@@ -515,7 +515,17 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     cb(now);
     if (!named) {
       const names = (st.wave.bosses || []).map(b => b.name).filter(Boolean).join('+');
-      if (names) named = names;
+      if (names) {
+        named = names;
+        // WAVE-14: the arrival banner is live the frame the cast spawns.
+        const ban = mainMod.__TEST.renderer.bossBanner;
+        assert(ban && /APPROACH/.test(ban.name),
+          'boss arrival banner must be live at spawn (got ' + JSON.stringify(ban) + ')');
+        assert(ban.letterbox === true, 'banner paints the cinematic letterbox');
+        assert(ban.alpha > 0 && ban.alpha <= 1, 'banner ramps in from >0 alpha');
+        assert(typeof ban.sub === 'string' && ban.sub.length > 3,
+          'banner carries the flavor sub-line');
+      }
     }
     // Any of the extra boss intent flags firing (telegraph/charge/nova/...).
     if (st.enemies.some(e => e.boss && (e.telegraph || e.charging || e.recovering))) intents++;
@@ -1094,6 +1104,89 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 'm' });
   assert(st.pilotMode === 'AUTO', 'probe hygiene: back to AUTO');
   console.log('draft pause: input inert under the overlay, M ignored, resume clean');
+}
+
+// ---- WAVE-14 EVENT FEED + BOSS-ARRIVAL OVERLAY probes ------------------------
+// Feed: rarity-tinted FOUND line, potion-found line, cap at 3 with newest
+// lowest, fade window, full expiry — all through the real toast() stream.
+{
+  const r = mainMod.__TEST.renderer;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+  mainMod.__TEST.startRun();
+  pump(5);
+  st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999;
+  st.wave.endsAt = st.time + 9999;
+  st.player.potions.hp = 0; st.player.potions.mp = 0;   // pickup never cap-gated
+
+  // (a) equipment find (rarity tint) + potion found, through real pickups.
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, age: 0,
+    item: { id: 'feed1', name: 'Fine Eye', rarity: 'RARE',
+      affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.06 }] } });
+  st.drops.push({ x: st.player.x, y: st.player.y, kind: 'hp' });
+  pump(5);
+  let feed = r.hudChrome.feed || [];
+  const eq = feed.find(l => l.msg.startsWith('FOUND: FINE EYE'));
+  assert(eq, 'feed must carry the equipment find line: ' + JSON.stringify(feed));
+  assert(eq.tint === '#4a8cff', 'the FOUND line carries the RARE tint (got ' + eq.tint + ')');
+  assert(feed.some(l => l.msg === 'HEALTH POTION FOUND'),
+    'feed must carry HEALTH POTION FOUND: ' + JSON.stringify(feed));
+
+  // (b) cap at 3, newest LOWEST, fresh lines opaque. NOTE: the pickup loop
+  // walks itemDrops in REVERSE, so MYTHIC is pushed first to toast LAST.
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, age: 0,
+    item: { id: 'feed3', name: 'Mythic Edge', rarity: 'EPIC',
+      affixes: [{ id: 'damageMult', name: 'Brutal Edge', field: 'damageMult', magnitude: 0.22 }] } });
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, age: 0,
+    item: { id: 'feed2', name: 'Worn Hide', rarity: 'COMMON',
+      affixes: [{ id: 'thorns', name: 'Spiked Hide', field: 'thorns', magnitude: 3 }] } });
+  pump(5);
+  feed = r.hudChrome.feed;
+  assert(feed.length === 3, 'feed caps at 3 lines (got ' + feed.length + ')');
+  assert(feed[2].msg.startsWith('FOUND: MYTHIC EDGE') && feed[2].tint === '#c46ad8',
+    'the newest line sits lowest with its EPIC tint');
+  assert(feed.every(l => l.alpha === 1), 'fresh lines are fully opaque');
+
+  // (c) fade: past ttl 3 the lines dim (0 < alpha < 1); past ttl 4 they go.
+  pump(Math.round(60 * 3.2));
+  feed = r.hudChrome.feed;
+  assert(feed.length > 0 && feed.every(l => l.alpha < 1 && l.alpha > 0),
+    'lines mid-fade in their final second (' + feed.map(l => l.alpha.toFixed(2)) + ')');
+  pump(Math.round(60 * 1.2));
+  feed = r.hudChrome.feed;
+  assert(feed.length === 0, 'lines must expire past ~4s (got ' + JSON.stringify(feed) + ')');
+  console.log('event feed: FOUND-tint/potion lines land, cap 3 newest-lowest, fade + expiry verified');
+}
+
+// Boss-arrival overlay: letterbox + name + sub-line live at spawn, expire ~ttl.
+{
+  const r = mainMod.__TEST.renderer;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+  mainMod.__TEST.startRun();
+  pump(5);
+  st.enemies.length = 0; st.gems.length = 0;
+  st.itemDrops.length = 0; st.drops.length = 0;
+  st.spawnTimer = 999;
+  st.wave.endsAt = st.time;   // the boss spawns on the next tick
+  let guard = 0;
+  while (!(st.wave.bosses || []).length && guard++ < 120) pump(1);
+  assert(st.wave.bosses.length > 0, 'a boss must spawn for the banner probe');
+  const bossName = st.wave.bosses[0].name;
+  const ban = r.bossBanner;
+  assert(ban && ban.letterbox === true && ban.name.startsWith(bossName),
+    'banner is live at spawn with the boss name: ' + JSON.stringify(ban));
+  assert(/APPROACHES$/.test(ban.name), 'the default copy line is "<NAME> APPROACHES"');
+  assert(typeof ban.sub === 'string' && ban.sub.length > 3,
+    'banner carries the flavor sub-line');
+  pump(Math.round(60 * 0.6));   // past the 0.35s ramp-in
+  assert(r.bossBanner && r.bossBanner.alpha === 1, 'banner fully visible past ramp-in');
+  pump(Math.round(60 * 2.4));   // past the 2.5s ttl (+ the 0.6 above)
+  assert(r.bossBanner === null,
+    'the banner must expire after ~2.5s (got ' + JSON.stringify(r.bossBanner) + ')');
+  console.log(`boss overlay: ${bossName} letterbox banner + sub-line, expired on ttl`);
 }
 
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----

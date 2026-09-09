@@ -582,3 +582,19 @@ one:
     blur/AUTO resume/draft-pause inertness).
   - Verified: 21/21 suites (new test_controllers.mjs), smoke x3,
     lightpanda clean with #dpad + tc-pilot in live DOM.
+- 2026-09-09 (wave-14): **EVENT FEED + BOSS-ARRIVAL OVERLAY** (Sk408
+  directive) — hb1:
+  - EVENT FEED: the toast stream now renders as an on-canvas feed UNDER the
+    HP/mana pixel bars — last 3 events, ~4s ttl, fade-out, pixel font.
+    Equipment pickups show rarity-tinted names; arch effects, potion
+    pickups (new toast at the drop site), weapon level-ups, synergies,
+    flash drops, wave/theme lines all route through the one feed.
+    TEXT HUD toggle output unchanged.
+  - BOSS OVERLAY: on wave-boss spawn — letterbox bands + blood-red rule,
+    bold gold name + flavor sub-line, 0.35s slam-in / 0.6s ease-out over
+    2.5s. Copy: "GRAVELMAW THE CHARGER APPROACHES" / "THE CHOIR MOTHER
+    APPROACHES" / "PYRAXIS APPROACHES"; double waves show both names;
+    finale keeps "THE MAW OF THE HORDE" with "EVERY HORDE WAS ALWAYS ONE
+    HUNGER." Fires the existing BOSS_YELL sting; no new audio.
+  - Verified: 21/21 suites, smoke x3 (new feed + banner probes),
+    lightpanda clean.

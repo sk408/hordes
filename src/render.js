@@ -688,6 +688,47 @@ export class Renderer {
     // WAVE-12 canvas HUD chrome: graphic HP/mana bars, weapon/equipment icon
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
     this.drawHudChrome(g, state);
+    // WAVE-14 boss-arrival overlay: cinematic letterbox + name. Above even
+    // the HUD chrome — it is a moment, not a readout.
+    this.drawBossBanner(g, state);
+  }
+
+  // ---- WAVE-14 boss-arrival overlay ------------------------------------------
+  // state.bossBanner = { title, sub, ttl } (main.js sets it at boss spawn /
+  // finale start; ~2.5s). Cinematic letterbox bands + big centered name + a
+  // flavor sub-line. Ramps in over the first 0.35s and out over the last 0.6s
+  // so it slams in and eases away. `this.bossBanner` is the test seam (the
+  // exact values painted this frame; null when no banner is live).
+  drawBossBanner(g, state) {
+    const b = state.bossBanner;
+    if (!b || !(b.ttl > 0)) { this.bossBanner = null; return; }
+    const DUR = 2.5;
+    const aIn = Math.min(1, (DUR - b.ttl) / 0.35);
+    const aOut = Math.min(1, b.ttl / 0.6);
+    const alpha = Math.max(0, Math.min(aIn, aOut));
+    const W = C.VIEW_W, H = C.VIEW_H;
+    const bandH = 34;
+    g.globalAlpha = alpha;
+    // Letterbox bands + a thin blood-red rule at each edge.
+    g.fillStyle = '#08080f';
+    g.fillRect(0, 0, W, bandH);
+    g.fillRect(0, H - bandH, W, bandH);
+    g.fillStyle = '#7a1028';
+    g.fillRect(0, bandH, W, 1);
+    g.fillRect(0, H - bandH - 1, W, 1);
+    // Name + sub-line, centered.
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = 'bold 20px monospace';
+    g.fillStyle = '#ffd75e';
+    g.fillText(b.title, W / 2, H / 2 - 9);
+    g.font = '9px monospace';
+    g.fillStyle = '#c8c8d8';
+    g.fillText(b.sub, W / 2, H / 2 + 11);
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    g.globalAlpha = 1;
+    this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
   }
 
   // ---- WAVE-12 HUD chrome (fillRect pixel grids only) -------------------------
@@ -740,6 +781,30 @@ export class Renderer {
     };
     drawBar(6, 16, 110, hpFrac, flashFrac, '#ff5566');
     drawBar(6, 26, 110, manaFrac, 0, '#4a8cff');
+
+    // --- WAVE-14 event feed: last 3 toasts UNDER the bars, newest lowest.
+    // The toast() stream in main.js is the ONE feed — equipment finds (tinted
+    // by rarity), arch effects, potions, weapon level-ups, synergies, flash
+    // drops, wave/theme lines all land here. Lines fade out over their final
+    // second (alpha = ttl clamped to 1).
+    g.font = '8px monospace';
+    g.textBaseline = 'top';
+    chrome.feed = [];
+    const feed = (state.toasts || []).slice(-3);
+    for (let i = 0; i < feed.length; i++) {
+      const ft = feed[i];
+      const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
+      if (alpha <= 0) continue;
+      const fy = 37 + i * 10;
+      const fw = ft.msg.length * 5 + 3;   // ~5px/char @ 8px monospace
+      g.globalAlpha = alpha;
+      g.fillStyle = 'rgba(8,8,14,0.60)';  // readability plate
+      g.fillRect(5, fy - 1, fw, 9);
+      g.fillStyle = ft.tint || '#d8d8e8';
+      g.fillText(ft.msg, 7, fy);
+      g.globalAlpha = 1;
+      chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha });
+    }
 
     // --- equipment icon row (above the weapon row, same bottom-left corner).
     // 4x4 rarity-tinted gem per equipped rare item.

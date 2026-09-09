@@ -104,7 +104,8 @@ const state = {
   shieldAbsorbs: 0,  // remaining AEGIS absorbs while the SHIELD buff lives
   portal: null,      // open portal after a boss clear ({ x, y, age }) — wave-6
   effects: [],       // transient skill/weapon visuals ({ kind, x, y, age, ttl })
-  toasts: [],        // transient HUD messages ({ msg, ttl })
+  toasts: [],        // transient HUD messages ({ msg, ttl, tint }) — WAVE-14: also the event feed
+  bossBanner: null,  // WAVE-14: boss-arrival overlay ({ title, sub, ttl } | null)
   time: 0,
   spawnTimer: 0,
   // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
@@ -356,17 +357,19 @@ function removeItemAffixes(p, item) {
 // (+1 heat NEW_ITEM_SLOT); REPLACE swaps out the weakest equipped item when
 // the drop is STRICTLY better (no heat — exchanges are free and rare by
 // construction, Sk408's no-churn rule); IGNORE leaves the drop on the ground
-// to despawn naturally. Returns a HUD message string, or null on IGNORE (the
-// caller then does NOT consume the drop). WAVE-9 heat charges live here.
+// to despawn naturally. Returns a feed line { msg, tint } or null on IGNORE
+// (the caller then does NOT consume the drop). WAVE-9 heat charges live here.
+// WAVE-14: the feed line is "FOUND: <name>" tinted by the item's rarity.
 function applyEquipDecision(it) {
   const res = decideEquip(state.items, it);
   const p = state.player;
+  const tint = RARITY_TINTS[it.rarity] || null;
   if (res.action === 'EQUIP') {
     state.items.push(it);
     addHeat(state, 'NEW_ITEM_SLOT');
     applyItemAffixes(p, it);
     for (const w of state.weapons) w.evoDeclined = false;
-    return 'EQUIPPED ' + it.name.toUpperCase() + ' [' + it.rarity + ']';
+    return { msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + ']', tint };
   }
   if (res.action === 'REPLACE') {
     const out = state.items[res.slot];
@@ -375,8 +378,11 @@ function applyEquipDecision(it) {
     addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
     applyItemAffixes(p, it);
     for (const w of state.weapons) w.evoDeclined = false;
-    return 'EXCHANGED ' + out.name.toUpperCase() + ' -> ' + it.name.toUpperCase() +
-      ' [' + it.rarity + ']';
+    return {
+      msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + '] (SWAPPED OUT ' +
+        out.name.toUpperCase() + ')',
+      tint,
+    };
   }
   return null;   // IGNORE — not strictly better than the weakest equipped
 }
@@ -577,6 +583,17 @@ function spawnBoss() {
   });
   // Named announce: BOTH names on double waves (3/6/9 — the events).
   toast(cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH!' : ' APPROACHES!'));
+  // WAVE-14 boss-arrival overlay (render.js drawBossBanner): cinematic
+  // letterbox + name + flavor sub-line, ~2.5s. The BOSS_YELL portal sting is
+  // the reusable cinematic seam (audio.js — no new audio invented).
+  state.bossBanner = {
+    title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : ' APPROACHES'),
+    sub: cast.length > 1
+      ? cast.map(b => b.flavor.toUpperCase()).join(' / ')
+      : cast[0].flavor.toUpperCase(),
+    ttl: 2.5,
+  };
+  audio.playPortalCue('BOSS_YELL');
 }
 
 // ---------- WAVE-11 SYNERGIES (synergies.js; weapons.js stays untouched) -----
@@ -1227,7 +1244,8 @@ function update(dt) {
   }
   for (const ev of chestEvents) {
     if (ev.kind === 'chestOpened') {
-      toast('CHEST OPENED: ' + ev.rarity.toUpperCase());
+      toast('CHEST OPENED: ' + ev.rarity.toUpperCase(),
+        RARITY_TINTS[ev.rarity.toUpperCase()] || null);   // WAVE-14 feed tint
       audio.playSfx('chest');
       // PALADIN bless: heal on chest open.
       const heal = state.character ? (state.character.healOnChest || 0) : 0;
@@ -1250,12 +1268,14 @@ function update(dt) {
 
   // Potion drops: auto-pickup within gem radius, but only if not at cap —
   // a full inventory leaves the potion on the ground for later.
+  // WAVE-14: pickups announce in the event feed (Sk408 request).
   for (let i = state.drops.length - 1; i >= 0; i--) {
     const d = state.drops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
       if (p.potions[d.kind] < C.POTIONS.MAX_CARRIED) {
         p.potions[d.kind]++;
         state.drops.splice(i, 1);
+        toast((d.kind === 'hp' ? 'HEALTH' : 'MANA') + ' POTION FOUND');
       }
     }
   }
@@ -1267,10 +1287,10 @@ function update(dt) {
   for (let i = state.itemDrops.length - 1; i >= 0; i--) {
     const d = state.itemDrops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
-      const msg = applyEquipDecision(d.item);
-      if (msg) {
+      const res = applyEquipDecision(d.item);
+      if (res) {
         state.itemDrops.splice(i, 1);
-        toast(msg);
+        toast(res.msg, res.tint);
       }
     }
   }
@@ -1285,6 +1305,7 @@ function update(dt) {
     state.toasts[i].ttl -= dt;
     if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
   }
+  tickBossBanner(dt);   // WAVE-14 arrival overlay
 
   // Gem pickup.
   for (let i = state.gems.length - 1; i >= 0; i--) {
@@ -1323,9 +1344,21 @@ function levelUp() {
   if (state.mode === 'playing') openDraft();
 }
 
-function toast(msg) {
-  state.toasts.push({ msg, ttl: 3 });
+// WAVE-14: toast() is the ONE event stream — the text HUD's `!` line and the
+// on-canvas event feed (render.js, under the HP/mana bars) both read it.
+// `tint` (optional) colorizes the feed line — the rarity color of a found
+// item. ttl 4s; the feed shows the last 3 and fades each line's final second.
+function toast(msg, tint = null) {
+  state.toasts.push({ msg, ttl: 4, tint });
   if (state.toasts.length > 3) state.toasts.shift();
+}
+
+// WAVE-14: the boss-arrival banner lives ~2.5s (ticked beside the toasts in
+// update() AND updateFinale() so the maw's banner expires mid-finale too).
+function tickBossBanner(dt) {
+  if (!state.bossBanner) return;
+  state.bossBanner.ttl -= dt;
+  if (state.bossBanner.ttl <= 0) state.bossBanner = null;
 }
 
 function openDraft() {
@@ -1738,6 +1771,7 @@ function startRun() {
   interMsg = '';
   state.effects = [];
   state.toasts = [];
+  state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
@@ -2226,6 +2260,13 @@ function startFinale() {
   state.mode = 'finale';
   toast(FINAL_BOSS.name + ' APPROACHES');
   toast(FINAL_BOSS.flavor.toUpperCase());
+  // WAVE-14: the maw's arrival gets the banner too — doom-ier sub-line.
+  state.bossBanner = {
+    title: FINAL_BOSS.name,
+    sub: FINAL_BOSS.flavor.toUpperCase(),   // "EVERY HORDE WAS ALWAYS ONE HUNGER."
+    ttl: 2.5,
+  };
+  audio.playPortalCue('BOSS_YELL');
   audio.playSfx('death');
   audio.startMusic();
 }
@@ -2366,6 +2407,7 @@ function updateFinale(dt) {
     state.toasts[i].ttl -= dt;
     if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
   }
+  tickBossBanner(dt);   // WAVE-14 arrival overlay (finale maw included)
   state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
   state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
 }
