@@ -1,0 +1,360 @@
+// HORDES — enemy variety: typed enemies with distinct stats & behaviors.
+// Pure decision functions: decide(enemy, player, dt) -> { mx, my, fire, ...extras }
+//   mx,my = normalized move intent (integrator multiplies by enemy.speed).
+//   fire  = null | { dx, dy, speed, damage } projectile INTENT ONLY —
+//           the integrator wires this to state.projectiles. This module
+//           never imports or mutates game state.
+//   Extras (additive, integrator may ignore):
+//     telegraph: true — WARLOCK charge pause; render/integrator can flash a
+//                warning before the bolt lands.
+//     attach: true / drain: <dps> — TICK latching contract: when attached,
+//             drain the player continuously INSTEAD of contact damage; the
+//             integrator owns the enemy.attached flag + position follow.
+// Firing/dash/charge phases derive from enemy.age (seconds alive, owned by the
+// integrator) so decide() stays deterministic and side-effect free.
+//
+// LOOK CONTRACT for render.js (replaces any hardcoded ENEMY_LOOK):
+//   ENEMY_TYPES[id].LOOK = { body, trim, accent, shape, sizeMult }
+//   and VARIANTS[id] = 2-3 alternate palettes {body, trim, accent} (same shape).
+//   The spawn site calls rollVariant(typeId, rng?) and stores the returned
+//   index on the enemy; render resolves the palette via resolveLook(id, v):
+//   0 = base LOOK, 1..n = VARIANTS[id][v-1].
+//   SHAPE DRAWING from the enemy's e.w/e.h box (all fillRect, pixel-art safe):
+//     block  — one rect w x h centered on (x,y).
+//     diamond— stepped diamond inscribed in the w x h box: 3 stacked rects —
+//              middle row full width (w x h/3), rows above/below half width
+//              (w/2 x h/3). 4 steps if h >= 20: quarter rows at 0.25/0.75 width.
+//     tall   — one rect (w*0.7) x (h*1.3) centered — stretched silhouette.
+//     wide   — one rect (w*1.3) x (h*0.7) centered — squat silhouette.
+//   body fills the main shape, trim a 1px darker inner/edge band, accent a
+//   2x2 "eye" or core pixel near center (facing the player if integrator knows).
+
+import { CONFIG as C } from './config.js';
+
+// ---- per-type stat multipliers & behavior params --------------------------
+export const ENEMY_TYPES = {
+  // Base chaser (reference; matches makeEnemy in entities.js at mult 1).
+  CHASER: {
+    id: 'CHASER',
+    hpMult: 1.0, speedMult: 1.0, xpMult: 1.0, sizeMult: 1.0,
+    contactDamageMult: 1.0,
+    decide: chaseDecide,
+    LOOK: { body: '#c23b3b', trim: '#7a1f1f', accent: '#ff8f8f', shape: 'block', sizeMult: 1.0 },
+  },
+
+  // Fast, weak, spawns in packs.
+  SWARMER: {
+    id: 'SWARMER',
+    hpMult: 0.4, speedMult: 1.7, xpMult: 0.5, sizeMult: 0.75,
+    contactDamageMult: 0.7,
+    packSize: 5,          // spawner hint: spawn this many per pop
+    decide: chaseDecide,
+    LOOK: { body: '#d9a03c', trim: '#8a5f1c', accent: '#ffe08a', shape: 'diamond', sizeMult: 0.75 },
+  },
+
+  // Slow, tanky, big contact damage.
+  BRUTE: {
+    id: 'BRUTE',
+    hpMult: 3.5, speedMult: 0.6, xpMult: 3.0, sizeMult: 1.8,
+    contactDamageMult: 2.5,
+    decide: chaseDecide,
+    LOOK: { body: '#6d4f8f', trim: '#3d2a52', accent: '#c9a6ff', shape: 'wide', sizeMult: 1.8 },
+  },
+
+  // Ranged threat: holds ~120px, retreats if crowded, spits slow shots.
+  SPITTER: {
+    id: 'SPITTER',
+    hpMult: 1.0, speedMult: 0.9, xpMult: 2.0, sizeMult: 1.1,
+    contactDamageMult: 1.0,
+    holdDist: 120,
+    retreatDist: 100,     // back off harder inside this radius
+    fireRange: 200,
+    fireInterval: 2.2,    // seconds between spits (age-phase driven)
+    projSpeed: 80,        // slow projectile
+    projDamage: 8,
+    decide: spitterDecide,
+    LOOK: { body: '#3f9e4f', trim: '#1f5c2b', accent: '#a6ff9e', shape: 'tall', sizeMult: 1.1 },
+  },
+
+  // DASHER — stalks slowly, then lunges in bursts. Deterministic
+  // cycle from age: 1.6s stalk at 0.5x, then 0.8s lunge at 2.6x.
+  DASHER: {
+    id: 'DASHER',
+    hpMult: 1.3, speedMult: 1.0, xpMult: 1.5, sizeMult: 1.0,
+    contactDamageMult: 1.5,
+    stalkTime: 1.6, stalkSpeedMult: 0.5,
+    lungeTime: 0.8, lungeSpeedMult: 2.6,
+    decide: dasherDecide,
+    LOOK: { body: '#3f7f9e', trim: '#1f465c', accent: '#9ee6ff', shape: 'block', sizeMult: 1.0 },
+  },
+
+  // WARLOCK — dedicated ranged HUNTER: keeps 150px, telegraphs with a 1s
+  // charge pause (stands still, intent.telegraph = true), then fires a SLOW
+  // heavy bolt. Punishes builds that ignore ranged threats.
+  // Age cycle: moveTime repositioning -> chargeTime frozen telegraph -> fire
+  // on the frame the cycle wraps.
+  WARLOCK: {
+    id: 'WARLOCK',
+    hpMult: 1.6, speedMult: 0.8, xpMult: 2.5, sizeMult: 1.2,
+    contactDamageMult: 1.0,
+    holdDist: 150,
+    retreatDist: 130,
+    fireRange: 260,
+    moveTime: 2.2,        // reposition phase of the cycle
+    chargeTime: 1.0,      // telegraph pause before the bolt
+    projSpeed: 55,        // SLOW bolt (dodgeable, but heavy)
+    projDamage: 14,
+    decide: warlockDecide,
+    LOOK: { body: '#8f3f6d', trim: '#52203d', accent: '#ff9ed8', shape: 'tall', sizeMult: 1.2 },
+  },
+
+  // TICK — tiny latcher: fast, attaches on contact and DRAINS hp over time
+  // instead of dealing contact damage (contactDamageMult 0). Must be killed
+  // to remove; while enemy.attached is truthy the intent stays
+  // { attach: true, drain: DRAIN_DPS } and movement is zero (integrator
+  // snaps the tick to the player).
+  TICK: {
+    id: 'TICK',
+    hpMult: 0.3, speedMult: 1.8, xpMult: 0.8, sizeMult: 0.5,
+    contactDamageMult: 0,           // NO contact hit — drain instead
+    attachDist: 14,                 // latches inside this radius
+    drainDps: 4,                    // hp/s while attached
+    decide: tickDecide,
+    LOOK: { body: '#7f9e3f', trim: '#46521f', accent: '#e3ff9e', shape: 'diamond', sizeMult: 0.5 },
+  },
+
+  // COLOSSUS — rare wave-5+ mini-boss tier: massive HP, slow, huge body.
+  // On death the integrator calls deathShockwave(enemy) and applies the
+  // returned AoE damage to nearby ENEMIES (friendly-fire chaos).
+  COLOSSUS: {
+    id: 'COLOSSUS',
+    hpMult: 14.0, speedMult: 0.45, xpMult: 8.0, sizeMult: 2.6,
+    contactDamageMult: 3.0,
+    minWave: 5,                     // spawner gate
+    shockRadius: 90,                // death AoE radius
+    shockBaseDamage: 25,
+    shockMaxHpFrac: 0.25,           // + 25% of colossus maxHp
+    decide: chaseDecide,
+    LOOK: { body: '#5a5f66', trim: '#2e3136', accent: '#ffd54a', shape: 'wide', sizeMult: 2.6 },
+  },
+};
+
+// ELITE template: applies to ANY type — 4x hp, 1.5x size, guaranteed chest.
+export const ELITE_TEMPLATE = {
+  hpMult: 4.0,
+  sizeMult: 1.5,
+  xpMult: 3.0,
+  guaranteesChest: true,
+};
+
+// Suggested elite palette override for render (gold trim keeps the existing
+// elite tell regardless of type/variant).
+export const ELITE_LOOK = { trim: '#ffd54a', accent: '#fff3b0' };
+
+// ---- palette VARIANTS (visual mix; rollVariant picks the index at spawn) ---
+// Each entry swaps {body, trim, accent}; shape/sizeMult come from type.LOOK.
+export const VARIANTS = {
+  CHASER: [
+    { body: '#b0562f', trim: '#6b3018', accent: '#ffb98a' },   // rust
+    { body: '#8f3b52', trim: '#521f2f', accent: '#ff9ec2' },   // rose
+  ],
+  SWARMER: [
+    { body: '#c9c93f', trim: '#75751c', accent: '#ffffa6' },   // acid
+    { body: '#9ec93f', trim: '#5c751c', accent: '#e3ff9e' },   // lime
+    { body: '#c96b3f', trim: '#753a1c', accent: '#ffc4a6' },   // ember
+  ],
+  BRUTE: [
+    { body: '#8f6d4f', trim: '#523a28', accent: '#ffc49e' },   // ochre
+    { body: '#4f6d8f', trim: '#283a52', accent: '#9ec9ff' },   // steel
+  ],
+  SPITTER: [
+    { body: '#3f9e8a', trim: '#1f5c50', accent: '#9effe0' },   // teal
+    { body: '#9e9e3f', trim: '#5c5c1c', accent: '#ffffa6' },   // bile
+  ],
+  DASHER: [
+    { body: '#5c3f9e', trim: '#321f5c', accent: '#c49eff' },   // violet
+    { body: '#3f9e6d', trim: '#1f5c40', accent: '#9effc4' },   // jade
+  ],
+  WARLOCK: [
+    { body: '#5c3f8f', trim: '#332052', accent: '#c49eff' },   // arcanist
+    { body: '#8f3f3f', trim: '#521f1f', accent: '#ff9e9e' },   // blood
+  ],
+  TICK: [
+    { body: '#9e5c3f', trim: '#5c3218', accent: '#ffc49e' },   // tick-brown
+    { body: '#3f6d9e', trim: '#1f3d5c', accent: '#9ec9ff' },   // blue-bug
+  ],
+  COLOSSUS: [
+    { body: '#6d5a3f', trim: '#3d3220', accent: '#ffd54a' },   // bronze
+    { body: '#3f5a6d', trim: '#20323d', accent: '#9effff' },   // glacier
+  ],
+};
+
+// rollVariant(typeId, rng?) -> palette index for this spawn. Index space is
+// [base, ...variants]: 0 = the type's base LOOK, 1..n = VARIANTS entries, so
+// hordes mix the base palette AND the alternates. rng: injectable () => [0,1)
+// (default Math.random). Clamped so a 0.999... roll never overflows.
+export function rollVariant(typeId, rng = Math.random) {
+  const count = (VARIANTS[typeId] || []).length + 1; // + base palette
+  return Math.min(count - 1, Math.floor(rng() * count));
+}
+
+// resolveLook(typeId, variant) -> full palette {body, trim, accent, shape,
+// sizeMult} for render; variant 0 = base LOOK, 1..n = VARIANTS[variant-1].
+// Unknown types fall back to CHASER base look.
+export function resolveLook(typeId, variant = 0) {
+  const type = ENEMY_TYPES[typeId] || ENEMY_TYPES.CHASER;
+  const v = variant > 0 ? (VARIANTS[type.id]?.[variant - 1] || {}) : {};
+  return { ...type.LOOK, ...v };
+}
+
+// ---- decision helpers ------------------------------------------------------
+
+function toward(dx, dy) {
+  const len = Math.hypot(dx, dy) || 1;
+  return { mx: dx / len, my: dy / len };
+}
+
+function chaseDecide(enemy, player) {
+  const t = toward(player.x - enemy.x, player.y - enemy.y);
+  return { mx: t.mx, my: t.my, fire: null };
+}
+
+function spitterDecide(enemy, player) {
+  const T = ENEMY_TYPES.SPITTER;
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
+  const dist = Math.hypot(dx, dy);
+  const dir = toward(dx, dy);
+
+  let mx = 0, my = 0;
+  if (dist < T.retreatDist) {            // too close: back away
+    mx = -dir.mx; my = -dir.my;
+  } else if (dist > T.holdDist + 20) {   // too far: close in
+    mx = dir.mx; my = dir.my;
+  }                                     // else: hold position (~120px band)
+
+  // Age-phase fire: one spit per fireInterval while in range. Pure — no timer
+  // mutation; the integrator owns enemy.age.
+  let fire = null;
+  if (dist <= T.fireRange) {
+    const phase = enemy.age % T.fireInterval;
+    if (phase < 1 / 60) {  // fire on the frame the phase wraps
+      fire = { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage };
+    }
+  }
+  return { mx, my, fire };
+}
+
+function dasherDecide(enemy, player) {
+  const T = ENEMY_TYPES.DASHER;
+  const dir = toward(player.x - enemy.x, player.y - enemy.y);
+  const phase = enemy.age % (T.stalkTime + T.lungeTime);
+  const lunging = phase >= T.stalkTime;
+  const speedMult = lunging ? T.lungeSpeedMult : T.stalkSpeedMult;
+  return { mx: dir.mx * speedMult, my: dir.my * speedMult, fire: null };
+}
+
+function warlockDecide(enemy, player) {
+  const T = ENEMY_TYPES.WARLOCK;
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
+  const dist = Math.hypot(dx, dy);
+  const dir = toward(dx, dy);
+  const cycle = T.moveTime + T.chargeTime;
+  const phase = enemy.age % cycle;
+
+  // Charge window at the end of the cycle: stand still, telegraph, then the
+  // bolt fires on the frame the cycle wraps (phase < 1/60) if in range.
+  const charging = phase >= T.moveTime;
+  if (charging) {
+    // Frozen: telegraph the bolt; the shot itself fires when the cycle wraps.
+    return { mx: 0, my: 0, fire: null, telegraph: true };
+  }
+
+  let mx = 0, my = 0;
+  if (dist < T.retreatDist) {            // hunter keeps its distance
+    mx = -dir.mx; my = -dir.my;
+  } else if (dist > T.holdDist + 20) {
+    mx = dir.mx; my = dir.my;
+  }
+
+  let fire = null;
+  if (dist <= T.fireRange && phase < 1 / 60) {  // cycle just wrapped: bolt!
+    fire = { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage };
+  }
+  return { mx, my, fire, telegraph: false };
+}
+
+function tickDecide(enemy, player) {
+  const T = ENEMY_TYPES.TICK;
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
+  const dist = Math.hypot(dx, dy);
+
+  // Attached (integrator flag) or within latch range: stop moving, drain.
+  if (enemy.attached || dist <= T.attachDist) {
+    return { mx: 0, my: 0, fire: null, attach: true, drain: T.drainDps };
+  }
+  const dir = toward(dx, dy);
+  return { mx: dir.mx, my: dir.my, fire: null, attach: false, drain: 0 };
+}
+
+// deathShockwave(enemy) -> AoE data for the integrator's kill path. Damages
+// nearby ENEMIES (friendly fire), not the player. Damage scales with the
+// colossus's own maxHp so late-wave colossi still thin the horde.
+export function deathShockwave(enemy) {
+  const T = ENEMY_TYPES.COLOSSUS;
+  if (enemy.typeId !== 'COLOSSUS') return null;
+  return {
+    radius: T.shockRadius,
+    damage: T.shockBaseDamage + enemy.maxHp * T.shockMaxHpFrac,
+    friendlyFire: true,
+  };
+}
+
+// ---- factory ----------------------------------------------------------------
+
+// makeTypedEnemy(typeId, x, y, t [, { elite, variant }])
+// Reuses the base time-scaling conventions from entities.js makeEnemy:
+// wave = floor(t / 30); hp scales 1+wave*0.35, speed 1+wave*0.05, xp 1+wave*0.25.
+// variant: palette index (call rollVariant at the spawn site; default 0).
+export function makeTypedEnemy(typeId, x, y, t, opts = {}) {
+  const type = ENEMY_TYPES[typeId] || ENEMY_TYPES.CHASER;
+  const wave = Math.floor(t / 30);
+  const hpScale = 1 + wave * 0.35;
+  const speedScale = 1 + wave * 0.05;
+  const xpScale = 1 + wave * 0.25;
+
+  let hpMult = type.hpMult, sizeMult = type.sizeMult, xpMult = type.xpMult;
+  const elite = !!opts.elite;
+  if (elite) {
+    hpMult *= ELITE_TEMPLATE.hpMult;
+    sizeMult *= ELITE_TEMPLATE.sizeMult;
+    xpMult *= ELITE_TEMPLATE.xpMult;
+  }
+
+  const hp = C.ENEMY.BASE_HP * hpScale * hpMult;
+  return {
+    typeId: type.id,
+    elite,
+    variant: opts.variant ?? 0,   // palette index for render (see rollVariant)
+    x, y,
+    hp, maxHp: hp,
+    speed: C.ENEMY.BASE_SPEED * speedScale * type.speedMult,
+    xp: C.ENEMY.BASE_XP * xpScale * xpMult,
+    w: C.ENEMY.W * sizeMult,
+    h: C.ENEMY.H * sizeMult,
+    contactDamageMult: type.contactDamageMult,
+    // Guaranteed chest drop on elites (loot wiring is the integrator's job).
+    guaranteesChest: elite || undefined,
+    packSize: type.packSize || 1,   // spawner hint
+    minWave: type.minWave || 0,     // spawner gate (COLOSSUS = 5+)
+    age: 0,                          // seconds alive; integrator advances it
+    attached: false,                 // TICK latch flag; integrator-owned
+    flash: 0,
+    slow: 0,
+  };
+}
+
+// Convenience: typed decision dispatch.
+export function decideEnemyAction(enemy, player, dt) {
+  const type = ENEMY_TYPES[enemy.typeId] || ENEMY_TYPES.CHASER;
+  return type.decide(enemy, player, dt);
+}
