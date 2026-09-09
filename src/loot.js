@@ -160,6 +160,24 @@ export function equipItem(inventory, item) {
   return true;
 }
 
+// WAVE-9 equip hook (heat.js charges off the distinction): equips into a FREE
+// slot when one exists; at the MAX_EQUIPPED cap the newcomer EXCHANGES the
+// oldest equipped item (FIFO — the pilot swaps constantly, items are never
+// burned by a full belt anymore). Returns null on bad input, else
+// { status: 'equipped' } or { status: 'exchanged', removed: <old item> } —
+// the caller owns affix bookkeeping (apply new, revert removed) and the heat
+// charge (NEW_ITEM_SLOT vs ITEM_EXCHANGE).
+export function equipOrExchange(inventory, item) {
+  if (!Array.isArray(inventory) || !item) return null;
+  if (inventory.length < MAX_EQUIPPED) {
+    inventory.push(item);
+    return { status: 'equipped' };
+  }
+  const removed = inventory.shift();
+  inventory.push(item);
+  return { status: 'exchanged', removed };
+}
+
 // Remove by item or id; returns the removed item or null.
 export function unequipItem(inventory, itemOrId) {
   if (!Array.isArray(inventory)) return null;

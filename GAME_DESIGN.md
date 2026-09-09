@@ -443,6 +443,21 @@ one:
   - Cleanup: removed stale `test/dbg2.mjs` (pre-wave-7 smoke copy that
     failed from the intro-boot change; recoverable in git history).
   - Verified: smoke 5/5 + 14 module suites, lightpanda clean.
+- 2026-09-09: **WAVE-9 — HEAT SYSTEM** (Sk408: "megabonk approach where
+  difficulty can keep scaling... careful with items... there could even be
+  a difficulty increaser for the user to engage"). hb6 module + hb1 wire:
+  - `src/heat.js` (hb6): run-scoped heat ledger. Charges: WEAPON_EVOLUTION
+    +2, NEW_ITEM_SLOT +1, ITEM_EXCHANGE at the 4/4 cap +0 (Sk408's guard —
+    the pilot churns items constantly), MANUAL_PUSH +1 (idempotence per
+    event id; HEAT_CAP 20 with partial fills). Multipliers: hp x(1+.12h),
+    damage x(1+.08h), spawnRate x(1+.06h) — stacked AFTER wave escalation;
+    goldMult x(1+.30/manual) driven by MANUAL pushes only (built-in heat
+    never inflates gold).
+  - Integration (hb1): RAISE THE STAKES card in the intermission (sells
+    the next gold mult; clamped at cap), spawn-time hp/damage/spawn
+    scaling incl. bosses, HEAT line in the HUD next to WEATHER, run reset.
+  - Verified: smoke 5/5 (exchange +0, evolution +2, stakes to cap, CHASER
+    hp x2.20 at heat 10), 15 module suites, lightpanda clean.
 - Layout: `index.html` + `src/{config,entities,controllers,skills,weapons,
   enemy_types,chests,meta,render,weather,main}.js` + `src/audio.js`
   (ES modules, no build step — must be served over HTTP).

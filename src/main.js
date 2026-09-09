@@ -4,7 +4,7 @@ import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale } from 
 import { Renderer } from './render.js';
 import { AutoPilotController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
-import { rollItem, equipItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest } from './loot.js';
+import { rollItem, equipOrExchange, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest } from './loot.js';
 import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
@@ -20,6 +20,10 @@ import { pickBossForWave, decideBossAction } from './bosses.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
+import {
+  HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, heatOf,
+  manualPushes, addHeat, initHeat,
+} from './heat.js';
 import {
   loadProfile, saveProfile, makeProfile, computeRunGold,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
@@ -75,6 +79,7 @@ const state = {
   itemDrops: [],     // rare item drops on the ground ({ x, y, item }) — loot.js
   chests: [],        // chests.js-owned ({ id, x, y, age })
   items: [],         // equipped rare items (loot.js; cap MAX_EQUIPPED=4)
+  heat: null,        // WAVE-9 heat ledger (heat.js; run-scoped, never persisted)
   weapons: [],       // granted weapons (base volley is slot 1, not listed)
   arches: [],        // field arch gates (arches.js; 1-2 spawned per wave)
   archBuffs: [],     // active arch buffs (arches.js tickArches-owned)
@@ -187,12 +192,14 @@ function pickSpawnType(wave) {
 
 // Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
 // enemy_types.js's linear multipliers (1+0.35w hp / 1+0.25w xp) and apply the
-// steeper documented curves from CONFIG.ESCALATION instead.
+// steeper documented curves from CONFIG.ESCALATION instead. WAVE-9: HEAT
+// stacks multiplicatively AFTER the wave escalation (hp only — xp/gold are
+// never heat-inflated).
 function applyEscalation(e, t) {
   const w = Math.floor(t / 30);
   const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
   const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult;
+  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
   e.hp = hp;
   e.maxHp = hp;
   e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;
@@ -202,7 +209,9 @@ function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
   state.spawnTimer -= dt;
   if (state.spawnTimer > 0) return;
-  const interval = Math.max(0.25, C.ENEMY.SPAWN_INTERVAL - state.time * 0.008);
+  // WAVE-9: heat speeds the spawn clock (interval / spawnRate).
+  const interval = Math.max(0.25,
+    (C.ENEMY.SPAWN_INTERVAL - state.time * 0.008) / heatMultipliers(heatOf(state)).spawnRate);
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
@@ -247,6 +256,35 @@ function applyItemAffixes(p, item) {
   for (const a of item.affixes || []) {
     p.stats[a.field] = (p.stats[a.field] ?? STAT_DEFAULTS[a.field] ?? 0) + a.magnitude;
   }
+}
+
+// WAVE-9: an exchanged item's affixes come back off the run player (mirror of
+// applyItemAffixes — the only revert path is the 4/4 exchange).
+function removeItemAffixes(p, item) {
+  for (const a of item.affixes || []) {
+    p.stats[a.field] = (p.stats[a.field] ?? STAT_DEFAULTS[a.field] ?? 0) - a.magnitude;
+  }
+}
+
+// WAVE-9 heat charge point: every pickup/equip routes through here. A FREE
+// slot costs +1 heat (NEW_ITEM_SLOT); the 4/4 exchange is FREE (Sk408's hard
+// rule — the pilot exchanges constantly). A fresh item kind may complete an
+// evolution's requirements either way, so declined offers re-arm.
+function equipOrExchangeItem(it) {
+  const res = equipOrExchange(state.items, it);
+  if (!res) return;
+  const p = state.player;
+  if (res.status === 'exchanged') {
+    removeItemAffixes(p, res.removed);
+    addHeat(state, 'ITEM_EXCHANGE');
+    toast('EXCHANGED ' + res.removed.name.toUpperCase() + ' -> ' + it.name.toUpperCase() +
+      ' [' + it.rarity + ']');
+  } else {
+    addHeat(state, 'NEW_ITEM_SLOT');
+    toast('EQUIPPED ' + it.name.toUpperCase() + ' [' + it.rarity + ']');
+  }
+  applyItemAffixes(p, it);
+  for (const w of state.weapons) w.evoDeclined = false;
 }
 
 // ---------- ARCHES: 1-2 gates per wave at random field positions -----------
@@ -314,6 +352,20 @@ function openIntermission() {
       `${offer.rarity} BLESSING · ${offer.desc}`,
       () => takeChoice(offer));
   }
+  // WAVE-9 manual heat dial: RAISE THE STAKES pushes +1 heat (harder, faster
+  // foes) and pays for it with goldMult — which tracks MANUAL pushes only.
+  // Card is hidden once the ledger sits at HEAT_CAP.
+  if (heatOf(state) < HEAT_CAP) {
+    const nextGold = goldMult(manualPushes(state) + 1);
+    menuCard('RAISE THE STAKES',
+      `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')}`,
+      () => {
+        addHeat(state, 'MANUAL_PUSH');
+        interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · run gold x${goldMult(manualPushes(state))}`;
+        audio.playSfx('levelup');
+        openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
+      });
+  }
 }
 
 function takeChoice(offer) {
@@ -341,12 +393,20 @@ function buyPaidChest(tier) {
   saveProfile(profile);
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
-    if (equipItem(state.items, it)) {
+    const eq = equipOrExchange(state.items, it);
+    if (eq) {
+      if (eq.status === 'exchanged') {
+        removeItemAffixes(state.player, eq.removed);
+        addHeat(state, 'ITEM_EXCHANGE');
+        interMsg = `CHEST: EXCHANGED ${eq.removed.name} -> ${it.name} [${it.rarity}]`;
+      } else {
+        addHeat(state, 'NEW_ITEM_SLOT');
+        interMsg = `CHEST: EQUIPPED ${it.name} [${it.rarity}] (${it.affixes.map(a => a.name).join(', ')})`;
+      }
       applyItemAffixes(state.player, it);
       for (const w of state.weapons) w.evoDeclined = false;   // kind may complete an evo
-      interMsg = `CHEST: EQUIPPED ${it.name} [${it.rarity}] (${it.affixes.map(a => a.name).join(', ')})`;
     } else {
-      interMsg = `CHEST: ${it.name} LOST — ITEM SLOTS FULL`;
+      interMsg = `CHEST: ${it.name} LOST — no slots`;
     }
   } else {
     interMsg = 'THE CHEST WAS EMPTY... ' + res.debited + ' gold gone';
@@ -390,7 +450,8 @@ function spawnBoss() {
       state.time, { elite: true });
     applyEscalation(boss, state.time);
     const hp = C.ENEMY.BASE_HP * hpScale(w) *
-      (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult;
+      (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
+      heatMultipliers(heatOf(state)).hp;   // WAVE-9: bosses take the heat too
     boss.hp = hp;
     boss.maxHp = hp;
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
@@ -521,7 +582,7 @@ function update(dt) {
   // (decideBossAction) whose extra intents — fan / summon / nova / teleport /
   // charging / recovering — are wired below; the old generic novaCd/summonCd
   // timers are gone (Pyraxis and the Choir Mother own those behaviors now).
-  const dmgMult = dmgScale(Math.floor(state.time / 30));
+  const dmgMult = dmgScale(Math.floor(state.time / 30)) * heatMultipliers(heatOf(state)).damage;
   let touchDmg = 0;
   for (const e of state.enemies) {
     e.age = (e.age || 0) + dt;
@@ -798,21 +859,14 @@ function update(dt) {
     }
   }
 
-  // Rare item drops (loot.js): auto-equip when a slot is free; a full
-  // inventory burns the item (toast) — the megabonk tension.
+  // Rare item drops (loot.js): auto-equip when a slot is free; at the 4/4 cap
+  // the newcomer EXCHANGES the oldest item (WAVE-9) — heat charges inside
+  // equipOrExchangeItem (+1 new slot / +0 exchange).
   for (let i = state.itemDrops.length - 1; i >= 0; i--) {
     const d = state.itemDrops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
       state.itemDrops.splice(i, 1);
-      if (equipItem(state.items, d.item)) {
-        applyItemAffixes(p, d.item);
-        // A fresh item kind may complete an evolution's requirements —
-        // re-arm any declined EVOLVE offers.
-        for (const w of state.weapons) w.evoDeclined = false;
-        toast('EQUIPPED ' + d.item.name.toUpperCase() + ' [' + d.item.rarity + ']');
-      } else {
-        toast('ITEM LOST - ' + MAX_EQUIPPED + '/' + MAX_EQUIPPED + ' EQUIPPED: ' + d.item.name.toUpperCase());
-      }
+      equipOrExchangeItem(d.item);
     }
   }
 
@@ -979,6 +1033,9 @@ function maybeOpenEvolve() {
       const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
       if (res.ok) {
         state.evoTokens = res.tokens;
+        // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
+        // double-fired tick can never double-charge).
+        addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
         toast(res.name.toUpperCase() + ' UNLEASHED');
         audio.playSfx('levelup');
       }
@@ -1008,10 +1065,11 @@ function die() {
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
   // Greed shop line + Midas items multiply the payout (computeRunGold takes
-  // goldMult as a runStat).
+  // goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
+  // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
   const gold = computeRunGold({
     kills: p.kills, level: p.level, time: state.time, firstClear,
-    goldMult: p.stats.goldMult || 1,
+    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)),
   });
   profile.gold += gold;
   saveProfile(profile);
@@ -1197,6 +1255,11 @@ function startRun() {
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
   state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false };
+  // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
+  // meta/profile — a null-then-init forces the reset, initHeat is idempotent
+  // but does not clear a stale ledger).
+  state.heat = null;
+  initHeat(state);
   spawnWaveArches();
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
   state.mode = 'playing';
@@ -1381,6 +1444,7 @@ function drawHud() {
     (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
+    `   ${describeHeat(heatOf(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
     `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +

@@ -4,6 +4,7 @@
 // drafts appear and picks apply.
 import assert from 'node:assert';
 import { CONFIG as CFG } from '../src/config.js';
+import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -170,6 +171,9 @@ for (let i = 0; i < frames; i++) {
     // POS is sub-pixel (x.y) because BERSERK arch drops move speed to 45px/s
     // (0.75px/frame) — integer rounding there made moving players look
     // stalled. Threshold 0.4: any real movement ticks; jitter stays under.
+    // WAVE-8/9: intended freezes (portal cine, overlays) are not stalls —
+    // only count frames while the loop is actually simulating play.
+    if (st.mode !== 'playing') { stillFrames = 0; lastPos = null; }
     const pos = t.match(/POS (-?\d+\.\d),(-?\d+\.\d)/);
     const foes = t.match(/FOES (C:\d+ .*?)\n/);
     if (pos && foes) {
@@ -489,9 +493,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(evolved, 'the EVOLVE overlay must open (Lv8 + crit item + token)');
   assert(volley.evolutionId === 'NOVA_SHOT', 'volley must be NOVA_SHOT after evolving');
   assert(st.evoTokens === 0, 'evolution must spend the token');
+  // WAVE-9: a weapon EVOLUTION charges +2 heat, and the HUD carries the line.
+  assert(heatOf(st) === 2, 'an evolution must charge +2 heat (got ' + heatOf(st) + ')');
+  assert(manualPushes(st) === 0, 'built-in heat must NOT touch the manual gold dial');
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(/Nova Shot/.test(hudText()), 'HUD must show the evolved weapon name');
-  console.log('evolution probe: VOLLEY -> Nova Shot (token spent, HUD updated)');
+  assert(/HEAT 2 /.test(hudText()), 'HUD must carry the HEAT line near WEATHER');
+  console.log('evolution probe: VOLLEY -> Nova Shot (token spent, +2 heat, HUD updated)');
 }
 
 // (3) RUN-SCOPE RESET: a fresh run must drop every WAVE-7 run-scoped field.
@@ -503,7 +511,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.pendingChoiceOffers === null, 'run reset must clear pendingChoiceOffers');
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   assert(volley && !volley.evolutionId, 'fresh run VOLLEY must be un-evolved');
-  console.log('run-scope reset: choices/tokens/evolutions all cleared');
+  assert(heatOf(st) === 0 && manualPushes(st) === 0, 'run reset must clear the heat ledger');
+  console.log('run-scope reset: choices/tokens/evolutions/heat all cleared');
 }
 
 // ---- WAVE-8/A portal-entry cinematic ----
@@ -572,6 +581,88 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(cineFrames >= Math.ceil(3800 / dtMs) - 2,
     `the 3.8s movie should run to isDone (${cineFrames} frames)`);
   console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
+
+  // (c) WAVE-9 RAISE THE STAKES: manual push +1 heat, +30% gold per push,
+  // card re-renders with the NEXT gold mult and hides at HEAT_CAP.
+  {
+    const findStakes = () => elements['ov-cards'].children
+      .find(c => (c.innerHTML || '').includes('RAISE THE STAKES'));
+    const stakes = findStakes();
+    assert(stakes, 'the intermission must offer the RAISE THE STAKES card');
+    assert((stakes.innerHTML || '').includes('gold x1.3'),
+      'the card must sell the NEXT gold mult (x1.3): ' + stakes.innerHTML);
+    const heatBefore = heatOf(st);
+    stakes.click();
+    assert(heatOf(st) === heatBefore + 1 && manualPushes(st) === 1,
+      'a manual push must add +1 heat and manual=1');
+    const again = findStakes();
+    assert(again && (again.innerHTML || '').includes('gold x1.6'),
+      'the re-rendered card must pitch the NEXT push (x1.6)');
+    // Clamp: keep clicking the card (each click re-renders) — it must
+    // disappear once the ledger sits at HEAT_CAP.
+    let clicks = 0;
+    for (let i = 0; i < 25 && findStakes(); i++) { findStakes().click(); clicks++; }
+    assert(!findStakes(), 'RAISE THE STAKES must be hidden at HEAT_CAP');
+    assert(heatOf(st) === 20, `heat must clamp at HEAT_CAP (got ${heatOf(st)})`);
+    assert(manualPushes(st) === 1 + clicks,
+      `every card click is one manual push (manual ${manualPushes(st)}, clicks ${1 + clicks})`);
+    console.log('heat dial: +1 heat per push, gold x1.3 -> x1.6 pitched, card clamped at cap');
+  }
+}
+
+// ---- WAVE-9 heat: item EXCHANGE is free, EMPTY-slot equip costs +1 --------
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  // Belt to 4/4 with dummy items, then drop a newcomer on the player.
+  st.items.length = 0;
+  for (let i = 0; i < 4; i++) {
+    st.items.push({ id: 'old' + i, name: 'Old ' + i, rarity: 'COMMON', affixes: [] });
+  }
+  const newcomer = { id: 'newcomer', name: 'Newcomer', rarity: 'RARE', affixes: [] };
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, item: newcomer, age: 0 });
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.items.length === 4, 'the exchange keeps the belt at 4/4');
+  assert(st.items[st.items.length - 1] === newcomer && !st.items.some(it => it.id === 'old0'),
+    'the OLDEST item must be exchanged out (FIFO)');
+  assert(heatOf(st) === 0, 'an item EXCHANGE at 4/4 must add NO heat (got ' + heatOf(st) + ')');
+  // Free the last slot and drop another: an empty-slot equip charges +1.
+  st.items.pop();
+  const second = { id: 'second', name: 'Second', rarity: 'RARE', affixes: [] };
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, item: second, age: 0 });
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.items[st.items.length - 1] === second, 'the free-slot drop must equip');
+  assert(heatOf(st) === 1, 'an equip into an EMPTY slot must charge +1 heat (got ' + heatOf(st) + ')');
+  console.log('heat charges: exchange +0 (FIFO swap), empty-slot equip +1 — verified');
+}
+
+// ---- WAVE-9 heat: enemy HP visibly scales at spawn -------------------------
+// Fresh run (t~0: no elites, variants are palette-only) — same typeId spawns
+// carry identical base hp, so the only delta between the two windows is heat.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  const spawnOnce = (typeId) => {
+    st.enemies.length = 0; st.itemDrops.length = 0;
+    st.spawnTimer = 0;
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+    return st.enemies.find(e => e.typeId === typeId) || null;
+  };
+  // Baseline: whatever type spawns first at heat 0.
+  st.enemies.length = 0; st.spawnTimer = 0;
+  now += dtMs; const cb0 = rafQueue.shift(); cb0 && cb0(now);
+  const T = st.enemies[0].typeId;
+  const base = st.enemies[0].maxHp;
+  // Force heat to 10 (+120% foe hp), re-spawn until the same type shows up.
+  for (let i = 0; i < 10; i++) addHeat(st, 'MANUAL_PUSH');
+  assert(heatOf(st) === 10, 'forced heat 10 for the spawn probe');
+  let hot = null;
+  for (let i = 0; i < 40 && !hot; i++) hot = spawnOnce(T);
+  assert(hot, 'a ' + T + ' must respawn within the probe window');
+  const want = heatMultipliers(10, 10).hp / heatMultipliers(0, 0).hp;   // 2.2
+  assert(Math.abs(hot.maxHp / base - want) < 0.01,
+    `heat 10 must scale foe hp x${want} (base ${base}, hot ${hot.maxHp})`);
+  console.log(`heat scaling: ${T} hp ${base} -> ${hot.maxHp} (x${(hot.maxHp / base).toFixed(2)} at heat 10)`);
 }
 
 // (4) INTRO SKIP: any key during the movie jumps straight to the title menu.
