@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  FOCUS_MODES, STANCES, AutoPilotController, PlayerController,
+  FOCUS_MODES, STANCES, JOY_DEAD_ZONE, AutoPilotController, PlayerController,
 } from '../src/controllers.js';
 
 let passed = 0;
@@ -119,6 +119,77 @@ check('manual targeting ignores gems entirely (movement-only override)', () => {
   const d = c.decide({ x: 0, y: 0 }, mkState([e], [{ x: 500, y: 500 }]), {});
   assert.equal(d.target, e, 'gem on the field never becomes the target');
   assert.equal(d.moveX, 0, 'and never drags the pilot toward it');
+});
+
+// --- WAVE-15 ANALOG JOYSTICK contract ------------------------------------------
+check('joystick partial deflection scales movement (mag 0.5 -> 0.5 speed)', () => {
+  const c = new PlayerController({ up: false, down: false, left: false, right: false, x: 1, y: 0, mag: 0.5 });
+  const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.equal(d.moveX, 0.5);
+  assert.equal(d.moveY, 0);
+});
+
+check('joystick direction is preserved at partial tilt (any angle)', () => {
+  const c = new PlayerController();
+  c.input = { x: 0, y: 1, mag: 0.8 };   // straight down, 80% tilt
+  const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.ok(Math.abs(d.moveX) < 1e-9);
+  assert.ok(Math.abs(d.moveY - 0.8) < 1e-9);
+  // diagonal 3-4-5 direction at full tilt stays unit-length
+  c.input = { x: 0.6, y: 0.8, mag: 1 };
+  const d2 = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.ok(Math.abs(d2.moveX - 0.6) < 1e-9 && Math.abs(d2.moveY - 0.8) < 1e-9);
+});
+
+check(`dead zone: deflection <= ${JOY_DEAD_ZONE} produces ZERO movement`, () => {
+  assert.equal(JOY_DEAD_ZONE, 0.15, 'dead zone is the documented ~15%');
+  const c = new PlayerController();
+  for (const mag of [0.05, 0.1, 0.15]) {
+    c.input = { x: 1, y: 0, mag };
+    const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+    assert.equal(d.moveX, 0, `mag ${mag} must be dead`);
+    assert.equal(d.moveY, 0);
+  }
+  // just past the ring: alive
+  c.input = { x: 1, y: 0, mag: 0.16 };
+  const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.ok(d.moveX > 0, 'mag just past the dead zone steers');
+});
+
+check('full tilt equals full keyboard speed (any stick direction)', () => {
+  const stick = new PlayerController({ x: 1, y: 0, mag: 1 });
+  const keys = new PlayerController({ up: false, down: false, left: false, right: true });
+  const ds = stick.decide({ x: 0, y: 0 }, mkState(), {});
+  const dk = keys.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.equal(ds.moveX, dk.moveX, 'full tilt == ArrowRight speed');
+  // and a full diagonal tilt matches the normalized w+d chord
+  stick.input = { x: Math.SQRT1_2, y: Math.SQRT1_2, mag: 1 };
+  const dd = stick.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.ok(Math.abs(dd.moveX - Math.SQRT1_2) < 1e-9);
+  assert.ok(Math.abs(dd.moveY - Math.SQRT1_2) < 1e-9);
+});
+
+check('released stick (mag 0) recenters — and falls back to held keys', () => {
+  const c = new PlayerController({ x: 1, y: 0, mag: 0 });
+  const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.equal(d.moveX, 0, 'mag 0 with no keys = stand still');
+  c.input.right = true;   // thumb left the stick, key still down
+  const d2 = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.equal(d2.moveX, 1, 'released stick defers to the keyboard');
+});
+
+check('stick overrides stale key state while deflected', () => {
+  const c = new PlayerController({ up: true, down: false, left: true, right: false, x: 1, y: 0, mag: 0.5 });
+  const d = c.decide({ x: 0, y: 0 }, mkState(), {});
+  assert.equal(d.moveX, 0.5, 'analog vector wins while past the dead zone');
+  assert.equal(d.moveY, 0);
+});
+
+check('analog decide never mutates the input object', () => {
+  const input = { up: false, down: false, left: false, right: false, x: 0.6, y: 0.8, mag: 0.9 };
+  const snapshot = { ...input };
+  new PlayerController(input).decide({ x: 0, y: 0 }, mkState([foe(10, 10)]), {});
+  assert.deepEqual(input, snapshot);
 });
 
 // --- module purity: controllers never touch the DOM ---------------------------

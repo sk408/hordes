@@ -598,3 +598,17 @@ one:
     HUNGER." Fires the existing BOSS_YELL sting; no new audio.
   - Verified: 21/21 suites, smoke x3 (new feed + banner probes),
     lightpanda clean.
+- 2026-09-09 (wave-15): **VIRTUAL JOYSTICK** (Sk408: d-pad swapped for a
+  touch-and-hold analog stick) — hb1:
+  - #joy base + #joy-knob replace the d-pad in the touch layer. Drag
+    vector = knob offset clamped to base radius; analog {x,y,mag} with
+    ~15% dead zone; release recenters; steering touch tracked by
+    identifier (multi-touch with skill buttons intact).
+  - PlayerController scales speed by mag — partial deflection = partial
+    speed, any-angle full tilt = full keyboard speed. Stick overrides
+    stale keys past the dead zone; released stick falls back to held
+    keys. Keyboard unchanged; AUTO ignores the stick (toggle, run start,
+    and blur all clear it, knob visual included).
+  - Verified: 21/21 suites (controller suite now 19 checks), smoke x3
+    (dead-zone no drift, full ~2x half, full tilt == ArrowRight within
+    1.5px, release stops, AUTO drops vector), lightpanda clean.

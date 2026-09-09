@@ -148,7 +148,10 @@ let profile = loadProfile();
 // (focus/stance decorations carry across) and startRun always re-engages the
 // AutoPilot. The controllers own ALL decisions (movement + volley targeting);
 // main.js only owns the held-direction input object they read.
-const pilotInput = { up: false, down: false, left: false, right: false };
+const pilotInput = {
+  up: false, down: false, left: false, right: false,   // keyboard (digital, mag 1)
+  x: 0, y: 0, mag: 0,                                   // WAVE-15 joystick (analog)
+};
 const autoController = new AutoPilotController();
 const manualController = new PlayerController(pilotInput);
 let controller = autoController;
@@ -169,8 +172,15 @@ function savePilotPref(mode) {
   try { hudStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
 
-// WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry
-// across BOTH directions (the incoming controller inherits the outgoing one's
+// Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
+// Also snaps the knob visual back to center.
+function clearPilotInput() {
+  pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+  pilotInput.x = 0; pilotInput.y = 0; pilotInput.mag = 0;
+  if (joyKnobEl && joyKnobEl.style) joyKnobEl.style.transform = 'translate(0px,0px)';
+}
+
+// WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry// across BOTH directions (the incoming controller inherits the outgoing one's
 // levers — TAB/G keep working through a round trip). Switching to AUTO clears
 // held input so a stale direction can't ghost-move the autopilot; keyup
 // handlers clear keys regardless of mode (no stuck keys across overlays).
@@ -183,10 +193,10 @@ function swapPilotMode(mode) {
   controller = to;
   state.pilotMode = mode;
   if (mode === 'AUTO') {
-    pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+    clearPilotInput();
   }
   savePilotPref(mode);
-  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the d-pad' : 'AUTOPILOT ENGAGED');
+  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick' : 'AUTOPILOT ENGAGED');
 }
 function togglePilotMode() {
   swapPilotMode(state.pilotMode === 'AUTO' ? 'MANUAL' : 'AUTO');
@@ -1732,7 +1742,7 @@ function startRun() {
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
   // not a preselect) — rebind the seam and drop any held directions.
   swapPilotMode('AUTO');
-  pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+  clearPilotInput();
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
   state.shrine = rollShrine(0, state.shrineRng);
   state.takenChoices = [];
@@ -2012,12 +2022,13 @@ window.addEventListener('keyup', (ev) => {
   if (dir) pilotInput[dir] = false;
 });
 window.addEventListener('blur', () => {
-  pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+  clearPilotInput();   // keys + joystick (no ghost vectors after alt-tab)
 });
 
 // ---------- Touch controls (Sk408): mirror the keyboard actions ----------
 const touchLayer = document.getElementById('touch');
-const dpadEl = document.getElementById('dpad');   // WAVE-13 manual d-pad
+const joyEl = document.getElementById('joy');         // WAVE-15 joystick base
+const joyKnobEl = document.getElementById('joy-knob');
 const touchEls = {};
 for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n']) {
   touchEls[id] = document.getElementById(id);
@@ -2030,16 +2041,64 @@ const hasTouch = ('ontouchstart' in window) ||
 if (touchLayer && hasTouch && touchLayer.classList) touchLayer.classList.add('on');
 
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
-// legacy 300ms wait and double-tap zoom. WAVE-13: [data-dir] buttons (the
-// manual d-pad) press directions into the same pilotInput the keyboard uses;
-// pointerup/pointercancel release them (multi-touch with the skill buttons
-// works — each pointer lifts independently).
+// legacy 300ms wait and double-tap zoom.
+//
+// WAVE-15 ANALOG JOYSTICK (replaces the WAVE-13 d-pad, Sk408 playtest):
+// touching the base captures the steering pointer BY IDENTIFIER — other
+// fingers keep working the skill/potion buttons (multi-touch safe). The drag
+// vector is the knob offset from the base center, clamped to the base radius;
+// movement scales with the deflection fraction (see controllers.js
+// PlayerController + JOY_DEAD_ZONE). Release recenters to zero.
+// Lifted to __TEST for the smoke probes (null when no touch layer exists).
+let joyVec = null, joyRelease = null;
+
 if (touchLayer && touchLayer.addEventListener) {
+  let joyPointerId = null;   // the finger that owns the stick (null = free)
+
+  // Offset (px from base center, client space) -> analog input + knob visual.
+  // rad = base radius in px. Exposed via __TEST as joyVec for the smoke probes.
+  function applyJoyVector(dx, dy, rad) {
+    const max = Math.max(1, rad || 1);
+    const len = Math.hypot(dx, dy);
+    const clamped = Math.min(len, max);
+    if (len <= 0) {
+      joyRecenter();
+      return;
+    }
+    const ux = dx / len, uy = dy / len;
+    pilotInput.x = ux;
+    pilotInput.y = uy;
+    pilotInput.mag = clamped / max;
+    // Knob visual: the clamped offset (edge drag parks the knob at the rim).
+    if (joyKnobEl && joyKnobEl.style) {
+      joyKnobEl.style.transform =
+        'translate(' + Math.round(ux * clamped) + 'px,' + Math.round(uy * clamped) + 'px)';
+    }
+  }
+  function joyRecenter() {
+    pilotInput.x = 0; pilotInput.y = 0; pilotInput.mag = 0;
+    if (joyKnobEl && joyKnobEl.style) joyKnobEl.style.transform = 'translate(0px,0px)';
+  }
+  // One pointer event -> base-relative drag vector. No-ops when the base is
+  // hidden or has no measurable rect (stub/headless guard).
+  function joySteer(ev) {
+    if (!joyEl || typeof joyEl.getBoundingClientRect !== 'function') return;
+    const r = joyEl.getBoundingClientRect();
+    if (!r || !r.width) return;
+    applyJoyVector(
+      (ev.clientX ?? 0) - (r.left + r.width / 2),
+      (ev.clientY ?? 0) - (r.top + r.height / 2),
+      r.width / 2);
+  }
+  const isJoyPointer = (ev) => joyPointerId !== null && ev.pointerId === joyPointerId;
+
   touchLayer.addEventListener('pointerdown', (ev) => {
-    const dirBtn = ev.target && ev.target.closest ? ev.target.closest('[data-dir]') : null;
-    if (dirBtn) {
+    const joy = ev.target && ev.target.closest
+      ? ev.target.closest('[data-joy]') : null;
+    if (joy) {
       if (ev.preventDefault) ev.preventDefault();
-      pilotInput[dirBtn.dataset.dir] = true;
+      joyPointerId = ev.pointerId ?? 0;   // capture THIS finger
+      joySteer(ev);                       // a press at the rim steers at once
       return;
     }
     const btn = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
@@ -2047,12 +2106,22 @@ if (touchLayer && touchLayer.addEventListener) {
     if (ev.preventDefault) ev.preventDefault();
     runAction(btn.dataset.act);
   });
-  const releaseDir = (ev) => {
-    const dirBtn = ev.target && ev.target.closest ? ev.target.closest('[data-dir]') : null;
-    if (dirBtn) pilotInput[dirBtn.dataset.dir] = false;
+  touchLayer.addEventListener('pointermove', (ev) => {
+    if (isJoyPointer(ev)) {
+      if (ev.preventDefault) ev.preventDefault();
+      joySteer(ev);
+    }
+  });
+  const releasePointer = (ev) => {
+    if (isJoyPointer(ev)) {
+      joyPointerId = null;
+      joyRecenter();   // release = stick snaps back to center
+    }
   };
-  touchLayer.addEventListener('pointerup', releaseDir);
-  touchLayer.addEventListener('pointercancel', releaseDir);
+  touchLayer.addEventListener('pointerup', releasePointer);
+  touchLayer.addEventListener('pointercancel', releasePointer);
+  joyVec = applyJoyVector;
+  joyRelease = joyRecenter;
 }
 
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
@@ -2062,11 +2131,11 @@ function updateTouchHud() {
     const want = (state.mode === 'playing' || state.mode === 'finale') ? '' : 'none';
     if (touchLayer.style.display !== want) touchLayer.style.display = want;
   }
-  // WAVE-13: the d-pad shows ONLY while the manual pilot is bound mid-run.
-  if (dpadEl && dpadEl.style) {
-    const wantDpad = (state.pilotMode === 'MANUAL' &&
-      (state.mode === 'playing' || state.mode === 'finale')) ? 'grid' : 'none';
-    if (dpadEl.style.display !== wantDpad) dpadEl.style.display = wantDpad;
+  // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
+  if (joyEl && joyEl.style) {
+    const wantJoy = (state.pilotMode === 'MANUAL' &&
+      (state.mode === 'playing' || state.mode === 'finale')) ? 'block' : 'none';
+    if (joyEl.style.display !== wantJoy) joyEl.style.display = wantJoy;
   }
   const p = state.player;
   const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
@@ -2488,4 +2557,7 @@ export const __TEST = {
   renderer, openStats, closeStats,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
   setPilotMode: swapPilotMode, pilotInput,
+  // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
+  get joyVec() { return joyVec; },
+  get joyRelease() { return joyRelease; },
 };

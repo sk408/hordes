@@ -180,13 +180,21 @@ export class AutoPilotController {
 // and doctrine levers as AutoPilot (constructor / cycleFocus / cycleStance /
 // pickTarget / decide -> { moveX, moveY, target }) — volleys STAY auto-aimed
 // via the inherited pickTarget (manual is MOVEMENT ONLY, per the build task).
-// Movement reads a HELD-direction input object { up, down, left, right }
-// (booleans, owned/updated by main.js — this module never touches the DOM).
-// Diagonals are normalized to unit length; opposite keys cancel (no input
-// stops the pilot — the world keeps moving). No input = {0,0}, NOT the
-// AutoPilot's kite/patrol logic: manual means manual.
+// WAVE-15 ANALOG: the input object carries BOTH a digital keyboard state
+// ({ up, down, left, right } booleans) and a joystick vector ({ x, y, mag } —
+// x/y the unit drag direction, mag the deflection fraction 0..1). The stick
+// wins whenever it is deflected past JOY_DEAD_ZONE (a light thumb rests on
+// the knob without drifting); below that (or released to mag 0) the digital
+// keys apply. Partial deflection = partial speed; full tilt in ANY direction
+// equals full keyboard speed. Opposite keys cancel; no input at all = {0,0},
+// NOT the AutoPilot's kite/patrol logic: manual means manual.
+export const JOY_DEAD_ZONE = 0.15;
+
 export class PlayerController extends AutoPilotController {
-  constructor(input = { up: false, down: false, left: false, right: false }) {
+  constructor(input = {
+    up: false, down: false, left: false, right: false,
+    x: 0, y: 0, mag: 0,
+  }) {
     super();
     this.input = input;
   }
@@ -194,11 +202,22 @@ export class PlayerController extends AutoPilotController {
   decide(p, state, cfg) {
     const target = this.pickTarget(p, state, cfg, nearestEnemy(p, state));
     const i = this.input || {};
-    let mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
-    let my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
-    if (mx !== 0 && my !== 0) {
-      mx *= Math.SQRT1_2;
-      my *= Math.SQRT1_2;
+    let mx = 0, my = 0;
+    const mag = Math.min(1, Math.max(0, i.mag || 0));
+    if (mag > JOY_DEAD_ZONE) {
+      // Analog stick: re-normalize the direction defensively, scale by the
+      // deflection fraction (0..1).
+      const len = Math.hypot(i.x || 0, i.y || 0) || 1;
+      mx = ((i.x || 0) / len) * mag;
+      my = ((i.y || 0) / len) * mag;
+    } else {
+      // Digital keyboard (WASD/arrows are inherently mag 1).
+      mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
+      my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
+      if (mx !== 0 && my !== 0) {
+        mx *= Math.SQRT1_2;
+        my *= Math.SQRT1_2;
+      }
     }
     return { moveX: mx, moveY: my, target };
   }

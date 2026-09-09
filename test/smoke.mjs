@@ -31,6 +31,9 @@ const fakeEl = () => {
     textContent: '', style: {},
     children: [], onclick: null,
     click() { if (this.onclick) this.onclick(); },
+    // WAVE-15: per-element event sink so the touch layer can register its
+    // pointer handlers (and expose the joystick seam through __TEST).
+    addEventListener(ev, cb) { (this._ev ?? (this._ev = {}))[ev] = cb; },
   };
   Object.defineProperty(el, 'innerHTML', {
     get() { return this._html ?? ''; },
@@ -977,11 +980,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('field report: S opens/pauses/closes, weapons+items+stats listed');
 }
 
-// ---- WAVE-13 MANUAL PILOT probes (through the real loop) ---------------------
-// (h) toggle + held-key movement + diagonal normalization + the d-pad seam +
-// AUTO resume + blur stuck-key clear. Every probe run starts from startRun
-// (which must re-engage AUTO + drop held input) and silences the spawner so
-// movement is the only variable on the field.
+// ---- WAVE-13/15 MANUAL PILOT probes (through the real loop) ------------------
+// (h) toggle + held-key movement + diagonal normalization + the ANALOG JOYSTICK
+// seam (half/full tilt, dead zone, release, AUTO-clears) + blur stuck-key
+// clear. Every probe run starts from startRun (which must re-engage AUTO +
+// drop held input) and silences the spawner so movement is the only variable
+// on the field.
 {
   const T = mainMod.__TEST;
   const quietField = () => {   // no spawns/boss/gems: a movement-only field
@@ -1042,16 +1046,51 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(dx - Math.abs(dy)) < 2,
     `diagonal must be normalized 0.7071/0.7071 (dx=${dx.toFixed(1)} dy=${dy.toFixed(1)})`);
 
-  // D-pad seam: the shared pilotInput object (index.html data-dir route).
-  const lx0 = st.player.x;
-  T.pilotInput.left = true;
+  // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) through the real loop.
+  // Synthetic base radius 120px (the shipped #joy geometry).
+  const R = 120;
+  // Dead zone: a light thumb rest (<=15% deflection) produces NO drift.
+  const jx0 = st.player.x;
+  T.joyVec(R * 0.1, 0, R);
   pump(30);
-  T.pilotInput.left = false;
-  assert(st.player.x < lx0 - 20, 'the d-pad seam (pilotInput) must drive movement');
+  assert(Math.abs(st.player.x - jx0) < 1,
+    `dead-zone drag must not drift the pilot (dx=${(st.player.x - jx0).toFixed(2)})`);
+  // Half deflection moves at ~half speed.
+  T.joyVec(R * 0.5, 0, R);
+  pump(30);
+  const halfD = st.player.x - jx0;
+  assert(halfD > 10, `half tilt must move the pilot (d=${halfD.toFixed(1)})`);
+  // Release stops dead (stick snaps to center).
+  const rx0 = st.player.x;
+  T.joyRelease();
+  pump(10);
+  assert(Math.abs(st.player.x - rx0) < 1,
+    `joystick release must stop the pilot (drift ${(st.player.x - rx0).toFixed(2)})`);
+  // Full tilt in the same window moves ~2x the half-deflection distance.
+  T.joyVec(R, 0, R);
+  pump(30);
+  const fullD = st.player.x - rx0;
+  T.joyRelease();
+  assert(fullD > halfD * 1.5,
+    `full tilt must outrun half tilt (${fullD.toFixed(1)} vs ${halfD.toFixed(1)})`);
+  assert(Math.abs(fullD - 2 * halfD) < fullD * 0.25,
+    `movement scales with deflection (${fullD.toFixed(1)} ~= 2 x ${halfD.toFixed(1)})`);
+  // Full tilt == keyboard speed over the same window.
+  const kx0 = st.player.x;
+  keyHandler({ key: 'ArrowRight' });
+  pump(30);
+  keyUpHandler({ key: 'ArrowRight' });
+  const keyD = st.player.x - kx0;
+  assert(Math.abs(keyD - fullD) < 1.5,
+    `full tilt equals keyboard speed (joy ${fullD.toFixed(1)} vs key ${keyD.toFixed(1)})`);
 
-  // M back to AUTO: with NO keys held the autopilot resumes deciding.
+  // M back to AUTO: the held stick vector is DROPPED (AUTO ignores the
+  // joystick) and the autopilot resumes deciding on its own.
+  T.joyVec(R, 0, R);                    // thumb still parked hard right
   keyHandler({ key: 'm' });
   assert(st.pilotMode === 'AUTO', 'M must toggle back to AUTO');
+  assert(T.pilotInput.mag === 0 && T.pilotInput.x === 0 && T.pilotInput.y === 0,
+    'switching to AUTO must drop the held stick vector');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'decorations survive the MANUAL->AUTO swap too');
   const ax0 = st.player.x, ay0 = st.player.y;
@@ -1059,17 +1098,22 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(st.player.x - ax0) + Math.abs(st.player.y - ay0) > 5,
     'AUTO resume must move on its own (patrol) with no keys held');
 
-  // Blur clears every held direction (no stuck keys across alt-tab).
+  // Blur clears every held direction AND the stick vector (no ghost input
+  // across alt-tab).
   keyHandler({ key: 'm' });
   keyHandler({ key: 'ArrowUp' });
-  assert(T.pilotInput.up === true, 'keydown must set the held-direction flag');
+  T.joyVec(R * 0.8, 0, R);
+  assert(T.pilotInput.up === true && T.pilotInput.mag > 0,
+    'keydown + joystick drag must set both input halves');
   blurHandler();
   assert(!T.pilotInput.up && !T.pilotInput.down && !T.pilotInput.left && !T.pilotInput.right,
     'blur must clear every held direction');
+  assert(T.pilotInput.mag === 0 && T.pilotInput.x === 0 && T.pilotInput.y === 0,
+    'blur must clear the analog stick vector too');
   pump(2);
   keyHandler({ key: 'm' });   // probe hygiene: leave AUTO
   assert(st.pilotMode === 'AUTO', 'back to AUTO for the rest of the suite');
-  console.log('manual pilot: toggle/movement/diagonal/d-pad/AUTO-resume/blur verified');
+  console.log('manual pilot: toggle/movement/diagonal/joystick(half+full+dead+release)/AUTO-resume/blur verified');
 }
 
 // (i) DRAFT PAUSE: manual input moves NOTHING while a draft is open, M does

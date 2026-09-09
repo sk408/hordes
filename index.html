@@ -75,29 +75,42 @@
   #touch .pad.left { left: max(10px, env(safe-area-inset-left, 10px)); }
   #touch .pad.right { right: max(10px, env(safe-area-inset-right, 10px)); }
   #touch .pair { display: flex; gap: 10px; }
-  /* WAVE-13 manual d-pad: cross layout of held-direction pads, shown only
-     while the manual pilot is bound (main.js toggles display). */
-  #dpad {
+  /* WAVE-15 analog joystick (replaces the WAVE-13 d-pad, Sk408 playtest):
+     circular base + drag knob, shown only while the manual pilot is bound
+     (main.js toggles display). Drag vector = knob offset from center,
+     clamped to the base radius; ~15% dead zone; release recenters. */
+  #joy {
     display: none;
     position: absolute;
-    bottom: max(10px, env(safe-area-inset-bottom, 10px));
-    left: 50%; transform: translateX(-50%);
-    grid-template-columns: repeat(3, 54px);
-    grid-template-rows: repeat(3, 54px);
-    gap: 4px; pointer-events: auto;
-  }
-  #dpad button {
-    min-width: 54px; min-height: 54px; padding: 0;
-    font-size: 20px; line-height: 1;
-    color: #e8e8f0; background: rgba(20,20,31,0.85);
-    border: 2px solid #4a4a6a; border-radius: 10px;
+    bottom: max(14px, env(safe-area-inset-bottom, 14px));
+    left: 50%; margin-left: -60px;      /* 120px base, centered */
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: rgba(20,20,31,0.72);
+    border: 3px solid #4a4a6a;
+    box-shadow: inset 0 0 0 6px rgba(74,74,106,0.25);
+    pointer-events: auto;
     touch-action: none; user-select: none; -webkit-user-select: none;
   }
-  #dpad button:active { border-color: #ffd75e; background: #1c1c2c; }
-  #dpad button[data-dir="up"] { grid-area: 1 / 2; }
-  #dpad button[data-dir="left"] { grid-area: 2 / 1; }
-  #dpad button[data-dir="right"] { grid-area: 2 / 3; }
-  #dpad button[data-dir="down"] { grid-area: 3 / 2; }
+  /* pixel-style ring guides: four cardinal notches via inset shadows */
+  #joy::before {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 6px,  #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at 50% calc(100% - 6px), #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at 6px 50%,  #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at calc(100% - 6px) 50%, #4a4a6a 3px, transparent 4px);
+  }
+  #joy-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px; margin: -20px 0 0 -20px;  /* centered */
+    border-radius: 50%;
+    background: #2a2a3a;
+    border: 3px solid #6a6a8a;
+    box-shadow: inset 0 -6px 0 rgba(0,0,0,0.35), inset 0 3px 0 rgba(255,255,255,0.12);
+    transform: translate(0px, 0px);   /* main.js drives the drag offset */
+  }
+  #joy-knob:active { border-color: #ffd75e; }
   #touch button {
     min-width: 68px; min-height: 56px; padding: 6px 12px;
     font-family: monospace; font-size: 13px; line-height: 1.3;
@@ -130,12 +143,7 @@
       <button data-act="pilot">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
       <button data-act="stats">STATS</button>
     </div>
-    <div id="dpad">
-      <button data-dir="up">&#9650;</button>
-      <button data-dir="left">&#9664;</button>
-      <button data-dir="right">&#9654;</button>
-      <button data-dir="down">&#9660;</button>
-    </div>
+    <div id="joy" data-joy="1"><div id="joy-knob"></div></div>
     <div class="pad right">
       <button data-act="q">FROST<span class="badge" id="tc-q">RDY</span></button>
       <button data-act="w">OVER<span class="badge" id="tc-w">RDY</span></button>
