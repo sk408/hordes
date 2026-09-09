@@ -75,6 +75,29 @@
   #touch .pad.left { left: max(10px, env(safe-area-inset-left, 10px)); }
   #touch .pad.right { right: max(10px, env(safe-area-inset-right, 10px)); }
   #touch .pair { display: flex; gap: 10px; }
+  /* WAVE-13 manual d-pad: cross layout of held-direction pads, shown only
+     while the manual pilot is bound (main.js toggles display). */
+  #dpad {
+    display: none;
+    position: absolute;
+    bottom: max(10px, env(safe-area-inset-bottom, 10px));
+    left: 50%; transform: translateX(-50%);
+    grid-template-columns: repeat(3, 54px);
+    grid-template-rows: repeat(3, 54px);
+    gap: 4px; pointer-events: auto;
+  }
+  #dpad button {
+    min-width: 54px; min-height: 54px; padding: 0;
+    font-size: 20px; line-height: 1;
+    color: #e8e8f0; background: rgba(20,20,31,0.85);
+    border: 2px solid #4a4a6a; border-radius: 10px;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #dpad button:active { border-color: #ffd75e; background: #1c1c2c; }
+  #dpad button[data-dir="up"] { grid-area: 1 / 2; }
+  #dpad button[data-dir="left"] { grid-area: 2 / 1; }
+  #dpad button[data-dir="right"] { grid-area: 2 / 3; }
+  #dpad button[data-dir="down"] { grid-area: 3 / 2; }
   #touch button {
     min-width: 68px; min-height: 56px; padding: 6px 12px;
     font-family: monospace; font-size: 13px; line-height: 1.3;
@@ -104,7 +127,14 @@
     <div class="pad left">
       <button data-act="focus">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
       <button data-act="stance">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>
+      <button data-act="pilot">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
       <button data-act="stats">STATS</button>
+    </div>
+    <div id="dpad">
+      <button data-dir="up">&#9650;</button>
+      <button data-dir="left">&#9664;</button>
+      <button data-dir="right">&#9654;</button>
+      <button data-dir="down">&#9660;</button>
     </div>
     <div class="pad right">
       <button data-act="q">FROST<span class="badge" id="tc-q">RDY</span></button>
@@ -119,7 +149,7 @@
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
     <div class="cards" id="ov-cards"></div>
-    <div class="sub">1 / 2 / 3 or tap a card &middot; TAB focus &middot; G stance &middot; Q / W skills &middot; H / N potions &middot; or the on-screen buttons</div>
+    <div class="sub">1 / 2 / 3 or tap a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; S or I stats &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

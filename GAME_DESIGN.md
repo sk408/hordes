@@ -560,3 +560,25 @@ one:
     Opens via 'S' key or the STATS touch button.
   - Verified: all suites green, smoke x3 reps with wave-12 probes,
     lightpanda clean.
+- 2026-09-09 (wave-13): **MANUAL PILOT CONTROL + AUTO TOGGLE** (Sk408
+  directive; fallback tag `pre-manual-control` pinned at f40bcf4 first) —
+  hb1:
+  - PlayerController in src/controllers.js — same seam interface as
+    AutoPilot (decide/pickTarget/cycleFocus/cycleStance); movement from a
+    held-direction input state (main.js feeds keys + d-pad; controller
+    never touches DOM). VOLLEYS STAY AUTO-AIMED — manual is movement only
+    (game identity). Normalized diagonals; rim clamp unchanged.
+  - TOGGLE: state.pilotMode AUTO|MANUAL, 'M' key + AUTO/MANUAL touch
+    button; controllers persist across the toggle; every run starts AUTO
+    (last choice remembered per browser, applied only after first toggle).
+  - KEYBOARD: arrows + WASD in MANUAL. Overcharge moved permanently
+    W -> E (W conflict). S = stats in AUTO only; I = stats in both modes.
+  - MOBILE: pixel-styled on-screen d-pad (#dpad) in the touch layer under
+    the screen; multi-touch with skill buttons works.
+  - EDGE CASES: manual input live only in playing/finale (drafts, intro,
+    portal cine, kill phase ignore it); no input held = player stands
+    still while the world acts; gems still vacuum; smoke default runs
+    stay AUTO with separate manual probes (toggle/hold/diagonal/d-pad/
+    blur/AUTO resume/draft-pause inertness).
+  - Verified: 21/21 suites (new test_controllers.mjs), smoke x3,
+    lightpanda clean with #dpad + tc-pilot in live DOM.

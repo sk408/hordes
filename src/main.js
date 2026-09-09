@@ -2,7 +2,7 @@
 import { CONFIG as C, UPGRADES } from './config.js';
 import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale } from './entities.js';
 import { Renderer } from './render.js';
-import { AutoPilotController } from './controllers.js';
+import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
 import {
   rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
@@ -130,6 +130,7 @@ const state = {
                      // shrine draws never desync the intermission offers
   lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
   rampage: { streak: 0, best: 0 },  // kill-streak meter (resets on ANY hit)
+  pilotMode: 'AUTO', // WAVE-13: 'AUTO' | 'MANUAL' (which controller is bound)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
   wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
@@ -141,7 +142,54 @@ state.player.y = C.VIEW_H / 2;
 let profile = loadProfile();
 
 // ---------- Character controller seam (see controllers.js) ----------
-const controller = new AutoPilotController();
+// WAVE-13 MANUAL PILOT: BOTH implementations live for the whole run — the
+// active one is whichever `controller` points at. swapPilotMode rebinds it
+// (focus/stance decorations carry across) and startRun always re-engages the
+// AutoPilot. The controllers own ALL decisions (movement + volley targeting);
+// main.js only owns the held-direction input object they read.
+const pilotInput = { up: false, down: false, left: false, right: false };
+const autoController = new AutoPilotController();
+const manualController = new PlayerController(pilotInput);
+let controller = autoController;
+
+// Held-direction key map (lowercased key -> direction). WASD + arrows.
+// Live only while pilotMode === 'MANUAL' (the keydown handler checks).
+const KEY_DIRS = {
+  arrowup: 'up', w: 'up',
+  arrowdown: 'down', s: 'down',
+  arrowleft: 'left', a: 'left',
+  arrowright: 'right', d: 'right',
+};
+
+// Last pilot choice per browser (hudText settings pattern). Write-only for
+// the record — per the build directive EVERY run starts in AUTO regardless.
+const KEY_PILOT = 'hordes_pilot';
+function savePilotPref(mode) {
+  try { hudStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
+}
+
+// WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry
+// across BOTH directions (the incoming controller inherits the outgoing one's
+// levers — TAB/G keep working through a round trip). Switching to AUTO clears
+// held input so a stale direction can't ghost-move the autopilot; keyup
+// handlers clear keys regardless of mode (no stuck keys across overlays).
+function swapPilotMode(mode) {
+  if (mode === state.pilotMode) return;
+  const from = controller;
+  const to = mode === 'MANUAL' ? manualController : autoController;
+  to.focus = from.focus;
+  to.stance = from.stance;
+  controller = to;
+  state.pilotMode = mode;
+  if (mode === 'AUTO') {
+    pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+  }
+  savePilotPref(mode);
+  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the d-pad' : 'AUTOPILOT ENGAGED');
+}
+function togglePilotMode() {
+  swapPilotMode(state.pilotMode === 'AUTO' ? 'MANUAL' : 'AUTO');
+}
 
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
@@ -1648,6 +1696,10 @@ function startRun() {
   // intermission offers) + the wave-1 shrine roll.
   state.lastFlashAt = null;
   state.rampage = { streak: 0, best: 0 };
+  // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
+  // not a preselect) — rebind the seam and drop any held directions.
+  swapPilotMode('AUTO');
+  pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
   state.shrine = rollShrine(0, state.shrineRng);
   state.takenChoices = [];
@@ -1813,6 +1865,12 @@ function runAction(act) {
     else openStats();
     return;
   }
+  // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
+  // must not flip controllers under the smoke probes' feet).
+  if (act === 'pilot') {
+    if (state.mode === 'playing' || state.mode === 'finale') togglePilotMode();
+    return;
+  }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
@@ -1876,18 +1934,32 @@ window.addEventListener('keydown', (ev) => {
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
   } else if (state.mode === 'stats') {
-    // WAVE-12 FIELD REPORT: S/ESC (or any card) closes and resumes.
-    if (k === 's' || k === 'escape') closeStats();
+    // WAVE-12 FIELD REPORT: S/ESC/I (or any card) closes and resumes.
+    if (k === 's' || k === 'escape' || k === 'i') closeStats();
     else if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
       const card = ovCards.children[Number(ev.key) - 1];
       if (card) card.click();
     }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
-    if (k === 's') { openStats(); return; }   // WAVE-12 FIELD REPORT
+    // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
+    //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
+    //   arrows/WASD held movement — MANUAL only
+    //   S          FIELD REPORT in AUTO · 'down' in MANUAL
+    //   I          FIELD REPORT always (S is taken by 'down' in MANUAL)
+    //   W          Overcharge in AUTO · 'up' in MANUAL — E fires Overcharge
+    //              in BOTH modes (the permanent new home for it)
+    if (k === 'm') { togglePilotMode(); return; }
+    if (k === 'i') { openStats(); return; }
+    if (state.pilotMode === 'MANUAL') {
+      const dir = KEY_DIRS[k];
+      if (dir) { pilotInput[dir] = true; return; }
+    }
+    if (k === 's' && state.pilotMode !== 'MANUAL') { openStats(); return; }
     const keyMap = {
       tab: 'focus', g: 'stance',
       [C.SKILLS.FROST_NOVA.KEY]: 'q',
-      [C.SKILLS.OVERCHARGE.KEY]: 'w',
+      [C.SKILLS.OVERCHARGE.KEY]: 'w',   // AUTO only in practice: in MANUAL, 'w' is held 'up'
+      e: 'w',
       h: 'h', n: 'n',
     };
     const act = keyMap[k];
@@ -1898,10 +1970,22 @@ window.addEventListener('keydown', (ev) => {
   }
 });
 
+// WAVE-13: keyup ALWAYS clears its direction (regardless of mode/overlay) so a
+// key held across a draft, a toggle or a death screen can never ghost-move the
+// next run. blur clears everything (alt-tab with a key down).
+window.addEventListener('keyup', (ev) => {
+  const dir = KEY_DIRS[ev.key.toLowerCase()];
+  if (dir) pilotInput[dir] = false;
+});
+window.addEventListener('blur', () => {
+  pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
+});
+
 // ---------- Touch controls (Sk408): mirror the keyboard actions ----------
 const touchLayer = document.getElementById('touch');
+const dpadEl = document.getElementById('dpad');   // WAVE-13 manual d-pad
 const touchEls = {};
-for (const id of ['tc-focus', 'tc-stance', 'tc-q', 'tc-w', 'tc-h', 'tc-n']) {
+for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n']) {
   touchEls[id] = document.getElementById(id);
 }
 
@@ -1912,14 +1996,29 @@ const hasTouch = ('ontouchstart' in window) ||
 if (touchLayer && hasTouch && touchLayer.classList) touchLayer.classList.add('on');
 
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
-// legacy 300ms wait and double-tap zoom.
+// legacy 300ms wait and double-tap zoom. WAVE-13: [data-dir] buttons (the
+// manual d-pad) press directions into the same pilotInput the keyboard uses;
+// pointerup/pointercancel release them (multi-touch with the skill buttons
+// works — each pointer lifts independently).
 if (touchLayer && touchLayer.addEventListener) {
   touchLayer.addEventListener('pointerdown', (ev) => {
+    const dirBtn = ev.target && ev.target.closest ? ev.target.closest('[data-dir]') : null;
+    if (dirBtn) {
+      if (ev.preventDefault) ev.preventDefault();
+      pilotInput[dirBtn.dataset.dir] = true;
+      return;
+    }
     const btn = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
     if (!btn) return;
     if (ev.preventDefault) ev.preventDefault();
     runAction(btn.dataset.act);
   });
+  const releaseDir = (ev) => {
+    const dirBtn = ev.target && ev.target.closest ? ev.target.closest('[data-dir]') : null;
+    if (dirBtn) pilotInput[dirBtn.dataset.dir] = false;
+  };
+  touchLayer.addEventListener('pointerup', releaseDir);
+  touchLayer.addEventListener('pointercancel', releaseDir);
 }
 
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
@@ -1929,10 +2028,17 @@ function updateTouchHud() {
     const want = (state.mode === 'playing' || state.mode === 'finale') ? '' : 'none';
     if (touchLayer.style.display !== want) touchLayer.style.display = want;
   }
+  // WAVE-13: the d-pad shows ONLY while the manual pilot is bound mid-run.
+  if (dpadEl && dpadEl.style) {
+    const wantDpad = (state.pilotMode === 'MANUAL' &&
+      (state.mode === 'playing' || state.mode === 'finale')) ? 'grid' : 'none';
+    if (dpadEl.style.display !== wantDpad) dpadEl.style.display = wantDpad;
+  }
   const p = state.player;
   const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
   set('tc-focus', controller.focus);
   set('tc-stance', controller.stance);
+  set('tc-pilot', state.pilotMode);
   const skill = (id, defId) => {
     const cd = p.skillCd[defId];
     set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= C.SKILLS[defId].MANA ? 'RDY' : 'LOW'));
@@ -2000,7 +2106,7 @@ function drawHud() {
     `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.ceil(p.hp)}/${p.stats.maxHp}\n` +
     `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
     `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
-    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance}\n` +
+    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
     (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
@@ -2011,6 +2117,21 @@ function drawHud() {
     `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
+  // WAVE-13: tiny canvas 'M' badge beside the hp/mana chrome while the manual
+  // pilot is bound (AUTO shows nothing). fillRect-only, drawn on the
+  // renderer's ctx from here — render.js stays untouched (WAVE-12 precedent).
+  if (state.pilotMode === 'MANUAL' && renderer.ctx &&
+      (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
+    const ctx = renderer.ctx;
+    ctx.fillStyle = '#14141f';
+    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
+    ctx.fillStyle = '#ffd75e';
+    ctx.fillRect(121, 17, 2, 11);    // left stem
+    ctx.fillRect(129, 17, 2, 11);    // right stem
+    ctx.fillRect(123, 19, 2, 2);     // vee
+    ctx.fillRect(127, 19, 2, 2);
+    ctx.fillRect(125, 21, 2, 2);
+  }
 }
 
 // Per-type enemy census (HUD probe; smoke test asserts on it).
@@ -2317,9 +2438,12 @@ requestAnimationFrame(frame);
 // Headless test seam (smoke.mjs): live state access so integration probes
 // can force conditions (Lv8 + item + token) through the REAL loop. Never
 // read by the browser page. WAVE-12 adds the renderer (HUD chrome seam) and
-// the FIELD REPORT open/close entry points.
+// the FIELD REPORT open/close entry points; WAVE-13 adds the pilot-mode
+// toggle + the shared held-direction input object (the d-pad seam).
 export const __TEST = {
-  state, controller, startRun, getProfile: () => profile, refreshSynergies,
+  state, get controller() { return controller; }, startRun,
+  getProfile: () => profile, refreshSynergies,
   renderer, openStats, closeStats,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
+  setPilotMode: swapPilotMode, pilotInput,
 };

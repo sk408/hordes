@@ -9,6 +9,7 @@ import { groundTheme } from '../src/render.js';
 import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
 import { makeWeapon } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
+import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -43,9 +44,18 @@ globalThis.document = {
   getElementById: (id) => elements[id] ?? (elements[id] = id === 'game' ? { ...fakeCanvas, getContext: () => fakeCtx } : fakeEl()),
   createElement: () => fakeEl(),
 };
-// Simulate keydown handlers registered by the game.
-let keyHandler = null;
-globalThis.window = { addEventListener: (_ev, cb) => { keyHandler = cb; } };
+// Simulate input handlers registered by the game. WAVE-13: the game also
+// registers keyup (held-direction release) + blur (stuck-key clear) — route
+// by event type so the later registrations don't clobber the keydown seam.
+let keyHandler = null, keyUpHandler = null, blurHandler = null;
+globalThis.window = {
+  addEventListener: (ev, cb) => {
+    if (ev === 'keydown') keyHandler = cb;
+    else if (ev === 'keyup') keyUpHandler = cb;
+    else if (ev === 'blur') blurHandler = cb;
+    // 'resize' (fitCanvas) — ignored
+  },
+};
 let now = 0;
 globalThis.performance = { now: () => now };
 const rafQueue = [];
@@ -955,6 +965,135 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   mainMod.__TEST.closeStats();
   assert(st.mode === 'playing', 'and closes it');
   console.log('field report: S opens/pauses/closes, weapons+items+stats listed');
+}
+
+// ---- WAVE-13 MANUAL PILOT probes (through the real loop) ---------------------
+// (h) toggle + held-key movement + diagonal normalization + the d-pad seam +
+// AUTO resume + blur stuck-key clear. Every probe run starts from startRun
+// (which must re-engage AUTO + drop held input) and silences the spawner so
+// movement is the only variable on the field.
+{
+  const T = mainMod.__TEST;
+  const quietField = () => {   // no spawns/boss/gems: a movement-only field
+    st.enemies.length = 0; st.gems.length = 0;
+    st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
+    st.wave.bosses = []; st.wave.boss = null; st.portal = null;
+  };
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+
+  // Every run starts in AUTO — even straight out of a MANUAL one.
+  T.startRun();
+  quietField();
+  assert(st.pilotMode === 'AUTO', 'runs must start in AUTO (got ' + st.pilotMode + ')');
+  assert(/Pilot:AUTO/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
+
+  // Doctrine decorations survive the toggle (both directions, tested below).
+  keyHandler({ key: 'Tab', preventDefault: () => {} });   // NEAREST -> TOUGHEST
+  keyHandler({ key: 'g' });                               // BALANCED -> GREEDY
+  pump(2);
+  keyHandler({ key: 'm' });                               // AUTO -> MANUAL
+  pump(2);
+  assert(st.pilotMode === 'MANUAL', 'M must toggle into MANUAL');
+  assert(/Pilot:MANUAL/.test(hudText()), 'HUD readout flips to MANUAL');
+  assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
+    'focus/stance decorations survive the AUTO->MANUAL swap');
+
+  // Held ArrowRight crosses a real distance; keyup STOPS the pilot dead.
+  const x0 = st.player.x;
+  keyHandler({ key: 'ArrowRight' });
+  pump(30);
+  const x1 = st.player.x;
+  assert(x1 - x0 > 20, `held ArrowRight must move the pilot (dx=${(x1 - x0).toFixed(1)})`);
+  keyUpHandler({ key: 'ArrowRight' });
+  pump(10);
+  assert(Math.abs(st.player.x - x1) < 1,
+    `keyup must stop the pilot (drifted ${(st.player.x - x1).toFixed(2)})`);
+  // Gems still vacuum at pickup radius in MANUAL (loot economy unaffected).
+  st.gems.push(makeGem(st.player.x + 2, st.player.y, 1));
+  pump(5);
+  assert(st.gems.length === 0 && st.player.xp >= 1,
+    'gems must vacuum onto a MANUAL pilot (rampage/heat/XP untouched)');
+
+  // Diagonal: w+d keys normalize to equal displacement on both axes.
+  T.startRun();
+  quietField();
+  keyHandler({ key: 'm' });
+  pump(2);
+  const dx0 = st.player.x, dy0 = st.player.y;
+  keyHandler({ key: 'd' });
+  keyHandler({ key: 'w' });
+  pump(30);
+  keyUpHandler({ key: 'd' });
+  keyUpHandler({ key: 'w' });
+  const dx = st.player.x - dx0, dy = st.player.y - dy0;
+  assert(dx > 10 && dy < -10, `diagonal must move both axes — right(+x) and UP(-y) (dx=${dx.toFixed(1)} dy=${dy.toFixed(1)})`);
+  assert(Math.abs(dx - Math.abs(dy)) < 2,
+    `diagonal must be normalized 0.7071/0.7071 (dx=${dx.toFixed(1)} dy=${dy.toFixed(1)})`);
+
+  // D-pad seam: the shared pilotInput object (index.html data-dir route).
+  const lx0 = st.player.x;
+  T.pilotInput.left = true;
+  pump(30);
+  T.pilotInput.left = false;
+  assert(st.player.x < lx0 - 20, 'the d-pad seam (pilotInput) must drive movement');
+
+  // M back to AUTO: with NO keys held the autopilot resumes deciding.
+  keyHandler({ key: 'm' });
+  assert(st.pilotMode === 'AUTO', 'M must toggle back to AUTO');
+  assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
+    'decorations survive the MANUAL->AUTO swap too');
+  const ax0 = st.player.x, ay0 = st.player.y;
+  pump(60);
+  assert(Math.abs(st.player.x - ax0) + Math.abs(st.player.y - ay0) > 5,
+    'AUTO resume must move on its own (patrol) with no keys held');
+
+  // Blur clears every held direction (no stuck keys across alt-tab).
+  keyHandler({ key: 'm' });
+  keyHandler({ key: 'ArrowUp' });
+  assert(T.pilotInput.up === true, 'keydown must set the held-direction flag');
+  blurHandler();
+  assert(!T.pilotInput.up && !T.pilotInput.down && !T.pilotInput.left && !T.pilotInput.right,
+    'blur must clear every held direction');
+  pump(2);
+  keyHandler({ key: 'm' });   // probe hygiene: leave AUTO
+  assert(st.pilotMode === 'AUTO', 'back to AUTO for the rest of the suite');
+  console.log('manual pilot: toggle/movement/diagonal/d-pad/AUTO-resume/blur verified');
+}
+
+// (i) DRAFT PAUSE: manual input moves NOTHING while a draft is open, M does
+// NOT flip the controller under an overlay, and play resumes cleanly.
+{
+  const T = mainMod.__TEST;
+  T.startRun();
+  st.enemies.length = 0; st.gems.length = 0;
+  st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
+  keyHandler({ key: 'm' });   // MANUAL
+  keyHandler({ key: 'ArrowRight' });
+  // One gem = exactly one level = one draft overlay (the levelUp path).
+  st.gems.push(makeGem(st.player.x, st.player.y, st.player.xpNext - st.player.xp));
+  for (let i = 0; i < 10 && st.mode !== 'draft'; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.mode === 'draft', 'the gem payout must open the draft (mode=' + st.mode + ')');
+  const xAtDraft = st.player.x;
+  keyUpHandler({ key: 'ArrowRight' });
+  keyHandler({ key: 'ArrowRight' });   // re-press INSIDE the draft — inert
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.mode === 'draft', 'the draft stays open (only 1-3 pick cards)');
+  assert(st.player.x === xAtDraft, 'manual input must move NOTHING while paused');
+  keyHandler({ key: 'm' });            // M under an overlay: ignored
+  assert(st.pilotMode === 'MANUAL', 'M must NOT flip the pilot mode while a draft is open');
+  keyHandler({ key: '1' });            // pick the card, resume
+  assert(st.mode === 'playing', 'the card pick must resume play');
+  keyUpHandler({ key: 'ArrowRight' }); // drop the stale hold from inside the draft
+  const rx0 = st.player.x;
+  keyHandler({ key: 'ArrowLeft' });
+  for (let i = 0; i < 30; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  keyUpHandler({ key: 'ArrowLeft' });
+  assert(st.player.x < rx0 - 20, 'manual movement resumes after the draft closes');
+  keyHandler({ key: 'm' });
+  assert(st.pilotMode === 'AUTO', 'probe hygiene: back to AUTO');
+  console.log('draft pause: input inert under the overlay, M ignored, resume clean');
 }
 
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----

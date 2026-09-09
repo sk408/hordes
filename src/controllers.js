@@ -17,6 +17,17 @@ export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
 // player down from off-screen).
 export const RANGED_TYPES = new Set(['SPITTER', 'WARLOCK']);
 
+// Nearest live enemy scan (shared by both controllers — pickTarget wants it
+// as its NEAREST-doctrine fallback).
+function nearestEnemy(p, state) {
+  let nearest = null, nd = Infinity;
+  for (const e of state.enemies) {
+    const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
+    if (d < nd) { nd = d; nearest = e; }
+  }
+  return nearest;
+}
+
 export class AutoPilotController {
   constructor() {
     this.focus = 'NEAREST';
@@ -83,11 +94,10 @@ export class AutoPilotController {
   // Returns { moveX, moveY, target } — moveX/moveY normalized direction,
   // target = enemy to fire at (or null to hold fire).
   decide(p, state, cfg) {
-    let nearest = null, nd = Infinity;
-    for (const e of state.enemies) {
-      const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
-      if (d < nd) { nd = d; nearest = e; }
-    }
+    const nearest = nearestEnemy(p, state);
+    const nd = nearest
+      ? (nearest.x - p.x) ** 2 + (nearest.y - p.y) ** 2
+      : Infinity;
 
     const target = this.pickTarget(p, state, cfg, nearest);
     const st = C.AUTOPILOT.STANCES[this.stance];
@@ -163,5 +173,33 @@ export class AutoPilotController {
       const my = (dx / len - (dy / len) * inward) * 0.5;
       return { moveX: mx, moveY: my, target };
     }
+  }
+}
+
+// WAVE-13 MANUAL PILOT: the player IS the movement authority. Same interface
+// and doctrine levers as AutoPilot (constructor / cycleFocus / cycleStance /
+// pickTarget / decide -> { moveX, moveY, target }) — volleys STAY auto-aimed
+// via the inherited pickTarget (manual is MOVEMENT ONLY, per the build task).
+// Movement reads a HELD-direction input object { up, down, left, right }
+// (booleans, owned/updated by main.js — this module never touches the DOM).
+// Diagonals are normalized to unit length; opposite keys cancel (no input
+// stops the pilot — the world keeps moving). No input = {0,0}, NOT the
+// AutoPilot's kite/patrol logic: manual means manual.
+export class PlayerController extends AutoPilotController {
+  constructor(input = { up: false, down: false, left: false, right: false }) {
+    super();
+    this.input = input;
+  }
+
+  decide(p, state, cfg) {
+    const target = this.pickTarget(p, state, cfg, nearestEnemy(p, state));
+    const i = this.input || {};
+    let mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
+    let my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
+    if (mx !== 0 && my !== 0) {
+      mx *= Math.SQRT1_2;
+      my *= Math.SQRT1_2;
+    }
+    return { moveX: mx, moveY: my, target };
   }
 }
