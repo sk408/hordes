@@ -77,6 +77,28 @@ const dtMs = 1000 / 60;
   console.log(`intro: played ${introFrames} frames before the menu`);
 }
 
+// Sk408 bug regression: RESET PROFILE must actually wipe. The arm flag used
+// to be cleared by its own re-render, so the confirm click never fired.
+{
+  const gp = mainMod.__TEST.getProfile;
+  if (gp) {
+    gp().gold = 777;   // dirty the profile so the wipe is observable
+    const cards = elements['ov-cards'];
+    const byTitle = (t) => Array.from(cards.children)
+      .find(c => (c.innerHTML || '').includes(t));
+    byTitle('SETTINGS').click();
+    const r1 = byTitle('RESET PROFILE');
+    assert(r1, 'settings should show a RESET PROFILE card');
+    r1.click();
+    const confirm = byTitle('CONFIRM RESET?');
+    assert(confirm, 'first reset click should ARM the CONFIRM RESET? card');
+    confirm.click();
+    assert(gp().gold === 0, `RESET should wipe gold (got ${gp().gold})`);
+    console.log('settings probe: RESET PROFILE armed + wiped gold');
+    byTitle('BACK').click();
+  }
+}
+
 // Title-mode boot: click PLAY to start the run (menu buttons are overlay
 // cards, same as draft picks).
 {

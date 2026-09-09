@@ -1187,9 +1187,12 @@ function showCharacters() {
 }
 
 let resetArmed = false;
-function showSettings() {
+function showSettings(disarm = true) {
   openMenu();
-  resetArmed = false;
+  // Sk408 bug: the arm click re-rendered through here, which cleared the
+  // arm flag the same frame it was set — RESET could never confirm. Only
+  // disarm when settings is opened fresh (from the title menu).
+  if (disarm) resetArmed = false;
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
   ovSub.textContent = 'audio & profile';
@@ -1204,10 +1207,11 @@ function showSettings() {
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
     resetArmed ? 'wipes gold, upgrades & unlocks' : 'tap twice to confirm',
     () => {
-      if (!resetArmed) { resetArmed = true; showSettings(); return; }
+      if (!resetArmed) { resetArmed = true; showSettings(false); return; }
       profile = makeProfile();
       saveProfile(profile);
-      showSettings();
+      resetArmed = false;
+      showSettings(false);
     });
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
@@ -1766,4 +1770,4 @@ requestAnimationFrame(frame);
 // Headless test seam (smoke.mjs): live state access so integration probes
 // can force conditions (Lv8 + item + token) through the REAL loop. Never
 // read by the browser page.
-export const __TEST = { state, controller, startRun };
+export const __TEST = { state, controller, startRun, getProfile: () => profile };
