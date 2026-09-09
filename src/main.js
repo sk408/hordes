@@ -17,6 +17,14 @@ import {
 } from './weather.js';
 import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
 import { pickBossForWave, decideBossAction } from './bosses.js';
+// WAVE-10 finale (hb6's module — read its header before touching wiring):
+// mawDecide keys choreography off enemy.age; barrage projectiles each carry
+// volleyId; the mercy rule + 3-hit damage + hp floor all live there.
+import {
+  FINAL_BOSS, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES, HP_FLOOR, DISPLAY_HP,
+  makeFinalBoss, decideFinalBossAction, finalBossDamage, shouldApplyHit,
+  applyFinalBossDamage,
+} from './final_boss.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
@@ -100,6 +108,8 @@ const state = {
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
   evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
+  finalBoss: null,   // WAVE-10: the maw instance while the finale lives (also rides state.enemies so the controller targets it untouched)
+  volleyMask: null,  // WAVE-10: last barrage volleyId that landed on the hero (mercy rule state)
   choiceSeed: 1,     // per-run seed for the intermission blessing/curse rolls
   choiceRng: null,   // mulberry32(choiceSeed) — deterministic per run
   takenChoices: [],  // choice ids taken this run (repeat-free offers)
@@ -1056,7 +1066,7 @@ function closeEvolve() {
   state.mode = 'playing';
 }
 
-function die() {
+function die(finale) {
   const p = state.player;
   state.mode = 'dead';
   audio.stopMusic();
@@ -1076,8 +1086,11 @@ function die() {
   profile.gold += gold;
   saveProfile(profile);
 
-  ovTitle.textContent = 'THE HORDE WINS';
-  ovSub.innerHTML = `survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
+  // WAVE-10: dying to the maw gets its own dramatic card (same payout).
+  ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
+  ovTitle.className = finale ? 'logo' : '';
+  ovSub.innerHTML = (finale ? 'the maw swallowed the last hero<br>' : '') +
+    `survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
     `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
@@ -1221,6 +1234,9 @@ function startRun() {
   // WAVE-7 run-scoped systems reset here (fresh makePlayer already dropped
   // player.choices — these are the state-side companions):
   state.evoTokens = 0;
+  // WAVE-10: finale fields are run-scoped too.
+  state.finalBoss = null;
+  state.volleyMask = null;
   state.choiceSeed = (Math.random() * 1e9) | 0;
   state.choiceRng = mulberry32(state.choiceSeed);   // deterministic per-run offers
   state.takenChoices = [];
@@ -1275,7 +1291,8 @@ function startRun() {
 // Doctrine actions only nudge the AutoPilot controller's state; no input
 // handling lives in controllers.js.
 function runAction(act) {
-  if (state.mode !== 'playing') return;
+  // Skills/potions/doctrine stay live through the finale (WAVE-10).
+  if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
   else if (act === 'stance') controller.cycleStance();
   else if (act === 'q') useSkill(state, 'FROST_NOVA');
@@ -1336,7 +1353,7 @@ window.addEventListener('keydown', (ev) => {
     }
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
-  } else if (state.mode === 'playing') {
+  } else if (state.mode === 'playing' || state.mode === 'finale') {
     const keyMap = {
       tab: 'focus', g: 'stance',
       [C.SKILLS.FROST_NOVA.KEY]: 'q',
@@ -1379,7 +1396,7 @@ if (touchLayer && touchLayer.addEventListener) {
 // The touch layer is only relevant mid-run — menus are directly tappable.
 function updateTouchHud() {
   if (touchLayer && touchLayer.style) {
-    const want = state.mode === 'playing' ? '' : 'none';
+    const want = (state.mode === 'playing' || state.mode === 'finale') ? '' : 'none';
     if (touchLayer.style.display !== want) touchLayer.style.display = want;
   }
   const p = state.player;
@@ -1417,7 +1434,15 @@ function drawHud() {
   // any lives, or PORTAL! while the wave-clear portal is open.
   const waveLeft = Math.max(0, state.wave.endsAt - state.time);
   const bossNames = (state.wave.bosses || []).filter(b => b.hp > 0).map(b => b.name).join(' & ');
-  const waveTxt = state.wave.boss ? 'BOSS! ' + (bossNames || '') : state.portal ? 'PORTAL!'
+  // WAVE-10: the finale owns the wave line — the maw's name + a beatable-
+  // looking M-formatted hp readout (raw 2,500,000 would read as math, not
+  // as a bar that's visibly draining).
+  const mawTxt = state.finalBoss
+    ? `THE MAW OF THE HORDE ${(state.finalBoss.hp / 1e6).toFixed(2)}M`
+    : null;
+  const waveTxt = mawTxt ? mawTxt
+    : state.wave.boss ? 'BOSS! ' + (bossNames || '')
+    : state.portal ? 'PORTAL!'
     : `${Math.floor(waveLeft / 60)}:${String(Math.floor(waveLeft % 60)).padStart(2, '0')}`;
   // WPN line: base volley is slot 1; the VOLLEY instance rides in
   // state.weapons for XP/leveling but never counts against the slots.
@@ -1456,14 +1481,16 @@ function drawHud() {
 // Per-type enemy census (HUD probe; smoke test asserts on it).
 // W=Warlock T=Tick X=Colossus E=elite count.
 function foeLine() {
-  const n = { C: 0, S: 0, B: 0, P: 0, D: 0, W: 0, T: 0, X: 0, E: 0 };
+  const n = { C: 0, S: 0, B: 0, P: 0, D: 0, W: 0, T: 0, X: 0, E: 0, MAW: 0 };
   const k = { CHASER: 'C', SWARMER: 'S', BRUTE: 'B', SPITTER: 'P', DASHER: 'D',
               WARLOCK: 'W', TICK: 'T', COLOSSUS: 'X' };
   for (const e of state.enemies) {
+    if (e.finalBoss) { n.MAW++; continue; }   // WAVE-10: the maw is its own line
     n[k[e.typeId] || 'C']++;
     if (e.elite) n.E++;
   }
-  return `C:${n.C} S:${n.S} B:${n.B} P:${n.P} D:${n.D} W:${n.W} T:${n.T} X:${n.X} E:${n.E}`;
+  return `C:${n.C} S:${n.S} B:${n.B} P:${n.P} D:${n.D} W:${n.W} T:${n.T} X:${n.X} E:${n.E}` +
+    (n.MAW ? ` MAW:${n.MAW}` : '');
 }
 
 // ---------- Main loop ----------
@@ -1501,7 +1528,202 @@ function startPortalCine() {
 }
 function endPortalCine() {
   if (state.mode !== 'portal-cine') return;
+  // WAVE-10: the END_WAVE cast fell — no intermission beyond the movie; the
+  // FINALE begins (final_boss.js). Everything past this wave is maw-only.
+  if (state.wave.num >= C.ESCALATION.END_WAVE) { startFinale(); return; }
   openIntermission();
+}
+
+// ---------- FINALE (WAVE-10: the maw of the horde, final_boss.js) ------------
+// The run's last stand: the field is swept clean (no spawns, no portal, no
+// intermission/choices), the MAW drifts in ALONE, and every hit it lands is
+// an exact third of maxHp — defenses, heat, items and buffs are all blind to
+// it. The display hp is 2.5M and clamps at HP_FLOOR while BEATABLE stays
+// false: the bar drains forever, the maw never closes.
+function startFinale() {
+  state.enemies.length = 0;
+  state.enemyShots.length = 0;
+  state.chests.length = 0;
+  state.arches.length = 0;
+  state.archBuffs.length = 0;
+  state.shieldAbsorbs = 0;
+  state.portal = null;
+  state.wave.bosses = [];
+  state.wave.boss = null;
+  state.wave.pendingClear = false;
+  state.wave.cinePending = false;
+  state.volleyMask = null;
+  const p = state.player;
+  const a = Math.random() * Math.PI * 2;
+  const b = makeFinalBoss(
+    p.x + Math.cos(a) * C.ENEMY.SPAWN_DIST * 0.6,
+    p.y + Math.sin(a) * C.ENEMY.SPAWN_DIST * 0.6);
+  b.finalBoss = true;   // tagged: updateFinale() owns it (update() never runs)
+  b.speed = 140;        // drift multiplier from decide() scales this way down
+  b.w = Math.round(b.w * FINAL_BOSS.sizeMult);   // collision box matches sprite
+  b.h = Math.round(b.h * FINAL_BOSS.sizeMult);
+  state.finalBoss = b;
+  // Rides state.enemies ONLY so the untouched controller finds a target; the
+  // normal enemy loop never ticks while mode === 'finale'.
+  state.enemies.push(b);
+  state.mode = 'finale';
+  toast(FINAL_BOSS.name + ' APPROACHES');
+  toast(FINAL_BOSS.flavor.toUpperCase());
+  audio.playSfx('death');
+  audio.startMusic();
+}
+
+// The finale tick (mode === 'finale'; frame() routes here instead of update).
+// Everything from the normal loop that still applies to a 1v1 — controller,
+// weapons, weather, camera — plus the maw's own choreography and hit rules.
+function updateFinale(dt) {
+  const p = state.player;
+  state.time += dt;
+  if (p.invuln > 0) p.invuln -= dt;
+  updateWeather(state, state.weather, dt);
+  const am = activeArchMods(state);   // arches are gone: identity mods
+  runController(p, dt, am);
+  updateResources(p, dt);
+  const regenBonus = (p.stats.manaRegen ?? C.MANA.REGEN) - C.MANA.REGEN;
+  if (regenBonus > 0) p.mana = Math.min(p.stats.maxMana, p.mana + regenBonus * dt);
+  updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
+
+  // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph
+  // in the last 0.8s of each 4.5s cycle, a 48-shot ring on the cycle wrap.
+  const b = state.finalBoss;
+  b.age += dt;
+  if (b.flash > 0) b.flash -= dt;
+  if (b.slow > 0) b.slow -= dt;
+  const act = decideFinalBossAction(b, p, state, dt);
+  b.telegraph = !!act.telegraph;
+  const mawSpd = b.speed * (b.slow > 0 ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1);
+  b.x = Math.max(-600, Math.min(600, b.x + act.mx * mawSpd * dt));
+  b.y = Math.max(-600, Math.min(600, b.y + act.my * mawSpd * dt));
+  if (act.barrage) {
+    const N = act.barrage.shots, off = Math.random() * Math.PI * 2;
+    for (let i = 0; i < N; i++) {
+      const ang = off + (i / N) * Math.PI * 2;
+      state.enemyShots.push({
+        x: b.x, y: b.y,
+        vx: Math.cos(ang) * act.barrage.speed,
+        vy: Math.sin(ang) * act.barrage.speed,
+        damage: 0, age: 0, kind: 'maw',
+        volleyId: act.barrage.volleyId,   // the mercy rule keys on this
+      });
+    }
+    state.effects.push({ kind: 'boss_nova', x: b.x, y: b.y, radius: 60, age: 0, ttl: 0.5 });
+    toast('THE MAW OPENS');
+    audio.playSfx('death');
+  }
+
+  // Barrage projectiles: the FIRST touch of a volleyId costs an exact third
+  // of maxHp DIRECTLY (no defenses, no heat, no damageTaken mults); the rest
+  // of the same volley pass through harmlessly.
+  for (const s of state.enemyShots) {
+    s.x += s.vx * dt; s.y += s.vy * dt; s.age += dt;
+    if (p.invuln <= 0 && Math.hypot(s.x - p.x, s.y - p.y) < 9) {
+      const r = shouldApplyHit(state.volleyMask, s.volleyId);
+      state.volleyMask = r.nextState;
+      if (r.apply) {
+        p.hp -= finalBossDamage(p.stats);   // reads .maxHp -> stats carries it
+        p.invuln = 0.6;
+        state.effects.push({ kind: 'hit_spark', x: p.x, y: p.y, age: 0, ttl: 0.15 });
+        audio.playSfx('hit');
+        if (p.hp <= 0) { die(true); return; }
+      }
+    }
+  }
+  state.enemyShots = state.enemyShots.filter(s => s.age < 8);
+
+  // Body contact: the maw itself bites under the same mercy rule — at most
+  // once per choreography cycle (the 'body'+n id never collides with the
+  // numeric barrage volleyIds).
+  if (p.invuln <= 0 && Math.hypot(p.x - b.x, p.y - b.y) < Math.max(b.w, b.h) * 0.45) {
+    const bodyId = 'body' + Math.floor(Math.max(0, b.age - FINAL_BOSS_PHASES.GRACE) / FINAL_BOSS_PHASES.CYCLE);
+    const r = shouldApplyHit(state.volleyMask, bodyId);
+    state.volleyMask = r.nextState;
+    if (r.apply) {
+      p.hp -= finalBossDamage(p.stats);   // reads .maxHp -> stats carries it
+      p.invuln = 0.6;
+      audio.playSfx('hit');
+      if (p.hp <= 0) { die(true); return; }
+    }
+  }
+
+  // Hero volley vs the maw: normal crit/evolution math decides the damage,
+  // but the hp WRITE goes through applyFinalBossDamage so the display bar
+  // drains and can never cross the floor while BEATABLE is false. Death is
+  // keyed strictly off the returned .died — never off a raw hp check.
+  const wd = windDrift(state.weather);
+  const volleyW2 = state.weapons.find(w => w.type === 'VOLLEY');
+  const volleyEvo3 = volleyW2 && volleyW2.evolution;
+  const evoCrit2 = (p.stats.crit || 0) + ((volleyEvo3 && volleyEvo3.affixes.crit) || 0);
+  const evoCritMult2 = (p.stats.critMult || 1.5) + ((volleyEvo3 && volleyEvo3.affixes.critMult) || 0);
+  for (const pr of state.projectiles) {
+    if (pr.kind) continue;   // kind bodies are weapons.js-owned (already moved)
+    pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt + wd.y * dt; pr.age += dt;
+    if (pr.hit.has(b) || Math.abs(pr.x - b.x) > b.w / 2 || Math.abs(pr.y - b.y) > b.h / 2) continue;
+    let dmg = pr.damage;
+    if (evoCrit2 > 0 && Math.random() < evoCrit2) {
+      dmg *= evoCritMult2;
+      state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
+    }
+    const res = applyFinalBossDamage(b, dmg);
+    b.flash = 0.08;
+    pr.hit.add(b);
+    state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
+    audio.playSfx('hit');
+    if ((p.stats.lifesteal || 0) > 0) {
+      p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
+    }
+    if (res.died) { mawDefeated(); return; }
+    if (pr.hit.size > pr.pierce) pr.age = 99;
+  }
+  state.projectiles = state.projectiles.filter(pr => pr.kind || pr.age < 3);
+  // updateWeapons' bodies chip the maw's hp directly — re-clamp the floor so
+  // that path can never slide under it either.
+  if (b.hp < HP_FLOOR) b.hp = HP_FLOOR;
+
+  // Effects / toasts / camera (same housekeeping as update()).
+  for (const fx of state.effects) {
+    fx.age += dt;
+    if (fx.kind === 'charge') { fx.x = p.x; fx.y = p.y; }
+  }
+  state.effects = state.effects.filter(fx => fx.age < fx.ttl);
+  for (let i = state.toasts.length - 1; i >= 0; i--) {
+    state.toasts[i].ttl -= dt;
+    if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
+  }
+  state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
+  state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+}
+
+// Reachable ONLY when final_boss.js's BEATABLE flips true (Sk408's later
+// phase) — while it's false the hp floor holds and .died never fires.
+function mawDefeated() {
+  state.finalBoss = null;
+  state.enemies.length = 0;
+  state.enemyShots.length = 0;
+  state.mode = 'dead';
+  audio.stopMusic();
+  audio.playSfx('levelup');
+  const p = state.player;
+  const firstClear = state.time > (profile.bestTime || 0);
+  if (firstClear) profile.bestTime = Math.floor(state.time);
+  const gold = computeRunGold({
+    kills: p.kills, level: p.level, time: state.time, firstClear,
+    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)),
+  });
+  profile.gold += gold;
+  saveProfile(profile);
+  ovTitle.textContent = 'THE MAW IS SLAIN';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = `the horde is ended · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
+    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovCards.innerHTML = '';
+  menuCard('RETRY', 'straight back in [R]', () => startRun());
+  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
+  overlay.style.display = 'flex';
 }
 
 state.mode = 'intro';
@@ -1533,6 +1755,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (state.mode === 'playing') update(dt);
+  else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawHud();
   updateTouchHud();

@@ -143,10 +143,13 @@ export class AutoPilotController {
       const rim = 560;
       if (Math.abs(p.x) > rim && gx * Math.sign(p.x) > 0) gx = 0;
       if (Math.abs(p.y) > rim && gy * Math.sign(p.y) > 0) gy = 0;
-      if (gx !== 0 || gy !== 0) {
+      // A near-axis outward gem leaves an arbitrarily small tangential
+      // component after cancellation — sub-pixel crawls read as a stall
+      // (smoke caught 3.0s at x=560.1). Below a real vector, patrol instead.
+      if (Math.hypot(gx, gy) >= 0.25) {
         return { moveX: gx * st.XP_SPEED, moveY: gy * st.XP_SPEED, target };
       }
-      // Gem dead-ahead outside the rim — fall through to the patrol below.
+      // Gem dead-ahead (or a crawl) outside the rim — fall through to patrol.
     }
     // Idle fallback (Sk408 bug: no gems + no threat inside the kite line used
     // to park the player center-screen eating ranged chip until death). Slow

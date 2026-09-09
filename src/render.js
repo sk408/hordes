@@ -3,6 +3,7 @@
 import { CONFIG as C } from './config.js';
 import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
+import { FINAL_BOSS_SPRITE } from './final_boss.js';
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
 export const PLAYER_SPRITE = [
@@ -242,6 +243,7 @@ export class Renderer {
     // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
     // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
     for (const e of state.enemies) {
+      if (e.finalBoss) continue;   // WAVE-10: the maw has its own draw below
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
       const hw = Math.round(w / 2), hh = Math.round(h / 2);
       const x = Math.round(e.x - cam.x), y = Math.round(e.y - cam.y);
@@ -335,6 +337,37 @@ export class Renderer {
       }
     }
 
+    // WAVE-10 FINALE: the maw of the horde — huge (4x zoom) void-black grid
+    // from final_boss.js, 2-frame idle, white hit-flash, and the hot pink
+    // telegraph wash during the 0.8s pre-barrage window (decide() sets the
+    // flag; render only reads it). fillRect-only, like everything else.
+    if (state.finalBoss && state.mode === 'finale') {
+      const fb = state.finalBoss;
+      const spr = FINAL_BOSS_SPRITE;
+      const Z = 4;
+      const x = Math.round(fb.x - cam.x), y = Math.round(fb.y - cam.y);
+      const frame = spr.frames[Math.floor((fb.age || 0) * 6) % spr.frames.length];
+      const sx = x - spr.anchor.x * Z, sy = y - spr.anchor.y * Z;
+      for (let ry = 0; ry < frame.length; ry++) {
+        const row = frame[ry];
+        for (let rx = 0; rx < row.length; rx++) {
+          const v = row[rx];
+          if (v) { g.fillStyle = spr.palette[v]; g.fillRect(sx + rx * Z, sy + ry * Z, Z, Z); }
+        }
+      }
+      if (fb.flash > 0) {
+        g.fillStyle = 'rgba(255,255,255,0.85)';
+        g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
+      } else if (fb.slow > 0) {
+        g.fillStyle = 'rgba(106,168,216,0.4)';
+        g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
+      }
+      if (fb.telegraph && Math.floor((state.time || 0) * 12) % 2 === 0) {
+        g.fillStyle = 'rgba(255,47,94,0.45)';
+        g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
+      }
+    }
+
     // Enemy projectiles: spit (green blob), bolt (heavy purple, WARLOCK),
     // nova (pink, boss radial burst).
     for (const s of state.enemyShots || []) {
@@ -351,6 +384,12 @@ export class Renderer {
         g.fillStyle = '#ff7a9a';
         g.fillRect(x - 2, y - 2, 5, 5);
         g.fillStyle = '#a83a5a';
+        g.fillRect(x - 1, y - 1, 2, 2);
+      } else if (s.kind === 'maw') {
+        // Barrage round (WAVE-10): hot-pink mote with a white-hot core.
+        g.fillStyle = '#ff2f5e';
+        g.fillRect(x - 2, y - 2, 5, 5);
+        g.fillStyle = '#ffd0da';
         g.fillRect(x - 1, y - 1, 2, 2);
       } else {
         g.fillStyle = '#68e080';
@@ -539,6 +578,24 @@ export class Renderer {
         g.fillStyle = '#ffd75e';
         g.fillRect(x0, y, 2, 5);
         g.fillRect(x1 - 2, y, 2, 5);
+      }
+      // WAVE-10: the maw's bar — taller and blood-red; the hp floors at
+      // HP_FLOOR so it NEVER fully empties while BEATABLE is false (reads as
+      // draining-toward-something, not broken). The exact number lives in the
+      // HUD text line (M-formatted); the canvas bar is the drama.
+      const fb = state.finalBoss;
+      if (fb && state.mode === 'finale') {
+        const bx0 = 16, bx1 = C.VIEW_W - 16, by = 2;
+        const bw = bx1 - bx0;
+        g.fillStyle = '#000000';
+        g.fillRect(bx0 - 1, by - 1, bw + 2, 9);
+        g.fillStyle = '#5a0a1c';
+        g.fillRect(bx0, by, bw, 7);
+        g.fillStyle = '#ff2f5e';
+        g.fillRect(bx0, by, Math.ceil(bw * Math.max(0, fb.hp / fb.maxHp)), 7);
+        g.fillStyle = '#ffd75e';
+        g.fillRect(bx0, by, 2, 7);
+        g.fillRect(bx1 - 2, by, 2, 7);
       }
     }
 

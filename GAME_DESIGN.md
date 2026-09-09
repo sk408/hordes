@@ -458,6 +458,28 @@ one:
     scaling incl. bosses, HEAT line in the HUD next to WEATHER, run reset.
   - Verified: smoke 5/5 (exchange +0, evolution +2, stakes to cap, CHASER
     hp x2.20 at heat 10), 15 module suites, lightpanda clean.
+- 2026-09-09: **WAVE-10 — END GAME: THE FINALE** (Sk408 spec: wave-5
+  target for now, tunable; final boss is presently unbeatable).
+  - `src/final_boss.js` (hb6): THE MAW OF THE HORDE — huge sprite
+    (~4x scale), huge display HP (2.5M) with an HP FLOOR (BEATABLE=false
+    export for when Sk408 green-lights the kill); slow 4.5s attack cycle:
+    TELEGRAPH (0.8s) -> 360° BARRAGE volley, huge radius, near-unavoidable.
+    `finalBossDamage(player)` = ceil(maxHp/3), bypasses all defenses —
+    any hero dies in exactly 3 hits. VOLLEY MERCY RULE: one hit per
+    volleyId (shouldApplyHit mask) — the rest of the same barrage pass
+    through harmlessly.
+  - Integration (hb1): CONFIG.END_WAVE=5; after the wave-5 boss + cine the
+    game enters FINALE MODE — all enemies despawn, spawner/arches/chests
+    silent, no intermission/choices/portal; maw HP bar (never-emptying
+    blood-red), telegraph wash + hit flash; hero death -> distinct end
+    card "THE HORDE CLAIMS ALL" + stats + gold + RETRY/TITLE.
+  - hb1 found + fixed: finalBossDamage NaN reading player.maxHp directly
+    (now reads via stats). Overseer verification caught a second controller
+    flake: near-axis outward gem at the rim left a sub-pixel tangential
+    crawl after wall-steer (3.0s stall at x=560.1) — calm branch now
+    patrols when the post-steer vector < 0.25 magnitude.
+  - Verified: smoke 15/15 during the hunt + 5/5 after, all 16 suites,
+    lightpanda clean.
 - Layout: `index.html` + `src/{config,entities,controllers,skills,weapons,
   enemy_types,chests,meta,render,weather,main}.js` + `src/audio.js`
   (ES modules, no build step — must be served over HTTP).

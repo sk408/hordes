@@ -205,6 +205,10 @@ export const CONFIG = {
     XP:  { LINEAR: 0.6, COMPOUND_FROM: 4, COMPOUND: 1.25 },
     DMG: { LINEAR: 0.2, COMPOUND_FROM: 6, COMPOUND: 1.15 },
     WAVE_LENGTH: 120,        // seconds before the boss spawns
+    // WAVE-10: the wave whose boss death triggers the FINALE (the maw) once
+    // its portal cinematic ends. Tunable — Sk408 moves it later when the
+    // end-game phase opens up.
+    END_WAVE: 5,
     BOSS: {
       // hp = BASE_HP * hpScale(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
       // HARDENED (Sk408: bosses still melted): 35/18 -> 60/30, nova +50%,

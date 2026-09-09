@@ -671,6 +671,110 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log(`heat scaling: ${T} hp ${base} -> ${hot.maxHp} (x${(hot.maxHp / base).toFixed(2)} at heat 10)`);
 }
 
+// ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----
+// the finale, then verify the field sweep, the silent spawner, the volley
+// mercy rule, the 3-hit rule and the distinct end screen.
+{
+  const pump = (pred, maxFrames, onFrame) => {
+    for (let i = 0; i < maxFrames; i++) {
+      now += dtMs;
+      const cb = rafQueue.shift();
+      if (!cb) throw new Error('raf died in finale pump');
+      cb(now);
+      if (st.mode === 'draft') {
+        const c0 = elements['ov-cards'].children[0]; c0 && c0.click(); continue;
+      }
+      if (st.mode === 'evolve') {
+        const kids = elements['ov-cards'].children;
+        kids[kids.length - 1] && kids[kids.length - 1].click(); continue;
+      }
+      if (onFrame) onFrame(i);
+      if (pred()) return i;
+    }
+    return -1;
+  };
+
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  // Jump straight to the END_WAVE fight and slay the cast.
+  st.wave.num = CFG.ESCALATION.END_WAVE;
+  st.wave.endsAt = st.time;   // boss spawns on the next tick
+  pump(() => (st.wave.bosses || []).some(b => b.hp > 0), 60 * 30);
+  assert(st.wave.bosses && st.wave.bosses.some(b => b.hp > 0),
+    'finale probe needs a live END_WAVE cast');
+  st.wave.endsAt = st.time + 120 * 60;   // block spawnBoss re-fire
+  for (const b of st.wave.bosses) if (b.hp > 0) b.hp = 0;
+
+  // Death -> (boss-XP drafts, auto-picked) -> portal cine -> FINALE (the
+  // cine runs ~5.4s wall-clock on its own).
+  const reached = pump(() => st.mode === 'finale', 60 * 40);
+  assert(reached >= 0, 'END_WAVE boss death must hand off to the finale (mode=' + st.mode + ')');
+
+  // (1) The sweep: ONLY the maw remains; no portal; the HUD announces it.
+  pump(() => false, 2);   // HUD lags a frame
+  assert(st.enemies.length === 1 && st.enemies[0].finalBoss,
+    'the finale field must hold ONLY the maw (enemies=' + st.enemies.length + ')');
+  assert(st.finalBoss === st.enemies[0], 'state.finalBoss must alias the enemies entry');
+  assert(!st.portal, 'no portal once the finale starts');
+  assert(st.chests.length === 0 && st.arches.length === 0, 'chests/arches must be swept');
+  assert(/THE MAW OF THE HORDE 2\.50M/.test(hudText()),
+    'HUD must announce the maw with an M-formatted hp: ' + hudText());
+
+  // (2) The spawner stays silent; the hero's volley drains the display hp
+  // (topping hp each frame keeps the probe's pilot alive through barrages).
+  const maw = st.finalBoss;
+  pump(() => false, 60 * 5, () => { st.player.hp = st.player.stats.maxHp; });
+  assert(st.enemies.length === 1 && st.enemies[0] === maw,
+    'no spawns during the finale (enemies=' + st.enemies.length + ')');
+  assert(maw.hp < maw.maxHp && maw.hp >= 1,
+    `the maw bar must drain but respect the floor (${maw.hp}/${maw.maxHp})`);
+
+  // (3) A tagged barrage fires within GRACE + CYCLE (~6.5s from finale start).
+  let sawVolley = false;
+  pump(() => { sawVolley = st.enemyShots.some(s => s.volleyId !== undefined); return sawVolley; },
+    60 * 12, () => { st.player.hp = st.player.stats.maxHp; });
+  assert(sawVolley, 'the maw must fire a volleyId-tagged barrage');
+
+  // (4)+(5) Mercy rule + 3-hit rule, deterministically: park frozen maw
+  // rounds on the hero (maw teleported away so body contact can't interfere).
+  {
+    st.finalBoss.x = -600; st.finalBoss.y = -600;
+    st.enemyShots.length = 0;
+    const full = st.player.stats.maxHp;
+    const third = Math.ceil(full / 3);
+    const shot = (id) => st.enemyShots.push({
+      x: st.player.x, y: st.player.y, vx: 0, vy: 0, damage: 0, age: 0, kind: 'maw', volleyId: id,
+    });
+    st.player.hp = full; st.player.invuln = 0; st.volleyMask = null;
+    shot(77);
+    now += dtMs; let cb = rafQueue.shift(); cb(now);
+    assert(st.player.hp === full - third,
+      `a volley's first hit must cost exactly ceil(maxHp/3) (${full} -> ${st.player.hp})`);
+    st.player.invuln = 0;
+    shot(77);   // SAME volleyId again
+    now += dtMs; cb = rafQueue.shift(); cb(now);
+    assert(st.player.hp === full - third,
+      'the second hit of the SAME volley must pass harmlessly (mercy rule)');
+    st.player.invuln = 0;
+    shot(78);   // fresh volleyId
+    now += dtMs; cb = rafQueue.shift(); cb(now);
+    assert(st.player.hp === full - 2 * third, 'a NEW volleyId must bite again');
+    st.player.invuln = 0;
+    shot(79);
+    now += dtMs; cb = rafQueue.shift(); cb(now);
+    assert(st.mode === 'dead', 'three volley hits must kill the hero (mode=' + st.mode + ')');
+    assert(elements['ov-title'].textContent === 'THE HORDE CLAIMS ALL',
+      'finale death must show the distinct end card (got ' +
+      elements['ov-title'].textContent + ')');
+    let hasRetry = false;
+    for (const c of elements['ov-cards'].children) {
+      if ((c.innerHTML || '').includes('RETRY')) hasRetry = true;
+    }
+    assert(hasRetry, 'the finale end card must offer RETRY');
+  }
+  console.log('finale: sweep + silent spawner + mercy rule + 3-hit rule + end card verified');
+}
+
 // (4) INTRO SKIP: any key during the movie jumps straight to the title menu.
 // Runs LAST on purpose: the fresh module re-import overwrites the shared
 // keyHandler stub with a handler bound to the SECOND module's state.
