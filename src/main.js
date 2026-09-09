@@ -428,7 +428,9 @@ function continueRun() {
   spawnWaveArches();
   state.mode = 'playing';
   overlay.style.display = 'none';
-  toast('WAVE ' + state.wave.num + ' - THE HORDE GROWS');
+  // WAVE-9B/2: announce the AREA change with the wave — the theme ladder in
+  // CONFIG.GROUND.THEMES cycles by wave number (render.js groundTheme).
+  toast('WAVE ' + state.wave.num + ' - ' + C.GROUND.THEMES[(state.wave.num - 1) % C.GROUND.THEMES.length].name);
 }
 
 // ---------- BOSS: spawns on wave expiry; timer pauses while any lives --------

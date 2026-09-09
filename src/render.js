@@ -52,13 +52,15 @@ function cellRand(cx, cy, seed, salt) {
   h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13;
   return (h >>> 0) / 4294967296;
 }
-// Muted tone families (per-run pick) — subtle by design: decor sits UNDER
-// entities and must never compete with them for attention.
-const GROUND_PALETTES = [
-  { tuft: '#182418', tuft2: '#1e2c1c', stone: '#1c1c28', stoneTop: '#262636', crack: '#0a0a10', slab: '#12121c' },
-  { tuft: '#20222e', tuft2: '#262a38', stone: '#1a201f', stoneTop: '#242e2c', crack: '#08080e', slab: '#111317' },
-  { tuft: '#2a2218', tuft2: '#322a1e', stone: '#201c1a', stoneTop: '#2c2824', crack: '#0a0808', slab: '#161310' },
-];
+// Muted tone families — WAVE-9B/2: the family is chosen by WAVE NUMBER from
+// CONFIG.GROUND.THEMES (per-wave area identity; the per-run groundSeed still
+// shapes which cells carry a piece). Subtle by design: decor sits UNDER
+// entities and must never compete with them for attention — except SNOWFIELD,
+// which reads clearly brighter by request.
+export function groundTheme(waveNum) {
+  const t = C.GROUND.THEMES;
+  return t[(Math.max(1, waveNum || 1) - 1) % t.length];
+}
 
 // Wave-6: item-drop glow colors by rarity (loot.js) + arch gate colors.
 const RARITY_COLORS = { COMMON: '#a8a8c0', RARE: '#4a8cff', EPIC: '#c46ad8', LEGENDARY: '#ffd75e' };
@@ -122,10 +124,12 @@ export class Renderer {
 
   render(state, cam) {
     const g = this.ctx;
-    // Background: dark field with subtle grid dots.
-    g.fillStyle = '#0e0e16';
+    // WAVE-9B/2 area identity: ground tone + grid dots come from the active
+    // wave's theme (theme ladder in CONFIG.GROUND.THEMES).
+    const theme = groundTheme(state.wave ? state.wave.num : 1);
+    g.fillStyle = theme.base;
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
-    g.fillStyle = '#151522';
+    g.fillStyle = theme.grid;
     const gs = 24;
     const ox = ((-cam.x % gs) + gs) % gs;
     const oy = ((-cam.y % gs) + gs) % gs;
@@ -135,7 +139,12 @@ export class Renderer {
 
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
-    this.drawGround(g, state.groundSeed || 1, cam);
+    this.drawGround(g, state.groundSeed || 1, cam, theme);
+    // Optional subtle scene tint for the theme (still under the entities).
+    if (theme.tint) {
+      g.fillStyle = theme.tint;
+      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+    }
 
     // Gems.
     for (const gem of state.gems) {
@@ -556,10 +565,11 @@ export class Renderer {
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------
-  drawGround(g, seed, cam) {
+  drawGround(g, seed, cam, theme) {
     const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY, B = C.GROUND.BOUND;
-    // Per-run tone family so fields look different between runs.
-    const pal = GROUND_PALETTES[Math.floor(cellRand(0, 0, seed, 0x51ab) * GROUND_PALETTES.length)];
+    // WAVE-9B/2: palette family rides the WAVE theme (groundSeed keeps
+    // shaping WHICH cells carry a piece — the field itself stays per-run).
+    const pal = theme || groundTheme(1);
     const c0 = Math.floor(cam.x / CELL), c1 = Math.floor((cam.x + C.VIEW_W) / CELL);
     const r0 = Math.floor(cam.y / CELL), r1 = Math.floor((cam.y + C.VIEW_H) / CELL);
     for (let cy = r0; cy <= r1; cy++) {

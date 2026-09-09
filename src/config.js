@@ -124,6 +124,33 @@ export const CONFIG = {
     CELL: 32,          // px per decor cell (one optional piece per cell)
     DENSITY: 0.42,     // chance a cell carries a piece
     BOUND: 660,        // decor stops at the arena walls (player clamps +-600)
+    // WAVE-9B/2 per-wave AREA IDENTITY: the theme ladder cycles by WAVE number
+    // (never by run — Sk408 beat the boss, entered wave 2 and the ground read
+    // identical). Each theme = base ground tone + grid dots + decor palette
+    // family + optional subtle scene tint (drawn under the entities). The
+    // per-run groundSeed still shapes WHICH cells carry a piece; the family
+    // is wave-chosen. SNOWFIELD is deliberately the brightest (Sk408: "it
+    // could go white or something").
+    THEMES: [
+      { name: 'THE VERDANT HOLLOW', base: '#0e1610', grid: '#16241b',
+        tuft: '#1c3222', tuft2: '#24402a', stone: '#1c2422', stoneTop: '#2a3630',
+        crack: '#08100a', slab: '#121c14', tint: null },
+      { name: 'THE ASHEN WASTE', base: '#121216', grid: '#1b1b21',
+        tuft: '#26262c', tuft2: '#2e2e36', stone: '#1e1e24', stoneTop: '#2c2c34',
+        crack: '#0a0a0e', slab: '#16161c', tint: 'rgba(120,120,140,0.04)' },
+      { name: 'THE SNOWFIELD', base: '#c9d2e0', grid: '#b8c2d4',
+        tuft: '#9fb8e8', tuft2: '#c2d6f4', stone: '#8ea6cc', stoneTop: '#dce8fa',
+        crack: '#8c9cbc', slab: '#d4ddec', tint: 'rgba(190,215,255,0.05)' },
+      { name: 'THE BLOOD RUST', base: '#160d0b', grid: '#221412',
+        tuft: '#3a1a14', tuft2: '#4a241a', stone: '#241410', stoneTop: '#38221a',
+        crack: '#0c0604', slab: '#1a100c', tint: 'rgba(160,50,30,0.04)' },
+      { name: 'THE BONE DESERT', base: '#1a150c', grid: '#262016',
+        tuft: '#3a3020', tuft2: '#4a3e2a', stone: '#2c2418', stoneTop: '#443826',
+        crack: '#0e0a04', slab: '#201a10', tint: 'rgba(220,190,120,0.03)' },
+      { name: 'THE VOID REACH', base: '#0f0d1c', grid: '#191730',
+        tuft: '#241e44', tuft2: '#30285c', stone: '#1c1834', stoneTop: '#2c2650',
+        crack: '#080614', slab: '#131024', tint: 'rgba(110,80,200,0.05)' },
+    ],
   },
 
   // Intercept drift for pickup-adjacent world objects (the AutoPilot is

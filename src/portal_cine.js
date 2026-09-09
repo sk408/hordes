@@ -16,15 +16,32 @@
 import { BOSS_SPRITES } from './bosses.js';
 
 // ---------- timeline ----------
-export const CINE_DURATION = 3800;   // ms
+// WAVE-9B/1 (Sk408: "slow it to about 70 percent"): the cinematic plays at
+// CINE_SPEED playback rate. Every beat below is authored in SCENE
+// milliseconds on the original 3800ms design timeline; render() maps
+// wall-clock t -> scene-ms (t * CINE_SPEED), so the exact same deterministic
+// beats replay ~143% longer. PHASES/CINE_DURATION are exported in WALL-CLOCK
+// ms (scene / CINE_SPEED) — hb1's clock and hb3's phase-keyed audio cues
+// line up with the stretched beats automatically (phases stretch uniformly).
+export const CINE_SPEED = 0.7;                 // playback rate
+const SCENE_DURATION = 3800;                   // scene-ms design timeline
+export const CINE_DURATION = Math.round(SCENE_DURATION / CINE_SPEED);   // 5429 wall-ms
 
-// name -> [start, end) in ms. Boss falls -> portal -> hero dissolves in ->
-// white-out/fade to black (hb1 cuts to the intermission).
-export const PHASES = {
+const SCENE = {
   KILL:    [0,    1200],   // hero lands the killing blow; boss collapses to a pile
   WALK:    [1200, 2000],   // portal fades in behind the pile; hero walks in
   DISSOLVE:[2000, 3200],   // hero dissolves into rising pixels; portal brightens
   FADE:    [3200, 3800],   // white-out, then fade to black
+};
+const wall = (s) => Math.round(s / CINE_SPEED);
+
+// name -> [start, end) in WALL-CLOCK ms. Boss falls -> portal -> hero
+// dissolves in -> white-out/fade to black (hb1 cuts to the intermission).
+export const PHASES = {
+  KILL:    [wall(SCENE.KILL[0]),     wall(SCENE.KILL[1])],
+  WALK:    [wall(SCENE.WALK[0]),     wall(SCENE.WALK[1])],
+  DISSOLVE:[wall(SCENE.DISSOLVE[0]), wall(SCENE.DISSOLVE[1])],
+  FADE:    [wall(SCENE.FADE[0]),     wall(SCENE.FADE[1])],
 };
 
 export function isDone(t) { return t >= CINE_DURATION; }
@@ -132,31 +149,34 @@ function bossCollapseU(t) { return clamp01((t - BLOW_T) / 550); }
 // Hero x: holds left, lunges for the blow, turns and walks to the portal,
 // then steps through its center while dissolving.
 function heroX(t) {
-  if (t < PHASES.WALK[0]) return 140 + ((t >= 450 && t < 750) ? 34 : 0);
-  if (t < PHASES.DISSOLVE[0]) return lerp(140, 296, clamp01((t - PHASES.WALK[0]) / 800));
-  return lerp(296, 322, clamp01((t - PHASES.DISSOLVE[0]) / 1200));
+  if (t < SCENE.WALK[0]) return 140 + ((t >= 450 && t < 750) ? 34 : 0);
+  if (t < SCENE.DISSOLVE[0]) return lerp(140, 296, clamp01((t - SCENE.WALK[0]) / 800));
+  return lerp(296, 322, clamp01((t - SCENE.DISSOLVE[0]) / 1200));
 }
 
 // Dissolve progress: hero pixel dropout + zoom shrink (8px -> 5px).
-function dissolveU(t) { return clamp01((t - PHASES.DISSOLVE[0]) / 1200); }
+function dissolveU(t) { return clamp01((t - SCENE.DISSOLVE[0]) / 1200); }
 
 // Portal ring: dots reveal + alpha during WALK, full ring + core glow
 // brightening through DISSOLVE.
 function portalAlpha(t) {
-  if (t < PHASES.WALK[0]) return 0;
-  if (t < PHASES.DISSOLVE[0]) return 0.30 + 0.45 * clamp01((t - PHASES.WALK[0]) / 800);
+  if (t < SCENE.WALK[0]) return 0;
+  if (t < SCENE.DISSOLVE[0]) return 0.30 + 0.45 * clamp01((t - SCENE.WALK[0]) / 800);
   return 0.75 + 0.25 * dissolveU(t);
 }
 function portalDots(t) {
-  if (t < PHASES.WALK[0]) return 0;
-  return Math.min(PORTAL_DOTS, Math.floor(6 + 22 * clamp01((t - PHASES.WALK[0]) / 800)));
+  if (t < SCENE.WALK[0]) return 0;
+  return Math.min(PORTAL_DOTS, Math.floor(6 + 22 * clamp01((t - SCENE.WALK[0]) / 800)));
 }
 
 // ---------- render ----------
 export function render(g, tRaw) {
-  // Skip-safety: clamp the scene clock — anything past the end is a black
-  // hold frame, anything negative plays from the first beat.
-  const t = Math.max(0, Math.min(tRaw, CINE_DURATION));
+  // Skip-safety + SLOW-MO: clamp the WALL-CLOCK input, then map it onto the
+  // design timeline at CINE_SPEED (t is scene-ms below — every beat is the
+  // original 3800ms choreography, replayed at 70% speed). Anything past the
+  // end is a black hold frame, anything negative plays from the first beat.
+  const t = Math.min(SCENE_DURATION,
+                     Math.max(0, Math.min(tRaw, CINE_DURATION)) * CINE_SPEED);
 
   // Sky + static stars.
   g.fillStyle = BG;
@@ -251,7 +271,7 @@ export function render(g, tRaw) {
   const pxh = PX - Math.floor(uD * 3);
   const hx = Math.floor(heroX(t));
   const heroTop = GROUND_Y - HERO_A.length * pxh;
-  const mirror = t >= PHASES.WALK[0];
+  const mirror = t >= SCENE.WALK[0];
   const frameH = mirror ? HERO_B : (Math.floor(t / 160) % 2 === 0 ? HERO_A : HERO_B);
   if (uD < 1) {
     drawGridScaled(g, frameH, HERO_PALETTE, hx, heroTop, pxh, mirror, uD, 91);
@@ -273,7 +293,7 @@ export function render(g, tRaw) {
   }
 
   // FADE: white-out by 3500, black by 3800 (hb1 cuts to the intermission).
-  const wl = clamp01((t - PHASES.FADE[0]) / 300);
+  const wl = clamp01((t - SCENE.FADE[0]) / 300);
   if (wl > 0) { g.fillStyle = WHITE(wl); g.fillRect(0, 0, W, H); }
   if (t >= 3500) { g.fillStyle = BLACK(clamp01((t - 3500) / 300)); g.fillRect(0, 0, W, H); }
   if (tRaw >= CINE_DURATION) { g.fillStyle = '#000000'; g.fillRect(0, 0, W, H); }
@@ -281,7 +301,7 @@ export function render(g, tRaw) {
 
 // ---------- test seam (read-only; mirrors INTRO_TEST pattern) ----------
 export const CINE_TEST = {
-  SEED: CINE_SEED,
+  SEED: CINE_SEED, SPEED: CINE_SPEED,
   COLORS: { BG, GROUND, BOSS_HIDE: BOSS.palette[1], HERO_BODY: HERO_PALETTE[4],
             PILE, GLOW, RISE: RISE_COLORS[0], FLASH, SLASH: '#ffffff' },
   ZOOM: PX,

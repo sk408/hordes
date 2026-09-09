@@ -5,6 +5,8 @@
 import assert from 'node:assert';
 import { CONFIG as CFG } from '../src/config.js';
 import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
+import { groundTheme } from '../src/render.js';
+import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -573,12 +575,16 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
   keyHandler({ key: 'c' });   // CONTINUE into wave 2
   assert(st.mode === 'playing', 'CONTINUE should resume play (mode=' + st.mode + ')');
+  // WAVE-9B/2: the wave-2 announce toast names the new AREA (HUD lags a frame).
+  now += dtMs; const cbT = rafQueue.shift(); cbT && cbT(now);
+  assert(/WAVE 2 - THE ASHEN WASTE/.test(hudText()),
+    'the wave toast must announce the theme: ' + hudText());
   forceBossDeath();
   cineFrames = 0;
   const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
     () => { if (st.mode === 'portal-cine') cineFrames++; });
   assert(took >= 0, 'the movie must hand off to the intermission on its own');
-  assert(cineFrames >= Math.ceil(3800 / dtMs) - 2,
+  assert(cineFrames >= Math.ceil(CINE_DURATION / dtMs) - 2,
     `the 3.8s movie should run to isDone (${cineFrames} frames)`);
   console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
 
@@ -676,6 +682,24 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(m2.__TEST.state.mode === 'menu', 'any key must skip the intro to the menu');
   console.log('intro skip: keypress jumps straight to the HORDES menu');
+}
+
+// ---- WAVE-9B/2 area identity: ground theme ladder cycles by wave ----------
+{
+  const t1 = groundTheme(1), t2 = groundTheme(2), t3 = groundTheme(3), t7 = groundTheme(7);
+  assert(t1.name === 'THE VERDANT HOLLOW' && t2.name === 'THE ASHEN WASTE' &&
+    t3.name === 'THE SNOWFIELD', 'wave 1/2/3 must map to the first three themes');
+  assert(t7.name === t1.name, 'the theme ladder must cycle (wave 7 == wave 1)');
+  assert(groundTheme(4).name === 'THE BLOOD RUST' &&
+    groundTheme(5).name === 'THE BONE DESERT' && groundTheme(6).name === 'THE VOID REACH',
+    'themes 4/5/6 must complete the ladder');
+  assert(new Set([1, 2, 3, 4, 5, 6].map(w => groundTheme(w).base)).size === 6,
+    'every theme must have a distinct ground tone');
+  // SNOWFIELD is Sk408's example: the ground must read clearly brighter.
+  const lum = (hex) => parseInt(hex.slice(1, 3), 16);   // red channel is enough
+  assert(lum(t3.base) > 150 && lum(t1.base) < 40,
+    'the snow theme base must be bright vs the dark verdant base');
+  console.log('ground themes: ' + [1, 2, 3, 4, 5, 6].map(w => groundTheme(w).name).join(' | '));
 }
 
 console.log('SMOKE TEST PASSED');
