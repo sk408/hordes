@@ -1616,9 +1616,11 @@ function menuCard(name, sub, onclick, dim) {
   return el;
 }
 
-function openMenu() {
-  // Common frame for every meta screen; caller fills ovCards.
-  state.mode = 'menu';
+function openMenu(mode = 'menu') {
+  // Common frame for every meta screen; caller fills ovCards. WAVE-17: the
+  // in-run SETTINGS screen passes its own pause mode ('settings') so the
+  // frame loop keeps NOT ticking — identical pause contract to 'stats'.
+  state.mode = mode;
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   ovCards.style.flexWrap = 'wrap';
@@ -1702,43 +1704,46 @@ function showCharacters() {
 }
 
 let resetArmed = false;
-function showSettings(disarm = true) {
-  openMenu();
+function showSettings(disarm = true, inRun = false) {
+  openMenu(inRun ? 'settings' : 'menu');
   // Sk408 bug: the arm click re-rendered through here, which cleared the
   // arm flag the same frame it was set — RESET could never confirm. Only
-  // disarm when settings is opened fresh (from the title menu).
+  // disarm when settings is opened fresh (title menu or the in-run cog).
   if (disarm) resetArmed = false;
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
   ovSub.textContent = 'audio, hud & profile';
   menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
     audio.setMusicEnabled(!audio.getMusicEnabled());
-    showSettings();
+    showSettings(true, inRun);
   });
   menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
     audio.setSfxEnabled(!audio.getSfxEnabled());
-    showSettings();
+    showSettings(true, inRun);
   });
   // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
   menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
     setHudTextEnabled(!hudTextEnabled());
-    showSettings();
+    showSettings(true, inRun);
   });
   // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
   menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
     cycleZoom(1);
-    showSettings();
+    showSettings(true, inRun);
   });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
     resetArmed ? 'wipes gold, upgrades & unlocks' : 'tap twice to confirm',
     () => {
-      if (!resetArmed) { resetArmed = true; showSettings(false); return; }
+      if (!resetArmed) { resetArmed = true; showSettings(false, inRun); return; }
       profile = makeProfile();
       saveProfile(profile);
       resetArmed = false;
-      showSettings(false);
+      showSettings(false, inRun);
     });
-  menuCard('BACK', 'to title [ESC]', () => showTitle());
+  // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
+  // instead of bailing to the title (which would abandon it).
+  if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
+  else menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
@@ -1930,6 +1935,23 @@ function closeStats() {
   overlay.style.display = 'none';
 }
 
+// WAVE-17 SETTINGS COG (Sk408): in-run SETTINGS, reached from the touch
+// layer's cog button (data-act="settings"). Same pause contract as the
+// FIELD REPORT above — 'settings' is not a ticked mode, so playing AND the
+// finale both freeze with zero spawner/clock drift; the return mode is
+// stashed and closing restores it. RESET always opens DISARMED from here
+// (showSettings' disarm pass below), never pre-armed from a prior visit.
+function openSettings() {
+  if (state.mode !== 'playing' && state.mode !== 'finale') return;
+  state.settingsReturn = state.mode;   // the finale resumes its own tick
+  showSettings(true, true);
+}
+function closeSettings() {
+  if (state.mode !== 'settings') return;
+  state.mode = state.settingsReturn || 'playing';
+  overlay.style.display = 'none';
+}
+
 // ---------- Input: shared action seam (keyboard AND touch use these) ----------
 // One code path per action — the touch buttons in index.html and the keydown
 // handler both funnel through runAction, so no game logic is duplicated.
@@ -1941,6 +1963,12 @@ function runAction(act) {
   if (act === 'stats') {
     if (state.mode === 'stats') closeStats();
     else openStats();
+    return;
+  }
+  // WAVE-17: the touch cog — opens/closes the in-run settings pause.
+  if (act === 'settings') {
+    if (state.mode === 'settings') closeSettings();
+    else openSettings();
     return;
   }
   // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
@@ -2011,6 +2039,9 @@ window.addEventListener('keydown', (ev) => {
     }
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
+  } else if (state.mode === 'settings') {
+    // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
+    if (k === 'escape') closeSettings();
   } else if (state.mode === 'stats') {
     // WAVE-12 FIELD REPORT: S/ESC/I (or any card) closes and resumes.
     if (k === 's' || k === 'escape' || k === 'i') closeStats();
@@ -2594,6 +2625,8 @@ export const __TEST = {
   state, get controller() { return controller; }, startRun,
   getProfile: () => profile, refreshSynergies,
   renderer, openStats, closeStats,
+  // WAVE-17 settings-cog seam: in-run open/close (pause contract probes).
+  openSettings, closeSettings,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },

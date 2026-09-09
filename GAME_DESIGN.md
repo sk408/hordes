@@ -627,3 +627,20 @@ one:
     zoom is presentation only.
   - Verified: 21/21 suites, smoke x3 (persistence round-trip, live apply,
     HUD-native proof, camera lock, cycle wrap), lightpanda clean.
+- 2026-09-09 (wave-17): **TOUCH LAYOUT BALANCE + SETTINGS COG** (Sk408
+  directive) — hb1 + overseer probe fix:
+  - BALANCE: both touch pads are now identical single-column 4-button
+    stacks (the old HP/MP side-by-side pair made the right pad ~2x wider,
+    so the centered joystick read as pushed left). Equal pads + centered
+    joystick split the side gaps equally at every width — layout-math
+    assertions in smoke (equal gaps; joy clears pads at 360/390/480).
+  - SETTINGS COG: small pixel gear (pure CSS ring + box-shadow teeth, no
+    assets) top-right of the screen, out of the thumb zone. Opens the
+    in-run SETTINGS pause screen (same pause contract as the field
+    report; BACK/ESC resumes; RESET never pre-armed via cog; works in
+    finale).
+  - Overseer fix: event-feed smoke probe was racy — the live pilot can
+    toast an unrelated line (an arch pickup) inside the probe's 4.4s
+    window; probe now tracks only its own lines (12/12 smoke reps green
+    around the fix).
+  - Verified: 21/21 suites, smoke x12 total, lightpanda clean.

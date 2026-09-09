@@ -74,7 +74,11 @@
   }
   #touch .pad.left { left: max(10px, env(safe-area-inset-left, 10px)); }
   #touch .pad.right { right: max(10px, env(safe-area-inset-right, 10px)); }
-  #touch .pair { display: flex; gap: 10px; }
+  /* WAVE-17 BALANCE (Sk408): both pads are identical single-column 4-button
+     stacks (the old HP/MP side-by-side pair made the right pad ~2x wider so
+     the centered joystick looked pushed left). Equal pads + the centered
+     joystick split the side gaps equally at every width — verified by layout
+     math in test/smoke.mjs. */
   /* WAVE-15 analog joystick (replaces the WAVE-13 d-pad, Sk408 playtest):
      circular base + drag knob, shown only while the manual pilot is bound
      (main.js toggles display). Drag vector = knob offset from center,
@@ -122,6 +126,42 @@
   #touch button .badge {
     display: block; font-size: 11px; color: #ffd75e; margin-top: 2px;
   }
+  /* WAVE-17 SETTINGS COG (Sk408): small pixel gear, top-right of the touch
+     layer — screen chrome, kept OUT of the bottom thumb zone. Opens the
+     in-run SETTINGS pause screen (main.js openSettings: same pause contract
+     as the FIELD REPORT; BACK/ESC resumes). Gear drawn in pure CSS: ring
+     body + 8 box-shadow teeth, no image assets. */
+  #touch button.cog {
+    position: absolute;
+    top: max(10px, env(safe-area-inset-top, 10px));
+    right: max(10px, env(safe-area-inset-right, 10px));
+    width: 46px; height: 46px; min-width: 0; min-height: 0; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: auto;
+  }
+  .cog-gear { position: relative; width: 18px; height: 18px; }
+  .cog-gear::before {          /* ring body */
+    content: ''; position: absolute; inset: 3px;
+    border: 3px solid #e8e8f0; border-radius: 50%;
+  }
+  .cog-gear::after {           /* 8 teeth: 4 cardinal + 4 diagonal dots */
+    content: ''; position: absolute; left: 8px; top: 0;
+    width: 2px; height: 2px; background: #e8e8f0;
+    box-shadow:
+      -8px 0 0 #e8e8f0, 8px 0 0 #e8e8f0,
+      0 16px 0 #e8e8f0,
+      -8px 16px 0 #e8e8f0, 8px 16px 0 #e8e8f0,
+      -8px 8px 0 #e8e8f0, 8px 8px 0 #e8e8f0;
+  }
+  #touch button.cog:active .cog-gear::before { border-color: #ffd75e; }
+  #touch button.cog:active .cog-gear::after {
+    background: #ffd75e;
+    box-shadow:
+      -8px 0 0 #ffd75e, 8px 0 0 #ffd75e,
+      0 16px 0 #ffd75e,
+      -8px 16px 0 #ffd75e, 8px 16px 0 #ffd75e,
+      -8px 8px 0 #ffd75e, 8px 8px 0 #ffd75e;
+  }
 
   /* Bigger tap targets for draft cards on small/touch screens. */
   @media (pointer: coarse), (max-width: 700px) {
@@ -147,11 +187,10 @@
     <div class="pad right">
       <button data-act="q">FROST<span class="badge" id="tc-q">RDY</span></button>
       <button data-act="w">OVER<span class="badge" id="tc-w">RDY</span></button>
-      <div class="pair">
-        <button data-act="h">HP<span class="badge" id="tc-h">1</span></button>
-        <button data-act="n">MP<span class="badge" id="tc-n">1</span></button>
-      </div>
+      <button data-act="h">HP<span class="badge" id="tc-h">1</span></button>
+      <button data-act="n">MP<span class="badge" id="tc-n">1</span></button>
     </div>
+    <button class="cog" id="tc-cog" data-act="settings" aria-label="settings"><span class="cog-gear"></span></button>
   </div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>

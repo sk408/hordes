@@ -3,6 +3,7 @@
 // auto-attack kills enemies, gems are collected, levels are gained,
 // drafts appear and picks apply.
 import assert from 'node:assert';
+import fs from 'node:fs';
 import { CONFIG as CFG } from '../src/config.js';
 import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
 import { groundTheme } from '../src/render.js';
@@ -1237,13 +1238,16 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(feed.every(l => l.alpha === 1), 'fresh lines are fully opaque');
 
   // (c) fade: past ttl 3 the lines dim (0 < alpha < 1); past ttl 4 they go.
+  // Track ONLY our lines — the live pilot can toast unrelated events (an
+  // arch pickup landed mid-probe once) and those must not fail the probe.
+  const ours = new Set(feed.map(l => l.msg));
   pump(Math.round(60 * 3.2));
-  feed = r.hudChrome.feed;
+  feed = (r.hudChrome.feed || []).filter(l => ours.has(l.msg));
   assert(feed.length > 0 && feed.every(l => l.alpha < 1 && l.alpha > 0),
     'lines mid-fade in their final second (' + feed.map(l => l.alpha.toFixed(2)) + ')');
   pump(Math.round(60 * 1.2));
-  feed = r.hudChrome.feed;
-  assert(feed.length === 0, 'lines must expire past ~4s (got ' + JSON.stringify(feed) + ')');
+  feed = (r.hudChrome.feed || []).filter(l => ours.has(l.msg));
+  assert(feed.length === 0, 'our lines must expire past ~4s (got ' + JSON.stringify(feed) + ')');
   console.log('event feed: FOUND-tint/potion lines land, cap 3 newest-lowest, fade + expiry verified');
 }
 
@@ -1355,6 +1359,81 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('world zoom: live +/- apply, 2x window halved, camera locked, HUD proven native 1x');
 }
 
+// ---- WAVE-17 TOUCH BALANCE + SETTINGS COG ---------------------------------------
+// (1) Balance is verified structurally + arithmetically from the real
+// index.html: identical single-column 4-button pads + the centered 120px
+// joystick split the side gaps EQUALLY at every viewport width. (2) The cog
+// is exercised through the REAL touch pointer routing (pointerdown handler
+// -> runAction('settings')): pause, clock freeze, disarm, resume, ESC.
+{
+  const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const touchHtml = html.slice(html.indexOf('<div id="touch">'), html.indexOf('<div id="overlay">'));
+  const seg = (a, b) => touchHtml.slice(touchHtml.indexOf(a), touchHtml.indexOf(b));
+  const leftHtml = seg('class="pad left"', '<div id="joy"');
+  const rightHtml = seg('class="pad right"', '<button class="cog"');
+  const countBtn = (s) => (s.match(/<button/g) || []).length;
+  assert(countBtn(leftHtml) === 4 && countBtn(rightHtml) === 4,
+    'both pads must be single-column 4-button stacks (L=' + countBtn(leftHtml) +
+    ' R=' + countBtn(rightHtml) + ')');
+  assert(!/class="pair"/.test(touchHtml),
+    'no side-by-side pair may widen the right pad');
+  assert(/data-act="settings"/.test(touchHtml) && /cog-gear/.test(touchHtml),
+    'the touch layer must carry the pixel-gear settings cog');
+  // Layout math: pads butt to the edges (10px insets), joy centered at 50%
+  // with a 120px base. Button box = 68 content + 24 h-padding + 4 border.
+  // gapL === gapR holds identically (equal pads); joy must clear both pads
+  // even on a narrow 360px phone.
+  const BTN_W = 68 + 2 * 12 + 2 * 2;
+  for (const W of [360, 390, 480]) {
+    const gapL = (W / 2 - 60) - (10 + BTN_W);
+    const gapR = (W - 10 - BTN_W) - (W / 2 + 60);
+    assert(gapL === gapR, 'joystick gap must split equally at W=' + W +
+      ' (L=' + gapL + ' R=' + gapR + ')');
+    assert(gapL > 0, 'joystick must clear the pads at W=' + W + ' (gap=' + gapL + ')');
+  }
+
+  // --- cog behavior through the REAL pointer routing, on the live run ---
+  const T = mainMod.__TEST;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+  const fireCog = () => elements['touch']._ev['pointerdown']({
+    preventDefault() {}, pointerId: 41, clientX: 0, clientY: 0,
+    target: {
+      closest: (s) => (s === '[data-joy]') ? null
+        : (s === '[data-act]' ? { dataset: { act: 'settings' } } : null),
+    },
+  });
+  assert(st.mode === 'playing', 'cog probes need the live run (mode=' + st.mode + ')');
+
+  // Opens settings mid-run; the clock freezes while it is open.
+  const t0 = st.time;
+  fireCog();
+  assert(st.mode === 'settings', 'the cog must open settings in-run (mode=' + st.mode + ')');
+  assert(elements['overlay'].style.display === 'flex', 'the SETTINGS overlay is showing');
+  assert(elements['ov-title'].textContent === 'SETTINGS', 'title reads SETTINGS');
+  pump(5);
+  assert(st.time === t0, 'the game clock must be frozen while settings is open');
+
+  // RESET disarm: arm it, leave, come back via the cog — never pre-armed.
+  const cards = elements['ov-cards'];
+  const byTitle = (t) => Array.from(cards.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  byTitle('RESET PROFILE').click();          // arm
+  assert(byTitle('CONFIRM RESET?'), 'arm click shows CONFIRM RESET?');
+  byTitle('BACK').click();                   // closeSettings -> resume
+  assert(st.mode === 'playing', 'BACK must resume the run');
+  pump(2);
+  assert(st.time > t0, 'closing must resume the game clock');
+  fireCog();                                  // re-open via the cog
+  assert(st.mode === 'settings' && byTitle('RESET PROFILE') && !byTitle('CONFIRM RESET?'),
+    'the cog must re-open DISARMED (never pre-armed from the prior visit)');
+  keyHandler({ key: 'Escape' });              // ESC closes too
+  assert(st.mode === 'playing', 'ESC must close the in-run settings');
+  pump(1);
+  console.log('touch cog: opens/pauses in-run, clock frozen, RESET re-opens disarmed, BACK/ESC resume');
+}
+
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----
 // the finale, then verify the field sweep, the silent spawner, the volley
 // mercy rule, the 3-hit rule and the distinct end screen.
@@ -1393,6 +1472,18 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // cine runs ~5.4s wall-clock on its own).
   const reached = pump(() => st.mode === 'finale', 60 * 40);
   assert(reached >= 0, 'END_WAVE boss death must hand off to the finale (mode=' + st.mode + ')');
+
+  // WAVE-17: the settings cog also works from the finale — same pause +
+  // resume contract, zero clock drift while open.
+  {
+    const tf = st.time;
+    mainMod.__TEST.openSettings();
+    assert(st.mode === 'settings', 'the cog must pause the finale (mode=' + st.mode + ')');
+    for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+    assert(st.time === tf, 'the finale clock must be frozen while settings is open');
+    mainMod.__TEST.closeSettings();
+    assert(st.mode === 'finale', 'closing must resume the finale');
+  }
 
   // (1) The sweep: ONLY the maw remains; no portal; the HUD announces it.
   pump(() => false, 2);   // HUD lags a frame
