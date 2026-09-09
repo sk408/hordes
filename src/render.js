@@ -215,6 +215,34 @@ export class Renderer {
       g.fillRect(x - 1, y - 17, 2, 2);            // keystone glint
     }
 
+    // WAVE-11 RUN SHRINES (shrines.js): pixel altar — stone slab + column +
+    // idol head, a soft aura pulse while unsold, a coin glyph on the face.
+    // Used shrines go dark (grey column, no aura) so the field reads spent.
+    if (state.shrine) {
+      const sh = state.shrine;
+      const x = Math.round(sh.x - cam.x), y = Math.round(sh.y - cam.y);
+      if (x > -20 && y > -30 && x < C.VIEW_W + 20 && y < C.VIEW_H + 30) {
+        const lit = !sh.used;
+        const glow = 0.5 + 0.5 * Math.sin((state.time || 0) * 2.5);
+        if (lit) {
+          g.fillStyle = 'rgba(255,215,94,' + (0.08 + 0.14 * glow).toFixed(2) + ')';
+          g.fillRect(x - 10, y - 20, 20, 30);     // aura field
+        }
+        g.fillStyle = '#3a3a46';                  // base slab
+        g.fillRect(x - 7, y + 4, 14, 4);
+        g.fillStyle = lit ? '#6a6a7a' : '#4a4a56'; // column
+        g.fillRect(x - 3, y - 8, 6, 12);
+        g.fillStyle = lit ? '#ffd75e' : '#8a8a96'; // idol head
+        g.fillRect(x - 4, y - 13, 8, 5);
+        g.fillStyle = lit ? '#fff6c8' : '#6a6a76';
+        g.fillRect(x - 1, y - 11, 2, 2);          // eye glint
+        if (lit) {                                // coin glyph, blinking
+          g.fillStyle = Math.floor((state.time || 0) * 3) % 2 === 0 ? '#ffe9a8' : '#c8a03a';
+          g.fillRect(x - 2, y - 4, 4, 4);
+        }
+      }
+    }
+
     // Portal (wave progression): a rotating ring of flames around a pulsing
     // core — the walk-in that ends the wave.
     if (state.portal) {
@@ -323,6 +351,35 @@ export class Renderer {
           g.fillRect(x - hw, y - hh - 3, w, 1);
           g.fillStyle = '#ff5566';
           g.fillRect(x - hw, y - hh - 3, Math.ceil(w * e.hp / e.maxHp), 1);
+        }
+      }
+      // WAVE-11 elite modifier tells (elite_mods.js stamps e.eliteMod + a
+      // `visual` string; render only reads it). Drawn for BOTH sprite and
+      // fallback branches — the tells layer on top of the elite gold outline.
+      if (e.eliteMod) {
+        const pl2 = state.player;
+        if (e.eliteMod === 'SWIFT') {
+          // Afterimage: 3 fading dots trailing opposite the player direction.
+          const dx = e.x - pl2.x, dy = e.y - pl2.y;
+          const len = Math.hypot(dx, dy) || 1;
+          g.fillStyle = 'rgba(104,224,128,0.5)';
+          for (let i = 1; i <= 3; i++) {
+            g.fillRect(Math.round(x + (dx / len) * i * 4) - 1,
+                       Math.round(y + (dy / len) * i * 4) - 1, 2, 2);
+          }
+        } else if (e.eliteMod === 'SPLITTING') {
+          // Cracked: dark fracture cross over the body's core.
+          g.fillStyle = 'rgba(20,20,30,0.75)';
+          g.fillRect(x - 4, y, 9, 1);
+          g.fillRect(x, y - 4, 1, 9);
+          g.fillRect(x - 3, y - 3, 1, 1);
+          g.fillRect(x + 3, y + 3, 1, 1);
+        } else if (e.eliteMod === 'VAMPIRIC') {
+          // Leech: pulsing red heart-core (2Hz heartbeat swell).
+          const beat = 0.5 + 0.5 * Math.sin((state.time || 0) * 12);
+          const cs = beat > 0.5 ? 3 : 2;
+          g.fillStyle = '#ff3040';
+          g.fillRect(x - Math.round(cs / 2), y - Math.round(cs / 2), cs, cs);
         }
       }
       // Attached tick: red drain tether dots to the player.
@@ -552,6 +609,11 @@ export class Renderer {
           g.fillRect(x - 3, y, 1, 1); g.fillRect(x + 3, y, 1, 1);
           g.fillRect(x, y - 3, 1, 1); g.fillRect(x, y + 3, 1, 1);
         }
+      } else if (fx.kind === 'flash') {
+        // WAVE-11 FLASH DROP: full-screen white-out fading over the fx life —
+        // the screen-clear moment erases the weakest trash tier.
+        g.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - t)).toFixed(3) + ')';
+        g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
       } else if (fx.kind === 'charge') {
         // Flickering yellow brackets around the player while overcharged.
         if (Math.floor(fx.age * 20) % 2 === 0) {

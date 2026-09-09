@@ -1,10 +1,19 @@
-// HORDES — unit tests for src/loot.js (node, no DOM). Deterministic rng stub.
+// HORDES — unit tests for src/loot.js (node, no DOM). Deterministic rng stub
+// + a seeded PRNG for the statistical weight tests (WAVE-11/2).
+// WAVE-11 INTEGRATION (hb1): the luck curve lives in meta.js now — these
+// tests import luckDropWeights/BASE_RARITY_WEIGHTS from there (loot.js's old
+// local BASE_DROP_WEIGHTS + fallbackLuckDropWeights were deleted).
 import assert from 'node:assert';
 import {
-  RARITIES, RARITY_WEIGHTS, AFFIX_POOL, LEGENDARIES, STAT_DEFAULTS,
+  RARITIES, RARITY_WEIGHTS,
+  AFFIX_POOL, LEGENDARIES, STAT_DEFAULTS,
   pickRarity, rollItem, equipItem, unequipItem, applyAffixes, MAX_EQUIPPED,
   PAID_CHESTS, rollPaidChest,
+  RARITY_TIER_SCORE, itemScore, decideEquip,
+  FLASH_DROP, FLASH_TRASH_TIERS, flashDropChance, canFlashDrop,
+  isFlashEligibleKill, flashTargets, shouldFlashDrop, describeFlash,
 } from '../src/loot.js';
+import { luckDropWeights, BASE_RARITY_WEIGHTS, LUCK_MAX_LEVEL } from '../src/meta.js';
 
 const seq = (vals) => {
   let i = 0;
@@ -14,39 +23,95 @@ const seq = (vals) => {
   };
 };
 
-// ---------- rarity weights + distribution ----------
+// Seeded PRNG (mulberry32) for the distribution tests.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- rarity weight tables ----------
 {
   const sum = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
-  assert.strictEqual(sum, 100, `weights must sum to 100 (got ${sum})`);
-  // Band edges at zero bias: C 0-60 / R 60-85 / E 85-97 / L 97-100.
+  assert.strictEqual(sum, 100, `chest weights must sum to 100 (got ${sum})`);
+  // WAVE-11 rebase: RARITY_WEIGHTS IS meta.js BASE_RARITY_WEIGHTS now (the
+  // shared 4-tier table — LEGENDARY weight 3 everywhere, world drops included;
+  // the old local 3-tier world-drop table is gone).
+  assert.strictEqual(RARITY_WEIGHTS, BASE_RARITY_WEIGHTS, 'RARITY_WEIGHTS aliases the meta.js base table');
+  const bsum = Object.values(BASE_RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.strictEqual(bsum, 100, `base weights sum to 100 (got ${bsum})`);
+  assert.strictEqual(BASE_RARITY_WEIGHTS.LEGENDARY, 3, 'LEGENDARY rides the shared table');
+
+  // Table bands at zero bias (default pickRarity table): C 0-60 / R 60-85 /
+  // E 85-97 / L 97-100 — the SAME bands for chests and (luck-0) world drops.
   assert.strictEqual(pickRarity(seq([0.0])), 'COMMON');
   assert.strictEqual(pickRarity(seq([0.599])), 'COMMON');
   assert.strictEqual(pickRarity(seq([0.60])), 'RARE');
-  assert.strictEqual(pickRarity(seq([0.849])), 'RARE');
   assert.strictEqual(pickRarity(seq([0.85])), 'EPIC');
-  assert.strictEqual(pickRarity(seq([0.969])), 'EPIC');
   assert.strictEqual(pickRarity(seq([0.97])), 'LEGENDARY');
+  assert.strictEqual(pickRarity(seq([0.99999]), 0, BASE_RARITY_WEIGHTS), 'LEGENDARY',
+    'LEGENDARY is rollable at max rng on the shared table');
 
   // tierBias pushes up-tier: the SAME roll value lands rarer with bias.
-  // bias=3 weights: C60 R100 E84 L30 (total 274); r=0.5 -> 137 -> RARE.
+  // bias=3 chest weights: C60 R100 E84 L30 (total 274); r=0.5 -> 137 -> RARE.
   assert.strictEqual(pickRarity(seq([0.5]), 0), 'COMMON', 'no bias: 0.5 -> COMMON');
   assert.strictEqual(pickRarity(seq([0.5]), 3), 'RARE', 'bias 3: same roll -> RARE');
-  // GOLD-tier chest bias (1.5): weights C60 R62.5 E42 L13.5 (total 178);
-  // r=0.9 -> 160.2: past C+R (122.5), into E (ends 164.5) -> EPIC.
+  // GOLD-tier chest bias (1.5): r=0.9 -> EPIC.
   assert.strictEqual(pickRarity(seq([0.9]), 1.5), 'EPIC');
-  console.log('ok: rarity weights sum to 100; bands + tierBias shift correct');
+  console.log('ok: shared 4-tier weight table (meta.js), bands + tierBias shift correct');
+}
+
+// ---------- luck curve (meta.js luckDropWeights — hb2's contract) ---------
+{
+  const lo = luckDropWeights(0), hi = luckDropWeights(LUCK_MAX_LEVEL);
+  assert.deepStrictEqual(lo, { ...BASE_RARITY_WEIGHTS }, 'luck 0 == base table');
+  assert.ok(hi.COMMON < lo.COMMON, 'luck shifts COMMON weight down');
+  assert.ok(hi.RARE > lo.RARE && hi.EPIC > lo.EPIC && hi.LEGENDARY > lo.LEGENDARY,
+    'luck shifts RARE/EPIC/LEGENDARY up');
+  // Weights NEED NOT sum to 100 (pickRarity normalizes) — only monotone
+  // movement matters; at luck 5 the total is ~110.7.
+  assert.deepStrictEqual(luckDropWeights(99), hi, `luck clamps at LUCK_MAX_LEVEL (${LUCK_MAX_LEVEL})`);
+  assert.deepStrictEqual(luckDropWeights(-5), lo, 'luck clamps at 0');
+  assert.strictEqual(LUCK_MAX_LEVEL, 5);
+  console.log('ok: meta.js luckDropWeights — luck 0 == base, monotone, clamped at 5');
+}
+
+// ---------- weights drive the rarity distribution (seeded) ---------------
+{
+  const N = 30000;
+  const tally = (weights) => {
+    const rng = mulberry32(0xC0FFEE);
+    const t = { COMMON: 0, RARE: 0, EPIC: 0, LEGENDARY: 0 };
+    for (let i = 0; i < N; i++) t[rollItem(rng, 0, weights).rarity]++;
+    return t;
+  };
+  const base = tally(BASE_RARITY_WEIGHTS);
+  assert.ok(Math.abs(base.COMMON / N - 0.60) < 0.03, `COMMON ~60% (got ${base.COMMON / N})`);
+  assert.ok(Math.abs(base.RARE / N - 0.25) < 0.03, `RARE ~25% (got ${base.RARE / N})`);
+  assert.ok(Math.abs(base.EPIC / N - 0.12) < 0.02, `EPIC ~12% (got ${base.EPIC / N})`);
+  assert.ok(Math.abs(base.LEGENDARY / N - 0.03) < 0.01, `LEGENDARY ~3% (got ${base.LEGENDARY / N})`);
+
+  const lucky = tally(luckDropWeights(5));  // ~32/36/24/7.5 normalized
+  assert.ok(lucky.COMMON / N < 0.45, `lucky COMMON rate drops (got ${lucky.COMMON / N})`);
+  assert.ok(lucky.EPIC / N > 0.15, `lucky EPIC rate rises (got ${lucky.EPIC / N})`);
+  assert.ok(lucky.RARE > base.RARE && lucky.EPIC > base.EPIC && lucky.LEGENDARY > base.LEGENDARY,
+    'luck curve shifts the distribution toward rare/epic/legendary');
+  console.log('ok: seeded distribution matches injected weights (base 60/25/12/3 + luck shift)');
 }
 
 // ---------- rollItem: counts, names, affix math ----------
 {
-  // COMMON: 1 rarity roll + 1 affix pick.
+  // COMMON: 1 rarity roll + 1 affix pick (0.0 lands in the 0-60 COMMON band).
   const c = rollItem(seq([0.0, 0.0]));
   assert.strictEqual(c.rarity, 'COMMON');
   assert.strictEqual(c.affixes.length, 1);
   assert.ok(c.name.startsWith('Worn '), 'common name uses the Worn prefix');
 
-  // RARE: 1 + 2 picks, distinct affixes, 1.5x magnitude.
-  const r = rollItem(seq([0.7, 0.0, 0.0]));
+  // RARE (0.75 in the 60-85 band): 1 + 2 picks, distinct affixes, 1.5x.
+  const r = rollItem(seq([0.75, 0.0, 0.0]));
   assert.strictEqual(r.rarity, 'RARE');
   assert.strictEqual(r.affixes.length, 2);
   assert.notStrictEqual(r.affixes[0].id, r.affixes[1].id, 'affixes are distinct');
@@ -54,8 +119,8 @@ const seq = (vals) => {
   assert.ok(Math.abs(r.affixes[0].magnitude - def.base * 1.5) < 1e-12,
     'rare magnitude = base * 1.5');
 
-  // EPIC: 3 affixes at 2.2x.
-  const e = rollItem(seq([0.86, 0.0, 0.0, 0.0]));
+  // EPIC (0.95 in the 85-97 band): 3 affixes at 2.2x.
+  const e = rollItem(seq([0.95, 0.0, 0.0, 0.0]));
   assert.strictEqual(e.rarity, 'EPIC');
   assert.strictEqual(e.affixes.length, 3);
   const edef = AFFIX_POOL.find(a => a.id === e.affixes[0].id);
@@ -73,8 +138,9 @@ const seq = (vals) => {
     assert.strictEqual(def.affixes.length, 3, `${slot} legendary has 3 fixed affixes`);
     assert.ok(def.desc.length > 10, `${slot} legendary has flavor text`);
   }
-  // Legendary roll: rarity rng 0.99 -> LEGENDARY, slot rng 0.5 -> index 2 (BOOTS).
-  const l = rollItem(seq([0.99, 0.5]));
+  // Legendary roll on the CHEST table (0.99 in its 97-100 band), slot rng
+  // 0.5 -> index 2 (BOOTS).
+  const l = rollItem(seq([0.99, 0.5]), 0, RARITY_WEIGHTS);
   assert.strictEqual(l.rarity, 'LEGENDARY');
   assert.strictEqual(l.slot, 'BOOTS');
   assert.strictEqual(l.name, LEGENDARIES.BOOTS.name, 'legendary uses its fixed name');
@@ -83,6 +149,94 @@ const seq = (vals) => {
   assert.strictEqual(LEGENDARIES.BOOTS.affixes[0].magnitude !== 999, true,
     'rolled legendary is a deep copy');
   console.log('ok: legendaries — 4 named uniques, fixed affixes, deep-copied');
+}
+
+// ---------- itemScore: rarity tier + normalized affix magnitudes ---------
+{
+  assert.strictEqual(itemScore(null), 0, 'null item scores 0');
+  assert.ok(RARITY_TIER_SCORE.COMMON < RARITY_TIER_SCORE.RARE
+    && RARITY_TIER_SCORE.RARE < RARITY_TIER_SCORE.EPIC
+    && RARITY_TIER_SCORE.EPIC < RARITY_TIER_SCORE.LEGENDARY,
+    'tier score components are strictly ordered');
+  // Normalization: one affix at exactly base scale contributes 1, whatever
+  // the field's raw magnitude scale (+0.04 crit == +3 thorns == +1).
+  const critOne = { id: 'a', rarity: 'COMMON', affixes: [{ id: 'crit', field: 'crit', magnitude: 0.04 }] };
+  const thornOne = { id: 'b', rarity: 'COMMON', affixes: [{ id: 'thorns', field: 'thorns', magnitude: 3 }] };
+  assert.ok(Math.abs(itemScore(critOne) - itemScore(thornOne)) < 1e-12,
+    'affix contribution is normalized by pool base');
+
+  // Tier ordering via rolled items (same rng per tier): C < R < E < L.
+  const rolls = {
+    COMMON: rollItem(seq([0.0, 0.0]), 0, RARITY_WEIGHTS),
+    RARE: rollItem(seq([0.7, 0.0, 0.0]), 0, RARITY_WEIGHTS),
+    EPIC: rollItem(seq([0.9, 0.0, 0.0, 0.0]), 0, RARITY_WEIGHTS),
+    LEGENDARY: rollItem(seq([0.99, 0.0]), 0, RARITY_WEIGHTS),
+  };
+  assert.ok(itemScore(rolls.COMMON) < itemScore(rolls.RARE), 'COMMON < RARE');
+  assert.ok(itemScore(rolls.RARE) < itemScore(rolls.EPIC), 'RARE < EPIC');
+  assert.ok(itemScore(rolls.EPIC) < itemScore(rolls.LEGENDARY), 'EPIC < LEGENDARY');
+
+  // Within a tier, more affixes at the same scale scores higher: EPIC (3
+  // affixes) vs a hand-built EPIC with 1 affix.
+  const light = { id: 'z', rarity: 'EPIC', affixes: [{ id: 'crit', field: 'crit', magnitude: 0.088 }] };
+  assert.ok(itemScore(rolls.EPIC) > itemScore(light), '3 affixes > 1 affix at same tier/scale');
+
+  // Tier gaps dominate raw affix noise: an EPIC with a weak affix still
+  // beats any COMMON.
+  assert.ok(itemScore(light) > itemScore(rolls.RARE), 'tier component dominates within-tier noise');
+  console.log('ok: itemScore — normalized affixes + tier component, strict ordering');
+}
+
+// ---------- decideEquip: BEST-CASE EQUIP policy (PURE) --------------------
+{
+  const mk = (id, rarity, mag) => ({
+    id, rarity, affixes: [{ id: 'crit', field: 'crit', magnitude: mag }],
+  });
+  // Free slot: always EQUIP, slot = items.length.
+  assert.deepStrictEqual(decideEquip([], mk('d', 'COMMON', 0.04)), { action: 'EQUIP', slot: 0 });
+  const two = [mk('a', 'RARE', 0.06), mk('b', 'EPIC', 0.088)];
+  assert.deepStrictEqual(decideEquip(two, mk('d', 'COMMON', 0.04)), { action: 'EQUIP', slot: 2 },
+    'even a junk drop EQUIPs into an empty slot');
+
+  // Full belt: weakest at a known index.
+  const belt = [mk('a', 'RARE', 0.06), mk('b', 'COMMON', 0.04), mk('c', 'EPIC', 0.088), mk('e', 'COMMON', 0.05)];
+  // scores: RARE 10+1.5=11.5, C 1+1=2, E 20+2.2=22.2, C 1+1.25=2.25 -> weakest idx 1.
+  assert.deepStrictEqual(decideEquip(belt, mk('d', 'RARE', 0.088)), { action: 'REPLACE', slot: 1 },
+    'strictly better drop REPLACES the weakest equipped');
+  assert.strictEqual(belt[1].id, 'b');
+
+  // STRICTLY: equal score -> IGNORE (no equal-swap churn).
+  const equalDrop = mk('d', 'COMMON', 0.04);   // same score as 'b' (2)
+  assert.deepStrictEqual(decideEquip(belt, equalDrop), { action: 'IGNORE', slot: null },
+    'equal-score drop is left on the ground');
+  // Downgrade -> IGNORE.
+  assert.deepStrictEqual(decideEquip(belt, mk('d', 'COMMON', 0.02)), { action: 'IGNORE', slot: null },
+    'worse drop is left on the ground');
+
+  // PURE: no mutation across every branch.
+  const snapshot = JSON.stringify(belt);
+  decideEquip(belt, mk('d', 'LEGENDARY', 1));
+  decideEquip(belt, equalDrop);
+  assert.strictEqual(JSON.stringify(belt), snapshot, 'decideEquip never mutates the belt');
+
+  // Bad input.
+  assert.deepStrictEqual(decideEquip(null, mk('d', 'COMMON', 0.04)), { action: 'IGNORE', slot: null });
+  assert.deepStrictEqual(decideEquip(belt, null), { action: 'IGNORE', slot: null });
+
+  // 4-slot cap preserved: equipItem still refuses past MAX_EQUIPPED, and a
+  // REPLACE decision never grows the belt beyond it.
+  const inv = [];
+  for (let i = 0; i < MAX_EQUIPPED; i++) {
+    assert.strictEqual(equipItem(inv, { id: 'i' + i }), true, 'equip below cap');
+  }
+  assert.strictEqual(inv.length, MAX_EQUIPPED, `cap is ${MAX_EQUIPPED}`);
+  assert.strictEqual(equipItem(inv, { id: 'overflow' }), false, 'equip past cap refused');
+  assert.strictEqual(inv.length, MAX_EQUIPPED, 'failed equip does not push');
+  const removed = unequipItem(inv, 'i1');
+  assert.ok(removed && removed.id === 'i1', 'unequip by id returns the item');
+  assert.strictEqual(unequipItem(inv, 'nope'), null, 'unequip unknown id -> null');
+  assert.strictEqual(equipItem(inv, { id: 'now-fits' }), true, 'slot freed after unequip');
+  console.log('ok: decideEquip — EQUIP/REPLACE/IGNORE strict-better policy, pure, cap intact');
 }
 
 // ---------- applyAffixes: pure math onto the stats contract ----------
@@ -109,26 +263,10 @@ const seq = (vals) => {
   console.log('ok: applyAffixes pure additive math with documented fields');
 }
 
-// ---------- equip / unequip cap ----------
-{
-  const inv = [];
-  for (let i = 0; i < MAX_EQUIPPED; i++) {
-    assert.strictEqual(equipItem(inv, { id: 'i' + i }), true, 'equip below cap');
-  }
-  assert.strictEqual(inv.length, MAX_EQUIPPED, `cap is ${MAX_EQUIPPED}`);
-  assert.strictEqual(equipItem(inv, { id: 'overflow' }), false, 'equip past cap refused');
-  assert.strictEqual(inv.length, MAX_EQUIPPED, 'failed equip does not push');
-  const removed = unequipItem(inv, 'i1');
-  assert.ok(removed && removed.id === 'i1', 'unequip by id returns the item');
-  assert.strictEqual(unequipItem(inv, 'nope'), null, 'unequip unknown id -> null');
-  assert.strictEqual(equipItem(inv, { id: 'now-fits' }), true, 'slot freed after unequip');
-  console.log('ok: equip cap 4 + unequip');
-}
-
 // ---------- PAID CHESTS: debit + gamble both ways ----------
 {
-  // Win path: BRONZE, rng order = nothing-flip (0.39 < 0.40? no -> 0.39 < 0.40
-  // IS nothing... pick 0.50 >= 0.40 -> item), then rollItem draws.
+  // Win path: BRONZE, rng order = nothing-flip (0.50 >= 0.40 -> item), then
+  // rollItem draws on the CHEST table.
   const p1 = { gold: 100 };
   const res1 = rollPaidChest(p1, 'BRONZE', seq([0.5, 0.0, 0.0])); // item, COMMON
   assert.strictEqual(res1.ok, true);
@@ -164,13 +302,104 @@ const seq = (vals) => {
     && PAID_CHESTS.SILVER.tierBias >= PAID_CHESTS.BRONZE.tierBias,
     'higher tier = stronger rarity bias');
 
-  // GOLD tier win rolls at bias 3: flip 0.5 (>= 0.10) -> rarity rng 0.0 with
-  // bias 3 stays COMMON, + 1 affix pick.
+  // Chests can still roll LEGENDARY (chest table, not world-drop weights):
+  // bias 0, rarity rng 0.99 -> LEGENDARY band (97-100), slot rng 0.0 -> WEAPON.
   const p4 = { gold: 500 };
-  const res4 = rollPaidChest(p4, 'GOLD', seq([0.5, 0.0, 0.0]));
-  assert.strictEqual(res4.item.rarity, 'COMMON');
+  const res4 = rollPaidChest(p4, 'GOLD', seq([0.5, 0.99, 0.0]));
+  assert.strictEqual(res4.item.rarity, 'LEGENDARY', 'paid chests keep the 4-tier table');
+  assert.strictEqual(res4.item.slot, 'WEAPON');
   assert.strictEqual(p4.gold, 500 - PAID_CHESTS.GOLD.cost);
-  console.log('ok: paid chests — debit both ways, gold-gate, tier odds');
+  console.log('ok: paid chests — debit both ways, gold-gate, tier odds, legendary intact');
+}
+
+// ---------- FLASH DROPS ----------------------------------------------------
+{
+  // Chance curve: base ~0.8%, luck-scaled, hard-capped.
+  assert.strictEqual(flashDropChance(0), FLASH_DROP.baseChance);
+  assert.strictEqual(FLASH_DROP.baseChance, 0.008, 'base chance ~0.8%');
+  assert.ok(flashDropChance(5) > flashDropChance(0), 'luck raises the flash chance');
+  assert.ok(flashDropChance(50) > flashDropChance(5), 'more luck, more chance');
+  assert.strictEqual(flashDropChance(10000), FLASH_DROP.chanceCap, 'hard cap holds');
+  assert.strictEqual(flashDropChance(-3), flashDropChance(0), 'negative luck clamps');
+  // Cooldown guard: once per ~45s.
+  assert.strictEqual(FLASH_DROP.cooldownMs, 45000);
+  assert.strictEqual(canFlashDrop(100000, null), true, 'never flashed -> allowed');
+  assert.strictEqual(canFlashDrop(100000, 55001), false, '44999ms since last -> blocked');
+  assert.strictEqual(canFlashDrop(100000, 55000), true, '45000ms since last -> allowed');
+  console.log('ok: flash chance curve + 45s cooldown guard');
+}
+
+{
+  // Eligibility: plain trash only.
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'SWARMER' }), true);
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'CHASER' }), true);
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'BRUTE' }), false, 'typed beyond trash');
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'SPITTER' }), false);
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'COLOSSUS' }), false, 'mini-boss tier');
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'CHASER', elite: true }), false, 'elites excluded');
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'SWARMER', elite: true }), false);
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'CHASER', isBoss: true }), false, 'bosses excluded');
+  assert.strictEqual(isFlashEligibleKill({ typeId: 'SWARMER', bossId: 'PYRAXIS' }), false);
+  assert.strictEqual(isFlashEligibleKill(null), false);
+  console.log('ok: flash eligibility — CHASER/SWARMER class only, no elite/boss/typed');
+}
+
+{
+  // flashTargets: ALL enemies of the WEAKEST trash tier present.
+  const chaser1 = { id: 'c1', typeId: 'CHASER' };
+  const chaser2 = { id: 'c2', typeId: 'CHASER' };
+  const sw1 = { id: 's1', typeId: 'SWARMER' };
+  const sw2 = { id: 's2', typeId: 'SWARMER' };
+  const field = [
+    chaser1, sw1,
+    { id: 'se1', typeId: 'SWARMER', elite: true },   // elite swarmer: untouched
+    { id: 'b1', typeId: 'BRUTE' },                    // typed beyond trash
+    { id: 'col', typeId: 'COLOSSUS' },
+    { id: 'bo', typeId: 'SWARMER', isBoss: true },
+    sw2, chaser2,
+  ];
+  const victims = flashTargets(field);
+  assert.deepStrictEqual(victims.map(v => v.id), ['s1', 's2'],
+    'kills every SWARMER (weakest tier present), nothing else');
+  // Chasers-only field -> chasers are then the weakest tier present.
+  assert.deepStrictEqual(flashTargets([chaser1, chaser2]).map(v => v.id), ['c1', 'c2']);
+  // No trash on the field -> empty list (flash would whiff visually).
+  assert.deepStrictEqual(flashTargets([{ id: 'b', typeId: 'BRUTE' }]), []);
+  assert.deepStrictEqual(flashTargets([]), []);
+  assert.deepStrictEqual(flashTargets(null), []);
+  // PURE: the input array is untouched.
+  const before = JSON.stringify(field.map(e => e.id));
+  flashTargets(field);
+  assert.strictEqual(JSON.stringify(field.map(e => e.id)), before, 'flashTargets never mutates');
+  // Order contract for hb1: FLASH_TRASH_TIERS is weakest-first.
+  assert.deepStrictEqual(FLASH_TRASH_TIERS, ['SWARMER', 'CHASER']);
+  console.log('ok: flashTargets — weakest trash tier only, bosses/elites untouched');
+}
+
+{
+  // shouldFlashDrop: eligibility -> cooldown -> rng, zero rng on early-out.
+  const swarmer = { id: 's1', typeId: 'SWARMER' };
+  assert.strictEqual(shouldFlashDrop({ typeId: 'BRUTE' }, 0, 100000, null, seq([])), false,
+    'ineligible kill: no rng consumed');
+  assert.strictEqual(shouldFlashDrop(swarmer, 0, 100000, 90000, seq([])), false,
+    'cooldown-blocked: no rng consumed');
+  assert.strictEqual(shouldFlashDrop(swarmer, 0, 100000, null, seq([0.0])), true,
+    'eligible + off cooldown + max roll -> FLASH');
+  assert.strictEqual(shouldFlashDrop(swarmer, 0, 100000, null, seq([0.99999])), false,
+    'eligible but the roll misses');
+  assert.strictEqual(shouldFlashDrop(swarmer, 5, 100000, 55000, seq([0.013])), true,
+    'luck-scaled chance: rng 0.013 < chance(5) = 0.014');
+  console.log('ok: shouldFlashDrop roll order + guard composition');
+}
+
+{
+  // HUD/toast copy.
+  const s = describeFlash();
+  assert.strictEqual(typeof s, 'string');
+  assert.ok(s.includes('Swarmer'), 'default copy names the swarmer wipe');
+  assert.ok(describeFlash('CHASER').includes('Chaser'), 'tier-specific copy');
+  assert.ok(describeFlash('BRUTE').length > 10, 'unknown tier still gets copy');
+  console.log('ok: describeFlash toast copy');
 }
 
 console.log('LOOT TESTS PASSED');

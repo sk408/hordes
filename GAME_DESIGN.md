@@ -490,3 +490,54 @@ one:
   token-choice UI), boss variety, persistent meta.
 - Hosting: base loop is presentable — request posted to coordinator for
   https://claude.stevesinfo.com:8443/hordes/.
+- 2026-09-09 (wave-11): **ECONOMY, UNLOCKS + WAVE-11 WISHLIST** — all four
+  overseer wishlist features (shrines / elite modifiers / rampage meter /
+  weapon synergies) plus Sk408's economy directives. Six builders, one
+  integration pass, one balance sim.
+  - ECONOMY (`src/meta.js` hb2, retuned by hb7): WEAPON_PRICES ladder —
+    weapons are BOUGHT in the shop (profile.unlockedWeapons starts as the
+    starter set: VOLLEY + one cheap pick; old profiles migrate retroactively,
+    Sk408-approved). Elite-modifier unlocks (SWIFT / SPLITTING / VAMPIRIC)
+    are shop rows, locked by default (profile.unlockedElites). LUCK skill,
+    5 levels, shifts loot rarity via luckDropWeights (base 60/25/12/3,
+    common-heavy). GOLD_MODEL + `tools/balance_sim.mjs` (hb7, 200-career
+    Monte-Carlo with compounding): TARGET (a) 10 good runs -> 63.3% of the
+    mid-tier catalog from good-run gold [tolerance 35-65%] PASS; TARGET (b)
+    top tier = BEAM 110k (60.7 ref runs / 34.0 compounding-aware) and
+    ARCADE_PASS 140k (77.2 / 43.2), both 30+ PASS. Honest sim finding for
+    Sk408: mixing average runs, real-player pace is ~2x the good-run
+    standard (full mid catalog ~15 good runs / ~62 total); if too fast in
+    playtest the lever is the GREED line (350g base), not the catalog.
+  - BEST-CASE EQUIP (`src/loot.js` hb4): swap-churn gone — decideEquip is
+    strict-better only (empty slot, or itemScore(new) > weakest equipped);
+    otherwise the drop stays on the ground. Heat rule unchanged. FLASH
+    DROPS: ~0.8%/eligible kill (luck-scaled, 45s guard) — pickup kills ALL
+    enemies of the weakest trash tier present (SWARMER/CHASER class only;
+    bosses/elites/typed untouched).
+  - ELITE MODIFIERS (`src/elite_mods.js` hb6): rolled only for normal
+    elites, gated STRICTLY by profile.unlockedElites (locked ids never
+    spawn). SWIFT +70% speed, SPLITTING (2 children at 30% hp, once only),
+    VAMPIRIC lifesteal. All three carry dropGuaranteed — a guaranteed item
+    on kill is the deal.
+  - RUN SHRINES (`src/shrines.js` hb8): ~60% of waves spawn one altar on
+    the patrol ring (250-420px). Proximity auto-buys ONE random
+    choices.js blessing (blessing AND its drawback in the toast) for
+    shrineCost = round((60 + 30*wave) * 1.25^used). Per-run only; pilot
+    stays shrine-BLIND (altar lean-drifts to the player at ~6px/s, arch
+    precedent).
+  - WEAPON SYNERGIES (`src/synergies.js` hb5): 7 named pair passives
+    (Orbital Volley, Superconductor, Bloodhound Rang, Chain Reaction,
+    Threshing Storm, Gravity Well, Fire Focus); detectSynergies re-runs on
+    every weapon change; each weapon pairs at most once per partner.
+  - RAMPAGE METER (hb1, in main.js): kill streak ramps XP +1%/kill (cap
+    +50%); gold rides the run-BEST streak (mult up to 1.5x, kept for the
+    run). ANY hp loss resets the streak. HUD readout.
+  - CHARACTER LEVEL TAPER (hb1): speed/rate-of-fire level-up gains now
+    diminish — 1.0 / 0.75 / 0.55 / 0.4 / 0.3 / 0.22 / 0.15 fraction per
+    repeat; early picks full-strength.
+  - Verified: all 20 unit suites, smoke x6 total reps with new wave-11
+    probes, lightpanda clean.
+  - Ops note: two worker-delivery failures this wave (a rogue duplicate
+    hb2 running from the wrong workdir, and hub-worker issue posts not
+    reaching workers after ~11:49 — direct API posts deliver fine);
+    recovered via restart + direct re-issue, zero lost work.

@@ -4,12 +4,20 @@ import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale } from 
 import { Renderer } from './render.js';
 import { AutoPilotController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
-import { rollItem, equipOrExchange, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest } from './loot.js';
+import {
+  rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
+  decideEquip, flashTargets, shouldFlashDrop, describeFlash,
+} from './loot.js';
 import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
-  WEAPON_TYPES, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
+  WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
   levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams,
 } from './weapons.js';
+// WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
+// mutation, stamping, drift and rendering on top of their contracts.
+import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
+import { rollShrine, shrineBlessing, canAfford } from './shrines.js';
+import { detectSynergies, describeSynergy } from './synergies.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
 import { maybeSpawnChest, tickChests } from './chests.js';
 import {
@@ -35,8 +43,9 @@ import {
 import {
   loadProfile, saveProfile, makeProfile, computeRunGold,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
-  CHARACTERS, unlockCharacter, equipCharacter,
+  CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
+  luckDropWeights,
 } from './meta.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -114,6 +123,14 @@ const state = {
   choiceRng: null,   // mulberry32(choiceSeed) — deterministic per run
   takenChoices: [],  // choice ids taken this run (repeat-free offers)
   pendingChoiceOffers: null, // this wave's 3 rolled cards (null = roll fresh)
+  // ---- WAVE-11 run-scoped systems (all reset in startRun) ----
+  shrine: null,      // this wave's shrine (shrines.js; null = none rolled)
+  shrineRng: null,   // mulberry32(choiceSeed ^ 0x5eed) — separate stream so
+                     // shrine draws never desync the intermission offers
+  lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
+  rampage: { streak: 0, best: 0 },  // kill-streak meter (resets on ANY hit)
+  synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
+  synergyNames: null, // toast-dedup set of already-announced synergy names
   wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
 };
 state.player.x = C.VIEW_W / 2;
@@ -170,6 +187,8 @@ function runController(p, dt, am) {
       const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
       pr.damage *= volleyDmgMult;
       if (volleyPierceAll) pr.pierce = 999;
+      // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
+      if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
       // Muzzle particle dot at the barrel (animation pass).
       state.effects.push({
@@ -244,6 +263,14 @@ function spawnWave(dt) {
         state.player.y + Math.sin(pa) * d,
         state.time, { elite, variant: rollVariant(typeId) });
       applyEscalation(e, state.time);
+      // WAVE-11 elite modifiers (elite_mods.js): rolled ONLY for normal elite
+      // spawns, gated strictly by profile.unlockedElites (locked mods never
+      // roll; the roll can fail and leave a plain elite). The stamp rides on
+      // top of the escalated stats (SWIFT's hpMult trims the final hp).
+      if (elite) {
+        const mod = rollEliteModifier(Math.random, profile.unlockedElites);
+        if (mod) Object.assign(e, applyEliteModifier(e, mod));
+      }
       state.enemies.push(e);
     }
   }
@@ -276,25 +303,52 @@ function removeItemAffixes(p, item) {
   }
 }
 
-// WAVE-9 heat charge point: every pickup/equip routes through here. A FREE
-// slot costs +1 heat (NEW_ITEM_SLOT); the 4/4 exchange is FREE (Sk408's hard
-// rule — the pilot exchanges constantly). A fresh item kind may complete an
-// evolution's requirements either way, so declined offers re-arm.
-function equipOrExchangeItem(it) {
-  const res = equipOrExchange(state.items, it);
-  if (!res) return;
+// WAVE-11 BEST-CASE EQUIP (loot.js decideEquip): EQUIP fills a free slot
+// (+1 heat NEW_ITEM_SLOT); REPLACE swaps out the weakest equipped item when
+// the drop is STRICTLY better (no heat — exchanges are free and rare by
+// construction, Sk408's no-churn rule); IGNORE leaves the drop on the ground
+// to despawn naturally. Returns a HUD message string, or null on IGNORE (the
+// caller then does NOT consume the drop). WAVE-9 heat charges live here.
+function applyEquipDecision(it) {
+  const res = decideEquip(state.items, it);
   const p = state.player;
-  if (res.status === 'exchanged') {
-    removeItemAffixes(p, res.removed);
-    addHeat(state, 'ITEM_EXCHANGE');
-    toast('EXCHANGED ' + res.removed.name.toUpperCase() + ' -> ' + it.name.toUpperCase() +
-      ' [' + it.rarity + ']');
-  } else {
+  if (res.action === 'EQUIP') {
+    state.items.push(it);
     addHeat(state, 'NEW_ITEM_SLOT');
-    toast('EQUIPPED ' + it.name.toUpperCase() + ' [' + it.rarity + ']');
+    applyItemAffixes(p, it);
+    for (const w of state.weapons) w.evoDeclined = false;
+    return 'EQUIPPED ' + it.name.toUpperCase() + ' [' + it.rarity + ']';
   }
-  applyItemAffixes(p, it);
-  for (const w of state.weapons) w.evoDeclined = false;
+  if (res.action === 'REPLACE') {
+    const out = state.items[res.slot];
+    removeItemAffixes(p, out);
+    state.items[res.slot] = it;   // in-place swap (not append)
+    addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
+    applyItemAffixes(p, it);
+    for (const w of state.weapons) w.evoDeclined = false;
+    return 'EXCHANGED ' + out.name.toUpperCase() + ' -> ' + it.name.toUpperCase() +
+      ' [' + it.rarity + ']';
+  }
+  return null;   // IGNORE — not strictly better than the weakest equipped
+}
+
+// WAVE-11 luck seam: the rarity weight table for world drops at the run's
+// current Fortune level (meta.js luckDropWeights — the shop line feeds it).
+function luckWeights() {
+  return luckDropWeights(state.player.stats.luck || 0);
+}
+
+// WAVE-11 RAMPAGE METER: kill streak ramps XP/gold. mult = 1 + 1% per streak
+// kill, capped at +50% (streak 50). ANY hp loss resets the streak; the run's
+// BEST streak rides the death payout.
+function rampageMult() {
+  return 1 + 0.01 * Math.min(state.rampage.streak, 50);
+}
+function rampageGoldMult() {
+  return 1 + 0.01 * Math.min(state.rampage.best, 50);
+}
+function resetRampage() {
+  if (state.rampage.streak > 0) state.rampage.streak = 0;
 }
 
 // ---------- ARCHES: 1-2 gates per wave at random field positions -----------
@@ -403,21 +457,10 @@ function buyPaidChest(tier) {
   saveProfile(profile);
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
-    const eq = equipOrExchange(state.items, it);
-    if (eq) {
-      if (eq.status === 'exchanged') {
-        removeItemAffixes(state.player, eq.removed);
-        addHeat(state, 'ITEM_EXCHANGE');
-        interMsg = `CHEST: EXCHANGED ${eq.removed.name} -> ${it.name} [${it.rarity}]`;
-      } else {
-        addHeat(state, 'NEW_ITEM_SLOT');
-        interMsg = `CHEST: EQUIPPED ${it.name} [${it.rarity}] (${it.affixes.map(a => a.name).join(', ')})`;
-      }
-      applyItemAffixes(state.player, it);
-      for (const w of state.weapons) w.evoDeclined = false;   // kind may complete an evo
-    } else {
-      interMsg = `CHEST: ${it.name} LOST — no slots`;
-    }
+    const msg = applyEquipDecision(it);
+    interMsg = msg
+      ? `CHEST: ${msg} (${it.affixes.map(a => a.name).join(', ')})`
+      : `CHEST: ${it.name} LEFT BEHIND — the belt is stronger`;
   } else {
     interMsg = 'THE CHEST WAS EMPTY... ' + res.debited + ' gold gone';
   }
@@ -434,6 +477,9 @@ function continueRun() {
   state.wave.boss = null;
   state.portal = null;
   state.pendingChoiceOffers = null;   // next wave rolls a fresh set
+  // WAVE-11: fresh shrine roll for the new wave (0-based waveNum; the shrine
+  // rng stream keeps this off the intermission choice rolls).
+  state.shrine = rollShrine(state.wave.num - 1, state.shrineRng);
   interMsg = '';
   spawnWaveArches();
   state.mode = 'playing';
@@ -482,6 +528,197 @@ function spawnBoss() {
   });
   // Named announce: BOTH names on double waves (3/6/9 — the events).
   toast(cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH!' : ' APPROACHES!'));
+}
+
+// ---------- WAVE-11 SYNERGIES (synergies.js; weapons.js stays untouched) -----
+// Derived state: re-evaluated on every weapon change (grant/evolve/run start).
+function refreshSynergies() {
+  const prev = state.synergyNames || new Set();
+  state.synergies = detectSynergies(state.weapons);
+  state.synergyNames = new Set(state.synergies.map(s => s.name));
+  for (const s of state.synergies) {
+    if (!prev.has(s.name)) {
+      const d = describeSynergy(s);
+      toast('SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc);
+      audio.playSfx('levelup');
+    }
+  }
+}
+
+// Active flag probe: the value of `flag` from any live synergy, else null.
+function syn(flag) {
+  for (const s of state.synergies || []) {
+    if (flag in s.flags) return s.flags[flag];
+  }
+  return null;
+}
+
+function nearestFoe(x, y, exclude) {
+  let best = null, bestD = Infinity;
+  for (const e of state.enemies) {
+    if (e.hp <= 0 || (exclude && exclude.has(e))) continue;
+    const d = Math.hypot(e.x - x, e.y - y);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best;
+}
+
+// weapons.js damage convention for the supplemental bolts/blasts below:
+// damage * archetype MULT * level dmgMult * loot damageMult * evolution mult.
+function synWeaponDmg(weaponId, mult) {
+  const w = state.weapons.find(k => k.type === weaponId);
+  const P = weaponLevelParams(weaponId, (w && w.level) || 1);
+  const evo = w && w.evolution && w.evolution.affixes;
+  return state.player.stats.damage * mult * (P.dmgMult || 1) *
+    (state.player.stats.damageMult || 1) * ((evo && evo.damageMult) || 1);
+}
+
+// Mine detonation from OUTSIDE weapons.js (Chain Reaction / Fire Focus):
+// mirrors weapons.js detonateMine (damage, blast radius, blast + shrapnel
+// payloads), minus its evolution chain rule.
+function detonateMineAt(mine) {
+  const p = state.player;
+  const w = state.weapons.find(k => k.type === 'MINE');
+  const P = weaponLevelParams('MINE', (w && w.level) || 1);
+  const blast = (P.blast || WEAPONS.MINE.BLAST) *
+    (((w && w.evolution && w.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
+  const dmg = synWeaponDmg('MINE', WEAPONS.MINE.DAMAGE_MULT);
+  for (const e of state.enemies) {
+    if (e.hp <= 0) continue;
+    if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
+      let d = dmg;
+      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
+      e.hp -= d; e.flash = 0.08;
+      state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 });
+    }
+  }
+  state.effects.push({ kind: 'mine_blast', x: mine.x, y: mine.y, radius: blast,
+    shrapnel: WEAPONS.MINE.SHRAPNEL, age: 0, ttl: 0.35 });
+  const i = state.projectiles.indexOf(mine);
+  if (i >= 0) state.projectiles.splice(i, 1);
+}
+
+// Superconductor (ZAP+BEAM): each fired chain zap throws an EXTRA fork chain
+// of zapExtraForks jumps — a supplemental bolt walking nearest-first from the
+// player, damage continuing the level-falloff curve past the base jump count.
+function synergyZapFork(zw) {
+  const extra = syn('zapExtraForks') || 0;
+  const p = state.player;
+  const P = weaponLevelParams('ZAP', zw.level);
+  const baseDmg = synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT);
+  const points = [{ x: p.x, y: p.y }];
+  const hit = new Set();
+  let from = p;
+  for (let k = 0; k < extra; k++) {
+    const tgt = nearestFoe(from.x, from.y, hit);
+    if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
+    hit.add(tgt);
+    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, (P.jumps || WEAPONS.ZAP.JUMPS) + 1 + k);
+    tgt.flash = 0.08;
+    points.push({ x: tgt.x, y: tgt.y });
+    from = tgt;
+  }
+  if (points.length > 1) state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15 });
+}
+
+// Gravity Well (NOVA+ORBIT) + Chain Reaction (NOVA+MINE), on each nova fire.
+function synergyOnNova(nw) {
+  const p = state.player;
+  const P = weaponLevelParams('NOVA_PULSE', nw.level);
+  const radius = (P.radius || WEAPONS.NOVA_PULSE.RADIUS) *
+    (((nw.evolution && nw.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
+  const pull = syn('novaPull');
+  if (pull) {
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) {
+        e.x += (p.x - e.x) * pull;   // drag inward by the flag fraction —
+        e.y += (p.y - e.y) * pull;   // feeds the orbit blades
+      }
+    }
+  }
+  if (syn('novaDetonatesMines')) {
+    const mines = state.projectiles.filter(m => m.kind === 'mine' &&
+      Math.hypot(m.x - p.x, m.y - p.y) <= radius);
+    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+  }
+}
+
+// Fire Focus (MINE+BEAM): a fired beam cooks off every mine inside its lane
+// (aim recomputed — weapons.js picks the same deterministic nearest target).
+function synergyBeamDetonate(bw) {
+  const p = state.player;
+  const t = nearestFoe(p.x, p.y);
+  if (!t) return;
+  const P = weaponLevelParams('BEAM', bw.level);
+  const width = (P.width || WEAPONS.BEAM.WIDTH) *
+    (((bw.evolution && bw.evolution.flags) || []).includes('solarFlare') ? 1.3 : 1);
+  const lanes = ((bw.evolution && bw.evolution.flags) || []).includes('prismSplit')
+    ? [-0.35, 0, 0.35] : [0];
+  const base = Math.atan2(t.y - p.y, t.x - p.x);
+  for (const off of lanes) {
+    const cx = Math.cos(base + off), cy = Math.sin(base + off);
+    const mines = state.projectiles.filter(m => {
+      if (m.kind !== 'mine') return false;
+      const rx = m.x - p.x, ry = m.y - p.y;
+      const along = rx * cx + ry * cy;
+      return along >= 0 && along <= WEAPONS.BEAM.LENGTH &&
+        Math.abs(rx * cy - ry * cx) <= width / 2 + 4;
+    });
+    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+  }
+}
+
+// Threshing Storm (SCYTHE+ZAP): each LANDED sweep (a fresh scythe_arc effect)
+// lashes the nearest foe from the arc's edge at 50% zap falloff.
+function synergyScytheZap() {
+  for (const fx of state.effects) {
+    if (fx.kind !== 'scythe_arc' || fx.zapped) continue;
+    fx.zapped = true;
+    const ex = fx.x + Math.cos(fx.dir) * fx.radius;
+    const ey = fx.y + Math.sin(fx.dir) * fx.radius;
+    const t = nearestFoe(ex, ey);
+    if (!t) continue;
+    t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5;   // 50% falloff
+    t.flash = 0.08;
+    state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
+      age: 0, ttl: 0.15 });
+  }
+}
+
+// Bloodhound Rang (BOOMERANG+SEEKER): the return leg steers toward the
+// nearest survivor at SEEKER turn rate * 0.5 (weak homing, post-tick step).
+function synergyBoomerangHoming(dt) {
+  const p = state.player;
+  const turn = WEAPONS.SEEKER.TURN * 0.5 * dt;
+  for (const pr of state.projectiles) {
+    if (pr.kind !== 'boomerang' || pr.phase !== 'back') continue;
+    const t = nearestFoe(pr.x, pr.y);
+    if (!t) continue;
+    const cur = Math.atan2(p.y - pr.y, p.x - pr.x);   // heading: home
+    const want = Math.atan2(t.y - pr.y, t.x - pr.x);  // desired: the mark
+    const diff = ((want - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const ang = cur + Math.max(-turn, Math.min(turn, diff));
+    pr.x += Math.cos(ang) * WEAPONS.BOOMERANG.SPEED * dt;
+    pr.y += Math.sin(ang) * WEAPONS.BOOMERANG.SPEED * dt;
+  }
+}
+
+// Post-tick pass: fire-event hooks (a cd/fires reset means the weapon fired)
+// + the continuous flags.
+function wireSynergies(dt, preFire) {
+  if (!state.synergies || state.synergies.length === 0) return;
+  for (const w of state.weapons) {
+    const before = preFire && preFire.get(w);
+    if (!before) continue;
+    const fired = (w.fires || 0) > before.fires || w.cd > before.cd;
+    if (!fired) continue;
+    if (w.type === 'ZAP' && syn('zapExtraForks')) synergyZapFork(w);
+    if (w.type === 'NOVA_PULSE' && (syn('novaPull') || syn('novaDetonatesMines'))) synergyOnNova(w);
+    if (w.type === 'BEAM' && syn('beamDetonatesMines')) synergyBeamDetonate(w);
+  }
+  if (syn('scytheArcZap')) synergyScytheZap();
+  if (syn('boomerangHoming')) synergyBoomerangHoming(dt);
 }
 
 // ---------- Update ----------
@@ -539,7 +776,12 @@ function update(dt) {
   if (wm.manaRegenMult && wm.manaRegenMult !== 1) {
     p.mana = Math.min(p.stats.maxMana, p.mana + C.MANA.REGEN * (wm.manaRegenMult - 1) * dt);
   }
+  // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
+  // then hook the active flags onto whatever just fired.
+  const preFire = new Map();
+  for (const w of state.weapons) preFire.set(w, { cd: w.cd, fires: w.fires || 0 });
   updateWeapons(state, state.weapons, dt);
+  wireSynergies(dt, preFire);
 
   // WIND drift pushes every projectile mid-flight (both sides — fairness).
   const wd = windDrift(state.weather);
@@ -554,7 +796,23 @@ function update(dt) {
   const novaRounds = !!(volleyEvo2 && volleyEvo2.flags.includes('novaRounds'));
   for (const pr of state.projectiles) {
     if (pr.kind) continue;
-    pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt; pr.age += dt;
+    pr.age += dt;
+    // Orbital Volley (VOLLEY+ORBIT synergy): the shot loops one full orbit
+    // around the player before screaming off down its aim lane.
+    if (pr.orbit) {
+      const pc = state.player;
+      pr.orbit.t += dt;
+      const ang = pr.orbit.ang + pr.orbit.t * (Math.PI * 2 / pr.orbit.dur);
+      pr.x = pc.x + Math.cos(ang) * 26;
+      pr.y = pc.y + Math.sin(ang) * 26;
+      if (pr.orbit.t >= pr.orbit.dur) {
+        pr.x = pc.x + Math.cos(pr.orbit.ang) * 26;   // release along the aim
+        pr.y = pc.y + Math.sin(pr.orbit.ang) * 26;
+        pr.orbit = null;
+      }
+    } else {
+      pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt;
+    }
     for (const e of state.enemies) {
       if (pr.hit.has(e) || e.hp <= 0) continue;
       if (Math.abs(pr.x - e.x) < 7 && Math.abs(pr.y - e.y) < 7) {
@@ -622,6 +880,7 @@ function update(dt) {
       e.x += (p.x - e.x) * Math.min(1, dt * 10);
       e.y += (p.y - e.y) * Math.min(1, dt * 10);
       p.hp -= act.drain * dt;        // DoT: no invuln window, just bleed
+      resetRampage();                // WAVE-11: ANY hp loss ends the streak
       if (p.hp <= 0) { die(); return; }
     }
     if (act.fire) {
@@ -696,6 +955,14 @@ function update(dt) {
     } else {
       p.hp -= touchDmg;
       p.invuln = 0.6;
+      resetRampage();   // WAVE-11: ANY hp loss ends the rampage streak
+      // VAMPIRIC elite mod (elite_mods.js): touching elites heal themselves a
+      // fraction of the contact damage they dealt.
+      for (const e of state.enemies) {
+        if (e.hp > 0 && (e.lifesteal || 0) > 0 && Math.hypot(p.x - e.x, p.y - e.y) < 13) {
+          e.hp = Math.min(e.maxHp, e.hp + touchDmg * e.lifesteal);
+        }
+      }
       if (p.hp <= 0) { die(); return; }
     }
     // Spiked Hide: reflect flat thorns damage into every touching enemy.
@@ -721,6 +988,7 @@ function update(dt) {
       } else {
         p.hp -= s.damage * takenMult;
         p.invuln = 0.6;
+        resetRampage();   // WAVE-11: projectile hits end the streak too
       }
       s.age = 99;
       if (p.hp <= 0) { die(); return; }
@@ -766,7 +1034,8 @@ function update(dt) {
           maybeSpawnChest(state,
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
-        state.itemDrops.push({ x: e.x, y: e.y, item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS), age: 0 });
+        state.itemDrops.push({ x: e.x, y: e.y,
+          item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
@@ -778,13 +1047,15 @@ function update(dt) {
         toast('BOSS DOWN');
       } else {
         // Rare item drops (loot.js): elites often + up-tier, normals rarely.
-        // Fortune's Favor blessing: itemDropMult scales the drop chance.
+        // Fortune's Favor blessing: itemDropMult scales the drop chance;
+        // WAVE-11 elite modifiers carry a GUARANTEED item drop on kill, and
+        // every world roll rides the luck-shifted rarity table (meta.js).
         const chance = (e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) *
           ((p.choices && p.choices.itemDropMult) || 1);
-        if (Math.random() < chance) {
+        if (e.eliteMod || Math.random() < chance) {
           state.itemDrops.push({
             x: e.x, y: e.y,
-            item: rollItem(Math.random, e.elite ? 0.75 : 0), age: 0,
+            item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
         }
         if (e.guaranteesChest) {
@@ -793,8 +1064,40 @@ function update(dt) {
           maybeSpawnChest(state, e);
         }
       }
+      // SPLITTING elite modifier (elite_mods.js): the dying elite divides into
+      // two plain copies at 30% hp / 60% size — ONCE only (splitSpent), and
+      // the children never carry modifiers (splits never recurse).
+      if (e.eliteMod === 'SPLITTING' && !e.splitSpent) {
+        const kids = splitChildren(e);
+        if (kids) {
+          e.splitSpent = true;
+          for (const k of kids) {
+            const c = makeTypedEnemy(k.typeId, k.x, k.y, state.time,
+              { variant: rollVariant(k.typeId) });
+            applyEscalation(c, state.time);
+            c.hp = k.hp; c.maxHp = k.maxHp; c.w = k.w; c.h = k.h;
+            c.elite = false; c.eliteMod = null;
+            state.enemies.push(c);
+          }
+          toast('THE ELITE DIVIDES!');
+        }
+      }
       state.enemies.splice(i, 1);
       p.kills++;
+      // WAVE-11 RAMPAGE METER: every kill extends the streak (mult caps at 1.5x).
+      state.rampage.streak++;
+      if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
+      // WAVE-11 FLASH DROPS (loot.js): a rare eligible kill erases EVERY enemy
+      // of the weakest trash tier present (elites/bosses/typed untouched).
+      if (shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)) {
+        const victims = flashTargets(state.enemies);
+        if (victims.length > 0) {
+          for (const v of victims) v.hp = 0;   // reaped by the next death pass
+          state.effects.push({ kind: 'flash', x: p.x, y: p.y, age: 0, ttl: 0.5 });
+          toast(describeFlash(victims[0].typeId));
+          state.lastFlashAt = performance.now();
+        }
+      }
     }
   }
 
@@ -836,6 +1139,43 @@ function update(dt) {
     a.x += (dx / len) * C.DRIFT.ARCH * dt;
     a.y += (dy / len) * C.DRIFT.ARCH * dt;
   }
+  // WAVE-11 RUN SHRINES (shrines.js): the pilot is shrine-BLIND (controllers
+  // never learn it exists) — the altar spawns on the patrol ring and merely
+  // LEANS at the player (arch precedent). On proximity, gold buys ONE random
+  // intermission-style blessing (choices.js semantics, repeat-free across the
+  // whole run). Per-run only: shrines never touch persistence beyond the
+  // purse debit (paid-chest precedent).
+  if (state.shrine && !state.shrine.used) {
+    const sh = state.shrine;
+    const dx = p.x - sh.x, dy = p.y - sh.y;
+    const len = Math.hypot(dx, dy) || 1;
+    sh.x += (dx / len) * C.DRIFT.ARCH * dt;
+    sh.y += (dy / len) * C.DRIFT.ARCH * dt;
+    if (len < 26) {
+      if (!sh.blessing) {
+        // Roll + cache once per shrine (rng stream: shrineRng, seeded off the
+        // run seed — never desyncs the intermission choice rolls).
+        sh.blessing = shrineBlessing(state.wave.num - 1, state.shrineRng || Math.random,
+          state.takenChoices);
+      }
+      if (!sh.blessing) {
+        sh.used = true;   // blessing pool exhausted — the altar goes dark
+      } else if (canAfford(profile.gold, sh.blessing.cost)) {
+        profile.gold -= sh.blessing.cost;
+        saveProfile(profile);
+        applyChoice(state.player, sh.blessing.offer);
+        state.takenChoices.push(sh.blessing.offer.id);
+        const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
+        state.weaponSlots = Math.min(C.WEAPON_SLOTS, state.baseWeaponSlots + bonus);
+        sh.used = true;
+        toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
+        audio.playSfx('levelup');
+      } else if (!sh.brokeToast) {
+        sh.brokeToast = true;   // once per shrine: don't nag a broke pilot
+        toast('THE SHRINE REQUIRES ' + sh.blessing.cost + ' GOLD');
+      }
+    }
+  }
   for (const ev of chestEvents) {
     if (ev.kind === 'chestOpened') {
       toast('CHEST OPENED: ' + ev.rarity.toUpperCase());
@@ -871,14 +1211,18 @@ function update(dt) {
     }
   }
 
-  // Rare item drops (loot.js): auto-equip when a slot is free; at the 4/4 cap
-  // the newcomer EXCHANGES the oldest item (WAVE-9) — heat charges inside
-  // equipOrExchangeItem (+1 new slot / +0 exchange).
+  // Rare item drops (loot.js, WAVE-11 best-case equip): EQUIP fills a free
+  // slot, REPLACE swaps the weakest when the drop is STRICTLY better, IGNORE
+  // leaves it on the ground (heat charges inside applyEquipDecision: +1 new
+  // slot / +0 exchange).
   for (let i = state.itemDrops.length - 1; i >= 0; i--) {
     const d = state.itemDrops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
-      state.itemDrops.splice(i, 1);
-      equipOrExchangeItem(d.item);
+      const msg = applyEquipDecision(d.item);
+      if (msg) {
+        state.itemDrops.splice(i, 1);
+        toast(msg);
+      }
     }
   }
 
@@ -898,7 +1242,7 @@ function update(dt) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
-      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1);   // Scholar + SUNNY
+      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();   // Scholar + SUNNY + WAVE-11 rampage
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
@@ -950,11 +1294,16 @@ function openDraft() {
   if (slotsFree > 0) {
     for (const [id, def] of Object.entries(WEAPON_TYPES)) {
       if (state.weapons.some(w => w.type === id)) continue;
+      // WAVE-11 weapon economy: the draft pool is gated to
+      // profile.unlockedWeapons (meta.js — starter set VOLLEY + BOOMERANG;
+      // every other archetype is a shop row). Already-granted weapons keep
+      // their level-up cards regardless.
+      if (!weaponUnlocked(profile, id)) continue;
       weaponCards.push({
         id: 'wpn_' + id,
         name: def.name,
         desc: 'NEW WEAPON · fills slot ' + (nonVolley + 2) + '/' + slotCap,
-        apply: () => { state.weapons.push(makeWeapon(id)); },
+        apply: () => { state.weapons.push(makeWeapon(id)); refreshSynergies(); },
       });
     }
   }
@@ -995,8 +1344,27 @@ function openDraft() {
   overlay.style.display = 'flex';
 }
 
+// WAVE-11 LEVEL-UP SLOWDOWN (Sk408): the SCALING stat cards now DIMINISH per
+// repeat — early picks stay full-strength, later ones taper. Curve (fraction
+// of the card's listed gain per Nth pick of that card):
+//   pick:   1     2     3     4     5     6     7+
+//   taper:  1.0   0.75  0.55  0.4   0.3   0.22  0.15
+// 'speed' Light Boots (+15% move speed): gains +15.0/+11.3/+8.3/+6.0/+4.5/+3.3/+2.25%...
+// 'rate'  Quick Hands (-15% cooldown):  same fractions of 15% off.
+// Counts live on the run player (fresh makePlayer resets them every run).
+const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
+
 function pick(u) {
-  u.apply(state.player);
+  const p = state.player;
+  if (u.id === 'speed' || u.id === 'rate') {
+    const n = (p.draftCounts = p.draftCounts || {});
+    n[u.id] = (n[u.id] || 0) + 1;
+    const t = DRAFT_TAPER[Math.min(n[u.id] - 1, DRAFT_TAPER.length - 1)];
+    if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t;
+    else p.stats.cooldown *= 1 - 0.15 * t;
+  } else {
+    u.apply(p);
+  }
   state.pendingDrafts--;
   if (state.pendingDrafts > 0) { openDraft(); return; }
   overlay.style.display = 'none';
@@ -1081,7 +1449,7 @@ function die(finale) {
   // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
   const gold = computeRunGold({
     kills: p.kills, level: p.level, time: state.time, firstClear,
-    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)),
+    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
   });
   profile.gold += gold;
   saveProfile(profile);
@@ -1137,13 +1505,20 @@ function showShop() {
   ovTitle.className = '';
   ovSub.textContent = `GOLD: ${profile.gold}`;
   for (const def of SHOP_UPGRADES) {
+    // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
+    // lives in profile.unlockedWeapons/unlockedElites (meta.js shopRowOwned),
+    // not profile.purchased. buyUpgrade dispatches on kind either way.
     const lvl = profile.purchased[def.id] || 0;
-    const capped = lvl >= def.maxLevel;
-    const cost = upgradeCost(def, lvl);
+    const owned = def.kind ? shopRowOwned(profile, def) : false;
+    const capped = def.kind ? owned : lvl >= def.maxLevel;
+    const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
     const afford = profile.gold >= cost;
+    const sub = def.kind
+      ? (owned ? 'OWNED' : cost + ' gold')
+      : `LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`;
     const el = menuCard(
       def.name,
-      `${def.desc}<br>LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`,
+      `${def.desc}<br>${sub}`,
       () => {
         if (buyUpgrade(profile, def.id)) { saveProfile(profile); showShop(); }
       },
@@ -1243,6 +1618,13 @@ function startRun() {
   state.volleyMask = null;
   state.choiceSeed = (Math.random() * 1e9) | 0;
   state.choiceRng = mulberry32(state.choiceSeed);   // deterministic per-run offers
+  // WAVE-11 companions: flash cooldown stamp, rampage streak, and the shrine
+  // rng stream (seeded OFF the choice seed — shrine draws never desync the
+  // intermission offers) + the wave-1 shrine roll.
+  state.lastFlashAt = null;
+  state.rampage = { streak: 0, best: 0 };
+  state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
+  state.shrine = rollShrine(0, state.shrineRng);
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
@@ -1251,13 +1633,19 @@ function startRun() {
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
   state.weapons.push(makeWeapon('VOLLEY'));
-  if (ch.startingWeapon) state.weapons.push(makeWeapon(ch.startingWeapon));
+  // WAVE-11: character starting weapons ride the SAME unlock gate as the
+  // draft pool (meta.js retroactively reset old saves to the starter set, so
+  // a WITCH save that never bought ZAP must not spawn with it).
+  if (ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)) {
+    state.weapons.push(makeWeapon(ch.startingWeapon));
+  }
   // Starting Artifact shop line: free random weapon levels at run start.
   for (let i = 0; i < (p.stats.artifactLevels || 0); i++) {
     const cands = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
     if (cands.length === 0) break;
     levelUpWeapon(cands[Math.floor(Math.random() * cands.length)]);
   }
+  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.enemies = [];
   state.projectiles = [];
   state.enemyShots = [];
@@ -1478,7 +1866,7 @@ function drawHud() {
     `   ${describeHeat(heatOf(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
     `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
-    `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
+    `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
 }
 
@@ -1549,6 +1937,7 @@ function startFinale() {
   state.enemyShots.length = 0;
   state.chests.length = 0;
   state.arches.length = 0;
+  state.shrine = null;   // WAVE-11: no shrines past the end
   state.archBuffs.length = 0;
   state.shieldAbsorbs = 0;
   state.portal = null;
@@ -1631,6 +2020,7 @@ function updateFinale(dt) {
       if (r.apply) {
         p.hp -= finalBossDamage(p.stats);   // reads .maxHp -> stats carries it
         p.invuln = 0.6;
+        resetRampage();   // WAVE-11: the maw's hits end the streak too
         state.effects.push({ kind: 'hit_spark', x: p.x, y: p.y, age: 0, ttl: 0.15 });
         audio.playSfx('hit');
         if (p.hp <= 0) { die(true); return; }
@@ -1649,6 +2039,7 @@ function updateFinale(dt) {
     if (r.apply) {
       p.hp -= finalBossDamage(p.stats);   // reads .maxHp -> stats carries it
       p.invuln = 0.6;
+      resetRampage();   // WAVE-11: the maw's bite ends the streak too
       audio.playSfx('hit');
       if (p.hp <= 0) { die(true); return; }
     }
@@ -1665,7 +2056,20 @@ function updateFinale(dt) {
   const evoCritMult2 = (p.stats.critMult || 1.5) + ((volleyEvo3 && volleyEvo3.affixes.critMult) || 0);
   for (const pr of state.projectiles) {
     if (pr.kind) continue;   // kind bodies are weapons.js-owned (already moved)
-    pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt + wd.y * dt; pr.age += dt;
+    pr.age += dt;
+    if (pr.orbit) {   // Orbital Volley flag — same flight rule as update()
+      pr.orbit.t += dt;
+      const ang = pr.orbit.ang + pr.orbit.t * (Math.PI * 2 / pr.orbit.dur);
+      pr.x = p.x + Math.cos(ang) * 26;
+      pr.y = p.y + Math.sin(ang) * 26;
+      if (pr.orbit.t >= pr.orbit.dur) {
+        pr.x = p.x + Math.cos(pr.orbit.ang) * 26;
+        pr.y = p.y + Math.sin(pr.orbit.ang) * 26;
+        pr.orbit = null;
+      }
+    } else {
+      pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt + wd.y * dt;
+    }
     if (pr.hit.has(b) || Math.abs(pr.x - b.x) > b.w / 2 || Math.abs(pr.y - b.y) > b.h / 2) continue;
     let dmg = pr.damage;
     if (evoCrit2 > 0 && Math.random() < evoCrit2) {
@@ -1716,7 +2120,7 @@ function mawDefeated() {
   if (firstClear) profile.bestTime = Math.floor(state.time);
   const gold = computeRunGold({
     kills: p.kills, level: p.level, time: state.time, firstClear,
-    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)),
+    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
   });
   profile.gold += gold;
   saveProfile(profile);
@@ -1770,4 +2174,4 @@ requestAnimationFrame(frame);
 // Headless test seam (smoke.mjs): live state access so integration probes
 // can force conditions (Lv8 + item + token) through the REAL loop. Never
 // read by the browser page.
-export const __TEST = { state, controller, startRun, getProfile: () => profile };
+export const __TEST = { state, controller, startRun, getProfile: () => profile, refreshSynergies };

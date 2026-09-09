@@ -6,7 +6,15 @@ import {
   SHOP_UPGRADES, SHOP_BY_ID, upgradeCost, buyUpgrade, applyMetaBonuses,
   startPotionCount, CHARACTERS, applyCharacter, unlockCharacter, equipCharacter,
   startWeaponSlots, WEAPON_SLOT_START, MAX_WEAPON_SLOTS, hasArcadePass,
+  STARTER_WEAPONS, WEAPON_PRICES, weaponUnlocked, unlockWeapon,
+  ELITE_MODIFIERS, eliteUnlocked, unlockElite,
+  LUCK_MAX_LEVEL, BASE_RARITY_WEIGHTS, luckDropWeights,
+  shopRowOwned, catalogCost,
 } from '../src/meta.js';
+import { WEAPON_TYPES } from '../src/weapons.js';   // read-only: drift guard
+import { CONFIG as C } from '../src/config.js';     // read-only: sim sync anchor
+import { SIM_ASSUMPTIONS, SIM_TUNING, simulateCareer }
+  from '../tools/balance_sim.mjs';                  // sim↔meta single source of truth
 
 let failed = 0;
 function ok(cond, msg) {
@@ -38,12 +46,17 @@ console.log('PERSISTENCE:');
   p.purchased = { dmg: 2, hp: 1 };
   p.unlockedCharacters = ['KNIGHT', 'WITCH'];
   p.equippedCharacter = 'WITCH';
+  p.unlockedWeapons = ['VOLLEY', 'BOOMERANG', 'ZAP'];
+  p.unlockedElites = ['SWIFT'];
   ok(saveProfile(p, s) === true, 'saveProfile succeeds');
   const back = loadProfile(s);
   ok(back.gold === 1234 && back.purchased.dmg === 2 && back.purchased.hp === 1,
      'round-trip preserves gold + purchased levels');
   ok(back.unlockedCharacters.length === 2 && back.equippedCharacter === 'WITCH',
      'round-trip preserves unlocks + equip');
+  ok(back.unlockedWeapons.length === 3 && back.unlockedWeapons.includes('ZAP')
+     && back.unlockedElites.length === 1 && back.unlockedElites[0] === 'SWIFT',
+     'round-trip preserves weapon + elite unlocks');
 
   s.setItem('hordes_profile_v1', '{not json');
   const corrupt = loadProfile(s);
@@ -111,10 +124,12 @@ console.log('GOLD MODEL:');
 console.log('PROGRESSION LADDER:');
 {
   // Full-buy cost: every level of every shop upgrade EXCEPT the arcade pass
-  // (the post-full-buy sink), plus every character unlock (KNIGHT is free).
+  // (the post-full-buy sink) and EXCEPT the WAVE-11 kind rows (weapons/elites
+  // are their own catalog — priced + asserted in ECONOMY TARGETS below), plus
+  // every character unlock (KNIGHT is free).
   let fullBuyCost = 0;
   for (const u of SHOP_UPGRADES) {
-    if (u.id === 'arcade') continue;
+    if (u.id === 'arcade' || u.kind) continue;
     for (let l = 0; l < u.maxLevel; l++) fullBuyCost += upgradeCost(u, l);
   }
   for (const c of Object.values(CHARACTERS)) fullBuyCost += c.unlockCost;
@@ -159,8 +174,14 @@ console.log('EXPANSION LINES:');
     ok(u && u.baseCost > 0 && u.maxLevel >= 3 && Number.isFinite(u.perLevel),
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
-  ok(SHOP_UPGRADES.filter(u => !['slots', 'arcade'].includes(u.id)).length === 11,
-     'eleven stat lines total (5 original + 6 expansion)');
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 12,
+     'twelve stat lines total (5 original + 6 expansion + luck)');
+  ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
+     === Object.keys(WEAPON_PRICES).length,
+     'every priced archetype has a weapon shop row');
+  ok(SHOP_UPGRADES.filter(u => u.kind === 'elite').length
+     === Object.keys(ELITE_MODIFIERS).length,
+     'every elite modifier has a shop row');
 
   // Purchase path works like any other line.
   const p = makeProfile();
@@ -172,7 +193,7 @@ console.log('EXPANSION LINES:');
   // Arcade Pass: single 60k purchase, flagged via hasArcadePass.
   ok(hasArcadePass(makeProfile()) === false, 'fresh profile has no arcade pass');
   const ap = makeProfile();
-  ap.gold = 60000;
+  ap.gold = 140000;
   ok(buyUpgrade(ap, 'arcade') === true && hasArcadePass(ap) === true,
      'arcade pass purchase flips hasArcadePass');
   ok(buyUpgrade(ap, 'arcade') === false, 'arcade pass is single-purchase (maxLevel 1)');
@@ -186,17 +207,18 @@ console.log('STATS CONTRACT:');
   const def = applyMetaBonuses(base, {});
   ok(def.crit === 0 && def.critMult === 1 && def.goldMult === 1
      && def.potionPower === 1 && def.dropBonus === 0 && def.artifactLevels === 0
-     && def.xpMult === 1,
+     && def.xpMult === 1 && def.luck === 0,
      'unpurchased: all contract fields present with safe defaults (0/1)');
 
   const max = applyMetaBonuses(base,
-    { crit: 5, critdmg: 5, greed: 5, alchemy: 4, scav: 4, artifact: 3, xp: 5 });
+    { crit: 5, critdmg: 5, greed: 5, alchemy: 4, scav: 4, artifact: 3, xp: 5, luck: 5 });
   ok(max.crit === 0.03 * 5, 'crit: +3%/level chance (0.15 max)');
   ok(max.critMult === 1 + 0.25 * 5, 'critMult: +25%/level (2.25 max)');
   ok(max.goldMult === 1.5, 'goldMult: +10%/level (1.5 max)');
   ok(max.potionPower === 2, 'potionPower: +25%/level (2.0 max)');
   ok(max.dropBonus === 0.015 * 4, 'dropBonus: +1.5%/level (+6% max)');
   ok(max.artifactLevels === 3, 'artifactLevels: +1 random weapon level per level');
+  ok(max.luck === 5, 'luck: Fortune level count flows through the stats contract (0..5)');
   ok(max.damage === 8 && max.maxHp === 100, 'base stats untouched by new lines');
 }
 
@@ -379,6 +401,246 @@ console.log('MIGRATION:');
   const preStats = applyMetaBonuses({ damage: 8, maxHp: 100 }, pre.purchased);
   ok(preStats.crit === 0 && preStats.goldMult === 1,
      'pre-expansion profile gets safe stat-contract defaults');
+
+  // WAVE-11 RETROACTIVE RESET (Sk408-approved): a pre-weapon-economy save has
+  // no unlockedWeapons field and gets the STARTER SET ONLY — nothing is
+  // grandfathered, not even WITCH's starting weapon.
+  ok(Array.isArray(old.unlockedWeapons)
+     && old.unlockedWeapons.length === STARTER_WEAPONS.length
+     && STARTER_WEAPONS.every(w => old.unlockedWeapons.includes(w)),
+     'pre-WAVE-11 save migrates to the starter set only');
+  ok(!old.unlockedWeapons.includes('ZAP'),
+     'WITCH ownership does not grandfather her ZAP starter');
+  ok(Array.isArray(old.unlockedElites) && old.unlockedElites.length === 0,
+     'elite modifiers are locked on old saves');
+
+  // Present-but-garbage unlock arrays sanitize (drop junk/dupes, keep valid).
+  s.setItem('hordes_profile_v1', JSON.stringify({
+    gold: 0, purchased: {},
+    unlockedCharacters: ['KNIGHT'], equippedCharacter: 'KNIGHT',
+    unlockedWeapons: ['BEAM', 'BEAM', 'NOPE', 42, 'VOLLEY'],
+    unlockedElites: ['SWIFT', 'SWIFT', 'GARBAGE', 7],
+  }));
+  const san = loadProfile(s);
+  ok(san.unlockedWeapons.length === 2 && san.unlockedWeapons.includes('BEAM')
+     && san.unlockedWeapons.includes('VOLLEY') && !san.unlockedWeapons.includes('NOPE'),
+     'weapon unlocks dedupe + drop garbage, VOLLEY always survives');
+  ok(san.unlockedElites.length === 1 && san.unlockedElites[0] === 'SWIFT',
+     'elite unlocks dedupe + drop garbage');
+  // VOLLEY re-added even when a mangled field omits it.
+  s.setItem('hordes_profile_v1', JSON.stringify({
+    gold: 0, purchased: {}, unlockedCharacters: ['KNIGHT'], equippedCharacter: 'KNIGHT',
+    unlockedWeapons: ['MINE'], unlockedElites: [],
+  }));
+  ok(loadProfile(s).unlockedWeapons[0] === 'VOLLEY',
+     'VOLLEY is re-prepended when a corrupt field omits it');
+}
+
+// ---------- Weapon unlocks (WAVE-11) ----------
+console.log('WEAPON UNLOCKS:');
+{
+  ok(STARTER_WEAPONS.length === 2 && STARTER_WEAPONS.includes('VOLLEY'),
+     'starter set = VOLLEY + one cheap pick');
+
+  // Drift guard vs the read-only weapons.js archetype list: every archetype
+  // is either priced or a starter; nothing priced exists outside it.
+  const archetypes = Object.keys(WEAPON_TYPES);
+  for (const a of archetypes) {
+    ok(WEAPON_PRICES[a] !== undefined || STARTER_WEAPONS.includes(a),
+       `${a} is priced or a starter weapon`);
+  }
+  ok(Object.keys(WEAPON_PRICES).length + STARTER_WEAPONS.length === archetypes.length + 1,
+     'price ladder covers exactly the non-starter catalog (+VOLLEY starter)');
+
+  // Stepped ladder: prices strictly ascend in listed order; BEAM is top tier.
+  const prices = Object.values(WEAPON_PRICES);
+  ok(prices.every((p, i) => i === 0 || p > prices[i - 1]),
+     'price ladder strictly ascends (early cheap, strong expensive)');
+  ok(WEAPON_PRICES.BEAM > WEAPON_PRICES.MINE * 5,
+     'BEAM sits in a class of its own above the ladder');
+
+  // Gating + buy path.
+  const p = makeProfile();
+  ok(weaponUnlocked(p, 'VOLLEY') && weaponUnlocked(p, 'BOOMERANG'),
+     'fresh profile owns the starter set');
+  ok(!weaponUnlocked(p, 'ZAP') && !weaponUnlocked(p, 'BEAM'),
+     'everything else is locked by default');
+  p.gold = WEAPON_PRICES.ZAP - 1;
+  ok(unlockWeapon(p, 'ZAP') === false && p.gold === WEAPON_PRICES.ZAP - 1
+     && !weaponUnlocked(p, 'ZAP'),
+     'weapon buy gated on gold, mutates nothing on failure');
+  p.gold = 100000;
+  ok(unlockWeapon(p, 'ZAP') === true && weaponUnlocked(p, 'ZAP')
+     && p.gold === 100000 - WEAPON_PRICES.ZAP,
+     'weapon buy deducts gold and records ownership');
+  ok(unlockWeapon(p, 'ZAP') === false, 'double weapon buy rejected');
+  ok(unlockWeapon(p, 'VOLLEY') === false && unlockWeapon(p, 'BOOMERANG') === false,
+     'starters cannot be bought');
+  ok(unlockWeapon(p, 'NOPE') === false, 'unknown weapon id rejected');
+
+  // Shop-row path (hb1 keeps calling buyUpgrade with the row id).
+  const q = makeProfile();
+  q.gold = WEAPON_PRICES.BEAM;
+  ok(buyUpgrade(q, 'weapon_beam') === true && weaponUnlocked(q, 'BEAM')
+     && q.purchased.weapon_beam === undefined && q.gold === 0,
+     'buyUpgrade on a weapon row unlocks via unlockedWeapons (not purchased)');
+  ok(buyUpgrade(q, 'weapon_beam') === false, 'weapon row is single-purchase');
+  ok(shopRowOwned(q, SHOP_BY_ID.weapon_beam) === true
+     && shopRowOwned(q, SHOP_BY_ID.weapon_zap) === false,
+     'shopRowOwned reflects weapon rows');
+  ok(buyUpgrade(q, 'weapon_nope') === false, 'unknown weapon row id rejected');
+}
+
+// ---------- Elite modifier unlocks (WAVE-11) ----------
+console.log('ELITE MODIFIERS:');
+{
+  ok(Object.keys(ELITE_MODIFIERS).length === 3
+     && ['SWIFT', 'SPLITTING', 'VAMPIRIC'].every(k => ELITE_MODIFIERS[k].cost > 0),
+     'SWIFT / SPLITTING / VAMPIRIC defined with costs');
+
+  const p = makeProfile();
+  ok(!eliteUnlocked(p, 'SWIFT') && !eliteUnlocked(p, 'SPLITTING')
+     && !eliteUnlocked(p, 'VAMPIRIC'),
+     'all elite modifiers locked by default');
+  p.gold = ELITE_MODIFIERS.SWIFT.cost - 1;
+  ok(unlockElite(p, 'SWIFT') === false, 'elite buy gated on gold');
+  p.gold = 100000;
+  ok(unlockElite(p, 'SWIFT') === true && eliteUnlocked(p, 'SWIFT')
+     && p.gold === 100000 - ELITE_MODIFIERS.SWIFT.cost,
+     'elite buy deducts gold and records ownership');
+  ok(unlockElite(p, 'SWIFT') === false, 'double elite buy rejected');
+  ok(unlockElite(p, 'NOPE') === false, 'unknown elite id rejected');
+
+  const q = makeProfile();
+  q.gold = ELITE_MODIFIERS.VAMPIRIC.cost;
+  ok(buyUpgrade(q, 'elite_vampiric') === true && eliteUnlocked(q, 'VAMPIRIC')
+     && q.purchased.elite_vampiric === undefined && q.gold === 0,
+     'buyUpgrade on an elite row unlocks via unlockedElites (not purchased)');
+  ok(shopRowOwned(q, SHOP_BY_ID.elite_vampiric) === true,
+     'shopRowOwned reflects elite rows');
+}
+
+// ---------- Luck skill (WAVE-11) ----------
+console.log('LUCK:');
+{
+  ok(SHOP_BY_ID.luck.maxLevel === LUCK_MAX_LEVEL && LUCK_MAX_LEVEL === 5,
+     'luck is a 5-level shop upgrade');
+
+  // Level 0 == the shared base table exactly (hb4 rebases loot.js onto it).
+  const w0 = luckDropWeights(0);
+  ok(w0.COMMON === BASE_RARITY_WEIGHTS.COMMON && w0.RARE === BASE_RARITY_WEIGHTS.RARE
+     && w0.EPIC === BASE_RARITY_WEIGHTS.EPIC && w0.LEGENDARY === BASE_RARITY_WEIGHTS.LEGENDARY,
+     'luck 0 returns BASE_RARITY_WEIGHTS exactly');
+
+  // Monotonic shift: COMMON strictly decreases, others never decrease.
+  let mono = true;
+  for (let L = 0; L < LUCK_MAX_LEVEL; L++) {
+    const a = luckDropWeights(L), b = luckDropWeights(L + 1);
+    if (b.COMMON >= a.COMMON || b.RARE < a.RARE || b.EPIC < a.EPIC
+        || b.LEGENDARY < a.LEGENDARY) mono = false;
+  }
+  ok(mono, 'luck monotonically shifts weights: common down, rare/epic/legendary up');
+  ok(luckDropWeights(5).EPIC > BASE_RARITY_WEIGHTS.EPIC
+     && luckDropWeights(5).COMMON < BASE_RARITY_WEIGHTS.COMMON,
+     'max luck noticeably tilts the table toward rare/epic');
+  for (const band of ['COMMON', 'RARE', 'EPIC', 'LEGENDARY']) {
+    ok(luckDropWeights(-3)[band] === luckDropWeights(0)[band]
+       && luckDropWeights(99)[band] === luckDropWeights(LUCK_MAX_LEVEL)[band],
+       `luck clamps to 0..${LUCK_MAX_LEVEL} (${band})`);
+  }
+
+  // Purchase path: 5 levels then cap; stat contract carries the level.
+  const p = makeProfile();
+  p.gold = catalogCost(['luck']);
+  let bought = 0;
+  while (buyUpgrade(p, 'luck')) bought++;
+  ok(bought === 5 && p.purchased.luck === 5 && p.gold === 0,
+     'luck buys all 5 levels and caps');
+  ok(applyMetaBonuses({ damage: 8 }, p.purchased).luck === 5,
+     'purchased luck reaches the stats contract');
+}
+
+// ---------- WAVE-11 economy targets (analytic; sim re-validates) ----------
+console.log('ECONOMY TARGETS:');
+{
+  const good = computeRunGold(GOLD_MODEL.GOOD_RUN);
+  ok(good >= 1700 && good <= 1900, `GOOD_RUN pays ~1.8k gold (got ${good})`);
+  ok(GOLD_MODEL.INCOME_TIERS[0].gold === computeRunGold(GOLD_MODEL.RUN1),
+     'income tier 0 matches the RUN1 reference');
+  ok(GOLD_MODEL.INCOME_TIERS[3].gold >= 2700
+     && GOLD_MODEL.INCOME_TIERS[3].gold <= computeRunGold(GOLD_MODEL.LATE),
+     'income tier 3 brackets the LATE reference');
+
+  // (a) ~10 good runs buy ~50% of the mid-tier catalog.
+  const midCost = catalogCost(GOLD_MODEL.MID_TIER_IDS);
+  const halfRuns = (midCost / 2) / good;
+  ok(halfRuns >= 9 && halfRuns <= 13,
+     `half the mid-tier catalog costs ~10 good runs (got ${halfRuns.toFixed(1)})`);
+  ok(midCost < good * 40,
+     'the whole mid-tier catalog stays a mid-game project (< 40 good runs)');
+
+  // (b) every top-tier item costs 30+ good runs.
+  ok(!GOLD_MODEL.MID_TIER_IDS.some(id => GOLD_MODEL.TOP_TIER_IDS.includes(id)),
+     'mid-tier and top-tier catalogs are disjoint');
+  for (const id of GOLD_MODEL.TOP_TIER_IDS) {
+    const cost = catalogCost([id]);
+    ok(cost >= good * GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
+       `${id} (${cost}g) costs 30+ good runs (${(cost / good).toFixed(1)})`);
+  }
+  ok(catalogCost(['arcade']) === 140000,
+     'ARCADE_PASS stays the 140k top-tier sink (balance-sim compounding standard)');
+
+  // Ladder sanity against the income curve.
+  ok(WEAPON_PRICES.ORBIT <= computeRunGold(GOLD_MODEL.RUN1),
+     'cheapest weapon is first-run affordable (early weapons cheap)');
+  ok(WEAPON_PRICES.BEAM > computeRunGold(GOLD_MODEL.LATE) * 15,
+     'BEAM is not plausibly one-run money even late');
+}
+
+// ---------- Sim ↔ meta single source of truth (WAVE-11 balance sim) --------
+console.log('SIM SYNC:');
+{
+  // tools/balance_sim.mjs must DERIVE its assumptions from GOLD_MODEL +
+  // config.js ESCALATION — never hardcode a second economy. Any drift between
+  // the sim's model and the live numbers fails here.
+  ok(SIM_ASSUMPTIONS.END_WAVE === C.ESCALATION.END_WAVE
+     && SIM_ASSUMPTIONS.WAVE_LENGTH === C.ESCALATION.WAVE_LENGTH,
+     'sim run structure matches config ESCALATION (END_WAVE / WAVE_LENGTH)');
+
+  // The sim's difficulty ratio uses the live hpScale curve from the constants.
+  const { LINEAR, COMPOUND_FROM, COMPOUND } = C.ESCALATION.HP;
+  const expectHp = w => (1 + LINEAR * w) * Math.pow(COMPOUND, Math.max(0, w - COMPOUND_FROM));
+  ok([1, 3, 5, 8].every(w => SIM_ASSUMPTIONS.hpScale(w) === expectHp(w)),
+     'sim hpScale derives from ESCALATION.HP constants');
+
+  ok(SIM_ASSUMPTIONS.goodRunGold === computeRunGold(GOLD_MODEL.GOOD_RUN),
+     'sim good-run reference gold equals computeRunGold(GOLD_MODEL.GOOD_RUN)');
+  ok(SIM_ASSUMPTIONS.killsPerFullRun === GOLD_MODEL.GOOD_RUN.kills
+     && SIM_ASSUMPTIONS.TW0 === GOLD_MODEL.GOOD_RUN.time / C.ESCALATION.END_WAVE,
+     'sim kill/time calibration anchors to the GOOD_RUN reference');
+  const rampSum = Array.from({ length: C.ESCALATION.END_WAVE },
+    (_, i) => 1 + SIM_TUNING.KILL_RAMP * i).reduce((s, x) => s + x, 0);
+  ok(Math.abs(SIM_ASSUMPTIONS.K0 * rampSum - GOLD_MODEL.GOOD_RUN.kills) < 1e-9,
+     'per-wave kill shape sums to GOOD_RUN.kills over a full run');
+
+  ok(JSON.stringify(SIM_ASSUMPTIONS.MID_TIER_IDS) === JSON.stringify(GOLD_MODEL.MID_TIER_IDS)
+     && JSON.stringify(SIM_ASSUMPTIONS.TOP_TIER_IDS) === JSON.stringify(GOLD_MODEL.TOP_TIER_IDS),
+     'sim tier catalogs equal GOLD_MODEL MID/TOP_TIER_IDS');
+  ok(SIM_ASSUMPTIONS.midTierCost === catalogCost(GOLD_MODEL.MID_TIER_IDS),
+     'sim mid-tier catalog cost equals catalogCost (no duplicated prices)');
+  ok(SIM_ASSUMPTIONS.TOP_TIER_MIN_GOOD_RUNS === GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
+     'sim uses GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS as the top-tier bar');
+
+  // Deterministic smoke: one career, fixed seed, must reach the target and
+  // produce the milestone table shape.
+  const career = simulateCareer(1337);
+  ok(career.hitTarget === true && career.milestones.length === SIM_TUNING.GOOD_RUN_TARGET / 5,
+     'sim career smoke: deterministic career reaches all good-run milestones');
+  ok(career.milestones[1].goodRuns === 10 && Number.isFinite(career.milestones[1].goodFrac),
+     'sim career smoke: 10-good-run milestone carries the target-(a) metric');
+  const again = simulateCareer(1337);
+  ok(JSON.stringify(again.milestones) === JSON.stringify(career.milestones),
+     'sim career smoke: same seed reproduces identical milestones');
 }
 
 // ---------- Summary ----------

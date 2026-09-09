@@ -15,8 +15,18 @@
 //   //        potions start at startPotionCount(profile); grant the equipped
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
 import { CONFIG as C } from './config.js';
+import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
 
 const STORAGE_KEY = 'hordes_profile_v1';
+
+// ---------- Weapon unlock catalog (WAVE-11 economy, Sk408 directives) ------
+// Weapons are BOUGHT now. A new profile starts with the STARTER SET: VOLLEY
+// (the base volley every run fires) plus one cheap pick — BOOMERANG, the
+// simplest archetype. Every OTHER archetype gets a shop row priced off
+// WEAPON_PRICES (a stepped ladder: early weapons cheap, strong ones
+// expensive, BEAM is top tier). Ownership lives in profile.unlockedWeapons;
+// helpers: weaponUnlocked / unlockWeapon, or buyUpgrade on the shop row.
+export const STARTER_WEAPONS = ['VOLLEY', 'BOOMERANG'];
 
 // ---------- Storage shim (node-safe) ----------
 export function detectStorage() {
@@ -34,6 +44,8 @@ export function makeProfile() {
     purchased: {},                      // upgradeId -> level (1..maxLevel)
     unlockedCharacters: ['KNIGHT'],
     equippedCharacter: 'KNIGHT',
+    unlockedWeapons: [...STARTER_WEAPONS],  // WAVE-11: starter set only
+    unlockedElites: [],                     // WAVE-11: elite modifiers locked
   };
 }
 
@@ -58,6 +70,23 @@ export function loadProfile(storage) {
         purchased[id] = def ? Math.max(0, Math.min(n, def.maxLevel)) : n;
       }
     }
+    // WAVE-11 WEAPON ECONOMY — RETROACTIVE RESET (Sk408-approved): saves from
+    // before weapon unlocks carry no unlockedWeapons field and get the STARTER
+    // SET ONLY. Previously "free" archetypes are NOT grandfathered — even a
+    // save with WITCH unlocked does not keep her ZAP starter; it must be
+    // repurchased. Present-but-garbage fields sanitize: non-strings/unknown
+    // ids drop out, dupes dedupe, and VOLLEY is always re-added (it is the
+    // base volley every run fires).
+    let unlockedWeapons = [...STARTER_WEAPONS];
+    if (Array.isArray(p.unlockedWeapons)) {
+      unlockedWeapons = [...new Set(p.unlockedWeapons
+        .filter(w => typeof w === 'string' && VALID_UNLOCK_WEAPONS.has(w)))];
+      if (!unlockedWeapons.includes('VOLLEY')) unlockedWeapons.unshift('VOLLEY');
+    }
+    const unlockedElites = Array.isArray(p.unlockedElites)
+      ? [...new Set(p.unlockedElites
+          .filter(e => typeof e === 'string' && VALID_ELITE_IDS.has(e)))]
+      : [];
     return {
       ...p,
       gold: Number(p.gold) || 0,
@@ -66,6 +95,8 @@ export function loadProfile(storage) {
         ? p.unlockedCharacters : ['KNIGHT'],
       equippedCharacter: typeof p.equippedCharacter === 'string'
         ? p.equippedCharacter : 'KNIGHT',
+      unlockedWeapons,
+      unlockedElites,
     };
   } catch { return makeProfile(); }    // corrupt blob -> fresh start
 }
@@ -94,6 +125,22 @@ export const RUN_GOLD = {
   FIRST_CLEAR: 250,   // runStats.firstClear: first time reaching a new best time
 };
 
+// WAVE-11 ECONOMY TARGETS (Sk408 directives). Assumptions the unlock prices
+// are set against — every number here is TUNABLE, the analytic tests in
+// test_meta.mjs re-derive the properties when they move:
+//   * GOOD_RUN ~1.8k gold = a competent mid-game run (tier 2 below).
+//   * Compounding income growth per tier (upgrades raise survival -> longer
+//     runs -> more kills -> more gold -> more upgrades):
+//       tier 0  runs 1-5    ~700/run   fresh profile (RUN1 reference)
+//       tier 1  runs 6-20   ~1.2k/run  first stat lines + one cheap weapon
+//       tier 2  runs 21-45  ~1.8k/run  GOOD_RUN reference, mid build
+//       tier 3  runs 46+    ~2.8k/run  LATE reference, full build
+//   * (a) ~10 GOOD RUNS buy ~50% of the MID-TIER catalog (every weapon +
+//     elite unlock + the full luck ladder; top tier excluded — asserted in
+//     test_meta.mjs as half-catalog / goodRun in [9, 13] runs).
+//   * (b) any single TOP-TIER item (BEAM, ARCADE_PASS) costs 30+ good runs.
+//   The post-integration balance sim re-validates against real playtest
+//   curves; INCOME_TIERS is the documented assumption until then.
 export const GOLD_MODEL = {
   BASE: 50,
   KILLS_DIV: 2,
@@ -106,6 +153,23 @@ export const GOLD_MODEL = {
   // shoppers hit the LATE income curve sooner than idlers). Stretched 45->60
   // in the EXPANSION retune so the full-buy ladder crosses at ~60-100 runs.
   PROGRESS_SPAN: 60,
+  // ---- WAVE-11 additions ----
+  GOOD_RUN: { kills: 3000, level: 25, time: 270 },  // -> ~1813g
+  INCOME_TIERS: [
+    { tier: 0, runs: '1-5',   gold: 700 },   // == computeRunGold(RUN1)
+    { tier: 1, runs: '6-20',  gold: 1200 },
+    { tier: 2, runs: '21-45', gold: 1800 },   // ~= computeRunGold(GOOD_RUN)
+    { tier: 3, runs: '46+',   gold: 2800 },   // ~= computeRunGold(LATE)
+  ],
+  TOP_TIER_MIN_GOOD_RUNS: 30,
+  // The priced-this-wave catalog (shop row ids). MID_TIER: everything a
+  // mid-game shopper works through; TOP_TIER: the 30+-good-run trophies.
+  MID_TIER_IDS: [
+    'weapon_orbit', 'weapon_zap', 'weapon_nova_pulse', 'weapon_scythe',
+    'weapon_seeker', 'weapon_mine', 'elite_swift', 'elite_splitting',
+    'elite_vampiric', 'luck',
+  ],
+  TOP_TIER_IDS: ['weapon_beam', 'arcade'],
 };
 
 export function computeRunGold(runStats) {
@@ -143,8 +207,9 @@ export function projectRunGold(runIndex, purchases) {
 // ---------- Permanent shop ----------
 // EXPANSION RETUNE (Sk408: still too cheap — target hours-days). Full-buy
 // cost (ALL stat lines + all characters + all 3 slot purchases) now crosses
-// cumulative projected income around run 60-70; the ARCADE PASS (a 60k gold
-// sink beyond full-buy) pushes the completionist crossing ~20 runs further.
+// cumulative projected income around run 60-70; the ARCADE PASS (a 140k gold
+// sink beyond full-buy; BALANCE-SIM RETUNED 60k -> 140k — the compounding-aware
+// 30+good-run standard from tools/balance_sim.mjs) pushes the crossing later.
 // The ladder test in test_meta.mjs enforces both. perLevel values are PER
 // LEVEL and stack via applyMetaBonuses (field contract documented there).
 //
@@ -154,6 +219,59 @@ export function projectRunGold(runIndex, purchases) {
 export const WEAPON_SLOT_START = 3;
 export const MAX_WEAPON_SLOTS = 6;
 
+// ---------- WEAPON_PRICES (stepped ladder; archetype order = price order) ----
+// Cheap picks first (run-1 income buys ORBIT), each step ~1.5-1.6x, BEAM is
+// the top-tier trophy at 30+ good runs (see GOLD_MODEL). Ladder derived from
+// the weapons.js archetype list — test_meta.mjs guards drift (every archetype
+// is priced here or is a STARTER_WEAPON).
+export const WEAPON_PRICES = {
+  ORBIT: 400,        // reliable contact damage, cheapest real archetype
+  ZAP: 800,          // chain zap: early AoE-ish clear
+  NOVA_PULSE: 1300,  // hands-free AoE ring
+  SCYTHE: 2000,      // heavy melee sweep
+  SEEKER: 3100,      // homing coverage
+  MINE: 4800,        // area denial, best-in-class mid pick
+  // TOP TIER — BALANCE-SIM RETUNE (Sk408: account for compounding): greed +
+  // chest income push a late-career good run to ~3.2k gross, so a 30+good-run
+  // trophy must cost 100k+. Sim standard: tools/balance_sim.mjs.
+  BEAM: 110000,
+};
+const VALID_UNLOCK_WEAPONS = new Set([...STARTER_WEAPONS, ...Object.keys(WEAPON_PRICES)]);
+
+// ---------- ELITE MODIFIER UNLOCKS (locked by default) ---------------------
+// profile.unlockedElites gates which elite modifiers the run side may use.
+// In-run SEMANTICS (what SWIFT/SPLITTING/VAMPIRIC actually do, and whether
+// they ride elite enemies or run modifiers) is the integrator's call — this
+// module owns only the unlock state + prices (Sk408: shop rows, locked by
+// default). buyUpgrade on the shop row or unlockElite(profile, id).
+export const ELITE_MODIFIERS = {
+  SWIFT: {
+    id: 'SWIFT', name: 'Swift', cost: 1800,
+    desc: 'Unlock the SWIFT elite modifier: faster elites, richer kills.',
+  },
+  SPLITTING: {
+    id: 'SPLITTING', name: 'Splitting', cost: 3600,
+    desc: 'Unlock the SPLITTING elite modifier: elites may split on death.',
+  },
+  VAMPIRIC: {
+    id: 'VAMPIRIC', name: 'Vampiric', cost: 7200,
+    desc: 'Unlock the VAMPIRIC elite modifier: elites that heal as they hit.',
+  },
+};
+const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
+
+// ROW SHAPE (hb1 renders; WAVE-11 extension in bold):
+//   { id, name, desc, baseCost, costGrowth, maxLevel, perLevel }
+//       classic stat/slot line — level-tracked in profile.purchased.
+//   { ..., kind: 'weapon', weaponId }
+//       single-purchase WEAPON unlock row (costGrowth 1, maxLevel 1,
+//       perLevel 0). Ownership lives in profile.unlockedWeapons — NOT in
+//       profile.purchased; render owned state via shopRowOwned().
+//   { ..., kind: 'elite', eliteId }
+//       single-purchase ELITE MODIFIER unlock row, same rules, ownership in
+//       profile.unlockedElites.
+// buyUpgrade() dispatches on kind, so hb1 can keep calling it with the row id
+// for every row in SHOP_UPGRADES.
 export const SHOP_UPGRADES = [
   // ---- original combat/resource lines (prices unchanged from retune) ----
   { id: 'dmg',     name: 'Forged Edge',    desc: '+10% weapon damage per level',
@@ -179,11 +297,27 @@ export const SHOP_UPGRADES = [
     baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.015 },
   { id: 'artifact',name: 'Starting Artifact', desc: 'Start each run with +1 random weapon level',
     baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 1 },
+  // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
+  { id: 'luck',    name: 'Fortune',        desc: 'Luck: loot rarity odds shift toward rare/epic per level',
+    baseCost: 500, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
+  // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
+  ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
+    id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
+    name: WEAPON_NAMES[wid] || wid,
+    desc: `Unlock the ${WEAPON_NAMES[wid] || wid} archetype for the draft pool.`,
+    baseCost: price, costGrowth: 1, maxLevel: 1, perLevel: 0,
+  })),
+  // ---- WAVE-11: elite modifier unlock rows (kind 'elite') ----
+  ...Object.values(ELITE_MODIFIERS).map(e => ({
+    id: `elite_${e.id.toLowerCase()}`, kind: 'elite', eliteId: e.id,
+    name: `${e.name} Elites`, desc: e.desc,
+    baseCost: e.cost, costGrowth: 1, maxLevel: 1, perLevel: 0,
+  })),
   // ---- slots + late-game sink ----
   { id: 'slots',   name: 'Weapon Slot',    desc: '+1 weapon slot (start 3, max 6)',
     baseCost: 5000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Golden HUD + arcade-run modifiers. The late-game flex.',
-    baseCost: 60000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
+    baseCost: 140000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
@@ -193,7 +327,7 @@ export function startWeaponSlots(profile) {
   return Math.min(MAX_WEAPON_SLOTS, WEAPON_SLOT_START + bought);
 }
 
-// Arcade Pass owned? (single 60k purchase — the post-full-buy gold sink;
+// Arcade Pass owned? (single 140k purchase — the post-full-buy gold sink;
 // hb1 reads this to flip on golden HUD/arcade modifiers.)
 export function hasArcadePass(profile) {
   return (Number(profile.purchased.arcade) || 0) > 0;
@@ -205,10 +339,15 @@ export function upgradeCost(def, currentLevel) {
 }
 
 // Buy one level of an upgrade. Validates gold + level cap. Mutates profile
-// (gold -= cost, purchased[id]++). Returns true on success.
+// (gold -= cost, purchased[id]++). Returns true on success. WAVE-11: rows
+// tagged kind 'weapon'/'elite' dispatch to the unlock paths instead — they
+// record ownership in profile.unlockedWeapons/unlockedElites, never in
+// profile.purchased (single source of truth per row kind).
 export function buyUpgrade(profile, id) {
   const def = SHOP_BY_ID[id];
   if (!def) return false;
+  if (def.kind === 'weapon') return unlockWeapon(profile, def.weaponId);
+  if (def.kind === 'elite') return unlockElite(profile, def.eliteId);
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
   const cost = upgradeCost(def, level);
@@ -216,6 +355,80 @@ export function buyUpgrade(profile, id) {
   profile.gold -= cost;
   profile.purchased[id] = level + 1;
   return true;
+}
+
+// ---------- Weapon / elite unlock paths (WAVE-11) --------------------------
+export function weaponUnlocked(profile, weaponId) {
+  return (profile.unlockedWeapons || []).includes(weaponId);
+}
+
+// Buy a locked archetype at its WEAPON_PRICES price. Starters/unknown ids
+// reject. Mutates profile on success. Returns true on success.
+export function unlockWeapon(profile, weaponId) {
+  const price = WEAPON_PRICES[weaponId];
+  if (price === undefined || weaponUnlocked(profile, weaponId)) return false;
+  if (profile.gold < price) return false;
+  profile.gold -= price;
+  profile.unlockedWeapons.push(weaponId);
+  return true;
+}
+
+export function eliteUnlocked(profile, eliteId) {
+  return (profile.unlockedElites || []).includes(eliteId);
+}
+
+// Buy a locked elite modifier at its ELITE_MODIFIERS cost.
+export function unlockElite(profile, eliteId) {
+  const def = ELITE_MODIFIERS[eliteId];
+  if (!def || eliteUnlocked(profile, eliteId)) return false;
+  if (profile.gold < def.cost) return false;
+  profile.gold -= def.cost;
+  profile.unlockedElites.push(eliteId);
+  return true;
+}
+
+// Fully-bought check for ANY shop row (hb1 render helper): weapon/elite rows
+// are owned-or-not (single purchase); classic rows are "maxed". For classic
+// rows the current LEVEL still comes from profile.purchased[id] as before.
+export function shopRowOwned(profile, def) {
+  if (def.kind === 'weapon') return weaponUnlocked(profile, def.weaponId);
+  if (def.kind === 'elite') return eliteUnlocked(profile, def.eliteId);
+  return (profile.purchased[def.id] || 0) >= def.maxLevel;
+}
+
+// Full-buy cost of a list of shop row ids (every level of every row; single-
+// purchase rows cost their baseCost). The balance seam the WAVE-11 economy
+// targets are asserted through (test_meta.mjs + the post-integration sim).
+export function catalogCost(rowIds) {
+  let sum = 0;
+  for (const id of rowIds || []) {
+    const def = SHOP_BY_ID[id];
+    if (!def) continue;
+    for (let l = 0; l < def.maxLevel; l++) sum += upgradeCost(def, l);
+  }
+  return sum;
+}
+
+// ---------- LUCK (WAVE-11; consumed by loot.js / hb4's loot task) ----------
+// BASE_RARITY_WEIGHTS is the SHARED export hb4 rebases loot.js onto (its
+// current hardcoded RARITY_WEIGHTS already match these values, so nothing
+// shifts until luck enters the roll). luckDropWeights(luck) returns the
+// rarity weight table at luck level 0..LUCK_MAX_LEVEL: base is common-heavy,
+// each luck level compounds COMMON down and shifts RARE/EPIC/LEGENDARY up.
+// Weights NEED NOT sum to 100 — consumers normalize like pickRarity().
+// Tuning knobs in LUCK_TAPER (per-level rates); 0 = base table exactly.
+export const LUCK_MAX_LEVEL = 5;
+export const BASE_RARITY_WEIGHTS = { COMMON: 60, RARE: 25, EPIC: 12, LEGENDARY: 3 };
+export const LUCK_TAPER = { COMMON: 0.10, RARE: 0.12, EPIC: 0.25, LEGENDARY: 0.35 };
+
+export function luckDropWeights(luck) {
+  const L = Math.max(0, Math.min(LUCK_MAX_LEVEL, Number(luck) || 0));
+  return {
+    COMMON: BASE_RARITY_WEIGHTS.COMMON * Math.pow(1 - LUCK_TAPER.COMMON, L),
+    RARE: BASE_RARITY_WEIGHTS.RARE * (1 + LUCK_TAPER.RARE * L),
+    EPIC: BASE_RARITY_WEIGHTS.EPIC * (1 + LUCK_TAPER.EPIC * L),
+    LEGENDARY: BASE_RARITY_WEIGHTS.LEGENDARY * (1 + LUCK_TAPER.LEGENDARY * L),
+  };
 }
 
 // Apply permanent bonuses to a stats object. PURE: returns a NEW object,
@@ -238,6 +451,9 @@ export function buyUpgrade(profile, id) {
 //   artifactLevels(0)             Starting Artifact: grant this many random
 //                                 weapon levels (weapons.js levelUpWeapon)
 //                                 at run start, respecting WEAPON_MAX_LEVEL.
+//   luck         (0)              Fortune: luck LEVEL count 0..5 — feed to
+//                                 luckDropWeights(luck) for loot rarity rolls
+//                                 (hb4's loot task consumes this).
 export function applyMetaBonuses(stats, purchased) {
   const lvl = id => purchased[id] || 0;
   return {
@@ -252,6 +468,7 @@ export function applyMetaBonuses(stats, purchased) {
     potionPower: 1 + SHOP_BY_ID.alchemy.perLevel * lvl('alchemy'),
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
+    luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
   };
 }
 

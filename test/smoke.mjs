@@ -7,6 +7,8 @@ import { CONFIG as CFG } from '../src/config.js';
 import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
 import { groundTheme } from '../src/render.js';
 import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
+import { makeWeapon } from '../src/weapons.js';
+import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -536,7 +538,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   assert(volley && !volley.evolutionId, 'fresh run VOLLEY must be un-evolved');
   assert(heatOf(st) === 0 && manualPushes(st) === 0, 'run reset must clear the heat ledger');
-  console.log('run-scope reset: choices/tokens/evolutions/heat all cleared');
+  // WAVE-11 run-scoped companions reset too.
+  assert(st.lastFlashAt === null, 'run reset must clear lastFlashAt');
+  assert(st.rampage.streak === 0 && st.rampage.best === 0, 'run reset must clear the rampage meter');
+  assert(st.shrineRng && st.shrine !== undefined, 'run must seed the shrine rng stream');
+  console.log('run-scope reset: choices/tokens/evolutions/heat/rampage/flash/shrine all cleared');
 }
 
 // ---- WAVE-8/A portal-entry cinematic ----
@@ -638,11 +644,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   }
 }
 
-// ---- WAVE-9 heat: item EXCHANGE is free, EMPTY-slot equip costs +1 --------
+// ---- WAVE-9 heat + WAVE-11 best-case equip: EXCHANGE is free (in-place ----
+// REPLACE of the weakest), IGNORE leaves the drop, EMPTY-slot equip +1 heat.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  // Belt to 4/4 with dummy items, then drop a newcomer on the player.
+  // Belt to 4/4 with dummy items (all COMMON, score 1 — first-weakest wins
+  // ties at slot 0), then drop a strictly better newcomer on the player.
   st.items.length = 0;
   for (let i = 0; i < 4; i++) {
     st.items.push({ id: 'old' + i, name: 'Old ' + i, rarity: 'COMMON', affixes: [] });
@@ -651,9 +659,17 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   st.itemDrops.push({ x: st.player.x, y: st.player.y, item: newcomer, age: 0 });
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.items.length === 4, 'the exchange keeps the belt at 4/4');
-  assert(st.items[st.items.length - 1] === newcomer && !st.items.some(it => it.id === 'old0'),
-    'the OLDEST item must be exchanged out (FIFO)');
+  assert(st.items[0] === newcomer && !st.items.some(it => it.id === 'old0'),
+    'a strictly better drop REPLACES the weakest slot IN PLACE (slot 0)');
   assert(heatOf(st) === 0, 'an item EXCHANGE at 4/4 must add NO heat (got ' + heatOf(st) + ')');
+  // IGNORE: an equal-score drop is left on the ground (no churn, no heat).
+  const junk = { id: 'junk', name: 'Junk', rarity: 'COMMON', affixes: [] };
+  st.itemDrops.push({ x: st.player.x, y: st.player.y, item: junk, age: 0 });
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.itemDrops.some(d => d.item === junk),
+    'an equal-score drop must stay on the ground (IGNORE)');
+  assert(!st.items.some(it => it.id === 'junk'), 'the ignored drop must NOT equip');
+  assert(heatOf(st) === 0, 'an ignored drop adds no heat');
   // Free the last slot and drop another: an empty-slot equip charges +1.
   st.items.pop();
   const second = { id: 'second', name: 'Second', rarity: 'RARE', affixes: [] };
@@ -661,7 +677,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.items[st.items.length - 1] === second, 'the free-slot drop must equip');
   assert(heatOf(st) === 1, 'an equip into an EMPTY slot must charge +1 heat (got ' + heatOf(st) + ')');
-  console.log('heat charges: exchange +0 (FIFO swap), empty-slot equip +1 — verified');
+  console.log('heat charges: in-place REPLACE +0, IGNORE stays on the ground, empty-slot equip +1 — verified');
 }
 
 // ---- WAVE-9 heat: enemy HP visibly scales at spawn -------------------------
@@ -691,6 +707,145 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(hot.maxHp / base - want) < 0.01,
     `heat 10 must scale foe hp x${want} (base ${base}, hot ${hot.maxHp})`);
   console.log(`heat scaling: ${T} hp ${base} -> ${hot.maxHp} (x${(hot.maxHp / base).toFixed(2)} at heat 10)`);
+}
+
+// ---- WAVE-11 probes (through the real loop) ----
+// (a) SHRINE PURCHASE: proximity + gold buys one blessing; purse debited via
+// the real update() shrine block (paid-chest precedent — profile-side gold).
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  mainMod.__TEST.getProfile().gold = 100;
+  const choicesBefore = st.takenChoices.length;
+  st.shrine = { x: st.player.x, y: st.player.y, used: false };
+  for (let i = 0; i < 30 && !st.shrine.used; i++) {
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+  }
+  assert(st.shrine.used === true, 'the shrine must complete the purchase (used flag)');
+  assert(mainMod.__TEST.getProfile().gold === 40,
+    `the shrine must debit its cost from the purse (got ${mainMod.__TEST.getProfile().gold}, want 40)`);
+  assert(st.takenChoices.length === choicesBefore + 1,
+    'the shrine blessing must be recorded repeat-free in takenChoices');
+  assert(st.player.choices, 'the shrine blessing must applyChoice onto the run player');
+  console.log('shrine: proximity purchase — 60 gold, blessing applied, altar marked used');
+}
+
+// (b) ELITE MODS: strict unlock gating (pure roll) + the death split + the
+// guaranteed item drop, through the real death loop.
+{
+  // Gating: locked modifiers NEVER roll (empty unlock set -> plain elite).
+  assert.strictEqual(rollEliteModifier(() => 0, []), null,
+    'no unlocked elite mods => the roll must fail');
+  assert.strictEqual(rollEliteModifier(() => 0.9, ['SWIFT']), null,
+    'the 0.5 chance roll can fail => plain elite');
+  const rolled = rollEliteModifier(() => 0, ['SPLITTING']);
+  assert(rolled && rolled.id === 'SPLITTING', 'an unlocked mod rolls when the flip lands');
+
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  // Craft a SPLITTING elite near (not on) the player and slay it.
+  const px = st.player.x, py = st.player.y - 80;
+  const parent = { typeId: 'CHASER', x: px, y: py, hp: 100, maxHp: 100, w: 10, h: 10,
+    speed: 0, xp: 1, age: 0, elite: true, splitSpent: false };
+  Object.assign(parent, applyEliteModifier(parent, 'SPLITTING'));
+  assert(parent.eliteMod === 'SPLITTING' && parent.split && !parent.split.spent,
+    'the SPLITTING stamp carries the once-only split plan');
+  st.enemies.push(parent);
+  const dropsBefore = st.itemDrops.length;
+  parent.hp = 0;   // reaped by the next death pass
+  for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  const kids = st.enemies.filter(e => e !== parent &&
+    Math.abs(e.x - px) <= 13 && Math.abs(e.y - py) <= 8);
+  assert(kids.length === 2, `a slain SPLITTING elite must divide into TWO children (got ${kids.length})`);
+  for (const k of kids) {
+    assert(k.eliteMod === null && k.elite === false, 'split children are PLAIN (no recursion)');
+    assert(Math.abs(k.maxHp - parent.maxHp * 0.3) < 1e-9,
+      `children carry 30% of the parent hp (got ${k.maxHp})`);
+  }
+  assert(!st.enemies.includes(parent), 'the parent must be gone after the split');
+  assert(st.itemDrops.length > dropsBefore,
+    'an elite-mod kill must guarantee an item drop');
+  console.log('elite mods: gating strict, split into 2 plain children @30% hp, guaranteed drop');
+}
+
+// (c) SYNERGIES: refreshSynergies detects the pair, announces it, and the
+// orbital flag tags real volley projectiles in flight.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  st.weapons.push(makeWeapon('ORBIT'));
+  mainMod.__TEST.refreshSynergies();
+  const orb = st.synergies.find(s => 'orbitVolley' in (s.flags || {}));
+  assert(orb, 'VOLLEY+ORBIT must detect the Orbital Volley synergy');
+  assert(st.toasts.some(t => /SYNERGY:/.test(t.msg)),
+    'a newly detected synergy must toast its announce');
+  // A target in range makes the controller fire volley shots — they must now
+  // carry the orbit flight state for their first ~0.55s.
+  st.enemies.push({ typeId: 'CHASER', x: st.player.x + 40, y: st.player.y,
+    hp: 500, maxHp: 500, w: 10, h: 10, speed: 0, xp: 1, age: 0 });
+  let tagged = false;
+  // The volley cooldown (~0.5s) means the first post-synergy shot can take
+  // ~30 frames — pump well past it (a stray pre-synergy shot may persist).
+  for (let i = 0; i < 75 && !tagged; i++) {
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+    tagged = st.projectiles.some(pr => pr.orbit);
+  }
+  assert(tagged, 'fired volley shots must be orbit-tagged while Orbital Volley is live');
+  console.log('synergies: Orbital Volley detected + announced + volley shots orbit-tagged');
+}
+
+// (d) RAMPAGE METER: kills extend the streak; ANY hp loss resets it.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  st.rampage.streak = 10; st.rampage.best = 10;
+  st.player.invuln = 0;
+  st.enemies.push({ typeId: 'CHASER', x: st.player.x, y: st.player.y,
+    hp: 500, maxHp: 500, w: 10, h: 10, speed: 0, xp: 1, age: 0 });
+  now += dtMs; const cb1 = rafQueue.shift(); cb1(now);
+  assert(st.rampage.streak === 0,
+    `a contact hit must reset the rampage streak (got ${st.rampage.streak})`);
+  assert(st.rampage.best === 10, 'the reset must NOT touch the run-best streak');
+  // A kill bumps the streak back up through the real death pass.
+  const victim = st.enemies.find(e => e.hp > 0 && e.typeId === 'CHASER');
+  victim.hp = 0;
+  now += dtMs; const cb2 = rafQueue.shift(); cb2(now);
+  assert(st.rampage.streak === 1, 'a kill must extend the fresh streak (+1)');
+  assert(/RP \d+ \(x1\.0\d\)/.test(hudText()) || /RP \d/.test(hudText()),
+    'the HUD must carry the rampage readout: ' + hudText());
+  console.log('rampage: hit resets the streak (best kept), kill re-extends, HUD reads out');
+}
+
+// (e) FLASH DROPS: a flash-eligible kill erases EXACTLY the weakest trash
+// tier present — elites/typed-beyond-trash untouched, cooldown stamped.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  st.lastFlashAt = null;
+  const mkE = (typeId, elite, dx, dy) => ({ typeId, x: st.player.x + dx, y: st.player.y + dy,
+    hp: 50, maxHp: 50, w: 10, h: 10, speed: 0, xp: 1, age: 0, elite: !!elite });
+  const sw1 = mkE('SWARMER', false, -120, -60);
+  const sw2 = mkE('SWARMER', false, -140, -60);
+  const brute = mkE('BRUTE', false, 120, 60);
+  const eliteSw = mkE('SWARMER', true, 140, 60);
+  st.enemies.push(sw1, sw2, brute, eliteSw);
+  // The eligible CHASER kill lands LAST so this frame's death pass reaches it.
+  const chaser = mkE('CHASER', false, 0, -100);
+  chaser.hp = 0;
+  st.enemies.push(chaser);
+  const realRandom = Math.random;
+  Math.random = () => 0;   // the flash roll always succeeds; cooldown clear
+  now += dtMs; const cbF = rafQueue.shift(); cbF(now);
+  Math.random = realRandom;
+  assert(st.lastFlashAt !== null, 'the flash must stamp the cooldown (lastFlashAt)');
+  assert(st.effects.some(fx => fx.kind === 'flash'), 'the flash must push its screen moment fx');
+  assert(!st.enemies.includes(sw1) && !st.enemies.includes(sw2) && !st.enemies.includes(chaser),
+    'the flash must reap BOTH plain swarmers + the triggering chaser');
+  assert(st.enemies.includes(brute) && brute.hp > 0,
+    'typed-beyond-trash (BRUTE) must be UNTOUCHED by the flash');
+  assert(st.enemies.includes(eliteSw) && eliteSw.hp > 0,
+    'an ELITE swarmer must be UNTOUCHED by the flash');
+  console.log('flash drop: weakest trash tier reaped, brute + elite swarmer untouched, cooldown stamped');
 }
 
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----
