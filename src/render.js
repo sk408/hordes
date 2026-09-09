@@ -3,6 +3,9 @@
 import { CONFIG as C } from './config.js';
 import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
+import {
+  WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
+} from './sprites.js';
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
@@ -681,6 +684,127 @@ export class Renderer {
     // Weather layer (weather.js): camera-anchored particles + scene tint,
     // drawn OVER the scene so the run feels weathered. All fillRect.
     this.drawWeather(g, state.weather, cam);
+
+    // WAVE-12 canvas HUD chrome: graphic HP/mana bars, weapon/equipment icon
+    // rows, weather glyph. Drawn LAST so it always sits above the scene.
+    this.drawHudChrome(g, state);
+  }
+
+  // ---- WAVE-12 HUD chrome (fillRect pixel grids only) -------------------------
+  // The text #hud div is now opt-in (settings toggle, default off) — this is
+  // the always-on visual readout. `this.hudChrome` is the honest test seam:
+  // the exact values the bars/icons painted this frame (smoke asserts on it).
+  drawHudChrome(g, state) {
+    const p = state.player;
+    if (!p || !p.stats) { this.hudChrome = null; return; }
+    const t = state.time || 0;
+    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null };
+
+    // --- graphic HP + mana bars, top-left (below the boss-bar zone) ---
+    // Damage flash: when hp DROPS, the lost segment stays white for ~0.45s
+    // (a heal never flashes). Heals just move the fill up silently.
+    const maxHp = p.stats.maxHp;
+    const hp = Math.max(0, Math.min(p.hp, maxHp));
+    if (this._hpPrev === undefined || hp >= this._hpPrev) this._hpPrev = hp;
+    if (hp < this._hpPrev - 0.01) {
+      this._hpFlashFrom = Math.min(1, this._hpPrev / maxHp);
+      this._hpFlashUntil = t + 0.45;
+    }
+    this._hpPrev = hp;
+    const hpFrac = Math.max(0, Math.min(1, hp / maxHp));
+    const flashFrac = (this._hpFlashUntil > t && this._hpFlashFrom > hpFrac)
+      ? this._hpFlashFrom : 0;
+    const manaFrac = Math.max(0, Math.min(1, p.mana / p.stats.maxMana));
+    chrome.hpFrac = hpFrac;
+    chrome.hpFlashFrac = flashFrac;
+    chrome.manaFrac = manaFrac;
+
+    const drawBar = (x, y, w, frac, flash, fillCol) => {
+      g.fillStyle = '#000000';                       // 1px pixel border
+      g.fillRect(x - 1, y - 1, w + 2, 7);
+      g.fillStyle = '#3a3a46';                       // empty track
+      g.fillRect(x, y, w, 5);
+      const fw = Math.round(w * frac);
+      g.fillStyle = fillCol;                         // the fill
+      g.fillRect(x, y, fw, 5);
+      g.fillStyle = 'rgba(255,255,255,0.30)';        // top glint row
+      g.fillRect(x, y, fw, 1);
+      g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky VS-style segments
+      for (let sx = x + 5; sx < x + fw; sx += 6) g.fillRect(sx, y + 1, 1, 4);
+      if (flash > frac) {                            // damage-flash segment
+        const fx = x + fw;
+        const fwid = Math.round(w * flash) - fw;
+        g.fillStyle = '#ffffff';
+        g.fillRect(fx, y, fwid, 5);
+      }
+    };
+    drawBar(6, 16, 110, hpFrac, flashFrac, '#ff5566');
+    drawBar(6, 26, 110, manaFrac, 0, '#4a8cff');
+
+    // --- equipment icon row (above the weapon row, same bottom-left corner).
+    // 4x4 rarity-tinted gem per equipped rare item.
+    let ix = 6;
+    const iy = C.VIEW_H - 44;
+    for (const it of state.items) {
+      const col = RARITY_COLORS[it.rarity] || RARITY_COLORS.COMMON;
+      for (let ry = 0; ry < ITEM_ICON_GRID.length; ry++) {
+        for (let rx = 0; rx < ITEM_ICON_GRID[ry].length; rx++) {
+          if (ITEM_ICON_GRID[ry][rx]) {
+            g.fillStyle = col;
+            g.fillRect(ix + rx, iy + ry, 1, 1);
+          }
+        }
+      }
+      g.fillStyle = 'rgba(0,0,0,0.5)';               // 1px shadow border
+      g.fillRect(ix - 1, iy - 1, 6, 1); g.fillRect(ix - 1, iy + 4, 6, 1);
+      g.fillRect(ix - 1, iy - 1, 1, 6); g.fillRect(ix + 4, iy - 1, 1, 6);
+      chrome.itemIcons.push({ rarity: it.rarity });
+      ix += 8;
+    }
+
+    // --- weapon icon row, bottom-left (above the touch pads on mobile).
+    // 5x5 grid at 2x + a small lv number; evolved weapons get a gold border.
+    const Z = 2;
+    let wx = 6;
+    const wy = C.VIEW_H - 30;
+    g.font = '8px monospace';
+    g.textBaseline = 'top';
+    for (const w of state.weapons) {
+      const grid = WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY;
+      g.fillStyle = w.evolution ? '#ffd75e' : '#2a2a36';   // slot frame
+      g.fillRect(wx - 1, wy - 1, 5 * Z + 2, 5 * Z + 2);
+      for (let ry = 0; ry < grid.length; ry++) {
+        for (let rx = 0; rx < grid[ry].length; rx++) {
+          const v = grid[ry][rx];
+          if (v) {
+            g.fillStyle = WEAPON_ICON_PALETTE[v];
+            g.fillRect(wx + rx * Z, wy + ry * Z, Z, Z);
+          }
+        }
+      }
+      g.fillStyle = '#e8e8f0';                       // lv badge
+      g.fillText(String(w.level || 1), wx + 1, wy + 5 * Z + 2);
+      chrome.weaponIcons.push({ type: w.type, level: w.level || 1, evolved: !!w.evolution });
+      wx += 5 * Z + 10;
+    }
+
+    // --- weather glyph, top-right (below the boss/maw bar zone) ---
+    const wi = weatherIcon(state.weather && state.weather.def);
+    chrome.weather = wi ? state.weather.def.id : null;
+    if (wi) {
+      const gx = C.VIEW_W - 6 - 5 * Z, gy = 15;
+      for (let ry = 0; ry < wi.grid.length; ry++) {
+        for (let rx = 0; rx < wi.grid[ry].length; rx++) {
+          const v = wi.grid[ry][rx];
+          if (v) {
+            g.fillStyle = wi.palette[v];
+            g.fillRect(gx + rx * Z, gy + ry * Z, Z, Z);
+          }
+        }
+      }
+    }
+
+    this.hudChrome = chrome;
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------

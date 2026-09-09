@@ -490,3 +490,161 @@ export const FLAME = {
   anchor: { x: 4, y: 6 },
   smallAnchor: { x: 2, y: 3 },
 };
+
+// ===========================================================================
+// WAVE-12 HUD ICONS — small pixel grids for the canvas HUD chrome (render.js)
+// and the FIELD REPORT stats overlay (main.js). Same convention as sprites:
+// rows of palette indices, 0 = transparent, 1..3 = palette keys.
+// ===========================================================================
+
+// 5x5 icon per weapon archetype (VOLLEY included — the base volley is slot 1).
+// Distinct silhouettes at a glance: dart / bolt / ring / beam / angle /
+// missile / burst / blade / mine.
+export const WEAPON_ICONS = {
+  VOLLEY: [ // dart, flight right
+    [0,0,1,0,0],
+    [0,0,0,1,0],
+    [1,1,1,1,1],
+    [0,0,0,1,0],
+    [0,0,1,0,0],
+  ],
+  ZAP: [ // lightning bolt
+    [0,0,0,1,1],
+    [0,0,1,1,0],
+    [0,1,1,0,0],
+    [1,1,0,0,0],
+    [1,0,0,0,0],
+  ],
+  ORBIT: [ // ring around a core
+    [0,1,1,1,0],
+    [1,0,0,0,1],
+    [1,0,3,0,1],
+    [1,0,0,0,1],
+    [0,1,1,1,0],
+  ],
+  BEAM: [ // horizontal laser, hot tip
+    [0,0,0,0,0],
+    [0,0,0,0,0],
+    [1,1,1,2,3],
+    [0,0,0,0,0],
+    [0,0,0,0,0],
+  ],
+  BOOMERANG: [ // thrown angle
+    [1,0,0,0,0],
+    [0,1,0,0,0],
+    [0,0,1,0,0],
+    [0,0,1,1,1],
+    [0,0,1,0,0],
+  ],
+  SEEKER: [ // missile with fins
+    [0,0,1,0,0],
+    [0,0,2,0,0],
+    [0,1,2,1,0],
+    [0,0,2,0,0],
+    [1,0,0,0,1],
+  ],
+  NOVA_PULSE: [ // radial burst
+    [0,0,1,0,0],
+    [0,1,0,1,0],
+    [1,0,2,0,1],
+    [0,1,0,1,0],
+    [0,0,1,0,0],
+  ],
+  SCYTHE: [ // curved blade on a shaft
+    [0,1,1,1,0],
+    [1,0,0,0,1],
+    [0,0,0,0,1],
+    [0,0,0,1,0],
+    [0,0,1,0,0],
+  ],
+  MINE: [ // spiked disc, armed core
+    [0,0,1,0,0],
+    [0,1,1,1,0],
+    [1,1,2,1,1],
+    [0,1,1,1,0],
+    [0,0,1,0,0],
+  ],
+};
+export const WEAPON_ICON_PALETTE = { 1: '#c8e8ff', 2: '#ff9a3c', 3: '#ffd75e' };
+
+// Generic 4x4 equipment gem — rendered fully tinted by the item's rarity
+// (COMMON grey / RARE blue / EPIC purple / LEGENDARY orange in render.js).
+export const ITEM_ICON_GRID = [
+  [0,1,1,0],
+  [1,1,1,1],
+  [1,1,1,1],
+  [0,1,1,0],
+];
+
+// 5x5 weather glyphs, top-right of the canvas. CLEAR shows nothing — an empty
+// sky needs no icon. Each entry carries its own palette (sky-tinted).
+export const WEATHER_ICONS = {
+  RAIN: {
+    grid: [ // cloud + falling drops
+      [0,1,1,1,0],
+      [1,1,1,1,1],
+      [1,1,1,1,1],
+      [0,2,0,2,0],
+      [2,0,2,0,0],
+    ],
+    palette: { 1: '#8ab0e8', 2: '#5a8ad8' },
+  },
+  SNOW: {
+    grid: [ // six-arm flake
+      [1,0,1,0,1],
+      [0,1,1,1,0],
+      [1,1,2,1,1],
+      [0,1,1,1,0],
+      [1,0,1,0,1],
+    ],
+    palette: { 1: '#d8e8ff', 2: '#8ac8f0' },
+  },
+  WIND: {
+    grid: [ // racing dashes
+      [0,0,0,0,0],
+      [1,1,1,0,0],
+      [0,0,2,2,2],
+      [0,1,1,0,0],
+      [0,0,0,0,0],
+    ],
+    palette: { 1: '#aebfd0', 2: '#d8e8f0' },
+  },
+  CLOUDY: {
+    grid: [ // flat cloud bank
+      [0,1,1,1,0],
+      [1,1,1,1,1],
+      [1,1,1,1,1],
+      [0,0,0,0,0],
+      [0,0,0,0,0],
+    ],
+    palette: { 1: '#8a8aa8' },
+  },
+  SUNNY: {
+    grid: [ // sun disc + rays
+      [1,0,1,0,1],
+      [0,1,1,1,0],
+      [1,1,2,1,1],
+      [0,1,1,1,0],
+      [1,0,1,0,1],
+    ],
+    palette: { 1: '#ffd75e', 2: '#fff2b0' },
+  },
+  MOONLIGHT: {
+    grid: [ // crescent moon
+      [0,1,1,0,0],
+      [1,1,0,0,0],
+      [1,1,0,0,0],
+      [1,1,0,0,0],
+      [0,1,1,0,0],
+    ],
+    palette: { 1: '#d8ffb0' },
+  },
+};
+
+// weatherIcon(def) -> { grid, palette } | null. CLEAR (and anything unknown)
+// shows no icon. render.js keys off this; tests use it as the honest seam.
+export function weatherIcon(def) {
+  if (!def || !def.id || def.id === 'CLEAR') return null;
+  return WEATHER_ICONS[def.id] || null;
+}
+

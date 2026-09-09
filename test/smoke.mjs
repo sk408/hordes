@@ -101,6 +101,30 @@ const dtMs = 1000 / 60;
   }
 }
 
+// WAVE-12: the text HUD is hidden by default (canvas chrome is the readout);
+// the settings TEXT HUD toggle round-trips through the real card flow.
+{
+  for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(elements['hud'].style.display === 'none',
+    'text HUD must be hidden by default (got "' + elements['hud'].style.display + '")');
+  const cards = elements['ov-cards'];
+  const byTitle = (t) => Array.from(cards.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETTINGS').click();
+  const hudCard = byTitle('TEXT HUD');
+  assert(hudCard, 'settings must offer a TEXT HUD card');
+  assert(/OFF/.test(hudCard.innerHTML), 'TEXT HUD card reads OFF by default');
+  hudCard.click();   // ON
+  for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(elements['hud'].style.display === '', 'TEXT HUD ON must reveal the text HUD');
+  assert(/ON/.test(byTitle('TEXT HUD').innerHTML), 'card re-renders to ON');
+  byTitle('TEXT HUD').click();   // back OFF
+  for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(elements['hud'].style.display === 'none', 'TEXT HUD OFF must hide it again');
+  byTitle('BACK').click();
+  console.log('text HUD: hidden by default, settings toggle round-trips');
+}
+
 // Title-mode boot: click PLAY to start the run (menu buttons are overlay
 // cards, same as draft picks).
 {
@@ -444,7 +468,10 @@ console.log(`wave-5 trio (soft): tick=${sawTick} warlock=${sawWarlock} colossus=
 // respect the cap and never offer a grant card once WPN n/n is showing.
 assert(slotCapSeen === 3, `fresh profile should start with 3 weapon slots (saw ${slotCapSeen})`);
 assert(!grantAtCap, 'grant cards must NOT appear once the weapon slots are full');
-assert(grantCardSeen, 'a NEW WEAPON grant card should appear while slots are free');
+assert(grantCardSeen || wpnCount > 1,
+  'a NEW WEAPON grant should be offered while slots are free (or already picked: weapons=' +
+  wpnCount + '). WAVE-11 note: a fresh profile has exactly ONE grantable weapon, so an ' +
+  'unlucky 90s can offer the card zero times — a second equipped weapon is the same proof.');
 assert(wpnCount <= 3, `weapon count must respect the slot cap (${wpnCount}/3)`);
 
 // Megabonk probe (soft): any weapon leveled past 1 shows as 'Name·N' in the
@@ -846,6 +873,88 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.enemies.includes(eliteSw) && eliteSw.hp > 0,
     'an ELITE swarmer must be UNTOUCHED by the flash');
   console.log('flash drop: weakest trash tier reaped, brute + elite swarmer untouched, cooldown stamped');
+}
+
+// ---- WAVE-12 mobile GUI refresh probes ----
+// (f) CANVAS HUD CHROME: bars seam (hp/mana fractions + damage flash),
+// weapon/item icon rows, weather glyph — through the real render loop.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  const r = mainMod.__TEST.renderer;
+  assert(r.hudChrome, 'renderer must record the HUD chrome seam');
+  assert(r.hudChrome.hpFrac > 0 && r.hudChrome.hpFrac <= 1, 'hp bar fraction sane');
+  assert(r.hudChrome.manaFrac > 0 && r.hudChrome.manaFrac <= 1, 'mana bar fraction sane');
+  assert(r.hudChrome.hpFlashFrac === 0, 'no damage flash at full hp');
+  // A hit paints the flash segment: it must LEAD the (now lower) fill.
+  st.player.hp -= 20;
+  now += dtMs; const cb1 = rafQueue.shift(); cb1(now);
+  assert(r.hudChrome.hpFlashFrac > r.hudChrome.hpFrac,
+    'a damage flash segment must lead the fill');
+  // Icon rows: one weapon icon (with its lv badge number) + one item icon
+  // per equipped item.
+  st.items.push({ id: 'probe_gem', name: 'Probe Gem', rarity: 'EPIC',
+    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.12 }] });
+  now += dtMs; const cb2 = rafQueue.shift(); cb2(now);
+  assert(r.hudChrome.weaponIcons.length === st.weapons.length,
+    'one icon per equipped weapon');
+  assert(r.hudChrome.weaponIcons[0].level >= 1, 'weapon icons carry the lv badge');
+  assert(r.hudChrome.itemIcons.length === st.items.length && r.hudChrome.itemIcons[0].rarity === 'EPIC',
+    'one rarity-tinted icon per equipped item');
+  // Icon coverage: every weapon archetype has a 5x5 grid.
+  const spritesMod = await import('../src/sprites.js');
+  const weaponsMod = await import('../src/weapons.js');
+  for (const id of ['VOLLEY', ...Object.keys(weaponsMod.WEAPON_TYPES)]) {
+    assert(spritesMod.WEAPON_ICONS[id], 'weapon icon grid must exist for ' + id);
+  }
+  // Weather glyph: forced RAIN tick records; CLEAR shows nothing.
+  const { initWeather } = await import('../src/weather.js');
+  st.weather = initWeather('RAIN', 7);
+  now += dtMs; const cb3 = rafQueue.shift(); cb3(now);
+  assert(r.hudChrome.weather === 'RAIN', 'weather icon seam must record RAIN');
+  st.weather = initWeather('CLEAR', 7);
+  now += dtMs; const cb4 = rafQueue.shift(); cb4(now);
+  assert(r.hudChrome.weather === null, 'CLEAR weather shows no icon');
+  for (const id of ['RAIN', 'SNOW', 'WIND', 'CLOUDY', 'SUNNY', 'MOONLIGHT']) {
+    assert(spritesMod.weatherIcon({ id }), 'weather icon must exist for ' + id);
+  }
+  assert(spritesMod.weatherIcon({ id: 'CLEAR' }) === null, 'CLEAR has no icon');
+  console.log('hud chrome: bars + damage flash + weapon/item icon rows + weather glyph verified');
+}
+
+// (g) FIELD REPORT: S opens, game pauses, content lists the loadout, S closes.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  st.items.push({ id: 'probe_eye', name: 'Probe Eye', rarity: 'RARE',
+    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }] });
+  keyHandler({ key: 's' });
+  assert(st.mode === 'stats', 'S must open the FIELD REPORT (mode=' + st.mode + ')');
+  assert(elements['overlay'].style.display === 'flex', 'stats overlay must show');
+  assert(/FIELD REPORT/.test(elements['ov-title'].textContent), 'stats title');
+  const html = Array.from(elements['ov-cards'].children).map(c => c.innerHTML || '').join('\n');
+  assert(/Volley/.test(html), 'stats must list weapons');
+  assert(/Lv \d\/8/.test(html), 'stats must show weapon levels');
+  assert(/twin darts/.test(html), 'stats weapons carry a one-line effect');
+  assert(/Probe Eye/.test(html) && /Keen Eye \+8%/.test(html),
+    'stats items show name + affix effect');
+  assert(/SYNERGIES/.test(html) && /ITEMS/.test(html), 'stats carries items + synergies sections');
+  assert(/RAMPAGE/.test(html) && /CRIT/.test(html) && /DMG/.test(html),
+    'stats lists rampage + core stats');
+  // Paused: state.time frozen while the report is open.
+  const t0 = st.time;
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(st.time === t0, 'the game must pause while the FIELD REPORT is open');
+  assert(st.mode === 'stats', 'the report stays open across frames');
+  keyHandler({ key: 's' });
+  assert(st.mode === 'playing' && elements['overlay'].style.display === 'none',
+    'S must close the report and resume');
+  // Touch-route parity: the shared action seam opens/closes it too.
+  mainMod.__TEST.openStats();
+  assert(st.mode === 'stats', 'runAction(stats) route opens the report');
+  mainMod.__TEST.closeStats();
+  assert(st.mode === 'playing', 'and closes it');
+  console.log('field report: S opens/pauses/closes, weapons+items+stats listed');
 }
 
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----

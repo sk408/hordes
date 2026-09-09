@@ -18,6 +18,7 @@ import {
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
 import { rollShrine, shrineBlessing, canAfford } from './shrines.js';
 import { detectSynergies, describeSynergy } from './synergies.js';
+import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
 import { maybeSpawnChest, tickChests } from './chests.js';
 import {
@@ -1466,6 +1467,25 @@ function die(finale) {
   overlay.style.display = 'flex';
 }
 
+// ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
+// The canvas HUD chrome (render.js drawHudChrome) is the default readout now;
+// the old text #hud stays fully functional but hidden unless opted in here.
+const hudStorage = (() => {
+  try {
+    const s = globalThis.localStorage;
+    if (s && typeof s.getItem === 'function') return s;
+  } catch { /* sandboxed — fall through to the no-op shim */ }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+})();
+const KEY_HUD_TEXT = 'hordes_hud_text';
+let textHudOn = false;
+try { textHudOn = hudStorage.getItem(KEY_HUD_TEXT) === '1'; } catch { /* shim */ }
+function hudTextEnabled() { return textHudOn; }
+function setHudTextEnabled(b) {
+  textHudOn = !!b;
+  try { hudStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
+}
+
 // ---------- Meta screens: title / shop / characters / settings ----------
 function menuCard(name, sub, onclick, dim) {
   const el = document.createElement('div');
@@ -1496,7 +1516,7 @@ function showTitle() {
   menuCard('PLAY', 'start a run', () => startRun());
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
-  menuCard('SETTINGS', 'audio & reset', () => showSettings());
+  menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
 }
 
 function showShop() {
@@ -1570,13 +1590,18 @@ function showSettings(disarm = true) {
   if (disarm) resetArmed = false;
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
-  ovSub.textContent = 'audio & profile';
+  ovSub.textContent = 'audio, hud & profile';
   menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
     audio.setMusicEnabled(!audio.getMusicEnabled());
     showSettings();
   });
   menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
     audio.setSfxEnabled(!audio.getSfxEnabled());
+    showSettings();
+  });
+  // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
+  menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
+    setHudTextEnabled(!hudTextEnabled());
     showSettings();
   });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
@@ -1677,12 +1702,117 @@ function startRun() {
   audio.startMusic();
 }
 
+// ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
+// 'S' on desktop / the STATS touch button opens it; the game PAUSES (update()
+// only runs in 'playing'; the finale tick in 'finale' — both paused by this
+// mode). The canvas keeps rendering underneath; any of S/ESC/CLOSE resumes.
+// Icons reuse the sprites.js HUD grids as tiny colored CSS cells (no canvas,
+// no image assets — same pixel data, DOM-flavored).
+const WEAPON_BLURBS = {
+  VOLLEY: 'twin darts — the trusty default',
+  ORBIT: 'blades circle you, shredding touchers',
+  BOOMERANG: 'flies out, arcs back through the pack',
+  ZAP: 'chains lightning between foes',
+  NOVA_PULSE: 'radial pulse that shoves the horde back',
+  SCYTHE: 'sweeps a heavy arc around you',
+  SEEKER: 'homing missiles on the nearest foes',
+  MINE: 'drops mines that blast + shrapnel',
+  BEAM: 'piercing laser through everything',
+};
+const RARITY_TINTS = { COMMON: '#a8a8c0', RARE: '#4a8cff', EPIC: '#c46ad8', LEGENDARY: '#ffd75e' };
+
+function iconHtml(grid, palette, px) {
+  let s = '<div style="display:inline-grid;grid-template-columns:repeat(' +
+    grid[0].length + ',' + px + 'px);vertical-align:middle;margin-right:6px;line-height:0">';
+  for (const row of grid) {
+    for (const v of row) {
+      s += '<i style="display:block;width:' + px + 'px;height:' + px + 'px' +
+        (v ? ';background:' + (palette[v] || '#ffffff') : '') + '"></i>';
+    }
+  }
+  return s + '</div>';
+}
+
+function openStats() {
+  if (state.mode !== 'playing' && state.mode !== 'finale') return;
+  state.statsReturn = state.mode;   // the finale resumes its own tick
+  state.mode = 'stats';
+  overlay.style.display = 'flex';
+  ovTitle.textContent = 'FIELD REPORT';
+  ovTitle.className = '';
+  ovSub.textContent = 'the loadout, at a glance — S / CLOSE resumes';
+  ovCards.innerHTML = '';
+  ovCards.style.flexWrap = 'wrap';
+  ovCards.style.justifyContent = 'center';
+  const p = state.player;
+  const info = () => audio.playSfx('button');
+
+  // WEAPONS: icon + name (+ evolution) + level + one-line effect.
+  let wHtml = '';
+  for (const w of state.weapons) {
+    const icon = iconHtml(WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY, WEAPON_ICON_PALETTE, 5);
+    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+    const evoTag = w.evolution
+      ? ' <span style="color:#ffd75e">(' + (WEAPON_NAMES[w.type] || w.type) + ' evolved)</span>'
+      : '';
+    wHtml += icon + '<b>' + nm + '</b>' + evoTag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
+      '<br><span style="color:#a8a8c0">' + (WEAPON_BLURBS[w.type] || '') + '</span><br>';
+  }
+  menuCard('WEAPONS', wHtml || 'none yet', info);
+
+  // ITEMS: name in its rarity color + affix effects (loot.js affix data).
+  let iHtml = '';
+  for (const it of state.items) {
+    const col = RARITY_TINTS[it.rarity] || RARITY_TINTS.COMMON;
+    iHtml += '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
+    for (const a of it.affixes || []) {
+      const mag = a.magnitude < 1 ? '+' + Math.round(a.magnitude * 100) + '%' : '+' + a.magnitude;
+      iHtml += '<span style="color:#a8a8c0">' + (a.name || a.id) + ' ' + mag + '</span><br>';
+    }
+  }
+  menuCard('ITEMS', iHtml || 'nothing equipped', info);
+
+  // SYNERGIES: describeSynergy (synergies.js).
+  let sHtml = '';
+  for (const s of state.synergies) {
+    const d = describeSynergy(s);
+    sHtml += '<b>' + d.name + '</b><br><span style="color:#a8a8c0">' + d.desc + '</span><br>';
+  }
+  menuCard('SYNERGIES', sHtml || 'none active', info);
+
+  // RAMPAGE + core stats.
+  const pct = (v) => Math.round(v * 100) + '%';
+  menuCard('THE NUMBERS',
+    'RAMPAGE streak ' + state.rampage.streak + ' · best ' + state.rampage.best +
+    ' (x' + rampageMult().toFixed(2) + ' xp)<br>' +
+    'HP ' + Math.ceil(p.hp) + '/' + p.stats.maxHp + ' · MANA ' + Math.floor(p.mana) + '/' + p.stats.maxMana + '<br>' +
+    'DMG ' + p.stats.damage.toFixed(1) + ' · SPD ' + Math.round(p.stats.speed) +
+    ' · CRIT ' + pct(p.stats.crit || 0) + ' x' + (p.stats.critMult || 1).toFixed(2) + '<br>' +
+    'KILLS ' + p.kills + ' · LVL ' + p.level,
+    info);
+
+  menuCard('CLOSE', 'back to the fight [S]', () => closeStats());
+}
+
+function closeStats() {
+  if (state.mode !== 'stats') return;
+  state.mode = state.statsReturn || 'playing';
+  overlay.style.display = 'none';
+}
+
 // ---------- Input: shared action seam (keyboard AND touch use these) ----------
 // One code path per action — the touch buttons in index.html and the keydown
 // handler both funnel through runAction, so no game logic is duplicated.
 // Doctrine actions only nudge the AutoPilot controller's state; no input
 // handling lives in controllers.js.
 function runAction(act) {
+  // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
+  // routes BEFORE the playing/finale gate below.
+  if (act === 'stats') {
+    if (state.mode === 'stats') closeStats();
+    else openStats();
+    return;
+  }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
@@ -1745,7 +1875,15 @@ window.addEventListener('keydown', (ev) => {
     }
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
+  } else if (state.mode === 'stats') {
+    // WAVE-12 FIELD REPORT: S/ESC (or any card) closes and resumes.
+    if (k === 's' || k === 'escape') closeStats();
+    else if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
+      const card = ovCards.children[Number(ev.key) - 1];
+      if (card) card.click();
+    }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
+    if (k === 's') { openStats(); return; }   // WAVE-12 FIELD REPORT
     const keyMap = {
       tab: 'focus', g: 'stance',
       [C.SKILLS.FROST_NOVA.KEY]: 'q',
@@ -1812,6 +1950,11 @@ function drawHud() {
   if (hud.style) {
     const want = hasArcadePass(profile) ? '#ffd75e' : '';
     if (hud.style.color !== want) hud.style.color = want;
+    // WAVE-12: the text HUD is opt-in (settings TEXT HUD toggle, persisted);
+    // the canvas HUD chrome is the default readout. The text is still WRITTEN
+    // every frame either way — hidden, not dead.
+    const wantDisp = hudTextEnabled() ? '' : 'none';
+    if (hud.style.display !== wantDisp) hud.style.display = wantDisp;
   }
   const bars = 20;
   const filled = Math.max(0, Math.min(bars, Math.round(bars * p.hp / p.stats.maxHp)));
@@ -2173,5 +2316,10 @@ requestAnimationFrame(frame);
 
 // Headless test seam (smoke.mjs): live state access so integration probes
 // can force conditions (Lv8 + item + token) through the REAL loop. Never
-// read by the browser page.
-export const __TEST = { state, controller, startRun, getProfile: () => profile, refreshSynergies };
+// read by the browser page. WAVE-12 adds the renderer (HUD chrome seam) and
+// the FIELD REPORT open/close entry points.
+export const __TEST = {
+  state, controller, startRun, getProfile: () => profile, refreshSynergies,
+  renderer, openStats, closeStats,
+  hudText: { get: hudTextEnabled, set: setHudTextEnabled },
+};

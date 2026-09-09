@@ -541,3 +541,22 @@ one:
     hb2 running from the wrong workdir, and hub-worker issue posts not
     reaching workers after ~11:49 — direct API posts deliver fine);
     recovered via restart + direct re-issue, zero lost work.
+- 2026-09-09 (wave-12): **MOBILE GUI REFRESH** (Sk408 directive) — hb1:
+  - GRAPHIC HP + MANA BARS — pixel bars on the game canvas (top-left):
+    HP red w/ damage-flash segment, mana blue, 1px borders, chunky VS-style
+    segment steps. Boss/maw bar untouched.
+  - WEAPON + EQUIPMENT ICON ROW — per-weapon 5x5-ish fillRect pixel grids
+    (distinct per type; evolution = gold border tint) each with a small
+    "lv #" badge; per-equipped-item rarity-tinted mini icons (grey/blue/
+    purple/orange).
+  - WEATHER ICONS — small static pixel icons, top-right, one per active
+    weather effect; clear sky shows nothing.
+  - TEXT HUD OPT-IN — the old text #hud still exists but is hidden by
+    default; SETTINGS > TEXT HUD toggle, persisted (audio-settings shim
+    pattern), default OFF.
+  - STATS SCREEN — in-run overlay (game paused): weapon list (icon, name,
+    evolution, level, one-line effect), equipped items (name + rarity +
+    affix effects), active synergies, rampage streak/best, core stats.
+    Opens via 'S' key or the STATS touch button.
+  - Verified: all suites green, smoke x3 reps with wave-12 probes,
+    lightpanda clean.
