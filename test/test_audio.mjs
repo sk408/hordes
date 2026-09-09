@@ -4,7 +4,8 @@
 // moves when the test says so.
 import assert from 'node:assert';
 import { init, setMusicEnabled, getMusicEnabled, setSfxEnabled, getSfxEnabled,
-         playSfx, startMusic, stopMusic, MUSIC, AUDIO_TEST } from '../src/audio.js';
+         playSfx, startMusic, stopMusic, playIntroCue, playPortalCue,
+         MUSIC, AUDIO_TEST } from '../src/audio.js';
 
 // ---- fakes ----
 let ctxCount = 0;
@@ -39,13 +40,14 @@ class FakeAudioContext {
     this.destination = {};
     this.notes = [];        // every osc/noise start with its scheduled time
     this.connects = [];     // every gain-node connect
+    this.nodes = [];        // live osc/noise instances (start/stop audit)
     this.resumes = 0;
     this.buffers = 0;
   }
   advance(dt) { this.currentTime += dt; }
   createGain() { return new FakeGain(this); }
-  createOscillator() { return new FakeOsc(this); }
-  createBufferSource() { return new FakeNoise(this); }
+  createOscillator() { const o = new FakeOsc(this); this.nodes.push(o); return o; }
+  createBufferSource() { const n = new FakeNoise(this); this.nodes.push(n); return n; }
   createBuffer() { this.buffers++; return { getChannelData: () => new Float32Array(1024) }; }
   resume() { this.resumes++; return Promise.resolve(); }
 }
@@ -206,6 +208,119 @@ const setup = () => {
   assert.strictEqual(startMusic(), false);
   assert.strictEqual(stopMusic(), false);
   console.log('ok: unavailable AudioContext -> everything no-ops cleanly');
+}
+
+// ---- cinematic stingers: cue -> exact node budget, start/stop cleanup ----
+{
+  const { theCtx } = setup();
+  init();
+  // Every scheduled node must start once, stop once, and stop AFTER start.
+  const auditCleanup = (label) => {
+    for (const n of theCtx.nodes) {
+      assert.strictEqual(n.starts.length, 1, `${label}: each node starts once`);
+      assert.strictEqual(n.stops.length, 1, `${label}: each node stops once`);
+      assert.ok(n.stops[0] > n.starts[0], `${label}: stop must follow start`);
+    }
+  };
+  const count = () => theCtx.notes.length;
+
+  // intro OVERTAKE: rising drone = 2 detuned saws.
+  assert.strictEqual(playIntroCue('OVERTAKE'), true);
+  assert.strictEqual(count(), 2, 'OVERTAKE = 2 osc (detuned saws)');
+  assert.ok(theCtx.notes.every(n => n.kind === 'osc' && n.type === 'sawtooth'));
+  auditCleanup('OVERTAKE');
+
+  // intro TITLE_SLAM: noise burst + low thump = 2 nodes.
+  theCtx.advance(1);
+  assert.strictEqual(playIntroCue('TITLE_SLAM'), true);
+  assert.strictEqual(count(), 4, 'TITLE_SLAM adds 2 nodes (noise + sine thump)');
+  assert.strictEqual(theCtx.notes.filter(n => n.kind === 'noise').length, 1);
+  auditCleanup('TITLE_SLAM');
+
+  // intro FADE: one downward sweep.
+  theCtx.advance(1);
+  assert.strictEqual(playIntroCue('FADE'), true);
+  assert.strictEqual(count(), 5, 'intro FADE adds 1 osc');
+
+  // alias phases map to the same voices.
+  theCtx.advance(1);
+  assert.strictEqual(playIntroCue('HORDE'), true);
+  assert.strictEqual(count(), 7, 'HORDE alias = same 2-osc drone');
+  theCtx.advance(1);
+  assert.strictEqual(playIntroCue('TITLE'), true);
+  assert.strictEqual(count(), 9, 'TITLE alias = same slam pair');
+  auditCleanup('intro aliases');
+
+  // portal BOSS_YELL: detuned saws + sub square = 3 osc.
+  theCtx.advance(1);
+  assert.strictEqual(playPortalCue('BOSS_YELL'), true);
+  assert.strictEqual(count(), 12, 'BOSS_YELL adds 3 osc');
+  // ...and it is louder than average sfx (gains 0.42 vs avg ~0.12-0.18).
+  // portal DISSOLVE: 6-note sine arpeggio, spaced for a delay feel.
+  theCtx.advance(1);
+  assert.strictEqual(playPortalCue('DISSOLVE'), true);
+  const dis = theCtx.notes.slice(-6);
+  assert.strictEqual(dis.length, 6, 'DISSOLVE = 6 sine notes');
+  assert.ok(dis.every(n => n.kind === 'osc' && n.type === 'sine'));
+  for (let i = 1; i < dis.length; i++) {
+    assert.ok(dis[i].at > dis[i - 1].at, 'dissolve notes rise in time');
+  }
+  const span = dis[5].at - dis[0].at + 0.16;
+  assert.ok(span > 1.0 && span < 1.6, `dissolve spans ~1.5s (got ${span.toFixed(2)})`);
+  // KILL alias = same yell; WALK/FADE map to a 1-osc blip.
+  theCtx.advance(1);
+  assert.strictEqual(playPortalCue('KILL'), true);
+  assert.strictEqual(count(), 21, 'KILL alias = same 3-osc yell');
+  theCtx.advance(1);
+  assert.strictEqual(playPortalCue('WALK'), true);
+  assert.strictEqual(count(), 22, 'WALK = 1-osc blip');
+  theCtx.advance(1);
+  assert.strictEqual(playPortalCue('FADE'), true);
+  assert.strictEqual(count(), 23, 'portal FADE = 1-osc blip');
+  auditCleanup('portal cues');
+  console.log('ok: stingers schedule exact node budgets and clean up');
+}
+
+// ---- stinger gating: sfx toggle gates, music toggle does NOT ----
+{
+  const { theCtx } = setup();
+  init();
+  setSfxEnabled(false);
+  assert.strictEqual(playIntroCue('OVERTAKE'), false, 'sfx off -> intro cue no-op');
+  assert.strictEqual(playPortalCue('BOSS_YELL'), false, 'sfx off -> portal cue no-op');
+  assert.strictEqual(theCtx.notes.length, 0, 'sfx off -> zero nodes scheduled');
+  setSfxEnabled(true);
+  setMusicEnabled(false); // music OFF must NOT gate SFX-class stingers
+  assert.strictEqual(playIntroCue('OVERTAKE'), true, 'music off must not gate stingers');
+  assert.strictEqual(playPortalCue('DISSOLVE'), true);
+  assert.ok(theCtx.notes.length > 0);
+  // Re-fire guard: an immediate duplicate (double transition fire) is swallowed.
+  theCtx.advance(0.1);
+  assert.strictEqual(playPortalCue('DISSOLVE'), false, 'refire within 0.4s is suppressed');
+  theCtx.advance(0.4);
+  assert.strictEqual(playPortalCue('DISSOLVE'), true, 'after the guard window it may fire again');
+  console.log('ok: stinger gating (sfx gates, music does not) + refire guard');
+}
+
+// ---- stingers: unknown phase no-ops; no throws without AudioContext ----
+{
+  const { theCtx } = setup();
+  init();
+  assert.strictEqual(playIntroCue('NOPE'), false, 'unknown intro phase no-ops');
+  assert.strictEqual(playPortalCue('OVERTAKE'), false, 'cross-cue phase name no-ops');
+  assert.strictEqual(playPortalCue('TITLE_SLAM'), false);
+  assert.strictEqual(theCtx.notes.length, 0);
+  // No AudioContext at all: cues must return false, never throw.
+  AUDIO_TEST.reset();
+  AUDIO_TEST.setDeps({ AudioContext: null, storage: makeStorage() });
+  init();
+  assert.doesNotThrow(() => {
+    assert.strictEqual(playIntroCue('OVERTAKE'), false);
+    assert.strictEqual(playIntroCue('TITLE_SLAM'), false);
+    assert.strictEqual(playPortalCue('BOSS_YELL'), false);
+    assert.strictEqual(playPortalCue('DISSOLVE'), false);
+  }, 'cues without AudioContext must not throw');
+  console.log('ok: unknown phases + missing AudioContext no-op cleanly');
 }
 
 AUDIO_TEST.reset();

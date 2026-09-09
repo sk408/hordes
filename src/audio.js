@@ -4,6 +4,10 @@
 // unit tests run against fakes. Public API (FROZEN for hb1 integration):
 //   init(), setMusicEnabled(b), getMusicEnabled(),
 //   setSfxEnabled(b), getSfxEnabled(), playSfx(name), startMusic(), stopMusic()
+// WAVE-8/B cinematic stingers (SFX-class: gated by the sfx toggle ONLY, never
+// the music toggle; fire once per phase transition — hb1 polls phaseAt()):
+//   playIntroCue(phase):  OVERTAKE|HORDE, TITLE_SLAM|TITLE, FADE
+//   playPortalCue(phase): BOSS_YELL|KILL, DISSOLVE, FADE, WALK
 // Call init() from a user gesture (autoplay policy): it lazily creates the
 // AudioContext, resumes it if suspended, and is idempotent.
 //
@@ -173,6 +177,96 @@ export function playSfx(name) {
       tone(ctx, sfxBus, { type: def.type, freq: f, dur: def.noteDur, gain: def.gain, when: now + i * def.noteDur });
     });
   }
+  return true;
+}
+
+// ---------- Cinematic stingers (WAVE-8/B) ----------
+// Intro (src/intro.js PHASES: OVERTAKE 2500–5000ms, TITLE stamps ~4300ms,
+// FADE 6000–7000ms) + portal (src/portal_cine.js: KILL/WALK/DISSOLVE/FADE,
+// ~4s). Fired once per phase transition; a short re-fire guard stops a
+// double-fire from stacking cues. SFX-class: sfx toggle gates, music does NOT.
+
+// Sustained voice: fast attack, hold, release — tone()'s one-shot exp decay
+// would fade a multi-second drone to silence long before its dur is up.
+function sus(c, dest, { type, freq, to, dur, gain, when, hold = 0.7 }) {
+  const osc = c.createOscillator();
+  const g = c.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, when);
+  if (to && to !== freq) osc.frequency.exponentialRampToValueAtTime(to, when + dur);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(gain, when + 0.04);
+  g.gain.setValueAtTime(gain, when + dur * hold);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  osc.connect(g); g.connect(dest);
+  osc.start(when);
+  osc.stop(when + dur + 0.02);
+}
+
+// intro OVERTAKE/HORDE — rising low drone: detuned saws sweeping up (~2.5s).
+function introOvertake(when) {
+  sus(ctx, sfxBus, { type: 'sawtooth', freq: 50,   to: 210, dur: 2.5, gain: 0.22, when });
+  sus(ctx, sfxBus, { type: 'sawtooth', freq: 51.5, to: 216, dur: 2.5, gain: 0.22, when });
+}
+// intro TITLE_SLAM — impact stinger: noise burst + low thump at the stamp.
+function introTitleSlam(when) {
+  noise(ctx, sfxBus, { dur: 0.22, gain: 0.32, when });
+  tone(ctx, sfxBus, { type: 'sine', freq: 130, to: 38, dur: 0.4, gain: 0.4, when });
+}
+// intro FADE — short downward sweep into black.
+function introFade(when) {
+  tone(ctx, sfxBus, { type: 'sawtooth', freq: 320, to: 60, dur: 0.5, gain: 0.14, when });
+}
+// portal BOSS_YELL — pitched descending growl (~0.6s; detuned saws + sub
+// square give the fm-ish beat; louder than average sfx, avg gain ~0.12–0.18).
+function portalBossYell(when) {
+  sus(ctx, sfxBus, { type: 'sawtooth', freq: 190, to: 62, dur: 0.6, gain: 0.42, when, hold: 0.8 });
+  sus(ctx, sfxBus, { type: 'sawtooth', freq: 197, to: 66, dur: 0.6, gain: 0.42, when, hold: 0.8 });
+  tone(ctx, sfxBus, { type: 'square',  freq: 95,  to: 31, dur: 0.6, gain: 0.2,  when });
+}
+// portal DISSOLVE — spacey shimmer: high sine arpeggio, gapped spacing for a
+// delay/echo feel (~1.5s total).
+function portalDissolve(when) {
+  const NOTES = [1046.5, 1318.5, 1568, 2093, 2637, 3136];
+  NOTES.forEach((f, i) => tone(ctx, sfxBus, { type: 'sine', freq: f, dur: 0.16, gain: 0.09, when: when + i * 0.22 }));
+}
+// transitional blip (portal WALK / FADE).
+function cueBlip(when) {
+  tone(ctx, sfxBus, { type: 'triangle', freq: 500, to: 260, dur: 0.09, gain: 0.1, when });
+}
+
+const INTRO_CUES = {
+  OVERTAKE: introOvertake, HORDE: introOvertake,
+  TITLE_SLAM: introTitleSlam, TITLE: introTitleSlam,
+  FADE: introFade,
+};
+const PORTAL_CUES = {
+  BOSS_YELL: portalBossYell, KILL: portalBossYell,
+  DISSOLVE: portalDissolve,
+  FADE: cueBlip, WALK: cueBlip,
+};
+
+const CUE_REFIRE = 0.4; // s — cues are one-shot per phase transition
+
+function cueAllowed(key) {
+  if (!ctx || !sfxEnabled) return false;   // music toggle deliberately NOT checked
+  const now = ctx.currentTime;
+  if (lastPlayed[key] !== undefined && now - lastPlayed[key] < CUE_REFIRE) return false;
+  lastPlayed[key] = now;
+  return true;
+}
+
+export function playIntroCue(phase) {
+  const fn = INTRO_CUES[phase];
+  if (!fn || !cueAllowed('intro:' + phase)) return false;
+  fn(ctx.currentTime);
+  return true;
+}
+
+export function playPortalCue(phase) {
+  const fn = PORTAL_CUES[phase];
+  if (!fn || !cueAllowed('portal:' + phase)) return false;
+  fn(ctx.currentTime);
   return true;
 }
 

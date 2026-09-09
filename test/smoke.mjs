@@ -506,12 +506,79 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('run-scope reset: choices/tokens/evolutions all cleared');
 }
 
+// ---- WAVE-8/A portal-entry cinematic ----
+// Force the wave-1 boss, slay the cast, and verify the movie plays between
+// the kill and the intermission; then the skip path, then the natural end.
+{
+  // Click through draft/evolve overlays the boss-XP payout may open, until
+  // the predicate holds (or the loop gives up). Never mutates game state.
+  function pumpUntil(pred, maxFrames, onFrame) {
+    for (let i = 0; i < maxFrames; i++) {
+      now += dtMs;
+      const cb = rafQueue.shift();
+      if (!cb) throw new Error('raf died in cine pump');
+      cb(now);
+      if (st.mode === 'draft') {
+        const c0 = elements['ov-cards'].children[0]; c0 && c0.click(); continue;
+      }
+      if (st.mode === 'evolve') {
+        const kids = elements['ov-cards'].children;
+        kids[kids.length - 1] && kids[kids.length - 1].click();   // NOT NOW
+        continue;
+      }
+      if (onFrame) onFrame(i);
+      if (pred()) return i;
+    }
+    return -1;
+  }
+  function forceBossDeath() {
+    st.wave.endsAt = st.time;   // boss spawns on the next tick
+    pumpUntil(() => (st.wave.bosses || []).some(b => b.hp > 0), 60 * 30);
+    assert(st.wave.bosses && st.wave.bosses.some(b => b.hp > 0),
+      'cine probe needs a live boss cast');
+    // Push the expiry forward BEFORE slaying: with endsAt still in the past,
+    // spawnBoss would re-fire next frame (its !wave.boss guard reads hp>0)
+    // and a fresh live boss would block the final-death detection.
+    st.wave.endsAt = st.time + 60 * 60;
+    for (const b of st.wave.bosses) if (b.hp > 0) b.hp = 0;   // slay them all
+  }
+
+  // (a) SKIP PATH: movie renders frames, a keypress jumps to the intermission.
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  forceBossDeath();
+  let cineFrames = 0, skipped = false;
+  pumpUntil(() => st.mode === 'intermission', 60 * 20, () => {
+    if (st.mode === 'portal-cine' && ++cineFrames === 31) {
+      keyHandler({ key: 'x' });   // any key skips straight to the end
+      skipped = true;
+    }
+  });
+  assert(skipped, 'cine skip path must be exercised');
+  assert(cineFrames >= 31, `the movie must render before the skip (${cineFrames} frames)`);
+  assert(st.mode === 'intermission', 'skip must land in the intermission (mode=' + st.mode + ')');
+  assert(elements['ov-title'].textContent.includes('CLEARED'),
+    'intermission title after the cine (got ' + elements['ov-title'].textContent + ')');
+  console.log(`portal cine: ${cineFrames} frames then key-skip -> intermission`);
+
+  // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
+  keyHandler({ key: 'c' });   // CONTINUE into wave 2
+  assert(st.mode === 'playing', 'CONTINUE should resume play (mode=' + st.mode + ')');
+  forceBossDeath();
+  cineFrames = 0;
+  const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
+    () => { if (st.mode === 'portal-cine') cineFrames++; });
+  assert(took >= 0, 'the movie must hand off to the intermission on its own');
+  assert(cineFrames >= Math.ceil(3800 / dtMs) - 2,
+    `the 3.8s movie should run to isDone (${cineFrames} frames)`);
+  console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
+}
+
 // (4) INTRO SKIP: any key during the movie jumps straight to the title menu.
+// Runs LAST on purpose: the fresh module re-import overwrites the shared
+// keyHandler stub with a handler bound to the SECOND module's state.
 {
   const m2 = await import(/* fresh instance */ '../src/main.js?skipintro');
-  const els2 = {};   // fresh DOM? the module reuses globalThis.document — the
-  // SECOND import shares the stubbed document: the title screen re-renders
-  // into the same elements map. Clear the overlay state and re-pump.
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(m2.__TEST.state.mode !== 'menu', 'fresh module should boot into the intro');
   keyHandler({ key: 'x' });

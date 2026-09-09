@@ -422,6 +422,27 @@ one:
     wall-steer as the flee path — a gem beyond the rim parked the player
     against the ±600 clamp (3.1s stall caught by smoke at x=561).
   - Verified: 14/14 suites (smoke 10/10 consecutive), lightpanda clean.
+- 2026-09-09: **WAVE-8 — PORTAL CINEMATIC + CINEMATIC AUDIO** (Sk408:
+  "a little video of the hero defeating the boss and entering a portal,
+  zoomed in the same way... hear the monsters coming and the title slamming
+  down... boss yell... spacey sound"). hb8 + hb3 parallel, hb1 integrated:
+  - **Portal cinematic** (`src/portal_cine.js`, hb8): ~3.8s deterministic
+    timeline — KILL (zoomed hero lands the killing blow, boss collapses
+    into a pixel pile), WALK (flame-ring portal fades in, hero walks in),
+    DISSOLVE (hero shrinks into rising motes, portal core glows), FADE
+    (white-out). Plays when a wave's FINAL boss dies (incl. double-boss
+    waves), then cuts to intermission; skippable, out-of-range-t safe.
+  - **Cinematic audio** (`src/audio.js`, hb3): playIntroCue /
+    playPortalCue stinger API — rising horde drone, TITLE_SLAM impact,
+    FADE sweep, BOSS_YELL growl, spacey DISSOLVE shimmer. SFX-toggle
+    gated (music toggle does not gate), no-op-safe without AudioContext,
+    0.4s re-fire guard.
+  - Integration (hb1): cinematic on final boss death → intermission;
+    per-frame phase polling fires cues once per transition in both videos;
+    smoke covers skip (frame 31) and natural end (229 frames).
+  - Cleanup: removed stale `test/dbg2.mjs` (pre-wave-7 smoke copy that
+    failed from the intro-boot change; recoverable in git history).
+  - Verified: smoke 5/5 + 14 module suites, lightpanda clean.
 - Layout: `index.html` + `src/{config,entities,controllers,skills,weapons,
   enemy_types,chests,meta,render,weather,main}.js` + `src/audio.js`
   (ES modules, no build step — must be served over HTTP).

@@ -19,6 +19,7 @@ import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js
 import { pickBossForWave, decideBossAction } from './bosses.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
+import * as CINE from './portal_cine.js';
 import {
   loadProfile, saveProfile, makeProfile, computeRunGold,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
@@ -34,6 +35,7 @@ let audio = {
   init() {}, setMusicEnabled() {}, getMusicEnabled() { return false; },
   setSfxEnabled() {}, getSfxEnabled() { return false; },
   playSfx() {}, startMusic() {}, stopMusic() {},
+  playIntroCue() {}, playPortalCue() {},   // WAVE-8/B cinematic stingers
 };
 try {
   const mod = await import('./audio.js');
@@ -97,7 +99,7 @@ const state = {
   choiceRng: null,   // mulberry32(choiceSeed) — deterministic per run
   takenChoices: [],  // choice ids taken this run (repeat-free offers)
   pendingChoiceOffers: null, // this wave's 3 rolled cards (null = roll fresh)
-  wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0 },
+  wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
 };
 state.player.x = C.VIEW_W / 2;
 state.player.y = C.VIEW_H / 2;
@@ -276,6 +278,10 @@ function chestCost(def) {
 }
 
 function openIntermission() {
+  // WAVE-8/A: if the final boss died but the movie hasn't played yet (a
+  // draft/evolve from the boss payout delayed its start), the intermission
+  // cannot preempt it — play the movie; it re-enters here when it ends.
+  if (state.wave.cinePending) { startPortalCine(); return; }
   state.portal = null;
   openMenu();
   state.mode = 'intermission';
@@ -691,6 +697,10 @@ function update(dt) {
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
+        // WAVE-8/A: the FINAL death of the wave's cast (nobody left alive)
+        // queues the portal-entry cinematic. The first of a double pair just
+        // opens the portal — existing wave-6 behavior is kept.
+        if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
         feedWeaponXp(30);   // boss kill = big weapon-XP payout
         toast('BOSS DOWN');
       } else {
@@ -836,6 +846,11 @@ function update(dt) {
   // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
+
+  // WAVE-8/A: start the portal-entry cinematic once overlays have settled —
+  // the boss-XP payout may open a draft/evolve first; those return mode to
+  // 'playing' when closed, and the movie starts on the next tick.
+  if (state.wave.cinePending && state.mode === 'playing') startPortalCine();
 }
 
 // ---------- Leveling & draft ----------
@@ -1181,7 +1196,7 @@ function startRun() {
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
-  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0 };
+  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false };
   spawnWaveArches();
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
   state.mode = 'playing';
@@ -1235,6 +1250,10 @@ function runAction(act) {
 window.addEventListener('keydown', (ev) => {
   const k = ev.key.toLowerCase();
   if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
+  if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
+    if (C.CINE.SKIPPABLE) endPortalCine();
+    return;
+  }
   if (state.mode === 'draft' && ['1', '2', '3'].includes(ev.key)) {
     const card = ovCards.children[Number(ev.key) - 1];
     if (card) card.click();
@@ -1393,15 +1412,55 @@ function endIntro() {
   showTitle();
 }
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
-if (canvas.addEventListener) canvas.addEventListener('pointerdown', () => endIntro());
+// WAVE-8/A: the same gesture skips the portal cinematic.
+if (canvas.addEventListener) canvas.addEventListener('pointerdown', () => {
+  endIntro();
+  if (C.CINE.SKIPPABLE) endPortalCine();
+});
+
+// ---------- Portal-entry cinematic (WAVE-8/A) ----------
+// Plays once when the wave's FINAL boss dies: gameplay freezes, CINE.render
+// runs per frame until isDone, then the run proceeds into the EXISTING
+// intermission (openIntermission — chest shop + blessing cards + CONTINUE).
+// Any key/click/tap skips straight to the end (gated by CONFIG.CINE.SKIPPABLE).
+// WAVE-8/B: phaseAt is polled once per frame; each phase transition fires the
+// matching audio stinger (BOSS_YELL at KILL, shimmer during DISSOLVE — sfx
+// toggle gates them, the re-fire guard makes double-fires safe).
+let cineT0 = 0, lastCinePhase = null;
+function startPortalCine() {
+  state.wave.cinePending = false;
+  cineT0 = performance.now();
+  lastCinePhase = null;
+  state.mode = 'portal-cine';
+}
+function endPortalCine() {
+  if (state.mode !== 'portal-cine') return;
+  openIntermission();
+}
 
 state.mode = 'intro';
 let last = performance.now();
+let lastIntroPhase = null;
 function frame(now) {
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
+    // WAVE-8/B: fire the intro stinger on each phase transition (rising
+    // drone at OVERTAKE, slam at the TITLE stamp, sweep on FADE).
+    const iph = INTRO.phaseAt(t);
+    if (iph !== lastIntroPhase) { lastIntroPhase = iph; audio.playIntroCue(iph); }
     if (INTRO.isDone(t)) endIntro();
+    requestAnimationFrame(frame);
+    return;
+  }
+  if (state.mode === 'portal-cine') {
+    // WAVE-8/A: gameplay is frozen (update() only runs in 'playing'); the
+    // movie owns the canvas until isDone, then the intermission takes over.
+    const t = now - cineT0;
+    CINE.render(renderer.ctx, t);
+    const cph = CINE.phaseAt(t);
+    if (cph !== lastCinePhase) { lastCinePhase = cph; audio.playPortalCue(cph); }
+    if (CINE.isDone(t)) endPortalCine();
     requestAnimationFrame(frame);
     return;
   }

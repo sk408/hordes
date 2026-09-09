@@ -111,6 +111,11 @@ export const CONFIG = {
   // stalls with the portal forever behind.
   PORTAL: { RADIUS: 16, SPEED: 60 },
 
+  // WAVE-8/A portal-entry cinematic: plays once when the wave's FINAL boss
+  // dies (between the kill and the intermission). SKIPPABLE gates the
+  // any-key/click/tap skip; the movie always ends on its own via isDone.
+  CINE: { SKIPPABLE: true },
+
   // World-space ground decor (Sk408 playtest: the camera is player-locked, so
   // a bare background read as sliding with you). Deterministic per-run field
   // hashed from (cellX, cellY, seed) — no stored arrays, cells outside the
