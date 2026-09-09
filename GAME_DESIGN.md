@@ -612,3 +612,18 @@ one:
   - Verified: 21/21 suites (controller suite now 19 checks), smoke x3
     (dead-zone no drift, full ~2x half, full tilt == ArrowRight within
     1.5px, release stops, AUTO drops vector), lightpanda clean.
+- 2026-09-09 (wave-16): **WORLD ZOOM SETTING** (Sk408 directive: pixel
+  detail lost on small mobile screens) — hb1:
+  - SETTINGS > ZOOM cycles 1x -> 2x -> 3x -> 4x -> 6x -> 8x -> 1x
+    (integer ladder, crisp pixels), persisted per browser (TEXT HUD
+    pattern), applies LIVE mid-run; '+'/'='/'-' quick-cycle keys.
+  - WORLD-ONLY: zoom scales ground/weather/enemies/player/projectiles/
+    drops/shrines (world window 600x375 at 1x down to 75x47 at 8x);
+    HUD stays native 1x (bars, feed, icon rows, banners, touch layer) —
+    verified via a ctx transform-depth recorder in smoke (HUD at depth 0,
+    world at depth 1, exactly one save/restore).
+  - Culling margins respect the zoom (no edge pops at 2x/8x); camera
+    stays player-locked (+-1px at 2x); gameplay/spawn/aggro UNTOUCHED —
+    zoom is presentation only.
+  - Verified: 21/21 suites, smoke x3 (persistence round-trip, live apply,
+    HUD-native proof, camera lock, cycle wrap), lightpanda clean.

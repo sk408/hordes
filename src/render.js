@@ -131,6 +131,51 @@ export class Renderer {
     // WAVE-9B/2 area identity: ground tone + grid dots come from the active
     // wave's theme (theme ladder in CONFIG.GROUND.THEMES).
     const theme = groundTheme(state.wave ? state.wave.num : 1);
+
+    // WAVE-16 WORLD ZOOM (Sk408: pixel detail lost on small mobile screens).
+    // Z scales ONLY the world layer below (ground, weather particles, enemies,
+    // player, projectiles, gems, chests, arches, shrines, boss, drops):
+    // device = viewCenter + (draw - viewCenter) * Z, camera stays player-locked.
+    // The HUD chrome / bars / feed / banner / touch layer stay native 1x.
+    // Culls test the ZOOMED window (x0..x1 below) with the SAME world-space
+    // margins as before — higher zoom shrinks the visible window, so culling
+    // gets TIGHTER, never looser: nothing inside the zoomed frame is culled,
+    // nothing pops at the screen edge (margins still cover sprite extents,
+    // which live in world px regardless of Z).
+    const Z = Math.max(1, Math.round(state.zoom || 1));
+    this._zoom = Z;
+    const vw = C.VIEW_W / Z, vh = C.VIEW_H / Z;
+    this.worldView = {
+      zoom: Z,
+      x0: (C.VIEW_W - vw) / 2, x1: (C.VIEW_W + vw) / 2,
+      y0: (C.VIEW_H - vh) / 2, y1: (C.VIEW_H + vh) / 2,
+    };
+    const cull = (x, y, m) => x < this.worldView.x0 - m || y < this.worldView.y0 - m ||
+      x > this.worldView.x1 + m || y > this.worldView.y1 + m;
+
+    // Behind the zoomed window: a dark letterbox (matches the WAVE-14 banner
+    // bands). Invisible at 1x, where the window IS the full screen.
+    if (Z > 1) {
+      g.fillStyle = '#08080f';
+      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+    }
+
+    // Optional subtle scene tint for the theme (under the entities, full
+    // screen — drawn OUTSIDE the zoom transform so it always covers).
+    if (theme.tint) {
+      g.fillStyle = theme.tint;
+      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+    }
+
+    // ---- WORLD LAYER (zoomed) ------------------------------------------------
+    g.save();
+    g.translate(C.VIEW_W / 2, C.VIEW_H / 2);
+    g.scale(Z, Z);
+    g.translate(-C.VIEW_W / 2, -C.VIEW_H / 2);
+
+    // Ground base + grid dots are world objects too: they zoom with the layer
+    // (fillRect 0..VIEW_W inside the transform covers exactly the zoomed
+    // window — at 1x that is the whole screen, i.e. identical to before).
     g.fillStyle = theme.base;
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
     g.fillStyle = theme.grid;
@@ -144,16 +189,11 @@ export class Renderer {
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
-    // Optional subtle scene tint for the theme (still under the entities).
-    if (theme.tint) {
-      g.fillStyle = theme.tint;
-      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
-    }
 
     // Gems.
     for (const gem of state.gems) {
       const x = gem.x - cam.x, y = gem.y - cam.y;
-      if (x < -5 || y < -5 || x > C.VIEW_W + 5 || y > C.VIEW_H + 5) continue;
+      if (cull(x, y, 5)) continue;
       g.fillStyle = '#3ef0c0';
       g.fillRect(x - 1, y - 2, 3, 4);
       g.fillRect(x - 2, y - 1, 5, 2);
@@ -162,7 +202,7 @@ export class Renderer {
     // Potion drops: tiny bottles (red = health, blue = mana).
     for (const d of state.drops || []) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
-      if (x < -5 || y < -5 || x > C.VIEW_W + 5 || y > C.VIEW_H + 5) continue;
+      if (cull(x, y, 5)) continue;
       g.fillStyle = d.kind === 'hp' ? '#ff5566' : '#4a8cff';
       g.fillRect(x - 2, y - 3, 4, 6);
       g.fillStyle = '#e8e8f0';
@@ -172,7 +212,7 @@ export class Renderer {
     // Chests: gold boxes that pulse; slide toward the player (main.js).
     for (const ch of state.chests || []) {
       const x = Math.round(ch.x - cam.x), y = Math.round(ch.y - cam.y);
-      if (x < -12 || y < -12 || x > C.VIEW_W + 12 || y > C.VIEW_H + 12) continue;
+      if (cull(x, y, 12)) continue;
       const blink = Math.floor(ch.age * 3) % 2 === 0;
       g.fillStyle = '#8a6a1e';
       g.fillRect(x - 6, y - 4, 12, 9);
@@ -187,7 +227,7 @@ export class Renderer {
     // EPIC+ sparkle so they read as loot, not potions.
     for (const d of state.itemDrops || []) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
-      if (x < -5 || y < -5 || x > C.VIEW_W + 5 || y > C.VIEW_H + 5) continue;
+      if (cull(x, y, 5)) continue;
       const col = RARITY_COLORS[d.item.rarity] || RARITY_COLORS.COMMON;
       g.fillStyle = col;
       g.fillRect(x - 2, y - 2, 5, 5);
@@ -204,7 +244,7 @@ export class Renderer {
     // shimmering field in the arch type's color (pulse while untriggered).
     for (const a of state.arches || []) {
       const x = Math.round(a.x - cam.x), y = Math.round(a.y - cam.y);
-      if (x < -20 || y < -30 || x > C.VIEW_W + 20 || y > C.VIEW_H + 30) continue;
+      if (cull(x, y, 30)) continue;
       const col = ARCH_COLORS[a.type] || '#a8e0ff';
       const glow = 0.5 + 0.5 * Math.sin((state.time || 0) * 3);
       g.fillStyle = 'rgba(255,255,255,' + (0.10 + 0.16 * glow).toFixed(2) + ')';
@@ -224,7 +264,7 @@ export class Renderer {
     if (state.shrine) {
       const sh = state.shrine;
       const x = Math.round(sh.x - cam.x), y = Math.round(sh.y - cam.y);
-      if (x > -20 && y > -30 && x < C.VIEW_W + 20 && y < C.VIEW_H + 30) {
+      if (!cull(x, y, 30)) {
         const lit = !sh.used;
         const glow = 0.5 + 0.5 * Math.sin((state.time || 0) * 2.5);
         if (lit) {
@@ -278,7 +318,7 @@ export class Renderer {
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
       const hw = Math.round(w / 2), hh = Math.round(h / 2);
       const x = Math.round(e.x - cam.x), y = Math.round(e.y - cam.y);
-      if (x < -30 || y < -30 || x > C.VIEW_W + 30 || y > C.VIEW_H + 30) continue;
+      if (cull(x, y, 30)) continue;
       const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : SPRITES[e.typeId];
       if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
@@ -432,7 +472,7 @@ export class Renderer {
     // nova (pink, boss radial burst).
     for (const s of state.enemyShots || []) {
       const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
-      if (x < -5 || y < -5 || x > C.VIEW_W + 5 || y > C.VIEW_H + 5) continue;
+      if (cull(x, y, 5)) continue;
       if (s.kind === 'bolt') {
         g.fillStyle = '#c46ad8';
         g.fillRect(x - 3, y - 3, 7, 7);
@@ -463,7 +503,7 @@ export class Renderer {
     // seeker missiles, dropped mines).
     for (const p of state.projectiles) {
       const x = Math.round(p.x - cam.x), y = Math.round(p.y - cam.y);
-      if (x < -8 || y < -8 || x > C.VIEW_W + 8 || y > C.VIEW_H + 8) continue;
+      if (cull(x, y, 8)) continue;
       if (p.kind === 'boomerang') {
         // Spin: alternate between horizontal and vertical bars.
         const spin = Math.floor(p.age * 20) % 2 === 0;
@@ -499,6 +539,7 @@ export class Renderer {
     }
 
     // Skill/weapon effects (fillRect only).
+    let pendingFlash = null;   // 'flash' paints full-screen at NATIVE 1x — deferred past the world restore
     for (const fx of state.effects || []) {
       const t = fx.age / fx.ttl; // 0 -> 1
       if (fx.kind === 'nova' || fx.kind === 'nova_pulse' || fx.kind === 'boss_nova' ||
@@ -614,9 +655,11 @@ export class Renderer {
         }
       } else if (fx.kind === 'flash') {
         // WAVE-11 FLASH DROP: full-screen white-out fading over the fx life —
-        // the screen-clear moment erases the weakest trash tier.
-        g.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - t)).toFixed(3) + ')';
-        g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+        // the screen-clear moment erases the weakest trash tier. WAVE-16: the
+        // fill must cover the WHOLE screen, so it draws after the zoom layer
+        // is restored (a fillRect inside the world transform would only wash
+        // the zoomed sub-rect).
+        pendingFlash = fx;
       } else if (fx.kind === 'charge') {
         // Flickering yellow brackets around the player while overcharged.
         if (Math.floor(fx.age * 20) % 2 === 0) {
@@ -630,7 +673,41 @@ export class Renderer {
       }
     }
 
-    // Boss HP bar: full-width overlay at the top while a boss lives.
+    // Player. Walk cycle (2 frames @ ~6fps, same clock as the enemies) —
+    // frame B only while actually moving: motion is derived from the player's
+    // position delta between renders (the same velocity the controller
+    // produces), so no gameplay state was added. Stationary -> frame A.
+    const pl = state.player;
+    if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
+      g.globalAlpha = 0.4;
+    }
+    const moved = this._lpx !== undefined &&
+      Math.abs(pl.x - this._lpx) + Math.abs(pl.y - this._lpy) > 0.25;
+    this._lpx = pl.x; this._lpy = pl.y;
+    const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
+    this.drawSprite(g, walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE,
+      Math.round(pl.x - cam.x - 6),
+      Math.round(pl.y - cam.y - 6));
+    g.globalAlpha = 1;
+
+    // Weather PARTICLES (weather.js): camera-anchored rain/snow/wind/bugs —
+    // they ride the world zoom like everything else in this layer. The
+    // distant sky layers (cloud bands, sun, scene tint) stay NATIVE 1x and
+    // paint after the restore below.
+    this.drawWeatherParticles(g, state.weather, cam);
+
+    // ---- end of the zoomed world layer --------------------------------------
+    g.restore();
+
+    // Deferred WAVE-11 flash: full-screen white-out at native 1x so the wash
+    // covers the whole screen regardless of zoom.
+    if (pendingFlash) {
+      const ft = pendingFlash.age / pendingFlash.ttl;
+      g.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - ft)).toFixed(3) + ')';
+      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+    }
+
+    // Boss HP bar: full-width overlay at the top while a boss lives (native).
     {
       const boss = state.wave && state.wave.boss;
       if (boss && boss.hp > 0) {
@@ -664,26 +741,9 @@ export class Renderer {
       }
     }
 
-    // Player. Walk cycle (2 frames @ ~6fps, same clock as the enemies) —
-    // frame B only while actually moving: motion is derived from the player's
-    // position delta between renders (the same velocity the controller
-    // produces), so no gameplay state was added. Stationary -> frame A.
-    const pl = state.player;
-    if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
-      g.globalAlpha = 0.4;
-    }
-    const moved = this._lpx !== undefined &&
-      Math.abs(pl.x - this._lpx) + Math.abs(pl.y - this._lpy) > 0.25;
-    this._lpx = pl.x; this._lpy = pl.y;
-    const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
-    this.drawSprite(g, walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE,
-      Math.round(pl.x - cam.x - 6),
-      Math.round(pl.y - cam.y - 6));
-    g.globalAlpha = 1;
-
-    // Weather layer (weather.js): camera-anchored particles + scene tint,
-    // drawn OVER the scene so the run feels weathered. All fillRect.
-    this.drawWeather(g, state.weather, cam);
+    // Weather sky + tint (weather.js): bands/rays/tint are screen-dressing,
+    // not world objects — they stay native 1x and cover the full screen.
+    this.drawWeatherSky(g, state.weather, cam);
 
     // WAVE-12 canvas HUD chrome: graphic HP/mana bars, weapon/equipment icon
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
@@ -910,18 +970,52 @@ export class Renderer {
   }
 
   // ---- weather rendering -----------------------------------------------------
-  // Particles are STORED in a bounded view-sized field (weather.js — wrapped,
-  // deterministic, unit-tested) but RENDERED camera-anchored: the camera
-  // offset is applied and re-wrapped here, so rain falls past the player
-  // instead of sliding with the screen. Cloud bands get a light parallax
-  // (they're distant); the sun is celestial and stays screen-fixed.
-  drawWeather(g, weather, cam) {
-    if (!weather) return;
+  // WAVE-16 split: PARTICLES are world objects and ride the zoom transform
+  // (drawWeatherParticles, called inside the world layer); the SKY (cloud
+  // bands, the sun) is distant scenery and the tint is a screen wash — both
+  // stay native 1x (drawWeatherSky, after the restore). Particles are STORED
+  // in a bounded view-sized field (weather.js — wrapped, deterministic,
+  // unit-tested) but RENDERED camera-anchored: the camera offset is applied
+  // and re-wrapped, so rain falls past the player instead of sliding with
+  // the screen. Cloud bands keep a light parallax (they're distant); the sun
+  // is celestial and stays screen-fixed.
+  drawWeatherParticles(g, weather, cam) {
+    if (!weather || !weather.def.particles) return;
     const def = weather.def;
     const t = weather.time || 0;
     const wrapX = (v) => (((v - cam.x) % C.VIEW_W) + C.VIEW_W) % C.VIEW_W;
     const wrapY = (v) => (((v - cam.y) % C.VIEW_H) + C.VIEW_H) % C.VIEW_H;
+    const P = def.particles;
+    for (let i = 0; i < weather.particles.length; i++) {
+      const p = weather.particles[i];
+      // World-anchor: subtract the camera and re-wrap inside the view.
+      const x = Math.round(wrapX(p.x)), y = Math.round(wrapY(p.y));
+      if (P.shape === 'streak') {          // RAIN: 1x4 falling streaks
+        g.fillStyle = 'rgba(90,138,216,0.7)';
+        g.fillRect(x, y, 1, 4);
+      } else if (P.shape === 'flake') {    // SNOW: 1x1/2x2 swaying flakes
+        g.fillStyle = P.color;
+        g.fillRect(x, y, p.size, p.size);
+      } else if (P.shape === 'dash') {     // WIND: horizontal dashes
+        if (Math.floor(t * 8 + p.phase) % 3 !== 0) {   // flicker
+          g.fillStyle = 'rgba(174,191,208,0.55)';
+          g.fillRect(x, y, 5, 1);
+        }
+      } else if (P.shape === 'firefly') {  // MOONLIGHT: blinking fireflies
+        if (Math.floor(t * 2 + p.phase) % 2 === 0) {
+          g.fillStyle = P.color;
+          g.fillRect(x, y, 2, 2);
+          g.fillStyle = 'rgba(216,255,176,0.4)';
+          g.fillRect(x - 1, y - 1, 4, 4);
+        }
+      }
+    }
+  }
 
+  drawWeatherSky(g, weather, cam) {
+    if (!weather) return;
+    const def = weather.def;
+    const t = weather.time || 0;
     if (def.bands) {
       // CLOUDY: dark translucent bands scrolling down; slow parallax on y.
       g.fillStyle = 'rgba(20,22,35,0.16)';
@@ -946,35 +1040,6 @@ export class Renderer {
         }
       }
     }
-
-    if (def.particles) {
-      const P = def.particles;
-      for (let i = 0; i < weather.particles.length; i++) {
-        const p = weather.particles[i];
-        // World-anchor: subtract the camera and re-wrap inside the view.
-        const x = Math.round(wrapX(p.x)), y = Math.round(wrapY(p.y));
-        if (P.shape === 'streak') {          // RAIN: 1x4 falling streaks
-          g.fillStyle = 'rgba(90,138,216,0.7)';
-          g.fillRect(x, y, 1, 4);
-        } else if (P.shape === 'flake') {    // SNOW: 1x1/2x2 swaying flakes
-          g.fillStyle = P.color;
-          g.fillRect(x, y, p.size, p.size);
-        } else if (P.shape === 'dash') {     // WIND: horizontal dashes
-          if (Math.floor(t * 8 + p.phase) % 3 !== 0) {   // flicker
-            g.fillStyle = 'rgba(174,191,208,0.55)';
-            g.fillRect(x, y, 5, 1);
-          }
-        } else if (P.shape === 'firefly') {  // MOONLIGHT: blinking fireflies
-          if (Math.floor(t * 2 + p.phase) % 2 === 0) {
-            g.fillStyle = P.color;
-            g.fillRect(x, y, 2, 2);
-            g.fillStyle = 'rgba(216,255,176,0.4)';
-            g.fillRect(x - 1, y - 1, 4, 4);
-          }
-        }
-      }
-    }
-
     // Scene tint last (rgba overlay value from the type table).
     if (def.tint) {
       g.fillStyle = def.tint;

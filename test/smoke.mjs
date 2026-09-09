@@ -13,10 +13,21 @@ import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
 
 // ---- DOM stubs ----
 const noop = () => {};
+// WAVE-16: transform-depth rect recorder. save/restore track a depth counter
+// and fillRect records {x,y,w,h,d} while rec is on — this is how the smoke
+// proves the HUD chrome paints at NATIVE coords (d=0) while the world layer
+// is drawn inside the zoom transform (d=1). translate/scale stay noop (the
+// transform is applied by the real canvas; the recorder only tracks depth).
+const ctxRec = { rec: false, depth: 0, rects: [] };
 const fakeCtx = new Proxy({}, {
   get(t, prop) {
     if (prop === 'canvas') return fakeCanvas;
     if (prop === 'fillStyle' || prop === 'globalAlpha') return undefined;
+    if (prop === 'save') return () => { ctxRec.depth++; };
+    if (prop === 'restore') return () => { ctxRec.depth = Math.max(0, ctxRec.depth - 1); };
+    if (prop === 'fillRect') return (x, y, w, h) => {
+      if (ctxRec.rec) ctxRec.rects.push({ x, y, w, h, d: ctxRec.depth });
+    };
     return typeof prop === 'string' ? noop : undefined;
   },
   set() { return true; },
@@ -64,6 +75,15 @@ globalThis.performance = { now: () => now };
 const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
+// WAVE-16: map-backed localStorage BEFORE the game import, so the persisted
+// zoom setting hydrates + round-trips headlessly (hudStorage picks this up).
+// Pre-seeded to 6x: the module-eval hydration assert below depends on it.
+const lsBack = new Map([['hordes_zoom', '6']]);
+globalThis.localStorage = {
+  getItem: (k) => (lsBack.has(k) ? lsBack.get(k) : null),
+  setItem: (k, v) => { lsBack.set(k, String(v)); },
+  removeItem: (k) => { lsBack.delete(k); },
+};
 
 // Import the game (module-level code runs immediately). __TEST is the
 // headless state seam (see main.js) — integration probes below use it.
@@ -136,6 +156,30 @@ const dtMs = 1000 / 60;
   assert(elements['hud'].style.display === 'none', 'TEXT HUD OFF must hide it again');
   byTitle('BACK').click();
   console.log('text HUD: hidden by default, settings toggle round-trips');
+}
+
+// WAVE-16 ZOOM: boot hydration (the pre-import seed hordes_zoom=6) + the
+// SETTINGS row cycling the sanctioned ladder and persisting every step.
+{
+  assert(st.zoom === 6,
+    'boot must hydrate the persisted zoom (hordes_zoom=6, got ' + st.zoom + ')');
+  assert(mainMod.__TEST.zoom.ladder.join(',') === '1,2,3,4,6,8',
+    'the zoom ladder is 1/2/3/4/6/8');
+  const cards = elements['ov-cards'];
+  const byTitle = (t) => Array.from(cards.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETTINGS').click();
+  const z = byTitle('ZOOM');
+  assert(z && /currently 6x/.test(z.innerHTML),
+    'settings must offer the ZOOM row (got ' + (z && z.innerHTML) + ')');
+  z.click();   // 6 -> 8 (each click re-renders the settings screen)
+  assert(st.zoom === 8 && globalThis.localStorage.getItem('hordes_zoom') === '8',
+    'a card click must cycle + persist 8x');
+  byTitle('ZOOM').click();   // 8 -> wraps to 1
+  assert(st.zoom === 1 && globalThis.localStorage.getItem('hordes_zoom') === '1',
+    'the ladder must wrap 8x -> 1x and persist');
+  byTitle('BACK').click();
+  console.log('zoom setting: hydrated 6x at boot, ZOOM row cycles + persists, 8x wraps to 1x');
 }
 
 // Title-mode boot: click PLAY to start the run (menu buttons are overlay
@@ -1233,6 +1277,84 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log(`boss overlay: ${bossName} letterbox banner + sub-line, expired on ttl`);
 }
 
+// ---- WAVE-16 WORLD ZOOM, live through the real loop ----------------------------
+// Quick keys, live mid-run apply, zoom-aware culling window, camera lock at
+// 2x, and the HUD-stays-native proof via the ctx depth recorder (world base
+// fill at depth 1 inside the transform; HP bar chrome at depth 0).
+{
+  const T = mainMod.__TEST;
+  const r = T.renderer;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+  T.startRun();
+  pump(5);
+  st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999;
+  st.wave.endsAt = st.time + 9999;
+  T.zoom.set(1);
+  pump(2);
+  assert(r._zoom === 1 && r.worldView.zoom === 1, 'renderer seam reads zoom 1');
+  assert(r.worldView.x0 === 0 && r.worldView.x1 === CFG.VIEW_W &&
+         r.worldView.y0 === 0 && r.worldView.y1 === CFG.VIEW_H,
+    'at 1x the cull window IS the full view');
+
+  // LIVE APPLY: '+' through the real keydown flips the WORLD layer next
+  // frame — no run reset, no reload. The visible window halves around the
+  // view center (entity culling gets TIGHTER, never looser: nothing inside
+  // the zoomed frame is culled, margins stay in world px).
+  keyHandler({ key: '+' });
+  assert(st.zoom === 2, "'+' must set zoom 2 immediately");
+  pump(2);
+  assert(r._zoom === 2, 'the change applies live (next rendered frame)');
+  assert(r.worldView.x0 === 120 && r.worldView.x1 === 360 &&
+         r.worldView.y0 === 75 && r.worldView.y1 === 225,
+    '2x halves the visible window around the center: ' + JSON.stringify(r.worldView));
+
+  // '-' backs out; '=' zooms in too (unshifted '+' parity).
+  keyHandler({ key: '-' });
+  pump(1);
+  assert(st.zoom === 1, "'-' must zoom back out");
+  keyHandler({ key: '=' });
+  pump(1);
+  assert(st.zoom === 2, "'=' must zoom in as well");
+  keyHandler({ key: '-' });
+  pump(1);
+
+  // CAMERA LOCK at 2x: a stationary MANUAL pilot (no keys held) stays dead
+  // center of the view — cam lerps to player - VIEW/2, and the zoom transform
+  // centers on the view, so the hero sits mid-screen at every zoom.
+  keyHandler({ key: 'm' });           // AUTO -> MANUAL, nothing held = still
+  T.zoom.set(2);
+  pump(150);                          // let the camera lerp converge
+  assert(Math.abs((st.player.x - st.cam.x) - CFG.VIEW_W / 2) <= 1 &&
+         Math.abs((st.player.y - st.cam.y) - CFG.VIEW_H / 2) <= 1,
+    'player must stay view-centered at 2x (camera lock)');
+
+  // HUD STAYS NATIVE while zoomed: record one 2x frame. The HP bar chrome
+  // border (5,15,112,7 — drawBar(6,16,110)) must paint at transform depth 0;
+  // the world ground base fill (0,0,480,300) at depth 1 (inside the zoom).
+  ctxRec.rec = true; ctxRec.rects.length = 0;
+  pump(1);
+  ctxRec.rec = false;
+  assert(ctxRec.rects.some(q => q.d === 0 && q.x === 5 && q.y === 15 && q.w === 112 && q.h === 7),
+    'the HP bar chrome must paint at NATIVE 1x coords while the world zooms');
+  assert(ctxRec.rects.some(q => q.d === 1 && q.x === 0 && q.y === 0 && q.w === CFG.VIEW_W && q.h === CFG.VIEW_H),
+    'the world ground base must paint INSIDE the zoom transform');
+  assert(ctxRec.rects.every(q => q.d === 0 || q.d === 1),
+    'exactly one world-layer save/restore brackets the zoom');
+
+  // Zoom leaves no residue on the HUD values themselves.
+  const hpAt2 = r.hudChrome.hpFrac;
+  T.zoom.set(1);
+  pump(1);
+  assert(r.hudChrome.hpFrac === hpAt2, 'zoom must not touch HUD-read state');
+
+  // Probe hygiene: back to AUTO at 1x for the rest of the suite.
+  keyHandler({ key: 'm' });
+  assert(st.pilotMode === 'AUTO' && st.zoom === 1, 'hygiene: AUTO + zoom 1x');
+  console.log('world zoom: live +/- apply, 2x window halved, camera locked, HUD proven native 1x');
+}
+
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----
 // the finale, then verify the field sweep, the silent spawner, the volley
 // mercy rule, the 3-hit rule and the distinct end screen.
@@ -1341,7 +1463,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 // Runs LAST on purpose: the fresh module re-import overwrites the shared
 // keyHandler stub with a handler bound to the SECOND module's state.
 {
+  // WAVE-16 hydration round-trip: re-seed storage, re-import — the fresh
+  // module must boot at the persisted zoom (module-eval hydration).
+  globalThis.localStorage.setItem('hordes_zoom', '4');
   const m2 = await import(/* fresh instance */ '../src/main.js?skipintro');
+  assert(m2.__TEST.state.zoom === 4,
+    'a fresh module must hydrate the persisted zoom (got ' + m2.__TEST.state.zoom + ')');
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(m2.__TEST.state.mode !== 'menu', 'fresh module should boot into the intro');
   keyHandler({ key: 'x' });

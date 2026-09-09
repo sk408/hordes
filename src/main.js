@@ -132,6 +132,8 @@ const state = {
   lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
   rampage: { streak: 0, best: 0 },  // kill-streak meter (resets on ANY hit)
   pilotMode: 'AUTO', // WAVE-13: 'AUTO' | 'MANUAL' (which controller is bound)
+  zoom: 1,           // WAVE-16 world zoom (ladder 1/2/3/4/6/8; render.js reads
+                     // it every frame — live mid-run, presentation only)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
   wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
@@ -1577,6 +1579,33 @@ function setHudTextEnabled(b) {
   try { hudStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
 }
 
+// ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
+// Sk408: fine pixel detail gets lost on small mobile screens. Ladder is the
+// sanctioned 1x -> 2x -> 3x -> 4x -> 6x -> 8x -> 1x cycle. render() reads
+// state.zoom EVERY frame, so changes apply live mid-run; startRun never
+// touches it (presentation preference, not run state).
+const KEY_ZOOM = 'hordes_zoom';
+const ZOOM_LADDER = [1, 2, 3, 4, 6, 8];
+function zoomIndex() {
+  const i = ZOOM_LADDER.indexOf(state.zoom);
+  return i < 0 ? 0 : i;
+}
+function setZoom(z) {
+  state.zoom = ZOOM_LADDER.includes(z) ? z : 1;
+  try { hudStorage.setItem(KEY_ZOOM, String(state.zoom)); } catch { /* shim */ }
+}
+function cycleZoom(dir = 1) {
+  const n = ZOOM_LADDER.length;
+  const next = ZOOM_LADDER[((zoomIndex() + dir) % n + n) % n];
+  setZoom(next);
+  toast('ZOOM ' + next + 'x');
+  return next;
+}
+try {
+  const savedZoom = parseInt(hudStorage.getItem(KEY_ZOOM), 10);
+  if (ZOOM_LADDER.includes(savedZoom)) state.zoom = savedZoom;
+} catch { /* shim */ }
+
 // ---------- Meta screens: title / shop / characters / settings ----------
 function menuCard(name, sub, onclick, dim) {
   const el = document.createElement('div');
@@ -1693,6 +1722,11 @@ function showSettings(disarm = true) {
   // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
   menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
     setHudTextEnabled(!hudTextEnabled());
+    showSettings();
+  });
+  // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
+  menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
+    cycleZoom(1);
     showSettings();
   });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
@@ -1994,6 +2028,11 @@ window.addEventListener('keydown', (ev) => {
     //              in BOTH modes (the permanent new home for it)
     if (k === 'm') { togglePilotMode(); return; }
     if (k === 'i') { openStats(); return; }
+    // WAVE-16 quick zoom: '+'/'=' zooms in, '-' zooms out — no settings trip
+    // needed. Live mid-run in both pilot modes (render reads state.zoom
+    // every frame).
+    if (k === '+' || k === '=') { cycleZoom(1); return; }
+    if (k === '-' || k === '_') { cycleZoom(-1); return; }
     if (state.pilotMode === 'MANUAL') {
       const dir = KEY_DIRS[k];
       if (dir) { pilotInput[dir] = true; return; }
@@ -2556,6 +2595,8 @@ export const __TEST = {
   getProfile: () => profile, refreshSynergies,
   renderer, openStats, closeStats,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
+  // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
+  zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
   setPilotMode: swapPilotMode, pilotInput,
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
