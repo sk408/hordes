@@ -121,12 +121,40 @@ export function makeWeapon(type) {
 }
 
 // ---------- Shared helpers (deterministic) ----------
-function rateScale(p) {
+// EVOLUTION AFFIX SEAM (evolutions.js): an evolved weapon carries a def-copy
+// on `weapon.evolution` with per-weapon affixes applied HERE with the exact
+// same convention as the loot stat fields above:
+//   damageMult — multiplies this weapon's final damage
+//   rateMult   — multiplies attack rate (cooldowns DIVIDE by it; ORBIT has no
+//                cooldown, so it halves the per-enemy contact tick instead)
+//   crit       — ADDITIVE crit chance for this weapon's hits only
+//   critMult   — ADDITIVE bonus to the crit damage multiplier on this weapon
+// Missing fields are neutral. Weapons without an evolution are unaffected.
+function evoAffixes(weapon) {
+  return (weapon && weapon.evolution && weapon.evolution.affixes) || null;
+}
+function evoDmg(weapon) {
+  const a = evoAffixes(weapon);
+  return a && a.damageMult ? a.damageMult : 1;
+}
+function evoRate(weapon) {
+  const a = evoAffixes(weapon);
+  return a && a.rateMult ? a.rateMult : 1;
+}
+// Behavior flag probe (pure data from evolutions.js; unknown flags ignored).
+function evoHas(weapon, flag) {
+  const e = weapon && weapon.evolution;
+  return !!(e && e.flags && e.flags.includes(flag));
+}
+
+function rateScale(p, weapon) {
   // Map the player's leveled cooldown onto this weapon: 1.0 at stock speed.
   // rateMult (loot Rapid Trigger etc.) DIVIDES the interval — the same
   // convention hb1's volley loop uses: cooldown * overcharge / rateMult.
+  // The weapon's OWN evolution rateMult divides it further (per-weapon).
   const overcharge = p.buffs && p.buffs.overcharge > 0 ? C.SKILLS.OVERCHARGE.RATE_MULT : 1;
-  return (p.stats.cooldown / C.WEAPON.COOLDOWN) * overcharge / (p.stats.rateMult || 1);
+  return (p.stats.cooldown / C.WEAPON.COOLDOWN) * overcharge /
+    ((p.stats.rateMult || 1) * evoRate(weapon));
 }
 
 // Final damage multiplier from loot affixes (Brutal Edge, BERSERK, ...).
@@ -136,11 +164,15 @@ function dmgScale(p) {
 
 // Per-hit crit roll -> 1 or the crit multiplier. The ONLY Math.random site
 // in this module (documented above): crit 0 / absent never fires, keeping
-// every other path deterministic for tests.
-function critRoll(p) {
+// every other path deterministic for tests. Evolution crit/critMult affixes
+// are additive PER-WEAPON on top of the player's stats.
+function critRoll(p, weapon) {
+  const a = evoAffixes(weapon);
   const s = p.stats;
-  if (!s.crit || s.crit <= 0) return 1;
-  return Math.random() < s.crit ? (s.critMult || 1.5) : 1;
+  const crit = (s.crit || 0) + (a && a.crit ? a.crit : 0);
+  if (crit <= 0) return 1;
+  const cm = (s.critMult || 1.5) + (a && a.critMult ? a.critMult : 0);
+  return Math.random() < crit ? cm : 1;
 }
 
 function nearestEnemy(state, x, y, exclude) {
@@ -159,18 +191,29 @@ function hurt(e, dmg) {
 }
 
 // ---------- ORBIT: blades circling the player, damage on contact ----------
+// TWIN_ORBIT evolution: `twinOrbit` adds a second counter-rotating ring at
+// 62% radius (both rings share the per-enemy tick map); `bladeStorm` halves
+// the contact tick cooldown (ticks come twice as often; the damageMult
+// affix covers "twice as hard").
 function updateOrbit(state, weapon, dt) {
   const W = WEAPONS.ORBIT;
   const P = weaponLevelParams('ORBIT', weapon.level);
   const radius = P.radius || W.RADIUS;
   const p = state.player;
+  const twin = evoHas(weapon, 'twinOrbit');
+  const tick = W.TICK / (evoRate(weapon) * (evoHas(weapon, 'bladeStorm') ? 2 : 1));
   weapon.angle += W.SPIN * dt;
+  if (twin) weapon.angle2 = (weapon.angle2 || 0) - W.SPIN * dt;
   const n = Math.max(1, (P.blades || 1) + p.stats.projectiles - 1);  // Split Shot still adds blades
   const blades = [];
-  for (let i = 0; i < n; i++) {
-    const a = weapon.angle + (i / n) * Math.PI * 2;
-    blades.push({ x: p.x + Math.cos(a) * radius, y: p.y + Math.sin(a) * radius });
-  }
+  const ring = (r, base, dir) => {
+    for (let i = 0; i < n; i++) {
+      const a = base * dir + (i / n) * Math.PI * 2;
+      blades.push({ x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r });
+    }
+  };
+  ring(radius, weapon.angle, 1);
+  if (twin) ring(radius * 0.62, weapon.angle2 || 0, -1);
   weapon.payload.blades = blades;
 
   // Per-enemy tick cooldowns tick down.
@@ -183,8 +226,9 @@ function updateOrbit(state, weapon, dt) {
     for (const e of state.enemies) {
       if (e.hp <= 0 || weapon.ticks.has(e)) continue;
       if (Math.abs(b.x - e.x) < W.HIT_R && Math.abs(b.y - e.y) < W.HIT_R) {
-        hurt(e, p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * critRoll(p));
-        weapon.ticks.set(e, W.TICK);
+        hurt(e, p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) *
+          evoDmg(weapon) * critRoll(p, weapon));
+        weapon.ticks.set(e, tick);
         state.effects.push({ kind: 'orbit_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
       }
     }
@@ -195,16 +239,21 @@ function updateOrbit(state, weapon, dt) {
 }
 
 // ---------- BOOMERANG: throws at the nearest enemy, pierces all, returns ----------
+// VOID_RANG evolution: `pierceAll` = unlimited re-hits on BOTH legs;
+// `voidPull` = every contact hit drags the victim ~12% of the way back to
+// the thrower (the return leg drags the horde home with it).
 function updateBoomerang(state, weapon, dt) {
   const W = WEAPONS.BOOMERANG;
   const P = weaponLevelParams('BOOMERANG', weapon.level);
   const speed = W.SPEED * (P.speedMult || 1);   // level: faster out AND back
   const p = state.player;
+  const pierceAll = evoHas(weapon, 'pierceAll');
+  const voidPull = evoHas(weapon, 'voidPull');
   weapon.cd -= dt;
   if (weapon.cd <= 0) {
     const target = nearestEnemy(state, p.x, p.y);
     if (target) {
-      weapon.cd = W.COOLDOWN * rateScale(p);
+      weapon.cd = W.COOLDOWN * rateScale(p, weapon);
       const a = Math.atan2(target.y - p.y, target.x - p.x);
       const n = Math.max(1, p.stats.projectiles);   // Split Shot = fan of boomerangs
       for (let i = 0; i < n; i++) {
@@ -214,8 +263,8 @@ function updateBoomerang(state, weapon, dt) {
           x: p.x, y: p.y,
           dx: Math.cos(a + spread), dy: Math.sin(a + spread),
           dist: 0, phase: 'out',
-          damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p),
-          pierce: p.stats.pierce + (P.pierceBonus || 0),   // extra re-hit allowance on the return leg
+          damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon),
+          pierce: pierceAll ? 999 : p.stats.pierce + (P.pierceBonus || 0),   // extra re-hit allowance on the return leg
           hit: new Set(),
           age: 0,
         });
@@ -247,8 +296,12 @@ function updateBoomerang(state, weapon, dt) {
     for (const e of state.enemies) {
       if (pr.hit.has(e) || e.hp <= 0) continue;
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
-        hurt(e, pr.damage * critRoll(p));   // crit rolled per contact hit
+        hurt(e, pr.damage * critRoll(p, weapon));   // crit rolled per contact hit
         pr.hit.add(e);
+        if (voidPull) {   // drag the victim toward the thrower
+          e.x += (p.x - e.x) * 0.12;
+          e.y += (p.y - e.y) * 0.12;
+        }
       }
     }
     if (pr.age >= 99) state.projectiles.splice(i, 1);
@@ -256,49 +309,73 @@ function updateBoomerang(state, weapon, dt) {
 }
 
 // ---------- ZAP: chain lightning, primary target + 3 nearest-jump neighbors ----------
+// TESLA_TEMPEST evolution: `chainZap` = every jump forks to the TWO nearest
+// unused neighbors (a branching tree); `forkBolt` = a second independent
+// bolt strikes the 2nd-nearest enemy and chains with the same rules.
 function updateZap(state, weapon, dt) {
   const W = WEAPONS.ZAP;
   const P = weaponLevelParams('ZAP', weapon.level);
   const jumps = P.jumps || W.JUMPS;
   const p = state.player;
-  const baseDmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p);
+  const forkPerJump = evoHas(weapon, 'chainZap') ? 2 : 1;
+  const baseDmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
   weapon.cd -= dt;
   if (weapon.cd > 0) return;
   const primary = nearestEnemy(state, p.x, p.y);
   if (!primary) { weapon.cd = 0; return; }
-  weapon.cd = W.COOLDOWN * rateScale(p);
+  weapon.cd = W.COOLDOWN * rateScale(p, weapon);
 
   const points = [{ x: p.x, y: p.y }];
   const hitSet = new Set([primary]);
-  hurt(primary, baseDmg * critRoll(p));
-  points.push({ x: primary.x, y: primary.y });
 
-  let from = primary;
-  for (let j = 0; j < jumps; j++) {
-    const next = nearestEnemy(state, from.x, from.y, hitSet);
-    if (!next || Math.hypot(next.x - from.x, next.y - from.y) > W.CHAIN_RANGE) break;
-    hurt(next, baseDmg * critRoll(p) * Math.pow(W.FALLOFF, j + 1));
-    hitSet.add(next);
-    points.push({ x: next.x, y: next.y });
-    from = next;
+  // One bolt = primary strike + a (possibly forking) chain walk.
+  const bolt = (head, origin) => {
+    points.push(origin ? { x: origin.x, y: origin.y } : { x: head.x, y: head.y });
+    hurt(head, baseDmg * critRoll(p, weapon));
+    let frontier = [head];
+    for (let j = 0; j < jumps; j++) {
+      const next = [];
+      for (const from of frontier) {
+        for (let f = 0; f < forkPerJump; f++) {
+          const tgt = nearestEnemy(state, from.x, from.y, hitSet);
+          if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > W.CHAIN_RANGE) break;
+          hurt(tgt, baseDmg * critRoll(p, weapon) * Math.pow(W.FALLOFF, j + 1));
+          hitSet.add(tgt);
+          // Polyline: append the victim; on a FORK, re-append the branch
+          // node first so each fork draws its own from->to segment.
+          if (f > 0) points.push({ x: from.x, y: from.y });
+          points.push({ x: tgt.x, y: tgt.y });
+          next.push(tgt);
+        }
+      }
+      frontier = next;
+      if (frontier.length === 0) break;
+    }
+  };
+  bolt(primary);
+  if (evoHas(weapon, 'forkBolt')) {
+    const second = nearestEnemy(state, p.x, p.y, hitSet);
+    if (second && Math.hypot(second.x - p.x, second.y - p.y) <= W.CHAIN_RANGE) bolt(second, p);
   }
 
   state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15 });
 }
 
 // ---------- NOVA_PULSE: periodic AoE ring from the player, no aiming ----------
+// SUPERNOVA evolution: `bigBoom` = +50% pulse radius; `novaChain` = pulses
+// chain back-to-back (cooldown halved).
 function updateNovaPulse(state, weapon, dt) {
   const W = WEAPONS.NOVA_PULSE;
   const P = weaponLevelParams('NOVA_PULSE', weapon.level);
-  const radius = P.radius || W.RADIUS;
+  const radius = (P.radius || W.RADIUS) * (evoHas(weapon, 'bigBoom') ? 1.5 : 1);
   const p = state.player;
   weapon.cd -= dt;
   if (weapon.cd > 0) return;
-  weapon.cd = W.COOLDOWN * rateScale(p);
-  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p);
+  weapon.cd = W.COOLDOWN * rateScale(p, weapon) * (evoHas(weapon, 'novaChain') ? 0.5 : 1);
+  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
-    if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) hurt(e, dmg * critRoll(p));
+    if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) hurt(e, dmg * critRoll(p, weapon));
   }
   state.effects.push({ kind: 'nova_pulse', x: p.x, y: p.y, radius, age: 0, ttl: 0.3 });
 }
@@ -308,10 +385,12 @@ function angleDiff(a, b) {           // signed smallest a-b, in [-PI, PI]
   return ((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
 }
 
+// SCYTHE evolution (GRAVE_HARVEST): `wideReap` = the sweep becomes a full
+// circle; `harvestSouls` = every kill in the sweep heals the player 2 hp.
 function updateScythe(state, weapon, dt) {
   const W = WEAPONS.SCYTHE;
   const P = weaponLevelParams('SCYTHE', weapon.level);
-  const arc = P.arc || W.ARC;
+  const arc = evoHas(weapon, 'wideReap') ? Math.PI * 2 : (P.arc || W.ARC);
   const p = state.player;
   weapon.cd -= dt;
 
@@ -327,14 +406,19 @@ function updateScythe(state, weapon, dt) {
     weapon.swing = null;
 
     // Land the sweep: everything inside the wedge eats damage.
-    const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p);
+    const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
+    let souls = 0;
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       const d = Math.hypot(e.x - p.x, e.y - p.y);
       if (d > W.RANGE) continue;
       if (Math.abs(angleDiff(Math.atan2(e.y - p.y, e.x - p.x), dir)) > arc / 2) continue;
-      hurt(e, dmg * critRoll(p));
+      hurt(e, dmg * critRoll(p, weapon));
+      if (e.hp <= 0) souls++;
       state.effects.push({ kind: 'scythe_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
+    }
+    if (souls > 0 && evoHas(weapon, 'harvestSouls')) {
+      p.hp = Math.min(p.stats.maxHp, p.hp + 2 * souls);
     }
     state.effects.push({
       kind: 'scythe_arc', x: p.x, y: p.y, dir, radius: W.RANGE, arc, age: 0, ttl: 0.25,
@@ -345,7 +429,7 @@ function updateScythe(state, weapon, dt) {
   if (weapon.cd > 0) return;
   const target = nearestEnemy(state, p.x, p.y);
   if (!target) { weapon.cd = 0; return; }
-  weapon.cd = W.COOLDOWN * rateScale(p);
+  weapon.cd = W.COOLDOWN * rateScale(p, weapon);
   // Sweep in the direction the volley would fire (nearest threat).
   weapon.swing = { dir: Math.atan2(target.y - p.y, target.x - p.x), t: W.WINDUP };
   state.effects.push({
@@ -355,15 +439,21 @@ function updateScythe(state, weapon, dt) {
 }
 
 // ---------- SEEKER: weak-turn homing missiles that retarget on kill --------
+// HYDRA_SWARM evolution: `hydraSplit` = a missile that connects spawns TWO
+// hatchlings at the impact point (half damage, one generation deep —
+// hatchlings don't split again); `eternalHunt` = 3x missile life so the
+// hunt outlives a lost mark.
 function updateSeeker(state, weapon, dt) {
   const W = WEAPONS.SEEKER;
   const P = weaponLevelParams('SEEKER', weapon.level);
   const count = P.count || 1;
   const turn = (P.turn || W.TURN) * dt;      // max radians this frame
+  const life = W.LIFE * (evoHas(weapon, 'eternalHunt') ? 3 : 1);
+  const hydra = evoHas(weapon, 'hydraSplit');
   const p = state.player;
   weapon.cd -= dt;
   if (weapon.cd <= 0) {
-    weapon.cd = W.COOLDOWN * rateScale(p);
+    weapon.cd = W.COOLDOWN * rateScale(p, weapon);
     const target = nearestEnemy(state, p.x, p.y);
     const base = target ? Math.atan2(target.y - p.y, target.x - p.x) : weapon.angle || 0;
     weapon.angle = base;
@@ -374,8 +464,8 @@ function updateSeeker(state, weapon, dt) {
         x: p.x, y: p.y,
         ang: base + spread,
         target,                               // may die mid-flight -> retarget
-        damage: p.stats.damage * W.DAMAGE_MULT * dmgScale(p),
-        age: 0, trail: [],
+        damage: p.stats.damage * W.DAMAGE_MULT * dmgScale(p) * evoDmg(weapon),
+        age: 0, trail: [], gen: 0,
       });
     }
   }
@@ -384,7 +474,7 @@ function updateSeeker(state, weapon, dt) {
     const pr = state.projectiles[i];
     if (pr.kind !== 'seeker') continue;
     pr.age += dt;
-    if (pr.age >= W.LIFE) {
+    if (pr.age >= life) {
       state.effects.push({ kind: 'seeker_pop', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
       state.projectiles.splice(i, 1);
       continue;
@@ -407,8 +497,21 @@ function updateSeeker(state, weapon, dt) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
-        hurt(e, pr.damage * critRoll(p));   // crit rolled per impact
+        hurt(e, pr.damage * critRoll(p, weapon));   // crit rolled per impact
         state.effects.push({ kind: 'seeker_pop', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
+        if (hydra && !(pr.gen > 0)) {
+          // Two hatchlings burst out of the kill and pick fresh marks.
+          for (let h = 0; h < 2; h++) {
+            state.projectiles.push({
+              kind: 'seeker',
+              x: pr.x, y: pr.y,
+              ang: pr.ang + (h === 0 ? 0.6 : -0.6),
+              target: nearestEnemy(state, pr.x, pr.y),
+              damage: pr.damage * 0.5,
+              age: 0, trail: [], gen: (pr.gen || 0) + 1,
+            });
+          }
+        }
         state.projectiles.splice(i, 1);
         break;
       }
@@ -437,14 +540,18 @@ function detonateMine(state, mine, blast, dmg, p) {
   }
 }
 
+// MINE evolution (VOLCANIC_FIELD): `bigBoom` = +50% blast radius;
+// `chainMine` = each detonation sets off every other mine inside its blast
+// (rolling chain, each mine fires once).
 function updateMine(state, weapon, dt) {
   const W = WEAPONS.MINE;
   const P = weaponLevelParams('MINE', weapon.level);
-  const blast = P.blast || W.BLAST;
+  const blast = (P.blast || W.BLAST) * (evoHas(weapon, 'bigBoom') ? 1.5 : 1);
+  const chain = evoHas(weapon, 'chainMine');
   const p = state.player;
   weapon.cd -= dt;
   if (weapon.cd <= 0) {
-    weapon.cd = W.COOLDOWN * rateScale(p);
+    weapon.cd = W.COOLDOWN * rateScale(p, weapon);
     state.projectiles.push({ kind: 'mine', x: p.x, y: p.y, age: 0 });
     // Cap the trail: the auto-mover drops a path, not a carpet.
     let mines = 0;
@@ -457,7 +564,7 @@ function updateMine(state, weapon, dt) {
     }
   }
 
-  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p);
+  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
   for (let i = state.projectiles.length - 1; i >= 0; i--) {
     const mine = state.projectiles[i];
     if (mine.kind !== 'mine') continue;
@@ -470,8 +577,21 @@ function updateMine(state, weapon, dt) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.hypot(e.x - mine.x, e.y - mine.y) <= W.TRIGGER_R) {
-        detonateMine(state, mine, blast, dmg, p);
-        state.projectiles.splice(i, 1);
+        // Rolling chain (visited set: every mine detonates at most once).
+        const boom = (m, seen) => {
+          seen.add(m);
+          detonateMine(state, m, blast, dmg, p);
+          if (!chain) return;
+          for (const other of state.projectiles) {
+            if (other.kind !== 'mine' || seen.has(other)) continue;
+            if (Math.hypot(other.x - m.x, other.y - m.y) <= blast) boom(other, seen);
+          }
+        };
+        const seen = new Set();
+        boom(mine, seen);
+        for (let k = state.projectiles.length - 1; k >= 0; k--) {
+          if (seen.has(state.projectiles[k])) state.projectiles.splice(k, 1);
+        }
         break;
       }
     }
@@ -479,39 +599,46 @@ function updateMine(state, weapon, dt) {
 }
 
 // ---------- BEAM: piercing laser along the volley direction, long cd -------
+// GODLANCE evolution: `prismSplit` = the lance splits through a prism into
+// THREE lanes (aim and +-0.35 rad); `solarFlare` = +30% beam width (the
+// lanes run hot).
 function updateBeam(state, weapon, dt) {
   const W = WEAPONS.BEAM;
   const P = weaponLevelParams('BEAM', weapon.level);
-  const width = P.width || W.WIDTH;
+  const width = (P.width || W.WIDTH) * (evoHas(weapon, 'solarFlare') ? 1.3 : 1);
+  const lanes = evoHas(weapon, 'prismSplit') ? [-0.35, 0, 0.35] : [0];
   const p = state.player;
   weapon.cd -= dt;
   if (weapon.cd > 0) return;
   const target = nearestEnemy(state, p.x, p.y);
   if (!target) { weapon.cd = 0; return; }
-  weapon.cd = W.COOLDOWN * rateScale(p);
+  weapon.cd = W.COOLDOWN * rateScale(p, weapon);
   weapon.fires = (weapon.fires || 0) + 1;
 
-  const dir = Math.atan2(target.y - p.y, target.x - p.x);
-  const cx = Math.cos(dir), cy = Math.sin(dir);
-  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p);
-  for (const e of state.enemies) {
-    if (e.hp <= 0) continue;
-    const rx = e.x - p.x, ry = e.y - p.y;
-    const along = rx * cx + ry * cy;          // projection on the beam axis
-    if (along < 0 || along > W.LENGTH) continue;
-    if (Math.abs(rx * cy - ry * cx) > width / 2) continue;   // perpendicular distance
-    hurt(e, dmg * critRoll(p));               // crit rolled per beam victim
-    state.effects.push({ kind: 'beam_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
+  const baseDir = Math.atan2(target.y - p.y, target.x - p.x);
+  const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
+  for (const off of lanes) {
+    const dir = baseDir + off;
+    const cx = Math.cos(dir), cy = Math.sin(dir);
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      const rx = e.x - p.x, ry = e.y - p.y;
+      const along = rx * cx + ry * cy;          // projection on the beam axis
+      if (along < 0 || along > W.LENGTH) continue;
+      if (Math.abs(rx * cy - ry * cx) > width / 2) continue;   // perpendicular distance
+      hurt(e, dmg * critRoll(p, weapon));       // crit rolled per beam victim
+      state.effects.push({ kind: 'beam_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
+    }
+    // Rich beam payload: sweep envelope (render lerps dir-from -> dir-to),
+    // thickness, and a deterministic flicker phase so each beam strobes
+    // differently (no Math.random).
+    state.effects.push({
+      kind: 'beam', x: p.x, y: p.y,
+      dir, from: dir - W.SWEEP, to: dir + W.SWEEP,
+      len: W.LENGTH, width, phase: weapon.fires * 1.7,
+      age: 0, ttl: 0.35,
+    });
   }
-  // Rich beam payload: sweep envelope (render lerps dir-from -> dir-to),
-  // thickness, and a deterministic flicker phase so each beam strobes
-  // differently (no Math.random).
-  state.effects.push({
-    kind: 'beam', x: p.x, y: p.y,
-    dir, from: dir - W.SWEEP, to: dir + W.SWEEP,
-    len: W.LENGTH, width, phase: weapon.fires * 1.7,
-    age: 0, ttl: 0.35,
-  });
 }
 
 // ---------- Registry ----------

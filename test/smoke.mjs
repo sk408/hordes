@@ -47,24 +47,43 @@ const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
 
-// Import the game (module-level code runs immediately).
-await import('../src/main.js');
+// Import the game (module-level code runs immediately). __TEST is the
+// headless state seam (see main.js) — integration probes below use it.
+const mainMod = await import('../src/main.js');
+const st = mainMod.__TEST.state;
 
-// Title-mode boot: the game now boots to the title screen; click PLAY to
-// start the run (menu buttons are overlay cards, same as draft picks).
+// ---- WAVE-7/D intro movie: plays BEFORE the title menu on page load ----
+// Pump rAF frames until the 7s movie finishes and the menu lands. Skipping
+// is exercised separately at the end of the file (fresh module re-import).
+const dtMs = 1000 / 60;
+{
+  let introFrames = 0;
+  for (; introFrames < 60 * 10; introFrames++) {
+    now += dtMs;
+    const cb = rafQueue.shift();
+    if (!cb) break;
+    cb(now);
+    if (elements['ov-title'] && elements['ov-title'].textContent === 'HORDES' &&
+        elements['ov-cards'] && elements['ov-cards'].children.length >= 4) break;
+  }
+  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
+    'intro should hand off to the HORDES title screen');
+  assert(elements['ov-cards'] && elements['ov-cards'].children.length >= 4,
+    'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
+  assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
+  console.log(`intro: played ${introFrames} frames before the menu`);
+}
+
+// Title-mode boot: click PLAY to start the run (menu buttons are overlay
+// cards, same as draft picks).
 {
   const cards = elements['ov-cards'];
-  assert(cards && cards.children.length >= 4,
-    'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards');
-  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
-    'should boot to the HORDES title screen');
   cards.children[0].click();   // PLAY -> startRun()
   const ov = elements['overlay'];
   assert(ov && ov.style.display === 'none', 'PLAY should start the run (hide overlay)');
 }
 
 // Simulate 90 seconds at 60fps, auto-picking draft cards (press "1").
-const dtMs = 1000 / 60;
 const frames = 90 * 60;
 let drafts = 0;
 
@@ -319,7 +338,10 @@ assert(/ITM \d\/4/.test(hudAfter), 'HUD should show the ITEMS line: ' + hudAfter
 // Opportunistic (the player may die first): observe BOSS! + boss resolution.
 // Wave-6 portal progression: boss death opens the portal; walking in shows
 // the WAVE CLEARED intermission (key 1 = CONTINUE, same seam as drafts).
+// WAVE-7: capture the NAMED boss announce (GRAVELMAW/CHOIR/PYRAXIS) and, at
+// the first intermission, take one blessing/curse card before continuing.
 let bossSeen = false, waveTwoSeen = false, intermissionSeen = false;
+let bossNamesSeen = '', choiceTaken = false;
 for (let i = frames; i < 180 * 60; i++) {
   now += dtMs;
   const cb = rafQueue.shift();
@@ -328,6 +350,10 @@ for (let i = frames; i < 180 * 60; i++) {
   const t = hudText();
   if (/WAVE 1 - BOSS!/.test(t)) bossSeen = true;
   if (/WAVE 2 - /.test(t)) { waveTwoSeen = true; break; }
+  if (!bossNamesSeen) {
+    const names = (st.wave.bosses || []).map(b => b.name).filter(Boolean).join('+');
+    if (names) bossNamesSeen = names;
+  }
   // Wave-5 trio probes during the extension (soft — the player may die).
   const fm = t.match(/FOES .*W:(\d+) T:(\d+) X:(\d+)/);
   if (fm) {
@@ -348,6 +374,13 @@ for (let i = frames; i < 180 * 60; i++) {
     const inter = /CLEARED/.test((elements['ov-title'] || {}).textContent || '');
     if (death && keyHandler) keyHandler({ key: 'r' });
     else if (keyHandler) {
+      if (inter && !choiceTaken) {
+        // WAVE-7/C: take the first blessing/curse card (applyChoice mutates
+        // the run-scoped player; the overlay re-renders without it).
+        for (let c = 0; c < cards.length; c++) {
+          if ((cards[c].innerHTML || '').includes('BLESSING')) { cards[c].click(); choiceTaken = true; break; }
+        }
+      }
       keyHandler({ key: '1' });
       if (inter) intermissionSeen = true;
     }
@@ -355,6 +388,18 @@ for (let i = frames; i < 180 * 60; i++) {
 }
 console.log(`boss seen=${bossSeen} wave2 seen=${waveTwoSeen}`);
 console.log(`portal progression (soft): intermissionSeen=${intermissionSeen}`);
+if (choiceTaken) {
+  assert(st.takenChoices.length === 1 && st.player.choices,
+    'blessing card should applyChoice onto the run-scoped player');
+  console.log(`choice taken: ${st.takenChoices[0]} fields=${Object.keys(st.player.choices).join(',')}`);
+} else {
+  console.log('choice card check SKIPPED: no intermission opened (soft)');
+}
+if (bossSeen) {
+  assert(/GRAVELMAW|CHOIR|PYRAXIS/.test(bossNamesSeen),
+    `a seen boss must be NAMED (got '${bossNamesSeen}')`);
+  console.log('named boss announce (HUD probes): ' + bossNamesSeen);
+}
 
 // Wave-1 integration: typed enemies in the mix, or a weapon beyond the base
 // volley acquired via the draft (weapons appear as draft cards).
@@ -385,5 +430,94 @@ assert(drafts >= 1, 'draft overlay should have appeared (drafts=' + drafts + ')'
 assert(kills > 10, 'auto-attack should be killing enemies (kills=' + kills + ')');
 assert(level >= 2, 'player should have leveled at least once (level=' + level + ')');
 assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 's; balance TODO if low)');
+
+// ---- WAVE-7 forced probes (through the real loop) ----
+// (1) NAMED BOSS: force the wave-1 boss spawn (wave timer expiry) and verify
+// the named cast + intents wiring through live state.
+{
+  // Reset to a clean playing run (the sim may be dead / on the title menu).
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  // Wave 1 boss fires when the wave timer expires with no portal open.
+  st.wave.endsAt = st.time;   // expire NOW: the boss spawns on the next tick
+  let named = '', intents = 0;
+  for (let i = 0; i < 60 * 60; i++) {   // up to 60s of boss fight
+    now += dtMs;
+    const cb = rafQueue.shift();
+    if (!cb) throw new Error('raf died in boss probe');
+    cb(now);
+    if (!named) {
+      const names = (st.wave.bosses || []).map(b => b.name).filter(Boolean).join('+');
+      if (names) named = names;
+    }
+    // Any of the extra boss intent flags firing (telegraph/charge/nova/...).
+    if (st.enemies.some(e => e.boss && (e.telegraph || e.charging || e.recovering))) intents++;
+    if (named && intents > 30) break;   // boss cast + pattern brain exercised
+  }
+  assert(/GRAVELMAW|CHOIR|PYRAXIS/.test(named), 'boss probe must see a NAMED boss (got ' + named + ')');
+  assert(intents > 30, 'boss pattern brain must fire intents (' + intents + ' frames)');
+  console.log(`boss probe: ${named} (intent frames: ${intents})`);
+}
+
+// (2) EVOLUTION: Lv8 VOLLEY + crit item + token via the real evolve overlay.
+{
+  mainMod.__TEST.startRun();
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  const volley = st.weapons.find(w => w.type === 'VOLLEY');
+  volley.level = 8;   // maxed
+  // Equip an item whose affix id is the NOVA_SHOT item kind ('crit').
+  st.items.push({
+    id: 'probe_crit', name: 'Probe Eye', rarity: 'RARE',
+    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }],
+  });
+  st.evoTokens = 1;
+  let evolved = false;
+  for (let i = 0; i < 30 && !evolved; i++) {
+    now += dtMs;
+    const cb = rafQueue.shift();
+    if (!cb) throw new Error('raf died in evolve probe');
+    cb(now);
+    if (st.mode === 'evolve') {
+      const cards = elements['ov-cards'].children;
+      assert(cards.length >= 1, 'evolve overlay must offer the EVOLVE card');
+      assert((cards[0].innerHTML || '').includes('Nova Shot'),
+        'evolve card should offer Nova Shot: ' + cards[0].innerHTML);
+      cards[0].click();
+      evolved = true;
+    }
+  }
+  assert(evolved, 'the EVOLVE overlay must open (Lv8 + crit item + token)');
+  assert(volley.evolutionId === 'NOVA_SHOT', 'volley must be NOVA_SHOT after evolving');
+  assert(st.evoTokens === 0, 'evolution must spend the token');
+  for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(/Nova Shot/.test(hudText()), 'HUD must show the evolved weapon name');
+  console.log('evolution probe: VOLLEY -> Nova Shot (token spent, HUD updated)');
+}
+
+// (3) RUN-SCOPE RESET: a fresh run must drop every WAVE-7 run-scoped field.
+{
+  mainMod.__TEST.startRun();
+  assert(st.evoTokens === 0, 'run reset must clear evoTokens');
+  assert(!st.player.choices, 'run reset must drop player.choices');
+  assert(st.takenChoices.length === 0, 'run reset must clear takenChoices');
+  assert(st.pendingChoiceOffers === null, 'run reset must clear pendingChoiceOffers');
+  const volley = st.weapons.find(w => w.type === 'VOLLEY');
+  assert(volley && !volley.evolutionId, 'fresh run VOLLEY must be un-evolved');
+  console.log('run-scope reset: choices/tokens/evolutions all cleared');
+}
+
+// (4) INTRO SKIP: any key during the movie jumps straight to the title menu.
+{
+  const m2 = await import(/* fresh instance */ '../src/main.js?skipintro');
+  const els2 = {};   // fresh DOM? the module reuses globalThis.document — the
+  // SECOND import shares the stubbed document: the title screen re-renders
+  // into the same elements map. Clear the overlay state and re-pump.
+  for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(m2.__TEST.state.mode !== 'menu', 'fresh module should boot into the intro');
+  keyHandler({ key: 'x' });
+  for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(m2.__TEST.state.mode === 'menu', 'any key must skip the intro to the menu');
+  console.log('intro skip: keypress jumps straight to the HORDES menu');
+}
 
 console.log('SMOKE TEST PASSED');

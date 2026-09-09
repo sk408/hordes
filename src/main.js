@@ -13,8 +13,12 @@ import {
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
 import { maybeSpawnChest, tickChests } from './chests.js';
 import {
-  rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift,
+  rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
+import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
+import { pickBossForWave, decideBossAction } from './bosses.js';
+import { rollChoices, applyChoice } from './choices.js';
+import * as INTRO from './intro.js';
 import {
   loadProfile, saveProfile, makeProfile, computeRunGold,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
@@ -78,13 +82,21 @@ const state = {
   toasts: [],        // transient HUD messages ({ msg, ttl })
   time: 0,
   spawnTimer: 0,
-  mode: 'menu',      // 'menu' | 'playing' | 'draft' | 'intermission' | 'dead'
+  // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
+  // EVOLUTION draft overlay (a maxed weapon + its item kind + a token).
+  mode: 'menu',      // 'menu' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
   character: null,   // equipped CHARACTERS entry for the current run
   weaponSlots: 6,    // per-run slot cap (startWeaponSlots(profile) in startRun)
+  baseWeaponSlots: 6, // pre-choice slot base (Merchant's Pact adds on top)
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
+  evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
+  choiceSeed: 1,     // per-run seed for the intermission blessing/curse rolls
+  choiceRng: null,   // mulberry32(choiceSeed) — deterministic per run
+  takenChoices: [],  // choice ids taken this run (repeat-free offers)
+  pendingChoiceOffers: null, // this wave's 3 rolled cards (null = roll fresh)
   wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0 },
 };
 state.player.x = C.VIEW_W / 2;
@@ -127,14 +139,20 @@ function runController(p, dt, am) {
     //  - extra projectiles spread wider (0.18 -> C.WEAPON.SPREAD).
     const volleyW = state.weapons.find(w => w.type === 'VOLLEY');
     const P = weaponLevelParams('VOLLEY', volleyW ? volleyW.level : 1);
+    // NOVA_SHOT evolution (evolutions.js): per-weapon affixes multiply damage
+    // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
+    const volleyEvo = volleyW && volleyW.evolution;
     const n = Math.min(p.stats.projectiles + (P.proj || 0), C.WEAPON.MAX_PROJECTILES);
     const volleyDmgMult = (P.dmgMult || 1) * (1 + 0.2 * (P.proj || 0)) *
-      (p.stats.damageMult || 1) * am.damageMult;   // loot Brutal Edge + BERSERK arch
+      (p.stats.damageMult || 1) * am.damageMult *   // loot Brutal Edge + BERSERK arch
+      (volleyEvo && volleyEvo.affixes.damageMult || 1);
+    const volleyPierceAll = !!(volleyEvo && volleyEvo.flags.includes('pierceAll'));
     for (let i = 0; i < n; i++) {
       const spread = (i - (n - 1) / 2) * C.WEAPON.SPREAD;
       const a = baseAng + spread;
       const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
       pr.damage *= volleyDmgMult;
+      if (volleyPierceAll) pr.pierce = 999;
       state.projectiles.push(pr);
       // Muzzle particle dot at the barrel (animation pass).
       state.effects.push({
@@ -242,7 +260,20 @@ function spawnWaveArches() {
 }
 
 // ---------- INTERMISSION: wave cleared via portal --------------------------
-let interMsg = '';   // last paid-chest gamble result (shown on the overlay)
+// WAVE-7/C: after the chest shopping cards, the portal presents 3
+// blessing/curse cards (choices.js), rolled from a run-seeded mulberry32 so
+// the offers replay deterministically for a given run. Choices are RUN-SCOPED
+// (player.choices / stats only — never meta/profile) and reset by the fresh
+// makePlayer() in startRun.
+let interMsg = '';   // last paid-chest gamble / blessing result (overlay line)
+
+// Merchant's Pact curse: run-scoped price multiplier on the paid chests.
+function shopPriceMult() {
+  return (state.player.choices && state.player.choices.shopPriceMult) || 1;
+}
+function chestCost(def) {
+  return Math.round(def.cost * shopPriceMult());
+}
 
 function openIntermission() {
   state.portal = null;
@@ -255,24 +286,58 @@ function openIntermission() {
   ovSub.innerHTML =
     `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
+    `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
     `<br>purse: ${profile.gold} gold${interMsg ? '<br>' + interMsg : ''}`;
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
+    const cost = chestCost(def);
     const el = menuCard(tier + ' CHEST',
-      `${def.cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)`,
-      () => buyPaidChest(tier), profile.gold < def.cost);
-    if (profile.gold < def.cost) el.onclick = () => audio.playSfx('button');
+      `${cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)` +
+      (shopPriceMult() !== 1 ? ' · CURSED PRICES' : ''),
+      () => buyPaidChest(tier), profile.gold < cost);
+    if (profile.gold < cost) el.onclick = () => audio.playSfx('button');
+  }
+  // The wave's blessing/curse offers: rolled once per wave (re-renders after
+  // a chest buy reuse the same pending set; taken ones drop off).
+  if (!state.pendingChoiceOffers) {
+    state.pendingChoiceOffers = rollChoices(state.wave.num, state.choiceRng || Math.random,
+      state.takenChoices);
+  }
+  for (const offer of state.pendingChoiceOffers) {
+    menuCard(offer.title.toUpperCase(),
+      `${offer.rarity} BLESSING · ${offer.desc}`,
+      () => takeChoice(offer));
   }
 }
 
+function takeChoice(offer) {
+  applyChoice(state.player, offer);
+  state.takenChoices.push(offer.id);
+  state.pendingChoiceOffers = state.pendingChoiceOffers.filter(o => o !== offer);
+  // Merchant's Pact: weaponSlotBonus widens the per-run slot cap (bounded by
+  // the absolute CONFIG cap).
+  const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
+  state.weaponSlots = Math.min(C.WEAPON_SLOTS, state.baseWeaponSlots + bonus);
+  interMsg = `BLESSING TAKEN: ${offer.title} — ${offer.desc}`;
+  audio.playSfx('levelup');
+  openIntermission();   // re-render: offers + gold line refresh
+}
+
 function buyPaidChest(tier) {
+  const def = PAID_CHESTS[tier];
+  const cost = chestCost(def);
+  if (profile.gold < cost) return;
   const res = rollPaidChest(profile, tier);
   if (!res.ok) return;
+  // rollPaidChest debits the BASE cost; the Merchant's Pact surcharge is
+  // taken here so loot.js stays untouched.
+  profile.gold -= cost - def.cost;
   saveProfile(profile);
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
     if (equipItem(state.items, it)) {
       applyItemAffixes(state.player, it);
+      for (const w of state.weapons) w.evoDeclined = false;   // kind may complete an evo
       interMsg = `CHEST: EQUIPPED ${it.name} [${it.rarity}] (${it.affixes.map(a => a.name).join(', ')})`;
     } else {
       interMsg = `CHEST: ${it.name} LOST — ITEM SLOTS FULL`;
@@ -292,6 +357,7 @@ function continueRun() {
   state.wave.bosses = [];
   state.wave.boss = null;
   state.portal = null;
+  state.pendingChoiceOffers = null;   // next wave rolls a fresh set
   interMsg = '';
   spawnWaveArches();
   state.mode = 'playing';
@@ -300,14 +366,17 @@ function continueRun() {
 }
 
 // ---------- BOSS: spawns on wave expiry; timer pauses while any lives --------
-// Every DOUBLE_EVERY-th wave spawns TWO bosses (wave-6 portal progression).
+// WAVE-7/B: the named cast (bosses.js) replaces the generic brute-elite.
+// pickBossForWave(wave) returns 1 descriptor, or 2 DISTINCT ones on waves
+// divisible by 3 (the EVENT waves) — base stats multiply CONFIG.ESCALATION.
+// BOSS exactly as hb6's header specifies (never hardcoded in the module).
 function spawnBoss() {
   const B = C.ESCALATION.BOSS;
   const w = Math.floor(state.time / 30);
-  const count = state.wave.num % (B.DOUBLE_EVERY || 3) === 0 ? 2 : 1;
+  const cast = pickBossForWave(state.wave.num);
   state.wave.bosses = [];
-  for (let i = 0; i < count; i++) {
-    const a = Math.random() * Math.PI * 2 + (i / count) * Math.PI * 2;
+  cast.forEach((desc, i) => {
+    const a = Math.random() * Math.PI * 2 + (i / cast.length) * Math.PI * 2;
     const d = C.ENEMY.SPAWN_DIST * 0.7;
     const boss = makeTypedEnemy('BRUTE',
       state.player.x + Math.cos(a) * d,
@@ -315,21 +384,25 @@ function spawnBoss() {
       state.time, { elite: true });
     applyEscalation(boss, state.time);
     const hp = C.ENEMY.BASE_HP * hpScale(w) *
-      (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num);
+      (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult;
     boss.hp = hp;
     boss.maxHp = hp;
-    boss.w = Math.round(boss.w * B.SIZE_MULT);
-    boss.h = Math.round(boss.h * B.SIZE_MULT);
-    boss.speed *= B.SPEED_MULT;
+    boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
+    boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
+    boss.speed *= B.SPEED_MULT * desc.speedMult;
+    boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
     boss.xp = C.ENEMY.BASE_XP * xpScale(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
-    boss.novaCd = 1.5 + i * 1.5;                          // staggered first bursts
-    boss.summonCd = 4 + i * 2;                            // first summon burst delay
+    boss.bossId = desc.id;          // decideBossAction dispatch key
+    boss.name = desc.name;          // announce + HUD
+    boss.flavor = desc.flavor;
+    boss.bossSprite = desc.sprite;  // render.js draws this grid (BOSS_SPRITES)
+    boss.age = 0;                   // pattern brains phase off age
     state.enemies.push(boss);
     state.wave.bosses.push(boss);
-  }
-  toast(count > 1 ? 'TWO BOSSES APPROACH - WAVE ' + state.wave.num
-                  : 'A BOSS APPROACHES - WAVE ' + state.wave.num);
+  });
+  // Named announce: BOTH names on double waves (3/6/9 — the events).
+  toast(cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH!' : ' APPROACHES!'));
 }
 
 // ---------- Update ----------
@@ -394,6 +467,12 @@ function update(dt) {
 
   // Projectiles: volley shots only — kind-tagged bodies (boomerang / seeker /
   // mine) are owned and moved by weapons.js (they have no vx/vy).
+  // NOVA_SHOT evolution: crit/critMult affixes are per-weapon additive on the
+  // volley's hits; `novaRounds` detonates a micro-nova on every volley kill.
+  const volleyEvo2 = (() => { const w = state.weapons.find(x => x.type === 'VOLLEY'); return w && w.evolution; })();
+  const evoCrit = (p.stats.crit || 0) + ((volleyEvo2 && volleyEvo2.affixes.crit) || 0);
+  const evoCritMult = (p.stats.critMult || 1.5) + ((volleyEvo2 && volleyEvo2.affixes.critMult) || 0);
+  const novaRounds = !!(volleyEvo2 && volleyEvo2.flags.includes('novaRounds'));
   for (const pr of state.projectiles) {
     if (pr.kind) continue;
     pr.x += pr.vx * dt + wd.x * dt; pr.y += pr.vy * dt; pr.age += dt;
@@ -403,13 +482,22 @@ function update(dt) {
         // Crit roll per hit (Deadly Aim + Keen Eye items; crits deal
         // dmg * critMult) + Vampiric lifesteal heals a fraction of damage.
         let dmg = pr.damage;
-        if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) {
-          dmg *= (p.stats.critMult || 1.5);
+        if (evoCrit > 0 && Math.random() < evoCrit) {
+          dmg *= evoCritMult;
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
         e.hp -= dmg; e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         if ((p.stats.lifesteal || 0) > 0) {
           p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
+        }
+        // NOVA_SHOT `novaRounds`: a volley kill bursts a micro-nova (half
+        // damage to everything within 24px of the kill point).
+        if (novaRounds && e.hp <= 0) {
+          for (const o of state.enemies) {
+            if (o === e || o.hp <= 0) continue;
+            if (Math.hypot(o.x - pr.x, o.y - pr.y) <= 24) { o.hp -= dmg * 0.5; o.flash = 0.08; }
+          }
+          state.effects.push({ kind: 'nova_pulse', x: pr.x, y: pr.y, radius: 24, age: 0, ttl: 0.2 });
         }
         // Animation pass: small hit-spark burst on every projectile hit.
         state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
@@ -423,7 +511,10 @@ function update(dt) {
   // Enemies: typed behavior via enemy_types decide() — movement intents are
   // applied at enemy.speed; fire intents become enemy projectiles. Frost Nova
   // slow multiplies move speed. Contact damage scales per type AND with the
-  // ESCALATION damage curve. The boss adds a radial nova burst on a timer.
+  // ESCALATION damage curve. WAVE-7/B: named bosses run bosses.js deciders
+  // (decideBossAction) whose extra intents — fan / summon / nova / teleport /
+  // charging / recovering — are wired below; the old generic novaCd/summonCd
+  // timers are gone (Pyraxis and the Choir Mother own those behaviors now).
   const dmgMult = dmgScale(Math.floor(state.time / 30));
   let touchDmg = 0;
   for (const e of state.enemies) {
@@ -432,14 +523,16 @@ function update(dt) {
     if (e.slow > 0) e.slow -= dt;
     const spd = e.speed * (e.slow > 0 ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1) *
       (wm.enemySpeedMult || 1);      // SNOW: the horde trudges
-    const act = decideEnemyAction(e, p, dt);
+    const act = e.boss ? decideBossAction(e, p, state, dt) : decideEnemyAction(e, p, dt);
     // RAIN shortens shooters' effective range (fairness-safe: intercept the
     // fire intent at the adjusted per-type range).
     if (act.fire && wm.fireRangeMult && wm.fireRangeMult !== 1) {
       const baseRange = (ENEMY_TYPES[e.typeId] || {}).fireRange || Infinity;
       if (Math.hypot(p.x - e.x, p.y - e.y) > baseRange * wm.fireRangeMult) act.fire = null;
     }
-    e.telegraph = !!act.telegraph;   // WARLOCK charge pause -> render flash
+    e.telegraph = !!act.telegraph;   // WARLOCK/boss windup -> render flash
+    e.charging = !!act.charging;     // GRAVELMAW contact-damage window
+    e.recovering = !!act.recovering; // GRAVELMAW punish window
     e.x += act.mx * spd * dt;
     e.y += act.my * spd * dt;
     // TICK latch: once attached it rides the player and drains hp/s INSTEAD
@@ -460,43 +553,61 @@ function update(dt) {
         kind: e.typeId === 'WARLOCK' ? 'bolt' : 'spit',   // render variant
       });
     }
-    if (e.boss) {
-      const B = C.ESCALATION.BOSS;
-      e.novaCd -= dt;
-      if (e.novaCd <= 0) {
-        e.novaCd = B.NOVA_INTERVAL;
-        for (let i = 0; i < B.NOVA_SHOTS; i++) {
-          const ang = (i / B.NOVA_SHOTS) * Math.PI * 2 + e.age;
-          state.enemyShots.push({
-            x: e.x, y: e.y,
-            vx: Math.cos(ang) * B.NOVA_SPEED,
-            vy: Math.sin(ang) * B.NOVA_SPEED,
-            damage: B.NOVA_DAMAGE * dmgMult, age: 0,
-            kind: 'nova',
-          });
-        }
-        state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 30, age: 0, ttl: 0.5 });
+    // CHOIR MOTHER hymn: a fan of fire-intents around the aim direction —
+    // wire exactly like `fire`, one projectile each.
+    if (act.fan) {
+      for (const f of act.fan) {
+        state.enemyShots.push({
+          x: e.x, y: e.y,
+          vx: f.dx * f.speed, vy: f.dy * f.speed,
+          damage: f.damage * dmgMult, age: 0,
+          kind: 'bolt',
+        });
       }
-      // Periodic summon (boss hardening): a fresh swarmer ring keeps pressure
-      // on during the long fight — no face-tanking while the DPS race runs.
-      e.summonCd = (e.summonCd ?? B.SUMMON_INTERVAL) - dt;
-      if (e.summonCd <= 0) {
-        e.summonCd = B.SUMMON_INTERVAL;
-        for (let s = 0; s < B.SUMMON_COUNT; s++) {
-          const ang = (s / B.SUMMON_COUNT) * Math.PI * 2 + e.age;
-          const m = makeTypedEnemy(B.SUMMON_TYPE,
-            e.x + Math.cos(ang) * 26, e.y + Math.sin(ang) * 26,
-            state.time, { variant: rollVariant(B.SUMMON_TYPE) });
-          applyEscalation(m, state.time);
-          state.enemies.push(m);
-        }
-        state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
+    }
+    // PYRAXIS ring nova: `shots` projectiles evenly around 360 degrees.
+    if (act.nova) {
+      for (let i = 0; i < act.nova.shots; i++) {
+        const ang = (i / act.nova.shots) * Math.PI * 2 + e.age;
+        state.enemyShots.push({
+          x: e.x, y: e.y,
+          vx: Math.cos(ang) * act.nova.speed,
+          vy: Math.sin(ang) * act.nova.speed,
+          damage: act.nova.damage * dmgMult, age: 0,
+          kind: 'nova',
+        });
       }
+      state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 30, age: 0, ttl: 0.5 });
+    }
+    // CHOIR MOTHER summon burst: minions pop at the boss's edge (the sprite
+    // half-width, so they appear from under her hem, not inside her).
+    if (act.summon) {
+      const edge = Math.max(e.w, e.h) / 2 + 6;
+      for (let s = 0; s < act.summon.count; s++) {
+        const ang = (s / act.summon.count) * Math.PI * 2 + e.age;
+        const m = makeTypedEnemy(act.summon.type,
+          e.x + Math.cos(ang) * edge, e.y + Math.sin(ang) * edge,
+          state.time, { variant: rollVariant(act.summon.type) });
+        applyEscalation(m, state.time);
+        state.enemies.push(m);
+      }
+      state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
+    }
+    // PYRAXIS blink: hop by (dx,dy)*dist, clamped inside the arena walls.
+    if (act.teleport) {
+      e.x = Math.max(-600, Math.min(600, e.x + act.teleport.dx * act.teleport.dist));
+      e.y = Math.max(-600, Math.min(600, e.y + act.teleport.dy * act.teleport.dist));
+      state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 14, age: 0, ttl: 0.25 });
     }
     if (Math.hypot(p.x - e.x, p.y - e.y) < 12) {
-      touchDmg = Math.max(touchDmg, 12 * dmgMult * (e.contactDamageMult || 1));
+      // GRAVELMAW mid-charge hits harder (the contact-damage window).
+      const chargeMult = e.charging ? 1.5 : 1;
+      touchDmg = Math.max(touchDmg, 12 * dmgMult * (e.contactDamageMult || 1) * chargeMult);
     }
   }
+  // Glass Cannon curse (choices.js damageTakenMult) scales every hit taken.
+  const takenMult = (p.choices && p.choices.damageTakenMult) || 1;
+  touchDmg *= takenMult;
   if (touchDmg > 0 && p.invuln <= 0) {
     // AEGIS arch: absorb the hit instead of taking it.
     if (state.shieldAbsorbs > 0) {
@@ -520,7 +631,8 @@ function update(dt) {
   }
 
   // Enemy projectiles (spitter shots): damage the player on contact,
-  // respecting the same invuln window as contact hits.
+  // respecting the same invuln window as contact hits. Glass Cannon's
+  // damageTakenMult scales these too.
   for (const s of state.enemyShots) {
     s.x += s.vx * dt + wd.x * dt; s.y += s.vy * dt; s.age += dt;
     if (p.invuln <= 0 && Math.hypot(s.x - p.x, s.y - p.y) < 8) {
@@ -528,7 +640,7 @@ function update(dt) {
         state.shieldAbsorbs--;
         p.invuln = 0.5;
       } else {
-        p.hp -= s.damage;
+        p.hp -= s.damage * takenMult;
         p.invuln = 0.6;
       }
       s.age = 99;
@@ -560,7 +672,10 @@ function update(dt) {
       state.gems.push(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
-      const drop = Math.random() < (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0))
+      // Alchemist's Blessing curse: dropChanceMult scales the whole chance.
+      const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0)) *
+        ((p.choices && p.choices.dropChanceMult) || 1);
+      const drop = Math.random() < dropChance
         ? { x: e.x, y: e.y, kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
       if (e.boss) {
@@ -580,7 +695,9 @@ function update(dt) {
         toast('BOSS DOWN');
       } else {
         // Rare item drops (loot.js): elites often + up-tier, normals rarely.
-        const chance = e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE;
+        // Fortune's Favor blessing: itemDropMult scales the drop chance.
+        const chance = (e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) *
+          ((p.choices && p.choices.itemDropMult) || 1);
         if (Math.random() < chance) {
           state.itemDrops.push({
             x: e.x, y: e.y,
@@ -646,11 +763,13 @@ function update(dt) {
     } else if (ev.kind === 'gambleHorde') {
       toast('THE GAMBLE BETRAYS YOU - MINI HORDE!');
     } else if (ev.kind === 'tokenOffer') {
-      // Simplified: legendary token offer becomes a bonus random upgrade.
-      // The 1-of-N token-choice UI is deferred (noted in GAME_DESIGN.md).
-      const bonus = UPGRADES[Math.floor(Math.random() * UPGRADES.length)];
-      bonus.apply(p);
-      toast('TOKEN OFFER -> ' + bonus.name.toUpperCase() + ' (choice UI deferred)');
+      // WAVE-7/A: legendary chests carry EVOLUTION TOKENS (the 1-of-N flavor
+      // choice is cosmetic — all options are the same currency). A token may
+      // re-open a previously declined EVOLVE offer, so clear the declines.
+      state.evoTokens++;
+      for (const w of state.weapons) w.evoDeclined = false;
+      toast('EVOLUTION TOKEN! ' + state.evoTokens + ' HELD');
+      audio.playSfx('levelup');
     }
   }
 
@@ -677,6 +796,9 @@ function update(dt) {
       state.itemDrops.splice(i, 1);
       if (equipItem(state.items, d.item)) {
         applyItemAffixes(p, d.item);
+        // A fresh item kind may complete an evolution's requirements —
+        // re-arm any declined EVOLVE offers.
+        for (const w of state.weapons) w.evoDeclined = false;
         toast('EQUIPPED ' + d.item.name.toUpperCase() + ' [' + d.item.rarity + ']');
       } else {
         toast('ITEM LOST - ' + MAX_EQUIPPED + '/' + MAX_EQUIPPED + ' EQUIPPED: ' + d.item.name.toUpperCase());
@@ -710,6 +832,10 @@ function update(dt) {
   // Camera follows player.
   state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
   state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+
+  // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
+  // can all complete a requirements triple since the last frame.
+  maybeOpenEvolve();
 }
 
 // ---------- Leveling & draft ----------
@@ -792,6 +918,66 @@ function pick(u) {
   u.apply(state.player);
   state.pendingDrafts--;
   if (state.pendingDrafts > 0) { openDraft(); return; }
+  overlay.style.display = 'none';
+  state.mode = 'playing';
+}
+
+// ---------- EVOLUTION draft (wave-7/A, evolutions.js) -----------------------
+// Surfaced the moment a weapon hits Lv8 AND its required item kind is
+// equipped AND a token is banked. The card is built from describeEvolution;
+// evolveWeapon mutates the SAME weapon instance (levelUpWeapon precedent)
+// and spends the token. Declines are suppressed until a new token or item
+// lands (otherwise the check would re-open every frame).
+function equippedItemKinds() {
+  return new Set(state.items.flatMap(it => (it.affixes || []).map(a => a.id)));
+}
+
+function evolutionCandidates() {
+  const kinds = equippedItemKinds();
+  return state.weapons.filter(w =>
+    !w.evolutionId && !w.evoDeclined &&
+    EVOLUTION_DEFS[w.type] &&
+    (w.level || 1) >= WEAPON_MAX_LEVEL &&
+    kinds.has(EVOLUTION_DEFS[w.type].itemKind) &&
+    state.evoTokens > 0);
+}
+
+function maybeOpenEvolve() {
+  if (state.mode !== 'playing') return;
+  const cands = evolutionCandidates();
+  if (cands.length === 0) return;
+  state.mode = 'evolve';
+  overlay.style.display = 'flex';
+  ovTitle.textContent = 'EVOLUTION';
+  ovTitle.className = 'logo';
+  ovSub.textContent = 'a maxed weapon + its item kind + a token';
+  ovCards.innerHTML = '';
+  for (const w of cands) {
+    const card = describeEvolution(w);
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML =
+      `<div class="name">EVOLVE: ${card.name}</div>` +
+      `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
+      `<div class="key">[1]</div>`;
+    el.onclick = () => {
+      const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
+      if (res.ok) {
+        state.evoTokens = res.tokens;
+        toast(res.name.toUpperCase() + ' UNLEASHED');
+        audio.playSfx('levelup');
+      }
+      closeEvolve();
+    };
+    ovCards.appendChild(el);
+  }
+  menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
+    for (const w of cands) w.evoDeclined = true;
+    closeEvolve();
+  });
+}
+
+function closeEvolve() {
   overlay.style.display = 'none';
   state.mode = 'playing';
 }
@@ -955,7 +1141,15 @@ function startRun() {
   p.hp = p.stats.maxHp;                          // mods changed maxHp
   const pots = startPotionCount(profile);        // character base + Travel Pack
   p.potions = { hp: pots, mp: pots };
-  state.weaponSlots = startWeaponSlots(profile); // 3 base; 4/5/6 shop-bought
+  state.baseWeaponSlots = startWeaponSlots(profile); // 3 base; 4/5/6 shop-bought
+  state.weaponSlots = state.baseWeaponSlots;
+  // WAVE-7 run-scoped systems reset here (fresh makePlayer already dropped
+  // player.choices — these are the state-side companions):
+  state.evoTokens = 0;
+  state.choiceSeed = (Math.random() * 1e9) | 0;
+  state.choiceRng = mulberry32(state.choiceSeed);   // deterministic per-run offers
+  state.takenChoices = [];
+  state.pendingChoiceOffers = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
   state.groundSeed = (Math.random() * 1e9) | 0;   // world-space decor field
   state.weapons = [];
@@ -1007,15 +1201,17 @@ function runAction(act) {
   else if (act === 'q') useSkill(state, 'FROST_NOVA');
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
   else if (act === 'h') {
-    // Alchemy (potionPower) + BOSS CURSE both applied at the action seam —
-    // skills.js usePotion stays base-config only. While a boss lives, health
-    // heals are halved again.
+    // Alchemy (potionPower) + choices.js potionHealMult (Alchemist's
+    // Blessing / Vampire's Kiss) + BOSS CURSE all applied at the action seam
+    // — skills.js usePotion stays base-config only. While a boss lives,
+    // health heals are halved again.
     const p2 = state.player;
+    const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
     const before = p2.hp;
-    usePotion(state, 'hp');
+    usePotion(state, 'hp');                      // base C.POTIONS.HP_HEAL
     let healed = p2.hp - before;
     if (healed > 0) {
-      const bonus = Math.min(C.POTIONS.HP_HEAL * ((p2.stats.potionPower || 1) - 1),
+      const bonus = Math.min(C.POTIONS.HP_HEAL * (healMult - 1),
         p2.stats.maxHp - p2.hp);
       if (bonus > 0) p2.hp += bonus;
       healed = p2.hp - before;
@@ -1038,8 +1234,12 @@ function runAction(act) {
 
 window.addEventListener('keydown', (ev) => {
   const k = ev.key.toLowerCase();
+  if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
   if (state.mode === 'draft' && ['1', '2', '3'].includes(ev.key)) {
     const card = ovCards.children[Number(ev.key) - 1];
+    if (card) card.click();
+  } else if (state.mode === 'evolve' && ['1', '2', '3', '4'].includes(ev.key)) {
+    const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
     if (card) card.click();
   } else if (state.mode === 'dead') {
     if (k === 'r') startRun();       // RETRY (parity with the death buttons)
@@ -1129,17 +1329,21 @@ function drawHud() {
     if (cd > 0) return `${label} ${cd.toFixed(1)}s`;
     return p.mana >= def.MANA ? `${label} RDY` : `${label} --`;
   };
-  // Wave timer line: countdown to the boss, BOSS! while one is alive, or
-  // PORTAL! while the wave-clear portal is open.
+  // Wave timer line: countdown to the boss, BOSS! (+ NAMES, wave-7/B) while
+  // any lives, or PORTAL! while the wave-clear portal is open.
   const waveLeft = Math.max(0, state.wave.endsAt - state.time);
-  const waveTxt = state.wave.boss ? 'BOSS!' : state.portal ? 'PORTAL!'
+  const bossNames = (state.wave.bosses || []).filter(b => b.hp > 0).map(b => b.name).join(' & ');
+  const waveTxt = state.wave.boss ? 'BOSS! ' + (bossNames || '') : state.portal ? 'PORTAL!'
     : `${Math.floor(waveLeft / 60)}:${String(Math.floor(waveLeft % 60)).padStart(2, '0')}`;
   // WPN line: base volley is slot 1; the VOLLEY instance rides in
   // state.weapons for XP/leveling but never counts against the slots.
+  // Evolved weapons show their EVOLUTION name (wave-7/A).
   const slotCap = state.weaponSlots || C.WEAPON_SLOTS;
   const nonVolley = state.weapons.filter(w => w.type !== 'VOLLEY').length;
-  const wpnNames = state.weapons.map(w =>
-    (WEAPON_NAMES[w.type] || w.type) + ((w.level || 1) > 1 ? '\u00b7' + w.level : '')).join(',');
+  const wpnNames = state.weapons.map(w => {
+    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+    return nm + ((w.level || 1) > 1 ? '\u00b7' + w.level : '');
+  }).join(',');
   // Equipped rare items (loot.js): last word of the name keeps the line short.
   const itemNames = state.items.map(it => it.name.split(' ').pop()).join(',');
   // Active arch buffs (arches.js) + remaining AEGIS absorbs.
@@ -1154,7 +1358,8 @@ function drawHud() {
     `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
-    `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}\n` +
+    `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
+    (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
@@ -1177,10 +1382,29 @@ function foeLine() {
 }
 
 // ---------- Main loop ----------
-// Boot to the title screen (canvas idles behind it); PLAY composes a run.
-showTitle();
+// WAVE-7/D: the intro movie plays BEFORE the title menu on page load — the
+// canvas IS the movie (intro.js render is fillRect-only and deterministic);
+// any key/click/tap skips straight to the menu. It plays once per load:
+// death-screen TITLE returns jump straight to the menu.
+let introT0 = performance.now();
+function endIntro() {
+  if (state.mode !== 'intro') return;
+  state.mode = 'menu';
+  showTitle();
+}
+// Click/tap skip (guarded: headless stubs may not implement addEventListener).
+if (canvas.addEventListener) canvas.addEventListener('pointerdown', () => endIntro());
+
+state.mode = 'intro';
 let last = performance.now();
 function frame(now) {
+  if (state.mode === 'intro') {
+    const t = now - introT0;
+    INTRO.render(renderer.ctx, t);
+    if (INTRO.isDone(t)) endIntro();
+    requestAnimationFrame(frame);
+    return;
+  }
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (state.mode === 'playing') update(dt);
@@ -1190,3 +1414,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Headless test seam (smoke.mjs): live state access so integration probes
+// can force conditions (Lv8 + item + token) through the REAL loop. Never
+// read by the browser page.
+export const __TEST = { state, controller, startRun };

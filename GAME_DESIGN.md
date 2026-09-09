@@ -389,6 +389,39 @@ one:
   gameplay state), same ~6fps clock as enemies, stationary -> frame A.
   Invuln blink / camera offset / fillRect-only unchanged. Verified:
   node --check clean, sprites + smoke suites pass, lightpanda clean.
+- 2026-09-09: **WAVE-7 — EVOLUTIONS / NAMED BOSSES / INTERMISSION
+  CHOICES / INTRO MOVIE** (Sk408-approved A+B+C + title cinematic).
+  Four parallel module builders then hb1 integration:
+  - **Weapon evolutions** (hb5, `src/evolutions.js`): every archetype has a
+    named super-form (e.g. VOLLEY -> Nova Shot). Requires Lv8 + a specific
+    equipped item kind + 1 evolution token (legendary chests grant tokens);
+    EVOLVE draft card via the menu overlay. Affixes reuse the weapon seam
+    + at most 2 behavior flags (twinOrbit, chainZap, ...).
+  - **Named boss cast** (hb6, `src/bosses.js`): GRAVELMAW THE CHARGER
+    (telegraph -> charge line -> recover), THE CHOIR MOTHER (summon bursts +
+    projectile fan under half HP), PYRAXIS (ring novas with charge-up +
+    short teleports). Larger hand-authored sprites; `pickBossForWave`
+    rotation, two distinct bosses on waves 3/6/9; names announced in HUD.
+  - **Intermission choices** (hb7, `src/choices.js`): at each portal, after
+    chest shopping, pick 1-of-3 rarity-weighted blessings — each with a REAL
+    drawback (14-entry pool, run-scoped only, seeded rng for future daily
+    runs; player.choices.* is the run-scope anchor).
+  - **Intro movie** (hb8, `src/intro.js`): ~7s skippable cinematic on load —
+    zoomed hero (8-10px pixels) fleeing an encroaching horde, the horde
+    swallows the hero, the big HORDES pixel title stamps down with shake +
+    splatter, fade to menu. Deterministic, zero mutable state, PHASES export
+    for audio stingers.
+  - Integration (hb1): evolve cards + tokens, boss intents
+    (telegraph/summon/fan/nova/teleport/charging/recovering) in the enemy
+    loop, boss name announces (both names on double waves), choice cards at
+    intermission + run reset of choices/tokens/evolutions, intro before the
+    title menu (any input skips).
+  - **Overseer flake fixes during verification**: (1) `applyChoice` now
+    always stamps `player.choices` via `ensureChoices` (was offer-dependent,
+    flaked smoke); (2) calm gem-drift in controllers.js gained the same
+    wall-steer as the flee path — a gem beyond the rim parked the player
+    against the ±600 clamp (3.1s stall caught by smoke at x=561).
+  - Verified: 14/14 suites (smoke 10/10 consecutive), lightpanda clean.
 - Layout: `index.html` + `src/{config,entities,controllers,skills,weapons,
   enemy_types,chests,meta,render,weather,main}.js` + `src/audio.js`
   (ES modules, no build step — must be served over HTTP).

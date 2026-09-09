@@ -229,13 +229,15 @@ export class Renderer {
     // Enemies: hand-authored pixel sprites (sprites.js) with 2-frame walk
     // cycles (frame flips ~6/s off e.age); typed shapes stay as FALLBACK for
     // unmapped types. Status tells preserved: flash/slow tint, elite gold
-    // outline, WARLOCK telegraph blink, boss = BOSS_SPRITE (crown built in).
+    // outline, WARLOCK telegraph blink. WAVE-7/B: named bosses carry their
+    // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
+    // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
     for (const e of state.enemies) {
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
       const hw = Math.round(w / 2), hh = Math.round(h / 2);
       const x = Math.round(e.x - cam.x), y = Math.round(e.y - cam.y);
       if (x < -30 || y < -30 || x > C.VIEW_W + 30 || y > C.VIEW_H + 30) continue;
-      const spr = e.boss ? BOSS_SPRITE : SPRITES[e.typeId];
+      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : SPRITES[e.typeId];
       if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
         const bw = spr.box.w, bh = spr.box.h;

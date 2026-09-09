@@ -137,7 +137,16 @@ export class AutoPilotController {
 
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {
-      return { moveX: gx * st.XP_SPEED, moveY: gy * st.XP_SPEED, target };
+      // Same wall-steer as the flee path: a gem at/outside the rim would
+      // park the player against the ±600 clamp chasing it (idle-player
+      // regression — smoke caught a 3.1s stall at x=561).
+      const rim = 560;
+      if (Math.abs(p.x) > rim && gx * Math.sign(p.x) > 0) gx = 0;
+      if (Math.abs(p.y) > rim && gy * Math.sign(p.y) > 0) gy = 0;
+      if (gx !== 0 || gy !== 0) {
+        return { moveX: gx * st.XP_SPEED, moveY: gy * st.XP_SPEED, target };
+      }
+      // Gem dead-ahead outside the rim — fall through to the patrol below.
     }
     // Idle fallback (Sk408 bug: no gems + no threat inside the kite line used
     // to park the player center-screen eating ranged chip until death). Slow
