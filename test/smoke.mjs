@@ -821,10 +821,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'themes 4/5/6 must complete the ladder');
   assert(new Set([1, 2, 3, 4, 5, 6].map(w => groundTheme(w).base)).size === 6,
     'every theme must have a distinct ground tone');
-  // SNOWFIELD is Sk408's example: the ground must read clearly brighter.
+  // SNOWFIELD is Sk408's example: clearly the LIGHTEST area, but muted
+  // grey (v2: the white version washed out the sprites).
   const lum = (hex) => parseInt(hex.slice(1, 3), 16);   // red channel is enough
-  assert(lum(t3.base) > 150 && lum(t1.base) < 40,
-    'the snow theme base must be bright vs the dark verdant base');
+  assert(lum(t3.base) > 70 && lum(t3.base) < 130 && lum(t1.base) < 40,
+    'the snow theme base must be light grey vs the dark verdant base (not white)');
   console.log('ground themes: ' + [1, 2, 3, 4, 5, 6].map(w => groundTheme(w).name).join(' | '));
 }
 

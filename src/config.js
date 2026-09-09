@@ -129,8 +129,8 @@ export const CONFIG = {
     // identical). Each theme = base ground tone + grid dots + decor palette
     // family + optional subtle scene tint (drawn under the entities). The
     // per-run groundSeed still shapes WHICH cells carry a piece; the family
-    // is wave-chosen. SNOWFIELD is deliberately the brightest (Sk408: "it
-    // could go white or something").
+    // is wave-chosen. SNOWFIELD stays the LIGHTEST area but reads as muted
+    // grey-blue, not white (Sk408 v2: bright snow washed out the sprites).
     THEMES: [
       { name: 'THE VERDANT HOLLOW', base: '#0e1610', grid: '#16241b',
         tuft: '#1c3222', tuft2: '#24402a', stone: '#1c2422', stoneTop: '#2a3630',
@@ -138,9 +138,9 @@ export const CONFIG = {
       { name: 'THE ASHEN WASTE', base: '#121216', grid: '#1b1b21',
         tuft: '#26262c', tuft2: '#2e2e36', stone: '#1e1e24', stoneTop: '#2c2c34',
         crack: '#0a0a0e', slab: '#16161c', tint: 'rgba(120,120,140,0.04)' },
-      { name: 'THE SNOWFIELD', base: '#c9d2e0', grid: '#b8c2d4',
-        tuft: '#9fb8e8', tuft2: '#c2d6f4', stone: '#8ea6cc', stoneTop: '#dce8fa',
-        crack: '#8c9cbc', slab: '#d4ddec', tint: 'rgba(190,215,255,0.05)' },
+      { name: 'THE SNOWFIELD', base: '#57616d', grid: '#4c5560',
+        tuft: '#3f4d5e', tuft2: '#4a5a6e', stone: '#414b57', stoneTop: '#5f6b78',
+        crack: '#39424c', slab: '#4e5864', tint: 'rgba(160,180,210,0.04)' },
       { name: 'THE BLOOD RUST', base: '#160d0b', grid: '#221412',
         tuft: '#3a1a14', tuft2: '#4a241a', stone: '#241410', stoneTop: '#38221a',
         crack: '#0c0604', slab: '#1a100c', tint: 'rgba(160,50,30,0.04)' },
