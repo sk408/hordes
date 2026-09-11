@@ -679,3 +679,34 @@ one:
   - Verified: 21/21 suites + draft_sim 13/13, smoke x4 (xp-bar seam
     exact match, DPR clamps, END RUN two-tap, wall at rim 1x+2x, L3
     overflow probe), lightpanda clean (0 errors).
+- 2026-09-11 (wave-19): **PILOT ANTI-OSCILLATION + FIRST-RUN ONBOARDING**
+  (Sk408 directive: pilot "vibrates in one spot, wants to go multiple
+  directions at once"; quick first-time button tutorials) — hb5 + hb1:
+  - ANTI-OSCILLATION (hb5, overseer-diagnosed): AutoPilot.decide was a
+    bang-bang controller — the flee branch (away from the nearest
+    enemy) and the calm gem-drift branch (toward loot, which clusters
+    where enemies died) can point in OPPOSITE directions, and the
+    switch was a knife-edge positional threshold (kite*2) with no
+    hysteresis: at the boundary the output flipped sign every frame.
+    Fix, three levers: (1) FLEE HYSTERESIS — enter flee inside
+    (kite*2)^2, hold until (kite*2*1.3)^2 (commitment band, not a
+    toggle); (2) GEM STICKINESS — commit to one gem by identity,
+    re-pick only when collected (two near-equal gems on opposite sides
+    used to flip the pick every frame); (3) MIN VECTOR — the GREEDY
+    flee/loot blend falling below 0.25 magnitude now commits to the
+    pure flee vector (no sub-pixel stalls mid-threat). Manual/joystick
+    path untouched (PlayerController overrides decide entirely).
+  - ONBOARDING (hb1): one-time HOW TO PLAY overlay — auto-pops after
+    the intro on first boot ONLY (hordes_onboarded flag, hudStorage
+    shim pattern), GOT IT dismisses + sets the flag; the title menu
+    keeps a HOW TO PLAY button so it is always re-openable. Content:
+    one-line point of the game ("survive the waves — your pilot
+    auto-fights, you steer the BUILD"), then labeled callouts for
+    every control on both schemes: touch (joystick, FOCUS/STANCE/
+    PILOT/STATS, FROST/OVER, HP/MP, cog) + keyboard (M/E/Q/H/N/S/I,
+    WASD, +/-, ESC). Never pauses a live run; no tutorial wall.
+  - Verified: 21/21 suites (controllers now 23 checks: hysteresis
+    enter/sticky/exit, no-latch-from-calm, gem commit/re-pick, GREEDY
+    opposed-vector >=0.25 swept at 24 angles), smoke x3 (first-boot
+    auto-pop -> GOT IT flags -> title -> reopen -> ESC; preset flag
+    skips straight to title), lightpanda 0 errors.

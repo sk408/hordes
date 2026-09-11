@@ -102,15 +102,41 @@ const dtMs = 1000 / 60;
     const cb = rafQueue.shift();
     if (!cb) break;
     cb(now);
-    if (elements['ov-title'] && elements['ov-title'].textContent === 'HORDES' &&
-        elements['ov-cards'] && elements['ov-cards'].children.length >= 4) break;
+    // WAVE-19: empty shim storage = first boot, so the intro hands off to
+    // the auto-popped HOW TO PLAY overlay (not the bare title).
+    if (elements['ov-title'] && elements['ov-title'].textContent === 'HOW TO PLAY' &&
+        elements['ov-cards'] && elements['ov-cards'].children.length >= 3) break;
   }
-  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
-    'intro should hand off to the HORDES title screen');
-  assert(elements['ov-cards'] && elements['ov-cards'].children.length >= 4,
-    'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
+  const cards0 = elements['ov-cards'];
+  const byTitle0 = (t) => Array.from(cards0.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HOW TO PLAY',
+    'first boot (storage empty) must auto-pop HOW TO PLAY after the intro');
   assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
-  console.log(`intro: played ${introFrames} frames before the menu`);
+  // The point of the game (ovSub lead line) + both control schemes (cards).
+  const htSub = elements['ov-sub'].innerHTML;
+  const htHtml = Array.from(cards0.children).map(c => c.innerHTML || '').join('');
+  assert(/auto-fights/.test(htSub) && /draft weapons/.test(htSub),
+    'the one-line point of the game must lead the overlay');
+  assert(/joystick/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&
+         /cog/.test(htHtml), 'touch callouts: joystick/FOCUS/STANCE/cog');
+  assert(/KEYBOARD/.test(htHtml) && /WASD/.test(htHtml) && /GOT IT/.test(htHtml),
+    'keyboard callouts + GOT IT present');
+  // GOT IT dismisses + sets the one-time flag, landing on the title.
+  byTitle0('GOT IT').click();
+  assert(globalThis.localStorage.getItem('hordes_onboarded') === '1',
+    "GOT IT must set hordes_onboarded='1'");
+  assert(elements['ov-title'].textContent === 'HORDES',
+    'GOT IT lands on the HORDES title screen');
+  assert(elements['ov-cards'].children.length >= 4,
+    'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
+  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it.
+  byTitle0('HOW TO PLAY').click();
+  assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'title HOW TO PLAY re-opens it');
+  keyHandler({ key: 'Escape' });
+  assert(elements['ov-title'].textContent === 'HORDES', 'ESC dismisses HOW TO PLAY');
+  console.log(`intro: played ${introFrames} frames, then first-boot HOW TO PLAY ` +
+    '(auto-pop -> GOT IT flags -> title -> reopen -> ESC)');
 }
 
 // Sk408 bug regression: RESET PROFILE must actually wipe. The arm flag used
@@ -1686,7 +1712,10 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 {
   // WAVE-16 hydration round-trip: re-seed storage, re-import — the fresh
   // module must boot at the persisted zoom (module-eval hydration).
+  // WAVE-19: the onboarding flag is preset too — a returning player must NOT
+  // get the HOW TO PLAY auto-pop; the skipped intro lands on the bare title.
   globalThis.localStorage.setItem('hordes_zoom', '4');
+  globalThis.localStorage.setItem('hordes_onboarded', '1');
   const m2 = await import(/* fresh instance */ '../src/main.js?skipintro');
   assert(m2.__TEST.state.zoom === 4,
     'a fresh module must hydrate the persisted zoom (got ' + m2.__TEST.state.zoom + ')');
@@ -1695,7 +1724,9 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 'x' });
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(m2.__TEST.state.mode === 'menu', 'any key must skip the intro to the menu');
-  console.log('intro skip: keypress jumps straight to the HORDES menu');
+  assert(elements['ov-title'].textContent === 'HORDES',
+    'onboarding flag preset: no HOW TO PLAY auto-pop, straight to the title');
+  console.log('intro skip: keypress jumps straight to the HORDES menu (no onboarding re-pop)');
 }
 
 // ---- WAVE-9B/2 area identity: ground theme ladder cycles by wave ----------

@@ -1658,6 +1658,52 @@ try {
   if (ZOOM_LADDER.includes(savedZoom)) state.zoom = savedZoom;
 } catch { /* shim */ }
 
+// ---------- WAVE-19: first-run onboarding flag (same storage shim) ------------
+// HOW TO PLAY auto-pops ONCE on first boot (before the first run starts) and
+// never again; the title menu keeps a HOW TO PLAY button so it is always
+// re-openable. The shim keeps headless tests green (no-op storage = the flag
+// simply never persists, and the smoke drives both paths explicitly).
+const KEY_ONBOARD = 'hordes_onboarded';
+function onboardingDone() {
+  try { return hudStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
+}
+function completeOnboarding() {
+  try { hudStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
+}
+
+// ---------- WAVE-19 HOW TO PLAY (Sk408: first-run onboarding) -------------------
+// One screen, terse pixel tone, no walls: the point of the game in one line,
+// then per-button callouts for BOTH input schemes (same overlay for desktop
+// and mobile — the lists carry both). Built as a menu-family screen (openMenu
+// cards, existing .card styling): it can only be reached from the title menu
+// or first boot, so it NEVER pauses a live run. GOT IT dismisses + sets the
+// one-time flag; ESC dismisses via the standard menu-escape branch.
+function showHowToPlay() {
+  openMenu();
+  ovTitle.textContent = 'HOW TO PLAY';
+  ovTitle.className = '';
+  ovSub.innerHTML =
+    'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
+    'you steer the BUILD: draft weapons, bank gold, outlast the finale.';
+  menuCard('TOUCH',
+    'joystick — move (manual pilot)<br>' +
+    'FOCUS — volley target: NEAREST / TOUGHEST / SWARM / RANGED<br>' +
+    'STANCE — risk dial: SAFE / BALANCED / GREEDY<br>' +
+    'PILOT — auto &harr; manual<br>' +
+    'STATS — your build &amp; gear<br>' +
+    'FROST / OVER — skills &middot; HP / MP — potions<br>' +
+    'cog (top-right) — settings: zoom, END RUN');
+  menuCard('KEYBOARD',
+    'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
+    'Q — frost nova &middot; E — overcharge<br>' +
+    'H / N — potions &middot; S / I — field report<br>' +
+    '+ / - — zoom &middot; ESC — close');
+  menuCard('GOT IT', 'into the horde (shows once)', () => {
+    completeOnboarding();
+    showTitle();
+  });
+}
+
 // ---------- Meta screens: title / shop / characters / settings ----------
 function menuCard(name, sub, onclick, dim) {
   const el = document.createElement('div');
@@ -1691,6 +1737,7 @@ function showTitle() {
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
+  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
 }
 
 function showShop() {
@@ -2396,7 +2443,11 @@ let introT0 = performance.now();
 function endIntro() {
   if (state.mode !== 'intro') return;
   state.mode = 'menu';
-  showTitle();
+  // WAVE-19: first boot pops HOW TO PLAY once, before the first run starts;
+  // returning players go straight to the title. Never mid-run by construction
+  // (the intro only ever plays pre-menu).
+  if (!onboardingDone()) showHowToPlay();
+  else showTitle();
 }
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
 // WAVE-8/A: the same gesture skips the portal cinematic.
