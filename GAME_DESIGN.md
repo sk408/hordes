@@ -644,3 +644,38 @@ one:
     window; probe now tracks only its own lines (12/12 smoke reps green
     around the fix).
   - Verified: 21/21 suites, smoke x12 total, lightpanda clean.
+- 2026-09-11 (wave-18): **PLAYTEST FEEDBACK DEFECTS + DRAFT STAKES**
+  (galaxy.click brief, docs/PLAYTEST_FEEDBACK_2026-09-11.md) — hb1
+  (legibility) + hb7 (draft sim) + overseer (L3 tuning call):
+  - XP BAR (#2): gold 150x6 bar under the mana bar with an LV number at
+    its right end, driven by the exact p.xp/p.xpNext seam; each weapon
+    slot icon gets a 10px gold xpFrac underline (solid 1.0 when maxed)
+    via collectWeaponXp/weaponXpNeeded. The level-up draft now visibly
+    telegraphs progress.
+  - CRISP TEXT (#4): DPR-aware backing store — canvas.width = VIEW_W *
+    devicePixelRatio (clamped 1..3), base setTransform keeps all draw
+    math in logical pixels. HUD text stops blurring on high-DPI phones.
+    NOTE: verification bar for this one is a real phone, not desktop.
+  - END RUN (#6): two-tap confirm in SETTINGS — END RUN arms to
+    "CONFIRM END RUN?" (BACK disarms and keeps the run ticking; re-open
+    is disarmed), confirm ends to the existing dead-card flow with
+    'RUN ENDED' copy and gold banked via the shared settleRunGold.
+  - MAP EDGE (#7): visible arena wall — theme-tinted stone rim painted
+    at the +-600 clamp boundary with gloom beyond, drawn in the WORLD
+    layer so it scales with zoom (1x..8x).
+  - DRAFT STAKES (#5): hb7's Monte-Carlo sim (tools/draft_sim.mjs,
+    60 runs/archetype, seed 4242) answers the brief's acceptance bar on
+    a fresh profile: GREED-DAMAGE 259s survival / 2184 kills vs
+    ADVERSARIAL-BAD 158s / 566 kills (x1.64 divergence, bad dies 100%
+    before the finale) — VERDICT PASS: a deliberately bad draft CAN
+    fail and a good draft visibly outperforms it at minute 10.
+  - Overseer fix (sim lever L3, "fake choice" defect): a Split Shot
+    card past MAX_PROJECTILES did nothing. Overflow picks now convert
+    to +20% weapon damage (same conversion as VOLLEY Lv3/6 proj
+    grants) and the card relabels "+20% weapon damage (volley full)".
+    Levers L1/L2/L4 (stat weight, %-HP card, xp curve) stay PROPOSED
+    ONLY — baseline already passes; deferred pending a built-profile
+    sim pass (meta progression changes the picture).
+  - Verified: 21/21 suites + draft_sim 13/13, smoke x4 (xp-bar seam
+    exact match, DPR clamps, END RUN two-tap, wall at rim 1x+2x, L3
+    overflow probe), lightpanda clean (0 errors).

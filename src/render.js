@@ -7,6 +7,7 @@ import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
 } from './sprites.js';
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
+import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
 export const PLAYER_SPRITE = [
@@ -104,9 +105,28 @@ function drawShape(g, shape, x, y, w, h) {
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    canvas.width = C.VIEW_W;
-    canvas.height = C.VIEW_H;
     this.ctx = canvas.getContext('2d');
+    this.resize();
+  }
+
+  // WAVE-18 (#4, "the large text is very fuzzy"): DPR-aware backing store.
+  // The canvas used to be a fixed 480x300 bitmap that phones CSS-scaled by a
+  // non-integer factor — imageSmoothingEnabled=false saved the PIXEL ART but
+  // rasterised GLYPHS resampled and blurred. Now the backing store is
+  // VIEW * dpr (clamped 1..3) with a base setTransform(dpr,...): every
+  // existing draw stays in view/CSS-pixel coordinates (all math unchanged),
+  // while text rasterises at native device resolution. The WAVE-16 zoom
+  // save/scale/restore nests on top of this base transform cleanly. Assigning
+  // canvas.width resets ctx state, so transform + smoothing are re-asserted
+  // here on every resize.
+  resize(dprOverride) {
+    const rawDpr = dprOverride !== undefined ? dprOverride
+      : ((typeof globalThis.window !== 'undefined' && globalThis.window.devicePixelRatio) || 1);
+    const dpr = Math.max(1, Math.min(3, rawDpr || 1));
+    this.dpr = dpr;
+    this.canvas.width = C.VIEW_W * dpr;
+    this.canvas.height = C.VIEW_H * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
   }
 
@@ -189,6 +209,7 @@ export class Renderer {
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
+    this.drawArenaWall(g, cam, theme);   // WAVE-18 (#7): the rim made visible
 
     // Gems.
     for (const gem of state.gems) {
@@ -842,11 +863,38 @@ export class Renderer {
     drawBar(6, 16, 110, hpFrac, flashFrac, '#ff5566');
     drawBar(6, 26, 110, manaFrac, 0, '#4a8cff');
 
-    // --- WAVE-14 event feed: last 3 toasts UNDER the bars, newest lowest.
-    // The toast() stream in main.js is the ONE feed — equipment finds (tinted
-    // by rarity), arch effects, potions, weapon level-ups, synergies, flash
-    // drops, wave/theme lines all land here. Lines fade out over their final
-    // second (alpha = ttl clamped to 1).
+    // --- WAVE-18 (#2) PLAYER XP BAR (galaxy.click: "there's no xp bar
+    // (?!?!?!?)"). The genre's core readout, previously drawn nowhere: gold,
+    // LONGER (150px vs the 110px HP/mana pair) and BOLDER (6px fill), with
+    // the level number riding its right end. "How close is my next upgrade"
+    // must be answerable in ~2s of looking, at any zoom (HUD chrome is
+    // native 1x by WAVE-16 construction). chrome.xpFrac is the EXACT
+    // unclamped fraction (draw rounds; the seam does not).
+    const xpFrac = p.xpNext > 0 ? Math.max(0, Math.min(1, p.xp / p.xpNext)) : 0;
+    chrome.xpFrac = p.xpNext > 0 ? p.xp / p.xpNext : 0;
+    chrome.level = p.level || 1;
+    const xb = 6, yb = 37, wb = 150, hb = 6;
+    g.fillStyle = '#000000';                       // 1px pixel border
+    g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
+    g.fillStyle = '#3a3a46';                       // empty track
+    g.fillRect(xb, yb, wb, hb);
+    const xfw = Math.round(wb * xpFrac);
+    g.fillStyle = '#ffd75e';                       // the gold fill
+    g.fillRect(xb, yb, xfw, hb);
+    g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
+    g.fillRect(xb, yb, xfw, 1);
+    g.fillStyle = 'rgba(0,0,0,0.30)';              // chunky segments, denser than HP
+    for (let sx = xb + 6; sx < xb + xfw; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
+    g.fillStyle = '#ffe9a8';
+    g.font = 'bold 8px monospace';
+    g.textBaseline = 'top';
+    g.fillText('LV ' + (p.level || 1), xb + wb + 4, yb);
+
+    // --- WAVE-14 event feed: last 3 toasts UNDER the bars (now under the XP
+    // bar too), newest lowest. The toast() stream in main.js is the ONE feed
+    // — equipment finds (tinted by rarity), arch effects, potions, weapon
+    // level-ups, synergies, flash drops, wave/theme lines all land here.
+    // Lines fade out over their final second (alpha = ttl clamped to 1).
     g.font = '8px monospace';
     g.textBaseline = 'top';
     chrome.feed = [];
@@ -855,7 +903,7 @@ export class Renderer {
       const ft = feed[i];
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
       if (alpha <= 0) continue;
-      const fy = 37 + i * 10;
+      const fy = 49 + i * 10;
       const fw = ft.msg.length * 5 + 3;   // ~5px/char @ 8px monospace
       g.globalAlpha = alpha;
       g.fillStyle = 'rgba(8,8,14,0.60)';  // readability plate
@@ -909,7 +957,20 @@ export class Renderer {
       }
       g.fillStyle = '#e8e8f0';                       // lv badge
       g.fillText(String(w.level || 1), wx + 1, wy + 5 * Z + 2);
-      chrome.weaponIcons.push({ type: w.type, level: w.level || 1, evolved: !!w.evolution });
+      // WAVE-18 (#2): per-weapon progress — a thin gold underline inside the
+      // slot frame bottom showing progress to the weapon's NEXT level
+      // (weapons.js weaponXpNeeded), solid gold at the level cap.
+      const maxed = (w.level || 1) >= WEAPON_MAX_LEVEL;
+      const wxpFrac = maxed ? 1
+        : Math.max(0, Math.min(1, (w.xp || 0) / weaponXpNeeded(w.level || 1)));
+      const uw = 5 * Z;                              // 10px — the icon width
+      g.fillStyle = '#1a1a22';                       // track inside the frame
+      g.fillRect(wx, wy + 5 * Z, uw, 1);
+      if (wxpFrac > 0) {
+        g.fillStyle = '#ffd75e';
+        g.fillRect(wx, wy + 5 * Z, Math.round(uw * wxpFrac), 1);
+      }
+      chrome.weaponIcons.push({ type: w.type, level: w.level || 1, evolved: !!w.evolution, xpFrac: wxpFrac, maxed });
       wx += 5 * Z + 10;
     }
 
@@ -967,6 +1028,91 @@ export class Renderer {
         }
       }
     }
+  }
+
+  // ---- WAVE-18 (#7): the ARENA WALL --------------------------------------------
+  // galaxy.click: "the edge of the map is not clearly defined". The clamp
+  // (±600, main.js update) always existed but drew nothing — an invisible
+  // wall reads as a bug ("why did I stop?"). This paints a stone-slab rim AT
+  // the clamp edge, theme-tinted like the ground decor (lit inner face, dark
+  // mortar seams, crisp black rim line), with a gloom fill beyond it so
+  // off-map space reads as off-map. It is world geometry: drawn inside the
+  // zoom transform (crisp at 1x through 8x) and culled per side to the
+  // visible window. `this.arenaWall` is the smoke seam (world-coord sides).
+  drawArenaWall(g, cam, theme) {
+    const RIM = 600, T = 12;             // clamp edge (matches main.js) + wall px
+    const pal = theme || groundTheme(1);
+    const x0 = cam.x, x1 = cam.x + C.VIEW_W, y0 = cam.y, y1 = cam.y + C.VIEW_H;
+    // (a) gloom beyond the rim — non-overlapping decomposition of the visible
+    // window minus the arena square, so the alpha never stacks at corners.
+    if (y0 < -RIM) {
+      const gy1 = Math.min(y1, -RIM);
+      g.fillStyle = 'rgba(4,4,10,0.55)';
+      g.fillRect(Math.round(x0 - cam.x), Math.round(y0 - cam.y),
+        C.VIEW_W, Math.round(gy1 - y0));
+    }
+    if (y1 > RIM) {
+      const gy0 = Math.max(y0, RIM);
+      g.fillStyle = 'rgba(4,4,10,0.55)';
+      g.fillRect(Math.round(x0 - cam.x), Math.round(gy0 - cam.y),
+        C.VIEW_W, Math.round(y1 - gy0));
+    }
+    const cy0 = Math.max(y0, -RIM), cy1 = Math.min(y1, RIM);
+    if (cy1 > cy0) {
+      if (x0 < -RIM) {
+        const gx1 = Math.min(x1, -RIM);
+        g.fillStyle = 'rgba(4,4,10,0.55)';
+        g.fillRect(Math.round(x0 - cam.x), Math.round(cy0 - cam.y),
+          Math.round(gx1 - x0), Math.round(cy1 - cy0));
+      }
+      if (x1 > RIM) {
+        const gx0 = Math.max(x0, RIM);
+        g.fillStyle = 'rgba(4,4,10,0.55)';
+        g.fillRect(Math.round(gx0 - cam.x), Math.round(cy0 - cam.y),
+          Math.round(x1 - gx0), Math.round(cy1 - cy0));
+      }
+    }
+    // (b) the wall band on each visible side, extended T past the corners so
+    // the bands join. Stone body + lit inner face + black rim line + seams.
+    const wy0 = Math.max(y0, -RIM - T), wy1 = Math.min(y1, RIM + T);
+    const wx0 = Math.max(x0, -RIM - T), wx1 = Math.min(x1, RIM + T);
+    const sides = [];
+    if (x1 > RIM && x0 < RIM + T && wy1 > wy0)
+      sides.push({ side: 'E', x: RIM, y: wy0, w: T, h: wy1 - wy0, horiz: false });
+    if (x0 < -RIM && x1 > -RIM - T && wy1 > wy0)
+      sides.push({ side: 'W', x: -RIM - T, y: wy0, w: T, h: wy1 - wy0, horiz: false });
+    if (y1 > RIM && y0 < RIM + T && wx1 > wx0)
+      sides.push({ side: 'S', x: wx0, y: RIM, w: wx1 - wx0, h: T, horiz: true });
+    if (y0 < -RIM && y1 > -RIM - T && wx1 > wx0)
+      sides.push({ side: 'N', x: wx0, y: -RIM - T, w: wx1 - wx0, h: T, horiz: true });
+    for (const s of sides) {
+      g.fillStyle = pal.stone;                       // slab body
+      g.fillRect(Math.round(s.x - cam.x), Math.round(s.y - cam.y), s.w, s.h);
+      // Crisp black rim line on the ARENA-facing edge + a lit face just
+      // outside it. E/S light their min edge (arena is at lower x/y); W/N
+      // light their max edge.
+      const inner = (s.side === 'W') ? s.x + s.w - 1 : s.x;    // lit-line x
+      const innerY = (s.side === 'N') ? s.y + s.h - 1 : s.y;   // lit-line y
+      const outward = (s.side === 'W' || s.side === 'N') ? -1 : 1;
+      g.fillStyle = '#000000';
+      if (s.horiz) g.fillRect(Math.round(s.x - cam.x), Math.round(innerY - cam.y), s.w, 1);
+      else g.fillRect(Math.round(inner - cam.x), Math.round(s.y - cam.y), 1, s.h);
+      g.fillStyle = pal.stoneTop;
+      if (s.horiz) g.fillRect(Math.round(s.x - cam.x), Math.round(innerY - cam.y) + outward, s.w, 1);
+      else g.fillRect(Math.round(inner - cam.x) + outward, Math.round(s.y - cam.y), 1, s.h);
+      // mortar seams every 16px along the band
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      if (s.horiz) {
+        for (let mx = s.x + 16; mx < s.x + s.w; mx += 16) {
+          g.fillRect(Math.round(mx - cam.x), Math.round(s.y - cam.y), 1, s.h);
+        }
+      } else {
+        for (let my = s.y + 16; my < s.y + s.h; my += 16) {
+          g.fillRect(Math.round(s.x - cam.x), Math.round(my - cam.y), s.w, 1);
+        }
+      }
+    }
+    this.arenaWall = { rim: RIM, thickness: T, sides };
   }
 
   // ---- weather rendering -----------------------------------------------------

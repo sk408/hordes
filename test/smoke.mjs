@@ -8,7 +8,7 @@ import { CONFIG as CFG } from '../src/config.js';
 import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
 import { groundTheme } from '../src/render.js';
 import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
-import { makeWeapon } from '../src/weapons.js';
+import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
 
@@ -1434,6 +1434,136 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('touch cog: opens/pauses in-run, clock frozen, RESET re-opens disarmed, BACK/ESC resume');
 }
 
+// ---- WAVE-18 LEGIBILITY DEFECTS (galaxy.click playtest) -------------------------
+// (1) PLAYER XP BAR + per-weapon progress, (2) DPR-aware backing store,
+// (3) END RUN, (4) the visible arena wall. All through the live run.
+{
+  const T = mainMod.__TEST;
+  const r = T.renderer;
+  const p = st.player;
+  const pump = (n) => {
+    for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  };
+  assert(st.mode === 'playing', 'wave-18 probes need the live run (mode=' + st.mode + ')');
+
+  // --- (1) XP BAR: the chrome seam fraction must EXACTLY equal p.xp/p.xpNext;
+  // the bar fills to 100% at the threshold, then the level-up resets it. ---
+  st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999;
+  st.wave.endsAt = st.time + 9999;
+  p.xp = 0; p.xpNext = 100;
+  pump(1);
+  assert(r.hudChrome.xpFrac === 0 && r.hudChrome.level === p.level,
+    'xp seam reads the player level at 0 progress');
+  p.xp = 50;
+  pump(1);
+  assert(r.hudChrome.xpFrac === 0.5,
+    'xp fraction must match p.xp/p.xpNext exactly (got ' + r.hudChrome.xpFrac + ')');
+  p.xp = p.xpNext;                    // exactly full: bar shows 100%, no gem yet
+  pump(1);
+  assert(r.hudChrome.xpFrac === 1, 'fill-to-100% is visible at the threshold');
+  const lvlBefore = p.level;
+  st.gems.push(makeGem(p.x, p.y, 1));  // the gem that tips it over
+  pump(1);
+  while (st.mode === 'draft') {       // resolve the level-up draft, if it opened
+    elements['ov-cards'].children[0].click();
+    pump(1);
+  }
+  assert(p.level === lvlBefore + 1,
+    'the full bar + one gem must level the player (lvl ' + p.level + ')');
+  pump(1);
+  assert(r.hudChrome.level === p.level && r.hudChrome.xpFrac < 0.1,
+    'after the draft the bar resets near zero and reads the new level');
+
+  // Per-weapon underline: half the needed XP -> 0.5; at the cap -> solid 1.
+  const w0 = st.weapons[0];
+  assert(w0, 'the run owns at least one weapon');
+  w0.level = 3; w0.xp = weaponXpNeeded(3) / 2;
+  pump(1);
+  const wi = r.hudChrome.weaponIcons.find(q => q.type === w0.type);
+  assert(wi && Math.abs(wi.xpFrac - 0.5) < 1e-12,
+    'weapon underline seam reads half progress (got ' + (wi && wi.xpFrac) + ')');
+  w0.level = WEAPON_MAX_LEVEL;
+  pump(1);
+  const wiMax = r.hudChrome.weaponIcons.find(q => q.type === w0.type);
+  assert(wiMax && wiMax.xpFrac === 1 && wiMax.maxed,
+    'a capped weapon shows a solid-gold underline');
+
+  // --- (2) DPR AWARENESS: backing store = VIEW * dpr (clamped 1..3); draw
+  // math stays in view coordinates via the base setTransform. ---
+  const cv = elements['game'];
+  assert(r.dpr === 1 && cv.width === CFG.VIEW_W && cv.height === CFG.VIEW_H,
+    'headless default build stays dpr 1');
+  window.devicePixelRatio = 2; r.resize();
+  assert(r.dpr === 2 && cv.width === CFG.VIEW_W * 2 && cv.height === CFG.VIEW_H * 2,
+    'dpr 2 must double the backing store (' + cv.width + 'x' + cv.height + ')');
+  window.devicePixelRatio = 4; r.resize();
+  assert(r.dpr === 3 && cv.width === CFG.VIEW_W * 3, 'dpr clamps DOWN to 3');
+  window.devicePixelRatio = 0.5; r.resize();
+  assert(r.dpr === 1 && cv.width === CFG.VIEW_W, 'dpr clamps UP to 1');
+  delete window.devicePixelRatio; r.resize();   // back to the headless default
+  assert(r.dpr === 1 && cv.width === CFG.VIEW_W, 'resize without dpr falls back to 1');
+
+  // --- (4) ARENA WALL: nothing painted mid-arena; the rim (±600) becomes a
+  // stone wall + gloom BEFORE the player reaches the clamp, at 1x AND 2x. ---
+  T.zoom.set(1);
+  keyHandler({ key: 'm' });           // MANUAL, nothing held = stationary
+  p.x = 0; p.y = 0;
+  pump(60);                           // let the camera lerp converge on center
+  assert(r.arenaWall && r.arenaWall.rim === 600 && r.arenaWall.sides.length === 0,
+    'mid-arena: no wall sides visible');
+  p.x = 560; p.y = 0;                 // 40px from the E clamp — rim on screen
+  pump(60);
+  const eSide = r.arenaWall.sides.find(s => s.side === 'E');
+  assert(eSide && eSide.x === 600 && eSide.w === r.arenaWall.thickness,
+    'the E wall band sits at the clamp rim in world coords');
+  ctxRec.rec = true; ctxRec.rects.length = 0;
+  pump(1);
+  ctxRec.rec = false;
+  assert(ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === 600),
+    'wall rects paint INSIDE the world layer at world x=600 (1x)');
+  T.zoom.set(2);                      // the wall is world geometry: same rim at 2x
+  ctxRec.rec = true; ctxRec.rects.length = 0;
+  pump(1);
+  ctxRec.rec = false;
+  assert(r.arenaWall.sides.some(s => s.side === 'E' && s.x === 600) &&
+         ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === 600),
+    'wall rects paint at world x=600 at 2x too (zooms with the world)');
+  T.zoom.set(1);
+
+  // --- (3) END RUN: two-tap confirm in the in-run settings; one tap + BACK
+  // leaves the run alive; confirm banks the gold and lands on the end card. ---
+  const purseBefore = T.getProfile().gold;
+  T.openSettings();
+  assert(st.mode === 'settings', 'settings open for the END RUN probe');
+  const cards = elements['ov-cards'];
+  const byTitle = (t) => Array.from(cards.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  assert(byTitle('END RUN'), 'the in-run settings must offer END RUN');
+  byTitle('END RUN').click();         // arm only
+  assert(byTitle('CONFIRM END RUN?'), 'arm shows CONFIRM END RUN?');
+  byTitle('BACK').click();            // back out — run must survive
+  assert(st.mode === 'playing', 'one tap + BACK must NOT end the run');
+  const tPause = st.time;
+  pump(2);
+  assert(st.time > tPause, 'the run resumed ticking after backing out');
+  T.openSettings();
+  assert(byTitle('END RUN') && !byTitle('CONFIRM END RUN?'),
+    'END RUN re-opens disarmed');
+  byTitle('END RUN').click();
+  byTitle('CONFIRM END RUN?').click();
+  assert(st.mode === 'dead', 'confirming must end the run');
+  assert(elements['ov-title'].textContent === 'RUN ENDED', 'end card copy is RUN ENDED');
+  const purseAfter = T.getProfile().gold;
+  assert(purseAfter >= purseBefore && /GOLD EARNED: \+\d+/.test(elements['ov-sub'].innerHTML),
+    'gold is banked with the same payout accounting (+' + (purseAfter - purseBefore) + ')');
+  assert(byTitle('RETRY') && byTitle('TITLE'), 'the end card offers RETRY/TITLE');
+  byTitle('TITLE').click();           // back at the title settings: no END RUN there
+  byTitle('SETTINGS').click();
+  assert(!byTitle('END RUN'), 'the TITLE settings screen must NOT offer END RUN');
+  console.log('wave-18: xp bar exact/reset + weapon underlines, dpr 1-3 clamped backing store, ' +
+    'END RUN two-tap banks gold, arena wall at rim 1x+2x');
+}
+
 // ---- WAVE-10 FINALE: force the END_WAVE boss, ride the portal cine into ----
 // the finale, then verify the field sweep, the silent spawner, the volley
 // mercy rule, the 3-hit rule and the distinct end screen.
@@ -1585,6 +1715,34 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(lum(t3.base) > 70 && lum(t3.base) < 130 && lum(t1.base) < 40,
     'the snow theme base must be light grey vs the dark verdant base (not white)');
   console.log('ground themes: ' + [1, 2, 3, 4, 5, 6].map(w => groundTheme(w).name).join(' | '));
+}
+
+// ---- WAVE-18 draft-stakes probes ------------------------------------------------
+// L3 fix (hb7 sim): Split Shot past MAX_PROJECTILES used to be a dead pick —
+// a fake choice. Overflow must convert to +20% weapon damage (same conversion
+// as the VOLLEY Lv3/6 projectile grants); below the cap it still grants the
+// projectile.
+{
+  const T = mainMod.__TEST;
+  T.startRun();
+  const st = T.state, p = st.player;
+  const multi = { id: 'multi', name: 'Split Shot', desc: '+1 projectile per volley',
+                  apply: (pp) => { pp.stats.projectiles += 1; } };
+  // At cap: base 1 + 2 grants = 3 = MAX_PROJECTILES (fresh VOLLEY Lv1).
+  p.stats.projectiles = CFG.WEAPON.MAX_PROJECTILES;
+  const d0 = p.stats.damage;
+  T.pickCard(multi);
+  assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES,
+    'overflow Split Shot must not push projectiles past the cap');
+  assert(p.stats.damage === d0 * 1.2,
+    `overflow Split Shot must convert to +20% damage (got ${p.stats.damage} vs ${d0 * 1.2})`);
+  // Below cap: still a real projectile.
+  p.stats.projectiles = 1;
+  const d1 = p.stats.damage;
+  T.pickCard(multi);
+  assert(p.stats.projectiles === 2 && p.stats.damage === d1,
+    'Split Shot below the cap must still grant the projectile');
+  console.log('L3 overflow multi: cap pick -> +20% dmg; below-cap pick -> +1 projectile');
 }
 
 console.log('SMOKE TEST PASSED');

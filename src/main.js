@@ -1417,6 +1417,12 @@ function openDraft() {
     ...weaponCards.map(c => ({ ...c, weight: 1 })),
     ...UPGRADES.map(u => ({ ...u, weight: 0.3 })),   // downweighted stats
   ];
+  // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a
+  // dead pick (a fake choice) — relabel it to what it actually does.
+  if (volleyAtProjCap()) {
+    const multiCard = pool.find(c => c.id === 'multi');
+    if (multiCard) multiCard.desc = '+20% weapon damage (volley full)';
+  }
   // Weighted draw WITHOUT replacement, take 3 (no duplicate cards per draft).
   const choices = [];
   while (choices.length < 3 && pool.length > 0) {
@@ -1448,9 +1454,22 @@ function openDraft() {
 // Counts live on the run player (fresh makePlayer resets them every run).
 const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 
+// WAVE-18 draft-stakes fix (hb7 sim lever L3): total volley projectiles are
+// capped at C.WEAPON.MAX_PROJECTILES (base 1 + VOLLEY Lv3/Lv6 grants), so a
+// Split Shot card past the cap did NOTHING — a fake choice. Overflow picks now
+// convert to +20% weapon damage, exactly like the VOLLEY Lv3/6 proj conversion
+// in weapons.js.
+function volleyAtProjCap() {
+  const w = state.weapons.find(x => x.type === 'VOLLEY');
+  const proj = weaponLevelParams('VOLLEY', w ? w.level : 1).proj || 0;
+  return (state.player.stats.projectiles || 0) + proj >= C.WEAPON.MAX_PROJECTILES;
+}
+
 function pick(u) {
   const p = state.player;
-  if (u.id === 'speed' || u.id === 'rate') {
+  if (u.id === 'multi' && volleyAtProjCap()) {
+    p.stats.damage *= 1.2;
+  } else if (u.id === 'speed' || u.id === 'rate') {
     const n = (p.draftCounts = p.draftCounts || {});
     n[u.id] = (n[u.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(n[u.id] - 1, DRAFT_TAPER.length - 1)];
@@ -1528,25 +1547,58 @@ function closeEvolve() {
   state.mode = 'playing';
 }
 
-function die(finale) {
+// WAVE-18: shared run settlement — death AND the END RUN card pay out
+// through the exact same accounting (first-clear bonus + gold multipliers).
+// Meta payout: gold into the profile (+first-clear bonus on a new best).
+// NOTE: meta.js loadProfile() drops unknown fields (incl. our bestTime),
+// so the best-run bonus is per-session until loadProfile preserves it.
+// Greed shop line + Midas items multiply the payout (computeRunGold takes
+// goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
+// goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
+function settleRunGold() {
   const p = state.player;
-  state.mode = 'dead';
-  audio.stopMusic();
-  audio.playSfx('death');
-  // Meta payout: gold into the profile (+first-clear bonus on a new best).
-  // NOTE: meta.js loadProfile() drops unknown fields (incl. our bestTime),
-  // so the best-run bonus is per-session until loadProfile preserves it.
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
-  // Greed shop line + Midas items multiply the payout (computeRunGold takes
-  // goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
-  // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
   const gold = computeRunGold({
     kills: p.kills, level: p.level, time: state.time, firstClear,
     goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
   });
   profile.gold += gold;
   saveProfile(profile);
+  return { gold, firstClear };
+}
+
+// WAVE-18 (#6, "no way to exit a run early"): deliberate run exit from the
+// in-run settings. Two-tap confirmed (see the END RUN card), settles through
+// settleRunGold (same payout as a death — gold is KEPT), then lands on the
+// existing end-card flow with its own copy.
+function endRun() {
+  // 'settings' is the paused-in-run screen (settingsReturn holds the live
+  // mode) — confirming from there is the whole point of this card.
+  if (state.mode !== 'playing' && state.mode !== 'finale' && state.mode !== 'settings') return;
+  const p = state.player;
+  state.mode = 'dead';
+  audio.stopMusic();
+  audio.playSfx('button');
+  const { gold, firstClear } = settleRunGold();
+  ovTitle.textContent = 'RUN ENDED';
+  ovTitle.className = '';
+  ovSub.innerHTML =
+    `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+    ` · level ${p.level} · ${p.kills} kills` +
+    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovCards.innerHTML = '';
+  menuCard('RETRY', 'straight back in [R]', () => startRun());
+  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
+  overlay.style.display = 'flex';
+}
+
+function die(finale) {
+  const p = state.player;
+  state.mode = 'dead';
+  audio.stopMusic();
+  audio.playSfx('death');
+  const { gold, firstClear } = settleRunGold();
 
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
@@ -1704,12 +1756,13 @@ function showCharacters() {
 }
 
 let resetArmed = false;
+let endArmed = false;   // WAVE-18 (#6): END RUN two-tap arm (same pattern as RESET)
 function showSettings(disarm = true, inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
   // Sk408 bug: the arm click re-rendered through here, which cleared the
   // arm flag the same frame it was set — RESET could never confirm. Only
   // disarm when settings is opened fresh (title menu or the in-run cog).
-  if (disarm) resetArmed = false;
+  if (disarm) { resetArmed = false; endArmed = false; }
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
   ovSub.textContent = 'audio, hud & profile';
@@ -1740,6 +1793,18 @@ function showSettings(disarm = true, inRun = false) {
       resetArmed = false;
       showSettings(false, inRun);
     });
+  // WAVE-18 (#6): END RUN — the early exit the playtest demanded, only on
+  // the in-run settings screen (never the title's). Same two-tap arm/
+  // confirm pattern as RESET PROFILE.
+  if (inRun) {
+    menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
+      endArmed ? 'banks your gold and ends the run' : 'tap twice to confirm',
+      () => {
+        if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
+        endArmed = false;
+        endRun();
+      });
+  }
   // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
   // instead of bailing to the title (which would abandon it).
   if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
@@ -2631,6 +2696,8 @@ export const __TEST = {
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
   setPilotMode: swapPilotMode, pilotInput,
+  // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
+  pickCard: pick,
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
