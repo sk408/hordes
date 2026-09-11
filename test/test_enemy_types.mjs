@@ -15,7 +15,7 @@ function check(name, fn) {
   console.log(`  ok - ${name}`);
 }
 
-const ALL_TYPES = ['CHASER', 'SWARMER', 'BRUTE', 'SPITTER', 'DASHER', 'WARLOCK', 'TICK', 'COLOSSUS'];
+const ALL_TYPES = ['CHASER', 'SWARMER', 'BRUTE', 'SPITTER', 'DASHER', 'WARLOCK', 'TICK', 'COLOSSUS', 'PILLAR'];
 
 // --- swarmer faster (and weaker) than base ---------------------------------
 check('swarmer faster than base chaser', () => {
@@ -54,7 +54,7 @@ check('spitter fires slow projectile intent in range', () => {
   assert.ok(a.fire, 'expected fire intent at phase wrap');
   assert.equal(a.fire.speed, ENEMY_TYPES.SPITTER.projSpeed);
   assert.equal(a.fire.damage, ENEMY_TYPES.SPITTER.projDamage);
-  assert.equal(a.fire.speed, 80); // slow shot vs weapon's 190
+  assert.equal(a.fire.speed, 105); // fast chip vs weapon's 190 (WAVE-20: 80 -> 105)
 });
 
 check('spitter silent out of range', () => {
@@ -140,8 +140,8 @@ check('warlock fires slow heavy bolt the frame the charge ends', () => {
   const a = decideEnemyAction(w, player, DT);
   assert.ok(a.fire, 'expected fire intent at cycle wrap');
   assert.equal(a.fire.speed, T.projSpeed);
-  assert.equal(a.fire.speed, 55, 'SLOW bolt');
-  assert.equal(a.fire.damage, 14, 'heavy bolt');
+  assert.equal(a.fire.speed, 75, 'heavy bolt (WAVE-20: 55 -> 75)');
+  assert.equal(a.fire.damage, 17, 'heavy bolt (WAVE-20: 14 -> 17)');
   assert.ok(a.fire.dx < -0.9, 'aimed at player');
   // out of range: no bolt even at wrap
   const far = makeTypedEnemy('WARLOCK', 400, 0, 0);
@@ -205,6 +205,26 @@ check('colossus death shockwave scales with maxHp, friendly-fire only', () => {
   assert.equal(deathShockwave(makeTypedEnemy('BRUTE', 0, 0, 0)), null);
 });
 
+// --- PILLAR: stationary ring turret (HERALD's cage) -----------------------------
+check('pillar never moves and fires a chip shot on the interval wrap', () => {
+  const T = ENEMY_TYPES.PILLAR;
+  assert.equal(T.speedMult, 0, 'spawner-static');
+  const p = makeTypedEnemy('PILLAR', 200, 0, 0);   // dist 200 < fireRange 300
+  const idle = decideEnemyAction({ ...p, age: 0.5 }, player, DT);
+  assert.equal(idle.mx, 0); assert.equal(idle.my, 0);
+  assert.equal(idle.fire, null, 'no shot mid-interval');
+  const wrap = decideEnemyAction({ ...p, age: T.fireInterval }, player, DT);
+  assert.ok(wrap.fire, 'fires on phase wrap');
+  assert.equal(wrap.fire.speed, T.projSpeed);
+  assert.equal(wrap.fire.damage, T.projDamage);
+  assert.ok(wrap.fire.dx < -0.9, 'aimed at player');
+  assert.equal(wrap.mx, 0, 'still planted while firing');
+  // out of range: silent even at the wrap
+  const far = makeTypedEnemy('PILLAR', 400, 0, 0);
+  far.age = T.fireInterval;
+  assert.equal(decideEnemyAction(far, player, DT).fire, null);
+});
+
 // --- LOOK variants -------------------------------------------------------------
 check('every type ships a valid LOOK and 2-3 palette variants', () => {
   const SHAPES = ['block', 'diamond', 'tall', 'wide'];
@@ -260,6 +280,7 @@ check('decide is pure (no mutation of enemy/player)', () => {
   const specs = [
     ['SPITTER', 120, 0], ['WARLOCK', 150, 0], ['TICK', 10, 0],
     ['DASHER', 100, 0], ['COLOSSUS', 200, 0], ['TICK', 100, 0],
+    ['PILLAR', 200, 0],
   ];
   for (const [id, x, y] of specs) {
     const e = makeTypedEnemy(id, x, y, 0);

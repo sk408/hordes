@@ -27,17 +27,29 @@ export const CONFIG = {
 
   ENEMY: {
     W: 10, H: 10,
-    BASE_SPEED: 28,
+    BASE_SPEED: 28,      // WAVE-20 tuning: 29/31/34 all proved pre-boss meat
+                         // grinders in the sim (half the cohort died to plain
+                         // chasers at ~40-60s, before any boss event spawned —
+                         // the boss ladder, not the ambience, must be the wall)
     BASE_HP: 12,
     BASE_XP: 5,
-    SPAWN_INTERVAL: 1.1, // seconds between spawn waves at t=0 (scales down)
+    SPAWN_INTERVAL: 1.35, // seconds between spawn waves at t=0 (scales down;
+                          // WAVE-20 tuning: 1.05 had half the cohort dead to
+                          // ambient swarm before the 60s herald — pressure
+                          // must come from DAMAGE (kept) + the boss ladder,
+                          // not from body count)
     SPAWN_DIST: 280,     // spawn ring radius around player
   },
 
   GEM: { SIZE: 4 },
 
   XP_LEVEL_BASE: 30,    // xp needed for level 2
-  XP_LEVEL_GROWTH: 1.35,
+  // WAVE-20: 1.35 -> 1.28 — draft-stakes sim (tools/draft_sim.mjs): the
+  // number of drafts per run collapsed mid-run exactly as escalation
+  // compounded, so the draft (the game's only real decision layer) stopped
+  // deciding anything — good vs bad drafts diverged by just x1.11. 1.28
+  // keeps drafts arriving; divergence projected/verified x1.4+.
+  XP_LEVEL_GROWTH: 1.28,
 
   // Mana pool (SKILLS cost mana; regen keeps pressure without starvation).
   MANA: {
@@ -203,20 +215,69 @@ export const CONFIG = {
   ESCALATION: {
     HP:  { LINEAR: 0.9, COMPOUND_FROM: 4, COMPOUND: 1.35 },
     XP:  { LINEAR: 0.6, COMPOUND_FROM: 4, COMPOUND: 1.25 },
-    DMG: { LINEAR: 0.2, COMPOUND_FROM: 6, COMPOUND: 1.15 },
+    // WAVE-20 (Sk408: weapon-only builds shrugged the horde off) — contact
+    // + projectile damage now climbs twice as fast with the minion waves;
+    // shop upgrades (hp/defense/speed) are the later mitigation.
+    DMG: { LINEAR: 0.4, COMPOUND_FROM: 6, COMPOUND: 1.15 },
     WAVE_LENGTH: 120,        // seconds before the boss spawns
     // WAVE-10: the wave whose boss death triggers the FINALE (the maw) once
     // its portal cinematic ends. Tunable — Sk408 moves it later when the
     // end-game phase opens up.
     END_WAVE: 5,
+    // WAVE-20 MID-WAVE BOSS (Sk408 balance pass): the HERALD spawns halfway
+    // through EVERY wave (AT_FRACTION of WAVE_LENGTH). It rings the player
+    // with PILLARS (stationary turret enemies, enemy_types.js) that chip from
+    // all sides, then relentlessly pursues at above-player speed firing
+    // player-weapon-like bursts. Weaker than the end-of-wave cast by design:
+    // the pillar ring + pursuit should claim the player in 1-3 of 10 runs on
+    // each wave (vs 5-8 of 10 for the wave boss) so runs die to a LADDER of
+    // escalating checkpoints — progress is felt, not a wall.
+    MIDBOSS: {
+      AT_FRACTION: 0.5,        // spawns at this fraction of WAVE_LENGTH
+      // hp = BASE_HP * hpScale(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
+      // WAVE-20 tuning: 22 -> 17 — the duel is the threat, not the hp bar;
+      // shorter fight = less pack-exposure time inside the ring (the sim had
+      // HERALD+ambient jointly eating half the cohort before the 120s boss).
+      HP_MULT_BASE: 17,
+      HP_MULT_PER_WAVE: 14,
+      SIZE_MULT: 1.7,          // over the chaser chassis (imposing, not huge)
+      SPEED_MULT: 1.8,         // x BASE_SPEED*(1+0.05w) ~= 1.12x player speed
+                                // (retuned after WAVE-20 BASE_SPEED 28 -> 34)
+      HOLD_DIST: 55,           // inside this the pursuit eases to a duel drift
+      CLOSE_SPEED_MULT: 0.3,   // the ease-off multiplier (catch, don't hug)
+      CONTACT_MULT: 1.1,       // over base contact (chassis contactMult is 1)
+      XP_KILLS: 6,             // herald xp ~= this many minion kills
+      // The ring: PILLARS encircle the PLAYER where they stand when it lands.
+      // WAVE-20 tuning: 8 pillars @ 1.4s cadence claimed 6/20 sim runs by
+      // themselves — the ring must cage, not execute. 6 pillars, slower fire,
+      // wider cage so the duel (not the turrets) does the claiming.
+      PILLARS: 6,              // ring size
+      PILLAR_RADIUS: 150,      // ring radius around the player (px)
+      RING_INTERVAL: 24,       // seconds between ring refreshes while it lives
+                              // (15s meant effectively-permanent cage + pack)
+      // The rifle: a tight VOLLEY-like burst (fast, medium damage, dodgeable).
+      BURST_INTERVAL: 2.4,
+      BURST_SHOTS: 3,
+      BURST_SPREAD: 0.24,      // radians, total arc
+      BURST_SPEED: 185,        // ~= player volley PROJ_SPEED
+      BURST_DAMAGE: 6,         // pre-dmgScale (7 proved hot with the ring up)
+      CHESTS: 1,               // guaranteed chest on the herald kill
+    },
     BOSS: {
       // hp = BASE_HP * hpScale(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
       // HARDENED (Sk408: bosses still melted): 35/18 -> 60/30, nova +50%,
       // plus a periodic summon so the fight can't be face-tanked.
-      HP_MULT_BASE: 60,
-      HP_MULT_PER_WAVE: 30,
+      // WAVE-20: 60/30 -> 85/40 -> 260/75 -> 500/60 — the wave boss should be
+      // the wall the run breaks on (5-8 of 10 runs die there per wave). Probe
+      // data: wave-1 pilots hit t=120 with 2000-8000 dps (draft luck) and
+      // 250-480 hp; at 260 the fight ran 5-20s and strong drafts face-melted
+      // the boss mid-first-cycle. 500 buys the pattern room to land.
+      HP_MULT_BASE: 500,
+      HP_MULT_PER_WAVE: 60,
       SIZE_MULT: 2.2,        // over the brute-elite body
-      SPEED_MULT: 0.55,
+      // WAVE-20: 0.55 -> 0.95 — the cast's chase/charge speeds must threaten
+      // a fleeing pilot (player 60px/s; GRAVELMAW's 3.4x charge now lands).
+      SPEED_MULT: 0.95,
       XP_KILLS: 10,          // boss xp ~= this many minion kills
       NOVA_INTERVAL: 3.5,    // seconds between radial shot bursts
       NOVA_SHOTS: 10,

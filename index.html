@@ -58,6 +58,28 @@
   .card .key { margin-top: 10px; font-size: 11px; color: #6a6a8a; }
   #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
 
+  /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
+     staged spotlight walkthrough. #tour-root is appended to <body> (above
+     every layer incl. #touch z5 and #overlay); four .tour-shade rects dim
+     the screen except a padded hole around the live target, relaid out on
+     a 120ms interval so the spotlight tracks moving UI. Click/tap anywhere
+     advances; SKIP + Escape exits; each step's flag persists so it never
+     replays uninvited. ---- */
+  #tour-root {
+    position: fixed; inset: 0; z-index: 50;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  .tour-shade { position: absolute; background: rgba(5,5,10,0.78); }
+  #tour-tip {
+    position: absolute; max-width: 220px;
+    padding: 8px 10px; box-sizing: border-box;
+    background: #14141f; border: 2px solid #ffd75e;
+    color: #e8e8f0; font-size: 13px; line-height: 1.45;
+    cursor: pointer;
+  }
+  #tour-tip .tour-hint { display: block; margin-top: 6px; font-size: 10px; color: #6a6a8a; letter-spacing: 1px; }
+  #tour-tip .tour-skip { color: #ff5a3c; text-decoration: underline; }
+
   /* ---- Touch control layer (Sk408): shown on coarse pointers / touch
      devices; buttons route through the same actions as the keyboard. ---- */
   #touch {
@@ -181,7 +203,7 @@
       <button data-act="focus">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
       <button data-act="stance">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>
       <button data-act="pilot">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
-      <button data-act="stats">STATS</button>
+      <button data-act="stats" id="tc-stats">STATS</button>
     </div>
     <div id="joy" data-joy="1"><div id="joy-knob"></div></div>
     <div class="pad right">

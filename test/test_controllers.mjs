@@ -192,6 +192,70 @@ check('analog decide never mutates the input object', () => {
   assert.deepEqual(input, snapshot);
 });
 
+// --- WAVE-19 AUTOPILOT ANTI-OSCILLATION (Sk408: pilot vibrated in place) -------
+// BALANCED + KITE_DIST 55 => kite 55: enter flee inside r=110, sticky until r=143.
+const cfg55 = { KITE_DIST: 55 };
+
+check('flee hysteresis: sticky between enter and 1.3x, calm only past 1.3x', () => {
+  const c = new AutoPilotController();
+  const farGem = { x: 500, y: 0 };               // calm drift target: +x
+  // just inside the enter boundary (110) => flee (-x, away from the enemy)
+  let d = c.decide({ x: 0, y: 0 }, mkState([foe(100, 0)], [farGem]), cfg55);
+  assert.ok(d.moveX < 0, 'just inside enter => flee');
+  // pushed to just ABOVE enter but below 1.3x (120 < 143) => STILL fleeing
+  d = c.decide({ x: 0, y: 0 }, mkState([foe(120, 0)], [farGem]), cfg55);
+  assert.ok(d.moveX < 0, 'between enter and 1.3x while fleeing => sticky flee');
+  // pushed past 1.3x (150 > 143) => calm branch (gem drift is +x)
+  d = c.decide({ x: 0, y: 0 }, mkState([foe(150, 0)], [farGem]), cfg55);
+  assert.ok(d.moveX > 0, 'past 1.3x => calm gem drift');
+});
+
+check('no latch without flee: calm controller at 120 stays calm (no dead band)', () => {
+  const c = new AutoPilotController();
+  // A FRESH controller (never fleeing) between enter and 1.3x must NOT be
+  // dragged into flee by the exit threshold — the band only widens while in.
+  const d = c.decide({ x: 0, y: 0 }, mkState([foe(120, 0)], [{ x: 500, y: 0 }]), cfg55);
+  assert.ok(d.moveX > 0, 'calm start between enter and 1.3x => calm drift');
+});
+
+check('gem stickiness: commits to one gem until it leaves the field', () => {
+  const c = new AutoPilotController();
+  const a = { x: 30, y: 0 }, b = { x: -40, y: 0 };
+  let state = mkState([], [a, b]);
+  let d = c.decide({ x: 0, y: 0 }, state, cfg55);
+  assert.equal(d.moveX, 1, 'picks the nearer gem A (+x)');
+  assert.equal(c.gem, a, 'committed by identity');
+  // A drifts away — B is now nearer, but the pilot is COMMITTED to A.
+  a.x = 100;
+  d = c.decide({ x: 0, y: 0 }, state, cfg55);
+  assert.equal(d.moveX, 1, 'still chasing A even though B is nearer now');
+  // A collected: re-evaluate — never stuck on the dead reference.
+  state = mkState([], [b]);
+  d = c.decide({ x: 0, y: 0 }, state, cfg55);
+  assert.equal(d.moveX, -1, 'A gone => re-pick => B (-x)');
+  assert.equal(c.gem, b);
+});
+
+check('GREEDY opposed flee/gem vectors keep a real magnitude (>= 0.25)', () => {
+  const c = new AutoPilotController();
+  c.stance = 'GREEDY';
+  // kite = 27.5 => enter r = 55; enemy at (40,0) => flee (-x), gem on the
+  // enemy side => directly opposed loot vector. The blend must never
+  // collapse to a sub-pixel crawl while a threat is inside the kite line.
+  let d = c.decide({ x: 0, y: 0 }, mkState([foe(40, 0)], [{ x: 40, y: 0 }]), cfg55);
+  assert.ok(Math.hypot(d.moveX, d.moveY) >= 0.25, 'exactly opposed: >= 0.25');
+  // ...at any gem angle around the pilot (min-vector floor holds everywhere).
+  for (let ang = 0; ang < 360; ang += 15) {
+    const r = 90;
+    const gem = {
+      x: Math.cos(ang * Math.PI / 180) * r,
+      y: Math.sin(ang * Math.PI / 180) * r,
+    };
+    d = c.decide({ x: 0, y: 0 }, mkState([foe(40, 0)], [gem]), cfg55);
+    assert.ok(Math.hypot(d.moveX, d.moveY) >= 0.25, `gem angle ${ang} keeps real magnitude`);
+  }
+});
+
 // --- module purity: controllers never touch the DOM ---------------------------
 check('controllers.js is DOM-free (no document/window references)', () => {
   const src = readFileSync(new URL('../src/controllers.js', import.meta.url), 'utf8');

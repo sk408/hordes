@@ -32,6 +32,12 @@ export class AutoPilotController {
   constructor() {
     this.focus = 'NEAREST';
     this.stance = 'BALANCED';
+    // WAVE-19 anti-oscillation state. Both fields self-correct within one
+    // frame of a fresh run (a stale gem identity is never in the new run's
+    // state.gems => re-pick; no threat near => fleeing clears), so a new
+    // controller per page load is reset enough — no reset hooks.
+    this.fleeing = false;
+    this.gem = null;
   }
 
   cycleFocus() {
@@ -103,14 +109,23 @@ export class AutoPilotController {
     const st = C.AUTOPILOT.STANCES[this.stance];
     const kite = cfg.KITE_DIST * st.KITE_MULT;
 
-    // Nearest XP gem (loot vector).
-    let g = null, gd = Infinity;
-    for (const gm of state.gems) {
-      const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
-      if (d < gd) { gd = d; g = gm; }
+    // Nearest XP gem (loot vector). WAVE-19 STICKINESS: gems sit where enemies
+    // died — two at near-equal distances on opposite sides flipped the nearest
+    // pick every frame (direction flip-flop). Commit to ONE gem (by identity)
+    // and keep chasing it while it is still on the field; re-pick only when it
+    // is collected (or a new run brings a field it is not in).
+    if (!state.gems.includes(this.gem)) this.gem = null;
+    if (!this.gem && state.gems.length > 0) {
+      let gd = Infinity;
+      for (const gm of state.gems) {
+        const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
+        if (d < gd) { gd = d; this.gem = gm; }
+      }
     }
+    const g = this.gem;
     let gx = 0, gy = 0;
     if (g) {
+      const gd = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
       const len = Math.sqrt(gd) || 1;
       gx = (g.x - p.x) / len;
       gy = (g.y - p.y) / len;
@@ -118,7 +133,16 @@ export class AutoPilotController {
 
     // Threat response: flee the nearest enemy when it crosses the stance's
     // kite line. GREEDY keeps a foot pointed at the loot even while fleeing.
-    if (nearest && nd < (kite * 2) ** 2) {
+    // WAVE-19 HYSTERESIS: the branch switch used to be a knife-edge positional
+    // threshold — at the boundary the flee vector and the calm gem-drift
+    // vector (gems cluster where enemies died, i.e. TOWARD enemies) flipped
+    // sign every frame: the pilot vibrated in place. Enter flee inside
+    // (kite*2)^2; once fleeing, hold until the threat clears (kite*2*1.3)^2 —
+    // a commitment band, not a toggle.
+    const enterR2 = (kite * 2) ** 2;
+    const exitR2 = (kite * 2 * 1.3) ** 2;
+    if (nearest && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
+      this.fleeing = true;
       const len = Math.sqrt(nd) || 1;
       let fx = (p.x - nearest.x) / len;
       let fy = (p.y - nearest.y) / len;
@@ -140,10 +164,18 @@ export class AutoPilotController {
       fx /= fl; fy /= fl;
       if (this.stance === 'GREEDY' && g) {
         const w = st.LOOT_WEIGHT;
-        return { moveX: fx * (1 - w) + gx * w, moveY: fy * (1 - w) + gy * w, target };
+        const bx = fx * (1 - w) + gx * w;
+        const by = fy * (1 - w) + gy * w;
+        // WAVE-19 MIN VECTOR: opposed flee/gem vectors can collapse the blend
+        // to a sub-pixel crawl — a stall while a threat is INSIDE the kite
+        // line. Below a real vector, commit to the pure flee vector instead.
+        if (Math.hypot(bx, by) >= 0.25) {
+          return { moveX: bx, moveY: by, target };
+        }
       }
       return { moveX: fx, moveY: fy, target };
     }
+    this.fleeing = false;
 
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {

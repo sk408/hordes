@@ -259,10 +259,82 @@ const PYRAXIS_PALETTE = {
   6: '#ffd54a',  // gold sparks
 };
 
+// ---- VYRN, THE HERALD — WAVE-20 mid-wave boss: 22x26 hooded reaper, bone
+// cowl, ember eye-slit, heavy cloak hem; the two frames swap the lance side
+// (right/left) so the weapon reads as sweeping while it advances.
+const HERALD_FRAMES = [
+  grid(
+    // frame A — lance carried right, eye lit
+    '..........33..........',
+    '.........3223.........',
+    '........322223........',
+    '........324423........',
+    '........322223........',
+    '.......33222233....55.',
+    '......3321111233...55.',
+    '......3211111123...55.',
+    '.....332111111233..55.',
+    '.....321111111123..55.',
+    '.....321111111123..55.',
+    '....33211111111233.55.',
+    '....32111111111123.55.',
+    '....32111111111123.55.',
+    '....33211111111233.55.',
+    '...3321111111112233...',
+    '...3211111111111233...',
+    '..332111111111112233..',
+    '..321111111111111223..',
+    '..322111111111112223..',
+    '..322211111111122223..',
+    '.33222211111122222233.',
+    '.33222221111222222233.',
+    '.33222222222222222233.',
+    '..332222222222222233..',
+    '...3333333333333333...',
+  ),
+  grid(
+    // frame B — lance swept left, eye guttering, hem sways
+    '..........33..........',
+    '.........3223.........',
+    '........322223........',
+    '........322223........',
+    '........322223........',
+    '.55.....33222233......',
+    '.55...3321111233......',
+    '.55...3211111123......',
+    '..55.332111111233.....',
+    '..55.321111111123.....',
+    '..55.321111111123.....',
+    '..5533211111111233....',
+    '..5532111111111233....',
+    '..5532111111111233....',
+    '..5533211111111233....',
+    '...3321111111112233...',
+    '...3211111111111233...',
+    '..332111111111112233..',
+    '..321111111111111223..',
+    '..322111111111112223..',
+    '..322211111111122223..',
+    '.33222211111122222233.',
+    '.3322222211122222233..',
+    '.33222222222222222233.',
+    '..332222222222222233..',
+    '...333333333333333....',
+  ),
+];
+const HERALD_PALETTE = {
+  1: '#23262e',  // armor body
+  2: '#3f2a52',  // cloak
+  3: '#cfc7a8',  // bone cowl / hem trim
+  4: '#ff5a3c',  // ember eye-slit
+  5: '#8a6f4a',  // lance shaft
+};
+
 export const BOSS_SPRITES = {
   GRAVELMAW:    makeBossSprite(GRAVELMAW_FRAMES, GRAVELMAW_PALETTE),
   CHOIR_MOTHER: makeBossSprite(CHOIR_MOTHER_FRAMES, CHOIR_MOTHER_PALETTE),
   PYRAXIS:      makeBossSprite(PYRAXIS_FRAMES, PYRAXIS_PALETTE),
+  HERALD:       makeBossSprite(HERALD_FRAMES, HERALD_PALETTE),
 };
 
 // ===========================================================================
@@ -274,17 +346,34 @@ export const BOSS_SPRITES = {
 export const BOSSES = {
   // Telegraph -> fixed-line charge -> recover. The windup flash is the dodge
   // window; the recover pause is the punish window.
+  // WAVE-20 (Sk408: the wave boss must be the wall runs break on): a much
+  // hotter chase profile — the stalk is a real pursuit now (walk ~67px/s,
+  // ABOVE the pilot's 60, so kiting alone can't hold the gap open; speed
+  // drafts are the counterplay and the progress feel) and the charge is a
+  // flatter 2.2x spike after the same 0.7s telegraph. Contact mult down from
+  // 1.5 to 1.0 so a catch costs ~half a health bar, not the whole run —
+  // death by repeated catches, not one grazing touch.
   GRAVELMAW: {
     id: 'GRAVELMAW',
     name: 'GRAVELMAW THE CHARGER',
     flavor: 'The mountain learned to run.',
-    hpMult: 1.15, speedMult: 1.0, sizeMult: 1.0, contactDamageMult: 1.5,
+    // WAVE-20: speedMult 2.9 -> 3.35 — probe showed the chassis chains to a
+    // 58px/s walk vs the player's 60: the charger could NEVER close. 3.35
+    // lands the stalk walk at ~67px/s so fleeing costs something.
+    // hp 1.15 -> 1.6, contact 1.8 -> 2.2, charge 1.1 -> 1.35s: wave-1 strong
+    // drafts (4-8k dps) were still melting it mid-second-cycle. (2.0 was
+    // indistinguishable from 1.6 inside 40-run cohort noise.)
+    hpMult: 1.6, speedMult: 3.35, sizeMult: 1.0, contactDamageMult: 2.2,
     decide: gravelmawDecide,
     // pattern params (seconds / move-intent multipliers)
-    stalkTime: 1.4, stalkSpeedMult: 0.7,
-    telegraphTime: 0.7,
-    chargeTime: 0.9, chargeSpeedMult: 3.4,
-    recoverTime: 1.1,
+    // WAVE-20: contact 1.0 -> 1.4, telegraph 0.7 -> 0.5, stalk 1.4 -> 1.1 —
+    // the tuning sim had wave-1 pilots face-tanking the full pattern and
+    // walking away; the wall has to actually land its hits.
+    stalkTime: 1.1, stalkSpeedMult: 1.0,
+    telegraphTime: 0.5,
+    chargeTime: 1.35, chargeSpeedMult: 2.5,
+    homeRate: 1.5,       // charge homing, blend/s (WAVE-20 anti-sidestep)
+    recoverTime: 0.8,
   },
 
   // Summoner: slow drift, periodic swarm bursts; below half hp she adds a
@@ -321,6 +410,27 @@ export const BOSSES = {
 export const BOSS_ORDER = ['GRAVELMAW', 'CHOIR_MOTHER', 'PYRAXIS'];
 
 // ===========================================================================
+// WAVE-20 MID-WAVE BOSS — VYRN, THE HERALD. NOT part of the end-of-wave cast
+// (never in BOSS_ORDER / pickBossForWave): it spawns at the MID-point of
+// every wave (main.js spawnMidBoss; ESCALATION.MIDBOSS.AT_FRACTION) and its
+// stat chassis is CONFIG.ESCALATION.MIDBOSS, not the BOSS block. Sk408 spec:
+// rings the player with PILLAR turrets (intent.ring — integrator plants them
+// in a circle around the PLAYER, unlike `summon` which pops at the boss's
+// edge), then relentlessly pursues at above-player speed firing VOLLEY-like
+// rifle bursts (intent.fan with a tight spread at player-projectile speed).
+// ===========================================================================
+export const MIDBOSS = {
+  HERALD: {
+    id: 'HERALD',
+    name: 'VYRN, HERALD OF THE HORDE',
+    flavor: 'It plants the choir, then comes for you.',
+    hpMult: 1.0, sizeMult: 1.0, contactDamageMult: 1.0,
+    sprite: BOSS_SPRITES.HERALD,
+    decide: heraldDecide,
+  },
+};
+
+// ===========================================================================
 // DECIDERS
 // ===========================================================================
 
@@ -329,11 +439,13 @@ function toward(dx, dy) {
   return { mx: dx / len, my: dy / len };
 }
 
-// ---- GRAVELMAW: stalk -> telegraph (flash + windup pause) -> locked charge
-// line -> recover pause. Charge direction locks to the player's position on
-// the first charge frame and holds for the whole charge (enemy.chargeDx/Dy,
-// cleared outside the charge window).
-function gravelmawDecide(enemy, player) {
+// ---- GRAVELMAW: stalk -> telegraph (flash + windup pause) -> homing charge
+// -> recover pause. Charge direction locks to the player's position on the
+// first charge frame (enemy.chargeDx/Dy, cleared outside the charge window)
+// then steers ~HOME_RATE/s toward the player's CURRENT position — a fully
+// locked line was sidestepped by the autopilot every cycle (WAVE-20 probe:
+// 33s fights, zero touches landed).
+function gravelmawDecide(enemy, player, _state, dt = 1 / 60) {
   const B = BOSSES.GRAVELMAW;
   const cycle = B.stalkTime + B.telegraphTime + B.chargeTime + B.recoverTime;
   const phase = enemy.age % cycle;
@@ -354,6 +466,15 @@ function gravelmawDecide(enemy, player) {
       // Lock on the first charge frame (documented enemy mutation).
       enemy.chargeDx = dir.mx;
       enemy.chargeDy = dir.my;
+    } else {
+      // Homing blend (chargeDx/Dy stay normalized-ish; renormalize so the
+      // charge speed doesn't sag from repeated blends).
+      const k = Math.min(1, B.homeRate * dt);
+      let dx = enemy.chargeDx + (dir.mx - enemy.chargeDx) * k;
+      let dy = enemy.chargeDy + (dir.my - enemy.chargeDy) * k;
+      const len = Math.hypot(dx, dy) || 1;
+      enemy.chargeDx = dx / len;
+      enemy.chargeDy = dy / len;
     }
     return {
       mx: enemy.chargeDx * B.chargeSpeedMult, my: enemy.chargeDy * B.chargeSpeedMult,
@@ -443,6 +564,44 @@ function pyraxisDecide(enemy, player) {
   return { mx, my, fire: null, nova, telegraph: false };
 }
 
+// ---- VYRN, THE HERALD (WAVE-20 mid-wave boss): relentless pursuit — full
+// move intent at the player while it has ground to make up (speed comes from
+// the MIDBOSS speed chassis in main.js, tuned above player speed so kiting
+// alone can't escape), easing to a skirmish drift inside holdDist so a catch
+// reads as a DUEL (hit + disengage) instead of a permanent body-hug that
+// melts the health bar through the invuln windows. Two age-phased weapons,
+// both pure/deterministic (spitter convention: they land on the frame the
+// interval phase wraps):
+//   ring  — every RING_INTERVAL: replant the PILLAR circle around the PLAYER
+//   fan   — every BURST_INTERVAL: a tight BURST_SHOTS rifle volley at
+//           BURST_SPEED/BURST_DAMAGE (the player's own volley profile).
+// Mutates NOTHING on the enemy (age-derived only) — purity-whitelist clean.
+function heraldDecide(enemy, player) {
+  const M = C.ESCALATION.MIDBOSS;
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
+  const dist = Math.hypot(dx, dy);
+  const dir = toward(dx, dy);
+  const closeMult = dist < M.HOLD_DIST ? M.CLOSE_SPEED_MULT : 1;
+  const intent = { mx: dir.mx * closeMult, my: dir.my * closeMult, fire: null };
+
+  if (enemy.age % M.RING_INTERVAL < 1 / 60) {
+    intent.ring = { type: 'PILLAR', count: M.PILLARS, radius: M.PILLAR_RADIUS };
+  }
+  if (enemy.age % M.BURST_INTERVAL < 1 / 60) {
+    const base = Math.atan2(dir.my, dir.mx);
+    const step = M.BURST_SPREAD / (M.BURST_SHOTS - 1);
+    intent.fan = [];
+    for (let k = 0; k < M.BURST_SHOTS; k++) {
+      const a = base + (k - (M.BURST_SHOTS - 1) / 2) * step;
+      intent.fan.push({
+        dx: Math.cos(a), dy: Math.sin(a),
+        speed: M.BURST_SPEED, damage: M.BURST_DAMAGE,
+      });
+    }
+  }
+  return intent;
+}
+
 // ===========================================================================
 // WAVE ROTATION
 // ===========================================================================
@@ -470,9 +629,10 @@ export function pickBossForWave(wave) {
 }
 
 // Convenience: typed decision dispatch (mirrors decideEnemyAction). The enemy
-// must carry bossId (or typeId) matching a BOSSES key.
+// must carry bossId (or typeId) matching a BOSSES key — or the MIDBOSS cast
+// (WAVE-20: the HERALD rides the same seam without joining the rotation).
 export function decideBossAction(enemy, player, state, dt) {
-  const boss = BOSSES[enemy.bossId || enemy.typeId];
+  const boss = BOSSES[enemy.bossId || enemy.typeId] || MIDBOSS[enemy.bossId || enemy.typeId];
   if (!boss) return { mx: 0, my: 0, fire: null };
   return boss.decide(enemy, player, state, dt);
 }

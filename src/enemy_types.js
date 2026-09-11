@@ -61,7 +61,9 @@ export const ENEMY_TYPES = {
     LOOK: { body: '#6d4f8f', trim: '#3d2a52', accent: '#c9a6ff', shape: 'wide', sizeMult: 1.8 },
   },
 
-  // Ranged threat: holds ~120px, retreats if crowded, spits slow shots.
+  // Ranged threat: holds ~120px, retreats if crowded, spits steady shots.
+  // WAVE-20: hotter cadence + faster/heavier spit (Sk408: shooters barely
+  // pressured a weapon-build pilot).
   SPITTER: {
     id: 'SPITTER',
     hpMult: 1.0, speedMult: 0.9, xpMult: 2.0, sizeMult: 1.1,
@@ -69,9 +71,11 @@ export const ENEMY_TYPES = {
     holdDist: 120,
     retreatDist: 100,     // back off harder inside this radius
     fireRange: 200,
-    fireInterval: 2.2,    // seconds between spits (age-phase driven)
-    projSpeed: 80,        // slow projectile
-    projDamage: 8,
+    fireInterval: 1.15,   // seconds between spits (age-phase driven) —
+                          // WAVE-20: 1.5 -> 1.15 — kiters must dodge, not
+                          // just outrun the pack
+    projSpeed: 105,       // meaningfully faster than the pilot's strafe
+    projDamage: 10,
     decide: spitterDecide,
     LOOK: { body: '#3f9e4f', trim: '#1f5c2b', accent: '#a6ff9e', shape: 'tall', sizeMult: 1.1 },
   },
@@ -89,10 +93,13 @@ export const ENEMY_TYPES = {
   },
 
   // WARLOCK — dedicated ranged HUNTER: keeps 150px, telegraphs with a 1s
-  // charge pause (stands still, intent.telegraph = true), then fires a SLOW
+  // charge pause (stands still, intent.telegraph = true), then fires a
   // heavy bolt. Punishes builds that ignore ranged threats.
   // Age cycle: moveTime repositioning -> chargeTime frozen telegraph -> fire
   // on the frame the cycle wraps.
+  // WAVE-20: shorter reposition + faster/heavier bolt (Sk408: ranged chip
+  // was ignorable; now the answer is killing the warlock or the shop's
+  // hp/defense upgrades).
   WARLOCK: {
     id: 'WARLOCK',
     hpMult: 1.6, speedMult: 0.8, xpMult: 2.5, sizeMult: 1.2,
@@ -100,10 +107,10 @@ export const ENEMY_TYPES = {
     holdDist: 150,
     retreatDist: 130,
     fireRange: 260,
-    moveTime: 2.2,        // reposition phase of the cycle
+    moveTime: 1.6,        // reposition phase of the cycle
     chargeTime: 1.0,      // telegraph pause before the bolt
-    projSpeed: 55,        // SLOW bolt (dodgeable, but heavy)
-    projDamage: 14,
+    projSpeed: 75,        // heavy bolt — faster than a calm strafe now
+    projDamage: 17,
     decide: warlockDecide,
     LOOK: { body: '#8f3f6d', trim: '#52203d', accent: '#ff9ed8', shape: 'tall', sizeMult: 1.2 },
   },
@@ -136,6 +143,26 @@ export const ENEMY_TYPES = {
     shockMaxHpFrac: 0.25,           // + 25% of colossus maxHp
     decide: chaseDecide,
     LOOK: { body: '#5a5f66', trim: '#2e3136', accent: '#ffd54a', shape: 'wide', sizeMult: 2.6 },
+  },
+
+  // PILLAR — WAVE-20 herald turret: NEVER in the normal spawner mix; the
+  // mid-wave boss (bosses.js HERALD) rings the player with these. Fully
+  // STATIONARY (speedMult 0 -> integrator speed 0; decide also returns
+  // mx/my 0), high HP, and chips the player with a steady slow shot from
+  // wherever it was planted. The spawn site staggers pillar.age so a ring
+  // fires as a rolling barrage instead of one synchronized volley.
+  PILLAR: {
+    id: 'PILLAR',
+    hpMult: 5.0, speedMult: 0, xpMult: 2.0, sizeMult: 1.3,
+    contactDamageMult: 0.6,
+    fireRange: 300,             // covers the whole ring's engagement band
+    fireInterval: 1.8,          // seconds between shots (age-phase driven)
+                              // WAVE-20: 1.4 -> 1.8 — the ring cages, it
+                              // doesn't execute (6/20 sim deaths was too hot)
+    projSpeed: 105,             // fast chip — the ring must be respected
+    projDamage: 5,              // pre-dmgScale chip damage
+    decide: pillarDecide,
+    LOOK: { body: '#7f7461', trim: '#4a4236', accent: '#ff5a3c', shape: 'tall', sizeMult: 1.3 },
   },
 };
 
@@ -186,6 +213,10 @@ export const VARIANTS = {
   COLOSSUS: [
     { body: '#6d5a3f', trim: '#3d3220', accent: '#ffd54a' },   // bronze
     { body: '#3f5a6d', trim: '#20323d', accent: '#9effff' },   // glacier
+  ],
+  PILLAR: [
+    { body: '#6d5f7f', trim: '#3a324a', accent: '#c49eff' },   // runic violet
+    { body: '#7f6d5f', trim: '#4a3a32', accent: '#ffc49e' },   // sandstone
   ],
 };
 
@@ -294,6 +325,23 @@ function tickDecide(enemy, player) {
   }
   const dir = toward(dx, dy);
   return { mx: dir.mx, my: dir.my, fire: null, attach: false, drain: 0 };
+}
+
+// PILLAR turret: planted forever — ZERO move intent at any range; fires a
+// single slow chip shot at the player on every fireInterval wrap while in
+// range (spitter convention: the shot lands on the frame the phase wraps).
+function pillarDecide(enemy, player) {
+  const T = ENEMY_TYPES.PILLAR;
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
+  if (Math.hypot(dx, dy) > T.fireRange) return { mx: 0, my: 0, fire: null };
+  const dir = toward(dx, dy);
+  if (enemy.age % T.fireInterval < 1 / 60) {
+    return {
+      mx: 0, my: 0,
+      fire: { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage },
+    };
+  }
+  return { mx: 0, my: 0, fire: null };
 }
 
 // deathShockwave(enemy) -> AoE data for the integrator's kill path. Damages
