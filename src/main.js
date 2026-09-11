@@ -25,7 +25,8 @@ import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
 import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
-import { pickBossForWave, decideBossAction } from './bosses.js';
+import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
+import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags } from './tour.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
 // volleyId; the mercy rule + 3-hit damage + hp floor all live there.
@@ -497,6 +498,25 @@ function openIntermission() {
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
       });
   }
+  // WAVE-22 (rev-4 item 3): intermission lands at the end of wave 1 with
+  // zero onboarding — coach it ONCE (the flag makes re-renders after a chest
+  // buy / stakes push silent; 'intermission' mode already freezes the sim).
+  if (!tourFlag(TOUR_KEYS.intermission)) {
+    startCoach([
+      { id: 'inter-continue',
+        text: 'Wave cleared — CONTINUE (C or Enter) heads into the next.',
+        target: () => cardByTitle('CONTINUE') },
+      { id: 'inter-chest',
+        text: 'Paid chests gamble gold for items — real odds on the cards: 40 / 25 / 10% nothing by tier.',
+        target: () => cardByTitle('BRONZE CHEST') },
+      { id: 'inter-blessing',
+        text: 'BLESSINGS are free run powers — take one each wave, or leave it.',
+        target: () => [...ovCards.children].find(c => (c.innerHTML || '').includes('BLESSING')) || null },
+      { id: 'inter-stakes',
+        text: 'RAISE THE STAKES: +1 heat — harder, faster foes — buys a permanent run gold multiplier.',
+        target: () => cardByTitle('RAISE THE STAKES') },
+    ], TOUR_KEYS.intermission);
+  }
 }
 
 function takeChoice(offer) {
@@ -539,6 +559,11 @@ function continueRun() {
   const p = state.player;
   state.wave.num++;
   state.wave.endsAt = state.time + C.ESCALATION.WAVE_LENGTH;
+  // WAVE-20: a fresh herald appointment for the new wave (the portal sweep
+  // already cleared any survivor of the last one).
+  state.wave.midAt = state.time + C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION);
+  state.wave.midBossDone = false;
+  state.wave.midBosses = [];
   state.wave.startKills = p.kills;
   state.wave.bosses = [];
   state.wave.boss = null;
@@ -605,6 +630,52 @@ function spawnBoss() {
       : cast[0].flavor.toUpperCase(),
     ttl: 2.5,
   };
+  audio.playPortalCue('BOSS_YELL');
+}
+
+// ---------- WAVE-20 MID-WAVE BOSS: VYRN, THE HERALD --------------------------
+// Spawns once per wave at the AT_FRACTION point (main.js wave-timer seam).
+// Kept STRICTLY out of state.wave.bosses: that array owns the end-cast
+// semantics (HUD 'BOSS!' line, wave-timer pause, pendingClear/portal payout,
+// the portal cine) and the smoke probes — the herald must not shift any of
+// them. Its own payout (chest + weapon XP, NO portal) rides the midBoss stamp
+// in the death loop. Chassis: a CHASER re-stamped like spawnBoss does, with
+// stats from ESCALATION.MIDBOSS (NOT the BOSS block) — contact 1 base and a
+// speed tuned ABOVE the player's so it runs the pilot down.
+function spawnMidBoss() {
+  const M = C.ESCALATION.MIDBOSS;
+  const w = Math.floor(state.time / 30);
+  const desc = MIDBOSS.HERALD;
+  const a = Math.random() * Math.PI * 2;
+  const d = C.ENEMY.SPAWN_DIST * 0.7;
+  const boss = makeTypedEnemy('CHASER',
+    state.player.x + Math.cos(a) * d,
+    state.player.y + Math.sin(a) * d,
+    state.time);
+  applyEscalation(boss, state.time);
+  const hp = C.ENEMY.BASE_HP * hpScale(w) *
+    (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
+    heatMultipliers(heatOf(state)).hp;
+  boss.hp = hp;
+  boss.maxHp = hp;
+  boss.w = Math.round(boss.w * M.SIZE_MULT * desc.sizeMult);
+  boss.h = Math.round(boss.h * M.SIZE_MULT * desc.sizeMult);
+  // Speed stays the makeTypedEnemy linear curve (BASE_SPEED * (1+0.05w)) —
+  // SPEED_MULT pushes it above the player's 60px/s at every wave.
+  boss.speed *= M.SPEED_MULT;
+  boss.contactDamageMult = M.CONTACT_MULT;
+  boss.xp = C.ENEMY.BASE_XP * xpScale(w) * M.XP_KILLS;
+  boss.boss = true;               // routes through decideBossAction
+  boss.bossId = desc.id;
+  boss.midBoss = true;            // payout + census distinguisher
+  boss.name = desc.name;
+  boss.flavor = desc.flavor;
+  boss.bossSprite = desc.sprite || null;
+  boss.age = 0;                   // ring/burst phases key off age
+  state.enemies.push(boss);
+  state.wave.midBosses.push(boss);
+  toast(desc.name + ' APPROACHES!');
+  state.bossBanner = { title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(), ttl: 2.5 };
   audio.playPortalCue('BOSS_YELL');
 }
 
@@ -846,6 +917,13 @@ function update(dt) {
   // CONTINUE (portal walk-in), not at boss death.
   state.wave.boss = (state.wave.bosses || []).find(b => b.hp > 0) || null;
   if (!state.wave.boss && !state.portal && state.time >= state.wave.endsAt) spawnBoss();
+  // WAVE-20: the HERALD fires once per wave at the mid-point. It does NOT
+  // pause the end-boss timer above (kiting the herald until the wave boss
+  // arrives is legitimate — and lethal) and never re-fires after death.
+  if (!state.wave.midBossDone && !state.portal && state.time >= state.wave.midAt) {
+    state.wave.midBossDone = true;
+    spawnMidBoss();
+  }
   updateResources(p, dt);
   // Meta Mana Spring bonus (applyMetaBonuses adds stats.manaRegen) + the
   // MOONLIGHT weather bonus (manaRegenMult on the base regen).
@@ -931,7 +1009,10 @@ function update(dt) {
   // charging / recovering — are wired below; the old generic novaCd/summonCd
   // timers are gone (Pyraxis and the Choir Mother own those behaviors now).
   const dmgMult = dmgScale(Math.floor(state.time / 30)) * heatMultipliers(heatOf(state)).damage;
-  let touchDmg = 0;
+  // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
+  // every damage path stamps the source right before die() can fire.
+  const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
+  let touchDmg = 0, touchKiller = null;
   for (const e of state.enemies) {
     e.age = (e.age || 0) + dt;
     if (e.flash > 0) e.flash -= dt;
@@ -959,7 +1040,7 @@ function update(dt) {
       e.y += (p.y - e.y) * Math.min(1, dt * 10);
       p.hp -= act.drain * dt;        // DoT: no invuln window, just bleed
       resetRampage();                // WAVE-11: ANY hp loss ends the streak
-      if (p.hp <= 0) { die(); return; }
+      if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
     }
     if (act.fire) {
       state.enemyShots.push({
@@ -967,10 +1048,11 @@ function update(dt) {
         vx: act.fire.dx * act.fire.speed, vy: act.fire.dy * act.fire.speed,
         damage: act.fire.damage * dmgMult, age: 0,
         kind: e.typeId === 'WARLOCK' ? 'bolt' : 'spit',   // render variant
+        src: shotSrc(e),   // WAVE-20 death-cause tracking
       });
     }
-    // CHOIR MOTHER hymn: a fan of fire-intents around the aim direction —
-    // wire exactly like `fire`, one projectile each.
+    // CHOIR MOTHER hymn / HERALD rifle burst: a fan of fire-intents around
+    // the aim direction — wire exactly like `fire`, one projectile each.
     if (act.fan) {
       for (const f of act.fan) {
         state.enemyShots.push({
@@ -978,6 +1060,7 @@ function update(dt) {
           vx: f.dx * f.speed, vy: f.dy * f.speed,
           damage: f.damage * dmgMult, age: 0,
           kind: 'bolt',
+          src: shotSrc(e),
         });
       }
     }
@@ -991,6 +1074,7 @@ function update(dt) {
           vy: Math.sin(ang) * act.nova.speed,
           damage: act.nova.damage * dmgMult, age: 0,
           kind: 'nova',
+          src: shotSrc(e),
         });
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 30, age: 0, ttl: 0.5 });
@@ -1009,16 +1093,41 @@ function update(dt) {
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
     }
+    // WAVE-20 HERALD ring: unlike `summon` (boss's edge), the PILLARS plant in
+    // a circle around the PLAYER — where the pilot stands when the ring lands
+    // is where the cage forms. Staggered ages turn the ring into a rolling
+    // barrage instead of one synchronized volley. Clamped inside the walls.
+    if (act.ring) {
+      for (let s = 0; s < act.ring.count; s++) {
+        const ang = (s / act.ring.count) * Math.PI * 2;
+        const m = makeTypedEnemy(act.ring.type,
+          Math.max(-590, Math.min(590, p.x + Math.cos(ang) * act.ring.radius)),
+          Math.max(-590, Math.min(590, p.y + Math.sin(ang) * act.ring.radius)),
+          state.time, { variant: rollVariant(act.ring.type) });
+        m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
+        applyEscalation(m, state.time);
+        state.enemies.push(m);
+      }
+      state.effects.push({ kind: 'boss_nova', x: p.x, y: p.y, radius: act.ring.radius, age: 0, ttl: 0.5 });
+    }
     // PYRAXIS blink: hop by (dx,dy)*dist, clamped inside the arena walls.
     if (act.teleport) {
       e.x = Math.max(-600, Math.min(600, e.x + act.teleport.dx * act.teleport.dist));
       e.y = Math.max(-600, Math.min(600, e.y + act.teleport.dy * act.teleport.dist));
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 14, age: 0, ttl: 0.25 });
     }
-    if (Math.hypot(p.x - e.x, p.y - e.y) < 12) {
+    // Touch radius scales with body size (WAVE-20: probe showed GRAVELMAW's
+    // ~29px body shoving the pilot around edge-first while dealing ZERO
+    // damage — the old flat 12px only counted center-to-center overlap).
+    // Normal 10px foes keep the historic 12px exactly.
+    const touchR = Math.max(12, 6 + (e.w || 10) / 2);
+    if (Math.hypot(p.x - e.x, p.y - e.y) < touchR) {
       // GRAVELMAW mid-charge hits harder (the contact-damage window).
+      // WAVE-20: base 12 -> 14 — the horde's touch must matter even before
+      // the escalation curve (Sk408: weapon-only builds ignored the pack).
       const chargeMult = e.charging ? 1.5 : 1;
-      touchDmg = Math.max(touchDmg, 12 * dmgMult * (e.contactDamageMult || 1) * chargeMult);
+      const hit = 14 * dmgMult * (e.contactDamageMult || 1) * chargeMult;
+      if (hit > touchDmg) { touchDmg = hit; touchKiller = e; }
     }
   }
   // Glass Cannon curse (choices.js damageTakenMult) scales every hit taken.
@@ -1041,7 +1150,7 @@ function update(dt) {
           e.hp = Math.min(e.maxHp, e.hp + touchDmg * e.lifesteal);
         }
       }
-      if (p.hp <= 0) { die(); return; }
+      if (p.hp <= 0) { lastDamageSource = { ...shotSrc(touchKiller || {}), cause: 'contact' }; die(); return; }
     }
     // Spiked Hide: reflect flat thorns damage into every touching enemy.
     const th = p.stats.thorns || 0;
@@ -1069,7 +1178,7 @@ function update(dt) {
         resetRampage();   // WAVE-11: projectile hits end the streak too
       }
       s.age = 99;
-      if (p.hp <= 0) { die(); return; }
+      if (p.hp <= 0) { lastDamageSource = { ...(s.src || {}), cause: 'shot' }; die(); return; }
     }
   }
   state.enemyShots = state.enemyShots.filter(s => s.age < 4);
@@ -1103,7 +1212,16 @@ function update(dt) {
       const drop = Math.random() < dropChance
         ? { x: e.x, y: e.y, kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
-      if (e.boss) {
+      if (e.boss && e.midBoss) {
+        // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
+        // pendingClear — the wave's progression still belongs to the end-cast.
+        for (let c = 0; c < C.ESCALATION.MIDBOSS.CHESTS; c++) {
+          maybeSpawnChest(state,
+            { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
+        }
+        feedWeaponXp(15);
+        toast('HERALD DOWN');
+      } else if (e.boss) {
         // Boss payout: guaranteed chest pair + an up-tier item drop. The
         // wave does NOT advance here — the PORTAL opens (see below) and the
         // intermission CONTINUE starts the next wave (wave-6 progression).
@@ -1442,6 +1560,14 @@ function openDraft() {
     ovCards.appendChild(el);
   });
   overlay.style.display = 'flex';
+  // WAVE-21: the draft IS the game — coachmark it the first time it appears.
+  // ('draft' mode already freezes the sim; the coach rides on top of the
+  // real cards and dismisses on the same click-to-advance contract.)
+  if (!tourFlag(TOUR_KEYS.draft)) {
+    startCoach({ id: 'draft',
+      text: 'THE DRAFT — your build\'s only real decisions. Tap a card or press 1 / 2 / 3.',
+      target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
+  }
 }
 
 // WAVE-11 LEVEL-UP SLOWDOWN (Sk408): the SCALING stat cards now DIMINISH per
@@ -1591,11 +1717,33 @@ function endRun() {
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
   overlay.style.display = 'flex';
+  maybeDeathCoach();
 }
+
+// WAVE-22 (rev-4 item 4): the first death is the moment the player most
+// needs to know the loop continues — one coach, once ever, on the end
+// screen ('dead' mode already freezes everything; the Tour engine is
+// event-driven so it runs without the frame loop).
+function maybeDeathCoach() {
+  if (tourFlag(TOUR_KEYS.death)) return;
+  startCoach({ id: 'death',
+    text: 'Death banks its gold — RETRY (R) straight back in, TITLE (T) to spend it. Every death funds the next run.',
+    target: () => cardByTitle('RETRY') }, TOUR_KEYS.death);
+}
+
+// WAVE-20 death-cause tracking: the damage paths stamp the source here right
+// before die() can fire; die() freezes it (plus wave/time) onto state.deathBy
+// for the run-history HUD-adjacent consumers and tools/boss_sim.mjs.
+let lastDamageSource = null;
 
 function die(finale) {
   const p = state.player;
   state.mode = 'dead';
+  state.deathBy = {
+    ...(lastDamageSource || { cause: 'unknown' }),
+    wave: state.wave.num,
+    time: state.time,
+  };
   audio.stopMusic();
   audio.playSfx('death');
   const { gold, firstClear } = settleRunGold();
@@ -1610,6 +1758,7 @@ function die(finale) {
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
   overlay.style.display = 'flex';
+  maybeDeathCoach();
 }
 
 // ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
@@ -1695,9 +1844,21 @@ function showHowToPlay() {
     'cog (top-right) — settings: zoom, END RUN');
   menuCard('KEYBOARD',
     'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
-    'Q — frost nova &middot; E — overcharge<br>' +
+    'TAB — focus &middot; G — stance<br>' +
+    'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
     'H / N — potions &middot; S / I — field report<br>' +
+    '1 – 6 — pick cards &amp; stat tabs &middot; C — continue &middot; R / T — retry / title<br>' +
     '+ / - — zoom &middot; ESC — close');
+  // WAVE-22: the field itself was undocumented — the exhaustive reference
+  // for everything that isn't a button or a key lives here (rev-4: controls
+  // the tour skips must be documented HERE or dropped).
+  menuCard('THE FIELD',
+    'chests — walk in: item, upgrades… or nothing + a mini-horde<br>' +
+    'portal — walk through to bank the wave<br>' +
+    'arches — cross the gate for a timed buff<br>' +
+    'shrines — drift close, gold buys a blessing<br>' +
+    'intermission — paid chests (40/25/10% nothing), blessings,<br>' +
+    'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons');
   menuCard('GOT IT', 'into the horde (shows once)', () => {
     completeOnboarding();
     showTitle();
@@ -1725,6 +1886,196 @@ function openMenu(mode = 'menu') {
   ovCards.style.justifyContent = 'center';
 }
 
+// ---------- WAVE-21 FIRST-RUN TOUR (docs/FIRST_RUN_TOUR_2026-09-11.md) ------
+// Staged spotlight walkthrough. Stage 1 = title cards, first load only; stage
+// 2 = in-run coachmarks that fire the first time each element matters, with
+// the sim PAUSED under them (frame() gates update on coachActive()). The doc's
+// "mode select"/"division selector" have no on-screen elements — the tour's
+// never-break rule skips them; EXIT-RUN is taught at the in-run cog (the only
+// place it exists).
+const cardByTitle = (t) => [...ovCards.children].find(c => (c.innerHTML || '').includes(`>${t}<`));
+
+// Canvas-region pseudo-target: a rect in the 480x300 native space projected
+// through the canvas's on-screen rect, so HUD-region spotlights land at any
+// CSS scale (phone letterbox included).
+function canvasRegion(x, y, w, h) {
+  return {
+    getBoundingClientRect() {
+      const r = canvas.getBoundingClientRect();
+      const sx = r.width / C.VIEW_W, sy = r.height / C.VIEW_H;
+      return {
+        left: r.left + x * sx, top: r.top + y * sy,
+        right: r.left + (x + w) * sx, bottom: r.top + (y + h) * sy,
+        width: w * sx, height: h * sy,
+      };
+    },
+  };
+}
+
+let menuTour = null;
+let coach = null;
+function coachActive() { return !!(coach && coach.active()); }
+
+function maybeStartMenuTour() {
+  if (tourStage1Done() || menuTour || state.mode !== 'menu') return;
+  const finish = () => { setTourFlag(TOUR_KEYS.stage1, true); menuTour = null; };
+  menuTour = new Tour({
+    // Player-flow order: what you press first reads first.
+    steps: [
+      { id: 'PLAY', text: 'PLAY starts a run — pilot the horde as long as you can.',
+        target: () => cardByTitle('PLAY') },
+      { id: 'SHOP', text: 'SHOP: every run (even a death) pays gold for PERMANENT upgrades.',
+        target: () => cardByTitle('SHOP') },
+      { id: 'CHARACTERS', text: 'CHARACTERS unlock pilots with different starting kits.',
+        target: () => cardByTitle('CHARACTERS') },
+      { id: 'SETTINGS', text: 'SETTINGS — audio, HUD, zoom and the profile reset.',
+        target: () => cardByTitle('SETTINGS') },
+      { id: 'HOW TO PLAY', text: 'HOW TO PLAY — the full reference, any time.',
+        target: () => cardByTitle('HOW TO PLAY') },
+    ],
+    onDone: finish, onSkip: finish,
+  });
+  menuTour.start();
+}
+
+// Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
+// dismissed. `steps` is a step object or an array (multi-step = spotlight
+// BOTH targets of a pair, e.g. the two skill buttons — rev-4 partial fix).
+function startCoach(steps, key) {
+  if (coachActive()) return;
+  setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
+  const end = () => { coach = null; };
+  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end });
+  coach.start();
+}
+
+// The joystick mounts only while MANUAL is bound — when it's hidden, point
+// at the screen region where it appears (bottom-center) so the movement
+// coachmark still lands.
+function joyTarget() {
+  const j = document.getElementById('joy');
+  if (j && j.style.display !== 'none') return j;
+  return canvasRegion(C.VIEW_W / 2 - 60, C.VIEW_H - 124, 120, 120);
+}
+
+// STATS button equivalent (joyTarget precedent): the touch layer is hidden
+// on keyboard-only devices — fall back to the canvas region where the
+// loadout sits, since the caption names the S / I keys either way.
+function statsTarget() {
+  const b = document.getElementById('tc-stats');
+  if (b && b.getBoundingClientRect().width > 0) return b;
+  return canvasRegion(4, C.VIEW_H - 46, 130, 40);
+}
+
+// Project a world position through the SAME transform render.js uses (cam
+// offset, then zoom about the view center) so an interactable coachmark can
+// spotlight the real chest / portal / arch / shrine where it actually sits.
+function worldRegion(wx, wy, r = 16) {
+  const Z = Math.max(1, Math.round(state.zoom || 1));
+  const sx = C.VIEW_W / 2 + (wx - state.cam.x - C.VIEW_W / 2) * Z;
+  const sy = C.VIEW_H / 2 + (wy - state.cam.y - C.VIEW_H / 2) * Z;
+  return canvasRegion(sx - r, sy - r, r * 2, r * 2);
+}
+
+// Called every frame in 'playing' (frame()); fires each coachmark the first
+// time its moment arrives. Coverage = CONTROLS_INVENTORY.md's coverage
+// column (the rev-4 acceptance bar): the doctrine levers FOCUS + STANCE
+// (Sk408's named complaint), dual-target skills/potions pairs, STATS, and
+// the world interactables as each first appears. The DRAFT coachmark fires
+// from openDraft, INTERMISSION from openIntermission, DEATH from die()/
+// endRun() — those screens already freeze the sim by mode.
+function updateTourCoach() {
+  if (coachActive()) return;
+  // World interactables next — event-driven beats schedule: each fires the
+  // moment it first exists on the field (rev-4 item 5). Arches exist from
+  // wave start, so a small time gate keeps the gauges intro first.
+  const fieldReady = state.time > 2;
+  if (fieldReady && !tourFlag(TOUR_KEYS.chest) && state.chests.length) {
+    const ch = state.chests[0];
+    startCoach({ id: 'chest',
+      text: 'A CHEST — walk into it: an item, upgrades… or nothing and a mini-horde. It drifts to you.',
+      target: () => worldRegion(ch.x, ch.y, 14) }, TOUR_KEYS.chest);
+  } else if (fieldReady && !tourFlag(TOUR_KEYS.portal) && state.portal) {
+    const po = state.portal;
+    startCoach({ id: 'portal',
+      text: 'The PORTAL — walk through to bank the wave. It chases you; take it when ready.',
+      target: () => worldRegion(po.x, po.y, 18) }, TOUR_KEYS.portal);
+  } else if (fieldReady && !tourFlag(TOUR_KEYS.arch) && state.arches.length) {
+    const a = state.arches[0];
+    startCoach({ id: 'arch',
+      text: 'An ARCH — fly through the gate for a timed buff.',
+      target: () => worldRegion(a.x, a.y, 18) }, TOUR_KEYS.arch);
+  } else if (fieldReady && !tourFlag(TOUR_KEYS.shrine) && state.shrine && !state.shrine.used) {
+    const sh = state.shrine;
+    startCoach({ id: 'shrine',
+      text: 'A SHRINE — drift close and gold buys a random blessing.',
+      target: () => worldRegion(sh.x, sh.y, 16) }, TOUR_KEYS.shrine);
+  } else if (!tourFlag(TOUR_KEYS.hud) && state.time > 1) {
+    startCoach({ id: 'hud',
+      text: 'Health, mana and XP, top-left — level-ups draft your build.',
+      target: () => canvasRegion(0, 4, 150, 44) }, TOUR_KEYS.hud);
+  } else if (!tourFlag(TOUR_KEYS.pilot) && state.time > 4) {
+    startCoach({ id: 'pilot',
+      text: 'PILOT: AUTO flies for you — tap here (or M) to take MANUAL control anytime.',
+      target: () => document.getElementById('tc-pilot') }, TOUR_KEYS.pilot);
+  } else if (!tourFlag(TOUR_KEYS.focus) && state.time > 7) {
+    // Rev-4 headline gap: without this, AUTO aiming reads as "whatever it
+    // feels like" — it's steerable.
+    startCoach({ id: 'focus',
+      text: 'FOCUS steers your volleys: NEAREST, TOUGHEST, SWARM or RANGED — cycle with TAB.',
+      target: () => document.getElementById('tc-focus') }, TOUR_KEYS.focus);
+  } else if (!tourFlag(TOUR_KEYS.stance) && state.time > 10) {
+    // Sk408 named this one. A choice about the run you want, not a setting.
+    startCoach({ id: 'stance',
+      text: 'STANCE is how bold you fly: SAFE kites far, GREEDY hugs the loot. G cycles — pick the run you want.',
+      target: () => document.getElementById('tc-stance') }, TOUR_KEYS.stance);
+  } else if (!tourFlag(TOUR_KEYS.move) && state.time > 13) {
+    startCoach({ id: 'move',
+      text: 'MANUAL movement: drag the joystick — or WASD / arrow keys.',
+      target: () => joyTarget() }, TOUR_KEYS.move);
+  } else if (!tourFlag(TOUR_KEYS.skills) && state.time > 16) {
+    // Rev-4 partial fix: BOTH buttons get their own spotlight; the W-in-AUTO
+    // vs E-always subtlety is named where it belongs.
+    startCoach([
+      { id: 'skills-q',
+        text: 'FROST nova (Q) freezes the swarm around you.',
+        target: () => document.getElementById('tc-q') },
+      { id: 'skills-w',
+        text: 'OVERCHARGE (E — or W in AUTO) speeds your fire.',
+        target: () => document.getElementById('tc-w') },
+    ], TOUR_KEYS.skills);
+  } else if (!tourFlag(TOUR_KEYS.potions) && state.time > 19) {
+    // Rev-4 partial fix: both potions, and the H / N keys — not touch-only
+    // "tap to drink" framing on a keyboard game.
+    startCoach([
+      { id: 'potions-h',
+        text: 'HP potion heals 35 — carry 3, refilled by chests & kills. Button, or H.',
+        target: () => document.getElementById('tc-h') },
+      { id: 'potions-n',
+        text: 'MP potion restores 40 for skills — button, or N.',
+        target: () => document.getElementById('tc-n') },
+    ], TOUR_KEYS.potions);
+  } else if (!tourFlag(TOUR_KEYS.stats) && state.time > 22) {
+    startCoach({ id: 'stats',
+      text: 'STATS (S or I) opens the FIELD REPORT — read your build, see why you died.',
+      target: () => statsTarget() }, TOUR_KEYS.stats);
+  } else if (!tourFlag(TOUR_KEYS.cog) && state.time > 25) {
+    startCoach({ id: 'cog',
+      text: 'The cog opens in-run settings — END RUN lives there.',
+      target: () => document.getElementById('tc-cog') }, TOUR_KEYS.cog);
+  } else if (!tourFlag(TOUR_KEYS.edge) &&
+             (Math.abs(state.player.x) > 480 || Math.abs(state.player.y) > 480)) {
+    const p = state.player;
+    const strip = Math.abs(p.x) >= Math.abs(p.y)
+      ? (p.x > 0 ? canvasRegion(C.VIEW_W - 16, 0, 16, C.VIEW_H) : canvasRegion(0, 0, 16, C.VIEW_H))
+      : (p.y > 0 ? canvasRegion(0, C.VIEW_H - 16, C.VIEW_W, 16) : canvasRegion(0, 0, C.VIEW_W, 16));
+    startCoach({ id: 'edge',
+      text: 'The arena has walls — the horde funnels along them.',
+      target: () => strip }, TOUR_KEYS.edge);
+  }
+}
+
+
 function showTitle() {
   openMenu();
   ovTitle.textContent = 'HORDES';
@@ -1738,6 +2089,7 @@ function showTitle() {
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
 }
 
 function showShop() {
@@ -1831,6 +2183,16 @@ function showSettings(disarm = true, inRun = false) {
     cycleZoom(1);
     showSettings(true, inRun);
   });
+  // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
+  menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
+    clearTourFlags();
+    if (inRun) {
+      closeSettings();
+      toast('TOUR REPLAYS NOW');   // hud/cog/edge flags cleared -> re-arm live
+    } else {
+      showTitle();                 // stage-1 flag cleared -> menu tour restarts
+    }
+  });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
     resetArmed ? 'wipes gold, upgrades & unlocks' : 'tap twice to confirm',
     () => {
@@ -1856,6 +2218,15 @@ function showSettings(disarm = true, inRun = false) {
   // instead of bailing to the title (which would abandon it).
   if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
   else menuCard('BACK', 'to title [ESC]', () => showTitle());
+  // WAVE-22 (rev-4): END RUN was PARTIAL (named by the cog coachmark, card
+  // never shown) — first in-run settings visit spotlights the real card
+  // ('settings' mode already freezes the sim; re-renders stay silent via
+  // the flag).
+  if (inRun && !tourFlag(TOUR_KEYS.settings)) {
+    startCoach({ id: 'settings',
+      text: 'END RUN banks your gold and ends the run early — two taps to confirm.',
+      target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
+  }
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
@@ -1933,10 +2304,12 @@ function startRun() {
   state.effects = [];
   state.toasts = [];
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
+  state.deathBy = null;      // WAVE-20: no death recorded yet
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
-  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false };
+  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false,
+    midAt: C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION), midBossDone: false, midBosses: [] };
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
   // meta/profile — a null-then-init forces the reset, initHeat is idempotent
   // but does not clear a stale ledger).
@@ -2420,17 +2793,18 @@ function drawHud() {
 }
 
 // Per-type enemy census (HUD probe; smoke test asserts on it).
-// W=Warlock T=Tick X=Colossus E=elite count.
+// W=Warlock T=Tick X=Colossus O=Pillar E=elite count.
 function foeLine() {
-  const n = { C: 0, S: 0, B: 0, P: 0, D: 0, W: 0, T: 0, X: 0, E: 0, MAW: 0 };
+  const n = { C: 0, S: 0, B: 0, P: 0, D: 0, W: 0, T: 0, X: 0, E: 0, O: 0, MAW: 0 };
   const k = { CHASER: 'C', SWARMER: 'S', BRUTE: 'B', SPITTER: 'P', DASHER: 'D',
-              WARLOCK: 'W', TICK: 'T', COLOSSUS: 'X' };
+              WARLOCK: 'W', TICK: 'T', COLOSSUS: 'X', PILLAR: 'O' };
   for (const e of state.enemies) {
     if (e.finalBoss) { n.MAW++; continue; }   // WAVE-10: the maw is its own line
     n[k[e.typeId] || 'C']++;
     if (e.elite) n.E++;
   }
   return `C:${n.C} S:${n.S} B:${n.B} P:${n.P} D:${n.D} W:${n.W} T:${n.T} X:${n.X} E:${n.E}` +
+    (n.O ? ` O:${n.O}` : '') +   // WAVE-20: the herald's pillars (only when present)
     (n.MAW ? ` MAW:${n.MAW}` : '');
 }
 
@@ -2723,8 +3097,12 @@ function frame(now) {
   }
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (state.mode === 'playing') update(dt);
-  else if (state.mode === 'finale') updateFinale(dt);
+  if (state.mode === 'playing') {
+    // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
+    // a dimming overlay is confusing — the game plays itself otherwise).
+    updateTourCoach();
+    if (!coachActive()) update(dt);
+  } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawHud();
   updateTouchHud();

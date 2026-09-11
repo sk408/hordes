@@ -430,7 +430,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     let hits = Math.min(SIM_TUNING.HITS_CAP,
       SIM_TUNING.PRESSURE_K * surround * surround * closing);
     if (bossHp > 0) hits = Math.min(SIM_TUNING.HITS_CAP, hits + 0.3);
-    const hurt = hits * 12 * dmgScale(w) * mix.contact * DT;
+    const hurt = hits * 14 * dmgScale(w) * mix.contact * DT;   // live touchDmg base (WAVE-20: 12 -> 14)
     if (hurt > 0) {
       if (player.hp < 0.5 * player.stats.maxHp && healBank >= 1) {
         player.hp = Math.min(player.stats.maxHp, player.hp + C.POTIONS.HP_HEAL);

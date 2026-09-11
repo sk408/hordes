@@ -2,7 +2,7 @@
 // Run: node test/test_bosses.mjs
 import assert from 'node:assert/strict';
 import {
-  BOSSES, BOSS_ORDER, BOSS_SPRITES, pickBossForWave, decideBossAction,
+  BOSSES, BOSS_ORDER, BOSS_SPRITES, pickBossForWave, decideBossAction, MIDBOSS,
 } from '../src/bosses.js';
 import { CONFIG as C } from '../src/config.js';
 
@@ -105,18 +105,22 @@ check('gravelmaw telegraph: frozen + telegraph=true during windup', () => {
   assert.equal(e.chargeDx, null, 'no charge lock yet');
 });
 
-check('gravelmaw charges fast along a locked line, ignoring player movement', () => {
+check('gravelmaw charges fast and steers toward the player (homing, WAVE-20)', () => {
   const B = BOSSES.GRAVELMAW;
   const teleEnd = B.stalkTime + B.telegraphTime;
   const e = bossEnemy('GRAVELMAW', 100, 0, teleEnd + 0.05);
   const a1 = B.decide(e, player, null, DT);       // locks toward player at (0,0)
   assert.equal(a1.charging, true);
-  assert.ok(Math.abs(a1.mx + B.chargeSpeedMult) < 1e-9, `charge -x at 3.4x, got ${a1.mx}`);
+  assert.ok(Math.abs(a1.mx + B.chargeSpeedMult) < 1e-9, `charge -x at ${B.chargeSpeedMult}x, got ${a1.mx}`);
   assert.ok(Math.abs(Math.hypot(a1.mx, a1.my) - B.chargeSpeedMult) < 1e-9, 'unit dir * mult');
-  // player dodges sideways: the charge line must NOT bend
+  // player dodges sideways: the charge BENDS toward the new position over
+  // successive ticks (a fully locked line was sidestepped every cycle —
+  // 33s probe fights with zero touches landed) but only gradually.
+  for (let i = 0; i < 60; i++) B.decide(e, { x: 100, y: 95 }, null, DT);
   const a2 = B.decide(e, { x: 100, y: 95 }, null, DT);
-  assert.ok(Math.abs(a2.mx - a1.mx) < 1e-9 && Math.abs(a2.my - a1.my) < 1e-9,
-    'charge direction stays locked');
+  assert.ok(a2.my > a1.my, 'charge steers toward the dodged player (+y bend)');
+  assert.ok(Math.abs(Math.hypot(a2.mx, a2.my) - B.chargeSpeedMult) < 1e-9,
+    'homing blend stays renormalized to the charge speed');
 });
 
 check('gravelmaw recovers frozen after the charge, lock cleared, cycle repeats', () => {
@@ -238,6 +242,90 @@ check('pyraxis teleports a hop away when crowded, then respects the cooldown', (
   // never blinks when the player keeps distance
   const calm = B.decide(bossEnemy('PYRAXIS', 250, 0, 5.0), player, null, DT);
   assert.equal(calm.teleport, undefined);
+});
+
+// --- MIDBOSS cast: HERALD (mid-wave, outside the end-boss rotation) ------------
+const heraldEnemy = (x, y, age = 0) => ({
+  bossId: 'HERALD', typeId: 'CHASER', x, y, age, hp: 100, maxHp: 100,
+});
+
+check('herald ships registry shape + sprite and is outside the end-boss rotation', () => {
+  const h = MIDBOSS.HERALD;
+  assert.equal(h.id, 'HERALD');
+  assert.ok(h.name.length > 3 && h.flavor.length > 3);
+  assert.ok(h.hpMult > 0 && h.sizeMult > 0 && h.contactDamageMult > 0);
+  assert.equal(typeof h.decide, 'function');
+  assert.ok(h.sprite, 'sprite carried');
+  assert.ok(!BOSS_ORDER.includes('HERALD'), 'mid-boss never rotates into wave-end casts');
+  assert.equal(pickBossForWave(3).length, 2, 'event waves stay end-cast-only');
+});
+
+check('herald plants the PILLAR ring on the interval wrap around the PLAYER', () => {
+  const M = C.ESCALATION.MIDBOSS;
+  const a = MIDBOSS.HERALD.decide(heraldEnemy(100, 0, M.RING_INTERVAL), player, null, DT);
+  assert.ok(a.ring, 'ring intent at wrap');
+  assert.equal(a.ring.type, 'PILLAR');
+  assert.equal(a.ring.count, M.PILLARS);
+  assert.equal(a.ring.radius, M.PILLAR_RADIUS);
+  // mid-interval: no ring
+  const mid = MIDBOSS.HERALD.decide(heraldEnemy(100, 0, M.RING_INTERVAL + 0.5), player, null, DT);
+  assert.equal(mid.ring, undefined);
+});
+
+check('herald fires a tight rifle burst on the burst wrap, middle shot aimed', () => {
+  const M = C.ESCALATION.MIDBOSS;
+  const a = MIDBOSS.HERALD.decide(heraldEnemy(100, 0, M.BURST_INTERVAL), player, null, DT);
+  assert.ok(Array.isArray(a.fan) && a.fan.length === M.BURST_SHOTS, 'fan of bursts');
+  const mid = a.fan[(M.BURST_SHOTS - 1) / 2];
+  assert.ok(mid.dx < -0.9, `middle shot aimed at player, dx ${mid.dx}`);
+  assert.equal(mid.speed, M.BURST_SPEED);
+  assert.equal(mid.damage, M.BURST_DAMAGE);
+  for (const s of a.fan) assert.ok(Math.abs(Math.hypot(s.dx, s.dy) - 1) < 1e-9, 'dirs normalized');
+  // mid-interval: silent
+  const quiet = MIDBOSS.HERALD.decide(heraldEnemy(100, 0, M.BURST_INTERVAL + 0.5), player, null, DT);
+  assert.equal(quiet.fan, undefined);
+});
+
+check('herald pursues at full speed, easing to a duel drift inside HOLD_DIST', () => {
+  const M = C.ESCALATION.MIDBOSS;
+  const far = MIDBOSS.HERALD.decide(heraldEnemy(100, 0, 0.5), player, null, DT);
+  assert.ok(Math.abs(far.mx + 1) < 1e-9, 'full pursuit beyond hold dist');
+  const near = MIDBOSS.HERALD.decide(heraldEnemy(M.HOLD_DIST - 5, 0, 0.5), player, null, DT);
+  assert.ok(Math.abs(near.mx + M.CLOSE_SPEED_MULT) < 1e-9, `eases to ${M.CLOSE_SPEED_MULT}x inside hold`);
+});
+
+check('herald decide is fully pure (no enemy-field mutations at all)', () => {
+  const e = heraldEnemy(100, 0);
+  const snap = JSON.stringify(e);
+  for (let age = 0; age < 30; age += 0.05) {
+    e.age = age;
+    MIDBOSS.HERALD.decide(e, player, null, DT);
+  }
+  const after = { ...e }; delete after.age;
+  const before = JSON.parse(snap); delete before.age;
+  assert.equal(JSON.stringify(after), JSON.stringify(before), 'herald decide mutated the enemy');
+});
+
+check('decideBossAction dispatch reaches the MIDBOSS cast', () => {
+  const e = heraldEnemy(100, 0, 0.5);
+  assert.deepEqual(decideBossAction(e, player, null, DT),
+    MIDBOSS.HERALD.decide(e, player, null, DT));
+});
+
+check('herald sprite passes the boss-sprite contract', () => {
+  const s = MIDBOSS.HERALD.sprite;
+  assert.equal(s.frames.length, 2, 'exactly 2 frames');
+  const h = s.frames[0].length, w = s.frames[0][0].length;
+  assert.ok(w >= 20 && h >= 24, `presence size (got ${w}x${h})`);
+  for (let f = 0; f < 2; f++) {
+    assert.ok(s.frames[f].every(r => r.length === w), `frame ${f} rectangular`);
+    assert.ok(s.frames[f].every(r => r.every(v => Number.isInteger(v) && v >= 0 && v <= 9)),
+      `frame ${f} palette-index ints`);
+  }
+  const used = new Set();
+  for (const g of s.frames) for (const r of g) for (const v of r) if (v) used.add(v);
+  assert.deepEqual([...used].filter(v => !s.palette[v]), [], 'every used index has a color');
+  assert.notEqual(JSON.stringify(s.frames[0]), JSON.stringify(s.frames[1]), 'frames distinct');
 });
 
 // --- decideBossAction dispatch -------------------------------------------------

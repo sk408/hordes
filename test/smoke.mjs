@@ -11,6 +11,7 @@ import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CIN
 import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
+import { TOUR_KEYS } from '../src/tour.js';     // WAVE-21: preseed tour flags
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -79,7 +80,13 @@ globalThis.location = { reload: noop };
 // WAVE-16: map-backed localStorage BEFORE the game import, so the persisted
 // zoom setting hydrates + round-trips headlessly (hudStorage picks this up).
 // Pre-seeded to 6x: the module-eval hydration assert below depends on it.
-const lsBack = new Map([['hordes_zoom', '6']]);
+// WAVE-21: the first-run TOUR flags are preseeded too — the tour is covered
+// by test_tour.mjs (incl. its own integration pass); here it must stay out
+// of the way (a stage-2 coachmark would pause the sim mid-smoke).
+const lsBack = new Map([
+  ['hordes_zoom', '6'],
+  ...Object.values(TOUR_KEYS).map(k => [k, '1']),
+]);
 globalThis.localStorage = {
   getItem: (k) => (lsBack.has(k) ? lsBack.get(k) : null),
   setItem: (k, v) => { lsBack.set(k, String(v)); },

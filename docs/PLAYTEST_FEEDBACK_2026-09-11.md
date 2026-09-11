@@ -127,8 +127,11 @@ with anything else.
 
 ## Explicit non-goals
 
-- **Do not build a tutorial or an explanation wall.** The genre doesn't need one, and the player who
-  wrote this wouldn't have read it either.
+- **~~Do not build a tutorial or an explanation wall.~~ AMENDED — see
+  `FIRST_RUN_TOUR_2026-09-11.md`.** Sk408 has specified a first-run **interactive spotlight tour**
+  (point at each button one at a time, one line each, click to advance). That is NOT the
+  explanation wall this line was guarding against — it's progressive, interactive, and paced by the
+  player. The tour doc supersedes this bullet; the ban on a *static text wall* still stands.
 - **Do not fix "no challenge" by making enemies tankier.** That makes the game longer, not
   more meaningful. The lever is the draft.
 - **Do not gold-plate.** The tester's last line — "this could be something competent" — is the actual
