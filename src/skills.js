@@ -6,9 +6,13 @@
 import { CONFIG as C } from './config.js';
 
 // Try to fire a skill ('FROST_NOVA' | 'OVERCHARGE'). Returns true if fired.
+// An unknown / missing id fails the same way an unknown potion kind does
+// (return false, no state touched) instead of throwing a TypeError on
+// `def.MANA` — see usePotion for the shared contract.
 export function useSkill(state, id) {
   const p = state.player;
   const def = C.SKILLS[id];
+  if (!def) return false;   // unknown id: fail, never throw
   if (p.skillCd[id] > 0 || p.mana < def.MANA) return false;
   p.mana -= def.MANA;
   p.skillCd[id] = def.COOLDOWN;
@@ -33,8 +37,13 @@ export function useSkill(state, id) {
 }
 
 // Drink a potion ('hp' | 'mp'). Returns true if consumed.
+// Kind validation comes FIRST: `p.potions[kind]` is undefined for an unknown
+// kind and `undefined <= 0` is false, so the old count guard fell straight
+// through into the else (MANA) branch and silently spent a mana potion,
+// reporting success. Unknown kinds now return false with zero mutation.
 export function usePotion(state, kind) {
   const p = state.player;
+  if (kind !== 'hp' && kind !== 'mp') return false;
   if (p.potions[kind] <= 0) return false;
   if (kind === 'hp') {
     if (p.hp >= p.stats.maxHp) return false; // never waste a health potion at full HP
@@ -57,8 +66,9 @@ export function updateResources(p, dt) {
   if (p.buffs.overcharge > 0) p.buffs.overcharge = Math.max(0, p.buffs.overcharge - dt);
 }
 
-// Roll an enemy death drop. Returns { x, y, kind: 'hp'|'mp' } or null.
-export function rollDrop(x, y) {
-  if (Math.random() >= C.POTIONS.DROP_CHANCE) return null;
-  return { x, y, kind: Math.random() < 0.5 ? 'hp' : 'mp' };
-}
+// NOTE (wave-25): the old `rollDrop(x, y)` export was removed — nothing ever
+// called it. main.js rolls the potion drop inline on the kill path (it has to:
+// the chance carries the Scavenger dropBonus stat and Alchemist's Blessing's
+// dropChanceMult curse), so a second base-config-only roll here was dead code
+// that invited a divergent duplicate. If a shared primitive is wanted later,
+// it must take those two modifiers and main.js must call it.

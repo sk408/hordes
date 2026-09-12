@@ -8,6 +8,7 @@
 // appetite for kiting vs. looting). Both are plain controller state, cycled
 // from main.js key handling — the controller itself never touches input.
 import { CONFIG as C } from './config.js';
+import { isReachableLoot, lootLimit } from './entities.js';
 
 export const FOCUS_MODES = ['NEAREST', 'TOUGHEST', 'SWARM', 'RANGED'];
 export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
@@ -18,10 +19,19 @@ export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
 export const RANGED_TYPES = new Set(['SPITTER', 'WARLOCK']);
 
 // Nearest live enemy scan (shared by both controllers — pickTarget wants it
-// as its NEAREST-doctrine fallback).
+// as its NEAREST-doctrine fallback). hp<=0 means "already dead, not yet
+// reaped": main.js reaps in the same frame but a COLOSSUS death shockwave can
+// leave victims at hp<=0 until the next frame, and a corpse is not a target
+// (weapons.js nearestEnemy filters the same way). An enemy with no hp field at
+// all (probe stubs) still counts as alive.
+function alive(e) {
+  return !(e.hp <= 0);
+}
+
 function nearestEnemy(p, state) {
   let nearest = null, nd = Infinity;
   for (const e of state.enemies) {
+    if (!alive(e)) continue;
     const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
     if (d < nd) { nd = d; nearest = e; }
   }
@@ -38,6 +48,13 @@ export class AutoPilotController {
     // controller per page load is reset enough — no reset hooks.
     this.fleeing = false;
     this.gem = null;
+    // WAVE-26 ("stance that bites"): the LIVE activity of the pilot this frame,
+    // published by main.js as state.stanceAct and printed in the canvas HUD
+    // next to the stance name. It is observation only — it never feeds back
+    // into movement — but it makes the dial's effect visible moment to moment
+    // ('FLEE' = the stance's kite line is doing work, 'LOOT' = it is banking
+    // gems, 'PATROL' = neither, 'MANUAL' = the human owns movement).
+    this.act = 'PATROL';
   }
 
   cycleFocus() {
@@ -60,6 +77,7 @@ export class AutoPilotController {
       // Highest max-hp enemy in range (kill the big ones first).
       let best = null, bh = -1, bd = Infinity;
       for (const e of state.enemies) {
+        if (!alive(e)) continue;
         const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
         if (d > r2) continue;
         if (e.maxHp > bh || (e.maxHp === bh && d < bd)) { bh = e.maxHp; bd = d; best = e; }
@@ -74,6 +92,7 @@ export class AutoPilotController {
       // while the volley ignored them); other doctrines keep the 260 cap.
       let best = null, bd = Infinity;
       for (const e of state.enemies) {
+        if (!alive(e)) continue;
         if (!RANGED_TYPES.has(e.typeId)) continue;
         const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
         if (d < bd) { bd = d; best = e; }
@@ -86,10 +105,12 @@ export class AutoPilotController {
     const cr2 = C.AUTOPILOT.SWARM_CLUSTER_R ** 2;
     let best = null, bc = -1, bd = Infinity;
     for (const e of state.enemies) {
+      if (!alive(e)) continue;
       const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
       if (d > r2) continue;
       let count = 0;
       for (const o of state.enemies) {
+        if (!alive(o)) continue;
         if ((o.x - e.x) ** 2 + (o.y - e.y) ** 2 <= cr2) count++;
       }
       if (count > bc || (count === bc && d < bd)) { bc = count; bd = d; best = e; }
@@ -114,10 +135,19 @@ export class AutoPilotController {
     // pick every frame (direction flip-flop). Commit to ONE gem (by identity)
     // and keep chasing it while it is still on the field; re-pick only when it
     // is collected (or a new run brings a field it is not in).
+    //
+    // WAVE-27 REACHABILITY: an UNREACHABLE gem is never a candidate. Because
+    // the commit is by identity, one gem beyond the wall used to hold the
+    // pilot for its whole lifetime AND starve every reachable gem behind it —
+    // the visible "grinding into the wall" bug. Drops are spawned clamped now
+    // (entities.clampLootToArena), so this is defence in depth: the pilot uses
+    // the SAME predicate the clamp guarantees.
     if (!state.gems.includes(this.gem)) this.gem = null;
+    if (this.gem && !isReachableLoot(this.gem.x, this.gem.y)) this.gem = null;
     if (!this.gem && state.gems.length > 0) {
       let gd = Infinity;
       for (const gm of state.gems) {
+        if (!isReachableLoot(gm.x, gm.y)) continue;
         const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
         if (d < gd) { gd = d; this.gem = gm; }
       }
@@ -131,6 +161,23 @@ export class AutoPilotController {
       gy = (g.y - p.y) / len;
     }
 
+    // WAVE-27 EDGE HOLD (the grind fix). Every branch below routes its vector
+    // through put(): once the pilot is at the working boundary — the arena rim
+    // minus the wall band minus the pickup radius, i.e. exactly the limit loot
+    // clamps to — it never accumulates OUTWARD pressure. A subject beyond the
+    // rim (an enemy still walking in from outside is legitimate and unaffected
+    // in every other way, or anything else out there) can therefore no longer
+    // pin the pilot into the wall: it holds on the boundary, still fires, and
+    // resumes normally the moment the subject comes inside. Manual movement is
+    // untouched (PlayerController never routes through here — the human owns
+    // movement and the position clamp stops them).
+    const edge = lootLimit();
+    const put = (mx, my) => ({
+      moveX: (p.x >= edge && mx > 0) || (p.x <= -edge && mx < 0) ? 0 : mx,
+      moveY: (p.y >= edge && my > 0) || (p.y <= -edge && my < 0) ? 0 : my,
+      target,
+    });
+
     // Threat response: flee the nearest enemy when it crosses the stance's
     // kite line. GREEDY keeps a foot pointed at the loot even while fleeing.
     // WAVE-19 HYSTERESIS: the branch switch used to be a knife-edge positional
@@ -143,6 +190,7 @@ export class AutoPilotController {
     const exitR2 = (kite * 2 * 1.3) ** 2;
     if (nearest && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
       this.fleeing = true;
+      this.act = 'FLEE';
       const len = Math.sqrt(nd) || 1;
       let fx = (p.x - nearest.x) / len;
       let fy = (p.y - nearest.y) / len;
@@ -150,7 +198,11 @@ export class AutoPilotController {
       // side, the raw flee vector points INTO the wall and the player dies in
       // the corner). Cancel the component pushing further outside the rim and
       // keep the tangential part — the player skims along the wall instead.
-      const rim = 560;
+      // WAVE-27: the rim is the CONFIG-derived working boundary (the old
+      // hardcoded 560 duplicated CONFIG.GROUND.RIM by hand and could not know
+      // about the wall band or the pickup radius); put() below holds the same
+      // edge for every branch.
+      const rim = lootLimit();
       if (Math.abs(p.x) > rim && fx * Math.sign(p.x) > 0) fx = 0;
       if (Math.abs(p.y) > rim && fy * Math.sign(p.y) > 0) fy = 0;
       if (fx === 0 && fy === 0) {
@@ -170,10 +222,10 @@ export class AutoPilotController {
         // to a sub-pixel crawl — a stall while a threat is INSIDE the kite
         // line. Below a real vector, commit to the pure flee vector instead.
         if (Math.hypot(bx, by) >= 0.25) {
-          return { moveX: bx, moveY: by, target };
+          return put(bx, by);
         }
       }
-      return { moveX: fx, moveY: fy, target };
+      return put(fx, fy);
     }
     this.fleeing = false;
 
@@ -182,14 +234,17 @@ export class AutoPilotController {
       // Same wall-steer as the flee path: a gem at/outside the rim would
       // park the player against the ±600 clamp chasing it (idle-player
       // regression — smoke caught a 3.1s stall at x=561).
-      const rim = 560;
+      // WAVE-27: CONFIG-derived boundary (see the flee path); unreachable gems
+      // are already excluded above, so this is the last line of defence.
+      const rim = lootLimit();
       if (Math.abs(p.x) > rim && gx * Math.sign(p.x) > 0) gx = 0;
       if (Math.abs(p.y) > rim && gy * Math.sign(p.y) > 0) gy = 0;
       // A near-axis outward gem leaves an arbitrarily small tangential
       // component after cancellation — sub-pixel crawls read as a stall
       // (smoke caught 3.0s at x=560.1). Below a real vector, patrol instead.
       if (Math.hypot(gx, gy) >= 0.25) {
-        return { moveX: gx * st.XP_SPEED, moveY: gy * st.XP_SPEED, target };
+        this.act = 'LOOT';
+        return put(gx * st.XP_SPEED, gy * st.XP_SPEED);
       }
       // Gem dead-ahead (or a crawl) outside the rim — fall through to patrol.
     }
@@ -203,7 +258,8 @@ export class AutoPilotController {
       const inward = len > 400 ? 0.6 : 0;
       const mx = (-dy / len - (dx / len) * inward) * 0.5;
       const my = (dx / len - (dy / len) * inward) * 0.5;
-      return { moveX: mx, moveY: my, target };
+      this.act = 'PATROL';
+      return put(mx, my);
     }
   }
 }
@@ -233,6 +289,10 @@ export class PlayerController extends AutoPilotController {
 
   decide(p, state, cfg) {
     const target = this.pickTarget(p, state, cfg, nearestEnemy(p, state));
+    // WAVE-26: manual movement means the STANCE's kite/XP-drift behaviour is
+    // inert (by design — manual means manual). The HUD says so ('MANUAL')
+    // instead of claiming a live kite; the stance's loot magnetism still bites.
+    this.act = 'MANUAL';
     const i = this.input || {};
     let mx = 0, my = 0;
     const mag = Math.min(1, Math.max(0, i.mag || 0));

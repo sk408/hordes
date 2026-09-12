@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {
   FINAL_BOSS, FINAL_BOSS_WAVE, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES, BARRAGE,
-  BEATABLE, HP_FLOOR, DISPLAY_HP,
+  BEATABLE, HP_FLOOR, DISPLAY_HP, MAW_SPEED_BASE,
   mawDecide, decideFinalBossAction,
   finalBossDamage, shouldApplyHit, applyFinalBossDamage, makeFinalBoss,
 } from '../src/final_boss.js';
@@ -93,7 +93,14 @@ check('decide is pure: mutates neither boss nor player across the whole cycle', 
   assert.equal(JSON.stringify(player), pSnap, 'player untouched');
   const { age, ...rest } = e;
   assert.deepEqual(Object.keys(rest).sort(),
-    ['bossId', 'h', 'hp', 'maxHp', 'typeId', 'w', 'x', 'y'], 'no fields added to the boss');
+    ['bossId', 'h', 'hp', 'maxHp', 'speed', 'typeId', 'w', 'x', 'y'],
+    'no fields added to the boss (speed is the wave-26 real default)');
+  // WAVE-26: the factory stamps a REAL speed so a caller that forgets to
+  // derive it gets the tuned value, never NaN.
+  assert.ok(Number.isFinite(e.speed) && e.speed > 0,
+    'makeFinalBoss stamps a finite, positive speed (' + e.speed + ')');
+  assert.equal(e.speed, MAW_SPEED_BASE * FINAL_BOSS.speedMult,
+    'and it is exactly the exported-base x speedMult tuning');
 });
 
 // --- three-hit rule -------------------------------------------------------------

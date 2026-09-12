@@ -146,6 +146,22 @@ check('SKIP link and Escape both exit early with onSkip', () => {
   }
 });
 
+check('WAVE-23: any non-Escape key advances; custom advanceHint renders', () => {
+  const a = fakeEl(), b = fakeEl();
+  const doc = fakeDoc(), st = fakeStorage();
+  const t = new Tour({
+    doc, storage: st,
+    advanceHint: 'CLICK OR PRESS ANY KEY',
+    steps: [{ id: 'a', text: 'First', target: () => a }, { id: 'b', text: 'Second', target: () => b }],
+  });
+  t.start();
+  assert.ok(t.tip._html.includes('CLICK OR PRESS ANY KEY'), 'input-aware hint rendered');
+  doc.fireKey('keydown', { key: 'm' });          // no preventDefault needed
+  assert.ok(t.tip._html.includes('Second'), 'plain key advanced the step');
+  doc.fireKey('keydown', { key: 'Escape', preventDefault() {} });
+  assert.ok(!t.active(), 'Escape still skips');
+});
+
 check('a target that disappears mid-step (zero rect) ends gracefully', () => {
   const a = fakeEl();
   const doc = fakeDoc(), st = fakeStorage();
@@ -297,7 +313,15 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
         else keyHandler({ key: '1' });
         continue;
       }
-      if (st.mode === 'dead' && keyHandler) { keyHandler({ key: 'r' }); continue; }
+      if (st.mode === 'dead' || st.mode === 'intermission') {
+        // WAVE-23 (#6): any-key advance means main.js swallows keys while a
+        // tour is live — dismiss the coach root directly (death/intermission
+        // coaches), then drive the screen key (r / c).
+        const r = globalThis.document.body.children.find(c => c.id === 'tour-root');
+        if (r) { r.fire('pointerdown', { stopPropagation() {} }); continue; }
+        keyHandler({ key: st.mode === 'dead' ? 'r' : 'c' });
+        continue;
+      }
       const r = globalThis.document.body.children.find(c => c.id === 'tour-root');
       if (r) {
         const tip = r.children.find(c => c.id === 'tour-tip');

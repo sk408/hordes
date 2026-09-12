@@ -87,14 +87,26 @@ export function loadProfile(storage) {
       ? [...new Set(p.unlockedElites
           .filter(e => typeof e === 'string' && VALID_ELITE_IDS.has(e)))]
       : [];
+    // WAVE-25 SAVE HARDENING (agent F): the character fields used to be
+    // TYPE-checked only — a corrupted / hand-edited save could equip a
+    // character that was never unlocked (applyCharacter would then build the
+    // whole run around her while the menu shows nobody equipped) or ship an
+    // unlock list full of garbage, locking KNIGHT out of the menu while the
+    // run still started as KNIGHT. Validate against the CHARACTERS table:
+    // real ids only, deduped, KNIGHT (free, unlockCost 0) always present, and
+    // an equipped character that must be a member of the validated list.
+    const unlockedCharacters = [...new Set(
+      (Array.isArray(p.unlockedCharacters) ? p.unlockedCharacters : [])
+        .filter(id => typeof id === 'string' && CHARACTERS[id]))];
+    if (!unlockedCharacters.includes('KNIGHT')) unlockedCharacters.unshift('KNIGHT');
+    const equippedCharacter = typeof p.equippedCharacter === 'string' &&
+      unlockedCharacters.includes(p.equippedCharacter) ? p.equippedCharacter : 'KNIGHT';
     return {
       ...p,
       gold: Number(p.gold) || 0,
       purchased,
-      unlockedCharacters: Array.isArray(p.unlockedCharacters) && p.unlockedCharacters.length
-        ? p.unlockedCharacters : ['KNIGHT'],
-      equippedCharacter: typeof p.equippedCharacter === 'string'
-        ? p.equippedCharacter : 'KNIGHT',
+      unlockedCharacters,
+      equippedCharacter,
       unlockedWeapons,
       unlockedElites,
     };

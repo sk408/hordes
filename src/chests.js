@@ -3,14 +3,16 @@
 // idles on the field until the player walks within PICKUP_RADIUS, then pops
 // its contents. Contents rarity is weighted; the GAMBLE rarity is the tension
 // moment — 50/50 between a big payoff and nothing PLUS a mini horde spawned
-// right on top of the player.
+// right on top of the player (typed CHASERs through the same chassis + heat
+// scaling every other spawn uses — see applyEscalation below).
 //
 // Pure-ish by design: every randomness goes through an injectable `rng`
 // (defaults to Math.random) so tests are deterministic. tickChests returns an
 // events array instead of touching the DOM — integration (main.js/render.js)
 // consumes those events later.
 import { CONFIG as C, UPGRADES } from './config.js';
-import { makeEnemy } from './entities.js';
+import { makeTypedEnemy } from './enemy_types.js';
+import { applyEscalation, clampLootToArena } from './entities.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -30,6 +32,32 @@ export const CHESTS = {
   GAMBLE_HORDE_COUNT: 6,    // the punishment horde
   GAMBLE_HORDE_RADIUS: 90,  // spawned on a ring around the player
 };
+
+// ---------- Typed horde spawn (main.js spawnWave parity) -------------------
+// Wave-25 (agent F): the gamble punishment horde used to spawn through
+// entities.makeEnemy(), so its enemies had no typeId / variant / w / h / age,
+// skipped the HEAT hp multiplier, and could never be flash-drop eligible
+// (loot.isFlashEligibleKill needs a CHASER/SWARMER typeId). It now spawns
+// through the SAME typed construction the regular spawner uses:
+//   enemy_types.makeTypedEnemy -> a real CHASER chassis (typeId/w/h/age/pack)
+//   the CONFIG.ESCALATION re-scale -> the same hp/xp curves as every spawn
+//   heatMultipliers(heatOf(state)).hp -> the run's heat ledger
+// Deliberately NO rng: the factory's default variant is used, so the chest
+// keeps its documented 2-draw rng order and no caller's stream shifts.
+// WAVE-26: the re-scale algebra used to be duplicated here and in main.js;
+// both now delegate to the ONE shared entities.applyEscalation helper, so the
+// curves can never desync between the chest horde and the ambient spawner.
+// BALANCE NOTE (wave-25, measured — no numbers were retuned): putting the
+// gamble horde on the typed path also puts it on CONFIG.ESCALATION, which
+// COMPOUNDS from wave 4. Its hp vs the old makeEnemy chassis: x1.41 at wave 1,
+// x1.65 at wave 2, x1.92 at wave 4, x7.2 at wave 8 (x1.36 more at heat 3);
+// xp follows the same curve (x1.47 at wave 2, x1.70 at wave 4, x4.72 at wave
+// 8). That is exactly the curve every
+// ambient spawn uses, so the punishment horde now matches the field it lands
+// in (and counts as elite-ish for chest rolls from wave 1 instead of wave 2).
+// If the owner wants the old "scare, not a threat" feel at high waves, dial
+// CHESTS.GAMBLE_HORDE_COUNT (or add a multiplier here) — do not revert the
+// typed path, which is what made the horde a real citizen.
 
 // Placeholder evolution tokens (legendary offers a 1-of-N choice; the actual
 // evolution system lands later — these are the offer payloads).
@@ -74,7 +102,11 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
   if (rng() >= CHESTS.DROP_CHANCE) return null;
   if (!Array.isArray(state.chests)) state.chests = [];
   if (state.chests.length >= CHESTS.MAX_ACTIVE) return null;
-  const chest = { id: nextId++, x: killedEnemy.x, y: killedEnemy.y, age: 0 };
+  // WAVE-27: a chest dropped by a kill outside the wall is unreachable — clamp
+  // it into the playable face (entities.clampLootToArena: rim minus the wall
+  // band minus the pickup radius). Same clamp every other drop uses.
+  const at = clampLootToArena(killedEnemy.x, killedEnemy.y);
+  const chest = { id: nextId++, x: at.x, y: at.y, age: 0 };
   state.chests.push(chest);
   return chest;
 }
@@ -124,11 +156,14 @@ function applyContents(state, contents, chest) {
     const n = CHESTS.GAMBLE_HORDE_COUNT;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      state.enemies.push(makeEnemy(
+      const e = makeTypedEnemy(
+        'CHASER',
         p.x + Math.cos(a) * CHESTS.GAMBLE_HORDE_RADIUS,
         p.y + Math.sin(a) * CHESTS.GAMBLE_HORDE_RADIUS,
         state.time
-      ));
+      );
+      applyEscalation(state, e);
+      state.enemies.push(e);
     }
     events.push({ kind: 'gambleHorde', count: n });
   }

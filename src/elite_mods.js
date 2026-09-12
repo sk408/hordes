@@ -25,6 +25,7 @@ export const ELITE_MOD_CHANCE = 0.5;
 //                 dropGuaranteed, visual }
 //   speedMult/hpMult — stat multipliers stamped at spawn
 //   onDeathSplit     — null | { count, hpFrac, sizeMult }: death-split plan
+//                      (count = number of children, honoured by splitChildren)
 //   lifesteal        — fraction of the elite's CONTACT damage healed back
 //   dropGuaranteed   — a guaranteed item drop on kill is part of every deal
 //   visual           — render tell flag (hb1's render reads it)
@@ -98,11 +99,33 @@ export function applyEliteModifier(enemy, mod) {
 }
 
 // ---------- The death split ----------
-// Deterministic scatter for the two children (opposite diagonals, far enough
-// that the split READS as a split, close enough to stay a threat pair).
+// Deterministic scatter for the children (the authored pairs sit on opposite
+// diagonals, far enough that the split READS as a split, close enough to stay
+// a threat pair). SPLIT_OFFSETS is the canonical TWO-child look.
 export const SPLIT_OFFSETS = [{ dx: -12, dy: -7 }, { dx: 12, dy: 7 }];
 
-// splitChildren(enemy) -> array of TWO child descriptors | null.
+// Scatter for `count` children (wave-25: the plan's `count` is HONOURED — it
+// used to be ignored, so editing it silently did nothing). The authored pair
+// comes first (count 2 is byte-identical to the old output), and any further
+// children repeat the pair with y mirrored, so a bigger split stays a tight
+// deterministic spread around the parent. No rng in this pure function; a
+// non-positive / missing count falls back to the authored pair rather than
+// producing an empty split.
+function splitOffsets(count) {
+  const want = Number(count);
+  const n = Number.isFinite(want) && want > 0
+    ? Math.max(1, Math.round(want)) : SPLIT_OFFSETS.length;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const base = SPLIT_OFFSETS[i % SPLIT_OFFSETS.length];
+    const mirror = Math.floor(i / SPLIT_OFFSETS.length) % 2 === 1;
+    out.push(mirror ? { dx: base.dx, dy: -base.dy } : { dx: base.dx, dy: base.dy });
+  }
+  return out;
+}
+
+// splitChildren(enemy) -> array of child descriptors | null (count = the
+// SPLITTING plan's `count`, 2 by default).
 // Pure: it never mutates the parent. Returns null when the enemy is not a
 // SPLITTING elite or the split was already consumed (enemy.splitSpent — hb1
 // sets it when it spawns the children; the ONCE-ONLY guard).
@@ -115,7 +138,7 @@ export function splitChildren(enemy) {
   if (enemy.splitSpent) return null;
   const plan = ELITE_MODS.SPLITTING.onDeathSplit;
   const hp = enemy.maxHp * plan.hpFrac;
-  return SPLIT_OFFSETS.map(off => ({
+  return splitOffsets(plan.count).map(off => ({
     typeId: enemy.typeId || 'CHASER',
     x: enemy.x + off.dx,
     y: enemy.y + off.dy,

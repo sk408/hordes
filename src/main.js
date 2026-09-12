@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import { CONFIG as C, UPGRADES } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale, applyEscalation, clampLootToArena, lootLimit } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
@@ -11,7 +11,7 @@ import {
 import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
-  levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams,
+  levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams, PIERCE_ALL,
 } from './weapons.js';
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
@@ -32,8 +32,8 @@ import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags 
 // volleyId; the mercy rule + 3-hit damage + hp floor all live there.
 import {
   FINAL_BOSS, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES, HP_FLOOR, DISPLAY_HP,
-  makeFinalBoss, decideFinalBossAction, finalBossDamage, shouldApplyHit,
-  applyFinalBossDamage,
+  MAW_SPEED_BASE, makeFinalBoss, decideFinalBossAction, finalBossDamage,
+  shouldApplyHit, applyFinalBossDamage,
 } from './final_boss.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
@@ -76,18 +76,63 @@ const ovCards = document.getElementById('ov-cards');
 const renderer = new Renderer(canvas);
 
 // ---------- Responsive canvas: letterbox to viewport, never stretch ----------
-// Internal resolution stays CONFIG.VIEW_W x VIEW_H; only the CSS size changes
-// (with image-rendering: pixelated). Re-run on orientation change / resize.
+// WAVE-23 RESOLUTION (Sk408: "maybe we can have a resolution setting?"):
+// display scale + backing store are now mode-driven, persisted like the
+// other prefs:
+//   AUTO (default)  — fractional fit (fills the window, biggest picture);
+//                     glyphs still rasterise crisp at device resolution
+//                     because the backing store tracks the real CSS size
+//                     (render.js resize), but ART pixels can be uneven
+//                     (some 2px, some 3px at a 2.67x fit).
+//   PIXEL-PERFECT   — integer floor scale; every art pixel is a uniform
+//                     NxN block. Prefers crisp over maximal window use.
+//   2x / 3x / 4x    — forced integer scale (clamped down to what fits the
+//                     window). More device pixels per art pixel = chunkier
+//                     pixels, bigger canvas — and more GPU fill (perf note).
+const prefStorage = (() => {
+  try {
+    const s = globalThis.localStorage;
+    if (s && typeof s.getItem === 'function') return s;
+  } catch { /* sandboxed — fall through to the no-op shim */ }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+})();
+const KEY_RESOLUTION = 'hordes_resolution';
+const RES_MODES = ['AUTO', 'PIXEL-PERFECT', '2', '3', '4'];
+function resMode() {
+  const v = prefStorage.getItem(KEY_RESOLUTION);
+  return RES_MODES.includes(v) ? v : 'AUTO';
+}
+function displayScale(fit) {
+  const m = resMode();
+  if (m === 'PIXEL-PERFECT') return Math.max(1, Math.floor(fit));
+  if (m === 'AUTO') return fit;
+  return Math.min(Number(m), Math.max(1, Math.floor(fit)));
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
-  const scale = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
+  const fit = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
+  const scale = displayScale(fit);
   canvas.style.width = Math.floor(C.VIEW_W * scale) + 'px';
   canvas.style.height = Math.floor(C.VIEW_H * scale) + 'px';
+  renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
 window.addEventListener('resize', fitCanvas);
 
 // ---------- State ----------
+// WAVE-25 (audit 2.6): ONE wave shape. There used to be two — a short
+// module-init literal (endsAt hardcoded 120, no mid-boss fields) and the
+// fuller object startRun() built. Both now come from here, so the tuning
+// constant (CONFIG.ESCALATION.WAVE_LENGTH) and the field set cannot drift.
+function makeWave() {
+  return {
+    num: 1,
+    endsAt: C.ESCALATION.WAVE_LENGTH,
+    boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false,
+    midAt: C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION),
+    midBossDone: false, midBosses: [],
+  };
+}
 const state = {
   player: makePlayer(),
   enemies: [],
@@ -114,6 +159,14 @@ const state = {
   mode: 'menu',      // 'menu' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
+  // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
+  // follow BASE (the view minus the lead — the deadzone is anchored here so the
+  // lead is never folded back in), and the player's last position the follow
+  // measures displacement from. Run-scoped (reset in startRun) — declared here
+  // so the follow needs no guards.
+  camLead: { x: 0, y: 0 },
+  camBase: { x: 0, y: 0 },
+  camPrev: { x: 0, y: 0 },
   character: null,   // equipped CHARACTERS entry for the current run
   weaponSlots: 6,    // per-run slot cap (startWeaponSlots(profile) in startRun)
   baseWeaponSlots: 6, // pre-choice slot base (Merchant's Pact adds on top)
@@ -137,7 +190,12 @@ const state = {
                      // it every frame — live mid-run, presentation only)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
-  wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
+  // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
+  timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
+  stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
+  moment: null,      // earned-moment flourish ({ kind, x, y, age, ttl } | null)
+  stanceLootAt: -99, // last GREEDY-payoff toast time (rate limiter)
+  wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
 state.player.y = C.VIEW_H / 2;
@@ -172,7 +230,7 @@ const KEY_DIRS = {
 // the record — per the build directive EVERY run starts in AUTO regardless.
 const KEY_PILOT = 'hordes_pilot';
 function savePilotPref(mode) {
-  try { hudStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
 
 // Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
@@ -199,6 +257,10 @@ function swapPilotMode(mode) {
     clearPilotInput();
   }
   savePilotPref(mode);
+  // WAVE-23 FIX (desktop audit #3): the hints list is mode-dependent (the S
+  // and W keys swap meaning), so a pilot swap must re-render it — otherwise
+  // the panel keeps teaching the outgoing mode's keys.
+  refreshHints();
   toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick' : 'AUTOPILOT ENGAGED');
 }
 function togglePilotMode() {
@@ -214,9 +276,12 @@ function runController(p, dt, am) {
     p.x += decision.moveX * spd * dt;
     p.y += decision.moveY * spd * dt;
   }
-  // Keep the player roughly on the field.
-  p.x = Math.max(-600, Math.min(600, p.x));
-  p.y = Math.max(-600, Math.min(600, p.y));
+  // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
+  // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
+  // literal 600 that used to live here could silently desync from the art.
+  const RIM = C.GROUND.RIM;
+  p.x = Math.max(-RIM, Math.min(RIM, p.x));
+  p.y = Math.max(-RIM, Math.min(RIM, p.y));
   // Attacking.
   p.attackTimer -= dt;
   const target = decision.target;
@@ -249,7 +314,7 @@ function runController(p, dt, am) {
       const a = baseAng + spread;
       const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
       pr.damage *= volleyDmgMult;
-      if (volleyPierceAll) pr.pierce = 999;
+      if (volleyPierceAll) pr.pierce = PIERCE_ALL;
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
       if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
@@ -282,20 +347,9 @@ function pickSpawnType(wave) {
   return 'CHASER';
 }
 
-// Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
-// enemy_types.js's linear multipliers (1+0.35w hp / 1+0.25w xp) and apply the
-// steeper documented curves from CONFIG.ESCALATION instead. WAVE-9: HEAT
-// stacks multiplicatively AFTER the wave escalation (hp only — xp/gold are
-// never heat-inflated).
-function applyEscalation(e, t) {
-  const w = Math.floor(t / 30);
-  const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
-  const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
-  e.hp = hp;
-  e.maxHp = hp;
-  e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;
-}
+// Enemy escalation now lives in entities.js (WAVE-26): the algebra was
+// duplicated here and in chests.js with a "both must move" comment; both
+// delegate to entities.applyEscalation now (signature: (state, enemy, t)).
 
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
@@ -325,7 +379,7 @@ function spawnWave(dt) {
         state.player.x + Math.cos(pa) * d,
         state.player.y + Math.sin(pa) * d,
         state.time, { elite, variant: rollVariant(typeId) });
-      applyEscalation(e, state.time);
+      applyEscalation(state, e, state.time);
       // WAVE-11 elite modifiers (elite_mods.js): rolled ONLY for normal elite
       // spawns, gated strictly by profile.unlockedElites (locked mods never
       // roll; the roll can fail and leave a plain elite). The stamp rides on
@@ -598,7 +652,7 @@ function spawnBoss() {
       state.player.x + Math.cos(a) * d,
       state.player.y + Math.sin(a) * d,
       state.time, { elite: true });
-    applyEscalation(boss, state.time);
+    applyEscalation(state, boss, state.time);
     const hp = C.ENEMY.BASE_HP * hpScale(w) *
       (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
       heatMultipliers(heatOf(state)).hp;   // WAVE-9: bosses take the heat too
@@ -652,7 +706,7 @@ function spawnMidBoss() {
     state.player.x + Math.cos(a) * d,
     state.player.y + Math.sin(a) * d,
     state.time);
-  applyEscalation(boss, state.time);
+  applyEscalation(state, boss, state.time);
   const hp = C.ENEMY.BASE_HP * hpScale(w) *
     (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
     heatMultipliers(heatOf(state)).hp;
@@ -694,6 +748,54 @@ function refreshSynergies() {
   }
 }
 
+// ===========================================================================
+// WAVE-26 FEATURE 2 — DRAFT SYNERGY HINTS
+// The draft IS the game in an auto-battler, so it is the main knowledge
+// surface. A draft card earns a hint ONLY when the pick would create a pair
+// the RUN ACTUALLY IMPLEMENTS — detectSynergies is the single source of truth
+// (the same call refreshSynergies makes), and every flag in the table is
+// wired in the weapon loop. No real synergy -> no hint at all: no filler, and
+// never a promise of an effect the code does not deliver.
+//
+//   - a NEW WEAPON card hints when one of its partners is already equipped
+//     ("PAIRS WITH BEAM · SUPERCONDUCTOR");
+//   - a LEVEL-UP card hints only while its weapon is part of a LIVE pair
+//     ("THRESHING STORM LIVE · ZAP") — otherwise silence.
+// ===========================================================================
+function synergyHintForCard(card) {
+  const id = (card && card.id) || '';
+  // Card ids are 'wpn_<TYPE>' for a grant and 'lvl_<TYPE>_<level>' for a
+  // level-up. The level suffix is stripped explicitly (a greedy [A-Z_]+ match
+  // would swallow the trailing '_' and miss multi-word types like NOVA_PULSE).
+  let kind = null, type = null;
+  let m = /^wpn_(.+)$/.exec(id);
+  if (m) { kind = 'wpn'; type = m[1]; }
+  else {
+    m = /^lvl_(.+)_\d+$/.exec(id);
+    if (m) { kind = 'lvl'; type = m[1]; }
+  }
+  if (!kind || !WEAPON_NAMES[type]) return null;    // not a real archetype card
+  const owned = state.weapons.map(w => w.type);
+  if (kind === 'wpn') {
+    if (owned.includes(type)) return null;
+    const live = new Set((state.synergies || detectSynergies(owned)).map(s => s.name));
+    for (const s of detectSynergies([...owned, type])) {
+      if (live.has(s.name) || !s.pair.includes(type)) continue;
+      const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+      return 'PAIRS WITH ' + (WEAPON_NAMES[partner] || partner) + ' · ' + s.name.toUpperCase();
+    }
+    return null;
+  }
+  // Level-up card: only meaningful while the weapon is in a live synergy.
+  const live = state.synergies || detectSynergies(owned);
+  for (const s of live) {
+    if (!s.pair.includes(type)) continue;
+    const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+    return s.name.toUpperCase() + ' LIVE · ' + (WEAPON_NAMES[partner] || partner);
+  }
+  return null;
+}
+
 // Active flag probe: the value of `flag` from any live synergy, else null.
 function syn(flag) {
   for (const s of state.synergies || []) {
@@ -713,13 +815,17 @@ function nearestFoe(x, y, exclude) {
 }
 
 // weapons.js damage convention for the supplemental bolts/blasts below:
-// damage * archetype MULT * level dmgMult * loot damageMult * evolution mult.
+// damage * archetype MULT * level dmgMult * loot damageMult * arch (BERSERK)
+// * evolution mult. The arch term MUST match weapons.js dmgScale: without it,
+// every synergy bolt (zap fork, scythe zap, nova/mine/beam detonations) missed
+// BERSERK while the base weapons got it.
 function synWeaponDmg(weaponId, mult) {
   const w = state.weapons.find(k => k.type === weaponId);
   const P = weaponLevelParams(weaponId, (w && w.level) || 1);
   const evo = w && w.evolution && w.evolution.affixes;
   return state.player.stats.damage * mult * (P.dmgMult || 1) *
-    (state.player.stats.damageMult || 1) * ((evo && evo.damageMult) || 1);
+    (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
+    ((evo && evo.damageMult) || 1);
 }
 
 // Mine detonation from OUTSIDE weapons.js (Chain Reaction / Fire Focus):
@@ -1088,7 +1194,7 @@ function update(dt) {
         const m = makeTypedEnemy(act.summon.type,
           e.x + Math.cos(ang) * edge, e.y + Math.sin(ang) * edge,
           state.time, { variant: rollVariant(act.summon.type) });
-        applyEscalation(m, state.time);
+        applyEscalation(state, m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
@@ -1105,15 +1211,17 @@ function update(dt) {
           Math.max(-590, Math.min(590, p.y + Math.sin(ang) * act.ring.radius)),
           state.time, { variant: rollVariant(act.ring.type) });
         m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
-        applyEscalation(m, state.time);
+        applyEscalation(state, m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: p.x, y: p.y, radius: act.ring.radius, age: 0, ttl: 0.5 });
     }
     // PYRAXIS blink: hop by (dx,dy)*dist, clamped inside the arena walls.
     if (act.teleport) {
-      e.x = Math.max(-600, Math.min(600, e.x + act.teleport.dx * act.teleport.dist));
-      e.y = Math.max(-600, Math.min(600, e.y + act.teleport.dy * act.teleport.dist));
+      // WAVE-25 (audit 2.4): config-driven arena edge (see runController).
+      const RIM = C.GROUND.RIM;
+      e.x = Math.max(-RIM, Math.min(RIM, e.x + act.teleport.dx * act.teleport.dist));
+      e.y = Math.max(-RIM, Math.min(RIM, e.y + act.teleport.dy * act.teleport.dist));
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 14, age: 0, ttl: 0.25 });
     }
     // Touch radius scales with body size (WAVE-20: probe showed GRAVELMAW's
@@ -1207,10 +1315,14 @@ function update(dt) {
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
       // Alchemist's Blessing curse: dropChanceMult scales the whole chance.
+      // WAVE-27: the drop position is clamped into the playable face
+      // (clampLootToArena) — a kill outside the wall used to drop an
+      // uncollectible potion out there. rng order is untouched (the clamp is
+      // pure and runs before the kind roll).
       const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0)) *
         ((p.choices && p.choices.dropChanceMult) || 1);
       const drop = Math.random() < dropChance
-        ? { x: e.x, y: e.y, kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
+        ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
@@ -1230,7 +1342,8 @@ function update(dt) {
           maybeSpawnChest(state,
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
-        state.itemDrops.push({ x: e.x, y: e.y,
+        const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
+        state.itemDrops.push({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
@@ -1241,6 +1354,11 @@ function update(dt) {
         if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
         feedWeaponXp(30);   // boss kill = big weapon-XP payout
         toast('BOSS DOWN');
+        // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
+        // per-wave HERALD (the midBoss branch above) is deliberately NOT
+        // dilated — it fires every wave, and Sk408's law is that slow-mo
+        // becomes noise the moment it is routine.
+        triggerEarnedMoment('boss', e.x, e.y);
       } else {
         // Rare item drops (loot.js): elites often + up-tier, normals rarely.
         // Fortune's Favor blessing: itemDropMult scales the drop chance;
@@ -1249,8 +1367,9 @@ function update(dt) {
         const chance = (e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) *
           ((p.choices && p.choices.itemDropMult) || 1);
         if (e.eliteMod || Math.random() < chance) {
+          const at = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
           state.itemDrops.push({
-            x: e.x, y: e.y,
+            x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
         }
@@ -1270,7 +1389,7 @@ function update(dt) {
           for (const k of kids) {
             const c = makeTypedEnemy(k.typeId, k.x, k.y, state.time,
               { variant: rollVariant(k.typeId) });
-            applyEscalation(c, state.time);
+            applyEscalation(state, c, state.time);
             c.hp = k.hp; c.maxHp = k.maxHp; c.w = k.w; c.h = k.h;
             c.elite = false; c.eliteMod = null;
             state.enemies.push(c);
@@ -1394,7 +1513,13 @@ function update(dt) {
   }
 
   // Effective pickup radius: base + Loot Vortex items + MAGNET arch.
-  const pickR = p.stats.pickup * (p.stats.pickupMult || 1) * am.pickupMult;
+  const basePickR = p.stats.pickup * (p.stats.pickupMult || 1) * am.pickupMult;
+  // WAVE-26 "stance that bites": STANCE loot magnetism. GREEDY reaches further
+  // for loot, SAFE keeps its distance from it — the one consequence that bites
+  // in BOTH pilot modes (manual pilot owns movement, so its kite distance is
+  // inert by design; the magnetism is not).
+  const stanceDef = C.AUTOPILOT.STANCES[controller.stance] || C.AUTOPILOT.STANCES.BALANCED;
+  const pickR = basePickR * (stanceDef.PICKUP_MULT || 1);
 
   // Potion drops: auto-pickup within gem radius, but only if not at cap —
   // a full inventory leaves the potion on the ground for later.
@@ -1438,20 +1563,30 @@ function update(dt) {
   tickBossBanner(dt);   // WAVE-14 arrival overlay
 
   // Gem pickup.
+  let greedyScoop = 0;   // WAVE-26: gems only the GREEDY stretch could reach
   for (let i = state.gems.length - 1; i >= 0; i--) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
+      if (controller.stance === 'GREEDY' && d > basePickR) greedyScoop++;
       p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();   // Scholar + SUNNY + WAVE-11 rampage
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
     }
   }
+  // WAVE-26 moment-to-moment signal: the stance PAYING OFF — loot the base
+  // radius could never have taken. Rate-limited (once per 6s) so it reads as
+  // a signal and never becomes noise, and greed-gated so it fires only when
+  // GREEDY is the reason it happened.
+  if (greedyScoop > 0 && state.time - state.stanceLootAt > 6) {
+    state.stanceLootAt = state.time;
+    toast('GREEDY HAUL - ' + greedyScoop + ' LOOT OUT OF REACH',
+      C.HUD.STANCE_COLORS.GREEDY);
+  }
 
-  // Camera follows player.
-  state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
-  state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+  // Camera follows player (WAVE-27: one shared follow — see updateCamera).
+  updateCamera(p, dt);
 
   // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
   // can all complete a requirements triple since the last frame.
@@ -1555,7 +1690,12 @@ function openDraft() {
   choices.forEach((u, i) => {
     const el = document.createElement('div');
     el.className = 'card';
-    el.innerHTML = `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div><div class="key">[${i + 1}]</div>`;
+    // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
+    // actually implements (see synergyHintForCard). Silent otherwise.
+    const hint = synergyHintForCard(u);
+    el.innerHTML = `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+      (hint ? `<div class="syn">${hint}</div>` : '') +
+      `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => pick(u);
     ovCards.appendChild(el);
   });
@@ -1565,7 +1705,7 @@ function openDraft() {
   // real cards and dismisses on the same click-to-advance contract.)
   if (!tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
-      text: 'THE DRAFT — your build\'s only real decisions. Tap a card or press 1 / 2 / 3.',
+      text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
 }
@@ -1640,14 +1780,18 @@ function maybeOpenEvolve() {
   ovTitle.className = 'logo';
   ovSub.textContent = 'a maxed weapon + its item kind + a token';
   ovCards.innerHTML = '';
-  for (const w of cands) {
+  // WAVE-23 FIX (desktop audit #5): every card was labelled `[1]` while the
+  // keydown handler routes 1-4 to ovCards.children[n-1] — so pressing [2]
+  // picked the second card the label called "[1]". Label each card with its
+  // own position (the same index the number key resolves to).
+  cands.forEach((w, i) => {
     const card = describeEvolution(w);
     const el = document.createElement('div');
     el.className = 'card';
     el.innerHTML =
       `<div class="name">EVOLVE: ${card.name}</div>` +
       `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
-      `<div class="key">[1]</div>`;
+      `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => {
       const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
       if (res.ok) {
@@ -1657,20 +1801,140 @@ function maybeOpenEvolve() {
         addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
         toast(res.name.toUpperCase() + ' UNLEASHED');
         audio.playSfx('levelup');
+        // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
+        // moments — brief dilation + the crackle flare, back to normal after.
+        triggerEarnedMoment('evolution', state.player.x, state.player.y);
       }
       closeEvolve();
     };
     ovCards.appendChild(el);
-  }
-  menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
+  });
+  // NOT NOW takes the next number key when it fits the 1-4 routing window
+  // (3+ candidates can overflow it — then it stays mouse/click only).
+  const notNow = menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
     for (const w of cands) w.evoDeclined = true;
     closeEvolve();
   });
+  if (cands.length + 1 <= 4) {
+    notNow.innerHTML += `<div class="key">[${cands.length + 1}]</div>`;
+  }
 }
 
 function closeEvolve() {
   overlay.style.display = 'none';
   state.mode = 'playing';
+}
+
+// ===========================================================================
+// WAVE-26 FEATURE 4 — EARNED TIME DILATION + GLOW
+// Sk408's game-feel law: juice is glowy and crackly, but screen shake and
+// slow-motion are RARE and EARNED — if they fire often they become noise.
+// Exactly two triggers qualify: a weapon EVOLUTION and a BOSS KILL. Never an
+// ordinary hit, never a level-up, never a chest.
+//
+// FRAME-RATE INDEPENDENCE: the window is measured in WALL-CLOCK seconds and
+// decays with the *real* frame dt (advanceDilation(realDt)), while only the
+// SIMULATION is scaled (dt = realDt * timeScale). 60Hz and 120Hz therefore
+// spend the same wall-clock time in slow-mo and see the same sim distance.
+//
+// NO STACKING: the scale is taken as a MIN and the window as a MAX, never a
+// product — two events landing in the same frame (or a boss dying on the same
+// frame a weapon evolves) cannot compound into a freeze. The window expiring
+// resets the scale to EXACTLY 1.
+// ===========================================================================
+const dilation = { scale: 1, remaining: 0 };
+const DILATION_FLOOR = C.DILATION.FLOOR;
+
+function triggerDilation(scale, duration) {
+  const s = Math.min(1, Math.max(DILATION_FLOOR, Number(scale) || 1));
+  const d = Math.max(0, Number(duration) || 0);
+  if (d <= 0) return dilation.scale;
+  dilation.scale = Math.min(dilation.scale, s);          // never multiplies
+  dilation.remaining = Math.max(dilation.remaining, d);  // never adds
+  state.timeScale = dilation.scale;
+  return dilation.scale;
+}
+
+// Called once per rendered frame with the REAL (unscaled) dt. Returns the
+// scale the simulation should use this frame; exactly 1 once the window ends.
+function advanceDilation(realDt) {
+  if (dilation.remaining <= 0) {
+    if (dilation.scale !== 1) dilation.scale = 1;
+    state.timeScale = 1;
+    return 1;
+  }
+  dilation.remaining -= realDt;
+  if (dilation.remaining <= 0) {
+    dilation.remaining = 0;
+    dilation.scale = 1;
+  }
+  state.timeScale = dilation.scale;
+  return state.timeScale;
+}
+
+// One earned moment = a short dilation + a matching pixel-art flourish (the
+// flare burst / vignette / chromatic fringe in render.js drawMoment). kind is
+// 'evolution' | 'boss' | 'finale'; boss/finale only differ by flavour tint.
+function triggerEarnedMoment(kind, x, y) {
+  const d = kind === 'evolution' ? C.DILATION.EVOLUTION : C.DILATION.BOSS;
+  triggerDilation(d.SCALE, d.DURATION);
+  // Non-stacking flourish too: a newer moment replaces the older one outright.
+  state.moment = { kind, x, y, age: 0, ttl: Math.max(d.DURATION, 0.55) };
+  return state.moment;
+}
+
+// ===========================================================================
+// WAVE-26 FEATURE 1 — DEATH AS PAYOFF, NOT A WALL
+// Players lose most runs, so the end screen is the most-seen screen in the
+// game. The data already exists: state.deathBy (stamped by die() from
+// lastDamageSource). This block turns it into one 3-second read: how far you
+// got, what killed you, what you earned, and the single shop row the run just
+// brought within reach.
+// ===========================================================================
+
+// Legible cause line from state.deathBy. Never invents a source: a boss keeps
+// its proper name, a typed enemy keeps its type id (all nine are already
+// readable words), and an unknown source degrades to the horde itself.
+function deathCauseLabel(d) {
+  const by = d || {};
+  const who = by.name || (by.bossId ? String(by.bossId) : (by.typeId ? String(by.typeId) : null));
+  const how = by.cause === 'contact' ? 'in melee'
+    : by.cause === 'shot' ? 'at range'
+      : by.cause === 'drain' ? 'latched on and drained you'
+        : null;
+  if (!who) return 'THE HORDE';
+  return who + (how ? ' ' + how : '');
+}
+
+// The single shop row this run came CLOSEST to affording — real meta data
+// (SHOP_UPGRADES + upgradeCost), never an invented number. Skips anything
+// already owned/maxed; ties resolve to the cheaper row.
+function nextUnlockWithinReach(prof) {
+  let best = null;
+  for (const def of SHOP_UPGRADES) {
+    if (shopRowOwned(prof, def)) continue;
+    const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
+    const cost = def.kind ? def.baseCost : upgradeCost(def, level);
+    if (!best || cost < best.cost) best = { id: def.id, name: def.name, cost };
+  }
+  return best;
+}
+
+// Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
+// `cause` the cause line, `gold` this run's payout. The unlock line is omitted
+// entirely when every row is owned — no filler.
+function endScreenBody({ lead, cause = null, gold, firstClear }) {
+  const goal = nextUnlockWithinReach(profile);
+  let html = lead;
+  if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
+  html += `<br><span class="earn">GOLD EARNED: +${gold}` +
+    `${firstClear ? ' (NEW BEST TIME!)' : ''} · purse ${profile.gold}</span>`;
+  if (goal) {
+    const gap = goal.cost - profile.gold;
+    html += `<br><span class="next">NEXT UNLOCK: ${goal.name} ${goal.cost}g · ` +
+      (gap > 0 ? `${gap}g TO GO` : 'READY NOW') + '</span>';
+  }
+  return html;
 }
 
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
@@ -1709,10 +1973,12 @@ function endRun() {
   const { gold, firstClear } = settleRunGold();
   ovTitle.textContent = 'RUN ENDED';
   ovTitle.className = '';
-  ovSub.innerHTML =
-    `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-    ` · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+      ` · level ${p.level} · ${p.kills} kills`,
+    cause: null,          // a deliberate exit has no killer
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -1751,9 +2017,12 @@ function die(finale) {
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
   ovTitle.className = finale ? 'logo' : '';
-  ovSub.innerHTML = (finale ? 'the maw swallowed the last hero<br>' : '') +
-    `survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
+      `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills`,
+    cause: deathCauseLabel(state.deathBy),
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -1764,20 +2033,15 @@ function die(finale) {
 // ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
 // The canvas HUD chrome (render.js drawHudChrome) is the default readout now;
 // the old text #hud stays fully functional but hidden unless opted in here.
-const hudStorage = (() => {
-  try {
-    const s = globalThis.localStorage;
-    if (s && typeof s.getItem === 'function') return s;
-  } catch { /* sandboxed — fall through to the no-op shim */ }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-})();
+// WAVE-25 (audit 2.7): no second shim — this used to be a byte-identical copy
+// of prefStorage; every persisted pref now shares the one instance above.
 const KEY_HUD_TEXT = 'hordes_hud_text';
 let textHudOn = false;
-try { textHudOn = hudStorage.getItem(KEY_HUD_TEXT) === '1'; } catch { /* shim */ }
+try { textHudOn = prefStorage.getItem(KEY_HUD_TEXT) === '1'; } catch { /* shim */ }
 function hudTextEnabled() { return textHudOn; }
 function setHudTextEnabled(b) {
   textHudOn = !!b;
-  try { hudStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
 }
 
 // ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
@@ -1793,7 +2057,7 @@ function zoomIndex() {
 }
 function setZoom(z) {
   state.zoom = ZOOM_LADDER.includes(z) ? z : 1;
-  try { hudStorage.setItem(KEY_ZOOM, String(state.zoom)); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_ZOOM, String(state.zoom)); } catch { /* shim */ }
 }
 function cycleZoom(dir = 1) {
   const n = ZOOM_LADDER.length;
@@ -1803,7 +2067,7 @@ function cycleZoom(dir = 1) {
   return next;
 }
 try {
-  const savedZoom = parseInt(hudStorage.getItem(KEY_ZOOM), 10);
+  const savedZoom = parseInt(prefStorage.getItem(KEY_ZOOM), 10);
   if (ZOOM_LADDER.includes(savedZoom)) state.zoom = savedZoom;
 } catch { /* shim */ }
 
@@ -1814,10 +2078,10 @@ try {
 // simply never persists, and the smoke drives both paths explicitly).
 const KEY_ONBOARD = 'hordes_onboarded';
 function onboardingDone() {
-  try { return hudStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
+  try { return prefStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
 }
 function completeOnboarding() {
-  try { hudStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
 }
 
 // ---------- WAVE-19 HOW TO PLAY (Sk408: first-run onboarding) -------------------
@@ -1846,10 +2110,12 @@ function showHowToPlay() {
     'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
     'TAB — focus &middot; G — stance<br>' +
     'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
-    'H / N — potions &middot; S / I — field report<br>' +
-    '1 – 6 — pick cards &amp; stat tabs &middot; C — continue &middot; R / T — retry / title<br>' +
+    'H / N — potions &middot; I — field report (S too, in AUTO)<br>' +
+    '1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs<br>' +
+    'C — continue &middot; R / T — retry / title<br>' +
     '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
-    '? — show / hide the on-screen key hints &middot; ESC — close');
+    'ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus<br>' +
+    '? — show / hide the on-screen key hints');
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
   // the tour skips must be documented HERE or dropped).
@@ -1935,6 +2201,9 @@ function maybeStartMenuTour() {
         target: () => cardByTitle('HOW TO PLAY') },
     ],
     onDone: finish, onSkip: finish,
+    // WAVE-23 (#6): input-aware advance wording — "TAP" reads wrong on a
+    // desktop with no touch (Sk408). Any key also advances (tour.js).
+    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY',
   });
   menuTour.start();
 }
@@ -1946,7 +2215,8 @@ function startCoach(steps, key) {
   if (coachActive()) return;
   setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
   const end = () => { coach = null; };
-  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end });
+  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end,
+    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY' });
   coach.start();
 }
 
@@ -1971,11 +2241,119 @@ function statsTarget() {
 // Project a world position through the SAME transform render.js uses (cam
 // offset, then zoom about the view center) so an interactable coachmark can
 // spotlight the real chest / portal / arch / shrine where it actually sits.
+// WAVE-25 (audit 2.8): the integer zoom factor has ONE definition here —
+// render.js applies the identical math. main.js publishes the canonical value
+// as state.zoomScale every frame (syncChrome) so render.js can read it instead
+// of re-deriving it, and the coachmark can never silently drift off the world.
+function zoomScale(z) {
+  return Math.max(1, Math.round(z || 1));
+}
 function worldRegion(wx, wy, r = 16) {
-  const Z = Math.max(1, Math.round(state.zoom || 1));
+  const Z = zoomScale(state.zoom);
   const sx = C.VIEW_W / 2 + (wx - state.cam.x - C.VIEW_W / 2) * Z;
   const sy = C.VIEW_H / 2 + (wy - state.cam.y - C.VIEW_H / 2) * Z;
   return canvasRegion(sx - r, sy - r, r * 2, r * 2);
+}
+
+// ---- WAVE-27 CAMERA: deadzone + lead + arena clamp (ONE follow, ONE source) --
+// The owner wanted the pilot to decouple from a hard screen centre near walls
+// ("give a nice movement feel ... a bit more 'real'"). This is a DEADZONE
+// camera, not a free one:
+//   - the player roams free inside a box around the follow centre (the box is
+//     DEADZONE_W/H SCREEN px at every zoom, so the feel is zoom-invariant);
+//     the view is the box centre PLUS the lead, kept as separate state so the
+//     lead can never be folded back in and accumulate frame over frame;
+//   - once they leave the box the view follows, with that small LEAD in the
+//     direction of travel so movement has weight;
+//   - the view is clamped so the player can never leave the SAFE screen region
+//     (the clamp reserves SAFE + LEAD, so even the lead cannot push them
+//     outside). Near a wall the view STOPS and the player moves within it.
+// It writes state.cam, which is the single transform every consumer reads:
+// render.js's world layer (translate/scale/translate), drawMoment, worldRegion()
+// below (the tour coachmark projection) and the arena-wall pass. Nothing
+// re-derives a camera of its own, so the projection cannot drift from the draw.
+// A stationary player produces no lead and (inside the box) no camera motion,
+// which is what keeps a parked hero exactly where the view already is. The
+// follow itself is POSITIONAL (the box makes the feel; no lerp), so the safe
+// region holds exactly at every zoom instead of degrading with Z.
+//
+// The player's travel direction comes from their own per-frame displacement,
+// normalised, so nothing here depends on the controller, on dt being fixed, or
+// on the pilot mode (manual movement leads exactly the same).
+function updateCamera(p, dt) {
+  const Z = zoomScale(state.zoom);
+  const CAM = C.CAMERA;
+  const halfW = C.VIEW_W / 2, halfH = C.VIEW_H / 2;
+  if (!state.camLead) state.camLead = { x: 0, y: 0 };
+  if (!state.camBase) state.camBase = { x: state.cam.x, y: state.cam.y };
+  if (!state.camPrev) state.camPrev = { x: p.x, y: p.y };
+
+  // Travel direction from the actual displacement (rate-free: the vector is
+  // normalised, so 60Hz and 120Hz lead by the same amount).
+  const dx = p.x - state.camPrev.x, dy = p.y - state.camPrev.y;
+  state.camPrev.x = p.x; state.camPrev.y = p.y;
+  const dlen = Math.hypot(dx, dy);
+  const tx = dlen > 1e-6 ? dx / dlen : 0;
+  const ty = dlen > 1e-6 ? dy / dlen : 0;
+  // Lead is defined in SCREEN px and converted to world px at this zoom; it is
+  // the ONLY smoothed term (weight when starting/stopping), so its time
+  // constant is wall-clock and its amplitude is zoom-invariant.
+  const kLead = Math.min(1, dt * CAM.SMOOTH);
+  state.camLead.x += (tx * CAM.LEAD / Z - state.camLead.x) * kLead;
+  state.camLead.y += (ty * CAM.LEAD / Z - state.camLead.y) * kLead;
+
+  // Deadzone, anchored to the follow BASE (the view WITHOUT the lead). The
+  // lead must never be folded back into the base: doing that adds the lead
+  // again every frame, which is a runaway drift (the camera walks away from
+  // the player on its own). The view people see is base + lead, so movement
+  // visibly leads while the box itself stays put.
+  const dzx = CAM.DEADZONE_W / Z, dzy = CAM.DEADZONE_H / Z;
+  const offx = (p.x - state.camBase.x) - halfW;   // offset from the box centre
+  const offy = (p.y - state.camBase.y) - halfH;
+  let baseX = state.camBase.x, baseY = state.camBase.y;
+  if (offx > dzx) baseX += (offx - dzx);
+  else if (offx < -dzx) baseX += (offx + dzx);
+  if (offy > dzy) baseY += (offy - dzy);
+  else if (offy < -dzy) baseY += (offy + dzy);
+  let wantX = baseX + state.camLead.x;
+  let wantY = baseY + state.camLead.y;
+
+  // Arena clamp: the view may not travel past the point where the player would
+  // sit closer than SAFE screen px to either edge. Derivation (Z = zoom):
+  //   screen = half + (world - cam - half) * Z          (render.js transform)
+  // at the +rim we want screen = VIEW_W - SAFE, which solves to
+  //   cam = RIM - half - (half - SAFE)/Z
+  // and mirrored at the -rim. LEAD is reserved inside SAFE, so even a full
+  // lead toward the opposite edge keeps the player inside the safe region.
+  // NOTE the bound is ASYMMETRIC about 0: the camera centres the PLAYER, so at
+  // the -rim it has to travel RIM further negative than at the +rim. A
+  // symmetric +-(RIM - half) clamp would ruin the follow (and is not used).
+  // This clamp is what makes the view STOP near a wall and lets the player
+  // drift toward the screen edge — the requested "disconnected" feel.
+  const reserveX = Math.max(0, (halfW - CAM.SAFE - CAM.LEAD) / Z);
+  const reserveY = Math.max(0, (halfH - CAM.SAFE - CAM.LEAD) / Z);
+  let maxX = C.GROUND.RIM - halfW - reserveX;
+  let minX = -C.GROUND.RIM - halfW + reserveX;
+  let maxY = C.GROUND.RIM - halfH - reserveY;
+  let minY = -C.GROUND.RIM - halfH + reserveY;
+  // Degenerate tiny arena (nothing in the game shrinks RIM; a test does):
+  // keep the bounds ordered so the clamp can never invert.
+  if (maxX < minX) { const c = (minX + maxX) / 2; minX = c; maxX = c; }
+  if (maxY < minY) { const c = (minY + maxY) / 2; minY = c; maxY = c; }
+  wantX = Math.max(minX, Math.min(maxX, wantX));
+  wantY = Math.max(minY, Math.min(maxY, wantY));
+
+  // POSITIONAL apply (no follow lag). The deadzone box IS the feel: the view
+  // is perfectly still while the player is inside it, then tracks the box edge
+  // 1:1. A lerp here would reintroduce a lag that Z magnifies, which could
+  // push the player past the safe edge at high zoom — so the safe-region
+  // guarantee is exact at every zoom by construction.
+  state.cam.x = wantX;
+  state.cam.y = wantY;
+  // Keep the base consistent with the clamped view (base = view - lead) so the
+  // deadzone bookkeeping cannot drift across frames when the clamp bites.
+  state.camBase.x = state.cam.x - state.camLead.x;
+  state.camBase.y = state.cam.y - state.camLead.y;
 }
 
 // Called every frame in 'playing' (frame()); fires each coachmark the first
@@ -2017,7 +2395,7 @@ function updateTourCoach() {
       target: () => canvasRegion(0, 4, 150, 44) }, TOUR_KEYS.hud);
   } else if (!tourFlag(TOUR_KEYS.pilot) && state.time > 4) {
     startCoach({ id: 'pilot',
-      text: 'PILOT: AUTO flies for you — tap here (or M) to take MANUAL control anytime.',
+      text: 'PILOT: AUTO flies for you — here or M takes MANUAL control anytime.',
       target: () => document.getElementById('tc-pilot') }, TOUR_KEYS.pilot);
   } else if (!tourFlag(TOUR_KEYS.focus) && state.time > 7) {
     // Rev-4 headline gap: without this, AUTO aiming reads as "whatever it
@@ -2133,7 +2511,7 @@ function showCharacters() {
     const equipped = profile.equippedCharacter === ch.id;
     const afford = profile.gold >= ch.unlockCost;
     const sub = equipped ? 'EQUIPPED'
-      : owned ? 'tap to equip'
+      : owned ? 'equip this pilot'
       : `${ch.desc}<br>unlock: ${ch.unlockCost} gold`;
     const el = menuCard(
       ch.name + (equipped ? ' *' : ''),
@@ -2184,6 +2562,17 @@ function showSettings(disarm = true, inRun = false) {
     cycleZoom(1);
     showSettings(true, inRun);
   });
+  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
+  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
+  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
+  menuCard('RESOLUTION', 'currently ' + resMode() +
+    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
+    ' — crisper text everywhere', () => {
+    const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
+    prefStorage.setItem(KEY_RESOLUTION, next);
+    fitCanvas();
+    showSettings(true, inRun);
+  });
   // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
   menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
     clearTourFlags();
@@ -2195,7 +2584,7 @@ function showSettings(disarm = true, inRun = false) {
     }
   });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
-    resetArmed ? 'wipes gold, upgrades & unlocks' : 'tap twice to confirm',
+    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
     () => {
       if (!resetArmed) { resetArmed = true; showSettings(false, inRun); return; }
       profile = makeProfile();
@@ -2208,7 +2597,7 @@ function showSettings(disarm = true, inRun = false) {
   // confirm pattern as RESET PROFILE.
   if (inRun) {
     menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
-      endArmed ? 'banks your gold and ends the run' : 'tap twice to confirm',
+      endArmed ? 'banks your gold and ends the run' : 'twice to confirm',
       () => {
         if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
         endArmed = false;
@@ -2225,7 +2614,7 @@ function showSettings(disarm = true, inRun = false) {
   // the flag).
   if (inRun && !tourFlag(TOUR_KEYS.settings)) {
     startCoach({ id: 'settings',
-      text: 'END RUN banks your gold and ends the run early — two taps to confirm.',
+      text: 'END RUN banks your gold and ends the run early — confirm twice.',
       target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
   }
 }
@@ -2262,6 +2651,13 @@ function startRun() {
   // intermission offers) + the wave-1 shrine roll.
   state.lastFlashAt = null;
   state.rampage = { streak: 0, best: 0 };
+  // WAVE-26: earned-moment presentation state is run-scoped too — a new run
+  // starts at normal speed with no flare and no stale GREEDY rate-limit stamp.
+  state.timeScale = 1;
+  state.moment = null;
+  state.stanceLootAt = -99;
+  dilation.scale = 1;
+  dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
   // not a preselect) — rebind the seam and drop any held directions.
   swapPilotMode('AUTO');
@@ -2288,7 +2684,6 @@ function startRun() {
     if (cands.length === 0) break;
     levelUpWeapon(cands[Math.floor(Math.random() * cands.length)]);
   }
-  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.enemies = [];
   state.projectiles = [];
   state.enemyShots = [];
@@ -2304,13 +2699,20 @@ function startRun() {
   interMsg = '';
   state.effects = [];
   state.toasts = [];
+  // WAVE-25 FIX (audit 2.3): a synergy already live at t=0 (the ORBIT-starting
+  // PALADIN's VOLLEY+ORBIT) must be announced on EVERY run. Two bugs hid it:
+  // synergyNames (the toast-dedup set) was never reset between runs, so run 2+
+  // treated the pair as already seen; and this call used to sit BEFORE the
+  // toasts clear above, which wiped the announcement it had just queued. Both
+  // are fixed here — reset the set, then detect AFTER the toast list is empty.
+  state.synergyNames = null;
+  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   state.deathBy = null;      // WAVE-20: no death recorded yet
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
-  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false,
-    midAt: C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION), midBossDone: false, midBosses: [] };
+  state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
   // meta/profile — a null-then-init forces the reset, initHeat is idempotent
   // but does not clear a stale ledger).
@@ -2318,6 +2720,12 @@ function startRun() {
   initHeat(state);
   spawnWaveArches();
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
+  // WAVE-27: a fresh run starts with no lead and with the follow's base +
+  // displacement baseline on the player, so the first frame cannot read a
+  // stale delta from the previous run as travel or start from an old base.
+  state.camLead = { x: 0, y: 0 };
+  state.camBase = { x: state.cam.x, y: state.cam.y };
+  state.camPrev = { x: p.x, y: p.y };
   state.mode = 'playing';
   overlay.style.display = 'none';
   audio.startMusic();
@@ -2443,6 +2851,22 @@ function closeSettings() {
 // handler both funnel through runAction, so no game logic is duplicated.
 // Doctrine actions only nudge the AutoPilot controller's state; no input
 // handling lives in controllers.js.
+//
+// WAVE-26 ("stance that bites"): the dial used to change one hidden number
+// with zero feedback. Cycling it now says what the new stance DOES (its tag +
+// the two multipliers that actually differ), tinted with the stance's risk
+// color. WAVE-27: with the canvas readout removed this toast is the DISCOVERY
+// moment for the stance's meaning, so it must be complete on its own — it
+// names the stance, its CONFIG tag, and both real consequences.
+function cycleStanceWithFeedback() {
+  const s = controller.cycleStance();
+  const d = C.AUTOPILOT.STANCES[s] || {};
+  toast('STANCE ' + s + ' - ' + (d.TAG || '') +
+    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
+    C.HUD.STANCE_COLORS[s] || null);
+  return s;
+}
+
 function runAction(act) {
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
@@ -2468,7 +2892,7 @@ function runAction(act) {
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
-  else if (act === 'stance') controller.cycleStance();
+  else if (act === 'stance') cycleStanceWithFeedback();
   else if (act === 'q') useSkill(state, 'FROST_NOVA');
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
   else if (act === 'h') {
@@ -2503,8 +2927,33 @@ function runAction(act) {
   }
 }
 
+// WAVE-25 FIX (audit 2.2): keys whose action is EDGE-triggered — one press, one
+// action. Wave-23 guarded only tab/g/h/n and only inside the live-run branch, so
+// every other edge key below still re-fired on OS key-repeat: holding ESC
+// oscillated the run between paused and live (the settings branch closes the
+// pause, the next repeat re-enters playing and reopens it), holding M flipped
+// AUTO/MANUAL every tick, and I / S / ? / + / - strobed their screens. None of
+// these is legitimately hold-repeatable: held movement (WASD/arrows, and S in
+// MANUAL) is state-based via keyup, not repeat-driven, so swallowing its repeat
+// still leaves the key held. The guard is GLOBAL and runs before the mode
+// dispatch, so a held ESC can no longer ping-pong a mode pair.
+const REPEAT_GUARDED = new Set([
+  'tab', 'g',            // focus / stance cycle
+  'h', 'n',              // potions
+  'escape', 'p',         // pause / resume
+  'm',                   // pilot toggle
+  'i', 's', '?', 'f1',   // field report + hints toggle
+  '+', '=', '-', '_',    // zoom ladder
+]);
+
 window.addEventListener('keydown', (ev) => {
+  // WAVE-23 (#6): any key advances a live tour step (tour.js), so swallow the
+  // key here — otherwise the same press would ALSO fire a skill / toggle the
+  // pilot under the paused coachmark. Escape still reaches the tour's own
+  // document-level skip handler.
+  if (coachActive() || (menuTour && menuTour.active())) return;
   const k = ev.key.toLowerCase();
+  if (ev.repeat && REPEAT_GUARDED.has(k)) return;
   if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
   if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
     if (C.CINE.SKIPPABLE) endPortalCine();
@@ -2538,6 +2987,14 @@ window.addEventListener('keydown', (ev) => {
       if (card) card.click();
     }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
+    // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
+    // ESC was routed only in menu/settings/stats, and the in-run settings
+    // screen (the game's only pause) opened solely from the mouse-only cog.
+    // ESC and P now open the same pause; the 'settings' branch above still
+    // owns ESC-to-resume, so ESC is a clean toggle.
+    if (k === 'escape' || k === 'p') { openSettings(); return; }
+    // NOTE (wave-25): the auto-repeat guard for held action keys (tab/g/h/n and
+    // the rest) now lives at the top of this handler; see REPEAT_GUARDED.
     // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
     //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
     //   arrows/WASD held movement — MANUAL only
@@ -2606,23 +3063,52 @@ if (touchLayer && touchLayer.classList) {
 
 // WAVE-22c ON-SCREEN CONTROL HINTS (Sk408): desktop players get no touch
 // labels, so a compact key list rides under the cog. Persisted pref
-// (hudStorage shim, same pattern as the text HUD); default ON for
+// (prefStorage shim, same pattern as the text HUD); default ON for
 // non-touch, OFF for touch (the buttons there are self-labeled). Toggle:
 // the "?" button beside the cog or the ? / F1 key, both in-run.
 const hintsEl = document.getElementById('hints');
 const KEY_HINTS = 'hordes_hints';
 let hintsOn = (() => {
   try {
-    const v = hudStorage.getItem(KEY_HINTS);
+    const v = prefStorage.getItem(KEY_HINTS);
     return v === null ? !hasTouch : v === '1';
   } catch { return !hasTouch; }
 })();
+// WAVE-23 FIX (desktop audit #3): the list is MODE-AWARE, not static. The
+// stat key is mode-dependent — in MANUAL, S is held "down" (movement) and
+// only I opens the FIELD REPORT — and W fires Overcharge in AUTO but is held
+// "up" in MANUAL, where E is the always path. The old static "S / I stats"
+// line told a MANUAL player to press a key that walks them into the horde.
+// "Q / E" stays accurate in BOTH modes (never regress that). The number-key
+// claim is scoped to the screens that route it (draft 1-3, evolve /
+// intermission 1-4, stat tabs 1-6) — the title / shop / characters /
+// settings screens ignore number keys while this panel is still visible.
+const HINT_LINES = {
+  AUTO: [
+    'M pilot (AUTO) &middot; TAB focus &middot; G stance',
+    'Q / E (W too) skills &middot; H / N potions',
+    'S / I stats &middot; ESC pause',
+    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+  ],
+  MANUAL: [
+    'M pilot (MANUAL) &middot; WASD / arrows move',
+    'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
+    'I stats (S = move down) &middot; ESC pause',
+    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+  ],
+};
+function refreshHints() {
+  if (hintsEl) hintsEl.innerHTML = (HINT_LINES[state.pilotMode] || HINT_LINES.AUTO).join('<br>');
+}
 function applyHints() {
-  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', hintsOn);
+  refreshHints();
+  // WAVE-25 (audit 2.1/2.12): visibility is syncChrome's job (screen gate +
+  // pref + intro/portal-cine correctness), not a bare class toggle here.
+  syncChrome();
 }
 function toggleHints() {
   hintsOn = !hintsOn;
-  try { hudStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
   applyHints();
 }
 applyHints();
@@ -2713,22 +3199,68 @@ if (touchLayer && touchLayer.addEventListener) {
 
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
 // The touch layer is only relevant mid-run — menus are directly tappable.
-function updateTouchHud() {
+//
+// WAVE-25 FIX (audit 2.1 + 2.12): SCREEN CHROME — the pad layer (8 buttons),
+// the cog, the "?" and the hints panel. Its keys/buttons only do anything while
+// a run is LIVE (playing / finale), so that is the one screen gate. Every writer
+// of its visibility goes through syncChrome() and frame() calls it on the FIRST
+// frame of every mode, including 'intro' and 'portal-cine' (which early-return):
+// previously the layer kept whatever display it had at module load
+// (`#touch.cog-only { display: block }`) and the whole desktop UI sat on top of
+// the intro movie for its full ~7s. Same gate removes the hints panel from the
+// draft / intermission / death screens, where every key it lists is inert.
+function chromeOn() {
+  return state.mode === 'playing' || state.mode === 'finale';
+}
+function syncChrome() {
+  // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
+  // factor as first-class state, BEFORE anything reads them this frame.
+  // WAVE-27: these published fields are the ONE source of truth for the
+  // doctrine values. The canvas no longer paints them (owner ruling); their
+  // consumers are the overlay button badges (updateTouchHud, right below) and
+  // the opt-in text HUD (hudTextBlock) — both read state.*, never the
+  // controller directly. state.zoomScale stays the canonical integer zoom so
+  // the renderer's transform cannot drift from the coachmark projection in
+  // worldRegion() below.
+  state.focus = controller.focus;
+  state.stance = controller.stance;
+  // WAVE-26: the stance's LIVE activity (controllers.js sets it in decide) —
+  // WAVE-27 it rides the PILOT badge, so the dial's effect is still visible
+  // moment to moment without any canvas text.
+  state.stanceAct = controller.act || 'PATROL';
+  state.zoomScale = zoomScale(state.zoom);
+  const on = chromeOn();
   if (touchLayer && touchLayer.style) {
-    const want = (state.mode === 'playing' || state.mode === 'finale') ? '' : 'none';
+    const want = on ? '' : 'none';
     if (touchLayer.style.display !== want) touchLayer.style.display = want;
   }
   // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
   if (joyEl && joyEl.style) {
-    const wantJoy = (state.pilotMode === 'MANUAL' &&
-      (state.mode === 'playing' || state.mode === 'finale')) ? 'block' : 'none';
+    const wantJoy = (on && state.pilotMode === 'MANUAL') ? 'block' : 'none';
     if (joyEl.style.display !== wantJoy) joyEl.style.display = wantJoy;
   }
+  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', on && hintsOn);
+}
+function updateTouchHud() {
+  syncChrome();
   const p = state.player;
   const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
-  set('tc-focus', controller.focus);
-  set('tc-stance', controller.stance);
-  set('tc-pilot', state.pilotMode);
+  // WAVE-27: the badges are the doctrine's ONLY on-screen home now, and they
+  // read the PUBLISHED state (state.focus / state.stance / state.stanceAct,
+  // set by syncChrome just above) rather than scraping the controller — so
+  // there is exactly one source for the values. The PILOT badge also carries
+  // the pilot's live activity (FLEE / LOOT / PATROL), which keeps the stance's
+  // moment-to-moment effect visible after the canvas text was removed; under
+  // the manual pilot the activity IS 'MANUAL', so the badge prints just the
+  // mode rather than "MANUAL · MANUAL". The stance's MEANING (its TAG) is
+  // announced by the cycle toast (cycleStanceWithFeedback) — the discovery
+  // moment, by owner ruling.
+  const act = state.stanceAct;
+  set('tc-focus', state.focus);
+  set('tc-stance', state.stance);
+  set('tc-pilot', act && act !== state.pilotMode
+    ? state.pilotMode + ' \u00b7 ' + act
+    : state.pilotMode);
   const skill = (id, defId) => {
     const cd = p.skillCd[defId];
     set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= C.SKILLS[defId].MANA ? 'RDY' : 'LOW'));
@@ -2747,11 +3279,41 @@ function drawHud() {
     const want = hasArcadePass(profile) ? '#ffd75e' : '';
     if (hud.style.color !== want) hud.style.color = want;
     // WAVE-12: the text HUD is opt-in (settings TEXT HUD toggle, persisted);
-    // the canvas HUD chrome is the default readout. The text is still WRITTEN
-    // every frame either way — hidden, not dead.
+    // the canvas HUD chrome is the default readout. WAVE-25 (audit 2.9): the
+    // text is only BUILT while it can be observed (see below) — hidden on a
+    // real page means no per-frame string work, not just an invisible node.
     const wantDisp = hudTextEnabled() ? '' : 'none';
     if (hud.style.display !== wantDisp) hud.style.display = wantDisp;
   }
+  // WAVE-25 PERF (audit 2.9): the text block is a ~600-char string rebuilt and
+  // assigned EVERY frame, but it is only observable when the opt-in text HUD is
+  // on (the desktop default is OFF) — or in a headless harness, which has no
+  // layout API and reads this string as its only view of HUD state. A real
+  // hidden element is read by nobody, so skip the build there.
+  if (hudTextEnabled() || typeof hud.getBoundingClientRect !== 'function') {
+    hud.textContent = hudTextBlock(p);
+  }
+  // WAVE-13: tiny canvas 'M' badge beside the hp/mana chrome while the manual
+  // pilot is bound (AUTO shows nothing). fillRect-only, drawn on the
+  // renderer's ctx from here — render.js stays untouched (WAVE-12 precedent).
+  if (state.pilotMode === 'MANUAL' && renderer.ctx &&
+      (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
+    const ctx = renderer.ctx;
+    ctx.fillStyle = '#14141f';
+    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
+    ctx.fillStyle = '#ffd75e';
+    ctx.fillRect(121, 17, 2, 11);    // left stem
+    ctx.fillRect(129, 17, 2, 11);    // right stem
+    ctx.fillRect(123, 19, 2, 2);     // vee
+    ctx.fillRect(127, 19, 2, 2);
+    ctx.fillRect(125, 21, 2, 2);
+  }
+}
+
+// WAVE-25 (audit 2.9): the text-HUD body, split out of drawHud so the string
+// build can be skipped while it is hidden. Values are read live on every call —
+// nothing is cached, so a caller that skips it loses nothing.
+function hudTextBlock(p) {
   const bars = 20;
   const filled = Math.max(0, Math.min(bars, Math.round(bars * p.hp / p.stats.maxHp)));
   const mFilled = Math.max(0, Math.min(bars, Math.round(bars * p.mana / p.stats.maxMana)));
@@ -2792,11 +3354,13 @@ function drawHud() {
     return nm.split(' ')[0] + ':' + Math.ceil(b.t) + 's';
   });
   if (state.shieldAbsorbs > 0) archBits.push('AEGISx' + state.shieldAbsorbs);
-  hud.textContent =
-    `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.ceil(p.hp)}/${p.stats.maxHp}\n` +
+  // WAVE-25 FIX (audit 2.11): the readout is clamped at 0 to match the clamped
+  // bar fill above — an unclamped Math.ceil(p.hp) printed e.g. "HP [---] -3/130"
+  // on a live death screen.
+  return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${p.stats.maxHp}\n` +
     `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
     `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
-    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance} Pilot:${state.pilotMode}\n` +
+    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
     (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
@@ -2807,21 +3371,6 @@ function drawHud() {
     `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
-  // WAVE-13: tiny canvas 'M' badge beside the hp/mana chrome while the manual
-  // pilot is bound (AUTO shows nothing). fillRect-only, drawn on the
-  // renderer's ctx from here — render.js stays untouched (WAVE-12 precedent).
-  if (state.pilotMode === 'MANUAL' && renderer.ctx &&
-      (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
-    const ctx = renderer.ctx;
-    ctx.fillStyle = '#14141f';
-    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
-    ctx.fillStyle = '#ffd75e';
-    ctx.fillRect(121, 17, 2, 11);    // left stem
-    ctx.fillRect(129, 17, 2, 11);    // right stem
-    ctx.fillRect(123, 19, 2, 2);     // vee
-    ctx.fillRect(127, 19, 2, 2);
-    ctx.fillRect(125, 21, 2, 2);
-  }
 }
 
 // Per-type enemy census (HUD probe; smoke test asserts on it).
@@ -2911,7 +3460,12 @@ function startFinale() {
     p.x + Math.cos(a) * C.ENEMY.SPAWN_DIST * 0.6,
     p.y + Math.sin(a) * C.ENEMY.SPAWN_DIST * 0.6);
   b.finalBoss = true;   // tagged: updateFinale() owns it (update() never runs)
-  b.speed = 140;        // drift multiplier from decide() scales this way down
+  // WAVE-25 (audit 2.5) + wave-26: the maw's speed used to be the bare
+  // literal 140 while FINAL_BOSS.speedMult (0.35) was read nowhere. The
+  // factory (final_boss.js makeFinalBoss) now stamps the real default from
+  // the shared MAW_SPEED_BASE knob, so this line only RE-STATES the same
+  // value from the same source of truth — no literal lives here anymore.
+  b.speed = MAW_SPEED_BASE * FINAL_BOSS.speedMult;
   b.w = Math.round(b.w * FINAL_BOSS.sizeMult);   // collision box matches sprite
   b.h = Math.round(b.h * FINAL_BOSS.sizeMult);
   state.finalBoss = b;
@@ -2956,8 +3510,10 @@ function updateFinale(dt) {
   const act = decideFinalBossAction(b, p, state, dt);
   b.telegraph = !!act.telegraph;
   const mawSpd = b.speed * (b.slow > 0 ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1);
-  b.x = Math.max(-600, Math.min(600, b.x + act.mx * mawSpd * dt));
-  b.y = Math.max(-600, Math.min(600, b.y + act.my * mawSpd * dt));
+  // WAVE-25 (audit 2.4): the same config-driven arena edge as the rest.
+  const RIM = C.GROUND.RIM;
+  b.x = Math.max(-RIM, Math.min(RIM, b.x + act.mx * mawSpd * dt));
+  b.y = Math.max(-RIM, Math.min(RIM, b.y + act.my * mawSpd * dt));
   if (act.barrage) {
     const N = act.barrage.shots, off = Math.random() * Math.PI * 2;
     for (let i = 0; i < N; i++) {
@@ -3069,8 +3625,8 @@ function updateFinale(dt) {
     if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
   }
   tickBossBanner(dt);   // WAVE-14 arrival overlay (finale maw included)
-  state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
-  state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+  // WAVE-27: the finale uses the SAME camera follow as the run (one source).
+  updateCamera(p, dt);
 }
 
 // Reachable ONLY when final_boss.js's BEATABLE flips true (Sk408's later
@@ -3082,6 +3638,9 @@ function mawDefeated() {
   state.mode = 'dead';
   audio.stopMusic();
   audio.playSfx('levelup');
+  // WAVE-26: the finale kill is the biggest earned moment in the game — the
+  // flare fires with the victory screen (the dilation plays as the run ends).
+  triggerEarnedMoment('finale', state.player.x, state.player.y);
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
@@ -3093,8 +3652,12 @@ function mawDefeated() {
   saveProfile(profile);
   ovTitle.textContent = 'THE MAW IS SLAIN';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = `the horde is ended · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: `the horde is ended · WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+      ` · level ${p.level} · ${p.kills} kills`,
+    cause: null,          // you did not die — you won
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -3105,6 +3668,26 @@ state.mode = 'intro';
 let last = performance.now();
 let lastIntroPhase = null;
 function frame(now) {
+  // WAVE-26: the REAL frame delta is measured once, at the top, for EVERY
+  // mode — the earned-moment dilation decays on wall-clock time and must not
+  // freeze while an overlay/cinematic mode early-returns. `dt` for the
+  // simulation is this real delta times the earned-moment time scale.
+  const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  last = now;
+  const timeScale = advanceDilation(realDt);
+  const dt = realDt * timeScale;
+  // The earned-moment flourish decays on WALL-CLOCK time too, so slow-mo
+  // stretches the simulation but never the flare itself.
+  if (state.moment) {
+    state.moment.age += realDt;
+    if (state.moment.age >= state.moment.ttl) state.moment = null;
+  }
+  // WAVE-25 FIX (audit 2.1): screen chrome (pad layer, cog, "?",
+  // hints panel) and the published doctrine/zoom state are synced on the FIRST
+  // frame of EVERY mode. This must run before the 'intro' / 'portal-cine' early
+  // returns below: those modes never reached updateTouchHud(), so the whole
+  // desktop UI rendered on top of the intro movie for its full ~7s.
+  syncChrome();
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -3127,8 +3710,7 @@ function frame(now) {
     requestAnimationFrame(frame);
     return;
   }
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+  // `dt` (real * earned-moment time scale) was computed at the top of frame().
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
@@ -3162,4 +3744,33 @@ export const __TEST = {
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
+  // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
+  // Pure helpers + the live dilation state, so the new behaviour is testable
+  // headlessly without driving the rAF loop.
+  dilation: {
+    get scale() { return dilation.scale; },
+    get remaining() { return dilation.remaining; },
+    trigger: triggerDilation,
+    advance: advanceDilation,
+    get timeScale() { return state.timeScale; },
+  },
+  triggerEarnedMoment,
+  deathCauseLabel,
+  nextUnlockWithinReach,
+  endScreenBody,
+  synergyHintForCard,
+  openDraft,
+  synWeaponDmg,
+  stanceOf: () => controller.stance,
+  // ---- WAVE-27 seams (camera deadzone / loot reachability) ----
+  // `region` is the SAME world->screen projection the tour coachmark uses
+  // (worldRegion): tests can render an entity through the real renderer and
+  // prove the projection lands on the drawn position after the camera moved.
+  camera: {
+    follow: updateCamera,
+    region: worldRegion,
+    get cam() { return state.cam; },
+    get lead() { return state.camLead; },
+  },
+  loot: { limit: lootLimit, clamp: clampLootToArena },
 };

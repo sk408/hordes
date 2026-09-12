@@ -37,7 +37,8 @@
 //   lastTeleportAge — PYRAXIS: age of the last hop (cooldown gate)
 //
 // All phases are derived from enemy.age (deterministic; spitter/warlock
-// convention: "fires" land on the frame an interval phase wraps, < 1/60).
+// convention: a patterned "fire" lands on the frame an interval phase wraps,
+// detected by intervalWrapped below).
 
 import { CONFIG as C } from './config.js';
 import { spriteBox } from './sprites.js';
@@ -439,6 +440,19 @@ function toward(dx, dy) {
   return { mx: dx / len, my: dy / len };
 }
 
+// Did `interval` tick over during this frame? Same rule as
+// enemy_types.js/intervalWrapped (see the long note there): compare the integer
+// part of age / interval against the previous frame's, with a small
+// float-noise slack. A PHASE-vs-window test is what broke — a fixed 1/60 made
+// 120Hz clients fire every burst twice, and long frames could skip a burst
+// entirely. dt defaults to 1/60 for callers that predate the argument.
+const WRAP_EPS = 1e-9;
+function intervalWrapped(age, interval, dt) {
+  const step = dt > 0 ? dt : 1 / 60;
+  return Math.floor(age / interval + WRAP_EPS) !==
+         Math.floor((age - step) / interval + WRAP_EPS);
+}
+
 // ---- GRAVELMAW: stalk -> telegraph (flash + windup pause) -> homing charge
 // -> recover pause. Charge direction locks to the player's position on the
 // first charge frame (enemy.chargeDx/Dy, cleared outside the charge window)
@@ -488,7 +502,7 @@ function gravelmawDecide(enemy, player, _state, dt = 1 / 60) {
 // ---- CHOIR MOTHER: constant slow drift toward the player; summon bursts on
 // the SUMMON_INTERVAL wrap (count +1 when enraged); once below half hp, a fan
 // of projectiles on every fanInterval wrap.
-function choirMotherDecide(enemy, player) {
+function choirMotherDecide(enemy, player, _state, dt = 1 / 60) {
   const B = BOSSES.CHOIR_MOTHER;
   const EB = C.ESCALATION.BOSS;
   const dir = toward(player.x - enemy.x, player.y - enemy.y);
@@ -500,7 +514,7 @@ function choirMotherDecide(enemy, player) {
   const enraged = enemy.maxHp > 0 && enemy.hp / enemy.maxHp < B.enrageHpFrac;
 
   // Summon burst: 3 swarmers normally, 4 enraged (ESCALATION.BOSS.SUMMON_*).
-  if (enemy.age % EB.SUMMON_INTERVAL < 1 / 60) {
+  if (intervalWrapped(enemy.age, EB.SUMMON_INTERVAL, dt)) {
     intent.summon = {
       type: EB.SUMMON_TYPE,
       count: enraged ? EB.SUMMON_COUNT + 1 : EB.SUMMON_COUNT,
@@ -508,7 +522,7 @@ function choirMotherDecide(enemy, player) {
   }
 
   // Enrage hymn: fan of fire-intents spread around the aim direction.
-  if (enraged && enemy.age % B.fanInterval < 1 / 60) {
+  if (enraged && intervalWrapped(enemy.age, B.fanInterval, dt)) {
     const base = Math.atan2(dir.my, dir.mx);
     const step = B.fanSpread / (B.fanShots - 1);
     intent.fan = [];
@@ -527,7 +541,7 @@ function choirMotherDecide(enemy, player) {
 // (frozen, telegraph) -> ring nova on the cycle wrap (NOVA_* tuning from
 // ESCALATION.BOSS). Teleports a short hop away when crowded, gated by a
 // cooldown (enemy.lastTeleportAge).
-function pyraxisDecide(enemy, player) {
+function pyraxisDecide(enemy, player, _state, dt = 1 / 60) {
   const B = BOSSES.PYRAXIS;
   const EB = C.ESCALATION.BOSS;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
@@ -544,9 +558,13 @@ function pyraxisDecide(enemy, player) {
   const cycle = Math.max(B.novaChargeTime + 0.1, EB.NOVA_INTERVAL);
   const moveTime = cycle - B.novaChargeTime;
   const phase = enemy.age % cycle;
+  // Nova lands on the frame the cycle wraps — resolved BEFORE the charge-up
+  // early-return (age accumulates by += dt, so the wrap frame's phase can sit a
+  // hair below the cycle length, where the charge window would eat the nova).
+  const wrapped = intervalWrapped(enemy.age, cycle, dt);
 
   // Charge-up window at the end of the cycle: frozen + flashing.
-  if (phase >= moveTime) {
+  if (phase >= moveTime && !wrapped) {
     return { mx: 0, my: 0, fire: null, telegraph: true, novaCharge: true };
   }
 
@@ -558,7 +576,7 @@ function pyraxisDecide(enemy, player) {
   }
 
   let nova = null;
-  if (phase < 1 / 60) {                  // cycle just wrapped: RING
+  if (wrapped) {                         // cycle just wrapped: RING
     nova = { shots: EB.NOVA_SHOTS, speed: EB.NOVA_SPEED, damage: EB.NOVA_DAMAGE };
   }
   return { mx, my, fire: null, nova, telegraph: false };
@@ -576,7 +594,7 @@ function pyraxisDecide(enemy, player) {
 //   fan   — every BURST_INTERVAL: a tight BURST_SHOTS rifle volley at
 //           BURST_SPEED/BURST_DAMAGE (the player's own volley profile).
 // Mutates NOTHING on the enemy (age-derived only) — purity-whitelist clean.
-function heraldDecide(enemy, player) {
+function heraldDecide(enemy, player, _state, dt = 1 / 60) {
   const M = C.ESCALATION.MIDBOSS;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
   const dist = Math.hypot(dx, dy);
@@ -584,10 +602,10 @@ function heraldDecide(enemy, player) {
   const closeMult = dist < M.HOLD_DIST ? M.CLOSE_SPEED_MULT : 1;
   const intent = { mx: dir.mx * closeMult, my: dir.my * closeMult, fire: null };
 
-  if (enemy.age % M.RING_INTERVAL < 1 / 60) {
+  if (intervalWrapped(enemy.age, M.RING_INTERVAL, dt)) {
     intent.ring = { type: 'PILLAR', count: M.PILLARS, radius: M.PILLAR_RADIUS };
   }
-  if (enemy.age % M.BURST_INTERVAL < 1 / 60) {
+  if (intervalWrapped(enemy.age, M.BURST_INTERVAL, dt)) {
     const base = Math.atan2(dir.my, dir.mx);
     const step = M.BURST_SPREAD / (M.BURST_SHOTS - 1);
     intent.fan = [];

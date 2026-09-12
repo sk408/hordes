@@ -55,8 +55,22 @@
   .card.dim:hover { border-color: #4a4a6a; background: #14141f; cursor: default; }
   .card .name { color: #ffd75e; font-weight: bold; margin-bottom: 8px; }
   .card .desc { font-size: 12px; color: #a8a8c0; }
+  /* WAVE-26 draft synergy hint: a real, code-backed pair with something the
+     player already owns. Cyan so it reads as information, not flavor text;
+     absent entirely when the card has no genuine synergy. */
+  .card .syn {
+    margin-top: 8px; font-size: 11px; color: #7ad0ff;
+    letter-spacing: 1px;
+  }
   .card .key { margin-top: 10px; font-size: 11px; color: #6a6a8a; }
   #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
+  /* WAVE-26 "death as payoff": the end screen is the most-seen screen in the
+     game, so its three facts get color-coded and scannable in one pass —
+     cause (hot red), earnings (gold), and the next shop unlock (cool cyan).
+     Monospace + no decoration: still the pixel look, just legible. */
+  #overlay .sub .cause { color: #ff7a6a; }
+  #overlay .sub .earn  { color: #ffd75e; }
+  #overlay .sub .next  { color: #7ad0ff; }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
      staged spotlight walkthrough. #tour-root is appended to <body> (above
@@ -90,14 +104,23 @@
   @media (pointer: coarse) { #touch { display: block; } }
   /* WAVE-22b DESKTOP MENU BUTTON (Sk408): the cog is the in-run menu —
      without the touch layer, desktop had NO on-screen way to reach settings
-     (zoom, END RUN, replay tour). On non-touch devices main.js adds
-     .cog-only: the layer shows the cog alone, mouse-clickable; pads and
-     joystick stay touch-only. !important keeps the JS-toggled joystick
-     from popping up under a mouse-only MANUAL bind. */
+     (zoom, END RUN, replay tour). WAVE-23 (#6): non-touch devices get the
+     full layer (main.js adds .cog-only) — the pads are real mouse-clickable
+     buttons (parity with touch), NOT zero-sized ghosts. The joystick is
+     pointer-captured, so it mouse-drags too when MANUAL is bound (WASD
+     remains the keyboard path). */
   #touch.cog-only { display: block; }
-  #touch.cog-only .pad { display: none; }
-  #touch.cog-only #joy { display: none !important; }
-  #touch.cog-only button.cog { cursor: pointer; }
+  #touch.cog-only button { cursor: pointer; }
+  #touch.cog-only #joy { cursor: grab; }
+  /* WAVE-23 desktop refinement (post-audit): a mouse user does not need
+     thumb-sized 56px targets, and at 0.85 opacity the pads sat on top of the
+     arena's bottom corners. On the fine-pointer desktop they shrink to a
+     44px click target (the standard minimum) and dim to 0.55, snapping back
+     to full opacity while the cursor is over them. Touch / hybrid (#touch.on)
+     keeps the full-size layer untouched — this block is cog-only devices. */
+  #touch.cog-only .pad button { min-width: 62px; min-height: 44px; font-size: 12px; }
+  #touch.cog-only .pad { opacity: 0.55; }
+  #touch.cog-only .pad:hover { opacity: 1; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));
@@ -202,13 +225,17 @@
     font-size: 16px; font-weight: bold; color: #e8e8f0;
   }
   /* The hints panel: compact one-glance key list, top-right under the cog.
-     Shown only when main.js adds .on (persisted pref; default = non-touch). */
+     Shown only when main.js adds .on (persisted pref; default = non-touch).
+     WAVE-23 (#6): the primary desktop reference — 14px, full-contrast text
+     with a black knock-out shadow (the old 11px low-grey was the least
+     readable thing on screen). */
   #hints {
     position: absolute;
     top: 64px; right: max(10px, env(safe-area-inset-right, 10px));
-    display: none; padding: 8px 11px;
-    font-size: 11px; line-height: 1.7; color: #c9c9dd; text-align: left;
-    background: rgba(20,20,31,0.82); border: 2px solid #4a4a6a; border-radius: 10px;
+    display: none; padding: 9px 12px;
+    font-size: 14px; line-height: 1.8; color: #e8e8f0; text-align: left;
+    text-shadow: 1px 1px 0 #000;
+    background: rgba(20,20,31,0.88); border: 2px solid #5a5a7a; border-radius: 10px;
     pointer-events: none; z-index: 6; white-space: nowrap;
   }
   #hints.on { display: block; }
@@ -243,17 +270,17 @@
     <button class="cog" id="tc-cog" data-act="settings" aria-label="settings"><span class="cog-gear"></span></button>
     <button class="cog help" id="tc-help" data-act="help" aria-label="controls">?</button>
   </div>
-  <div id="hints">
-    M pilot &middot; TAB focus &middot; G stance<br>
-    Q / E skills &middot; H / N potions<br>
-    S / I stats &middot; + / - zoom &middot; 1-6 cards<br>
-    ? hide this
-  </div>
+  <!-- WAVE-25 (audit 2.11): the authored key list that used to sit here was
+       dead markup — applyHints()/refreshHints() (main.js) overwrite this
+       element's innerHTML at module load with the mode-aware AUTO/MANUAL
+       variant, so the static copy was never rendered and had already drifted
+       once. The element stays as the hook; main.js owns the content. -->
+  <div id="hints"></div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
     <div class="cards" id="ov-cards"></div>
-    <div class="sub">1 / 2 / 3 or tap a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats &middot; ? key hints &middot; or the on-screen buttons</div>
+    <div class="sub">cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats (S in AUTO) &middot; ESC pause &middot; ? key hints &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

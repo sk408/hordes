@@ -25,7 +25,9 @@
 //   potionHealMult  (base 1)    — hb1: multiply CONFIG.POTIONS.HP_HEAL in the
 //                                 usePotion call path (skills.js seam)
 //   dropChanceMult  (base 1)    — hb1: multiply CONFIG.POTIONS.DROP_CHANCE in
-//                                 skills.js rollDrop
+//                                 the potion-drop roll on the kill path
+//                                 (main.js; skills.js's old rollDrop export
+//                                 was removed in wave-25 as dead code)
 //   itemDropMult    (base 1)    — hb1: multiply CONFIG.ITEMS chances in
 //                                 loot.js drop rolls
 //   damageTakenMult (base 1)    — hb1: multiply contact/projectile damage the
@@ -227,11 +229,17 @@ export function rollChoices(wave, rng = Math.random, excludeIds = []) {
   const used = new Set(excludeIds);
   const cw = RARITY_WEIGHTS.COMMON, rw = RARITY_WEIGHTS.RARE, ew = epicWeight(wave);
   const offers = [];
-  const n = Math.max(0, Math.min(3, CHOICE_POOL.length - used.size));
+  // How many offers this set can hold: 3, or whatever the pool has LEFT after
+  // the run-taken ids. Counted off the POOL (not CHOICE_POOL.length - used.size)
+  // so an exclude id that never came from this pool cannot shrink the set: with
+  // the size arithmetic, 12 unknown ids left 2 offers even though all 14
+  // blessings were still available.
+  const pool = CHOICE_POOL.filter((e) => !used.has(e.id));
+  const n = Math.max(0, Math.min(3, pool.length));
   for (let i = 0; i < n; i++) {
     const r = rng() * (cw + rw + ew);
     const rarity = r < cw ? 'COMMON' : r < cw + rw ? 'RARE' : 'EPIC';
-    const avail = CHOICE_POOL.filter((e) => !used.has(e.id));
+    const avail = pool.filter((e) => !used.has(e.id));
     const entry = avail[Math.min(avail.length - 1, Math.floor(rng() * avail.length))];
     used.add(entry.id);
     offers.push({ id: entry.id, title: entry.title, rarity, ...entry.build(RARITY_SCALE[rarity]) });
