@@ -173,7 +173,7 @@ about offered options dilution"* — so the pool-dilution problem is DEFERRED, n
 `docs/GENRE_RESEARCH.md` §2 (both genre leaders narrow the pool at full slots) only once the catalogue
 grows enough for it to matter.
 
-### G8 — RUN-ALTERING ITEMS, SKILL ITEMS, AND LUCK  [status: not started]
+### G8 — RUN-ALTERING ITEMS, SKILL ITEMS, AND LUCK  [status: DECIDED 2026-09-12 — owner picked option 6, build order 1 -> 3 -> 4 -> 2]
 Owner: *"run altering items and general skill items offered at level up to make luck more of a factor in
 the run."*
 - Add genuinely RUN-ALTERING items to the level-up pool (items that change how the run plays, not just
@@ -769,6 +769,9 @@ and setup are in the headers (`PW_BASE`, `HORDES_URL`, `SHOTS_DIR`).
   not a "does it look right" judgement. Re-shoot + vision-read at W10.
 - **The `before` state of the bleed was not measured** (the fix is already in the tree and git state
   commands are forbidden for agents). The live-run control is the substitute.
+- **RESOLVED 2026-09-12 (tick 3) — see TICK NOTE 3 at the end of this file.** The tour still runs on the
+  title (by design: `FIRST_RUN_TOUR` stage 1), but a finger tap on a menu card now REACHES the card, and
+  the tour teaches TROPHIES. The finding below is kept as the record of what was wrong.
 - **NEW FINDING (W4/G12 — one extra tap, not a blocker): the FIRST-RUN TOUR renders over the TITLE.**
   On a fresh profile the tour tip ("PLAY starts a run — pilot the horde as long as you can." +
   "TAP TO CONTINUE" + "SKIP TOUR") and its `.tour-shade` sit ABOVE the menu cards: a real finger tap on
@@ -787,3 +790,90 @@ other half of the owner's ask ("what the run OFFERS"). `openDraft()` in main.js 
 weighted pool (weapon cards 1, stat cards 0.3) on a plain `Math.random`, and there is no run-altering
 item category at all yet. G8 also needs an OWNER decision on WHICH run-altering items he wants, so the
 next tick should surface a numbered option list rather than guess.
+
+
+## TICK NOTE 3 — 2026-09-12 (cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** nothing new started. This tick closed the one OPEN finding left in this file from tick 2
+(the W4/G12 tour-over-title finding: a real finger tap on the TROPHIES card was swallowed by the tour
+shade, and TROPHIES was the one title card the tour did not teach).
+
+**LANDED (suite re-run by the parent: PASS=56 FAIL=0; tree was clean at fb692fe before the slice):**
+1. **`src/tour.js` — `passThrough` (OPT-IN).** A tap that lands on a real control UNDER the shade now
+   presses that control: the tour tears down, marks itself done, and forwards the press. Hit-tested with
+   `document.elementsFromPoint` at the tap's client coords, guarded so a missing API (fake doc, old
+   browser) falls back to plain advance. **The opt-in is the point:** the in-run coachmarks pause the sim
+   under the shade, so a pass-through there would silently pick a draft card the player only tapped to
+   dismiss the tip. Only the stage-1 title tour sets `passThrough: '#ov-cards > .card'`.
+2. **`src/main.js` — the tour now teaches TROPHIES** ("TROPHIES - every emblem you have earned, full
+   screen."), inserted in menu order. This is build-plan item 9 honoured for the gallery (taught, not left
+   to luck), and it is asserted, not merely written.
+3. **`test/test_tour.mjs`** — retargeted, not weakened, and now STRONGER. The integration case hardcoded
+   "advance through all 5 steps"; it now derives the count from the live menu (`seen.length ===
+   cards().length`) and asserts the tour teaches TROPHIES. A future menu screen nobody teaches fails the
+   test instead of shipping silently. Plus 3 new engine cases: the pass-through presses the card and ends
+   the tour; pass-through is opt-in (a tap over a card without it still just advances); and no hit-test
+   API means a safe plain advance.
+
+**MEASURED — real browser, phone viewport (390x844 @ DPR 3, touch, fresh profile), served locally,
+screenshots in `docs/art/browser-verify-2026-09-12/`:**
+- **The tap now lands.** `page.touchscreen.tap` (a real touch event) at the TROPHIES card centre
+  **(275,422) — the exact coordinate recorded as swallowed in tick 2** — opens the gallery:
+  `tourGone: true`, gallery up (`PREV / NEXT / BACK`, "LOCKED 1 / 21 ... Enemies slain (all runs): 0 / 1"),
+  DOM chrome gate `#hud=none #hints=none #touch=none #joy=none`. Before: that same tap only advanced the
+  tip (evidence: `phone-title-tourblock.png`). New shots: `phone-title-before-tap.png`,
+  `phone-title-tap-passthrough.png`.
+- **The tour teaches all six cards**, in menu order, read from the live `#tour-tip`: PLAY, SHOP,
+  CHARACTERS, **TROPHIES**, SETTINGS, HOW TO PLAY. Shot of the TROPHIES step:
+  `phone-title-tour-trophies.png`.
+
+**COULD NOT VERIFY (honest):**
+- **No vision read.** No vision model is reachable from this runner, so the shots were read as DOM state +
+  text, not as a "does it look right" judgement. Same standing gap as tick 2; re-read at W10.
+- The before-state of the swallowed tap was NOT re-measured in this tick (the fix is already in the tree
+  and git state commands are forbidden for agents); tick 2's shot is the record.
+- Touch + mouse input verified. The desktop keyboard path (digits 1-6 -> menu cards) is unchanged and was
+  not re-walked.
+
+---
+
+## G8 DECISION NEEDED FROM THE OWNER (surfaced, not guessed)
+
+Recon stands from tick 2: **luck is already a real stat** (`Fortune`, 5 levels in `meta.js`) but it only
+shifts WORLD-DROP rarity (`luckDropWeights` in `loot.js`) and flash-drop chance — it does not touch the
+level-up draft at all, which is the other half of the ask ("what the run OFFERS"). And there is no
+run-altering item category yet: `openDraft()` draws 3 cards from a weighted pool (weapon 1, stat 0.3) on a
+plain `Math.random`.
+Numbered options for the owner to pick from (my recommendation in brackets):
+1. **Luck touches the draft** — pool weights shift with Fortune, so high luck measurably offers the rarer
+   cards more often. Cheapest real change; no new content.
+2. **Run-altering items, rule-rewrite shape** — cards that change how the run PLAYS, one per keyword
+   ("all projectiles pierce", "on-kill explosions", "health pickups also damage"), borrowed from G21's
+   rule-card model. Biggest depth, biggest job.
+3. **Run-altering items, condition shape** — "no stat is ever offered twice", "every chest is a horde",
+   "waves never stop until you bank one". Cheap to author, very legible to the player.
+4. **General skill items** — small always-on perks (move speed, pickup radius, regen, cooldown) as a
+   distinct card family from the stat cards.
+5. **Luck as a currency/choice** — a shrine or shop row that buys luck for a run, so the player can bet
+   on it (this also uses the existing shrine hook).
+6. **All of the above, sequenced** — 1 first (measurable, no content), then 2/3 as the content pass.
+[Bracketed recommendation: 1 + 3 first — both are cheap, both are measurable in the existing draft sim,
+  and they answer "more of a factor in the run" without inventing a whole card system up front.]
+
+### OWNER DECISION — 2026-09-12: **option 6, sequenced 1 -> 3 -> 4 -> 2.** [status: DECIDED]
+
+The owner picked 6 (all of the above, sequenced) over the minimal "1 + 3". Rationale, so the build does
+not have to re-derive it: the original ask named THREE things — run-altering items, general skill items,
+and luck as a real factor — and only 6 delivers all three. The order front-loads cheap, measurable work:
+
+1. **Luck touches the draft** first — pool weights shift with `Fortune`. No new content, and the effect is
+   immediately measurable in the existing draft sim (`tools/draft_sim.mjs`), so it establishes the
+   measurement before any content lands.
+2. **Condition-shape run-altering items** (option 3) — cheap to author, very legible to a player
+   ("no stat offered twice", "every chest is a horde"), and measurable in the same sim.
+3. **General skill items** (option 4) — a distinct always-on perk family, separate from stat cards.
+4. **Rule-rewrite run-altering items** (option 2) LAST — the real content pass, biggest job, and by then
+   the measurement harness from steps 1-2 is already proven.
+
+Do NOT ask again; build in this order. Each step still has to keep the existing invariants (bad draft can
+fail, good beats bad >=3/5 metrics, no single pick loses a run) and keep the suite green.
