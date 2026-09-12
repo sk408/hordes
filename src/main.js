@@ -1848,7 +1848,8 @@ function showHowToPlay() {
     'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
     'H / N — potions &middot; S / I — field report<br>' +
     '1 – 6 — pick cards &amp; stat tabs &middot; C — continue &middot; R / T — retry / title<br>' +
-    '+ / - — zoom &middot; ESC — close');
+    '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
+    '? — show / hide the on-screen key hints &middot; ESC — close');
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
   // the tour skips must be documented HERE or dropped).
@@ -2456,6 +2457,8 @@ function runAction(act) {
     else openSettings();
     return;
   }
+  // WAVE-22c: the "?" button — toggles the key-hints panel.
+  if (act === 'help') { toggleHints(); return; }
   // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
   // must not flip controllers under the smoke probes' feet).
   if (act === 'pilot') {
@@ -2544,6 +2547,8 @@ window.addEventListener('keydown', (ev) => {
     //              in BOTH modes (the permanent new home for it)
     if (k === 'm') { togglePilotMode(); return; }
     if (k === 'i') { openStats(); return; }
+    // WAVE-22c: ? (or F1) toggles the on-screen control hints.
+    if (ev.key === '?' || k === 'f1') { if (ev.preventDefault) ev.preventDefault(); toggleHints(); return; }
     // WAVE-16 quick zoom: '+'/'=' zooms in, '-' zooms out — no settings trip
     // needed. Live mid-run in both pilot modes (render reads state.zoom
     // every frame).
@@ -2590,10 +2595,37 @@ for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', '
 }
 
 // Reveal the layer on touch devices (CSS @media (pointer: coarse) covers
-// most; this catches the rest, e.g. hybrid laptops).
+// most; this catches the rest, e.g. hybrid laptops). WAVE-22b: non-touch
+// devices get COG-ONLY — the settings cog is the in-run menu button and
+// desktop must reach it with a mouse too.
 const hasTouch = ('ontouchstart' in window) ||
   ((typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) || 0) > 0;
-if (touchLayer && hasTouch && touchLayer.classList) touchLayer.classList.add('on');
+if (touchLayer && touchLayer.classList) {
+  touchLayer.classList.add(hasTouch ? 'on' : 'cog-only');
+}
+
+// WAVE-22c ON-SCREEN CONTROL HINTS (Sk408): desktop players get no touch
+// labels, so a compact key list rides under the cog. Persisted pref
+// (hudStorage shim, same pattern as the text HUD); default ON for
+// non-touch, OFF for touch (the buttons there are self-labeled). Toggle:
+// the "?" button beside the cog or the ? / F1 key, both in-run.
+const hintsEl = document.getElementById('hints');
+const KEY_HINTS = 'hordes_hints';
+let hintsOn = (() => {
+  try {
+    const v = hudStorage.getItem(KEY_HINTS);
+    return v === null ? !hasTouch : v === '1';
+  } catch { return !hasTouch; }
+})();
+function applyHints() {
+  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', hintsOn);
+}
+function toggleHints() {
+  hintsOn = !hintsOn;
+  try { hudStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
+  applyHints();
+}
+applyHints();
 
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
 // legacy 300ms wait and double-tap zoom.
