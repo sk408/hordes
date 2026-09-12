@@ -6,7 +6,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import { CONFIG as CFG } from '../src/config.js';
 import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
-import { groundTheme } from '../src/render.js';
+import { groundTheme, Renderer } from '../src/render.js';
 import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
 import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
@@ -71,13 +71,13 @@ globalThis.document = {
 // Simulate input handlers registered by the game. WAVE-13: the game also
 // registers keyup (held-direction release) + blur (stuck-key clear) — route
 // by event type so the later registrations don't clobber the keydown seam.
-let keyHandler = null, keyUpHandler = null, blurHandler = null;
+let keyHandler = null, keyUpHandler = null, blurHandler = null, resizeHandler = null;
 globalThis.window = {
   addEventListener: (ev, cb) => {
     if (ev === 'keydown') keyHandler = cb;
     else if (ev === 'keyup') keyUpHandler = cb;
     else if (ev === 'blur') blurHandler = cb;
-    // 'resize' (fitCanvas) — ignored
+    else if (ev === 'resize') resizeHandler = cb;   // WAVE-23: fitCanvas seam
   },
 };
 let now = 0;
@@ -222,6 +222,76 @@ const dtMs = 1000 / 60;
     'the ladder must wrap 8x -> 1x and persist');
   byTitle('BACK').click();
   console.log('zoom setting: hydrated 6x at boot, ZOOM row cycles + persists, 8x wraps to 1x');
+}
+
+// WAVE-23 RESOLUTION / pixel-scale: the settings row cycles
+// AUTO -> PIXEL-PERFECT -> 2 -> 3 -> 4 -> AUTO, persists every step, and each
+// click re-fits the canvas CSS size through the REAL displayScale math
+// (1280x720 window: fit = 2.4 -> AUTO 1152x720, integer modes 960x600).
+{
+  globalThis.window.innerWidth = 1280;            // the harness boots headless
+  globalThis.window.innerHeight = 720;            // (no innerWidth) — set it now
+  elements['game'].style = {};                    // fitCanvas guard needs .style
+  resizeHandler();                                // initial fit under AUTO
+  const cards = elements['ov-cards'];
+  const byTitle = (t) => Array.from(cards.children)
+    .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETTINGS').click();
+  const cv = elements['game'];
+  const size = () => cv.style.width + 'x' + cv.style.height;
+  const r0 = byTitle('RESOLUTION');
+  assert(r0 && /currently AUTO \(fit window\)/.test(r0.innerHTML),
+    'settings must offer the RESOLUTION row, AUTO by default (got ' + (r0 && r0.innerHTML) + ')');
+  assert(size() === '1152pxx720px', 'AUTO fits the window: 1152x720 (got ' + size() + ')');
+  byTitle('RESOLUTION').click();   // -> PIXEL-PERFECT
+  assert(globalThis.localStorage.getItem('hordes_resolution') === 'PIXEL-PERFECT' &&
+    /currently PIXEL-PERFECT \(uniform pixels\)/.test(byTitle('RESOLUTION').innerHTML),
+    'PIXEL-PERFECT persists + re-renders');
+  assert(size() === '960pxx600px', 'PIXEL-PERFECT floors 2.4 -> 2: 960x600 (got ' + size() + ')');
+  byTitle('RESOLUTION').click();   // -> '2' (fits: same 960x600, mode persisted)
+  assert(globalThis.localStorage.getItem('hordes_resolution') === '2', 'forced 2x persists');
+  byTitle('RESOLUTION').click();   // -> '3' (clamped down to the fitting 2)
+  assert(globalThis.localStorage.getItem('hordes_resolution') === '3' && size() === '960pxx600px',
+    'forced 3x clamps to what fits: still 960x600');
+  byTitle('RESOLUTION').click();   // -> '4'
+  assert(globalThis.localStorage.getItem('hordes_resolution') === '4', 'forced 4x persists');
+  byTitle('RESOLUTION').click();   // -> wraps to AUTO (visible, reversible)
+  assert(globalThis.localStorage.getItem('hordes_resolution') === 'AUTO' && size() === '1152pxx720px',
+    'wraps back to AUTO and re-fits 1152x720');
+  byTitle('BACK').click();
+  console.log('resolution setting: AUTO/PIXEL-PERFECT/2/3/4 cycle, persist, and re-fit ' +
+    'the canvas (1152x720 <-> 960x600 at a 1280x720 window)');
+}
+
+// WAVE-23 Renderer backing store: sized to the REAL displayed pixels (CSS x
+// dpr) with a view-coordinate base transform — the crisper-text mechanism.
+// Headless (no layout rect): stays VIEW-sized 1:1 so view-coordinate
+// assertions keep working.
+{
+  const mkCanvas = (rect) => ({
+    width: 0, height: 0, style: {},
+    getContext: () => fakeCtx,
+    ...(rect ? { getBoundingClientRect: () => rect } : {}),
+  });
+  const { Renderer: R } = { Renderer };
+  // 960x600 CSS at dpr 2 -> 1920x1200 backing, 4x view scale.
+  const r1 = new Renderer(mkCanvas({ width: 960, height: 600, left: 0, top: 0 }));
+  r1.resize(2);
+  assert(r1.canvas.width === 1920 && r1.canvas.height === 1200,
+    'CSS 960x600 x dpr2 -> 1920x1200 backing (got ' + r1.canvas.width + 'x' + r1.canvas.height + ')');
+  assert(r1.viewScale.sx === 4 && r1.viewScale.sy === 4, 'view transform maps 480x300 -> backing');
+  assert(r1.dpr === 2, 'dpr retained');
+  // dpr clamps to 1..3.
+  const r2 = new Renderer(mkCanvas({ width: 480, height: 300, left: 0, top: 0 }));
+  r2.resize(9);   // clamped to 3
+  assert(r2.dpr === 3 && r2.canvas.width === 1440 && r2.canvas.height === 900,
+    'dpr clamps to 3 (got ' + r2.dpr + ', ' + r2.canvas.width + 'x' + r2.canvas.height + ')');
+  // No layout rect (headless stub): VIEW-sized 1:1 fallback (dpr reads as 1).
+  const r3 = new Renderer(mkCanvas(null));
+  r3.resize();
+  assert(r3.canvas.width === 480 && r3.canvas.height === 300 && r3.viewScale.sx === 1,
+    'headless fallback keeps a 480x300 1:1 backing');
+  console.log('renderer backing store: CSS x dpr sizing + view transform + headless 1:1 fallback');
 }
 
 // Title-mode boot: click PLAY to start the run (menu buttons are overlay
@@ -1376,12 +1446,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'player must stay view-centered at 2x (camera lock)');
 
   // HUD STAYS NATIVE while zoomed: record one 2x frame. The HP bar chrome
-  // border (5,15,112,7 — drawBar(6,16,110)) must paint at transform depth 0;
-  // the world ground base fill (0,0,480,300) at depth 1 (inside the zoom).
+  // border (21,15,112,7 — drawBar(22,16,110) + 1px border; WAVE-23 shifted
+  // the bars right for the HP/MP labels) must paint at transform depth 0; the
+  // world ground base fill (0,0,480,300) at depth 1 (inside the zoom).
   ctxRec.rec = true; ctxRec.rects.length = 0;
   pump(1);
   ctxRec.rec = false;
-  assert(ctxRec.rects.some(q => q.d === 0 && q.x === 5 && q.y === 15 && q.w === 112 && q.h === 7),
+  assert(ctxRec.rects.some(q => q.d === 0 && q.x === 21 && q.y === 15 && q.w === 112 && q.h === 7),
     'the HP bar chrome must paint at NATIVE 1x coords while the world zooms');
   assert(ctxRec.rects.some(q => q.d === 1 && q.x === 0 && q.y === 0 && q.w === CFG.VIEW_W && q.h === CFG.VIEW_H),
     'the world ground base must paint INSIDE the zoom transform');

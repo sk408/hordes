@@ -126,6 +126,11 @@ export class Tour {
     this.root.addEventListener('pointerdown', this.onPointerDown);
     this.onKey = (ev) => {
       if (ev && ev.key === 'Escape') { ev.preventDefault?.(); this.skip(); }
+      // WAVE-23 (#6): ANY other key advances too — the hint wording is
+      // input-aware ("CLICK OR PRESS ANY KEY" on desktop), so the engine
+      // honors it. No preventDefault: the game is paused while a coachmark
+      // is up, so the key has nowhere else to go.
+      else this.next();
     };
     d.addEventListener?.('keydown', this.onKey);
     (d.body || this.root).appendChild(this.root);

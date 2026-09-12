@@ -109,24 +109,33 @@ export class Renderer {
     this.resize();
   }
 
-  // WAVE-18 (#4, "the large text is very fuzzy"): DPR-aware backing store.
-  // The canvas used to be a fixed 480x300 bitmap that phones CSS-scaled by a
-  // non-integer factor — imageSmoothingEnabled=false saved the PIXEL ART but
-  // rasterised GLYPHS resampled and blurred. Now the backing store is
-  // VIEW * dpr (clamped 1..3) with a base setTransform(dpr,...): every
-  // existing draw stays in view/CSS-pixel coordinates (all math unchanged),
-  // while text rasterises at native device resolution. The WAVE-16 zoom
-  // save/scale/restore nests on top of this base transform cleanly. Assigning
+  // WAVE-18 (#4) made the backing store VIEW*dpr; WAVE-23 goes further: the
+  // backing store is now the REAL displayed pixel size (CSS size x dpr, from
+  // the layout rect), with the base transform mapping view coordinates onto
+  // it. On a 1280x720 dpr=1 desktop the buffer was 480x300 upscaled by CSS —
+  // every glyph rasterised at 8px then nearest-resampled (soft, uneven 2/3px
+  // art pixels). Now glyphs rasterise 1:1 at device resolution (canvas text
+  // under a scale transform renders its vector outlines at final size), and
+  // PIXEL-PERFECT mode (main.js fitCanvas) makes the CSS scale an integer so
+  // art pixels are uniform NxN. Smoothing stays OFF for the sprite pass.
+  // Headless fallback: no layout rect -> VIEW-sized buffer, 1:1 transform
+  // (every existing test assertion is in view coordinates). Assigning
   // canvas.width resets ctx state, so transform + smoothing are re-asserted
-  // here on every resize.
+  // on every resize.
   resize(dprOverride) {
     const rawDpr = dprOverride !== undefined ? dprOverride
       : ((typeof globalThis.window !== 'undefined' && globalThis.window.devicePixelRatio) || 1);
     const dpr = Math.max(1, Math.min(3, rawDpr || 1));
     this.dpr = dpr;
-    this.canvas.width = C.VIEW_W * dpr;
-    this.canvas.height = C.VIEW_H * dpr;
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    let cssW = C.VIEW_W, cssH = C.VIEW_H;
+    try {
+      const r = this.canvas.getBoundingClientRect();
+      if (r && r.width > 0 && r.height > 0) { cssW = r.width; cssH = r.height; }
+    } catch { /* headless stub */ }
+    this.canvas.width = Math.max(1, Math.round(cssW * dpr));
+    this.canvas.height = Math.max(1, Math.round(cssH * dpr));
+    this.viewScale = { sx: this.canvas.width / C.VIEW_W, sy: this.canvas.height / C.VIEW_H };
+    this.ctx.setTransform(this.viewScale.sx, 0, 0, this.viewScale.sy, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
   }
 
@@ -803,8 +812,8 @@ export class Renderer {
     g.font = 'bold 20px monospace';
     g.fillStyle = '#ffd75e';
     g.fillText(b.title, W / 2, H / 2 - 9);
-    g.font = '9px monospace';
-    g.fillStyle = '#c8c8d8';
+    g.font = '10px monospace';               // WAVE-23 (#4): 9 -> 10px
+    g.fillStyle = '#d8d8e8';
     g.fillText(b.sub, W / 2, H / 2 + 11);
     g.textAlign = 'left';
     g.textBaseline = 'top';
@@ -860,42 +869,62 @@ export class Renderer {
         g.fillRect(fx, y, fwid, 5);
       }
     };
-    drawBar(6, 16, 110, hpFrac, flashFrac, '#ff5566');
-    drawBar(6, 26, 110, manaFrac, 0, '#4a8cff');
+    // WAVE-23 (#4/#6): every bar gets a text label to its left — the vision
+    // pass called the unlabeled bars "placeholders" — and the bars shift
+    // right to make room. 8px mono, tinted to its bar.
+    g.font = 'bold 8px monospace';
+    g.textBaseline = 'top';
+    g.fillStyle = '#ff8a96'; g.fillText('HP', 6, 16);
+    g.fillStyle = '#7aa8ff'; g.fillText('MP', 6, 26);
+    drawBar(22, 16, 110, hpFrac, flashFrac, '#ff5566');
+    drawBar(22, 26, 110, manaFrac, 0, '#4a8cff');
 
     // --- WAVE-18 (#2) PLAYER XP BAR (galaxy.click: "there's no xp bar
     // (?!?!?!?)"). The genre's core readout, previously drawn nowhere: gold,
-    // LONGER (150px vs the 110px HP/mana pair) and BOLDER (6px fill), with
-    // the level number riding its right end. "How close is my next upgrade"
-    // must be answerable in ~2s of looking, at any zoom (HUD chrome is
-    // native 1x by WAVE-16 construction). chrome.xpFrac is the EXACT
-    // unclamped fraction (draw rounds; the seam does not).
+    // LONGER and BOLDER (6px fill), with the level number riding its right
+    // end. WAVE-23 (#1): the EMPTY state must read as a bar at 0% too —
+    // visible frame + track, tick marks across the FULL width (not just the
+    // fill), an XP label, and a gold goal-tick at the far end. Fill
+    // behaviour unchanged. chrome.xpFrac is the EXACT unclamped fraction.
     const xpFrac = p.xpNext > 0 ? Math.max(0, Math.min(1, p.xp / p.xpNext)) : 0;
     chrome.xpFrac = p.xpNext > 0 ? p.xp / p.xpNext : 0;
     chrome.level = p.level || 1;
-    const xb = 6, yb = 37, wb = 150, hb = 6;
+    const xb = 22, yb = 37, wb = 134, hb = 6;
+    g.fillStyle = '#ffd75e';                       // label (matches the fill)
+    g.fillText('XP', 6, yb);
     g.fillStyle = '#000000';                       // 1px pixel border
     g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
-    g.fillStyle = '#3a3a46';                       // empty track
+    g.fillStyle = '#464652';                       // empty track (readable at 0%)
     g.fillRect(xb, yb, wb, hb);
     const xfw = Math.round(wb * xpFrac);
     g.fillStyle = '#ffd75e';                       // the gold fill
     g.fillRect(xb, yb, xfw, hb);
     g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
     g.fillRect(xb, yb, xfw, 1);
-    g.fillStyle = 'rgba(0,0,0,0.30)';              // chunky segments, denser than HP
-    for (let sx = xb + 6; sx < xb + xfw; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
+    // Ticks run the FULL track (empty-state fix): over the fill they read as
+    // chunky segments, over the track as progress marks. Quarter-ticks are
+    // 1px taller so 0%/25%/50%/75% are glanceable.
+    g.fillStyle = 'rgba(0,0,0,0.30)';
+    for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
+    g.fillStyle = '#ffd75e';                       // goal tick at the far end
+    g.fillRect(xb + wb - 1, yb, 1, hb);
+    // WAVE-23 (#4): LV badge — bigger, with a dark readability plate (the
+    // vision pass: "washed out, reads like a placeholder").
+    const lvTxt = 'LV ' + (p.level || 1);
+    g.fillStyle = 'rgba(8,8,14,0.60)';
+    g.fillRect(xb + wb + 3, yb - 2, lvTxt.length * 6 + 3, 11);
     g.fillStyle = '#ffe9a8';
-    g.font = 'bold 8px monospace';
-    g.textBaseline = 'top';
-    g.fillText('LV ' + (p.level || 1), xb + wb + 4, yb);
+    g.font = 'bold 9px monospace';
+    g.fillText(lvTxt, xb + wb + 5, yb);
 
     // --- WAVE-14 event feed: last 3 toasts UNDER the bars (now under the XP
     // bar too), newest lowest. The toast() stream in main.js is the ONE feed
     // — equipment finds (tinted by rarity), arch effects, potions, weapon
     // level-ups, synergies, flash drops, wave/theme lines all land here.
     // Lines fade out over their final second (alpha = ttl clamped to 1).
-    g.font = '8px monospace';
+    g.font = '9px monospace';               // WAVE-23 (#4): 8 -> 9px feed text
     g.textBaseline = 'top';
     chrome.feed = [];
     const feed = (state.toasts || []).slice(-3);
@@ -904,7 +933,7 @@ export class Renderer {
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
       if (alpha <= 0) continue;
       const fy = 49 + i * 10;
-      const fw = ft.msg.length * 5 + 3;   // ~5px/char @ 8px monospace
+      const fw = ft.msg.length * 6 + 3;   // ~6px/char @ 9px monospace
       g.globalAlpha = alpha;
       g.fillStyle = 'rgba(8,8,14,0.60)';  // readability plate
       g.fillRect(5, fy - 1, fw, 9);
@@ -940,7 +969,7 @@ export class Renderer {
     const Z = 2;
     let wx = 6;
     const wy = C.VIEW_H - 30;
-    g.font = '8px monospace';
+    g.font = '9px monospace';               // WAVE-23 (#4): 8 -> 9px
     g.textBaseline = 'top';
     for (const w of state.weapons) {
       const grid = WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY;
@@ -994,6 +1023,12 @@ export class Renderer {
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------
+  // WAVE-23 (#2, Sk408 directive): the old 1-2px speckle read as "scanline
+  // noise / hieroglyphs". Same deterministic field, same culling, same
+  // palettes — but every piece is now LARGE and COMPOSED (a stone PAIR, a
+  // tuft CLUSTER, a slab PLATE with seams, an occasional boulder landmark)
+  // so the floor reads as deliberate level art. Still subtle: decor sits
+  // under entities and never competes with the play pieces.
   drawGround(g, seed, cam, theme) {
     const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY, B = C.GROUND.BOUND;
     // WAVE-9B/2: palette family rides the WAVE theme (groundSeed keeps
@@ -1004,27 +1039,51 @@ export class Renderer {
     for (let cy = r0; cy <= r1; cy++) {
       for (let cx = c0; cx <= c1; cx++) {
         if (cellRand(cx, cy, seed, 1) >= DENS) continue;
-        const wx = cx * CELL + Math.floor(cellRand(cx, cy, seed, 2) * (CELL - 8));
-        const wy = cy * CELL + Math.floor(cellRand(cx, cy, seed, 3) * (CELL - 8));
+        const wx = cx * CELL + Math.floor(cellRand(cx, cy, seed, 2) * (CELL - 16));
+        const wy = cy * CELL + Math.floor(cellRand(cx, cy, seed, 3) * (CELL - 16));
         if (wx < -B || wx > B || wy < -B || wy > B) continue;   // arena walls
         const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
         const kind = cellRand(cx, cy, seed, 4);
-        if (kind < 0.35) {            // tuft: 2-3 moss blades
+        if (kind < 0.24) {            // tuft cluster: 5 blades + dirt specks
           g.fillStyle = pal.tuft;
-          g.fillRect(x, y, 1, 3); g.fillRect(x + 4, y + 1, 1, 2);
+          g.fillRect(x, y, 1, 4); g.fillRect(x + 2, y - 1, 1, 5); g.fillRect(x + 5, y + 1, 1, 3);
+          g.fillRect(x + 7, y, 1, 4);
           g.fillStyle = pal.tuft2;
-          g.fillRect(x + 2, y, 1, 3);
-        } else if (kind < 0.65) {     // stone: small rock + lit top pixel
-          g.fillStyle = pal.stone;
-          g.fillRect(x, y + 1, 4, 2); g.fillRect(x + 1, y, 2, 1);
-          g.fillStyle = pal.stoneTop;
-          g.fillRect(x + 1, y, 1, 1);
-        } else if (kind < 0.85) {     // crack: stepping darker-than-bg dashes
+          g.fillRect(x + 1, y + 1, 1, 3); g.fillRect(x + 3, y, 1, 4); g.fillRect(x + 6, y + 1, 1, 3);
           g.fillStyle = pal.crack;
-          g.fillRect(x, y, 2, 1); g.fillRect(x + 3, y + 1, 2, 1); g.fillRect(x + 6, y + 2, 2, 1);
-        } else {                      // slab: barely-lighter floor tile
-          g.fillStyle = pal.slab;
-          g.fillRect(x, y, 8, 8);
+          g.fillRect(x - 2, y + 4, 2, 1); g.fillRect(x + 6, y + 5, 2, 1);
+        } else if (kind < 0.46) {     // stone pair: big rock + pebble sidekick
+          g.fillStyle = pal.stone;
+          g.fillRect(x, y + 1, 6, 4); g.fillRect(x + 1, y, 4, 1);
+          g.fillStyle = pal.stoneTop;
+          g.fillRect(x + 1, y + 1, 3, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x + 7, y + 3, 3, 2);
+          g.fillStyle = pal.stoneTop;
+          g.fillRect(x + 7, y + 3, 1, 1);
+        } else if (kind < 0.62) {     // crack run: long stepping fissure
+          g.fillStyle = pal.crack;
+          g.fillRect(x, y, 3, 1); g.fillRect(x + 3, y + 1, 3, 1); g.fillRect(x + 5, y + 2, 3, 1);
+          g.fillRect(x + 8, y + 3, 2, 1); g.fillRect(x + 4, y + 3, 2, 1);
+        } else if (kind < 0.92) {     // slab plate: 13x13 floor tile, notched
+          g.fillStyle = pal.slab;     // corners + a seam — reads as paving
+          g.fillRect(x + 1, y, 11, 13); g.fillRect(x, y + 1, 13, 11);
+          g.fillStyle = pal.base;     // knock the corners off the square
+          g.fillRect(x, y, 1, 1); g.fillRect(x + 12, y, 1, 1);
+          g.fillRect(x, y + 12, 1, 1); g.fillRect(x + 12, y + 12, 1, 1);
+          g.fillStyle = pal.crack;    // a seam splitting the plate
+          const seam = cellRand(cx, cy, seed, 5) < 0.5;
+          if (seam) g.fillRect(x + 2, y + 6, 9, 1);
+          else g.fillRect(x + 6, y + 2, 1, 9);
+        } else {                      // boulder: rare landmark anchor
+          g.fillStyle = pal.stone;
+          g.fillRect(x + 1, y + 1, 8, 5); g.fillRect(x, y + 2, 10, 3); g.fillRect(x + 3, y, 4, 1);
+          g.fillStyle = pal.stoneTop;
+          g.fillRect(x + 3, y + 1, 4, 1); g.fillRect(x + 2, y + 2, 2, 1);
+          g.fillStyle = pal.crack;    // grounded shadow at the base
+          g.fillRect(x - 1, y + 6, 12, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x + 11, y + 4, 2, 2);
         }
       }
     }

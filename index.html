@@ -90,14 +90,14 @@
   @media (pointer: coarse) { #touch { display: block; } }
   /* WAVE-22b DESKTOP MENU BUTTON (Sk408): the cog is the in-run menu —
      without the touch layer, desktop had NO on-screen way to reach settings
-     (zoom, END RUN, replay tour). On non-touch devices main.js adds
-     .cog-only: the layer shows the cog alone, mouse-clickable; pads and
-     joystick stay touch-only. !important keeps the JS-toggled joystick
-     from popping up under a mouse-only MANUAL bind. */
+     (zoom, END RUN, replay tour). WAVE-23 (#6): non-touch devices get the
+     full layer (main.js adds .cog-only) — the pads are real mouse-clickable
+     buttons (parity with touch), NOT zero-sized ghosts. The joystick is
+     pointer-captured, so it mouse-drags too when MANUAL is bound (WASD
+     remains the keyboard path). */
   #touch.cog-only { display: block; }
-  #touch.cog-only .pad { display: none; }
-  #touch.cog-only #joy { display: none !important; }
-  #touch.cog-only button.cog { cursor: pointer; }
+  #touch.cog-only button { cursor: pointer; }
+  #touch.cog-only #joy { cursor: grab; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));
@@ -202,13 +202,17 @@
     font-size: 16px; font-weight: bold; color: #e8e8f0;
   }
   /* The hints panel: compact one-glance key list, top-right under the cog.
-     Shown only when main.js adds .on (persisted pref; default = non-touch). */
+     Shown only when main.js adds .on (persisted pref; default = non-touch).
+     WAVE-23 (#6): the primary desktop reference — 14px, full-contrast text
+     with a black knock-out shadow (the old 11px low-grey was the least
+     readable thing on screen). */
   #hints {
     position: absolute;
     top: 64px; right: max(10px, env(safe-area-inset-right, 10px));
-    display: none; padding: 8px 11px;
-    font-size: 11px; line-height: 1.7; color: #c9c9dd; text-align: left;
-    background: rgba(20,20,31,0.82); border: 2px solid #4a4a6a; border-radius: 10px;
+    display: none; padding: 9px 12px;
+    font-size: 14px; line-height: 1.8; color: #e8e8f0; text-align: left;
+    text-shadow: 1px 1px 0 #000;
+    background: rgba(20,20,31,0.88); border: 2px solid #5a5a7a; border-radius: 10px;
     pointer-events: none; z-index: 6; white-space: nowrap;
   }
   #hints.on { display: block; }
@@ -253,7 +257,7 @@
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
     <div class="cards" id="ov-cards"></div>
-    <div class="sub">1 / 2 / 3 or tap a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats &middot; ? key hints &middot; or the on-screen buttons</div>
+    <div class="sub">1 / 2 / 3 or pick a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats &middot; ? key hints &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

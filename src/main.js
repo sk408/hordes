@@ -76,13 +76,45 @@ const ovCards = document.getElementById('ov-cards');
 const renderer = new Renderer(canvas);
 
 // ---------- Responsive canvas: letterbox to viewport, never stretch ----------
-// Internal resolution stays CONFIG.VIEW_W x VIEW_H; only the CSS size changes
-// (with image-rendering: pixelated). Re-run on orientation change / resize.
+// WAVE-23 RESOLUTION (Sk408: "maybe we can have a resolution setting?"):
+// display scale + backing store are now mode-driven, persisted like the
+// other prefs:
+//   AUTO (default)  — fractional fit (fills the window, biggest picture);
+//                     glyphs still rasterise crisp at device resolution
+//                     because the backing store tracks the real CSS size
+//                     (render.js resize), but ART pixels can be uneven
+//                     (some 2px, some 3px at a 2.67x fit).
+//   PIXEL-PERFECT   — integer floor scale; every art pixel is a uniform
+//                     NxN block. Prefers crisp over maximal window use.
+//   2x / 3x / 4x    — forced integer scale (clamped down to what fits the
+//                     window). More device pixels per art pixel = chunkier
+//                     pixels, bigger canvas — and more GPU fill (perf note).
+const prefStorage = (() => {
+  try {
+    const s = globalThis.localStorage;
+    if (s && typeof s.getItem === 'function') return s;
+  } catch { /* sandboxed — fall through to the no-op shim */ }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+})();
+const KEY_RESOLUTION = 'hordes_resolution';
+const RES_MODES = ['AUTO', 'PIXEL-PERFECT', '2', '3', '4'];
+function resMode() {
+  const v = prefStorage.getItem(KEY_RESOLUTION);
+  return RES_MODES.includes(v) ? v : 'AUTO';
+}
+function displayScale(fit) {
+  const m = resMode();
+  if (m === 'PIXEL-PERFECT') return Math.max(1, Math.floor(fit));
+  if (m === 'AUTO') return fit;
+  return Math.min(Number(m), Math.max(1, Math.floor(fit)));
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
-  const scale = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
+  const fit = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
+  const scale = displayScale(fit);
   canvas.style.width = Math.floor(C.VIEW_W * scale) + 'px';
   canvas.style.height = Math.floor(C.VIEW_H * scale) + 'px';
+  renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
 window.addEventListener('resize', fitCanvas);
@@ -1565,7 +1597,7 @@ function openDraft() {
   // real cards and dismisses on the same click-to-advance contract.)
   if (!tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
-      text: 'THE DRAFT — your build\'s only real decisions. Tap a card or press 1 / 2 / 3.',
+      text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
 }
@@ -1935,6 +1967,9 @@ function maybeStartMenuTour() {
         target: () => cardByTitle('HOW TO PLAY') },
     ],
     onDone: finish, onSkip: finish,
+    // WAVE-23 (#6): input-aware advance wording — "TAP" reads wrong on a
+    // desktop with no touch (Sk408). Any key also advances (tour.js).
+    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY',
   });
   menuTour.start();
 }
@@ -1946,7 +1981,8 @@ function startCoach(steps, key) {
   if (coachActive()) return;
   setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
   const end = () => { coach = null; };
-  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end });
+  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end,
+    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY' });
   coach.start();
 }
 
@@ -2017,7 +2053,7 @@ function updateTourCoach() {
       target: () => canvasRegion(0, 4, 150, 44) }, TOUR_KEYS.hud);
   } else if (!tourFlag(TOUR_KEYS.pilot) && state.time > 4) {
     startCoach({ id: 'pilot',
-      text: 'PILOT: AUTO flies for you — tap here (or M) to take MANUAL control anytime.',
+      text: 'PILOT: AUTO flies for you — here or M takes MANUAL control anytime.',
       target: () => document.getElementById('tc-pilot') }, TOUR_KEYS.pilot);
   } else if (!tourFlag(TOUR_KEYS.focus) && state.time > 7) {
     // Rev-4 headline gap: without this, AUTO aiming reads as "whatever it
@@ -2133,7 +2169,7 @@ function showCharacters() {
     const equipped = profile.equippedCharacter === ch.id;
     const afford = profile.gold >= ch.unlockCost;
     const sub = equipped ? 'EQUIPPED'
-      : owned ? 'tap to equip'
+      : owned ? 'equip this pilot'
       : `${ch.desc}<br>unlock: ${ch.unlockCost} gold`;
     const el = menuCard(
       ch.name + (equipped ? ' *' : ''),
@@ -2184,6 +2220,17 @@ function showSettings(disarm = true, inRun = false) {
     cycleZoom(1);
     showSettings(true, inRun);
   });
+  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
+  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
+  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
+  menuCard('RESOLUTION', 'currently ' + resMode() +
+    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
+    ' — crisper text everywhere', () => {
+    const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
+    prefStorage.setItem(KEY_RESOLUTION, next);
+    fitCanvas();
+    showSettings(true, inRun);
+  });
   // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
   menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
     clearTourFlags();
@@ -2195,7 +2242,7 @@ function showSettings(disarm = true, inRun = false) {
     }
   });
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
-    resetArmed ? 'wipes gold, upgrades & unlocks' : 'tap twice to confirm',
+    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
     () => {
       if (!resetArmed) { resetArmed = true; showSettings(false, inRun); return; }
       profile = makeProfile();
@@ -2208,7 +2255,7 @@ function showSettings(disarm = true, inRun = false) {
   // confirm pattern as RESET PROFILE.
   if (inRun) {
     menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
-      endArmed ? 'banks your gold and ends the run' : 'tap twice to confirm',
+      endArmed ? 'banks your gold and ends the run' : 'twice to confirm',
       () => {
         if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
         endArmed = false;
@@ -2225,7 +2272,7 @@ function showSettings(disarm = true, inRun = false) {
   // the flag).
   if (inRun && !tourFlag(TOUR_KEYS.settings)) {
     startCoach({ id: 'settings',
-      text: 'END RUN banks your gold and ends the run early — two taps to confirm.',
+      text: 'END RUN banks your gold and ends the run early — confirm twice.',
       target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
   }
 }
@@ -2504,6 +2551,11 @@ function runAction(act) {
 }
 
 window.addEventListener('keydown', (ev) => {
+  // WAVE-23 (#6): any key advances a live tour step (tour.js), so swallow the
+  // key here — otherwise the same press would ALSO fire a skill / toggle the
+  // pilot under the paused coachmark. Escape still reaches the tour's own
+  // document-level skip handler.
+  if (coachActive() || (menuTour && menuTour.active())) return;
   const k = ev.key.toLowerCase();
   if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
   if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
