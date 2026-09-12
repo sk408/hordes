@@ -83,19 +83,46 @@ export function clearTourFlags(storage) {
 // it works identically on a phone (targets are real tappable elements).
 // ---------------------------------------------------------------------------
 export class Tour {
-  constructor({ steps, doc, storage, onDone, onSkip, advanceHint = 'TAP TO CONTINUE' }) {
+  constructor({ steps, doc, storage, onDone, onSkip, advanceHint = 'TAP TO CONTINUE', passThrough = null }) {
     this.steps = steps;
     this.doc = doc || globalThis.document;
     this.storage = storage || detectStorage();
     this.onDone = onDone || (() => {});
     this.onSkip = onSkip || (() => {});
     this.advanceHint = advanceHint;
+    // OPT-IN: a CSS selector for controls a tap may reach THROUGH the shade.
+    // Only the title tour sets it (see _underlyingControl for why).
+    this.passThrough = passThrough;
     this.idx = -1;
     this.root = null;         // #tour-root (shade + tip); rebuilt per start()
     this.tracker = null;      // the relayout interval
   }
 
   active() { return !!this.root; }
+
+  // A tap that lands on a real, interactive control UNDER the shade (a title
+  // menu card) is an intent to PRESS THAT CONTROL, not to advance the tour.
+  // Opt-in via `passThrough`, and deliberately NOT the default: the in-run
+  // coachmarks pause the sim under the shade, so a pass-through there would
+  // silently pick a draft card the player only meant to dismiss the tip with.
+  // The title has no such hazard - the card is the thing the player aimed at.
+  _underlyingControl(ev) {
+    if (!this.passThrough) return null;
+    const d = this.doc;
+    if (!ev || typeof ev.clientX !== 'number' || typeof ev.clientY !== 'number') return null;
+    const at = d.elementsFromPoint;
+    if (typeof at !== 'function') return null;   // fake docs / old browsers
+    let stack;
+    try { stack = at.call(d, ev.clientX, ev.clientY) || []; } catch { return null; }
+    for (const el of stack) {
+      if (!el || typeof el.closest !== 'function') continue;
+      if (el === this.root) continue;
+      if (this.root && typeof this.root.contains === 'function' && this.root.contains(el)) continue;
+      const hit = el.closest(this.passThrough);
+      if (hit) return hit;
+    }
+    return null;
+  }
 
   start() {
     if (this.root) return;
@@ -121,6 +148,17 @@ export class Tour {
     // SKIP control inside the tip stops propagation.
     this.onPointerDown = (ev) => {
       if (ev && ev.stopPropagation) ev.stopPropagation();
+      // WAVE-31: a finger tap on a title menu card used to be swallowed by the
+      // shade (the tick note's "TAP TO CONTINUE, not the card you aimed at").
+      // End the tour - the player has chosen their own path - and forward the
+      // press so the card does what it looks like it does.
+      const under = this._underlyingControl(ev);
+      if (under) {
+        this._teardown();
+        this.onDone();
+        if (typeof under.click === 'function') under.click();
+        return;
+      }
       this.next();
     };
     this.root.addEventListener('pointerdown', this.onPointerDown);

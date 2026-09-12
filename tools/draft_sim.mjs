@@ -81,7 +81,22 @@ import {
   WEAPONS, WEAPON_MAX_LEVEL, makeWeapon, levelUpWeapon, weaponLevelParams,
 } from '../src/weapons.js';
 import { ENEMY_TYPES, ELITE_TEMPLATE } from '../src/enemy_types.js';
-import { computeRunGold, STARTER_WEAPONS } from '../src/meta.js';
+import { computeRunGold, STARTER_WEAPONS, draftCardWeight,
+         draftRarityOf } from '../src/meta.js';
+// G8 steps 3+4 (run-level measurement): the two new card families, read
+// through the SAME seams the game reads — the constants from rules.js/perks.js
+// and the applied-value helpers, so a measurement of the sim is a measurement
+// of the game.
+import { RULE_IDS, RULE_CARD_WEIGHT, statCardOffered, grantRule } from '../src/rules.js';
+import {
+  SKILL_PERK_IDS, SKILL_CARD_WEIGHT, grantSkill, hpRegenPerSec, damageTakenMult,
+} from '../src/perks.js';
+// G8 step 2 (rule-rewrite family): cards + the applied-value helpers the game
+// reads, through the same seams as the other two families.
+import {
+  REWRITE_IDS, REWRITE_CARD_WEIGHT, grantRewrite, rewriteBoom, harvestBlast,
+} from '../src/rewrites.js';
+import { CHESTS } from '../src/chests.js';
 
 const UPGRADES_BY_ID = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
 // DRAFT_TAPER mirrors main.js:1449 (speed/rate cards diminish per repeat).
@@ -102,15 +117,31 @@ export const SIM_TUNING = {
   PRESSURE_K: 1.2,      // pressure curve gain
   HITS_CAP: 1 / 0.6,    // invuln-capped contact hits per second (live 0.6s)
   CHEST_GOLD: 32,       // mean gold per opened chest (in-run currency)
+  // G8 step 2 rewrite-model assumptions (documented, coarse on purpose):
+  PIERCEALL_VAL: 2,     // PIERCE ALL's crowd value, in pierce POINTS (the live
+                        // sentinel is 'unlimited'; against the crowd model the
+                        // (1+PIERCE_VAL*p) curve saturates, so +2 points is the
+                        // honest bounded reading of 'nothing stops at the first
+                        // body' at field density)
+  BOOM_FRESH: 1,        // CHAIN REACTION: expected FRESH bodies per detonation
+                        // (radius 40 vs field spread; 1 is the conservative
+                        // floor — the blast usually clips a pack)
+  HARVEST_FRESH: 2,     // BLOOD HARVEST: expected bodies per blast (radius 55,
+                        // centered on the player where the horde is densest)
 };
 
 // Live lever defaults (what the sim runs with no patch — the values to
 // compare LEVER proposals against). Overrides arrive via the `patch` argument.
 export const LIVE = {
   statWeight: 0.3,      // main.js:1418 (stat cards vs weapon weight 1)
+  luckLevel: 0,         // G8 step 1: Fortune level feeding the stat weights
   maxProj: C.WEAPON.MAX_PROJECTILES,   // config.js WEAPON.MAX_PROJECTILES (3)
   xpGrowth: C.XP_LEVEL_GROWTH,         // config.js XP_LEVEL_GROWTH (1.28)
   hpCardPct: false,     // UPGRADES hp card: live = +25 flat
+  // G8 steps 3+4: the run-rule + skill-perk card families ride the draft pool,
+  // exactly like src/main.js openDraft (ruleCards + skillCards). Set to false
+  // ONLY as the "before" cell of a before/after measurement.
+  families: true,
 };
 
 const DT = SIM_TUNING.DT;
@@ -195,31 +226,40 @@ function dpsBase(player, weapons, P) {
 
 // Effective dps vs the live field: crowd idles cooldowns, crowds multiply
 // pierce/AoE value (see header).
-function dpsEff(player, weapons, N, P) {
+function dpsEff(player, weapons, N, P, extraPierce = 0) {
   const crowd = clamp(N / SIM_TUNING.CROWD_SAT, 0, 1);
   const boom = weapons.find(x => x.type === 'BOOMERANG');
   const pierceTot = player.stats.pierce +
-    (boom ? (weaponLevelParams('BOOMERANG', boom.level).pierceBonus || 0) : 0);
+    (boom ? (weaponLevelParams('BOOMERANG', boom.level).pierceBonus || 0) : 0) + extraPierce;
   return dpsBase(player, weapons, P) * crowd *
     (1 + SIM_TUNING.PIERCE_VAL * pierceTot + SIM_TUNING.AOE_B * crowd);
 }
 
 // ---------- draft: roll 3 like openDraft, pick 1 by policy ------------------
-function cardImpact(card, player, weapons, counts, P) {
+function cardImpact(card, player, weapons, counts, P, held) {
   const base = dpsBase(player, weapons, P);
+  // G8 step 2 retune: under ONE OF EACH a weapon pick grants +1 BONUS level
+  // (main.js pick()), so a level-up prices cur -> cur+2 and a grant lands at
+  // Lv2 — the payout has to be priced where the policy can see it.
+  const bonus = held && held.rules && held.rules.once ? 1 : 0;
   if (card.kind === 'grant') {
     const shadow = { stats: { ...player.stats } };
-    const add = boomerangDps(shadow, [{ type: 'BOOMERANG', level: 1 }]);
+    const add = boomerangDps(shadow, [{ type: 'BOOMERANG', level: 1 + bonus }]);
     return { dps: base > 0 ? add / base : 1, ehp: 0 };
   }
   if (card.kind === 'wlevel') {
     const cur = card.w.level;
+    // At-cap pricing: under ONE OF EACH an at-cap weapon pick converts to
+    // +10% player damage (applyCard does the conversion; main.js pick() does
+    // the same). Player damage feeds EVERY weapon's dps, so the marginal
+    // value is exactly +0.1 relative — priced exactly, not coarse.
+    if (bonus && cur >= WEAPON_MAX_LEVEL) return { dps: 0.1, ehp: 0 };
     if (card.w.type === 'VOLLEY') {
-      const a = weaponLevelParams('VOLLEY', cur), b = weaponLevelParams('VOLLEY', cur + 1);
+      const a = weaponLevelParams('VOLLEY', cur), b = weaponLevelParams('VOLLEY', cur + 1 + bonus);
       const f = (b.dmgMult * (1 + 0.2 * (b.proj || 0))) / (a.dmgMult * (1 + 0.2 * (a.proj || 0)));
       return { dps: base > 0 ? (f - 1) * (volleyDps(player, weapons, P) / base) : 0, ehp: 0 };
     }
-    const a = weaponLevelParams('BOOMERANG', cur), b = weaponLevelParams('BOOMERANG', cur + 1);
+    const a = weaponLevelParams('BOOMERANG', cur), b = weaponLevelParams('BOOMERANG', cur + 1 + bonus);
     const f = (b.dmgMult * (1.4 + 0.5 * player.stats.pierce + 0.5 * (b.pierceBonus || 0))) /
       (a.dmgMult * (1.4 + 0.5 * player.stats.pierce + 0.5 * (a.pierceBonus || 0)));
     return { dps: base > 0 ? (f - 1) * (boomerangDps(player, weapons) / base) : 0, ehp: 0 };
@@ -228,6 +268,72 @@ function cardImpact(card, player, weapons, counts, P) {
     const n = (counts[id] || 0) + 1;
     return DRAFT_TAPER[Math.min(n - 1, DRAFT_TAPER.length - 1)];
   };
+  // ---- G8 steps 3+4: the rule + skill families. Coarse HONEST numbers, each
+  // with its reasoning in the comment — no invented precision. The mechanical
+  // effects live in applyCard + the run loop (held state), read through the
+  // same seams the game reads; the numbers below only tell the POLICIES what
+  // a card is worth so the run-level measurement can actually pick them.
+  if (card.kind === 'rule') {
+    if (card.id === 'hordebait') {
+      // PAYOUT, enumerated from CHESTS.WEIGHTS + rollContents: expected
+      // upgrades/chest 1.05 -> 1.25 (+19%) and potions/chest 0.35 -> 0.75
+      // (both modeled in the loop: the extra potions land in healBank). The
+      // PRICE is a 6-enemy horde on EVERY chest (also modeled). The upgrade
+      // surplus itself is NOT a stat the sim applies (chest contents are not
+      // drafted), so the score below prices only the sustain side: a fraction
+      // of a hp-card per chest, ~1 chest per 2 minutes.
+      return { dps: 0.02, ehp: 0.03 };
+    }
+    // 'once' (One of Each): no direct stat, and the two structural effects
+    // pull opposite ways — offers tilt toward the weight-1 weapon cards, but
+    // the run LOSES stat stacking (the axis a greed build lives on). Priced
+    // at exactly 0: the net is policy-dependent and unmeasurable in this
+    // model, so the sim lets the mechanics (statCardOffered filtering) speak
+    // and refuses to guess a number.
+    return { dps: 0, ehp: 0 };
+  }
+  if (card.kind === 'skill') {
+    if (card.id === 'regrowth') {
+      // 0.7 flat hp/s (perks.REGROWTH_HP_PER_SEC, deliberately NOT a percent).
+      // Priced at the mid-run band: this model's incoming contact pressure is
+      // order ~10 hp/s around minute 5, so the heal cancels ~7% of it — the
+      // same order as a mid-taper hp card. It decays late by design.
+      return { dps: 0, ehp: 0.07 };
+    }
+    if (card.id === 'thick') {
+      // EXACT, not coarse: a permanent damageTakenMult of 0.88 is effective HP
+      // x(1/0.88) = +13.6%, forever, on every modeled damage path.
+      return { dps: 0, ehp: 1 / 0.88 - 1 };
+    }
+    // 'focus': the sim has NO Q/W ability layer (no mana, no cooldowns), so
+    // this model CANNOT see the perk's real value (-20% mana / -15% cd in the
+    // live game). Priced at exactly 0 rather than invented — which means the
+    // run-level numbers below measure focus as a dead card, and the honesty
+    // cost is reported in the tick note, not hidden here.
+    return { dps: 0, ehp: 0 };
+  }
+  if (card.kind === 'rewrite') {
+    if (card.id === 'pierceall') {
+      // PRICED OFF THE MODEL ITSELF (not invented): the run loop gives PIERCE
+      // ALL +PIERCEALL_VAL effective pierce in dpsEff, so the marginal value
+      // of the card is exactly that curve's next step, same shape as the
+      // 'pierce' stat card one branch down.
+      const pv = SIM_TUNING.PIERCE_VAL, cur = player.stats.pierce || 0;
+      return { dps: pv * SIM_TUNING.PIERCEALL_VAL / (1 + pv * cur), ehp: 0 };
+    }
+    if (card.id === 'onkillboom') {
+      // Coarse, from the live numbers: each detonation is 4 + 0.5 x weapon
+      // damage (half a hit), and at field density the model credits
+      // BOOM_FRESH fresh bodies per kill -> roughly +0.5x dps while the field
+      // holds, tapering as trash dies instantly anyway. 0.2 is the honest
+      // mid-band, not a derivation.
+      return { dps: 0.2, ehp: 0 };
+    }
+    // 'healthdamage': potions land on ~3% of kills and the blast is 10 + 1.0 x
+    // weapon damage — rare but wide. Coarse 0.04 with the reasoning stated;
+    // the run loop applies the modeled blast when held.
+    return { dps: 0.04, ehp: 0 };
+  }
   switch (card.id) {
     case 'dmg': return { dps: 0.25, ehp: 0 };
     case 'rate': {
@@ -254,7 +360,10 @@ export const POLICIES = {
   ADVERSARIAL_BAD: { label: 'ADVERSARIAL-BAD', pick: m => m.dps + m.ehp, argmax: false },
 };
 
-function buildDraftPool(weapons, patch) {
+// `held` mirrors the run player's card state so the pool shrinks exactly like
+// openDraft's does: { rules: {id:true}, skills: {id:true}, takenStats: {id:1} }.
+// Default = a fresh run (nothing held), which is what measureDraftOffers uses.
+export function buildDraftPool(weapons, patch, held = {}) {
   const cards = [];
   const slotCap = 3;   // startWeaponSlots(makeProfile()) — fresh profile
   const nonVolley = weapons.filter(w => w.type !== 'VOLLEY').length;
@@ -264,10 +373,49 @@ function buildDraftPool(weapons, patch) {
       cards.push({ kind: 'grant', weapon: id, weight: 1 });
     }
   }
+  const onceHeld = !!(held.rules && held.rules.once);
   for (const w of weapons) {
-    if ((w.level || 1) < WEAPON_MAX_LEVEL) cards.push({ kind: 'wlevel', w, weight: 1 });
+    // G8 step 2 retune (extended ladder): under once the weapon ladder never
+    // ends — at-cap picks stay offered and convert to +10% player damage
+    // (applyCard; main.js openDraft/pick() do the same).
+    if ((w.level || 1) < WEAPON_MAX_LEVEL || onceHeld) cards.push({ kind: 'wlevel', w, weight: 1 });
   }
-  for (const u of UPGRADES) cards.push({ kind: 'stat', id: u.id, weight: patch.statWeight });
+  // G8 step 1: stat weights ride the SHARED meta.js seam, so this pool is the
+  // same number openDraft() computes. statWeight stays the family lever (L1);
+  // luckLevel multiplies ON TOP of it, and at luck 0 the product is exactly
+  // statWeight (bit-identical to the shipped sim).
+  // G8 step 3: ONE OF EACH drops a taken stat from the pool (statCardOffered
+  // reads the same held-state shape the game's player carries).
+  const heldState = { player: {
+    rules: held.rules || {}, takenStats: held.takenStats || {}, skills: held.skills || {},
+    rewrites: held.rewrites || {},
+  } };
+  const luckLv = Number.isFinite(patch.luckLevel) ? patch.luckLevel : LIVE.luckLevel;
+  const statW  = Number.isFinite(patch.statWeight) ? patch.statWeight : LIVE.statWeight;
+  const families = patch.families === undefined ? LIVE.families : patch.families;
+  for (const u of UPGRADES) {
+    if (!statCardOffered(u.id, heldState)) continue;
+    cards.push({ kind: 'stat', id: u.id,
+      weight: draftCardWeight(u.id, 'stat', luckLv) * (statW / 0.3) });
+  }
+  // G8 steps 3+4: the rule + skill families, at the SAME weights openDraft
+  // gives them (constants imported, never restated), one card per entry the
+  // run does not already hold.
+  if (families) {
+    for (const id of RULE_IDS) {
+      if (held.rules && held.rules[id]) continue;
+      cards.push({ kind: 'rule', id, weight: RULE_CARD_WEIGHT });
+    }
+    for (const id of SKILL_PERK_IDS) {
+      if (held.skills && held.skills[id]) continue;
+      cards.push({ kind: 'skill', id, weight: SKILL_CARD_WEIGHT });
+    }
+    // G8 step 2: the rewrite family, same contract.
+    for (const id of REWRITE_IDS) {
+      if (held.rewrites && held.rewrites[id]) continue;
+      cards.push({ kind: 'rewrite', id, weight: REWRITE_CARD_WEIGHT });
+    }
+  }
   return cards;
 }
 
@@ -282,9 +430,30 @@ function rollThree(pool, rng) {
   return out;
 }
 
-function applyCard(card, player, weapons, counts, patch) {
-  if (card.kind === 'grant') { weapons.push(makeWeapon(card.weapon)); return; }
-  if (card.kind === 'wlevel') { levelUpWeapon(card.w); return; }
+function applyCard(card, player, weapons, counts, patch, held, heldState) {
+  // G8 step 2 retune: under ONE OF EACH the weapon tilt actually pays — a
+  // level-up grants +1 BONUS level, a grant lands at Lv2, and an at-cap
+  // level-up converts to +10% player damage (main.js pick() does the same;
+  // levelUpWeapon caps at WEAPON_MAX_LEVEL, never an overflow).
+  const once = !!(held && held.rules && held.rules.once);
+  if (card.kind === 'grant') {
+    const w = makeWeapon(card.weapon);
+    if (once) levelUpWeapon(w);
+    weapons.push(w);
+    return;
+  }
+  if (card.kind === 'wlevel') {
+    if (once && (card.w.level || 1) >= WEAPON_MAX_LEVEL) { player.stats.damage *= 1.10; return; }
+    levelUpWeapon(card.w);
+    if (once) levelUpWeapon(card.w);
+    return;
+  }
+  if (card.kind === 'rule') { grantRule(heldState, card.id); return; }
+  if (card.kind === 'skill') { grantSkill(heldState, card.id); return; }
+  if (card.kind === 'rewrite') { grantRewrite(heldState, card.id); return; }
+  // The `once` ledger is written for EVERY stat pick (main.js pick() does the
+  // same); the rule only gates OFFERING, and it is retroactive by design.
+  if (card.kind === 'stat') held.takenStats[card.id] = 1;
   if (card.id === 'speed' || card.id === 'rate') {
     counts[card.id] = (counts[card.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(counts[card.id] - 1, DRAFT_TAPER.length - 1)];
@@ -299,6 +468,30 @@ function applyCard(card, player, weapons, counts, patch) {
   }
 }
 
+// ---------- G8 step 1 measurement: what luck does to the OFFER ----------
+// Rolls `draws` real 3-card offers off the FRESH-run pool (the same
+// buildDraftPool openDraft mirrors) and returns per-offer rates by tier.
+// PURE and seeded, so a regression in the weighting is a number, not an opinion.
+export function measureDraftOffers(luck = 0, seed = 4242, draws = 20000) {
+  const patch = { statWeight: LIVE.statWeight, luckLevel: luck };
+  const weapons = STARTER_WEAPONS.map(id => makeWeapon(id));
+  const rng = mulberry32(seed);
+  const c = { grants: 0, COMMON: 0, UNCOMMON: 0, RARE: 0, cards: 0 };
+  for (let i = 0; i < draws; i++) {
+    for (const card of rollThree(buildDraftPool(weapons, patch), rng)) {
+      c.cards++;
+      if (card.kind === 'stat') c[draftRarityOf(card.id)]++;
+      else c.grants++;
+    }
+  }
+  const rate = k => c[k] / draws;                    // per OFFER (3 cards)
+  return { luck: luck, draws, cards: c.cards,
+    perOffer: { grants: rate('grants'), COMMON: rate('COMMON'),
+                UNCOMMON: rate('UNCOMMON'), RARE: rate('RARE') },
+    statPerOffer: (c.COMMON + c.UNCOMMON + c.RARE) / draws,
+    counts: c };
+}
+
 // ---------- one run -----------------------------------------------------------
 // Returns checkpoints at minutes 2/5/10 (metrics freeze at death if earlier),
 // the final state (run length, death wave + killer, income), and draft
@@ -309,6 +502,17 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   if (!policy) throw new Error(`draft_sim: unknown policy ${policyName}`);
   const rng = mulberry32(seed);
   const player = makePlayer();
+  // G8 steps 3+4: the run's held cards, driven through the REAL helpers
+  // (grantRule / grantSkill / statCardOffered all read this same state), so
+  // the sim's pool and effects cannot drift from the game's. `startCards`
+  // injects cards as if taken at t=0 — the "one bad pick never loses a run"
+  // probe holds a card the policy would not have chosen.
+  const held = { rules: player.rules, skills: player.skills, takenStats: player.takenStats,
+    rewrites: player.rewrites };
+  const heldState = { player };
+  for (const id of (P.startCards || [])) {
+    if (!grantRule(heldState, id) && !grantSkill(heldState, id)) grantRewrite(heldState, id);
+  }
   const weapons = [makeWeapon('VOLLEY')];
   const startMaxHp = player.stats.maxHp;    // the pool HP_PER_LEVEL is linear in
   const counts = {};
@@ -383,8 +587,10 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     }
     if (mawHp > 0 && t >= mawUntil) mawHp = 0;   // the maw withdraws
 
-    // Damage out.
-    const dps = dpsEff(player, weapons, N, P);
+    // Damage out. G8 step 2 PIERCE ALL: +PIERCEALL_VAL effective pierce in the
+    // crowd curve (see SIM_TUNING for the honest-bounded reading).
+    const dps = dpsEff(player, weapons, N, P,
+      held.rewrites.pierceall ? SIM_TUNING.PIERCEALL_VAL : 0);
     let dmg = dps * DT;
     if (mawHp > 0) {
       const toMaw = dmg * SIM_TUNING.BOSS_DPS_SHARE;
@@ -395,6 +601,17 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       if (bossHp <= 0) {
         waves++;
         xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.BOSS.XP_KILLS * bossCount;
+        // HORDE BAIT, run-level: the wave's chest answers with a horde (the
+        // price — GAMBLE_HORDE_COUNT escalated CHASERs in the live game) and
+        // rolls one band better (the payout — enumerated: potions/chest 0.35
+        // -> 0.75 under the bump, upgrades/chest 1.05 -> 1.25 which this sim
+        // cannot apply because chest contents are not drafted). Only the
+        // DELTA over the unmodeled baseline is credited, so a no-bait run's
+        // numbers stay bit-identical.
+        if (held.rules.hordebait) {
+          N = Math.min(SIM_TUNING.FIELD_CAP, N + CHESTS.GAMBLE_HORDE_COUNT);
+          healBank += 0.4;
+        }
         bossHp = 0; bossCount = 0;
         waveStart = t; waveEnd = t + WAVE_SECONDS;   // the timer resumes
         heraldDone = false;
@@ -408,7 +625,27 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       }
     }
     const avgHp = C.ENEMY.BASE_HP * ladderHp(w) * mix.hp;
-    const killN = Math.min(N, Math.max(0, dmg) / Math.max(1e-9, avgHp));
+    let killN = Math.min(N, Math.max(0, dmg) / Math.max(1e-9, avgHp));
+    // G8 step 2 CHAIN REACTION, run-level: every kill detonates
+    // (4 + 0.5 x weapon damage — the live rewriteBoom numbers), credited at
+    // BOOM_FRESH fresh bodies per detonation. Single step, no chain recursion:
+    // a boom's victims detonate next tick, which is the conservative bound of
+    // the live frame-by-frame propagation.
+    if (held.rewrites.onkillboom && killN > 0) {
+      const boom = rewriteBoom(heldState);
+      killN = Math.min(N, killN + killN * SIM_TUNING.BOOM_FRESH * boom.damage / avgHp);
+    }
+    // G8 step 2 BLOOD HARVEST, run-level: ~DROP_CHANCE potions per kill reach
+    // the inventory (the healBank seam); each pickup blasts
+    // 10 + 1.0 x weapon damage at HARVEST_FRESH fresh bodies (the live
+    // harvestBlast numbers, centered on the player where the horde is densest).
+    let harvestKills = 0;
+    if (held.rewrites.healthdamage && killN > 0) {
+      const blast = harvestBlast(heldState);
+      harvestKills = Math.min(Math.max(0, N - killN),
+        killN * C.POTIONS.DROP_CHANCE * SIM_TUNING.HARVEST_FRESH * blast.damage / avgHp);
+      killN += harvestKills;
+    }
     kills += killN; N -= killN;
 
     // XP -> drafts.
@@ -420,24 +657,34 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       const gain = startMaxHp * C.SURVIVAL.HP_PER_LEVEL;
       player.stats.maxHp += gain;
       player.hp = Math.min(player.stats.maxHp, player.hp + gain);
-      const offers = rollThree(buildDraftPool(weapons, P), rng);
+      const offers = rollThree(buildDraftPool(weapons, P, held), rng);
       if (offers.length === 0) continue;
-      const scored = offers.map(c => ({ c, m: cardImpact(c, player, weapons, counts, P) }));
+      const scored = offers.map(c => ({ c, m: cardImpact(c, player, weapons, counts, P, held) }));
       let best = scored[0];
       for (const s of scored) {
         const a = policy.pick(s.m), b = policy.pick(best.m);
         if (policy.argmax ? a > b : a < b) best = s;
       }
-      applyCard(best.c, player, weapons, counts, P);
+      applyCard(best.c, player, weapons, counts, P, held, heldState);
       const id = best.c.kind === 'stat' ? best.c.id
-        : best.c.kind === 'grant' ? 'grant_' + best.c.weapon : 'wlevel_' + best.c.w.type;
+        : best.c.kind === 'grant' ? 'grant_' + best.c.weapon
+        : best.c.kind === 'rule' ? 'rule_' + best.c.id
+        : best.c.kind === 'skill' ? 'skill_' + best.c.id
+        : best.c.kind === 'rewrite' ? 'rewrite_' + best.c.id
+        : 'wlevel_' + best.c.w.type;
       picks[id] = (picks[id] || 0) + 1;
       draftTimes.push(t);
       if (id === 'multi' && player.stats.projectiles > P.maxProj) deadMulti++;
     }
 
+    // G8 step 4, run-level: REGROWTH heals through the same helper the game's
+    // resource seams call (flat rate, dt-scaled), before damage in.
+    const regen = hpRegenPerSec(heldState) * DT;
+    if (regen > 0) player.hp = Math.min(player.stats.maxHp, player.hp + regen);
+
     // Damage in: the crowd's pressure curve, priced by the LIVE contact-damage
     // function against the player's LIVE pool. Boss/herald add contact.
+    // THICK SKIN rides the same funnel the game routes player HP through.
     const avgSpd = C.ENEMY.BASE_SPEED * (1 + 0.05 * w) * mix.speed;
     const closing = clamp(avgSpd / player.stats.speed, 0.12, 1.6);
     const surround = clamp(N / SIM_TUNING.OVERWHELM_N, 0, 1);
@@ -456,7 +703,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       ? contactHitDamage(C.SURVIVAL.BASE_CONTACT, dm, heavyType, bossId === 'GRAVELMAW' ? 1.5 : 1,
         player.stats.maxHp)
       : 0;
-    const hurt = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT;
+    const hurt = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT * damageTakenMult(heldState);
     if (hurt > 0) {
       if (player.hp < 0.5 * player.stats.maxHp && healBank >= 1) {
         player.hp = Math.min(player.stats.maxHp, player.hp + C.POTIONS.HP_HEAL);

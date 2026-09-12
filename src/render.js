@@ -601,7 +601,8 @@ export class Renderer {
     for (const fx of state.effects || []) {
       const t = fx.age / fx.ttl; // 0 -> 1
       if (fx.kind === 'nova' || fx.kind === 'nova_pulse' || fx.kind === 'boss_nova' ||
-          fx.kind === 'mine_blast' || fx.kind === 'colossus_shock') {
+          fx.kind === 'mine_blast' || fx.kind === 'colossus_shock' ||
+          fx.kind === 'rewrite_boom' || fx.kind === 'rewrite_harvest') {
         // Expanding ring: 1px rects sampled along a circle. Color per kind.
         const r = fx.radius * t;
         g.fillStyle = fx.kind === 'nova'
@@ -612,7 +613,12 @@ export class Renderer {
               ? (t < 0.4 ? '#ffd75e' : t < 0.75 ? '#ff8848' : '#a83a1e')
               : fx.kind === 'colossus_shock'
                 ? (t < 0.5 ? '#e8e8f0' : '#8a8a96')
-                : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
+                // G8 step 2: Chain Reaction (warm ember) / Blood Harvest (red).
+                : fx.kind === 'rewrite_boom'
+                  ? (t < 0.5 ? '#ffb066' : '#b05a2a')
+                  : fx.kind === 'rewrite_harvest'
+                    ? (t < 0.5 ? '#ff6a7a' : '#a02a3a')
+                    : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
         const steps = 48;
         for (let i = 0; i < steps; i++) {
           const a = (i / steps) * Math.PI * 2;

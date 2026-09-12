@@ -257,8 +257,18 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   const tipOf = () => tourRoot.children.find(c => c.id === 'tour-tip');
   assert.ok(tipOf()._html.includes('PLAY'), 'first step spotlights PLAY');
 
-  // Advance through all 5 steps by clicking (pointerdown contract).
-  for (let i = 0; i < 5; i++) tourRoot.fire('pointerdown', { stopPropagation() {} });
+  // Advance through every step by clicking (pointerdown contract). WAVE-31: the
+  // tour is no longer a fixed 5 - TROPHIES shipped after the tour was written and
+  // is taught now - so the count is DERIVED from the menu and the assertion is
+  // about WHAT it teaches: every title card, the gallery included. A new menu
+  // screen that nobody teaches fails here instead of shipping silently.
+  const seen = [];
+  for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
+    seen.push(tipOf()._html);
+    tourRoot.fire('pointerdown', { stopPropagation() {} });
+  }
+  assert.equal(seen.length, cards().length, 'stage-1 tour teaches every title card');
+  assert.ok(seen.some(h => h.includes('TROPHIES')), 'the trophy gallery is taught, not left to luck');
   assert.equal(ls.get(TOUR_KEYS.stage1), '1', 'stage-1 flag persisted');
   assert.ok(!globalThis.document.body.children.includes(tourRoot), 'tour unmounted');
 
@@ -339,6 +349,64 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
     assert.equal(ls.get(flagKey), '1', `${flagKey} flag persisted`);
     root2.fire('pointerdown', { stopPropagation() {} });   // dismiss -> resume
   }
+});
+
+// ---- WAVE-31: a tap ON a title menu card reaches the card ---------------------
+// The stage-1 tour spotlights one card at a time, but the player's finger may go
+// somewhere else entirely. Before this change the tap was swallowed by the shade
+// and merely advanced the tip (found in the phone screenshot review, tick note 2).
+check('passThrough: a tap on a real control under the shade presses it and ends the tour', () => {
+  const card = fakeEl();
+  card.className = 'card';
+  let pressed = 0;
+  card.click = () => { pressed++; };
+  card.closest = (sel) => (sel === '#ov-cards > .card' ? card : null);
+  const doc = fakeDoc(), st = fakeStorage();
+  doc.elementsFromPoint = () => ([fakeEl('div') /* the shade on top */, card]);
+  let done = 0;
+  const t = new Tour({
+    doc, storage: st, steps: [{ id: 'a', text: 'First', target: () => fakeEl() }],
+    passThrough: '#ov-cards > .card', onDone: () => { done++; },
+  });
+  t.start();
+  assert.ok(t.active(), 'mounted');
+  t.root.fire('pointerdown', { clientX: 275, clientY: 422, stopPropagation() {} });
+  assert.equal(pressed, 1, 'the title menu card got the press');
+  assert.equal(done, 1, 'the tour finished - the player chose their own path');
+  assert.ok(!t.active(), 'torn down');
+});
+
+// The pass-through is OPT-IN: the in-run coachmarks pause the sim under the shade,
+// so a tap over a draft card there must still only dismiss the tip.
+check('passThrough is opt-in - without it a tap over a card still just advances', () => {
+  const card = fakeEl();
+  card.className = 'card';
+  let pressed = 0;
+  card.click = () => { pressed++; };
+  card.closest = (sel) => (sel === '#ov-cards > .card' ? card : null);
+  const doc = fakeDoc(), st = fakeStorage();
+  doc.elementsFromPoint = () => ([card]);
+  const t = new Tour({
+    doc, storage: st,
+    steps: [{ id: 'a', text: 'First', target: () => fakeEl() }, { id: 'b', text: 'Second', target: () => fakeEl() }],
+  });
+  t.start();
+  t.root.fire('pointerdown', { clientX: 10, clientY: 10, stopPropagation() {} });
+  assert.equal(pressed, 0, 'no pass-through by default');
+  assert.ok(t.tip._html.includes('Second'), 'advanced instead (coachmarks keep tap-to-dismiss)');
+  t.skip();   // tear down: the relayout interval is the only thing keeping node alive
+});
+
+// A fake doc / old browser with no elementsFromPoint must not break advancing.
+check('passThrough falls back safely when the doc cannot hit-test', () => {
+  const doc = fakeDoc(), st = fakeStorage();
+  const t = new Tour({
+    doc, storage: st, steps: [{ id: 'a', text: 'First', target: () => fakeEl() }],
+    passThrough: '#ov-cards > .card',
+  });
+  t.start();
+  t.root.fire('pointerdown', { clientX: 5, clientY: 5, stopPropagation() {} });
+  assert.ok(!t.active(), 'no hit-test -> plain advance -> tour completed');
 });
 
 console.log(`\n${passed} assertion groups passed — test_tour OK`);

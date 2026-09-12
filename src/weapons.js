@@ -50,6 +50,10 @@
 
 import { CONFIG as C } from './config.js';
 import { activeArchMods } from './arches.js';
+// G8 step 2 PIERCE ALL (src/rewrites.js): read at the boomerang's SPAWN site
+// so the rule is weapon-agnostic. rewrites.js imports nothing from here, so
+// the edge stays acyclic.
+import { hasRewrite } from './rewrites.js';
 
 // ---------- Tuning constants (kept HERE, not in config.js — no collisions) ----------
 export const WEAPONS = {
@@ -306,7 +310,10 @@ function updateBoomerang(state, weapon, dt) {
           dx: Math.cos(a + spread), dy: Math.sin(a + spread),
           dist: 0, phase: 'out',
           damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
-          pierce: pierceAll ? PIERCE_ALL : (p.stats.pierce || 0) + (P.pierceBonus || 0),
+          // G8 step 2 PIERCE ALL rewrite: same sentinel the VOID_RANG
+          // evolution uses, read at spawn.
+          pierce: (pierceAll || hasRewrite(state, 'pierceall')) ? PIERCE_ALL
+            : (p.stats.pierce || 0) + (P.pierceBonus || 0),
           hit: new Map(),   // enemy -> hits already spent THIS leg (see PIERCE above)
           age: 0,
         });

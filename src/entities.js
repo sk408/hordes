@@ -26,6 +26,17 @@ export function makePlayer() {
     mana: C.MANA.MAX,
     skillCd: { FROST_NOVA: 0, OVERCHARGE: 0 }, // seconds remaining
     buffs: { overcharge: 0 },
+    // G8 step 3 (src/rules.js): the run's persistent CONDITIONS (Horde Bait /
+    // One of Each) and the stat ledger `once` reads. G8 step 4 (src/perks.js):
+    // the run's always-on PERKS (Regrowth / Focus / Thick Skin). G8 step 2
+    // (src/rewrites.js): the run's MECHANIC REWRITES (Pierce All / Chain
+    // Reaction / Blood Harvest). All live on the RUN player, exactly like
+    // draftCounts, so a fresh makePlayer() is a fresh run and none of it
+    // enters the save schema.
+    rules: {},
+    takenStats: {},
+    skills: {},
+    rewrites: {},
     potions: { hp: C.POTIONS.START, mp: C.POTIONS.START },
   };
 }

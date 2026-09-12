@@ -24,6 +24,19 @@ import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
 import { maybeSpawnChest, tickChests } from './chests.js';
+// G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
+import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
+// G8 step 4: the general skill items (Regrowth / Focus / Thick Skin) — the
+// perk card family, its applied-value helpers (one source of truth for the
+// HUD and the damage funnel) and the ONE per-frame regen step.
+import {
+  skillCards, applyRegrowth, damageTaken, skillManaCost, SKILL_PERKS,
+} from './perks.js';
+// G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
+// Blood Harvest) — mechanic rewrites, granted through the same card contract.
+import {
+  rewriteCards, hasRewrite, rewriteBoom, harvestBlast, REWRITES,
+} from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
@@ -54,6 +67,7 @@ import {
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   luckDropWeights,
+  draftCardWeight,
   // W1 save foundation (src/save.js): versioned schema + lossless export/import.
   SCHEMA_VERSION, exportProfileText, importProfileText,
   downloadProfile, saveProfileToDisk, readSaveFile,
@@ -396,7 +410,10 @@ function runController(p, dt, am) {
       const a = baseAng + spread;
       const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
       pr.damage *= volleyDmgMult;
-      if (volleyPierceAll) pr.pierce = PIERCE_ALL;
+      // G8 step 2 PIERCE ALL: the rewrite is weapon-agnostic — read at SPAWN
+      // (both duplicated update loops honor `pierce` already, so one line here
+      // covers the in-run and finale/boss loops alike).
+      if (volleyPierceAll || hasRewrite(state, 'pierceall')) pr.pierce = PIERCE_ALL;
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
       if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
@@ -1204,6 +1221,10 @@ function update(dt) {
   if (wm.manaRegenMult && wm.manaRegenMult !== 1) {
     p.mana = Math.min(p.stats.maxMana, p.mana + C.MANA.REGEN * (wm.manaRegenMult - 1) * dt);
   }
+  // G8 step 4: Regrowth's HP regen lives in ONE helper (perks.js applyRegrowth)
+  // called from BOTH resource seams — this one and updateFinale's — so there is
+  // never a third copy. dt-scaled: 60Hz and 120Hz are both exact.
+  applyRegrowth(state, dt);
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -1321,7 +1342,7 @@ function update(dt) {
       // rest still ride (and still have to be killed). See CONFIG.SURVIVAL.
       if (drainActive < C.SURVIVAL.MAX_DRAIN_TICKS) {
         drainActive++;
-        p.hp -= act.drain * dt;      // DoT: no invuln window, just bleed
+        p.hp -= damageTaken(state, act.drain * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel)
         state.runCounts.waveTookDamage = true;   // G9: a hit landed this wave
         resetRampage();              // WAVE-11: ANY hp loss ends the streak
         if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
@@ -1431,7 +1452,7 @@ function update(dt) {
       p.invuln = 0.5;
       state.effects.push({ kind: 'orbit_hit', x: p.x, y: p.y, age: 0, ttl: 0.2 });
     } else {
-      p.hp -= touchDmg;
+      p.hp -= damageTaken(state, touchDmg);   // THICK SKIN funnel (touchDmg already carries the Glass Cannon mult)
       state.runCounts.waveTookDamage = true;   // G9: contact landed this wave
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: ANY hp loss ends the rampage streak
@@ -1465,7 +1486,7 @@ function update(dt) {
         state.shieldAbsorbs--;
         p.invuln = 0.5;
       } else {
-        p.hp -= s.damage * takenMult;
+        p.hp -= damageTaken(state, s.damage * takenMult);   // THICK SKIN funnel
         state.runCounts.waveTookDamage = true;   // G9: a shot landed this wave
         p.invuln = 0.6;
         resetRampage();   // WAVE-11: projectile hits end the streak too
@@ -1495,6 +1516,22 @@ function update(dt) {
         }
         state.effects.push({ kind: 'colossus_shock', x: e.x, y: e.y, radius: sw.radius, age: 0, ttl: 0.5 });
         toast('COLOSSUS DOWN - SHOCKWAVE!');
+      }
+      // G8 step 2 CHAIN REACTION rewrite: every kill detonates. Same shape as
+      // the colossus shockwave above — enemy-side friendly fire only, so it can
+      // never kill the player; the death pass splices each enemy exactly once
+      // (below), so a kill detonates exactly once and a chain merely propagates
+      // across frames. NO toast: the feed is for rare moments, not every kill.
+      const boom = rewriteBoom(state);
+      if (boom) {
+        for (const o of state.enemies) {
+          if (o === e || o.hp <= 0) continue;
+          if (Math.hypot(o.x - e.x, o.y - e.y) <= boom.radius) {
+            o.hp -= boom.damage;
+            o.flash = 0.08;
+          }
+        }
+        state.effects.push({ kind: 'rewrite_boom', x: e.x, y: e.y, radius: boom.radius, age: 0, ttl: 0.25 });
       }
       state.gems.push(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
@@ -1634,7 +1671,7 @@ function update(dt) {
   // G9 FOLLOW-UP: count OPENED chests for CHESTS_25. An expired chest is a
   // different event kind (chestExpired), so a despawned chest never counts.
   for (const ev of chestEvents) if (ev.kind === 'chestOpened') state.runCounts.chests++;
-  if (chestPre && chestEvents.some(ev => ev.kind === 'gambleHorde')) {
+  if (chestPre && chestEvents.some(ev => ev.kind === 'gambleHorde' || ev.kind === 'hordeBait')) {
     for (const e of state.enemies) if (!chestPre.has(e)) escalate(e, state.time);
   }
   for (const ch of state.chests) {
@@ -1701,6 +1738,9 @@ function update(dt) {
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
     } else if (ev.kind === 'gambleHorde') {
       toast('THE GAMBLE BETRAYS YOU - MINI HORDE!');
+    } else if (ev.kind === 'hordeBait') {
+      // G8 step 3: the rule paid a better chest and the horde is the price.
+      toast('HORDE BAIT - THE CHEST ANSWERED WITH A HORDE!');
     } else if (ev.kind === 'tokenOffer') {
       // WAVE-7/A: legendary chests carry EVOLUTION TOKENS (the 1-of-N flavor
       // choice is cosmetic — all options are the same currency). A token may
@@ -1731,6 +1771,20 @@ function update(dt) {
         p.potions[d.kind]++;
         state.drops.splice(i, 1);
         toast((d.kind === 'hp' ? 'HEALTH' : 'MANA') + ' POTION FOUND');
+        // G8 step 2 BLOOD HARVEST rewrite: the PICKUP retaliates. Hooked on
+        // the collect path (NOT drinkPotion — the ask is "health pickups also
+        // damage"); the blast is enemy-side only, centered on the player.
+        const blast = d.kind === 'hp' ? harvestBlast(state) : null;
+        if (blast) {
+          for (const o of state.enemies) {
+            if (o.hp <= 0) continue;
+            if (Math.hypot(o.x - p.x, o.y - p.y) <= blast.radius) {
+              o.hp -= blast.damage;
+              o.flash = 0.08;
+            }
+          }
+          state.effects.push({ kind: 'rewrite_harvest', x: p.x, y: p.y, radius: blast.radius, age: 0, ttl: 0.3 });
+        }
       }
     }
   }
@@ -1866,19 +1920,40 @@ function openDraft() {
   }
   // Level-up cards for every owned weapon below the cap (VOLLEY included —
   // its instance rides in state.weapons but never takes a slot).
+  // G8 step 2 retune (extended ladder): under ONE OF EACH the weapon ladder
+  // never ends — an at-cap level-up card STAYS offered and converts to +10%
+  // weapon damage in pick() (the multi/volleyAtProjCap precedent: no dead
+  // cards, no fake choices).
   for (const w of state.weapons) {
     const lv = w.level || 1;
-    if (lv >= WEAPON_MAX_LEVEL) continue;
+    if (lv >= WEAPON_MAX_LEVEL && !hasRule(state, 'once')) continue;
     weaponCards.push({
       id: 'lvl_' + w.type + '_' + lv,
       name: WEAPON_NAMES[w.type] + ' UP',
-      desc: (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
+      desc: lv >= WEAPON_MAX_LEVEL
+        ? '+10% weapon damage · MAXED'
+        : (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
       apply: () => { levelUpWeapon(w); },
     });
   }
   const pool = [
     ...weaponCards.map(c => ({ ...c, weight: 1 })),
-    ...UPGRADES.map(u => ({ ...u, weight: 0.3 })),   // downweighted stats
+    // G8 step 1: the stat family carries its rarity weight (meta.js
+    // draftCardWeight) so Fortune shifts the DRAFT, not just world drops.
+    // At luck 0 every one of these is exactly 0.3 — the shipped pool.
+    // G8 step 3: ONE OF EACH drops a stat card from the pool once the run has
+    // taken it (statCardOffered), and the run-rule cards ride in the same pool
+    // at RULE_CARD_WEIGHT. With no rules held the first line is byte-identical
+    // to the shipped pool (every stat card exactly its draft weight).
+    ...UPGRADES.filter(u => statCardOffered(u.id, state))
+      .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) })),
+    ...ruleCards(state),
+    // G8 step 4: the perk family rides the same pool at SKILL_CARD_WEIGHT,
+    // one card per perk the run does not already hold (taken once, like a rule).
+    ...skillCards(state),
+    // G8 step 2: the rewrite family rides the same pool at
+    // REWRITE_CARD_WEIGHT, one card per rewrite not already held.
+    ...rewriteCards(state),
   ];
   // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a
   // dead pick (a fake choice) — relabel it to what it actually does.
@@ -1943,6 +2018,25 @@ function volleyAtProjCap() {
 
 function pick(u) {
   const p = state.player;
+  // G8 step 3: a RUN RULE card grants a persistent condition instead of a
+  // number; every other card records itself in the `once` ledger (stat cards
+  // only — weapon grant/level cards are the weapon economy, not the stats).
+  if (u.rule) {
+    p.rules = p.rules || {};
+    p.rules[u.rule] = true;
+    toast('RUN RULE - ' + RULES[u.rule].name.toUpperCase() + ': ' + RULES[u.rule].desc.replace('RUN RULE - ', ''));
+  } else if (u.skill) {
+    // G8 step 4: a SKILL card grants its always-on perk through the card's own
+    // apply(player) in the chain below, and NEVER enters the `once` stat
+    // ledger — skill ids must not pollute it (same shape as the rule branch).
+    toast('SKILL - ' + SKILL_PERKS[u.skill].name.toUpperCase() + ': ' + SKILL_PERKS[u.skill].desc.replace('SKILL - ', ''));
+  } else if (u.rewrite) {
+    // G8 step 2: a REWRITE card grants its mechanic through apply(player) in
+    // the chain below, and NEVER enters the `once` stat ledger.
+    toast('REWRITE - ' + REWRITES[u.rewrite].name.toUpperCase() + ': ' + REWRITES[u.rewrite].desc.replace('REWRITE - ', ''));
+  } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
+    markStatTaken(state, u.id);
+  }
   if (u.id === 'multi' && volleyAtProjCap()) {
     p.stats.damage *= 1.2;
   } else if (u.id === 'speed' || u.id === 'rate') {
@@ -1953,6 +2047,28 @@ function pick(u) {
     else p.stats.cooldown *= 1 - 0.15 * t;
   } else {
     u.apply(p);
+    // G8 step 2 RETUNE (the step-3 debt TICK NOTE 7 measured at 0.65x): under
+    // ONE OF EACH the weapon tilt actually PAYS — a weapon level-up card
+    // grants +1 BONUS level and a weapon grant lands at Lv2. The rule still
+    // removes the stat-stacking axis; this is the compensation on the same
+    // axis the card tilts toward. levelUpWeapon caps at WEAPON_MAX_LEVEL, so
+    // a doubled pick at the cap is a no-op, never an overflow.
+    if (hasRule(state, 'once')) {
+      if (u.id.startsWith('lvl_')) {
+        // Below the cap the payout is +1 BONUS level. At the cap the doubled
+        // level-up would be a no-op — the extended-ladder conversion pays
+        // instead: +10% weapon damage (the multi-overflow shape). The cap
+        // test reads the OFFER-time level from the card id: the generic
+        // u.apply above has already run, so w.level would misfire on a card
+        // offered at MAX-1 (leveled to MAX by that apply) and double-pay.
+        const lvAtOffer = Number(u.id.split('_').pop());
+        if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage *= 1.10;
+        else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
+      } else if (u.id.startsWith('wpn_')) {
+        const granted = state.weapons[state.weapons.length - 1];
+        if (granted) levelUpWeapon(granted);
+      }
+    }
   }
   state.pendingDrafts--;
   if (state.pendingDrafts > 0) { openDraft(); return; }
@@ -2548,6 +2664,11 @@ function maybeStartMenuTour() {
         target: () => cardByTitle('SHOP') },
       { id: 'CHARACTERS', text: 'CHARACTERS unlock pilots with different starting kits.',
         target: () => cardByTitle('CHARACTERS') },
+      // WAVE-31: TROPHIES was added to the menu after the tour was written and
+      // was left untaught (build-plan item 9: every new screen taught or
+      // deliberately left to discovery - this is the taught option).
+      { id: 'TROPHIES', text: 'TROPHIES \u2014 every emblem you have earned, full screen.',
+        target: () => cardByTitle('TROPHIES') },
       { id: 'SETTINGS', text: 'SETTINGS — audio, HUD, zoom and the profile reset.',
         target: () => cardByTitle('SETTINGS') },
       { id: 'HOW TO PLAY', text: 'HOW TO PLAY — the full reference, any time.',
@@ -2557,6 +2678,9 @@ function maybeStartMenuTour() {
     // WAVE-23 (#6): input-aware advance wording — "TAP" reads wrong on a
     // desktop with no touch (Sk408). Any key also advances (tour.js).
     advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY',
+    // WAVE-31: a tap that lands ON a menu card presses the card (the tour's
+    // "tap anywhere advances" rule cost a real finger tap its target).
+    passThrough: '#ov-cards > .card',
   });
   menuTour.start();
 }
@@ -3516,7 +3640,9 @@ function runAction(act) {
         p2.stats.maxHp - p2.hp);
       if (bonus > 0) p2.hp += bonus;
       healed = p2.hp - before;
-      if (state.wave.boss) p2.hp -= healed / 2;
+      // The boss curse's heal tax is hostile damage too — it rides the SAME
+      // THICK SKIN funnel as every other path that removes player HP.
+      if (state.wave.boss) p2.hp -= damageTaken(state, healed / 2);
     }
   }
   else if (act === 'n') {
@@ -3888,7 +4014,9 @@ function updateTouchHud() {
     : state.pilotMode);
   const skill = (id, defId) => {
     const cd = p.skillCd[defId];
-    set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= C.SKILLS[defId].MANA ? 'RDY' : 'LOW'));
+    // G8 step 4: the readiness readout reads the SAME helpers useSkill pays
+    // (perks.js), so FOCUS cannot make the button text lie about RDY/LOW.
+    set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= skillManaCost(defId, state) ? 'RDY' : 'LOW'));
   };
   skill('tc-q', 'FROST_NOVA');
   skill('tc-w', 'OVERCHARGE');
@@ -4196,6 +4324,8 @@ function updateFinale(dt) {
   updateResources(p, dt);
   const regenBonus = (p.stats.manaRegen ?? C.MANA.REGEN) - C.MANA.REGEN;
   if (regenBonus > 0) p.mana = Math.min(p.stats.maxMana, p.mana + regenBonus * dt);
+  // The SECOND resource seam (see the play loop's copy): the same ONE helper.
+  applyRegrowth(state, dt);
   updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
 
   // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph
@@ -4230,7 +4360,11 @@ function updateFinale(dt) {
 
   // Barrage projectiles: the FIRST touch of a volleyId costs an exact third
   // of maxHp DIRECTLY (no defenses, no heat, no damageTaken mults); the rest
-  // of the same volley pass through harmlessly.
+  // of the same volley pass through harmlessly. NOTE (G8 step 4): the maw's
+  // mercy-rule hits are the ONE player-HP path deliberately NOT routed through
+  // perks.damageTaken — "no damageTaken mults" is the documented balance
+  // contract (Glass Cannon's mult is excluded here for the same reason), so
+  // THICK SKIN does not apply to the finale.
   for (const s of state.enemyShots) {
     s.x += s.vx * dt; s.y += s.vy * dt; s.age += dt;
     if (p.invuln <= 0 && Math.hypot(s.x - p.x, s.y - p.y) < 9) {

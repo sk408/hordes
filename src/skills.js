@@ -4,6 +4,10 @@
 // decisions around the controller seam — movement/attack targeting stays in
 // controllers.js.
 import { CONFIG as C } from './config.js';
+// G8 step 4 (src/perks.js): Focus discounts mana cost + cooldown. useSkill
+// reads the SAME applied-value helpers the HUD readiness readout reads, so
+// the button text can never lie about what the perk changed.
+import { skillManaCost, skillCooldown } from './perks.js';
 
 // Try to fire a skill ('FROST_NOVA' | 'OVERCHARGE'). Returns true if fired.
 // An unknown / missing id fails the same way an unknown potion kind does
@@ -13,9 +17,9 @@ export function useSkill(state, id) {
   const p = state.player;
   const def = C.SKILLS[id];
   if (!def) return false;   // unknown id: fail, never throw
-  if (p.skillCd[id] > 0 || p.mana < def.MANA) return false;
-  p.mana -= def.MANA;
-  p.skillCd[id] = def.COOLDOWN;
+  if (p.skillCd[id] > 0 || p.mana < skillManaCost(id, state)) return false;
+  p.mana -= skillManaCost(id, state);
+  p.skillCd[id] = skillCooldown(id, state);
 
   if (id === 'FROST_NOVA') {
     // AoE damage + slow around the player. No aiming — the player IS the

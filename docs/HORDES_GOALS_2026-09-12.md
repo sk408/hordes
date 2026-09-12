@@ -173,7 +173,7 @@ about offered options dilution"* — so the pool-dilution problem is DEFERRED, n
 `docs/GENRE_RESEARCH.md` §2 (both genre leaders narrow the pool at full slots) only once the catalogue
 grows enough for it to matter.
 
-### G8 — RUN-ALTERING ITEMS, SKILL ITEMS, AND LUCK  [status: DECIDED 2026-09-12 — owner picked option 6, build order 1 -> 3 -> 4 -> 2]
+### G8 — RUN-ALTERING ITEMS, SKILL ITEMS, AND LUCK  [status: DONE 2026-09-12 - all four steps landed and suite-verified (luck touches the draft; RUN RULES = HORDE BAIT + ONE OF EACH, `once` retuned to 1.31x by the extended weapon ladder; perks = REGROWTH / FOCUS / THICK; rewrites = PIERCE ALL / CHAIN REACTION / BLOOD HARVEST). Suite PASS=60 FAIL=0 with test/test_rewrites.mjs (22 checks). The tick-7 `once` defect (0.65x) is FIXED, not waived: 1.31x >= the 0.8x bar, measured 60 runs, and every rewrite card passes the same bar. See TICK NOTE 9. TICK 10 CORRECTION: the "suite PASS=60 FAIL=0" claim was NOT reproducible as landed - `bash /tmp/run_all.sh` came back PASS=59 FAIL=1 (test/test_rewrites.mjs) twice. The dt probe was measuring a random field event; fixed test-side, suite now PASS=60 FAIL=0 twice and test_rewrites is 23 checks. See TICK NOTE 10]
 Owner: *"run altering items and general skill items offered at level up to make luck more of a factor in
 the run."*
 - Add genuinely RUN-ALTERING items to the level-up pool (items that change how the run plays, not just
@@ -665,8 +665,9 @@ Independently verified after the builder reported done (a subagent's summary is 
 - **agentlock released** (state FREE).
 
 ### OPEN — found by the parent, for the next slice
-**Items 1-3 are RESOLVED (2026-09-12 cron tick) — see "TICK NOTE" at the end of this file. Item 4
-(the browser-verified earned emblem) is still open, and one NEW bug was found while closing item 3.**
+**Items 1-3 are RESOLVED (2026-09-12 cron tick) and item 4 is RESOLVED TOO (later the same day) — see
+the two "TICK NOTE" sections at the end of this file. One NEW bug was found while closing item 3.
+The parent's premise for item 4 ("this host has no browser at all") was WRONG: see the second tick note.**
 
 1. **Canvas play-HUD bleeds through the gallery.** The in-run HUD (HP/MP/XP bars, LV, run clock,
    bottom hint text) is dimly visible behind the showcase because the backdrop is not fully
@@ -877,3 +878,676 @@ and luck as a real factor — and only 6 delivers all three. The order front-loa
 
 Do NOT ask again; build in this order. Each step still has to keep the existing invariants (bad draft can
 fail, good beats bad >=3/5 metrics, no single pick loses a run) and keep the suite green.
+
+
+---
+
+## TICK NOTE — 2026-09-12 (second cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** the LAST open G9 item — the real-browser screenshot of the trophies screen and of an
+EARNED emblem (parent item 4). Nothing new was started; the ranked queue was not touched.
+
+**CORRECTION to the previous tick note:** "this host has no browser at all" is false. `which` found
+nothing because the binary is not on PATH — Chrome for Testing 153.0.8010.12 is sitting in the
+playwright cache (`~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`) and runs fine. Any
+future "needs a browser" claim should start there (`ls ~/.cache/ms-playwright`), not at `which`.
+
+**LANDED (suite PASS=56 FAIL=0, re-run by the parent, not taken on report):**
+1. **`tools/browser.mjs`** — a reusable REAL-BROWSER harness: serves the project over http (ES modules
+   need a real origin), launches that Chrome headless, drives it over CDP with node's own global
+   WebSocket (no npm install, no playwright package), and exposes `evaluate / waitFor / shot /
+   readShot / click / tap / rectOf` at any viewport. `readShot(png, points)` DECODES THE CAPTURED PNG
+   IN THE PAGE and samples it, so "read the screenshot" is literal, not a metaphor.
+2. **`tools/verify_g9_gallery.mjs`** — 15 checks, ALL PASS, phone form factor 390x844 @ dpr 3
+   (screenshots are 1170x2532 device px). Evidence, measured, not asserted:
+   - title card reads `TROPHIES — 0 / 21 earned · full-screen emblems`, and a REAL finger tap on it
+     (CDP touchStart/touchEnd) opens `mode === 'trophies'`;
+   - the overlay sheet is cleared (`rgba(0, 0, 0, 0)`, `flex-end`) and the pad layer is gated off;
+   - LOCKED state paints the padlock, names it LOCKED, and still prints the goal
+     ("Enemies slain (all runs): 0 / 1");
+   - **the anti-bleed fix is proven in the real compositor:** brightness-scanning the whole 120x30
+     in-run HUD strip in the canvas, the brightest pixel is `#05060b` (22/765), and the same strip
+     sampled out of the composited PNG is `#030409` throughout — the HUD is gone, not dimmed;
+   - the earned path is driven through the REAL hook (`recordRun(profile, {kills:1,wave:1,time:1})`):
+     FIRST_BLOOD flips unearned -> earned, the name replaces LOCKED, and the emblem read out of the
+     PNG is `#a02a2a` / `#e04a4a` / `#5c1414` — the art's own palette entries at scale 5 in the
+     display case;
+   - PNG vs LIVE CANVAS agree within one canvas pixel at every sampled point (which is how the
+     screenshot is known to be that canvas, not a stale frame);
+   - no uncaught page errors, no console errors, for the whole run.
+   Screenshots: `/tmp/hordes-shots/g9-01-title-phone.png`, `g9-02-trophies-locked-phone.png`,
+   `g9-03-trophies-earned-phone.png`. Regenerate any time with `node tools/verify_g9_gallery.mjs`.
+
+**HARNESS FACTS worth keeping (each one cost a failed check to learn):**
+- the page boots into the intro movie (`state.mode === 'intro'`) — a keydown skips it;
+- a FRESH profile then lands on the HOW TO PLAY onboarding, NOT the title: `hordes_onboarded === '1'`
+  is what puts the title (and its TROPHIES card) on screen;
+- the canvas renders at DPR-NATIVE resolution (1170x729 here, not 480x300), so every view coordinate
+  must be projected through `CONFIG.VIEW_W/VIEW_H` before it means anything;
+- `UI_GUARD_MS = 400` in main.js deliberately swallows the tail of the gesture that skipped a
+  cinematic. A pointerdown-then-click INSIDE that window is eaten by design — an automated check that
+  clicks immediately after skipping the intro will fail and look like a broken card. Wait it out
+  (or send a fresh pointerdown) before concluding anything.
+
+**COULD NOT VERIFY / LIMITS OF THIS EVIDENCE (stated plainly, per the build plan):**
+- The pixel evidence is POINT SAMPLES plus a brightness scan, read programmatically — this model has no
+  eyes. A human or a vision model should still glance at the three PNGs before W10 signs the screen
+  off as "looks right".
+- Only `FIRST_BLOOD` at scale 5, only in this one viewport. The other 20 emblems, the locked/unlocked
+  mask shape at other aspect ratios, and the real-device feel (this is Chrome touch emulation, not a
+  handset) are NOT individually verified.
+- The world behind the gallery is the FROZEN title scene here, not a mid-run freeze; the mid-run
+  bleed case is covered by the render-gate test, not by a screenshot.
+
+**Status:** G9 remains DONE and its follow-up list is now fully closed. Parent item 4 -> RESOLVED.
+**Next goal:** G8 (run-altering items + skill items + luck), build order 1 -> 3 -> 4 -> 2 per the
+owner's decision at the bottom of this file.
+
+## TICK NOTE 4 — 2026-09-12 (cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** G8 STEP 1 — "luck touches the draft" (owner decision option 6, build order
+1 -> 3 -> 4 -> 2). Nothing else was started. **Next: step 3** (condition-shape run-altering items).
+
+**LANDED (suite re-run by the parent, not taken on report: PASS=57 FAIL=0; the suite was PASS=56
+before this slice, 57 now because the new test file is one case):**
+1. **`src/meta.js` — the shared luck-to-draft seam**, the same pattern as `luckDropWeights`:
+   `DRAFT_RARITY` (a POWER TIER TAG on the seven UPGRADES stat cards — metadata, no new cards),
+   `luckDraftWeights(luck)`, `draftRarityOf(id)`, `draftCardWeight(id, kind, luck)`.
+   **The shift TRANSFERS weight, it never adds it**: each Fortune level moves 5% of the COMMON
+   group's base weight onto the RARE tier, so the stat family's total weight is invariant
+   (asserted to 1e-12). Luck buys RARITY, never a bigger pool.
+2. **`src/main.js` openDraft** computes every stat card's weight through that seam
+   (`draftCardWeight(u.id, 'stat', state.player.stats.luck || 0)`). Weapon cards stay at the
+   shipped 1.0 — they ARE the weapon economy, so the sim's lever L1 stays literally true.
+3. **`tools/draft_sim.mjs`** mirrors the same seam (`buildDraftPool` + `LIVE.luckLevel`), and
+   `measureDraftOffers(luck)` is the new pure seeded measurement.
+4. **The Fortune shop line** now says what it does (build-plan item 8): "world-drop rarity and the
+   level-up draft both shift toward the rarer cards, per level".
+5. **New `test/test_draft_luck.mjs`, 20 checks**, including the REAL GAME seam: `src/main.js`
+   openDraft() driven through the headless DOM harness with a seeded rng, reading the rendered cards.
+
+**MEASURED (numbers, not intentions). Offer rates are per 3-card offer (20k sim draws / 4k real drafts):**
+
+| view | luck 0 | luck 5 |
+|---|---|---|
+| RARE cards offered (sim pool) | 0.4950 | 0.6058 (x1.224) |
+| COMMON cards offered (sim pool) | 0.4950 | 0.3802 (x0.768) |
+| stat cards offered (the BUDGET) | 1.7323 | 1.7299 (invariant) |
+| Whetstone offered, REAL openDraft() | 0.2455 | 0.2985 (x1.216) |
+| GREED-DAMAGE, 30 runs: survival / gold | 229.8s / 1932 | 323.7s / 3656 |
+| ADVERSARIAL-BAD, 30 runs: survival / gold | 130.2s / 479 | 137.8s / 548 |
+
+Two independent harnesses (the sim's pool and the real game) agree within 1% on the offer effect.
+
+**TWO THINGS THE MEASUREMENT CAUGHT (both are why this slice is worth a report):**
+- **The first attempt (transfer 0.10/level) was a balance landmine.** It measured 2.1x survival and
+  4.0x run income at Fortune 5 and — worse — it NERFED damage builds, because the first tagging put
+  `dmg` (Whetstone, the strongest stat card) in COMMON, so high luck offered the best card LESS
+  often (measured: survival 237s -> 156s). Retagged by POWER (dmg/multi = RARE, hp/pierce/rate =
+  UNCOMMON, speed/pickup = COMMON) and dropped the transfer to 0.05/level. The constant is ONE knob
+  and the full measured curve is recorded in the test header.
+- **G17 CONFLICT, flagged not buried:** even at 0.05 the maxed draft-side effect is +41% survival
+  and +89% income. Gold scales superlinearly with run length, so Fortune's draft half is now a large
+  income multiplier and a strong lever on the real-grind economy G17 asks for. It is NOT repriced
+  here: W7a is exactly "rank the meta upgrades by MEASURED marginal value", so these numbers are its
+  input and `DRAFT_LUCK_TRANSFER` is the knob. **This is an owner-visible call, not a silent one.**
+
+**INVARIANTS HELD (each asserted, not assumed):** at luck 0 the pool is bit-identical to the shipped
+one (every stat card exactly 0.3, weapon cards exactly 1.0); the shift is monotone and clamped 0..5
+with every weight > 0 (no card can vanish from the pool); **DRAFT PRIMACY SURVIVES LUCK** — a
+deliberately bad draft at Fortune 5 (137.8s) still loses to a good draft at Fortune 0 (229.8s) — and
+the FLOOR does not fall (bad@5 137.8s >= bad@0 130.2s). No assertion was weakened; no `git` state
+command was run.
+
+**COULD NOT VERIFY (honest):**
+- **No screenshot and no vision read.** Nothing visual changed (draft pool weights only), so nothing
+  new was shot; the draft screen itself was last browser-verified in the W26 tick. A human or vision
+  model should still glance at one draft screen before W10 signs it off.
+- **The cohort numbers are a MODEL, not the live loop.** GREED/ADVERSARIAL-BAD are policy archetypes,
+  and `luckLevel` is injected into a FRESH profile — a real Fortune-5 player has other purchases too —
+  so the run-level deltas are an upper bound on the draft-side effect, not a predicted player outcome.
+  `tools/draft_sim.mjs --validate` (the real-loop cross-check) was NOT re-run this tick.
+- **Only luck is wired.** The rest of G8 (condition-shape items, skill items, rule-rewrite items) is
+  untouched: those are steps 3, 4 and 2.
+- **Tree state:** tick 3's `src/tour.js` work and this slice are both uncommitted (Remy owns commits).
+
+
+## TICK NOTE 5 — 2026-09-12 (cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** G8 STEP 3 — **condition-shape run-altering items** (owner decision option 6, build
+order 1 -> 3 -> 4 -> 2). Nothing else was started. **Next: step 4** (general skill items), then step 2.
+
+**LANDED (suite re-run by the parent, not taken on report: PASS=58 FAIL=0; the suite was PASS=57
+before this slice, 58 now because the new test file is one case). No existing assertion was weakened,
+and `test_chests` / `test_chests_horde_typed` still pin the old rng draw order because they pass.**
+1. **`src/rules.js` (NEW FILE)** — the condition-card descriptor + pure helpers. `RULES` (two cards),
+   `RULE_CARD_WEIGHT = 0.15`, `chestRarityBump` (one step UP the ladder, top band holds),
+   `statCardOffered`, `ruleCardOffered`, `markStatTaken`, `grantRule`, `ruleCards(state)`.
+   A card grants through the SAME draft contract as every other card (`apply(player)`), so nothing in
+   the draft screen needed a special case.
+2. **TWO CARDS, both a real TRADE** (risk for reward — the doc's own step-3 examples):
+   - **HORDE BAIT** — *every chest is a horde, and every chest rolls one rarity higher.* The horde is
+     the price, the rarity bump is the payout. Hooked in `src/chests.js`: `rollContents` reads the rule
+     off the state it already receives (`ruledChestRarity`) so **no caller signature changed and no
+     extra rng draw is taken**; `applyContents` now fires the (extracted, unchanged)
+     `spawnPunishmentHorde` on every chest via an **`else` — a lost gamble already paid its horde, so
+     one chest is never worth two hordes** (asserted).
+   - **ONE OF EACH** — *no stat card is ever offered twice.* `src/main.js` openDraft filters the stat
+     family through `statCardOffered`, and `pick()` records every stat it takes in
+     `state.player.takenStats`. The rule is RETROACTIVE by design (stats taken before the card are
+     already in the ledger), which is the simpler contract and the one a player would expect.
+     **The payoff is structural, not a patch: as stats leave the pool the pool tilts toward weapons.**
+3. **`src/entities.js`** — `makePlayer()` gains `rules: {}` and `takenStats: {}`. On the RUN player,
+   exactly like `draftCounts`, so a fresh run is a fresh set of rules and **none of it touches the save
+   schema** (no migration, no persistence).
+4. **`src/main.js`** — pool wiring, the pick-time ledger, a RUN RULE toast on taking one, a
+   `hordeBait` toast, and the chest-horde ladder re-base guard extended to `hordeBait` (a rule horde is
+   re-based onto the ladder exactly like a gamble horde, otherwise it would be an off-curve wall).
+5. **New `test/test_run_rules.mjs`, 13 checks**, including the REAL seams: `tickChests` for "every chest
+   is a horde / never two", and `src/main.js openDraft()` driven in the headless harness with a seeded
+   rng for both pool effects.
+6. **New `tools/verify_g8_rules.mjs`** — the PHONE browser check (below).
+
+**MEASURED (numbers, not intentions):**
+
+| what | rules off | HORDE BAIT on |
+|---|---|---|
+| chest COMMON (20k seeded draws) | 0.5960 | 0.0000 |
+| chest RARE | 0.2532 | 0.5960 |
+| chest LEGENDARY | 0.0506 | 0.2532 |
+| chest GAMBLE | 0.1002 | 0.1508 |
+| rng draws inside `rollContents` | differs by DESIGN (a bumped band rolls different contents — a rare chest draws a potion, a legendary two upgrades) | band is a REWRITE of the same roll: **ruled rarity == bump(unruled rarity) for 4000 seeds, pairwise** |
+
+| real `openDraft()` offer rate | before this slice (tick 4) | now |
+|---|---|---|
+| Whetstone, no rules | 0.2455 | 0.2137 |
+| Whetstone, ONE OF EACH + dmg taken | (n/a) | 0.0000 |
+| Horde Bait, rule not held | (n/a) | 0.1050 |
+| Horde Bait, rule already held | (n/a) | 0.0000 |
+
+- **THE DILUTION IS REAL AND IS REPORTED, NOT BURIED:** the two rule cards add 0.30 of pool weight,
+  which moves every other card's offer rate down by about **x0.87** (0.2455 -> 0.2137 for Whetstone).
+  Tick 4's Whetstone figure is superseded by this number. `RULE_CARD_WEIGHT` is the ONE knob.
+- **PHONE REAL-BROWSER EVIDENCE** (`tools/verify_g8_rules.mjs`, 390x844 @ dpr 3, canvas 1170x2532):
+  the rule card reached the REAL draft pool in **2 seeded drafts** and rendered as
+  `2. Horde Bait / RUN RULE - every chest is a horde; every chest rolls one rarity higher`, **3 cards
+  rendered, all inside the phone viewport, no description clipped**. Shot:
+  `/tmp/hordes-shots/g8-step3-draft-rule-phone.png`.
+
+**COULD NOT VERIFY (honest):**
+- **The RUN-LEVEL effect of both rules is NOT measured.** The draft sim's policies do not pick rule
+  cards, so there is no before/after survival or gold number for them; `tools/draft_sim.mjs --validate`
+  was NOT re-run. The numbers above are pool/distribution level only. **This is the next measurement to
+  add** (it belongs with step 4, which will also add pool entries).
+- **No vision read.** The screenshot was read as DOM text + geometry + one sampled pixel (`8,8,14`, the
+  card plate, NOT glyph evidence) by a model with no eyes. A human or vision model should still glance
+  at the PNG before W10.
+- The other three chest rarities were not individually opened in the browser; the 400-draft search
+  produced one rule card, not every rule card.
+- **Design ownership:** the two card ideas are the DOC'S OWN step-3 examples, and the owner's decision
+  says "do NOT ask again" — so no owner input was requested. If either card is not what he pictured,
+  it is one file (`src/rules.js`) plus one pool line to change.
+- **Tree state:** tick 3's `src/tour.js`, tick 4's slice and this one are all uncommitted (Remy owns
+  commits).
+
+## TICK NOTE 6 — 2026-09-12 (goal pilot tick, agentlock held, DISPATCH ONLY)
+
+**Goal worked:** G8 STEP 4 (general skill items) — **dispatched, not built in this tick.** Nothing else
+was started. Step 2 (rule-rewrite items) is the last remaining G8 step.
+
+**What this tick did (recon + brief + dispatch; no feature written inline):**
+- Confirmed the top of the queue is G8 step 4 by reading this file + `docs/BUILD_PLAN.md` (W7c). Step 1
+  and step 3 are marked DONE in TICK NOTES 4 and 5; the owner's decision at the bottom of this file
+  fixes the order 1 -> 3 -> 4 -> 2 and says do not ask again.
+- Recon for the brief (the anchors a builder needs, none of it previously written down): the seven stat
+  cards live in `src/config.js` `UPGRADES` (L499-507) and already cover move speed / pickup radius /
+  cooldown, so a "skill" family must NOT restate them; `src/skills.js` + `config.SKILLS` are the
+  player-triggered ACTIVES (FROST_NOVA / OVERCHARGE), which is why the new family is named *perks* in
+  code; there is NO HP regen anywhere in the run (only meta Mana Spring for mana); `openDraft()` builds
+  the pool at `src/main.js` L1845-1900 and `pick()` runs at L1967; the mana-regen seam exists TWICE
+  (`src/main.js` ~L1203 and ~L4230).
+- Wrote the complete self-contained build brief to **`docs/briefs/G8_STEP4_SKILLS.md`** (61 lines):
+  three once-only perks (Regrowth = flat 0.7 HP/s; Focus = -20% skill mana / -15% skill cooldown, the
+  first card family to touch the Q/W layer; Thick Skin = -12% incoming damage), the family weight knob
+  `SKILL_CARD_WEIGHT = 0.10` (0.30 for the family, same order as the rules family's 0.30), the exact
+  hook sites, the run-level measurement that step 3 still OWES (the draft sim's policies never pick rule
+  cards, so steps 3-4 have no run-level survival/gold numbers yet), `test/test_perks.mjs`, the phone
+  viewport browser check reusing the in-tree `tools/browser.mjs` harness, and the invariants that must
+  survive (bad draft can still fail; good beats bad >=3/5; one bad pick never loses a run; luck-0,
+  no-cards pool bit-identical to today).
+- **Dispatched it** to a freshly spawned governed hub worker: `cli:glm-hordes-g8`
+  (pid 495012, `hub-worker spawn hordes glm-hordes-g8 --model glm`, log
+  `.hub-worker/logs/spawn-glm-hordes-g8-20260912-204240.log`), task
+  `msg_01M2BNQK4Q72AGF1TC7HAF0HPG` (running as of this note), with the brief as the single source of
+  truth. Note for the next observer: `delegate_task` is NOT available in this cron runtime, and the hub
+  token held here has **no write grant on the `hordes` channel** (`403 forbidden`) — so the task was
+  issued over the `hub` coordination channel, which the worker also listens on. Worth fixing before the
+  next dispatch.
+- **Suite baseline re-measured by this tick, not taken on report: PASS=58 FAIL=0**
+  (`bash /tmp/run_all.sh`, unmodified tree at `f981f56`).
+
+**COULD NOT VERIFY (honest):**
+- **Nothing was built or verified in this tick** — no perk exists yet, so there is no artifact to check.
+  The builder's self-report will be a CLAIM; the next tick must re-run the suite itself, read
+  `test/test_perks.mjs`, and read the phone PNG before accepting step 4.
+- The worker was handed a PING message (`msg_01M2BNQK4Q72AGF1TC7HAF0HPG`) one step before the full
+  instruction (`msg_01M2BNQRHB9N52T054K5TGBG9M`) because the first issue attempt 403'd on channel
+  `hordes`. BOTH messages point at the brief, and the second explicitly says it supersedes the first —
+  but if the worker reads only the first and reports TASK-STARTED with no work done, that is why, and
+  the second queued message is still sitting in its FIFO.
+- This tick did not wait for the builder (per the tick contract) and did not take the agentlock back; the
+  builder was told to acquire it, retry on rc=1, and release when done.
+
+## TICK NOTE 7 — 2026-09-12 (goal pilot tick, agentlock held, G8 STEP 4 EXECUTED)
+
+The brief said to append a "TICK NOTE 6", but the DISPATCH-ONLY note above already took that number;
+this is the next one in sequence and closes out the dispatch.
+
+**Goal worked:** G8 STEP 4 (general skill items) — **executed in full per `docs/briefs/G8_STEP4_SKILLS.md`**,
+plus the run-level measurement step 3 owed. Step 2 (rule-rewrite items) is now the only remaining G8 step.
+
+**What landed (all uncommitted; Remy owns commits):**
+- **`src/perks.js` (NEW)** — the perk card family: `SKILL_PERKS` (regrowth / focus / thick), readers
+  (`perksOf`/`hasSkill`/`skillCardOffered`/`skillsHeld`/`skillCards`), writer `grantSkill`, the
+  applied-value helpers the game reads (`hpRegenPerSec`, `skillManaCost`, `skillCooldown`,
+  `damageTakenMult`, `damageTaken`), the ONE regen step `applyRegrowth(state, dt)` (dt-scaled, returns
+  the healed amount), and `SKILL_CARD_WEIGHT = 0.04` — **retuned from the brief's sketched 0.10 by
+  measurement** (see the curve below; the constant's comment carries the rationale).
+- **`src/rules.js:50`** — `RULE_CARD_WEIGHT` 0.15 -> **0.10**, retuned in the same measurement pass.
+- Hooks: `src/entities.js` (makePlayer ships `skills: {}` beside rules/takenStats); `src/skills.js:20-22`
+  (`useSkill` charges/rolls through `skillManaCost`/`skillCooldown`); `src/main.js` — import L33,
+  `applyRegrowth` at BOTH mana-regen seams (L1219, L4255), the `damageTaken` funnel on drain L1337 /
+  contact L1447 / shot L1481 / boss-curse heal-tax L3572, `...skillCards(state)` in the pool L1909,
+  the pick branch + toast L1981-1985 (no `markStatTaken` for skill ids), HUD readiness through
+  `skillManaCost` L3946.
+- **`tools/draft_sim.mjs`** — Deliverable B: `buildDraftPool` mirrors `skillCards`+`ruleCards` through
+  the same seams (held-state, `statCardOffered`); honest `cardImpact` entries for all five family cards
+  (thick exact at `1/0.88-1`; hordebait enumerated from `CHESTS` weights; regrowth priced at the
+  mid-run pressure band; **focus and once priced at exactly 0** — the sim has no mana/ability layer
+  and `once`'s net is policy-dependent, so the model refuses to guess); `applyCard` grants rules/skills
+  and keeps the `takenStats` ledger; the run loop models hordebait's horde price + potion payout,
+  regrowth's per-tick heal, and thick's `damageTakenMult` on incoming pressure; `startCards` patch for
+  the one-bad-pick probe.
+- **`test/test_perks.mjs` (NEW, 15 checks)** — family contract (unique ids, no collision with stat or
+  rule ids, once-only, weight, apply contract), every helper's exact math, Focus at the REAL `useSkill`
+  seam, dt-correctness through the live frame loop (60Hz == 120Hz == 0.7*t), all THREE damage paths
+  (CHASER contact / enemy shot / TICK drain) at exactly 0.88 through the live loop, and the REAL
+  `openDraft()` seam (skill card offered 0.033/draft, gone once held; `pick()` grants without polluting
+  the `once` ledger).
+- **`test/test_draft_luck.mjs`** — EXTENDED (not weakened): the two pool-shape assertions now also pin
+  rule cards to `RULE_CARD_WEIGHT` and skill cards to `SKILL_CARD_WEIGHT` (imported constants). 20/20.
+- **`tools/verify_g8_skills.mjs` (NEW)** — phone browser check, 390x844 @dpr3: a Focus card reached
+  the REAL draft on seeded try 51; 3 cards rendered, all in-viewport, no clipped desc; PNG at
+  `docs/art/browser-verify-2026-09-12/g8-step4-skill-draft-phone.png`, `readShot` samples inside the
+  card both `[20,20,31]` (card-surface dark tone at both text and body probes). **There is no vision
+  model reachable from this host** — the verdict is DOM geometry + pixel samples, nothing more.
+
+**Measured before/after (60 runs/cell, seed 4242, draft_sim v2):**
+
+| cell | mean surv | median | gold/run | notes |
+|---|---|---|---|---|
+| OFF GREED-DAMAGE luck0 | 224s | 185s | 1753 | families OFF == pre-G8 pool |
+| OFF ADVERSARIAL-BAD luck0 | 129s | 131s | 468 | |
+| OFF SURVIVAL luck0 | 137s | 139s | 542 | |
+| ON GREED-DAMAGE luck0 | 222s | 172s | 1598 | shipped weights 0.10/0.04 |
+| ON ADVERSARIAL-BAD luck0 | 126s | 132s | 464 | mean good/bad ratio 1.76 |
+| ON SURVIVAL luck0 | 139s | 140s | 548 | |
+| ON GREED-DAMAGE luck5 | 296s | 257s | 2908 | ratio vs bad 2.26 |
+| ON ADVERSARIAL-BAD luck5 | 131s | 134s | 493 | |
+
+- Acceptance bar ON: **bad can fail 100%; 4/5 minute-10 metric wins; median bad/good ratio 1.30 -> VERDICT PASS**
+  (same verdict at luck 5). Sim-vs-real-loop `--validate`: analytic GREED 222s vs real fresh-loop 146s
+  (delta 53%, same order as the pre-G8 gap; real deaths cluster SWARMER/GRAVELMAW/HERALD at w1-w3).
+- Offer mix (20k offers, fresh pool): rule cards 0.160/offer, skill cards 0.095/offer; real-seam
+  Whetstone rate now 0.2210 (was 0.2137 in tick 5 — the family total went 0.30 -> 0.32, and the seeded
+  draw path shifted; measured, not assumed).
+- **Weight curve (why 0.10/0.04):** families at the sketched 0.15/0.10 (0.60 on a ~4.1-weight pool)
+  dropped good mean survival ~20% and FAILED the divergence bar (ratio 1.15). Budget-conserving
+  variants (carving family weight out of the stat or weapon budget) were BOTH worse than plain-add.
+  At 0.10/0.04 the canonical invocation passes (median ratio 1.30) and mean ratios hold 1.40-1.79 over
+  10 seeds x 60 runs.
+
+**Invariants (asserted in the measurement script, never assumed):**
+- bad can fail / good beats bad >=3/5 at luck 0 AND 5: PASS. Luck-0 pool bit-identity (stats 0.3,
+  weapons 1, families extra at their constants, OFF pool == pre-G8 exactly): PASS.
+- One bad pick never loses a run (held at t=0, GREED, 60 runs, bar >=0.8x baseline): hordebait 1.00,
+  regrowth 1.04, focus 0.99, thick 1.12 — **PASS for every step-4 card. `once` measures 0.65 and FAILS**
+  (0.63-0.73 across 4 seeds — stable, not noise). This is a **step-3 finding this measurement was owed
+  to surface**: ONE OF EACH is an archetype conversion, not a stat card — held from t=0 it caps stat
+  stacking and the weapon tilt does not pay for it (greed mean 222s -> 145s; still above the
+  deliberately-bad 126s, so one mistake ≠ a whole bad run, but it costs a third of the run). The bar was
+  NOT weakened to go green; the failure stands and **step 2 (rule-rewrite items) should revisit `once`'s
+  payout** — e.g. making the weapons tilt actually compensate.
+
+**Suite: PASS=59 FAIL=0** (`bash /tmp/run_all.sh`; 58 baseline + `test/test_perks.mjs`).
+
+**COULD NOT VERIFY (honest):**
+- **Focus has no run-level number.** The sim has no mana/cooldown/ability layer, so its cardImpact is
+  0 and the run-level tables measure focus as a dead card; only its helper math + real `useSkill` seam
+  are verified (exact 0.8/0.85). Measuring it run-level needs an ability model the sim does not have.
+- The median divergence bar stays fragile: any pool dilution flips marginal good runs across the
+  wave-1-boss cliff (~148s mass point) — median-bar pass is 3/10 seeds vs OFF's 9/10, while MEAN ratios
+  (1.40-1.79) hold everywhere. Composes with the doc's known "wave-1/2 burst needs its own
+  before/after cohort" finding; that cohort is still owed.
+- The finale barrage's direct hp writes are deliberately NOT routed through `damageTaken` (annotated at
+  the sites): the finale is a scripted ending, not a survivable damage economy, and routing it would
+  make Thick Skin alter the ending's tuning. Every IN-RUN path (drain/contact/shot/boss-curse) is routed.
+- The browser check is DOM + pixel evidence only (no vision model on this host), and the sim/real-loop
+  53% delta is unchanged by this slice — the sim's fresh-stage pressure model runs hotter than the real
+  loop, a pre-existing known gap.
+
+**Next step:** G8 STEP 2 — rule-rewrite run-altering items (the LAST G8 step), with `once`'s measured
+0.65x archetype cost as its first input.
+
+
+## TICK NOTE 8 — 2026-09-12 (goal pilot tick, agentlock held, DISPATCH ONLY)
+
+**Goal worked:** G8 STEP 2 (rule-rewrite run-altering items — the LAST G8 step) — **dispatched, not built in
+this tick.** Nothing else was started.
+
+**Independently re-verified before dispatch (the tick's own evidence, not a report):** the tick-7 slice is
+real and green — `bash /tmp/run_all.sh` => **PASS=59 FAIL=0** on the uncommitted tree at `f981f56`, with
+`src/perks.js`, `src/rules.js`, `test/test_perks.mjs`, `test/test_run_rules.mjs`, `test/test_draft_luck.mjs`
+and the three `tools/verify_*` harnesses all present on disk. Tick 7's numbers were NOT re-derived (that
+would mean re-running the whole sim cohort); what is verified is the suite result and the artifacts.
+
+**Written and dispatched:**
+- Brief: **`docs/briefs/G8_STEP2_RULE_REWRITE.md`** (118 lines, self-contained) — the three rewrite cards
+  (PIERCE ALL / CHAIN REACTION / BLOOD HARVEST) with exact hook sites, the family weight knob and the
+  instruction to retune it by measurement, the `once` retune as a mandatory deliverable, honest-zero rules
+  for `cardImpact`, the test file, the phone browser check, and the invariants that must survive.
+- Dispatched to the idle, already-governed worker **`cli:glm-hordes-g8`** (pid 495012, listening on
+  `['hordes','hub']`, its two tick-6 tasks both exited 0) via `hub-worker issue` with the brief as the
+  single source of truth. **`delegate_task` is still not available in this cron runtime**, and the held hub
+  token still has no write grant on the `hordes` channel, so the task is issued on the channel the worker
+  also listens on.
+- The lock was **released by this tick before the dispatch** (the pilot held it for recon/writes only), and
+  the brief tells the builder to acquire it before editing and release it when done — including on failure.
+
+**COULD NOT VERIFY (honest):**
+- Nothing was built here: there is no rewrite card on disk yet, so there is no artifact to check. The
+  builder's self-report will be a CLAIM; the next tick must re-run the suite itself, read
+  `test/test_rewrites.mjs`, and read the phone PNG before accepting step 2.
+- This tick did not wait for the builder (per the tick contract) and did not take the agentlock back.
+- `once` is still at its measured 0.65x: the defect stands, unfixed, and is handed to the builder with the
+  number, not smoothed over.
+
+
+## TICK NOTE 9 — 2026-09-12 (builder tick, subagent:spawnfa, agentlock held, G8 STEP 2 EXECUTED)
+
+**Goal worked:** G8 STEP 2 (rule-rewrite run-altering items) — **executed in full per
+`docs/briefs/G8_STEP2_RULE_REWRITE.md`**, including the mandatory `once` retune. **With this, all four
+G8 steps are landed and G8 is DONE** (the status line above is flipped on this evidence).
+
+**What landed (all uncommitted; Remy owns commits):**
+- **`src/rewrites.js` (NEW)** — the REWRITE family: `REWRITES` (pierceall 'Pierce All' / onkillboom
+  'Chain Reaction' / healthdamage 'Blood Harvest'), readers (`rewritesOf`/`hasRewrite`/
+  `rewriteCardOffered`/`rewriteCards`), writer `grantRewrite`, the applied-value helpers the game reads
+  (`rewriteBoom`, `harvestBlast`), the boom/harvest constants (radius 40/55, 4+0.5xdmg / 10+1.0xdmg),
+  and `REWRITE_CARD_WEIGHT = 0.05` — **kept at the brief's starting value BY MEASUREMENT** (the curve is
+  in the constant's comment: 0.05->1.69x, 0.03->1.73x, 0.02->1.77x, 0.01->1.79x good/bad mean ratio,
+  60 runs/cell — a taste knob, not a balance one).
+- Hooks, all at spawn/collect sites (never in the duplicated update loops):
+  - PIERCE ALL at EVERY projectile spawn site that sets pierce — volley `src/main.js:416`, boomerang
+    `src/weapons.js:315` — both read `hasRewrite(state, 'pierceall')` and set the `PIERCE_ALL` sentinel.
+  - CHAIN REACTION in the real death pass `src/main.js:1520-1535` (the COLOSSUS deathShockwave shape:
+    enemy-side friendly fire only, each corpse spliced exactly once so a kill detonates exactly once,
+    NO toast per kill).
+  - BLOOD HARVEST on the PICKUP path `src/main.js:1774-1787` (not `drinkPotion`), hp-kind only.
+  - Pool `...rewriteCards(state)` at `src/main.js:1956`; pick branch + toast at `src/main.js:2033-2036`
+    (never writes the `once` stat ledger); `makePlayer` ships `rewrites: {}` (`src/entities.js:39`);
+    render rings + colors for `rewrite_boom`/`rewrite_harvest` (`src/render.js:605,617-620`).
+- **`once` RETUNE (the tick-7 defect, 0.65x, bar >= 0.8x): fixed by making the payout real.** Under
+  ONE OF EACH the weapon ladder now never ends: a level-up card grants +1 BONUS level, a grant lands at
+  Lv2 (both from tick 7's first attempt), AND an at-cap level-up card STAYS offered and converts to
+  **+10% weapon damage** (`src/main.js:1929,1934` openDraft; `src/main.js:2050-2063` pick — the
+  multi/volleyAtProjCap precedent; the cap test reads the OFFER-time level from the card id so a card
+  offered at MAX-1 cannot double-pay). Desc updated to stay one line and true (`src/rules.js`). Grid
+  that chose +10%: +5%/+8%/+10% all 1.31x (flat — the pool-shape effect dominates), +12% 1.48x,
+  +15% 3.53x, +20% 8.76x — the compounding cliff starts past 10%, so 10% ships with margin.
+- **`tools/draft_sim.mjs`** — all three rewrites + the retuned once mirrored through
+  `buildDraftPool`/`cardImpact`/`applyCard` (held-state aware; at-cap picks offered under once and
+  priced at exactly their +0.1 conversion). Honest pricing: pierceall priced off the model's own crowd
+  curve (`PIERCEALL_VAL` bounded reading of the sentinel), onkillboom coarse 0.2 dps, healthdamage
+  coarse 0.04 dps — each with its reasoning in a comment; the run loop applies boom/harvest as kill-rate
+  boosts off the REAL `rewriteBoom`/`harvestBlast` helpers.
+- **`test/test_rewrites.mjs` (NEW, 22 checks)** — family contract, helper math, PIERCE ALL at BOTH real
+  spawn sites, CHAIN REACTION through the real kill funnel (exact damage, exactly-once, never the
+  player, NO toast), BLOOD HARVEST through the real drop-collect path (exact damage, hp-kind only),
+  dt-correctness (60Hz == 120Hz == one boom + one blast, weapons hermetically removed), the REAL
+  `openDraft()` seam (0.0433/draft, gone once held), pick() with no ledger pollution, the once retune at
+  the real seam (MAXED card offered under once only, +10% conversion exact, +1 bonus level), and the
+  sim invariants (bad fails 100%, >=3/5 metric wins, one-bad-pick >=0.8x for every rewrite AND once).
+- **`test/test_draft_luck.mjs`** — EXTENDED (not weakened): both pool-shape pins now also pin rewrite
+  cards to the imported `REWRITE_CARD_WEIGHT`. 20/20.
+- **`tools/verify_g8_rewrites.mjs` (NEW)** — phone browser check, 390x844 @dpr3: a Pierce All card
+  reached the REAL draft; 3 cards rendered, all in-viewport, no clipped desc; PNG at
+  `docs/art/browser-verify-2026-09-12/g8-step2-rewrite-draft-phone.png`, readShot samples inside the
+  card `[20,20,31]` at both probes. **No vision model is reachable from this host** — the verdict is
+  DOM geometry + pixel samples, nothing more.
+
+**Measured run-level table (60 runs/cell, seed 4242, draft_sim v2, luck 0 and 5):**
+
+| cell | mean surv | median | gold/run | good/bad mean | notes |
+|---|---|---|---|---|---|
+| OFF GREED-DAMAGE luck0 | 224s | 185s | 1753 | 1.74x | bit-identical to tick 7's OFF cell |
+| OFF ADVERSARIAL-BAD luck0 | 129s | 131s | 468 | | |
+| OFF SURVIVAL luck0 | 137s | 139s | 542 | | |
+| ON GREED-DAMAGE luck0 | 199s | 150s | 1233 | 1.69x | shipped 0.10/0.04/0.05 + retuned once |
+| ON ADVERSARIAL-BAD luck0 | 118s | 130s | 434 | | 3/5 metric wins |
+| ON SURVIVAL luck0 | 138s | 140s | 543 | | |
+| ON GREED-DAMAGE luck5 | 248s | 221s | 1987 | 2.01x | 4/5 metric wins |
+| ON ADVERSARIAL-BAD luck5 | 123s | 134s | 469 | | |
+| ON SURVIVAL luck5 | 140s | 141s | 567 | | |
+
+**Invariants (asserted in test/test_rewrites.mjs at 30 runs, re-measured at 60):**
+- bad fails 100% of runs; good beats bad >=3/5 minute-10 metrics at luck 0 (4/5 at luck 5 and in every
+  OFF cell): PASS.
+- One bad pick never loses a run (held at t=0, GREED, bar >=0.8x): pierceall 1.23x, onkillboom 1.20x,
+  healthdamage 1.06x, **`once` 1.31x — the tick-7 defect is closed** (30-run cadence in the test reads
+  1.35/1.34/1.17/1.42; both above the bar).
+- Luck-0 pool bit-identity (stats exactly 0.3, weapons exactly 1, families extra at their imported
+  constants): PASS (test_draft_luck, now with the fourth family term).
+
+**Suite: PASS=60 FAIL=0** (`bash /tmp/run_all.sh`; 59 + `test/test_rewrites.mjs`).
+
+**COULD NOT VERIFY (honest):**
+- The rewrite cards' run-level numbers rest on coarse model assumptions (BOOM_FRESH 1 / HARVEST_FRESH 2
+  fresh bodies per event, PIERCEALL_VAL 2 effective pierce points) — each documented in SIM_TUNING, but
+  they are the model's honesty, not a real-loop measurement. The seam-level exactness (boom = 4+0.5xdmg,
+  blast = 10+1.0xdmg, pierce sentinel at spawn) IS real-loop verified.
+- The `--validate` real-loop cross-check was not re-run this tick (tick 7's 53% sim/real delta stands,
+  unchanged by this slice; the fresh-stage pressure-model gap is a pre-existing known finding).
+- The median divergence ratio stays cliff-noisy (1.15 at ON luck0 vs 1.41 OFF — the wave-1-boss ~148s
+  mass point), which is why the weight curve and the invariants above are pinned on MEAN ratios and
+  asserted bars, not the median verdict.
+- The browser check is DOM + pixel evidence only (no vision model on this host).
+
+**G8 is DONE:** steps 1 (luck), 3 (run rules), 4 (perks) and 2 (rewrites) are all landed, tested and
+measured; the one open defect tick 7 surfaced (`once` 0.65x) is fixed at 1.31x with the bar intact.
+
+
+## TICK NOTE 10 — 2026-09-12 (goal pilot tick, subagent:spawnfa, agentlock held, RED SUITE FIXED)
+
+**Goal worked: the RED SUITE, not a feature.** No new goal was started. Reason: the build plan's bar is
+a green full suite, and it was red. Nothing else was touched.
+
+**What was wrong (independently reproduced, twice):** tick 9's "Suite: PASS=60 FAIL=0" is NOT
+reproducible as landed. `bash /tmp/run_all.sh` => **PASS=59 FAIL=1, FAILED test/test_rewrites.mjs**, on
+two consecutive runs. `node test/test_rewrites.mjs` alone passed 4/4 (including once with a concurrent
+`tools/balance_sim.mjs` load), so this was neither a stale tree nor CPU load.
+
+**The failure text:** `FAIL the rewrite payouts are dt-correct: 60Hz == 120Hz over the same second /
+same total at both refresh rates / 26 !== 1000000000`. `at60 = 26` is exactly one boom + one blast at
+the probe's damage (4+0.5d + 10+1.0d = 26), i.e. the 60Hz probe was right. `at120 = 1e9` is
+`1e9 - near.hp` with **near.hp === 0**: the probe's 1e9-hp sentinel had been force-zeroed mid-probe.
+
+**ROOT CAUSE (code-proven, not inferred from the number):** the whole engine has exactly ONE site that
+forces `hp = 0` outside the death pass — the WAVE-11 FLASH DROP reap at **src/main.js:1635**
+(`for (const v of victims) v.hp = 0`), entered from
+`shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)` at
+**src/main.js:1632**. In `src/loot.js`: `FLASH_DROP.baseChance = 0.008` per eligible kill, and the reap
+targets only `FLASH_TRASH_TIERS = ['SWARMER','CHASER']`. The probe's sentinels were **CHASERs**, so a
+single flash roll reaps the entire probe field (near AND far) and destroys the measurement — a
+`Math.random`-gated flake, not a steady failure. The engine behaviour is intended; the PROBE was not
+hermetic.
+
+**Fix (test-side hermeticity; NO assertion was weakened, retargeted or removed):**
+- Probe bodies are now non-trash: `hostile()` maps any trash request to `PROBE_BODY = 'BRUTE'`, and all
+  10 `hostile('CHASER', ...)` call sites plus the 2 inline `typeId: 'CHASER'` sentinels were retyped.
+- NEW check `the probe bodies are immune to the WAVE-11 FLASH DROP (it reaps trash tier only)` proves
+  the hazard is real (a plain CHASER IS flash-eligible and a flash WOULD reap it) AND that the probe
+  field holds nothing a flash can reap. The dt probe additionally asserts `flashTargets(st.enemies)` is
+  empty before it pumps, so the exact field where this bit stays guarded.
+- Why the measurement is unchanged: no boom/blast/kill path branches on `typeId`, and a BRUTE is not
+  `elite`, so the ordinary non-elite drop path is identical to the old CHASER body.
+- `test/test_rewrites.mjs` is now **23 checks** (was 22 - the new one is the guard, not a replacement).
+
+**Verified this tick (my own runs, not a report):** `node test/test_rewrites.mjs` => **PASS=23 FAIL=0**;
+`bash /tmp/run_all.sh` => **PASS=60 FAIL=0**, run twice back to back (was 59/1 twice before the fix).
+
+**COULD NOT VERIFY (honest):**
+- I did not force a flash to fire (that needs `Math.random` stubbed), so the causal chain rests on code
+  inspection (a single force-zero site in `src/`), the observed sentinel value, and the new guards - not
+  on a bit-for-bit reproduction of the flash.
+- The constants imply roughly a 1-2% chance per file run, which does not comfortably explain 2/2 red.
+  A second contributor cannot be excluded; what IS certain is that no other code can set `near.hp = 0`,
+  and the probe field is now immune to the flash whatever else rolls. If a red dt probe is ever seen
+  again, the first thing to read is `near.hp` at the assertion.
+- **LATENT SIBLINGS (NOT touched, handed to the next tick):** `test/test_arch_buffs.mjs:40` and
+  `test/test_perks.mjs:185` build the same 1e9-hp CHASER sentinels, so the same 0.8% roll can reap
+  those fields. Remedy is the same one-liner (non-trash body) plus a field guard per probe.
+
+**NEXT GOAL: G10 / G23** (enemy guide / bestiary + rarity tiers, build-plan W6) — first in the ranked
+queue after G8, which is DONE. It needs a COMPLETE brief (encounters namespace on the v4 save schema,
+discovered-vs-undiscovered entries with masked identity, per-enemy kill counters, rare tiers with
+documented rates and sims that account for them) and is a feature, so it is dispatched, not built inline.
+Suite is green again, so W6 can be briefed from a sound base.
+
+
+## TICK NOTE 11 — 2026-09-12 (goal pilot tick, subagent:spawnfa, agentlock held for recon+writes, DISPATCH ONLY)
+
+**Goal worked: the GREEN-SUITE bar, not a feature.** G10/G23 was NOT started. The full suite is not
+reliably green, so nothing may be briefed from it yet.
+
+**Independently reproduced (my own runs, not a report): `bash /tmp/run_all.sh` came back
+PASS=59 FAIL=1 (FAILED test/test_rewrites.mjs) twice, then PASS=60 FAIL=0 three times.** Tick 10's
+"the suite is green again" is therefore TRUE PER RUN but FALSE AS A RATE: `node test/test_rewrites.mjs`
+run alone in a loop is **5 failures in 30 runs (~17%)**. Tick 10's flash-drop fix did NOT close this
+check; it closed one leak of several.
+
+**ROOT CAUSE, code-proven by instrumented logging (the probe was copied to a scratch path, made to log
+per-frame damage deltas plus `p.stats.damage`/`p.level`/`st.mode`/`p.potions`/`st.drops.length`/
+`st.runCounts`/`st.effects`, and run 30x). The dt probe runs INSIDE the live run loop — it only sets
+`st.weapons = []`, it does not stop the run — so two live systems leak into the measurement:**
+
+1. **A chest opens mid-window and grants a Whetstone.** Logged: `runCounts.chests` 0 -> 1 -> 2 across
+   the window and `p.stats.damage` 8 -> 10 — EXACTLY x1.25, i.e. `src/config.js:500`
+   (`Whetstone: p.stats.damage *= 1.25`). The BOOM is priced at the corpse death, the BLAST at the
+   potion collect, so the two payouts get priced at DIFFERENT damage: logged `steps f0:+28` (8 then 10)
+   vs the other pass's `f0:+29` — this is the `28 !== 29` failure exactly.
+2. **A second hp potion is collected inside the window.** Logged `p.potions.hp === 2` at probe end in
+   5 of 30 runs, with `steps f0:+44` at 120Hz against `f0:+26` at 60Hz — one extra BLOOD HARVEST blast
+   (+18 at damage 8). The extra potion is a live-run drop/reward; the probe pushes exactly one.
+
+In every clean run of the sample both refresh rates read `f0:+26` (one boom 8 + one blast 18), i.e. the
+engine's per-EVENT payout IS frame-rate independent. **This is a TEST-HERMETICITY defect, not a balance
+or dt bug** — no game constant was touched.
+
+**LANDED this tick (uncommitted; Remy owns commits):**
+- **`test/test_perks.mjs` — flash hermeticity (the tick-10 latent sibling, done).** Probe bodies are
+  remapped off `FLASH_TRASH_TIERS` (`PROBE_BODY = 'BRUTE'`, mirroring test_rewrites) and `contactLoss()`
+  now asserts `flashTargets(st.enemies)` is empty before the pump. Every assertion there is a ratio, so
+  the body swap cancels. `node test/test_perks.mjs` => PASS=15 FAIL=0.
+- **`docs/briefs/DT_PROBE_HERMETICITY.md` (NEW, 96 lines, self-contained)** — the two leak modes with
+  their logged evidence, the required test-side fix (pin `p.stats.damage` for `want`; close the window
+  against the run's spawner/chest/drop paths at their real seam without stubbing the code under
+  measurement; assert the field is exactly the probe; assert POSITIVELY one boom + one blast +
+  `p.potions.hp === 1` so the next leak fails loudly), the sibling files, and the acceptance bar:
+  **200 consecutive green runs of test_rewrites + `bash /tmp/run_all.sh` PASS=60 FAIL=0 three times.**
+- **DISPATCHED** to the idle governed worker `cli:glm-hordes-g8` (pid 495012) as
+  `msg_01M2BW3JMVPZHFJZ02MW98N7MF` on channel `hub` (the held token still has NO write grant on
+  `hordes`: `403 no write grant on channel 'hordes'`). It is **running** per
+  `.hub-worker/cli_glm-hordes-g8/running.json`; the tick did not wait on it. `delegate_task` is still
+  not available in this cron runtime.
+- Lock hygiene: the lock was acquired for recon+writes and **released before ending the tick** (the
+  brief tells the builder to acquire it, and to release it even on failure). `agentlock status` =>
+  FREE. Note: `agentlock release` resolves the lock from CWD — releasing from the wrong directory
+  silently reports "already free" while the `hordes` lock stays held; release must be run from
+  `/home/claude/projects/hordes`.
+- Cleanup: two STALE PENDING tasks on that worker (a duplicate G8 step 4 and a duplicate G8 step 2 —
+  both steps long since DONE, tick 5 / tick 9) were cancelled before the dispatch so the builder does
+  not re-run completed work over a near-final tree. The worker log shows both had in fact exited 0.
+
+**CORRECTION to tick 10 (honest):** (a) its flash-drop theory does not explain the `28 !== 29` failure,
+and the dt probe's 1e9-hp sentinels are not the leak that is actually firing; (b) its
+`test/test_arch_buffs.mjs` flag is WRONG — that file imports only `src/weapons.js` and `src/arches.js`
+and never boots the main loop (`test/_harness.mjs`), so no flash reap and no run-loop leak can reach
+its dummies; (c) its "1-2% per run" estimate understated the real rate, which is ~17%.
+
+**COULD NOT VERIFY (honest):**
+- Nothing was fixed in the flaky check itself: `test/test_rewrites.mjs` is UNCHANGED by this tick and
+  still flakes ~17%. There is no artifact to check yet; the builder's report will be a CLAIM and the
+  next tick must re-run the suite itself (3x) and the 200-run loop before accepting it.
+- The two leak modes are proven by live-loop state logging (chest counter, damage stat, potion count,
+  damage deltas), not by a per-event trace of the chest-open or drop-spawn call; no engine bug is
+  claimed by them.
+- The stale-task cancel is a coordination action I took unilaterally; if those tasks were meant to be
+  re-run for another reason, that intent is lost.
+
+**NEXT GOAL: G10 / G23 (bestiary + rarity tiers, W6) — but it stays blocked behind a reliably green
+suite.** Sequence: builder lands the hermetic probe fix -> next tick re-runs the 200-run loop and the
+3x suite -> only then brief W6.
+
+## TICK NOTE — 2026-09-12 (dt-probe hermeticity, subagent:spawnfa)
+
+Brief: `docs/briefs/DT_PROBE_HERMETICITY.md`. Test-side only — no game balance, drop rate or damage
+constant was touched. Suite green 3x and the flaky dt check is green 200/200.
+
+**THE LEAK, root-caused (instrumented, evidence below): the probe corpses themselves were
+chest-eligible.** `isEliteish` (src/chests.js) counts `maxHp >= C.ENEMY.BASE_HP * 1.5`, and every
+probe corpse was `{ ...hostile('BRUTE', ...), hp: 0 }` — maxHp 1e9, i.e. elite-ish. So EVERY corpse
+death rolled `maybeSpawnChest`'s 35% (that roll is NOT gated by `dropBonus`; only the potion roll at
+main.js:1544 is). A spawned chest lands clamped to the corpse — the player's feet — and pops the very
+next frame: `rollContents` rare = one UPGRADES apply (a Whetstone is `damage *= 1.25`: the 8 -> 10
+"no chest/stat leak" failure) plus one potion (the `2 !== 1` "exactly ONE potion" failure; gamble
+variants paid hp+mp, which is why some runs read 2/1). Evidence: accessor-trap instrumentation showed
+the mutations firing in-frame with zero `st.drops.push` and no chest on the field at window open, and
+a v12 diagnostic printed `st.runCounts.chests` incremented DURING the window on every failing run
+(6/6 failures: `chests=1..2`, potions/damage shifted exactly per chest contents). CLOSED: the test
+now builds corpses via a `corpse()` factory with `maxHp: 1` (below the elite bar; `hp: 0` still dies
+frame 1) — same class of fix as the pilot's flash-tier remap: fix the probe BODY, never the engine.
+
+**Second leak mode, closed earlier in the hunt (both real seams):** (a) the base volley —
+`runController` fires it off `p.attackTimer` + `decision.target` REGARDLESS of `st.weapons` (an empty
+weapons list just means Lv1 params; a shot into `near` on the firing line is +2 the probe never
+priced) — closed by pinning `p.attackTimer = 1e9` in `closeWindow`; (b) the shrine — `state.shrine`
+drifts AT the player and auto-buys an intermission-style blessing on proximity (`applyChoice` can
+reprice stats or refill potions) — closed with `st.shrine = null`. `closeWindow` also pins the
+run_structure triple (`spawnTimer` / `wave.endsAt` / `wave.midAt` = `time + 1e9`), `dropBonus = -1`
+(kills the death-pass potion roll deterministically), clears the loot fields, and restores everything
+in a `finally`. The volley/shrine/chest behavior is BY DESIGN in the engine — no player-facing bug
+claimed, none fixed; only the tests stopped feeding their own measurement.
+
+**MEASURED:** before: 5/30 red (~17%, matches tick 11's estimate; the first closeWindow attempt was
+still 43/200 red with loud assertions). After the corpse fix: `for i in $(seq 1 200); do node
+test/test_rewrites.mjs > /dev/null 2>&1 || echo "FAIL $i"; done` => **0 failures, 200/200** (also
+0/100 on an intermediate loop). `bash /tmp/run_all.sh` => **PASS=60 FAIL=0, three times back to back**
+(raw: `PASS=60 FAIL=0 / FAILED:` x3). Siblings: `test/test_perks.mjs` got the same window pin
+(`p.stats.damage` + a nothing-extra-collected guard on the three loss probes, pilot's flash guard
+kept) and is 30/30 green; `test/test_arch_buffs.mjs` re-confirmed CLEAN (imports weapons/arches only,
+never boots the harness — tick 10's flag on it was wrong, as tick 11 already corrected); scanned the
+other harness-booting tests (camera_deadzone, playtest_fixes, run_structure, stance_bite, run_rules)
+— no other live-loop leak shape found.
+
+**Files touched:** `test/test_rewrites.mjs` (corpse factory + all four corpse sites; attackTimer +
+shrine seams in closeWindow; the brief's required assertions: pinned `dmg0`, field deepEqual, exactly
+one boom / one blast / one potion, no-new-tolerance on `at60 == at120 == want`), `test/test_perks.mjs`
+(window pins on the loss probes). No src/ file was modified.
+
+**UNVERIFIED (honest):** the leak modes were proven by state deltas and the chest counter, not by a
+per-event stack trace of `applyContents` itself (the accessor traps never caught a write because the
+potion/stat writes land through ordinary mutation inside `applyContents` after the chest splice —
+the `runCounts.chests` correlation at 6/6 failures plus exact content-shaped deltas is the evidence);
+no browser check was run (test-only change, nothing renders differently); the ~17% before-rate was
+measured on this tick's tree, not re-measured on the pre-fix tree after the fact.

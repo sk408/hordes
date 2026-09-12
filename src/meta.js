@@ -326,7 +326,7 @@ export const SHOP_UPGRADES = [
   { id: 'artifact',name: 'Starting Artifact', desc: 'Start each run with +1 random weapon level',
     baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 1 },
   // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
-  { id: 'luck',    name: 'Fortune',        desc: 'Luck: loot rarity odds shift toward rare/epic per level',
+  { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
     baseCost: 500, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
   // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
@@ -502,6 +502,78 @@ export function luckDropWeights(luck) {
     EPIC: BASE_RARITY_WEIGHTS.EPIC * (1 + LUCK_TAPER.EPIC * L),
     LEGENDARY: BASE_RARITY_WEIGHTS.LEGENDARY * (1 + LUCK_TAPER.LEGENDARY * L),
   };
+}
+
+// ---- G8 STEP 1 (owner decision 2026-09-12: option 6, build order 1 -> 3 -> 4 -> 2):
+// LUCK TOUCHES THE DRAFT.
+// Fortune already shifts WORLD-DROP rarity (luckDropWeights above). The owner's ask
+// named the OTHER half too ("what the run OFFERS"), and that is the level-up draft.
+// Same rarity-weight-table idea, applied to the draft pool.
+//
+// WHAT IS "RARE" HERE: the draft has no rarity today, so this adds a POWER TIER TAG
+// (metadata - no new cards, no new content) to the seven UPGRADES stat cards. A tier
+// says how much a card is worth when it shows up, not how often it shows up: at luck 0
+// every stat card still weighs exactly 0.3.
+//   COMMON   - utility: useful sometimes, no direct damage (move speed, pickup radius)
+//   UNCOMMON - solid, repeatable combat value (max HP, pierce, cooldown)
+//   RARE     - the run-defining cards (multiplicative damage, extra projectile)
+// Weapon cards (grants = new archetypes, level-ups = ladder steps) are EXCLUDED by
+// design: they carry the shipped weight 1, they ARE the weapon economy, and the draft
+// sim tracks that ratio as lever L1 - so it stays literally true here.
+//
+// THE INVARIANT THAT MAKES THIS SAFE: the shift TRANSFERS weight, it does not ADD it.
+// Each Fortune level moves 10% of the COMMON group's base weight onto the RARE tier, so
+// the stat family's total weight - the draft's stat BUDGET - is exactly unchanged at
+// every luck level. Luck buys RARITY, never a bigger pool. luckDraftWeights below is
+// weight-conserving BY CONSTRUCTION (sum of count_tier * m_tier == 7), and
+// test/test_draft_luck.mjs asserts that to 1e-12 as well as the direction. At luck 0
+// the table is the all-1.0 identity, so an unlucky profile drafts the shipped pool
+// bit-for-bit.
+export const DRAFT_RARITY = {
+  // COMMON - utility, no direct damage
+  speed: 'COMMON', pickup: 'COMMON',
+  // UNCOMMON - solid, repeatable value
+  hp: 'UNCOMMON', pierce: 'UNCOMMON', rate: 'UNCOMMON',
+  // RARE - run-defining (multiplicative damage, extra projectile)
+  dmg: 'RARE', multi: 'RARE',
+};
+export const DRAFT_BASE_WEIGHTS = { COMMON: 1, UNCOMMON: 1, RARE: 1 };
+// Fraction of the COMMON group's base weight moved to RARE per luck level
+// (0.05 * 5 = 0.25 at the cap). Deliberately conservative - see the measured curve in
+// test/test_draft_luck.mjs and the tick note in docs/HORDES_GOALS_2026-09-12.md: at 0.10
+// the same mechanism measured 4x run income, which would gut G17 (the real-grind economy).
+export const DRAFT_LUCK_TRANSFER = 0.05;
+// Per-card base weight of a stat card in the shipped draft pool (main.js / draft_sim).
+export const DRAFT_STAT_WEIGHT = 0.3;
+
+const DRAFT_TIER_COUNT = { COMMON: 0, UNCOMMON: 0, RARE: 0 };
+for (const k of Object.values(DRAFT_RARITY)) DRAFT_TIER_COUNT[k]++;
+
+/** Draft rarity weight table at luck level 0..LUCK_MAX_LEVEL. Luck 0 is the all-1.0
+ *  identity (the shipped pool). Weight-conserving: the COMMON group's loss is exactly
+ *  the RARE group's gain, so the stat budget never moves. UNCOMMON holds its ground -
+ *  that IS the effect (its share rises as COMMON's falls). */
+export function luckDraftWeights(luck) {
+  const L = Math.max(0, Math.min(LUCK_MAX_LEVEL, Number(luck) || 0));
+  const f = Math.min(0.9, DRAFT_LUCK_TRANSFER * L);   // never zero out COMMON
+  const out = { ...DRAFT_BASE_WEIGHTS };
+  out.COMMON = 1 - f;
+  out.RARE = 1 + (f * DRAFT_TIER_COUNT.COMMON) / DRAFT_TIER_COUNT.RARE;
+  return out;
+}
+
+/** Rarity tier of a draft stat card (unknown ids read as COMMON). */
+export function draftRarityOf(cardId) {
+  return DRAFT_RARITY[cardId] || 'COMMON';
+}
+
+/** Weight of ONE draft card. 'stat' = the shipped 0.3 family, luck-shifted through the
+ *  shared table; anything else ('weapon') is 1.0, never luck-shifted. PURE.
+ *  This is THE seam main.js openDraft() and tools/draft_sim.mjs both call, so a
+ *  measurement of one is a measurement of the other. */
+export function draftCardWeight(cardId, kind, luck) {
+  if (kind !== 'stat') return 1;
+  return DRAFT_STAT_WEIGHT * luckDraftWeights(luck)[draftRarityOf(cardId)];
 }
 
 // Apply permanent bonuses to a stats object. PURE: returns a NEW object,

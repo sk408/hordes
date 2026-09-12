@@ -13,6 +13,9 @@
 import { CONFIG as C, UPGRADES } from './config.js';
 import { makeTypedEnemy } from './enemy_types.js';
 import { applyEscalation, clampLootToArena } from './entities.js';
+// G8 step 3: the CONDITION-shape run rules. Pure helpers only (no rng, no
+// mutation), so the chest keeps its documented rng draw order either way.
+import { ruledChestRarity, hasRule } from './rules.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -114,7 +117,11 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
 // Roll chest contents WITHOUT applying anything (pure given rng).
 // Returns { rarity, upgrades[], potions{hp,mp}, tokenOptions[], gambleWin? }.
 export function rollContents(state, rng = Math.random) {
-  const rarity = pickRarity(rng);
+  // G8 step 3: HORDE BAIT moves the rolled band ONE STEP UP (see rules.js).
+  // It reads the rules off the state this function already receives, so no
+  // caller signature changes and NO extra rng draw is taken: the documented
+  // draw order is byte-for-byte the old one (test_chests + test_run_rules).
+  const rarity = ruledChestRarity(pickRarity(rng), state);
   const base = { rarity, upgrades: [], potions: { hp: 0, mp: 0 }, tokenOptions: [] };
 
   if (rarity === 'common') {
@@ -139,6 +146,26 @@ export function rollContents(state, rng = Math.random) {
 
 // Apply rolled contents to the player; returns events describing what the
 // integration layer should surface (toasts, token-choice UI, horde warning).
+// The mini horde, extracted so HORDE BAIT can fire it on EVERY chest through
+// the same code the lost gamble used. Unchanged in behaviour: typed CHASER
+// chassis, a ring around the player, the shared escalation, and NO rng draw.
+function spawnPunishmentHorde(state) {
+  const p = state.player;
+  const n = CHESTS.GAMBLE_HORDE_COUNT;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const e = makeTypedEnemy(
+      'CHASER',
+      p.x + Math.cos(a) * CHESTS.GAMBLE_HORDE_RADIUS,
+      p.y + Math.sin(a) * CHESTS.GAMBLE_HORDE_RADIUS,
+      state.time
+    );
+    applyEscalation(state, e);
+    state.enemies.push(e);
+  }
+  return n;
+}
+
 function applyContents(state, contents, chest) {
   const p = state.player;
   const events = [{ kind: 'chestOpened', rarity: contents.rarity, x: chest.x, y: chest.y }];
@@ -153,19 +180,12 @@ function applyContents(state, contents, chest) {
 
   if (contents.rarity === 'gamble' && contents.gambleWin === false) {
     // The gamble tension: nothing AND a mini horde rings the player.
-    const n = CHESTS.GAMBLE_HORDE_COUNT;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      const e = makeTypedEnemy(
-        'CHASER',
-        p.x + Math.cos(a) * CHESTS.GAMBLE_HORDE_RADIUS,
-        p.y + Math.sin(a) * CHESTS.GAMBLE_HORDE_RADIUS,
-        state.time
-      );
-      applyEscalation(state, e);
-      state.enemies.push(e);
-    }
-    events.push({ kind: 'gambleHorde', count: n });
+    events.push({ kind: 'gambleHorde', count: spawnPunishmentHorde(state) });
+  } else if (hasRule(state, 'hordebait')) {
+    // G8 step 3: HORDE BAIT paid a better chest and answers with a horde.
+    // The `else` is load-bearing — a lost gamble already paid its horde, so a
+    // chest is NEVER worth two hordes (asserted in test_run_rules).
+    events.push({ kind: 'hordeBait', count: spawnPunishmentHorde(state) });
   }
   return events;
 }
