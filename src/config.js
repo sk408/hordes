@@ -166,6 +166,12 @@ export const CONFIG = {
                        // +-600 player clamp and the arena wall in render.js).
                        // Decor/landmarks never paint past it (WAVE-24: the old
                        // BOUND 660 let pieces spill into the off-map gloom).
+    WALL: 12,          // drawn wall-band thickness in world px (RIM..RIM+WALL,
+                       // render.js drawArenaWall). ONE definition: the loot
+                       // clamp (entities.clampLootToArena) subtracts this band
+                       // plus the pickup radius so a drop can never land on the
+                       // wall's inner face, and the pilot's edge hold
+                       // (controllers.js) subtracts the same amount.
     // WAVE-24 (#3) LANDMARKS: a second, coarser layer of deliberate
     // structures (ruined wall runs, fallen pillars, cairns, camp rings,
     // theme-flavored piles) on this grid, so the floor has landmarks to
@@ -202,6 +208,28 @@ export const CONFIG = {
     ],
   },
 
+  // ---- CAMERA (main.js updateCamera) ----------------------------------------
+  // A DEADZONE follow, not a free camera. The player roams free inside a box
+  // around the view centre; the view only follows once they leave it, leads
+  // slightly in the direction of travel so movement has weight, and is clamped
+  // so the player can never leave the SAFE region of the screen. Near a wall
+  // the view stops and the player moves within it — that is the "disconnected
+  // from centre" feel. Sizes are SCREEN px at EVERY zoom: updateCamera divides
+  // them by the integer zoom factor (state.zoomScale) so the feel is identical
+  // at 1x and 8x (the zoomed world is just more magnified inside the same safe
+  // screen region), and the world->screen projection (worldRegion / the tour
+  // coachmark / render.js's world layer) all read the same state.cam.
+  CAMERA: {
+    DEADZONE_W: 64,   // half-width of the free box around view centre (screen px)
+    DEADZONE_H: 44,   // half-height of the free box
+    LEAD: 14,         // lead in the direction of travel (screen px)
+    SAFE: 40,         // guaranteed gap from the screen edge at full excursion
+                      // (screen px) — the camera clamp reserves SAFE + LEAD
+    SMOOTH: 5,        // rate (1/s) at which the LEAD eases in/out of travel.
+                      // The follow itself is positional (the box is the feel),
+                      // so this is the only smoothed term.
+  },
+
   // ---- HUD presentation (WAVE-24 #1/#2/#4 legibility pass) ------------------
   // The vision pass called the canvas text "washed out / placeholder" and the
   // bar labels "tiny". Every canvas label now paints on a dark PLATE (contrast
@@ -214,7 +242,6 @@ export const CONFIG = {
     LABEL_PX: 9,          // HP / MP / XP bar labels (was 8)
     FEED_PX: 9,           // event-feed lines
     LV_PX: 11,            // level badge (was 9 — read as unpolished)
-    BADGE_PX: 9,          // FOCUS / STANCE doctrine readout
     BANNER_TITLE_PX: 22,  // boss-arrival title (was 20)
     BANNER_SUB_PX: 11,    // boss-arrival sub-line (was 10)
     FRAME: '#6a6a7c',     // outer steel frame around every bar/plate
@@ -224,9 +251,11 @@ export const CONFIG = {
     TICK: 'rgba(255,255,255,0.12)',        // minor ticks (full track)
     TICK_MAJOR: 'rgba(255,255,255,0.22)',  // 25/50/75% ticks
     HP: '#ff9aa6', MP: '#9ec2ff', XP: '#ffe07a',   // label tints (bright)
-    // FOCUS is targeting doctrine (cool/neutral); STANCE is the RISK dial, so
-    // it is risk-colored: green = safe, gold = balanced, orange = greedy.
-    FOCUS_COLOR: '#9ec2ff',
+    // WAVE-27: the canvas FOCUS/STANCE readout is gone (the overlay buttons'
+    // badges and the cycle toast carry the doctrine). STANCE_COLORS survives
+    // because it tints the stance CYCLE toast (main.js cycleStanceWithFeedback)
+    // and the GREEDY HAUL payoff toast — risk-colored: green = safe, gold =
+    // balanced, orange = greedy.
     STANCE_COLORS: { SAFE: '#68e080', BALANCED: '#ffd75e', GREEDY: '#ff8848' },
   },
 

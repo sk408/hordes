@@ -112,11 +112,12 @@ export async function boot(opts = {}) {
 
   const mainMod = await import('../src/main.js');
 
-  // Pump n real frames. frameMs lets a test choose the refresh rate.
-  const frameMs = opts.frameMs || dtMs;
+  // Pump n real frames. opts.frameMs lets a test choose the refresh rate;
+  // it is read PER FRAME so setFrameMs() below actually takes effect (it used
+  // to be captured once at boot, which made the seam a no-op).
   function pump(n = 1, onFrame) {
     for (let i = 0; i < n; i++) {
-      now += frameMs;
+      now += (opts.frameMs || dtMs);
       const cb = raf.shift();
       if (!cb) throw new Error('rAF queue drained at frame ' + i);
       cb(now);

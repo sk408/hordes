@@ -12,7 +12,7 @@
 // consumes those events later.
 import { CONFIG as C, UPGRADES } from './config.js';
 import { makeTypedEnemy } from './enemy_types.js';
-import { applyEscalation } from './entities.js';
+import { applyEscalation, clampLootToArena } from './entities.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -102,7 +102,11 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
   if (rng() >= CHESTS.DROP_CHANCE) return null;
   if (!Array.isArray(state.chests)) state.chests = [];
   if (state.chests.length >= CHESTS.MAX_ACTIVE) return null;
-  const chest = { id: nextId++, x: killedEnemy.x, y: killedEnemy.y, age: 0 };
+  // WAVE-27: a chest dropped by a kill outside the wall is unreachable — clamp
+  // it into the playable face (entities.clampLootToArena: rim minus the wall
+  // band minus the pickup radius). Same clamp every other drop uses.
+  const at = clampLootToArena(killedEnemy.x, killedEnemy.y);
+  const chest = { id: nextId++, x: at.x, y: at.y, age: 0 };
   state.chests.push(chest);
   return chest;
 }

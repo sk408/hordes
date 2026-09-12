@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import { CONFIG as C, UPGRADES } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale, applyEscalation } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale, applyEscalation, clampLootToArena, lootLimit } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
@@ -159,6 +159,14 @@ const state = {
   mode: 'menu',      // 'menu' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
+  // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
+  // follow BASE (the view minus the lead — the deadzone is anchored here so the
+  // lead is never folded back in), and the player's last position the follow
+  // measures displacement from. Run-scoped (reset in startRun) — declared here
+  // so the follow needs no guards.
+  camLead: { x: 0, y: 0 },
+  camBase: { x: 0, y: 0 },
+  camPrev: { x: 0, y: 0 },
   character: null,   // equipped CHARACTERS entry for the current run
   weaponSlots: 6,    // per-run slot cap (startWeaponSlots(profile) in startRun)
   baseWeaponSlots: 6, // pre-choice slot base (Merchant's Pact adds on top)
@@ -1307,10 +1315,14 @@ function update(dt) {
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
       // Alchemist's Blessing curse: dropChanceMult scales the whole chance.
+      // WAVE-27: the drop position is clamped into the playable face
+      // (clampLootToArena) — a kill outside the wall used to drop an
+      // uncollectible potion out there. rng order is untouched (the clamp is
+      // pure and runs before the kind roll).
       const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0)) *
         ((p.choices && p.choices.dropChanceMult) || 1);
       const drop = Math.random() < dropChance
-        ? { x: e.x, y: e.y, kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
+        ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
@@ -1330,7 +1342,8 @@ function update(dt) {
           maybeSpawnChest(state,
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
-        state.itemDrops.push({ x: e.x, y: e.y,
+        const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
+        state.itemDrops.push({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
@@ -1354,8 +1367,9 @@ function update(dt) {
         const chance = (e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) *
           ((p.choices && p.choices.itemDropMult) || 1);
         if (e.eliteMod || Math.random() < chance) {
+          const at = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
           state.itemDrops.push({
-            x: e.x, y: e.y,
+            x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
         }
@@ -1571,9 +1585,8 @@ function update(dt) {
       C.HUD.STANCE_COLORS.GREEDY);
   }
 
-  // Camera follows player.
-  state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
-  state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+  // Camera follows player (WAVE-27: one shared follow — see updateCamera).
+  updateCamera(p, dt);
 
   // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
   // can all complete a requirements triple since the last frame.
@@ -2242,6 +2255,107 @@ function worldRegion(wx, wy, r = 16) {
   return canvasRegion(sx - r, sy - r, r * 2, r * 2);
 }
 
+// ---- WAVE-27 CAMERA: deadzone + lead + arena clamp (ONE follow, ONE source) --
+// The owner wanted the pilot to decouple from a hard screen centre near walls
+// ("give a nice movement feel ... a bit more 'real'"). This is a DEADZONE
+// camera, not a free one:
+//   - the player roams free inside a box around the follow centre (the box is
+//     DEADZONE_W/H SCREEN px at every zoom, so the feel is zoom-invariant);
+//     the view is the box centre PLUS the lead, kept as separate state so the
+//     lead can never be folded back in and accumulate frame over frame;
+//   - once they leave the box the view follows, with that small LEAD in the
+//     direction of travel so movement has weight;
+//   - the view is clamped so the player can never leave the SAFE screen region
+//     (the clamp reserves SAFE + LEAD, so even the lead cannot push them
+//     outside). Near a wall the view STOPS and the player moves within it.
+// It writes state.cam, which is the single transform every consumer reads:
+// render.js's world layer (translate/scale/translate), drawMoment, worldRegion()
+// below (the tour coachmark projection) and the arena-wall pass. Nothing
+// re-derives a camera of its own, so the projection cannot drift from the draw.
+// A stationary player produces no lead and (inside the box) no camera motion,
+// which is what keeps a parked hero exactly where the view already is. The
+// follow itself is POSITIONAL (the box makes the feel; no lerp), so the safe
+// region holds exactly at every zoom instead of degrading with Z.
+//
+// The player's travel direction comes from their own per-frame displacement,
+// normalised, so nothing here depends on the controller, on dt being fixed, or
+// on the pilot mode (manual movement leads exactly the same).
+function updateCamera(p, dt) {
+  const Z = zoomScale(state.zoom);
+  const CAM = C.CAMERA;
+  const halfW = C.VIEW_W / 2, halfH = C.VIEW_H / 2;
+  if (!state.camLead) state.camLead = { x: 0, y: 0 };
+  if (!state.camBase) state.camBase = { x: state.cam.x, y: state.cam.y };
+  if (!state.camPrev) state.camPrev = { x: p.x, y: p.y };
+
+  // Travel direction from the actual displacement (rate-free: the vector is
+  // normalised, so 60Hz and 120Hz lead by the same amount).
+  const dx = p.x - state.camPrev.x, dy = p.y - state.camPrev.y;
+  state.camPrev.x = p.x; state.camPrev.y = p.y;
+  const dlen = Math.hypot(dx, dy);
+  const tx = dlen > 1e-6 ? dx / dlen : 0;
+  const ty = dlen > 1e-6 ? dy / dlen : 0;
+  // Lead is defined in SCREEN px and converted to world px at this zoom; it is
+  // the ONLY smoothed term (weight when starting/stopping), so its time
+  // constant is wall-clock and its amplitude is zoom-invariant.
+  const kLead = Math.min(1, dt * CAM.SMOOTH);
+  state.camLead.x += (tx * CAM.LEAD / Z - state.camLead.x) * kLead;
+  state.camLead.y += (ty * CAM.LEAD / Z - state.camLead.y) * kLead;
+
+  // Deadzone, anchored to the follow BASE (the view WITHOUT the lead). The
+  // lead must never be folded back into the base: doing that adds the lead
+  // again every frame, which is a runaway drift (the camera walks away from
+  // the player on its own). The view people see is base + lead, so movement
+  // visibly leads while the box itself stays put.
+  const dzx = CAM.DEADZONE_W / Z, dzy = CAM.DEADZONE_H / Z;
+  const offx = (p.x - state.camBase.x) - halfW;   // offset from the box centre
+  const offy = (p.y - state.camBase.y) - halfH;
+  let baseX = state.camBase.x, baseY = state.camBase.y;
+  if (offx > dzx) baseX += (offx - dzx);
+  else if (offx < -dzx) baseX += (offx + dzx);
+  if (offy > dzy) baseY += (offy - dzy);
+  else if (offy < -dzy) baseY += (offy + dzy);
+  let wantX = baseX + state.camLead.x;
+  let wantY = baseY + state.camLead.y;
+
+  // Arena clamp: the view may not travel past the point where the player would
+  // sit closer than SAFE screen px to either edge. Derivation (Z = zoom):
+  //   screen = half + (world - cam - half) * Z          (render.js transform)
+  // at the +rim we want screen = VIEW_W - SAFE, which solves to
+  //   cam = RIM - half - (half - SAFE)/Z
+  // and mirrored at the -rim. LEAD is reserved inside SAFE, so even a full
+  // lead toward the opposite edge keeps the player inside the safe region.
+  // NOTE the bound is ASYMMETRIC about 0: the camera centres the PLAYER, so at
+  // the -rim it has to travel RIM further negative than at the +rim. A
+  // symmetric +-(RIM - half) clamp would ruin the follow (and is not used).
+  // This clamp is what makes the view STOP near a wall and lets the player
+  // drift toward the screen edge — the requested "disconnected" feel.
+  const reserveX = Math.max(0, (halfW - CAM.SAFE - CAM.LEAD) / Z);
+  const reserveY = Math.max(0, (halfH - CAM.SAFE - CAM.LEAD) / Z);
+  let maxX = C.GROUND.RIM - halfW - reserveX;
+  let minX = -C.GROUND.RIM - halfW + reserveX;
+  let maxY = C.GROUND.RIM - halfH - reserveY;
+  let minY = -C.GROUND.RIM - halfH + reserveY;
+  // Degenerate tiny arena (nothing in the game shrinks RIM; a test does):
+  // keep the bounds ordered so the clamp can never invert.
+  if (maxX < minX) { const c = (minX + maxX) / 2; minX = c; maxX = c; }
+  if (maxY < minY) { const c = (minY + maxY) / 2; minY = c; maxY = c; }
+  wantX = Math.max(minX, Math.min(maxX, wantX));
+  wantY = Math.max(minY, Math.min(maxY, wantY));
+
+  // POSITIONAL apply (no follow lag). The deadzone box IS the feel: the view
+  // is perfectly still while the player is inside it, then tracks the box edge
+  // 1:1. A lerp here would reintroduce a lag that Z magnifies, which could
+  // push the player past the safe edge at high zoom — so the safe-region
+  // guarantee is exact at every zoom by construction.
+  state.cam.x = wantX;
+  state.cam.y = wantY;
+  // Keep the base consistent with the clamped view (base = view - lead) so the
+  // deadzone bookkeeping cannot drift across frames when the clamp bites.
+  state.camBase.x = state.cam.x - state.camLead.x;
+  state.camBase.y = state.cam.y - state.camLead.y;
+}
+
 // Called every frame in 'playing' (frame()); fires each coachmark the first
 // time its moment arrives. Coverage = CONTROLS_INVENTORY.md's coverage
 // column (the rev-4 acceptance bar): the doctrine levers FOCUS + STANCE
@@ -2606,6 +2720,12 @@ function startRun() {
   initHeat(state);
   spawnWaveArches();
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
+  // WAVE-27: a fresh run starts with no lead and with the follow's base +
+  // displacement baseline on the player, so the first frame cannot read a
+  // stale delta from the previous run as travel or start from an old base.
+  state.camLead = { x: 0, y: 0 };
+  state.camBase = { x: state.cam.x, y: state.cam.y };
+  state.camPrev = { x: p.x, y: p.y };
   state.mode = 'playing';
   overlay.style.display = 'none';
   audio.startMusic();
@@ -2734,13 +2854,16 @@ function closeSettings() {
 //
 // WAVE-26 ("stance that bites"): the dial used to change one hidden number
 // with zero feedback. Cycling it now says what the new stance DOES (its tag +
-// the two multipliers that actually differ), and the canvas HUD keeps that
-// meaning on screen live next to the pilot's current activity.
+// the two multipliers that actually differ), tinted with the stance's risk
+// color. WAVE-27: with the canvas readout removed this toast is the DISCOVERY
+// moment for the stance's meaning, so it must be complete on its own — it
+// names the stance, its CONFIG tag, and both real consequences.
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
   const d = C.AUTOPILOT.STANCES[s] || {};
   toast('STANCE ' + s + ' - ' + (d.TAG || '') +
-    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')');
+    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
+    C.HUD.STANCE_COLORS[s] || null);
   return s;
 }
 
@@ -3091,15 +3214,19 @@ function chromeOn() {
 }
 function syncChrome() {
   // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
-  // factor as first-class state, BEFORE render() reads them this frame.
-  // render.js reads state.focus / state.stance (and can drop its #tc-focus /
-  // #tc-stance badge-text fallback), and state.zoomScale is the canonical
-  // integer zoom so the renderer's transform cannot drift from the coachmark
-  // projection in worldRegion() below.
+  // factor as first-class state, BEFORE anything reads them this frame.
+  // WAVE-27: these published fields are the ONE source of truth for the
+  // doctrine values. The canvas no longer paints them (owner ruling); their
+  // consumers are the overlay button badges (updateTouchHud, right below) and
+  // the opt-in text HUD (hudTextBlock) — both read state.*, never the
+  // controller directly. state.zoomScale stays the canonical integer zoom so
+  // the renderer's transform cannot drift from the coachmark projection in
+  // worldRegion() below.
   state.focus = controller.focus;
   state.stance = controller.stance;
-  // WAVE-26: the stance's LIVE activity (controllers.js sets it in decide) so
-  // the canvas HUD can say what the dial is doing right now, not just its name.
+  // WAVE-26: the stance's LIVE activity (controllers.js sets it in decide) —
+  // WAVE-27 it rides the PILOT badge, so the dial's effect is still visible
+  // moment to moment without any canvas text.
   state.stanceAct = controller.act || 'PATROL';
   state.zoomScale = zoomScale(state.zoom);
   const on = chromeOn();
@@ -3118,9 +3245,22 @@ function updateTouchHud() {
   syncChrome();
   const p = state.player;
   const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
-  set('tc-focus', controller.focus);
-  set('tc-stance', controller.stance);
-  set('tc-pilot', state.pilotMode);
+  // WAVE-27: the badges are the doctrine's ONLY on-screen home now, and they
+  // read the PUBLISHED state (state.focus / state.stance / state.stanceAct,
+  // set by syncChrome just above) rather than scraping the controller — so
+  // there is exactly one source for the values. The PILOT badge also carries
+  // the pilot's live activity (FLEE / LOOT / PATROL), which keeps the stance's
+  // moment-to-moment effect visible after the canvas text was removed; under
+  // the manual pilot the activity IS 'MANUAL', so the badge prints just the
+  // mode rather than "MANUAL · MANUAL". The stance's MEANING (its TAG) is
+  // announced by the cycle toast (cycleStanceWithFeedback) — the discovery
+  // moment, by owner ruling.
+  const act = state.stanceAct;
+  set('tc-focus', state.focus);
+  set('tc-stance', state.stance);
+  set('tc-pilot', act && act !== state.pilotMode
+    ? state.pilotMode + ' \u00b7 ' + act
+    : state.pilotMode);
   const skill = (id, defId) => {
     const cd = p.skillCd[defId];
     set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= C.SKILLS[defId].MANA ? 'RDY' : 'LOW'));
@@ -3220,7 +3360,7 @@ function hudTextBlock(p) {
   return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${p.stats.maxHp}\n` +
     `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
     `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
-    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance} Pilot:${state.pilotMode}\n` +
+    `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
     (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
@@ -3485,8 +3625,8 @@ function updateFinale(dt) {
     if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
   }
   tickBossBanner(dt);   // WAVE-14 arrival overlay (finale maw included)
-  state.cam.x += ((p.x - C.VIEW_W / 2) - state.cam.x) * Math.min(1, dt * 5);
-  state.cam.y += ((p.y - C.VIEW_H / 2) - state.cam.y) * Math.min(1, dt * 5);
+  // WAVE-27: the finale uses the SAME camera follow as the run (one source).
+  updateCamera(p, dt);
 }
 
 // Reachable ONLY when final_boss.js's BEATABLE flips true (Sk408's later
@@ -3622,4 +3762,15 @@ export const __TEST = {
   openDraft,
   synWeaponDmg,
   stanceOf: () => controller.stance,
+  // ---- WAVE-27 seams (camera deadzone / loot reachability) ----
+  // `region` is the SAME world->screen projection the tour coachmark uses
+  // (worldRegion): tests can render an entity through the real renderer and
+  // prove the projection lands on the drawn position after the camera moved.
+  camera: {
+    follow: updateCamera,
+    region: worldRegion,
+    get cam() { return state.cam; },
+    get lead() { return state.camLead; },
+  },
+  loot: { limit: lootLimit, clamp: clampLootToArena },
 };

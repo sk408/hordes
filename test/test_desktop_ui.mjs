@@ -152,7 +152,29 @@ const chromeHidden = () => touchLayer.style.display === 'none';
     'state.focus must track a doctrine change within the frame');
   key('Tab');   // cycle back
   pump(1);
-  console.log('doctrine: state.focus / state.stance published every frame from the live controller');
+  // WAVE-27: with the canvas readout removed the BUTTON BADGES are the
+  // doctrine's on-screen home, and they read the published fields (one
+  // source). The PILOT badge also carries the pilot's live activity, which is
+  // what keeps the stance's moment-to-moment effect visible.
+  assert(elements['tc-focus'].textContent === st.focus,
+    'the FOCUS badge must read the published state.focus (got ' +
+    elements['tc-focus'].textContent + ' vs ' + st.focus + ')');
+  assert(elements['tc-stance'].textContent === st.stance,
+    'the STANCE badge must read the published state.stance (got ' +
+    elements['tc-stance'].textContent + ' vs ' + st.stance + ')');
+  assert(elements['tc-pilot'].textContent.includes(st.pilotMode) &&
+         (st.stanceAct === st.pilotMode ||
+          elements['tc-pilot'].textContent.includes(st.stanceAct)),
+    'the PILOT badge must read pilotMode + the live activity (got ' +
+    elements['tc-pilot'].textContent + ')');
+  const f2 = st.focus;
+  key('Tab');
+  pump(1);
+  assert(st.focus !== f2 && elements['tc-focus'].textContent === st.focus,
+    'a lever change must reach the badge through the published field in-frame');
+  key('Tab'); key('Tab'); key('Tab');   // 4 modes -> back to the default
+  pump(1);
+  console.log('doctrine: state.* published every frame, the BUTTON BADGES are the readout (WAVE-27)');
 }
 
 // ---- 1. PAUSE KEY --------------------------------------------------------

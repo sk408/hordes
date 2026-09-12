@@ -1481,15 +1481,24 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: '-' });
   pump(1);
 
-  // CAMERA LOCK at 2x: a stationary MANUAL pilot (no keys held) stays dead
-  // center of the view — cam lerps to player - VIEW/2, and the zoom transform
-  // centers on the view, so the hero sits mid-screen at every zoom.
+  // CAMERA at 2x (WAVE-27 deadzone camera): the pilot is no longer welded to
+  // exact screen centre — that hard tether is what the owner asked to replace —
+  // but they are held INSIDE the deadzone box (a fixed SCREEN-px box at every
+  // zoom) and can never leave the safe screen region. The old assertion pinned
+  // exact centring; this pins the new contract (and is not a no-op: the box is
+  // a small fraction of the screen, while the safe region is the hard bound).
   keyHandler({ key: 'm' });           // AUTO -> MANUAL, nothing held = still
   T.zoom.set(2);
-  pump(150);                          // let the camera lerp converge
-  assert(Math.abs((st.player.x - st.cam.x) - CFG.VIEW_W / 2) <= 1 &&
-         Math.abs((st.player.y - st.cam.y) - CFG.VIEW_H / 2) <= 1,
-    'player must stay view-centered at 2x (camera lock)');
+  pump(150);                          // let the follow settle
+  const offScrX = ((st.player.x - st.cam.x) - CFG.VIEW_W / 2) * 2;   // screen px
+  const offScrY = ((st.player.y - st.cam.y) - CFG.VIEW_H / 2) * 2;
+  assert(Math.abs(offScrX) <= CFG.CAMERA.DEADZONE_W + CFG.CAMERA.LEAD + 1 &&
+         Math.abs(offScrY) <= CFG.CAMERA.DEADZONE_H + CFG.CAMERA.LEAD + 1,
+    'the pilot must be held inside the camera deadzone box (off ' +
+    offScrX.toFixed(1) + ',' + offScrY.toFixed(1) + ' screen px)');
+  assert(Math.abs(offScrX) <= CFG.VIEW_W / 2 - CFG.CAMERA.SAFE &&
+         Math.abs(offScrY) <= CFG.VIEW_H / 2 - CFG.CAMERA.SAFE,
+    'and inside the safe screen region (never near the edge)');
 
   // HUD STAYS NATIVE while zoomed: record one 2x frame. The HP bar chrome
   // border (21,15,112,7 — drawBar(22,16,110) + 1px border; WAVE-23 shifted
@@ -1514,7 +1523,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // Probe hygiene: back to AUTO at 1x for the rest of the suite.
   keyHandler({ key: 'm' });
   assert(st.pilotMode === 'AUTO' && st.zoom === 1, 'hygiene: AUTO + zoom 1x');
-  console.log('world zoom: live +/- apply, 2x window halved, camera locked, HUD proven native 1x');
+  console.log('world zoom: live +/- apply, 2x window halved, camera deadzone, HUD proven native 1x');
 }
 
 // ---- WAVE-17 TOUCH BALANCE + SETTINGS COG ---------------------------------------

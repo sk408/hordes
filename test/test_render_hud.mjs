@@ -1,5 +1,5 @@
 // HORDES — headless tests for src/render.js HUD legibility, ground decor and
-// the doctrine (FOCUS / STANCE) readout. WAVE-24, agent A.
+// the removal of the doctrine (FOCUS / STANCE) readout. WAVE-24, agent A.
 // Run: node test/test_render_hud.mjs
 //
 // Deliberately imports ONLY render.js / config.js / entities.js (never
@@ -234,73 +234,43 @@ console.log('WAVE-24 / #3 — GROUND DECOR: LANDMARKS + RIM CLIP');
     'landmarks read as landmarks, not a carpet: ~' + avg.toFixed(2) + ' per 480x300 screen');
 }
 
-console.log('WAVE-24 / #4 — FOCUS / STANCE ON THE DEFAULT CANVAS HUD');
+console.log('WAVE-27 — NO CANVAS DOCTRINE TEXT (the overlay badges carry it)');
 {
-  // WAVE-26: the STANCE line now carries its MEANING (CONFIG tag) and the
-  // pilot's live activity, so match on the prefix and assert the format.
-  const stanceLine = (rec) => rec.texts.find(t => t.txt.startsWith('STANCE '));
+  // Owner ruling (WAVE-27): the big canvas "FOCUS <x>" / "STANCE <x> · <TAG> ·
+  // <ACT>" lines are redundant with the overlay buttons' badges, so the
+  // renderer must paint NO doctrine text even when the published state carries
+  // it — and the chrome seam must not carry doctrine fields either. This
+  // replaces the WAVE-24/#4 block (which pinned the old readout) with the new
+  // contract; the rest of the HUD is unchanged.
   const { R, rec, ctx } = makeRenderer();
-  const st = hudState({ focus: 'SWARM', stance: 'GREEDY' });
+  const st = hudState({ focus: 'SWARM', stance: 'GREEDY', stanceAct: 'FLEE' });
   R.drawHudChrome(ctx, st);
-  ok(R.hudChrome.focus === 'SWARM' && R.hudChrome.stance === 'GREEDY',
-    'the chrome seam carries the live doctrine');
-  const f = textOf(rec, 'FOCUS SWARM'), s = stanceLine(rec);
-  ok(!!f && !!s, 'the default HUD paints FOCUS and STANCE (no text HUD needed)');
-  ok(f && f.style === C.HUD.FOCUS_COLOR, 'focus is tinted by CONFIG.HUD.FOCUS_COLOR');
-  ok(s && s.style === C.HUD.STANCE_COLORS.GREEDY, 'greedy stance reads risk-orange');
-  ok(!!plateFor(rec, f) && !!plateFor(rec, s), 'both doctrine lines ride readability plates');
-  // WAVE-26: the readout states what the stance DOES, not just its name.
-  ok(s && s.txt === 'STANCE GREEDY \u00b7 ' + C.AUTOPILOT.STANCES.GREEDY.TAG,
-    'the stance line carries the CONFIG meaning tag (got "' + (s && s.txt) + '")');
+  const doctrine = rec.texts.filter(t => /^FOCUS |^STANCE /.test(t.txt));
+  ok(doctrine.length === 0, 'no FOCUS/STANCE text on the canvas (' + doctrine.length + ' painted)');
+  ok(R.hudChrome && !('focus' in R.hudChrome) && !('stance' in R.hudChrome) &&
+     !('stanceAct' in R.hudChrome),
+    'the chrome seam carries no doctrine fields any more');
+  // Everything ELSE the HUD paints is untouched (removal, not a rewrite).
+  ok(!!textOf(rec, 'XP') && !!textOf(rec, 'LV 1'), 'the rest of the HUD chrome still paints');
 
-  // Values change when the lever cycles - the whole point: a player pressing
-  // TAB/G must SEE the change.
-  const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
-  R2.drawHudChrome(ctx2, hudState({ focus: 'TOUGHEST', stance: 'SAFE' }));
-  ok(!!textOf(rec2, 'FOCUS TOUGHEST') && !!stanceLine(rec2), 'cycling the levers repaints the HUD lines');
-  ok(stanceLine(rec2).style === C.HUD.STANCE_COLORS.SAFE, 'safe stance reads green');
-  ok(stanceLine(rec2).txt.startsWith('STANCE SAFE \u00b7 ' + C.AUTOPILOT.STANCES.SAFE.TAG),
-    'and the meaning tag follows the lever (got "' + stanceLine(rec2).txt + '")');
-
-  // WAVE-26: the pilot's LIVE activity rides the same line (state.stanceAct).
-  const { R: R2b, rec: rec2b, ctx: ctx2b } = makeRenderer();
-  R2b.drawHudChrome(ctx2b, hudState({ focus: 'NEAREST', stance: 'GREEDY', stanceAct: 'FLEE' }));
-  ok(stanceLine(rec2b).txt.endsWith('\u00b7 FLEE') && R2b.hudChrome.stanceAct === 'FLEE',
-    'the live pilot activity is shown on the stance line (got "' + stanceLine(rec2b).txt + '")');
-
-  // WAVE-26: the old #tc-focus / #tc-stance DOM-badge fallback is REMOVED.
-  // main.js publishes state.focus / state.stance every frame, so the renderer
-  // must never consult the DOM: even when the badges exist and carry text, a
-  // state without doctrine reads nulls and paints nothing (inventing a value
-  // from a DOM node the canvas cannot verify is exactly the drift we removed).
+  // The renderer must be DOM-free now (the old badge bridge is gone for good):
+  // a document that THROWS on any access must never be touched, through the
+  // real full-frame render path.
   const savedDoc = globalThis.document;
-  globalThis.document = {
-    getElementById: (id) => (id === 'tc-focus' ? { textContent: 'RANGED' }
-      : id === 'tc-stance' ? { textContent: 'BALANCED' } : null),
-  };
+  globalThis.document = { getElementById: () => { throw new Error('renderer must be DOM-free'); } };
   const { R: R3, rec: rec3, ctx: ctx3 } = makeRenderer();
-  R3.drawHudChrome(ctx3, hudState());
-  ok(R3.hudChrome.focus === null && R3.hudChrome.stance === null,
-    'with no state doctrine the HUD reads nulls — the DOM badge bridge is gone');
+  try {
+    R3.render(hudState({ focus: 'RANGED', stance: 'SAFE', stanceAct: 'PATROL' }), { x: 0, y: 0 });
+  } finally {
+    globalThis.document = savedDoc;
+  }
   ok(!rec3.texts.some(t => /^FOCUS |^STANCE /.test(t.txt)),
-    'and the dead DOM fallback paints nothing');
+    'a full render() frame with doctrine in state paints no doctrine text');
+  ok(rec3.rects.some(q => q.d === 1), 'render(): the ground/decor layer is still inside the zoom transform');
 
-  // No source at all -> draw nothing rather than invent a value.
-  globalThis.document = undefined;
-  const { R: R4, rec: rec4, ctx: ctx4 } = makeRenderer();
-  R4.drawHudChrome(ctx4, hudState());
-  ok(R4.hudChrome.focus === null && R4.hudChrome.stance === null,
-    'no doctrine source -> nulls, never a guessed value');
-  ok(!rec4.texts.some(t => /^FOCUS |^STANCE /.test(t.txt)), 'and nothing painted');
-  globalThis.document = savedDoc;
-
-  // Integration: through the REAL render() the doctrine is HUD chrome (native
-  // 1x, depth 0) while the ground/decor stay inside the world transform.
-  const { R: R5, rec: rec5, ctx: ctx5 } = makeRenderer();
-  R5.render(hudState({ focus: 'NEAREST', stance: 'BALANCED' }), { x: 0, y: 0 });
-  const fd = rec5.texts.find(t => t.txt === 'FOCUS NEAREST');
-  ok(!!fd && fd.d === 0, 'render(): FOCUS text paints at native HUD depth (0)');
-  ok(rec5.rects.some(q => q.d === 1), 'render(): the ground/decor layer is still inside the zoom transform');
+  // The doctrine block used to sit above the ground/landmark pass; removing it
+  // must not disturb the world layer. Same sweep the old block ran.
+  const { R: R5 } = makeRenderer();
   let lmFrames = 0;
   for (let sx = -560; sx <= 560; sx += 40) {
     for (let sy = -560; sy <= 560; sy += 40) {

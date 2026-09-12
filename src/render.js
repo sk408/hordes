@@ -860,22 +860,15 @@ export class Renderer {
     this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
   }
 
-  // ---- WAVE-24 (#4): live DOCTRINE (focus / stance) for the canvas HUD -------
-  // The default HUD drew neither lever anywhere, so a player could cycle them
-  // (TAB / G) and see nothing change. The SINGLE source is state.focus /
-  // state.stance — main.js publishes the active controller's values every
-  // frame (syncChrome), the same object the text HUD reads. WAVE-26 removed
-  // the old #tc-focus / #tc-stance DOM-badge fallback: main.js now publishes
-  // state.* unconditionally, so the DOM bridge was dead code that could only
-  // ever disagree with the canvas. Returns { focus: null, stance: null } when
-  // neither is available (headless without a state yet) — callers skip the draw.
-  readDoctrine(state) {
-    const out = { focus: null, stance: null };
-    const src = state || {};
-    if (typeof src.focus === 'string' && src.focus) out.focus = src.focus;
-    if (typeof src.stance === 'string' && src.stance) out.stance = src.stance;
-    return out;
-  }
+  // ---- WAVE-27: the DOCTRINE canvas readout is REMOVED ------------------------
+  // WAVE-24 (#4) painted a live "FOCUS <x>" / "STANCE <x> · <TAG> · <ACT>" block
+  // here because the levers were otherwise invisible. The owner ruled it
+  // redundant: the overlay buttons' badges carry the same state (and the
+  // stance CYCLE toast names the tag + the multipliers that actually differ).
+  // The canvas is the play field again — no doctrine paint, no chrome seam
+  // fields, and no DOM-badge bridge. The published source of truth stays
+  // state.focus / state.stance / state.stanceAct (main.js syncChrome); the
+  // badge writer (main.js updateTouchHud) reads exactly those.
 
   // ---- WAVE-26 EARNED MOMENT flourish ---------------------------------------
   // Fires ONLY on a weapon EVOLUTION or a BOSS KILL (main.js
@@ -1088,33 +1081,11 @@ export class Renderer {
     g.fillStyle = '#fff3c4';
     g.fillText(lvTxt, lvX + 3, lvY + 2);
 
-    // --- WAVE-24 (#4): the DOCTRINE readout ---------------------------------
-    // With the text HUD off (the DEFAULT), focus and stance were drawn
-    // NOWHERE on the canvas — a player could cycle them (TAB / G) and see
-    // nothing change, so the coachmarks teaching them felt dead. Values come
-    // from the same source the text HUD / touch badges read (controller.focus
-    // / controller.stance, see readDoctrine). Focus is cool/neutral (it is
-    // targeting doctrine); stance is the RISK dial, so it is risk-colored.
-    const doc = this.readDoctrine(state);
-    chrome.focus = doc.focus;
-    chrome.stance = doc.stance;
-    if (doc.focus || doc.stance) {
-      const dy = 56;
-      if (doc.focus) label('FOCUS ' + doc.focus, 6, dy, H.FOCUS_COLOR, H.BADGE_PX);
-      if (doc.stance) {
-        // WAVE-26 ("stance that bites"): the readout carries the stance's
-        // MEANING (CONFIG tag) and the pilot's LIVE activity this frame
-        // (state.stanceAct, set by controllers.js), so the dial is legible
-        // without any new panel: "STANCE GREEDY · LOOT FIRST · FLEE".
-        const tag = (C.AUTOPILOT.STANCES[doc.stance] || {}).TAG;
-        const act = state.stanceAct;
-        const txt = 'STANCE ' + doc.stance + (tag ? ' \u00b7 ' + tag : '') +
-          (act ? ' \u00b7 ' + act : '');
-        label(txt, 6, dy + 13,
-          H.STANCE_COLORS[doc.stance] || H.XP, H.BADGE_PX);
-        chrome.stanceAct = act || null;
-      }
-    }
+    // --- WAVE-27: no doctrine text on the canvas ----------------------------
+    // The FOCUS / STANCE readout that used to sit here is gone (owner ruling:
+    // the overlay buttons' badges already carry that state, and the stance
+    // cycle toast names its meaning). The event feed below keeps its own
+    // placement; nothing is shifted to compensate.
 
     // --- WAVE-14 event feed: last 3 toasts UNDER the bars (now under the XP
     // bar too), newest lowest. The toast() stream in main.js is the ONE feed
@@ -1122,7 +1093,8 @@ export class Renderer {
     // level-ups, synergies, flash drops, wave/theme lines all land here.
     // Lines fade out over their final second (alpha = ttl clamped to 1).
     // WAVE-24 (#2): text stays 9px; the plate is darker so the lines hold up
-    // over bright themes and the doctrine block below them.
+    // over bright themes. (WAVE-27: the doctrine block that used to sit below
+    // these lines is gone; the feed keeps its own placement.)
     g.font = H.FEED_PX + 'px monospace';
     g.textBaseline = 'top';
     chrome.feed = [];
@@ -1430,7 +1402,11 @@ export class Renderer {
   // zoom transform (crisp at 1x through 8x) and culled per side to the
   // visible window. `this.arenaWall` is the smoke seam (world-coord sides).
   drawArenaWall(g, cam, theme) {
-    const RIM = C.GROUND.RIM, T = 12;    // clamp edge (main.js clamp) + wall px
+    // WAVE-27: the band thickness is CONFIG.GROUND.WALL — the loot clamp
+    // (entities.clampLootToArena) and the pilot edge hold (controllers.js)
+    // subtract the same knob, so the art and the reachability rule can never
+    // drift apart again (it used to be a bare 12 here).
+    const RIM = C.GROUND.RIM, T = C.GROUND.WALL;   // clamp edge + wall band px
     const pal = theme || groundTheme(1);
     const x0 = cam.x, x1 = cam.x + C.VIEW_W, y0 = cam.y, y1 = cam.y + C.VIEW_H;
     // (a) gloom beyond the rim — non-overlapping decomposition of the visible
