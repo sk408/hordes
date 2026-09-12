@@ -43,11 +43,15 @@ import {
   manualPushes, addHeat, initHeat,
 } from './heat.js';
 import {
-  loadProfile, saveProfile, makeProfile, computeRunGold,
+  loadProfileResult, saveProfile, makeProfile, computeRunGold,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   luckDropWeights,
+  // W1 save foundation (src/save.js): versioned schema + lossless export/import.
+  SCHEMA_VERSION, exportProfileText, importProfileText,
+  downloadProfile, saveProfileToDisk, readSaveFile,
+  readRecovery, downloadRecovery,
 } from './meta.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -200,8 +204,38 @@ const state = {
 state.player.x = C.VIEW_W / 2;
 state.player.y = C.VIEW_H / 2;
 
-// ---------- Meta profile (persistent, meta.js owns the shape/storage) ----------
-let profile = loadProfile();
+// ---------- Meta profile (persistent; src/save.js owns schema + storage) -----
+// W1: the loader now returns a RESULT — the profile plus a status/notice. A
+// corrupt or NEWER-version save is never silently replaced: the payload is
+// preserved under meta.js RECOVERY_KEY and the notice is surfaced to the
+// player (title screen), because a silent wipe is worse than an error.
+const bootResult = loadProfileResult();
+let profile = bootResult.profile;
+let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'future-version')
+  ? bootResult.notice : null;
+
+// ---------- W1 AUTOSAVE before any exit path ----------
+// Tab close, navigation and backgrounding all flush the profile. Writes are
+// synchronous, so they survive beforeunload/pagehide. The explicit Exit Game
+// flow is W4's work; this is the guarantee it can build on, and it means a
+// player can never lose progress by closing the page.
+export function autosave(reason = 'exit') {
+  return saveProfile(profile);
+}
+try {
+  const evWin = (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function')
+    ? window : globalThis;
+  const flush = () => { autosave('exit'); };
+  evWin.addEventListener('pagehide', flush);
+  evWin.addEventListener('beforeunload', flush);
+  // visibilitychange covers the mobile case (iOS/Android often never fire
+  // pagehide before suspending a backgrounded tab).
+  if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') autosave('hidden');
+    });
+  }
+} catch { /* no window (headless) — the autosave seam still works */ }
 
 // ---------- Character controller seam (see controllers.js) ----------
 // WAVE-13 MANUAL PILOT: BOTH implementations live for the whole run — the
@@ -1940,8 +1974,9 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
 // through the exact same accounting (first-clear bonus + gold multipliers).
 // Meta payout: gold into the profile (+first-clear bonus on a new best).
-// NOTE: meta.js loadProfile() drops unknown fields (incl. our bestTime),
-// so the best-run bonus is per-session until loadProfile preserves it.
+// NOTE (W1): the profile layer preserves unknown fields verbatim and is now
+// versioned (src/save.js), so bestTime DOES persist across sessions — the
+// old "per-session only" caveat is gone.
 // Greed shop line + Midas items multiply the payout (computeRunGold takes
 // goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
 // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
@@ -2455,6 +2490,16 @@ function updateTourCoach() {
 }
 
 
+// W1: show a save-layer notice (unreadable / from a newer version / repaired /
+// upgraded) on the title. Red = a data problem the player must know about,
+// cyan = informational. This is the "TELL them" half of the corrupted-save
+// contract — the payload is preserved, and it is never a silent wipe.
+function saveNoticeHtml() {
+  if (!saveNotice) return '';
+  const cls = /UNREADABLE|NEWER VERSION/.test(saveNotice) ? 'cause' : 'next';
+  return `<br><span class="${cls}">${saveNotice}</span>`;
+}
+
 function showTitle() {
   openMenu();
   ovTitle.textContent = 'HORDES';
@@ -2462,7 +2507,7 @@ function showTitle() {
   ovSub.innerHTML = `purse: ${profile.gold} gold · equipped: ` +
     (CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT).name +
     (hasArcadePass(profile) ? ' · ARCADE PASS' : '') +
-    '<br>the build IS the game';
+    '<br>the build IS the game' + saveNoticeHtml();
   menuCard('PLAY', 'start a run', () => startRun());
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
@@ -2533,6 +2578,53 @@ function showCharacters() {
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
+// ---------- W1 EXPORT / IMPORT (title settings only) ----------
+// localStorage is per-origin, can be evicted (Safari clears non-installed site
+// storage after ~7 days of non-use) and is limited/absent in private mode, so
+// the exported file is the player's real safety net. Import replaces the live
+// profile, which is NOT safe mid-run — hence title settings only.
+
+// Hidden <input type="file">: the universal import path (works in every
+// browser, including iOS Safari where the File System Access API is absent).
+function pickImportFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  if (input.style) input.style.display = 'none';
+  input.onchange = () => {
+    const f = input.files && input.files[0];
+    if (typeof input.remove === 'function') input.remove();   // no DOM litter per attempt
+    if (!f) return;
+    readSaveFile(f).then(read => {
+      if (!read.ok) {
+        saveNotice = 'IMPORT FAILED — ' + (read.error || 'the file could not be read.');
+      } else {
+        importSaveText(read.text);
+      }
+      showSettings(false);
+    });
+  };
+  if (document.body && document.body.appendChild) document.body.appendChild(input);
+  if (typeof input.click === 'function') input.click();
+}
+
+// Apply a validated import to the live profile. Parse + validate + migrate is
+// pure (save.js importProfileText), so a bad file cannot damage the profile:
+// nothing is written and the reason is shown to the player.
+function importSaveText(text) {
+  const res = importProfileText(text);
+  if (!res.ok) {
+    saveNotice = 'IMPORT FAILED — ' + (res.error || res.status);
+    return res;
+  }
+  profile = res.profile;
+  saveProfile(profile);
+  saveNotice = res.status === 'imported-migrated'
+    ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
+    : 'SAVE IMPORTED.';
+  return res;
+}
+
 let resetArmed = false;
 let endArmed = false;   // WAVE-18 (#6): END RUN two-tap arm (same pattern as RESET)
 function showSettings(disarm = true, inRun = false) {
@@ -2543,7 +2635,7 @@ function showSettings(disarm = true, inRun = false) {
   if (disarm) { resetArmed = false; endArmed = false; }
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
-  ovSub.textContent = 'audio, hud & profile';
+  ovSub.textContent = 'audio, hud & profile' + (saveNotice ? ' · ' + saveNotice : '');
   menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
     audio.setMusicEnabled(!audio.getMusicEnabled());
     showSettings(true, inRun);
@@ -2583,6 +2675,28 @@ function showSettings(disarm = true, inRun = false) {
       showTitle();                 // stage-1 flag cleared -> menu tour restarts
     }
   });
+  // W1 SAVE FOUNDATION: export/import, plus the preserved payload of an
+  // unreadable or newer-version save when one exists. Title settings only.
+  if (!inRun) {
+    menuCard('EXPORT SAVE', 'download a .json backup of everything', () => {
+      const done = (r) => {
+        if (r && r.aborted) return;   // player cancelled the save dialog — say nothing
+        saveNotice = r && r.ok ? 'SAVE EXPORTED.' : 'EXPORT FAILED — try again.';
+        showSettings(false);
+      };
+      const res = saveProfileToDisk(profile);
+      if (res && typeof res.then === 'function') res.then(done, () => done(null));
+      else done(res);
+    });
+    menuCard('IMPORT SAVE', 'load a .json backup (validated + migrated)', () => pickImportFile());
+    if (readRecovery()) {
+      menuCard('RECOVERY FILE', 'download the preserved damaged save', () => {
+        const r = downloadRecovery();
+        saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
+        showSettings(false);
+      });
+    }
+  }
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
     resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
     () => {
@@ -3773,4 +3887,22 @@ export const __TEST = {
     get lead() { return state.camLead; },
   },
   loot: { limit: lootLimit, clamp: clampLootToArena },
+  // ---- W1 save-foundation seam (schema / migration / export / import) ----
+  // `status` is the boot load result ('fresh' | 'current' | 'migrated' |
+  // 'repaired' | 'corrupt' | 'future-version'); `notice` is what the player
+  // is shown when the save was damaged or written by a newer build.
+  save: {
+    get status() { return bootResult.status; },
+    get notice() { return saveNotice; },
+    get version() { return profile.version; },
+    schemaVersion: SCHEMA_VERSION,
+    autosave,
+    exportText: (opts) => exportProfileText(profile, opts),
+    importText: (text) => importSaveText(text),
+    download: (env, opts) => downloadProfile(profile, env || globalThis, opts),
+    saveToDisk: (env, opts) => saveProfileToDisk(profile, env || globalThis, opts),
+    readFile: (file) => readSaveFile(file),
+    recovery: () => readRecovery(),
+    downloadRecovery: (env, opts) => downloadRecovery(undefined, env || globalThis, opts),
+  },
 };

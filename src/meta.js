@@ -16,8 +16,31 @@
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
 import { CONFIG as C } from './config.js';
 import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
+// W1 SAVE FOUNDATION (src/save.js): versioning, migration, validation and
+// export/import live there, catalog-injected so that module stays free of any
+// dependency on this one. meta.js is the composition root that supplies the
+// live tables (characters, shop rows, valid weapon/elite ids).
+import * as SAVE from './save.js';
 
-const STORAGE_KEY = 'hordes_profile_v1';
+// ---------- Save-layer re-exports (W1) ----------
+// Callers keep importing the profile API from meta.js; the schema constants
+// live in save.js. STORAGE_KEY is deliberately unchanged ('hordes_profile_v1')
+// so every existing player's save keeps loading.
+export const PROFILE_VERSION = SAVE.PROFILE_VERSION;
+export const SCHEMA_VERSION = SAVE.SCHEMA_VERSION;
+export const STORAGE_KEY = SAVE.STORAGE_KEY;
+export const RECOVERY_KEY = SAVE.RECOVERY_KEY;
+export const EXPORT_FORMAT = SAVE.EXPORT_FORMAT;
+export const VERSION_HISTORY = SAVE.VERSION_HISTORY;
+export const detectStorage = SAVE.detectStorage;
+export const readRecovery = SAVE.readRecovery;
+export const recoveryExportText = SAVE.recoveryExportText;
+export const downloadProfile = SAVE.downloadProfile;
+export const downloadRecovery = SAVE.downloadRecovery;
+export const saveProfileToDisk = SAVE.saveProfileToDisk;
+export const readSaveFile = SAVE.readSaveFile;
+export const exportProfileText = SAVE.exportProfileText;
+export const buildExport = SAVE.buildExport;
 
 // ---------- Weapon unlock catalog (WAVE-11 economy, Sk408 directives) ------
 // Weapons are BOUGHT now. A new profile starts with the STARTER SET: VOLLEY
@@ -28,95 +51,64 @@ const STORAGE_KEY = 'hordes_profile_v1';
 // helpers: weaponUnlocked / unlockWeapon, or buyUpgrade on the shop row.
 export const STARTER_WEAPONS = ['VOLLEY', 'BOOMERANG'];
 
-// ---------- Storage shim (node-safe) ----------
-export function detectStorage() {
-  try {
-    const s = globalThis.localStorage;
-    if (s && typeof s.getItem === 'function') return s;
-  } catch { /* sandboxed/locked storage — fall through to no-op */ }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-}
-
-// ---------- Profile ----------
-export function makeProfile() {
+// ---------- Profile (W1: schema + validation live in src/save.js) ----------
+// The catalog injects the LIVE tables into the schema layer so validation can
+// never drift from the shop/character data it checks against. Declared as a
+// function because CHARACTERS / SHOP_BY_ID are defined further down this file
+// (function declarations hoist; the body runs at call time, after evaluation).
+function catalog() {
   return {
-    gold: 0,
-    purchased: {},                      // upgradeId -> level (1..maxLevel)
-    unlockedCharacters: ['KNIGHT'],
-    equippedCharacter: 'KNIGHT',
-    unlockedWeapons: [...STARTER_WEAPONS],  // WAVE-11: starter set only
-    unlockedElites: [],                     // WAVE-11: elite modifiers locked
+    characters: CHARACTERS,
+    shopById: SHOP_BY_ID,
+    validWeapons: VALID_UNLOCK_WEAPONS,
+    validElites: VALID_ELITE_IDS,
+    starterWeapons: STARTER_WEAPONS,
+    baseWeapon: 'VOLLEY',            // the base volley every run fires, always owned
+    defaultCharacter: 'KNIGHT',
   };
 }
 
-export function loadProfile(storage) {
-  const s = storage || detectStorage();
-  let raw = null;
-  try { raw = s.getItem(STORAGE_KEY); } catch { raw = null; }
-  if (!raw) return makeProfile();
-  try {
-    const p = JSON.parse(raw);
-    if (!p || typeof p !== 'object') return makeProfile();
-    // Spread-PRESERVE unknown fields (e.g. bestTime from main.js) so future
-    // modules persist without touching this file, while the four known
-    // fields still get sanitized for backward compat with older saves.
-    // Purchased levels are clamped to the CURRENT maxLevel — old-economy
-    // saves (pre-retune prices/caps) load clean instead of over-granting.
-    const purchased = {};
-    if (p.purchased && typeof p.purchased === 'object') {
-      for (const [id, lvl] of Object.entries(p.purchased)) {
-        const def = SHOP_BY_ID[id];
-        const n = Number(lvl) || 0;
-        purchased[id] = def ? Math.max(0, Math.min(n, def.maxLevel)) : n;
-      }
-    }
-    // WAVE-11 WEAPON ECONOMY — RETROACTIVE RESET (Sk408-approved): saves from
-    // before weapon unlocks carry no unlockedWeapons field and get the STARTER
-    // SET ONLY. Previously "free" archetypes are NOT grandfathered — even a
-    // save with WITCH unlocked does not keep her ZAP starter; it must be
-    // repurchased. Present-but-garbage fields sanitize: non-strings/unknown
-    // ids drop out, dupes dedupe, and VOLLEY is always re-added (it is the
-    // base volley every run fires).
-    let unlockedWeapons = [...STARTER_WEAPONS];
-    if (Array.isArray(p.unlockedWeapons)) {
-      unlockedWeapons = [...new Set(p.unlockedWeapons
-        .filter(w => typeof w === 'string' && VALID_UNLOCK_WEAPONS.has(w)))];
-      if (!unlockedWeapons.includes('VOLLEY')) unlockedWeapons.unshift('VOLLEY');
-    }
-    const unlockedElites = Array.isArray(p.unlockedElites)
-      ? [...new Set(p.unlockedElites
-          .filter(e => typeof e === 'string' && VALID_ELITE_IDS.has(e)))]
-      : [];
-    // WAVE-25 SAVE HARDENING (agent F): the character fields used to be
-    // TYPE-checked only — a corrupted / hand-edited save could equip a
-    // character that was never unlocked (applyCharacter would then build the
-    // whole run around her while the menu shows nobody equipped) or ship an
-    // unlock list full of garbage, locking KNIGHT out of the menu while the
-    // run still started as KNIGHT. Validate against the CHARACTERS table:
-    // real ids only, deduped, KNIGHT (free, unlockCost 0) always present, and
-    // an equipped character that must be a member of the validated list.
-    const unlockedCharacters = [...new Set(
-      (Array.isArray(p.unlockedCharacters) ? p.unlockedCharacters : [])
-        .filter(id => typeof id === 'string' && CHARACTERS[id]))];
-    if (!unlockedCharacters.includes('KNIGHT')) unlockedCharacters.unshift('KNIGHT');
-    const equippedCharacter = typeof p.equippedCharacter === 'string' &&
-      unlockedCharacters.includes(p.equippedCharacter) ? p.equippedCharacter : 'KNIGHT';
-    return {
-      ...p,
-      gold: Number(p.gold) || 0,
-      purchased,
-      unlockedCharacters,
-      equippedCharacter,
-      unlockedWeapons,
-      unlockedElites,
-    };
-  } catch { return makeProfile(); }    // corrupt blob -> fresh start
+// A fresh, validated, CURRENT-version profile. Carries `version` (schema v2)
+// and the starter weapon set.
+export function makeProfile() {
+  return SAVE.defaultProfile(catalog());
 }
 
+// Validate/repair an arbitrary profile object against the live catalog.
+// Returns { profile, repairs } — see save.js validateProfile.
+export function validateProfile(profile) {
+  return SAVE.validateProfile(profile, catalog());
+}
+
+// Full load result: { profile, status, from, repairs, migrations, recoveryKey,
+// notice }. status: 'fresh' | 'current' | 'migrated' | 'repaired' | 'corrupt'
+// | 'future-version'. A corrupt or NEWER-version payload is preserved under
+// RECOVERY_KEY (original key untouched) and the caller gets a `notice` string
+// to show the player — never a silent wipe. Never throws.
+export function loadProfileResult(storage, opts) {
+  return SAVE.loadProfileFrom(storage || detectStorage(), catalog(), opts);
+}
+
+// Back-compat profile-only loader (existing callers/tests use this shape).
+export function loadProfile(storage) {
+  return loadProfileResult(storage).profile;
+}
+
+// Persist a profile. Always stamps the current schema version. Returns false if
+// storage is unavailable/full (callers may ignore — never throws).
 export function saveProfile(profile, storage) {
-  const s = storage || detectStorage();
-  try { s.setItem(STORAGE_KEY, JSON.stringify(profile)); return true; }
-  catch { return false; }
+  return SAVE.saveProfileTo(profile, storage || detectStorage());
+}
+
+// Full export envelope (format + schemaVersion + exportedAt + profile).
+export function exportProfile(profile, opts) {
+  return SAVE.buildExport(profile, opts);
+}
+
+// Import a save file: validates + migrates, PURE (never touches the live
+// profile). Returns { ok, status, profile?, error?, repairs? }.
+export function importProfileText(text) {
+  return SAVE.importProfileText(text, catalog());
 }
 
 // ---------- Run rewards ----------

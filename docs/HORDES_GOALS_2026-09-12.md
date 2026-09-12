@@ -16,12 +16,21 @@ this project should read it first and treat the numbered goals as the acceptance
   https://github.com/sk408/hordes, served at https://sk408.github.io/hordes/ (branch-based Pages, main:/).
 - Only ONE writer in the repo at a time. Verify with the full test suite after every wave.
 
-## G1 — SHIP THE CURRENT BUILD  [status: open]
+## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the
 design pass. Nothing else on this list matters to a player if this does not ship.
-**Reached when:** Pages serves the current build, verified by fetching the live files and confirming a
-build marker is present (not merely that a push succeeded), and the served tree is code-only.
+**Reached:** snapshot `9c4aa0f` pushed (9380167..9c4aa0f). Evidence, not just a green push:
+- 45/45 test files passed INSIDE the published snapshot (not on the working tree).
+- Pages auto-built the pushed commit: status `building` -> `built` on commit `9c4aa0f2`.
+- SERVED files verified to be the new build: `lootLimit=4` in the live entities.js, `updateCamera=5` in
+  the live main.js, `tour-stance=1` in the live tour.js, site HTTP 200.
+- Snapshot is code-only (docs/ and GAME_DESIGN.md excluded); local main untouched and still holds the
+  full wave history.
+Testers can now play: the first-run spotlight tour, the legibility + resolution work, desktop
+mouse-clickable pads, ESC/P pause, mode-aware hints, the wall fixes (loot reachability, no pilot grind),
+the deadzone camera, the design pass (death payoff, synergy hints, stance that bites, earned slow-mo)
+and the logic bug fixes including the mine-chain crash and the 120Hz double-fire.
 
 ## G2 — THE WALL BUGS (owner-reported, currently the worst in-game experience)  [status: open]
 The pilot visibly grinds against the wall for seconds, and loot can drop on or outside the wall.
@@ -246,6 +255,182 @@ the data interface is specified up front (e.g. `src/trophy_art.js` exporting a m
 grid + palette, in the same shape the sprite system already uses). So: one agent on new art files, one on
 logic/schema files, is safe; two agents in `main.js` is not.
 
+### G15 — DEATH MOVIE  [status: not started]
+Owner: *"we also need a death movie if we don't have one."*
+Currently death goes straight to a screen/overlay (`state.mode === 'dead'`), not a cinematic — so this is
+new work, not a polish pass (verify against the code first: `src/portal_cine.js` is the only existing
+cinematic module, and the intro movie is separate).
+**Must compose with the existing death payoff screen** (G-level item from wave-26): the movie plays
+first, then the stat/cause/next-unlock screen. Do not replace that content with an animation.
+Skippable with any key (matching the intro and portal cinematics), and registered in the chrome gate.
+
+### G16 — PORTAL-ENTRY CINEMATIC UPGRADE  [status: exists, needs the detailed pass]
+Owner: *"the boss kill movie could use a tune to show a more detailed portal that the pilot enters upon
+defeating the boss. it could show them approach and pause before they enter. fade the pilot and linger
+on the movie for a beat or two before fading out of the movie too"*
+The portal cinematic EXISTS (`src/portal_cine.js`, `state.mode === 'portal-cine'`), so this is a directed
+upgrade, not a new system. Required beats, in order:
+1. a MORE DETAILED PORTAL (build the art; distinct from the in-run portal sprite),
+2. the pilot APPROACHES and then PAUSES before entering (the pause is the beat that sells the moment),
+3. the pilot FADES (do not just teleport or hard-cut),
+4. LINGER on the cinematic for a beat or two,
+5. then FADE OUT of the movie.
+Compose with the earned slow-motion that already fires on a boss kill (it should reinforce, not fight).
+Skippable with any key, and verification must be VISUAL (real browser + vision read), since this item is
+entirely about how it reads.
+
+### G17 — THE ECONOMY MUST REQUIRE A REAL GRIND  [status: open]
+Owner, verbatim: *"also we might still be earning too much gold per run. their feeling of being
+overpowered also reads as they want to grind a bit for improvements"*
+Read: "overpowered" is also a REQUEST FOR A LONGER LADDER — the shop should be a project, not a
+formality. Today the economy sim passes its own targets: an average run pays ~1,992g and 10 good runs
+buys **63.3% of the mid-tier catalogue** (its tolerance is 35-65%), with top tier at ~34-60 good runs.
+
+**A KEY DISTINCTION I WANT CHECKED BEFORE ANYTHING IS CHANGED: prefer PRICES over PAYOUTS.**
+Runs already die by ~minute 5 (median waves cleared 0-1), so income per run is already modest — the
+shop fills fast because the CATALOGUE IS CHEAP relative to income, not because runs are lucrative.
+Cutting payouts further would make early runs feel poverty-stricken without changing that ratio much;
+raising mid-tier prices targets the actual cause. Measure first, then pick the lever.
+
+**Proposed shape (to be validated against the sim, not assumed):**
+- Keep the FIRST few upgrades cheap — the first purchase should land within ~1-3 runs, because that is
+  the hook and a player who feels broke at the start never reaches the grind.
+- STRETCH THE MID-TIER so 10 good runs buys roughly 30-40% of it (down from 63%).
+- Keep the top tier a long-term target (already 34-60 good runs; verify it still reads as aspirational).
+- RE-BASELINE THE SIM'S OWN TARGETS to match the new intent — the 35-65% tolerance currently ENCODES
+  "fast", so leaving it in place would let a later agent "fix" the grind straight back out.
+
+**Guard against the double-nerf:** shorter runs (G5, die-earlier) AND higher prices both push toward
+grind. Applied together without measurement they could make progression demoralising. Sequence: model
+arches (G5) -> measure real gold per run under current difficulty -> THEN set prices once.
+**OWNER'S HARD TARGETS (2026-09-12), verbatim:** *"top tier should take a few hours to get one top tier
+item, let alone all of them. and the final boss should be beatable when the player has acheived around
+40 play hours worth of shop items, so we need around 60+ play hours worth of shop items determined by
+gold."*
+- the whole catalogue = **60+ play hours of gold**
+- the FINAL BOSS becomes beatable at roughly **40 play hours** of purchased upgrades
+- a single top-tier item = **a few hours**, not a session
+
+**MEASURED TODAY (commit 6f69bed, /tmp worktree, `node` over the real tables):**
+- Catalogue total **522,194g**: 24 upgrade rows (387,194g) + 7 weapon unlocks (122,400g) + 3 elite
+  unlocks (12,600g), including the weapon-slot ladder.
+- Payout: avg run ~1,992g, good run ~2,617g. At ~3.5 min/run that is **262 runs (~15.3h)** to buy
+  everything at average income, or **200 runs (~11.6h)** at good-run income.
+- So the catalogue is roughly **4x too short** for a 60-hour target: the same catalogue at ~508g/run
+  would be 60 hours.
+
+**THE TENSION THE NUMBERS EXPOSE (this is a design problem, not a tuning problem):** the current
+catalogue is lopsided. Two items alone — `arcade` 140,000g and `weapon_beam` 110,000g — are **48% of the
+entire catalogue**. A 60-hour catalogue that still lets one top-tier item take "a few hours" is
+arithmetically impossible while two items hold half the gold: at 60h the whole catalogue is ~8,700g/hour,
+so a 110,000g item alone would take **12.6 hours**, four times the stated target.
+**Therefore the hours must come from BREADTH, not from a couple of mega-priced trophies.** Fix shape:
+1. cap any SINGLE item at roughly a few hours of income (order 26-30k at the target rate);
+2. reach 60 hours by ADDING mid-priced content (which is also the "we need depth / more options" goal
+   the owner already set — the two goals agree);
+3. reprice income and/or prices together, once, against measurement.
+
+**RECOMMENDED APPROACH (validate with the sim, do not assume):** cut income per run substantially
+(toward ~500-800g) AND broaden/expand the catalogue, rather than only inflating two trophy prices. Then
+keep the early ladder cheap: at ~500g/run the FIRST purchase must still land within ~1-3 runs, so the
+cheapest tiers must stay in the low hundreds to ~1,500g or the opening will feel broke.
+
+**THE ACCEPTANCE TEST FOR BEATABILITY (currently unmeasured):** simulate a profile with ~40 play hours of
+purchases (order 600-700 runs of income at the target rate) and show the finale is clearable at a
+meaningful rate; simulate a fresh profile and show it is not. Right now nothing measures "can a developed
+player win", which is the owner's actual target.
+
+**Reached when:** the sim shows a 60+ hour catalogue, no single item exceeding a few hours of income, a
+~40-hour profile able to clear the finale while a fresh one cannot, the early ladder still hooking within
+a few runs, and the sim's own targets re-baselined so they encode the NEW intent (the old 35-65% /
+30-good-run targets encode the old, faster economy).
+
+### THE PROGRESSION CURVE — OWNER'S BENCHMARK (2026-09-12)  [authoritative]
+Owner, verbatim: *"30 minute run is usually a later run. it takes probably 20 hours of gameplay to be
+able to survive the entire 30 minutes, and another 15 to 20 hours to be able to beat the final boss on a
+lucky run and another 5 to 10 hours to be able to beat the boss on a mostly regular run"*
+
+Staged milestones (cumulative play hours), from a player who has actually done it in Vampire Survivors:
+| hours | capability |
+|---|---|
+| 0-20h | CANNOT survive a full long run; runs end early, often in minutes |
+| ~20h | can survive the entire 30-minute run |
+| ~20-40h | can beat the final boss on a LUCKY run |
+| ~40-50h | can beat the final boss on a mostly REGULAR run |
+| 50h+ | completion / mastery |
+
+**THIS IS THE SHAPE HORDES MUST REPRODUCE**, and it reconciles the owner's earlier targets: the "final
+boss beatable at ~40 play hours" = the lucky-run boss kill, and "60+ hours of shop items" = the
+catalogue outlasting reliable boss-killing.
+
+### G18 — RUN LENGTH MUST BE A PROGRESSION AXIS  [status: open]
+**The critical consequence: run length is itself a late-game capability, not a constant.** Early runs are
+SHORT (the player dies in minutes); late runs approach a long cap (30 minutes in VS). So:
+1. **Our economy model must use a run-length CURVE, not a constant.** My earlier 60-hour arithmetic
+   assumed ~3.5 min/run for ALL players; that is only true early. A developed player's runs are many
+   times longer, so income per HOUR (not per run) is what the pricing must be built on. Any tuning done
+   on a flat 3.5 min assumption is wrong and must be redone.
+2. **HORDES currently cannot express this**: the run is 5 waves + the maw finale, which caps run length
+   at a few minutes no matter how strong the player becomes. There is no "I survived the whole thing"
+   milestone and no long-run endgame to grow into.
+3. **Therefore the run structure needs to extend** so a developed player's run can last far longer than a
+   fresh player's — the wave ladder should keep escalating rather than being capped at 5. The finale then
+   functions as the climax of a long run rather than the end of a short one. (Research wave R2 on run
+   structure is checking how the reference games schedule this: boss cadence, escalation, and what ends
+   a run.)
+**Reached when:** measured runs show a real length curve across progression (a fresh profile dies in
+minutes, a developed profile can last many times longer), the economy is priced off income per HOUR at
+each stage rather than a flat per-run figure, and the sim can report the curve.
+
+### G19 — PER-CHARACTER PROGRESSION + SPECIALISATION  [status: open]
+Owner, verbatim: *"another mechanic some games use is that some of your gained skill that makes the game
+easier is tied to the character. so you purchase upgrades for that specific character and they generally
+aren't good at everything, so eventually you switch characters because they are better at beating certain
+areas, but you are quite a bit weaker again"*
+
+Three parts: (1) upgrades bought PER CHARACTER, (2) characters are SPECIALISED — each is better at some
+areas and worse at others, (3) switching characters means starting notably weaker, which is the intended
+loop. This is a long-tail progression mechanic: it gives a reason to keep playing after the first
+character is maxed, and it makes character choice a strategic decision rather than a cosmetic one.
+
+**THE CRITICAL DESIGN DETAIL IS THE OWNER'S WORD "SOME".** Only PART of the power is character-tied. That
+points at a TWO-LAYER model, which is also exactly what Vampire Survivors does (a GLOBAL PowerUps shop
+applying to every character, plus per-character Golden Eggs):
+- **GLOBAL layer** (today's shop) = a floor. Keeps working on every character, so switching never means
+  starting from nothing.
+- **PER-CHARACTER layer** = specialisation and the long-tail grind.
+This ordering matters: if ALL power were per-character, switching would feel like a punishment and a
+player who invested in character A would resent needing character B. The global floor is what makes the
+soft reset read as "a different build" rather than "I lost my progress".
+
+**Specialisation needs things to be good AT**, so this depends on content variety:
+- preferred BIOME/STAGE (connects to the map-selection gap — research running),
+- preferred ENEMY types or density (e.g. strong vs swarms, weak vs ranged),
+- preferred PLAYSTYLE (e.g. a stance/pilot synergy, or a weapon family).
+Pick the axis only after the map and enemy research lands. A character must have a visible identity the
+player can plan around.
+
+**WHY THIS IS ALSO THE ANSWER TO THE 60-HOUR PROBLEM:** N characters x M upgrades each multiplies
+purchasable entries WITHOUT inflating any single item's price. Our catalogue is short because 34 entries
+carry the whole economy and two items hold 48% of it. Per-character paths add breadth structurally
+instead of by making items expensive — which is exactly the shape G17 and CATALOGUE_PLAN.md call for.
+
+**RISKS AND MITIGATIONS (do not skip these):**
+- The soft reset must not feel like a tax: keep the first per-character upgrades cheap, keep the global
+  floor meaningful, and make each character's speciality legible BEFORE the player invests.
+- Do not let one character become strictly best (that kills the whole loop). Each needs a real weakness.
+- Do not gate the CORE game behind per-character power — a fresh character must still be playable.
+
+**SCHEMA REQUIREMENT:** per-character progress must live in its own namespaced section of the profile
+(e.g. `characters: { [id]: { upgrades, ... } }`), never as scattered top-level fields, so future
+per-character data never needs another top-level migration. The save foundation wave (W1) has just
+finished; verify its schema can hold this and extend it if not — one clean migration now beats five later.
+
+**Reached when:** per-character upgrades exist and persist, the global layer still applies everywhere, at
+least three characters have distinct and legible specialisations with real weaknesses, switching
+demonstrably resets the per-character portion while the global floor holds, and the sim can report
+progression for a fresh character vs a developed one.
+
 ## Loop mechanics
 
 - Write every brief to a file; give each agent strict file ownership and a single writer per file.
@@ -255,3 +440,110 @@ logic/schema files, is safe; two agents in `main.js` is not.
   would otherwise have shipped (the desktop chrome rendering over the intro movie).
 - Publish (G1) whenever the correctness goals hold; do not wait for G6.
 - Record what each wave actually did here or in a wave note, including what did NOT work.
+
+---
+
+## G18 CORRECTION (2026-09-12) + NEW CONTENT GOALS
+
+**G18 IS NOW THE TOP STRUCTURAL PRIORITY, AHEAD OF THE ECONOMY.** The run-structure study invalidated my
+own working assumption, so it is corrected here rather than quietly edited:
+
+- Our run is **~3.5 min ended by death**. The genre leaders complete a run at **30 min** (VS) or **10 min**
+  per stage (Megabonk). "Everyone dies by minute 5" is therefore **not a design choice matching the genre
+  — it is a failure state.**
+- **We have no victory condition.** VS pays a discrete "stage complete" bonus for surviving to the limit.
+  If every run ends in death, every run is a loss. Part of the testers' "this feels off" is a MISSING WIN,
+  not only balance.
+- **New targets:** completed run = **8-12 min** (~10 working); add a **RUN SURVIVED** win at the limit with
+  a payout; boss stays a milestone for unlocking rather than the only ending; cadence = one wave per
+  minute + an enemy scaling ramp + a boss/elite beat every ~2-3 min (3-4 beats per run).
+- **ECONOMY REPRICE:** 60h at ~10 min = **~360 runs** (I had computed ~1,029 at 3.5 min). Final boss at
+  40h = **~240 runs**. Every earlier pacing target that encodes 3.5-min runs — including the mid-tier
+  "35-65% after 10 good runs" figure — is now the wrong unit and must be rebuilt.
+- Validation: VS completionist mean **56.6h** (n=861), Megabonk **59.5h** (n=37) — our 60h is normal. Our
+  run COUNT was the outlier, not the hours.
+
+**G20 — PLAYER-SELECTED STAGES + A MODIFIER AXIS.** 6-8 selectable stages (VS ships ~27; Megabonk 3 maps x
+3 tiers), each with 2-3 modes/tiers. Use the cheap "modifier-on-arena" model: reuse geometry, swap the
+enemy pool, apply per-stage stat modifiers, retint, add ONE signature hazard. Per-stage ITEM/REWARD POOLS
+are what make stage choice a build decision. Gate stages by achievement-style unlocks (reach level X,
+defeat a boss), not gold. Add a separate Hyper/Inverse/Endless-style modifier axis — the highest-ROI
+variety lever in either game. **Never ship a reskin:** players judge maps on mechanics.
+
+**G21 — RULE-CHANGING CARDS + A SMALL ACTIVE SET.** Neither leader has player-triggered actives (VS is
+100% auto; Megabonk's "abilities" are passive character traits) — so our actives were never the gap. Keep
+3-4 actives on distinct ROLES (CC / burst / mobility / defense) and add **12-20 rule-changing cards** that
+rewrite how abilities behave ("on-kill explosions", "healing also damages nearby enemies", "empty slots
+grant cooldown", "all projectiles pierce"). Finite build slots so every pick excludes others; a keyword
+taxonomy (FROST/CHAIN/ORBIT/BURN/CONDUCT) so stacking is legible; one rule-card per tag plus cross-tag
+combos; an opportunity-cost incentive for leaving a slot empty.
+
+**G22 — ENEMY BEHAVIOUR BUDGET + THE RARITY LADDER.** 25-40 named enemy types over **~8 distinct
+behaviours** (hard cap 10), one behaviour per archetype, and a genuine gap to own: VS has **no splitter**.
+Elites = stat + resistance + size + **persistence** (steal VS's "cannot be outrun, teleports back on
+screen") with exactly one visible tell. Publish the elite rate as a NUMBER (Megabonk: 0.6% per eligible
+spawn, linear with a stat, and not every type can roll elite). Rare signalling has three levers: spawn-tell
+(unique silhouette/size/outline/HP bar/clock position), **anti-tell** (the Mimic model — disguise a rare
+1:1 as a common enemy and let recognition be the reward, with a guaranteed distinct drop), and map/UI-tell
+for secrets (pulsing icon, black question mark, silhouette, stopped timer). Every new tier should introduce
+a MECHANIC, not a multiplier.
+
+**G23 — BESTIARY WITH FOUR JOBS.** Per-enemy KILL COUNTER (proof of progress), combat stats that matter
+(HP/power/speed/resistances/skills/stage), undiscovered entries that show the SLOT but hide the identity
+(number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
+a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
+
+**G24 — OPT-IN DIFFICULTY THAT PAYS.** Both leaders pair a difficulty dial with MORE rewards (VS Curse →
+more kills/XP/gold, Hyper +50% gold; Megabonk Difficulty → more XP/Silver/gold). This is the genre's
+primary long-tail progression tool and ours only hurts. Heat must visibly PAY MORE, not just bite harder.
+
+Full consolidated numbers live in `docs/DESIGN_TARGETS.md` (supersedes scattered figures elsewhere).
+
+**G25 — THE APEX TIER: deliberately game-breaking prestige items.** Owner, verbatim: *"there should also be
+some mecha ultra super powered items in the shop that basically break the game once they are purchased.
+their cost should require a grind even with top level gear, and they shouldn't be considered when it comes
+to length of time for completion of the game. they are strictly to offer a stretch goal for an extra
+committed player. the 'proof' for the player who wants to feel accomplished"*
+
+Five requirements, all binding:
+1. **They BREAK the game** — each one removes a CONSTRAINT rather than adding a number (+20% is not apex;
+   "weapons have no cooldown" is apex).
+2. **Cost = a real grind at END-GAME income**, priced against a fully developed late build, not early runs.
+3. **EXCLUDED from the completion curve.** The ~60h target and every pacing target must be computed WITHOUT
+   them, so the apex tier never inflates the "time to finish" figure.
+4. **A separate, clearly-marked tier** in the shop, gated behind completion milestones so they cannot be
+   bought early or by accident.
+5. **They are PROOF.** Ownership must be VISIBLE — aura, title, HUD flourish, and a full-screen pixel-art
+   gallery entry — or the grind has no trophy value.
+
+**THE ECONOMY WIN THIS SOLVES:** after ~60h of unlocks, gold normally becomes meaningless and the loop
+dies. An infinitely-scaled prestige sink gives late gold a purpose forever, which is also the honest answer
+to "what do I do now" for a player who has finished everything.
+
+**DESIGN RULES (these are where it goes wrong if ignored):**
+- **Break the game ON PURPOSE and OBVIOUSLY.** These are not balance-neutral; they are meant to be absurd.
+  Do not tune them down later. Their absurdity is the reward.
+- **DETERMINISTIC, never random.** VS's Golden Eggs are the closest precedent and the cautionary tale:
+  random per-character stat eggs let players permanently degrade their own movement control. Ours are chosen,
+  named, and legible.
+- **MUST BE TOGGLEABLE OFF.** Megabonk's community lesson is exact: unlocks that permanently join the pool
+  make the game worse and players rush to find the Toggler. Apex gear must be switchable so a player can
+  return to an honest run.
+- **NEVER REQUIRED.** No achievement, trophy, stage, character or ending may depend on owning one. Otherwise
+  the stretch goal becomes a wall.
+- **PROTECT THE INTEGRITY OF THE CLEAN CLEAR.** A run completed with apex gear must be distinguishable from
+  one without (e.g. a marked result), so "I beat it legitimately" keeps its meaning. This is the whole point
+  of the tier — the proof only means something if the un-boosted version is still on the record.
+- **PARTITION THE DATA.** Catalogue/balance tooling must carry an explicit `apex` flag, or our own sims will
+  silently fold the apex tier into "time to buy everything" and skew every pacing number.
+
+**Shape I recommend:** one tier, named **APEX**, sitting above the normal catalogue in its own shop panel,
+with ~6-10 items. Two kinds: (a) *rule-breakers* — "weapons never stop firing", "the run no longer ends at
+the limit", "chests always yield the maximum", "a full passive loadout from the first minute", "your
+character's signature rule applies to every character"; and (b) at least one *pure-proof* item — no power
+at all, nothing but a visible mark that the player did it. Priced so the first takes many hours of
+top-tier play and the last of them is a genuine long-haul goal.
+
+**Reached when:** an APEX panel exists and is gated behind completion; each item removes a real constraint
+visibly and can be toggled off; their cost is calibrated against measured end-game income (not guessed);
+completion-time reporting excludes them and says so; and a clean (non-apex) clear is still distinguishable.

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HORDES — ART PREVIEW (A1)</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 18px 18px 60px;
+    background: #14121c; color: #d8d4e4;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #ffd54a; letter-spacing: 1px; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #ff9a3c; letter-spacing: .5px; }
+  p.note { margin: 4px 0; color: #9a94ac; max-width: 900px; }
+  code { color: #9effe0; }
+  .bar { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 10px 0 4px;
+         padding: 8px 10px; background: #1d1a28; border: 1px solid #2e2940; border-radius: 4px; }
+  .bar label { color: #b8b2c8; }
+  select, input { background: #14121c; color: #d8d4e4; border: 1px solid #3a3450;
+                  border-radius: 3px; padding: 2px 6px; font: inherit; }
+  canvas { display: block; background: #0a090e; border: 1px solid #2e2940; border-radius: 3px;
+           image-rendering: pixelated; }
+  #err { display: none; margin: 16px 0; padding: 12px; border: 1px solid #c23b3b;
+         background: #2a1114; color: #ffb3b3; border-radius: 4px; }
+  .legend { color: #857f96; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>HORDES — ART PREVIEW (A1 art track)</h1>
+<p class="note">Every asset exported by <code>src/art/</code>, drawn through the game's own
+integer-pixel <code>drawGrid(grid, palette, x, y)</code> path (one fillRect per pixel, smoothing off).
+A code claim is not evidence for art — this page is how the art gets judged. Screenshot it.</p>
+
+<div id="err">
+  <b>Could not load the ES modules.</b> Opening this file directly with <code>file://</code> blocks
+  module imports in Chrome/Edge (CORS). Serve the repo root and open the page over HTTP:
+  <br><br><code>cd /home/claude/projects/hordes &amp;&amp; python3 -m http.server 8080</code>
+  <br>then <code>http://localhost:8080/tools/art_preview.html</code>
+  <br><br>Firefox also blocks <code>file://</code> modules by default.
+</div>
+
+<div class="bar">
+  <label for="zoom">Display scale</label>
+  <select id="zoom">
+    <option value="2">2x (overview)</option>
+    <option value="4" selected>4x (judge)</option>
+    <option value="6">6x</option>
+    <option value="8">8x (full-screen judgement)</option>
+  </select>
+  <label><input type="checkbox" id="labels" checked> labels</label>
+  <label><input type="checkbox" id="checker" checked> transparency checker</label>
+  <span class="legend" id="summary">loading…</span>
+</div>
+
+<div id="root"></div>
+
+<script type="module">
+const root = document.getElementById('root');
+const errBox = document.getElementById('err');
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  const s = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
+}
+
+// The game's renderer.drawGrid, exactly: one 1x1 fillRect per pixel, 0 skipped.
+function drawGrid(g, grid, palette, x, y) {
+  for (let ry = 0; ry < grid.length; ry++) {
+    const row = grid[ry];
+    for (let rx = 0; rx < row.length; rx++) {
+      const v = row[rx];
+      if (!v) continue;
+      const col = palette[v];
+      if (!col) continue;
+      g.fillStyle = col;
+      g.fillRect(x + rx, y + ry, 1, 1);
+    }
+  }
+}
+
+function paintBackground(g, w, h) {
+  g.fillStyle = '#0a090e';
+  g.fillRect(0, 0, w, h);
+  if (document.getElementById('checker').checked) {
+    for (let y = 0; y < h; y += 4) {
+      for (let x = 0; x < w; x += 4) {
+        const on = ((x / 4) + (y / 4)) % 2 === 0;
+        g.fillStyle = on ? '#15131d' : '#1d1a28';
+        g.fillRect(x, y, 2, 2);
+        g.fillRect(x + 2, y + 2, 2, 2);
+      }
+    }
+  }
+}
+
+const UI = { fontSize: 11, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' };
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  paintBackground(g, w, h);
+  return { c, g };
+}
+
+function section(title, note) {
+  const h = document.createElement('h2');
+  h.textContent = title;
+  root.appendChild(h);
+  if (note) {
+    const p = document.createElement('p');
+    p.className = 'note';
+    p.textContent = note;
+    root.appendChild(p);
+  }
+  return h;
+}
+
+function render(art, scale) {
+  root.textContent = '';
+  const showLabels = document.getElementById('labels').checked;
+  const labelPx = 11;
+  const labelH = showLabels ? labelPx + 6 : 6;
+  const pad = 10;
+  let drawn = 0;
+
+  for (const sec of art.ART_SECTIONS) {
+    section(sec.label, 'section "' + sec.id + '" · ' +
+      sec.items.length + ' asset(s) · native pixel box: ' +
+      sec.items[0].w + 'x' + sec.items[0].h);
+
+    if (sec.kind === 'layered') {
+      // The title card is a stacked composition already sized to 480x300.
+      // Draw it with the ONE-CALL helper to prove the exported shape needs no
+      // adapter, then also draw it with a raw drawGrid loop as a cross-check.
+      const pw = art.TITLE_WIDTH * Math.max(1, Math.floor(scale / 2));
+      const ph = art.TITLE_HEIGHT * Math.max(1, Math.floor(scale / 2));
+      const { c, g } = makeCanvas(pw + pad, ph + pad + labelH);
+      g.save();
+      g.setTransform(Math.max(1, Math.floor(scale / 2)), 0, 0, Math.max(1, Math.floor(scale / 2)), pad / 2, pad / 2);
+      art.drawTitle(drawGrid, g);          // one call, whole card
+      g.restore();
+      if (showLabels) {
+        g.font = labelPx + 'px ' + UI.fontFamily;
+        g.fillStyle = '#b8b2c8';
+        g.fillText('TITLE_ART (drawTitle) 480x300, ' + art.TITLE_LAYERS.length +
+          ' layers: ' + art.TITLE_LAYERS.map(l => l.id + '@' + l.x + ',' + l.y + 'x' + l.scale).join('  '),
+          pad, ph + labelPx + 2);
+      }
+      root.appendChild(c);
+      drawn += art.TITLE_LAYERS.length;
+
+      // layer-by-layer inspection strip
+      const ls = Math.max(1, Math.floor(scale / 2));
+      const lw = art.TITLE_WIDTH * ls + pad;
+      const lh = art.TITLE_HEIGHT * ls + pad;
+      const lc = document.createElement('canvas');
+      lc.width = lw * art.TITLE_LAYERS.length; lc.height = lh;
+      const lg = lc.getContext('2d');
+      lg.imageSmoothingEnabled = false;
+      art.TITLE_LAYERS.forEach((L, i) => {
+        lg.fillStyle = '#0a090e';
+        lg.fillRect(i * lw, 0, lw, lh);
+        lg.save();
+        lg.setTransform(ls, 0, 0, ls, i * lw + pad / 2, pad / 2);
+        drawGrid(lg, art.scaleGrid(L.grid, L.scale), L.palette, L.x, L.y);
+        lg.restore();
+        lg.font = labelPx + 'px ' + UI.fontFamily;
+        lg.fillStyle = '#9effe0';
+        lg.fillText(L.id + ' ' + L.grid[0].length + 'x' + L.grid.length + ' x' + L.scale,
+                    i * lw + 6, 12);
+      });
+      root.appendChild(lc);
+      continue;
+    }
+
+    const items = sec.items;
+    const cell = Math.max(...items.map(a => a.w)) * scale + pad;
+    const cellH = Math.max(...items.map(a => a.h)) * scale + pad + labelH;
+    const cols = Math.max(1, Math.min(8, Math.floor((window.innerWidth - 60) / cell)));
+    const rows = Math.ceil(items.length / cols);
+    const { c, g } = makeCanvas(cols * cell + pad, rows * cellH + pad);
+
+    items.forEach((a, i) => {
+      const cx = pad + (i % cols) * cell;
+      const cy = pad + Math.floor(i / cols) * cellH;
+      // Flat assets ({id, grid, palette, ...}) have no .frames — falling back to
+      // [a] would hand drawGrid the whole asset OBJECT, and iterating .length on
+      // an object is undefined, so the loop silently drew nothing at all. That
+      // is why every flat asset (all trophies, all shop icons) rendered blank.
+      const frames = a.frames || [a.grid];
+      frames.forEach((fr, f) => {
+        // The zoom has to come from the transform: drawGrid paints one 1x1 rect
+        // per pixel, so without this every sprite renders at its native 32px
+        // inside a cell sized for `scale` and the sheet reads as empty. The
+        // labels below already position themselves for SCALED dimensions.
+        g.save();
+        g.setTransform(scale, 0, 0, scale, cx + f * (a.w * scale + 4), cy);
+        drawGrid(g, fr, a.palette, 0, 0);
+        g.restore();
+        drawn++;
+      });
+      if (showLabels) {
+        g.font = labelPx + 'px ' + UI.fontFamily;
+        g.fillStyle = '#d8d4e4';
+        g.fillText(a.id, cx, cy + a.h * scale + labelPx);
+        g.fillStyle = '#857f96';
+        g.fillText(a.w + 'x' + a.h + (a.frames ? ' x' + a.frames.length + 'f' : ''),
+                   cx + Math.max(80, a.w * scale - 42), cy + a.h * scale + labelPx);
+      }
+    });
+    root.appendChild(c);
+
+    if (sec.id === 'trophies') {
+      // FULL-SCREEN READ: the first trophy blown up to roughly the size it
+      // reaches on a 480x300 canvas shown full-screen, so the read can be judged.
+      section('FULL-SCREEN READ (single trophy at 8x, 256px)',
+              'A trophy at 8x is roughly how large it lands on a phone in the gallery. ' +
+              'If it stops reading here, it will not read in the game.');
+      const big = items[0];
+      const b = makeCanvas(big.w * 8 + pad * 2, big.h * 8 + pad * 2);
+      // Same reason as the grid: 8x must come from the transform, or this panel
+      // shows a 32px sprite in the corner of a 256px box and judges nothing.
+      b.g.save();
+      b.g.setTransform(8, 0, 0, 8, pad, pad);
+      drawGrid(b.g, big.grid, big.palette, 0, 0);
+      b.g.restore();
+      root.appendChild(b.c);
+    }
+  }
+
+  document.getElementById('summary').textContent =
+    drawn + ' pixel layers drawn · ' + art.ART_SECTIONS.length + ' sections · counts ' +
+    JSON.stringify(art.ART_COUNTS);
+}
+
+try {
+  const art = await import('../src/art/index.js');
+  const zoom = document.getElementById('zoom');
+  const redraw = () => render(art, parseInt(zoom.value, 10));
+  zoom.addEventListener('change', redraw);
+  document.getElementById('labels').addEventListener('change', redraw);
+  document.getElementById('checker').addEventListener('change', redraw);
+  redraw();
+  // A machine-readable marker for a screenshot/vision pass to check against.
+  window.__ART_PREVIEW_READY = { sections: art.ART_SECTIONS.length, counts: art.ART_COUNTS };
+  console.log('art preview ready', window.__ART_PREVIEW_READY);
+} catch (e) {
+  errBox.style.display = 'block';
+  errBox.insertAdjacentHTML('beforeend', '<br><br><code>' + String(e && e.message || e) + '</code>');
+  document.getElementById('summary').textContent = 'LOAD FAILED';
+  console.error(e);
+}
+</script>
+</body>
+</html>
