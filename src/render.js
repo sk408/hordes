@@ -1,6 +1,6 @@
 // HORDES — pixel rendering. Sprites are pixel grids drawn with fillRect:
 // no image assets, no drawImage — pure structured data.
-import { CONFIG as C } from './config.js';
+import { CONFIG as C, runClock } from './config.js';
 import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
 import {
@@ -149,12 +149,20 @@ export class Renderer {
 
   // Generic pixel-grid painter (sprites.js enemies/boss/flames carry their own
   // palette objects keyed 1..9; 0 = transparent).
-  drawGrid(g, grid, palette, x, y) {
+  //
+  // G9: `scale` is an INTEGER pixel-block size (default 1, so every existing
+  // caller paints exactly as before). It exists for the trophy showcase, which
+  // paints ONE 32x32 emblem at the largest whole-factor size that fits the
+  // view. A canvas transform could do the same job, but the game's pixel-art
+  // convention is uniform NxN blocks and a per-pixel fillRect keeps the
+  // painted geometry measurable — the gallery test reads the real rects.
+  drawGrid(g, grid, palette, x, y, scale = 1) {
+    const s = Math.max(1, Math.floor(scale));
     for (let ry = 0; ry < grid.length; ry++) {
       const row = grid[ry];
       for (let rx = 0; rx < row.length; rx++) {
         const v = row[rx];
-        if (v) { g.fillStyle = palette[v]; g.fillRect(x + rx, y + ry, 1, 1); }
+        if (v) { g.fillStyle = palette[v]; g.fillRect(x + rx * s, y + ry * s, s, s); }
       }
     }
   }
@@ -1081,6 +1089,39 @@ export class Renderer {
     g.fillStyle = '#fff3c4';
     g.fillText(lvTxt, lvX + 3, lvY + 2);
 
+    // --- RUN CLOCK (SURVIVAL-GAP wave) -------------------------------------
+    // The 30:00 limit is the run's core structure, but the always-on CANVAS HUD
+    // never showed it: only the opt-in text HUD, the per-minute toast and the
+    // end cards did. This is the readout a player must always have — how far
+    // into the run they are. Pixel-art, in the existing HUD language: the clock
+    // as a bold label on the same dark plate every other label uses, plus a
+    // thin limit bar with the same steel-frame / dark-trough chrome as the XP
+    // bar and a red limit tick at the far end. It turns warm once the
+    // FINAL_CALL_AT callout lands. Frame-rate independence is by construction:
+    // it reads state.time (sim seconds, dt-driven) through the same runClock()
+    // the win condition uses — no frame counters, nothing to stack.
+    const clockTxt = runClock(t);
+    const clockPx = H.CLOCK_PX;
+    const cw = clockTxt.length * Math.round(clockPx * 0.62) + 4;
+    const cx = C.VIEW_W - 24 + 2 - cw;
+    const finalCall = t >= C.RUN.FINAL_CALL_AT;
+    label(clockTxt, cx, 13, finalCall ? '#ff9c6a' : '#cfe8ff', clockPx);
+    const cbX = cx - 2, cbY = 13 + clockPx + 4, cbW = cw, cbH = 4;
+    const limitFrac = Math.max(0, Math.min(1, t / C.RUN.LIMIT));
+    g.fillStyle = H.FRAME;                         // steel container frame
+    g.fillRect(cbX - 2, cbY - 2, cbW + 4, cbH + 4);
+    g.fillStyle = '#000000';                       // 1px pixel border
+    g.fillRect(cbX - 1, cbY - 1, cbW + 2, cbH + 2);
+    g.fillStyle = H.TROUGH;                        // dark empty track
+    g.fillRect(cbX, cbY, cbW, cbH);
+    g.fillStyle = '#4a8cff';                       // the run-progress fill
+    g.fillRect(cbX, cbY, Math.round(cbW * limitFrac), cbH);
+    g.fillStyle = 'rgba(255,255,255,0.30)';        // top glint row
+    g.fillRect(cbX, cbY, Math.round(cbW * limitFrac), 1);
+    g.fillStyle = '#ff2f5e';                       // the limit tick (30:00)
+    g.fillRect(cbX + cbW - 1, cbY, 1, cbH);
+    chrome.clock = { text: clockTxt, frac: limitFrac, finalCall };
+
     // --- WAVE-27: no doctrine text on the canvas ----------------------------
     // The FOCUS / STANCE readout that used to sit here is gone (owner ruling:
     // the overlay buttons' badges already carry that state, and the stance
@@ -1195,6 +1236,69 @@ export class Renderer {
     }
 
     this.hudChrome = chrome;
+  }
+
+  // ---- G9 TROPHY SHOWCASE (the owner's full-screen pixel-art ask) -----------
+  // Owner: "would be really cool to have the trophy gallery have the ability to
+  // show full screen pixel art of the trophy." This paints ONE trophy emblem as
+  // large as the view honestly allows, over the whole canvas, so the gallery
+  // screen (main.js mode 'trophies') can push its cards to the bottom and leave
+  // the emblem owning the middle of the screen.
+  //
+  // WHAT IT READS: state.trophyView = { art, locked, id } | null. `art` is
+  // ALREADY the right grid — achievements.galleryModel hands back the real
+  // emblem on an earned entry and the LOCKED silhouette on an unearned one — so
+  // this method never decides what is earned and never keeps a second copy of
+  // the art table, a name or a description.
+  //
+  // INTEGER SCALE ONLY: the size is the largest WHOLE number of canvas pixels
+  // per art pixel that fits the budget box (~72% of the view width, ~62% of the
+  // height, leaving room for the frame and the bottom card row). A fractional
+  // scale would make one art pixel 4px and its neighbour 5px; at 32x32 that
+  // reads as a broken sprite, so uniformity wins over filling the box exactly.
+  // Same reason drawGrid takes an integer block size: this is the game's
+  // pixel-art convention, with no smoothing anywhere in the path.
+  //
+  // SEAM: this.trophyShowcase = { scale, x, y, w, h, id, locked } is the exact
+  // box painted this frame (null when no trophy is selected), so the gallery
+  // test can measure the geometry instead of pixel-diffing the canvas.
+  drawTrophyShowcase(g, state) {
+    const tv = state && state.trophyView;
+    if (!tv || !tv.art || !Array.isArray(tv.art.grid) || tv.art.grid.length === 0) {
+      this.trophyShowcase = null;
+      return;
+    }
+    const art = tv.art;
+    const gw = art.w || art.grid[0].length;
+    const gh = art.h || art.grid.length;
+
+    // Full-screen backdrop first: the world and HUD are still painted under
+    // this (the frame loop runs in every mode), so the showcase owns the view.
+    g.fillStyle = 'rgba(3,3,8,0.94)';
+    g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+
+    const maxW = Math.floor(C.VIEW_W * 0.72);
+    const maxH = Math.floor(C.VIEW_H * 0.62);
+    let scale = Math.min(Math.floor(maxW / gw), Math.floor(maxH / gh));
+    if (!(scale >= 1)) scale = 1;     // an oversized emblem still paints 1:1
+    const w = gw * scale, h = gh * scale;
+    const x = Math.round((C.VIEW_W - w) / 2);
+    const y = Math.round((C.VIEW_H - h) / 2);
+
+    // Display case in the HUD's own chrome vocabulary (CONFIG.HUD): outer steel
+    // FRAME, a 1px black seam, then a dark plate. Identical primitives to the
+    // bars and plates in drawHudChrome, so the showcase reads as the same game.
+    const PAD = 6;
+    g.fillStyle = C.HUD.FRAME;
+    g.fillRect(x - PAD - 2, y - PAD - 2, w + PAD * 2 + 4, h + PAD * 2 + 4);
+    g.fillStyle = '#000000';
+    g.fillRect(x - PAD - 1, y - PAD - 1, w + PAD * 2 + 2, h + PAD * 2 + 2);
+    g.fillStyle = C.HUD.PLATE_SOLID;
+    g.fillRect(x - PAD, y - PAD, w + PAD * 2, h + PAD * 2);
+
+    this.drawGrid(g, art.grid, art.palette, x, y, scale);
+
+    this.trophyShowcase = { scale, x, y, w, h, id: tv.id, locked: !!tv.locked };
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------

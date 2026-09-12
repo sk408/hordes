@@ -40,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 3;
+export const PROFILE_VERSION = 4;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -81,6 +81,13 @@ export const VERSION_HISTORY = [
       'character id ({ [characterId]: { upgrades: { upgradeId: level }, ... } }), ' +
       'validated against the live character + per-character upgrade catalogs. ' +
       'Populated empty — no character starts with upgrades.',
+  },
+  {
+    version: 4,
+    note: 'G9 achievements: profile.achievements = { v, earned: { [id]: epochMs }, ' +
+      'progress: { [id]: n }, totals: {...} }. Earned trophies are NEVER dropped by ' +
+      'validation (a damaged stamp repairs to 1, never to "unearned"). Populated empty — ' +
+      'an existing player starts with no trophies and no progress recycled.',
   },
 ];
 
@@ -164,6 +171,16 @@ const MIGRATIONS = {
   2: (p) => {
     const next = { ...p };
     if (!plainObject(next.characters)) next.characters = {};
+    return next;
+  },
+  // v3 -> v4: G9 achievements namespace. Guarantee the container is a plain
+  // object and NOTHING ELSE — no trophy is granted, no progress invented, and
+  // no existing field is touched, so this step is lossless for every v3 save.
+  // Present-but-garbage data is left for validateProfile to repair + report
+  // (one repair path, not two).
+  3: (p) => {
+    const next = { ...p };
+    if (!plainObject(next.achievements)) next.achievements = {};
     return next;
   },
 };
@@ -302,6 +319,74 @@ export function validateProfile(profile, cat) {
     repairs.push('characters');
   }
   out.characters = characters;
+
+  // ---- achievements (G9: trophies + cumulative counters) ----
+  // THE SEMANTIC-SAFETY RULE FOR THIS NAMESPACE: an earned trophy is NEVER
+  // dropped by validation. The worst a damaged entry can do is lose its
+  // timestamp (repaired to 1) or its progress number (repaired to 0) — and the
+  // gallery backfills a progress value below the goal from the goal itself, so
+  // an earned trophy can never be displayed as "3 / 100". Losing a trophy
+  // because a save was hand-edited is the one failure a player never forgives,
+  // so this section errs entirely toward keeping.
+  //
+  // UNKNOWN ids are PRESERVED here (the same policy `purchased` uses): a save
+  // written by a NEWER build must round-trip through this one untouched, and
+  // an inert id costs nothing — the gallery iterates the known trophy list
+  // only, and its earned count counts known ids only.
+  //
+  // This layer validates STRUCTURE only. Semantic repair (goal backfill,
+  // clamping a progress value to its goal) lives in src/achievements.js, which
+  // owns the goal table — so this file stays free of achievement-specific
+  // knowledge and the two concerns cannot disagree.
+  const achIn = plainObject(p.achievements) ? p.achievements : {};
+  const earned = {};
+  const earnedIn = achIn.earned;
+  if (plainObject(earnedIn)) {
+    for (const [id, at] of Object.entries(earnedIn)) {
+      if (UNSAFE_KEYS.has(id)) { repairs.push('achievements.earned.' + id); continue; }
+      if (at === false || at === null || at === undefined || at === '') {
+        repairs.push('achievements.earned.' + id); continue;   // not earned at all
+      }
+      const n = Number(at);
+      const stamped = Number.isFinite(n) && Math.floor(n) > 0 ? Math.floor(n) : 1;
+      earned[id] = stamped;
+      if (stamped !== at) repairs.push('achievements.earned.' + id);
+    }
+  } else if (earnedIn !== undefined) {
+    repairs.push('achievements.earned');
+  }
+  const achProgress = {};
+  const progressIn = achIn.progress;
+  if (plainObject(progressIn)) {
+    for (const [id, n] of Object.entries(progressIn)) {
+      if (UNSAFE_KEYS.has(id)) { repairs.push('achievements.progress.' + id); continue; }
+      const v = Number(n);
+      if (!Number.isFinite(v)) { achProgress[id] = 0; repairs.push('achievements.progress.' + id); continue; }
+      const iv = Math.max(0, Math.floor(v));
+      achProgress[id] = iv;
+      if (iv !== n) repairs.push('achievements.progress.' + id);
+    }
+  } else if (progressIn !== undefined) {
+    repairs.push('achievements.progress');
+  }
+  const totals = {};
+  const totalsIn = achIn.totals;
+  if (plainObject(totalsIn)) {
+    for (const [k, n] of Object.entries(totalsIn)) {
+      if (UNSAFE_KEYS.has(k)) { repairs.push('achievements.totals.' + k); continue; }
+      const v = Number(n);
+      if (!Number.isFinite(v)) { totals[k] = 0; repairs.push('achievements.totals.' + k); continue; }
+      const iv = Math.max(0, Math.floor(v));
+      totals[k] = iv;
+      if (iv !== n) repairs.push('achievements.totals.' + k);
+    }
+  } else if (totalsIn !== undefined) {
+    repairs.push('achievements.totals');
+  }
+  const achV = Number.isFinite(Number(achIn.v)) && Math.floor(Number(achIn.v)) > 0
+    ? Math.floor(Number(achIn.v)) : 1;
+  out.achievements = { v: achV, earned, progress: achProgress, totals };
+  if (!plainObject(p.achievements) && p.achievements !== undefined) repairs.push('achievements');
 
   // ---- unlocked characters + equipped selection ----
   // Real ids only, deduped, KNIGHT (free) always present, and the equipped

@@ -12,7 +12,8 @@ import {
   shopRowOwned, catalogCost,
 } from '../src/meta.js';
 import { WEAPON_TYPES } from '../src/weapons.js';   // read-only: drift guard
-import { CONFIG as C } from '../src/config.js';     // read-only: sim sync anchor
+import { CONFIG as C, ladderHp, ladderDmg } from '../src/config.js';  // read-only: sim sync anchor
+import { hpScale, dmgScale } from '../src/entities.js';               // read-only: shipped curves
 import { SIM_ASSUMPTIONS, SIM_TUNING, simulateCareer }
   from '../tools/balance_sim.mjs';                  // sim↔meta single source of truth
 
@@ -597,31 +598,47 @@ console.log('ECONOMY TARGETS:');
      'BEAM is not plausibly one-run money even late');
 }
 
-// ---------- Sim ↔ meta single source of truth (WAVE-11 balance sim) --------
+// ---------- Sim ↔ meta single source of truth (BALANCE SIM v2) --------------
+// SURVIVAL-GAP wave: the sim was rebuilt for the LIVE bounded ladder (15 waves
+// x 120s = RUN.LIMIT). These assertions were re-pointed at the new derivation —
+// the old ones pinned the retired 5-wave unit (END_WAVE-based rampSum / TW0),
+// which no longer describes a run. The run-structure BLOCK was strengthened,
+// not weakened: it now also pins the ladder to the same curve authority the
+// game reads.
 console.log('SIM SYNC:');
 {
-  // tools/balance_sim.mjs must DERIVE its assumptions from GOLD_MODEL +
-  // config.js ESCALATION — never hardcode a second economy. Any drift between
-  // the sim's model and the live numbers fails here.
+  const MAX_TICK = Math.ceil(C.RUN.LIMIT / 30);
+  ok(SIM_ASSUMPTIONS.LIMIT === C.RUN.LIMIT
+     && SIM_ASSUMPTIONS.WAVES === C.LADDER.WAVES
+     && SIM_ASSUMPTIONS.WAVE_SECONDS === C.LADDER.WAVE_SECONDS,
+     'sim run structure matches CONFIG.RUN / CONFIG.LADDER (LIMIT / WAVES / WAVE_SECONDS)');
+  ok(SIM_ASSUMPTIONS.WAVES * SIM_ASSUMPTIONS.WAVE_SECONDS === SIM_ASSUMPTIONS.LIMIT,
+     'sim ladder spans the run limit exactly (WAVES x WAVE_SECONDS = LIMIT)');
   ok(SIM_ASSUMPTIONS.END_WAVE === C.ESCALATION.END_WAVE
      && SIM_ASSUMPTIONS.WAVE_LENGTH === C.ESCALATION.WAVE_LENGTH,
-     'sim run structure matches config ESCALATION (END_WAVE / WAVE_LENGTH)');
+     'sim still reports the SHIPPED milestone values (END_WAVE / WAVE_LENGTH)');
 
-  // The sim's difficulty ratio uses the live hpScale curve from the constants.
-  const { LINEAR, COMPOUND_FROM, COMPOUND } = C.ESCALATION.HP;
-  const expectHp = w => (1 + LINEAR * w) * Math.pow(COMPOUND, Math.max(0, w - COMPOUND_FROM));
-  ok([1, 3, 5, 8].every(w => SIM_ASSUMPTIONS.hpScale(w) === expectHp(w)),
-     'sim hpScale derives from ESCALATION.HP constants');
+  // The sim's curve authority is the ladder, and inside the knee that IS the
+  // shipped curve — the same invariant test_run_structure pins.
+  let kneeHolds = true;
+  for (let w = 0; w <= C.LADDER.KNEE_TICK; w++) {
+    if (SIM_ASSUMPTIONS.hpScale(w) !== hpScale(w)) kneeHolds = false;
+    if (SIM_ASSUMPTIONS.dmgScale(w) !== dmgScale(w)) kneeHolds = false;
+  }
+  ok(kneeHolds, 'sim curves (hpScale/dmgScale) equal the shipped curves inside the knee');
+  ok(SIM_ASSUMPTIONS.hpScale(MAX_TICK) === ladderHp(MAX_TICK)
+     && SIM_ASSUMPTIONS.dmgScale(MAX_TICK) === ladderDmg(MAX_TICK),
+     'sim curves are the LADDER at the run limit');
 
   ok(SIM_ASSUMPTIONS.goodRunGold === computeRunGold(GOLD_MODEL.GOOD_RUN),
      'sim good-run reference gold equals computeRunGold(GOLD_MODEL.GOOD_RUN)');
   ok(SIM_ASSUMPTIONS.killsPerFullRun === GOLD_MODEL.GOOD_RUN.kills
-     && SIM_ASSUMPTIONS.TW0 === GOLD_MODEL.GOOD_RUN.time / C.ESCALATION.END_WAVE,
-     'sim kill/time calibration anchors to the GOOD_RUN reference');
-  const rampSum = Array.from({ length: C.ESCALATION.END_WAVE },
+     && SIM_ASSUMPTIONS.TW0 === C.RUN.LIMIT / C.LADDER.WAVES,
+     'sim kill/time calibration anchors to the GOOD_RUN reference over the ladder');
+  const rampSum = Array.from({ length: C.LADDER.WAVES },
     (_, i) => 1 + SIM_TUNING.KILL_RAMP * i).reduce((s, x) => s + x, 0);
   ok(Math.abs(SIM_ASSUMPTIONS.K0 * rampSum - GOLD_MODEL.GOOD_RUN.kills) < 1e-9,
-     'per-wave kill shape sums to GOOD_RUN.kills over a full run');
+     'per-wave kill shape sums to GOOD_RUN.kills over a full ladder run');
 
   ok(JSON.stringify(SIM_ASSUMPTIONS.MID_TIER_IDS) === JSON.stringify(GOLD_MODEL.MID_TIER_IDS)
      && JSON.stringify(SIM_ASSUMPTIONS.TOP_TIER_IDS) === JSON.stringify(GOLD_MODEL.TOP_TIER_IDS),
@@ -632,10 +649,13 @@ console.log('SIM SYNC:');
      'sim uses GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS as the top-tier bar');
 
   // Deterministic smoke: one career, fixed seed, must reach the target and
-  // produce the milestone table shape.
+  // produce the milestone table shape. A "good run" is the run's MILESTONE —
+  // the same standard the retired 5-wave era used, re-pointed onto the ladder
+  // (a run that cleared past ESCALATION.END_WAVE); the harder RUN SURVIVED
+  // count is reported alongside.
   const career = simulateCareer(1337);
   ok(career.hitTarget === true && career.milestones.length === SIM_TUNING.GOOD_RUN_TARGET / 5,
-     'sim career smoke: deterministic career reaches all good-run milestones');
+     'sim career smoke: deterministic career reaches all milestone runs');
   ok(career.milestones[1].goodRuns === 10 && Number.isFinite(career.milestones[1].goodFrac),
      'sim career smoke: 10-good-run milestone carries the target-(a) metric');
   const again = simulateCareer(1337);

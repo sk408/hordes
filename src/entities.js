@@ -58,6 +58,26 @@ export function dmgScale(w) {
   return (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
 }
 
+// ---------- CONTACT DAMAGE (SURVIVAL-GAP wave) ------------------------------
+// ONE source of truth for what touching an enemy costs the player. main.js
+// calls this for every touching enemy (it takes the MAX hit of the frame, as it
+// always has, then applies the invuln window); the balance sims call the same
+// function, so the model can never be tuned against a stale copy of the combat
+// rules — see CONFIG.SURVIVAL for why the shape is what it is:
+//   raw = BASE_CONTACT * dmgMult^CONTACT_POW * typeMult * chargeMult
+//   hit = min(raw, maxHp * HIT_CAP_FRAC)
+// dmgMult is the ladder's damage curve (x9.32 by 30:00). The pow keeps the
+// threat climbing all run without letting it outrun the pool; the cap keeps any
+// single hit a FRACTION of the bar, so the wall is repeated catches again.
+// PURE: no state, no side effects.
+export function contactHitDamage(base, dmgMult, typeMult, chargeMult, maxHp) {
+  const S = C.SURVIVAL;
+  const scaled = Math.pow(Math.max(0.05, dmgMult || 1), S.CONTACT_POW);
+  const raw = base * scaled * (typeMult || 1) * (chargeMult || 1);
+  const cap = Math.max(1, (maxHp || C.PLAYER.MAX_HP) * S.HIT_CAP_FRAC);
+  return Math.min(raw, cap);
+}
+
 // ---------- applyEscalation (single source of truth) -----------------------
 // Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
 // enemy_types.js's linear preview multipliers (1+0.35w hp / 1+0.25w xp) and

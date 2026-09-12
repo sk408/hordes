@@ -46,6 +46,24 @@ const MAXED = PROFILE === 'maxed';
 const BOSS_HP_MULT = argOf('--boss-hp-mult', 1);
 const BOSS_DMG_MULT = argOf('--boss-dmg-mult', 1);
 const DIAG = BOSS_HP_MULT !== 1 || BOSS_DMG_MULT !== 1;
+// --progress: print the run clock + wave + alive count every 15 SIM seconds.
+// Diagnostic only (the run-by-run report is unchanged); it exists because a
+// maxed cohort run can now last the full 30:00 and there was previously no way
+// to tell "climbing the ladder" apart from "wedged".
+const PROGRESS = args.includes('--progress');
+// --set PATH=value (repeatable): experiment-only override of a CONFIG leaf for
+// THIS sim process (e.g. --set SURVIVAL.CONTACT_POW=0.65). Same spirit as
+// --boss-hp-mult: it mutates the live CONFIG object the loop reads, so a lever
+// can be measured without editing src/. Used to rank the SURVIVAL-GAP levers.
+for (let i = 0; i < args.length; i++) {
+  if (args[i] !== '--set' || !args[i + 1]) continue;
+  const [path, raw] = args[i + 1].split('=');
+  const parts = path.split('.');
+  let o = CFG;
+  for (let k = 0; k < parts.length - 1; k++) o = o[parts[k]];
+  o[parts[parts.length - 1]] = Number(raw);
+  console.log(`[--set] CONFIG.${path} = ${raw}`);
+}
 
 // ---- DOM shims (smoke.mjs pattern, trimmed to what main.js touches) -------
 const noop = () => {};
@@ -188,9 +206,17 @@ for (let r = 1; r <= RUNS; r++) {
   mainMod.__TEST.startRun();
   let ended = null;
   const capFrames = (MAX_SECONDS * 60) | 0;
+  let nextMark = 0;
   for (let i = 0; i < capFrames; i++) {
     if (frame() === 'dead') { ended = st.deathBy; break; }
     applyDiag();
+    if (PROGRESS && st.time >= nextMark) {
+      nextMark = Math.floor(st.time / 15) * 15 + 15;
+      console.log(`  [run ${r}] t=${Math.floor(st.time)}s wave ${st.wave.num} ` +
+        `alive ${st.enemies.length} bosses ${(st.wave.bosses || []).filter(b => b.hp > 0).length} ` +
+        `hp ${Math.ceil(st.player.hp)}/${st.player.stats.maxHp} lv ${st.player.level} ` +
+        `mode ${st.mode}${st.portal ? ' portal' : ''}${st.finalBoss ? ' MAW' : ''}`);
+    }
   }
   // RUN-STRUCTURE: a run that reaches the limit ends in the WIN state, not in
   // death (state.runWon), and must not be folded into the truncation case.

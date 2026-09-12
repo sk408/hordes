@@ -12,6 +12,49 @@ export const CONFIG = {
     XP_PICKUP_RADIUS: 22,
   },
 
+  // ---- SURVIVAL (SURVIVAL-GAP wave) ----------------------------------------
+  // The run is 30:00 long now, and nothing could reach it: the wave-29
+  // diagnostic narrowed the wall to CONTACT DAMAGE (boss contact x0.25 let 3/3
+  // maxed runs pass 10:00; boss hp x0.25 changed nothing). The function that was
+  // wrong is this one: a hit's damage was `BASE * dmgMult * typeMult *
+  // chargeMult`, drawn straight off the ladder's damage curve, which reaches
+  // x9.32 by 30:00 — against a player pool that only grows a little (Vitality
+  // +20/level, Iron Heart +25 flat, both ADDITIVE). A wave-1 GRAVELMAW charge
+  // was 14 * 2.6 * 2.2 * 1.5 = 120 against a 100-230 HP bar, and by wave 15 the
+  // same charge was 430: one arithmetic one-shot, at every tier, no matter how
+  // many hours of shop were behind the build. That is not difficulty, it is an
+  // unwinnable curve, and it is why a maxed save died at 1:52-2:13.
+  //
+  // Two changes, both FUNCTIONAL rather than a flattened magic number:
+  //   * the ladder's damage curve is the THREAT SIGNAL, and contact damage now
+  //     responds to it SUB-LINEARLY (pow). The threat still climbs all run —
+  //     from x1.61 to x3.05 of base contact — but it can no longer outrun the
+  //     pool by construction.
+  //   * a single hit is additionally capped at HIT_CAP_FRAC of the player's
+  //     max HP, which is the design intent the wave-20 comments always stated
+  //     ("a catch costs ~half a health bar, not the whole run"): the wall is
+  //     meant to be death by repeated catches, and now it can be.
+  //   * MAX HP grows with LEVEL (HP_PER_LEVEL, linear in the run's START pool)
+  //     — the run's missing EHP axis. A fresh save levels ~20-30 times and gains
+  //     ~+30-45%; a maxed build that survives to level 40-45 gains ~+60-70%,
+  //     which is what lets a developed build answer the late ladder at all. It
+  //     is deliberately LINEAR, not compounding: levels come fast in this game
+  //     (the autopilot hits level 40+ inside 9 minutes) and a compounding rule
+  //     made even a FRESH save unkillable (measured: 1018 HP at 8:45).
+  // Early-game effect is measured, not assumed: the fresh cohort must stay in
+  // the 3-6 minute band (it was dying at 1:52).
+  SURVIVAL: {
+    BASE_CONTACT: 14,     // the touch base (was the literal 14 in main.js)
+    CONTACT_POW: 0.65,    // contact damage ~ ladderDmg^0.65: the threat climbs
+                          // all run (x1.87 -> x4.02 of base contact by 30:00)
+                          // without outrunning the pool (see the measured lever
+                          // ranking: pow 1.0 leaves the fresh band at ~1:35,
+                          // pow < 0.5 makes a fresh save survive 8+ minutes)
+    HIT_CAP_FRAC: 0.5,    // a single hit never eats more than this x max HP
+    HP_PER_LEVEL: 0.015,  // level-up adds this x the run's START max HP
+    MAX_DRAIN_TICKS: 2,   // TICK latches: only this many bleed at once
+  },
+
   WEAPON: {
     DAMAGE: 8,
     COOLDOWN: 0.55,     // seconds between shots
@@ -113,6 +156,16 @@ export const CONFIG = {
       GREEDY:   { KITE_MULT: 0.5, XP_SPEED: 1.35, LOOT_WEIGHT: 0.65, PICKUP_MULT: 1.35,
                   TAG: 'LOOT FIRST' },
     },
+    // BOSS_STANCE (playtest: "when a boss is incoming the stance should be
+    // automatically set to safe/balanced somehow, because while the boss
+    // animation is playing you cannot set the stance, and I get immediately
+    // destroyed after the animation plays (on greed)"). The arrival banner owns
+    // the screen for ~2.5s and the pilot keeps its doctrine underneath it, so a
+    // GREEDY player walked into every boss hugging the horde with no chance to
+    // change. When a wave boss (or the herald/maw) lands, the pilot EASES to
+    // this stance and returns to the player's own pick the moment the wave's
+    // cast is down. A deliberate mid-fight change by the player always wins.
+    BOSS_STANCE: 'SAFE',
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):
@@ -242,6 +295,10 @@ export const CONFIG = {
     LABEL_PX: 9,          // HP / MP / XP bar labels (was 8)
     FEED_PX: 9,           // event-feed lines
     LV_PX: 11,            // level badge (was 9 — read as unpolished)
+    CLOCK_PX: 11,         // RUN CLOCK (RUN-STRUCTURE/SURVIVAL-GAP wave): the
+                          // always-on canvas readout of the 30:00 limit. Same
+                          // size/weight as the LV badge so the two top-left
+                          // readouts read as one family.
     BANNER_TITLE_PX: 22,  // boss-arrival title (was 20)
     BANNER_SUB_PX: 11,    // boss-arrival sub-line (was 10)
     FRAME: '#6a6a7c',     // outer steel frame around every bar/plate

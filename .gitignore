@@ -1,3 +1,4 @@
 .hub-worker/
 *.log
 /tmp/
+.agentlock

@@ -172,7 +172,71 @@ the run."*
 and the balance sim still passes its invariants (bad draft can fail, good beats bad >=3/5 metrics, no
 single pick loses a run). Needs owner input on WHICH run-altering ideas he wants; propose options.
 
-### G9 — ACHIEVEMENTS AS THE UNLOCK SPINE + TROPHY GALLERY  [status: not started]
+### G9 — ACHIEVEMENTS AS THE UNLOCK SPINE + TROPHY GALLERY  [status: DONE]
+
+**LANDED 2026-09-12 (the systems half — all measured/tested, suite 54/54):**
+- `src/achievements.js` — the catalog (21 earnable trophies, ids/goals matching the art's
+  `TROPHY_IDS` exactly, enforced by test), cumulative-vs-single-run goal semantics,
+  `recordRun()` evaluation, gallery model, and gold-free unlock granting.
+- **Achievements UNLOCK real content** (the VS model): 10 of them grant a shop row —
+  7 weapons, 3 elite modifiers — and 3 grant pilots (WITCH/ROGUE/PALADIN). They are
+  "**achieve OR buy**": shop prices are untouched and a soft-lock is impossible.
+- `src/meta.js` — `grantShopRow` / `grantCharacter` (+ grantWeapon/grantElite), writing the
+  SAME `unlockedWeapons`/`unlockedElites`/`purchased` ownership the shop uses, so the shop,
+  the run and the gallery cannot disagree about what is owned.
+- **Schema v4** — `profile.achievements = { v, earned, progress, totals }` with a documented
+  v3->v4 migration, structural validation, and one hard rule: **an earned trophy is NEVER
+  dropped by validation** (a damaged stamp repairs to 1, never to "unearned"). Unknown ids
+  from a newer build are preserved so a save passing through an older build loses nothing.
+- `test/test_achievements.mjs` — 34 checks: art/catalog id parity, cumulative vs best
+  semantics, no-replay, idempotent grants, gold-free grants, state goals, gallery masking,
+  hand-edited-save repair, v3->v4 migration, future-version refusal, and a regression for a
+  reference-stability bug that silently orphaned every earned trophy.
+
+**LANDED 2026-09-12 (SLICE 2 — the gallery screen + the earn hook; suite 55/55):**
+- `src/render.js` — `drawTrophyShowcase(g, state)`: the full-screen showcase. A full-view dark
+  backdrop, a steel-frame/dark-plate display case in the HUD's own chrome vocabulary
+  (CONFIG.HUD FRAME/PLATE), then the selected 32x32 emblem at the LARGEST INTEGER scale that
+  fits ~72% of the view width / ~62% of the height, centered. `this.trophyShowcase =
+  { scale, x, y, w, h, id, locked }` is the test seam (null when nothing is selected).
+  `drawGrid` gained an optional integer `scale` (default 1, so every existing caller is
+  byte-identical) so the emblem is painted as NxN blocks with no smoothing in the path.
+- `src/main.js` — `showTrophies` / `closeTrophies` / `trophiesStep` / `refreshTrophyView`,
+  mode `'trophies'`, reached from a new TROPHIES card on the title (labelled with the live
+  earned count). One trophy at a time; PREV / NEXT wrap a ring over `ACHIEVEMENT_DISPLAY_IDS`;
+  BACK (and ESC, and the arrow keys) returns to the title; `closeTrophies` restores the mode
+  it was opened from. Every caption string comes from the ART (name/desc) plus the
+  achievement's goal text — main.js restates no trophy name, description or condition.
+  The overlay clears its 75% sheet for this ONE screen (`background: transparent`,
+  `justify-content: flex-end`, chrome pushed to the bottom) and `openMenu()` resets both, so
+  no other screen can inherit them (asserted from a screen entered after the gallery).
+  `chromeOn()` is untouched — the new mode is false by construction, so the pad layer hides
+  (asserted directly, plus through the real `syncChrome` frame).
+- `settleRunGold` — the RUN-END EARN HOOK. It is the single funnel `die` / `runSurvived` /
+  `endRun` all share, so the fold lives there: `recordRun(profile, summary)` with kills /
+  wave / time / the settled gold / the best in-run weapon level / evolutions / legendaries /
+  survived. It EARNS, GRANTS the unlocks (gold-free), and speaks in at most TWO toast lines
+  (trophies named by their ART name, then the newly granted content — measured against a
+  pre-run ownership snapshot, so an "achieve OR buy" row the player already owned is never
+  announced as new).
+- `test/test_trophy_gallery.mjs` — 20 checks: showcase geometry (integer scale >= 1, the
+  largest that fits, one NxN block per painted art pixel, centered, inside the view, dark
+  full-view backdrop painted first), LOCKED vs earned masking, the ring wrapping across all
+  21 entries, the overlay reset contract, `chromeOn()` false in `trophies`, and the
+  earn + grant + no-double-earn hook driven through the real win funnel.
+- Verified in a REAL browser against the live canvas, not just headless: the earned
+  FIRST_BLOOD emblem paints at scale 5 in a box of x 160..320 / y 70..230 and its centre
+  pixel reads exactly `#a02a2a` (the art's own palette entry), with the canvas HUD covered by
+  the backdrop (sampled `18,8,14` where the HP bar would be). A fresh profile shows the
+  padlock silhouette named LOCKED with its goal still visible.
+
+**REMAINS (follow-up, does not block the goal being met):** 4 of the 21 trophies cannot be
+earned through the live hook yet because the run does not track their counters — boss kills
+(`FIRST_BOSS`, `BOSS_SLAYER_5`), chests opened (`CHESTS_25`) and untouched waves
+(`UNTOUCHED_WAVE`). `recordRun` already accepts `bossKills` / `chests` / `untouchedWave`, so
+wiring them is a summary change in `recordRunAchievements` plus a live counter in state.
+Also: `'state'` gallery goals print their prose instead of an `n / m` fraction, because no
+per-run counter measures them (printing "0 / 14" would be a number the game does not keep).
 Owner: *"acheivements would be good also. trophies and a trophy gallery. would be really cool to have
 the trophy gallery have the ability to show full screen pixel art of the trophy."*
 Precedent: in Vampire Survivors achievements ARE the unlock engine ("Achievements, displayed as Unlocks
@@ -203,7 +267,14 @@ Owner: *"have timed acheivements. have challenge play modes"*
 **Reached when:** at least one timed achievement is completable and verified, and at least one challenge
 mode is selectable, clearly distinguished from a standard run, and does not corrupt normal progression.
 
-### FOUNDATION PREREQUISITE — SAVE SCHEMA BEFORE PERSISTED CONTENT (do this first)
+### FOUNDATION PREREQUISITE — SAVE SCHEMA BEFORE PERSISTED CONTENT  [status: DONE]
+
+Schema is now **v4**: explicit version, a documented + tested migration chain (v0->v1->v2->v3->v4),
+per-collection validation with repairs reported to the player, corrupt/future payloads preserved
+under a recovery key, and a lossless versioned export/import. Achievements (G9) are the first
+persisted content built on it; enemy encounters (G10/G23) can now follow the same pattern.
+
+_Original text:_
 G9/G10/G11 all persist new per-profile data (achievements, trophies, encounters), and the existing
 profile layer is not ready for that: the wave-25 audit found `loadProfile` only type-checks
 `equippedCharacter` and accepts `unlockedCharacters` verbatim, and there is no migration story for new
@@ -499,6 +570,22 @@ a "which entry am I missing" filter — chasing the last entries is real player 
 more kills/XP/gold, Hyper +50% gold; Megabonk Difficulty → more XP/Silver/gold). This is the genre's
 primary long-tail progression tool and ours only hurts. Heat must visibly PAY MORE, not just bite harder.
 
+**MEASURED 2026-09-12 (real frame loop, post-fix — the SURVIVAL-GAP wave result):**
+
+- **Fresh** (n=11): mean **198–226s**, 0/11 reached the limit. In the target 3–6 min band.
+- **Partial** (n=6): mean **531s**, 3/6 still alive at the 1000s cap.
+- **Maxed** (n=4, three of them run to the full 1800s): **3/4 RUN SURVIVED at 30:00**
+  (waves 9 and 12 reached; best 12/15 waves). One run died at **252s on wave 2 to a WARLOCK shot** —
+  so a maxed save is NOT invincible, and the survivor rate is 75%, not 100%.
+- Before the fix every stage died at wave 1 (fresh 136s, partial 107s, maxed 129–133s) to the
+  GRAVELMAW charge: `14 · ladderDmg(2.6) · 2.2 · 1.5 = 120` against a 130–230 HP bar.
+- The gap was the damage FUNCTION plus a missing EHP axis, not one flat number. Ranked levers that
+  fixed it: per-hit cap (0.5 × maxHP) > contact exponent (0.65) > HP-per-level (0.015, linear) >
+  drain-cap (2 latched ticks).
+- REMAINING: the maxed runs die to a **ranged burst (WARLOCK shot)** and fresh runs are still
+  bimodal (3 of 8 died at 62–107s to the 0:60 HERALD). The wave-1/2 burst relative to a starting
+  pool is the next lever, and it needs its own before/after cohort.
+
 Full consolidated numbers live in `docs/DESIGN_TARGETS.md` (supersedes scattered figures elsewhere).
 
 **G25 — THE APEX TIER: deliberately game-breaking prestige items.** Owner, verbatim: *"there should also be
@@ -549,3 +636,38 @@ top-tier play and the last of them is a genuine long-haul goal.
 **Reached when:** an APEX panel exists and is gated behind completion; each item removes a real constraint
 visibly and can be toggled off; their cost is calibrated against measured end-game income (not guessed);
 completion-time reporting excludes them and says so; and a clean (non-apex) clear is still distinguishable.
+
+
+---
+
+## PARENT VERIFICATION — G9 gallery (2026-09-12, remy)
+
+Independently verified after the builder reported done (a subagent's summary is a claim, not evidence):
+
+- **Suite re-run by the parent: `PASS=55 FAIL=0`** (not taken on report).
+- **Live browser check** (real Chrome, the game served locally): the title menu lists **TROPHIES**;
+  the screen opens with PREV / NEXT / BACK; a locked entry draws the LOCKED padlock emblem
+  full-screen with its REAL goal text ("Enemies slain (all runs): 0 / 1"); the overlay is
+  transparent + bottom-anchored as designed; and the DOM chrome gate is clean in this mode
+  (`#hud`, `#hints`, `#touch`, `#joy` all `display:none`).
+- **No shop price changed** — `git diff src/meta.js` shows comments and one guard line only.
+- **agentlock released** (state FREE).
+
+### OPEN — found by the parent, for the next slice
+
+1. **Canvas play-HUD bleeds through the gallery.** The in-run HUD (HP/MP/XP bars, LV, run clock,
+   bottom hint text) is dimly visible behind the showcase because the backdrop is not fully
+   opaque. The gallery is NOT a play state: skip the play-HUD draw in `render.js` when
+   `state.mode === 'trophies'`, or make the backdrop opaque. (DOM chrome is already correct;
+   this is canvas-side.)
+2. **Run-end hook coverage gap.** `die()` and `endRun()` share `settleRunGold()` with
+   `runSurvived()`, which IS driven through the real win seam — so the hook reaches them by
+   construction, but **no test asserts a trophy earned via a real death or early exit.** Add one.
+3. **Four achievements cannot be earned through the live hook yet**, because the run summary
+   carries no `bossKills` / `chests` / `untouchedWave`: FIRST_BOSS, BOSS_SLAYER_5, CHESTS_25,
+   UNTOUCHED_WAVE. Wire those counters out of live state.
+4. **No browser-verified EARNED emblem yet.** A hand-seeded profile is overwritten on reload by
+   the `pagehide`/`beforeunload` autosave — which is the progress-flush working as designed, not
+   a bug (identified after two failed seeding attempts; the loader itself was proven clean:
+   `status: current, repairs: [], gold/earned preserved`). To see an earned emblem, earn one in
+   play, or re-seed from a late-registered `pagehide` listener that runs after the flush.

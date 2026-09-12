@@ -401,6 +401,51 @@ export function unlockWeapon(profile, weaponId) {
   return true;
 }
 
+// ---------- Achievement grant paths (G9) ----------------------------------
+// Gold-FREE grants. The achievement IS the price, so these skip the currency
+// check that the unlock* buyers above enforce. They write the SAME ownership
+// fields (unlockedWeapons / unlockedElites / purchased), so the shop, the run
+// and the gallery can never disagree about what the player owns — there is one
+// notion of "owned", and this is a second way to reach it.
+//
+// Idempotent: already-owned returns true without re-granting, so a replayed
+// achievement (or a double call) is harmless.
+
+export function grantWeapon(profile, weaponId) {
+  if (WEAPON_PRICES[weaponId] === undefined) return false;
+  if (weaponUnlocked(profile, weaponId)) return true;
+  profile.unlockedWeapons.push(weaponId);
+  return true;
+}
+
+export function grantElite(profile, eliteId) {
+  if (!ELITE_MODIFIERS[eliteId]) return false;
+  if (eliteUnlocked(profile, eliteId)) return true;
+  profile.unlockedElites.push(eliteId);
+  return true;
+}
+
+// One entry point for ANY shop row, dispatched the same way the shop's own
+// buy path and shopRowOwned() dispatch. This is the function achievements.js
+// calls, so an unlock id is always a row id and is always auditable against
+// SHOP_BY_ID.
+export function grantShopRow(profile, rowId) {
+  const def = SHOP_BY_ID[rowId];
+  if (!def) return false;
+  if (def.kind === 'weapon') return grantWeapon(profile, def.weaponId);
+  if (def.kind === 'elite') return grantElite(profile, def.eliteId);
+  if (shopRowOwned(profile, def)) return true;
+  profile.purchased[rowId] = def.maxLevel;
+  return true;
+}
+
+export function grantCharacter(profile, id) {
+  if (!CHARACTERS[id]) return false;
+  if (profile.unlockedCharacters.includes(id)) return true;
+  profile.unlockedCharacters.push(id);
+  return true;
+}
+
 export function eliteUnlocked(profile, eliteId) {
   return (profile.unlockedElites || []).includes(eliteId);
 }

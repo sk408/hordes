@@ -284,5 +284,44 @@ console.log('WAVE-27 — NO CANVAS DOCTRINE TEXT (the overlay badges carry it)')
   ok(lmFrames > 0, 'render(): landmarks are painted through the real frame path (' + lmFrames + ' frames)');
 }
 
+// ============================================================================
+// SURVIVAL-GAP wave — THE RUN CLOCK ON THE CANVAS HUD
+// ============================================================================
+// The 30:00 limit is the run's core structure; the always-on canvas HUD must
+// always show where the run stands. Same contract as every other HUD label:
+// painted text, on a dark plate, and reported through the chrome seam.
+console.log('SURVIVAL-GAP — RUN CLOCK ON THE CANVAS HUD');
+{
+  const { R, rec, ctx } = makeRenderer();
+  R.drawHudChrome(ctx, hudState({ time: 0 }));
+  const t0 = textOf(rec, '00:00');
+  ok(!!t0, 'the run clock is painted at 00:00 at run start');
+  ok(t0 && plateFor(rec, t0), 'the clock rides a dark plate like every other HUD label');
+  ok(!!R.hudChrome.clock && R.hudChrome.clock.text === '00:00' && R.hudChrome.clock.frac === 0,
+    'the chrome seam reports the clock + the limit fraction');
+
+  const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
+  R2.drawHudChrome(ctx2, hudState({ time: 900 }));
+  ok(!!textOf(rec2, '15:00'), 'the clock reads the sim time (15:00 at 900s)');
+
+  const { R: R3, rec: rec3, ctx: ctx3 } = makeRenderer();
+  R3.drawHudChrome(ctx3, hudState({ time: C.RUN.LIMIT - 1 }));
+  ok(!!textOf(rec3, '29:59'), 'one second before the limit the clock reads 29:59');
+  ok(R3.hudChrome.clock.frac > 0.99, 'the limit bar is ~full at 29:59');
+  ok(rec3.rects.some(q => q.style === '#ff2f5e'), 'the limit tick is painted at the far end');
+  ok(R3.hudChrome.clock.finalCall === true,
+    'past FINAL_CALL_AT the clock is flagged for the last-minute colour');
+
+  // Frame-rate independence: the clock is a pure function of state.time (sim
+  // seconds), so the SAME sim time paints the SAME text whatever the cadence.
+  const { R: R4, rec: rec4, ctx: ctx4 } = makeRenderer();
+  R4.drawHudChrome(ctx4, hudState({ time: 123.456 }));
+  ok(!!textOf(rec4, '02:03'), 'a fractional sim time floors into the clock (123.456 -> 02:03)');
+  const { R: R5, rec: rec5, ctx: ctx5 } = makeRenderer();
+  R5.drawHudChrome(ctx5, hudState({ time: 123.456 }));
+  ok(JSON.stringify(rec5.texts) === JSON.stringify(rec4.texts),
+    'the same sim time paints a byte-identical readout (no frame counters)');
+}
+
 if (failed) { console.error('\n' + failed + ' FAILURES'); process.exit(1); }
 console.log('\nALL RENDER HUD TESTS PASSED');

@@ -3,7 +3,7 @@ import {
   CONFIG as C, UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
 } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
@@ -59,6 +59,16 @@ import {
   downloadProfile, saveProfileToDisk, readSaveFile,
   readRecovery, downloadRecovery,
 } from './meta.js';
+// G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
+// goals and the grant (its recordRun is the one fold-a-finished-run entry
+// point); the art barrel owns the emblems and their names/descriptions. This
+// file only WIRES them: it never restates an achievement, a goal or a trophy
+// name, so the emblem, its caption and its condition cannot drift apart.
+import {
+  recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
+  earnedCount, totalAchievements,
+} from './achievements.js';
+import { TROPHY_ART } from './art/index.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -189,6 +199,15 @@ const state = {
   choiceRng: null,   // mulberry32(choiceSeed) — deterministic per run
   takenChoices: [],  // choice ids taken this run (repeat-free offers)
   pendingChoiceOffers: null, // this wave's 3 rolled cards (null = roll fresh)
+  // Sk408 playtest: "the modifiers at the end of each wave disappear when you
+  // click on them... they shouldn't disappear so I can change my choice". Only
+  // ONE blessing is active per wave by design, so the offers now stay on screen
+  // and re-picking SWAPS: waveChoice is the offer currently taken (null = none
+  // yet) and waveChoiceSnap is the choice-mutable player scope captured before
+  // the first pick, restored before a new one is applied — so re-picking can
+  // never stack two blessings.
+  waveChoice: null,
+  waveChoiceSnap: null,
   // ---- WAVE-11 run-scoped systems (all reset in startRun) ----
   shrine: null,      // this wave's shrine (shrines.js; null = none rolled)
   shrineRng: null,   // mulberry32(choiceSeed ^ 0x5eed) — separate stream so
@@ -211,6 +230,16 @@ const state = {
   finalCall: false,  // 29:00 "one minute left" callout fired
   mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
   mawDeadline: 0,    // sim time the maw encounter's window closes
+  // ---- G9 TROPHY GALLERY (presentation only; never persisted) ----
+  // The gallery browses achievement-gallery entries one at a time. trophyIdx is
+  // the ring position (wrapped by refreshTrophyView, so PREV from the first
+  // entry lands on the last) and trophyView is the CONTRACT render.js paints
+  // from: { art, locked, id } where `art` is already the right grid (the real
+  // emblem when earned, the LOCKED silhouette when not — galleryModel does that
+  // masking, not the renderer). null means "no showcase" and the renderer
+  // paints nothing.
+  trophyIdx: 0,
+  trophyView: null,
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -610,8 +639,13 @@ function openIntermission(opts = {}) {
       state.takenChoices);
   }
   for (const offer of state.pendingChoiceOffers) {
-    menuCard(offer.title.toUpperCase(),
-      `${offer.rarity} BLESSING · ${offer.desc}`,
+    // Sk408 playtest: the offers STAY on screen, and one is marked ACTIVE, so
+    // the pick can be changed (takeChoice swaps: it undoes the previous pick
+    // before applying the new one — the blessings never stack).
+    const active = !!(state.waveChoice && state.waveChoice.id === offer.id);
+    menuCard(offer.title.toUpperCase() + (active ? ' [ACTIVE]' : ''),
+      `${offer.rarity} BLESSING · ${offer.desc}` +
+      (active ? ' · tap another offer to change' : ''),
       () => takeChoice(offer));
   }
   // WAVE-9 manual heat dial: RAISE THE STAKES pushes +1 heat (harder, faster
@@ -649,15 +683,46 @@ function openIntermission(opts = {}) {
   }
 }
 
+// ---------- BLESSING RE-PICK (Sk408 playtest) --------------------------------
+// The offers stay on screen after a pick so the choice can be CHANGED. Because
+// a blessing applies arbitrary stat mutations (choices.js), a swap is done by
+// restoring the choice-mutable scope captured before the FIRST pick and then
+// applying the new one — so the two can never compound and the numbers are
+// exactly the new offer's. The scope is exactly the fields choices.js documents
+// as its contract (player.stats, player.hp, player.choices).
+function snapshotChoiceScope(p) {
+  return {
+    stats: { ...p.stats },
+    hp: p.hp,
+    choices: p.choices ? { ...p.choices } : null,
+  };
+}
+function restoreChoiceScope(p, snap) {
+  for (const k of Object.keys(p.stats)) if (!(k in snap.stats)) delete p.stats[k];
+  Object.assign(p.stats, snap.stats);
+  p.hp = Math.min(snap.hp, p.stats.maxHp);
+  p.choices = snap.choices ? { ...snap.choices } : null;
+}
+
 function takeChoice(offer) {
-  applyChoice(state.player, offer);
-  state.takenChoices.push(offer.id);
-  state.pendingChoiceOffers = state.pendingChoiceOffers.filter(o => o !== offer);
+  const p = state.player;
+  if (state.waveChoice) {
+    // Changing the pick: undo the previous blessing first, and un-take its id
+    // so the pool can offer it again on a later wave.
+    if (state.waveChoiceSnap) restoreChoiceScope(p, state.waveChoiceSnap);
+    state.takenChoices = state.takenChoices.filter(id => id !== state.waveChoice.id);
+  } else {
+    state.waveChoiceSnap = snapshotChoiceScope(p);
+  }
+  applyChoice(p, offer);
+  if (!state.takenChoices.includes(offer.id)) state.takenChoices.push(offer.id);
+  state.waveChoice = offer;
   // Merchant's Pact: weaponSlotBonus widens the per-run slot cap (bounded by
-  // the absolute CONFIG cap).
-  const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
+  // the absolute CONFIG cap) — recomputed from the restored scope, so a swap
+  // away from the Pact narrows it again.
+  const bonus = (p.choices && p.choices.weaponSlotBonus) || 0;
   state.weaponSlots = Math.min(C.WEAPON_SLOTS, state.baseWeaponSlots + bonus);
-  interMsg = `BLESSING TAKEN: ${offer.title} — ${offer.desc}`;
+  interMsg = `BLESSING: ${offer.title} — ${offer.desc} · tap another offer to change it`;
   audio.playSfx('levelup');
   openIntermission();   // re-render: offers + gold line refresh
 }
@@ -699,6 +764,8 @@ function continueRun() {
   state.wave.boss = null;
   state.portal = null;
   state.pendingChoiceOffers = null;   // next wave rolls a fresh set
+  state.waveChoice = null;            // ...and a fresh pick (Sk408 playtest)
+  state.waveChoiceSnap = null;
   // WAVE-11: fresh shrine roll for the new wave (0-based waveNum; the shrine
   // rng stream keeps this off the intermission choice rolls).
   state.shrine = rollShrine(state.wave.num - 1, state.shrineRng);
@@ -761,6 +828,7 @@ function spawnBoss() {
     ttl: 2.5,
   };
   audio.playPortalCue('BOSS_YELL');
+  easeToBossStance();       // BOSS_STANCE: the banner owns the screen; see CONFIG
 }
 
 // ---------- WAVE-20 MID-WAVE BOSS: VYRN, THE HERALD --------------------------
@@ -807,6 +875,7 @@ function spawnMidBoss() {
   toast(desc.name + ' APPROACHES!');
   state.bossBanner = { title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(), ttl: 2.5 };
   audio.playPortalCue('BOSS_YELL');
+  easeToBossStance();       // BOSS_STANCE: same ease for the mid-wave herald
 }
 
 // ---------- WAVE-11 SYNERGIES (synergies.js; weapons.js stays untouched) -----
@@ -1202,6 +1271,13 @@ function update(dt) {
   // every damage path stamps the source right before die() can fire.
   const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
   let touchDmg = 0, touchKiller = null;
+  // SURVIVAL-GAP: TICK latches. The drain is a flat 4 hp/s per tick with NO
+  // invuln window, so N latched ticks stack linearly and a fresh save bled out
+  // in ~4-8s (measured: 2 of 12 fresh runs died to TICK at t=68-79s, before any
+  // boss). The latch itself stays (it is the TICK's identity); the BLEED is
+  // capped at MAX_DRAIN_TICKS simultaneous drains, so a pack grips and slows
+  // you but cannot execute you off-screen.
+  let drainActive = 0;
   for (const e of state.enemies) {
     e.age = (e.age || 0) + dt;
     if (e.flash > 0) e.flash -= dt;
@@ -1227,9 +1303,14 @@ function update(dt) {
       // Snap-ride the player (fast follow; the tick itself stopped moving).
       e.x += (p.x - e.x) * Math.min(1, dt * 10);
       e.y += (p.y - e.y) * Math.min(1, dt * 10);
-      p.hp -= act.drain * dt;        // DoT: no invuln window, just bleed
-      resetRampage();                // WAVE-11: ANY hp loss ends the streak
-      if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
+      // SURVIVAL-GAP: only MAX_DRAIN_TICKS latched ticks bleed at once; the
+      // rest still ride (and still have to be killed). See CONFIG.SURVIVAL.
+      if (drainActive < C.SURVIVAL.MAX_DRAIN_TICKS) {
+        drainActive++;
+        p.hp -= act.drain * dt;      // DoT: no invuln window, just bleed
+        resetRampage();              // WAVE-11: ANY hp loss ends the streak
+        if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
+      }
     }
     if (act.fire) {
       state.enemyShots.push({
@@ -1314,10 +1395,14 @@ function update(dt) {
     const touchR = Math.max(12, 6 + (e.w || 10) / 2);
     if (Math.hypot(p.x - e.x, p.y - e.y) < touchR) {
       // GRAVELMAW mid-charge hits harder (the contact-damage window).
-      // WAVE-20: base 12 -> 14 — the horde's touch must matter even before
-      // the escalation curve (Sk408: weapon-only builds ignored the pack).
+      // SURVIVAL-GAP: the hit itself now comes from entities.contactHitDamage
+      // (the ONE source of truth the sims also call) — base 14 x the ladder's
+      // threat curve applied SUB-LINEARLY, capped at a fraction of the bar.
+      // See CONFIG.SURVIVAL for the measured reason (a wave-1 charger used to
+      // one-shot a maxed 230 HP build for 120 and killed every tier at wave 1).
       const chargeMult = e.charging ? 1.5 : 1;
-      const hit = 14 * dmgMult * (e.contactDamageMult || 1) * chargeMult;
+      const hit = contactHitDamage(C.SURVIVAL.BASE_CONTACT, dmgMult,
+        e.contactDamageMult || 1, chargeMult, p.stats.maxHp);
       if (hit > touchDmg) { touchDmg = hit; touchKiller = e; }
     }
   }
@@ -1416,6 +1501,7 @@ function update(dt) {
         }
         feedWeaponXp(15);
         toast('HERALD DOWN');
+        restoreBossStanceIfClear();   // BOSS_STANCE: the herald was the only boss up
       } else if (e.boss) {
         // Boss payout: guaranteed chest pair + an up-tier item drop. The
         // wave does NOT advance here — the PORTAL opens (see below) and the
@@ -1435,6 +1521,7 @@ function update(dt) {
         // queues the portal-entry cinematic. The first of a double pair just
         // opens the portal — existing wave-6 behavior is kept.
         if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
+        restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
         feedWeaponXp(30);   // boss kill = big weapon-XP payout
         toast('BOSS DOWN');
         // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
@@ -1696,6 +1783,16 @@ function levelUp() {
   p.xp -= p.xpNext;
   p.level++;
   p.xpNext = Math.floor(p.xpNext * C.XP_LEVEL_GROWTH);
+  // SURVIVAL-GAP: the run's EHP axis. Enemy contact threat climbs all run
+  // (sub-linearly now, see CONFIG.SURVIVAL) and the shop's pool grows only
+  // additively, so the player's bar had no way to answer the late ladder. Max
+  // HP grows with LEVEL, LINEAR in the run's start pool (state.baseMaxHp, set
+  // in startRun), and the gain is healed in (a level-up reads as a small heal).
+  // Linear, NOT compounding: levels come fast (level 40+ inside 9 minutes) and
+  // a compounding rule made a fresh save unkillable (measured: 1018 HP at 8:45).
+  const gain = (state.baseMaxHp || p.stats.maxHp) * C.SURVIVAL.HP_PER_LEVEL;
+  p.stats.maxHp += gain;
+  p.hp = Math.min(p.stats.maxHp, p.hp + gain);
   audio.playSfx('levelup');
   state.pendingDrafts++;
   if (state.mode === 'playing') openDraft();
@@ -2038,6 +2135,68 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
 // Greed shop line + Midas items multiply the payout (computeRunGold takes
 // goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
 // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
+// G9 — ACHIEVEMENTS ARE EARNED HERE, ONCE PER RUN.
+//
+// settleRunGold is the single funnel EVERY run end passes through (die,
+// runSurvived, endRun), so the achievement fold lives here instead of in each
+// of those three callers: a run can only be measured once, and a fourth way to
+// end a run would inherit the whole feature for free. recordRun() updates
+// profile.achievements AND grants whatever the newly earned trophies unlock
+// (gold-free by design — achievements.js owns both halves); the toasts below
+// are the player-facing half.
+//
+// WHAT THE SUMMARY CARRIES TODAY, honestly: kills, wave, time, the settled
+// gold, the best weapon level in the run, evolutions, legendary item count and
+// survived. Only what THIS state actually tracks is reported, so a run can no
+// longer earn a trophy for a counter it does not keep — boss-kill, chest and
+// untouched-wave trophies stay unearned until the run summary grows those
+// counters (recordRun already accepts them, so that is a one-line change when
+// the counters land).
+function recordRunAchievements(gold) {
+  const p = state.player;
+  let bestWeaponLevel = 0;
+  for (const w of state.weapons) bestWeaponLevel = Math.max(bestWeaponLevel, w.level || 1);
+  // Which unlock targets were ALREADY owned before this run settled. applyUnlocks
+  // reports ok:true for a row that was already owned (granting is idempotent),
+  // and toasting "UNLOCKED" for something the player bought last week would be a
+  // small lie — so newness is measured against this snapshot, not against ok.
+  const ownedBefore = new Set();
+  for (const a of ACHIEVEMENTS) {
+    if (a.unlock && ownsUnlock(profile, a.unlock)) ownedBefore.add(a.unlock.kind + ':' + a.unlock.id);
+  }
+
+  const res = recordRun(profile, {
+    kills: p.kills,
+    gold,
+    wave: state.wave.num,
+    time: state.time,
+    weaponLevel: bestWeaponLevel,
+    evolutions: state.weapons.filter(w => !!w.evolution).length,
+    legendaries: state.items.filter(it => it.rarity === 'LEGENDARY').length,
+    survived: !!state.runWon,
+  });
+
+  // AT MOST TWO toasts, ever: a run can earn several trophies at once and the
+  // event feed only shows three lines, so each category gets ONE line naming
+  // them. Two lines keep the earn moment readable instead of burying it under
+  // its own feedback.
+  //   * the trophy name comes from the ART (TROPHY_ART) with ACHIEVEMENT_BY_ID
+  //     as the gate — a future/unknown id can never reach the player as a
+  //     blank line;
+  //   * the unlock name comes from unlockLabel()'s live catalogs.
+  const trophyName = id => (ACHIEVEMENT_BY_ID[id] && TROPHY_ART[id] && TROPHY_ART[id].name) || id;
+  if (res.earned.length) toast('TROPHY: ' + res.earned.map(trophyName).join(' · '), '#ffd75e');
+  const granted = [];
+  for (const u of res.unlocks) {
+    if (!u.ok) continue;
+    if (ownedBefore.has(u.kind + ':' + u.id)) continue;
+    if (granted.some(x => x.kind === u.kind && x.id === u.id)) continue;
+    granted.push(u);
+  }
+  if (granted.length) toast('UNLOCKED: ' + granted.map(unlockLabel).join(' · '), '#7ad0ff');
+  return res;
+}
+
 function settleRunGold({ winBonus = 0 } = {}) {
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
@@ -2049,6 +2208,9 @@ function settleRunGold({ winBonus = 0 } = {}) {
     goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
   }) + winBonus;
   profile.gold += gold;
+  // G9: fold the finished run into the profile (earn + grant) BEFORE the save,
+  // so the trophies and the gold they were settled alongside persist together.
+  recordRunAchievements(gold);
   saveProfile(profile);
   return { gold, firstClear };
 }
@@ -2309,6 +2471,13 @@ function openMenu(mode = 'menu') {
   ovCards.innerHTML = '';
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
+  // G9: the TROPHY GALLERY is the one screen that wants the canvas art visible
+  // behind the cards, so it sets these two inline overrides AFTER calling this
+  // function (showTrophies). The reset lives HERE so the overrides cannot leak:
+  // a 'transparent' background would make the shop or the characters screen
+  // show the frozen world through its cards. '' returns both to the stylesheet.
+  overlay.style.background = '';
+  overlay.style.justifyContent = '';
 }
 
 // ---------- WAVE-21 FIRST-RUN TOUR (docs/FIRST_RUN_TOUR_2026-09-11.md) ------
@@ -2634,6 +2803,12 @@ function showTitle() {
   menuCard('PLAY', 'start a run', () => startRun());
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
+  // G9: the gallery is reached from here, and the count on the card is the
+  // honest one (earnedCount counts KNOWN trophy ids only, so a save from a
+  // newer build cannot inflate it). The full-screen showcase lives one press
+  // away, so the title card names what the press gets you.
+  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
+    () => showTrophies());
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
@@ -2870,6 +3045,9 @@ function startRun() {
   // thorns/lifesteal) so every consumer can read them unguarded.
   p.stats = applyAffixes(
     applyCharacter(applyMetaBonuses(p.stats, profile.purchased), profile.equippedCharacter), []);
+  // SURVIVAL-GAP: the pool this run levels up FROM (CONFIG.SURVIVAL.HP_PER_LEVEL
+  // is linear in it), stamped before any in-run change.
+  state.baseMaxHp = p.stats.maxHp;
   p.hp = p.stats.maxHp;                          // mods changed maxHp
   const pots = startPotionCount(profile);        // character base + Travel Pack
   p.potions = { hp: pots, mp: pots };
@@ -2910,6 +3088,8 @@ function startRun() {
   state.shrine = rollShrine(0, state.shrineRng);
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
+  state.waveChoice = null;            // Sk408 playtest: fresh run, fresh pick
+  state.waveChoiceSnap = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
   state.groundSeed = (Math.random() * 1e9) | 0;   // world-space decor field
   state.weapons = [];
@@ -3090,6 +3270,121 @@ function closeSettings() {
   overlay.style.display = 'none';
 }
 
+// ---------- G9 TROPHY GALLERY (mode 'trophies') -----------------------------
+// The owner's showcase ask, as a screen: ONE trophy at a time, drawn
+// FULL-SCREEN as pixel art by renderer.drawTrophyShowcase (called from frame()
+// after the HUD, so it paints on top of the frozen world), with the name,
+// description, goal progress and unlock line in the overlay chrome — which is
+// why this is the one screen that overrides the overlay's background and
+// alignment (below), pushing its cards to the bottom so the emblem owns the
+// middle of the canvas.
+//
+// WHERE EVERY STRING COMES FROM: the ART (name + description, src/art) and the
+// achievement's GOAL text (achievements.js goalText, already folded into
+// galleryModel). This file restates neither — it could not, and still show a
+// caption that matches the emblem, if it kept its own copy.
+function trophiesModel() {
+  // galleryModel MASKS unearned entries for us: their `art` is already the
+  // LOCKED silhouette and their name/desc are already generic, so this screen
+  // never learns (or leaks) what an unearned trophy is called.
+  return gallerySummary(profile).model;
+}
+
+// The unlock's display name, read from the LIVE catalogs by id — never a second
+// table here. A shop row is named by its SHOP_UPGRADES row; a pilot by its
+// CHARACTERS entry (the same objects the shop and the character screen show).
+function unlockLabel(u) {
+  if (!u) return '';
+  if (u.kind === 'shopRow') {
+    const row = SHOP_UPGRADES.find(r => r.id === u.id);
+    return row ? row.name : u.id;
+  }
+  if (u.kind === 'character') return (CHARACTERS[u.id] || {}).name || u.id;
+  return u.id;
+}
+
+// Repaint the caption + the showcase payload for the CURRENT ring position.
+// state.trophyIdx is normalised here (not at the call sites), so PREV/NEXT can
+// step past either end and the ring wraps without a dead end.
+function refreshTrophyView() {
+  const model = trophiesModel();
+  const n = model.length;
+  if (n === 0) {
+    // No art authored: say so instead of painting an empty showcase.
+    state.trophyView = null;
+    ovTitle.textContent = 'TROPHIES';
+    ovTitle.className = '';
+    ovSub.textContent = 'no trophies authored';
+    return;
+  }
+  state.trophyIdx = ((state.trophyIdx % n) + n) % n;
+  const e = model[state.trophyIdx];
+  // The renderer's input: the art is ALREADY masked, so the showcase cannot
+  // disagree with this caption about what is earned.
+  state.trophyView = { art: e.art, locked: !e.earned, id: e.id };
+
+  // An unearned entry is named LOCKED (the name lives only on the earned
+  // model entry), while its GOAL stays visible — that is the chase, and it is
+  // the one thing a locked trophy must not hide.
+  ovTitle.textContent = e.earned ? e.name : 'LOCKED';
+  ovTitle.className = '';
+  const lines = [
+    `${state.trophyIdx + 1} / ${n}`,
+    e.desc || '',
+  ];
+  const ach = ACHIEVEMENT_BY_ID[e.id];
+  if (e.goal) {
+    // A 'state' goal is an ownership fact with no per-run counter, so it reads
+    // as its prose ("Own every upgrade line in the shop"). Printing a
+    // "0 / 14" fraction for it would be a number the game does not measure.
+    lines.push(ach && ach.goal.kind === 'state' ? e.goal : `${e.goal}: ${e.progress} / ${e.target}`);
+  }
+  if (e.unlock) {
+    lines.push(ownsUnlock(profile, e.unlock)
+      ? `unlock: ${unlockLabel(e.unlock)} (already owned)`
+      : `unlocks: ${unlockLabel(e.unlock)}`);
+  }
+  if (e.earned && e.at) lines.push('earned ' + new Date(e.at).toLocaleDateString());
+  ovSub.innerHTML = lines.filter(Boolean).join('<br>');
+}
+
+// Open the gallery. Reached from the title card (showTitle), so the return
+// mode is stashed the way openStats stashes the in-run one and BACK restores
+// the screen the player came from.
+function showTrophies() {
+  state.trophiesReturn = state.mode;
+  openMenu('trophies');
+  // THE one screen that wants the canvas visible behind it: no sheet
+  // background, chrome pushed to the bottom edge. Set AFTER openMenu because
+  // openMenu is what resets them for every other screen (see its comment).
+  overlay.style.background = 'transparent';
+  overlay.style.justifyContent = 'flex-end';
+  refreshTrophyView();
+  menuCard('PREV', 'previous trophy', () => trophiesStep(-1));
+  menuCard('NEXT', 'next trophy', () => trophiesStep(1));
+  menuCard('BACK', 'to title [ESC]', () => { closeTrophies(); showTitle(); });
+}
+
+// Step the ring by `delta` and repaint. Not a no-op outside the gallery: the
+// cards are rebuilt per screen, but a stale handler must not repaint another
+// screen's caption.
+function trophiesStep(delta) {
+  if (state.mode !== 'trophies') return;
+  state.trophyIdx += (Number(delta) || 0);
+  refreshTrophyView();
+}
+
+// Leave the gallery. Clears the showcase payload so the NEXT frame paints no
+// trophy over whatever screen follows (the overlay's inline overrides are reset
+// by the following openMenu — showTitle calls it; the ESC key path calls this
+// then showTitle too).
+function closeTrophies() {
+  if (state.mode !== 'trophies') return;
+  state.trophyView = null;
+  state.mode = state.trophiesReturn || 'menu';
+  overlay.style.display = 'none';
+}
+
 // ---------- Input: shared action seam (keyboard AND touch use these) ----------
 // One code path per action — the touch buttons in index.html and the keydown
 // handler both funnel through runAction, so no game logic is duplicated.
@@ -3102,6 +3397,45 @@ function closeSettings() {
 // color. WAVE-27: with the canvas readout removed this toast is the DISCOVERY
 // moment for the stance's meaning, so it must be complete on its own — it
 // names the stance, its CONFIG tag, and both real consequences.
+//
+// ---------- BOSS-ARRIVAL STANCE EASE (Sk408 playtest) -----------------------
+// See CONFIG.AUTOPILOT.BOSS_STANCE. The arrival banner owns the screen while it
+// lands (a stance change during it is not possible), so the pilot eases to the
+// boss stance for the fight and returns to the player's pick when the wave's
+// cast is down. A mid-fight change by the player always wins (the restore only
+// fires when the stance is still the one we eased into).
+function easeToBossStance() {
+  const want = C.AUTOPILOT.BOSS_STANCE;
+  if (!want || state.preBossStance != null) return;
+  state.preBossStance = controller.stance;
+  if (controller.stance === want) return;          // already there: restore is a no-op
+  controller.stance = want;
+  const d = C.AUTOPILOT.STANCES[want] || {};
+  toast('BOSS INCOMING - STANCE ' + want + ' (' + (d.TAG || '') + ')',
+    C.HUD.STANCE_COLORS[want] || null);
+}
+function restoreBossStance() {
+  if (state.preBossStance == null) return;
+  const back = state.preBossStance;
+  state.preBossStance = null;
+  if (controller.stance !== C.AUTOPILOT.BOSS_STANCE) return;   // player moved on
+  if (back === C.AUTOPILOT.BOSS_STANCE) return;
+  controller.stance = back;
+  const d = C.AUTOPILOT.STANCES[back] || {};
+  toast('STANCE ' + back + ' (' + (d.TAG || '') + ')', C.HUD.STANCE_COLORS[back] || null);
+}
+// Only stand down once NOTHING boss-shaped is left alive this wave.
+function restoreBossStanceIfClear() {
+  const live = [...(state.wave.bosses || []), ...(state.wave.midBosses || [])]
+    .some(b => b && b.hp > 0);
+  if (live) return;
+  restoreBossStance();
+}
+
+// cycleStanceWithFeedback: the DISCOVERY moment for the stance's meaning
+// (WAVE-27 removed the canvas readout, so this toast must be complete on its
+// own — it names the stance, its CONFIG tag, and both real consequences),
+// tinted with the stance's risk color.
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
   const d = C.AUTOPILOT.STANCES[s] || {};
@@ -3198,9 +3532,21 @@ window.addEventListener('keydown', (ev) => {
   if (coachActive() || (menuTour && menuTour.active())) return;
   const k = ev.key.toLowerCase();
   if (ev.repeat && REPEAT_GUARDED.has(k)) return;
-  if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
+  if (state.mode === 'intro') {                              // any key skips the movie
+    // CINEMATIC GESTURE GUARD: the same press must not also activate the button
+    // that appears with the menu (preventDefault kills the synthesized click on
+    // a focused element; arming swallows any that still lands on the overlay).
+    if (ev.preventDefault) ev.preventDefault();
+    uiGuard.arm();
+    endIntro();
+    return;
+  }
   if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
-    if (C.CINE.SKIPPABLE) endPortalCine();
+    if (C.CINE.SKIPPABLE) {
+      if (ev.preventDefault) ev.preventDefault();
+      uiGuard.arm();
+      endPortalCine();
+    }
     return;
   }
   if (state.mode === 'draft' && ['1', '2', '3'].includes(ev.key)) {
@@ -3218,6 +3564,13 @@ window.addEventListener('keydown', (ev) => {
       const card = ovCards.children[Number(ev.key) - 1];
       if (card) card.click();
     }
+  } else if (state.mode === 'trophies') {
+    // G9 TROPHY GALLERY: ESC backs out to the title (what the BACK card
+    // promises) and the arrows walk the ring the PREV/NEXT cards step. The
+    // gallery is reached from the title, so there is no paused run to resume.
+    if (k === 'escape') { closeTrophies(); showTitle(); }
+    else if (k === 'arrowleft') trophiesStep(-1);
+    else if (k === 'arrowright') trophiesStep(1);
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
   } else if (state.mode === 'settings') {
@@ -3652,9 +4005,51 @@ function endIntro() {
   if (!onboardingDone()) showHowToPlay();
   else showTitle();
 }
+// ---------- CINEMATIC GESTURE GUARD (Sk408 playtest) ------------------------
+// "During the opening cinematic, if I push on the screen, it pushes whatever
+// button is going to be there." A tap is pointerdown -> pointerup -> click, and
+// the click is dispatched at the touch point AFTER the skip handler has already
+// switched modes — so ONE tap against the intro movie skipped the movie AND
+// pressed the button that appeared under the same finger (PLAY / HOW TO PLAY,
+// or a chest card when the portal cinematic hands off to the intermission).
+// The keyboard path has the same shape (Enter activating a just-appeared
+// button, and any key skipping the movie).
+//
+// The guard consumes the TAIL of that one gesture: for UI_GUARD_MS after a
+// cinematic is ended BY INPUT, any pointerup/click/keyup landing on the overlay
+// is swallowed in the CAPTURE phase, so a card's own handler never sees it.
+// A fresh pointerdown (a new press = a new intent) stands the guard down
+// immediately, so the player's NEXT deliberate tap is never eaten.
+const UI_GUARD_MS = 400;
+let uiGuardUntil = 0;
+const uiGuard = {
+  arm: () => { uiGuardUntil = performance.now() + UI_GUARD_MS; },
+  armed: () => performance.now() < uiGuardUntil,
+  standDown: () => { uiGuardUntil = 0; },
+  // ONE definition of "swallow", so the rule cannot drift between callers.
+  swallow: (ev) => {
+    if (!uiGuard.armed()) return false;
+    if (ev && ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    else if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (ev && ev.preventDefault) ev.preventDefault();
+    return true;
+  },
+  window: UI_GUARD_MS,
+};
+if (overlay && overlay.addEventListener) {
+  for (const type of ['pointerup', 'click', 'keyup']) {
+    overlay.addEventListener(type, (ev) => uiGuard.swallow(ev), true);
+  }
+  overlay.addEventListener('pointerdown', () => uiGuard.standDown(), true);
+}
+
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
 // WAVE-8/A: the same gesture skips the portal cinematic.
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', () => {
+  // Armed ONLY when this gesture actually ended a cinematic — never during play.
+  const skipping = state.mode === 'intro' ||
+    (state.mode === 'portal-cine' && C.CINE.SKIPPABLE);
+  if (skipping) uiGuard.arm();
   endIntro();
   if (C.CINE.SKIPPABLE) endPortalCine();
 });
@@ -3726,6 +4121,7 @@ function startFinale() {
   // the bar can now reach zero.
   b.hp = b.maxHp = C.RUN.MAW_HP;
   b.milestone = true;
+  easeToBossStance();   // BOSS_STANCE: the maw is the run's biggest arrival
   state.mawDeadline = state.time + C.RUN.MAW_WINDOW;
   state.mawCleared = false;
   // WAVE-25 (audit 2.5) + wave-26: the maw's speed used to be the bare
@@ -3948,6 +4344,7 @@ function mawWithdrew() {
   state.volleyMask = null;
   state.mode = 'playing';
   toast('THE MAW WITHDRAWS');
+  restoreBossStance();   // BOSS_STANCE: nothing boss-shaped is left; hand it back
   // Straight into the intermission: the field is empty, so the only thing
   // ahead is the next wave and the rest of the ladder.
   openIntermission();
@@ -4008,6 +4405,11 @@ function frame(now) {
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawHud();
+  // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
+  // gallery's emblem and its display case sit on top of the (frozen) world and
+  // its readouts. A no-op everywhere else — drawTrophyShowcase returns
+  // immediately while state.trophyView is null.
+  renderer.drawTrophyShowcase(renderer.ctx, state);
   updateTouchHud();
   requestAnimationFrame(frame);
 }
@@ -4024,6 +4426,11 @@ export const __TEST = {
   renderer, openStats, closeStats,
   // WAVE-17 settings-cog seam: in-run open/close (pause contract probes).
   openSettings, closeSettings,
+  // G9 trophy-gallery seam: open/close (the mode + return-mode contract) and
+  // step (the ring, so a test can wrap 21 entries without a DOM click per
+  // entry). chromeOn is exposed so the pad-layer gate for the new mode is
+  // asserted directly, not inferred from a style string.
+  openTrophies: showTrophies, closeTrophies, trophiesStep, chromeOn,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
@@ -4051,6 +4458,10 @@ export const __TEST = {
   openDraft,
   synWeaponDmg,
   stanceOf: () => controller.stance,
+  // ---- CINEMATIC GESTURE GUARD seam (src/main.js uiGuard) ----
+  // The test drives the guard directly: arm it, prove a click on the overlay is
+  // swallowed by the capture listener, prove a new press stands it down.
+  uiGuard,
   // ---- WAVE-27 seams (camera deadzone / loot reachability) ----
   // `region` is the SAME world->screen projection the tour coachmark uses
   // (worldRegion): tests can render an entity through the real renderer and

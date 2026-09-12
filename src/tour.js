@@ -200,11 +200,20 @@ export class Tour {
     set(this.shades[1], 0, B, vw, vh - B);     // below
     set(this.shades[2], 0, T, L, B - T);       // left
     set(this.shades[3], R, T, vw - R, B - T);  // right
-    // Tip: below the hole when it fits, else above. Clamped to the viewport
-    // so it is reachable at phone size.
-    this.tip.style.left = Math.max(4, Math.min(vw - 190, L)) + 'px';
-    const below = B + 34 <= vh;
-    this.tip.style.top = (below ? B + 4 : Math.max(2, T - 34)) + 'px';
+    // Tip: below the hole when it FITS, else above it; clamped into the
+    // viewport on BOTH axes by the tip's own measured box, so it is reachable
+    // at phone size and inside an embed (the old clamp used a hard-coded 190px
+    // width and never bounded the bottom edge, so a target near the bottom of a
+    // short viewport pushed the tip off-screen — "the tutorial goes off screen
+    // in the galaxy embed").
+    const tipW = Math.max(120, this.tip.offsetWidth || 190);
+    const tipH = Math.max(24, this.tip.offsetHeight || 46);
+    const maxLeft = Math.max(4, vw - tipW - 4);
+    const maxTop = Math.max(4, vh - tipH - 4);
+    this.tip.style.left = Math.max(4, Math.min(maxLeft, L)) + 'px';
+    const below = B + 4 + tipH <= vh;
+    const wantTop = below ? B + 4 : T - tipH - 4;
+    this.tip.style.top = Math.max(4, Math.min(maxTop, wantTop)) + 'px';
     this.tip.style.maxWidth = (vw - 8) + 'px';
   }
 

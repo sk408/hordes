@@ -69,8 +69,10 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA VERSION:');
 {
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 3,
-    `schema version constant is 3 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // Pinned deliberately: bumping the schema is a conscious act, and this line
+  // must be updated with it (v4 = G9 achievements).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 4,
+    `schema version constant is 4 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -158,7 +160,13 @@ console.log('FUTURE-VERSION SAVE (fail safe, never half-load):');
   const res = loadProfileResult(s);
   ok(res.status === 'future-version', `a future save is refused (status=${res.status})`);
   ok(res.from === 99, 'the refused save reports the version it came from');
-  ok(res.profile.gold === 0 && !res.profile.achievements,
+  // The profile this build hands back is a CLEAN CURRENT one: the future
+  // payload's own `achievements` blob must not leak into it. (The namespace
+  // itself now exists on every profile — schema v4 owns it — so the check is
+  // that it is EMPTY, not that it is absent.)
+  ok(res.profile.gold === 0 &&
+     res.profile.achievements && Object.keys(res.profile.achievements.earned).length === 0 &&
+     res.profile.achievements.whatever === undefined,
     'a future save is NOT half-loaded (no future fields leak into the session)');
   ok(/NEWER VERSION/.test(res.notice || ''), 'the player is told the save is from a newer build');
   ok(s.getItem(STORAGE_KEY) === JSON.stringify(future),
@@ -175,8 +183,8 @@ console.log('FUTURE-VERSION SAVE (fail safe, never half-load):');
     ok(r.status !== 'future-version' && r.profile.gold === 7,
       `a non-integer/malformed version (${bad}) is treated as legacy, not future`);
   }
-  const exact = loadProfileResult(seededJson({ version: 3, gold: 7 }));
-  ok(exact.status === 'current' && exact.from === 3,
+  const exact = loadProfileResult(seededJson({ version: SCHEMA_VERSION, gold: 7 }));
+  ok(exact.status === 'current' && exact.from === SCHEMA_VERSION,
     'an exact current-version save is not migrated');
   // A v2 save (the previous schema) now migrates forward.
   const v2 = loadProfileResult(seededJson({ version: 2, gold: 7 }));
@@ -310,10 +318,28 @@ console.log('VALIDATION OF EVERY PERSISTED COLLECTION:');
     'a non-array elite unlock field degrades to none');
 
   // ---- unknown collections pass through untouched (lossless for new modules) ----
-  const extra = v({ achievements: { a: 1 }, trophies: ['t'], encounters: { grunt: 3 }, deep: { x: [1, 2] } });
-  ok(extra.achievements.a === 1 && extra.trophies[0] === 't' &&
-     extra.encounters.grunt === 3 && extra.deep.x.length === 2,
-    'unknown collections are preserved verbatim (achievements/trophies/encounters-ready)');
+  // NOTE: `achievements` used to be the sample "unknown collection" here. As of
+  // schema v4 it is a VALIDATED namespace, so the sample moved to collections
+  // that are still unknown (trophies/encounters/deep) and the achievements
+  // namespace gets its own data-preservation check below.
+  const extra = v({ trophies: ['t'], encounters: { grunt: 3 }, deep: { x: [1, 2] } });
+  ok(extra.trophies[0] === 't' && extra.encounters.grunt === 3 && extra.deep.x.length === 2,
+    'unknown collections are preserved verbatim (trophies/encounters-ready)');
+
+  // ---- the achievements namespace carries its DATA through validation ----
+  const ach = v({ achievements: { v: 1, earned: { FIRST_BLOOD: 1700000000000 }, progress: { KILLS_100: 7 }, totals: { kills: 42 } } }).achievements;
+  ok(ach && ach.earned.FIRST_BLOOD === 1700000000000 && ach.progress.KILLS_100 === 7 &&
+     ach.totals.kills === 42,
+    'the achievements namespace round-trips its earned/progress/totals data');
+  // An id written by a NEWER build survives this one (the `purchased` policy),
+  // so a save never loses data by passing through an older build.
+  const futAch = v({ achievements: { v: 1, earned: { FROM_THE_FUTURE: 5, FIRST_BLOOD: 3 }, progress: {}, totals: {} } }).achievements;
+  ok(futAch.earned.FROM_THE_FUTURE === 5 && futAch.earned.FIRST_BLOOD === 3,
+    'an unknown achievement id from a newer build is preserved, not dropped');
+  // ...and an earned trophy is never demoted to unearned by garbage.
+  const junkAch = v({ achievements: { earned: { FIRST_BLOOD: true }, progress: { KILLS_100: -5 }, totals: { kills: 'many' } } }).achievements;
+  ok(junkAch.earned.FIRST_BLOOD === 1 && junkAch.progress.KILLS_100 === 0 && junkAch.totals.kills === 0,
+    'a hand-edited namespace repairs to safe values without losing the trophy');
 
   // The catalog-injected validator behaves the same in isolation.
   const iso = SAVE.validateProfile({ gold: 10, purchased: { dmg: 99, junk: 'x' }, unlockedWeapons: ['NOPE'] }, CAT);
@@ -335,7 +361,12 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
   rich.bestTime = 187.5;
   rich.runsPlayed = 9;
   rich.nested = { bossKills: 3, tags: ['a', 'b'] };
-  rich.achievements = { firstBlood: { at: 1700000000000, count: 2 } };
+  rich.achievements = {
+    v: 1,
+    earned: { FIRST_BLOOD: 1700000000000, KILLS_100: 1700000000500 },
+    progress: { KILLS_100: 100, KILLS_1000: 250 },
+    totals: { kills: 250, runs: 4, bestWave: 6 },
+  };
   rich.trophies = ['boss_slayer'];
   rich.encounters = { grunt: 41, elite_brute: 2 };
 
