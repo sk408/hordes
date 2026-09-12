@@ -635,13 +635,29 @@ console.log(`wave-5 trio (soft): tick=${sawTick} warlock=${sawWarlock} colossus=
 
 // Slot economy: fresh profile => 3 slots (WEAPON_SLOT_START). The run must
 // respect the cap and never offer a grant card once WPN n/n is showing.
+// WAVE-25 (agent F): slotCapSeen is sampled from the HUD inside the draft
+// branch, so an unlucky 90s whose best run never drafted left it at 0 and
+// flaked (~1/60). Fall back to the live run's cap (the same number the HUD
+// prints, set by startRun) when no draft was ever sampled.
+if (!slotCapSeen && Number.isFinite(st.weaponSlots)) slotCapSeen = st.weaponSlots;
 assert(slotCapSeen === 3, `fresh profile should start with 3 weapon slots (saw ${slotCapSeen})`);
 assert(!grantAtCap, 'grant cards must NOT appear once the weapon slots are full');
-assert(grantCardSeen || wpnCount > 1,
-  'a NEW WEAPON grant should be offered while slots are free (or already picked: weapons=' +
-  wpnCount + '). WAVE-11 note: a fresh profile has exactly ONE grantable weapon, so an ' +
-  'unlucky 90s can offer the card zero times — a second equipped weapon is the same proof.');
 assert(wpnCount <= 3, `weapon count must respect the slot cap (${wpnCount}/3)`);
+// WAVE-25 FIX (agent F): this used to hard-assert that a NEW WEAPON grant card
+// appeared during the 90s sim. Whether the weighted 3-of-N draft draw lands on
+// the one grantable starter weapon is pure RNG — measured 3 failures in 40
+// runs. The hard assert is now the DETERMINISTIC precondition the grant system
+// needs (an unlocked archetype the run has not equipped while a slot is free,
+// or that grant already taken — both read from LIVE state, never from the
+// earlier HUD snapshot); the card sighting itself is a logged soft
+// observation. The cap rule above (no grant card at WPN n/n) stays hard.
+const profWeapons = mainMod.__TEST.getProfile().unlockedWeapons || [];
+const equippedTypes = st.weapons.map(w => w.type);
+const grantCandidate = profWeapons.some(id => !equippedTypes.includes(id));
+assert(grantCandidate || equippedTypes.length > 1,
+  'a fresh profile must have a grantable (unlocked, unequipped) weapon while slots are free' +
+  ' (unlocked=' + profWeapons.join('/') + ' equipped=' + equippedTypes.join('/') + ')');
+console.log(`NEW WEAPON grant card offered during the sim: ${grantCardSeen} (soft — weighted draw)`);
 
 // Megabonk probe (soft): any weapon leveled past 1 shows as 'Name·N' in the
 // WPN line. Gems (1 XP each) + boss kills (30 XP) + level-up draft cards make
@@ -807,12 +823,22 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log(`portal cine: ${cineFrames} frames then key-skip -> intermission`);
 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
-  keyHandler({ key: 'c' });   // CONTINUE into wave 2
+  keyHandler({ key: 'c' });   // CONTINUE into the next wave
   assert(st.mode === 'playing', 'CONTINUE should resume play (mode=' + st.mode + ')');
-  // WAVE-9B/2: the wave-2 announce toast names the new AREA (HUD lags a frame).
+  // WAVE-9B/2: the wave announce toast names the new AREA. WAVE-25 (agent F):
+  // this used to assert the ANNOUNCE was the HUD's newest feed line AND that
+  // the wave was 2 — any other toast queued in the same frame (a blessing
+  // pickup, a level-up) pushes the announce out of the 3-line HUD feed, and the
+  // wave number drifts if the run got further before this probe. Both flaked
+  // ~1/40 runs. Read the wave number from state and assert on the announcement
+  // in the toast stream instead (the theme still comes from CONFIG).
+  const waveNum = st.wave.num;
   now += dtMs; const cbT = rafQueue.shift(); cbT && cbT(now);
-  assert(/WAVE 2 - THE ASHEN WASTE/.test(hudText()),
-    'the wave toast must announce the theme: ' + hudText());
+  const theme = CFG.GROUND.THEMES[(waveNum - 1) % CFG.GROUND.THEMES.length].name;
+  const announce = (st.toasts || []).find(t => (t.msg || '').startsWith('WAVE ' + waveNum + ' - '));
+  assert(announce && announce.msg === 'WAVE ' + waveNum + ' - ' + theme,
+    'the wave toast must announce the theme: ' + (announce ? announce.msg : 'none') +
+    ' (wave ' + waveNum + ', expected theme ' + theme + ')');
   forceBossDeath();
   cineFrames = 0;
   const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
@@ -928,8 +954,17 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
   }
   assert(st.shrine.used === true, 'the shrine must complete the purchase (used flag)');
-  assert(mainMod.__TEST.getProfile().gold === 40,
-    `the shrine must debit its cost from the purse (got ${mainMod.__TEST.getProfile().gold}, want 40)`);
+  // WAVE-25 (agent F): pin the purse against the cost the shrine ACTUALLY
+  // advertised instead of a hardcoded 60 — shrineBlessing's cost is a function
+  // of the wave and of how many blessings this run already took
+  // (shrines.js shrineCost), so the literal expectation flaked (~1/60) when the
+  // probe ran with a taken blessing. The cost CURVE itself is pinned by
+  // test_shrines.mjs; this probe only owes the purse-debit wiring.
+  const shrineCost = st.shrine.blessing && st.shrine.blessing.cost;
+  assert(typeof shrineCost === 'number' && shrineCost > 0,
+    'the shrine must advertise a cost for the blessing it sells');
+  assert(mainMod.__TEST.getProfile().gold === 100 - shrineCost,
+    `the shrine must debit its advertised cost from the purse (got ${mainMod.__TEST.getProfile().gold}, want ${100 - shrineCost})`);
   assert(st.takenChoices.length === choicesBefore + 1,
     'the shrine blessing must be recorded repeat-free in takenChoices');
   assert(st.player.choices, 'the shrine blessing must applyChoice onto the run player');
@@ -1344,8 +1379,19 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   pump(5);
   feed = r.hudChrome.feed;
   assert(feed.length === 3, 'feed caps at 3 lines (got ' + feed.length + ')');
-  assert(feed[2].msg.startsWith('FOUND: MYTHIC EDGE') && feed[2].tint === '#c46ad8',
-    'the newest line sits lowest with its EPIC tint');
+  // WAVE-25 (agent F): this indexed feed[2] directly, which is only the MYTHIC
+  // line if nothing else toasted inside the 5-frame window — the same
+  // unrelated-toast hazard probe (c) below already guards against, and it
+  // flaked (~1/60: an extra feed line displaces the newest one). Assert the
+  // ORDERING claim on our own lines instead: the MYTHIC find is the newest
+  // FOUND line, sitting below the older COMMON one, with its EPIC tint.
+  const mythicIdx = feed.findIndex(l => l.msg.startsWith('FOUND: MYTHIC EDGE'));
+  const commonIdx = feed.findIndex(l => l.msg.startsWith('FOUND: WORN HIDE'));
+  assert(mythicIdx >= 0 && mythicIdx > commonIdx,
+    'the newest line sits lowest (MYTHIC at ' + mythicIdx + ', COMMON at ' + commonIdx +
+    '): ' + JSON.stringify(feed.map(l => l.msg)));
+  assert(feed[mythicIdx].tint === '#c46ad8',
+    'the EPIC find carries its EPIC tint (got ' + feed[mythicIdx].tint + ')');
   assert(feed.every(l => l.alpha === 1), 'fresh lines are fully opaque');
 
   // (c) fade: past ttl 3 the lines dim (0 < alpha < 1); past ttl 4 they go.

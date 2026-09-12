@@ -79,23 +79,23 @@ export function initHeat(run) {
 //   source  — HEAT_SOURCES key ('WEAPON_EVOLUTION' | 'NEW_ITEM_SLOT' |
 //             'ITEM_EXCHANGE' | 'MANUAL_PUSH')
 //   amount  — optional override of the source's tuned cost
-//   eventId — optional dedupe id: if this id was already charged, the call is
-//             IGNORED (guards against a level-up tick firing twice)
+//   eventId — optional dedupe id: if this id was already CHARGED, the call is
+//             IGNORED (guards against a level-up tick firing twice). It is
+//             recorded only when the ledger actually moved, so a call that
+//             added nothing (full ledger / non-positive amount) never burns
+//             the id.
 // Returns { applied, added, heat, reason } — applied:false means the source
 // was rejected ('source' unknown / 'duplicate' eventId). applied:true with
-// added:0 is a successful no-charge: ITEM_EXCHANGE (always free) or a full
-// ledger (reason 'cap'). ITEM_EXCHANGE always applies +0 so hb1 can call it
-// on every swap without special-casing.
+// added:0 is a successful no-charge: ITEM_EXCHANGE (always free, reason 'ok')
+// or a capped / non-positive request (reason 'cap'). ITEM_EXCHANGE always
+// applies +0 so hb1 can call it on every swap without special-casing.
 export function addHeat(run, source, amount = null, eventId = null) {
   const def = HEAT_SOURCES[source];
   if (!def) return { applied: false, added: 0, heat: heatOf(run), reason: 'source' };
 
   const ledger = initHeat(run);
-  if (eventId != null) {
-    if (ledger.events.has(eventId)) {
-      return { applied: false, added: 0, heat: ledger.total, reason: 'duplicate' };
-    }
-    ledger.events.add(eventId);
+  if (eventId != null && ledger.events.has(eventId)) {
+    return { applied: false, added: 0, heat: ledger.total, reason: 'duplicate' };
   }
 
   const want = amount == null ? def.amount : amount;
@@ -105,8 +105,18 @@ export function addHeat(run, source, amount = null, eventId = null) {
   const added = Math.min(room, Math.max(0, want));
   ledger.total += added;
   if (def.id === 'MANUAL_PUSH' && added > 0) ledger.manual += added;
+  // The event id is charged ONLY when the ledger actually moved. A call that
+  // added nothing (ledger already at HEAT_CAP, or a non-positive amount) must
+  // not burn the id — otherwise a later, legitimate call with the same id is
+  // rejected as a 'duplicate' even though this one cost nothing.
+  if (eventId != null && added > 0) ledger.events.add(eventId);
 
-  return { applied: true, added, heat: ledger.total, reason: added < want ? 'cap' : 'ok' };
+  // reason 'cap' whenever the request could not be fully honoured — including
+  // a NON-POSITIVE amount (nothing was charged, and nothing could have been).
+  // ITEM_EXCHANGE's documented always-free +0 keeps 'ok' so hb1 can call it on
+  // every 4/4 swap without special-casing.
+  const short = added < want || (want < 0);
+  return { applied: true, added, heat: ledger.total, reason: short ? 'cap' : 'ok' };
 }
 
 // ---------- HUD ----------

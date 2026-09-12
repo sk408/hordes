@@ -25,7 +25,9 @@
 //   potionHealMult  (base 1)    — hb1: multiply CONFIG.POTIONS.HP_HEAL in the
 //                                 usePotion call path (skills.js seam)
 //   dropChanceMult  (base 1)    — hb1: multiply CONFIG.POTIONS.DROP_CHANCE in
-//                                 skills.js rollDrop
+//                                 the potion-drop roll on the kill path
+//                                 (main.js; skills.js's old rollDrop export
+//                                 was removed in wave-25 as dead code)
 //   itemDropMult    (base 1)    — hb1: multiply CONFIG.ITEMS chances in
 //                                 loot.js drop rolls
 //   damageTakenMult (base 1)    — hb1: multiply contact/projectile damage the

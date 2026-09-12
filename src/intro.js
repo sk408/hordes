@@ -10,6 +10,8 @@
 //
 // Public API (FROZEN for hb1):
 //   INTRO_DURATION, PHASES, render(ctx, t), isDone(t), phaseAt(t)
+//   TITLE_IMPACT (additive, wave-25): the ms instant the title LANDS — the
+//   frame phaseAt() switches to 'TITLE', so audio and video agree.
 // INTRO_TEST is a read-only test seam (NOT part of the frozen API).
 
 import { SPRITE_ARCHETYPES } from './sprites.js';
@@ -18,15 +20,23 @@ import { SPRITE_ARCHETYPES } from './sprites.js';
 export const INTRO_DURATION = 7000;   // ms
 
 // name -> [start, end) in ms. TITLE intentionally overlaps OVERTAKE (the
-// stamp lands while the horde is still swallowing the hero).
+// stamp lands while the horde is still swallowing the hero). The TITLE window
+// starts when the title BEGINS its drop-in; the impact itself is
+// TITLE_IMPACT = TITLE[0] + TITLE_DROP_MS (see phaseAt below).
 export const PHASES = {
   CHASE:    [0,    2500],   // zoomed hero sprints right, horde pours in behind
   OVERTAKE: [2500, 5000],   // horde swells, catches and engulfs the hero
-  TITLE:    [4000, 6000],   // HORDES stamps down: 2-frame shake + splatter
+  TITLE:    [4000, 6000],   // HORDES drops in: 2-frame shake + splatter
   FADE:     [6000, 7000],   // fade to black
 };
 
 export function isDone(t) { return t >= INTRO_DURATION; }
+
+// The title's stamp: the drop-in takes TITLE_DROP_MS from PHASES.TITLE[0] and
+// the title LANDS at TITLE_IMPACT — the instant phaseAt() reports 'TITLE', so
+// the audio stinger (hb1 polls phaseAt) and the visual impact cannot drift.
+const TITLE_DROP_MS = 300;
+export const TITLE_IMPACT = PHASES.TITLE[0] + TITLE_DROP_MS;
 
 // Phase name whose window contains t (later phases win on overlap; the
 // FADE/TAIL ordering makes the "what stinger should play now" answer easy).
@@ -34,7 +44,11 @@ export function phaseAt(t) {
   if (t < 0) return 'CHASE';
   if (t >= INTRO_DURATION) return 'DONE';
   if (t >= PHASES.FADE[0]) return 'FADE';
-  if (t >= PHASES.TITLE[0]) return 'TITLE';
+  // TITLE is reported from the STAMP, not from the start of the drop-in: hb1
+  // fires the TITLE_SLAM stinger on this transition, and audio.js documents
+  // the stamp at ~4300ms (= TITLE_IMPACT), so the boom must land WITH the
+  // impact rather than 300ms before it.
+  if (t >= TITLE_IMPACT) return 'TITLE';
   if (t >= PHASES.OVERTAKE[0]) return 'OVERTAKE';
   return 'CHASE';
 }
@@ -164,15 +178,18 @@ function heroVisible(t) {
   return true;
 }
 
-// Title stamp: drops in over 300ms, impact at TITLE[0]+300, 2-frame shake.
-const TITLE_IMPACT = PHASES.TITLE[0] + 300;
+// Title stamp: drops in over TITLE_DROP_MS, impact at TITLE_IMPACT (both
+// defined with the timeline above), 2-frame shake.
 function titlePose(t) {
   const tt = t - PHASES.TITLE[0];
   if (tt < 0) return null;
-  const y = tt < 300 ? lerp(-90, TITLE_Y, (tt / 300) * (tt / 300)) : TITLE_Y; // ease-in
+  const y = tt < TITLE_DROP_MS
+    ? lerp(-90, TITLE_Y, (tt / TITLE_DROP_MS) * (tt / TITLE_DROP_MS)) : TITLE_Y; // ease-in
   let dx = 0;
-  if (tt >= 300 && tt < 420) dx = Math.floor((tt - 300) / 60) % 2 === 0 ? 5 : -5;
-  return { y, dx, splat: tt >= 300 };
+  if (tt >= TITLE_DROP_MS && tt < TITLE_DROP_MS + 120) {
+    dx = Math.floor((tt - TITLE_DROP_MS) / 60) % 2 === 0 ? 5 : -5;
+  }
+  return { y, dx, splat: tt >= TITLE_DROP_MS };
 }
 
 // ---------- render ----------

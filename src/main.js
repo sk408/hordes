@@ -120,6 +120,19 @@ fitCanvas();
 window.addEventListener('resize', fitCanvas);
 
 // ---------- State ----------
+// WAVE-25 (audit 2.6): ONE wave shape. There used to be two — a short
+// module-init literal (endsAt hardcoded 120, no mid-boss fields) and the
+// fuller object startRun() built. Both now come from here, so the tuning
+// constant (CONFIG.ESCALATION.WAVE_LENGTH) and the field set cannot drift.
+function makeWave() {
+  return {
+    num: 1,
+    endsAt: C.ESCALATION.WAVE_LENGTH,
+    boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false,
+    midAt: C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION),
+    midBossDone: false, midBosses: [],
+  };
+}
 const state = {
   player: makePlayer(),
   enemies: [],
@@ -169,7 +182,7 @@ const state = {
                      // it every frame — live mid-run, presentation only)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
-  wave: { num: 1, endsAt: 120, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false },
+  wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
 state.player.y = C.VIEW_H / 2;
@@ -204,7 +217,7 @@ const KEY_DIRS = {
 // the record — per the build directive EVERY run starts in AUTO regardless.
 const KEY_PILOT = 'hordes_pilot';
 function savePilotPref(mode) {
-  try { hudStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
 
 // Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
@@ -250,9 +263,12 @@ function runController(p, dt, am) {
     p.x += decision.moveX * spd * dt;
     p.y += decision.moveY * spd * dt;
   }
-  // Keep the player roughly on the field.
-  p.x = Math.max(-600, Math.min(600, p.x));
-  p.y = Math.max(-600, Math.min(600, p.y));
+  // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
+  // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
+  // literal 600 that used to live here could silently desync from the art.
+  const RIM = C.GROUND.RIM;
+  p.x = Math.max(-RIM, Math.min(RIM, p.x));
+  p.y = Math.max(-RIM, Math.min(RIM, p.y));
   // Attacking.
   p.attackTimer -= dt;
   const target = decision.target;
@@ -1148,8 +1164,10 @@ function update(dt) {
     }
     // PYRAXIS blink: hop by (dx,dy)*dist, clamped inside the arena walls.
     if (act.teleport) {
-      e.x = Math.max(-600, Math.min(600, e.x + act.teleport.dx * act.teleport.dist));
-      e.y = Math.max(-600, Math.min(600, e.y + act.teleport.dy * act.teleport.dist));
+      // WAVE-25 (audit 2.4): config-driven arena edge (see runController).
+      const RIM = C.GROUND.RIM;
+      e.x = Math.max(-RIM, Math.min(RIM, e.x + act.teleport.dx * act.teleport.dist));
+      e.y = Math.max(-RIM, Math.min(RIM, e.y + act.teleport.dy * act.teleport.dist));
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 14, age: 0, ttl: 0.25 });
     }
     // Touch radius scales with body size (WAVE-20: probe showed GRAVELMAW's
@@ -1809,20 +1827,15 @@ function die(finale) {
 // ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
 // The canvas HUD chrome (render.js drawHudChrome) is the default readout now;
 // the old text #hud stays fully functional but hidden unless opted in here.
-const hudStorage = (() => {
-  try {
-    const s = globalThis.localStorage;
-    if (s && typeof s.getItem === 'function') return s;
-  } catch { /* sandboxed — fall through to the no-op shim */ }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-})();
+// WAVE-25 (audit 2.7): no second shim — this used to be a byte-identical copy
+// of prefStorage; every persisted pref now shares the one instance above.
 const KEY_HUD_TEXT = 'hordes_hud_text';
 let textHudOn = false;
-try { textHudOn = hudStorage.getItem(KEY_HUD_TEXT) === '1'; } catch { /* shim */ }
+try { textHudOn = prefStorage.getItem(KEY_HUD_TEXT) === '1'; } catch { /* shim */ }
 function hudTextEnabled() { return textHudOn; }
 function setHudTextEnabled(b) {
   textHudOn = !!b;
-  try { hudStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
 }
 
 // ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
@@ -1838,7 +1851,7 @@ function zoomIndex() {
 }
 function setZoom(z) {
   state.zoom = ZOOM_LADDER.includes(z) ? z : 1;
-  try { hudStorage.setItem(KEY_ZOOM, String(state.zoom)); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_ZOOM, String(state.zoom)); } catch { /* shim */ }
 }
 function cycleZoom(dir = 1) {
   const n = ZOOM_LADDER.length;
@@ -1848,7 +1861,7 @@ function cycleZoom(dir = 1) {
   return next;
 }
 try {
-  const savedZoom = parseInt(hudStorage.getItem(KEY_ZOOM), 10);
+  const savedZoom = parseInt(prefStorage.getItem(KEY_ZOOM), 10);
   if (ZOOM_LADDER.includes(savedZoom)) state.zoom = savedZoom;
 } catch { /* shim */ }
 
@@ -1859,10 +1872,10 @@ try {
 // simply never persists, and the smoke drives both paths explicitly).
 const KEY_ONBOARD = 'hordes_onboarded';
 function onboardingDone() {
-  try { return hudStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
+  try { return prefStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
 }
 function completeOnboarding() {
-  try { hudStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
 }
 
 // ---------- WAVE-19 HOW TO PLAY (Sk408: first-run onboarding) -------------------
@@ -2022,8 +2035,15 @@ function statsTarget() {
 // Project a world position through the SAME transform render.js uses (cam
 // offset, then zoom about the view center) so an interactable coachmark can
 // spotlight the real chest / portal / arch / shrine where it actually sits.
+// WAVE-25 (audit 2.8): the integer zoom factor has ONE definition here —
+// render.js applies the identical math. main.js publishes the canonical value
+// as state.zoomScale every frame (syncChrome) so render.js can read it instead
+// of re-deriving it, and the coachmark can never silently drift off the world.
+function zoomScale(z) {
+  return Math.max(1, Math.round(z || 1));
+}
 function worldRegion(wx, wy, r = 16) {
-  const Z = Math.max(1, Math.round(state.zoom || 1));
+  const Z = zoomScale(state.zoom);
   const sx = C.VIEW_W / 2 + (wx - state.cam.x - C.VIEW_W / 2) * Z;
   const sy = C.VIEW_H / 2 + (wy - state.cam.y - C.VIEW_H / 2) * Z;
   return canvasRegion(sx - r, sy - r, r * 2, r * 2);
@@ -2350,7 +2370,6 @@ function startRun() {
     if (cands.length === 0) break;
     levelUpWeapon(cands[Math.floor(Math.random() * cands.length)]);
   }
-  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.enemies = [];
   state.projectiles = [];
   state.enemyShots = [];
@@ -2366,13 +2385,20 @@ function startRun() {
   interMsg = '';
   state.effects = [];
   state.toasts = [];
+  // WAVE-25 FIX (audit 2.3): a synergy already live at t=0 (the ORBIT-starting
+  // PALADIN's VOLLEY+ORBIT) must be announced on EVERY run. Two bugs hid it:
+  // synergyNames (the toast-dedup set) was never reset between runs, so run 2+
+  // treated the pair as already seen; and this call used to sit BEFORE the
+  // toasts clear above, which wiped the announcement it had just queued. Both
+  // are fixed here — reset the set, then detect AFTER the toast list is empty.
+  state.synergyNames = null;
+  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   state.deathBy = null;      // WAVE-20: no death recorded yet
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
-  state.wave = { num: 1, endsAt: C.ESCALATION.WAVE_LENGTH, boss: null, bosses: [], pendingClear: false, startKills: 0, cinePending: false,
-    midAt: C.ESCALATION.WAVE_LENGTH * (1 - C.ESCALATION.MIDBOSS.AT_FRACTION), midBossDone: false, midBosses: [] };
+  state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
   // meta/profile — a null-then-init forces the reset, initHeat is idempotent
   // but does not clear a stale ledger).
@@ -2565,6 +2591,25 @@ function runAction(act) {
   }
 }
 
+// WAVE-25 FIX (audit 2.2): keys whose action is EDGE-triggered — one press, one
+// action. Wave-23 guarded only tab/g/h/n and only inside the live-run branch, so
+// every other edge key below still re-fired on OS key-repeat: holding ESC
+// oscillated the run between paused and live (the settings branch closes the
+// pause, the next repeat re-enters playing and reopens it), holding M flipped
+// AUTO/MANUAL every tick, and I / S / ? / + / - strobed their screens. None of
+// these is legitimately hold-repeatable: held movement (WASD/arrows, and S in
+// MANUAL) is state-based via keyup, not repeat-driven, so swallowing its repeat
+// still leaves the key held. The guard is GLOBAL and runs before the mode
+// dispatch, so a held ESC can no longer ping-pong a mode pair.
+const REPEAT_GUARDED = new Set([
+  'tab', 'g',            // focus / stance cycle
+  'h', 'n',              // potions
+  'escape', 'p',         // pause / resume
+  'm',                   // pilot toggle
+  'i', 's', '?', 'f1',   // field report + hints toggle
+  '+', '=', '-', '_',    // zoom ladder
+]);
+
 window.addEventListener('keydown', (ev) => {
   // WAVE-23 (#6): any key advances a live tour step (tour.js), so swallow the
   // key here — otherwise the same press would ALSO fire a skill / toggle the
@@ -2572,6 +2617,7 @@ window.addEventListener('keydown', (ev) => {
   // document-level skip handler.
   if (coachActive() || (menuTour && menuTour.active())) return;
   const k = ev.key.toLowerCase();
+  if (ev.repeat && REPEAT_GUARDED.has(k)) return;
   if (state.mode === 'intro') { endIntro(); return; }   // any key skips the movie
   if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
     if (C.CINE.SKIPPABLE) endPortalCine();
@@ -2611,10 +2657,8 @@ window.addEventListener('keydown', (ev) => {
     // ESC and P now open the same pause; the 'settings' branch above still
     // owns ESC-to-resume, so ESC is a clean toggle.
     if (k === 'escape' || k === 'p') { openSettings(); return; }
-    // WAVE-23 FIX (desktop audit #5): no auto-repeat on the held action keys.
-    // A held TAB/G spun the doctrine dial and a held H/N drank one potion per
-    // repeat tick (flask drained in a few hundred ms). Edge-trigger only.
-    if (ev.repeat && (k === 'tab' || k === 'g' || k === 'h' || k === 'n')) return;
+    // NOTE (wave-25): the auto-repeat guard for held action keys (tab/g/h/n and
+    // the rest) now lives at the top of this handler; see REPEAT_GUARDED.
     // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
     //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
     //   arrows/WASD held movement — MANUAL only
@@ -2683,14 +2727,14 @@ if (touchLayer && touchLayer.classList) {
 
 // WAVE-22c ON-SCREEN CONTROL HINTS (Sk408): desktop players get no touch
 // labels, so a compact key list rides under the cog. Persisted pref
-// (hudStorage shim, same pattern as the text HUD); default ON for
+// (prefStorage shim, same pattern as the text HUD); default ON for
 // non-touch, OFF for touch (the buttons there are self-labeled). Toggle:
 // the "?" button beside the cog or the ? / F1 key, both in-run.
 const hintsEl = document.getElementById('hints');
 const KEY_HINTS = 'hordes_hints';
 let hintsOn = (() => {
   try {
-    const v = hudStorage.getItem(KEY_HINTS);
+    const v = prefStorage.getItem(KEY_HINTS);
     return v === null ? !hasTouch : v === '1';
   } catch { return !hasTouch; }
 })();
@@ -2722,11 +2766,13 @@ function refreshHints() {
 }
 function applyHints() {
   refreshHints();
-  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', hintsOn);
+  // WAVE-25 (audit 2.1/2.12): visibility is syncChrome's job (screen gate +
+  // pref + intro/portal-cine correctness), not a bare class toggle here.
+  syncChrome();
 }
 function toggleHints() {
   hintsOn = !hintsOn;
-  try { hudStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
+  try { prefStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
   applyHints();
 }
 applyHints();
@@ -2817,17 +2863,43 @@ if (touchLayer && touchLayer.addEventListener) {
 
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
 // The touch layer is only relevant mid-run — menus are directly tappable.
-function updateTouchHud() {
+//
+// WAVE-25 FIX (audit 2.1 + 2.12): SCREEN CHROME — the pad layer (8 buttons),
+// the cog, the "?" and the hints panel. Its keys/buttons only do anything while
+// a run is LIVE (playing / finale), so that is the one screen gate. Every writer
+// of its visibility goes through syncChrome() and frame() calls it on the FIRST
+// frame of every mode, including 'intro' and 'portal-cine' (which early-return):
+// previously the layer kept whatever display it had at module load
+// (`#touch.cog-only { display: block }`) and the whole desktop UI sat on top of
+// the intro movie for its full ~7s. Same gate removes the hints panel from the
+// draft / intermission / death screens, where every key it lists is inert.
+function chromeOn() {
+  return state.mode === 'playing' || state.mode === 'finale';
+}
+function syncChrome() {
+  // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
+  // factor as first-class state, BEFORE render() reads them this frame.
+  // render.js reads state.focus / state.stance (and can drop its #tc-focus /
+  // #tc-stance badge-text fallback), and state.zoomScale is the canonical
+  // integer zoom so the renderer's transform cannot drift from the coachmark
+  // projection in worldRegion() below.
+  state.focus = controller.focus;
+  state.stance = controller.stance;
+  state.zoomScale = zoomScale(state.zoom);
+  const on = chromeOn();
   if (touchLayer && touchLayer.style) {
-    const want = (state.mode === 'playing' || state.mode === 'finale') ? '' : 'none';
+    const want = on ? '' : 'none';
     if (touchLayer.style.display !== want) touchLayer.style.display = want;
   }
   // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
   if (joyEl && joyEl.style) {
-    const wantJoy = (state.pilotMode === 'MANUAL' &&
-      (state.mode === 'playing' || state.mode === 'finale')) ? 'block' : 'none';
+    const wantJoy = (on && state.pilotMode === 'MANUAL') ? 'block' : 'none';
     if (joyEl.style.display !== wantJoy) joyEl.style.display = wantJoy;
   }
+  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', on && hintsOn);
+}
+function updateTouchHud() {
+  syncChrome();
   const p = state.player;
   const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
   set('tc-focus', controller.focus);
@@ -2851,11 +2923,41 @@ function drawHud() {
     const want = hasArcadePass(profile) ? '#ffd75e' : '';
     if (hud.style.color !== want) hud.style.color = want;
     // WAVE-12: the text HUD is opt-in (settings TEXT HUD toggle, persisted);
-    // the canvas HUD chrome is the default readout. The text is still WRITTEN
-    // every frame either way — hidden, not dead.
+    // the canvas HUD chrome is the default readout. WAVE-25 (audit 2.9): the
+    // text is only BUILT while it can be observed (see below) — hidden on a
+    // real page means no per-frame string work, not just an invisible node.
     const wantDisp = hudTextEnabled() ? '' : 'none';
     if (hud.style.display !== wantDisp) hud.style.display = wantDisp;
   }
+  // WAVE-25 PERF (audit 2.9): the text block is a ~600-char string rebuilt and
+  // assigned EVERY frame, but it is only observable when the opt-in text HUD is
+  // on (the desktop default is OFF) — or in a headless harness, which has no
+  // layout API and reads this string as its only view of HUD state. A real
+  // hidden element is read by nobody, so skip the build there.
+  if (hudTextEnabled() || typeof hud.getBoundingClientRect !== 'function') {
+    hud.textContent = hudTextBlock(p);
+  }
+  // WAVE-13: tiny canvas 'M' badge beside the hp/mana chrome while the manual
+  // pilot is bound (AUTO shows nothing). fillRect-only, drawn on the
+  // renderer's ctx from here — render.js stays untouched (WAVE-12 precedent).
+  if (state.pilotMode === 'MANUAL' && renderer.ctx &&
+      (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
+    const ctx = renderer.ctx;
+    ctx.fillStyle = '#14141f';
+    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
+    ctx.fillStyle = '#ffd75e';
+    ctx.fillRect(121, 17, 2, 11);    // left stem
+    ctx.fillRect(129, 17, 2, 11);    // right stem
+    ctx.fillRect(123, 19, 2, 2);     // vee
+    ctx.fillRect(127, 19, 2, 2);
+    ctx.fillRect(125, 21, 2, 2);
+  }
+}
+
+// WAVE-25 (audit 2.9): the text-HUD body, split out of drawHud so the string
+// build can be skipped while it is hidden. Values are read live on every call —
+// nothing is cached, so a caller that skips it loses nothing.
+function hudTextBlock(p) {
   const bars = 20;
   const filled = Math.max(0, Math.min(bars, Math.round(bars * p.hp / p.stats.maxHp)));
   const mFilled = Math.max(0, Math.min(bars, Math.round(bars * p.mana / p.stats.maxMana)));
@@ -2896,8 +2998,10 @@ function drawHud() {
     return nm.split(' ')[0] + ':' + Math.ceil(b.t) + 's';
   });
   if (state.shieldAbsorbs > 0) archBits.push('AEGISx' + state.shieldAbsorbs);
-  hud.textContent =
-    `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.ceil(p.hp)}/${p.stats.maxHp}\n` +
+  // WAVE-25 FIX (audit 2.11): the readout is clamped at 0 to match the clamped
+  // bar fill above — an unclamped Math.ceil(p.hp) printed e.g. "HP [---] -3/130"
+  // on a live death screen.
+  return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${p.stats.maxHp}\n` +
     `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
     `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${controller.focus} G:${controller.stance} Pilot:${state.pilotMode}\n` +
@@ -2911,21 +3015,6 @@ function drawHud() {
     `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
-  // WAVE-13: tiny canvas 'M' badge beside the hp/mana chrome while the manual
-  // pilot is bound (AUTO shows nothing). fillRect-only, drawn on the
-  // renderer's ctx from here — render.js stays untouched (WAVE-12 precedent).
-  if (state.pilotMode === 'MANUAL' && renderer.ctx &&
-      (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
-    const ctx = renderer.ctx;
-    ctx.fillStyle = '#14141f';
-    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
-    ctx.fillStyle = '#ffd75e';
-    ctx.fillRect(121, 17, 2, 11);    // left stem
-    ctx.fillRect(129, 17, 2, 11);    // right stem
-    ctx.fillRect(123, 19, 2, 2);     // vee
-    ctx.fillRect(127, 19, 2, 2);
-    ctx.fillRect(125, 21, 2, 2);
-  }
 }
 
 // Per-type enemy census (HUD probe; smoke test asserts on it).
@@ -3015,7 +3104,15 @@ function startFinale() {
     p.x + Math.cos(a) * C.ENEMY.SPAWN_DIST * 0.6,
     p.y + Math.sin(a) * C.ENEMY.SPAWN_DIST * 0.6);
   b.finalBoss = true;   // tagged: updateFinale() owns it (update() never runs)
-  b.speed = 140;        // drift multiplier from decide() scales this way down
+  // WAVE-25 (audit 2.5): the maw's speed was the bare literal 140 while
+  // FINAL_BOSS.speedMult (0.35) was exported and read nowhere, and
+  // makeFinalBoss() sets no `speed` field at all — so losing this line would
+  // leave mawSpd below NaN and the maw's position NaN within one frame.
+  // Read the exported knob instead: MAW_SPEED_BASE * speedMult reproduces the
+  // tuned 140 px/s exactly (400 x 0.35), and retuning speedMult now moves the
+  // maw instead of silently doing nothing.
+  const MAW_SPEED_BASE = 400;
+  b.speed = MAW_SPEED_BASE * FINAL_BOSS.speedMult;
   b.w = Math.round(b.w * FINAL_BOSS.sizeMult);   // collision box matches sprite
   b.h = Math.round(b.h * FINAL_BOSS.sizeMult);
   state.finalBoss = b;
@@ -3060,8 +3157,10 @@ function updateFinale(dt) {
   const act = decideFinalBossAction(b, p, state, dt);
   b.telegraph = !!act.telegraph;
   const mawSpd = b.speed * (b.slow > 0 ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1);
-  b.x = Math.max(-600, Math.min(600, b.x + act.mx * mawSpd * dt));
-  b.y = Math.max(-600, Math.min(600, b.y + act.my * mawSpd * dt));
+  // WAVE-25 (audit 2.4): the same config-driven arena edge as the rest.
+  const RIM = C.GROUND.RIM;
+  b.x = Math.max(-RIM, Math.min(RIM, b.x + act.mx * mawSpd * dt));
+  b.y = Math.max(-RIM, Math.min(RIM, b.y + act.my * mawSpd * dt));
   if (act.barrage) {
     const N = act.barrage.shots, off = Math.random() * Math.PI * 2;
     for (let i = 0; i < N; i++) {
@@ -3209,6 +3308,12 @@ state.mode = 'intro';
 let last = performance.now();
 let lastIntroPhase = null;
 function frame(now) {
+  // WAVE-25 FIX (audit 2.1): screen chrome (pad layer, cog, "?", hints panel)
+  // and the published doctrine/zoom state are synced on the FIRST frame of
+  // EVERY mode. This must run before the 'intro' / 'portal-cine' early returns
+  // below: those modes never reached updateTouchHud(), so the whole desktop UI
+  // rendered on top of the intro movie for its full ~7s.
+  syncChrome();
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);

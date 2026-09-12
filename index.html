@@ -256,12 +256,12 @@
     <button class="cog" id="tc-cog" data-act="settings" aria-label="settings"><span class="cog-gear"></span></button>
     <button class="cog help" id="tc-help" data-act="help" aria-label="controls">?</button>
   </div>
-  <div id="hints">
-    M pilot (AUTO) &middot; TAB focus &middot; G stance<br>
-    Q / E (W too) skills &middot; H / N potions<br>
-    S / I stats &middot; ESC pause<br>
-    + / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide
-  </div>
+  <!-- WAVE-25 (audit 2.11): the authored key list that used to sit here was
+       dead markup — applyHints()/refreshHints() (main.js) overwrite this
+       element's innerHTML at module load with the mode-aware AUTO/MANUAL
+       variant, so the static copy was never rendered and had already drifted
+       once. The element stays as the hook; main.js owns the content. -->
+  <div id="hints"></div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
