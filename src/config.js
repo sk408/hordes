@@ -384,6 +384,58 @@ export const CONFIG = {
       DOUBLE_EVERY: 3,       // every Nth wave spawns TWO bosses at once
     },
   },
+
+  // ========================================================================
+  // RUN STRUCTURE (RUN-STRUCTURE wave) — the run is a BOUNDED 30:00 ladder
+  // ========================================================================
+  // Shipped run: 5 waves, then an UNBEATABLE finale. Every run therefore ended
+  // in death, and the only shape the game could express was "die in ~3.5 min".
+  // The genre leaders do not work that way — they complete a run at a TIME
+  // LIMIT and pay a discrete win for reaching it (Vampire Survivors: 30:00
+  // "stage complete" + gold; Megabonk: 10:00 per stage, tiers chained). G18
+  // makes run length a PROGRESSION AXIS: the limit is 30:00, a fresh build
+  // still dies in minutes, and surviving is what the build earns.
+  //
+  // WHAT IS BOUNDED, AND WHY: reaching RUN.LIMIT ends the run in victory. There
+  // is no post-limit continuation — an unbounded run has no ladder to climb and
+  // no win to pay, and "keep playing forever" is the failure state this wave
+  // exists to remove. (VS resolves the same question the other way: a Reaper
+  // spawns at the limit and ends you. We chose the discrete win because the
+  // browser session should have a completion.)
+  RUN: {
+    LIMIT: 1800,           // 30:00 of PLAY time (state.time, sim seconds)
+    FINAL_CALL_AT: 1740,   // 29:00 — the "one minute left" callout
+    SURVIVED_BONUS: 1500,  // flat payout for reaching the limit (VS shape)
+    DEPTH_BONUS: 150,      // + per wave reached BEYOND the maw milestone
+    MAW_HP: 2_500_000,     // the maw is a REAL fight now (== final_boss DISPLAY_HP)
+    MAW_WINDOW: 90,        // seconds the maw encounter lasts before it withdraws
+    MAW_CLEAR_BONUS: 1200, // payout for slaying the maw (on top of the run's gold)
+    MAW_UNLOCK: 'HYPER',   // difficulty tier the milestone unlocks (profile.milestones)
+  },
+
+  // ---- THE WAVE LADDER ---------------------------------------------------
+  // `w` is the ESCALATION tick, floor(t / 30) — 60 ticks across a full run.
+  // Ticks 0..KNEE_TICK (0:00-4:00) reproduce the shipped curves EXACTLY, so the
+  // early deaths the whole game is tuned around cannot move. Past the knee each
+  // curve is re-based onto a bounded compound: the shipped compound (1.35/tick
+  // hp, 1.15/tick dmg) reaches ~1e9x by 30:00 — that is not a ladder, it is a
+  // wall, and the wall is the bug this wave fixes. See ladderHp/ladderDmg/
+  // ladderXp/ladderGroups/ladderEliteChance/ladderBeats below for the shape.
+  LADDER: {
+    WAVE_SECONDS: 120,   // == ESCALATION.WAVE_LENGTH (the tests assert this)
+    WAVES: 15,           // 15 x 120s = 1800s = RUN.LIMIT
+    KNEE_TICK: 8,        // 4:00 — the shipped curve holds through here
+    HP_LATE: 1.055,      // x/tick after the knee -> 440.8x base at 30:00
+    DMG_LATE: 1.010,     // x/tick after the knee -> 9.32x base at 30:00
+    XP_LATE: 1.030,      // x/tick after the knee -> 65.9x base at 30:00
+    GROUPS_KNEE: 240,    // density matches the shipped formula through 4:00
+    GROUPS_BASE: 5,      // shipped groups at GROUPS_KNEE (ceil((1+9)/2))
+    GROUPS_PER: 180,     // +1 spawn group every N seconds after the knee
+    GROUPS_MAX: 14,      // absolute ceiling (measured: 13 at 30:00, vs 37 shipped)
+    ELITE_FROM: 600,     // 10:00 — the elite surge begins
+    ELITE_MAX: 0.12,     // ceiling on per-spawn elite chance (base 0.05)
+    SURGE_EVERY: 3,      // every Nth wave past the milestone is an ELITE SURGE
+  },
 };
 
 // Upgrade pool for the 1-of-3 draft.
@@ -396,3 +448,95 @@ export const UPGRADES = [
   { id: 'hp',      name: 'Iron Heart',      desc: '+25 max HP and heal 25',        apply: (p) => { p.stats.maxHp += 25; p.hp = Math.min(p.hp + 25, p.stats.maxHp); } },
   { id: 'pierce',  name: 'Sharpened Tips',  desc: 'Projectiles pierce +1 enemy',   apply: (p) => { p.stats.pierce += 1; } },
 ];
+
+// ============================================================================
+// THE RUN LADDER — pure helpers (CONFIG.RUN / CONFIG.LADDER above)
+// ============================================================================
+// These live in config.js, next to the numbers they read, so the ladder can be
+// exercised with no DOM harness: the run-structure tests import them directly.
+//
+// The one invariant that matters: for every tick INSIDE the knee the ladder
+// returns EXACTLY the shipped curve, so nothing the early game (and therefore
+// every existing early-death measurement) sees can change. Past the knee the
+// curve is re-based onto a bounded compound.
+const _tickCurve = (E, w) =>
+  (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
+
+/** Enemy hp multiplier at escalation tick w (0..LIMIT/30). */
+export function ladderHp(w) {
+  const K = CONFIG.LADDER.KNEE_TICK;
+  const k = Math.min(w, K);
+  return _tickCurve(CONFIG.ESCALATION.HP, k) *
+    Math.pow(CONFIG.LADDER.HP_LATE, Math.max(0, w - K));
+}
+
+/** Enemy damage multiplier at escalation tick w. */
+export function ladderDmg(w) {
+  const K = CONFIG.LADDER.KNEE_TICK;
+  const k = Math.min(w, K);
+  return _tickCurve(CONFIG.ESCALATION.DMG, k) *
+    Math.pow(CONFIG.LADDER.DMG_LATE, Math.max(0, w - K));
+}
+
+/** Enemy xp multiplier at escalation tick w (keeps drafts flowing late). */
+export function ladderXp(w) {
+  const K = CONFIG.LADDER.KNEE_TICK;
+  const k = Math.min(w, K);
+  return _tickCurve(CONFIG.ESCALATION.XP, k) *
+    Math.pow(CONFIG.LADDER.XP_LATE, Math.max(0, w - K));
+}
+
+/** The shipped per-spawn-tick group count — the density curve before the knee. */
+export function shippedGroups(t) {
+  return Math.max(1, Math.ceil((1 + Math.floor(t / 25)) / 2));
+}
+
+/**
+ * Spawn groups per tick at play time t. Identical to the shipped formula
+ * through GROUPS_KNEE (4:00), then a linear ramp to GROUPS_MAX: the shipped
+ * formula reached 37 groups/tick at 30:00, which is not a ladder either.
+ */
+export function ladderGroups(t) {
+  const L = CONFIG.LADDER;
+  const shipped = shippedGroups(t);
+  if (t <= L.GROUPS_KNEE) return shipped;
+  const ramp = L.GROUPS_BASE + Math.floor((t - L.GROUPS_KNEE) / L.GROUPS_PER);
+  return Math.min(shipped, L.GROUPS_MAX, ramp);
+}
+
+/**
+ * Per-spawn elite chance at play time t. The shipped value is flat 0.05 after
+ * SPAWNER.ELITE_TIME; the ladder ramps it to ELITE_MAX by the run limit so a
+ * long run keeps producing events (elites are also the loot/xp peak).
+ */
+export function ladderEliteChance(t) {
+  const S = CONFIG.SPAWNER, L = CONFIG.LADDER, LIMIT = CONFIG.RUN.LIMIT;
+  if (t < S.ELITE_TIME) return 0;
+  const p = Math.min(1, Math.max(0, (t - L.ELITE_FROM) / (LIMIT - L.ELITE_FROM)));
+  return S.ELITE_CHANCE + (L.ELITE_MAX - S.ELITE_CHANCE) * p;
+}
+
+/**
+ * The cadence beat scheduled on a given wave number.
+ *   boss   — the end-of-wave named cast (every wave; ~2:00 apart)
+ *   herald — the mid-wave HERALD sub-beat. Every wave through the milestone
+ *            (waves 1..END_WAVE are the shipped cadence, untouched), then
+ *            alternating waves so a long run does not become a metronome.
+ *   surge  — an ELITE SURGE beat: past the milestone, every SURGE_EVERYth wave
+ *            raises the spawn-time elite chance for that wave's duration.
+ */
+export function ladderBeats(waveNum) {
+  const L = CONFIG.LADDER;
+  const past = waveNum > CONFIG.ESCALATION.END_WAVE;
+  return {
+    boss: true,
+    herald: past ? (waveNum % 2 === 1) : true,
+    surge: past && waveNum % L.SURGE_EVERY === 0,
+  };
+}
+
+/** MM:SS for a sim-time value (the HUD clock / end-screen readouts). */
+export function runClock(t) {
+  const s = Math.max(0, Math.floor(t || 0));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}

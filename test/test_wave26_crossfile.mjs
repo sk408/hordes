@@ -129,8 +129,17 @@ S.check('applyEscalation lives in entities.js and both callers delegate', () => 
   assert.equal(algebra(chests), 0, 'nor in chests.js');
   assert.ok(/from '\.\/entities\.js'/.test(chests) && /applyEscalation/.test(chests),
     'chests.js imports the shared helper');
-  assert.ok(/applyEscalation\(state, e, state\.time\)/.test(main),
-    'main.js calls it with the shared signature');
+  // RUN-STRUCTURE: main.js's escalation calls now all route through its
+  // `escalate(e, t)` wrapper, which re-bases entities' result onto the run
+  // LADDER. The invariant the original assertion encoded — "main.js does not
+  // re-implement the algebra, it delegates" — is unchanged and is asserted
+  // STRONGER here: the helper is imported, and it has exactly ONE call site.
+  assert.ok(/applyEscalation[^\n]*from '\.\/entities\.js'/.test(main),
+    'main.js imports the shared helper');
+  const calls = (main.match(/applyEscalation\(/g) || []).length;
+  assert.equal(calls, 1, 'main.js has exactly ONE applyEscalation call site, got ' + calls);
+  assert.ok(/applyEscalation\(state, e, t\)/.test(main),
+    'and that call site is the ladder wrapper (params state, enemy, t)');
 });
 S.check('the shared helper reproduces the documented curves exactly', () => {
   const st = { time: 90, heat: { total: 3, manual: 0, events: new Set() } };

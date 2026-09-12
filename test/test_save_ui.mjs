@@ -9,6 +9,7 @@
 // Run: node test/test_save_ui.mjs   (exit 0 = pass)
 import assert from 'node:assert/strict';
 import { boot } from './_harness.mjs';
+import { SCHEMA_VERSION } from '../src/meta.js';
 
 const CORRUPT = '{not json';
 const h = await boot({
@@ -30,7 +31,7 @@ const T = h.T;
 // ---- corrupted save: told, never silently wiped ----
 assert.equal(T.save.status, 'corrupt', 'boot reports the corrupt load');
 assert.ok(/UNREADABLE/.test(T.save.notice || ''), 'the notice tells the player the save was unreadable');
-assert.equal(T.save.version, 2, 'the session runs a valid CURRENT-version profile');
+assert.equal(T.save.version, SCHEMA_VERSION, 'the session runs a valid CURRENT-version profile');
 assert.equal(T.getProfile().gold, 0, 'the player starts clean');
 assert.ok(h.storage.get('hordes_profile_recovery'),
   'the damaged payload is preserved under the recovery key');
@@ -44,12 +45,12 @@ console.log('corrupt boot: notice shown, payload preserved, fresh profile live')
 assert.ok(/UNREADABLE/.test(T.save.notice), 'the notice is still pending before any save');
 h.key('pagehide');   // fires the registered window 'pagehide' handler
 const flushed = JSON.parse(h.storage.get('hordes_profile_v1'));
-assert.equal(flushed.version, 2, 'pagehide AUTOSAVES a current-version profile');
+assert.equal(flushed.version, SCHEMA_VERSION, 'pagehide AUTOSAVES a current-version profile');
 assert.equal(h.storage.get('hordes_profile_recovery') !== null, true,
   'the autosave did not destroy the preserved payload');
 h.key('beforeunload');
 const flushed2 = JSON.parse(h.storage.get('hordes_profile_v1'));
-assert.equal(flushed2.version, 2, 'beforeunload also flushes (second exit path)');
+assert.equal(flushed2.version, SCHEMA_VERSION, 'beforeunload also flushes (second exit path)');
 assert.ok(T.save.autosave() === true, 'the autosave seam reports success');
 console.log('exit paths: pagehide/beforeunload/autosave all flush the profile');
 
@@ -71,11 +72,12 @@ T.getProfile().gold = 4242;
 T.getProfile().bestTime = 123;
 const exported = T.save.exportText({ at: '2026-01-02T03:04:05.000Z' });
 assert.ok(/"format": "hordes-profile"/.test(exported), 'the export carries the format marker');
-assert.ok(/"schemaVersion": 2/.test(exported), 'the export carries the schema version');
+assert.ok(new RegExp(`"schemaVersion": ${SCHEMA_VERSION}`).test(exported), 'the export carries the schema version');
 assert.ok(/"gold"/.test(exported) && /"purchased"/.test(exported) &&
   /"unlockedCharacters"/.test(exported) && /"unlockedWeapons"/.test(exported) &&
-  /"unlockedElites"/.test(exported) && /"bestTime"/.test(exported),
-  'the export includes every persisted collection (unknown fields too)');
+  /"unlockedElites"/.test(exported) && /"characters"/.test(exported) &&
+  /"bestTime"/.test(exported),
+  'the export includes every persisted collection (unknown fields too), including the per-character namespace');
 
 // Dirty the live profile, then restore it from the export.
 T.getProfile().gold = 9999;

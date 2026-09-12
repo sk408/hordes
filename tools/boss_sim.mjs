@@ -7,8 +7,24 @@
 // claim 1-3 runs and the wave-N END BOSS 5-8 — a ladder of checkpoints the
 // player climbs as the profile grows.
 //
+// ---- RUN-STRUCTURE wave changes to THIS FILE (2026-09-12) ------------------
+// The sim's REPORTING was updated for the new bounded run; its escalation
+// model was NOT touched (it runs the real loop, so it inherits the ladder).
+//   1. `--profile maxed`: seed a fully-developed save (every shop row at
+//      maxLevel, every weapon/elite unlocked) through the REAL meta.js
+//      buyUpgrade path, so the late-game reach is MEASURED rather than
+//      assumed. Costs nothing to the economy — the gold is seeded, no prices
+//      are read from a second table.
+//   2. Runs that end at RUN.LIMIT are recorded as RUN SURVIVED (state.runWon)
+//      instead of falling into the 'SURVIVED' catch-all of a --max-seconds
+//      truncation.
+//   3. The default --max-seconds now exceeds the 30:00 run limit, because a
+//      run can legitimately last that long now.
+//
 // Usage: node tools/boss_sim.mjs [--runs N] [--max-seconds S]
+//        [--profile fresh|partial|maxed]
 import { CONFIG as CFG } from '../src/config.js';
+import { makeProfile, buyUpgrade, SHOP_UPGRADES } from '../src/meta.js';
 
 const args = process.argv.slice(2);
 const argOf = (name, dflt) => {
@@ -16,11 +32,20 @@ const argOf = (name, dflt) => {
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) : dflt;
 };
 const RUNS = argOf('--runs', 20);
-const MAX_SECONDS = argOf('--max-seconds', 14 * 60);   // hard cap per run
+const MAX_SECONDS = argOf('--max-seconds', 31 * 60);   // > the 30:00 run limit
 // --profile partial: simulate an EARLY-SHOPPER save (~2200g spent: ORBIT+ZAP
 // bought, Forged Edge 2, Vitality 3) so the fresh-vs-partial death-wave gap
 // — the progression curve the DIFFICULTY doc asks to be measured — is visible.
-const PARTIAL = args.includes('--profile') && args[args.indexOf('--profile') + 1] === 'partial';
+// --profile maxed: the fully-developed save (the "20 hours of gameplay" build).
+const PROFILE = args.includes('--profile') ? args[args.indexOf('--profile') + 1] : 'fresh';
+const PARTIAL = PROFILE === 'partial';
+const MAXED = PROFILE === 'maxed';
+// DIAGNOSTIC KNOBS (experiment only — they scale freshly spawned BOSS bodies
+// in the SIM, they do not touch the game): used to find out WHICH gate blocks
+// a developed build from climbing the ladder (can't-kill-it vs can't-survive-it).
+const BOSS_HP_MULT = argOf('--boss-hp-mult', 1);
+const BOSS_DMG_MULT = argOf('--boss-dmg-mult', 1);
+const DIAG = BOSS_HP_MULT !== 1 || BOSS_DMG_MULT !== 1;
 
 // ---- DOM shims (smoke.mjs pattern, trimmed to what main.js touches) -------
 const noop = () => {};
@@ -72,6 +97,20 @@ if (PARTIAL) {
     unlockedElites: [],
   }));
 }
+if (MAXED) {
+  // Build the developed save through the REAL shop API: seed the purse, then
+  // buy every row to its cap. No second price table, no hand-written level
+  // map — whatever prices/slots the live meta.js has is what this profile is.
+  const prof = makeProfile();
+  prof.gold = 10_000_000;
+  for (const def of SHOP_UPGRADES) {
+    for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(prof, def.id)) break;
+  }
+  lsBack.set('hordes_profile_v1', JSON.stringify(prof));
+  console.log(`maxed profile: gold spent ${10_000_000 - prof.gold}g · ` +
+    `slots ${prof.purchased.slots} · weapons ${prof.unlockedWeapons.length} · ` +
+    `elites ${prof.unlockedElites.join('/') || 'none'}`);
+}
 globalThis.localStorage = {
   getItem: (k) => (lsBack.has(k) ? lsBack.get(k) : null),
   setItem: (k, v) => { lsBack.set(k, String(v)); },
@@ -120,6 +159,19 @@ function frame() {
   return 'playing';
 }
 
+// DIAGNOSTIC: scale each freshly spawned boss body exactly once (hp and/or
+// contact damage). Only used with --boss-hp-mult / --boss-dmg-mult to answer
+// "which gate blocks the climb", never in a reported balance number.
+function applyDiag() {
+  if (!DIAG) return;
+  for (const e of st.enemies) {
+    if (!(e.boss || e.midBoss) || e.__diag) continue;
+    e.__diag = true;
+    if (BOSS_HP_MULT !== 1) { e.hp *= BOSS_HP_MULT; e.maxHp = e.hp; }
+    if (BOSS_DMG_MULT !== 1) e.contactDamageMult = (e.contactDamageMult || 1) * BOSS_DMG_MULT;
+  }
+}
+
 // Death-cause classification for the report.
 function classify(d) {
   if (!d) return 'unknown';
@@ -138,11 +190,16 @@ for (let r = 1; r <= RUNS; r++) {
   const capFrames = (MAX_SECONDS * 60) | 0;
   for (let i = 0; i < capFrames; i++) {
     if (frame() === 'dead') { ended = st.deathBy; break; }
+    applyDiag();
   }
-  const rec = ended
-    ? { wave: ended.wave ?? st.wave.num, time: Math.floor(ended.time ?? st.time),
-        cause: classify(ended), killer: ended.name || ended.typeId || '?' }
-    : { wave: st.wave.num, time: Math.floor(st.time), cause: 'SURVIVED', killer: '-' };
+  // RUN-STRUCTURE: a run that reaches the limit ends in the WIN state, not in
+  // death (state.runWon), and must not be folded into the truncation case.
+  const rec = st.runWon
+    ? { wave: st.wave.num, time: Math.floor(st.time), cause: 'RUN SURVIVED', killer: '-' }
+    : ended
+      ? { wave: ended.wave ?? st.wave.num, time: Math.floor(ended.time ?? st.time),
+          cause: classify(ended), killer: ended.name || ended.typeId || '?' }
+      : { wave: st.wave.num, time: Math.floor(st.time), cause: 'TRUNCATED', killer: '-' };
   runs.push(rec);
   console.log(`run ${String(r).padStart(2)}: wave ${rec.wave} @ ${rec.time}s — ${rec.cause}${rec.killer !== '-' ? ' (' + rec.killer + ')' : ''}`);
 }
@@ -155,7 +212,8 @@ for (const rec of runs) {
   w[key] = (w[key] || 0) + 1;
   byWave.set(rec.wave, w);
 }
-console.log('\n=== DEATHS BY WAVE x CAUSE (cohort of ' + RUNS + (PARTIAL ? ', PARTIAL save' : ', FRESH save') + ') ===');
+console.log('\n=== DEATHS BY WAVE x CAUSE (cohort of ' + RUNS + ', ' +
+  PROFILE.toUpperCase() + ' save, run limit ' + CFG.RUN.LIMIT + 's) ===');
 console.log('target: HERALD 1-3 and ENDBOSS 5-8 per 10 runs of each wave');
 for (const w of [...byWave.keys()].sort((a, b) => a - b)) {
   const counts = byWave.get(w);
@@ -164,6 +222,12 @@ for (const w of [...byWave.keys()].sort((a, b) => a - b)) {
 }
 const totalWaves = runs.map(r => r.wave);
 const clear1 = runs.filter(r => r.wave > 1).length;
+const survived = runs.filter(r => r.cause === 'RUN SURVIVED').length;
 console.log(`\nwave-1 clear rate: ${clear1}/${RUNS} · deepest wave reached: ${Math.max(...totalWaves)}`);
 const avg = (runs.reduce((s, r) => s + r.time, 0) / runs.length).toFixed(0);
-console.log(`mean survival: ${avg}s (WAVE_LENGTH=${CFG.ESCALATION.WAVE_LENGTH}s, MIDBOSS at ${CFG.ESCALATION.WAVE_LENGTH * (1 - CFG.ESCALATION.MIDBOSS.AT_FRACTION)}s)`);
+console.log(`mean survival: ${avg}s (run limit ${CFG.RUN.LIMIT}s, WAVE_LENGTH=${CFG.ESCALATION.WAVE_LENGTH}s, MIDBOSS at ${CFG.ESCALATION.WAVE_LENGTH * (1 - CFG.ESCALATION.MIDBOSS.AT_FRACTION)}s)`);
+console.log(`RUN SURVIVED: ${survived}/${RUNS} runs reached the limit`);
+if (MAXED) {
+  const deepest = Math.max(...totalWaves);
+  console.log(`maxed-build reach: ${deepest}/${CFG.LADDER.WAVES} waves, best ${Math.max(...runs.map(r => r.time))}s of ${CFG.RUN.LIMIT}s`);
+}

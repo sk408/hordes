@@ -3,6 +3,15 @@
 // items... account for cumulative impact of upgrades increasing survival as
 // well as increasing gold."
 //
+// ⚠️ STALE AS OF THE RUN-STRUCTURE WAVE (2026-09-12) — DO NOT QUOTE NUMBERS.
+// This sim models the OLD run unit: a boss wave every WAVE_LENGTH, run over
+// END_WAVE waves, ~GOOD_RUN.time (270s) for a full run. The live game is now a
+// bounded 30:00 ladder (CONFIG.RUN.LIMIT) with 15 waves, a RUN SURVIVED win,
+// and re-based escalation curves (CONFIG.LADDER). Nothing here was re-modelled
+// for that — the economy reprice wave owns rebuilding it against the new unit
+// — so every output below is an artifact of the retired structure.
+// (tools/boss_sim.mjs DOES run the live loop and was updated; use it instead.)
+//
 // Run: node tools/balance_sim.mjs [--runs N] [--seed S]
 //   --runs N   number of simulated CAREERS (default 200; each career plays
 //              until 30 good runs or 600 total runs)

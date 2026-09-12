@@ -69,8 +69,8 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA VERSION:');
 {
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 2,
-    `schema version constant is 2 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 3,
+    `schema version constant is 3 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -175,9 +175,13 @@ console.log('FUTURE-VERSION SAVE (fail safe, never half-load):');
     ok(r.status !== 'future-version' && r.profile.gold === 7,
       `a non-integer/malformed version (${bad}) is treated as legacy, not future`);
   }
-  const exact = loadProfileResult(seededJson({ version: 2, gold: 7 }));
-  ok(exact.status === 'current' && exact.from === 2,
+  const exact = loadProfileResult(seededJson({ version: 3, gold: 7 }));
+  ok(exact.status === 'current' && exact.from === 3,
     'an exact current-version save is not migrated');
+  // A v2 save (the previous schema) now migrates forward.
+  const v2 = loadProfileResult(seededJson({ version: 2, gold: 7 }));
+  ok(v2.status === 'migrated' && v2.from === 2 && v2.profile.version === SCHEMA_VERSION,
+    `a version-2 save migrates to ${SCHEMA_VERSION} (from=${v2.from})`);
 }
 
 // =====================================================================

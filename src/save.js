@@ -2,6 +2,14 @@
 // validation for every persisted collection, deliberate corrupted-save
 // behaviour, and lossless export/import.
 //
+// v3 (this wave) adds the NAMESPACED PER-CHARACTER SECTION: profile.characters
+// is a map keyed by character id ({ [characterId]: { upgrades: {...}, ... } }),
+// never a pile of top-level `knight_upgrades` fields. The whole point is that
+// every FUTURE piece of per-character data (specialisations, skill trees,
+// mastery) lands inside this namespace, so it never needs another top-level
+// migration. This wave is schema + migration + validation + accessors only:
+// nothing is populated, no game behaviour and no balance changes.
+//
 // WHY THIS MODULE EXISTS: the profile is the game's only durable state, and
 // every upcoming feature (achievements, trophies, enemy encounters, challenge
 // modes) persists into it. Before this module the loader type-checked a single
@@ -32,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 2;
+export const PROFILE_VERSION = 3;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -66,6 +74,13 @@ export const VERSION_HISTORY = [
     note: 'W1 save foundation: explicit "version" field, integer-clamped currency, ' +
       'validated collections, prototype-pollution-safe purchased map, and a ' +
       'reserved recovery key for unreadable payloads.',
+  },
+  {
+    version: 3,
+    note: 'G19 per-character namespace: profile.characters is a map keyed by ' +
+      'character id ({ [characterId]: { upgrades: { upgradeId: level }, ... } }), ' +
+      'validated against the live character + per-character upgrade catalogs. ' +
+      'Populated empty — no character starts with upgrades.',
   },
 ];
 
@@ -139,6 +154,16 @@ const MIGRATIONS = {
     if (!Array.isArray(next.unlockedElites)) next.unlockedElites = [];
     const g = Number(next.gold);
     next.gold = Number.isFinite(g) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(g))) : 0;
+    return next;
+  },
+  // v2 -> v3: G19 per-character namespace. Guarantee the `characters` container
+  // is a plain object (the strict validator relies on it) and NOTHING ELSE —
+  // no character is given upgrades, and no existing field is touched, so this
+  // step is lossless for every v2 save. Present-but-garbage data is left for
+  // validateProfile to repair + report (one repair path, not two).
+  2: (p) => {
+    const next = { ...p };
+    if (!plainObject(next.characters)) next.characters = {};
     return next;
   },
 };
@@ -221,6 +246,63 @@ export function validateProfile(profile, cat) {
   }
   out.purchased = purchased;
 
+  // ---- characters (G19 per-character namespace) ----
+  // NAMESPACED BY CHARACTER ID on purpose: profile.characters[characterId] =
+  // { upgrades: { upgradeId: level }, ... }. A future per-character feature
+  // (specialisations, skill trees) extends this entry — it never adds another
+  // top-level key like `knight_upgrades`, so it never needs a new migration.
+  //
+  // Rules, in the same style as the other collections:
+  //   * a key that is not a live catalog character id is DROPPED (and
+  //     reported) — the namespace is keyed by the catalog, not by arbitrary
+  //     save text;
+  //   * a malformed entry (not an object) is dropped whole;
+  //   * UNKNOWN sibling fields inside a surviving entry are preserved verbatim
+  //     (the namespace's own passthrough, for a newer module's data);
+  //   * `upgrades` values are finite non-negative integers, clamped to a known
+  //     row's maxLevel when the per-character upgrade catalog declares one
+  //     (unknown ids keep their finite integer, exactly like `purchased`);
+  //   * one bad field never invalidates the entry, the character, or the file.
+  const charactersIn = p.characters;
+  const characters = {};
+  if (plainObject(charactersIn)) {
+    for (const [cid, entry] of Object.entries(charactersIn)) {
+      if (UNSAFE_KEYS.has(cid)) { repairs.push('characters.' + cid); continue; }
+      if (!Object.prototype.hasOwnProperty.call(cat.characters, cid)) {
+        repairs.push('characters.' + cid);          // unknown character id -> drop
+        continue;
+      }
+      if (!plainObject(entry)) {
+        repairs.push('characters.' + cid);          // malformed entry -> drop
+        continue;
+      }
+      const outEntry = { ...entry };                // preserve unknown sibling fields
+      const upgrades = {};
+      if (plainObject(entry.upgrades)) {
+        for (const [uid, lvl] of Object.entries(entry.upgrades)) {
+          if (UNSAFE_KEYS.has(uid)) { repairs.push(`characters.${cid}.upgrades.${uid}`); continue; }
+          const n = Number(lvl);
+          if (!Number.isFinite(n)) {
+            upgrades[uid] = 0;
+            repairs.push(`characters.${cid}.upgrades.${uid}`);
+            continue;
+          }
+          const iv = Math.max(0, Math.floor(n));
+          const def = cat.characterUpgradeById && cat.characterUpgradeById[uid];
+          upgrades[uid] = def ? Math.min(iv, def.maxLevel) : iv;
+          if (upgrades[uid] !== lvl) repairs.push(`characters.${cid}.upgrades.${uid}`);
+        }
+      } else if (entry.upgrades !== undefined) {
+        repairs.push(`characters.${cid}.upgrades`);
+      }
+      outEntry.upgrades = upgrades;
+      characters[cid] = outEntry;
+    }
+  } else if (charactersIn !== undefined) {
+    repairs.push('characters');
+  }
+  out.characters = characters;
+
   // ---- unlocked characters + equipped selection ----
   // Real ids only, deduped, KNIGHT (free) always present, and the equipped
   // character must be a member of the validated list.
@@ -281,6 +363,125 @@ export function validateProfile(profile, cat) {
 /** A clean, validated current-version profile (the game's makeProfile). */
 export function defaultProfile(cat) {
   return validateProfile({ version: PROFILE_VERSION }, cat).profile;
+}
+
+// ---------- Per-character namespace accessors (G19) ----------
+// The ONLY sanctioned way for game code to read or change per-character
+// progress. They exist so the progression feature wave never pokes at
+// profile.characters[...] directly: every read normalises, every write
+// validates against the injected catalog the same way validateProfile does,
+// and an invalid input is rejected WITHOUT mutating the profile.
+//
+// Storage shape they operate on (see validateProfile):
+//   profile.characters = { [characterId]: { upgrades: { [upgradeId]: level } } }
+//
+// Catalog contract (the caller's catalog()):
+//   cat.characters            { [id]: characterDef }  — determines valid ids
+//   cat.characterUpgradeById  { [id]: { maxLevel } }  — OPTIONAL; when present
+//                             a known row's level clamps to its maxLevel.
+
+function hasCharacter(cat, characterId) {
+  return typeof characterId === 'string' && characterId.length > 0 &&
+    plainObject(cat && cat.characters) &&
+    Object.prototype.hasOwnProperty.call(cat.characters, characterId);
+}
+
+function characterEntry(profile, characterId) {
+  const chars = plainObject(profile) && plainObject(profile.characters) ? profile.characters : null;
+  return chars ? chars[characterId] : undefined;
+}
+
+/** Catalog maxLevel for a per-character upgrade row, or null when unknown. */
+function characterUpgradeDef(cat, upgradeId) {
+  const table = cat && cat.characterUpgradeById;
+  return table && Object.prototype.hasOwnProperty.call(table, upgradeId) ? table[upgradeId] : null;
+}
+
+/**
+ * Read a character's progress as an INDEPENDENT COPY (mutating the result does
+ * NOT change the profile): `{ upgrades: { [upgradeId]: level }, ... }`, with any
+ * future sibling fields carried through. Unknown character id -> null; a known
+ * character with no progress yet -> `{ upgrades: {} }` (never null, never a
+ * half-built object), so callers can read levels unconditionally.
+ */
+export function getCharacterProgress(profile, characterId, cat) {
+  if (!hasCharacter(cat, characterId)) return null;
+  const e = characterEntry(profile, characterId);
+  const out = plainObject(e) ? { ...e } : {};
+  out.upgrades = plainObject(out.upgrades) ? { ...out.upgrades } : {};
+  return out;
+}
+
+/**
+ * One upgrade level for a character: a finite non-negative integer, or 0 when
+ * the character is unknown / the upgrade is unowned / the stored value is junk.
+ * Never throws.
+ */
+export function getCharacterUpgradeLevel(profile, characterId, upgradeId, cat) {
+  if (!hasCharacter(cat, characterId)) return 0;
+  if (typeof upgradeId !== 'string' || !upgradeId.length) return 0;
+  const e = characterEntry(profile, characterId);
+  const lvl = plainObject(e) && plainObject(e.upgrades) ? e.upgrades[upgradeId] : undefined;
+  const n = Number(lvl);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+/**
+ * Set an upgrade to an exact level. Validates the character id, the upgrade id
+ * and the level (finite, floored, clamped to [0, row.maxLevel] when the catalog
+ * knows the row) BEFORE writing, so a rejected call leaves the profile
+ * untouched. Returns true on success, false on any invalid input.
+ */
+export function setCharacterUpgradeLevel(profile, characterId, upgradeId, level, cat) {
+  if (!plainObject(profile)) return false;
+  if (!hasCharacter(cat, characterId)) return false;
+  if (typeof upgradeId !== 'string' || !upgradeId.length) return false;
+  const n = Number(level);
+  if (!Number.isFinite(n)) return false;
+  const def = characterUpgradeDef(cat, upgradeId);
+  let lv = Math.max(0, Math.floor(n));
+  if (def) lv = Math.min(lv, def.maxLevel);
+  if (!plainObject(profile.characters)) profile.characters = {};
+  const entry = plainObject(profile.characters[characterId]) ? profile.characters[characterId] : {};
+  entry.upgrades = plainObject(entry.upgrades) ? entry.upgrades : {};
+  entry.upgrades[upgradeId] = lv;
+  profile.characters[characterId] = entry;
+  return true;
+}
+
+/**
+ * Add `amount` (default 1) to an upgrade's level — the "buy one level" call.
+ * Same validation as setCharacterUpgradeLevel; the RESULT is clamped to the
+ * row's maxLevel (or the finite non-negative range for an unknown row). A
+ * negative amount lowers the level, floored at 0. Returns true on success,
+ * false on invalid input (nothing written).
+ */
+export function addCharacterUpgrade(profile, characterId, upgradeId, amount, cat) {
+  if (!plainObject(profile)) return false;
+  if (!hasCharacter(cat, characterId)) return false;
+  if (typeof upgradeId !== 'string' || !upgradeId.length) return false;
+  const amt = amount === undefined ? 1 : Number(amount);
+  if (!Number.isFinite(amt)) return false;
+  const current = getCharacterUpgradeLevel(profile, characterId, upgradeId, cat);
+  const def = characterUpgradeDef(cat, upgradeId);
+  let next = Math.max(0, Math.floor(current + Math.floor(amt)));
+  if (def) next = Math.min(next, def.maxLevel);
+  return setCharacterUpgradeLevel(profile, characterId, upgradeId, next, cat);
+}
+
+/**
+ * Reset a character's progress: the whole namespace entry is removed, so the
+ * character starts from nothing again (including any future per-character
+ * field). Unknown id -> false. Returns true when the character existed and the
+ * namespace is now clear of it (a no-op reset on an already-clear character
+ * still succeeds).
+ */
+export function resetCharacterProgress(profile, characterId, cat) {
+  if (!plainObject(profile)) return false;
+  if (!hasCharacter(cat, characterId)) return false;
+  if (!plainObject(profile.characters)) profile.characters = {};
+  delete profile.characters[characterId];
+  return true;
 }
 
 // ---------- Corrupted / future saves ----------

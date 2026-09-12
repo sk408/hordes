@@ -445,7 +445,9 @@ progression for a fresh character vs a developed one.
 
 ## G18 CORRECTION (2026-09-12) + NEW CONTENT GOALS
 
-**G18 IS NOW THE TOP STRUCTURAL PRIORITY, AHEAD OF THE ECONOMY.** The run-structure study invalidated my
+**G18 IS NOW THE TOP STRUCTURAL PRIORITY, AHEAD OF THE ECONOMY. [OWNER-CONFIRMED 2026-09-12:
+*"You have the right idea for run length."* — the 30:00 limit with early deaths at 3-6 min and survival
+as the earned progression gate is the approved model; do not reopen it.]** The run-structure study invalidated my
 own working assumption, so it is corrected here rather than quietly edited:
 
 - Our run is **~3.5 min ended by death**. The genre leaders complete a run at **30 min** (VS) or **10 min**

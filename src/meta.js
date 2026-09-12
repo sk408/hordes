@@ -42,6 +42,29 @@ export const readSaveFile = SAVE.readSaveFile;
 export const exportProfileText = SAVE.exportProfileText;
 export const buildExport = SAVE.buildExport;
 
+// ---------- Per-character namespace accessors (G19, schema v3) ----------
+// Re-exported with the live catalog injected, so the progression feature wave
+// calls these rather than touching profile.characters[...] directly. See
+// src/save.js for the full contract; the storage shape is
+//   profile.characters = { [characterId]: { upgrades: { [upgradeId]: level } } }
+// Nothing populates it yet — a fresh profile has characters: {} — and this
+// module adds no game behaviour or balance, only the accessor seam.
+export function getCharacterProgress(profile, characterId) {
+  return SAVE.getCharacterProgress(profile, characterId, catalog());
+}
+export function getCharacterUpgradeLevel(profile, characterId, upgradeId) {
+  return SAVE.getCharacterUpgradeLevel(profile, characterId, upgradeId, catalog());
+}
+export function setCharacterUpgradeLevel(profile, characterId, upgradeId, level) {
+  return SAVE.setCharacterUpgradeLevel(profile, characterId, upgradeId, level, catalog());
+}
+export function addCharacterUpgrade(profile, characterId, upgradeId, amount = 1) {
+  return SAVE.addCharacterUpgrade(profile, characterId, upgradeId, amount, catalog());
+}
+export function resetCharacterProgress(profile, characterId) {
+  return SAVE.resetCharacterProgress(profile, characterId, catalog());
+}
+
 // ---------- Weapon unlock catalog (WAVE-11 economy, Sk408 directives) ------
 // Weapons are BOUGHT now. A new profile starts with the STARTER SET: VOLLEY
 // (the base volley every run fires) plus one cheap pick — BOOMERANG, the
@@ -60,6 +83,7 @@ function catalog() {
   return {
     characters: CHARACTERS,
     shopById: SHOP_BY_ID,
+    characterUpgradeById: CHARACTER_UPGRADE_BY_ID,
     validWeapons: VALID_UNLOCK_WEAPONS,
     validElites: VALID_ELITE_IDS,
     starterWeapons: STARTER_WEAPONS,
@@ -483,6 +507,18 @@ export function startPotionCount(profile) {
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   return ch.startPotions + (profile.purchased.potions || 0);
 }
+
+// ---------- PER-CHARACTER UPGRADES (G19 — catalog seam, EMPTY for now) ------
+// The progression feature wave fills this with per-character upgrade rows. The
+// save layer already understands the shape and clamps a KNOWN row's level to
+// its maxLevel exactly like the shared `purchased` map, so adding rows here
+// later needs no schema change and no migration. Row shape mirrors the shop:
+//   { id, characterId, name, desc, baseCost, costGrowth, maxLevel, perLevel }
+// Nothing consumes this yet; the profile's characters namespace stays empty
+// until the feature wave populates it through the accessors above.
+export const CHARACTER_UPGRADES = [];
+export const CHARACTER_UPGRADE_BY_ID = Object.fromEntries(
+  CHARACTER_UPGRADES.map(u => [u.id, u]));
 
 // ---------- Characters ----------
 // startingWeapon ids match WEAPON_TYPES keys in weapons.js; null = base volley.

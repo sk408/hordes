@@ -21,6 +21,15 @@ The run-structure study killed my own assumption, so it goes first.
    limit. If every run ends in death, then every run is a loss, and the testers' "no challenge /
    overpowered / this feels off" reads are partly a *missing win state*, not only a balance problem.
 
+**OWNER-CONFIRMED (Sk408, 2026-09-12): *"You have the right idea for run length."*** The model
+below is approved and is not open for re-litigation in later waves:
+- the run LIMIT is **30:00** for everyone (the genre's number, and the owner's);
+- a beginner build genuinely dies around **minute 3-6** — that is the normal, expected failure mode,
+  not a bug to fix;
+- **surviving the full length is the thing that is EARNED** over ~20 hours — run length is a
+  progression axis, which is what reconciles a 30:00 limit with short early runs;
+- "RUN SURVIVED" at the limit is a real win with a payout. A non-boss run must be able to END IN A WIN.
+
 **New targets:**
 - A **completed run = 8-12 minutes** (~10 as the working unit). Long enough to be a genre peer, short
   enough for a browser.

@@ -5,6 +5,14 @@
 //    visibly outperform it. If two opposite draft strategies produce the same
 //    result at minute 10, the balance is broken."
 //
+// ⚠️ STALE AS OF THE RUN-STRUCTURE WAVE (2026-09-12) — DO NOT QUOTE NUMBERS.
+// This sim's "minute 10" bar and its escalation model were built for the OLD
+// structure (5 waves, ~3.5-minute runs, an unbeatable finale as the ending).
+// The live game is a bounded 30:00 ladder (CONFIG.RUN.LIMIT, CONFIG.LADDER)
+// with a RUN SURVIVED win. Re-modelling it belongs with the economy reprice
+// wave; until then treat every output as an artifact of the retired structure.
+// (tools/boss_sim.mjs runs the LIVE loop and was updated for the new run.)
+//
 // Run: node tools/draft_sim.mjs [--runs N] [--seed S]
 //   --runs N   runs per draft archetype (default 60)
 //   --seed S   rng seed (default 4242; deterministic given the seed)

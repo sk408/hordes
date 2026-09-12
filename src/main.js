@@ -1,6 +1,9 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
-import { CONFIG as C, UPGRADES } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale, applyEscalation, clampLootToArena, lootLimit } from './entities.js';
+import {
+  CONFIG as C, UPGRADES,
+  ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
+} from './config.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
@@ -29,11 +32,14 @@ import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags } from './tour.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
-// volleyId; the mercy rule + 3-hit damage + hp floor all live there.
+// volleyId; the mercy rule + 3-hit damage live there. NOTE (RUN-STRUCTURE):
+// HP_FLOOR/DISPLAY_HP/applyFinalBossDamage are deliberately NO LONGER imported
+// — the maw's pool is main.js's (CONFIG.RUN.MAW_HP) so the milestone can
+// actually be slain. final_boss.js is untouched and still exports them.
 import {
-  FINAL_BOSS, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES, HP_FLOOR, DISPLAY_HP,
+  FINAL_BOSS, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES,
   MAW_SPEED_BASE, makeFinalBoss, decideFinalBossAction, finalBossDamage,
-  shouldApplyHit, applyFinalBossDamage,
+  shouldApplyHit,
 } from './final_boss.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
@@ -199,6 +205,12 @@ const state = {
   stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
   moment: null,      // earned-moment flourish ({ kind, x, y, age, ttl } | null)
   stanceLootAt: -99, // last GREEDY-payoff toast time (rate limiter)
+  // ---- RUN-STRUCTURE wave (the run is a bounded 30:00 ladder) ----
+  runWon: false,     // true once RUN SURVIVED has fired (the victory ending)
+  lastMinute: 0,     // last whole minute the clock toast fired for
+  finalCall: false,  // 29:00 "one minute left" callout fired
+  mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
+  mawDeadline: 0,    // sim time the maw encounter's window closes
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -384,6 +396,22 @@ function pickSpawnType(wave) {
 // Enemy escalation now lives in entities.js (WAVE-26): the algebra was
 // duplicated here and in chests.js with a "both must move" comment; both
 // delegate to entities.applyEscalation now (signature: (state, enemy, t)).
+//
+// RUN-STRUCTURE: the LADDER is the run's escalation authority. entities.
+// applyEscalation applies the SHIPPED curves (exact through LADDER.KNEE_TICK,
+// i.e. through 4:00 — which is where every early-death measurement lives — and
+// explosive after: ~1e9x hp by 30:00). This wrapper re-bases its result onto
+// the ladder. Inside the knee both ratios are exactly 1, so nothing the early
+// game sees moves at all.
+function escalate(e, t = state.time) {
+  applyEscalation(state, e, t);
+  const w = Math.floor(t / 30);
+  const hr = ladderHp(w) / hpScale(w);
+  const xr = ladderXp(w) / xpScale(w);
+  if (hr !== 1) { e.hp *= hr; e.maxHp = e.hp; }
+  if (xr !== 1) e.xp *= xr;
+  return e;
+}
 
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
@@ -395,7 +423,16 @@ function spawnWave(dt) {
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
-  const groups = Math.max(1, Math.ceil((1 + Math.floor(state.time / 25)) / 2));
+  // RUN-STRUCTURE: ladderGroups is the shipped formula through 4:00 and a
+  // bounded ramp after (the shipped formula reached 37 groups/tick at 30:00).
+  const groups = ladderGroups(state.time);
+  // ELITE SURGE beat (ladderBeats): on a surge wave the spawn-time elite
+  // chance gets the ladder's ceiling for that wave, so a long run keeps
+  // producing events instead of only more bodies.
+  const surge = ladderBeats(state.wave.num).surge;
+  const eliteChance = surge
+    ? Math.max(ladderEliteChance(state.time), C.LADDER.ELITE_MAX)
+    : ladderEliteChance(state.time);
   const wave = Math.floor(state.time / 30);
   for (let i = 0; i < groups; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -408,12 +445,12 @@ function spawnWave(dt) {
       const pa = a + (j - (pack - 1) / 2) * 0.12;
       const elite = state.time >= C.SPAWNER.ELITE_TIME &&
         typeId !== 'COLOSSUS' &&                       // colossus IS the mini-boss
-        Math.random() < C.SPAWNER.ELITE_CHANCE;
+        Math.random() < eliteChance;
       const e = makeTypedEnemy(typeId,
         state.player.x + Math.cos(pa) * d,
         state.player.y + Math.sin(pa) * d,
         state.time, { elite, variant: rollVariant(typeId) });
-      applyEscalation(state, e, state.time);
+      escalate(e, state.time);
       // WAVE-11 elite modifiers (elite_mods.js): rolled ONLY for normal elite
       // spawns, gated strictly by profile.unlockedElites (locked mods never
       // roll; the roll can fail and leave a plain elite). The stamp rides on
@@ -535,7 +572,7 @@ function chestCost(def) {
   return Math.round(def.cost * shopPriceMult());
 }
 
-function openIntermission() {
+function openIntermission(opts = {}) {
   // WAVE-8/A: if the final boss died but the movie hasn't played yet (a
   // draft/evolve from the boss payout delayed its start), the intermission
   // cannot preempt it — play the movie; it re-enters here when it ends.
@@ -545,10 +582,15 @@ function openIntermission() {
   state.mode = 'intermission';
   const p = state.player;
   const waveKills = p.kills - (state.wave.startKills || 0);
-  ovTitle.textContent = 'WAVE ' + state.wave.num + ' CLEARED';
+  // RUN-STRUCTURE: a caller that just resolved a milestone beat (the maw) owns
+  // the headline and a lead line — otherwise the milestone card would be
+  // overwritten by the plain "WAVE N CLEARED" copy on the very next line.
+  ovTitle.textContent = opts.title || ('WAVE ' + state.wave.num + ' CLEARED');
   ovTitle.className = 'logo';
   ovSub.innerHTML =
-    `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s<br>` +
+    (opts.lead ? opts.lead + '<br>' : '') +
+    `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s` +
+    ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
     `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
     `<br>purse: ${profile.gold} gold${interMsg ? '<br>' + interMsg : ''}`;
@@ -686,8 +728,8 @@ function spawnBoss() {
       state.player.x + Math.cos(a) * d,
       state.player.y + Math.sin(a) * d,
       state.time, { elite: true });
-    applyEscalation(state, boss, state.time);
-    const hp = C.ENEMY.BASE_HP * hpScale(w) *
+    escalate(boss, state.time);
+    const hp = C.ENEMY.BASE_HP * ladderHp(w) *
       (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
       heatMultipliers(heatOf(state)).hp;   // WAVE-9: bosses take the heat too
     boss.hp = hp;
@@ -696,7 +738,7 @@ function spawnBoss() {
     boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
     boss.speed *= B.SPEED_MULT * desc.speedMult;
     boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
-    boss.xp = C.ENEMY.BASE_XP * xpScale(w) * B.XP_KILLS;  // worth ~10 kills
+    boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
     boss.bossId = desc.id;          // decideBossAction dispatch key
     boss.name = desc.name;          // announce + HUD
@@ -740,8 +782,8 @@ function spawnMidBoss() {
     state.player.x + Math.cos(a) * d,
     state.player.y + Math.sin(a) * d,
     state.time);
-  applyEscalation(state, boss, state.time);
-  const hp = C.ENEMY.BASE_HP * hpScale(w) *
+  escalate(boss, state.time);
+  const hp = C.ENEMY.BASE_HP * ladderHp(w) *
     (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
     heatMultipliers(heatOf(state)).hp;
   boss.hp = hp;
@@ -752,7 +794,7 @@ function spawnMidBoss() {
   // SPEED_MULT pushes it above the player's 60px/s at every wave.
   boss.speed *= M.SPEED_MULT;
   boss.contactDamageMult = M.CONTACT_MULT;
-  boss.xp = C.ENEMY.BASE_XP * xpScale(w) * M.XP_KILLS;
+  boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * M.XP_KILLS;
   boss.boss = true;               // routes through decideBossAction
   boss.bossId = desc.id;
   boss.midBoss = true;            // payout + census distinguisher
@@ -1014,6 +1056,9 @@ function wireSynergies(dt, preFire) {
 function update(dt) {
   const p = state.player;
   state.time += dt;
+  // RUN-STRUCTURE: the clock + the RUN SURVIVED win, checked before any damage
+  // this frame can resolve. Reaching the limit is a victory, not a death.
+  if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
 
   // Weather: advance the particle field; grab this frame's modifiers.
@@ -1060,7 +1105,11 @@ function update(dt) {
   // WAVE-20: the HERALD fires once per wave at the mid-point. It does NOT
   // pause the end-boss timer above (kiting the herald until the wave boss
   // arrives is legitimate — and lethal) and never re-fires after death.
-  if (!state.wave.midBossDone && !state.portal && state.time >= state.wave.midAt) {
+  // RUN-STRUCTURE: the herald is the mid-wave CADENCE beat — every wave through
+  // the maw milestone (the shipped cadence, untouched), then alternating waves
+  // so a 30:00 run has texture instead of a metronome. See config.ladderBeats.
+  if (ladderBeats(state.wave.num).herald &&
+      !state.wave.midBossDone && !state.portal && state.time >= state.wave.midAt) {
     state.wave.midBossDone = true;
     spawnMidBoss();
   }
@@ -1148,7 +1197,7 @@ function update(dt) {
   // (decideBossAction) whose extra intents — fan / summon / nova / teleport /
   // charging / recovering — are wired below; the old generic novaCd/summonCd
   // timers are gone (Pyraxis and the Choir Mother own those behaviors now).
-  const dmgMult = dmgScale(Math.floor(state.time / 30)) * heatMultipliers(heatOf(state)).damage;
+  const dmgMult = ladderDmg(Math.floor(state.time / 30)) * heatMultipliers(heatOf(state)).damage;
   // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
   // every damage path stamps the source right before die() can fire.
   const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
@@ -1228,7 +1277,7 @@ function update(dt) {
         const m = makeTypedEnemy(act.summon.type,
           e.x + Math.cos(ang) * edge, e.y + Math.sin(ang) * edge,
           state.time, { variant: rollVariant(act.summon.type) });
-        applyEscalation(state, m, state.time);
+        escalate(m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
@@ -1245,7 +1294,7 @@ function update(dt) {
           Math.max(-590, Math.min(590, p.y + Math.sin(ang) * act.ring.radius)),
           state.time, { variant: rollVariant(act.ring.type) });
         m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
-        applyEscalation(state, m, state.time);
+        escalate(m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: p.x, y: p.y, radius: act.ring.radius, age: 0, ttl: 0.5 });
@@ -1423,7 +1472,7 @@ function update(dt) {
           for (const k of kids) {
             const c = makeTypedEnemy(k.typeId, k.x, k.y, state.time,
               { variant: rollVariant(k.typeId) });
-            applyEscalation(state, c, state.time);
+            escalate(c, state.time);
             c.hp = k.hp; c.maxHp = k.maxHp; c.w = k.w; c.h = k.h;
             c.elite = false; c.eliteMod = null;
             state.enemies.push(c);
@@ -1470,7 +1519,16 @@ function update(dt) {
   // Chests: tick lifecycle, then slide gently toward the player so the
   // gem-seeking AutoPilot naturally crosses them — the controller seam
   // stays untouched (controllers don't know chests exist).
+  // RUN-STRUCTURE: chests.js stamps its gambled-chest mini horde with the
+  // SHIPPED escalation curve (it has no ladder seam), which at 20:00+ would be
+  // a wall of off-curve unkillables. When that horde actually fires, re-base
+  // the newly added enemies onto the ladder. Guarded on the event so the
+  // frame cost of the set snapshot is not paid on ordinary ticks.
+  const chestPre = state.chests.length > 0 ? new Set(state.enemies) : null;
   const chestEvents = tickChests(state, dt);
+  if (chestPre && chestEvents.some(ev => ev.kind === 'gambleHorde')) {
+    for (const e of state.enemies) if (!chestPre.has(e)) escalate(e, state.time);
+  }
   for (const ch of state.chests) {
     const dx = p.x - ch.x, dy = p.y - ch.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -1980,17 +2038,81 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
 // Greed shop line + Midas items multiply the payout (computeRunGold takes
 // goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
 // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
-function settleRunGold() {
+function settleRunGold({ winBonus = 0 } = {}) {
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
+  // RUN-STRUCTURE: the completion bonus rides OUTSIDE computeRunGold (which is
+  // meta.js's income integrator and must not be re-priced here).
   const gold = computeRunGold({
     kills: p.kills, level: p.level, time: state.time, firstClear,
     goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
-  });
+  }) + winBonus;
   profile.gold += gold;
   saveProfile(profile);
   return { gold, firstClear };
+}
+
+// ---------- RUN LIMIT + THE WIN STATE (RUN-STRUCTURE wave) -------------------
+// The run has a LENGTH now, and reaching it is a discrete victory ("RUN
+// SURVIVED") — the second way a run can end, alongside death. Shape copied
+// from the genre's completion payout: a flat bonus for the completion plus a
+// depth term for every wave cleared past the maw milestone.
+//
+// It is a true end, not a VS-style overtime Reaper: the run terminates at the
+// limit. See the long comment on CONFIG.RUN for why (a bounded run is what
+// makes the ladder climbable and the win payable).
+function survivedBonus() {
+  const past = Math.max(0, (state.wave.num || 1) - C.ESCALATION.END_WAVE);
+  return C.RUN.SURVIVED_BONUS + C.RUN.DEPTH_BONUS * past;
+}
+
+function runSurvived() {
+  if (state.mode !== 'playing' && state.mode !== 'finale') return;
+  const p = state.player;
+  state.mode = 'dead';        // the terminal mode — already freezes the sim
+  state.runWon = true;
+  state.deathBy = null;       // nobody killed you; do not print a cause line
+  audio.stopMusic();
+  audio.playSfx('levelup');
+  // The biggest earned moment in the game, same flourish the finale kill used.
+  triggerEarnedMoment('finale', p.x, p.y);
+  const bonus = survivedBonus();
+  const { gold, firstClear } = settleRunGold({ winBonus: bonus });
+  ovTitle.textContent = 'RUN SURVIVED';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = endScreenBody({
+    lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
+      ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
+      `<br><span class="earn">COMPLETION BONUS: +${bonus}` +
+      `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
+    cause: null,                // you did not die — you won
+    gold, firstClear,
+  });
+  ovCards.innerHTML = '';
+  menuCard('RETRY', 'straight back in [R]', () => startRun());
+  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
+  overlay.style.display = 'flex';
+}
+
+// Per simulated frame, AFTER state.time advances and BEFORE any damage is
+// resolved: the run clock, the last-minute callout, and the win itself. The
+// win fires at state.time >= LIMIT exactly — never before (the run-structure
+// tests drive the real loop to prove both halves).
+function checkRunLimit() {
+  if (state.runWon || state.mode === 'dead') return false;
+  const mins = Math.floor(state.time / 60);
+  if (mins > state.lastMinute) {
+    state.lastMinute = mins;
+    if (mins * 60 < C.RUN.LIMIT) toast(`TIME ${runClock(mins * 60)} / ${runClock(C.RUN.LIMIT)}`);
+  }
+  if (!state.finalCall && state.time >= C.RUN.FINAL_CALL_AT) {
+    state.finalCall = true;
+    toast('ONE MINUTE LEFT');
+    audio.playSfx('levelup');
+  }
+  if (state.time >= C.RUN.LIMIT) { runSurvived(); return true; }
+  return false;
 }
 
 // WAVE-18 (#6, "no way to exit a run early"): deliberate run exit from the
@@ -2010,7 +2132,7 @@ function endRun() {
   ovTitle.className = '';
   ovSub.innerHTML = endScreenBody({
     lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-      ` · level ${p.level} · ${p.kills} kills`,
+      ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
     cause: null,          // a deliberate exit has no killer
     gold, firstClear,
   });
@@ -2054,7 +2176,8 @@ function die(finale) {
   ovTitle.className = finale ? 'logo' : '';
   ovSub.innerHTML = endScreenBody({
     lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
-      `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills`,
+      `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+      ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
     cause: deathCauseLabel(state.deathBy),
     gold, firstClear,
   });
@@ -2770,6 +2893,13 @@ function startRun() {
   state.timeScale = 1;
   state.moment = null;
   state.stanceLootAt = -99;
+  // RUN-STRUCTURE run-scoped reset: the run clock, the win flag, and the maw
+  // milestone all restart with the run.
+  state.runWon = false;
+  state.lastMinute = 0;
+  state.finalCall = false;
+  state.mawCleared = false;
+  state.mawDeadline = 0;
   dilation.scale = 1;
   dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
@@ -3445,7 +3575,11 @@ function hudTextBlock(p) {
   // looking M-formatted hp readout (raw 2,500,000 would read as math, not
   // as a bar that's visibly draining).
   const mawTxt = state.finalBoss
-    ? `THE MAW OF THE HORDE ${(state.finalBoss.hp / 1e6).toFixed(2)}M`
+    ? `THE MAW OF THE HORDE ${(state.finalBoss.hp / 1e6).toFixed(2)}M` +
+      // RUN-STRUCTURE: the milestone has a WINDOW — show it, because surviving
+      // the window is a real outcome (the maw withdraws, the run continues).
+      (Number.isFinite(state.mawDeadline)
+        ? ` ${Math.max(0, Math.ceil(state.mawDeadline - state.time))}s` : '')
     : null;
   const waveTxt = mawTxt ? mawTxt
     : state.wave.boss ? 'BOSS! ' + (bossNames || '')
@@ -3482,7 +3616,7 @@ function hudTextBlock(p) {
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
     `   ${describeHeat(heatOf(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
-    `WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
+    `RUN ${runClock(state.time)}/${runClock(C.RUN.LIMIT)}   WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
 }
@@ -3542,18 +3676,31 @@ function startPortalCine() {
 }
 function endPortalCine() {
   if (state.mode !== 'portal-cine') return;
-  // WAVE-10: the END_WAVE cast fell — no intermission beyond the movie; the
-  // FINALE begins (final_boss.js). Everything past this wave is maw-only.
-  if (state.wave.num >= C.ESCALATION.END_WAVE) { startFinale(); return; }
+  // WAVE-10: the END_WAVE cast fell and the maw MILESTONE begins (final_boss.js).
+  // RUN-STRUCTURE: the maw is the run's milestone beat at END_WAVE, not the
+  // run's ending — it is a bounded encounter, and every wave AFTER it resumes
+  // the ordinary ladder (intermission -> CONTINUE) up to the 30:00 limit.
+  if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
   openIntermission();
 }
 
-// ---------- FINALE (WAVE-10: the maw of the horde, final_boss.js) ------------
-// The run's last stand: the field is swept clean (no spawns, no portal, no
-// intermission/choices), the MAW drifts in ALONE, and every hit it lands is
-// an exact third of maxHp — defenses, heat, items and buffs are all blind to
-// it. The display hp is 2.5M and clamps at HP_FLOOR while BEATABLE stays
-// false: the bar drains forever, the maw never closes.
+// ---------- FINALE / MAW MILESTONE (final_boss.js) ---------------------------
+// The milestone beat: the field is swept clean (no spawns, no portal, no
+// intermission/choices) and the MAW comes in ALONE. Every hit it lands is an
+// exact third of maxHp — defenses, heat, items and buffs are all blind to it —
+// so the encounter is a pure dodge-and-burn skill check.
+//
+// RUN-STRUCTURE changes (all in main.js; final_boss.js is untouched):
+//   * The maw has a REAL, finite hp pool (CONFIG.RUN.MAW_HP, the same 2.5M the
+//     display bar always showed). Killing it is the milestone: it unlocks the
+//     next difficulty tier on the profile and pays a bonus — it does NOT end
+//     the run. The old behaviour (an unkillable wall that WAS the ending) is
+//     exactly what the run-structure wave was chartered to remove.
+//   * The encounter has a WINDOW (CONFIG.RUN.MAW_WINDOW). Survive it without
+//     killing the maw and it withdraws and the run CONTINUES: a milestone must
+//     not be a mandatory wall on the road to the 30:00 limit.
+//   * Damage is written to boss.hp directly (weapons.js already writes there
+//     for its chip bodies), so the bar the HUD shows IS the real pool.
 function startFinale() {
   state.enemies.length = 0;
   state.enemyShots.length = 0;
@@ -3574,6 +3721,13 @@ function startFinale() {
     p.x + Math.cos(a) * C.ENEMY.SPAWN_DIST * 0.6,
     p.y + Math.sin(a) * C.ENEMY.SPAWN_DIST * 0.6);
   b.finalBoss = true;   // tagged: updateFinale() owns it (update() never runs)
+  // RUN-STRUCTURE: the real pool. MAW_HP === final_boss.js DISPLAY_HP, so the
+  // HUD readout and every existing probe are unchanged; what changed is that
+  // the bar can now reach zero.
+  b.hp = b.maxHp = C.RUN.MAW_HP;
+  b.milestone = true;
+  state.mawDeadline = state.time + C.RUN.MAW_WINDOW;
+  state.mawCleared = false;
   // WAVE-25 (audit 2.5) + wave-26: the maw's speed used to be the bare
   // literal 140 while FINAL_BOSS.speedMult (0.35) was read nowhere. The
   // factory (final_boss.js makeFinalBoss) now stamps the real default from
@@ -3606,7 +3760,12 @@ function startFinale() {
 function updateFinale(dt) {
   const p = state.player;
   state.time += dt;
+  // RUN-STRUCTURE: the clock + the win run in the finale too — a player who
+  // reaches 30:00 while fighting the maw has still survived the run.
+  if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
+  // The milestone WINDOW: survive it and the maw withdraws, the run continues.
+  if (state.time >= state.mawDeadline) { mawWithdrew(); return; }
   updateWeather(state, state.weather, dt);
   const am = activeArchMods(state);   // arches are gone: identity mods
   runController(p, dt, am);
@@ -3681,10 +3840,12 @@ function updateFinale(dt) {
     }
   }
 
-  // Hero volley vs the maw: normal crit/evolution math decides the damage,
-  // but the hp WRITE goes through applyFinalBossDamage so the display bar
-  // drains and can never cross the floor while BEATABLE is false. Death is
-  // keyed strictly off the returned .died — never off a raw hp check.
+  // Hero volley vs the maw: normal crit/evolution math decides the damage.
+  // RUN-STRUCTURE: the hp WRITE is a plain subtraction against the REAL pool
+  // (final_boss.js's applyFinalBossDamage clamps at HP_FLOOR forever, which is
+  // the old "unkillable" rule — the milestone needs a pool that can reach 0).
+  // weapons.js chip bodies already write boss.hp directly, so both paths now
+  // agree: boss.hp IS the maw's real health.
   const wd = windDrift(state.weather);
   const volleyW2 = state.weapons.find(w => w.type === 'VOLLEY');
   const volleyEvo3 = volleyW2 && volleyW2.evolution;
@@ -3712,7 +3873,7 @@ function updateFinale(dt) {
       dmg *= evoCritMult2;
       state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
     }
-    const res = applyFinalBossDamage(b, dmg);
+    b.hp = Math.max(0, b.hp - dmg);
     b.flash = 0.08;
     pr.hit.add(b);
     state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
@@ -3720,13 +3881,13 @@ function updateFinale(dt) {
     if ((p.stats.lifesteal || 0) > 0) {
       p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
     }
-    if (res.died) { mawDefeated(); return; }
+    if (b.hp <= 0) { mawDefeated(); return; }
     if (pr.hit.size > pr.pierce) pr.age = 99;
   }
   state.projectiles = state.projectiles.filter(pr => pr.kind || pr.age < 3);
-  // updateWeapons' bodies chip the maw's hp directly — re-clamp the floor so
-  // that path can never slide under it either.
-  if (b.hp < HP_FLOOR) b.hp = HP_FLOOR;
+  // updateWeapons' bodies chip the maw's hp directly — the same milestone rule
+  // applies to that path too (both now write the real pool).
+  if (b.hp <= 0) { mawDefeated(); return; }
 
   // Effects / toasts / camera (same housekeeping as update()).
   for (const fx of state.effects) {
@@ -3743,39 +3904,53 @@ function updateFinale(dt) {
   updateCamera(p, dt);
 }
 
-// Reachable ONLY when final_boss.js's BEATABLE flips true (Sk408's later
-// phase) — while it's false the hp floor holds and .died never fires.
+// THE MAW MILESTONE — cleared. RUN-STRUCTURE: this used to be the run's ONLY
+// victory, and it was unreachable (final_boss.js pinned the hp floor). It is
+// now a MILESTONE: slaying the maw unlocks a difficulty tier on the profile
+// and pays a bonus, then the run CONTINUES (the maw is a beat on the ladder,
+// not the end of it). The run's actual completion is the 30:00 limit.
 function mawDefeated() {
   state.finalBoss = null;
   state.enemies.length = 0;
   state.enemyShots.length = 0;
-  state.mode = 'dead';
-  audio.stopMusic();
+  state.mawCleared = true;
+  state.mode = 'intermission';   // clears the field; openIntermission re-arms it
   audio.playSfx('levelup');
-  // WAVE-26: the finale kill is the biggest earned moment in the game — the
-  // flare fires with the victory screen (the dilation plays as the run ends).
+  // The biggest earned moment in the game — same flourish the finale used.
   triggerEarnedMoment('finale', state.player.x, state.player.y);
-  const p = state.player;
-  const firstClear = state.time > (profile.bestTime || 0);
-  if (firstClear) profile.bestTime = Math.floor(state.time);
-  const gold = computeRunGold({
-    kills: p.kills, level: p.level, time: state.time, firstClear,
-    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
-  });
-  profile.gold += gold;
-  saveProfile(profile);
-  ovTitle.textContent = 'THE MAW IS SLAIN';
-  ovTitle.className = 'logo';
-  ovSub.innerHTML = endScreenBody({
-    lead: `the horde is ended · WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-      ` · level ${p.level} · ${p.kills} kills`,
-    cause: null,          // you did not die — you won
-    gold, firstClear,
-  });
+  // The unlock: a persistent milestone flag on the profile (src/save.js keeps
+  // unknown fields verbatim, so this needs no schema change).
+  const first = !(profile.milestones && profile.milestones.mawSlain);
+  profile.milestones = { ...(profile.milestones || {}), mawSlain: true };
+  toast('THE MAW IS SLAIN — ' + C.RUN.MAW_UNLOCK + ' UNLOCKED');
+  toast(first ? 'A NEW DIFFICULTY TIER IS YOURS' : 'THE MAW FALLS AGAIN');
+  // The milestone pays on top of the run's ordinary account.
+  const bonus = C.RUN.MAW_CLEAR_BONUS || 0;
+  const { gold } = settleRunGold({ winBonus: bonus });
+  // Hand the milestone headline to the intermission (it renders the follow-on
+  // cards: CONTINUE, chests, blessings) — a milestone beat should read as one.
   ovCards.innerHTML = '';
-  menuCard('RETRY', 'straight back in [R]', () => startRun());
-  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
-  overlay.style.display = 'flex';
+  openIntermission({
+    title: 'THE MAW IS SLAIN',
+    lead: `<span class="earn">MILESTONE: ${C.RUN.MAW_UNLOCK} TIER UNLOCKED` +
+      `${bonus ? ` · +${bonus} BONUS` : ''} · gold +${gold}</span>`,
+  });
+}
+
+// THE MAW MILESTONE — withdrawn. The encounter window expired with the maw
+// alive: it leaves, the run continues, and the milestone stays unearned. This
+// is what keeps the milestone a BEAT rather than a mandatory wall between a
+// player and the 30:00 limit.
+function mawWithdrew() {
+  state.finalBoss = null;
+  state.enemies.length = 0;
+  state.enemyShots.length = 0;
+  state.volleyMask = null;
+  state.mode = 'playing';
+  toast('THE MAW WITHDRAWS');
+  // Straight into the intermission: the field is empty, so the only thing
+  // ahead is the next wave and the rest of the ladder.
+  openIntermission();
 }
 
 state.mode = 'intro';
@@ -3887,6 +4062,23 @@ export const __TEST = {
     get lead() { return state.camLead; },
   },
   loot: { limit: lootLimit, clamp: clampLootToArena },
+  // ---- RUN-STRUCTURE wave seam: the run limit, the clock, the win, and the
+  // cadence schedule. `check` drives the limit check without a frame loop;
+  // `survivedBonus` is the payout shape; `beats`/`groups`/`curves` expose the
+  // ladder's live values so a test can assert monotonicity against config.
+  run: {
+    limit: C.RUN.LIMIT,
+    clock: runClock,
+    survivedBonus,
+    runSurvived,
+    check: checkRunLimit,
+    beats: ladderBeats,
+    groups: ladderGroups,
+    eliteChance: ladderEliteChance,
+    get won() { return state.runWon; },
+    get mawCleared() { return state.mawCleared; },
+    get mawDeadline() { return state.mawDeadline; },
+  },
   // ---- W1 save-foundation seam (schema / migration / export / import) ----
   // `status` is the boot load result ('fresh' | 'current' | 'migrated' |
   // 'repaired' | 'corrupt' | 'future-version'); `notice` is what the player
