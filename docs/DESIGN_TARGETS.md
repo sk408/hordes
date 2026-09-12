@@ -31,17 +31,20 @@ below is approved and is not open for re-litigation in later waves:
 - "RUN SURVIVED" at the limit is a real win with a payout. A non-boss run must be able to END IN A WIN.
 
 **New targets:**
-- A **completed run = 8-12 minutes** (~10 as the working unit). Long enough to be a genre peer, short
-  enough for a browser.
+- **The run LIMIT is 30:00 for everyone.** A typical EARLY run ends at 3-6 min because the
+  player dies — that is normal. A run approaching the full 30 min is a LATE-game result.
 - **Add a "RUN SURVIVED" win** at the time limit with a payout bonus. The boss stays a milestone
   (it should unlock the next difficulty/mode), NOT the only way to end a run. Non-boss runs must be
   able to END IN A WIN.
 - **Cadence:** one wave per minute, a per-minute enemy scaling ramp, and a boss/elite beat every ~2-3
-  minutes so a 10-minute run has 3-4 escalation beats (VS scripts a boss at :25, Megabonk lets the player
+  minutes, so even a short run has real texture (VS scripts a boss at :25; Megabonk lets the
+  player summon one).
   summon one).
-- **Economy reprice:** 60h at ~10 min = **~360 runs** (not the ~1,029 I computed at 3.5 min). 40h (the
-  final-boss target) = **~240 runs**. All shop pricing must be rebuilt against ~360 runs. The old
-  35-65% / 30-good-run targets encode the wrong unit and must be replaced.
+- **Economy reprice: DO NOT COMPUTE 60h FROM THE LIMIT.** A run's length is a progression
+  axis, so average run length rises across a playthrough; dividing 60h by any single run
+  length gives a wrong run count. Use MEASURED average run length from the sims (which
+  must first be rebuilt for the new structure) before any price is set. The earlier
+  ~360-runs-from-10-min figure is void, as is the ~1,029-runs-from-3.5-min one.
 - Genre cross-check: VS completionist mean **56.6h** (n=861) and Megabonk **59.5h** (n=37) — our 60h
   target is normal. Our *run count* was the outlier, not the hours.
 
@@ -110,8 +113,9 @@ below is approved and is not open for re-litigation in later waves:
 
 ## 5. What this changes in the plan
 
-- **G18 (run length) is now the top structural priority**, ahead of the economy: extend a completed run to
-  ~10 min, add the RUN SURVIVED win, script the cadence, then reprice on ~360 runs.
+- **G18 (run length) is DONE** (wave-29, owner-confirmed): the limit is 30:00, reaching it is
+  a discrete RUN SURVIVED win, and the ladder spans the full length. **Rebuild the sims next**
+  — they still model 3.5-min runs, so no economy number can be trusted until they are re-modelled.
 - **New content goals**: stages + modifier axis, character rule-benders, rule-changing cards, enemy
   behaviour budget, the elite rarity dial, rare signalling, the bestiary spec.
 - **The catalogue and per-character work stay valid** — but the hours now divide differently, and the
