@@ -98,6 +98,15 @@
   #touch.cog-only { display: block; }
   #touch.cog-only button { cursor: pointer; }
   #touch.cog-only #joy { cursor: grab; }
+  /* WAVE-23 desktop refinement (post-audit): a mouse user does not need
+     thumb-sized 56px targets, and at 0.85 opacity the pads sat on top of the
+     arena's bottom corners. On the fine-pointer desktop they shrink to a
+     44px click target (the standard minimum) and dim to 0.55, snapping back
+     to full opacity while the cursor is over them. Touch / hybrid (#touch.on)
+     keeps the full-size layer untouched — this block is cog-only devices. */
+  #touch.cog-only .pad button { min-width: 62px; min-height: 44px; font-size: 12px; }
+  #touch.cog-only .pad { opacity: 0.55; }
+  #touch.cog-only .pad:hover { opacity: 1; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));
@@ -248,16 +257,16 @@
     <button class="cog help" id="tc-help" data-act="help" aria-label="controls">?</button>
   </div>
   <div id="hints">
-    M pilot &middot; TAB focus &middot; G stance<br>
-    Q / E skills &middot; H / N potions<br>
-    S / I stats &middot; + / - zoom &middot; 1-6 cards<br>
-    ? hide this
+    M pilot (AUTO) &middot; TAB focus &middot; G stance<br>
+    Q / E (W too) skills &middot; H / N potions<br>
+    S / I stats &middot; ESC pause<br>
+    + / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide
   </div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
     <div class="cards" id="ov-cards"></div>
-    <div class="sub">1 / 2 / 3 or pick a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats &middot; ? key hints &middot; or the on-screen buttons</div>
+    <div class="sub">cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats (S in AUTO) &middot; ESC pause &middot; ? key hints &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

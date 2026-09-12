@@ -18,10 +18,19 @@ export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
 export const RANGED_TYPES = new Set(['SPITTER', 'WARLOCK']);
 
 // Nearest live enemy scan (shared by both controllers — pickTarget wants it
-// as its NEAREST-doctrine fallback).
+// as its NEAREST-doctrine fallback). hp<=0 means "already dead, not yet
+// reaped": main.js reaps in the same frame but a COLOSSUS death shockwave can
+// leave victims at hp<=0 until the next frame, and a corpse is not a target
+// (weapons.js nearestEnemy filters the same way). An enemy with no hp field at
+// all (probe stubs) still counts as alive.
+function alive(e) {
+  return !(e.hp <= 0);
+}
+
 function nearestEnemy(p, state) {
   let nearest = null, nd = Infinity;
   for (const e of state.enemies) {
+    if (!alive(e)) continue;
     const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
     if (d < nd) { nd = d; nearest = e; }
   }
@@ -60,6 +69,7 @@ export class AutoPilotController {
       // Highest max-hp enemy in range (kill the big ones first).
       let best = null, bh = -1, bd = Infinity;
       for (const e of state.enemies) {
+        if (!alive(e)) continue;
         const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
         if (d > r2) continue;
         if (e.maxHp > bh || (e.maxHp === bh && d < bd)) { bh = e.maxHp; bd = d; best = e; }
@@ -74,6 +84,7 @@ export class AutoPilotController {
       // while the volley ignored them); other doctrines keep the 260 cap.
       let best = null, bd = Infinity;
       for (const e of state.enemies) {
+        if (!alive(e)) continue;
         if (!RANGED_TYPES.has(e.typeId)) continue;
         const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
         if (d < bd) { bd = d; best = e; }
@@ -86,10 +97,12 @@ export class AutoPilotController {
     const cr2 = C.AUTOPILOT.SWARM_CLUSTER_R ** 2;
     let best = null, bc = -1, bd = Infinity;
     for (const e of state.enemies) {
+      if (!alive(e)) continue;
       const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
       if (d > r2) continue;
       let count = 0;
       for (const o of state.enemies) {
+        if (!alive(o)) continue;
         if ((o.x - e.x) ** 2 + (o.y - e.y) ** 2 <= cr2) count++;
       }
       if (count > bc || (count === bc && d < bd)) { bc = count; bd = d; best = e; }

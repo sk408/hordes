@@ -134,8 +134,20 @@ export const CONFIG = {
   // view are simply never visited (cull for free).
   GROUND: {
     CELL: 32,          // px per decor cell (one optional piece per cell)
-    DENSITY: 0.42,     // chance a cell carries a piece
-    BOUND: 660,        // decor stops at the arena walls (player clamps +-600)
+    DENSITY: 0.36,     // chance a cell carries a fine piece (WAVE-24: 0.42 ->
+                       // 0.36 — with the landmark layer added below, the fine
+                       // field read busy; the coarse structures carry identity)
+    RIM: 600,          // arena clamp edge in world px (MUST match main.js's
+                       // +-600 player clamp and the arena wall in render.js).
+                       // Decor/landmarks never paint past it (WAVE-24: the old
+                       // BOUND 660 let pieces spill into the off-map gloom).
+    // WAVE-24 (#3) LANDMARKS: a second, coarser layer of deliberate
+    // structures (ruined wall runs, fallen pillars, cairns, camp rings,
+    // theme-flavored piles) on this grid, so the floor has landmarks to
+    // orient by instead of pure texture. LANDMARK_DENSITY = chance a cell
+    // carries one.
+    LANDMARK_CELL: 192,
+    LANDMARK_DENSITY: 0.30,
     // WAVE-9B/2 per-wave AREA IDENTITY: the theme ladder cycles by WAVE number
     // (never by run — Sk408 beat the boss, entered wave 2 and the ground read
     // identical). Each theme = base ground tone + grid dots + decor palette
@@ -163,6 +175,34 @@ export const CONFIG = {
         tuft: '#241e44', tuft2: '#30285c', stone: '#1c1834', stoneTop: '#2c2650',
         crack: '#080614', slab: '#131024', tint: 'rgba(110,80,200,0.05)' },
     ],
+  },
+
+  // ---- HUD presentation (WAVE-24 #1/#2/#4 legibility pass) ------------------
+  // The vision pass called the canvas text "washed out / placeholder" and the
+  // bar labels "tiny". Every canvas label now paints on a dark PLATE (contrast
+  // never depends on the terrain behind the HUD) at these sizes, in VIEW
+  // coordinates — WAVE-23's backing-store change rasterises them at device
+  // resolution, so these ARE the on-screen sizes. Bar chrome gets a steel
+  // outer FRAME + dark TROUGH so a 0% bar reads as an EMPTY container rather
+  // than a filled grey bar or a dead placeholder.
+  HUD: {
+    LABEL_PX: 9,          // HP / MP / XP bar labels (was 8)
+    FEED_PX: 9,           // event-feed lines
+    LV_PX: 11,            // level badge (was 9 — read as unpolished)
+    BADGE_PX: 9,          // FOCUS / STANCE doctrine readout
+    BANNER_TITLE_PX: 22,  // boss-arrival title (was 20)
+    BANNER_SUB_PX: 11,    // boss-arrival sub-line (was 10)
+    FRAME: '#6a6a7c',     // outer steel frame around every bar/plate
+    TROUGH: '#2e2e38',    // dark empty track (a 0% bar must read EMPTY)
+    PLATE: 'rgba(4,4,10,0.72)',   // dark plate behind label text
+    PLATE_SOLID: 'rgba(6,6,12,0.80)',
+    TICK: 'rgba(255,255,255,0.12)',        // minor ticks (full track)
+    TICK_MAJOR: 'rgba(255,255,255,0.22)',  // 25/50/75% ticks
+    HP: '#ff9aa6', MP: '#9ec2ff', XP: '#ffe07a',   // label tints (bright)
+    // FOCUS is targeting doctrine (cool/neutral); STANCE is the RISK dial, so
+    // it is risk-colored: green = safe, gold = balanced, orange = greedy.
+    FOCUS_COLOR: '#9ec2ff',
+    STANCE_COLORS: { SAFE: '#68e080', BALANCED: '#ffd75e', GREEDY: '#ff8848' },
   },
 
   // Intercept drift for pickup-adjacent world objects (the AutoPilot is

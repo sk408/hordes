@@ -175,7 +175,21 @@ export const FINAL_BOSS_SPRITE = (() => {
 // Volley ids derive from age: floor((age - GRACE) / CYCLE), so every barrage
 // carries a fresh id without any mutable state.
 // ===========================================================================
-export function mawDecide(enemy, player) {
+// Integer-domain wrap detection for the barrage cadence; see the long note in
+// enemy_types.js/intervalWrapped (it is duplicated here because final_boss.js
+// deliberately imports nothing but sprites.js). wrapCount doubles as the volley
+// id: both must use the SAME rounding, or the id can repeat a landed volley and
+// the mercy rule would make the whole barrage harmless.
+const WRAP_EPS = 1e-9;
+function wrapCount(age, interval) {
+  return Math.floor(age / interval + WRAP_EPS);
+}
+function intervalWrapped(age, interval, dt) {
+  const step = dt > 0 ? dt : 1 / 60;
+  return wrapCount(age, interval) !== wrapCount(age - step, interval);
+}
+
+export function mawDecide(enemy, player, _state, dt = 1 / 60) {
   const P = FINAL_BOSS_PHASES;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
   const len = Math.hypot(dx, dy) || 1;
@@ -184,21 +198,24 @@ export function mawDecide(enemy, player) {
 
   const age = Math.max(0, enemy.age - P.GRACE);   // entrance grace first
   const phase = age % P.CYCLE;
+  const wrap = age > 0 && intervalWrapped(age, P.CYCLE, dt);
 
-  // Telegraph window: the last TELEGRAPH seconds of each cycle.
-  if (age > 0 && phase >= P.CYCLE - P.TELEGRAPH) {
-    intent.telegraph = true;
-    return intent;
-  }
-
-  // Barrage lands on the frame the cycle wraps (spitter/warlock convention).
-  if (age > 0 && phase < 1 / 60) {
+  // Barrage lands on the frame the cycle wraps (spitter/warlock convention:
+  // integer-domain wrap detection, so a 120Hz client cannot fire it twice and a
+  // long frame cannot step over it). Decided BEFORE the telegraph window: age is
+  // accumulated by += dt, so the wrap frame's phase can sit a hair below CYCLE
+  // where the telegraph early-return used to swallow the whole barrage.
+  if (wrap) {
     intent.barrage = {
-      volleyId: Math.floor(age / P.CYCLE),
+      volleyId: wrapCount(age, P.CYCLE),
       shots: BARRAGE.SHOTS,
       speed: BARRAGE.SPEED,
     };
+    return intent;
   }
+
+  // Telegraph window: the last TELEGRAPH seconds of each cycle.
+  if (age > 0 && phase >= P.CYCLE - P.TELEGRAPH) intent.telegraph = true;
   return intent;
 }
 

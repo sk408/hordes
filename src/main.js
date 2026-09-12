@@ -231,6 +231,10 @@ function swapPilotMode(mode) {
     clearPilotInput();
   }
   savePilotPref(mode);
+  // WAVE-23 FIX (desktop audit #3): the hints list is mode-dependent (the S
+  // and W keys swap meaning), so a pilot swap must re-render it — otherwise
+  // the panel keeps teaching the outgoing mode's keys.
+  refreshHints();
   toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick' : 'AUTOPILOT ENGAGED');
 }
 function togglePilotMode() {
@@ -1672,14 +1676,18 @@ function maybeOpenEvolve() {
   ovTitle.className = 'logo';
   ovSub.textContent = 'a maxed weapon + its item kind + a token';
   ovCards.innerHTML = '';
-  for (const w of cands) {
+  // WAVE-23 FIX (desktop audit #5): every card was labelled `[1]` while the
+  // keydown handler routes 1-4 to ovCards.children[n-1] — so pressing [2]
+  // picked the second card the label called "[1]". Label each card with its
+  // own position (the same index the number key resolves to).
+  cands.forEach((w, i) => {
     const card = describeEvolution(w);
     const el = document.createElement('div');
     el.className = 'card';
     el.innerHTML =
       `<div class="name">EVOLVE: ${card.name}</div>` +
       `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
-      `<div class="key">[1]</div>`;
+      `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => {
       const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
       if (res.ok) {
@@ -1693,11 +1701,16 @@ function maybeOpenEvolve() {
       closeEvolve();
     };
     ovCards.appendChild(el);
-  }
-  menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
+  });
+  // NOT NOW takes the next number key when it fits the 1-4 routing window
+  // (3+ candidates can overflow it — then it stays mouse/click only).
+  const notNow = menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
     for (const w of cands) w.evoDeclined = true;
     closeEvolve();
   });
+  if (cands.length + 1 <= 4) {
+    notNow.innerHTML += `<div class="key">[${cands.length + 1}]</div>`;
+  }
 }
 
 function closeEvolve() {
@@ -1878,10 +1891,12 @@ function showHowToPlay() {
     'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
     'TAB — focus &middot; G — stance<br>' +
     'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
-    'H / N — potions &middot; S / I — field report<br>' +
-    '1 – 6 — pick cards &amp; stat tabs &middot; C — continue &middot; R / T — retry / title<br>' +
+    'H / N — potions &middot; I — field report (S too, in AUTO)<br>' +
+    '1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs<br>' +
+    'C — continue &middot; R / T — retry / title<br>' +
     '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
-    '? — show / hide the on-screen key hints &middot; ESC — close');
+    'ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus<br>' +
+    '? — show / hide the on-screen key hints');
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
   // the tour skips must be documented HERE or dropped).
@@ -2590,6 +2605,16 @@ window.addEventListener('keydown', (ev) => {
       if (card) card.click();
     }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
+    // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
+    // ESC was routed only in menu/settings/stats, and the in-run settings
+    // screen (the game's only pause) opened solely from the mouse-only cog.
+    // ESC and P now open the same pause; the 'settings' branch above still
+    // owns ESC-to-resume, so ESC is a clean toggle.
+    if (k === 'escape' || k === 'p') { openSettings(); return; }
+    // WAVE-23 FIX (desktop audit #5): no auto-repeat on the held action keys.
+    // A held TAB/G spun the doctrine dial and a held H/N drank one potion per
+    // repeat tick (flask drained in a few hundred ms). Edge-trigger only.
+    if (ev.repeat && (k === 'tab' || k === 'g' || k === 'h' || k === 'n')) return;
     // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
     //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
     //   arrows/WASD held movement — MANUAL only
@@ -2669,7 +2694,34 @@ let hintsOn = (() => {
     return v === null ? !hasTouch : v === '1';
   } catch { return !hasTouch; }
 })();
+// WAVE-23 FIX (desktop audit #3): the list is MODE-AWARE, not static. The
+// stat key is mode-dependent — in MANUAL, S is held "down" (movement) and
+// only I opens the FIELD REPORT — and W fires Overcharge in AUTO but is held
+// "up" in MANUAL, where E is the always path. The old static "S / I stats"
+// line told a MANUAL player to press a key that walks them into the horde.
+// "Q / E" stays accurate in BOTH modes (never regress that). The number-key
+// claim is scoped to the screens that route it (draft 1-3, evolve /
+// intermission 1-4, stat tabs 1-6) — the title / shop / characters /
+// settings screens ignore number keys while this panel is still visible.
+const HINT_LINES = {
+  AUTO: [
+    'M pilot (AUTO) &middot; TAB focus &middot; G stance',
+    'Q / E (W too) skills &middot; H / N potions',
+    'S / I stats &middot; ESC pause',
+    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+  ],
+  MANUAL: [
+    'M pilot (MANUAL) &middot; WASD / arrows move',
+    'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
+    'I stats (S = move down) &middot; ESC pause',
+    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+  ],
+};
+function refreshHints() {
+  if (hintsEl) hintsEl.innerHTML = (HINT_LINES[state.pilotMode] || HINT_LINES.AUTO).join('<br>');
+}
 function applyHints() {
+  refreshHints();
   if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', hintsOn);
 }
 function toggleHints() {

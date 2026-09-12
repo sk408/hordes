@@ -106,6 +106,10 @@ export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    // WAVE-24 (#3): the ground decor seams (filled every frame in render):
+    // this.landmarks = the structures painted this frame (world coords),
+    // this.arenaWall / this.hudChrome / this.bossBanner = the existing seams.
+    this.landmarks = [];
     this.resize();
   }
 
@@ -208,7 +212,11 @@ export class Renderer {
     g.fillStyle = theme.base;
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
     g.fillStyle = theme.grid;
-    const gs = 24;
+    // WAVE-24 (#3): the dot lattice is aligned to the decor CELL and drawn at
+    // CELL spacing (was an unrelated 24px grid). At 24px the lattice read as
+    // scanline/compression noise; on the same 32px joints as the paving field
+    // the dots read as ground seams, and there are ~44% fewer of them.
+    const gs = C.GROUND.CELL;
     const ox = ((-cam.x % gs) + gs) % gs;
     const oy = ((-cam.y % gs) + gs) % gs;
     for (let y = oy - gs; y < C.VIEW_H; y += gs) {
@@ -218,6 +226,9 @@ export class Renderer {
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
+    // WAVE-24 (#3): deliberate structures over the fine field (see
+    // drawLandmarks) — the coarse layer that gives the floor a sense of place.
+    this.drawLandmarks(g, state.groundSeed || 1, cam, theme);
     this.drawArenaWall(g, cam, theme);   // WAVE-18 (#7): the rim made visible
 
     // Gems.
@@ -807,18 +818,66 @@ export class Renderer {
     g.fillRect(0, bandH, W, 1);
     g.fillRect(0, H - bandH - 1, W, 1);
     // Name + sub-line, centered.
+    // WAVE-24 (#2): the title/sub sit at SCREEN CENTER — over live gameplay,
+    // not on the letterbox bands — so their contrast used to depend on
+    // whatever was behind them. A dark plate (plus a blood-red rule top and
+    // bottom) makes the moment legible on every scene, and the text goes
+    // 20 -> 22px / 10 -> 11px (CONFIG.HUD).
+    const titlePx = C.HUD.BANNER_TITLE_PX, subPx = C.HUD.BANNER_SUB_PX;
+    const adv = (px) => Math.round(px * 0.6);
+    const plateW = Math.max(b.title.length * adv(titlePx),
+      (b.sub ? b.sub.length : 0) * adv(subPx)) + 28;
+    const plateX = Math.round(W / 2 - plateW / 2);
+    const plateY = Math.round(H / 2 - 30);
+    g.fillStyle = C.HUD.PLATE_SOLID;
+    g.fillRect(plateX, plateY, plateW, 56);
+    g.fillStyle = '#7a1028';
+    g.fillRect(plateX, plateY, plateW, 1);
+    g.fillRect(plateX, plateY + 55, plateW, 1);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = 'bold 20px monospace';
+    g.font = 'bold ' + titlePx + 'px monospace';
     g.fillStyle = '#ffd75e';
     g.fillText(b.title, W / 2, H / 2 - 9);
-    g.font = '10px monospace';               // WAVE-23 (#4): 9 -> 10px
-    g.fillStyle = '#d8d8e8';
-    g.fillText(b.sub, W / 2, H / 2 + 11);
+    g.font = subPx + 'px monospace';
+    g.fillStyle = '#e4e4ee';
+    g.fillText(b.sub, W / 2, H / 2 + 12);
     g.textAlign = 'left';
     g.textBaseline = 'top';
     g.globalAlpha = 1;
     this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
+  }
+
+  // ---- WAVE-24 (#4): live DOCTRINE (focus / stance) for the canvas HUD -------
+  // The default HUD drew neither lever anywhere, so a player could cycle them
+  // (TAB / G) and see nothing change. Sources, in order — never invented:
+  //   1. state.focus / state.stance — the values main.js reads straight off
+  //      the active controller (the SAME object the text HUD and the touch
+  //      badges read: controller.focus / controller.stance).
+  //   2. the #tc-focus / #tc-stance badge text, which updateTouchHud() already
+  //      mirrors from that controller every frame. This keeps the canvas HUD
+  //      honest TODAY, while main.js is owned by another agent (see the note
+  //      in the hand-off: adding state.focus/state.stance retires this read).
+  // Returns { focus: null, stance: null } when neither is available (headless
+  // without a DOM, or before the first badge write) — callers skip the draw.
+  readDoctrine(state) {
+    const out = { focus: null, stance: null };
+    const src = state || {};
+    if (typeof src.focus === 'string' && src.focus) out.focus = src.focus;
+    if (typeof src.stance === 'string' && src.stance) out.stance = src.stance;
+    if (out.focus && out.stance) return out;
+    try {
+      const d = globalThis.document;
+      if (!d || typeof d.getElementById !== 'function') return out;
+      const badge = (id) => {
+        const el = d.getElementById(id);
+        const v = el && el.textContent;
+        return (typeof v === 'string' && v.length > 0 && v.length <= 12) ? v : null;
+      };
+      if (!out.focus) out.focus = badge('tc-focus');
+      if (!out.stance) out.stance = badge('tc-stance');
+    } catch { /* no DOM: leave nulls */ }
+    return out;
   }
 
   // ---- WAVE-12 HUD chrome (fillRect pixel grids only) -------------------------
@@ -850,81 +909,139 @@ export class Renderer {
     chrome.hpFlashFrac = flashFrac;
     chrome.manaFrac = manaFrac;
 
-    const drawBar = (x, y, w, frac, flash, fillCol) => {
-      g.fillStyle = '#000000';                       // 1px pixel border
-      g.fillRect(x - 1, y - 1, w + 2, 7);
-      g.fillStyle = '#3a3a46';                       // empty track
-      g.fillRect(x, y, w, 5);
+    // WAVE-24 (#2): every canvas label goes through label() — a dark plate
+    // behind the text so its contrast NEVER depends on the terrain that
+    // happens to be under the HUD, at the sizes in CONFIG.HUD (the vision
+    // pass: bar labels "tiny", the LV badge "washed out"). Returns the
+    // painted plate width so callers can stack a second element beside it.
+    const H = C.HUD;
+    const label = (txt, x, y, col, size) => {
+      g.font = 'bold ' + size + 'px monospace';
+      g.textBaseline = 'top';
+      const w = txt.length * Math.round(size * 0.62) + 4;
+      g.fillStyle = H.PLATE;
+      g.fillRect(x - 2, y - 2, w, size + 5);
+      g.fillStyle = col;
+      g.fillText(txt, x, y);
+      return w;
+    };
+    const drawBar = (x, y, w, h, frac, flash, fillCol) => {
+      // WAVE-24 (#1/#2): steel FRAME + dark TROUGH. The old pure-black border
+      // vanished on the dark themes and a mid-grey track read as a FILLED bar
+      // at 0%; the frame makes the container visible and the dark trough makes
+      // "empty" unmistakable, on every theme.
+      g.fillStyle = H.FRAME;
+      g.fillRect(x - 2, y - 2, w + 4, h + 4);
+      g.fillStyle = '#000000';                       // 1px pixel border (seam)
+      g.fillRect(x - 1, y - 1, w + 2, h + 2);
+      g.fillStyle = H.TROUGH;                        // empty track
+      g.fillRect(x, y, w, h);
+      // Ticks run the FULL track (WAVE-23 empty-state fix, now legible on the
+      // dark trough): over the fill they read as chunky VS-style segments,
+      // over the empty trough as progress marks.
+      g.fillStyle = H.TICK;
+      for (let sx = x + 6; sx < x + w; sx += 8) g.fillRect(sx, y, 1, h);
       const fw = Math.round(w * frac);
       g.fillStyle = fillCol;                         // the fill
-      g.fillRect(x, y, fw, 5);
+      g.fillRect(x, y, fw, h);
       g.fillStyle = 'rgba(255,255,255,0.30)';        // top glint row
       g.fillRect(x, y, fw, 1);
-      g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky VS-style segments
-      for (let sx = x + 5; sx < x + fw; sx += 6) g.fillRect(sx, y + 1, 1, 4);
+      g.fillStyle = 'rgba(0,0,0,0.35)';              // segment marks on the fill
+      for (let sx = x + 5; sx < x + fw; sx += 6) g.fillRect(sx, y + 1, 1, h - 1);
       if (flash > frac) {                            // damage-flash segment
         const fx = x + fw;
         const fwid = Math.round(w * flash) - fw;
         g.fillStyle = '#ffffff';
-        g.fillRect(fx, y, fwid, 5);
+        g.fillRect(fx, y, fwid, h);
       }
     };
-    // WAVE-23 (#4/#6): every bar gets a text label to its left — the vision
-    // pass called the unlabeled bars "placeholders" — and the bars shift
-    // right to make room. 8px mono, tinted to its bar.
-    g.font = 'bold 8px monospace';
-    g.textBaseline = 'top';
-    g.fillStyle = '#ff8a96'; g.fillText('HP', 6, 16);
-    g.fillStyle = '#7aa8ff'; g.fillText('MP', 6, 26);
-    drawBar(22, 16, 110, hpFrac, flashFrac, '#ff5566');
-    drawBar(22, 26, 110, manaFrac, 0, '#4a8cff');
+    // WAVE-23 (#4/#6) gave every bar a text label to its left (the vision pass
+    // called the unlabeled bars "placeholders"); WAVE-24 (#2) puts each label
+    // on a plate and lifts 8px -> 9px bold with a brighter tint.
+    label('HP', 6, 15, H.HP, H.LABEL_PX);
+    label('MP', 6, 25, H.MP, H.LABEL_PX);
+    drawBar(22, 16, 110, 5, hpFrac, flashFrac, '#ff5566');
+    drawBar(22, 26, 110, 5, manaFrac, 0, '#4a8cff');
 
     // --- WAVE-18 (#2) PLAYER XP BAR (galaxy.click: "there's no xp bar
     // (?!?!?!?)"). The genre's core readout, previously drawn nowhere: gold,
     // LONGER and BOLDER (6px fill), with the level number riding its right
     // end. WAVE-23 (#1): the EMPTY state must read as a bar at 0% too —
     // visible frame + track, tick marks across the FULL width (not just the
-    // fill), an XP label, and a gold goal-tick at the far end. Fill
-    // behaviour unchanged. chrome.xpFrac is the EXACT unclamped fraction.
+    // fill), an XP label, and a gold goal-tick at the far end. WAVE-24 (#1):
+    // VERIFIED against the wave-23 primitives and tightened — the frame is
+    // now steel (not black-on-black), the trough dark (an empty XP bar used
+    // to read as a full grey one), the ticks light-on-dark instead of
+    // black-on-grey, and the label rides a plate. Fill behaviour unchanged.
+    // chrome.xpFrac is the EXACT unclamped fraction.
     const xpFrac = p.xpNext > 0 ? Math.max(0, Math.min(1, p.xp / p.xpNext)) : 0;
     chrome.xpFrac = p.xpNext > 0 ? p.xp / p.xpNext : 0;
     chrome.level = p.level || 1;
     const xb = 22, yb = 37, wb = 134, hb = 6;
-    g.fillStyle = '#ffd75e';                       // label (matches the fill)
-    g.fillText('XP', 6, yb);
+    label('XP', 6, yb - 1, H.XP, H.LABEL_PX);
+    g.fillStyle = H.FRAME;                         // steel container frame
+    g.fillRect(xb - 2, yb - 2, wb + 4, hb + 4);
     g.fillStyle = '#000000';                       // 1px pixel border
     g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
-    g.fillStyle = '#464652';                       // empty track (readable at 0%)
+    g.fillStyle = H.TROUGH;                        // dark empty track
     g.fillRect(xb, yb, wb, hb);
+    g.fillStyle = H.TICK;                          // ticks run the FULL track
+    for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
+    g.fillStyle = H.TICK_MAJOR;                    // 25 / 50 / 75% majors
+    for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
     const xfw = Math.round(wb * xpFrac);
     g.fillStyle = '#ffd75e';                       // the gold fill
     g.fillRect(xb, yb, xfw, hb);
     g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
     g.fillRect(xb, yb, xfw, 1);
-    // Ticks run the FULL track (empty-state fix): over the fill they read as
-    // chunky segments, over the track as progress marks. Quarter-ticks are
-    // 1px taller so 0%/25%/50%/75% are glanceable.
-    g.fillStyle = 'rgba(0,0,0,0.30)';
-    for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
-    g.fillStyle = 'rgba(0,0,0,0.45)';
-    for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
-    g.fillStyle = '#ffd75e';                       // goal tick at the far end
+    g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky segments on the fill
+    for (let sx = xb + 5; sx < xb + xfw; sx += 6) g.fillRect(sx, yb + 1, 1, hb - 1);
+    g.fillStyle = '#ffd75e';                       // gold goal tick at the end
     g.fillRect(xb + wb - 1, yb, 1, hb);
-    // WAVE-23 (#4): LV badge — bigger, with a dark readability plate (the
-    // vision pass: "washed out, reads like a placeholder").
+    // WAVE-23 (#4) added the LV badge; WAVE-24 (#2) makes it a BADGE: 9 -> 11px
+    // bold on a gold-bordered dark plate (the vision pass: "washed out, reads
+    // like an unpolished placeholder"), vertically centered on the bar.
     const lvTxt = 'LV ' + (p.level || 1);
-    g.fillStyle = 'rgba(8,8,14,0.60)';
-    g.fillRect(xb + wb + 3, yb - 2, lvTxt.length * 6 + 3, 11);
-    g.fillStyle = '#ffe9a8';
-    g.font = 'bold 9px monospace';
-    g.fillText(lvTxt, xb + wb + 5, yb);
+    const lvPx = H.LV_PX;
+    const lvW = lvTxt.length * Math.round(lvPx * 0.62) + 6;
+    const lvH = lvPx + 4;
+    const lvX = xb + wb + 4, lvY = yb + Math.round(hb / 2) - Math.round(lvH / 2);
+    g.fillStyle = '#ffd75e';                       // gold badge border
+    g.fillRect(lvX, lvY, lvW, lvH);
+    g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
+    g.fillRect(lvX + 1, lvY + 1, lvW - 2, lvH - 2);
+    g.font = 'bold ' + lvPx + 'px monospace';
+    g.textBaseline = 'top';
+    g.fillStyle = '#fff3c4';
+    g.fillText(lvTxt, lvX + 3, lvY + 2);
+
+    // --- WAVE-24 (#4): the DOCTRINE readout ---------------------------------
+    // With the text HUD off (the DEFAULT), focus and stance were drawn
+    // NOWHERE on the canvas — a player could cycle them (TAB / G) and see
+    // nothing change, so the coachmarks teaching them felt dead. Values come
+    // from the same source the text HUD / touch badges read (controller.focus
+    // / controller.stance, see readDoctrine). Focus is cool/neutral (it is
+    // targeting doctrine); stance is the RISK dial, so it is risk-colored.
+    const doc = this.readDoctrine(state);
+    chrome.focus = doc.focus;
+    chrome.stance = doc.stance;
+    if (doc.focus || doc.stance) {
+      const dy = 56;
+      if (doc.focus) label('FOCUS ' + doc.focus, 6, dy, H.FOCUS_COLOR, H.BADGE_PX);
+      if (doc.stance) {
+        label('STANCE ' + doc.stance, 6, dy + 13,
+          H.STANCE_COLORS[doc.stance] || H.XP, H.BADGE_PX);
+      }
+    }
 
     // --- WAVE-14 event feed: last 3 toasts UNDER the bars (now under the XP
     // bar too), newest lowest. The toast() stream in main.js is the ONE feed
     // — equipment finds (tinted by rarity), arch effects, potions, weapon
     // level-ups, synergies, flash drops, wave/theme lines all land here.
     // Lines fade out over their final second (alpha = ttl clamped to 1).
-    g.font = '9px monospace';               // WAVE-23 (#4): 8 -> 9px feed text
+    // WAVE-24 (#2): text stays 9px; the plate is darker so the lines hold up
+    // over bright themes and the doctrine block below them.
+    g.font = H.FEED_PX + 'px monospace';
     g.textBaseline = 'top';
     chrome.feed = [];
     const feed = (state.toasts || []).slice(-3);
@@ -932,12 +1049,12 @@ export class Renderer {
       const ft = feed[i];
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
       if (alpha <= 0) continue;
-      const fy = 49 + i * 10;
+      const fy = 86 + i * 10;
       const fw = ft.msg.length * 6 + 3;   // ~6px/char @ 9px monospace
       g.globalAlpha = alpha;
-      g.fillStyle = 'rgba(8,8,14,0.60)';  // readability plate
-      g.fillRect(5, fy - 1, fw, 9);
-      g.fillStyle = ft.tint || '#d8d8e8';
+      g.fillStyle = H.PLATE;              // readability plate
+      g.fillRect(5, fy - 2, fw, 11);
+      g.fillStyle = ft.tint || '#e4e4ee';
       g.fillText(ft.msg, 7, fy);
       g.globalAlpha = 1;
       chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha });
@@ -984,6 +1101,10 @@ export class Renderer {
           }
         }
       }
+      // WAVE-24 (#2): the level number rides its own dark plate — it used to
+      // sit on bare terrain.
+      g.fillStyle = H.PLATE;
+      g.fillRect(wx - 1, wy + 5 * Z + 1, 10, 12);
       g.fillStyle = '#e8e8f0';                       // lv badge
       g.fillText(String(w.level || 1), wx + 1, wy + 5 * Z + 2);
       // WAVE-18 (#2): per-weapon progress — a thin gold underline inside the
@@ -1030,7 +1151,10 @@ export class Renderer {
   // so the floor reads as deliberate level art. Still subtle: decor sits
   // under entities and never competes with the play pieces.
   drawGround(g, seed, cam, theme) {
-    const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY, B = C.GROUND.BOUND;
+    const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY;
+    // WAVE-24 (#3): decor clips at the arena RIM (600), not the old 660 bound
+    // — pieces used to spill into the off-map gloom past the wall.
+    const RIM = C.GROUND.RIM;
     // WAVE-9B/2: palette family rides the WAVE theme (groundSeed keeps
     // shaping WHICH cells carry a piece — the field itself stays per-run).
     const pal = theme || groundTheme(1);
@@ -1041,10 +1165,12 @@ export class Renderer {
         if (cellRand(cx, cy, seed, 1) >= DENS) continue;
         const wx = cx * CELL + Math.floor(cellRand(cx, cy, seed, 2) * (CELL - 16));
         const wy = cy * CELL + Math.floor(cellRand(cx, cy, seed, 3) * (CELL - 16));
-        if (wx < -B || wx > B || wy < -B || wy > B) continue;   // arena walls
+        // Keep the whole piece inside the arena: pieces are up to 14px wide,
+        // so the anchor culls 14 short of the rim.
+        if (wx < -RIM + 2 || wx > RIM - 14 || wy < -RIM + 2 || wy > RIM - 14) continue;
         const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
         const kind = cellRand(cx, cy, seed, 4);
-        if (kind < 0.24) {            // tuft cluster: 5 blades + dirt specks
+        if (kind < 0.28) {            // tuft cluster: 5 blades + dirt specks
           g.fillStyle = pal.tuft;
           g.fillRect(x, y, 1, 4); g.fillRect(x + 2, y - 1, 1, 5); g.fillRect(x + 5, y + 1, 1, 3);
           g.fillRect(x + 7, y, 1, 4);
@@ -1052,7 +1178,7 @@ export class Renderer {
           g.fillRect(x + 1, y + 1, 1, 3); g.fillRect(x + 3, y, 1, 4); g.fillRect(x + 6, y + 1, 1, 3);
           g.fillStyle = pal.crack;
           g.fillRect(x - 2, y + 4, 2, 1); g.fillRect(x + 6, y + 5, 2, 1);
-        } else if (kind < 0.46) {     // stone pair: big rock + pebble sidekick
+        } else if (kind < 0.52) {     // stone pair: big rock + pebble sidekick
           g.fillStyle = pal.stone;
           g.fillRect(x, y + 1, 6, 4); g.fillRect(x + 1, y, 4, 1);
           g.fillStyle = pal.stoneTop;
@@ -1061,16 +1187,20 @@ export class Renderer {
           g.fillRect(x + 7, y + 3, 3, 2);
           g.fillStyle = pal.stoneTop;
           g.fillRect(x + 7, y + 3, 1, 1);
-        } else if (kind < 0.62) {     // crack run: long stepping fissure
+        } else if (kind < 0.68) {     // crack run: long stepping fissure
           g.fillStyle = pal.crack;
           g.fillRect(x, y, 3, 1); g.fillRect(x + 3, y + 1, 3, 1); g.fillRect(x + 5, y + 2, 3, 1);
           g.fillRect(x + 8, y + 3, 2, 1); g.fillRect(x + 4, y + 3, 2, 1);
-        } else if (kind < 0.92) {     // slab plate: 13x13 floor tile, notched
+          g.fillStyle = pal.stoneTop;  // lit lip along the fissure
+          g.fillRect(x, y - 1, 3, 1); g.fillRect(x + 3, y, 3, 1);
+        } else if (kind < 0.93) {     // slab plate: 13x13 floor tile, notched
           g.fillStyle = pal.slab;     // corners + a seam — reads as paving
           g.fillRect(x + 1, y, 11, 13); g.fillRect(x, y + 1, 13, 11);
           g.fillStyle = pal.base;     // knock the corners off the square
           g.fillRect(x, y, 1, 1); g.fillRect(x + 12, y, 1, 1);
           g.fillRect(x, y + 12, 1, 1); g.fillRect(x + 12, y + 12, 1, 1);
+          g.fillStyle = pal.stoneTop; // lit top pitch (paving relief)
+          g.fillRect(x + 1, y, 11, 1);
           g.fillStyle = pal.crack;    // a seam splitting the plate
           const seam = cellRand(cx, cy, seed, 5) < 0.5;
           if (seam) g.fillRect(x + 2, y + 6, 9, 1);
@@ -1089,6 +1219,125 @@ export class Renderer {
     }
   }
 
+  // ---- WAVE-24 (#3): LANDMARKS — deliberate level art -------------------------
+  // The fine decor field above is TEXTURE; a floor made only of texture reads
+  // as noise with no sense of place (the vision pass: "scanline noise",
+  // "hieroglyph-like glyphs"). This second, COARSER layer puts a handful of
+  // recognizable structures on a LANDMARK_CELL grid — ruined wall runs, fallen
+  // pillars, cairns, camp rings and a theme-flavored pile — so the floor has
+  // landmarks to orient by. Same deterministic hash field as the fine decor
+  // (no stored arrays; off-screen cells are never visited), same theme
+  // palette, drawn ON TOP of the fine field (structures occlude ground
+  // texture) but still UNDER every entity. Quiet by contract: dark tones,
+  // never brighter than a play piece. `this.landmarks` is the smoke seam
+  // (what was painted this frame: { kind, x, y, rects } in world coords).
+  drawLandmarks(g, seed, cam, theme) {
+    const FC = C.GROUND.LANDMARK_CELL, DENS = C.GROUND.LANDMARK_DENSITY;
+    const RIM = C.GROUND.RIM;
+    const pal = theme || groundTheme(1);
+    const tIdx = C.GROUND.THEMES.indexOf(pal);
+    const out = [];
+    const c0 = Math.floor(cam.x / FC), c1 = Math.floor((cam.x + C.VIEW_W) / FC);
+    const r0 = Math.floor(cam.y / FC), r1 = Math.floor((cam.y + C.VIEW_H) / FC);
+    for (let cy = r0; cy <= r1; cy++) {
+      for (let cx = c0; cx <= c1; cx++) {
+        if (cellRand(cx, cy, seed, 11) >= DENS) continue;
+        // Anchor inside the cell with a margin so a structure never clips its
+        // neighbour, and never past the arena rim (structures are <= 72 wide).
+        const wx = cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72));
+        const wy = cy * FC + 24 + Math.floor(cellRand(cx, cy, seed, 13) * (FC - 72));
+        if (wx < -RIM + 4 || wx > RIM - 76 || wy < -RIM + 4 || wy > RIM - 76) continue;
+        const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
+        const pick = cellRand(cx, cy, seed, 14);
+        // rects = how many fillRects this structure painted (the smoke seam
+        // asserts every landmark is COMPOSED, i.e. many rects, not a glyph).
+        let rects = 6;
+        let kind = 'RUBBLE';
+        if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
+          kind = 'WALL';
+          const n = 4 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 4..6
+          const gap = Math.floor(cellRand(cx, cy, seed, 16) * n);        // breach
+          rects = 1 + 2 * (n - 1);
+          g.fillStyle = pal.crack;                                       // base shadow
+          g.fillRect(x - 1, y + 5, n * 11 + 1, 1);
+          g.fillStyle = pal.stone;
+          for (let i = 0; i < n; i++) { if (i !== gap) g.fillRect(x + i * 11, y, 10, 5); }
+          g.fillStyle = pal.stoneTop;                                    // lit course
+          for (let i = 0; i < n; i++) { if (i !== gap) g.fillRect(x + i * 11, y, 10, 1); }
+        } else if (pick < 0.48) {     // FALLEN PILLAR: stepped column + base
+          kind = 'PILLAR';
+          const n = 3 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 3..5
+          rects = 2 * n + 3;
+          g.fillStyle = pal.crack;
+          g.fillRect(x - 1, y + 5, n * 8 + 12, 1);
+          g.fillStyle = pal.stone;
+          for (let i = 0; i < n; i++) g.fillRect(x + i * 8, y + i * 5, 12, 5);
+          g.fillRect(x + n * 8, y + n * 5, 10, 6);                       // broken base
+          g.fillStyle = pal.stoneTop;
+          for (let i = 0; i < n; i++) g.fillRect(x + i * 8, y + i * 5, 12, 1);
+          g.fillRect(x + n * 8, y + n * 5, 10, 1);
+        } else if (pick < 0.68) {     // CAIRN: stacked stones, tapering
+          kind = 'CAIRN';
+          rects = 7;
+          g.fillStyle = pal.crack;
+          g.fillRect(x - 1, y + 12, 16, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x, y + 8, 14, 4);
+          g.fillRect(x + 2, y + 4, 10, 4);
+          g.fillRect(x + 4, y + 1, 6, 3);
+          g.fillStyle = pal.stoneTop;
+          g.fillRect(x + 1, y + 8, 12, 1);
+          g.fillRect(x + 3, y + 4, 8, 1);
+          g.fillRect(x + 4, y + 1, 6, 1);
+        } else if (pick < 0.86) {     // CAMP RING: stones round a fire scar
+          kind = 'CAMP';
+          rects = 9;
+          const R = 9 + Math.floor(cellRand(cx, cy, seed, 15) * 5);
+          g.fillStyle = pal.crack;                                     // scorched centre
+          g.fillRect(x + 8, y + 6, 9, 9);
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            g.fillStyle = i % 2 ? pal.stone : pal.stoneTop;
+            g.fillRect(Math.round(x + 12 + Math.cos(a) * R),
+                       Math.round(y + 10 + Math.sin(a) * R), 3, 2);
+          }
+        } else if (tIdx === 5) {      // VOID REACH: crystal shard cluster
+          kind = 'CRYSTAL';
+          rects = 7;
+          g.fillStyle = pal.crack;
+          g.fillRect(x - 1, y + 11, 18, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x + 1, y + 3, 5, 9); g.fillRect(x + 10, y + 5, 4, 7);
+          g.fillStyle = pal.tuft2;                                     // the shards
+          g.fillRect(x + 2, y, 2, 11); g.fillRect(x + 11, y + 2, 2, 9);
+          g.fillStyle = pal.tuft;
+          g.fillRect(x + 2, y, 1, 5); g.fillRect(x + 11, y + 2, 1, 4);
+        } else if (tIdx === 2) {      // SNOWFIELD: wind-packed drift mound
+          kind = 'DRIFT';
+          rects = 5;
+          g.fillStyle = pal.stone;
+          g.fillRect(x, y + 6, 20, 5); g.fillRect(x + 4, y + 3, 12, 4);
+          g.fillStyle = pal.stoneTop;                                  // windlit crest
+          g.fillRect(x + 4, y + 3, 12, 1); g.fillRect(x, y + 6, 20, 1);
+          g.fillStyle = pal.crack;
+          g.fillRect(x - 1, y + 11, 22, 1);
+        } else {                      // rubble mound: collapsed stone heap
+          kind = 'RUBBLE';
+          g.fillStyle = pal.crack;
+          g.fillRect(x - 1, y + 10, 19, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x, y + 6, 18, 5); g.fillRect(x + 3, y + 3, 11, 4);
+          g.fillStyle = pal.stoneTop;
+          g.fillRect(x + 1, y + 6, 16, 1); g.fillRect(x + 4, y + 3, 9, 1);
+          g.fillStyle = pal.stone;
+          g.fillRect(x + 14, y + 8, 4, 3);
+        }
+        out.push({ kind, x: wx, y: wy, rects });
+      }
+    }
+    this.landmarks = out;
+  }
+
   // ---- WAVE-18 (#7): the ARENA WALL --------------------------------------------
   // galaxy.click: "the edge of the map is not clearly defined". The clamp
   // (±600, main.js update) always existed but drew nothing — an invisible
@@ -1099,7 +1348,7 @@ export class Renderer {
   // zoom transform (crisp at 1x through 8x) and culled per side to the
   // visible window. `this.arenaWall` is the smoke seam (world-coord sides).
   drawArenaWall(g, cam, theme) {
-    const RIM = 600, T = 12;             // clamp edge (matches main.js) + wall px
+    const RIM = C.GROUND.RIM, T = 12;    // clamp edge (main.js clamp) + wall px
     const pal = theme || groundTheme(1);
     const x0 = cam.x, x1 = cam.x + C.VIEW_W, y0 = cam.y, y1 = cam.y + C.VIEW_H;
     // (a) gloom beyond the rim — non-overlapping decomposition of the visible

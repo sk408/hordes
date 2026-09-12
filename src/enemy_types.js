@@ -245,12 +245,36 @@ function toward(dx, dy) {
   return { mx: dx / len, my: dy / len };
 }
 
+// Did `interval` tick over during this frame? The convention for these
+// attackers is "the shot lands on the frame the interval phase wraps", and the
+// sound way to answer that from (age, interval, dt) is to compare the integer
+// part of age / interval against the previous frame's — age advances by exactly
+// dt, so the wrap frame is the one where that integer moves. (WRAP_EPS absorbs
+// float noise: `age - dt` can land one ulp BELOW a multiple of the interval the
+// previous frame had already reached, which would detect the same boundary
+// twice. WRAP_EPS is relative to the interval — ~2ns of jitter, far below any
+// real frame cadence.)
+// Testing the PHASE against a window is what broke:
+//   * a fixed 1/60 window (the original code) fired every shot TWICE on a 120Hz
+//     display (dt 1/120 put two frames inside it) and could skip a shot entirely
+//     when a frame ran longer than 1/60 (dt is clamped at 0.05);
+//   * a frame-relative `phase < dt` window is still epsilon-fragile — a boundary
+//     landing a hair inside the previous frame leaves the next frame's phase a
+//     fraction below dt and the shot fires twice again.
+// dt defaults to 1/60 for callers that predate the argument.
+const WRAP_EPS = 1e-9;
+function intervalWrapped(age, interval, dt) {
+  const step = dt > 0 ? dt : 1 / 60;
+  return Math.floor(age / interval + WRAP_EPS) !==
+         Math.floor((age - step) / interval + WRAP_EPS);
+}
+
 function chaseDecide(enemy, player) {
   const t = toward(player.x - enemy.x, player.y - enemy.y);
   return { mx: t.mx, my: t.my, fire: null };
 }
 
-function spitterDecide(enemy, player) {
+function spitterDecide(enemy, player, dt = 1 / 60) {
   const T = ENEMY_TYPES.SPITTER;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
   const dist = Math.hypot(dx, dy);
@@ -266,11 +290,8 @@ function spitterDecide(enemy, player) {
   // Age-phase fire: one spit per fireInterval while in range. Pure — no timer
   // mutation; the integrator owns enemy.age.
   let fire = null;
-  if (dist <= T.fireRange) {
-    const phase = enemy.age % T.fireInterval;
-    if (phase < 1 / 60) {  // fire on the frame the phase wraps
-      fire = { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage };
-    }
+  if (dist <= T.fireRange && intervalWrapped(enemy.age, T.fireInterval, dt)) {
+    fire = { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage };
   }
   return { mx, my, fire };
 }
@@ -284,19 +305,22 @@ function dasherDecide(enemy, player) {
   return { mx: dir.mx * speedMult, my: dir.my * speedMult, fire: null };
 }
 
-function warlockDecide(enemy, player) {
+function warlockDecide(enemy, player, dt = 1 / 60) {
   const T = ENEMY_TYPES.WARLOCK;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
   const dist = Math.hypot(dx, dy);
   const dir = toward(dx, dy);
   const cycle = T.moveTime + T.chargeTime;
   const phase = enemy.age % cycle;
+  // Bolt fires on the frame the cycle wraps — resolved BEFORE the charge pause.
+  // age is accumulated by += dt in the game loop, so the wrap frame's phase can
+  // sit a hair below the cycle length; letting the charge early-return win there
+  // would eat the bolt for a whole cycle.
+  const wrapped = intervalWrapped(enemy.age, cycle, dt);
 
-  // Charge window at the end of the cycle: stand still, telegraph, then the
-  // bolt fires on the frame the cycle wraps (phase < 1/60) if in range.
-  const charging = phase >= T.moveTime;
+  // Charge window at the end of the cycle: stand still and telegraph.
+  const charging = phase >= T.moveTime && !wrapped;
   if (charging) {
-    // Frozen: telegraph the bolt; the shot itself fires when the cycle wraps.
     return { mx: 0, my: 0, fire: null, telegraph: true };
   }
 
@@ -308,7 +332,7 @@ function warlockDecide(enemy, player) {
   }
 
   let fire = null;
-  if (dist <= T.fireRange && phase < 1 / 60) {  // cycle just wrapped: bolt!
+  if (dist <= T.fireRange && wrapped) {  // cycle just wrapped: bolt!
     fire = { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage };
   }
   return { mx, my, fire, telegraph: false };
@@ -330,12 +354,12 @@ function tickDecide(enemy, player) {
 // PILLAR turret: planted forever — ZERO move intent at any range; fires a
 // single slow chip shot at the player on every fireInterval wrap while in
 // range (spitter convention: the shot lands on the frame the phase wraps).
-function pillarDecide(enemy, player) {
+function pillarDecide(enemy, player, dt = 1 / 60) {
   const T = ENEMY_TYPES.PILLAR;
   const dx = player.x - enemy.x, dy = player.y - enemy.y;
   if (Math.hypot(dx, dy) > T.fireRange) return { mx: 0, my: 0, fire: null };
   const dir = toward(dx, dy);
-  if (enemy.age % T.fireInterval < 1 / 60) {
+  if (intervalWrapped(enemy.age, T.fireInterval, dt)) {
     return {
       mx: 0, my: 0,
       fire: { dx: dir.mx, dy: dir.my, speed: T.projSpeed, damage: T.projDamage },

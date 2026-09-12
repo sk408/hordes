@@ -565,13 +565,20 @@ function updateMine(state, weapon, dt) {
   }
 
   const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(p) * evoDmg(weapon);
-  for (let i = state.projectiles.length - 1; i >= 0; i--) {
-    const mine = state.projectiles[i];
-    if (mine.kind !== 'mine') continue;
+  // Mine scan. A chain detonation removes the triggering mine AND every mine it
+  // set off, so state.projectiles SHRINKS while we scan it: walk a snapshot of
+  // the mines (newest first, same order as before) and re-check liveness before
+  // touching each one. Reading state.projectiles[i] with the pre-removal index
+  // threw TypeError mid-frame whenever a chain caught a second mine — the
+  // exception escaped the rAF update and killed the game loop.
+  const mines = state.projectiles.filter(pr => pr.kind === 'mine');
+  for (let i = mines.length - 1; i >= 0; i--) {
+    const mine = mines[i];
+    if (!state.projectiles.includes(mine)) continue;   // chained away already
     mine.age += dt;
     if (mine.age >= W.LIFETIME) {
       state.effects.push({ kind: 'mine_fizzle', x: mine.x, y: mine.y, age: 0, ttl: 0.15 });
-      state.projectiles.splice(i, 1);
+      state.projectiles.splice(state.projectiles.indexOf(mine), 1);
       continue;
     }
     for (const e of state.enemies) {
