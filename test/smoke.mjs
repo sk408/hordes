@@ -48,6 +48,14 @@ const fakeEl = () => {
     // pointer handlers (and expose the joystick seam through __TEST).
     addEventListener(ev, cb) { (this._ev ?? (this._ev = {}))[ev] = cb; },
   };
+  // WAVE-22c: classList (hints panel / touch-layer mode classes)
+  const cls = new Set();
+  el.classList = {
+    add: (c) => cls.add(c),
+    remove: (c) => cls.delete(c),
+    contains: (c) => cls.has(c),
+    toggle: (c, on) => { const want = on === undefined ? !cls.has(c) : !!on; want ? cls.add(c) : cls.delete(c); },
+  };
   Object.defineProperty(el, 'innerHTML', {
     get() { return this._html ?? ''; },
     set(v) { this._html = v; if (v === '') el.children.length = 0; },
@@ -1465,6 +1473,31 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.mode === 'playing', 'ESC must close the in-run settings');
   pump(1);
   console.log('touch cog: opens/pauses in-run, clock frozen, RESET re-opens disarmed, BACK/ESC resume');
+
+  // ---- WAVE-22c: the "?" control-hints panel ------------------------------
+  // Headless has no touch -> default ON (desktop). Toggle via the "?" button
+  // (real pointer routing -> runAction('help')) and via the ? key; the pref
+  // persists through the hudStorage shim.
+  const hints = elements['hints'];
+  assert(hints && hints.classList.contains('on'),
+    'hints default ON for non-touch (desktop) devices');
+  const fireHelp = () => elements['touch']._ev['pointerdown']({
+    preventDefault() {}, pointerId: 42, clientX: 0, clientY: 0,
+    target: {
+      closest: (s) => (s === '[data-joy]') ? null
+        : (s === '[data-act]' ? { dataset: { act: 'help' } } : null),
+    },
+  });
+  fireHelp();
+  assert(!hints.classList.contains('on'), '"?" button must hide the hints');
+  keyHandler({ key: '?' });                    // ? key shows them again
+  assert(hints.classList.contains('on'), '? key must show the hints');
+  keyHandler({ key: 'F1', preventDefault() {} });  // F1 aliases ?
+  assert(!hints.classList.contains('on'), 'F1 must toggle the hints too');
+  assert(globalThis.localStorage.getItem('hordes_hints') === '0',
+    'the hints pref persists');
+  keyHandler({ key: '?' });                    // restore ON for later probes
+  console.log('hints panel: desktop default ON, button + ?/F1 toggle, pref persists');
 }
 
 // ---- WAVE-18 LEGIBILITY DEFECTS (galaxy.click playtest) -------------------------
