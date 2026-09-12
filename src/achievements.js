@@ -76,7 +76,13 @@ export const ACHIEVEMENTS = [
   { id: 'FIRST_EVOLUTION', goal: { kind: 'total', stat: 'evolutions', n: 1 }, unlock: null },
   { id: 'MAX_WEAPON', goal: { kind: 'best', stat: 'weaponLevel', n: MAX_WEAPON_LEVEL }, unlock: null },
   { id: 'ALL_CHARACTERS', goal: { kind: 'state', stat: 'characters' }, unlock: null },
-  { id: 'UNTOUCHED_WAVE', goal: { kind: 'best', stat: 'untouchedWave', n: 1 }, unlock: null },
+  // G9 FOLLOW-UP: kind 'total', NOT 'best'. The 'best' measurement convention
+  // reads t['best' + Cap(stat)] (bestWave / bestTime / bestWeaponLevel), so a
+  // 'best' goal on 'untouchedWave' looked up `bestUntouchedWave` — a field
+  // nothing writes. The trophy measured 0 forever and was UNEARNABLE. The
+  // counter itself is a 0/1 cap maintained by recordRun, so 'total' with the
+  // same bar of 1 is the honest pairing. Bar unchanged.
+  { id: 'UNTOUCHED_WAVE', goal: { kind: 'total', stat: 'untouchedWave', n: 1 }, unlock: null },
   { id: 'LEGENDARY_LOOT', goal: { kind: 'total', stat: 'legendaries', n: 1 }, unlock: null },
   { id: 'SHOP_MASTER', goal: { kind: 'state', stat: 'shopRows' }, unlock: { kind: 'shopRow', id: 'weapon_beam' } },
   { id: 'ARCADE_PASS', goal: { kind: 'state', stat: 'arcade' }, unlock: null },

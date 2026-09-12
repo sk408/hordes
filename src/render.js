@@ -807,10 +807,22 @@ export class Renderer {
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
     // WAVE-26: the earned-moment flourish paints just BELOW the chrome so the
     // HUD readouts stay legible through the flare.
-    this.drawMoment(g, state);
-    this.drawHudChrome(g, state);
+    this.drawPlayHud(g, state);
     // WAVE-14 boss-arrival overlay: cinematic letterbox + name. Above even
     // the HUD chrome — it is a moment, not a readout.
+  }
+
+  // ---- the play HUD, in one gated seam ---------------------------------------
+  // G9 FOLLOW-UP (parent-found): the gallery is NOT a play state. The frozen
+  // world stays as the backdrop, but the play READOUTS (bars, LV, clock, the
+  // event feed flourish and the boss banner) must not bleed through the
+  // showcase. The DOM side already does this via chromeOn(); this is the canvas
+  // half of the same gate. Folded into ONE method so it is directly assertable
+  // (test_trophy_gallery) — paint order is unchanged: moment, chrome, banner.
+  drawPlayHud(g, state) {
+    if (state.mode === 'trophies') { this.hudChrome = null; this.bossBanner = null; return; }
+    this.drawMoment(g, state);
+    this.drawHudChrome(g, state);
     this.drawBossBanner(g, state);
   }
 

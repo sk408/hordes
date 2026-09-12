@@ -193,6 +193,13 @@ const state = {
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
   evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
+  // G9 FOLLOW-UP: the three run counters the trophy summary was missing. They
+  // live in ONE run-scoped object (reset in startRun) so the summary can read
+  // them without five separate guards. bossKills = bosses/heralds killed,
+  // chests = chests actually OPENED (expired ones do not count), and
+  // waveTookDamage/untouchedWave = whether any wave was finished without a hit
+  // landing on the hero.
+  runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false },
   finalBoss: null,   // WAVE-10: the maw instance while the finale lives (also rides state.enemies so the controller targets it untouched)
   volleyMask: null,  // WAVE-10: last barrage volleyId that landed on the hero (mercy rule state)
   choiceSeed: 1,     // per-run seed for the intermission blessing/curse rolls
@@ -752,6 +759,13 @@ function buyPaidChest(tier) {
 
 function continueRun() {
   const p = state.player;
+  // G9 FOLLOW-UP: the wave that just ENDED is "untouched" when nothing landed
+  // on the hero during it. Reaching CONTINUE means the wave was finished (the
+  // portal only opens on a clear), so this is the completion seam. The
+  // `state.time > 0` guard keeps a hypothetical cold-start call from banking a
+  // wave that was never played.
+  if (state.time > 0 && !state.runCounts.waveTookDamage) state.runCounts.untouchedWave = true;
+  state.runCounts.waveTookDamage = false;   // fresh ledger for the wave ahead
   state.wave.num++;
   state.wave.endsAt = state.time + C.ESCALATION.WAVE_LENGTH;
   // WAVE-20: a fresh herald appointment for the new wave (the portal sweep
@@ -1308,6 +1322,7 @@ function update(dt) {
       if (drainActive < C.SURVIVAL.MAX_DRAIN_TICKS) {
         drainActive++;
         p.hp -= act.drain * dt;      // DoT: no invuln window, just bleed
+        state.runCounts.waveTookDamage = true;   // G9: a hit landed this wave
         resetRampage();              // WAVE-11: ANY hp loss ends the streak
         if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
       }
@@ -1417,6 +1432,7 @@ function update(dt) {
       state.effects.push({ kind: 'orbit_hit', x: p.x, y: p.y, age: 0, ttl: 0.2 });
     } else {
       p.hp -= touchDmg;
+      state.runCounts.waveTookDamage = true;   // G9: contact landed this wave
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: ANY hp loss ends the rampage streak
       // VAMPIRIC elite mod (elite_mods.js): touching elites heal themselves a
@@ -1450,6 +1466,7 @@ function update(dt) {
         p.invuln = 0.5;
       } else {
         p.hp -= s.damage * takenMult;
+        state.runCounts.waveTookDamage = true;   // G9: a shot landed this wave
         p.invuln = 0.6;
         resetRampage();   // WAVE-11: projectile hits end the streak too
       }
@@ -1492,6 +1509,7 @@ function update(dt) {
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
+      if (e.boss) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
         // pendingClear — the wave's progression still belongs to the end-cast.
@@ -1613,6 +1631,9 @@ function update(dt) {
   // frame cost of the set snapshot is not paid on ordinary ticks.
   const chestPre = state.chests.length > 0 ? new Set(state.enemies) : null;
   const chestEvents = tickChests(state, dt);
+  // G9 FOLLOW-UP: count OPENED chests for CHESTS_25. An expired chest is a
+  // different event kind (chestExpired), so a despawned chest never counts.
+  for (const ev of chestEvents) if (ev.kind === 'chestOpened') state.runCounts.chests++;
   if (chestPre && chestEvents.some(ev => ev.kind === 'gambleHorde')) {
     for (const e of state.enemies) if (!chestPre.has(e)) escalate(e, state.time);
   }
@@ -2173,6 +2194,11 @@ function recordRunAchievements(gold) {
     weaponLevel: bestWeaponLevel,
     evolutions: state.weapons.filter(w => !!w.evolution).length,
     legendaries: state.items.filter(it => it.rarity === 'LEGENDARY').length,
+    // G9 FOLLOW-UP: the counters wired out of live state — FIRST_BOSS,
+    // BOSS_SLAYER_5, CHESTS_25 and UNTOUCHED_WAVE were unearnable before this.
+    bossKills: state.runCounts.bossKills,
+    chests: state.runCounts.chests,
+    untouchedWave: !!state.runCounts.untouchedWave,
     survived: !!state.runWon,
   });
 
@@ -3078,6 +3104,8 @@ function startRun() {
   state.finalCall = false;
   state.mawCleared = false;
   state.mawDeadline = 0;
+  // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
+  state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false };
   dilation.scale = 1;
   dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
@@ -4489,6 +4517,9 @@ export const __TEST = {
     get won() { return state.runWon; },
     get mawCleared() { return state.mawCleared; },
     get mawDeadline() { return state.mawDeadline; },
+    // G9 FOLLOW-UP: the wave-completion seam, so the untouched-wave ledger can
+    // be driven without a DOM click through the intermission card.
+    nextWave: continueRun,
   },
   // ---- W1 save-foundation seam (schema / migration / export / import) ----
   // `status` is the boot load result ('fresh' | 'current' | 'migrated' |

@@ -32,7 +32,13 @@ mouse-clickable pads, ESC/P pause, mode-aware hints, the wall fixes (loot reacha
 the deadzone camera, the design pass (death payoff, synergy hints, stance that bites, earned slow-mo)
 and the logic bug fixes including the mine-chain crash and the 120Hz double-fire.
 
-## G2 — THE WALL BUGS (owner-reported, currently the worst in-game experience)  [status: open]
+## G2 — THE WALL BUGS (owner-reported, currently the worst in-game experience)  [status: DONE 2026-09-12]
+STATUS RECONCILED by the cron tick: this shipped in wave-27 (`6f69bed`) but the marker was never
+flipped, which made the loop's "OPEN first" rule keep pointing at finished work. Evidence, not a claim:
+`test/test_wall_loot.mjs` (165 lines), `test/test_pilot_grind.mjs` (213) and
+`test/test_camera_deadzone.mjs` (261) are all green in the current 56/56 suite, which is exactly the
+"each proven by a headless test" bar. The camera half was additionally checked by that wave in a real
+browser; the tick did not re-shoot it (no browser on this host — see the tick note at the end).
 The pilot visibly grinds against the wall for seconds, and loot can drop on or outside the wall.
 **Reached when all three hold, each proven by a headless test:**
 1. No loot/gem/chest/pickup can spawn outside the reachable region, at the rim, or on the wall band —
@@ -43,7 +49,12 @@ The pilot visibly grinds against the wall for seconds, and loot can drop on or o
    safe screen region, AND the coachmark world-to-screen projection still lands correctly (one source
    of truth for the transform).
 
-## G3 — REMOVE THE REDUNDANT DOCTRINE TEXT  [status: open]
+## G3 — REMOVE THE REDUNDANT DOCTRINE TEXT  [status: DONE 2026-09-12]
+STATUS RECONCILED by the cron tick: `grep -rn "FOCUS NEAREST\|STANCE GREEDY" src/` returns NOTHING
+(wave-27, `6f69bed`), so the on-canvas doctrine text is gone. CAVEAT, recorded honestly: the tick
+verified only the "text is gone" half. The "exactly ONE source of truth for the doctrine values" half
+was not re-audited here — that was wave-27's own claim. Treat the single-source half as
+wave-27-asserted, not tick-verified.
 Owner: the big on-canvas "FOCUS NEAREST" / "STANCE GREEDY" lines are unnecessary — the overlay buttons'
 badges already carry that state.
 **Reached when:** the canvas doctrine text is gone, the button badges are the single visible source,
@@ -654,6 +665,8 @@ Independently verified after the builder reported done (a subagent's summary is 
 - **agentlock released** (state FREE).
 
 ### OPEN — found by the parent, for the next slice
+**Items 1-3 are RESOLVED (2026-09-12 cron tick) — see "TICK NOTE" at the end of this file. Item 4
+(the browser-verified earned emblem) is still open, and one NEW bug was found while closing item 3.**
 
 1. **Canvas play-HUD bleeds through the gallery.** The in-run HUD (HP/MP/XP bars, LV, run clock,
    bottom hint text) is dimly visible behind the showcase because the backdrop is not fully
@@ -671,3 +684,106 @@ Independently verified after the builder reported done (a subagent's summary is 
    a bug (identified after two failed seeding attempts; the loader itself was proven clean:
    `status: current, repairs: [], gold/earned preserved`). To see an earned emblem, earn one in
    play, or re-seed from a late-registered `pagehide` listener that runs after the flush.
+
+
+---
+
+## TICK NOTE — 2026-09-12 (cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** the G9 follow-up OPEN list (the four unearnable trophies + the gallery HUD bleed).
+Nothing new was started; the ranked queue was not touched.
+
+**LANDED (suite PASS=56 FAIL=0, re-run by the parent, not taken on report):**
+1. **The four unearnable trophies are earnable through the live loop.** `src/main.js` now carries
+   `state.runCounts = { bossKills, chests, waveTookDamage, untouchedWave }`, reset in `startRun()`,
+   incremented at the REAL seams — the enemy-death sweep (`e.boss`), the chest-open event from
+   `tickChests` (`kind === 'chestOpened'` only, so a despawned chest never counts), the three hostile
+   damage paths (drain / contact / shot), and the wave-completion seam `continueRun()`, which banks
+   `untouchedWave` when nothing landed during the wave that just ended. All three ride
+   `recordRunAchievements` into `recordRun`, so `FIRST_BOSS`, `BOSS_SLAYER_5`, `CHESTS_25` and
+   `UNTOUCHED_WAVE` now earn. `CHESTS_25` gates the PALADIN character row, so this was locking real
+   content, not a badge.
+2. **NEW BUG found while closing item 3:** `UNTOUCHED_WAVE` was ALSO 0-by-construction —
+   `measuredValue` reads `t['best' + Cap(stat)]` for `kind: 'best'`, so a 'best' goal on
+   `untouchedWave` looked up `bestUntouchedWave`, a field nothing writes. Fixed in
+   `src/achievements.js` by pairing the counter honestly (`kind: 'total'`, same bar of 1) rather than
+   inventing a second field. So the gap was FIVE broken trophies, not four.
+3. **The gallery HUD bleed (parent item 1) is fixed and asserted.** The play HUD trio
+   (moment flourish, HUD chrome, boss banner) is now ONE seam, `Renderer.drawPlayHud`, which paints
+   nothing in `state.mode === 'trophies'` (paint order unchanged). The canvas half of the chrome gate
+   now matches the DOM half.
+4. **New test file `test/test_trophy_hooks.mjs` (4 checks)** — drives chests, a boss death, the wave
+   ledger and a REAL death through the live loop and the real `die()` funnel (parent item 2), then
+   asserts the trophies and that the PALADIN row became owned. `test/test_trophy_gallery.mjs` gained
+   the render-gate check (21 checks now).
+
+**Rules held:** nothing was poked into a profile in the tests (real loop in, real funnel out).
+No assertion was weakened; `UNTOUCHED_WAVE`'s bar stayed at 1. No `git` state command was run.
+
+**COULD NOT VERIFY (open, for whoever has a browser):**
+- **The real-browser screenshot of the trophies screen was NOT taken.** This host has no browser at
+  all (`which chromium/chrome/firefox` empty, no ms-playwright cache), so the visual half of item 1
+  could only be proven headlessly (the gate is asserted on the real renderer, and the *look* was
+  proven by the earlier wave's live Chrome check). Re-shoot with the gallery open on a phone-sized
+  viewport before W10 signs the screen off.
+- **Item 4 remains open:** no browser-verified EARNED emblem. Note that your own save-overwrite
+  finding applies: earn one in play, or seed from a late-registered `pagehide` listener.
+
+## TICK NOTE 2 — 2026-09-12 (cron tick, subagent:spawnfa, agentlock held)
+
+**Goal worked:** G9's LAST TWO OPEN items — the trophies screen re-shot at a PHONE viewport (the visual
+half of OPEN item 1) and the browser-verified EARNED emblem (OPEN item 4). Nothing else was started.
+
+**THE STANDING BLOCKER IS GONE.** The previous tick recorded "no browser on this host". This tick
+installed one: `playwright@1.49.1` + chromium 131 (`~/.cache/ms-playwright`, 161MB). No repo runtime
+dependency was added (the repo stays code-only). The harness is now reusable in-tree:
+`tools/verify_phone.mjs` (phone-viewport verification + JSON of measured canvas pixels) and
+`tools/gen_earned_profile.mjs` (schema-valid profile with trophies earned through `recordRun`); usage
+and setup are in the headers (`PW_BASE`, `HORDES_URL`, `SHOTS_DIR`).
+
+**MEASURED — 390x844 @ DPR 3, touch, iPhone UA (canvas 1170x729). Screenshots in
+`docs/art/browser-verify-2026-09-12/`:**
+
+| case | bright px | bright bbox | top-12% band | bottom band | corner | case centre |
+|---|---|---|---|---|---|---|
+| gallery, LOCKED | 41,424 | 370,151,799,577 | **0** | **0** | #030308 | #5c5e6b |
+| gallery, EARNED | 44,195 | 370,151,799,577 | **0** | **0** | #030308 | #792021 |
+| live run (control) | 16,921 | 14,5,1161,701 | **12,947** | 342 | #0e1610 | #0e1610 |
+
+- **Item 1 (HUD bleed) CLOSED.** In the gallery the top band — where HP/MP/XP bars, LV and the run clock
+  live — has ZERO bright pixels and all painted content sits in one centred box; the SAME measurement
+  during a live run lights 12,947 bright pixels in that band. The metric is sensitive to the play HUD
+  actually being drawn, so 0 in the gallery means the HUD is not painted, not merely hard to see.
+- **Item 4 (earned emblem) CLOSED.** With a profile carrying FIRST_BLOOD (3/21), the entry reads
+  "First Blood · 1/21 · Draw first blood: kill your first enemy · Enemies slain (all runs): 1 / 1 ·
+  earned 9/12/2026" and its showcase centre pixel is crimson #792021; the same entry on a fresh profile
+  reads "LOCKED" with centre #5c5e6b. The title card label reads "3 / 21 earned" vs "0 / 21 earned".
+- **Item 4's real problem was ORDER, not a save bug:** install the profile with `addInitScript` BEFORE
+  the page's scripts run; the pagehide flush then writes the same profile straight back.
+- DOM chrome gate in the gallery: `#hud / #hints / #touch / #joy` all `display:none`, matching the
+  canvas gate. Suite re-run by the parent: **PASS=56 FAIL=0**.
+
+**COULD NOT VERIFY (honest):**
+- **No vision read.** No vision model is reachable from this runner (`kimi-vis :5495` is a SPA, not an
+  API). The screenshots were read as PIXELS (bands, bbox, sampled hex, on-screen text) — objective, but
+  not a "does it look right" judgement. Re-shoot + vision-read at W10.
+- **The `before` state of the bleed was not measured** (the fix is already in the tree and git state
+  commands are forbidden for agents). The live-run control is the substitute.
+- **NEW FINDING (W4/G12 — one extra tap, not a blocker): the FIRST-RUN TOUR renders over the TITLE.**
+  On a fresh profile the tour tip ("PLAY starts a run — pilot the horde as long as you can." +
+  "TAP TO CONTINUE" + "SKIP TOUR") and its `.tour-shade` sit ABOVE the menu cards: a real finger tap on
+  the TROPHIES card at (275,422) is swallowed by the shade and does not open the gallery. It is not a
+  hard block (the tip says TAP TO CONTINUE, and SKIP TOUR is offered), but the build plan explicitly
+  asks that the first-run tour "not appear over the title screen" — either anchor the tour's first step
+  on PLAY and let the tap advance it, or stop the shade covering the menu.
+  Evidence: `docs/art/browser-verify-2026-09-12/phone-title-tourblock.png`. The key-hints panel IS
+  clean on the title (`#hints=none`).
+- Suite counting note: PASS=56 = `test_*.mjs` + `smoke.mjs`; `test/_harness.mjs` is support, not a case.
+
+**NEXT: G8** (run-altering items + luck), per the ranked queue. Recon done in this tick, for the next
+brief: luck is ALREADY a real stat (`Fortune`, meta.js, 5 levels) but it only shifts world-drop rarity
+(`luckDropWeights`) and flash-drop chance (loot.js) — it does NOT touch the level-up draft, which is the
+other half of the owner's ask ("what the run OFFERS"). `openDraft()` in main.js draws 3 cards from a
+weighted pool (weapon cards 1, stat cards 0.3) on a plain `Math.random`, and there is no run-altering
+item category at all yet. G8 also needs an OWNER decision on WHICH run-altering items he wants, so the
+next tick should surface a numbered option list rather than guess.

@@ -296,6 +296,23 @@ S.check('ESC backs out of the gallery to the title', () => {
   assert.ok(cardWith('PLAY'), 'the title cards are rebuilt');
 });
 
+S.check('the gallery paints NO play HUD (the canvas half of the chrome gate)', () => {
+  // G9 FOLLOW-UP: the parent found the in-run readouts bleeding through the
+  // showcase. The gate is drawPlayHud, so it is asserted directly on the real
+  // renderer: a live run builds the chrome, and 'trophies' must build none.
+  T.startRun();
+  h.pump(2);
+  assert.equal(st.mode, 'playing', 'a run is live');
+  const { R, ctx } = makeRenderer();
+  R.drawPlayHud(ctx, st);
+  assert.ok(R.hudChrome, 'the play readouts ARE built for a live run');
+  st.mode = 'trophies';
+  R.drawPlayHud(ctx, st);
+  assert.equal(R.hudChrome, null, 'and NONE are built while the gallery is up');
+  assert.equal(R.bossBanner, null, 'nor a boss banner');
+  st.mode = 'playing';
+});
+
 // ============================================================================
 // 3. THE RUN-END EARN HOOK (settleRunGold, through the real win funnel)
 // ============================================================================
