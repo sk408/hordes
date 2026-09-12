@@ -1,5 +1,6 @@
 // HORDES — entities: player, enemies, projectiles, gems
 import { CONFIG as C } from './config.js';
+import { heatOf, heatMultipliers } from './heat.js';
 
 export function makePlayer() {
   return {
@@ -55,6 +56,29 @@ export function xpScale(w) {
 export function dmgScale(w) {
   const E = C.ESCALATION.DMG;
   return (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
+}
+
+// ---------- applyEscalation (single source of truth) -----------------------
+// Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
+// enemy_types.js's linear preview multipliers (1+0.35w hp / 1+0.25w xp) and
+// apply the steeper CONFIG.ESCALATION curves instead. HEAT stacks
+// multiplicatively AFTER the wave escalation (hp only — xp/gold are never
+// heat-inflated).
+//
+// WAVE-26: this algebra used to be duplicated (main.js + chests.js) with a
+// comment on both sides saying they had to move together. It lives HERE now;
+// both callers delegate, so a curve change can never desync the two paths.
+// `t` defaults to state.time (main.js historically passed it explicitly).
+export function applyEscalation(state, e, t) {
+  const time = (t === undefined ? (state && state.time) : t) || 0;
+  const w = Math.floor(time / 30);
+  const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
+  const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
+  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
+  e.hp = hp;
+  e.maxHp = hp;
+  e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;
+  return e;
 }
 
 export function makeProjectile(x, y, dx, dy, stats) {

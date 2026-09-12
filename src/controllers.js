@@ -47,6 +47,13 @@ export class AutoPilotController {
     // controller per page load is reset enough — no reset hooks.
     this.fleeing = false;
     this.gem = null;
+    // WAVE-26 ("stance that bites"): the LIVE activity of the pilot this frame,
+    // published by main.js as state.stanceAct and printed in the canvas HUD
+    // next to the stance name. It is observation only — it never feeds back
+    // into movement — but it makes the dial's effect visible moment to moment
+    // ('FLEE' = the stance's kite line is doing work, 'LOOT' = it is banking
+    // gems, 'PATROL' = neither, 'MANUAL' = the human owns movement).
+    this.act = 'PATROL';
   }
 
   cycleFocus() {
@@ -156,6 +163,7 @@ export class AutoPilotController {
     const exitR2 = (kite * 2 * 1.3) ** 2;
     if (nearest && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
       this.fleeing = true;
+      this.act = 'FLEE';
       const len = Math.sqrt(nd) || 1;
       let fx = (p.x - nearest.x) / len;
       let fy = (p.y - nearest.y) / len;
@@ -202,6 +210,7 @@ export class AutoPilotController {
       // component after cancellation — sub-pixel crawls read as a stall
       // (smoke caught 3.0s at x=560.1). Below a real vector, patrol instead.
       if (Math.hypot(gx, gy) >= 0.25) {
+        this.act = 'LOOT';
         return { moveX: gx * st.XP_SPEED, moveY: gy * st.XP_SPEED, target };
       }
       // Gem dead-ahead (or a crawl) outside the rim — fall through to patrol.
@@ -216,6 +225,7 @@ export class AutoPilotController {
       const inward = len > 400 ? 0.6 : 0;
       const mx = (-dy / len - (dx / len) * inward) * 0.5;
       const my = (dx / len - (dy / len) * inward) * 0.5;
+      this.act = 'PATROL';
       return { moveX: mx, moveY: my, target };
     }
   }
@@ -246,6 +256,10 @@ export class PlayerController extends AutoPilotController {
 
   decide(p, state, cfg) {
     const target = this.pickTarget(p, state, cfg, nearestEnemy(p, state));
+    // WAVE-26: manual movement means the STANCE's kite/XP-drift behaviour is
+    // inert (by design — manual means manual). The HUD says so ('MANUAL')
+    // instead of claiming a live kite; the stance's loot magnetism still bites.
+    this.act = 'MANUAL';
     const i = this.input || {};
     let mx = 0, my = 0;
     const mag = Math.min(1, Math.max(0, i.mag || 0));

@@ -175,7 +175,16 @@ export class Renderer {
     // gets TIGHTER, never looser: nothing inside the zoomed frame is culled,
     // nothing pops at the screen edge (margins still cover sprite extents,
     // which live in world px regardless of Z).
-    const Z = Math.max(1, Math.round(state.zoom || 1));
+    // WAVE-26: the integer zoom factor has ONE definition, in main.js's
+    // zoomScale(); main.js publishes it as state.zoomScale every frame
+    // (syncChrome) and worldRegion()/the coachmark projection read the same
+    // value. Read it here so the render transform can never drift from the
+    // coachmark projection. Fallback (headless / pre-first-frame): derive it
+    // with the identical clamp so a state without zoomScale still renders.
+    const zs = state.zoomScale;
+    const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1)
+      ? Math.round(zs)
+      : Math.max(1, Math.round(state.zoom || 1));
     this._zoom = Z;
     const vw = C.VIEW_W / Z, vh = C.VIEW_H / Z;
     this.worldView = {
@@ -788,6 +797,9 @@ export class Renderer {
 
     // WAVE-12 canvas HUD chrome: graphic HP/mana bars, weapon/equipment icon
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
+    // WAVE-26: the earned-moment flourish paints just BELOW the chrome so the
+    // HUD readouts stay legible through the flare.
+    this.drawMoment(g, state);
     this.drawHudChrome(g, state);
     // WAVE-14 boss-arrival overlay: cinematic letterbox + name. Above even
     // the HUD chrome — it is a moment, not a readout.
@@ -850,34 +862,95 @@ export class Renderer {
 
   // ---- WAVE-24 (#4): live DOCTRINE (focus / stance) for the canvas HUD -------
   // The default HUD drew neither lever anywhere, so a player could cycle them
-  // (TAB / G) and see nothing change. Sources, in order — never invented:
-  //   1. state.focus / state.stance — the values main.js reads straight off
-  //      the active controller (the SAME object the text HUD and the touch
-  //      badges read: controller.focus / controller.stance).
-  //   2. the #tc-focus / #tc-stance badge text, which updateTouchHud() already
-  //      mirrors from that controller every frame. This keeps the canvas HUD
-  //      honest TODAY, while main.js is owned by another agent (see the note
-  //      in the hand-off: adding state.focus/state.stance retires this read).
-  // Returns { focus: null, stance: null } when neither is available (headless
-  // without a DOM, or before the first badge write) — callers skip the draw.
+  // (TAB / G) and see nothing change. The SINGLE source is state.focus /
+  // state.stance — main.js publishes the active controller's values every
+  // frame (syncChrome), the same object the text HUD reads. WAVE-26 removed
+  // the old #tc-focus / #tc-stance DOM-badge fallback: main.js now publishes
+  // state.* unconditionally, so the DOM bridge was dead code that could only
+  // ever disagree with the canvas. Returns { focus: null, stance: null } when
+  // neither is available (headless without a state yet) — callers skip the draw.
   readDoctrine(state) {
     const out = { focus: null, stance: null };
     const src = state || {};
     if (typeof src.focus === 'string' && src.focus) out.focus = src.focus;
     if (typeof src.stance === 'string' && src.stance) out.stance = src.stance;
-    if (out.focus && out.stance) return out;
-    try {
-      const d = globalThis.document;
-      if (!d || typeof d.getElementById !== 'function') return out;
-      const badge = (id) => {
-        const el = d.getElementById(id);
-        const v = el && el.textContent;
-        return (typeof v === 'string' && v.length > 0 && v.length <= 12) ? v : null;
-      };
-      if (!out.focus) out.focus = badge('tc-focus');
-      if (!out.stance) out.stance = badge('tc-stance');
-    } catch { /* no DOM: leave nulls */ }
     return out;
+  }
+
+  // ---- WAVE-26 EARNED MOMENT flourish ---------------------------------------
+  // Fires ONLY on a weapon EVOLUTION or a BOSS KILL (main.js
+  // triggerEarnedMoment) — the two moments Sk408's game-feel law reserves
+  // slow-mo and screen juice for. Pure integer-pixel drawing: fillRect only,
+  // no filters, no gradients, no blur, nothing that softens the art.
+  //
+  //   t=0  hard pixel vignette pulled in from every edge + a 1px chromatic
+  //        fringe (red top / blue bottom) + a white cross core flash
+  //   t->1 a 12-spoke crackle burst flies outward, the vignette and fringe
+  //        recede, and everything fades to nothing
+  //
+  // `this.moment` is the honest test seam: the exact values painted this
+  // frame, or null when nothing was live.
+  drawMoment(g, state) {
+    const m = state.moment;
+    this.moment = null;
+    if (!m || !(m.ttl > 0)) return;
+    const W = C.VIEW_W, Hh = C.VIEW_H;
+    const t = Math.max(0, Math.min(1, m.age / m.ttl));
+    const hot = m.kind === 'evolution' ? '#7ad0ff'
+      : m.kind === 'finale' ? '#ffd75e' : '#ff8848';
+    const fade = 1 - t;
+    // Same world -> device projection the world layer uses (the canonical
+    // state.zoomScale; see the zoom block above), so the flare lands exactly
+    // on the evolved hero / dead boss at any zoom.
+    const zs = state.zoomScale;
+    const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1) ? Math.round(zs) : 1;
+    const cam = state.cam || { x: 0, y: 0 };
+    const cx = Math.round(W / 2 + (m.x - cam.x - W / 2) * Z);
+    const cy = Math.round(Hh / 2 + (m.y - cam.y - Hh / 2) * Z);
+
+    // 1. VIGNETTE PULSE — 2px steps from the rim inward, receding with t.
+    const band = Math.round(fade * 22) & ~1;
+    if (band > 0) {
+      g.globalAlpha = 0.5 * fade;
+      g.fillStyle = '#05050a';
+      for (let i = 0; i < band; i += 2) {
+        g.fillRect(i, 0, 2, Hh);
+        g.fillRect(W - 2 - i, 0, 2, Hh);
+        g.fillRect(0, i, W, 2);
+        g.fillRect(0, Hh - 2 - i, W, 2);
+      }
+    }
+    // 2. CHROMATIC FRINGE — one hard red row and one hard blue row on the
+    //    frame edge: a pulse, not a blur.
+    g.globalAlpha = 0.55 * fade;
+    g.fillStyle = '#ff2f5e';
+    g.fillRect(0, 0, W, 1);
+    g.fillStyle = '#3c6bff';
+    g.fillRect(0, Hh - 1, W, 1);
+
+    // 3. CRACKLE BURST — 12 spokes of 3x3 blocks flying outward, each with a
+    //    trailing pixel, alternating white / hot tint.
+    const r = Math.round(t * 92);
+    g.globalAlpha = fade;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const sx = Math.round(cx + Math.cos(a) * r);
+      const sy = Math.round(cy + Math.sin(a) * r);
+      g.fillStyle = (i % 2 === 0) ? '#ffffff' : hot;
+      g.fillRect(sx - 1, sy - 1, 3, 3);
+      const tr = Math.max(0, r - 8);
+      g.fillRect(Math.round(cx + Math.cos(a) * tr), Math.round(cy + Math.sin(a) * tr), 2, 2);
+    }
+
+    // 4. CORE FLASH — a white cross that collapses as the burst expands.
+    const cs = Math.max(2, Math.round(fade * 14));
+    g.globalAlpha = Math.max(0, 1 - t * 1.5);
+    g.fillStyle = '#ffffff';
+    g.fillRect(cx - cs, cy - 1, cs * 2, 3);
+    g.fillRect(cx - 1, cy - cs, 3, cs * 2);
+    g.globalAlpha = 1;
+
+    this.moment = { kind: m.kind, t, hot, cx, cy, spokeR: r, band };
   }
 
   // ---- WAVE-12 HUD chrome (fillRect pixel grids only) -------------------------
@@ -1029,8 +1102,17 @@ export class Renderer {
       const dy = 56;
       if (doc.focus) label('FOCUS ' + doc.focus, 6, dy, H.FOCUS_COLOR, H.BADGE_PX);
       if (doc.stance) {
-        label('STANCE ' + doc.stance, 6, dy + 13,
+        // WAVE-26 ("stance that bites"): the readout carries the stance's
+        // MEANING (CONFIG tag) and the pilot's LIVE activity this frame
+        // (state.stanceAct, set by controllers.js), so the dial is legible
+        // without any new panel: "STANCE GREEDY · LOOT FIRST · FLEE".
+        const tag = (C.AUTOPILOT.STANCES[doc.stance] || {}).TAG;
+        const act = state.stanceAct;
+        const txt = 'STANCE ' + doc.stance + (tag ? ' \u00b7 ' + tag : '') +
+          (act ? ' \u00b7 ' + act : '');
+        label(txt, 6, dy + 13,
           H.STANCE_COLORS[doc.stance] || H.XP, H.BADGE_PX);
+        chrome.stanceAct = act || null;
       }
     }
 

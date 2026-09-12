@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import { CONFIG as C, UPGRADES } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, dmgScale, applyEscalation } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources } from './skills.js';
@@ -11,7 +11,7 @@ import {
 import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
-  levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams,
+  levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams, PIERCE_ALL,
 } from './weapons.js';
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
@@ -32,8 +32,8 @@ import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags 
 // volleyId; the mercy rule + 3-hit damage + hp floor all live there.
 import {
   FINAL_BOSS, FINAL_BOSS_SPRITE, FINAL_BOSS_PHASES, HP_FLOOR, DISPLAY_HP,
-  makeFinalBoss, decideFinalBossAction, finalBossDamage, shouldApplyHit,
-  applyFinalBossDamage,
+  MAW_SPEED_BASE, makeFinalBoss, decideFinalBossAction, finalBossDamage,
+  shouldApplyHit, applyFinalBossDamage,
 } from './final_boss.js';
 import { rollChoices, applyChoice } from './choices.js';
 import * as INTRO from './intro.js';
@@ -182,6 +182,11 @@ const state = {
                      // it every frame — live mid-run, presentation only)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
+  // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
+  timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
+  stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
+  moment: null,      // earned-moment flourish ({ kind, x, y, age, ttl } | null)
+  stanceLootAt: -99, // last GREEDY-payoff toast time (rate limiter)
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -301,7 +306,7 @@ function runController(p, dt, am) {
       const a = baseAng + spread;
       const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
       pr.damage *= volleyDmgMult;
-      if (volleyPierceAll) pr.pierce = 999;
+      if (volleyPierceAll) pr.pierce = PIERCE_ALL;
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
       if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
@@ -334,20 +339,9 @@ function pickSpawnType(wave) {
   return 'CHASER';
 }
 
-// Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
-// enemy_types.js's linear multipliers (1+0.35w hp / 1+0.25w xp) and apply the
-// steeper documented curves from CONFIG.ESCALATION instead. WAVE-9: HEAT
-// stacks multiplicatively AFTER the wave escalation (hp only — xp/gold are
-// never heat-inflated).
-function applyEscalation(e, t) {
-  const w = Math.floor(t / 30);
-  const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
-  const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
-  e.hp = hp;
-  e.maxHp = hp;
-  e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;
-}
+// Enemy escalation now lives in entities.js (WAVE-26): the algebra was
+// duplicated here and in chests.js with a "both must move" comment; both
+// delegate to entities.applyEscalation now (signature: (state, enemy, t)).
 
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
@@ -377,7 +371,7 @@ function spawnWave(dt) {
         state.player.x + Math.cos(pa) * d,
         state.player.y + Math.sin(pa) * d,
         state.time, { elite, variant: rollVariant(typeId) });
-      applyEscalation(e, state.time);
+      applyEscalation(state, e, state.time);
       // WAVE-11 elite modifiers (elite_mods.js): rolled ONLY for normal elite
       // spawns, gated strictly by profile.unlockedElites (locked mods never
       // roll; the roll can fail and leave a plain elite). The stamp rides on
@@ -650,7 +644,7 @@ function spawnBoss() {
       state.player.x + Math.cos(a) * d,
       state.player.y + Math.sin(a) * d,
       state.time, { elite: true });
-    applyEscalation(boss, state.time);
+    applyEscalation(state, boss, state.time);
     const hp = C.ENEMY.BASE_HP * hpScale(w) *
       (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
       heatMultipliers(heatOf(state)).hp;   // WAVE-9: bosses take the heat too
@@ -704,7 +698,7 @@ function spawnMidBoss() {
     state.player.x + Math.cos(a) * d,
     state.player.y + Math.sin(a) * d,
     state.time);
-  applyEscalation(boss, state.time);
+  applyEscalation(state, boss, state.time);
   const hp = C.ENEMY.BASE_HP * hpScale(w) *
     (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
     heatMultipliers(heatOf(state)).hp;
@@ -746,6 +740,54 @@ function refreshSynergies() {
   }
 }
 
+// ===========================================================================
+// WAVE-26 FEATURE 2 — DRAFT SYNERGY HINTS
+// The draft IS the game in an auto-battler, so it is the main knowledge
+// surface. A draft card earns a hint ONLY when the pick would create a pair
+// the RUN ACTUALLY IMPLEMENTS — detectSynergies is the single source of truth
+// (the same call refreshSynergies makes), and every flag in the table is
+// wired in the weapon loop. No real synergy -> no hint at all: no filler, and
+// never a promise of an effect the code does not deliver.
+//
+//   - a NEW WEAPON card hints when one of its partners is already equipped
+//     ("PAIRS WITH BEAM · SUPERCONDUCTOR");
+//   - a LEVEL-UP card hints only while its weapon is part of a LIVE pair
+//     ("THRESHING STORM LIVE · ZAP") — otherwise silence.
+// ===========================================================================
+function synergyHintForCard(card) {
+  const id = (card && card.id) || '';
+  // Card ids are 'wpn_<TYPE>' for a grant and 'lvl_<TYPE>_<level>' for a
+  // level-up. The level suffix is stripped explicitly (a greedy [A-Z_]+ match
+  // would swallow the trailing '_' and miss multi-word types like NOVA_PULSE).
+  let kind = null, type = null;
+  let m = /^wpn_(.+)$/.exec(id);
+  if (m) { kind = 'wpn'; type = m[1]; }
+  else {
+    m = /^lvl_(.+)_\d+$/.exec(id);
+    if (m) { kind = 'lvl'; type = m[1]; }
+  }
+  if (!kind || !WEAPON_NAMES[type]) return null;    // not a real archetype card
+  const owned = state.weapons.map(w => w.type);
+  if (kind === 'wpn') {
+    if (owned.includes(type)) return null;
+    const live = new Set((state.synergies || detectSynergies(owned)).map(s => s.name));
+    for (const s of detectSynergies([...owned, type])) {
+      if (live.has(s.name) || !s.pair.includes(type)) continue;
+      const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+      return 'PAIRS WITH ' + (WEAPON_NAMES[partner] || partner) + ' · ' + s.name.toUpperCase();
+    }
+    return null;
+  }
+  // Level-up card: only meaningful while the weapon is in a live synergy.
+  const live = state.synergies || detectSynergies(owned);
+  for (const s of live) {
+    if (!s.pair.includes(type)) continue;
+    const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+    return s.name.toUpperCase() + ' LIVE · ' + (WEAPON_NAMES[partner] || partner);
+  }
+  return null;
+}
+
 // Active flag probe: the value of `flag` from any live synergy, else null.
 function syn(flag) {
   for (const s of state.synergies || []) {
@@ -765,13 +807,17 @@ function nearestFoe(x, y, exclude) {
 }
 
 // weapons.js damage convention for the supplemental bolts/blasts below:
-// damage * archetype MULT * level dmgMult * loot damageMult * evolution mult.
+// damage * archetype MULT * level dmgMult * loot damageMult * arch (BERSERK)
+// * evolution mult. The arch term MUST match weapons.js dmgScale: without it,
+// every synergy bolt (zap fork, scythe zap, nova/mine/beam detonations) missed
+// BERSERK while the base weapons got it.
 function synWeaponDmg(weaponId, mult) {
   const w = state.weapons.find(k => k.type === weaponId);
   const P = weaponLevelParams(weaponId, (w && w.level) || 1);
   const evo = w && w.evolution && w.evolution.affixes;
   return state.player.stats.damage * mult * (P.dmgMult || 1) *
-    (state.player.stats.damageMult || 1) * ((evo && evo.damageMult) || 1);
+    (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
+    ((evo && evo.damageMult) || 1);
 }
 
 // Mine detonation from OUTSIDE weapons.js (Chain Reaction / Fire Focus):
@@ -1140,7 +1186,7 @@ function update(dt) {
         const m = makeTypedEnemy(act.summon.type,
           e.x + Math.cos(ang) * edge, e.y + Math.sin(ang) * edge,
           state.time, { variant: rollVariant(act.summon.type) });
-        applyEscalation(m, state.time);
+        applyEscalation(state, m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
@@ -1157,7 +1203,7 @@ function update(dt) {
           Math.max(-590, Math.min(590, p.y + Math.sin(ang) * act.ring.radius)),
           state.time, { variant: rollVariant(act.ring.type) });
         m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
-        applyEscalation(m, state.time);
+        applyEscalation(state, m, state.time);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: p.x, y: p.y, radius: act.ring.radius, age: 0, ttl: 0.5 });
@@ -1295,6 +1341,11 @@ function update(dt) {
         if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
         feedWeaponXp(30);   // boss kill = big weapon-XP payout
         toast('BOSS DOWN');
+        // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
+        // per-wave HERALD (the midBoss branch above) is deliberately NOT
+        // dilated — it fires every wave, and Sk408's law is that slow-mo
+        // becomes noise the moment it is routine.
+        triggerEarnedMoment('boss', e.x, e.y);
       } else {
         // Rare item drops (loot.js): elites often + up-tier, normals rarely.
         // Fortune's Favor blessing: itemDropMult scales the drop chance;
@@ -1324,7 +1375,7 @@ function update(dt) {
           for (const k of kids) {
             const c = makeTypedEnemy(k.typeId, k.x, k.y, state.time,
               { variant: rollVariant(k.typeId) });
-            applyEscalation(c, state.time);
+            applyEscalation(state, c, state.time);
             c.hp = k.hp; c.maxHp = k.maxHp; c.w = k.w; c.h = k.h;
             c.elite = false; c.eliteMod = null;
             state.enemies.push(c);
@@ -1448,7 +1499,13 @@ function update(dt) {
   }
 
   // Effective pickup radius: base + Loot Vortex items + MAGNET arch.
-  const pickR = p.stats.pickup * (p.stats.pickupMult || 1) * am.pickupMult;
+  const basePickR = p.stats.pickup * (p.stats.pickupMult || 1) * am.pickupMult;
+  // WAVE-26 "stance that bites": STANCE loot magnetism. GREEDY reaches further
+  // for loot, SAFE keeps its distance from it — the one consequence that bites
+  // in BOTH pilot modes (manual pilot owns movement, so its kite distance is
+  // inert by design; the magnetism is not).
+  const stanceDef = C.AUTOPILOT.STANCES[controller.stance] || C.AUTOPILOT.STANCES.BALANCED;
+  const pickR = basePickR * (stanceDef.PICKUP_MULT || 1);
 
   // Potion drops: auto-pickup within gem radius, but only if not at cap —
   // a full inventory leaves the potion on the ground for later.
@@ -1492,15 +1549,26 @@ function update(dt) {
   tickBossBanner(dt);   // WAVE-14 arrival overlay
 
   // Gem pickup.
+  let greedyScoop = 0;   // WAVE-26: gems only the GREEDY stretch could reach
   for (let i = state.gems.length - 1; i >= 0; i--) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
+      if (controller.stance === 'GREEDY' && d > basePickR) greedyScoop++;
       p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();   // Scholar + SUNNY + WAVE-11 rampage
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
     }
+  }
+  // WAVE-26 moment-to-moment signal: the stance PAYING OFF — loot the base
+  // radius could never have taken. Rate-limited (once per 6s) so it reads as
+  // a signal and never becomes noise, and greed-gated so it fires only when
+  // GREEDY is the reason it happened.
+  if (greedyScoop > 0 && state.time - state.stanceLootAt > 6) {
+    state.stanceLootAt = state.time;
+    toast('GREEDY HAUL - ' + greedyScoop + ' LOOT OUT OF REACH',
+      C.HUD.STANCE_COLORS.GREEDY);
   }
 
   // Camera follows player.
@@ -1609,7 +1677,12 @@ function openDraft() {
   choices.forEach((u, i) => {
     const el = document.createElement('div');
     el.className = 'card';
-    el.innerHTML = `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div><div class="key">[${i + 1}]</div>`;
+    // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
+    // actually implements (see synergyHintForCard). Silent otherwise.
+    const hint = synergyHintForCard(u);
+    el.innerHTML = `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+      (hint ? `<div class="syn">${hint}</div>` : '') +
+      `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => pick(u);
     ovCards.appendChild(el);
   });
@@ -1715,6 +1788,9 @@ function maybeOpenEvolve() {
         addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
         toast(res.name.toUpperCase() + ' UNLEASHED');
         audio.playSfx('levelup');
+        // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
+        // moments — brief dilation + the crackle flare, back to normal after.
+        triggerEarnedMoment('evolution', state.player.x, state.player.y);
       }
       closeEvolve();
     };
@@ -1734,6 +1810,118 @@ function maybeOpenEvolve() {
 function closeEvolve() {
   overlay.style.display = 'none';
   state.mode = 'playing';
+}
+
+// ===========================================================================
+// WAVE-26 FEATURE 4 — EARNED TIME DILATION + GLOW
+// Sk408's game-feel law: juice is glowy and crackly, but screen shake and
+// slow-motion are RARE and EARNED — if they fire often they become noise.
+// Exactly two triggers qualify: a weapon EVOLUTION and a BOSS KILL. Never an
+// ordinary hit, never a level-up, never a chest.
+//
+// FRAME-RATE INDEPENDENCE: the window is measured in WALL-CLOCK seconds and
+// decays with the *real* frame dt (advanceDilation(realDt)), while only the
+// SIMULATION is scaled (dt = realDt * timeScale). 60Hz and 120Hz therefore
+// spend the same wall-clock time in slow-mo and see the same sim distance.
+//
+// NO STACKING: the scale is taken as a MIN and the window as a MAX, never a
+// product — two events landing in the same frame (or a boss dying on the same
+// frame a weapon evolves) cannot compound into a freeze. The window expiring
+// resets the scale to EXACTLY 1.
+// ===========================================================================
+const dilation = { scale: 1, remaining: 0 };
+const DILATION_FLOOR = C.DILATION.FLOOR;
+
+function triggerDilation(scale, duration) {
+  const s = Math.min(1, Math.max(DILATION_FLOOR, Number(scale) || 1));
+  const d = Math.max(0, Number(duration) || 0);
+  if (d <= 0) return dilation.scale;
+  dilation.scale = Math.min(dilation.scale, s);          // never multiplies
+  dilation.remaining = Math.max(dilation.remaining, d);  // never adds
+  state.timeScale = dilation.scale;
+  return dilation.scale;
+}
+
+// Called once per rendered frame with the REAL (unscaled) dt. Returns the
+// scale the simulation should use this frame; exactly 1 once the window ends.
+function advanceDilation(realDt) {
+  if (dilation.remaining <= 0) {
+    if (dilation.scale !== 1) dilation.scale = 1;
+    state.timeScale = 1;
+    return 1;
+  }
+  dilation.remaining -= realDt;
+  if (dilation.remaining <= 0) {
+    dilation.remaining = 0;
+    dilation.scale = 1;
+  }
+  state.timeScale = dilation.scale;
+  return state.timeScale;
+}
+
+// One earned moment = a short dilation + a matching pixel-art flourish (the
+// flare burst / vignette / chromatic fringe in render.js drawMoment). kind is
+// 'evolution' | 'boss' | 'finale'; boss/finale only differ by flavour tint.
+function triggerEarnedMoment(kind, x, y) {
+  const d = kind === 'evolution' ? C.DILATION.EVOLUTION : C.DILATION.BOSS;
+  triggerDilation(d.SCALE, d.DURATION);
+  // Non-stacking flourish too: a newer moment replaces the older one outright.
+  state.moment = { kind, x, y, age: 0, ttl: Math.max(d.DURATION, 0.55) };
+  return state.moment;
+}
+
+// ===========================================================================
+// WAVE-26 FEATURE 1 — DEATH AS PAYOFF, NOT A WALL
+// Players lose most runs, so the end screen is the most-seen screen in the
+// game. The data already exists: state.deathBy (stamped by die() from
+// lastDamageSource). This block turns it into one 3-second read: how far you
+// got, what killed you, what you earned, and the single shop row the run just
+// brought within reach.
+// ===========================================================================
+
+// Legible cause line from state.deathBy. Never invents a source: a boss keeps
+// its proper name, a typed enemy keeps its type id (all nine are already
+// readable words), and an unknown source degrades to the horde itself.
+function deathCauseLabel(d) {
+  const by = d || {};
+  const who = by.name || (by.bossId ? String(by.bossId) : (by.typeId ? String(by.typeId) : null));
+  const how = by.cause === 'contact' ? 'in melee'
+    : by.cause === 'shot' ? 'at range'
+      : by.cause === 'drain' ? 'latched on and drained you'
+        : null;
+  if (!who) return 'THE HORDE';
+  return who + (how ? ' ' + how : '');
+}
+
+// The single shop row this run came CLOSEST to affording — real meta data
+// (SHOP_UPGRADES + upgradeCost), never an invented number. Skips anything
+// already owned/maxed; ties resolve to the cheaper row.
+function nextUnlockWithinReach(prof) {
+  let best = null;
+  for (const def of SHOP_UPGRADES) {
+    if (shopRowOwned(prof, def)) continue;
+    const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
+    const cost = def.kind ? def.baseCost : upgradeCost(def, level);
+    if (!best || cost < best.cost) best = { id: def.id, name: def.name, cost };
+  }
+  return best;
+}
+
+// Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
+// `cause` the cause line, `gold` this run's payout. The unlock line is omitted
+// entirely when every row is owned — no filler.
+function endScreenBody({ lead, cause = null, gold, firstClear }) {
+  const goal = nextUnlockWithinReach(profile);
+  let html = lead;
+  if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
+  html += `<br><span class="earn">GOLD EARNED: +${gold}` +
+    `${firstClear ? ' (NEW BEST TIME!)' : ''} · purse ${profile.gold}</span>`;
+  if (goal) {
+    const gap = goal.cost - profile.gold;
+    html += `<br><span class="next">NEXT UNLOCK: ${goal.name} ${goal.cost}g · ` +
+      (gap > 0 ? `${gap}g TO GO` : 'READY NOW') + '</span>';
+  }
+  return html;
 }
 
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
@@ -1772,10 +1960,12 @@ function endRun() {
   const { gold, firstClear } = settleRunGold();
   ovTitle.textContent = 'RUN ENDED';
   ovTitle.className = '';
-  ovSub.innerHTML =
-    `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-    ` · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+      ` · level ${p.level} · ${p.kills} kills`,
+    cause: null,          // a deliberate exit has no killer
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -1814,9 +2004,12 @@ function die(finale) {
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
   ovTitle.className = finale ? 'logo' : '';
-  ovSub.innerHTML = (finale ? 'the maw swallowed the last hero<br>' : '') +
-    `survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
+      `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills`,
+    cause: deathCauseLabel(state.deathBy),
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -2344,6 +2537,13 @@ function startRun() {
   // intermission offers) + the wave-1 shrine roll.
   state.lastFlashAt = null;
   state.rampage = { streak: 0, best: 0 };
+  // WAVE-26: earned-moment presentation state is run-scoped too — a new run
+  // starts at normal speed with no flare and no stale GREEDY rate-limit stamp.
+  state.timeScale = 1;
+  state.moment = null;
+  state.stanceLootAt = -99;
+  dilation.scale = 1;
+  dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
   // not a preselect) — rebind the seam and drop any held directions.
   swapPilotMode('AUTO');
@@ -2531,6 +2731,19 @@ function closeSettings() {
 // handler both funnel through runAction, so no game logic is duplicated.
 // Doctrine actions only nudge the AutoPilot controller's state; no input
 // handling lives in controllers.js.
+//
+// WAVE-26 ("stance that bites"): the dial used to change one hidden number
+// with zero feedback. Cycling it now says what the new stance DOES (its tag +
+// the two multipliers that actually differ), and the canvas HUD keeps that
+// meaning on screen live next to the pilot's current activity.
+function cycleStanceWithFeedback() {
+  const s = controller.cycleStance();
+  const d = C.AUTOPILOT.STANCES[s] || {};
+  toast('STANCE ' + s + ' - ' + (d.TAG || '') +
+    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')');
+  return s;
+}
+
 function runAction(act) {
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
@@ -2556,7 +2769,7 @@ function runAction(act) {
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
-  else if (act === 'stance') controller.cycleStance();
+  else if (act === 'stance') cycleStanceWithFeedback();
   else if (act === 'q') useSkill(state, 'FROST_NOVA');
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
   else if (act === 'h') {
@@ -2885,6 +3098,9 @@ function syncChrome() {
   // projection in worldRegion() below.
   state.focus = controller.focus;
   state.stance = controller.stance;
+  // WAVE-26: the stance's LIVE activity (controllers.js sets it in decide) so
+  // the canvas HUD can say what the dial is doing right now, not just its name.
+  state.stanceAct = controller.act || 'PATROL';
   state.zoomScale = zoomScale(state.zoom);
   const on = chromeOn();
   if (touchLayer && touchLayer.style) {
@@ -3104,14 +3320,11 @@ function startFinale() {
     p.x + Math.cos(a) * C.ENEMY.SPAWN_DIST * 0.6,
     p.y + Math.sin(a) * C.ENEMY.SPAWN_DIST * 0.6);
   b.finalBoss = true;   // tagged: updateFinale() owns it (update() never runs)
-  // WAVE-25 (audit 2.5): the maw's speed was the bare literal 140 while
-  // FINAL_BOSS.speedMult (0.35) was exported and read nowhere, and
-  // makeFinalBoss() sets no `speed` field at all — so losing this line would
-  // leave mawSpd below NaN and the maw's position NaN within one frame.
-  // Read the exported knob instead: MAW_SPEED_BASE * speedMult reproduces the
-  // tuned 140 px/s exactly (400 x 0.35), and retuning speedMult now moves the
-  // maw instead of silently doing nothing.
-  const MAW_SPEED_BASE = 400;
+  // WAVE-25 (audit 2.5) + wave-26: the maw's speed used to be the bare
+  // literal 140 while FINAL_BOSS.speedMult (0.35) was read nowhere. The
+  // factory (final_boss.js makeFinalBoss) now stamps the real default from
+  // the shared MAW_SPEED_BASE knob, so this line only RE-STATES the same
+  // value from the same source of truth — no literal lives here anymore.
   b.speed = MAW_SPEED_BASE * FINAL_BOSS.speedMult;
   b.w = Math.round(b.w * FINAL_BOSS.sizeMult);   // collision box matches sprite
   b.h = Math.round(b.h * FINAL_BOSS.sizeMult);
@@ -3285,6 +3498,9 @@ function mawDefeated() {
   state.mode = 'dead';
   audio.stopMusic();
   audio.playSfx('levelup');
+  // WAVE-26: the finale kill is the biggest earned moment in the game — the
+  // flare fires with the victory screen (the dilation plays as the run ends).
+  triggerEarnedMoment('finale', state.player.x, state.player.y);
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
@@ -3296,8 +3512,12 @@ function mawDefeated() {
   saveProfile(profile);
   ovTitle.textContent = 'THE MAW IS SLAIN';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = `the horde is ended · survived ${Math.floor(state.time)}s · level ${p.level} · ${p.kills} kills` +
-    `<br>GOLD EARNED: +${gold}${firstClear ? ' (NEW BEST TIME!)' : ''} · purse: ${profile.gold}`;
+  ovSub.innerHTML = endScreenBody({
+    lead: `the horde is ended · WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+      ` · level ${p.level} · ${p.kills} kills`,
+    cause: null,          // you did not die — you won
+    gold, firstClear,
+  });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
@@ -3308,11 +3528,25 @@ state.mode = 'intro';
 let last = performance.now();
 let lastIntroPhase = null;
 function frame(now) {
-  // WAVE-25 FIX (audit 2.1): screen chrome (pad layer, cog, "?", hints panel)
-  // and the published doctrine/zoom state are synced on the FIRST frame of
-  // EVERY mode. This must run before the 'intro' / 'portal-cine' early returns
-  // below: those modes never reached updateTouchHud(), so the whole desktop UI
-  // rendered on top of the intro movie for its full ~7s.
+  // WAVE-26: the REAL frame delta is measured once, at the top, for EVERY
+  // mode — the earned-moment dilation decays on wall-clock time and must not
+  // freeze while an overlay/cinematic mode early-returns. `dt` for the
+  // simulation is this real delta times the earned-moment time scale.
+  const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  last = now;
+  const timeScale = advanceDilation(realDt);
+  const dt = realDt * timeScale;
+  // The earned-moment flourish decays on WALL-CLOCK time too, so slow-mo
+  // stretches the simulation but never the flare itself.
+  if (state.moment) {
+    state.moment.age += realDt;
+    if (state.moment.age >= state.moment.ttl) state.moment = null;
+  }
+  // WAVE-25 FIX (audit 2.1): screen chrome (pad layer, cog, "?",
+  // hints panel) and the published doctrine/zoom state are synced on the FIRST
+  // frame of EVERY mode. This must run before the 'intro' / 'portal-cine' early
+  // returns below: those modes never reached updateTouchHud(), so the whole
+  // desktop UI rendered on top of the intro movie for its full ~7s.
   syncChrome();
   if (state.mode === 'intro') {
     const t = now - introT0;
@@ -3336,8 +3570,7 @@ function frame(now) {
     requestAnimationFrame(frame);
     return;
   }
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+  // `dt` (real * earned-moment time scale) was computed at the top of frame().
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
@@ -3371,4 +3604,22 @@ export const __TEST = {
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
+  // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
+  // Pure helpers + the live dilation state, so the new behaviour is testable
+  // headlessly without driving the rAF loop.
+  dilation: {
+    get scale() { return dilation.scale; },
+    get remaining() { return dilation.remaining; },
+    trigger: triggerDilation,
+    advance: advanceDilation,
+    get timeScale() { return state.timeScale; },
+  },
+  triggerEarnedMoment,
+  deathCauseLabel,
+  nextUnlockWithinReach,
+  endScreenBody,
+  synergyHintForCard,
+  openDraft,
+  synWeaponDmg,
+  stanceOf: () => controller.stance,
 };

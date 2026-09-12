@@ -236,27 +236,43 @@ console.log('WAVE-24 / #3 — GROUND DECOR: LANDMARKS + RIM CLIP');
 
 console.log('WAVE-24 / #4 — FOCUS / STANCE ON THE DEFAULT CANVAS HUD');
 {
+  // WAVE-26: the STANCE line now carries its MEANING (CONFIG tag) and the
+  // pilot's live activity, so match on the prefix and assert the format.
+  const stanceLine = (rec) => rec.texts.find(t => t.txt.startsWith('STANCE '));
   const { R, rec, ctx } = makeRenderer();
   const st = hudState({ focus: 'SWARM', stance: 'GREEDY' });
   R.drawHudChrome(ctx, st);
   ok(R.hudChrome.focus === 'SWARM' && R.hudChrome.stance === 'GREEDY',
     'the chrome seam carries the live doctrine');
-  const f = textOf(rec, 'FOCUS SWARM'), s = textOf(rec, 'STANCE GREEDY');
+  const f = textOf(rec, 'FOCUS SWARM'), s = stanceLine(rec);
   ok(!!f && !!s, 'the default HUD paints FOCUS and STANCE (no text HUD needed)');
   ok(f && f.style === C.HUD.FOCUS_COLOR, 'focus is tinted by CONFIG.HUD.FOCUS_COLOR');
   ok(s && s.style === C.HUD.STANCE_COLORS.GREEDY, 'greedy stance reads risk-orange');
   ok(!!plateFor(rec, f) && !!plateFor(rec, s), 'both doctrine lines ride readability plates');
+  // WAVE-26: the readout states what the stance DOES, not just its name.
+  ok(s && s.txt === 'STANCE GREEDY \u00b7 ' + C.AUTOPILOT.STANCES.GREEDY.TAG,
+    'the stance line carries the CONFIG meaning tag (got "' + (s && s.txt) + '")');
 
   // Values change when the lever cycles - the whole point: a player pressing
   // TAB/G must SEE the change.
   const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
   R2.drawHudChrome(ctx2, hudState({ focus: 'TOUGHEST', stance: 'SAFE' }));
-  ok(!!textOf(rec2, 'FOCUS TOUGHEST') && !!textOf(rec2, 'STANCE SAFE'),
-    'cycling the levers repaints the HUD lines');
-  ok(textOf(rec2, 'STANCE SAFE').style === C.HUD.STANCE_COLORS.SAFE, 'safe stance reads green');
+  ok(!!textOf(rec2, 'FOCUS TOUGHEST') && !!stanceLine(rec2), 'cycling the levers repaints the HUD lines');
+  ok(stanceLine(rec2).style === C.HUD.STANCE_COLORS.SAFE, 'safe stance reads green');
+  ok(stanceLine(rec2).txt.startsWith('STANCE SAFE \u00b7 ' + C.AUTOPILOT.STANCES.SAFE.TAG),
+    'and the meaning tag follows the lever (got "' + stanceLine(rec2).txt + '")');
 
-  // Fallback source: the #tc-focus / #tc-stance badge text that main.js already
-  // mirrors from controller.focus / controller.stance every frame.
+  // WAVE-26: the pilot's LIVE activity rides the same line (state.stanceAct).
+  const { R: R2b, rec: rec2b, ctx: ctx2b } = makeRenderer();
+  R2b.drawHudChrome(ctx2b, hudState({ focus: 'NEAREST', stance: 'GREEDY', stanceAct: 'FLEE' }));
+  ok(stanceLine(rec2b).txt.endsWith('\u00b7 FLEE') && R2b.hudChrome.stanceAct === 'FLEE',
+    'the live pilot activity is shown on the stance line (got "' + stanceLine(rec2b).txt + '")');
+
+  // WAVE-26: the old #tc-focus / #tc-stance DOM-badge fallback is REMOVED.
+  // main.js publishes state.focus / state.stance every frame, so the renderer
+  // must never consult the DOM: even when the badges exist and carry text, a
+  // state without doctrine reads nulls and paints nothing (inventing a value
+  // from a DOM node the canvas cannot verify is exactly the drift we removed).
   const savedDoc = globalThis.document;
   globalThis.document = {
     getElementById: (id) => (id === 'tc-focus' ? { textContent: 'RANGED' }
@@ -264,9 +280,10 @@ console.log('WAVE-24 / #4 — FOCUS / STANCE ON THE DEFAULT CANVAS HUD');
   };
   const { R: R3, rec: rec3, ctx: ctx3 } = makeRenderer();
   R3.drawHudChrome(ctx3, hudState());
-  ok(R3.hudChrome.focus === 'RANGED' && R3.hudChrome.stance === 'BALANCED',
-    'with no state.focus/state.stance the HUD reads the touch badges (same controller source)');
-  ok(!!textOf(rec3, 'FOCUS RANGED'), 'the fallback path actually paints the lines');
+  ok(R3.hudChrome.focus === null && R3.hudChrome.stance === null,
+    'with no state doctrine the HUD reads nulls — the DOM badge bridge is gone');
+  ok(!rec3.texts.some(t => /^FOCUS |^STANCE /.test(t.txt)),
+    'and the dead DOM fallback paints nothing');
 
   // No source at all -> draw nothing rather than invent a value.
   globalThis.document = undefined;

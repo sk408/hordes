@@ -95,11 +95,36 @@ export const CONFIG = {
   AUTOPILOT: {
     FOCUS_RANGE: 260,      // doctrine candidates must be within this radius
     SWARM_CLUSTER_R: 60,   // cluster-density radius for the SWARM doctrine
+    // STANCE = the risk dial. WAVE-26 ("stance that bites"): each stance is a
+    // REAL trade, not just a kite distance, and each carries a one-word TAG
+    // that the canvas HUD prints next to the name so the dial is legible.
+    //   KITE_MULT   flee distance multiplier (SAFE back-pedals, GREEDY hugs)
+    //   XP_SPEED    calm drift speed toward the nearest gem
+    //   LOOT_WEIGHT GREEDY only: how hard the flee vector bends toward loot
+    //   PICKUP_MULT loot magnetism — the ONE consequence that bites in BOTH
+    //               auto and manual pilot (manual owns movement by design, so
+    //               without this the dial would be inert for manual players).
+    //               GREEDY reaches loot from further; SAFE keeps its distance.
     STANCES: {
-      SAFE:     { KITE_MULT: 2.0, XP_SPEED: 0.6 },               // flee far, drift slowly to XP
-      BALANCED: { KITE_MULT: 1.0, XP_SPEED: 1.0 },               // current behavior
-      GREEDY:   { KITE_MULT: 0.5, XP_SPEED: 1.0, LOOT_WEIGHT: 0.65 }, // loot > safety
+      SAFE:     { KITE_MULT: 2.0, XP_SPEED: 0.6, LOOT_WEIGHT: 0, PICKUP_MULT: 0.85,
+                  TAG: 'KEEP CLEAR' },
+      BALANCED: { KITE_MULT: 1.0, XP_SPEED: 1.0, LOOT_WEIGHT: 0, PICKUP_MULT: 1.0,
+                  TAG: 'EVEN ODDS' },
+      GREEDY:   { KITE_MULT: 0.5, XP_SPEED: 1.35, LOOT_WEIGHT: 0.65, PICKUP_MULT: 1.35,
+                  TAG: 'LOOT FIRST' },
     },
+  },
+
+  // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):
+  // the simulation honours a state-level time scale for the two genuinely
+  // earned moments ONLY — a weapon EVOLUTION and a BOSS KILL. Values are
+  // wall-clock seconds, so the window is frame-rate independent; the scale is
+  // taken as a MIN and the window as a MAX (never multiplied) so two triggers
+  // in one frame cannot stack into a freeze.
+  DILATION: {
+    EVOLUTION: { SCALE: 0.45, DURATION: 0.5 },
+    BOSS:      { SCALE: 0.35, DURATION: 0.6 },
+    FLOOR: 0.05,          // hard clamp: never slower than this
   },
 
   // Weapon-slot economy: the base volley occupies slot 1. Players START at 3

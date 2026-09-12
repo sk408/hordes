@@ -55,8 +55,22 @@
   .card.dim:hover { border-color: #4a4a6a; background: #14141f; cursor: default; }
   .card .name { color: #ffd75e; font-weight: bold; margin-bottom: 8px; }
   .card .desc { font-size: 12px; color: #a8a8c0; }
+  /* WAVE-26 draft synergy hint: a real, code-backed pair with something the
+     player already owns. Cyan so it reads as information, not flavor text;
+     absent entirely when the card has no genuine synergy. */
+  .card .syn {
+    margin-top: 8px; font-size: 11px; color: #7ad0ff;
+    letter-spacing: 1px;
+  }
   .card .key { margin-top: 10px; font-size: 11px; color: #6a6a8a; }
   #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
+  /* WAVE-26 "death as payoff": the end screen is the most-seen screen in the
+     game, so its three facts get color-coded and scannable in one pass —
+     cause (hot red), earnings (gold), and the next shop unlock (cool cyan).
+     Monospace + no decoration: still the pixel look, just legible. */
+  #overlay .sub .cause { color: #ff7a6a; }
+  #overlay .sub .earn  { color: #ffd75e; }
+  #overlay .sub .next  { color: #7ad0ff; }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
      staged spotlight walkthrough. #tour-root is appended to <body> (above

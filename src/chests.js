@@ -12,8 +12,7 @@
 // consumes those events later.
 import { CONFIG as C, UPGRADES } from './config.js';
 import { makeTypedEnemy } from './enemy_types.js';
-import { hpScale, xpScale } from './entities.js';
-import { heatOf, heatMultipliers } from './heat.js';
+import { applyEscalation } from './entities.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -45,19 +44,9 @@ export const CHESTS = {
 //   heatMultipliers(heatOf(state)).hp -> the run's heat ledger
 // Deliberately NO rng: the factory's default variant is used, so the chest
 // keeps its documented 2-draw rng order and no caller's stream shifts.
-// NOTE: applyEscalation mirrors main.js's (same "back the factory's linear
-// preview out, re-apply CONFIG.ESCALATION" algebra). Both sides read the same
-// curves through entities.hpScale/xpScale; if that re-scale ever changes
-// shape, both must move — a shared helper is the proper home for it.
-function applyEscalation(state, e) {
-  const w = Math.floor(state.time / 30);
-  const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
-  const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
-  e.hp = hp;
-  e.maxHp = hp;
-  e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;
-}
+// WAVE-26: the re-scale algebra used to be duplicated here and in main.js;
+// both now delegate to the ONE shared entities.applyEscalation helper, so the
+// curves can never desync between the chest horde and the ambient spawner.
 // BALANCE NOTE (wave-25, measured — no numbers were retuned): putting the
 // gamble horde on the typed path also puts it on CONFIG.ESCALATION, which
 // COMPOUNDS from wave 4. Its hp vs the old makeEnemy chassis: x1.41 at wave 1,

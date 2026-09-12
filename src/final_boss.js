@@ -60,6 +60,13 @@ export const FINAL_BOSS = {
   decide: mawDecide,
 };
 
+// The maw's tuned chase speed is a FACT of this module, not of main.js: the
+// factory below stamps `speed = MAW_SPEED_BASE * FINAL_BOSS.speedMult` so a
+// caller that forgets to derive speed gets the real 140 px/s instead of NaN
+// (a NaN speed poisons the maw's position within one frame). Retuning
+// speedMult moves the maw; 400 x 0.35 reproduces the old literal exactly.
+export const MAW_SPEED_BASE = 400;
+
 // ===========================================================================
 // SPRITE — 34x38 void-black maw: jagged crown, eye cluster, ringed teeth
 // around a burning throat. Same grid format as sprites.js/bosses.js (rows of
@@ -265,6 +272,9 @@ export function makeFinalBoss(x, y) {
     hp: DISPLAY_HP, maxHp: DISPLAY_HP,
     age: 0,                 // integrator advances; choreography keys off it
     w: 34, h: 38,           // sprite box; hb1 may scale by sizeMult
+    // Real default (never NaN): the tuned chase speed. hb1 may still override
+    // after the factory, but forgetting to no longer poisons the integrator.
+    speed: MAW_SPEED_BASE * FINAL_BOSS.speedMult,
   };
 }
 
