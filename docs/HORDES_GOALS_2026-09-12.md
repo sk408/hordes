@@ -302,7 +302,7 @@ will break the new features in a way that is invisible until a player loses thei
 **Reached when:** the profile has an explicit version, documented migration for older saves, validation
 for every persisted collection, and a test that loads a corrupted and an old-format save safely.
 
-### G12 — FULL GAME TREATMENT: TITLE SCREEN, STARTUP MENU, SAVE EXPORT  [status: IN PROGRESS 2026-09-13 — RECON DONE + DISPATCHED, nothing built yet. The marker was WRONG: `src/art/title.js` already exports the 480x300 title card plus composeTitle/drawTitle and NOTHING calls them, so showTitle() paints DOM cards over the LIVE MAP — what the owner asked not to have. `src/save.js` already has buildExport/exportProfileText/downloadProfile/importProfileText. Real gap: draw the existing graphic behind the menu, START GAME + EXIT GAME (autosave -> window.close() attempt -> farewell screen), load-from-disk when no local save exists. Brief docs/briefs/G12_TITLE_SCREEN.md, issued as msg_01M2C7WKKJ6NBW6X92PJJSYWQS. See TICK NOTE 15]
+### G12 — FULL GAME TREATMENT: TITLE SCREEN, STARTUP MENU, SAVE EXPORT  [status: IN PROGRESS 2026-09-13 — RE-DISPATCHED, still nothing built. TICK 15 dispatched msg_01M2C7WKKJ6NBW6X92PJJSYWQS and it came back `blocked:` on the lock having burned all 5 retries while subagent:spawnab held it - NO partial work exists (.hub-worker/logs/msg_01M2C7WKKJ6NBW6X92PJJSYWQS.log). TICK 16 re-issued the same brief as msg_01M2CDFB0JMMFJ2R4JBV7GN3NY with a 15x30s retry window. Re-checked on the current tree: `grep -rn "drawTitle|TITLE_ART|composeTitle" src/` hits ONLY src/art/* (nothing in main.js or render.js draws it), `grep -rn "START GAME|EXIT GAME" src/` is EMPTY, and showTitle() (src/main.js:3039) still paints DOM cards over the LIVE MAP. Suite on this tree PASS=68 FAIL=0. See TICK NOTE 15 and TICK NOTE 16]
 Owner: *"maybe a legititimate startup screen like a full pc game. <Start Game> <Achievements>
 <Settings> <Exit Game> and exit game can offer a save to disk dialouge. Maybe start game could offer a
 load from disk option if no save is found in localstorage. This would be overlaid on a title screen
@@ -1804,3 +1804,50 @@ is real, because G6 is an explicit owner number and nothing in the served queue 
 **NEXT GOAL: G12** (in flight, `msg_01M2C7WKKJ6NBW6X92PJJSYWQS`). Its `done:` report is a CLAIM: the next
 tick must re-run the suite itself, open `docs/art/browser-verify-2026-09-12/g12-title-phone.png`, and
 confirm the title graphic really is what is painted behind the menu rather than the map.
+
+## TICK NOTE 16 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held, G12 RE-DISPATCHED)
+
+**Goal worked: G12 (title screen / startup menu / exit + load, build-plan W4). Still UNBUILT - this tick diagnosed why
+the dispatch went nowhere and re-issued it.**
+
+**Verified by this tick's own runs (not a report):**
+- **Suite baseline on the CURRENT tree: `bash /tmp/run_all.sh` => PASS=68 FAIL=0.** 68 = the 65 of TICK 15 plus
+  `test_autodrink.mjs`, `test_feedback_098.mjs`, `test_skill_key_letters.mjs`. The tree carries `b1963cd` (spawnab's
+  two-line boss banner + I-only stats key) AND spawnfb's still-uncommitted 0.98 / auto-drink / skill-key work.
+- **TICK 15's G12 dispatch never ran.** `.hub-worker/logs/msg_01M2C7WKKJ6NBW6X92PJJSYWQS.log` ends in the builder's own
+  `blocked:` sentence: all 5 lock retries returned BUSY while `subagent:spawnab` held the lock ("HORDES two-line boss
+  banner + S/stats key fix"), and it edited NOTHING. So G12's true state was "dispatched and blocked", not "in flight",
+  and no partial work has to be cleaned up.
+- **The gap itself, re-checked on this tree (not quoted from the brief):** `grep -rn "drawTitle\|TITLE_ART\|composeTitle"
+  src/` hits ONLY `src/art/title.js` and the `src/art/index.js` re-export - `src/main.js` and `src/render.js` never draw
+  it. `grep -rn "START GAME\|EXIT GAME" src/` returns NOTHING. `showTitle()` (`src/main.js:3039`) still calls
+  `openMenu()` and paints DOM cards (PLAY / SHOP / CHARACTERS / TROPHIES / BESTIARY / CHALLENGE / SETTINGS / HOW TO PLAY)
+  over the LIVE MAP - exactly what the owner asked not to have.
+
+**Re-dispatched (this tick's entire write budget):**
+- **`msg_01M2CDFB0JMMFJ2R4JBV7GN3NY` -> `cli:glm-hordes-g8`.** The worker is alive (glm lane, pid 495012, queue empty,
+  idle). Same self-contained brief, `docs/briefs/G12_TITLE_SCREEN.md` (70 lines, unchanged); the issue text now names
+  the blocked history and widens the retry window to 15 x 30s, because the pilot releases the lock at the end of this
+  tick and the 5 x 20s window of TICK 15 is what the last failure was made of.
+
+**COULD NOT VERIFY (honest):**
+- Nothing was built. This tick wrote no `src/` file, so the only number it can stand behind is the pre-existing baseline
+  (PASS=68 FAIL=0). The builder's `done:` is a CLAIM: the next tick must re-run the suite three times, open
+  `docs/art/browser-verify-2026-09-12/g12-title-phone.png`, and confirm the title GRAPHIC is what sits behind the menu
+  rather than the map.
+- **No vision model is reachable from this host**, so any future phone PNG can be checked as geometry + `getImageData`
+  samples, never as "looks right" - the same caveat as every prior tick.
+- **The sequencing conflict is now two ticks old and still unresolved:** the served ranked queue runs G11 -> G12 ->
+  G13/G14, while `docs/BUILD_PLAN.md` sequences **W7a** (sim models the arch buffs; meta upgrades ranked by measured
+  marginal value; G17 economy) and **W7b** (draft divergence to >= x1.6) BEFORE W9/W4. G5 remains "unmeasured for the
+  arch fix" and G6 remains "below target" at x1.28 against the owner's raised x1.6. Neither is tagged IN PROGRESS or
+  open, so the queue rule keeps skipping the owner's own number. Recorded again rather than silently reordered.
+- **Live-writer risk, named:** a second hordes agent (`subagent:spawnfb`) posted
+  `task.start "hordes: make mana a finite resource"` at 03:36:26Z, about 40s after this tick took the lock. It will hit
+  rc=1 and must wait, which is the point of the lock; flagged because if the owner wants that feature to jump the queue,
+  this tick's G12 dispatch is what stands in front of it.
+- Lock hygiene: acquired at the top of this tick, released at the end of it, both from `/home/claude/projects/hordes`
+  (`agentlock release` resolves the lock from CWD).
+
+**NEXT GOAL: G12** (re-dispatched, `msg_01M2CDFB0JMMFJ2R4JBV7GN3NY`). If it returns `blocked:` a second time, the next
+tick should stop re-dispatching and instead take the BUILD_PLAN sequence (W7a/W7b) that the queue keeps skipping.

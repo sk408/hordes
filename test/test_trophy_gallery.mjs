@@ -168,7 +168,7 @@ const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 
 S.check('the title menu offers a TROPHIES card carrying the earned count', () => {
   if (st.mode === 'intro') key('x');                 // any key skips the intro movie
-  assert.equal(st.mode, 'menu', 'the title is up');
+  assert.equal(st.mode, 'title', 'the title is up');
   const card = cardWith('TROPHIES');
   assert.ok(card, 'a TROPHIES card exists');
   const summary = gallerySummary(T.getProfile());
@@ -270,9 +270,11 @@ S.check('an UNEARNED entry shows the LOCKED art, hides the name, keeps the goal'
 
 S.check('closing restores the previous mode and every overlay override resets', () => {
   cardWith('BACK').click();                           // the real BACK path
-  assert.equal(st.mode, 'menu', 'BACK returns to the title');
+  assert.equal(st.mode, 'title', 'BACK returns to the title');
   assert.equal(st.trophyView, null, 'the showcase payload is cleared (nothing paints over the title)');
-  assert.equal(ov.style.background, '', 'openMenu restored the sheet background');
+  // G12: the title's OWN sheet is transparent (the art shows through) — the
+  // gallery's flex-end override is what must be gone.
+  assert.equal(ov.style.background, 'transparent', 'the title sheet is its own transparent one');
   assert.equal(ov.style.justifyContent, '', 'openMenu restored the alignment');
   assert.ok(cardWith('SHOP'), 'and the title cards are back (no leaked gallery chrome)');
 
@@ -291,9 +293,9 @@ S.check('ESC backs out of the gallery to the title', () => {
   T.openTrophies();
   assert.equal(st.mode, 'trophies', 'gallery open');
   key('escape');
-  assert.equal(st.mode, 'menu', 'ESC lands on the title');
+  assert.equal(st.mode, 'title', 'ESC lands on the title');
   assert.equal(st.trophyView, null, 'the gallery payload is gone');
-  assert.ok(cardWith('PLAY'), 'the title cards are rebuilt');
+  assert.ok(cardWith('START GAME'), 'the title cards are rebuilt');
 });
 
 S.check('the gallery paints NO play HUD (the canvas half of the chrome gate)', () => {
@@ -370,7 +372,7 @@ S.check('a second identical run earns nothing twice (no re-earn, no re-grant, no
 S.check('the title card count reflects the new trophies', () => {
   st.mode = 'dead';
   cardWith('TITLE').click();                        // the death screen's own TITLE path
-  assert.equal(st.mode, 'menu', 'back at the title');
+  assert.equal(st.mode, 'title', 'back at the title');
   const summary = gallerySummary(T.getProfile());
   const card = cardWith('TROPHIES');
   assert.ok(card.innerHTML.includes(summary.earned + ' / ' + summary.total),

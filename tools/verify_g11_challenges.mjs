@@ -98,6 +98,12 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
       T.challenge.select('STANDARD');
       T.startRun();
       await raf(); await raf();
+      // WEATHER CONTROL: the SUNNY glyph is ALSO #ffd75e and lives in this
+      // exact column (VIEW_W-6-5Z, y15 — weight 35 in the run roll), so a
+      // sunny STANDARD run trips "any gold pixel = badge". Force CLEAR
+      // through the game's own initWeather so the claim stays deterministic.
+      state.weather = (await import('./src/weather.js')).initWeather('CLEAR', state.wave.num);
+      await raf(); await raf();
       results.standard = {
         challenge: state.challenge,
         seam: T.renderer.hudChrome && T.renderer.hudChrome.challenge,
@@ -176,7 +182,7 @@ try { copyFileSync(out.shot, canonical); } catch (e) { console.error('COPY FAILE
 
 const problems = [];
 const t = out.title, r = out.run, std = out.standard, b = out.bestiary;
-if (t.mode !== 'menu') problems.push('title: mode is ' + t.mode);
+if (t.mode !== 'title') problems.push('title: mode is ' + t.mode);
 if (!t.cardFound) problems.push('title: no CHALLENGE card');
 if (!t.cardInView || t.cardClipped) problems.push('title: the CHALLENGE card is clipped or off-viewport');
 if (!t.namesSelection) problems.push('title: the card does not name the selection');

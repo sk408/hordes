@@ -1847,6 +1847,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
       x: st.player.x, y: st.player.y, vx: 0, vy: 0, damage: 0, age: 0, kind: 'maw', volleyId: id,
     });
     st.player.hp = full; st.player.invuln = 0; st.volleyMask = null;
+    // WAVE-28: this block pins the third-hit LETHALITY arithmetic, so the
+    // pilot's potion hand is emptied first — with a charge in inventory the
+    // AUTO auto-drink (CONFIG.AUTOPILOT.AUTO_DRINK) would legitimately heal the
+    // 42/130 dip back over its 35% line between the third and fourth frames and
+    // the hero would live. That is the feature working, not this check's
+    // subject; the assertions below are unchanged.
+    st.player.potions.hp = 0;
     shot(77);
     now += dtMs; let cb = rafQueue.shift(); cb(now);
     assert(st.player.hp === full - third,
@@ -1893,7 +1900,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(m2.__TEST.state.mode !== 'menu', 'fresh module should boot into the intro');
   keyHandler({ key: 'x' });
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  assert(m2.__TEST.state.mode === 'menu', 'any key must skip the intro to the menu');
+  assert(m2.__TEST.state.mode === 'title', 'any key must skip the intro to the title');
   assert(elements['ov-title'].textContent === 'HORDES',
     'onboarding flag preset: no HOW TO PLAY auto-pop, straight to the title');
   console.log('intro skip: keypress jumps straight to the HORDES menu (no onboarding re-pop)');

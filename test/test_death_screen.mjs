@@ -105,6 +105,11 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   const p = state.player;
   p.hp = 1;                 // one contact hit is fatal
   p.invuln = 0;
+  // WAVE-28: the AUTO pilot auto-drinks below CONFIG.AUTOPILOT.AUTO_DRINK.
+  // HP_FRACTION, so a charge in inventory would legitimately save this dip —
+  // and this check is about the DEATH funnel, not about the pilot's potions.
+  // Empty the inventory; every assertion below is unchanged.
+  p.potions.hp = 0;
   state.spawnTimer = 999;   // no ambient spawns
   state.wave.endsAt = state.time + 9999;
   state.enemies.length = 0;

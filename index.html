@@ -182,6 +182,27 @@
   #touch button .badge {
     display: block; font-size: 11px; color: #ffd75e; margin-top: 2px;
   }
+  /* WAVE-28 KEY LETTERS (playtest: "put a [Q] and [E] by the timer"). The badge
+     below the label is the LIVE cooldown readout (RDY / LOW / 8.0s, written by
+     updateTouchHud) and stays exactly that — so the key lives INLINE ahead of
+     the label instead, boxed like a key cap so it reads as a key and not as
+     part of the skill name. Pixel-art styling (monospace, 1px hard border, 3px
+     radius) matches .badge and the cog.
+     SIZING IS MEASURED, not assumed (tools/verify_skill_keys.mjs, real Chrome
+     at 390x844 dpr3 coarse pointer): the buttons are border-box, so the 68px
+     min-width leaves a 40px content box and "FROST" at 13px monospace already
+     fills it — the letters therefore DO grow the skill buttons, 68 -> 94.2px,
+     and (flex column) the whole right pad with them. That is deliberate and
+     still inside the 96px per-button budget index.html's pad math is written
+     against, and it moves the right pad TOWARD the 114.09px left pad (joystick
+     clearance 360px: 15.8px). Height is untouched (the 16px key box sits in the
+     label's 16.9px line box) and the key's box never touches the badge's. */
+  #touch button .key {
+    display: inline-block; margin-right: 3px; padding: 0 2px;
+    font-size: 10px; line-height: 14px; vertical-align: 1px;
+    color: #b8e0ff; background: rgba(74,74,106,0.4);
+    border: 1px solid #4a4a6a; border-radius: 3px;
+  }
   /* WAVE-17 SETTINGS COG (Sk408): small pixel gear, top-right of the touch
      layer — screen chrome, kept OUT of the bottom thumb zone. Opens the
      in-run SETTINGS pause screen (main.js openSettings: same pause contract
@@ -273,8 +294,8 @@
     </div>
     <div id="joy" data-joy="1"><div id="joy-knob"></div></div>
     <div class="pad right">
-      <button data-act="q">FROST<span class="badge" id="tc-q">RDY</span></button>
-      <button data-act="w">OVER<span class="badge" id="tc-w">RDY</span></button>
+      <button data-act="q"><span class="key">[Q]</span>FROST<span class="badge" id="tc-q">RDY</span></button>
+      <button data-act="w"><span class="key">[E]</span>OVER<span class="badge" id="tc-w">RDY</span></button>
       <button data-act="h">HP<span class="badge" id="tc-h">1</span></button>
       <button data-act="n">MP<span class="badge" id="tc-n">1</span></button>
     </div>

@@ -85,6 +85,11 @@ S.check('a REAL death earns the four counter trophies and grants PALADIN', () =>
   assert.equal(st.mode, 'playing', 'still in the run');
   st.player.hp = 0.01;                    // one contact tick ends the run
   st.player.invuln = 0;
+  // WAVE-28: the AUTO pilot's auto-drink (CONFIG.AUTOPILOT.AUTO_DRINK) would
+  // legitimately heal this dip out of a carried charge, so the inventory is
+  // emptied — this check is about the death funnel granting the trophies, and
+  // every assertion below is unchanged.
+  st.player.potions.hp = 0;
   parkOnHero();
   for (let i = 0; i < 30 && st.mode !== 'dead'; i++) h.pump(1);
   assert.equal(st.mode, 'dead', 'the run ended through die()');

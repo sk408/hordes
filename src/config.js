@@ -166,6 +166,33 @@ export const CONFIG = {
     // this stance and returns to the player's own pick the moment the wave's
     // cast is down. A deliberate mid-fight change by the player always wins.
     BOSS_STANCE: 'SAFE',
+    // AUTO_DRINK (playtest: "maybe a way to auto use potions in autopilot?").
+    // Potions were manual-only (main.js runAction 'h'/'n'), so an AUTO player
+    // watched the pilot eat a lethal horde with a full inventory — the pilot
+    // fights for you, so the consumables it would have spent must be spent for
+    // you too. Scope is deliberately narrow:
+    //   * AUTO ONLY. The manual pilot's potions stay 100% the player's call;
+    //     nothing here can ever drink a MANUAL player's charge.
+    //   * HP_FRACTION — drink a health potion once HP is STRICTLY BELOW this
+    //     fraction of max (at or above the line nothing is drunk: no wasted
+    //     charge). A fraction, not a flat number, so the line tracks max HP
+    //     through the whole ladder.
+    //   * MP_FRACTION — drink a mana potion only when mana is below this
+    //     fraction AND a skill is actually BLOCKED ON MANA (off cooldown and
+    //     short of its cost). Low mana with everything on cooldown is not a
+    //     reason to spend a charge.
+    //   * COOLDOWN — one auto-drink per kind per this many seconds. Without it
+    //     a single deep dip chugs the whole stack in three frames (35 heal on a
+    //     200 pool cannot climb back over the line in one gulp).
+    // This block touches potions ONLY: it never reads or writes the stance, so
+    // it cannot fight BOSS_STANCE or the pilot's kite/retreat logic — a potion
+    // drunk during the arrival banner leaves the eased stance exactly as it was.
+    AUTO_DRINK: {
+      ENABLED: true,
+      HP_FRACTION: 0.35,   // strictly below this share of max HP
+      MP_FRACTION: 0.30,   // strictly below this share of max mana (+ a starved skill)
+      COOLDOWN: 1.5,       // seconds between auto-drinks of the same kind
+    },
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):

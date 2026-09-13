@@ -73,7 +73,7 @@ import {
   // W1 save foundation (src/save.js): versioned schema + lossless export/import.
   SCHEMA_VERSION, exportProfileText, importProfileText,
   downloadProfile, saveProfileToDisk, readSaveFile,
-  readRecovery, downloadRecovery,
+  readRecovery, downloadRecovery, STORAGE_KEY,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -198,7 +198,10 @@ const state = {
   spawnTimer: 0,
   // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
   // EVOLUTION draft overlay (a maxed weapon + its item kind + a token).
-  mode: 'menu',      // 'menu' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
+  // G12: 'title' is the startup menu over the composed title card (the other
+  // meta screens keep 'menu' over the frozen world); 'farewell' is the
+  // EXIT GAME screen.
+  mode: 'menu',      // 'menu' | 'title' | 'farewell' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
@@ -229,6 +232,10 @@ const state = {
   // waveTookDamage/untouchedWave = whether any wave was finished without a hit
   // landing on the hero.
   runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false },
+  // WAVE-28 AUTO-DRINK: the per-kind lockout gates (CONFIG.AUTOPILOT.AUTO_DRINK
+  // COOLDOWN), in seconds. Run-scoped — declared here so the seam needs no
+  // guard, and reset in startRun so a new run never inherits a stale lockout.
+  autoDrinkCd: { hp: 0, mp: 0 },
   finalBoss: null,   // WAVE-10: the maw instance while the finale lives (also rides state.enemies so the controller targets it untouched)
   volleyMask: null,  // WAVE-10: last barrage volleyId that landed on the hero (mercy rule state)
   choiceSeed: 1,     // per-run seed for the intermission blessing/curse rolls
@@ -1284,6 +1291,11 @@ function update(dt) {
   // called from BOTH resource seams — this one and updateFinale's — so there is
   // never a third copy. dt-scaled: 60Hz and 120Hz are both exact.
   applyRegrowth(state, dt);
+  // WAVE-28 AUTO-DRINK: the pilot's potion hand (CONFIG.AUTOPILOT.AUTO_DRINK).
+  // Sits AFTER every resource grant of the frame so it reads the live HP/mana,
+  // and reads/writes NOTHING but potions (it cannot touch the stance, so the
+  // BOSS_STANCE ease and the kite/retreat decision are untouched).
+  autoDrinkPotions(state, dt);
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -2700,6 +2712,9 @@ function openMenu(mode = 'menu') {
   // show the frozen world through its cards. '' returns both to the stylesheet.
   overlay.style.background = '';
   overlay.style.justifyContent = '';
+  // G12: same reset for the title's hidden DOM <h1> (the title card's own
+  // wordmark replaces it there; every other screen wants it back).
+  if (ovTitle.style) ovTitle.style.display = '';
 }
 
 // ---------- WAVE-21 FIRST-RUN TOUR (docs/FIRST_RUN_TOUR_2026-09-11.md) ------
@@ -2733,13 +2748,22 @@ let coach = null;
 function coachActive() { return !!(coach && coach.active()); }
 
 function maybeStartMenuTour() {
-  if (tourStage1Done() || menuTour || state.mode !== 'menu') return;
+  if (tourStage1Done() || menuTour || (state.mode !== 'menu' && state.mode !== 'title')) return;
   const finish = () => { setTourFlag(TOUR_KEYS.stage1, true); menuTour = null; };
-  menuTour = new Tour({
-    // Player-flow order: what you press first reads first.
-    steps: [
-      { id: 'PLAY', text: 'PLAY starts a run — pilot the horde as long as you can.',
-        target: () => cardByTitle('PLAY') },
+  // G12: the tour is built against the LIVE title menu, so the fresh-browser
+  // LOAD FROM DISK card is taught exactly when it exists (a step for a missing
+  // card would be skipped by the never-break rule, but naming it here keeps
+  // the taught-count contract exact: every title card, or a recorded
+  // discovery exemption).
+  const steps = [
+    { id: 'START', text: 'START GAME begins a run — pilot the horde as long as you can.',
+      target: () => cardByTitle('START GAME') },
+  ];
+  if (!hasLocalSave()) {
+    steps.push({ id: 'LOAD', text: 'LOAD FROM DISK imports a saved profile from another browser.',
+      target: () => cardByTitle('LOAD FROM DISK') });
+  }
+  steps.push(
       { id: 'SHOP', text: 'SHOP: every run (even a death) pays gold for PERMANENT upgrades.',
         target: () => cardByTitle('SHOP') },
       { id: 'CHARACTERS', text: 'CHARACTERS unlock pilots with different starting kits.',
@@ -2758,7 +2782,14 @@ function maybeStartMenuTour() {
         target: () => cardByTitle('SETTINGS') },
       { id: 'HOW TO PLAY', text: 'HOW TO PLAY — the full reference, any time.',
         target: () => cardByTitle('HOW TO PLAY') },
-    ],
+      // G12: the new LAST card is taught too — a quit button nobody introduced
+      // reads as dangerous.
+      { id: 'EXIT', text: 'EXIT GAME saves your progress and quits.',
+        target: () => cardByTitle('EXIT GAME') },
+  );
+  menuTour = new Tour({
+    // Player-flow order: what you press first reads first.
+    steps,
     onDone: finish, onSkip: finish,
     // WAVE-23 (#6): input-aware advance wording — "TAP" reads wrong on a
     // desktop with no touch (Sk408). Any key also advances (tour.js).
@@ -3027,15 +3058,72 @@ function saveNoticeHtml() {
   return `<br><span class="${cls}">${saveNotice}</span>`;
 }
 
-function showTitle() {
-  openMenu();
+// ---------- G12: the startup menu over the composed title card ----------------
+// A local save is what separates "welcome back" from "fresh browser": the
+// LOAD FROM DISK offer on the title (and its tour step) exist only while NO
+// save lives under STORAGE_KEY. SETTINGS > IMPORT SAVE stays reachable either
+// way — that is the offer's permanent home.
+function hasLocalSave() {
+  try {
+    const v = prefStorage.getItem(STORAGE_KEY);
+    return typeof v === 'string' && v.length > 0;
+  } catch { return false; }
+}
+
+// EXIT GAME, honestly (G12 DO 3): (a) autosave; (b) attempt window.close();
+// (c) when the tab does not close — it will not, for a tab the player opened —
+// the farewell screen says the progress is saved and the tab can be closed.
+// `exitSteps` is the assertable event log: the three steps, in order, as they
+// ran. window.close() cannot be polled for success, so the farewell shows
+// unconditionally right after the attempt: if the browser DID close the tab,
+// the player never sees it; if it did not, nothing reads as broken.
+const exitSteps = [];
+function exitGame() {
+  exitSteps.length = 0;
+  exitSteps.push('autosave');
+  autosave('exit-game');
+  exitSteps.push('window.close');
+  try {
+    const w = globalThis.window;
+    if (w && typeof w.close === 'function') w.close();
+  } catch { /* headless / blocked — the farewell below is the honest answer */ }
+  exitSteps.push('farewell');
+  showFarewell();
+}
+
+function showFarewell() {
+  openMenu('farewell');
   ovTitle.textContent = 'HORDES';
   ovTitle.className = 'logo';
+  ovSub.innerHTML = 'progress saved &mdash; you can close this tab now';
+  menuCard('BACK', 'return to the title', () => showTitle());
+}
+
+function showTitle() {
+  openMenu('title');
+  // The authored title card (renderer mode 'title') carries its OWN wordmark,
+  // so the DOM <h1> hides here (textContent stays 'HORDES' — the stub-DOM
+  // tests read it) and the sheet goes transparent so the canvas art shows
+  // through between the cards. openMenu resets both for every other screen
+  // (same override pattern the trophy gallery uses).
+  ovTitle.textContent = 'HORDES';
+  ovTitle.className = 'logo';
+  if (ovTitle.style) ovTitle.style.display = 'none';
+  overlay.style.background = 'transparent';
+  const fresh = !hasLocalSave();
   ovSub.innerHTML = `purse: ${profile.gold} gold · equipped: ` +
     (CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT).name +
     (hasArcadePass(profile) ? ' · ARCADE PASS' : '') +
     '<br>the build IS the game' + saveNoticeHtml();
-  menuCard('PLAY', 'start a run', () => startRun());
+  menuCard('START GAME', fresh ? 'start a run · or LOAD FROM DISK below' : 'start a run',
+    () => startRun());
+  // G12 DO 4: on a fresh browser (no local save) the startup menu itself
+  // offers load-from-disk, through the SAME validated import path SETTINGS
+  // uses (pickImportFile -> importSaveText -> importProfileText). Once ANY
+  // save exists the card adds no friction and disappears.
+  if (fresh) {
+    menuCard('LOAD FROM DISK', 'import a saved profile (.json)', () => pickImportFile(() => showTitle()));
+  }
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
   // G9: the gallery is reached from here, and the count on the card is the
@@ -3054,6 +3142,8 @@ function showTitle() {
     () => { cyclePendingChallenge(); showTitle(); });
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  // G12 DO 2: EXIT GAME is the LAST card.
+  menuCard('EXIT GAME', 'save & quit', () => exitGame());
   maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
 }
 
@@ -3096,9 +3186,13 @@ function showCharacters() {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const equipped = profile.equippedCharacter === ch.id;
     const afford = profile.gold >= ch.unlockCost;
-    const sub = equipped ? 'EQUIPPED'
+    // 0.98 feedback (defect 2): an OWNED pilot used to lose its ability
+    // description — the sub-line swapped to the equip affordance, hiding the
+    // text the player paid to read. The description is now ALWAYS on the card;
+    // the equip state rides underneath it (EQUIPPED, or the equip prompt).
+    const sub = `${ch.desc}<br>` + (equipped ? 'EQUIPPED'
       : owned ? 'equip this pilot'
-      : `${ch.desc}<br>unlock: ${ch.unlockCost} gold`;
+      : `unlock: ${ch.unlockCost} gold`);
     const el = menuCard(
       ch.name + (equipped ? ' *' : ''),
       sub,
@@ -3127,7 +3221,10 @@ function showCharacters() {
 
 // Hidden <input type="file">: the universal import path (works in every
 // browser, including iOS Safari where the File System Access API is absent).
-function pickImportFile() {
+// G12: `returnTo` says which screen re-renders after the attempt (SETTINGS
+// keeps its own re-render; the title's LOAD FROM DISK returns to the title so
+// the offer disappears the moment a save exists).
+function pickImportFile(returnTo) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json,application/json';
@@ -3142,7 +3239,8 @@ function pickImportFile() {
       } else {
         importSaveText(read.text);
       }
-      showSettings(false);
+      if (typeof returnTo === 'function') returnTo();
+      else showSettings(false);
     });
   };
   if (document.body && document.body.appendChild) document.body.appendChild(input);
@@ -3326,6 +3424,9 @@ function startRun() {
   state.timeScale = 1;
   state.moment = null;
   state.stanceLootAt = -99;
+  // WAVE-28: the auto-drink gates restart with the run (a fresh run starts
+  // with both kinds armed).
+  state.autoDrinkCd = { hp: 0, mp: 0 };
   // RUN-STRUCTURE run-scoped reset: the run clock, the win flag, and the maw
   // milestone all restart with the run.
   state.runWon = false;
@@ -3846,37 +3947,87 @@ function runAction(act) {
   else if (act === 'stance') cycleStanceWithFeedback();
   else if (act === 'q') useSkill(state, 'FROST_NOVA');
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
-  else if (act === 'h') {
-    // Alchemy (potionPower) + choices.js potionHealMult (Alchemist's
-    // Blessing / Vampire's Kiss) + BOSS CURSE all applied at the action seam
-    // — skills.js usePotion stays base-config only. While a boss lives,
-    // health heals are halved again.
-    const p2 = state.player;
-    const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
-    const before = p2.hp;
-    usePotion(state, 'hp');                      // base C.POTIONS.HP_HEAL
-    let healed = p2.hp - before;
-    if (healed > 0) {
-      const bonus = Math.min(C.POTIONS.HP_HEAL * (healMult - 1),
-        p2.stats.maxHp - p2.hp);
-      if (bonus > 0) p2.hp += bonus;
-      healed = p2.hp - before;
-      // The boss curse's heal tax is hostile damage too — it rides the SAME
-      // THICK SKIN funnel as every other path that removes player HP.
-      if (state.wave.boss) p2.hp -= damageTaken(state, healed / 2);
-    }
+  else if (act === 'h') drinkHealthPotion(state);
+  else if (act === 'n') drinkManaPotion(state);
+}
+
+// ---------- THE ONE POTION SEAM (WAVE-28) -----------------------------------
+// skills.js usePotion is base-config only; the RUN's modifiers have always been
+// applied here, at the action seam: Alchemy (stats.potionPower), choices.js
+// potionHealMult (Alchemist's Blessing / Vampire's Kiss), and the BOSS CURSE
+// (a live boss halves the heal). AUTO_DRINK (see autoDrinkPotions below) drinks
+// through THESE functions rather than around them, so an automatic potion is
+// worth exactly a manual one and there is still ONE place that spends a charge.
+function drinkHealthPotion(state) {
+  const p2 = state.player;
+  const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
+  const before = p2.hp;
+  if (!usePotion(state, 'hp')) return false;    // base C.POTIONS.HP_HEAL
+  let healed = p2.hp - before;
+  if (healed > 0) {
+    const bonus = Math.min(C.POTIONS.HP_HEAL * (healMult - 1),
+      p2.stats.maxHp - p2.hp);
+    if (bonus > 0) p2.hp += bonus;
+    healed = p2.hp - before;
+    // The boss curse's heal tax is hostile damage too — it rides the SAME
+    // THICK SKIN funnel as every other path that removes player HP.
+    if (state.wave.boss) p2.hp -= damageTaken(state, healed / 2);
   }
-  else if (act === 'n') {
-    // Mana potion with the Alchemy (potionPower) bonus at the same seam.
-    const p2 = state.player;
-    const before = p2.mana;
-    usePotion(state, 'mp');
-    const restored = p2.mana - before;
-    if (restored > 0) {
-      const bonus = Math.min(C.POTIONS.MP_RESTORE * ((p2.stats.potionPower || 1) - 1),
-        p2.stats.maxMana - p2.mana);
-      if (bonus > 0) p2.mana += bonus;
-    }
+  return true;
+}
+function drinkManaPotion(state) {
+  // Mana potion with the Alchemy (potionPower) bonus at the same seam.
+  const p2 = state.player;
+  const before = p2.mana;
+  if (!usePotion(state, 'mp')) return false;
+  const restored = p2.mana - before;
+  if (restored > 0) {
+    const bonus = Math.min(C.POTIONS.MP_RESTORE * ((p2.stats.potionPower || 1) - 1),
+      p2.stats.maxMana - p2.mana);
+    if (bonus > 0) p2.mana += bonus;
+  }
+  return true;
+}
+
+// ---------- AUTO-DRINK (WAVE-28; playtest: "maybe a way to auto use potions
+// in autopilot?") ------------------------------------------------------------
+// The pilot fights for the player, so the consumables it would have spent must
+// be spent too — otherwise an AUTO run carries an inventory it can never open.
+// Called from BOTH resource seams of the live loop (update / updateFinale),
+// right after updateResources + the regen grants, so it reads the same current
+// HP/mana the manual buttons act on.
+// Contract (CONFIG.AUTOPILOT.AUTO_DRINK — the knobs, with the reasoning):
+//   * AUTO only. A MANUAL player keeps 100% of the decision: nothing here can
+//     drink a manual player's charge.
+//   * strictly BELOW the line (HP/MP < max * FRACTION), never at or above it,
+//     and never with an empty count — no charge is burned at the boundary.
+//   * mana is only worth a charge when a skill is genuinely WAITING on it: off
+//     cooldown AND short of its cost (skillManaCost carries the perks). Low
+//     mana with everything on cooldown is not a reason to spend.
+//   * one drink per kind per COOLDOWN seconds — a deep dip cannot chug the
+//     stack in three frames.
+// The stance is never read or written here, so this cannot interact with
+// BOSS_STANCE or the pilot's kite/retreat decision: a potion drunk under the
+// arrival banner leaves the eased stance exactly as it was.
+function autoDrinkPotions(state, dt) {
+  const ad = state.autoDrinkCd;
+  // The gates tick in BOTH pilot modes, so swapping to MANUAL and back cannot
+  // strand a stale lockout (and MANUAL never reaches the drink block below).
+  ad.hp = Math.max(0, ad.hp - dt);
+  ad.mp = Math.max(0, ad.mp - dt);
+  if (state.pilotMode !== 'AUTO') return;
+  const d = C.AUTOPILOT.AUTO_DRINK;
+  if (!d || !d.ENABLED) return;
+  const p = state.player;
+  if (ad.hp === 0 && p.potions.hp > 0 && p.hp < p.stats.maxHp * d.HP_FRACTION) {
+    if (drinkHealthPotion(state)) ad.hp = d.COOLDOWN;
+  }
+  if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {
+    const starved = Object.keys(C.SKILLS).some(id => {
+      const cd = p.skillCd[id] || 0;
+      return cd <= 0 && p.mana < skillManaCost(id, state);
+    });
+    if (starved && drinkManaPotion(state)) ad.mp = d.COOLDOWN;
   }
 }
 
@@ -3895,7 +4046,8 @@ const REPEAT_GUARDED = new Set([
   'h', 'n',              // potions
   'escape', 'p',         // pause / resume
   'm',                   // pilot toggle
-  'i', 's', '?', 'f1',   // field report + hints toggle
+  'i', '?', 'f1',         // stats overlay + hints toggle
+  's',                    // held "down" in MANUAL — swallow ONLY its repeat
   '+', '=', '-', '_',    // zoom ladder
 ]);
 
@@ -3955,8 +4107,8 @@ window.addEventListener('keydown', (ev) => {
     else if (k === 'arrowleft') bestiaryStep(-1);
     else if (k === 'arrowright') bestiaryStep(1);
     else if (k === 'f') cycleBestiaryFilter();
-  } else if (state.mode === 'menu' && k === 'escape') {
-    showTitle();                     // every sub-menu backs out to title
+  } else if ((state.mode === 'menu' || state.mode === 'farewell') && k === 'escape') {
+    showTitle();                     // every sub-menu (and the farewell) backs out to title
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
     if (k === 'escape') closeSettings();
@@ -4360,7 +4512,11 @@ function hudTextBlock(p) {
   // on a live death screen.
   return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${p.stats.maxHp}\n` +
     `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
-    `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   W ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
+    // WAVE-28: the skill letters are the UNIVERSAL ones (Q / E) so this line
+    // agrees with the touch buttons and the hint lines — `W` is AUTO-only
+    // (in MANUAL it is held 'up'; main.js keyMap maps `e` to the act in BOTH
+    // modes) and the AUTO hint line already discloses "(W too)".
+    `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
@@ -4574,6 +4730,9 @@ function updateFinale(dt) {
   if (regenBonus > 0) p.mana = Math.min(p.stats.maxMana, p.mana + regenBonus * dt);
   // The SECOND resource seam (see the play loop's copy): the same ONE helper.
   applyRegrowth(state, dt);
+  // WAVE-28: the SECOND auto-drink seam — the maw fight is exactly when a
+  // pilot-owned potion matters most (see the play loop's copy).
+  autoDrinkPotions(state, dt);
   updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
 
   // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph
@@ -4853,6 +5012,15 @@ export const __TEST = {
   // card/key path (guarded to the bestiary mode).
   bestiaryFilter: { get: () => state.bestiaryFilter, cycle: cycleBestiaryFilter },
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
+  // ---- G12 title-screen seams: the screen itself (showTitle re-renders the
+  // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
+  // on, and the honest-exit contract (the step log + the two screens).
+  showTitle, hasLocalSave,
+  exit: {
+    game: exitGame,
+    farewell: showFarewell,
+    get steps() { return exitSteps.slice(); },
+  },
   // ---- G11 challenge-mode seam: the pending (session-scoped) selection, the
   // cycle the title card drives, and the live run's stamp + rule ceilings, so
   // a headless test can prove the seams through the REAL startRun without a
@@ -4892,6 +5060,11 @@ export const __TEST = {
   openDraft,
   synWeaponDmg,
   stanceOf: () => controller.stance,
+  // ---- WAVE-28 AUTO-DRINK seam: the pure decision step, so a headless probe
+  // can drive the pilot's potion hand with a controlled dt rather than depending
+  // on rAF timing. The live loop calls this SAME function from both resource
+  // seams (update / updateFinale).
+  autoDrink: autoDrinkPotions,
   // ---- CINEMATIC GESTURE GUARD seam (src/main.js uiGuard) ----
   // The test drives the guard directly: arm it, prove a click on the overlay is
   // swallowed by the capture listener, prove a new press stands it down.

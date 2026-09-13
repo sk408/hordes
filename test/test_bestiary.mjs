@@ -215,7 +215,7 @@ const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 
 S.check('the title menu offers a BESTIARY card carrying the honest count', () => {
   if (st.mode === 'intro') key('x');                 // any key skips the intro movie
-  assert.equal(st.mode, 'menu', 'the title is up');
+  assert.equal(st.mode, 'title', 'the title is up');
   const card = cardWith('BESTIARY');
   assert.ok(card, 'a BESTIARY card exists');
   const seen = seenCount(T.getProfile());
@@ -340,11 +340,13 @@ S.check('the model\'s numbers ARE the source constants (no restatement anywhere)
 
 S.check('BACK restores the title and every overlay override resets', () => {
   cardWith('BACK').click();                           // the real BACK path
-  assert.equal(st.mode, 'menu', 'BACK returns to the title');
+  assert.equal(st.mode, 'title', 'BACK returns to the title');
   assert.equal(st.bestiaryView, null, 'the payload is cleared (nothing paints over the title)');
-  assert.equal(ov.style.background, '', 'openMenu restored the sheet background');
+  // G12: the title's OWN sheet is transparent (the art shows through) — the
+  // guide's flex-end override is what must be gone.
+  assert.equal(ov.style.background, 'transparent', 'the title sheet is its own transparent one');
   assert.equal(ov.style.justifyContent, '', 'openMenu restored the alignment');
-  assert.ok(cardWith('PLAY'), 'and the title cards are back (no leaked guide chrome)');
+  assert.ok(cardWith('START GAME'), 'and the title cards are back (no leaked guide chrome)');
   assert.ok(cardWith('BESTIARY').innerHTML.includes(seenCount(T.getProfile()) + ' / ' +
     totalEncounters() + ' discovered'), 'the card count is live after the run');
 
@@ -368,7 +370,7 @@ S.check('ESC backs out to the title; arrows walk the ring', () => {
   key('arrowleft');
   assert.equal(st.bestiaryIdx, before, 'ARROW-LEFT steps back');
   key('escape');
-  assert.equal(st.mode, 'menu', 'ESC lands on the title');
+  assert.equal(st.mode, 'title', 'ESC lands on the title');
   assert.equal(st.bestiaryView, null, 'the guide payload is gone');
   assert.ok(cardWith('PLAY'), 'the title cards are rebuilt');
 });
@@ -453,9 +455,9 @@ S.check('MISSING with everything discovered is an HONEST empty state', () => {
   // The overlay-reset contract holds across the whole filter walk: BACK
   // restores the title and clears the payload.
   cardWith('BACK').click();
-  assert.equal(st.mode, 'menu', 'BACK returns to the title from a filtered guide');
+  assert.equal(st.mode, 'title', 'BACK returns to the title from a filtered guide');
   assert.equal(st.bestiaryView, null, 'the payload is cleared');
-  assert.equal(ov.style.background, '', 'the sheet background reset');
+  assert.equal(ov.style.background, 'transparent', 'the title sheet is its own transparent one');
 });
 
 S.done();

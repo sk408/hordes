@@ -247,15 +247,15 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   // Skip the intro movie -> title.
   keyHandler({ key: 'x', preventDefault() {} });
   for (let i = 0; i < 5; i++) frame();
-  assert.equal(st.mode, 'menu', 'title screen up');
+  assert.equal(st.mode, 'title', 'title screen up');
 
-  // Stage 1 fired: a #tour-root element exists and points at PLAY.
+  // Stage 1 fired: a #tour-root element exists and points at START GAME.
   const root = () => elements['tour-root'];
   // the Tour appended its root to document.body
   const tourRoot = globalThis.document.body.children.find(c => c.id === 'tour-root');
   assert.ok(tourRoot, 'menu tour mounted');
   const tipOf = () => tourRoot.children.find(c => c.id === 'tour-tip');
-  assert.ok(tipOf()._html.includes('PLAY'), 'first step spotlights PLAY');
+  assert.ok(tipOf()._html.includes('START GAME'), 'first step spotlights START GAME');
 
   // Advance through every step by clicking (pointerdown contract). WAVE-31: the
   // tour is no longer a fixed 5 - TROPHIES shipped after the tour was written and
@@ -285,9 +285,9 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   assert.equal(ls.get(TOUR_KEYS.stage1), '1', 'stage-1 flag persisted');
   assert.ok(!globalThis.document.body.children.includes(tourRoot), 'tour unmounted');
 
-  // Into a run.
-  const play = cardTitled('PLAY');
-  assert.ok(play, 'PLAY card present');
+  // Into a run. (G12: PLAY is START GAME now — the retargeted contract.)
+  const play = cardTitled('START GAME');
+  assert.ok(play, 'START GAME card present');
   play.onclick ? play.onclick() : play.fire('click');
   assert.equal(st.mode, 'playing', 'run live');
 

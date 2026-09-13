@@ -11,6 +11,7 @@ import {
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
+import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
 export const PLAYER_SPRITE = [
@@ -164,6 +165,9 @@ export class Renderer {
     this.viewScale = { sx: this.canvas.width / C.VIEW_W, sy: this.canvas.height / C.VIEW_H };
     this.ctx.setTransform(this.viewScale.sx, 0, 0, this.viewScale.sy, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
+    // G12: assigning canvas.width cleared the canvas — the title card must be
+    // recomposed on the next title frame.
+    this._titlePainted = false;
   }
 
   drawSprite(g, grid, x, y) {
@@ -190,8 +194,57 @@ export class Renderer {
     }
   }
 
+  // ---- G12 TITLE SCREEN --------------------------------------------------------
+  // Paints the authored title card (src/art/title.js — composeTitle/drawTitle
+  // expand its layers to view pixels ONCE and memoize; no art is restated here)
+  // and publishes the seam `this.titleScreen = { x, y, w, h, scale }` so a
+  // headless test owns the geometry, exactly like trophyShowcase/bestiary.
+  //
+  // SCALE: the largest INTEGER number of view pixels per composed title pixel
+  // that fits the view (it is 1 today — the card is authored at exactly
+  // 480x300 — but the guard keeps a future view change honest). Sub-pixel
+  // scaling is what smoothing would buy; it is refused, per house style.
+  //
+  // PAINT ONCE: the composition is static and nothing else draws on the canvas
+  // while 'title' is live (the frame loop's other canvas calls no-op in this
+  // mode), so the layers are painted on the first title frame after a change
+  // and skipped after — the composed sky alone is ~10^5 pixels, and repainting
+  // it every frame would be pure waste. resize() invalidates the cache
+  // (assigning canvas.width clears the surface); leaving the mode does too.
+  drawTitleScreen(g) {
+    const scale = Math.max(1, Math.min(Math.floor(C.VIEW_W / TITLE_WIDTH),
+                                        Math.floor(C.VIEW_H / TITLE_HEIGHT)));
+    const w = TITLE_WIDTH * scale, h = TITLE_HEIGHT * scale;
+    const x = Math.round((C.VIEW_W - w) / 2);
+    const y = Math.round((C.VIEW_H - h) / 2);
+    if (!this._titlePainted) {
+      if (w < C.VIEW_W || h < C.VIEW_H) {          // letterbox behind an odd fit
+        g.fillStyle = '#05050a';
+        g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+      }
+      drawTitle(this.drawGrid.bind(this), g, x, y);
+      this._titlePainted = true;
+    }
+    this.titleScreen = { x, y, w, h, scale };
+  }
+
   render(state, cam) {
     const g = this.ctx;
+    // G12 TITLE SCREEN: in mode 'title' the composed title card owns the canvas
+    // (main.js keeps the DOM menu on top of it). The world is NOT rendered under
+    // it — the owner asked for the title graphic "not on the map", so the map
+    // simply never paints here. The play-readout seams are cleared (same gate
+    // as the trophy/bestiary showcases in drawPlayHud) so no stale bars or
+    // banners read as live behind the menu.
+    this.titleScreen = null;
+    if (state.mode === 'title') {
+      this.hudChrome = null;
+      this.bossBanner = null;
+      this.moment = null;
+      this.drawTitleScreen(g);
+      return;
+    }
+    this._titlePainted = false;   // leaving the title: a return visit repaints
     // WAVE-9B/2 area identity: ground tone + grid dots come from the active
     // wave's theme (theme ladder in CONFIG.GROUND.THEMES).
     const theme = groundTheme(state.wave ? state.wave.num : 1);
@@ -1156,6 +1209,44 @@ export class Renderer {
     drawBar(22, 16, 110, 5, hpFrac, flashFrac, '#ff5566');
     drawBar(22, 26, 110, 5, manaFrac, 0, '#4a8cff');
 
+    // 0.98 feedback (defect 3): a 5px bar carries no readable text, and the
+    // current/max numbers existed ONLY in the opt-in text HUD (default OFF) —
+    // so the always-on HUD showed a fill with nothing to read it against. The
+    // values ride to the RIGHT of the bars (x=136, clear of the 132px bar end)
+    // in the same dark-plate + bold-monospace language as every other label.
+    // The rows are 10px apart — too tight for two 9px plates — so ONE plate
+    // backs both rows. `valRight` is the run clock's column: if a value would
+    // reach it the numbers are simply NOT painted (an unlabelled bar beats an
+    // overlap, at any view width).
+    const valPx = H.LABEL_PX;
+    // Measured when the context can (the browser), the 9px-monospace estimate
+    // otherwise — same fallback rule as the event feed above, so the headless
+    // geometry stays assertable.
+    const valTextW = (s) => {
+      if (typeof g.measureText === 'function') {
+        const m = g.measureText(s);
+        if (m && isFinite(m.width) && m.width > 0) return m.width;
+      }
+      return s.length * Math.round(valPx * 0.62);
+    };
+    const valX = 136;
+    const hpTxt = Math.max(0, Math.floor(hp)) + '/' + maxHp;
+    const mpTxt = Math.max(0, Math.floor(p.mana)) + '/' + p.stats.maxMana;
+    g.font = 'bold ' + valPx + 'px monospace';
+    g.textBaseline = 'top';
+    const valBox = Math.ceil(Math.max(valTextW(hpTxt), valTextW(mpTxt))) + 4;
+    const valRight = C.VIEW_W - 24 - 44;          // the clock plate starts at ~417
+    if (valX + valBox <= valRight) {
+      g.fillStyle = H.PLATE;                      // one plate behind both rows
+      g.fillRect(valX - 2, 11, valBox, 22);
+      g.fillStyle = H.HP;
+      g.fillText(hpTxt, valX, 13);
+      g.fillStyle = H.MP;
+      g.fillText(mpTxt, valX, 23);
+      chrome.hpText = hpTxt;
+      chrome.mpText = mpTxt;
+    }
+
     // --- WAVE-18 (#2) PLAYER XP BAR (galaxy.click: "there's no xp bar
     // (?!?!?!?)"). The genre's core readout, previously drawn nowhere: gold,
     // LONGER and BOLDER (6px fill), with the level number riding its right
@@ -1207,6 +1298,20 @@ export class Renderer {
     g.textBaseline = 'top';
     g.fillStyle = '#fff3c4';
     g.fillText(lvTxt, lvX + 3, lvY + 2);
+    // 0.98 feedback (defect 3): the XP row keeps its LV badge, and the
+    // progress numbers join it to the badge's right (the badge owns the bar's
+    // right end, so the value cannot ride the bar itself). Same plate + bold
+    // language as the HP/MP values, same guard: dropped rather than allowed to
+    // reach the clock column, and never painted at the level cap (xpNext = 0 —
+    // "0/0" would be noise).
+    if (p.xpNext > 0) {
+      const xpTxt = Math.max(0, Math.floor(p.xp)) + '/' + Math.floor(p.xpNext);
+      const xpValX = lvX + lvW + 4;
+      if (xpValX + xpTxt.length * Math.round(H.LABEL_PX * 0.62) + 4 <= valRight) {
+        label(xpTxt, xpValX, lvY + 2, H.XP, H.LABEL_PX);
+        chrome.xpText = xpTxt;
+      }
+    }
 
     // --- RUN CLOCK (SURVIVAL-GAP wave) -------------------------------------
     // The 30:00 limit is the run's core structure, but the always-on CANVAS HUD
@@ -1279,23 +1384,65 @@ export class Renderer {
     // WAVE-24 (#2): text stays 9px; the plate is darker so the lines hold up
     // over bright themes. (WAVE-27: the doctrine block that used to sit below
     // these lines is gone; the feed keeps its own placement.)
+    // 0.98 feedback (defect 1): a toast used to paint as ONE unwrapped line —
+    // every synergy announce measured 513..627px against a 480px view, so all
+    // seven ran off the right edge. Lines now WRAP to the view (at word
+    // boundaries; a word wider than the box is hard-split, so nothing can ever
+    // paint past the edge), the plate is sized from the widest MEASURED line,
+    // and a short message still paints exactly one line (the feed's pitch and
+    // geometry are unchanged for it).
     g.font = H.FEED_PX + 'px monospace';
     g.textBaseline = 'top';
     chrome.feed = [];
     const feed = (state.toasts || []).slice(-3);
-    for (let i = 0; i < feed.length; i++) {
-      const ft = feed[i];
+    const FEED_LINE_H = 10;                 // the feed's line pitch (unchanged)
+    const FEED_MAX_W = C.VIEW_W - 14;       // plate starts at x=5; 7px of air right
+    // Real font metrics when the context has them (the browser, and the
+    // measureText probes); the ~6px/char 9px-monospace advance the feed has
+    // always assumed otherwise (the headless stubs carry no measureText, so
+    // the painted geometry stays assertable in tests).
+    const feedTextW = (s) => {
+      if (typeof g.measureText === 'function') {
+        const m = g.measureText(s);
+        if (m && isFinite(m.width) && m.width > 0) return m.width;
+      }
+      return s.length * 6;
+    };
+    const wrapFeed = (msg) => {
+      const out = [];
+      let line = '';
+      for (const word of String(msg).split(' ')) {
+        const cand = line ? line + ' ' + word : word;
+        if (feedTextW(cand) <= FEED_MAX_W) { line = cand; continue; }
+        if (line) { out.push(line); line = ''; }
+        let rest = word;
+        while (feedTextW(rest) > FEED_MAX_W) {   // a word wider than the box
+          let n = 1;
+          while (n < rest.length && feedTextW(rest.slice(0, n + 1)) <= FEED_MAX_W) n++;
+          out.push(rest.slice(0, n));
+          rest = rest.slice(n);
+        }
+        line = rest;
+      }
+      if (line) out.push(line);
+      return out.length ? out : [''];
+    };
+    let fy = 86;
+    for (const ft of feed) {
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
       if (alpha <= 0) continue;
-      const fy = 86 + i * 10;
-      const fw = ft.msg.length * 6 + 3;   // ~6px/char @ 9px monospace
+      const lines = wrapFeed(ft.msg);
+      let widest = 0;
+      for (const ln of lines) widest = Math.max(widest, feedTextW(ln));
+      const fw = Math.ceil(widest) + 4;
       g.globalAlpha = alpha;
-      g.fillStyle = H.PLATE;              // readability plate
-      g.fillRect(5, fy - 2, fw, 11);
+      g.fillStyle = H.PLATE;              // readability plate, sized to the lines
+      g.fillRect(5, fy - 2, fw, lines.length * FEED_LINE_H + 1);
       g.fillStyle = ft.tint || '#e4e4ee';
-      g.fillText(ft.msg, 7, fy);
+      for (let li = 0; li < lines.length; li++) g.fillText(lines[li], 7, fy + li * FEED_LINE_H);
       g.globalAlpha = 1;
-      chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha });
+      chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha, lines: lines.slice() });
+      fy += lines.length * FEED_LINE_H;
     }
 
     // --- equipment icon row (above the weapon row, same bottom-left corner).
