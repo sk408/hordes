@@ -317,15 +317,16 @@ const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 // for every row in SHOP_UPGRADES.
 export const SHOP_UPGRADES = [
   // ---- original combat/resource lines (prices unchanged from retune) ----
-  // OWNER (2026-09-13): "+150% per level" — the survival lever now that the
-  // enemies are squared (BASE_HP 144, BASE_CONTACT 196) and a fresh run is
-  // deliberately lethal: "gives players the grind they want", and the owner is
-  // measuring how long it takes to grow strong enough to survive. Same linear
-  // formula as before (damage * (1 + perLevel * level)): L1 is 2.5x base damage,
-  // L5 is 8.5x. Kept on the BASE damage, so every level is worth the same
-  // absolute step and a fresh player always starts from 1x.
-  { id: 'dmg',     name: 'Forged Edge',    desc: '+150% weapon damage per level',
-    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 1.5 },
+  // OWNER (2026-09-13): "+200% per level, stacking MULTIPLICATIVELY". Damage is
+  // the one row that compounds: each level multiplies the running total by
+  // (1 + perLevel) = 3x, so L1 3x, L2 9x, L3 27x, L4 81x, L5 243x base damage
+  // (it was additive: 2.5x/8.5x at +150%). Every other row stays additive per
+  // level -- see the META STAT FIELD CONTRACT below, which documents this row's
+  // rule because compounding is NOT the house convention and must not be
+  // assumed for a neighbour. Kept on the BASE damage so a fresh player still
+  // starts at 1x and every level is worth a fixed FACTOR, not a fixed step.
+  { id: 'dmg',     name: 'Forged Edge',    desc: '+200% weapon damage per level',
+    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 2.0 },
   { id: 'hp',      name: 'Vitality',       desc: '+20 max HP per level',
     baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 20 },
   { id: 'potions', name: 'Travel Pack',    desc: '+1 starting potion (each kind) per level',
@@ -627,6 +628,9 @@ export function draftCardWeight(cardId, kind, luck) {
 // Apply permanent bonuses to a stats object. PURE: returns a NEW object,
 // never mutates the input. Beyond the makePlayer().stats shape it emits the
 // META STAT FIELD CONTRACT (all safe to read unowned — defaults in parens):
+//   damage        (C.PLAYER base) Forged Edge: MULTIPLICATIVE, and the only row
+//                                 that is — base x (1 + 2.0)^level, i.e. 3x per
+//                                 level (L5 = 243x). Additive everywhere else.
 //   manaRegen     (C.MANA.REGEN)  Mana Spring: base regen + 0.5/level.
 //   xpMult        (1)             Scholar: XP gain x(1 + 0.10/level) — apply
 //                                 on gem pickup.
@@ -665,7 +669,9 @@ export function applyMetaBonuses(stats, purchased) {
   const lvl = id => purchased[id] || 0;
   return {
     ...stats,
-    damage: stats.damage * (1 + (SHOP_BY_ID.dmg.perLevel * lvl('dmg'))),
+    // Forged Edge COMPOUNDS (owner rule, 2026-09-13): (1 + perLevel)^level, not
+    // 1 + perLevel*level. The only multiplicative row in the shop.
+    damage: stats.damage * Math.pow(1 + SHOP_BY_ID.dmg.perLevel, lvl('dmg')),
     maxHp: stats.maxHp + SHOP_BY_ID.hp.perLevel * lvl('hp'),
     manaRegen: C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * lvl('regen'),
     xpMult: 1 + SHOP_BY_ID.xp.perLevel * lvl('xp'),

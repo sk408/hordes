@@ -252,23 +252,30 @@ they want") — do not soften the fresh-run curve to make a probe or a balance t
 **OPEN, and the thing the owner is currently measuring: how long until the damage buyable pays.**
 Measured with the levels actually purchased (`profile.purchased.dmg = N`, fresh run, one run per
 process), **n=3 runs per level** because a single run per level is not evidence here — the spread
-within a level is as large as the effect:
+within a level is as large as the effect. Since 2026-09-13 the row **COMPOUNDS**: the multiplier is
+`(1 + perLevel)^level` = 3x per level, so the `mult` column is 3/9/27/81/243, not 2.5/4/5.5/7/8.5.
 
-| dmg level | mult | endTime (3 runs) | mean | kills (3 runs) | mean kills |
+| dmg level | mult (compounding) | endTime (3 runs) | mean | kills (3 runs) | mean kills |
 |---|---|---|---|---|---|
-| L0 | 1.0x | 17.1 / 11.1 / 18.0 | 15.4s | 1 / 1 / 0 | 0.7 |
-| L1 | 2.5x | 17.8 / 19.3 / 10.3 | 15.8s | 4 / 4 / 2 | 3.3 |
-| L2 | 4.0x | 12.1 / 15.3 / 23.7 | 17.0s | 4 / 5 / 8 | 5.7 |
-| L3 | 5.5x | 49.2 / 41.3 / 17.2 | 35.9s | 23 / 52 / 7 | 27.3 |
-| L4 | 7.0x | 35.0 / 39.2 / 38.9 | 37.7s | 26 / 28 / 50 | 34.7 |
-| L5 | 8.5x | 41.5 / 39.9 / 37.6 | 39.7s | 41 / 40 / 32 | 37.7 |
+| L0 | 1x | 6.0 / 18.4 / 9.1 | 11.2s | 0 / 1 / 0 | 0.3 |
+| L1 | 3x | 13.5 / 12.8 / 21.7 | 16.0s | 4 / 1 / 5 | 3.3 |
+| L2 | 9x | 37.0 / 22.9 / 35.3 | 31.7s | 33 / 9 / 32 | 24.7 |
+| L3 | 27x | 56.2 / 43.3 / 56.8 | 52.1s | 93 / 67 / 101 | 87.0 |
+| L4 | 81x | 67.5 / 37.4 / **289.3** | 131.4s | 154 / 34 / **5989** | 2059 |
+| L5 | 243x | 56.3 / 79.9 / 56.2 | 64.1s | 88 / 259 / 104 | 150.3 |
 
-So the buyable DOES extend survival, with a **threshold at L3** (5.5x, 774 gold cumulative):
-mean survival roughly 15s -> 36s and mean kills 0.7 -> 27, then it **saturates around 40s**
-(L5 at 2371 gold buys only ~4s over L3). Damage at end rises exactly as the formula says
-(8/20/32/44/56/68 for L0..L5), so the wiring is right; the shape is the design question.
-**An earlier single-run-per-level pass (26.6/20.9/11.6/8.5/35.3/6.8s) suggested damage did
-nothing at all — that reading was wrong, retracted here, and is the reason this table uses n=3.**
+Damage at end matches the row exactly at low levels (8/24/72/216 for L0..L3 = base 8 x 3^L), so the
+compounding is wired right; longer runs then add draft damage on top (one L4 run reached 4060
+damage and 5989 kills).
+
+**THE SHAPE THAT MATTERS: there is an escape velocity.** At L4 one of three runs did not just survive
+longer, it BROKE THROUGH — 289.3s and 5,989 kills, i.e. the pre-buff tree's long-run territory
+(286-292s). The other two died at 37-67s. So the buyable can flip a run from "dead in 40s" to a
+long snowball, which is the payoff a shop should have. Two things to know before tuning it further:
+it is **not monotonic** (the three L5 runs at 243x did NOT break through: 56/80/56s), so the flip
+looks spawn/luck-driven rather than a clean damage threshold — and **n=3 is not enough to size it**.
+**An earlier single-run-per-level pass suggested damage did nothing at all; that reading was wrong,
+retracted, and is why this table is n=3.**
 
 **A fresh run pays ~60-80 gold** (`computeRunGold`: BASE 50 + kills/2 + level*10 + time/20) against
 `GOLD_MODEL.RUN1` = 700, so every price argued from "N fresh runs at 700 gold" needs re-deriving,
