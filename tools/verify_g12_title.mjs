@@ -26,6 +26,9 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   async (p) => {
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000);
+    // N2: the reveal gates the menu (pointer-events none mid-fade) — settle first.
+    await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal;" +
+      " return !rv || rv.phase === 'settled'; })()", 8000);
     // Let a couple of real frames paint the composed title card.
     await p.evaluate("(async () => { const r = () => new Promise(q => requestAnimationFrame(() => requestAnimationFrame(q))); await r(); await r(); })()");
 
@@ -104,8 +107,10 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     const startCenter = res._centers.start, exitCenter = res._centers.exit;
     delete res._centers;
 
-    // REAL TAP: START GAME starts the run.
+    // REAL TAP: START GAME starts the run. N2: the tap now begins the hold
+    // (menu out ~0.3s + art held ~1s) — the run starts AFTER it, once.
     await p.tap(Math.round(startCenter[0]), Math.round(startCenter[1]));
+    await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()", 6000);
     const runState = await p.evaluate("(async () => { const m = await import('./src/main.js');" +
       " const T = m.__TEST; await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));" +
       " const cv = document.querySelector('canvas'); const g = cv.getContext('2d');" +
@@ -117,6 +122,9 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     // this feature's subject).
     await p.evaluate("(async () => { const m = await import('./src/main.js'); const T = m.__TEST;" +
       " T.state.mode = 'menu'; T.showTitle(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); })()");
+    // N2: re-entry runs the short return fade — settle before the EXIT tap.
+    await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal;" +
+      " return !rv || rv.phase === 'settled'; })()", 5000);
 
     // ---- 3b. REAL TAP on EXIT GAME -> autosave, close attempt, farewell ----
     const exitCenterNow = await p.evaluate("(() => { const els = [...document.querySelectorAll('#ov-cards .card')];" +
@@ -134,6 +142,10 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     // have been ideal; re-enter the title and shoot the composed card).
     await p.evaluate("(async () => { const m = await import('./src/main.js'); const T = m.__TEST;" +
       " T.state.mode = 'menu'; T.showTitle(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); })()");
+    // N2: settle the re-entry fade so the canonical PNG is the composed card.
+    await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal;" +
+      " return !rv || rv.phase === 'settled'; })()", 5000);
+    await p.evaluate("(async () => { const r = () => new Promise(q => requestAnimationFrame(() => requestAnimationFrame(q))); await r(); })()");
     const shot = await p.shot('g12-title-phone');
     const skyCss = res.art.canvasRect;
     const px = await p.readShot(shot, {

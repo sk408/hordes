@@ -47,7 +47,7 @@ ONE hardcoded skill string (`index.html`, the `FROST` text inside `<button data-
 beside the `[Q]` key cap), the tour's `skills` coachmark copy, the readiness readout
 (`skill('tc-q', ...)`) and the text-HUD line. All should read the class's skill id.
 
-#### N1a — WITCH / CHAIN ZAP spec (owner-ordered 2026-09-13)  [status: not started]
+#### N1a — WITCH / CHAIN ZAP spec (owner-ordered 2026-09-13)  [status: DONE 2026-09-13 - VERIFIED BY TICK NOTE 19, which re-ran every number itself rather than reading the builder report (suite PASS=70 FAIL=0 x3, verify_skill_keys PASS 32 measurements, test_weapon_mana 9/9 standalone, and the pilot's OWN 4x120s Witch cohort re-measurement at >=117 bolts/run against a >=60 bar). Landed by cli:glm-hordes-g8 as msg_01M2CNXSDT7DF17BHS1EP40FHP. STILL UNCOMMITTED in the working tree - the orchestrator owns the commit. See TICK NOTE 19]
 
 Sk408: *"the witch should get some kind of discount on the chain zap then. Or minimum fire
 speed, or both. Maybe for witch with no mana, the chain zap is weaker, and with mana we buff
@@ -141,7 +141,7 @@ and no benefits. Measured cost of that gap: the same cohort firing Q/E at bosses
 (boss/elite in range, and/or spend when the pool is near full so income is not wasted) BEFORE
 tuning any further mana number.
 
-### N2 — SHOW THE TITLE ART (owner: "we never show it")  [status: IN PROGRESS 2026-09-13 — DISPATCHED as msg_01M2CH6Z3G07KQ7PP15CQJ3E2S to the live worker cli:glm-hordes-g8 with the self-contained brief `docs/briefs/N2_TITLE_ART_REVEAL.md` (113 lines). The art is already drawn behind the menu (G12, verified this tick); the remaining slice is the menu FADE-IN over the art, the ~1s ART HOLD on START GAME, the reveal seam + double-tap idempotency, and the tour/fade interaction. Nothing is built yet - the builder holds no lock until this tick releases it. See TICK NOTE 17]
+### N2 — SHOW THE TITLE ART (owner: "we never show it")  [status: DONE 2026-09-13 — VERIFIED by TICK NOTE 18 (the pilot re-ran every claim itself, not a builder report): `bash /tmp/run_all.sh` => PASS=70 FAIL=0 on this tree, `node tools/verify_n2_reveal.mjs` => PASS with measured reveal-to-settle 785ms wall (350ms art beat + 500ms fade), tap-to-run 1411ms (300ms out + 1000ms hold), shimmer canvas sums 6703076 -> 9079149, PNG docs/art/browser-verify-2026-09-12/n2-reveal-phone.png 1170x2532 = 390x844 @dpr3; and `node tools/verify_g12_title.mjs` still PASS, so N2 did not regress the G12 surface it edits. Code read by the pilot: openMenu() resets opacity+pointerEvents (no leak), all timings dt-driven (60/120Hz), double-tap idempotent via uiGuard, fail-safes on both the reveal advance and the run start, and the first-run tour is gated until the reveal settles. UNCOMMITTED pending the orchestrator s commit. See TICK NOTE 18]
 
 Sk408: *"what's that title screen under the menu? How do I see the whole thing? Looks like it
 might be great but we never show it. Maybe when starting a run it removes the menu and lets
@@ -2079,3 +2079,166 @@ tick should stop re-dispatching and instead take the BUILD_PLAN sequence (W7a/W7
 **NEXT GOAL: N2** (in flight, `msg_01M2CH6Z3G07KQ7PP15CQJ3E2S`), then **N1 + N1a** (class identity +
 the Witch / Chain Zap soft gate) — note `test/test_weapon_mana.mjs` already exists on this tree and
 `730a04b` shipped the 4-mana hard gate, so N1a revises a contract that is only hours old.
+
+## TICK NOTE 18 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held, N2 VERIFIED + DONE; N1a DISPATCHED)
+
+**WHAT THIS TICK WAS.** N2 was in flight from TICK NOTE 17 (msg_01M2CH6Z3G07KQ7PP15CQJ3E2S). The worker
+landed it while the lock was free; this tick re-verified it independently, recorded it, and dispatched the
+next owner-ordered item (N1a).
+
+**N2 — VERIFIED, NOT TAKEN ON REPORT.** The builder's own verifier was run BY THIS TICK, not read:
+`node tools/verify_n2_reveal.mjs` => `PASS - reveal starts at 0 and reaches 1 with the art behind it at
+t=0/mid-fade/settled, menu readable before the run, real double-tap holds once and starts the run after ~1s,
+shimmer visible`. Measured, browser-driven (tools/browser.mjs withPage, 390x844 @dpr3):
+reveal-to-settle **785ms wall** (nominal 350ms art beat + 500ms fade), tap-to-run **1411ms wall** (nominal
+300ms out + 1000ms hold), shimmer canvas sums **6703076 -> 9079149**, PNG
+`docs/art/browser-verify-2026-09-12/n2-reveal-phone.png` = **1170x2532** (390x844 @dpr3, phone factor).
+`bash /tmp/run_all.sh` => **PASS=70 FAIL=0**. `node tools/verify_g12_title.mjs` => **PASS** (N2 edits the G12
+title surface, so this was the regression check that mattered).
+Code read by this tick (not asserted from the worker's prose): `openMenu()` now resets
+`overlay.style.opacity` and `pointerEvents` to the stylesheet default, so the fade cannot leak into any other
+screen; every duration is advanced from the frame loop's own `realDt` (60Hz and 120Hz land on the same wall
+clock, nothing counts frames); `beginTitleHold()` is idempotent against a double activation via the existing
+`uiGuard`; `advanceTitleReveal()` and `finishTitleHold()` both fail SAFE (a broken reveal settles to full
+opacity, a failed start reopens the title) instead of stranding a blank sheet; the first-run tour is deferred
+until the reveal settles. `test/test_title_screen.mjs` gained substantive assertions (phase/opacity at 0,
+mid-fade strictly between 0 and 1, settle within 2 frames, one press = one run, the mid-fade leak case, and a
+120Hz replay of the same reveal) — no assertion was weakened or no-op'd.
+
+**N1a — DISPATCHED (the next owner-ordered slice).** `msg_01M2CMKY4NMY0F74257Y4ZA3HM` to the live worker
+`cli:glm-hordes-g8`, brief `docs/briefs/N1a_WITCH_SOFT_GATE.md`. Scope: ZAP soft gate (always fires;
+full damage with mana, `MANA_DRY_MULT` 0.5 dry; no cd penalty), per-character `manaCostMult` threaded through
+`applyCharacter` (WITCH 0.5 => ZAP costs 2 for her, 4 for others) read through an exported
+`weaponManaCost(id, state)`, a WITCH-only default AutoPilot focus of SWARM applied at `startRun` (still
+cycleable with TAB/G), and the four hardcoded `'FROST_NOVA'` literals routed through `classSkillId(state)`.
+Acceptance bar carried in the brief: >=60 ZAP bolts in a 120s Witch cohort (today 6, against 1089
+ready-but-starved frames), dry damage ratio 0.5 within 0.02, costs 2 vs 4 asserted, `verify_skill_keys.mjs`
+PASS, three suite runs at FAIL=0, and a 120Hz re-check.
+
+**DESIGN CALL NEEDED FROM THE OWNER (this tick did NOT invent it).** The goals doc contradicts itself about the
+Q slot. N1b item 3 says the ult sits "on the Q slot" for Knight/Rogue/Paladin, but N1b item 5 says the existing
+Q/E mana skills (FROST 30 / OVER 25) must stay reachable for all four classes or they become dead picks for
+three of them. Both cannot hold once FROST_NOVA is displaced from Q. Options, with the pilot's recommendation:
+(a) **RECOMMENDED** ult on Q for the three non-Witch classes, FROST_NOVA retired from Q and kept as a
+draftable/Witch-side skill, E stays OVERCHARGE for everyone; (b) ult on Q and FROST_NOVA moved to a second
+skill slot/E for everyone; (c) ults on a new key. The ults are excluded from the current dispatch precisely
+because this is an owner call, not a builder's.
+
+**ALSO FOUND.** The worker's queue held two STALE tasks from earlier ticks of this same chain: a G12
+"finish" instruction quoting a PASS=68 baseline (G12 has since been verified, committed as c6b935b, and the
+tree is at 70) and an informational note from a prior builder. The stale G12 task was CANCELLED
+(`hub-worker cancel msg_01M2CDFB0JMMFJ2R4JBV7GN3NY` => `{"cancelled": ..., "state": "pending"}`) rather than
+left to be picked up, because re-running G12 would put a builder back inside `src/main.js` while N2's changes
+sit UNCOMMITTED and could have clobbered them. The informational note was left in place.
+
+**COULD NOT VERIFY (honest):**
+- **No vision model is reachable from this host.** Every N2 visual claim is geometry + computed opacity +
+  `canvas.getImageData` + PNG readback, never "looks right". The PNG was written by the verifier and is
+  1170x2532; this tick did not read it as an image.
+- N2 is UNCOMMITTED in the working tree (`M src/main.js`, `M test/*`, plus the new
+  `tools/verify_n2_reveal.mjs`, `docs/briefs/N2_TITLE_ART_REVEAL.md`, `docs/art/.../n2-reveal-phone.png`).
+  Commits are the orchestrator's, so the next tick should confirm the commit before treating N2 as shipped.
+- The worker is a long-lived process (pid 495012) that was IDLE at dispatch time (`hub-worker queue
+  cli_glm-hordes-g8` => `running: null`). N1a is queued, not started: `running:` must be re-checked next tick.
+- The sequencing conflict recorded in TICK NOTES 15-17 (BUILD_PLAN W7a/W7b vs the ranked queue) remains
+  UNRESOLVED and still needs an owner design call. G5 stays unmeasured for the arch fix; G6 stays below the
+  raised x1.6 target at x1.28.
+
+**NEXT GOAL: N1a** (in flight), then either N1's ults (once the Q-slot call lands) or N1b's item 8
+(the AUTO pilot cast policy, which N1b itself says must land BEFORE any further mana tuning).
+
+## TICK NOTE 19 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held, N1a VERIFIED + DONE; N1b item 8 DISPATCHED)
+
+**Goal worked: N1a (Witch / Chain Zap soft gate + mana discount + cluster pilot).** It was in flight from
+TICK NOTE 18 and had already landed by the time this tick took the lock. The pilot verified the ARTIFACT,
+not the report, flipped the marker, then dispatched the next owner-ordered slice.
+
+**Independently re-verified this tick (my own runs, not the builder's prose):**
+- `bash /tmp/run_all.sh` => **PASS=70 FAIL=0** (baseline held; no new test file, so the count is unchanged).
+- `node tools/verify_skill_keys.mjs` => **VERDICT: PASS (32 measurements)**.
+- `node test/test_weapon_mana.mjs` standalone => **9/9 checks**, including "a DRY ZAP still fires — at
+  MANA_DRY_MULT, spending nothing", "the dry damage ratio is exactly MANA_DRY_MULT", "fire cadence is the
+  cooldown at 60Hz AND 120Hz — nothing counts frames", and "the WITCH discount: ZAP costs her 2, everyone
+  else 4". The git diff shows the file was **RETARGETED, not weakened**: the old "a starved ZAP does not
+  fire" contract is replaced by the new soft-gate contract with MORE assertions (ratio, the single cost
+  seam, unknown/zero-cost weapons), and nothing was no-op'd or deleted.
+- **My own cohort re-measurement** (RUNS=4, SECS=120, `CLASS=witch`, the builder's probe at
+  `/tmp/n1a_probe.mjs`): **172 bolts in a full 120s run, 117 in a run that died at 79s** — every run
+  clears the >=60 bar. The probe instruments by WRAPPING `WEAPON_TYPES.ZAP.update` (no game file touched),
+  and I checked the counter cannot be inflated: `src/weapons.js:459` pushes **exactly one `kind:'zap'`
+  effect per bolt**, so the bolt count is 1:1 with the real effect, not a proxy.
+- Code read by this tick: `src/weapons.js:386-401` (`MANA_DRY_MULT` exported, `weaponManaCost(id,state)`
+  the ONE cost seam), `:413-421` (`funded = p.mana >= cost`, damage `* (funded ? 1 : MANA_DRY_MULT)`, the
+  spend placed AFTER the empty-field target test, cd armed identically either way), `src/meta.js:660-669`
+  (WITCH `mods.manaCostMult: 0.5` + `defaultFocus: 'SWARM'`) and `:699` (`applyCharacter` threads it,
+  multiplicative and neutral at 1), `src/main.js:3639` (`startRun` applies `ch.defaultFocus`), `:4132`
+  `classSkillId(state)` feeding the q act `:4162`, the keymap `:4375`, the readiness readout `:4631` and
+  the text HUD `:4733`, and `index.html:297` (the label wrapped in `<span id="q-skill">`, stamped at
+  startRun `:3644`). The skill VALUE stays `FROST_NOVA` for all four classes, as the brief required.
+
+**INCIDENT, re-verified because it is the biggest risk on this tree.** The builder reports (msg
+`msg_01M2CNASW30QVSE23V1ZZZW651`) that **`src/main.js` was externally reverted mid-run during another
+agent's cancelled diagnostics**, wiping the uncommitted N2 engine plus its in-flight N1a edits, and that it
+restored the file by replaying the session transcript onto pristine HEAD. I did NOT take that on trust: I
+re-ran the N2 surface myself on the restored file — `node test/test_title_screen.mjs` => **19/19**,
+`node test/test_tour.mjs` => **8/8**, and **`node tools/verify_n2_reveal.mjs` => PASS in a real browser**
+(reveal-to-settle **799ms** wall, tap-to-run **1437ms** wall, shimmer sums **6703076 -> 8873851**, PNG
+rewritten to `docs/art/browser-verify-2026-09-12/n2-reveal-phone.png`). So the restore is FUNCTIONALLY
+intact. What I cannot check is byte-exactness to the pre-incident file — no copy of it exists.
+
+**Housekeeping.** A DUPLICATE N1a task (`msg_01M2CMKY4NMY0F74257Y4ZA3HM`) was still sitting `pending` on
+the worker after the work had already landed and been reported. Left alone it would have re-run the whole
+build over **uncommitted** N2+N1a hunks in `src/main.js` — the same class of collision that caused the
+incident above. Cancelled; the queue now holds only spawnfb's informational ack. Note the cancel printed a
+Python traceback while still taking effect (the queue read-back confirms the task is gone), so treat that
+traceback as a benign partial failure, not a no-op.
+
+**Dispatched (this tick's write budget).** Brief **`docs/briefs/N1B_AUTO_CAST_POLICY.md`** (95 lines) ->
+the live worker **`cli:glm-hordes-g8`** as **`msg_01M2CPR11XXDC5FWJAKKYT28SP`**. This is **N1b item 8**,
+which N1b itself says must land BEFORE any further mana tuning: the AUTO pilot never casts (`useSkill` is
+reachable only from the player's Q/E), so in AUTO mana has costs and no benefits, and the measured cost of
+that gap is the owner's own cohort number (survival 204.8s -> 277.8s, kills 3583 -> 5993 when Q/E is fired
+at bosses). Scope: a declarative `CONFIG.AUTOPILOT.AUTO_CAST` block following the existing `AUTO_DRINK`
+pattern (`src/main.js:4213-4244`), spending only through `useSkill`, reusing the `BOSS_STANCE` boss
+awareness (`:4081-4103`) rather than inventing a second definition of "a boss is here", FROST_NOVA only
+with a live enemy inside its radius, OVERCHARGE on a boss or a near-full pool, never delaying or starving a
+weapon, MANUAL and every keybinding untouched. Acceptance bar carries the two N1b item-7 bars (frames at
+zero under 20%; mana spent as a share of income 70-90%), a new `test/test_auto_cast.mjs` with a 60Hz vs
+120Hz cast-count replay, `verify_skill_keys` PASS and the suite x3 at FAIL=0. The issue text repeats the
+critical constraint that `src/main.js` holds uncommitted N2+N1a hunks that must stay byte-identical.
+`delegate_task` is still unavailable in this cron runtime, so hub-worker remains the delegation path.
+
+**COULD NOT VERIFY (honest):**
+- **N2 AND N1a ARE BOTH STILL UNCOMMITTED.** `git show HEAD:src/main.js | grep -c "advanceTitleReveal\|
+  beginTitleHold"` => **0**, while the working tree has **6**. The N1a hunks (`classSkillId`, the
+  `defaultFocus` line, the q label) are unversioned too, alongside ~230 added lines in `src/main.js`,
+  `src/meta.js`, `src/weapons.js`, `index.html`, five test files and `tools/real_loop.mjs`. Two landed
+  features exist only in the working tree, and that tree has already been mangled once today. **The
+  single most valuable next action is the orchestrator committing it**, not another dispatch.
+- **The builder's own baseline correction is unreproduced.** It reports the brief's "6 bolts / 1089
+  starved frames" does NOT reproduce on this tree even pre-edit (it measures 89.8 bolts / 1679 starved
+  with the standard cohort policy). I did not reconstruct the pre-edit tree to adjudicate which number is
+  the true before, so the honest statement is: **after = 140.6 mean bolts/run (builder, 8 runs) and >=117
+  (pilot, 4 runs); the "before" is contested.**
+- I re-ran the Witch arm only. The KNIGHT control (0 bolts by construction — no ZAP at base) is the
+  builder's measurement, not mine.
+- **No vision model is reachable from this host**, so every N2 visual claim is DOM geometry + computed
+  opacity + `canvas.getImageData` + PNG readback, never "looks right" — the same caveat as every prior tick.
+- The soft gate's BALANCE effect is unmeasured in the game's own terms: the cohort numbers come from an
+  instrumentation wrapper, and no balance sim was re-run this tick. Nothing was weakened to go green.
+- `window.close()` on exit is still unobservable over CDP; the N2/G12 verifiers assert the farewell
+  fallback instead.
+- **The sequencing conflict (TICK NOTES 15-18) is now four ticks old and still unresolved.** The served
+  ranked queue runs G11 -> G12 -> G13/G14, while `docs/BUILD_PLAN.md` sequences **W7a** (sim models the
+  arch buffs; meta upgrades ranked by measured marginal value; G17 economy) and **W7b** (draft divergence
+  >= x1.6) before W9/W4. G5 stays "unmeasured for the arch fix" and G6 stays below the owner's raised x1.6
+  at x1.28. Neither is tagged IN PROGRESS or open, so the queue rule keeps skipping the owner's own
+  number. It needs an owner design call.
+- **Still needs that owner design call:** where FROST_NOVA lives once Q becomes the class ult (N1b item 3
+  vs item 5). Options and the pilot's recommendation are in TICK NOTE 18. N1's ults stay undelivered, and
+  correctly so, until it is answered.
+
+**NEXT GOAL: N1b item 8** (in flight, `msg_01M2CPR11XXDC5FWJAKKYT28SP`). Its `done:` will be a CLAIM: the
+next tick must re-run the suite itself, re-run the two item-7 bars, and re-measure the AUTO cohorts before
+accepting it. After that, the unblocked queue is G13/G14 or G24/G25 unless the owner answers the Q-slot
+question, which unlocks N1's ults.

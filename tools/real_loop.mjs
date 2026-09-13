@@ -101,7 +101,10 @@ function installDom(profile) {
  * Dynamic import so this module stays import-safe without a DOM.
  */
 export async function bootReal(stage = 'fresh') {
-  const dom = installDom(stageProfile(stage));
+  // `stage` is a NAME of the three progression stages, or a ready-made PROFILE
+  // object (N1a: the Witch cohort needs a save with WITCH equipped + ZAP
+  // unlocked, which none of the three stages expresses).
+  const dom = installDom(typeof stage === 'string' ? stageProfile(stage) : stage);
   const mainMod = await import('../src/main.js');
   const T = mainMod.__TEST;
   return {

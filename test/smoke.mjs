@@ -294,13 +294,26 @@ const dtMs = 1000 / 60;
   console.log('renderer backing store: CSS x dpr sizing + view transform + headless 1:1 fallback');
 }
 
-// Title-mode boot: click PLAY to start the run (menu buttons are overlay
-// cards, same as draft picks).
+// Title-mode boot: click START GAME to start the run (menu buttons are
+// overlay cards, same as draft picks). N2: the press fades the menu out and
+// HOLDS the title art ~1s before the run — the retargeted contract.
 {
   const cards = elements['ov-cards'];
-  cards.children[0].click();   // PLAY -> startRun()
   const ov = elements['overlay'];
-  assert(ov && ov.style.display === 'none', 'PLAY should start the run (hide overlay)');
+  cards.children[0].click();   // START GAME -> the N2 art hold, then startRun()
+  assert(st.mode === 'title' && st.titleReveal &&
+    (st.titleReveal.phase === 'out' || st.titleReveal.phase === 'hold'),
+    'the press holds the art first (N2): the run does not start on the press tick');
+  let held = 0;
+  for (; held < 90; held++) {
+    now += dtMs;
+    const cb = rafQueue.shift();
+    if (!cb) break;
+    cb(now);
+    if (ov.style.display === 'none') break;
+  }
+  assert(ov && ov.style.display === 'none',
+    'START GAME starts the run after the art hold (hide overlay)');
 }
 
 // Simulate 90 seconds at 60fps, auto-picking draft cards (press "1").

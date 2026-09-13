@@ -662,7 +662,11 @@ export const CHARACTERS = {
     desc: 'Starts with Chain Zap. Deep mana pool (+50). Frail: -25 max HP.',
     startingWeapon: 'ZAP', skill: 'FROST_NOVA', startPotions: 1,
     healOnChest: 0,
-    mods: { maxHp: -25, maxMana: 50 },
+    // N1a: she is the mana class — spells cost her half (weaponManaCost reads
+    // this), and her pilot defaults to SWARM (the chain only pays on a clump;
+    // TAB/G still cycle it like any focus).
+    mods: { maxHp: -25, maxMana: 50, manaCostMult: 0.5 },
+    defaultFocus: 'SWARM',
   },
   ROGUE: {
     id: 'ROGUE', name: 'Rogue', unlockCost: 2500,
@@ -690,6 +694,9 @@ export function applyCharacter(stats, characterId) {
     maxHp: stats.maxHp + (m.maxHp || 0),
     maxMana: stats.maxMana + (m.maxMana || 0),
     speed: stats.speed * (m.speedMult || 1),
+    // N1a: multiplicative mana-cost modifier (WITCH 0.5). Missing = neutral 1,
+    // and it COMPOSES with any stats-level mult a future perk might carry.
+    manaCostMult: (stats.manaCostMult || 1) * (m.manaCostMult || 1),
   };
 }
 

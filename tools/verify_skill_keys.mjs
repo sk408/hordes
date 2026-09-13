@@ -172,8 +172,14 @@ for (const act of ['q', 'w']) {
   ok(b.keyText === want, 'button ' + act + ' key must read ' + want + ' (got ' + b.keyText + ')');
   ok(b.keyFontPx >= 10, 'button ' + act + ' key must be >= 10px (got ' + b.keyFontPx + ')');
   ok(b.badgeId === 'tc-' + act, 'button ' + act + ' must keep its badge id (got ' + b.badgeId + ')');
-  ok(b.badgeText === 'RDY' || b.badgeText === 'LOW',
-    'button ' + act + ' badge must still print the cooldown readout (got ' + b.badgeText + ')');
+  // N1b AUTO_CAST retarget: the badge must print the LIVE readout. Before the
+  // pilot could cast, that was always an idle state (RDY/LOW). Now the AUTO
+  // pilot itself legitimately puts a skill on cooldown mid-run (the spill rule
+  // fires the moment the pool is near full), so a countdown like "11.9s" at
+  // scan time is the readout doing its job — the tap checks below still prove
+  // the badge counts down from a REAL press.
+  ok(b.badgeText === 'RDY' || b.badgeText === 'LOW' || /^\d+\.\d+s$/.test(b.badgeText),
+    'button ' + act + ' badge must still print the live readout (got ' + b.badgeText + ')');
   ok(b.overlapPx === 0, 'button ' + act + ' key must not collide with the badge (' + b.overlapPx + 'px)');
   ok(b.keyBeforeLabel === true, 'button ' + act + ' key must be inside the button');
   ok(b.key.x >= b.btn.x && b.key.r <= b.btn.r,

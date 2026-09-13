@@ -206,6 +206,34 @@ export const CONFIG = {
       MP_FRACTION: 0.30,   // strictly below this share of max mana (+ a starved skill)
       COOLDOWN: 1.5,       // seconds between auto-drinks of the same kind
     },
+    // AUTO_CAST (N1b item 8: "the AUTO pilot must be able to SPEND mana, or
+    // the whole scheme reads as a tax"). useSkill was reachable ONLY from the
+    // player's Q/E, so an AUTO run paid mana's costs (ZAP, Chain Reaction) and
+    // collected none of its benefits. The pilot now casts — through useSkill
+    // itself, never around it — under a deliberately narrow contract:
+    //   * AUTO ONLY. A MANUAL player keeps 100% of the cast decision: nothing
+    //     here can spend a MANUAL player's mana.
+    //   * a cast must LAND. FROST_NOVA only with a live enemy inside its own
+    //     RADIUS of the player (it is an AoE around the player, so an empty
+    //     field is a wasted 30). OVERCHARGE only when a boss/elite is present
+    //     (the BOSS_STANCE awareness — no second "is a boss here") or when the
+    //     pool is at/above NEAR_FULL, so income spills into damage instead of
+    //     overflowing the cap.
+    //   * ELITE_RANGE — how close a live elite must be to count as "present"
+    //     for OVERCHARGE. Mirrors FOCUS_RANGE (the doctrine's own engagement
+    //     radius): an elite on the far side of the arena is not a reason to
+    //     burn the buff yet.
+    //   * never a wasted call: the pilot checks the skill's cooldown and cost
+    //     first, so useSkill is only ever called when it will say yes.
+    //   * never a new withhold: casting is synchronous in the frame and reads
+    //     the same pool the manual buttons act on; it cannot block, delay or
+    //     starve a weapon (weapons tick on their own cooldowns, and ZAP's N1a
+    //     soft gate still fires dry at 0.5x if a cast just drained the pool).
+    AUTO_CAST: {
+      ENABLED: true,
+      NEAR_FULL: 0.8,      // pool at/above this share of max: spill, don't waste
+      ELITE_RANGE: 260,    // a live elite within this radius counts as present
+    },
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):

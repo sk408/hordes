@@ -199,15 +199,26 @@ await acheck('the stamp happens at the trunk spawn: forced rolls tier every elig
 });
 
 await acheck('dt-correctness: 60Hz and 120Hz both produce tiered spawns over equal sim time', () => {
+  // N1b AUTO_CAST retarget: the old fixture counted only what was STILL ALIVE
+  // after the 2s window — survivable before, but the pilot now casts
+  // (FROST_NOVA + OVERCHARGE), so a forced MYTHIC wave can be fully cleared
+  // inside the window and the live array says nothing about the stamp. Sample
+  // EVERY frame instead (the window-not-history idiom the check above already
+  // uses): the stamp firing at both rates is the contract, not survival.
   for (const hz of [60, 120]) {
     h.T.startRun();
     h.setFrameMs(1000 / hz);
-    let tiered = 0;
+    const seen = new Set();
     forceRolls(() => {
       const frames = Math.round(2 * hz);   // 2 sim-seconds at this rate
-      for (let i = 0; i < frames; i++) h.pump(1);
-      tiered = st.enemies.filter(e => !e.boss && !e.finalBoss && e.rarity === 'MYTHIC').length;
+      for (let i = 0; i < frames; i++) {
+        for (const e of st.enemies) {
+          if (!e.boss && !e.finalBoss) seen.add(e);
+        }
+        h.pump(1);
+      }
     });
+    const tiered = [...seen].filter(e => e.rarity === 'MYTHIC').length;
     assert.ok(tiered > 0, hz + 'Hz: the spawn stamp fired (no per-frame accumulator to drift)');
   }
   h.setFrameMs(1000 / 60);   // restore the default tick for the checks below

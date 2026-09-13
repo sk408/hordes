@@ -236,12 +236,23 @@ const closeWindow = () => {
   st.itemDrops.length = 0; st.portal = null; st.effects.length = 0;
   const save = { spawnTimer: st.spawnTimer, endsAt: st.wave.endsAt, midAt: st.wave.midAt,
     dropBonus: p.stats.dropBonus, weapons: st.weapons, shrine: st.shrine,
-    attackTimer: p.attackTimer };
+    attackTimer: p.attackTimer, skillCd: { ...p.skillCd } };
   st.spawnTimer = st.time + 1e9;   // no ambient packs
   st.wave.endsAt = st.time + 1e9;  // no wave boss
   st.wave.midAt = st.time + 1e9;   // no herald
   p.stats.dropBonus = -1;          // no drop rolls inside the window
   st.weapons = [];                 // no weapon damage into the field
+  for (const id in p.skillCd) p.skillCd[id] = 1e9;
+                                  // N1b AUTO_CAST: skills pinned ON COOLDOWN so
+                                  // the pilot's cast hand stays quiet — an AUTO
+                                  // pilot with a ready, affordable FROST_NOVA
+                                  // would fire it into the probe field (the
+                                  // bodies sit well inside RADIUS) and the
+                                  // payout numbers would price two events.
+                                  // (Pinning p.mana instead is NOT equivalent:
+                                  // mana is a real input to the kite/loot
+                                  // doctrine and to AUTO_DRINK, and disturbing
+                                  // it moved the pilot off the pickup.)
   st.shrine = null;                // no altar purchase: the shrine DRIFTS AT the
   //                                player and buys an intermission-style
   //                                blessing on proximity (applyChoice — a
@@ -257,7 +268,8 @@ const closeWindow = () => {
   //                                is +2 the probe never priced
   return () => { st.spawnTimer = save.spawnTimer; st.wave.endsAt = save.endsAt;
     st.wave.midAt = save.midAt; p.stats.dropBonus = save.dropBonus; st.weapons = save.weapons;
-    st.shrine = save.shrine; p.attackTimer = save.attackTimer; };
+    st.shrine = save.shrine; p.attackTimer = save.attackTimer;
+    Object.assign(p.skillCd, save.skillCd); };
 };
 
 ok('CHAIN REACTION detonates through the REAL kill funnel (damage exact, once per kill)', () => {

@@ -208,6 +208,12 @@ const state = {
   // -> 'settled'; the hold runs 'out' (menu down) -> 'hold' (art alone) ->
   // startRun, which NULLS it. Null when no title flow is live.
   titleReveal: null,
+  // N2 TITLE ART REVEAL — the assertable seam for the menu fade-in + the
+  // START GAME art hold: { phase, t, dur, opacity }. Phases: 'art' (card
+  // alone) -> 'fade' (menu up, first entry only) | 'return' (<=150ms re-fade)
+  // -> 'settled'; the hold runs 'out' (menu down) -> 'hold' (art alone) ->
+  // startRun, which NULLS it. Null when no title flow is live.
+  titleReveal: null,
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
@@ -1305,6 +1311,10 @@ function update(dt) {
   // and reads/writes NOTHING but potions (it cannot touch the stance, so the
   // BOSS_STANCE ease and the kite/retreat decision are untouched).
   autoDrinkPotions(state, dt);
+  // N1b item 8 AUTO-CAST: the pilot's cast hand (CONFIG.AUTOPILOT.AUTO_CAST).
+  // After the drinks: survival spending first, then casts read the refreshed
+  // pool — the same ordering a manual player's frame effectively has.
+  autoCastSkills(state);
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -2729,6 +2739,11 @@ function openMenu(mode = 'menu') {
   // G12: same reset for the title's hidden DOM <h1> (the title card's own
   // wordmark replaces it there; every other screen wants it back).
   if (ovTitle.style) ovTitle.style.display = '';
+  // N2: same reset for the reveal's opacity/pointer gating. The title fades
+  // its menu in over the art; no other screen may inherit a partial opacity,
+  // and leaving the title mid-fade must hand the NEXT screen a full sheet.
+  overlay.style.opacity = '';
+  overlay.style.pointerEvents = '';
 }
 
 // ---------- WAVE-21 FIRST-RUN TOUR (docs/FIRST_RUN_TOUR_2026-09-11.md) ------
@@ -3084,6 +3099,154 @@ function hasLocalSave() {
   } catch { return false; }
 }
 
+// ---------- N2 TITLE ART REVEAL: menu fade-in + the START GAME art hold -----
+// Owner 2026-09-13: "The menu needs to fade in so players can see this! And
+// then when they select a run, it should remain for 1 second. Maybe even
+// animate it for that second." Every duration below is SECONDS advanced by
+// the frame loop's own measured realDt (the WAVE-26 top-of-frame delta), so
+// 60Hz and 120Hz land on the same wall-clock timings — nothing counts frames.
+const TITLE_ART_BEAT_S = 0.35;   // art alone before the menu fades in
+const TITLE_FADE_S = 0.5;        // the menu fade-in (brief: ~400-600ms)
+const TITLE_RETURN_FADE_S = 0.12;// a return to the title re-fades SHORT (<=150ms), never the full show
+const TITLE_OUT_FADE_S = 0.3;    // menu down after START GAME
+const TITLE_HOLD_S = 1.0;        // the art holds alone before the run starts
+const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S,
+  out: TITLE_OUT_FADE_S, hold: TITLE_HOLD_S };
+let titleRevealPlayed = false;   // the full reveal runs ONCE per page load
+let tourPendingAfterReveal = false;
+let holdSnap = null;             // the wordmark region snapshot for the hold shimmer
+let titleRunStarts = 0;          // startRun calls issued by the hold path (assertable)
+
+function revealSettled() {
+  return !state.titleReveal || state.titleReveal.phase === 'settled';
+}
+
+// Publish the phase's opacity/pointer gating to the sheet. Full opacity is
+// the STYLESHEET default (''), so a reset and a settled reveal are the same
+// bytes — the fade cannot leave a stale inline value behind.
+function applyRevealStyles() {
+  const rv = state.titleReveal;
+  if (!rv || !overlay.style) return;
+  let o = 1;
+  if (rv.phase === 'art' || rv.phase === 'hold') o = 0;
+  else if (rv.phase === 'fade' || rv.phase === 'return') o = Math.min(1, rv.t / rv.dur);
+  else if (rv.phase === 'out') o = Math.max(0, 1 - rv.t / rv.dur);
+  rv.opacity = o;
+  const inline = o >= 1 ? '' : String(Math.round(o * 1000) / 1000);
+  if (overlay.style.opacity !== inline) overlay.style.opacity = inline;
+  const pe = (o >= 1 || rv.phase === 'settled') ? '' : 'none';
+  if (overlay.style.pointerEvents !== pe) overlay.style.pointerEvents = pe;
+}
+
+// Snapshot the wordmark region of the painted card so the hold shimmer can
+// repaint it 1:1 every frame (integer coords, no resampling, no smoothing —
+// the paint-once card itself is never touched).
+function snapshotWordmark() {
+  try {
+    const ts = renderer.titleScreen;
+    if (!ts) return null;
+    const c = renderer.canvas;
+    const k = c.width / C.VIEW_W;
+    const s = ts.scale;
+    const x = Math.round((ts.x + 154 * s) * k), y = Math.round((ts.y + 88 * s) * k);
+    const w = Math.round(180 * s * k), h = Math.round(37 * s * k);
+    if (!(w > 0 && h > 0)) return null;
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const og = off.getContext('2d');
+    og.drawImage(c, x, y, w, h, 0, 0, w, h);
+    return { off, x, y, w, h };
+  } catch { return null; }   // headless stubs / exotic states: no shimmer, no crash
+}
+
+// N2 DO 3 (the owner's "maybe"): a gentle gold shimmer on the wordmark during
+// the hold — two decaying pulses over the second, drawn on top of the
+// restored 1:1 snapshot. fillRect + integer coords only; no transforms.
+function drawTitleFlourish(g) {
+  const rv = state.titleReveal;
+  if (!rv || rv.phase !== 'hold' || !holdSnap || !g) return;
+  try {
+    // The snapshot/restore is 1:1 in BACKING pixels, so it must run under the
+    // IDENTITY transform — the renderer's view transform is still active
+    // after render() and would move/rescale (resample!) the restore.
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.drawImage(holdSnap.off, holdSnap.x, holdSnap.y);
+    const decay = Math.max(0, 1 - rv.t / TITLE_HOLD_S);
+    const pulse = 0.30 * decay * (0.55 + 0.45 * Math.sin(rv.t * Math.PI * 4));
+    if (pulse > 0.004) {
+      g.fillStyle = 'rgba(255,213,74,' + pulse.toFixed(3) + ')';
+      g.fillRect(holdSnap.x, holdSnap.y, holdSnap.w, holdSnap.h);
+    }
+    g.restore();
+  } catch { /* stub contexts: the shimmer is sugar, never a crash */ }
+}
+
+// Wall-clock advance, called from frame() with the top-of-frame realDt every
+// mode (the reveal must not freeze under an early-return mode — same rule the
+// earned-moment decay follows).
+function advanceTitleReveal(dt) {
+  const rv = state.titleReveal;
+  if (!rv) return;
+  if (state.mode !== 'title') {
+    // Left the title mid-flow: openMenu already restored the sheet (opacity
+    // '' + pointerEvents ''); the stale phase object is simply dropped.
+    state.titleReveal = null;
+    return;
+  }
+  if (rv.phase === 'settled') return;
+  try {
+    rv.t += dt;
+    if (rv.phase === 'art') {
+      if (rv.t >= TITLE_ART_BEAT_S) { rv.phase = 'fade'; rv.t = 0; }
+    } else if (rv.phase === 'fade' || rv.phase === 'return') {
+      if (rv.t >= rv.dur) {
+        rv.phase = 'settled'; rv.t = rv.dur; rv.opacity = 1;
+        applyRevealStyles();
+        // N2 DO 4: the first-run tour fires only once the reveal has settled
+        // (a coachmark popping mid-fade reads as a glitch).
+        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeStartMenuTour(); }
+        return;
+      }
+    } else if (rv.phase === 'out') {
+      if (rv.t >= rv.dur) { rv.phase = 'hold'; rv.t = 0; holdSnap = snapshotWordmark(); }
+    } else if (rv.phase === 'hold') {
+      if (rv.t >= TITLE_HOLD_S) { finishTitleHold(); return; }
+    }
+    applyRevealStyles();
+  } catch (err) {
+    // FAIL SAFE: a broken reveal must never strand a blank/unreachable sheet.
+    state.titleReveal = { phase: 'settled', t: 0, dur: 0, opacity: 1 };
+    applyRevealStyles();
+    throw err;
+  }
+}
+
+// START GAME's new tail (N2 DO 2): fade the menu out, hold the art ~1s in
+// mode 'title' (so the canvas keeps showing the card), THEN startRun().
+function beginTitleHold() {
+  const rv = state.titleReveal;
+  if (rv && (rv.phase === 'out' || rv.phase === 'hold')) return;   // already leaving: idempotent
+  state.titleReveal = { phase: 'out', t: 0, dur: TITLE_OUT_FADE_S, opacity: 1 };
+  applyRevealStyles();
+  uiGuard.arm();   // swallow this gesture's tail (double-tap / key-repeat)
+}
+
+function finishTitleHold() {
+  holdSnap = null;
+  state.titleReveal = null;
+  if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
+  titleRunStarts++;
+  try {
+    startRun();
+  } catch (err) {
+    // FAIL SAFE: a failed start must land the player somewhere reachable.
+    if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
+    showTitle();
+    throw err;
+  }
+}
+
 // EXIT GAME, honestly (G12 DO 3): (a) autosave; (b) attempt window.close();
 // (c) when the tab does not close — it will not, for a tab the player opened —
 // the farewell screen says the progress is saved and the tab can be closed.
@@ -3130,7 +3293,7 @@ function showTitle() {
     (hasArcadePass(profile) ? ' · ARCADE PASS' : '') +
     '<br>the build IS the game' + saveNoticeHtml();
   menuCard('START GAME', fresh ? 'start a run · or LOAD FROM DISK below' : 'start a run',
-    () => startRun());
+    () => beginTitleHold());   // N2: fade out + hold the art ~1s, then startRun()
   // G12 DO 4: on a fresh browser (no local save) the startup menu itself
   // offers load-from-disk, through the SAME validated import path SETTINGS
   // uses (pickImportFile -> importSaveText -> importProfileText). Once ANY
@@ -3158,7 +3321,24 @@ function showTitle() {
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   // G12 DO 2: EXIT GAME is the LAST card.
   menuCard('EXIT GAME', 'save & quit', () => exitGame());
-  maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
+  // N2 DO 1: the FIRST title entry per page load shows the art alone for a
+  // beat, then fades the menu in over it; every return re-fades short. A
+  // hold already in flight (out/hold) is never interrupted by a rebuild.
+  const inHold = state.titleReveal &&
+    (state.titleReveal.phase === 'out' || state.titleReveal.phase === 'hold');
+  if (!inHold) {
+    if (!titleRevealPlayed) {
+      titleRevealPlayed = true;
+      state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
+    } else {
+      state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
+    }
+  }
+  applyRevealStyles();
+  // N2 DO 4: the first-run tour starts only once the reveal has settled (it
+  // fires from advanceTitleReveal); flags-done boots start it right here.
+  if (revealSettled()) maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
+  else tourPendingAfterReveal = true;
 }
 
 function showShop() {
@@ -3456,6 +3636,21 @@ function startRun() {
   // not a preselect) — rebind the seam and drop any held directions.
   swapPilotMode('AUTO');
   clearPilotInput();
+  // N1a: a class may declare a default focus doctrine (WITCH -> SWARM: the
+  // chain only pays off on a clump, and the SWARM branch already exists in
+  // controllers.js). Classes without one keep whatever focus is live — TAB/G
+  // cycle it exactly as before; this is a default, not a lock.
+  if (ch.defaultFocus) autoController.focus = ch.defaultFocus;
+  // N1a: the touch Q label reads the class's skill id (was: the hardcoded
+  // "FROST" literal in index.html). The VALUE is FROST_NOVA for every class
+  // today — the span keeps the label runtime-owned for the per-class ults.
+  {
+    const qLbl = document.getElementById('q-skill');
+    if (qLbl) {
+      const nm = ((C.SKILLS[classSkillId(state)] || {}).NAME || '').split(' ')[0].toUpperCase();
+      if (nm && qLbl.textContent !== nm) qLbl.textContent = nm;
+    }
+  }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
   state.shrine = rollShrine(0, state.shrineRng);
   state.takenChoices = [];
@@ -3912,11 +4107,16 @@ function restoreBossStance() {
   const d = C.AUTOPILOT.STANCES[back] || {};
   toast('STANCE ' + back + ' (' + (d.TAG || '') + ')', C.HUD.STANCE_COLORS[back] || null);
 }
+// BOSS_STANCE awareness, shared (N1b): true while any wave boss or herald of
+// this wave's cast is still alive. AUTO_CAST reads the SAME predicate — there
+// is exactly one definition of "is a boss here" in the pilot.
+function bossCastLive(st) {
+  return [...(st.wave.bosses || []), ...(st.wave.midBosses || [])]
+    .some(b => b && b.hp > 0);
+}
 // Only stand down once NOTHING boss-shaped is left alive this wave.
 function restoreBossStanceIfClear() {
-  const live = [...(state.wave.bosses || []), ...(state.wave.midBosses || [])]
-    .some(b => b && b.hp > 0);
-  if (live) return;
+  if (bossCastLive(state)) return;
   restoreBossStance();
 }
 
@@ -3931,6 +4131,15 @@ function cycleStanceWithFeedback() {
     ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
     C.HUD.STANCE_COLORS[s] || null);
   return s;
+}
+
+// N1a: the Q slot's skill id is the equipped class's own (CHARACTERS[].skill
+// in meta.js — data, not a special case). Every Q consumer — the key act, the
+// readiness readout, the text-HUD line and the touch label — reads it HERE,
+// never a literal. All four classes carry FROST_NOVA today; the per-class
+// ULTS are a separate owner-gated slice (goals doc N1) and are NOT wired here.
+function classSkillId(st) {
+  return (st.character && st.character.skill) || 'FROST_NOVA';
 }
 
 function runAction(act) {
@@ -3959,7 +4168,7 @@ function runAction(act) {
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
   else if (act === 'stance') cycleStanceWithFeedback();
-  else if (act === 'q') useSkill(state, 'FROST_NOVA');
+  else if (act === 'q') useSkill(state, classSkillId(state));
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
   else if (act === 'h') drinkHealthPotion(state);
   else if (act === 'n') drinkManaPotion(state);
@@ -4042,6 +4251,56 @@ function autoDrinkPotions(state, dt) {
       return cd <= 0 && p.mana < skillManaCost(id, state);
     });
     if (starved && drinkManaPotion(state)) ad.mp = d.COOLDOWN;
+  }
+}
+
+// ---------- AUTO-CAST (N1b item 8) -------------------------------------------
+// The AUTO pilot fights (controllers.js) and drinks (AUTO_DRINK above) — and
+// now CASTS. useSkill was reachable only from the player's Q/E, so an AUTO
+// run paid mana's costs and collected none of its benefits: the whole mana
+// scheme read as a tax on the pilot. Called from the SAME two resource seams
+// as AUTO_DRINK (update / updateFinale), right after it — survival spending
+// (potions) comes first, then the cast hand reads the refreshed pool.
+// Contract (CONFIG.AUTOPILOT.AUTO_CAST — the knobs, with the reasoning):
+//   * AUTO ONLY. A MANUAL player keeps 100% of the cast decision; nothing
+//     here can spend a MANUAL player's mana.
+//   * both casts go through useSkill itself — the ONE skill mana spender —
+//     so an automatic cast costs and cools exactly what a manual one does,
+//     and lands on the same state (the end screen and run stats stay true).
+//   * CONSERVATIVE: a cast must actually land. FROST_NOVA only with a live
+//     enemy inside its own RADIUS; OVERCHARGE only when a boss/elite is
+//     present (bossCastLive — the BOSS_STANCE awareness, plus the maw and
+//     FOCUS_RANGE elites) or the pool is at/above the near-full threshold
+//     (spill income into damage rather than overflow the cap).
+//   * never a wasted call: cooldown and cost are checked HERE, so useSkill
+//     is only ever called when it will say yes.
+//   * never a new withhold: casting is synchronous in the frame; it cannot
+//     block, delay or starve a weapon (weapons tick on their own cooldowns,
+//     and ZAP's N1a soft gate still fires dry at 0.5x if a cast drained it).
+function autoCastSkills(state) {
+  if (state.pilotMode !== 'AUTO') return;
+  const ac = C.AUTOPILOT.AUTO_CAST;
+  if (!ac || !ac.ENABLED) return;
+  const p = state.player;
+  // The Q slot (N1a classSkillId — the ONE place a class's skill id is read).
+  // All classes carry FROST_NOVA today; a future Q skill without a RADIUS
+  // falls back to "any live enemy" rather than a blind cast.
+  const q = classSkillId(state);
+  if ((p.skillCd[q] || 0) <= 0 && p.mana >= skillManaCost(q, state)) {
+    const r = C.SKILLS[q] && C.SKILLS[q].RADIUS;
+    const lands = state.enemies.some(e => e && e.hp > 0 &&
+      (!r || Math.hypot(e.x - p.x, e.y - p.y) <= r));
+    if (lands) useSkill(state, q);
+  }
+  // OVERCHARGE: a self-buff, so the gate is THREAT or SPILL — never position.
+  if ((p.skillCd.OVERCHARGE || 0) <= 0 && p.mana >= skillManaCost('OVERCHARGE', state)) {
+    const bossUp = bossCastLive(state)
+      || !!(state.finalBoss && state.finalBoss.hp > 0)
+      || state.enemies.some(e => e && e.hp > 0 && e.elite &&
+        Math.hypot(e.x - p.x, e.y - p.y) <= ac.ELITE_RANGE);
+    if (bossUp || p.mana >= p.stats.maxMana * ac.NEAR_FULL) {
+      useSkill(state, 'OVERCHARGE');
+    }
   }
 }
 
@@ -4172,7 +4431,7 @@ window.addEventListener('keydown', (ev) => {
     // reintroduce it.)
     const keyMap = {
       tab: 'focus', g: 'stance',
-      [C.SKILLS.FROST_NOVA.KEY]: 'q',
+      [C.SKILLS[classSkillId(state)].KEY]: 'q',
       [C.SKILLS.OVERCHARGE.KEY]: 'w',   // AUTO only in practice: in MANUAL, 'w' is held 'up'
       e: 'w',
       h: 'h', n: 'n',
@@ -4428,7 +4687,7 @@ function updateTouchHud() {
     // (perks.js), so FOCUS cannot make the button text lie about RDY/LOW.
     set(id, cd > 0 ? cd.toFixed(1) + 's' : (p.mana >= skillManaCost(defId, state) ? 'RDY' : 'LOW'));
   };
-  skill('tc-q', 'FROST_NOVA');
+  skill('tc-q', classSkillId(state));
   skill('tc-w', 'OVERCHARGE');
   set('tc-h', String(p.potions.hp));
   set('tc-n', String(p.potions.mp));
@@ -4530,7 +4789,7 @@ function hudTextBlock(p) {
     // agrees with the touch buttons and the hint lines — `W` is AUTO-only
     // (in MANUAL it is held 'up'; main.js keyMap maps `e` to the act in BOTH
     // modes) and the AUTO hint line already discloses "(W too)".
-    `Q ${skillTxt('FROST_NOVA', 'FrostNova')}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
+    `Q ${skillTxt(classSkillId(state), 'FrostNova')}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
@@ -4747,6 +5006,11 @@ function updateFinale(dt) {
   // WAVE-28: the SECOND auto-drink seam — the maw fight is exactly when a
   // pilot-owned potion matters most (see the play loop's copy).
   autoDrinkPotions(state, dt);
+  // N1b item 8: the SECOND auto-cast seam — the maw fight is the one place
+  // the pilot MUST be able to spend its pool on damage (see the play loop's
+  // copy). bossCastLive is false here (the cast is down), but the maw itself
+  // and the near-full spill rule both still gate OVERCHARGE honestly.
+  autoCastSkills(state);
   updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
 
   // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph
@@ -4957,6 +5221,9 @@ function frame(now) {
   // returns below: those modes never reached updateTouchHud(), so the whole
   // desktop UI rendered on top of the intro movie for its full ~7s.
   syncChrome();
+  // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
+  // earned-moment decay above) so it can never assume a frame rate.
+  advanceTitleReveal(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -4987,6 +5254,7 @@ function frame(now) {
     if (!coachActive()) update(dt);
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
+  drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
   drawHud();
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
   // gallery's emblem and its display case sit on top of the (frozen) world and
@@ -5010,6 +5278,9 @@ requestAnimationFrame(frame);
 export const __TEST = {
   state, get controller() { return controller; }, startRun,
   getProfile: () => profile, refreshSynergies,
+  // N1a: the Q-slot seam — the class's own skill id, and the key act that
+  // routes through it (so a probe casts what the button casts).
+  classSkillId, runAction,
   renderer, openStats, closeStats,
   // WAVE-17 settings-cog seam: in-run open/close (pause contract probes).
   openSettings, closeSettings,
@@ -5030,6 +5301,17 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
+  // N2 title art reveal: the live seam rides state.titleReveal; these expose
+  // the hold path's call count, its timings (for rate-independent asserts),
+  // and the activation itself.
+  title: {
+    get runStarts() { return titleRunStarts; },
+    timings: TITLE_TIMINGS,
+    beginHold: beginTitleHold,
+    // Re-arm the once-per-page-load guard and re-run the FULL reveal (the
+    // rate-independence tests replay it under a different frame step).
+    replay() { titleRevealPlayed = false; showTitle(); },
+  },
   exit: {
     game: exitGame,
     farewell: showFarewell,
@@ -5079,6 +5361,10 @@ export const __TEST = {
   // on rAF timing. The live loop calls this SAME function from both resource
   // seams (update / updateFinale).
   autoDrink: autoDrinkPotions,
+  // ---- N1b item 8 AUTO-CAST seam: the pure decision step, so a headless
+  // probe can drive the pilot's cast hand with a controlled dt (the live loop
+  // calls this SAME function from both resource seams).
+  autoCast: autoCastSkills,
   // ---- CINEMATIC GESTURE GUARD seam (src/main.js uiGuard) ----
   // The test drives the guard directly: arm it, prove a click on the overlay is
   // swallowed by the capture listener, prove a new press stands it down.

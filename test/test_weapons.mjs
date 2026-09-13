@@ -17,6 +17,10 @@ function stubState() {
     player: {
       x: 0, y: 0,
       hp: 100, level: 1,
+      // N1a: mana funds ZAP's soft gate — a funded stub keeps these tests
+      // measuring full damage (the dry multiplier has its own file,
+      // test_weapon_mana.mjs).
+      mana: 1000,
       stats: { damage: 10, cooldown: 0.55, projectiles: 1, pierce: 0 },
       buffs: { overcharge: 0 },
     },

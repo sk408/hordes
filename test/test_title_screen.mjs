@@ -36,6 +36,50 @@ function check(name, fn) {
   console.log(`  ok - ${name}`);
 }
 
+// ---- 0. N2: the reveal, observed LIVE (the phases advance from here on) ------
+{
+  const tm = T.title.timings;
+  const dt = (1000 / 60) / 1000;
+  // Frames pumped since the reveal started: the intro-skip block's pump(2) is
+  // the only advance before this section (onboarded flag => the skip lands
+  // straight on the title, so those 2 frames are the reveal's first 2).
+  let revealFrames = 2;
+  check('the reveal starts BELOW full opacity (the art alone, menu unpressable)', () => {
+    const rv = st.titleReveal;
+    assert.ok(rv, 'the reveal seam is live on the first title entry');
+    assert.equal(rv.phase, 'art', 'the first phase shows the art alone');
+    assert.equal(rv.opacity, 0, 'opacity starts at 0');
+    assert.equal(ov.style.opacity, '0', 'the sheet is at opacity 0');
+    assert.equal(ov.style.pointerEvents, 'none', 'the invisible menu cannot be pressed');
+    assert.ok(T.renderer.titleScreen, 'the art seam is live under the hidden menu');
+  });
+  check('mid-fade the opacity is strictly between 0 and 1', () => {
+    h.pump(Math.ceil(tm.beat / dt) + 2);   // two frames in: clear of the transition frame
+    revealFrames += Math.ceil(tm.beat / dt) + 2;
+    const rv = st.titleReveal;
+    assert.equal(rv.phase, 'fade', 'in the fade phase');
+    assert.ok(rv.opacity > 0 && rv.opacity < 1, '0 < opacity < 1 (got ' + rv.opacity + ')');
+    assert.ok(parseFloat(ov.style.opacity) > 0 && parseFloat(ov.style.opacity) < 1,
+      'the sheet carries the same partial opacity');
+  });
+  check('the reveal settles at 1.0 after its duration (60Hz wall clock)', () => {
+    let frames = 0;
+    for (; frames < 400; frames++) {
+      h.pump(1);
+      if (st.titleReveal && st.titleReveal.phase === 'settled') break;
+    }
+    revealFrames += frames;
+    const rv = st.titleReveal;
+    assert.ok(rv && rv.phase === 'settled', 'the reveal settled (frames=' + frames + ')');
+    assert.equal(rv.opacity, 1, 'opacity reaches 1.0');
+    assert.equal(ov.style.opacity, '', 'full opacity is the stylesheet default, not a stale inline');
+    assert.equal(ov.style.pointerEvents, '', 'the menu is interactive again');
+    const settledAt = revealFrames * dt, want = tm.beat + tm.fade;
+    assert.ok(Math.abs(settledAt - want) <= 2 * dt,
+      `settled at ${settledAt.toFixed(3)}s, want ~${want}s (within 2 frames)`);
+  });
+}
+
 // ---- 1. the title card owns the canvas (DO 1) --------------------------------
 check('mode title + the renderer seam carries the full-view geometry', () => {
   assert.equal(st.mode, 'title', 'the startup menu is mode title');
@@ -63,7 +107,10 @@ check('the card is painted ONCE (extra title frames do not repaint it)', () => {
 
 check('the seam is NULL outside the title; a return visit repaints', () => {
   cardWith('START GAME').click();
-  assert.equal(st.mode, 'playing', 'run live');
+  // N2: the press fades the menu out and holds the art ~1s BEFORE the run —
+  // pump the hold at the loop's own dt until startRun lands.
+  for (let i = 0; i < 150 && st.mode !== 'playing'; i++) h.pump(1);
+  assert.equal(st.mode, 'playing', 'run live after the art hold');
   h.pump(2);
   assert.equal(T.renderer.titleScreen, null, 'no title seam in a run');
   // Leaving the mode invalidated the once-paint: back on the title the seam
@@ -197,7 +244,92 @@ check('chrome is OFF in the title (pad layer, hints) — the wave-23 contract', 
 
 check('START GAME starts a run with no extra friction', () => {
   cardWith('START GAME').click();
-  assert.equal(st.mode, 'playing', 'one press, one run');
+  for (let i = 0; i < 150 && st.mode !== 'playing'; i++) h.pump(1);
+  assert.equal(st.mode, 'playing', 'one press, one run (after the N2 art hold)');
+});
+
+// ---- 6. N2: the hold + the leak + the 120Hz contract (same boot, replay seam) ----
+check('START GAME: a double activation in one tick holds ONCE, never an early run', () => {
+  T.showTitle();
+  let s = 0;
+  for (; s < 30 && !(st.titleReveal && st.titleReveal.phase === 'settled'); s++) h.pump(1);
+  assert.equal(st.titleReveal.phase, 'settled', 'settled before the press (return re-fade done)');
+  const before = T.title.runStarts;
+  cardWith('START GAME').click();
+  cardWith('START GAME').click();   // the same tick, again: idempotent
+  const rv = st.titleReveal;
+  assert.ok(rv && (rv.phase === 'out' || rv.phase === 'hold'), 'the hold is in flight once');
+  assert.equal(st.mode, 'title', 'the run does NOT start on the press tick');
+  assert.equal(T.title.runStarts, before, 'startRun has not been called yet');
+  assert.ok(T.renderer.titleScreen, 'the art seam stays live through the hold');
+});
+
+check('START GAME: the run starts EXACTLY once, only after the full hold', () => {
+  const dt = (1000 / 60) / 1000;
+  const before = T.title.runStarts;
+  let frames = 0;
+  for (; frames < 400; frames++) {
+    h.pump(1);
+    if (st.mode === 'playing') break;
+  }
+  assert.equal(st.mode, 'playing', 'the run started (frames=' + frames + ')');
+  assert.equal(T.title.runStarts, before + 1, 'startRun ran EXACTLY once through the hold');
+  assert.equal(st.titleReveal, null, 'the reveal seam is null once the run is live');
+  assert.equal(T.renderer.titleScreen, null, 'the art seam is null in the run');
+  const heldAt = frames * dt, want = T.title.timings.out + T.title.timings.hold;
+  assert.ok(heldAt >= want - 2 * dt && heldAt <= want + 4 * dt,
+    `run started ${heldAt.toFixed(3)}s after the press, want ~${want}s (within 2 frames)`);
+  assert.equal(ov.style.display, 'none', 'the overlay hid with the run');
+});
+
+check('leaving the title mid-fade leaks NO partial opacity into the next screen', () => {
+  T.showTitle();                    // a return entry: the short (<=150ms) re-fade
+  assert.equal(st.titleReveal.phase, 'return', 'the return re-fade is running');
+  assert.ok(st.titleReveal.dur <= 0.15, 'the return fade is short (<=150ms)');
+  h.pump(1);                         // mid-fade now
+  assert.ok(parseFloat(ov.style.opacity) < 1, 'mid-fade, opacity below 1');
+  cardWith('SETTINGS').click();     // leave the title mid-fade
+  assert.notEqual(st.mode, 'title', 'on the settings screen');
+  assert.equal(ov.style.opacity, '', 'openMenu restored FULL opacity for the next screen');
+  assert.equal(ov.style.pointerEvents, '', 'and full interactivity');
+  h.pump(1);                         // one frame: the stale phase is dropped
+  assert.equal(st.titleReveal, null, 'the dropped flow left no reveal seam behind');
+  key('escape');
+  assert.equal(st.mode, 'title', 'back on the title');
+});
+
+check('the SAME reveal contract at a 120Hz frame step (no fixed-dt assumption)', () => {
+  h.setFrameMs(1000 / 120);
+  const dt = (1000 / 120) / 1000;
+  const tm = T.title.timings;
+  T.title.replay();                  // re-arm the once-per-load guard, full reveal
+  assert.equal(st.titleReveal.phase, 'art', 'the replayed reveal starts at the art');
+  assert.equal(st.titleReveal.opacity, 0, 'opacity 0 at the start');
+  h.pump(Math.ceil(tm.beat / dt) + 2);   // two frames in: clear of the transition frame
+  assert.equal(st.titleReveal.phase, 'fade', 'mid-reveal at 120Hz: the fade phase');
+  assert.ok(st.titleReveal.opacity > 0 && st.titleReveal.opacity < 1,
+    '0 < opacity < 1 at 120Hz (got ' + st.titleReveal.opacity + ')');
+  let frames = Math.ceil(tm.beat / dt) + 2;   // everything pumped since replay()
+  for (let i = frames; i < 800; i++) {
+    h.pump(1); frames++;
+    if (st.titleReveal && st.titleReveal.phase === 'settled') break;
+  }
+  assert.equal(st.titleReveal.opacity, 1, 'opacity reaches 1.0 at 120Hz');
+  const settledAt = frames * dt, want = tm.beat + tm.fade;
+  assert.ok(Math.abs(settledAt - want) <= 3 * dt,
+    `120Hz settled at ${settledAt.toFixed(3)}s, want ~${want}s (within 3 frames)`);
+  // And the HOLD at 120Hz lands on the same wall-clock second.
+  const beforeHold = T.title.runStarts;
+  cardWith('START GAME').click();
+  let held = 0;
+  for (; held < 800; held++) {
+    h.pump(1);
+    if (st.mode === 'playing') break;
+  }
+  assert.equal(T.title.runStarts, beforeHold + 1, 'exactly one more run through the 120Hz hold');
+  const heldAt = held * dt, wantHold = tm.out + tm.hold;
+  assert.ok(heldAt >= wantHold - 2 * dt && heldAt <= wantHold + 4 * dt,
+    `120Hz run started ${heldAt.toFixed(3)}s after the press, want ~${wantHold}s (within 2 frames)`);
 });
 
 console.log(`\n${passed} assertion groups passed — test_title_screen OK`);

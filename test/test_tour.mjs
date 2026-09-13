@@ -249,6 +249,15 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   for (let i = 0; i < 5; i++) frame();
   assert.equal(st.mode, 'title', 'title screen up');
 
+  // N2 (docs/briefs/N2_TITLE_ART_REVEAL.md DO 4): the reveal owns the first
+  // beat — the art alone, then the menu fade — and the tour mounts only once
+  // it settles. A coachmark popping mid-fade would read as a glitch.
+  assert.ok(!globalThis.document.body.children.find(c => c.id === 'tour-root'),
+    'no tour while the reveal is still running (the art-alone beat)');
+  for (let f = 0; f < 120 && !(st.titleReveal && st.titleReveal.phase === 'settled'); f++) frame();
+  assert.ok(st.titleReveal && st.titleReveal.phase === 'settled',
+    'the N2 reveal settled before the tour fires');
+
   // Stage 1 fired: a #tour-root element exists and points at START GAME.
   const root = () => elements['tour-root'];
   // the Tour appended its root to document.body
@@ -285,11 +294,14 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   assert.equal(ls.get(TOUR_KEYS.stage1), '1', 'stage-1 flag persisted');
   assert.ok(!globalThis.document.body.children.includes(tourRoot), 'tour unmounted');
 
-  // Into a run. (G12: PLAY is START GAME now — the retargeted contract.)
+  // Into a run. (G12: PLAY is START GAME now — the retargeted contract. N2:
+  // the press fades the menu out and holds the art ~1s before the run.)
   const play = cardTitled('START GAME');
   assert.ok(play, 'START GAME card present');
   play.onclick ? play.onclick() : play.fire('click');
-  assert.equal(st.mode, 'playing', 'run live');
+  assert.equal(st.mode, 'title', 'the N2 art hold keeps the title up on the press tick');
+  for (let i = 0; i < 130 && st.mode !== 'playing'; i++) frame();
+  assert.equal(st.mode, 'playing', 'run live after the art hold');
 
   // Pump ~2s of frames: the HUD coachmark must fire and FREEZE the sim.
   for (let i = 0; i < 130; i++) frame();
