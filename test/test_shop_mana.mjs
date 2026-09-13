@@ -24,6 +24,7 @@ import { boot, suite } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { SHOP_UPGRADES, SHOP_BY_ID, buyUpgrade } from '../src/meta.js';
 import { weaponManaCost } from '../src/weapons.js';
+import { initWeather, mods as weatherMods } from '../src/weather.js';
 import { skillManaCost } from '../src/perks.js';
 
 const S = suite('SHOP MANA BUYABLES');
@@ -231,6 +232,10 @@ S.check('60Hz and 120Hz pay the SAME siphon over the same scripted kills', () =>
   };
   const pass = (hz) => {
     prof.purchased.siphon = 2;          // 0.10 per kill
+    // DETERMINISM: T.startRun() rolls a RANDOM weather (main.js:3666) and MOONLIGHT
+    // grants +0.5/s of mana, which this probe would read as siphon income and fail on.
+    // Pin CLEAR here; the MOONLIGHT side gets its own check at the end of the file.
+    st.weather = initWeather('CLEAR', 7);
     T.startRun();
     T.setPilotMode('MANUAL');
     h.setFrameMs(1000 / hz);
@@ -246,7 +251,7 @@ S.check('60Hz and 120Hz pay the SAME siphon over the same scripted kills', () =>
     // The base regen drip (0.5/s, dt-correct by design — stats.manaRegen only
     // carries the meta BONUS, the base flows from the constant) rides along
     // at frames x dt. Subtract it exactly: what remains is the KILL income.
-    const drip = C.MANA.REGEN * frames * (1 / hz);
+    const drip = (C.MANA.REGEN + (weatherMods(st.weather).manaRegenFlat || 0)) * frames * (1 / hz);
     const got = p.mana - drip;
     h.setFrameMs(1000 / 60);            // restore the default tick
     return got;
@@ -281,6 +286,7 @@ S.check('the stats are not pilot-gated: AUTO benefits identically', () => {
     prof.purchased.siphon = 4;          // 0.2 per kill
     T.startRun();
     T.setPilotMode('AUTO');             // the mode the cohorts run in
+    st.weather = initWeather('CLEAR', 7);   // deterministic: no weather mana grant
     h.pump(2, quiet); quiet();
     const p = st.player;
     // Quiet the cast/drink hands so the grant is the only mover: skills on
@@ -300,4 +306,59 @@ S.check('the stats are not pilot-gated: AUTO benefits identically', () => {
   }
 });
 
+
+// ============================================================================
+// The 60/120 probe above pins CLEAR weather so its read is deterministic. This
+// check pins the OTHER side, because that is how this test first failed: a run
+// that rolled MOONLIGHT was read as if the weather's +0.5/s trickle were siphon
+// income (measured 2.0833 at 120Hz vs the 2.0 bar). With MOONLIGHT forced, the
+// two rates must still pay the SAME kill income and the flat grant must scale
+// with dt — i.e. nothing in the mana path counts frames.
+S.check('MOONLIGHT active: 20 scripted kills pay the same siphon at 60Hz and 120Hz', () => {
+  const prof = T.getProfile();
+  const had = prof.purchased.siphon || 0;
+  const quiet = () => {
+    st.spawnTimer = st.time + 1e9;
+    st.wave.endsAt = st.time + 1e9;
+    st.wave.midAt = st.time + 1e9;
+    st.enemies.length = 0;
+    st.drops.length = 0;
+  };
+  const pass = (hz) => {
+    prof.purchased.siphon = 2;                 // 0.10 per kill
+    T.startRun();
+    T.setPilotMode('MANUAL');
+    st.weather = initWeather('MOONLIGHT', 7);  // the polluting field event, forced
+    h.setFrameMs(1000 / hz);
+    h.pump(2, quiet); quiet();
+    const p = st.player;
+    p.stats.dropBonus = -1;
+    p.stats.manaRegen = C.MANA.REGEN;          // no Mana Spring riding along
+    p.mana = 0;
+    const frames = 20;
+    for (let k = 0; k < frames; k++) {
+      st.enemies.push(corpse());
+      h.pump(1, quiet);
+    }
+    const wFlat = weatherMods(st.weather).manaRegenFlat || 0;
+    const drip = (C.MANA.REGEN + wFlat) * frames * (1 / hz);
+    h.setFrameMs(1000 / 60);
+    return { siphon: p.mana - drip, wFlat };
+  };
+  try {
+    const a = pass(60);
+    const b = pass(120);
+    assert.equal(a.wFlat, 0.5, 'MOONLIGHT really does grant +0.5/s (the probe is not a no-op)');
+    assert.ok(Math.abs(a.siphon - 2.0) < 1e-6,
+      '60Hz with MOONLIGHT: 20 kills pay 2.0 of siphon (got ' + a.siphon + ')');
+    assert.ok(Math.abs(b.siphon - 2.0) < 1e-6,
+      '120Hz with MOONLIGHT: 20 kills pay 2.0 of siphon (got ' + b.siphon + ')');
+    assert.ok(Math.abs(a.siphon - b.siphon) < 1e-6, 'the kill grant is frame-free at both rates');
+  } finally {
+    h.setFrameMs(1000 / 60);
+    st.weather = initWeather('CLEAR', 7);
+    if (had) prof.purchased.siphon = had; else delete prof.purchased.siphon;
+    T.startRun();
+  }
+});
 S.done();

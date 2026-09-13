@@ -68,11 +68,21 @@ export async function boot(opts = {}) {
     getContext: () => ctx,
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 }),
   };
+  // G13: createElement('canvas') must return a canvas-shaped stub (the
+  // character selector builds live portrait canvases in the DOM overlay);
+  // every other tag stays the generic element.
+  const canvasEl = () => ({
+    width: 0, height: 0,
+    style: {},
+    className: '',
+    getContext: () => ctx,
+    getBoundingClientRect() { return { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 }; },
+  });
 
   const elements = {};
   globalThis.document = {
     getElementById: (id) => elements[id] ?? (elements[id] = id === 'game' ? canvas : el()),
-    createElement: () => el(),
+    createElement: (tag) => (tag === 'canvas' ? canvasEl() : el()),
     addEventListener: noop, removeEventListener: noop,
     body: el(),
   };

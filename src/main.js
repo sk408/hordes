@@ -84,7 +84,7 @@ import {
   recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
   earnedCount, totalAchievements,
 } from './achievements.js';
-import { TROPHY_ART } from './art/index.js';
+import { TROPHY_ART, CHARACTER_PORTRAITS } from './art/index.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
   challengeRules, nextChallengeId, describeChallenge,
@@ -3377,40 +3377,162 @@ function showShop() {
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
-function showCharacters() {
-  openMenu();
-  ovTitle.textContent = 'CHARACTERS';
-  ovTitle.className = '';
+// ---------- G13: the animated character selector --------------------------------
+// The CHARACTERS screen shows every pilot's authored 32x32 idle bust
+// (src/art/portraits.js, 2 frames each) as a LIVE canvas — painted through the
+// renderer's own drawGrid on a 32x32 backing store that CSS scales by an
+// INTEGER factor (2x) with image-rendering: pixelated. The idle advance is
+// WALL-CLOCK dt out of frame() (same rule as the title reveal), so 60Hz and
+// 120Hz step the same frame index over the same elapsed time; the advance
+// no-ops in every other mode, so BACK leaves no repaint, timer or rAF behind.
+const CHAR_IDLE_PERIOD = 0.6;   // seconds per idle frame (1.2s blink cycle)
+const charIdle = { t: 0, frame: -1, entries: [] };
+let charSelected = null;        // the pilot whose kit the panel is showing
+
+// The unowned mask: the SAME grid painted through a one-tone palette, so the
+// bust reads as a designed silhouette (the authored outline, just unlit) —
+// never a broken or empty box.
+const SILHOUETTE_PALETTE = { 1: '#16161f', 2: '#16161f', 3: '#1d1d29', 4: '#101018', 5: '#16161f' };
+
+function charIdleIndex() {
+  return Math.floor(charIdle.t / CHAR_IDLE_PERIOD);
+}
+
+function paintCharPortraits() {
+  const base = charIdleIndex();
+  for (const e of charIdle.entries) {
+    const g = e.canvas.getContext('2d');
+    g.clearRect(0, 0, e.canvas.width, e.canvas.height);
+    renderer.drawGrid(g, e.asset.frames[base % e.asset.frameCount],
+      e.mask ? SILHOUETTE_PALETTE : e.asset.palette, 0, 0);
+  }
+  charIdle.frame = base % 2;
+}
+
+// Called from frame() for EVERY mode with the real wall-clock dt; a no-op
+// unless the selector is live. dt-driven (never a frame count), so the two
+// refresh rates pay the same animation.
+function advanceCharIdle(dt) {
+  if (state.mode !== 'characters') return;
+  charIdle.t += dt;
+  const idx = charIdleIndex() % 2;
+  if (idx !== charIdle.frame) paintCharPortraits();
+}
+
+// The kit panel — the Neutral_flower fix ("I don't see what other character
+// ability after I buy it"). Every number is DERIVED from the same chain the
+// run applies in startRun (makePlayer's base stats -> applyMetaBonuses ->
+// applyCharacter), never hand-typed, so the screen cannot drift from the game.
+function pilotKit(id) {
+  const ch = CHARACTERS[id] || CHARACTERS.KNIGHT;
+  const base = makePlayer().stats;
+  const st = applyCharacter(applyMetaBonuses({ ...base }, profile.purchased), ch.id);
+  const owned = profile.unlockedCharacters.includes(ch.id);
+  return {
+    id: ch.id, name: ch.name,
+    owned, equipped: profile.equippedCharacter === ch.id,
+    unlockCost: ch.unlockCost,
+    baseHp: base.maxHp, maxHp: st.maxHp,
+    maxMana: st.maxMana,
+    speedMult: +(st.speed / base.speed).toFixed(2),
+    spellCostMult: st.manaCostMult || 1,
+    // startPotionCount's formula, inlined for a pilot that is not equipped.
+    potions: ch.startPotions + (profile.purchased.potions || 0),
+    weapon: ch.startingWeapon ? WEAPON_NAMES[ch.startingWeapon] : WEAPON_NAMES.VOLLEY + ' (BASE)',
+    skill: C.SKILLS[ch.skill].NAME,
+    healOnChest: ch.healOnChest,
+  };
+}
+
+function kitPanelHtml(kit) {
+  const lines = [
+    `HP: ${kit.baseHp} base -> ${kit.maxHp}`,
+    `MANA: ${kit.maxMana} max · spells cost x${kit.spellCostMult}`,
+    `SPEED: x${kit.speedMult}`,
+    `STARTS: ${kit.weapon} · ${kit.potions} potion${kit.potions === 1 ? '' : 's'}`,
+    `SKILL [Q]: ${kit.skill}`,
+  ];
+  if (kit.healOnChest) lines.push(`CHESTS: heals ${kit.healOnChest} HP on open`);
+  const status = kit.equipped ? 'EQUIPPED'
+    : kit.owned ? 'owned — tap to equip'
+    : `locked — ${kit.unlockCost} gold`;
+  return `<div class="name">${kit.name} · ${status}</div>` +
+    `<div class="desc">${lines.join('<br>')}</div>`;
+}
+
+function renderCharSelector() {
+  ovCards.innerHTML = '';
+  // Re-stamped every render so a purchase updates the purse the same frame.
   ovSub.textContent = `GOLD: ${profile.gold}`;
+  // The kit panel rides first (full width), then one card per pilot.
+  const kit = pilotKit(charSelected);
+  const kitEl = document.createElement('div');
+  kitEl.className = 'card kit-card';
+  kitEl.id = 'char-kit';
+  kitEl.setAttribute('data-char-kit', kit.id);
+  kitEl.setAttribute('data-kit', JSON.stringify(kit));
+  kitEl.innerHTML = kitPanelHtml(kit);
+  ovCards.appendChild(kitEl);
+  charIdle.entries = [];
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const equipped = profile.equippedCharacter === ch.id;
     const afford = profile.gold >= ch.unlockCost;
-    // 0.98 feedback (defect 2): an OWNED pilot used to lose its ability
-    // description — the sub-line swapped to the equip affordance, hiding the
-    // text the player paid to read. The description is now ALWAYS on the card;
-    // the equip state rides underneath it (EQUIPPED, or the equip prompt).
-    const sub = `${ch.desc}<br>` + (equipped ? 'EQUIPPED'
-      : owned ? 'equip this pilot'
-      : `unlock: ${ch.unlockCost} gold`);
-    const el = menuCard(
-      ch.name + (equipped ? ' *' : ''),
-      sub,
-      () => {
-        if (equipped) return;
+    const el = document.createElement('div');
+    el.className = 'card char-card' + (equipped ? ' selected' : '')
+      + (!owned && !afford ? ' dim' : '');
+    el.setAttribute('data-pilot', ch.id);
+    // 0.98 feedback (defect 2), preserved: an OWNED pilot's card ALWAYS shows
+    // ch.desc — the equip state rides underneath the description, never
+    // instead of it. (Markup-built like every menuCard so the DOM string is
+    // the card's own contract; the live canvas rides the markup in a real
+    // browser and a fabricated one in the stub DOM.)
+    el.innerHTML =
+      `<canvas class="portrait" width="32" height="32"></canvas>` +
+      `<div class="name">${ch.name}${equipped ? ' *' : ''}</div>` +
+      `<div class="desc">${ch.desc}<br>` + (equipped ? 'EQUIPPED'
+        : owned ? 'equip this pilot'
+        : `unlock: ${ch.unlockCost} gold`) + `</div>`;
+    let cv = el.querySelector ? el.querySelector('canvas') : null;
+    if (!cv) { cv = document.createElement('canvas'); el.appendChild(cv); }
+    el.onclick = () => {
+      audio.playSfx('button');
+      // Selection ALWAYS moves — previewing a locked pilot's kit is free (the
+      // oversight complaint was exactly that the kit was invisible).
+      charSelected = ch.id;
+      if (!equipped) {
         if (owned) {
-          if (equipCharacter(profile, ch.id)) { saveProfile(profile); showCharacters(); }
-        } else if (unlockCharacter(profile, ch.id)) {
-          equipCharacter(profile, ch.id);   // buy -> equip in one flow
-          saveProfile(profile);
-          showCharacters();
+          if (equipCharacter(profile, ch.id)) saveProfile(profile);
+        } else if (afford) {
+          // buy -> equip in one flow (preserved verbatim from the 0.98 screen)
+          if (unlockCharacter(profile, ch.id)) {
+            equipCharacter(profile, ch.id);
+            saveProfile(profile);
+          }
         }
-      },
-      (!owned && !afford),
-    );
-    if (!owned && !afford) el.onclick = () => audio.playSfx('button');
+      }
+      renderCharSelector();
+      paintCharPortraits();
+    };
+    ovCards.appendChild(el);
+    charIdle.entries.push({ id: ch.id, canvas: cv, asset: CHARACTER_PORTRAITS[ch.id], mask: !owned });
   }
   menuCard('BACK', 'to title [ESC]', () => showTitle());
+  paintCharPortraits();   // frame 0 lands immediately, not on the next blink
+}
+
+function showCharacters() {
+  // G13: the screen is its OWN mode now (it used to ride 'menu'). Registered
+  // everywhere a mode matters: chromeOn() keeps it chrome-OFF (it is not
+  // playing/finale), the key handler backs ESC out to the title, and the
+  // first-run tour's start gate (menu/title only) can never fire over it.
+  openMenu('characters');
+  ovTitle.textContent = 'CHARACTERS';
+  ovTitle.className = '';
+  charSelected = profile.equippedCharacter || 'KNIGHT';
+  charIdle.t = 0;
+  charIdle.frame = -1;
+  renderCharSelector();
 }
 
 // ---------- W1 EXPORT / IMPORT (title settings only) ----------
@@ -4386,7 +4508,7 @@ window.addEventListener('keydown', (ev) => {
     else if (k === 'arrowleft') bestiaryStep(-1);
     else if (k === 'arrowright') bestiaryStep(1);
     else if (k === 'f') cycleBestiaryFilter();
-  } else if ((state.mode === 'menu' || state.mode === 'farewell') && k === 'escape') {
+  } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters') && k === 'escape') {
     showTitle();                     // every sub-menu (and the farewell) backs out to title
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
@@ -4636,6 +4758,9 @@ if (touchLayer && touchLayer.addEventListener) {
 // the intro movie for its full ~7s. Same gate removes the hints panel from the
 // draft / intermission / death screens, where every key it lists is inert.
 function chromeOn() {
+  // G13 registration check: 'characters' is deliberately NOT in this list —
+  // the selector is a meta screen, so the pad layer / cog / "?" / hints stay
+  // down while it is live (verified by name in tools/verify_g13_selector.mjs).
   return state.mode === 'playing' || state.mode === 'finale';
 }
 function syncChrome() {
@@ -5230,6 +5355,10 @@ function frame(now) {
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
   advanceTitleReveal(realDt);
+  // G13: the character selector's idle busts advance on the same wall-clock
+  // dt (dt-parity: 60Hz and 120Hz step the same frame over the same time).
+  // No-ops in every other mode, so no repaint or timer survives BACK.
+  advanceCharIdle(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -5307,6 +5436,21 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
+  // ---- G13 character-selector seam: the screen, the live selection, the kit
+  // derivation (so a test compares the DOM numbers against the SAME chain the
+  // run applies), and the idle driver (step/reset for 60Hz-vs-120Hz parity
+  // replays — the same accumulator frame() feeds).
+  charSelect: {
+    open: showCharacters,
+    get selected() { return charSelected; },
+    kit: pilotKit,
+    idle: {
+      step: advanceCharIdle,
+      reset() { charIdle.t = 0; charIdle.frame = -1; },
+      get frame() { return charIdle.frame; },
+      get period() { return CHAR_IDLE_PERIOD; },
+    },
+  },
   // N2 title art reveal: the live seam rides state.titleReveal; these expose
   // the hold path's call count, its timings (for rate-independent asserts),
   // and the activation itself.

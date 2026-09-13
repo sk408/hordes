@@ -119,7 +119,7 @@ the existing Q/E skills cost mana (FROST 30 / OVER 25). If only the Witch had ma
 become dead picks for 3 of 4 classes and their own skills stop working. The Witch's identity is
 the RATE + her +50 pool + the cost discount, never exclusive access.
 
-**6. Buyables to add** — [status: IN PROGRESS 2026-09-13 - dispatched to cli:glm-hordes-g8 as msg_01M2CX1KK3AK257PKAPCR74Y6M by TICK NOTE 21, RE-DISPATCHED by TICK NOTE 22 after the first id was found mis-addressed and never ran; brief docs/briefs/N1B6_SHOP_MANA_BUYABLES.md] all fit the existing `{id,name,desc,baseCost,costGrowth,maxLevel,perLevel}`
+**6. Buyables to add** — [status: DONE 2026-09-13 - VERIFIED BY TICK NOTE 23: landed as commit 3cd9425 (builder cli:glm-hordes-g8, brief docs/briefs/N1B6_SHOP_MANA_BUYABLES.md). Prices: thrifty 350g x1.7 max4 (-10%/lvl), well 250g x1.6 max4 (+25/lvl), siphon 500g x1.7 max4 (+0.05/kill/lvl). The pilot re-ran everything itself: suite PASS=72 FAIL=0 three times, test_shop_mana 8/8, verify_skill_keys PASS (32 measurements), a REAL-browser purchase of Thrifty L1 at 390x844 @dpr3 (gold 1000->650, all three rows onScreen), and the item-7 bars re-measured on THIS tree for both classes - the spend share moves 94.9%->76.9% KNIGHT and 97.4%->88.9% WITCH, i.e. INTO the 70-90% band, which is the brief's open question answered. ONE DEFECT FOUND AND FIXED test-side: a random MOONLIGHT weather roll (+0.5/s flat) was being read as siphon income, making test_shop_mana flaky (measured 2.0833 vs the 2.0 bar); the probe now pins CLEAR and a new MOONLIGHT check proves dt-parity WITH the weather grant. See TICK NOTE 23] all fit the existing `{id,name,desc,baseCost,costGrowth,maxLevel,perLevel}`
 row shape (`src/meta.js:302`), so this is content, not new machinery:
    - `thrifty` — Thrifty Casting: -% mana cost. The direct counter to a punishing Chain Zap.
    - `well`    — Deep Well: +max mana.
@@ -132,7 +132,7 @@ row shape (`src/meta.js:302`), so this is content, not new machinery:
 (5993 kills / 277.8s = **21.6 kills/s**), ~0.15 mana/kill lands near 3.2/s. Hold it to two bars,
 both already instrumented: **frames at zero under 20%** (proves it is not a lockout) and **mana
 spent as a share of income 70-90%** (proves it is not decorative). The numbers to beat are
-75.1% of frames under cost, and the 89% refund.
+75.1% of frames under cost, and the 89% refund. **MEASURED ON THIS TREE 2026-09-13 (TICK NOTE 23):** unowned baseline 4x300s AUTO cohorts read zeroFrac 0.0% and spend share 94.9% KNIGHT / 97.4% WITCH (still above the band); with thrifty+well+siphon ALL at max the same cohorts read zeroFrac 0.0% and share 76.9% / 88.9% - inside the band for BOTH classes. So the bars are met once the relief valve is BOUGHT, which is the design intent (item 1: the shop, never a balance change). Reversible: level 0 stays exactly neutral, asserted in test_shop_mana.mjs.
 
 **8. The AUTO pilot must be able to SPEND mana, or the whole scheme reads as a tax.**  [status: DONE 2026-09-13 - VERIFIED BY TICK NOTE 20] `useSkill`
 is reachable ONLY from the player's Q/E; the AUTO pilot never casts, so in AUTO mana has costs
@@ -490,7 +490,14 @@ graphic, not on the map."*
    clears non-installed site storage after ~7 days of non-use), and is absent/limited in private mode.
    Export is the player's real safety net for progress, so it must round-trip losslessly and be versioned.
 
-### G13 — ANIMATED CHARACTER SELECTOR WITH PIXEL ART  [status: not started]
+### G13 — ANIMATED CHARACTER SELECTOR WITH PIXEL ART  [status: IN PROGRESS 2026-09-13 — DISPATCHED by TICK NOTE 24]
+
+Art EXISTS and is unused; the work is WIRING it (`src/art/portraits.js` CHARACTER_PORTRAITS, 32x32, 2 idle
+frames per pilot) plus the kit display. Builder `cli:glm-hordes-g8`, task `msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ`,
+brief `docs/briefs/G13_CHARACTER_SELECT.md` (verified RUNNING by tick 24, not merely queued). NO artifact yet —
+nothing here is verified until the next tick re-runs the suite + `tools/verify_g13_selector.mjs` itself.
+Re-checked by tick 24 on this tree: `bash /tmp/run_all.sh` => PASS=72 FAIL=0 at `3cd9425` (+ the uncommitted
+tick-23 test fix).
 Owner: *"animated character selector with the pixel art for the characters."*
 Characters currently exist as mechanical variants on text cards. This needs real character pixel art
 (one sprite each) plus a selection screen that presents them with an idle animation, showing each one's
@@ -2483,3 +2490,140 @@ the matching `task msg_01M2CX1KK3AK257PKAPCR74Y6M from remy:orchestrator` line. 
 
 **NEXT GOAL: N1b item 6** (in flight, correctly addressed now). After it lands and is verified, the
 unblocked queue is G13/G14 or G24/G25 unless the owner answers the Q-slot question, which unlocks N1's ults.
+
+## TICK NOTE 23 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; N1b item 6 VERIFIED + DONE — and one real defect in it found and fixed)
+
+**Goal worked: N1b item 6** (the three mana shop buyables). The tick's job was to verify TICK 22's in-flight
+artifact rather than take a `done:` line on trust. The artifact had landed AND been committed
+(`3cd9425`, "N1b item 6: mana shop buyables (thrifty / well / siphon)", tree clean) — the first tick in this
+stretch where the work arrived already committed, so no uncommitted-work warning applies here.
+
+**WHAT LANDED (read, not assumed).** Three rows after `regen` in `SHOP_UPGRADES` (`src/meta.js:329-334`):
+`thrifty` 350g x1.7 max4 `-10% mana cost/level`, `well` 250g x1.6 max4 `+25 max mana/level`, `siphon`
+500g x1.7 max4 `+0.05 mana/kill/level`. Plumbing: `applyMetaBonuses` gains `manaCostMult` / `maxMana` /
+`manaOnKill` (level 0 exactly neutral, `src/meta.js:644-656`); `skillManaCost` reads `stats.manaCostMult`
+so ONE discount number drives both cost seams (`src/perks.js:133`); the siphon grant sits on the kill seam
+(`src/main.js:1725-1727`), event-based, clamped at maxMana. Three A2 shop icons + art-lint and meta
+expectations updated.
+
+**VERIFIED BY THIS TICK (each number re-run here, on this tree):**
+- `bash /tmp/run_all.sh` => **PASS=72 FAIL=0, three times** (was PASS=71 FAIL=0 as the brief's baseline).
+- `node test/test_shop_mana.mjs` => 8 checks passed (the file had 7 when the builder wrote it; see the fix below).
+- `node tools/verify_skill_keys.mjs` => PASS, 32 measurements.
+- REAL browser, phone viewport (`/tmp/n1b6_browser.mjs`, 390x844 @dpr3): 28 cards, the three rows all
+  `onScreen: true`, and a REAL purchase click takes gold 1000 -> 650 (Thrifty L1, 350g) with `errors: []`.
+  PNG `docs/art/browser-verify-2026-09-12/n1b6-shop-mana-phone.png` (228637 bytes). No vision model on this
+  host (unchanged) — this is geometry + DOM state + a click, never "looks right".
+- **The brief's open question — the item-7 bars for BOTH classes — measured here.** 4x300s pure-AUTO cohorts
+  per class on THIS tree, unowned vs all three rows at max:
+  | class | zeroFrac | spend share | meanMana/maxMana |
+  |---|---|---|---|
+  | KNIGHT baseline | 0.0% | 94.9% | 45.6 / 100 |
+  | KNIGHT buyables | 0.0% | **76.9%** | 74.3 / 200 |
+  | WITCH baseline | 0.0% | 97.4% | 42.8 / 150 |
+  | WITCH buyables | 0.0% | **88.9%** | 62.1 / 250 |
+  So the buyables move the spend share from ABOVE the 70-90% band to INSIDE it for both classes, and
+  `maxMana` grows exactly +100 (Deep Well L4 = +25x4) on top of both the Knight's 100 and the Witch's 150 —
+  the applyCharacter ordering the brief demanded is intact. Two of the four Witch baseline cohorts truncated
+  at the 300s cap, so the Witch numbers are 4 runs with 2 full-length: directional, not tight.
+- The bars are met **when the valve is bought**, which is the design intent (item 1). Level 0 remains exactly
+  neutral, and that is asserted, not asserted-by-comment.
+
+**THE DEFECT THIS TICK FOUND — and fixed test-side, as a FIX, not a feature.** The first suite run of this
+tick came back **FAIL=1, `test/test_shop_mana.mjs`**: `120Hz: 20 kills pay exactly 2.0 of siphon (got
+2.083333333333334)`. Root cause, proven not guessed: `T.startRun()` rolls a RANDOM weather
+(`src/main.js:3666`) and **MOONLIGHT grants a flat `manaRegenFlat: 0.5`** (`src/weather.js:76`); 20 frames
+at 120Hz is exactly 0.5 x (20/120) = 0.0833, the precise size of the error. The old probe subtracted only
+`C.MANA.REGEN * frames / hz`, so a MOONLIGHT run read the weather trickle as siphon income. That made the
+check a ~1-in-8-per-pass flake — the second occurrence of the TICK 10 pattern (a random field event inside a
+dt probe). Fix, in `test/test_shop_mana.mjs` only, no assertion weakened:
+- the 60/120 probe pins `st.weather = initWeather('CLEAR', 7)` and subtracts base regen + the ACTIVE
+  weather's `manaRegenFlat`;
+- the AUTO check pins CLEAR too (it had the same exposure);
+- a NEW check pins MOONLIGHT *on purpose* and asserts 20 scripted kills pay exactly 2.0 at BOTH rates, with
+  `a.wFlat === 0.5` first so the check cannot silently become a no-op. That is what makes the corrected
+  probe provably right rather than merely green — it fails on the old arithmetic and passes on the new.
+The suite then read PASS=72 FAIL=0 on three consecutive runs.
+
+**COULD NOT VERIFY (honest):**
+- No vision model reachable from this host (unchanged, not a new failure): the new shop icons are verified
+  by art-lint + geometry + a real purchase, never by "reading" the PNG.
+- The item-7 cohorts are 4 runs/class, not the 6 the probe defaults to — directional (a 17.9pt / 8.5pt move
+  against a 4.9pt / 2.6pt band edge is well outside noise, but it is 4 runs).
+- `window.close()` still unobservable over CDP (unchanged).
+- Still needing an OWNER call (unchanged, not invented here): the Q-slot question that gates N1's ults, the
+  ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, G5 unmeasured for the arch fix, G6 at x1.28
+  vs the owner's raised x1.6.
+- My doc edit and the test fix are UNCOMMITTED in the working tree — the orchestrator owns commits.
+
+**LOCK / HYGIENE:** acquired at the top of this tick as `subagent:spawnfa` and released at the end, both from
+`/home/claude/projects/hordes`. No worker was killed or restarted; no state outside hordes was touched.
+
+**NEXT GOAL: N1b item 6 is DONE.** The unblocked queue is now G13/G14 (character selector + shop pixel art)
+or G24/G25; N1's ults stay gated on the owner's Q-slot answer. Nothing is in flight.
+
+## TICK NOTE 24 — 2026-09-13 (goal pilot tick, subagent:spawnfa (lock) / subagent:spawnda (session token), agentlock held; G13 DISPATCHED and CONFIRMED RUNNING; queue hygiene + one flag for the owner)
+
+**Goal worked: G13 (the animated character selector).** This tick did recon, briefing, dispatch and hygiene, and
+did NOT implement a feature inline — the slice is a screen plus an animation, so it went to a Hermes-side builder
+as a complete self-contained brief. Nothing is verified about it yet; the tick's own verified facts are below.
+
+**RECON (what the dispatch is actually riding on).** G13 and G14 are mislabelled "not started" in the sense that
+matters least: the A1 art track already AUTHORED both asset sets — `src/art/portraits.js` (CHARACTER_PORTRAITS,
+32x32, **2 idle frames each**, KNIGHT/WITCH/ROGUE/PALADIN) and `src/art/shop_icons.js` (16x16 per SHOP_UPGRADES
+row) — and NEITHER is consumed anywhere: no `src/` file imports `portraits.js` or `shop_icons.js` (only the
+`src/art/index.js` barrel does). So both goals are WIRING, not art authoring. `showCharacters()`
+(`src/main.js:3380`) is still the 0.98-era text-card screen; `showShop()` (`:3350`) is still text rows.
+Home for the fix: `src/main.js` alone (+ a small `index.html` CSS addition), single writer, no conflict.
+
+**DISPATCHED AND CONFIRMED RUNNING (not the tick-22 failure mode).** `msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ` ->
+`cli:glm-hordes-g8` via `hub-worker issue hordes cli:glm-hordes-g8 "$(cat /tmp/g13_task.txt)" --async`, brief
+`docs/briefs/G13_CHARACTER_SELECT.md` (105 lines: house rules, every anchor with line numbers, the do-list, the
+numeric acceptance bar, the out-of-scope list, the report shape). Confirmation, which is the only thing that
+counts: `hub-worker queue cli_glm-hordes-g8` returns `"running": "msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ"` and the worker
+log carries the matching `task msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ from remy:orchestrator` line.
+**Auth gotcha re-confirmed (tick 21 was right, and it bites again):** the ambient session token gets
+`403 forbidden: no write grant on channel 'hordes'`. The working invocation is
+`set -a; . ~/projects/agent-hub/coordinator.env; set +a;` then
+`AGENT_HUB_URL="$HUB_URL" AGENT_HUB_TOKEN="$HUB_TOKEN" AGENT_HUB_PARTICIPANT="$HUB_PARTICIPANT" hub-worker issue ...`
+(`coordinator.env` sets HUB_TOKEN/HUB_PARTICIPANT, not the AGENT_HUB_* names the shim reads).
+
+**QUEUE HYGIENE (an action, stated plainly).** The builder's `queued.json` still listed the two known stale ids
+from ticks 19/21/22 — `msg_01M2CFATF46VSRKXHK5FFN4J26` (a purely informational ack) and
+`msg_01M2CPR11XXDC5FWJAKKYT28SP` (tick 19's N1b item-8 task, whose work is already landed in `34f7614`). Tick 21
+recorded that both are in `seen.json`, so the worker's seen-watermark dedupe already prevented a re-run; this tick
+DROPPED them anyway with the documented tool (`hub-worker cancel <id> --workdir /home/claude/projects/hordes`,
+state `pending`, no worker interrupted, nothing killed or restarted) so the queue reads empty before the new task
+and cannot re-order behind them. That cancel posts two `blocked: <id> cancelled` lines to `#hub` — they are true
+(cancelled as already-complete), not a failure report.
+
+**VERIFIED BY THIS TICK (my own run, on the tree the builder inherits):** `bash /tmp/run_all.sh` => **PASS=72
+FAIL=0** at `3cd9425`. Working tree: `M docs/HORDES_GOALS_2026-09-12.md`, `M test/test_shop_mana.mjs` (tick 23's
+MOONLIGHT fix), plus the untracked `docs/briefs/G13_CHARACTER_SELECT.md` — the orchestrator owns the commits, so
+none were made here.
+
+**COULD NOT VERIFY (honest):**
+- **No G13 artifact exists yet** — the builder started inside this tick. Nothing in this note is evidence about
+  G13 itself; the next tick must re-run the suite x3, `tools/verify_g13_selector.mjs`, the two phone PNGs and the
+  displayed-vs-run kit numbers itself. A `done:` line is a claim, never evidence.
+- No vision model reachable from this host (unchanged): the new screen will be verified by geometry + canvas
+  pixel samples + real taps, never by "reading" the PNG.
+- The item-7 mana bars, G5 (unmeasured for the arch fix), G6 at x1.28 vs the owner's raised x1.6, and the
+  ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict are all unchanged from tick 23.
+- The Q-slot question that gates N1's ults is STILL unanswered by the owner, so the owner-ordered N1 block
+  (three non-Witch ults) remains the top *unstarted* item in this doc while G13/G14 run as the unblocked queue.
+
+**FLAG FOR THE OWNER / ORCHESTRATOR — a source this goals doc does not yet cover.** `docs/FEEDBACK_2026-09-13.md`
+is new: the galaxy Oversight Board print of the PUBLISHED listing, 4 pages, fully extracted, **25 concrete player
+items across 6 players** (CoolRadGamer, Neutral_flower, Akami, incremental_gamer, bazke, CardboardEmpress). It is
+referenced by NO goal here. Several items already map onto landed work (no xp bar, no way to exit a run early, map
+edges, auto-potion in autopilot, tutorial), and G13's kit display was chosen partly because it closes
+Neutral_flower's "I don't see what other character ability after I buy it". But at least these look UNMAPPED and
+need an owner-or-orchestrator triage rather than an invented fix: the wave-end modifier cards DISAPPEARING when
+clicked (so a choice cannot be changed), the tutorial going OFF SCREEN inside the galaxy embed specifically, and
+bazke's "[Q] and [E] by the spell timer" label request (which is N1's own labelling work and should be folded into
+that brief, not duplicated). Recommend a G26 "oversight-board triage" pass; NOT created here, because the
+sequencing/priority call is the owner's.
+
+**NEXT GOAL: verify G13's artifact** (suite x3 + `tools/verify_g13_selector.mjs` + PNGs + kit numbers), then **G14**
+(shop-row pixel icons) — same wiring pattern, same single-writer file, brief not yet written.
