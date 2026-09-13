@@ -1284,11 +1284,24 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(fullD - 2 * halfD) < fullD * 0.25,
     `movement scales with deflection (${fullD.toFixed(1)} ~= 2 x ${halfD.toFixed(1)})`);
   // Full tilt == keyboard speed over the same window.
+  // G20D DIAG2 (temporary): per-frame x deltas of BOTH windows, dumped only on
+  // a mismatch, to locate which frame(s) the extra distance comes from.
+  const joyDeltas = [];
   const kx0 = st.player.x;
   keyHandler({ key: 'ArrowRight' });
-  pump(30);
+  let kPrev = kx0;
+  for (let i = 0; i < 30; i++) {
+    pump(1);
+    joyDeltas.push(+(st.player.x - kPrev).toFixed(4));
+    kPrev = st.player.x;
+  }
   keyUpHandler({ key: 'ArrowRight' });
   const keyD = st.player.x - kx0;
+  if (Math.abs(keyD - fullD) >= 1.5) {
+    console.log('DIAG joykey mismatch: fullD=' + fullD.toFixed(3) + ' keyD=' + keyD.toFixed(3) +
+      ' speed=' + st.player.stats.speed + ' pilotMode=' + st.pilotMode + ' mode=' + st.mode +
+      ' rafLen=' + rafQueue.length + ' keyWindowDeltas=' + JSON.stringify(joyDeltas));
+  }
   assert(Math.abs(keyD - fullD) < 1.5,
     `full tilt equals keyboard speed (joy ${fullD.toFixed(1)} vs key ${keyD.toFixed(1)})`);
 

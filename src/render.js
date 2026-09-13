@@ -1230,8 +1230,8 @@ export class Renderer {
       return s.length * Math.round(valPx * 0.62);
     };
     const valX = 136;
-    const hpTxt = Math.max(0, Math.floor(hp)) + '/' + maxHp;
-    const mpTxt = Math.max(0, Math.floor(p.mana)) + '/' + p.stats.maxMana;
+    const hpTxt = Math.max(0, Math.floor(hp)) + '/' + Math.ceil(maxHp);
+    const mpTxt = Math.max(0, Math.floor(p.mana)) + '/' + Math.ceil(p.stats.maxMana);
     g.font = 'bold ' + valPx + 'px monospace';
     g.textBaseline = 'top';
     const valBox = Math.ceil(Math.max(valTextW(hpTxt), valTextW(mpTxt))) + 4;

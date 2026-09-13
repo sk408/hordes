@@ -82,13 +82,20 @@ import {
 // name, so the emblem, its caption and its condition cannot drift apart.
 import {
   recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
-  earnedCount, totalAchievements,
+  earnedCount, totalAchievements, isEarned,
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon } from './art/index.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
   challengeRules, nextChallengeId, describeChallenge,
 } from './challenges.js';
+// G20a STAGES — the third axis (the PLACE): pool/mods/hazard rows stamped onto
+// the run exactly like challenges are. Same purity contract, same session-
+// scoped pending selection, nothing persisted.
+import {
+  DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
+  nextStageId, describeStage, lockedStageLines,
+} from './stages.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -232,6 +239,9 @@ const state = {
   // the mode's rules impose, defaulting to the constants a STANDARD run uses,
   // so every consumer below can read them unguarded.
   challenge: 'STANDARD',
+  // G20a STAGES — run-scoped, reset in startRun. `stage` is the selected
+  // stage's id (never persisted); the spawn seam reads it every spawn.
+  stage: 'VERDANT_HOLLOW',
   weaponCap: 6,      // rule ceiling on weaponSlots (ONE_WEAPON: 1)
   potionCap: 3,      // rule ceiling on carried potions (NO_POTIONS: 0)
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
@@ -477,16 +487,21 @@ function runController(p, dt, am) {
 // Wave = floor(t/30). Swarmers from the start (in packs), brutes from wave 2,
 // spitters/warlocks from wave 3, colossi rarely from wave 5; elites (any type)
 // ~5% after 60s (guaranteed chest). Palette variants roll per spawn.
+// G20a: the ONE spawn seam. The live stage's pool resolves through the SAME
+// shipped wave gates (C.SPAWNER.<TYPE>_WAVE, read live — no restated table),
+// in pool order, with the same weighted walk and the same 'CHASER' fallback.
+// The default stage's pool IS the shipped table in the shipped order, so a
+// default run draws byte-identically to the pre-stage chooser (pinned by
+// test/test_stages.mjs). For any stage the gates still apply: a COLOSSUS
+// entry cannot surface at wave 1 even if a pool carries its weight.
 function pickSpawnType(wave) {
   const S = C.SPAWNER;
-  const entries = [['CHASER', S.CHASER_WEIGHT]];
-  if (wave >= S.SWARMER_WAVE) entries.push(['SWARMER', S.SWARMER_WEIGHT]);
-  if (wave >= S.BRUTE_WAVE) entries.push(['BRUTE', S.BRUTE_WEIGHT]);
-  if (wave >= S.DASHER_WAVE) entries.push(['DASHER', S.DASHER_WEIGHT]);
-  if (wave >= S.SPITTER_WAVE) entries.push(['SPITTER', S.SPITTER_WEIGHT]);
-  if (wave >= S.WARLOCK_WAVE) entries.push(['WARLOCK', S.WARLOCK_WEIGHT]);
-  if (wave >= S.TICK_WAVE) entries.push(['TICK', S.TICK_WEIGHT]);
-  if (wave >= S.COLOSSUS_WAVE) entries.push(['COLOSSUS', S.COLOSSUS_WEIGHT]);
+  const gate = (id) => S[id + '_WAVE'];
+  const entries = [];
+  for (const [id, w] of stageOf(state.stage).pool) {
+    const g = gate(id);
+    if (g === undefined || wave >= g) entries.push([id, w]);
+  }
   let r = Math.random() * entries.reduce((s, e) => s + e[1], 0);
   for (const [id, w] of entries) { if ((r -= w) < 0) return id; }
   return 'CHASER';
@@ -512,13 +527,36 @@ function escalate(e, t = state.time) {
   return e;
 }
 
+// G20C: the ONE implementation of the stage stamp. Stage stat mods stamp LAST,
+// on the fully-escalated, elite- and rarity-stamped foe — a hpMult 1.5 stage
+// produces exactly 1.5x the hp the same spawn would have on the default stage.
+// A stage may omit a dial entirely: missing means 1.0 (|| 1), never
+// undefined-through-math. The PRE-stage hp is recorded first so chest
+// eligibility (chests.isEliteish) can read the stage-independent value — a
+// stage hpMult must not make every plain foe read elite-ish.
+// Called from the trunk spawn seam (spawnWave) AND at every non-trunk spawn
+// site (the chest punishment horde via the post-tick re-base, boss act.summon,
+// boss act.ring) so the stamp is universal: NO foe joins the field unstamped.
+function stampStageStats(stateArg, e) {
+  const sm = stageMods(stateArg.stage);
+  e.preStageMaxHp = e.maxHp;
+  const mHp = sm.hpMult || 1, mSpd = sm.speedMult || 1;
+  if (mHp !== 1) { e.hp *= mHp; e.maxHp = e.hp; }
+  if (mSpd !== 1) e.speed *= mSpd;
+  return e;
+}
+
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
   state.spawnTimer -= dt;
   if (state.spawnTimer > 0) return;
   // WAVE-9: heat speeds the spawn clock (interval / spawnRate).
+  // G20a: a stage spawnMult < 1 slows the same clock (guarded — the default
+  // stage divides by exactly 1.0, byte-identical to today).
+  const sm = stageMods(state.stage);
   const interval = Math.max(0.25,
-    (C.ENEMY.SPAWN_INTERVAL - state.time * 0.008) / heatMultipliers(heatOf(state)).spawnRate);
+    (C.ENEMY.SPAWN_INTERVAL - state.time * 0.008) /
+    (heatMultipliers(heatOf(state)).spawnRate * (sm.spawnMult || 1)));
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
@@ -529,17 +567,32 @@ function spawnWave(dt) {
   // chance gets the ladder's ceiling for that wave, so a long run keeps
   // producing events instead of only more bodies.
   const surge = ladderBeats(state.wave.num).surge;
-  const eliteChance = surge
+  let eliteChance = surge
     ? Math.max(ladderEliteChance(state.time), C.LADDER.ELITE_MAX)
     : ladderEliteChance(state.time);
+  // G20a hazard: an eliteRate stage bumps the SAME spawn-time elite chance
+  // additively (capped at 1) — no new spawn code, the existing roll reads a
+  // slightly higher number. Default stage: no hazard, no change.
+  const hz = stageOf(state.stage).hazard;
+  if (hz && hz.kind === 'eliteRate') eliteChance = Math.min(1, eliteChance + hz.add);
   const wave = Math.floor(state.time / 30);
   for (let i = 0; i < groups; i++) {
     const a = Math.random() * Math.PI * 2;
-    const d = C.ENEMY.SPAWN_DIST * (0.85 + Math.random() * 0.3);
+    // G20a hazard: a spawnBand stage squeezes the SAME SPAWN_DIST draw by its
+    // ring factor (default stage: no hazard, no change).
+    const d = C.ENEMY.SPAWN_DIST * (0.85 + Math.random() * 0.3) *
+      (hz && hz.kind === 'spawnBand' ? hz.ring : 1);
     const typeId = pickSpawnType(wave);
     // TICK pops in latches of TICK_PACK (packSize lives in hb4's module and
     // ticks don't set one); everything else uses its own packSize hint.
-    const pack = typeId === 'TICK' ? C.SPAWNER.TICK_PACK : (ENEMY_TYPES[typeId].packSize || 1);
+    // G20a: a stage packMult scales the pop (rounded, min 1); the default
+    // stage multiplies by exactly 1.0. G20b hazard: a packBurst stage
+    // multiplies the SAME expression by its burst — one more factor on the
+    // existing pack site, no new spawn code.
+    const pack = Math.max(1, Math.round(
+      (typeId === 'TICK' ? C.SPAWNER.TICK_PACK : (ENEMY_TYPES[typeId].packSize || 1)) *
+      (sm.packMult || 1) *
+      (hz && hz.kind === 'packBurst' ? hz.burst : 1)));
     for (let j = 0; j < pack; j++) {
       const pa = a + (j - (pack - 1) / 2) * 0.12;
       const elite = state.time >= C.SPAWNER.ELITE_TIME &&
@@ -575,6 +628,10 @@ function spawnWave(dt) {
       if (effTier !== 'COMMON') {
         recordEncounter(profile, 'tier:' + effTier, { wave, at: state.time, tier: effTier });
       }
+      // G20a/G20C: stage stat mods stamp LAST, on the fully-escalated, elite-
+      // and rarity-stamped foe — the ONE shared stampStageStats (see its
+      // comment) now also records preStageMaxHp for chest eligibility.
+      stampStageStats(state, e);
       state.enemies.push(e);
     }
   }
@@ -1391,7 +1448,11 @@ function update(dt) {
   // (decideBossAction) whose extra intents — fan / summon / nova / teleport /
   // charging / recovering — are wired below; the old generic novaCd/summonCd
   // timers are gone (Pyraxis and the Choir Mother own those behaviors now).
-  const dmgMult = ladderDmg(Math.floor(state.time / 30)) * heatMultipliers(heatOf(state)).damage;
+  // G20a: a stage's dmgMult rides the SAME threat curve every enemy-damage
+  // path below already multiplies (projectiles, novas, contact) — one seam,
+  // guarded so the default stage (1.0) is byte-identical.
+  const dmgMult = ladderDmg(Math.floor(state.time / 30)) *
+    heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1);
   // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
   // every damage path stamps the source right before die() can fire.
   const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
@@ -1485,6 +1546,8 @@ function update(dt) {
           e.x + Math.cos(ang) * edge, e.y + Math.sin(ang) * edge,
           state.time, { variant: rollVariant(act.summon.type) });
         escalate(m, state.time);
+        // G20C: boss minions carry the stage stamp like every trunk spawn.
+        stampStageStats(state, m);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 20, age: 0, ttl: 0.3 });
@@ -1502,6 +1565,8 @@ function update(dt) {
           state.time, { variant: rollVariant(act.ring.type) });
         m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
         escalate(m, state.time);
+        // G20C: the cage pillars carry the stage stamp like every trunk spawn.
+        stampStageStats(state, m);
         state.enemies.push(m);
       }
       state.effects.push({ kind: 'boss_nova', x: p.x, y: p.y, radius: act.ring.radius, age: 0, ttl: 0.5 });
@@ -1773,7 +1838,11 @@ function update(dt) {
   // different event kind (chestExpired), so a despawned chest never counts.
   for (const ev of chestEvents) if (ev.kind === 'chestOpened') state.runCounts.chests++;
   if (chestPre && chestEvents.some(ev => ev.kind === 'gambleHorde' || ev.kind === 'hordeBait')) {
-    for (const e of state.enemies) if (!chestPre.has(e)) escalate(e, state.time);
+    // G20C: re-base onto the ladder AND the stage stamp — the punishment horde
+    // used to join at default-stage hp on every stage (measured: 6 unstamped
+    // 12hp CHASERs on SNOWFIELD, GAMBLE_HORDE_COUNT exactly). chests.js's own
+    // rng draw order stays byte-identical — the stamp happens here, after.
+    for (const e of state.enemies) if (!chestPre.has(e)) stampStageStats(state, escalate(e, state.time));
   }
   for (const ch of state.chests) {
     const dx = p.x - ch.x, dy = p.y - ch.y;
@@ -2357,10 +2426,15 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
   const goal = nextUnlockWithinReach(profile);
   // G11: a challenge result must be distinguishable from a clean clear — the
   // mode is the LEAD line's first clause, and only when non-standard (a
-  // STANDARD run renders byte-identically to today).
+  // STANDARD run renders byte-identically to today). G20a: a non-default
+  // stage gets its own clause beside it (same rule: the default stage renders
+  // byte-identically to today).
   let html = !isStandard(state.challenge)
     ? `<span class="cause">${challengeOf(state.challenge).name} RUN</span><br>` + lead
     : lead;
+  if (!isDefaultStage(state.stage)) {
+    html = `<span class="cause">${stageOf(state.stage).name}</span><br>` + html;
+  }
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · purse ${profile.gold}</span>`;
@@ -2624,6 +2698,34 @@ let pendingChallenge = DEFAULT_CHALLENGE_ID;
 function cyclePendingChallenge() {
   pendingChallenge = nextChallengeId(pendingChallenge);
   return pendingChallenge;
+}
+
+// ---------- G20a: the pending stage (SESSION-scoped, never persisted) --------
+// Mirror of the challenge pattern: the title screen's STAGE card cycles this,
+// startRun() stamps it onto run-scoped state.stage, and nothing is written to
+// the profile or storage — a reload returns to VERDANT HOLLOW. The gate is an
+// EXISTING achievement id read through achievements.isEarned on the live
+// profile; locked stages are skipped by the cycler entirely.
+let pendingStage = DEFAULT_STAGE_ID;
+function stageUnlocked(id) {
+  const s = stageOf(id);
+  return !s.unlock || isEarned(profile, s.unlock.achievementId);
+}
+function cyclePendingStage() {
+  pendingStage = nextStageId(pendingStage, stageUnlocked);
+  return pendingStage;
+}
+// The title card's sub-line: the live selection first, then the plain-word
+// requirement for stages still locked on THIS profile. G20b: with an
+// 8-stage ladder the full locked list no longer fits a 390px phone card, so
+// the card names the FIRST TWO (the next rungs on the ladder) and counts the
+// rest — lockedStageLines() still emits every line for tests.
+function stageCardSub() {
+  const locked = lockedStageLines(stageUnlocked);
+  const head = locked.slice(0, 2).join(', ');
+  const more = locked.length > 2 ? ' +' + (locked.length - 2) + ' more' : '';
+  return describeStage(pendingStage) +
+    (locked.length ? ' · locked: ' + head + more : '') + ' · press to change';
 }
 
 // ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
@@ -3323,6 +3425,12 @@ function showTitle() {
   // run BEFORE the player commits to it.
   menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
     () => { cyclePendingChallenge(); showTitle(); });
+  // G20a: the stage selector rides the SAME title menu (no new screen mode) —
+  // same cycling-card pattern as CHALLENGE above: the press cycles the
+  // session's pending stage through UNLOCKED rows only and re-renders so the
+  // card always names the CURRENT selection plus what unlocks the rest.
+  menuCard('STAGE', stageCardSub(),
+    () => { cyclePendingStage(); showTitle(); });
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   // G12 DO 2: EXIT GAME is the LAST card.
@@ -3467,7 +3575,7 @@ function pilotKit(id) {
 
 function kitPanelHtml(kit) {
   const lines = [
-    `HP: ${kit.baseHp} base -> ${kit.maxHp}`,
+    `HP: ${Math.round(kit.baseHp)} base -> ${Math.round(kit.maxHp)}`,
     `MANA: ${kit.maxMana} max · spells cost x${kit.spellCostMult}`,
     `SPEED: x${kit.speedMult}`,
     `STARTS: ${kit.weapon} · ${kit.potions} potion${kit.potions === 1 ? '' : 's'}`,
@@ -3741,6 +3849,9 @@ function startRun() {
   // (slot growth x2, potion pickup, chest potions) read the caps, never the
   // constants, for the mode.
   state.challenge = pendingChallenge;
+  // G20a: the run knows its stage — stamped beside the challenge, reset the
+  // same way (the declaration above + this stamp = the full run-scoped reset).
+  state.stage = pendingStage;
   refreshHints();   // G11: the hints line names the live mode (swapPilotMode early-returns on same-mode runs)
   const rules = challengeRules(state.challenge);
   state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
@@ -4935,8 +5046,8 @@ function hudTextBlock(p) {
   // WAVE-25 FIX (audit 2.11): the readout is clamped at 0 to match the clamped
   // bar fill above — an unclamped Math.ceil(p.hp) printed e.g. "HP [---] -3/130"
   // on a live death screen.
-  return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${p.stats.maxHp}\n` +
-    `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${p.stats.maxMana}\n` +
+  return `HP  [${'#'.repeat(filled)}${'-'.repeat(bars - filled)}] ${Math.max(0, Math.ceil(p.hp))}/${Math.ceil(p.stats.maxHp)}\n` +
+    `MAN [${'#'.repeat(mFilled)}${'-'.repeat(bars - mFilled)}] ${Math.floor(p.mana)}/${Math.ceil(p.stats.maxMana)}\n` +
     // WAVE-28: the skill letters are the UNIVERSAL ones (Q / E) so this line
     // agrees with the touch buttons and the hint lines — `W` is AUTO-only
     // (in MANUAL it is held 'up'; main.js keyMap maps `e` to the act in BOTH
@@ -5521,6 +5632,21 @@ export const __TEST = {
     get live() { return state.challenge; },
     get weaponCap() { return state.weaponCap; },
     get potionCap() { return state.potionCap; },
+  },
+  // ---- G20a stage seam: the pending (session-scoped) selection, the cycle
+  // the title card drives (through the REAL lock predicate on the LIVE
+  // profile), the lock predicate itself, and the live run's stamp — same
+  // shape as the challenge seam. `select` is test-only.
+  stages: {
+    get pending() { return pendingStage; },
+    cycle: cyclePendingStage,
+    unlocked: stageUnlocked,
+    select: (id) => { pendingStage = stageOf(id).id; },
+    get live() { return state.stage; },
+    cardSub: stageCardSub,
+    // The spawn seam itself, so a headless test can prove stage-0 parity and
+    // the mod/gate behaviour through the REAL chooser, not a restated copy.
+    pickSpawnType, spawnWave,
   },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },

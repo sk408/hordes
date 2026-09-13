@@ -96,7 +96,14 @@ function sample(arr, n, rng) {
 export function isEliteish(enemy) {
   if (!enemy) return false;
   if (enemy.elite) return true;
-  return enemy.maxHp >= C.ENEMY.BASE_HP * CHESTS.ELITE_HP_MULT;
+  // G20C: read the PRE-stage hp. The test used to read the stage-stamped
+  // maxHp, so on a hpMult 1.5 stage (SNOWFIELD) EVERY plain CHASER read
+  // elite-ish and the whole chest economy leaked open (measured: 22/25
+  // 900-frame cohorts opened chests vs 0/25 on the default stage).
+  // spawnWave's stampStageStats records preStageMaxHp on every spawn; the
+  // fallback keeps the default stage byte-identical (preStage === max there).
+  const hp = enemy.preStageMaxHp ?? enemy.maxHp;
+  return hp >= C.ENEMY.BASE_HP * CHESTS.ELITE_HP_MULT;
 }
 
 // Called per enemy kill. Returns the spawned chest or null.

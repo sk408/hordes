@@ -205,6 +205,24 @@ const assertWindowClean = (pin, label) => {
   assert.equal(p.stats.damage, pin.dmg, label + ': no stat leaked into the window');
   assert.deepEqual(p.potions, pin.potions, label + ': nothing extra was collected in the window');
 };
+// HERMETICITY - WALL CLOCK. The WAVE-11 flash drop gates on performance.now()
+// (src/main.js shouldFlashDrop(..., performance.now(), state.lastFlashAt, ...)),
+// so whether it fires depends on real elapsed time. When it fires it mass-kills
+// SWARMER/CHASER trash, that XP levels the player up, and levelUp() grows
+// p.stats.maxHp AND heals p.hp - while every probe below measures its loss as
+// (maxHp - hp). A level-up inside the probe frame therefore moves both ends of
+// that subtraction and reads 0.00 damage, which is how this test flaked at
+// ~10% (measured 3/30 here; 0/30 with the clock frozen). The harness drives dt
+// itself via setFrameMs, so freezing performance.now() only removes the
+// wall-clock input from game logic - assertions are unchanged.
+const frozenClock = (fn) => {
+  const real = performance.now;
+  const fixed = real.call(performance);
+  Object.defineProperty(performance, 'now', { configurable: true, value: () => fixed });
+  try { return fn(); } finally {
+    Object.defineProperty(performance, 'now', { configurable: true, value: real });
+  }
+};
 const contactLoss = () => {
   quiet();
   p.hp = p.stats.maxHp; p.invuln = 0;
@@ -212,7 +230,7 @@ const contactLoss = () => {
   st.enemies.push(hostile('CHASER', p));
   assert.deepEqual(flashTargets(st.enemies), [],
     'the contact probe field holds nothing the flash drop can reap');
-  h.pump(1, quiet);
+  frozenClock(() => h.pump(1, quiet));
   assertWindowClean(pin, 'contact probe');
   return p.stats.maxHp - p.hp;
 };
@@ -221,7 +239,7 @@ const shotLoss = () => {
   p.hp = p.stats.maxHp; p.invuln = 0;
   const pin = windowPins();
   st.enemyShots.push({ x: p.x, y: p.y, vx: 0, vy: 0, damage: 20, age: 0, kind: 'spit', src: {} });
-  h.pump(1, quiet);
+  frozenClock(() => h.pump(1, quiet));
   assertWindowClean(pin, 'shot probe');
   return p.stats.maxHp - p.hp;
 };
@@ -230,7 +248,7 @@ const drainLoss = (frames = 30) => {
   p.hp = p.stats.maxHp; p.invuln = 999;   // the drain ignores invuln by design
   const pin = windowPins();
   st.enemies.push(hostile('TICK', p));    // latches inside attachDist and bleeds
-  h.pump(frames, quiet);
+  frozenClock(() => h.pump(frames, quiet));
   assertWindowClean(pin, 'drain probe');
   return p.stats.maxHp - p.hp;
 };

@@ -278,7 +278,11 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   // selection, so a coachmark adds nothing. An exemption is a list entry with
   // a reason, never a deleted assertion: a card that is neither taught nor
   // listed here still fails.
-  const DISCOVERY_EXEMPT = ['CHALLENGE'];
+  // G20a: STAGE joins the same exemption for the same reason — it is the
+  // CHALLENGE card's exact pattern (a cycling selector whose sub-line names
+  // the live selection and, when stages are locked, says what unlocks them),
+  // so a coachmark would repeat the card's own text.
+  const DISCOVERY_EXEMPT = ['CHALLENGE', 'STAGE'];
   const seen = [];
   for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
     seen.push(tipOf()._html);

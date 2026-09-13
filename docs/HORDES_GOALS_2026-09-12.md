@@ -503,7 +503,7 @@ Characters currently exist as mechanical variants on text cards. This needs real
 (one sprite each) plus a selection screen that presents them with an idle animation, showing each one's
 kit. Requires authoring the art, not just layout: integer pixels, the game's palette, no smoothing.
 
-### G14 — PIXEL ART FOR EVERY SHOP  [status: IN PROGRESS 2026-09-13 — DISPATCHED by TICK NOTE 25, task `msg_01M2D3GDG9VSPBVTC520E9XSQF` to `cli:glm-hordes-g8`, brief `docs/briefs/G14_SHOP_ICONS.md`; CONFIRMED RUNNING, no artifact yet]
+### G14 — PIXEL ART FOR EVERY SHOP  [status: DONE 2026-09-13 — VERIFIED BY TICK NOTE 26 on the COMMITTED artifact (`44393f9` + the `87a8e13` tooling follow-up, clean tree): suite PASS=72 FAIL=0 twice; `node tools/verify_g14_shop_icons.mjs` => PASS (27/27 shop rows render their authored 16x16 icon at integer 2x, every one painted non-empty, the fallback paints, row text unchanged, a REAL tap buys at exactly -150g, a MAXED row does not buy, chrome off); PLUS the pilot own real-browser phone capture (1170x2532 = 390x844 @dpr3) pixel-read back row by row - all 10 on-screen icons showed 4-6 distinct colours with 13-23 of 25 sampled points non-background. See TICK NOTE 26]
 Owner: *"all the shops get a pixel art upgrade."* Shop rows are currently text cards; each upgrade/
 weapon/elite entry should carry its own pixel-art icon so shopping reads as a designed screen.
 
@@ -730,7 +730,7 @@ own working assumption, so it is corrected here rather than quietly edited:
 - Validation: VS completionist mean **56.6h** (n=861), Megabonk **59.5h** (n=37) — our 60h is normal. Our
   run COUNT was the outlier, not the hours.
 
-**G20 — PLAYER-SELECTED STAGES + A MODIFIER AXIS.** 6-8 selectable stages (VS ships ~27; Megabonk 3 maps x
+**G20 — PLAYER-SELECTED STAGES + A MODIFIER AXIS.** [status: SLICES 1+2 DONE + G20C FIX VERIFIED 2026-09-13 (tick 32: probe flake 0/25, unstamped foes 0/25, SNOWFIELD chests 38->2 over 25 cohorts, test_stages 33/33, REAL-browser PASS 8/8 rungs at 390x844 @dpr3, PNG 1170x2532); G20D DISPATCHED (msg_01M2DJCP10HHDD75D774T9JVBM, builder cli:glm-hordes-g8, brief docs/briefs/G20D_PROBE_HARDENING.md) to make the suite green BY CONSTRUCTION — the SYSTEM + the full 8-stage ladder. Slice 1 (the system + VERDANT HOLLOW / ASHEN WASTE / SNOWFIELD) VERIFIED BY TICK NOTE 28. SLICE 2 (stages 4-8) LANDED AND VERIFIED BY TICK NOTE 30: suite PASS=73 FAIL=0 x2 (plus one known ~10% probe flake, named there), test_stages 30/30, REAL-browser PASS over all 8 rungs at 390x844 @dpr3, 8/8 per-stage maxHp, PNG 1170x2532. REMAINS OPEN (deliberate, delegated): per-stage item/reward pools (G17 owns the economy call), and the Hyper/Inverse/Endless modifier axis — deliberately NOT duplicated, heat.js (G24) and challenges.js (G11) already own the difficulty and rule axes.] G20C DISPATCHED 2026-09-13 (msg_01M2DG6525FAF2TBQ3034CCDM5, builder cli:glm-hordes-g8, brief docs/briefs/G20C_STAGE_STAMP_CONSISTENCY.md): the stage stat stamp is NOT universal — the chest punishment horde and boss summon/ring spawn unstamped, and chest eligibility reads the STAMPED hp (measured: 17/25 SNOWFIELD cohorts open chests vs 0/25 on the default stage). See TICK NOTE 31. 6-8 selectable stages (VS ships ~27; Megabonk 3 maps x
 3 tiers), each with 2-3 modes/tiers. Use the cheap "modifier-on-arena" model: reuse geometry, swap the
 enemy pool, apply per-stage stat modifiers, retint, add ONE signature hazard. Per-stage ITEM/REWARD POOLS
 are what make stage choice a build decision. Gate stages by achievement-style unlocks (reach level X,
@@ -2649,3 +2649,460 @@ sequencing/priority call is the owner's.
 - Unchanged from tick 24: the item-7 mana bars, G5 (unmeasured for the arch fix), G6 at x1.28 vs the owner's raised x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the unanswered Q-slot question gating N1's ults, and the `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended G26; NOT created, the priority call is the owner's).
 
 **NEXT GOAL: verify G14's artifact** (suite x3 + `tools/verify_g14_shop_icons.mjs` + `tools/verify_g13_selector.mjs` regression + PNG), then the next unblocked queue item.
+
+## TICK NOTE 26 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; G14 VERIFIED + DONE; next goal named)
+
+**Goal worked: G14 (pixel icons on every shop row).** Tick 25 dispatched it; this tick verified the landed artifact itself - no feature written inline, no builder report trusted.
+
+**VERIFIED BY THIS TICK, on the COMMITTED tree (clean working tree at `87a8e13`).**
+- `bash /tmp/run_all.sh` => **PASS=72 FAIL=0 twice** (and see the flake flag below).
+- `node tools/verify_g14_shop_icons.mjs` => **PASS**: the seam report shows 27 rows, every one a 16x16 backing at `cssPx 32 / scale 2` with non-empty painted pixels (163..196 of 256); `__fallback` paints 152; a REAL tap bought "Forged Edge" at exactly -150g (6324 -> 6174, LV 1/5) and a REAL tap on the pre-maxed Thrifty (LV 4/4) did not move gold; row text unchanged; chrome stays off.
+- **Independent visual half, done by this tick, because no vision tool is exposed to this cron session**: `tools/browser.mjs` booted the real game at 390x844 @dpr3, tapped SHOP, and the pilot read pixels back (`readShot`) from BOTH its own fresh capture (`/tmp/hordes-shots/g14-pilot-phone.png`, 1170x2532) and the committed `docs/art/browser-verify-2026-09-12/g14-shop-icons-phone.png`. Own capture: all 10 on-screen icons sampled on a 5x5 grid inside each icon rect => 4-6 distinct colours each, 13-23 of 25 points NOT the card/page background (card `20,20,31`, page `6,6,11`). That is the screenshot half of the plan's rule met with real pixels, not a code claim.
+- Committed PNG: 1170x2532 (390x844 @dpr3) with palette icon colours on the icon column (e.g. `47,122,63`, `168,168,192`) - not a blank frame. **Could NOT align it row-for-row** to my live DOM rects (the verifier seeds a different profile/scroll), so the per-row proof above comes from the pilot's own capture; flagged rather than fudged.
+
+**FLAKE FOUND (not waived).** The first suite run of this tick came back **PASS=71 FAIL=1, `test/test_perks.mjs`**. It then passed 3/3 standalone and in 2/2 full-suite runs (6 green observations). Cause is structural, not G14: the test drives `openDraft()` and measures that a skill card is offered, and the offer is a weighted random roll (~0.032/roll), so a single unlucky roll can fail it. Same failure class as the documented `test_encounters` flake. NOT weakened, NOT retargeted - recorded for the owner: `test_perks` is a probabilistic assertion and will occasionally go red on a correct build.
+
+**COULD NOT VERIFY (honest).**
+- No vision model is reachable from THIS cron session (no vision tool in the catalog), so the PNG read above is a pixel-sample read, not a semantic "does it look like a shop" read. Whoever has vision still owes that glance.
+- The brief said 29 icons; the live `SHOP_UPGRADES` table is 27 rows and all 27 are covered - the two extra art entries are the STARTER_WEAPONS, which have no shop row. Not a gap.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the unanswered Q-slot question gating N1's ults, and the `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended as G26 - the priority call is the owner's).
+
+**NEXT GOAL: N1 is now the only goal with OPEN items** (the three non-Witch class identity ults, plus N1b's remaining items 1-5 and 7). G14 closes the G13/G14 pair. N1 is a FEATURE slice, so the next tick must dispatch it as a complete self-contained brief (paths + anchors + numeric bar) to a hub builder rather than writing it inline.
+
+## TICK NOTE 27 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held then handed to the builder; G20 SLICE 1 (G20a) DISPATCHED and CONFIRMED RUNNING; one open-item finding for G24)
+
+**Goal worked: G20a - PLAYER-SELECTED STAGES, slice 1 (the system + 3 stages).** N1 (the owner-ordered
+block) is now DOWN TO the three non-Witch ults, which remain gated on the owner's unanswered Q-slot
+question (where FROST_NOVA lives once Q becomes the class ult) - flagged for the NINTH tick, NOT invented
+here. With N1's residual blocked and the ranked queue's earlier entries (G8, G10/G23, G11, G12, G13/G14)
+all DONE, G20 is the next unblocked item in the ranked queue, so this tick briefed and dispatched it.
+
+**RECON THIS TICK (all read from the tree, line numbers are current at `87a8e13`):**
+- `pickSpawnType(wave)` (`src/main.js:480-493`, called at `:539`) is the ONE enemy-type chooser - weights
+  from `C.SPAWNER`, gated by the `*_WAVE` thresholds. That is the single seam a stage pool must ride.
+- The retint axis already exists: `CONFIG.GROUND.THEMES` (`src/config.js:310-330`, 5 authored themes,
+  wave-driven via `groundTheme()`, drawn in `render.js:1703+`). Stages pick a theme INDEX; no new palettes.
+- The selector pattern already exists: the title menu's cycling CHALLENGE card (`src/main.js:3320-3324`),
+  its session-scoped `pendingChallenge` + `nextChallengeId()` (`:2623-2626`) and the ONE application seam
+  in `startRun` (`:3743`). `src/challenges.js:1-45` is the module template (pure, nothing persisted).
+- Gates can use REAL achievement ids only (`src/achievements.js:62-104`) through `isEarned`
+  (`src/achievements.js:219`). No new persisted field, no schema bump - same contract as challenges.js.
+- Enemy ids available to a pool: `CHASER, SWARMER, BRUTE, SPITTER, DASHER, WARLOCK, TICK, COLOSSUS`
+  (`src/enemy_types.js:37-154`; PILLAR is scenery, never spawnable).
+
+**DISPATCHED AND CONFIRMED RUNNING (not merely queued).** `msg_01M2D7GM7HKGRY1MX0FBXDT17K` ->
+`cli:glm-hordes-g8`, brief `docs/briefs/G20_STAGE_SELECT.md` (self-contained: house rules, every anchor
+above with line numbers, the 3 stages and their required MECHANICS, the parity bar, the out-of-scope
+list, the report shape), task text `/tmp/g20_task.txt`. Confirmation, which is the only thing that
+counts: `hub-worker queue cli_glm-hordes-g8` returns `"running": "msg_01M2D7GM7HKGRY1MX0FBXDT17K"`.
+SCOPE CALL MADE EXPLICITLY, and it is the pilot's, not the owner's: this slice is the SYSTEM + 3 stages;
+stages 4-8 are a data-only follow-up, per-stage item/reward pools are deferred to G17 (economy), and the
+Hyper/Inverse/Endless MODIFIER axis is NOT duplicated because `src/heat.js` (G24) and `src/challenges.js`
+(G11) already own the difficulty and rule axes. The brief forbids stage gold multipliers for that reason.
+
+**QUEUE HYGIENE.** The builder's queue still listed tick 25's G14 task `msg_01M2D3GDG9VSPBVTC520E9XSQF`
+(its work is landed and verified: `44393f9`). Dropped with the documented tool
+(`hub-worker cancel ... --workdir /home/claude/projects/hordes`, state `pending`, no worker interrupted)
+so the new task could not queue behind it. The cancel posts a `blocked: ... cancelled` line to `#hub`;
+that line is true (cancelled as already-complete), not a failure report.
+
+**VERIFIED BY THIS TICK, on the tree the builder inherits (my own run, not a report):**
+- `bash /tmp/run_all.sh` => **PASS=72 FAIL=0** (`/tmp/suite_tick27.log`), at `87a8e13` with a CLEAN src/
+  tree: `md5sum src/main.js` = `29eed06b86b4da7b5a3ccd7ea64d2145` before AND after the suite run, no
+  file under `src/` modified during it, so the measurement is of the committed tree.
+- Working tree carried into the builder: `M docs/HORDES_GOALS_2026-09-12.md`, `M docs/art/.../g14-shop-icons-phone.png`
+  (the pilot's own phone capture from tick 26), `?? docs/briefs/G20_STAGE_SELECT.md`. No src/ modification,
+  so the builder starts from a clean source tree. The orchestrator owns all commits.
+
+**OPEN-ITEM FINDING - G24 LOOKS ALREADY BUILT, and it is recorded as a code read, not a measured pass.**
+G24's bar is "Heat must visibly PAY MORE, not just bite harder". `src/heat.js` (WAVE-9/A) already carries
+`HEAT_CURVES.GOLD: 0.30` applied through `goldMult()` at the ONE settlement funnel
+(`src/main.js:2459`, `settleRunGold`), with the in-run RAISE THE STAKES card at `src/main.js:738-747`
+naming the multiplier it grants, and `test_heat.mjs` / `test_heat_ledger.mjs` already exist. So G24's
+build half appears landed before the goals doc was written, and its "status: open" marker is likely
+stale - the same class of stale marker as G2/G3. NOT flipped here: the honest close is a measurement
+(cohort gold with vs without manual heat), and this tick spent its budget on G20a. Recommend the next
+free tick close G24 with a before/after cohort OR downgrade its marker with that caveat.
+
+**COULD NOT VERIFY (honest):**
+- **No G20a artifact exists yet** - the builder started inside this tick. Nothing above is evidence about
+  G20 itself: the next tick must re-run suite x3, `test/test_stages.mjs` standalone, `tools/verify_g20_stages.mjs`,
+  the phone PNG at 1170x2532, and the stage-0 PARITY numbers, itself.
+- **No vision model is reachable from this host** (unchanged): the stage select is verifiable by geometry,
+  DOM state, canvas pixel samples and real taps only. A semantic "does the stage read as a different place"
+  glance is still owed by whoever has vision.
+- G24's pay-more half is a CODE READ (three cited sites), not a measured cohort - see above.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the
+  owner's x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK
+  (blocked on a design call: no achievement names a specific enemy), and the `docs/FEEDBACK_2026-09-13.md`
+  25-item oversight-board triage (recommended as G26 - the priority call is the owner's).
+- **LOCK HYGIENE, stated plainly because this tick did something the earlier ones did not:** the lock was
+  acquired at the top of the tick as `subagent:spawnfa`, and then **RELEASED EARLY, at 11:13:05Z, before
+  this tick's suite run**, because the brief the builder received requires it to take the lock before
+  editing and to STOP if it finds it HELD - holding it through the end of the tick would have had the
+  builder self-cancel. Verified `state: FREE` at release. The builder then holds it for its own edit
+  window; the doc edit above is docs-only and outside the builder's file set.
+
+**NEXT GOAL: verify G20a's artifact** (suite x3 + `test_stages.mjs` + `tools/verify_g20_stages.mjs` +
+the PNG + the stage-0 parity numbers), then either close G24 with a measured cohort or start G21.
+
+## TICK NOTE 28 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; G20a VERIFIED + DONE — the builder report was NOT trusted, every number below was re-run here)
+
+**Goal worked: G20a (player-selected stages, slice 1: the system + 3 stages).** Tick 27 dispatched it and released the
+lock early so the builder could take it; this tick did the verification half. No feature was written inline.
+
+**BUILDER STATE (read, not assumed).** The worker log is the only thing that counts:
+`/home/claude/projects/hordes/.hub-worker/logs/spawn-glm-hordes-g8-20260912-204240.log` carries
+`task msg_01M2D7GM7HKGRY1MX0FBXDT17K exit 0`, and the id is in the worker's `seen.json`, so the task RAN TO
+COMPLETION — the `running: msg_...` the queue still reports is stale state, not a live builder. Artifact landed in the
+WORKING TREE, uncommitted: `src/stages.js` (new, 6601B), `M src/main.js` (+114/-16), `M test/test_tour.mjs`, `test/test_stages.mjs`
+(new, 25610B), `tools/verify_g20_stages.mjs` (new, 17393B), PNG `docs/art/browser-verify-2026-09-12/g20-stages-phone.png`.
+
+**VERIFIED BY THIS TICK, each number re-run here on this tree (my own runs, never the builder's report):**
+- `bash /tmp/run_all.sh` => **PASS=73 FAIL=0 on three consecutive runs** (was PASS=72 before this slice; 73 because
+  `test/test_stages.mjs` is the new file). `node test/test_stages.mjs` standalone => **17 checks passed**.
+- `node tools/verify_g20_stages.mjs` => **PASS** in a REAL browser at **390x844 @dpr3**. The read-back state:
+  fresh session card names `VERDANT HOLLOW` and spells the locks in plain words (`ashen waste: beat your first boss,
+  snowfield: reach wave 5`); granting FIRST_BOSS + WAVE_5 through the game's OWN profile import seam walks the SAME tap
+  `VERDANT -> ASHEN -> SNOWFIELD -> VERDANT`; a real START tap with SNOWFIELD pending runs `stage: SNOWFIELD` with
+  `chaserMaxHp: 18` and `chaserSpeed: 25.2` and `nan: false`; a forced reload returns the pending selection to
+  `VERDANT_HOLLOW` with `profHasStageData: false`; `errors: []`.
+- **THE PARITY BAR, measured, and the one number that matters:** the default-stage run reads `chaserMaxHp: 12`, i.e.
+  byte-identical to the shipped formula, and the SNOWFIELD run reads `18` = **exactly 1.5x** of it — the `hpMult` lands
+  on the fully-escalated foe, as the brief required.
+- **INDEPENDENT parity check I did myself, not the builder's comment:** I read `src/config.js:423-430` and the
+  stage-0 pool is the shipped table in the shipped ORDER with the shipped VALUES — CHASER 3, SWARMER 2, BRUTE 1.5,
+  DASHER 1.2, SPITTER 1.5, WARLOCK 1.2, TICK 1.5, COLOSSUS 0.35. So a default run draws from the identical entry
+  vector it drew from before this slice; the `test_stages` "stage-0 pool IS the shipped table" check is corroborated by
+  my own read rather than taken on trust.
+- PNG `docs/art/browser-verify-2026-09-12/g20-stages-phone.png`, dimensions read with `file` (not by report):
+  **PNG image data, 1170 x 2532, 8-bit/color RGB** = 390x844 @dpr3, the owner's phone form factor. 245006 bytes, mtime
+  11:51Z = this tick's own verifier run.
+- **Nothing under `src/` was modified by any of my runs**: `md5sum` of `src/main.js` and `src/stages.js` before and after
+  the suite and the browser verifier are unchanged, so all of the above is a measurement of the tree the builder left.
+
+**ENGINEERING REVIEW (the pilot read the diff, it did not just run it).** The spawn seam is the right one and it is
+GUARDED: `pickSpawnType` now walks `stageOf(state.stage).pool` through the LIVE `C.SPAWNER.<TYPE>_WAVE` gates with the
+shipped weighted walk and the shipped 'CHASER' fallback; `spawnMult` divides the existing spawn clock; the elite bump is
+an additive 5 points on the EXISTING `eliteChance`; the spawn-ring squeeze is one multiplier on the EXISTING SPAWN_DIST
+draw; `hpMult`/`speedMult` stamp LAST, on the fully-escalated elite/rarity-stamped foe; `dmgMult` rides the SAME threat
+curve every damage path already multiplies. Every one is `|| 1` guarded, so the default stage is a no-op rather than a
+near-miss. `src/stages.js` is pure (no DOM, no state), total over garbage id (unknown -> default, never throws), and
+persists NOTHING — the same contract as `challenges.js`, which is why the reload check can pass by construction.
+
+**TEST CHANGE, stated plainly (it is an exemption, not a weakened assertion).** `test/test_tour.mjs` adds `'STAGE'` to
+`DISCOVERY_EXEMPT` beside `'CHALLENGE'`, with a comment giving the reason: the STAGE card is the CHALLENGE card's exact
+pattern (a cycling selector whose sub-line names the live selection and what unlocks the locked rows), so a coachmark
+would repeat the card's own text. That list is an allow-list of cards that are deliberately not taught; a card that is
+neither taught nor listed still fails, so the assertion still bites. Recorded here because it IS a test edit.
+
+**FLAKE FOUND (not waived).** The FIRST suite run of this tick came back **PASS=72 FAIL=1, `test/smoke.mjs`**, then the
+suite went **PASS=73 FAIL=0 three times in a row** and `test/smoke.mjs` passed **6/6 standalone**. The failing run's
+output was overwritten before I could capture it (smoke is the LAST file in `run_all.sh`, so `/tmp/tout.txt` is clobbered
+by the next loop iteration's first test), so I can state the observation but NOT the assertion that failed: one
+nondeterministic failure in ~10 observations of a correct build. That is the same class as the documented
+`test_perks`/`test_encounters` probabilistic flakes, and it is NOT weakened or retargeted. Flagging it for the owner
+because smoke is the broad integration probe, and a smoke test that can go red at random is worth one hardening pass.
+
+**COULD NOT VERIFY (honest).**
+- **No vision model is reachable from this cron session**, so NOBODY has semantically "read" the G20A screenshot. The
+  verdict is DOM geometry + real taps + live `__TEST` state (pending/live stage, the unlock predicate, per-foe maxHp),
+  which is the bar the G20 acceptance test itself sets and the same bar G13/G14 cleared. A human glance at
+  `g20-stages-phone.png` is still owed.
+- **The smoke failure's exact assertion** — observation only, see the flake note above.
+- **Only 3 of the 6-8 stages G20's own text asks for exist**, and per-stage item/reward pools are absent by design
+  (deferred to G17's economy call, per tick 27's explicit scope decision). Slice 1 is the SYSTEM; the marker above says so.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised
+  x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (blocked on a design
+  call), the unanswered Q-slot question gating N1's three non-Witch ults (now flagged for the TENTH tick), and the
+  `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended as G26 — the priority call is the owner's).
+- **My doc edit is UNCOMMITTED and so is the whole G20a slice** — the orchestrator owns all commits.
+
+**LOCK / HYGIENE:** acquired at the top of this tick as `subagent:spawnfa` from `/home/claude/projects/hordes` and
+released at the end. No worker was killed or restarted; the stale queue row for the already-complete task was dropped
+with the documented tool. No state outside hordes was touched.
+
+**NEXT GOAL: G21** (rule-changing cards + a small active set) — the next unblocked item in the ranked queue, unless the
+owner answers the Q-slot question, which unlocks N1's three non-Witch ults (the highest-priority unstarted item).
+
+## TICK NOTE 29 - 2026-09-13 (goal pilot tick, subagent:spawnfa (lock) then released to the builder; G20 SLICE 2 (stages 4-8) DISPATCHED and CONFIRMED RUNNING)
+
+**Goal worked: G20 slice 2 - the five remaining stages (4-8), taking the ladder to 8.** This tick did recon, briefing,
+dispatch and the pre-dispatch measurement, and wrote NO feature inline (a content pass goes to a builder - that is the
+pattern that works).
+
+**WHY THIS SLICE, NOT G21.** Tick 28's tentative next goal was G21, and this tick overrode it on the standing rule
+*"anything IN PROGRESS or any OPEN item listed under a goal - finish it before starting anything new"*: G20's own text
+still reads **REMAINS OPEN: stages 4-8**, and G20 sits ABOVE G21 in the ranked queue. G21 is a card system; the open
+item is the cheaper, higher-certainty slice. G21 is the queue head again once this lands and is verified.
+
+**VERIFIED BY THIS TICK (my own run, on the tree the builder inherits).** `bash /tmp/run_all.sh` => **PASS=73 FAIL=0** at
+`87a8e13` plus slice 1's UNCOMMITTED work. Tree fingerprint taken before the run: `md5sum src/main.js` =
+`d6639b04d3d585e3678c85bdf1c672c2`, `md5sum src/stages.js` = `10a660d40c16b828436337e3330cfca5`. Working tree carries
+slice 1 uncommitted (`M src/main.js`, `?? src/stages.js`, `?? test/test_stages.mjs`, `?? tools/verify_g20_stages.mjs`,
+`?? docs/briefs/G20_STAGE_SELECT.md`, `?? docs/art/.../g20-stages-phone.png`) - the orchestrator still owns that commit.
+
+**RECON THIS TICK (read from the tree, not assumed), and it changed the brief:**
+- `CONFIG.GROUND.THEMES` (`src/config.js:310-330`) carries **SIX** authored palettes, not five - index 3 THE BLOOD RUST,
+  4 THE BONE DESERT, 5 THE VOID REACH are unauthored-into by any stage. So the five new rows can retint without new art.
+- The hazard kinds actually WIRED in `main.js` are exactly two: `eliteRate` (`:554-557`) and `spawnBand` (`:562-564`).
+  `packMult` is applied at the pack site (`:566-573`) but is declared as a MOD and used by NO stage - it is a free third
+  mechanic. Anything beyond those three would need a file outside the builder's owned set, so the brief forbids it.
+- `FIRST_BOSS` and `WAVE_5` are already consumed as gates by ASHEN_WASTE / SNOWFIELD respectively, so the five new gates
+  must come from the still-unused real ids (`BOSS_SLAYER_5`, `WAVE_10`, `SURVIVE_10MIN`, `KILLS_10000`, `WAVE_20`,
+  `SURVIVE_20MIN`, `FULL_BUILD`...). The brief requires the catalog-existence check in the test.
+- **A phone-layout risk named in the brief, found by reading the code:** `lockedStageLines()` returns one line per locked
+  stage, so at 8 stages the title card renders up to SEVEN lines of lock text at 390x844. That is a real overflow risk and
+  the brief makes it a DOM-rect acceptance item rather than a glance.
+- **The anti-reskin bar is the point of this brief.** Slice 1's own scope note called stages 4-8 "data-only rows"; five
+  data-only rows over three hazard kinds would be exactly the reskin G20 forbids ("never ship a reskin: players judge maps
+  on mechanics"). So the brief requires every new stage to differ on pool + theme + mods + hazard AND requires each hazard's
+  effect to be a MEASURED delta (elite counts, sampled spawn distance, pack pop size) against the default stage. A hazard
+  with no measured delta fails the bar.
+
+**DISPATCHED AND CONFIRMED RUNNING (not merely queued).** `msg_01M2DBP9BYB0GQSCJ62J4TAEJR` -> `cli:glm-hordes-g8`, brief
+`docs/briefs/G20B_STAGES_4_8.md` (114 lines, self-contained: house rules, the pre-conditions, the four-axis distinctness
+rule, the five-gate ladder, the numbered acceptance bar, the out-of-scope list, the report shape), task text
+`/tmp/g20b_task.txt`. Confirmation, which is the only thing that counts: `hub-worker queue cli_glm-hordes-g8` returns
+`"running": "msg_01M2DBP9BYB0GQSCJ62J4TAEJR"` and `.hub-worker/logs/msg_01M2DBP9BYB0GQSCJ62J4TAEJR.log` carries the
+task text. Auth: the documented `set -a; . ~/projects/agent-hub/coordinator.env; set +a` + `AGENT_HUB_*` shim names.
+Note `hub-worker issue` takes NO `--workdir` (it rejected the flag); only `queue`/`cancel` do.
+
+**QUEUE HYGIENE.** The builder's queue read `{"queued": []}` BEFORE this dispatch - no stale rows this tick. G20a's task
+`msg_01M2D7GM7HKGRY1MX0FBXDT17K` is in `seen.json`, i.e. already consumed, so nothing was cancelled and no worker was
+interrupted or restarted.
+
+**LOCK / HYGIENE, stated plainly.** Acquired at the top of the tick as `subagent:spawnfa` (the agentlock was FREE), then
+**RELEASED EARLY, before the dispatch**, because the brief requires the builder to take the lock itself and to STOP if it
+finds it HELD - holding it would have made the builder self-cancel (the tick-27 lesson, re-applied). `state: FREE` was
+confirmed at release. The builder now holds it for its own edit window; this doc edit is docs-only and outside the
+builder's file set.
+
+**COULD NOT VERIFY (honest):**
+- **No G20b artifact exists yet** - the builder started inside this tick. Nothing above is evidence about stages 4-8: the
+  next tick must re-run the suite x3, `test/test_stages.mjs` standalone, `tools/verify_g20_stages.mjs` over all EIGHT rows,
+  the phone PNG, the stage-0 parity numbers AND each hazard's measured delta itself. A `done:` line is a claim, never
+  evidence.
+- **No vision model is reachable from this cron session** (no vision tool in the session's catalog, unchanged): a semantic
+  "does this stage read as a different place" glance is still owed by whoever has one. The plan's screenshot+vision rule is
+  met only in its screenshot half here, and even that is read back as pixel samples.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised
+  x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (blocked on a design
+  call), the unanswered Q-slot question gating N1's three non-Witch ults (now flagged for the ELEVENTH tick), and the
+  `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended as G26 - the priority call is the owner's).
+- This tick's own doc edit is UNCOMMITTED, as is the whole slice-1 G20a tree: the orchestrator owns all commits.
+
+**NEXT GOAL: verify G20b's artifact** (suite x3 + `test_stages.mjs` + `tools/verify_g20_stages.mjs` over 8 rows + the PNG +
+stage-0 parity + the per-hazard measured deltas), then close G20 after that (only per-stage item/reward pools remain, which
+are G17's call), and then G21 leads the queue.
+
+## TICK NOTE 30 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held the whole tick; G20 SLICE 2 VERIFIED + DONE; two named flake identities captured for the first time)
+
+**Goal worked: G20 slice 2 (stages 4-8, the full 8-stage ladder).** This tick BUILT NOTHING - it verified the builder's
+artifact itself, so nothing below is a builder claim.
+
+**THE BUILD IS NOT MINE.** Builder `cli:glm-hordes-g8`, task `msg_01M2DBP9BYB0GQSCJ62J4TAEJR`, brief
+`docs/briefs/G20B_STAGES_4_8.md`. Confirmation of completion, not assumption: `.hub-worker/logs/spawn-glm-hordes-g8-20260912-204240.log`
+ends with `task msg_01M2DBP9BYB0GQSCJ62J4TAEJR exit 0`, and the artifact files carry 12:29-12:43 mtimes. The lock was FREE at
+the start of this tick, so no worker was running against the tree while the suite ran.
+
+**TREE FINGERPRINT (what was verified, so a later tick can tell whether it verified the same thing):**
+`md5sum src/main.js` = `6a55461e9b74fd617f26d67362f02bf8`, `src/stages.js` = `b4125311866d4963e0c48b9ff609794e`,
+`test/test_stages.mjs` = `0c384d4b60d6fa5b5a55a8ac5eaf65a7`, `tools/verify_g20_stages.mjs` = `b3a0fc0d64f5cd03c5ae56ed12a7d145`.
+Everything is still UNCOMMITTED; the orchestrator owns the commit.
+
+**WHAT THE LADDER ACTUALLY IS (read from `src/stages.js`, 8 rows):** VERDANT_HOLLOW (theme 0, shipped pool, all-1.0 mods,
+no hazard, ungated) / ASHEN_WASTE (1, FIRST_BOSS) / SNOWFIELD (2, WAVE_5) / BLOOD_RUST (3, BOSS_SLAYER_5) / BONE_DESERT
+(4, WAVE_10) / VOID_REACH (5, SURVIVE_10MIN) / CINDER_MAW (1, KILLS_10000) / WHITEOUT (2, SURVIVE_20MIN). Hazard kinds are
+only the three the pre-existing seam implements: `eliteRate` (ASHEN +0.05, BLOOD_RUST +0.15, CINDER_MAW +0.03, WHITEOUT
++0.08), `spawnBand` (SNOWFIELD 0.70, VOID_REACH 0.85), `packBurst` (BONE_DESERT 1.5, composed on the EXISTING pack
+expression at `src/main.js:566-573`).
+
+**VERIFIED BY MY OWN RUNS (every number below came from this tick's shell, not a report):**
+- `node test/test_stages.mjs` => **30 checks passed** (the brief's bar is >= 30). Read the file as well as the output: the
+  anti-reskin rules are ASSERTED (pairwise-distinct pools / themes / mods vectors / hazards, >= 3 of the 5 new pools drop
+  >= 2 ids stage 0 carries, five distinct gates excluding FIRST_BOSS and WAVE_5), plus stage-0 pool = the shipped weight
+  table by VALUE AND ORDER, live-chooser parity at waves 1 and 15, 60Hz==120Hz spawn parity per stage, and
+  `lockedStageLines` enumerating 7 gated rungs for a fresh player.
+- **HAZARD DELTAS ARE MEASURED, NOT ASSERTED** (same run, printed by the probe): elite fraction @100s default 0.0505,
+  +0.15 -> 0.1883 (delta 0.1378), +0.08 -> 0.1264 (0.0759), +0.03 -> 0.0850 (0.0345); mean spawn distance @100s default
+  279.99px, SNOWFIELD 196.56px (ratio 0.7020), VOID_REACH 238.57px (0.8521); packBurst BONE_DESERT 40 scripted spawn
+  calls -> 80 foes vs the default's 40; packMult WHITEOUT 120 -> 720 foes.
+- `node tools/verify_g20_stages.mjs` => **PASS in a REAL browser at 390x844 @dpr3**: `cycleWalk` walks all 7 gated rungs
+  with REAL taps once the gates are granted, then a real START tap per rung gives **8/8 runs whose per-type maxHp equals
+  BASE_HP x type.hpMult x stage.hpMult** (CHASER 12 on stage 0, 18 on SNOWFIELD), `nan: false`, `errors: []`,
+  `afterReload.pending = VERDANT_HOLLOW` with `profHasStageData: false` (a reload persists nothing), and the
+  fresh-profile card is **not clipped**: `cardRect {x:200,y:409,w:141,h:201}` inside 390x844, `cardClipped: false`, with
+  the lock block COMPACTED to "+5 more" instead of seven lines - that was the phone-overflow risk tick 29 named in the
+  brief, and it is a DOM-rect measurement, not a glance.
+- PNG written and file-verified by me, not by the tool's own string: `docs/art/browser-verify-2026-09-12/g20-stages-phone.png`
+  = **PNG image data, 1170 x 2532** (390x844 @dpr3), 344684 bytes, written 13:07 by this tick's run.
+- `bash /tmp/run_all.sh` => **PASS=73 FAIL=0** twice in this tick (plus a green run earlier in the tick), file count 73,
+  i.e. the file count did not drop. Two red runs were seen in five attempts - see the flake section, which is the ONE
+  honest asterisk on this verification.
+
+**FLAKE, NOW IDENTIFIED (tick 28 saw a smoke red run it could not capture; this tick captured both identities).**
+- `test/test_stages.mjs:360` - `(e) mods at the REAL seam: SNOWFIELD foes are exactly 1.5x hp / 0.9x speed, stage 0
+  exactly 1.0x` -> `Error: CHASER hp ratio 1`. Seen **2 times in ~13 standalone runs (~10%)**, and it is what turned
+  suite runs 2 and 3 red above. Ratio exactly 1 (not 1.5) means the SNOWFIELD cohort's minimum chaser `maxHp` was the
+  DEFAULT stage's value.
+- `test/smoke.mjs:1292` - `full tilt equals keyboard speed (joy 30.0 vs key 34.8)`, seen 1 time in ~120 test runs.
+- **Neither is deterministic and neither was touched, weakened or retargeted.** Hypothesis, LABELLED as a hypothesis:
+  `collectSpawned()` (`test/test_stages.mjs:332-344`) takes `min(maxHp)` over every foe object it sees in a window, so a
+  single foe left over from the PREVIOUS cohort's run would drag that minimum to the default 12hp and produce exactly
+  ratio 1. Test-side fix (next tick, not done here): assert the foe array is empty after `startRun()` before sampling, or
+  stamp and filter by spawn time. Supporting evidence that the GAME seam is not the failure: the real-browser tool's 8
+  per-stage runs stamped maxHp exactly per the formula twice in a row, and every other `test_stages` check passes in the
+  ~90% of runs where the probe is clean.
+
+**COULD NOT VERIFY (honest):**
+- **No vision model is reachable from this cron session** (no vision tool in the catalog), so NOBODY has semantically read
+  `g20-stages-phone.png`. "Does each of the 8 stages read as a DIFFERENT PLACE" is still owed to a human or a
+  vision-capable session; the verdict here is DOM geometry + real taps + live state + pixel-identical PNG dimensions.
+- **The exact mechanism of the ratio-1 flake** - observation with a named hypothesis, above, not a proof.
+- **The suite is green per RUN, not proven green as a RATE** (2 reds in 5 suite attempts, every one of them the same
+  named probe flake).
+- Deliberately absent, per G20's own scope: per-stage item/reward pools (G17's economy call) and a Hyper/Inverse/Endless
+  modifier axis (heat.js G24 and challenges.js G11 already own those axes). Stages pay no gold, by design.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised
+  x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (blocked on a design
+  call), the unanswered Q-slot question gating N1's three non-Witch ults (TWELFTH tick), and the
+  `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended as G26 - the priority call is the owner's).
+
+**LOCK / HYGIENE:** FREE at the top of the tick, acquired as `subagent:spawnfa`, held for the whole tick (no builder was
+active, so holding it could not self-cancel anyone), released at the end. No worker was killed, restarted or steered. No
+git state command was run. This doc edit is UNCOMMITTED, as is the whole G20 tree.
+
+**NEXT GOAL:** the queue head is **G21** (rule-changing cards + a small active set). Recommended first, as a cheap
+non-feature slice: harden the two named probes above (assert an empty foe array between cohorts; pin the smoke movement
+window against a live speed change) so the suite's green stops being a 90% coin-flip - no assertion weakened, no
+threshold moved. G23's remaining items stay blocked on the owner's design call.
+
+
+## TICK NOTE 31 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; the tick-30 flake hypothesis DISPROVEN and the real defect measured; G20C DISPATCHED)
+
+**Goal worked: G20 follow-up (the stage stamp's universality). The queue head G21 is deferred one tick because this is
+a MEASURED DEFECT inside an already-DONE goal AND the cause of the suite's flakiness.** This tick BUILT NOTHING; it
+found, measured, and dispatched.
+
+**TICK 30's HYPOTHESIS IS WRONG, AND HERE IS THE MEASUREMENT THAT KILLS IT.** Tick 30 guessed the `CHASER hp ratio 1`
+flake came from a leftover foe of the previous cohort. It cannot: `startRun()` clears `state.enemies` (`src/main.js:3914`).
+New probe `tools/probe_stage_stamp.mjs` (25 paired 900-frame cohorts, SNOWFIELD vs the default stage, run by this tick
+on this tree) prints the full CHASER maxHp HISTOGRAM per cohort:
+
+- **17 of 25 SNOWFIELD cohorts opened chests** (0-5 each, 38 total); **0 of 25 default-stage cohorts opened any.**
+- The failing cohort carried `{"12": 6, "18": 9}` - exactly SIX unstamped CHASERs, i.e. `CHESTS.GAMBLE_HORDE_COUNT = 6`.
+  That is a fingerprint, not a correlation. Flake rate measured here 1/25 (~4%); tick 30 measured ~10%.
+
+**THE TWO DEFECTS (both invisible on the default stage, both introduced by G20):**
+1. `src/chests.js:99` tests elite-ish as `enemy.maxHp >= C.ENEMY.BASE_HP * CHESTS.ELITE_HP_MULT` (12 x 1.5 = 18) -
+   it reads the STAGE-STAMPED hp. SNOWFIELD's hpMult is exactly 1.5, so EVERY plain CHASER has maxHp 18 and the 0.35
+   chest-drop roll fires on every kill. The chest economy is wide open on that stage; the default stage is untouched.
+2. The stage stamp is bypassed at three sites: `spawnPunishmentHorde` (`src/chests.js:157`), boss `act.summon`
+   (`src/main.js:1529`), boss `act.ring` (`src/main.js:1544`). Measured consequence: a SNOWFIELD punishment horde
+   spawns at 12hp instead of 18 - the declared contract ("a hpMult 1.5 stage produces exactly 1.5x the hp the same
+   spawn would have on the default stage") fails for those foes.
+
+**DISPATCHED, NOT BUILT (the standing pattern):** task `msg_01M2DG6525FAF2TBQ3034CCDM5` issued to `cli:glm-hordes-g8`
+on the hub channel (the `hordes` channel refuses this token's writes - 403, same as tick 20) and CONFIRMED RUNNING
+(`hub-worker queue` shows `running: msg_01M2DG6525FAF2TBQ3034CCDM5`, working as `subagent:spawnda`). Brief:
+`docs/briefs/G20C_STAGE_STAMP_CONSISTENCY.md`; evidence tool `tools/probe_stage_stamp.mjs` (NEW, this tick). The brief
+forbids weakening any assertion, requires ONE `stampStageStats()` helper called at every site, a stamp-independent
+chest eligibility test, and three new checks in `test/test_stages.mjs` (assert the HISTOGRAM, not just the min - the
+min-only assertion is exactly what let a 12hp straggler hide in a field of 18s). Evidence bar: probe 0 flake,
+`verify_g20_stages.mjs` PASS at 390x844 @dpr3 with a fresh PNG, suite FAIL=0 x3.
+
+**VERIFIED THIS TICK:** `bash /tmp/run_all.sh` => **PASS=73 FAIL=0** on the pre-fix tree (one clean run; one clean run
+is not a rate - the flake was measured separately at 1/25 by the probe). Fingerprint: `src/main.js` md5
+`6a55461e9b74fd617f26d67362f02bf8`, unchanged from tick 30 - this tick edited no game file. The only tree writes are
+docs/briefs/G20C_STAGE_STAMP_CONSISTENCY.md (new), tools/probe_stage_stamp.mjs (new), and this note. No git command run.
+
+**COULD NOT VERIFY:** the engine of the second known flake (`test/smoke.mjs:1292`, "full tilt equals keyboard speed
+joy 30.0 vs key 34.8", 1 in ~120) - handed to the builder as a secondary item, explicitly conditional on naming the
+cause with evidence; if it cannot, nothing changes. Also unchanged and still owed: the item-7 mana-bar re-measure,
+G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised x1.6, the W7a/W7b sequencing conflict, G23's unlock-tied
+HOOK (owner design call), the Q-slot question gating N1's three non-Witch ults (THIRTEENTH tick), and the
+`docs/FEEDBACK_2026-09-13.md` 25-item triage (recommended as G26 - the priority call is the owner's).
+
+**NEXT:** verify G20C when the builder's `done:` lands - the flake must be gone BY CONSTRUCTION, not by tolerance -
+then G21 (rule-changing cards + a small active set) as the queue head.
+
+## TICK NOTE 32 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; G20C VERIFIED + DONE; a SECOND flake identity found and measured as PROBE VARIANCE, so G20D is dispatched — not built here)
+
+**Goal worked: G20C (the stage stamp made universal).** This tick BUILT NOTHING game-side: it verified the builder's
+artifact itself, found a second flake, measured its cause, and dispatched the fix.
+
+**THE BUILD IS NOT MINE.** Builder `cli:glm-hordes-g8`, task `msg_01M2DG6525FAF2TBQ3034CCDM5`, brief
+`docs/briefs/G20C_STAGE_STAMP_CONSISTENCY.md`. Completion, not assumption: `.hub-worker/logs/spawn-glm-hordes-g8-20260912-204240.log`
+ends `task msg_01M2DG6525FAF2TBQ3034CCDM5 exit 0`, artifact mtimes 14:01-14:02Z. The lock was FREE at the top of this tick.
+
+**TREE FINGERPRINT:** `md5sum src/main.js` = `3d013c0d277ad863acc654a5d7380708`, `src/chests.js` = `18592429f7a8c1505bafcaf7598ec2ce`,
+`src/stages.js` = `b4125311866d4963e0c48b9ff609794e` (unchanged from tick 30), `test/test_stages.mjs` = `fe8638bf242a80e9fcc9720bd3378cae`,
+`tools/probe_stage_stamp.mjs` = `1a82b17f798fede4a3f9a05d01ce675b`. All UNCOMMITTED - the orchestrator owns the commit.
+`md5sum -c` after the three suite runs and the browser verifier: all three `src/` files OK, so every number below is a
+measurement of the tree the builder left.
+
+**VERIFIED BY MY OWN RUNS (not a report):**
+- `node tools/probe_stage_stamp.mjs` (25 paired 900-frame cohorts) => **`SUMMARY N=25 flake=0 runsWithSnowChest=2`**.
+  Every cohort reads `ratio=1.5`, `snowMin=18 baseMin=12`, **`unstampedSnowCHASERs=0`** (the tick-31 fingerprint of 6 unstamped
+  foes is gone). SNOWFIELD chests collapse **38 -> 2** over 25 runs.
+- `node test/test_stages.mjs` => **33 checks passed** (was 30). The three new G20C checks are present and green by name:
+  the WHOLE-HISTOGRAM stamp check, "chests are an ELITE reward" (default cohort opens 0; SNOWFIELD plain foes are not eligible),
+  and "boss summon/ring foes carry the stage mult".
+- `node tools/verify_g20_stages.mjs` => **PASS in a REAL browser**, 8/8 rungs whose per-type maxHp equals
+  BASE_HP x type.hpMult x stage.hpMult (CHASER 12 on stage 0, 18 on SNOWFIELD), `nan: false`, `errors: []`,
+  `afterReload.pending = VERDANT_HOLLOW` with `profHasStageData: false`. PNG rewritten by my own run and file-read by me, not
+  trusted to the tool's own string: `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` = **PNG 1170 x 2532** (390x844 @dpr3),
+  306857 bytes, mtime 14:22Z.
+
+**HONEST READING OF THE CHEST NUMBER.** 38 -> 2 is not 0, and the brief's bar was "the default stage's level" (0/25). I checked
+the 2 before accepting it: in both runs the cohort histogram carries a high-hp straggler (`28.800000000000004` = 12 x 1.5 stage x 1.6
+elite), i.e. the chest came from a genuinely ELITE kill whose pre-stage hp clears the 18 bar. That is the designed behaviour -
+chests are an elite reward - so 2/25 is not a leak. Recorded because it is a deviation from the letter of the bar even though it
+matches the intent, and because the default-stage arm read 0/25 (no elite CHASER was killed inside that 900-frame window).
+
+**FINDING - THE SUITE IS STILL NOT RELIABLY GREEN, and it is the PROBE, not the game.** Three consecutive
+
+`bash /tmp/run_all.sh` runs this tick: **PASS=73 / FAIL=1 (`test/test_stages.mjs`) / PASS=73**. The failing assertion is
+`test/test_stages.mjs:387`, `SNOWFIELD spawned 9 vs base 9 (spawnMult 0.7 must be fewer)` - a DIFFERENT identity from the
+CHASER-ratio flake ticks 30/31 chased, and the one they saw in suite runs 2 and 3 was probably this. Measured 1 failure in
+20 standalone runs. I wrote `tools/probe_spawn_mult.mjs` (NEW) to decide whether it is a game defect: **60 paired 900-frame
+cohorts - base `{min 9, max 12, mean 11.82}`, SNOWFIELD `{min 6, max 15, mean 8.93}`, mean ratio 0.755, ties 0/60,
+snow>base 1/60`.** The seam is CORRECT (spawnMult 0.7 really does yield ~0.75x the bodies); the assertion is a single-sample
+integer compare over a window that holds only ~9-12 bodies, so a strict `<` ties by chance when base lands at its minimum.
+**No assertion was weakened, moved or deleted, and no game file was touched.**
+
+**DISPATCHED, NOT BUILT:** task `msg_01M2DJCP10HHDD75D774T9JVBM` -> `cli:glm-hordes-g8`, brief
+`docs/briefs/G20D_PROBE_HARDENING.md`, CONFIRMED RUNNING (`hub-worker queue` shows `running: msg_01M2DJCP10HHDD75D774T9JVBM`
+and the worker log carries the task text). The brief is TEST-ONLY and requires an AGGREGATE over >= 4 cohorts per stage with the
+STRICT `<` kept (no tolerance band a spawnMult-1.0 regression could pass), a 20/20 standalone run tally, `run_all.sh` FAIL=0 x3,
+and the same probe numbers unchanged (proof `src/` was not touched). It also asks for the `test/smoke.mjs:1292` joy/key speed
+flake to be pinned only if its cause can be named with evidence.
+
+**QUEUE HYGIENE.** The builder's queue listed TWO stale rows (`msg_01M2DBP9BYB0GQSCJ62J4TAEJR` = G20b, `msg_01M2DG6525FAF2TBQ3034CCDM5`
+= G20c). Both were already consumed - each id is present in `.hub-worker/cli_glm-hordes-g8/seen.json` and both log `exit 0` - but they
+still sat in `queued.json` and `hub-worker queue` reported them as pending, which would have made the new task queue behind ghosts.
+Dropped with the documented tool (`hub-worker cancel`, state `pending`, no worker interrupted); the two `blocked: ... cancelled` lines
+posted to `#hub` are true (cancelled as already-complete), not failure reports. Queue read `{"queued": []}` before the dispatch.
+
+**COULD NOT VERIFY (honest):**
+- **No G20D artifact exists yet** - the builder started inside this tick. The next tick must re-run the 20x standalone tally,
+  `run_all.sh` x3, `tools/probe_spawn_mult.mjs`, and confirm no assertion text changed, itself. A `done:` line is a claim.
+- **No vision model is reachable from this cron session**: nobody has semantically read `g20-stages-phone.png`. The verdict is
+  DOM geometry + real taps + live `__TEST` state + measured hp histograms. A human glance is still owed.
+- **The suite is green per RUN, not proven green as a RATE** (1 red in 3 this tick, 1 in 20 standalone). G20D is the slice that
+  makes it deterministic; until it lands, treat a single red `test_stages` as probe variance and re-run before believing it.
+- **`test/smoke.mjs:1292`** (`full tilt equals keyboard speed 30.0 vs 34.8`, ~1 in 120) - cause still NOT named, handed to the
+  builder as strictly conditional.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised x1.6,
+  the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (owner design call), the unanswered
+  Q-slot question gating N1's three non-Witch ults (FOURTEENTH tick), and the `docs/FEEDBACK_2026-09-13.md` 25-item triage
+  (recommended as G26 - the priority call is the owner's).
+
+**LOCK / HYGIENE:** FREE at the top of the tick, acquired as `subagent:spawnfa`, held through recon/verification, then **RELEASED
+EARLY at the dispatch** (the brief requires the builder to take the lock itself - holding it would have made the builder
+self-cancel; the tick-27 lesson, re-applied). `state: FREE` confirmed at release. No worker killed, restarted or steered. No git
+state command run. This doc edit is UNCOMMITTED.
+
+**NEXT GOAL: verify G20D** (20/20 standalone + suite FAIL=0 x3 + `probe_spawn_mult` numbers unchanged), then hand the goal back to
+the queue head **G21** (rule-changing cards + a small active set).
