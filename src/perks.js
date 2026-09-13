@@ -129,11 +129,17 @@ export function grantSkill(state, id) {
 export function hpRegenPerSec(state) {
   return hasSkill(state, 'regrowth') ? REGROWTH_HP_PER_SEC : 0;
 }
-/** Mana a skill costs AFTER Focus (unknown ids cost 0, like useSkill's guard). */
+/** Mana a skill costs AFTER Focus (unknown ids cost 0, like useSkill's guard).
+ * N1b item 6: the meta/character manaCostMult (Thrifty Casting x the Witch's
+ * 0.5) multiplies in here too — ONE discount number, BOTH cost seams (this and
+ * weaponManaCost in weapons.js), never a second read inside useSkill. */
 export function skillManaCost(defId, state) {
   const def = C.SKILLS[defId];
   if (!def) return 0;
-  return def.MANA * (hasSkill(state, 'focus') ? FOCUS_MANA_MULT : 1);
+  const mult = (hasSkill(state, 'focus') ? FOCUS_MANA_MULT : 1)
+    * ((state && state.player && state.player.stats
+      && state.player.stats.manaCostMult) || 1);
+  return def.MANA * mult;
 }
 /** Cooldown a skill rolls onto AFTER Focus. */
 export function skillCooldown(defId, state) {

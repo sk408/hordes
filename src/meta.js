@@ -320,6 +320,18 @@ export const SHOP_UPGRADES = [
     baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 1 },
   { id: 'regen',   name: 'Mana Spring',    desc: '+0.5 mana regen per second per level',
     baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 0.5 },
+  // ---- N1b item 6: the three MANA buyables (the relief valve; mana itself
+  // stays punishing at base — see goals N1b item 1). Priced against the
+  // mana neighbours above (regen totals ~1851g) and against the class ladder
+  // (Knight 0 -> Rogue 2500 -> Paladin 6000 -> Witch 9000): a NON-Witch
+  // buying all three spends less than the Witch costs, which is the point —
+  // she is the whole kit in one purchase, these are kit-at-a-time.
+  { id: 'thrifty', name: 'Thrifty Casting', desc: '-10% mana cost per level',
+    baseCost: 350, costGrowth: 1.7, maxLevel: 4, perLevel: 0.10 },
+  { id: 'well',    name: 'Deep Well',       desc: '+25 max mana per level',
+    baseCost: 250, costGrowth: 1.6, maxLevel: 4, perLevel: 25 },
+  { id: 'siphon',  name: 'Siphon',          desc: '+0.05 mana per kill per level',
+    baseCost: 500, costGrowth: 1.7, maxLevel: 4, perLevel: 0.05 },
   { id: 'xp',      name: 'Scholar',        desc: '+10% XP gain per level',
     baseCost: 180, costGrowth: 1.6, maxLevel: 5, perLevel: 0.10 },
   // ---- EXPANSION lines (economy pass) ----
@@ -609,6 +621,20 @@ export function draftCardWeight(cardId, kind, luck) {
 //   luck         (0)              Fortune: luck LEVEL count 0..5 — feed to
 //                                 luckDropWeights(luck) for loot rarity rolls
 //                                 (hb4's loot task consumes this).
+//   manaCostMult (1)              Thrifty Casting: multiplicative mana-cost
+//                                 modifier, 1 - 0.10/level (max 0.6). The ONE
+//                                 number both cost seams read — weaponManaCost
+//                                 (weapons.js) and skillManaCost (perks.js) —
+//                                 and it COMPOSES with applyCharacter's own
+//                                 mult (the Witch's 0.5), so a Witch with
+//                                 Thrifty L3 pays base x 0.5 x 0.7.
+//   maxMana      (makePlayer)     Deep Well: ADDs +25/level to the base pool.
+//                                 applyCharacter adds the character's own
+//                                 maxMana mod AFTER this, so the Witch's +50
+//                                 still stacks as it always did.
+//   manaOnKill   (0)              Siphon: flat mana granted per KILL (an
+//                                 event, never frame-scaled) at the main.js
+//                                 kill seam, clamped to stats.maxMana.
 export function applyMetaBonuses(stats, purchased) {
   const lvl = id => purchased[id] || 0;
   return {
@@ -624,6 +650,9 @@ export function applyMetaBonuses(stats, purchased) {
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
+    manaCostMult: 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty'),
+    maxMana: stats.maxMana + SHOP_BY_ID.well.perLevel * lvl('well'),
+    manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon'),
   };
 }
 

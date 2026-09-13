@@ -179,8 +179,8 @@ console.log('EXPANSION LINES:');
     ok(u && u.baseCost > 0 && u.maxLevel >= 3 && Number.isFinite(u.perLevel),
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 12,
-     'twelve stat lines total (5 original + 6 expansion + luck)');
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 15,
+     'fifteen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');

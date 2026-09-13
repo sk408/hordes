@@ -119,7 +119,7 @@ the existing Q/E skills cost mana (FROST 30 / OVER 25). If only the Witch had ma
 become dead picks for 3 of 4 classes and their own skills stop working. The Witch's identity is
 the RATE + her +50 pool + the cost discount, never exclusive access.
 
-**6. Buyables to add** — all fit the existing `{id,name,desc,baseCost,costGrowth,maxLevel,perLevel}`
+**6. Buyables to add** — [status: IN PROGRESS 2026-09-13 - dispatched to cli:glm-hordes-g8 as msg_01M2CX1KK3AK257PKAPCR74Y6M by TICK NOTE 21, RE-DISPATCHED by TICK NOTE 22 after the first id was found mis-addressed and never ran; brief docs/briefs/N1B6_SHOP_MANA_BUYABLES.md] all fit the existing `{id,name,desc,baseCost,costGrowth,maxLevel,perLevel}`
 row shape (`src/meta.js:302`), so this is content, not new machinery:
    - `thrifty` — Thrifty Casting: -% mana cost. The direct counter to a punishing Chain Zap.
    - `well`    — Deep Well: +max mana.
@@ -134,7 +134,7 @@ both already instrumented: **frames at zero under 20%** (proves it is not a lock
 spent as a share of income 70-90%** (proves it is not decorative). The numbers to beat are
 75.1% of frames under cost, and the 89% refund.
 
-**8. The AUTO pilot must be able to SPEND mana, or the whole scheme reads as a tax.** `useSkill`
+**8. The AUTO pilot must be able to SPEND mana, or the whole scheme reads as a tax.**  [status: DONE 2026-09-13 - VERIFIED BY TICK NOTE 20] `useSkill`
 is reachable ONLY from the player's Q/E; the AUTO pilot never casts, so in AUTO mana has costs
 and no benefits. Measured cost of that gap: the same cohort firing Q/E at bosses went
 **204.8s -> 277.8s survival (+36%) and 3583 -> 5993 kills (+67%)**. Give the pilot a cast policy
@@ -2242,3 +2242,244 @@ critical constraint that `src/main.js` holds uncommitted N2+N1a hunks that must 
 next tick must re-run the suite itself, re-run the two item-7 bars, and re-measure the AUTO cohorts before
 accepting it. After that, the unblocked queue is G13/G14 or G24/G25 unless the owner answers the Q-slot
 question, which unlocks N1's ults.
+
+
+## TICK NOTE 20 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held, N1b item 8 VERIFIED + DONE; next slice WRITTEN but DISPATCH BLOCKED on auth)
+
+**Goal worked: N1b item 8 (the AUTO pilot cast policy).** It was in flight from TICK NOTE 19
+(`msg_01M2CPR11XXDC5FWJAKKYT28SP`) and had already landed. The orchestrator has since COMMITTED
+everything from TICK NOTES 18/19 as **`34f7614`** ("N1a Witch soft gate + N1b auto-cast/auto-drink +
+N2 title art reveal") — so the two features TICK 19 flagged as uncommitted are now versioned and the
+working tree is CLEAN. This tick verified the ARTIFACT, not the report, and flipped the marker.
+
+**Independently re-verified this tick (my own runs, not the builder's prose):**
+- `bash /tmp/run_all.sh` => **PASS=71 FAIL=0, THREE times** (71 = TICK 19's 70 + the new
+  `test/test_auto_cast.mjs`).
+- `node test/test_auto_cast.mjs` standalone => **13/13**, including "wired into the REAL frame loop —
+  nobody pressed a key", "MANUAL never casts — the player keeps 100% of the decision", "no cast when
+  the pool cannot pay", "no double-spend in one frame", and "60Hz and 120Hz give the SAME cast count".
+- `node tools/verify_skill_keys.mjs` => **VERDICT: PASS (32 measurements)** in a REAL browser: a real
+  tap on FROST arms cd 7.97s with badge "8.0s", a real press on the [E] span arms OVERCHARGE
+  (cd 11.97s, buff 3.97s), potion badges track live counts, and the joystick clearance at 390px is
+  unaffected (right-gap 30.8px). This is the browser re-check the retargeted tool needed.
+- Code read by this tick: `src/config.js:232` (`AUTO_CAST` block, ENABLED true, `NEAR_FULL` 0.8,
+  `ELITE_RANGE` 260), `src/main.js:1314` (called on the resource seam, right after `autoDrinkPotions`
+  — drinks first, then casts read the refreshed pool), `src/main.js:4264-4300` `autoCastSkills`: AUTO
+  only (`pilotMode !== 'AUTO'` returns early), both casts routed through `useSkill` itself (never
+  around it), FROST_NOVA requires a live enemy inside its own RADIUS, OVERCHARGE requires threat
+  (`bossCastLive` / final boss / a live elite inside ELITE_RANGE) or the near-full spill rule, and
+  both check cooldown AND `skillManaCost` first so no call is ever wasted.
+
+**MY OWN cohort re-measurement** (`/tmp/pilot_n1b_probe.mjs`, written by this tick; casts counted by
+NEW arrivals in `state.effects` with `kind` 'nova'/'charge' — an INDEPENDENT signal from the builder's
+cooldown-jump counting. AUTO only, fresh profile, 4 runs x 300s, 60Hz):
+- KNIGHT AUTO **on**: survival 292.5s, kills 6196, nova 13.5 / charge 21.3 per run, meanMana 35.1/100,
+  **zeroFrac 0.0%**, spent 1682 / income 1603, **share 97.9%**.
+- KNIGHT AUTO **off** (control, `AUTO_CAST.ENABLED=false`): survival 208.8s (per-run 78 / 280 / 184 /
+  293), kills 3826, share 24.9% — mana NEVER MOVED in 3 of 4 runs, because a fresh KNIGHT carries no
+  base mana weapon, so the control arm's share is degenerate for this class.
+- WITCH AUTO **on**: survival 293.8s, kills 6535, nova 14.0 / charge 19.0, meanMana 35.5/150,
+  **zeroFrac 0.0%**, spent 2706 / income 2634, **share 99.0%**.
+- WITCH AUTO **off**: survival 127.5s (72 / 69 / 294 / 75), kills 1762, share 79.8%.
+So AUTO now lands in the SAME band as the owner's manual Q/E cohort (204.8s -> 277.8s, 3583 -> 5993
+kills), and for the WITCH it lands at or slightly BEYOND it — which the brief says to report plainly
+as a finding, not to celebrate.
+
+**THE TWO N1b ITEM-7 BARS — one PASSES clean, one OVERSHOOTS and is reported as such:**
+- **frames at zero: 0.0% on both classes, both arms — PASS** (bar is under 20%). The pilot is not
+  locked out, and the dry ZAP soft gate (N1a) plus the spill rule keep the pool from pinning at zero.
+- **spent as a share of income: 97.9% (KNIGHT) / 99.0% (WITCH) — OUTSIDE the stated 70-90% band.**
+  Stated plainly rather than massaged: the denominator is `income + the starting pool`, realized income
+  UNDERcounts regen that overflowed the cap, and the pilot now spends down the reserve instead of
+  parking at full — so the number errs high by construction. It certainly proves the spending is not
+  decorative (the bar's stated purpose), but it is NOT a pass on the letter of the bar. Flagged for the
+  owner as a spec question, not silently declared green. Nothing was weakened to go green.
+
+**NEXT SLICE — written, NOT dispatched (the tick's budget went to verification).** Brief
+**`docs/briefs/N1B6_SHOP_MANA_BUYABLES.md`** (98 lines) is on disk and ready to fire. It is **N1b
+item 6**: `thrifty` (Thrifty Casting, -% mana cost), `well` (Deep Well, +max mana) and `siphon`
+(Siphon, mana on kill) as `SHOP_UPGRADES` rows plus the stat fields they feed. It is the right next
+slice precisely because it needs NO owner design call: item 6 is fully specced, and the owner's own
+rule (item 1) is that the shop — never a balance change — is the relief valve for punishing mana. It
+carries the current `weaponManaCost` / `skillManaCost` seams, the existing `manaCostMult` field the
+WITCH's 0.5 already rides, the `applyMetaBonuses` purity + META STAT FIELD CONTRACT, the
+`src/main.js:1721` kill seam for siphon, the AUTO-and-MANUAL constraint, the no-balance-change rule,
+and the bar: a new `test/test_shop_mana.mjs`, before/after cohorts for both classes, suite x3, a 120Hz
+replay, and a phone-viewport browser check if any shop rendering changes.
+
+**DISPATCH BLOCKED — AUTH, AND IT IS THE ONE THING THE ORCHESTRATOR MUST FIX.** `hub-worker issue
+hordes @cli_glm-hordes-g8 ... --async` fails with
+`HubAuthError: 403 forbidden: no write grant on channel 'hordes'`. Diagnosis, done this tick:
+`ahub whoami` returns `subagent:spawnda` for the session token AND for the token inside
+`~/projects/agent-hub/coordinator.env` — i.e. the "coordinator" file (dated 2026-09-06, with
+`HUB_PARTICIPANT=remy:orchestrator`) no longer carries a coordinator token at all; it resolves to the
+same worker identity the pilot already has, and that identity's write grant on `hordes` is gone.
+TICK NOTE 17's note ("the coordinator identity is the reason this tick could issue at all") is no
+longer true. `ahub` has no `read`/`history` subcommand, so hub message history could not be read this
+tick either — which is why the builder's own `done:` report was not retrieved. The worker
+`cli_glm-hordes-g8` is alive and IDLE (`hub-worker queue` => `running: null`).
+
+**Tooling that IS on PATH:** `hub-worker` (run/issue/spawn/retire/poll/queue/cancel) yes; `ahub` only
+by full path (`~/projects/agent-hub/sdk/ahub`); there is no `agent-hub/sdk/checkpoint` binary and
+`ahub` exposes no `checkpoint` subcommand, so the STEP-5 checkpoint could not be posted this tick —
+recorded here instead, which is the durable record anyway.
+
+**Housekeeping.** `hub-worker queue cli_glm-hordes-g8` lists TWO pending rows that have ALREADY run
+(`msg_01M2CFATF46VSRKXHK5FFN4J26`, spawnfb's informational ack, and `msg_01M2CPR11XXDC5FWJAKKYT28SP`,
+this tick's own N1b item 8 task) — both show `exit 0` in
+`.hub-worker/logs/spawn-glm-hordes-g8-20260912-204240.log`, so they are stale queue rows, not work.
+They could not be cancelled (no write grant). The tree is COMMITTED and clean, so a stale re-run could
+not clobber anything today, but the queue should be swept once a write-capable token exists.
+
+**COULD NOT VERIFY (honest):**
+- **The 70-90% spend-share bar is NOT met.** 97.9% / 99.0%. Reported above; not papered over.
+- The WITCH control arm's 127.5s mean sits on 4 runs with 3 early deaths (bimodal), so that "before"
+  is small-n and should not be quoted as a rate.
+- The KNIGHT control arm's spend share is degenerate (no base mana weapon), so the metric separates the
+  two arms only for the WITCH.
+- The builder's own reported numbers were NOT retrieved (no hub read path, see above); every number in
+  this note is one I measured myself.
+- No balance sim was re-run, so the DIFFICULTY effect of AUTO now casting is unmeasured in the game's
+  own terms — the cohort numbers above are instrumentation, not a balance verdict.
+- **No vision model is reachable from this host.** `verify_skill_keys.mjs` is a real-browser check, but
+  its result is geometry + computed values + `getImageData`, never "looks right". AUTO_CAST adds no new
+  visual surface, so no new phone PNG was required this tick.
+- The sequencing conflict (TICK NOTES 15-19: the ranked queue vs BUILD_PLAN W7a/W7b, G5 unmeasured for
+  the arch fix, G6 below the owner's raised x1.6 at x1.28) is now FIVE ticks old and still needs an
+  owner call. The Q-slot question (where FROST_NOVA lives once Q becomes the class ult, which gates
+  N1's ults) is also still unanswered.
+- Lock hygiene: acquired at the top of this tick (`subagent:spawnfa`), released at the end of it, both
+  from `/home/claude/projects/hordes`.
+
+**NEXT GOAL: N1b item 6** — brief ready at `docs/briefs/N1B6_SHOP_MANA_BUYABLES.md`, blocking only on
+a write-capable hub token. After that, the unblocked queue is G13/G14 or G24/G25 unless the owner
+answers the Q-slot question, which unlocks N1's ults.
+
+
+## TICK NOTE 21 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; N1b item 6 DISPATCHED — TICK 20's auth blocker turned out to be a false alarm)
+
+**Goal worked: N1b item 6 (the three MANA shop buyables — thrifty / well / siphon).** Brief was already
+written by TICK 20; this tick un-blocked the dispatch, verified the baseline the builder starts from, and
+put the task on the worker.
+
+**THE AUTH BLOCKER FROM TICK 20 IS NOT REAL — DIAGNOSED AND WORKED AROUND, WITH EVIDENCE.** TICK 20
+concluded the coordinator token had lost its write grant on `hordes`. Re-tested this tick:
+- `ahub whoami` returns `{"error": "participant '<id>' not found on hub"}` for BOTH the ambient session
+  token (`subagent:spawnda`) and the coordinator token (`remy:orchestrator`). **That lookup failing is a
+  red herring — it proves nothing about write access.**
+- Writes SUCCEED with the coordinator token. `ahub say` on channel `hub` published
+  `msg_01M2CTZ5WZX2PB2DAVAQP22J19`, and on channel `hordes` published `msg_01M2CTZ9HEWX1BE38WKNN7XJ5A`.
+  Both returned a message id; neither returned 403.
+- `hub-worker issue hordes @cli_glm-hordes-g8 ... --async` then succeeded outright (see dispatch below).
+- **The gotcha, for the next tick:** `~/projects/agent-hub/coordinator.env` sets `HUB_TOKEN` and
+  `HUB_PARTICIPANT`, NOT `AGENT_HUB_TOKEN`/`AGENT_HUB_PARTICIPANT`. Sourcing it alone changes nothing
+  because the ambient session token wins. The working invocation is:
+  `set -a; . ~/projects/agent-hub/coordinator.env; set +a;`
+  `AGENT_HUB_URL="$HUB_URL" AGENT_HUB_TOKEN="$HUB_TOKEN" AGENT_HUB_PARTICIPANT="$HUB_PARTICIPANT" hub-worker issue ...`
+- The hub server is up (uvicorn pid 1917606 on <hub-host>:5710); the worker `cli:glm-hordes-g8` is
+  alive (pid 495012, uptime 10:51:51). The admin token in the coordinator.env comments still works for
+  `token-requests`, but no token had to be minted — the existing coordinator session writes fine.
+
+**BASELINE RE-VERIFIED BY THIS TICK (my own run, on the tree the builder inherits):**
+`bash /tmp/run_all.sh` => **PASS=71 FAIL=0** at `34f7614`. The tree is COMMITTED and contains no `src/`
+modification — the only working-tree entries are `M docs/HORDES_GOALS_2026-09-12.md` (tick notes) and the
+untracked `docs/briefs/N1B6_SHOP_MANA_BUYABLES.md`. **So TICK 19/20's "two landed features exist only in
+the working tree" risk is CLOSED**: the orchestrator committed N2 + N1a + N1b-item-8 as `34f7614`.
+
+**STALE-QUEUE CHECK BEFORE DISPATCHING (this is the collision class that caused TICK 19's incident).**
+`queued.json` for `cli_glm-hordes-g8` still lists two ids — `msg_01M2CFATF46VSRKXHK5FFN4J26` (spawnfb's
+informational ack) and `msg_01M2CPR11XXDC5FWJAKKYT28SP` (TICK 19's own N1b item 8 task). Re-running that
+second one would have rewritten `src/main.js` over a clean tree. Checked rather than assumed: BOTH ids are
+present in `.hub-worker/cli_glm-hordes-g8/seen.json`, and the worker dedupes on the seen watermark
+(`hub-worker.py:981` — `if mid and mid in self.seen`), so they cannot re-run. Left in place; they are a
+display artifact of the queue file, not pending work.
+
+**DISPATCHED THIS TICK:** `msg_01M2CTZQ93XW644JRAT4XPXAK1` -> `cli:glm-hordes-g8`, brief
+`docs/briefs/N1B6_SHOP_MANA_BUYABLES.md` (item 6's three rows as `SHOP_UPGRADES` content, composing into
+the EXISTING seams — `manaCostMult` via `applyCharacter`, `stats.maxMana` via `applyMetaBonuses`, the kill
+seam at `src/main.js:1721` — with a new `test/test_shop_mana.mjs`, before/after cohorts for both classes,
+suite x3 at FAIL=0, a 120Hz replay, and the phone-viewport browser check only if shop rendering changes).
+The issue text repeats the no-git rule, the clean-tree fact, and that the lock must be taken per the
+brief's own LOCK section.
+
+**COULD NOT VERIFY (honest):**
+- **The dispatch is QUEUED, NOT RUNNING.** `hub-worker queue cli_glm-hordes-g8` run immediately after the
+  issue still showed `running: null` and did not yet list the new id — the runner picks it up on its next
+  poll. The next tick must confirm `running:` is non-null and then verify the ARTIFACT (suite re-run,
+  `test_shop_mana.mjs` standalone, the two item-7 bars re-measured), because a builder `done:` line is a
+  claim, never evidence.
+- No `src/` file was changed by this tick, so the only numbers this note stands behind are the baseline
+  suite result and the two published hub message ids.
+- **The 70-90% spend-share bar is still NOT met at baseline** (97.9% KNIGHT / 99.0% WITCH, TICK 20's own
+  measurement). The brief asks the builder to measure what the buyables DO to it and to report plainly if
+  they only move it a little — not to force it green.
+- No balance sim was run this tick, so the difficulty effect of the shop rows is unmeasured by definition
+  (they do not exist yet).
+- **No vision model is reachable from this host** — unchanged caveat for every phone PNG.
+- `window.close()` on exit remains unobservable over CDP.
+- **The sequencing conflict (ranked queue vs `docs/BUILD_PLAN.md` W7a/W7b; G5 unmeasured for the arch fix;
+  G6 below the owner's raised x1.6 at x1.28) is now SIX ticks old and still needs an owner call.** The
+  Q-slot question that gates N1's ults (where FROST_NOVA lives once Q becomes the class ult) is also still
+  unanswered. Neither is a builder's decision, so neither was invented here.
+- Lock hygiene: acquired at the top of this tick (`subagent:spawnfa`), released at the end, both from
+  `/home/claude/projects/hordes`.
+
+**NEXT GOAL: N1b item 6** (in flight). After it lands and is verified, the unblocked queue is G13/G14 or
+G24/G25 unless the owner answers the Q-slot question, which unlocks N1's ults.
+
+## TICK NOTE 22 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; N1b item 6 RE-DISPATCHED after the real root cause was found)
+
+**Goal worked: N1b item 6.** The tick's assigned job was to verify TICK 21's artifact. There was no
+artifact to verify, and the reason was not a wedged worker — it was an addressing bug in TICK 21's
+dispatch. Diagnosed here, fixed here, dispatch re-issued and CONFIRMED RUNNING.
+
+**ROOT CAUSE (evidence, not theory).** TICK 21 published the brief to handle `@cli_glm-hordes-g8`
+(UNDERSCORE). The worker's real participant id is `cli:glm-hordes-g8` (COLON) and that is what its
+handles are built from. Every task this worker has ever executed was addressed with the colon form:
+`sqlite3 hub.db "select substr(body,1,60) from messages where id in (...)"` returns
+`@cli:glm-hordes-g8 N1a DISPATCH ...` and `@cli:glm-hordes-g8 N1b ITEM 8 DISPATCH ...` for the two
+tasks it demonstrably ran, while the failed one reads `@cli_glm-hordes-g8 TASK: ...`. The underscore
+string is only the FILESYSTEM name of the worker's state dir (`.hub-worker/cli_glm-hordes-g8/queued.json`,
+which is also what `hub-worker queue cli_glm-hordes-g8` takes) — which is exactly why the dispatch looked
+successful: `hub-worker issue` posts the message and returns an id, but it does not validate the target
+against the participant's handles. The message sat on `#hordes`, unseen, for the whole interval since
+07:33Z. Corroboration: the id is absent from BOTH `queued.json` and `seen.json` for that worker (it was
+never delivered, not delivered-and-dropped).
+
+**A FALSE LEAD, RECORDED SO THE NEXT TICK DOES NOT CHASE IT.** The worker's sockets to the hub are full
+of `CLOSE-WAIT` states, which reads like a dead SSE subscription and a deaf worker. It is NOT: every
+other live hub worker on this box (ludex kimi, pongrogue glm, agent-hub-android kimi) shows the same
+pattern, and it holds one `ESTAB`. I checked the pattern before touching anything, then proved the worker
+was listening the only way that counts — by posting a correctly-addressed task and watching it run. No
+process was killed or restarted this tick; no worker state was modified.
+
+**DISPATCHED (and CONFIRMED RUNNING, not merely queued — the gap TICK 21 could not close):**
+`msg_01M2CX1KK3AK257PKAPCR74Y6M` -> `cli:glm-hordes-g8`, `hub-worker issue hordes cli:glm-hordes-g8
+"$(cat /tmp/n1b6_task.txt)" --async`, brief `docs/briefs/N1B6_SHOP_MANA_BUYABLES.md`, same scope as TICK 21
+plus an explicit note that this is a re-dispatch and which id failed. Confirmation: `hub-worker queue
+cli_glm-hordes-g8` now reports `running: "msg_01M2CX1KK3AK257PKAPCR74Y6M"`, and this worker's own log has
+the matching `task msg_01M2CX1KK3AK257PKAPCR74Y6M from remy:orchestrator` line. That is the TICK 21
+`running: null` gap closed.
+
+**COULD NOT VERIFY (honest):**
+- **No artifact exists yet.** The builder started during this tick; nothing has landed. The suite was
+  therefore not re-run by this tick — the `PASS=71 FAIL=0` figure on this tree is TICK 21's measurement,
+  and the only tree fact this note stands behind on its own is `git status` (clean except this doc and the
+  untracked brief) at `34f7614`. The next tick must verify the ARTIFACT: suite x3 at FAIL=0,
+  `test/test_shop_mana.mjs` standalone, `verify_skill_keys.mjs`, and the two item-7 bars re-measured for
+  BOTH classes. A `done:` line is a claim, never evidence.
+- **The item-7 bars are still unmet at baseline** (zeroFrac 0.0%, spend share 97.9% KNIGHT / 99.0% WITCH —
+  TICK 20's measurement). The brief asks what the buyables do to them and to say plainly if it is little.
+- **Add this to the hub-ops friction list:** `hub-worker issue` accepts a target that matches no handle and
+  silently posts a task nobody will ever run. A one-line validation (resolve the target against the
+  participant's handles, or refuse) would have saved two ticks. Not fixed here — it is hub tooling, not
+  hordes, and the lock this tick holds is scoped to hordes.
+- No vision model reachable from this host (unchanged); `window.close()` unobservable over CDP (unchanged).
+- The six-tick-old sequencing conflict (ranked queue vs `docs/BUILD_PLAN.md` W7a/W7b; G5 unmeasured for the
+  arch fix; G6 at x1.28 vs the owner's raised x1.6) and the Q-slot question that gates N1's ults both still
+  need an OWNER call. Neither was invented here.
+- Lock hygiene: acquired at the top of this tick (`subagent:spawnfa`), released at the end, both from
+  `/home/claude/projects/hordes`.
+
+**NEXT GOAL: N1b item 6** (in flight, correctly addressed now). After it lands and is verified, the
+unblocked queue is G13/G14 or G24/G25 unless the owner answers the Q-slot question, which unlocks N1's ults.

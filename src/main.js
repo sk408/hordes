@@ -1719,6 +1719,12 @@ function update(dt) {
       }
       state.enemies.splice(i, 1);
       p.kills++;
+      // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
+      // field is safe unowned). A kill is an EVENT, never a frame: the grant
+      // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
+      if (p.stats.manaOnKill) {
+        p.mana = Math.min(p.stats.maxMana, p.mana + p.stats.manaOnKill);
+      }
       // WAVE-11 RAMPAGE METER: every kill extends the streak (mult caps at 1.5x).
       state.rampage.streak++;
       if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
