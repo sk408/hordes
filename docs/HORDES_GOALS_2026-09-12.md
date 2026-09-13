@@ -58,6 +58,32 @@ do not treat its numbers as current, and do not "fix" the tree back toward them.
 
 ---
 
+### A STALE HEARTBEAT IS NOT AN ABANDONED LOCK (2026-09-13, corrected twice)
+
+The pilot has twice reported "lock held with a stale heartbeat, so every tick will
+no-op" as if the holder were dead. **It was not.** Measured on the pid in question:
+a live worker, a live BUILDER CHILD (`/home/claude/bin/claude --print "HORDES suite
+reds: FIXTU...RETARGET"`, 35 minutes in), and `test/test_shop_mana.mjs` written 3
+minutes earlier. Do NOT force a lock on heartbeat age.
+
+WHY THE HEARTBEAT LIES: nothing makes a builder beat, and a builder's brief is
+mostly long silent runs — 20 standalone runs per test plus the full suite three
+times is many minutes of pure test execution with no file writes and no beats.
+`agentlock` is right to decide by pid on the same host, precisely because a beat
+cannot resurrect a process. The heartbeat only decides the CROSS-HOST case.
+
+THE CHECK, before ever concluding "stale" (all four, cheap):
+  ps -o pid,ppid,etime,time,args -p <pid>      # is it a live worker?
+  pgrep -P <pid>                               # a LIVE CHILD = work in flight
+  find . -newermt '-30 minutes' -not -path './.git/*'   # recent writes?
+  ~/projects/agent-hub/sdk/agentlock status    # what does it claim
+A live child plus any recent write = WORKING. Report "builder in flight", end the
+tick, change nothing. The pilot's tick no-op'ing while a builder holds the tree is
+CORRECT behaviour, not a fault to escalate.
+
+FOR DISPATCHERS: briefs that demand long verification phases should tell the
+builder to `agentlock beat` as it goes, so the heartbeat stops scaring readers.
+
 ### VISUAL VERIFICATION: you cannot see, but you can still get it seen (2026-09-13)
 
 The pilot reported "no vision model in this session, so g20-stages-phone.png still

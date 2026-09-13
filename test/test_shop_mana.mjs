@@ -34,6 +34,18 @@ const h = await boot();
 const st = h.state;
 const T = h.T;
 
+// SUITE-REDS (post-R1 flake): every scripted kill below rolls the kill-channel
+// EVOLUTION TOKEN (1 in 1200, main.js:1831), and the FIRST-EVER token banner
+// is a PERSISTED per-profile event (save.js v6 ledger) that HOLDS the sim for
+// 2.5s (main.js grantEvolutionToken -> state.bannerHold). One unlucky roll
+// landing inside a 20-kill window froze the death pass mid-pass (measured:
+// t stuck at 0.2667s, kills stuck at 14/20, 5 fails / 100 standalone runs).
+// The banner is a tutorial presentation hold, orthogonal to what this file
+// measures — pre-mark it seen so the kill windows race nothing. Same house
+// pattern as pinning the weather: determinism for the fixture, not a softer
+// assertion.
+T.getProfile().banners = { TOKEN: 1 };
+
 const row = (id) => SHOP_BY_ID[id];
 const sane = (r) => {
   assert.ok(r, 'row exists');
