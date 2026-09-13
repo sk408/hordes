@@ -114,6 +114,16 @@ S.check('the hint lines and the text HUD name the SAME two letters', () => {
   // MANUAL). The buttons advertise the universal pair, so the rest must too.
   assert.equal(C.SKILLS.FROST_NOVA.KEY, 'q', 'FROST_NOVA is Q');
   const hints = hintBlock();
+  // (h) INVARIANT: every mode the player can be in must have its OWN entry and
+  // must name ITSELF. The pre-(h) table had only AUTO + MANUAL, so AUTO_MOVE fell
+  // through to the AUTO copy and the panel named the wrong mode.
+  for (const mode of ['AUTO_ALL', 'AUTO_MOVE', 'MANUAL']) {
+    assert.match(hints, new RegExp('\\b' + mode + ':'),
+      `${mode} must have its OWN hint entry (a fallback names the wrong mode)`);
+  }
+  assert.match(hints, /M pilot \(AUTO ALL\)/, 'the AUTO ALL line names its own mode');
+  assert.match(hints, /M pilot \(AUTO MOVE\)/, 'the AUTO MOVE line names its own mode');
+  assert.match(hints, /M pilot \(MANUAL\)/, 'the MANUAL line names its own mode');
   assert.match(hints, /Q \/ E/, 'the AUTO hint line must teach Q / E');
   assert.match(hints, /\(W too\)/, 'the AUTO hint line still discloses W');
   assert.match(hints, /Q frost &middot; E overcharge/,

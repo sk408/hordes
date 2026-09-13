@@ -18,6 +18,39 @@ this project should read it first and treat the numbered goals as the acceptance
 
 ---
 
+## SUPERSEDED BALANCE ARITHMETIC — read before using any number below (2026-09-13)
+
+Owner-ordered changes on 2026-09-13 invalidated the balance arithmetic in the older tick notes and
+in every doc that quotes them. The history below is left intact as a record of what was true THEN;
+do not treat its numbers as current, and do not "fix" the tree back toward them.
+
+- **Enemy base stats squared/doubled** (`4202a08`): `ENEMY.BASE_HP` 12 -> **144**,
+  `BASE_CONTACT` 14 -> **196**, `BASE_SPEED` 28 -> **56**. Squared at the BASE, deliberately, so
+  heat / wave-ladder / stage / type multipliers keep their own linear contracts (squaring the
+  composite broke heat's pinned x2.2 contract). Any note quoting "CHASER 12 on stage 0, 18 on
+  SNOWFIELD" or "12 x 1.5 = 18" is a pre-buff example: the ratio-based rules still hold
+  (`isEliteish` is `maxHp >= BASE_HP * 1.5`, so it stayed proportional), the literals did not.
+- **Chests no longer grant upgrades** (`b52cfd1`): each band drops an item of its own rarity.
+  Any goal that assumes the chest upgrade faucet is describing a removed system.
+- **Rarity ladder re-tiered** (`edf8e2a`): COMMON 98 / RARE 1.7 / EPIC 0.2 / LEGENDARY 0.02 as raw
+  shares (sum 99.92, normalised at pick); the gamble is a separate independent 1-in-10 roll.
+- **Forged Edge is +150% weapon damage per level** (`2c13d1c`): L1 = 2.5x, L5 = 8.5x base damage.
+- **Fresh-run gold is ~60**, not the 700 that `GOLD_MODEL.RUN1` assumes. Every unlock price argued
+  from "N fresh runs at 700 gold" needs re-deriving before it is trusted.
+- **BUILD_PLAN's W7b "never lower the floor" is a DRAFT rule, not a difficulty rule.** It forbids
+  making bad DRAFTS more punishing; it was not the basis for the base curve. The base difficulty was
+  deliberately made far harsher by direct owner order (squared foe hp/damage, chest upgrades
+  removed) and the owner has accepted the result in his own words: *"It's fine so far. Gives players
+  the grind they want."* So do NOT cite W7b, a balance test, a sim target or "a fresh run dies in
+  ~10-25s" as a regression to revert. Retarget the fixture (the probe character may be made durable
+  for a test scenario — the owner sanctioned exactly that) rather than softening the game.
+- The suite's own bar is unchanged: `bash /tmp/run_all.sh` must end with zero failures, and an
+  assertion is never weakened to get there. `test_rarity` has a low-rate flake under load
+  (~30% measured as 3/10 across two commits); it passes standalone repeatedly. `smoke` and
+  `test_trophy_hooks` flake under concurrent load and pass standalone.
+
+---
+
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
 Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority — he saw the
@@ -183,6 +216,303 @@ mid-fade, and settled, plus the art-only hold on run start — the same
 `tools/verify_g12_title.mjs` pattern, which already drives `mode 'title'` and
 `T.showTitle()` and can be extended rather than reinvented. Note there is NO vision model on
 this host: assertions must be geometry/opacity/pixel-sample based, not "looks right".
+
+## OWNER FEEDBACK 2026-09-13 — ITEMS (a)-(j)  [status per item, see the table]
+
+Queued from the durable source `~/.hermes/scripts/hordes_goal_items.md`, which is the file these were measured into. Every measured number and every quoted owner line is preserved verbatim below; do not retype or summarise them from memory.
+
+**STATUS OF THESE ITEMS — set by Remy 2026-09-13 after landing them (read before re-dispatching
+anything here).** Every claim below was verified against the tree at the named commit, and each
+carries its measured number; a subagent's self-report is not evidence, so re-run the probe if you
+intend to build on it.
+
+| item | status | landed in | evidence |
+|---|---|---|---|
+| (e) TOP-TIER DROPS + LUCK GATE | **LANDED** | `edf8e2a` | ladder measured C98.08 / R1.70 / E0.195 / L0.0200 at luck 0; luck-5 legendary share 0.147% = **x7.36** vs luck 0 (1 per 2.43 runs vs 1 per 17.9). Live loop: legendaries/run **8.40 -> 0** at luck 0 over 13.2k/13.5k kills. |
+| (g) TOP-TIER PICKUP IS AN EVENT | **LANDED** | `edf8e2a` | one-time banner, persisted via save schema **v6** `profile.banners` (keyed by item name; the first-ever token banner also stops re-firing every run). |
+| (h) SELECTABLE AUTO-PILOT | **LANDED** | `edf8e2a` | `AUTO ALL / AUTO MOVE / MANUAL`, `M` cycles, `setPilotMode` seam. NOTE for probes: one `M` press now lands on **AUTO_MOVE**, not MANUAL — every probe that assumed one press = MANUAL had to be made mode-explicit. |
+| (i) EVOLUTION TOKENS | **LANDED** | `edf8e2a` | per-channel roll + `runCounts.tokens {kill, chest, drop}` ledger. Kill 1/1200, chest 1/200, drop 1/500. |
+| (j) CHESTS -> EQUIPMENT | **LANDED** | `b52cfd1` (+ `2c13d1c`) | no band applies an UPGRADE any more; each band drops an item of its own rarity. `test_chests` asserts the removal. |
+| (d) ECONOMY TOO GENEROUS | **ADDRESSED** | `edf8e2a` | 98% common by construction (51.99 common per 53 chests); gamble split into its own independent 1-in-10 roll so it stayed alive. |
+| (a) REGEN OUTPACES ENEMY DAMAGE | **ADDRESSED** | `4202a08` | BASE_CONTACT 14 -> **196**. |
+| (b) FIRST-RUN MOVEMENT SPEED | not addressed | — | untouched. |
+| (c) BOSSES TOO EASY | partly | `4202a08` | bosses take the same squared base (hp and contact); no boss-specific tuning was done. |
+| (f) CHEST PATH = EQUIPMENT FAUCET | measured only | — | see the item text; no code change. |
+
+**The owner has since ACCEPTED the resulting difficulty** ("It's fine so far. Gives players the grind
+they want") — do not soften the fresh-run curve to make a probe or a balance test pass.
+
+**OPEN, and the thing the owner is currently measuring: how long until the damage buyable pays.**
+Measured with the levels actually purchased (`profile.purchased.dmg = N`, fresh run, one run per
+process), **n=3 runs per level** because a single run per level is not evidence here — the spread
+within a level is as large as the effect:
+
+| dmg level | mult | endTime (3 runs) | mean | kills (3 runs) | mean kills |
+|---|---|---|---|---|---|
+| L0 | 1.0x | 17.1 / 11.1 / 18.0 | 15.4s | 1 / 1 / 0 | 0.7 |
+| L1 | 2.5x | 17.8 / 19.3 / 10.3 | 15.8s | 4 / 4 / 2 | 3.3 |
+| L2 | 4.0x | 12.1 / 15.3 / 23.7 | 17.0s | 4 / 5 / 8 | 5.7 |
+| L3 | 5.5x | 49.2 / 41.3 / 17.2 | 35.9s | 23 / 52 / 7 | 27.3 |
+| L4 | 7.0x | 35.0 / 39.2 / 38.9 | 37.7s | 26 / 28 / 50 | 34.7 |
+| L5 | 8.5x | 41.5 / 39.9 / 37.6 | 39.7s | 41 / 40 / 32 | 37.7 |
+
+So the buyable DOES extend survival, with a **threshold at L3** (5.5x, 774 gold cumulative):
+mean survival roughly 15s -> 36s and mean kills 0.7 -> 27, then it **saturates around 40s**
+(L5 at 2371 gold buys only ~4s over L3). Damage at end rises exactly as the formula says
+(8/20/32/44/56/68 for L0..L5), so the wiring is right; the shape is the design question.
+**An earlier single-run-per-level pass (26.6/20.9/11.6/8.5/35.3/6.8s) suggested damage did
+nothing at all — that reading was wrong, retracted here, and is the reason this table uses n=3.**
+
+**A fresh run pays ~60-80 gold** (`computeRunGold`: BASE 50 + kills/2 + level*10 + time/20) against
+`GOLD_MODEL.RUN1` = 700, so every price argued from "N fresh runs at 700 gold" needs re-deriving,
+and reaching L3 (774 gold) is roughly 10 runs at the current income.
+
+Cut-paste these into `docs/HORDES_GOALS_2026-09-12.md` as goal items with
+`[status: not started]` markers, above the G1 section. That doc IS the queue
+the goal pilot reads; the hub is not an intake channel.
+
+All numbers below are measured on the SERVED build (`/home/claude/hordes`,
+byte-identical to the worktree) with a FRESH save through the real loop.
+
+---
+
+## (a) REGEN OUTPACES ENEMY DAMAGE — fresh save
+
+4471 heal writes in 288s (~15/second). Healed **4528.8** vs **4162.5** taken;
+healing won 2 of 3 runs. Owner: "enemies couldn't hurt me faster than I
+regenerate HP". Root contributor measured at run end: **lifesteal 0 → 0.06**,
+plus `applyRegrowth` (main.js:1308) and level-up heals (main.js:1921).
+
+## (b) FIRST-RUN MOVEMENT SPEED IS ENDGAME SPEED
+
+Mean actual movement **185–190 px/s** against a 60 px/s base, speedMult peaking
+1.24–1.66 before earning anything — and the sample is worse at the tail: a
+single fresh run finished at **speed 60 → 1506 px/s** (25x base). Compounding
+seam: base x controller KITE_MULT 2.0 x speedMult x chest upgrades. Owner: this
+should be endgame movement, not first-run.
+
+## (c) BOSSES TOO EASY — fresh save
+
+HERALD time-to-kill **10.5–35.7s**, player already **level 23–36 at t=60**.
+
+## (d) ECONOMY TOO GENEROUS
+
+A run that died at t=122 banked **2545 gold**; full-run payout not yet measured.
+Owner reported ~25k on a first run.
+
+## (e) TOP-TIER DROPS ARE NOT RARE + LUCK GATE — owner spec
+
+Rarity is rolled **per kill**, so volume makes the top tier a certainty.
+Measured in ONE fresh run: **280 world drops** → C141 / R86 / E46 / **L7**
+(second run 297 → C149 / R89 / E44 / **L15**). Owner: *"3% per kill with
+thousands of kills is a certain guarantee, which means it is not rare."*
+
+**Owner's ladder** (target share of drops at luck 0): COMMON 98%, RARE 1.7%,
+EPIC 0.2%, LEGENDARY 0.02%. Measured implication at ~280 drops/run: RARE
+89/run → 4.8; EPIC 44/run → 0.56; LEGENDARY 8–15/run → 0.056, i.e. **1
+legendary per ~18 runs**.
+
+**ROOT CAUSE:** `loot.js:12-13` records that the old *"no LEGENDARY on world
+drops"* rule was deliberately SUPERSEDED when the chest rarity table was
+unified, so the world path now uses `BASE_RARITY_WEIGHTS` (meta.js:516 =
+{COMMON:60, RARE:25, EPIC:12, LEGENDARY:3}). Reinstate a luck gate on the
+world-drop path instead of only re-tuning a weight.
+
+**THE TAPER MUST CHANGE TOO OR THE GATE IS FAKE:** `LUCK_TAPER.LEGENDARY` is
+0.35 LINEAR (meta.js:517, `luckDropWeights` meta.js:519), so maxing Fortune
+(500g x2.0 growth x5 levels = **15,500g**) lifts the legendary WEIGHT only
+2.75x. Measured today: luck 0 = **8.4** legendaries/run, luck 5 = **20.9**/run —
+the buyable floods the tier instead of unlocking it. Under the owner's new base
+the same taper reaches only 1 per 4.0 runs at max Fortune (x4.5). Owner wants
+maxing luck to UNLOCK the top tier. **Owner has APPROVED raising the taper.**
+Recommended value: `LUCK_TAPER.LEGENDARY` 0.35 → **0.7**, which measures luck 0
+= 1 per 17.8 runs, luck 5 = 1 per 2.4 runs (x7.4 gain).
+
+## (f) THE CHEST PATH IS THE REAL EQUIPMENT FAUCET (measured, owner-flagged)
+
+The owner pushed back hard on the chest path being left unmeasured, and was
+right — it dwarfs world drops.
+
+Measured in ONE fresh run: **53 chests opened, 6 of them before the first
+boss**. Chest contents follow `CHESTS.WEIGHTS = { common: 60, rare: 25,
+legendary: 5, gamble: 10 }` (chests.js:30) and grant PERMANENT stat upgrades:
+
+- common 60% → 1 upgrade
+- rare 25% → 1 upgrade + 1 potion
+- **legendary 5% → 2 upgrades + an evolution-token CHOICE** (token offer is being
+  DECOUPLED — see item (i); this band then needs a replacement top reward, which
+  is an open design question, not something to invent silently)
+- gamble 10% → win: upgrades + both potions; lose: nothing (+ punishment horde)
+
+At 53 chests that is **~32 common, ~13 rare, ~2-3 legendary** chests per run —
+i.e. **~53-70 permanent upgrades in one fresh run**, versus only 4 equippable
+items. `ruledChestRarity` (HORDE BAIT) can also move the band ONE STEP UP, so
+rare chests become legendary ones.
+
+The compounding it produces in a single fresh run (t=60 → end): damage
+**8 → 4856**, speed **60 → 1506**, cooldown **0.55 → 0.048**, projectiles
+**1 → 16**, pierce **1 → 19**.
+
+**OWNER DECISION (2026-09-13): the rarity re-tier applies to the CHEST bands
+too** ("And yes, rarity reteir applies to chests also"). Mapping the drop ladder
+onto the chest bands at 53 chests/run:
+
+- common 98% → 51.9 chests/run
+- rare 1.7% → 0.90
+- legendary 0.2% → 0.11
+- 4th tier 0.02% → 0.01
+
+**TWO THINGS TO SETTLE BEFORE IMPLEMENTING, neither of them invented here:**
+
+1. **The GAMBLE band is not a rarity.** `CHESTS.WEIGHTS` mixes
+   {common, rare, legendary, gamble} in ONE table. Applying a 4-tier rarity
+   ladder leaves gamble homeless. Recommendation: give gamble its OWN
+   independent roll (e.g. 1 in 10 chests, unchanged) so the risk mechanic
+   survives the re-tier instead of quietly becoming the 0.02% slot.
+2. **This does NOT reduce equipment volume.** A *common* chest still grants 1
+   upgrade, so the upgrade COUNT stays ~53/run either way — the ladder only
+   removes the bonuses attached to the upper bands (potion, double upgrade,
+   token choice). If "too good equipment fast" is the problem, the levers are
+   the chest SPAWN rate (`CHESTS.DROP_CHANCE` on elite-ish kills) or the
+   per-upgrade magnitude — not the rarity band. Decide which before dispatching,
+   or the re-tier will land, look correct, and change nothing measurable.
+
+**RECOMMENDED READING:** the ladder caps the CEILING (no more 2-upgrade
+legendary chests at 5%, no token choice at 5%), and the volume problem needs a
+separate decision. Both should be measured after the change: chests/run,
+upgrades/run, and the stat curve (damage 8 → 4856, speed 60 → 1506 today).
+
+## (j) CHESTS BECOME EQUIPMENT FAUCETS, NOT UPGRADE FAUCETS — owner design pivot
+
+Owner (2026-09-13): *"chests don't need to grant upgrades at all though. That
+should be handled through buyables and level upgrades. The equipment they drop
+should be the thing that adds stat, damage, etc modifiers."*
+
+**What changes:** chests stop granting `UPGRADES` (the flat stat bumps). Stat
+growth moves to the shop buyables and the level-up draft. Chests instead drop
+EQUIPMENT, whose affixes are the modifier system.
+
+**Good news — equipment already IS that system** (loot.js): `rollItem` builds
+items with `affixes[{id,name,field,magnitude}]` where `magnitude = base *
+RARITY_SCALE[rarity]`; `applyItemAffixes` (main.js:653) adds each onto
+`p.stats[field]`, applied once per equip; `MAX_EQUIPPED = 4`. Fields are the
+multiplier stats (crit, critMult, rateMult, damageMult, xpMult, goldMult,
+speedMult, pickupMult, thorns, lifesteal). LEGENDARY items are hand-authored
+per slot (WEAPON/ARMOR/BOOTS/RING) with FIXED affixes. So the pivot is mostly
+re-routing the chest reward, not building a new system.
+
+**The pivot also makes the rarity ladder mean something:** chest rarity becomes
+item rarity, so (e)'s ladder maps straight on, and the 0.02% 4th tier naturally
+drops a LEGENDARY item.
+
+**MEASURED GAP — the equipment path cannot absorb the power it replaces.**
+Current chest faucet: 53 upgrades/run. Equipment capacity: 4 slots x
+{COMMON 1, RARE 2, EPIC 3, LEGENDARY 3} affixes with magnitudes base x
+{1, 1.5, 2.2, 3}. An all-EPIC kit is 12 affixes; if every single one were
+damageMult (+10% base x2.2) that is **+264% damageMult, i.e. 1 -> 3.64**.
+Compare what the upgrade faucet currently produces in ONE fresh run
+(t=60 -> end): damage **8 -> 4856 (x607)**, speed **60 -> 1506 (x25)**,
+cooldown **0.55 -> 0.048 (x11 faster)**, projectiles **1 -> 16**, pierce
+**1 -> 19**.
+
+That is a two-order-of-magnitude gap, and it is the owner's intent — but it
+means the buyable + level-up path must be deliberately rebalanced in the same
+change, or a fresh run stops being survivable. **Do not ship the chest change
+alone.** Measure before and after with the existing harness: stat curve,
+time-to-kill, HERALD TTK, kills, and whether a fresh player reaches t=60.
+
+**SECOND FLAG — RESOLVED BY OWNER (2026-09-13): "SCRAP/SALVAGE LOOP."**
+Owner: *"Scrap/salvage loop. Yes, chests are meant to be mostly junk. That's the
+idea of rarity. That's why we have the logic to equip better items and ignore
+the rest."* So the junk volume is INTENDED, not a defect — 4 slots against ~53
+pickups/run is the rarity design working.
+
+The existing logic he refers to is real and must be reused, not rebuilt:
+`itemScore(item)` (loot.js:189) = RARITY_TIER_SCORE
+{COMMON 1, RARE 10, EPIC 20, LEGENDARY 30} + affix magnitudes normalised by the
+pool's base, driving the PURE "best-case equip / no more swap churn" policy
+wired on every drop pickup (loot.js:183-201).
+
+**What to build:** a scrap/salvage loop so the ignored junk has a purpose —
+salvage converts unwanted equipment into a resource instead of it being dead
+weight on the floor. THIS is the mechanical home for the junk, so do not reduce
+chest drops or item counts to solve it.
+
+**SUB-DECISION, recommend gold:** route salvage into GOLD, because item (j) moves
+stat growth to the shop buyables, so junk -> gold -> buyables closes the economy
+loop with the equipment pivot. Alternatives (a dedicated scrap currency, or
+salvage feeding the level-up draft) are plausible but add a second currency.
+Confirm with the owner before building; since the chest->equipment pivot is
+deferred, this rides with it.
+
+
+
+## (g) FEATURE — MAKE A TOP-TIER PICKUP AN EVENT — owner spec
+
+Owner: *"It should be a really cool thing when the player receives a top tier
+drop."* On the FIRST-EVER acquisition of a given top-tier item (per item,
+persisted in the profile — needs a schema field; follow save-schema-evolution
+and bump if required): **pause everything and show a banner**. On repeat
+acquisitions: no pause, but the status/pickup message must visually stand out
+so the pickup reads as noticeable. Specced as top tier = **EPIC + LEGENDARY**
+(one-line tunable if the owner wants LEGENDARY only). Verify through the real
+loop, not by reading code.
+
+## (h) FEATURE — SELECTABLE AUTO-PILOT — owner spec
+
+Auto-skills/auto-potions must be selectable. Extend the existing
+`state.pilotMode` seam (`AUTO` today, already gated in `autoDrinkPotions`
+main.js:4237) to **AUTO ALL / AUTO MOVE / MANUAL**.
+
+## (i) EVOLUTION TOKENS BECOME THEIR OWN ROLL — owner spec
+
+Owner: *"Evolution tokens can be a separate drop completely so they can be
+tuned on their own. They should be possible but hard to get. Maybe 1/500. And
+they should also trigger a banner about what they are used for, and that they
+let you evolve your weapon when it is max level."*
+
+**Decouple the token from `CHESTS.WEIGHTS`** so its rate is tunable on its own
+(today it rides the legendary chest band: 53 chests x 5% = **2.7 tokens per
+run**). Give it its own named constant next to the other drop knobs rather than
+a literal, so the rate has one home.
+
+**THE DENOMINATOR IS THE WHOLE RATE — measured per fresh run** (53 chests,
+~6000 kills on a long run, 280 world drops):
+
+- 1 per 500 **chests** → 0.106/run = **1 every 9.4 runs** ← RECOMMENDED
+- 1 per 500 **kills** → **12.0/run** — the same per-roll volume trap as (e)
+- 1 per 500 **world drops** → 0.56/run = 1 every 1.8 runs
+
+Recommended reading of the owner's "1/500" is **per chest** (1 every ~9.4
+runs), a ~25x cut from today's 2.7/run, which matches "possible but hard to
+get". Confirm the denominator before shipping; if kills is intended, the rate
+must be ~1/50000 to land in the same place.
+
+**OWNER DECISION (2026-09-13) — supersedes the recommendation above.** Tokens
+are meant to be reachable, not a chase: *"should be something a new player can
+get... It's a fun aspect of the game. Shouldn't be something that happens right
+away, but shouldn't take multiple runs to have a chance at a single one."*
+Owner's rates — a THREE-CHANNEL roll, each tuned on its own:
+
+- per **kill** 1/1200 → 0.69 tokens on a short run (834 kills), 5.19 on a long
+  one (6232 kills)
+- per **chest** 1/200 → 0.27
+- **world** 1/500 → 0.56
+
+Combined: **~1.5 tokens on a typical short run, ~6 on a long run** (today:
+2.65, all of it bundled in the chest band). The short-run figure is the owner's
+intent — one token with a chance of a second, without grinding runs. **Flag for
+the owner:** the per-kill channel scales with run length, so a snowballing run
+pulls 5+ from kills alone; if the rate should stay flat, the kill channel needs
+a per-run cap or normalisation. Not a defect — a tuning choice.
+
+**BANNER:** acquiring a token triggers a banner explaining what tokens are FOR
+and that they let the player evolve a weapon **once it is at max level** — so
+the first token teaches the mechanic rather than just being an inventory
+number. First-ever token: full banner (same treatment as the top-tier pickup in
+(g)); repeats: standout status line, no pause.
+
+---
 
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not

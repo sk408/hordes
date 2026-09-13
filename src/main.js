@@ -4901,9 +4901,23 @@ let hintsOn = (() => {
 // claim is scoped to the screens that route it (draft 1-3, evolve /
 // intermission 1-4, stat tabs 1-6) — the title / shop / characters /
 // settings screens ignore number keys while this panel is still visible.
+// (h) EVERY pilot mode gets its OWN entry, keyed by the mode's own name.
+// refreshHints() looks up HINT_LINES[state.pilotMode] and the pre-(h) table had
+// only AUTO + MANUAL, so AUTO_MOVE -- a mode the player can actually be in --
+// fell through to HINT_LINES.AUTO and the panel named the WRONG MODE
+// ("M pilot (AUTO)" while the pilot mode was AUTO MOVE). That is precisely the
+// rule this file's own G11 note states (the hints name the LIVE mode) and the
+// build plan's "every new system updates the reference surfaces" rule, so the
+// mode name is now keyed off PILOT_MODES and the fallback cannot mislabel.
 const HINT_LINES = {
-  AUTO: [
-    'M pilot (AUTO) &middot; TAB focus &middot; G stance',
+  AUTO_ALL: [
+    'M pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
+    'Q / E (W too) skills &middot; H / N potions',
+    'I stats &middot; ESC close / pause',
+    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+  ],
+  AUTO_MOVE: [
+    'M pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
@@ -4915,8 +4929,12 @@ const HINT_LINES = {
     '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
 };
+// The pre-(h) persisted mode name 'AUTO' is an alias, not a lookalike table:
+// one array, so the copy cannot diverge between the two names.
+HINT_LINES.AUTO = HINT_LINES.AUTO_ALL;
+
 function refreshHints() {
-  const lines = [...(HINT_LINES[state.pilotMode] || HINT_LINES.AUTO_ALL || HINT_LINES.AUTO || [])];
+  const lines = [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
   // G11: name the live challenge mode while a non-standard run is up (the
   // hints are in-run chrome; a STANDARD run sees the same four lines as
   // before).
