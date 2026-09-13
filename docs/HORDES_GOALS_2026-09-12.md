@@ -116,9 +116,12 @@ screen itself, then get THAT one read.
   Knight/Rogue/Paladin); **E stays OVERCHARGE for every class**, which is what keeps N1b
   item 5 true; FROST_NOVA leaves Q and returns as a NEW draftable card (new work — the pool
   grants perks, not skills). Full text: N1b item 3 / item 5 / the old DESIGN CALL block.
-  **N1 is therefore NOT blocked on the Q slot.** Still owed from the owner for N1: what each
-  non-Witch ult DOES, and what the Witch's Q becomes (her Chain Zap is her starting WEAPON —
-  `WITCH.skill` is still FROST_NOVA and no `CHAIN_ZAP` exists in `C.SKILLS`). See TICK NOTE 35.
+  **N1 is therefore NOT blocked on the Q slot.**
+- **THE WITCH'S Q — ANSWERED 2026-09-13: it becomes CHAIN REACTION, mana-fed.** Owner: *"Yes, we
+  have to give witch something strong and defining. Frost nova is sort of weak to be honest."*
+  Full spec on N1b item 3. FROST_NOVA leaves Q for everyone and returns as a draftable card
+  (new work). Its slow, the one strong property it had, is carried INTO her new Q.
+  **Still owed from the owner for N1: what each non-Witch ult DOES.** See TICK NOTE 35.
 
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
@@ -126,7 +129,7 @@ Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: not started — Q-SLOT CALL ANSWERED 2026-09-13 (option (a)); still waiting on TWO owner inputs, see the header block below]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: DISPATCHABLE-ISH 2026-09-13 — Q-slot call ANSWERED (option (a)) and the WITCH'S Q is SPECCED (Chain Reaction, N1b item 3). Only the three non-Witch ult EFFECTS remain unspecified]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -220,6 +223,30 @@ skill with a longer timer) and give it a cooldown floor so a dense wave cannot c
    card that grants FROST_NOVA. Item 5's underlying worry (only the Witch has mana income) is
    already answered by item 6's buyables — thrifty / well / siphon are purchasable by any
    class — so a Knight is not locked out of the mana economy.
+
+   **THE WITCH'S Q = CHAIN REACTION (owner-confirmed 2026-09-13). Spec, with its three
+   constraints, so a builder does not have to invent any of it:**
+   Owner: *"Yes, we have to give witch something strong and defining. Frost nova is sort of weak
+   to be honest."* So the Witch's Q must be her DEFINING move, not a utility spell.
+
+   (i) **What it does.** A mana-fed chain attack: cast at the nearest target, jump FURTHER than
+   her starting weapon (`WEAPONS.ZAP` = 'Chain Zap', 1.4s CD, 3 jumps, `CHAIN_RANGE` 90,
+   `FALLOFF` 0.75), and **every enemy the chain kills detonates** — the `onkillboom` rewrite's
+   blast ("every kill detonates - the blast damages enemies nearby"), paying mana per
+   detonation at the established 6-mana price (item 2), not a new one.
+   (ii) **It must READ as the burst, not a second copy of her gun.** Her weapon already
+   auto-fires chain zaps on cooldown; the Q is the big, deliberate cast — more jumps or longer
+   reach, gentler falloff, and the detonations. Otherwise the class reads flat.
+   (iii) **FROST_NOVA's SLOW moves into it** — she loses her only crowd control otherwise, and
+   her survival is kite-based (85px radius, 2.5s, 0.45x speed). Each enemy the chain touches
+   takes the slow. This is also what makes it memorable: a cascading slow that detonates.
+   **It is deliberate that she gets natively what others must DRAFT** — the Chain Reaction card
+   is run-defining and rare (rewrite family weight 0.02, from the owner's own "should use mana?
+   And be rare"), and she is the 9000g buyable class. Keep the card in the pool for every other
+   class; do not remove it because she has it built in.
+   **FROST_NOVA, meanwhile, is called weak by the owner and gets NO balance change here** — it
+   simply leaves Q, keeps its slow (which the new Q also carries), and returns as the draftable
+   card that makes it reachable for the other three.
 
 **4. The Witch is the mana class, and she is BUYABLE: `unlockCost` 1000 -> 9000 (LANDED
 2026-09-13).** At 1000 she cost **1.43 fresh runs** (`computeRunGold(RUN1)` = 700) — buyable
@@ -3659,6 +3686,6 @@ cards + a small active set).
 **>>> OWNER ANSWERS RECEIVED AFTER THIS NOTE (2026-09-13) - N1 IS NO LONGER WAITING ON THE Q-SLOT QUESTION. <<<**
 The owner answered the Q-slot question: **OPTION (a)**. Full text lives on N1b item 3, item 5, and the old DESIGN CALL block (marked answered). Do not re-open it.
 **AND THIS NOTE'S OWN RECON IS UPHELD - one premise in the decision record was wrong and is now corrected.** The Witch's Q is NOT Chain Zap today: her Chain Zap is her STARTING WEAPON (`WITCH.startingWeapon = 'ZAP'`, meta.js:758). Her Q SKILL is still `FROST_NOVA`, and `grep CHAIN_ZAP src/ test/ tools/ index.html` returns nothing — `C.SKILLS` (config.js:151) carries only FROST_NOVA and OVERCHARGE. So option (a)'s plumbing half is real and consumer-complete, while its DATA half is not built for ANY class yet.
-**STILL NEEDING AN OWNER INPUT BEFORE N1 CAN BE DISPATCHED (the real remaining blocker, and it is NOT the Q slot):**
-  1. **What each of the three non-Witch ULTS actually DOES.** N1b item 3 pins only the mechanics (non-mana, kill-charged, cooldown floor). The effects are unspecified, and a builder must not invent them.
-  2. **What the Witch's Q becomes.** Under option (a) Q is the class identity; her identity is the ZAP weapon, so either she keeps FROST_NOVA on Q as her skill (and the ult pattern is for the other three only), or she gets a `CHAIN_ZAP` skill entry. Cheap either way - but it is a design call, not a builder's.
+**UPDATED AFTER THIS NOTE — ONE ANSWER IN, ONE STILL OUT:**
+  1. **The Witch's Q: ANSWERED.** It becomes **CHAIN REACTION** (mana-fed chain zap whose kills detonate, with FROST_NOVA's slow folded in) - owner-confirmed, full spec on N1b item 3. So the answer to question 2 of this note is NEITHER option sketched here: she gets a NEW defining Q, not FROST_NOVA and not a bare `CHAIN_ZAP`. Do not re-open it.
+  2. **The three non-Witch ULT EFFECTS: STILL UNANSWERED**, and it is now the ONLY thing between N1 and a dispatchable brief. N1b item 3 pins the mechanics (non-mana, kill-charged, cooldown floor, one big payoff distinct from existing weapons) but not what each does. The orchestrator's suggestion to the owner: delegate the EFFECTS to the pilot against those constraints rather than spec them by hand.
