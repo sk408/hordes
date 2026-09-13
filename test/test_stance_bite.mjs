@@ -151,6 +151,40 @@ S.check('the payoff reports through the EXISTING feed, rate-limited', () => {
   T.controller.stance = 'BALANCED';
 });
 
+S.check('the payoff never claims collected loot was left out of reach (owner-reported)', () => {
+  const p = quietArena();
+  const base = p.stats.pickup * (p.stats.pickupMult || 1);
+  const greedy = base * (C.AUTOPILOT.STANCES.GREEDY.PICKUP_MULT || 1);
+  const hauls = () => state.toasts.filter(t => /GREEDY HAUL/.test(t.msg));
+
+  // (1) A gem the BASE radius could take is not a payoff, so it says nothing.
+  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
+  T.controller.stance = 'GREEDY';
+  state.gems.push({ x: p.x + base * 0.5, y: p.y, xp: 0.01 });
+  pump(1);
+  assert.equal(state.gems.length, 0, 'the ordinary gem was collected');
+  assert.equal(hauls().length, 0, 'an ordinary pickup is not a GREEDY payoff');
+
+  // (2) Loot beyond even the GREEDY radius stays on the floor and must NOT be
+  // announced as a payoff. The wording bug: "1 LOOT OUT OF REACH" fired exactly
+  // when the loot WAS taken, and never when loot was truly out of reach.
+  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
+  state.gems.push({ x: p.x + greedy * 3, y: p.y, xp: 0.01 });
+  pump(1);
+  assert.equal(state.gems.length, 1, 'loot beyond the GREEDY radius is left alone');
+  assert.equal(hauls().length, 0, 'unreachable loot is not a haul');
+
+  // (3) When it speaks, the words must match the event: the loot was collected.
+  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
+  state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
+  pump(1);
+  assert.equal(state.gems.length, 0, 'the stretched gem was collected');
+  assert.equal(hauls().length, 1, 'a stretched pickup is the payoff');
+  assert.ok(!/OUT OF REACH/.test(hauls()[0].msg),
+    'a payoff must not call the loot it just collected "out of reach"');
+  T.controller.stance = 'BALANCED';
+});
+
 // ---- (2b) legibility through the real input path ----------------------------
 S.check('cycling the dial through the real key path announces the meaning', () => {
   quietArena();

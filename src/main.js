@@ -2054,9 +2054,17 @@ function update(dt) {
   // radius could never have taken. Rate-limited (once per 6s) so it reads as
   // a signal and never becomes noise, and greed-gated so it fires only when
   // GREEDY is the reason it happened.
+  // WORDING (owner-reported + measured): this used to read "N LOOT OUT OF
+  // REACH", which reads as a WARNING about loot left on the ground while the
+  // condition is a SUCCESS -- the gems counted here are the ones being collected
+  // THIS FRAME at a distance only the GREEDY stretch covers. So with a lone far
+  // gem the player was told "1 LOOT OUT OF REACH" about the very gem they had
+  // just picked up, and a gem genuinely left out of reach (3x the radius)
+  // produced no message at all: the claim was inverted from the event. The count
+  // and the rate limit are unchanged; only the claim is now true.
   if (greedyScoop > 0 && state.time - state.stanceLootAt > 6) {
     state.stanceLootAt = state.time;
-    toast('GREEDY HAUL - ' + greedyScoop + ' LOOT OUT OF REACH',
+    toast('GREEDY HAUL - ' + greedyScoop + ' SNATCHED BEYOND REACH',
       C.HUD.STANCE_COLORS.GREEDY);
   }
 

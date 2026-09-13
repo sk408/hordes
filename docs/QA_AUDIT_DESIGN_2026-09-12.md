@@ -85,7 +85,12 @@ What actually changed (config diff `config.js:108-115`):
 - New consequence wired at `main.js:1501-1508`: `pickR = basePickR * stanceDef.PICKUP_MULT`
   (manual + auto both hit this, because pickup is engine-side).
 - Payoff toast: `main.js:1552-1572` — `greedyScoop` counts gems only the GREEDY radius reached,
-  fires `GREEDY HAUL - N LOOT OUT OF REACH` at most once per 6 s (`state.stanceLootAt`).
+  fires `GREEDY HAUL - N SNATCHED BEYOND REACH` at most once per 6 s
+  (`state.stanceLootAt`). OWNER-REPORTED WORDING FIX 2026-09-13: the line used to
+  say `N LOOT OUT OF REACH`, which inverted the event — it fires exactly when the
+  loot WAS collected, so with a lone far gem it read as a warning about a gem the
+  player was holding, and loot genuinely left beyond the radius never produced a
+  line at all. Pinned by test_stance_bite.mjs.
 - Observability: **yes** — a GREEDY player collects loot ~35 % further out and sees the haul
   toast; SAFE demonstrably keeps distance. `controllers.js:163/210/225/256` set `act`
   (FLEE/LOOT/PATROL/MANUAL) for the readout.
