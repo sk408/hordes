@@ -16,6 +16,51 @@ this project should read it first and treat the numbered goals as the acceptance
   https://github.com/sk408/hordes, served at https://sk408.github.io/hordes/ (branch-based Pages, main:/).
 - Only ONE writer in the repo at a time. Verify with the full test suite after every wave.
 
+---
+
+## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
+
+Set directly by Sk408 in session. Take N1, then N2.
+
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: not started]
+
+Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
+is used up"* ... *"I like the class identity idea"*.
+
+**The hook already exists and is DEAD.** All four entries in `CHARACTERS` (`src/meta.js`)
+declare `skill: 'FROST_NOVA'`, and NOTHING in `src/` reads it: `applyCharacter()` applies
+only maxHp/maxMana/speed, and `runAction` hardcodes `useSkill(state, 'FROST_NOVA')` for act
+`'q'`. Wiring it IS the change — this is not new architecture.
+
+Scope (as endorsed by the owner): each class gets a distinct skill in its Q slot — Knight
+frost, Rogue strike, Paladin consecrate, Witch **strong spells** (the caster: expensive casts
+drawn from the finite pool). The Witch's identity depends on mana already being scarce, which
+landed as `e0cea1c` (base regen 2.5 -> 0.5/s, Mana Spring as the relief valve), so N1
+sequences after that.
+
+Also touched, because they name the skill by literal today: the `q` touch-button label is the
+ONE hardcoded skill string (`index.html`, the `FROST` text inside `<button data-act="q">`,
+beside the `[Q]` key cap), the tour's `skills` coachmark copy, the readiness readout
+(`skill('tc-q', ...)`) and the text-HUD line. All should read the class's skill id.
+
+### N2 — SHOW THE TITLE ART (owner: "we never show it")  [status: not started]
+
+Sk408: *"what's that title screen under the menu? How do I see the whole thing? Looks like it
+might be great but we never show it. Maybe when starting a run it removes the menu and lets
+the screen show for a second"*.
+
+**The art is real and nearly invisible.** `src/art/title.js` (`TITLE_ART` / `TITLE_LAYERS` /
+`composeTitle` / `drawTitle`) is drawn full-screen BEHIND the DOM menu by
+`src/render.js` `drawTitleScreen` (line ~214), which publishes a `titleScreen` seam
+`{x,y,w,h,scale}`. A phone screenshot
+(`docs/art/browser-verify-2026-09-12/g12-title-phone.png`) shows only fragments of it: a pixel
+skull behind the TROPHIES card, dungeon tiles and lava/brick pixels around the bottom row,
+plain black above the cards.
+
+Ask: on START GAME, hide the menu and hold the title art ALONE for a beat (~1s) before the run
+begins, so the art is actually shown rather than glimpsed. Must respect the standing "slow-mo
+and shake: rare and earned only" juice rule, and stay integer-scaled with no smoothing.
+
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the
