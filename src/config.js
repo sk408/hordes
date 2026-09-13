@@ -1,4 +1,20 @@
 // HORDES — global config & tuning constants
+
+/**
+ * THE effective volley projectile cap: the base plus whatever the Split Shot
+ * shop row has bought (owner-ordered 2026-09-13: a buyable that "goes to 10 and
+ * allows the card to continue improving until that cap").
+ *
+ * Every read site goes through here — the volley fire, the draft's at-cap label,
+ * and the at-cap damage conversion. Three places used to read
+ * CONFIG.WEAPON.MAX_PROJECTILES directly; if one of them keeps reading the base
+ * while another reads the raised cap, the Split Shot card becomes a fake choice
+ * again in one path and a real one in the other. PURE: stats in, number out.
+ */
+export function volleyProjectileCap(stats) {
+  return CONFIG.WEAPON.MAX_PROJECTILES + ((stats && stats.splitCap) || 0);
+}
+
 export const CONFIG = {
   // Internal render resolution (pixel-art; canvas is CSS-scaled up).
   VIEW_W: 480,

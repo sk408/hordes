@@ -377,6 +377,15 @@ export const SHOP_UPGRADES = [
     baseCost: e.cost, costGrowth: 1, maxLevel: 1, perLevel: 0,
   })),
   // ---- slots + late-game sink ----
+  // OWNER (2026-09-13): "We need one that goes to 10 and allows the card to
+  // continue improving until that cap." Split Shot is a DRAFT card whose grant
+  // goes dead at the base cap of 3 — from there the draft relabels it "+20%
+  // weapon damage (volley full)", because otherwise it is a fake choice. This
+  // row RAISES that cap, +1 per level, so the card keeps granting projectiles:
+  // L1..L10 -> cap 4..13. A flat count, so additive by nature (compounding is
+  // for the (1+x) multiplier rows, not for counts).
+  { id: 'split',   name: 'Split Shot',     desc: '+1 volley projectile cap per level',
+    baseCost: 400, costGrowth: 1.35, maxLevel: 10, perLevel: 1 },
   { id: 'slots',   name: 'Weapon Slot',    desc: '+1 weapon slot (start 3, max 6)',
     baseCost: 5000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Golden HUD + arcade-run modifiers. The late-game flex.',
@@ -699,6 +708,9 @@ export function applyMetaBonuses(stats, purchased) {
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
+    // Split Shot: extra volley projectile cap. A COUNT — never compounded, and
+    // read through volleyProjectileCap() (config.js), the one definition.
+    splitCap: SHOP_BY_ID.split.perLevel * lvl('split'),
     // OWNER: "80% cost cut for casting sounds fine. Allow the full 80." So the
     // floor is 0.2, not the old 0.6 -- at the doubled rate the clamp never binds
     // (L4 = 1 - 0.20*4 = 0.2 exactly), which means all four levels pay instead

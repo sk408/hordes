@@ -2007,13 +2007,50 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'overflow Split Shot must not push projectiles past the cap');
   assert(p.stats.damage === d0 * 1.2,
     `overflow Split Shot must convert to +20% damage (got ${p.stats.damage} vs ${d0 * 1.2})`);
-  // Below cap: still a real projectile.
+  // Below cap: still a real projectile. The premise is stated rather than
+  // assumed: this check is about the CARD's grant, so the volley must be at its
+  // base level (proj 0) or the at-cap predicate fires on the weapon's own Lv3/Lv6
+  // grants and the card correctly converts instead. The old version assumed
+  // "fresh VOLLEY Lv1" and failed INTERMITTENTLY whenever the sim had leveled
+  // VOLLEY — measured: `projectiles 1 want 2, damage 11.52 want 9.6, splitCap 0,
+  // cap 3`, i.e. 1 + proj(2) >= 3. Identical before the cap row existed.
+  const volleyW = st.weapons.find(w => w.type === 'VOLLEY');
+  if (volleyW) volleyW.level = 1;
   p.stats.projectiles = 1;
   const d1 = p.stats.damage;
   T.pickCard(multi);
+  // Name the numbers: this assertion failed once intermittently and the bare
+  // message left nothing to diagnose. cap is computed from CFG + splitCap (both
+  // already in scope here) rather than importing the helper.
+  const capNow = CFG.WEAPON.MAX_PROJECTILES + (p.stats.splitCap || 0);
   assert(p.stats.projectiles === 2 && p.stats.damage === d1,
-    'Split Shot below the cap must still grant the projectile');
+    `Split Shot below the cap must still grant the projectile ` +
+    `(projectiles ${p.stats.projectiles} want 2, damage ${p.stats.damage} want ${d1}, ` +
+    `splitCap ${p.stats.splitCap}, cap ${capNow})`);
   console.log('L3 overflow multi: cap pick -> +20% dmg; below-cap pick -> +1 projectile');
+
+  // OWNER (2026-09-13): the Split Shot SHOP ROW raises the cap, so the card
+  // keeps paying past the old base cap of 3 — that is the whole point of the
+  // row ("goes to 10 and allows the card to continue improving until that cap").
+  // splitCap is set exactly as applyMetaBonuses emits it: 2 levels bought => 5.
+  p.stats.splitCap = 2;
+  p.stats.projectiles = CFG.WEAPON.MAX_PROJECTILES;    // 3 = the OLD dead point
+  const d2 = p.stats.damage;
+  T.pickCard(multi);
+  assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES + 1,
+    'with the cap row bought, the card must keep granting past the BASE cap');
+  assert(p.stats.damage === d2,
+    'a granted projectile must not also pay the damage conversion');
+  // And at the RAISED cap it converts, exactly as it did at the base cap.
+  p.stats.projectiles = CFG.WEAPON.MAX_PROJECTILES + 2;
+  const d3 = p.stats.damage;
+  T.pickCard(multi);
+  assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES + 2,
+    'at the raised cap the projectile count must not exceed it');
+  assert(p.stats.damage === d3 * 1.2,
+    `at the raised cap it must convert to +20% damage (got ${p.stats.damage} vs ${d3 * 1.2})`);
+  p.stats.splitCap = 0;
+  console.log('split-shot cap row: card pays to the raised cap, then converts');
 }
 
 console.log('SMOKE TEST PASSED');

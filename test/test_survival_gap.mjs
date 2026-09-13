@@ -32,7 +32,8 @@ const MAX_TICK = Math.ceil(C.RUN.LIMIT / 30);
 console.log('survival-gap: the contact-damage function');
 
 ok('the constants exist and are the documented shape', () => {
-  assert.equal(S.BASE_CONTACT, 14, 'the touch base is the shipped 14');
+  // OWNER enemy buff 2026-09-13: the base was squared, 14 -> 196.
+  assert.equal(S.BASE_CONTACT, 196, 'the touch base is the shipped 196 (14 squared)');
   assert.ok(S.CONTACT_POW > 0 && S.CONTACT_POW < 1,
     `contact responds SUB-linearly to the ladder (pow ${S.CONTACT_POW})`);
   assert.ok(S.HIT_CAP_FRAC > 0 && S.HIT_CAP_FRAC < 1,

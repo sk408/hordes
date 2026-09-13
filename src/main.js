@@ -2,6 +2,7 @@
 import {
   CONFIG as C, UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
+  volleyProjectileCap,
 } from './config.js';
 import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage } from './entities.js';
 import { Renderer } from './render.js';
@@ -488,7 +489,7 @@ function runController(p, dt, am) {
     // NOVA_SHOT evolution (evolutions.js): per-weapon affixes multiply damage
     // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
     const volleyEvo = volleyW && volleyW.evolution;
-    const n = Math.min(p.stats.projectiles + (P.proj || 0), C.WEAPON.MAX_PROJECTILES);
+    const n = Math.min(p.stats.projectiles + (P.proj || 0), volleyProjectileCap(p.stats));
     const volleyDmgMult = (P.dmgMult || 1) * (1 + 0.2 * (P.proj || 0)) *
       (p.stats.damageMult || 1) * am.damageMult *   // loot Brutal Edge + BERSERK arch
       (volleyEvo && volleyEvo.affixes.damageMult || 1);
@@ -2325,7 +2326,7 @@ const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 function volleyAtProjCap() {
   const w = state.weapons.find(x => x.type === 'VOLLEY');
   const proj = weaponLevelParams('VOLLEY', w ? w.level : 1).proj || 0;
-  return (state.player.stats.projectiles || 0) + proj >= C.WEAPON.MAX_PROJECTILES;
+  return (state.player.stats.projectiles || 0) + proj >= volleyProjectileCap(state.player.stats);
 }
 
 function pick(u) {

@@ -12,7 +12,7 @@ import {
   shopRowOwned, catalogCost,
 } from '../src/meta.js';
 import { WEAPON_TYPES } from '../src/weapons.js';   // read-only: drift guard
-import { CONFIG as C, ladderHp, ladderDmg } from '../src/config.js';  // read-only: sim sync anchor
+import { CONFIG as C, ladderHp, ladderDmg, volleyProjectileCap } from '../src/config.js';  // read-only: sim sync anchor
 import { hpScale, dmgScale } from '../src/entities.js';               // read-only: shipped curves
 import { SIM_ASSUMPTIONS, SIM_TUNING, simulateCareer }
   from '../tools/balance_sim.mjs';                  // sim↔meta single source of truth
@@ -179,8 +179,8 @@ console.log('EXPANSION LINES:');
     ok(u && u.baseCost > 0 && u.maxLevel >= 3 && Number.isFinite(u.perLevel),
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 15,
-     'fifteen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck)');
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 16,
+     'sixteen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck + split)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
@@ -217,12 +217,13 @@ console.log('STATS CONTRACT:');
 
   const max = applyMetaBonuses(base,
     { crit: 5, critdmg: 5, greed: 5, alchemy: 4, scav: 4, artifact: 3, xp: 5, luck: 5 });
-  ok(max.crit === 0.03 * 5, 'crit: +3%/level chance (0.15 max)');
-  ok(max.critMult === 1 + 0.25 * 5, 'critMult: +25%/level (2.25 max)');
-  ok(max.goldMult === 1.5, 'goldMult: +10%/level (1.5 max)');
-  ok(max.potionPower === 2, 'potionPower: +25%/level (2.0 max)');
-  ok(max.dropBonus === 0.015 * 4, 'dropBonus: +1.5%/level (+6% max)');
-  ok(max.artifactLevels === 3, 'artifactLevels: +1 random weapon level per level');
+  // OWNER 2026-09-13: rates doubled, and the (1+x) multiplier rows COMPOUND.
+  ok(max.crit === 0.06 * 5, 'crit: +6%/level chance (0.30 max)');
+  ok(max.critMult === Math.pow(1.5, 5), 'critMult: compounds (1.50)^level (7.59 max)');
+  ok(max.goldMult === Math.pow(1.2, 5), 'goldMult: compounds (1.20)^level (2.49 max)');
+  ok(max.potionPower === Math.pow(1.5, 4), 'potionPower: compounds (1.50)^level (5.06 max)');
+  ok(max.dropBonus === 0.03 * 4, 'dropBonus: +3%/level (+12% max, additive: it is a chance)');
+  ok(max.artifactLevels === 6, 'artifactLevels: +2 random weapon levels per level');
   ok(max.luck === 5, 'luck: Fortune level count flows through the stats contract (0..5)');
   ok(max.damage === 8 && max.maxHp === 100, 'base stats untouched by new lines');
 }
@@ -295,11 +296,11 @@ console.log('BONUSES:');
      'zero purchases leave base stats intact');
 
   const out2 = applyMetaBonuses(base, { dmg: 2, hp: 3, regen: 1, xp: 2 });
-  ok(out2.damage === 8 * (1 + 0.10 * 2), 'damage bonus stacks multiplicatively per level');
-  ok(out2.maxHp === 100 + 20 * 3, 'max HP bonus adds per level');
+  ok(out2.damage === 8 * Math.pow(3, 2), 'damage stacks MULTIPLICATIVELY: base x 3^level');
+  ok(out2.maxHp === 100 + 40 * 3, 'max HP bonus adds per level (+40)');
   ok(out2.manaRegen === C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * 1,
      'mana regen bonus adds per level (base + perLevel, both read from config)');
-  ok(out2.xpMult === 1 + 0.10 * 2, 'XP bonus adds per level');
+  ok(out2.xpMult === Math.pow(1.2, 2), 'XP bonus COMPOUNDS (1.20)^level');
   ok(out2.speed === 60 && out2.cooldown === 0.55, 'untouched stats pass through');
 }
 
@@ -352,7 +353,7 @@ console.log('CHARACTERS:');
   p.purchased.potions = 2;
   ok(startPotionCount(p) === 3, 'startPotionCount: Travel Pack levels add');
   const composed = applyCharacter(applyMetaBonuses(base, p.purchased), 'KNIGHT');
-  ok(composed.maxHp === (100 + 20) + 30, 'shop + character bonuses compose');
+  ok(composed.maxHp === (100 + 40) + 30, 'shop + character bonuses compose');
 }
 
 // ---------- Migration: old-economy saves load clean ----------
@@ -668,6 +669,30 @@ console.log('SIM SYNC:');
   const again = simulateCareer(1337);
   ok(JSON.stringify(again.milestones) === JSON.stringify(career.milestones),
      'sim career smoke: same seed reproduces identical milestones');
+}
+
+// ---------- (owner) THE SPLIT SHOT CAP ROW ----------
+// Pinned so the row cannot silently shrink. Owner: "one that goes to 10 and
+// allows the card to continue improving until that cap." The game reads the cap
+// through volleyProjectileCap(), so assert THROUGH it, never against the base
+// constant — a row that raises a cap nobody reads is the same fake choice in a
+// different costume.
+{
+  const row = SHOP_BY_ID.split;
+  ok(!!row, 'the Split Shot cap row exists');
+  ok(row.maxLevel === 10, `the row goes to 10 (got ${row && row.maxLevel})`);
+  ok(row.perLevel === 1, 'each level buys exactly +1 cap');
+  const base = C.WEAPON.MAX_PROJECTILES;
+  ok(volleyProjectileCap({}) === base, 'nothing bought => the base cap');
+  ok(volleyProjectileCap({ splitCap: 0 }) === base, 'a zero field => the base cap');
+  ok(volleyProjectileCap({ splitCap: 10 }) === base + 10,
+     `fully bought => base + 10 (got ${volleyProjectileCap({ splitCap: 10 })})`);
+  const stats = { damage: 8, maxHp: 100, maxMana: 100, splitCap: 0 };
+  ok(applyMetaBonuses(stats, { split: 10 }).splitCap === 10,
+     'applyMetaBonuses emits the full +10 at level 10');
+  ok(applyMetaBonuses(stats, { split: 0 }).splitCap === 0, 'and 0 unowned');
+  ok(row.baseCost > 0 && row.costGrowth > 1,
+     'the row prices on a real ladder (a cap this deep is a long-term buy)');
 }
 
 // ---------- Summary ----------

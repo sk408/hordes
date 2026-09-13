@@ -51,15 +51,15 @@ const EXPECTED_TROPHIES = [
   'GOLD_600_UNDER_6MIN', 'LOCKED',
 ];
 const EXPECTED_PORTRAITS = ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN'];
-// meta.js SHOP_UPGRADES ids at the time of authoring: 14 stat/slot rows
-// (dmg..luck incl. the three N1b mana buyables, slots, arcade) + 7 priced
-// weapon unlock rows + 3 elite unlock rows = 27 rows, PLUS the two
-// STARTER_WEAPONS (VOLLEY, BOOMERANG) which have no shop row but do have art
-// (the draft pool / roster UI uses the same icons), PLUS the generic
-// fallback = 30 keys.
+// meta.js SHOP_UPGRADES ids at the time of authoring: 15 stat/slot rows
+// (dmg..luck incl. the three N1b mana buyables, slots, arcade, and the
+// owner-ordered Split Shot cap row) + 7 priced weapon unlock rows + 3 elite
+// unlock rows = 28 rows, PLUS the two STARTER_WEAPONS (VOLLEY, BOOMERANG) which
+// have no shop row but do have art (the draft pool / roster UI uses the same
+// icons), PLUS the generic fallback = 31 keys.
 const EXPECTED_SHOP = [
   'dmg', 'hp', 'potions', 'regen', 'thrifty', 'well', 'siphon', 'xp', 'crit',
-  'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'slots', 'arcade',
+  'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'split', 'slots', 'arcade',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',

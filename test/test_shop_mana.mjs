@@ -7,11 +7,13 @@
 //   1. the three rows exist in SHOP_UPGRADES with sane economy shape, plain
 //      English (no emojis), and buyUpgrade() levels them like any row;
 //   2. level 0 is NEUTRAL — an unowned profile reads the defaults exactly;
-//   3. level N is the documented number (thrifty L3 = 0.7, well L2 = +50,
-//      siphon L4 = 0.2/kill) through the REAL run-start stat chain;
+//   3. level N is the documented number (thrifty L3 = 0.4, well L2 = +100,
+//      siphon L4 = 0.4/kill) through the REAL run-start stat chain. Rates were
+//      DOUBLED on 2026-09-13, so these literals moved with them; thrifty is also
+//      clamped at 0.2 (the authorised -80%) in meta.js, which does not bind at L3.
 //   4. thrifty composes MULTIPLICATIVELY with the Witch's 0.5 through the ONE
 //      manaCostMult number — and BOTH cost seams read it (weaponManaCost and
-//      skillManaCost): a Witch with Thrifty L3 pays ZAP 4 x 0.5 x 0.7;
+//      skillManaCost): a Witch with Thrifty L3 pays ZAP 4 x 0.5 x 0.4;
 //   5. well's +maxMana lands BEFORE applyCharacter, so the Witch's +50 still
 //      stacks on top of it exactly as it stacks on the base pool;
 //   6. siphon grants mana per KILL (an event), never per frame: an idle frame
@@ -111,18 +113,18 @@ S.check('level N is the documented number, through the real stat chain', () => {
     prof.purchased.siphon = 4;
     T.startRun();
     const p = st.player;
-    assert.ok(Math.abs(p.stats.manaCostMult - (1 - 0.10 * 3)) < 1e-9,
-      'thrifty L3 = 0.7 (got ' + p.stats.manaCostMult + ')');
-    assert.equal(p.stats.maxMana, C.MANA.MAX + 25 * 2,
-      'well L2 = +50 max mana (got ' + p.stats.maxMana + ')');
-    assert.ok(Math.abs(p.stats.manaOnKill - 0.05 * 4) < 1e-9,
-      'siphon L4 = 0.2 mana per kill (got ' + p.stats.manaOnKill + ')');
+    assert.ok(Math.abs(p.stats.manaCostMult - (1 - 0.20 * 3)) < 1e-9,
+      'thrifty L3 = 0.4 (got ' + p.stats.manaCostMult + ')');
+    assert.equal(p.stats.maxMana, C.MANA.MAX + 50 * 2,
+      'well L2 = +100 max mana (got ' + p.stats.maxMana + ')');
+    assert.ok(Math.abs(p.stats.manaOnKill - 0.10 * 4) < 1e-9,
+      'siphon L4 = 0.4 mana per kill (got ' + p.stats.manaOnKill + ')');
     // The weapon seam reads the same number: a Knight with Thrifty L3 pays
-    // ZAP 4 x 0.7.
-    assert.ok(Math.abs(weaponManaCost('ZAP', st) - 4 * 0.7) < 1e-9,
-      'Knight + thrifty L3 pays ZAP 2.8 (got ' + weaponManaCost('ZAP', st) + ')');
-    assert.ok(Math.abs(skillManaCost('FROST_NOVA', st) - 30 * 0.7) < 1e-9,
-      'and FROST_NOVA 21 (got ' + skillManaCost('FROST_NOVA', st) + ')');
+    // ZAP 4 x 0.4.
+    assert.ok(Math.abs(weaponManaCost('ZAP', st) - 4 * 0.4) < 1e-9,
+      'Knight + thrifty L3 pays ZAP 1.6 (got ' + weaponManaCost('ZAP', st) + ')');
+    assert.ok(Math.abs(skillManaCost('FROST_NOVA', st) - 30 * 0.4) < 1e-9,
+      'and FROST_NOVA 12 (got ' + skillManaCost('FROST_NOVA', st) + ')');
   } finally {
     for (const [k, v] of Object.entries(restore)) {
       if (v) prof.purchased[k] = v; else delete prof.purchased[k];
@@ -143,17 +145,18 @@ S.check('thrifty composes MULTIPLICATIVELY with the Witch 0.5, on BOTH seams', (
     prof.purchased.well = 2;
     T.startRun();
     const p = st.player;
-    // THE PRODUCT, not a sum: meta 0.7 x character 0.5.
-    assert.ok(Math.abs(p.stats.manaCostMult - 0.7 * 0.5) < 1e-9,
-      'the mults multiply (0.7 x 0.5 = 0.35, got ' + p.stats.manaCostMult + ')');
-    assert.ok(Math.abs(weaponManaCost('ZAP', st) - 4 * 0.5 * 0.7) < 1e-9,
-      'a Witch with Thrifty L3 pays ZAP 4 x 0.5 x 0.7 = 1.4 (got ' + weaponManaCost('ZAP', st) + ')');
-    assert.ok(Math.abs(skillManaCost('FROST_NOVA', st) - 30 * 0.5 * 0.7) < 1e-9,
-      'the skill seam reads the same number: 10.5 (got ' + skillManaCost('FROST_NOVA', st) + ')');
-    assert.ok(Math.abs(skillManaCost('OVERCHARGE', st) - 25 * 0.5 * 0.7) < 1e-9,
-      'OVERCHARGE too: 8.75 (got ' + skillManaCost('OVERCHARGE', st) + ')');
-    // well lands BEFORE the character mod: base 100 + well 50 + Witch 50 = 200.
-    assert.equal(p.stats.maxMana, C.MANA.MAX + 25 * 2 + 50,
+    // THE PRODUCT, not a sum: meta 0.4 x character 0.5 (thrifty L3 is 0.4 since
+    // the rates doubled; the 0.2 clamp does not bind at L3).
+    assert.ok(Math.abs(p.stats.manaCostMult - 0.4 * 0.5) < 1e-9,
+      'the mults multiply (0.4 x 0.5 = 0.2, got ' + p.stats.manaCostMult + ')');
+    assert.ok(Math.abs(weaponManaCost('ZAP', st) - 4 * 0.5 * 0.4) < 1e-9,
+      'a Witch with Thrifty L3 pays ZAP 4 x 0.5 x 0.4 = 0.8 (got ' + weaponManaCost('ZAP', st) + ')');
+    assert.ok(Math.abs(skillManaCost('FROST_NOVA', st) - 30 * 0.5 * 0.4) < 1e-9,
+      'the skill seam reads the same number: 6 (got ' + skillManaCost('FROST_NOVA', st) + ')');
+    assert.ok(Math.abs(skillManaCost('OVERCHARGE', st) - 25 * 0.5 * 0.4) < 1e-9,
+      'OVERCHARGE too: 5 (got ' + skillManaCost('OVERCHARGE', st) + ')');
+    // well lands BEFORE the character mod: base 100 + well 100 + Witch 50 = 250.
+    assert.equal(p.stats.maxMana, C.MANA.MAX + 50 * 2 + 50,
       "well stacks under the Witch's own +50 (got " + p.stats.maxMana + ')');
   } finally {
     prof.equippedCharacter = restore.eq;
@@ -180,7 +183,7 @@ S.check('siphon grants mana per KILL, never per frame', () => {
     st.wave.boss = null;
   };
   try {
-    prof.purchased.siphon = 1;          // 0.05 per kill
+    prof.purchased.siphon = 1;          // 0.10 per kill (doubled 2026-09-13)
     T.startRun();
     T.setPilotMode('MANUAL');           // stats are not pilot-gated, but MANUAL
     h.pump(2, quiet); quiet();          // keeps the cast/drink hands out
@@ -204,7 +207,8 @@ S.check('siphon grants mana per KILL, never per frame', () => {
     p.mana = 0;
     st.enemies.push(corpse());
     h.pump(1, quiet);
-    assert.ok(Math.abs(p.mana - (0.05 + regenOne)) < 1e-6,
+    // siphon L1 is 0.10 since the rates doubled (was 0.05).
+    assert.ok(Math.abs(p.mana - (0.10 + regenOne)) < 1e-6,
       'one kill pays exactly manaOnKill + the frame drip (got ' + p.mana + ')');
     assert.equal(p.kills, 1, 'and it was a real kill through the death pass');
     // (c) the grant clamps at maxMana.
@@ -231,7 +235,7 @@ S.check('60Hz and 120Hz pay the SAME siphon over the same scripted kills', () =>
     st.drops.length = 0;
   };
   const pass = (hz) => {
-    prof.purchased.siphon = 2;          // 0.10 per kill
+    prof.purchased.siphon = 2;          // 0.20 per kill at L2 (doubled)
     // DETERMINISM: T.startRun() rolls a RANDOM weather (main.js:3666) and MOONLIGHT
     // grants +0.5/s of mana, which this probe would read as siphon income and fail on.
     // Pin CLEAR here; the MOONLIGHT side gets its own check at the end of the file.
@@ -259,10 +263,10 @@ S.check('60Hz and 120Hz pay the SAME siphon over the same scripted kills', () =>
   try {
     const at60 = pass(60);
     const at120 = pass(120);
-    assert.ok(Math.abs(at60 - 20 * 0.10) < 1e-6,
-      '60Hz: 20 kills pay exactly 2.0 of siphon (got ' + at60 + ')');
-    assert.ok(Math.abs(at120 - 20 * 0.10) < 1e-6,
-      '120Hz: 20 kills pay exactly 2.0 of siphon (got ' + at120 + ')');
+    assert.ok(Math.abs(at60 - 20 * 0.20) < 1e-6,
+      '60Hz: 20 kills pay exactly 4.0 of siphon (got ' + at60 + ')');
+    assert.ok(Math.abs(at120 - 20 * 0.20) < 1e-6,
+      '120Hz: 20 kills pay exactly 4.0 of siphon (got ' + at120 + ')');
     assert.ok(Math.abs(at60 - at120) < 1e-6, 'nothing counts frames');
   } finally {
     h.setFrameMs(1000 / 60);
@@ -325,7 +329,7 @@ S.check('MOONLIGHT active: 20 scripted kills pay the same siphon at 60Hz and 120
     st.drops.length = 0;
   };
   const pass = (hz) => {
-    prof.purchased.siphon = 2;                 // 0.10 per kill
+    prof.purchased.siphon = 2;                 // 0.20 per kill at L2 (doubled)
     T.startRun();
     T.setPilotMode('MANUAL');
     st.weather = initWeather('MOONLIGHT', 7);  // the polluting field event, forced
@@ -349,10 +353,10 @@ S.check('MOONLIGHT active: 20 scripted kills pay the same siphon at 60Hz and 120
     const a = pass(60);
     const b = pass(120);
     assert.equal(a.wFlat, 0.5, 'MOONLIGHT really does grant +0.5/s (the probe is not a no-op)');
-    assert.ok(Math.abs(a.siphon - 2.0) < 1e-6,
-      '60Hz with MOONLIGHT: 20 kills pay 2.0 of siphon (got ' + a.siphon + ')');
-    assert.ok(Math.abs(b.siphon - 2.0) < 1e-6,
-      '120Hz with MOONLIGHT: 20 kills pay 2.0 of siphon (got ' + b.siphon + ')');
+    assert.ok(Math.abs(a.siphon - 4.0) < 1e-6,
+      '60Hz with MOONLIGHT: 20 kills pay 4.0 of siphon (got ' + a.siphon + ')');
+    assert.ok(Math.abs(b.siphon - 4.0) < 1e-6,
+      '120Hz with MOONLIGHT: 20 kills pay 4.0 of siphon (got ' + b.siphon + ')');
     assert.ok(Math.abs(a.siphon - b.siphon) < 1e-6, 'the kill grant is frame-free at both rates');
   } finally {
     h.setFrameMs(1000 / 60);
