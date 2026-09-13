@@ -200,10 +200,16 @@ const chromeHidden = () => touchLayer.style.display === 'none';
 {
   const hints = elements['hints'];
   const html = () => hints.innerHTML || '';
-  assert(/S \/ I stats/.test(html()), 'AUTO hints must advertise S / I stats: ' + html());
+  // OWNER RULE (2026-09-13): `I` is the ONE stats key in BOTH modes — `S` is
+  // movement-only and must never be advertised as a screen key. These checks
+  // used to pin the old "S / I stats" copy; they now pin the new contract and
+  // additionally assert that S is NOT taught (the negative is the point).
+  assert(/I stats/.test(html()), 'AUTO hints must advertise I stats: ' + html());
+  assert(!/S \/ I stats/.test(html()), 'NO mode may teach S as the stat key: ' + html());
   assert(/Q \/ E/.test(html()), 'the panel must keep the Q / E overcharge claim');
   assert(!/1-6 cards/.test(html()), 'the unscoped number-key claim must be gone');
-  assert(/ESC pause/.test(html()), 'the hints must teach the new pause key');
+  assert(/ESC close \/ pause/.test(html()),
+    'the hints must teach the ESC close/pause contract: ' + html());
   T.setPilotMode('MANUAL');
   assert(/I stats \(S = move down\)/.test(html()),
     'MANUAL hints must warn that S is movement: ' + html());
@@ -212,7 +218,8 @@ const chromeHidden = () => touchLayer.style.display === 'none';
     'MANUAL must still list both skills via their always-valid keys');
   assert(/WASD \/ arrows move/.test(html()), 'MANUAL must document held movement');
   T.setPilotMode('AUTO');
-  assert(/S \/ I stats/.test(html()), 'an AUTO swap must re-render the AUTO list back');
+  assert(/I stats/.test(html()) && !/S \/ I stats/.test(html()),
+    'an AUTO swap must re-render the AUTO list back');
   console.log('hints: panel renders AUTO/MANUAL variants and re-renders on pilot swap');
 }
 
@@ -361,7 +368,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
     'the footer must not claim number keys work everywhere');
   assert(/cards 1 \/ 2 \/ 3 in the draft/.test(html), 'the footer must scope the draft keys');
   assert(/1-6 stat tabs/.test(html), 'the footer must scope the stat-tab keys');
-  assert(/ESC pause/.test(html), 'the footer must teach the pause key');
+  assert(/ESC close \/ pause/.test(html), 'the footer must teach the close/pause key');
   const src = read('src/main.js');
   assert(!/1 – 6 — pick cards/.test(src), 'HOW TO PLAY must not claim 1-6 picks cards');
   assert(/1 – 3 — draft cards/.test(src), 'HOW TO PLAY must scope the draft keys');

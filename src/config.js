@@ -299,8 +299,31 @@ export const CONFIG = {
                           // always-on canvas readout of the 30:00 limit. Same
                           // size/weight as the LV badge so the two top-left
                           // readouts read as one family.
-    BANNER_TITLE_PX: 22,  // boss-arrival title (was 20)
+    BANNER_TITLE_PX: 22,  // boss-arrival TITLE legacy base (was 20). The
+                          // two-line banner no longer paints at a fixed size —
+                          // each line is fitted from measureText (see below);
+                          // this stays as the record of the old single-line
+                          // size and the reference for "was it huge enough".
     BANNER_SUB_PX: 11,    // boss-arrival sub-line (was 10)
+    // ---- TWO-LINE BOSS BANNER (owner-approved) ----------------------------
+    // Line 1..N = the boss NAME(S), one boss per line: the largest type on
+    // screen for the arrival beat. Then the title line ('APPROACH' /
+    // 'APPROACHES') underneath — big, but strictly smaller than the names.
+    // Every line is sized from the REAL measureText of the exact font string
+    // it is painted in, so a two-boss cast can no longer overrun the 480px
+    // view. A shared names-line is NOT used: fitting wave 3's cast onto one
+    // line forces ~18px, which is not "huge" — one name per line keeps 33px.
+    BANNER_NAME_MAX_PX: 38,   // ceiling — one short name must still read HUGE
+    BANNER_NAME_MIN_PX: 15,   // floor — a long name never shrinks to nothing
+    BANNER_VERB_RATIO: 0.62,  // title line = this fraction of the fitted name px
+    BANNER_VERB_MIN_PX: 13,
+    BANNER_VERB_MAX_PX: 24,
+    BANNER_PLATE_PAD_X: 14,   // plate inset left/right of the widest line
+    BANNER_PLATE_PAD_Y: 9,    // plate inset top/bottom
+    BANNER_LINE_GAP: 3,       // px of air between stacked lines
+    BANNER_EDGE_MARGIN: 14,   // px the plate keeps off the view edge (never
+                              // edge-to-edge) — the text box is inset from it
+                              // by BANNER_PLATE_PAD_X again
     FRAME: '#6a6a7c',     // outer steel frame around every bar/plate
     TROUGH: '#2e2e38',    // dark empty track (a 0% bar must read EMPTY)
     PLATE: 'rgba(4,4,10,0.72)',   // dark plate behind label text

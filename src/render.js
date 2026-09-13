@@ -862,11 +862,14 @@ export class Renderer {
   }
 
   // ---- WAVE-14 boss-arrival overlay ------------------------------------------
-  // state.bossBanner = { title, sub, ttl } (main.js sets it at boss spawn /
-  // finale start; ~2.5s). Cinematic letterbox bands + big centered name + a
-  // flavor sub-line. Ramps in over the first 0.35s and out over the last 0.6s
-  // so it slams in and eases away. `this.bossBanner` is the test seam (the
-  // exact values painted this frame; null when no banner is live).
+  // state.bossBanner = { names:[...], verb, title, sub, ttl } (main.js sets it
+  // at boss spawn / herald / finale start; ~2.5s). Cinematic letterbox bands +
+  // a fitted two-line block (huge NAME(S) over the big title verb) + the flavor
+  // sub-line. `names`/`verb` drive the split; `title` is the flat legacy string
+  // and is used as line 1 when a caller passes no split. Ramps in over the
+  // first 0.35s and out over the last 0.6s so it slams in and eases away.
+  // `this.bossBanner` is the test seam (the exact values painted this frame;
+  // null when no banner is live).
   drawBossBanner(g, state) {
     const b = state.bossBanner;
     if (!b || !(b.ttl > 0)) { this.bossBanner = null; return; }
@@ -884,31 +887,100 @@ export class Renderer {
     g.fillStyle = '#7a1028';
     g.fillRect(0, bandH, W, 1);
     g.fillRect(0, H - bandH - 1, W, 1);
-    // Name + sub-line, centered.
+    // Name + title + sub, centered.
     // WAVE-24 (#2): the title/sub sit at SCREEN CENTER — over live gameplay,
     // not on the letterbox bands — so their contrast used to depend on
     // whatever was behind them. A dark plate (plus a blood-red rule top and
-    // bottom) makes the moment legible on every scene, and the text goes
-    // 20 -> 22px / 10 -> 11px (CONFIG.HUD).
-    const titlePx = C.HUD.BANNER_TITLE_PX, subPx = C.HUD.BANNER_SUB_PX;
-    const adv = (px) => Math.round(px * 0.6);
-    const plateW = Math.max(b.title.length * adv(titlePx),
-      (b.sub ? b.sub.length : 0) * adv(subPx)) + 28;
+    // bottom) makes the moment legible on every scene.
+    //
+    // TWO-LINE BANNER (owner-approved: "huge stylized name and big title
+    // underneath"). Line 1..N is the NAME(S) — one boss per line, the largest
+    // type on screen for this beat. The title line ('APPROACH' / 'APPROACHES')
+    // sits under them, big but strictly smaller. The flavor sub keeps its old
+    // job as the small print.
+    //
+    // FITTING (the actual fix for the clipped two-boss banner): every line is
+    // sized from the REAL measureText of the exact font string it is painted
+    // in. The old code painted one 49-char run-on line with no maxWidth and
+    // sized its plate from a 0.6em estimate — wave 3 measured 649px in a 480px
+    // view behind a 637px plate, bleeding off BOTH edges. Now each line takes
+    // the largest integer px whose measured width fits BANNER_MAX_W, the plate
+    // is built from the measured widest line, and the plate is clamped
+    // BANNER_EDGE_MARGIN off each view edge — never edge to edge.
+    const HUD = C.HUD;
+    const padX = HUD.BANNER_PLATE_PAD_X, padY = HUD.BANNER_PLATE_PAD_Y;
+    const gap = HUD.BANNER_LINE_GAP, edge = HUD.BANNER_EDGE_MARGIN;
+    const maxTextW = W - 2 * edge - 2 * padX;
+    // Measured monospace advance (px per em) — the FALLBACK only, for the stub
+    // ctx in the headless tests, where measureText has no metrics to give.
+    const ADV_FALLBACK = 0.6021;
+    const widthOf = (txt, px, bold) => {
+      g.font = (bold ? 'bold ' : '') + px + 'px monospace';   // measure in the font we paint in
+      if (typeof g.measureText === 'function') {
+        const m = g.measureText(txt);
+        if (m && typeof m.width === 'number' && isFinite(m.width) && m.width > 0) return m.width;
+      }
+      return txt.length * px * ADV_FALLBACK;
+    };
+    // Largest integer px in [lo,hi] whose measured width still fits the box.
+    const fitPx = (txt, lo, hi, bold) => {
+      let px = hi;
+      while (px > lo && widthOf(txt, px, bold) > maxTextW) px--;
+      return px;
+    };
+
+    // Line 1..N: the boss names (one per line; see CONFIG for why not shared).
+    const names = (b.names && b.names.length) ? b.names.slice() : (b.title ? [b.title] : []);
+    const longestName = names.reduce((a, s) => (s.length > a.length ? s : a), '');
+    const namePx = fitPx(longestName, HUD.BANNER_NAME_MIN_PX, HUD.BANNER_NAME_MAX_PX, true);
+    // Title line: a fixed fraction of the name size, still fitted + clamped.
+    const verb = b.verb || '';
+    const verbMax = Math.max(HUD.BANNER_VERB_MIN_PX,
+      Math.min(HUD.BANNER_VERB_MAX_PX, Math.round(namePx * HUD.BANNER_VERB_RATIO)));
+    const verbPx = verb ? fitPx(verb, HUD.BANNER_VERB_MIN_PX, verbMax, true) : 0;
+    // Flavor sub-line: the old 11px small print (never below 10 — the panel's
+    // floor), fitted so a two-boss flavor pair cannot overrun either.
+    const subPx = b.sub ? fitPx(b.sub, 10, HUD.BANNER_SUB_PX, false) : 0;
+
+    const lines = [];
+    for (const s of names) lines.push({ txt: s, px: namePx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
+    if (verb) lines.push({ txt: verb, px: verbPx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
+    if (b.sub) lines.push({ txt: b.sub, px: subPx, bold: false, ink: '#e4e4ee', shade: null });
+    if (!lines.length) {
+      g.textAlign = 'left'; g.textBaseline = 'top'; g.globalAlpha = 1;
+      this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
+      return;
+    }
+    for (const l of lines) l.h = Math.round(l.px * 1.16) + gap;   // line box
+
+    // The plate is built from the MEASURED widest line, then clamped inside
+    // the view edge — the two-boss case can no longer be underestimated.
+    const widest = lines.reduce((m, l) => Math.max(m, widthOf(l.txt, l.px, l.bold)), 0);
+    const plateW = Math.min(Math.round(widest + 2 * padX), W - 2 * edge);
     const plateX = Math.round(W / 2 - plateW / 2);
-    const plateY = Math.round(H / 2 - 30);
-    g.fillStyle = C.HUD.PLATE_SOLID;
-    g.fillRect(plateX, plateY, plateW, 56);
+    const bodyH = lines.reduce((a, l) => a + l.h, 0) - gap;
+    const plateH = Math.round(bodyH + 2 * padY);
+    const plateY = Math.round(H / 2 - plateH / 2);
+    g.fillStyle = HUD.PLATE_SOLID;
+    g.fillRect(plateX, plateY, plateW, plateH);
     g.fillStyle = '#7a1028';
     g.fillRect(plateX, plateY, plateW, 1);
-    g.fillRect(plateX, plateY + 55, plateW, 1);
+    g.fillRect(plateX, plateY + plateH - 1, plateW, 1);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = 'bold ' + titlePx + 'px monospace';
-    g.fillStyle = '#ffd75e';
-    g.fillText(b.title, W / 2, H / 2 - 9);
-    g.font = subPx + 'px monospace';
-    g.fillStyle = '#e4e4ee';
-    g.fillText(b.sub, W / 2, H / 2 + 12);
+    let cy = plateY + padY;
+    for (const l of lines) {
+      const midY = Math.round(cy + l.h / 2);
+      if (l.shade) {                       // 2px offset shade = the stylized cut
+        g.font = 'bold ' + l.px + 'px monospace';
+        g.fillStyle = l.shade;
+        g.fillText(l.txt, W / 2 + 2, midY + 2);
+      }
+      g.font = (l.bold ? 'bold ' : '') + l.px + 'px monospace';
+      g.fillStyle = l.ink;
+      g.fillText(l.txt, W / 2, midY);
+      cy += l.h;
+    }
     g.textAlign = 'left';
     g.textBaseline = 'top';
     g.globalAlpha = 1;

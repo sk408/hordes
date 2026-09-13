@@ -274,7 +274,13 @@ real information, and rare tiers spawn at controlled, documented rates that the 
 NOTES: new enemy tiers change difficulty and loot, so this interacts with G5/G6 and must be measured, not
 assumed. Unknown entries should be tantalising (silhouette + "???"), not blank.
 
-### G11 — TIMED ACHIEVEMENTS + CHALLENGE MODES  [status: IN PROGRESS 2026-09-12 — DISPATCHED, nothing built yet. See TICK NOTE 14]
+### G11 — TIMED ACHIEVEMENTS + CHALLENGE MODES  [status: DONE 2026-09-13 — VERIFIED by TICK NOTE 15: suite PASS=65 FAIL=0 three times, the timed
+goals driven through the real `recordRun` funnel (wave6@150s earns WAVE5_UNDER_3MIN, the same summary
+@400s earns nothing, boundary at 180s inclusive), the challenge seam read in `startRun()` and the
+STANDARD path falling back to the ORIGINAL constants, and a real-browser phone check (390x844 @dpr3)
+PASS: tap-cycled title card, canvas badge pixel-found, bestiary MISSING filter. Caveats: no vision
+model on this host so there is no "looks right" judgement, and the modes' own difficulty effect is
+deliberately unmeasured. See TICK NOTE 15]
 Owner: *"have timed acheivements. have challenge play modes"*
 - Achievements with time/completion constraints, and selectable modes that alter the run's rules.
 **Reached when:** at least one timed achievement is completable and verified, and at least one challenge
@@ -296,7 +302,7 @@ will break the new features in a way that is invisible until a player loses thei
 **Reached when:** the profile has an explicit version, documented migration for older saves, validation
 for every persisted collection, and a test that loads a corrupted and an old-format save safely.
 
-### G12 — FULL GAME TREATMENT: TITLE SCREEN, STARTUP MENU, SAVE EXPORT  [status: not started]
+### G12 — FULL GAME TREATMENT: TITLE SCREEN, STARTUP MENU, SAVE EXPORT  [status: IN PROGRESS 2026-09-13 — RECON DONE + DISPATCHED, nothing built yet. The marker was WRONG: `src/art/title.js` already exports the 480x300 title card plus composeTitle/drawTitle and NOTHING calls them, so showTitle() paints DOM cards over the LIVE MAP — what the owner asked not to have. `src/save.js` already has buildExport/exportProfileText/downloadProfile/importProfileText. Real gap: draw the existing graphic behind the menu, START GAME + EXIT GAME (autosave -> window.close() attempt -> farewell screen), load-from-disk when no local save exists. Brief docs/briefs/G12_TITLE_SCREEN.md, issued as msg_01M2C7WKKJ6NBW6X92PJJSYWQS. See TICK NOTE 15]
 Owner: *"maybe a legititimate startup screen like a full pc game. <Start Game> <Achievements>
 <Settings> <Exit Game> and exit game can offer a save to disk dialouge. Maybe start game could offer a
 load from disk option if no save is found in localstorage. This would be overlaid on a title screen
@@ -574,7 +580,11 @@ spawn, linear with a stat, and not every type can roll elite). Rare signalling h
 for secrets (pulsing icon, black question mark, silhouette, stopped timer). Every new tier should introduce
 a MECHANIC, not a multiplier.
 
-**G23 — BESTIARY WITH FOUR JOBS.** [status: PARTIAL 2026-09-12 — kill counter / stat rows / masked slots / flavour landed in `b761e86` (G10); the "which entry am I missing" FILTER and the unlock-tied HOOK are OPEN. See TICK NOTE 13 FILTER dispatched 2026-09-12 as PART C of the G11 brief; the HOOK is BLOCKED on a design call - no achievement in the catalog names a specific enemy or boss, so any "TIED: ..." line would be invented. See TICK NOTE 14] Per-enemy KILL COUNTER (proof of progress), combat stats that matter
+**G23 — BESTIARY WITH FOUR JOBS.** [status: PARTIAL 2026-09-13 — kill counter / stat rows /
+masked slots / flavour landed in `b761e86` (G10); the "which entry am I missing" FILTER LANDED in
+`3612e36` (G11 PART C) and is browser-verified. The unlock-tied HOOK remains BLOCKED on a design call —
+no achievement in the catalog names a specific enemy or boss, so any "TIED: ..." line would be invented
+data. See TICK NOTE 15] Per-enemy KILL COUNTER (proof of progress), combat stats that matter
 (HP/power/speed/resistances/skills/stage), undiscovered entries that show the SLOT but hide the identity
 (number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
 a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
@@ -1726,3 +1736,71 @@ bestiary FILTER riding along as PART C.** Next in the ranked queue after G10. Di
 - Lock hygiene: acquired at the top of this tick and released before ending it (the brief tells the
   builder to acquire it, retry on rc=1, and release it even on failure). `agentlock release` resolves the
   lock from CWD - it must be run from `/home/claude/projects/hordes`.
+
+## TICK NOTE 15 — 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held, G11 VERIFIED + DONE; G12 recon + dispatch)
+
+**Goal worked: G11 (timed achievements + challenge modes) with G23's bestiary FILTER (PART C).** The
+TICK NOTE 14 dispatch landed and was committed by Remy as **`3612e36`**; this tick verified the ARTIFACT
+itself, not the builder's report, and flipped the marker. Then G12 was reconnoitered and dispatched.
+
+**Independently re-verified this tick (my own runs, not a report):**
+- **Suite `bash /tmp/run_all.sh` => PASS=65 FAIL=0, THREE times** (63 + `test/test_challenges.mjs` +
+  `test/test_timed_achievements.mjs`). No flake observed this tick; TICK NOTE 13's low-rate `smoke.mjs`
+  flake did not reappear in three runs, which is not the same as proving it absent as a rate.
+- **Timed goals, driven through the REAL `recordRun` funnel** with `makeProfile()`, my own probe (not the
+  test's numbers): a wave-6 run settling at 150s earns `WAVE5_UNDER_3MIN` and writes
+  `timed = {wave@180:6, wave@300:6, kills@300:120, gold@360:250}`; the SAME summary at 400s earns nothing
+  and leaves the bucket **empty `{}`** (no clock, no entry). The boundary is INCLUSIVE: wave5@180s earns,
+  wave5@181s does not (and records only `wave@300`). Catalog is 25 trophies, 4 with `kind:'run'`.
+- **The challenge seam, read in `src/main.js` (~3294):** `state.challenge = pendingChallenge`;
+  `state.weaponCap = rules.weaponSlots ?? C.WEAPON_SLOTS`; `state.potionCap = rules.potions ??
+  C.POTIONS.MAX_CARRIED`. STANDARD therefore falls back to the ORIGINAL constants — and `src/config.js`,
+  `weapons.js`, `entities.js` and `heat.js` are not in the commit at all (`git diff --stat` empty), so no
+  balance-bearing file moved. The one behavioural delta outside the seam is `src/chests.js`: a chest
+  potion refill now clamps to `state.potionCap` rather than the constant. That is required for NO_POTIONS;
+  for STANDARD it is the same number by construction, and `startRun()` always sets the cap before a run.
+- **`node tools/verify_g11_challenges.mjs` => PASS in a REAL browser at 390x844 @dpr3**: the title
+  CHALLENGE card cycles by a real TAP, the in-run canvas badge is pixel-found (and absent for STANDARD),
+  the bestiary ALL/MISSING chip filters (`ringAll` 16 / `ringMissing` 15) and sits in the viewport
+  unclipped. Phone PNG on disk: `docs/art/browser-verify-2026-09-12/g11-challenge-phone.png`, 1170x2532.
+
+**COULD NOT VERIFY (honest):**
+- **No vision model is reachable from this host**, so the phone shot is DOM geometry + `getImageData`
+  samples, NOT a "looks right" judgement — the same caveat as every prior tick.
+- The builder's commit message says "Suite: PASS=*** FAIL=0" — the count is literally asterisks. The
+  three clean runs above are the evidence; the message is not.
+- **The modes' own difficulty effect is unmeasured.** ONE_WEAPON / NO_POTIONS are run-scoped and outside
+  the sims' model; the brief asked for no sim change, so their win-rate is unknown rather than claimed.
+- Balance deltas the builder reported were not re-measured. What is established is narrower and
+  stronger: no balance-bearing source file changed.
+- **G23's HOOK stays BLOCKED**, not unbuilt-by-oversight: nothing in the achievement catalog names a
+  specific enemy or boss, so a "TIED: ..." line would be invented data. It needs a design call.
+
+**Written and dispatched (G12):**
+- Brief: **`docs/briefs/G12_TITLE_SCREEN.md`** (70 lines). Issued to the idle worker
+  **`cli:glm-hordes-g8`** as **`msg_01M2C7WKKJ6NBW6X92PJJSYWQS`**. `delegate_task` remains unavailable in
+  this cron runtime, so hub-worker is the delegation path, as in every prior tick.
+- **The G12 marker was WRONG and this is the tick's most useful finding:** it read "not started", but
+  **two thirds of build-plan W4 already exists and nothing draws it.** `src/art/title.js` exports
+  `TITLE_WIDTH`/`TITLE_HEIGHT` 480x300, `TITLE_LAYERS`, `TITLE_ART`, `composeTitle`, `drawTitle` — and
+  `grep -rn "drawTitle\|TITLE_ART" src/main.js src/render.js` returns NOTHING, so `showTitle()` paints
+  DOM cards over the LIVE GAME MAP, which is precisely what the owner asked not to have ("overlaid on a
+  title screen graphic, not on the map"). `src/save.js` also already has `buildExport` (809),
+  `exportProfileText` (820), `downloadProfile` (929) with a `showSaveFilePicker` upgrade, and a pure
+  `importProfileText` already wired at `main.js:3145`. The brief therefore forbids re-authoring art and
+  scopes the real gap: draw the existing title graphic behind the menu, `PLAY` -> `START GAME` with
+  `EXIT GAME` last (keeping every existing card — the shop hub must stay reachable), the honest exit
+  (autosave -> `window.close()` attempt -> farewell screen, since a player-opened tab will not close),
+  and load-from-disk when no local save exists.
+
+**FLAG FOR THE OWNER / ORCHESTRATOR — the queue and the wave plan disagree about what is next.** The
+ranked queue this job is told to follow runs G11 -> G12, and that is what was dispatched. But BUILD_PLAN
+sequences **W7a (sim tooling: model the arch buffs, rank the meta upgrades by measured marginal value,
+G17 economy) and W7b (draft divergence to >= x1.6)** BEFORE W9/W4, and both remain unmet: G5 is
+"unmeasured for the arch fix" and G6 is "below target" at x1.28 against an owner-raised x1.6. Neither is
+IN PROGRESS and neither is tagged `open`, so the queue rule skipped them. Someone should say which order
+is real, because G6 is an explicit owner number and nothing in the served queue is measuring it.
+
+**NEXT GOAL: G12** (in flight, `msg_01M2C7WKKJ6NBW6X92PJJSYWQS`). Its `done:` report is a CLAIM: the next
+tick must re-run the suite itself, open `docs/art/browser-verify-2026-09-12/g12-title-phone.png`, and
+confirm the title graphic really is what is painted behind the menu rather than the map.

@@ -1136,14 +1136,18 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('hud chrome: bars + damage flash + weapon/item icon rows + weather glyph verified');
 }
 
-// (g) FIELD REPORT: S opens, game pauses, content lists the loadout, S closes.
+// (g) FIELD REPORT: I opens (S is movement-only — owner rule, 2026-09-13),
+// game pauses, content lists the loadout, I closes.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   st.items.push({ id: 'probe_eye', name: 'Probe Eye', rarity: 'RARE',
     affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }] });
   keyHandler({ key: 's' });
-  assert(st.mode === 'stats', 'S must open the FIELD REPORT (mode=' + st.mode + ')');
+  assert(st.mode === 'playing',
+    'S must NOT open the FIELD REPORT in any mode (mode=' + st.mode + ')');
+  keyHandler({ key: 'i' });
+  assert(st.mode === 'stats', 'I must open the FIELD REPORT (mode=' + st.mode + ')');
   assert(elements['overlay'].style.display === 'flex', 'stats overlay must show');
   assert(/FIELD REPORT/.test(elements['ov-title'].textContent), 'stats title');
   const html = Array.from(elements['ov-cards'].children).map(c => c.innerHTML || '').join('\n');
@@ -1160,15 +1164,15 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.time === t0, 'the game must pause while the FIELD REPORT is open');
   assert(st.mode === 'stats', 'the report stays open across frames');
-  keyHandler({ key: 's' });
+  keyHandler({ key: 'i' });
   assert(st.mode === 'playing' && elements['overlay'].style.display === 'none',
-    'S must close the report and resume');
+    'I must close the report and resume');
   // Touch-route parity: the shared action seam opens/closes it too.
   mainMod.__TEST.openStats();
   assert(st.mode === 'stats', 'runAction(stats) route opens the report');
   mainMod.__TEST.closeStats();
   assert(st.mode === 'playing', 'and closes it');
-  console.log('field report: S opens/pauses/closes, weapons+items+stats listed');
+  console.log('field report: I opens/pauses/closes, weapons+items+stats listed');
 }
 
 // ---- WAVE-13/15 MANUAL PILOT probes (through the real loop) ------------------

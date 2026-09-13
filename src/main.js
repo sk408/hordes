@@ -191,7 +191,9 @@ const state = {
   portal: null,      // open portal after a boss clear ({ x, y, age }) — wave-6
   effects: [],       // transient skill/weapon visuals ({ kind, x, y, age, ttl })
   toasts: [],        // transient HUD messages ({ msg, ttl, tint }) — WAVE-14: also the event feed
-  bossBanner: null,  // WAVE-14: boss-arrival overlay ({ title, sub, ttl } | null)
+  bossBanner: null,  // WAVE-14: boss-arrival overlay
+                     // ({ names, verb, title, sub, ttl } | null) — names/verb
+                     // drive the two-line fit, title stays the flat legacy form
   time: 0,
   spawnTimer: 0,
   // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
@@ -899,6 +901,9 @@ function spawnBoss() {
   // letterbox + name + flavor sub-line, ~2.5s. The BOSS_YELL portal sting is
   // the reusable cinematic seam (audio.js — no new audio invented).
   state.bossBanner = {
+    // TWO-LINE BANNER: the names own line 1 (one per boss), the verb line 2.
+    names: cast.map(b => b.name),
+    verb: cast.length > 1 ? 'APPROACH' : 'APPROACHES',
     title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : ' APPROACHES'),
     sub: cast.length > 1
       ? cast.map(b => b.flavor.toUpperCase()).join(' / ')
@@ -955,7 +960,10 @@ function spawnMidBoss() {
   state.enemies.push(boss);
   state.wave.midBosses.push(boss);
   toast(desc.name + ' APPROACHES!');
-  state.bossBanner = { title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(), ttl: 2.5 };
+  state.bossBanner = {
+    names: [desc.name], verb: 'APPROACHES',
+    title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(), ttl: 2.5,
+  };
   audio.playPortalCue('BOSS_YELL');
   easeToBossStance();       // BOSS_STANCE: same ease for the mid-wave herald
 }
@@ -2642,7 +2650,7 @@ function showHowToPlay() {
     'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
     'TAB — focus &middot; G — stance<br>' +
     'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
-    'H / N — potions &middot; I — field report (S too, in AUTO)<br>' +
+    'H / N — potions &middot; I — field report (the ONE stats key)<br>' +
     '1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs<br>' +
     'C — continue &middot; R / T — retry / title<br>' +
     '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
@@ -2785,7 +2793,7 @@ function joyTarget() {
 
 // STATS button equivalent (joyTarget precedent): the touch layer is hidden
 // on keyboard-only devices — fall back to the canvas region where the
-// loadout sits, since the caption names the S / I keys either way.
+// loadout sits, since the caption names the I key either way.
 function statsTarget() {
   const b = document.getElementById('tc-stats');
   if (b && b.getBoundingClientRect().width > 0) return b;
@@ -2990,7 +2998,7 @@ function updateTourCoach() {
     ], TOUR_KEYS.potions);
   } else if (!tourFlag(TOUR_KEYS.stats) && state.time > 22) {
     startCoach({ id: 'stats',
-      text: 'STATS (S or I) opens the FIELD REPORT — read your build, see why you died.',
+      text: 'STATS (I) opens the FIELD REPORT — read your build, see why you died.',
       target: () => statsTarget() }, TOUR_KEYS.stats);
   } else if (!tourFlag(TOUR_KEYS.cog) && state.time > 25) {
     startCoach({ id: 'cog',
@@ -3971,8 +3979,11 @@ window.addEventListener('keydown', (ev) => {
     // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
     //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
     //   arrows/WASD held movement — MANUAL only
-    //   S          FIELD REPORT in AUTO · 'down' in MANUAL
-    //   I          FIELD REPORT always (S is taken by 'down' in MANUAL)
+    //   S          'down' — MOVEMENT ONLY, in EVERY mode (owner rule). S used
+    //              to open the FIELD REPORT in AUTO, which is the DEFAULT mode:
+    //              a player driving with WASD hit S to walk down and got a menu
+    //              instead. Nothing else claims S now.
+    //   I          FIELD REPORT — the ONE stats key, in BOTH modes
     //   W          Overcharge in AUTO · 'up' in MANUAL — E fires Overcharge
     //              in BOTH modes (the permanent new home for it)
     if (k === 'm') { togglePilotMode(); return; }
@@ -3984,11 +3995,15 @@ window.addEventListener('keydown', (ev) => {
     // every frame).
     if (k === '+' || k === '=') { cycleZoom(1); return; }
     if (k === '-' || k === '_') { cycleZoom(-1); return; }
+    // Held movement. MANUAL only — and checked BEFORE any screen opener, so a
+    // movement key can never be swallowed by a menu.
     if (state.pilotMode === 'MANUAL') {
       const dir = KEY_DIRS[k];
       if (dir) { pilotInput[dir] = true; return; }
     }
-    if (k === 's' && state.pilotMode !== 'MANUAL') { openStats(); return; }
+    // (owner rule: `s` is NOT a stats key in any mode — `I` is the only one.
+    // A stale `s` opener lived here and cost MANUAL-vs-AUTO confusion; do not
+    // reintroduce it.)
     const keyMap = {
       tab: 'focus', g: 'stance',
       [C.SKILLS.FROST_NOVA.KEY]: 'q',
@@ -4047,11 +4062,11 @@ let hintsOn = (() => {
     return v === null ? !hasTouch : v === '1';
   } catch { return !hasTouch; }
 })();
-// WAVE-23 FIX (desktop audit #3): the list is MODE-AWARE, not static. The
-// stat key is mode-dependent — in MANUAL, S is held "down" (movement) and
-// only I opens the FIELD REPORT — and W fires Overcharge in AUTO but is held
-// "up" in MANUAL, where E is the always path. The old static "S / I stats"
-// line told a MANUAL player to press a key that walks them into the horde.
+// WAVE-23 FIX (desktop audit #3): the list is MODE-AWARE, not static.
+// (owner rule, later): `I` is the ONE stats key in BOTH modes — `S` is pure
+// movement and never opens a screen — so the old static "S / I stats" line is
+// gone for good. W fires Overcharge in AUTO but is held "up" in MANUAL, where
+// E is the always path.
 // "Q / E" stays accurate in BOTH modes (never regress that). The number-key
 // claim is scoped to the screens that route it (draft 1-3, evolve /
 // intermission 1-4, stat tabs 1-6) — the title / shop / characters /
@@ -4060,13 +4075,13 @@ const HINT_LINES = {
   AUTO: [
     'M pilot (AUTO) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
-    'S / I stats &middot; ESC pause',
+    'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
   MANUAL: [
     'M pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
-    'I stats (S = move down) &middot; ESC pause',
+    'I stats (S = move down) &middot; ESC close / pause',
     '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
 };
@@ -4529,6 +4544,7 @@ function startFinale() {
   toast(FINAL_BOSS.flavor.toUpperCase());
   // WAVE-14: the maw's arrival gets the banner too — doom-ier sub-line.
   state.bossBanner = {
+    names: [FINAL_BOSS.name], verb: 'APPROACHES',
     title: FINAL_BOSS.name,
     sub: FINAL_BOSS.flavor.toUpperCase(),   // "EVERY HORDE WAS ALWAYS ONE HUNGER."
     ttl: 2.5,
