@@ -43,6 +43,39 @@ ONE hardcoded skill string (`index.html`, the `FROST` text inside `<button data-
 beside the `[Q]` key cap), the tour's `skills` coachmark copy, the readiness readout
 (`skill('tc-q', ...)`) and the text-HUD line. All should read the class's skill id.
 
+#### N1a — WITCH / CHAIN ZAP spec (owner-ordered 2026-09-13)  [status: not started]
+
+Sk408: *"the witch should get some kind of discount on the chain zap then. Or minimum fire
+speed, or both. Maybe for witch with no mana, the chain zap is weaker, and with mana we buff
+it to make up the difference? And witch gets different pilot logic which chooses enemies
+clumped together more often"*.
+
+This **revises the shipped hard gate** (`730a04b`, ZAP costs 4 mana and will not fire below
+it). That hard gate is measured-bad for the Witch, whose STARTING weapon ZAP is: on a fresh
+run the pool drained 96 -> single digits by ~60s, ZAP spent **1089 frames (~18s of a 120s
+run) loaded with a target but unable to pay**, and it fired **6 bolts in 120s** against ~85
+if unfunded. A class must not open with its signature weapon mostly offline.
+
+1. **SOFT gate, not a starve.** ZAP fires on cooldown as normal. With mana >= cost it spends
+   and deals FULL damage; below cost it still fires but at reduced damage
+   (`MANA_DRY_MULT`, ~0.5). This delivers the owner's "weaker with no mana, buffed with mana"
+   and the "minimum fire speed" in ONE mechanism — the floor cadence IS the cooldown, so no
+   second knob is needed.
+2. **Witch discount.** The cost is multiplied by a per-character figure: add
+   `manaCostMult` to the character mods (WITCH 0.5 -> ZAP costs 2 for her, 4 for everyone
+   else). NOTE `applyCharacter` today carries ONLY maxHp/maxMana/speed, so the field must be
+   threaded through it, and the cost read through a `weaponManaCost(id, state)` helper so a
+   future weapon/perk can move the same number.
+3. **Witch pilot: cluster seeker.** Her auto-pilot should reach for clumped enemies, because
+   the chain only pays off on a cluster. The AutoPilot constructor hardcodes
+   `this.focus = 'NEAREST'` (`src/controllers.js:43`), so this needs either a per-class
+   default focus applied at `startRun`, or a Witch-only bias in `pickTarget`. **SWARM
+   targeting already exists** (densest cluster within `SWARM_CLUSTER_R`) — this is a default,
+   not new targeting math. The player must still be able to cycle focus with TAB/G.
+
+Sequencing: N1a lands with N1 (it is the Witch's half of the class identity), and it should
+land BEFORE more content is balanced against a Zap that is either free or dead.
+
 ### N2 — SHOW THE TITLE ART (owner: "we never show it")  [status: not started]
 
 Sk408: *"what's that title screen under the menu? How do I see the whole thing? Looks like it
