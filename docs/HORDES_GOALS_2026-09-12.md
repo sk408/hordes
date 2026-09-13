@@ -44,6 +44,13 @@ do not treat its numbers as current, and do not "fix" the tree back toward them.
   the grind they want."* So do NOT cite W7b, a balance test, a sim target or "a fresh run dies in
   ~10-25s" as a regression to revert. Retarget the fixture (the probe character may be made durable
   for a test scenario — the owner sanctioned exactly that) rather than softening the game.
+- **SHOP STRENGTHENING IS A KNOWN, PLANNED FOLLOW-UP — not an invitation to rebalance now.**
+  Owner, 2026-09-13: *"We will probably need further balance adjustments to strengthen the shop, but
+  for now, we keep it a grind game."* So the hard fresh run is deliberate AT PRESENT: do not soften
+  it, and do not strengthen, reprice or add to the shop unilaterally — that call is the owner's. The
+  measured facts the decision will be made FROM are in this file: the L0-L5 damage-buyable ladder,
+  the ~60-80 gold fresh-run income against `GOLD_MODEL.RUN1` = 700, and the saturation note (the
+  damage line stops paying past ~L3, which points at HP/speed rather than more damage).
 - The suite's own bar is unchanged: `bash /tmp/run_all.sh` must end with zero failures, and an
   assertion is never weakened to get there. `test_rarity` has a low-rate flake under load
   (~30% measured as 3/10 across two commits); it passes standalone repeatedly. `smoke` and
