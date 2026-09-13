@@ -127,6 +127,5 @@ else if (Math.max(c[0], c[1], c[2]) > 90) problems.push('canvas centre is not th
 
 console.log(problems.length ? 'VERIFY G10 BESTIARY: FAIL - ' + problems.join('; ')
   : 'VERIFY G10 BESTIARY: PASS - phone guide masked fresh, un-masked seeded, chrome in viewport');
-console.log('EVIDENCE: DOM geometry + readShot pixel samples above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: DOM geometry + readShot pixel samples above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 process.exit(problems.length ? 1 : 0);

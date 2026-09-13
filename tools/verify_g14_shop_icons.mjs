@@ -194,7 +194,6 @@ if (out.errors && out.errors.length) problems.push('console errors: ' + out.erro
 console.log(problems.length ? 'VERIFY G14 SHOP ICONS: FAIL - ' + problems.join('; ')
   : 'VERIFY G14 SHOP ICONS: PASS - all ' + out.rows.length + ' shop rows render their authored 16x16 icon at integer 2x with non-empty pixels, the fallback paints, row text is unchanged, a real tap buys at exactly -' + out.upgradeCost0 + 'g, the MAXED row does not buy, chrome stays off');
 console.log('PNG: ' + canonical);
-console.log('EVIDENCE: __TEST.shopIcons.report (backing size + CSS scale + painted count per row) + DOM text + real taps above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: __TEST.shopIcons.report (backing size + CSS scale + painted count per row) + DOM text + real taps above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 
 process.exit(problems.length ? 1 : 0);

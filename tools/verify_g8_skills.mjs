@@ -78,6 +78,5 @@ if (out.anyClipped) problems.push('a card description is clipped');
 if (out.overlay !== 'flex') problems.push('overlay display is ' + out.overlay);
 console.log(problems.length ? 'VERIFY G8 STEP 4: FAIL - ' + problems.join('; ')
   : 'VERIFY G8 STEP 4: PASS - phone draft shows the skill card unclipped');
-console.log('EVIDENCE: DOM geometry + readShot pixel samples above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: DOM geometry + readShot pixel samples above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 process.exit(problems.length ? 1 : 0);

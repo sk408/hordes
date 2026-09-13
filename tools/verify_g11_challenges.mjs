@@ -216,6 +216,5 @@ else {
 console.log(problems.length ? 'VERIFY G11 CHALLENGES: FAIL - ' + problems.join('; ')
   : 'VERIFY G11 CHALLENGES: PASS - title card cycles by real tap, canvas badge pixel-found (absent for STANDARD), bestiary chip filters');
 console.log('PNG: ' + canonical + ' (from ' + out.shot + ')');
-console.log('EVIDENCE: DOM geometry + canvas getImageData scan + readShot pixel samples above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: DOM geometry + canvas getImageData scan + readShot pixel samples above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 process.exit(problems.length ? 1 : 0);

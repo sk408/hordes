@@ -217,8 +217,7 @@ else {
 console.log(problems.length ? 'VERIFY G12 TITLE: FAIL - ' + problems.join('; ')
   : 'VERIFY G12 TITLE: PASS - title art pixel-proven behind the menu (map absent in-run), cards in-viewport, real taps drive start + exit, farewell renders');
 console.log('PNG: ' + canonical + ' (from ' + out.shot + ')');
-console.log('EVIDENCE: DOM geometry + canvas getImageData + readShot pixel samples above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed. window.close() real closure cannot be ' +
+console.log('EVIDENCE: DOM geometry + canvas getImageData + readShot pixel samples above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed. window.close() real closure cannot be ' +
   'observed over CDP in a headless tab - the attempt is step-logged, and the farewell (which a real player ' +
   'would never see if the close succeeded) is the honest fallback.');
 

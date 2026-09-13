@@ -197,7 +197,6 @@ console.log('PNG: ' + canonical + ' (from ' + out.shot + ')');
 console.log(problems.length ? 'VERIFY N2 REVEAL: FAIL - ' + problems.join('; ')
   : 'VERIFY N2 REVEAL: PASS - reveal starts at 0 and reaches 1 with the art behind it at t=0/mid-fade/settled, ' +
     'menu readable before the run, real double-tap holds once and starts the run after ~1s, shimmer visible');
-console.log('EVIDENCE: DOM geometry + computed opacity + canvas getImageData + PNG readback only. No vision model ' +
-  'is reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: DOM geometry + computed opacity + canvas getImageData + PNG readback only. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 
 process.exit(problems.length ? 1 : 0);

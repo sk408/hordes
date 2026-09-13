@@ -306,7 +306,6 @@ if (out.errors && out.errors.length) problems.push('console errors: ' + out.erro
 console.log(problems.length ? 'VERIFY G13 SELECTOR: FAIL - ' + problems.join('; ')
   : 'VERIFY G13 SELECTOR: PASS - 4 animated portraits pixel-proven (owned full-colour, locked silhouette), kit numbers equal the run chain, real taps unlock+equip (-9000 exactly) and re-equip, idle parity 60Hz==120Hz, chrome off, no leak after ESC');
 console.log('PNG: ' + dir + 'g13-selector-phone.png + g13-selector-phone-alt.png');
-console.log('EVIDENCE: DOM geometry + canvas getImageData + real taps + wall-clock frame advance above. No vision model is ' +
-  'reachable from this host; no "looks right" judgement is claimed.');
+console.log('EVIDENCE: DOM geometry + canvas getImageData + real taps + wall-clock frame advance above. No vision read is made by this tool (vision_analyze works here but is flaky - crop + downscale); no "looks right" judgement is claimed.');
 
 process.exit(problems.length ? 1 : 0);
