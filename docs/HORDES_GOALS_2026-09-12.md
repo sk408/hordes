@@ -490,7 +490,7 @@ graphic, not on the map."*
    clears non-installed site storage after ~7 days of non-use), and is absent/limited in private mode.
    Export is the player's real safety net for progress, so it must round-trip losslessly and be versioned.
 
-### G13 — ANIMATED CHARACTER SELECTOR WITH PIXEL ART  [status: IN PROGRESS 2026-09-13 — DISPATCHED by TICK NOTE 24]
+### G13 — ANIMATED CHARACTER SELECTOR WITH PIXEL ART  [status: DONE 2026-09-13 — VERIFIED BY TICK NOTE 25 on the COMMITTED artifact, by the pilot's own run: suite PASS=72 FAIL=0 x3 at `627bba1`; `node tools/verify_g13_selector.mjs` => PASS (4 portraits pixel-proven, owned full-colour vs locked silhouette; kit numbers equal the real `applyCharacter` chain; REAL taps unlock at exactly -9000 then re-equip; idle parity 60Hz==120Hz; chrome OFF while live; no repaint/timer leak after ESC); both PNGs 1170x2532 = 390x844 @dpr3. Landed as `627bba1` (the orchestrator's commit). See TICK NOTE 25]
 
 Art EXISTS and is unused; the work is WIRING it (`src/art/portraits.js` CHARACTER_PORTRAITS, 32x32, 2 idle
 frames per pilot) plus the kit display. Builder `cli:glm-hordes-g8`, task `msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ`,
@@ -503,7 +503,7 @@ Characters currently exist as mechanical variants on text cards. This needs real
 (one sprite each) plus a selection screen that presents them with an idle animation, showing each one's
 kit. Requires authoring the art, not just layout: integer pixels, the game's palette, no smoothing.
 
-### G14 — PIXEL ART FOR EVERY SHOP  [status: not started]
+### G14 — PIXEL ART FOR EVERY SHOP  [status: IN PROGRESS 2026-09-13 — DISPATCHED by TICK NOTE 25, task `msg_01M2D3GDG9VSPBVTC520E9XSQF` to `cli:glm-hordes-g8`, brief `docs/briefs/G14_SHOP_ICONS.md`; CONFIRMED RUNNING, no artifact yet]
 Owner: *"all the shops get a pixel art upgrade."* Shop rows are currently text cards; each upgrade/
 weapon/elite entry should carry its own pixel-art icon so shopping reads as a designed screen.
 
@@ -2627,3 +2627,25 @@ sequencing/priority call is the owner's.
 
 **NEXT GOAL: verify G13's artifact** (suite x3 + `tools/verify_g13_selector.mjs` + PNGs + kit numbers), then **G14**
 (shop-row pixel icons) — same wiring pattern, same single-writer file, brief not yet written.
+
+## TICK NOTE 25 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; G13 VERIFIED + DONE; G14 DISPATCHED and CONFIRMED RUNNING)
+
+**Goal worked: G13 (animated character selector).** Tick 24's NEXT GOAL was to verify the artifact itself, and this tick did exactly that - no feature was written inline.
+
+**VERIFIED BY THIS TICK, on the COMMITTED artifact (not a builder report).**
+- The orchestrator had already committed G13 as `627bba1` ("G13: animated character selector + fix the flaky shop_mana test") at 09:42Z, so tick 24's "no artifact yet" is stale: `tools/verify_g13_selector.mjs`, two phone PNGs and the G13 brief are all IN that commit, and the working tree is clean.
+- `bash /tmp/run_all.sh` => **PASS=72 FAIL=0**, three consecutive runs.
+- `node tools/verify_g13_selector.mjs` => **PASS**: 4 animated 32x32 portraits pixel-proven (owned full-colour; locked painted as the authored silhouette through SILHOUETTE_PALETTE, never an empty box); the displayed kit numbers equal the run's own `applyCharacter` chain; REAL taps unlock at exactly -9000 gold then re-equip; idle parity `at60 [1,0,0,0,0,1]` == `at120 [1,0,0,0,0,1]` with liveFrames [0,1] (dt-driven, not a frame count); frozen mode 'title' with identical canvas hashes before/after (no repaint leak); chrome off while the mode is live (see the tick's own bar directly below).
+- PNGs: `docs/art/browser-verify-2026-09-12/g13-selector-phone.png` and `...-alt.png`, BOTH **1170x2532** (= 390x844 @dpr3, the phone form factor the owner plays on), confirmed with `file`, not by report.
+- Code read by this tick to confirm the two standing rules: the chrome gate is registered (`src/main.js:3416` `if (state.mode !== 'characters') return;`), ESC returns to the title (`:4511`), and the idle advance `advanceCharIdle(dt)` (`:3412`) is a no-op in every other mode.
+
+**DISPATCHED AND CONFIRMED RUNNING.** G14 (shop-row pixel icons) -> `cli:glm-hordes-g8`, task `msg_01M2D3GDG9VSPBVTC520E9XSQF`, brief `docs/briefs/G14_SHOP_ICONS.md` (94 lines, self-contained: every anchor with line numbers, the do-list, the numeric bar, out-of-scope, report shape). Confirmation is `hub-worker queue cli_glm-hordes-g8 --workdir /home/claude/projects/hordes` => `"running": "msg_01M2D3GDG9VSPBVTC520E9XSQF"`, plus the matching worker-log `task msg_01M2D3GDG9VSPBVTC520E9XSQF from remy:orchestrator` line. RECON the brief rides on: `src/art/shop_icons.js` already holds 29 authored 16x16 icons + `__fallback` covering EVERY `SHOP_UPGRADES` id (dmg..arcade, the nine `weapon_*`, the three `elite_*`), and NOTHING in `src/` imports it - so G14 is wiring, not art, exactly like G13.
+
+**QUEUE HYGIENE.** The builder's `queued.json` still listed tick 24's G13 task `msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ`. It is in `seen.json`, and the worker log PROVES it ran to completion (`task msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ exit 0`), so it was already-complete, not a live task. Dropped with the documented tool (`hub-worker cancel msg_01M2D1DD7Z1QHMDHN2W9YYVEXZ --workdir /home/claude/projects/hordes`, state `pending`, no worker interrupted) so G14 could not queue behind it. The tool posts a `blocked: ... cancelled` line to `#hub`; it is true (cancelled as already-complete), not a failure report.
+
+**COULD NOT VERIFY (honest).**
+- **No vision model is reachable from this host, so NOBODY has "read" the G13 screenshots.** The verification is geometry + canvas `getImageData` samples + real taps + the two 390x844 PNGs, which is the bar the G13 acceptance test itself sets. The BUILD PLAN's "screenshot + vision read" rule is therefore met only in its screenshot half on this host; a vision read of `g13-selector-phone.png` is still owed by whoever has one.
+- **No G14 artifact exists yet** - the builder started inside this tick. A `done:` line is a claim, never evidence: the next tick must re-run suite x3 + `tools/verify_g14_shop_icons.mjs` + the G13 verifier (regression) + the PNG itself.
+- Unchanged from tick 24: the item-7 mana bars, G5 (unmeasured for the arch fix), G6 at x1.28 vs the owner's raised x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the unanswered Q-slot question gating N1's ults, and the `docs/FEEDBACK_2026-09-13.md` 25-item oversight-board triage (recommended G26; NOT created, the priority call is the owner's).
+
+**NEXT GOAL: verify G14's artifact** (suite x3 + `tools/verify_g14_shop_icons.mjs` + `tools/verify_g13_selector.mjs` regression + PNG), then the next unblocked queue item.

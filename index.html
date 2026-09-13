@@ -78,6 +78,14 @@
   .card.kit-card { width: min(92vw, 380px); text-align: left; cursor: default; }
   .card.kit-card .desc { font-size: 13px; line-height: 1.7; }
   .card.char-card.selected { border-color: #ffd75e; }
+  /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
+     canvas — 16x16 backing store, INTEGER 2x CSS scale (32px), pixelated
+     (same convention as the G13 portraits; no smoothing, no blur). */
+  .card canvas.shop-icon {
+    display: block; margin: 0 auto 8px;
+    width: 32px; height: 32px;           /* 16x16 backing, integer 2x */
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
   #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
   /* WAVE-26 "death as payoff": the end screen is the most-seen screen in the
      game, so its three facts get color-coded and scannable in one pass —

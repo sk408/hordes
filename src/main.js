@@ -84,7 +84,7 @@ import {
   recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
   earnedCount, totalAchievements,
 } from './achievements.js';
-import { TROPHY_ART, CHARACTER_PORTRAITS } from './art/index.js';
+import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon } from './art/index.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
   challengeRules, nextChallengeId, describeChallenge,
@@ -3347,11 +3347,17 @@ function showTitle() {
   else tourPendingAfterReveal = true;
 }
 
+// G14: the live registry of shop-row icon canvases, rebuilt by showShop() so
+// the __TEST.shopIcons seam can report painted pixels per row id without DOM
+// scraping heuristics.
+const shopIconCanvases = {};
+
 function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
   ovSub.textContent = `GOLD: ${profile.gold}`;
+  for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
   for (const def of SHOP_UPGRADES) {
     // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
     // lives in profile.unlockedWeapons/unlockedElites (meta.js shopRowOwned),
@@ -3373,6 +3379,21 @@ function showShop() {
       capped || !afford,
     );
     if (capped) el.onclick = () => audio.playSfx('button');
+    // G14: every row carries its authored 16x16 icon (src/art/shop_icons.js)
+    // as a live canvas painted through the renderer's own drawGrid — same
+    // convention as the G13 portraits: 16x16 backing store, INTEGER 2x CSS
+    // scale (32px) with image-rendering: pixelated, no smoothing. Unknown ids
+    // get the authored __fallback via shopIcon(), never an empty box. The
+    // row's text contract (name / desc / LV-MAXED-OWNED-cost) is untouched —
+    // the canvas rides on top, nothing else about the row changes.
+    const cv = document.createElement('canvas');
+    cv.className = 'shop-icon';
+    cv.width = 16; cv.height = 16;
+    if (el.insertBefore) el.insertBefore(cv, el.firstChild);
+    else el.appendChild(cv);          // stub DOM: markup string is the contract
+    const icon = shopIcon(def.id);
+    renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
+    shopIconCanvases[def.id] = cv;
   }
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
@@ -5466,6 +5487,27 @@ export const __TEST = {
     game: exitGame,
     farewell: showFarewell,
     get steps() { return exitSteps.slice(); },
+  },
+  // ---- G14 shop-icon seam: per row id, the painted canvas's backing size,
+  // the live CSS scale (must be an exact integer multiple of 16) and the
+  // non-transparent pixel count. Reads the canvases showShop() registered.
+  shopIcons: {
+    get report() {
+      const rep = {};
+      for (const [id, cv] of Object.entries(shopIconCanvases)) {
+        const g = cv.getContext('2d');
+        let painted = -1;
+        try {
+          const d = g.getImageData(0, 0, cv.width, cv.height).data;
+          painted = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i] > 0) painted++;
+        } catch { /* stub ctx has no getImageData */ }
+        const r = cv.getBoundingClientRect();
+        rep[id] = { w: cv.width, h: cv.height, cssPx: Math.round(r.width),
+                    scale: Math.round(r.width) / cv.width, painted };
+      }
+      return rep;
+    },
   },
   // ---- G11 challenge-mode seam: the pending (session-scoped) selection, the
   // cycle the title card drives, and the live run's stamp + rule ceilings, so
