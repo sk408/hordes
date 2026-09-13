@@ -80,6 +80,19 @@ export const WEAPONS = {
     JUMPS: 3,           // extra enemies hit after the primary target
     CHAIN_RANGE: 90,    // max jump distance between chained enemies
     FALLOFF: 0.75,      // damage multiplier per jump
+    // MANA-COST WEAPON (Sk408: "Chain Zap seemed pretty powerful ... maybe
+    // should use mana"). ZAP is a spell, not a swing — it hits the primary plus
+    // every jump for a 1.4s cooldown, which is a lot of damage for no cost — so
+    // it now draws on the pool and simply will not fire when the pool cannot
+    // pay. This is the first weapon to opt in; the seam is general (any def may
+    // carry MANA) and only ZAP does today.
+    //
+    // Sizing: 0.714 bolts/s at base (1.4s CD) x 4 mana = 2.86 mana/s against a
+    // 0.5/s base trickle, so a fresh save drains its pool in ~35s of held fire
+    // and then fires only as regen allows. Maxed Mana Spring (2.5/s) very nearly
+    // covers it, which is the intended shape: strained at base, solved by the
+    // shop. OVERCHARGE's 0.45 rate multiplier roughly doubles the burn.
+    MANA: 4,
   },
   NOVA_PULSE: {
     NAME: 'Nova Pulse',
@@ -378,6 +391,14 @@ function updateZap(state, weapon, dt) {
   if (weapon.cd > 0) return;
   const primary = nearestEnemy(state, p.x, p.y);
   if (!primary) { weapon.cd = 0; return; }
+  // MANA-COST WEAPON (see WEAPONS.ZAP.MANA). The gate sits AFTER the target
+  // test — an empty field must never burn a charge — and does NOT spend the
+  // cooldown on failure, so a starved ZAP keeps its negative cd and fires the
+  // instant the pool can pay again.
+  if (W.MANA) {
+    if (p.mana < W.MANA) return;
+    p.mana -= W.MANA;
+  }
   weapon.cd = W.COOLDOWN * rateScale(state, weapon);
 
   const points = [{ x: p.x, y: p.y }];
