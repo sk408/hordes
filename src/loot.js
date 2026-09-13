@@ -159,23 +159,29 @@ export function rollLegendaryItem(rng = Math.random) {
   return { ...def, affixes: def.affixes.map(a => ({ ...a })) };  // deep copy, fixed affixes
 }
 
-// Roll a random item. The third arg injects the rarity weights (default =
-// the shared 4-tier base table; world-drop callers pass meta.js
-// luckDropWeights(luckLevel) so Fortune shifts the odds). rng call order
-// (tests rely on it): 1 x rarity, N x affix picks, +1 x legendary slot pick
-// if LEGENDARY.
-export function rollItem(rng = Math.random, tierBias = 0, weights = BASE_RARITY_WEIGHTS) {
-  const rarity = pickRarity(rng, tierBias, weights);
-
-  if (rarity === 'LEGENDARY') return rollLegendaryItem(rng);
-
-  const scale = RARITY_SCALE[rarity];
-  const picked = sample(AFFIX_POOL, AFFIX_COUNT[rarity], rng);
+// Roll an item at a GIVEN rarity. This is the CHEST-BAND seam: under the
+// owner's pivot a chest band IS an item rarity, so the band decides the rarity
+// and this builds the item at it -- no re-roll, no bias. rng order (tests pin
+// it): N x affix picks for COMMON/RARE/EPIC (1/2/3), and exactly 1 draw for
+// LEGENDARY (the fixed-slot pick). PURE.
+export function rollItemOfRarity(rarity, rng = Math.random) {
+  const r = RARITIES.includes(rarity) ? rarity : 'COMMON';
+  if (r === 'LEGENDARY') return rollLegendaryItem(rng);
+  const scale = RARITY_SCALE[r];
+  const picked = sample(AFFIX_POOL, AFFIX_COUNT[r], rng);
   const affixes = picked.map(a => ({
     id: a.id, name: a.name, field: a.field, magnitude: a.base * scale,
   }));
-  const name = `${PREFIX[rarity]} ${picked[0].noun}`;
-  return { id: 'item_' + (nextId++), name, rarity, affixes };
+  const name = `${PREFIX[r]} ${picked[0].noun}`;
+  return { id: 'item_' + (nextId++), name, rarity: r, affixes };
+}
+
+// Roll a random item. The third arg injects the rarity weights (default =
+// the shared 4-tier base table; world-drop callers pass meta.js
+// luckDropWeights(luckLevel) so Fortune shifts the odds). rng call order
+// (tests rely on it): 1 x rarity, then the item's own draws.
+export function rollItem(rng = Math.random, tierBias = 0, weights = BASE_RARITY_WEIGHTS) {
+  return rollItemOfRarity(pickRarity(rng, tierBias, weights), rng);
 }
 
 // ---------- Equipping (in-run state, profile-agnostic) --------------------

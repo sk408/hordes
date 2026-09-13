@@ -274,15 +274,35 @@ await acheck('bosses and the COLOSSUS are NEVER tier-rolled (forced roll proves 
       step();
       boss = st.enemies.find(e => (e.boss || e.finalBoss) && e.hp > 0);
     }
-    // Phase B — a 1-in-5 cycling high draw: pickSpawnType walks the weight
-    // table and the high draw lands in the LAST band (COLOSSUS, gated at
-    // wave 5 / ~150s), while every other draw still demands MYTHIC. If the
-    // exclusion ternary were missing, a COLOSSUS spawned here WOULD stamp.
-    let n = 0;
-    Math.random = () => (n++ % 5 === 0 ? 0.999 : 0);
-    for (let i = 0; i < 60 * 220 && !colossus; i++) {   // + the banner pause, as above
-      sample();
-      step();
+    // Phase B — a cycling high draw: pickSpawnType walks the weight table and a
+    // high draw lands in the LAST band (COLOSSUS, gated at wave 5 / ~150s),
+    // while every other draw still demands MYTHIC. If the exclusion ternary were
+    // missing, a COLOSSUS spawned here WOULD stamp.
+    //
+    // THE PHASE IS SWEPT, not assumed. The old stub was a bare `n++ % 5`, which
+    // silently depends on the simulation consuming exactly the draws it used to:
+    // any new draw per frame or per KILL shifts the phase, the spawn-type draw
+    // then never sees the high value, and the probe reports "no COLOSSUS" for a
+    // reason that has nothing to do with the exclusion (measured: the per-kill
+    // evolution-token channel is exactly such a draw). Sweeping all five offsets
+    // makes the proof independent of how many draws the rest of the frame
+    // consumes, and it is STRONGER than the single phase was: the exclusion is
+    // asserted below for every COLOSSUS that ANY phase produces.
+    // THE GATE IS PINNED, not waited out. Phase B needs a wave past the COLOSSUS
+    // gate; the old probe got there by SURVIVING ~150s, and death RETRYs reset
+    // the wave clock. That made the check depend on the run's power curve — which
+    // the chest -> equipment pivot deliberately changed (chests no longer hand
+    // out flat stat upgrades), so the probe started reporting "no COLOSSUS" for a
+    // reason unrelated to the tier-stamp exclusion it is testing. Pin the clock
+    // past the gate and the exclusion is what the check measures.
+    st.time = Math.max(st.time, 30 * (C.SPAWNER.COLOSSUS_WAVE + 1));
+    for (let phase = 0; phase < 5 && !colossus; phase++) {
+      let n = phase;
+      Math.random = () => (n++ % 5 === 0 ? 0.999 : 0);
+      for (let i = 0; i < 60 * 170 && !colossus; i++) {   // carries the banner pause
+        sample();
+        step();
+      }
     }
     sample();
   } finally {

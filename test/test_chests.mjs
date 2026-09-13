@@ -20,7 +20,7 @@ import { CHESTS, EVOLUTION_TOKENS, EVOLUTION_TOKEN, pickRarity, isEliteish,
          tokenChance, rollEvolutionToken } from '../src/chests.js';
 import { makePlayer, makeEnemy } from '../src/entities.js';
 import { CONFIG as C } from '../src/config.js';
-import { LEGENDARIES } from '../src/loot.js';
+import { LEGENDARIES, AFFIX_COUNT } from '../src/loot.js';
 import { CHEST_RARITY_LADDER } from '../src/rules.js';
 
 const seq = (vals) => {
@@ -103,30 +103,35 @@ const makeState = () => ({
 {
   const GAMBLE_MISS = 0.5;   // >= GAMBLE_CHANCE: not a gamble
 
-  // common: gamble-miss + rarity + 1 upgrade pick.
+  // common: gamble-miss + rarity + 1 affix pick -> a COMMON item.
   const c = rollContents(makeState(), seq([GAMBLE_MISS, 0.0, 0.0]));
   assert.strictEqual(c.rarity, 'common');
-  assert.strictEqual(c.upgrades.length, 1, 'common = 1 upgrade');
+  assert.ok(!('upgrades' in c), 'THE PIVOT: chest contents grant no upgrades at all');
+  assert.ok(c.item && c.item.rarity === 'COMMON', 'a common chest drops a COMMON item');
+  assert.strictEqual(c.item.affixes.length, AFFIX_COUNT.COMMON);
   assert.deepStrictEqual(c.potions, { hp: 0, mp: 0 });
-  assert.strictEqual(c.item, null, 'a common chest drops no equipment');
+  // (The pre-pivot assertion that a common chest drops NO equipment is gone: the
+  // owner's pivot makes every band drop equipment, so it is now false by design.)
 
-  // rare: gamble-miss + rarity + upgrade + potion-kind roll (0.7 -> mp).
-  const r = rollContents(makeState(), seq([GAMBLE_MISS, 0.99, 0.0, 0.7]));
+  // rare: gamble-miss + rarity + the item's 2 affix picks + potion coin (0.7 -> mp).
+  const r = rollContents(makeState(), seq([GAMBLE_MISS, 0.99, 0.0, 0.0, 0.7]));
   assert.strictEqual(r.rarity, 'rare');
-  assert.strictEqual(r.upgrades.length, 1);
-  assert.deepStrictEqual(r.potions, { hp: 0, mp: 1 }, 'rare = upgrade + 1 potion');
+  assert.strictEqual(r.item.rarity, 'RARE');
+  assert.strictEqual(r.item.affixes.length, AFFIX_COUNT.RARE);
+  assert.deepStrictEqual(r.potions, { hp: 0, mp: 1 }, 'rare = item + 1 potion (the flask is sustain, not a stat grant)');
   // and the hp side of the potion coin (0.2 -> hp)
-  const r2 = rollContents(makeState(), seq([GAMBLE_MISS, 0.99, 0.0, 0.2]));
+  const r2 = rollContents(makeState(), seq([GAMBLE_MISS, 0.99, 0.0, 0.0, 0.2]));
   assert.deepStrictEqual(r2.potions, { hp: 1, mp: 0 });
 
-  // epic (0.2% rung): 2 distinct upgrades, and NO token offer -- the token is
-  // its own decoupled drop now. This is the rung the old 5% "legendary" chest's
-  // contents landed on, kept EXACTLY as they were minus the token.
-  const e = rollContents(makeState(), seq([GAMBLE_MISS, 0.9985, 0.0, 0.0]));
+  // epic (0.2% rung): an EPIC item, 3 affixes at 2.2x. This is the rung that
+  // held the old 5% band's 2 upgrades + token choice; the token is its own
+  // decoupled drop and the PIVOT answers the previously-open "replacement top
+  // reward" question -- under the pivot the item IS the reward.
+  const e = rollContents(makeState(), seq([GAMBLE_MISS, 0.9985, 0.0, 0.0, 0.0]));
   assert.strictEqual(e.rarity, 'epic');
-  assert.strictEqual(e.upgrades.length, 2, 'epic = 2 upgrades');
-  assert.notStrictEqual(e.upgrades[0].id, e.upgrades[1].id, 'epic upgrades must be distinct');
-  assert.strictEqual(e.item, null, 'the epic rung has NO replacement reward yet (open owner decision)');
+  assert.strictEqual(e.item.rarity, 'EPIC');
+  assert.strictEqual(e.item.affixes.length, AFFIX_COUNT.EPIC);
+  assert.deepStrictEqual(e.potions, { hp: 0, mp: 0 });
   assert.ok(!('tokenOptions' in e), 'the token offer is gone from the chest contents shape');
 
   // legendary (0.02% top rung): a hand-authored LEGENDARY ITEM, no upgrades.
@@ -137,7 +142,7 @@ const makeState = () => ({
   assert.strictEqual(l.item.rarity, 'LEGENDARY');
   assert.strictEqual(l.item.slot, 'BOOTS');
   assert.strictEqual(l.item.name, LEGENDARIES.BOOTS.name, 'the drop is a hand-authored unique');
-  assert.strictEqual(l.upgrades.length, 0, 'the item IS the reward');
+  assert.ok(!('upgrades' in l), 'the item IS the reward');
   assert.deepStrictEqual(l.potions, { hp: 0, mp: 0 });
   console.log('ok: rollContents common/rare/epic/legendary (top band drops a named LEGENDARY item)');
 }
@@ -148,14 +153,15 @@ const makeState = () => ({
   const win = rollContents(makeState(), seq([0.05, 0.3, 0.1, 0.9]));
   assert.strictEqual(win.rarity, 'gamble');
   assert.strictEqual(win.gambleWin, true, 'coin < 0.5 should win the gamble');
-  assert.strictEqual(win.upgrades.length, CHESTS.GAMBLE_WIN_UPGRADES, 'gamble win = big reward (2 upgrades)');
+  assert.strictEqual(win.item.rarity, CHESTS.GAMBLE_WIN_ITEM_RARITY,
+    'gamble win = big reward (an item at GAMBLE_WIN_ITEM_RARITY, not flat upgrades)');
   assert.deepStrictEqual(win.potions, { hp: 1, mp: 1 }, 'gamble win refills both potions');
 
   // Lose: gamble draw + coin(0.7 >= 0.5) — exactly 2 rng draws, no more.
   const lose = rollContents(makeState(), seq([0.05, 0.7]));
   assert.strictEqual(lose.rarity, 'gamble');
   assert.strictEqual(lose.gambleWin, false, 'coin >= 0.5 should lose the gamble');
-  assert.strictEqual(lose.upgrades.length, 0, 'gamble loss grants nothing');
+  assert.strictEqual(lose.item, null, 'gamble loss grants nothing');
 
   // The gamble roll is INDEPENDENT of the ladder: the worst possible band roll
   // (0.9999999, the top rung) is still a gamble when the gamble draw hits, and
@@ -179,7 +185,12 @@ const makeState = () => ({
   const opened = events.find(e => e.kind === 'chestOpened');
   assert.ok(opened, 'open should emit chestOpened event');
   assert.strictEqual(opened.rarity, 'common');
-  assert.ok(st.player.stats.damage > before.damage, 'common upgrade should apply to the player');
+  // THE PIVOT: the chest hands over EQUIPMENT (through the one pickup path),
+  // and grants the player no flat stat growth of its own.
+  assert.ok(events.some(e => e.kind === 'chestItem' && e.item.rarity === 'COMMON'),
+    'a common chest delivers its item as a chestItem event');
+  assert.strictEqual(st.player.stats.damage, before.damage,
+    'a chest grants no flat stat growth any more (buyables + level-ups own that)');
 
   // Out of radius: chest stays put and ages.
   const st2 = makeState();

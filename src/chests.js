@@ -12,7 +12,7 @@
 // (defaults to Math.random) so tests are deterministic. tickChests returns an
 // events array instead of touching the DOM — integration (main.js/render.js)
 // consumes those events later.
-import { CONFIG as C, UPGRADES } from './config.js';
+import { CONFIG as C } from './config.js';
 import { makeTypedEnemy } from './enemy_types.js';
 import { applyEscalation, clampLootToArena } from './entities.js';
 // G8 step 3: the CONDITION-shape run rules. Pure helpers only (no rng, no
@@ -21,7 +21,7 @@ import { ruledChestRarity, hasRule } from './rules.js';
 // The top chest band's reward: loot.js owns the hand-authored LEGENDARY items
 // (one fixed named unique per slot). One-directional — loot.js imports meta.js
 // only, so there is no cycle.
-import { rollLegendaryItem } from './loot.js';
+import { rollItemOfRarity } from './loot.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -48,7 +48,11 @@ export const CHESTS = {
 
   // Gamble branch: 50% big reward, 50% nothing + mini horde on the player.
   GAMBLE_WIN_CHANCE: 0.5,
-  GAMBLE_WIN_UPGRADES: 2,   // "big reward": upgrades + refilled potions
+  // "Big reward" under the pivot = a RARE item + both flasks refilled. (It used
+  // to be 2 UPGRADES + both flasks; a band that still granted flat upgrades
+  // would contradict the pivot below.) The gamble stays a gamble: no band, its
+  // own 1-in-10 roll, and the loss still costs a horde.
+  GAMBLE_WIN_ITEM_RARITY: 'RARE',
   GAMBLE_HORDE_COUNT: 6,    // the punishment horde
   GAMBLE_HORDE_RADIUS: 90,  // spawned on a ring around the player
 };
@@ -185,18 +189,25 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
 }
 
 // Roll chest contents WITHOUT applying anything (pure given rng).
-// Returns { rarity, upgrades[], potions{hp,mp}, item|null, gambleWin? }.
+// Returns { rarity, item|null, potions{hp,mp}, gambleWin? }.
 //
-// DRAW ORDER (tests pin it): 1 gamble draw FIRST — a chest is either a gamble
-// or a rarity band, never both — then 1 rarity draw when it is not a gamble,
-// then the band's own contents draws. The gamble roll is deliberate: making it
-// independent is the only way the risk mechanic survives a 4-tier ladder.
+// THE PIVOT (owner, 2026-09-13): "chests don't need to grant upgrades at all
+// though. That should be handled through buyables and level upgrades. The
+// equipment they drop should be the thing that adds stat, damage, etc
+// modifiers." So a chest band IS an item rarity and the ITEM is the reward --
+// no band hands out UPGRADES (the flat stat bumps) any more. Flat growth lives
+// in the shop buyables and the level-up draft; a chest contributes EQUIPMENT,
+// whose affixes are the modifier system (loot.js applyAffixes).
+//
+// DRAW ORDER (tests pin it): 1 gamble draw FIRST -- a chest is either a gamble
+// or a rarity band, never both -- then 1 rarity draw when it is not a gamble,
+// then the band's item (1-3 draws), then the rare band's potion coin.
 export function rollContents(state, rng = Math.random) {
   if (rng() < CHESTS.GAMBLE_CHANCE) {
-    const g = { rarity: 'gamble', upgrades: [], potions: { hp: 0, mp: 0 }, item: null };
+    const g = { rarity: 'gamble', item: null, potions: { hp: 0, mp: 0 } };
     if (rng() < CHESTS.GAMBLE_WIN_CHANCE) {
       g.gambleWin = true;
-      g.upgrades = sample(UPGRADES, CHESTS.GAMBLE_WIN_UPGRADES, rng);
+      g.item = rollItemOfRarity(CHESTS.GAMBLE_WIN_ITEM_RARITY, rng);
       g.potions = { hp: 1, mp: 1 };
     } else {
       g.gambleWin = false;
@@ -208,30 +219,17 @@ export function rollContents(state, rng = Math.random) {
   // It reads the rules off the state this function already receives, so no
   // caller signature changes and NO extra rng draw is taken.
   const rarity = ruledChestRarity(pickRarity(rng), state);
-  const base = { rarity, upgrades: [], potions: { hp: 0, mp: 0 }, item: null };
+  const base = { rarity, item: null, potions: { hp: 0, mp: 0 } };
 
-  if (rarity === 'common') {
-    base.upgrades = sample(UPGRADES, 1, rng);
-  } else if (rarity === 'rare') {
-    base.upgrades = sample(UPGRADES, 1, rng);
-    base.potions[rng() < 0.5 ? 'hp' : 'mp'] = 1;
-  } else if (rarity === 'epic') {
-    // TODO(OPEN OWNER DECISION — do not invent a reward here): this rung is
-    // where the old 5% "legendary" chest's CONTENTS land now that the ladder
-    // applies to the bands. Those contents were 2 upgrades + an
-    // evolution-token CHOICE; the token is now its own decoupled drop
-    // (EVOLUTION_TOKEN above), so what is left is 2 upgrades and nothing else.
-    // The band needs a REPLACEMENT top reward and the owner has not decided
-    // it. Left exactly as the old band minus the token, per instruction.
-    base.upgrades = sample(UPGRADES, 2, rng);
-  } else { // legendary — the 0.02% top band
-    // OWNER SPEC: the 0.02% chest tier drops a hand-authored LEGENDARY item
-    // (loot.js LEGENDARIES — one fixed named unique per slot). This is the
-    // first step of the chest -> equipment pivot: chest rarity IS item rarity.
-    // 1 rng draw (the slot pick). Delivery is the chestItem event, routed
-    // through the SAME world-drop pickup/equip path in main.js.
-    base.item = rollLegendaryItem(rng);
-  }
+  // THE BAND IS THE ITEM RARITY. One item per chest, built at the band's own
+  // rarity: common 98% pays a common item, the 0.02% top band pays a
+  // hand-authored LEGENDARY unique. This also ANSWERS the previously-open
+  // "replacement top reward" question for the upper band: under the pivot the
+  // item IS the reward, so no separate bonus had to be invented for it.
+  base.item = rollItemOfRarity(rarity.toUpperCase(), rng);
+  // The rare band keeps its flask: potions are the run's SUSTAIN, not a stat
+  // grant, and a fresh run is meant to be weak with the shop as the answer.
+  if (rarity === 'rare') base.potions[rng() < 0.5 ? 'hp' : 'mp'] = 1;
   return base;
 }
 
@@ -261,7 +259,6 @@ function applyContents(state, contents, chest) {
   const p = state.player;
   const events = [{ kind: 'chestOpened', rarity: contents.rarity, x: chest.x, y: chest.y }];
 
-  for (const u of contents.upgrades) u.apply(p);
   for (const k of ['hp', 'mp']) {
     // G11: the run's rule ceiling (NO_POTIONS stays at 0 — no chest refills a
     // forbidden flask). startRun always sets state.potionCap before a run.
