@@ -317,13 +317,15 @@ const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 // for every row in SHOP_UPGRADES.
 export const SHOP_UPGRADES = [
   // ---- original combat/resource lines (prices unchanged from retune) ----
-  // OWNER (2026-09-13): "+100% per level" — the survival lever now that the
-  // enemies are squared. Applied by the same linear formula as before
-  // (damage * (1 + perLevel * level)), so L1 doubles, L5 is 6x base damage.
-  // Kept on the BASE damage: a fresh player buys their way up from 1x, which is
-  // what "improvement comes from shop buyables" means with squared foes.
-  { id: 'dmg',     name: 'Forged Edge',    desc: '+100% weapon damage per level',
-    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 1.0 },
+  // OWNER (2026-09-13): "+150% per level" — the survival lever now that the
+  // enemies are squared (BASE_HP 144, BASE_CONTACT 196) and a fresh run is
+  // deliberately lethal: "gives players the grind they want", and the owner is
+  // measuring how long it takes to grow strong enough to survive. Same linear
+  // formula as before (damage * (1 + perLevel * level)): L1 is 2.5x base damage,
+  // L5 is 8.5x. Kept on the BASE damage, so every level is worth the same
+  // absolute step and a fresh player always starts from 1x.
+  { id: 'dmg',     name: 'Forged Edge',    desc: '+150% weapon damage per level',
+    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 1.5 },
   { id: 'hp',      name: 'Vitality',       desc: '+20 max HP per level',
     baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 20 },
   { id: 'potions', name: 'Travel Pack',    desc: '+1 starting potion (each kind) per level',
