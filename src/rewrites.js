@@ -41,17 +41,17 @@ export const REWRITES = {
   pierceall: {
     id: 'pierceall',
     name: 'Pierce All',
-    desc: 'REWRITE - every projectile pierces; nothing stops at the first body',
+    desc: 'every shot pierces - nothing stops at the first body',
   },
   onkillboom: {
     id: 'onkillboom',
     name: 'Chain Reaction',
-    desc: 'REWRITE - every kill detonates; the blast damages nearby enemies',
+    desc: 'every kill detonates - the blast damages enemies nearby',
   },
   healthdamage: {
     id: 'healthdamage',
     name: 'Blood Harvest',
-    desc: 'REWRITE - picking up a health potion also damages nearby enemies',
+    desc: 'health potions also damage enemies nearby',
   },
 };
 export const REWRITE_IDS = Object.keys(REWRITES);
@@ -65,12 +65,14 @@ export const REWRITE_IDS = Object.keys(REWRITES);
 // marginally cleaner greed cohort — but the slope is ~0.1x of ratio across a
 // 5x weight range and ALL cells clear the acceptance bar's substance (bad
 // fails 100%, good beats bad >=3/5 minute-10 metrics at every weight), so the
-// offer rate is a taste knob, not a balance one: 0.05 ships unchanged to keep
-// the family visible in drafts. Invariants at 0.05 (families ON, luck 0): bad
+// offer rate is a taste knob, not a balance one. OWNER DIRECTIVE 2026-09-13
+// ("should use mana? And be rare."): 0.05 read too often in drafts, so the
+// family now ships at 0.02 - inside the measured range above (ratio 1.77x,
+// every acceptance cell still clears). Invariants at 0.05 (families ON, luck 0): bad
 // fails 100%, good beats bad 3/5 minute-10 metrics, one-bad-pick probes
 // pierceall 1.23x / onkillboom 1.20x / healthdamage 1.06x — all >= the 0.8x
 // bar.
-export const REWRITE_CARD_WEIGHT = 0.05;
+export const REWRITE_CARD_WEIGHT = 0.02;
 
 // ---- CHAIN REACTION numbers (the detonation on every kill) -----------------
 // Radius covers a trash pack; damage is a flat + a fraction of the player's
@@ -79,6 +81,15 @@ export const REWRITE_CARD_WEIGHT = 0.05;
 export const BOOM_RADIUS = 40;
 export const BOOM_DAMAGE_FLAT = 4;
 export const BOOM_DAMAGE_FRAC = 0.5;   // + 50% of the player's weapon damage
+
+// CHAIN REACTION's mana price. A detonation on EVERY kill is the strongest
+// engine in the family (one-bad-pick probe 1.20x), so it now draws on the pool.
+// SOFT gate, not a hard one: when the run cannot pay, the blast still fires at
+// a reduced radius and damage rather than vanishing, so the card never goes
+// dark mid-fight (the failure mode measured on Chain Zap's first cut).
+export const BOOM_MANA_COST = 6;
+export const BOOM_DRY_RADIUS_MULT = 0.6;
+export const BOOM_DRY_DAMAGE_MULT = 0.4;
 
 // ---- BLOOD HARVEST numbers (the blast on every health pickup) --------------
 // Potions are ~rare (POTIONS.DROP_CHANCE 0.03/kill), so the blast is allowed
@@ -135,9 +146,16 @@ export function grantRewrite(state, id) {
 export function rewriteBoom(state) {
   if (!hasRewrite(state, 'onkillboom')) return null;
   const p = state.player;
+  // PURE: the helper decides what the blast WOULD be and what it WOULD cost;
+  // the caller performs the spend. A state with no finite mana pool (unit
+  // tests, any non-run caller) cannot bind the cost, so it reads funded.
+  const pool = typeof p.mana === 'number' ? p.mana : Infinity;
+  const funded = pool >= BOOM_MANA_COST;
+  const base = BOOM_DAMAGE_FLAT + BOOM_DAMAGE_FRAC * (p.stats.damage || 0);
   return {
-    radius: BOOM_RADIUS,
-    damage: BOOM_DAMAGE_FLAT + BOOM_DAMAGE_FRAC * (p.stats.damage || 0),
+    radius: funded ? BOOM_RADIUS : BOOM_RADIUS * BOOM_DRY_RADIUS_MULT,
+    damage: funded ? base : base * BOOM_DRY_DAMAGE_MULT,
+    manaCost: funded ? BOOM_MANA_COST : 0,
   };
 }
 /** BLOOD HARVEST's blast at the pickup site, or null when not held. */

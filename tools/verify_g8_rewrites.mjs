@@ -14,6 +14,14 @@
 //
 // Run: node tools/verify_g8_rewrites.mjs
 import { withPage } from './browser.mjs';
+import { REWRITES } from '../src/rewrites.js';
+
+// The family's cards are found by their player-facing NAME. They used to be
+// found by grepping for the internal 'REWRITE - ' label, which is exactly the
+// leaked marker that has now been removed from player copy - so the old
+// matcher would silently find nothing.
+const REWRITE_NAMES = Object.values(REWRITES).map(r => r.name);
+const isRewriteText = (t) => REWRITE_NAMES.some(n => (t || '').includes(n));
 
 const out = await withPage({ w: 390, h: 844, dpr: 3,
   startupScript: "try { localStorage.setItem('hordes_onboarded', '1'); } catch (e) {}" },
@@ -38,7 +46,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
           T.openDraft();
           tries++;
           const els = [...document.querySelectorAll('#ov-cards .card')];
-          const hit = els.find(el => (el.textContent || '').includes('REWRITE - '));
+          const hit = els.find(el => isRewriteText(el.textContent));
           if (hit) found = { seed: i * 7919, texts: els.map(el => el.textContent.replace(/\\s+/g, ' ').trim()) };
         }
       } finally { Math.random = real; }
@@ -58,7 +66,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
         overlay: getComputedStyle(document.getElementById('overlay')).display };
     })()`);
     const shot = await p.shot('g8-step2-rewrite-draft-phone');
-    const target = res.cards.find(c => c.text.includes('REWRITE - ')) || res.cards[0];
+    const target = res.cards.find(c => isRewriteText(c.text)) || res.cards[0];
     // readShot takes a LABEL -> [x, y] map in CSS px (it scales by the captured dpr).
     const px = await p.readShot(shot, {
       rewriteCardText: [Math.round(target.rect.x + target.rect.w / 2), Math.round(target.rect.y + 40)],
@@ -68,7 +76,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   });
 
 console.log(JSON.stringify(out, null, 2));
-const rewrite = (out.cards || []).find(c => c.text.includes('REWRITE - '));
+const rewrite = (out.cards || []).find(c => isRewriteText(c.text));
 const problems = [];
 if (out.mode !== 'draft') problems.push('mode is ' + out.mode + ', not draft');
 if (!out.found) problems.push('no REWRITE card reached the pool in ' + out.tries + ' drafts');

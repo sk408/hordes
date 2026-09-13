@@ -63,7 +63,9 @@ ok('the catalog is the three rewrites with unique ids and player-facing labels',
   assert.equal(new Set(REWRITE_IDS).size, 3);
   for (const id of REWRITE_IDS) {
     assert.ok(REWRITES[id].name, id + ' has a name');
-    assert.ok(REWRITES[id].desc.startsWith('REWRITE - '), id + ' desc carries the family label');
+    assert.ok(!/rewrite/i.test(REWRITES[id].desc),
+      id + ' desc is player-facing copy, never the internal family label');
+    assert.ok(REWRITES[id].desc.length > 20, id + ' desc is real prose, not a placeholder');
   }
 });
 ok('no id collides with the stat UPGRADES, the run-rule ids or the perk ids', () => {

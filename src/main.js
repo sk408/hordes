@@ -202,6 +202,12 @@ const state = {
   // meta screens keep 'menu' over the frozen world); 'farewell' is the
   // EXIT GAME screen.
   mode: 'menu',      // 'menu' | 'title' | 'farewell' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
+  // N2 TITLE ART REVEAL — the assertable seam for the menu fade-in + the
+  // START GAME art hold: { phase, t, dur, opacity }. Phases: 'art' (card
+  // alone) -> 'fade' (menu up, first entry only) | 'return' (<=150ms re-fade)
+  // -> 'settled'; the hold runs 'out' (menu down) -> 'hold' (art alone) ->
+  // startRun, which NULLS it. Null when no title flow is live.
+  titleReveal: null,
   pendingDrafts: 0,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
@@ -1598,6 +1604,9 @@ function update(dt) {
       // across frames. NO toast: the feed is for rare moments, not every kill.
       const boom = rewriteBoom(state);
       if (boom) {
+        // CHAIN REACTION draws on the pool per detonation; a dry run still
+        // detonates, just smaller (rewriteBoom owns that decision).
+        if (boom.manaCost) state.player.mana -= boom.manaCost;
         for (const o of state.enemies) {
           if (o === e || o.hp <= 0) continue;
           if (Math.hypot(o.x - e.x, o.y - e.y) <= boom.radius) {
@@ -2110,7 +2119,9 @@ function pick(u) {
   } else if (u.rewrite) {
     // G8 step 2: a REWRITE card grants its mechanic through apply(player) in
     // the chain below, and NEVER enters the `once` stat ledger.
-    toast('REWRITE - ' + REWRITES[u.rewrite].name.toUpperCase() + ': ' + REWRITES[u.rewrite].desc.replace('REWRITE - ', ''));
+    // Player-facing copy only: the internal family label must never reach the
+    // feed - it read as a placeholder ("rewrite this description before using").
+    toast(REWRITES[u.rewrite].name.toUpperCase() + ' - ' + REWRITES[u.rewrite].desc);
   } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
     markStatTaken(state, u.id);
   }
