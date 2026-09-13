@@ -121,7 +121,9 @@ screen itself, then get THAT one read.
   have to give witch something strong and defining. Frost nova is sort of weak to be honest."*
   Full spec on N1b item 3. FROST_NOVA leaves Q for everyone and returns as a draftable card
   (new work). Its slow, the one strong property it had, is carried INTO her new Q.
-  **Still owed from the owner for N1: what each non-Witch ult DOES.** See TICK NOTE 35.
+  **NO OWNER INPUTS OUTSTANDING FOR N1.** The three non-Witch ult EFFECTS are DELEGATED to
+  the pilot (owner, 2026-09-13: "go ahead") against the constraints and acceptance bar on N1b
+  item 3. N1 is dispatchable. See TICK NOTE 35.
 
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
@@ -129,7 +131,7 @@ Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: DISPATCHABLE-ISH 2026-09-13 — Q-slot call ANSWERED (option (a)) and the WITCH'S Q is SPECCED (Chain Reaction, N1b item 3). Only the three non-Witch ult EFFECTS remain unspecified]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: DISPATCHABLE 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -247,6 +249,31 @@ skill with a longer timer) and give it a cooldown floor so a dense wave cannot c
    **FROST_NOVA, meanwhile, is called weak by the owner and gets NO balance change here** — it
    simply leaves Q, keeps its slow (which the new Q also carries), and returns as the draftable
    card that makes it reachable for the other three.
+
+   **THE THREE NON-WITCH ULT EFFECTS ARE DELEGATED TO THE PILOT (owner, 2026-09-13: "go ahead").**
+   The owner did not spec them by hand and does not need to; the pilot owns the content DESIGN
+   and must bring back a short spec per class (name, effect, numbers, why it is distinct) BEFORE
+   a builder implements anything. A builder left to invent effects mid-implementation is how a
+   class identity becomes an accident.
+   What the spec MUST honour — every one of these is already a recorded constraint, not a new rule:
+   - **NON-MANA.** Item 3: it must not draw on mana or the two systems blur and the Witch stops
+     being the mana class. Kill-charged, not mana-fed.
+   - **Kill-charged with a cooldown FLOOR**, so a dense wave cannot chain it (item 3).
+   - **One big payoff per class, and the three must not feel like each other** — nor like any of
+     the 9 existing weapon archetypes, nor like the Witch's Chain Reaction.
+   - **Q is the slot** (option (a)); **E stays OVERCHARGE for every class**.
+   - **The charge needs a READOUT.** A kill-charged ult is invisible until the HUD shows progress,
+     so the spec must include the charge display and register any new chrome in the screen-chrome
+     gate (`chromeOn`/`syncChrome`) — BUILD_PLAN's standing rule, and wave-23 shipped a regression
+     by skipping it.
+   - **Phone-first.** The owner plays on a phone: verify at 390x844 @dpr3 with a REAL-browser
+     screenshot, and get the screenshot actually READ (see the visual-verification note at the top
+     — a PNG nobody has looked at is a claim, not evidence).
+   - **Measured, not asserted.** Each ult must show a measured before/after on a real cohort, and
+     must not create a dead pick. Never weaken an assertion to go green; 60Hz and 120Hz both.
+   - **N1's full scope, so no slice is missed:** (1) the Witch's Chain Reaction Q, (2) the new
+     draftable FROST_NOVA card that keeps it reachable for the other three, (3) the three ults +
+     their charge readout. The pilot slices these into its own briefs.
 
 **4. The Witch is the mana class, and she is BUYABLE: `unlockCost` 1000 -> 9000 (LANDED
 2026-09-13).** At 1000 she cost **1.43 fresh runs** (`computeRunGold(RUN1)` = 700) — buyable
@@ -3688,4 +3715,4 @@ The owner answered the Q-slot question: **OPTION (a)**. Full text lives on N1b i
 **AND THIS NOTE'S OWN RECON IS UPHELD - one premise in the decision record was wrong and is now corrected.** The Witch's Q is NOT Chain Zap today: her Chain Zap is her STARTING WEAPON (`WITCH.startingWeapon = 'ZAP'`, meta.js:758). Her Q SKILL is still `FROST_NOVA`, and `grep CHAIN_ZAP src/ test/ tools/ index.html` returns nothing — `C.SKILLS` (config.js:151) carries only FROST_NOVA and OVERCHARGE. So option (a)'s plumbing half is real and consumer-complete, while its DATA half is not built for ANY class yet.
 **UPDATED AFTER THIS NOTE — ONE ANSWER IN, ONE STILL OUT:**
   1. **The Witch's Q: ANSWERED.** It becomes **CHAIN REACTION** (mana-fed chain zap whose kills detonate, with FROST_NOVA's slow folded in) - owner-confirmed, full spec on N1b item 3. So the answer to question 2 of this note is NEITHER option sketched here: she gets a NEW defining Q, not FROST_NOVA and not a bare `CHAIN_ZAP`. Do not re-open it.
-  2. **The three non-Witch ULT EFFECTS: STILL UNANSWERED**, and it is now the ONLY thing between N1 and a dispatchable brief. N1b item 3 pins the mechanics (non-mana, kill-charged, cooldown floor, one big payoff distinct from existing weapons) but not what each does. The orchestrator's suggestion to the owner: delegate the EFFECTS to the pilot against those constraints rather than spec them by hand.
+  2. **The three non-Witch ULT EFFECTS: DELEGATED TO THE PILOT (owner, 2026-09-13: "go ahead").** NOT answered here, and deliberately so - the owner does not need to spec them by hand. Bring back a short spec per class (name, effect, numbers, why it is distinct) BEFORE any builder implements, honouring the constraint list now on N1b item 3: non-mana, kill-charged with a cooldown floor, distinct from each other and from the 9 existing weapon archetypes and from Chain Reaction, a charge READOUT registered in the chrome gate, phone-first verification with the screenshot actually read, and measured before/after rather than asserted. **N1 IS FULLY DISPATCHABLE; there is no owner input outstanding.** Its three slices: the Witch's Chain Reaction Q, the draftable FROST_NOVA card, and the three ults.
