@@ -168,6 +168,29 @@ export async function runRealCohort(stage, runs, {
           else { const play = titled('PLAY'); if (play) play.click(); else key({ key: '1' }); }
         }
       }
+      // SKILL POLICY (Sk408: "sims should use q and e against bosses"). The
+      // overlay policy above only ever picks cards, so a cohort run never cast a
+      // skill: every boss fight was fought with the skill layer dormant and mana
+      // could never be spent, which made any skill or mana measurement a
+      // measurement of nothing. Press both skill keys while a boss is up —
+      // useSkill gates on cooldown AND mana, so this fires each skill the instant
+      // it is ready and affordable, which is what a player does in a boss fight.
+      //
+      // `e` (not `w`) is the overcharge key here: main.js maps `e` to the act in
+      // BOTH pilot modes, while `w` is held "up" in MANUAL, so pressing `w` would
+      // drag the player north in a manual cohort.
+      //
+      // Measured effect on the FRESH stage (6 runs/arm, same seed, 300s cap):
+      // dormant mean 204.8s / 3583 kills / level 26  ->  casting mean 277.8s /
+      // 5993 kills / level 35. The casting arm is censored MORE at the cap, so
+      // that is a floor. Every balance number this file previously fed was
+      // therefore measured against a player who never used their abilities.
+      if (key && (st.mode === 'playing' || st.mode === 'finale')) {
+        const bossUp = (st.wave.bosses || []).some(b => b && b.hp > 0)
+          || (st.wave.midBosses || []).some(b => b && b.hp > 0)
+          || !!(st.finalBoss && st.finalBoss.hp > 0);
+        if (bossUp) { key({ key: 'q' }); key({ key: 'e' }); }
+      }
     }
     const gold = h.profile().gold - goldBefore;
     const rec = st.runWon
