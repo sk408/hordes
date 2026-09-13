@@ -173,6 +173,18 @@ single big payoff on the Q slot. It must NOT draw on mana, or the two systems bl
 stops being the mana class. Charge it with kills (not a bare cooldown, or it is just another
 skill with a longer timer) and give it a cooldown floor so a dense wave cannot chain it.
 
+   **RESOLVED BY THE OWNER 2026-09-13 — option (a). N1'S ULTS ARE NO LONGER BLOCKED.**
+   Q is the CLASS IDENTITY for all four classes: the Witch's Q is Chain Zap (already routed
+   through `classSkillId`), and the ult takes Q for Knight / Rogue / Paladin. FROST_NOVA
+   leaves Q. **E stays OVERCHARGE for every class** — that is what satisfies item 5, because
+   item 5 requires that a MANA SKILL stays reachable for all four; it does not require
+   FROST_NOVA specifically to sit on Q. FROST_NOVA returns as a DRAFTABLE skill card.
+   NOTE, so nobody assumes a free move: that draftable path is NEW WORK. The draft pool
+   carries skill PERKS (`SKILL_PERK_IDS`) and nothing in it grants a skill, so N1 must add a
+   card that grants FROST_NOVA. Item 5's underlying worry (only the Witch has mana income) is
+   already answered by item 6's buyables — thrifty / well / siphon are purchasable by any
+   class — so a Knight is not locked out of the mana economy.
+
 **4. The Witch is the mana class, and she is BUYABLE: `unlockCost` 1000 -> 9000 (LANDED
 2026-09-13).** At 1000 she cost **1.43 fresh runs** (`computeRunGold(RUN1)` = 700) — buyable
 with the first run's gold, and cheaper than SWIFT (1800). Ladder is now Knight 0 -> Rogue 2500
@@ -184,6 +196,11 @@ Mana-cost content is NOT Witch-only — Chain Zap and Chain Reaction are draftab
 the existing Q/E skills cost mana (FROST 30 / OVER 25). If only the Witch had mana income, those
 become dead picks for 3 of 4 classes and their own skills stop working. The Witch's identity is
 the RATE + her +50 pool + the cost discount, never exclusive access.
+
+RESOLVED 2026-09-13 by the owner's option (a): the fixed key that keeps this true for every
+class is **E = OVERCHARGE, unchanged**. FROST_NOVA leaves Q and returns as a draftable card
+(see item 3, including the note that the card itself is new work). Do not re-litigate this — 
+the question sat unanswered for 15 ticks and the pilot was right to refuse to invent it.
 
 **6. Buyables to add** — [status: DONE 2026-09-13 - VERIFIED BY TICK NOTE 23: landed as commit 3cd9425 (builder cli:glm-hordes-g8, brief docs/briefs/N1B6_SHOP_MANA_BUYABLES.md). Prices: thrifty 350g x1.7 max4 (-10%/lvl), well 250g x1.6 max4 (+25/lvl), siphon 500g x1.7 max4 (+0.05/kill/lvl). The pilot re-ran everything itself: suite PASS=72 FAIL=0 three times, test_shop_mana 8/8, verify_skill_keys PASS (32 measurements), a REAL-browser purchase of Thrifty L1 at 390x844 @dpr3 (gold 1000->650, all three rows onScreen), and the item-7 bars re-measured on THIS tree for both classes - the spend share moves 94.9%->76.9% KNIGHT and 97.4%->88.9% WITCH, i.e. INTO the 70-90% band, which is the brief's open question answered. ONE DEFECT FOUND AND FIXED test-side: a random MOONLIGHT weather roll (+0.5/s flat) was being read as siphon income, making test_shop_mana flaky (measured 2.0833 vs the 2.0 bar); the probe now pins CLEAR and a new MOONLIGHT check proves dt-parity WITH the weather grant. See TICK NOTE 23] all fit the existing `{id,name,desc,baseCost,costGrowth,maxLevel,perLevel}`
 row shape (`src/meta.js:302`), so this is content, not new machinery:
@@ -2492,14 +2509,13 @@ Acceptance bar carried in the brief: >=60 ZAP bolts in a 120s Witch cohort (toda
 ready-but-starved frames), dry damage ratio 0.5 within 0.02, costs 2 vs 4 asserted, `verify_skill_keys.mjs`
 PASS, three suite runs at FAIL=0, and a 120Hz re-check.
 
-**DESIGN CALL NEEDED FROM THE OWNER (this tick did NOT invent it).** The goals doc contradicts itself about the
-Q slot. N1b item 3 says the ult sits "on the Q slot" for Knight/Rogue/Paladin, but N1b item 5 says the existing
-Q/E mana skills (FROST 30 / OVER 25) must stay reachable for all four classes or they become dead picks for
-three of them. Both cannot hold once FROST_NOVA is displaced from Q. Options, with the pilot's recommendation:
-(a) **RECOMMENDED** ult on Q for the three non-Witch classes, FROST_NOVA retired from Q and kept as a
-draftable/Witch-side skill, E stays OVERCHARGE for everyone; (b) ult on Q and FROST_NOVA moved to a second
-skill slot/E for everyone; (c) ults on a new key. The ults are excluded from the current dispatch precisely
-because this is an owner call, not a builder's.
+**DESIGN CALL — ANSWERED BY THE OWNER 2026-09-13: OPTION (a). The ults are UNBLOCKED.**
+The contradiction this flagged: N1b item 3 puts the ult on Q for Knight/Rogue/Paladin, while
+item 5 requires the Q/E mana skills (FROST 30 / OVER 25) to stay reachable for all four classes.
+The owner chose (a): ult on Q for the three non-Witch classes, FROST_NOVA retired from Q, and
+**E stays OVERCHARGE for everyone**. Implementation consequence recorded on item 3: FROST_NOVA
+needs a NEW draftable card to stay reachable, because nothing in the pool currently grants a
+skill. Read item 3 before building — do not re-open the question.
 
 **ALSO FOUND.** The worker's queue held two STALE tasks from earlier ticks of this same chain: a G12
 "finish" instruction quoting a PASS=68 baseline (G12 has since been verified, committed as c6b935b, and the
