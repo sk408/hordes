@@ -5788,6 +5788,14 @@ export const __TEST = {
   },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
+  // One-time-banner ledger seam (schema v6). A probe that COUNTS FRAMES must be
+  // banner-inert: the first-ever token / top-tier banner legitimately holds the
+  // sim for 2.5s, which starves a frame-budgeted measurement. Its own behaviour
+  // is asserted in its own block, with the hold live. Never read by the browser.
+  banners: {
+    seen: (id) => bannerSeen(profile, id),
+    markSeen: (id) => markBannerSeen(profile, id),
+  },
   setPilotMode: swapPilotMode, pilotInput,
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,

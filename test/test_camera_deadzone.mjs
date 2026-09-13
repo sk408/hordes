@@ -61,10 +61,20 @@ T.startRun();
 pump(3);
 state.spawnTimer = 99999;
 state.wave.endsAt = state.time + 99999;
-handlers.keydown({ key: 'm' });
+// (h) ASK for the manual pilot. This used to be a single M press, which is now
+// the MIDDLE rung (AUTO_MOVE): under AUTO_MOVE the autopilot still drives, so it
+// fought the one-pixel walk below and the view never traveled.
+T.setPilotMode('MANUAL');
+assert.equal(state.pilotMode, 'MANUAL', 'the walk runs under the manual pilot');
 clearField();
 park(0, 0);
 pump(2);
+
+// (i)/(g) HYGIENE: the one-time banners HOLD the sim for 2.5s. This probe walks
+// in one-pixel/one-frame steps and asserts how far the VIEW traveled, so a hold
+// landing mid-walk starves the measurement. Declare the banners already shown --
+// their own behaviour (banner + hold) is asserted where it belongs, not here.
+T.banners.markSeen('TOKEN');
 
 // ---- the deadzone itself ---------------------------------------------------
 S.check('the player is free inside the box; the view does not track 1:1', () => {

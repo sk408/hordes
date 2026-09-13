@@ -1251,8 +1251,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // Diagonal: w+d keys normalize to equal displacement on both axes.
   T.startRun();
   quietField();
-  keyHandler({ key: 'm' });
+  // (h) ASK for the manual pilot: T.startRun() resets the ladder to AUTO_ALL and
+  // a single M press now lands on AUTO_MOVE, where held KEYS do not drive the
+  // player at all. The M key's own three-rung behaviour is asserted above.
+  T.setPilotMode('MANUAL');
   pump(2);
+  assert(st.pilotMode === 'MANUAL', 'the diagonal probe runs under the manual pilot');
   const dx0 = st.player.x, dy0 = st.player.y;
   keyHandler({ key: 'd' });
   keyHandler({ key: 'w' });
@@ -1331,7 +1335,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 
   // Blur clears every held direction AND the stick vector (no ghost input
   // across alt-tab).
-  keyHandler({ key: 'm' });
+  T.setPilotMode('MANUAL');   // (h) ask: a held KEY only drives in MANUAL
   keyHandler({ key: 'ArrowUp' });
   T.joyVec(R * 0.8, 0, R);
   assert(T.pilotInput.up === true && T.pilotInput.mag > 0,
@@ -1354,7 +1358,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   T.startRun();
   st.enemies.length = 0; st.gems.length = 0;
   st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
-  keyHandler({ key: 'm' });   // MANUAL
+  T.setPilotMode('MANUAL');   // (h) ask, do not count presses
   keyHandler({ key: 'ArrowRight' });
   // One gem = exactly one level = one draft overlay (the levelUp path).
   st.gems.push(makeGem(st.player.x, st.player.y, st.player.xpNext - st.player.xp));
@@ -1410,6 +1414,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 
   // (b) cap at 3, newest LOWEST, fresh lines opaque. NOTE: the pickup loop
   // walks itemDrops in REVERSE, so MYTHIC is pushed first to toast LAST.
+  // (g) HYGIENE: this probe stages an EPIC pickup to read the FEED, and an
+  // unmarked EPIC fires the first-ever top-tier banner + its 2.5s sim hold,
+  // which freezes the toast ttl the fade assertion below measures. The banner's
+  // own behaviour is asserted in the banner block.
+  mainMod.__TEST.banners.markSeen('top:Mythic Edge');
   st.itemDrops.push({ x: st.player.x, y: st.player.y, age: 0,
     item: { id: 'feed3', name: 'Mythic Edge', rarity: 'EPIC',
       affixes: [{ id: 'damageMult', name: 'Brutal Edge', field: 'damageMult', magnitude: 0.22 }] } });
@@ -1527,7 +1536,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // zoom) and can never leave the safe screen region. The old assertion pinned
   // exact centring; this pins the new contract (and is not a no-op: the box is
   // a small fraction of the screen, while the safe region is the hard bound).
-  keyHandler({ key: 'm' });           // AUTO -> MANUAL, nothing held = still
+  T.setPilotMode('MANUAL');           // (h) ask, do not count presses: nothing held = still
   T.zoom.set(2);
   pump(150);                          // let the follow settle
   const offScrX = ((st.player.x - st.cam.x) - CFG.VIEW_W / 2) * 2;   // screen px
@@ -1738,7 +1747,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // --- (4) ARENA WALL: nothing painted mid-arena; the rim (±600) becomes a
   // stone wall + gloom BEFORE the player reaches the clamp, at 1x AND 2x. ---
   T.zoom.set(1);
-  keyHandler({ key: 'm' });           // MANUAL, nothing held = stationary
+  T.setPilotMode('MANUAL');           // (h) ask, do not count presses: nothing held = stationary
   p.x = 0; p.y = 0;
   pump(60);                           // let the camera lerp converge on center
   assert(r.arenaWall && r.arenaWall.rim === 600 && r.arenaWall.sides.length === 0,

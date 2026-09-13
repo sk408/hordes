@@ -70,9 +70,10 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA v3 + NAMESPACE SHAPE:');
 {
-  // Pinned deliberately (v5 = G10 encounters) — update WITH the schema bump.
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 5,
-    `schema version is 5 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
+  // Pinned deliberately (v6 = the one-time-banner ledger) — update WITH the
+  // schema bump.
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 6,
+    `schema version is 6 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
   ok(VERSION_HISTORY.some(v => v.version === 3 && /per-character/i.test(v.note)),
     'VERSION_HISTORY documents the v3 per-character namespace');
   ok(STORAGE_KEY === 'hordes_profile_v1',
@@ -188,7 +189,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v0 = loadProfileResult(seededJson(legacy));
   ok(v0.status === 'migrated' && v0.from === 0 && v0.profile.version === SCHEMA_VERSION,
     `a v0 (unversioned) save migrates to v${SCHEMA_VERSION} (from=${v0.from})`);
-  deepEq(v0.migrations, [0, 1, 2, 3, 4], 'the whole chain 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 runs');
+  deepEq(v0.migrations, [0, 1, 2, 3, 4, 5], 'the whole chain 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 runs');
   ok(v0.profile.bestTime === 187.5 && v0.profile.purchased.dmg === 1 &&
      v0.profile.equippedCharacter === 'WITCH',
     'the v0 -> v3 chain preserves the legacy fields');
