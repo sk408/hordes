@@ -293,7 +293,8 @@ console.log('BONUSES:');
   const out2 = applyMetaBonuses(base, { dmg: 2, hp: 3, regen: 1, xp: 2 });
   ok(out2.damage === 8 * (1 + 0.10 * 2), 'damage bonus stacks multiplicatively per level');
   ok(out2.maxHp === 100 + 20 * 3, 'max HP bonus adds per level');
-  ok(out2.manaRegen === 2.5 + 0.5 * 1, 'mana regen bonus adds per level');
+  ok(out2.manaRegen === C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * 1,
+     'mana regen bonus adds per level (base + perLevel, both read from config)');
   ok(out2.xpMult === 1 + 0.10 * 2, 'XP bonus adds per level');
   ok(out2.speed === 60 && out2.cooldown === 0.55, 'untouched stats pass through');
 }

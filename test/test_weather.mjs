@@ -55,7 +55,7 @@ assert.equal(rollWeather(seq([0.95])), 'MOONLIGHT');
 
 // SUNNY +10% XP, MOONLIGHT +10% mana regen, WIND/CLOUDY no stat mods.
 assert.equal(mods(initWeather('SUNNY', 2)).xpMult, 1.1);
-assert.equal(mods(initWeather('MOONLIGHT', 2)).manaRegenMult, 1.1);
+assert.equal(mods(initWeather('MOONLIGHT', 2)).manaRegenFlat, 0.5);
 assert.deepEqual(mods(initWeather('WIND', 2)).enemySpeedMult, undefined);
 assert.equal(Object.keys(mods(initWeather('CLOUDY', 2))).length, 0, 'CLOUDY is cosmetic only');
 

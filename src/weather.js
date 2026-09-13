@@ -18,7 +18,9 @@ import { CONFIG as C } from './config.js';
 //   enemySpeedMult — multiplies every enemy's move speed (SNOW 0.9)
 //   fireRangeMult  — multiplies each shooter's base fireRange (RAIN 0.85)
 //   projDrift      — wind vector pushes projectiles mid-flight (WIND)
-//   manaRegenMult  — multiplies base mana regen (MOONLIGHT 1.1)
+//   manaRegenFlat  — a flat mana/s grant (MOONLIGHT 0.5); it was a multiplier on
+//                    base regen, which stopped being meaningful once the base
+//                    regen became a small trickle (see CONFIG.MANA.REGEN).
 //   xpMult         — multiplies gem XP (SUNNY 1.1)
 // All subtle by design: weather should color a run, never decide it.
 export const WEATHER_TYPES = {
@@ -67,7 +69,11 @@ export const WEATHER_TYPES = {
     particles: { count: 9, wander: true, color: '#d8ffb0', shape: 'firefly' },
     tint: 'rgba(80,110,200,0.16)',
     wind: { x: 0, y: 0 },
-    mods: { manaRegenMult: 1.1 },    // the moon feeds mana
+    // A FLAT trickle, not a multiplier on base regen: base regen is now 0.5/s
+    // (CONFIG.MANA.REGEN), so the old x1.1 multiplied 0.5 -> 0.55 and the weather
+    // was effectively dead. A flat grant stays meaningful at every stage,
+    // including a fresh save that owns no Mana Spring.
+    mods: { manaRegenFlat: 0.5 },    // the moon feeds mana
   },
 };
 

@@ -94,10 +94,23 @@ export const CONFIG = {
   // keeps drafts arriving; divergence projected/verified x1.4+.
   XP_LEVEL_GROWTH: 1.28,
 
-  // Mana pool (SKILLS cost mana; regen keeps pressure without starvation).
+  // Mana pool (SKILLS cost mana). FINITE BY DESIGN (Sk408: "make mana a finite
+  // resource ... spells and skills use it up enough to actually exhaust it at
+  // base levels without shop upgrades").
+  //
+  // The base trickle sits deliberately far below what a casting player spends:
+  // keeping BOTH skills on cooldown costs 30/8 + 25/12 = 5.83 mana/s against
+  // 0.5/s here, so at base the pool really does run dry and mana is a budget you
+  // spend rather than a throttle you wait on. Measured before this change: a
+  // spam-casting run spent 615 mana and had 549 mana of income, i.e. it refilled
+  // itself (89% refunded) and never stayed empty.
+  //
+  // Mana Spring (meta.js: +0.5/s per level, maxLevel 4) is the relief valve —
+  // maxed it gives 2.0/s, so a fully-upgraded save sits at 2.5/s, exactly the
+  // old base rate. Veterans lose nothing; a fresh save feels the squeeze.
   MANA: {
     MAX: 100,
-    REGEN: 2.5,         // mana/s
+    REGEN: 0.5,         // mana/s — base trickle; Mana Spring is the way up
   },
 
   // Player-triggered skills. Keys: Q = FROST_NOVA, W = OVERCHARGE.

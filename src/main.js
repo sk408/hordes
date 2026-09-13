@@ -1281,11 +1281,14 @@ function update(dt) {
   }
   updateResources(p, dt);
   // Meta Mana Spring bonus (applyMetaBonuses adds stats.manaRegen) + the
-  // MOONLIGHT weather bonus (manaRegenMult on the base regen).
+  // MOONLIGHT weather bonus (see weather.js — now a FLAT trickle).
   const regenBonus = (p.stats.manaRegen ?? C.MANA.REGEN) - C.MANA.REGEN;
   if (regenBonus > 0) p.mana = Math.min(p.stats.maxMana, p.mana + regenBonus * dt);
-  if (wm.manaRegenMult && wm.manaRegenMult !== 1) {
-    p.mana = Math.min(p.stats.maxMana, p.mana + C.MANA.REGEN * (wm.manaRegenMult - 1) * dt);
+  if (wm.manaRegenFlat) {
+    // Was a x1.1 multiplier on BASE regen, which is now 0.5/s — a multiplier
+    // there is 0.05/s, i.e. dead. A flat grant stays meaningful at every stage,
+    // including a fresh save that owns no Mana Spring.
+    p.mana = Math.min(p.stats.maxMana, p.mana + wm.manaRegenFlat * dt);
   }
   // G8 step 4: Regrowth's HP regen lives in ONE helper (perks.js applyRegrowth)
   // called from BOTH resource seams — this one and updateFinale's — so there is
