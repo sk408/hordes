@@ -158,8 +158,12 @@ console.log('PROGRESSION LADDER:');
      `arcade pass pushes the crossing to run ${crossArcade} (+${crossArcade - crossRun} runs)`);
 
   // Early game cannot be skipped through: run-1 income buys no character.
-  ok(computeRunGold(GOLD_MODEL.RUN1) < CHARACTERS.WITCH.unlockCost,
-     'a first run cannot afford even the cheapest character');
+  // Derive the floor from the catalog - naming one class as "the cheapest" is
+  // what silently stopped testing anything when the Witch's price moved.
+  const cheapestUnlock = Math.min(...Object.values(CHARACTERS)
+    .map(c => c.unlockCost).filter(c => c > 0));   // KNIGHT is deliberately free
+  ok(computeRunGold(GOLD_MODEL.RUN1) < cheapestUnlock,
+     `a first run cannot afford even the cheapest character (${computeRunGold(GOLD_MODEL.RUN1)}g vs ${cheapestUnlock}g)`);
   // Slot 6 stays a long-run trophy: it costs more than 25 mid-game runs.
   const slot6 = upgradeCost(SHOP_BY_ID.slots, 2);
   const midRun = projectRunGold(20, {});
@@ -310,10 +314,12 @@ console.log('CHARACTERS:');
      'starting weapons match weapons.js ids (KNIGHT = base volley)');
 
   const p = makeProfile();
-  p.gold = 2000;
+  p.gold = 2000;   // deliberately short of PALADIN (6000)
   ok(unlockCharacter(p, 'PALADIN') === false, 'cannot unlock beyond current gold');
+  const witchPrice = CHARACTERS.WITCH.unlockCost;
+  p.gold = witchPrice + 250;   // funded from the catalog, not a magic number
   ok(unlockCharacter(p, 'WITCH') === true, 'unlock with enough gold succeeds');
-  ok(p.gold === 2000 - 1000 && p.unlockedCharacters.includes('WITCH'),
+  ok(p.gold === 250 && p.unlockedCharacters.includes('WITCH'),
      'unlock deducts cost and records ownership');
   ok(unlockCharacter(p, 'WITCH') === false, 'double unlock rejected');
   ok(unlockCharacter(p, 'KNIGHT') === false, 'already-free character cannot be re-unlocked');

@@ -658,7 +658,7 @@ export const CHARACTERS = {
     mods: { maxHp: 30 },
   },
   WITCH: {
-    id: 'WITCH', name: 'Witch', unlockCost: 1000,
+    id: 'WITCH', name: 'Witch', unlockCost: 9000,
     desc: 'Starts with Chain Zap. Deep mana pool (+50). Frail: -25 max HP.',
     startingWeapon: 'ZAP', skill: 'FROST_NOVA', startPotions: 1,
     healOnChest: 0,
