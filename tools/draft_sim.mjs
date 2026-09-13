@@ -81,8 +81,9 @@ import {
   WEAPONS, WEAPON_MAX_LEVEL, makeWeapon, levelUpWeapon, weaponLevelParams,
 } from '../src/weapons.js';
 import { ENEMY_TYPES, ELITE_TEMPLATE } from '../src/enemy_types.js';
+import { volleyProjectileCap } from '../src/config.js';   // the ONE cap definition
 import { computeRunGold, STARTER_WEAPONS, draftCardWeight,
-         draftRarityOf } from '../src/meta.js';
+         draftRarityOf, applyMetaBonuses } from '../src/meta.js';
 // G8 steps 3+4 (run-level measurement): the two new card families, read
 // through the SAME seams the game reads — the constants from rules.js/perks.js
 // and the applied-value helpers, so a measurement of the sim is a measurement
@@ -390,7 +391,7 @@ export const POLICIES = {
 // Default = a fresh run (nothing held), which is what measureDraftOffers uses.
 export function buildDraftPool(weapons, patch, held = {}) {
   const cards = [];
-  const slotCap = 3;   // startWeaponSlots(makeProfile()) — fresh profile
+  const slotCap = patch.slotCap ?? 3;   // fresh profile = 3; purchases.slots raises it
   const nonVolley = weapons.filter(w => w.type !== 'VOLLEY').length;
   if (slotCap - 1 - nonVolley > 0) {
     for (const id of STARTER_WEAPONS) {
@@ -527,6 +528,21 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   if (!policy) throw new Error(`draft_sim: unknown policy ${policyName}`);
   const rng = mulberry32(seed);
   const player = makePlayer();
+  // PURCHASED LOADOUT (owner 2026-09-13: "give the sim all the damage upgrades
+  // and some split shot upgrades and some mana reduction buyables and 1 weapon
+  // slot and unlock the cheapest weapon"). `purchases` is profile.purchased-
+  // shaped and goes through the REAL applyMetaBonuses, so the sim cannot price
+  // the shop differently from the game. Absent/empty = the fresh profile exactly
+  // as before, so every existing cohort measurement is unchanged.
+  const purchases = P.purchases || {};
+  if (Object.keys(purchases).length > 0) {
+    player.stats = applyMetaBonuses(player.stats, purchases);
+    // The projectile cap is DERIVED, never the bare constant: the Split Shot row
+    // raises it, and a sim reading the base while the game reads the raised cap
+    // is exactly the drift that made that card a fake choice.
+    P.maxProj = volleyProjectileCap(player.stats);
+    P.slotCap = 3 + (Number(purchases.slots) || 0);
+  }
   // G8 steps 3+4: the run's held cards, driven through the REAL helpers
   // (grantRule / grantSkill / statCardOffered all read this same state), so
   // the sim's pool and effects cannot drift from the game's. `startCards`
@@ -539,6 +555,13 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     if (!grantRule(heldState, id) && !grantSkill(heldState, id)) grantRewrite(heldState, id);
   }
   const weapons = [makeWeapon('VOLLEY')];
+  // A purchased weapon unlock starts the run in the kit (the shop row grants
+  // ownership, so the run opens with it rather than drafting it).
+  for (const id of Object.keys(purchases)) {
+    if (!id.startsWith('weapon_')) continue;
+    const wid = id.slice('weapon_'.length).toUpperCase();
+    if (WEAPONS[wid] && !weapons.some(w => w.type === wid)) weapons.push(makeWeapon(wid));
+  }
   const startMaxHp = player.stats.maxHp;    // the pool HP_PER_LEVEL is linear in
   const counts = {};
   const picks = {};

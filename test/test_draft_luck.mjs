@@ -34,7 +34,7 @@ import assert from 'node:assert/strict';
 import { CONFIG as C, UPGRADES } from '../src/config.js';
 import {
   draftCardWeight, luckDraftWeights, draftRarityOf, DRAFT_RARITY,
-  DRAFT_BASE_WEIGHTS, LUCK_MAX_LEVEL,
+  DRAFT_BASE_WEIGHTS, LUCK_MAX_LEVEL, SHOP_BY_ID,
 } from '../src/meta.js';
 import {
   buildDraftPool, measureDraftOffers, simulateCohort, LIVE,
@@ -194,17 +194,34 @@ ok('the pool never loses a card (all nine still offerable at luck 5)', () => {
 });
 
 console.log('draft luck: run-level effect, measured and honest');
-const cohort0 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0 });
-const cohort5 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: LUCK_MAX_LEVEL });
-const bad0 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: 0 });
-const bad5 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: LUCK_MAX_LEVEL });
+// THE PROFILE MATTERS, and a GREEN run is the wrong one to measure this on.
+// Owner: "We don't want a green run to be very powerful. They aren't supposed to
+// be strong." Measured on a fresh profile all three policies die at ~52s (52.4 /
+// 52.2 / 51.4), so NOTHING has room to express itself — luck included: the same
+// cohort read +0.2% and failed this bar for that reason alone, not because the
+// axis is flat. With the shop loadout the same cohorts spread 3.3x by DECISION
+// (1323s damage / 691s survival / 398s adversarial, 30 runs each) and luck pays:
+// +16.1% / +12.6% / +0.1% for those three policies. So the cohorts below run a
+// PURCHASED profile and the bars are unchanged.
+const META_LOADOUT = {
+  dmg: SHOP_BY_ID.dmg.maxLevel,       // all damage upgrades
+  split: 3,                           // some split shot
+  thrifty: 2,                         // some mana reduction
+  slots: 1,                           // +1 weapon slot
+  weapon_orbit: 1,                    // the cheapest archetype (ORBIT, 400g)
+};
+const cohort0 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT });
+const cohort5 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: LUCK_MAX_LEVEL, purchases: META_LOADOUT });
+const bad0 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: 0, purchases: META_LOADOUT });
+const bad5 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: LUCK_MAX_LEVEL, purchases: META_LOADOUT });
 const sum2 = o => o.COMMON + o.UNCOMMON + o.RARE;
 const mean = (rows, f) => rows.reduce((s, r) => s + f(r), 0) / rows.length;
 const surv0 = mean(cohort0, r => r.survivalTime), surv5 = mean(cohort5, r => r.survivalTime);
 const gold = r => r.incomeProfile + r.incomeChest;   // the live payout + chest gold
 const gold0 = mean(cohort0, gold), gold5 = mean(cohort5, gold);
 ok('cohorts are deterministic (same seed + luck -> identical rows)', () => {
-  assert.deepStrictEqual(simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0 }), cohort0);
+  assert.deepStrictEqual(
+    simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT }), cohort0);
 });
 ok('DRAFT PRIMACY SURVIVES LUCK: bad-at-max-luck still loses to good-at-zero-luck', () => {
   // The owner's load-bearing rule (G6): the DRAFT decides runs. Luck must raise
