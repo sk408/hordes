@@ -316,6 +316,24 @@ const dtMs = 1000 / 60;
     'START GAME starts the run after the art hold (hide overlay)');
 }
 
+// FIXTURE BUFF (owner-approved: "the test character might need a buff, just for
+// that test scenario"). The owner's enemy buff (config ENEMY.POWER: hp and damage
+// SQUARED, speed doubled) is deliberate and it now ends an unbuffed fresh run in
+// about 35s with a couple of kills — long before the content this suite exists to
+// observe (typed enemies past their wave gates, drafts, bosses, the intermission).
+// So the PROBE plays a deliberately durable character: it makes the run viable,
+// which is what lets every assertion below still be exercised. No assertion here
+// is relaxed by this — only the character is.
+// (i)/(g) HYGIENE: this suite runs a 90s simulation that picks up EPIC gear and
+// tokens repeatedly, so it must be banner-inert — otherwise each first-ever
+// banner holds the sim 2.5s and frame-counting probes (the idle check, the feed
+// fade) read the designed pause as a stall. The banners' own behaviour is
+// asserted with the switch ON elsewhere.
+mainMod.__TEST.banners.suppressAll();
+st.player.stats.maxHp *= 80;
+st.player.hp = st.player.stats.maxHp;
+st.player.stats.damage *= 60;
+
 // Simulate 90 seconds at 60fps, auto-picking draft cards (press "1").
 const frames = 90 * 60;
 let drafts = 0;

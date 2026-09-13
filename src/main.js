@@ -1485,6 +1485,9 @@ function update(dt) {
   // G20a: a stage's dmgMult rides the SAME threat curve every enemy-damage
   // path below already multiplies (projectiles, novas, contact) — one seam,
   // guarded so the default stage (1.0) is byte-identical.
+  // OWNER enemy buff: damage SQUARED. The square is on C.ENEMY.BASE_CONTACT (see
+  // config.js POWER), so this multiplier stays linear and heat's own damage
+  // contract is unchanged.
   const dmgMult = ladderDmg(Math.floor(state.time / 30)) *
     heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1);
   // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
@@ -2122,6 +2125,14 @@ const TOKEN_BANNER_SEC = 2.5;   // == render.js drawBossBanner's DUR
 // it evolves a weapon ONCE IT IS AT MAX LEVEL, so the first one teaches the
 // mechanic instead of being an inventory number. Every later token is a
 // standout status line only — no pause, no repeated lecture.
+// Test seam: one-time banners OFF for this process. A long end-to-end probe
+// (smoke) runs a 90s simulation that acquires EPIC/LEGENDARY gear and tokens by
+// the dozen, and each first-ever banner holds the sim for TOKEN_BANNER_SEC --
+// which a frame-counting probe (an idle check, a fade fade) reads as a stall
+// rather than as the designed pause. The banners' own behaviour is asserted with
+// this switch on. Never touched by the browser page.
+let oneTimeBanners = true;
+
 function grantEvolutionToken(channel) {
   state.evoTokens++;
   if (state.runCounts && state.runCounts.tokens) state.runCounts.tokens[channel] =
@@ -2132,7 +2143,7 @@ function grantEvolutionToken(channel) {
   // teaches the mechanic once per PLAYER. It used to be run-scoped, which meant
   // the explainer -- and a 2.5s hold on the sim -- fired on the first token of
   // EVERY run; with ~1.5 tokens a run that is a lecture the player gets forever.
-  if (markBannerSeen(profile, 'TOKEN')) {
+  if (oneTimeBanners && markBannerSeen(profile, 'TOKEN')) {
     state.bossBanner = {
       names: ['EVOLUTION TOKEN'],
       verb: 'ACQUIRED',
@@ -2161,6 +2172,7 @@ function grantEvolutionToken(channel) {
 // first and would pause the game forever. The name is stable per item.
 const TOP_TIER = ['EPIC', 'LEGENDARY'];   // one-line tunable (LEGENDARY only?)
 function maybeTopTierBanner(it) {
+  if (!oneTimeBanners) return false;
   if (!it || !TOP_TIER.includes(it.rarity)) return false;
   if (!markBannerSeen(profile, 'top:' + it.name)) return false;
   state.bossBanner = {
@@ -5795,6 +5807,9 @@ export const __TEST = {
   banners: {
     seen: (id) => bannerSeen(profile, id),
     markSeen: (id) => markBannerSeen(profile, id),
+    // Turn every one-time banner off for this process (see `oneTimeBanners`).
+    suppressAll: () => { oneTimeBanners = false; },
+    enabled: () => oneTimeBanners,
   },
   setPilotMode: swapPilotMode, pilotInput,
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).

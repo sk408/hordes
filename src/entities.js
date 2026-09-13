@@ -105,6 +105,8 @@ export function applyEscalation(state, e, t) {
   const w = Math.floor(time / 30);
   const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
   const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
+  // OWNER enemy buff: the square is on C.ENEMY.BASE_HP (see config.js POWER), not
+  // here, so the ladder/heat multipliers keep their own linear contracts.
   const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
   e.hp = hp;
   e.maxHp = hp;

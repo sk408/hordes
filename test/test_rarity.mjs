@@ -269,6 +269,12 @@ await acheck('bosses and the COLOSSUS are NEVER tier-rolled (forced roll proves 
     // and it costs this loop ~150 of its frames -- so the budget carries it
     // explicitly rather than the window silently closing early. Assertions
     // unchanged.
+    // PIN THE SPAWN instead of surviving to it. The wave's named boss cast fires
+    // when the clock passes state.wave.endsAt, and the owner's enemy buff
+    // (hp/damage squared) now ends an unbuffed run long before then — while the
+    // retry path resets the wave clock, so waiting for the cast is a SURVIVAL
+    // test, not a stamp test. This is the idiom smoke.mjs already uses.
+    st.wave.endsAt = st.time;
     for (let i = 0; i < 60 * 160 && !boss; i++) {
       sample();
       step();

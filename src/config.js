@@ -44,7 +44,7 @@ export const CONFIG = {
   // Early-game effect is measured, not assumed: the fresh cohort must stay in
   // the 3-6 minute band (it was dying at 1:52).
   SURVIVAL: {
-    BASE_CONTACT: 14,     // the touch base (was the literal 14 in main.js)
+    BASE_CONTACT: 196,    // 14 squared (owner enemy buff; see POWER)
     CONTACT_POW: 0.65,    // contact damage ~ ladderDmg^0.65: the threat climbs
                           // all run (x1.87 -> x4.02 of base contact by 30:00)
                           // without outrunning the pool (see the measured lever
@@ -70,11 +70,29 @@ export const CONFIG = {
 
   ENEMY: {
     W: 10, H: 10,
-    BASE_SPEED: 28,      // WAVE-20 tuning: 29/31/34 all proved pre-boss meat
+    // OWNER (2026-09-13): "I want to buff the enemies. Square their hp, damage,
+    // and double their speed."
+    //
+    // SQUARED AT THE BASE, not on the composite value. Squaring the composite
+    // (what the player finally meets) ALSO squares every multiplier inside it,
+    // which silently rewrites OTHER systems' documented contracts: heat x2.2
+    // would become x4.84 foe hp, and the wave ladder would compound with itself
+    // (measured: the heat contract check failed with "x2.2 ... hot 696.96" =
+    // 144 * 2.2^2). Anchoring the square on the BASE constants gives every foe
+    // the square -- 12 -> 144 hp, 14 -> 196 contact -- while heat, ladder, stage
+    // and type multipliers all stay linear, exactly as their own tests pin.
+    POWER: {
+      HP_SQUARED: true,
+      DAMAGE_SQUARED: true,
+    },
+    // Doubled from 28 by the same owner change. ONE constant: both enemy
+    // constructors (makeEnemy, makeTypedEnemy) and every boss SPEED_MULT are
+    // relative to it, so this is the whole "double their speed".
+    BASE_SPEED: 56,
                          // grinders in the sim (half the cohort died to plain
                          // chasers at ~40-60s, before any boss event spawned —
                          // the boss ladder, not the ambience, must be the wall)
-    BASE_HP: 12,
+    BASE_HP: 144,          // 12 squared (owner enemy buff; see POWER)
     BASE_XP: 5,
     SPAWN_INTERVAL: 1.35, // seconds between spawn waves at t=0 (scales down;
                           // WAVE-20 tuning: 1.05 had half the cohort dead to
