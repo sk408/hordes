@@ -317,49 +317,49 @@ const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 // for every row in SHOP_UPGRADES.
 export const SHOP_UPGRADES = [
   // ---- original combat/resource lines (prices unchanged from retune) ----
-  // OWNER (2026-09-13): "+200% per level, stacking MULTIPLICATIVELY". Damage is
-  // the one row that compounds: each level multiplies the running total by
-  // (1 + perLevel) = 3x, so L1 3x, L2 9x, L3 27x, L4 81x, L5 243x base damage
-  // (it was additive: 2.5x/8.5x at +150%). Every other row stays additive per
-  // level -- see the META STAT FIELD CONTRACT below, which documents this row's
-  // rule because compounding is NOT the house convention and must not be
-  // assumed for a neighbour. Kept on the BASE damage so a fresh player still
-  // starts at 1x and every level is worth a fixed FACTOR, not a fixed step.
+  // OWNER (2026-09-13): "+200% per level, stacking MULTIPLICATIVELY", then "double
+  // the rest of the shop buffs and make them multiplicative increases also for
+  // now". Damage compounds by (1 + perLevel) = 3x per level: L1 3x .. L5 243x.
+  // FOUR more multiplier rows compound with it (xpMult, critMult, goldMult,
+  // potionPower) -- see the META STAT FIELD CONTRACT below, which is the
+  // authoritative list. The flat rows stay additive and must: they are absolute
+  // amounts (hp/regen/well/siphon/artifact) or values set FROM ZERO
+  // (crit chance, dropBonus) where compounding is a silent no-op.
   { id: 'dmg',     name: 'Forged Edge',    desc: '+200% weapon damage per level',
     baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 2.0 },
-  { id: 'hp',      name: 'Vitality',       desc: '+20 max HP per level',
-    baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 20 },
-  { id: 'potions', name: 'Travel Pack',    desc: '+1 starting potion (each kind) per level',
-    baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 1 },
-  { id: 'regen',   name: 'Mana Spring',    desc: '+0.5 mana regen per second per level',
-    baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 0.5 },
+  { id: 'hp',      name: 'Vitality',       desc: '+40 max HP per level',
+    baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 40 },
+  { id: 'potions', name: 'Travel Pack',    desc: '+2 starting potions (each kind) per level',
+    baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 2 },
+  { id: 'regen',   name: 'Mana Spring',    desc: '+1 mana regen per second per level',
+    baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 1 },
   // ---- N1b item 6: the three MANA buyables (the relief valve; mana itself
   // stays punishing at base — see goals N1b item 1). Priced against the
   // mana neighbours above (regen totals ~1851g) and against the class ladder
   // (Knight 0 -> Rogue 2500 -> Paladin 6000 -> Witch 9000): a NON-Witch
   // buying all three spends less than the Witch costs, which is the point —
   // she is the whole kit in one purchase, these are kit-at-a-time.
-  { id: 'thrifty', name: 'Thrifty Casting', desc: '-10% mana cost per level',
-    baseCost: 350, costGrowth: 1.7, maxLevel: 4, perLevel: 0.10 },
-  { id: 'well',    name: 'Deep Well',       desc: '+25 max mana per level',
-    baseCost: 250, costGrowth: 1.6, maxLevel: 4, perLevel: 25 },
-  { id: 'siphon',  name: 'Siphon',          desc: '+0.05 mana per kill per level',
-    baseCost: 500, costGrowth: 1.7, maxLevel: 4, perLevel: 0.05 },
-  { id: 'xp',      name: 'Scholar',        desc: '+10% XP gain per level',
-    baseCost: 180, costGrowth: 1.6, maxLevel: 5, perLevel: 0.10 },
+  { id: 'thrifty', name: 'Thrifty Casting', desc: '-20% mana cost per level (floors at -40%)',
+    baseCost: 350, costGrowth: 1.7, maxLevel: 4, perLevel: 0.20 },
+  { id: 'well',    name: 'Deep Well',       desc: '+50 max mana per level',
+    baseCost: 250, costGrowth: 1.6, maxLevel: 4, perLevel: 50 },
+  { id: 'siphon',  name: 'Siphon',          desc: '+0.10 mana per kill per level',
+    baseCost: 500, costGrowth: 1.7, maxLevel: 4, perLevel: 0.10 },
+  { id: 'xp',      name: 'Scholar',        desc: '+20% XP gain per level',
+    baseCost: 180, costGrowth: 1.6, maxLevel: 5, perLevel: 0.20 },
   // ---- EXPANSION lines (economy pass) ----
-  { id: 'crit',    name: 'Deadly Aim',     desc: '+3% crit chance per level',
-    baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.03 },
-  { id: 'critdmg', name: 'Deadeye',        desc: '+25% crit damage per level',
-    baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.25 },
-  { id: 'greed',   name: 'Greed',          desc: '+10% gold from runs per level',
-    baseCost: 350, costGrowth: 1.7, maxLevel: 5, perLevel: 0.10 },
-  { id: 'alchemy', name: 'Alchemy',        desc: '+25% potion healing/restore per level',
-    baseCost: 280, costGrowth: 1.6, maxLevel: 4, perLevel: 0.25 },
-  { id: 'scav',    name: 'Scavenger',      desc: '+1.5% potion drop chance per level',
-    baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.015 },
-  { id: 'artifact',name: 'Starting Artifact', desc: 'Start each run with +1 random weapon level',
-    baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 1 },
+  { id: 'crit',    name: 'Deadly Aim',     desc: '+6% crit chance per level',
+    baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.06 },
+  { id: 'critdmg', name: 'Deadeye',        desc: '+50% crit damage per level',
+    baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.50 },
+  { id: 'greed',   name: 'Greed',          desc: '+20% gold from runs per level',
+    baseCost: 350, costGrowth: 1.7, maxLevel: 5, perLevel: 0.20 },
+  { id: 'alchemy', name: 'Alchemy',        desc: '+50% potion healing/restore per level',
+    baseCost: 280, costGrowth: 1.6, maxLevel: 4, perLevel: 0.50 },
+  { id: 'scav',    name: 'Scavenger',      desc: '+3% potion drop chance per level',
+    baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.03 },
+  { id: 'artifact', name: 'Starting Artifact', desc: 'Start each run with +2 random weapon levels per level',
+    baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 2 },
   // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
   { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
     baseCost: 500, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
@@ -628,37 +628,45 @@ export function draftCardWeight(cardId, kind, luck) {
 // Apply permanent bonuses to a stats object. PURE: returns a NEW object,
 // never mutates the input. Beyond the makePlayer().stats shape it emits the
 // META STAT FIELD CONTRACT (all safe to read unowned — defaults in parens):
-//   damage        (C.PLAYER base) Forged Edge: MULTIPLICATIVE, and the only row
-//                                 that is — base x (1 + 2.0)^level, i.e. 3x per
-//                                 level (L5 = 243x). Additive everywhere else.
-//   manaRegen     (C.MANA.REGEN)  Mana Spring: base regen + 0.5/level.
-//   xpMult        (1)             Scholar: XP gain x(1 + 0.10/level) — apply
-//                                 on gem pickup.
-//   crit          (0)             Deadly Aim: crit CHANCE, +0.03/level (max
-//                                 0.15). Roll per weapon hit.
-//   critMult      (1)             Deadeye: crit damage multiplier,
-//                                 1 + 0.25/level — crits deal dmg*critMult.
-//   goldMult      (1)             Greed: run payout multiplier, 1 + 0.10/
-//                                 level — pass as runStats.goldMult to
-//                                 computeRunGold (or multiply its result).
-//   potionPower   (1)             Alchemy: multiply HP_HEAL/MP_RESTORE by
-//                                 1 + 0.25/level in usePotion.
+//   THE COMPOUNDING SET: damage, xpMult, critMult, goldMult, potionPower are ALL
+//   (1 + perLevel)^level. Every other row is additive per level, and the flat
+//   rows must stay that way (see damage/hp notes). Five rows compound, not one.
+//   damage        (C.PLAYER base) Forged Edge: COMPOUNDS — base x (1 + 2.0)^level
+//                                 = 3x per level (L5 = 243x).
+//   manaRegen     (C.MANA.REGEN)  Mana Spring: base regen + 1/level.
+//   xpMult        (1)             Scholar: COMPOUNDS x(1.20)^level (L5 = 2.49x) —
+//                                 apply on gem pickup.
+//   crit          (0)             Deadly Aim: crit CHANCE, +0.06/level (0.30 at
+//                                 L5). Roll per weapon hit. NOT compoundable: it
+//                                 is set FROM ZERO, and 0 x anything is 0.
+//   critMult      (1)             Deadeye: crit damage multiplier, COMPOUNDS
+//                                 (1.50)^level (L5 = 7.59x) — dmg*critMult.
+//   goldMult      (1)             Greed: run payout multiplier, COMPOUNDS
+//                                 (1.20)^level (L5 = 2.49x) — pass as
+//                                 runStats.goldMult to computeRunGold.
+//   potionPower   (1)             Alchemy: COMPOUNDS (1.50)^level in usePotion
+//                                 (L4 = 5.06x).
 //   dropBonus     (0)             Scavenger: ADD to POTIONS.DROP_CHANCE,
-//                                 +0.015/level (max +0.06).
+//                                 +0.03/level (max +0.12). NOT compoundable —
+//                                 an added chance, not a factor.
 //   artifactLevels(0)             Starting Artifact: grant this many random
 //                                 weapon levels (weapons.js levelUpWeapon)
 //                                 at run start, respecting WEAPON_MAX_LEVEL.
 //   luck         (0)              Fortune: luck LEVEL count 0..5 — feed to
 //                                 luckDropWeights(luck) for loot rarity rolls
 //                                 (hb4's loot task consumes this).
-//   manaCostMult (1)              Thrifty Casting: multiplicative mana-cost
-//                                 modifier, 1 - 0.10/level (max 0.6). The ONE
+//   manaCostMult (1)              Thrifty Casting: mana-cost modifier,
+//                                 1 - 0.20/level, CLAMPED at the documented
+//                                 floor of 0.6 (the un-clamped doubled rate
+//                                 reaches 0.2, an -80% cut the row never
+//                                 promised). NOTE: at this rate the clamp binds
+//                                 from L2 of 4, so L3/L4 buy nothing. The ONE
 //                                 number both cost seams read — weaponManaCost
 //                                 (weapons.js) and skillManaCost (perks.js) —
 //                                 and it COMPOSES with applyCharacter's own
 //                                 mult (the Witch's 0.5), so a Witch with
 //                                 Thrifty L3 pays base x 0.5 x 0.7.
-//   maxMana      (makePlayer)     Deep Well: ADDs +25/level to the base pool.
+//   maxMana      (makePlayer)     Deep Well: ADDs +50/level to the base pool.
 //                                 applyCharacter adds the character's own
 //                                 maxMana mod AFTER this, so the Witch's +50
 //                                 still stacks as it always did.
@@ -674,15 +682,23 @@ export function applyMetaBonuses(stats, purchased) {
     damage: stats.damage * Math.pow(1 + SHOP_BY_ID.dmg.perLevel, lvl('dmg')),
     maxHp: stats.maxHp + SHOP_BY_ID.hp.perLevel * lvl('hp'),
     manaRegen: C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * lvl('regen'),
-    xpMult: 1 + SHOP_BY_ID.xp.perLevel * lvl('xp'),
+    // MULTIPLIER rows COMPOUND (owner rule, 2026-09-13): (1 + perLevel)^level.
+    // These four are (1+x) factors, so compounding is well-defined. The FLAT
+    // rows below stay additive and must: `crit` and `dropBonus` are values SET
+    // from zero (0 x anything = 0, so compounding would silently disable the
+    // row), and hp/regen/well/siphon/artifact are absolute amounts, not factors.
+    xpMult: Math.pow(1 + SHOP_BY_ID.xp.perLevel, lvl('xp')),
     crit: SHOP_BY_ID.crit.perLevel * lvl('crit'),
-    critMult: 1 + SHOP_BY_ID.critdmg.perLevel * lvl('critdmg'),
-    goldMult: 1 + SHOP_BY_ID.greed.perLevel * lvl('greed'),
-    potionPower: 1 + SHOP_BY_ID.alchemy.perLevel * lvl('alchemy'),
+    critMult: Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg')),
+    goldMult: Math.pow(1 + SHOP_BY_ID.greed.perLevel, lvl('greed')),
+    potionPower: Math.pow(1 + SHOP_BY_ID.alchemy.perLevel, lvl('alchemy')),
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
-    manaCostMult: 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty'),
+    // The contract promises a floor of 0.6. At the doubled rate the un-clamped
+    // form reaches 1 - 0.20*4 = 0.2, i.e. an -80% cost cut that the row never
+    // agreed to, so the documented clamp is enforced here.
+    manaCostMult: Math.max(0.6, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty')),
     maxMana: stats.maxMana + SHOP_BY_ID.well.perLevel * lvl('well'),
     manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon'),
   };
