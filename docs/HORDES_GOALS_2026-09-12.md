@@ -261,7 +261,8 @@ way to solve G8's "not enough options" problem: achieve -> unlock -> new options
 **Reached when:** achievements unlock real content, the gallery lists earned/locked trophies, and
 selecting a trophy shows its full-screen pixel art.
 
-### G10 — ENEMY GUIDE + RARITY TIERS  [status: not started]
+### G10 — ENEMY GUIDE + RARITY TIERS  [status: IN PROGRESS 2026-09-12 — briefed and DISPATCHED to
+`cli:glm-hordes-g8` as `msg_01M2BZYHYYTFAVTH1H74PQ4W81`; NOTHING built or verified yet. See TICK NOTE 12]
 Owner: *"we could have an enemy guide of enemies you've encountered. have rare and extremely rare
 enemies."*
 - An in-game bestiary that records enemies the player has actually ENCOUNTERED (discovery-driven, which
@@ -1551,3 +1552,57 @@ potion/stat writes land through ordinary mutation inside `applyContents` after t
 the `runCounts.chests` correlation at 6/6 failures plus exact content-shaped deltas is the evidence);
 no browser check was run (test-only change, nothing renders differently); the ~17% before-rate was
 measured on this tick's tree, not re-measured on the pre-fix tree after the fact.
+
+## TICK NOTE 12 — 2026-09-12 (goal pilot tick, subagent:spawnfa, agentlock held for recon+writes, DISPATCH ONLY)
+
+**Goal worked: G10 / G23 (enemy guide + rarity tiers, build-plan wave W6) — the first item in the ranked
+queue now that G8 is DONE. Dispatched, not built in this tick.** Nothing else was started.
+
+**Independently re-verified this tick (my own runs, not a report):**
+- `bash /tmp/run_all.sh` => **PASS=60 FAIL=0** — run once at the top of the tick and TWICE more at the end
+  (three green runs, `FAILED:` empty every time).
+- The tree's known ~17% flake stays closed: `for i in $(seq 1 40); do node test/test_rewrites.mjs
+  >/dev/null 2>&1 || echo "FAIL $i"; done` => **0 failures, 40/40**. The last wave's test-side
+  hermeticity fix (corpse factory with `maxHp: 1`, the `closeWindow` pins) is in HEAD (`bfed9ba` carries
+  `test/test_rewrites.mjs`; `git status --short` is CLEAN, so the fix is committed, not floating).
+- Worker health: `cli:glm-hordes-g8` (pid 495012) was idle and alive before dispatch — `running.json`
+  absent, `queued.json` `{"queued": []}`, `pending_interrupts.json` empty, no stale pending work to
+  cancel. It picked the new task up: `running.json` now names `msg_01M2BZYHYYTFAVTH1H74PQ4W81`.
+
+**Written and dispatched:**
+- Brief: **`docs/briefs/G10_BESTIARY_RARITY.md`** (276 lines, self-contained, read as the single source of
+  truth). It carries: the verbatim acceptance bar; PART A encounters persistence (new `src/encounters.js`
+  with a catalog DERIVED from `ENEMY_TYPES` + `BOSSES` + `MIDBOSS`, namespaced ids, the never-un-discover
+  repair rule, unknown-id preservation; `src/save.js` PROFILE_VERSION 4->5 + `MIGRATIONS[4]` +
+  `validateProfile` collection block; spawn-time recording at the trunk `state.enemies.push(e)` site in
+  `spawnWave` and at `boss.bossId = desc.id` in `spawnBoss`, never in the update loop, never for split
+  children); PART B the bestiary screen (mirrored on the shipped trophy gallery — `drawBestiary` with the
+  same `this.bestiary` geometry seam, mode `'bestiary'`, title card, ring, the SAME overlay-reset hooks,
+  `chromeOn()` false by construction, the key-handler branch, the `__TEST` seam, the tour-hints sync rule,
+  and the "tantalising silhouette + ??? / real numbers restated from the source modules" rule); PART C
+  rare + very-rare tiers (new `src/rarity.js`, rates as constants MEASURED at N=100k, stamped at the real
+  spawn site, visible on the sprite, never on bosses/colossus/split children, and the EXISTING elite tier
+  documented from the real `config.js` constants rather than rebuilt); PART D the sims must model the tier
+  layer (honest-zero where it cannot be priced) with the invariants re-measured; the test files to write;
+  the 3x-suite + 40-run + phone-viewport verification bar; and the honest "no vision model on this host"
+  caveat.
+- Dispatched to the idle governed worker **`cli:glm-hordes-g8`** (pid 495012) via `hub-worker issue` on
+  channel **`hub`** (the pilot's token still has `403 no write grant on channel 'hordes'`), `--async`, so
+  this tick did not wait on it. **`delegate_task` is still not available in this cron runtime.**
+
+**COULD NOT VERIFY (honest):**
+- **Nothing was built.** There is no `src/encounters.js`, no `src/rarity.js`, no bestiary screen and no
+  new test on disk — the brief is the only artifact. The builder's `done:` report will be a CLAIM; the
+  next tick must re-run the suite itself (3x), read the new test files, re-measure the tier rate, and
+  read the phone PNG before accepting G10.
+- The tier rates, the tier hp/xp multipliers and the before/after balance numbers do not exist yet; the
+  brief deliberately does NOT prescribe them, because the goals doc says they must be measured.
+- **A prior dispatch wedged and was killed:** the last task's log ends `WEDGE: killed after 900s of zero
+  progress (cpu, log and workdir files all flat) [exit -9]` — that was the dt-probe brief, and its work
+  DID land afterwards via a pilot tick (see the dt-probe note above). Flagged because a silent wedge costs
+  a full cycle: if this G10 dispatch produces no `running.json` progress and no file changes within the
+  next tick, the headless builder is the suspect, not the brief.
+- Lock hygiene: acquired for recon+writes, **released before ending this tick** (the brief tells the
+  builder to acquire it, and to release it even on failure). NOTE for future ticks: `agentlock release`
+  resolves the lock from CWD — it must be run from `/home/claude/projects/hordes`.
+

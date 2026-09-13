@@ -97,6 +97,10 @@ import {
   REWRITE_IDS, REWRITE_CARD_WEIGHT, grantRewrite, rewriteBoom, harvestBlast,
 } from '../src/rewrites.js';
 import { CHESTS } from '../src/chests.js';
+// G10 (rarity tiers): the tier table through the same seam the game rolls —
+// spawnWave's one rollRarity() per tier-eligible spawn, folded into the mix's
+// EXPECTED hp/xp exactly like the elite ladder fraction below it.
+import { RARITY, rollRarity } from '../src/rarity.js';
 
 const UPGRADES_BY_ID = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
 // DRAFT_TAPER mirrors main.js:1449 (speed/rate cards diminish per repeat).
@@ -142,6 +146,11 @@ export const LIVE = {
   // exactly like src/main.js openDraft (ruleCards + skillCards). Set to false
   // ONLY as the "before" cell of a before/after measurement.
   families: true,
+  // G10 (rarity tiers): fold src/rarity.js's RARE/MYTHIC mults into the spawn
+  // mix's expected hp/xp and the kill funnel's potion-drop rate, exactly where
+  // the live spawnWave stamps them. Set to false ONLY as the "before" cell of a
+  // before/after measurement.
+  rarity: true,
 };
 
 const DT = SIM_TUNING.DT;
@@ -169,10 +178,15 @@ function mulberry32(seed) {
 
 // ---------- enemy mix in expectation (live SPAWNER weights & type mults) -----
 // Cached per minion-wave w = floor(t/30). Elites fold the LIVE ladder elite
-// chance at play time t into hp/xp.
+// chance at play time t into hp/xp. G10: rarity tiers fold the SAME way — the
+// live spawnWave rolls rollRarity() once per tier-eligible spawn and multiplies
+// hp/xp by the tier mult, so in expectation each type's mult scales by
+// (1 + rareFrac*(RARE-1) + mythFrac*(MYTHIC-1)). COLOSSUS is never tier-rolled
+// in the live seam and bosses roll nothing here, so the fold applies only to
+// the minion mix — which is exactly what this function prices.
 const MIX_CACHE = new Map();
-function spawnMix(w, t) {
-  const key = w + ':' + Math.round(ladderEliteChance(t) * 100);
+function spawnMix(w, t, rarityOn) {
+  const key = w + ':' + Math.round(ladderEliteChance(t) * 100) + ':' + (rarityOn ? 1 : 0);
   if (MIX_CACHE.has(key)) return MIX_CACHE.get(key);
   const S = C.SPAWNER;
   const entries = [['CHASER', S.CHASER_WEIGHT]];
@@ -185,13 +199,24 @@ function spawnMix(w, t) {
   if (w >= S.COLOSSUS_WAVE) entries.push(['COLOSSUS', S.COLOSSUS_WEIGHT]);
   const tot = entries.reduce((s, e) => s + e[1], 0);
   const eliteFrac = ladderEliteChance(t);
+  // G10 expected-value fold off the REAL tier table (src/rarity.js rates:
+  // RARE 0.02 / MYTHIC 0.003, measured at N=100k in test_rarity.mjs). This is
+  // the expected multiplier for ONE tier-eligible spawn; the COLOSSUS exclusion
+  // is applied per-type inside the loop, not here.
+  const rarHp = rarityOn ? 1 + RARITY.RARE.chance * (RARITY.RARE.hpMult - 1) +
+    RARITY.MYTHIC.chance * (RARITY.MYTHIC.hpMult - 1) : 1;
+  const rarXp = rarityOn ? 1 + RARITY.RARE.chance * (RARITY.RARE.xpMult - 1) +
+    RARITY.MYTHIC.chance * (RARITY.MYTHIC.xpMult - 1) : 1;
   let pack = 0, hp = 0, xp = 0, contact = 0, speed = 0;
   for (const [id, weight] of entries) {
     const T = ENEMY_TYPES[id];
     const share = weight / tot;
+    const tiered = rarityOn && id !== 'COLOSSUS' ? 1 : 0;
     pack += share * (id === 'TICK' ? C.SPAWNER.TICK_PACK : (T.packSize || 1));
-    hp += share * T.hpMult * (1 + eliteFrac * (ELITE_TEMPLATE.hpMult - 1));
-    xp += share * T.xpMult * (1 + eliteFrac * (ELITE_TEMPLATE.xpMult - 1));
+    hp += share * T.hpMult * (1 + eliteFrac * (ELITE_TEMPLATE.hpMult - 1)) *
+      (1 + tiered * (rarHp - 1));
+    xp += share * T.xpMult * (1 + eliteFrac * (ELITE_TEMPLATE.xpMult - 1)) *
+      (1 + tiered * (rarXp - 1));
     contact += share * T.contactDamageMult;
     speed += share * T.speedMult;
   }
@@ -556,7 +581,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
 
   while (t < LIMIT && !dead) {
     const w = Math.floor(t / 30);
-    const mix = spawnMix(w, t);
+    const mix = spawnMix(w, t, P.rarity);
 
     // Spawning (expected value, live formulas + the LIVE ladder density).
     const interval = Math.max(0.25, C.ENEMY.SPAWN_INTERVAL - t * 0.008);
@@ -721,7 +746,13 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
         break;
       }
     }
-    healBank += killN * C.POTIONS.DROP_CHANCE;
+    // G10: tiered enemies carry e.dropBonus, which the live death pass adds to
+    // the potion drop chance — folded here as the expected per-kill bonus over
+    // the tier-eligible fraction of the mix (COLOSSUS excluded, same as the
+    // hp/xp fold in spawnMix).
+    healBank += killN * C.POTIONS.DROP_CHANCE *
+      (P.rarity ? 1 + (RARITY.RARE.chance * RARITY.RARE.dropBonus +
+        RARITY.MYTHIC.chance * RARITY.MYTHIC.dropBonus) : 1);
 
     for (const mark of [120, 300, 600]) if (t >= mark && !checkpoints[mark]) snap(mark);
     t += DT;
@@ -739,6 +770,11 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     incomeProfile: computeRunGold({
       kills: Math.round(kills), level, time: reachedLimit ? LIMIT : Math.round(t), goldMult: 1,
     }),
+    // G10 HONEST ZERO: a tiered enemy's dropBonus also raises the ITEM drop
+    // chance in the live death pass, but this sim prices in-run income as
+    // computeRunGold + per-wave chests and never models item drops — so the
+    // item-side bonus is priced at 0 here rather than invented (the potion
+    // side IS priced, above). focus/once precedent: state it, don't fake it.
     incomeChest: chests * SIM_TUNING.CHEST_GOLD,
     kills: Math.round(kills),
     checkpoints,
@@ -875,6 +911,30 @@ async function main() {
   console.log(`HORDES DRAFT STAKES SIM v2 — ${runs} runs/archetype, seed ${seed}`);
   console.log(`fresh profile (starter VOLLEY+BOOMERANG, 3 slots); ladder ${WAVES} x ${WAVE_SECONDS}s ` +
     `= ${runClock(LIMIT)}; draft is the only lever`);
+  // G10: the tier rate the rarity fold is built from, MEASURED through the real
+  // rollRarity (not asserted off the constants) so the printed fold and the
+  // model's assumptions are the same number the game rolls.
+  {
+    let rngSeed = seed >>> 0;
+    const rng = () => {
+      rngSeed |= 0; rngSeed = (rngSeed + 0x6D2B79F5) | 0;
+      let t2 = Math.imul(rngSeed ^ (rngSeed >>> 15), 1 | rngSeed);
+      t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2;
+      return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
+    };
+    const N = 100000;
+    let rare = 0, mythic = 0;
+    for (let i = 0; i < N; i++) {
+      const tier = rollRarity(rng);
+      if (tier === 'RARE') rare++;
+      else if (tier === 'MYTHIC') mythic++;
+    }
+    const f = 1 + RARITY.RARE.chance * (RARITY.RARE.hpMult - 1) +
+      RARITY.MYTHIC.chance * (RARITY.MYTHIC.hpMult - 1);
+    console.log(`rarity fold ON: measured rollRarity N=${N} -> RARE ` +
+      `${(100 * rare / N).toFixed(3)}% MYTHIC ${(100 * mythic / N).toFixed(3)}% ` +
+      `(tiered ${(100 * (rare + mythic) / N).toFixed(2)}%); expected minion hp x${f.toFixed(4)}`);
+  }
   console.log('');
 
   const cohorts = {

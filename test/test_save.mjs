@@ -70,9 +70,9 @@ const CAT = {
 console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
-  // must be updated with it (v4 = G9 achievements).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 4,
-    `schema version constant is 4 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // must be updated with it (v5 = G10 encounters).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 5,
+    `schema version constant is 5 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -319,12 +319,12 @@ console.log('VALIDATION OF EVERY PERSISTED COLLECTION:');
 
   // ---- unknown collections pass through untouched (lossless for new modules) ----
   // NOTE: `achievements` used to be the sample "unknown collection" here. As of
-  // schema v4 it is a VALIDATED namespace, so the sample moved to collections
-  // that are still unknown (trophies/encounters/deep) and the achievements
-  // namespace gets its own data-preservation check below.
-  const extra = v({ trophies: ['t'], encounters: { grunt: 3 }, deep: { x: [1, 2] } });
-  ok(extra.trophies[0] === 't' && extra.encounters.grunt === 3 && extra.deep.x.length === 2,
-    'unknown collections are preserved verbatim (trophies/encounters-ready)');
+  // schema v4 it is a VALIDATED namespace; as of v5 so is `encounters`. The
+  // sample moved to collections that are still unknown (trophies/sightings/
+  // deep) and both namespaces get their own data-preservation checks below.
+  const extra = v({ trophies: ['t'], sightings: { grunt: 3 }, deep: { x: [1, 2] } });
+  ok(extra.trophies[0] === 't' && extra.sightings.grunt === 3 && extra.deep.x.length === 2,
+    'unknown collections are preserved verbatim (trophies/sightings/deep)');
 
   // ---- the achievements namespace carries its DATA through validation ----
   const ach = v({ achievements: { v: 1, earned: { FIRST_BLOOD: 1700000000000 }, progress: { KILLS_100: 7 }, totals: { kills: 42 } } }).achievements;
@@ -340,6 +340,19 @@ console.log('VALIDATION OF EVERY PERSISTED COLLECTION:');
   const junkAch = v({ achievements: { earned: { FIRST_BLOOD: true }, progress: { KILLS_100: -5 }, totals: { kills: 'many' } } }).achievements;
   ok(junkAch.earned.FIRST_BLOOD === 1 && junkAch.progress.KILLS_100 === 0 && junkAch.totals.kills === 0,
     'a hand-edited namespace repairs to safe values without losing the trophy');
+
+  // ---- the encounters namespace (G10, schema v5) carries its DATA through validation ----
+  const enc = v({ encounters: { v: 1, entries: {
+    'enemy:CHASER': { firstWave: 1, firstAt: 30, kills: 41, bestWave: 4, bestTier: 'RARE' },
+    'enemy:FUTURE': { firstWave: 2, firstAt: 60, kills: 2, bestWave: 2, custom: 'keep' },
+  } } }).encounters;
+  ok(enc.entries['enemy:CHASER'].kills === 41 && enc.entries['enemy:CHASER'].bestTier === 'RARE',
+    'the encounters namespace round-trips its sighting data');
+  ok(JSON.stringify(enc.entries['enemy:FUTURE']) === JSON.stringify({ firstWave: 2, firstAt: 60, kills: 2, bestWave: 2, custom: 'keep' }),
+    'an unknown encounter id from a newer build is preserved VERBATIM, entry and sibling fields');
+  const junkEnc = v({ encounters: { v: 1, entries: { 'enemy:CHASER': { kills: -5, bestTier: 'NOPE' } } } }).encounters;
+  ok(junkEnc.entries['enemy:CHASER'].kills === 1 && junkEnc.entries['enemy:CHASER'].bestTier === undefined,
+    'a damaged entry repairs to discovered; an unknown tier drops the field, not the entry');
 
   // The catalog-injected validator behaves the same in isolation.
   const iso = SAVE.validateProfile({ gold: 10, purchased: { dmg: 99, junk: 'x' }, unlockedWeapons: ['NOPE'] }, CAT);
@@ -368,14 +381,17 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
     totals: { kills: 250, runs: 4, bestWave: 6 },
   };
   rich.trophies = ['boss_slayer'];
-  rich.encounters = { grunt: 41, elite_brute: 2 };
+  rich.encounters = {
+    v: 1,
+    entries: { 'enemy:CHASER': { firstWave: 1, firstAt: 30, kills: 41, bestWave: 4, bestTier: 'RARE' } },
+  };
 
   const at = '2026-01-02T03:04:05.000Z';
   const text = exportProfileText(rich, { at });
   const env = buildExport(rich, { at });
   ok(env.format === EXPORT_FORMAT && env.schemaVersion === SCHEMA_VERSION && env.exportedAt === at,
     'the export envelope declares its format, schema version and timestamp');
-  ok(env.profile.runsPlayed === 9 && env.profile.encounters.grunt === 41,
+  ok(env.profile.runsPlayed === 9 && env.profile.encounters.entries['enemy:CHASER'].kills === 41,
     'the envelope carries the WHOLE profile, unknown collections included');
 
   const res = importProfileText(text);
@@ -429,7 +445,7 @@ console.log('BROWSER IO (guarded helpers, fake DOM):');
 {
   const rich = makeProfile();
   rich.gold = 4242;
-  rich.encounters = { grunt: 7 };
+  rich.encounters = { v: 1, entries: { 'boss:HERALD': { firstWave: 3, firstAt: 95, kills: 7, bestWave: 3 } } };
 
   // Fake DOM: records the anchor, captures the Blob text.
   function fakeEnv() {

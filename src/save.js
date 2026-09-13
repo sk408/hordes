@@ -40,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 4;
+export const PROFILE_VERSION = 5;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -88,6 +88,15 @@ export const VERSION_HISTORY = [
       'progress: { [id]: n }, totals: {...} }. Earned trophies are NEVER dropped by ' +
       'validation (a damaged stamp repairs to 1, never to "unearned"). Populated empty — ' +
       'an existing player starts with no trophies and no progress recycled.',
+  },
+  {
+    version: 5,
+    note: 'G10 encounters namespace: profile.encounters = { v, entries: { [id]: ' +
+      '{ firstWave, firstAt, kills, bestWave, bestTier } } } with namespaced ids ' +
+      '(enemy:CHASER / boss:GRAVELMAW / tier:RARE). A discovered entry is NEVER ' +
+      'dropped by validation (a damaged entry repairs to kills >= 1, never to ' +
+      'undiscovered); unknown ids from a newer build are preserved verbatim. ' +
+      'Populated empty — no bestiary is invented for an existing player.',
   },
 ];
 
@@ -181,6 +190,16 @@ const MIGRATIONS = {
   3: (p) => {
     const next = { ...p };
     if (!plainObject(next.achievements)) next.achievements = {};
+    return next;
+  },
+  // v4 -> v5: G10 encounters namespace. Guarantee the container is a plain
+  // object and NOTHING ELSE — no encounter is invented, and no existing field
+  // is touched, so this step is lossless for every v4 save. Present-but-garbage
+  // data is left for validateProfile to repair + report (one repair path, not
+  // two).
+  4: (p) => {
+    const next = { ...p };
+    if (!plainObject(next.encounters)) next.encounters = {};
     return next;
   },
 };
@@ -387,6 +406,73 @@ export function validateProfile(profile, cat) {
     ? Math.floor(Number(achIn.v)) : 1;
   out.achievements = { v: achV, earned, progress: achProgress, totals };
   if (!plainObject(p.achievements) && p.achievements !== undefined) repairs.push('achievements');
+
+  // ---- encounters (G10: bestiary sightings) ----
+  // THE SEMANTIC-SAFETY RULE FOR THIS NAMESPACE: a discovered entry is NEVER
+  // dropped by validation. A present-but-damaged entry repairs to discovered
+  // (kills clamped to >= 1), never to undiscovered — losing the bestiary to a
+  // hand-edited save is the same unforgivable failure as losing a trophy.
+  //
+  // UNKNOWN ids are PRESERVED verbatim (the newer-build round-trip rule), and
+  // unknown sibling fields INSIDE a surviving entry ride along untouched. A
+  // known entry with damaged counters is flagged per-field; an unknown id is
+  // never flagged (it is a newer build's data, not damage).
+  //
+  // This layer validates STRUCTURE only. bestTier resolves through the
+  // injected tier table (cat.tierRank): an unknown tier drops the FIELD, not
+  // the entry. Semantic rules (the tier ORDERING, what regresses) live in
+  // src/encounters.js, which owns the catalog.
+  const encIn = plainObject(p.encounters) ? p.encounters : {};
+  const encEntries = {};
+  const entriesIn = encIn.entries;
+  if (plainObject(entriesIn)) {
+    for (const [id, e] of Object.entries(entriesIn)) {
+      if (UNSAFE_KEYS.has(id)) { repairs.push('encounters.entries.' + id); continue; }
+      const known = cat.validEncounters ? cat.validEncounters.has(id) : true;
+      // An id this build does not know is a NEWER build's data: preserved
+      // VERBATIM (the whole entry, untouched), never structurally rewritten.
+      if (!known) { encEntries[id] = e; continue; }
+      const flag = (field) => { if (known) repairs.push('encounters.entries.' + id + '.' + field); };
+      // A present key IS a discovery: whatever garbage the value is, the entry
+      // survives with kills >= 1.
+      const src = plainObject(e) ? e : {};
+      if (!plainObject(e)) flag('(entry)');
+      const outEntry = {};
+      for (const [k, v] of Object.entries(src)) {
+        if (UNSAFE_KEYS.has(k)) { flag(k); continue; }
+        if (k === 'firstWave' || k === 'firstAt' || k === 'bestWave') {
+          const n = Number(v);
+          if (!Number.isFinite(n) || Math.floor(n) < 0) { outEntry[k] = 0; flag(k); continue; }
+          outEntry[k] = Math.floor(n);
+          if (outEntry[k] !== v) flag(k);
+        } else if (k === 'kills') {
+          const n = Number(v);
+          const iv = Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 1;
+          outEntry.kills = iv;
+          if (iv !== v) flag('kills');
+        } else if (k === 'bestTier') {
+          // Resolve through the tier table; unknown drops the field only.
+          if (typeof v === 'string' && cat.tierRank && cat.tierRank[v] !== undefined) {
+            outEntry.bestTier = v;
+          } else {
+            flag('bestTier');
+          }
+        } else {
+          outEntry[k] = v;   // unknown sibling field: preserved verbatim
+        }
+      }
+      if (!outEntry.kills) { outEntry.kills = 1; flag('kills'); }
+      if (outEntry.firstWave === undefined) { outEntry.firstWave = 0; flag('firstWave'); }
+      if (outEntry.firstAt === undefined) { outEntry.firstAt = 0; flag('firstAt'); }
+      encEntries[id] = outEntry;
+    }
+  } else if (entriesIn !== undefined) {
+    repairs.push('encounters.entries');
+  }
+  const encV = Number.isFinite(Number(encIn.v)) && Math.floor(Number(encIn.v)) > 0
+    ? Math.floor(Number(encIn.v)) : 1;
+  out.encounters = { v: encV, entries: encEntries };
+  if (!plainObject(p.encounters) && p.encounters !== undefined) repairs.push('encounters');
 
   // ---- unlocked characters + equipped selection ----
   // Real ids only, deduped, KNIGHT (free) always present, and the equipped

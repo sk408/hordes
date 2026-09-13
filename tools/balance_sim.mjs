@@ -56,6 +56,10 @@ import {
   ELITE_MODIFIERS, GOLD_MODEL, applyMetaBonuses, applyCharacter,
 } from '../src/meta.js';
 import { makePlayer, contactHitDamage } from '../src/entities.js';
+// G10 (rarity tiers): the live tier table, through the same seam the game
+// rolls — folded into the wave demand (tiered hp lengthens kills) and the
+// kills -> level map (tiered xp). See the fold constants below.
+import { RARITY, rollRarity } from '../src/rarity.js';
 
 const L = C.LADDER, RUN = C.RUN;
 
@@ -111,6 +115,16 @@ const K0 = GOLD_MODEL.GOOD_RUN.kills / RAMP_SUM;   // kills in the wave-1 slot o
 const TW0 = RUN.LIMIT / WAVES;                     // == WAVE_SECONDS; named for the old anchor
 const envelopeHp = w => ladderHp(w) / ladderHp(1); // ladder demand normalised to wave 1
 const envelopeDmg = w => ladderDmg(w) / ladderDmg(1);
+// G10 rarity folds (src/rarity.js): in expectation the live spawnWave rolls one
+// tier per tier-eligible minion, so the wave's hp demand rises by the tier
+// table's mean hp mult and each kill pays the mean xp mult. Bosses, split
+// children and the COLOSSUS are never tier-rolled, but at wave granularity the
+// minion mix dominates the demand envelope — the fold is applied to the whole
+// envelope (a <2% effect, within the CAL gates' fitted tolerance).
+const RARITY_HP_FOLD = 1 + RARITY.RARE.chance * (RARITY.RARE.hpMult - 1) +
+  RARITY.MYTHIC.chance * (RARITY.MYTHIC.hpMult - 1);
+const RARITY_XP_FOLD = 1 + RARITY.RARE.chance * (RARITY.RARE.xpMult - 1) +
+  RARITY.MYTHIC.chance * (RARITY.MYTHIC.xpMult - 1);
 
 export const SIM_ASSUMPTIONS = {
   // run structure (LIVE values — the test suite pins these to config.js)
@@ -155,9 +169,13 @@ const logistic = (x) => 1 / (1 + Math.exp(-CAL.GATE_K * x));
 // reads as "how many x ahead of wave 1 is the build / is the ladder". A fresh
 // build at wave 1 is (power 1.0, pool 1.0) against (demand 1.0, threat 1.0).
 const WAVE1_TICK = Math.max(1, Math.round(WAVE_SECONDS / 30));
+// G10: demand carries the rarity hp fold — tiered minions take longer to kill,
+// so the power needed to clear the wave rises by the tier table's mean mult.
+// (SIM_ASSUMPTIONS.demand stays the RAW ladder envelope: that export is the
+// config-authority contract test_meta pins, not the tiered game model.)
 const demandIdx = (b) => {
   const w = Math.min(Math.ceil(RUN.LIMIT / 30), Math.round((b * WAVE_SECONDS) / 30));
-  return envelopeHp(w) / envelopeHp(WAVE1_TICK);
+  return (envelopeHp(w) / envelopeHp(WAVE1_TICK)) * RARITY_HP_FOLD;
 };
 // THE WAVE'S DAMAGE BUDGET, in HP, from the LIVE contact-damage function
 // (entities.contactHitDamage — the same function main.js applies). The wave
@@ -304,7 +322,9 @@ export function simulateRun(profile, rng, pre = null) {
   const pf = dead ? SIM_TUNING.PARTIAL_TIME_FRAC : 1;
   const time = dead ? Math.round(WAVE_SECONDS * (b - 1) + WAVE_SECONDS * pf) : RUN.LIMIT;
   const kills = Math.round(killsForRun(dead ? b : WAVES, pf) * (0.9 + 0.2 * rng()));
-  const level = levelForKills(kills);
+  // G10: tiered xp — the same bodies pay the tier table's mean xp mult, so the
+  // run DRAFTS as if it had killed RARITY_XP_FOLD times as many commons.
+  const level = levelForKills(Math.round(kills * RARITY_XP_FOLD));
   const greedMult = 1 + SHOP_BY_ID.greed.perLevel * (profile.purchased.greed || 0);
   const payout = computeRunGold({ kills, level, time, goldMult: greedMult });
   const bosses = dead ? b - 1 : WAVES;
@@ -331,6 +351,11 @@ function contactCulprit(w) {
 }
 
 function chestGoldFor(bosses, rng) {
+  // G10 HONEST ZERO: tiered minions' dropBonus also raises the ITEM drop chance
+  // in the live death pass, but this model prices in-run income as
+  // computeRunGold + boss chests only — item drops are not modelled, so the
+  // item-side bonus is priced at 0 rather than invented (the survival-side of
+  // extra potions is absorbed by the CAL gate fit; focus/once precedent).
   let gold = 0;
   for (let b = 1; b <= bosses; b++) {
     const n = C.ESCALATION.BOSS.CHESTS * (b % C.ESCALATION.BOSS.DOUBLE_EVERY === 0 ? 2 : 1);
@@ -566,6 +591,27 @@ async function main() {
     `knee at tick ${L.KNEE_TICK} (${runClock(L.KNEE_TICK * 30)})`);
   console.log(`reference: GOOD_RUN ${SIM_ASSUMPTIONS.goodRunGold}g, mid-tier catalog ` +
     `${SIM_ASSUMPTIONS.midTierCost}g`);
+  // G10: the tier rate the demand/xp folds are built from, MEASURED through the
+  // real rollRarity — the same discipline as the draft sim's fold line.
+  {
+    let s2 = seed >>> 0;
+    const rng2 = () => {
+      s2 |= 0; s2 = (s2 + 0x6D2B79F5) | 0;
+      let t2 = Math.imul(s2 ^ (s2 >>> 15), 1 | s2);
+      t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2;
+      return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
+    };
+    const N = 100000;
+    let rare = 0, mythic = 0;
+    for (let i = 0; i < N; i++) {
+      const tier = rollRarity(rng2);
+      if (tier === 'RARE') rare++;
+      else if (tier === 'MYTHIC') mythic++;
+    }
+    console.log(`rarity fold: measured rollRarity N=${N} -> RARE ${(100 * rare / N).toFixed(3)}% ` +
+      `MYTHIC ${(100 * mythic / N).toFixed(3)}%; demand x${RARITY_HP_FOLD.toFixed(4)}, ` +
+      `kill-xp x${RARITY_XP_FOLD.toFixed(4)}`);
+  }
 
   // ---- stage cohorts (fresh / partial / maxed) ----
   const stages = {

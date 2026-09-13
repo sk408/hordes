@@ -42,6 +42,8 @@ import {
 } from './weather.js';
 import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
+import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
+import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
 import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags } from './tour.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
@@ -261,6 +263,14 @@ const state = {
   // paints nothing.
   trophyIdx: 0,
   trophyView: null,
+  // ---- G10 BESTIARY (presentation only; never persisted) ----
+  // Same contract as the trophy ring: bestiaryIdx is the ring position
+  // (wrapped by refreshBestiaryView) and bestiaryView is what render.js
+  // drawBestiary paints from: { id, kind, ref, discovered } where the SHAPE /
+  // sprite is resolved off the real source modules at draw time (the renderer
+  // masks an undiscovered entry to its own silhouette in ONE flat colour).
+  bestiaryIdx: 0,
+  bestiaryView: null,
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -511,6 +521,23 @@ function spawnWave(dt) {
       if (elite) {
         const mod = rollEliteModifier(Math.random, profile.unlockedElites);
         if (mod) Object.assign(e, applyEliteModifier(e, mod));
+      }
+      // G10 rarity tiers (rarity.js): rolled at the SAME trunk spawn site as
+      // the elite flag, never for the COLOSSUS (it IS the mini-boss tier) —
+      // the same exclusion the elite roll uses. Composes with elite: each
+      // system stamps its own fields, nothing conflicts.
+      const tierId = typeId === 'COLOSSUS' ? 'COMMON' : rollRarity();
+      if (tierId !== 'COMMON') applyRarity(e, tierId);
+      // G10 encounters (encounters.js): spawn-time discovery. "Enemies you've
+      // ENCOUNTERED" means it appeared and came at you — recording at the kill
+      // funnel would hide a boss the player fled from. This ONE site covers
+      // every base type incl. elite variants and tier upgrades; the tier
+      // entry itself is discovered alongside the first tiered sighting.
+      const effTier = effectiveTierId(tierId, elite);
+      recordEncounter(profile, 'enemy:' + typeId,
+        { wave, at: state.time, tier: effTier });
+      if (effTier !== 'COMMON') {
+        recordEncounter(profile, 'tier:' + effTier, { wave, at: state.time, tier: effTier });
       }
       state.enemies.push(e);
     }
@@ -839,6 +866,10 @@ function spawnBoss() {
     boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
     boss.bossId = desc.id;          // decideBossAction dispatch key
+    // G10 encounters: a boss the player has SEEN is encountered — recorded at
+    // spawn (never the kill funnel), so a fled-from boss still fills the guide.
+    recordEncounter(profile, 'boss:' + desc.id,
+      { wave: Math.floor(state.time / 30), at: state.time });
     boss.name = desc.name;          // announce + HUD
     boss.flavor = desc.flavor;
     boss.bossSprite = desc.sprite;  // render.js draws this grid (BOSS_SPRITES)
@@ -896,6 +927,10 @@ function spawnMidBoss() {
   boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * M.XP_KILLS;
   boss.boss = true;               // routes through decideBossAction
   boss.bossId = desc.id;
+  // G10 encounters: the MIDBOSS path stamps bossId too — both boss sources
+  // (pickBossForWave AND the herald) record through the same spawn seam.
+  recordEncounter(profile, 'boss:' + desc.id,
+    { wave: Math.floor(state.time / 30), at: state.time });
   boss.midBoss = true;            // payout + census distinguisher
   boss.name = desc.name;
   boss.flavor = desc.flavor;
@@ -1541,7 +1576,8 @@ function update(dt) {
       // (clampLootToArena) — a kill outside the wall used to drop an
       // uncollectible potion out there. rng order is untouched (the clamp is
       // pure and runs before the kind roll).
-      const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0)) *
+      const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0) +
+        (e.dropBonus || 0)) *   // G10: rarity tiers pay a drop bonus
         ((p.choices && p.choices.dropChanceMult) || 1);
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
@@ -1589,7 +1625,8 @@ function update(dt) {
         // Fortune's Favor blessing: itemDropMult scales the drop chance;
         // WAVE-11 elite modifiers carry a GUARANTEED item drop on kill, and
         // every world roll rides the luck-shifted rarity table (meta.js).
-        const chance = (e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) *
+        const chance = ((e.elite ? C.ITEMS.ELITE_CHANCE : C.ITEMS.DROP_CHANCE) +
+          (e.dropBonus || 0)) *   // G10: rarity tiers pay a drop bonus
           ((p.choices && p.choices.itemDropMult) || 1);
         if (e.eliteMod || Math.random() < chance) {
           const at = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
@@ -2669,6 +2706,11 @@ function maybeStartMenuTour() {
       // deliberately left to discovery - this is the taught option).
       { id: 'TROPHIES', text: 'TROPHIES \u2014 every emblem you have earned, full screen.',
         target: () => cardByTitle('TROPHIES') },
+      // G10: the bestiary is taught too (same rule 9): it is the discovery
+      // log for rare tiers, and a player who never opens it never learns the
+      // ??? silhouettes are a chase.
+      { id: 'BESTIARY', text: 'BESTIARY \u2014 every enemy you have encountered, rare tiers included.',
+        target: () => cardByTitle('BESTIARY') },
       { id: 'SETTINGS', text: 'SETTINGS — audio, HUD, zoom and the profile reset.',
         target: () => cardByTitle('SETTINGS') },
       { id: 'HOW TO PLAY', text: 'HOW TO PLAY — the full reference, any time.',
@@ -2959,6 +3001,8 @@ function showTitle() {
   // away, so the title card names what the press gets you.
   menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
     () => showTrophies());
+  menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
+    () => showBestiary());
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
@@ -3537,6 +3581,93 @@ function closeTrophies() {
   overlay.style.display = 'none';
 }
 
+// ---------- G10 BESTIARY (mode 'bestiary') -----------------------------------
+// The enemy guide, as a screen — MIRRORS THE TROPHY GALLERY EXACTLY (the
+// screen that shipped and is tested; no second screen idiom): ONE entry at a
+// time, drawn full-screen by renderer.drawBestiary (called from frame() after
+// the HUD, so it paints on top of the frozen world), with the caption in the
+// overlay chrome pushed to the bottom so the silhouette owns the middle.
+//
+// WHERE EVERY STRING COMES FROM: encounters.js bestiaryModel — the name, the
+// stat line and the behaviour lines are read off the REAL source modules
+// (ENEMY_TYPES / bosses.js / rarity.js / config constants) AT MODEL-BUILD
+// TIME. This file restates nothing; it could not, and still show a caption
+// that matches the sprite, if it kept its own copy. An UNDISCOVERED entry
+// reads ??? with NO stats and NO behaviour lines — the silhouette is the
+// tease, not a spoiler.
+function bestiaryDisplayIds() {
+  return bestiaryModel(profile).map(e => e.id);
+}
+
+// Repaint the caption + the showcase payload for the CURRENT ring position.
+// state.bestiaryIdx is normalised here (not at the call sites), so PREV/NEXT
+// can step past either end and the ring wraps without a dead end.
+function refreshBestiaryView() {
+  const model = bestiaryModel(profile);
+  const n = model.length;
+  if (n === 0) {
+    state.bestiaryView = null;
+    ovTitle.textContent = 'BESTIARY';
+    ovTitle.className = '';
+    ovSub.textContent = 'nothing to discover';
+    return;
+  }
+  state.bestiaryIdx = ((state.bestiaryIdx % n) + n) % n;
+  const e = model[state.bestiaryIdx];
+  // The renderer's input: kind/ref let it resolve the real silhouette;
+  // `discovered` is the mask. The model's info lines are ONLY printed for a
+  // discovered entry — an undiscovered one shows ??? and nothing else.
+  state.bestiaryView = { id: e.id, kind: e.kind, ref: e.ref, discovered: e.discovered };
+
+  ovTitle.textContent = e.discovered ? e.name : '???';
+  ovTitle.className = '';
+  const lines = [`${state.bestiaryIdx + 1} / ${n}`];
+  if (e.discovered) {
+    lines.push(...e.info);
+    lines.push(`encountered ${e.kills} - first wave ${e.firstWave} - deepest wave ${e.bestWave}`);
+    if (e.tier) lines.push('best tier: ' + e.tier);
+  } else {
+    lines.push('not yet encountered');
+  }
+  ovSub.innerHTML = lines.filter(Boolean).join('<br>');
+}
+
+// Open the guide. Reached from the title card (showTitle), so the return mode
+// is stashed the way the gallery stashes its own; BACK (and ESC) restore the
+// screen the player came from.
+function showBestiary() {
+  state.bestiaryReturn = state.mode;
+  openMenu('bestiary');
+  // The SAME two hooks the gallery uses (set AFTER openMenu because openMenu
+  // is what resets them for every other screen — no second reset path): no
+  // sheet background, chrome pushed to the bottom edge, canvas owns the view.
+  overlay.style.background = 'transparent';
+  overlay.style.justifyContent = 'flex-end';
+  refreshBestiaryView();
+  menuCard('PREV', 'previous entry', () => bestiaryStep(-1));
+  menuCard('NEXT', 'next entry', () => bestiaryStep(1));
+  menuCard('BACK', 'to title [ESC]', () => { closeBestiary(); showTitle(); });
+}
+
+// Step the ring by `delta` and repaint. Guarded like trophiesStep: a stale
+// handler must not repaint another screen's caption.
+function bestiaryStep(delta) {
+  if (state.mode !== 'bestiary') return;
+  state.bestiaryIdx += (Number(delta) || 0);
+  refreshBestiaryView();
+}
+
+// Leave the guide. Clears the showcase payload so the NEXT frame paints no
+// bestiary over whatever screen follows (the overlay's inline overrides are
+// reset by the following openMenu — showTitle calls it; the ESC key path
+// calls this then showTitle too).
+function closeBestiary() {
+  if (state.mode !== 'bestiary') return;
+  state.bestiaryView = null;
+  state.mode = state.bestiaryReturn || 'menu';
+  overlay.style.display = 'none';
+}
+
 // ---------- Input: shared action seam (keyboard AND touch use these) ----------
 // One code path per action — the touch buttons in index.html and the keydown
 // handler both funnel through runAction, so no game logic is duplicated.
@@ -3725,6 +3856,13 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'escape') { closeTrophies(); showTitle(); }
     else if (k === 'arrowleft') trophiesStep(-1);
     else if (k === 'arrowright') trophiesStep(1);
+  } else if (state.mode === 'bestiary') {
+    // G10 BESTIARY: the gallery's exact key contract — ESC backs out to the
+    // title (what the BACK card promises) and the arrows walk the ring the
+    // PREV/NEXT cards step. Reached from the title, so no paused run exists.
+    if (k === 'escape') { closeBestiary(); showTitle(); }
+    else if (k === 'arrowleft') bestiaryStep(-1);
+    else if (k === 'arrowright') bestiaryStep(1);
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
   } else if (state.mode === 'settings') {
@@ -4572,6 +4710,10 @@ function frame(now) {
   // its readouts. A no-op everywhere else — drawTrophyShowcase returns
   // immediately while state.trophyView is null.
   renderer.drawTrophyShowcase(renderer.ctx, state);
+  // G10 BESTIARY: same paint slot as the trophy showcase (after the HUD, on
+  // top of the frozen world). A no-op everywhere else — drawBestiary returns
+  // immediately while state.bestiaryView is null.
+  renderer.drawBestiary(renderer.ctx, state);
   updateTouchHud();
   requestAnimationFrame(frame);
 }
@@ -4593,6 +4735,10 @@ export const __TEST = {
   // entry). chromeOn is exposed so the pad-layer gate for the new mode is
   // asserted directly, not inferred from a style string.
   openTrophies: showTrophies, closeTrophies, trophiesStep, chromeOn,
+  // G10 bestiary seam: open/close (the mode + return-mode contract) and step
+  // (the ring, so a test can wrap every display id without a DOM click per
+  // entry) — same shape as the gallery seam above.
+  openBestiary: showBestiary, closeBestiary, bestiaryStep, bestiaryDisplayIds,
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },

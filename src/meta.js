@@ -16,6 +16,8 @@
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
 import { CONFIG as C } from './config.js';
 import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
+import { ENCOUNTER_IDS } from './encounters.js';   // G10: derived bestiary catalog
+import { TIER_RANK } from './rarity.js';           // G10: tier ordering for bestTier
 // W1 SAVE FOUNDATION (src/save.js): versioning, migration, validation and
 // export/import live there, catalog-injected so that module stays free of any
 // dependency on this one. meta.js is the composition root that supplies the
@@ -74,6 +76,9 @@ export function resetCharacterProgress(profile, characterId) {
 // helpers: weaponUnlocked / unlockWeapon, or buyUpgrade on the shop row.
 export const STARTER_WEAPONS = ['VOLLEY', 'BOOMERANG'];
 
+// G10: the derived encounter ids as a Set, for save.js's id sanitisation.
+const VALID_ENCOUNTER_IDS = new Set(ENCOUNTER_IDS);
+
 // ---------- Profile (W1: schema + validation live in src/save.js) ----------
 // The catalog injects the LIVE tables into the schema layer so validation can
 // never drift from the shop/character data it checks against. Declared as a
@@ -89,6 +94,11 @@ function catalog() {
     starterWeapons: STARTER_WEAPONS,
     baseWeapon: 'VOLLEY',            // the base volley every run fires, always owned
     defaultCharacter: 'KNIGHT',
+    // G10 encounters: the DERIVED bestiary catalog + the tier ordering, so
+    // save.js validation can sanitize ids / resolve bestTier without importing
+    // the game modules (catalog-injected by design, same as every table above).
+    validEncounters: VALID_ENCOUNTER_IDS,
+    tierRank: TIER_RANK,
   };
 }
 

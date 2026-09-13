@@ -2,6 +2,8 @@
 // no image assets, no drawImage — pure structured data.
 import { CONFIG as C, runClock } from './config.js';
 import { resolveLook, ELITE_LOOK } from './enemy_types.js';
+import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
+import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
 import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
@@ -100,6 +102,26 @@ function drawShape(g, shape, x, y, w, h) {
   } else {
     g.fillRect(x - hw, y - hh, w, h);   // block
   }
+}
+
+// G10 rarity tell (rarity.js): the SAME 1px outline-ring vocabulary the elite
+// gold uses, in the tier's own colour — NO new sprites. `o` is the ring's
+// offset from the box (o=1 reproduces the elite ring's exact geometry). A
+// MYTHIC pulses at its tell's Hz using the telegraph blink idiom, so it is
+// distinguishable from a rare at a glance even inside a horde.
+function rarityRing(g, e, state, x, y, w, h) {
+  const t = RARITY[e.rarity];
+  if (!t || !t.tell) return;
+  const o = e.elite ? 2 : 1;   // outside the gold ring when the badges compose
+  let col = t.tell.outline;
+  if (t.tell.pulseHz && Math.floor((state.time || 0) * t.tell.pulseHz * 2) % 2 === 0) {
+    col = '#efd9ff';           // pale-violet blink on the pulse phase
+  }
+  g.fillStyle = col;
+  g.fillRect(x - o, y - o, w + 2 * o, 1);
+  g.fillRect(x - o, y + h + o, w + 2 * o, 1);
+  g.fillRect(x - o, y - o, 1, h + 2 * o);
+  g.fillRect(x + w + o, y - o, 1, h + 2 * o);
 }
 
 export class Renderer {
@@ -411,6 +433,7 @@ export class Renderer {
           g.fillRect(sx - 1, sy - 1, 1, bh + 2);
           g.fillRect(sx + bw + 1, sy - 1, 1, bh + 2);
         }
+        if (e.rarity) rarityRing(g, e, state, sx, sy, bw, bh);
         if (e.hp < e.maxHp) {
           g.fillStyle = '#000000';
           g.fillRect(sx, sy - 3, bw, 1);
@@ -447,6 +470,7 @@ export class Renderer {
           g.fillRect(x - hw - 1, y - hh - 1, 1, h + 2);
           g.fillRect(x + hw + 1, y - hh - 1, 1, h + 2);
         }
+        if (e.rarity) rarityRing(g, e, state, x - hw, y - hh, w, h);
         if (e.hp < e.maxHp) {
           g.fillStyle = '#000000';
           g.fillRect(x - hw, y - hh - 3, w, 1);
@@ -826,7 +850,11 @@ export class Renderer {
   // half of the same gate. Folded into ONE method so it is directly assertable
   // (test_trophy_gallery) — paint order is unchanged: moment, chrome, banner.
   drawPlayHud(g, state) {
-    if (state.mode === 'trophies') { this.hudChrome = null; this.bossBanner = null; return; }
+    // G10: the bestiary is the same non-play showcase state — the readouts
+    // must not bleed through the guide either (the G9 follow-up, extended).
+    if (state.mode === 'trophies' || state.mode === 'bestiary') {
+      this.hudChrome = null; this.bossBanner = null; return;
+    }
     this.drawMoment(g, state);
     this.drawHudChrome(g, state);
     this.drawBossBanner(g, state);
@@ -1317,6 +1345,108 @@ export class Renderer {
     this.drawGrid(g, art.grid, art.palette, x, y, scale);
 
     this.trophyShowcase = { scale, x, y, w, h, id: tv.id, locked: !!tv.locked };
+  }
+
+  // ---- G10 BESTIARY (main.js mode 'bestiary') --------------------------------
+  // Mirrors drawTrophyShowcase EXACTLY (it is the screen that shipped and is
+  // tested; no second screen idiom): full-view dark backdrop painted FIRST,
+  // the case in the HUD's own chrome vocabulary (CONFIG.HUD.FRAME / PLATE),
+  // the entry at the LARGEST INTEGER scale that fits, centered, one block per
+  // painted pixel, no smoothing.
+  //
+  // WHAT IT READS: state.bestiaryView = { id, kind, ref, discovered } | null
+  // (main.js refreshBestiaryView). The art is resolved off the REAL source
+  // modules at draw time — bosses carry their own sprite grids (bosses.js),
+  // enemies the LOOK contract's shape at sizeMult (resolveLook), tiers a
+  // diamond in the tier's own tell colour — so the renderer never keeps a
+  // second copy of the enemy table and main.js restates nothing.
+  //
+  // UNDISCOVERED = TANTALISING, NEVER BLANK: the SAME code-drawn shape the
+  // enemy uses in play, painted in ONE flat dark colour (MASK) — the player
+  // sees that something is there and how big it is, nothing more. A masked
+  // boss paints its real sprite grid through an all-MASK palette, so the
+  // silhouette is the sprite's own.
+  //
+  // SEAM: this.bestiary = { scale, x, y, w, h, id, discovered } — the exact
+  // box painted this frame (null when nothing is selected), measurable off a
+  // recording 2d context exactly like the gallery's.
+  drawBestiary(g, state) {
+    const bv = state && state.bestiaryView;
+    if (!bv || !bv.id) { this.bestiary = null; return; }
+
+    // Full-screen backdrop first: the world and HUD are still painted under
+    // this (the frame loop runs in every mode), so the bestiary owns the view.
+    g.fillStyle = 'rgba(3,3,8,0.94)';
+    g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
+
+    const MASK = '#262636';   // the one flat dark silhouette colour
+    let grid = null, palette = null, gw = 0, gh = 0;
+    let shape = 'block', color = MASK, sw = C.ENEMY.W, sh = C.ENEMY.H;
+    if (bv.kind === 'boss') {
+      const desc = BOSSES[bv.ref] || MIDBOSS[bv.ref];
+      // The static BOSSES table does not carry `sprite` (only the spawn copies
+      // bosses.js:spawn() builds get it attached) — resolve through
+      // BOSS_SPRITES so the guide paints the real sprite, never a stand-in.
+      // A boss sprite is ANIMATED ({ frames, palette, box }); the guide shows
+      // frame 0 (the in-game idiom: spr.frames[floor(age*6) % len], age 0).
+      const spr = desc && (desc.sprite || BOSS_SPRITES[bv.ref]);
+      if (spr) {
+        grid = spr.frames ? spr.frames[0] : spr.grid;
+        // Masked: every palette entry -> MASK, so the silhouette IS the sprite.
+        palette = bv.discovered ? spr.palette
+          : Object.fromEntries(Object.keys(spr.palette).map(k => [k, MASK]));
+        gw = spr.box.w; gh = spr.box.h;
+      }
+    } else if (bv.kind === 'tier') {
+      shape = 'diamond';                      // the emblem plate shape
+      sw = 24; sh = 24;
+      color = bv.discovered
+        ? (bv.ref === 'ELITE' ? '#ffd75e' : (RARITY[bv.ref] && RARITY[bv.ref].tell.outline))
+        : MASK;
+    } else {
+      const look = resolveLook(bv.ref, 0);    // the REAL silhouette contract
+      shape = look.shape;
+      sw = C.ENEMY.W * look.sizeMult;
+      sh = C.ENEMY.H * look.sizeMult;
+      color = bv.discovered ? look.body : MASK;
+    }
+
+    const maxW = Math.floor(C.VIEW_W * 0.72);
+    const maxH = Math.floor(C.VIEW_H * 0.62);
+    let scale, w, h;
+    if (grid) {
+      scale = Math.min(Math.floor(maxW / gw), Math.floor(maxH / gh));
+      if (!(scale >= 1)) scale = 1;
+      w = gw * scale; h = gh * scale;
+    } else {
+      // 'tall'/'wide' overshoot the box by 1.3x (drawShape) — budget for it
+      // so the silhouette never clips its case. 'diamond' inscribes the box.
+      const over = (shape === 'tall' || shape === 'wide') ? 1.3 : 1;
+      scale = Math.min(Math.floor(maxW / (sw * over)), Math.floor(maxH / (sh * over)));
+      if (!(scale >= 1)) scale = 1;
+      w = Math.round(sw * scale); h = Math.round(sh * scale);
+    }
+    const x = Math.round((C.VIEW_W - w) / 2);
+    const y = Math.round((C.VIEW_H - h) / 2);
+
+    // Display case in the HUD's own chrome vocabulary — identical primitives
+    // to the trophy showcase, so both screens read as the same game.
+    const PAD = 6;
+    g.fillStyle = C.HUD.FRAME;
+    g.fillRect(x - PAD - 2, y - PAD - 2, w + PAD * 2 + 4, h + PAD * 2 + 4);
+    g.fillStyle = '#000000';
+    g.fillRect(x - PAD - 1, y - PAD - 1, w + PAD * 2 + 2, h + PAD * 2 + 2);
+    g.fillStyle = C.HUD.PLATE_SOLID;
+    g.fillRect(x - PAD, y - PAD, w + PAD * 2, h + PAD * 2);
+
+    if (grid) {
+      this.drawGrid(g, grid, palette, x, y, scale);
+    } else {
+      g.fillStyle = color;
+      drawShape(g, shape, x + Math.round(w / 2), y + Math.round(h / 2), w, h);
+    }
+
+    this.bestiary = { scale, x, y, w, h, id: bv.id, discovered: !!bv.discovered };
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------

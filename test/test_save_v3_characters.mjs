@@ -70,9 +70,9 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA v3 + NAMESPACE SHAPE:');
 {
-  // Pinned deliberately (v4 = G9 achievements) — update WITH the schema bump.
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 4,
-    `schema version is 4 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
+  // Pinned deliberately (v5 = G10 encounters) — update WITH the schema bump.
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 5,
+    `schema version is 5 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
   ok(VERSION_HISTORY.some(v => v.version === 3 && /per-character/i.test(v.note)),
     'VERSION_HISTORY documents the v3 per-character namespace');
   ok(STORAGE_KEY === 'hordes_profile_v1',
@@ -115,7 +115,7 @@ console.log('v2 -> v3 MIGRATION (preserve everything, populate nothing):');
     bestTime: 210,
     runsPlayed: 12,
     trophies: ['boss_slayer'],
-    encounters: { grunt: 41, elite_brute: 2 },
+    sightings: { grunt: 41, elite_brute: 2 },
     nested: { bossKills: 3, tags: ['a', 'b'] },
   };
   const original = JSON.stringify(v2);
@@ -123,7 +123,7 @@ console.log('v2 -> v3 MIGRATION (preserve everything, populate nothing):');
   const res = loadProfileResult(s);
   ok(res.status === 'migrated' && res.from === 2 && res.profile.version === SCHEMA_VERSION,
     `a v2 save migrates to v3 (status=${res.status}, from=${res.from})`);
-  deepEq(res.migrations, [2, 3], 'a v2 save applies exactly the v2->v3 and v3->v4 steps');
+  deepEq(res.migrations, [2, 3, 4], 'a v2 save applies exactly the v2->v3, v3->v4 and v4->v5 steps');
   deepEq(res.profile.characters, {}, 'the migration populates NO character with upgrades');
   ok(res.profile.gold === 4321 && res.profile.purchased.dmg === 2 &&
      res.profile.purchased.futureThing === 3,
@@ -135,13 +135,16 @@ console.log('v2 -> v3 MIGRATION (preserve everything, populate nothing):');
     'weapon + elite unlocks survive the v2 -> v3 step');
   ok(res.profile.bestTime === 210 && res.profile.runsPlayed === 12 &&
      res.profile.trophies[0] === 'boss_slayer' &&
-     res.profile.encounters.grunt === 41 && res.profile.nested.x === undefined &&
+     res.profile.sightings.grunt === 41 && res.profile.nested.x === undefined &&
      res.profile.nested.tags.length === 2,
     'EVERY unknown top-level field survives the migration verbatim');
   // ...and the field that is no longer unknown (achievements, schema v4) is
   // present and EMPTY: a legacy save is never handed free trophies.
   ok(res.profile.achievements && Object.keys(res.profile.achievements.earned).length === 0,
     'the v3 -> v4 step creates an EMPTY achievements namespace (no free trophies)');
+  // Same rule for the encounters namespace (schema v5): no free bestiary.
+  ok(res.profile.encounters && Object.keys(res.profile.encounters.entries).length === 0,
+    'the v4 -> v5 step creates an EMPTY encounters namespace (no free sightings)');
   ok(res.profile.version === SCHEMA_VERSION && s.getItem(STORAGE_KEY) === original,
     'migration is pure: the stored v2 payload is not rewritten on load');
 
@@ -170,7 +173,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v1 = loadProfileResult(seededJson({ version: 1, gold: 12.9, unlockedCharacters: ['KNIGHT'] }));
   ok(v1.status === 'migrated' && v1.from === 1 && v1.profile.version === SCHEMA_VERSION,
     `a v1 save migrates ALL the way to v${SCHEMA_VERSION} (from=${v1.from})`);
-  deepEq(v1.migrations, [1, 2, 3], 'the v1 save runs the 1->2, 2->3 and 3->4 steps in order');
+  deepEq(v1.migrations, [1, 2, 3, 4], 'the v1 save runs the 1->2, 2->3, 3->4 and 4->5 steps in order');
   ok(v1.profile.gold === 12, 'the chained migration still clamps currency (1 -> 2 step)');
   deepEq(v1.profile.characters, {}, 'the chained migration adds an empty v3 namespace');
 
@@ -185,7 +188,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v0 = loadProfileResult(seededJson(legacy));
   ok(v0.status === 'migrated' && v0.from === 0 && v0.profile.version === SCHEMA_VERSION,
     `a v0 (unversioned) save migrates to v${SCHEMA_VERSION} (from=${v0.from})`);
-  deepEq(v0.migrations, [0, 1, 2, 3], 'the whole chain 0 -> 1 -> 2 -> 3 -> 4 runs');
+  deepEq(v0.migrations, [0, 1, 2, 3, 4], 'the whole chain 0 -> 1 -> 2 -> 3 -> 4 -> 5 runs');
   ok(v0.profile.bestTime === 187.5 && v0.profile.purchased.dmg === 1 &&
      v0.profile.equippedCharacter === 'WITCH',
     'the v0 -> v3 chain preserves the legacy fields');
@@ -206,11 +209,11 @@ console.log('UNKNOWN-FIELD PRESERVATION (top-level + inside the namespace):');
       KNIGHT: { upgrades: { rage: 2 }, specialty: 'fire', mastery: { tier: 3 } },
     },
     achievements: { a: 1 },
-    encounters: { grunt: 3 },
+    sightings: { grunt: 3 },
     deep: { x: [1, 2] },
   };
   const out = v(rich);
-  ok(out.encounters.grunt === 3 && out.deep.x.length === 2,
+  ok(out.sightings.grunt === 3 && out.deep.x.length === 2,
     'unknown top-level collections are preserved verbatim');
   ok(out.characters.KNIGHT.specialty === 'fire' && out.characters.KNIGHT.mastery.tier === 3,
     'unknown SIBLING fields inside a character entry are preserved (namespace passthrough)');
