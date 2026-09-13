@@ -32,3 +32,43 @@ You may edit ONLY test/test_stages.mjs, test/test_trophy_hooks.mjs and test/_har
 - A COULD NOT VERIFY section naming anything you could not measure or believe is still a game defect. That section is expected and is not a failure.
 
 Report as a done: line plus the sections above.
+
+---
+
+## TICK-36 ADDENDUM (2026-09-13, pilot tick subagent:spawnfa) - READ THIS, IT SUPERSEDES THE RATES ABOVE
+
+**WHY THIS BRIEF IS BEING RE-ISSUED:** the previous dispatch of this exact brief
+(msg_01M2E4FMR99Y47HWP6G8P39FAG) reported
+`blocked: SUITE_FLAKES_POWER - agentlock held by another owner (subagent:commit-watcher, alive, "commit+push pending hordes slice")`
+and did NOTHING. Nothing was edited, the slice was never attempted. That was a transient
+lock collision, not a defect in the task.
+
+**LOCK CLAUSE - CHANGED, OBEY THIS ONE (it replaces the "STOP if HELD" line in HOUSE RULES):**
+if `agentlock status` reads HELD by another owner, do NOT immediately self-cancel. Sleep 20s,
+re-check, and repeat up to 15 times (5 minutes total). Never edit a file, never run a git state
+command, while it is held. Only if it is STILL held after 5 minutes do you post `blocked:` and stop.
+Most holders here are short-lived committers.
+
+**TREE AT THIS ADDENDUM:** HEAD 23330a9, dirty=0 (verified).
+
+**PILOT's OWN MEASUREMENTS THIS TICK (verify, do not re-derive):**
+- `bash /tmp/run_all.sh` at 23330a9: `greenfiles=72 redfiles=1`, REDLIST `test/test_stages.mjs`,
+  message `Error: SNOWFIELD aggregate spawn ratio 0.971 over 4 cohorts`.
+- `test/test_stages.mjs` standalone: 3 red / 15 sequential runs across two batches
+  (batch of 5: 3 red; batch of 10 immediately after: 0 red). Load-correlated, ~20%.
+- **NEW AND IMPORTANT - the two red clauses CO-FAIL, so they share ONE cause.**
+  In EVERY red run this tick BOTH of these fired, and in all 13 green runs NEITHER fired:
+    1. `FAIL (e) mods at the REAL seam: SNOWFIELD foes are exactly 1.5x hp / 0.9x speed, stage 0 exactly 1.0x`
+    2. the spawn clause, on one of two messages:
+       `Error: SNOWFIELD aggregate spawn ratio 0.947 over 4 cohorts (measured ~0.75; a spawnMult 1.0 regression reads ~1.0)`
+       `Error: SNOWFIELD spawned 36 vs base 36 over 4 cohorts (spawnMult 0.7 must be fewer)`
+  So the emission/seam route in MEASURED FACTS item 3 must cover the mods clause too: measure the
+  STAGE MODS and the EMISSION deterministically at the seam (identical state / dt / time, driven
+  through the exported spawnWave at src/main.js:5826), not through surviving body counts.
+  KEEP every existing clause; do not delete the body-count checks, do not add a tolerance band.
+- `test/test_trophy_hooks.mjs` standalone: 2 red / 10 runs, both the same message:
+  `FAIL the LIVE loop counts boss kills and OPENED chests`. Name the cause with the per-iteration log
+  (st.mode, banner hold, pickup counter) BEFORE touching the fixture, per MEASURED FACTS item 4.
+
+Everything else in this brief stands unchanged, including the acceptance bar and the
+COULD NOT VERIFY section.
