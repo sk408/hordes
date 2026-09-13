@@ -20,7 +20,9 @@ this project should read it first and treat the numbered goals as the acceptance
 
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
-Set directly by Sk408 in session. Take N1, then N2.
+Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority — he saw the
+art alone and immediately asked for the fade-in — and it is the smallest of the three), then
+**N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
 ### N1 — CLASS IDENTITY: every class gets its own skill  [status: not started]
 
@@ -90,9 +92,34 @@ the screen show for a second"*.
 skull behind the TROPHIES card, dungeon tiles and lava/brick pixels around the bottom row,
 plain black above the cards.
 
-Ask: on START GAME, hide the menu and hold the title art ALONE for a beat (~1s) before the run
-begins, so the art is actually shown rather than glimpsed. Must respect the standing "slow-mo
-and shake: rare and earned only" juice rule, and stay integer-scaled with no smoothing.
+Ask (owner-revised 2026-09-13, after seeing the art alone — *"Ooh that's nice! We can't hide
+that permanently. The menu needs to fade in so players can see this! And then when they select
+a run, it should remain for 1 second. Maybe even animate it for that second"*):
+
+1. **THE MENU FADES IN over the art.** The art is painted first and shown alone, then the menu
+   fades up to full over ~400-600ms, so the first thing a player sees is the title art rather
+   than a menu sitting on top of it. Entry point: `showTitle()` (`src/main.js:3105`) already
+   calls `openMenu('title')`, hides the DOM `<h1>` (the canvas art carries its OWN wordmark)
+   and sets `overlay.style.background = 'transparent'` so the art shows through between the
+   cards — so this is an opacity reveal on a screen that is already transparent, not a
+   restructure. `openMenu()` (`overlay.style.display = 'flex'`) is SHARED by every other
+   screen, so the fade must be scoped to the title and must not leak into menus/drafts.
+2. **THE ART HOLDS ~1s WHEN A RUN IS SELECTED.** On START GAME, fade the menu OUT, keep
+   `mode 'title'` so the art remains, hold for about a second, then `startRun()`. Must be
+   idempotent against a double-tap (the cinematic gesture guard `uiGuard` exists for exactly
+   this class of problem), and must not leave the overlay hidden if the run never starts.
+3. **OPTIONAL, owner said "maybe": animate the art during that second.** The art is
+   PAINT-ONCE by design (invalidated only on resize / mode-leave — see `drawTitleScreen`,
+   `src/render.js:214`), so any animation must either repaint deliberately for that beat or
+   use a cheap transform-free effect (a glow/shimmer on the existing pixels). Respect the
+   standing juice rule — "glow/crackle yes; slow-motion and shake rare and earned only" — and
+   stay INTEGER-SCALED with NO smoothing (that is about art scaling, not opacity).
+
+Evidence bar for whoever builds this: a real-browser capture of the title at t=0 (art alone),
+mid-fade, and settled, plus the art-only hold on run start — the same
+`tools/verify_g12_title.mjs` pattern, which already drives `mode 'title'` and
+`T.showTitle()` and can be extended rather than reinvented. Note there is NO vision model on
+this host: assertions must be geometry/opacity/pixel-sample based, not "looks right".
 
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
