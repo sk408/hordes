@@ -299,19 +299,40 @@ await acheck('startRun records enemy: sightings on the live profile (tier alongs
 
 await acheck('the mid-wave HERALD records boss:HERALD at its spawn', () => {
   h.T.startRun();
-  // The HERALD lands mid-wave-1 (~60s); drafts PAUSE the sim, so clear them the
-  // way test_run_structure does and pump on run time, not frame count.
+  // SUITE-REDS R3: the owner-ordered enemy wave (squared base hp/damage,
+  // fa9d81c..d9d5426) kills a FRESH probe at ~52s — BEFORE the herald gate
+  // (state.wave.midAt = WAVE_LENGTH * (1 - AT_FRACTION) = 60s into wave 1),
+  // so the old 60*400-frame pump could never see it. House rule: make the
+  // PROBE durable for its scenario, never soften the game. Durability comes
+  // through the real run-stat seams (a big hp pool, exactly what a purchased
+  // build would field), and the pump is budgeted by SIM TIME to the gate, not
+  // by a bare frame count — drafts/coachmarks pause the clock, so frames are
+  // not time.
+  const gate = st.wave.midAt;   // set by startRun from CONFIG, never a retyped literal
+  const p = st.player;
+  p.stats.maxHp = 1e9;
+  p.hp = 1e9;
   let saw = null;
-  for (let i = 0; i < 60 * 400 && !saw; i++) {
+  let deadAt = null;
+  let frames = 0;
+  // SIM-TIME budget: run until past the gate (+5s for the spawn tick), with a
+  // generous frame ceiling (10 min at 60Hz) so a stalled sim still ends.
+  while (!saw && deadAt === null && st.time <= gate + 5 && frames < 60 * 600) {
     if (st.mode === 'draft' || st.mode === 'evolve') {
       const c = h.elements['ov-cards'].children[0];
-      if (c) { c.click(); continue; }
+      if (c) { c.click(); frames++; continue; }
     }
-    saw = st.enemies.find(e => e.boss && e.midBoss);
     h.pump(1);
+    frames++;
+    saw = st.enemies.find(e => e.boss && e.midBoss);
+    if (!saw && st.mode === 'dead') deadAt = st.time;   // the clock freezes at death
   }
   const entries = h.T.getProfile().encounters.entries;
-  assert.ok(saw || entries['boss:HERALD'], 'a herald appeared (or was already recorded)');
+  const stall = 'probe stalled: mode=' + st.mode + ', sim time ' + st.time.toFixed(1) +
+    's vs herald gate ' + gate.toFixed(1) + 's after ' + frames + ' frames' +
+    (deadAt !== null ? ' (run DIED at ' + deadAt.toFixed(1) + 's — probe not durable enough)' : '');
+  assert.ok(saw || entries['boss:HERALD'],
+    'a herald appeared (or was already recorded) — ' + stall);
   assert.ok(entries['boss:HERALD'], 'boss:HERALD is recorded AT SPAWN (never the kill funnel)');
   assert.ok(entries['boss:HERALD'].firstAt < 120, 'the first sighting is inside wave 1');
 });

@@ -58,6 +58,32 @@ do not treat its numbers as current, and do not "fix" the tree back toward them.
 
 ---
 
+### VISUAL VERIFICATION: you cannot see, but you can still get it seen (2026-09-13)
+
+The pilot reported "no vision model in this session, so g20-stages-phone.png still
+has no human/capable glance". Correct — the pilot's toolset is files+terminal
+only. But the answer is not to leave a visual claim unglossed. Route it:
+
+1. **ASK AN AGENT THAT CAN SEE.** Post on the hub (`ahub say` / `ahub ask`) with the
+   ABSOLUTE PNG path and the question. Kimi and Remy can read images.
+2. **MAKE THE IMAGE READABLE FIRST — this is the whole trick.** The vision tool
+   TIMES OUT on phone-size captures even when cropped. Measured: 1170x2532 timed
+   out, 468x400 timed out, **234x148 worked**. Crop the region of interest and
+   downscale HARD to <= ~320px wide before sending:
+   `ffmpeg -i shot.png -vf "crop=1170:740:0:760,scale=234:148" /tmp/small.png`
+   (PIL is available at /home/claude/.hermes/hermes-agent/venv/bin/python.)
+3. **NEVER cite a screenshot nobody has looked at.** A committed PNG is a claim,
+   not evidence.
+
+**ALREADY READ — do not redo this one.** `g20-stages-phone.png` shows the MENU with
+the FIRST-RUN TOUR overlay still up ("The arena has walls - the horde funnels along
+them." / "TAP TO CONTINUE / SKIP TOUR"), the STAGE tile reading "VERDANT HOLLOW"
+with "locked: ashen waste: beat your...", and HOW TO PLAY / EXIT GAME. It does NOT
+show the stage-select ladder or all 8 rungs. **So G20's "REAL-browser PASS 8/8
+rungs at 390x844 @dpr3" is NOT evidenced by that artifact** — the capture was taken
+with the tour covering the screen. RE-SHOOT with the tour dismissed, on the stage
+screen itself, then get THAT one read.
+
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
 Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority — he saw the
@@ -3472,3 +3498,86 @@ the queue head **G21** (rule-changing cards + a small active set).
 **LOCK:** held through the whole tick (no file edits outside this doc), released at the end. No worker was killed, restarted or steered. No git state command was run by this tick.
 
 **NEXT GOAL / PROJECTION:** fix the four stable suite reds first (they are the definition of "full build complete" item 3), then G20D re-verify (needs the dilution call), then the queue head G21. The spawn assertion and the four reds are one conversation: an economy/enemy retune that moved every draft/encounter/mana measurement.
+
+## TICK NOTE 34 - 2026-09-13 (goal pilot tick, subagent:spawnfa; all four suite reds DIAGNOSED BY MEASUREMENT as probe defects, and the fix DISPATCHED as a test-only retarget brief)
+
+**Goal worked: the four stable suite reds at the clean HEAD `d9d5426` (BUILD_PLAN "full build complete"
+item 3 is a green suite).** This tick BUILT NOTHING: it measured each red to its cause and dispatched the
+retarget. No `src/`, `tools/` or test file was edited by this tick.
+
+**TREE / LOCK.** `git log -1` = `d9d5426` (18:23:51Z, ~1 minute before this tick took the lock - the
+orchestrator commits live and does NOT take the agentlock, so a long builder is a real collision risk and
+the brief gives it a hard STOP-if-HELD clause). Tree CLEAN (`dirty=0`). agentlock FREE at tick start,
+acquired as `subagent:spawnfa`. The orchestrator's `d9d5426` ("sim: model a PURCHASED loadout") landed
+seconds before, and it FIXED one of tick 33's four reds: `test_draft_luck` is green now (its cohorts run
+the purchased loadout, bars untouched - the orchestrator's own numbers: luck 0->5 1323s->1535s = +16.1%).
+
+**SUITE, MY OWN RUN, at `d9d5426` (`bash /tmp/run_all.sh`): redfiles=4, greenfiles=69.**
+`TREE: /home/claude/projects/hordes @ d9d5426 | dirty=0`. Reds and the message each one printed:
+- `test/test_draft_sim.mjs` :: `survival hp+speed 0 vs good 0`
+- `test/test_encounters.mjs` :: `a herald appeared (or was already recorded)`
+- `test/test_shop_mana.mjs` :: `an AUTO kill pays the same 0.2 (+ the frame drip, got 0.4083333333333333)`
+- `test/test_tour.mjs` :: `coachmark for hordes_tour_cog mounted (stalled at mode=playing, t=17s)`
+
+**EVERY RED IS PROBE-SIDE, AND HERE IS THE MEASUREMENT FOR EACH (not a hypothesis).**
+- **R1 shop_mana - a STALE LITERAL.** `SHOP_BY_ID.siphon.perLevel` is `0.10` (the owner's `fa9d81c`
+  "double the rest of the shop"; `src/meta.js:346` even prints "+0.10 mana per kill per level"), so L4 =
+  **0.40** and the probe reads `0.408333...` = 0.40 + 0.5/60 - the frame drip. The old literal `0.2`
+  predates the doubling. The sibling check "level N is the documented number" PASSES, so the game is right
+  and only the retyped constant is stale.
+- **R2 draft_sim - the cohorts run a FRESH profile.** The three cohorts are built with
+  `simulateRun(SEED, <policy>)` and NO patch. I measured it directly (a 6-line probe importing
+  `tools/draft_sim.mjs`, seed 4242): GREED_DAMAGE `survivalTime 52, kills 18, picks
+  {wlevel_VOLLEY:1, dmg:1}`, SURVIVAL **byte-identically the same picks**, ADVERSARIAL_BAD
+  `51s, {rule_once:1, pickup:1}`. So `s('hp')+s('speed') > g('hp')+g('speed')` reads `0 > 0`: a fresh run
+  under the ordered difficulty dies at ~52s with only **2 drafts**, and both policies take the same two
+  cards. A green run is deliberately uniform - that IS the ordered design - so this probe has no drafts
+  left in which divergence can express itself. The fix is the same one the orchestrator just applied to
+  `test_draft_luck`: run the cohorts on the purchased loadout.
+- **R3 encounters - the probe never reaches the HERALD.** `saw` is null after 60*400 frames and no
+  `boss:HERALD` entry exists. The gate is `state.time >= state.wave.midAt` (`src/main.js:1382`), midAt set
+  at `:946` from `WAVE_LENGTH * (1 - AT_FRACTION)`; the probe runs the default fresh run and dies before
+  that gate. The goals doc already sanctions the remedy in the owner's words: *the probe character may be
+  made durable for a test scenario* - so the fixture, not the game.
+- **R4 tour - the frame budget cannot reach a TIME gate.** The cog gate is `state.time > 25`
+  (`src/main.js:3313`); the probe's per-step budget is a fixed **1800 FRAMES**. Coachmarks PAUSE the sim,
+  so frames burn without advancing `state.time`. Three standalone runs this tick: **2 red / 1 green, the
+  stalls read t=17s, t=9s and t=5s** - i.e. flaky, and flaky for a structural reason (frame budget vs
+  time gate), which is why it also surfaced in tick 33's suite as a "seen once" flake. The assertion is
+  right; the budget is wrong.
+
+**DISPATCHED, NOT BUILT (the standing pattern).** Task `msg_01M2E0CXPH2VQSE6BZCEEMGZEP` -> `cli:glm-hordes-g8`,
+brief `docs/briefs/SUITE_REDS_FIXTURE_RETARGET.md` (105 lines: house rules, the four diagnoses with their
+numbers, the hard scope `test/*.mjs` only, the "never weaken an assertion / never edit src or tools"
+bound, a STOP-if-lock-HELD clause, and a numeric acceptance bar of 20/20 standalone per test + three
+consecutive `redfiles=0` suite runs + `git diff --stat` showing no `src/`/`tools/` file touched). Task text
+`/tmp/reds_task.txt`. **QUEUE HYGIENE:** the queue held one stale ghost (`msg_01M2DJCP10HHDD75D774T9JVBM`,
+G20D - in `seen.json`, and its worker log ends `task msg_01M2DJCP10HHDD75D774T9JVBM exit -9`, killed by the
+watchdog for a 900s stall); dropped with `hub-worker cancel`, state `pending`, no worker interrupted. Queue
+read `{"pending_tasks": [], "running": null}` before the dispatch, so the new task cannot queue behind it.
+
+**COULD NOT VERIFY (honest):**
+- **No artifact exists yet** - the builder started inside this tick. The next tick must run the four 20/20
+  tallies, the three suite runs, `git diff --stat` over `src/`/`tools/`, and `git diff` of the four test
+  files itself. A `done:` line is a claim, never evidence.
+- **Whether ANY of the four is also a game defect is not proven, only that the fixture explains it.** R3's
+  gate time and R4's gate are named but the probe's death time was not measured by me - the builder is
+  required to report both, and to STOP rather than patch `src/` if one turns out to be the game's fault.
+- **No vision model is reachable from this cron session** (unchanged, now 16 ticks): nobody has
+  semantically read `docs/art/browser-verify-2026-09-12/g20-stages-phone.png`.
+- Unchanged and still owed: G20D's own bar (tick 33: 17/20 standalone, spawn ratio drifted 0.755 -> 0.842
+  - a GAME/balance question, and the spawn assertion is now the fourth symptom of the same dilution),
+  the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised x1.6, the
+  ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (owner design
+  call), the unanswered Q-slot question gating N1's three non-Witch ults (FIFTEENTH tick), and the
+  `docs/FEEDBACK_2026-09-13.md` 25-item triage (recommended as G26 - the priority call is the owner's).
+
+**LOCK / HYGIENE:** FREE at tick start, acquired as `subagent:spawnfa`, held through recon and the
+diagnosis, then **RELEASED EARLY at the dispatch** (the brief requires the builder to take the lock itself
+and to STOP if it finds it HELD - holding it would have made the builder self-cancel; the tick-27 lesson,
+re-applied). `state: FREE` confirmed at release. No worker killed, restarted or steered. No git state
+command run. This doc edit is UNCOMMITTED, as is the new brief.
+
+**NEXT GOAL:** verify the retarget (4x20/20 standalone + `redfiles=0` x3 + no `src/`/`tools/` diff), then
+re-verify G20D's spawn assertion against the dilution call, then the queue head **G21** (rule-changing
+cards + a small active set).

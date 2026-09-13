@@ -342,9 +342,26 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
     // A level-up can open the DRAFT overlay mid-chain: its coachmark (and the
     // overlay itself) is off-chain here — dismiss the coach, pick a card, and
     // keep pumping until OUR step mounts with its own caption.
+    // SUITE-REDS R4: this budget used to be a bare 60*30 FRAMES, but
+    // coachmarks PAUSE the sim and drafts/intermissions eat frames without
+    // advancing state.time — and a death-restart REWINDS the clock to 0 — so
+    // a frame count is not time (measured stalls at t=17s/9s/5s, 2 red / 1
+    // green). Budget by SIM TIME ACTUALLY ADVANCED instead: the ceiling is 60
+    // frames per cumulative lived sim-second (counted monotonically across
+    // death-rewinds) plus a generous 60*30 slack for paused frames. Every
+    // chain gate is a state.time threshold (the last, hordes_tour_cog, is
+    // > 25s), so a healthy run needs ~30 cumulative sim-seconds; death
+    // rewinds only ADD to the cumulative count, never subtract. A genuinely
+    // stuck sim still hits the ceiling and names itself in the assert below.
     let root2 = null;
-    for (let i = 0; i < 60 * 30 && !root2; i++) {
+    let frames = 0;
+    let simLived = 0;
+    let lastT = st.time;
+    while (!root2 && frames < 60 * Math.ceil(simLived + 31)) {
       frame();
+      frames++;
+      if (st.time > lastT) { simLived += st.time - lastT; }
+      lastT = st.time;
       if (st.mode === 'draft' || st.mode === 'evolve') {
         const kids = elements['ov-cards'] ? elements['ov-cards'].children : [];
         if (st.mode === 'evolve' && kids.length) kids[kids.length - 1].click();

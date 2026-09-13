@@ -8,6 +8,7 @@
 // Run: node test/test_draft_sim.mjs
 import assert from 'node:assert/strict';
 import { CONFIG as C } from '../src/config.js';
+import { SHOP_BY_ID } from '../src/meta.js';
 import {
   simulateRun, simulateCohort, divergenceVerdict, POLICIES, LEVERS, LIVE,
 } from '../tools/draft_sim.mjs';
@@ -19,18 +20,37 @@ function ok(name, fn) {
   console.log(`  ok ${name}`);
 }
 
+// SUITE-REDS R2: the divergence cohorts used to run a FRESH profile, but under
+// the ordered design a green run dies at ~52s with 2 drafts — both policies
+// take the same two cards, so `survival hp+speed 0 vs good 0` could never
+// express divergence. The owner ordered this: "We don't want a green run to be
+// very powerful." Retarget the FIXTURE exactly as d9d5426 did for
+// test_draft_luck: run the cohorts with the PURCHASED loadout the owner
+// specified ("all the damage upgrades and some split shot upgrades and some
+// mana reduction buyables and 1 weapon slot and unlock the cheapest weapon"),
+// applied through the REAL applyMetaBonuses seam. Every id below is a real
+// SHOP row in src/meta.js. Assertions, thresholds and messages unchanged.
+const META_LOADOUT = {
+  dmg: SHOP_BY_ID.dmg.maxLevel,       // all damage upgrades
+  split: 3,                           // some split shot
+  thrifty: 2,                         // some mana reduction
+  slots: 1,                           // +1 weapon slot
+  weapon_orbit: 1,                    // the cheapest archetype (ORBIT, 400g)
+};
+const PATCH = { purchases: META_LOADOUT };
+
 const SEED = 4242;
-const good = simulateRun(SEED, 'GREED_DAMAGE');
-const bad = simulateRun(SEED, 'ADVERSARIAL_BAD');
-const survival = simulateRun(SEED, 'SURVIVAL');
+const good = simulateRun(SEED, 'GREED_DAMAGE', PATCH);
+const bad = simulateRun(SEED, 'ADVERSARIAL_BAD', PATCH);
+const survival = simulateRun(SEED, 'SURVIVAL', PATCH);
 
 console.log('draft_sim: reproducibility');
 ok('same seed + policy -> byte-identical result', () => {
-  const a = simulateRun(SEED, 'GREED_DAMAGE');
+  const a = simulateRun(SEED, 'GREED_DAMAGE', PATCH);
   assert.deepStrictEqual(a, good);
 });
 ok('different seeds -> different runs (rng actually varies offers)', () => {
-  const b = simulateRun(SEED + 1, 'GREED_DAMAGE');
+  const b = simulateRun(SEED + 1, 'GREED_DAMAGE', PATCH);
   assert.notDeepStrictEqual(b.checkpoints[600], good.checkpoints[600]);
 });
 ok('checkpoints exist for minutes 2/5/10 with all 5 metrics + level', () => {

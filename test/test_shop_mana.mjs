@@ -302,8 +302,13 @@ S.check('the stats are not pilot-gated: AUTO benefits identically', () => {
     p.mana = 0;
     st.enemies.push(corpse());
     h.pump(1, quiet);
-    assert.ok(Math.abs(p.mana - (0.2 + C.MANA.REGEN / 60)) < 1e-9,
-      'an AUTO kill pays the same 0.2 (+ the frame drip, got ' + p.mana + ')');
+    // R1 (suite reds): the hardcoded 0.2 went stale when fa9d81c owner-doubled
+    // the siphon row (perLevel 0.05 -> 0.10, so L4 pays 0.40). Read the number
+    // through the applied stat chain instead of retyping a literal:
+    // stats.manaOnKill = SHOP_BY_ID.siphon.perLevel * level (meta.js).
+    const expect = p.stats.manaOnKill + C.MANA.REGEN / 60;
+    assert.ok(Math.abs(p.mana - expect) < 1e-9,
+      'an AUTO kill pays the same ' + p.stats.manaOnKill + ' (+ the frame drip, got ' + p.mana + ')');
   } finally {
     if (had) prof.purchased.siphon = had; else delete prof.purchased.siphon;
     T.startRun();
