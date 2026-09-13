@@ -261,8 +261,9 @@ way to solve G8's "not enough options" problem: achieve -> unlock -> new options
 **Reached when:** achievements unlock real content, the gallery lists earned/locked trophies, and
 selecting a trophy shows its full-screen pixel art.
 
-### G10 — ENEMY GUIDE + RARITY TIERS  [status: IN PROGRESS 2026-09-12 — briefed and DISPATCHED to
-`cli:glm-hordes-g8` as `msg_01M2BZYHYYTFAVTH1H74PQ4W81`; NOTHING built or verified yet. See TICK NOTE 12]
+### G10 — ENEMY GUIDE + RARITY TIERS  [status: DONE 2026-09-12 — landed as `b761e86` and VERIFIED by
+TICK NOTE 13: suite PASS=63 FAIL=0 five times, rates re-measured independently (RARE 2.004%, MYTHIC
+0.321%), real-browser phone check PASS. G23's filter/hook half remains OPEN, see the note]
 Owner: *"we could have an enemy guide of enemies you've encountered. have rare and extremely rare
 enemies."*
 - An in-game bestiary that records enemies the player has actually ENCOUNTERED (discovery-driven, which
@@ -573,7 +574,7 @@ spawn, linear with a stat, and not every type can roll elite). Rare signalling h
 for secrets (pulsing icon, black question mark, silhouette, stopped timer). Every new tier should introduce
 a MECHANIC, not a multiplier.
 
-**G23 — BESTIARY WITH FOUR JOBS.** Per-enemy KILL COUNTER (proof of progress), combat stats that matter
+**G23 — BESTIARY WITH FOUR JOBS.** [status: PARTIAL 2026-09-12 — kill counter / stat rows / masked slots / flavour landed in `b761e86` (G10); the "which entry am I missing" FILTER and the unlock-tied HOOK are OPEN. See TICK NOTE 13] Per-enemy KILL COUNTER (proof of progress), combat stats that matter
 (HP/power/speed/resistances/skills/stage), undiscovered entries that show the SLOT but hide the identity
 (number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
 a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
@@ -1606,3 +1607,50 @@ queue now that G8 is DONE. Dispatched, not built in this tick.** Nothing else wa
   builder to acquire it, and to release it even on failure). NOTE for future ticks: `agentlock release`
   resolves the lock from CWD — it must be run from `/home/claude/projects/hordes`.
 
+
+## TICK NOTE 13 — 2026-09-12 (goal pilot tick, subagent:spawnfa, agentlock held, G10 VERIFIED + DONE)
+
+**Goal worked: G10 (enemy guide + rarity tiers).** The previous tick's dispatch landed and was committed
+by Remy as **`b761e86`**; this tick verified the ARTIFACT itself rather than accepting the builder's
+report, and flipped the marker. No new goal was started.
+
+**Verified myself (my own runs, not a report):**
+- **Suite: `bash /tmp/run_all.sh` => PASS=63 FAIL=0, five times** (twice mid-tick, three back to back).
+  63 = the previous 60 + the three new test files: `test/test_bestiary.mjs` (18 checks),
+  `test/test_encounters.mjs` (13 checks + 3 awaited seam), `test/test_rarity.mjs` (13 + 3 awaited seam).
+- **Rarity rates re-measured independently** (real `rollRarity`, mulberry32 seed 4242, N=100000, my own
+  probe, not the test's): **RARE 2004/100000 = 2.004%** (constant 0.02), **MYTHIC 321/100000 = 0.321%**
+  (constant 0.003), `hpMult` RARE 1.6 / MYTHIC 2.5. Matches the commit's claim exactly.
+- **The only check that can look at the screen:** `node tools/verify_g10_bestiary.mjs` => **PASS** in a
+  REAL browser (camoufox) at 390x844 @dpr3 — fresh profile fully masked, seeded profile un-masked with
+  the model's own numbers, chrome in viewport, `renderer.bestiary` seam integer scale 7 at x 177 y 87
+  (126x126), id `enemy:BRUTE`, `discovered: true`, plus readShot samples inside the canvas and caption.
+  Same standing caveat as every prior tick: **no vision model is reachable from this host**, so this is
+  DOM geometry + pixel samples, NOT a "looks right" judgement.
+- **Artifact inventory on disk matches the brief:** `src/encounters.js`, `src/rarity.js`, `src/save.js`
+  (PROFILE_VERSION v4->v5, MIGRATIONS[4], validateProfile collection block), the three test files,
+  `tools/verify_g10_bestiary.mjs`, and the phone PNG
+  `docs/art/browser-verify-2026-09-12/g10-bestiary-phone.png` (1170x2532).
+
+**COULD NOT VERIFY / REMAINS (honest):**
+- **ONE RED SUITE RUN OBSERVED, UNREPRODUCED.** The first `bash /tmp/run_all.sh` of this tick returned
+  **PASS=62 FAIL=1 (FAILED test/smoke.mjs)**. Five subsequent suite runs were clean, `node test/smoke.mjs`
+  passes standalone, and 8 parallel `test_encounters` runs all passed. A deliberately loaded experiment
+  crashed `test_encounters` once with only a stack tail (no error text captured). So `test/smoke.mjs` is a
+  **low-rate flake of unknown cause, not a deterministic break** — but the suite is green *per run*, not
+  yet proven green *as a rate*, and the failing output is unrecoverable after the fact because
+  `run_all.sh` overwrites `/tmp/tout.txt` per file. **If it is seen again, capture the output FIRST.**
+- **G23 is only partly covered by this landing.** In: per-enemy kill counter (`seenCount`), stat rows,
+  masked undiscovered slots, catalog flavour text, rarity tiers. NOT built: the **"which entry am I
+  missing" filter** and the **unlock-tied highlight/hook** (`showBestiary` offers PREV/NEXT/BACK only,
+  and `src/encounters.js` has no unlock tie). Left OPEN under G23 rather than silently claimed.
+- The tier rate is measured **at the roll**, not in a live run: the sim folds it in as an expected-value
+  term (`draft_sim` spawnMix) rather than replaying per-spawn dice, so the model is honest about the
+  mean and says nothing about per-run variance.
+- I did **not** re-run the balance cohort. The commit's balance deltas (survival 138.3 -> 138.4s, GREED
+  199.2 -> 200.6s) and the "rarity OFF cells byte-identical to baseline" claim are the builder's
+  measurements; what this tick established is that the invariants are asserted in the new tests and the
+  suite is green.
+
+**NEXT GOAL: G11 (timed achievements + challenge modes)** — next in the ranked queue. G23's remaining
+filter/hook is a small follow-up that can ride along with it.
