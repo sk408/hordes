@@ -339,7 +339,7 @@ export const SHOP_UPGRADES = [
   // (Knight 0 -> Rogue 2500 -> Paladin 6000 -> Witch 9000): a NON-Witch
   // buying all three spends less than the Witch costs, which is the point —
   // she is the whole kit in one purchase, these are kit-at-a-time.
-  { id: 'thrifty', name: 'Thrifty Casting', desc: '-20% mana cost per level (floors at -40%)',
+  { id: 'thrifty', name: 'Thrifty Casting', desc: '-20% mana cost per level (max -80%)',
     baseCost: 350, costGrowth: 1.7, maxLevel: 4, perLevel: 0.20 },
   { id: 'well',    name: 'Deep Well',       desc: '+50 max mana per level',
     baseCost: 250, costGrowth: 1.6, maxLevel: 4, perLevel: 50 },
@@ -656,16 +656,20 @@ export function draftCardWeight(cardId, kind, luck) {
 //                                 luckDropWeights(luck) for loot rarity rolls
 //                                 (hb4's loot task consumes this).
 //   manaCostMult (1)              Thrifty Casting: mana-cost modifier,
-//                                 1 - 0.20/level, CLAMPED at the documented
-//                                 floor of 0.6 (the un-clamped doubled rate
-//                                 reaches 0.2, an -80% cut the row never
-//                                 promised). NOTE: at this rate the clamp binds
-//                                 from L2 of 4, so L3/L4 buy nothing. The ONE
-//                                 number both cost seams read — weaponManaCost
-//                                 (weapons.js) and skillManaCost (perks.js) —
-//                                 and it COMPOSES with applyCharacter's own
-//                                 mult (the Witch's 0.5), so a Witch with
-//                                 Thrifty L3 pays base x 0.5 x 0.7.
+//                                 1 - 0.20/level, CLAMPED at 0.2 = the full
+//                                 authorised -80% (owner). The clamp does not
+//                                 bind at this rate, so all four levels pay:
+//                                 0.8 / 0.6 / 0.4 / 0.2. The ONE number both
+//                                 cost seams read — weaponManaCost (weapons.js)
+//                                 and skillManaCost (perks.js) — and NEITHER
+//                                 seam rounds or floors, the clamp here is the
+//                                 only limit. It COMPOSES with applyCharacter's
+//                                 own mult (the Witch's 0.5) AND with Focus
+//                                 (FOCUS_MANA_MULT in perks.js), so a Witch at
+//                                 L4 pays base x 0.5 x 0.2 = 0.1, and Focus on
+//                                 top of that goes lower again. Intended
+//                                 stacking, but it means -80% is a SHOP floor,
+//                                 not a floor on the final cost.
 //   maxMana      (makePlayer)     Deep Well: ADDs +50/level to the base pool.
 //                                 applyCharacter adds the character's own
 //                                 maxMana mod AFTER this, so the Witch's +50
@@ -695,10 +699,12 @@ export function applyMetaBonuses(stats, purchased) {
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
-    // The contract promises a floor of 0.6. At the doubled rate the un-clamped
-    // form reaches 1 - 0.20*4 = 0.2, i.e. an -80% cost cut that the row never
-    // agreed to, so the documented clamp is enforced here.
-    manaCostMult: Math.max(0.6, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty')),
+    // OWNER: "80% cost cut for casting sounds fine. Allow the full 80." So the
+    // floor is 0.2, not the old 0.6 -- at the doubled rate the clamp never binds
+    // (L4 = 1 - 0.20*4 = 0.2 exactly), which means all four levels pay instead
+    // of L3/L4 buying nothing. The clamp stays as the guard so a future rate
+    // bump cannot silently blow past the authorised -80%.
+    manaCostMult: Math.max(0.2, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty')),
     maxMana: stats.maxMana + SHOP_BY_ID.well.perLevel * lvl('well'),
     manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon'),
   };
