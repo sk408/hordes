@@ -31,6 +31,14 @@ All waves below marked DONE, with:
   correct — nothing may assume a fixed dt.
 - Commit after each verified wave with an honest message that says what did NOT work.
 
+## Owner decisions already answered — check before reporting a blocker
+
+Recorded in `HORDES_GOALS_2026-09-12.md`, at the top under "OWNER DECISIONS, ANSWERED".
+The Q-slot question (where FROST_NOVA lives once Q becomes the class ult, which gated N1's
+ults) is **ANSWERED: option (a)** — Q is the class identity, E stays OVERCHARGE for everyone.
+Do not report it as blocked; N1's remaining inputs are the ults' EFFECTS and the Witch's Q
+data. If you are about to write "waiting on the owner" for anything, read that section first.
+
 ## Waves
 
 - **W0 — DONE** (commits 78b20b8 → 6f69bed): the bug-hunt run, the repair round, the design pass, and

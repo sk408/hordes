@@ -110,13 +110,23 @@ rungs at 390x844 @dpr3" is NOT evidenced by that artifact** — the capture was 
 with the tour covering the screen. RE-SHOOT with the tour dismissed, on the stage
 screen itself, then get THAT one read.
 
+## OWNER DECISIONS, ANSWERED (check here before reporting anything as blocked)
+
+- **THE Q SLOT — ANSWERED 2026-09-13: OPTION (a).** Q is the class identity (ult for
+  Knight/Rogue/Paladin); **E stays OVERCHARGE for every class**, which is what keeps N1b
+  item 5 true; FROST_NOVA leaves Q and returns as a NEW draftable card (new work — the pool
+  grants perks, not skills). Full text: N1b item 3 / item 5 / the old DESIGN CALL block.
+  **N1 is therefore NOT blocked on the Q slot.** Still owed from the owner for N1: what each
+  non-Witch ult DOES, and what the Witch's Q becomes (her Chain Zap is her starting WEAPON —
+  `WITCH.skill` is still FROST_NOVA and no `CHAIN_ZAP` exists in `C.SKILLS`). See TICK NOTE 35.
+
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
 Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority — he saw the
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: not started]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: not started — Q-SLOT CALL ANSWERED 2026-09-13 (option (a)); still waiting on TWO owner inputs, see the header block below]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -3645,3 +3655,10 @@ cards + a small active set).
 **COULD NOT VERIFY (honest):** no vision model is reachable from this cron session, so nobody has semantically read docs/art/browser-verify-2026-09-12/g20-stages-phone.png (owed, now 17 ticks). The test_stages **the stage run mutated profile.gold** red (test/test_stages.mjs:590, the no-profile-mutation-except-encounters check) was seen ONCE under suite load and did not reproduce in 10 standalone runs - named, not characterised. The trophy_hooks cause is a labelled hypothesis. Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised x1.6, the ranked-queue vs BUILD_PLAN W7a/W7b sequencing conflict, the G23 unlock-tied HOOK (owner design call), N1's owner decisions (above), and the docs/FEEDBACK_2026-09-13.md 25-item triage (recommended as G26 - the priority call is the owner's).
 
 **NEXT:** verify the new dispatch (both tests 20/20, three redfiles=0 runs, no src//tools diff), then **G21** (rule-changing cards + a small active set) or **N1** once the owner answers. The remaining flake work is the last thing between this tree and a by-construction green suite.
+
+**>>> OWNER ANSWERS RECEIVED AFTER THIS NOTE (2026-09-13) - N1 IS NO LONGER WAITING ON THE Q-SLOT QUESTION. <<<**
+The owner answered the Q-slot question: **OPTION (a)**. Full text lives on N1b item 3, item 5, and the old DESIGN CALL block (marked answered). Do not re-open it.
+**AND THIS NOTE'S OWN RECON IS UPHELD - one premise in the decision record was wrong and is now corrected.** The Witch's Q is NOT Chain Zap today: her Chain Zap is her STARTING WEAPON (`WITCH.startingWeapon = 'ZAP'`, meta.js:758). Her Q SKILL is still `FROST_NOVA`, and `grep CHAIN_ZAP src/ test/ tools/ index.html` returns nothing — `C.SKILLS` (config.js:151) carries only FROST_NOVA and OVERCHARGE. So option (a)'s plumbing half is real and consumer-complete, while its DATA half is not built for ANY class yet.
+**STILL NEEDING AN OWNER INPUT BEFORE N1 CAN BE DISPATCHED (the real remaining blocker, and it is NOT the Q slot):**
+  1. **What each of the three non-Witch ULTS actually DOES.** N1b item 3 pins only the mechanics (non-mana, kill-charged, cooldown floor). The effects are unspecified, and a builder must not invent them.
+  2. **What the Witch's Q becomes.** Under option (a) Q is the class identity; her identity is the ZAP weapon, so either she keeps FROST_NOVA on Q as her skill (and the ult pattern is for the other three only), or she gets a `CHAIN_ZAP` skill entry. Cheap either way - but it is a design call, not a builder's.
