@@ -42,7 +42,7 @@ import {
   grantShopRow, grantCharacter,
 } from './meta.js';
 
-export const ACH_NAMESPACE_VERSION = 1;
+export const ACH_NAMESPACE_VERSION = 2;
 
 // The in-run weapon level that counts as "maxed" for MAX_WEAPON. Read from the
 // weapon system's own cap rather than a literal, so raising the cap moves the
@@ -87,10 +87,32 @@ export const ACHIEVEMENTS = [
   { id: 'SHOP_MASTER', goal: { kind: 'state', stat: 'shopRows' }, unlock: { kind: 'shopRow', id: 'weapon_beam' } },
   { id: 'ARCADE_PASS', goal: { kind: 'state', stat: 'arcade' }, unlock: null },
   { id: 'FULL_BUILD', goal: { kind: 'state', stat: 'fullBuild' }, unlock: null },
+  // G11 TIMED ACHIEVEMENTS — kind 'run': a conjunction of a stat threshold and
+  // a clock ceiling inside ONE run, measured at the single settle funnel off
+  // the run summary (A1): the stat reached n AND the run's OWN clock, when it
+  // settled (death, win or a deliberate exit), was <= within. The goal text
+  // says exactly that — never "before 3:00", which the measurement does not
+  // honour. Keys in the persisted `timed` bucket are '<stat>@<within>'.
+  { id: 'WAVE5_UNDER_3MIN', goal: { kind: 'run', stat: 'wave', n: 5, within: 180 },
+    unlock: null },
+  { id: 'WAVE8_UNDER_5MIN', goal: { kind: 'run', stat: 'wave', n: 8, within: 300 },
+    unlock: { kind: 'shopRow', id: 'slots' } },
+  { id: 'KILLS_500_UNDER_5MIN', goal: { kind: 'run', stat: 'kills', n: 500, within: 300 },
+    unlock: { kind: 'shopRow', id: 'artifact' } },
+  { id: 'GOLD_600_UNDER_6MIN', goal: { kind: 'run', stat: 'gold', n: 600, within: 360 },
+    unlock: null },
 ];
 
 export const ACHIEVEMENT_IDS = ACHIEVEMENTS.map(a => a.id);
 export const ACHIEVEMENT_BY_ID = ACHIEVEMENTS.reduce((m, a) => { m[a.id] = a; return m; }, {});
+
+// G11: the timed keys the LIVE catalog declares ('<stat>@<within>'). Repair
+// keeps only these; anything else in the bucket is a newer build's data that
+// this build cannot measure — dropped from the repaired view (the save layer
+// still preserves the raw payload verbatim for the round-trip).
+const TIMED_KEYS = new Set(ACHIEVEMENTS
+  .filter(a => a.goal.kind === 'run')
+  .map(a => a.goal.stat + '@' + a.goal.within));
 
 // TOTALS CONTRACT — the counters recordRun maintains, with their start values.
 // Anything a run reports that is not listed here is ignored, so a caller
@@ -105,7 +127,7 @@ export const TOTALS_ZERO = {
 // ---------------------------------------------------------------------------
 
 export function emptyAchievements() {
-  return { v: ACH_NAMESPACE_VERSION, earned: {}, progress: {}, totals: { ...TOTALS_ZERO } };
+  return { v: ACH_NAMESPACE_VERSION, earned: {}, progress: {}, totals: { ...TOTALS_ZERO }, timed: {} };
 }
 
 const plainObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -134,6 +156,18 @@ export function normalizeAchievements(raw) {
   if (plainObject(src.totals)) {
     for (const k of Object.keys(TOTALS_ZERO)) out.totals[k] = intOr(src.totals[k], 0);
   }
+  // G11 timed bucket (namespace v2): best stat values at '<stat>@<within>'
+  // keys. A SIBLING of totals on purpose — every TOTALS_ZERO value is an int
+  // coerced with intOr above, so an object in there would be poisoned to 0.
+  // Repair rules: a missing/garbage bucket normalises to {}; only keys the
+  // LIVE catalog still declares are kept; values via intOr. An earned stamp
+  // is never dropped by any of this (the rule above).
+  if (plainObject(src.timed)) {
+    for (const [k, v] of Object.entries(src.timed)) {
+      if (!TIMED_KEYS.has(k)) continue;
+      out.timed[k] = intOr(v, 0);
+    }
+  }
   // An achievement can be earned without a stamped progress value (older save,
   // or earned via a state goal that has no number) — backfill so the gallery
   // never shows "0 / 5" next to a finished trophy.
@@ -148,7 +182,10 @@ export function normalizeAchievements(raw) {
 // the CHEAP check ensureAchievements uses on the hot path; full normalisation
 // is a repair, not a per-read job.
 export function isValidNamespace(ns) {
-  return plainObject(ns) && plainObject(ns.earned) && plainObject(ns.progress) && plainObject(ns.totals);
+  // G11: `timed` joins the structural check, so a v1 payload (no bucket) is
+  // repaired ONCE through ensureAchievements -> normalizeAchievements.
+  return plainObject(ns) && plainObject(ns.earned) && plainObject(ns.progress) &&
+    plainObject(ns.totals) && plainObject(ns.timed);
 }
 
 // Lazily attach the namespace. Callers do not have to remember to.
@@ -212,11 +249,27 @@ export function measuredValue(profile, ach) {
     case 'total': return t[g.stat] || 0;
     case 'best': return t['best' + cap(g.stat)] || 0;
     case 'state': return stateValue(profile, g.stat);
+    // G11: the timed bucket — the best value that stat reached in any run that
+    // settled within the goal's clock ceiling. goalMet stays the single
+    // `measuredValue >= n` path; no new branch there.
+    case 'run': return (a.timed && a.timed[g.stat + '@' + g.within]) || 0;
     default: return 0;
   }
 }
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+// G11 TIMED MEASUREMENT — all through the ONE existing code path.
+//
+// The run-summary stats a 'run' goal may measure. summaryStat maps a stat name
+// onto the summary object and returns 0 for an unknown stat, so a typo in the
+// catalog MEASURES 0 (never earns) instead of throwing at settle time — and
+// auditRunGoals below catches it loudly at test time anyway.
+export const RUN_STATS = ['wave', 'kills', 'gold', 'chests', 'bossKills', 'evolutions', 'weaponLevel'];
+export function summaryStat(r, stat) {
+  if (!RUN_STATS.includes(stat)) return 0;
+  return intOr((r && r[stat]), 0);
+}
 
 // 'state' goals are facts about what the profile OWNS right now, not counters.
 // Returning a 0/1-ish measure keeps every goal comparable through one code
@@ -304,6 +357,22 @@ export function recordRun(profile, run) {
   bump('survived', r.survived ? 1 : 0);
   bump('runs', 1);
 
+  // G11 timed fold, from the SAME summary: for each catalog 'run' goal, if this
+  // run's own clock (at settle) is inside the ceiling, the bucket keeps the
+  // best stat value seen under that ceiling. A run that never settled a time
+  // (time 0/missing) records nothing — a summary without a clock cannot honour
+  // a clock ceiling, and 0 would poison a real best.
+  const rt = intOr(r.time, 0);
+  if (rt > 0) {
+    for (const ach of ACHIEVEMENTS) {
+      const g = ach.goal;
+      if (g.kind !== 'run') continue;
+      if (rt > g.within) continue;   // boundary is INCLUSIVE: rt === within earns
+      const key = g.stat + '@' + g.within;
+      a.timed[key] = Math.max(a.timed[key] || 0, summaryStat(r, g.stat));
+    }
+  }
+
   // __fullBuildRun is a TRANSIENT fact about THIS run: FULL_BUILD requires
   // surviving to the limit, so it is set from the summary, consulted by the
   // 'state' goal, and left on the profile (harmless, and it keeps the goal
@@ -357,6 +426,26 @@ export function achievementForUnlock(kind, id) {
   return ACHIEVEMENTS.find(a => a.unlock && a.unlock.kind === kind && a.unlock.id === id) || null;
 }
 
+// G11: every 'run' goal must be measurable and honest. Fail loudly at TEST
+// time, not silently at runtime: an unknown stat would measure 0 forever (an
+// unearnable trophy), and a non-positive/non-integer ceiling is a broken clock
+// promise. Same spirit as auditUnlockTargets.
+export function auditRunGoals() {
+  const bad = [];
+  for (const ach of ACHIEVEMENTS) {
+    const g = ach.goal;
+    if (g.kind !== 'run') continue;
+    if (!RUN_STATS.includes(g.stat)) bad.push(ach.id + ' -> unknown stat ' + JSON.stringify(g.stat));
+    if (!(Number.isInteger(g.within) && g.within > 0)) {
+      bad.push(ach.id + ' -> within ' + JSON.stringify(g.within) + ' is not a positive integer');
+    }
+    if (!(Number.isInteger(g.n) && g.n > 0)) {
+      bad.push(ach.id + ' -> n ' + JSON.stringify(g.n) + ' is not a positive integer');
+    }
+  }
+  return bad;
+}
+
 // Every unlock target must exist in the live catalogs. Exported (and asserted
 // by the test) so a typo in the table above fails loudly at test time instead
 // of silently granting nothing at runtime.
@@ -402,6 +491,14 @@ export function goalText(ach) {
   };
   const label = labels[g.stat] || g.stat;
   if (g.kind === 'total') return label + ' (all runs)';
+  // G11 timed goals, stated as implemented: the stat threshold and the run's
+  // OWN clock at settle, conjoined. Never "before X" — the measurement reads
+  // the clock at the settle funnel, not at the moment the stat crossed.
+  if (g.kind === 'run') {
+    const noun = { wave: 'Wave', kills: 'Enemies slain', gold: 'Gold earned' }[g.stat] || label;
+    const mm = Math.floor(g.within / 60), ss = String(g.within % 60).padStart(2, '0');
+    return `${noun} ${g.n}+ in a run under ${mm}:${ss}`;
+  }
   return label + ' (single run)';
 }
 

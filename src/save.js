@@ -402,9 +402,28 @@ export function validateProfile(profile, cat) {
   } else if (totalsIn !== undefined) {
     repairs.push('achievements.totals');
   }
+  // G11 timed bucket (namespace v2): same STRUCTURE-ONLY pass as progress —
+  // opaque '<stat>@<within>' keys preserved verbatim for the newer-build
+  // round-trip, values intOr'd. An absent bucket is simply absent (no repair
+  // flag): a v1 save is not damaged, it just predates the bucket, and
+  // ensureAchievements normalises it on next read.
+  const achTimed = {};
+  const timedIn = achIn.timed;
+  if (plainObject(timedIn)) {
+    for (const [k, n] of Object.entries(timedIn)) {
+      if (UNSAFE_KEYS.has(k)) { repairs.push('achievements.timed.' + k); continue; }
+      const v = Number(n);
+      if (!Number.isFinite(v)) { achTimed[k] = 0; repairs.push('achievements.timed.' + k); continue; }
+      const iv = Math.max(0, Math.floor(v));
+      achTimed[k] = iv;
+      if (iv !== n) repairs.push('achievements.timed.' + k);
+    }
+  } else if (timedIn !== undefined) {
+    repairs.push('achievements.timed');
+  }
   const achV = Number.isFinite(Number(achIn.v)) && Math.floor(Number(achIn.v)) > 0
     ? Math.floor(Number(achIn.v)) : 1;
-  out.achievements = { v: achV, earned, progress: achProgress, totals };
+  out.achievements = { v: achV, earned, progress: achProgress, totals, timed: achTimed };
   if (!plainObject(p.achievements) && p.achievements !== undefined) repairs.push('achievements');
 
   // ---- encounters (G10: bestiary sightings) ----

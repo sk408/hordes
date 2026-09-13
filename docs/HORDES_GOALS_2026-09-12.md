@@ -274,7 +274,7 @@ real information, and rare tiers spawn at controlled, documented rates that the 
 NOTES: new enemy tiers change difficulty and loot, so this interacts with G5/G6 and must be measured, not
 assumed. Unknown entries should be tantalising (silhouette + "???"), not blank.
 
-### G11 — TIMED ACHIEVEMENTS + CHALLENGE MODES  [status: not started]
+### G11 — TIMED ACHIEVEMENTS + CHALLENGE MODES  [status: IN PROGRESS 2026-09-12 — DISPATCHED, nothing built yet. See TICK NOTE 14]
 Owner: *"have timed acheivements. have challenge play modes"*
 - Achievements with time/completion constraints, and selectable modes that alter the run's rules.
 **Reached when:** at least one timed achievement is completable and verified, and at least one challenge
@@ -574,7 +574,7 @@ spawn, linear with a stat, and not every type can roll elite). Rare signalling h
 for secrets (pulsing icon, black question mark, silhouette, stopped timer). Every new tier should introduce
 a MECHANIC, not a multiplier.
 
-**G23 — BESTIARY WITH FOUR JOBS.** [status: PARTIAL 2026-09-12 — kill counter / stat rows / masked slots / flavour landed in `b761e86` (G10); the "which entry am I missing" FILTER and the unlock-tied HOOK are OPEN. See TICK NOTE 13] Per-enemy KILL COUNTER (proof of progress), combat stats that matter
+**G23 — BESTIARY WITH FOUR JOBS.** [status: PARTIAL 2026-09-12 — kill counter / stat rows / masked slots / flavour landed in `b761e86` (G10); the "which entry am I missing" FILTER and the unlock-tied HOOK are OPEN. See TICK NOTE 13 FILTER dispatched 2026-09-12 as PART C of the G11 brief; the HOOK is BLOCKED on a design call - no achievement in the catalog names a specific enemy or boss, so any "TIED: ..." line would be invented. See TICK NOTE 14] Per-enemy KILL COUNTER (proof of progress), combat stats that matter
 (HP/power/speed/resistances/skills/stage), undiscovered entries that show the SLOT but hide the identity
 (number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
 a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
@@ -1654,3 +1654,75 @@ report, and flipped the marker. No new goal was started.
 
 **NEXT GOAL: G11 (timed achievements + challenge modes)** — next in the ranked queue. G23's remaining
 filter/hook is a small follow-up that can ride along with it.
+
+## TICK NOTE 14 — 2026-09-12 (goal pilot tick, subagent:spawnfa, agentlock held, DISPATCH ONLY)
+
+**Goal worked: G11 (timed achievements + challenge modes, build-plan wave W9) with G23's remaining
+bestiary FILTER riding along as PART C.** Next in the ranked queue after G10. Dispatched, not built.
+
+**Independently re-verified this tick (my own runs, not a report):**
+- `bash /tmp/run_all.sh` at the top of the tick => **PASS=63 FAIL=0**. Working tree CLEAN.
+- HEAD is `c4aee80` (the overlay-card overlap fix), one commit past the G10 commit `b761e86` that TICK
+  NOTE 13 verified and flipped. G10's own artifacts are still on disk unchanged.
+- The dispatch target was idle and provably empty before I used it: `hub-worker queue cli:glm-hordes-g8`
+  => `pending_tasks: []`, `running: null`, no pending interrupts, and no worker in `.hub-worker/*` had a
+  `running.json`.
+
+**Written and dispatched:**
+- Brief: **`docs/briefs/G11_CHALLENGE_MODES.md`** (227 lines, self-contained). PART A timed achievements:
+  a new DECLARATIVE goal kind `{ kind:'run', stat, n, within }` measured through the existing
+  single `measuredValue >= n` path, persisted as a new `timed` bucket that is a SIBLING of `totals` (not
+  inside it - `TOTALS_ZERO` values are ints and `intOr` would poison an object to 0), with
+  `ACH_NAMESPACE_VERSION` 1 -> 2 and a documented repair that never drops an earned stamp; the semantics
+  are pinned to the primitive the game actually has (a run that SETTLED with stat >= n and its own clock
+  <= within) and the brief forbids the player-facing lie "reached wave 5 before 3:00". 4 timed
+  achievements named, >= 2 carrying an EXISTING unlock kind. PART B challenge modes: a new pure
+  `src/challenges.js` (STANDARD / ONE_WEAPON / NO_POTIONS) applied at ONE seam each in `startRun()`,
+  chosen from ONE title-screen card, shown in-run and on the end screen, session-scoped and NOT persisted,
+  with the integrity bar made testable (deep profile comparison across a challenge run, gold settlement
+  unchanged, no leakage across runs, reload returns to STANDARD). The brief explicitly forbids duplicating
+  the `heat.js` opt-in-difficulty axis (G24 owns that) and forbids stat-multiplier modes. PART C: the
+  bestiary ALL/MISSING filter, ring-normalised inside the filtered list, with an honest all-discovered
+  empty state.
+- Dispatched to the idle governed worker **`cli:glm-hordes-g8`** via `hub-worker issue hub @cli:glm-hordes-g8
+  ... --async` => task **`msg_01M2C5W8JC022DVKAVQZHTRKBQ`**. The issue text carries the house rules, the
+  agentlock acquire/release rule, and - new this tick - an explicit retry-on-rc=1 instruction (sleep 20,
+  up to 5 tries, report `blocked:` rather than editing without the lock), because the pilot releases the
+  lock at the end of the tick and an eager builder could otherwise collide with that release window.
+  **`delegate_task` is still not available in this cron runtime** - `tool_search` returns only
+  `process_manage`, so hub-worker is the delegation path, as in every prior tick.
+
+**Stale work cancelled (housekeeping, could have cost a whole cycle):**
+- A **duplicate G10 dispatch was still queued** on the same worker: `msg_01M2BZYHYYTFAVTH1H74PQ4W81`
+  (author `subagent:spawneee`), i.e. the G10 brief that TICK NOTE 12 issued and TICK NOTE 13 verified as
+  landed in `b761e86`. Left alone it would have re-run the whole G10 build ahead of the G11 task. Dropped
+  with `hub-worker cancel` => `{"cancelled": ..., "state": "pending"}`; the queue is now empty.
+- **Risk left standing, named honestly:** several other `.hub-worker/*/queued.json` files still hold
+  hordes-flavoured tasks queued by earlier hub cycles (`cli_glm-hordes` x2 from `remy:orchestrator`,
+  `cli_glm-hb1` x2 from `cli:glm-hordes`, `cli_glm-hb5` and `cli_glm-hb7` from `cli:kimi-smack`, one of
+  which asks for a `test/test_draft_sim.mjs` divergence run). None is running and none holds the lock, but
+  if a hub cycle wakes one of those workers while the G11 builder holds the lock, the second writer stops
+  on rc=1 by design - so the lock is doing its job. Flagged rather than silently left.
+
+**COULD NOT VERIFY (honest):**
+- **Nothing is built.** `src/challenges.js` does not exist, `achievements.js` has no `'run'` goal kind,
+  and the bestiary has no filter - `docs/briefs/G11_CHALLENGE_MODES.md` is the only artifact. The
+  builder's `done:` report will be a CLAIM; the next tick must re-run the suite itself (3x), read the new
+  test files, diff the balance numbers, and open the phone PNG before accepting G11.
+- The timed goals' semantics are a **design decision made by the pilot, not by the owner**: a timed
+  achievement means "that stat reached, in a run that settled under the clock", not "that stat reached
+  before the clock struck". It is honest as implemented and the brief forbids wording that overstates it,
+  but if the owner wanted true per-wave timestamps, that is a bigger build and this must be revisited.
+- **The G23 HOOK is now formally BLOCKED, not merely unbuilt.** The goals doc asked for "unlock-tied
+  entries highlighted + flavour text", and the catalog cannot support it: `achievementForUnlock()` exists
+  for shop rows / characters / weapons / elites, and no achievement in `src/achievements.js` names a
+  specific enemy or boss. Any "TIED: ..." line today would be invented data, so the brief explicitly
+  forbids building it. It needs a design decision (e.g. a per-family kill achievement per enemy, or
+  tier-tied content), and it is recorded here instead of guessed.
+- Balance impact of the two rule modes is asserted UNCHANGED for the standard path by the brief; the
+  modes' own effect on difficulty is deliberately **not** measured this wave (no sim change was requested
+  and the run-scoped modes are outside the sim's model). If the builder reports a balance delta for the
+  standard path, that is a defect, not a tuning result.
+- Lock hygiene: acquired at the top of this tick and released before ending it (the brief tells the
+  builder to acquire it, retry on rc=1, and release it even on failure). `agentlock release` resolves the
+  lock from CWD - it must be run from `/home/claude/projects/hordes`.

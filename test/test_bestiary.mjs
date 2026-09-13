@@ -23,7 +23,7 @@ import { ENEMY_TYPES, resolveLook } from '../src/enemy_types.js';
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from '../src/bosses.js';
 import { RARITY } from '../src/rarity.js';
 import { boot, suite } from './_harness.mjs';
-import { ENCOUNTER_IDS, seenCount, totalEncounters, bestiaryModel } from '../src/encounters.js';
+import { ENCOUNTER_IDS, seenCount, totalEncounters, bestiaryModel, recordEncounter } from '../src/encounters.js';
 
 const S = suite('test_bestiary');
 
@@ -227,12 +227,13 @@ S.check('opening the guide sets mode bestiary with a masked first entry', () => 
   cardWith('BESTIARY').click();
   assert.equal(st.mode, 'bestiary', 'mode is bestiary');
   assert.ok(st.bestiaryView && st.bestiaryView.id, 'state.bestiaryView is populated');
-  assert.equal(cards().length, 3, 'PREV / NEXT / BACK');
+  assert.equal(cards().length, 4, 'FILTER / PREV / NEXT / BACK');
   assert.equal(st.bestiaryView.discovered, false, 'a fresh profile starts masked');
   assert.equal(h.elements['ov-title'].textContent, '???', 'the name is masked');
   const body = h.elements['ov-sub'].innerHTML;
   assert.ok(body.includes('not yet encountered'), 'no stats, no behaviour lines');
-  assert.ok(/^\d+ \/ \d+<br>/.test(body), 'the ring position leads the caption');
+  assert.ok(/^FILTER: ALL<br>\d+ \/ \d+<br>/.test(body),
+    'the caption names the filter, then the ring position');
 });
 
 S.check('the guide clears the overlay sheet so the canvas art is visible', () => {
@@ -383,6 +384,78 @@ S.check('the guide paints NO play HUD (the canvas half of the chrome gate)', () 
   R.drawPlayHud(ctx, st);
   assert.equal(R.hudChrome, null, 'and NONE are built while the guide is up');
   st.mode = 'playing';
+});
+
+// ---- G23/G11: the ALL/MISSING filter (the guide's remaining open item) -----
+S.check('the filter defaults to ALL; MISSING lists only undiscovered entries', () => {
+  st.mode = 'menu';                                     // leave the run cleanly
+  T.openBestiary();
+  assert.equal(T.bestiaryFilter.get(), 'ALL', 'default is ALL');
+  const all = T.bestiaryDisplayIds();
+  const model = bestiaryModel(T.getProfile());
+  assert.ok(model.some(e => e.discovered), 'this profile has discoveries (a run happened)');
+  const missingModel = model.filter(e => !e.discovered);
+  T.bestiaryFilter.cycle();                             // the REAL card/key path
+  assert.equal(T.bestiaryFilter.get(), 'MISSING', 'the cycle flipped it');
+  assert.deepEqual(T.bestiaryDisplayIds(), missingModel.map(e => e.id),
+    'MISSING is exactly the undiscovered slice of the same model');
+  assert.ok(T.bestiaryDisplayIds().length < all.length, 'and it is strictly smaller here');
+  assert.ok(h.elements['ov-sub'].innerHTML.startsWith('FILTER: MISSING'),
+    'the caption names the live filter');
+});
+
+S.check('the ring wraps INSIDE the filtered list; a switch re-normalises the index', () => {
+  const ids = T.bestiaryDisplayIds();
+  const n = ids.length;
+  assert.ok(n >= 2, 'the filtered list is walkable (' + n + ' entries)');
+  st.bestiaryIdx = 0; T.bestiaryStep(0);
+  T.bestiaryStep(-1);
+  assert.equal(st.bestiaryIdx, n - 1, 'PREV from the first wraps to the filtered LAST');
+  T.bestiaryStep(1);
+  assert.equal(st.bestiaryIdx, 0, 'NEXT from the last wraps to the filtered FIRST');
+  assert.equal(st.bestiaryView.id, ids[0], 'the view is the filtered list\'s own first entry');
+  // A stale out-of-range index (from the longer ALL list) must be normalised
+  // by the switch, never index past the shorter list.
+  st.bestiaryIdx = 999;
+  T.bestiaryFilter.cycle();                             // back to ALL
+  assert.ok(st.bestiaryIdx < T.bestiaryDisplayIds().length,
+    'the switch normalised the stale index into range');
+});
+
+S.check('the F key cycles the filter (the FILTER card\'s key twin)', () => {
+  T.bestiaryFilter.cycle();                             // ALL -> MISSING
+  assert.equal(T.bestiaryFilter.get(), 'MISSING');
+  key('f');
+  assert.equal(T.bestiaryFilter.get(), 'ALL', 'F cycles it back');
+  assert.ok(cardWith('FILTER').innerHTML.includes('every entry'), 'the card names ALL');
+  key('f');
+  assert.ok(cardWith('FILTER').innerHTML.includes('undiscovered'), 'the card names MISSING');
+  key('f');                                             // leave it on ALL
+});
+
+S.check('MISSING with everything discovered is an HONEST empty state', () => {
+  const profile = T.getProfile();
+  for (const e of bestiaryModel(profile)) {
+    if (!e.discovered) recordEncounter(profile, e.id, { wave: 1, at: 1 });
+  }
+  assert.equal(seenCount(profile), totalEncounters(), 'the profile discovered everything');
+  T.bestiaryFilter.cycle();                             // ALL -> MISSING: empty
+  assert.equal(T.bestiaryDisplayIds().length, 0, 'the filtered list is empty');
+  assert.equal(st.bestiaryView, null, 'no payload paints');
+  assert.equal(h.elements['ov-title'].textContent, 'BESTIARY', 'the title is honest');
+  assert.ok(h.elements['ov-sub'].textContent.includes('everything discovered'),
+    'the caption says what happened, not "broken"');
+  T.bestiaryStep(1);                                    // PREV/NEXT must not crash
+  T.bestiaryStep(-1);
+  assert.equal(T.bestiaryDisplayIds().length, 0, 'still empty, still walkable');
+  key('f');                                             // back to ALL
+  assert.equal(T.bestiaryDisplayIds().length, totalEncounters(), 'ALL still lists everything');
+  // The overlay-reset contract holds across the whole filter walk: BACK
+  // restores the title and clears the payload.
+  cardWith('BACK').click();
+  assert.equal(st.mode, 'menu', 'BACK returns to the title from a filtered guide');
+  assert.equal(st.bestiaryView, null, 'the payload is cleared');
+  assert.equal(ov.style.background, '', 'the sheet background reset');
 });
 
 S.done();

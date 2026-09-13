@@ -10,6 +10,7 @@ import {
 } from './sprites.js';
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
+import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
 export const PLAYER_SPRITE = [
@@ -1008,7 +1009,7 @@ export class Renderer {
     const p = state.player;
     if (!p || !p.stats) { this.hudChrome = null; return; }
     const t = state.time || 0;
-    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null };
+    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, challenge: null };
 
     // --- graphic HP + mana bars, top-left (below the boss-bar zone) ---
     // Damage flash: when hp DROPS, the lost segment stays white for ~0.45s
@@ -1167,6 +1168,30 @@ export class Renderer {
     g.fillStyle = '#ff2f5e';                       // the limit tick (30:00)
     g.fillRect(cbX + cbW - 1, cbY, 1, cbH);
     chrome.clock = { text: clockTxt, frac: limitFrac, finalCall };
+
+    // --- G11 CHALLENGE MODE BADGE ------------------------------------------
+    // Only when a NON-standard mode is live (a STANDARD run renders
+    // byte-identically to before — the badge is simply not drawn). Same badge
+    // language as the LV plate: gold border, dark inset, warm bold text, set
+    // directly under the clock's limit bar so the right column reads
+    // clock -> mode.
+    if (state.challenge && state.challenge !== 'STANDARD') {
+      const name = (CHALLENGE_BY_ID[state.challenge] || CHALLENGE_BY_ID.STANDARD).name;
+      const bPx = 9;
+      const bW = name.length * Math.round(bPx * 0.62) + 6;
+      const bH = bPx + 4;
+      const bX = C.VIEW_W - 24 + 2 - bW;
+      const bY = cbY + cbH + 8;
+      g.fillStyle = '#ffd75e';                       // gold badge border
+      g.fillRect(bX, bY, bW, bH);
+      g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
+      g.fillRect(bX + 1, bY + 1, bW - 2, bH - 2);
+      g.font = 'bold ' + bPx + 'px monospace';
+      g.textBaseline = 'top';
+      g.fillStyle = '#ffe9a8';
+      g.fillText(name, bX + 3, bY + 2);
+      chrome.challenge = { id: state.challenge, name };
+    }
 
     // --- WAVE-27: no doctrine text on the canvas ----------------------------
     // The FOCUS / STANCE readout that used to sit here is gone (owner ruling:

@@ -331,6 +331,16 @@ console.log('VALIDATION OF EVERY PERSISTED COLLECTION:');
   ok(ach && ach.earned.FIRST_BLOOD === 1700000000000 && ach.progress.KILLS_100 === 7 &&
      ach.totals.kills === 42,
     'the achievements namespace round-trips its earned/progress/totals data');
+  // G11: the timed bucket is validated structurally (opaque keys kept for the
+  // newer-build round-trip, values intOr'd) and a v1 payload without one gains
+  // an empty bucket, never a poisoned one.
+  ok(ach && ach.timed && typeof ach.timed === 'object' && Object.keys(ach.timed).length === 0,
+    'a v1 achievements payload gains an empty timed bucket through validation');
+  const timedAch = v({ achievements: { v: 2, earned: {}, progress: {}, totals: {},
+    timed: { 'wave@180': 5, 'kills@300': 'many', '__proto__': 1 } } }).achievements;
+  ok(timedAch.timed['wave@180'] === 5 && timedAch.timed['kills@300'] === 0 &&
+     !Object.prototype.hasOwnProperty.call(timedAch.timed, '__proto__'),
+    'the timed bucket keeps its keys, repairs garbage values and blocks unsafe keys');
   // An id written by a NEWER build survives this one (the `purchased` policy),
   // so a save never loses data by passing through an older build.
   const futAch = v({ achievements: { v: 1, earned: { FROM_THE_FUTURE: 5, FIRST_BLOOD: 3 }, progress: {}, totals: {} } }).achievements;
@@ -375,10 +385,14 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
   rich.runsPlayed = 9;
   rich.nested = { bossKills: 3, tags: ['a', 'b'] };
   rich.achievements = {
-    v: 1,
+    v: 2,
     earned: { FIRST_BLOOD: 1700000000000, KILLS_100: 1700000000500 },
     progress: { KILLS_100: 100, KILLS_1000: 250 },
     totals: { kills: 250, runs: 4, bestWave: 6 },
+    // G11: the timed bucket is part of the namespace now, so the lossless
+    // fixture exercises it (added the same way `encounters` was when G10
+    // grew the profile).
+    timed: { 'wave@180': 5, 'kills@300': 412 },
   };
   rich.trophies = ['boss_slayer'];
   rich.encounters = {

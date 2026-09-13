@@ -85,6 +85,10 @@ import {
   earnedCount, totalAchievements,
 } from './achievements.js';
 import { TROPHY_ART } from './art/index.js';
+import {
+  DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
+  challengeRules, nextChallengeId, describeChallenge,
+} from './challenges.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -206,6 +210,13 @@ const state = {
   character: null,   // equipped CHARACTERS entry for the current run
   weaponSlots: 6,    // per-run slot cap (startWeaponSlots(profile) in startRun)
   baseWeaponSlots: 6, // pre-choice slot base (Merchant's Pact adds on top)
+  // G11 CHALLENGE MODES — run-scoped, reset in startRun. `challenge` is the
+  // selected mode's id (never persisted); weaponCap/potionCap are the ceilings
+  // the mode's rules impose, defaulting to the constants a STANDARD run uses,
+  // so every consumer below can read them unguarded.
+  challenge: 'STANDARD',
+  weaponCap: 6,      // rule ceiling on weaponSlots (ONE_WEAPON: 1)
+  potionCap: 3,      // rule ceiling on carried potions (NO_POTIONS: 0)
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
   evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
@@ -271,6 +282,10 @@ const state = {
   // masks an undiscovered entry to its own silhouette in ONE flat colour).
   bestiaryIdx: 0,
   bestiaryView: null,
+  // G23/G11: the guide's ALL/MISSING filter (presentation only, never
+  // persisted). bestiaryIdx is normalised against the FILTERED list inside
+  // refreshBestiaryView, so switching filters can never index out of range.
+  bestiaryFilter: 'ALL',
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -772,7 +787,8 @@ function takeChoice(offer) {
   // the absolute CONFIG cap) — recomputed from the restored scope, so a swap
   // away from the Pact narrows it again.
   const bonus = (p.choices && p.choices.weaponSlotBonus) || 0;
-  state.weaponSlots = Math.min(C.WEAPON_SLOTS, state.baseWeaponSlots + bonus);
+  // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
+  state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
   interMsg = `BLESSING: ${offer.title} — ${offer.desc} · tap another offer to change it`;
   audio.playSfx('levelup');
   openIntermission();   // re-render: offers + gold line refresh
@@ -1755,7 +1771,8 @@ function update(dt) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
-        state.weaponSlots = Math.min(C.WEAPON_SLOTS, state.baseWeaponSlots + bonus);
+        // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
+        state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
         sh.used = true;
         toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
         audio.playSfx('levelup');
@@ -1804,7 +1821,7 @@ function update(dt) {
   for (let i = state.drops.length - 1; i >= 0; i--) {
     const d = state.drops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
-      if (p.potions[d.kind] < C.POTIONS.MAX_CARRIED) {
+      if (p.potions[d.kind] < state.potionCap) {   // G11: the run's rule ceiling
         p.potions[d.kind]++;
         state.drops.splice(i, 1);
         toast((d.kind === 'hp' ? 'HEALTH' : 'MANA') + ' POTION FOUND');
@@ -2288,7 +2305,12 @@ function nextUnlockWithinReach(prof) {
 // entirely when every row is owned — no filler.
 function endScreenBody({ lead, cause = null, gold, firstClear }) {
   const goal = nextUnlockWithinReach(profile);
-  let html = lead;
+  // G11: a challenge result must be distinguishable from a clean clear — the
+  // mode is the LEAD line's first clause, and only when non-standard (a
+  // STANDARD run renders byte-identically to today).
+  let html = !isStandard(state.challenge)
+    ? `<span class="cause">${challengeOf(state.challenge).name} RUN</span><br>` + lead
+    : lead;
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · purse ${profile.gold}</span>`;
@@ -2543,6 +2565,17 @@ function setHudTextEnabled(b) {
   try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
 }
 
+// ---------- G11: the pending challenge mode (SESSION-scoped, never persisted) ----
+// The title screen's CHALLENGE card cycles this. startRun() stamps it onto the
+// run-scoped state.challenge and derives the rule ceilings from it — nothing is
+// written to the profile or storage, so a reload returns to STANDARD and a
+// challenge run mutates nothing persistent (the brief's bar, tested).
+let pendingChallenge = DEFAULT_CHALLENGE_ID;
+function cyclePendingChallenge() {
+  pendingChallenge = nextChallengeId(pendingChallenge);
+  return pendingChallenge;
+}
+
 // ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
 // Sk408: fine pixel detail gets lost on small mobile screens. Ladder is the
 // sanctioned 1x -> 2x -> 3x -> 4x -> 6x -> 8x -> 1x cycle. render() reads
@@ -2624,7 +2657,9 @@ function showHowToPlay() {
     'arches — cross the gate for a timed buff<br>' +
     'shrines — drift close, gold buys a blessing<br>' +
     'intermission — paid chests (40/25/10% nothing), blessings,<br>' +
-    'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons');
+    'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons<br>' +
+    'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
+    '(ONE WEAPON / NO POTIONS); the HUD names the live mode');
   menuCard('GOT IT', 'into the horde (shows once)', () => {
     completeOnboarding();
     showTitle();
@@ -3003,6 +3038,12 @@ function showTitle() {
     () => showTrophies());
   menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
     () => showBestiary());
+  // G11: the challenge-mode selector. Session-scoped — the press cycles the
+  // mode and re-renders so the card always names the CURRENT selection; the
+  // sub-line is what makes the selection clearly distinguished from a standard
+  // run BEFORE the player commits to it.
+  menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
+    () => { cyclePendingChallenge(); showTitle(); });
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
@@ -3243,9 +3284,21 @@ function startRun() {
   // is linear in it), stamped before any in-run change.
   state.baseMaxHp = p.stats.maxHp;
   p.hp = p.stats.maxHp;                          // mods changed maxHp
-  const pots = startPotionCount(profile);        // character base + Travel Pack
+  // G11 CHALLENGE MODES — THE ONE APPLICATION SEAM. The session's pending mode
+  // is stamped onto the run, its rules become the two run-scoped ceilings, and
+  // the existing start-of-run numbers are CLAMPED to them (a rule can only
+  // constrain: STANDARD keeps today's constants byte-for-byte). This is the
+  // only place state.challenge is written; the four consumers of the ceilings
+  // (slot growth x2, potion pickup, chest potions) read the caps, never the
+  // constants, for the mode.
+  state.challenge = pendingChallenge;
+  refreshHints();   // G11: the hints line names the live mode (swapPilotMode early-returns on same-mode runs)
+  const rules = challengeRules(state.challenge);
+  state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
+  state.potionCap = rules.potions !== undefined ? rules.potions : C.POTIONS.MAX_CARRIED;
+  const pots = Math.min(state.potionCap, startPotionCount(profile)); // character base + Travel Pack
   p.potions = { hp: pots, mp: pots };
-  state.baseWeaponSlots = startWeaponSlots(profile); // 3 base; 4/5/6 shop-bought
+  state.baseWeaponSlots = Math.min(state.weaponCap, startWeaponSlots(profile)); // 3 base; 4/5/6 shop-bought
   state.weaponSlots = state.baseWeaponSlots;
   // WAVE-7 run-scoped systems reset here (fresh makePlayer already dropped
   // player.choices — these are the state-side companions):
@@ -3596,20 +3649,34 @@ function closeTrophies() {
 // reads ??? with NO stats and NO behaviour lines — the silhouette is the
 // tease, not a spoiler.
 function bestiaryDisplayIds() {
-  return bestiaryModel(profile).map(e => e.id);
+  return bestiaryFilteredModel().map(e => e.id);
+}
+
+// G23/G11 FILTER: the model slice the ring walks. ALL (default) walks every
+// entry; MISSING walks only the undiscovered ones — the "which entry am I
+// missing" question the guide could not answer before. Same bestiaryModel
+// source, so the filter can never disagree with the captions.
+function bestiaryFilteredModel() {
+  const model = bestiaryModel(profile);
+  return state.bestiaryFilter === 'MISSING' ? model.filter(e => !e.discovered) : model;
 }
 
 // Repaint the caption + the showcase payload for the CURRENT ring position.
 // state.bestiaryIdx is normalised here (not at the call sites), so PREV/NEXT
 // can step past either end and the ring wraps without a dead end.
 function refreshBestiaryView() {
-  const model = bestiaryModel(profile);
+  const model = bestiaryFilteredModel();
   const n = model.length;
   if (n === 0) {
     state.bestiaryView = null;
     ovTitle.textContent = 'BESTIARY';
     ovTitle.className = '';
-    ovSub.textContent = 'nothing to discover';
+    // HONEST empty state: MISSING with everything discovered is an
+    // accomplishment, not a broken ring — say so plainly, and PREV/NEXT stay
+    // no-ops that cannot crash (this early return IS their guard).
+    ovSub.textContent = state.bestiaryFilter === 'MISSING'
+      ? 'FILTER: MISSING — everything discovered. Nothing left to find.'
+      : 'nothing to discover';
     return;
   }
   state.bestiaryIdx = ((state.bestiaryIdx % n) + n) % n;
@@ -3621,7 +3688,7 @@ function refreshBestiaryView() {
 
   ovTitle.textContent = e.discovered ? e.name : '???';
   ovTitle.className = '';
-  const lines = [`${state.bestiaryIdx + 1} / ${n}`];
+  const lines = [`FILTER: ${state.bestiaryFilter}`, `${state.bestiaryIdx + 1} / ${n}`];
   if (e.discovered) {
     lines.push(...e.info);
     lines.push(`encountered ${e.kills} - first wave ${e.firstWave} - deepest wave ${e.bestWave}`);
@@ -3644,6 +3711,12 @@ function showBestiary() {
   overlay.style.background = 'transparent';
   overlay.style.justifyContent = 'flex-end';
   refreshBestiaryView();
+  // G23/G11 FILTER card: cycles ALL -> MISSING -> ALL. The sub names the
+  // CURRENT selection, so the press is never a guess; re-render through
+  // showBestiary so the card, the caption and the ring all agree.
+  menuCard('FILTER',
+    state.bestiaryFilter === 'MISSING' ? 'MISSING — only undiscovered entries' : 'ALL — every entry',
+    () => cycleBestiaryFilter());
   menuCard('PREV', 'previous entry', () => bestiaryStep(-1));
   menuCard('NEXT', 'next entry', () => bestiaryStep(1));
   menuCard('BACK', 'to title [ESC]', () => { closeBestiary(); showTitle(); });
@@ -3655,6 +3728,15 @@ function bestiaryStep(delta) {
   if (state.mode !== 'bestiary') return;
   state.bestiaryIdx += (Number(delta) || 0);
   refreshBestiaryView();
+}
+
+// G23/G11: flip the filter and repaint the whole guide. showBestiary re-runs
+// refreshBestiaryView, which re-normalises bestiaryIdx against the NEW list —
+// an out-of-range index after a switch is impossible by construction.
+function cycleBestiaryFilter() {
+  if (state.mode !== 'bestiary') return;
+  state.bestiaryFilter = state.bestiaryFilter === 'MISSING' ? 'ALL' : 'MISSING';
+  showBestiary();
 }
 
 // Leave the guide. Clears the showcase payload so the NEXT frame paints no
@@ -3860,9 +3942,11 @@ window.addEventListener('keydown', (ev) => {
     // G10 BESTIARY: the gallery's exact key contract — ESC backs out to the
     // title (what the BACK card promises) and the arrows walk the ring the
     // PREV/NEXT cards step. Reached from the title, so no paused run exists.
+    // G23/G11: F drives the ALL/MISSING filter (the FILTER card's key twin).
     if (k === 'escape') { closeBestiary(); showTitle(); }
     else if (k === 'arrowleft') bestiaryStep(-1);
     else if (k === 'arrowright') bestiaryStep(1);
+    else if (k === 'f') cycleBestiaryFilter();
   } else if (state.mode === 'menu' && k === 'escape') {
     showTitle();                     // every sub-menu backs out to title
   } else if (state.mode === 'settings') {
@@ -3987,7 +4071,14 @@ const HINT_LINES = {
   ],
 };
 function refreshHints() {
-  if (hintsEl) hintsEl.innerHTML = (HINT_LINES[state.pilotMode] || HINT_LINES.AUTO).join('<br>');
+  const lines = [...(HINT_LINES[state.pilotMode] || HINT_LINES.AUTO)];
+  // G11: name the live challenge mode while a non-standard run is up (the
+  // hints are in-run chrome; a STANDARD run sees the same four lines as
+  // before).
+  if (!isStandard(state.challenge)) {
+    lines.splice(1, 0, 'CHALLENGE: ' + challengeOf(state.challenge).name);
+  }
+  if (hintsEl) hintsEl.innerHTML = lines.join('<br>');
 }
 function applyHints() {
   refreshHints();
@@ -4264,6 +4355,9 @@ function hudTextBlock(p) {
     `   ${describeHeat(heatOf(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
     `RUN ${runClock(state.time)}/${runClock(C.RUN.LIMIT)}   WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
+    // G11: the mode badge line — only while a NON-standard mode is live, so a
+    // STANDARD run's text HUD is byte-identical to before.
+    (isStandard(state.challenge) ? '' : `MODE ${challengeOf(state.challenge).name}\n`) +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
 }
@@ -4739,7 +4833,23 @@ export const __TEST = {
   // (the ring, so a test can wrap every display id without a DOM click per
   // entry) — same shape as the gallery seam above.
   openBestiary: showBestiary, closeBestiary, bestiaryStep, bestiaryDisplayIds,
+  // G23/G11 filter seam: read the live filter, cycle it through the REAL
+  // card/key path (guarded to the bestiary mode).
+  bestiaryFilter: { get: () => state.bestiaryFilter, cycle: cycleBestiaryFilter },
   hudText: { get: hudTextEnabled, set: setHudTextEnabled },
+  // ---- G11 challenge-mode seam: the pending (session-scoped) selection, the
+  // cycle the title card drives, and the live run's stamp + rule ceilings, so
+  // a headless test can prove the seams through the REAL startRun without a
+  // DOM click. `select` is test-only: the title card is the player's one
+  // control surface.
+  challenge: {
+    get pending() { return pendingChallenge; },
+    cycle: cyclePendingChallenge,
+    select: (id) => { pendingChallenge = id; },
+    get live() { return state.challenge; },
+    get weaponCap() { return state.weaponCap; },
+    get potionCap() { return state.potionCap; },
+  },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
   setPilotMode: swapPilotMode, pilotInput,

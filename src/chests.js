@@ -172,7 +172,9 @@ function applyContents(state, contents, chest) {
 
   for (const u of contents.upgrades) u.apply(p);
   for (const k of ['hp', 'mp']) {
-    p.potions[k] = Math.min(C.POTIONS.MAX_CARRIED, p.potions[k] + contents.potions[k]);
+    // G11: the run's rule ceiling (NO_POTIONS stays at 0 — no chest refills a
+    // forbidden flask). startRun always sets state.potionCap before a run.
+    p.potions[k] = Math.min(state.potionCap, p.potions[k] + contents.potions[k]);
   }
   if (contents.tokenOptions.length > 0) {
     events.push({ kind: 'tokenOffer', options: contents.tokenOptions });

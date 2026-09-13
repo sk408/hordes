@@ -262,12 +262,25 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   // is taught now - so the count is DERIVED from the menu and the assertion is
   // about WHAT it teaches: every title card, the gallery included. A new menu
   // screen that nobody teaches fails here instead of shipping silently.
+  //
+  // G11: the ONE sanctioned exception is a RECORDED discovery decision. The
+  // builder brief (docs/briefs/G11_CHALLENGE_MODES.md B5) rules the CHALLENGE
+  // selector is left to discovery — the card's sub-line already names the
+  // selection, so a coachmark adds nothing. An exemption is a list entry with
+  // a reason, never a deleted assertion: a card that is neither taught nor
+  // listed here still fails.
+  const DISCOVERY_EXEMPT = ['CHALLENGE'];
   const seen = [];
   for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
     seen.push(tipOf()._html);
     tourRoot.fire('pointerdown', { stopPropagation() {} });
   }
-  assert.equal(seen.length, cards().length, 'stage-1 tour teaches every title card');
+  const taught = seen.length;
+  const exempt = cards().filter(c => DISCOVERY_EXEMPT.some(t => (c._html || '').includes('>' + t + '<'))).length;
+  assert.equal(exempt, DISCOVERY_EXEMPT.length,
+    'every recorded discovery exemption names a real title card');
+  assert.equal(taught, cards().length - exempt,
+    'stage-1 tour teaches every title card (or holds a recorded exemption for it)');
   assert.ok(seen.some(h => h.includes('TROPHIES')), 'the trophy gallery is taught, not left to luck');
   assert.equal(ls.get(TOUR_KEYS.stage1), '1', 'stage-1 flag persisted');
   assert.ok(!globalThis.document.body.children.includes(tourRoot), 'tour unmounted');

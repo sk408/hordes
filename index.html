@@ -25,7 +25,8 @@
     position: absolute; top: 8px; left: 8px;
     color: #e8e8f0; font-size: 14px; line-height: 1.5;
     text-shadow: 1px 1px 0 #000; pointer-events: none;
-    white-space: pre;
+    white-space: pre-wrap;               /* was: pre - grew the box past the screen edge */
+    max-width: calc(100vw - 16px);
   }
   #overlay {
     position: absolute; inset: 0; display: none;
@@ -247,6 +248,10 @@
        of each other. Top-align it and let it scroll. */
     #overlay { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain;
                padding: 10px 8px 14px; }
+    /* c4aee80's top-align is needed for the wrapped card rows (it is what stopped the
+       guide/gallery buttons stacking) but it also shrink-wraps the heading and the
+       sub-lines and pins them left. Centre only those; the card rows keep top-align. */
+    #overlay > h1, #overlay > .sub { align-self: center; }
     #overlay .cards { flex-wrap: wrap; justify-content: center; align-content: flex-start;
                       gap: 10px; width: 100%; }
     .card { width: min(30vw, 172px); min-height: 0; padding: 12px 10px; margin-bottom: 2px; }
@@ -286,7 +291,7 @@
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
     <div class="cards" id="ov-cards"></div>
-    <div class="sub">cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats (S in AUTO) &middot; ESC pause &middot; ? key hints &middot; or the on-screen buttons</div>
+    <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; M pilot (WASD+arrows manual) &middot; + / - zoom &middot; S or I stats (S in AUTO) &middot; ESC pause &middot; ? key hints &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>
