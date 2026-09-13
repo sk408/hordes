@@ -43,6 +43,11 @@ export const saveProfileToDisk = SAVE.saveProfileToDisk;
 export const readSaveFile = SAVE.readSaveFile;
 export const exportProfileText = SAVE.exportProfileText;
 export const buildExport = SAVE.buildExport;
+// v6 one-time-banner ledger: the sanctioned reader/writer for "has this player
+// already been shown banner X?" (see save.js). Re-exported so game code has one
+// import home.
+export const bannerSeen = SAVE.bannerSeen;
+export const markBannerSeen = SAVE.markBannerSeen;
 
 // ---------- Per-character namespace accessors (G19, schema v3) ----------
 // Re-exported with the live catalog injected, so the progression feature wave
@@ -513,8 +518,22 @@ export function catalogCost(rowIds) {
 // Weights NEED NOT sum to 100 — consumers normalize like pickRarity().
 // Tuning knobs in LUCK_TAPER (per-level rates); 0 = base table exactly.
 export const LUCK_MAX_LEVEL = 5;
-export const BASE_RARITY_WEIGHTS = { COMMON: 60, RARE: 25, EPIC: 12, LEGENDARY: 3 };
-export const LUCK_TAPER = { COMMON: 0.10, RARE: 0.12, EPIC: 0.25, LEGENDARY: 0.35 };
+// OWNER'S LADDER (2026-09-13): the target SHARE of drops at luck 0 —
+// COMMON 98% / RARE 1.7% / EPIC 0.2% / LEGENDARY 0.02%. These are the raw
+// shares, NOT rescaled to sum to 100 (they total 99.92): pickRarity normalizes,
+// so the ladder has ONE home and one meaning. The old 60/25/12/3 table made the
+// top tier a certainty by volume — measured 280 world drops in one fresh run
+// against a 3% weight = 8-15 legendaries per run. At 0.02% the same 280 drops
+// pay 1 legendary per ~18 runs.
+export const BASE_RARITY_WEIGHTS = { COMMON: 98, RARE: 1.7, EPIC: 0.2, LEGENDARY: 0.02 };
+// Per-luck-level rates; 0 = base table exactly.
+// LEGENDARY 0.35 -> 0.7 (owner-APPROVED): at 0.35 a LINEAR taper lifted the
+// legendary WEIGHT only 2.75x at max Fortune (500g x2.0 growth x5 levels =
+// 15,500g), so the buyable flooded the tier instead of unlocking it (measured
+// luck 0 = 8.4/run, luck 5 = 20.9/run on the old base). On the new ladder 0.7
+// reaches 4.5x at the cap: luck 0 = 1 per ~17.8 runs, luck 5 = 1 per ~2.4
+// (x7.4 gain), so maxing Fortune is what makes the top tier REACHABLE.
+export const LUCK_TAPER = { COMMON: 0.10, RARE: 0.12, EPIC: 0.25, LEGENDARY: 0.7 };
 
 export function luckDropWeights(luck) {
   const L = Math.max(0, Math.min(LUCK_MAX_LEVEL, Number(luck) || 0));

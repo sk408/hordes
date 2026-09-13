@@ -46,10 +46,13 @@ export const RULES = {
 };
 export const RULE_IDS = Object.keys(RULES);
 
-// The chest rarity ladder, LOW to HIGH. src/chests.js declares CHESTS.WEIGHTS
-// in this same order; test/test_run_rules.mjs asserts the two agree, so the
-// ladder cannot silently drift out of the bump.
-export const CHEST_RARITY_LADDER = ['common', 'rare', 'legendary', 'gamble'];
+// The chest rarity ladder, LOW to HIGH. src/chests.js declares
+// CHESTS.RARITY_WEIGHTS in this same order; test/test_run_rules.mjs asserts the
+// two agree, so the ladder cannot silently drift out of the bump.
+// GAMBLE IS DELIBERATELY ABSENT: it is not a rarity any more, it is its own
+// independent roll (CHESTS.GAMBLE_CHANCE), so HORDE BAIT cannot bump a chest
+// into it — and no chest can be bumped OUT of it either.
+export const CHEST_RARITY_LADDER = ['common', 'rare', 'epic', 'legendary'];
 
 // The weight ONE run-rule card carries in the draft pool. Deliberately low: a
 // rule is a run-defining pick and must never crowd out the weapon economy (the

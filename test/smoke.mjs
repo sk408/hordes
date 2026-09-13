@@ -1208,19 +1208,29 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // Every run starts in AUTO — even straight out of a MANUAL one.
   T.startRun();
   quietField();
-  assert(st.pilotMode === 'AUTO', 'runs must start in AUTO (got ' + st.pilotMode + ')');
-  assert(/Pilot:AUTO/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
+  assert(st.pilotMode === 'AUTO_ALL', 'runs must start in AUTO (got ' + st.pilotMode + ')');
+  assert(/Pilot:AUTO_ALL/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
 
   // Doctrine decorations survive the toggle (both directions, tested below).
   keyHandler({ key: 'Tab', preventDefault: () => {} });   // NEAREST -> TOUGHEST
   keyHandler({ key: 'g' });                               // BALANCED -> GREEDY
   pump(2);
-  keyHandler({ key: 'm' });                               // AUTO -> MANUAL
+  // (h) M now CYCLES the three-rung ladder AUTO ALL -> AUTO MOVE -> MANUAL, so
+  // MANUAL is two presses away. The middle rung is pinned rather than skipped:
+  // a 3-mode selector whose intermediate state was never asserted would pass
+  // with AUTO MOVE wired to the wrong controller.
+  keyHandler({ key: 'm' });                               // AUTO ALL -> AUTO MOVE
+  pump(2);
+  assert(st.pilotMode === 'AUTO_MOVE', 'the first M press lands on AUTO MOVE (got ' + st.pilotMode + ')');
+  assert(/Pilot:AUTO_MOVE/.test(hudText()), 'HUD readout names AUTO MOVE');
+  assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
+    'focus/stance decorations survive the AUTO ALL -> AUTO MOVE swap');
+  keyHandler({ key: 'm' });                               // AUTO MOVE -> MANUAL
   pump(2);
   assert(st.pilotMode === 'MANUAL', 'M must toggle into MANUAL');
   assert(/Pilot:MANUAL/.test(hudText()), 'HUD readout flips to MANUAL');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
-    'focus/stance decorations survive the AUTO->MANUAL swap');
+    'focus/stance decorations survive the AUTO MOVE -> MANUAL swap');
 
   // Held ArrowRight crosses a real distance; keyup STOPS the pilot dead.
   const x0 = st.player.x;
@@ -1309,7 +1319,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // joystick) and the autopilot resumes deciding on its own.
   T.joyVec(R, 0, R);                    // thumb still parked hard right
   keyHandler({ key: 'm' });
-  assert(st.pilotMode === 'AUTO', 'M must toggle back to AUTO');
+  assert(st.pilotMode === 'AUTO_ALL', 'M must toggle back to AUTO');
   assert(T.pilotInput.mag === 0 && T.pilotInput.x === 0 && T.pilotInput.y === 0,
     'switching to AUTO must drop the held stick vector');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
@@ -1333,7 +1343,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'blur must clear the analog stick vector too');
   pump(2);
   keyHandler({ key: 'm' });   // probe hygiene: leave AUTO
-  assert(st.pilotMode === 'AUTO', 'back to AUTO for the rest of the suite');
+  assert(st.pilotMode === 'AUTO_ALL', 'back to AUTO for the rest of the suite');
   console.log('manual pilot: toggle/movement/diagonal/joystick(half+full+dead+release)/AUTO-resume/blur verified');
 }
 
@@ -1367,7 +1377,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyUpHandler({ key: 'ArrowLeft' });
   assert(st.player.x < rx0 - 20, 'manual movement resumes after the draft closes');
   keyHandler({ key: 'm' });
-  assert(st.pilotMode === 'AUTO', 'probe hygiene: back to AUTO');
+  assert(st.pilotMode === 'AUTO_ALL', 'probe hygiene: back to AUTO');
   console.log('draft pause: input inert under the overlay, M ignored, resume clean');
 }
 
@@ -1552,7 +1562,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 
   // Probe hygiene: back to AUTO at 1x for the rest of the suite.
   keyHandler({ key: 'm' });
-  assert(st.pilotMode === 'AUTO' && st.zoom === 1, 'hygiene: AUTO + zoom 1x');
+  assert(st.pilotMode === 'AUTO_ALL' && st.zoom === 1, 'hygiene: AUTO_ALL + zoom 1x');
   console.log('world zoom: live +/- apply, 2x window halved, camera deadzone, HUD proven native 1x');
 }
 

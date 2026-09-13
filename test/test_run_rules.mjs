@@ -53,76 +53,110 @@ const stateWith = (rules = null) => ({ player: { ...makePlayer(), rules: rules |
 console.log('run rules (G8 step 3): the condition cards, at their real seams');
 
 // ---- 1. the ladder matches the chest bands ---------------------------------
-ok('CHEST_RARITY_LADDER is the declared order of CHESTS.WEIGHTS', () => {
-  assert.deepEqual(CHEST_RARITY_LADDER, Object.keys(CHESTS.WEIGHTS));
-  const total = Object.values(CHESTS.WEIGHTS).reduce((a, b) => a + b, 0);
-  assert.equal(total, 100, 'the bands still sum to 100');
+ok('CHEST_RARITY_LADDER is the declared order of CHESTS.RARITY_WEIGHTS', () => {
+  assert.deepEqual(CHEST_RARITY_LADDER, Object.keys(CHESTS.RARITY_WEIGHTS));
+  const L = CHESTS.RARITY_WEIGHTS;
+  const total = Object.values(L).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(total - 99.92) < 1e-9, 'the bands still declare their raw shares');
+  assert.deepEqual(L, { common: 98, rare: 1.7, epic: 0.2, legendary: 0.02 },
+    'the bands ARE the owner ladder');
+  // GAMBLE is deliberately NOT on this ladder: it is its own independent roll,
+  // so the bump can never reach it (see the gamble assertion in section 2).
+  assert.ok(!CHEST_RARITY_LADDER.includes('gamble'), 'the bump ladder names rarities only');
 });
 ok('the bump is one step up, and the top band holds', () => {
   assert.equal(chestRarityBump('common'), 'rare');
-  assert.equal(chestRarityBump('rare'), 'legendary');
-  assert.equal(chestRarityBump('legendary'), 'gamble');
-  assert.equal(chestRarityBump('gamble'), 'gamble');
+  assert.equal(chestRarityBump('rare'), 'epic');
+  assert.equal(chestRarityBump('epic'), 'legendary');
+  assert.equal(chestRarityBump('legendary'), 'legendary');
   assert.equal(chestRarityBump('nonsense'), 'nonsense', 'an unknown band is left alone');
+  assert.equal(chestRarityBump('gamble'), 'gamble',
+    'a gamble is not a rung: it has no neighbour to move to');
 });
 
 // ---- 2. rules off == the shipped game --------------------------------------
-const rollCounts = (rules, draws = 20000, seed = 999) => {
+const DRAWS = 20000;
+const rollCounts = (rules, draws = DRAWS, seed = 999) => {
   const st = stateWith(rules);
   const rng = seeded(seed);
-  const out = { common: 0, rare: 0, legendary: 0, gamble: 0, _draws: 0 };
+  const out = { common: 0, rare: 0, epic: 0, legendary: 0, gamble: 0, _draws: 0 };
   const counted = () => { out._draws++; return rng(); };
   for (let i = 0; i < draws; i++) out[rollContents(st, counted).rarity]++;
   return out;
 };
 const off = rollCounts(null), on = rollCounts({ hordebait: true });
-const rate = (t, k) => t[k] / 20000;
-ok('rules OFF reproduces CHESTS.WEIGHTS exactly', () => {
-  for (const [k, w] of Object.entries(CHESTS.WEIGHTS)) {
-    assert.ok(Math.abs(rate(off, k) - w / 100) < 0.02,
-      `${k}: ${rate(off, k).toFixed(4)} vs ${(w / 100).toFixed(2)}`);
+const rate = (t, k) => t[k] / DRAWS;
+// 4-sigma band, so a 0.018%-wide expectation is not checked with a tolerance
+// sized for a 88%-wide one.
+const withinBand = (measured, want, sigma = 4) =>
+  Math.abs(measured - want) < Math.max(sigma * Math.sqrt(want * (1 - want) / DRAWS), 1e-9);
+ok('rules OFF reproduces the owner ladder, scaled by the independent gamble', () => {
+  const L = CHESTS.RARITY_WEIGHTS;
+  const tot = Object.values(L).reduce((a, b) => a + b, 0);
+  // A chest is a GAMBLE 1-in-10 and a band otherwise, so a band's share of ALL
+  // chests is its share of the band roll times (1 - GAMBLE_CHANCE).
+  for (const [k, w] of Object.entries(L)) {
+    const want = (w / tot) * (1 - CHESTS.GAMBLE_CHANCE);
+    assert.ok(withinBand(rate(off, k), want),
+      `${k}: ${rate(off, k).toFixed(5)} vs ladder-scaled ${want.toFixed(5)}`);
   }
+  assert.ok(withinBand(rate(off, 'gamble'), CHESTS.GAMBLE_CHANCE),
+    `gamble: ${rate(off, 'gamble').toFixed(4)} vs its own ${CHESTS.GAMBLE_CHANCE}`);
 });
 ok('HORDE BAIT is a REWRITE of the same roll, never an extra roll', () => {
   // Pairwise, seed for seed: the ruled rarity must be exactly the bump of the
   // unruled rarity. If the rule consumed its own rng draw for the band, this
   // relation would break for arbitrary seeds. (The TOTAL draw count differs by
   // design and is NOT an invariant: a bumped band rolls different CONTENTS --
-  // a rare chest draws a potion, a legendary draws two upgrades -- so counting
+  // a rare chest draws a potion, an epic draws two upgrades -- so counting
   // total draws would only re-measure that, which is why this checks the band.)
   const one = (rules, seed) => rollContents(stateWith(rules), seeded(seed)).rarity;
   for (let seed = 1; seed <= 4000; seed++) {
     assert.equal(one({ hordebait: true }, seed), chestRarityBump(one(null, seed)), 'seed ' + seed);
   }
 });
-ok('HORDE BAIT bumps the distribution one band (MC vs exhaustive)', () => {
-  const expect = { common: 0, rare: 0, legendary: 0, gamble: 0 };
-  for (const [k, w] of Object.entries(CHESTS.WEIGHTS)) expect[chestRarityBump(k)] += w / 100;
+ok('HORDE BAIT bumps the band distribution one rung (MC vs exhaustive)', () => {
+  const L = CHESTS.RARITY_WEIGHTS;
+  const tot = Object.values(L).reduce((a, b) => a + b, 0);
+  const expect = { common: 0, rare: 0, epic: 0, legendary: 0 };
+  for (const [k, w] of Object.entries(L)) {
+    expect[chestRarityBump(k)] += (w / tot) * (1 - CHESTS.GAMBLE_CHANCE);
+  }
   for (const k of CHEST_RARITY_LADDER) {
-    assert.ok(Math.abs(rate(on, k) - expect[k]) < 0.02,
-      `${k}: measured ${rate(on, k).toFixed(4)} vs enumerated ${expect[k].toFixed(4)}`);
+    assert.ok(withinBand(rate(on, k), expect[k]),
+      `${k}: measured ${rate(on, k).toFixed(5)} vs enumerated ${expect[k].toFixed(5)}`);
   }
   assert.equal(rate(on, 'common'), 0, 'under HORDE BAIT a COMMON chest cannot exist');
-  assert.ok(rate(on, 'gamble') > rate(off, 'gamble'), 'the tension band grows too');
+  // THE INVARIANT THE DECOUPLING BUYS: an independent roll is not a band, so
+  // the rule can neither grow nor shrink the gamble. Asserted, not assumed.
+  assert.ok(Math.abs(rate(on, 'gamble') - rate(off, 'gamble')) < 0.02,
+    `the gamble rate is untouched by the bump (${rate(off, 'gamble').toFixed(4)} vs ${rate(on, 'gamble').toFixed(4)})`);
+  // ...and the whole band distribution walks up, so the upper rungs grow.
+  assert.ok(rate(on, 'epic') + rate(on, 'legendary') > rate(off, 'epic') + rate(off, 'legendary'),
+    'the upper rungs grow');
 });
 
 // ---- 3. every chest is a horde, and never two ------------------------------
-const chestTick = (rules, r) => {
+// `draws` is a LIST (or a scalar) because the gaggle of a gamble needs two
+// different values: a hit below GAMBLE_CHANCE, then a losing coin.
+const chestTick = (rules, draws) => {
   const st = stateWith(rules);
   st.player.x = 0; st.player.y = 0;
   st.chests.push({ id: 1, x: 0, y: 0, age: 0 });
-  const evs = tickChests(st, 1 / 60, () => r);
+  const vals = Array.isArray(draws) ? [...draws] : [draws];
+  let i = 0;
+  const evs = tickChests(st, 1 / 60, () => vals[Math.min(i++, vals.length - 1)]);
   return { st, evs };
 };
 const N = CHESTS.GAMBLE_HORDE_COUNT;
 ok('an ordinary chest spawns NO horde without the rule', () => {
-  const { st, evs } = chestTick(null, 0.10);              // 10 -> COMMON
+  const { st, evs } = chestTick(null, [0.5, 0.10]);        // gamble misses, then COMMON
   assert.equal(evs.filter(e => e.kind === 'chestOpened').length, 1);
   assert.ok(evs.every(e => e.kind !== 'hordeBait'));
   assert.equal(st.enemies.length, 0);
 });
 ok('under HORDE BAIT every ordinary chest answers with a horde', () => {
-  const { st, evs } = chestTick({ hordebait: true }, 0.10);   // COMMON -> RARE
+  const { st, evs } = chestTick({ hordebait: true }, [0.5, 0.10]);   // COMMON -> RARE
   const opened = evs.find(e => e.kind === 'chestOpened');
   assert.equal(opened.rarity, 'rare', 'the bump is visible on the opened event');
   const horde = evs.find(e => e.kind === 'hordeBait');
@@ -131,7 +165,7 @@ ok('under HORDE BAIT every ordinary chest answers with a horde', () => {
   assert.equal(st.enemies.length, N, 'exactly one horde stands on the field');
 });
 ok('a LOST GAMBLE under HORDE BAIT still fires exactly ONE horde', () => {
-  const { st, evs } = chestTick({ hordebait: true }, 0.95);   // 95 -> GAMBLE, and 95 >= 0.5 loses
+  const { st, evs } = chestTick({ hordebait: true }, [0.05, 0.95]);  // gamble HIT, coin 0.95 loses
   assert.equal(evs.filter(e => e.kind === 'gambleHorde').length, 1);
   assert.equal(evs.filter(e => e.kind === 'hordeBait').length, 0, 'the else branch holds');
   assert.equal(st.enemies.length, N, 'never two hordes for one chest');

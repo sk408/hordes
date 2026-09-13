@@ -23,7 +23,7 @@ import { rollShrine, shrineBlessing, canAfford } from './shrines.js';
 import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
-import { maybeSpawnChest, tickChests } from './chests.js';
+import { maybeSpawnChest, tickChests, rollEvolutionToken } from './chests.js';
 // G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
 import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
 // G8 step 4: the general skill items (Regrowth / Focus / Thick Skin) — the
@@ -72,6 +72,9 @@ import {
   draftCardWeight,
   // W1 save foundation (src/save.js): versioned schema + lossless export/import.
   SCHEMA_VERSION, exportProfileText, importProfileText,
+  // v6 one-time-banner ledger (save.js): first-EVER gates for the tutorial-scale
+  // banners, so they fire once per PROFILE rather than once per run.
+  bannerSeen, markBannerSeen,
   downloadProfile, saveProfileToDisk, readSaveFile,
   readRecovery, downloadRecovery, STORAGE_KEY,
 } from './meta.js';
@@ -201,6 +204,9 @@ const state = {
   bossBanner: null,  // WAVE-14: boss-arrival overlay
                      // ({ names, verb, title, sub, ttl } | null) — names/verb
                      // drive the two-line fit, title stays the flat legacy form
+  // EVOLUTION TOKEN banner: seconds the sim is HELD while the first token of a
+  // run owns the screen (frame() decays it on wall-clock dt and gates update()).
+  bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
   time: 0,
   spawnTimer: 0,
   // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
@@ -253,7 +259,11 @@ const state = {
   // chests = chests actually OPENED (expired ones do not count), and
   // waveTookDamage/untouchedWave = whether any wave was finished without a hit
   // landing on the hero.
-  runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false },
+  runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
+    // EVOLUTION TOKENS: which channel paid each token this run (chests.js
+    // EVOLUTION_TOKEN — kill / chest / drop). A ledger, not a rule: the rates
+    // are the knock's, and nothing reads this to decide anything.
+    tokens: { kill: 0, chest: 0, drop: 0 } },
   // WAVE-28 AUTO-DRINK: the per-kind lockout gates (CONFIG.AUTOPILOT.AUTO_DRINK
   // COOLDOWN), in seconds. Run-scoped — declared here so the seam needs no
   // guard, and reset in startRun so a new run never inherits a stale lockout.
@@ -279,7 +289,12 @@ const state = {
                      // shrine draws never desync the intermission offers
   lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
   rampage: { streak: 0, best: 0 },  // kill-streak meter (resets on ANY hit)
-  pilotMode: 'AUTO', // WAVE-13: 'AUTO' | 'MANUAL' (which controller is bound)
+  // WAVE-13 / (h) SELECTABLE AUTO-PILOT: 'AUTO_ALL' | 'AUTO_MOVE' | 'MANUAL'.
+  // A LADDER of how much the game does for you, not three unrelated switches:
+  //   AUTO_ALL  - the pilot moves, casts skills and drinks potions (shipped AUTO)
+  //   AUTO_MOVE - the pilot moves; skills and potions are the player's
+  //   MANUAL    - the player moves; skills and potions are the player's too
+  pilotMode: 'AUTO_ALL',
   zoom: 1,           // WAVE-16 world zoom (ladder 1/2/3/4/6/8; render.js reads
                      // it every frame — live mid-run, presentation only)
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
@@ -397,7 +412,20 @@ function clearPilotInput() {
 // levers — TAB/G keep working through a round trip). Switching to AUTO clears
 // held input so a stale direction can't ghost-move the autopilot; keyup
 // handlers clear keys regardless of mode (no stuck keys across overlays).
+// (h) THE ONE PLACE each assistance question is answered, so no call site
+// re-derives a mode from a string compare. `pilotMovesYou` is the movement
+// seam (which controller is bound); `pilotAssistsYou` is the auto-cast /
+// auto-drink seam that used to read `pilotMode !== 'AUTO'`.
+export const PILOT_MODES = ['AUTO_ALL', 'AUTO_MOVE', 'MANUAL'];
+export function normalizePilotMode(m) {
+  if (m === 'AUTO') return 'AUTO_ALL';        // the pre-(h) persisted name
+  return PILOT_MODES.includes(m) ? m : 'AUTO_ALL';
+}
+function pilotMovesYou() { return normalizePilotMode(state.pilotMode) === 'MANUAL'; }
+function pilotAssistsYou() { return normalizePilotMode(state.pilotMode) === 'AUTO_ALL'; }
+
 function swapPilotMode(mode) {
+  mode = normalizePilotMode(mode);
   if (mode === state.pilotMode) return;
   const from = controller;
   const to = mode === 'MANUAL' ? manualController : autoController;
@@ -405,7 +433,7 @@ function swapPilotMode(mode) {
   to.stance = from.stance;
   controller = to;
   state.pilotMode = mode;
-  if (mode === 'AUTO') {
+  if (mode !== 'MANUAL') {
     clearPilotInput();
   }
   savePilotPref(mode);
@@ -413,10 +441,14 @@ function swapPilotMode(mode) {
   // and W keys swap meaning), so a pilot swap must re-render it — otherwise
   // the panel keeps teaching the outgoing mode's keys.
   refreshHints();
-  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick' : 'AUTOPILOT ENGAGED');
+  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick'
+    : mode === 'AUTO_MOVE' ? 'AUTO MOVE — pilot drives, skills + potions are yours'
+    : 'AUTOPILOT ENGAGED — move, skills and potions');
 }
 function togglePilotMode() {
-  swapPilotMode(state.pilotMode === 'AUTO' ? 'MANUAL' : 'AUTO');
+  // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
+  const i = PILOT_MODES.indexOf(normalizePilotMode(state.pilotMode));
+  swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
 }
 
 function runController(p, dt, am) {
@@ -680,6 +712,7 @@ function applyEquipDecision(it) {
     addHeat(state, 'NEW_ITEM_SLOT');
     applyItemAffixes(p, it);
     for (const w of state.weapons) w.evoDeclined = false;
+    maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return { msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + ']', tint };
   }
   if (res.action === 'REPLACE') {
@@ -689,6 +722,7 @@ function applyEquipDecision(it) {
     addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
     applyItemAffixes(p, it);
     for (const w of state.weapons) w.evoDeclined = false;
+    maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return {
       msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + '] (SWAPPED OUT ' +
         out.name.toUpperCase() + ')',
@@ -1728,6 +1762,7 @@ function update(dt) {
         const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
         state.itemDrops.push({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
+        maybeGrantToken('drop');   // EVOLUTION TOKEN, world-drop channel (1 in 500)
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
@@ -1757,6 +1792,9 @@ function update(dt) {
             x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
+          // EVOLUTION TOKEN, world-drop channel (1 in 500) — per DROP, not per
+          // kill, so it rides the same volume the item itself does.
+          maybeGrantToken('drop');
         }
         if (e.guaranteesChest) {
           maybeSpawnChest(state, e, () => 0);
@@ -1784,6 +1822,9 @@ function update(dt) {
       }
       state.enemies.splice(i, 1);
       p.kills++;
+      // EVOLUTION TOKEN, kill channel (1 in 1200). A kill is an EVENT, so the
+      // roll is dt-free and 60Hz/120Hz pay the same per corpse.
+      maybeGrantToken('kill');
       // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
       // field is safe unowned). A kill is an EVENT, never a frame: the grant
       // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
@@ -1907,18 +1948,24 @@ function update(dt) {
       // PALADIN bless: heal on chest open.
       const heal = state.character ? (state.character.healOnChest || 0) : 0;
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
+      // EVOLUTION TOKEN, chest channel (1 in 200). Rolled HERE rather than
+      // inside rollContents so the chest module's documented rng draw order is
+      // untouched: every pinned chest sequence in the suite still means what it
+      // meant (and the token no longer rides the chest rarity table at all).
+      maybeGrantToken('chest');
     } else if (ev.kind === 'gambleHorde') {
       toast('THE GAMBLE BETRAYS YOU - MINI HORDE!');
     } else if (ev.kind === 'hordeBait') {
       // G8 step 3: the rule paid a better chest and the horde is the price.
       toast('HORDE BAIT - THE CHEST ANSWERED WITH A HORDE!');
-    } else if (ev.kind === 'tokenOffer') {
-      // WAVE-7/A: legendary chests carry EVOLUTION TOKENS (the 1-of-N flavor
-      // choice is cosmetic — all options are the same currency). A token may
-      // re-open a previously declined EVOLVE offer, so clear the declines.
-      state.evoTokens++;
-      for (const w of state.weapons) w.evoDeclined = false;
-      toast('EVOLUTION TOKEN! ' + state.evoTokens + ' HELD');
+    } else if (ev.kind === 'chestItem') {
+      // The 0.02% top chest band's reward (owner spec): a hand-authored
+      // LEGENDARY item. It lands on the ground where the chest opened and the
+      // ONE world-drop pickup path owns the equip decision, so a full belt
+      // still gets the normal swap-or-ignore rule rather than a second
+      // equip code path.
+      state.itemDrops.push({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
+      toast('LEGENDARY: ' + ev.item.name.toUpperCase(), RARITY_TINTS.LEGENDARY);
       audio.playSfx('levelup');
     }
   }
@@ -2059,6 +2106,80 @@ function tickBossBanner(dt) {
   if (!state.bossBanner) return;
   state.bossBanner.ttl -= dt;
   if (state.bossBanner.ttl <= 0) state.bossBanner = null;
+}
+
+// ---------- EVOLUTION TOKENS (chests.js EVOLUTION_TOKEN) ---------------------
+// The token is its own drop with three independently tuned channels, so all
+// three land HERE — one grant path, one counter, one banner rule. The rates
+// live in chests.js (EVOLUTION_TOKEN); this side owns what the player sees.
+const TOKEN_BANNER_SEC = 2.5;   // == render.js drawBossBanner's DUR
+
+// The FIRST token of a run owns the screen: the full WAVE-14 cinematic banner
+// (render.js drawBossBanner — the letterbox + fitted two-line block already
+// exists, so no new render path) PLUS a real pause. The pause is what makes it
+// a moment rather than a toast: state.bannerHold holds update() for the
+// banner's own duration (see frame()). It explains what a token is FOR and that
+// it evolves a weapon ONCE IT IS AT MAX LEVEL, so the first one teaches the
+// mechanic instead of being an inventory number. Every later token is a
+// standout status line only — no pause, no repeated lecture.
+function grantEvolutionToken(channel) {
+  state.evoTokens++;
+  if (state.runCounts && state.runCounts.tokens) state.runCounts.tokens[channel] =
+    (state.runCounts.tokens[channel] || 0) + 1;
+  // A token may re-open a previously declined EVOLVE offer.
+  for (const w of state.weapons) w.evoDeclined = false;
+  // FIRST-EVER, PERSISTED (schema v6 ledger): the full banner + its pause
+  // teaches the mechanic once per PLAYER. It used to be run-scoped, which meant
+  // the explainer -- and a 2.5s hold on the sim -- fired on the first token of
+  // EVERY run; with ~1.5 tokens a run that is a lecture the player gets forever.
+  if (markBannerSeen(profile, 'TOKEN')) {
+    state.bossBanner = {
+      names: ['EVOLUTION TOKEN'],
+      verb: 'ACQUIRED',
+      title: 'EVOLUTION TOKEN ACQUIRED',
+      sub: 'EVOLVES A WEAPON ONCE IT HAS REACHED MAX LEVEL',
+      ttl: TOKEN_BANNER_SEC,
+    };
+    state.bannerHold = TOKEN_BANNER_SEC;
+    audio.playPortalCue('BOSS_YELL');   // the reusable cinematic sting
+  } else {
+    toast('EVOLUTION TOKEN! ' + state.evoTokens +
+      ' HELD - EVOLVES A MAX-LEVEL WEAPON', RARITY_TINTS.LEGENDARY);
+  }
+  audio.playSfx('levelup');
+}
+
+// ---------- (g) FIRST-EVER TOP-TIER PICKUP ---------------------------------
+// Owner spec: "It should be a really cool thing when the player receives a top
+// tier drop." The FIRST time a given top-tier item is ever acquired, the full
+// banner owns the screen and the sim holds -- the same treatment (and the same
+// cinematic seam) as the token explainer above. Repeats get NO pause and NO
+// banner: the rarity-tinted FOUND line in applyEquipDecision is the standout
+// status line, which is what the spec asks for.
+// KEYED BY ITEM NAME, not by item id: rolled EPIC items get a fresh generated
+// id every roll, so an id-keyed ledger would believe every single one was the
+// first and would pause the game forever. The name is stable per item.
+const TOP_TIER = ['EPIC', 'LEGENDARY'];   // one-line tunable (LEGENDARY only?)
+function maybeTopTierBanner(it) {
+  if (!it || !TOP_TIER.includes(it.rarity)) return false;
+  if (!markBannerSeen(profile, 'top:' + it.name)) return false;
+  state.bossBanner = {
+    names: [it.name.toUpperCase()],
+    verb: it.rarity,
+    title: it.name.toUpperCase(),
+    sub: (it.rarity === 'LEGENDARY' ? 'LEGENDARY ITEM ACQUIRED' : 'TOP-TIER ITEM ACQUIRED'),
+    ttl: TOKEN_BANNER_SEC,
+  };
+  state.bannerHold = TOKEN_BANNER_SEC;
+  audio.playPortalCue('BOSS_YELL');
+  return true;
+}
+
+// One token roll on one channel ('kill' | 'chest' | 'drop'), via the module's
+// own helper so the denominator has exactly one home. Unknown channels draw
+// nothing and can never grant.
+function maybeGrantToken(channel) {
+  if (rollEvolutionToken(Math.random, channel)) grantEvolutionToken(channel);
 }
 
 function openDraft() {
@@ -3889,12 +4010,13 @@ function startRun() {
   state.mawCleared = false;
   state.mawDeadline = 0;
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
-  state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false };
+  state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
+    tokens: { kill: 0, chest: 0, drop: 0 } };   // EVOLUTION TOKEN channel ledger
   dilation.scale = 1;
   dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
   // not a preselect) — rebind the seam and drop any held directions.
-  swapPilotMode('AUTO');
+  swapPilotMode('AUTO_ALL');
   clearPilotInput();
   // N1a: a class may declare a default focus doctrine (WITCH -> SWARM: the
   // chain only pays off on a clump, and the SWARM branch already exists in
@@ -3959,6 +4081,9 @@ function startRun() {
   state.synergyNames = null;
   refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
+  // EVOLUTION TOKEN banner is run-scoped: a fresh run gets its own first-token
+  // moment, and no stale hold can freeze the new run's opening frames.
+  state.bannerHold = 0;
   state.deathBy = null;      // WAVE-20: no death recorded yet
   state.time = 0;
   state.spawnTimer = 0;
@@ -4498,7 +4623,7 @@ function autoDrinkPotions(state, dt) {
   // strand a stale lockout (and MANUAL never reaches the drink block below).
   ad.hp = Math.max(0, ad.hp - dt);
   ad.mp = Math.max(0, ad.mp - dt);
-  if (state.pilotMode !== 'AUTO') return;
+  if (!pilotAssistsYou()) return;
   const d = C.AUTOPILOT.AUTO_DRINK;
   if (!d || !d.ENABLED) return;
   const p = state.player;
@@ -4538,7 +4663,7 @@ function autoDrinkPotions(state, dt) {
 //     block, delay or starve a weapon (weapons tick on their own cooldowns,
 //     and ZAP's N1a soft gate still fires dry at 0.5x if a cast drained it).
 function autoCastSkills(state) {
-  if (state.pilotMode !== 'AUTO') return;
+  if (!pilotAssistsYou()) return;
   const ac = C.AUTOPILOT.AUTO_CAST;
   if (!ac || !ac.ENABLED) return;
   const p = state.player;
@@ -4771,7 +4896,7 @@ const HINT_LINES = {
   ],
 };
 function refreshHints() {
-  const lines = [...(HINT_LINES[state.pilotMode] || HINT_LINES.AUTO)];
+  const lines = [...(HINT_LINES[state.pilotMode] || HINT_LINES.AUTO_ALL || HINT_LINES.AUTO || [])];
   // G11: name the live challenge mode while a non-standard run is up (the
   // hints are in-run chrome; a STANDARD run sees the same four lines as
   // before).
@@ -5491,6 +5616,19 @@ function frame(now) {
   // dt (dt-parity: 60Hz and 120Hz step the same frame over the same time).
   // No-ops in every other mode, so no repaint or timer survives BACK.
   advanceCharIdle(realDt);
+  // EVOLUTION TOKEN banner hold: the first token of a run holds the sim for
+  // TOKEN_BANNER_SEC. The hold decays on WALL-CLOCK dt (the same rule as the
+  // earned-moment flourish and the title reveal above), and while it is live it
+  // also ages the banner itself — tickBossBanner only runs INSIDE update(),
+  // which is exactly what is being held, so the banner would otherwise never
+  // expire. Frame-rate independent: 2.5s of real time at 60Hz and at 120Hz.
+  if (state.bannerHold > 0) {
+    state.bannerHold = Math.max(0, state.bannerHold - realDt);
+    if (state.bossBanner) {
+      state.bossBanner.ttl -= realDt;
+      if (state.bossBanner.ttl <= 0) state.bossBanner = null;
+    }
+  }
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -5518,7 +5656,7 @@ function frame(now) {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
     updateTourCoach();
-    if (!coachActive()) update(dt);
+    if (!coachActive() && state.bannerHold <= 0) update(dt);
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card

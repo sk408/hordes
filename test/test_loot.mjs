@@ -36,35 +36,53 @@ function mulberry32(seed) {
 // ---------- rarity weight tables ----------
 {
   const sum = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
-  assert.strictEqual(sum, 100, `chest weights must sum to 100 (got ${sum})`);
-  // WAVE-11 rebase: RARITY_WEIGHTS IS meta.js BASE_RARITY_WEIGHTS now (the
-  // shared 4-tier table — LEGENDARY weight 3 everywhere, world drops included;
-  // the old local 3-tier world-drop table is gone).
+  // OWNER'S LADDER (2026-09-13): the raw shares total 99.92 BY DESIGN. They are
+  // not rescaled to 100 because pickRarity normalizes for every consumer, so the
+  // ladder is declared ONCE and never re-based (a re-based copy would be a
+  // second home for the same numbers).
+  assert.ok(Math.abs(sum - 99.92) < 1e-9, `the ladder sums to its declared 99.92 (got ${sum})`);
+  // WAVE-11 rebase: RARITY_WEIGHTS IS meta.js BASE_RARITY_WEIGHTS (the shared
+  // 4-tier table — the same ladder feeds world drops AND the paid chests).
   assert.strictEqual(RARITY_WEIGHTS, BASE_RARITY_WEIGHTS, 'RARITY_WEIGHTS aliases the meta.js base table');
-  const bsum = Object.values(BASE_RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
-  assert.strictEqual(bsum, 100, `base weights sum to 100 (got ${bsum})`);
-  assert.strictEqual(BASE_RARITY_WEIGHTS.LEGENDARY, 3, 'LEGENDARY rides the shared table');
+  assert.deepStrictEqual(BASE_RARITY_WEIGHTS, { COMMON: 98, RARE: 1.7, EPIC: 0.2, LEGENDARY: 0.02 },
+    'the shared table IS the owner ladder, rung for rung');
 
-  // Table bands at zero bias (default pickRarity table): C 0-60 / R 60-85 /
-  // E 85-97 / L 97-100 — the SAME bands for chests and (luck-0) world drops.
-  assert.strictEqual(pickRarity(seq([0.0])), 'COMMON');
-  assert.strictEqual(pickRarity(seq([0.599])), 'COMMON');
-  assert.strictEqual(pickRarity(seq([0.60])), 'RARE');
-  assert.strictEqual(pickRarity(seq([0.85])), 'EPIC');
-  assert.strictEqual(pickRarity(seq([0.97])), 'LEGENDARY');
-  assert.strictEqual(pickRarity(seq([0.99999]), 0, BASE_RARITY_WEIGHTS), 'LEGENDARY',
+  // Bands are DERIVED from the declared ladder, never hand-copied: each rung is
+  // probed just below and just above its own edge, so a retune cannot pass by
+  // leaving a stale literal behind.
+  const T = Object.values(BASE_RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  const edge = (i) => RARITIES.slice(0, i).reduce((s, r) => s + BASE_RARITY_WEIGHTS[r], 0) / T;
+  for (let i = 1; i < RARITIES.length; i++) {
+    assert.strictEqual(pickRarity(seq([edge(i) - 1e-6])), RARITIES[i - 1],
+      `just below the ${RARITIES[i]} edge is still ${RARITIES[i - 1]}`);
+    assert.strictEqual(pickRarity(seq([edge(i) + 1e-6])), RARITIES[i],
+      `just above the ${RARITIES[i]} edge is ${RARITIES[i]}`);
+  }
+  assert.strictEqual(pickRarity(seq([0.9999999])), 'LEGENDARY',
     'LEGENDARY is rollable at max rng on the shared table');
 
   // tierBias pushes up-tier: the SAME roll value lands rarer with bias.
-  // bias=3 chest weights: C60 R100 E84 L30 (total 274); r=0.5 -> 137 -> RARE.
-  assert.strictEqual(pickRarity(seq([0.5]), 0), 'COMMON', 'no bias: 0.5 -> COMMON');
-  assert.strictEqual(pickRarity(seq([0.5]), 3), 'RARE', 'bias 3: same roll -> RARE');
-  // GOLD-tier chest bias (1.5): r=0.9 -> EPIC.
-  assert.strictEqual(pickRarity(seq([0.9]), 1.5), 'EPIC');
-  console.log('ok: shared 4-tier weight table (meta.js), bands + tierBias shift correct');
+  assert.strictEqual(pickRarity(seq([0.95]), 0), 'COMMON', 'no bias: 0.95 lands COMMON on a 98% ladder');
+  assert.strictEqual(pickRarity(seq([0.95]), 3), 'RARE', 'bias 3: the same roll lands RARE');
+  const biasedEdge = (bias, i) => {
+    const w = RARITIES.map((r, k) => BASE_RARITY_WEIGHTS[r] * (1 + bias * k));
+    const tot = w.reduce((a, b) => a + b, 0);
+    return w.slice(0, i).reduce((a, b) => a + b, 0) / tot;
+  };
+  for (const bias of [1.5, 3]) {
+    for (let i = 1; i < RARITIES.length; i++) {
+      assert.strictEqual(pickRarity(seq([biasedEdge(bias, i) + 1e-6]), bias), RARITIES[i],
+        `bias ${bias}: just above the ${RARITIES[i]} edge is ${RARITIES[i]}`);
+    }
+  }
+  console.log('ok: owner ladder table (meta.js), derived bands + tierBias shift correct');
 }
 
-// ---------- luck curve (meta.js luckDropWeights — hb2's contract) ---------
+  // The band order edge()/biasedEdge() derive from IS the table's own key order.
+  assert.deepStrictEqual(Object.keys(BASE_RARITY_WEIGHTS), RARITIES,
+    'the ladder table declares the rarities in RARITIES order');
+
+  // ---------- luck curve (meta.js luckDropWeights — hb2's contract) ---------
 {
   const lo = luckDropWeights(0), hi = luckDropWeights(LUCK_MAX_LEVEL);
   assert.deepStrictEqual(lo, { ...BASE_RARITY_WEIGHTS }, 'luck 0 == base table');
@@ -72,7 +90,7 @@ function mulberry32(seed) {
   assert.ok(hi.RARE > lo.RARE && hi.EPIC > lo.EPIC && hi.LEGENDARY > lo.LEGENDARY,
     'luck shifts RARE/EPIC/LEGENDARY up');
   // Weights NEED NOT sum to 100 (pickRarity normalizes) — only monotone
-  // movement matters; at luck 5 the total is ~110.7.
+  // movement matters; at luck 5 the total is ~61.1 on the owner's ladder.
   assert.deepStrictEqual(luckDropWeights(99), hi, `luck clamps at LUCK_MAX_LEVEL (${LUCK_MAX_LEVEL})`);
   assert.deepStrictEqual(luckDropWeights(-5), lo, 'luck clamps at 0');
   assert.strictEqual(LUCK_MAX_LEVEL, 5);
@@ -81,37 +99,61 @@ function mulberry32(seed) {
 
 // ---------- weights drive the rarity distribution (seeded) ---------------
 {
-  const N = 30000;
+  // N raised from 30k: at a 0.02% top rung a 30k sample expects 6 legendaries,
+  // which is too few to distinguish the ladder from a neighbouring one.
+  const N = 200000;
   const tally = (weights) => {
     const rng = mulberry32(0xC0FFEE);
     const t = { COMMON: 0, RARE: 0, EPIC: 0, LEGENDARY: 0 };
     for (let i = 0; i < N; i++) t[rollItem(rng, 0, weights).rarity]++;
     return t;
   };
+  const share = (t, r) => t[r] / N;
+  // 4-sigma band per rung against the ladder's own share. A relative band, not
+  // a fixed epsilon: 0.0002 cannot be checked with a tolerance sized for 0.98.
+  const within = (t, weights, label) => {
+    const tot = Object.values(weights).reduce((a, b) => a + b, 0);
+    for (const r of RARITIES) {
+      const want = weights[r] / tot;
+      const sig = 4 * Math.sqrt(want * (1 - want) / N);
+      assert.ok(Math.abs(share(t, r) - want) < sig,
+        `${label} ${r}: measured ${share(t, r).toFixed(5)} vs ladder ${want.toFixed(5)} (4-sigma ${sig.toFixed(5)})`);
+    }
+  };
   const base = tally(BASE_RARITY_WEIGHTS);
-  assert.ok(Math.abs(base.COMMON / N - 0.60) < 0.03, `COMMON ~60% (got ${base.COMMON / N})`);
-  assert.ok(Math.abs(base.RARE / N - 0.25) < 0.03, `RARE ~25% (got ${base.RARE / N})`);
-  assert.ok(Math.abs(base.EPIC / N - 0.12) < 0.02, `EPIC ~12% (got ${base.EPIC / N})`);
-  assert.ok(Math.abs(base.LEGENDARY / N - 0.03) < 0.01, `LEGENDARY ~3% (got ${base.LEGENDARY / N})`);
+  within(base, BASE_RARITY_WEIGHTS, 'luck 0');
 
-  const lucky = tally(luckDropWeights(5));  // ~32/36/24/7.5 normalized
-  assert.ok(lucky.COMMON / N < 0.45, `lucky COMMON rate drops (got ${lucky.COMMON / N})`);
-  assert.ok(lucky.EPIC / N > 0.15, `lucky EPIC rate rises (got ${lucky.EPIC / N})`);
-  assert.ok(lucky.RARE > base.RARE && lucky.EPIC > base.EPIC && lucky.LEGENDARY > base.LEGENDARY,
-    'luck curve shifts the distribution toward rare/epic/legendary');
-  console.log('ok: seeded distribution matches injected weights (base 60/25/12/3 + luck shift)');
+  const hi = luckDropWeights(5);
+  const lucky = tally(hi);
+  within(lucky, hi, `luck ${LUCK_MAX_LEVEL}`);   // ~94.7/4.45/0.74/0.15 normalized
+
+  // Direction, plus the point of the raised taper: at max Fortune the TOP rung's
+  // share must multiply enough to actually UNLOCK the tier, not merely nudge a
+  // weight (the old 0.35 taper lifted the weight 2.75x and the tier stayed a
+  // certainty-by-volume instead of a reward).
+  assert.ok(share(lucky, 'COMMON') < share(base, 'COMMON'), 'luck lowers the COMMON share');
+  assert.ok(share(lucky, 'EPIC') > share(base, 'EPIC') && share(lucky, 'LEGENDARY') > share(base, 'LEGENDARY'),
+    'luck raises the EPIC and LEGENDARY shares');
+  const baseShare = BASE_RARITY_WEIGHTS.LEGENDARY /
+    Object.values(BASE_RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  const gain = share(lucky, 'LEGENDARY') / baseShare;
+  assert.ok(gain > 5, `max Fortune multiplies the top-rung share by >5x (measured ${gain.toFixed(2)}x)`);
+  console.log(`ok: seeded distribution matches the owner ladder (luck 0) and its luck-${LUCK_MAX_LEVEL} shift ` +
+    `(top rung x${gain.toFixed(2)})`);
 }
 
 // ---------- rollItem: counts, names, affix math ----------
 {
-  // COMMON: 1 rarity roll + 1 affix pick (0.0 lands in the 0-60 COMMON band).
+  // COMMON: 1 rarity roll + 1 affix pick (0.0 lands in the COMMON rung, which
+  // the owner's ladder holds to 98.08%).
   const c = rollItem(seq([0.0, 0.0]));
   assert.strictEqual(c.rarity, 'COMMON');
   assert.strictEqual(c.affixes.length, 1);
   assert.ok(c.name.startsWith('Worn '), 'common name uses the Worn prefix');
 
-  // RARE (0.75 in the 60-85 band): 1 + 2 picks, distinct affixes, 1.5x.
-  const r = rollItem(seq([0.75, 0.0, 0.0]));
+  // RARE (0.99 -> 98.92 of 99.92, just inside the 1.7-wide rung): 1 + 2 picks,
+  // distinct affixes, 1.5x.
+  const r = rollItem(seq([0.99, 0.0, 0.0]));
   assert.strictEqual(r.rarity, 'RARE');
   assert.strictEqual(r.affixes.length, 2);
   assert.notStrictEqual(r.affixes[0].id, r.affixes[1].id, 'affixes are distinct');
@@ -119,8 +161,8 @@ function mulberry32(seed) {
   assert.ok(Math.abs(r.affixes[0].magnitude - def.base * 1.5) < 1e-12,
     'rare magnitude = base * 1.5');
 
-  // EPIC (0.95 in the 85-97 band): 3 affixes at 2.2x.
-  const e = rollItem(seq([0.95, 0.0, 0.0, 0.0]));
+  // EPIC (0.9985 -> 99.77, inside the 0.2-wide rung): 3 affixes at 2.2x.
+  const e = rollItem(seq([0.9985, 0.0, 0.0, 0.0]));
   assert.strictEqual(e.rarity, 'EPIC');
   assert.strictEqual(e.affixes.length, 3);
   const edef = AFFIX_POOL.find(a => a.id === e.affixes[0].id);
@@ -138,9 +180,9 @@ function mulberry32(seed) {
     assert.strictEqual(def.affixes.length, 3, `${slot} legendary has 3 fixed affixes`);
     assert.ok(def.desc.length > 10, `${slot} legendary has flavor text`);
   }
-  // Legendary roll on the CHEST table (0.99 in its 97-100 band), slot rng
+  // Legendary roll on the shared table (0.9999 -> the 0.02% top rung), slot rng
   // 0.5 -> index 2 (BOOTS).
-  const l = rollItem(seq([0.99, 0.5]), 0, RARITY_WEIGHTS);
+  const l = rollItem(seq([0.9999, 0.5]), 0, RARITY_WEIGHTS);
   assert.strictEqual(l.rarity, 'LEGENDARY');
   assert.strictEqual(l.slot, 'BOOTS');
   assert.strictEqual(l.name, LEGENDARIES.BOOTS.name, 'legendary uses its fixed name');
@@ -165,12 +207,13 @@ function mulberry32(seed) {
   assert.ok(Math.abs(itemScore(critOne) - itemScore(thornOne)) < 1e-12,
     'affix contribution is normalized by pool base');
 
-  // Tier ordering via rolled items (same rng per tier): C < R < E < L.
+  // Tier ordering via rolled items (same rng per tier): C < R < E < L. Each
+  // value is chosen inside its own rung of the owner's ladder.
   const rolls = {
     COMMON: rollItem(seq([0.0, 0.0]), 0, RARITY_WEIGHTS),
-    RARE: rollItem(seq([0.7, 0.0, 0.0]), 0, RARITY_WEIGHTS),
-    EPIC: rollItem(seq([0.9, 0.0, 0.0, 0.0]), 0, RARITY_WEIGHTS),
-    LEGENDARY: rollItem(seq([0.99, 0.0]), 0, RARITY_WEIGHTS),
+    RARE: rollItem(seq([0.99, 0.0, 0.0]), 0, RARITY_WEIGHTS),
+    EPIC: rollItem(seq([0.9985, 0.0, 0.0, 0.0]), 0, RARITY_WEIGHTS),
+    LEGENDARY: rollItem(seq([0.9999, 0.0]), 0, RARITY_WEIGHTS),
   };
   assert.ok(itemScore(rolls.COMMON) < itemScore(rolls.RARE), 'COMMON < RARE');
   assert.ok(itemScore(rolls.RARE) < itemScore(rolls.EPIC), 'RARE < EPIC');
@@ -302,13 +345,38 @@ function mulberry32(seed) {
     && PAID_CHESTS.SILVER.tierBias >= PAID_CHESTS.BRONZE.tierBias,
     'higher tier = stronger rarity bias');
 
-  // Chests can still roll LEGENDARY (chest table, not world-drop weights):
-  // bias 0, rarity rng 0.99 -> LEGENDARY band (97-100), slot rng 0.0 -> WEAPON.
+  // Chests can still roll LEGENDARY (the shared ladder, NOT a reduced
+  // world-drop-only table): bias 3 on the owner's ladder gives GOLD weights
+  // C98 / R6.8 / E1.4 / L0.2 (total 106.4), so the TOP rung is the last
+  // 0.2/106.4 = 0.188% of the roll. rng 0.999 -> 106.29 -> LEGENDARY,
+  // slot rng 0.0 -> WEAPON.
+  //
+  // MEASURED CONSEQUENCE, reported not hidden: applying the owner's ladder to
+  // the shared table also drops the PAID chest's top rung from 10.9% to 0.188%
+  // at GOLD, because tierBias multiplies the (now tiny) base weights. Whether
+  // the paid tiers want their own bias retune is an OPEN TUNING DECISION for
+  // the owner - the assertion below only pins that the rung stays reachable.
   const p4 = { gold: 500 };
-  const res4 = rollPaidChest(p4, 'GOLD', seq([0.5, 0.99, 0.0]));
-  assert.strictEqual(res4.item.rarity, 'LEGENDARY', 'paid chests keep the 4-tier table');
+  const res4 = rollPaidChest(p4, 'GOLD', seq([0.5, 0.999, 0.0]));
+  assert.strictEqual(res4.item.rarity, 'LEGENDARY', 'paid chests keep the 4-tier ladder, top rung reachable');
   assert.strictEqual(res4.item.slot, 'WEAPON');
   assert.strictEqual(p4.gold, 500 - PAID_CHESTS.GOLD.cost);
+  {
+    // Reachability, all three tiers, derived from the ladder rather than pinned:
+    // the highest rng that still lands LEGENDARY must exist below 1 for each.
+    const band = (bias) => {
+      const w = RARITIES.map((r, k) => BASE_RARITY_WEIGHTS[r] * (1 + bias * k));
+      const tot = w.reduce((a, b) => a + b, 0);
+      return 1 - w[RARITIES.length - 1] / tot;
+    };
+    for (const [tier, def] of Object.entries(PAID_CHESTS)) {
+      const edge = band(def.tierBias);
+      assert.ok(edge < 1, `${tier}: the top rung occupies a non-empty band (starts at ${edge.toFixed(4)})`);
+      const p = { gold: 9999 };
+      const r = rollPaidChest(p, tier, seq([0.5, Math.min(0.9999999, (edge + 1) / 2), 0.0]));
+      assert.strictEqual(r.item.rarity, 'LEGENDARY', `${tier} can still roll its top rung`);
+    }
+  }
   console.log('ok: paid chests — debit both ways, gold-gate, tier odds, legendary intact');
 }
 

@@ -70,9 +70,9 @@ const CAT = {
 console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
-  // must be updated with it (v5 = G10 encounters).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 5,
-    `schema version constant is 5 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // must be updated with it (v6 = the one-time-banner ledger).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 6,
+    `schema version constant is 6 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 

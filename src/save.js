@@ -40,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 5;
+export const PROFILE_VERSION = 6;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -88,6 +88,15 @@ export const VERSION_HISTORY = [
       'progress: { [id]: n }, totals: {...} }. Earned trophies are NEVER dropped by ' +
       'validation (a damaged stamp repairs to 1, never to "unearned"). Populated empty — ' +
       'an existing player starts with no trophies and no progress recycled.',
+  },
+  {
+    version: 6,
+    note: 'v6 one-time-banner ledger: profile.banners = { [bannerId]: 1 } records ' +
+      'the tutorial-scale banners a player has ALREADY been shown (the evolution-token ' +
+      'explainer and the first top-tier pickup), so the full cinematic and its pause ' +
+      'fires once per PROFILE rather than once per run. Truthy-preserving: a damaged ' +
+      'stamp repairs to 1, never to "unseen". Populated empty - an existing player is ' +
+      'shown each banner once, which is the intent.',
   },
   {
     version: 5,
@@ -192,6 +201,15 @@ const MIGRATIONS = {
     if (!plainObject(next.achievements)) next.achievements = {};
     return next;
   },
+  // v5 -> v6: the one-time-banner ledger. Guarantee the container is a plain
+  // object and NOTHING ELSE — no banner is marked seen, and no existing field is
+  // touched, so this step is lossless for every v5 save (and an existing player
+  // is SHOWN each banner once, which is the point of the ledger).
+  5: (p) => {
+    const next = { ...p };
+    if (!plainObject(next.banners)) next.banners = {};
+    return next;
+  },
   // v4 -> v5: G10 encounters namespace. Guarantee the container is a plain
   // object and NOTHING ELSE — no encounter is invented, and no existing field
   // is touched, so this step is lossless for every v4 save. Present-but-garbage
@@ -281,6 +299,25 @@ export function validateProfile(profile, cat) {
     repairs.push('purchased');
   }
   out.purchased = purchased;
+
+  // ---- banners (v6 one-time-banner ledger) ----
+  // A flat { [bannerId]: 1 } map. Unknown ids are preserved verbatim (a newer
+  // build's banner round-trips through this one leaving no trace), and a damaged
+  // stamp repairs to 1 — truthy-preserving, so a corrupted save never re-shows a
+  // tutorial the player has already been given. Ids the payload never carried are
+  // NOT invented here.
+  const banners = {};
+  if (plainObject(p.banners)) {
+    for (const [id, v] of Object.entries(p.banners)) {
+      if (UNSAFE_KEYS.has(id)) { repairs.push('banners.' + id); continue; }
+      if (v === 1 || v === true) { banners[id] = 1; continue; }
+      if (v === 0 || v === false) { banners[id] = 0; continue; }
+      banners[id] = 1; repairs.push('banners.' + id);
+    }
+  } else if (p.banners !== undefined) {
+    repairs.push('banners');
+  }
+  out.banners = banners;
 
   // ---- characters (G19 per-character namespace) ----
   // NAMESPACED BY CHARACTER ID on purpose: profile.characters[characterId] =
@@ -553,6 +590,24 @@ export function validateProfile(profile, cat) {
 /** A clean, validated current-version profile (the game's makeProfile). */
 export function defaultProfile(cat) {
   return validateProfile({ version: PROFILE_VERSION }, cat).profile;
+}
+
+// ---------- One-time-banner ledger (v6) ----------
+// The ONLY sanctioned way for game code to ask "has this player already been
+// shown this banner?" and to record that they have. `bannerSeen` never mutates;
+// `markBannerSeen` returns true only on the FIRST marking, which is what lets a
+// caller gate a full cinematic + pause on it. Neither invents a flag.
+export function bannerSeen(profile, id) {
+  const b = profile && profile.banners;
+  return !!(plainObject(b) && b[id]);
+}
+
+export function markBannerSeen(profile, id) {
+  if (!profile || typeof id !== 'string' || id.length === 0) return false;
+  if (!plainObject(profile.banners)) profile.banners = {};
+  if (profile.banners[id]) return false;
+  profile.banners[id] = 1;
+  return true;
 }
 
 // ---------- Per-character namespace accessors (G19) ----------

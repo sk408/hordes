@@ -1,8 +1,10 @@
 // HORDES — chests & gamble moments (self-contained module).
 // Chest lifecycle: elite-ish kills have a chance to drop a chest; the chest
 // idles on the field until the player walks within PICKUP_RADIUS, then pops
-// its contents. Contents rarity is weighted; the GAMBLE rarity is the tension
-// moment — 50/50 between a big payoff and nothing PLUS a mini horde spawned
+// its contents. Contents rarity follows the owner's ladder
+// (CHESTS.RARITY_WEIGHTS); the GAMBLE is NOT a rarity but its own independent
+// 1-in-10 roll — the tension moment: 50/50 between a big payoff and nothing
+// PLUS a mini horde spawned
 // right on top of the player (typed CHASERs through the same chassis + heat
 // scaling every other spawn uses — see applyEscalation below).
 //
@@ -16,6 +18,10 @@ import { applyEscalation, clampLootToArena } from './entities.js';
 // G8 step 3: the CONDITION-shape run rules. Pure helpers only (no rng, no
 // mutation), so the chest keeps its documented rng draw order either way.
 import { ruledChestRarity, hasRule } from './rules.js';
+// The top chest band's reward: loot.js owns the hand-authored LEGENDARY items
+// (one fixed named unique per slot). One-directional — loot.js imports meta.js
+// only, so there is no cycle.
+import { rollLegendaryItem } from './loot.js';
 
 // All chest tuning lives here (NOT config.js — avoids collision with the
 // glm-hb1-owned files during fan-out).
@@ -26,8 +32,19 @@ export const CHESTS = {
   PICKUP_RADIUS: 14,        // player must come this close to open one
   LIFETIME: 30,             // seconds before an unopened chest despawns
 
-  // Contents rarity weights (must sum to 100).
-  WEIGHTS: { common: 60, rare: 25, legendary: 5, gamble: 10 },
+  // Contents rarity bands — the OWNER'S LADDER (2026-09-13), the SAME numbers
+  // the world-drop table uses (meta.js BASE_RARITY_WEIGHTS): COMMON 98 /
+  // RARE 1.7 / EPIC 0.2 / LEGENDARY 0.02. Deliberately the owner's raw shares,
+  // not rescaled to 100 — pickRarity normalizes, so the ladder has one home and
+  // one meaning ("share of chests at luck 0"). Measured at 53 chests a run:
+  // 51.9 common / 0.90 rare / 0.11 epic / 0.01 legendary.
+  RARITY_WEIGHTS: { common: 98, rare: 1.7, epic: 0.2, legendary: 0.02 },
+
+  // GAMBLE IS NOT A RARITY (owner decision): it used to sit in the SAME table
+  // as the bands, so a 4-tier ladder left it homeless — and folding it into the
+  // ladder would have quietly turned the risk mechanic into the 0.02% slot. It
+  // keeps its OWN independent roll at 1 in 10 chests instead.
+  GAMBLE_CHANCE: 0.10,
 
   // Gamble branch: 50% big reward, 50% nothing + mini horde on the player.
   GAMBLE_WIN_CHANCE: 0.5,
@@ -35,6 +52,47 @@ export const CHESTS = {
   GAMBLE_HORDE_COUNT: 6,    // the punishment horde
   GAMBLE_HORDE_RADIUS: 90,  // spawned on a ring around the player
 };
+
+// ---------- EVOLUTION TOKENS: their own drop, decoupled (owner spec) --------
+// The token used to ride the legendary chest band (53 chests x 5% = ~2.7
+// tokens/run), which made its rate a hostage of the chest rarity table: any
+// retune of the ladder silently retuned the token too. It is now a SEPARATE
+// drop with three independently tunable channels, so 1/500 has exactly one
+// home and the chest ladder can move without moving it.
+//
+// THE DENOMINATOR IS THE WHOLE RATE (owner decision 2026-09-13), measured per
+// FRESH RUN on the shipped build (834 kills, 53 chests, 280 world drops on a
+// short run; 6232 kills on a long one):
+//   per kill  1/1200 -> 0.69 on a short run, 5.19 on a long one
+//   per chest 1/200  -> 0.27
+//   per drop  1/500  -> 0.56
+// => ~1.5 tokens on a typical short run, ~6 on a long one. That is the owner's
+// intent: "should be something a new player can get... not right away, but
+// shouldn't take multiple runs to have a chance at a single one."
+// FLAGGED, not a defect: the per-kill channel rides run length, so a
+// snowballing run pulls 5+ from kills alone. If the rate should stay flat it
+// needs a per-run cap or a normalisation; that is a tuning choice for the owner.
+export const EVOLUTION_TOKEN = {
+  PER_KILL: 1200,
+  PER_CHEST: 200,
+  PER_DROP: 500,
+};
+// channel -> the knob that owns its denominator. 'kill' = an enemy death,
+// 'chest' = a chest opened, 'drop' = a world item drop created.
+const TOKEN_DENOM = { kill: 'PER_KILL', chest: 'PER_CHEST', drop: 'PER_DROP' };
+
+/** Chance per event for a token channel. Unknown channel => 0 (never rolls).
+ *  PURE — and consumes NO rng when it returns 0. */
+export function tokenChance(channel) {
+  const key = TOKEN_DENOM[channel];
+  return key ? 1 / EVOLUTION_TOKEN[key] : 0;
+}
+
+/** Roll one token channel. Unknown channel draws nothing and returns false. */
+export function rollEvolutionToken(rng = Math.random, channel) {
+  const c = tokenChance(channel);
+  return c > 0 && rng() < c;   // short-circuit: no draw for a dead channel
+}
 
 // ---------- Typed horde spawn (main.js spawnWave parity) -------------------
 // Wave-25 (agent F): the gamble punishment horde used to spawn through
@@ -72,14 +130,19 @@ export const EVOLUTION_TOKENS = [
 
 let nextId = 1;
 
-// Weighted rarity pick. rng() in [0,1); bands follow WEIGHTS key order.
+// Weighted rarity pick over CHESTS.RARITY_WEIGHTS (the owner's ladder). The
+// bands are the raw shares, so the roll is normalised by their total: the
+// ladder's rungs and the band edges can never drift apart. rng() in [0,1).
+// GAMBLE IS NOT HERE — it is its own roll in rollContents (CHESTS.GAMBLE_CHANCE).
 export function pickRarity(rng) {
-  let r = rng() * 100;
-  for (const [kind, w] of Object.entries(CHESTS.WEIGHTS)) {
+  const table = CHESTS.RARITY_WEIGHTS;
+  const total = Object.values(table).reduce((a, b) => a + b, 0);
+  let r = rng() * total;
+  for (const [kind, w] of Object.entries(table)) {
     if (r < w) return kind;
     r -= w;
   }
-  return Object.keys(CHESTS.WEIGHTS).at(-1); // fp-drift fallback
+  return Object.keys(table).at(-1); // fp-drift fallback
 }
 
 // n distinct items from arr, rng-driven.
@@ -122,31 +185,52 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
 }
 
 // Roll chest contents WITHOUT applying anything (pure given rng).
-// Returns { rarity, upgrades[], potions{hp,mp}, tokenOptions[], gambleWin? }.
+// Returns { rarity, upgrades[], potions{hp,mp}, item|null, gambleWin? }.
+//
+// DRAW ORDER (tests pin it): 1 gamble draw FIRST — a chest is either a gamble
+// or a rarity band, never both — then 1 rarity draw when it is not a gamble,
+// then the band's own contents draws. The gamble roll is deliberate: making it
+// independent is the only way the risk mechanic survives a 4-tier ladder.
 export function rollContents(state, rng = Math.random) {
+  if (rng() < CHESTS.GAMBLE_CHANCE) {
+    const g = { rarity: 'gamble', upgrades: [], potions: { hp: 0, mp: 0 }, item: null };
+    if (rng() < CHESTS.GAMBLE_WIN_CHANCE) {
+      g.gambleWin = true;
+      g.upgrades = sample(UPGRADES, CHESTS.GAMBLE_WIN_UPGRADES, rng);
+      g.potions = { hp: 1, mp: 1 };
+    } else {
+      g.gambleWin = false;
+    }
+    return g;
+  }
+
   // G8 step 3: HORDE BAIT moves the rolled band ONE STEP UP (see rules.js).
   // It reads the rules off the state this function already receives, so no
-  // caller signature changes and NO extra rng draw is taken: the documented
-  // draw order is byte-for-byte the old one (test_chests + test_run_rules).
+  // caller signature changes and NO extra rng draw is taken.
   const rarity = ruledChestRarity(pickRarity(rng), state);
-  const base = { rarity, upgrades: [], potions: { hp: 0, mp: 0 }, tokenOptions: [] };
+  const base = { rarity, upgrades: [], potions: { hp: 0, mp: 0 }, item: null };
 
   if (rarity === 'common') {
     base.upgrades = sample(UPGRADES, 1, rng);
   } else if (rarity === 'rare') {
     base.upgrades = sample(UPGRADES, 1, rng);
     base.potions[rng() < 0.5 ? 'hp' : 'mp'] = 1;
-  } else if (rarity === 'legendary') {
+  } else if (rarity === 'epic') {
+    // TODO(OPEN OWNER DECISION — do not invent a reward here): this rung is
+    // where the old 5% "legendary" chest's CONTENTS land now that the ladder
+    // applies to the bands. Those contents were 2 upgrades + an
+    // evolution-token CHOICE; the token is now its own decoupled drop
+    // (EVOLUTION_TOKEN above), so what is left is 2 upgrades and nothing else.
+    // The band needs a REPLACEMENT top reward and the owner has not decided
+    // it. Left exactly as the old band minus the token, per instruction.
     base.upgrades = sample(UPGRADES, 2, rng);
-    base.tokenOptions = [...EVOLUTION_TOKENS]; // the CHOICE is the player's
-  } else { // gamble
-    if (rng() < CHESTS.GAMBLE_WIN_CHANCE) {
-      base.gambleWin = true;
-      base.upgrades = sample(UPGRADES, CHESTS.GAMBLE_WIN_UPGRADES, rng);
-      base.potions = { hp: 1, mp: 1 };
-    } else {
-      base.gambleWin = false;
-    }
+  } else { // legendary — the 0.02% top band
+    // OWNER SPEC: the 0.02% chest tier drops a hand-authored LEGENDARY item
+    // (loot.js LEGENDARIES — one fixed named unique per slot). This is the
+    // first step of the chest -> equipment pivot: chest rarity IS item rarity.
+    // 1 rng draw (the slot pick). Delivery is the chestItem event, routed
+    // through the SAME world-drop pickup/equip path in main.js.
+    base.item = rollLegendaryItem(rng);
   }
   return base;
 }
@@ -183,8 +267,12 @@ function applyContents(state, contents, chest) {
     // forbidden flask). startRun always sets state.potionCap before a run.
     p.potions[k] = Math.min(state.potionCap, p.potions[k] + contents.potions[k]);
   }
-  if (contents.tokenOptions.length > 0) {
-    events.push({ kind: 'tokenOffer', options: contents.tokenOptions });
+  if (contents.item) {
+    // The 0.02% top band's reward is EQUIPMENT. Emitted as its own event rather
+    // than applied here: main.js pushes it onto state.itemDrops so the ONE
+    // world-drop pickup path (decideEquip / applyItemAffixes) owns the equip
+    // decision, and a full 4/4 belt still gets the normal swap-or-ignore rule.
+    events.push({ kind: 'chestItem', item: contents.item, x: chest.x, y: chest.y });
   }
 
   if (contents.rarity === 'gamble' && contents.gambleWin === false) {

@@ -147,6 +147,18 @@ function sample(arr, n, rng) {
   return out;
 }
 
+// Roll one of the hand-authored LEGENDARY items (one per slot). This is the
+// reward for the TOP chest band (chests.js CHESTS.RARITY_WEIGHTS.legendary,
+// 0.02% of chests) — the first step of the owner's chest -> equipment pivot:
+// chest rarity IS item rarity, so the rarest chest band drops the rarest
+// equipment. rng order: exactly 1 draw (the slot pick), the same draw
+// rollItem's LEGENDARY branch has always taken. PURE (deep copy out).
+export function rollLegendaryItem(rng = Math.random) {
+  const slot = LEGENDARY_SLOTS[Math.floor(rng() * LEGENDARY_SLOTS.length)];
+  const def = LEGENDARIES[slot];
+  return { ...def, affixes: def.affixes.map(a => ({ ...a })) };  // deep copy, fixed affixes
+}
+
 // Roll a random item. The third arg injects the rarity weights (default =
 // the shared 4-tier base table; world-drop callers pass meta.js
 // luckDropWeights(luckLevel) so Fortune shifts the odds). rng call order
@@ -155,11 +167,7 @@ function sample(arr, n, rng) {
 export function rollItem(rng = Math.random, tierBias = 0, weights = BASE_RARITY_WEIGHTS) {
   const rarity = pickRarity(rng, tierBias, weights);
 
-  if (rarity === 'LEGENDARY') {
-    const slot = LEGENDARY_SLOTS[Math.floor(rng() * LEGENDARY_SLOTS.length)];
-    const def = LEGENDARIES[slot];
-    return { ...def, affixes: def.affixes.map(a => ({ ...a })) };  // deep copy, fixed affixes
-  }
+  if (rarity === 'LEGENDARY') return rollLegendaryItem(rng);
 
   const scale = RARITY_SCALE[rarity];
   const picked = sample(AFFIX_POOL, AFFIX_COUNT[rarity], rng);

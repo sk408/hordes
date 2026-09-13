@@ -262,7 +262,14 @@ await acheck('bosses and the COLOSSUS are NEVER tier-rolled (forced roll proves 
     // Phase A — every draw 0: the type walk pins to CHASER and every tier
     // roll lands MYTHIC. The HERALD lands mid-wave-1 (~60s).
     Math.random = () => 0;
-    for (let i = 0; i < 60 * 150 && !boss; i++) {
+    // BUDGET NOTE: this stub makes EVERY roll succeed, and the per-kill
+    // evolution-token channel is a roll (chests.js EVOLUTION_TOKEN.PER_KILL), so
+    // a token is granted on the first kill and the first-token banner PAUSES the
+    // sim for ~2.5s (frame() holds update()). That is a real, requested pause,
+    // and it costs this loop ~150 of its frames -- so the budget carries it
+    // explicitly rather than the window silently closing early. Assertions
+    // unchanged.
+    for (let i = 0; i < 60 * 160 && !boss; i++) {
       sample();
       step();
       boss = st.enemies.find(e => (e.boss || e.finalBoss) && e.hp > 0);
@@ -273,7 +280,7 @@ await acheck('bosses and the COLOSSUS are NEVER tier-rolled (forced roll proves 
     // exclusion ternary were missing, a COLOSSUS spawned here WOULD stamp.
     let n = 0;
     Math.random = () => (n++ % 5 === 0 ? 0.999 : 0);
-    for (let i = 0; i < 60 * 200 && !colossus; i++) {
+    for (let i = 0; i < 60 * 220 && !colossus; i++) {   // + the banner pause, as above
       sample();
       step();
     }

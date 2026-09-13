@@ -110,7 +110,8 @@ S.check('the counters restart with the run (no bleed across runs)', () => {
   T.startRun();
   h.pump(2);
   assert.deepEqual(st.runCounts,
-    { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false },
+    { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
+      tokens: { kill: 0, chest: 0, drop: 0 } },   // EVOLUTION TOKEN channel ledger
     'startRun resets the trophy ledger');
 });
 

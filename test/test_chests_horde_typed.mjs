@@ -53,7 +53,7 @@ console.log('GAMBLE LOSS -> typed horde:');
   const T = 120;                 // wave 4
   const st = makeState(T, 3);
   st.chests.push({ id: 3, x: st.player.x, y: st.player.y, age: 0 });
-  const rng = countingRng([0.95, 0.7]);   // rarity -> gamble, coin -> lose
+  const rng = countingRng([0.05, 0.7]);   // gamble roll HITS (< 0.10), coin -> lose
   const events = tickChests(st, 0.016, rng);
 
   ok(events.some(e => e.kind === 'gambleHorde'), 'gamble loss emits gambleHorde');
@@ -94,7 +94,7 @@ console.log('BAREWORDS STATE (no heat ledger) does not crash:');
     player: makePlayer(), enemies: [], chests: [], effects: [], time: 30,
   };
   st.chests.push({ id: 4, x: st.player.x, y: st.player.y, age: 0 });
-  const rng = countingRng([0.95, 0.7]);
+  const rng = countingRng([0.05, 0.7]);
   const events = tickChests(st, 0.016, rng);
   const expHp = C.ENEMY.BASE_HP * hpScale(1);   // heat 0 -> neutral
   ok(events.some(e => e.kind === 'gambleHorde') &&
@@ -108,7 +108,7 @@ console.log('GAMBLE WIN path unchanged:');
 {
   const st = makeState(120, 0);
   st.chests.push({ id: 5, x: st.player.x, y: st.player.y, age: 0 });
-  const rng = countingRng([0.95, 0.3, 0.0, 0.0]);
+  const rng = countingRng([0.05, 0.3, 0.0, 0.0]);
   const events = tickChests(st, 0.016, rng);
   ok(events.some(e => e.kind === 'chestOpened' && e.rarity === 'gamble'), 'gamble rarity rolled');
   ok(!events.some(e => e.kind === 'gambleHorde'), 'a gamble WIN spawns no horde');
@@ -119,7 +119,7 @@ console.log('GAMBLE WIN path unchanged:');
 {
   const st = makeState(120, 0);
   st.chests.push({ id: 6, x: st.player.x, y: st.player.y, age: 0 });
-  tickChests(st, 0.016, countingRng([0.95, 0.7]));
+  tickChests(st, 0.016, countingRng([0.05, 0.7]));
   assert.ok(st.enemies.every(e => e.packSize !== undefined),
     'typed spawner fields ride along (packSize present)');
   console.log('  PASS typed spawner fields ride along (packSize present)');
