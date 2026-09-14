@@ -400,6 +400,47 @@ has to sustain variety for that long, which is a real requirement rather than a 
   platforming skill, so it has to be readable — telegraphs over memorization, and the horde pressure
   visible as a wall rather than felt as an invisible timer.
 
+**THE FINALE — THE BOSS AND THE EXIT PORTAL (owner question, 2026-09-14).** Sk408: *"At the end, with the
+boss, we need a portal for the player to reach to move on. Biggest question will be how to make it so the
+player can reach the portal but not make the boss seem completely harmless."*
+
+**First, reframe the problem, because the constraint is already in the design:** the escape ignores stats,
+so the boss is **UNKILLABLE by construction**. That is the thing that makes this tractable — the player
+never expects to *beat* it, so the question is not "how strong is it" but **"how expensive is the bypass"**.
+A boss that cannot be killed can still be dangerous in three ways that do not require it to hit the player:
+
+1. **THE BOSS COSTS TIME, NOT HEALTH — the strongest lever, and it uses a system that already exists.**
+   The horde wall behind is the real timer. The boss does not need to damage the player at all: its body and
+   its telegraphs occupy the corridor, so passing it costs SECONDS, and seconds are what the wall punishes.
+   A slow or greedy line gets you caught; a clean line costs little. The boss is then genuinely threatening
+   (it can kill you, indirectly) without ever dealing unavoidable damage — and it can never read as
+   harmless, because time always matters.
+2. **THE BOSS DESTROYS TERRAIN.** In a platformer corridor the boss can tear out platforms ahead of or
+   behind the player, so the finale is a RACE against the damage rather than a fight, and it is visibly
+   powerful the moment it lands. This is the best use of the platforming substrate and it makes the portal
+   approach dynamic — the route is closing as you take it.
+3. **THE BOSS CONSTRAINS THE ROUTE.** Its body occupies most of the corridor and the passable gaps are
+   telegraphed (over a terrace, through a gap, under an arch). The player must engage with it spatially, so
+   it is never walk-past-able by accident.
+
+**Design shape I would build:** the portal is a **VISIBLE BEACON from a distance** (the goal must be
+legible — same fairness rule as the gaps), the boss guards the APPROACH but not the exit, and the danger
+ENDS where the reward begins: **the boss never touches the portal area, and contact with the portal ends
+the sequence immediately.** So the tension lives in the last third of the corridor, not in a final duel.
+
+**REUSE P1's PORTAL — one portal concept, two contexts.** P1 already specifies the boss portal in the
+overhead game (parked, the pilot steers into it, bounded i-frames for AUTO only, manual gets none). The
+escape's exit should be the SAME entity and the SAME rules rather than a second lookalike: reaching it ends
+the sequence and hands back to the run. That also keeps the owner's manual-vs-auto invulnerability ruling
+consistent in both places.
+
+**ANTI-PATTERN TO AVOID — and the acceptance that catches it, in two halves:** the failure modes are a
+boss that deals damage you cannot avoid (unfair, and resented in a two-minute mode) and one you can stroll
+past (cosmetic, and the climax is flat). So **measure both ends: the time/HP cost of the boss beat versus
+the rest of the escape, and the completion rate through it.** If the boss beat costs ~0, it is decoration;
+if completion collapses, it is unfair. Also measure the AUTO completion rate AT THE BOSS BEAT specifically
+— weaving plus timing is the hardest pilot job in the mode, and it is where an auto run will die.
+
 **SEQUENCING INSIGHT — the escape is cheap BECAUSE its prerequisites are already queued:** G7's leap is
 the verb, and E2's flying enemy is the antagonist. **Build those first and V1 is a modest slice, not a
 project. Do not start V1 before them.**
