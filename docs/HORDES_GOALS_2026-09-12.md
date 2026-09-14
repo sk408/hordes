@@ -672,8 +672,11 @@ art alone and immediately asked for the fade-in — and it is the smallest of th
 This supersedes both the order these entries appear in below AND the ranked-queue sequencing conflict
 that went unresolved for four ticks.**
 
-**H1 (HUD reflow) -> P1 (portal) -> A1 (engagement range) -> E1 (purse) -> W7a-tooling -> W7b
-(draft >= x1.6) -> E2 (horde) -> S1 (shrines) -> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
+**H1 (HUD reflow) -> P1 (portal) -> A1 (engagement range) -> A2 (radar) -> E1 (purse) -> W7a-tooling
+-> W7b (draft >= x1.6) -> E2 (horde) -> S1 (shrines) -> M1 (world map, once the owner picks a reading)
+-> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
+A1 and A2 pair (both are about enemy awareness, and the radar is what makes A1's 100px cap playable).
+M1 sits late because it CANNOT be dispatched until the owner answers which world it maps.
 A1 sits beside P1 because both edit `controllers.js` and must not run in parallel, and A1's row price is
 re-checked in E1's economy pass rather than priced twice.
 
@@ -733,11 +736,18 @@ by design, and the pilot shoots at them immediately.
    (`enterR2 = (kite*2)^2`, hysteresis to `1.3x`), so dodging stays unconditional — a threat 300px away is
    still coming for you. Range gates OFFENSE, never survival. Both halves get tests: no target beyond the
    radius, AND a flee response still fires for a threat beyond it.
-3. **Retune the base radius for legibility, and make it the buyable's floor.** 260 is still off-screen
-   vertically (150 half-height), so applying it verbatim will NOT fix the complaint. Start the base around
-   **170-200** (just past the visible half-height) and let the buyable climb past 280 — the spawn ring —
-   so a maxed pilot engages everything on arrival. This makes the stat legible: the base range is roughly
-   "what I can see", and upgrading buys early engagement.
+3. **Base radius = 100 (OWNER-SET 2026-09-14).** Sk408: *"I think the starting radius should be more like
+   100."* So the base is a TIGHT cap — the pilot engages only when an enemy is well inside the visible
+   area (the view's visible half-height is 150). The buyable then climbs from 100 toward and past the
+   spawn ring (280-322) so a maxed pilot engages on arrival. **Two consequences to measure, not assume:**
+   - **Survival.** A 100px cap means the player's damage idles until enemies are nearly on top of them.
+     This is the single most important before/after number: cohort survival with the cap vs without. If it
+     drops hard, the honest answers are a cheaper/stronger buyable or a higher floor — not a quiet revert.
+   - **The buyable becomes a core power line**, not a flavour row: at base 100 the pilot declines most
+     engagements, so upgrading the radius is what restores its output. Price it accordingly and re-check
+     the price in E1's economy pass.
+   The minimap below is what makes a 100px cap playable at all: the player can SEE the approach a radar
+   away even though the pilot will not shoot at it.
 4. **A shop row raises it** — flat px per level, the existing `{id,name,desc,baseCost,costGrowth,maxLevel,
    perLevel}` shape (`meta.js:346` precedent), so it is CONTENT, not machinery. **Price provisionally and
    RE-CHECK it in E1's economy pass** (E1 re-measures the whole ladder).
@@ -757,6 +767,56 @@ cheap and strong — do NOT conclude "the range hurt, revert it" without those t
 permanently approached by unseen enemies — a broader legibility issue than the pilot's targeting. Off-screen
 edge indicators (a marker at the screen border) would fix that too, and would explain at a glance why the
 pilot is holding fire. Not required by this directive; flagging it because it addresses the same root.
+
+### A2 — THE RADAR (circular minimap with enemy dots)  [status: not started — owner-suggested 2026-09-14]
+
+Sk408: *"What about a circle map on the screen, like some games use, with little dots that show the
+enemies? It doesn't have to be a large radius that allows the player to see too far, but enough to see all
+the enemies within the spawn radius."*
+
+**What it is:** a small circular radar in a HUD corner — the player centred, enemy dots around them —
+covering roughly the SPAWN RING (280, plus its 0.85-1.15 jitter = up to 322). So the radar radius should
+be ~330 world px: everything that can come for you is visible, and nothing beyond it matters.
+
+**Why it earns its place:** combined with A1's 100px engagement cap, the radar is what keeps the player
+informed while the pilot deliberately declines long shots. Without it, a 100px cap means enemies arrive
+from an invisible edge with no warning; with it, the approach is telegraphed and the small radius reads as
+intentional rather than broken.
+
+**Constraints (the house rules that apply to a new HUD element):**
+- **It must not reflow anything** — see the HUD pads directive: fixed geometry, reserved space, no
+  layout participation. A radar that grows as dots appear is the H1 bug again.
+- Pixel-art integrity: integer pixels, no blur, no anti-aliased circle edge; it must compose with the
+  resolution modes and the deadzone camera.
+- 60Hz AND 120Hz; it is a render-only read of `state.enemies` and must never touch the sim.
+- Decide and state what it shows: player dot, enemy dots, and whether tiers are distinguished (elite/boss
+  a different colour or size — recommended, since heavies at mid-boss strength now matter). Clamp or hide
+  dots beyond the radius; do not silently scale them in.
+- It needs its own test: dot count equals enemies within the radius for a synthetic field, and the radar's
+  rect is stable across every state (the H1 acceptance pattern).
+
+### M1 — THE WORLD MAP SCREEN (hotkey, visited areas only)  [status: not started — owner-suggested 2026-09-14; NEEDS ONE OWNER DECISION, see below]
+
+Sk408: *"we could have a world map hotkey that allowed the player to view the overall world map, not with
+enemies listed, but just the world map. It would only show the areas that they've already visited, and the
+other areas would have some sort of haze or just not exist, sort of like a Metroid map."*
+
+**THE DECISION THAT GATES THIS — what "areas" means, because the two readings are very different work:**
+- **(a) In-run fog-of-war over the arena.** Cheap-ish to DRAW, but the arena is **re-seeded every run**
+  (`groundSeed` is rolled in `startRun`) and a run lasts 35s-20min, so the visited map would be per-run,
+  short-lived, and different every time. It would almost never be worth opening, and it fights the owner's
+  own "simple pick up and leave" intent.
+- **(b) A STAGE-LEVEL world map (Remy's recommendation).** G20 shipped **8 selectable stages with
+  achievement-style unlock gates** (reach level X, defeat a boss) — that IS the persistent world, and it
+  already has visited-vs-locked semantics. A Metroid-style map of the stages (unlocked + visited drawn,
+  the rest in haze) fits the existing systems, persists across runs, gives the unlock gates somewhere to
+  live visually, and is the natural home for future stage content. Recommended.
+- A third option exists (a persistent overworld across runs with fixed landmarks) but it contradicts the
+  per-run seeding and the stage system, and it is a much bigger design change than this note implies.
+
+**Do not dispatch M1 until this is answered.** If (b), the work is: per-profile visited/unlocked stage
+state (schema + save migration), a full-screen map view behind a hotkey, haze rendering for unvisited,
+and the stage-select flow (G13/G12 neighbours) staying intact. Follow the save-schema conventions.
 
 ### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
 
