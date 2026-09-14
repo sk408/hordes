@@ -1221,7 +1221,21 @@ the equipped pilot's own `CHARACTER_PORTRAITS[id]` bust (integer 2x, pixelated).
   grid makes every cell truthy, `palette['.']` is undefined, the invalid
   `fillStyle` assignment is silently ignored and the previous colour paints every
   pixel (this is how the first cut of the header coin rendered as a solid block).
-- **P1b — THE RIM-PIN: A PORTAL CAN SPAWN UNREACHABLE AND THE RUN IS UNWINNABLE.**
+- **P1b — THE RIM-PIN — DONE 2026-09-14, landed as `7355576` and PUSHED. Do not re-dispatch.**
+  Fix chosen: make the rim reachable, NOT clamp the spawn (clamping would move the portal off the
+  boss's corpse, which the fiction and the render both promise). `put()` now takes an `edge`
+  parameter - lootLimit stays the boundary for STATIC subjects, the portal branch passes
+  `GROUND.RIM` - plus the case this brief MISSED: a boss can die outside the rim, parking the
+  portal past RIM + RADIUS where no legal standing spot reaches it, so the pilot lures the drift
+  back by walking inward (distance to the square is non-increasing, so it flips once).
+  EVIDENCE, all re-measured by the orchestrator and not taken from the builder: the new
+  `test/test_portal_reach.mjs` FAILS on the pre-fix tree (checked out 50d3fe9 in a scratch
+  worktree: "the outward step was clamped at the loot edge (the rim-pin): {moveX:0,moveY:0}") and
+  passes after; suite greenfiles=80 redfiles=0; tools/verify_p1_portal.mjs 13/13 PASS (sim 2.942s,
+  wall 3.307s). NOT MEASURED, stated honestly: a NATURAL boss-death-outside-the-rim has never been
+  observed in 74 tool runs - the beyond-rim hole is proven by constructed geometry only. MANUAL
+  players are unaffected. PREVIOUS TEXT KEPT FOR THE RECORD BELOW:
+  ~~
   Measured and confirmed real (own probe, 2026-09-14): `spawnBoss` places the boss
   at `player + SPAWN_DIST*0.7` on a random angle and the portal opens at the spawn
   spot UNCLAMPED, while `put()` refuses outward motion past `lootLimit()` (566) even
