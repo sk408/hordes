@@ -207,8 +207,18 @@ export class AutoPilotController {
     // resumes normally the moment the subject comes inside. Manual movement is
     // untouched (PlayerController never routes through here — the human owns
     // movement and the position clamp stops them).
-    const edge = lootLimit();
-    const put = (mx, my) => ({
+    const lootEdge = lootLimit();
+    // P1b: `edge` is a parameter now. The loot edge (lootLimit) is the right
+    // boundary for STATIC subjects (a gem/enemy can sit out past it forever,
+    // so outward pressure there is a grind). The portal is NOT static — its
+    // one-way drift (main.js) re-parks it at STANDOFF of wherever the player
+    // stands — so the portal branch below passes the physical rim instead:
+    // outward pressure toward the portal always converges, and the loot edge
+    // was what pinned the approach (measured: portal forced to x=900 with the
+    // player at x=400 froze the pilot at x=566, d=24.0 for 20s, never
+    // reaching RADIUS 16 — /tmp probe, 2026-09-14; the orchestrator's own
+    // probe measured the same freeze).
+    const put = (mx, my, edge = lootEdge) => ({
       moveX: (p.x >= edge && mx > 0) || (p.x <= -edge && mx < 0) ? 0 : mx,
       moveY: (p.y >= edge && my > 0) || (p.y <= -edge && my < 0) ? 0 : my,
       target,
@@ -295,11 +305,42 @@ export class AutoPilotController {
     // — the corridor is spawn-suppressed and banking gems while the wave waits
     // would stall progression. Already inside STANDOFF? The straight line
     // IS the final step — no orbit logic needed.
+    //
+    // P1b RIM-PIN (the unwinnable-run fix). Two reachability holes made a
+    // legal portal unenterable on AUTO, both measured frozen at d = STANDOFF:
+    //   1. The portal opens where the boss fell, UNCLAMPED, while put() held
+    //      the pilot at the loot edge (lootLimit() = RIM - WALL - pickup = 566)
+    //      — a portal parking past ~590 froze the approach at 24 > RADIUS 16.
+    //      The fix is "make the rim reachable", NOT "clamp the spawn": the
+    //      portal's own one-way drift already brings it to STANDOFF of
+    //      wherever the player stands, so the ONLY missing capability was the
+    //      last outward step — and clamping the spawn would move the portal
+    //      away from the boss's corpse, which the fiction ("the PORTAL opens
+    //      where the boss fell") and the render both promise. So this branch
+    //      steers with edge = GROUND.RIM (the physical clamp): outward motion
+    //      toward the portal is legal all the way to the wall.
+    //   2. A boss can DIE outside the rim entirely (enemy motion is not
+    //      rim-clamped — only the player is), parking the portal past
+    //      RIM + RADIUS, where NO legal standing spot is close enough to
+    //      enter. Then the pilot walks toward the arena center instead: the
+    //      drift chases the player and re-parks at STANDOFF of the new
+    //      position, i.e. stepping inside lures the portal back into reach.
+    //      While the portal drifts toward a player inside the square its
+    //      distance to the square is non-increasing, so this hand-off flips
+    //      at most once — no oscillation band to tune.
     if (state.portal) {
       const pdx = state.portal.x - p.x, pdy = state.portal.y - p.y;
       const plen = Math.hypot(pdx, pdy) || 1;
       this.act = 'PORTAL';
-      return put(pdx / plen, pdy / plen);
+      const rim = C.GROUND.RIM;
+      const outX = Math.max(0, Math.abs(state.portal.x) - rim);
+      const outY = Math.max(0, Math.abs(state.portal.y) - rim);
+      if (Math.hypot(outX, outY) >= C.PORTAL.RADIUS) {
+        // Past every legal standing spot: lure it inward (see hole 2 above).
+        const clen = Math.hypot(p.x, p.y) || 1;
+        return put(-p.x / clen, -p.y / clen);
+      }
+      return put(pdx / plen, pdy / plen, rim);
     }
 
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
