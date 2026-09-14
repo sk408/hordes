@@ -173,7 +173,20 @@ S.check('OVERCHARGE on a live elite inside ELITE_RANGE (not a boss)', () => {
   const p = st.player;
   ready(p);
   p.mana = COST_W + 5;
-  const e = foe(p, AC.ELITE_RANGE - 20, true);   // elite, engaged, but far
+  // A1 RETARGET (2026-09-14): ELITE_RANGE is now DERIVED from the pilot's
+  // engagement radius (config AUTOPILOT.FOCUS_RANGE, owner-set base 100) instead
+  // of its own hardcoded 260 — so the old fixture at ELITE_RANGE-20 = 240px
+  // moved to 80px, INSIDE FROST_NOVA's 85px RADIUS, and the pilot spent the Q
+  // cast first: the last assertion ("FROST_NOVA did not fire") is what caught
+  // it. The band this test needs still exists (nova RADIUS 85 < d < ELITE_RANGE
+  // 100), so the elite is placed in it and BOTH original invariants are asserted
+  // unchanged: an elite inside ELITE_RANGE spends OVERCHARGE, and an elite
+  // beyond the nova RADIUS is never novad.
+  const novaR = C.SKILLS.FROST_NOVA.RADIUS;
+  const d = Math.round((novaR + AC.ELITE_RANGE) / 2);
+  assert.ok(d > novaR && d < AC.ELITE_RANGE,
+    'fixture sits between the nova RADIUS and the elite gate: ' + d + 'px');
+  const e = foe(p, d, true);   // elite, engaged, but beyond the nova
   const before = p.mana;
   T.autoCast(st);
   assert.equal(p.mana, before - COST_W,

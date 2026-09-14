@@ -179,8 +179,13 @@ console.log('EXPANSION LINES:');
     ok(u && u.baseCost > 0 && u.maxLevel >= 3 && Number.isFinite(u.perLevel),
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 16,
-     'sixteen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck + split)');
+  // RETARGETED 2026-09-14 (A1): the count moved 16 -> 17 when the owner-ordered
+  // engagement-radius row ('focus', meta.js) joined the flat stat/slot lines.
+  // The invariant this fixture guards is "one row per stat line, nothing
+  // silently added or dropped", so the number tracks the catalogue rather than
+  // being deleted or turned into a >= check.
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 17,
+     'seventeen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck + split + A1 focus)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');

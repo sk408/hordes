@@ -145,7 +145,9 @@ const dtMs = 1000 / 60;
     'GOT IT lands on the HORDES title screen');
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
-  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it.
+  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it. U1: the
+  // reference now lives behind the SETUP door, so route through it.
+  byTitle0('SETUP').click();
   byTitle0('HOW TO PLAY').click();
   assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'title HOW TO PLAY re-opens it');
   keyHandler({ key: 'Escape' });
@@ -163,6 +165,7 @@ const dtMs = 1000 / 60;
     const cards = elements['ov-cards'];
     const byTitle = (t) => Array.from(cards.children)
       .find(c => (c.innerHTML || '').includes(t));
+    byTitle('SETUP').click();   // U1: behind the SETUP door
     byTitle('SETTINGS').click();
     const r1 = byTitle('RESET PROFILE');
     assert(r1, 'settings should show a RESET PROFILE card');
@@ -185,6 +188,7 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
   const hudCard = byTitle('TEXT HUD');
   assert(hudCard, 'settings must offer a TEXT HUD card');
@@ -210,6 +214,7 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
   const z = byTitle('ZOOM');
   assert(z && /currently 6x/.test(z.innerHTML),
@@ -236,6 +241,7 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
   const cv = elements['game'];
   const size = () => cv.style.width + 'x' + cv.style.height;
@@ -567,21 +573,35 @@ assert(maxStillFrames < 120,
   `player must not idle while enemies swarm (stalled ${maxStillFrames} frames = ` +
   (maxStillFrames / 60).toFixed(1) + 's)');
 
-// RANGED doctrine reach: a 400px-away warlock must be targetable (Sk408
-// bug: the 260px FOCUS_RANGE left off-screen warlocks free-firing).
+// RANGED doctrine within the ENGAGEMENT RADIUS (A1 retarget: this block used to
+// pin "a 400px-away warlock must be targetable — RANGED is valid at ANY range",
+// the WAVE-era fix for off-screen warlocks. A1 replaces that contract: the
+// owner's engagement radius gates EVERY focus policy, so a shooter beyond it is
+// deliberately NOT targeted. The invariant that survives — and is asserted here
+// — is that RANGED still prefers a shooter over a nearer non-shooter INSIDE the
+// radius). The full all-policies radius contract lives in test_controllers.mjs.
 {
   const { AutoPilotController } = await import('../src/controllers.js');
+  const { CONFIG: CFG } = await import('../src/config.js');
+  const R = CFG.AUTOPILOT.FOCUS_RANGE;
   const ctl = new AutoPilotController();
   ctl.focus = 'RANGED';
   const p = { x: 0, y: 0 };
-  const warlock = { typeId: 'WARLOCK', x: 400, y: 0, hp: 10, maxHp: 10 };
+  const warlock = { typeId: 'WARLOCK', x: R - 10, y: 0, hp: 10, maxHp: 10 };
   const chaser = { typeId: 'CHASER', x: 20, y: 0, hp: 10, maxHp: 10 };
   const st = { enemies: [warlock, chaser], gems: [] };
   const t = ctl.pickTarget(p, st, null, chaser);
-  assert(t === warlock, 'RANGED focus must target a 400px warlock over a 20px chaser');
-  // Other doctrines keep the 260 cap: NEAREST still picks the close chaser.
+  assert(t === warlock, 'RANGED focus must target an in-range warlock over a nearer chaser');
+  // Beyond the engagement radius the volley HOLDS FIRE (null), on every policy.
+  const outOfRange = { typeId: 'WARLOCK', x: 400, y: 0, hp: 10, maxHp: 10 };
+  assert(ctl.pickTarget(p, { enemies: [outOfRange], gems: [] }, null, outOfRange) === null,
+    'a 400px warlock is beyond the engagement radius: hold fire');
+  // Other doctrines keep the same cap: NEAREST still picks the close chaser ...
   ctl.focus = 'NEAREST';
   assert(ctl.pickTarget(p, st, null, chaser) === chaser, 'NEAREST keeps the close target');
+  // ... and also returns null when the only enemy is out of range.
+  assert(ctl.pickTarget(p, { enemies: [outOfRange], gems: [] }, null, outOfRange) === null,
+    'NEAREST must not target beyond the radius either');
 }
 
 // Weather system: every run rolls one; the HUD must show it.
@@ -1846,6 +1866,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'gold is banked with the same payout accounting (+' + (purseAfter - purseBefore) + ')');
   assert(byTitle('RETRY') && byTitle('TITLE'), 'the end card offers RETRY/TITLE');
   byTitle('TITLE').click();           // back at the title settings: no END RUN there
+  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
   assert(!byTitle('END RUN'), 'the TITLE settings screen must NOT offer END RUN');
   console.log('wave-18: xp bar exact/reset + weapon underlines, dpr 1-3 clamped backing store, ' +
@@ -1915,8 +1936,28 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 
   // (2) The spawner stays silent; the hero's volley drains the display hp
   // (topping hp each frame keeps the probe's pilot alive through barrages).
+  //
+  // A1 FIXTURE RETARGET (2026-09-14). This block's subject is the bar's
+  // DRAIN/FLOOR contract, not how the pilot closes distance — and A1 changed
+  // the latter: the pilot now holds fire beyond its engagement radius
+  // (CONFIG.AUTOPILOT.FOCUS_RANGE, owner-set base 100). The maw spawns at
+  // ENEMY.SPAWN_DIST * 0.6 = 168px and drifts at 0.3 x 140 = 42px/s while the
+  // AUTO pilot back-pedals at 60px/s under the forced SAFE boss stance, so at
+  // base 100 the volley legitimately declines the fight and the bar does not
+  // drain on its own (this assertion went red: maw at full hp after 5s).
+  // Measured separately on the real loop (3 runs/arm, 60Hz, maxed save):
+  // maw-in-radius frames 77-92% at the pre-A1 260px vs 0-28% at 100px.
+  // The maw is therefore parked INSIDE the radius for the drain probe. THE
+  // PILOT'S INABILITY TO CLOSE ON A DRIFTING BOSS AT BASE 100 IS REPORTED TO
+  // THE ORCHESTRATOR, NOT FIXED HERE (A1's directive is explicit: hold fire
+  // beyond the radius on every path).
   const maw = st.finalBoss;
-  pump(() => false, 60 * 5, () => { st.player.hp = st.player.stats.maxHp; });
+  const inRange = () => {
+    maw.x = st.player.x + (CFG.AUTOPILOT.FOCUS_RANGE - 20);
+    maw.y = st.player.y;
+  };
+  inRange();
+  pump(() => false, 60 * 5, () => { st.player.hp = st.player.stats.maxHp; inRange(); });
   assert(st.enemies.length === 1 && st.enemies[0] === maw,
     'no spawns during the finale (enemies=' + st.enemies.length + ')');
   assert(maw.hp < maw.maxHp && maw.hp >= 1,

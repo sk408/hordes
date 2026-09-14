@@ -169,6 +169,8 @@ const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 S.check('the title menu offers a TROPHIES card carrying the earned count', () => {
   if (st.mode === 'intro') key('x');                 // any key skips the intro movie
   assert.equal(st.mode, 'title', 'the title is up');
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: the gallery's card lives behind PROGRESS
   const card = cardWith('TROPHIES');
   assert.ok(card, 'a TROPHIES card exists');
   const summary = gallerySummary(T.getProfile());
@@ -177,6 +179,8 @@ S.check('the title menu offers a TROPHIES card carrying the earned count', () =>
 });
 
 S.check('opening the gallery sets mode trophies with a live (masked) showcase', () => {
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: behind the PROGRESS door
   cardWith('TROPHIES').click();
   assert.equal(st.mode, 'trophies', 'mode is trophies');
   assert.ok(st.trophyView && st.trophyView.art && st.trophyView.id, 'state.trophyView is populated');
@@ -374,6 +378,8 @@ S.check('the title card count reflects the new trophies', () => {
   cardWith('TITLE').click();                        // the death screen's own TITLE path
   assert.equal(st.mode, 'title', 'back at the title');
   const summary = gallerySummary(T.getProfile());
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: the gallery's card lives behind PROGRESS
   const card = cardWith('TROPHIES');
   assert.ok(card.innerHTML.includes(summary.earned + ' / ' + summary.total),
     'the card count is live (' + summary.earned + ' / ' + summary.total + ')');
@@ -381,6 +387,8 @@ S.check('the title card count reflects the new trophies', () => {
 });
 
 S.check('an EARNED entry shows the real art, name and description', () => {
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: behind the PROGRESS door
   cardWith('TROPHIES').click();
   assert.equal(st.mode, 'trophies', 'gallery open from the title');
   st.trophyIdx = ACHIEVEMENT_DISPLAY_IDS.indexOf('KILLS_100');

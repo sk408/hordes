@@ -230,6 +230,10 @@ s.check('the title screen offers a CHALLENGE card naming the selection; a press 
   st.mode = 'menu';
   T.challenge.select('STANDARD');
   key('escape');
+  // U1: the CHALLENGE card lives behind the SETUP door now, so walk to it.
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
+  if (!door) throw new Error('no SETUP door on the title (U1)');
+  door.click();
   const cards = cardsNow();
   const card = cards.find(t => t.includes('>CHALLENGE<'));
   if (!card) throw new Error('no CHALLENGE card: ' + JSON.stringify(cards.map(c => c.slice(0, 40))));
@@ -294,6 +298,10 @@ s.check('HOW TO PLAY documents the challenge selection', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   key('escape');                                       // title
+  // U1: HOW TO PLAY is behind the SETUP door now.
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
+  if (!door) throw new Error('no SETUP door on the title (U1)');
+  door.click();
   const howTo = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>HOW TO PLAY<'));
   howTo.click();
   const field = cardsNow().find(t => t.includes('CHALLENGE'));

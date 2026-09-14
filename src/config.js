@@ -252,7 +252,22 @@ export const CONFIG = {
 
   // AutoPilot doctrine levers (general-vs-pilot controls; see controllers.js).
   AUTOPILOT: {
-    FOCUS_RANGE: 260,      // doctrine candidates must be within this radius
+    // A1 ENGAGEMENT RADIUS (owner-reported 2026-09-14: "the pilot targets
+    // enemies that are off the screen even ... have the pilot have a certain
+    // distance that they can target enemies, and we can add a buyable to the
+    // store that allows that distance to be increased").
+    // THE base radius, ONE definition. The pilot's volleys only engage a
+    // target INSIDE this radius of the player; beyond it pickTarget returns
+    // null and main.js holds fire (the existing null-target seam). 100 is
+    // OWNER-SET and deliberately tight — the 480x300 view's visible half-height
+    // is 150, so the pilot never shoots at anything the player cannot see.
+    // The 'focus' SHOP ROW (meta.js) raises it by that row's perLevel per
+    // level, climbing from 100 toward and past the 280-322 spawn ring.
+    // TWO readers, one number: controllers.js through engagementRange(p)
+    // (per-player, off p.stats.focusRange) and AUTO_CAST.ELITE_RANGE below
+    // through liveEngagementRange() (the config-side mirror meta.js stamps
+    // with setEngagementRange at run start).
+    FOCUS_RANGE: 100,
     SWARM_CLUSTER_R: 60,   // cluster-density radius for the SWARM doctrine
     // STANCE = the risk dial. WAVE-26 ("stance that bites"): each stance is a
     // REAL trade, not just a kite distance, and each carries a one-word TAG
@@ -335,7 +350,14 @@ export const CONFIG = {
     AUTO_CAST: {
       ENABLED: true,
       NEAR_FULL: 0.8,      // pool at/above this share of max: spill, don't waste
-      ELITE_RANGE: 260,    // a live elite within this radius counts as present
+      // DERIVED, not a second hardcoded radius (A1, 2026-09-14). It used to be
+      // its own literal 260 while the comment above claimed it "mirrors
+      // FOCUS_RANGE" — nothing made it so, and once the radius became
+      // upgradable a second literal would have left boss/elite detection
+      // stranded at the old value. It now reads the SAME ONE engagement radius
+      // the pilot targets with (liveEngagementRange()), so a bought 'focus'
+      // upgrade moves both the volleys AND this gate.
+      get ELITE_RANGE() { return liveEngagementRange(); },
     },
   },
 
@@ -695,6 +717,33 @@ export const CONFIG = {
     SURGE_EVERY: 3,      // every Nth wave past the milestone is an ELITE SURGE
   },
 };
+
+// ============================================================================
+// A1 — THE ENGAGEMENT RADIUS (ONE definition, two readers)
+// ============================================================================
+// `AUTOPILOT.FOCUS_RANGE` is the BASE (owner-set 100). The 'focus' shop row
+// (meta.js, SHOP_BY_ID.focus.perLevel) adds perLevel per purchased level, and
+// meta.js's applyMetaBonuses is the ONE place that computes the sum — it stamps
+// the result on the run's stats (`focusRange`) AND publishes it here through
+// setEngagementRange, because the config-side reader (AUTO_CAST.ELITE_RANGE) has
+// no player to read from. The pilot reads the per-player value off
+// p.stats.focusRange (controllers.js engagementRange), so both readers resolve
+// to the same number by construction, and a bought upgrade reaches both.
+//
+// It is deliberately LAST-KNOWN rather than per-run state: at boot (before any
+// profile is applied) it falls back to the base, which is exactly what a
+// stats-less probe should see.
+let liveRange = null;
+
+/** Record the engagement radius a just-applied profile runs with (meta.js). */
+export function setEngagementRange(px) {
+  liveRange = (typeof px === 'number' && Number.isFinite(px) && px > 0) ? px : null;
+}
+
+/** The radius the CONFIG-side readers see: the live value, else the base. */
+export function liveEngagementRange() {
+  return liveRange === null ? CONFIG.AUTOPILOT.FOCUS_RANGE : liveRange;
+}
 
 // Upgrade pool for the 1-of-3 draft.
 export const UPGRADES = [

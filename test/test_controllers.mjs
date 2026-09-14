@@ -6,6 +6,10 @@ import { readFileSync } from 'node:fs';
 import {
   FOCUS_MODES, STANCES, JOY_DEAD_ZONE, AutoPilotController, PlayerController,
 } from '../src/controllers.js';
+// A1: the engagement radius is a CONFIG number with a SHOP row behind it, so the
+// radius tests read the same definitions the game does (never a copied literal).
+import { CONFIG as C, setEngagementRange } from '../src/config.js';
+import { SHOP_BY_ID, applyMetaBonuses } from '../src/meta.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -93,17 +97,23 @@ check('target comes from pickTarget: NEAREST picks the nearest foe', () => {
   assert.equal(d.target, near);
 });
 
-check('RANGED doctrine reaches the off-screen warlock while standing still', () => {
-  // Sk408 bug regression, manual edition: the volley must keep silencing
-  // free-firing warlocks even while the pilot holds nothing.
+check('RANGED doctrine prefers a shooter inside the engagement radius', () => {
+  // A1 RETARGET. This used to be "RANGED reaches the off-screen warlock while
+  // standing still" (the WAVE-era ANY-range contract). A1 replaces that: the
+  // owner's engagement radius gates every focus policy, so the surviving
+  // invariant is that RANGED still silences a shooter BEFORE a nearer
+  // non-shooter when both are inside the radius — and holds fire beyond it.
   const c = new PlayerController();
   c.focus = 'RANGED';
-  const warlock = foe(400, 0, 'WARLOCK');
+  const warlock = foe(C.AUTOPILOT.FOCUS_RANGE - 10, 0, 'WARLOCK');
   const chaser = foe(20, 0);
   const d = c.decide({ x: 0, y: 0 }, mkState([warlock, chaser]), {});
   assert.equal(d.target, warlock);
   assert.equal(d.moveX, 0);
   assert.equal(d.moveY, 0);
+  const outOfRange = foe(400, 0, 'WARLOCK');
+  const d2 = c.decide({ x: 0, y: 0 }, mkState([outOfRange]), {});
+  assert.equal(d2.target, null, 'beyond the radius: hold fire, even in manual');
 });
 
 check('decide never mutates the input object', () => {
@@ -253,6 +263,145 @@ check('GREEDY opposed flee/gem vectors keep a real magnitude (>= 0.25)', () => {
     };
     d = c.decide({ x: 0, y: 0 }, mkState([foe(40, 0)], [gem]), cfg55);
     assert.ok(Math.hypot(d.moveX, d.moveY) >= 0.25, `gem angle ${ang} keeps real magnitude`);
+  }
+});
+
+// --- A1 THE ENGAGEMENT RADIUS (the off-screen targeting fix, 2026-09-14) ------
+// Owner: "the pilot targets enemies that are off the screen even ... have the
+// pilot have a certain distance that they can target enemies, and we can add a
+// buyable to the store that allows that distance to be increased."
+// The radius (CONFIG.AUTOPILOT.FOCUS_RANGE, base 100, +50/level from the
+// 'focus' shop row) gates OFFENSE on EVERY target-selection path: beyond it
+// pickTarget yields null and main.js holds fire. Half two, below, proves the
+// threat response is NOT gated — that asymmetry is the whole point.
+const R = C.AUTOPILOT.FOCUS_RANGE;
+const cfgKite = { KITE_DIST: 55 };
+
+check('A1: the base radius is INSIDE the visible view (never off-screen by design)', () => {
+  // The complaint, as an invariant: the view is 480x300, so anything past the
+  // 150px visible half-height cannot be seen. A base radius wider than that is
+  // the bug back again, whatever number it is.
+  assert.ok(R > 0 && R <= C.VIEW_H / 2,
+    `base engagement radius ${R} must be inside the visible half-height ${C.VIEW_H / 2}`);
+  // ...and the whole buyable ladder must reach the spawn ring (ENEMY.SPAWN_DIST
+  // 280), or a maxed pilot could never engage an enemy on arrival.
+  const maxed = R + SHOP_BY_ID.focus.perLevel * SHOP_BY_ID.focus.maxLevel;
+  assert.ok(maxed >= C.ENEMY.SPAWN_DIST,
+    `a maxed 'focus' line (${maxed}px) must reach the spawn ring (${C.ENEMY.SPAWN_DIST}px)`);
+});
+
+check('A1: beyond the engagement radius NO focus policy returns a target', () => {
+  for (const focus of FOCUS_MODES) {
+    const c = new AutoPilotController();
+    c.focus = focus;
+    const far = foe(R + 40, 0);
+    const d = c.decide({ x: 0, y: 0 }, mkState([far]), cfgKite);
+    assert.equal(d.target, null, `${focus}: must hold fire past the engagement radius`);
+  }
+});
+
+check('A1: an out-of-range enemy never wins over an in-range one (all four policies)', () => {
+  const near = R - 20;
+  // Each fixture gives the FAR enemy every reason to win its own doctrine: it
+  // is the biggest (TOUGHEST), the middle of a dense cluster (SWARM) and a
+  // free-firing shooter (RANGED). Inside the radius only, every one must lose.
+  const cases = [
+    ['NEAREST', [foe(400, 0), foe(near, 0)]],
+    ['TOUGHEST', [foe(400, 0, 'COLOSSUS', 9999), foe(near, 0)]],
+    ['SWARM', [foe(400, 0), foe(404, 0), foe(408, 0), foe(412, 0), foe(near, 0)]],
+    ['RANGED', [foe(400, 0, 'WARLOCK'), foe(near, 0)]],
+  ];
+  for (const [focus, enemies] of cases) {
+    const c = new AutoPilotController();
+    c.focus = focus;
+    const d = c.decide({ x: 0, y: 0 }, mkState(enemies), cfgKite);
+    assert.ok(d.target, `${focus}: an in-range enemy is still engaged`);
+    assert.ok(Math.hypot(d.target.x, d.target.y) <= R,
+      `${focus}: the target is INSIDE the radius (got ${Math.hypot(d.target.x, d.target.y)}px)`);
+  }
+});
+
+check('A1: NEAREST (the DEFAULT focus) is gated too — the path the player plays', () => {
+  // The original bug: the NEAREST early return handed back the nearest LIVE
+  // enemy with no distance test at all, and NEAREST is the default doctrine.
+  const c = new AutoPilotController();
+  assert.equal(c.focus, 'NEAREST', 'NEAREST is the default focus');
+  assert.equal(c.decide({ x: 0, y: 0 }, mkState([foe(280, 0)]), cfgKite).target, null,
+    'an enemy at SPAWN_DIST 280 is not an engagement at the 100px base');
+  assert.ok(c.decide({ x: 0, y: 0 }, mkState([foe(R, 0)]), cfgKite).target !== null,
+    'exactly AT the radius is still an engagement (inclusive boundary)');
+  assert.equal(c.decide({ x: 0, y: 0 }, mkState([foe(R + 0.01, 0)]), cfgKite).target, null,
+    'just past it is not');
+  assert.equal(c.decide({ x: 0, y: 0 }, mkState([]), cfgKite).target, null, 'empty field holds fire');
+});
+
+check('A1: the radius is PER-PLAYER (p.stats.focusRange) so the shop upgrade reaches the pilot', () => {
+  const far = foe(R + 100, 0);
+  const base = new AutoPilotController();
+  assert.equal(base.decide({ x: 0, y: 0 }, mkState([far]), cfgKite).target, null,
+    'a stats-less pilot uses the config base');
+  const upgraded = new AutoPilotController();
+  const d = upgraded.decide(
+    { x: 0, y: 0, stats: { focusRange: R + 150 } }, mkState([far]), cfgKite);
+  assert.equal(d.target, far, 'the upgraded radius engages what the base declines');
+});
+
+check('A1: the shop row and the ELITE_RANGE mirror are the SAME radius (no second 260)', () => {
+  const saved = C.AUTOPILOT.AUTO_CAST.ELITE_RANGE;
+  try {
+    assert.equal(saved, R, 'the elite/boss gate mirrors the base radius at boot');
+    const baseStats = { damage: 1, maxHp: 100, maxMana: 50, speed: 1, cooldown: 1,
+      pickup: 1, projectiles: 1, pierce: 0 };
+    for (const lvl of [1, 3, SHOP_BY_ID.focus.maxLevel]) {
+      const st = applyMetaBonuses({ ...baseStats }, { focus: lvl });
+      const want = R + SHOP_BY_ID.focus.perLevel * lvl;
+      assert.equal(st.focusRange, want, `focus L${lvl} -> stats.focusRange ${want}`);
+      assert.equal(C.AUTOPILOT.AUTO_CAST.ELITE_RANGE, want,
+        `focus L${lvl}: the elite/boss gate follows the bought upgrade`);
+      const c = new AutoPilotController();
+      assert.ok(c.decide({ x: 0, y: 0, stats: st }, mkState([foe(want - 10, 0)]), cfgKite).target !== null,
+        `focus L${lvl}: an enemy just inside the upgraded radius is engaged`);
+    }
+  } finally {
+    setEngagementRange(saved);   // leave the module as we found it
+  }
+});
+
+// --- A1 half two: SURVIVAL IS NEVER GATED -------------------------------------
+// "A threat beyond the engagement radius is still coming for you." The volley
+// holds fire out there; the stance kite does NOT.
+check('A1: a threat BEYOND the engagement radius still triggers the flee', () => {
+  const c = new AutoPilotController();
+  c.stance = 'SAFE';                     // kite 110 => enter flee inside 220px
+  const threat = foe(R + 100, 0);        // 200px: no target, but still inbound
+  const d = c.decide({ x: 0, y: 0 }, mkState([threat], [{ x: 500, y: 0 }]), cfgKite);
+  assert.equal(d.target, null, 'beyond the radius: the volley holds fire');
+  assert.equal(c.fleeing, true, 'and the pilot STILL commits to the dodge');
+  assert.ok(d.moveX < 0, 'the flee vector points away from the threat (-x)');
+  assert.equal(d.moveY, 0);
+});
+
+check('A1: the KITE LINE — not the engagement radius — decides the flee (every stance)', () => {
+  for (const stance of STANCES) {
+    const c = new AutoPilotController();
+    c.stance = stance;
+    const kite = 55 * C.AUTOPILOT.STANCES[stance].KITE_MULT;
+    // Just inside the stance's OWN kite line. SAFE's line (220px) is far wider
+    // than the engagement radius, which is the case the owner's directive cares
+    // about; GREEDY's (55px) is narrower, and it still decides on its own.
+    const inKite = kite * 2 - 1;
+    // The gem sits on the SAFE side of the pilot (opposite the threat) so the
+    // flee assertion is about the threat response even for GREEDY, whose flee
+    // vector bends toward loot (LOOT_WEIGHT 0.65).
+    const near = c.decide({ x: 0, y: 0 }, mkState([foe(inKite, 0)], [{ x: -500, y: 0 }]), cfgKite);
+    assert.equal(c.fleeing, true, `${stance}: flees at ${inKite}px (inside its kite line ${kite * 2})`);
+    assert.ok(near.moveX < 0, `${stance}: flee vector is away from the threat`);
+    // Well past the kite line: calm drift toward the gem, no flee.
+    const c2 = new AutoPilotController();
+    c2.stance = stance;
+    const out = c2.decide({ x: 0, y: 0 }, mkState([foe(kite * 2 + 40, 0)], [{ x: 500, y: 0 }]), cfgKite);
+    assert.equal(c2.fleeing, false, `${stance}: calm past its kite line`);
+    assert.ok(out.moveX > 0, `${stance}: drifts toward the gem`);
   }
 });
 

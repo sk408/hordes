@@ -3119,20 +3119,15 @@ function maybeStartMenuTour() {
         target: () => cardByTitle('SHOP') },
       { id: 'CHARACTERS', text: 'CHARACTERS unlock pilots with different starting kits.',
         target: () => cardByTitle('CHARACTERS') },
-      // WAVE-31: TROPHIES was added to the menu after the tour was written and
-      // was left untaught (build-plan item 9: every new screen taught or
-      // deliberately left to discovery - this is the taught option).
-      { id: 'TROPHIES', text: 'TROPHIES \u2014 every emblem you have earned, full screen.',
-        target: () => cardByTitle('TROPHIES') },
-      // G10: the bestiary is taught too (same rule 9): it is the discovery
-      // log for rare tiers, and a player who never opens it never learns the
-      // ??? silhouettes are a chase.
-      { id: 'BESTIARY', text: 'BESTIARY \u2014 every enemy you have encountered, rare tiers included.',
-        target: () => cardByTitle('BESTIARY') },
-      { id: 'SETTINGS', text: 'SETTINGS — audio, HUD, zoom and the profile reset.',
-        target: () => cardByTitle('SETTINGS') },
-      { id: 'HOW TO PLAY', text: 'HOW TO PLAY — the full reference, any time.',
-        target: () => cardByTitle('HOW TO PLAY') },
+      // U1 (owner 2026-09-14): TROPHIES/BESTIARY moved behind PROGRESS and
+      // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY behind SETUP. The tour teaches the
+      // DOORS and names their contents, so the moved screens are still taught
+      // (never merely exempted) and test_tour's "TROPHIES is taught" contract
+      // keeps biting. One step per title card remains the rule.
+      { id: 'PROGRESS', text: 'PROGRESS \u2014 TROPHIES and the BESTIARY: everything you have earned and met.',
+        target: () => cardByTitle('PROGRESS') },
+      { id: 'SETUP', text: 'SETUP \u2014 CHALLENGE, STAGE, SETTINGS and HOW TO PLAY.',
+        target: () => cardByTitle('SETUP') },
       // G12: the new LAST card is taught too — a quit button nobody introduced
       // reads as dangerous.
       { id: 'EXIT', text: 'EXIT GAME saves your progress and quits.',
@@ -3598,6 +3593,115 @@ function showFarewell() {
   menuCard('BACK', 'return to the title', () => showTitle());
 }
 
+// U1 SUBMENUS (owner 2026-09-14: "there should be more submenus to contain
+// some"). Both are the showHowToPlay()/showSettings() shape: openMenu + cards +
+// a BACK card. The moved cards keep their EXACT numbers and cycling behaviour —
+// only their parent screen changed. CHALLENGE/STAGE re-render THIS screen when
+// they cycle (was showTitle()), so the selection updates without bouncing the
+// player back out to the title.
+function showProgress() {
+  openMenu('progress');
+  ovTitle.textContent = 'PROGRESS';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = 'emblems earned &middot; enemies met';
+  // G9: the count is the honest one (earnedCount counts KNOWN trophy ids only,
+  // so a save from a newer build cannot inflate it).
+  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
+    () => showTrophies());
+  // G10: the discovery log for rare tiers — a player who never opens it never
+  // learns the ??? silhouettes are a chase.
+  menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
+    () => showBestiary());
+  menuCard('BACK', 'to title [ESC]', () => showTitle());
+}
+
+function showSetup() {
+  openMenu('setup');
+  ovTitle.textContent = 'SETUP';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = 'what the next run is &middot; how it plays &middot; how it sounds';
+  // G11: session-scoped selector — the press cycles the mode and re-renders so
+  // the card always names the CURRENT selection before the player commits.
+  menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
+    () => { cyclePendingChallenge(); showSetup(); });
+  // G20a: same cycling-card pattern through UNLOCKED stage rows only.
+  menuCard('STAGE', stageCardSub(),
+    () => { cyclePendingStage(); showSetup(); });
+  menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
+  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  menuCard('BACK', 'to title [ESC]', () => showTitle());
+}
+
+// U1 HEADER (owner 2026-09-14: "remove purse text from the main menu or add gold
+// as a gold coin with number display. We don't need the equipped character text
+// or 'the build IS the game' text. We could put something showing the equipped
+// character by using the pixel art for the character"). So: a coin glyph + the
+// number, and the equipped pilot as their OWN authored 32x32 bust — the same
+// asset the CHARACTERS screen paints, through the same renderer.drawGrid seam,
+// on a 32x32 backing store at an INTEGER 2x with pixelated rendering. ARCADE
+// PASS stays (it is a status flag, not filler) and the save-damage notice is
+// preserved verbatim.
+//
+// GRID CONVENTION (this is load-bearing): drawGrid does a TRUTHY test on each
+// cell (`if (v)`), and the authored frames are INTEGER arrays where 0 is the
+// transparent cell. A string grid ('..1111..') is truthy in EVERY cell, so
+// palette['.'] is undefined, the invalid fillStyle assignment is silently
+// ignored and the previous colour paints every pixel — the first cut of this
+// coin rendered as a solid 8x8 block for exactly that reason. Always: integers,
+// 0 = empty.
+const COIN_GRID = [
+  [0, 0, 1, 1, 1, 1, 0, 0],
+  [0, 1, 3, 3, 3, 3, 2, 0],
+  [1, 3, 4, 3, 3, 3, 3, 2],
+  [1, 3, 3, 3, 3, 3, 3, 2],
+  [1, 3, 3, 3, 3, 3, 3, 2],
+  [1, 3, 3, 3, 3, 3, 3, 2],
+  [0, 1, 3, 3, 3, 3, 2, 0],
+  [0, 0, 1, 1, 1, 1, 0, 0],
+];
+const COIN_PALETTE = { 1: '#0a0603', 2: '#8a5a2a', 3: '#ffd75e', 4: '#fff2b0' };
+
+function paintTitleHeader() {
+  const equipped = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
+  ovSub.innerHTML =
+    '<div class="purse-row">' +
+      '<canvas class="coin" width="8" height="8"></canvas>' +
+      `<span class="gold">${profile.gold}</span>` +
+      (hasArcadePass(profile) ? '<span class="pass">ARCADE PASS</span>' : '') +
+    '</div>' +
+    '<canvas class="bust" width="32" height="32"></canvas>' +
+    saveNoticeHtml();
+  // Markup-built like every menuCard; the live canvases are resolved exactly the
+  // way the character selector resolves its portraits (stub-DOM safe).
+  const canvasIn = (cls) => {
+    let cv = ovSub.querySelector ? ovSub.querySelector('canvas.' + cls) : null;
+    // a stub DOM can hand back a non-canvas node for this markup, so the guard
+    // is on getContext, not on presence — createElement('canvas') is stubbed
+    // properly by the test harness and is a real element in a browser
+    if (!cv || typeof cv.getContext !== 'function') {
+      cv = document.createElement('canvas'); cv.className = cls; ovSub.appendChild(cv);
+    }
+    return cv;
+  };
+  const coin = canvasIn('coin');
+  coin.width = 8; coin.height = 8;
+  const bust = canvasIn('bust');
+  bust.width = 32; bust.height = 32;
+  bust.title = equipped.name;
+  const asset = CHARACTER_PORTRAITS[equipped.id];
+  // Paint ONLY when a real 2D context exists: test/smoke.mjs's stub DOM has no
+  // canvas support at all (createElement('canvas') carries no getContext), while
+  // test/_harness.mjs stubs it properly. The markup is the contract either way;
+  // the pixels are the browser's.
+  const paint = (cv, grid, palette) => {
+    if (!cv || typeof cv.getContext !== 'function') return;
+    const g = cv.getContext('2d');
+    if (g) renderer.drawGrid(g, grid, palette, 0, 0);
+  };
+  paint(coin, COIN_GRID, COIN_PALETTE);
+  if (asset) paint(bust, asset.frames[0], asset.palette);
+}
+
 function showTitle() {
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
@@ -3610,10 +3714,7 @@ function showTitle() {
   if (ovTitle.style) ovTitle.style.display = 'none';
   overlay.style.background = 'transparent';
   const fresh = !hasLocalSave();
-  ovSub.innerHTML = `purse: ${profile.gold} gold · equipped: ` +
-    (CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT).name +
-    (hasArcadePass(profile) ? ' · ARCADE PASS' : '') +
-    '<br>the build IS the game' + saveNoticeHtml();
+  paintTitleHeader();
   menuCard('START GAME', fresh ? 'start a run · or LOAD FROM DISK below' : 'start a run',
     () => beginTitleHold());   // N2: fade out + hold the art ~1s, then startRun()
   // G12 DO 4: on a fresh browser (no local save) the startup menu itself
@@ -3625,28 +3726,15 @@ function showTitle() {
   }
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
-  // G9: the gallery is reached from here, and the count on the card is the
-  // honest one (earnedCount counts KNOWN trophy ids only, so a save from a
-  // newer build cannot inflate it). The full-screen showcase lives one press
-  // away, so the title card names what the press gets you.
-  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
-    () => showTrophies());
-  menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
-    () => showBestiary());
-  // G11: the challenge-mode selector. Session-scoped — the press cycles the
-  // mode and re-renders so the card always names the CURRENT selection; the
-  // sub-line is what makes the selection clearly distinguished from a standard
-  // run BEFORE the player commits to it.
-  menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
-    () => { cyclePendingChallenge(); showTitle(); });
-  // G20a: the stage selector rides the SAME title menu (no new screen mode) —
-  // same cycling-card pattern as CHALLENGE above: the press cycles the
-  // session's pending stage through UNLOCKED rows only and re-renders so the
-  // card always names the CURRENT selection plus what unlocks the rest.
-  menuCard('STAGE', stageCardSub(),
-    () => { cyclePendingStage(); showTitle(); });
-  menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
-  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  // U1 (owner 2026-09-14): the menu was eleven cards. TROPHIES/BESTIARY and
+  // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, so the
+  // title is six (seven on a fresh browser). The doors' sub-lines carry the
+  // live numbers the moved cards used to show, so nothing is hidden that a
+  // player needs before pressing.
+  menuCard('PROGRESS', `${earnedCount(profile)} / ${totalAchievements()} emblems · ` +
+    `${seenCount(profile)} / ${totalEncounters()} met`, () => showProgress());
+  menuCard('SETUP', stageCardSub().split(' · ')[0] + ' · challenge, stage, options',
+    () => showSetup());
   // G12 DO 2: EXIT GAME is the LAST card.
   menuCard('EXIT GAME', 'save & quit', () => exitGame());
   // N2 DO 1: the FIRST title entry per page load shows the art alone for a

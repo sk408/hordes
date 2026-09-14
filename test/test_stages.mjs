@@ -586,6 +586,10 @@ s.check('the title menu carries a STAGE card naming the live stage; a press cycl
   h.elements['ov-cards'].innerHTML = '';
   T.stages.select(DEFAULT_STAGE_ID);
   h.key('keydown', { key: 'Escape', preventDefault() {} });
+  // U1: the STAGE card lives behind the SETUP door now, so walk to it.
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
+  if (!door) throw new Error('no SETUP door on the title (U1)');
+  door.click();
   const card = cardsNow().find(t => t.includes('>STAGE<'));
   if (!card) throw new Error('no STAGE card: ' + JSON.stringify(cardsNow().map(c => c.slice(0, 30))));
   if (!card.includes('VERDANT HOLLOW')) throw new Error('the card does not name the stage: ' + card);

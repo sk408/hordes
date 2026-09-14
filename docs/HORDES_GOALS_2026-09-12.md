@@ -1173,6 +1173,20 @@ above (auto-width buttons whose `.badge` text changes at runtime; fix by fixed p
 buttons + reserved badge width; prove it with `getBoundingClientRect` equality across all four pilot modes
 and across a cooldown/potion change). Small, self-contained, no dependencies.
 
+### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS  [status: themed buttons DONE 2026-09-14 (uncommitted, pixel-verified); subnav NOT STARTED — owner-ordered 2026-09-14]
+
+Owner, verbatim: *"I think we have too many buttons on the main menu. There should
+be more submenus to contain some and also we should have custom themed buttons
+instead of squares."* Brief with the measured inventory (11 cards), the exact
+dependency list and the acceptance bar: `docs/briefs/U1_MENU_SUBNAV.md`.
+The themed-button half is in the working tree (`index.html` `.card` → notched
+pixel plaque, custom properties, pixel-sampled: corners cut on all four, top
+bevel lit, bottom band shaded; title/tour/smoke/bestiary/challenge/stage/trophy
+tests all green). The subnav half is a COORDINATED change — it must update
+`test/test_title_screen.mjs:143` (flat-menu contract by name) and the tour's
+per-card targets at `src/main.js:3111-3139` in the same change, and it must keep
+START GAME as `cards.children[0]` and EXIT GAME last.
+
 ### A1 — THE PILOT'S ENGAGEMENT RANGE (the off-screen targeting bug)  [status: not started — owner-reported 2026-09-14]
 
 Sk408: *"Right now the pilot targets enemies that are off the screen even. We need to try and work on that

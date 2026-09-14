@@ -225,6 +225,7 @@ console.log('0.98 D2 — AN OWNED PILOT KEEPS ITS ABILITY DESCRIPTION (DOM)');
 
   // ---- copy truthfulness (0.98: I is the ONE stats key; S is movement) ----
   // The keyboard card is what a player reads before their first run.
+  clickCard('SETUP');                        // U1: the reference lives behind the SETUP door
   clickCard('HOW TO PLAY');
   ok(/I — field report \(the ONE stats key\)/.test(html()),
     'HOW TO PLAY names I as the ONE stats key');

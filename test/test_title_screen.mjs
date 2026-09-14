@@ -131,7 +131,9 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
   assert.equal(h.elements['ov-title'].style.display, 'none',
     'the art wordmark replaces the DOM h1 (which stays for stub-DOM readers)');
   assert.equal(h.elements['ov-title'].textContent, 'HORDES', 'the h1 text is unchanged');
-  // Every other screen restores the sheet + the h1 (openMenu reset).
+  // Every other screen restores the sheet + the h1 (openMenu reset). U1: the
+  // options live behind the SETUP door now, so route through it.
+  cardWith('SETUP').click();
   cardWith('SETTINGS').click();
   assert.equal(ov.style.background, '', 'openMenu restored the sheet background');
   assert.notEqual(h.elements['ov-title'].style.display, 'none', 'the h1 is visible again');
@@ -142,12 +144,39 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
 // ---- 2. the startup menu (DO 2) ----------------------------------------------
 check('the menu carries START GAME, EXIT GAME as the LAST card, and every existing card', () => {
   const n = names();
-  for (const want of ['START GAME', 'SHOP', 'CHARACTERS', 'TROPHIES', 'BESTIARY',
-                      'CHALLENGE', 'SETTINGS', 'HOW TO PLAY', 'EXIT GAME']) {
+  // U1 (owner 2026-09-14): six/seven top-level cards after the subnav split —
+  // TROPHIES/BESTIARY moved behind PROGRESS, CHALLENGE/STAGE/SETTINGS/HOW TO
+  // PLAY behind SETUP. This assertion is retargeted, NOT weakened: the moved
+  // cards are asserted below, one level down.
+  for (const want of ['START GAME', 'SHOP', 'CHARACTERS', 'PROGRESS', 'SETUP', 'EXIT GAME']) {
     assert.ok(n.includes(want), 'card present: ' + want);
   }
   assert.equal(n[n.length - 1], 'EXIT GAME', 'EXIT GAME is the LAST card');
   assert.ok(!n.includes('PLAY'), 'the old PLAY name is gone');
+  // The pile that made the menu eleven cards is gone from the top level.
+  for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'SETTINGS', 'HOW TO PLAY']) {
+    assert.ok(!n.includes(moved), 'moved behind a submenu, not on the title: ' + moved);
+  }
+});
+
+check('U1 submenus: PROGRESS carries TROPHIES + BESTIARY, SETUP carries the run options, both return', () => {
+  cardWith('PROGRESS').click();
+  assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'BACK'],
+    'PROGRESS holds the gallery and the guide, plus BACK');
+  cardWith('BACK').click();
+  assert.ok(names().includes('START GAME'), 'BACK returns to the title');
+
+  cardWith('SETUP').click();
+  const s = names();
+  for (const want of ['CHALLENGE', 'STAGE', 'SETTINGS', 'HOW TO PLAY', 'BACK']) {
+    assert.ok(s.includes(want), 'SETUP holds: ' + want);
+  }
+  assert.equal(s[s.length - 1], 'BACK', 'BACK is the LAST card in SETUP');
+  // A cycling selector must re-render its OWN screen, not bounce to the title.
+  cardWith('CHALLENGE').click();
+  assert.ok(names().includes('CHALLENGE'), 'cycling the challenge stays in SETUP');
+  cardWith('BACK').click();
+  assert.ok(names().includes('START GAME'), 'BACK returns to the title from SETUP');
 });
 
 // ---- 3. EXIT GAME, honestly (DO 3 + DO 6) -------------------------------------
@@ -222,6 +251,7 @@ check('the load offer is wired to the same file picker SETTINGS uses', () => {
 });
 
 check('SETTINGS keeps IMPORT SAVE reachable either way (the permanent home)', () => {
+  cardWith('SETUP').click();          // U1: options live behind the SETUP door
   cardWith('SETTINGS').click();
   assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')),
     'settings offers IMPORT SAVE');
@@ -288,7 +318,8 @@ check('leaving the title mid-fade leaks NO partial opacity into the next screen'
   assert.ok(st.titleReveal.dur <= 0.15, 'the return fade is short (<=150ms)');
   h.pump(1);                         // mid-fade now
   assert.ok(parseFloat(ov.style.opacity) < 1, 'mid-fade, opacity below 1');
-  cardWith('SETTINGS').click();     // leave the title mid-fade
+  cardWith('SETUP').click();         // U1: leave the title mid-fade (through the door)
+  cardWith('SETTINGS').click();
   assert.notEqual(st.mode, 'title', 'on the settings screen');
   assert.equal(ov.style.opacity, '', 'openMenu restored FULL opacity for the next screen');
   assert.equal(ov.style.pointerEvents, '', 'and full interactivity');

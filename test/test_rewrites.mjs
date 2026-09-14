@@ -134,13 +134,21 @@ const quiet = () => { st.enemies.length = 0; st.enemyShots.length = 0; st.projec
 
 ok('PIERCE ALL is read at the VOLLEY spawn site (live loop)', () => {
   p.rewrites.pierceall = true;
-  // One durable far-away target so the volley actually fires. The first 30
-  // frames wipe projectiles too, so any pre-flag stale shot is gone before
-  // sampling begins; after that every sampled shot was fired post-flag.
-  const far = { typeId: 'BRUTE', x: p.x + 400, y: p.y, hp: 1e9, maxHp: 1e9, speed: 0, age: 0, flash: 0, slow: 0, xp: 0 };
+  // One durable target so the volley actually fires. The first 30 frames wipe
+  // projectiles too, so any pre-flag stale shot is gone before sampling begins;
+  // after that every sampled shot was fired post-flag.
+  // A1 RETARGET (2026-09-14): this target used to sit at p.x + 400 — the pilot
+  // now HOLDS FIRE beyond its engagement radius (config AUTOPILOT.FOCUS_RANGE,
+  // owner-set base 100), so 0 shots were observed. The fixture is re-anchored to
+  // the pilot at half the radius every frame: the shot source under test (the
+  // VOLLEY spawn site reading PIERCE_ALL) is unchanged, and the assertions below
+  // are byte-for-byte the originals.
+  const gap = Math.round(C.AUTOPILOT.FOCUS_RANGE / 2);
+  const far = { typeId: 'BRUTE', x: p.x + gap, y: p.y, hp: 1e9, maxHp: 1e9, speed: 0, age: 0, flash: 0, slow: 0, xp: 0 };
   const pierces = [];
   h.pump(180, (i) => {
     st.enemies.length = 0; st.enemyShots.length = 0;
+    far.x = p.x + gap; far.y = p.y;      // stay inside the engagement radius
     st.enemies.push(far);
     if (i < 30) st.projectiles.length = 0;
     else for (const pr of st.projectiles) if (!pr.kind) pierces.push(pr.pierce);

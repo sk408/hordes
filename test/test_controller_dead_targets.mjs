@@ -24,6 +24,13 @@ const st = (enemies, gems = []) => ({ enemies, gems });
 const live = (x, y, extra = {}) => ({ x, y, typeId: 'CHASER', maxHp: 10, hp: 10, ...extra });
 const corpse = (x, y, extra = {}) => ({ x, y, typeId: 'CHASER', maxHp: 10, hp: 0, ...extra });
 const pilot = (focus) => { const c = new AutoPilotController(); c.focus = focus; return c; };
+// A1 (2026-09-14): every fixture below sits INSIDE the engagement radius
+// (config AUTOPILOT.FOCUS_RANGE, owner-set base 100) unless the test is about
+// the radius itself — the corpse-filtering invariant is what these pin, and the
+// distances are derived from the config so a future re-pricing of the radius
+// cannot silently turn a fixture into an out-of-range hold-fire.
+const R = C.AUTOPILOT.FOCUS_RANGE;
+const IN = (f) => Math.round(R * f);
 
 // --- NEAREST: the corpse must not shadow the live enemy -------------------------
 check('NEAREST targets the live enemy, not the closer corpse', () => {
@@ -49,10 +56,13 @@ check('TOUGHEST skips the dead colossus (its maxHp still dwarfs everything)', ()
 });
 
 // --- RANGED: a dead spitter must not silence the volley ------------------------
+// (A1 retarget: the live shooter moved from 300px to IN(0.6)=60px because the
+// engagement radius now gates this path too — the INVARIANT under test is dead
+// vs living, not the distance, and 300px would be a legitimate hold-fire.)
 check('RANGED picks a living shooter over a closer dead one', () => {
   const c = pilot('RANGED');
   const deadSpitter = corpse(50, 0, { typeId: 'SPITTER' });
-  const liveSpitter = live(300, 0, { typeId: 'SPITTER' });
+  const liveSpitter = live(IN(0.6), 0, { typeId: 'SPITTER' });
   const d = c.decide(player, st([deadSpitter, liveSpitter]), C.PLAYER);
   assert.equal(d.target, liveSpitter);
 });
@@ -77,12 +87,15 @@ check('SWARM never returns a corpse, even one sitting in a corpse pile', () => {
 
 check('SWARM cluster density counts only living enemies', () => {
   const c = pilot('SWARM');
-  // Live A (in FOCUS_RANGE, 260) has two live neighbours => cluster 3. Live B at
-  // 100 is ringed by four corpses: with corpses counted, B's "cluster" of 5 wins.
-  const aroundB = [corpse(90, 0), corpse(96, 0), corpse(104, 0), corpse(110, 0)];
-  const A = live(240, 0);
-  const neighbours = [live(245, 0), live(250, 0)];
-  const B = live(100, 0);
+  // A1 retarget: the live cluster sits INSIDE the engagement radius now (the
+  // old geometry put A at 240px, in range only at the pre-A1 260 cap). Live A
+  // (A cluster of 3) vs live B at 30px ringed by four corpses: with corpses
+  // counted, B's "cluster" of 5 wins; with only the living counted, A's 3 wins.
+  // The two clusters are > SWARM_CLUSTER_R apart so neither inflates the other.
+  const aroundB = [corpse(20, 0), corpse(26, 0), corpse(34, 0), corpse(40, 0)];
+  const A = live(IN(0.95), 0);
+  const neighbours = [live(IN(0.95) + 4, 0), live(IN(0.95) + 8, 0)];
+  const B = live(30, 0);
   const d = c.decide(player, st([...aroundB, A, ...neighbours, B]), C.PLAYER);
   assert.equal(d.target, A, 'the real cluster wins, the corpse pile does not inflate B');
 });

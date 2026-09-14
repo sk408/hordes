@@ -57,6 +57,7 @@ console.log('exit paths: pagehide/beforeunload/autosave all flush the profile');
 // ---- title SETTINGS offers export/import + the recovery download ----
 const cards = h.elements['ov-cards'];
 const byTitle = (t) => Array.from(cards.children).find(c => (c.innerHTML || '').includes(t));
+byTitle('SETUP').click();   // U1: SETTINGS lives behind the SETUP door
 const settings = byTitle('SETTINGS');
 assert.ok(settings, 'the title offers SETTINGS');
 settings.click();

@@ -282,7 +282,12 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   // CHALLENGE card's exact pattern (a cycling selector whose sub-line names
   // the live selection and, when stages are locked, says what unlocks them),
   // so a coachmark would repeat the card's own text.
-  const DISCOVERY_EXEMPT = ['CHALLENGE', 'STAGE'];
+  // U1 (owner 2026-09-14): the list is now EMPTY, and that is a tightening, not
+  // a relaxation. CHALLENGE and STAGE were title cards whose coachmarks were
+  // exempted; both moved behind the SETUP door, so no title card holds an
+  // exemption any more and `taught == cards().length` must hold exactly. The
+  // mechanism stays so a future title card that nobody teaches still fails.
+  const DISCOVERY_EXEMPT = [];
   const seen = [];
   for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
     seen.push(tipOf()._html);

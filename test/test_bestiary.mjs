@@ -216,6 +216,8 @@ const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 S.check('the title menu offers a BESTIARY card carrying the honest count', () => {
   if (st.mode === 'intro') key('x');                 // any key skips the intro movie
   assert.equal(st.mode, 'title', 'the title is up');
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: the guide's card lives behind PROGRESS
   const card = cardWith('BESTIARY');
   assert.ok(card, 'a BESTIARY card exists');
   const seen = seenCount(T.getProfile());
@@ -224,6 +226,8 @@ S.check('the title menu offers a BESTIARY card carrying the honest count', () =>
 });
 
 S.check('opening the guide sets mode bestiary with a masked first entry', () => {
+  T.showTitle();
+  cardWith('PROGRESS').click();            // U1: behind the PROGRESS door
   cardWith('BESTIARY').click();
   assert.equal(st.mode, 'bestiary', 'mode is bestiary');
   assert.ok(st.bestiaryView && st.bestiaryView.id, 'state.bestiaryView is populated');
@@ -347,8 +351,10 @@ S.check('BACK restores the title and every overlay override resets', () => {
   assert.equal(ov.style.background, 'transparent', 'the title sheet is its own transparent one');
   assert.equal(ov.style.justifyContent, '', 'openMenu restored the alignment');
   assert.ok(cardWith('START GAME'), 'and the title cards are back (no leaked guide chrome)');
+  cardWith('PROGRESS').click();            // U1: the guide's card lives behind PROGRESS
   assert.ok(cardWith('BESTIARY').innerHTML.includes(seenCount(T.getProfile()) + ' / ' +
     totalEncounters() + ' discovered'), 'the card count is live after the run');
+  cardWith('BACK').click();                // back to the title for the next check
 
   // The return mode is STASHED, not assumed: entering from a live run and
   // closing must come back to the run.
@@ -372,7 +378,10 @@ S.check('ESC backs out to the title; arrows walk the ring', () => {
   key('escape');
   assert.equal(st.mode, 'title', 'ESC lands on the title');
   assert.equal(st.bestiaryView, null, 'the guide payload is gone');
-  assert.ok(cardWith('PLAY'), 'the title cards are rebuilt');
+  // U1: this used to assert cardWith('PLAY') — which only passed because the
+  // old title carried "HOW TO PLAY" and the lookup is a SUBSTRING match. The
+  // real card is START GAME; assert that instead of an accidental match.
+  assert.ok(cardWith('START GAME'), 'the title cards are rebuilt');
 });
 
 S.check('the guide paints NO play HUD (the canvas half of the chrome gate)', () => {

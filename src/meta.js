@@ -14,7 +14,7 @@
 //   //        profile.purchased), profile.equippedCharacter);
 //   //        potions start at startPotionCount(profile); grant the equipped
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
-import { CONFIG as C } from './config.js';
+import { CONFIG as C, setEngagementRange } from './config.js';
 import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
 import { ENCOUNTER_IDS } from './encounters.js';   // G10: derived bestiary catalog
 import { TIER_RANK } from './rarity.js';           // G10: tier ordering for bestTier
@@ -333,6 +333,24 @@ export const SHOP_UPGRADES = [
     baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 2 },
   { id: 'regen',   name: 'Mana Spring',    desc: '+1 mana regen per second per level',
     baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 1 },
+  // ---- A1: THE PILOT'S ENGAGEMENT RADIUS (owner-ordered 2026-09-14) --------
+  // Sk408: "the pilot targets enemies that are off the screen even ... have the
+  // pilot have a certain distance that they can target enemies, and we can add
+  // a buyable to the store that allows that distance to be increased."
+  // The BASE radius (100, owner-set) lives in config.js AUTOPILOT.FOCUS_RANGE
+  // and is applied on every target-selection path in controllers.js; this row
+  // is the +50px/level climb, so L1..L5 = 150..350 and a MAXED pilot engages on
+  // arrival at the 280-322 spawn ring (the base 100 declines almost everything
+  // pricier than the visible half-height of 150). ADDITIVE, like the other flat
+  // amount rows — it is a distance, not a (1+x) multiplier.
+  // PRICE IS PROVISIONAL (baseCost 200, costGrowth 1.6, maxLevel 5): it sits on
+  // the cheap rung next to Vitality/Forged Edge because at base 100 the pilot
+  // declines most engagements, so this is a core power line, not a flavour row.
+  // RE-CHECK IT IN E1's ECONOMY PASS (E1 re-prices the whole ladder); measured
+  // effect of the full L1..L5 line on the modeled ladder: full-buy cost
+  // 162771g -> 165933g, the modeled crossing moves run 81 -> 83 (target 60-100).
+  { id: 'focus',   name: 'Rangefinder',    desc: '+50 pilot engagement range per level',
+    baseCost: 200, costGrowth: 1.6, maxLevel: 5, perLevel: 50 },
   // ---- N1b item 6: the three MANA buyables (the relief valve; mana itself
   // stays punishing at base — see goals N1b item 1). Priced against the
   // mana neighbours above (regen totals ~1851g) and against the class ladder
@@ -686,8 +704,25 @@ export function draftCardWeight(cardId, kind, luck) {
 //   manaOnKill   (0)              Siphon: flat mana granted per KILL (an
 //                                 event, never frame-scaled) at the main.js
 //                                 kill seam, clamped to stats.maxMana.
+//   focusRange   (C.AUTOPILOT.FOCUS_RANGE) A1, ADD +50/level (Rangefinder): the
+//                                 pilot's ENGAGEMENT RADIUS in world px. The
+//                                 base is owner-set 100 (config.js) and this is
+//                                 the ONE place the purchased levels are added
+//                                 to it; controllers.js reads it per-player off
+//                                 p.stats (falling back to the base when a
+//                                 probe hands in no stats), and the same value
+//                                 is published to config so the config-side
+//                                 reader (AUTOPILOT.AUTO_CAST.ELITE_RANGE)
+//                                 cannot drift from the volleys. ADDITIVE.
 export function applyMetaBonuses(stats, purchased) {
   const lvl = id => purchased[id] || 0;
+  // A1: the ONE place the engagement radius is computed. Publish it to config
+  // BEFORE returning, so the config-side reader (AUTO_CAST.ELITE_RANGE, read by
+  // main.js's auto-cast gate) sees the same radius this run's pilot targets
+  // with. The returned object stays a NEW object (this function's contract);
+  // the publish is the shop row's effect reaching the config seam.
+  const focusRange = C.AUTOPILOT.FOCUS_RANGE + SHOP_BY_ID.focus.perLevel * lvl('focus');
+  setEngagementRange(focusRange);
   return {
     ...stats,
     // Forged Edge COMPOUNDS (owner rule, 2026-09-13): (1 + perLevel)^level, not
@@ -719,6 +754,9 @@ export function applyMetaBonuses(stats, purchased) {
     manaCostMult: Math.max(0.2, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty')),
     maxMana: stats.maxMana + SHOP_BY_ID.well.perLevel * lvl('well'),
     manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon'),
+    // A1 engagement radius (Rangefinder). ADDITIVE distance, and the value
+    // published to config.js above is this exact expression — one definition.
+    focusRange,
   };
 }
 

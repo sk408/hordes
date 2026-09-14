@@ -78,15 +78,29 @@ s.check('portal-only exception: decide() ignores shrines/chests/arches, with and
     throw new Error('pilot does not steer at the portal: ' + JSON.stringify(d));
   }
   if (c3.act !== 'PORTAL') throw new Error('the live activity should read PORTAL, got ' + c3.act);
-  // A live threat inside the kite line still outranks the portal (FLEE first).
+  // OWNER DIRECTIVE 2026-09-14: "Pilot should ignore flee status during the
+  // portal sequence. That's why we made it invulnerability." A live threat
+  // inside the kite line NO LONGER outranks the portal: while the portal is
+  // open the pilot is invuln (C.PORTAL.INVULN, refreshed every frame — P1 R3),
+  // so kiting buys nothing, and the old ordering parked the pilot on the
+  // portal's STANDOFF ring (d 21-23 against RADIUS 16) until the horde died.
   const c4 = new AutoPilotController();
   const st4 = dressed(base());
   st4.portal = { x: 150, y: 0, age: 1 };
   st4.enemies = [{ x: 60, y: 0, hp: 5, maxHp: 5, typeId: 'CHASER' }];
   const d4 = c4.decide({ x: 50, y: 0 }, st4, cfg);
-  if (c4.act !== 'FLEE' || d4.moveX > 0) {
-    throw new Error('a threat inside the kite line must outrank the portal: act=' +
+  if (c4.act !== 'PORTAL' || Math.abs(d4.moveX - 1) > 1e-9 || Math.abs(d4.moveY) > 1e-9) {
+    throw new Error('the portal must outrank an in-kite-line threat: act=' +
       c4.act + ' ' + JSON.stringify(d4));
+  }
+  // ...and the kite itself is untouched: with NO portal the same threat flees.
+  const c5 = new AutoPilotController();
+  const st5 = dressed(base());
+  st5.enemies = [{ x: 60, y: 0, hp: 5, maxHp: 5, typeId: 'CHASER' }];
+  const d5 = c5.decide({ x: 50, y: 0 }, st5, cfg);
+  if (c5.act !== 'FLEE' || d5.moveX > 0) {
+    throw new Error('without a portal the kite must still flee: act=' +
+      c5.act + ' ' + JSON.stringify(d5));
   }
 });
 

@@ -38,6 +38,24 @@ function nearestEnemy(p, state) {
   return nearest;
 }
 
+// A1 ENGAGEMENT RADIUS (the ONE definition lives in config: AUTOPILOT.FOCUS_RANGE
+// = owner-set base 100, raised by the 'focus' shop row). EVERY target-selection
+// path below is gated on it: beyond the radius the pilot returns NO target, and
+// main.js's existing null-target seam holds fire. p.stats.focusRange is the
+// per-run value meta.js computes from the purchased levels; a stats-less probe
+// point (unit tests, tools) falls back to the config base.
+//
+// OFFENSE ONLY. This is read by pickTarget and NOTHING else: decide()'s threat
+// response (the stance kite line below) deliberately keeps its own radii — a
+// threat out past the engagement radius is still walking toward the player, so
+// dodging must stay unconditional.
+function engagementR2(p) {
+  const v = p && p.stats ? p.stats.focusRange : undefined;
+  const back = C.AUTOPILOT.FOCUS_RANGE;
+  const r = (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : back;
+  return r * r;
+}
+
 export class AutoPilotController {
   constructor() {
     this.focus = 'NEAREST';
@@ -68,10 +86,23 @@ export class AutoPilotController {
   }
 
   // Target doctrine: WHICH enemy the auto-attack volleys at. Never manual
-  // aim — it only ranks candidates within FOCUS_RANGE of the player.
+  // aim — it only ranks candidates within the engagement radius of the player
+  // (A1: AUTOPILOT.FOCUS_RANGE / the 'focus' shop row, via engagementR2), on
+  // EVERY path: an enemy beyond it is not a candidate, and if nothing is a
+  // candidate the result is null (main.js holds fire).
   pickTarget(p, state, cfg, nearest) {
-    if (this.focus === 'NEAREST' || state.enemies.length === 0) return nearest;
-    const r2 = C.AUTOPILOT.FOCUS_RANGE ** 2;
+    const r2 = engagementR2(p);
+    // A1 THE OFF-SCREEN FIX. `nearest` is the nearest LIVE enemy, so testing it
+    // is enough to know whether ANY enemy is in range (it is the minimum
+    // distance); if it fails, every `best` below fails too. NEAREST is the
+    // DEFAULT focus, and this early return used to hand back `nearest`
+    // unconditionally — which is why the radius was a lie on the path the
+    // player actually plays while every enemy spawns at SPAWN_DIST 280 (far
+    // outside the 240x150 visible half-extents).
+    const near = (nearest && (nearest.x - p.x) ** 2 + (nearest.y - p.y) ** 2 <= r2)
+      ? nearest : null;
+    if (state.enemies.length === 0) return null;
+    if (this.focus === 'NEAREST') return near;
 
     if (this.focus === 'TOUGHEST') {
       // Highest max-hp enemy in range (kill the big ones first).
@@ -82,22 +113,27 @@ export class AutoPilotController {
         if (d > r2) continue;
         if (e.maxHp > bh || (e.maxHp === bh && d < bd)) { bh = e.maxHp; bd = d; best = e; }
       }
-      return best ?? nearest;
+      return best ?? near;
     }
 
     if (this.focus === 'RANGED') {
       // Nearest FIRE-CAPABLE enemy (SPITTER / WARLOCK) — silence the shooters
-      // before they whittle the player down. RANGED targets are valid at ANY
-      // range (Sk408 bug: FOCUS_RANGE 260 left off-screen warlocks free-firing
-      // while the volley ignored them); other doctrines keep the 260 cap.
+      // before they whittle the player down. A1 RETARGET: this path used to
+      // ignore the radius on purpose ("RANGED targets are valid at ANY range" —
+      // a WAVE-era fix for off-screen warlocks free-firing). That contract is
+      // gone: the owner's engagement radius is the rule on every focus policy,
+      // so a shooter beyond it is NOT targeted (the volley holds fire and the
+      // pilot closes the distance / flees under the stance instead). Shooters
+      // INSIDE the radius are still shot first, which is what that fix died for.
       let best = null, bd = Infinity;
       for (const e of state.enemies) {
         if (!alive(e)) continue;
         if (!RANGED_TYPES.has(e.typeId)) continue;
         const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
+        if (d > r2) continue;
         if (d < bd) { bd = d; best = e; }
       }
-      return best ?? nearest;
+      return best ?? near;
     }
 
     // SWARM: enemy in the densest cluster (most enemies within SWARM_CLUSTER_R
@@ -115,7 +151,7 @@ export class AutoPilotController {
       }
       if (count > bc || (count === bc && d < bd)) { bc = count; bd = d; best = e; }
     }
-    return best ?? nearest;
+    return best ?? near;
   }
 
   // Returns { moveX, moveY, target } — moveX/moveY normalized direction,
@@ -180,6 +216,10 @@ export class AutoPilotController {
 
     // Threat response: flee the nearest enemy when it crosses the stance's
     // kite line. GREEDY keeps a foot pointed at the loot even while fleeing.
+    // A1: this reads `nearest` and its OWN kite radii (enterR2/exitR2 below) and
+    // deliberately NOT the engagement radius — the range gates OFFENSE only. A
+    // threat beyond the volleys' radius is still coming for the player, so the
+    // dodge stays unconditional.
     // WAVE-19 HYSTERESIS: the branch switch used to be a knife-edge positional
     // threshold — at the boundary the flee vector and the calm gem-drift
     // vector (gems cluster where enemies died, i.e. TOWARD enemies) flipped
@@ -188,7 +228,20 @@ export class AutoPilotController {
     // a commitment band, not a toggle.
     const enterR2 = (kite * 2) ** 2;
     const exitR2 = (kite * 2 * 1.3) ** 2;
-    if (nearest && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
+    // P1 PORTAL OVERRIDES THE KITE (owner directive 2026-09-14: "Pilot should
+    // ignore flee status during the portal sequence. That's why we made it
+    // invulnerability."). While state.portal is open and the pilot is steering,
+    // main.js refreshes p.invuln to C.PORTAL.INVULN every frame (P1 R3, AUTO
+    // only) — kiting buys nothing and costs the run. Measured on the P1
+    // acceptance scenario: a lost chest gamble rings the pilot with
+    // GAMBLE_HORDE_COUNT CHASERs at GAMBLE_HORDE_RADIUS (90px — well inside the
+    // kite line), and the old ordering parked the pilot on the portal's 24px
+    // STANDOFF ring (d 21-23) for 30-50s, past the tool's 45s flow budget,
+    // because PORTAL.RADIUS is 16 and the FLEE branch never takes that last
+    // step in. Evidence: 6-chaser horde -> act=FLEE on EVERY sample for 30s at
+    // d=23, PORTAL never re-entered; clearing the same horde -> entry in ~1s.
+    // The pilot now walks in and fires on the way; the invuln grant protects.
+    if (nearest && !state.portal && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
       this.fleeing = true;
       this.act = 'FLEE';
       const len = Math.sqrt(nd) || 1;
@@ -235,10 +288,11 @@ export class AutoPilotController {
     // close the last gap itself: while the boss portal is open, steer
     // straight at it. Shrines/chests/arches stay invisible (the
     // src/shrines.js:12 contract is unchanged — this branch reads
-    // state.portal and NOTHING else). Priority, stated: a live threat
-    // inside the stance's kite line still FLEES first (the branch above
-    // already returned); the portal outranks gem LOOT and PATROL — the
-    // corridor is spawn-suppressed and banking gems while the wave waits
+    // state.portal and NOTHING else). Priority, stated: the portal OUTRANKS
+    // the kite — the flee branch above is gated on !state.portal, because the
+    // approach invuln (P1 R3) is the protection and kiting short of the ring
+    // is what stranded the pilot; the portal also outranks gem LOOT and PATROL
+    // — the corridor is spawn-suppressed and banking gems while the wave waits
     // would stall progression. Already inside STANDOFF? The straight line
     // IS the final step — no orbit logic needed.
     if (state.portal) {
