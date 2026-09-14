@@ -93,6 +93,7 @@ import {
   earnedCount, totalAchievements, isEarned,
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon } from './art/index.js';
+import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
   challengeRules, nextChallengeId, describeChallenge,
@@ -2434,6 +2435,7 @@ function openDraft() {
       `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => pick(u);
     ovCards.appendChild(el);
+    frameCard(el);
   });
   overlay.style.display = 'flex';
   // WAVE-21: the draft IS the game — coachmark it the first time it appears.
@@ -2591,6 +2593,7 @@ function maybeOpenEvolve() {
       closeEvolve();
     };
     ovCards.appendChild(el);
+    frameCard(el);
   });
   // NOT NOW takes the next number key when it fits the 1-4 routing window
   // (3+ candidates can overflow it — then it stays mouse/click only).
@@ -2600,6 +2603,10 @@ function maybeOpenEvolve() {
   });
   if (cands.length + 1 <= 4) {
     notNow.innerHTML += `<div class="key">[${cands.length + 1}]</div>`;
+    // A real browser re-serializes innerHTML on += and drops the painted
+    // frame canvas with it; frameCard is idempotent, so re-frame after the
+    // mutation (the stub DOM keeps the child and this is a no-op repaint).
+    frameCard(notNow);
   }
 }
 
@@ -3132,12 +3139,77 @@ function showHowToPlay() {
 }
 
 // ---------- Meta screens: title / shop / characters / settings ----------
+//
+// U1b AUTHORED PIXEL FRAME (owner 2026-09-14: "custom somewhat like this..
+// like it is part of the screen"). Every .card carries its OWN canvas layer
+// (class "frame", a child of the card — elements['ov-cards'].children[i]
+// stays the clickable card itself, nothing is wrapped). The canvas is painted
+// with the authored 9-slice pixel frame (src/art/menu_frame.js) through the
+// renderer's drawGrid seam, sized to the card's box PLUS the shadow offset,
+// so the cast shadow is painted pixels OUTSIDE the card box — the thing the
+// CSS clip-path plaque could never do (the clip cut the card's own 0-blur
+// drop-shadow). States (hover/focus crimson, equipped gold) REPAINT the same
+// grid with a swapped palette, so the silhouette can never jump. The frame is
+// static: no clock, no dt, so 60Hz and 120Hz are identical by construction.
+// Stub DOMs (no clientWidth, or canvas without getContext) keep the markup
+// only — the canvas child is the contract there, the pixels are the
+// browser's, exactly like paintTitleHeader.
+let frameHotEl = null;
+function frameCard(el) {
+  if (!el || typeof el.appendChild !== 'function') return el;
+  let cv = null;
+  for (const c of (el.children || [])) { if (c && c.className === 'frame') { cv = c; break; } }
+  if (!cv) {
+    cv = document.createElement('canvas');
+    cv.className = 'frame';
+    if (cv.setAttribute) cv.setAttribute('aria-hidden', 'true');
+    el.appendChild(cv);
+  }
+  const paint = () => {
+    const w = el.clientWidth, h = el.clientHeight;
+    if (typeof w !== 'number' || typeof cv.getContext !== 'function') return true;
+    if (!w || !h) return false;   // real browser, overlay not laid out yet: retry below
+    const g = cv.getContext('2d');
+    if (!g) return true;
+    const cls = el.className || '';
+    const tone = cls.includes('selected') ? 'sel'
+      : (frameHotEl === el && !cls.includes('dim')) ? 'hot' : 'base';
+    const wpx = Math.round(w), hpx = Math.round(h);
+    cv.width = wpx + MENU_FRAME_SHADOW.dx;
+    cv.height = hpx + MENU_FRAME_SHADOW.dy;
+    renderer.drawGrid(g, composeMenuFrame(wpx, hpx).grid, MENU_FRAME_PALETTES[tone], 0, 0);
+    return true;
+  };
+  if (!paint()) {
+    let tries = 0;
+    const retry = () => { if (!paint() && ++tries < 8) requestAnimationFrame(retry); };
+    requestAnimationFrame(retry);
+  }
+  // Late relayout (a menu re-wrap, a viewport change, a state line settling)
+  // re-measures and repaints — the frame always matches the card's live box.
+  if (typeof ResizeObserver === 'function' && !el._frameRO) {
+    el._frameRO = new ResizeObserver(() => { paint(); });
+    el._frameRO.observe(el);
+  }
+  if (typeof el.addEventListener === 'function' && !el._frameWired) {
+    el._frameWired = true;
+    const on = () => { frameHotEl = el; paint(); };
+    const off = () => { if (frameHotEl === el) frameHotEl = null; paint(); };
+    el.addEventListener('mouseenter', on);
+    el.addEventListener('mouseleave', off);
+    el.addEventListener('focus', on);
+    el.addEventListener('blur', off);
+  }
+  return el;
+}
+
 function menuCard(name, sub, onclick, dim) {
   const el = document.createElement('div');
   el.className = 'card' + (dim ? ' dim' : '');
   el.innerHTML = `<div class="name">${name}</div><div class="desc">${sub || ''}</div>`;
   el.onclick = () => { audio.playSfx('button'); onclick(); };
   ovCards.appendChild(el);
+  frameCard(el);
   return el;
 }
 
@@ -4005,6 +4077,7 @@ function renderCharSelector() {
   kitEl.setAttribute('data-kit', JSON.stringify(kit));
   kitEl.innerHTML = kitPanelHtml(kit);
   ovCards.appendChild(kitEl);
+  frameCard(kitEl);
   charIdle.entries = [];
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
@@ -4047,6 +4120,7 @@ function renderCharSelector() {
       paintCharPortraits();
     };
     ovCards.appendChild(el);
+    frameCard(el);
     charIdle.entries.push({ id: ch.id, canvas: cv, asset: CHARACTER_PORTRAITS[ch.id], mask: !owned });
   }
   menuCard('BACK', 'to title [ESC]', () => showTitle());
