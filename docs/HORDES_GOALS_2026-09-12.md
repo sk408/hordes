@@ -54,6 +54,15 @@ since idle dominated the cycle. Recovery from a gateway-restart kill also drops 
 
 ## BUILDER LANE — KIMI, NOT GLM (2026-09-13, owner-ordered; read before dispatching)
 
+**LANE LAUNCH LESSON (2026-09-14, cost ~7h): ALWAYS pass `--task-timeout`.** The hordes
+kimi lane was launched without it and WITHOUT the `timeout 86400` wrapper every other
+lane uses (`kimi-overseer`, `glm-pong`), so when the hub_worker hit a bad task it hung
+FOREVER instead of timing out: measured 07:05:36 elapsed against 00:00:21 of CPU, no
+child process, no file writes for an hour, and a 4-task queue going unread. A lane that
+is "running" is not a lane that is WORKING — check CPU time and file mtimes, not the pid.
+Orchestrator action taken: worker 1382676 killed, lane left to the pilot's next tick to
+re-spawn WITH a timeout.
+
 **Dispatch builders to `cli:kimi-hordes-g8`** (channel `hub`, colon form in the target — the
 `@`-underscore form returns success and delivers nothing).
 
@@ -1230,8 +1239,7 @@ tests all green). The subnav half is a COORDINATED change — it must update
 per-card targets at `src/main.js:3111-3139` in the same change, and it must keep
 START GAME as `cards.children[0]` and EXIT GAME last.
 
-### A1 — THE PILOT'S ENGAGEMENT RANGE (the off-screen targeting bug)  [status: not started — owner-reported 2026-09-14]
-
+### A1 — THE PILOT'S ENGAGEMENT RANGE (the off-screen targeting bug)  [status: CODE LANDED 2026-09-14 in `f521bd3` (builder cli:kimi-hordes-g8). EVIDENCE MEASURED BY THE ORCHESTRATOR, not from a builder report: AUTOPILOT.FOCUS_RANGE is 100 at src/config.js:270 (the ONE definition), engagementR2() at src/controllers.js:52 consumes it, and the A1 fixtures in test/test_controllers.mjs (+157 lines) are green inside the 78/78 suite run at that commit. CAVEAT, stated honestly: no A1-specific tool or cohort re-measurement exists, so this is LANDED, not independently ACCEPTED. Do not re-dispatch the build; if anything, dispatch the acceptance measurement.]
 Sk408: *"Right now the pilot targets enemies that are off the screen even. We need to try and work on that
 a little bit. Maybe what we could do is have the pilot have a certain distance that they can target
 enemies, and we can add a buyable to the store that allows that distance to be increased."*
@@ -1291,8 +1299,7 @@ permanently approached by unseen enemies — a broader legibility issue than the
 edge indicators (a marker at the screen border) would fix that too, and would explain at a glance why the
 pilot is holding fire. Not required by this directive; flagging it because it addresses the same root.
 
-### A2 — THE RADAR (circular minimap with enemy dots)  [status: not started — owner-suggested 2026-09-14]
-
+### A2 — THE RADAR (circular minimap with enemy dots)  [status: MODULE BUILT, NOT WIRED 2026-09-14 — src/radar.js (8.0KB: RADAR_RADIUS 330, classifyTier, RADAR_TIERS, DEFAULT_RADAR) and test/test_radar.mjs (13.5KB) landed in `f521bd3`, but NOTHING IMPORTS IT. Orchestrator check: grep -rn 'radar' over src/*.js and index.html returns no consumer, so as far as the game is concerned the owner-suggested radar does not exist yet. THE NEXT WORK ON THIS ITEM IS THE WIRING (renderer draw + hotkey/toggle + the A1 pairing), NOT the module — do not rebuild it.]
 Sk408: *"What about a circle map on the screen, like some games use, with little dots that show the
 enemies? It doesn't have to be a large radius that allows the player to see too far, but enough to see all
 the enemies within the spawn radius."*
@@ -1362,8 +1369,7 @@ reachable once a loadout produces long runs. Therefore:
 - Run-scoped visited state is a bonus of this reading: it lives in `state` (like the other run counters),
   so **no save migration and no schema change** — unlike the stage-map reading Remy first proposed.
 
-### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: IN PROGRESS 2026-09-14 — brief `docs/briefs/P1_PORTAL.md` landed. FIRST DISPATCH msg_01M2F3CJK5KSAD7WXRGC13DPPZ NEVER RAN: the worker handler crashed on it (hub_worker.py:1498 -> `_write_json` FileNotFoundError on `pending_interrupts.json.tmp`), so the builder was idle and no code exists. RE-ISSUED 2026-09-14 04:52 UTC as msg_01M2F44KQEB3KYNW4BTXVDJ51H by the goal-pilot tick after re-verifying every brief anchor on clean HEAD `64828af` (config.js:373 PORTAL, main.js:1901 portal open, chase :1375-1385 entry test :1384, openIntermission :800, controllers.js :72/:123/:269, render.js:823); builder `cli:kimi-hordes-g8` CONFIRMED RUNNING (`hub-worker queue` => running: msg_01M2F44KQEB3KYNW4BTXVDJ51H, kimi-code pid 1467892). Nothing verified yet]
-
+### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: DONE 2026-09-14 — landed as `b8818d6` (linger + auto-path + AUTO-only approach invuln + entry dwell) and completed by the flee-gate fix in `f521bd3`. THIS MARKER READ "IN PROGRESS / nothing verified yet" UNTIL 2026-09-14 23:59 PT AND WAS STALE: the re-issued task msg_01M2F44KQEB3KYNW4BTXVDJ51H sat UNPROCESSED in a hung kimi lane for ~7h while P1 was already built and shipped. Orchestrator evidence: tools/verify_p1_portal.mjs 13/13 PASS, HEADLINE(wall) portal-open->cine 3.244s, and the deterministic chest-horde repro now enters in 0.5s at d=0.4 where the pre-fix build parked 30-50s. See docs/briefs/U1_MENU_SUBNAV.md for the P1b rim-pin follow-up.]
 Sk408: *"the boss portal needs to be on the screen longer before the player enters and the cinematic
 begins. Maybe it can be something that the auto pathing heads toward automatically, and give the player
 a bit of invulnerability headed to the portal."*
