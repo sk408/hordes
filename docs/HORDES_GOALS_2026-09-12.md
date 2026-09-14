@@ -365,6 +365,41 @@ maybe a boss comes but the player can just go around them somehow."*
   escape.** A mode the pilot reliably LOSES is a mode the pick-up-and-leave owner never gets the reward
   from, which would defeat the point of adding it.
 
+**A TWO-MINUTE ESCAPE NEEDS INTERNAL SHAPE OR IT IS TWO MINUTES OF THE SAME THING.** Recommended acts
+(timings indicative, tune by measurement):
+1. **0:00-0:30 — WARM-UP.** Flat ground, one easy gap, the horde visibly behind but not yet lethal.
+   This is where the player (and the pilot) learn the verb.
+2. **0:30-1:10 — ESCALATION.** Terraces and taller drops, harder gaps, the pressure wall closing, the
+   first FLIERS (the gap-ignoring threat). Difficulty ramps here.
+3. **1:10-1:35 — THE BOSS BEAT.** The obstacle-boss arrives: telegraphed, occupying a lane, passed above,
+   below or over. The climax, and the one thing the player will remember.
+4. **1:35-2:00 — THE FINAL SPRINT.** Max pressure, simplest terrain, a straight run to safety. Reward the
+   player for surviving to here rather than surprising them.
+
+Consequence for the generator: segment templates must carry a DIFFICULTY TIER and the sequence must RAMP,
+not shuffle. At ~200px/s a two-minute run covers 20,000+px, so this is dozens of segments — the generator
+has to sustain variety for that long, which is a real requirement rather than a handful of templates.
+
+**TWO RISKS THAT ONLY APPEAR AT TWO MINUTES — flag them now, they are the mode's real cost:**
+
+- **RISK 1: THE AUTO PILOT'S JUMP TIMING IS THE HARDEST PILOT PROBLEM IN THE GAME SO FAR.** Every existing
+  controller behaviour is 2D steering (kite, flee, approach) — none of it is timing a jump off a ledge at
+  speed over two minutes. The AUTO requirement is confirmed, so this must work, and the honest engineering
+  answer is to make the mode FORGIVING rather than to make the pilot clever: generous jump windows, clear
+  telegraphs (a visible edge, a landing marker), wide gaps-of-safety, and a pilot rule set tuned against
+  MEASURED success rates. If the pilot cannot clear it reliably, the fallbacks in order are: widen the
+  windows, then simplify the terrain, and only then consider a reduced auto reward. Do NOT ship a mode the
+  pilot loses.
+- **RISK 2: TWO MINUTES IS LONGER THAN A FRESH RUN DIES (measured ~35s).** So the escape must be GATED to
+  a point where runs reach it — a later wave, or a dedicated stage/mode — or it is content a new player
+  literally never sees. It also means the escape is a major part of the run's rhythm rather than a cameo,
+  and the reward must scale with a two-minute investment: a chest is too small, which is another argument
+  for tying the payout to M1's collectible set.
+- **FAIRNESS (a two-minute kitchen-timer of lethal gaps earns resentment if it is cheap):** no blind
+  drops, no off-screen holes, no unavoidable damage. The mode is the ONE place in this game with
+  platforming skill, so it has to be readable — telegraphs over memorization, and the horde pressure
+  visible as a wall rather than felt as an invisible timer.
+
 **SEQUENCING INSIGHT — the escape is cheap BECAUSE its prerequisites are already queued:** G7's leap is
 the verb, and E2's flying enemy is the antagonist. **Build those first and V1 is a modest slice, not a
 project. Do not start V1 before them.**
@@ -375,7 +410,11 @@ project. Do not start V1 before them.**
    His "replacement for wave 2" reading suggests a scheduled beat.
 2. **STAKES** — failure is death, or a lost reward? Stakes are what make it a change of pace rather than a
    throwaway minigame.
-3. **LENGTH** — 20-40s, fixed. It must end before the novelty does.
+3. **LENGTH — OWNER-SET 2026-09-14: about TWO MINUTES, not 30s.** Sk408: *"Well, not a 30 second
+   sequence. More like 2 minutes."* That promotes the escape from a beat to a full ACT, and it changes
+   three things (see the pacing + risk section below): the generator must sustain a long run with a
+   difficulty ramp, the pilot's jump timing becomes the mode's biggest risk, and the reward has to be
+   worth two minutes.
 4. **REWARD** — escape complete pays what? A chest, or a piece of M1's collectible set (the natural tie-in).
 
 **STATUS: spec'd and NOT in the execution order — but it is now SLICE-SIZED, so it can be slotted whenever
@@ -971,7 +1010,7 @@ reachable once a loadout produces long runs. Therefore:
 - Run-scoped visited state is a bonus of this reading: it lives in `state` (like the other run counters),
   so **no save migration and no schema change** — unlike the stage-map reading Remy first proposed.
 
-### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: IN PROGRESS 2026-09-14 — brief `docs/briefs/P1_PORTAL.md` landed and DISPATCHED as msg_01M2F3CJK5KSAD7WXRGC13DPPZ; nothing verified yet]
+### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: IN PROGRESS 2026-09-14 — brief `docs/briefs/P1_PORTAL.md` landed. FIRST DISPATCH msg_01M2F3CJK5KSAD7WXRGC13DPPZ NEVER RAN: the worker handler crashed on it (hub_worker.py:1498 -> `_write_json` FileNotFoundError on `pending_interrupts.json.tmp`), so the builder was idle and no code exists. RE-ISSUED 2026-09-14 04:52 UTC as msg_01M2F44KQEB3KYNW4BTXVDJ51H by the goal-pilot tick after re-verifying every brief anchor on clean HEAD `64828af` (config.js:373 PORTAL, main.js:1901 portal open, chase :1375-1385 entry test :1384, openIntermission :800, controllers.js :72/:123/:269, render.js:823); builder `cli:kimi-hordes-g8` CONFIRMED RUNNING (`hub-worker queue` => running: msg_01M2F44KQEB3KYNW4BTXVDJ51H, kimi-code pid 1467892). Nothing verified yet]
 
 Sk408: *"the boss portal needs to be on the screen longer before the player enters and the cinematic
 begins. Maybe it can be something that the auto pathing heads toward automatically, and give the player
