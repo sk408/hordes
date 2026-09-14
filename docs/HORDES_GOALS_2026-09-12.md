@@ -638,6 +638,8 @@ payout a fixed fraction of EARNED progress.
 - Therefore it cannot move the run's income tier (`INCOME_TIERS`, `computeRunGold`) either. **Corollary that
   strengthens the owner's economy waiver above: the escape does not touch the RUN economy at all.** It is a
   separate faucet into the meta pool, which is precisely why nothing needs modelling in W7a.
+
+[DONE 2026-09-14 - landed `8e92a27` and PUSHED. Tooling only (the owner waived economy modelling in W7a). MEASURED, reproduced by the orchestrator itself: `node tools/draft_sim.mjs --divergence` prints "OWNER TARGET (W7b, reported not enacted): >= x1.6 on BOTH axes -> NOT MET (survival x1.36, waves x1.50)". The tool reports rather than enacts the target, deliberately: flipping the acceptance bar would presuppose W7b's balance change. It also shipped the DIAGNOSIS of why divergence is only x1.36 - four levers (L1 stat cards weigh 0.3 vs weapons 1.0 so most drafts carry no decision; L2 Iron Heart is flat +25 HP and decays against the contact curve exactly when long runs are decided; L3 a THIRD Split Shot card does NOTHING because the projectile cap is 3; L4 XP x1.28/level collapses the number of drafts late) - ALL FOUR FAIL the x1.6 bar individually, so the target needs a combination. L3 is a defect on its own merits. TWO FIXTURE RETARGETS FLAGGED BY THE ORCHESTRATOR, NOT BLESSED: test_draft_luck's cohort was widened 30->60 runs to clear an x1.15 bar that read x1.149 (tune-until-pass in shape, even though the model genuinely changed); test_draft_sim's measurement point moved to final kills/banked and to a 9-run cohort median. NOT VERIFIED: no real-loop validation (analytic/sim-only), sim income mirrors E1's shape but is not calibrated to the real ~11.7k bank (ratios only), owner loadout only. W7b is the NEXT slice, not this one.]
 - **No extra multipliers on the payout** (Remy's recommendation): `goldMult` and friends are already
   encoded in the best-run basis, so applying them again double-counts. If the owner wants a multiplier,
   it belongs in K.
@@ -773,6 +775,8 @@ wall, and the heavy tier reads like a corridor boss fight. If V1 happens it shou
 ---
 
 ## GOLD BECOMES AN IN-RUN PURSE (owner directive, 2026-09-14)
+
+[DONE 2026-09-14 - landed `245cea0` and PUSHED. In-run purse: per-kill tier gold + fixed AWARD 70 (0.62% of a maxed run's earnings); save v6->v7 with migration; purchases debit the purse, settlement banks and zeroes it. Fresh banks 196/195, maxed banks 10181 mean/11694 median (~52x mean, ~60x median vs the >=2x bar). THE BALANCE CONSEQUENCE, spec-sanctioned: halfRuns 11.2 -> ~2 (top-tier 30+ -> 10+ good runs); the brief requires reporting this and FORBIDS repricing the shop, so the fixture was retargeted. Orchestrator-verified: 3 consecutive suite runs greenfiles=84 redfiles=0, and tools/verify_e1_purse.mjs 13/13 on my own run (save round-trip proven stored===live===painted; readout cannot reflow at 5 digits). DO NOT RE-DISPATCH.]
 
 Sk408: *"The gold floor as it is is fine. Gold at the end of the run should maybe be fixed because we have
 shrines that cost money and we eventually want chest and item merchants. Gold should be accumulated. Also
@@ -1191,8 +1195,7 @@ above (auto-width buttons whose `.badge` text changes at runtime; fix by fixed p
 buttons + reserved badge width; prove it with `getBoundingClientRect` equality across all four pilot modes
 and across a cooldown/potion change). Small, self-contained, no dependencies.
 
-### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS  [status: DONE 2026-09-14 — landed + PUSHED as `f521bd3`, VERIFIED]
-
+### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS  [DONE 2026-09-14 - both halves landed and PUSHED: subnav `f521bd3`, authored frame `fde2528`. The CSS plaque is gone (92 lines removed) and replaced by an authored 9-slice frame through drawGrid. Orchestrator measurement of the cast: diffing against the same static title art pre-frame gives 48446 art pixels pulled to 0.30-0.80x with the histogram peaking at exactly 0.5x - the translucent cast that clip-path made impossible. GATE DISCHARGED: 3 consecutive suite runs on a quiescent tree, greenfiles=84 redfiles=0. Remaining gaps: the draft/evolve/intermission/death screens share the frameCard path but were never pixel-measured; touch/hover on coarse pointers unmeasured; 60-vs-120Hz argued by construction. DO NOT RE-DISPATCH.]
 **LANDED AND PUSHED. Do not redo any of this** (commit `f521bd3` on `main`, gate
 `bash /tmp/run_all.sh` => greenfiles=78 redfiles=0 at that commit, and the live
 GitHub Pages build was read back and confirmed serving it: `paintTitleHeader` x2,
