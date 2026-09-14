@@ -303,8 +303,10 @@ cutting.
 **CUT BY THE FRAMING — do not build these:**
 - **Vertical aiming: none.** Weapons keep doing what they already do automatically, or are suspended. The
   escape is about SURVIVAL, not damage output — so no aiming model, no weapon re-read.
-- **Platform/level geometry: none.** No ledges, no one-way platforms, no level design. A corridor with a
-  floor and obstacles.
+- ~~**Platform/level geometry: none.**~~ **CORRECTED — WRONG (see the gravity bullet below).** The owner
+  wants platforming: different levels to run on and gaps to jump. What IS still cut is **level DESIGN**
+  (hand-authored maps): use a segment generator with a handful of templates instead. Gravity, jump arcs,
+  platform collision and lethal gaps are all IN.
 - **The arena rim, the radar, spawn rings:** all irrelevant side-on.
 - **The draft, shop, meta, chests, shrines, portals: none of them run inside the escape.** That is exactly
   what makes it a change of pace, and it is what keeps the slice self-contained.
@@ -334,12 +336,28 @@ maybe a boss comes but the player can just go around them somehow."*
   late game. It is there for dimension, not for damage.
 - **The boss is a HAZARD TO WEAVE AROUND, not a damage race** — it appears, telegraphs, and the player
   goes around it. Passing it is the climax of the sequence.
-- **"Go around it" DEFINES the spatial model, and it is cheaper than a platformer:** if the corridor is
-  only 1D + jump, a boss cannot be gone around. So the corridor needs a **bounded vertical BAND** — the
-  existing 2D movement constrained into a narrow strip (a floor, a ceiling-ish limit, x running one way)
-  rather than gravity + platforms + ledges. **No gravity model and no platform collision are needed**,
-  which is the single biggest saving in the whole design, and it comes straight from the owner's framing.
-  The upper band is also where E2's flying enemies live, which gives them an obvious role.
+- **GRAVITY AND PLATFORMING ARE IN — Remy's "no gravity needed" claim was WRONG and is retracted
+  (owner-corrected 2026-09-14).** Sk408: *"Oh wouldn't we need gravity? I mean, it should still have some
+  platforming elements to it. Different levels to run on and gaps to jump over sort of thing."* So the
+  corridor is a genuine platformer run: **different elevations to run on, and gaps to jump.**
+  - **What this adds (the real new work):** gravity, jump arcs, platform collision (landing on ledges — a
+    simple land-from-above rule is enough for ledges, no need for full solid-side resolution), falling into
+    a gap being lethal, and terrain height changes along the corridor. **This is the one system the
+    overhead game has ZERO of**, so it is the substrate of the whole mode and the biggest single piece of
+    V1. It is also why V1 needs its own acceptance rather than riding the run's.
+  - **What still bounds it — use a SEGMENT GENERATOR, not level design:** a handful of corridor segment
+    templates (flat run / raised terrace / gap / platform pair / boss beat) assembled in a sequence. That
+    is the "skim down the mechanics" version of level design, and it keeps authoring cost near zero while
+    still producing variety per run.
+  - **"Going around the boss" now resolves naturally:** on a platformer corridor the boss can be passed
+    ABOVE or BELOW, or jumped over on a terrace — so the owner's two asks (platforming, and a boss you
+    weave around) turn out to be the same answer.
+  - **BONUS MECHANIC THAT FALLS OUT FOR FREE — and it makes the mode sing:** with gravity, pursuers fall
+    into gaps too. If the ground horde cannot platform, then **gaps double as enemy filters** — the player
+    is choosing a route that breaks up the wall behind them, not just running. And E2's FLYING enemy
+    ignores gaps entirely, so it becomes the counter to gap-kiting: two threat types with opposite answers,
+    which is real texture for a 30-second sequence. Take this — it costs nothing and gives the mode a verb
+    (route choice) beyond dodge.
 - **Verb:** dash/dodge (plus jump if there is a floor gap). One verb, as above.
 - **AUTO PILOT: CONFIRMED REQUIRED, and it is measurable.** Since the escape ignores stats, the pilot
   cannot be carried by power — so its escape rule set has to be genuinely competent (default to dodging,
