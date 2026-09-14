@@ -124,7 +124,10 @@ S.check('the counters restart with the run (no bleed across runs)', () => {
   h.pump(2);
   assert.deepEqual(st.runCounts,
     { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
-      tokens: { kill: 0, chest: 0, drop: 0 } },   // EVOLUTION TOKEN channel ledger
+      tokens: { kill: 0, chest: 0, drop: 0 },   // EVOLUTION TOKEN channel ledger
+      // E1: the run-purse ledger rides the same reset (GOLD_TIER tiers).
+      gold: { earned: 0, spent: 0,
+        kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } },
     'startRun resets the trophy ledger');
 });
 

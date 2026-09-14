@@ -574,40 +574,50 @@ console.log('LUCK:');
      'purchased luck reaches the stats contract');
 }
 
-// ---------- WAVE-11 economy targets (analytic; sim re-validates) ----------
+// ---------- Economy targets (E1 purse retarget: MEASURED, not analytic) -----
+// The old block pinned the retired computeRunGold formula (GOOD_RUN ~1.8k,
+// tiers == RUN1/LATE references, halfRuns in [9,13], top-tier 30+ good runs).
+// E1 pays per-kill tier gold + the fixed AWARD, so the targets are re-derived
+// from the measured real-loop cohorts (see GOLD_MODEL header in src/meta.js).
+// The shop is deliberately NOT repriced (HORDES_GOALS 2026-09-12).
 console.log('ECONOMY TARGETS:');
 {
-  const good = computeRunGold(GOLD_MODEL.GOOD_RUN);
-  ok(good >= 1700 && good <= 1900, `GOOD_RUN pays ~1.8k gold (got ${good})`);
-  ok(GOLD_MODEL.INCOME_TIERS[0].gold === computeRunGold(GOLD_MODEL.RUN1),
-     'income tier 0 matches the RUN1 reference');
-  ok(GOLD_MODEL.INCOME_TIERS[3].gold >= 2700
-     && GOLD_MODEL.INCOME_TIERS[3].gold <= computeRunGold(GOLD_MODEL.LATE),
-     'income tier 3 brackets the LATE reference');
+  const good = GOLD_MODEL.INCOME_TIERS[3].gold;
+  ok(good >= 9000 && good <= 13000,
+     `good (maxed) run banks ~11k purse gold, measured cohort median 11694 censored (got ${good})`);
+  ok(GOLD_MODEL.INCOME_TIERS[0].gold === RUN_GOLD.AWARD,
+     'income tier 0 pins the fixed-award floor (fresh runs bank the bare award)');
+  ok(GOLD_MODEL.INCOME_TIERS[0].gold < GOLD_MODEL.INCOME_TIERS[1].gold
+     && GOLD_MODEL.INCOME_TIERS[1].gold < GOLD_MODEL.INCOME_TIERS[2].gold
+     && GOLD_MODEL.INCOME_TIERS[2].gold < GOLD_MODEL.INCOME_TIERS[3].gold,
+     'income tiers strictly increase (floor -> partial -> mid -> maxed)');
 
-  // (a) ~10 good runs buy ~50% of the mid-tier catalog.
+  // (a) ~2 good runs buy ~50% of the mid-tier catalog (was ~10 under the old
+  // formula: halfRuns was 11.2 with goodRun 1813, band [9, 13]).
   const midCost = catalogCost(GOLD_MODEL.MID_TIER_IDS);
   const halfRuns = (midCost / 2) / good;
-  ok(halfRuns >= 9 && halfRuns <= 13,
-     `half the mid-tier catalog costs ~10 good runs (got ${halfRuns.toFixed(1)})`);
+  ok(halfRuns >= 1.5 && halfRuns <= 2.5,
+     `half the mid-tier catalog costs ~2 good runs (got ${halfRuns.toFixed(1)}, was 11.2)`);
   ok(midCost < good * 40,
      'the whole mid-tier catalog stays a mid-game project (< 40 good runs)');
 
-  // (b) every top-tier item costs 30+ good runs.
+  // (b) every top-tier item costs 10+ good runs (was 30+; re-derived, shop
+  // NOT repriced: BEAM 10.0, ARCADE_PASS 12.7 maxed runs).
   ok(!GOLD_MODEL.MID_TIER_IDS.some(id => GOLD_MODEL.TOP_TIER_IDS.includes(id)),
      'mid-tier and top-tier catalogs are disjoint');
   for (const id of GOLD_MODEL.TOP_TIER_IDS) {
     const cost = catalogCost([id]);
     ok(cost >= good * GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
-       `${id} (${cost}g) costs 30+ good runs (${(cost / good).toFixed(1)})`);
+       `${id} (${cost}g) costs ${GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS}+ good runs (${(cost / good).toFixed(1)})`);
   }
   ok(catalogCost(['arcade']) === 140000,
      'ARCADE_PASS stays the 140k top-tier sink (balance-sim compounding standard)');
 
-  // Ladder sanity against the income curve.
-  ok(WEAPON_PRICES.ORBIT <= computeRunGold(GOLD_MODEL.RUN1),
-     'cheapest weapon is first-run affordable (early weapons cheap)');
-  ok(WEAPON_PRICES.BEAM > computeRunGold(GOLD_MODEL.LATE) * 15,
+  // Ladder sanity against the measured income curve.
+  ok(WEAPON_PRICES.ORBIT > GOLD_MODEL.INCOME_TIERS[0].gold
+     && WEAPON_PRICES.ORBIT <= GOLD_MODEL.INCOME_TIERS[2].gold * 2,
+     'cheapest weapon is past the first-run floor but ~2 mid-tier runs (early weapons cheap)');
+  ok(WEAPON_PRICES.BEAM > good,
      'BEAM is not plausibly one-run money even late');
 }
 

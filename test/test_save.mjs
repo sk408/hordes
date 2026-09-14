@@ -71,8 +71,8 @@ console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
   // must be updated with it (v6 = the one-time-banner ledger).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 6,
-    `schema version constant is 6 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 7,
+    `schema version constant is 7 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -183,7 +183,9 @@ console.log('FUTURE-VERSION SAVE (fail safe, never half-load):');
     ok(r.status !== 'future-version' && r.profile.gold === 7,
       `a non-integer/malformed version (${bad}) is treated as legacy, not future`);
   }
-  const exact = loadProfileResult(seededJson({ version: SCHEMA_VERSION, gold: 7 }));
+  // E1 (v7): the current-version shape carries the run purse — a v7 payload
+  // without it is incomplete and repairs (runPurse added at 0).
+  const exact = loadProfileResult(seededJson({ version: SCHEMA_VERSION, gold: 7, runPurse: 0 }));
   ok(exact.status === 'current' && exact.from === SCHEMA_VERSION,
     'an exact current-version save is not migrated');
   // A v2 save (the previous schema) now migrates forward.

@@ -40,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 6;
+export const PROFILE_VERSION = 7;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -106,6 +106,14 @@ export const VERSION_HISTORY = [
       'dropped by validation (a damaged entry repairs to kills >= 1, never to ' +
       'undiscovered); unknown ids from a newer build are preserved verbatim. ' +
       'Populated empty — no bestiary is invented for an existing player.',
+  },
+  {
+    version: 7,
+    note: 'E1 run purse: profile.runPurse = the IN-RUN gold wallet (integer >= 0). ' +
+      'Tier-weighted per-kill earnings credit it, in-run shrines and paid chests ' +
+      'debit it, and settlement banks the remainder into profile.gold and zeroes it. ' +
+      'Populated 0 — a v6 save earned no purse, and the clamp below keeps a ' +
+      'hand-edited value finite / non-negative / integer.',
   },
 ];
 
@@ -220,6 +228,14 @@ const MIGRATIONS = {
     if (!plainObject(next.encounters)) next.encounters = {};
     return next;
   },
+  // v6 -> v7: the E1 run purse. Guarantee the wallet field EXISTS (0 — a v6
+  // save earned nothing in-run) and NOTHING ELSE; a present-but-garbage value
+  // is left for validateProfile to clamp + report (one repair path, not two).
+  6: (p) => {
+    const next = { ...p };
+    if (next.runPurse === undefined) next.runPurse = 0;
+    return next;
+  },
 };
 
 /**
@@ -278,6 +294,14 @@ export function validateProfile(profile, cat) {
     : 0;
   if (gold !== p.gold) repairs.push('gold');
   out.gold = gold;
+
+  // ---- run purse (E1: the in-run wallet; same currency rule as gold) ----
+  const rp = Number(p.runPurse);
+  const runPurse = Number.isFinite(rp)
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(rp)))
+    : 0;
+  if (runPurse !== p.runPurse) repairs.push('runPurse');
+  out.runPurse = runPurse;
 
   // ---- purchased (upgradeId -> level) ----
   // Levels for KNOWN shop rows clamp to that row's current maxLevel (an

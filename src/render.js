@@ -1425,6 +1425,32 @@ export class Renderer {
       }
     }
 
+    // --- E1 RUN PURSE readout (owner directive 2026-09-14: "have a visible ----
+    // on screen display"). The live IN-RUN wallet (state.runPurse — syncChrome
+    // publishes profile.runPurse every frame; the renderer never touches the
+    // profile). Same badge language as the LV plate: gold border, dark inset,
+    // 11px bold. H1 NO-REFLOW CONTRACT: the digit column is RESERVED — the
+    // value is right-aligned in a fixed 5-digit field (saturating at 99999),
+    // so a 1-digit purse and a 5-digit purse paint BYTE-IDENTICAL geometry.
+    // A counter whose width grows as it counts is the control-pad reflow bug
+    // H1 just fixed; the canvas HUD obeys the same rule.
+    const purseVal = state.runPurse | 0;
+    const goldTxt = 'GOLD ' + String(Math.min(purseVal, 99999)).padStart(5, ' ');
+    const goldPx = H.CLOCK_PX;
+    const goldW = goldTxt.length * Math.round(goldPx * 0.62) + 6;
+    const goldH = goldPx + 4;
+    const goldX = 6, goldY = 52;           // left column, under the XP row, clear of the feed (y 84+)
+    g.fillStyle = '#ffd75e';                       // gold badge border
+    g.fillRect(goldX, goldY, goldW, goldH);
+    g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
+    g.fillRect(goldX + 1, goldY + 1, goldW - 2, goldH - 2);
+    g.font = 'bold ' + goldPx + 'px monospace';
+    g.textBaseline = 'top';
+    g.fillStyle = '#fff3c4';
+    g.fillText(goldTxt, goldX + 3, goldY + 2);
+    chrome.purse = { x: goldX, y: goldY, w: goldW, h: goldH, px: goldPx,
+      value: purseVal, text: goldTxt, digitW: 5 * Math.round(goldPx * 0.62) };
+
     // --- RUN CLOCK (SURVIVAL-GAP wave) -------------------------------------
     // The 30:00 limit is the run's core structure, but the always-on CANVAS HUD
     // never showed it: only the opt-in text HUD, the per-minute toast and the

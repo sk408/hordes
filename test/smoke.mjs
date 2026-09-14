@@ -1000,12 +1000,15 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 }
 
 // ---- WAVE-11 probes (through the real loop) ----
-// (a) SHRINE PURCHASE: proximity + gold buys one blessing; purse debited via
-// the real update() shrine block (paid-chest precedent — profile-side gold).
+// (a) SHRINE PURCHASE: proximity + gold buys one blessing; the RUN PURSE is
+// debited via the real update() shrine block. E1 (owner directive 2026-09-14):
+// the debit moved from the bank to the purse — this probe now pins BOTH halves
+// (purse debited exactly the cost, the bank untouched).
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  mainMod.__TEST.getProfile().gold = 100;
+  mainMod.__TEST.getProfile().gold = 1000;    // the BANK: must not move
+  mainMod.__TEST.getProfile().runPurse = 100; // the run's own wallet
   const choicesBefore = st.takenChoices.length;
   st.shrine = { x: st.player.x, y: st.player.y, used: false };
   for (let i = 0; i < 30 && !st.shrine.used; i++) {
@@ -1021,8 +1024,10 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   const shrineCost = st.shrine.blessing && st.shrine.blessing.cost;
   assert(typeof shrineCost === 'number' && shrineCost > 0,
     'the shrine must advertise a cost for the blessing it sells');
-  assert(mainMod.__TEST.getProfile().gold === 100 - shrineCost,
-    `the shrine must debit its advertised cost from the purse (got ${mainMod.__TEST.getProfile().gold}, want ${100 - shrineCost})`);
+  assert(mainMod.__TEST.getProfile().runPurse === 100 - shrineCost,
+    `the shrine must debit its advertised cost from the purse (got ${mainMod.__TEST.getProfile().runPurse}, want ${100 - shrineCost})`);
+  assert(mainMod.__TEST.getProfile().gold === 1000,
+    'and the BANK must be untouched by an in-run purchase (E1)');
   assert(st.takenChoices.length === choicesBefore + 1,
     'the shrine blessing must be recorded repeat-free in takenChoices');
   assert(st.player.choices, 'the shrine blessing must applyChoice onto the run player');

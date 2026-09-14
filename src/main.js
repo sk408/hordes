@@ -68,7 +68,8 @@ import {
   manualPushes, addHeat, initHeat,
 } from './heat.js';
 import {
-  loadProfileResult, saveProfile, makeProfile, computeRunGold,
+  loadProfileResult, saveProfile, makeProfile,
+  GOLD_TIER, purseTier, purseValue, RUN_GOLD,
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
@@ -267,7 +268,17 @@ const state = {
     // EVOLUTION TOKENS: which channel paid each token this run (chests.js
     // EVOLUTION_TOKEN — kill / chest / drop). A ledger, not a rule: the rates
     // are the knock's, and nothing reads this to decide anything.
-    tokens: { kill: 0, chest: 0, drop: 0 } },
+    tokens: { kill: 0, chest: 0, drop: 0 },
+    // E1 RUN PURSE ledger: per-TIER kill counts + the gold earned / spent
+    // through the purse this run, so the tier weighting (meta.js GOLD_TIER)
+    // can be re-derived and reported honestly. The RAW p.kills count stays
+    // beside it — milestones/achievements genuinely want bodies.
+    gold: { earned: 0, spent: 0,
+      kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } },
+  // E1: the live IN-RUN gold wallet is profile.runPurse (persisted); this is
+  // its per-frame presentation mirror (syncChrome publishes it, render.js
+  // paints it — the renderer never touches the profile).
+  runPurse: 0,
   // WAVE-28 AUTO-DRINK: the per-kind lockout gates (CONFIG.AUTOPILOT.AUTO_DRINK
   // COOLDOWN), in seconds. Run-scoped — declared here so the seam needs no
   // guard, and reset in startRun so a new run never inherits a stale lockout.
@@ -775,6 +786,44 @@ function resetRampage() {
   if (state.rampage.streak > 0) state.rampage.streak = 0;
 }
 
+// ---------- E1 THE RUN PURSE (owner directive 2026-09-14) ---------------------
+// The run's gold is an IN-RUN WALLET: profile.runPurse, persisted through the
+// ONE existing profile key (hordes_profile_v1). Three writers, and only three:
+//   purseCredit — per-kill, tier-weighted (meta.js GOLD_TIER), a per-kill
+//     EVENT like the token/mana grants beside it: flat, dt-free, so 60Hz and
+//     120Hz pay the same per corpse. Does NOT save per corpse (a corpse storm
+//     must not write storage); the exit flush (autosave on pagehide /
+//     beforeunload / visibilitychange) + the run's periodic flush + every
+//     spend/settle save cover persistence.
+//   purseSpend  — EVERY in-run purchase (shrine, paid chest) debits the purse,
+//     never the bank. profile.gold is unreachable mid-run by design: a run
+//     cannot spend gold it has not earned.
+//   settleRunGold — banks FIXED award x goldMult + the purse remainder into
+//     profile.gold and ZEROES the purse (zeroing is what stops the next
+//     settlement banking the same remainder twice).
+function purseCredit(e) {
+  const v = purseValue(e);
+  const tier = purseTier(e);
+  profile.runPurse = (profile.runPurse | 0) + v;
+  const g = state.runCounts.gold;
+  g.earned += v;
+  g.kills[tier] = (g.kills[tier] || 0) + 1;
+  state.runPurse = profile.runPurse;
+  return v;
+}
+// Debit the purse if it covers `amount`. Returns true on payment. The spend
+// saves immediately (shrine / paid-chest precedent) so a reload never
+// resurrects gold that was already spent.
+function purseSpend(amount) {
+  amount = Math.max(0, Math.floor(Number(amount) || 0));
+  if ((profile.runPurse | 0) < amount) return false;
+  profile.runPurse = (profile.runPurse | 0) - amount;
+  state.runCounts.gold.spent += amount;
+  state.runPurse = profile.runPurse;
+  saveProfile(profile);
+  return true;
+}
+
 // ---------- ARCHES: 1-2 gates per wave at random field positions -----------
 function spawnWaveArches() {
   const p = state.player;
@@ -794,6 +843,7 @@ function spawnWaveArches() {
 // (player.choices / stats only — never meta/profile) and reset by the fresh
 // makePlayer() in startRun.
 let interMsg = '';   // last paid-chest gamble / blessing result (overlay line)
+let lastPurseFlush = 0;   // E1: sim-time stamp of the run's last periodic save
 
 // Merchant's Pact curse: run-scoped price multiplier on the paid chests.
 function shopPriceMult() {
@@ -826,15 +876,15 @@ function openIntermission(opts = {}) {
     ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
     `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
-    `<br>purse: ${profile.gold} gold${interMsg ? '<br>' + interMsg : ''}`;
+    `<br>GOLD ${profile.runPurse | 0} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
     const cost = chestCost(def);
     const el = menuCard(tier + ' CHEST',
       `${cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)` +
       (shopPriceMult() !== 1 ? ' · CURSED PRICES' : ''),
-      () => buyPaidChest(tier), profile.gold < cost);
-    if (profile.gold < cost) el.onclick = () => audio.playSfx('button');
+      () => buyPaidChest(tier), (profile.runPurse | 0) < cost);
+    if ((profile.runPurse | 0) < cost) el.onclick = () => audio.playSfx('button');
   }
   // The wave's blessing/curse offers: rolled once per wave (re-renders after
   // a chest buy reuse the same pending set; taken ones drop off).
@@ -935,12 +985,21 @@ function takeChoice(offer) {
 function buyPaidChest(tier) {
   const def = PAID_CHESTS[tier];
   const cost = chestCost(def);
-  if (profile.gold < cost) return;
-  const res = rollPaidChest(profile, tier);
+  // E1: paid chests debit the RUN PURSE, never the bank (owner: "runs should
+  // spend earned gold for shrines and merchants" — the intermission's paid
+  // chests are in-run spending that exists today). loot.js's rollPaidChest
+  // takes a { gold } wallet, so hand it a purse VIEW: loot.js stays untouched
+  // and the bank is never in scope here.
+  if ((profile.runPurse | 0) < cost) return;
+  const wallet = { gold: profile.runPurse | 0 };
+  const res = rollPaidChest(wallet, tier);
   if (!res.ok) return;
+  profile.runPurse = wallet.gold;
   // rollPaidChest debits the BASE cost; the Merchant's Pact surcharge is
   // taken here so loot.js stays untouched.
-  profile.gold -= cost - def.cost;
+  profile.runPurse -= cost - def.cost;
+  state.runCounts.gold.spent += cost;
+  state.runPurse = profile.runPurse;
   saveProfile(profile);
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
@@ -1882,6 +1941,11 @@ function update(dt) {
       }
       state.enemies.splice(i, 1);
       p.kills++;
+      // E1 RUN PURSE: tier-weighted gold per kill (meta.js GOLD_TIER), an
+      // EVENT like the token/mana grants below — flat and dt-free. Chaff pays
+      // ~0, elites ~1 unit, heavies more, herald/boss heavily; the raw
+      // p.kills above stays the body count for milestones/achievements.
+      purseCredit(e);
       // N1 slice 3 CONSECRATION: a kill inside the Paladin's live field banks
       // its heal (paid at the field's tick, capped there). The corpse is only
       // in hand HERE — after the splice it is gone — and every kill (weapons,
@@ -1977,6 +2041,8 @@ function update(dt) {
   // intermission-style blessing (choices.js semantics, repeat-free across the
   // whole run). Per-run only: shrines never touch persistence beyond the
   // purse debit (paid-chest precedent).
+  // E1: the shrine debits the RUN PURSE (profile.runPurse), never the bank —
+  // in-run gold buys in-run powers.
   if (state.shrine && !state.shrine.used) {
     const sh = state.shrine;
     const dx = p.x - sh.x, dy = p.y - sh.y;
@@ -1992,9 +2058,7 @@ function update(dt) {
       }
       if (!sh.blessing) {
         sh.used = true;   // blessing pool exhausted — the altar goes dark
-      } else if (canAfford(profile.gold, sh.blessing.cost)) {
-        profile.gold -= sh.blessing.cost;
-        saveProfile(profile);
+      } else if (canAfford(profile.runPurse | 0, sh.blessing.cost) && purseSpend(sh.blessing.cost)) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
@@ -2640,9 +2704,11 @@ function nextUnlockWithinReach(prof) {
 }
 
 // Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
-// `cause` the cause line, `gold` this run's payout. The unlock line is omitted
-// entirely when every row is owned — no filler.
-function endScreenBody({ lead, cause = null, gold, firstClear }) {
+// `cause` the cause line, `gold` this run's payout. E1: the payout has TWO
+// parts now (the FIXED award and the banked purse remainder) and the card
+// shows both, never one blended number — `parts` is settleRunGold's breakdown.
+// The unlock line is omitted entirely when every row is owned — no filler.
+function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   const goal = nextUnlockWithinReach(profile);
   // G11: a challenge result must be distinguishable from a clean clear — the
   // mode is the LEAD line's first clause, and only when non-standard (a
@@ -2657,7 +2723,12 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
   }
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
-    `${firstClear ? ' (NEW BEST TIME!)' : ''} · purse ${profile.gold}</span>`;
+    `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
+  if (parts) {
+    html += `<br><span class="earn">AWARD +${parts.award}` +
+      `${parts.winBonus ? ` · BONUS +${parts.winBonus}` : ''}` +
+      ` · PURSE BANKED +${parts.purseBanked}</span>`;
+  }
   if (goal) {
     const gap = goal.cost - profile.gold;
     html += `<br><span class="next">NEXT UNLOCK: ${goal.name} ${goal.cost}g · ` +
@@ -2672,8 +2743,9 @@ function endScreenBody({ lead, cause = null, gold, firstClear }) {
 // NOTE (W1): the profile layer preserves unknown fields verbatim and is now
 // versioned (src/save.js), so bestTime DOES persist across sessions — the
 // old "per-session only" caveat is gone.
-// Greed shop line + Midas items multiply the payout (computeRunGold takes
-// goldMult as a runStat). WAVE-9: RAISE THE STAKES multiplies on top —
+// E1: the payout is FIXED award x goldMult + the banked purse remainder
+// (owner directive 2026-09-14) — the Greed shop line + Midas items multiply
+// the AWARD. WAVE-9: RAISE THE STAKES multiplies on top —
 // goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
 // G9 — ACHIEVEMENTS ARE EARNED HERE, ONCE PER RUN.
 //
@@ -2746,18 +2818,27 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
-  // RUN-STRUCTURE: the completion bonus rides OUTSIDE computeRunGold (which is
-  // meta.js's income integrator and must not be re-priced here).
-  const gold = computeRunGold({
-    kills: p.kills, level: p.level, time: state.time, firstClear,
-    goldMult: (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult(),
-  }) + winBonus;
+  // E1 (owner directive 2026-09-14): the end-of-run meta award is a FIXED
+  // amount — computeRunGold is RETIRED as the payout authority (it stays a
+  // pure helper with its own test). The goldMult chain (GREED x manual stakes
+  // x rampage best) multiplies the AWARD only; FIRST_CLEAR and the maw /
+  // completion winBonus stay SEPARATE additions on top. Performance pays
+  // through the banked purse remainder: the run's tier-weighted in-run
+  // earnings land here, unspent.
+  const mult = (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult();
+  const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
+  const purseBanked = profile.runPurse | 0;
+  const gold = award + purseBanked + winBonus;
   profile.gold += gold;
+  // THE DOUBLE-BANK TRAP: the purse MUST be zeroed as part of settlement, or
+  // the next run's settlement banks the same remainder a second time.
+  profile.runPurse = 0;
+  state.runPurse = 0;
   // G9: fold the finished run into the profile (earn + grant) BEFORE the save,
   // so the trophies and the gold they were settled alongside persist together.
   recordRunAchievements(gold);
   saveProfile(profile);
-  return { gold, firstClear };
+  return { gold, award, purseBanked, winBonus, firstClear };
 }
 
 // ---------- RUN LIMIT + THE WIN STATE (RUN-STRUCTURE wave) -------------------
@@ -2785,7 +2866,7 @@ function runSurvived() {
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
-  const { gold, firstClear } = settleRunGold({ winBonus: bonus });
+  const { gold, firstClear, award, purseBanked } = settleRunGold({ winBonus: bonus });
   ovTitle.textContent = 'RUN SURVIVED';
   ovTitle.className = 'logo';
   ovSub.innerHTML = endScreenBody({
@@ -2795,6 +2876,7 @@ function runSurvived() {
       `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
     cause: null,                // you did not die — you won
     gold, firstClear,
+    parts: { award, purseBanked, winBonus: bonus },
   });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
@@ -2808,6 +2890,15 @@ function runSurvived() {
 // tests drive the real loop to prove both halves).
 function checkRunLimit() {
   if (state.runWon || state.mode === 'dead') return false;
+  // E1: the run's own periodic flush. Per-kill purse credits deliberately do
+  // NOT write storage per corpse, so the wallet's persistence is: this flush
+  // + the exit flush (autosave on pagehide/beforeunload/visibilitychange) +
+  // every spend/settle save. 10s of sim time bounds what a mid-run reload
+  // can lose; localStorage writes are synchronous and tiny.
+  if (state.time - lastPurseFlush >= 10) {
+    lastPurseFlush = state.time;
+    saveProfile(profile);
+  }
   const mins = Math.floor(state.time / 60);
   if (mins > state.lastMinute) {
     state.lastMinute = mins;
@@ -2834,7 +2925,7 @@ function endRun() {
   state.mode = 'dead';
   audio.stopMusic();
   audio.playSfx('button');
-  const { gold, firstClear } = settleRunGold();
+  const { gold, firstClear, award, purseBanked } = settleRunGold();
   ovTitle.textContent = 'RUN ENDED';
   ovTitle.className = '';
   ovSub.innerHTML = endScreenBody({
@@ -2842,6 +2933,7 @@ function endRun() {
       ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
     cause: null,          // a deliberate exit has no killer
     gold, firstClear,
+    parts: { award, purseBanked, winBonus: 0 },
   });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
@@ -2876,7 +2968,7 @@ function die(finale) {
   };
   audio.stopMusic();
   audio.playSfx('death');
-  const { gold, firstClear } = settleRunGold();
+  const { gold, firstClear, award, purseBanked } = settleRunGold();
 
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
@@ -2887,6 +2979,7 @@ function die(finale) {
       ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
     cause: deathCauseLabel(state.deathBy),
     gold, firstClear,
+    parts: { award, purseBanked, winBonus: 0 },
   });
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
@@ -3772,7 +3865,8 @@ function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
-  ovSub.textContent = `GOLD: ${profile.gold}`;
+  // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
+  ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
   for (const def of SHOP_UPGRADES) {
     // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
@@ -3900,7 +3994,8 @@ function kitPanelHtml(kit) {
 function renderCharSelector() {
   ovCards.innerHTML = '';
   // Re-stamped every render so a purchase updates the purse the same frame.
-  ovSub.textContent = `GOLD: ${profile.gold}`;
+  // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
+  ovSub.textContent = `BANK: ${profile.gold}`;
   // The kit panel rides first (full width), then one card per pilot.
   const kit = pilotKit(charSelected);
   const kitEl = document.createElement('div');
@@ -4196,9 +4291,17 @@ function startRun() {
   state.finalCall = false;
   state.mawCleared = false;
   state.mawDeadline = 0;
+  lastPurseFlush = 0;   // E1: the periodic purse flush restarts with the run
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
   state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
-    tokens: { kill: 0, chest: 0, drop: 0 } };   // EVOLUTION TOKEN channel ledger
+    tokens: { kill: 0, chest: 0, drop: 0 },   // EVOLUTION TOKEN channel ledger
+    gold: { earned: 0, spent: 0,              // E1 purse ledger (per-tier kills)
+      kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } };
+  // E1: the purse is NOT reseeded from the bank — a fresh run after settlement
+  // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
+  // whatever profile.runPurse persisted (R4: nothing earned is confiscated).
+  // profile.gold is never a purse source.
+  state.runPurse = profile.runPurse | 0;
   dilation.scale = 1;
   dilation.remaining = 0;
   // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
@@ -5278,6 +5381,9 @@ function syncChrome() {
   // WAVE-27 it rides the PILOT badge, so the dial's effect is still visible
   // moment to moment without any canvas text.
   state.stanceAct = controller.act || 'PATROL';
+  // E1: publish the live purse for the canvas HUD readout (render.js paints
+  // state.*, never the profile).
+  state.runPurse = profile.runPurse | 0;
   state.zoomScale = zoomScale(state.zoom);
   const on = chromeOn();
   if (touchLayer && touchLayer.style) {
@@ -6075,6 +6181,18 @@ export const __TEST = {
     enabled: () => oneTimeBanners,
   },
   setPilotMode: swapPilotMode, pilotInput,
+  // ---- E1 RUN PURSE seam: the live wallet plus the REAL credit / spend /
+  // settle functions the game loop itself calls (never copies) — a headless
+  // test drives the SAME code path a kill, a shrine walk and a run end drive.
+  purse: {
+    get: () => profile.runPurse | 0,
+    credit: purseCredit,
+    spend: purseSpend,
+    settle: settleRunGold,
+    tierOf: purseTier,
+    valueOf: purseValue,
+    table: GOLD_TIER,
+  },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().

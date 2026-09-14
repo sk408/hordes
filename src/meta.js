@@ -166,24 +166,51 @@ export function importProfileText(text) {
 // curve the shop ladder is priced against (see projectRunGold + tests).
 export const RUN_GOLD = {
   FIRST_CLEAR: 250,   // runStats.firstClear: first time reaching a new best time
+  // E1 (owner directive 2026-09-14, "fixed amount at end of the run, yes"): the
+  // end-of-run meta award is a FIXED base, retired from the computeRunGold
+  // formula. It is the FLOOR a bad short run still banks; performance pays
+  // through the tier-weighted purse below instead. Multiplied by the goldMult
+  // chain at settlement (GREED / stakes / rampage); FIRST_CLEAR and the maw
+  // bonus stay SEPARATE additions on top. VALUE: BASE 50-derived — the old
+  // formula's floor for a bad short run measured ~60-80 (BASE 50 + the small
+  // level/time terms), the floor the owner called "fine as it is"; 70 sits in
+  // that band. Measured against the real-loop cohorts (docs/briefs/
+  // E1_RUN_PURSE.md ACCEPTANCE-1/2): a maxed 300s-capped run EARNS ~11k in-run,
+  // so the award is ~0.6% of a good run's income — a pure floor, never the
+  // dominant term; a fresh death still banks it in full.
+  AWARD: 70,
 };
 
-// WAVE-11 ECONOMY TARGETS (Sk408 directives). Assumptions the unlock prices
-// are set against — every number here is TUNABLE, the analytic tests in
-// test_meta.mjs re-derive the properties when they move:
-//   * GOOD_RUN ~1.8k gold = a competent mid-game run (tier 2 below).
+// WAVE-11 ECONOMY TARGETS (Sk408 directives), RE-DERIVED for the E1 run purse
+// (owner directive 2026-09-14). The old analytic bands (700/1200/1800/2800,
+// computeRunGold references) priced the shop; the purse economy pays
+// per-kill tier gold + the fixed RUN_GOLD.AWARD instead, so the tiers below
+// are now MEASURED, not analytic: real-loop cohorts, 6 seeded runs per arm,
+// 300s cap, banked income per run (docs/briefs/E1_RUN_PURSE.md ACCEPTANCE-3):
 //   * Compounding income growth per tier (upgrades raise survival -> longer
-//     runs -> more kills -> more gold -> more upgrades):
-//       tier 0  runs 1-5    ~700/run   fresh profile (RUN1 reference)
-//       tier 1  runs 6-20   ~1.2k/run  first stat lines + one cheap weapon
-//       tier 2  runs 21-45  ~1.8k/run  GOOD_RUN reference, mid build
-//       tier 3  runs 46+    ~2.8k/run  LATE reference, full build
-//   * (a) ~10 GOOD RUNS buy ~50% of the MID-TIER catalog (every weapon +
-//     elite unlock + the full luck ladder; top tier excluded — asserted in
-//     test_meta.mjs as half-catalog / goodRun in [9, 13] runs).
-//   * (b) any single TOP-TIER item (BEAM, ARCADE_PASS) costs 30+ good runs.
-//   The post-integration balance sim re-validates against real playtest
-//   curves; INCOME_TIERS is the documented assumption until then.
+//     runs -> more kills -> more purse gold -> more upgrades):
+//       tier 0  runs 1-5    ~70/run    fresh profile: dies ~15s / 0 kills at
+//                                        shipped difficulty; banks the bare
+//                                        AWARD floor (FIRST_CLEAR one-time
+//                                        250 excluded from the band)
+//       tier 1  runs 6-20   ~100/run   partial build (median banked 95.5)
+//       tier 2  runs 21-45  ~200/run   half-maxed build (median banked 185)
+//       tier 3  runs 46+    ~11k/run   maxed build (median banked 11694;
+//                                        CENSORED — 5/6 runs truncated at
+//                                        ~287s of the 300s cap then settled)
+//   * (a) ~2 GOOD (maxed) RUNS buy ~50% of the MID-TIER catalog (every weapon
+//     + elite unlock + the full luck ladder; top tier excluded — asserted in
+//     test_meta.mjs as half-catalog / goodRun in [1.5, 2.5] runs; was [9, 13]
+//     under the old formula, good-run 1813).
+//   * (b) any single TOP-TIER item (BEAM, ARCADE_PASS) costs 10+ good runs
+//     (was 30+; the shop is deliberately NOT repriced — HORDES_GOALS
+//     2026-09-12 "do not reprice the shop to keep a test green").
+//   The mid tiers are DEGENERATE at shipped difficulty (sub-max builds die in
+//   under a minute and earn almost nothing); the curve is effectively the
+//   award floor until a build can farm wave 3. computeRunGold / RUN1 /
+//   GOOD_RUN / LATE below are retained ONLY for the balance-sim projection
+//   (tools/balance_sim.mjs SIM_ASSUMPTIONS.goodRunGold) — they no longer
+//   describe a payout.
 export const GOLD_MODEL = {
   BASE: 50,
   KILLS_DIV: 2,
@@ -197,14 +224,17 @@ export const GOLD_MODEL = {
   // in the EXPANSION retune so the full-buy ladder crosses at ~60-100 runs.
   PROGRESS_SPAN: 60,
   // ---- WAVE-11 additions ----
-  GOOD_RUN: { kills: 3000, level: 25, time: 270 },  // -> ~1813g
+  GOOD_RUN: { kills: 3000, level: 25, time: 270 },  // -> ~1813g (RETIRED payout reference; sim-only)
+  // E1 measured purse income (see the GOLD_MODEL header block). Tier 0 pins
+  // the AWARD floor; tier 3 is the good-run reference the shop assertions
+  // below read as `good`.
   INCOME_TIERS: [
-    { tier: 0, runs: '1-5',   gold: 700 },   // == computeRunGold(RUN1)
-    { tier: 1, runs: '6-20',  gold: 1200 },
-    { tier: 2, runs: '21-45', gold: 1800 },   // ~= computeRunGold(GOOD_RUN)
-    { tier: 3, runs: '46+',   gold: 2800 },   // ~= computeRunGold(LATE)
+    { tier: 0, runs: '1-5',   gold: 70 },     // == RUN_GOLD.AWARD (measured floor)
+    { tier: 1, runs: '6-20',  gold: 100 },    // partial build, median 95.5
+    { tier: 2, runs: '21-45', gold: 200 },    // half-maxed build, median 185
+    { tier: 3, runs: '46+',   gold: 11000 },  // maxed build, median 11694 (censored)
   ],
-  TOP_TIER_MIN_GOOD_RUNS: 30,
+  TOP_TIER_MIN_GOOD_RUNS: 10,  // re-derived: BEAM 10.0, ARCADE_PASS 12.7 maxed runs
   // The priced-this-wave catalog (shop row ids). MID_TIER: everything a
   // mid-game shopper works through; TOP_TIER: the 30+-good-run trophies.
   MID_TIER_IDS: [
@@ -227,6 +257,43 @@ export function computeRunGold(runStats) {
   // GREED shop line: pass stats.goldMult (from applyMetaBonuses) to multiply
   // the whole payout (first-clear bonus included), rounded once at the end.
   return Math.round(gold * (Number(runStats.goldMult) || 1));
+}
+
+// ---------- E1 RUN PURSE: tier-weighted per-kill gold -----------------------
+// Owner directive (2026-09-14): "tier weighted gold counter ... mid wave boss
+// gives a nice gold drop and the chaff drops a bit less." The purse is an
+// IN-RUN wallet (profile.runPurse): every kill credits it ONCE, at the kill
+// funnel, as a per-kill EVENT (dt-free — 60Hz and 120Hz pay the same per
+// corpse, the evolution-token convention). ONE data table, one knob per tier —
+// never a squared curve, and never re-derived from hp at run end. The SAME
+// kill is never paid twice: the end award is RUN_GOLD.AWARD (flat), so these
+// drops are the only per-kill gold surface.
+export const GOLD_TIER = {
+  CHAFF: 0,      // SWARMER / TICK — the wave-2 horde pays ~nothing by design
+  GRUNT: 1,      // CHASER — "near zero", but the counter still ticks
+  MID: 3,        // SPITTER / DASHER / WARLOCK — the ordinary field
+  HEAVY: 8,      // BRUTE / PILLAR / COLOSSUS — clearly > 1
+  ELITE: 15,     // elite / eliteMod-stamped — "~1.0" unit of real gold
+  MID_BOSS: 60,  // the per-wave herald — reads as "a nice drop"
+  BOSS: 150,     // the wave boss — the heavy payout
+};
+// The tier signals: bosses carry boss/midBoss stamps (main.js), elites carry
+// elite / eliteMod; otherwise the ENEMY_TYPES hp ladder sorts the field.
+// Chaff = the cheap swarm tier (hpMult <= 0.5 bodies), heavy = hpMult >= 3.
+const PURSE_TYPE_TIER = {
+  SWARMER: 'CHAFF', TICK: 'CHAFF',
+  CHASER: 'GRUNT',
+  SPITTER: 'MID', DASHER: 'MID', WARLOCK: 'MID',
+  BRUTE: 'HEAVY', PILLAR: 'HEAVY', COLOSSUS: 'HEAVY',
+};
+export function purseTier(u) {
+  if (!u) return 'CHAFF';
+  if (u.boss) return u.midBoss ? 'MID_BOSS' : 'BOSS';
+  if (u.elite || u.eliteMod) return 'ELITE';
+  return PURSE_TYPE_TIER[u.typeId] || 'MID';
+}
+export function purseValue(u) {
+  return GOLD_TIER[purseTier(u)];
 }
 
 // Projected income for a given run, interpolating RUN1 -> LATE stats by
