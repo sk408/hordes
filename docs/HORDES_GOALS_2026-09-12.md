@@ -597,6 +597,36 @@ the run's own income carrying all of it. Because it scales with the player's own
 distort the early curve: a new player's best run is small, so their escape pays little, and only earned
 progress is rewarded.
 
+**⛔ NON-NEGOTIABLE: THE ESCAPE'S INCOME MUST NOT COUNT TOWARD THE RUN TOTAL (owner caveat, 2026-09-14).**
+Sk408: *"We do need to make one caveat. This income can't count toward run total."*
+
+**WHY IT MATTERS MORE THAN IT LOOKS — IT BLOCKS A FEEDBACK LOOP.** The payout is `bestGold x K`, and
+`bestGold` is the best single-run gold total. If the escape's income were counted into the run's gold, then:
+
+> play the escape -> the payout raises the run total -> the run total raises `bestGold` -> the next escape
+> pays MORE -> repeat.
+
+That compounds WITHOUT the player playing the game at all: each escape raises the guide for its own next
+payout. The mode would become the best income source in the game by doing nothing else, and the 1/3 discount
+would be meaningless within a few runs. So the separation is not bookkeeping tidiness — it is what keeps the
+payout a fixed fraction of EARNED progress.
+
+**THE RULE, stated precisely:**
+- **`bestGold` is gold the RUN earned — escape income is excluded BY CONSTRUCTION, never by a subtraction.**
+  Do not add the payout to the run's gold and then subtract it later; never let it enter the run's
+  accounting in the first place.
+- **The payout is credited to the PROFILE / BANKED meta purse at escape completion** — outside the run
+  purse, and outside the end-of-run award calculation.
+- Therefore it cannot move the run's income tier (`INCOME_TIERS`, `computeRunGold`) either. **Corollary that
+  strengthens the owner's economy waiver above: the escape does not touch the RUN economy at all.** It is a
+  separate faucet into the meta pool, which is precisely why nothing needs modelling in W7a.
+- **No extra multipliers on the payout** (Remy's recommendation): `goldMult` and friends are already
+  encoded in the best-run basis, so applying them again double-counts. If the owner wants a multiplier,
+  it belongs in K.
+- **HUD: show the credit as its own line at escape completion** (e.g. a distinct "+X banked" beat), so the
+  two currencies never blur — the owner asked for a visible gold display in E1 and the same legibility
+  argument applies here.
+
 **AND IT IS A LOW-RISK GAIN BY DESIGN — "easy" is the intent.** Sk408: *"if a player can earn 40 seconds of
 rewards for near zero risk, that's easy."* That is the point of the mode: a low-risk, decent-reward break
 from the horde. In dead time it is pure upside; even when it is not, the risk is near zero because failure

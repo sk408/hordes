@@ -208,6 +208,25 @@ interactive cinematic than a required game. That way they are less critical if i
 - **Measured as the SKIP RATE ON REPEAT ENCOUNTERS**, not first: repeat skips are what reveal "auto skip
   after the first play".
 
+## INCOME SEPARATION (owner caveat, 2026-09-14 — non-negotiable)
+
+Sk408: *"We do need to make one caveat. This income can't count toward run total."*
+
+**It blocks a feedback loop:** the payout is `bestGold x K`, and `bestGold` is the best single-run total. If
+escape income entered the run's gold, each payout would raise the guide for its own next payout — play the
+escape, get paid, the guide rises, the next escape pays more, with no gameplay in between. The mode would
+become the best income source in the game and the 1/3 discount would evaporate within a few runs.
+
+- **`bestGold` = gold the RUN earned. Escape income is excluded BY CONSTRUCTION** — never added and then
+  subtracted, never allowed into the run's accounting at all.
+- **The payout credits the PROFILE / BANKED meta purse at escape completion**, outside the run purse and
+  outside the end-of-run award.
+- It therefore cannot move `INCOME_TIERS` or `computeRunGold`. **The escape does not touch the RUN economy
+  at all** — which is exactly why the owner's economy waiver needs no modelling.
+- **No extra multipliers** (recommendation): `goldMult` etc. are already in the best-run basis. If a
+  multiplier is wanted, it belongs in K.
+- **Show the credit as its own line at escape completion** so the two currencies never blur.
+
 ## ACCEPTANCE (measurable — no adjectives)
 
 1. **Generator invariant, asserted across generated corridors:** for EVERY template its
@@ -216,6 +235,11 @@ interactive cinematic than a required game. That way they are less critical if i
    cheap — fail here is a template bug, not an AI problem.
 2. **AUTO completion rate through the escape**, as a TEMPLATE REGRESSION CHECK — plus the completion
    rate AT THE BOSS BEAT specifically (weaving plus jump timing is where an auto run dies).
+1a. **SEPARATION IS ASSERTED, not assumed — and the compounding test is the sharp one:** (a) completing an
+   escape is asserted to leave the run's gold total, its income tier and the end-of-run award UNCHANGED;
+   (b) **run the escape twice in a row with no gameplay between and assert the second payout EQUALS the
+   first** — if it grew, escape income is leaking into `bestGold` and the loop is live. That second clause
+   is the one that catches the failure mode, because it fails loudly the moment the leak exists.
 1b. **THE PAYOUT SHARE — one number, no modelling:** report the escape's measured payout as a share of the
    player's run income. The owner has explicitly waived economy rebalancing for this (*"It's a known
    quantity.. if it messes things up, we just multiply the economy by 1.3 or something"*), because a payout
