@@ -314,11 +314,35 @@ budget decision.
    still pays out.
 5. **A visible on-screen gold readout** during the run.
 
-**ANSWERED 2026-09-14 — option (a), confirmed by the owner:** *"Yes, runs should spend earned gold for
-shrines and merchants. I think that's how megabonk does it for balance."* So the run earns its own gold,
-spends it on in-run shrines (and later merchants), and the meta award at run end is a FIXED completion
-amount rather than a formula that swings on luck. Megabonk's in-run-shop model is the named precedent for
-the balance.
+**ANSWERED 2026-09-14 — option (a), confirmed twice by the owner:** *"Yes, runs should spend earned gold
+for shrines and merchants. I think that's how megabonk does it for balance."* and then, explicitly,
+**"Sure, fixed amount at end of the run, yes."** So: the run earns its own gold, spends it on in-run
+shrines (and later merchants), and the meta award at run end is a **FIXED AMOUNT** — not the
+`computeRunGold` formula, which is therefore retired as the payout authority. Megabonk's in-run-shop
+model is the named precedent.
+
+**THE INCENTIVE CONSEQUENCE — do not let this go unnoticed, it is the whole balance of the change.** A
+fixed award means a 30-second run and a 30-minute run pay the SAME at run end: the formula's kills, level
+and time terms were what made playing well pay. **Performance must now pay through the BANKED REMAINDER
+instead** — a strong run earns more in-run (tier-weighted drops), spends what it wants on shrines, and
+banks the rest. So the design dial is the RATIO between the fixed award and what a good run earns in-run:
+
+- If the fixed award dominates, every run pays about the same and the grind goes flat — the game stops
+  rewarding play, which is the opposite of every other owner decision this week.
+- If the in-run earnings dominate, the fixed award is just a floor and performance still drives income.
+
+**Set the fixed amount so the PACING holds, and choose the ratio deliberately — then MEASURE the spread.**
+The pacing anchor already exists: `test_meta.mjs` asserts ~10 good runs buy ~50% of the mid-tier catalog,
+and `GOLD_MODEL.INCOME_TIERS` documents the intended per-run band (700 / 1200 / 1800 / 2800 by run
+index). Pick the constant so those still land, re-derive `INCOME_TIERS` from the new model, and make
+**"a bad run vs the owner's loadout run differ by a meaningful multiple"** an explicit acceptance number
+rather than a vibe.
+
+**Constants to keep working, and why:** `goldMult` (the GREED shop row) must still multiply the payout —
+it is a shop buyable the owner doubled, so a fixed base times `goldMult` is the correct shape.
+`RUN_GOLD.FIRST_CLEAR` and `MAW_CLEAR_BONUS` (an event payout *"on top of the run's gold"*) stay as
+separate additions — but re-read the double-payment trap in the GOLD section above before giving any kill
+a second payout.
 
 **Remy's call on the one remaining shape question (state it in the report so the owner can flip it): the
 remainder BANKS.** Unspent run gold carries into the profile at run end, so nothing the player earned is
@@ -643,6 +667,40 @@ screen itself, then get THAT one read.
 Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority — he saw the
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
+
+**EXECUTION ORDER — DECIDED by Remy 2026-09-14 with the owner's delegation ("Whatever you recommend").
+This supersedes both the order these entries appear in below AND the ranked-queue sequencing conflict
+that went unresolved for four ticks.**
+
+**H1 (HUD reflow) -> P1 (portal) -> E1 (purse) -> W7a-tooling -> W7b (draft >= x1.6) -> E2 (horde)
+-> S1 (shrines) -> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
+
+WHY this order:
+1. **H1 and P1 lead** because they depend on nothing and are the fastest things the owner can feel.
+2. **E1 goes before everything that gets measured.** It changes what gold IS, so E2's cohort acceptance,
+   S1's shrine costs and W7b's divergence numbers must all be taken against the FINAL economy — measure
+   twice and you redo the work.
+3. **W7a-tooling and W7b come next, ahead of the ranked queue.** This resolves the four-tick conflict in
+   the owner's favour: W7b is HIS raised number (x1.6, against x1.28 today), and W7a's sim work is what
+   makes G5/G6 *measurable at all* (neither sim models arch buffs, so the wave-25 arch fix cannot be
+   measured). Preferring the queue over this was the queue rule skipping the owner's own target.
+   **SCOPE NOTE: W7a's economy half is SUBSUMED by E1** — E1 is the economy retune — so W7a shrinks to
+   the sim tooling (model the arch buffs, rank the meta upgrades by MEASURED marginal value) plus the
+   re-baselining. Do not plan a second economy pass.
+4. **E2 and S1 follow** the tooling, so their balance claims land on a model that can actually check them.
+5. **The ranked queue resumes after that.**
+
+Do not re-order without recording why in the tick note.
+
+### H1 — THE CONTROL PADS MUST NOT REFLOW (owner-reported bug)  [status: not started — owner-reported 2026-09-14]
+
+Sk408: *"the on screen controls fluctuate in size during a run. I think it's the updates to pilot status.
+Should be fixed to accommodate any change to pilot status."*
+
+Cause, the fix, and the measurable acceptance are in the **HUD CONTROL PADS MUST NOT REFLOW** section
+above (auto-width buttons whose `.badge` text changes at runtime; fix by fixed pad width + `width: 100%`
+buttons + reserved badge width; prove it with `getBoundingClientRect` equality across all four pilot modes
+and across a cooldown/potion change). Small, self-contained, no dependencies.
 
 ### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
 
@@ -1291,7 +1349,7 @@ The original galaxy.click feedback, item by item. Verify each and record VERIFIE
 7. "the edge of the map is not clearly defined" — wall + camera decoupling (see G2.3).
 8. "all over the place" — overall coherence pass.
 
-## G5 — DIFFICULTY STILL MATCHES THE GOAL  [status: unmeasured for the arch fix]
+## G5 — DIFFICULTY STILL MATCHES THE GOAL  [status: OPEN — UNMEASURABLE until W7a models the arch buffs in the sim; see the EXECUTION ORDER above]
 The sims currently pass: a bad draft can fail (100% die before the finale), good beats bad (182s vs
 142s = 0.78x, bar is <=0.8x, 4/5 metrics), economy in range, and every archetype dies by minute 5.
 **Open problem:** the sims do NOT model arch buffs (balance_sim has zero arch references; draft_sim
@@ -1324,7 +1382,7 @@ The one exception to report: a hidden trade-off that is ALSO irreversible and ne
 not a discovery — escalate it with numbers, and fix it by making it growable or reversible (slot
 growth, or player-chosen pool), never by explaining it.
 
-## G6 — THE DRAFT DECIDES RUNS (owner raised the target)  [status: below target]
+## G6 — THE DRAFT DECIDES RUNS (owner raised the target)  [status: OPEN — measured x1.28 against the owner's raised >=x1.6, a target the queue rule kept SKIPPING; depends on W7a-tooling and on E1's final economy. See the EXECUTION ORDER above]
 Divergence is currently **x1.28**, which barely clears its own bar and is weak for a game whose stated
 principle is "the draft IS the game". **Owner: "I think we could push it even further? 1.6? 2.0?"**
 
