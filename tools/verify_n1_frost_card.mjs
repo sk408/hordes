@@ -176,6 +176,24 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     check('WITCH: the nova FIRES in the live loop (>=1 frame with a nova effect)', live && live.novaFrames >= 1, live);
     check('WITCH: the live sim advanced during the window (not a frozen frame)', live && live.simAdvanced > 8, live);
 
+    // HARDENING (tick 40, test-only, NO assertion changed): `#touch` is
+    // display:none whenever chromeOn() is false (src/main.js:5077 — a draft is
+    // NOT playing/finale), so a capture taken while a draft overlay happens to
+    // be open reads a 0x0 label rect and 0 ink in the PNG. Measured once in the
+    // two runs of tick 40 ([ -2,-2,4,4 ], ink 0) while check 5 (the DOM text
+    // CHAIN) passed in the same run, i.e. a capture-timing artifact, not a
+    // product fault. Dismiss any open overlay and capture ONLY from a live
+    // 'playing' frame, so the ink check measures the HUD it names.
+    for (let guard = 0; guard < 40; guard++) {
+      const m = await p.evaluate("(async () => (await import('./src/main.js')).__TEST.state.mode)()");
+      if (m === 'playing') break;
+      const open = await scanPool().catch(() => []);
+      if (open.length) await p.tap(open[0].cx, open[0].cy);
+      else await p.evaluate("(async () => { const T = (await import('./src/main.js')).__TEST; const st = T.state; if (st.mode === 'playing') return; st.gems.push({ x: st.player.x, y: st.player.y, xp: st.player.xpNext }); })()");
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const preShot = await p.evaluate("(async () => (await import('./src/main.js')).__TEST.state.mode)()");
+    check('WITCH: the capture happens from a live playing frame (HUD visible)', preShot === 'playing', preShot);
     // ---- the artifact --------------------------------------------------------
     await p.evaluate("(async () => { for (let i = 0; i < 6; i++) await new Promise(r => requestAnimationFrame(r)); })()");
     const shotFile = await p.shot('n1-frost-card-witch');

@@ -359,7 +359,7 @@ coupling), which is why it is in scope under the SCOPE INTENT rule.
 **Schedule:** after the in-flight N1 slices (slice 2 = the draftable FROST_NOVA card, then slice 3
 against `docs/briefs/N1_ULTS_SPECS.md`), ahead of the polish goals (G21+). No dependency on N1.
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). **SLICE 2 (the draftable FROST_NOVA card) DISPATCHED 2026-09-13 by TICK NOTE 39** to builder cli:kimi-hordes-g8 as `msg_01M2ERHX29X0BQV4C2CFG1K3DX`, against the pilot-authored brief `docs/briefs/N1_SLICE2_FROST_CARD.md` - designed but NOT yet built or verified.]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). **SLICE 2 (the draftable FROST_NOVA card) BUILT + VERIFIED BY TICK NOTE 40 on the COMMITTED artifact `0582339`** (builder cli:kimi-hordes-g8, brief `docs/briefs/N1_SLICE2_FROST_CARD.md`): suite greenfiles=75 redfiles=0, test_frost_card 10/10 with printed numbers, test_chain_q 15/15 (fixture retarget only, assertion untouched), verify_n1_frost_card 10/10 in a real browser at 390x844 @dpr3 after the tick-40 capture-frame guard. **ONE OPEN MEASUREMENT:** the KNIGHT arm trends negative at n=12 (negative survival, t=-1.98) while the WITCH is neutral - recorded as a flag, not a defect claim. All three slices specced; next is SLICE 3 (the three ults).]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -4206,3 +4206,58 @@ re-measure, the ranked-queue vs BUILD_PLAN W7a/W7b sequencing conflict, the G23 
 G26 25-item feedback triage, and `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` still
 unread by any agent. The builder lane is `cli:kimi-hordes-g8` (glm's quota reset is 2026-09-15
 15:49 UTC).
+
+## TICK NOTE 40 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; N1 slice 2 VERIFIED on the committed artifact, one open measurement flagged, one test-tool flake found and guarded)
+
+**Goal worked: N1 slice 2 - the draftable FROST_NOVA card - verified against its own bar (artifact, not self-report).**
+The builder's commit landed as `0582339` ("land N1 slice 2 ..."), so every number below was re-run here on that tree
+(`dirty=0` at tick start).
+
+**VERIFIED (all measured now, raw output kept in /tmp/n1s2_*.log):**
+- `bash /tmp/run_all.sh` => `greenfiles=75 redfiles=0`, `REDLIST:` empty, TREE reported as `0582339`.
+- `node test/test_chain_q.mjs` => **15 checks passed**, and its two pinned checks are UNTOUCHED: the six FROST_NOVA
+  constants and "KNIGHT keeps FROST_NOVA in the Q slot" both pass as written. The only diff in that file
+  (`3c22bce..0582339`) is the fixture retarget - the `witness` enemy is planted `elite: true` (loot.js's flash-exempt
+  flag) so the FLASH DROP roll can no longer erase it; **the assertion line itself is byte-identical**.
+- `node test/test_frost_card.mjs` => **10 checks passed** with its numbers: **15 casts at BOTH 60Hz and 120Hz over a
+  120s window** (cooldown 8s => 15 expected, 13-17 accepted), **mana pinned at 0 => 0 casts and the pool never
+  negative**, **card not held => 0 casts** (the card is the only source), inert outside `playing`, and the text-HUD
+  token reads FROST AUTO while `#q-skill` stays CHAIN.
+- `node tools/verify_n1_frost_card.mjs` => **10/10 PASS in a real browser at 390x844 @dpr3, twice** after the hardening
+  below: all 19 TOUR_KEYS set, `state.time > 1.0` asserted, a REAL tap takes the card from the LIVE `ov-cards` pool,
+  the next pool no longer offers it, **novaFrames=114/115 with simAdvanced 36.4/40.0 sim-s** (the nova really fires in
+  the live loop), PNG `docs/art/browser-verify-2026-09-12/n1-frost-card-phone.png` = **1170x2532**, label bbox
+  [325,589,43,19] with **ink=1265**.
+
+**FOUND AND FIXED THIS TICK - a test-tool capture flake (no assertion weakened).** The bar's tool was **8/9 on its
+first run here**: `FAIL the #q-skill label bbox holds real ink :: {"ink":0}` with `lblBox [-2,-2,4,4]`, i.e. a 0x0
+element rect. Cause, read from the code: `#touch` is `display:none` whenever `chromeOn()` is false
+(`src/main.js:5077` - a `draft` is NOT `playing`/`finale`), so a PNG captured while a draft overlay happened to be open
+contains no HUD at all. That is a **capture-timing artifact, not a product fault** - the DOM-text check ("#q-skill still
+reads CHAIN") PASSED in that same run, and the second run without any change was 9/9. The fix is a test-side guard in
+`tools/verify_n1_frost_card.mjs`: dismiss any open overlay, then assert `mode === 'playing'` **before** the capture, and
+that assert is now its own check. Post-guard: **10/10 twice, stable bbox and ink**. This is the tick-38 pattern again -
+the harness, not the game, was the defect.
+
+**THE ONE THING THE BAR ASKS FOR THAT THE BUILDER NEVER REPORTED - bar item 4, measured here.** The commit message
+carries no cohort numbers at all, so "no dead pick" was asserted, not measured. Pilot-run, interleaved OFF/ON per pair,
+**12 runs per arm, 120s cap, fresh stage, card held for the whole run through the REAL `grantFrost` seam**, skill policy
+as `tools/real_loop.mjs` (q/e vs bosses):
+- **WITCH: 43.8s ± 6.3 vs 42.1s ± 7.7 survival; 44.4 ± 14.7 vs 44.1 ± 26.3 kills** (t = -0.59 / -0.03). **NEUTRAL - the
+  bar holds.** The card costs her nothing and gives her the frost nova she otherwise cannot reach.
+- **KNIGHT: 39.3s ± 4.6 vs 31.8s ± 12.3 survival; 32.8 ± 10.8 vs 24.5 ± 18.9 kills** (t = -1.98 / -1.32 at n=12).
+  **NEGATIVE TREND, NOT ESTABLISHED.** The ON arm's sd triples because it carries three fast deaths (13s, 14s, 19s)
+  against an unusually tight OFF arm (34-49s). No mechanism is demonstrated: KNIGHT's Q is already FROST_NOVA and these
+  runs die at ~39s, before any boss fight, where the sim's mana has no other sink. Recorded as an OPEN MEASUREMENT
+  (needs a larger paired cohort and a death-cause breakdown), explicitly NOT as a defect - and NOT a reason to retune
+  FROST_NOVA, which the owner forbade.
+
+**NOT VERIFIED, HONESTLY:** whether the KNIGHT trend is real or an artifact of n=12 on a knife-edge stage; and I did not
+read the PNG semantically (dimensions + bbox ink only, per the brief's own instruction). The card's interaction with the
+real WITCH run's mana economy over a LONG run (>120s, mana buyables bought) is also unmeasured.
+
+**NEXT GOAL:** N1 slice 3 - the three class ults, already specced at `docs/briefs/N1_ULTS_SPECS.md` (the owner-delegated
+content design), then **G21**. Still owed and unchanged: G5 (arch fix unmeasured), G6 at x1.28 vs the raised x1.6, the
+item-7 mana-bar re-measure, the ranked-queue vs W7a/W7b sequencing conflict, the G23 unlock-tied hook, the G26 25-item
+feedback triage, and `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` still unread by any agent. Builder lane
+is `cli:kimi-hordes-g8`; no builder was running and nothing was killed, restarted or steered. No git state command run.
