@@ -398,11 +398,37 @@ has to sustain variety for that long, which is a real requirement rather than a 
   - **Invisible to MANUAL — manual players jump themselves.** So the assist is auto-only, which is the same
     principle as P1's portal i-frames (AUTO gets the help, manual gets none). **One rule, two places.**
 
-  **WHAT THE REAL WORK ACTUALLY IS (and it is a template invariant, not an AI problem):** a trigger can only
-  fire into a gap the jump can clear, so **every generated gap must be jump-clearable at the corridor's
-  MINIMUM approach speed** — otherwise a correct trigger still drops the pilot in a hole. That is a
-  deterministic, testable invariant of the generator: assert it over generated corridors rather than
-  hoping. It moves the risk from probabilistic AI behaviour to a template bug, which is the trade you want.
+  **THE TRIGGER MAY ALSO FUDGE THE APPROACH SPEED — OWNER 2026-09-14.** Sk408: *"we can fudge the speed for
+  the jumps too. The jump box can add a bit of speed to pilot if needed. But should have a threshold so it
+  doesn't look too silly."* Recorded, and it is the right call — with one addition: the clamp should work
+  **both ways**.
+
+  **MECHANISM: the trigger clamps approach speed INTO the window the gap was authored for.** The template
+  authors a speed window `[v_min, v_max]`; on entering the trigger, an auto player's forward speed is
+  clamped into it, then the jump fires. That buys a property worth more than the fudge itself:
+  **TEMPLATE PLAYABILITY BECOMES SPEED-INDEPENDENT BY CONSTRUCTION.** This matters because the escape shares
+  the player entity — so a maxed build's movement speed would otherwise break the geometry, and in BOTH
+  directions: too slow drops into the gap, and **too fast OVERSHOOTS the landing platform** (a fixed jump
+  arc plus higher horizontal speed carries you past the ledge into the next hazard). Clamping both ways
+  kills both failures with one rule.
+
+  **THE SILLINESS THRESHOLD, made concrete:** cap the fudge at a small fraction of current speed (start
+  ~25-30% and measure it), applied as a single small clamp at the trigger rather than an obvious
+  acceleration ramp — it should read as the player bracing for the jump, not as the game taking the
+  controls. **And if a template needs more than the cap, THE TEMPLATE IS MISDESIGNED** — that is the signal,
+  not a reason to raise the cap.
+
+  **THE INVARIANT, UPDATED:** for every template, its (gap width, authored speed window) must clear AND land
+  within the fudge cap — i.e. assert clearance at the fudge FLOOR (v_min minus nothing, since the clamp
+  guarantees v_min) and landing within the platform at the fudge CEILING. Assert it over generated
+  corridors. Deterministic and testable, so the risk stays a template bug rather than AI behaviour.
+
+  **TWO CONSTRAINTS ON THE IMPLEMENTATION:**
+  - **AUTO ONLY.** A manual player getting nudged would feel like the game playing for them. Same
+    assist rule as the portal i-frames and the invisible trigger: auto-assisted, manual unassisted.
+  - **IMPLEMENT IT IN THE ESCAPE'S OWN MOVEMENT LAYER, not the shared overhead movement** — so the speed
+    fudge can never leak into the main game. The same discipline as "the escape ignores stats": the mode
+    is self-contained, including its writes to the player.
 
   **Edge cases to handle in the trigger, all small:** trigger is a BAND (not a point) so a slowed or
   knocked-back player cannot slide past the firing line; no double-fire (never mid-air, never while
