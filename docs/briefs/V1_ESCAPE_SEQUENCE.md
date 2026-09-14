@@ -185,11 +185,18 @@ interactive cinematic than a required game. That way they are less critical if i
 - **SKIP = FORGO THE PAYOUT. That is the light punishment, and the ONLY punishment** — no run penalty,
   no death, no gate. Owner refinement 2026-09-14: *"Missing the payout is the light punishment. Should have
   enough of a reward that people want to play it, otherwise it's an auto skip after the first play."*
-- **SO THE PAYOUT MUST BE WORTH TWO MINUTES — Remy's earlier "keep it modest" call is SUPERSEDED.** A
-  trivial payout does not make skipping a free choice, it makes the mode dead content. **The payout must
-  at minimum match what normal play earns in the same time plus a novelty margin, or skipping is rational.**
-  Size it as a RATE (per minute), against measured run income (`INCOME_TIERS` 700/1200/1800/2800,
-  `computeRunGold`). Do not ship a token amount.
+- **THE PAYOUT RATE IS OWNER-SET: ONE THIRD OF THAT PLAYER'S NORMAL RATE.** *"Should pay at like 1/3 the
+  normal rate of time spent in a run of that length for that player, if that makes sense. 2 min equals 40
+  seconds payout. It's an easy stage so can't pay too much."* So `payout = player rate x duration / 3`,
+  i.e. **40 seconds of income for a 2-minute escape** (120/3). SCALED TO THE PLAYER (derive from
+  `INCOME_TIERS` 700/1200/1800/2800 and `computeRunGold`; do not invent an instrument). The 1/3 discount is
+  also anti-exploit: the stage is EASY, so the full rate would make it a better farm than the run itself.
+  Remy's earlier "beat the opportunity cost plus a margin" rule is **WITHDRAWN**.
+- **⚠ LOAD-BEARING CONDITION: THE ESCAPE MUST OCCUR IN DEAD TIME (the intermission / wave-boundary seam).**
+  In dead time the player is earning nothing anyway, so the 40 seconds is pure upside and skipping costs
+  real income (the intended light punishment). If it instead consumed run-earning time, 1/3 of the rate
+  makes SKIPPING RATIONAL and the mode would guarantee its own "auto skip after the first play" failure.
+  **This is now the decisive argument for the trigger and must be settled with it.**
 - **Reward SHAPE (Remy's recommendation, owner decides):** prefer a meaningful, REPEATABLE payout
   (currency / chest-equivalent / evo tokens) over a one-off meta-collectible — repeat play must be
   motivated by the payout, and a one-off goes quiet once collected. **M1's collectible set stays OUT of the
@@ -229,19 +236,25 @@ interactive cinematic than a required game. That way they are less critical if i
 
 ## OPEN OWNER QUESTIONS (ask before dispatch, not during)
 
-1. **TRIGGER** — a scripted beat at a wave boundary (the intermission seam, which is also the only
-   safe place for a view swap), a run-end last chance (*"you are about to die — run"*), or a
-   dedicated stage/mode? The owner's *"replacement for wave 2"* reading suggests a scheduled beat.
-   **This also fixes the gating problem: a fresh run dies at ~35s, so an ungated two-minute escape is
-   content a new player never sees.**
+1. **TRIGGER — now LOAD-BEARING, recommend the intermission / wave-boundary seam.** It was open for
+   three reasons and is now decisive for a fourth: (a) a view swap is only safe there; (b) the owner's
+   *"replacement for wave 2"* reading suggests a scheduled beat; (c) a fresh run dies at ~35s, so an
+   ungated two-minute escape is content a new player never sees; and **(d) NEW — the 1/3 payout rate only
+   functions as a reward in DEAD TIME.** At the intermission the player earns nothing anyway, so 40
+   seconds of income is pure upside and skipping genuinely costs them. If the escape consumed
+   run-earning time instead, 1/3 of the rate would make skipping rational and the mode would guarantee its
+   own "auto skip after the first play" failure. **Remy recommends the wave-boundary/intermission seam.**
 2. ~~**STAKES** — is failure death, or a lost reward?~~ **ANSWERED by the owner's skip directive
    (2026-09-14): failure is SOFT.** The escape ends, no escape bonus, the run continues — never death.
    See the SKIP section. Do not build a lethal failure path.
-3. **REWARD** — corrected by the owner's refinement: it must be **attractive enough that people want to
-   play it** (his words), because a token payout produces an auto-skip after the first play. Skip forgoes
-   it, and that is the whole punishment. Size it as a RATE that beats normal play's income-per-minute plus
-   a novelty margin; prefer a repeatable currency/item payout over a one-off collectible. **Still open: the
-   exact payout and its rate.**
+3. **REWARD — RATE SET BY THE OWNER (1/3 of the player's normal rate, i.e. 40 seconds for a 2-minute
+   escape; see the SKIP section).** What remains open is only the SHAPE and the exact derivation:
+   - Prefer a **repeatable payout** (currency / chest-equivalent / evo tokens) over a one-off
+     meta-collectible, so repeat play is motivated by the payout itself.
+   - **Assume it triggers in dead time** (see the trigger question) — that is the condition under which
+     the rate works.
+   - **M1's collectible set stays OUT of the escape.**
+   - Derive "that player's rate" from `INCOME_TIERS` / `computeRunGold`; do not invent an instrument.
 
 ## DO NOT
 

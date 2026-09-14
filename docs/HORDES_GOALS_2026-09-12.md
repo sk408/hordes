@@ -541,7 +541,38 @@ painful and the mode becomes required in practice — exactly what the skip exis
   forgone by skipping.** So: **SKIP = FORGO THE PAYOUT (that is the light punishment, and it is the ONLY
   punishment).** No run penalty, no death, no gate — but you do not get the reward.
 
-**THE PAYOUT MUST BEAT ITS OPPORTUNITY COST — this is what decides whether the mode is played twice.**
+**THE PAYOUT RATE IS SET BY THE OWNER: ONE THIRD OF THE PLAYER'S OWN NORMAL RATE (2026-09-14).**
+Sk408: *"Should pay at like 1/3 the normal rate of time spent in a run of that length for that player, if
+that makes sense. 2 min equals 40 seconds payout. It's an easy stage so can't pay too much."*
+
+- **The formula: `payout = (that player's normal income RATE) x (escape duration) / 3`.** For a 2-minute
+  escape that is **40 seconds worth** (120/3) ✓ the arithmetic checks.
+- **"for that player" = SCALED TO THEIR PROGRESSION**, not a fixed lump sum. Derive the rate from what the
+  game already measures — `INCOME_TIERS` (700/1200/1800/2800) and `computeRunGold` are the anchors — so a
+  late-game player is not underpaid and an early player is not overpaid. Do NOT invent a new instrument
+  for this.
+- **The 1/3 discount is also an anti-exploit, not just modesty:** the escape is an EASY stage (platforming,
+  no stat danger), so paying the full rate would make it a BETTER farm than the run itself — a real economy
+  hole. 1/3 keeps it a bonus rather than an exploit.
+
+**⚠ THE 1/3 RATE ONLY WORKS AS A REWARD IF THE ESCAPE HAPPENS IN DEAD TIME — this is now the decisive
+argument for the TRIGGER, which was still open.** Two cases:
+- **Dead time (a wave boundary / the intermission seam):** the player is not earning during that window
+  anyway, so ANY payout is pure upside, 40 seconds of income is a real prize, and skipping genuinely costs
+  the player something — the owner's "light punishment" lands exactly as intended.
+- **Consuming run-earning time:** then the escape pays 1/3 of what the same 2 minutes would have earned in
+  the run, which makes skipping the RATIONAL choice for anyone who does the math — the mode's own payout
+  logic would guarantee the "auto skip after the first play" failure.
+**So: trigger the escape where the clock is already stopped (the intermission / wave-boundary seam, which is
+also the only safe place for a view swap). That is Remy's recommendation and it is now load-bearing for the
+payout, not just for the view transition.**
+
+**SUPERSEDED by the owner's rate above: Remy's earlier rule "the payout must beat its opportunity cost plus
+a novelty margin" is WITHDRAWN.** The owner deliberately pays BELOW the normal rate, which is correct
+precisely because the stage is easier — the condition that makes it work is dead time (above), not a higher
+number.
+
+**THE SHARPEST METRIC IS THE SKIP RATE OVER REPEATED ENCOUNTERS, not the first.**
 The escape consumes ~2 minutes the player could have spent in the normal run. If it pays less than normal
 play earns in the same time, skipping is simply RATIONAL and the mode is skipped forever after the first
 look. So the payout must at minimum match the run's own per-minute income rate at comparable progression,
