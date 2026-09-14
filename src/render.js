@@ -12,6 +12,27 @@ import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
 import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
+// A2 THE RADAR: the DATA layer (pure maths, no DOM — see src/radar.js's header)
+// is imported, never restated. This file owns only the painting of what it
+// returns; the classification (chaff/elite/boss) is classifyTier's alone.
+import { radarDots, RADAR_RADIUS } from './radar.js';
+
+// A2 RADAR paint constants (geometry rationale lives on drawRadar below).
+// RADAR_DISPLAY_R is the HUD-px radius of the drawn circle; the world->radar
+// scale is RADAR_DISPLAY_R / RADAR_RADIUS (34/330). Bottom-right corner box:
+// the one HUD region with no chrome (bars/XP/feed top-left, clock/weather
+// top-right, weapon/item rows bottom-left).
+const RADAR_DISPLAY_R = 34;
+const RADAR_CORNER_INSET = 10;
+// Tier tells: chaff is a small grey pip, elite is gold, boss is the big red
+// one — readable at a glance, in the house palette (gold #ffd75e / red
+// #ff2f5e, the same pair the LV badge and the run-limit tick use). Sizes are
+// odd integers so a dot centres exactly on its integer radar-space pixel.
+const RADAR_DOT_STYLE = {
+  chaff: { size: 3, color: '#b8b8c8' },
+  elite: { size: 5, color: '#ffd75e' },
+  boss: { size: 7, color: '#ff2f5e' },
+};
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
 export const PLAYER_SPRITE = [
@@ -241,6 +262,7 @@ export class Renderer {
       this.hudChrome = null;
       this.bossBanner = null;
       this.moment = null;
+      this.radar = null;
       this.drawTitleScreen(g);
       return;
     }
@@ -912,11 +934,96 @@ export class Renderer {
     // G10: the bestiary is the same non-play showcase state — the readouts
     // must not bleed through the guide either (the G9 follow-up, extended).
     if (state.mode === 'trophies' || state.mode === 'bestiary') {
-      this.hudChrome = null; this.bossBanner = null; return;
+      this.hudChrome = null; this.bossBanner = null; this.radar = null; return;
     }
     this.drawMoment(g, state);
     this.drawHudChrome(g, state);
+    this.drawRadar(g, state);
     this.drawBossBanner(g, state);
+  }
+
+  // ---- A2 THE RADAR (owner-suggested 2026-09-14, pair to A1's AUTO pilot) ----
+  // A circular minimap in the HUD layer: nearby enemies as tier-classified dots
+  // around the player. The DATA is radar.js's radarDots() — the same function
+  // test_radar.mjs pins — called every frame with the live state; this method
+  // only paints what it returns. There is no time term anywhere in it (the dot
+  // set is a pure function of the current positions), so 60Hz and 120Hz paint
+  // the identical frame for the identical state — nothing assumes a dt.
+  //
+  // GEOMETRY (fixed; the H1 no-reflow contract — the radar never reflows any
+  // other HUD element, its box is a constant of the view): bottom-right corner,
+  // display radius RADAR_DISPLAY_R view px, mapped over RADAR_RADIUS (330)
+  // world px — the module's radius, which covers the whole 322px spawn ring.
+  //
+  // THE PAIRING (owner context): AUTOPILOT.FOCUS_RANGE (100 world px) is the
+  // pilot's engagement radius, and the radar exists to show what the AUTO pilot
+  // is IGNORING — so the focus ring is painted as a faint circle at its true
+  // scaled radius: dots INSIDE it are the pilot's problem, dots outside are
+  // the player's. Read from C.AUTOPILOT, never restated.
+  //
+  // `this.radar` is the honest test seam (same contract as hudChrome): the
+  // exact box + the screen-space dots painted this frame, null while the
+  // radar is off — so "toggle off restores the HUD" is assertable as
+  // radar === null plus zero paint in the box.
+  drawRadar(g, state) {
+    const p = state.player;
+    if (!state.radarOn || !p || !p.stats) { this.radar = null; return; }
+    const R = RADAR_DISPLAY_R;
+    const cx = C.VIEW_W - RADAR_CORNER_INSET - R;
+    const cy = C.VIEW_H - RADAR_CORNER_INSET - R;
+    const scale = R / RADAR_RADIUS;
+    const focusR = Math.round((C.AUTOPILOT.FOCUS_RANGE || 0) * scale);
+
+    // The dot set, from the real data layer: live enemies only, classified by
+    // classifyTier inside radar.js (BOSS > ELITE > CHAFF — never restated here).
+    const live = [];
+    for (const e of state.enemies) if (e && e.hp > 0) live.push(e);
+    const dots = radarDots(p, live, { radius: RADAR_RADIUS, displayRadius: R });
+
+    // Plate: a filled dark disc painted as pixel rows (integer half-widths —
+    // no arc(), no antialiasing, per the pixel-art rule), then a 1px rim.
+    for (let dy = -R; dy <= R; dy++) {
+      const half = Math.floor(Math.sqrt(R * R - dy * dy));
+      g.fillStyle = C.HUD.PLATE;
+      g.fillRect(cx - half, cy + dy, half * 2 + 1, 1);
+    }
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > R || d <= R - 1.5) continue;
+        g.fillStyle = C.HUD.FRAME;                     // steel rim, 1px band
+        g.fillRect(cx + dx, cy + dy, 1, 1);
+      }
+    }
+    // The AUTO pilot's engagement ring (the pairing made visible): faint, 1px.
+    if (focusR > 1) {
+      g.fillStyle = 'rgba(184,224,255,0.28)';
+      for (let dy = -focusR; dy <= focusR; dy++) {
+        for (let dx = -focusR; dx <= focusR; dx++) {
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d > focusR || d <= focusR - 1.2) continue;
+          g.fillRect(cx + dx, cy + dy, 1, 1);
+        }
+      }
+    }
+    // The player pip at the centre (the radar is player-relative by contract).
+    g.fillStyle = '#e8e8f0';
+    g.fillRect(cx - 1, cy - 1, 3, 3);
+
+    // Dots: size + colour by tier, centred on the integer radar-space offset
+    // radarDots returned (screen = centre + offset; the mapping is 1:1).
+    const counts = { chaff: 0, elite: 0, boss: 0 };
+    const painted = [];
+    for (const dot of dots) {
+      const st = RADAR_DOT_STYLE[dot.tier] || RADAR_DOT_STYLE.chaff;
+      const sx = cx + dot.x, sy = cy + dot.y;
+      const o = Math.floor(st.size / 2);
+      g.fillStyle = st.color;
+      g.fillRect(sx - o, sy - o, st.size, st.size);
+      counts[dot.tier] = (counts[dot.tier] || 0) + 1;
+      painted.push({ x: sx, y: sy, tier: dot.tier, typeId: dot.typeId, size: st.size, color: st.color });
+    }
+    this.radar = { cx, cy, r: R, focusR, counts, dots: painted };
   }
 
   // ---- WAVE-14 boss-arrival overlay ------------------------------------------

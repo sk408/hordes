@@ -301,6 +301,12 @@ const state = {
   pilotMode: 'AUTO_ALL',
   zoom: 1,           // WAVE-16 world zoom (ladder 1/2/3/4/6/8; render.js reads
                      // it every frame — live mid-run, presentation only)
+  // A2 THE RADAR (owner-suggested 2026-09-14): the circular enemy minimap.
+  // Presentation only — render.js drawRadar reads this every frame and paints
+  // the radar.js dot set while it is on; the sim never reads it. Toggled by
+  // the R key / the RADAR touch button (toggleRadar), sticky across runs in
+  // the session like zoom. Not persisted.
+  radarOn: false,
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
@@ -4735,6 +4741,11 @@ function runAction(act) {
     if (state.mode === 'playing' || state.mode === 'finale') togglePilotMode();
     return;
   }
+  // A2: the RADAR touch button — same mid-run-only gate as the pilot toggle.
+  if (act === 'radar') {
+    if (state.mode === 'playing' || state.mode === 'finale') toggleRadar();
+    return;
+  }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
@@ -4901,6 +4912,7 @@ const REPEAT_GUARDED = new Set([
   'h', 'n',              // potions
   'escape', 'p',         // pause / resume
   'm',                   // pilot toggle
+  'r',                   // A2 radar toggle
   'i', '?', 'f1',         // stats overlay + hints toggle
   's',                    // held "down" in MANUAL — swallow ONLY its repeat
   '+', '=', '-', '_',    // zoom ladder
@@ -4995,6 +5007,9 @@ window.addEventListener('keydown', (ev) => {
     //              in BOTH modes (the permanent new home for it)
     if (k === 'm') { togglePilotMode(); return; }
     if (k === 'i') { openStats(); return; }
+    // A2: R toggles the radar in BOTH pilot modes (it is a HUD readout, not
+    // a movement key — no conflict with WASD).
+    if (k === 'r') { toggleRadar(); return; }
     // WAVE-22c: ? (or F1) toggles the on-screen control hints.
     if (ev.key === '?' || k === 'f1') { if (ev.preventDefault) ev.preventDefault(); toggleHints(); return; }
     // WAVE-16 quick zoom: '+'/'=' zooms in, '-' zooms out — no settings trip
@@ -5042,7 +5057,7 @@ const touchLayer = document.getElementById('touch');
 const joyEl = document.getElementById('joy');         // WAVE-15 joystick base
 const joyKnobEl = document.getElementById('joy-knob');
 const touchEls = {};
-for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n']) {
+for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-radar']) {
   touchEls[id] = document.getElementById(id);
 }
 
@@ -5091,19 +5106,19 @@ const HINT_LINES = {
     'M pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
   AUTO_MOVE: [
     'M pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
   MANUAL: [
     'M pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
     'I stats (S = move down) &middot; ESC close / pause',
-    '+ / - zoom &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
 };
 // The pre-(h) persisted mode name 'AUTO' is an alias, not a lookalike table:
@@ -5132,6 +5147,18 @@ function toggleHints() {
   applyHints();
 }
 applyHints();
+
+// A2 THE RADAR: one toggle, one code path — the R key and the RADAR touch
+// button both land here (the button through runAction, the key directly).
+// The state flag is the whole mechanism: render.js reads it every frame, so
+// ON paints from the next frame and OFF leaves nothing behind (the canvas is
+// repainted whole every frame; there is no radar DOM to leak). The toast is
+// the discovery feedback, same pattern as the stance cycle.
+function toggleRadar() {
+  state.radarOn = !state.radarOn;
+  toast('RADAR ' + (state.radarOn ? 'ON' : 'OFF') + ' (R)', '#b8e0ff');
+  return state.radarOn;
+}
 
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
 // legacy 300ms wait and double-tap zoom.
@@ -5302,6 +5329,10 @@ function updateTouchHud() {
   skill('tc-w', 'OVERCHARGE');
   set('tc-h', String(p.potions.hp));
   set('tc-n', String(p.potions.mp));
+  // A2: the RADAR button carries no badge — its lit frame IS the readout
+  // (state-driven, rewritten every frame like the badges above).
+  const radarBtn = touchEls['tc-radar'];
+  if (radarBtn && radarBtn.classList) radarBtn.classList.toggle('on', !!state.radarOn);
 }
 
 // ---------- HUD ----------
@@ -6028,6 +6059,10 @@ export const __TEST = {
   },
   // WAVE-16 zoom seam: ladder + live get/set/cycle (settings row + '+/-' keys).
   zoom: { get: () => state.zoom, set: setZoom, cycle: cycleZoom, ladder: ZOOM_LADDER },
+  // A2 radar seam: the live flag + the ONE toggle the R key and the RADAR
+  // touch button both drive. The painted frame is renderer.radar's seam
+  // (null while off — the "no leaked chrome" half of the toggle contract).
+  radar: { get on() { return state.radarOn; }, toggle: toggleRadar },
   // One-time-banner ledger seam (schema v6). A probe that COUNTS FRAMES must be
   // banner-inert: the first-ever token / top-tier banner legitimately holds the
   // sim for 2.5s, which starves a frame-budgeted measurement. Its own behaviour
