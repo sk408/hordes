@@ -216,6 +216,12 @@ interactive cinematic than a required game. That way they are less critical if i
    cheap — fail here is a template bug, not an AI problem.
 2. **AUTO completion rate through the escape**, as a TEMPLATE REGRESSION CHECK — plus the completion
    rate AT THE BOSS BEAT specifically (weaving plus jump timing is where an auto run dies).
+1b. **THE PAYOUT SHARE — one number, no modelling:** report the escape's measured payout as a share of the
+   player's run income. The owner has explicitly waived economy rebalancing for this (*"It's a known
+   quantity.. if it messes things up, we just multiply the economy by 1.3 or something"*), because a payout
+   keyed to the player's own best run is a PROPORTIONAL faucet — it shifts the whole ladder together, so a
+   global multiplier is the right-shaped fix. This measurement exists only so that decision is informed
+   rather than guessed, and it is NOT a reason to couple V1 to W7a. Report it; do not model it.
 2b. **THE SKIP RATE, reported alongside completion.** For a skippable mode this is the honest signal of
    whether it earns its two minutes: a high skip rate is the intended outcome (nobody resents it), a low
    skip rate with a high completion rate proves it is fun. Assert only that the skip WORKS from the first

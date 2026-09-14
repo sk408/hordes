@@ -591,16 +591,38 @@ OBLIGATED to play is a mode they criticise. The two owner statements reconcile c
 people in; the free skip keeps the critics quiet.** Both must hold at once, which is why the skip carries
 only the light cost (the forgone payout) and never a run penalty, a death, or a gate.
 
-**⚠ ECONOMY CROSS-LINK — THE ESCAPE PAYOUT IS AN INCOME FAUCET, NOT JUST A TREAT.** Sk408: *"free rewards
-means more buyables. Also means we can scale costs higher."* So the escape payout is a designed income
-source whose existence BUYS SHOP HEADROOM: more buyables can exist, and the cost ladder can climb higher,
-without the run's own income carrying all of it. Consequences to honour:
-- It must be modelled in **W7a's economy simulation**, or W7a's balance numbers are computed against a
-  model that is missing an income source and will understate what players can afford.
-- V1/W12 lands AFTER W7a, so either W7a **reserves headroom** for it, or a **post-V1 economy re-measure** is
-  owed. One of the two, decided explicitly — not skipped.
-- Because the payout scales with the player's own best run, it does NOT distort the early curve: an early
-  player's best run is small, so their escape pays little. Only earned progress is rewarded.
+**THE PAYOUT IS AN INCOME FAUCET — IT BUYS SHOP HEADROOM.** Sk408: *"free rewards means more buyables.
+Also means we can scale costs higher."* More buyables can exist and the cost ladder can climb higher without
+the run's own income carrying all of it. Because it scales with the player's own best run it does NOT
+distort the early curve: a new player's best run is small, so their escape pays little, and only earned
+progress is rewarded.
+
+**AND IT IS A LOW-RISK GAIN BY DESIGN — "easy" is the intent.** Sk408: *"if a player can earn 40 seconds of
+rewards for near zero risk, that's easy."* That is the point of the mode: a low-risk, decent-reward break
+from the horde. In dead time it is pure upside; even when it is not, the risk is near zero because failure
+soft-ends instead of killing the run.
+
+**✅ ECONOMY MODELLING IS EXPLICITLY WAIVED BY THE OWNER (2026-09-14) — no W7a coupling.** Sk408:
+*"Basically, if a player can earn 40 seconds of rewards for near zero risk, that's easy. Don't worry about
+the economy rebalance for this. It's a known quantity.. if it messes things up, we just multiply the economy
+by 1.3 or something."*
+
+So, all three of the following are **DROPPED** (they were Remy's, not the owner's):
+- ~~W7a's economy simulation must model the escape payout.~~
+- ~~W7a must reserve headroom for it.~~
+- ~~A post-V1 economy re-measure is owed.~~
+
+**WHY THE BLUNT LEVER IS THE CORRECT TOOL HERE (Remy's own technical support for the owner's call, recorded
+so nobody re-opens this):** because the payout keys off the player's own best run, it is a **PROPORTIONAL
+faucet, not a selective one** — it cannot make one progression band rich and another poor, it shifts the
+whole ladder together. A global multiplier is therefore the *right-shaped* instrument for the disturbance it
+can actually cause, and per the standing rule ("prefer changes that DELETE machinery over changes that add
+it") modelling it in W7a would be machinery built for a problem that a one-line multiplier already solves.
+
+**The ONE thing kept is a measurement, not machinery:** the pilot reports the escape's measured payout as a
+SHARE OF RUN INCOME (a single number), so the "multiply by 1.3" decision is informed rather than guessed.
+That is a line in the escape's own acceptance bar, not a new system.
+
 
 
 - **The 1/3 discount is also an anti-exploit, not just modesty:** the escape is an EASY stage (platforming,
