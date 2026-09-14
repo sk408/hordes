@@ -798,9 +798,11 @@ function chestCost(def) {
 }
 
 function openIntermission(opts = {}) {
-  // WAVE-8/A: if the final boss died but the movie hasn't played yet (a
-  // draft/evolve from the boss payout delayed its start), the intermission
-  // cannot preempt it — play the movie; it re-enters here when it ends.
+  // WAVE-8/A: if the final boss died but the movie hasn't played yet, the
+  // intermission cannot preempt it — play the movie; it re-enters here when
+  // it ends. P1: this is now THE way the movie starts — the auto-start at
+  // the boss kill is gone, so walking into the portal (dwell elapsed) is
+  // what triggers the cinematic, exactly as the owner directive words it.
   if (state.wave.cinePending) { startPortalCine(); return; }
   state.portal = null;
   openMenu();
@@ -1370,18 +1372,42 @@ function update(dt) {
     }
   }
   if (state.portal) {
-    // Portal chases the player (chest precedent) so the AutoPilot crosses it
-    // without touching the controller seam. It moves 60px/s faster than the
-    // player's CURRENT speed — Light Boots stacks (observed 211px/s in sims)
-    // would otherwise outrun a fixed-speed portal forever.
+    // P1: the portal LINGERS. The chase is deleted — a one-way drift at
+    // C.PORTAL.APPROACH eases it toward the player and PARKS on the
+    // STANDOFF ring (24px); it never advances closer on its own, so entry
+    // (< RADIUS) is the player's/pilot's deliberate act. The AutoPilot
+    // closes that last gap itself now (src/controllers.js portal
+    // exception), which is what the chase used to guarantee.
     const po = state.portal;
     po.age += dt;
-    const dx = p.x - po.x, dy = p.y - po.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const poSpd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult + C.PORTAL.SPEED;
-    po.x += (dx / len) * poSpd * dt;
-    po.y += (dy / len) * poSpd * dt;
-    if (len < C.PORTAL.RADIUS) { openIntermission(); return; }
+    // P1 R3: approach invulnerability, AUTO ONLY. Gated on pilotMovesYou()
+    // — the ONE movement-authority predicate (see :428) — so AUTO_ALL and
+    // AUTO_MOVE (both pilot-steered) get the bounded window and MANUAL
+    // gets nothing, ever. Reuses p.invuln and the render.js blink; no
+    // second tell, no new machinery. Math.max never clips a longer
+    // combat-granted window; it lapses naturally when the portal closes.
+    if (!pilotMovesYou()) p.invuln = Math.max(p.invuln, C.PORTAL.INVULN);
+    if (po.entering) {
+      // P1 R4: the dwell beat — a dt-based hold on contact so the crossing
+      // reads instead of teleporting. The 1e-9 epsilon makes the accumulate-
+      // and-compare land on the EXACT frame at both 60Hz and 120Hz (48 x
+      // 1/120 sums to 0.39999... in doubles, which would otherwise hold one
+      // extra 120Hz frame); it is 6 orders below any visible timescale.
+      po.enterT += dt;
+      if (po.enterT >= C.PORTAL.DWELL - 1e-9) { openIntermission(); return; }
+    } else {
+      const dx = p.x - po.x, dy = p.y - po.y;
+      const len = Math.hypot(dx, dy);
+      if (len < C.PORTAL.RADIUS) {
+        po.entering = true;
+        po.enterT = 0;
+      } else if (len > C.PORTAL.STANDOFF) {
+        // One-way approach: the step never overshoots the standoff ring.
+        const step = Math.min(C.PORTAL.APPROACH * dt, len - C.PORTAL.STANDOFF);
+        po.x += (dx / len) * step;
+        po.y += (dy / len) * step;
+      }
+    }
   }
   spawnWave(dt);
   // Wave timer: countdown to the boss(es); the timer PAUSES while any boss
@@ -2109,10 +2135,15 @@ function update(dt) {
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
 
-  // WAVE-8/A: start the portal-entry cinematic once overlays have settled —
-  // the boss-XP payout may open a draft/evolve first; those return mode to
-  // 'playing' when closed, and the movie starts on the next tick.
-  if (state.wave.cinePending && state.mode === 'playing') startPortalCine();
+  // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
+  // auto-start here on the first playing tick after the final boss died —
+  // which meant the portal rendered for ZERO gameplay frames (measured
+  // 2026-09-14: portal-open -> cine = 0.000s; the "walk" the toast promises
+  // never existed). The owner directive is "on the screen longer before the
+  // player enters and the cinematic begins", so the movie now starts ONLY
+  // when the player/pilot actually walks in: the dwell beat elapses ->
+  // openIntermission -> cinePending routes to startPortalCine (:804).
+  if (state.wave.cinePending && state.mode === 'playing' && !state.portal) startPortalCine();
 }
 
 // ---------- Leveling & draft ----------

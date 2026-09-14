@@ -229,6 +229,25 @@ export class AutoPilotController {
     }
     this.fleeing = false;
 
+    // P1 PORTAL — the ONE exception to PILOT-BLIND (owner directive
+    // 2026-09-14: "the auto pathing heads toward it automatically"). The
+    // chase that used to guarantee AUTO entry is deleted, so the pilot must
+    // close the last gap itself: while the boss portal is open, steer
+    // straight at it. Shrines/chests/arches stay invisible (the
+    // src/shrines.js:12 contract is unchanged — this branch reads
+    // state.portal and NOTHING else). Priority, stated: a live threat
+    // inside the stance's kite line still FLEES first (the branch above
+    // already returned); the portal outranks gem LOOT and PATROL — the
+    // corridor is spawn-suppressed and banking gems while the wave waits
+    // would stall progression. Already inside STANDOFF? The straight line
+    // IS the final step — no orbit logic needed.
+    if (state.portal) {
+      const pdx = state.portal.x - p.x, pdy = state.portal.y - p.y;
+      const plen = Math.hypot(pdx, pdy) || 1;
+      this.act = 'PORTAL';
+      return put(pdx / plen, pdy / plen);
+    }
+
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {
       // Same wall-steer as the flee path: a gem at/outside the rim would

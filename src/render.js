@@ -421,22 +421,27 @@ export class Renderer {
     }
 
     // Portal (wave progression): a rotating ring of flames around a pulsing
-    // core — the walk-in that ends the wave.
+    // core — the walk-in that ends the wave. P1 R4 PRESENCE: the ring GROWS
+    // in over the portal's first 0.6s (spawn-in animation, integer pixels),
+    // and while the entry dwell beat runs the spin triples and the core
+    // burns bright — the crossing reads instead of teleporting.
     if (state.portal) {
       const po = state.portal;
       const x = Math.round(po.x - cam.x), y = Math.round(po.y - cam.y);
       const t = state.time || 0;
-      const n = 8, R = 24;
+      const grow = Math.min(1, (po.age || 0) / 0.6);
+      const n = 8, R = Math.max(4, Math.round(24 * (0.25 + 0.75 * grow)));
+      const spin = po.entering ? 2.4 : 0.8;
       for (let i = 0; i < n; i++) {
-        const ang = (i / n) * Math.PI * 2 + t * 0.8;
+        const ang = (i / n) * Math.PI * 2 + t * spin;
         const fx = Math.round(x + Math.cos(ang) * R), fy = Math.round(y + Math.sin(ang) * R);
         const fi = Math.floor(t * 10 + i * 1.3) % FLAME.frames.length;
         this.drawGrid(g, FLAME.frames[fi], FLAME.palette,
           fx - FLAME.anchor.x, fy - FLAME.anchor.y - 4);
       }
-      const pulse = 0.5 + 0.5 * Math.sin(t * 6);
-      const r = Math.round(5 + 3 * pulse);
-      g.fillStyle = pulse > 0.5 ? '#b8e0ff' : '#5a7ad8';
+      const pulse = po.entering ? 1 : 0.5 + 0.5 * Math.sin(t * 6);
+      const r = Math.round((5 + 3 * pulse) * (0.25 + 0.75 * grow));
+      g.fillStyle = po.entering ? '#fff6c8' : (pulse > 0.5 ? '#b8e0ff' : '#5a7ad8');
       g.fillRect(x - r, y - 3, r * 2, 6);
       g.fillRect(x - 3, y - r, 6, r * 2);
     }

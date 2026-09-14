@@ -366,11 +366,18 @@ export const CONFIG = {
   },
 
   // Wave-6 portal progression: boss death opens a flame-ring portal; walking
-  // in ends the wave (intermission -> next wave). The portal chases the
-  // player (chest precedent) at playerSpeed + SPEED — it must ALWAYS outrun
-  // the AutoPilot (Light Boots stacks reach 200+px/s in sims) or the run
-  // stalls with the portal forever behind.
-  PORTAL: { RADIUS: 16, SPEED: 60 },
+  // in ends the wave (intermission -> next wave). P1 (owner directive
+  // 2026-09-14): the portal LINGERS — a one-way drift at APPROACH px/s that
+  // parks on a STANDOFF ring (1.5x RADIUS = 24px) and never advances closer
+  // on its own; entry is the player's/pilot's deliberate act, which is what
+  // the toast always promised. The old player-speed + SPEED chase is DELETED
+  // (its only job was guaranteeing AUTO entry — the AutoPilot now paths to
+  // the portal itself, src/controllers.js). DWELL is the visible beat on
+  // contact before the intermission/cinematic (dt-based, 60/120Hz-safe).
+  // INVULN is the bounded AUTO-only approach window: main.js refreshes
+  // p.invuln to it while the portal is open AND the pilot is steering
+  // (AUTO_ALL and AUTO_MOVE; MANUAL gets nothing, ever).
+  PORTAL: { RADIUS: 16, APPROACH: 40, STANDOFF: 24, DWELL: 0.4, INVULN: 0.1 },
 
   // WAVE-8/A portal-entry cinematic: plays once when the wave's FINAL boss
   // dies (between the kill and the intermission). SKIPPABLE gates the
