@@ -104,8 +104,17 @@ ok('hpRegenPerSec: exactly REGROWTH_HP_PER_SEC with the perk, 0 without', () => 
 ok('skillManaCost / skillCooldown: Focus multiplies, unknown ids cost 0', () => {
   const off = stateWith(null), on = stateWith({ focus: true });
   for (const id of Object.keys(C.SKILLS)) {
-    assert.equal(skillManaCost(id, off), C.SKILLS[id].MANA);
-    assert.equal(skillManaCost(id, on), C.SKILLS[id].MANA * FOCUS_MANA_MULT);
+    // RETARGET (N1 slice 3): the three ults carry NO MANA key — they are
+    // kill-charged and NON-mana, so there is no mana price for Focus to
+    // multiply and useSkill never asks for one (it branches on KILLS first).
+    // The byte-exact pool proof lives in test_ults.mjs. The COOLDOWN helper
+    // still applies to them verbatim (the one-cooldown-source rule).
+    if (C.SKILLS[id].MANA == null) {
+      assert.ok(C.SKILLS[id].KILLS != null, id + ': a MANA-less skill must be a kill-charged ult');
+    } else {
+      assert.equal(skillManaCost(id, off), C.SKILLS[id].MANA);
+      assert.equal(skillManaCost(id, on), C.SKILLS[id].MANA * FOCUS_MANA_MULT);
+    }
     assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN);
     assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT);
   }
@@ -149,10 +158,22 @@ ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
     for (const st of [off, on]) { st.enemies = [park()]; st.effects = []; }
     const a = off.player, b = on.player;
     a.mana = b.mana = 999;
+    // RETARGET (N1 slice 3): an ult (KILLS, no MANA key) is legal only at full
+    // charge, so the fixture banks the kills — and its cast spends ZERO mana
+    // in BOTH perk states (Focus has no price to discount; the byte-exact
+    // pool proof lives in test_ults.mjs). The cooldown assertions below are
+    // the shipped ones, verbatim, ults included.
+    const isUlt = C.SKILLS[id].KILLS != null;
+    if (isUlt) a.kills = b.kills = C.SKILLS[id].KILLS;
     assert.equal(useSkill(off, id), true);
     assert.equal(useSkill(on, id), true);
-    assert.ok(Math.abs((b.mana - a.mana) - C.SKILLS[id].MANA * (1 - FOCUS_MANA_MULT)) < 1e-9,
-      id + ' mana delta');
+    if (isUlt) {
+      assert.equal(a.mana, 999, id + ' left the perk-off pool untouched');
+      assert.equal(b.mana, 999, id + ' left the Focus pool untouched');
+    } else {
+      assert.ok(Math.abs((b.mana - a.mana) - C.SKILLS[id].MANA * (1 - FOCUS_MANA_MULT)) < 1e-9,
+        id + ' mana delta');
+    }
     assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT, id + ' cooldown');
     assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN, 'and the perk-off run is the shipped price');
   }

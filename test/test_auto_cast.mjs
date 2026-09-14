@@ -49,6 +49,15 @@ const quiet = () => {
 };
 const live = (mode = 'AUTO') => {
   T.startRun();
+  // RETARGET (N1 slice 3): no class row carries FROST_NOVA anymore — the
+  // three non-Witch classes got kill-charged NON-mana ults and FROST_NOVA
+  // moved to the draftable card. This file's contract is the AUTO-CAST
+  // POLICY itself (mana price, radius honesty, spill, boss awareness), which
+  // is class-agnostic, so the fixture pins a SYNTHETIC FROST_NOVA Q on a
+  // shallow copy of the run's character row (the meta row is never mutated).
+  // The charge-gated ult Q path through this same seam is covered by
+  // test_ults.mjs.
+  st.character = { ...(st.character || {}), skill: 'FROST_NOVA' };
   T.setPilotMode(mode);
   h.pump(2, quiet);
   quiet();

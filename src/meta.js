@@ -747,8 +747,8 @@ export const CHARACTER_UPGRADE_BY_ID = Object.fromEntries(
 export const CHARACTERS = {
   KNIGHT: {
     id: 'KNIGHT', name: 'Knight', unlockCost: 0,
-    desc: 'Free. Base volley + Frost Nova. Sturdy: +30 max HP.',
-    startingWeapon: null, skill: 'FROST_NOVA', startPotions: 1,
+    desc: 'Free. Base volley + Earthshatter. Sturdy: +30 max HP.',
+    startingWeapon: null, skill: 'EARTHSHATTER', startPotions: 1,   // N1 slice 3: his kill-charged ult (was FROST_NOVA)
     healOnChest: 0,
     mods: { maxHp: 30 },
   },
@@ -770,14 +770,14 @@ export const CHARACTERS = {
   ROGUE: {
     id: 'ROGUE', name: 'Rogue', unlockCost: 2500,
     desc: 'Starts with Boomerang. Fast feet: +20% move speed.',
-    startingWeapon: 'BOOMERANG', skill: 'FROST_NOVA', startPotions: 2,
+    startingWeapon: 'BOOMERANG', skill: 'AFTERIMAGE', startPotions: 2,   // N1 slice 3: her kill-charged ult (was FROST_NOVA)
     healOnChest: 0,
     mods: { speedMult: 1.2 },
   },
   PALADIN: {
     id: 'PALADIN', name: 'Paladin', unlockCost: 6000,
     desc: 'Starts with Orbit Blades. Blessed: heals 15 HP on chest open.',
-    startingWeapon: 'ORBIT', skill: 'FROST_NOVA', startPotions: 1,
+    startingWeapon: 'ORBIT', skill: 'CONSECRATION', startPotions: 1,   // N1 slice 3: his kill-charged ult (was FROST_NOVA)
     healOnChest: 15,
     mods: { maxHp: 15 },
   },

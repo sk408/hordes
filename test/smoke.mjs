@@ -486,7 +486,12 @@ for (let i = 0; i < frames; i++) {
       'doctrine should cycle back to defaults: ' + t);
   }
 
-  // ~2s in: fire Frost Nova (Q) — mana must drop and cooldown must show.
+  // ~2s in: fire the class skill (Q). RETARGET (N1 slice 3): the Knight's Q is
+  // EARTHSHATTER — kill-charged and NON-mana — so ~2s in with no charge banked
+  // the cast is REFUSED: the mana pool is untouched (never a 30-mana spend),
+  // no cooldown is armed, and the text HUD shows the charge readout instead.
+  // The mana-spend/cooldown contract for mana skills is unchanged and covered
+  // at the useSkill seam (test_perks.mjs) and by the pilot (test_auto_cast.mjs).
   if (qFrame === -1 && i >= 120 && playing()) {
     manaBeforeQ = manaOf(hudText());
     keyHandler({ key: 'q' });
@@ -494,8 +499,10 @@ for (let i = 0; i < frames; i++) {
   } else if (qFrame !== -1 && i === qFrame + 1) {
     const t = hudText();
     const m = manaOf(t);
-    assert(m <= manaBeforeQ - 29, `Frost Nova should cost ~30 mana (${manaBeforeQ} -> ${m})`);
-    assert(/FrostNova \d+\.\d+s/.test(t), 'Frost Nova cooldown should show after use: ' + t);
+    assert(Math.abs(m - manaBeforeQ) <= 1,
+      `the un-charged NON-mana ult must leave the pool alone (${manaBeforeQ} -> ${m})`);
+    assert(/EARTH \d+\/40/.test(t), 'the ult shows its charge readout (n/40): ' + t);
+    assert(!/EARTH \d+\.\d+s/.test(t), 'no ult cooldown may be armed by a refused cast: ' + t);
     // Follow with a mana potion (N) — verified next frame (HUD lags one frame).
     manaBeforeN = m;
     keyHandler({ key: 'n' });
@@ -1025,7 +1032,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   st.enemies.push(parent);
   const dropsBefore = st.itemDrops.length;
   parent.hp = 0;   // reaped by the next death pass
-  for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  // N1 slice 3: read the children after the ONE split frame, not after three.
+  // The split, the plain-stamp and the guaranteed drop ALL land in the same
+  // death pass; the extra frames only let the (real, escalated) children WALK
+  // toward the player and drift out of the spawn box below — and the slice-3
+  // Knight run legitimately diverges (no FROST_NOVA on Q, the ult auto-casts),
+  // so the escalation at this checkpoint moved. Every assertion is unchanged.
+  for (let i = 0; i < 1; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   const kids = st.enemies.filter(e => e !== parent &&
     Math.abs(e.x - px) <= 13 && Math.abs(e.y - py) <= 8);
   assert(kids.length === 2, `a slain SPLITTING elite must divide into TWO children (got ${kids.length})`);
@@ -1614,9 +1627,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(/data-act="settings"/.test(touchHtml) && /cog-gear/.test(touchHtml),
     'the touch layer must carry the pixel-gear settings cog');
   // Layout math: pads butt to the edges (10px insets), joy centered at 50%
-  // with a 120px base. Button box = 68 content + 24 h-padding + 4 border.
-  // gapL === gapR holds identically (equal pads); joy must clear both pads
-  // even on a narrow 360px phone.
+  // with a 120px base. H1: the pad width is now LITERALLY 96px in CSS
+  // (#touch .pad { width: 96px }) — before H1 it was text-driven and this
+  // 96 was only the content-box budget (68 content + 24 h-padding + 4
+  // border). gapL === gapR holds identically (equal pads); joy must clear
+  // both pads even on a narrow 360px phone.
   const BTN_W = 68 + 2 * 12 + 2 * 2;
   for (const W of [360, 390, 480]) {
     const gapL = (W / 2 - 60) - (10 + BTN_W);
@@ -1625,6 +1640,20 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
       ' (L=' + gapL + ' R=' + gapR + ')');
     assert(gapL > 0, 'joystick must clear the pads at W=' + W + ' (gap=' + gapL + ')');
   }
+  // H1 NO-REFLOW CONTRACT (Sk408: "the on screen controls fluctuate in size
+  // during a run"): the pad geometry must be text-independent IN THE MARKUP —
+  // a fixed pad width, pad buttons that FILL it (width:100% + border-box + a
+  // fixed height, so a button can never size the pad), and a badge that
+  // reserves its own box (min-height = the measured two-line height,
+  // wrapping allowed, never clipped) so live text never changes a dimension.
+  assert(/#touch \.pad \{[^}]*width:\s*96px/.test(html),
+    '#touch .pad must carry a fixed 96px width (the H1 no-reflow contract)');
+  assert(/#touch \.pad button \{[^}]*width:\s*100%/.test(html) &&
+         /#touch \.pad button \{[^}]*box-sizing:\s*border-box/.test(html) &&
+         /#touch \.pad button \{[^}]*height:\s*64px/.test(html),
+    'pad buttons must be width:100% + box-sizing:border-box + fixed 64px height');
+  assert(/#touch button \.badge \{[^}]*min-height:\s*28\.6px/.test(html),
+    'the badge must reserve its box (min-height 28.6px, wrapping allowed)');
 
   // --- cog behavior through the REAL pointer routing, on the live run ---
   const T = mainMod.__TEST;

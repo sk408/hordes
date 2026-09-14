@@ -53,11 +53,17 @@ const overBadgeAtRest = h.elements['tc-w'].textContent;
 
 const p = st.player;
 p.mana = p.stats.maxMana;
-p.skillCd.FROST_NOVA = 0;
+// RETARGET (N1 slice 3): the default run's Q is the Knight's EARTHSHATTER —
+// kill-charged, NON-mana — so the badge's live readout is the CHARGE pair at
+// rest and the cooldown countdown after a real cast. The fixture banks the
+// charge through the published kills field, then presses Q: the cast fires
+// through the same useSkill seam and the badge must count down exactly like
+// the old mana-Q did.
+p.kills = C.SKILLS.EARTHSHATTER.KILLS;
 h.key('keydown', { key: 'q' });
 h.pump(2, keepAlive);
 const badgeAfterUse = h.elements['tc-q'].textContent;
-const hudLine = (h.elements['hud'].textContent || '').split('\n').find(l => /FrostNova/.test(l)) || '';
+const hudLine = (h.elements['hud'].textContent || '').split('\n').find(l => /^Q /.test(l)) || '';
 
 const S = suite('SKILL KEY LETTERS');
 
@@ -95,11 +101,13 @@ S.check('each skill button KEEPS its live cooldown badge, as a sibling', () => {
 
 // ============================================================================
 S.check('the badge still takes the LIVE readout through the real frame loop', () => {
-  assert.ok(badgeAtRest === 'RDY' || badgeAtRest === 'LOW',
+  // N1 slice 3: an ult's readiness readout is the CHARGE pair (`0/40`) in
+  // place of RDY/LOW — still never a key letter.
+  assert.ok(badgeAtRest === 'RDY' || badgeAtRest === 'LOW' || /^\d+\/\d+$/.test(badgeAtRest),
     'at rest the badge prints the readiness readout, not a key letter (got ' +
     JSON.stringify(badgeAtRest) + ')');
   assert.match(badgeAfterUse, /^\d+\.\d+s$/,
-    'using FROST must put a live countdown in the badge (got ' +
+    'using the Q skill must put a live countdown in the badge (got ' +
     JSON.stringify(badgeAfterUse) + ')');
   assert.ok(overBadgeAtRest === 'LOW' || overBadgeAtRest === 'RDY' ||
     /^\d+\.\d+s$/.test(overBadgeAtRest),
@@ -131,7 +139,9 @@ S.check('the hint lines and the text HUD name the SAME two letters', () => {
 });
 
 S.check('the canvas text HUD prints E for OVERCHARGE, not the AUTO-only W', () => {
-  assert.match(hudLine, /Q FrostNova/, 'the HUD names the Q skill: ' + hudLine);
+  // RETARGET (N1 slice 3): the Q line names the class ult's short LABEL
+  // (EARTH on the default Knight run) instead of FrostNova.
+  assert.match(hudLine, /Q EARTH/, 'the HUD names the Q skill: ' + hudLine);
   assert.match(hudLine, /E Ovrchg/, 'the HUD names the E skill: ' + hudLine);
   assert.ok(!/W Ovrchg/.test(hudLine),
     'the HUD must not advertise the AUTO-only W as the overcharge key: ' + hudLine);

@@ -42,16 +42,22 @@ s.check('the card is shaped like the perk family (id, skill key, weight, apply)'
   if (!p.skills || p.skills.frost !== true) throw new Error('apply wrote ' + JSON.stringify(p.skills));
 });
 
-s.check('NOT offered while the class Q is FROST_NOVA (KNIGHT/ROGUE/PALADIN as they stand)', () => {
-  for (const id of ['KNIGHT', 'ROGUE', 'PALADIN']) {
-    const st = { player: { skills: {} }, character: CHARACTERS[id] };
-    if (frostCardOffered(st)) throw new Error('offered on ' + id + ' whose Q is FROST_NOVA');
-  }
+s.check('NOT offered while the class Q is FROST_NOVA (a synthetic row — every real row moved on)', () => {
+  // RETARGET (N1 slice 3): all three non-Witch rows now carry their own ults,
+  // so NO shipped class row has a FROST_NOVA Q anymore — the NOT-offered arm
+  // can only be pinned on a synthetic FROST_NOVA character row, and the four
+  // REAL rows all sit in the offered arm (checked below).
+  const synthetic = { player: { skills: {} }, character: { skill: 'FROST_NOVA' } };
+  if (frostCardOffered(synthetic)) throw new Error('offered on a synthetic FROST_NOVA Q');
 });
 
-s.check('IS offered when the class Q is something else (the WITCH row, set in the probe)', () => {
-  const st = { player: { skills: {} }, character: CHARACTERS.WITCH };   // CHAIN_REACTION since slice 1
-  if (!frostCardOffered(st)) throw new Error('not offered on the WITCH (Q = CHAIN_REACTION)');
+s.check('IS offered when the class Q is something else (all four real rows, plus a synthetic)', () => {
+  for (const id of ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN']) {
+    const st = { player: { skills: {} }, character: CHARACTERS[id] };
+    if (!frostCardOffered(st)) {
+      throw new Error('not offered on ' + id + ' (Q = ' + CHARACTERS[id].skill + ')');
+    }
+  }
   const synthetic = { player: { skills: {} }, character: { skill: 'OVERCHARGE' } };
   if (!frostCardOffered(synthetic)) throw new Error('not offered on a synthetic non-FROST_NOVA Q');
 });

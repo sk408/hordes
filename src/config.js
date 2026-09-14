@@ -190,6 +190,52 @@ export const CONFIG = {
       SLOW: 2.5,          // FROST_NOVA's slow duration, applied to every touch
       SLOW_FACTOR: 0.45,
     },
+    // N1 slice 3 (docs/briefs/N1_ULTS_SPECS.md — the pilot's AUTHORITATIVE
+    // content; do not rebalance): the three non-Witch class ults. Shared
+    // contract: KILL-CHARGED (charge from the live p.kills counter), a
+    // COOLDOWN floor so one dense wave cannot chain the ult, and NON-mana —
+    // NO MANA key here, so skills.js routes them around the mana-price path
+    // and the Witch stays the only mana class. LABEL (<=5 chars) is the
+    // on-screen short form for the fixed 96px H1 touch button + text HUD;
+    // NAME stays the long spec name.
+    EARTHSHATTER: {       // KNIGHT — one huge player-centred shockwave + a
+      KEY: 'q',           // defensive rider (the free tank stands in the clump)
+      NAME: 'Earthshatter',
+      LABEL: 'EARTH',
+      KILLS: 40,          // charge: kills to READY
+      COOLDOWN: 12,       // seconds — the chain-proof floor
+      RADIUS: 240,        // radial shockwave centred on the player
+      DAMAGE: 40,         // flat + ...
+      DAMAGE_MAXHP: 1.2,  // ... 1.2 x maxHp (scales with the Knight's own stat)
+      FORTIFY_TIME: 3,    // seconds of FORTIFY after the blast
+      FORTIFY_MULT: 0.5,  // damage taken x0.5 while FORTIFY lives
+    },
+    AFTERIMAGE: {         // ROGUE — 3s of movement payoff: speed up, and a
+      KEY: 'q',           // phantom detonates at her CURRENT position on a
+      NAME: 'Afterimage', // tick through the ONE blast path (rewrites.js)
+      LABEL: 'AFTER',
+      KILLS: 30,
+      COOLDOWN: 10,
+      DURATION: 3,        // seconds the window lives
+      SPEED_MULT: 1.5,    // move speed multiplier (stat shape, NO dash/teleport)
+      TICK: 0.25,         // seconds between phantom detonations
+      RADIUS: 70,         // per-phantom blast radius
+      DAMAGE: 30,         // flat + ...
+      DAMAGE_WEAPON: 0.6, // ... 0.6 x weapon damage (the boom shape)
+    },
+    CONSECRATION: {       // PALADIN — ONE placed, persistent holy field at
+      KEY: 'q',           // the densest cluster; the only sustain ult
+      NAME: 'Consecration',
+      LABEL: 'ALTAR',     // UI label for the consecrated ground, not a rename
+      KILLS: 40,
+      COOLDOWN: 15,
+      RADIUS: 140,        // field radius
+      DURATION: 6,        // seconds the field lives
+      DPS: 18,            // ticking damage to enemies inside
+      TICK: 0.5,          // seconds per tick (9 dmg/tick; heal cap = 9 HP/tick)
+      HEAL_PER_KILL: 2,   // HP per enemy KILLED inside, banked and paid per
+                          // tick, capped at DPS*TICK so it cannot out-heal a boss
+    },
   },
 
   // Finite consumables. Keys: H = health, N = mana.

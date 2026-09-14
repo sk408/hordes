@@ -840,7 +840,7 @@ reachable once a loadout produces long runs. Therefore:
 - Run-scoped visited state is a bonus of this reading: it lives in `state` (like the other run counters),
   so **no save migration and no schema change** — unlike the stage-map reading Remy first proposed.
 
-### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
+### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: IN PROGRESS 2026-09-14 — brief `docs/briefs/P1_PORTAL.md` landed and DISPATCHED as msg_01M2F3CJK5KSAD7WXRGC13DPPZ; nothing verified yet]
 
 Sk408: *"the boss portal needs to be on the screen longer before the player enters and the cinematic
 begins. Maybe it can be something that the auto pathing heads toward automatically, and give the player
@@ -900,7 +900,7 @@ coupling), which is why it is in scope under the SCOPE INTENT rule.
 **Schedule:** after the in-flight N1 slices (slice 2 = the draftable FROST_NOVA card, then slice 3
 against `docs/briefs/N1_ULTS_SPECS.md`), ahead of the polish goals (G21+). No dependency on N1.
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). **SLICE 2 (the draftable FROST_NOVA card) BUILT + VERIFIED BY TICK NOTE 40 on the COMMITTED artifact `0582339`** (builder cli:kimi-hordes-g8, brief `docs/briefs/N1_SLICE2_FROST_CARD.md`): suite greenfiles=75 redfiles=0, test_frost_card 10/10 with printed numbers, test_chain_q 15/15 (fixture retarget only, assertion untouched), verify_n1_frost_card 10/10 in a real browser at 390x844 @dpr3 after the tick-40 capture-frame guard. **ONE OPEN MEASUREMENT:** the KNIGHT arm trends negative at n=12 (negative survival, t=-1.98) while the WITCH is neutral - recorded as a flag, not a defect claim. All three slices specced; next is SLICE 3 (the three ults).]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). **SLICE 2 (the draftable FROST_NOVA card) BUILT + VERIFIED BY TICK NOTE 40 on the COMMITTED artifact `0582339`** (builder cli:kimi-hordes-g8, brief `docs/briefs/N1_SLICE2_FROST_CARD.md`): suite greenfiles=75 redfiles=0, test_frost_card 10/10 with printed numbers, test_chain_q 15/15 (fixture retarget only, assertion untouched), verify_n1_frost_card 10/10 in a real browser at 390x844 @dpr3 after the tick-40 capture-frame guard. **ONE OPEN MEASUREMENT:** the KNIGHT arm trends negative at n=12 (negative survival, t=-1.98) while the WITCH is neutral - recorded as a flag, not a defect claim. **SLICE 3 (the three non-Witch ults) BUILT + VERIFIED BY TICK NOTE 42 on the dirty tree `6107ffe`** (suite `greenfiles=76 redfiles=0`, `test_ults` 21/21, `verify_n1_ults` 33/33 in a real browser at 390x844 @dpr3). All three slices now exist on disk; **ONE OPEN FLAG**, unchanged: the KNIGHT arm trend, recorded not claimed. The tree carrying slices 2+3 is uncommitted - landing is the orchestrator's.]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -4847,3 +4847,43 @@ than weakened.
 
 No git state command was run this tick (read-only `git log`/`status`/`diff` only). Lock acquired
 before the first edit and released after the dispatch.
+
+
+## TICK NOTE 42 - 2026-09-14 (goal pilot tick, subagent:spawnfa, agentlock held; N1 SLICE 3 VERIFIED on the dirty tree, P1 brief LANDED and DISPATCHED)
+
+**Picked up:** `cli:kimi-hordes-g8` finished N1 slice 3 (spawn-kimi-hordes-g8-20260913-235025, task
+msg_01M2F160RYGERQ2RZR2QTARW3P, exit 0, 04:35Z).
+
+**Verified by the pilot on THIS tree, not read from the report** (`6107ffe`, dirty=24):
+- `bash tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ 6107ffe | dirty=24`
+  `SUITE greenfiles=76 redfiles=0`.
+- `node test/test_ults.mjs` => **21 checks passed** with real numbers kept: 39/40 kills refused, 40/40
+  casts, leftover 7 carried; mana `37.25 -> 37.25` and `0 -> 0` across a cast; AFTERIMAGE measured
+  `x1.5000` on a live move; 12/12 detonations and `417.600` dmg at both 60 and 120Hz; CONSECRATION
+  `108.000` inside / `0` outside, heals `6.0 / 9.0 (cap) / 0.0 (excess) / 0.0 (outside)`.
+- `node tools/verify_n1_ults.mjs` => **33/33** in real Chrome at 390x844 @dpr3 with all 19 TOUR_KEYS
+  and `time > 1.0` asserted; labels read EARTH / AFTER / ALTAR and sit INSIDE the fixed `96x64`
+  button (so the H1 no-reflow contract holds); the badge moves CHARGING -> RDY -> cooling live; a real
+  Q tap fires each ult with the mana pool never dropping. Three PNGs at 1170x2532 regenerated 04:38Z.
+- **COULD NOT VERIFY:** no vision model is reachable from this job's toolset (files + terminal only),
+  so the PNGs are asserted by dimensions + live DOM reads + ink bbox, never by a semantic read.
+  Stated, not hidden.
+- **Balance, taken as measured, no win claimed:** the builder's own cohort (seed 20260914, n=8/arm,
+  stated band +/-13s) is KNIGHT 167.5 -> 158.3s and ROGUE 175.6 -> 178.8s = **NULL within noise**;
+  PALADIN 156.6 -> 183.1s is a **weak positive** (2-run boss-clear mode swing, not decisive at n=8).
+  Recorded as a flag against the ult set, not as evidence of an improvement.
+
+**Landed the drafted brief and dispatched in the same tick (zero-latency handoff):**
+`/tmp/hordes_briefs/P1_PORTAL.md` -> `docs/briefs/P1_PORTAL.md` (12.7KB, house format), after
+re-reading every anchor on THIS tree. Only two line drifts needed fixing: `openIntermission`
+`src/main.js:795` -> `:800`, and the portal chase block `:1372-1384` -> `:1372-1385`. Everything else
+held (`C.PORTAL` `src/config.js:373`; portal open + toast `:1901-1902`; `p.invuln` `:1349`/gate
+`:1664`/boss shots `:1700`; blink tell `src/render.js:823`; AutoPilot `src/controllers.js:43/72/123`).
+
+**Dispatched:** task **msg_01M2F3CJK5KSAD7WXRGC13DPPZ** to `cli:kimi-hordes-g8` (colon form) - P1
+BOSS PORTAL: linger + auto-path + approach invulnerability. P1 is EXECUTION ORDER item 2 and now the
+top OPEN item; its code scope does not overlap A1's in a way that lets both run (both edit
+`src/controllers.js`), so A1 stays parked while P1 is in flight.
+
+No git state command was run this tick (read-only `git log`/`status` only). Lock acquired before the
+first edit, released after the dispatch.

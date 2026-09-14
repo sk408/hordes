@@ -54,13 +54,19 @@ s.check('FROST_NOVA is untouched (balance + shape) and the Q carries ITS slow', 
   }
 });
 
-s.check('the Witch row points at the Q; the other three classes keep FROST_NOVA', () => {
+s.check('the Witch row points at the Q; the other three rows point at their slice-3 ults', () => {
   if (CHARACTERS.WITCH.skill !== 'CHAIN_REACTION') {
     throw new Error('WITCH.skill = ' + CHARACTERS.WITCH.skill);
   }
+  // RETARGET (N1 slice 3): KNIGHT/ROGUE/PALADIN no longer keep FROST_NOVA —
+  // each row now carries its own kill-charged, NON-mana ult (the pilot's
+  // specs, docs/briefs/N1_ULTS_SPECS.md). FROST_NOVA itself is unchanged and
+  // lives on as the draftable card (slice 2), so nothing is deleted here —
+  // the pin moved from the class rows to the card.
+  const want = { KNIGHT: 'EARTHSHATTER', ROGUE: 'AFTERIMAGE', PALADIN: 'CONSECRATION' };
   for (const id of ['KNIGHT', 'ROGUE', 'PALADIN']) {
-    if (CHARACTERS[id].skill !== 'FROST_NOVA') {
-      throw new Error(id + '.skill = ' + CHARACTERS[id].skill + ' (must keep FROST_NOVA)');
+    if (CHARACTERS[id].skill !== want[id]) {
+      throw new Error(id + '.skill = ' + CHARACTERS[id].skill + ' (slice 3 wants ' + want[id] + ')');
     }
   }
   // The gun stays her starting weapon.
@@ -273,9 +279,12 @@ s.check('60Hz and 120Hz: strikes and detonations pay identically per EVENT (dt-f
 });
 
 // ---------------------------------------------------------------------------
-// 3. The other classes are untouched by the routing: KNIGHT keeps the nova.
+// 3. RETARGET (N1 slice 3): the Knight's Q slot is now EARTHSHATTER — his own
+//    kill-charged, NON-mana ult (docs/briefs/N1_ULTS_SPECS.md). FROST_NOVA
+//    itself is UNCHANGED (the standalone cast check below is the slice-1 one,
+//    verbatim) and lives on as the draftable card from slice 2.
 // ---------------------------------------------------------------------------
-s.check('KNIGHT keeps FROST_NOVA in the Q slot (routing changed the Witch alone)', () => {
+s.check('KNIGHT runs EARTHSHATTER in the Q slot (the slice-3 ult)', () => {
   prof.equippedCharacter = 'KNIGHT';
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
@@ -283,11 +292,11 @@ s.check('KNIGHT keeps FROST_NOVA in the Q slot (routing changed the Witch alone)
   h.pump(2);
   T.hudText.set(true);
   h.pump(1);
-  if (h.elements['q-skill'].textContent !== 'FROST') {
+  if (h.elements['q-skill'].textContent !== 'EARTH') {
     throw new Error('KNIGHT Q label = ' + JSON.stringify(h.elements['q-skill'].textContent));
   }
   const hudLine = (h.elements['hud'].textContent || '').split('\n').find(l => /Q /.test(l)) || '';
-  if (!/Q FrostNova/.test(hudLine)) throw new Error('KNIGHT HUD Q line: ' + hudLine);
+  if (!/Q EARTH/.test(hudLine)) throw new Error('KNIGHT HUD Q line: ' + hudLine);
   // And the nova still novas (its own branch, unchanged).
   st.spawnTimer = 999; st.enemies.length = 0; st.effects.length = 0;
   st.enemies.push(plant(st.player.x + 40, st.player.y, 1000));

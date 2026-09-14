@@ -177,3 +177,26 @@ export function harvestBlast(state) {
     damage: HARVEST_DAMAGE_FLAT + HARVEST_DAMAGE_FRAC * (p.stats.damage || 0),
   };
 }
+/**
+ * N1 slice 3: the ONE radial-blast APPLICATION, exported so every detonation
+ * shares a single implementation. main.js's death pass (onkillboom / the
+ * Witch's chain kills) used to own this loop inline; the Rogue's AFTERIMAGE
+ * phantoms (skills.js updateUlts) now detonate through the SAME path.
+ * Applies damage + the hit flash to every live enemy inside radius and pushes
+ * the established 'rewrite_boom' draw effect (render.js already draws it).
+ * Enemy-side friendly fire only, exactly like the death-pass loop — a blast
+ * can never hurt the player. Returns the number of enemies hit.
+ */
+export function applyBlast(state, x, y, blast) {
+  let hits = 0;
+  for (const o of state.enemies) {
+    if (o.hp <= 0) continue;
+    if (Math.hypot(o.x - x, o.y - y) <= blast.radius) {
+      o.hp -= blast.damage;
+      o.flash = 0.08;
+      hits++;
+    }
+  }
+  state.effects.push({ kind: 'rewrite_boom', x, y, radius: blast.radius, age: 0, ttl: 0.25 });
+  return hits;
+}

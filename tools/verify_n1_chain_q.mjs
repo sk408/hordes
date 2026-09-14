@@ -2,7 +2,8 @@
 // REAL browser, PHONE viewport 390x844 @dpr3, real finger taps. Proves the Q
 // label reads the CLASS's skill id and that the label is actually PAINTED:
 //   1. WITCH run  -> #q-skill textContent === 'CHAIN'
-//   2. KNIGHT run -> #q-skill textContent === 'FROST'  (same page, profile swapped)
+//   2. KNIGHT run -> #q-skill textContent === 'EARTH'  (same page, profile swapped)
+//      (RETARGET N1 slice 3: the Knight's Q is EARTHSHATTER now, label EARTH)
 //   3. both PNGs are 1170x2532 (= 390x844 @3x) and the label bbox in the PNG
 //      holds real ink (dark pixels), i.e. the text is drawn, not just in the DOM.
 //   4. the Witch's Q actually FIRES in the live loop: effect frames with a
@@ -78,7 +79,10 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   async (p) => {
     const report = {};
 
-    for (const [charId, expect] of [['WITCH', 'CHAIN'], ['KNIGHT', 'FROST']]) {
+    // RETARGET (N1 slice 3): the KNIGHT row's Q is now EARTHSHATTER, so his
+    // #q-skill label is its short LABEL 'EARTH' (the fixed 96px H1 button
+    // cannot fit the long NAME). The WITCH expectation stays 'CHAIN'.
+    for (const [charId, expect] of [['WITCH', 'CHAIN'], ['KNIGHT', 'EARTH']]) {
       if (charId === 'KNIGHT') { // same browser, fresh boot: profile swap
         await p.evaluate('location.reload()');
         await p.waitFor("!!document.getElementById('ov-cards')", 15000);

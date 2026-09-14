@@ -137,17 +137,29 @@
   #touch.cog-only #joy { cursor: grab; }
   /* WAVE-23 desktop refinement (post-audit): a mouse user does not need
      thumb-sized 56px targets, and at 0.85 opacity the pads sat on top of the
-     arena's bottom corners. On the fine-pointer desktop they shrink to a
-     44px click target (the standard minimum) and dim to 0.55, snapping back
-     to full opacity while the cursor is over them. Touch / hybrid (#touch.on)
-     keeps the full-size layer untouched — this block is cog-only devices. */
-  #touch.cog-only .pad button { min-width: 62px; min-height: 44px; font-size: 12px; }
+     arena's bottom corners. On the fine-pointer desktop they dim to 0.55,
+     snapping back to full opacity while the cursor is over them. Touch /
+     hybrid (#touch.on) keeps the full-size layer untouched — this block is
+     cog-only devices. H1: the old 44px click-target shrink is gone — the
+     no-reflow contract (#touch .pad button below: fixed 64px height holding
+     the badge's reserved two-line box) applies to this variant too, so its
+     min-width/min-height knobs were dead declarations and are removed. */
+  #touch.cog-only .pad button { font-size: 12px; }
   #touch.cog-only .pad { opacity: 0.55; }
   #touch.cog-only .pad:hover { opacity: 1; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));
     display: flex; flex-direction: column; gap: 10px;
+    /* H1 (Sk408: "the on screen controls fluctuate in size during a run"):
+       the pad width is FIXED, never text-driven. With no width here the live
+       badge text (updateTouchHud) set the pad's max-content width and swung
+       the left pad 74.97px -> 147.22px mid-run. 96px is the budget the
+       repo's layout math (test/smoke.mjs, tools/verify_skill_keys.mjs)
+       already assumes; at 96 the centered 120px joystick clears both pads
+       at 360px (gap 14) and 390px (gap 29). Both pads identical, so the
+       WAVE-17 "equal pads" claim below is finally literally true. */
+    width: 96px;
     pointer-events: auto;
   }
   #touch .pad.left { left: max(10px, env(safe-area-inset-left, 10px)); }
@@ -200,9 +212,23 @@
     border: 2px solid #4a4a6a; border-radius: 10px;
     touch-action: manipulation; user-select: none; -webkit-user-select: none;
   }
+  /* H1: pad buttons fill the FIXED pad and so can never size it — width 100%
+     of the 96px pad (border-box, so padding and border stay inside) and a
+     fixed HEIGHT, so no badge text can change any dimension. 64px = the
+     measured two-line-badge case (62.89/63.48px) rounded up to an integer:
+     6+6 padding + 16.9 label line + 2 badge margin + 28.6 badge box + 4
+     border = 63.5 <= 64. The .cog-only desktop variant inherits the same
+     guarantee through this rule. */
+  #touch .pad button { width: 100%; box-sizing: border-box; height: 64px; }
   #touch button:active { border-color: #ffd75e; background: #1c1c2c; }
   #touch button .badge {
     display: block; font-size: 11px; color: #ffd75e; margin-top: 2px;
+    /* H1: the badge RESERVES its box — min-height is the measured two-line
+       height (28.59px), wrapping allowed, NEVER clipped: the pilot badge is
+       the doctrine's only on-screen home for FLEE/LOOT/PATROL and must stay
+       fully readable at every value (a clip variant was measured and
+       REJECTED). Content can never change a dimension now. */
+    min-height: 28.6px; white-space: normal; overflow-wrap: anywhere;
   }
   /* WAVE-28 KEY LETTERS (playtest: "put a [Q] and [E] by the timer"). The badge
      below the label is the LIVE cooldown readout (RDY / LOW / 8.0s, written by

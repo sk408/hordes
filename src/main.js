@@ -7,7 +7,7 @@ import {
 import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage } from './entities.js';
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
-import { useSkill, usePotion, updateResources } from './skills.js';
+import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
   rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
   decideEquip, flashTargets, shouldFlashDrop, describeFlash,
@@ -39,7 +39,7 @@ import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcar
 // G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
 // Blood Harvest) — mechanic rewrites, granted through the same card contract.
 import {
-  rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, REWRITES,
+  rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast, REWRITES,
 } from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
@@ -455,11 +455,25 @@ function togglePilotMode() {
   swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
 }
 
+// N1 slice 3 FORTIFY (EARTHSHATTER's defensive rider): while p.fortify lives,
+// EVERY player-HP loss through the THICK SKIN funnel is scaled by FORTIFY_MULT.
+// ONE local helper so all four call sites (drain / contact / shots / the boss
+// curse's heal tax) read the same rule. p.fortify ticks in updateResources
+// (skills.js) and is deliberately NOT p.invuln — FORTIFY halves damage, it
+// grants no i-frames.
+function damageTakenFortified(state, amount) {
+  const mult = state.player.fortify > 0 ? C.SKILLS.EARTHSHATTER.FORTIFY_MULT : 1;
+  return damageTaken(state, amount * mult);
+}
+
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
   // Movement. Loot speedMult (Windwalker boots) + SWIFT/BERSERK arch mods
   // multiply the base speed (controller decides WHERE, stats say HOW FAST).
-  const spd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult;
+  // N1 slice 3 AFTERIMAGE: her ult's speed window rides the SAME stat-
+  // multiplier shape (no dash, no teleport — movement stays the controller's).
+  const spd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult *
+    (p.buffs.afterimage > 0 ? C.SKILLS.AFTERIMAGE.SPEED_MULT : 1);
   if (decision.moveX !== 0 || decision.moveY !== 0) {
     p.x += decision.moveX * spd * dt;
     p.y += decision.moveY * spd * dt;
@@ -1413,6 +1427,9 @@ function update(dt) {
   // N1 slice 2: the drafted Pocket Frost card fires its nova in this same
   // frame region (pay-only-when-you-can; ONE cooldown, p.skillCd.FROST_NOVA).
   frostCardTick(state, dt);
+  // N1 slice 3: the ults' per-frame windows (AFTERIMAGE phantoms, the
+  // CONSECRATION field ticks) tick here beside the cast hand.
+  updateUlts(state, dt);
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -1537,7 +1554,7 @@ function update(dt) {
       // rest still ride (and still have to be killed). See CONFIG.SURVIVAL.
       if (drainActive < C.SURVIVAL.MAX_DRAIN_TICKS) {
         drainActive++;
-        p.hp -= damageTaken(state, act.drain * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel)
+        p.hp -= damageTakenFortified(state, act.drain * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel; N1 slice 3 FORTIFY-aware)
         state.runCounts.waveTookDamage = true;   // G9: a hit landed this wave
         resetRampage();              // WAVE-11: ANY hp loss ends the streak
         if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
@@ -1651,7 +1668,7 @@ function update(dt) {
       p.invuln = 0.5;
       state.effects.push({ kind: 'orbit_hit', x: p.x, y: p.y, age: 0, ttl: 0.2 });
     } else {
-      p.hp -= damageTaken(state, touchDmg);   // THICK SKIN funnel (touchDmg already carries the Glass Cannon mult)
+      p.hp -= damageTakenFortified(state, touchDmg);   // THICK SKIN funnel (touchDmg already carries the Glass Cannon mult; N1 slice 3 FORTIFY-aware)
       state.runCounts.waveTookDamage = true;   // G9: contact landed this wave
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: ANY hp loss ends the rampage streak
@@ -1685,7 +1702,7 @@ function update(dt) {
         state.shieldAbsorbs--;
         p.invuln = 0.5;
       } else {
-        p.hp -= damageTaken(state, s.damage * takenMult);   // THICK SKIN funnel
+        p.hp -= damageTakenFortified(state, s.damage * takenMult);   // THICK SKIN funnel (N1 slice 3 FORTIFY-aware)
         state.runCounts.waveTookDamage = true;   // G9: a shot landed this wave
         p.invuln = 0.6;
         resetRampage();   // WAVE-11: projectile hits end the streak too
@@ -1730,14 +1747,11 @@ function update(dt) {
         // CHAIN REACTION draws on the pool per detonation; a dry run still
         // detonates, just smaller (rewriteBoom owns that decision).
         if (boom.manaCost) state.player.mana -= boom.manaCost;
-        for (const o of state.enemies) {
-          if (o === e || o.hp <= 0) continue;
-          if (Math.hypot(o.x - e.x, o.y - e.y) <= boom.radius) {
-            o.hp -= boom.damage;
-            o.flash = 0.08;
-          }
-        }
-        state.effects.push({ kind: 'rewrite_boom', x: e.x, y: e.y, radius: boom.radius, age: 0, ttl: 0.25 });
+        // N1 slice 3: the application loop moved INTO rewrites.js applyBlast —
+        // the ONE blast implementation the Rogue's AFTERIMAGE phantoms now
+        // share (e is dead here, so applyBlast's hp<=0 guard covers the old
+        // `o === e` skip).
+        applyBlast(state, e.x, e.y, boom);
       }
       state.gems.push(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
@@ -1836,6 +1850,15 @@ function update(dt) {
       }
       state.enemies.splice(i, 1);
       p.kills++;
+      // N1 slice 3 CONSECRATION: a kill inside the Paladin's live field banks
+      // its heal (paid at the field's tick, capped there). The corpse is only
+      // in hand HERE — after the splice it is gone — and every kill (weapons,
+      // skills, blasts, the field's own ticks) funnels through this pass.
+      { const cf = p.consecField;
+        if (cf && Math.hypot(e.x - cf.x, e.y - cf.y) <= cf.radius) {
+          cf.healAcc += C.SKILLS.CONSECRATION.HEAL_PER_KILL;
+        }
+      }
       // EVOLUTION TOKEN, kill channel (1 in 1200). A kill is an EVENT, so the
       // roll is dt-free and 60Hz/120Hz pay the same per corpse.
       maybeGrantToken('kill');
@@ -4065,11 +4088,14 @@ function startRun() {
   // N1a: the touch Q label reads the class's skill id (was: the hardcoded
   // "FROST" literal in index.html). N1 slice 1: the Witch's row now carries
   // CHAIN_REACTION, so the label reads CHAIN on her runs — the span stays
-  // runtime-owned for the per-class ults.
+  // runtime-owned for the per-class ults. N1 slice 3: an ult declares a short
+  // LABEL (<=5 chars) because the H1 touch button is a FIXED 96px — the long
+  // spec NAME (EARTHSHATTER etc.) would never fit it.
   {
     const qLbl = document.getElementById('q-skill');
     if (qLbl) {
-      const nm = ((C.SKILLS[classSkillId(state)] || {}).NAME || '').split(' ')[0].toUpperCase();
+      const qDef = C.SKILLS[classSkillId(state)] || {};
+      const nm = qDef.LABEL || (qDef.NAME || '').split(' ')[0].toUpperCase();
       if (nm && qLbl.textContent !== nm) qLbl.textContent = nm;
     }
   }
@@ -4620,7 +4646,7 @@ function drinkHealthPotion(state) {
     healed = p2.hp - before;
     // The boss curse's heal tax is hostile damage too — it rides the SAME
     // THICK SKIN funnel as every other path that removes player HP.
-    if (state.wave.boss) p2.hp -= damageTaken(state, healed / 2);
+    if (state.wave.boss) p2.hp -= damageTakenFortified(state, healed / 2);   // N1 slice 3: FORTIFY-aware like every HP loss
   }
   return true;
 }
@@ -4673,6 +4699,9 @@ function autoDrinkPotions(state, dt) {
   }
   if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {
     const starved = Object.keys(C.SKILLS).some(id => {
+      // N1 slice 3: an ult has NO MANA key — it never waits on the pool, so
+      // it must not count as "starved" (skillManaCost would also read NaN).
+      if (C.SKILLS[id].MANA == null) return false;
       const cd = p.skillCd[id] || 0;
       return cd <= 0 && p.mana < skillManaCost(id, state);
     });
@@ -4711,10 +4740,17 @@ function autoCastSkills(state) {
   // The Q slot (N1a classSkillId — the ONE place a class's skill id is read).
   // FROST_NOVA gates on its RADIUS; a Q skill without one (the Witch's
   // CHAIN_REACTION — an aimed chain) falls back to "any live enemy" rather
-  // than a blind cast.
+  // than a blind cast. N1 slice 3: an ult's readiness is charge + the cooldown
+  // floor (ultCharge), NEVER mana; CONSECRATION is PLACED at the densest
+  // cluster (not centred on the player), so its honest lands-test is "any
+  // live enemy" like the Witch's chain, while EARTHSHATTER/AFTERIMAGE keep
+  // the player-centred RADIUS test (their payoff zone IS around the player).
   const q = classSkillId(state);
-  if ((p.skillCd[q] || 0) <= 0 && p.mana >= skillManaCost(q, state)) {
-    const r = C.SKILLS[q] && C.SKILLS[q].RADIUS;
+  const uq = ultCharge(state, q);
+  const qReady = uq ? uq.ready
+    : ((p.skillCd[q] || 0) <= 0 && p.mana >= skillManaCost(q, state));
+  if (qReady) {
+    const r = q === 'CONSECRATION' ? 0 : (C.SKILLS[q] && C.SKILLS[q].RADIUS);
     const lands = state.enemies.some(e => e && e.hp > 0 &&
       (!r || Math.hypot(e.x - p.x, e.y - p.y) <= r));
     if (lands) useSkill(state, q);
@@ -5130,6 +5166,14 @@ function updateTouchHud() {
     ? state.pilotMode + ' \u00b7 ' + act
     : state.pilotMode);
   const skill = (id, defId) => {
+    // N1 slice 3: an ult badge reads the charge state, never mana — cooling
+    // (`12.0s`) while the floor runs, then RDY at full charge, else `34/40`.
+    const u = ultCharge(state, defId);
+    if (u) {
+      set(id, u.cooldown > 0 ? u.cooldown.toFixed(1) + 's'
+        : (u.charge >= u.need ? 'RDY' : u.charge + '/' + u.need));
+      return;
+    }
     const cd = p.skillCd[defId];
     // G8 step 4: the readiness readout reads the SAME helpers useSkill pays
     // (perks.js), so FOCUS cannot make the button text lie about RDY/LOW.
@@ -5188,6 +5232,13 @@ function hudTextBlock(p) {
   const filled = Math.max(0, Math.min(bars, Math.round(bars * p.hp / p.stats.maxHp)));
   const mFilled = Math.max(0, Math.min(bars, Math.round(bars * p.mana / p.stats.maxMana)));
   const skillTxt = (id, label) => {
+    // N1 slice 3: an ult reads charge / RDY / cooling, never mana (it has no
+    // MANA key — the old `p.mana >= def.MANA` read would be NaN-false forever).
+    const u = ultCharge(state, id);
+    if (u) {
+      if (u.cooldown > 0) return `${label} ${u.cooldown.toFixed(1)}s`;
+      return u.charge >= u.need ? `${label} RDY` : `${label} ${u.charge}/${u.need}`;
+    }
     const cd = p.skillCd[id];
     const def = C.SKILLS[id];
     if (cd > 0) return `${label} ${cd.toFixed(1)}s`;
@@ -5239,10 +5290,12 @@ function hudTextBlock(p) {
     // modes) and the AUTO hint line already discloses "(W too)".
     // N1 slice 1: the Q short label is derived from the LIVE class skill's
     // NAME (spaces stripped) — 'FrostNova' for three classes, 'ChainReaction'
-    // on the Witch — never a hardcoded skill literal.
+    // on the Witch — never a hardcoded skill literal. N1 slice 3: an ult's
+    // short LABEL (EARTH / AFTER / ALTAR, <=5 chars) takes precedence — the
+    // same label the fixed 96px H1 touch button shows.
     // N1 slice 2: a held Pocket Frost card NAMES itself on the same skills
     // line ('FROST AUTO') — no new panel, no new chrome.
-    `Q ${skillTxt(classSkillId(state), ((C.SKILLS[classSkillId(state)] || {}).NAME || 'Frost Nova').replace(/ /g, ''))}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}${hasFrost(state) ? '   FROST AUTO' : ''}\n` +
+    `Q ${skillTxt(classSkillId(state), ((C.SKILLS[classSkillId(state)] || {}).LABEL || (C.SKILLS[classSkillId(state)] || {}).NAME || 'Frost Nova').replace(/ /g, ''))}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}${hasFrost(state) ? '   FROST AUTO' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
@@ -5464,6 +5517,9 @@ function updateFinale(dt) {
   // copy). bossCastLive is false here (the cast is down), but the maw itself
   // and the near-full spill rule both still gate OVERCHARGE honestly.
   autoCastSkills(state);
+  // N1 slice 3: the SECOND ult-window seam — the maw fight must tick the
+  // AFTERIMAGE phantoms and the CONSECRATION field like any other frame.
+  updateUlts(state, dt);
   updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
 
   // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph

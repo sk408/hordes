@@ -91,18 +91,22 @@ const PAGE = `(async () => {
     rightPadShown: out.pads.right.w, rightPadHidden: beforeRight,
     buttonsUnchanged: wShown === wHidden && hShown === hHidden };
 
-  // The badge MUST still be the live readout: spend the mana, tap FROST, and
-  // read what the badge prints one frame later.
+  // The badge MUST still be the live readout: bank the ult's charge, tap the
+  // Q button, and read what the badge prints one frame later.
+  // RETARGET (N1 slice 3): the default run's Q is the Knight's EARTHSHATTER —
+  // kill-charged, NON-mana — so the fixture banks the charge through the
+  // PUBLISHED kills field (a mana top-up does nothing for an ult) and the
+  // countdown lands on the ult's own cooldown slot. The tap-driven countdown
+  // contract itself is unchanged.
   const p = T.state.player;
-  p.mana = p.stats.maxMana;
-  p.skillCd.FROST_NOVA = 0;
+  p.kills = 40;   // C.SKILLS.EARTHSHATTER.KILLS
   const qr = box(qBtn);
   const cx = qr.x + qr.w / 2, cy = qr.y + qr.h / 2;
   qBtn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: cx, clientY: cy, pointerType: 'touch' }));
   qBtn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: cx, clientY: cy, pointerType: 'touch' }));
   await frame(); await frame();
   out.afterTap = {
-    cd: T.state.player.skillCd.FROST_NOVA,
+    cd: T.state.player.skillCd.EARTHSHATTER || 0,
     badgeText: document.querySelector('#tc-q').textContent,
     keyText: document.querySelector('[data-act="q"] .key').textContent,
     overBadgeText: document.querySelector('#tc-w').textContent,
@@ -178,8 +182,11 @@ for (const act of ['q', 'w']) {
   // fires the moment the pool is near full), so a countdown like "11.9s" at
   // scan time is the readout doing its job — the tap checks below still prove
   // the badge counts down from a REAL press.
-  ok(b.badgeText === 'RDY' || b.badgeText === 'LOW' || /^\d+\.\d+s$/.test(b.badgeText),
+  ok(b.badgeText === 'RDY' || b.badgeText === 'LOW' || /^\d+\.\d+s$/.test(b.badgeText) ||
+    /^\d+\/\d+$/.test(b.badgeText),
     'button ' + act + ' badge must still print the live readout (got ' + b.badgeText + ')');
+  // N1 slice 3: an ult's readiness readout is the CHARGE pair (e.g. 0/40),
+  // accepted above alongside RDY/LOW/countdown.
   ok(b.overlapPx === 0, 'button ' + act + ' key must not collide with the badge (' + b.overlapPx + 'px)');
   ok(b.keyBeforeLabel === true, 'button ' + act + ' key must be inside the button');
   ok(b.key.x >= b.btn.x && b.key.r <= b.btn.r,
@@ -194,8 +201,15 @@ ok(d.keyLayout.hShown === d.keyLayout.hHidden,
 // repo documents stays an upper bound rather than an underestimate.
 ok(d.pads.right.w <= 96,
   'the right pad must stay inside the 96px button budget the pad math assumes (got ' + d.pads.right.w + ')');
-ok(d.pads.left.w === d.before.padLeft,
-  'the left pad must be untouched (was ' + d.before.padLeft + ', now ' + d.pads.left.w + ')');
+// H1 RETARGET (docs/briefs/H1_PAD_REFLOW.md, ACCEPTANCE item 3): this used to
+// pin `left === before` — the old CONTENT-DRIVEN left-pad width — and is the
+// one assertion H1 legitimately invalidates: a fixed 96px pad is precisely
+// the change the owner asked for. The invariant that now matters (and that
+// WAVE-17 always wanted) is left === right === the FIXED 96. Lines 195/199
+// and the joystick clearance below are untouched and pass on their own.
+ok(d.pads.left.w === 96 && d.pads.right.w === 96 && d.pads.left.w === d.pads.right.w,
+  'H1: both pads must be the FIXED 96px, left === right (got left=' + d.pads.left.w +
+  ' right=' + d.pads.right.w + ')');
 ok(d.pads.right.w >= d.before.padRight,
   'the letters may only widen the right pad, never shrink it (was ' + d.before.padRight + ')');
 {
@@ -208,7 +222,7 @@ ok(d.pads.right.w >= d.before.padRight,
     '  (left-pad gap is pre-existing and unchanged: ' +
     [360, 390].map((W) => W + 'px=' + ((W / 2 - 60) - (10 + d.pads.left.w)).toFixed(1) + 'px').join('  ') + ')');
 }
-console.log('after a real tap on FROST: cooldown=' + d.afterTap.cd.toFixed(2) +
+console.log('after a real tap on the Q ult (EARTHSHATTER): cooldown=' + d.afterTap.cd.toFixed(2) +
   's  badge=' + JSON.stringify(d.afterTap.badgeText) +
   '  key=' + JSON.stringify(d.afterTap.keyText));
 console.log('after a real press ON the [E] span: overcharge cd=' +
@@ -219,7 +233,7 @@ console.log('potion badges track their own counts: HP ' + JSON.stringify(d.potio
   ' (live ' + d.potionBadges.liveMp + ')');
 
 ok(/^\d+\.\d+s$/.test(d.afterTap.badgeText),
-  'tapping FROST must put a live countdown in the badge (got ' + d.afterTap.badgeText + ')');
+  'tapping the Q button must put a live countdown in the badge (got ' + d.afterTap.badgeText + ')');
 ok(d.afterTap.keyText === '[Q]', 'the key letter is NOT overwritten by the cooldown');
 ok(d.tapOnKeySpan.overchargeCd > 0 && d.tapOnKeySpan.overchargeBuff > 0,
   'a press landing on the [E] span must still fire Overcharge (cd=' +
