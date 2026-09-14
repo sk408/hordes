@@ -14,7 +14,7 @@
 //   //        profile.purchased), profile.equippedCharacter);
 //   //        potions start at startPotionCount(profile); grant the equipped
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
-import { CONFIG as C, setEngagementRange } from './config.js';
+import { CONFIG as C, setEngagementRange, DRAFT_LADDER } from './config.js';
 import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
 import { ENCOUNTER_IDS } from './encounters.js';   // G10: derived bestiary catalog
 import { TIER_RANK } from './rarity.js';           // G10: tier ordering for bestTier
@@ -717,6 +717,27 @@ export function draftRarityOf(cardId) {
 export function draftCardWeight(cardId, kind, luck) {
   if (kind !== 'stat') return 1;
   return DRAFT_STAT_WEIGHT * luckDraftWeights(luck)[draftRarityOf(cardId)];
+}
+
+// ---- W7b LUCK EXTENSION: Fortune reaches the WHOLE ladder -------------------
+// G8 step 1 wired Fortune into the COMMON stat family only (draftCardWeight
+// above returns 1 for everything else). The W7b ladder adds RARE and MYTHIC
+// tiers, and the brief's extension is: Fortune raises the odds of RARE and
+// MYTHIC offers across EVERY card kind — buying Fortune becomes a run-long
+// investment in draft quality, not just in the flat family.
+//
+// Weight of ONE ladder-tier card. tier 'RARE' | 'MYTHIC' reads its base weight
+// from DRAFT_LADDER (config.js, the one home); each luck level adds
+// LUCK_TIER_BOOST of the base, linear and unclamped in weight (luck itself is
+// clamped 0..LUCK_MAX_LEVEL). At luck 0 the table is the base exactly, so an
+// unlucky profile drafts the shipped chase rates bit-for-bit. Unlike the G8
+// stat-family shift this ADDS weight rather than transferring it — that is the
+// point of the extension (a bigger chase slice is what Fortune buys here), and
+// the COMMON stat budget invariant (test_draft_luck) is untouched by it. PURE.
+export function draftLadderWeight(cardId, tier, luck) {
+  const base = tier === 'MYTHIC' ? DRAFT_LADDER.MYTHIC_WEIGHT : DRAFT_LADDER.RARE_WEIGHT;
+  const L = Math.max(0, Math.min(LUCK_MAX_LEVEL, Number(luck) || 0));
+  return base * (1 + DRAFT_LADDER.LUCK_TIER_BOOST * L);
 }
 
 // Apply permanent bonuses to a stats object. PURE: returns a NEW object,

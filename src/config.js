@@ -757,6 +757,81 @@ export const UPGRADES = [
 ];
 
 // ============================================================================
+// W7b — THE DRAFT RARITY LADDER (docs/briefs/W7B_DRAFT_DIVERGENCE.md)
+// ============================================================================
+// The draft is a rarity-laddered choice, not a stat-card flood. The COMMON
+// tier is the shipped UPGRADES family above (flat, early stabilization,
+// unchanged, weight 0.3). The two new tiers below are the chase:
+//   RARE   — percent/scaling cards. LOW-WEIGHT (RARE_WEIGHT), never a pool
+//            flood: the weapon cards keep weight 1 and full access, and no
+//            chase card is strictly better in all states — each one's value is
+//            state-dependent (compounds early, dead late; scales with a
+//            commitment the run may not have made).
+//   MYTHIC — build-definers, RUN-GATED: at startRun a TWO-STAGE chase gate
+//            decides which (if any) mythics enter the run's draft pool — a 10%
+//            event roll ("this run has a joker"), then a 60/25/15 count roll,
+//            then a uniform draw of which mythics (owner 2026-09-14). Each then
+//            rides the pool at MYTHIC_WEIGHT. Taken once per run.
+// FIXED = common, PERCENT = rare, and the two COEXIST — never a conversion.
+//
+// Whetstone note (brief deviation, stated out loud): the brief's rare table
+// lists "Whetstone — +15% damage". The shipped 'dmg' card IS Whetstone at
+// +25% (pinned by test_draft_luck / test_run_rules / test_rewrites / chests).
+// A second Whetstone at +15% next to it would be strictly dominated in every
+// state — the "fake choice" the brief's own NO UNIFORM STRENGTH rule forbids —
+// so the shipped +25% Whetstone stands as the ladder's rare damage anchor and
+// the +15% duplicate is not added.
+export const DRAFT_LADDER = {
+  RARE_WEIGHT: 0.12,        // per-card pool weight of a RARE ladder card
+                            // (common stat = 0.3, weapon = 1): a chase, not a flood
+  MYTHIC_WEIGHT: 0.10,      // per-card pool weight of a run-gated MYTHIC chase card
+  // The TWO-STAGE chase gate (owner 2026-09-14). CHASE_GATE_CHANCE is the 10%
+  // EVENT roll ("this run has a joker"); CHASE_COUNT_WEIGHTS is the conditional
+  // count distribution (60% one / 25% two / 15% the three-joker jackpot run).
+  // Per-card independent rolls would stack to ~27% any-mythic (0.1 x 3 cards);
+  // the gate caps the EVENT at 10% while the count keeps multiples fun. Each
+  // specific mythic then lands in ~0.0517 of runs (0.1 x [0.6/3 + 0.25*2/3 + 0.15]).
+  CHASE_GATE_CHANCE: 0.1,
+  CHASE_COUNT_WEIGHTS: [0.60, 0.25, 0.15],
+  LUCK_TIER_BOOST: 0.25,    // Fortune: +25% RARE/MYTHIC ladder weight per luck level
+                            // (the luck extension — Fortune now buys draft quality
+                            // across the WHOLE ladder, not just the stat family)
+  SECOND_WIND_HP_FRAC: 0.5, // revive at this fraction of max HP (owner spec)
+  SECOND_WIND_INVULN: 2,    // seconds of spawn-protection after the revive, so the
+                            // revive is a second chance, not a double death
+  // Storm Shards chip (sensible default, TUNABLE): per XP gem picked up, every
+  // enemy within RADIUS of the player takes max(CHIP_MIN, damage * CHIP_FRAC).
+  // It scales with XP farming by construction (one proc per gem) and with the
+  // run's damage investment — dead in a build that neither farms nor hits.
+  STORM_SHARDS: { RADIUS: 90, CHIP_MIN: 4, CHIP_FRAC: 0.5 },
+};
+
+// RARE ladder cards (percent/scaling, timing-gated). Repeatable across drafts
+// (percent cards compound); under the ONE OF EACH run rule they leave the pool
+// once taken, through the same statCardOffered ledger as the common family.
+export const DRAFT_RARE_UPGRADES = [
+  // The anchor. Coexists with the flat +25 Iron Heart — percent wins with a
+  // developed pool, the flat wins wave 1: the drafter split is the point.
+  { id: 'hp_pct',   name: 'Iron Heart',      desc: '+25% max HP and heal 25%',   apply: (p) => { p.stats.maxHp *= 1.25; p.hp = Math.min(p.hp + 0.25 * p.stats.maxHp, p.stats.maxHp); } },
+  // Good early (compounds into more drafts -> more cards); dead at minute 25.
+  { id: 'xp_pct',   name: "Scholar's Stone", desc: '+20% XP',                    apply: (p) => { p.stats.xpMult = (p.stats.xpMult || 1) * 1.2; } },
+  // Good early (compounds into the E1 purse); dead late.
+  { id: 'gold_pct', name: 'Gilded Palm',     desc: '+30% purse gold per kill',   apply: (p) => { p.stats.purseKillMult = (p.stats.purseKillMult || 1) * 1.3; } },
+  // Build-commitment: scales with damage output — a greedy damage build wants
+  // it, a defensive build wastes it.
+  { id: 'edge',     name: 'Crimson Edge',    desc: '+3% lifesteal',              apply: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.03; } },
+];
+
+// MYTHIC ladder cards (build-definers, run-gated by the two-stage chase gate — see
+// startRun). Taken once per run (the takenStats ledger, rule or no rule).
+export const DRAFT_MYTHIC_UPGRADES = [
+  { id: 'second_wind', name: 'Second Wind',  desc: 'Revive once at 50% max HP',  apply: (p) => { p.stats.secondWind = true; } },
+  { id: 'storm_shards', name: 'Storm Shards', desc: 'XP pickups chip nearby enemies', apply: (p) => { p.stats.stormShards = true; } },
+  // A compounding draft investment: worth it early, dead late.
+  { id: 'full_hand',  name: 'Full Hand',     desc: '+1 draft offer for the rest of the run', apply: (p) => { p.stats.draftOffers = (p.stats.draftOffers || 0) + 1; } },
+];
+
+// ============================================================================
 // THE RUN LADDER — pure helpers (CONFIG.RUN / CONFIG.LADDER above)
 // ============================================================================
 // These live in config.js, next to the numbers they read, so the ladder can be

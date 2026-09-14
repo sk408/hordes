@@ -1,6 +1,7 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
   CONFIG as C, UPGRADES,
+  DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap,
 } from './config.js';
@@ -75,6 +76,7 @@ import {
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   luckDropWeights,
   draftCardWeight,
+  draftLadderWeight,
   // W1 save foundation (src/save.js): versioned schema + lossless export/import.
   SCHEMA_VERSION, exportProfileText, importProfileText,
   // v6 one-time-banner ledger (save.js): first-EVER gates for the tutorial-scale
@@ -234,6 +236,10 @@ const state = {
   // startRun, which NULLS it. Null when no title flow is live.
   titleReveal: null,
   pendingDrafts: 0,
+  // W7b ladder run state (rerolled/reset in startRun): the run's MYTHIC chase
+  // gate ({ cardId: bool }) and the Second Wind spend.
+  chasePool: {},
+  secondWindUsed: false,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
   // follow BASE (the view minus the lead — the deadzone is anchored here so the
@@ -803,7 +809,12 @@ function resetRampage() {
 //     profile.gold and ZEROES the purse (zeroing is what stops the next
 //     settlement banking the same remainder twice).
 function purseCredit(e) {
-  const v = purseValue(e);
+  // W7b RARE Gilded Palm: +30% purse gold per kill per pick, compounding. The
+  // multiplier lives on the run's stats (1 = the shipped payout bit-for-bit,
+  // CHAFF's 0 included), so the wallet keeps ONE writer and every consumer
+  // (HUD, ledger, settle) reads the same number.
+  const mult = (state.player && state.player.stats.purseKillMult) || 1;
+  const v = Math.round(purseValue(e) * mult);
   const tier = purseTier(e);
   profile.runPurse = (profile.runPurse | 0) + v;
   const g = state.runCounts.gold;
@@ -2179,6 +2190,24 @@ function update(dt) {
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
+      // W7b MYTHIC Storm Shards: picking up XP chips every enemy in a radius
+      // (one proc per gem — it scales with XP farming by construction, and
+      // with the run's damage investment through CHIP_FRAC). Enemy-side only,
+      // player-centred; hp<=0 enemies are reaped by the normal death pass
+      // (the BLOOD HARVEST blast precedent above), so kills, purse and tokens
+      // credit through the one existing path. An EVENT, never frame-scaled:
+      // 60Hz and 120Hz chip the same per gem.
+      if (p.stats.stormShards) {
+        const S = DRAFT_LADDER.STORM_SHARDS;
+        const chip = Math.max(S.CHIP_MIN, p.stats.damage * S.CHIP_FRAC);
+        for (const o of state.enemies) {
+          if (o.hp <= 0) continue;
+          if (Math.hypot(o.x - p.x, o.y - p.y) <= S.RADIUS) {
+            o.hp -= chip;
+            o.flash = 0.08;
+          }
+        }
+      }
     }
   }
   // WAVE-26 moment-to-moment signal: the stance PAYING OFF — loot the base
@@ -2338,6 +2367,13 @@ function maybeGrantToken(channel) {
   if (rollEvolutionToken(Math.random, channel)) grantEvolutionToken(channel);
 }
 
+// W7b measurement seam (never shipped off): tools/w7b_draft_ab.mjs sets
+// globalThis.HORDES_DRAFT_LADDER = false BEFORE importing this module to run
+// the BEFORE arm (the HEAD pool, no ladder families, no chase rolls) of the
+// paired-seed A/B. Default ON; the game itself never sets it. Read once at
+// module scope so an arm cannot flip mid-run.
+const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
+
 function openDraft() {
   state.mode = 'draft';
   ovTitle.className = '';
@@ -2395,6 +2431,21 @@ function openDraft() {
     // to the shipped pool (every stat card exactly its draft weight).
     ...UPGRADES.filter(u => statCardOffered(u.id, state))
       .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) })),
+    // W7b RARE ladder tier: the percent/scaling chase cards. LOW-WEIGHT (never
+    // a pool flood — the weapon cards keep weight 1 and full access), luck-
+    // shifted through draftLadderWeight (the Fortune extension reaches the
+    // whole ladder, not just the stat family). Repeatable across drafts —
+    // percent cards compound — but the ONE OF EACH ledger still applies
+    // (statCardOffered), the same contract the common family rides.
+    ...(DRAFT_LADDER_ON ? DRAFT_RARE_UPGRADES.filter(u => statCardOffered(u.id, state))
+      .map(u => ({ ...u, tier: 'RARE', weight: draftLadderWeight(u.id, 'RARE', state.player.stats.luck || 0) })) : []),
+    // W7b MYTHIC ladder tier: the run-gated chase cards. A card is in the pool
+    // AT ALL only if startRun rolled it into state.chasePool (~1/10 of runs,
+    // owner spec), and leaves the pool for the run once taken (the takenStats
+    // ledger read directly — once per run with or without a run rule).
+    ...(DRAFT_LADDER_ON ? DRAFT_MYTHIC_UPGRADES.filter(u =>
+        (state.chasePool || {})[u.id] && !((state.player.takenStats || {})[u.id]))
+      .map(u => ({ ...u, tier: 'MYTHIC', weight: draftLadderWeight(u.id, 'MYTHIC', state.player.stats.luck || 0) })) : []),
     ...ruleCards(state),
     // G8 step 4: the perk family rides the same pool at SKILL_CARD_WEIGHT,
     // one card per perk the run does not already hold (taken once, like a rule).
@@ -2413,9 +2464,12 @@ function openDraft() {
     const multiCard = pool.find(c => c.id === 'multi');
     if (multiCard) multiCard.desc = '+20% weapon damage (volley full)';
   }
-  // Weighted draw WITHOUT replacement, take 3 (no duplicate cards per draft).
+  // Weighted draw WITHOUT replacement, take the offer count (3 base; the W7b
+  // MYTHIC Full Hand adds +1 for the rest of the run — the number-key routing
+  // already covers 1-4). No duplicate cards per draft.
+  const offerN = 3 + (state.player.stats.draftOffers || 0);
   const choices = [];
-  while (choices.length < 3 && pool.length > 0) {
+  while (choices.length < offerN && pool.length > 0) {
     let r = Math.random() * pool.reduce((s, c) => s + c.weight, 0);
     let idx = pool.length - 1;
     for (let i = 0; i < pool.length; i++) { if ((r -= pool[i].weight) < 0) { idx = i; break; } }
@@ -2430,7 +2484,15 @@ function openDraft() {
     // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
     // actually implements (see synergyHintForCard). Silent otherwise.
     const hint = synergyHintForCard(u);
-    el.innerHTML = `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+    // W7b: the ladder tier is ON the card — the chase has to read as a chase.
+    // Tints are the rarity.js encounter tells (RARE cyan / MYTHIC violet), so
+    // the draft and the field speak one rarity language. Inline style: the
+    // draft overlay is DOM, and index.html's stylesheet is another track's
+    // file.
+    const badge = u.tier
+      ? `<div class="syn" style="color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
+      : '';
+    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
       (hint ? `<div class="syn">${hint}</div>` : '') +
       `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => pick(u);
@@ -2493,6 +2555,12 @@ function pick(u) {
     // Player-facing copy only: the internal family label must never reach the
     // feed - it read as a placeholder ("rewrite this description before using").
     toast(REWRITES[u.rewrite].name.toUpperCase() + ' - ' + REWRITES[u.rewrite].desc);
+  } else if (u.tier === 'MYTHIC') {
+    // W7b: a MYTHIC chase card leaves the pool for the rest of the run once
+    // taken (openDraft reads the takenStats ledger directly for this family —
+    // once per run with or without a run rule), and the catch is announced.
+    markStatTaken(state, u.id);
+    toast('MYTHIC - ' + u.name.toUpperCase() + ': ' + u.desc, RARITY.MYTHIC.tell.outline);
   } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
     markStatTaken(state, u.id);
   }
@@ -2967,6 +3035,21 @@ let lastDamageSource = null;
 
 function die(finale) {
   const p = state.player;
+  // W7b MYTHIC Second Wind: the run's one revive. Fires on ANY lethal hit
+  // (contact, shot, drain, finale) exactly once per run — die() is the single
+  // death seam, so the intercept lives here and no damage path needs to know.
+  // Revive at SECOND_WIND_HP_FRAC of max HP (owner spec) with a short invuln
+  // window (reuses p.invuln and its render blink): a second chance, not a
+  // double death inside the same horde. The deliberate-exit path (endRun)
+  // never reaches here, so it can never spend the revive.
+  if (p.stats.secondWind && !state.secondWindUsed) {
+    state.secondWindUsed = true;
+    p.hp = Math.max(1, p.stats.maxHp * DRAFT_LADDER.SECOND_WIND_HP_FRAC);
+    p.invuln = Math.max(p.invuln || 0, DRAFT_LADDER.SECOND_WIND_INVULN);
+    toast('SECOND WIND - BACK AT ' + Math.round(p.hp) + ' HP', RARITY.MYTHIC.tell.outline);
+    audio.playSfx('levelup');
+    return;
+  }
   state.mode = 'dead';
   state.deathBy = {
     ...(lastDamageSource || { cause: 'unknown' }),
@@ -4453,6 +4536,30 @@ function startRun() {
   // moment, and no stale hold can freeze the new run's opening frames.
   state.bannerHold = 0;
   state.deathBy = null;      // WAVE-20: no death recorded yet
+  // W7b MYTHIC chase gate: each run rolls whether each mythic build-definer is
+  // in its draft pool AT ALL (owner spec: ~1/10 of runs each, ~1% both). The
+  // roll rides the run's Math.random stream, which the paired-seed harness
+  // seeds per run — so the gate is run-seeded by construction. Run-scoped:
+  // rerolled every startRun, and the revive spend resets with the run.
+  state.chasePool = {};
+  if (DRAFT_LADDER_ON) {
+    // W7b TWO-STAGE chase gate (owner 2026-09-14): one 10% EVENT roll ("this run
+    // has a joker"), then a 60/25/15 count roll, then a uniform draw of WHICH
+    // mythics. Replaces per-card independent rolls, which stacked to ~27%
+    // any-mythic; the gate caps the event at 10% and the count keeps multiples fun.
+    if (Math.random() < DRAFT_LADDER.CHASE_GATE_CHANCE) {
+      const w = DRAFT_LADDER.CHASE_COUNT_WEIGHTS;           // [0.60, 0.25, 0.15]
+      const r = Math.random();
+      const count = r < w[0] ? 1 : (r < w[0] + w[1] ? 2 : 3);
+      const ids = DRAFT_MYTHIC_UPGRADES.map((m) => m.id);
+      for (let i = ids.length - 1; i > 0; i--) {             // Fisher-Yates, take N
+        const j = (Math.random() * (i + 1)) | 0;
+        const t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+      }
+      for (const id of ids.slice(0, count)) state.chasePool[id] = true;
+    }
+  }
+  state.secondWindUsed = false;
   state.time = 0;
   state.spawnTimer = 0;
   state.pendingDrafts = 0;
@@ -5120,7 +5227,9 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
-  if (state.mode === 'draft' && ['1', '2', '3'].includes(ev.key)) {
+  if (state.mode === 'draft' && ['1', '2', '3', '4'].includes(ev.key)) {
+    // 1-4: the W7b Full Hand mythic adds a fourth offer, and its card carries
+    // a [4] key hint — the routing must cover what the markup promises.
     const card = ovCards.children[Number(ev.key) - 1];
     if (card) card.click();
   } else if (state.mode === 'evolve' && ['1', '2', '3', '4'].includes(ev.key)) {
@@ -6269,6 +6378,10 @@ export const __TEST = {
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,
+  // W7b ladder seams: the ONE death function (Second Wind revive probes drive
+  // it directly, the same call every damage path makes) and the ladder-on
+  // flag this process booted with (the A/B BEFORE/AFTER arms).
+  die, ladderOn: DRAFT_LADDER_ON,
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
