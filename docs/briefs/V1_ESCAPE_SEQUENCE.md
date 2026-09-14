@@ -254,7 +254,34 @@ interactive cinematic than a required game. That way they are less critical if i
    - **Assume it triggers in dead time** (see the trigger question) — that is the condition under which
      the rate works.
    - **M1's collectible set stays OUT of the escape.**
-   - Derive "that player's rate" from `INCOME_TIERS` / `computeRunGold`; do not invent an instrument.
+   - **"That player's rate" = their own STORED BEST RUN RATE (owner, 2026-09-14), superseding the
+    `INCOME_TIERS` derivation.** Store the best run's gold AND duration and use **best gold-per-second**
+    — a best TOTAL is inflated by one long outlier run and would raise every future payout permanently.
+    Update at RUN END only, never mid-run. This is a new persisted field, so it rides **W1** (schema
+    version + migration tolerating a missing value + validation: finite, non-negative, capped).
+
+  **CONCRETE ANCHORS (read from the tree at HEAD `08fb127` — re-verify at dispatch):**
+  - The fold-a-finished-run entry point already exists: **`recordRun(profile, run)` at
+    `src/achievements.js:338`**, described in-file as "the one entry point main.js calls when a run ends".
+    The new stat is folded THERE — no new hook.
+  - **`TOTALS_ZERO` at `src/achievements.js:120-123`** is the totals contract, and `bestTime` and `bestWave`
+    are ALREADY in it — so an "all-time best" counter is an established pattern. The contract states
+    "anything a run reports that is not listed here is ignored", so a new key must be ADDED to it.
+  - **⚠ THE CONTRACT IS INTEGER-ONLY, AND THAT BREAKS A STORED RATE.** `intOr` at `:134`
+    (`Math.max(0, Math.floor(Number(v)))`) floors every value, and `normalizeAchievements` at `:157` runs
+    every totals entry through it. So a gold-per-SECOND figure stored directly would be silently floored
+    (4.7 -> 4) and **a rate below 1 gold/sec would be repaired to 0** — the payout would then read as zero
+    and the escape would pay nothing, with nothing in the logs to show why.
+  - **THEREFORE: STORE THE RAW INTEGER FACTS, DERIVE THE RATE AT READ TIME.** Add `bestGold` (int) and
+    `bestGoldSecs` (int, the duration of the run that produced it) to `TOTALS_ZERO`, and compute
+    `goldPerSec = bestGold / bestGoldSecs` guarded on `bestGoldSecs > 0`. This also matches the
+    store-raw-facts rule above: the derivation can change later with no schema migration.
+  - **`bestTime` IS NOT A SUBSTITUTE for `bestGoldSecs`:** `bestTime` is the LONGEST run, and the run with
+    the best gold is frequently not the longest one. Pair the gold with the duration of THAT run.
+  - Schema work rides **`src/save.js`** (the schema + validation live there; it is already at v3 after G19's
+    per-character namespace). A new totals key needs the version bump, the migration tolerating a missing
+    value on old saves, and validation.
+
 
 ## DO NOT
 

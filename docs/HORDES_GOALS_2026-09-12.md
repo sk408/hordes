@@ -547,10 +547,40 @@ that makes sense. 2 min equals 40 seconds payout. It's an easy stage so can't pa
 
 - **The formula: `payout = (that player's normal income RATE) x (escape duration) / 3`.** For a 2-minute
   escape that is **40 seconds worth** (120/3) ✓ the arithmetic checks.
-- **"for that player" = SCALED TO THEIR PROGRESSION**, not a fixed lump sum. Derive the rate from what the
-  game already measures — `INCOME_TIERS` (700/1200/1800/2800) and `computeRunGold` are the anchors — so a
-  late-game player is not underpaid and an early player is not overpaid. Do NOT invent a new instrument
-  for this.
+- **"for that player" = SCALED TO THEIR PROGRESSION**, not a fixed lump sum, so a late-game player is not
+  underpaid and an early player is not overpaid.
+**THE REFERENCE FOR "THAT PLAYER'S RATE" IS NOW THEIR OWN STORED BEST RUN (owner, 2026-09-14).**
+Sk408: *"We could even store best gold per run for a player and use that as the guide."*
+
+This SUPERSEDES the `INCOME_TIERS` derivation above and it is the better instrument — it self-calibrates:
+a player who improves earns more from escapes automatically, with no tier re-tuning and no maintenance as
+the power curve grows. It also gives the escape a legible pitch to the player ("40 seconds at your best
+rate") and makes the personal best itself a stat worth having.
+
+- **⚠ AND IT MUST BE STORED AS RAW INTEGERS, NOT AS A RATE — found by reading the code, not assumed.** The
+  existing totals contract (`TOTALS_ZERO`, `src/achievements.js:120-123`, floored by `intOr` at `:134`) is
+  **integer-only**, so a stored gold-per-second value would be silently floored and **any rate under 1
+  gold/sec would be repaired to 0** — the escape would pay nothing, silently. Store `bestGold` plus
+  `bestGoldSecs` as integers and derive the rate at read time, guarded on `bestGoldSecs > 0`. Note
+  `bestTime` is NOT a substitute: it is the LONGEST run, and the best-gold run is often not the longest.
+  `recordRun` (`src/achievements.js:338`) is the existing fold-at-run-end seam to hang this on.
+- **STORE THE RATE, NOT JUST THE TOTAL — this is the refinement, and it closes an exploit.** Record the
+  best run's gold **and its duration** (or the derived gold-per-second) and use **best gold-per-SECOND** as
+  the guide. A best TOTAL is inflated by a single long outlier run (a 30-minute run totals more than a
+  3-minute run at the same pace), and since the escape pays a fixed 40 seconds, that one outlier would
+  raise every future escape payout permanently. The RATE is stable across run lengths; the total is not.
+  Raw facts are worth storing (gold + duration) so the derivation can change later without a schema
+  migration.
+- **Update it at RUN END, never mid-run** — so a live spike cannot leak into the escape's payout.
+- **Tie-break, owner's call:** if the CURRENT run's rate is higher than the stored best, pay on the live
+  rate or the stored one? Remy recommends the STORED value — predictable and unchanged mid-run — but this
+  is a one-line decision either way.
+- **PERSISTENCE: this is a new persisted profile field, so it rides W1 (save foundation).** W1's own rule
+  is that nothing may persist new data until the schema version, migration and validation exist. Required
+  with it: a version bump, a migration that tolerates a missing/zero value on old saves, and validation
+  (finite, non-negative, sane cap) — an `Infinity` or `NaN` here would make the payout calculator produce
+  nonsense.
+
 - **The 1/3 discount is also an anti-exploit, not just modesty:** the escape is an EASY stage (platforming,
   no stat danger), so paying the full rate would make it a BETTER farm than the run itself — a real economy
   hole. 1/3 keeps it a bonus rather than an exploit.
