@@ -185,18 +185,21 @@ interactive cinematic than a required game. That way they are less critical if i
 - **SKIP = FORGO THE PAYOUT. That is the light punishment, and the ONLY punishment** — no run penalty,
   no death, no gate. Owner refinement 2026-09-14: *"Missing the payout is the light punishment. Should have
   enough of a reward that people want to play it, otherwise it's an auto skip after the first play."*
-- **THE PAYOUT RATE IS OWNER-SET: ONE THIRD OF THAT PLAYER'S NORMAL RATE.** *"Should pay at like 1/3 the
-  normal rate of time spent in a run of that length for that player, if that makes sense. 2 min equals 40
-  seconds payout. It's an easy stage so can't pay too much."* So `payout = player rate x duration / 3`,
-  i.e. **40 seconds of income for a 2-minute escape** (120/3). SCALED TO THE PLAYER (derive from
-  `INCOME_TIERS` 700/1200/1800/2800 and `computeRunGold`; do not invent an instrument). The 1/3 discount is
-  also anti-exploit: the stage is EASY, so the full rate would make it a better farm than the run itself.
-  Remy's earlier "beat the opportunity cost plus a margin" rule is **WITHDRAWN**.
-- **⚠ LOAD-BEARING CONDITION: THE ESCAPE MUST OCCUR IN DEAD TIME (the intermission / wave-boundary seam).**
-  In dead time the player is earning nothing anyway, so the 40 seconds is pure upside and skipping costs
-  real income (the intended light punishment). If it instead consumed run-earning time, 1/3 of the rate
-  makes SKIPPING RATIONAL and the mode would guarantee its own "auto skip after the first play" failure.
-  **This is now the decisive argument for the trigger and must be settled with it.**
+- **THE PAYOUT: SCALED TO THE PLAYER, SET BY THEIR OWN BEST RUN.** The owner set the INTENT — *"Should pay
+  at like 1/3 the normal rate of time spent in a run of that length for that player... 2 min equals 40
+  seconds payout. It's an easy stage so can't pay too much"* — and then set the MECHANISM: *"We could even
+  store best gold per run for a player and use that as the guide... Best rate doesn't feel right. Best run
+  feels right."* Implementation is `payout = bestGold x K` with K tuned so it lands near the 1/3 intent;
+  the "40 seconds" figure is how K is CHOSEN, not a stored or recomputed value. The 1/3 discount is also
+  anti-exploit: the stage is EASY, so a full-rate payout would make it a better farm than the run itself.
+  Remy's earlier "beat the opportunity cost plus a margin" rule is **WITHDRAWN**, as is the stored-rate
+  version (`bestGoldSecs`).
+- **⚠ THE TRIGGER DECIDES WHETHER PLAYING IS ATTRACTIVE — strong argument for DEAD TIME (the intermission /
+  wave-boundary seam).** In dead time the player is earning nothing anyway, so the payout is pure upside
+  and skipping costs real income (the intended light punishment). If the escape instead consumes
+  run-earning time, playing it pays LESS than the playtime is worth, so most players will skip — which is
+  now a PERMITTED choice (see "legitimate choice" above), but it also means the mode is rarely seen.
+  **Settle this with the trigger question; Remy recommends the intermission seam.**
 - **Reward SHAPE (Remy's recommendation, owner decides):** prefer a meaningful, REPEATABLE payout
   (currency / chest-equivalent / evo tokens) over a one-off meta-collectible — repeat play must be
   motivated by the payout, and a one-off goes quiet once collected. **M1's collectible set stays OUT of the
@@ -254,11 +257,16 @@ interactive cinematic than a required game. That way they are less critical if i
    - **Assume it triggers in dead time** (see the trigger question) — that is the condition under which
      the rate works.
    - **M1's collectible set stays OUT of the escape.**
-   - **"That player's rate" = their own STORED BEST RUN RATE (owner, 2026-09-14), superseding the
-    `INCOME_TIERS` derivation.** Store the best run's gold AND duration and use **best gold-per-second**
-    — a best TOTAL is inflated by one long outlier run and would raise every future payout permanently.
-    Update at RUN END only, never mid-run. This is a new persisted field, so it rides **W1** (schema
-    version + migration tolerating a missing value + validation: finite, non-negative, capped).
+   - **"That player's rate" = their own BEST RUN (owner, 2026-09-14).** Store ONE integer — `bestGold`,
+    the best single-run gold total — and pay `bestGold x K`, K tuned so the payout lands near the owner's
+    1/3 intent. **A stored RATE is WITHDRAWN** (*"Best rate doesn't feel right... could break easier or have
+    some unforeseen consequences with some other balance changes"*): a rate is derived and drifts silently
+    when the gold formula or run lengths shift, whereas a best-run total moves with the economy. It also
+    sidesteps the integer-flooring trap below entirely (no division). Retuning is a one-line constant, so
+    **tuning lives in a constant, not in the save.** Update at RUN END only. Rides **W1** (`src/save.js`
+    version bump + migration tolerating a missing value + validation: finite, non-negative, capped) and
+    folds at **`recordRun`** (`src/achievements.js:338`) into **`TOTALS_ZERO`** (`:120-123`), beside
+    `bestTime`/`bestWave`.
 
   **CONCRETE ANCHORS (read from the tree at HEAD `08fb127` — re-verify at dispatch):**
   - The fold-a-finished-run entry point already exists: **`recordRun(profile, run)` at
@@ -272,12 +280,13 @@ interactive cinematic than a required game. That way they are less critical if i
     every totals entry through it. So a gold-per-SECOND figure stored directly would be silently floored
     (4.7 -> 4) and **a rate below 1 gold/sec would be repaired to 0** — the payout would then read as zero
     and the escape would pay nothing, with nothing in the logs to show why.
-  - **THEREFORE: STORE THE RAW INTEGER FACTS, DERIVE THE RATE AT READ TIME.** Add `bestGold` (int) and
-    `bestGoldSecs` (int, the duration of the run that produced it) to `TOTALS_ZERO`, and compute
-    `goldPerSec = bestGold / bestGoldSecs` guarded on `bestGoldSecs > 0`. This also matches the
-    store-raw-facts rule above: the derivation can change later with no schema migration.
-  - **`bestTime` IS NOT A SUBSTITUTE for `bestGoldSecs`:** `bestTime` is the LONGEST run, and the run with
-    the best gold is frequently not the longest one. Pair the gold with the duration of THAT run.
+  - **THEREFORE STORE NO RATE AT ALL — and the owner's best-run model already satisfies this.** Add ONE
+    integer, `bestGold`, to `TOTALS_ZERO` and pay `bestGold x K`. **There is no division, so the trap above
+    cannot fire.** (An earlier Remy version stored `bestGold` + `bestGoldSecs` and derived a rate at read
+    time; it is WITHDRAWN — the owner preferred the raw total precisely because a derived rate can drift
+    under later balance changes, and the divide-free version cannot floor to zero at all.)
+  - `bestTime` remains unrelated to this: it is the LONGEST run, not the best-gold run. Do not substitute
+    one for the other.
   - Schema work rides **`src/save.js`** (the schema + validation live there; it is already at v3 after G19's
     per-character namespace). A new totals key needs the version bump, the migration tolerating a missing
     value on old saves, and validation.

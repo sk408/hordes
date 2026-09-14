@@ -557,29 +557,51 @@ a player who improves earns more from escapes automatically, with no tier re-tun
 the power curve grows. It also gives the escape a legible pitch to the player ("40 seconds at your best
 rate") and makes the personal best itself a stat worth having.
 
-- **⚠ AND IT MUST BE STORED AS RAW INTEGERS, NOT AS A RATE — found by reading the code, not assumed.** The
-  existing totals contract (`TOTALS_ZERO`, `src/achievements.js:120-123`, floored by `intOr` at `:134`) is
-  **integer-only**, so a stored gold-per-second value would be silently floored and **any rate under 1
-  gold/sec would be repaired to 0** — the escape would pay nothing, silently. Store `bestGold` plus
-  `bestGoldSecs` as integers and derive the rate at read time, guarded on `bestGoldSecs > 0`. Note
-  `bestTime` is NOT a substitute: it is the LONGEST run, and the best-gold run is often not the longest.
-  `recordRun` (`src/achievements.js:338`) is the existing fold-at-run-end seam to hang this on.
-- **STORE THE RATE, NOT JUST THE TOTAL — this is the refinement, and it closes an exploit.** Record the
-  best run's gold **and its duration** (or the derived gold-per-second) and use **best gold-per-SECOND** as
-  the guide. A best TOTAL is inflated by a single long outlier run (a 30-minute run totals more than a
-  3-minute run at the same pace), and since the escape pays a fixed 40 seconds, that one outlier would
-  raise every future escape payout permanently. The RATE is stable across run lengths; the total is not.
-  Raw facts are worth storing (gold + duration) so the derivation can change later without a schema
-  migration.
-- **Update it at RUN END, never mid-run** — so a live spike cannot leak into the escape's payout.
-- **Tie-break, owner's call:** if the CURRENT run's rate is higher than the stored best, pay on the live
-  rate or the stored one? Remy recommends the STORED value — predictable and unchanged mid-run — but this
-  is a one-line decision either way.
-- **PERSISTENCE: this is a new persisted profile field, so it rides W1 (save foundation).** W1's own rule
-  is that nothing may persist new data until the schema version, migration and validation exist. Required
-  with it: a version bump, a migration that tolerates a missing/zero value on old saves, and validation
-  (finite, non-negative, sane cap) — an `Infinity` or `NaN` here would make the payout calculator produce
-  nonsense.
+**THE GUIDE IS THE BEST RUN — ONE INTEGER, NOT A RATE (OWNER, 2026-09-14; Remy's rate idea WITHDRAWN).**
+Sk408: *"Best rate doesn't feel right. Best run feels right. Best rate could break easier or have some
+unforeseen consequences with some other balance changes."*
+
+He is right, and the reason is coupling: a RATE is a DERIVED value whose meaning changes silently when the
+gold formula or typical run length changes — it can drift without anyone touching it. A best-run TOTAL is a
+raw fact about what the player actually did, and it moves with the economy instead of against it. Remy's
+`bestGoldSecs` pairing is withdrawn with it.
+
+- **Store ONE integer: `bestGold`** — the player's best single-run gold total. Updated at RUN END, never
+  mid-run.
+- **Payout = `bestGold` x K**, where K is a single tuned constant chosen so the payout lands near the
+  owner's 1/3 intent (i.e. roughly what 1/3 of a 2-minute stretch earns at their pace). The "40 seconds"
+  figure is how K is CHOSEN, not a value that must be stored or recomputed.
+- **This also SIDESTEPS the integer trap** recorded above: with no division there is no rate to floor to
+  zero, so the one hard failure mode Remy found disappears entirely. One integer, one constant, no
+  divide — the whole feature is cheaper than the version Remy proposed.
+- **Accepted tradeoff, stated so it is not rediscovered later:** if typical runs get much longer, or the
+  gold formula shifts, the payout drifts away from "1/3 of a 2-minute rate". That is the price of
+  robustness, and it is FIXED BY RETUNING K — a one-line constant — rather than by migrating stored data.
+  **Tuning lives in a constant, not in the save.**
+- Schema work still rides **W1 / `src/save.js`** (version bump + a migration tolerating a missing value +
+  validation: finite, non-negative, capped), and still folds at **`recordRun`**
+  (`src/achievements.js:338`) into the **`TOTALS_ZERO`** contract (`:120-123`), beside the existing
+  `bestTime` / `bestWave`.
+
+**THE SKIP IS A LEGITIMATE CHOICE, AND THAT IS THE POINT (owner, 2026-09-14).** Sk408: *"Skipping should be
+the rational choice or as you said, they will criticize."* Recorded reading, stated plainly so it can be
+corrected in one line: **the skip must be an unpunished, ungated, legitimate option** — a player who
+dislikes the mode loses only the payout and is never trapped, pressured, or gated. A mode players feel
+OBLIGATED to play is a mode they criticise. The two owner statements reconcile cleanly: **the payout draws
+people in; the free skip keeps the critics quiet.** Both must hold at once, which is why the skip carries
+only the light cost (the forgone payout) and never a run penalty, a death, or a gate.
+
+**⚠ ECONOMY CROSS-LINK — THE ESCAPE PAYOUT IS AN INCOME FAUCET, NOT JUST A TREAT.** Sk408: *"free rewards
+means more buyables. Also means we can scale costs higher."* So the escape payout is a designed income
+source whose existence BUYS SHOP HEADROOM: more buyables can exist, and the cost ladder can climb higher,
+without the run's own income carrying all of it. Consequences to honour:
+- It must be modelled in **W7a's economy simulation**, or W7a's balance numbers are computed against a
+  model that is missing an income source and will understate what players can afford.
+- V1/W12 lands AFTER W7a, so either W7a **reserves headroom** for it, or a **post-V1 economy re-measure** is
+  owed. One of the two, decided explicitly — not skipped.
+- Because the payout scales with the player's own best run, it does NOT distort the early curve: an early
+  player's best run is small, so their escape pays little. Only earned progress is rewarded.
+
 
 - **The 1/3 discount is also an anti-exploit, not just modesty:** the escape is an EASY stage (platforming,
   no stat danger), so paying the full rate would make it a BETTER farm than the run itself — a real economy
