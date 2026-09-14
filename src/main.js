@@ -33,6 +33,9 @@ import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rul
 import {
   skillCards, applyRegrowth, damageTaken, skillManaCost, SKILL_PERKS,
 } from './perks.js';
+// N1 slice 2: the draftable FROST_NOVA card ("Pocket Frost") — a run-owned,
+// AUTO-FIRED nova through the existing useSkill seam (src/frostcard.js).
+import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcard.js';
 // G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
 // Blood Harvest) — mechanic rewrites, granted through the same card contract.
 import {
@@ -1407,6 +1410,9 @@ function update(dt) {
   // After the drinks: survival spending first, then casts read the refreshed
   // pool — the same ordering a manual player's frame effectively has.
   autoCastSkills(state);
+  // N1 slice 2: the drafted Pocket Frost card fires its nova in this same
+  // frame region (pay-only-when-you-can; ONE cooldown, p.skillCd.FROST_NOVA).
+  frostCardTick(state, dt);
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -2268,6 +2274,10 @@ function openDraft() {
     // G8 step 4: the perk family rides the same pool at SKILL_CARD_WEIGHT,
     // one card per perk the run does not already hold (taken once, like a rule).
     ...skillCards(state),
+    // N1 slice 2: the run-owned auto FROST_NOVA card rides the same pool at
+    // FROST_CARD_WEIGHT, offered exactly when the class Q is not already
+    // FROST_NOVA and the run does not hold it (taken once, like the perks).
+    ...(frostCardOffered(state) ? [frostCard()] : []),
     // G8 step 2: the rewrite family rides the same pool at
     // REWRITE_CARD_WEIGHT, one card per rewrite not already held.
     ...rewriteCards(state),
@@ -2346,7 +2356,11 @@ function pick(u) {
     // G8 step 4: a SKILL card grants its always-on perk through the card's own
     // apply(player) in the chain below, and NEVER enters the `once` stat
     // ledger — skill ids must not pollute it (same shape as the rule branch).
-    toast('SKILL - ' + SKILL_PERKS[u.skill].name.toUpperCase() + ': ' + SKILL_PERKS[u.skill].desc.replace('SKILL - ', ''));
+    // N1 slice 2: the Pocket Frost card is NOT in SKILL_PERKS (perks.js stays
+    // read-only for that slice) and carries its own name/desc — fall back to
+    // the card itself so the toast cannot throw on an unknown skill id.
+    const skillCardMeta = SKILL_PERKS[u.skill] || u;
+    toast('SKILL - ' + skillCardMeta.name.toUpperCase() + ': ' + skillCardMeta.desc.replace('SKILL - ', ''));
   } else if (u.rewrite) {
     // G8 step 2: a REWRITE card grants its mechanic through apply(player) in
     // the chain below, and NEVER enters the `once` stat ledger.
@@ -5226,7 +5240,9 @@ function hudTextBlock(p) {
     // N1 slice 1: the Q short label is derived from the LIVE class skill's
     // NAME (spaces stripped) — 'FrostNova' for three classes, 'ChainReaction'
     // on the Witch — never a hardcoded skill literal.
-    `Q ${skillTxt(classSkillId(state), ((C.SKILLS[classSkillId(state)] || {}).NAME || 'Frost Nova').replace(/ /g, ''))}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
+    // N1 slice 2: a held Pocket Frost card NAMES itself on the same skills
+    // line ('FROST AUTO') — no new panel, no new chrome.
+    `Q ${skillTxt(classSkillId(state), ((C.SKILLS[classSkillId(state)] || {}).NAME || 'Frost Nova').replace(/ /g, ''))}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}${hasFrost(state) ? '   FROST AUTO' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +

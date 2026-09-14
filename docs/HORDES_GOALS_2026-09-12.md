@@ -359,7 +359,7 @@ coupling), which is why it is in scope under the SCOPE INTENT rule.
 **Schedule:** after the in-flight N1 slices (slice 2 = the draftable FROST_NOVA card, then slice 3
 against `docs/briefs/N1_ULTS_SPECS.md`), ahead of the polish goals (G21+). No dependency on N1.
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). SLICE 2 (the draftable FROST_NOVA card) is the next build.]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). **SLICE 2 (the draftable FROST_NOVA card) DISPATCHED 2026-09-13 by TICK NOTE 39** to builder cli:kimi-hordes-g8 as `msg_01M2ERHX29X0BQV4C2CFG1K3DX`, against the pilot-authored brief `docs/briefs/N1_SLICE2_FROST_CARD.md` - designed but NOT yet built or verified.]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -4148,3 +4148,61 @@ while held, RELEASED at the end. No worker killed, restarted or steered. No git 
 the other three classes as a draft pick), then **N1 slice 3** against `docs/briefs/N1_ULTS_SPECS.md`,
 then **G21**. Balance note for whoever picks up slice 3: the ults must not read as a second copy of
 FROST_NOVA, which stays in the pool for everyone.
+
+## TICK NOTE 39 - 2026-09-13 (goal pilot tick, subagent:spawnfa; N1 slice 2 DESIGNED + DISPATCHED, nothing built inline)
+
+**Goal worked: N1 slice 2 - the draftable FROST_NOVA card.** Slice 2 is what keeps a shipped spell
+alive: the moment slice 3 puts the three ults in the Q slot, `FROST_NOVA` is unreachable for all four
+classes and would be a silent deletion. This tick did recon, DESIGN (the pilot owns content design on
+N1), the brief and the dispatch, and wrote no feature code - the pattern the plan mandates.
+
+**THE DESIGN CALL (pilot-authored, in the brief as authoritative).** The card is a run-owned
+AUTO-FIRED frost nova: take it and a FROST_NOVA erupts from the player whenever it is off cooldown
+and the pool can pay, driven through the EXISTING `useSkill(state,'FROST_NOVA')` seam at FROST_NOVA's
+OWN unchanged constants. Pay-only-when-you-can is what makes an auto-cast safe - `useSkill`
+(src/skills.js:16) returns false and touches nothing when the cooldown is live or mana is short, so a
+dry run gets NO nova, never a silent drain. It shares `p.skillCd.FROST_NOVA` (so FOCUS's -15% applies
+and there is one cooldown, not two), takes no new button, does NOT hijack `tc-q` (the Q badge keeps
+naming the class's own skill), is offered ONCE per run (the perk-family contract), and is offered only
+when `classSkillId(state) !== 'FROST_NOVA'` - a predicate, not a class list, so slice 3 needs no
+follow-up edit. Three alternatives are recorded as REJECTED in the brief: a third touch button, the
+card replacing the class Q, and buffing FROST to compete (the last is explicitly forbidden by the
+owner). FROST_NOVA stays weak on purpose; the owner called it weak and said NO balance change.
+
+**RECON THAT SHAPED THE BRIEF (read from the tree, not assumed):** the draw pool is built in
+`openDraft()` (`src/main.js:2210`) and the four families are spread at `:2255-2275` - so this is ONE
+pool line plus a new module, not new architecture. The perk family (`src/perks.js:41` `SKILL_PERKS`,
+`:117` `skillCards`, `SKILL_CARD_WEIGHT` 0.04, run-local `state.player.skills`, deliberately outside
+the save schema) is the exact shape to copy: no persistence, no migration. The N1b item 8 AUTO-CAST
+policy already exists (`src/main.js:4676-4720`, driven from the frame at `:1406`), so the tick call
+site is an existing seam. `test_chain_q.mjs` pins FROST_NOVA's six constants and "the other three
+classes keep FROST_NOVA", and the brief requires both to be re-asserted UNTOUCHED - this slice must
+not be allowed to quietly retune the spell it is making reachable.
+
+**DISPATCHED (msg_01M2ERHX29X0BQV4C2CFG1K3DX -> cli:kimi-hordes-g8, brief
+`docs/briefs/N1_SLICE2_FROST_CARD.md`, 156 lines, task text `/tmp/n1s2_task.txt`).** Queue read at
+dispatch: two pre-existing pending rows, both harmless lane-validation one-liners from
+telegram:spawnbfee ("reply TASK-STARTED... name the lane and model"), i.e. Remy's glm-lane autopsy
+probes - NOT stale feature work, and nothing for this tick to cancel. No builder was killed, restarted
+or steered.
+
+**NOT VERIFIED, HONESTLY.** Nothing about this slice is verified: the card does not exist yet. The
+tick did NOT run the suite (the tree is clean at `c49642e` with `dirty=0`, so tick 38's
+`greenfiles=74 redfiles=0` stands as the last measured state, and the builder must reproduce FAIL=0 on
+its own tree). The brief's acceptance bar is measurable and independent: suite FAIL=0, the new
+headless card test with printed numbers, the new real-browser phone tool (all 19 TOUR_KEYS set and
+`state.time > 1.0` asserted BEFORE measuring - the tick-38 harness defect that silently measures a
+FROZEN game), a 1170x2532 PNG, and measured before/after cohort numbers for KNIGHT and WITCH.
+
+**LOCK / HYGIENE:** FREE at tick start, acquired as `subagent:spawnfa`, held through recon + brief +
+dispatch, RELEASED to the builder at dispatch (it refuses to work while another owner holds it), then
+the doc edits in this note - which are outside the builder's file scope by the brief's own list. No
+git state command run.
+
+**NEXT GOAL:** verify slice 2 when the builder reports (artifact, not self-report), then dispatch
+**slice 3** (the three ults) against `docs/briefs/N1_ULTS_SPECS.md`, then **G21**. Still owed and
+unchanged: G5 (arch fix unmeasured), G6 at x1.28 vs the owner's raised x1.6, the item-7 mana-bar
+re-measure, the ranked-queue vs BUILD_PLAN W7a/W7b sequencing conflict, the G23 unlock-tied hook, the
+G26 25-item feedback triage, and `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` still
+unread by any agent. The builder lane is `cli:kimi-hordes-g8` (glm's quota reset is 2026-09-15
+15:49 UTC).

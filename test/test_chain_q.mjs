@@ -157,7 +157,13 @@ s.check('every enemy the chain KILLS detonates through the ONE blast (funded: 6 
   p.potions.mp = 0;                            // AUTO_DRINK must not refuel mid-measurement
   p.skillCd.OVERCHARGE = 99;
   for (let i = 0; i < 7; i++) st.enemies.push(plant(p.x + 30 + i * 25, p.y, 5));   // all die
-  const witness = plant(p.x + 30 + 7 * 25, p.y, 1000);                            // beyond jump 6
+  const witness = { ...plant(p.x + 30 + 7 * 25, p.y, 1000), elite: true };        // beyond jump 6
+  // FIXTURE RETARGET (not an assertion change): the witness must not be plain
+  // trash. Each of the 7 corpse kills rolls FLASH DROP (loot.js
+  // shouldFlashDrop), and a hit erases EVERY flash-eligible CHASER on the
+  // field — the witness included, at hp 0 — which made this check red ~12% of
+  // runs for a reason it does not measure. `elite` is the loot.js:325
+  // flash-exempt flag, so the witness is now hit by the corpse blasts alone.
   st.enemies.push(witness);
   p.mana = 150; p.skillCd.CHAIN_REACTION = 0;
   useSkill(st, 'CHAIN_REACTION');
