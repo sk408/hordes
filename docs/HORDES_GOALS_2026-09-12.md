@@ -317,11 +317,35 @@ cutting.
 - A horizontal camera follow (the existing deadzone camera on a different axis).
 - A stream spawn (behind and ahead) instead of the player-relative ring.
 - An in/out transition plus framing (the horde visibly behind you) and a win/lose rule.
-- **ONE VERB (jump/dash)** — which is also what makes it playable by the AUTO pilot. **That is REQUIRED,
-  not optional:** the owner plays pick-up-and-leave, so a mode the pilot cannot play is a mode he never
-  sees.
+- **ONE VERB (dash/dodge)** — one verb plus auto-fire is what makes it playable by the AUTO pilot.
+  **CONFIRMED REQUIRED by the owner**, and measured: see the AUTO success-rate acceptance above.
 - A **HORDE PRESSURE** readout (how close the wall of pursuers is behind you) replaces the radar, which
   is meaningless side-on — and it is thematically better anyway.
+
+**OWNER-REFINED 2026-09-14 — weapons exist but are NOT a stat system, and the boss is an OBSTACLE, not a
+fight.** Sk408: *"Yes auto pilot has to be able to play it. And we could have weapons and what not but they
+don't need to follow stats. Just add a bit of dimension to the experience. A shot or two kills any enemy..
+maybe a boss comes but the player can just go around them somehow."*
+
+- **Weapons: cosmetic-plus, ZERO stat coupling.** A shot or two kills any enemy, flat, regardless of the
+  build. So the escape must NOT read `stats.damage`, the draft, loot affixes or any meta bonus — no
+  `applyMetaBonuses` inside it. Two consequences, both good: the mode is fully self-contained (nothing to
+  balance against the economy), and a maxed profile cannot trivialise it, so the tension survives the
+  late game. It is there for dimension, not for damage.
+- **The boss is a HAZARD TO WEAVE AROUND, not a damage race** — it appears, telegraphs, and the player
+  goes around it. Passing it is the climax of the sequence.
+- **"Go around it" DEFINES the spatial model, and it is cheaper than a platformer:** if the corridor is
+  only 1D + jump, a boss cannot be gone around. So the corridor needs a **bounded vertical BAND** — the
+  existing 2D movement constrained into a narrow strip (a floor, a ceiling-ish limit, x running one way)
+  rather than gravity + platforms + ledges. **No gravity model and no platform collision are needed**,
+  which is the single biggest saving in the whole design, and it comes straight from the owner's framing.
+  The upper band is also where E2's flying enemies live, which gives them an obvious role.
+- **Verb:** dash/dodge (plus jump if there is a floor gap). One verb, as above.
+- **AUTO PILOT: CONFIRMED REQUIRED, and it is measurable.** Since the escape ignores stats, the pilot
+  cannot be carried by power — so its escape rule set has to be genuinely competent (default to dodging,
+  auto-dash on a telegraph, steer around the boss). **Acceptance: measure the AUTO success rate in the
+  escape.** A mode the pilot reliably LOSES is a mode the pick-up-and-leave owner never gets the reward
+  from, which would defeat the point of adding it.
 
 **SEQUENCING INSIGHT — the escape is cheap BECAUSE its prerequisites are already queued:** G7's leap is
 the verb, and E2's flying enemy is the antagonist. **Build those first and V1 is a modest slice, not a
