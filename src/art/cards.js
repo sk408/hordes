@@ -45,10 +45,13 @@ const G = (...rows) => rows.map((r) => [...r].map((ch) => ch.charCodeAt(0) - 48)
 export const RANK_CLASS = { number: 'COMMON', face: 'RARE', ace: 'MYTHIC', joker: 'CHASE' };
 const RANK_GLYPHS = {
   '2': G('111', '001', '111', '100', '111'),
+  '3': G('111', '001', '111', '001', '111'),
+  '4': G('101', '101', '111', '001', '001'),
   '5': G('111', '100', '111', '001', '111'),
   '6': G('111', '100', '111', '101', '111'),
   '7': G('111', '001', '010', '010', '010'),
   '8': G('111', '101', '111', '101', '111'),
+  '9': G('111', '101', '111', '001', '111'),
   'J': G('011', '001', '001', '101', '010'),
   'Q': G('111', '101', '101', '111', '001'),
   'K': G('101', '101', '110', '101', '101'),
@@ -291,6 +294,296 @@ const MOTIFS = {
       '0000000000000000',
     ),
   },
+
+  // ============================================================ expansion ====
+  // CARD ART COVERAGE (docs/briefs/CARD_ART_COVERAGE.md): motifs for the rest
+  // of the draft pool — the nine weapon cards, Quick Hands, the G8 rule /
+  // perk / rewrite families and the Pocket Frost card. Same discipline as the
+  // core motifs: integer grids via G(), palette keys 5..9, ink kept out of
+  // the pip corners (TL x<=6,y<=12 and the rotated BR) so the pips read.
+  // ORBIT BLADE — a steel blade circling inside its gold orbit ring.
+  orbit: {
+    palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#c89a2a' },
+    grid: G(
+      '00007770000',
+      '00700000700',
+      '07000000070',
+      '07000560070',
+      '07005600070',
+      '70056000007',
+      '07056000070',
+      '07060000070',
+      '07000000070',
+      '00700000700',
+      '00007770000',
+    ),
+  },
+  // BOOMERANG — the thrown V, wood with a gold leading edge.
+  boomerang: {
+    palette: { 5: '#8a5f2c', 6: '#c89a2a', 7: '#4a3018' },
+    grid: G(
+      '5500000055',
+      '5660000665',
+      '0566006650',
+      '0056666500',
+      '0005665000',
+      '0000550000',
+    ),
+  },
+  // CHAIN ZAP — a gold bolt with a white-hot core, zigzag down the card.
+  bolt: {
+    palette: { 8: '#ffe07a', 9: '#f4f4f8' },
+    grid: G(
+      '0080000',
+      '0098000',
+      '0980000',
+      '0980000',
+      '9800000',
+      '9999980',
+      '0000980',
+      '0000980',
+      '0009800',
+      '0009800',
+      '0098000',
+      '0080000',
+    ),
+  },
+  // SCYTHE — the curved blade sweeping off the top of its haft.
+  scythe: {
+    palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#8a5f2c' },
+    grid: G(
+      '0000555550',
+      '0005666665',
+      '0056500005',
+      '0055000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+      '0007000000',
+    ),
+  },
+  // BEAM — a white-core energy column, flared at the muzzle.
+  beam: {
+    palette: { 5: '#2aa08a', 8: '#7ae0c8', 9: '#f4f4f8' },
+    grid: G(
+      '00899800',
+      '00899800',
+      '05899850',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+      '00899800',
+    ),
+  },
+  // NOVA PULSE — the ring bursting from the player, white-hot core.
+  pulse: {
+    palette: { 5: '#3a5a9a', 7: '#f4f4f8' },
+    grid: G(
+      '00005500000',
+      '00055550000',
+      '00550005500',
+      '05500000550',
+      '05000700050',
+      '05007770050',
+      '05000700050',
+      '05500000550',
+      '00550005500',
+      '00055550000',
+      '00005500000',
+    ),
+  },
+  // SEEKER — the homing missile climbing its own flame trail.
+  seeker: {
+    palette: { 5: '#9aa4b8', 7: '#c89a2a', 8: '#c03a3a' },
+    grid: G(
+      '000080000',
+      '000585000',
+      '005858500',
+      '005555500',
+      '005555500',
+      '000555000',
+      '000050000',
+      '000070000',
+      '000700000',
+      '000070000',
+      '000700000',
+      '000070000',
+    ),
+  },
+  // MINE LAYER — the spiked mine with its red trigger light.
+  mine: {
+    palette: { 5: '#5a5f6e', 6: '#9aa4b8', 8: '#c03a3a' },
+    grid: G(
+      '000060000',
+      '060000060',
+      '005555500',
+      '005585500',
+      '605585506',
+      '005585500',
+      '005555500',
+      '060000060',
+      '000060000',
+    ),
+  },
+  // QUICK HANDS — the hourglass: gold caps, glass bulbs, sand pooled below.
+  hourglass: {
+    palette: { 5: '#5a6a8a', 7: '#c89a2a', 8: '#ffe07a' },
+    grid: G(
+      '77777777',
+      '70555507',
+      '07055070',
+      '00755700',
+      '00057000',
+      '00057000',
+      '00758700',
+      '07088070',
+      '70888807',
+      '77777777',
+    ),
+  },
+  // HORDE BAIT — the chest that is always a horde, keyhole glowing.
+  chest: {
+    palette: { 5: '#8a5f2c', 6: '#4a3018', 7: '#c89a2a', 8: '#ffe07a' },
+    grid: G(
+      '077777777770',
+      '075555555570',
+      '075666666570',
+      '077777777770',
+      '077708077770',
+      '075555555570',
+      '075666666570',
+      '075555555570',
+      '077777777770',
+    ),
+  },
+  // ONE OF EACH — a lone mini card, its red pips at both corners.
+  lone_card: {
+    palette: { 5: '#3a3f4c', 6: '#efe6cc', 7: '#a02a2a' },
+    grid: G(
+      '05555550',
+      '05666650',
+      '05677650',
+      '05677650',
+      '05666650',
+      '05666650',
+      '05666650',
+      '05677650',
+      '05677650',
+      '05666650',
+      '05555550',
+    ),
+  },
+  // REGROWTH — the sprout that never stops, rooted in dark soil.
+  sprout: {
+    palette: { 5: '#2a8a4a', 6: '#5ac86a', 7: '#8a5f2c' },
+    grid: G(
+      '000060000',
+      '006000600',
+      '066606660',
+      '006666600',
+      '000060000',
+      '000060000',
+      '000060000',
+      '000060000',
+      '000060000',
+      '007777700',
+      '077777770',
+    ),
+  },
+  // FOCUS — the scrying orb on its gold stand, white-hot centre.
+  orb: {
+    palette: { 5: '#5a6a8a', 6: '#9ab8e8', 7: '#f4f4f8', 8: '#c89a2a' },
+    grid: G(
+      '000555000',
+      '005666500',
+      '056777650',
+      '056777650',
+      '056666650',
+      '005666500',
+      '000555000',
+      '000050000',
+      '000888000',
+      '008888800',
+    ),
+  },
+  // THICK SKIN — the shield, steel with a gold boss.
+  shield: {
+    palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#c89a2a' },
+    grid: G(
+      '0555555550',
+      '0566666650',
+      '0566006650',
+      '0566006650',
+      '0566776650',
+      '0566006650',
+      '0566666650',
+      '0056666500',
+      '0005665000',
+      '0000550000',
+      '0000050000',
+    ),
+  },
+  // POCKET FROST — the snowflake, ice-blue arms around a white heart.
+  snowflake: {
+    palette: { 6: '#9ab8e8', 7: '#f4f4f8' },
+    grid: G(
+      '60006000006',
+      '06006000060',
+      '00606006060',
+      '00066666000',
+      '00067776000',
+      '66667766666',
+      '00067776000',
+      '00066666000',
+      '00606006060',
+      '06006000060',
+      '60006000006',
+    ),
+  },
+  // CHAIN REACTION — the kill detonation, a gold starburst with a white core.
+  blast: {
+    palette: { 8: '#ffe07a', 9: '#f4f4f8' },
+    grid: G(
+      '00000800000',
+      '08000800080',
+      '00800800800',
+      '00088888000',
+      '00888988800',
+      '08889998880',
+      '00888988800',
+      '00088888000',
+      '00800800800',
+      '08000800080',
+      '00000800000',
+    ),
+  },
+  // BLOOD HARVEST — the health potion that bites back, red draught in glass.
+  potion: {
+    palette: { 5: '#9aa4b8', 6: '#c03a3a', 7: '#e04a4a', 8: '#8a5f2c' },
+    grid: G(
+      '00088000',
+      '00088000',
+      '00055000',
+      '00555500',
+      '05577550',
+      '05666650',
+      '05666650',
+      '05667650',
+      '05666650',
+      '05666650',
+      '05555550',
+      '00555500',
+    ),
+  },
 };
 
 // ---------------------------------------------------------------- deck ------
@@ -314,6 +607,55 @@ export const CARD_DECK = [
   { id: 'storm_shards',   name: 'Storm Shards',      desc: 'XP pickup deals chip damage',       rank: 'JOKER', suit: null,   motif: 'storm_shard',  joker: 'black' },
 ];
 export const CARD_IDS = CARD_DECK.map((c) => c.id);
+
+// ------------------------------------------------------- expansion deck -----
+// CARD ART COVERAGE (docs/briefs/CARD_ART_COVERAGE.md): the rest of the draft
+// pool. These live OUTSIDE CARD_DECK/CARD_IDS on purpose — the core-deck
+// contract (test_card_art.mjs pins exactly 13) does not move — but they are
+// built through the SAME frame/pip/palette pipeline below and registered into
+// CARD_ART, so cardArt()/drawCard find them exactly like a core card.
+//
+// Every entry is COMMON pool content, so every rank is a NUMBER (rank class
+// IS the rarity; the face/ace/joker ranks stay exclusive to the W7b ladder).
+// Suit = family, matched to how the core cards assign suit (spades damage,
+// hearts survival, diamonds economy, clubs utility):
+//   - weapons are the DAMAGE family (spades), by identity. Two exceptions,
+//     both by what the weapon IS: NOVA_PULSE is the self-centred defensive
+//     burst (hearts/survival); SEEKER (homing guidance) and MINE (deployed
+//     trap) ride the utility suit (clubs).
+//   - Quick Hands (cooldown), the G8 run rules/perks and Pocket Frost are
+//     utility (clubs), except the survival-flavoured ones: Regrowth, Thick
+//     Skin and Blood Harvest (health potions) are hearts, and Horde Bait
+//     (chest rarity/gold) is diamonds. Chain Reaction's kill-detonation
+//     engine clears the bodies pressing you: hearts, beside Blood Harvest.
+//   - VOLLEY reuses three_arrows (it IS the arrow volley Split Shot extends)
+//     and PIERCE ALL reuses spear (the pierce identity) — motif reuse across
+//     registries, never within one.
+// Names join by NAME to the source of truth (WEAPON_NAMES / UPGRADES /
+// RULES / SKILL_PERKS / REWRITES / frostCard) — pinned in
+// test/test_card_art_expansion.mjs so a rename on either side goes red.
+export const CARD_EXPANSION = [
+  { id: 'wpn_volley',     name: 'Volley',        desc: 'weapon card',         rank: '2', suit: 'spades',   motif: 'three_arrows' },
+  { id: 'wpn_orbit',      name: 'Orbit Blade',   desc: 'weapon card',         rank: '3', suit: 'spades',   motif: 'orbit' },
+  { id: 'wpn_boomerang',  name: 'Boomerang',     desc: 'weapon card',         rank: '4', suit: 'spades',   motif: 'boomerang' },
+  { id: 'wpn_zap',        name: 'Chain Zap',     desc: 'weapon card',         rank: '5', suit: 'spades',   motif: 'bolt' },
+  { id: 'wpn_scythe',     name: 'Scythe',        desc: 'weapon card',         rank: '6', suit: 'spades',   motif: 'scythe' },
+  { id: 'wpn_beam',       name: 'Beam',          desc: 'weapon card',         rank: '9', suit: 'spades',   motif: 'beam' },
+  { id: 'wpn_nova_pulse', name: 'Nova Pulse',    desc: 'weapon card',         rank: '3', suit: 'hearts',   motif: 'pulse' },
+  { id: 'wpn_seeker',     name: 'Seeker',        desc: 'weapon card',         rank: '4', suit: 'clubs',    motif: 'seeker' },
+  { id: 'wpn_mine',       name: 'Mine Layer',    desc: 'weapon card',         rank: '2', suit: 'clubs',    motif: 'mine' },
+  { id: 'quick_hands',    name: 'Quick Hands',   desc: '-15% attack cooldown', rank: '3', suit: 'clubs',   motif: 'hourglass' },
+  { id: 'rule_hordebait', name: 'Horde Bait',    desc: 'run rule card',       rank: '3', suit: 'diamonds', motif: 'chest' },
+  { id: 'rule_once',      name: 'One of Each',   desc: 'run rule card',       rank: '8', suit: 'clubs',    motif: 'lone_card' },
+  { id: 'skill_regrowth', name: 'Regrowth',      desc: 'skill card',          rank: '4', suit: 'hearts',   motif: 'sprout' },
+  { id: 'skill_focus',    name: 'Focus',         desc: 'skill card',          rank: '6', suit: 'clubs',    motif: 'orb' },
+  { id: 'skill_thick',    name: 'Thick Skin',    desc: 'skill card',          rank: '5', suit: 'hearts',   motif: 'shield' },
+  { id: 'skill_frost',    name: 'Frost Nova',    desc: 'skill card',          rank: '7', suit: 'clubs',    motif: 'snowflake' },
+  { id: 'rw_pierceall',   name: 'Pierce All',    desc: 'rewrite card',        rank: '9', suit: 'clubs',    motif: 'spear' },
+  { id: 'rw_onkillboom',  name: 'Chain Reaction', desc: 'rewrite card',       rank: '9', suit: 'hearts',   motif: 'blast' },
+  { id: 'rw_healthdamage', name: 'Blood Harvest', desc: 'rewrite card',       rank: '6', suit: 'hearts',   motif: 'potion' },
+];
+export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 
 const RANK_CLASS_OF = (rank) =>
   rank === 'JOKER' ? 'joker' : rank === 'A' ? 'ace' : ('JQK'.includes(rank) ? 'face' : 'number');
@@ -400,8 +742,11 @@ function paletteFor(def) {
 }
 
 // ------------------------------------------------------------------ assets --
+// CARD_DECK + CARD_EXPANSION build through the ONE pipeline; CARD_ART holds
+// both (cardArt() is the only accessor the wired tracks call). CARD_IDS stays
+// the 13 core ids — the core-deck lint (test_card_art.mjs) does not move.
 export const CARD_ART = {};
-for (const def of CARD_DECK) {
+for (const def of [...CARD_DECK, ...CARD_EXPANSION]) {
   const a = makeAsset({
     id: def.id,
     name: def.name,

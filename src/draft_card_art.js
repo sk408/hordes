@@ -13,24 +13,55 @@
 //   xp_pct   -> scholars_stone  ("Scholar's Stone")
 //   gold_pct -> gilded_palm     ("Gilded Palm")
 //   edge     -> crimson_edge    ("Crimson Edge")
-// Offers with no deck entry (weapon grant/level cards, run rules, perks,
-// rewrites) get NO canvas: drawCard fails safe on unknown ids, and an empty
-// backing store would paint a blank rectangle over the card.
+// CARD ART COVERAGE (docs/briefs/CARD_ART_COVERAGE.md): the join now covers
+// EVERY offer the draft pool can produce — the weapon grant (wpn_*) and
+// level-up (lvl_*) cards resolve through WEAPON_OFFER_TO_DECK to the weapon's
+// own expansion card, and the utility/rule/perk/frost/rewrite families join
+// 1:1 below. Only a genuinely unknown id gets NO canvas: drawCard fails safe
+// on unknown ids, and an empty backing store would paint a blank rectangle
+// over the card.
 import { cardArt } from './art/cards.js';
 import { drawCard, cardBox } from './render_cards.js';
 
 export const OFFER_TO_DECK = {
   // COMMON (config.js UPGRADES — ids match the deck 1:1)
   hp: 'hp', speed: 'speed', pickup: 'pickup', pierce: 'pierce', multi: 'multi', dmg: 'dmg',
+  // COMMON utility (Quick Hands rides the new expansion card)
+  rate: 'quick_hands',
   // W7b RARE ladder
   hp_pct: 'hp_pct', xp_pct: 'scholars_stone', gold_pct: 'gilded_palm', edge: 'crimson_edge',
   // W7b MYTHIC chase
   full_hand: 'full_hand', second_wind: 'second_wind', storm_shards: 'storm_shards',
+  // G8 run rules (rules.js ruleCards: 'rule_' + id)
+  rule_hordebait: 'rule_hordebait', rule_once: 'rule_once',
+  // G8 perks (perks.js skillCards: 'skill_' + id) + the N1 Pocket Frost card
+  skill_regrowth: 'skill_regrowth', skill_focus: 'skill_focus', skill_thick: 'skill_thick',
+  skill_frost: 'skill_frost',
+  // G8 rewrites (rewrites.js rewriteCards: 'rewrite_' + id)
+  rewrite_pierceall: 'rw_pierceall', rewrite_onkillboom: 'rw_onkillboom',
+  rewrite_healthdamage: 'rw_healthdamage',
 };
 
-// The deck id backing a draft offer, or null when the offer has no card art.
+// Weapon grant (wpn_<TYPE>) and level-up (lvl_<TYPE>_<lv>) offers share the
+// weapon's own card — keyed by the WEAPON_TYPES/WEAPON_NAMES type, joined by
+// NAME in test/test_card_art_expansion.mjs so a rename on either side goes
+// red. VOLLEY has a card even though it is never GRANTED (its level-up card
+// rides in every pool: the base volley is always owned).
+export const WEAPON_OFFER_TO_DECK = {
+  VOLLEY: 'wpn_volley', ORBIT: 'wpn_orbit', BOOMERANG: 'wpn_boomerang',
+  ZAP: 'wpn_zap', NOVA_PULSE: 'wpn_nova_pulse', SCYTHE: 'wpn_scythe',
+  SEEKER: 'wpn_seeker', MINE: 'wpn_mine', BEAM: 'wpn_beam',
+};
+
+// The deck id backing a draft offer, or null when the offer id is unknown.
 export function deckIdForOffer(offerId) {
-  const deckId = OFFER_TO_DECK[offerId] || null;
+  let deckId = OFFER_TO_DECK[offerId] || null;
+  if (!deckId && typeof offerId === 'string') {
+    const type = offerId.startsWith('wpn_') ? offerId.slice(4)
+      : offerId.startsWith('lvl_') ? offerId.slice(4).replace(/_\d+$/, '')
+      : null;
+    if (type) deckId = WEAPON_OFFER_TO_DECK[type] || null;
+  }
   return deckId && cardArt(deckId) ? deckId : null;
 }
 

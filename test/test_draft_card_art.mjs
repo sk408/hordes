@@ -23,7 +23,7 @@
 //   7. the box dies with its draft (taken -> hidden, overlay closed).
 import assert from 'node:assert';
 import { boot, suite } from './_harness.mjs';
-import { CARD_DECK } from '../src/art/cards.js';
+import { CARD_DECK, cardArt } from '../src/art/cards.js';
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
 import { describeWeaponLevel } from '../src/weapons.js';
 import {
@@ -36,7 +36,7 @@ const s = suite('test_draft_card_art');
 // ---- 1. the offer->deck join (pure) -----------------------------------------
 s.check('every OFFER_TO_DECK target is a REAL deck card', () => {
   for (const [offerId, deckId] of Object.entries(OFFER_TO_DECK)) {
-    assert.ok(CARD_DECK.some(c => c.id === deckId), `${offerId} -> ${deckId} must exist in CARD_DECK`);
+    assert.ok(cardArt(deckId), `${offerId} -> ${deckId} must exist in the full deck (core 13 + expansion)`);
   }
 });
 s.check('the three renamed ladder ids join by NAME (both frozen tracks)', () => {
@@ -46,16 +46,17 @@ s.check('the three renamed ladder ids join by NAME (both frozen tracks)', () => 
   assert.equal(deckName(deckIdForOffer('gold_pct')), nameOf(DRAFT_RARE_UPGRADES, 'gold_pct'), 'Gilded Palm');
   assert.equal(deckName(deckIdForOffer('edge')), nameOf(DRAFT_RARE_UPGRADES, 'edge'), 'Crimson Edge');
 });
-s.check('every shipped stat/ladder offer id with deck art resolves; unmapped offers get none', () => {
-  // hp/speed/pickup/pierce/multi/dmg + the whole W7b ladder carry art...
+s.check('every offer id the pool can offer resolves to deck art (CARD ART COVERAGE)', () => {
+  // hp/speed/pickup/pierce/multi/dmg + rate (Quick Hands) + the whole W7b ladder...
   for (const u of [...UPGRADES, ...DRAFT_RARE_UPGRADES, ...DRAFT_MYTHIC_UPGRADES]) {
-    if (u.id === 'rate') continue;   // Quick Hands has no deck card today
     assert.ok(deckIdForOffer(u.id), `${u.id} should resolve to a deck card`);
   }
-  // ...weapon/rule/skill offers fail safe: no art, no blank canvas.
-  assert.equal(deckIdForOffer('wpn_BOOMERANG'), null);
-  assert.equal(deckIdForOffer('lvl_VOLLEY_1'), null);
-  assert.equal(deckIdForOffer('rate'), null);
+  // ...and the weapon grant/level-up cards too — NO plain-text fallback anywhere.
+  assert.ok(deckIdForOffer('wpn_BOOMERANG'), 'a weapon grant resolves to its weapon card');
+  assert.ok(deckIdForOffer('lvl_VOLLEY_1'), 'a weapon level-up resolves to its weapon card');
+  assert.ok(deckIdForOffer('rate'), 'Quick Hands resolves to its card');
+  // ...only a genuinely unknown id fails safe: no art, no blank canvas.
+  assert.equal(deckIdForOffer('no_such_offer'), null);
 });
 
 // ---- boot the REAL game ------------------------------------------------------
@@ -73,7 +74,8 @@ s.check('paintOfferArt paints through the REAL drawCard at the integer backing s
   assert.equal(cv.width, w, 'backing width is the integer-scale card box');
   assert.equal(cv.height, h, 'backing height is the integer-scale card box');
   assert.ok(rec.rects.length > before + 100, 'the full card (frame + pips + motif) painted, not a corner');
-  assert.equal(paintOfferArt(document.createElement('canvas'), 'wpn_BOOMERANG'), false, 'no art -> false');
+  assert.equal(paintOfferArt(document.createElement('canvas'), 'wpn_BOOMERANG'), true, 'a weapon grant has art');
+  assert.equal(paintOfferArt(document.createElement('canvas'), 'no_such_offer'), false, 'unknown id -> false');
 });
 
 // ---- draft helpers -----------------------------------------------------------
