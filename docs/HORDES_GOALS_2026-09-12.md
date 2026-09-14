@@ -63,6 +63,15 @@ is "running" is not a lane that is WORKING — check CPU time and file mtimes, n
 Orchestrator action taken: worker 1382676 killed, lane left to the pilot's next tick to
 re-spawn WITH a timeout.
 
+**SAME LESSON, SECOND FACE (2026-09-14 00:02 PT): pausing a cron does NOT stop an in-flight tick.**
+The orchestrator resumed both hordes jobs, then paused them ~10 minutes later to drive the queue
+manually. The pilot's tick fired INSIDE that window: it rewrote `docs/briefs/A2_RADAR_WIRING.md`
+(3.6KB -> 13.2KB), issued A2 to the kimi lane, updated this doc and posted a hub checkpoint - all
+while the orchestrator believed the engine was off. Symptom that looks alarming and is not: a brief
+you just wrote changes size under you, and a hub interrupt arrives authored by YOUR OWN identity.
+Diagnose before reacting: check `~/.hermes/cron/output/<jobid>/` for a tick whose Run Time matches
+the file mtime. Action: pause BEFORE starting manual work, and re-verify state after.
+
 **Dispatch builders to `cli:kimi-hordes-g8`** (channel `hub`, colon form in the target — the
 `@`-underscore form returns success and delivers nothing).
 
@@ -1299,7 +1308,7 @@ permanently approached by unseen enemies — a broader legibility issue than the
 edge indicators (a marker at the screen border) would fix that too, and would explain at a glance why the
 pilot is holding fire. Not required by this directive; flagging it because it addresses the same root.
 
-### A2 — THE RADAR (circular minimap with enemy dots)  [status: MODULE BUILT, NOT WIRED 2026-09-14 — src/radar.js (8.0KB: RADAR_RADIUS 330, classifyTier, RADAR_TIERS, DEFAULT_RADAR) and test/test_radar.mjs (13.5KB) landed in `f521bd3`, but NOTHING IMPORTS IT. Orchestrator check: grep -rn 'radar' over src/*.js and index.html returns no consumer, so as far as the game is concerned the owner-suggested radar does not exist yet. THE NEXT WORK ON THIS ITEM IS THE WIRING (renderer draw + hotkey/toggle + the A1 pairing), NOT the module — do not rebuild it.]
+[status: WIRING DISPATCHED 2026-09-14 by the goal pilot — brief docs/briefs/A2_RADAR_WIRING.md, builder cli:kimi-hordes-g8. The dispatch tick re-verified at HEAD 9bf8931: radar.js unwired (grep returns empty), FOCUS_RANGE 100, drawHudChrome at render.js:1138 with the this.hudChrome seam. The brief carries R1 draw (fixed 104x104 bottom-left box, integer span-built disc, NO anti-aliased arc), R2 the H1 no-reflow rect pin across 12 states, R3 the 'r' toggle (default ON, REPEAT_GUARDED, hints line), R4 render-only + 60/120Hz parity, R5 THE A1 PAIRING (the A1 acceptance measurement A1 never got: per-policy target vs radar dot at 60/150/250/320px), R6 a headless wiring test + a real-browser 390x844 @dpr3 probe with a read PNG. No A2 claim is verified yet — the builder self-report will NOT be treated as evidence; the pilot re-measures the artifact next tick. PREVIOUS STATE, kept for the record: MODULE BUILT, NOT WIRED 2026-09-14 — src/radar.js (8.0KB: RADAR_RADIUS 330, classifyTier, RADAR_TIERS, DEFAULT_RADAR) and test/test_radar.mjs (13.5KB) landed in `f521bd3`, but NOTHING IMPORTS IT. Orchestrator check: grep -rn 'radar' over src/*.js and index.html returns no consumer, so as far as the game is concerned the owner-suggested radar does not exist yet. THE NEXT WORK ON THIS ITEM IS THE WIRING (renderer draw + hotkey/toggle + the A1 pairing), NOT the module — do not rebuild it.]
 Sk408: *"What about a circle map on the screen, like some games use, with little dots that show the
 enemies? It doesn't have to be a large radius that allows the player to see too far, but enough to see all
 the enemies within the spawn radius."*
