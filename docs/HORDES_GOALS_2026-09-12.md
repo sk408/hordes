@@ -289,6 +289,51 @@ defined, not inherited. Two useful building blocks already exist:
      the same blast leaves its hp untouched, PLUS a test that a direct projectile hit DOES damage it --
      both halves, or the trait is tested in the direction that hides the bug.
 
+## V1 — SIDE-SCROLLING: FUTURE VISION, NOT SCOPE (owner idea, 2026-09-14)
+
+Sk408: *"what you were saying made me think that we could at some point take a lot of this framework and
+make a side scrolling game. Actually, that might be an interesting either game play mode or a kind of
+replacement for wave 2. Flop between side scrolling and overhead view. Definitely give a unique feel to
+the game."*
+
+**STATUS: an idea, recorded so it is not lost and so nobody forecloses it. It is deliberately NOT in the
+execution order.** Do not build it, do not architect around it, and do not let it leak into the current
+slices — it is a "someday", and the queue in front of it is real work the owner has already asked for.
+
+**What this framework gives away for free** (all spatial-agnostic): the draft, loot + affixes,
+meta/shop/saves, enemies-as-DATA (types with looks and a `decide()`), chests/shrines/portal, the pixel-art
+pipeline, and the entire test + sim harness. Those are the expensive parts and they port as-is.
+
+**What a side-scroller must actually rewrite — it is NOT a camera change:** gravity and platform collision
+(one-way platforms, ledges), jump arcs, aiming in a vertical plane, EVERY weapon's behaviour (a boomerang,
+a volley and a chain zap all read differently side-on), the arena rim becoming walls/sky, spawn geometry
+(the player-relative ring becomes off-screen left/right plus above), the camera's deadzone becoming a
+horizontal follow, and the movement of all eight enemy types (walkers/jumpers/flyers instead of
+8-directional chasers). The radar (A2) also stops making sense side-on — it wants off-screen edge
+indicators instead.
+
+**So the realistic read:** "take this framework and make a side-scrolling game" is a SIBLING GAME sharing
+the systems and the content pipeline, not a mode bolted onto this one. That is a project, not a slice.
+
+**IF a view flip is ever built, the contained shape is: FLIP AT WAVE BOUNDARIES, never mid-wave.** Waves
+already pause at the intermission/portal, which is the only seam where a player's spatial memory survives
+the swap. A live mid-run flip would disorient the player AND force every system to work in both spatial
+models simultaneously — the most expensive possible shape for the least certain payoff. A wave-scoped swap
+(a corridor gauntlet with 1D movement + jump and a restricted rule set) is the slice-sized version if the
+owner wants to test the feel inside this game.
+
+**THE CHEAP DOWN PAYMENT ON THE SAME FEEL IS ALREADY QUEUED:** **G7 (elevation)** — a z-axis plus ground
+shadows, explicitly render-only and already spec'd, with the flying enemy as its first real customer (E2)
+and the leap as its movement verb. That buys most of the verticality novelty without a second spatial
+model, and it is the honest way to find out whether "vertical" is what is actually missing.
+
+**Note for whenever V1 becomes real:** several current threads get BETTER side-on — the flying enemy is
+natural, the leap stops being optional, portals and shrines read as doors and altars, the rim becomes a
+wall, and the heavy tier reads like a corridor boss fight. If V1 happens it should CARRY this content
+(enemies, loot, the draft), not re-invent it.
+
+---
+
 ## GOLD BECOMES AN IN-RUN PURSE (owner directive, 2026-09-14)
 
 Sk408: *"The gold floor as it is is fine. Gold at the end of the run should maybe be fixed because we have
