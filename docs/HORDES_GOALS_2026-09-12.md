@@ -275,11 +275,70 @@ defined, not inherited. Two useful building blocks already exist:
 1. **`z` + a ground shadow**, drawn above the field (visual flight, reads instantly on a flat plane).
 2. **A swoop**: a hover/dive approach (bob, close at an angle, commit to a dive) — distinct from the
    CHASER's straight walk and the DASHER's ground lunge.
-3. **One mechanical identity** so it is not just a stat line. Remy's pick: it **ignores ground effects**
-   (the frost slow / ground AoE) — a threat that demands a different answer. **OWNER CALL**, because it
-   interacts with the Witch's kit (her slow is her kite-based survival tool, so an enemy that ignores it
-   is a deliberate counter to her). Alternatives: untouched by knockback, or it can only be damaged
-   inside the dive window.
+3. **Its mechanical identity — OWNER-CONFIRMED 2026-09-14: it IGNORES GROUND EFFECTS and HAS A SHADOW.**
+   Sk408: *"Yes, flying enemies that ignore ground effects and have shadows. I like it."* Define this
+   PRECISELY so a builder cannot guess:
+   - **Ignores:** the frost slow (FROST_NOVA / the chain's slow), and ground AoE damage — the chain
+     detonations and any ground nova/blast. Its speed is unaffected and it takes no blast damage.
+   - **Does NOT ignore:** direct hits — projectiles, contact, beams. It must stay killable normally, or
+     "ignores ground effects" turns into "invincible", which is the failure mode.
+   - **The balance consequence, deliberate:** the Witch's kite-based survival is built on the slow, so a
+     flying heavy is a real COUNTER to her — she must kill it or avoid it, not kite it. That is the point
+     of the trait; do not soften it later, and do not let a probe "fix" it by asserting the slow applies.
+   - **Acceptance:** a test that a flying enemy's speed is unchanged while inside the slow field and that
+     the same blast leaves its hp untouched, PLUS a test that a direct projectile hit DOES damage it --
+     both halves, or the trait is tested in the direction that hides the bug.
+
+## GOLD BECOMES AN IN-RUN PURSE (owner directive, 2026-09-14)
+
+Sk408: *"The gold floor as it is is fine. Gold at the end of the run should maybe be fixed because we have
+shrines that cost money and we eventually want chest and item merchants. Gold should be accumulated. Also
+have a visible on screen display."*
+
+**THE CURRENT BEHAVIOUR IS NOT WHAT IT LOOKS LIKE — read this before briefing a builder.** There is **no
+run purse today**. Shrines and paid chests debit the *persistent* balance mid-run
+(`profile.gold -= sh.blessing.cost`, `main.js:1941`; paid chests likewise), and the run's gold is added
+once at the very end (`profile.gold += gold`, `main.js:2695`, from `computeRunGold`). So the player is
+currently spending their BANKED meta gold on in-run shrines — which is why a shrine already reads as a
+budget decision.
+
+**The directive, as Remy reads it (confirm the one flagged item below before building):**
+1. **A run-scoped PURSE, accumulated during the run**: start the run at zero (or a small fixed stipend)
+   and earn gold from **tier-weighted drops** — chaff pays ~nothing, elites some, heavies/mid-boss/boss
+   pay real gold (this is the same tier weighting as the gold-counter item above, now as an in-run drop
+   rather than a formula term).
+2. **Spend it in-run**: shrines now, chest and item merchants later — debiting the PURSE, not the bank.
+3. **Bank the remainder at run end**, so unspent earnings carry into meta progression.
+4. **A FIXED end-of-run award replaces the variable formula** ("gold at the end of the run should maybe
+   be fixed"). The floor the owner likes is preserved by making that award the floor — a bad, short run
+   still pays out.
+5. **A visible on-screen gold readout** during the run.
+
+**ANSWERED 2026-09-14 — option (a), confirmed by the owner:** *"Yes, runs should spend earned gold for
+shrines and merchants. I think that's how megabonk does it for balance."* So the run earns its own gold,
+spends it on in-run shrines (and later merchants), and the meta award at run end is a FIXED completion
+amount rather than a formula that swings on luck. Megabonk's in-run-shop model is the named precedent for
+the balance.
+
+**Remy's call on the one remaining shape question (state it in the report so the owner can flip it): the
+remainder BANKS.** Unspent run gold carries into the profile at run end, so nothing the player earned is
+confiscated — which matters for the pick-up-and-leave player who may not spend anything in a short run.
+The sharper alternative (Megabonk-adjacent) is *unspent is lost*, which maximises the in-run decision but
+punishes a passive player; the middle dial is a bank RATE. If more in-run pressure is ever wanted, change
+that rate — do not remove the purse.
+
+**Two consequences that must be handled, not discovered later:**
+- **The meta economy moves.** Income per run stops being formula-driven, so `GOLD_MODEL.INCOME_TIERS`
+  and the shop's whole price ladder need a RE-MEASURE, and `test_meta.mjs`'s "~10 good runs buy ~50% of
+  the mid-tier catalog" assertion will shift. Re-measure and retarget honestly; do not silently reprice
+  the shop to keep a test green.
+- **Decide whether the purse is persisted mid-run.** The profile is persistent and the run is
+  run-scoped; if a reload mid-run loses the purse, a player who earned 500g and refreshed is punished.
+  Pick one and state it (recommendation: persist it with the run, so a reload resumes the same purse).
+
+**The HUD readout is not just a number** — it must obey the no-reflow rule from the HUD section above
+(fixed width, `tabular-nums`, badge space reserved). A gold counter that changes width as it counts up
+would reflow the control pads, which is the exact bug the owner reported on 2026-09-14.
 
 ### CHAFF DENSITY AT WAVE 2 + THE INCOME INVARIANT (owner, 2026-09-14)
 
@@ -599,6 +658,38 @@ section above. Read that before writing a brief.
 **Schedule:** after S1 (the shrine rework), ahead of the polish goals. Note the shared surface: it
 touches `controllers.js` (the blindness exception), so it must NOT run in parallel with anything else
 that edits the controller.
+
+### E1 — THE RUN PURSE: TIER-WEIGHTED GOLD, IN-RUN SPEND, FIXED END AWARD, HUD READOUT  [status: not started — owner-ordered 2026-09-14]
+
+Sk408: *"Yes, tier weighted gold counter is needed... Gold at the end of the run should maybe be fixed
+because we have shrines that cost money and we eventually want chest and item merchants. Gold should be
+accumulated. Also have a visible on screen display."* then *"Yes, runs should spend earned gold for
+shrines and merchants. I think that's how megabonk does it for balance."*
+
+This ONE slice carries four directives that are the same machinery: the **tier-weighted gold counter**,
+**chaff drops at ~zero**, the **in-run purse** (earned in-run, spent on shrines/merchants, remainder
+banked), and the **fixed end-of-run award** plus the **HUD gold readout**. Two traps are named in the
+GOLD sections above and both must be respected: gold is a formula over a RAW kill count today (so the
+weighting is not a drop-rate change), and an in-run boss payout must not double-pay the run-end award.
+
+**Suite note:** this moves the meta economy, so `test_meta.mjs`'s income assertions will shift —
+re-measure and retarget honestly, never reprice the shop to keep a test green.
+
+### E2 — THE WAVE-2 HORDE: HEAVY TIER, FLYING ENEMY, TRIPLED CHAFF, PERF GATE  [status: not started — owner-ordered 2026-09-14]
+
+Sk408: *"we need more enemy variety so that the 2nd wave has a complement of new enemies... I meant it
+literally for the enemies to be mid level boss strength... the wave 2 spawn rate for chaff should be
+maybe triple... drops for chaff enemies should be close to zero... we should make a flying enemy like the
+bats, but stronger for wave 2... Yes, flying enemies that ignore ground effects and have shadows."*
+
+Everything is spec'd in the **ENEMY VARIETY / FLYING ENEMY / CHAFF DENSITY** sections above: heavies at
+mid-boss strength riding the mid-boss ladder one wave behind, chaff tripled with drops near zero, the
+flying heavy with `z` + shadow that ignores ground effects but stays killable by direct hits, and the
+**perf gate on the VPS** (`tools/verify_perf.mjs`, wall-clock frame time at the wave-2 peak, p50/p95,
+real browser, before and after).
+
+**Sequencing note:** E2 changes what a wave-2 run pays, and E1 changes how gold is earned — land E1
+first so E2's cohort measurements are taken against the final economy, not a moving one.
 
 ### S1 — SHRINES: WORLD-SEEDED, WHOLE-MAP, RARER, STATIC  [status: not started — owner-ordered 2026-09-14]
 
