@@ -533,7 +533,38 @@ painful and the mode becomes required in practice — exactly what the skip exis
 - **M1's collectible set should stay OUT of the escape**, or at worst the escape is ONE of several routes
   to a piece, never the only one. (This supersedes Remy's earlier "tie the payout to M1's set" suggestion,
   which would have made the mode mandatory.)
-- **Design rule worth keeping: the reward must be modest enough that skipping is a REAL choice.**
+- ~~**Design rule: the reward must be modest enough that skipping is a REAL choice.**~~ **SUPERSEDED BY
+  THE OWNER — and Remy had the lever backwards (2026-09-14).** Sk408: *"Missing the payout is the light
+  punishment. Should have enough of a reward that people want to play it, otherwise it's an auto skip after
+  the first play."* Correct: a trivial payout does not make skipping a free choice, it makes the mode DEAD
+  CONTENT. The choice must be real in the other direction — **a payout worth two minutes of play, knowingly
+  forgone by skipping.** So: **SKIP = FORGO THE PAYOUT (that is the light punishment, and it is the ONLY
+  punishment).** No run penalty, no death, no gate — but you do not get the reward.
+
+**THE PAYOUT MUST BEAT ITS OPPORTUNITY COST — this is what decides whether the mode is played twice.**
+The escape consumes ~2 minutes the player could have spent in the normal run. If it pays less than normal
+play earns in the same time, skipping is simply RATIONAL and the mode is skipped forever after the first
+look. So the payout must at minimum match the run's own per-minute income rate at comparable progression,
+plus a novelty margin on top. **That is measurable:** payout-per-minute versus measured run income-per-minute
+(the `INCOME_TIERS` 700/1200/1800/2800 ladder and `computeRunGold` are the anchors). Tune it as a rate, not
+as a lump sum.
+
+**THE SHARPEST METRIC IS THE SKIP RATE OVER REPEATED ENCOUNTERS, not the first.** First-encounter skips
+measure novelty pull; **repeat-encounter skips measure whether the payout and the fun actually earn their
+two minutes.** If repeat skip rate approaches 100%, the payout is too small or the mode is not enjoyable —
+that is the owner's "auto skip after the first play" failure, and it is a number, not an opinion.
+
+**Honest tradeoff to keep in view:** the more attractive the payout, the more players judge the mode on how
+good it is (they came for the reward), which works against "they are less critical if it feels
+underdeveloped". The skip is what protects that: keep the reward worth playing AND keep the skip
+penalty-free, so a player who dislikes the mode loses only the payout, never their progress.
+
+**Reward SHAPE — Remy's recommendation, owner decides:** prefer a MEANINGFUL, REPEATABLE payout (currency, a
+chest-equivalent, evo tokens/items) over a meta-collectible. Currency is self-contained and re-earned every
+time, so repeat play is motivated by the payout itself; a one-off collectible piece pays only until it is
+collected and then the mode goes quiet — and it re-creates the mandatory-feel pressure the skip exists to
+avoid. (`INCOME_TIERS` / `computeRunGold` are the anchors for sizing it.) **Still open: the exact payout and
+its rate. Do not ship a token amount.**
 
 **THE NUMBER THAT MATTERS IS NOW THE SKIP RATE, not the completion rate.** For a skippable mode the honest
 signal of whether it earns its two minutes is how many players skip it. A high skip rate is the outcome the

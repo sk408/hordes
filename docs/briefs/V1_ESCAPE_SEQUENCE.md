@@ -182,10 +182,21 @@ interactive cinematic than a required game. That way they are less critical if i
 - **FAILURE IS SOFT, NOT DEATH:** the escape ends (no escape bonus) and the RUN CONTINUES. This removes
   the fairness risk of a two-minute platformer entirely — a mistimed jump cannot end a run. The AUTO
   pilot's failure takes the same path, so an auto run can never be ended by V1.
-- **THE REWARD MUST BE MODEST ENOUGH THAT SKIPPING IS A REAL CHOICE.** If a valuable collectible is
-  gated behind the escape, skipping becomes painful and the mode becomes required in practice. So the
-  escape's own payout is flavour/modest, and **M1's collectible set stays OUT of it** (at most the escape
-  is one of several routes to a piece). This supersedes the earlier "tie the payout to M1's set" idea.
+- **SKIP = FORGO THE PAYOUT. That is the light punishment, and the ONLY punishment** — no run penalty,
+  no death, no gate. Owner refinement 2026-09-14: *"Missing the payout is the light punishment. Should have
+  enough of a reward that people want to play it, otherwise it's an auto skip after the first play."*
+- **SO THE PAYOUT MUST BE WORTH TWO MINUTES — Remy's earlier "keep it modest" call is SUPERSEDED.** A
+  trivial payout does not make skipping a free choice, it makes the mode dead content. **The payout must
+  at minimum match what normal play earns in the same time plus a novelty margin, or skipping is rational.**
+  Size it as a RATE (per minute), against measured run income (`INCOME_TIERS` 700/1200/1800/2800,
+  `computeRunGold`). Do not ship a token amount.
+- **Reward SHAPE (Remy's recommendation, owner decides):** prefer a meaningful, REPEATABLE payout
+  (currency / chest-equivalent / evo tokens) over a one-off meta-collectible — repeat play must be
+  motivated by the payout, and a one-off goes quiet once collected. **M1's collectible set stays OUT of the
+  escape** (at most one of several routes to a piece): gating a required collectible re-creates the
+  mandatory-feel pressure the skip exists to avoid.
+- **Measured as the SKIP RATE ON REPEAT ENCOUNTERS**, not first: repeat skips are what reveal "auto skip
+  after the first play".
 
 ## ACCEPTANCE (measurable — no adjectives)
 
@@ -226,10 +237,11 @@ interactive cinematic than a required game. That way they are less critical if i
 2. ~~**STAKES** — is failure death, or a lost reward?~~ **ANSWERED by the owner's skip directive
    (2026-09-14): failure is SOFT.** The escape ends, no escape bonus, the run continues — never death.
    See the SKIP section. Do not build a lethal failure path.
-3. **REWARD** — narrowed by the same directive: it must be **modest** (flavour, a small bonus, currency),
-   because a valuable reward makes skipping painful and the mode mandatory in practice. M1's collectible
-   set stays OUT of the escape, or the escape is at most one of several routes to a piece. Still open:
-   exactly WHICH modest reward.
+3. **REWARD** — corrected by the owner's refinement: it must be **attractive enough that people want to
+   play it** (his words), because a token payout produces an auto-skip after the first play. Skip forgoes
+   it, and that is the whole punishment. Size it as a RATE that beats normal play's income-per-minute plus
+   a novelty margin; prefer a repeatable currency/item payout over a one-off collectible. **Still open: the
+   exact payout and its rate.**
 
 ## DO NOT
 
