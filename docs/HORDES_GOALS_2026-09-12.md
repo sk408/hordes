@@ -672,8 +672,10 @@ art alone and immediately asked for the fade-in — and it is the smallest of th
 This supersedes both the order these entries appear in below AND the ranked-queue sequencing conflict
 that went unresolved for four ticks.**
 
-**H1 (HUD reflow) -> P1 (portal) -> E1 (purse) -> W7a-tooling -> W7b (draft >= x1.6) -> E2 (horde)
--> S1 (shrines) -> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
+**H1 (HUD reflow) -> P1 (portal) -> A1 (engagement range) -> E1 (purse) -> W7a-tooling -> W7b
+(draft >= x1.6) -> E2 (horde) -> S1 (shrines) -> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
+A1 sits beside P1 because both edit `controllers.js` and must not run in parallel, and A1's row price is
+re-checked in E1's economy pass rather than priced twice.
 
 WHY this order:
 1. **H1 and P1 lead** because they depend on nothing and are the fastest things the owner can feel.
@@ -692,7 +694,7 @@ WHY this order:
 
 Do not re-order without recording why in the tick note.
 
-### H1 — THE CONTROL PADS MUST NOT REFLOW (owner-reported bug)  [status: not started — owner-reported 2026-09-14]
+### H1 — THE CONTROL PADS MUST NOT REFLOW (owner-reported bug)  [status: DONE 2026-09-14 — VERIFIED BY TICK NOTE 41 on the UNCOMMITTED tree (brief docs/briefs/H1_PAD_REFLOW.md, builder cli:kimi-hordes-g8). The reflow is FIXED in index.html CSS only and the pilot re-measured it: pads byte-identical 96x286 at every one of 12 live states, all 8 buttons 96x64. REMAINS for the orchestrator: LAND THE COMMIT (tree dirty=7). REMAINS as a disclosed, unclaimed regression: the `#touch.cog-only` desktop variant lost its 44px click-target shrink (impossible under the fixed 64px button) — never asserted by any test, desktop-only, mouse users now get BIGGER buttons, not smaller.
 
 Sk408: *"the on screen controls fluctuate in size during a run. I think it's the updates to pilot status.
 Should be fixed to accommodate any change to pilot status."*
@@ -701,6 +703,60 @@ Cause, the fix, and the measurable acceptance are in the **HUD CONTROL PADS MUST
 above (auto-width buttons whose `.badge` text changes at runtime; fix by fixed pad width + `width: 100%`
 buttons + reserved badge width; prove it with `getBoundingClientRect` equality across all four pilot modes
 and across a cooldown/potion change). Small, self-contained, no dependencies.
+
+### A1 — THE PILOT'S ENGAGEMENT RANGE (the off-screen targeting bug)  [status: not started — owner-reported 2026-09-14]
+
+Sk408: *"Right now the pilot targets enemies that are off the screen even. We need to try and work on that
+a little bit. Maybe what we could do is have the pilot have a certain distance that they can target
+enemies, and we can add a buyable to the store that allows that distance to be increased."*
+
+**THE MECHANISM ALREADY EXISTS AND IS SIMPLY NOT APPLIED — this is a one-branch fix, not a new system.**
+`C.AUTOPILOT.FOCUS_RANGE = 260` is already defined (`config.js:209`, *"doctrine candidates must be within
+this radius"*) and already used in `pickTarget` (`controllers.js:74`). But `pickTarget` opens with:
+
+    if (this.focus === 'NEAREST' || state.enemies.length === 0) return nearest;   // controllers.js:73
+
+`NEAREST` is the DEFAULT focus (`controllers.js:43`), so on the default path the radius is **bypassed
+entirely** — and the policy fallbacks (`best ?? nearest`, three of them) bypass it too. That is why the
+pilot engages enemies the player cannot see.
+
+**Why it is visible at all:** enemies spawn at `SPAWN_DIST = 280` (`config.js:118`) while the view is
+`480x300` — visible half-extents of only **240 wide x 150 tall**. So EVERY enemy is off-screen at spawn,
+by design, and the pilot shoots at them immediately.
+
+**The directive, as Remy reads it:**
+1. **`FOCUS_RANGE` becomes the ONE engagement radius** and applies on EVERY path — the `NEAREST` early
+   return AND all three `best ?? nearest` fallbacks must yield `target: null` beyond it. `decide()` already
+   treats a null target as "hold fire" (`controllers.js:121`), so the seam exists; use it. A radius that
+   holds on one focus and not the others is a lie on three quarters of the settings.
+2. **Do NOT gate the threat response.** The stance flee already uses its own radii
+   (`enterR2 = (kite*2)^2`, hysteresis to `1.3x`), so dodging stays unconditional — a threat 300px away is
+   still coming for you. Range gates OFFENSE, never survival. Both halves get tests: no target beyond the
+   radius, AND a flee response still fires for a threat beyond it.
+3. **Retune the base radius for legibility, and make it the buyable's floor.** 260 is still off-screen
+   vertically (150 half-height), so applying it verbatim will NOT fix the complaint. Start the base around
+   **170-200** (just past the visible half-height) and let the buyable climb past 280 — the spawn ring —
+   so a maxed pilot engages everything on arrival. This makes the stat legible: the base range is roughly
+   "what I can see", and upgrading buys early engagement.
+4. **A shop row raises it** — flat px per level, the existing `{id,name,desc,baseCost,costGrowth,maxLevel,
+   perLevel}` shape (`meta.js:346` precedent), so it is CONTENT, not machinery. **Price provisionally and
+   RE-CHECK it in E1's economy pass** (E1 re-measures the whole ladder).
+5. **Keep `ELITE_RANGE` consistent.** The config comment says it *"Mirrors FOCUS_RANGE"*; if the range
+   becomes upgradable, derive it (or scale it) rather than leaving a second hardcoded 260 that the upgrade
+   cannot reach — otherwise the pilot's boss detection lags the buyable.
+6. **Fix the stale contract comment:** `controllers.js:90` says *"RANGED targets are valid at ANY range"*
+   — that stops being true; retarget the comment and any test asserting it.
+
+**Measurement (the complaint has a direct metric — use it):** the fraction of targeting frames whose
+target is OFF-SCREEN, before/after, from the existing probe harness. Then, because a shorter range delays
+engagement, measure cohort survival before/after: a shorter range means the player's damage idles while
+enemies close in, which could hurt. If it does, the base radius is too short or the buyable must be
+cheap and strong — do NOT conclude "the range hurt, revert it" without those two numbers.
+
+**OPTIONAL COMPANION (owner's call, cheap):** since spawns are ALWAYS off-screen (280 > 150), the player is
+permanently approached by unseen enemies — a broader legibility issue than the pilot's targeting. Off-screen
+edge indicators (a marker at the screen border) would fix that too, and would explain at a glance why the
+pilot is holding fire. Not required by this directive; flagging it because it addresses the same root.
 
 ### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
 
@@ -4664,3 +4720,48 @@ content design), then **G21**. Still owed and unchanged: G5 (arch fix unmeasured
 item-7 mana-bar re-measure, the ranked-queue vs W7a/W7b sequencing conflict, the G23 unlock-tied hook, the G26 25-item
 feedback triage, and `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` still unread by any agent. Builder lane
 is `cli:kimi-hordes-g8`; no builder was running and nothing was killed, restarted or steered. No git state command run.
+
+## TICK NOTE 41 - 2026-09-14 (goal pilot tick, subagent:spawnfa, agentlock held; H1 VERIFIED on the dirty tree, N1 SLICE 3 brief authored and DISPATCHED)
+
+**Picked up:** `cli:kimi-hordes-g8` finished the H1 slice (spawn-kimi-hordes-g8-20260913-235025,
+task msg_01M2EZYTF5XJ5Q14PR12NRKQEB, exit 0, 03:53Z).
+
+**H1 verified by the pilot, not read from the report.** `bash tools/run_suite.sh` on THIS tree:
+`TREE: /home/claude/projects/hordes @ a624078 | dirty=7` `SUITE greenfiles=75 redfiles=0`. Re-ran the
+builder's own probe myself (`node tools/verify_h1_pad_reflow.mjs`): **16/16 checks passed**, pads
+`96x286 @10,548` and `96x286 @284,548` byte-identical across all 12 live states, all 8 buttons
+`96x64` at fixed x/y, `#joy 126x126` invariant across the MANUAL states, badge text genuinely moving
+through the measured states (so the measurement is not of a static page). PNG
+`docs/art/browser-verify-2026-09-12/h1-pad-reflow-phone.png` present, `PNG image data, 1170 x 2532`.
+`git diff --stat` confirms the change is where claimed: index.html +30/-3 CSS only, test/smoke.mjs
++19/-3 (BTN_W=96 and both gap assertions kept), tools/verify_skill_keys.mjs +9/-2 (only the one
+authorised line retargeted), no `src/*.js` touched.
+**COULD NOT VERIFY:** no vision model is reachable from this job's toolset (files + terminal only),
+so the PNG is asserted by dimensions + DOM rects, never by a semantic read. Stated, not hidden.
+**FLAGGED, not fixed (builder disclosed it honestly):** the `#touch.cog-only` desktop variant lost
+its 44px click-target shrink - a 44px box cannot hold the reserved 28.6px badge box. Desktop/mouse
+only, asserted nowhere, and the direction is "bigger buttons", not smaller. Recorded, no action.
+**REMAINS for the orchestrator:** LAND THE H1 COMMIT - the tree carrying H1 is still uncommitted.
+
+**Priority call, recorded as the EXECUTION ORDER section requires** ("Do not re-order without
+recording why in the tick note"): the next slice is **N1 SLICE 3 (the three non-Witch ults)**, not
+P1. Reason: N1 is **IN PROGRESS** and this job's standing rule puts "anything IN PROGRESS" ahead of
+anything new; the execution order sequences the *owner-ordered* items among themselves and does not
+mention N1, which would strand a live, fully-specced goal. P1 keeps its place immediately after N1
+slice 3 (execution order H1 -> P1 -> E1 -> W7a -> W7b -> E2 -> S1 is otherwise untouched). P1's own
+entry still says "after S1"; the EXECUTION ORDER supersedes that, and this tick did not touch it
+further.
+
+**Dispatched:** `docs/briefs/N1_SLICE3_THREE_ULTS.md` (NEW, authored this tick, 12.8KB, house
+format) to `cli:kimi-hordes-g8`. It implements the already-authored content authority
+`docs/briefs/N1_ULTS_SPECS.md` (EARTHSHATTER / AFTERIMAGE / CONSECRATION, kill-charged, NON-mana,
+with cooldown floors) and adds the one cross-slice hazard the specs could not know about: the H1
+landed-but-uncommitted pad fix means the derived `#q-skill` label (`NAME.split(' ')[0].toUpperCase()`)
+can no longer be 10-12 characters, so the brief mandates a short `LABEL` field (<=5 chars) with the
+long `NAME` kept, plus a measured in-button layout assertion and `verify_h1_pad_reflow` still 16/16.
+It also names the two retargets this slice legitimately forces (`test_chain_q.mjs` section 3 and
+`tools/verify_n1_chain_q.mjs`'s KNIGHT 'FROST' expectation) so they are retargeted honestly rather
+than weakened.
+
+No git state command was run this tick (read-only `git log`/`status`/`diff` only). Lock acquired
+before the first edit and released after the dispatch.
