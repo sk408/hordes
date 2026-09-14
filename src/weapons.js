@@ -222,7 +222,10 @@ function critRoll(p, weapon) {
   return Math.random() < crit ? cm : 1;
 }
 
-function nearestEnemy(state, x, y, exclude) {
+// Exported for skills.js (N1 slice 1): the Witch's CHAIN_REACTION Q walks the
+// same nearest-first scan her gun does, so both chains pick identical targets
+// under identical state. Pure read; weapons.js owns the tie-break rule.
+export function nearestEnemy(state, x, y, exclude) {
   let best = null, bestD = Infinity;
   for (const e of state.enemies) {
     if (e.hp <= 0 || (exclude && exclude.has(e))) continue;

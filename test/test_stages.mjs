@@ -352,61 +352,114 @@ function collectSpawned(stageId, frames) {
 const minHp = (arr) => Math.min(...arr.map(e => e.maxHp));
 
 s.check('(e) mods at the REAL seam: SNOWFIELD foes are exactly 1.5x hp / 0.9x speed, stage 0 exactly 1.0x', () => {
-  // 15s of run = spawner wave 0 (gates open at wave 1 = t>=30s), so the
-  // window compares CHASERs — the type every stage's pool carries.
-  const base = collectSpawned(DEFAULT_STAGE_ID, 900);
-  const snow = collectSpawned('SNOWFIELD', 900);
-  if (snow.CHASER && base.CHASER) {
-    if (Math.abs(minHp(snow.CHASER) / minHp(base.CHASER) - 1.5) > 1e-9) {
-      throw new Error('CHASER hp ratio ' + minHp(snow.CHASER) / minHp(base.CHASER));
-    }
-    // NaN guard FIRST: a NaN ratio silently passes every |NaN - x| > tol
-    // comparison, so finiteness is asserted explicitly on both stages' foes.
-    for (const [name, by] of [['base', base], ['snow', snow]]) {
-      for (const e of Object.values(by).flat()) {
-        if (!Number.isFinite(e.hp) || !Number.isFinite(e.maxHp) || !Number.isFinite(e.speed)) {
-          throw new Error(name + ' produced a non-finite foe stat: ' + JSON.stringify(
-            { typeId: e.typeId, hp: e.hp, maxHp: e.maxHp, speed: e.speed }));
+  // SUITE-FLAKES (power, not tolerance): this clause used to sample SURVIVORS
+  // of live 900-frame runs (~9-12 bodies a window), which put the strict
+  // clauses inside the game's own run-to-run variance — the pilot measured the
+  // mods clause and the spawn clause CO-FAILING ~17-20% standalone (aggregate
+  // ratios 0.917-0.971, or no CHASERs at all in a window). The deterministic
+  // route the seam ships for exactly this: drive the exported spawnWave
+  // (T.stages.spawnWave, src/main.js:5826) at IDENTICAL state / dt / time with
+  // seeded draws and measure the EMISSION, never the survivors. Every original
+  // operator survives below — exact 1.5x hp, exact 0.9x speed, the NaN guards,
+  // stage-0 parity, the STRICT `<` on bodies, the <0.9 aggregate bound — now
+  // deterministic by construction, plus the exact first-tick spawnTimer
+  // interval ratio (0.7, NO tolerance: the same formula at the same time
+  // divides by spawnMult, so base/snow === 0.7 exactly in IEEE).
+  const realMR = Math.random;
+  // Fixed-clock emission: identical state (time pinned), identical dt, seeded
+  // draws — the count and every foe stat are functions of the inputs alone.
+  const emit = (stageId, dt, seconds, seed) => {
+    st.stage = stageId;
+    st.enemies.length = 0;
+    st.spawnTimer = 0.001;                                 // interior start, no boundary tie
+    st.time = 10;                                          // spawner wave 0: CHASERs, the type every pool carries
+    let x = seed;
+    Math.random = () => { x = (x * 1664525 + 1013904223) % 4294967296; return x / 4294967296; };
+    const steps = Math.round(seconds / dt);
+    for (let i = 1; i <= steps; i++) T.stages.spawnWave(dt);
+    Math.random = realMR;
+    const byType = {};
+    for (const e of st.enemies) (byType[e.typeId] = byType[e.typeId] || []).push(e);
+    st.enemies.length = 0;
+    return byType;
+  };
+  // THE EXACT FIRST-TICK INTERVAL RATIO (no tolerance): run the clock down
+  // once per stage at the same pinned time and read the interval spawnWave
+  // computed. spawnMult 0.7 divides it, so base/snow is exactly 0.7.
+  const firstTickInterval = (stageId) => {
+    st.stage = stageId;
+    st.time = 10;
+    st.spawnTimer = 0;
+    Math.random = () => 0.5;                               // pinned: the emission rolls, not the interval
+    try { T.stages.spawnWave(1 / 60); } finally { Math.random = realMR; }
+    const iv = st.spawnTimer;
+    st.enemies.length = 0;
+    return iv;
+  };
+  const ivBase = firstTickInterval(DEFAULT_STAGE_ID);
+  const ivSnow = firstTickInterval('SNOWFIELD');
+  if (!(ivSnow > ivBase)) {
+    throw new Error('SNOWFIELD first-tick interval ' + ivSnow + ' not slower than base ' + ivBase);
+  }
+  if (ivBase / ivSnow !== 0.7) {
+    throw new Error('first-tick interval ratio base/snow ' + (ivBase / ivSnow) + ' (want EXACTLY 0.7)');
+  }
+  // The mods, measured on emitted foes at 60Hz AND 120Hz (dt is an input, not
+  // an assumption).
+  for (const [dt, hz] of [[1 / 60, '60Hz'], [1 / 120, '120Hz']]) {
+    const base = emit(DEFAULT_STAGE_ID, dt, 10, 1234567);
+    const snow = emit('SNOWFIELD', dt, 10, 1234567);
+    if (snow.CHASER && base.CHASER) {
+      if (Math.abs(minHp(snow.CHASER) / minHp(base.CHASER) - 1.5) > 1e-9) {
+        throw new Error(hz + ' CHASER hp ratio ' + minHp(snow.CHASER) / minHp(base.CHASER));
+      }
+      // NaN guard FIRST: a NaN ratio silently passes every |NaN - x| > tol
+      // comparison, so finiteness is asserted explicitly on both stages' foes.
+      for (const [name, by] of [['base', base], ['snow', snow]]) {
+        for (const e of Object.values(by).flat()) {
+          if (!Number.isFinite(e.hp) || !Number.isFinite(e.maxHp) || !Number.isFinite(e.speed)) {
+            throw new Error(name + ' (' + hz + ') produced a non-finite foe stat: ' + JSON.stringify(
+              { typeId: e.typeId, hp: e.hp, maxHp: e.maxHp, speed: e.speed }));
+          }
         }
       }
+      const sp = snow.CHASER[0].speed / base.CHASER[0].speed;
+      if (!Number.isFinite(sp) || Math.abs(sp - 0.9) > 1e-9) throw new Error(hz + ' CHASER speed ratio ' + sp);
+    } else {
+      throw new Error(hz + ': no CHASERs to compare: base ' + !!base.CHASER + ' snow ' + !!snow.CHASER);
     }
-    const sp = snow.CHASER[0].speed / base.CHASER[0].speed;
-    if (!Number.isFinite(sp) || Math.abs(sp - 0.9) > 1e-9) throw new Error('CHASER speed ratio ' + sp);
-  } else {
-    throw new Error('no CHASERs to compare: base ' + !!base.CHASER + ' snow ' + !!snow.CHASER);
   }
-  // 1.0x on stage 0: two default runs produce the SAME plain hp (mods are a
-  // no-op, not a perturbation).
-  const base2 = collectSpawned(DEFAULT_STAGE_ID, 900);
+  // 1.0x on stage 0: two default emissions under the same seed produce the
+  // SAME plain hp (mods are a no-op, not a perturbation).
+  const base = emit(DEFAULT_STAGE_ID, 1 / 60, 10, 1234567);
+  const base2 = emit(DEFAULT_STAGE_ID, 1 / 60, 10, 1234567);
   if (minHp(base2.CHASER) !== minHp(base.CHASER)) {
-    throw new Error('two stage-0 runs disagree on plain hp');
+    throw new Error('two stage-0 emissions disagree on plain hp');
   }
-  // spawnMult 0.7: fewer bodies over the same window (never more).
-  // G20D: a single 900-frame window holds only ~9-12 bodies, so a one-sample
-  // strict `<` tied/inverted by chance when base landed at its minimum
-  // (~1 in 20 standalone runs, `SNOWFIELD spawned 9 vs base 9`). The GAME seam
-  // is correct (tools/probe_spawn_mult.mjs: 60 paired cohorts, mean ratio
-  // snow/base ~0.75). The assertion now aggregates K=4 cohorts per stage —
-  // same property, same window, same STRICT `<` (aggregate means ~47 vs ~36,
-  // so no tolerance band is introduced), plus the measured aggregate ratio
-  // bound (< 0.9, which 0.75 clears with room; a spawnMult 1.0 regression
-  // would sit at ~1.0 and fail BOTH clauses).
+  // spawnMult 0.7: fewer EMITTED bodies over the same sim time (never more).
+  // Same property, same STRICT `<`, same K=4 aggregation and the same <0.9
+  // aggregate bound as before — but the cohorts are now deterministic
+  // emissions (measured 6 vs 8 per 10s, ratio 0.750), so no tolerance band is
+  // introduced and no run-to-run variance can tie or invert the comparison.
   const count = (by) => Object.values(by).reduce((n, a) => n + a.length, 0);
   const K = 4;
-  let snowTotal = count(snow), baseTotal = count(base);   // cohort 1 = the pair above
-  for (let k = 1; k < K; k++) {
-    snowTotal += count(collectSpawned('SNOWFIELD', 900));
-    baseTotal += count(collectSpawned(DEFAULT_STAGE_ID, 900));
+  let snowTotal = 0, baseTotal = 0;
+  for (let k = 0; k < K; k++) {
+    snowTotal += count(emit('SNOWFIELD', 1 / 60, 10, 1234567));
+    baseTotal += count(emit(DEFAULT_STAGE_ID, 1 / 60, 10, 1234567));
   }
   if (!(snowTotal < baseTotal)) {
-    throw new Error('SNOWFIELD spawned ' + snowTotal + ' vs base ' + baseTotal +
+    throw new Error('SNOWFIELD emitted ' + snowTotal + ' vs base ' + baseTotal +
       ' over ' + K + ' cohorts (spawnMult 0.7 must be fewer)');
   }
   const ratio = snowTotal / baseTotal;
   if (!(ratio < 0.9)) {
-    throw new Error('SNOWFIELD aggregate spawn ratio ' + ratio.toFixed(3) + ' over ' + K +
+    throw new Error('SNOWFIELD aggregate emission ratio ' + ratio.toFixed(3) + ' over ' + K +
       ' cohorts (measured ~0.75; a spawnMult 1.0 regression reads ~1.0)');
   }
+  console.log('    [measure] first-tick interval base ' + ivBase + ' / snow ' + ivSnow +
+    ' = ' + (ivBase / ivSnow) + ' (EXACT 0.7) | emission 10s cohorts: snow ' +
+    (snowTotal / K) + ' vs base ' + (baseTotal / K) + ' avg, ratio ' + ratio.toFixed(3));
 });
 
 s.check('(e) dmgMult rides the threat curve: the same ladder number, scaled by the stage', () => {

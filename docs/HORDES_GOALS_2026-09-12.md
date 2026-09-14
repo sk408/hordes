@@ -18,6 +18,64 @@ this project should read it first and treat the numbered goals as the acceptance
 
 ---
 
+## BUILDER LANE — KIMI, NOT GLM (2026-09-13, owner-ordered; read before dispatching)
+
+**Dispatch builders to `cli:kimi-hordes-g8`** (channel `hub`, colon form in the target — the
+`@`-underscore form returns success and delivers nothing).
+
+- **`cli:glm-hordes-g8` is RETIRED and its lock is released.** The GLM weekly quota died
+  mid-flight: `API Error: 429 [1310] Weekly/Monthly Limit Exhausted`, reset **2026-09-15 15:49:58
+  UTC**. Its worker (pid 495012) was live but its model backend could not answer for ~33h, so it
+  held `.agentlock` with a 7,776s-stale heartbeat and zero children. Do **not** dispatch to it, do
+  not re-spawn a glm worker, and do not treat a stale heartbeat alone as proof a worker is broken —
+  the decisive evidence was the 429 in its task log.
+- **The kimi lane is VERIFIED END TO END** (2026-09-13, Remy): `hub-worker spawn hordes
+  kimi-hordes-g8 --model kimi` => online; a real issued task ran
+  `~/.kimi-code/bin/kimi -p` and replied `done: kimi lane — running as Kimi (Moonshot AI) via Kimi
+  Code CLI ... Lane responsive.` Log:
+  `.hub-worker/logs/spawn-kimi-hordes-g8-20260913-235025.log`.
+- **When you spawn a worker, pass `--model kimi`** — the old dispatches used `--model glm`, which is
+  how the whole queue got parked on a dead backend. LANES are `kimi|glm|claude` (`hub_worker.py:192`),
+  so the lane is a one-word change: `hub-worker spawn hordes <name> --model kimi`.
+- **A worker is already online: `cli:kimi-hordes-g8`** (pid 1382676, listening on `['hordes','hub']`).
+  Prefer issuing to it over spawning another; if you do spawn, do not reuse that handle.
+- The worker's own watchdog respawns a wedged model, and it will just as happily keep retrying a
+  **quota-dead** one — a busy-looking worker is not a working worker. The tell is the model's own
+  exit line in `.hub-worker/logs/msg_<id>.log`.
+
+### N1 slice 1 (Witch's Chain Reaction Q) — COMPLETE ON DISK, ONE REPRODUCIBLE RED (2026-09-13, Remy)
+
+`cli:glm-hordes-g8` finished the slice and then died on the 429 before it could be verified, so the
+work sat **uncommitted** (~354 insertions across 7 `src/` files + `test/test_chain_q.mjs`, written
+21:30-21:40). Remy measured it rather than trusting either the builder report or the missing one:
+
+- `node test/test_chain_q.mjs` => **15 checks passed** (the Q is real: it jumps further than the gun,
+  FROST_NOVA's slow lands on everything the chain touches, kills detonate through the one funded
+  blast at 6 mana, 60/120Hz parity, the draftable card stays in the pool un-nerfed, and KNIGHT keeps
+  FROST_NOVA — i.e. all three constraints the owner's decision pinned).
+- `bash tools/run_suite.sh` => **greenfiles=73 redfiles=1**. The red is `test/test_perks.mjs`:
+  `FAIL useSkill charges the Focus price and rolls the Focus cooldown (false !== true)`,
+  **reproducible** standalone (`perks: PASS=14 FAIL=1`). The Q routing change broke the Focus
+  price/cooldown contract at the real `useSkill` seam.
+- Fix brief written: `docs/briefs/N1_CHAIN_Q_PERKS_RED.md`. Its kimi dispatch **was NOT sent** — the
+  worker correctly refused because the lock was held, and stopping was the right call.
+- **THE RED IS NOW FIXED, and NOT by that brief — the commit-watcher fixed it in-flight (23:58).**
+  The cause was a stale FIXTURE, not the game: `test_perks` cast every catalog id into an EMPTY
+  field, and CHAIN_REACTION is AIMED — it legitimately refuses an empty cast (no spend, no cooldown;
+  `test_chain_q.mjs` pins that refund). The watcher's fix parks one sturdy target so every id is cast
+  under legal conditions and says so inline; **the assertion itself is untouched** (7 insertions,
+  1 deletion, all in fixture setup). Remy re-measured it: `test_perks` => **PASS=15 FAIL=0, 8/8
+  standalone**. One earlier `FAIL=2` was contention with the watcher's own concurrent suite — the
+  documented "a lone red is contention, re-run it alone" rule, not a defect.
+  `docs/briefs/N1_CHAIN_Q_PERKS_RED.md` is therefore **SUPERSEDED — do NOT dispatch it**; it is kept
+  only as the record of how the red was found and scoped.
+- **NEXT ACTION for the pilot:** once the watcher's commit lands and the lock is FREE, VERIFY N1
+  slice 1 on the committed artifact as usual (`test_chain_q` 15/15, `test_perks` 15/15 twice,
+  `bash tools/run_suite.sh` => `redfiles=0` three times, and confirm no assertion was weakened in the
+  `test_perks` fixture diff). Then continue the queue (three ult specs = N1 slice 3, then G21).
+
+---
+
 ## SUPERSEDED BALANCE ARITHMETIC — read before using any number below (2026-09-13)
 
 Owner-ordered changes on 2026-09-13 invalidated the balance arithmetic in the older tick notes and
@@ -131,7 +189,7 @@ Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: DISPATCHABLE 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3]
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -3716,3 +3774,137 @@ The owner answered the Q-slot question: **OPTION (a)**. Full text lives on N1b i
 **UPDATED AFTER THIS NOTE — ONE ANSWER IN, ONE STILL OUT:**
   1. **The Witch's Q: ANSWERED.** It becomes **CHAIN REACTION** (mana-fed chain zap whose kills detonate, with FROST_NOVA's slow folded in) - owner-confirmed, full spec on N1b item 3. So the answer to question 2 of this note is NEITHER option sketched here: she gets a NEW defining Q, not FROST_NOVA and not a bare `CHAIN_ZAP`. Do not re-open it.
   2. **The three non-Witch ULT EFFECTS: DELEGATED TO THE PILOT (owner, 2026-09-13: "go ahead").** NOT answered here, and deliberately so - the owner does not need to spec them by hand. Bring back a short spec per class (name, effect, numbers, why it is distinct) BEFORE any builder implements, honouring the constraint list now on N1b item 3: non-mana, kill-charged with a cooldown floor, distinct from each other and from the 9 existing weapon archetypes and from Chain Reaction, a charge READOUT registered in the chrome gate, phone-first verification with the screenshot actually read, and measured before/after rather than asserted. **N1 IS FULLY DISPATCHABLE; there is no owner input outstanding.** Its three slices: the Witch's Chain Reaction Q, the draftable FROST_NOVA card, and the three ults.
+
+## TICK NOTE 36 - 2026-09-13 (goal pilot tick, subagent:spawnfa; the tick-35 dispatch was found DEAD - it self-cancelled on a transient lock and never ran - so this tick re-dispatched it, with new co-failure evidence and a lock clause that cannot self-cancel)
+
+**Goal worked: the four stable suite reds' successor - BUILD_PLAN "full build complete" item 3, a suite that
+is green BY CONSTRUCTION.** This tick BUILT NOTHING. It measured, it found the previous dispatch was a
+false start, and it re-issued it.
+
+**THE FINDING THAT MATTERS: THE TICK-35 DISPATCH NEVER RAN.** Its log
+`.hub-worker/logs/msg_01M2E4FMR99Y47HWP6G8P39FAG.log` (exit 0, nothing edited) reads:
+`blocked: SUITE_FLAKES_POWER - agentlock held by another owner (subagent:commit-watcher, alive,
+"commit+push pending hordes slice"). Stop condition (1) hit: nothing edited, lock not taken.`
+So the flake slice sat unstarted for a whole tick, and the previous tick's note reported it as
+"dispatched" without the outcome being knowable yet. **Also a DOC-ID MISMATCH:** tick 35's note records
+the task id as `msg_01M2E4BW3X5JYN2C4K29ESY14Q`; the task that actually ran was
+`msg_01M2E4FMR99Y47HWP6G8P39FAG` (it is the one in the g8 seen-list and the one with a log).
+
+**MY OWN MEASUREMENTS THIS TICK (HEAD 23330a9 / now bfb56d7, dirty=0).**
+- `bash /tmp/run_all.sh`: `greenfiles=72 redfiles=1`, REDLIST `test/test_stages.mjs`,
+  `Error: SNOWFIELD aggregate spawn ratio 0.971 over 4 cohorts`.
+- `test/test_stages.mjs` standalone: **3 red / 15 sequential runs** (batch of 5: 3 red; batch of 10
+  immediately after: 0 red). Load-correlated, about 20% - consistent with tick 35's 5/30, so it is a
+  flake, not a new regression.
+- **NEW AND LOAD-BEARING: THE TWO RED CLAUSES CO-FAIL, SO THEY SHARE ONE CAUSE.** In EVERY red run this
+  tick BOTH fired; in all 13 green runs NEITHER did:
+  `FAIL (e) mods at the REAL seam: SNOWFIELD foes are exactly 1.5x hp / 0.9x speed, stage 0 exactly 1.0x`
+  plus one of `Error: SNOWFIELD aggregate spawn ratio 0.947 over 4 cohorts` /
+  `Error: SNOWFIELD spawned 36 vs base 36 over 4 cohorts (spawnMult 0.7 must be fewer)`.
+  So the deterministic route (drive the exported `T.spawnWave` at src/main.js:5826 with identical
+  state/dt/time, and assert the exact first-tick spawnTimer interval ratio) must cover the mods clause
+  too - measuring SURVIVING BODIES is what is inside the game's own variance.
+- `test/test_trophy_hooks.mjs` standalone: **2 red / 10 runs**, both the same message
+  `FAIL the LIVE loop counts boss kills and OPENED chests`.
+
+**DISPATCHED, AND THIS TIME IT IS ACTUALLY RUNNING.** The brief `docs/briefs/SUITE_FLAKES_POWER.md` got a
+**TICK-36 ADDENDUM** (lines 38-74) carrying the co-fail evidence above AND a CHANGED LOCK CLAUSE: if the
+lock is HELD, sleep 20s and re-check up to 15 times (5 minutes) rather than self-cancelling immediately,
+never editing while held. Re-issued as **`msg_01M2E8DXWT1SA8X4NKTMT36SSC` -> `cli:glm-hordes-g8`**, and
+`hub-worker queue cli_glm-hordes-g8` confirms `running: msg_01M2E8DXWT1SA8X4NKTMT36SSC` with a live log
+(`.hub-worker/logs/msg_01M2E8DXWT1SA8X4NKTMT36SSC.log`, 20:48). The orchestrator committed the addendum
+as `bfb56d7`.
+
+**TOOLING FINDING - NEW, AND IT COSTS A TICK IF NOT KNOWN (for the orchestrator).** Two separate traps,
+both hit this tick:
+1. **`hub-worker issue hordes @cli_glm-hordes-g8 ... --async` RETURNS SUCCESS AND DELIVERS NOTHING.** It
+   printed `{"issued": "msg_01M2E8719B573D9QY0Z8XY6GYW", "channel": "hordes", "to": "cli_glm-hordes-g8"}`
+   and the message IS in the channel (verified by reading it back from the API), but the worker's queue
+   stayed `pending_tasks: []` and no log appeared for 4+ minutes. **The colon form delivers:**
+   `hub-worker issue hordes cli:glm-hordes-g8 "$(cat /tmp/flakes_task.txt)" --async` was `running`
+   within seconds. An `@`-prefixed underscore target is a silent no-op - the doc's known-good example
+   (`cli:glm-hordes-g8`) was right and the `@` form is a trap.
+2. Issuing needs the **coordinator token**: with the ambient identity the post fails
+   `HubAuthError: 403 forbidden: no write grant on channel 'hordes'`. Working invocation:
+   `set -a; . ~/projects/agent-hub/coordinator.env; set +a` then
+   `AGENT_HUB_URL="$HUB_URL" AGENT_HUB_TOKEN="$HUB_TOKEN" AGENT_HUB_PARTICIPANT="$HUB_PARTICIPANT" hub-worker issue ...`.
+   Note the env file uses `HUB_TOKEN`/`HUB_PARTICIPANT` (no `AGENT_` prefix), so the ambient session token
+   otherwise wins and the 403 returns.
+
+**COULD NOT VERIFY (honest):**
+- **No artifact exists yet.** The builder started inside this tick. The next tick MUST run the two 20/20
+  standalone tallies, three consecutive `redfiles=0` suite runs with their TREE lines, `git diff --stat`
+  showing no `src/`/`tools/` file touched, and read the trophy_hooks per-iteration log. A `done:` line is
+  a claim, never evidence.
+- Whether the mods+spawn co-failure is ALSO a game defect (stage mods intermittently not stamped) is not
+  proven. The co-failure is measured; the cause is not. The brief orders the builder to STOP and report
+  rather than patch `src/` if the seam measures clean while the body counts stay diluted.
+- **No vision model was reachable from this cron session at tick 35 and I did not retest it this tick**, so
+  `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` remains unread by any agent (now 18 ticks).
+  The orchestrator's `6c0ee6d` claims a real read of it; that claim is the orchestrator's, not this pilot's.
+- Unchanged and still owed: the item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the
+  owner's raised x1.6, the ranked-queue vs `BUILD_PLAN.md` W7a/W7b sequencing conflict, the G23
+  unlock-tied HOOK (owner design call), and the `docs/FEEDBACK_2026-09-13.md` 25-item triage (G26).
+- **N1 is now FULLY DISPATCHABLE** (owner answered the Q-slot and delegated the three ult effects to the
+  pilot, with constraints - see the head of this file). It was NOT dispatched this tick: the suite-green
+  bar outranks it and only one writer exists. Next tick's call, in that order.
+
+**LOCK / HYGIENE:** FREE at tick start, acquired as `subagent:spawnfa`, held through recon and the
+re-dispatch, **RELEASED before issuing** (the builder takes it itself; the new clause makes it retry
+instead of self-cancelling). `state: FREE` confirmed at the end and at 20:48. No worker killed, restarted
+or steered. No git state command run this tick. **QUEUE HYGIENE:** the undelivered `@`-form message
+`msg_01M2E8719B573D9QY0Z8XY6GYW` is left in the channel as a plain post; it does not sit in any worker's
+pending queue (`pending_tasks: []`), so it cannot double-run the builder. No ghost rows to sweep.
+
+**NEXT GOAL:** verify the re-dispatch (both tests 20/20 standalone, three `redfiles=0` runs, no `src/` or
+`tools/` diff), then **N1** (the Witch's Chain Reaction Q, the draftable FROST_NOVA card, the three ults
+with the pilot's own specs + charge readout), then **G21**.
+
+## TICK NOTE 37 - 2026-09-13 (goal pilot tick, subagent:spawnfa)
+
+**Goal worked: BUILD_PLAN 'full build complete' item 3 - a suite that is green BY CONSTRUCTION. VERIFIED,**
+**not taken on the builder's word.** The tick-36 re-dispatch (msg_01M2E8DXWT1SA8X4NKTMT36SSC, cli:glm-hordes-g8)
+COMPLETED (exit 0). This tick re-measured everything itself.
+
+**MY OWN MEASUREMENTS (HEAD bfb56d7, 3 dirty files: the two tests + this doc).**
+- test/test_stages.mjs standalone: **20/20 green** (was 3 red / 15 at tick 36).
+- test/test_trophy_hooks.mjs standalone: **20/20 green** (was 2 red / 10 at tick 36).
+- bash /tmp/run_all.sh **three consecutive runs: greenfiles=73 redfiles=0** each, TREE line identical
+  each time: /home/claude/projects/hordes @ bfb56d7 | dirty=3. REDLIST empty.
+- **No src/ or tools/ file touched**: git status --short src/ tools/ is empty. The builder honoured
+  the test-only bound; git diff --stat is test/test_stages.mjs +134, test/test_trophy_hooks.mjs +13.
+
+**WHAT THE FIX ACTUALLY IS (pilot-read, not reported).** test_stages.mjs clause (e) no longer samples
+SURVIVORS of live 900-frame runs (9-12 bodies, inside the game's own variance). It now drives the exported
+seam T.stages.spawnWave (src/main.js:5826, verified present: signature spawnWave(dt) at :582, called by the
+run loop) at pinned state/dt/time with a seeded LCG, and measures EMISSION. Every original operator
+survives (exact 1.5x hp, exact 0.9x speed, NaN guards, stage-0 parity, STRICT < on bodies, <0.9 aggregate
+bound) and the fix ADDS coverage: 60Hz AND 120Hz, plus an exact first-tick spawnTimer interval ratio with
+no tolerance. Measured this tick: interval base 1.27 / snow 1.8142857142857145 = exactly 0.7; emission 10s
+cohorts snow 6 vs base 8 avg, ratio 0.750. test_trophy_hooks.mjs adds T.banners.suppressAll() (seam at
+src/main.js:5834-5838) - the cause was the one-time EVOLUTION TOKEN banner legitimately holding the sim
+2.5s mid-loop and starving a frame-budgeted counter; the seam's own comment (main.js:5830) says a
+frame-counting probe must be banner-inert. No assertion weakened or removed in either file.
+
+**COULD NOT VERIFY (honest).**
+- The trophy_hooks fix rests on the builder's 40-run probe (hold landed mid-loop 5 times). I confirmed the
+  seam EXISTS and is documented for this purpose and that the test is now 20/20; I did not re-run the
+  40-probe myself.
+- docs/art/browser-verify-2026-09-12/g20-stages-phone.png still unread by any pilot agent (19 ticks).
+- Unchanged and still owed: item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the
+  owner's raised x1.6, ranked-queue vs BUILD_PLAN W7a/W7b sequencing conflict, the G23 unlock-tied HOOK,
+  and the docs/FEEDBACK_2026-09-13.md 25-item triage (G26).
+
+**DISPATCHED: N1 slice 1 - the Witch's Q = CHAIN REACTION**, brief docs/briefs/N1_CHAIN_REACTION_Q.md
+(complete and self-contained: the in-repo owner spec is named as authoritative, every anchor is one the
+pilot verified exists at bfb56d7, plus the doc's own 'her Q is Chain Zap' vs 'her Q is CHAIN REACTION'
+wording clash resolved explicitly so a builder cannot invent a resolution). N1's other two slices remain:
+slice 2 the draftable FROST_NOVA card, slice 3 the three non-Witch ults - **slice 3 still needs the
+pilot to author the three ult specs BEFORE any builder implements**, per the owner's delegation.
+
+**LOCK / HYGIENE:** FREE at tick start, acquired as subagent:spawnfa, doc+brief edits made while held,
+RELEASED before issuing (the builder takes it itself with the 5-minute retry clause). No worker killed,
+restarted or steered. No git state command run this tick.
+
+**NEXT GOAL:** verify N1 slice 1 (suite redfiles=0 x3, tallies, the measured detonation/mana numbers, the
+phone screenshot READ), then author the three ult specs, then G21.

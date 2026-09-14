@@ -36,7 +36,7 @@ import {
 // G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
 // Blood Harvest) — mechanic rewrites, granted through the same card contract.
 import {
-  rewriteCards, hasRewrite, rewriteBoom, harvestBlast, REWRITES,
+  rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, REWRITES,
 } from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
@@ -1715,7 +1715,11 @@ function update(dt) {
       // never kill the player; the death pass splices each enemy exactly once
       // (below), so a kill detonates exactly once and a chain merely propagates
       // across frames. NO toast: the feed is for rare moments, not every kill.
-      const boom = rewriteBoom(state);
+      // N1 slice 1: a corpse the Witch's CHAIN_REACTION Q killed (flagged by
+      // useSkill) detonates through the SAME blast — boomBlast owns the
+      // numbers/price/dry-fallback, so there is ONE detonation implementation
+      // and a rewrite-holding Witch still detonates each corpse exactly once.
+      const boom = rewriteBoom(state) || (e.chainBoom ? boomBlast(state.player) : null);
       if (boom) {
         // CHAIN REACTION draws on the pool per detonation; a dry run still
         // detonates, just smaller (rewriteBoom owns that decision).
@@ -4045,8 +4049,9 @@ function startRun() {
   // cycle it exactly as before; this is a default, not a lock.
   if (ch.defaultFocus) autoController.focus = ch.defaultFocus;
   // N1a: the touch Q label reads the class's skill id (was: the hardcoded
-  // "FROST" literal in index.html). The VALUE is FROST_NOVA for every class
-  // today — the span keeps the label runtime-owned for the per-class ults.
+  // "FROST" literal in index.html). N1 slice 1: the Witch's row now carries
+  // CHAIN_REACTION, so the label reads CHAIN on her runs — the span stays
+  // runtime-owned for the per-class ults.
   {
     const qLbl = document.getElementById('q-skill');
     if (qLbl) {
@@ -4542,8 +4547,9 @@ function cycleStanceWithFeedback() {
 // N1a: the Q slot's skill id is the equipped class's own (CHARACTERS[].skill
 // in meta.js — data, not a special case). Every Q consumer — the key act, the
 // readiness readout, the text-HUD line and the touch label — reads it HERE,
-// never a literal. All four classes carry FROST_NOVA today; the per-class
-// ULTS are a separate owner-gated slice (goals doc N1) and are NOT wired here.
+// never a literal. N1 slice 1: the WITCH row carries CHAIN_REACTION (her
+// defining move); the other three classes still carry FROST_NOVA, which
+// returns as a DRAFTABLE card for everyone in N1 slice 2.
 function classSkillId(st) {
   return (st.character && st.character.skill) || 'FROST_NOVA';
 }
@@ -4689,8 +4695,9 @@ function autoCastSkills(state) {
   if (!ac || !ac.ENABLED) return;
   const p = state.player;
   // The Q slot (N1a classSkillId — the ONE place a class's skill id is read).
-  // All classes carry FROST_NOVA today; a future Q skill without a RADIUS
-  // falls back to "any live enemy" rather than a blind cast.
+  // FROST_NOVA gates on its RADIUS; a Q skill without one (the Witch's
+  // CHAIN_REACTION — an aimed chain) falls back to "any live enemy" rather
+  // than a blind cast.
   const q = classSkillId(state);
   if ((p.skillCd[q] || 0) <= 0 && p.mana >= skillManaCost(q, state)) {
     const r = C.SKILLS[q] && C.SKILLS[q].RADIUS;
@@ -5216,7 +5223,10 @@ function hudTextBlock(p) {
     // agrees with the touch buttons and the hint lines — `W` is AUTO-only
     // (in MANUAL it is held 'up'; main.js keyMap maps `e` to the act in BOTH
     // modes) and the AUTO hint line already discloses "(W too)".
-    `Q ${skillTxt(classSkillId(state), 'FrostNova')}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
+    // N1 slice 1: the Q short label is derived from the LIVE class skill's
+    // NAME (spaces stripped) — 'FrostNova' for three classes, 'ChainReaction'
+    // on the Witch — never a hardcoded skill literal.
+    `Q ${skillTxt(classSkillId(state), ((C.SKILLS[classSkillId(state)] || {}).NAME || 'Frost Nova').replace(/ /g, ''))}   E ${skillTxt('OVERCHARGE', 'Ovrchg')}${p.buffs.overcharge > 0 ? '!' : ''}\n` +
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +

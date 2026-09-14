@@ -140,7 +140,13 @@ ok('applyRegrowth heals min(rate*dt, room) and reports the applied amount', () =
 ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
   for (const id of Object.keys(C.SKILLS)) {
     const off = stateWith(null), on = stateWith({ focus: true });
-    for (const st of [off, on]) { st.enemies = []; st.effects = []; }
+    // N1 slice 1: CHAIN_REACTION is the AIMED skill - an empty field REFUSES the
+    // cast by design (no spend, no cooldown; test_chain_q.mjs pins that refund).
+    // So the fixture parks ONE STURDY target and every catalog id is cast under
+    // legal conditions. Every assertion below is the shipped one, verbatim.
+    const park = () => ({ x: 40, y: 0, hp: 1e9, maxHp: 1e9, kind: 'CHASER',
+      speed: 60, age: 0, flash: 0, slow: 0, xp: 0 });
+    for (const st of [off, on]) { st.enemies = [park()]; st.effects = []; }
     const a = off.player, b = on.player;
     a.mana = b.mana = 999;
     assert.equal(useSkill(off, id), true);

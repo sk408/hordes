@@ -754,12 +754,16 @@ export const CHARACTERS = {
   },
   WITCH: {
     id: 'WITCH', name: 'Witch', unlockCost: 9000,
-    desc: 'Starts with Chain Zap. Deep mana pool (+50). Frail: -25 max HP.',
-    startingWeapon: 'ZAP', skill: 'FROST_NOVA', startPotions: 1,
+    desc: 'Chain Reaction Q + Chain Zap start. Deep mana pool (+50). Frail: -25 max HP.',
+    startingWeapon: 'ZAP', skill: 'CHAIN_REACTION', startPotions: 1,
     healOnChest: 0,
     // N1a: she is the mana class — spells cost her half (weaponManaCost reads
     // this), and her pilot defaults to SWARM (the chain only pays on a clump;
     // TAB/G still cycle it like any focus).
+    // N1 slice 1: her Q is CHAIN REACTION, her DEFINING move (goals doc N1b
+    // item 3) — a mana-fed chain that outreaches and out-jumps her gun, whose
+    // kills detonate. FROST_NOVA's slow moved onto the chain; FROST_NOVA
+    // itself is unchanged and returns as a draftable card in slice 2.
     mods: { maxHp: -25, maxMana: 50, manaCostMult: 0.5 },
     defaultFocus: 'SWARM',
   },

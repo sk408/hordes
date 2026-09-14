@@ -142,10 +142,15 @@ export function grantRewrite(state, id) {
 }
 
 // ---------- applied-value helpers (the ONE source the game reads) -----------
-/** CHAIN REACTION's detonation at the kill site, or null when not held. */
-export function rewriteBoom(state) {
-  if (!hasRewrite(state, 'onkillboom')) return null;
-  const p = state.player;
+/**
+ * The detonation numbers (radius/damage/manaCost) for a pool state. PURE.
+ * N1 slice 1: the Witch's Q chain detonates its kills with THESE numbers —
+ * the same blast, the same 6-mana price, the same dry fallback — so there is
+ * exactly ONE detonation implementation in the game. rewriteBoom (the
+ * draftable card: EVERY kill detonates) and the Q (CHAIN kills detonate)
+ * both call this; only their gating differs.
+ */
+export function boomBlast(p) {
   // PURE: the helper decides what the blast WOULD be and what it WOULD cost;
   // the caller performs the spend. A state with no finite mana pool (unit
   // tests, any non-run caller) cannot bind the cost, so it reads funded.
@@ -157,6 +162,11 @@ export function rewriteBoom(state) {
     damage: funded ? base : base * BOOM_DRY_DAMAGE_MULT,
     manaCost: funded ? BOOM_MANA_COST : 0,
   };
+}
+/** CHAIN REACTION (the rewrite card)'s detonation at the kill site, or null when not held. */
+export function rewriteBoom(state) {
+  if (!hasRewrite(state, 'onkillboom')) return null;
+  return boomBlast(state.player);
 }
 /** BLOOD HARVEST's blast at the pickup site, or null when not held. */
 export function harvestBlast(state) {

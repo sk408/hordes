@@ -18,6 +18,19 @@ const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
 const T = h.T;
 
+// SUITE-FLAKES identity B — CAUSE NAMED WITH EVIDENCE, then the sanctioned
+// fixture fix. The chest loop below counts FRAMES (one pump per pushed chest),
+// and opening a chest rolls the CHEST-channel EVOLUTION TOKEN (main.js:1959).
+// The first-ever TOKEN banner is a PERSISTED per-profile event that HOLDS the
+// sim for 2.5s (grantEvolutionToken -> state.bannerHold), and a fresh harness
+// profile has not seen it: in 40 probe runs the hold landed mid-loop 5 times —
+// the pickup counter froze at 2 / 13 / 23 of 25 while mode stayed 'playing'
+// and st.bannerHold decayed 2.5 -> 2.1 under the banner
+// 'EVOLUTION TOKEN ACQUIRED'. Not a game defect (the hold is deliberate), and
+// the game ships the sanctioned seam for exactly this case — "a probe that
+// COUNTS FRAMES must be banner-inert" (main.js:5830). Assertions untouched.
+T.banners.suppressAll();
+
 // A live hostile parked on the hero: the contact path in update() is the one
 // real damage source a headless test can aim without inventing shots.
 function parkOnHero() {

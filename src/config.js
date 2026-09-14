@@ -167,6 +167,29 @@ export const CONFIG = {
       DURATION: 4,       // buff duration
       RATE_MULT: 0.45,   // attack cooldown multiplier while buffed
     },
+    // N1 slice 1 (goals doc N1b item 3): the Witch's Q, her DEFINING move —
+    // a mana-fed chain that must read as the big deliberate burst next to her
+    // gun (WEAPONS.ZAP: 3 jumps / 90 reach / 0.75 falloff on a 1.4s cadence),
+    // so it EXCEEDS the gun on every axis: more jumps, longer reach, GENTLER
+    // per-jump falloff. Every enemy it kills detonates at the ESTABLISHED
+    // onkillboom price (rewrites.js BOOM_MANA_COST 6, dry fallback — item 2:
+    // the relief valve is the shop, never a balance change), and FROST_NOVA's
+    // slow moved ONTO the chain (same constants; FROST_NOVA itself is
+    // UNCHANGED and returns as a draftable card in N1 slice 2).
+    CHAIN_REACTION: {
+      KEY: 'q',
+      NAME: 'Chain Reaction',
+      MANA: 30,
+      COOLDOWN: 8,        // seconds — a deliberate burst, not gun cadence
+      JUMPS: 6,           // vs the gun's 3
+      CHAIN_RANGE: 130,   // vs the gun's 90
+      FALLOFF: 0.85,      // vs the gun's 0.75 — gentler per-jump decay
+      DAMAGE: 12,         // flat per strike
+      DAMAGE_FRAC: 0.5,   // + 50% of weapon damage per strike (the boom shape:
+                          // stays relevant as the ladder's HP curve climbs)
+      SLOW: 2.5,          // FROST_NOVA's slow duration, applied to every touch
+      SLOW_FACTOR: 0.45,
+    },
   },
 
   // Finite consumables. Keys: H = health, N = mana.

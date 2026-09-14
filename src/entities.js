@@ -24,7 +24,7 @@ export function makePlayer() {
     attackTimer: 0,
     // Skills/potions engagement layer.
     mana: C.MANA.MAX,
-    skillCd: { FROST_NOVA: 0, OVERCHARGE: 0 }, // seconds remaining
+    skillCd: { FROST_NOVA: 0, OVERCHARGE: 0, CHAIN_REACTION: 0 }, // seconds remaining
     buffs: { overcharge: 0 },
     // G8 step 3 (src/rules.js): the run's persistent CONDITIONS (Horde Bait /
     // One of Each) and the stat ledger `once` reads. G8 step 4 (src/perks.js):
