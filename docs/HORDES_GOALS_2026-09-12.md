@@ -641,7 +641,7 @@ payout a fixed fraction of EARNED progress.
 
 [DONE 2026-09-14 - landed `8e92a27` and PUSHED. Tooling only (the owner waived economy modelling in W7a). MEASURED, reproduced by the orchestrator itself: `node tools/draft_sim.mjs --divergence` prints "OWNER TARGET (W7b, reported not enacted): >= x1.6 on BOTH axes -> NOT MET (survival x1.36, waves x1.50)". The tool reports rather than enacts the target, deliberately: flipping the acceptance bar would presuppose W7b's balance change. It also shipped the DIAGNOSIS of why divergence is only x1.36 - four levers (L1 stat cards weigh 0.3 vs weapons 1.0 so most drafts carry no decision; L2 Iron Heart is flat +25 HP and decays against the contact curve exactly when long runs are decided; L3 a THIRD Split Shot card does NOTHING because the projectile cap is 3; L4 XP x1.28/level collapses the number of drafts late) - ALL FOUR FAIL the x1.6 bar individually, so the target needs a combination. L3 is a defect on its own merits. TWO FIXTURE RETARGETS FLAGGED BY THE ORCHESTRATOR, NOT BLESSED: test_draft_luck's cohort was widened 30->60 runs to clear an x1.15 bar that read x1.149 (tune-until-pass in shape, even though the model genuinely changed); test_draft_sim's measurement point moved to final kills/banked and to a 9-run cohort median. NOT VERIFIED: no real-loop validation (analytic/sim-only), sim income mirrors E1's shape but is not calibrated to the real ~11.7k bank (ratios only), owner loadout only. W7b is the NEXT slice, not this one.]
 
-[status: DONE 2026-09-14 — LANDED and PUSHED. The draft is now a RARITY-LADDERED choice (COMMON flat / RARE percent / MYTHIC chase; fixed and percent COEXIST, never a conversion). RARE: Iron Heart +25% (coexists with the flat +25), Scholar's Stone +20% XP, Gilded Palm +30% purse gold, Crimson Edge +3% lifesteal. MYTHIC (run-gated): Second Wind (revive 50% HP + 2s spawn protection), Storm Shards (XP pickups chip enemies in radius 90), Full Hand (+1 draft offer for the rest of the run). L3 fixed (projectile cap now takes a splitCap stat, so a 3rd+ Split Shot is no longer a dead pick). Fortune extended to the whole ladder. The chase gate is the owner's TWO-STAGE roll (2026-09-14): a 10% EVENT roll ('this run has a joker'), then 60/25/15 on the count, then a uniform which-draw — replacing the per-card independent rolls that stacked to ~27% any-mythic; MEASURED over 1200 seeded runs: event 0.0908, count 0.550/0.321/0.128, per-card ~0.048. VERIFIED by the orchestrator AND independently by the pilot: test_w7b_draft_ladder 16/16 through the real seams, verify_w7b_ladder ALL CHECKS PASSED in real Chrome (one live offer showed COMMON+RARE+MYTHIC together), suite greenfiles=85 redfiles=0. The test_run_purse fixture was retargeted 0xe1->0xe3 for the chase-gate rng shift (assertion unchanged, passes 11/11); test_ults was a load flake (passes standalone 3/3). STILL OPEN, stated not hidden: acceptance bar #4, the paired-seed real-loop divergence A/B (node tools/w7b_draft_ab.mjs, partials /tmp/w7b_ab/) — RUNNING, no ratio yet, the bad-policy arms are slow (hours). The FEATURE is verified working; the divergence OUTCOME (does it hit x1.6?) is a balance measurement that lands separately and informs tuning. E2 is unblocked now that this has landed.]
+[status: DONE 2026-09-14 — LANDED and PUSHED. The draft is now a RARITY-LADDERED choice (COMMON flat / RARE percent / MYTHIC chase; fixed and percent COEXIST, never a conversion). RARE: Iron Heart +25% (coexists with the flat +25), Scholar's Stone +20% XP, Gilded Palm +30% purse gold, Crimson Edge +3% lifesteal. MYTHIC (run-gated): Second Wind (revive 50% HP + 2s spawn protection), Storm Shards (XP pickups chip enemies in radius 90), Full Hand (+1 draft offer for the rest of the run). L3 fixed (projectile cap now takes a splitCap stat, so a 3rd+ Split Shot is no longer a dead pick). Fortune extended to the whole ladder. The chase gate is the owner's TWO-STAGE roll (2026-09-14): a 10% EVENT roll ('this run has a joker'), then 60/25/15 on the count, then a uniform which-draw — replacing the per-card independent rolls that stacked to ~27% any-mythic; MEASURED over 1200 seeded runs: event 0.0908, count 0.550/0.321/0.128, per-card ~0.048. VERIFIED by the orchestrator AND independently by the pilot: test_w7b_draft_ladder 16/16 through the real seams, verify_w7b_ladder ALL CHECKS PASSED in real Chrome (one live offer showed COMMON+RARE+MYTHIC together), suite greenfiles=85 redfiles=0. The test_run_purse fixture was retargeted 0xe1->0xe3 for the chase-gate rng shift (assertion unchanged, passes 11/11); test_ults was a load flake (passes standalone 3/3). STILL OPEN, stated not hidden: acceptance bar #4, the paired-seed real-loop divergence A/B (node tools/w7b_draft_ab.mjs, partials /tmp/w7b_ab/) — PARTIAL READ IN TICK NOTE 43 (2026-09-14 23:45 UTC; good arms n=24 complete, bad arms still running at 23/24 and 12/24). THE SIGN IS INVERTED, IN BOTH BUILDS: over the 12 seeds present in all four arms, the utility-favoring BAD policy survives LONGER than the ladder-chasing GOOD one - good/bad x0.443 (ratio-of-medians x0.172) with the ladder OFF and x0.348 (x0.279) with it ON. The ladder itself reads as broad POWER, not draft divergence: on-vs-off for the GOOD arm x1.932 median-of-ratios (n=12) while the BAD arm is pinned at the 1800s cap (10/12 censored, x1.000). Exact tables + the censoring caveat in TICK NOTE 43. NOT a bar verdict - the arms are unfinished. The FEATURE is verified working; the divergence OUTCOME (does it hit x1.6?) is a balance measurement that lands separately and informs tuning. E2 is unblocked now that this has landed.]
 - **No extra multipliers on the payout** (Remy's recommendation): `goldMult` and friends are already
   encoded in the best-run basis, so applying them again double-counts. If the owner wants a multiplier,
   it belongs in K.
@@ -2539,7 +2539,7 @@ are what make stage choice a build decision. Gate stages by achievement-style un
 defeat a boss), not gold. Add a separate Hyper/Inverse/Endless-style modifier axis — the highest-ROI
 variety lever in either game. **Never ship a reskin:** players judge maps on mechanics.
 
-**G21 — RULE-CHANGING CARDS + A SMALL ACTIVE SET.**  [status: IN PROGRESS 2026-09-14 (SLICE 1) — BRIEF AUTHORED + ANCHOR-VERIFIED, DISPATCH BLOCKED BY A PROVIDER QUOTA WALL, NOT BY THE WORK. **NEXT TICK: RE-ISSUE, DO NOT VERIFY.** Task msg_01M2H2HK5S5D0374TV5PHENFH7 exists in `.hub-worker/logs/` and its spawn line reads `exit 1`, but that exit 1 is a kimi PROVIDER AUTH ERROR, not a build: the task log ends `provider.auth_error: 403 You've reached your 5-hour usage limit` - ZERO tokens were produced and NO G21 code was written. Treat exit 1 on this task id as `not started` and re-issue the SAME brief; do NOT run `verify_g21_rewrite_cards.mjs` (it does not exist) and do NOT mark anything landed. Dispatched by the goal-pilot tick on the post-M1 dirty tree (`4d79210`, dirty=16, suite greenfiles=88 redfiles=0), builder lane cli:kimi-hordes-g8 (up, pid 1576690), brief `docs/briefs/G21_RULE_CARDS.md` (authored pre-M1, its executed DISPATCH ANCHOR CHECK + the one corrected anchor are INSIDE it). Slice 1 = the SYSTEM: `REWRITE_SLOTS = 4` finite slots, the empty-slot cooldown incentive, the FROST/CHAIN/ORBIT/BURN/CONDUCT tag taxonomy on the draft desc, and FIVE new cards (RIME/IGNITE/LIVE WIRE/AFTERSHOCK/WIDE ORBIT) through ONE `onWeaponHit` writer + the predicate-offered contract, family share held at ~0.06. Slice 2 (cross-tag combos + the rest of the 12-20) is NOT in this dispatch.] Neither leader has player-triggered actives (VS is
+**G21 — RULE-CHANGING CARDS + A SMALL ACTIVE SET.**  [status: IN PROGRESS 2026-09-14 (SLICE 1) — BRIEF AUTHORED + ANCHOR-VERIFIED, DISPATCH BLOCKED BY A PROVIDER QUOTA WALL, NOT BY THE WORK. **NEXT TICK: RE-ISSUE, DO NOT VERIFY.** Task msg_01M2H2HK5S5D0374TV5PHENFH7 exists in `.hub-worker/logs/` and its spawn line reads `exit 1`, but that exit 1 is a kimi PROVIDER AUTH ERROR, not a build: the task log ends `provider.auth_error: 403 You've reached your 5-hour usage limit` - ZERO tokens were produced and NO G21 code was written. Treat exit 1 on this task id as `not started` and re-issue the SAME brief; do NOT run `verify_g21_rewrite_cards.mjs` (it does not exist) and do NOT mark anything landed. RE-CONFIRMED BY TICK 43 (2026-09-14 23:40 UTC): the wall is STILL up - a direct provider probe (`kimi -p "reply with exactly: PROBE_OK"`) returned the same `403 You've reached your 5-hour usage limit`, so tick 43 dispatched NOTHING (a blind re-issue reproduces exit 1 and adds hub noise, it does not build). The lane queue is EMPTY (`hub-worker queue hub` => no output = no pending and no running task), so nothing stale will fire when the quota returns. NEXT TICK: PROBE FIRST (~10s), then re-issue the SAME brief only if the probe answers; if the 403 persists there is NO fallback lane (cli:glm-hordes-g8 retired, quota resets 2026-09-15 15:49:58 UTC) and the queue stays stalled until the owner decides. Dispatched by the goal-pilot tick on the post-M1 dirty tree (`4d79210`, dirty=16, suite greenfiles=88 redfiles=0), builder lane cli:kimi-hordes-g8 (up, pid 1576690), brief `docs/briefs/G21_RULE_CARDS.md` (authored pre-M1, its executed DISPATCH ANCHOR CHECK + the one corrected anchor are INSIDE it). Slice 1 = the SYSTEM: `REWRITE_SLOTS = 4` finite slots, the empty-slot cooldown incentive, the FROST/CHAIN/ORBIT/BURN/CONDUCT tag taxonomy on the draft desc, and FIVE new cards (RIME/IGNITE/LIVE WIRE/AFTERSHOCK/WIDE ORBIT) through ONE `onWeaponHit` writer + the predicate-offered contract, family share held at ~0.06. Slice 2 (cross-tag combos + the rest of the 12-20) is NOT in this dispatch.] Neither leader has player-triggered actives (VS is
 100% auto; Megabonk's "abilities" are passive character traits) — so our actives were never the gap. Keep
 3-4 actives on distinct ROLES (CC / burst / mobility / defense) and add **12-20 rule-changing cards** that
 rewrite how abilities behave ("on-kill explosions", "healing also damages nearby enemies", "empty slots
@@ -5443,3 +5443,68 @@ top OPEN item; its code scope does not overlap A1's in a way that lets both run 
 
 No git state command was run this tick (read-only `git log`/`status` only). Lock acquired before the
 first edit, released after the dispatch.
+
+## TICK NOTE 43 - 2026-09-14 23:45 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G21 STILL BLOCKED BY THE PROVIDER WALL, so this tick advanced the PILOT's OWN measurement lane instead)
+
+**State picked up.** The orchestrator has landed the stack: HEAD `354ce02` ("M1 per-run map screen (atlas seam) + M1/G21 briefs"),
+tree CLEAN (dirty=0) - the M1/H1/E2/S1 work verified at `4d79210` dirty=16 plus the G21 brief, exactly as the previous tick left it.
+The last dispatch (`msg_01M2H2HK5S5D0374TV5PHENFH7`, G21 slice 1) is `exit 1` with ZERO tokens: `provider.auth_error: 403 You've reached
+your 5-hour usage limit`. Nothing to verify on the artifact: `grep -rn "REWRITE_SLOTS|RIME|LIVE WIRE|AFTERSHOCK" src/ index.html` => 0 hits,
+`tools/verify_g21*.mjs` does not exist. G21 slice 1 has NOT started.
+
+**1. The wall is STILL up, measured directly, so NO DISPATCH WAS MADE.** A provider probe
+(`kimi -p "reply with exactly: PROBE_OK"`, run from /tmp, ~10s) returned the same 403 quota error. Dispatching the brief into that wall
+would only reproduce exit 1 and leave another stale task id in the log, so this tick deliberately issued nothing. Lane hygiene checked:
+`hub-worker queue hub` prints NOTHING (no pending, no running), so there is no stale queued G21 sitting in the lane to fire or be
+FIFO-dismissed when the quota resets. There is no fallback lane to move to: `cli:glm-hordes-g8` is retired with its quota resetting
+2026-09-15 15:49:58 UTC, and the owner's lane decision is kimi. **This is the second consecutive tick blocked by provider quota; the queue
+cannot advance until the window resets (or the owner intervenes) - that decision is his, and it is the only blocker.**
+
+**2. Suite on the COMMITTED HEAD - GREEN, but NOT green by construction (measured twice, back to back).**
+- `bash tools/run_suite.sh` @ `354ce02` dirty=0 => **greenfiles=87 redfiles=1**, `RED test/test_run_structure.mjs :: the maw milestone was
+  cleared through the real loop` (assert at :248, `false !== true`).
+- `node test/test_run_structure.mjs` standalone **3/3 rc=0 (14 checks each)**.
+- `bash tools/run_suite.sh` again => **greenfiles=88 redfiles=0**.
+So the red is a FLAKE (1 red in 2 suite runs, 0 in 3 standalone runs), not a defect introduced by HEAD. **Mechanism, from the code, not a
+guess:** the maw check drives the real loop and kills the maw inside a bounded step budget (`while (!st.mawCleared && guard++ < 1800) step();`),
+and NEITHER `test/test_run_structure.mjs` NOR `test/_harness.mjs` seeds randomness (grep for `seed|mulberry|Math.random` => zero hits in both);
+the harness queues rAF callbacks itself (`_harness.mjs:102`), so the loop is draw-dependent, not wall-clock-dependent - an unlucky draw leaves the
+volley short of the maw and the guard trips. **Not fixed here and not weakened: the fix shape is a builder slice (seed the arm, or assert on sim
+time instead of a step count), and the guard must not simply be raised blindly.** Recorded so no later tick reads one green run as proof the
+suite is green by construction.
+
+**3. The W7b real-loop A/B has produced its first REAL numbers - and the sign is INVERTED.** The two good arms are complete, the bad arms are
+still running (`off_bad` 23/24, `on_bad` 12/24; the four arm processes have been up ~3h25m). Read from a snapshot (`/tmp/w7b_ab_snap`, partial
+lines dropped), per-arm summary over the runs each arm has:
+
+| arm | n | median | mean | censored @1800s | won |
+|---|---|---|---|---|---|
+| off_good | 24 | 209.5s | 405.4s | 2 | 2 |
+| off_bad | 23 | 507.6s | 916.9s | 9 | 9 |
+| on_good | 24 | 261.1s | 698.4s | 7 | 7 |
+| on_bad | 12 | 1800.0s | 1589.0s | 10 | 10 |
+
+Paired over the **12 seeds present in ALL FOUR arms** (4243-4254, `tools/w7b_draft_ab.mjs --aggregate` + a cross-arm pairing done here):
+
+| comparison | median-of-ratios | ratio-of-medians |
+|---|---|---|
+| good / bad, ladder OFF | **x0.443** | x0.172 |
+| good / bad, ladder ON | **x0.348** | x0.279 |
+| on / off, GOOD arm | **x1.932** | x1.739 |
+| on / off, BAD arm | x1.000 | x1.074 |
+
+Two readings, both uncomfortable and both stated as measured:
+(a) **The draft-policy divergence is inverted in BOTH builds** - the utility-favoring "bad" policy (the reverse rank order: Light Boots / Gem
+Magnet / run rules first) outlives the ladder-chasing "good" one by roughly 2-5x. The rarity ladder did NOT flip that sign, so as of this read
+the ladder is not making the draft "decide runs" in the intended direction; it is making a movement/XP-filler build even stronger.
+(b) **The ladder's own effect is broad POWER, not divergence:** turning it on multiplies the good arm's survival ~x1.9 (median-of-ratios, n=12)
+while the bad arm sits at the 1800s ceiling (10/12 censored) where no ratio is measurable.
+**Caveat that outranks both readings: HEAVY RIGHT-CENSORING.** 28 of 83 runs hit the 1800s cap, so every "bad arm survives longer" number is a
+LOWER bound and the ratios are compressed. **Therefore: this is a flagged PARTIAL read, not the acceptance-bar verdict - G6 (`>=x1.6`
+divergence) stays OPEN and the W7b bar #4 stays OPEN.** The arms will be re-read complete and aggregated against the brief's bar in a later tick
+once the two bad arms exit (their `.err` files are still empty and `progress.txt` has only the two `done ... rc=0` good-arm lines).
+
+**Held/issued this tick:** lock acquired (`ACQUIRED hordes as pid 1686244 (subagent:spawnfa)`), doc edits ONLY (this note + the two markers),
+**nothing issued** (no live builder), lock RELEASED. Commits remain the orchestrator's.
+**NOT verified by me, said plainly:** nothing about G21 (no code exists), and the visual/gameplay meaning of the A/B numbers beyond the
+survival medians above.
