@@ -673,10 +673,11 @@ This supersedes both the order these entries appear in below AND the ranked-queu
 that went unresolved for four ticks.**
 
 **H1 (HUD reflow) -> P1 (portal) -> A1 (engagement range) -> A2 (radar) -> E1 (purse) -> W7a-tooling
--> W7b (draft >= x1.6) -> E2 (horde) -> S1 (shrines) -> M1 (world map, once the owner picks a reading)
+-> W7b (draft >= x1.6) -> E2 (horde) -> S1 (shrines) -> M1 (the per-run map screen, which also lands the visited-grid A2 needs)
 -> then the ranked queue (G11 -> G12 -> G13/G14 -> ...).**
 A1 and A2 pair (both are about enemy awareness, and the radar is what makes A1's 100px cap playable).
-M1 sits late because it CANNOT be dispatched until the owner answers which world it maps.
+M1 shares the visited-grid + landmark data model with A2, so whichever lands second must reuse the first
+one's tracker rather than writing a second.
 A1 sits beside P1 because both edit `controllers.js` and must not run in parallel, and A1's row price is
 re-checked in E1's economy pass rather than priced twice.
 
@@ -783,6 +784,10 @@ informed while the pilot deliberately declines long shots. Without it, a 100px c
 from an invisible edge with no warning; with it, the approach is telegraphed and the small radius reads as
 intentional rather than broken.
 
+**It also shows LANDMARKS once discovered** (see M1): the radar and the map screen are one system at two
+scales, so the visited-grid + landmark data is built once and rendered twice. Nearby landmarks get their
+own marker (a distinct glyph or colour from enemy dots).
+
 **Constraints (the house rules that apply to a new HUD element):**
 - **It must not reflow anything** — see the HUD pads directive: fixed geometry, reserved space, no
   layout participation. A radar that grows as dots appear is the H1 bug again.
@@ -795,28 +800,45 @@ intentional rather than broken.
 - It needs its own test: dot count equals enemies within the radius for a synthetic field, and the radar's
   rect is stable across every state (the H1 acceptance pattern).
 
-### M1 — THE WORLD MAP SCREEN (hotkey, visited areas only)  [status: not started — owner-suggested 2026-09-14; NEEDS ONE OWNER DECISION, see below]
+### M1 — THE PER-RUN MAP SCREEN (hotkey, visited areas only)  [status: not started — owner-confirmed reading]
 
-Sk408: *"we could have a world map hotkey that allowed the player to view the overall world map, not with
-enemies listed, but just the world map. It would only show the areas that they've already visited, and the
-other areas would have some sort of haze or just not exist, sort of like a Metroid map."*
+Sk408: *"I meant per run maps, and here's why. In the future we can add landmarks with special shrines or
+chests or anything like that and we can also seed valuable drops that when you collect all 5 or something,
+you get a powerful weapon."*
 
-**THE DECISION THAT GATES THIS — what "areas" means, because the two readings are very different work:**
-- **(a) In-run fog-of-war over the arena.** Cheap-ish to DRAW, but the arena is **re-seeded every run**
-  (`groundSeed` is rolled in `startRun`) and a run lasts 35s-20min, so the visited map would be per-run,
-  short-lived, and different every time. It would almost never be worth opening, and it fights the owner's
-  own "simple pick up and leave" intent.
-- **(b) A STAGE-LEVEL world map (Remy's recommendation).** G20 shipped **8 selectable stages with
-  achievement-style unlock gates** (reach level X, defeat a boss) — that IS the persistent world, and it
-  already has visited-vs-locked semantics. A Metroid-style map of the stages (unlocked + visited drawn,
-  the rest in haze) fits the existing systems, persists across runs, gives the unlock gates somewhere to
-  live visually, and is the natural home for future stage content. Recommended.
-- A third option exists (a persistent overworld across runs with fixed landmarks) but it contradicts the
-  per-run seeding and the stage system, and it is a much bigger design change than this note implies.
+**OWNER-CONFIRMED: per-run, and the reason changes the calculus.** Remy had recommended a stage-level map;
+the owner overruled it with a purpose, so this is now SPEC'D, not gated. The map is not fog-of-war for its
+own sake — **it is the UI for a place-of-interest system**, and the per-run re-seed (`groundSeed`, rolled
+in `startRun`) is a FEATURE for that: every run is a fresh place to explore. Roguelikes do exactly this.
 
-**Do not dispatch M1 until this is answered.** If (b), the work is: per-profile visited/unlocked stage
-state (schema + save migration), a full-screen map view behind a hotkey, haze rendering for unvisited,
-and the stage-select flow (G13/G12 neighbours) staying intact. Follow the save-schema conventions.
+**What it is:** a full-screen view of the current run's arena behind a hotkey. Areas the player has visited
+are drawn; the rest is haze or absent (the Metroid convention). **No enemies on it** (owner's words) —
+enemies belong to the radar (A2), which is this same map at local scale.
+
+**A2 AND M1 ARE ONE SYSTEM AT TWO SCALES** — build the visited-grid + landmark data ONCE:
+- **A2 (radar)**: local, ~330px, enemy dots plus NEARBY landmark markers.
+- **M1 (map screen)**: the whole 1200x1200 arena, visited-vs-haze, DISCOVERED landmarks only.
+Do not build two independent trackers; a landmark the player has found is the same datum in both views.
+
+**FUTURE WORK THIS MUST ACCOMMODATE (build the data model for it now, ship the features later):**
+1. **Landmarks** — special shrines / chests / rare spawns at fixed points in the arena, revealed on the map
+   once visited. The map is what makes them findable rather than accidental.
+2. **A seeded collectible set** ("collect all 5 -> a powerful weapon"). This is a RUN QUEST, and the map is
+   its interface: the pieces must be findable, so they need map presence once discovered, and the set must
+   be tracked in run state. Leave the reward/weapon itself to a separate goal — do not bundle it here.
+
+**THE DESIGN TENSION THAT DECIDES WHETHER THIS WORKS — flag it, do not paper over it.** This is a horde
+survival game: standing still is death, so *deliberate detours into the open are how runs end*. The arena
+is ~10 screens (1200x1200 against a 480x300 view) and a FRESH run dies in ~35s, so "exploration" is only
+reachable once a loadout produces long runs. Therefore:
+- Landmarks must sit on the natural KITING ROUTES, or the map must reveal them early enough to be routed
+  through while moving — the collectible set should make collecting = traversing the arena *while kiting*,
+  not detouring into open ground.
+- Density and placement must be designed against RUN LENGTH and MEASURED: "pieces found per run" and
+  "pieces found per run at the owner's loadout" are the numbers that tell you whether the quest is
+  reachable or decorative.
+- Run-scoped visited state is a bonus of this reading: it lives in `state` (like the other run counters),
+  so **no save migration and no schema change** — unlike the stage-map reading Remy first proposed.
 
 ### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
 
