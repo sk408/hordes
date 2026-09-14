@@ -207,6 +207,16 @@ interactive cinematic than a required game. That way they are less critical if i
   mandatory-feel pressure the skip exists to avoid.
 - **Measured as the SKIP RATE ON REPEAT ENCOUNTERS**, not first: repeat skips are what reveal "auto skip
   after the first play".
+- **PAID SKIP BUYABLE (owner directive 2026-09-14):** a one-time meta-shop unlock, ~100,000 gold, that lets
+  the player skip the escape AND STILL COLLECT THE PAYOUT. It is a PAID OVERRIDE of the "skip = forgo the
+  payout" rule above, aimed at the veteran / "addicted" player who has played the escape enough that it is no
+  longer a change of pace for them. Two things to hold: (1) it doubles as an ECONOMY SINK — 100k drains the
+  big banks E1's ~5x-more-generous purse creates; (2) it converts the escape into pure passive income for
+  buyers (no play, no forgo), so the change-of-pace design is bypassed entirely for that tier — that is the
+  owner's call, and the free skip (forgo the payout) stays for everyone else. Open question for the owner at
+  build time: one-time permanent unlock (the natural reading of "a buyable", assumed here) vs a per-skip fee;
+  permanent is the better fit for a prestige/veteran unlock. BUILD IT WITH THE ESCAPE — the buyable has
+  nothing to skip until the escape exists, so it lands in the same V1 slice, not before.
 
 ## INCOME SEPARATION (owner caveat, 2026-09-14 — non-negotiable)
 

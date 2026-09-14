@@ -269,27 +269,32 @@ export function computeRunGold(runStats) {
 // kill is never paid twice: the end award is RUN_GOLD.AWARD (flat), so these
 // drops are the only per-kill gold surface.
 export const GOLD_TIER = {
-  CHAFF: 0,      // SWARMER / TICK — the wave-2 horde pays ~nothing by design
+  CHAFF: 0,      // SWARMER — the wave-2 horde's chaff pays ~nothing by design
   GRUNT: 1,      // CHASER — "near zero", but the counter still ticks
-  MID: 3,        // SPITTER / DASHER / WARLOCK — the ordinary field
-  HEAVY: 8,      // BRUTE / PILLAR / COLOSSUS — clearly > 1
+  MID: 3,        // SPITTER / DASHER / WARLOCK / TICK — the ordinary field
+  HEAVY: 8,      // BRUTE / PILLAR / COLOSSUS / SHRIKE — clearly > 1
   ELITE: 15,     // elite / eliteMod-stamped — "~1.0" unit of real gold
   MID_BOSS: 60,  // the per-wave herald — reads as "a nice drop"
   BOSS: 150,     // the wave boss — the heavy payout
 };
 // The tier signals: bosses carry boss/midBoss stamps (main.js), elites carry
-// elite / eliteMod; otherwise the ENEMY_TYPES hp ladder sorts the field.
-// Chaff = the cheap swarm tier (hpMult <= 0.5 bodies), heavy = hpMult >= 3.
+// elite / eliteMod; E2's heavy stamp (main.js stampHeavy) writes e.purseTier
+// directly — the purse follows the BODY, so a wave-1 TICK still pays CHAFF
+// and only a real mid-boss-bodied heavy pays HEAVY. Otherwise the ENEMY_TYPES
+// hp ladder sorts the field: chaff = the cheap swarm tier (hpMult <= 0.5),
+// heavy = hpMult >= 3.
 const PURSE_TYPE_TIER = {
   SWARMER: 'CHAFF', TICK: 'CHAFF',
   CHASER: 'GRUNT',
   SPITTER: 'MID', DASHER: 'MID', WARLOCK: 'MID',
   BRUTE: 'HEAVY', PILLAR: 'HEAVY', COLOSSUS: 'HEAVY',
+  SHRIKE: 'HEAVY',   // E2 (R7): the flying heavy lands at HEAVY or above
 };
 export function purseTier(u) {
   if (!u) return 'CHAFF';
   if (u.boss) return u.midBoss ? 'MID_BOSS' : 'BOSS';
   if (u.elite || u.eliteMod) return 'ELITE';
+  if (u.purseTier) return u.purseTier;   // E2: the heavy stamp's direct word
   return PURSE_TYPE_TIER[u.typeId] || 'MID';
 }
 export function purseValue(u) {

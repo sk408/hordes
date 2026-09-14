@@ -244,6 +244,7 @@ const closeWindow = () => {
   st.itemDrops.length = 0; st.portal = null; st.effects.length = 0;
   const save = { spawnTimer: st.spawnTimer, endsAt: st.wave.endsAt, midAt: st.wave.midAt,
     dropBonus: p.stats.dropBonus, weapons: st.weapons, shrine: st.shrine,
+    shrines: st.shrines,               // S1: the world-seeded set rides too
     attackTimer: p.attackTimer, skillCd: { ...p.skillCd } };
   st.spawnTimer = st.time + 1e9;   // no ambient packs
   st.wave.endsAt = st.time + 1e9;  // no wave boss
@@ -261,12 +262,13 @@ const closeWindow = () => {
                                   // mana is a real input to the kite/loot
                                   // doctrine and to AUTO_DRINK, and disturbing
                                   // it moved the pilot off the pickup.)
-  st.shrine = null;                // no altar purchase: the shrine DRIFTS AT the
-  //                                player and buys an intermission-style
+  st.shrine = null;                // no altar purchase: the world-seeded
+  st.shrines = [];                 // shrines are STATIC now (S1 killed the
+  //                                drift) but STILL buy an intermission-style
   //                                blessing on proximity (applyChoice — a
   //                                Whetstone repricing the payouts or a potion
   //                                refill; this was the leak the chest theory
-  //                                missed: state.shrine, not st.chests)
+  //                                missed: the shrine, not st.chests)
   p.attackTimer = 1e9;             // and the BASE VOLLEY still fires with
   //                                st.weapons empty: runController (src/main.js)
   //                                fires it straight off p.attackTimer +
@@ -276,7 +278,7 @@ const closeWindow = () => {
   //                                is +2 the probe never priced
   return () => { st.spawnTimer = save.spawnTimer; st.wave.endsAt = save.endsAt;
     st.wave.midAt = save.midAt; p.stats.dropBonus = save.dropBonus; st.weapons = save.weapons;
-    st.shrine = save.shrine; p.attackTimer = save.attackTimer;
+    st.shrine = save.shrine; st.shrines = save.shrines; p.attackTimer = save.attackTimer;
     Object.assign(p.skillCd, save.skillCd); };
 };
 

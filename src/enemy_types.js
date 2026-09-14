@@ -36,6 +36,7 @@ export const ENEMY_TYPES = {
   // Base chaser (reference; matches makeEnemy in entities.js at mult 1).
   CHASER: {
     id: 'CHASER',
+    chaff: true,   // E2: the wave-2 horde triples THIS swarm, not the heavies
     hpMult: 1.0, speedMult: 1.0, xpMult: 1.0, sizeMult: 1.0,
     contactDamageMult: 1.0,
     decide: chaseDecide,
@@ -45,6 +46,7 @@ export const ENEMY_TYPES = {
   // Fast, weak, spawns in packs.
   SWARMER: {
     id: 'SWARMER',
+    chaff: true,   // E2: the wave-2 horde triples THIS swarm, not the heavies
     hpMult: 0.4, speedMult: 1.7, xpMult: 0.5, sizeMult: 0.75,
     contactDamageMult: 0.7,
     packSize: 5,          // spawner hint: spawn this many per pop
@@ -55,6 +57,7 @@ export const ENEMY_TYPES = {
   // Slow, tanky, big contact damage.
   BRUTE: {
     id: 'BRUTE',
+    heavy: true,   // E2 (R1): mid-boss-equivalent hp from the horde wave on
     hpMult: 3.5, speedMult: 0.6, xpMult: 3.0, sizeMult: 1.8,
     contactDamageMult: 2.5,
     decide: chaseDecide,
@@ -84,6 +87,7 @@ export const ENEMY_TYPES = {
   // cycle from age: 1.6s stalk at 0.5x, then 0.8s lunge at 2.6x.
   DASHER: {
     id: 'DASHER',
+    heavy: true,   // E2 (R1): mid-boss-equivalent hp from the horde wave on
     hpMult: 1.3, speedMult: 1.0, xpMult: 1.5, sizeMult: 1.0,
     contactDamageMult: 1.5,
     stalkTime: 1.6, stalkSpeedMult: 0.5,
@@ -122,6 +126,7 @@ export const ENEMY_TYPES = {
   // snaps the tick to the player).
   TICK: {
     id: 'TICK',
+    heavy: true,   // E2 (R1): mid-boss-equivalent hp from the horde wave on
     hpMult: 0.3, speedMult: 1.8, xpMult: 0.8, sizeMult: 0.5,
     contactDamageMult: 0,           // NO contact hit — drain instead
     attachDist: 14,                 // latches inside this radius
@@ -163,6 +168,32 @@ export const ENEMY_TYPES = {
     projDamage: 5,              // pre-dmgScale chip damage
     decide: pillarDecide,
     LOOK: { body: '#7f7461', trim: '#4a4236', accent: '#ff5a3c', shape: 'tall', sizeMult: 1.3 },
+  },
+
+  // SHRIKE — E2 (R9) THE FLYING heavy, debuting with the wave-2 horde. It
+  // HOVERS above the ground game: z (altitude px) is drawn, never simulated —
+  // contact, targeting and every damage number stay 2D on (x,y). Ground AoE
+  // cannot touch it (main.js's call-site guard restores its hp/flash/slow
+  // around novas, blasts, chain detonations and consecration fields) and
+  // frost slow never grips it; DIRECT hits (projectiles, contact, and the
+  // Witch's chain beam) land normally. The swoop cycle runs off enemy.age
+  // (dt-free — 60Hz and 120Hz fly identical paths): an angled OBLIQUE close
+  // (cruise), then a committed straight DIVE burst, then the cycle wraps.
+  SHRIKE: {
+    id: 'SHRIKE',
+    heavy: true,            // E2 (R1): mid-boss-equivalent hp from the horde wave on
+    flying: true,           // E2 (R9): z-drawn, ground-AoE/slow immune
+    hpMult: 2.0, speedMult: 1.2, xpMult: 3.0, sizeMult: 1.2,
+    contactDamageMult: 1.5,
+    cruiseTime: 2.2,        // angled close phase (s)
+    diveTime: 0.7,          // committed dive phase (s)
+    oblique: 0.6,           // radians off the direct bearing while cruising
+    cruiseSpeedMult: 0.9,
+    diveSpeedMult: 3.0,
+    hoverZ: 14,             // cruise altitude (px, drawn)
+    diveZ: 3,               // altitude at the bottom of the dive (px, drawn)
+    decide: shrikeDecide,
+    LOOK: { body: '#3f4a9e', trim: '#1f2552', accent: '#9ec9ff', shape: 'wide', sizeMult: 1.2 },
   },
 };
 
@@ -217,6 +248,10 @@ export const VARIANTS = {
   PILLAR: [
     { body: '#6d5f7f', trim: '#3a324a', accent: '#c49eff' },   // runic violet
     { body: '#7f6d5f', trim: '#4a3a32', accent: '#ffc49e' },   // sandstone
+  ],
+  SHRIKE: [
+    { body: '#3f9e8a', trim: '#1f5c50', accent: '#9effe0' },   // storm teal
+    { body: '#9e3f5c', trim: '#5c1f2f', accent: '#ff9ec2' },   // dusk crimson
   ],
 };
 
@@ -368,6 +403,46 @@ function pillarDecide(enemy, player, dt = 1 / 60) {
   return { mx: 0, my: 0, fire: null };
 }
 
+// SHRIKE swoop (E2 R9): cruise = close in at a fixed OBLIQUE off the direct
+// bearing (alternating side per cycle, so the approach reads as a swoop, not
+// a beeline); dive = a COMMITTED straight burst at the player — no steering
+// away mid-dive, contact is the payoff. Age-phase only (no dt read), so the
+// flight path is identical at 60Hz and 120Hz.
+function shrikeDecide(enemy, player) {
+  const T = ENEMY_TYPES.SHRIKE;
+  const dir = toward(player.x - enemy.x, player.y - enemy.y);
+  const cycle = T.cruiseTime + T.diveTime;
+  const phase = enemy.age % cycle;
+  if (phase >= T.cruiseTime) {
+    return { mx: dir.mx * T.diveSpeedMult, my: dir.my * T.diveSpeedMult, fire: null };
+  }
+  const side = Math.floor(enemy.age / cycle) % 2 === 0 ? 1 : -1;
+  const c = Math.cos(T.oblique * side), s = Math.sin(T.oblique * side);
+  return {
+    mx: (dir.mx * c - dir.my * s) * T.cruiseSpeedMult,
+    my: (dir.mx * s + dir.my * c) * T.cruiseSpeedMult,
+    fire: null,
+  };
+}
+
+// E2 (R9): a flyer's altitude in drawn px. Pure function of enemy.age — no dt
+// accumulation — so 60Hz and 120Hz draw the SAME altitude at the same second.
+// Cruise: hoverZ with a slow bob; the dive dips to diveZ and back (a sine
+// over the dive window — down, contact, recover).
+export function flyingZ(e) {
+  const T = ENEMY_TYPES[e.typeId];
+  if (!T || !T.flying) return 0;
+  const cycle = T.cruiseTime + T.diveTime;
+  const phase = e.age % cycle;
+  const hover = T.hoverZ + Math.sin(e.age * 2.4) * 2;
+  if (phase >= T.cruiseTime) {
+    const k = (phase - T.cruiseTime) / T.diveTime;   // 0..1 through the dive
+    const dip = Math.sin(k * Math.PI);               // 0 -> 1 -> 0
+    return Math.max(1, Math.round(hover * (1 - dip) + T.diveZ * dip));
+  }
+  return Math.max(1, Math.round(hover));
+}
+
 // deathShockwave(enemy) -> AoE data for the integrator's kill path. Damages
 // nearby ENEMIES (friendly fire), not the player. Damage scales with the
 // colossus's own maxHp so late-wave colossi still thin the horde.
@@ -422,6 +497,8 @@ export function makeTypedEnemy(typeId, x, y, t, opts = {}) {
     attached: false,                 // TICK latch flag; integrator-owned
     flash: 0,
     slow: 0,
+    flying: type.flying || undefined,  // E2 (R9): SHRIKE — z-drawn heavy
+    z: 0,                              // altitude px (only flyers read it)
   };
 }
 

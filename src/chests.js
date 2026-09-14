@@ -174,9 +174,11 @@ export function isEliteish(enemy) {
 }
 
 // Called per enemy kill. Returns the spawned chest or null.
-export function maybeSpawnChest(state, killedEnemy, rng = Math.random) {
+// chanceMult scales the DROP_CHANCE roll only (E2: the wave-2 horde's plain
+// chaff pays near-zero); every existing caller reads the default 1.
+export function maybeSpawnChest(state, killedEnemy, rng = Math.random, chanceMult = 1) {
   if (!isEliteish(killedEnemy)) return null;
-  if (rng() >= CHESTS.DROP_CHANCE) return null;
+  if (rng() >= CHESTS.DROP_CHANCE * chanceMult) return null;
   if (!Array.isArray(state.chests)) state.chests = [];
   if (state.chests.length >= CHESTS.MAX_ACTIVE) return null;
   // WAVE-27: a chest dropped by a kill outside the wall is unreachable — clamp

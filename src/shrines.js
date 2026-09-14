@@ -1,47 +1,57 @@
 // HORDES — WAVE-11/5: RUN SHRINES (Sk408-approved: gold spends mid-run for a
-// random blessing). A shrine is a pixel altar that can appear once per wave;
-// touching it with enough gold buys ONE random intermission-style blessing
-// (choices.js semantics — blessing AND drawback, rarity-weighted).
+// random blessing). A shrine is a pixel altar; touching it with enough gold
+// buys ONE random intermission-style blessing (choices.js semantics —
+// blessing AND drawback, rarity-weighted).
+//
+// S1 (owner directive 2026-09-14, "rarer, across the entire map, not player
+// specific, spawned on world creation like megabonk"): the shrines are a
+// FIXED SET seeded ONCE at run start and static for the whole run — no
+// per-wave roll, no drift toward the player, no respawn after use.
 //
 // Purity contract: rolls only, no DOM, no game loop, never touches
-// meta/profile — shrines exist per-run only (hb1 drops the shrine object on
+// meta/profile — shrines exist per-run only (hb1 drops the shrine objects on
 // new run; nothing persists). All randomness goes through an injectable rng
 // (mulberry32-compatible, weather.js contract) so tests + daily-seed runs
 // replay exactly.
 //
 // PILOT-BLIND (chest/arch precedent): controllers.js never learns shrines
-// exist. Placement rides the pilot's patrol orbit (controllers.js idles in a
-// counter-clockwise orbit of the arena center, biased inward past 400px), so
-// shrines spawn on a 250-420px ring around center — inside the rim, on the
-// orbit path, and crossings happen by patrol, not by steering. Like arches,
-// the shrine leans toward the player at ~6px/s (CONFIG.DRIFT.ARCH precedent)
-// to close the last distance — hb1 owns that drift + the render; this module
+// exist. The pre-S1 ring placement rode the pilot's patrol orbit so AUTO runs
+// crossed shrines by patrol; S1's whole-map scatter drops that coupling, so
+// an AUTO/AFK run now meets FEWER shrines, sometimes none — accepted (the
+// blessing is an optional bonus; the owner's power model is shop buyables).
+// Placement itself takes no player argument — positions are a pure function
+// of the run seed plus the arena bounds. hb1 owns the render; this module
 // owns rolls + math only.
 
 import { rollChoices } from './choices.js';
 
 // ---------- tuning ----------
-export const SHRINE_CHANCE = 0.6;          // ~60% of waves get one shrine
-export const SHRINE_RING_MIN = 250;        // px from arena center (0,0)
-export const SHRINE_RING_MAX = 420;        // (patrol orbit rides ~<=400; rim
-                                           //  clamp is +-600 — always in-bounds)
+export const SHRINE_WORLD_COUNT = 3;       // fixed set per run (the "rarer" dial:
+                                           //  measured, see S1 brief evidence 1)
+export const SHRINE_WORLD_MARGIN = 40;     // px inside the +-600 rim so no
+                                           //  shrine sits half-offworld
 export const SHRINE_BASE_COST = 60;        // gold, first shrine of wave 0
 export const SHRINE_COST_PER_WAVE = 30;    // +30 gold per wave number
 export const SHRINE_COST_USED_MULT = 1.25; // x1.25 per prior shrine THIS RUN
 
-// ---------- roll --------------------------------------------------------------
-// ~60% chance one shrine per wave (one rng draw for the gate, then radius +
-// angle). Returns { x, y, used:false } on the patrol ring, or null. 3 rng
-// draws total when it spawns, 1 when it doesn't — cadence tests rely on this.
-export function rollShrine(wave, rng = Math.random) {
-  if (rng() >= SHRINE_CHANCE) return null;
-  const r = SHRINE_RING_MIN + rng() * (SHRINE_RING_MAX - SHRINE_RING_MIN);
-  const a = rng() * Math.PI * 2;
-  return {
-    x: Math.round(Math.cos(a) * r),
-    y: Math.round(Math.sin(a) * r),
-    used: false,
-  };
+// ---------- world seed --------------------------------------------------------
+// S1: the set is chosen ONCE at run start off the run's shrineRng stream.
+// Uniform scatter over the +-(600-MARGIN) box — integer pixels, no centre
+// weighting, no radius band, no player-relative term (the function takes no
+// player argument; corner-park invariance is a code fact). Exactly 2 rng
+// draws per shrine (8 for the default set), then ZERO draws for the rest of
+// the run — stepping waves consumes no randomness.
+export function seedShrines(rng = Math.random, count = SHRINE_WORLD_COUNT) {
+  const half = 600 - SHRINE_WORLD_MARGIN;
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: Math.round((rng() * 2 - 1) * half),
+      y: Math.round((rng() * 2 - 1) * half),
+      used: false,
+    });
+  }
+  return out;
 }
 
 // ---------- cost curve --------------------------------------------------------

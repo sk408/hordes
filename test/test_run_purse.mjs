@@ -139,20 +139,23 @@ h.pump(5);
   const prof = T.getProfile();
   prof.gold = 0;
   prof.runPurse = 0;
-  st.shrine = { x: st.player.x, y: st.player.y, used: false };
-  for (let i = 0; i < 30 && !st.shrine.used && !st.shrine.brokeToast; i++) h.pump(1);
-  var shrineCost = st.shrine.blessing && st.shrine.blessing.cost;
+  // S1 retarget: the proximity loop iterates state.shrines (the world-seeded
+  // set); pin one probe altar under the player (was: st.shrine = {...}).
+  var probeShrine = { x: st.player.x, y: st.player.y, used: false };
+  st.shrines = [probeShrine];
+  for (let i = 0; i < 30 && !probeShrine.used && !probeShrine.brokeToast; i++) h.pump(1);
+  var shrineCost = probeShrine.blessing && probeShrine.blessing.cost;
 }
 S.check('banked gold buys NOTHING at the shrine (purse 0, bank 0 -> no sale)', () => {
   assert(typeof shrineCost === 'number' && shrineCost > 0,
     'the shrine advertised a cost before the affordability check');
-  assert(st.shrine.used === false, 'no purchase with an empty purse');
-  assert(st.shrine.brokeToast === true, 'the broke toast fired (the altar asked and was refused)');
+  assert(probeShrine.used === false, 'no purchase with an empty purse');
+  assert(probeShrine.brokeToast === true, 'the broke toast fired (the altar asked and was refused)');
   assert(T.getProfile().gold === 0, 'the BANK was not touched');
   // Now the purse exactly covers it: same shrine, real proximity purchase.
   T.getProfile().runPurse = shrineCost;
-  for (let i = 0; i < 30 && !st.shrine.used; i++) h.pump(1);
-  assert(st.shrine.used === true, 'purse == cost completes the purchase');
+  for (let i = 0; i < 30 && !probeShrine.used; i++) h.pump(1);
+  assert(probeShrine.used === true, 'purse == cost completes the purchase');
   assert(T.purse.get() === 0, `the purse was debited exactly ${shrineCost}`);
   assert(T.getProfile().gold === 0, 'and the bank STILL was not touched');
 });

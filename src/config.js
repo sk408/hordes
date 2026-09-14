@@ -572,6 +572,23 @@ export const CONFIG = {
     ELITE_TIME: 60,        // seconds
   },
 
+  // ---- E2: THE WAVE-2 HORDE (docs/briefs/E2_HORDE.md) ----------------------
+  // Owner directive: wave 2 becomes a HORDE — the chaff swarm triples and a
+  // HEAVY tier (BRUTE/DASHER/TICK + the flying SHRIKE) lands with mid-boss
+  // bodies. Everything here gates on state.wave.num >= WAVE (the 120s wave
+  // number, NOT the 30s escalation tick); below it every formula reads
+  // byte-identical to before. The knobs ride pickSpawnType/spawnWave in
+  // main.js (stages.js is outside this slice's scope).
+  E2: {
+    WAVE: 2,               // the 120s wave the horde lands on
+    HEAVY_WEIGHT_MULT: 0.5,  // R3: heavy pool weights thin out vs chaff
+    CHAFF_DENSITY_MULT: 3,   // R5: ONE knob — chaff pack pop x3
+    CHAFF_DROP_MULT: 0.05,   // R6: plain-chaff potion/chest/token rolls x0.05
+    CHAFF_XP_MULT: 0.25,     // R6: plain-chaff xp at spawn (heavies pay instead)
+    HEAVY_XP_KILLS: 3,       // R8: a heavy corpse pays ~this many base kills
+    SHRIKE_WEIGHT: 0.8,      // R9: the flying heavy's pool weight (debut wave)
+  },
+
   // ---- ESCALATION (Sk408 playtest: maxed builds became unkillable) --------
   // Curves by minion-wave w (= floor(t/30)); applied as a post-pass over the
   // enemy_types.js base scaling in main.js:
@@ -866,6 +883,20 @@ export function ladderXp(w) {
   const k = Math.min(w, K);
   return _tickCurve(CONFIG.ESCALATION.XP, k) *
     Math.pow(CONFIG.LADDER.XP_LATE, Math.max(0, w - K));
+}
+
+/**
+ * Mid-boss (HERALD-class) hp at 120s-wave `waveNum` and escalation tick
+ * `wTick` — the ONE definition of the MIDBOSS hp formula (E2 R2).
+ * main.js spawnMidBoss multiplies desc.hpMult * heat on top at its call site
+ * (byte-identical to the old inline formula), and the wave-2 HEAVY tier reads
+ * this same function at waveNum-1 so a heavy body is mid-boss-equivalent by
+ * READING, never by a restated copy.
+ */
+export function midBossHp(waveNum, wTick) {
+  const M = CONFIG.ESCALATION.MIDBOSS;
+  return CONFIG.ENEMY.BASE_HP * ladderHp(wTick) *
+    (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * waveNum);
 }
 
 /** The shipped per-spawn-tick group count — the density curve before the knee. */

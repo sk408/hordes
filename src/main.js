@@ -3,7 +3,7 @@ import {
   CONFIG as C, UPGRADES,
   DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
-  volleyProjectileCap,
+  volleyProjectileCap, midBossHp,
 } from './config.js';
 import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage } from './entities.js';
 import { Renderer } from './render.js';
@@ -21,10 +21,10 @@ import {
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
-import { rollShrine, shrineBlessing, canAfford } from './shrines.js';
+import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
 import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
-import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave } from './enemy_types.js';
+import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
 import { maybeSpawnChest, tickChests, rollEvolutionToken } from './chests.js';
 // G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
 import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
@@ -306,7 +306,9 @@ const state = {
   waveChoice: null,
   waveChoiceSnap: null,
   // ---- WAVE-11 run-scoped systems (all reset in startRun) ----
-  shrine: null,      // this wave's shrine (shrines.js; null = none rolled)
+  shrine: null,      // VIEW on state.shrines: the first unused altar (the
+                     // render + tour handoff; the set itself is static — S1)
+  shrines: [],       // S1: world-seeded set of 4, chosen ONCE at run start
   shrineRng: null,   // mulberry32(choiceSeed ^ 0x5eed) — separate stream so
                      // shrine draws never desync the intermission offers
   lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
@@ -576,6 +578,17 @@ function pickSpawnType(wave) {
     const g = gate(id);
     if (g === undefined || wave >= g) entries.push([id, w]);
   }
+  // E2 (R3/R9): from the horde wave on, the SAME weighted walk reads heavy
+  // weights through ONE config dial (heavies spawn rarer than chaff) and the
+  // SHRIKE joins the pool at its own weight. stages.js is outside this
+  // slice's file scope, so the seam rides here; below E2.WAVE the entries
+  // are untouched (byte-identical draws).
+  if (state.wave.num >= C.E2.WAVE) {
+    for (const e of entries) {
+      if (ENEMY_TYPES[e[0]] && ENEMY_TYPES[e[0]].heavy) e[1] *= C.E2.HEAVY_WEIGHT_MULT;
+    }
+    entries.push(['SHRIKE', C.E2.SHRIKE_WEIGHT]);
+  }
   let r = Math.random() * entries.reduce((s, e) => s + e[1], 0);
   for (const [id, w] of entries) { if ((r -= w) < 0) return id; }
   return 'CHASER';
@@ -618,6 +631,43 @@ function stampStageStats(stateArg, e) {
   if (mHp !== 1) { e.hp *= mHp; e.maxHp = e.hp; }
   if (mSpd !== 1) e.speed *= mSpd;
   return e;
+}
+
+// E2 (R1/R2): the HEAVY stamp. From the horde wave on, a heavy-tier body
+// (ENEMY_TYPES[id].heavy) carries MID-BOSS-equivalent hp — config.js's ONE
+// midBossHp definition read at waveNum-1 (R2: never a copied formula), with
+// the same heat factor the herald takes. R8: the corpse pays HEAVY_XP_KILLS
+// base kills of xp so the horde wave's drafts don't collapse when chaff xp
+// drops. R7: the purse follows the BODY — the stamp upgrades the tier to
+// HEAVY (a wave-1 TICK still pays CHAFF; only a real heavy body pays heavy).
+function stampHeavy(e) {
+  const wTick = Math.floor(state.time / 30);
+  e.hp = e.maxHp = midBossHp(Math.max(1, state.wave.num - 1), wTick) *
+    heatMultipliers(heatOf(state)).hp;
+  e.xp = C.ENEMY.BASE_XP * ladderXp(wTick) * C.E2.HEAVY_XP_KILLS;
+  e.purseTier = 'HEAVY';
+}
+
+// E2 (R9): THE FLYING TRAIT's ground-AoE exemption. rewrites.js/skills.js are
+// outside this slice's file scope, so the exemption wraps the ONE main.js
+// call site of each ground-AoE path (novas, blasts, chain detonations, the
+// colossus shockwave, harvest blasts, ult fields/ticks): snapshot every live
+// flyer's (hp, flash, slow), run the effect, restore — a flyer takes NOTHING
+// from ground AoE and frost slow never grips it. DIRECT hits (projectiles,
+// contact, and the Witch's chain beam — mode 'beam' restores only the slow,
+// the beam's damage is meant to land) are untouched.
+function flyingGuard(mode, fn) {
+  let fly = null;
+  for (const e of state.enemies) {
+    if (e.flying && e.hp > 0) (fly = fly || []).push([e, e.hp, e.flash, e.slow]);
+  }
+  if (!fly) return fn();
+  const out = fn();
+  for (const [e, hp, flash, slow] of fly) {
+    if (mode === 'blast') { e.hp = hp; e.flash = flash; }
+    e.slow = slow;
+  }
+  return out;
 }
 
 function spawnWave(dt) {
@@ -666,7 +716,11 @@ function spawnWave(dt) {
     const pack = Math.max(1, Math.round(
       (typeId === 'TICK' ? C.SPAWNER.TICK_PACK : (ENEMY_TYPES[typeId].packSize || 1)) *
       (sm.packMult || 1) *
-      (hz && hz.kind === 'packBurst' ? hz.burst : 1)));
+      (hz && hz.kind === 'packBurst' ? hz.burst : 1) *
+      // E2 (R5): ONE knob triples the chaff pop from the horde wave on —
+      // the horde is CHASER/SWARMER bodies, the heavy tier stays rare.
+      (ENEMY_TYPES[typeId].chaff && state.wave.num >= C.E2.WAVE
+        ? C.E2.CHAFF_DENSITY_MULT : 1)));
     for (let j = 0; j < pack; j++) {
       const pa = a + (j - (pack - 1) / 2) * 0.12;
       const elite = state.time >= C.SPAWNER.ELITE_TIME &&
@@ -677,6 +731,18 @@ function spawnWave(dt) {
         state.player.y + Math.sin(pa) * d,
         state.time, { elite, variant: rollVariant(typeId) });
       escalate(e, state.time);
+      // E2 (R1/R2): heavies carry the mid-boss body from the horde wave on —
+      // AFTER escalate (the ladder re-base) so the stamp is the final word on
+      // the base body, BEFORE elite mods / rarity tiers compose on top and
+      // BEFORE stampStageStats records preStageMaxHp (chest eligibility reads
+      // the heavy body — drops come mostly from the strong enemies).
+      if (ENEMY_TYPES[typeId].heavy && state.wave.num >= C.E2.WAVE) stampHeavy(e);
+      // E2 (R6): plain-chaff xp drops to near-zero from the horde wave on
+      // (an elite is an EVENT, never chaff) — the wave's xp income moves
+      // onto the heavy corpses (R8).
+      else if (ENEMY_TYPES[typeId].chaff && !elite && state.wave.num >= C.E2.WAVE) {
+        e.xp *= C.E2.CHAFF_XP_MULT;
+      }
       // WAVE-11 elite modifiers (elite_mods.js): rolled ONLY for normal elite
       // spawns, gated strictly by profile.unlockedElites (locked mods never
       // roll; the roll can fail and leave a plain elite). The stamp rides on
@@ -705,6 +771,29 @@ function spawnWave(dt) {
       // G20a/G20C: stage stat mods stamp LAST, on the fully-escalated, elite-
       // and rarity-stamped foe — the ONE shared stampStageStats (see its
       // comment) now also records preStageMaxHp for chest eligibility.
+      stampStageStats(state, e);
+      state.enemies.push(e);
+    }
+  }
+  // E2 (R3): the GUARANTEED debut. The horde wave's first spawn tick puts ONE
+  // of each heavy type on the field through the same make/escalate/stamp
+  // pipeline (plain bodies — no elite/rarity rolls), so the tier is SEEN the
+  // moment it lands even when the thinned weighted walk would dally. Once per
+  // run; the flag lives on state.wave (reset per run with the wave object).
+  if (state.wave.num === C.E2.WAVE && !state.wave.e2HeavyDebut) {
+    state.wave.e2HeavyDebut = true;
+    const debut = ['BRUTE', 'DASHER', 'TICK', 'SHRIKE'];
+    for (let i = 0; i < debut.length; i++) {
+      const id = debut[i];
+      const a = Math.random() * Math.PI * 2 + (i / debut.length) * Math.PI * 2;
+      const d = C.ENEMY.SPAWN_DIST * (0.85 + Math.random() * 0.3);
+      const e = makeTypedEnemy(id,
+        state.player.x + Math.cos(a) * d,
+        state.player.y + Math.sin(a) * d,
+        state.time, { variant: rollVariant(id) });
+      escalate(e, state.time);
+      stampHeavy(e);
+      recordEncounter(profile, 'enemy:' + id, { wave, at: state.time, tier: 'COMMON' });
       stampStageStats(state, e);
       state.enemies.push(e);
     }
@@ -1049,9 +1138,8 @@ function continueRun() {
   state.pendingChoiceOffers = null;   // next wave rolls a fresh set
   state.waveChoice = null;            // ...and a fresh pick (Sk408 playtest)
   state.waveChoiceSnap = null;
-  // WAVE-11: fresh shrine roll for the new wave (0-based waveNum; the shrine
-  // rng stream keeps this off the intermission choice rolls).
-  state.shrine = rollShrine(state.wave.num - 1, state.shrineRng);
+  // S1: shrines are world-seeded ONCE at run start (startRun) and static for
+  // the whole run — no per-wave roll, no respawn.
   interMsg = '';
   spawnWaveArches();
   state.mode = 'playing';
@@ -1141,8 +1229,11 @@ function spawnMidBoss() {
     state.player.y + Math.sin(a) * d,
     state.time);
   escalate(boss, state.time);
-  const hp = C.ENEMY.BASE_HP * ladderHp(w) *
-    (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
+  // E2 (R2): the formula is config.js's midBossHp — the ONE definition the
+  // wave-2 heavy tier also reads. Same factors in the same order as the old
+  // inline expression (desc.hpMult * heat on top), so the herald's number is
+  // byte-identical.
+  const hp = midBossHp(state.wave.num, w) * desc.hpMult *
     heatMultipliers(heatOf(state)).hp;
   boss.hp = hp;
   boss.maxHp = hp;
@@ -1529,10 +1620,12 @@ function update(dt) {
   autoCastSkills(state);
   // N1 slice 2: the drafted Pocket Frost card fires its nova in this same
   // frame region (pay-only-when-you-can; ONE cooldown, p.skillCd.FROST_NOVA).
-  frostCardTick(state, dt);
+  // E2 (R9): the nova is ground AoE — flyers take nothing (see flyingGuard).
+  flyingGuard('blast', () => frostCardTick(state, dt));
   // N1 slice 3: the ults' per-frame windows (AFTERIMAGE phantoms, the
   // CONSECRATION field ticks) tick here beside the cast hand.
-  updateUlts(state, dt);
+  // E2 (R9): phantom blasts and the consecration field are ground AoE too.
+  flyingGuard('blast', () => updateUlts(state, dt));
   // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
   // then hook the active flags onto whatever just fired.
   const preFire = new Map();
@@ -1632,8 +1725,14 @@ function update(dt) {
     e.age = (e.age || 0) + dt;
     if (e.flash > 0) e.flash -= dt;
     if (e.slow > 0) e.slow -= dt;
-    const spd = e.speed * (e.slow > 0 ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1) *
+    const spd = e.speed * (e.slow > 0 && !e.flying ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1) *
       (wm.enemySpeedMult || 1);      // SNOW: the horde trudges
+    // E2 (R9): a flyer's altitude is drawn, never simulated — z is a pure
+    // function of age (flyingZ: dt-free, so 60Hz and 120Hz fly the same
+    // swoop), and frost slow above never grips it (the flyingGuard call-site
+    // wrappers keep e.slow unstamped; the !e.flying read is the explicit
+    // seam).
+    if (e.flying) e.z = flyingZ(e);
     const act = e.boss ? decideBossAction(e, p, state, dt) : decideEnemyAction(e, p, dt);
     // RAIN shortens shooters' effective range (fairness-safe: intercept the
     // fire intent at the adjusted per-type range).
@@ -1822,17 +1921,26 @@ function update(dt) {
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     if (e.hp <= 0) {
+      // E2 (R6): plain chaff (the CHASER/SWARMER swarm — an elite is an
+      // EVENT, never chaff) pays near-zero on every drop roll from the horde
+      // wave on: potion, chest, evolution token and (at spawn) xp. The wave's
+      // income moves onto the heavy corpses (R7/R8).
+      const e2Chaff = state.wave.num >= C.E2.WAVE && !e.elite &&
+        !!(ENEMY_TYPES[e.typeId] && ENEMY_TYPES[e.typeId].chaff);
       // COLOSSUS death shockwave: friendly-fire AoE vs nearby enemies
       // (victims earlier in the sweep get reaped next frame's death loop).
       const sw = deathShockwave(e);
       if (sw) {
-        for (const o of state.enemies) {
-          if (o === e || o.hp <= 0) continue;
-          if (Math.hypot(o.x - e.x, o.y - e.y) <= sw.radius) {
-            o.hp -= sw.damage;
-            o.flash = 0.08;
+        // E2 (R9): the shockwave is a ground blast — flyers take nothing.
+        flyingGuard('blast', () => {
+          for (const o of state.enemies) {
+            if (o === e || o.hp <= 0) continue;
+            if (Math.hypot(o.x - e.x, o.y - e.y) <= sw.radius) {
+              o.hp -= sw.damage;
+              o.flash = 0.08;
+            }
           }
-        }
+        });
         state.effects.push({ kind: 'colossus_shock', x: e.x, y: e.y, radius: sw.radius, age: 0, ttl: 0.5 });
         toast('COLOSSUS DOWN - SHOCKWAVE!');
       }
@@ -1853,8 +1961,8 @@ function update(dt) {
         // N1 slice 3: the application loop moved INTO rewrites.js applyBlast —
         // the ONE blast implementation the Rogue's AFTERIMAGE phantoms now
         // share (e is dead here, so applyBlast's hp<=0 guard covers the old
-        // `o === e` skip).
-        applyBlast(state, e.x, e.y, boom);
+        // `o === e` skip). E2 (R9): a ground detonation — flyers take nothing.
+        flyingGuard('blast', () => applyBlast(state, e.x, e.y, boom));
       }
       state.gems.push(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
@@ -1866,7 +1974,8 @@ function update(dt) {
       // pure and runs before the kind roll).
       const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0) +
         (e.dropBonus || 0)) *   // G10: rarity tiers pay a drop bonus
-        ((p.choices && p.choices.dropChanceMult) || 1);
+        ((p.choices && p.choices.dropChanceMult) || 1) *
+        (e2Chaff ? C.E2.CHAFF_DROP_MULT : 1);   // E2 (R6): chaff pays ~zero
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
@@ -1930,7 +2039,9 @@ function update(dt) {
         if (e.guaranteesChest) {
           maybeSpawnChest(state, e, () => 0);
         } else {
-          maybeSpawnChest(state, e);
+          // E2 (R6): plain chaff's chest roll scales to near-zero from the
+          // horde wave on (the chance dial is chests.js's new chanceMult).
+          maybeSpawnChest(state, e, Math.random, e2Chaff ? C.E2.CHAFF_DROP_MULT : 1);
         }
       }
       // SPLITTING elite modifier (elite_mods.js): the dying elite divides into
@@ -1969,7 +2080,9 @@ function update(dt) {
       }
       // EVOLUTION TOKEN, kill channel (1 in 1200). A kill is an EVENT, so the
       // roll is dt-free and 60Hz/120Hz pay the same per corpse.
-      maybeGrantToken('kill');
+      // E2 (R6): plain chaff's token roll is near-zero from the horde wave on
+      // (a second thinning roll — the token channel's own rng is untouched).
+      if (!e2Chaff || Math.random() < C.E2.CHAFF_DROP_MULT) maybeGrantToken('kill');
       // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
       // field is safe unowned). A kill is an EVENT, never a frame: the grant
       // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
@@ -2048,19 +2161,19 @@ function update(dt) {
     a.y += (dy / len) * C.DRIFT.ARCH * dt;
   }
   // WAVE-11 RUN SHRINES (shrines.js): the pilot is shrine-BLIND (controllers
-  // never learn it exists) — the altar spawns on the patrol ring and merely
-  // LEANS at the player (arch precedent). On proximity, gold buys ONE random
-  // intermission-style blessing (choices.js semantics, repeat-free across the
-  // whole run). Per-run only: shrines never touch persistence beyond the
-  // purse debit (paid-chest precedent).
+  // never learn shrines exist). S1 (owner directive 2026-09-14): the set is
+  // world-seeded ONCE at run start and STATIC — the ~6px/s lean toward the
+  // player is gone ("static means static"; the DRIFT.ARCH coupling is removed
+  // from this path only — arches keep theirs above). On proximity, gold buys
+  // ONE random intermission-style blessing (choices.js semantics, repeat-free
+  // across the whole run). Per-run only: shrines never touch persistence
+  // beyond the purse debit (paid-chest precedent).
   // E1: the shrine debits the RUN PURSE (profile.runPurse), never the bank —
   // in-run gold buys in-run powers.
-  if (state.shrine && !state.shrine.used) {
-    const sh = state.shrine;
+  for (const sh of state.shrines) {
+    if (sh.used) continue;
     const dx = p.x - sh.x, dy = p.y - sh.y;
     const len = Math.hypot(dx, dy) || 1;
-    sh.x += (dx / len) * C.DRIFT.ARCH * dt;
-    sh.y += (dy / len) * C.DRIFT.ARCH * dt;
     if (len < 26) {
       if (!sh.blessing) {
         // Roll + cache once per shrine (rng stream: shrineRng, seeded off the
@@ -2082,6 +2195,11 @@ function update(dt) {
       } else if (!sh.brokeToast) {
         sh.brokeToast = true;   // once per shrine: don't nag a broke pilot
         toast('THE SHRINE REQUIRES ' + sh.blessing.cost + ' GOLD');
+      }
+      if (sh.used) {
+        // S1: advance the render/tour VIEW to the next unsold altar. This is
+        // the only place the view moves — event-driven, never per-frame.
+        state.shrine = state.shrines.find(s => !s.used) || null;
       }
     }
   }
@@ -2139,13 +2257,16 @@ function update(dt) {
         // damage"); the blast is enemy-side only, centered on the player.
         const blast = d.kind === 'hp' ? harvestBlast(state) : null;
         if (blast) {
-          for (const o of state.enemies) {
-            if (o.hp <= 0) continue;
-            if (Math.hypot(o.x - p.x, o.y - p.y) <= blast.radius) {
-              o.hp -= blast.damage;
-              o.flash = 0.08;
+          // E2 (R9): a ground blast — flyers take nothing (see flyingGuard).
+          flyingGuard('blast', () => {
+            for (const o of state.enemies) {
+              if (o.hp <= 0) continue;
+              if (Math.hypot(o.x - p.x, o.y - p.y) <= blast.radius) {
+                o.hp -= blast.damage;
+                o.flash = 0.08;
+              }
             }
-          }
+          });
           state.effects.push({ kind: 'rewrite_harvest', x: p.x, y: p.y, radius: blast.radius, age: 0, ttl: 0.3 });
         }
       }
@@ -3210,7 +3331,7 @@ function showHowToPlay() {
     'chests — walk in: item, upgrades… or nothing + a mini-horde<br>' +
     'portal — walk through to bank the wave<br>' +
     'arches — cross the gate for a timed buff<br>' +
-    'shrines — drift close, gold buys a blessing<br>' +
+    'shrines — walk close, gold buys a blessing<br>' +
     'intermission — paid chests (40/25/10% nothing), blessings,<br>' +
     'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons<br>' +
     'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
@@ -3580,7 +3701,7 @@ function updateTourCoach() {
   } else if (fieldReady && !tourFlag(TOUR_KEYS.shrine) && state.shrine && !state.shrine.used) {
     const sh = state.shrine;
     startCoach({ id: 'shrine',
-      text: 'A SHRINE — drift close and gold buys a random blessing.',
+      text: 'A SHRINE — walk close and gold buys a random blessing.',
       target: () => worldRegion(sh.x, sh.y, 16) }, TOUR_KEYS.shrine);
   } else if (!tourFlag(TOUR_KEYS.hud) && state.time > 1) {
     startCoach({ id: 'hud',
@@ -4485,7 +4606,10 @@ function startRun() {
     }
   }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
-  state.shrine = rollShrine(0, state.shrineRng);
+  // S1 (owner directive 2026-09-14): world-seed the fixed set of 4 altars ONCE
+  // here — uniform scatter over the whole arena, static for the whole run.
+  state.shrines = seedShrines(state.shrineRng);
+  state.shrine = state.shrines[0] || null;   // render/tour VIEW: first unused
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
   state.waveChoice = null;            // Sk408 playtest: fresh run, fresh pick
@@ -5034,7 +5158,13 @@ function runAction(act) {
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
   else if (act === 'stance') cycleStanceWithFeedback();
-  else if (act === 'q') useSkill(state, classSkillId(state));
+  else if (act === 'q') {
+    // E2 (R9): ground-AoE casts can't touch flyers (see flyingGuard); the
+    // Witch's chain beam is a DIRECT hit — its damage lands, only the
+    // frost-slow rider is refused ('beam').
+    const qid = classSkillId(state);
+    flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
+  }
   else if (act === 'w') useSkill(state, 'OVERCHARGE');
   else if (act === 'h') drinkHealthPotion(state);
   else if (act === 'n') drinkManaPotion(state);
@@ -5167,7 +5297,11 @@ function autoCastSkills(state) {
     const r = q === 'CONSECRATION' ? 0 : (C.SKILLS[q] && C.SKILLS[q].RADIUS);
     const lands = state.enemies.some(e => e && e.hp > 0 &&
       (!r || Math.hypot(e.x - p.x, e.y - p.y) <= r));
-    if (lands) useSkill(state, q);
+    if (lands) {
+      // E2 (R9): same flying exemption as the manual cast seam — ground AoE
+      // is refused, the chain beam's direct damage still lands.
+      flyingGuard(q === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, q));
+    }
   }
   // OVERCHARGE: a self-buff, so the gate is THREAT or SPILL — never position.
   if ((p.skillCd.OVERCHARGE || 0) <= 0 && p.mana >= skillManaCost('OVERCHARGE', state)) {
@@ -5878,6 +6012,7 @@ function startFinale() {
   state.enemyShots.length = 0;
   state.chests.length = 0;
   state.arches.length = 0;
+  state.shrines = [];    // S1: the world-seeded set closes at the end
   state.shrine = null;   // WAVE-11: no shrines past the end
   state.archBuffs.length = 0;
   state.shieldAbsorbs = 0;
@@ -5958,7 +6093,8 @@ function updateFinale(dt) {
   autoCastSkills(state);
   // N1 slice 3: the SECOND ult-window seam — the maw fight must tick the
   // AFTERIMAGE phantoms and the CONSECRATION field like any other frame.
-  updateUlts(state, dt);
+  // E2 (R9): ground AoE — flyers take nothing (see flyingGuard).
+  flyingGuard('blast', () => updateUlts(state, dt));
   updateWeapons(state, state.weapons, dt);   // chip damage; floor re-clamped below
 
   // The maw: age-keyed choreography (final_boss.js) — slow drift, telegraph

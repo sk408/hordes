@@ -1010,18 +1010,22 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   mainMod.__TEST.getProfile().gold = 1000;    // the BANK: must not move
   mainMod.__TEST.getProfile().runPurse = 100; // the run's own wallet
   const choicesBefore = st.takenChoices.length;
-  st.shrine = { x: st.player.x, y: st.player.y, used: false };
-  for (let i = 0; i < 30 && !st.shrine.used; i++) {
+  // S1 retarget: the proximity loop iterates the world-seeded SET
+  // (state.shrines); the probe replaces it with one altar under the player
+  // (was: st.shrine = {...} on the single-slot handoff).
+  const probeShrine = { x: st.player.x, y: st.player.y, used: false };
+  st.shrines = [probeShrine];
+  for (let i = 0; i < 30 && !probeShrine.used; i++) {
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
   }
-  assert(st.shrine.used === true, 'the shrine must complete the purchase (used flag)');
+  assert(probeShrine.used === true, 'the shrine must complete the purchase (used flag)');
   // WAVE-25 (agent F): pin the purse against the cost the shrine ACTUALLY
   // advertised instead of a hardcoded 60 — shrineBlessing's cost is a function
   // of the wave and of how many blessings this run already took
   // (shrines.js shrineCost), so the literal expectation flaked (~1/60) when the
   // probe ran with a taken blessing. The cost CURVE itself is pinned by
   // test_shrines.mjs; this probe only owes the purse-debit wiring.
-  const shrineCost = st.shrine.blessing && st.shrine.blessing.cost;
+  const shrineCost = probeShrine.blessing && probeShrine.blessing.cost;
   assert(typeof shrineCost === 'number' && shrineCost > 0,
     'the shrine must advertise a cost for the blessing it sells');
   assert(mainMod.__TEST.getProfile().runPurse === 100 - shrineCost,

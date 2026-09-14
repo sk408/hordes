@@ -478,8 +478,20 @@ export class Renderer {
       if (e.finalBoss) continue;   // WAVE-10: the maw has its own draw below
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
       const hw = Math.round(w / 2), hh = Math.round(h / 2);
-      const x = Math.round(e.x - cam.x), y = Math.round(e.y - cam.y);
+      const x = Math.round(e.x - cam.x);
+      let y = Math.round(e.y - cam.y);
       if (cull(x, y, 30)) continue;
+      // E2 (R9): a flyer draws its ground SHADOW at (x,y) — the sim's 2D
+      // truth (contact/targeting read that point) — then the whole body
+      // (sprite or fallback shape, tells and hp bar included) lifts by its
+      // altitude z. Integer px throughout (house rule).
+      if (e.flying) {
+        const shw = Math.max(2, Math.round(w * 0.7));
+        g.fillStyle = 'rgba(0,0,0,0.35)';
+        g.fillRect(x - Math.round(shw / 2), y + hh - 2, shw, 2);
+        g.fillRect(x - Math.round(shw / 4), y + hh - 4, Math.max(1, Math.round(shw / 2)), 2);
+        y -= Math.round(e.z || 0);
+      }
       const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : SPRITES[e.typeId];
       if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
@@ -537,6 +549,14 @@ export class Renderer {
         // Accent core pixel.
         g.fillStyle = accent;
         g.fillRect(x - 1, y - 1, 2, 2);
+        // E2 (R9): wing flap for the flyer — two beating side rows off the
+        // age phase (~8/s), so the hover READS as flight, not a float.
+        if (e.flying) {
+          const flap = Math.floor((e.age || 0) * 8) % 2 === 0 ? 0 : 2;
+          g.fillStyle = trim;
+          g.fillRect(x - hw - 3, y - 2 - flap, 3, 2);
+          g.fillRect(x + hw, y - 2 - flap, 3, 2);
+        }
         if (e.telegraph && Math.floor((state.time || 0) * 12) % 2 === 0) {
           g.fillStyle = '#ffffff';
           g.fillRect(x - hw - 1, y - hh - 1, w + 2, 1);

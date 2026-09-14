@@ -2,8 +2,8 @@
 // Run: node test/test_shrines.mjs
 import assert from 'node:assert';
 import {
-  rollShrine, shrineCost, shrineBlessing, canAfford,
-  SHRINE_CHANCE, SHRINE_RING_MIN, SHRINE_RING_MAX,
+  seedShrines, shrineCost, shrineBlessing, canAfford,
+  SHRINE_WORLD_COUNT, SHRINE_WORLD_MARGIN,
   SHRINE_BASE_COST, SHRINE_COST_PER_WAVE, SHRINE_COST_USED_MULT,
 } from '../src/shrines.js';
 import { CHOICE_POOL, RARITIES, applyChoice } from '../src/choices.js';
@@ -13,46 +13,69 @@ import { mulberry32 } from '../src/weather.js';
 // Deterministic rng helper: replays a fixed sequence.
 const seq = (vals) => { let i = 0; return () => vals[i++ % vals.length]; };
 
-// ---- roll: gate + ring geometry ----------------------------------------------
-// Gate: first rng draw decides spawn — 0.59 spawns (< 0.6), 0.60 does not.
-assert.equal(rollShrine(0, seq([0.60])), null, 'rng 0.60 must NOT spawn (>= chance)');
-assert.ok(rollShrine(0, seq([0.59])), 'rng 0.59 must spawn (< chance)');
-
-// Fixed draws pin the ring point: r = 250 + 0.5*(420-250) = 335, a = 0.25*2pi.
+// ---- world seed: count + geometry -------------------------------------------
+// S1 RETARGET (was: per-wave gate 0.60 + 250-420 ring): the per-wave roll is
+// deleted; the set is seeded ONCE at run start. The new contract: exactly
+// SHRINE_WORLD_COUNT altars, integer pixels, uniform over the +-(600-MARGIN)
+// box, never centre-ringed, and a FIXED draw count at creation (then ZERO
+// draws per wave — the stronger property: stepping waves consumes no rng).
 {
-  const s = rollShrine(3, seq([0.0, 0.5, 0.25]));
-  assert.ok(s, 'spawned');
-  const r = Math.hypot(s.x, s.y);
-  assert.ok(r >= SHRINE_RING_MIN - 1 && r <= SHRINE_RING_MAX + 1,
-    `placement on the 250-420 patrol ring (got r=${r})`);
-  assert.equal(s.used, false, 'fresh shrine is unused');
-  assert.deepEqual(Object.keys(s).sort(), ['used', 'x', 'y'], 'plain {x,y,used} shape');
-  // In-bounds for the +-600 arena clamp, always.
-  assert.ok(Math.abs(s.x) <= 600 && Math.abs(s.y) <= 600, 'inside the arena');
+  const set = seedShrines(mulberry32(1));
+  assert.equal(set.length, SHRINE_WORLD_COUNT, `exactly ${SHRINE_WORLD_COUNT} shrines per world`);
+  for (const s of set) {
+    assert.equal(s.used, false, 'fresh shrine is unused');
+    assert.deepEqual(Object.keys(s).sort(), ['used', 'x', 'y'], 'plain {x,y,used} shape');
+    assert.equal(s.x, Math.round(s.x), 'integer pixel x');
+    assert.equal(s.y, Math.round(s.y), 'integer pixel y');
+    const half = 600 - SHRINE_WORLD_MARGIN;
+    assert.ok(Math.abs(s.x) <= half && Math.abs(s.y) <= half,
+      `inside the rim with margin (|x|,|y| <= ${half})`);
+  }
 }
 
-// Determinism: same seed -> identical shrine.
-assert.deepEqual(rollShrine(4, mulberry32(11)), rollShrine(4, mulberry32(11)),
-  'same seed rolls the same shrine');
-
-// ---- cadence bounds ----------------------------------------------------------
-// 2000 seeded waves -> ~60% have a shrine (loose bounds; ring stays valid).
+// Fixed draws pin the placement: every draw 0.25 -> (0.25*2-1)*560 = -280.
 {
-  const rng = mulberry32(4242);
-  let spawned = 0, N = 2000;
-  for (let i = 0; i < N; i++) {
-    const s = rollShrine(i % 10, rng);
-    if (s) {
-      spawned++;
+  const set = seedShrines(seq([0.25]));
+  for (const s of set) {
+    assert.equal(s.x, -280, 'pinned x from the fixed draw');
+    assert.equal(s.y, -280, 'pinned y from the fixed draw');
+  }
+}
+
+// Determinism: same seed -> identical set.
+assert.deepEqual(seedShrines(mulberry32(11)), seedShrines(mulberry32(11)),
+  'same seed rolls the same world set');
+assert.notDeepEqual(seedShrines(mulberry32(11)), seedShrines(mulberry32(12)),
+  'different seeds roll different sets');
+
+// ---- draw cadence + distribution --------------------------------------------
+// Exactly 2 rng draws per shrine at creation — the whole run's shrine
+// randomness is spent up front; nothing is drawn per wave.
+{
+  let draws = 0;
+  const counting = () => { draws++; return 0.5; };
+  seedShrines(counting);
+  assert.equal(draws, 2 * SHRINE_WORLD_COUNT,
+    `exactly ${2 * SHRINE_WORLD_COUNT} draws at world creation, zero after`);
+}
+// Whole-map, NOT the old 250-420 centre ring: over many seeds the scatter
+// escapes the ring in BOTH directions, and |x| averages ~half the box
+// (uniform on [-560,560] -> E|x| = 280).
+{
+  let inside = 0, outside = 0, sumAbsX = 0, n = 0;
+  for (let seed = 1; seed <= 500; seed++) {
+    for (const s of seedShrines(mulberry32(seed))) {
       const r = Math.hypot(s.x, s.y);
-      assert.ok(r >= SHRINE_RING_MIN - 1 && r <= SHRINE_RING_MAX + 1,
-        `spawn stays on the ring across waves (r=${r})`);
-    } else {
-      assert.equal(s, null, 'no-shrine waves return null');
+      if (r < 250) inside++;
+      if (r > 420) outside++;
+      sumAbsX += Math.abs(s.x); n++;
     }
   }
-  const f = spawned / N;
-  assert.ok(f > 0.53 && f < 0.67, `cadence ~60% over ${N} waves (got ${(f * 100).toFixed(1)}%)`);
+  assert.ok(inside > 0, 'scatter reaches INSIDE the old 250 ring (not centre-ringed)');
+  assert.ok(outside > 0, 'scatter reaches OUTSIDE the old 420 ring (whole-map)');
+  const meanAbsX = sumAbsX / n;
+  assert.ok(meanAbsX > 250 && meanAbsX < 310,
+    `|x| mean ~280 for a uniform box (got ${meanAbsX.toFixed(1)})`);
 }
 
 // ---- exact cost curve --------------------------------------------------------
@@ -136,8 +159,8 @@ assert.equal(canAfford(undefined, 60), false, 'missing gold is not affordable');
   const a = shrineBlessing(0, mulberry32(3), []);
   const b = shrineBlessing(0, mulberry32(3), []);
   assert.deepEqual([a.offer.id, a.cost], [b.offer.id, b.cost], 'pure: identical inputs');
-  const s1 = rollShrine(1, mulberry32(4)), s2 = rollShrine(1, mulberry32(4));
-  assert.deepEqual(s1, s2, 'pure: identical shrine rolls');
+  const s1 = seedShrines(mulberry32(4)), s2 = seedShrines(mulberry32(4));
+  assert.deepEqual(s1, s2, 'pure: identical world sets');   // S1 retarget: was rollShrine
 }
 
 console.log('ALL SHRINE TESTS PASSED');

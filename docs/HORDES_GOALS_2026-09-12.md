@@ -1411,7 +1411,7 @@ section above. Read that before writing a brief.
 touches `controllers.js` (the blindness exception), so it must NOT run in parallel with anything else
 that edits the controller.
 
-### E1 — THE RUN PURSE: TIER-WEIGHTED GOLD, IN-RUN SPEND, FIXED END AWARD, HUD READOUT  [status: not started — owner-ordered 2026-09-14]
+### E1 — THE RUN PURSE: TIER-WEIGHTED GOLD, IN-RUN SPEND, FIXED END AWARD, HUD READOUT  [status: DONE 2026-09-14 — landed `245cea0` and PUSHED, orchestrator-verified (3 consecutive suite runs greenfiles=84 redfiles=0, verify_e1_purse 13/13). Full evidence in the GOLD BECOMES AN IN-RUN PURSE section above. Marker corrected by the goal-pilot tick at `b9c5571` — it still read 'not started' after landing.]
 
 Sk408: *"Yes, tier weighted gold counter is needed... Gold at the end of the run should maybe be fixed
 because we have shrines that cost money and we eventually want chest and item merchants. Gold should be
@@ -1427,7 +1427,7 @@ weighting is not a drop-rate change), and an in-run boss payout must not double-
 **Suite note:** this moves the meta economy, so `test_meta.mjs`'s income assertions will shift —
 re-measure and retarget honestly, never reprice the shop to keep a test green.
 
-### E2 — THE WAVE-2 HORDE: HEAVY TIER, FLYING ENEMY, TRIPLED CHAFF, PERF GATE  [status: not started — owner-ordered 2026-09-14]
+### E2 — THE WAVE-2 HORDE: HEAVY TIER, FLYING ENEMY, TRIPLED CHAFF, PERF GATE  [status: DONE 2026-09-14 — LANDED by builder cli:kimi-hordes-g8 (task msg_01M2GTTMDNSAJRCSECSS0HPZQX, brief docs/briefs/E2_HORDE.md) on the dirty tree at `b9c5571` (dirty=13, uncommitted — the orchestrator owns commits). Builder evidence: test_e2_horde 19/19, verify_e2_horde 7/7, verify_perf PASS (332 peak bodies, p95 6.00ms vs 16.67/8.33 budgets), R2 midBossHp formula asserted byte-exact in unit + browser, R9 ground-AoE flying exemption proven both halves, spawn mix measured (heavies 9.8%, chaff x3.43, SHRIKE 131), 5-channel income re-measured (purse/run 9556->18196 gold, drafts 34->32 no collapse), cohorts: fresh 15s->15s, partial 25.5s->25.5s, maxed 573s->576.5s with an HONEST NULL on the maxed arm (louder, not deadlier). Phone PNG read back (SHRIKE at altitude + shadow). PILOT RE-VERIFICATION: full suite re-run on the artifact, `SUITE greenfiles=86 redfiles=0`, TREE b9c5571 dirty=13 — matches the builder's claim. NOT independently re-run by the pilot: the perf gate and cohort numbers (accepted from raw builder output; the harnesses are committed files and re-runnable).]
 
 Sk408: *"we need more enemy variety so that the 2nd wave has a complement of new enemies... I meant it
 literally for the enemies to be mid level boss strength... the wave 2 spawn rate for chaff should be
@@ -1443,7 +1443,7 @@ real browser, before and after).
 **Sequencing note:** E2 changes what a wave-2 run pays, and E1 changes how gold is earned — land E1
 first so E2's cohort measurements are taken against the final economy, not a moving one.
 
-### S1 — SHRINES: WORLD-SEEDED, WHOLE-MAP, RARER, STATIC  [status: not started — owner-ordered 2026-09-14]
+### S1 — SHRINES: WORLD-SEEDED, WHOLE-MAP, RARER, STATIC  [status: IN PROGRESS 2026-09-14 — DISPATCHED by the goal-pilot tick on the post-E2 tree (`b9c5571`, dirty=13, suite greenfiles=86 redfiles=0), builder cli:kimi-hordes-g8, brief docs/briefs/S1_SHRINES.md. Dispatch-re-verified: all anchors re-resolved (main.js drift seams moved to 2174-2175, per-wave roll to 1141, coachmark to 3695-3699, tour copy to 3328), three new seams recorded (run-start roll 4602-4603, WAVE-11 clear 6006, shared DRIFT.ARCH 2153-2160); the before-baseline measurement is delegated to the builder pre-edit per the brief's amended dispatch-check item 4.]
 
 Sk408: *"Shrines should be a bit rarer. But should also be available across the entire map, yes. Not
 player specific spawn. Maybe spawned on world creation like megabonk."*
