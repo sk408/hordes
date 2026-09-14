@@ -1173,7 +1173,50 @@ above (auto-width buttons whose `.badge` text changes at runtime; fix by fixed p
 buttons + reserved badge width; prove it with `getBoundingClientRect` equality across all four pilot modes
 and across a cooldown/potion change). Small, self-contained, no dependencies.
 
-### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS  [status: themed buttons DONE 2026-09-14 (uncommitted, pixel-verified); subnav NOT STARTED — owner-ordered 2026-09-14]
+### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS  [status: DONE 2026-09-14 — landed + PUSHED as `f521bd3`, VERIFIED]
+
+**LANDED AND PUSHED. Do not redo any of this** (commit `f521bd3` on `main`, gate
+`bash /tmp/run_all.sh` => greenfiles=78 redfiles=0 at that commit, and the live
+GitHub Pages build was read back and confirmed serving it: `paintTitleHeader` x2,
+`COIN_GRID` x2, `PROGRESS` x6, `SETUP` x6 in the served `src/main.js`).
+
+What shipped: the title is 6 cards (7 fresh) — START GAME / [LOAD FROM DISK] /
+SHOP / CHARACTERS / **PROGRESS** / **SETUP** / EXIT GAME(last). PROGRESS holds
+TROPHIES+BESTIARY, SETUP holds CHALLENGE+STAGE+SETTINGS+HOW TO PLAY, both ending
+in BACK; CHALLENGE/STAGE re-render the submenu after a press. Themed pixel plaque
+`.card` styling. Title header is now ART, not copy: coin glyph + gold number +
+the equipped pilot's own `CHARACTER_PORTRAITS[id]` bust (integer 2x, pixelated).
+`test_tour`'s `DISCOVERY_EXEMPT` is now EMPTY (stricter, not looser).
+
+**TWO FOLLOW-UPS QUEUED HERE (both un-started):**
+
+- **U1b — THE AUTHORED PIXEL FRAME (the last piece of "custom themed buttons").**
+  The plaque is currently CSS-approximated: `clip-path` cuts the corners and, being
+  a clip, it also clips the card's 0-blur `drop-shadow`, so the cards do not cast
+  onto the screen art ("like it's part of the screen"). The real answer is an
+  authored 9-slice frame drawn through the repo's `drawGrid` seam (corners fixed,
+  edges tiled, centre filled) on a canvas layer inside each card. Do NOT solve this
+  by wrapping cards in a div for a parent `drop-shadow`: `elements['ov-cards']
+  .children[i]` must stay the clickable card (smoke and several suites click
+  `children[0]` and read `.innerHTML` on it). **Grid trap, already paid for once:**
+  `drawGrid` frames are INTEGER grids where `0` is the transparent cell — a string
+  grid makes every cell truthy, `palette['.']` is undefined, the invalid
+  `fillStyle` assignment is silently ignored and the previous colour paints every
+  pixel (this is how the first cut of the header coin rendered as a solid block).
+- **P1b — THE RIM-PIN: A PORTAL CAN SPAWN UNREACHABLE AND THE RUN IS UNWINNABLE.**
+  Measured and confirmed real (own probe, 2026-09-14): `spawnBoss` places the boss
+  at `player + SPAWN_DIST*0.7` on a random angle and the portal opens at the spawn
+  spot UNCLAMPED, while `put()` refuses outward motion past `lootLimit()` (566) even
+  though the player may stand at `RIM` (600) and `PORTAL.STANDOFF` is 24. A portal
+  landing past ~590 pins the pilot at 566 with the portal at 590: distance freezes
+  at 24 and never reaches `RADIUS` 16. Probe: portal forced to x=900 with the player
+  at x=400 => d frozen at 24.0 for 20s; control enters in 0.5s. The flee-gate fix
+  does NOT touch this. Latent — `portalBeyondEdge:false` in all 74 tool runs so far —
+  which is why it is queued rather than urgent. Fix by clamping the portal spawn
+  inside reachability (or making the rim reachable), then pin it with a test that
+  asserts a portal is always enterable from the worst-case legal player position.
+
+### U1 — TITLE MENU: SUBNAV + THEMED BUTTONS (original entry, kept for the record)
 
 Owner, verbatim: *"I think we have too many buttons on the main menu. There should
 be more submenus to contain some and also we should have custom themed buttons
