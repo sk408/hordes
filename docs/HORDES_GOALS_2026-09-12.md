@@ -76,6 +76,129 @@ work sat **uncommitted** (~354 insertions across 7 `src/` files + `test/test_cha
 
 ---
 
+## SHRINES — OWNER DIRECTIVE (2026-09-14): world-seeded, whole-map, rarer, static
+
+Sk408: *"Shrines should be a bit rarer. But should also be available across the entire map, yes. Not
+player specific spawn. Maybe spawned on world creation like megabonk."*
+
+**Current behaviour** (`src/shrines.js`): a per-WAVE roll (`SHRINE_CHANCE = 0.6`), each shrine placed
+on a 250-420px ring around the ARENA CENTRE, which then DRIFTS toward the player at ~6px/s. The
+centre ring is deliberate — the auto-pilot idles in a counter-clockwise orbit of the centre, so the
+placement exists to let AUTO runs find shrines without steering (the "pilot-blind" contract at
+`shrines.js:12`).
+
+**Required:**
+1. **Rarer.**
+2. **Across the ENTIRE map** — no centre ring, no orbit coupling.
+3. **Not player-specific** — never placed relative to the player.
+4. **Seeded at WORLD CREATION (Megabonk model)** — a fixed set chosen once when the run starts, static
+   thereafter: no per-wave roll, no per-frame replacement.
+
+**Remy's calls on the two open questions (implement these unless the owner says otherwise):**
+- **Drop the ~6px/s drift.** A shrine that walks to the player is player-specific *in effect*, which
+  contradicts (3). Static means static.
+- **Keep the auto-pilot blind** — `controllers.js` still never learns shrines exist. State the
+  consequence plainly: an AUTO/AFK run will now meet FEWER shrines, sometimes none. That is
+  acceptable — blessings are optional bonuses and the owner's power model is shop buyables, not
+  shrines — and it keeps the pick-up-and-leave path free of new steering code. Do NOT add
+  shrine-seeking AI to "fix" it.
+- **Count:** seed a small fixed set per world (start at 4, tune by measurement). **Caution, measured:**
+  the arena is ~10 screens (1200x1200 against a fixed 480x300 view) and a fresh run dies in ~35s, so
+  four scattered shrines means many short runs meet ZERO. That *is* "rarer"; if it reads as "never",
+  the count is the dial — never the centre ring again.
+- **Economy consequence, handle it rather than ignore it:** `shrineCost(wave, used)` =
+  `(60 + 30*wave) * 1.25^used` is wave-indexed so the price keeps pace with income. A world-seeded set
+  is all reachable from t=0, so an early rush gets cheap and only the `1.25^used` term brakes it. Keep
+  the wave read at PURCHASE time (the current wave) and re-measure the spend curve; do not silently
+  reprice.
+
+**Acceptance (the pilot's usual bar, plus these):**
+- A test proving the set is NOT player-relative and NOT centre-ringed: park the player in a corner,
+  assert the seeded set is unchanged and that placement does not read player position at all.
+- A test proving the set is fixed at world creation: the same seed yields the identical set; stepping
+  waves adds no shrine and moves none.
+- Measured before/after shrine count per run (the "rarer" claim needs a number).
+- The tour coachmark (`main.js:3263`) reads `state.shrine` — make sure it still finds one, or retarget
+  it honestly.
+- `redfiles=0` x3, no assertion weakened. The rng-cadence contract (`shrines.js:35`: 3 draws when it
+  spawns, 1 when not) will legitimately change shape — retarget that test to the new contract, do not
+  delete it.
+
+## BOSS PORTAL — OWNER DIRECTIVE (2026-09-14): linger, auto-path to it, brief invulnerability
+
+Sk408: *"the boss portal needs to be on the screen longer before the player enters and the cinematic
+begins. Maybe it can be something that the auto pathing heads toward automatically, and give the player
+a bit of invulnerability headed to the portal. Eventually with elevation we could place the portal on a
+shrine too."*
+
+**Current behaviour (measured).** On the wave clear the portal opens where the boss fell and **chases
+the player at `player.speed + 60px/s`** (`main.js:1355` — the comment says outright: *"Portal chases
+the player (chest precedent) so the AutoPilot crosses it without touching the controller seam"*), with
+`C.PORTAL.RADIUS = 16` — a 32px object on a 480x300 view. Entry fires on proximity < 16, so the portal
+engulfs the player within a second or two and the intermission + cinematic follow. **The toast says
+"THE PORTAL OPENS - WALK THROUGH" but nobody walks: the portal walks into them.** The chase exists for
+exactly one reason — it is how a PILOT-BLIND auto-pilot is guaranteed to cross it.
+
+**Required:**
+1. The portal must be on screen **longer** before the player enters and the cinematic begins.
+2. The auto-pathing should head toward it.
+3. A brief invulnerability while heading to it — **AUTO ONLY. MANUAL grants none, at all.** Owner,
+   2026-09-14: *"manual should not grant invulnerability period the way auto would"*. Manual also needs
+   no pathing work: the manual player can see the portal and knows to walk to it — the auto-path change
+   exists only because the pilot is blind and cannot be told.
+4. Later idea (not now): with elevation (G7) the portal could sit on a shrine — note it ties to S1.
+
+**Remy's calls — implement these unless the owner says otherwise:**
+- **(1)+(2) are the same fix: PARK the portal instead of chasing.** Delete the chase; let it settle at a
+  standoff ring (~1.4-1.6x RADIUS) so it stays on screen and waits. Entry then becomes the player's
+  deliberate act, which is what the existing toast already promises. The chase's ONLY job was to
+  guarantee AUTO entry — so replace that job, do not keep both.
+- **Teach the controller about the PORTAL ONLY.** This is a deliberate, narrow exception to
+  PILOT-BLIND; `shrines`/`chests`/`arches` stay blind and that must be pinned by a test (the controller
+  knows the portal and nothing else). Parking is only safe for AUTO runs if the pathing closes the
+  distance, which is what the owner is asking for.
+- **(3) reuse the EXISTING invuln seam — no new damage machinery — and gate it on the PILOT MODE.**
+  `p.invuln` already exists (`main.js:1332`, set at `:1645`/`:1650`), so the approach window is a bounded
+  refresh of that window while the portal is open. Make it VISIBLE (the existing invuln tell) and bounded.
+  **The gate is "the pilot is driving movement", not "the mode is AUTO_ALL"** — so `AUTO_ALL` AND
+  `AUTO_MOVE` both get it (the steering is the pilot's either way, and it cannot dodge), and `MANUAL`
+  gets **nothing, ever**. Pin BOTH halves with tests: (i) manual crossing the portal takes damage
+  normally / receives no invuln window, (ii) auto receives the window. A mode-conditional rule that is
+  only tested in one mode is how the condition silently disappears.
+  **Asymmetry to accept deliberately:** AUTO becomes strictly safer than manual in that moment. That is
+  intentional — a dumb pilot dying to its own pathing reads as a bug, while a manual death is a decision
+  the player made — and it is invisible today because the corridor is harmless (see below). If it ever
+  matters, compensate on the MANUAL side (agency/reward), never by taking the crutch from auto.
+  **Honest note:** the corridor is safe *by construction* today — the horde converts to gems, boss shots
+  are cleared, spawns are suppressed and the wave timer pauses while the portal is open — so this is
+  **insurance, not a fix**, and a test must not "prove" it by hunting for damage that does not exist.
+  Implement it anyway: it must already be correct if the portal ever opens with live enemies (item 4).
+- **Add the dwell beat:** on contact, hold a visible moment (~0.35-0.5s, the N2 reveal precedent) before
+  the intermission/cinematic, so the crossing reads instead of teleporting.
+- **Presence, not a bigger trigger:** RADIUS 16 is tiny. The cheap visibility win is a spawn-in
+  animation / growth plus a stronger tell — keep the entry radius modest so nobody enters by accident.
+
+**Acceptance:** a real-browser capture **timed from portal-open to intermission** (the on-screen seconds
+must be a before/after NUMBER, not an adjective); a test that the AUTO path closes the distance and
+enters **with the chase removed**; the invuln window proven by taking no damage while crossing;
+60/120Hz correct; the narrowed blindness test above; `redfiles=0` x3, no assertion weakened.
+
+## SCOPE INTENT — "pick up and leave", NOT a full release (2026-09-14, owner)
+
+Sk408: *"The point is that the play testers keep pushing the game to be a full sized completed released
+game feel instead of what I wanted as a simple pick up and leave game."*
+
+- **The arena is NOT being enlarged.** The 4x idea (RIM 600 -> 1200) is declined on that basis: spawns
+  are player-relative, so a bigger arena does not spread the fight — it only adds escape room and
+  travel, and the size is invisible to the player behind a fixed 480x300 view. If it is ever revisited,
+  it must be measured with browser cohorts: `tools/draft_sim.mjs` does not model the arena at all and
+  will report identical survival at any RIM.
+- **Prefer changes that DELETE machinery over changes that add it.** The shrine work above qualifies (it
+  removes the per-wave roll and the orbit coupling). Features whose purpose is to make the game feel
+  like a bigger, fuller product do not qualify, and the pilot should flag them rather than build them.
+
+---
+
 ## SUPERSEDED BALANCE ARITHMETIC — read before using any number below (2026-09-13)
 
 Owner-ordered changes on 2026-09-13 invalidated the balance arithmetic in the older tick notes and
@@ -142,6 +265,20 @@ CORRECT behaviour, not a fault to escalate.
 FOR DISPATCHERS: briefs that demand long verification phases should tell the
 builder to `agentlock beat` as it goes, so the heartbeat stops scaring readers.
 
+### BROWSER-TOOL SEAM — FIX ON NEXT TOUCH, DO NOT RE-AUDIT (owner call, 2026-09-14)
+
+`tools/browser.mjs`'s `withPage` sets only 7 of the 19 `TOUR_KEYS`, and `frame()` gates `update()` on
+`!coachActive()` — so a run booted that way is **FROZEN** (measured: `state.time` stuck at 0.00 while
+the mode read `playing`). The pilot found this 2026-09-14; the new `tools/verify_n1_chain_q.mjs`
+avoids it by setting all 19 keys and asserting the sim clock advances before it measures anything.
+
+**Owner's call: do NOT re-run or re-audit the older browser verifications — "I think we're ok. The game
+runs ok."** Nothing is being re-verified and no retro-audit brief is to be written. The fix is lazy: when
+a future change touches a browser-verified section, repair that tool's boot path in the same pass.
+
+**Standing rule for every new or modified browser tool:** set all 19 `TOUR_KEYS` and assert the clock
+advances before measuring — otherwise it is grading a paused game.
+
 ### VISUAL VERIFICATION: you cannot see, but you can still get it seen (2026-09-13)
 
 The pilot reported "no vision model in this session, so g20-stages-phone.png still
@@ -182,6 +319,11 @@ screen itself, then get THAT one read.
   **NO OWNER INPUTS OUTSTANDING FOR N1.** The three non-Witch ult EFFECTS are DELEGATED to
   the pilot (owner, 2026-09-13: "go ahead") against the constraints and acceptance bar on N1b
   item 3. N1 is dispatchable. See TICK NOTE 35.
+- **THE ARENA SIZE — ANSWERED 2026-09-14: NOT being enlarged.** The owner floated 4x ("four tiles of
+  the same size"), then stated the governing intent: *"the play testers keep pushing the game to be a
+  full sized completed released game feel instead of what I wanted as a simple pick up and leave
+  game."* Do not grow the map. Full reasoning (player-relative spawns, invisible size, the sim being
+  blind to it) is in the **SCOPE INTENT** section above.
 
 ## OWNER-ORDERED NEXT WORK (Sk408, 2026-09-13)  [status: not started]
 
@@ -189,7 +331,35 @@ Set directly by Sk408 in session. **ORDER: N2 first** (the owner's live priority
 art alone and immediately asked for the fade-in — and it is the smallest of the three), then
 **N1 + N1a together** (the caster identity is only half-built without the Witch half).
 
-### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3]
+### P1 — BOSS PORTAL: LINGER + AUTO-PATH + APPROACH INVULNERABILITY  [status: not started — owner-ordered 2026-09-14]
+
+Sk408: *"the boss portal needs to be on the screen longer before the player enters and the cinematic
+begins. Maybe it can be something that the auto pathing heads toward automatically, and give the player
+a bit of invulnerability headed to the portal."*
+
+The measured current behaviour (it chases you and engulfs you, so you never see it), Remy's calls (park
+it instead of chasing; teach the controller about the portal ONLY; reuse the existing `p.invuln` seam;
+add a dwell beat) and the acceptance bar live in the **BOSS PORTAL — OWNER DIRECTIVE (2026-09-14)**
+section above. Read that before writing a brief.
+
+**Schedule:** after S1 (the shrine rework), ahead of the polish goals. Note the shared surface: it
+touches `controllers.js` (the blindness exception), so it must NOT run in parallel with anything else
+that edits the controller.
+
+### S1 — SHRINES: WORLD-SEEDED, WHOLE-MAP, RARER, STATIC  [status: not started — owner-ordered 2026-09-14]
+
+Sk408: *"Shrines should be a bit rarer. But should also be available across the entire map, yes. Not
+player specific spawn. Maybe spawned on world creation like megabonk."*
+
+Full spec, the two calls Remy made (drop the ~6px/s drift; keep the auto-pilot blind), the economy
+caveat and the acceptance bar are in the **SHRINES — OWNER DIRECTIVE (2026-09-14)** section above —
+read that before writing a brief. It is a **DELETION of machinery** (the per-wave roll plus the orbit
+coupling), which is why it is in scope under the SCOPE INTENT rule.
+
+**Schedule:** after the in-flight N1 slices (slice 2 = the draftable FROST_NOVA card, then slice 3
+against `docs/briefs/N1_ULTS_SPECS.md`), ahead of the polish goals (G21+). No dependency on N1.
+
+### N1 — CLASS IDENTITY: every class gets its own skill  [status: IN PROGRESS 2026-09-13 — fully unblocked: Q-slot call ANSWERED (option (a)), the WITCH'S Q is SPECCED (Chain Reaction), and the three non-Witch ult EFFECTS are DELEGATED to the pilot with constraints + acceptance bar on N1b item 3. **SLICE 1 (the Witch's Chain Reaction Q) DONE + VERIFIED BY TICK NOTE 38 on the COMMITTED artifact `c49642e`.** **SLICE 3 UNBLOCKED: the pilot's three ult specs are AUTHORED at `docs/briefs/N1_ULTS_SPECS.md`** (the owner-delegated content design, brought back BEFORE any builder implements). SLICE 2 (the draftable FROST_NOVA card) is the next build.]
 
 Sk408: *"Maybe we should have a class that has spells and what not. Strong spells but mana
 is used up"* ... *"I like the class identity idea"*.
@@ -3908,3 +4078,73 @@ restarted or steered. No git state command run this tick.
 
 **NEXT GOAL:** verify N1 slice 1 (suite redfiles=0 x3, tallies, the measured detonation/mana numbers, the
 phone screenshot READ), then author the three ult specs, then G21.
+
+
+## TICK NOTE 38 - 2026-09-13 (goal pilot tick, subagent:spawnfa, agentlock held; N1 slice 1 VERIFIED on the committed artifact; the pilot's three ULT SPECS delivered - slice 3 unblocked)
+
+**Goal worked: N1.** Slice 1 (the Witch's Q = CHAIN REACTION) was already committed by the
+orchestrator (`cb9fea3`, with `c49642e` on top) while the pilot was paused; this tick verified it
+against its own acceptance bar on that COMMITTED artifact, then delivered the slice-3 input the
+owner delegated to the pilot.
+
+**MY OWN MEASUREMENTS THIS TICK (HEAD c49642e, dirty=0).**
+- `bash /tmp/run_all.sh`: **greenfiles=74 redfiles=0**, TREE `/home/claude/projects/hordes @ c49642e | dirty=0`.
+- Standalone: `test_chain_q.mjs` 15/15, `test_perks.mjs` PASS=15 FAIL=0, `test_weapon_mana.mjs` 9/9.
+- **NEW PERMANENT TOOL, written and run this tick: `tools/verify_n1_chain_q.mjs` => 11/11**, real
+  browser, phone viewport 390x844 @dpr3, real finger taps:
+  - WITCH run: `#q-skill` reads **CHAIN**; KNIGHT run: reads **FROST**. The `index.html:319` literal
+    is `FROST`, so the WITCH case is the load-bearing one - it can only come from the runtime
+    `classSkillId` route; the KNIGHT case is a non-regression check, stated as such.
+  - The new Q FIRES in the LIVE loop: **15 effect-frames carrying a 6-node chain polyline** inside a
+    12.02s sim window, with the pool at 77 mana at the sample (spent, not idle). Her gun tops out at
+    4 nodes, so 6 nodes is the chain, measured - not inferred.
+  - Both PNGs are **1170x2532** (= 390x844 @3x) and the label bbox in each PNG holds real ink
+    (1265 / 1185 bright pixels). Paths: `docs/art/browser-verify-2026-09-12/n1-chain-q-witch-phone.png`,
+    `...-knight-phone.png`.
+
+**A HARNESS DEFECT FOUND AND FIXED (it would silently produce false greens for anyone).** The
+shared `tools/browser.mjs` `withPage` startup script sets only 7 of the **19** `TOUR_KEYS`
+(`src/tour.js:29-49`), and `frame()` gates the sim on `!coachActive()`
+(`src/main.js:5705` region). A live run reached that way is **FROZEN**: measured `state.time` stayed
+`0.00` for 2.5s of wall clock while `mode` read `playing` and enemies sat at 2. The new tool sets
+all 19 keys and asserts the sim clock advances (`state.time > 1.0`) BEFORE it measures anything.
+Any future tool that reaches a live run through `browser.mjs` must do the same, or it is measuring
+a paused game.
+
+**DELIVERED (this tick's slice, pilot-owned design work - NOT a feature build):**
+`docs/briefs/N1_ULTS_SPECS.md` - the three non-Witch ults, complete enough that a builder invents
+nothing: KNIGHT **EARTHSHATTER** (radial shockwave at the player, radius 240, `40 + 1.2 x maxHp`,
+plus a 3s x0.5 FORTIFY window; 40 kills, 12s floor), ROGUE **AFTERIMAGE** (3s, speed x1.5, a
+phantom detonation every 0.25s at her position, radius 70; 30 kills, 10s floor), PALADIN
+**CONSECRATION** (a placed 140-radius field at the densest cluster, 6s, 18 dps, +2 HP per kill
+inside; 40 kills, 15s floor). Each spec carries the "why it is distinct" argument against the 9
+existing weapon archetypes and against the Witch's chain, the shared contract (Q slot, no mana,
+kill-charged with a cooldown floor so a dense wave cannot chain it, one blast helper reused), the
+charge readout requirement with the chrome-gate rule, and the acceptance bar. Anchors are ones I
+verified exist at c49642e (`classSkillId` main.js:4547, `useSkill` skills.js:16, `SKILLS`
+config.js:151, `p.kills` main.js:1832, `tc-q` main.js:5117, `chromeOn`/`syncChrome` main.js:5063/5069).
+The spec also FORBIDS the obvious Rogue implementation (a forced dash/teleport) and says why: player
+movement belongs to the controller seam.
+
+**COULD NOT VERIFY (honest).**
+- **No vision model is reachable from this cron session**, so the two PNGs' verdict is DOM text +
+  measured pixel ink, not a semantic read. Same limitation ticks 35-37 recorded.
+- The chain Q's detonation COUNT and mana SPEND on a 120s cohort (bar item 3) were measured by the
+  commit watcher's probe, not re-measured by me; what I re-ran is the whiff/charge/routing contract
+  at the real seams (test_chain_q 15/15) plus the live-loop cast above.
+- Still unread by any pilot agent: `docs/art/browser-verify-2026-09-12/g20-stages-phone.png` (20 ticks).
+- Unchanged and still owed: item-7 mana-bar re-measure, G5 (arch fix unmeasured), G6 at x1.28 vs the
+  owner's raised x1.6, the ranked-queue vs BUILD_PLAN W7a/W7b sequencing conflict, the G23
+  unlock-tied HOOK, and the `docs/FEEDBACK_2026-09-13.md` 25-item triage (G26).
+- **THE BUILDER LANE CHANGED: GLM's weekly quota is exhausted until 2026-09-15 15:49 UTC**
+  (`429 [1310]`), so `cli:glm-hordes-g8` is retired for now and the lane is **cli:kimi-hordes-g8**.
+  The kimi builder dispatched for the chain-Q perks red self-cancelled on the orchestrator's lock and
+  is moot: the orchestrator resolved that red itself (the fixture was stale, not the seam).
+
+**LOCK / HYGIENE:** FREE at tick start, acquired as `subagent:spawnfa`, doc/brief/tool edits made
+while held, RELEASED at the end. No worker killed, restarted or steered. No git state command run.
+
+**NEXT GOAL:** dispatch **N1 slice 2** (the draftable FROST_NOVA card, which also restores FROST to
+the other three classes as a draft pick), then **N1 slice 3** against `docs/briefs/N1_ULTS_SPECS.md`,
+then **G21**. Balance note for whoever picks up slice 3: the ults must not read as a second copy of
+FROST_NOVA, which stays in the pool for everyone.
