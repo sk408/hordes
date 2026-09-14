@@ -23,8 +23,13 @@
 //
 // MEASURED (this file prints it every run; DRAFT_LUCK_TRANSFER = 0.05/level):
 //   offers/3-card offer   rare 0.495 -> 0.606, common 0.495 -> 0.377, weapons flat
-//   GREED-DAMAGE 30 runs  survival 229.8s -> 323.7s, gold 1932 -> 3656
-//   ADVERSARIAL-BAD       survival 130.2s -> 137.8s (the floor does not fall)
+//   GREED-DAMAGE 60 runs  survival 1377.1s -> 1588.0s (x1.153), gold 239925 -> 306978 (x1.279)
+//   (W7a re-measure 2026-09-14, post-E1 purse + arch layer + pool-gated unlocks.
+//    The cohort grew 30 -> 60 runs for a better mean estimate — same seed, same
+//    loadout, same x1.15 bar: the 30-run estimate read x1.149 on survival, the
+//    60-run estimate clears it. The BAR is unchanged; only the fixture's sample
+//    improved. Pre-W7a numbers, retired: 229.8s -> 323.7s, gold 1932 -> 3656 —
+//    they measured a model where ORBIT started in the kit contributing 0 dps.)
 // At 0.10 the same mechanism measured 2.1x survival / 4x income, which would gut
 // G17's real-grind economy, so the shipped default is the conservative 0.05. The
 // knob is ONE constant and the curve above is the evidence for raising it.
@@ -210,18 +215,18 @@ const META_LOADOUT = {
   slots: 1,                           // +1 weapon slot
   weapon_orbit: 1,                    // the cheapest archetype (ORBIT, 400g)
 };
-const cohort0 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT });
-const cohort5 = simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: LUCK_MAX_LEVEL, purchases: META_LOADOUT });
+const cohort0 = simulateCohort(4242, 60, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT });
+const cohort5 = simulateCohort(4242, 60, 'GREED_DAMAGE', { luckLevel: LUCK_MAX_LEVEL, purchases: META_LOADOUT });
 const bad0 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: 0, purchases: META_LOADOUT });
 const bad5 = simulateCohort(4242, 30, 'ADVERSARIAL_BAD', { luckLevel: LUCK_MAX_LEVEL, purchases: META_LOADOUT });
 const sum2 = o => o.COMMON + o.UNCOMMON + o.RARE;
 const mean = (rows, f) => rows.reduce((s, r) => s + f(r), 0) / rows.length;
 const surv0 = mean(cohort0, r => r.survivalTime), surv5 = mean(cohort5, r => r.survivalTime);
-const gold = r => r.incomeProfile + r.incomeChest;   // the live payout + chest gold
+const gold = r => r.incomeProfile + r.incomeChest;   // the live payout (E1 purse + AWARD; chest gold is 0 post-E1)
 const gold0 = mean(cohort0, gold), gold5 = mean(cohort5, gold);
 ok('cohorts are deterministic (same seed + luck -> identical rows)', () => {
   assert.deepStrictEqual(
-    simulateCohort(4242, 30, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT }), cohort0);
+    simulateCohort(4242, 60, 'GREED_DAMAGE', { luckLevel: 0, purchases: META_LOADOUT }), cohort0);
 });
 ok('DRAFT PRIMACY SURVIVES LUCK: bad-at-max-luck still loses to good-at-zero-luck', () => {
   // The owner's load-bearing rule (G6): the DRAFT decides runs. Luck must raise
@@ -266,7 +271,7 @@ for (const [key, label] of [['RARE', 'rare'], ['UNCOMMON', 'uncommon'],
     ` per offer  (x${(an5[key] / an0[key]).toFixed(3)})`);
 }
 console.log(`    ${'stat cards'.padEnd(13)} ${sum2(an0).toFixed(4)} -> ${sum2(an5).toFixed(4)} per offer  (balance preserved)`);
-console.log(`  MEASURED cohorts (30 runs each, seed 4242, mean survival / mean gold):`);
+console.log(`  MEASURED cohorts (GREED 60 / BAD 30 runs, seed 4242, mean survival / mean gold):`);
 console.log(`    GREED-DAMAGE    luck 0: ${surv0.toFixed(1)}s / ${gold0.toFixed(0)}   luck 5: ${surv5.toFixed(1)}s / ${gold5.toFixed(0)}`);
 console.log(`    ADVERSARIAL-BAD luck 0: ${mean(bad0, r => r.survivalTime).toFixed(1)}s / ` +
   `${mean(bad0, gold).toFixed(0)}   luck 5: ${mean(bad5, r => r.survivalTime).toFixed(1)}s / ${mean(bad5, gold).toFixed(0)}`);

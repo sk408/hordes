@@ -390,7 +390,9 @@ export function stageMargin(analytic, real) {
 }
 
 // ---------- Greedy purchase priority (documented strategy) -----------------
-const GREEDY_PRIORITY = [
+// W7a: exported so tools/draft_sim.mjs --meta-value can print this HARDCODED
+// order beside the MEASURED marginal-value ranking (the W7a deliverable).
+export const GREEDY_PRIORITY = [
   'dmg', 'hp', 'crit', 'critdmg', 'greed', 'xp',
   ...SHOP_UPGRADES.filter(u => u.kind === 'weapon' && u.id !== 'weapon_beam')
     .sort((a, b) => a.baseCost - b.baseCost).map(u => u.id),

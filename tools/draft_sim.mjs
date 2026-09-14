@@ -43,7 +43,8 @@
 //                game), hpScale/xpScale
 //   weapons.js   makeWeapon, levelUpWeapon, weaponLevelParams (live tables)
 //   enemy_types.js ENEMY_TYPES / ELITE_TEMPLATE (live mults and pack sizes)
-//   meta.js      computeRunGold (the live end-of-run gold integrator)
+//   meta.js      the E1 purse seams (GOLD_TIER / purseValue / RUN_GOLD), the
+//                draft-weight + meta-bonus seams, shop tables
 //
 // ============================ MODEL ASSUMPTIONS ============================
 // Every game number is imported; the knobs in SIM_TUNING are the model's
@@ -71,6 +72,50 @@
 //     CONFIG.SURVIVAL.HP_PER_LEVEL x the run's start pool (the live rule,
 //     mirrored from main.js levelUp). Draft rolls mirror main.js openDraft
 //     (weapon cards weight 1, the 7 stat cards weight 0.3, take 3).
+//
+// ======================= W7a TOOLING (2026-09-14) ===========================
+// Four W7a additions, all read through the LIVE seams (economy modelling is
+// owner-WAIVED — E1 is the economy retune; this sim only READS its seams):
+//   ARCH BUFFS (G5): neither sim referenced arches, so the wave-25 arch fix
+//     (DOUBLE_FIRE rate x2 / BERSERK +50% dmg reaching every weapon) was
+//     unmeasurable. archExpectedMods() prices the live arch cadence
+//     (main.js spawnWaveArches: 1-2 gates/wave, uniform over ARCH_TYPES) as a
+//     steady-state expected uptime per buff, off the REAL ARCH_TYPES table.
+//     Toggle: LIVE.arches / patch { arches: false } for before/after cells.
+//   E1 RUN PURSE: computeRunGold is RETIRED as the payout authority
+//     (main.js settleRunGold). Banked income is now purse + AWARD: per-kill
+//     tier gold (meta.js purseValue, folded into the mix in expectation),
+//     MID_BOSS per herald, BOSS per wave boss, plus RUN_GOLD.AWARD x goldMult
+//     at settlement (the live chain multiplies the AWARD only — the purse
+//     banks unmultiplied). Chests pay NO gold post-E1 (incomeChest = 0).
+//   WEAPON UNLOCKS AS +1 OPTION + POOL DILUTION: the live game does NOT start
+//     purchased weapons in the kit — an unlock adds a GRANT CARD to the draft
+//     pool (main.js openDraft gates grants on profile.unlockedWeapons). The
+//     old sim started them in the kit AND offered only STARTER_WEAPONS
+//     grants: both halves wrong. Now purchases.weapon_X unlocks enter the
+//     pool via P.unlockedWeapons, exactly the live semantics.
+//   GENERIC WEAPON DPS: dpsBase only knew VOLLEY + BOOMERANG (a granted ORBIT
+//     contributed 0 dps and its level-ups were priced AS a boomerang). Every
+//     archetype now has a coarse, documented dps line (weaponDps) read off
+//     the LIVE WEAPONS defs + WEAPON_LEVELS tables, so unlock net value and
+//     weapon level-ups price honestly. The per-type "bodies per cycle"
+//     constants are sim-only assumptions in SIM_TUNING, each with its
+//     reasoning — same honesty standard as PIERCE_VAL / BOOM_FRESH.
+// New CLI modes (the default report is unchanged in shape):
+//   --divergence      G6 measurement: good-vs-bad on BOTH axes (survival-time
+//                     ratio AND waves-cleared ratio) against the post-E1
+//                     economy, vs the owner's raised >= x1.6 target (W7b's
+//                     number — reported, not enacted here)
+//   --meta-value      every shop stat row ranked by MEASURED marginal value
+//                     (delta cohort outcome per 1000g of next-level cost)
+//                     against balance_sim's hardcoded GREEDY_PRIORITY order
+//   --unlock-value    each weapon unlock's NET value (option gain MINUS pool
+//                     dilution) at the real slot counts 3 / 4 / 6
+//   --arch-impact     the arch layer's measured contribution, on vs off
+// Purchase rows the sim still cannot see stay HONEST ZEROS, printed as such:
+// the mana rows (regen/well/siphon/thrifty — no mana layer), focus (no pilot
+// engagement model), arcade (cosmetic), elite_* unlocks (elite modifiers are
+// not modelled), and ZAP's mana dry-mult (modelled at FULL damage — stated).
 // ==========================================================================
 
 import { pathToFileURL } from 'node:url';
@@ -82,8 +127,16 @@ import {
 } from '../src/weapons.js';
 import { ENEMY_TYPES, ELITE_TEMPLATE } from '../src/enemy_types.js';
 import { volleyProjectileCap } from '../src/config.js';   // the ONE cap definition
-import { computeRunGold, STARTER_WEAPONS, draftCardWeight,
-         draftRarityOf, applyMetaBonuses } from '../src/meta.js';
+// W7a: computeRunGold is RETIRED as the payout authority (main.js
+// settleRunGold, E1). The sim banks the purse + award through the LIVE seams:
+// purseValue per kill (tier-weighted), RUN_GOLD.AWARD at settlement.
+import { STARTER_WEAPONS, draftCardWeight,
+         draftRarityOf, applyMetaBonuses, GOLD_TIER, purseValue, RUN_GOLD,
+         SHOP_BY_ID, SHOP_UPGRADES, WEAPON_PRICES, startPotionCount,
+         startWeaponSlots, upgradeCost } from '../src/meta.js';
+// W7a (G5): the arch layer, read off the REAL table (durations + mods) — the
+// sim may never restate an arch number.
+import { ARCH_TYPES } from '../src/arches.js';
 // G8 steps 3+4 (run-level measurement): the two new card families, read
 // through the SAME seams the game reads — the constants from rules.js/perks.js
 // and the applied-value helpers, so a measurement of the sim is a measurement
@@ -121,7 +174,31 @@ export const SIM_TUNING = {
   OVERWHELM_N: 170,     // alive enemies at full surround pressure
   PRESSURE_K: 1.2,      // pressure curve gain
   HITS_CAP: 1 / 0.6,    // invuln-capped contact hits per second (live 0.6s)
-  CHEST_GOLD: 32,       // mean gold per opened chest (in-run currency)
+  CHEST_GOLD: 32,       // RETIRED post-E1: chests pay no gold (the per-kill
+                        // purse replaced every in-run gold surface; chests.js
+                        // has no gold outcome). Unused; kept so old patch
+                        // cells that reference the knob still load.
+  // ---- W7a arch-layer assumptions (see header) ------------------------------
+  ARCHES_PER_WAVE: 1.5, // live spawnWaveArches: 1 gate + 50% a second
+  ARCH_TRIGGER: 0.8,    // fraction of spawned gates the kiting AUTO pilot
+                        // walks under before the run ends. Gates PERSIST on
+                        // the field until consumed (state.arches is only
+                        // cleared at run reset) and the pilot crosses the
+                        // arena every wave, so most gates are eventually
+                        // triggered; 0.8 is the honest coarse reading, not a
+                        // derivation. Sensitivity is one knob away.
+  // ---- W7a generic weapon-dps assumptions (bodies per cycle at field -------
+  // saturation; dpsEff's crowd factor scales them down on a thin field).
+  ZAP_DRY_MULT: 1,      // ZAP is a mana weapon (WEAPONS.ZAP.MANA); the sim has
+                        // NO mana layer, so it models FULL bolts. 1 = honest
+                        // overstatement, stated — set to the live dry mult to
+                        // price the starved case.
+  NOVA_HIT: 4,          // bodies inside a 70-112px pulse ring inside a horde
+  SCYTHE_RING: 10,      // bodies within melee reach at saturation; the arc
+                        // fraction (lp.arc / 2pi) of them is hit per swing
+  MINE_HIT: 2,          // bodies per detonation (BLAST 45+ px)
+  BEAM_HIT: 5,          // bodies in a 240px piercing line
+  ORBIT_CONTACT: 0.5,   // fraction of a blade's revolution spent in a body
   // G8 step 2 rewrite-model assumptions (documented, coarse on purpose):
   PIERCEALL_VAL: 2,     // PIERCE ALL's crowd value, in pierce POINTS (the live
                         // sentinel is 'unlimited'; against the crowd model the
@@ -152,6 +229,13 @@ export const LIVE = {
   // the live spawnWave stamps them. Set to false ONLY as the "before" cell of a
   // before/after measurement.
   rarity: true,
+  // W7a (G5): the arch layer. true = the live game (gates spawn every wave);
+  // false ONLY as the "before" cell of a before/after measurement.
+  arches: true,
+  // W7a: the run's unlocked weapon set (live: profile.unlockedWeapons —
+  // starters are always unlocked). Grant cards are drawn from this set; the
+  // default is the fresh profile exactly (STARTER_WEAPONS).
+  unlockedWeapons: null,
 };
 
 const DT = SIM_TUNING.DT;
@@ -208,7 +292,7 @@ function spawnMix(w, t, rarityOn) {
     RARITY.MYTHIC.chance * (RARITY.MYTHIC.hpMult - 1) : 1;
   const rarXp = rarityOn ? 1 + RARITY.RARE.chance * (RARITY.RARE.xpMult - 1) +
     RARITY.MYTHIC.chance * (RARITY.MYTHIC.xpMult - 1) : 1;
-  let pack = 0, hp = 0, xp = 0, contact = 0, speed = 0;
+  let pack = 0, hp = 0, xp = 0, contact = 0, speed = 0, purse = 0;
   for (const [id, weight] of entries) {
     const T = ENEMY_TYPES[id];
     const share = weight / tot;
@@ -220,34 +304,72 @@ function spawnMix(w, t, rarityOn) {
       (1 + tiered * (rarXp - 1));
     contact += share * T.contactDamageMult;
     speed += share * T.speedMult;
+    // E1 purse fold: the live kill funnel credits purseValue(e) per corpse.
+    // An elite-stamped body pays GOLD_TIER.ELITE INSTEAD of its type tier
+    // (purseTier's elite branch outranks the type table), so the expected
+    // value is the fraction blend. Rarity tiers (RARE/MYTHIC) are NOT purse
+    // signals — purseTier never reads them — so there is nothing to fold.
+    purse += share * ((1 - eliteFrac) * purseValue({ typeId: id }) +
+      eliteFrac * purseValue({ typeId: id, elite: true }));
   }
-  const mix = { pack, hp, xp, contact, speed };
+  const mix = { pack, hp, xp, contact, speed, purse };
   MIX_CACHE.set(key, mix);
   return mix;
 }
 
 // ---------- weapon dps estimates (live stats + live level tables) -----------
-function volleyDps(player, weapons, P) {
-  const w = weapons.find(x => x.type === 'VOLLEY');
-  if (!w) return 0;
-  const lp = weaponLevelParams('VOLLEY', w.level);
-  const n = Math.min(player.stats.projectiles + (lp.proj || 0), P.maxProj);
-  const perShot = player.stats.damage * (lp.dmgMult || 1) * (1 + 0.2 * (lp.proj || 0));
-  return (perShot / player.stats.cooldown) * (1 + SIM_TUNING.SPREAD_EFF * (n - 1));
-}
-
-function boomerangDps(player, weapons) {
-  const w = weapons.find(x => x.type === 'BOOMERANG');
-  if (!w) return 0;
-  const lp = weaponLevelParams('BOOMERANG', w.level);
-  const cycle = WEAPONS.BOOMERANG.COOLDOWN * (player.stats.cooldown / C.WEAPON.COOLDOWN);
-  const perThrow = player.stats.damage * (lp.dmgMult || 1);
-  const hitsPerThrow = 1.4 + 0.5 * (player.stats.pierce + (lp.pierceBonus || 0));
-  return (perThrow / cycle) * hitsPerThrow;
+// W7a: ONE generic pricing per archetype, read off the LIVE WEAPONS def and
+// WEAPON_LEVELS table. VOLLEY and BOOMERANG keep their established formulas
+// verbatim; the other archetypes are coarse per-cycle models — each type's
+// "bodies per cycle" is either DERIVED from the live constants (ZAP's chain
+// sum with FALLOFF, SCYTHE's arc fraction of the melee ring, SEEKER's missile
+// count) or a documented SIM_TUNING assumption (NOVA/MINE/BEAM/ORBIT), and
+// dpsEff's crowd factor still scales the total on a thin field. Before this,
+// a granted non-starter weapon contributed 0 dps and its level-up cards were
+// priced AS a boomerang — unlock net value was unmeasurable.
+export function weaponDps(type, level, player, P) {
+  const s = player.stats;
+  const lp = weaponLevelParams(type, level);
+  if (type === 'VOLLEY') {
+    const n = Math.min(s.projectiles + (lp.proj || 0), P.maxProj);
+    const perShot = s.damage * (lp.dmgMult || 1) * (1 + 0.2 * (lp.proj || 0));
+    return (perShot / s.cooldown) * (1 + SIM_TUNING.SPREAD_EFF * (n - 1));
+  }
+  if (type === 'BOOMERANG') {
+    const cycle = WEAPONS.BOOMERANG.COOLDOWN * (s.cooldown / C.WEAPON.COOLDOWN);
+    const perThrow = s.damage * (lp.dmgMult || 1);
+    const hitsPerThrow = 1.4 + 0.5 * (s.pierce + (lp.pierceBonus || 0));
+    return (perThrow / cycle) * hitsPerThrow;
+  }
+  const def = WEAPONS[type];
+  if (!def) return 0;
+  const perBody = s.damage * (def.DAMAGE_MULT || 1) * (lp.dmgMult || 1);
+  if (type === 'ORBIT') {
+    // No cooldown: each blade re-ticks a body every TICK s while in contact.
+    return perBody * (lp.blades || 1) * (1 / def.TICK) * SIM_TUNING.ORBIT_CONTACT;
+  }
+  let bodies = 1;
+  if (type === 'ZAP') {
+    // Primary + jumps with the live per-jump falloff — derived, not tuned.
+    let sum = 0, f = 1;
+    for (let j = 0; j <= (lp.jumps || def.JUMPS); j++) { sum += f; f *= def.FALLOFF; }
+    bodies = sum;
+  } else if (type === 'NOVA_PULSE') bodies = SIM_TUNING.NOVA_HIT;
+  else if (type === 'SCYTHE') bodies = ((lp.arc || def.ARC) / (2 * Math.PI)) * SIM_TUNING.SCYTHE_RING;
+  else if (type === 'SEEKER') bodies = lp.count || 1;   // homing: a missile is a hit
+  else if (type === 'MINE') bodies = SIM_TUNING.MINE_HIT;
+  else if (type === 'BEAM') bodies = SIM_TUNING.BEAM_HIT;
+  const cycle = (def.COOLDOWN || 1) * (s.cooldown / C.WEAPON.COOLDOWN);
+  // ZAP is the one mana weapon: no mana layer, so the model fires FULL bolts
+  // (ZAP_DRY_MULT 1) — an honest overstatement, stated in the header.
+  const dry = type === 'ZAP' ? SIM_TUNING.ZAP_DRY_MULT : 1;
+  return (perBody / cycle) * bodies * dry;
 }
 
 function dpsBase(player, weapons, P) {
-  return volleyDps(player, weapons, P) + boomerangDps(player, weapons);
+  let total = 0;
+  for (const w of weapons) total += weaponDps(w.type, w.level || 1, player, P);
+  return total;
 }
 
 // Effective dps vs the live field: crowd idles cooldowns, crowds multiply
@@ -261,6 +383,38 @@ function dpsEff(player, weapons, N, P, extraPierce = 0) {
     (1 + SIM_TUNING.PIERCE_VAL * pierceTot + SIM_TUNING.AOE_B * crowd);
 }
 
+// ---------- W7a: the arch layer in expectation (live cadence, REAL table) ---
+// main.js spawnWaveArches drops ARCHES_PER_WAVE gates per wave, uniform over
+// the five ARCH_TYPES; a gate persists on the field until the pilot walks
+// under it (state.arches is only cleared at run reset) and then grants its
+// buff for the table's duration. In steady state each type fires
+// (ARCHES_PER_WAVE / #types) x ARCH_TRIGGER times per WAVE_SECONDS, so its
+// expected uptime is triggers x duration / wave, capped at 1 (a refresh
+// restarts the timer, it never stacks). Each mod's time-weighted expectation
+// is 1 + uptime x (mult - 1), combined multiplicatively across the types
+// that DO stack (the live rule in activeArchMods). SHIELD is not a
+// multiplier: it pays shieldHits absorbs per trigger, priced at the wave's
+// ambient hit in the damage funnel. MAGNET's pickupMult is an HONEST ZERO in
+// this model — the sim already collects every gem it prices, so a bigger
+// pickup radius buys nothing here; stated, not faked. All numbers come from
+// the REAL ARCH_TYPES rows: retune arches.js and the sim moves.
+export function archExpectedMods(P) {
+  const out = { rateMult: 1, damageMult: 1, speedMult: 1, pickupMult: 1,
+    shieldPerSec: 0, uptimes: {} };
+  if (!P.arches) return out;
+  const ids = Object.keys(ARCH_TYPES);
+  const trigPerSec = (SIM_TUNING.ARCHES_PER_WAVE / ids.length) *
+    SIM_TUNING.ARCH_TRIGGER / WAVE_SECONDS;
+  for (const id of ids) {
+    const def = ARCH_TYPES[id];
+    const uptime = Math.min(1, trigPerSec * def.duration);
+    out.uptimes[id] = uptime;
+    for (const [k, v] of Object.entries(def.mods)) out[k] *= 1 + uptime * (v - 1);
+    if (def.shieldHits) out.shieldPerSec += trigPerSec * def.shieldHits;
+  }
+  return out;
+}
+
 // ---------- draft: roll 3 like openDraft, pick 1 by policy ------------------
 function cardImpact(card, player, weapons, counts, P, held) {
   const base = dpsBase(player, weapons, P);
@@ -270,7 +424,7 @@ function cardImpact(card, player, weapons, counts, P, held) {
   const bonus = held && held.rules && held.rules.once ? 1 : 0;
   if (card.kind === 'grant') {
     const shadow = { stats: { ...player.stats } };
-    const add = boomerangDps(shadow, [{ type: 'BOOMERANG', level: 1 + bonus }]);
+    const add = weaponDps(card.weapon, 1 + bonus, shadow, P);
     return { dps: base > 0 ? add / base : 1, ehp: 0 };
   }
   if (card.kind === 'wlevel') {
@@ -280,15 +434,12 @@ function cardImpact(card, player, weapons, counts, P, held) {
     // the same). Player damage feeds EVERY weapon's dps, so the marginal
     // value is exactly +0.1 relative — priced exactly, not coarse.
     if (bonus && cur >= WEAPON_MAX_LEVEL) return { dps: 0.1, ehp: 0 };
-    if (card.w.type === 'VOLLEY') {
-      const a = weaponLevelParams('VOLLEY', cur), b = weaponLevelParams('VOLLEY', cur + 1 + bonus);
-      const f = (b.dmgMult * (1 + 0.2 * (b.proj || 0))) / (a.dmgMult * (1 + 0.2 * (a.proj || 0)));
-      return { dps: base > 0 ? (f - 1) * (volleyDps(player, weapons, P) / base) : 0, ehp: 0 };
-    }
-    const a = weaponLevelParams('BOOMERANG', cur), b = weaponLevelParams('BOOMERANG', cur + 1 + bonus);
-    const f = (b.dmgMult * (1.4 + 0.5 * player.stats.pierce + 0.5 * (b.pierceBonus || 0))) /
-      (a.dmgMult * (1.4 + 0.5 * player.stats.pierce + 0.5 * (a.pierceBonus || 0)));
-    return { dps: base > 0 ? (f - 1) * (boomerangDps(player, weapons) / base) : 0, ehp: 0 };
+    // W7a: every archetype prices through its OWN weaponDps curve (the old
+    // code priced every non-VOLLEY level-up as a boomerang).
+    const a = weaponDps(card.w.type, cur, player, P);
+    const b = weaponDps(card.w.type, cur + 1 + bonus, player, P);
+    const f = a > 0 ? b / a : 1;
+    return { dps: base > 0 ? (f - 1) * (a / base) : 0, ehp: 0 };
   }
   const taper = id => {
     const n = (counts[id] || 0) + 1;
@@ -394,7 +545,11 @@ export function buildDraftPool(weapons, patch, held = {}) {
   const slotCap = patch.slotCap ?? 3;   // fresh profile = 3; purchases.slots raises it
   const nonVolley = weapons.filter(w => w.type !== 'VOLLEY').length;
   if (slotCap - 1 - nonVolley > 0) {
-    for (const id of STARTER_WEAPONS) {
+    // W7a: grant cards come from the run's UNLOCKED set (live: openDraft gates
+    // grants on profile.unlockedWeapons) — an unlock is +1 option in this
+    // pool AND the dilution that comes with it. Default = STARTER_WEAPONS,
+    // the fresh profile exactly.
+    for (const id of (patch.unlockedWeapons || STARTER_WEAPONS)) {
       if (id === 'VOLLEY' || weapons.some(w => w.type === id)) continue;
       cards.push({ kind: 'grant', weapon: id, weight: 1 });
     }
@@ -537,12 +692,32 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   const purchases = P.purchases || {};
   if (Object.keys(purchases).length > 0) {
     player.stats = applyMetaBonuses(player.stats, purchases);
+    // A run starts at FULL pool: applyMetaBonuses returns a NEW stats object
+    // (Vitality raises stats.maxHp), so the current hp must be re-pinned to
+    // the new max — otherwise a Vitality arm would START 40xlevel hp down,
+    // which read as the hp row having negative value.
+    player.hp = player.stats.maxHp;
     // The projectile cap is DERIVED, never the bare constant: the Split Shot row
     // raises it, and a sim reading the base while the game reads the raised cap
     // is exactly the drift that made that card a fake choice.
     P.maxProj = volleyProjectileCap(player.stats);
-    P.slotCap = 3 + (Number(purchases.slots) || 0);
   }
+  // The live slot seam (3..6, clamped): startWeaponSlots, never a restated 3.
+  P.slotCap = startWeaponSlots({ purchased: purchases });
+  // W7a: the purchase rows the sim can price, read off the REAL applied stats
+  // (applyMetaBonuses already emits them; an unread row measures as exactly
+  // 0, which --meta-value prints as an honest zero rather than a guess):
+  //   Fortune  -> the draft-weight seam (an explicit patch.luckLevel wins)
+  if (!Number.isFinite(patch.luckLevel)) P.luckLevel = player.stats.luck || LIVE.luckLevel;
+  //   Deadly Aim / Deadeye -> expected crit value (weapons.js critRoll is a
+  //   per-hit roll; over a run the expectation is the honest price). Fixed at
+  //   run start: nothing in the draft changes crit.
+  const critFactor = 1 + (player.stats.crit || 0) * ((player.stats.critMult || 1) - 1);
+  const xpM = player.stats.xpMult || 1;               // Scholar, on gem pickup
+  const dropChance = C.POTIONS.DROP_CHANCE + (player.stats.dropBonus || 0);  // Scavenger
+  const potionHeal = C.POTIONS.HP_HEAL * (player.stats.potionPower || 1);    // Alchemy
+  // W7a (G5): the arch layer's expected mods for this run (identity when off).
+  const arch = archExpectedMods(P);
   // G8 steps 3+4: the run's held cards, driven through the REAL helpers
   // (grantRule / grantSkill / statCardOffered all read this same state), so
   // the sim's pool and effects cannot drift from the game's. `startCards`
@@ -555,19 +730,40 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     if (!grantRule(heldState, id) && !grantSkill(heldState, id)) grantRewrite(heldState, id);
   }
   const weapons = [makeWeapon('VOLLEY')];
-  // A purchased weapon unlock starts the run in the kit (the shop row grants
-  // ownership, so the run opens with it rather than drafting it).
-  for (const id of Object.keys(purchases)) {
-    if (!id.startsWith('weapon_')) continue;
-    const wid = id.slice('weapon_'.length).toUpperCase();
-    if (WEAPONS[wid] && !weapons.some(w => w.type === wid)) weapons.push(makeWeapon(wid));
+  // W7a — WEAPON UNLOCKS AS +1 OPTION + POOL DILUTION (the live semantics):
+  // a shop unlock does NOT start the run in the kit. main.js opens every run
+  // with VOLLEY plus the equipped character's startingWeapon (not modelled —
+  // the sim's pilot is classless) and gates the draft's GRANT cards on
+  // profile.unlockedWeapons (openDraft). The old sim started purchased
+  // weapons in the kit AND offered only STARTER_WEAPONS grants, so an unlock
+  // read as a free weapon with zero dilution cost — both halves wrong.
+  P.unlockedWeapons = STARTER_WEAPONS.concat(
+    Object.keys(purchases)
+      .filter(id => id.startsWith('weapon_') && purchases[id])
+      .map(id => id.slice('weapon_'.length).toUpperCase())
+      .filter(wid => WEAPONS[wid] && !STARTER_WEAPONS.includes(wid)));
+  // Starting Artifact row: artifactLevels free weapon levels at run start
+  // (live: random picks among under-cap weapons; sim: lowest-level-first —
+  // the deterministic expectation of the live roll).
+  for (let i = 0; i < (player.stats.artifactLevels || 0); i++) {
+    const cands = weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
+    if (cands.length === 0) break;
+    cands.sort((a, b) => (a.level || 1) - (b.level || 1));
+    levelUpWeapon(cands[0]);
   }
   const startMaxHp = player.stats.maxHp;    // the pool HP_PER_LEVEL is linear in
   const counts = {};
   const picks = {};
   let deadMulti = 0;
   let xp = player.xp, level = 1, xpNext = player.xpNext;
-  let N = 0, kills = 0, dmgTaken = 0, healBank = 0;
+  let N = 0, kills = 0, dmgTaken = 0;
+  // E1: the in-run wallet (profile.runPurse's sim mirror), credited per kill
+  // through the mix's purse fold, per herald/boss through GOLD_TIER.
+  let purse = 0;
+  // Travel Pack / character start: the live starting potion count rides the
+  // startPotionCount seam (KNIGHT = the sim's classless pilot). The auto-drink
+  // funnel below is the AUTO pilot's own rule (drink at <50%).
+  let healBank = startPotionCount({ equippedCharacter: 'KNIGHT', purchased: purchases });
   let t = 0;
   // The ladder: wave n is armed at waveEnd; the timer PAUSES while the boss
   // lives (the next wave starts when the boss dies), exactly as main.js does.
@@ -589,9 +785,9 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       damageTaken: Math.round(dmgTaken),
       wavesCleared: waves,
       level,
-      gold: computeRunGold({
-        kills: Math.round(kills), level, time: Math.round(t), goldMult: 1,
-      }),
+      // E1: mid-run the wallet IS the purse (settlement's fixed AWARD only
+      // lands at run end — see the return value).
+      gold: Math.round(purse),
     };
   };
 
@@ -637,8 +833,14 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
 
     // Damage out. G8 step 2 PIERCE ALL: +PIERCEALL_VAL effective pierce in the
     // crowd curve (see SIM_TUNING for the honest-bounded reading).
+    // W7a: the arch layer (rate x damage, the live rateScale/dmgScale shape)
+    // and the expected crit value ride as UNIFORM multipliers — they scale
+    // every weapon and every policy together, so they never re-rank a draft
+    // card, which is exactly why G5's arch fix is measurable as a power delta
+    // rather than a draft distortion.
     const dps = dpsEff(player, weapons, N, P,
-      held.rewrites.pierceall ? SIM_TUNING.PIERCEALL_VAL : 0);
+      held.rewrites.pierceall ? SIM_TUNING.PIERCEALL_VAL : 0) *
+      arch.rateMult * arch.damageMult * critFactor;
     let dmg = dps * DT;
     if (mawHp > 0) {
       const toMaw = dmg * SIM_TUNING.BOSS_DPS_SHARE;
@@ -648,7 +850,11 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       bossHp -= toBoss; dmg -= toBoss;
       if (bossHp <= 0) {
         waves++;
-        xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.BOSS.XP_KILLS * bossCount;
+        xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.BOSS.XP_KILLS * bossCount * xpM;
+        // E1: the wave boss pays GOLD_TIER.BOSS per boss BODY at the kill
+        // funnel (double-boss waves credit twice — the live purseCredit runs
+        // per corpse).
+        purse += GOLD_TIER.BOSS * bossCount;
         // HORDE BAIT, run-level: the wave's chest answers with a horde (the
         // price — GAMBLE_HORDE_COUNT escalated CHASERs in the live game) and
         // rolls one band better (the payout — enumerated: potions/chest 0.35
@@ -669,7 +875,8 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       heraldHp -= toHerald; dmg -= toHerald;
       if (heraldHp <= 0) {
         heraldHp = 0;
-        xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.MIDBOSS.XP_KILLS;
+        xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.MIDBOSS.XP_KILLS * xpM;
+        purse += GOLD_TIER.MID_BOSS;   // E1: "a nice drop", per the live tier
       }
     }
     const avgHp = C.ENEMY.BASE_HP * ladderHp(w) * mix.hp;
@@ -691,13 +898,16 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     if (held.rewrites.healthdamage && killN > 0) {
       const blast = harvestBlast(heldState);
       harvestKills = Math.min(Math.max(0, N - killN),
-        killN * C.POTIONS.DROP_CHANCE * SIM_TUNING.HARVEST_FRESH * blast.damage / avgHp);
+        killN * dropChance * SIM_TUNING.HARVEST_FRESH * blast.damage / avgHp);
       killN += harvestKills;
     }
     kills += killN; N -= killN;
+    // E1: the per-kill purse credit, in expectation over the mix (the live
+    // kill funnel runs purseValue per corpse).
+    purse += killN * mix.purse;
 
     // XP -> drafts.
-    xp += killN * C.ENEMY.BASE_XP * ladderXp(w) * mix.xp;
+    xp += killN * C.ENEMY.BASE_XP * ladderXp(w) * mix.xp * xpM;
     while (xp >= xpNext) {
       xp -= xpNext; level++;
       xpNext = Math.floor(xpNext * P.xpGrowth);
@@ -734,7 +944,9 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     // function against the player's LIVE pool. Boss/herald add contact.
     // THICK SKIN rides the same funnel the game routes player HP through.
     const avgSpd = C.ENEMY.BASE_SPEED * (1 + 0.05 * w) * mix.speed;
-    const closing = clamp(avgSpd / player.stats.speed, 0.12, 1.6);
+    // W7a: BERSERK's x0.75 / SWIFT's x1.4 ride the kite ratio through the arch
+    // layer's expected speedMult (identity when the layer is off).
+    const closing = clamp(avgSpd / (player.stats.speed * arch.speedMult), 0.12, 1.6);
     const surround = clamp(N / SIM_TUNING.OVERWHELM_N, 0, 1);
     let hits = Math.min(SIM_TUNING.HITS_CAP,
       SIM_TUNING.PRESSURE_K * surround * surround * closing);
@@ -751,10 +963,13 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       ? contactHitDamage(C.SURVIVAL.BASE_CONTACT, dm, heavyType, bossId === 'GRAVELMAW' ? 1.5 : 1,
         player.stats.maxHp)
       : 0;
-    const hurt = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT * damageTakenMult(heldState);
+    const hurtRaw = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT * damageTakenMult(heldState);
+    // W7a SHIELD arch: absorbs are whole HITS (shieldHits per grant); priced
+    // at the wave's ambient hit and subtracted at the expected grant rate.
+    const hurt = Math.max(0, hurtRaw - arch.shieldPerSec * ambient * DT);
     if (hurt > 0) {
       if (player.hp < 0.5 * player.stats.maxHp && healBank >= 1) {
-        player.hp = Math.min(player.stats.maxHp, player.hp + C.POTIONS.HP_HEAL);
+        player.hp = Math.min(player.stats.maxHp, player.hp + potionHeal);
         healBank--;
       }
       player.hp -= hurt; dmgTaken += hurt;
@@ -773,7 +988,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     // the potion drop chance — folded here as the expected per-kill bonus over
     // the tier-eligible fraction of the mix (COLOSSUS excluded, same as the
     // hp/xp fold in spawnMix).
-    healBank += killN * C.POTIONS.DROP_CHANCE *
+    healBank += killN * dropChance *
       (P.rarity ? 1 + (RARITY.RARE.chance * RARITY.RARE.dropBonus +
         RARITY.MYTHIC.chance * RARITY.MYTHIC.dropBonus) : 1);
 
@@ -783,22 +998,28 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   if (!dead && t >= LIMIT) reachedLimit = true;
   for (const mark of [120, 300, 600]) if (!checkpoints[mark]) snap(mark);
 
-  const chests = waves + (mawUsed ? 1 : 0);
+  // E1 settlement (the live settleRunGold shape): banked = the purse
+  // remainder + the fixed AWARD x goldMult. The live goldMult chain
+  // (GREED x manual stakes x rampage best) multiplies the AWARD ONLY — the
+  // purse banks unmultiplied, and the stakes/rampage legs are 1 in a plain
+  // run (not modelled). computeRunGold is RETIRED as the payout authority.
+  const award = Math.round(RUN_GOLD.AWARD * (player.stats.goldMult || 1));
+  const incomePurse = Math.round(purse);
   return {
     policy: policyName,
     dead, reachedLimit,
     survivalTime: reachedLimit ? LIMIT : Math.round(t),
     wave: waveNum, wavesCleared: waves,
     killer: reachedLimit ? null : killer,
-    incomeProfile: computeRunGold({
-      kills: Math.round(kills), level, time: reachedLimit ? LIMIT : Math.round(t), goldMult: 1,
-    }),
-    // G10 HONEST ZERO: a tiered enemy's dropBonus also raises the ITEM drop
-    // chance in the live death pass, but this sim prices in-run income as
-    // computeRunGold + per-wave chests and never models item drops — so the
-    // item-side bonus is priced at 0 here rather than invented (the potion
-    // side IS priced, above). focus/once precedent: state it, don't fake it.
-    incomeChest: chests * SIM_TUNING.CHEST_GOLD,
+    incomePurse,
+    incomeProfile: incomePurse + award,
+    // E1 HONEST ZERO: chests pay NO gold post-E1 (the per-kill purse replaced
+    // every in-run gold surface — src/chests.js has no gold outcome). Kept as
+    // a field so readers summing incomeProfile + incomeChest keep working.
+    // The pre-E1 G10 honest-zero note stands too: item drops are still not
+    // modelled, so a tiered enemy's item-side dropBonus is still priced at 0
+    // (the potion side IS priced, above).
+    incomeChest: 0,
     kills: Math.round(kills),
     checkpoints,
     picks,
@@ -850,15 +1071,171 @@ export function divergenceVerdict(good, bad) {
     ['damageTaken (lower better)', g.damageTaken < b.damageTaken],
   ];
   const winCount = wins.filter(w => w[1]).length;
+  // G6's SECOND axis (owner 2026-09-14): waves-cleared ratio — "wider and
+  // far more legible to a player (bad draft = wave 2, good = wave 4)". Read
+  // at the run's END, not the minute-10 checkpoint: the checkpoint freezes
+  // mid-run for runs still alive, and under a strong loadout the kill funnel
+  // saturates at the spawn rate (every surviving run shows the same
+  // checkpoint kills/gold) — the final wave count is where the draft's
+  // coherence actually expresses.
+  const medWaves = c => median(c.map(r => r.wavesCleared));
+  const gW = medWaves(good), bW = medWaves(bad);
   return {
     pass: b.failRate() >= 0.5 && b.survival <= 0.8 * g.survival && winCount >= 3,
     badCanFail: b.failRate() >= 0.5,
     badEarlier: b.survival <= 0.8 * g.survival,
     goodBad: b.survival > 0 ? g.survival / b.survival : Infinity,
+    goodBadWaves: bW > 0 ? gW / bW : Infinity,
+    finalWaves: { good: gW, bad: bW },
     metricWins: wins, winCount,
     good: g, bad: b,
   };
 }
+
+// ---------- W7a measurement cells (the tooling deliverables) ----------------
+// The owner-specified expression loadout (2026-09-13, pinned by
+// test_draft_sim / test_draft_luck): a green run dies at ~52s with two drafts
+// and cannot express divergence, so every W7a measurement defaults to this
+// fixture. Read through SHOP_BY_ID, never restated.
+export const OWNER_LOADOUT = {
+  dmg: SHOP_BY_ID.dmg.maxLevel,   // all damage upgrades
+  split: 3,                       // some split shot
+  thrifty: 2,                     // some mana reduction (an honest 0 in this
+                                  // model: no mana layer — printed as such)
+  slots: 1,                       // +1 weapon slot
+  weapon_orbit: 1,                // the cheapest archetype (WEAPON_PRICES.ORBIT)
+};
+
+const meanOf = (rows, f) => rows.reduce((s, r) => s + f(r), 0) / Math.max(1, rows.length);
+
+// G6 divergence, measured on BOTH axes against the post-E1 economy (the
+// cohorts bank the E1 purse + AWARD through the live seams).
+export function measureDivergence(seed, runs, patch = { purchases: OWNER_LOADOUT }) {
+  const good = simulateCohort(seed, runs, 'GREED_DAMAGE', patch);
+  const bad = simulateCohort(seed, runs, 'ADVERSARIAL_BAD', patch);
+  const v = divergenceVerdict(good, bad);
+  return {
+    ...v,
+    meanSurvival: { good: meanOf(good, r => r.survivalTime), bad: meanOf(bad, r => r.survivalTime) },
+    meanWaves: { good: meanOf(good, r => r.wavesCleared), bad: meanOf(bad, r => r.wavesCleared) },
+    meanBanked: { good: meanOf(good, r => r.incomeProfile), bad: meanOf(bad, r => r.incomeProfile) },
+    // The owner's raised bar (2026-09-14): >= x1.6 on BOTH axes, x2.0 the
+    // stretch. That target is W7b's — REPORTED here, enacted there.
+    target: 1.6,
+    meetsTarget: v.goodBad >= 1.6 && v.goodBadWaves >= 1.6,
+  };
+}
+
+// The arch layer's measured contribution: identical cohorts, layer ON vs OFF
+// (the only before/after cell where { arches: false } is legitimate).
+export function measureArchImpact(seed, runs, patch = { purchases: OWNER_LOADOUT }) {
+  const on = simulateCohort(seed, runs, 'GREED_DAMAGE', patch);
+  const off = simulateCohort(seed, runs, 'GREED_DAMAGE', { ...patch, arches: false });
+  return {
+    surv: { on: meanOf(on, r => r.survivalTime), off: meanOf(off, r => r.survivalTime) },
+    waves: { on: meanOf(on, r => r.wavesCleared), off: meanOf(off, r => r.wavesCleared) },
+    banked: { on: meanOf(on, r => r.incomeProfile), off: meanOf(off, r => r.incomeProfile) },
+    uptimes: archExpectedMods({ ...LIVE, ...patch }).uptimes,
+  };
+}
+
+// W7a: rank the shop's STAT rows by MEASURED marginal value. Each row's arm
+// is the expression base plus ONE more level of that row (the next purchase
+// a player would make); the cost is the LIVE next-level price through
+// upgradeCost. A row maxed in the base (dmg) is measured as its FIRST level
+// from a stripped base, and says so. A row the model cannot see measures
+// BYTE-IDENTICAL to the base (the sim is seeded and deterministic) — the
+// delta is exactly 0 and the row is reported as an honest zero, never
+// guessed. Weapon/elite unlock rows are not stat rows: weapons are measured
+// by measureUnlockValue; elite modifiers are unmodelled (honest zero).
+export function measureMetaValue(seed, runs, base = OWNER_LOADOUT) {
+  const basePatch = { purchases: base };
+  const baseCohort = simulateCohort(seed, runs, 'GREED_DAMAGE', basePatch);
+  const baseSurv = meanOf(baseCohort, r => r.survivalTime);
+  const baseGold = meanOf(baseCohort, r => r.incomeProfile);
+  const rows = [];
+  for (const def of SHOP_UPGRADES) {
+    if (def.kind) continue;   // weapon_/elite_ unlock rows: see measureUnlockValue
+    const baseLvl = base[def.id] || 0;
+    let armPatch = { purchases: { ...base, [def.id]: baseLvl + 1 } };
+    let cost = upgradeCost(def, baseLvl);
+    let note = null;
+    let armBase = baseCohort, armBaseSurv = baseSurv, armBaseGold = baseGold;
+    if (baseLvl >= def.maxLevel) {
+      // Maxed in the base: the marginal purchase does not exist. Measure the
+      // FIRST level's value from a stripped base instead, and say so.
+      const stripped = { ...base }; delete stripped[def.id];
+      const sc = simulateCohort(seed, runs, 'GREED_DAMAGE', { purchases: stripped });
+      armBase = sc; armBaseSurv = meanOf(sc, r => r.survivalTime);
+      armBaseGold = meanOf(sc, r => r.incomeProfile);
+      armPatch = { purchases: { ...stripped, [def.id]: 1 } };
+      cost = upgradeCost(def, 0);
+      note = `maxed in the base — measured as level 0->1 (cost ${cost}g)`;
+    }
+    const arm = simulateCohort(seed, runs, 'GREED_DAMAGE', armPatch);
+    const dSurv = meanOf(arm, r => r.survivalTime) - armBaseSurv;
+    const dGold = meanOf(arm, r => r.incomeProfile) - armBaseGold;
+    // A truly unread row is byte-identical to its base — but a byte-identical
+    // arm can ALSO mean "read, and worth nothing alone at this base" (crit
+    // without critdmg; a 5th slot with only 2 unlocked weapons; a starting
+    // potion when the drop funnel banks hundreds). Split the two cases with
+    // the LIVE probes: applied-stats diff, the slot seam, the potion seam.
+    const identical = JSON.stringify(arm) === JSON.stringify(armBase);
+    let zeroNote = null;
+    if (identical && !note) {
+      const probe0 = applyMetaBonuses(makePlayer().stats, base);
+      const probe1 = applyMetaBonuses(makePlayer().stats, armPatch.purchases);
+      const reads = JSON.stringify(probe0) !== JSON.stringify(probe1) ||
+        startWeaponSlots({ purchased: base }) !== startWeaponSlots({ purchased: armPatch.purchases }) ||
+        startPotionCount({ equippedCharacter: 'KNIGHT', purchased: base }) !==
+          startPotionCount({ equippedCharacter: 'KNIGHT', purchased: armPatch.purchases });
+      zeroNote = reads
+        ? 'reads into the model; no measurable effect ALONE at this base (honest 0)'
+        : 'OUTSIDE THIS MODEL (mana / pilot-range / arcade — no layer to read it; honest 0)';
+    }
+    rows.push({ id: def.id, name: def.name, baseLvl, cost, dSurv, dGold,
+      survPer1k: cost > 0 ? dSurv / cost * 1000 : 0,
+      goldPer1k: cost > 0 ? dGold / cost * 1000 : 0,
+      invisible: identical, note: note || zeroNote });
+  }
+  rows.sort((a, b) => b.survPer1k - a.survPer1k);
+  return { base: { ...base }, baseSurv, baseGold, rows };
+}
+
+// W7a: each weapon unlock's NET value at the real slot counts — the option
+// gain MINUS the pool dilution, both modelled (the unlock enters the draft
+// pool as +1 grant card; nothing starts in the kit). The base is the owner
+// fixture minus its own unlock row, so ORBIT is measured like every other
+// archetype.
+export function measureUnlockValue(seed, runs, slotCounts = [3, 4, 6]) {
+  const base0 = { ...OWNER_LOADOUT };
+  delete base0.weapon_orbit;
+  delete base0.slots;
+  const out = [];
+  for (const slots of slotCounts) {
+    const slotsLvl = slots - 3;   // WEAPON_SLOT_START is 3; the shop row adds
+    const base = slotsLvl > 0 ? { ...base0, slots: slotsLvl } : { ...base0 };
+    const baseCohort = simulateCohort(seed, runs, 'GREED_DAMAGE', { purchases: base });
+    const bSurv = meanOf(baseCohort, r => r.survivalTime);
+    const bWaves = meanOf(baseCohort, r => r.wavesCleared);
+    const bGold = meanOf(baseCohort, r => r.incomeProfile);
+    for (const [wid, price] of Object.entries(WEAPON_PRICES)) {
+      const arm = simulateCohort(seed, runs, 'GREED_DAMAGE',
+        { purchases: { ...base, ['weapon_' + wid.toLowerCase()]: 1 } });
+      out.push({
+        weapon: wid, slots, price,
+        dSurv: meanOf(arm, r => r.survivalTime) - bSurv,
+        dWaves: meanOf(arm, r => r.wavesCleared) - bWaves,
+        dBanked: meanOf(arm, r => r.incomeProfile) - bGold,
+        // How often the GREED policy actually drafts the unlocked weapon —
+        // the take-rate a negative row's dilution cost is conditioned on.
+        takeRate: arm.filter(r => (r.picks['grant_' + wid] || 0) > 0).length / arm.length,
+      });
+    }
+  }
+  return out;
+}
+
 
 // ---------- lever analysis ----------------------------------------------------
 // PROPOSALS ONLY — no src/ edits. Each lever re-runs the sim with the live
@@ -1020,8 +1397,90 @@ async function main() {
   console.log(`  bad dies meaningfully earlier (<=0.8x good): bad ${Math.round(v.bad.survival)}s vs good ${Math.round(v.good.survival)}s (ratio ${v.goodBad.toFixed(2)}) -> ${v.badEarlier ? 'yes' : 'NO'}`);
   console.log(`  good beats bad on >=3 of 5 minute-10 metrics: ${v.winCount}/5 -> ${v.winCount >= 3 ? 'yes' : 'NO'}`);
   for (const [metric, won] of v.metricWins) console.log(`    ${won ? 'W' : '.'} ${metric}`);
+  // G6's two axes and the owner's raised bar (W7b's target — reported, not
+  // enacted): survival ratio is the fresh-profile read above; BOTH-axes on
+  // the owner loadout is what --divergence prints.
+  console.log(`  waves-cleared ratio (G6 axis 2, fresh profile): good ${v.finalWaves.good} vs bad ${v.finalWaves.bad} final waves ` +
+    `(x${Number.isFinite(v.goodBadWaves) ? v.goodBadWaves.toFixed(2) : 'n/a — no waves cleared'})`);
   console.log(`VERDICT: ${v.pass ? 'PASS' : 'FAIL'}`);
   console.log('');
+
+  // ---- W7a measurement modes -------------------------------------------------
+  if (args.includes('--divergence')) {
+    const d = measureDivergence(seed, runs);
+    console.log(`G6 DIVERGENCE — the owner's raised bar, post-E1 economy ` +
+      `(${runs} runs/policy, seed ${seed}, owner loadout):`);
+    console.log(`  survival-time ratio (axis 1): good ${Math.round(d.good.survival)}s vs bad ${Math.round(d.bad.survival)}s median ` +
+      `-> x${d.goodBad.toFixed(2)}  (means ${d.meanSurvival.good.toFixed(0)}s / ${d.meanSurvival.bad.toFixed(0)}s)`);
+    console.log(`  waves-cleared ratio (axis 2): good ${d.finalWaves.good} vs bad ${d.finalWaves.bad} final waves median ` +
+      `-> x${d.goodBadWaves.toFixed(2)}  (means ${d.meanWaves.good.toFixed(1)} / ${d.meanWaves.bad.toFixed(1)})`);
+    console.log(`  banked income (E1 purse + AWARD): good ${Math.round(d.meanBanked.good)}g vs bad ${Math.round(d.meanBanked.bad)}g mean/run`);
+    console.log(`  bad can fail: ${(100 * d.bad.failRate()).toFixed(0)}% die before the limit; metric wins ${d.winCount}/5`);
+    console.log(`  minute-10 metric detail: ${d.metricWins.map(([k, w]) => (w ? 'W ' : '. ') + k).join(' | ')}`);
+    console.log(`  (saturation note: under a maxed-damage loadout the kill funnel caps at the spawn rate,`);
+    console.log(`   so checkpoint kills/gold tie for any run still alive — divergence reads on survival + waves.)`);
+    console.log(`  OWNER TARGET (W7b, reported not enacted): >= x${d.target.toFixed(1)} on BOTH axes -> ` +
+      `${d.meetsTarget ? 'MET' : 'NOT MET'} (survival x${d.goodBad.toFixed(2)}, waves x${d.goodBadWaves.toFixed(2)})`);
+    console.log('');
+  }
+
+  if (args.includes('--arch-impact')) {
+    const a = measureArchImpact(seed, runs);
+    const pc = (on, off) => `${off > 0 ? (100 * (on - off) / off).toFixed(1) : 'inf'}%`;
+    console.log(`ARCH BUFF LAYER — measured contribution, ON vs OFF ` +
+      `(${runs} runs/policy, seed ${seed}, owner loadout; G5's arch fix is now measurable):`);
+    console.log(`  expected uptimes: ` + Object.entries(a.uptimes)
+      .map(([k, u]) => `${k} ${(100 * u).toFixed(0)}%`).join('  '));
+    console.log(`  mean survival ${a.surv.off.toFixed(0)}s -> ${a.surv.on.toFixed(0)}s (+${pc(a.surv.on, a.surv.off)})`);
+    console.log(`  mean waves ${a.waves.off.toFixed(1)} -> ${a.waves.on.toFixed(1)}`);
+    console.log(`  mean banked ${Math.round(a.banked.off)}g -> ${Math.round(a.banked.on)}g (+${pc(a.banked.on, a.banked.off)})`);
+    console.log('');
+  }
+
+  if (args.includes('--meta-value')) {
+    const { GREEDY_PRIORITY } = await import('./balance_sim.mjs');
+    const mv = measureMetaValue(seed, Math.min(runs, 30));
+    console.log(`META UPGRADES RANKED BY MEASURED MARGINAL VALUE ` +
+      `(${Math.min(runs, 30)} runs/cell, seed ${seed}; base = owner loadout, ` +
+      `base run ${mv.baseSurv.toFixed(0)}s / ${Math.round(mv.baseGold)}g):`);
+    console.log(' rank | id        | +1 level delta survival | delta banked | per 1000g (surv / gold) | note');
+    mv.rows.forEach((r, i) => {
+      console.log(`  ${String(i + 1).padStart(3)} | ${r.id.padEnd(10)} | ` +
+        `${(r.dSurv >= 0 ? '+' : '') + r.dSurv.toFixed(1) + 's'}`.padEnd(24) + ' | ' +
+        `${(r.dGold >= 0 ? '+' : '') + Math.round(r.dGold) + 'g'}`.padEnd(13) + ' | ' +
+        `${r.survPer1k.toFixed(2)}s / ${Math.round(r.goldPer1k)}g`.padEnd(24) + ' | ' +
+        (r.note || ''));
+    });
+    console.log(`  hardcoded GREEDY_PRIORITY (balance_sim, for comparison): ${GREEDY_PRIORITY.join(' > ')}`);
+    console.log(`  measured order: ${mv.rows.map(r => r.id).join(' > ')}`);
+    console.log('  (weapon unlocks are not stat rows — see --unlock-value. Rows reading 0 say why:');
+    console.log('   outside the model = mana/pilot/arcade layer the sim does not have; otherwise the row');
+    console.log('   reads in but is worth nothing ALONE at this base — crit without critdmg, a slot with');
+    console.log('   nothing to fill it, a starting potion when the drop funnel banks hundreds.)');
+    console.log('');
+  }
+
+  if (args.includes('--unlock-value')) {
+    const uv = measureUnlockValue(seed, Math.min(runs, 24));
+    console.log(`WEAPON UNLOCK NET VALUE — +1 draft option MINUS pool dilution, at the real slot counts ` +
+      `(${Math.min(runs, 24)} runs/cell, seed ${seed}; nothing starts in the kit — the live semantics):`);
+    console.log(' weapon    | price  | slots | grant take-rate | delta survival | delta waves | delta banked');
+    for (const r of uv) {
+      console.log(` ${r.weapon.padEnd(10)} | ${String(r.price).padStart(6)} | ${r.slots}     | ` +
+        `${(100 * r.takeRate).toFixed(0)}%`.padEnd(16) + '| ' +
+        `${(r.dSurv >= 0 ? '+' : '') + r.dSurv.toFixed(1) + 's'}`.padEnd(15) + '| ' +
+        `${(r.dWaves >= 0 ? '+' : '') + r.dWaves.toFixed(2)}`.padEnd(12) + '| ' +
+        `${(r.dBanked >= 0 ? '+' : '') + Math.round(r.dBanked)}g`);
+    }
+    console.log('  (a NEGATIVE row is the dilution cost out-weighing the option at that slot count —');
+    console.log('   exactly the net-value read W7a asks for; deltas are vs the same base without the unlock.');
+    console.log('   CAVEAT: the base maxes dmg, so the kill funnel saturates at the spawn rate — added');
+    console.log('   weapon dps cannot pay in kills/xp there, and the draft is zero-sum. The negative rows');
+    console.log('   are the myopic-GREED read: the policy always takes the grant and the blade-doubling');
+    console.log('   levels, which crowd out the compounding dmg/rate line. A player who declines the');
+    console.log('   grant pays only the offer-rate dilution. Measured, stated, not a balance proposal.)');
+    console.log('');
+  }
 
   console.log('LEVER ANALYSIS — where draft impact collapses (proposals only, no src/ edits):');
   const medSurv = name => Math.round(cohortSummary(cohorts[name], 600).meanSurvival);
