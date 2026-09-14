@@ -359,11 +359,12 @@ maybe a boss comes but the player can just go around them somehow."*
     which is real texture for a 30-second sequence. Take this — it costs nothing and gives the mode a verb
     (route choice) beyond dodge.
 - **Verb:** dash/dodge (plus jump if there is a floor gap). One verb, as above.
-- **AUTO PILOT: CONFIRMED REQUIRED, and it is measurable.** Since the escape ignores stats, the pilot
-  cannot be carried by power — so its escape rule set has to be genuinely competent (default to dodging,
-  auto-dash on a telegraph, steer around the boss). **Acceptance: measure the AUTO success rate in the
-  escape.** A mode the pilot reliably LOSES is a mode the pick-up-and-leave owner never gets the reward
-  from, which would defeat the point of adding it.
+- **AUTO PILOT: CONFIRMED REQUIRED, and cheap by construction.** Since the escape ignores stats the pilot
+  cannot be carried by power, so it has to actually play — but **it needs no cleverness**: terrain jumps
+  come from the authored jump-trigger volumes in each segment template (see RISK 1 below), and the boss
+  weave is the existing 2D steering. **Acceptance: measure the AUTO completion rate in the escape**, as a
+  regression check on the templates. A mode the pilot reliably LOSES is a mode the pick-up-and-leave owner
+  never gets the reward from, which would defeat the point of adding it.
 
 **A TWO-MINUTE ESCAPE NEEDS INTERNAL SHAPE OR IT IS TWO MINUTES OF THE SAME THING.** Recommended acts
 (timings indicative, tune by measurement):
@@ -382,14 +383,36 @@ has to sustain variety for that long, which is a real requirement rather than a 
 
 **TWO RISKS THAT ONLY APPEAR AT TWO MINUTES — flag them now, they are the mode's real cost:**
 
-- **RISK 1: THE AUTO PILOT'S JUMP TIMING IS THE HARDEST PILOT PROBLEM IN THE GAME SO FAR.** Every existing
-  controller behaviour is 2D steering (kite, flee, approach) — none of it is timing a jump off a ledge at
-  speed over two minutes. The AUTO requirement is confirmed, so this must work, and the honest engineering
-  answer is to make the mode FORGIVING rather than to make the pilot clever: generous jump windows, clear
-  telegraphs (a visible edge, a landing marker), wide gaps-of-safety, and a pilot rule set tuned against
-  MEASURED success rates. If the pilot cannot clear it reliably, the fallbacks in order are: widen the
-  windows, then simplify the terrain, and only then consider a reduced auto reward. Do NOT ship a mode the
-  pilot loses.
+- ~~**RISK 1: the pilot's jump timing is the hardest problem in the game.**~~ **WRONG — RETRACTED
+  (owner-corrected 2026-09-14).** Sk408: *"What do you mean? Jumps are easy. You just put an invisible jump
+  box at the right spot to jump and it triggers if auto pilot is engaged. No timing needed."* Correct: there
+  is no perception problem and no timing AI, because **the geometry is authored, so the jump is authored
+  with it.** Remy was pricing an AI that has to *see* a gap; the generator already *knows* where every gap
+  is.
+
+  **THE MECHANISM — the segment template owns its own jump hint:**
+  - Each corridor segment template emits **invisible jump-trigger volumes** alongside its geometry (the
+    gap's approach band), so the trigger and the gap can never disagree.
+  - Firing rule: **inside the trigger AND AUTO is engaged AND moving forward -> jump.** Deterministic. No
+    prediction, no lookahead, no tuning.
+  - **Invisible to MANUAL — manual players jump themselves.** So the assist is auto-only, which is the same
+    principle as P1's portal i-frames (AUTO gets the help, manual gets none). **One rule, two places.**
+
+  **WHAT THE REAL WORK ACTUALLY IS (and it is a template invariant, not an AI problem):** a trigger can only
+  fire into a gap the jump can clear, so **every generated gap must be jump-clearable at the corridor's
+  MINIMUM approach speed** — otherwise a correct trigger still drops the pilot in a hole. That is a
+  deterministic, testable invariant of the generator: assert it over generated corridors rather than
+  hoping. It moves the risk from probabilistic AI behaviour to a template bug, which is the trade you want.
+
+  **Edge cases to handle in the trigger, all small:** trigger is a BAND (not a point) so a slowed or
+  knocked-back player cannot slide past the firing line; no double-fire (never mid-air, never while
+  falling); no fire on the way back (one-way per segment); and the boss beat needs NO triggers at all —
+  weaving around the boss is spatial steering, which is the existing controller's home turf.
+
+  **Acceptance, updated:** (a) the generator invariant above, asserted across generated corridors; (b) the
+  AUTO completion rate through the escape as a regression check on the templates — not as a measure of AI
+  cleverness. Fallbacks if auto still fails: widen the trigger band, then make the gap narrower; never
+  weaken it into a free pass.
 - **RISK 2: TWO MINUTES IS LONGER THAN A FRESH RUN DIES (measured ~35s).** So the escape must be GATED to
   a point where runs reach it — a later wave, or a dedicated stage/mode — or it is content a new player
   literally never sees. It also means the escape is a major part of the run's rhythm rather than a cameo,
