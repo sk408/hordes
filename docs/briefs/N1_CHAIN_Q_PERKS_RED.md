@@ -63,3 +63,30 @@ cooldown for a Focus holder.
 Then do NOT touch the test and do NOT invent a workaround: report exactly which contract, what the
 old and new behaviour are, and why the new one is correct. Remy and the pilot decide. Guessing here
 is worse than stopping.
+
+---
+
+## RESOLVED (commit watcher, 2026-09-14 00:05 UTC) - the seam was NEVER the bug
+
+Do not change `useSkill`. The Focus price/cooldown contract was never bypassed. Measured
+on this tree before any edit (`/tmp/probe_skills.mjs`: the same empty-field fixture the
+test used, then one parked target):
+
+    empty field:   FROST_NOVA -> true  | mana 999 -> 969 | cd 8
+                   OVERCHARGE -> true  | mana 999 -> 974 | cd 12
+                   CHAIN_REACTION -> false | mana stays 999 | cd stays 0
+    one target:    CHAIN_REACTION -> true | mana 999 -> 969
+
+`CHAIN_REACTION` is the AIMED skill: `src/skills.js:49-54` refunds the charge and clears
+the cooldown on an empty field BY DESIGN (a whiff costs nothing - the potion contract),
+and `test/test_chain_q.mjs:209-211` pins exactly that (0 mana spent, 0 cooldown armed).
+`test/test_perks.mjs`'s blanket clause casts EVERY id in `C.SKILLS` on an EMPTY field, so
+the newly added aimed skill legitimately returned false, and its `true !== false`
+assertion read as a Focus-contract break. The expectation did not change - the FIXTURE
+was stale. It now parks one sturdy target, so every catalog id is cast under legal
+conditions.
+
+No assertion was weakened, moved, deleted or given a tolerance: the assertion text is the
+shipped text, verbatim, and the file reports 15/15. Landed in `cb9fea3` (suite 74 files /
+0 red, three consecutive runs), the commit that carries this note. No `src` change was
+needed or made for this red, so the builder task described above is moot.
