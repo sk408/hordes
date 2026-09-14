@@ -170,6 +170,23 @@ Indicative timings — tune by measurement.
 - Trigger edge cases: a BAND, not a point (so a slowed or knocked-back player cannot slide past the
   firing line); never double-fire (not mid-air, not while falling); one-way per segment.
 
+## SKIP (owner directive, 2026-09-14 — a first-class feature, not a courtesy)
+
+Sk408: *"For now we should have a skip method available for the players, so it just feels like an
+interactive cinematic than a required game. That way they are less critical if it feels underdeveloped."*
+
+- **Visible from the FIRST FRAME, one input, no waiting, no hidden gesture.** A skip nobody notices does
+  not buy the immunity it exists for.
+- **Skippable at the start AND mid-escape.** Never trap a player for two minutes.
+- **NEVER A GATE.** Progress, the run, and the run's normal payout are identical either way.
+- **FAILURE IS SOFT, NOT DEATH:** the escape ends (no escape bonus) and the RUN CONTINUES. This removes
+  the fairness risk of a two-minute platformer entirely — a mistimed jump cannot end a run. The AUTO
+  pilot's failure takes the same path, so an auto run can never be ended by V1.
+- **THE REWARD MUST BE MODEST ENOUGH THAT SKIPPING IS A REAL CHOICE.** If a valuable collectible is
+  gated behind the escape, skipping becomes painful and the mode becomes required in practice. So the
+  escape's own payout is flavour/modest, and **M1's collectible set stays OUT of it** (at most the escape
+  is one of several routes to a piece). This supersedes the earlier "tie the payout to M1's set" idea.
+
 ## ACCEPTANCE (measurable — no adjectives)
 
 1. **Generator invariant, asserted across generated corridors:** for EVERY template its
@@ -178,6 +195,11 @@ Indicative timings — tune by measurement.
    cheap — fail here is a template bug, not an AI problem.
 2. **AUTO completion rate through the escape**, as a TEMPLATE REGRESSION CHECK — plus the completion
    rate AT THE BOSS BEAT specifically (weaving plus jump timing is where an auto run dies).
+2b. **THE SKIP RATE, reported alongside completion.** For a skippable mode this is the honest signal of
+   whether it earns its two minutes: a high skip rate is the intended outcome (nobody resents it), a low
+   skip rate with a high completion rate proves it is fun. Assert only that the skip WORKS from the first
+   frame and mid-escape, that it never blocks progress, and that a failure soft-ends rather than ending
+   the run.
 3. **THE BOSS BEAT'S COST, BOTH ENDS:** the time/HP cost of the boss beat versus the rest of the
    escape. If it is ~0 the boss is decoration; if completion collapses it is unfair. Report both
    numbers.
@@ -201,10 +223,13 @@ Indicative timings — tune by measurement.
    dedicated stage/mode? The owner's *"replacement for wave 2"* reading suggests a scheduled beat.
    **This also fixes the gating problem: a fresh run dies at ~35s, so an ungated two-minute escape is
    content a new player never sees.**
-2. **STAKES** — is failure death, or a lost reward? Stakes are what make it a change of pace rather
-   than a throwaway minigame.
-3. **REWARD** — a chest is too small for a two-minute investment; M1's collectible set is the natural
-   tie-in.
+2. ~~**STAKES** — is failure death, or a lost reward?~~ **ANSWERED by the owner's skip directive
+   (2026-09-14): failure is SOFT.** The escape ends, no escape bonus, the run continues — never death.
+   See the SKIP section. Do not build a lethal failure path.
+3. **REWARD** — narrowed by the same directive: it must be **modest** (flavour, a small bonus, currency),
+   because a valuable reward makes skipping painful and the mode mandatory in practice. M1's collectible
+   set stays OUT of the escape, or the escape is at most one of several routes to a piece. Still open:
+   exactly WHICH modest reward.
 
 ## DO NOT
 

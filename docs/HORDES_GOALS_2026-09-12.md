@@ -510,6 +510,36 @@ project. Do not start V1 before them.**
 **STATUS: spec'd and NOT in the execution order — but it is now SLICE-SIZED, so it can be slotted whenever
 the owner wants it, after G7 and E2.** Do not let it leak into the current slices before then.
 
+**SKIP IS A FIRST-CLASS FEATURE, NOT A COURTESY (owner directive, 2026-09-14).** Sk408: *"For now we
+should have a skip method available for the players, so it just feels like an interactive cinematic than a
+required game. That way they are less critical if it feels underdeveloped."*
+
+- **Visible from the FIRST FRAME**, one input, no waiting, no hidden gesture. The whole value is that
+  players KNOW it is optional before they judge it — a skip nobody notices does not buy the immunity the
+  owner is asking for.
+- **Skippable at the start AND mid-escape**, so a player who dislikes it is never trapped for two minutes.
+- **IT IS NEVER A GATE.** Progress, the run, and the run's normal payout are unaffected either way.
+
+**THIS ANSWERS THE OPEN "STAKES" QUESTION, and in the friendly direction:** with a skip in place, failing
+the escape must NOT kill the run. Failure soft-ends the sequence (the escape is over, no escape bonus, the
+run continues). That removes the entire fairness risk of a two-minute platformer — a mistimed jump can no
+longer end a run — and it is coherent with the framing: it is an interactive cinematic, not a gauntlet.
+The AUTO pilot's failure takes the same soft path, so an auto run can never be ended by V1.
+
+**THE TENSION THE SKIP CREATES — flag it, it walks back an earlier Remy call:** a skippable mode can only
+be skipped freely if its reward is MODEST. If a valuable collectible is gated behind it, skipping becomes
+painful and the mode becomes required in practice — exactly what the skip exists to prevent. So:
+- The escape's own reward should be flavour/modest (a small bonus, a cosmetic, a bit of currency).
+- **M1's collectible set should stay OUT of the escape**, or at worst the escape is ONE of several routes
+  to a piece, never the only one. (This supersedes Remy's earlier "tie the payout to M1's set" suggestion,
+  which would have made the mode mandatory.)
+- **Design rule worth keeping: the reward must be modest enough that skipping is a REAL choice.**
+
+**THE NUMBER THAT MATTERS IS NOW THE SKIP RATE, not the completion rate.** For a skippable mode the honest
+signal of whether it earns its two minutes is how many players skip it. A high skip rate is the outcome the
+owner wants (nobody resents it); a *low* skip rate with a high completion rate is the outcome that proves
+it is fun. Report both, and treat a collapse in either direction as information rather than failure.
+
 **WRITTEN UP AS A BUILD BRIEF (owner: "Ok write it up for the plan", 2026-09-14):**
 `docs/briefs/V1_ESCAPE_SEQUENCE.md` — the buildable form of everything below (house rules, the eight
 verbatim owner quotes, what it reuses with anchors, the cuts, the spatial model, the generator, the pacing
