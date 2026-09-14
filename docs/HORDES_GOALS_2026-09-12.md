@@ -18,6 +18,40 @@ this project should read it first and treat the numbered goals as the acceptance
 
 ---
 
+## PILOT CADENCE — 10 MINUTES + SILENT QUIET TICKS (2026-09-14, owner-ordered)
+
+Sk408: *"maybe we should update the pilot updater in a way so that it is continuously running. Maybe we
+need to either cut the schedule to 5 minutes, or have the watcher distribute work to it as soon as it
+finishes a task... Whatever we can do to get it developing a bit faster. It would be nice to finish off
+its queue."*
+
+**Measured first (Remy, from the cron executions DB) — the interval was the throttle, not the builder:**
+
+- The pilot's own runs take **4-11 minutes** (10.7 / 4.2 / 8.0 measured).
+- Fires were **on time** against their own schedule (lateness 0.1-1.0 min), but the effective cadence
+  was **30-60 minutes** (15:28, 16:00, 16:32, 17:33, 18:26, 19:34).
+- So **20-50 minutes of every cycle was idle** — waiting for the next fire while the builder had
+  already finished. That idle is the throughput loss.
+- Separate cause, not fixable by scheduling: **9 of 50 runs died with "Interrupted by shutdown before
+  terminal completion"** (gateway restarts killing runs).
+
+**Change: the interval is now 10m (was 30m), with a mandatory silent no-op.**
+- **STEP 0 pickup guard** in the job prompt: if the task dispatched last tick has no `exit` line in
+  `.hub-worker/logs/spawn-*.log`, the builder is still working — take no lock, edit nothing, run no
+  suite, dispatch nothing, reply **exactly `[SILENT]`** and stop. Most ticks are now this case.
+- **10m, not 5m:** runs are 4-11m, so a 5m interval guarantees overlapping fires (which the scheduler
+  delays or skips anyway) for no gain. 10m fits the work and cuts pickup latency to <=10m.
+- **The fast cadence is only safe with the silent path.** A quiet tick that reports is spam — that is
+  the exact failure the commit-watcher was just cleaned up for. Do not turn a no-op into a status
+  report.
+
+**Also corrected while here:** this job's enabled toolsets are `files` + `terminal`, so
+`delegate_task` is **not available to it** — the prompt had been telling it to delegate that way. The
+governed hub worker (`hub-worker issue hub cli:kimi-hordes-g8`, COLON form) is the only builder path.
+
+**Expected effect:** pickup latency 20-50m -> <=10m, so roughly **3-5x more queue items per hour**,
+since idle dominated the cycle. Recovery from a gateway-restart kill also drops from up to 30m to 10m.
+
 ## BUILDER LANE — KIMI, NOT GLM (2026-09-13, owner-ordered; read before dispatching)
 
 **Dispatch builders to `cli:kimi-hordes-g8`** (channel `hub`, colon form in the target — the
@@ -123,6 +157,226 @@ placement exists to let AUTO runs find shrines without steering (the "pilot-blin
 - `redfiles=0` x3, no assertion weakened. The rng-cadence contract (`shrines.js:35`: 3 draws when it
   spawns, 1 when not) will legitimately change shape — retarget that test to the new contract, do not
   delete it.
+
+## HUD CONTROL PADS MUST NOT REFLOW (owner-reported 2026-09-14)
+
+Sk408: *"the on screen controls fluctuate in size during a run. I think it's the updates to pilot
+status. Should be fixed to accommodate any change to pilot status."*
+
+**Cause, found in the markup (Remy, measured — this is not a mystery to re-diagnose).** Every pad
+button in `index.html` carries a `.badge` span whose TEXT CHANGES AT RUNTIME while the buttons are
+auto-width inside a flex column:
+
+    <button data-act="pilot">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
+    ...tc-focus (NEAREST...), tc-stance (BALANCED...), tc-q / tc-w (RDY -> cooldown), tc-h / tc-n (counts)
+
+`tc-pilot` alone cycles `AUTO` / `AUTO ALL` / `AUTO MOVE` / `MANUAL`. Longer badge text widens the
+button, which reflows the pad, which can shift the CENTRED joystick between the two pads (the WAVE-17
+comment above `#touch .pad` documents that pad width already moves it). Any badge change — pilot mode,
+cooldown text, potion counts — reflows the controls.
+
+**Fix:** make the layout immune to text length — a fixed pad width with `width: 100%` buttons, and the
+badge given a reserved width (`min-width` sized to the longest string, or `tabular-nums` + a fixed
+column) so its content can never change a dimension. Do NOT fix it by shortening the pilot strings: the
+next badge added would reintroduce it.
+
+**Acceptance (measurable, no adjectives):** capture `getBoundingClientRect()` for every pad button AND
+the joystick, and assert **byte-identical dimensions** across all pilot modes (`AUTO_ALL`, `AUTO_MOVE`,
+`MANUAL`) and across a badge change (RDY -> cooldown, potion count 1 -> 3). Real browser at 390x844
+@dpr3, all 19 TOUR_KEYS set and `state.time > 1.0` asserted first. A screenshot alone is not evidence
+here — this bug is a measurement, not a look.
+
+## ENEMY VARIETY, TOUGHNESS AND SCALING (owner, 2026-09-14)
+
+Sk408: *"we need more enemy variety so that the 2nd wave has a complement of new enemies. They should
+also be much tougher. They should probably at least be equivalent to the mid wave boss of the first
+wave. Also do the enemies scale with chest pickups and level ups? Maybe we should increase that scale
+slightly."*
+
+**ANSWERED — do enemies scale with chest pickups and level-ups? NO.** `entities.applyEscalation`
+(`entities.js:103`) reads exactly two things: the wave/time ladder and heat. Nothing reads the player's
+level, and nothing reads chests (which no longer grant upgrades anyway since the (j) pivot). The
+player's power curve therefore outruns the enemies' by construction.
+
+**Wave gating already exists (`C.SPAWNER`, config.js:479) — and wave 2 DOES introduce new types:**
+
+| wave | first appears |
+|------|---------------|
+| 0 | CHASER |
+| 1 | + SWARMER |
+| **2** | **+ BRUTE, DASHER, TICK** |
+| 3 | + SPITTER, WARLOCK |
+| 5 | + COLOSSUS |
+
+So "wave 2 has no new enemies" is not what the code says. The likely real complaint is the **MIX**:
+weights are CHASER 3 / SWARMER 2 / BRUTE 1.5 / DASHER 1.2 / TICK 1.5, so the debut wave still reads as
+mostly chasers. **The lever is the weights and a guaranteed debut — not new types.** (Second
+possibility worth checking: a fresh run dies at ~35s, i.e. inside wave 1, so a fresh player never
+reaches the wave-2 content at all.)
+
+**TOUGHNESS — CONFIRMED LITERAL by the owner (2026-09-14): wave-2 enemies ARE meant to be mid-boss
+strength.** Sk408: *"Ok I meant it literally for the enemies to be mid level boss strength. Maybe their
+spawn rate can be slightly lower than the first enemies to give the player chance to kill them. But by
+wave 2, player will be strong and then they will want to grind again. If the enemies are too strong, we
+allow buyables to have more levels with a large increase in cost."*
+
+The numbers, for the brief: `MIDBOSS` (`config.js:534`) is `BASE_HP * hpScale(w) * (17 + 14*waveNum)`.
+Wave-1 mid-boss = `144 * 1.35 * 31` = **~6,026 hp**. Today a wave-2 CHASER is **194 hp** and a wave-2
+BRUTE is **680 hp** — the ask is ~31x the chaff. Remy's earlier "a field of mid-bosses is unwinnable"
+framing was WRONG and is retracted: the shipped probe data says wave-1 pilots reach t=120 at
+**2,000-8,000 dps**, so a ~6,000 hp body is a **1-3 second kill** — a grind, not a wall. The owner's
+call holds up; it was my read that was wrong.
+
+**How to build it (the shape that matches his words and keeps wave 1 a warm-up):**
+1. **A HEAVY TIER.** The types that DEBUT at wave 2 (BRUTE, DASHER, TICK) carry **mid-boss-equivalent
+   hp**; CHASER and SWARMER stay chaff on the current curve. Wave 1 stays survivable, wave 2 arrives as
+   "a complement of new enemies" that are genuinely dangerous, and the two together give the field
+   variety (chaff + heavies) instead of a uniform wall.
+2. **Heavies ride the mid-boss ladder one wave behind**: heavy hp at wave `w` = the MIDBOSS formula at
+   `w-1` (so wave 2 heavies = 144 * 1.7 * 31 = **~7,589 hp**, at or above the wave-1 mid-boss ~6,026 —
+   "at least equivalent", literally satisfied). Keep ONE definition of the formula and read it; do not
+   copy the constants.
+3. **Heavies spawn rarer than the chaff** (owner: *"slightly lower than the first enemies"*). Today's
+   weights are already lower for the debut trio (BRUTE 1.5 / DASHER 1.2 / TICK 1.5 vs CHASER 3) — tune
+   from there by measurement, and consider a guaranteed debut so the tier actually shows up.
+4. **The mid-boss stays distinct by BEHAVIOUR, not hp** — it has the pillar ring, the pursuit and the
+   bursts. With heavies at mid-boss hp that separation matters more, so do not let the two collapse
+   into "the same thing but alone".
+5. **The wave boss is untouched**: still ~108,000 hp at wave 1 (`500 + 60*waveNum`), still the wall the
+   run breaks on. The ladder should read: chaff -> heavy -> mid-boss -> wave boss.
+
+**STANDING RULE (owner, 2026-09-14): if this proves too strong, the answer is the SHOP, never the
+enemies.** *"If the enemies are too strong, we allow buyables to have more levels with a large increase
+in cost."* So: raise the buyables' `maxLevel` with steep cost growth, and do NOT soften the enemy
+numbers, do NOT add a rubber band, and do NOT revert this. This is the same rule as the accepted
+difficulty from 2026-09-13, restated for the enemy curve.
+
+**Acceptance:** an assertion that a wave-2 heavy's hp is >= the wave-1 mid-boss's hp (numeric, both read
+from their one definition, not literals); measured cohort runs before/after (time-to-death, waves
+reached, kills) with the owner's loadout; and a measured spawn-mix table proving the heavies are rarer
+than the chaff. Real-browser phone capture for anything the player sees.
+
+### A FLYING ENEMY FOR WAVE 2 (owner, 2026-09-14)
+
+Sk408: *"we should make a flying enemy like the bats, but stronger for wave 2."*
+
+**A finding first: "flying" has NO mechanical meaning in this game yet.** There is no
+enemy-enemy collision or separation anywhere (`main.js`/`entities.js` have none), so every enemy already
+passes through every other one, and the arena has no terrain to fly over. Flight must therefore be
+defined, not inherited. Two useful building blocks already exist:
+- **The bat art and its flight convention exist** — `intro.js` has `BAT` sprites and draws them
+  *"fly above with a sine bob"* (ground rows stagger behind the front). Reuse both rather than inventing
+  a second flying idea.
+- **The z-axis G7 already specifies** is exactly what flight needs: a `z` per entity drawn at `y - z`
+  with a ground shadow that stays at ground level. That is RENDER-ONLY (the sim stays 2D), so the flying
+  enemy becomes **elevation's first customer** without committing to G7's jump or parallax.
+
+**Recommended spec (a HEAVY, per the tier above, debuting with the wave-2 batch):**
+1. **`z` + a ground shadow**, drawn above the field (visual flight, reads instantly on a flat plane).
+2. **A swoop**: a hover/dive approach (bob, close at an angle, commit to a dive) — distinct from the
+   CHASER's straight walk and the DASHER's ground lunge.
+3. **One mechanical identity** so it is not just a stat line. Remy's pick: it **ignores ground effects**
+   (the frost slow / ground AoE) — a threat that demands a different answer. **OWNER CALL**, because it
+   interacts with the Witch's kit (her slow is her kite-based survival tool, so an enemy that ignores it
+   is a deliberate counter to her). Alternatives: untouched by knockback, or it can only be damaged
+   inside the dive window.
+
+### CHAFF DENSITY AT WAVE 2 + THE INCOME INVARIANT (owner, 2026-09-14)
+
+Sk408: *"the wave 2 spawn rate for chaff should be maybe triple or squared, which means their drop rates
+need to be reduced by the same for consistency."*
+
+**Intent:** wave 2 becomes a real HORDE — a swarm of cheap chaff ON TOP of the heavy tier. More bodies to
+mow down is the grind the owner wants; each body pays less so the economy does not inflate.
+
+**The consistency rule is FIVE channels, not one — everything below is denominated in KILLS, so all five
+inflate together if you only fix "the drop rate":**
+
+| channel | seam |
+|---|---|
+| XP per kill | `entities.js:52/113` (`BASE_XP 5 * xpScale(w)`) |
+| gold | `meta.js:159/223` — `BASE + floor(kills / KILLS_DIV) + level*10 + floor(time/20)` |
+| evolution tokens | `chests.js:80` — `PER_KILL: 1200` (the kill channel) |
+| potion drops | `config.js:317` — `DROP_CHANCE 0.02` per normal kill (also `:202` 0.03) |
+| **chest drops** | `chests.js:29` — `DROP_CHANCE 0.35` on elite-ish kills — the EQUIPMENT FAUCET (item (f)) |
+
+**SUPERSEDED, and better (owner, 2026-09-14): chaff drops go to NEAR ZERO and the heavies carry the
+income.** Sk408: *"wave 2, drops for chaff enemies should be close to zero. Drops should be mostly from
+the strong enemies."* This replaces the divide-by-N arithmetic above: if the swarm pays nothing, tripling
+it cannot inflate the economy, and the grind becomes "kill the strong ones for progress". The four
+per-kill DROP rolls are therefore simply set near zero for chaff.
+
+**GOLD: OWNER-CONFIRMED — A TIER-WEIGHTED COUNTER, FROM THE START (2026-09-14).** Sk408: *"Yes, tier
+weighted gold counter is needed. Needed from the start actually so that mid wave boss gives a nice gold
+drop and the chaff drops a bit less. Min drop 60 like it kind of already is is a good feature."*
+
+Gold is not a drop — `computeRunGold` (`meta.js:219`) is a run-end FORMULA over a RAW kill count:
+`BASE(50) + floor(kills / KILLS_DIV) + level*10 + floor(time/20)`, and `kills` increments per kill with no
+regard to type (`p.kills++`, `main.js:1838`). So tripling chaff triples the gold term regardless of any
+drop chance. Fix, as the owner directs:
+
+1. **Replace the raw `kills` term with a TIER-WEIGHTED kill sum**, in force from wave 0 (not just wave 2):
+   chaff weighted DOWN, elites ~1.0, heavies > 1, mid-boss and boss heavily weighted so a mid-boss kill
+   reads as "a nice drop". Keep the RAW count too, for anything that genuinely wants bodies
+   (milestones, achievements).
+2. **The tier signals already exist** — the run stats carry `p.kills` and `runCounts.bossKills`
+   ("bosses/heralds killed", `main.js:262`); add an elite/heavy counter alongside them rather than
+   re-deriving tier from hp at run end.
+3. **Keep the floor feature the owner likes.** `BASE 50` + the level and time terms mean even a bad, short
+   run pays out (measured ~60-80 gold for a fresh player). Do NOT weight the whole formula — weight only
+   the kill term, or a chaff-heavy run would collapse toward zero. (If the owner means a literal per-source
+   minimum of 60, get it from him: no `60` constant exists in `GOLD_MODEL` today — the ceiling is `BASE 50`
+   plus the two non-kill terms.)
+4. **Do NOT reprice `KILLS_DIV` to compensate** — that would also cut gold from the heavy kills the income
+   is supposed to come from.
+
+**TRAP TO AVOID — DOUBLE PAYMENT.** Gold is paid ONCE, at run end (`profile.gold += gold`, `main.js:2695`);
+there is no in-run gold. `MAW_CLEAR_BONUS: 1200` (`config.js:617`) is an EVENT payout *"on top of the run's
+gold"*. So if a mid-boss is given a visible in-run "nice drop" using that pattern, the SAME kill must be
+removed from the run-end weighted term — otherwise one kill pays twice. Decide which surface owns
+mid-boss gold and make the other not count it; assert that in a test.
+
+**Also flag XP separately — it is progression, not income.** XP drives the draft, and the draft is the
+core loop. Near-zero chaff XP is coherent with the owner's intent (work for progress), but it must be
+MEASURED that level-ups still flow: report **drafts per wave before/after** and keep it from collapsing.
+If it does, the heavies must pay more xp, not the chaff.
+
+**Prefer a flat multiplier over a squared curve** (owner offered "triple or squared"): a squared rate
+compounds with the hp ladder and cannot hold a phone frame budget. Make it ONE config knob so it is
+tunable and testable.
+
+**PERF: MEASURE IT, AND MEASURE IT ON THE VPS — that is the floor (owner, 2026-09-14: "Your vps
+environment is generally weak. If it can run 120hz there, it's not an issue at all").** The owner is right
+about the machine: this VPS is a **6-core Xeon E5-2690 v4 @ 2.6GHz with 7.9GB RAM and NO GPU**, so a
+headless browser rasterises in SOFTWARE. A frame budget held here is held with real margin on a phone.
+Because spawns are PLAYER-RELATIVE, the extra bodies are ON SCREEN — arena culling does not save you.
+
+**But the existing "120Hz" checks do NOT prove throughput, so they cannot be used as the perf bar.**
+They inject the frame time (`h.setFrameMs(1000/120)`) and assert dt-correctness per event — that is a
+LOGIC check about frame-rate independence, and running it on the VPS says nothing about frame cost.
+`tools/real_loop.mjs` boots the real loop headlessly but neither renders nor times a frame. **Nothing in
+the tree currently measures frame cost at all** — so "it holds on the VPS" is not yet evidence.
+
+**Required: a real wall-clock frame-time measurement in a real browser on the VPS** — update+render cost
+per frame (p50 and p95, plus max) at the wave-2 horde peak, captured before and after, with the load
+average noted so a contended box is not mistaken for a slow game. Worth making it a PERMANENT tool
+(`tools/verify_perf.mjs`) rather than a one-off: spawn and entity-count changes recur, and this is the
+gate that keeps them honest. If the VPS holds the budget at 3x chaff, a phone is safe by construction.
+
+**Acceptance:** a measured per-wave income table covering ALL FIVE channels before/after, with the
+invariant stated as a percentage; a measured frame-time table at 60 and 120Hz; and the spawn-mix table
+showing chaff tripled and heavies rarer. Never by assertion.
+
+**On "increase that scale slightly":** the HEAVY TIER above is the escalation mechanism — prefer it
+over both a blanket ladder steepening and, especially, over adding a player-level term. A rubber band
+that scales enemies off the player's own level cuts against the owner's own model (*"improvement to
+survival is meant to be from shop buyables"*) because upgrades would be partly self-cancelling; and the
+owner's stated remedy for over-toughness is more shop LEVELS, not a softer curve. Any change must
+respect the run structure: the shipped curves are exact through `LADDER.KNEE_TICK` (4:00) and explosive
+after, and every early-death measurement lives inside the knee. Measure with cohorts before/after;
+never by assertion.
+
+---
 
 ## BOSS PORTAL — OWNER DIRECTIVE (2026-09-14): linger, auto-path to it, brief invulnerability
 
