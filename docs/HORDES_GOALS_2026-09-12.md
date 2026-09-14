@@ -289,16 +289,60 @@ defined, not inherited. Two useful building blocks already exist:
      the same blast leaves its hp untouched, PLUS a test that a direct projectile hit DOES damage it --
      both halves, or the trait is tested in the direction that hides the bug.
 
-## V1 — SIDE-SCROLLING: FUTURE VISION, NOT SCOPE (owner idea, 2026-09-14)
+## V1 — THE ESCAPE SEQUENCE (a side-scrolling change of pace)  [OWNER-REFRAMED 2026-09-14]
 
-Sk408: *"what you were saying made me think that we could at some point take a lot of this framework and
-make a side scrolling game. Actually, that might be an interesting either game play mode or a kind of
-replacement for wave 2. Flop between side scrolling and overhead view. Definitely give a unique feel to
-the game."*
+Sk408: *"Think of the side scroller like this: an escape sequence. The pilot is running from the horde. We
+can skim down the mechanics by changing the framing and expectations. It's not a complete game. It's a
+change of pace."*
 
-**STATUS: an idea, recorded so it is not lost and so nobody forecloses it. It is deliberately NOT in the
-execution order.** Do not build it, do not architect around it, and do not let it leak into the current
-slices — it is a "someday", and the queue in front of it is real work the owner has already asked for.
+**THIS REFRAME IS THE WHOLE POINT — it deletes most of what Remy first priced.** That price list was for a
+complete side-scrolling GAME (platform level design, aiming in a vertical plane, every weapon re-read). An
+ESCAPE SEQUENCE with a reduced rule set needs almost none of it, because the framing itself does the
+cutting.
+
+**CUT BY THE FRAMING — do not build these:**
+- **Vertical aiming: none.** Weapons keep doing what they already do automatically, or are suspended. The
+  escape is about SURVIVAL, not damage output — so no aiming model, no weapon re-read.
+- **Platform/level geometry: none.** No ledges, no one-way platforms, no level design. A corridor with a
+  floor and obstacles.
+- **The arena rim, the radar, spawn rings:** all irrelevant side-on.
+- **The draft, shop, meta, chests, shrines, portals: none of them run inside the escape.** That is exactly
+  what makes it a change of pace, and it is what keeps the slice self-contained.
+
+**WHAT REMAINS (small, and mostly already spec'd):**
+- A minimal second spatial model: 1D travel along x plus a jump — and **the jump already has a spec**
+  (G7's leap).
+- Enemies as pursuers and swoopers: ground types run at you from behind, flying types dive from above.
+  **The flying enemy is already spec'd in E2** and is the natural escape antagonist.
+- A horizontal camera follow (the existing deadzone camera on a different axis).
+- A stream spawn (behind and ahead) instead of the player-relative ring.
+- An in/out transition plus framing (the horde visibly behind you) and a win/lose rule.
+- **ONE VERB (jump/dash)** — which is also what makes it playable by the AUTO pilot. **That is REQUIRED,
+  not optional:** the owner plays pick-up-and-leave, so a mode the pilot cannot play is a mode he never
+  sees.
+- A **HORDE PRESSURE** readout (how close the wall of pursuers is behind you) replaces the radar, which
+  is meaningless side-on — and it is thematically better anyway.
+
+**SEQUENCING INSIGHT — the escape is cheap BECAUSE its prerequisites are already queued:** G7's leap is
+the verb, and E2's flying enemy is the antagonist. **Build those first and V1 is a modest slice, not a
+project. Do not start V1 before them.**
+
+**FOUR QUESTIONS FOR THE OWNER, for whenever he wants it built (not now):**
+1. **TRIGGER** — a scripted beat at a wave boundary (the intermission seam, which is also the only safe
+   place for a view swap), a run-end last chance ("you are about to die — run"), or a dedicated stage?
+   His "replacement for wave 2" reading suggests a scheduled beat.
+2. **STAKES** — failure is death, or a lost reward? Stakes are what make it a change of pace rather than a
+   throwaway minigame.
+3. **LENGTH** — 20-40s, fixed. It must end before the novelty does.
+4. **REWARD** — escape complete pays what? A chest, or a piece of M1's collectible set (the natural tie-in).
+
+**STATUS: spec'd and NOT in the execution order — but it is now SLICE-SIZED, so it can be slotted whenever
+the owner wants it, after G7 and E2.** Do not let it leak into the current slices before then.
+
+### SUPERSEDED ANALYSIS — the FULL-GAME reading (kept: the freed-vs-rewritten split is still useful)
+
+Sk408, earlier: *"we could at some point take a lot of this framework and make a side scrolling game...
+either game play mode or a kind of replacement for wave 2. Flop between side scrolling and overhead view."*
 
 **What this framework gives away for free** (all spatial-agnostic): the draft, loot + affixes,
 meta/shop/saves, enemies-as-DATA (types with looks and a `decide()`), chests/shrines/portal, the pixel-art
