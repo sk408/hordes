@@ -510,6 +510,15 @@ project. Do not start V1 before them.**
 **STATUS: spec'd and NOT in the execution order — but it is now SLICE-SIZED, so it can be slotted whenever
 the owner wants it, after G7 and E2.** Do not let it leak into the current slices before then.
 
+**WRITTEN UP AS A BUILD BRIEF (owner: "Ok write it up for the plan", 2026-09-14):**
+`docs/briefs/V1_ESCAPE_SEQUENCE.md` — the buildable form of everything below (house rules, the eight
+verbatim owner quotes, what it reuses with anchors, the cuts, the spatial model, the generator, the pacing
+acts, the threat model, the finale, the auto jump trigger plus speed clamp, the measurable acceptance bar
+with ten numbered items, the three open owner questions, and the DO-NOT list). Queued as **W12 — STRETCH** in
+`docs/BUILD_PLAN.md`, after **W11 (G7 elevation)** and **E2 (the flying enemy)** — its verb and its
+antagonist, which is why it is a slice and not a project. Three owner questions remain open and must be
+answered BEFORE dispatch: trigger, stakes, reward.
+
 ### SUPERSEDED ANALYSIS — the FULL-GAME reading (kept: the freed-vs-rewritten split is still useful)
 
 Sk408, earlier: *"we could at some point take a lot of this framework and make a side scrolling game...

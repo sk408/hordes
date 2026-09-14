@@ -100,6 +100,16 @@ data. If you are about to write "waiting on the owner" for anything, read that s
   phone, re-check the original playtest complaints item by item, publish, and confirm what Pages serves.
 - **W11 — STRETCH: 2.5D/ELEVATION** (G7). Only after the full build ships, since it is explicitly
   optional and touches the same files as everything else.
+- **W12 — STRETCH: V1, THE ESCAPE SEQUENCE (side-scrolling change of pace).** A ~2-minute generated
+  platformer corridor: the pilot runs from the horde to an exit portal. Full brief at
+  `docs/briefs/V1_ESCAPE_SEQUENCE.md`; design authority in `HORDES_GOALS_2026-09-12.md` under "V1 — THE
+  ESCAPE SEQUENCE". **Depends on W11 (G7's leap and z substrate) and E2 (the flying enemy), which are
+  its verbs and its antagonist** — it is cheap BECAUSE both are already queued. Self-contained by
+  design: it reads no stats, no draft, no loot, no meta, and writes nothing to the shared overhead
+  movement. One new module (`src/escape/`), one narrow seam in `main.js`, registered in the
+  screen-chrome gate. Auto pilot is REQUIRED to play it via template-owned invisible jump triggers
+  with a both-ways, capped speed clamp. **Three owner questions still open before dispatch: trigger,
+  stakes, reward.** Do not start this before its prerequisites ship.
 
 ## Items I am ADDING from the genre deep dive (and why)
 
