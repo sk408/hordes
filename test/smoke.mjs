@@ -1275,19 +1275,20 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 'Tab', preventDefault: () => {} });   // NEAREST -> TOUGHEST
   keyHandler({ key: 'g' });                               // BALANCED -> GREEDY
   pump(2);
-  // (h) M now CYCLES the three-rung ladder AUTO ALL -> AUTO MOVE -> MANUAL, so
+  // (h) O now CYCLES the three-rung ladder AUTO ALL -> AUTO MOVE -> MANUAL, so
   // MANUAL is two presses away. The middle rung is pinned rather than skipped:
   // a 3-mode selector whose intermediate state was never asserted would pass
   // with AUTO MOVE wired to the wrong controller.
-  keyHandler({ key: 'm' });                               // AUTO ALL -> AUTO MOVE
+  // (M1 retarget: the pilot ladder moved M -> O when the map claimed M.)
+  keyHandler({ key: 'o' });                               // AUTO ALL -> AUTO MOVE
   pump(2);
-  assert(st.pilotMode === 'AUTO_MOVE', 'the first M press lands on AUTO MOVE (got ' + st.pilotMode + ')');
+  assert(st.pilotMode === 'AUTO_MOVE', 'the first O press lands on AUTO MOVE (got ' + st.pilotMode + ')');
   assert(/Pilot:AUTO_MOVE/.test(hudText()), 'HUD readout names AUTO MOVE');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'focus/stance decorations survive the AUTO ALL -> AUTO MOVE swap');
-  keyHandler({ key: 'm' });                               // AUTO MOVE -> MANUAL
+  keyHandler({ key: 'o' });                               // AUTO MOVE -> MANUAL
   pump(2);
-  assert(st.pilotMode === 'MANUAL', 'M must toggle into MANUAL');
+  assert(st.pilotMode === 'MANUAL', 'O must toggle into MANUAL');
   assert(/Pilot:MANUAL/.test(hudText()), 'HUD readout flips to MANUAL');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'focus/stance decorations survive the AUTO MOVE -> MANUAL swap');
@@ -1379,11 +1380,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(keyD - fullD) < 1.5,
     `full tilt equals keyboard speed (joy ${fullD.toFixed(1)} vs key ${keyD.toFixed(1)})`);
 
-  // M back to AUTO: the held stick vector is DROPPED (AUTO ignores the
+  // O back to AUTO: the held stick vector is DROPPED (AUTO ignores the
   // joystick) and the autopilot resumes deciding on its own.
   T.joyVec(R, 0, R);                    // thumb still parked hard right
-  keyHandler({ key: 'm' });
-  assert(st.pilotMode === 'AUTO_ALL', 'M must toggle back to AUTO');
+  keyHandler({ key: 'o' });
+  assert(st.pilotMode === 'AUTO_ALL', 'O must toggle back to AUTO');
   assert(T.pilotInput.mag === 0 && T.pilotInput.x === 0 && T.pilotInput.y === 0,
     'switching to AUTO must drop the held stick vector');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
@@ -1406,13 +1407,15 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(T.pilotInput.mag === 0 && T.pilotInput.x === 0 && T.pilotInput.y === 0,
     'blur must clear the analog stick vector too');
   pump(2);
-  keyHandler({ key: 'm' });   // probe hygiene: leave AUTO
+  keyHandler({ key: 'o' });   // probe hygiene: leave AUTO (M1: pilot is O now)
   assert(st.pilotMode === 'AUTO_ALL', 'back to AUTO for the rest of the suite');
   console.log('manual pilot: toggle/movement/diagonal/joystick(half+full+dead+release)/AUTO-resume/blur verified');
 }
 
-// (i) DRAFT PAUSE: manual input moves NOTHING while a draft is open, M does
+// (i) DRAFT PAUSE: manual input moves NOTHING while a draft is open, O does
 // NOT flip the controller under an overlay, and play resumes cleanly.
+// (M1 retarget: pilot toggle M -> O; the same overlay gate now also has to
+// swallow M, which the map claimed — both are pressed and pinned below.)
 {
   const T = mainMod.__TEST;
   T.startRun();
@@ -1430,8 +1433,10 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.mode === 'draft', 'the draft stays open (only 1-3 pick cards)');
   assert(st.player.x === xAtDraft, 'manual input must move NOTHING while paused');
-  keyHandler({ key: 'm' });            // M under an overlay: ignored
-  assert(st.pilotMode === 'MANUAL', 'M must NOT flip the pilot mode while a draft is open');
+  keyHandler({ key: 'o' });            // O (pilot) under an overlay: ignored
+  assert(st.pilotMode === 'MANUAL', 'O must NOT flip the pilot mode while a draft is open');
+  keyHandler({ key: 'm' });            // M (map) under the same overlay: ignored too
+  assert(st.mapOpen === false, 'M must NOT open the map while a draft is open');
   keyHandler({ key: '1' });            // pick the card, resume
   assert(st.mode === 'playing', 'the card pick must resume play');
   keyUpHandler({ key: 'ArrowRight' }); // drop the stale hold from inside the draft
@@ -1440,9 +1445,9 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   for (let i = 0; i < 30; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   keyUpHandler({ key: 'ArrowLeft' });
   assert(st.player.x < rx0 - 20, 'manual movement resumes after the draft closes');
-  keyHandler({ key: 'm' });
+  keyHandler({ key: 'o' });
   assert(st.pilotMode === 'AUTO_ALL', 'probe hygiene: back to AUTO');
-  console.log('draft pause: input inert under the overlay, M ignored, resume clean');
+  console.log('draft pause: input inert under the overlay, O and M ignored, resume clean');
 }
 
 // ---- WAVE-14 EVENT FEED + BOSS-ARRIVAL OVERLAY probes ------------------------
@@ -1630,7 +1635,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(r.hudChrome.hpFrac === hpAt2, 'zoom must not touch HUD-read state');
 
   // Probe hygiene: back to AUTO at 1x for the rest of the suite.
-  keyHandler({ key: 'm' });
+  keyHandler({ key: 'o' });   // (M1 retarget: pilot toggle is O; M is the map)
   assert(st.pilotMode === 'AUTO_ALL' && st.zoom === 1, 'hygiene: AUTO_ALL + zoom 1x');
   console.log('world zoom: live +/- apply, 2x window halved, camera deadzone, HUD proven native 1x');
 }

@@ -129,9 +129,11 @@ S.check('the hint lines and the text HUD name the SAME two letters', () => {
     assert.match(hints, new RegExp('\\b' + mode + ':'),
       `${mode} must have its OWN hint entry (a fallback names the wrong mode)`);
   }
-  assert.match(hints, /M pilot \(AUTO ALL\)/, 'the AUTO ALL line names its own mode');
-  assert.match(hints, /M pilot \(AUTO MOVE\)/, 'the AUTO MOVE line names its own mode');
-  assert.match(hints, /M pilot \(MANUAL\)/, 'the MANUAL line names its own mode');
+  // (M1 retarget: the pilot hint prefixes moved M -> O when the map claimed M.)
+  assert.match(hints, /O pilot \(AUTO ALL\)/, 'the AUTO ALL line names its own mode');
+  assert.match(hints, /O pilot \(AUTO MOVE\)/, 'the AUTO MOVE line names its own mode');
+  assert.match(hints, /O pilot \(MANUAL\)/, 'the MANUAL line names its own mode');
+  assert.match(hints, /M map/, 'every hint set teaches the M map key (M1)');
   assert.match(hints, /Q \/ E/, 'the AUTO hint line must teach Q / E');
   assert.match(hints, /\(W too\)/, 'the AUTO hint line still discloses W');
   assert.match(hints, /Q frost &middot; E overcharge/,

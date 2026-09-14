@@ -275,11 +275,19 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   // Held ESC was the worst: the settings branch closed the pause and the next
   // tick re-entered playing and reopened it (run flickering live/paused).
   const pilot0 = st.pilotMode;
+  // (M1 retarget: the pilot toggle moved M -> O when the map claimed M; the
+  // repeat-guard probe follows the key, and the map key gets its own pin.)
+  key('o', { repeat: true });
+  assert(st.pilotMode === pilot0, 'a repeated O must not flip the pilot (' + st.pilotMode + ')');
+  key('o');
+  assert(st.pilotMode !== pilot0, 'a fresh O must still flip the pilot');
+  key('o');   // back to the starting mode
+  const map0 = st.mapOpen;
   key('m', { repeat: true });
-  assert(st.pilotMode === pilot0, 'a repeated M must not flip the pilot (' + st.pilotMode + ')');
+  assert(st.mapOpen === map0, 'a repeated M must not toggle the map');
   key('m');
-  assert(st.pilotMode !== pilot0, 'a fresh M must still flip the pilot');
-  key('m');   // back to the starting mode
+  assert(st.mapOpen === !map0, 'a fresh M must still toggle the map');
+  key('m');   // back to closed
 
   // Held ESC must NOT oscillate: pause once, then repeats must be ignored.
   key('Escape');

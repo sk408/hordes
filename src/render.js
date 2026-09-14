@@ -16,6 +16,7 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 // is imported, never restated. This file owns only the painting of what it
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
 import { radarDots, RADAR_RADIUS } from './radar.js';
+import { atlasCell } from './atlas.js';
 
 // A2 RADAR paint constants (geometry rationale lives on drawRadar below).
 // RADAR_DISPLAY_R is the HUD-px radius of the drawn circle; the world->radar
@@ -263,6 +264,7 @@ export class Renderer {
       this.bossBanner = null;
       this.moment = null;
       this.radar = null;
+      this.atlasMap = null;
       this.drawTitleScreen(g);
       return;
     }
@@ -939,6 +941,10 @@ export class Renderer {
     // WAVE-26: the earned-moment flourish paints just BELOW the chrome so the
     // HUD readouts stay legible through the flare.
     this.drawPlayHud(g, state);
+    // M1 THE MAP SCREEN: drawn LAST on the canvas layer — OPAQUE over the
+    // field (C1; the DOM touch pads stay tappable above the canvas, so the
+    // player can still steer blind and close it). Self-gates on mapOpen.
+    this.drawAtlasMap(g, state);
     // WAVE-14 boss-arrival overlay: cinematic letterbox + name. Above even
     // the HUD chrome — it is a moment, not a readout.
   }
@@ -1043,7 +1049,93 @@ export class Renderer {
       counts[dot.tier] = (counts[dot.tier] || 0) + 1;
       painted.push({ x: sx, y: sy, tier: dot.tier, typeId: dot.typeId, size: st.size, color: st.color });
     }
-    this.radar = { cx, cy, r: R, focusR, counts, dots: painted };
+    // M1 (C2 — ONE TRACKER, TWO SCALES): nearby DISCOVERED landmarks, read
+    // from the SAME atlas.landmarks the map screen paints (atlas.js owns the
+    // datum; this is a read-only projection into radar space). Gold squares —
+    // the shrine idol's colour (render.js shrine draw). Undiscovered
+    // landmarks paint NOWHERE, here or on the map (R4).
+    const landmarks = [];
+    if (state.atlas) {
+      for (const lm of state.atlas.landmarks) {
+        if (!lm.discovered) continue;
+        const dx = lm.x - p.x, dy = lm.y - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (!(dist <= RADAR_RADIUS)) continue;   // radar.js's inclusive rule
+        const mx = cx + Math.round(dx * scale), my = cy + Math.round(dy * scale);
+        g.fillStyle = '#ffd75e';
+        g.fillRect(mx - 1, my - 1, 3, 3);
+        landmarks.push({ x: mx, y: my, kind: lm.kind });
+      }
+    }
+    this.radar = { cx, cy, r: R, focusR, counts, dots: painted, landmarks };
+  }
+
+  // ---- M1 THE PER-RUN MAP SCREEN (owner directive 2026-09-14,
+  // docs/briefs/M1_MAP_SCREEN.md) -------------------------------------------
+  // The whole 1200x1200 arena at small scale: VISITED AREAS ONLY off the
+  // atlas's visited grid (the Metroid convention — the rest is haze), plus
+  // DISCOVERED landmarks and the player pip. The datum is state.atlas, the
+  // SAME atlas.js tracker the radar reads (C2: one system, two scales).
+  //
+  // INTEGER-SPANS ONLY (the A2 lesson, restated in C7): every mark below is
+  // an integer fillRect — no ctx.arc, no antialiased circle edge, no
+  // gradients, no per-cell string work. GEOMETRY IS FIXED (the H1 no-reflow
+  // rule): 8 view px per grid cell over the 30x30 grid -> a 240x240 map,
+  // integer-centred in the 480x300 view at (120,30). OPAQUE over the field
+  // (C1): the sim keeps running while it is open, so hiding the field is the
+  // stated risk, not an accident.
+  //
+  // READ-ONLY: a draw never writes sim state and never advances a timer —
+  // the only fields touched are paint locals and this.atlasMap, the honest
+  // test seam (null while the map is closed, so "close restores the field"
+  // is assertable as atlasMap === null plus zero paint in the box).
+  drawAtlasMap(g, state) {
+    const atlas = state.atlas;
+    if (!state.mapOpen || !atlas || !state.player) { this.atlasMap = null; return; }
+    const CELL = 8;
+    const side = atlas.side;
+    const size = side * CELL;                          // 240
+    const ox = Math.round((C.VIEW_W - size) / 2);      // 120
+    const oy = Math.round((C.VIEW_H - size) / 2);      // 30
+    // The plate: one OPAQUE dark rect (the field is hidden BY DESIGN — C1),
+    // the unvisited haze as the field's own base fill.
+    g.fillStyle = '#04060a';
+    g.fillRect(ox - 2, oy - 2, size + 4, size + 4);
+    g.fillStyle = '#0a0e14';                           // haze = UNVISITED
+    g.fillRect(ox, oy, size, size);
+    // Visited cells, one integer rect each.
+    g.fillStyle = '#233420';
+    let visited = 0;
+    for (let cy = 0; cy < side; cy++) {
+      for (let cx = 0; cx < side; cx++) {
+        if (!atlas.visited[cy * side + cx]) continue;
+        g.fillRect(ox + cx * CELL, oy + cy * CELL, CELL, CELL);
+        visited++;
+      }
+    }
+    // The arena rim frame: the map reads as THE ARENA, not a texture.
+    g.fillStyle = '#3a4a58';
+    g.fillRect(ox - 1, oy - 1, size + 2, 1);
+    g.fillRect(ox - 1, oy + size, size + 2, 1);
+    g.fillRect(ox - 1, oy, 1, size);
+    g.fillRect(ox + size, oy, 1, size);
+    // Landmarks: DISCOVERED only (R4 — an undiscovered one is drawn NOWHERE).
+    const marks = [];
+    for (const lm of atlas.landmarks) {
+      if (!lm.discovered) continue;
+      const c = atlasCell(atlas, lm.x, lm.y);
+      const mx = ox + c.cx * CELL + (CELL >> 1), my = oy + c.cy * CELL + (CELL >> 1);
+      g.fillStyle = '#ffd75e';                         // the shrine idol's gold
+      g.fillRect(mx - 2, my - 2, 5, 5);
+      marks.push({ kind: lm.kind, x: mx, y: my });
+    }
+    // The player pip, same cell rule as everything else.
+    const pc = atlasCell(atlas, state.player.x, state.player.y);
+    const px = ox + pc.cx * CELL + (CELL >> 1), py = oy + pc.cy * CELL + (CELL >> 1);
+    g.fillStyle = '#e8e8f0';
+    g.fillRect(px - 1, py - 1, 3, 3);
+    this.atlasMap = { x: ox, y: oy, size, cell: CELL, visited,
+      landmarks: marks, player: { x: px, y: py } };
   }
 
   // ---- WAVE-14 boss-arrival overlay ------------------------------------------

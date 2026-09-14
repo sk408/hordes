@@ -22,6 +22,7 @@ import {
 // mutation, stamping, drift and rendering on top of their contracts.
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
 import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
+import { createAtlas, atlasUpdate, atlasRegisterLandmark } from './atlas.js';
 import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
@@ -264,6 +265,11 @@ const state = {
   potionCap: 3,      // rule ceiling on carried potions (NO_POTIONS: 0)
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
+  // M1 THE PER-RUN ATLAS (atlas.js): the ONE visited grid + landmark set
+  // (C2 — the map screen and the A2 radar both read THIS datum). Created
+  // fresh in startRun next to groundSeed; never serialised (C4: no save
+  // schema change); consumes ZERO rng draws (R2).
+  atlas: null,
   evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
   // G9 FOLLOW-UP: the three run counters the trophy summary was missing. They
   // live in ONE run-scoped object (reset in startRun) so the summary can read
@@ -327,6 +333,12 @@ const state = {
   // the R key / the RADAR touch button (toggleRadar), sticky across runs in
   // the session like zoom. Not persisted.
   radarOn: false,
+  // M1 THE MAP SCREEN: canvas-drawn, OPAQUE over the field, and the sim KEEPS
+  // RUNNING while it is open (C1 — a pausing map is a free dodge button).
+  // CLOSED by default at boot and on every startRun (C6: nothing else opens
+  // it). Toggled by the M key / the MAP touch button (toggleMap). Not
+  // persisted, not sticky across runs.
+  mapOpen: false,
   synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
   synergyNames: null, // toast-dedup set of already-announced synergy names
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
@@ -2160,6 +2172,13 @@ function update(dt) {
     a.x += (dx / len) * C.DRIFT.ARCH * dt;
     a.y += (dy / len) * C.DRIFT.ARCH * dt;
   }
+  // M1 (C2): the per-frame atlas read — marks the cells the player can see
+  // and flips any landmark he reached. ONE tracker: the map screen and the
+  // radar both read state.atlas. Pure function of position (no dt, no rng),
+  // so 60Hz and 120Hz mark the identical set.
+  if (state.atlas) {
+    atlasUpdate(state.atlas, p.x, p.y, C.ATLAS.VISIT_RADIUS, C.ATLAS.DISCOVER_RADIUS);
+  }
   // WAVE-11 RUN SHRINES (shrines.js): the pilot is shrine-BLIND (controllers
   // never learn shrines exist). S1 (owner directive 2026-09-14): the set is
   // world-seeded ONCE at run start and STATIC — the ~6px/s lean toward the
@@ -3709,7 +3728,7 @@ function updateTourCoach() {
       target: () => canvasRegion(0, 4, 150, 44) }, TOUR_KEYS.hud);
   } else if (!tourFlag(TOUR_KEYS.pilot) && state.time > 4) {
     startCoach({ id: 'pilot',
-      text: 'PILOT: AUTO flies for you — here or M takes MANUAL control anytime.',
+      text: 'PILOT: AUTO flies for you — here or O takes MANUAL control anytime.',
       target: () => document.getElementById('tc-pilot') }, TOUR_KEYS.pilot);
   } else if (!tourFlag(TOUR_KEYS.focus) && state.time > 7) {
     // Rev-4 headline gap: without this, AUTO aiming reads as "whatever it
@@ -4610,6 +4629,16 @@ function startRun() {
   // here — uniform scatter over the whole arena, static for the whole run.
   state.shrines = seedShrines(state.shrineRng);
   state.shrine = state.shrines[0] || null;   // render/tour VIEW: first unused
+  // M1 (C4/C5): the per-run atlas — created fresh here next to groundSeed,
+  // never serialised. The ONE landmark source wired this slice is S1's
+  // world-seeded shrines: their positions are READ from the set above and
+  // registered ONCE (no re-roll, no mirrored placement constants, no
+  // per-frame registration).
+  state.atlas = createAtlas(C.GROUND.RIM, C.ATLAS.MAP_CELL);
+  for (const sh of state.shrines) {
+    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
+  }
+  state.mapOpen = false;                     // C6: every run boots map-CLOSED
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
   state.waveChoice = null;            // Sk408 playtest: fresh run, fresh pick
@@ -5154,6 +5183,13 @@ function runAction(act) {
     if (state.mode === 'playing' || state.mode === 'finale') toggleRadar();
     return;
   }
+  // M1: the MAP touch button — same mid-run-only gate (C6). The sim keeps
+  // running while the map is open (C1), so opening it mid-swarm is a risk
+  // the player takes, never a pause.
+  if (act === 'map') {
+    if (state.mode === 'playing' || state.mode === 'finale') toggleMap();
+    return;
+  }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') controller.cycleFocus();
@@ -5329,7 +5365,8 @@ const REPEAT_GUARDED = new Set([
   'tab', 'g',            // focus / stance cycle
   'h', 'n',              // potions
   'escape', 'p',         // pause / resume
-  'm',                   // pilot toggle
+  'o',                   // pilot toggle (was M before M1 claimed M for the map)
+  'm',                   // M1 map toggle
   'r',                   // A2 radar toggle
   'i', '?', 'f1',         // stats overlay + hints toggle
   's',                    // held "down" in MANUAL — swallow ONLY its repeat
@@ -5416,7 +5453,10 @@ window.addEventListener('keydown', (ev) => {
     // NOTE (wave-25): the auto-repeat guard for held action keys (tab/g/h/n and
     // the rest) now lives at the top of this handler; see REPEAT_GUARDED.
     // WAVE-13 MANUAL PILOT. Key scheme (documented in the hint line):
-    //   M          toggle AUTO/MANUAL (any mode-pair, mid-run)
+    //   O          toggle AUTO/MANUAL (any mode-pair, mid-run)
+    //   M          the per-run MAP (M1) — M used to be the pilot toggle; the
+    //              brief for the map claims M, so the pilot moved to O (free
+    //              in-run, off the WASD cluster). Dispatch msg_01M2H0ZEDG.
     //   arrows/WASD held movement — MANUAL only
     //   S          'down' — MOVEMENT ONLY, in EVERY mode (owner rule). S used
     //              to open the FIELD REPORT in AUTO, which is the DEFAULT mode:
@@ -5425,7 +5465,10 @@ window.addEventListener('keydown', (ev) => {
     //   I          FIELD REPORT — the ONE stats key, in BOTH modes
     //   W          Overcharge in AUTO · 'up' in MANUAL — E fires Overcharge
     //              in BOTH modes (the permanent new home for it)
-    if (k === 'm') { togglePilotMode(); return; }
+    if (k === 'o') { togglePilotMode(); return; }
+    // M1: M toggles the per-run map in BOTH pilot modes (a HUD readout like
+    // the radar — never a pause, the sim keeps running under it).
+    if (k === 'm') { toggleMap(); return; }
     if (k === 'i') { openStats(); return; }
     // A2: R toggles the radar in BOTH pilot modes (it is a HUD readout, not
     // a movement key — no conflict with WASD).
@@ -5477,7 +5520,7 @@ const touchLayer = document.getElementById('touch');
 const joyEl = document.getElementById('joy');         // WAVE-15 joystick base
 const joyKnobEl = document.getElementById('joy-knob');
 const touchEls = {};
-for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-radar']) {
+for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-radar', 'tc-map']) {
   touchEls[id] = document.getElementById(id);
 }
 
@@ -5523,22 +5566,22 @@ let hintsOn = (() => {
 // mode name is now keyed off PILOT_MODES and the fallback cannot mislabel.
 const HINT_LINES = {
   AUTO_ALL: [
-    'M pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
+    'O pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
   AUTO_MOVE: [
-    'M pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
+    'O pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
   MANUAL: [
-    'M pilot (MANUAL) &middot; WASD / arrows move',
+    'O pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
     'I stats (S = move down) &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
   ],
 };
 // The pre-(h) persisted mode name 'AUTO' is an alias, not a lookalike table:
@@ -5578,6 +5621,14 @@ function toggleRadar() {
   state.radarOn = !state.radarOn;
   toast('RADAR ' + (state.radarOn ? 'ON' : 'OFF') + ' (R)', '#b8e0ff');
   return state.radarOn;
+}
+
+// M1: the map screen toggle. CLOSED by default at boot and on every startRun
+// (C6); the sim KEEPS RUNNING while it is open (C1 — no free dodge button).
+function toggleMap() {
+  state.mapOpen = !state.mapOpen;
+  toast('MAP ' + (state.mapOpen ? 'OPEN' : 'CLOSED') + ' (M)', '#b8e0ff');
+  return state.mapOpen;
 }
 
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
@@ -5756,6 +5807,8 @@ function updateTouchHud() {
   // (state-driven, rewritten every frame like the badges above).
   const radarBtn = touchEls['tc-radar'];
   if (radarBtn && radarBtn.classList) radarBtn.classList.toggle('on', !!state.radarOn);
+  const mapBtn = touchEls['tc-map'];
+  if (mapBtn && mapBtn.classList) mapBtn.classList.toggle('on', !!state.mapOpen);
 }
 
 // ---------- HUD ----------
@@ -6488,6 +6541,10 @@ export const __TEST = {
   // touch button both drive. The painted frame is renderer.radar's seam
   // (null while off — the "no leaked chrome" half of the toggle contract).
   radar: { get on() { return state.radarOn; }, toggle: toggleRadar },
+  // M1 map seam: the live flag + the ONE toggle the M key and the MAP touch
+  // button both drive. The painted frame is renderer.atlasMap's seam (null
+  // while closed — the "restore proof" half of the toggle contract).
+  map: { get open() { return state.mapOpen; }, toggle: toggleMap },
   // One-time-banner ledger seam (schema v6). A probe that COUNTS FRAMES must be
   // banner-inert: the first-ever token / top-tier banner legitimately holds the
   // sim for 2.5s, which starves a frame-budgeted measurement. Its own behaviour

@@ -461,6 +461,20 @@ export const CONFIG = {
     ],
   },
 
+  // ---- M1 THE PER-RUN ATLAS (src/atlas.js) ------------------------------------
+  // The visited-grid + landmark-discovery constants. C3: they live HERE and
+  // nowhere else — atlas.js stays pure maths and takes them as arguments,
+  // main.js's call sites pass them. MAP_CELL 40 over the +-600 arena divides
+  // EXACTLY (1200/40 = 30 -> a 30x30 = 900-cell grid; that is why 40).
+  ATLAS: {
+    MAP_CELL: 40,        // world px per visited cell
+    VISIT_RADIUS: 300,   // a cell is marked when the player comes within this
+                         // of its centre — >= the 480x300 view's half-diagonal
+                         // (~283), so the grid records what was SEEN
+    DISCOVER_RADIUS: 120,// a landmark flips to discovered inside this range
+                         // (about a quarter view — you plainly reached it)
+  },
+
   // ---- CAMERA (main.js updateCamera) ----------------------------------------
   // A DEADZONE follow, not a free camera. The player roams free inside a box
   // around the view centre; the view only follows once they leave it, leads
