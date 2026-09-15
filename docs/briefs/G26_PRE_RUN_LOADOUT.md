@@ -118,3 +118,45 @@ rewrite it).
 Post `done:` with: files changed; the suite's verbatim final line; the three proofs (pool / choice /
 reward) with raw output; every retarget (file + line + why); the real-browser verifier result and PNG;
 the dirty count; and an explicit **COULD NOT VERIFY** section.
+
+---
+
+## DISPATCH ANCHOR CHECK (goal-pilot tick 64, 2026-09-15 ~18:35 UTC — resolved on the live tree at HEAD `beb0854`, dirty=3)
+
+Resolved by the issuing pilot, not trusted from author time. Trust the SYMBOL if a number has moved.
+
+- `src/config.js` :378-380 — `WEAPON_SLOTS: 6` (the per-run cap), with the comment naming
+  `MAX_WEAPON_SLOTS` as the absolute cap.
+- `src/meta.js` :357 `MAX_WEAPON_SLOTS = 6`; :369 `WEAPON_PRICES`; :380 `VALID_UNLOCK_WEAPONS`
+  (starters + priced ids = the UNLOCKED set the menu enumerates); :574 the slot helper
+  `Math.min(MAX_WEAPON_SLOTS, WEAPON_SLOT_START + bought)`; :596 the shop purchase path's weapon branch
+  (`def.kind === 'weapon'` -> `unlockWeapon`) = the JUST-IN-TIME COACHMARK TRIGGER seam; :614
+  `unlockWeapon(profile, weaponId)`.
+- `src/main.js` :1415-1419 the draft card-id parser (`/^wpn_(.+)$/` grant vs `lvl_<TYPE>_<level>`);
+  :2668 `openDraft()`; :2689 the `wpn_` offer built into the pool; :2909 / :2939 the pickup branches
+  that act on `wpn_` ids; :4897 `startRun()`. Screen pattern to copy: `openMenu(mode)` :3660, the
+  character door `openMenu('characters')` :4728, the settings door :4212-4218.
+- `test/test_tour.mjs` :290 `DISCOVERY_EXEMPT = []`; :297-298 the `taught == titleCards - exempt`
+  contract the exemption must be PAID FOR in.
+- `test/test_card_art_expansion.mjs` :6-20 (the pool is DERIVED from the live registries, never a frozen
+  count) and :129-133 (the `OFFER_TO_DECK` join) — this is the file that must be RETARGETED, not
+  weakened, when `wpn_*` leaves the offer pool.
+
+## MEASUREMENT RE-SCOPE (owner directive 2026-09-15 — long measurements suspended, STANDING)
+
+Owner, verbatim: *"When I say no more measurements, I mean no more sims that last longer than 60 seconds."*
+DEAD to the end of the queue: cohorts (n>1 in one command), A/B campaigns, rate derivations, re-baselining,
+and any before/after simulation number.
+
+**Acceptance item 4 as originally written (the paired-seed well-chosen-vs-poor A/B with medians/means and
+a censoring rate) is STRUCK and must NOT be run.** It asked for exactly what the directive forbids.
+Replaced by this, which fits the cap:
+
+4. **REWARD PROOF — functional, inside 60 s.** (a) Start a run with a chosen kit and read the carried
+   weapons back off LIVE run state (never the menu's own bookkeeping). (b) Do the same with a
+   deliberately poor kit and show the two weapon sets DIFFER. (c) Two SINGLE seeded fresh runs (a fresh
+   run is ~12 s, so ~25 s total) reporting the survival time each produced, seeds printed. **A null is a
+   finding, not a failure to hide** — if the kits come out the same, say so. Balance tuning is DEFERRED
+   by the owner: do not tune, do not cohort, do not re-derive any rate.
+
+No other acceptance item changes and no assertion may be weakened to go green.

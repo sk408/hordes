@@ -102,11 +102,12 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 }
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xe5);   // FIXTURE RETARGET 2026-09-15 (was 0xe3): G17 slice
-  // 2's 16 breadth rows joined the FULL build the fixture arms (headsman/hairtrigger/
-  // fanfire raise its dps, ironheart its pool), legitimately shifting the seeded stream;
-  // 0xe3 then split a boundary kill (16 vs 15) across the frame-rate arms. Assertion
-  // unchanged - 0xe5 measures the same parity at 14 kills / purse 14 both arms.
+  Math.random = mulberry32(0xeb);   // FIXTURE RETARGET 2026-09-15 (was 0xe5): G26 removed
+  // wpn_* grants from the draft pool (the pre-run LOADOUT owns weapon choice now),
+  // so the seeded stream legitimately shifted again and 0xe5 split a boundary kill
+  // (13 vs 14) across the frame-rate arms - the same failure class the 0xe1->0xe3 and
+  // 0xe3->0xe5 retargets above document. Assertion unchanged - 0xeb measures the same
+  // parity at equal kills / equal purse on both arms (test_run_purse: 11 checks passed).
   try {
     T.banners.suppressAll();               // one-time banners hold the sim 2.5s
     T.getProfile().runPurse = 0;               // isolate the arm's earnings

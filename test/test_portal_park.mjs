@@ -292,10 +292,20 @@ s.check('R4 dwell: 0.35-0.5s on contact, identical wall-clock at 60Hz and 120Hz'
       throw new Error('the movie fired almost immediately (' + framesPlayingWithCinePending +
         ' playing frames) — the kill-time auto-start is back');
     }
-    // Skip to the intermission through the real key seam (any key skips).
+    // Skip through the real key seam (any key skips). RETARGETED 2026-09-15
+    // (V1 escape): on wave 1 the cine's end no longer opens the intermission —
+    // it hands the run to THE ESCAPE (owner directive 2026-09-15: the escape
+    // hangs off PORTAL ENTRY after the wave-1 boss). Same strength, new
+    // invariant: the skip lands in the escape, the escape's OWN skip (ESC)
+    // then hands the run back to the intermission SOFT (alive, no death path).
     h.key('keydown', { key: 'x', preventDefault() {} });
     h.pump(2);
-    if (st.mode !== 'intermission') throw new Error('the skip did not land in the intermission: ' + st.mode);
+    if (st.mode !== 'escape') throw new Error('the skip did not hand the run to the escape: ' + st.mode);
+    h.key('keydown', { key: 'Escape', preventDefault() {} });
+    let back = 0;
+    while (st.mode === 'escape' && back < 400) { h.pump(1); back++; }
+    if (st.mode !== 'intermission') throw new Error('the escape skip did not hand back to the intermission: ' + st.mode);
+    if (!(st.player.hp > 0)) throw new Error('the escape skip must never kill (hp=' + st.player.hp + ')');
   });
 }
 

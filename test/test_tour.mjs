@@ -287,7 +287,14 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   // exempted; both moved behind the SETUP door, so no title card holds an
   // exemption any more and `taught == cards().length` must hold exactly. The
   // mechanism stays so a future title card that nobody teaches still fails.
-  const DISCOVERY_EXEMPT = [];
+  // G26 (2026-09-15): the LOADOUT door is the first card since to re-open the
+  // list — it is EVENT-TAUGHT instead (the just-in-time coach fires the first
+  // time the unlocked-weapon set grows beyond the starter kit, owner's own
+  // timing pick), so the title walk must not teach it. The exemption is PAID
+  // FOR by the dedicated event test in test/test_g26_loadout.mjs: no coach
+  // before the growth, exactly ONE after, the flag prevents a repeat, and the
+  // door reachable by real taps with the coach never fired.
+  const DISCOVERY_EXEMPT = ['LOADOUT'];
   const seen = [];
   for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
     seen.push(tipOf()._html);

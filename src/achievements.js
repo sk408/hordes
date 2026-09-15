@@ -120,6 +120,11 @@ const TIMED_KEYS = new Set(ACHIEVEMENTS
 export const TOTALS_ZERO = {
   kills: 0, bossKills: 0, gold: 0, chests: 0, evolutions: 0, legendaries: 0,
   bestWave: 0, bestTime: 0, bestWeaponLevel: 0, untouchedWave: 0, runs: 0, survived: 0,
+  // V1 escape payout basis: the BEST single-run gold, an integer MAX (never a
+  // rate — no division at read time). The escape's payout multiplies this by
+  // K and floors once (src/escape/payout.js); it is not an achievement goal,
+  // just a totals counter the escape reads.
+  bestGold: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -353,6 +358,9 @@ export function recordRun(profile, run) {
   t.bestWave = Math.max(intOr(t.bestWave, 0), intOr(r.wave, 0));
   t.bestTime = Math.max(intOr(t.bestTime, 0), intOr(r.time, 0));
   t.bestWeaponLevel = Math.max(intOr(t.bestWeaponLevel, 0), intOr(r.weaponLevel, 0));
+  // V1: the escape payout's basis rides the same fold (a MAX, so collecting a
+  // payout can never grow it — the twice-in-a-row clause).
+  t.bestGold = Math.max(intOr(t.bestGold, 0), intOr(r.gold, 0));
   t.untouchedWave = Math.max(intOr(t.untouchedWave, 0), r.untouchedWave ? 1 : 0);
   bump('survived', r.survived ? 1 : 0);
   bump('runs', 1);

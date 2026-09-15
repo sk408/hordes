@@ -71,6 +71,12 @@ import { rollChoices, applyChoice } from './choices.js';
 import { paintOfferArt } from './draft_card_art.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
+// V1 THE ESCAPE SEQUENCE: the side-scrolling change of pace owns its whole
+// world in src/escape/ (sim, generator, auto controller, render, payout). The
+// integration is this import plus ONE frame branch, ONE keydown/keyup branch,
+// ONE pointer route and ONE hook in endPortalCine — a narrow seam by house
+// rule; the escape never touches the overhead movement, p.stats or the draft.
+import * as ESCAPE from './escape/index.js';
 import {
   HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
   heatXpMult, heatOf, manualPushes, addHeat, initHeat,
@@ -78,7 +84,7 @@ import {
 import {
   loadProfileResult, saveProfile, makeProfile,
   GOLD_TIER, purseTier, purseValue, RUN_GOLD,
-  SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
+  SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
@@ -176,16 +182,100 @@ function displayScale(fit) {
   if (m === 'AUTO') return fit;
   return Math.min(Number(m), Math.max(1, Math.floor(fit)));
 }
+// MOBILE EMBED LAYOUT (owner 2026-09-15, docs/briefs/MOBILE_EMBED_LAYOUT.md
+// ROUND 4 — the priority rule, owner: "Overlap should be the failure mode,
+// not breaking the gameplay completely"). Rounds 1-2 bounded the canvas into
+// the free band between the top-strip chrome and the pads; on a short
+// LANDSCAPE viewport those axis-aligned reservations consumed the whole
+// height and the fit collapsed (measured: 41x26px at 844x390, 0x0 at
+// 640x360 — the field simply vanished). ROUND 4 reverses the priority:
+// (1) the canvas is ALWAYS USABLE — never below its floor, never outside the
+// viewport, any orientation (the only hard failure); (2) the chrome stays
+// on-screen and tappable; (3) no overlap — pursued only when it costs
+// nothing in 1 or 2. So the SCALE is the plain viewport-limited letterbox
+// (chrome never shrinks the field), and only the PLACEMENT is chrome-aware:
+// top-aligned below the visible top-strip chrome row when there is room,
+// clamped INSIDE the viewport otherwise — accepting overlap, never collapse.
+// Desktop / '.cog-only' keeps the flex-centred whole-viewport letterbox
+// (WAVE-23: the dimmed pads, cogs and the default-on hints deliberately sit
+// over the arena there; rounds 1-2 also shrank a desktop that had the text
+// HUD opted in — the touchLive gate now covers all of it).
+const BAND_MARGIN = 6;
+// ROUND 4 floor: the field stays the dominant element on screen — canvas
+// height >= 55% of the viewport height — except where the phone itself is
+// the limit: on a viewport narrower than 1.6:1 (portrait) the width-limited
+// height (vw/1.6) is already the largest field possible, so it is the floor.
+// The viewport-limited fit always satisfies it, so the documented chrome
+// shrink (pad buttons 64 -> 56/48) never needs to fire.
+const CANVAS_FLOOR_FRACTION = 0.55;
+function touchLayerLive() {
+  // Only the REAL touch layer ('.on' — coarse pointers / touch devices, where
+  // the pads are opaque thumb controls) gets chrome-aware placement.
+  const touch = document.getElementById('touch');
+  return !!(touch && touch.isConnected && touch.classList &&
+    touch.classList.contains('on') && getComputedStyle(touch).display !== 'none');
+}
+// ROUND 2 union (kept): the bottom edge of the WHOLE visible top-strip chrome
+// row — #hud plus every #touch button.cog (settings / "?" / radar / map)
+// plus #hints when .on — measured LIVE. The selectors iterate whatever is
+// displayed, so a future button added to the row is placed-below
+// automatically, and no button name or pixel value is hardcoded.
+function topChromeBottom() {
+  let bottom = 0;
+  const consider = (el) => {
+    if (!el || !el.isConnected) return;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    const r = el.getBoundingClientRect();
+    if (r.height > 0 && r.bottom > bottom) bottom = r.bottom;
+  };
+  consider(document.getElementById('hud'));
+  const touch = document.getElementById('touch');
+  for (const el of touch ? touch.querySelectorAll('button.cog') : []) consider(el);
+  const hints = document.getElementById('hints');
+  if (hints && hints.classList && hints.classList.contains('on')) consider(hints);
+  return bottom;
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
+  // ROUND 4: the scale is the VIEWPORT-limited letterbox only — chrome
+  // NEVER shrinks the field (that is how round 2 collapsed landscape to
+  // 41x26 / 0x0). Overlap with chrome is accepted; see the block comment.
   const fit = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
-  const scale = displayScale(fit);
-  canvas.style.width = Math.floor(C.VIEW_W * scale) + 'px';
-  canvas.style.height = Math.floor(C.VIEW_H * scale) + 'px';
+  let scale = displayScale(fit);
+  // A forced resolution mode (PIXEL-PERFECT / 2 / 3 / 4) can round the scale
+  // ABOVE the viewport-limited fit on a phone (floor(0.81) -> max(1, 0) = 1
+  // -> a 480px field on a 390px screen). Priority 1: never outside the
+  // viewport — clamp back to the fit.
+  if (scale > fit) scale = fit;
+  const w = Math.floor(C.VIEW_W * scale), h = Math.floor(C.VIEW_H * scale);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  let placed = false;
+  // No real layout API (node harness stub DOM) -> no live chrome to place
+  // against: the whole-viewport letterbox stands exactly as before.
+  if (typeof getComputedStyle === 'function' && touchLayerLive()) {
+    placed = true;
+    // Top-aligned below the chrome row, horizontally centred by hand. When
+    // the field is tall enough to meet the chrome (landscape: the field is
+    // height-limited and fills the viewport), the clamp keeps it INSIDE the
+    // viewport and the chrome overlaps the field's top strip — the accepted
+    // failure mode, never a collapsed or clipped canvas.
+    const top = Math.min(topChromeBottom() + BAND_MARGIN, window.innerHeight - h);
+    canvas.style.position = 'absolute';
+    canvas.style.top = Math.round(top) + 'px';
+    canvas.style.left = Math.round((window.innerWidth - w) / 2) + 'px';
+  }
+  if (!placed) {
+    canvas.style.position = '';
+    canvas.style.top = '';
+    canvas.style.left = '';
+  }
   renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
 window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
 
 // ---------- State ----------
 // WAVE-25 (audit 2.6): ONE wave shape. There used to be two — a short
@@ -2584,31 +2674,15 @@ const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
 function openDraft() {
   state.mode = 'draft';
   ovTitle.className = '';
-  // Weapon-scoped pool (megabonk rework): grants fill free slots, level-up
-  // cards push a weapon further up its ladder (duplicate picks of the same
-  // weapon just level it again). Global stat cards are downweighted so the
-  // draft reads ~70% weapon / ~30% stat. Slot cap = startWeaponSlots(profile)
-  // (3 base, 4/5/6 shop-bought); grants stop at the cap, level-ups never do.
-  const slotCap = state.weaponSlots || C.WEAPON_SLOTS;
-  const nonVolley = state.weapons.filter(w => w.type !== 'VOLLEY').length;
-  const slotsFree = slotCap - 1 - nonVolley;
+  // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
+  // "Player chosen weapons in a menu, not during run... Replaces in run
+  // cards"): there are NO wpn_* grant offers any more — the run never hands
+  // you a weapon you did not bring. What starts in state.weapons (startRun:
+  // the pre-run LOADOUT choice, or the default kit) is what the whole run
+  // carries, so the weapon side of the pool is LEVEL-UP cards for exactly the
+  // brought kit (+ the base volley). Global stat cards keep their weights, so
+  // the draft still reads weapon-tilted while a draft lasts.
   const weaponCards = [];
-  if (slotsFree > 0) {
-    for (const [id, def] of Object.entries(WEAPON_TYPES)) {
-      if (state.weapons.some(w => w.type === id)) continue;
-      // WAVE-11 weapon economy: the draft pool is gated to
-      // profile.unlockedWeapons (meta.js — starter set VOLLEY + BOOMERANG;
-      // every other archetype is a shop row). Already-granted weapons keep
-      // their level-up cards regardless.
-      if (!weaponUnlocked(profile, id)) continue;
-      weaponCards.push({
-        id: 'wpn_' + id,
-        name: def.name,
-        desc: 'NEW WEAPON · fills slot ' + (nonVolley + 2) + '/' + slotCap,
-        apply: () => { state.weapons.push(makeWeapon(id)); refreshSynergies(); },
-      });
-    }
-  }
   // Level-up cards for every owned weapon below the cap (VOLLEY included —
   // its instance rides in state.weapons but never takes a slot).
   // G8 step 2 retune (extended ladder): under ONE OF EACH the weapon ladder
@@ -4052,8 +4126,10 @@ function advanceTitleReveal(dt) {
         rv.phase = 'settled'; rv.t = rv.dur; rv.opacity = 1;
         applyRevealStyles();
         // N2 DO 4: the first-run tour fires only once the reveal has settled
-        // (a coachmark popping mid-fade reads as a glitch).
-        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeStartMenuTour(); }
+        // (a coachmark popping mid-fade reads as a glitch). G26: the loadout
+        // door coach rides the same settle gate (achievement grants land at
+        // run settle, so the next title visit is the first legal moment).
+        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeStartMenuTour(); maybeCoachLoadoutDoor(); }
         return;
       }
     } else if (rv.phase === 'out') {
@@ -4233,6 +4309,119 @@ function paintTitleHeader() {
   if (asset) paint(bust, asset.frames[0], asset.palette);
 }
 
+// ---------- G26 PRE-RUN WEAPON LOADOUT (owner 2026-09-15) ---------------------
+// "Player chosen weapons in a menu, not during run. Before the run." The screen
+// is a DESTINATION the player finds from the title (never a forced stop before
+// START GAME, never a nag); the penalty for never visiting it is ZERO — with no
+// stored choice startRun arms the same starting kit a fresh account has today
+// (VOLLEY + the character's starting weapon when unlocked), and a stored choice
+// persists run to run. The choice REPLACES in-run weapon acquisition: openDraft
+// no longer offers wpn_* grants at all, and lvl_* cards ride state.weapons, so
+// the pool carries level-ups for exactly the weapons the player brought.
+//
+// Slots: the base volley occupies slot 1 of startWeaponSlots(profile), so the
+// player picks at most slots-1 weapons here. A challenge mode that narrows the
+// run's slot count is applied at startRun (the run truncates, the menu never
+// needs to know the mode).
+function loadoutChoices() {
+  // The unlock set, ordered by the WEAPON_TYPES registry so the menu is stable
+  // no matter the purchase order. VOLLEY is not in WEAPON_TYPES (it is the base
+  // volley, not a slot weapon), so it can never appear here.
+  const order = Object.keys(WEAPON_TYPES);
+  return order.filter(id => weaponUnlocked(profile, id));
+}
+
+function loadoutSlotCap() {
+  return startWeaponSlots(profile) - 1;   // slot 1 is the base volley
+}
+
+function toggleLoadoutWeapon(id) {
+  if (!loadoutChoices().includes(id)) return;
+  const cur = new Set(profile.loadout || []);
+  if (cur.has(id)) cur.delete(id);
+  else {
+    if (cur.size >= loadoutSlotCap()) return;   // slot cap: the card reads DIM
+    cur.add(id);
+  }
+  // An empty selection is "no choice" (the default kit), never a zero-weapon
+  // run — the save layer stores the same null either way.
+  profile.loadout = cur.size ? [...cur] : null;
+  saveProfile(profile);
+  showLoadout();
+}
+
+function showLoadout() {
+  openMenu('loadout');
+  ovTitle.textContent = 'LOADOUT';
+  ovTitle.className = '';
+  const sel = new Set(profile.loadout || []);
+  const cap = loadoutSlotCap();
+  ovSub.textContent = (profile.loadout ? sel.size + '/' + cap + ' chosen' : 'default kit')
+    + ' · the weapons the next run brings';
+  for (const id of loadoutChoices()) {
+    const on = sel.has(id);
+    const full = !on && sel.size >= cap;
+    // Unselected rows ride the existing 'dim' card style (the shop's owned/
+    // unaffordable look) — "not selected" reads at a glance without new CSS.
+    const el = menuCard(
+      WEAPON_NAMES[id],
+      (on ? 'SELECTED' : full ? 'slots full' : 'not selected')
+        + ' · ' + (describeWeaponLevel(id, 2) || ''),
+      () => toggleLoadoutWeapon(id),
+      !on,
+    );
+    // The weapon's PLAYING-CARD art (src/draft_card_art.js WEAPON_OFFER_TO_DECK
+    // join — the same deck the draft painted). With wpn_* gone from the offer
+    // pool this menu is the surface that join serves for weapon grants.
+    const artCv = document.createElement('canvas');
+    artCv.className = 'card-art';
+    if (artCv.setAttribute) artCv.setAttribute('data-card', 'wpn_' + id);
+    if (paintOfferArt(artCv, 'wpn_' + id)) {
+      if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
+      else el.appendChild(artCv);
+    }
+  }
+  menuCard('DEFAULT KIT', 'clear the choice — runs use the character kit', () => {
+    profile.loadout = null;
+    saveProfile(profile);
+    showLoadout();
+  });
+  menuCard('BACK', 'to title [ESC]', () => showTitle());
+}
+
+// The run's kit from the stored choice, validated against the LIVE unlock set
+// and the run's slot count (never the menu's own bookkeeping): this is what
+// startRun arms. null = no choice was made (the zero-penalty default).
+function chosenLoadout() {
+  // state.weaponSlots is stamped by startRun just before this runs; the
+  // startWeaponSlots fallback makes a PRE-run call (the __TEST seam) agree
+  // with the standard-slot run it describes.
+  const cap = ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1;
+  const list = (profile.loadout || [])
+    .filter(t => WEAPON_TYPES[t] && weaponUnlocked(profile, t))
+    .slice(0, Math.max(0, cap));
+  return list.length ? list : null;
+}
+
+// G26 just-in-time door coach (owner: "can it present the coaching after the
+// first weapon buyable is bought?"). Fires the FIRST time the unlocked-weapon
+// set grows beyond the starter kit — a weapon purchase on the shop path or an
+// achievement grant — ONCE, in the tour flag store. Never during a run (both
+// call sites are title/shop screens), never over a live tour, dismisses like
+// every other coachmark. The dedicated event test in test/test_g26_loadout.mjs
+// pins: nothing before the growth, exactly one after, the flag prevents a
+// repeat, and the door stays reachable by taps without the coach ever firing.
+function maybeCoachLoadoutDoor() {
+  if (tourFlag(TOUR_KEYS.loadout)) return;
+  if (!(profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w))) return;
+  if (coachActive() || (menuTour && menuTour.active())) return;
+  startCoach({
+    id: 'loadout',
+    text: 'NEW WEAPON UNLOCKED — the next run only brings what you pick. Choose your LOADOUT from the title screen.',
+    target: () => (state.mode === 'title' && cardByTitle('LOADOUT')) || ovCards,
+  }, TOUR_KEYS.loadout);
+}
+
 function showTitle() {
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
@@ -4257,6 +4446,14 @@ function showTitle() {
   }
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
+  // G26: the LOADOUT door. A destination the player FINDS (owner: "the player
+  // should have to go find the weapon selection in a menu") — never a forced
+  // stop, never a gate: the sub-line names the live state so the card carries
+  // its own information, and START GAME keeps starting immediately.
+  menuCard('LOADOUT',
+    profile.loadout
+      ? profile.loadout.length + '/' + (startWeaponSlots(profile) - 1) + ' weapons chosen'
+      : 'pick this run\'s weapons', () => showLoadout());
   // U1 (owner 2026-09-14): the menu was eleven cards. TROPHIES/BESTIARY and
   // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, so the
   // title is six (seven on a fresh browser). The doors' sub-lines carry the
@@ -4284,7 +4481,7 @@ function showTitle() {
   applyRevealStyles();
   // N2 DO 4: the first-run tour starts only once the reveal has settled (it
   // fires from advanceTitleReveal); flags-done boots start it right here.
-  if (revealSettled()) maybeStartMenuTour();   // WAVE-21: stage-1 tour, first load only
+  if (revealSettled()) { maybeStartMenuTour(); maybeCoachLoadoutDoor(); }   // WAVE-21: stage-1 tour, first load only
   else tourPendingAfterReveal = true;
 }
 
@@ -4316,7 +4513,15 @@ function showShop() {
       def.name,
       `${def.desc}<br>${sub}`,
       () => {
-        if (buyUpgrade(profile, def.id)) { saveProfile(profile); showShop(); }
+        if (buyUpgrade(profile, def.id)) {
+          saveProfile(profile);
+          showShop();
+          // G26: a successful WEAPON purchase is the just-in-time moment the
+          // owner picked ("after the first weapon buyable is bought") — the
+          // unlocked set just grew, so the loadout door coach checks now, on
+          // the re-rendered shop. Stat/mana/slot rows never fire it.
+          if (def.kind === 'weapon') maybeCoachLoadoutDoor();
+        }
       },
       capped || !afford,
     );
@@ -4944,10 +5149,19 @@ function startRun() {
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
   state.weapons.push(makeWeapon('VOLLEY'));
-  // WAVE-11: character starting weapons ride the SAME unlock gate as the
-  // draft pool (meta.js retroactively reset old saves to the starter set, so
-  // a WITCH save that never bought ZAP must not spawn with it).
-  if (ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)) {
+  // G26 PRE-RUN LOADOUT: a stored choice (chosenLoadout — validated against
+  // the LIVE unlock set and this run's slot count, never the menu's own
+  // bookkeeping) IS the kit. With NO choice the run arms exactly the starting
+  // kit a fresh account has today (the zero-penalty contract): the character's
+  // starting weapon when unlocked, nothing else. openDraft offers no wpn_*
+  // grants, so what starts here is what the whole run carries.
+  const loadout = chosenLoadout();
+  if (loadout) {
+    for (const t of loadout) state.weapons.push(makeWeapon(t));
+  } else if (ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)) {
+    // WAVE-11: character starting weapons ride the SAME unlock gate as the
+    // loadout (meta.js retroactively reset old saves to the starter set, so
+    // a WITCH save that never bought ZAP must not spawn with it).
     state.weapons.push(makeWeapon(ch.startingWeapon));
   }
   // Starting Artifact shop line: free random weapon levels at run start.
@@ -5693,6 +5907,13 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
+  if (state.mode === 'escape') {                        // V1: the mode's own keys
+    // The escape owns its input surface (arrows/AD run, space/W/up jump,
+    // shift/X dash, ESC skips) — never the overhead skill/potion paths.
+    if (ev.preventDefault) ev.preventDefault();
+    ESCAPE.onKey(ev.key, true);
+    return;
+  }
   if (state.mode === 'draft') {
     if (['1', '2', '3', '4'].includes(ev.key)) {
       // 1-4: the W7b Full Hand mythic adds a fourth offer, and its card carries
@@ -5751,7 +5972,8 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'escape') { closeApexGallery(); showApexShop(); }
     else if (k === 'arrowleft') apexStep(-1);
     else if (k === 'arrowright') apexStep(1);
-  } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters') && k === 'escape') {
+  } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters'
+      || state.mode === 'loadout') && k === 'escape') {
     showTitle();                     // every sub-menu (and the farewell) backs out to title
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
@@ -5827,7 +6049,10 @@ window.addEventListener('keydown', (ev) => {
 // WAVE-13: keyup ALWAYS clears its direction (regardless of mode/overlay) so a
 // key held across a draft, a toggle or a death screen can never ghost-move the
 // next run. blur clears everything (alt-tab with a key down).
+// V1: the escape owns its held-key state (its own movement layer) — route the
+// keyup there too so a manual runner never ghost-runs past the hand-back.
 window.addEventListener('keyup', (ev) => {
+  if (state.mode === 'escape') ESCAPE.onKey(ev.key, false);
   const dir = KEY_DIRS[ev.key.toLowerCase()];
   if (dir) pilotInput[dir] = false;
 });
@@ -6051,6 +6276,10 @@ function chromeOn() {
   // G13 registration check: 'characters' is deliberately NOT in this list —
   // the selector is a meta screen, so the pad layer / cog / "?" / hints stay
   // down while it is live (verified by name in tools/verify_g13_selector.mjs).
+  // V1 REGISTRATION: 'escape' is likewise chrome-OFF BY NAME — the side
+  // scroller's d-pad/cog/? are meaningless (and inert: its input never routes
+  // through the touch layer), so the whole layer stands down for the whole
+  // mode (verified in test_v1_escape + the phone verifier).
   return state.mode === 'playing' || state.mode === 'finale';
 }
 function syncChrome() {
@@ -6074,16 +6303,29 @@ function syncChrome() {
   state.runPurse = profile.runPurse | 0;
   state.zoomScale = zoomScale(state.zoom);
   const on = chromeOn();
+  let chromeLayoutChanged = false;
   if (touchLayer && touchLayer.style) {
     const want = on ? '' : 'none';
-    if (touchLayer.style.display !== want) touchLayer.style.display = want;
+    if (touchLayer.style.display !== want) { touchLayer.style.display = want; chromeLayoutChanged = true; }
   }
   // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
   if (joyEl && joyEl.style) {
     const wantJoy = (on && state.pilotMode === 'MANUAL') ? 'block' : 'none';
-    if (joyEl.style.display !== wantJoy) joyEl.style.display = wantJoy;
+    if (joyEl.style.display !== wantJoy) { joyEl.style.display = wantJoy; chromeLayoutChanged = true; }
   }
-  if (hintsEl && hintsEl.classList) hintsEl.classList.toggle('on', on && hintsOn);
+  // MOBILE EMBED LAYOUT: the free band the canvas is bounded to changes the
+  // moment the pad layer, the joystick, or the hints panel (ROUND 2: it
+  // reserves top-strip space when shown) appears/disappears — re-fit when one
+  // of those writes actually flipped (all are change-guarded, so this fires
+  // on transitions, never per frame).
+  if (hintsEl && hintsEl.classList) {
+    const wantHints = on && hintsOn;
+    if (hintsEl.classList.contains('on') !== wantHints) {
+      hintsEl.classList.toggle('on', wantHints);
+      chromeLayoutChanged = true;
+    }
+  }
+  if (chromeLayoutChanged) fitCanvas();
 }
 function updateTouchHud() {
   syncChrome();
@@ -6333,7 +6575,17 @@ if (overlay && overlay.addEventListener) {
 
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
 // WAVE-8/A: the same gesture skips the portal cinematic.
-if (canvas.addEventListener) canvas.addEventListener('pointerdown', () => {
+// V1: during the escape a tap is PLAY — mapped into the mode's own virtual
+// 480x300 (the skip rect first, then a tap anywhere jumps for MANUAL play).
+if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
+  if (state.mode === 'escape') {
+    const r = canvas.getBoundingClientRect();
+    if (r.width && r.height) {
+      ESCAPE.pointer((ev.clientX - r.left) / r.width * C.VIEW_W,
+        (ev.clientY - r.top) / r.height * C.VIEW_H);
+    }
+    return;
+  }
   // Armed ONLY when this gesture actually ended a cinematic — never during play.
   const skipping = state.mode === 'intro' ||
     (state.mode === 'portal-cine' && C.CINE.SKIPPABLE);
@@ -6364,7 +6616,45 @@ function endPortalCine() {
   // run's ending — it is a bounded encounter, and every wave AFTER it resumes
   // the ordinary ladder (intermission -> CONTINUE) up to the 30:00 limit.
   if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
+  // V1 THE ESCAPE SEQUENCE (owner trigger decision 2026-09-15): the escape
+  // hangs off PORTAL ENTRY — beating the wave-1 boss and walking into the
+  // portal starts the side-scroller INSTEAD of the wave-2 intermission. It
+  // ends SOFT (complete/caught/fell/skip) back into openIntermission, so the
+  // ordinary ladder resumes unchanged.
+  if (state.wave.num === 1) { startEscape(); return; }
   openIntermission();
+}
+
+// ---------- V1: THE ESCAPE SEQUENCE (src/escape/) ----------------------------
+// The mode's whole engine lives in its own directory; main.js only starts it,
+// routes input to it while it is live, and takes the (always-soft) hand-back.
+function startEscape() {
+  state.portal = null;
+  state.mode = 'escape';
+  ESCAPE.begin({
+    // The corridor seed is the run's identity, not a sim input; anything
+    // deterministic per run will do (never Math.random inside the sim).
+    seed: (Date.now() & 0x7fffffff) || 1,
+    profile,
+    // AUTO pilots ride the template controller (bands, clamps, boss steering);
+    // a MANUAL pilot plays the escape by hand — same seam as the overhead
+    // movement-authority predicate, read once at hand-over.
+    auto: !pilotMovesYou(),
+    onEnd: endEscape,
+  });
+}
+function endEscape(r) {
+  // The ladder resumes exactly where the portal would have taken it: wave 1
+  // cleared, CONTINUE into wave 2. The lead line carries the escape's story
+  // (and its payout, when it paid one) onto the intermission screen.
+  const lead = r.result === 'complete'
+    ? `ESCAPE COMPLETE +${r.payout}g (bank) in ${Math.floor(r.seconds)}s`
+    : r.result === 'skip'
+      ? (r.paidSkipUsed ? `ESCAPE SKIPPED (writ) +${r.payout}g (bank)` : 'ESCAPE SKIPPED — payout forgone')
+      : r.result === 'caught'
+        ? 'ESCAPE FAILED: caught by the horde — the run continues'
+        : 'ESCAPE FAILED: fell — the run continues';
+  openIntermission({ lead });
 }
 
 // ---------- FINALE / MAW MILESTONE (final_boss.js) ---------------------------
@@ -6724,6 +7014,15 @@ function frame(now) {
     requestAnimationFrame(frame);
     return;
   }
+  // V1: the escape owns the canvas like the movies do — the overhead world
+  // render, the HUD and the touch pads all stand down for the change of pace
+  // (chromeOn already excludes every mode but playing/finale). realDt, NOT
+  // the earned-moment dt: the escape keeps a steady clock by design.
+  if (state.mode === 'escape') {
+    ESCAPE.frame(renderer.ctx, realDt);
+    requestAnimationFrame(frame);
+    return;
+  }
   // `dt` (real * earned-moment time scale) was computed at the top of frame().
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
@@ -6784,6 +7083,16 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
+  // ---- G26 pre-run-loadout seam: the screen, the live stored choice, and the
+  // validated kit startRun will arm (so a test compares the menu's state
+  // against the SAME chain the run applies — never the menu's bookkeeping).
+  loadout: {
+    open: showLoadout,
+    get chosen() { return profile.loadout; },
+    kit: chosenLoadout,
+    choices: loadoutChoices,
+    slotCap: loadoutSlotCap,
+  },
   // ---- G13 character-selector seam: the screen, the live selection, the kit
   // derivation (so a test compares the DOM numbers against the SAME chain the
   // run applies), and the idle driver (step/reset for 60Hz-vs-120Hz parity
@@ -6994,5 +7303,20 @@ export const __TEST = {
     readFile: (file) => readSaveFile(file),
     recovery: () => readRecovery(),
     downloadRecovery: (env, opts) => downloadRecovery(undefined, env || globalThis, opts),
+  },
+  // ---- V1 escape seam: start the mode through the REAL hand-over (the same
+  // startEscape the portal-cine hook calls), read its live sim (clock, mode,
+  // pressure), drive the skip, and step it headlessly — so tests and the
+  // browser verifier prove the integrated path, never a copy of it.
+  escape: {
+    start: startEscape,
+    begin: ESCAPE.begin,      // seeded hand-over (the no-stats trace test drives this)
+    get mode() { return state.mode; },
+    get sim() { return ESCAPE.current(); },
+    skip: ESCAPE.skip,
+    frame: ESCAPE.frame,
+    onKey: ESCAPE.onKey,
+    pointer: ESCAPE.pointer,
+    get payload() { return ESCAPE.payload(); },
   },
 };

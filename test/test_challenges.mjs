@@ -149,8 +149,14 @@ s.check('the rules hold across the run: a draft offers no new weapon at 1 slot',
   if (st.mode !== 'draft') throw new Error('mode is ' + st.mode);
   const texts = [...h.elements['ov-cards'].children].map(c => c.innerHTML || '');
   if (texts.some(t => t.includes('NEW WEAPON'))) throw new Error('a 1-slot run was offered a second weapon');
-  // And the same profile at STANDARD does see weapon grants (the pool is not
-  // broken, it is constrained).
+  // G26 RETARGET (2026-09-15, owner: "Replaces in run cards"): this half used
+  // to prove the pool was "constrained, not broken" by requiring a NEW WEAPON
+  // grant at STANDARD — but wpn_* grants LEFT the draft pool by design (the
+  // pre-run LOADOUT screen owns weapon choice now), so "STANDARD offers NEW
+  // WEAPON" is wrong BY DESIGN for every mode. The proof the pool is alive
+  // moves to what the pool still serves: at STANDARD the draft offers lvl_*
+  // weapon-level cards for the armed kit (read through the _draftOffer seam,
+  // the exact card openDraft built — never a restated copy of the pool).
   st.mode = 'playing';
   h.elements['ov-cards'].innerHTML = '';
   T.challenge.select('STANDARD');
@@ -159,12 +165,12 @@ s.check('the rules hold across the run: a draft offers no new weapon at 1 slot',
   let offered = false;
   for (let i = 0; i < 25 && !offered; i++) {
     T.openDraft();
-    const t2 = [...h.elements['ov-cards'].children].map(c => c.innerHTML || '');
-    offered = t2.some(t => t.includes('NEW WEAPON'));
+    const cards2 = [...h.elements['ov-cards'].children];
+    offered = cards2.some(c => c._draftOffer && String(c._draftOffer.id).startsWith('lvl_'));
     st.mode = 'playing';
     h.elements['ov-cards'].innerHTML = '';
   }
-  if (!offered) throw new Error('STANDARD never offered a weapon grant in 25 drafts (pool broken?)');
+  if (!offered) throw new Error('STANDARD never offered a weapon-level card in 25 drafts (pool broken?)');
 });
 
 // ---------------------------------------------------------------------------

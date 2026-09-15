@@ -565,6 +565,14 @@ export const SHOP_UPGRADES = [
   // was 0.09h.
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Golden HUD + arcade-run modifiers. The late-game flex.',
     baseCost: 4200000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
+  // ---- V1 ESCAPE: the PAID SKIP (owner directive 2026-09-14) ---------------
+  // A one-time unlock: skipping the escape normally FORGOES the payout (the
+  // "skip = forgo" rule); owning this row lets a veteran skip AND still
+  // collect. perLevel 0 — the row owns nothing in the stat field contract
+  // (applyMetaBonuses never reads it; the escape reads profile.purchased).
+  // Doubles as an economy sink aimed at veterans who outgrew the beat.
+  { id: 'escapeskip', name: 'Escape Writ', desc: 'Skip the escape sequence AND still collect its payout (one-time).',
+    baseCost: 100000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 

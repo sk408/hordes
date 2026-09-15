@@ -144,9 +144,14 @@ const IDENTITY_REUSE = { wpn_volley: 'multi', rw_pierceall: 'pierce' };
 // ------------------------------------------------------------ the pool ------
 // Every offer id src/main.js openDraft can produce, built from the LIVE
 // registries — no frozen list, no frozen count.
+// G26 RETARGET (2026-09-15, owner: "Replaces in run cards"): wpn_* grant
+// offers LEFT the draft pool (the pre-run LOADOUT screen owns weapon choice
+// now), so they left THIS enumeration too. The weapon-card coverage did not
+// die with them — it moved to the MENU section below: every wpn_<TYPE> must
+// still resolve to a real deck card, because the loadout screen paints its
+// rows through the same deckIdForOffer join (src/main.js showLoadout).
 function poolOfferIds() {
   const ids = [];
-  for (const type of Object.keys(WEAPON_TYPES)) ids.push('wpn_' + type);
   for (const type of Object.keys(WEAPON_NAMES)) {
     ids.push('lvl_' + type + '_1', 'lvl_' + type + '_' + WEAPON_MAX_LEVEL,
       'lvl_' + type + '_' + (WEAPON_MAX_LEVEL + 1));
@@ -344,6 +349,16 @@ console.log('NAME JOINS (a rename on either side goes red):');
   }
   for (const [type, deckId] of Object.entries(WEAPON_OFFER_TO_DECK)) {
     ok(!!cardArt(deckId), 'WEAPON_OFFER_TO_DECK.' + type + ' -> ' + deckId + ' is a real card');
+  }
+  // G26 MENU SURFACE: wpn_<TYPE> ids no longer ride the DRAFT pool, but they
+  // are exactly what the pre-run LOADOUT screen paints (showLoadout calls
+  // paintOfferArt(cv, 'wpn_' + type)) — so every weapon archetype must still
+  // resolve to a REAL card through the live join. This is the pool-coverage
+  // check RETARGETED to the surface that serves the ids now, not a deletion.
+  for (const type of Object.keys(WEAPON_TYPES)) {
+    const deckId = deckIdForOffer('wpn_' + type);
+    ok(!!deckId, 'wpn_' + type + ' (LOADOUT menu) resolves to deck card ' + (deckId || 'NULL'));
+    if (deckId) ok(!!cardArt(deckId), 'wpn_' + type + ' -> ' + deckId + ' is a REAL card');
   }
   for (const type of Object.keys(WEAPON_NAMES)) {
     const deckId = WEAPON_OFFER_TO_DECK[type];

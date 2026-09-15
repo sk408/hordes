@@ -607,6 +607,31 @@ export function validateProfile(profile, cat) {
   }
   out.unlockedWeapons = unlockedWeapons;
 
+  // ---- G26 pre-run weapon loadout ----
+  // DEFAULTS: null (NEVER CHOSEN — the zero-penalty contract: a run started
+  // without visiting the loadout screen uses the same starting kit a fresh
+  // account has today, and an empty selection is the same "no choice", not a
+  // kit with zero weapons). Present-but-garbage sanitizes exactly like every
+  // other section: keep unique valid weapon ids, drop the base volley (it
+  // rides every run and is never a pickable slot), and NAME the field on any
+  // repair. An entry the player has not unlocked is kept verbatim here (the
+  // newer-build round-trip rule) — startRun validates against the live
+  // unlocked set at run time, so an import can never arm a weapon the save
+  // does not own.
+  let loadout = null;
+  if (p.loadout !== undefined && p.loadout !== null) {
+    if (Array.isArray(p.loadout)) {
+      const baseWeapon = cat.baseWeapon || (cat.starterWeapons && cat.starterWeapons[0]);
+      loadout = [...new Set(p.loadout.filter(
+        w => typeof w === 'string' && cat.validWeapons.has(w) && w !== baseWeapon))];
+      if (loadout.length !== p.loadout.length) repairs.push('loadout');
+      if (loadout.length === 0) { loadout = null; if (p.loadout.length > 0) repairs.push('loadout'); }   // deselected everything = default kit
+    } else {
+      repairs.push('loadout');
+    }
+  }
+  out.loadout = loadout;
+
   // ---- elite modifier unlocks ----
   const elitesIn = Array.isArray(p.unlockedElites) ? p.unlockedElites : [];
   const unlockedElites = [...new Set(

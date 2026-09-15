@@ -71,6 +71,9 @@ const EXPECTED_SHOP = [
   'fleetfoot', 'briarmail', 'lodestone', 'hollowpoint', 'ironheart', 'hairtrigger',
   'headsman', 'bloodpact', 'fanfire', 'deepread', 'aethertap', 'grandelixir',
   'deepfont', 'eagleeye', 'staticfield', 'laststand',
+  // V1 ESCAPE (owner directive 2026-09-14): the paid-skip shop row rides the
+  // same slice as the mode itself — RETARGET, not weaken (one icon per row).
+  'escapeskip',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',

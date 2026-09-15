@@ -239,6 +239,8 @@ become the best income source in the game and the 1/3 discount would evaporate w
 
 ## ACCEPTANCE (measurable — no adjectives)
 
+**NOTE: items #2, #4 and #1b are DEFERRED under the owner's measurement freeze — see the block above the open questions. Do not run them.**
+
 1. **Generator invariant, asserted across generated corridors:** for EVERY template its
    (gap width, authored speed window) must **clear** the gap at the clamp floor AND **land within**
    the platform at the clamp ceiling. This is deterministic and is the whole reason the auto jump is
@@ -276,6 +278,35 @@ become the best income source in the game and the 1/3 discount would evaporate w
 9. **No blind drops, no off-screen holes, no unavoidable damage** — demonstrated by walking a
    generated corridor, not asserted.
 10. Suite `redfiles=0`, with any retarget named (file + line + why). No assertion weakened.
+
+## OPEN OWNER QUESTIONS — RESOLVED 2026-09-15 (authoritative; supersedes the recommendations below)
+
+1. **TRIGGER — ANSWERED BY THE OWNER: it takes place AFTER BEATING THE WAVE BOSS AND ENTERING THE PORTAL.**
+   Owner, verbatim: *"It should take place after beating the wave boss and entering the portal."* So hook
+   the escape at the PORTAL-ENTRY seam (the G16 portal-entry cinematic's existing hook), NOT a
+   free-standing wave-boundary intermission. This preserves everything the recommendation below argued
+   for — a safe view swap, and the payout landing in dead time — while binding it to a beat the player
+   already reaches. The recommendation below is kept as the reasoning, not as the decision.
+2. **STAKES — SOFT.** Answered earlier by the skip directive: the escape ends, no escape bonus, the run
+   continues. Never death. Do not build a lethal failure path.
+3. **REWARD — REPEATABLE CURRENCY PAYOUT.** Owner-accepted 2026-09-15: pay `bestGold x K` as repeatable
+   currency, with K tuned so a completed escape lands near 1/3 of the player's normal rate (~40 seconds
+   of income for a 2-minute escape), keyed to the player's own BEST RUN. Shape = currency (not a one-off
+   collectible), so repeat play is motivated by the payout itself.
+
+**AND: THE JUMP IS THE ESCAPE'S OWN.** Owner-accepted 2026-09-15: the escape builds its own
+jump/z/gravity inside `src/escape/`. G7 (elevation) is a STRETCH marked explicitly NOT required and is
+NOT a prerequisite; do not wait for it, and do not restructure the overhead movement to share one.
+
+## MEASUREMENT FREEZE ON THIS SLICE (owner directive 2026-09-15, binding)
+
+**No sim or measurement command may exceed 60 seconds of wall clock.** Therefore these acceptance items
+are **DEFERRED, not waived** — drop them from this build and say so in the report; never raise a timeout:
+AUTO completion-rate cohorts (#2), the measured 1:45-2:15 duration reading (#4), and the payout-share
+reading (#1b). Their assertions are still WRITTEN where they are deterministic and cheap; only the
+sim-shaped readings wait. The deterministic bar stands: generator invariant (#1), income separation
+including the twice-in-a-row compounding clause (#1a), the no-stats assertion (#6), 60/120Hz parity (#7),
+the real-browser phone PNG (#8), no-blind-drops walk (#9) and the suite (#10).
 
 ## OPEN OWNER QUESTIONS (ask before dispatch, not during)
 

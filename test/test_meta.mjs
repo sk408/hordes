@@ -191,11 +191,14 @@ console.log('EXPANSION LINES:');
   // RETARGETED 2026-09-14 (A1): the count moved 16 -> 17 when the owner-ordered
   // engagement-radius row ('focus', meta.js) joined the flat stat/slot lines.
   // RETARGETED 2026-09-15 (G17 slice 2 breadth): 17 -> 33 with the 16 new rows
-  // (fleetfoot .. laststand). The invariant this fixture guards is "one row per
-  // stat line, nothing silently added or dropped", so the number tracks the
-  // catalogue rather than being deleted or turned into a >= check.
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 33,
-     'thirty-three stat lines total (17 classic + 16 G17-slice-2 breadth rows)');
+  // (fleetfoot .. laststand).
+  // RETARGETED 2026-09-15 (V1 escape): 33 -> 34 — the owner-ordered PAID SKIP
+  // row ('escapeskip', meta.js, owner directive 2026-09-14 "BUILD IT WITH THE
+  // ESCAPE") joins the classic stat lines. The invariant this fixture guards is
+  // "one row per stat line, nothing silently added or dropped", so the number
+  // tracks the catalogue rather than being deleted or turned into a >= check.
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 34,
+     'thirty-four stat lines total (18 classic + 16 G17-slice-2 breadth rows)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
@@ -752,8 +755,12 @@ console.log('APEX TIER (G25):');
   // uncoordinated mid/top reprice fails this line.
   ok(partition === 94545800,
      `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-G17-slice-2 94545800)`);
-  ok(SHOP_UPGRADES.length === 45,
-     `SHOP_UPGRADES holds exactly its 45 pre-apex rows (29 classic + 16 breadth; got ${SHOP_UPGRADES.length})`);
+  // RETARGETED 2026-09-15 (V1 escape): 45 -> 46 — the PAID SKIP row
+  // ('escapeskip', owner directive 2026-09-14) joined SHOP_UPGRADES with the
+  // escape slice. The pin's JOB is unchanged: apex rows must never leak into
+  // the normal catalogue, so the count tracks the pre-apex rows exactly.
+  ok(SHOP_UPGRADES.length === 46,
+     `SHOP_UPGRADES holds exactly its 46 pre-apex rows (30 classic + 16 breadth; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

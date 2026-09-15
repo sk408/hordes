@@ -862,23 +862,35 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     for (const b of st.wave.bosses) if (b.hp > 0) b.hp = 0;   // slay them all
   }
 
-  // (a) SKIP PATH: movie renders frames, a keypress jumps to the intermission.
+  // (a) SKIP PATH: movie renders frames, a keypress jumps to the end of the
+  // cine. RETARGETED 2026-09-15 (V1 escape): this probe is on WAVE 1, and the
+  // wave-1 cine end now hands the run to THE ESCAPE (owner directive
+  // 2026-09-15: the escape hangs off PORTAL ENTRY after the wave-1 boss).
+  // Same strength, new invariant: the key-skip lands in the escape, and the
+  // escape's OWN skip key (ESC, the mode's first-class affordance) hands the
+  // run back to the intermission SOFT.
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   forceBossDeath();
-  let cineFrames = 0, skipped = false;
-  pumpUntil(() => st.mode === 'intermission', 60 * 20, () => {
+  let cineFrames = 0, skipped = false, escapeSeen = false;
+  pumpUntil(() => st.mode === 'escape' || st.mode === 'intermission', 60 * 20, () => {
     if (st.mode === 'portal-cine' && ++cineFrames === 31) {
       keyHandler({ key: 'x' });   // any key skips straight to the end
       skipped = true;
     }
+    if (st.mode === 'escape') escapeSeen = true;
   });
   assert(skipped, 'cine skip path must be exercised');
   assert(cineFrames >= 31, `the movie must render before the skip (${cineFrames} frames)`);
-  assert(st.mode === 'intermission', 'skip must land in the intermission (mode=' + st.mode + ')');
+  assert(escapeSeen && st.mode === 'escape',
+    'wave-1 skip must hand the run to the escape (mode=' + st.mode + ')');
+  keyHandler({ key: 'Escape' });   // the escape's own skip (first-class, first frame)
+  pumpUntil(() => st.mode === 'intermission', 60 * 20, () => {});
+  assert(st.mode === 'intermission', 'escape skip must hand back to the intermission (mode=' + st.mode + ')');
+  assert(st.player.hp > 0, 'the escape skip must never kill (hp=' + st.player.hp + ')');
   assert(elements['ov-title'].textContent.includes('CLEARED'),
     'intermission title after the cine (got ' + elements['ov-title'].textContent + ')');
-  console.log(`portal cine: ${cineFrames} frames then key-skip -> intermission`);
+  console.log(`portal cine: ${cineFrames} frames then key-skip -> escape -> ESC skip -> intermission`);
 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
   keyHandler({ key: 'c' });   // CONTINUE into the next wave

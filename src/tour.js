@@ -47,6 +47,13 @@ export const TOUR_KEYS = {
   intermission: 'hordes_tour_intermission',
   death: 'hordes_tour_death',
   settings: 'hordes_tour_settings',   // END RUN card, first in-run settings visit
+  // G26 pre-run loadout: the just-in-time door coach. Owner 2026-09-15: "can it
+  // present the coaching after the first weapon buyable is bought?" — it fires
+  // the FIRST time the UNLOCKED-WEAPON SET grows beyond the starter kit (a
+  // weapon shop purchase or grant), never from the title walk, once only. The
+  // dedicated event test in test/test_g26_loadout.mjs pays for the
+  // DISCOVERY_EXEMPT this door carries in test_tour.mjs.
+  loadout: 'hordes_tour_loadout',
 };
 
 function detectStorage() {
