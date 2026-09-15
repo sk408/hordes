@@ -232,12 +232,24 @@ function buildPower(profile) {
   const lvl = id => profile.purchased[id] || 0;
   let p = 1;
   p *= 1 + SHOP_BY_ID.dmg.perLevel * lvl('dmg');
-  const crit = SHOP_BY_ID.crit.perLevel * lvl('crit');
+  const crit = SHOP_BY_ID.crit.perLevel * lvl('crit')
+    + SHOP_BY_ID.eagleeye.perLevel * lvl('eagleeye');   // G17 slice 2: Eagle Eye folds into the crit line
   const critMult = 1 + SHOP_BY_ID.critdmg.perLevel * lvl('critdmg');
   p *= 1 + crit * (critMult - 1);                       // expected crit value
   p *= 1 + 0.08 * Math.max(0, profile.unlockedWeapons.length - STARTER_WEAPONS.length);
   p *= 1 + 0.12 * lvl('slots');
   p *= 1 + 0.05 * lvl('artifact');
+  // G17 slice 2 breadth rows — the DPS-side multipliers compound exactly as
+  // applyMetaBonuses computes them (same perLevel values, read from the LIVE
+  // table). The survival/economy rows (lifesteal, thorns, revive, mana, draft
+  // offers, pickup, speed) are priced at their HONEST ZERO here, the same
+  // precedent as dropBonus in chestGoldFor: this model is fitted for
+  // run-length/income, not for their survival texture; Iron Heart's maxHp is
+  // already read through buildPool -> applyMetaBonuses.
+  p *= Math.pow(1 + SHOP_BY_ID.headsman.perLevel, lvl('headsman'));
+  p *= Math.pow(1 + SHOP_BY_ID.hairtrigger.perLevel, lvl('hairtrigger'));
+  p *= 1 + 0.20 * lvl('fanfire');                       // extra projectiles ~= linear dps before the volley cap
+  p *= 1 + 0.05 * lvl('hollowpoint');                   // pierce adds targets per shot, a partial dps term
   return p;
 }
 
@@ -411,6 +423,14 @@ export const GREEDY_PRIORITY = [
   ...SHOP_UPGRADES.filter(u => u.kind === 'elite')
     .sort((a, b) => a.baseCost - b.baseCost).map(u => u.id),
   'luck', 'slots',
+  // G17 slice 2 breadth: the new premium stat rungs join the order AFTER the
+  // classic ladder (they are late-catalogue rungs at 65k-4.3M base), sorted
+  // by baseCost among themselves, BEFORE the two top flexes.
+  ...SHOP_UPGRADES.filter(u => ['fleetfoot', 'briarmail', 'lodestone',
+      'hollowpoint', 'ironheart', 'hairtrigger', 'headsman', 'bloodpact', 'fanfire',
+      'deepread', 'aethertap', 'grandelixir', 'deepfont', 'eagleeye', 'staticfield',
+      'laststand'].includes(u.id))
+    .sort((a, b) => a.baseCost - b.baseCost).map(u => u.id),
   'weapon_beam', 'arcade',
 ];
 

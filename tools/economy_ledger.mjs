@@ -151,8 +151,12 @@ function printLedger() {
     `(cheapest real upgrade ${L.cheapest.label} ${L.cheapest.gold}g / tier-0/1 income ${L.tier01}g` +
     ` = must land 1-3 runs)`);
   const hours = L.total / L.rate;
+  // G17 slice 2 landed: the 40.4h shortfall was bought with BREADTH (16 rows),
+  // so the hours line now reports margin over the target, not a shortfall.
   console.log(`\ncatalogue hours @ end-game rate: ${hours.toFixed(1)}h ` +
-    `(owner target 60+; shortfall ${(60 - hours).toFixed(1)}h belongs to G17 slice 2 breadth)`);
+    `(owner target 60+; ${hours >= 60
+      ? `margin +${(hours - 60).toFixed(1)}h (G17 slice 2 breadth closed the gap)`
+      : `shortfall ${(60 - hours).toFixed(1)}h remains`})`);
 }
 
 // ---- --measure: the only path that runs the game (seeded, reproducible) -----

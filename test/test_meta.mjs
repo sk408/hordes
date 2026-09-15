@@ -147,8 +147,12 @@ console.log('PROGRESSION LADDER:');
     cum += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum >= fullBuyCost) { crossRun = n; break; }
   }
-  ok(crossRun !== null && crossRun >= 5 && crossRun <= 7,
-     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 5-7 runs post-reprice)`);
+  // G17 slice 2 RETARGET: 16 breadth rows (+65,105,600g of stat lines) moved
+  // fullBuyCost 4,490,433 -> 69,596,033g, so the measured-income crossing is
+  // 92-94 runs (~46-47h). The invariant is unchanged: the zero-purchase
+  // analytic projection can no longer cross the catalogue (checked below).
+  ok(crossRun !== null && crossRun >= 92 && crossRun <= 94,
+     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 92-94 runs post-breadth)`);
 
   // ARCADE PASS sits beyond full-buy (G17 1b: 4,200,000g = 5.6 measured runs,
   // and the pass alone costs less than the luck ladder it follows home).
@@ -186,11 +190,12 @@ console.log('EXPANSION LINES:');
   }
   // RETARGETED 2026-09-14 (A1): the count moved 16 -> 17 when the owner-ordered
   // engagement-radius row ('focus', meta.js) joined the flat stat/slot lines.
-  // The invariant this fixture guards is "one row per stat line, nothing
-  // silently added or dropped", so the number tracks the catalogue rather than
-  // being deleted or turned into a >= check.
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 17,
-     'seventeen stat lines total (5 original + 3 N1b mana buyables + 6 expansion + luck + split + A1 focus)');
+  // RETARGETED 2026-09-15 (G17 slice 2 breadth): 17 -> 33 with the 16 new rows
+  // (fleetfoot .. laststand). The invariant this fixture guards is "one row per
+  // stat line, nothing silently added or dropped", so the number tracks the
+  // catalogue rather than being deleted or turned into a >= check.
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 33,
+     'thirty-three stat lines total (17 classic + 16 G17-slice-2 breadth rows)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
@@ -741,10 +746,14 @@ console.log('APEX TIER (G25):');
   // G17 slice 1b RETARGET: 29,440,200 = MID 20,740,200 + TOP 8,700,000 at the
   // repriced tables. The pin's JOB is unchanged — any apex row leaking into
   // SHOP_UPGRADES or any uncoordinated mid/top reprice fails this line.
-  ok(partition === 29440200,
-     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-G17-1b 29440200)`);
-  ok(SHOP_UPGRADES.length === 29,
-     `SHOP_UPGRADES still holds exactly its 29 pre-apex rows (got ${SHOP_UPGRADES.length})`);
+  // G17 slice 2 RETARGET: 94,545,800 = MID 22,755,200 + TOP 71,790,600 with the
+  // 17 breadth rows partitioned (fleetfoot MID; the other 16 TOP). The pin's
+  // JOB is unchanged — any apex row leaking into SHOP_UPGRADES or any
+  // uncoordinated mid/top reprice fails this line.
+  ok(partition === 94545800,
+     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-G17-slice-2 94545800)`);
+  ok(SHOP_UPGRADES.length === 45,
+     `SHOP_UPGRADES holds exactly its 45 pre-apex rows (29 classic + 16 breadth; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');
@@ -782,7 +791,7 @@ console.log('APEX TIER (G25):');
     cum3 += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum3 >= fullBuyCost2) { crossRun3 = n; break; }
   }
-  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 5 && crossRun3 <= 7,
+  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 92 && crossRun3 <= 94,
      `the apex-free completion crossing is unmoved (${crossRun3} runs x 754,689g at the measured tier-3 income = ${(crossRun3 * 0.5).toFixed(1)}h)`);
 
   // -- pricing: G17 slice 1b RETARGET of the calibration frame --

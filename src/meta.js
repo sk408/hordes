@@ -252,8 +252,19 @@ export const GOLD_MODEL = {
     'weapon_orbit', 'weapon_zap', 'weapon_nova_pulse', 'weapon_scythe',
     'weapon_seeker', 'weapon_mine', 'elite_swift', 'elite_splitting',
     'elite_vampiric', 'luck',
+    // G17 slice 2 breadth: the ONE mid-priced addition (2,015,000g full-buy)
+    // keeps the 10-good-run mid share at 33.2% (band 30-40%).
+    'fleetfoot',
   ],
-  TOP_TIER_IDS: ['weapon_beam', 'arcade'],
+  // G17 slice 2 breadth: 15 premium rungs at 3,980,000-4,433,000g full-buy
+  // (5.3-5.9 measured good runs each, all inside the 3h single-item cap) -
+  // "a few hours to get one top tier item, let alone all of them" (owner).
+  TOP_TIER_IDS: [
+    'weapon_beam', 'arcade',
+    'briarmail', 'lodestone', 'hollowpoint', 'ironheart', 'hairtrigger',
+    'headsman', 'bloodpact', 'fanfire', 'deepread', 'aethertap',
+    'grandelixir', 'deepfont', 'eagleeye', 'staticfield', 'laststand',
+  ],
 };
 
 export function computeRunGold(runStats) {
@@ -474,6 +485,55 @@ export const SHOP_UPGRADES = [
   // 3h cap, and it takes the 10-good-run share to the 36.4% target band.
   { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
     baseCost: 140000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
+  // ---- G17 SLICE 2: THE BREADTH PASS (2026-09-15) ---------------------------
+  // Slice 1 measured the catalogue at 19.6h of end-game income against the
+  // owner's 60h+ target (shortfall 40.4h = +60,972,047g at the MEASURED
+  // 1,509,378g/h divisor). The single-item cap (3h = 4,528,134g) bounds any
+  // fix at N >= 14 rows, so the hours are bought with BREADTH: 16 new stat
+  // rows, each feeding a stats seam the game ALREADY consumes (see
+  // applyMetaBonuses below - a row whose perLevel nothing reads is a defect).
+  // Shape per the goal's own fix (goals G17 items 1-3): every row sits inside
+  // the cap, the cheapest rows stay untouched (first purchase still 2.9
+  // tier-0 runs), and the top rungs are priced as "a few hours to get ONE
+  // top tier item, let alone all of them" (owner) - 5.3-5.9 measured good
+  // runs each. ONE mid rung (fleetfoot, 2,015,000g full-buy) keeps the
+  // 10-good-run mid share inside its 30-40% band (33.2%) and halfRuns at
+  // 15.07 (band 12.5-16.7) - both asserted in test_meta/test_economy_reprice.
+  // New catalogue: 94,696,233g across 48 items = 62.7h >= 60h.
+  // MID rung (the one mid catalogue addition; join MID_TIER_IDS below):
+  { id: 'fleetfoot', name: 'Fleetfoot',    desc: '+8% move speed per level',
+    baseCost: 65000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.08 },
+  // TOP rungs (join TOP_TIER_IDS below; full-buy 3,980,000-4,433,000g each):
+  { id: 'briarmail', name: 'Briarmail',    desc: '+10 thorn damage per level, reflected into every touching enemy',
+    baseCost: 133000, costGrowth: 2.0, maxLevel: 5, perLevel: 10 },
+  { id: 'lodestone', name: 'Lodestone',    desc: '+25% pickup radius per level',
+    baseCost: 134000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.25 },
+  { id: 'hollowpoint', name: 'Hollowpoint', desc: '+1 pierce on volley and boomerang hits per level',
+    baseCost: 136000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
+  { id: 'ironheart', name: 'Iron Heart',   desc: '+120 max HP per level',
+    baseCost: 137000, costGrowth: 2.0, maxLevel: 5, perLevel: 120 },
+  { id: 'hairtrigger', name: 'Hairtrigger', desc: '+12% attack rate per level',
+    baseCost: 139000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.12 },
+  { id: 'headsman', name: 'Headsman',      desc: '+15% all damage per level',
+    baseCost: 141000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.15 },
+  { id: 'bloodpact', name: 'Blood Pact',   desc: '+2% lifesteal per level',
+    baseCost: 143000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.02 },
+  { id: 'fanfire',  name: 'Fan Fire',      desc: '+1 volley projectile per level (the volley cap still applies)',
+    baseCost: 410000, costGrowth: 2.6, maxLevel: 3, perLevel: 1 },
+  { id: 'deepread', name: 'Deep Read',     desc: '+1 draft offer per level',
+    baseCost: 1650000, costGrowth: 1.6, maxLevel: 2, perLevel: 1 },
+  { id: 'aethertap', name: 'Aether Tap',   desc: '+0.60 mana per kill',
+    baseCost: 3980000, costGrowth: 1, maxLevel: 1, perLevel: 0.60 },
+  { id: 'grandelixir', name: 'Grand Elixir', desc: 'Potions heal and restore twice as much',
+    baseCost: 4040000, costGrowth: 1, maxLevel: 1, perLevel: 1.0 },
+  { id: 'deepfont', name: 'Deep Font',     desc: '+3 mana regen per second',
+    baseCost: 4060000, costGrowth: 1, maxLevel: 1, perLevel: 3 },
+  { id: 'eagleeye', name: 'Eagle Eye',     desc: '+12% crit chance',
+    baseCost: 4120000, costGrowth: 1, maxLevel: 1, perLevel: 0.12 },
+  { id: 'staticfield', name: 'Static Field', desc: 'XP pickups chip nearby enemies',
+    baseCost: 4180000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
+  { id: 'laststand', name: 'Last Stand',   desc: 'Revive once per run at 50% max HP',
+    baseCost: 4320000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
   // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
     id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
@@ -925,21 +985,38 @@ export function applyMetaBonuses(stats, purchased) {
     // Forged Edge COMPOUNDS (owner rule, 2026-09-13): (1 + perLevel)^level, not
     // 1 + perLevel*level. The only multiplicative row in the shop.
     damage: stats.damage * Math.pow(1 + SHOP_BY_ID.dmg.perLevel, lvl('dmg')),
-    maxHp: stats.maxHp + SHOP_BY_ID.hp.perLevel * lvl('hp'),
-    manaRegen: C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * lvl('regen'),
+    manaRegen: C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * lvl('regen')
+      + SHOP_BY_ID.deepfont.perLevel * lvl('deepfont'),
     // MULTIPLIER rows COMPOUND (owner rule, 2026-09-13): (1 + perLevel)^level.
     // These four are (1+x) factors, so compounding is well-defined. The FLAT
     // rows below stay additive and must: `crit` and `dropBonus` are values SET
     // from zero (0 x anything = 0, so compounding would silently disable the
     // row), and hp/regen/well/siphon/artifact are absolute amounts, not factors.
     xpMult: Math.pow(1 + SHOP_BY_ID.xp.perLevel, lvl('xp')),
-    crit: SHOP_BY_ID.crit.perLevel * lvl('crit'),
+    crit: SHOP_BY_ID.crit.perLevel * lvl('crit') + SHOP_BY_ID.eagleeye.perLevel * lvl('eagleeye'),
     critMult: Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg')),
     goldMult: Math.pow(1 + SHOP_BY_ID.greed.perLevel, lvl('greed')),
-    potionPower: Math.pow(1 + SHOP_BY_ID.alchemy.perLevel, lvl('alchemy')),
+    potionPower: Math.pow(1 + SHOP_BY_ID.alchemy.perLevel, lvl('alchemy'))
+      * (1 + SHOP_BY_ID.grandelixir.perLevel * lvl('grandelixir')),
     dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
+    // ---- G17 slice 2 breadth rows (each feeds a consumed seam above) ----
+    // Multiplier seams compound off whatever the base/affix pass carries in,
+    // same owner rule as dmg/xp: (1 + perLevel)^level. Flat seams add.
+    maxHp: stats.maxHp + SHOP_BY_ID.hp.perLevel * lvl('hp')
+      + SHOP_BY_ID.ironheart.perLevel * lvl('ironheart'),
+    pierce: (stats.pierce || 0) + SHOP_BY_ID.hollowpoint.perLevel * lvl('hollowpoint'),
+    projectiles: (stats.projectiles || 1) + SHOP_BY_ID.fanfire.perLevel * lvl('fanfire'),
+    damageMult: (stats.damageMult || 1) * Math.pow(1 + SHOP_BY_ID.headsman.perLevel, lvl('headsman')),
+    rateMult: (stats.rateMult || 1) * Math.pow(1 + SHOP_BY_ID.hairtrigger.perLevel, lvl('hairtrigger')),
+    speedMult: (stats.speedMult || 1) * Math.pow(1 + SHOP_BY_ID.fleetfoot.perLevel, lvl('fleetfoot')),
+    pickupMult: (stats.pickupMult || 1) * Math.pow(1 + SHOP_BY_ID.lodestone.perLevel, lvl('lodestone')),
+    lifesteal: (stats.lifesteal || 0) + SHOP_BY_ID.bloodpact.perLevel * lvl('bloodpact'),
+    thorns: (stats.thorns || 0) + SHOP_BY_ID.briarmail.perLevel * lvl('briarmail'),
+    draftOffers: (stats.draftOffers || 0) + SHOP_BY_ID.deepread.perLevel * lvl('deepread'),
+    secondWind: !!stats.secondWind || lvl('laststand') > 0,
+    stormShards: !!stats.stormShards || lvl('staticfield') > 0,
     // Split Shot: extra volley projectile cap. A COUNT — never compounded, and
     // read through volleyProjectileCap() (config.js), the one definition.
     splitCap: SHOP_BY_ID.split.perLevel * lvl('split'),
@@ -950,7 +1027,8 @@ export function applyMetaBonuses(stats, purchased) {
     // bump cannot silently blow past the authorised -80%.
     manaCostMult: Math.max(0.2, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty')),
     maxMana: stats.maxMana + SHOP_BY_ID.well.perLevel * lvl('well'),
-    manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon'),
+    manaOnKill: SHOP_BY_ID.siphon.perLevel * lvl('siphon')
+      + SHOP_BY_ID.aethertap.perLevel * lvl('aethertap'),
     // A1 engagement radius (Rangefinder). ADDITIVE distance, and the value
     // published to config.js above is this exact expression — one definition.
     focusRange,

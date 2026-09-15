@@ -71,8 +71,8 @@ console.log('G17 REPRICE — MID-TIER STRETCH (10 good runs buy 30-40%):');
   const share10 = (10 * good) / L.midCost;
   ok(share10 >= 0.30 && share10 <= 0.40,
      `10 good runs (10 x ${good}g) buy ${(100 * share10).toFixed(1)}% of the ${L.midCost}g mid catalogue (band 30-40%)`);
-  ok(Math.abs(L.midCost - 20740200) < 1,
-     `mid catalogue total pinned at 20,740,200g (drift fails this line; got ${L.midCost})`);
+  ok(Math.abs(L.midCost - 22755200) < 1,
+     `mid catalogue total pinned at 22,755,200g (drift fails this line; got ${L.midCost})`);
 }
 
 console.log('G17 REPRICE — FIRST PURCHASE (1-3 tier-0/1 runs):');
@@ -85,21 +85,19 @@ console.log('G17 REPRICE — FIRST PURCHASE (1-3 tier-0/1 runs):');
 
 console.log('G17 REPRICE — CATALOGUE HOURS vs THE 60h OWNER TARGET:');
 {
-  // The owner target is 60+ PLAY HOURS of shop content. The arithmetic at the
-  // measured rate says repricing alone cannot reach it without breaking the
-  // single-item cap (32 items x 4,528,134g cap = 144.9h MAXIMUM, but every
-  // item at the cap destroys the early game the first-purchase band protects).
-  // This slice ships the SPINE at 19.6h; slice 2 (BREADTH: new mid-priced
-  // content, not inflated trophies) owns the shortfall below. The constant is
-  // pinned so slice 2 must move it DELIBERATELY, and any accidental price cut
-  // shrinks the total and fails here.
-  const SLICE2_SHORTFALL_H = 40.4;   // hours of NEW mid-priced content slice 2 must add
+  // The owner target is 60+ PLAY HOURS of shop content. G17 slice 2 (BREADTH:
+  // 16 new rows, +65,105,600g — content, not trophy inflation) closed the
+  // 40.4h shortfall slice 1 shipped. The shortfall constant is retired at 0;
+  // the pin is now the LANDED total: the catalogue must hold 60-64h at the
+  // measured rate, so any accidental price cut (or an uncoordinated further
+  // inflation) fails this line.
+  const SLICE2_SHORTFALL_H = 0;      // G17 slice 2 landed: breadth closed the gap
   const L = ledger();
   const hours = L.total / L.rate;
   ok(hours + SLICE2_SHORTFALL_H >= 60,
-     `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h + ${SLICE2_SHORTFALL_H}h slice-2 breadth = ${(hours + SLICE2_SHORTFALL_H).toFixed(1)}h >= the 60h owner target`);
-  ok(hours >= 19 && hours <= 21,
-     `shipped spine is ${hours.toFixed(1)}h (band 19-21h; slice 2 pushes this toward 60h, an accidental reprice fails this line)`);
+     `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h >= the 60h owner target`);
+  ok(hours >= 60 && hours <= 64,
+     `landed catalogue is ${hours.toFixed(1)}h (band 60-64h post-breadth; an accidental reprice fails this line)`);
   const capCeiling = (singleItemCapGold() * L.rows.length) / L.rate;
   ok(60 < capCeiling,
      `60h is reachable by breadth alone: ${L.rows.length} items x 3h cap = ${capCeiling.toFixed(1)}h ceiling — no trophy inflation needed`);

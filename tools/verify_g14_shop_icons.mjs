@@ -63,7 +63,11 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
         const el = cards.find(c => (c.innerHTML || '').includes('>' + def.name + '<'));
         return { id: def.id, name: def.name, found: !!el,
                  html: el ? el.innerHTML : null,
-                 nCanvases: el ? el.querySelectorAll('canvas').length : 0 };
+                 // G17 slice 2 tool fix: cards now ALSO carry a decorative
+                 // <canvas class="frame"> (added by the post-G14 card-frame
+                 // work, main.js), so count the ICON canvases by class, not
+                 // every canvas under the card.
+                 nCanvases: el ? el.querySelectorAll('canvas.shop-icon').length : 0 };
       });
       const gold = T.getProfile().gold;
       return {
@@ -72,7 +76,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
         report: T.shopIcons.report, rows, gold,
         upgradeCost0: meta.upgradeCost(meta.SHOP_UPGRADES.find(d => d.id === 'dmg'), 0),
         backRow: (() => { const b = cards.find(c => (c.innerHTML || '').includes('>BACK<'));
-                          return b ? { found: true, nCanvases: b.querySelectorAll('canvas').length } : null; })(),
+                          return b ? { found: true, nCanvases: b.querySelectorAll('canvas.shop-icon').length } : null; })(),
       };
     })()`);
 

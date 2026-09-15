@@ -66,6 +66,11 @@ const EXPECTED_PORTRAITS = ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN'];
 const EXPECTED_SHOP = [
   'dmg', 'hp', 'potions', 'regen', 'focus', 'thrifty', 'well', 'siphon', 'xp', 'crit',
   'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'split', 'slots', 'arcade',
+  // G17 slice 2 breadth: 16 new stat rows (fleetfoot .. laststand), each with
+  // its own authored icon — never the fallback.
+  'fleetfoot', 'briarmail', 'lodestone', 'hollowpoint', 'ironheart', 'hairtrigger',
+  'headsman', 'bloodpact', 'fanfire', 'deepread', 'aethertap', 'grandelixir',
+  'deepfont', 'eagleeye', 'staticfield', 'laststand',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',
