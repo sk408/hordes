@@ -55,7 +55,8 @@ import { activeArchMods } from './arches.js';
 // the edge stays acyclic. G21 slice 1: the ONE on-weapon-hit rider writer
 // (fed by hurt(), the module's single direct-hit apply) and the WIDE ORBIT
 // readers ride the same edge.
-import { hasRewrite, onWeaponHit, wideOrbitRadiusMult, wideOrbitSpinMult } from './rewrites.js';
+import { hasRewrite, onWeaponHit, wideOrbitRadiusMult, wideOrbitSpinMult,
+  directHitMult } from './rewrites.js';
 
 // ---------- Tuning constants (kept HERE, not in config.js — no collisions) ----------
 export const WEAPONS = {
@@ -240,12 +241,16 @@ export function nearestEnemy(state, x, y, exclude) {
 // The module's ONE direct-hit apply: every archetype's primary damage routes
 // here (orbit contact, boomerang legs, zap head + chain, nova pulse, scythe
 // swing, seeker impact, mine detonation, beam tick), so the G21 on-weapon-hit
-// rider (rewrites.js onWeaponHit — RIME/IGNITE/LIVE WIRE) hooks EXACTLY the
-// direct-hit set and nothing else.
-function hurt(state, e, dmg) {
-  e.hp -= dmg;
+// rider (rewrites.js onWeaponHit — RIME/IGNITE/LIVE WIRE/OVERLOAD) hooks
+// EXACTLY the direct-hit set and nothing else. G21 slice 2: the direct-hit
+// DAMAGE multiplier (GLACIER, and GLACIAL ORBIT when the caller marks an
+// ORBIT contact) is read HERE, at the same seam — so no blast, burn tick,
+// echo, thorn or discharge can ever pick it up (R3). `opts.orbit` is passed
+// by updateOrbit alone.
+function hurt(state, e, dmg, opts) {
+  e.hp -= dmg * directHitMult(state, e, opts);
   e.flash = 0.08;
-  onWeaponHit(state, e);
+  onWeaponHit(state, e, opts);
 }
 
 // ---------- ORBIT: blades circling the player, damage on contact ----------
@@ -291,7 +296,7 @@ function updateOrbit(state, weapon, dt) {
       if (e.hp <= 0 || weapon.ticks.has(e)) continue;
       if (Math.abs(b.x - e.x) < W.HIT_R && Math.abs(b.y - e.y) < W.HIT_R) {
         hurt(state, e, p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgMult *
-          evoDmg(weapon) * critRoll(p, weapon));
+          evoDmg(weapon) * critRoll(p, weapon), { orbit: true });   // G21 GLACIAL ORBIT
         weapon.ticks.set(e, tick);
         state.effects.push({ kind: 'orbit_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
       }

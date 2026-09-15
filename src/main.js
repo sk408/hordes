@@ -43,7 +43,7 @@ import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcar
 // G21 slice 1: + the ONE on-weapon-hit rider writer and AFTERSHOCK's echo tick.
 import {
   rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast, REWRITES,
-  onWeaponHit, tickRewriteEchoes,
+  onWeaponHit, tickRewriteEchoes, directHitMult, wildfireTransfer, stormReaperBlast,
 } from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
@@ -1390,7 +1390,9 @@ function detonateMineAt(mine) {
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
       if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
-      e.hp -= d; e.flash = 0.08;
+      // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
+      // damage site (the rider below rides the same hit) — blasts never see it.
+      e.hp -= d * directHitMult(state, e); e.flash = 0.08;
       // G21 rider: the mine's PRIMARY payload is a direct weapon hit wherever
       // the detonation is triggered from (weapons.js detonateMine rides via
       // hurt(); this mirror rides identically).
@@ -1419,7 +1421,8 @@ function synergyZapFork(zw) {
     const tgt = nearestFoe(from.x, from.y, hit);
     if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
     hit.add(tgt);
-    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, (P.jumps || WEAPONS.ZAP.JUMPS) + 1 + k);
+    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, (P.jumps || WEAPONS.ZAP.JUMPS) + 1 + k) *
+      directHitMult(state, tgt);   // G21 GLACIER (direct hit)
     tgt.flash = 0.08;
     onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
@@ -1486,7 +1489,7 @@ function synergyScytheZap() {
     const ey = fx.y + Math.sin(fx.dir) * fx.radius;
     const t = nearestFoe(ex, ey);
     if (!t) continue;
-    t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5;   // 50% falloff
+    t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t);   // 50% falloff + G21 GLACIER
     t.flash = 0.08;
     onWeaponHit(state, t);   // G21 rider: the scythe-zap lash is a direct hit
     state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
@@ -1693,7 +1696,7 @@ function update(dt) {
           dmg *= evoCritMult;
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
-        e.hp -= dmg; e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
+        e.hp -= dmg * directHitMult(state, e); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
           p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
@@ -2001,6 +2004,20 @@ function update(dt) {
         // `o === e` skip). E2 (R9): a ground detonation — flyers take nothing.
         flyingGuard('blast', () => applyBlast(state, e.x, e.y, boom));
       }
+      // G21 slice 2 WILDFIRE: a BURNING corpse hands its burn (remaining dps
+      // and duration, full) to the nearest other live body within
+      // WILDFIRE_RANGE, once per death. Written BESIDE the blast gate because
+      // the spread does not depend on what killed the body; the transfer is a
+      // burn application, never a weapon hit, so it moves no counter and fires
+      // no rider (R3).
+      wildfireTransfer(state, e);
+      // G21 slice 2 STORM REAPER: a corpse the LIVE WIRE zap killed (the rider
+      // stamped it) detonates a 50%-strength blast through the SAME applyBlast
+      // path — a ground detonation, so the flyer exemption applies exactly as
+      // it does to the kill boom above. ADDITIVE to the onkillboom detonation
+      // the same corpse already fired; stated in the report.
+      const zapBoom = e.zapLethal ? stormReaperBlast(state) : null;
+      if (zapBoom) flyingGuard('blast', () => applyBlast(state, e.x, e.y, zapBoom));
       state.gems.push(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
@@ -2623,7 +2640,12 @@ function openDraft() {
     // FROST_NOVA and the run does not hold it (taken once, like the perks).
     ...(frostCardOffered(state) ? [frostCard()] : []),
     // G8 step 2: the rewrite family rides the same pool at
-    // REWRITE_CARD_WEIGHT, one card per rewrite not already held.
+    // REWRITE_CARD_WEIGHT, one card per rewrite not already held. G21 slice 2:
+    // FOURTEEN cards now, and the family share is held by WEIGHT CLASS rather
+    // than one flat number — eleven single-tag/legacy cards at
+    // REWRITE_CARD_WEIGHT, three cross-tag combos at half weight (12.5 x
+    // 0.005 = 0.0625, inside the goal's [0.055, 0.070] band); rewriteCards
+    // carries the per-card weight, so the pool needs no special case.
     ...rewriteCards(state),
   ];
   // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a

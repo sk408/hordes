@@ -32,7 +32,8 @@ import { makeWeapon, WEAPON_MAX_LEVEL, PIERCE_ALL, levelUpWeapon } from '../src/
 import { RULE_IDS } from '../src/rules.js';
 import { SKILL_PERK_IDS } from '../src/perks.js';
 import {
-  REWRITES, REWRITE_IDS, REWRITE_CARD_WEIGHT, REWRITE_TAGS,
+  REWRITES, REWRITE_IDS, REWRITE_CARD_WEIGHT, REWRITE_COMBO_WEIGHT_MULT, REWRITE_TAGS,
+  isComboRewrite,
   BOOM_RADIUS, BOOM_DAMAGE_FLAT, BOOM_DAMAGE_FRAC,
   HARVEST_RADIUS, HARVEST_DAMAGE_FLAT, HARVEST_DAMAGE_FRAC,
   RIME_SLOW_DURATION, RIME_SLOW_FACTOR,
@@ -40,15 +41,20 @@ import {
   LIVEWIRE_EVERY, LIVEWIRE_RANGE, LIVEWIRE_DAMAGE_MULT,
   AFTERSHOCK_DELAY, AFTERSHOCK_RADIUS_MULT, AFTERSHOCK_DAMAGE_MULT,
   WIDEORBIT_RADIUS_MULT, WIDEORBIT_SPIN_MULT,
+  GLACIER_DAMAGE_MULT, WILDFIRE_RANGE, OVERLOAD_EVERY, OVERLOAD_RANGE,
+  OVERLOAD_TARGETS, OVERLOAD_DAMAGE_MULT, THERMALSHOCK_BURST_MULT,
+  STORMREAPER_BLAST_MULT, GLACIALORBIT_CHILL_DURATION, GLACIALORBIT_DAMAGE_MULT,
   rewritesOf, hasRewrite, rewriteCardOffered, rewriteCards, grantRewrite,
   rewriteBoom, harvestBlast, applyBlast, tickRewriteEchoes,
   rewriteCount, emptySlotCooldownMult, onWeaponHit,
   wideOrbitRadiusMult, wideOrbitSpinMult,
+  directHitMult, wildfireTransfer, stormReaperBlast,
 } from '../src/rewrites.js';
 import { skillCooldown } from '../src/perks.js';
 import { ultCharge } from '../src/skills.js';
 import { updateWeapons } from '../src/weapons.js';
 import { isFlashEligibleKill, flashTargets, FLASH_TRASH_TIERS } from '../src/loot.js';
+import { buildExport } from '../src/save.js';
 import { simulateCohort, divergenceVerdict } from '../tools/draft_sim.mjs';
 import { boot } from './_harness.mjs';
 
@@ -68,11 +74,14 @@ const stateWith = (rewrites = null) => ({ player: { ...makePlayer(), rewrites: r
 console.log('rewrites (G8 step 2): the mechanic-rewrite family, at its real seams');
 
 // ---- 1. the family contract --------------------------------------------------
-ok('the catalog is the eight rewrites with unique ids and player-facing labels', () => {
-  // G21 SLICE 1 RETARGET: the family grew 3 -> 8 (C4's five keyword cards).
+ok('the catalog is the fourteen rewrites with unique ids and player-facing labels', () => {
+  // G21 SLICE 2 RETARGET: the family grew 8 -> 14 (D1's three second-tag cards
+  // + D2's three cross-tag combos). The assertion is still an exact id list.
   assert.deepEqual(REWRITE_IDS, ['pierceall', 'onkillboom', 'healthdamage',
-    'rime', 'ignite', 'livewire', 'aftershock', 'wideorbit']);
-  assert.equal(new Set(REWRITE_IDS).size, 8);
+    'rime', 'ignite', 'livewire', 'aftershock', 'wideorbit',
+    'glacier', 'wildfire', 'overload',
+    'thermalshock', 'stormreaper', 'glacialorbit']);
+  assert.equal(new Set(REWRITE_IDS).size, 14);
   for (const id of REWRITE_IDS) {
     assert.ok(REWRITES[id].name, id + ' has a name');
     assert.ok(!/rewrite/i.test(REWRITES[id].desc),
@@ -117,15 +126,22 @@ ok('no id collides with the stat UPGRADES, the run-rule ids or the perk ids', ()
     assert.ok(!SKILL_PERK_IDS.includes(id), id + ' would shadow a perk card');
   }
 });
-ok('cards exist once, at REWRITE_CARD_WEIGHT, and grant through apply(player)', () => {
+ok('cards exist once, at their family weight, and grant through apply(player)', () => {
   const st = stateWith(null);
   assert.equal(Object.keys(st.player.rewrites).length, 0, 'a fresh player holds nothing');
   const cards = rewriteCards(st);
-  // G21 SLICE 1 RETARGET: on a bare state the two PREDICATE cards are absent
-  // (no blast source, no ORBIT equipped) — the offered set is the six
-  // always-offered cards, not the whole catalog.
-  assert.equal(cards.length, REWRITE_IDS.length - 2);
+  // G21 SLICE 2 RETARGET: on a bare state FIVE cards are absent — the two
+  // slice-1 predicates (no blast source, no ORBIT equipped) plus all THREE
+  // combos (neither constituent owned). The offered set is the NINE
+  // always-offered cards, asserted as an exact list.
+  const BARE_OFFERED = ['pierceall', 'onkillboom', 'healthdamage', 'rime',
+    'ignite', 'livewire', 'glacier', 'wildfire', 'overload'];
+  assert.equal(cards.length, BARE_OFFERED.length);
+  assert.deepEqual(cards.map(c => c.rewrite).sort(), [...BARE_OFFERED].sort());
   for (const c of cards) {
+    // No combo can be offered on a bare state, so every card here is a single
+    // (or legacy) card at the family base weight.
+    assert.equal(isComboRewrite(c.rewrite), false);
     assert.equal(c.weight, REWRITE_CARD_WEIGHT);
     assert.ok(c.id.startsWith('rewrite_'));
     const p = makePlayer();
@@ -133,10 +149,12 @@ ok('cards exist once, at REWRITE_CARD_WEIGHT, and grant through apply(player)', 
     assert.ok(p.rewrites[c.rewrite], c.rewrite + ' is granted by its own card');
   }
   grantRewrite(st, 'onkillboom');
-  // G21 SLICE 1 RETARGET: taking onkillboom removes one card but WAKES the
-  // aftershock predicate (a held blast source), so the count holds at
-  // REWRITE_IDS.length - 2 (eight minus the take minus the still-dead wideorbit).
-  assert.equal(rewriteCards(st).length, REWRITE_IDS.length - 2, 'a taken rewrite leaves the pool');
+  // G21 SLICE 2 RETARGET: taking onkillboom removes one card but WAKES the
+  // aftershock predicate, and still no combo is live (no constituent pair is
+  // owned) — so the offered set is the other eight of the nine.
+  assert.deepEqual(rewriteCards(st).map(c => c.rewrite).sort(),
+    ['aftershock', 'glacier', 'healthdamage', 'ignite', 'livewire',
+      'overload', 'pierceall', 'rime', 'wildfire'], 'a taken rewrite leaves the pool');
   assert.equal(rewriteCardOffered('onkillboom', st), false);
   assert.equal(grantRewrite(st, 'not_a_rewrite'), false, 'an unknown rewrite id is refused');
   assert.ok(hasRewrite(st, 'onkillboom') && !hasRewrite(st, 'pierceall'));
@@ -152,15 +170,30 @@ ok('R1: a full run (REWRITE_SLOTS held) is offered ZERO rewrite cards; one short
   assert.equal(rewriteCount(st), 4);
   assert.deepEqual(rewriteCards(st), [], 'a full house closes the family');
   // One slot short: exactly the untaken, predicate-passing set (aftershock's
-  // predicate is now TRUE — onkillboom is held — so all five remaining land).
+  // predicate is now TRUE — onkillboom is held — so all five slice-1 cards
+  // land, joined by slice 2's three always-offered second-tag cards). NO combo
+  // is offered: no constituent PAIR is owned yet.
   const st2 = stateWith(null);
   st2.weapons = [makeWeapon('ORBIT')];
   for (const id of ['pierceall', 'onkillboom', 'healthdamage']) grantRewrite(st2, id);
   const offered = rewriteCards(st2).map(c => c.rewrite).sort();
-  assert.deepEqual(offered, ['aftershock', 'ignite', 'livewire', 'rime', 'wideorbit'],
+  // G21 SLICE 2 RETARGET: the explicit eight-card set (was five).
+  assert.deepEqual(offered, ['aftershock', 'glacier', 'ignite', 'livewire',
+    'overload', 'rime', 'wideorbit', 'wildfire'],
     'REWRITE_SLOTS-1 held offers exactly the untaken predicate-passing set');
+  // ...and with a CONSTITUENT PAIR owned, the matching combos wake while the
+  // other single stays: rime + ignite + wideorbit still leaves a free slot.
+  const st3 = stateWith(null);
+  st3.weapons = [makeWeapon('ORBIT')];
+  for (const id of ['rime', 'ignite', 'wideorbit']) grantRewrite(st3, id);
+  assert.deepEqual(rewriteCards(st3).map(c => c.rewrite).sort(),
+    ['glacialorbit', 'glacier', 'healthdamage', 'livewire', 'onkillboom',
+      'overload', 'pierceall', 'thermalshock', 'wildfire'],
+    'the two woken combos join the untaken singles (aftershock still has no blast source, stormreaper still needs LIVE WIRE)');
   grantRewrite(st2, 'ignite');          // taking one more closes the family
   assert.deepEqual(rewriteCards(st2), [], 'the fourth take closes the family');
+  grantRewrite(st3, 'overload');        // the same on the combo-bearing state
+  assert.deepEqual(rewriteCards(st3), [], 'and the fourth take closes it there too');
 });
 ok('R2: empty slots pay x0.80..x1.00 through skillCooldown; the ult KILL count never moves', () => {
   const st = stateWith(null);
@@ -757,6 +790,539 @@ ok('R5: a burn tick has ZERO rider side-effects and a burn-lethal corpse never d
   } finally { restore(); }
 });
 
+// ---- 3c. G21 slice 2: THE SIX NEW CARDS, BOTH SIDES (R1/R2) + NO CHAIN-OF-
+// --------- CHAINS, EXTENDED (R3) + THE COMBO PREDICATES (R4) ----------------
+console.log('G21 slice 2: the second-tag cards and the cross-tag combos');
+
+// R1 GLACIER ------------------------------------------------------------------
+ok('R1 GLACIER: +20% only against a SLOWED body, and only on a DIRECT hit', () => {
+  const st = stateWith(null);
+  const chilled = { hp: 1e9, slow: 0.5, flash: 0 };
+  const clean = { hp: 1e9, slow: 0, flash: 0 };
+  assert.equal(directHitMult(st, chilled), 1, 'no card: no bonus');
+  assert.equal(GLACIER_DAMAGE_MULT, 1.20, 'the brief fixes the bonus at +20%');
+  grantRewrite(st, 'glacier');
+  assert.equal(directHitMult(st, chilled), GLACIER_DAMAGE_MULT, 'a chilled body takes +20%');
+  assert.equal(directHitMult(st, clean), 1, 'an unchilled body takes none');
+  assert.equal(directHitMult(st, { hp: 1 }), 1, 'a body with no slow field takes none');
+  assert.equal(directHitMult(st, undefined), 1, 'a missing body never throws');
+  assert.equal(directHitMult(stateWith(null), chilled), 1, 'a body-only field is not this card');
+  // R3: it is a DIRECT-HIT read. applyBlast never routes through it, so a blast
+  // that lands on a CHILLED body is priced flat.
+  const near = { x: 0, y: 0, hp: 1e9, slow: 0.5, flash: 0 };
+  st.enemies = [near];
+  const before = near.hp;
+  applyBlast(st, 0, 0, { radius: 40, damage: 20 });
+  assert.equal(before - near.hp, 20,
+    'a blast on a CHILLED body is NOT multiplied (GLACIER never reaches blasts)');
+});
+
+// R1 WILDFIRE -----------------------------------------------------------------
+ok('R1 WILDFIRE: a burning death hands the FULL remaining burn to the nearest other body', () => {
+  const st = stateWith(null);
+  const burning = (at) => ({ x: at.x, y: at.y, hp: 0, burn: 2.4, burnDps: 7, flash: 0 });
+  const target = (at) => ({ x: at.x, y: at.y, hp: 1e9, burn: 0, burnDps: 0, flash: 0, slow: 0 });
+  const dead = burning({ x: 0, y: 0 });
+  const near = target({ x: 50, y: 0 });
+  const far = target({ x: 400, y: 0 });
+  st.enemies = [dead, near, far];
+  assert.equal(wildfireTransfer(st, dead), null, 'no card: no transfer');
+  assert.equal(near.burn, 0, 'and the neighbour stays clean');
+  grantRewrite(st, 'wildfire');
+  assert.equal(WILDFIRE_RANGE, 100, 'the brief fixes the reach at 100px');
+  assert.equal(wildfireTransfer(st, dead), near, 'the nearest OTHER body received it');
+  assert.equal(near.burn, 2.4, 'the remaining duration transferred FULL');
+  assert.equal(near.burnDps, 7, 'the remaining dps transferred FULL');
+  assert.equal(far.burn, 0, 'a body outside WILDFIRE_RANGE is untouched');
+  assert.equal(near.slow || 0, 0, 'the transfer is a burn, not a weapon hit: no chill');
+  // a CLEAN death (nothing burning) spreads nothing
+  const cleanDead = { x: 0, y: 0, hp: 0, burn: 0, burnDps: 0, flash: 0 };
+  const watch = target({ x: 20, y: 0 });
+  st.enemies = [cleanDead, watch];
+  assert.equal(wildfireTransfer(st, cleanDead), null, 'a clean death spreads nothing');
+  assert.equal(watch.burn, 0, 'and the neighbour stays clean');
+  // the RANGE boundary: 100 lands, 101 does not
+  const at = (d) => { const t = target({ x: d, y: 0 }); st.enemies = [burning({ x: 0, y: 0 }), t]; return t; };
+  const t100 = at(WILDFIRE_RANGE);
+  wildfireTransfer(st, st.enemies[0]);
+  assert.equal(t100.burn, 2.4, 'at exactly WILDFIRE_RANGE the burn lands');
+  const t101 = at(WILDFIRE_RANGE + 1);
+  wildfireTransfer(st, st.enemies[0]);
+  assert.equal(t101.burn, 0, 'one pixel past WILDFIRE_RANGE it does not');
+  // one transfer per death: the SAME corpse handing over twice overwrites, never stacks
+  const a = target({ x: 30, y: 0 });
+  st.enemies = [burning({ x: 0, y: 0 }), a];
+  wildfireTransfer(st, st.enemies[0]);
+  const first = a.burnDps;
+  wildfireTransfer(st, st.enemies[0]);
+  assert.equal(a.burnDps, first, 'a second call overwrites with the same dps, never stacks');
+});
+
+// R1 OVERLOAD -----------------------------------------------------------------
+ok('R1 OVERLOAD: fires on the 20th hit and not the 19th, at most 3 targets, moves no counter', () => {
+  const st = stateWith(null);
+  grantRewrite(st, 'overload');
+  st.player.stats.damage = 40;
+  assert.equal(OVERLOAD_EVERY, 20, 'the brief fixes the cadence at every 20th hit');
+  assert.equal(OVERLOAD_DAMAGE_MULT, 0.75, 'and the payload at 75% weapon damage');
+  const struck = { x: 0, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  const ring = [];
+  for (let i = 0; i < 5; i++) ring.push({ x: 10 + i * 5, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 });
+  const out = { x: 500, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  st.enemies = [struck, ...ring, out];
+  for (let i = 0; i < OVERLOAD_EVERY - 1; i++) onWeaponHit(st, struck);
+  assert.equal(st.player.overloadHits, OVERLOAD_EVERY - 1, 'the counter is a run-player integer');
+  assert.equal(ring.every(e => e.hp === 1e9), true, 'the 19th hit does NOT discharge');
+  assert.equal(st.effects.filter(fx => fx.kind === 'zap').length, 0, 'and paints nothing');
+  onWeaponHit(st, struck);                             // the 20th
+  const payload = OVERLOAD_DAMAGE_MULT * 40;
+  // The nova is centred on the struck body: the 3 NEAREST live enemies are the
+  // struck one (d 0) and ring[0]/ring[1] (d 10/15).
+  assert.equal(1e9 - struck.hp, payload, 'the struck body is the nearest target');
+  assert.equal(1e9 - ring[0].hp, payload, 'ring[0] took the nova');
+  assert.equal(1e9 - ring[1].hp, payload, 'ring[1] took the nova');
+  assert.equal(ring[2].hp, 1e9, `only the ${OVERLOAD_TARGETS} nearest are hit`);
+  assert.equal(ring[3].hp, 1e9, 'so ring[3] is untouched');
+  assert.equal(out.hp, 1e9, 'a body outside OVERLOAD_RANGE is untouched');
+  assert.equal(st.effects.filter(fx => fx.kind === 'zap').length, OVERLOAD_TARGETS,
+    'one zap polyline per target');
+  assert.equal(st.player.overloadHits, OVERLOAD_EVERY, 'the discharge itself advanced nothing');
+  assert.equal(st.player.livewireHits, undefined, 'LIVE WIRE was not held; its counter never moved');
+  assert.equal(ring[0].slow || 0, 0, 'no chill from the discharge (never a rider)');
+  assert.equal(ring[0].burn || 0, 0, 'and no burn');
+  onWeaponHit(st, struck);                             // the 21st
+  assert.equal(1e9 - ring[1].hp, payload, 'never twice in a row');
+  // a SEPARATE counter from LIVE WIRE's, and both may fire on the SAME hit
+  const both = stateWith(null);
+  grantRewrite(both, 'overload'); grantRewrite(both, 'livewire');
+  both.player.stats.damage = 40;
+  const struck2 = { x: 0, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  const other = { x: 20, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  both.enemies = [struck2, other];
+  both.player.overloadHits = OVERLOAD_EVERY - 1;
+  both.player.livewireHits = LIVEWIRE_EVERY - 1;
+  onWeaponHit(both, struck2);
+  assert.equal(both.player.overloadHits, OVERLOAD_EVERY, 'the overload counter advanced');
+  assert.equal(both.player.livewireHits, LIVEWIRE_EVERY, 'and LIVE WIRE\'s advanced on the SAME hit');
+  // other took LIVE WIRE's zap (0.5 x 40) AND the overload nova (0.75 x 40)
+  assert.equal(1e9 - other.hp, LIVEWIRE_DAMAGE_MULT * 40 + OVERLOAD_DAMAGE_MULT * 40,
+    'the two carriers fire together on one hit');
+});
+
+// R3 NO CHAIN-OF-CHAINS, EXTENDED ---------------------------------------------
+ok('R3: the overload discharge is rider-free even with RIME/IGNITE/LIVE WIRE held', () => {
+  const st = stateWith(null);
+  for (const id of ['rime', 'ignite', 'livewire', 'overload']) grantRewrite(st, id);
+  st.player.stats.damage = 40;
+  const struck = { x: 0, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  const victim = { x: 20, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  st.enemies = [struck, victim];
+  st.player.livewireHits = LIVEWIRE_EVERY - 1;     // the same hit zaps too
+  st.player.overloadHits = OVERLOAD_EVERY - 1;     // ...and discharges
+  onWeaponHit(st, struck);
+  assert.equal(victim.slow || 0, 0, 'the zap victim caught NO chill from a non-direct source');
+  assert.equal(victim.burn || 0, 0, 'and NO burn');
+  assert.equal(st.player.livewireHits, LIVEWIRE_EVERY, 'neither zap re-advanced LIVE WIRE');
+  assert.equal(st.player.overloadHits, OVERLOAD_EVERY, 'nor the overload discharge');
+  assert.equal(1e9 - victim.hp, LIVEWIRE_DAMAGE_MULT * 40 + OVERLOAD_DAMAGE_MULT * 40,
+    'and the payload is exactly the two zaps, nothing recursive');
+});
+
+// R2 THERMAL SHOCK ------------------------------------------------------------
+ok('R2 THERMAL SHOCK: a burst only on a chilled, ALREADY-BURNING refresh', () => {
+  const mk = (rewrites) => {
+    const st = stateWith(rewrites); st.player.stats.damage = 40;
+    const e = { hp: 1e9, burn: 0, burnDps: 0, slow: 0, flash: 0 };
+    st.enemies = [e];
+    return { st, e };
+  };
+  assert.equal(THERMALSHOCK_BURST_MULT, 3, 'the brief fixes the burst at 3x burnDps');
+  let s = mk(null);
+  onWeaponHit(s.st, s.e);
+  assert.equal(s.e.hp, 1e9, 'no cards at all: no burst');
+  // IGNITE alone: the FIRST application is not a refresh...
+  s = mk({ ignite: true });
+  onWeaponHit(s.st, s.e);
+  assert.equal(s.e.hp, 1e9, 'a first burn application never bursts');
+  onWeaponHit(s.st, s.e);                       // now a refresh, but UNCHILLED
+  assert.equal(s.e.hp, 1e9, 'a refresh on an unchilled body does not burst');
+  // BOTH constituents, no combo: still nothing
+  s = mk({ rime: true, ignite: true });
+  onWeaponHit(s.st, s.e); onWeaponHit(s.st, s.e);
+  assert.equal(s.e.hp, 1e9, 'the two constituents alone never burst');
+  assert.ok(s.e.slow > 0, 'although RIME did chill the body');
+  // THE COMBO: chilled + already burning + a refresh
+  s = mk({ rime: true, ignite: true, thermalshock: true });
+  onWeaponHit(s.st, s.e);
+  assert.equal(s.e.hp, 1e9, 'the first application still does not burst');
+  onWeaponHit(s.st, s.e);
+  assert.equal(1e9 - s.e.hp, THERMALSHOCK_BURST_MULT * s.e.burnDps, 'exactly 3x the burn dps');
+  assert.equal(s.e.burnDps, IGNITE_BURN_FLAT + IGNITE_BURN_FRAC * 40, 'and the burn refreshed first');
+  assert.equal(s.e.hp > 0, true, 'the body survived this one');
+  assert.equal(s.st.effects.filter(fx => fx.kind === 'nova_pulse').length, 1, 'the burst painted once');
+  assert.equal(s.st.player.livewireHits, undefined, 'no counter moved');
+  // R3: a burst that KILLS stamps the corpse burn-lethal, exactly like the tick
+  s = mk({ rime: true, ignite: true, thermalshock: true });
+  onWeaponHit(s.st, s.e);
+  s.e.hp = 1;
+  onWeaponHit(s.st, s.e);
+  assert.equal(s.e.hp <= 0, true, 'the burst killed it');
+  assert.equal(s.e.burnLethal, true, 'and the corpse is stamped burn-lethal (never detonates)');
+});
+
+// R2 STORM REAPER -------------------------------------------------------------
+ok('R2 STORM REAPER: a zap KILL stamps the corpse, a zap HIT does not', () => {
+  const mk = (extra) => {
+    const st = stateWith({ livewire: true, onkillboom: true, ...extra });
+    st.player.stats.damage = 50;
+    return st;
+  };
+  const b = { x: 0, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  // a zap HIT (survivor): no stamp, no blast
+  let st = mk({});
+  const tough = { x: 20, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  st.enemies = [b, tough];
+  st.player.livewireHits = LIVEWIRE_EVERY - 1;
+  onWeaponHit(st, b);
+  assert.equal(tough.zapLethal, undefined, 'a zap HIT never stamps');
+  assert.equal(stormReaperBlast(st), null, 'the combo is not held: no blast');
+  // a zap KILL with the combo
+  st = mk({ stormreaper: true });
+  const struck2 = { x: 0, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  const doomed = { x: 20, y: 0, hp: 1, flash: 0, slow: 0, burn: 0 };   // the 25-damage zap kills it
+  st.enemies = [struck2, doomed];
+  st.player.livewireHits = LIVEWIRE_EVERY - 1;
+  onWeaponHit(st, struck2);
+  assert.equal(doomed.hp <= 0, true, 'the zap killed it');
+  assert.equal(doomed.zapLethal, true, 'the KILL stamped the corpse');
+  const blast = stormReaperBlast(st);
+  assert.ok(blast, 'the combo prices a blast');
+  assert.equal(STORMREAPER_BLAST_MULT, 0.5, 'the brief fixes the blast at 50%');
+  assert.equal(blast.damage, (BOOM_DAMAGE_FLAT + BOOM_DAMAGE_FRAC * 50) * STORMREAPER_BLAST_MULT,
+    'half of the CHAIN REACTION damage');
+  assert.equal(blast.radius, BOOM_RADIUS * STORMREAPER_BLAST_MULT, 'and half its radius');
+  // with no detonation source at all there is nothing to price from
+  assert.equal(stormReaperBlast(stateWith({ livewire: true, stormreaper: true })), null,
+    'no CHAIN source: nothing to detonate');
+  // R3: the blast is applyBlast, so it never rides (no chill on a chilled-body blast)
+  const ring = { x: 4, y: 0, hp: 1e9, flash: 0, slow: 0, burn: 0 };
+  const s2 = stateWith({ rime: true });
+  grantRewrite(s2, 'stormreaper'); grantRewrite(s2, 'onkillboom');
+  s2.enemies = [ring];
+  applyBlast(s2, 0, 0, blast);
+  assert.equal(ring.slow || 0, 0, 'the blast victim caught no chill (blasts never ride)');
+});
+
+// R2 GLACIAL ORBIT ------------------------------------------------------------
+ok('R2 GLACIAL ORBIT: orbit hits chill 2.5s, every other direct hit still 1.5s', () => {
+  assert.equal(GLACIALORBIT_CHILL_DURATION, 2.5, 'the brief fixes the orbit chill at 2.5s');
+  assert.ok(GLACIALORBIT_CHILL_DURATION > RIME_SLOW_DURATION, 'and it IS longer than RIME\'s');
+  const st = stateWith({ rime: true, glacialorbit: true });
+  const orb = { hp: 1e9, slow: 0, flash: 0 };
+  onWeaponHit(st, orb, { orbit: true });
+  assert.equal(orb.slow, GLACIALORBIT_CHILL_DURATION, 'an ORBIT contact writes the longer chill');
+  assert.equal(orb.slowMult, RIME_SLOW_FACTOR, 'the same grip factor: no second status system');
+  const other = { hp: 1e9, slow: 0, flash: 0 };
+  onWeaponHit(st, other);                       // a NON-orbit direct hit
+  assert.equal(other.slow, RIME_SLOW_DURATION, 'every other direct hit still chills 1.5s');
+  const noCombo = { hp: 1e9, slow: 0, flash: 0 };
+  onWeaponHit(stateWith({ rime: true }), noCombo, { orbit: true });
+  assert.equal(noCombo.slow, RIME_SLOW_DURATION, 'without the combo the orbit hit chills 1.5s too');
+  const longer = { hp: 1e9, slow: 3, slowMult: 0.45, flash: 0 };
+  onWeaponHit(st, longer, { orbit: true });
+  assert.equal(longer.slow, 3, 'a longer FROST_NOVA window is never truncated');
+  // the +10% reads only on a CHILLED body and only on an ORBIT contact
+  assert.equal(GLACIALORBIT_DAMAGE_MULT, 1.10, 'the brief fixes the orbit bonus at +10%');
+  assert.equal(directHitMult(stateWith({ glacialorbit: true }), { slow: 1 }, { orbit: true }),
+    GLACIALORBIT_DAMAGE_MULT, 'x1.10 on an ORBIT hit against a chilled body');
+  assert.equal(directHitMult(stateWith({ glacialorbit: true }), { slow: 1 }), 1,
+    'a non-orbit hit gets no orbit bonus');
+  assert.equal(directHitMult(stateWith({ glacialorbit: true }), { slow: 0 }, { orbit: true }), 1,
+    'an unchilled body gets none');
+  // and the two FROST damage bonuses COMPOSE when both cards are held
+  const bothSt = stateWith({ glacier: true, glacialorbit: true });
+  assert.ok(Math.abs(directHitMult(bothSt, { slow: 1 }, { orbit: true }) -
+    GLACIER_DAMAGE_MULT * GLACIALORBIT_DAMAGE_MULT) < 1e-12,
+    'GLACIER x1.20 and GLACIAL ORBIT x1.10 compose on one orbit hit');
+});
+
+// R4 THE COMBO PREDICATES + R5 THE DESC + R6 THE FAMILY SHARE ------------------
+ok('R4: a combo is offered ONLY while BOTH constituents are owned, and draws no rng', () => {
+  const ids = (held, weapons) => {
+    const st = stateWith(null);
+    if (weapons) st.weapons = weapons;
+    for (const id of held) grantRewrite(st, id);
+    return rewriteCards(st).map(c => c.rewrite);
+  };
+  const orb = [makeWeapon('ORBIT')];
+  assert.ok(!ids([]).includes('thermalshock'), 'nothing held: THERMAL SHOCK is absent');
+  assert.ok(!ids(['rime']).includes('thermalshock'), 'RIME alone is not enough');
+  assert.ok(!ids(['ignite']).includes('thermalshock'), 'IGNITE alone is not enough');
+  assert.ok(ids(['rime', 'ignite']).includes('thermalshock'), 'both: THERMAL SHOCK is offered');
+  assert.ok(!ids([]).includes('stormreaper'), 'nothing held: STORM REAPER is absent');
+  assert.ok(!ids(['livewire']).includes('stormreaper'), 'LIVE WIRE alone is not enough');
+  assert.ok(ids(['livewire', 'onkillboom']).includes('stormreaper'), 'both: STORM REAPER is offered');
+  assert.ok(!ids([]).includes('glacialorbit'), 'nothing held: GLACIAL ORBIT is absent');
+  assert.ok(!ids(['wideorbit']).includes('glacialorbit'), 'WIDE ORBIT alone is not enough');
+  assert.ok(!ids(['rime']).includes('glacialorbit'), 'RIME alone is not enough');
+  // Ownership is the gate, not the kit: a run that OWNS WIDE ORBIT owns it
+  // because an ORBIT was equipped when it was drafted, and the combo reads the
+  // base card's own predicate no further (the brief: "read
+  // state.player.rewrites"). Stated, not glossed.
+  assert.ok(ids(['wideorbit', 'rime']).includes('glacialorbit'),
+    'both constituents owned: the combo is offered');
+  assert.ok(ids(['wideorbit', 'rime'], orb).includes('glacialorbit'),
+    'and owning them with the ORBIT still equipped offers it too');
+  // R5: both tags, and the desc prefix reads TAG1+TAG2 - ...
+  for (const id of ['thermalshock', 'stormreaper', 'glacialorbit']) {
+    assert.equal(isComboRewrite(id), true, id + ' is a two-tag combo');
+    assert.equal(REWRITES[id].tags.length, 2, id + ' carries two tags');
+    for (const t of REWRITES[id].tags) {
+      assert.ok(REWRITE_TAGS.includes(t), id + ' tag ' + t + ' is reserved-set');
+    }
+  }
+  const st = stateWith(null);
+  for (const id of ['rime', 'ignite']) grantRewrite(st, id);
+  const card = rewriteCards(st).find(c => c.rewrite === 'thermalshock');
+  assert.ok(card, 'the combo reached the pool');
+  assert.ok(card.desc.startsWith('FROST+BURN - '), 'the desc is two-tag prefixed: ' + card.desc);
+  assert.equal(card.weight, REWRITE_CARD_WEIGHT * REWRITE_COMBO_WEIGHT_MULT,
+    'a combo card carries HALF the family base weight');
+  // ZERO rng draws, combo predicates included
+  const real = Math.random;
+  let draws = 0;
+  Math.random = () => { draws++; return real(); };
+  try {
+    rewriteCards(st);                       // both constituents + the combo
+    rewriteCards(stateWith(null));          // nothing held
+    const s2 = stateWith(null);
+    for (const id of ['livewire', 'onkillboom']) grantRewrite(s2, id);
+    rewriteCards(s2);
+  } finally { Math.random = real; }
+  assert.equal(draws, 0, 'the offered set (combo predicates included) consumes zero rng draws');
+});
+ok('R6: the fourteen-card family total stays inside the goal band [0.055, 0.070]', () => {
+  assert.equal(REWRITE_IDS.length, 14, 'the brief wants 12-20; slice 2 takes it to fourteen');
+  let total = 0, singles = 0, combos = 0;
+  for (const id of REWRITE_IDS) {
+    if (isComboRewrite(id)) { combos++; total += REWRITE_CARD_WEIGHT * REWRITE_COMBO_WEIGHT_MULT; }
+    else { singles++; total += REWRITE_CARD_WEIGHT; }
+  }
+  assert.equal(singles, 11, 'eleven single-tag/legacy cards');
+  assert.equal(combos, 3, 'three cross-tag combos');
+  assert.equal(REWRITE_COMBO_WEIGHT_MULT, 0.5, 'combos carry half base weight');
+  assert.equal(REWRITE_CARD_WEIGHT, 0.005, 'the base weight the D4 solve picked');
+  assert.ok(Math.abs(total - 0.0625) < 1e-12, `family total ${total} (12.5 x 0.005)`);
+  assert.ok(total >= 0.055 && total <= 0.070, 'inside the goal band');
+  // every tag on every card still comes from REWRITE_TAGS
+  const tagSet = new Set(REWRITE_TAGS);
+  for (const id of REWRITE_IDS) {
+    for (const t of REWRITES[id].tags) assert.ok(tagSet.has(t), id + ' tag in the reserved set');
+    assert.ok(REWRITES[id].desc.length > 20, id + ' desc is real prose');
+    assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(REWRITES[id].desc),
+      id + ' desc carries no emoji');
+  }
+});
+ok('R7: a full house is still offered ZERO rewrite cards, combos included', () => {
+  assert.equal(C.REWRITE_SLOTS, 4, 'REWRITE_SLOTS is untouched at four');
+  const st = stateWith(null);
+  st.weapons = [makeWeapon('ORBIT')];
+  // a full house that OWNS BOTH constituents of two combos — the combos must
+  // still be gone, not offered on top
+  for (const id of ['rime', 'ignite', 'wideorbit', 'livewire']) grantRewrite(st, id);
+  assert.equal(rewriteCount(st), 4);
+  assert.deepEqual(rewriteCards(st), [], 'the full house closes the family, combos and all');
+  // the empty-slot incentive is byte-equivalent: x0.80 at zero taken, x1.00 full
+  assert.equal(emptySlotCooldownMult(stateWith(null)), 0.80, 'x0.80 at zero taken');
+  assert.equal(emptySlotCooldownMult(st), 1.00, 'x1.00 at a full house');
+  const three = stateWith(null);
+  for (const id of ['rime', 'ignite', 'wideorbit']) grantRewrite(three, id);
+  assert.ok(Math.abs(emptySlotCooldownMult(three) - 0.95) < 1e-9,
+    'x0.95 at three taken (one empty slot)');
+});
+
+// ---- 3d. G21 slice 2: the LIVE loop (the real seams) --------------------------
+ok('R1 GLACIER live: an ORBIT contact lands exactly x1.20 on a chilled body, x1.00 unchilled', () => {
+  const measure = (glacier, chill) => {
+    const restore = closeWindow();
+    try {
+      const orb = makeWeapon('ORBIT');
+      st.weapons = [orb];
+      p.rewrites = { rime: true };
+      if (glacier) p.rewrites.glacier = true;
+      p.stats.crit = 0;                       // critRoll is a die roll; pin it flat
+      const victim = hostile('BRUTE', p, { x: 0, y: 0 });
+      // A 1e6-hp sentinel, NOT 1e9: the loss is read as startHp - hp, and at
+      // 1e9 a ~100-point loss keeps only ~7 significant digits (the ratio then
+      // fails a 1e-9 bar for a float reason, not a gameplay one). 1e6 keeps
+      // plenty of headroom over a four-second ring probe.
+      victim.hp = 1e6; victim.maxHp = 1e6;
+      victim.slow = chill ? RIME_SLOW_DURATION : 0;
+      st.enemies.push(victim);
+      let contacts = 0;
+      h.pump(240, () => {
+        st.projectiles.length = 0; st.enemyShots.length = 0;
+        // Re-anchor the body onto the ring every frame: the blade path is
+        // deterministic (angle += SPIN x dt), so BOTH arms see the identical
+        // contact sequence and the only variable is the multiplier.
+        const b = orb.payload.blades && orb.payload.blades[0];
+        if (b) { victim.x = b.x; victim.y = b.y; }
+        if (!chill) victim.slow = 0;          // the unchilled arm stays unchilled
+        else victim.slow = Math.max(victim.slow, RIME_SLOW_DURATION);
+        if (victim.flash > 0) contacts++;
+      });
+      const loss = 1e6 - victim.hp;
+      p.rewrites = {}; p.stats.crit = 0; st.weapons = [];
+      return { loss, contacts };
+    } finally { restore(); }
+  };
+  const base = measure(false, false);
+  const chillNoCard = measure(false, true);
+  const chilled = measure(true, true);
+  const unchilled = measure(true, false);
+  assert.ok(base.loss > 0, `the ring contacted the body (${base.loss} damage)`);
+  assert.ok(Math.abs(chillNoCard.loss / base.loss - 1) < 1e-9,
+    `a chill ALONE changes nothing (x${(chillNoCard.loss / base.loss).toFixed(6)})`);
+  assert.ok(Math.abs(chilled.loss / base.loss - GLACIER_DAMAGE_MULT) < 1e-9,
+    `GLACIER on a chilled body: x${(chilled.loss / base.loss).toFixed(6)}`);
+  assert.ok(Math.abs(unchilled.loss / base.loss - 1) < 1e-9,
+    `GLACIER on an UNCHILLED body: x${(unchilled.loss / base.loss).toFixed(6)}`);
+});
+ok('R1 WILDFIRE live: the death pass hands the burn over, rider-free', () => {
+  const restore = closeWindow();
+  try {
+    p.rewrites = { wildfire: true, rime: true, ignite: true, livewire: true };
+    p.invuln = 999;
+    p.livewireHits = 0; p.overloadHits = 0;
+    // A burning corpse (hp 0 dies this frame) 40px from a live neighbour and a
+    // third body well outside WILDFIRE_RANGE.
+    const dead = { ...hostile('BRUTE', p, { x: 400, y: 400 }), hp: 0, maxHp: 1, burn: 2.2, burnDps: 6 };
+    const near = hostile('BRUTE', p, { x: 440, y: 400 });
+    const far = hostile('BRUTE', p, { x: 800, y: 400 });
+    st.enemies.push(dead, near, far);
+    st.projectiles.length = 0;
+    h.pump(1, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+    const deadBurn = dead.burn, deadDps = dead.burnDps;
+    p.rewrites = {};
+    assert.ok(deadBurn > 2.0, `the corpse was still burning at death (${deadBurn.toFixed(4)}s)`);
+    assert.equal(near.burn, deadBurn, 'the neighbour caught the FULL remaining duration');
+    assert.equal(near.burnDps, deadDps, 'and the FULL remaining dps');
+    assert.equal(far.burn, 0, 'a body outside WILDFIRE_RANGE caught nothing');
+    assert.equal(near.slow || 0, 0, 'R3: the transfer is not a weapon hit — no chill');
+    assert.equal(st.player.livewireHits || 0, 0, 'and no rider counter moved');
+    assert.equal(st.player.overloadHits || 0, 0, 'neither of them');
+  } finally { restore(); }
+});
+ok('R2 STORM REAPER live: a zap kill detonates through the death pass, only with the combo', () => {
+  const run = (withCombo) => {
+    const restore = closeWindow();
+    try {
+      p.rewrites = { livewire: true, onkillboom: true };
+      if (withCombo) p.rewrites.stormreaper = true;
+      p.invuln = 999;
+      p.livewireHits = LIVEWIRE_EVERY - 1;      // the next hit zaps
+      const struck = hostile('BRUTE', p, { x: 400, y: 400 });
+      const doomed = { ...hostile('BRUTE', p, { x: 420, y: 400 }), hp: 1, maxHp: 1 };
+      st.enemies.push(struck, doomed);
+      st.effects.length = 0;
+      onWeaponHit(st, struck);                  // the 5th hit: the zap kills `doomed`
+      const stamped = doomed.zapLethal === true;
+      const killed = doomed.hp <= 0;
+      h.pump(1, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+      const booms = st.effects.filter(fx => fx.kind === 'rewrite_boom').length;
+      const gone = !st.enemies.includes(doomed);
+      p.rewrites = {};
+      return { stamped, killed, booms, gone };
+    } finally { restore(); }
+  };
+  const off = run(false);
+  const on = run(true);
+  assert.equal(off.killed, true, 'the zap killed the 1-hp body');
+  assert.equal(off.stamped, false, 'without the combo nothing is stamped');
+  assert.equal(off.gone, true, 'the corpse left the field');
+  assert.equal(off.booms, 1, 'the onkillboom detonation alone fired');
+  assert.equal(on.stamped, true, 'with the combo the kill is stamped');
+  assert.equal(on.gone, true, 'the corpse left the field');
+  assert.equal(on.booms, 2, 'the combo ADDS its 50% blast through the SAME applyBlast path');
+});
+ok('R2 GLACIAL ORBIT live: an ORBIT contact writes the 2.5s chill (RIME alone stays at 1.5s)', () => {
+  const peakSlow = (combo) => {
+    const restore = closeWindow();
+    try {
+      p.rewrites = { rime: true };
+      if (combo) p.rewrites.glacialorbit = true;
+      const orb = makeWeapon('ORBIT');
+      st.weapons = [orb];
+      const near = hostile('BRUTE', p, { x: 45, y: 0 });
+      st.enemies.push(near);
+      let peak = 0;
+      h.pump(300, () => {
+        st.projectiles.length = 0; st.enemyShots.length = 0;
+        if (near.slow > peak) peak = near.slow;
+      });
+      p.rewrites = {}; st.weapons = [];
+      return peak;
+    } finally { restore(); }
+  };
+  const rimeOnly = peakSlow(false);
+  const withCombo = peakSlow(true);
+  assert.ok(rimeOnly > 0, `the orbit contact chilled at all (${rimeOnly.toFixed(4)}s)`);
+  assert.ok(rimeOnly <= RIME_SLOW_DURATION + 1e-9,
+    `RIME alone never writes past its 1.5s (${rimeOnly.toFixed(4)}s)`);
+  assert.ok(withCombo > RIME_SLOW_DURATION,
+    `the combo writes past RIME's 1.5s (${withCombo.toFixed(4)}s)`);
+  assert.ok(withCombo <= GLACIALORBIT_CHILL_DURATION + 1e-9,
+    `and never past its configured 2.5s (${withCombo.toFixed(4)}s)`);
+});
+ok('R2 GLACIAL ORBIT: the 2.5s chill burns at the same WALL rate at 60Hz and 120Hz', () => {
+  // House rule: 60Hz and 120Hz must both be correct, nothing counts frames.
+  // Slice 2 adds NO timer at all — the only new duration is the chill written
+  // into the existing `e.slow` field, which the sim decays dt-driven.
+  const burned = (hz) => {
+    const restore = closeWindow();
+    try {
+      p.rewrites = { rime: true, glacialorbit: true };
+      p.invuln = 999;
+      const e = hostile('BRUTE', p, { x: 500, y: 500 });
+      st.enemies.push(e);
+      onWeaponHit(st, e, { orbit: true });
+      const start = e.slow;
+      h.setFrameMs(1000 / hz);
+      h.pump(Math.round(1.0 * hz), () => {
+        st.projectiles.length = 0; st.enemyShots.length = 0;
+        e.x = p.x + 500; e.y = p.y + 500;      // pinned out of every weapon's reach
+      });
+      h.setFrameMs(1000 / 60);
+      p.rewrites = {};
+      return { start, burned: start - e.slow };
+    } finally { restore(); h.setFrameMs(1000 / 60); }
+  };
+  const a = burned(60), b = burned(120);
+  assert.equal(a.start, GLACIALORBIT_CHILL_DURATION, 'both arms start from the same 2.5s write');
+  assert.ok(Math.abs(a.burned - 1.0) < 1e-6, `a wall-clock second burned 1.00s of chill (${a.burned.toFixed(9)})`);
+  assert.ok(Math.abs(a.burned - b.burned) < 1e-9,
+    `60Hz ${a.burned.toFixed(9)}s vs 120Hz ${b.burned.toFixed(9)}s — no frame counting`);
+});
+ok('R1 OVERLOAD live: direct hits through the volley advance the SEPARATE counter', () => {
+  const restore = closeWindow();
+  try {
+    p.rewrites = { overload: true };
+    p.attackTimer = 0;                          // closeWindow pinned it silent
+    const gap = Math.round(C.AUTOPILOT.FOCUS_RANGE / 2);
+    const far = hostile('BRUTE', p, { x: gap, y: 0 });
+    st.enemies.push(far);
+    h.pump(900, () => {
+      st.enemyShots.length = 0;
+      far.x = p.x + gap; far.y = p.y;           // stay inside the engagement radius
+    });
+    const hits = p.overloadHits || 0;
+    p.rewrites = {};
+    assert.ok(hits > 0, `the volley rider advanced the overload counter (${hits} direct hits)`);
+    assert.ok(hits < OVERLOAD_EVERY || far.hp <= 1e9, 'the counter is the run\'s own integer');
+  } finally { restore(); }
+});
+
+
 // ---- 4. THE REAL DRAFT SEAM: src/main.js openDraft ----------------------------
 function draftOffer(label, setup, draws = 3000) {
   st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
@@ -909,6 +1475,109 @@ ok('one bad pick never loses a run: every rewrite AND the retuned once >= 0.8x',
     console.log(`    ${id.padEnd(13)} held from t=0: ${ratio.toFixed(2)}x baseline`);
     assert.ok(ratio >= 0.8, `${id} at ${ratio.toFixed(2)}x < the 0.8x bar`);
   }
+});
+
+// ---- 6b. G21 slice 2: D5 per-card probes + D6 no-drift -------------------------
+console.log('G21 slice 2: D5 per-card one-bad-pick probes (30 runs/cell, seed 4242)');
+const S2_CARDS = ['glacier', 'wildfire', 'overload', 'thermalshock', 'stormreaper', 'glacialorbit'];
+// A combo is probed WITH BOTH CONSTITUENTS: the honest comparable for a card
+// that can only ever be drafted after its pair is owned is (pair + card) vs
+// (pair alone), so BOTH ratios are printed and both must clear the 0.8x bar.
+const S2_PREREQS = {
+  glacier: [], wildfire: [], overload: [],
+  thermalshock: ['rime', 'ignite'],
+  stormreaper: ['livewire', 'onkillboom'],
+  glacialorbit: ['wideorbit', 'rime'],
+};
+ok('D5: every slice-2 card reads >= 0.8x, alone and against its constituents', () => {
+  const baseMean = mean(good);
+  for (const id of S2_CARDS) {
+    const pre = S2_PREREQS[id];
+    const alone = mean(simulateCohort(SEED, RUNS, 'GREED_DAMAGE', { startCards: [id] })) / baseMean;
+    const withPre = mean(simulateCohort(SEED, RUNS, 'GREED_DAMAGE', { startCards: [...pre, id] }));
+    const preOnly = pre.length
+      ? mean(simulateCohort(SEED, RUNS, 'GREED_DAMAGE', { startCards: pre }))
+      : baseMean;
+    const marginal = withPre / preOnly;
+    console.log(`    ${id.padEnd(13)} alone ${alone.toFixed(3)}x baseline` +
+      `  |  with constituents ${marginal.toFixed(3)}x` +
+      (pre.length ? ` (vs ${pre.join('+')} alone)` : ''));
+    assert.ok(alone >= 0.8, `${id} alone at ${alone.toFixed(2)}x < the 0.8x bar`);
+    assert.ok(marginal >= 0.8, `${id} + constituents at ${marginal.toFixed(2)}x < the 0.8x bar`);
+  }
+});
+ok('D5: the bad cohort still fails 100% with every slice-2 card (and without it)', () => {
+  assert.ok(bad.every(r => r.dead), 'the cardless bad cohort fails 100%');
+  for (const id of S2_CARDS) {
+    const b = simulateCohort(SEED, RUNS, 'ADVERSARIAL_BAD', { startCards: [id] });
+    assert.ok(b.every(r => r.dead), `the bad cohort holding ${id} still fails 100%`);
+  }
+});
+console.log('G21 slice 2: D6 the no-drift proof (seeded)');
+ok('D6: all slice-2 state is RUN-scoped — a fresh player carries none of it', () => {
+  const fresh = makePlayer();
+  assert.equal(fresh.overloadHits, undefined, 'OVERLOAD\'s counter is born on the run it hits in');
+  assert.equal(fresh.livewireHits, undefined, 'as slice 1 already had it');
+  assert.equal(fresh.rewrites && Object.keys(fresh.rewrites).length, 0, 'a fresh run holds no rewrite');
+  assert.equal('zapLethal' in fresh, false, 'the storm-reaper stamp lives on an ENEMY, not the player');
+  assert.equal(C.REWRITE_SLOTS, 4, 'and the slot cap is untouched');
+  // The save schema is not touched at all: the run player is never serialised
+  // (src/save.js stores the PROFILE), and no slice-2 id is a profile field.
+  const payload = JSON.stringify(buildExport(h.T.getProfile(), {}));
+  for (const id of S2_CARDS) {
+    assert.ok(!payload.includes(id), id + ' never reaches the save payload');
+  }
+  for (const field of ['overloadHits', 'zapLethal', 'rewriteEchoes']) {
+    assert.ok(!payload.includes(field), field + ' is run state, never saved');
+  }
+});
+ok('D6: combo predicates consume ZERO draws, and a CLOSED family is stream-stable', () => {
+  // (a) the offered set draws nothing at all, predicates included.
+  const real = Math.random;
+  let draws = 0;
+  Math.random = () => { draws++; return real(); };
+  try {
+    const withPairs = stateWith(null);
+    withPairs.weapons = [makeWeapon('ORBIT')];
+    for (const id of ['rime', 'ignite', 'livewire', 'onkillboom', 'wideorbit']) grantRewrite(withPairs, id);
+    rewriteCards(withPairs);          // every combo predicate TRUE
+    rewriteCards(stateWith(null));    // every combo predicate FALSE
+  } finally { Math.random = real; }
+  assert.equal(draws, 0, 'rewriteCards consumes zero rng draws, combo predicates included');
+  // (b) a CLOSED family is stream-stable: with FOUR rewrites held no rewrite
+  // card is offered at all, so ALSO holding all six slice-2 cards cannot move
+  // one offer. (A whole-tree before/after is impossible — no git checkout per
+  // house rules — so the no-drift clause is proven on the states where the new
+  // cards are ABSENT from the pool, which is exactly what it claims.)
+  const arm = (extra) => {
+    st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
+    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {};
+    st.player.rewrites = { pierceall: true, onkillboom: true, healthdamage: true, rime: true };
+    for (const id of extra) st.player.rewrites[id] = true;
+    const real2 = Math.random;
+    const rng = seeded(4711);
+    let n = 0;
+    Math.random = () => { n++; return rng(); };
+    const seq = [];
+    try {
+      for (let i = 0; i < 500; i++) {
+        h.T.openDraft();
+        seq.push(Array.from(h.elements['ov-cards'].children).map(el => el.innerHTML || '').join('|'));
+      }
+    } finally {
+      Math.random = real2;
+      st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {};
+    }
+    return { seq, n };
+  };
+  const a = arm([]);
+  const b = arm(S2_CARDS);
+  assert.equal(a.n, b.n, `identical rng draw counts (${a.n} vs ${b.n})`);
+  assert.deepEqual(a.seq, b.seq, 'offer-for-offer identical draft streams');
+  assert.ok(a.n > 0 && a.seq.length === 500, 'the probe measured 500 seeded drafts');
+  const closed = stateWith(null);
+  for (const id of ['pierceall', 'onkillboom', 'healthdamage', 'rime']) grantRewrite(closed, id);
+  assert.deepEqual(rewriteCards(closed), [], 'the family really is closed in both arms');
 });
 
 console.log(`rewrites: PASS=${pass} FAIL=${fail}`);
