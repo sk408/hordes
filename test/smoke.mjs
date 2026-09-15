@@ -971,8 +971,15 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
 }
 
 // ---- WAVE-9 heat: enemy HP visibly scales at spawn -------------------------
-// Fresh run (t~0: no elites, variants are palette-only) — same typeId spawns
-// carry identical base hp, so the only delta between the two windows is heat.
+// E2/G10 TIER FIX (pilot tick 48): "variants are palette-only" was WRONG. Every
+// spawn rolls a rarity (main.js:772-773, `rollRarity()`), RARE 2% = hpMult 1.6 and
+// MYTHIC 0.3% = hpMult 2.5, FROM t=0. That made this probe measure the tier roll
+// instead of heat: a RARE hot draw reads x3.52 (2.2 x 1.6) and fails the x2.2 bar,
+// which is the ~2%-per-suite-run flake tick 47 saw here and mis-attributed to load.
+// The bar is NOT weakened - want stays x2.2 and the same typeId is still compared -
+// both windows now require a COMMON body (a tiered draw stamps `enemy.rarity`;
+// COMMON is an unstamped no-op), so the only delta between the windows is heat,
+// which is what the check says it measures.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
@@ -982,17 +989,25 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
     return st.enemies.find(e => e.typeId === typeId) || null;
   };
-  // Baseline: whatever type spawns first at heat 0.
-  st.enemies.length = 0; st.spawnTimer = 0;
-  now += dtMs; const cb0 = rafQueue.shift(); cb0 && cb0(now);
-  const T = st.enemies[0].typeId;
-  const base = st.enemies[0].maxHp;
-  // Force heat to 10 (+120% foe hp), re-spawn until the same type shows up.
+  // Baseline: a COMMON body of whatever type spawns first at heat 0.
+  let first = null;
+  for (let i = 0; i < 40 && !first; i++) {
+    st.enemies.length = 0; st.itemDrops.length = 0; st.spawnTimer = 0;
+    now += dtMs; const cb0 = rafQueue.shift(); cb0 && cb0(now);
+    first = st.enemies.find(e => !e.rarity) || null;
+  }
+  assert(first, 'a COMMON body must spawn within the probe window');
+  const T = first.typeId;
+  const base = first.maxHp;
+  // Force heat to 10 (+120% foe hp), re-spawn until the same COMMON type shows up.
   for (let i = 0; i < 10; i++) addHeat(st, 'MANUAL_PUSH');
   assert(heatOf(st) === 10, 'forced heat 10 for the spawn probe');
   let hot = null;
-  for (let i = 0; i < 40 && !hot; i++) hot = spawnOnce(T);
-  assert(hot, 'a ' + T + ' must respawn within the probe window');
+  for (let i = 0; i < 40 && !hot; i++) {
+    const e = spawnOnce(T);
+    if (e && !e.rarity) hot = e;
+  }
+  assert(hot, 'a COMMON ' + T + ' must respawn within the probe window');
   const want = heatMultipliers(10, 10).hp / heatMultipliers(0, 0).hp;   // 2.2
   assert(Math.abs(hot.maxHp / base - want) < 0.01,
     `heat 10 must scale foe hp x${want} (base ${base}, hot ${hot.maxHp})`);

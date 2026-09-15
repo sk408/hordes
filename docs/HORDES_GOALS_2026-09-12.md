@@ -2076,7 +2076,7 @@ The one exception to report: a hidden trade-off that is ALSO irreversible and ne
 not a discovery — escalate it with numbers, and fix it by making it growable or reversible (slot
 growth, or player-chosen pool), never by explaining it.
 
-## G6 — THE DRAFT DECIDES RUNS (owner raised the target)  [status: OPEN — measured x1.28 against the owner's raised >=x1.6, a target the queue rule kept SKIPPING; depends on W7a-tooling and on E1's final economy. See the EXECUTION ORDER above]
+## G6 — THE DRAFT DECIDES RUNS (owner raised the target)  [status: OPEN — W7b's real-loop A/B is now FINAL (tick 48, all four arms 24/24) and it reads the divergence INVERTED IN BOTH BUILDS: good/bad = x0.323/x0.377 with the pre-W7b pool and x0.279/x0.145 with the shipped ladder (`b9c5571`), i.e. the landed ladder widens the inversion rather than reaching the owner's >=x1.6. The x1.28 analytic figure predates W7b. Needs an owner call before another balance slice: see TICK 48 at the end of this doc]
 Divergence is currently **x1.28**, which barely clears its own bar and is weak for a game whose stated
 principle is "the draft IS the game". **Owner: "I think we could push it even further? 1.6? 2.0?"**
 
@@ -5559,6 +5559,9 @@ line in tick 44 as a skipped suite. Tick 43's standing flag still applies: `test
 
 **Held/issued this tick:** lock acquired (`ACQUIRED hordes as pid 1686244`), doc edits ONLY (this note + the G21 marker re-confirmation),
 **nothing issued** (no live lane), lock RELEASED. Commits remain the orchestrator's.
+**Same tick, second finding - the smoke red is a REAL unseeded-draw flake and tick 47's "load flake" label was wrong. Fixed test-side (no builder lane needed, the tick-45 precedent).**
+The suite came back `greenfiles=87 redfiles=1` this tick on an otherwise-unchanged code tree: `test/smoke.mjs :: heat 10 must scale foe hp x2.2 (base 144, hot 506.88000000000005)`. The arithmetic gives the cause exactly: 506.88 / 144 = **3.52 = 2.2 (the heat factor the check wants) x 1.6 (the RARE tier's `hpMult`, `src/rarity.js:67`)**. Every spawn rolls a rarity from t=0 (`rollRarity()` at `src/main.js:772-773`; RARE 2% / MYTHIC 0.3%), so the probe's "hot" body was a RARE CHASER and the probe measured the tier roll, not heat. Its own comment - "variants are palette-only" - was factually wrong. That is a ~2.3% per-run failure rate, which is exactly why the same file read "green standalone, red in the suite" twice and got filed as load. **Fix is DETERMINISM, NOT TOLERANCE:** both probe windows now require a COMMON body (a tiered draw stamps `enemy.rarity`; COMMON is an unstamped no-op), same typeId, `want` unchanged at x2.2, no `src/` touched. Measured after: `node test/smoke.mjs` **12/12 green** (102s), the probe still measures live (`heat scaling: CHASER hp 144 -> 316.8 (x2.20 at heat 10)`), and `bash tools/run_suite.sh` => `TREE ... @ 974b86c | dirty=2`, **`SUITE greenfiles=88 redfiles=0`**. Retarget disclosed per house rules: `test/smoke.mjs` +35/-11, only the probe's body-selection changed, no assertion moved or banded. **Flag, NOT fixed:** other spawn-touching smoke probes may carry the same tier exposure; this fix is scoped to the heat probe only.
+
 **NOT verified by me, stated plainly:** anything about G21 (no code exists), and the gameplay meaning behind the survival medians.
 
 
@@ -5629,3 +5632,34 @@ I recommend (a) - no purchase, no new lane, and the pilot's own verification wor
 loss. This tick's first checkpoint was swallowed that way; re-sent with the env and delivered as
 `msg_01M2HH9D5Y3WJPA61JT4MH1J2Z`. Same env requirement as `hub-worker issue`. Exit 0 is NOT evidence a checkpoint landed -
 read the returned id.
+
+
+---
+
+## TICK 48 - 2026-09-15 04:15 UTC (goal pilot, subagent:spawnfa) - W7b DRAFT A/B COMPLETE (ALL FOUR ARMS 24/24): THE INVERSION IS CONFIRMED, AND THE LANDED LADDER MAKES IT WORSE
+
+**What moved:** the one measurement the queue was explicitly waiting on closed. `on_bad` finished (it sat at 14/24 at tick 44, and tick 44's text says "the final aggregate waits on on_bad's exit - no re-dispatch needed"; that condition is now met). Nothing else in the tree changed: HEAD `974b86c`, `git status --porcelain` = clean.
+
+**Final arms, re-read by the pilot itself from the arm files (not from an earlier tick's table):** `python3 /tmp/w7b_ab/stats.py` over the four `/tmp/w7b_ab/*.jsonl` (each 24 RUN lines + 1 SUMMARY), cap = 1800s:
+
+| arm | runs | median | mean | won | at the 1800s cap | median kills |
+|---|---|---|---|---|---|---|
+| off_good | 24/24 | 209.5s | 405.4s | 2 | 2 | 3,581 |
+| off_bad  | 24/24 | 555.6s | 953.6s | 10 | 10 | 17,995 |
+| on_good  | 24/24 | 261.1s | 698.4s | 7 | 7 | 5,109 |
+| on_bad   | 24/24 | 1800.0s | 1370.9s | 17 | 17 | 109,581 |
+
+**Paired divergence (`node tools/w7b_draft_ab.mjs --aggregate <good> <bad>`), both FINAL at n=24:**
+- good/bad, **ladder OFF** (pre-W7b pool) = **x0.323 median-of-ratios / x0.377 ratio-of-medians**.
+- good/bad, **ladder ON** (the SHIPPED build, `b9c5571`) = **x0.279 / x0.145** (tick 44's x0.210 ratio-of-medians was the partial bad arm; the full cohort sharpens it DOWN, not up).
+- on/off, good arm = x1.001 / x1.246 - the ladder is MEDIAN-NEUTRAL on the good arm and buys tail + wins (wins 2 -> 7, cap-hits 2 -> 7, median kills 3,581 -> 5,109).
+
+**The reading, stated as the artifact states it:** the metric is INVERTED IN BOTH BUILDS - the utility-favoring "bad" order (Light Boots / Gem Magnet / run rules first) outlives the ladder-chasing "good" one - and the shipped rarity ladder does NOT flip the sign; it widens the inversion (ratio-of-medians x0.377 -> x0.145, cap-hits 10 -> 17). So the owner's x1.6 target is not merely unmet, it is unmet on the wrong side of 1.0, and the landed W7b ladder is not delivering divergence: its measurable effect is broad good-arm power (x1.246 on the good arm's median) plus a much larger utility-arm tail.
+
+**Censoring, stated so nobody reads these as exact:** 36 of the 96 runs (37.5%) sit at the 1800s cap - 17 of 24 in `on_bad` - so every "the utility build survives longer" figure is a LOWER bound; the true on-arm divergence is at least as inverted as x0.145 (the good arm is not censored much: 7/24).
+
+**Owner decision needed (one line, pilot's recommendation first):** I would NOT stack another W7b balance slice on top of an inverted metric - the A/B says the ladder's own cards do not beat utility filler, so re-pricing items without changing what the ladder PAYS would just move the same numbers. Cheaper first step: treat this as a priced finding and let the owner pick (a) leave the ladder as shipped (it is a win-rate/tail buff, ~neutral on the median), (b) revert `b9c5571` and re-open W7b from the draft-policy side, or (c) author a W7b slice that reprices the CHASE families against the measured utility order - and only then re-run this same 4-arm A/B, which is now a one-command re-measurement (roughly 8h of cohort wall-clock, it is a real-loop harness, not a sim).
+
+**Lanes (probed this tick, pasted):** `kimi -p "reply with exactly: PROBE_OK"` from /tmp => `provider.auth_error: 403 You've reached your weekly (7-day) usage limit` - unchanged from tick 47, still no known reset time. `cli:glm-hordes-g8` is retired with its dated reset at 2026-09-15 15:49:58 UTC (~11.5h out). The `claude` lane is kimi-metered (`hub_worker.py:546-557`), so two live lanes are one dead meter. `hub-worker queue hub` reads empty, so nothing stale fires when a lane returns. **NOTHING ISSUED** - a blind re-issue reproduces exit 1 and adds a stale task id (tick 44-47 precedent). `docs/briefs/G21_SLICE2_COMBOS.md` stays staged and anchor-checked, ready to go verbatim the first tick a probe answers.
+
+**NOT verified by me, stated plainly:** the gameplay meaning behind the survival medians (why the utility order wins) - the harness reports time/kills, not a causal account; and anything about G21 slice 2 (no code exists). The A/B arms themselves were produced by earlier ticks' dispatches, not re-run this tick; only the AGGREGATE and the per-arm statistics were computed here, from the raw arm files.
