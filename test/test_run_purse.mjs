@@ -90,7 +90,12 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 // the same "owner's loadout" stage the cohorts measure — so both arms KILL.
 {
   const prof = T.getProfile();
-  prof.gold = 10_000_000;
+  // G17 slice 1b FIXTURE RETARGET (was 10_000_000): the repriced catalogue is
+  // 29.6M, so the old grant armed only a PARTIAL build and the seeded parity
+  // arm split a boundary kill across the frame-rate arms (16 vs 15 kills,
+  // the same failure class the 0xe1->0xe3 seed retarget fixed). 100M re-arms
+  // the FULL build the comment promises; the assertions are unchanged.
+  prof.gold = 100_000_000;
   for (const def of SHOP_UPGRADES) {
     for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(prof, def.id)) break;
   }

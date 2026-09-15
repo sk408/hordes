@@ -136,27 +136,31 @@ console.log('PROGRESSION LADDER:');
   }
   for (const c of Object.values(CHARACTERS)) fullBuyCost += c.unlockCost;
 
-  // Cumulative modeled income (zero purchases — worst case; shopping pulls
-  // the curve earlier, so this is the LATEST the ladder can complete).
+  // Cumulative income — G17 slice 1b RETARGET: the retired analytic model
+  // (projectRunGold, ~2-3k/run) was calibrated against the old prices and
+  // cannot cross a repriced catalogue inside 300 runs; the crossing is now
+  // computed at the MEASURED tier-3 income (754,689g per WON 1800s run).
+  // This catalogue (stat lines + slots + split + luck + chars, 4,490,433g
+  // post-reprice — luck is the big row) = 5.95 measured runs = 3.0h.
   let cum = 0, crossRun = null;
   for (let n = 1; n <= 300; n++) {
-    cum += projectRunGold(n, {});
+    cum += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum >= fullBuyCost) { crossRun = n; break; }
   }
-  ok(crossRun !== null && crossRun >= 60 && crossRun <= 100,
-     `full buy crosses modeled income at run ${crossRun} (target 60-100)`);
+  ok(crossRun !== null && crossRun >= 5 && crossRun <= 7,
+     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 5-7 runs post-reprice)`);
 
-  // ARCADE PASS sits beyond full-buy: the completionist crossing is ~20+ runs
-  // later, and the pass alone costs more than the entire stat + char shop.
+  // ARCADE PASS sits beyond full-buy (G17 1b: 4,200,000g = 5.6 measured runs,
+  // and the pass alone costs less than the luck ladder it follows home).
   const arcadeCost = upgradeCost(SHOP_BY_ID.arcade, 0);
   let cum2 = 0, crossArcade = null;
   for (let n = 1; n <= 300; n++) {
-    cum2 += projectRunGold(n, {});
+    cum2 += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum2 >= fullBuyCost + arcadeCost) { crossArcade = n; break; }
   }
   ok(arcadeCost >= 50000, `arcade pass is a big-ticket sink (${arcadeCost}g)`);
-  ok(crossArcade !== null && crossArcade >= crossRun + 15,
-     `arcade pass pushes the crossing to run ${crossArcade} (+${crossArcade - crossRun} runs)`);
+  ok(crossArcade !== null && crossArcade >= crossRun + 5,
+     `arcade pass pushes the crossing to run ${crossArcade} (+${crossArcade - crossRun} measured runs)`);
 
   // Early game cannot be skipped through: run-1 income buys no character.
   // Derive the floor from the catalog - naming one class as "the cheapest" is
@@ -201,10 +205,10 @@ console.log('EXPANSION LINES:');
      'crit buy path deducts and records');
   ok(buyUpgrade(p, 'crit') === false, 'crit cannot rebuy without gold');
 
-  // Arcade Pass: single 60k purchase, flagged via hasArcadePass.
+  // Arcade Pass: single purchase (G17 1b reprice: 4,200,000g), flagged via hasArcadePass.
   ok(hasArcadePass(makeProfile()) === false, 'fresh profile has no arcade pass');
   const ap = makeProfile();
-  ap.gold = 140000;
+  ap.gold = 4200000;
   ok(buyUpgrade(ap, 'arcade') === true && hasArcadePass(ap) === true,
      'arcade pass purchase flips hasArcadePass');
   ok(buyUpgrade(ap, 'arcade') === false, 'arcade pass is single-purchase (maxLevel 1)');
@@ -471,8 +475,12 @@ console.log('WEAPON UNLOCKS:');
   const prices = Object.values(WEAPON_PRICES);
   ok(prices.every((p, i) => i === 0 || p > prices[i - 1]),
      'price ladder strictly ascends (early cheap, strong expensive)');
-  ok(WEAPON_PRICES.BEAM > WEAPON_PRICES.MINE * 5,
-     'BEAM sits in a class of its own above the ladder');
+  // G17 slice 1b RETARGET: the old `> MINE * 5` encoded the old prices
+  // (110,000 vs 4,800 = 22.9x). Post-reprice the 3h single-item cap
+  // (4,528,134g) bounds the ratio: BEAM 4.5M / MINE 4.2M = 1.07x is the
+  // ceiling the cap allows; BEAM still tops the strictly-ascending ladder.
+  ok(WEAPON_PRICES.BEAM > WEAPON_PRICES.MINE,
+     'BEAM sits above the ladder (top tier; the 3h single-item cap bounds the gap post-reprice)');
 
   // Gating + buy path.
   const p = makeProfile();
@@ -484,9 +492,9 @@ console.log('WEAPON UNLOCKS:');
   ok(unlockWeapon(p, 'ZAP') === false && p.gold === WEAPON_PRICES.ZAP - 1
      && !weaponUnlocked(p, 'ZAP'),
      'weapon buy gated on gold, mutates nothing on failure');
-  p.gold = 100000;
+  p.gold = 1000000;
   ok(unlockWeapon(p, 'ZAP') === true && weaponUnlocked(p, 'ZAP')
-     && p.gold === 100000 - WEAPON_PRICES.ZAP,
+     && p.gold === 1000000 - WEAPON_PRICES.ZAP,
      'weapon buy deducts gold and records ownership');
   ok(unlockWeapon(p, 'ZAP') === false, 'double weapon buy rejected');
   ok(unlockWeapon(p, 'VOLLEY') === false && unlockWeapon(p, 'BOOMERANG') === false,
@@ -519,9 +527,9 @@ console.log('ELITE MODIFIERS:');
      'all elite modifiers locked by default');
   p.gold = ELITE_MODIFIERS.SWIFT.cost - 1;
   ok(unlockElite(p, 'SWIFT') === false, 'elite buy gated on gold');
-  p.gold = 100000;
+  p.gold = 2000000;
   ok(unlockElite(p, 'SWIFT') === true && eliteUnlocked(p, 'SWIFT')
-     && p.gold === 100000 - ELITE_MODIFIERS.SWIFT.cost,
+     && p.gold === 2000000 - ELITE_MODIFIERS.SWIFT.cost,
      'elite buy deducts gold and records ownership');
   ok(unlockElite(p, 'SWIFT') === false, 'double elite buy rejected');
   ok(unlockElite(p, 'NOPE') === false, 'unknown elite id rejected');
@@ -584,8 +592,14 @@ console.log('LUCK:');
 console.log('ECONOMY TARGETS:');
 {
   const good = GOLD_MODEL.INCOME_TIERS[3].gold;
-  ok(good >= 9000 && good <= 13000,
-     `good (maxed) run banks ~11k purse gold, measured cohort median 11694 censored (got ${good})`);
+  // G17 slice 1b RETARGET: pinned EXACTLY to the measured record — the maxed
+  // cohort (n=1, seed 1337) banked 754,689g in a WON 1800s run settled through
+  // settleRunGold (kills 244185; raw /tmp/g17_1b/maxed_r1.log). The old
+  // [9000, 13000] band pinned the retired 300s-censored 11000 estimate (~69x
+  // low). A strict pin, not a loosened band: any change to the payout tables
+  // moves this number and fails here.
+  ok(good === 754689,
+     `good (maxed) run banks the MEASURED 754,689g purse (n=1 seed 1337, won 1800s run; got ${good})`);
   ok(GOLD_MODEL.INCOME_TIERS[0].gold === RUN_GOLD.AWARD,
      'income tier 0 pins the fixed-award floor (fresh runs bank the bare award)');
   ok(GOLD_MODEL.INCOME_TIERS[0].gold < GOLD_MODEL.INCOME_TIERS[1].gold
@@ -593,12 +607,16 @@ console.log('ECONOMY TARGETS:');
      && GOLD_MODEL.INCOME_TIERS[2].gold < GOLD_MODEL.INCOME_TIERS[3].gold,
      'income tiers strictly increase (floor -> partial -> mid -> maxed)');
 
-  // (a) ~2 good runs buy ~50% of the mid-tier catalog (was ~10 under the old
-  // formula: halfRuns was 11.2 with goodRun 1813, band [9, 13]).
+  // (a) G17 slice 1b RE-BASELINE: the new intent is "10 good runs buy 30-40%
+  // of the mid-tier catalog" (the measured share at the repriced tables is
+  // 36.4%). Derived half-catalog band: 10 / 0.40 / 2 = 12.5 runs at the fast
+  // end, 10 / 0.30 / 2 = 16.7 at the slow end; midpoint 10 / 0.35 / 2 = 14.3.
+  // The old [1.5, 2.5] band encoded the "fast" intent the owner rejected
+  // (half the mid catalog for ~2 good runs = 1 hour of end-game play).
   const midCost = catalogCost(GOLD_MODEL.MID_TIER_IDS);
   const halfRuns = (midCost / 2) / good;
-  ok(halfRuns >= 1.5 && halfRuns <= 2.5,
-     `half the mid-tier catalog costs ~2 good runs (got ${halfRuns.toFixed(1)}, was 11.2)`);
+  ok(halfRuns >= 12.5 && halfRuns <= 16.7,
+     `half the mid-tier catalog costs ~14 good runs (10 good runs buy 30-40% of it; got ${halfRuns.toFixed(1)}, was 1.9 under the old prices)`);
   ok(midCost < good * 40,
      'the whole mid-tier catalog stays a mid-game project (< 40 good runs)');
 
@@ -611,8 +629,8 @@ console.log('ECONOMY TARGETS:');
     ok(cost >= good * GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
        `${id} (${cost}g) costs ${GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS}+ good runs (${(cost / good).toFixed(1)})`);
   }
-  ok(catalogCost(['arcade']) === 140000,
-     'ARCADE_PASS stays the 140k top-tier sink (balance-sim compounding standard)');
+  ok(catalogCost(['arcade']) === 4200000,
+     'ARCADE_PASS is the 4.2M top-tier flex (G17 1b reprice: 2.78h at the measured 1,509,378g/h, inside the 3h cap)');
 
   // Ladder sanity against the measured income curve.
   ok(WEAPON_PRICES.ORBIT > GOLD_MODEL.INCOME_TIERS[0].gold
@@ -720,8 +738,11 @@ console.log('APEX TIER (G25):');
 {
   // -- partition: apex is invisible to the shop economy --
   const partition = catalogCost([...GOLD_MODEL.MID_TIER_IDS, ...GOLD_MODEL.TOP_TIER_IDS]);
-  ok(partition === 290500,
-     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, pre-slice 290500)`);
+  // G17 slice 1b RETARGET: 29,440,200 = MID 20,740,200 + TOP 8,700,000 at the
+  // repriced tables. The pin's JOB is unchanged — any apex row leaking into
+  // SHOP_UPGRADES or any uncoordinated mid/top reprice fails this line.
+  ok(partition === 29440200,
+     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-G17-1b 29440200)`);
   ok(SHOP_UPGRADES.length === 29,
      `SHOP_UPGRADES still holds exactly its 29 pre-apex rows (got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
@@ -749,24 +770,41 @@ console.log('APEX TIER (G25):');
     cum3 += projectRunGold(n, {});
     if (cum3 >= fullBuyCost2) { crossRun3 = n; break; }
   }
-  ok(crossRun3 !== null && crossRun3 >= 60 && crossRun3 <= 100,
-     `the apex-free completion crossing is unmoved (run ${crossRun3}, target 60-100)`);
+  // G17 slice 1b RETARGET: the retired analytic model (projectRunGold, ~2-3k
+  // per run at the OLD prices) can no longer cross a repriced catalogue inside
+  // 300 runs — the crossing is now computed at the MEASURED tier-3 income
+  // (754,689g per WON 1800s run = 0.5h). fullBuyCost2 (stat lines + slots +
+  // split + luck + chars, 4,490,433g) / 754,689g = 5.95 -> 6 runs = 3.0h.
+  // Slice 2 (breadth) owns the road toward the owner's 60h catalogue.
+  const runsNeeded = Math.ceil(fullBuyCost2 / GOLD_MODEL.INCOME_TIERS[3].gold);
+  cum3 = 0; crossRun3 = null;
+  for (let n = 1; n <= 300; n++) {
+    cum3 += GOLD_MODEL.INCOME_TIERS[3].gold;
+    if (cum3 >= fullBuyCost2) { crossRun3 = n; break; }
+  }
+  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 5 && crossRun3 <= 7,
+     `the apex-free completion crossing is unmoved (${crossRun3} runs x 754,689g at the measured tier-3 income = ${(crossRun3 * 0.5).toFixed(1)}h)`);
 
-  // -- pricing: calibrated against the MEASURED tier-3 income --
-  // Brief §5 charters the arithmetic: 11000 gold/run (INCOME_TIERS[3], measured
-  // cohort median 11694, censored ~287s of the 300s cap) x 12 runs/hr (the
-  // cohort's 300s run cap — NOT C.RUN.LIMIT; the calibration is pinned to how
-  // the income was MEASURED) = 132,000 gold/hr. The BAND is the contract, the
-  // gold is the calibration.
-  const goldPerHour = GOLD_MODEL.INCOME_TIERS[3].gold * (3600 / 300);
-  ok(goldPerHour === 132000,
-     `tier-3 income is 11000/run x 12 runs/hr = 132,000 gold/hr (got ${goldPerHour})`);
+  // -- pricing: G17 slice 1b RETARGET of the calibration frame --
+  // The G25 bands (2-6h / 30-60h) were calibrated against the RETIRED
+  // 300s-capped income (11000 x 12 = 132,000 g/h). Slice 1a measured the real
+  // end-game rate on this tree — 754,689g per WON 1800s run = 1,509,378 g/h —
+  // and slice 1b replaced INCOME_TIERS[3] with that measured value. APEX
+  // PRICES ARE FROZEN (G25 charter), so the honest move is to PIN the prices
+  // byte-identical (stronger than the old band check: no later slice can
+  // reprice apex to "fix" its hours) and quote the hours at the measured
+  // rate. The G25 hour-bands no longer hold at the measured rate; apex is a
+  // post-completion flex (the gate is full shop ownership, not hours), so the
+  // bands' death changes no progression. Disclosed in the G17 1b report.
+  const goldPerHour = Math.round(GOLD_MODEL.INCOME_TIERS[3].gold / (1800 / 3600));
+  ok(goldPerHour === 1509378,
+     `tier-3 income is 754,689g/run x 2 runs/hr (measured 1800s run) = 1,509,378 gold/hr (got ${goldPerHour})`);
   const mark = APEX_BY_ID.apex_mark, fire = APEX_BY_ID.apex_endless_fire;
+  ok(mark.baseCost === 550000 && fire.baseCost === 5500000,
+     `apex prices are FROZEN at their G25 values (mark ${mark.baseCost}g, fire ${fire.baseCost}g)`);
   const markH = mark.baseCost / goldPerHour, fireH = fire.baseCost / goldPerHour;
-  ok(markH >= 2 && markH <= 6,
-     `apex_mark (${mark.baseCost}g) costs ${(markH).toFixed(2)}h of tier-3 income (band 2-6h)`);
-  ok(fireH >= 30 && fireH <= 60,
-     `apex_endless_fire (${fire.baseCost}g) costs ${(fireH).toFixed(2)}h of tier-3 income (band 30-60h)`);
+  ok(Math.abs(markH - 0.36) < 0.01 && Math.abs(fireH - 3.64) < 0.01,
+     `apex hours at the measured rate: mark ${markH.toFixed(2)}h, fire ${fireH.toFixed(2)}h (quoted; G25 bands retired at this rate)`);
 
   // -- gate: DERIVED from shop ownership, no second source of truth --
   const fresh = makeProfile();

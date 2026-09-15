@@ -55,9 +55,9 @@ import {
 // acceptance 7 re-runs --measure after the reprice and must reproduce these
 // numbers (stage cohorts buy fixed purchases, prices do not enter them).
 export const MEASURED = {
-  fresh:   { n: 0, seed: 0, goldMean: 0, goldMedian: 0, lenMeanS: 1, tier: 0 },
-  partial: { n: 0, seed: 0, goldMean: 0, goldMedian: 0, lenMeanS: 1, tier: 1 },
-  maxed:   { n: 0, seed: 0, goldMean: 0, goldMedian: 0, lenMeanS: 1, tier: 3 },
+  fresh:   { n: 8, seed: 1337, goldMean: 164.5, goldMedian: 71, lenMeanS: 11.6, tier: 0 },
+  partial: { n: 8, seed: 1337, goldMean: 156.3, goldMedian: 98, lenMeanS: 26.4, tier: 1 },
+  maxed:   { n: 1, seed: 1337, goldMean: 754689, goldMedian: 754689, lenMeanS: 1800, tier: 3 },
 };
 
 // Gold per HOUR at a stage: the measured banked gold per run divided by the
@@ -162,11 +162,20 @@ async function measure(stage, n, seed) {
   Math.random = mulberry32(seed);          // the WHOLE loop reproduces: spawns,
   try {                                    // drafts (choiceSeed), elites, weather
     const { runRealCohort, mean, median } = await import('./real_loop.mjs');
-    const recs = await runRealCohort(stage, n, { maxSeconds: 1860 });
+    // G17 slice 1a: INCREMENTAL logging, one line per finished run AS IT
+    // FINISHES through the harness's existing onRun hook (real_loop.mjs :138)
+    // — a big maxed cohort must never look wedged to the worker watchdog
+    // (design #62 §4.5), which is exactly what killed the previous attempt.
     console.log(`# --measure ${stage} n=${n} seed=${seed} cap=1860s (RUN.LIMIT 1800s + 60)`);
-    for (const r of recs) {
-      console.log(`run: time=${r.time}s wave=${r.wave} cause=${r.cause} kills=${r.kills} gold=${r.gold}${r.won ? ' WON' : ''}`);
-    }
+    const recs = await runRealCohort(stage, n, {
+      maxSeconds: 1860,
+      onRun: (r, i) => console.log(`run ${String(i).padStart(2)}/${n}: time=${r.time}s wave=${r.wave} ` +
+        `cause=${r.cause} kills=${r.kills} gold=${r.gold}${r.won ? ' WON' : ''}`),
+      // G17 slice 1a STEP B: live mid-run progress every 600 frames (10 sim-s),
+      // from inside the harness's ONE existing frame loop — a 35-min wall run
+      // must never be a flat log (the watchdog defect that killed slice 1a twice).
+      onProgress: (r, line) => console.log(line),
+    });
     console.log(`BASELINE ${stage}: n=${n} seed=${seed} goldMean=${mean(recs.map(r => r.gold)).toFixed(1)} ` +
       `goldMedian=${median(recs.map(r => r.gold))} lenMeanS=${mean(recs.map(r => r.time)).toFixed(1)} ` +
       `won=${recs.filter(r => r.won).length}/${n}`);

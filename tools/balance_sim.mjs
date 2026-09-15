@@ -71,13 +71,21 @@ export const SIM_TUNING = {
                             // at the wave boundary, so wave-1 deaths clock at
                             // ~122s — the real cohort's 118-137s deaths)
   CHEST_MIN: 20, CHEST_MAX: 45,  // gold per opened chest (in-run currency)
-  GOOD_RUN_TARGET: 30,      // good runs per career (milestones every 5)
+  // G17 slice 1b re-baseline: the measured good run banks 754,689g over
+  // 1800s (= 0.5h), and the owner's completion target is 60+ play hours of
+  // catalogue — 60h / 0.5h = 120 good runs of end-game play per career
+  // (milestones every 5). The old 30 encoded the pre-reprice "fast" intent.
+  GOOD_RUN_TARGET: 120,     // good runs per career (milestones every 5)
   RUN_CAP: 2000,            // hard cap on total runs per career. Re-calibrated
                             // for the ladder: the retired 5-wave unit reached
                             // its milestone in most runs, the 15-wave ladder
                             // much less often, so a career needs more runs to
                             // bank the same 30 (sim-only knob).
-  MID_TIER_TOL: [0.35, 0.65],    // tolerance around the ~50% directive
+  // G17 slice 1b re-baseline: the new intent is "10 good runs buy 30-40% of
+  // the mid catalogue" (measured share at the new prices: 36.4%). The old
+  // [0.35, 0.65] was the tolerance around the retired "~50% of a 40,500g
+  // catalogue" directive from the pre-reprice fast economy.
+  MID_TIER_TOL: [0.30, 0.40],    // 10-good-run mid-share band (G17 1b)
 };
 
 // Calibration constants fitted to the REAL stage cohorts (tools/real_loop.mjs
@@ -628,7 +636,7 @@ async function main() {
     partial: (() => { const p = makeProfile(); p.purchased = { dmg: 2, hp: 3 };
       p.unlockedWeapons = STARTER_WEAPONS.concat(['ORBIT', 'ZAP']);
       p.unlockedCharacters = ['KNIGHT']; p.equippedCharacter = 'KNIGHT'; return p; })(),
-    maxed: (() => { const p = makeProfile(); p.gold = 10_000_000;
+    maxed: (() => { const p = makeProfile(); p.gold = 1_000_000_000;   // G17 1b: full-buy grant above any plausible catalogue
       for (const def of SHOP_UPGRADES) {
         for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(p, def.id)) break;
       } return p; })(),

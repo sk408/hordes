@@ -37,7 +37,13 @@ export function stageProfile(name) {
     return prof;
   }
   if (name === 'maxed') {
-    prof.gold = 10_000_000;
+    // G17 slice 1b: the grant is 1e9, not the old 10M — the repriced catalogue
+    // is 29.6M, so 10M would silently arm a PARTIAL build. The STAGE's
+    // definition is "everything bought" (the 1a baseline was measured with a
+    // full buy; 10M covered the old 440,933g catalogue with 22x headroom).
+    // A grant this far above any plausible catalogue keeps the stage
+    // price-independent.
+    prof.gold = 1_000_000_000;
     for (const def of SHOP_UPGRADES) {
       for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(prof, def.id)) break;
     }
@@ -134,9 +140,15 @@ function classify(d) {
  * the chest/heat terms exactly as the game pays them.
  *
  * onRun(record, i) — optional progress callback.
+ * onProgress(r, st) — optional LIVE progress callback, fired from INSIDE the
+ * existing frame loop at frame 0 and then every 600 frames (10 sim-seconds),
+ * so a 35-minute wall run is never a flat log (G17 slice 1a STEP B; goals
+ * doc "no measurement tool may sit silent for minutes" rule). No second
+ * frame loop, no second advance call, no second rAF queue — this hook rides
+ * the one loop that already exists below.
  */
 export async function runRealCohort(stage, runs, {
-  maxSeconds = CFG.RUN.LIMIT + 60, onRun = null,
+  maxSeconds = CFG.RUN.LIMIT + 60, onRun = null, onProgress = null,
 } = {}) {
   const h = await bootReal(stage);
   const st = h.state;
@@ -147,6 +159,9 @@ export async function runRealCohort(stage, runs, {
     let ended = null;
     const capFrames = Math.floor(maxSeconds * 60);
     for (let i = 0; i < capFrames; i++) {
+      if (onProgress && i % 600 === 0) {
+        onProgress(r, `run ${r}: t=${Math.floor(st.time)}s wave=${st.wave.num} hp=${Math.round(st.player.hp)} mode=${st.mode}`);
+      }
       h.dom.advance(dtMs);
       const cb = h.dom.rafQueue.shift();
       if (!cb) throw new Error('real_loop: raf queue died');

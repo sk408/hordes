@@ -142,12 +142,14 @@ if (MAXED) {
   // buy every row to its cap. No second price table, no hand-written level
   // map — whatever prices/slots the live meta.js has is what this profile is.
   const prof = makeProfile();
-  prof.gold = 10_000_000;
+  // G17 slice 1b: 1e9, not the old 10M — the repriced catalogue is 29.6M and
+  // 10M would arm a partial build (the stage's definition is a FULL buy).
+  prof.gold = 1_000_000_000;
   for (const def of SHOP_UPGRADES) {
     for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(prof, def.id)) break;
   }
   lsBack.set('hordes_profile_v1', JSON.stringify(prof));
-  console.log(`maxed profile: gold spent ${10_000_000 - prof.gold}g · ` +
+  console.log(`maxed profile: gold spent ${1_000_000_000 - prof.gold}g · ` +
     `slots ${prof.purchased.slots} · weapons ${prof.unlockedWeapons.length} · ` +
     `elites ${prof.unlockedElites.join('/') || 'none'}`);
 }

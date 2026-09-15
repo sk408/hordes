@@ -232,9 +232,20 @@ export const GOLD_MODEL = {
     { tier: 0, runs: '1-5',   gold: 70 },     // == RUN_GOLD.AWARD (measured floor)
     { tier: 1, runs: '6-20',  gold: 100 },    // partial build, median 95.5
     { tier: 2, runs: '21-45', gold: 200 },    // half-maxed build, median 185
-    { tier: 3, runs: '46+',   gold: 11000 },  // maxed build, median 11694 (censored)
+    // G17 slice 1b (2026-09-15): REPLACED WITH THE MEASURED VALUE — the old
+    // 11000 was a 300s-CAPPED cohort median (~69x low). The maxed cohort on
+    // this tree (n=1, seed 1337, tools/economy_ledger.mjs --measure) banked
+    // 754,689g in ONE WON 1800s run settled through settleRunGold (kills
+    // 244185, cause RUN SURVIVED; raw log /tmp/g17_1b/maxed_r1.log). A record
+    // of measurement, not an intent knob (the G17 charter froze payouts).
+    { tier: 3, runs: '46+',   gold: 754689 },
   ],
-  TOP_TIER_MIN_GOOD_RUNS: 10,  // re-derived: BEAM 10.0, ARCADE_PASS 12.7 maxed runs
+  // G17 slice 1b: re-derived at the MEASURED good run (754,689g = 0.5h of
+  // end-game play). The single-item cap (3h) bounds ANY row at <= 6 good
+  // runs, so the old "10+" bar is arithmetically unreachable post-reprice;
+  // the top bar is 5+ good runs (~2.5h+). Post-reprice: BEAM 6.0,
+  // ARCADE_PASS 5.6 good runs.
+  TOP_TIER_MIN_GOOD_RUNS: 5,
   // The priced-this-wave catalog (shop row ids). MID_TIER: everything a
   // mid-game shopper works through; TOP_TIER: the 30+-good-run trophies.
   MID_TIER_IDS: [
@@ -335,21 +346,25 @@ export const WEAPON_SLOT_START = 3;
 export const MAX_WEAPON_SLOTS = 6;
 
 // ---------- WEAPON_PRICES (stepped ladder; archetype order = price order) ----
-// Cheap picks first (run-1 income buys ORBIT), each step ~1.5-1.6x, BEAM is
-// the top-tier trophy at 30+ good runs (see GOLD_MODEL). Ladder derived from
-// the weapons.js archetype list — test_meta.mjs guards drift (every archetype
-// is priced here or is a STARTER_WEAPON).
+// G17 SLICE 1b REPRICE (2026-09-15): the economy was ~69x too fast at the top
+// (measured end-game rate 1,509,378g/h — a WON 1800s maxed run banks 754,689g;
+// the old ladder totalled 0.3h of end-game income). Prices are the lever,
+// payouts are FROZEN. Ladder rules now: the FIRST purchase stays inside 1-3
+// tier-0/1 runs (ORBIT 200g / 70g = 2.9 runs), 10 good runs buy 30-40% of the
+// mid catalogue (measured share 36.4%), and NO single item exceeds the 3h cap
+// (4,528,134g). BEAM stays the top of the ladder at ~3h (2.98h). Ladder
+// derived from the weapons.js archetype list — test_meta.mjs guards drift
+// (every archetype is priced here or is a STARTER_WEAPON).
 export const WEAPON_PRICES = {
-  ORBIT: 400,        // reliable contact damage, cheapest real archetype
-  ZAP: 800,          // chain zap: early AoE-ish clear
-  NOVA_PULSE: 1300,  // hands-free AoE ring
-  SCYTHE: 2000,      // heavy melee sweep
-  SEEKER: 3100,      // homing coverage
-  MINE: 4800,        // area denial, best-in-class mid pick
-  // TOP TIER — BALANCE-SIM RETUNE (Sk408: account for compounding): greed +
-  // chest income push a late-career good run to ~3.2k gross, so a 30+good-run
-  // trophy must cost 100k+. Sim standard: tools/balance_sim.mjs.
-  BEAM: 110000,
+  ORBIT: 200,          // reliable contact damage, cheapest real archetype (FIRST purchase: 2.9 tier-0 runs)
+  ZAP: 600000,         // chain zap: early AoE-ish clear (0.40h)
+  NOVA_PULSE: 1200000, // hands-free AoE ring (0.79h)
+  SCYTHE: 2000000,     // heavy melee sweep (1.32h)
+  SEEKER: 2800000,     // homing coverage (1.85h)
+  MINE: 4200000,       // area denial, best-in-class mid pick (2.78h)
+  // TOP TIER (G17 1b): "a few hours" at the measured rate = inside the 3h cap
+  // (4,528,134g) and >= TOP_TIER_MIN_GOOD_RUNS (5) good runs = 5.96 runs.
+  BEAM: 4500000,
 };
 const VALID_UNLOCK_WEAPONS = new Set([...STARTER_WEAPONS, ...Object.keys(WEAPON_PRICES)]);
 
@@ -360,16 +375,19 @@ const VALID_UNLOCK_WEAPONS = new Set([...STARTER_WEAPONS, ...Object.keys(WEAPON_
 // module owns only the unlock state + prices (Sk408: shop rows, locked by
 // default). buyUpgrade on the shop row or unlockElite(profile, id).
 export const ELITE_MODIFIERS = {
+  // G17 slice 1b reprice: mid-tier unlock rungs on the same measured ladder
+  // (1.00h / 1.19h / 1.85h at 1,509,378g/h); the old 1800/3600/7200 ladder
+  // totalled 0.009h of end-game income.
   SWIFT: {
-    id: 'SWIFT', name: 'Swift', cost: 1800,
+    id: 'SWIFT', name: 'Swift', cost: 1000000,
     desc: 'Unlock the SWIFT elite modifier: faster elites, richer kills.',
   },
   SPLITTING: {
-    id: 'SPLITTING', name: 'Splitting', cost: 3600,
+    id: 'SPLITTING', name: 'Splitting', cost: 1800000,
     desc: 'Unlock the SPLITTING elite modifier: elites may split on death.',
   },
   VAMPIRIC: {
-    id: 'VAMPIRIC', name: 'Vampiric', cost: 7200,
+    id: 'VAMPIRIC', name: 'Vampiric', cost: 2800000,
     desc: 'Unlock the VAMPIRIC elite modifier: elites that heal as they hit.',
   },
 };
@@ -451,8 +469,11 @@ export const SHOP_UPGRADES = [
   { id: 'artifact', name: 'Starting Artifact', desc: 'Start each run with +2 random weapon levels per level',
     baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 2 },
   // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
+  // G17 slice 1b reprice: luck is the TOP rung of the mid catalogue. Full-buy
+  // = baseCost x 31 (growth 2.0, 5 levels) = 4,340,000g = 2.87h — inside the
+  // 3h cap, and it takes the 10-good-run share to the 36.4% target band.
   { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
-    baseCost: 500, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
+    baseCost: 140000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
   // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
     id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
@@ -478,8 +499,12 @@ export const SHOP_UPGRADES = [
     baseCost: 400, costGrowth: 1.35, maxLevel: 10, perLevel: 1 },
   { id: 'slots',   name: 'Weapon Slot',    desc: '+1 weapon slot (start 3, max 6)',
     baseCost: 5000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
+  // G17 slice 1b reprice: the TOP-tier flex at 4,200,000g = 2.78h at the
+  // measured end-game rate (1,509,378g/h) = 5.6 good runs — inside the 3h
+  // single-item cap and over TOP_TIER_MIN_GOOD_RUNS (5). The old 140,000g
+  // was 0.09h.
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Golden HUD + arcade-run modifiers. The late-game flex.',
-    baseCost: 140000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
+    baseCost: 4200000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
