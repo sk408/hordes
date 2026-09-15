@@ -201,8 +201,31 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
     const chromeNow = () => p.evaluate(`(async () => ${T}.chromeOn())()`);
 
     // (a) approach: hero ink non-zero mid-WALK (t=2500, hero ~x179-275).
-    if (!await p.waitFor(cineAt(2500), 5000, 20)) throw new Error('never reached WALK t=2500');
-    const walkSnap = await p.evaluate(SNAP);
+    // G16 re-spec item 2 (docs/briefs/G16_SKIP_BAR_RESPEC.md): the beat is
+    // WAITED ON IN-PAGE -- a rAF observer resolves the instant the cine clock
+    // crosses the target and the snapshot is taken INSIDE the same evaluate --
+    // so no CDP round trip can straddle the window. The old form sampled the
+    // window from the harness at 20ms intervals and died 1-in-3 with the hard
+    // 'never reached WALK t=2500' exception.
+    const walk = await p.evaluate(`(async () => {
+      const T2 = ${T};
+      const fail = (why) => ({ ok: false, why, mode: T2.state.mode });
+      if (T2.state.mode !== 'portal-cine') return fail('not in cine');
+      const deadline = performance.now() + 10000;
+      await new Promise((res) => {
+        const tick = () => {
+          if (T2.state.mode !== 'portal-cine' || T2.portalCine.t >= 2500) return res();
+          if (performance.now() > deadline) return res();
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      if (T2.state.mode !== 'portal-cine') return fail('cine ended before t=2500');
+      if (T2.portalCine.t < 2500) return fail('deadline');
+      return { ok: true, t: Math.round(T2.portalCine.t), snap: await ${SNAP} };
+    })()`);
+    if (!walk.ok) throw new Error('never reached WALK t=2500 (' + walk.why + ', mode=' + walk.mode + ')');
+    const walkSnap = walk.snap;
     const walkChrome = await chromeNow();
     const shotWalk = await p.shot('g16-walk');
 
@@ -231,16 +254,62 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
     // (e) a REAL gesture skips out in < 250ms (CDP touch on the canvas: the
     // game's own pointerdown skip clause; the keydown clause is unit-pinned by
     // smoke.mjs + test_cinematic_input_guard.mjs).
+    //
+    // G16 re-spec item 1 (docs/briefs/G16_SKIP_BAR_RESPEC.md, owner ruling
+    // 2026-09-15): the delta is timed IN-PAGE, on the page's own
+    // performance.now() clock, and read back with ONE evaluate after the fact.
+    //   t0 -- a capture-phase listener on the game canvas, stamped at the
+    //         pointerdown dispatch: the exact in-page event the game's own
+    //         skip clause (the canvas pointerdown handler in src/main.js that
+    //         calls endPortalCine) runs on. The game skips on pointerdown, not
+    //         pointerup -- the CDP touch gesture's touchStart produces this
+    //         dispatch -- so pointerdown IS the gesture's first in-page
+    //         moment. (pointerup is stamped too, reported as tapUp only.)
+    //   t1 -- a rAF observer that stamps the FIRST frame on which state.mode
+    //         has left 'portal-cine' (the observed mode transition; the game
+    //         sets the new mode synchronously inside the same pointerdown
+    //         dispatch, so t1-t0 carries at most one frame of observation
+    //         latency, still entirely page-side).
+    // EXCLUDED from the measured span, by construction: the harness's own
+    // 40ms sleep between touchStart and touchEnd (tools/browser.mjs tap(),
+    // :170) and EVERY CDP evaluate round trip. The old span started BEFORE
+    // p.tap() and ran a 40-iteration CDP poll loop, so both sat inside it --
+    // it measured the rig, not the game (a 150ms build could read 250ms+).
+    // The bar itself is unchanged: 250ms at the check below.
+    const armedMode = await p.evaluate(`(async () => {
+      const T2 = ${T};
+      const cv = document.getElementById('game');
+      const rec = window.__g16skip = { t0: null, t1: null, tapUp: null,
+                                       downMode: T2.state.mode, endMode: null };
+      rec.onDown = () => { if (rec.t0 === null) rec.t0 = performance.now(); };
+      rec.onUp = () => { if (rec.tapUp === null) rec.tapUp = performance.now(); };
+      cv.addEventListener('pointerdown', rec.onDown, true);
+      cv.addEventListener('pointerup', rec.onUp, true);
+      rec.tick = () => {
+        if (rec.t0 !== null && rec.t1 === null && T2.state.mode !== 'portal-cine') {
+          rec.t1 = performance.now(); rec.endMode = T2.state.mode;
+          return;
+        }
+        if (rec.t1 === null) requestAnimationFrame(rec.tick);
+      };
+      requestAnimationFrame(rec.tick);
+      return T2.state.mode;
+    })()`);
+    if (armedMode !== 'portal-cine') throw new Error('skip instrument armed outside portal-cine (mode=' + armedMode + ')');
     if (!await p.waitFor(cineAt(6100), 2500, 15)) throw new Error('never reached t=6100 for the skip');
     const map = await p.evaluate(`(() => { const r = document.getElementById('game').getBoundingClientRect();
       return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
-    const s0 = Date.now();
     await p.tap(Math.round(map.x + map.w / 2), Math.round(map.y + map.h / 2));
-    let skipMs = null, skipMode = null;
-    for (let i = 0; i < 40; i++) {
-      await p.sleep(10);
-      const m = await p.evaluate(`(async () => ${T}.state.mode)()`);
-      if (m !== 'portal-cine') { skipMs = Date.now() - s0; skipMode = m; break; }
+    // ONE evaluate reads the page-side stamps. The sleeps/CDP round trips in
+    // this read-back loop happen AFTER both timestamps were taken -- they are
+    // outside the measured span.
+    let skipMs = null, skipMode = null, skipDetail = null;
+    for (let i = 0; i < 50 && skipMs === null; i++) {
+      await p.sleep(20);
+      skipDetail = await p.evaluate(`(() => { const r = window.__g16skip;
+        return { t0: r.t0, t1: r.t1, tapUp: r.tapUp, endMode: r.endMode,
+                 delta: (r.t0 !== null && r.t1 !== null) ? r.t1 - r.t0 : null }; })()`);
+      if (skipDetail.delta !== null) { skipMs = skipDetail.delta; skipMode = skipDetail.endMode; }
     }
 
     return {
@@ -256,7 +325,7 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
         portalDelta: diffCount(lingerA.portal, lingerB.portal),
         heroInk: heroInkOf(lingerA.hero), chrome: lingerChrome, shot: shotLinger,
       },
-      skipMs, skipMode, errors: p.errors,
+      skipMs, skipMode, skipDetail, errors: p.errors,
     };
   });
 
