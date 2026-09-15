@@ -32,12 +32,22 @@ import { makeWeapon, WEAPON_MAX_LEVEL, PIERCE_ALL, levelUpWeapon } from '../src/
 import { RULE_IDS } from '../src/rules.js';
 import { SKILL_PERK_IDS } from '../src/perks.js';
 import {
-  REWRITES, REWRITE_IDS, REWRITE_CARD_WEIGHT,
+  REWRITES, REWRITE_IDS, REWRITE_CARD_WEIGHT, REWRITE_TAGS,
   BOOM_RADIUS, BOOM_DAMAGE_FLAT, BOOM_DAMAGE_FRAC,
   HARVEST_RADIUS, HARVEST_DAMAGE_FLAT, HARVEST_DAMAGE_FRAC,
+  RIME_SLOW_DURATION, RIME_SLOW_FACTOR,
+  IGNITE_BURN_DURATION, IGNITE_BURN_FLAT, IGNITE_BURN_FRAC,
+  LIVEWIRE_EVERY, LIVEWIRE_RANGE, LIVEWIRE_DAMAGE_MULT,
+  AFTERSHOCK_DELAY, AFTERSHOCK_RADIUS_MULT, AFTERSHOCK_DAMAGE_MULT,
+  WIDEORBIT_RADIUS_MULT, WIDEORBIT_SPIN_MULT,
   rewritesOf, hasRewrite, rewriteCardOffered, rewriteCards, grantRewrite,
-  rewriteBoom, harvestBlast,
+  rewriteBoom, harvestBlast, applyBlast, tickRewriteEchoes,
+  rewriteCount, emptySlotCooldownMult, onWeaponHit,
+  wideOrbitRadiusMult, wideOrbitSpinMult,
 } from '../src/rewrites.js';
+import { skillCooldown } from '../src/perks.js';
+import { ultCharge } from '../src/skills.js';
+import { updateWeapons } from '../src/weapons.js';
 import { isFlashEligibleKill, flashTargets, FLASH_TRASH_TIERS } from '../src/loot.js';
 import { simulateCohort, divergenceVerdict } from '../tools/draft_sim.mjs';
 import { boot } from './_harness.mjs';
@@ -58,14 +68,45 @@ const stateWith = (rewrites = null) => ({ player: { ...makePlayer(), rewrites: r
 console.log('rewrites (G8 step 2): the mechanic-rewrite family, at its real seams');
 
 // ---- 1. the family contract --------------------------------------------------
-ok('the catalog is the three rewrites with unique ids and player-facing labels', () => {
-  assert.deepEqual(REWRITE_IDS, ['pierceall', 'onkillboom', 'healthdamage']);
-  assert.equal(new Set(REWRITE_IDS).size, 3);
+ok('the catalog is the eight rewrites with unique ids and player-facing labels', () => {
+  // G21 SLICE 1 RETARGET: the family grew 3 -> 8 (C4's five keyword cards).
+  assert.deepEqual(REWRITE_IDS, ['pierceall', 'onkillboom', 'healthdamage',
+    'rime', 'ignite', 'livewire', 'aftershock', 'wideorbit']);
+  assert.equal(new Set(REWRITE_IDS).size, 8);
   for (const id of REWRITE_IDS) {
     assert.ok(REWRITES[id].name, id + ' has a name');
     assert.ok(!/rewrite/i.test(REWRITES[id].desc),
       id + ' desc is player-facing copy, never the internal family label');
     assert.ok(REWRITES[id].desc.length > 20, id + ' desc is real prose, not a placeholder');
+  }
+});
+ok('R3: every card carries tags from REWRITE_TAGS; tagged descs are prefixed at the seam', () => {
+  assert.deepEqual(REWRITE_TAGS, ['FROST', 'CHAIN', 'ORBIT', 'BURN', 'CONDUCT']);
+  const tagSet = new Set(REWRITE_TAGS);
+  for (const id of REWRITE_IDS) {
+    assert.ok(Array.isArray(REWRITES[id].tags), id + ' carries a tags array');
+    for (const t of REWRITES[id].tags) assert.ok(tagSet.has(t), id + ' tag ' + t + ' is reserved-set');
+  }
+  // The existing three: onkillboom is CHAIN; pierceall/healthdamage stay
+  // untagged (they predate the taxonomy — do NOT force-tag them).
+  assert.deepEqual(REWRITES.onkillboom.tags, ['CHAIN']);
+  assert.deepEqual(REWRITES.pierceall.tags, []);
+  assert.deepEqual(REWRITES.healthdamage.tags, []);
+  // The slice-1 cards: exactly one tag each (cross-tag combos are slice 2).
+  for (const id of ['rime', 'ignite', 'livewire', 'aftershock', 'wideorbit']) {
+    assert.equal(REWRITES[id].tags.length, 1, id + ' carries exactly one tag this slice');
+  }
+  // The offered desc of a tagged card starts with its tag; an untagged card's
+  // desc is byte-identical to the raw catalog string (today's copy).
+  const st = stateWith(null);
+  st.weapons = [makeWeapon('ORBIT')];                 // every predicate true:
+  grantRewrite(st, 'onkillboom');                     // ...aftershock has a source,
+  st.player.rewrites = {};                            // ...but nothing is TAKEN
+  for (const c of rewriteCards(st)) {
+    const r = REWRITES[c.rewrite];
+    if (r.tags.length) assert.ok(c.desc.startsWith(r.tags.join('+') + ' - '),
+      c.rewrite + ' desc is tag-prefixed: ' + c.desc);
+    else assert.equal(c.desc, r.desc, c.rewrite + ' untagged desc is byte-identical');
   }
 });
 ok('no id collides with the stat UPGRADES, the run-rule ids or the perk ids', () => {
@@ -80,7 +121,10 @@ ok('cards exist once, at REWRITE_CARD_WEIGHT, and grant through apply(player)', 
   const st = stateWith(null);
   assert.equal(Object.keys(st.player.rewrites).length, 0, 'a fresh player holds nothing');
   const cards = rewriteCards(st);
-  assert.equal(cards.length, REWRITE_IDS.length);
+  // G21 SLICE 1 RETARGET: on a bare state the two PREDICATE cards are absent
+  // (no blast source, no ORBIT equipped) — the offered set is the six
+  // always-offered cards, not the whole catalog.
+  assert.equal(cards.length, REWRITE_IDS.length - 2);
   for (const c of cards) {
     assert.equal(c.weight, REWRITE_CARD_WEIGHT);
     assert.ok(c.id.startsWith('rewrite_'));
@@ -89,11 +133,93 @@ ok('cards exist once, at REWRITE_CARD_WEIGHT, and grant through apply(player)', 
     assert.ok(p.rewrites[c.rewrite], c.rewrite + ' is granted by its own card');
   }
   grantRewrite(st, 'onkillboom');
-  assert.equal(rewriteCards(st).length, REWRITE_IDS.length - 1, 'a taken rewrite leaves the pool');
+  // G21 SLICE 1 RETARGET: taking onkillboom removes one card but WAKES the
+  // aftershock predicate (a held blast source), so the count holds at
+  // REWRITE_IDS.length - 2 (eight minus the take minus the still-dead wideorbit).
+  assert.equal(rewriteCards(st).length, REWRITE_IDS.length - 2, 'a taken rewrite leaves the pool');
   assert.equal(rewriteCardOffered('onkillboom', st), false);
   assert.equal(grantRewrite(st, 'not_a_rewrite'), false, 'an unknown rewrite id is refused');
   assert.ok(hasRewrite(st, 'onkillboom') && !hasRewrite(st, 'pierceall'));
   assert.equal(rewritesOf({}), null, 'a stateless read is null, not a throw');
+});
+
+// ---- 1b. G21 slice 1: FINITE SLOTS (R1), EMPTY-SLOT PAY (R2), PREDICATES (R6)
+ok('R1: a full run (REWRITE_SLOTS held) is offered ZERO rewrite cards; one short offers the rest', () => {
+  const st = stateWith(null);
+  st.weapons = [makeWeapon('ORBIT')];   // both predicates satisfiable
+  assert.equal(C.REWRITE_SLOTS, 4, 'the house ships four finite rewrite slots');
+  for (const id of ['pierceall', 'onkillboom', 'healthdamage', 'rime']) grantRewrite(st, id);
+  assert.equal(rewriteCount(st), 4);
+  assert.deepEqual(rewriteCards(st), [], 'a full house closes the family');
+  // One slot short: exactly the untaken, predicate-passing set (aftershock's
+  // predicate is now TRUE — onkillboom is held — so all five remaining land).
+  const st2 = stateWith(null);
+  st2.weapons = [makeWeapon('ORBIT')];
+  for (const id of ['pierceall', 'onkillboom', 'healthdamage']) grantRewrite(st2, id);
+  const offered = rewriteCards(st2).map(c => c.rewrite).sort();
+  assert.deepEqual(offered, ['aftershock', 'ignite', 'livewire', 'rime', 'wideorbit'],
+    'REWRITE_SLOTS-1 held offers exactly the untaken predicate-passing set');
+  grantRewrite(st2, 'ignite');          // taking one more closes the family
+  assert.deepEqual(rewriteCards(st2), [], 'the fourth take closes the family');
+});
+ok('R2: empty slots pay x0.80..x1.00 through skillCooldown; the ult KILL count never moves', () => {
+  const st = stateWith(null);
+  const want = [0.80, 0.85, 0.90, 0.95, 1.00];
+  const ids = ['pierceall', 'onkillboom', 'healthdamage', 'rime'];
+  for (let taken = 0; taken <= 4; taken++) {
+    assert.ok(Math.abs(emptySlotCooldownMult(st) - want[taken]) < 1e-9,
+      `x${want[taken]} at ${taken} taken (got ${emptySlotCooldownMult(st)})`);
+    if (taken < 4) grantRewrite(st, ids[taken]);
+  }
+  // The floor: even if REWRITE_SLOTS were raised the mult never dips below 0.80.
+  const saved = C.REWRITE_SLOTS;
+  C.REWRITE_SLOTS = 9;
+  const bare = stateWith(null);
+  assert.equal(emptySlotCooldownMult(bare), 0.80, 'x0.80 floor at a raised slot count');
+  C.REWRITE_SLOTS = saved;
+  // skillCooldown REFLECTS the payment (the one applied-value read)...
+  const cd0 = skillCooldown('FROST_NOVA', stateWith(null));
+  assert.ok(Math.abs(cd0 - C.SKILLS.FROST_NOVA.COOLDOWN * 0.80) < 1e-9,
+    'zero rewrites: cooldown at x0.80');
+  const full = stateWith(null);
+  for (const id of ids) grantRewrite(full, id);
+  assert.equal(skillCooldown('FROST_NOVA', full), C.SKILLS.FROST_NOVA.COOLDOWN,
+    'a full house: cooldown back at x1.00');
+  // ...and it multiplies the cooldown part ONLY: a kill-charged ult's KILL
+  // count is identical with zero and with four rewrites held, while its
+  // cooldown floor still reads through the mult.
+  const q0 = ultCharge(stateWith(null), 'EARTHSHATTER');
+  const q4 = ultCharge(full, 'EARTHSHATTER');
+  assert.equal(q0.charge, q4.charge, 'the ult charge is a KILL count, never a cooldown');
+  assert.equal(q0.need, q4.need);
+  assert.ok(Math.abs(skillCooldown('EARTHSHATTER', stateWith(null)) -
+    C.SKILLS.EARTHSHATTER.COOLDOWN * 0.80) < 1e-9, 'the ult floor rolls on after the mult');
+});
+ok('R6: the predicate cards hide while dead, appear when live, and consume ZERO rng draws', () => {
+  const st = stateWith(null);
+  const ids = () => rewriteCards(st).map(c => c.rewrite);
+  assert.ok(!ids().includes('aftershock'), 'no blast source: AFTERSHOCK is never offered');
+  assert.ok(!ids().includes('wideorbit'), 'no ORBIT equipped: WIDE ORBIT is never offered');
+  grantRewrite(st, 'onkillboom');
+  assert.ok(ids().includes('aftershock'), 'onkillboom held: AFTERSHOCK is offered');
+  const stWitch = stateWith(null);
+  stWitch.character = { skill: 'CHAIN_REACTION' };
+  assert.ok(rewriteCards(stWitch).some(c => c.rewrite === 'aftershock'),
+    'the Witch chain Q is a blast source');
+  const stRogue = stateWith(null);
+  stRogue.character = { skill: 'AFTERIMAGE' };
+  assert.ok(rewriteCards(stRogue).some(c => c.rewrite === 'aftershock'),
+    'the Rogue AFTERIMAGE is a blast source');
+  const stOrb = stateWith(null);
+  stOrb.weapons = [makeWeapon('ORBIT')];
+  assert.ok(rewriteCards(stOrb).some(c => c.rewrite === 'wideorbit'),
+    'an equipped ORBIT offers WIDE ORBIT');
+  // A predicate-false card consumes no rng: rewriteCards never draws at all.
+  const real = Math.random;
+  let draws = 0;
+  Math.random = () => { draws++; return real(); };
+  try { rewriteCards(stateWith(null)); rewriteCards(stOrb); } finally { Math.random = real; }
+  assert.equal(draws, 0, 'rewriteCards consumes zero rng draws, predicates included');
 });
 ok('makePlayer() ships an empty rewrites ledger beside rules/skills/takenStats', () => {
   const p = makePlayer();
@@ -199,7 +325,7 @@ const hostile = (typeId, at, off = { x: 0, y: 0 }) => ({
   // whatever a call site asks for. Ask for CHASER and you get a BRUTE body.
   typeId: FLASH_TRASH_TIERS.includes(typeId) ? PROBE_BODY : typeId,
   x: at.x + off.x, y: at.y + off.y, hp: 1e9, maxHp: 1e9,
-  speed: 0, age: 0, flash: 0, slow: 0, xp: 0,
+  speed: 0, age: 0, flash: 0, slow: 0, xp: 0, burn: 0, burnDps: 0,
 });
 // A PROBE CORPSE is a body that must die frame 1 — and only its maxHp made it
 // elite-ish: isEliteish counts `maxHp >= BASE_HP * 1.5` (src/chests.js), so a
@@ -435,6 +561,202 @@ ok('the rewrite payouts are dt-correct: 60Hz == 120Hz over the same second', () 
   assert.equal(at60, want, 'and it is exactly one boom + one blast, no frame scaling');
 });
 
+// ---- 3b. G21 slice 1: THE FIVE CARDS, BOTH SIDES (R4) + NO CHAIN-OF-CHAINS (R5)
+ok('R4 RIME: a direct hit chills (refresh, never stack, never truncates); nothing without the card', () => {
+  const st = stateWith(null);
+  const e = { hp: 100, slow: 0, flash: 0 };
+  onWeaponHit(st, e);
+  assert.equal(e.slow, 0, 'no card: no chill');
+  grantRewrite(st, 'rime');
+  onWeaponHit(st, e);
+  assert.equal(e.slow, RIME_SLOW_DURATION, 'the hit refreshed the existing slow field');
+  assert.equal(e.slowMult, RIME_SLOW_FACTOR, 'the chill carries its own gentler grip');
+  e.slow = 0.4; onWeaponHit(st, e);
+  assert.equal(e.slow, RIME_SLOW_DURATION, 'a shorter remainder refreshes UP to full');
+  e.slow = 2.5; onWeaponHit(st, e);   // a FROST_NOVA window is already gripping
+  assert.equal(e.slow, 2.5, 'the chill never TRUNCATES a longer nova slow');
+  assert.equal(e.slowMult, RIME_SLOW_FACTOR, 'the freshest grip owns the factor');
+});
+ok('R4 IGNITE: a direct hit burns at the snapshotted dps (refresh, never stack)', () => {
+  const st = stateWith(null);
+  const e = { hp: 1e9, burn: 0, burnDps: 0, flash: 0 };
+  onWeaponHit(st, e);
+  assert.equal(e.burn, 0, 'no card: no burn');
+  grantRewrite(st, 'ignite');
+  st.player.stats.damage = 40;
+  onWeaponHit(st, e);
+  assert.equal(e.burn, IGNITE_BURN_DURATION);
+  assert.equal(e.burnDps, IGNITE_BURN_FLAT + IGNITE_BURN_FRAC * 40, 'dps snapshots the weapon damage');
+  e.burn = 1.1; st.player.stats.damage = 80;
+  onWeaponHit(st, e);
+  assert.equal(e.burn, IGNITE_BURN_DURATION, 'refresh, never stack');
+  assert.equal(e.burnDps, IGNITE_BURN_FLAT + IGNITE_BURN_FRAC * 80, 'the refresh re-snapshots');
+});
+ok('R4 LIVE WIRE: fires on the 5th hit, not the 4th, never twice in a row', () => {
+  const st = stateWith(null);
+  grantRewrite(st, 'livewire');
+  st.player.stats.damage = 50;
+  const struck = { x: 0, y: 0, hp: 1e9, flash: 0 };
+  const near = { x: 50, y: 0, hp: 1e9, flash: 0 };    // dist 50 <= RANGE
+  const far = { x: 500, y: 0, hp: 1e9, flash: 0 };
+  st.enemies.push(struck, near, far);
+  const zaps = () => st.effects.filter(fx => fx.kind === 'zap').length;
+  for (let i = 0; i < 4; i++) onWeaponHit(st, struck);
+  assert.equal(st.player.livewireHits, 4, 'the counter is a run-player integer');
+  assert.equal(near.hp, 1e9, 'the 4th hit does NOT fire');
+  onWeaponHit(st, struck);                            // the 5th
+  assert.equal(1e9 - near.hp, LIVEWIRE_DAMAGE_MULT * 50, 'the 5th hit zaps at 50% weapon damage');
+  assert.equal(far.hp, 1e9, 'an enemy outside the range is untouched');
+  assert.equal(zaps(), 1, 'the zap painted its polyline');
+  onWeaponHit(st, struck);                            // the 6th
+  assert.equal(1e9 - near.hp, LIVEWIRE_DAMAGE_MULT * 50, 'never twice in a row');
+  assert.equal(zaps(), 1);
+});
+ok('R4 AFTERSHOCK: one echo, 0.4s later, half radius and half damage — and it never echoes', () => {
+  const st = stateWith(null);
+  grantRewrite(st, 'aftershock');
+  const near = { x: 0, y: 0, hp: 1e9, flash: 0 };
+  st.enemies.push(near);
+  applyBlast(st, 0, 0, { radius: 40, damage: 20 });
+  assert.equal(st.rewriteEchoes.length, 1, 'the detonation scheduled ONE echo');
+  assert.equal(st.rewriteEchoes[0].radius, 40 * AFTERSHOCK_RADIUS_MULT);
+  assert.equal(st.rewriteEchoes[0].damage, 20 * AFTERSHOCK_DAMAGE_MULT);
+  assert.equal(1e9 - near.hp, 20, 'the detonation itself landed at full strength');
+  const fx0 = st.effects.filter(fx => fx.kind === 'rewrite_boom').length;
+  // dt-driven: 0.4s is 24 frames at 60Hz, 48 at 120Hz — same wall time.
+  for (const hz of [60, 120]) {
+    const st2 = stateWith(null);
+    grantRewrite(st2, 'aftershock');
+    const v = { x: 0, y: 0, hp: 1e9, flash: 0 };
+    st2.enemies.push(v);
+    applyBlast(st2, 0, 0, { radius: 40, damage: 20 });
+    const hpAfterBlast = v.hp;
+    const dt = 1 / hz;
+    let firedAt = -1, frames = Math.round(AFTERSHOCK_DELAY * hz) + 3;
+    for (let i = 1; i <= frames; i++) {
+      tickRewriteEchoes(st2, dt);
+      if (firedAt < 0 && v.hp < hpAfterBlast) firedAt = i;
+    }
+    assert.equal(firedAt, Math.round(AFTERSHOCK_DELAY * hz),
+      `the echo fired at the 0.4s frame at ${hz}Hz (+/- nothing)`);
+    assert.equal(hpAfterBlast - v.hp, 20 * AFTERSHOCK_DAMAGE_MULT, 'half damage');
+    assert.equal(st2.rewriteEchoes.length, 0, 'the echo never re-schedules');
+    assert.equal(st2.effects.filter(fx => fx.kind === 'rewrite_boom').length, 2,
+      'exactly two blasts painted: the detonation + its one echo');
+  }
+  assert.ok(fx0 >= 1);
+});
+ok('R4 WIDE ORBIT: measurably widens the ring and raises the spin (the updateOrbit reads)', () => {
+  const mk = (held) => {
+    const st = stateWith(null);
+    if (held) grantRewrite(st, 'wideorbit');
+    const w = makeWeapon('ORBIT');
+    st.weapons = [w];
+    return { st, w };
+  };
+  const base = mk(false), wide = mk(true);
+  assert.equal(wideOrbitRadiusMult(base.st), 1, 'no card: x1 radius');
+  assert.equal(wideOrbitSpinMult(base.st), 1, 'no card: x1 spin');
+  updateWeapons(base.st, base.st.weapons, 0.25);
+  updateWeapons(wide.st, wide.st.weapons, 0.25);
+  const r0 = Math.hypot(base.w.payload.blades[0].x - base.st.player.x,
+    base.w.payload.blades[0].y - base.st.player.y);
+  const r1 = Math.hypot(wide.w.payload.blades[0].x - wide.st.player.x,
+    wide.w.payload.blades[0].y - wide.st.player.y);
+  assert.ok(Math.abs(r1 / r0 - WIDEORBIT_RADIUS_MULT) < 1e-9,
+    `the ring widened x${(r1 / r0).toFixed(3)}`);
+  assert.ok(Math.abs(wide.w.angle / base.w.angle - WIDEORBIT_SPIN_MULT) < 1e-9,
+    `the spin raised x${(wide.w.angle / base.w.angle).toFixed(3)}`);
+});
+ok('R4 wiring: the volley projectile and the ORBIT blade both fire the rider (live seams)', () => {
+  const restore = closeWindow();
+  try {
+    p.rewrites.rime = true;
+    // (a) weapons.js hurt(): an ORBIT blade's contact hit chills its victim.
+    const orb = makeWeapon('ORBIT');
+    st.weapons = [orb];
+    const near = hostile('BRUTE', p, { x: 45, y: 0 });
+    st.enemies.push(near);
+    h.pump(90, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+    st.weapons = [];
+    assert.ok(near.slow > 0 && near.slowMult === RIME_SLOW_FACTOR,
+      'an orbit contact chilled through hurt() (weapons.js seam)');
+    // (b) main.js: the volley projectile (the A1 fixture shape: re-anchor the
+    // target inside the pilot's engagement radius every frame so it fires).
+    const far = hostile('BRUTE', p, { x: 60, y: 0 });
+    st.enemies.push(far);
+    p.attackTimer = 0;
+    const gap = Math.round(C.AUTOPILOT.FOCUS_RANGE / 2);
+    h.pump(150, () => {
+      st.enemyShots.length = 0;
+      far.x = p.x + gap; far.y = p.y;
+    });
+    p.rewrites.rime = false;
+    assert.ok(far.slow > 0 && far.slowMult === RIME_SLOW_FACTOR,
+      'the volley projectile chilled through the main.js rider site');
+  } finally { restore(); }
+});
+ok('R4 IGNITE live: the burn pays the same total at 60Hz and 120Hz (dt-driven)', () => {
+  const totalBurn = (hz) => {
+    const restore = closeWindow();
+    try {
+      p.rewrites.ignite = true;
+      p.invuln = 999;
+      const victim = hostile('BRUTE', p, { x: 400, y: 400 });   // far: no weapon contact
+      st.enemies.push(victim);
+      onWeaponHit(st, victim);                                  // the direct-hit stamp
+      const dps = victim.burnDps;
+      h.setFrameMs(1000 / hz);
+      h.pump(Math.round(IGNITE_BURN_DURATION * hz) + 2, () => {
+        st.projectiles.length = 0; st.enemyShots.length = 0;
+        victim.x = p.x + 400; victim.y = p.y + 400;   // pinned out of reach
+      });
+      h.setFrameMs(1000 / 60);
+      p.rewrites.ignite = false;
+      assert.ok(victim.burn <= 0, 'the burn ran its course');
+      return { loss: 1e9 - victim.hp, dps };
+    } finally { h.setFrameMs(1000 / 60); restore(); }
+  };
+  const a = totalBurn(60), b = totalBurn(120);
+  assert.equal(a.dps, b.dps, 'same snapshotted dps');
+  assert.ok(Math.abs(a.loss - b.loss) < 0.51,
+    `60Hz ${a.loss.toFixed(2)} vs 120Hz ${b.loss.toFixed(2)} (sub-tick rounding only)`);
+  assert.ok(Math.abs(a.loss - a.dps * IGNITE_BURN_DURATION) < 0.51,
+    'and the total is dps x duration, never frame-scaled');
+});
+ok('R5: a burn tick has ZERO rider side-effects and a burn-lethal corpse never detonates', () => {
+  const restore = closeWindow();
+  try {
+    p.rewrites.ignite = true;
+    p.rewrites.livewire = true;
+    p.rewrites.aftershock = true;
+    p.rewrites.onkillboom = true;
+    p.invuln = 999;
+    p.livewireHits = 0;
+    // A burn-lethal body (hp 1: one tick zeroes it) beside a healthy one that
+    // must NOT catch chill/burn from anything but a direct hit.
+    const dying = { ...hostile('BRUTE', p, { x: 400, y: 400 }), hp: 1, maxHp: 1 };
+    const watching = hostile('BRUTE', p, { x: -400, y: -400 });
+    st.enemies.push(dying, watching);
+    onWeaponHit(st, dying);   // stamp the burn (the 1st livewire hit: no zap)
+    assert.equal(st.player.livewireHits, 1);
+    dying.hp = 1;             // the stamp's zap did not fire; the burn will kill
+    h.pump(90, () => {
+      st.projectiles.length = 0; st.enemyShots.length = 0;
+      if (st.enemies.includes(dying)) { dying.x = p.x + 400; dying.y = p.y + 400; }
+      watching.x = p.x - 400; watching.y = p.y - 400;
+    });
+    assert.equal(st.player.livewireHits, 1, 'burn ticks never advance the live wire counter');
+    assert.equal(watching.slow, 0, 'no chill from a non-direct source');
+    assert.equal(watching.burn, 0, 'no burn from a non-direct source');
+    assert.equal(st.enemies.includes(dying), false, 'the burn-lethal body died');
+    assert.equal(st.effects.filter(fx => fx.kind === 'rewrite_boom').length, 0,
+      'onkillboom HELD, yet the burn-lethal corpse never detonated');
+    assert.equal((st.rewriteEchoes || []).length, 0, 'and no echo was scheduled');
+    p.rewrites.ignite = p.rewrites.livewire = p.rewrites.aftershock = p.rewrites.onkillboom = false;
+  } finally { restore(); }
+});
+
 // ---- 4. THE REAL DRAFT SEAM: src/main.js openDraft ----------------------------
 function draftOffer(label, setup, draws = 3000) {
   st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
@@ -476,6 +798,41 @@ ok('pick() grants the rewrite through the real draft contract, no stat-ledger po
   assert.ok(st.player.rewrites[card.rewrite], card.rewrite + ' granted by the real pick()');
   assert.deepEqual(st.player.takenStats, before, 'a rewrite pick never writes the once ledger');
   assert.equal(rewriteCardOffered(card.rewrite, st), false, 'and it left the pool');
+});
+
+// ---- 4b. C7: SEEDED NO-DRIFT at the real seam ----------------------------------
+// A rewrite that is HELD but INERT (aftershock with no blast source, wideorbit
+// with no ORBIT equipped) must not perturb the draft stream one bit: same seeded
+// Math.random, same number of draws, same card sequence, offer for offer.
+// (A whole-run hash cannot stay identical — the empty-slot cooldown pay differs
+// by design — so the DRAFT stream is isolated via direct openDraft calls. A
+// literal pre-slice-tree comparison is impossible: no git checkout is allowed.)
+ok('C7: a held-but-inert rewrite causes ZERO draft-stream drift (seeded, verbatim)', () => {
+  const runArm = (grantInert) => {
+    st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
+    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {};
+    if (grantInert) { st.player.rewrites.aftershock = true; st.player.rewrites.wideorbit = true; }
+    const real = Math.random;
+    const rng = seeded(4711);
+    let draws = 0;
+    Math.random = () => { draws++; return rng(); };
+    const seq = [];
+    try {
+      for (let i = 0; i < 500; i++) {
+        h.T.openDraft();
+        seq.push(Array.from(h.elements['ov-cards'].children).map(el => el.innerHTML || '').join('|'));
+      }
+    } finally {
+      Math.random = real;
+      st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {};
+    }
+    return { seq, draws };
+  };
+  const a = runArm(false);   // predicates naturally false: the two cards absent
+  const b = runArm(true);    // the same two cards HELD (taken -> absent) but inert
+  assert.equal(b.draws, a.draws, `identical rng draw counts (${a.draws} vs ${b.draws})`);
+  assert.deepEqual(b.seq, a.seq, 'offer-for-offer identical draft streams');
+  assert.ok(a.draws > 0 && a.seq.length === 500, 'the probe actually measured 500 drafts');
 });
 
 // ---- 5. THE ONCE RETUNE at the real seam --------------------------------------

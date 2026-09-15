@@ -34,6 +34,10 @@ import {
   hpRegenPerSec, skillManaCost, skillCooldown, damageTakenMult, damageTaken,
   applyRegrowth,
 } from '../src/perks.js';
+// G21 slice 1: the empty-rewrite-slot payment rides skillCooldown (the ONE
+// applied-value read), so the exact-cooldown pins below multiply by the live
+// emptySlotCooldownMult(state) instead of restating a stale number.
+import { emptySlotCooldownMult } from '../src/rewrites.js';
 import { boot } from './_harness.mjs';
 import { flashTargets, FLASH_TRASH_TIERS } from '../src/loot.js';
 
@@ -115,8 +119,12 @@ ok('skillManaCost / skillCooldown: Focus multiplies, unknown ids cost 0', () => 
       assert.equal(skillManaCost(id, off), C.SKILLS[id].MANA);
       assert.equal(skillManaCost(id, on), C.SKILLS[id].MANA * FOCUS_MANA_MULT);
     }
-    assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN);
-    assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT);
+    // RETARGET (G21 slice 1, C2): the empty-rewrite-slot payment multiplies
+    // the COOLDOWN through the same one seam, so the exact pin is now
+    // COOLDOWN [x Focus] x emptySlotCooldownMult(state) — x0.80 on these
+    // zero-rewrite fixtures, x1.00 at a full house (covered in test_rewrites).
+    assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off));
+    assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on));
   }
   assert.equal(skillManaCost('NOPE', on), 0, 'same guard as useSkill');
   assert.equal(skillCooldown('NOPE', on), 0);
@@ -174,8 +182,10 @@ ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
       assert.ok(Math.abs((b.mana - a.mana) - C.SKILLS[id].MANA * (1 - FOCUS_MANA_MULT)) < 1e-9,
         id + ' mana delta');
     }
-    assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT, id + ' cooldown');
-    assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN, 'and the perk-off run is the shipped price');
+    // RETARGET (G21 slice 1, C2): same empty-slot payment, same one seam —
+    // the exact pins multiply by emptySlotCooldownMult(state).
+    assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on), id + ' cooldown');
+    assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off), 'and the perk-off run is the shipped price');
   }
 });
 

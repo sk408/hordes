@@ -52,6 +52,12 @@ export function makeEnemy(x, y, t) {
     xp: C.ENEMY.BASE_XP * xpScale(wave),
     flash: 0,
     slow: 0,            // seconds of frost-nova slow remaining
+    // G21 slice 1 (IGNITE): the burn DoT. burn = seconds left, burnDps = the
+    // snapshotted damage per second; ticked dt-driven beside the slow decay
+    // (main.js), never stacked (a fresh direct hit refreshes both), and burn
+    // damage never triggers riders and never detonates (no chain-of-chains).
+    burn: 0,
+    burnDps: 0,
   };
 }
 

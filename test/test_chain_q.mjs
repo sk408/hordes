@@ -15,7 +15,7 @@ import { WEAPONS } from '../src/weapons.js';
 import { CHARACTERS } from '../src/meta.js';
 import { skillManaCost } from '../src/perks.js';
 import { useSkill } from '../src/skills.js';
-import { boomBlast, grantRewrite, rewriteCards } from '../src/rewrites.js';
+import { boomBlast, grantRewrite, rewriteCards, REWRITE_CARD_WEIGHT, emptySlotCooldownMult } from '../src/rewrites.js';
 
 const s = suite('test_chain_q');
 const Q = C.SKILLS.CHAIN_REACTION, ZAP = WEAPONS.ZAP, FN = C.SKILLS.FROST_NOVA;
@@ -77,7 +77,13 @@ s.check('the draftable Chain Reaction card is still in the pool, un-nerfed', () 
   const cards = rewriteCards({ player: {} });   // a run holding nothing
   const boom = cards.find(c => c.rewrite === 'onkillboom');
   if (!boom) throw new Error('the onkillboom card left the draft pool');
-  if (boom.weight !== 0.02) throw new Error('card weight ' + boom.weight + ' (pinned 0.02)');
+  // RETARGET (G21 slice 1): the family grew 3 -> 8 cards at a HELD aggregate
+  // share — 3 x 0.02 = 0.06 becomes 8 x 0.0075 = 0.06 — so the per-card pin
+  // moves 0.02 -> 0.0075 (the REWRITE_CARD_WEIGHT constant, imported). The
+  // card itself is un-nerfed: the boomBlast numbers below are byte-pinned.
+  if (boom.weight !== REWRITE_CARD_WEIGHT) {
+    throw new Error('card weight ' + boom.weight + ' (pinned REWRITE_CARD_WEIGHT 0.0075, share 8x = 0.06)');
+  }
   // The ONE blast: the card's helper and the Q's detonations read the same
   // pure function, so there cannot be a second blast implementation.
   const p = { mana: 100, stats: { damage: 10 } };
@@ -252,8 +258,12 @@ s.check('the autopilot casts the Q with no RADIUS gate: any live enemy lands it'
   h.pump(1);
   // A cast through the LIVE loop (autoCastSkills -> useSkill) re-arms the full
   // cooldown AND strikes the target; a no-cast frame leaves cd at 0.
-  if (!(p.skillCd.CHAIN_REACTION > 7.9)) {
-    throw new Error('the pilot did not cast (cd ' + p.skillCd.CHAIN_REACTION.toFixed(2) + ')');
+  // RETARGET (G21 slice 1, C2): the armed value pays the empty-rewrite-slot
+  // mult through skillCooldown's one read (x0.80 here) — computed live, so
+  // the pin stays the FULL armed cooldown, not a stale constant.
+  const cdWant = C.SKILLS.CHAIN_REACTION.COOLDOWN * emptySlotCooldownMult(st);
+  if (!(p.skillCd.CHAIN_REACTION > cdWant - 0.05 && p.skillCd.CHAIN_REACTION <= cdWant)) {
+    throw new Error('the pilot did not cast (cd ' + p.skillCd.CHAIN_REACTION.toFixed(2) + ', want ~' + cdWant.toFixed(2) + ')');
   }
   if (!st.enemies.some(e => e.hp < 1000)) throw new Error('the pilot cast struck nothing at 300px');
 });

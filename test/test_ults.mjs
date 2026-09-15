@@ -23,6 +23,10 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { CHARACTERS } from '../src/meta.js';
 import { useSkill, ultCharge, isUlt } from '../src/skills.js';
+// G21 slice 1 (C2): the ult cooldown FLOOR rolls on through skillCooldown's
+// one read, so it pays the empty-rewrite-slot mult too — the floor-bound
+// cast expectation below computes it live (the KILL count never moves).
+import { emptySlotCooldownMult } from '../src/rewrites.js';
 
 const s = suite('test_ults');
 
@@ -227,7 +231,12 @@ for (const [charId, ultId] of CLASSES) {
   s.check(charId + ': the cooldown floor — a dense window cannot chain it (60Hz == 120Hz)', () => {
     const p = runAs(charId);
     T.setPilotMode('AUTO_ALL');           // the pilot's cast hand is the gate under test
-    const expected = 1 + Math.floor((40 - 1e-6) / def.COOLDOWN);
+    // RETARGET (G21 slice 1, C2): the floor itself pays the empty-slot mult
+    // (x0.80 on this zero-rewrite fixture), so the floor-bound count is read
+    // off def.COOLDOWN x emptySlotCooldownMult(st) — the chain-prevention
+    // mechanism under test is unchanged, only the armed number moved.
+    const floor = def.COOLDOWN * emptySlotCooldownMult(st);
+    const expected = 1 + Math.floor((40 - 1e-6) / floor);
     const arm = (dt) => {
       resetUlt(p, ultId);
       clearFoes();
@@ -256,7 +265,7 @@ for (const [charId, ultId] of CLASSES) {
     const at60 = arm(1 / 60);
     const at120 = arm(1 / 120);
     console.log('    measured: casts@60Hz=' + at60 + ' casts@120Hz=' + at120 +
-      ' over 40s with 1500 kills flooded in (floor ' + def.COOLDOWN + 's -> ' + expected + ' expected)');
+      ' over 40s with 1500 kills flooded in (floor ' + floor.toFixed(1) + 's -> ' + expected + ' expected)');
     if (at60 !== expected) throw new Error('60Hz casts ' + at60 + ' != floor-bound ' + expected);
     if (at120 !== expected) throw new Error('120Hz casts ' + at120 + ' != floor-bound ' + expected);
     if (at60 !== at120) throw new Error('dt dependence: ' + at60 + ' vs ' + at120);

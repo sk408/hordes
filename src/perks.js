@@ -37,6 +37,10 @@
 // skillManaCost, skillCooldown, damageTakenMult) are the ONE source of truth
 // the game reads, so the HUD cannot lie about what a perk changed.
 import { CONFIG as C } from './config.js';
+// G21 slice 1 (C2): the empty-rewrite-slot cooldown payment, read in exactly
+// ONE place (skillCooldown below). rewrites.js imports config only, so this
+// edge stays acyclic.
+import { emptySlotCooldownMult } from './rewrites.js';
 
 export const SKILL_PERKS = {
   regrowth: {
@@ -145,7 +149,13 @@ export function skillManaCost(defId, state) {
 export function skillCooldown(defId, state) {
   const def = C.SKILLS[defId];
   if (!def) return 0;
-  return def.COOLDOWN * (hasSkill(state, 'focus') ? FOCUS_COOLDOWN_MULT : 1);
+  // G21 slice 1 (C2): the empty-rewrite-slot payment multiplies the COOLDOWN
+  // part ONLY, HERE — the ONE applied-value read — so the game and the HUD
+  // can never disagree. A kill-charged ult's KILL count never touches this
+  // (its charge is kills banked on the player); its cooldown FLOOR rolls on
+  // through this same line (useSkill), so the floor comes out after the mult.
+  return def.COOLDOWN * (hasSkill(state, 'focus') ? FOCUS_COOLDOWN_MULT : 1) *
+    emptySlotCooldownMult(state);
 }
 /** Multiplier on incoming damage AFTER Thick Skin (1 without the perk). */
 export function damageTakenMult(state) {

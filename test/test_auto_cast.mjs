@@ -24,6 +24,9 @@ import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { updateResources, useSkill } from '../src/skills.js';
+// G21 slice 1 (C2): the empty-rewrite-slot payment rides skillCooldown, so
+// the armed-cooldown pin below reads the live emptySlotCooldownMult(st).
+import { emptySlotCooldownMult } from '../src/rewrites.js';
 
 const S = suite('AUTO-CAST');
 const h = await boot();
@@ -129,7 +132,11 @@ S.check('FROST_NOVA casts when a live enemy is inside RADIUS', () => {
   T.autoCast(st);
   assert.equal(p.mana, before - COST_Q,
     'the pilot cast FROST_NOVA through useSkill (full price, no discount)');
-  assert.ok(p.skillCd[Q] > CD_Q - 1e-6 && p.skillCd[Q] <= CD_Q,
+  // RETARGET (G21 slice 1, C2): the armed cooldown now pays the empty-slot
+  // multiplier through the one skillCooldown seam — CD_Q x 0.80 on this
+  // zero-rewrite fixture, computed live so a full-house run would pin x1.00.
+  const cdWant = CD_Q * emptySlotCooldownMult(st);
+  assert.ok(p.skillCd[Q] > cdWant - 1e-6 && p.skillCd[Q] <= cdWant,
     'the skill\'s own cooldown is armed: ' + p.skillCd[Q]);
   assert.ok(e.slow > 0, 'the cast LANDED: the enemy is slowed');
   quiet();

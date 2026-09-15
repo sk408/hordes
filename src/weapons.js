@@ -52,8 +52,10 @@ import { CONFIG as C } from './config.js';
 import { activeArchMods } from './arches.js';
 // G8 step 2 PIERCE ALL (src/rewrites.js): read at the boomerang's SPAWN site
 // so the rule is weapon-agnostic. rewrites.js imports nothing from here, so
-// the edge stays acyclic.
-import { hasRewrite } from './rewrites.js';
+// the edge stays acyclic. G21 slice 1: the ONE on-weapon-hit rider writer
+// (fed by hurt(), the module's single direct-hit apply) and the WIDE ORBIT
+// readers ride the same edge.
+import { hasRewrite, onWeaponHit, wideOrbitRadiusMult, wideOrbitSpinMult } from './rewrites.js';
 
 // ---------- Tuning constants (kept HERE, not in config.js — no collisions) ----------
 export const WEAPONS = {
@@ -235,9 +237,15 @@ export function nearestEnemy(state, x, y, exclude) {
   return best;
 }
 
-function hurt(e, dmg) {
+// The module's ONE direct-hit apply: every archetype's primary damage routes
+// here (orbit contact, boomerang legs, zap head + chain, nova pulse, scythe
+// swing, seeker impact, mine detonation, beam tick), so the G21 on-weapon-hit
+// rider (rewrites.js onWeaponHit — RIME/IGNITE/LIVE WIRE) hooks EXACTLY the
+// direct-hit set and nothing else.
+function hurt(state, e, dmg) {
   e.hp -= dmg;
   e.flash = 0.08;
+  onWeaponHit(state, e);
 }
 
 // ---------- ORBIT: blades circling the player, damage on contact ----------
@@ -248,7 +256,7 @@ function hurt(e, dmg) {
 function updateOrbit(state, weapon, dt) {
   const W = WEAPONS.ORBIT;
   const P = weaponLevelParams('ORBIT', weapon.level);
-  const radius = P.radius || W.RADIUS;
+  const radius = (P.radius || W.RADIUS) * wideOrbitRadiusMult(state);   // G21 WIDE ORBIT
   const p = state.player;
   // Arch read hoisted out of the per-hit loop below (one allocation per
   // update, not one per contact): ORBIT has no cooldown, so its ARCH attack
@@ -258,8 +266,8 @@ function updateOrbit(state, weapon, dt) {
   const twin = evoHas(weapon, 'twinOrbit');
   const tick = W.TICK / (evoRate(weapon) * (evoHas(weapon, 'bladeStorm') ? 2 : 1) *
     (arch.rateMult || 1));
-  weapon.angle += W.SPIN * dt;
-  if (twin) weapon.angle2 = (weapon.angle2 || 0) - W.SPIN * dt;
+  weapon.angle += W.SPIN * wideOrbitSpinMult(state) * dt;   // G21 WIDE ORBIT
+  if (twin) weapon.angle2 = (weapon.angle2 || 0) - W.SPIN * wideOrbitSpinMult(state) * dt;
   const n = Math.max(1, (P.blades || 1) + p.stats.projectiles - 1);  // Split Shot still adds blades
   const blades = [];
   const ring = (r, base, dir) => {
@@ -282,7 +290,7 @@ function updateOrbit(state, weapon, dt) {
     for (const e of state.enemies) {
       if (e.hp <= 0 || weapon.ticks.has(e)) continue;
       if (Math.abs(b.x - e.x) < W.HIT_R && Math.abs(b.y - e.y) < W.HIT_R) {
-        hurt(e, p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgMult *
+        hurt(state, e, p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgMult *
           evoDmg(weapon) * critRoll(p, weapon));
         weapon.ticks.set(e, tick);
         state.effects.push({ kind: 'orbit_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
@@ -373,7 +381,7 @@ function updateBoomerang(state, weapon, dt) {
       const spent = pr.hit.get(e) || 0;
       if (spent >= budget) continue;
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
-        hurt(e, pr.damage * critRoll(p, weapon));   // crit rolled per contact hit
+        hurt(state, e, pr.damage * critRoll(p, weapon));   // crit rolled per contact hit
         pr.hit.set(e, spent + 1);
         if (voidPull) {   // drag the victim toward the thrower
           e.x += (p.x - e.x) * 0.12;
@@ -432,7 +440,7 @@ function updateZap(state, weapon, dt) {
   // One bolt = primary strike + a (possibly forking) chain walk.
   const bolt = (head, origin) => {
     points.push(origin ? { x: origin.x, y: origin.y } : { x: head.x, y: head.y });
-    hurt(head, baseDmg * critRoll(p, weapon));
+    hurt(state, head, baseDmg * critRoll(p, weapon));
     let frontier = [head];
     for (let j = 0; j < jumps; j++) {
       const next = [];
@@ -440,7 +448,7 @@ function updateZap(state, weapon, dt) {
         for (let f = 0; f < forkPerJump; f++) {
           const tgt = nearestEnemy(state, from.x, from.y, hitSet);
           if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > W.CHAIN_RANGE) break;
-          hurt(tgt, baseDmg * critRoll(p, weapon) * Math.pow(W.FALLOFF, j + 1));
+          hurt(state, tgt, baseDmg * critRoll(p, weapon) * Math.pow(W.FALLOFF, j + 1));
           hitSet.add(tgt);
           // Polyline: append the victim; on a FORK, re-append the branch
           // node first so each fork draws its own from->to segment.
@@ -476,7 +484,7 @@ function updateNovaPulse(state, weapon, dt) {
   const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon);
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
-    if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) hurt(e, dmg * critRoll(p, weapon));
+    if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) hurt(state, e, dmg * critRoll(p, weapon));
   }
   state.effects.push({ kind: 'nova_pulse', x: p.x, y: p.y, radius, age: 0, ttl: 0.3 });
 }
@@ -514,7 +522,7 @@ function updateScythe(state, weapon, dt) {
       const d = Math.hypot(e.x - p.x, e.y - p.y);
       if (d > W.RANGE) continue;
       if (Math.abs(angleDiff(Math.atan2(e.y - p.y, e.x - p.x), dir)) > arc / 2) continue;
-      hurt(e, dmg * critRoll(p, weapon));
+      hurt(state, e, dmg * critRoll(p, weapon));
       if (e.hp <= 0) souls++;
       state.effects.push({ kind: 'scythe_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
     }
@@ -598,7 +606,7 @@ function updateSeeker(state, weapon, dt) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
-        hurt(e, pr.damage * critRoll(p, weapon));   // crit rolled per impact
+        hurt(state, e, pr.damage * critRoll(p, weapon));   // crit rolled per impact
         state.effects.push({ kind: 'seeker_pop', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
         if (hydra && !(pr.gen > 0)) {
           // Two hatchlings burst out of the kill and pick fresh marks.
@@ -625,7 +633,7 @@ function detonateMine(state, mine, blast, dmg, p) {
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
-      hurt(e, dmg * critRoll(p));   // crit rolled per blast victim
+      hurt(state, e, dmg * critRoll(p));   // crit rolled per blast victim
       state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 }); // spark dot
     }
   }
@@ -734,7 +742,7 @@ function updateBeam(state, weapon, dt) {
       const along = rx * cx + ry * cy;          // projection on the beam axis
       if (along < 0 || along > W.LENGTH) continue;
       if (Math.abs(rx * cy - ry * cx) > width / 2) continue;   // perpendicular distance
-      hurt(e, dmg * critRoll(p, weapon));       // crit rolled per beam victim
+      hurt(state, e, dmg * critRoll(p, weapon));       // crit rolled per beam victim
       state.effects.push({ kind: 'beam_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
     }
     // Rich beam payload: sweep envelope (render lerps dir-from -> dir-to),

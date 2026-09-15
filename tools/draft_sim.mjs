@@ -147,8 +147,11 @@ import {
 } from '../src/perks.js';
 // G8 step 2 (rule-rewrite family): cards + the applied-value helpers the game
 // reads, through the same seams as the other two families.
+// G21 slice 1: rewriteCards itself — the pool now enforces the finite
+// REWRITE_SLOTS cap and the offered-predicates through the REAL seam.
 import {
-  REWRITE_IDS, REWRITE_CARD_WEIGHT, grantRewrite, rewriteBoom, harvestBlast,
+  REWRITE_CARD_WEIGHT, grantRewrite, rewriteBoom, harvestBlast, rewriteCards,
+  AFTERSHOCK_DAMAGE_MULT,
 } from '../src/rewrites.js';
 import { CHESTS } from '../src/chests.js';
 // G10 (rarity tiers): the tier table through the same seam the game rolls —
@@ -506,6 +509,42 @@ function cardImpact(card, player, weapons, counts, P, held) {
       // mid-band, not a derivation.
       return { dps: 0.2, ehp: 0 };
     }
+    // ---- G21 slice 1 models (coarse, reasoning stated per card) -------------
+    if (card.id === 'rime') {
+      // RIME: every direct hit chills to x0.75 speed for 1.5s. The sim has no
+      // movement layer, so the chill's real value (bodies arrive slower,
+      // fewer contact overlaps) is priced as contact relief: +5% ehp, coarse.
+      return { dps: 0, ehp: 0.05 };
+    }
+    if (card.id === 'ignite') {
+      // IGNITE: a 3s burn at (2 + 0.25 x weapon damage) on every direct hit,
+      // refreshing. A small parallel damage stream on bodies the weapons
+      // already struck: +4% dps, coarse (the run loop credits the held burn
+      // at 1.08 — the picker prices the OFFER conservatively, the run pays
+      // the card's real stream once held; C6 measures the held arm).
+      return { dps: 0.04, ehp: 0 };
+    }
+    if (card.id === 'livewire') {
+      // LIVE WIRE: every 5th direct hit zaps one OTHER body within 120px at
+      // 0.5 x damage -> +0.1 hit-equivalents per hit at field density, cut to
+      // a third because the zap body is not always fresh: +3% dps, coarse
+      // (run-loop held credit 1.05 — same offer-vs-held conservatism).
+      return { dps: 0.03, ehp: 0 };
+    }
+    if (card.id === 'aftershock') {
+      // AFTERSHOCK: every blast echoes once at half damage 0.4s later. In this
+      // sim the only blast source is a held CHAIN REACTION (classless sim),
+      // so the card is worth +AFTERSHOCK_DAMAGE_MULT of the boom credit,
+      // halved again for the echo's delay and overlap: 0.2 x 0.5 x 0.5 = 0.05;
+      // the predicate keeps the inert case out of the pool.
+      return { dps: 0.05, ehp: 0 };
+    }
+    if (card.id === 'wideorbit') {
+      // WIDE ORBIT: x1.3 ring radius, x1.2 spin — more blade-seconds inside
+      // bodies on ONE weapon of the kit: +3% dps, coarse (run-loop held
+      // credit 1.05 only while an ORBIT is equipped).
+      return { dps: 0.03, ehp: 0 };
+    }
     // 'healthdamage': potions land on ~3% of kills and the blast is 10 + 1.0 x
     // weapon damage — rare but wide. Coarse 0.04 with the reasoning stated;
     // the run loop applies the modeled blast when held.
@@ -592,9 +631,17 @@ export function buildDraftPool(weapons, patch, held = {}) {
       cards.push({ kind: 'skill', id, weight: SKILL_CARD_WEIGHT });
     }
     // G8 step 2: the rewrite family, same contract.
-    for (const id of REWRITE_IDS) {
-      if (held.rewrites && held.rewrites[id]) continue;
-      cards.push({ kind: 'rewrite', id, weight: REWRITE_CARD_WEIGHT });
+    // G21 slice 1: through the REAL seam — rewriteCards enforces the finite
+    // REWRITE_SLOTS cap and the offered-predicates, so the sim's pool cannot
+    // drift from openDraft's. aftershock's blast source here can only be a
+    // HELD onkillboom (the sim is classless — the CHAIN_REACTION/AFTERIMAGE
+    // skill sources are out of scope, stated not modeled); wideorbit's
+    // predicate reads the kit below. patch.rewriteWeight overrides the
+    // per-card weight ABSOLUTELY (the C5 curve cells).
+    heldState.weapons = weapons;
+    const rewriteW = Number.isFinite(patch.rewriteWeight) ? patch.rewriteWeight : REWRITE_CARD_WEIGHT;
+    for (const c of rewriteCards(heldState)) {
+      cards.push({ kind: 'rewrite', id: c.rewrite, weight: rewriteW });
     }
   }
   return cards;
@@ -880,16 +927,29 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       }
     }
     const avgHp = C.ENEMY.BASE_HP * ladderHp(w) * mix.hp;
+    // G21 WIDE ORBIT, run-level: the widened, faster ring puts more
+    // blade-seconds inside bodies — but only while an ORBIT is in the kit
+    // (the offered-predicate guarantees it whenever the card is draftable).
+    if (held.rewrites.wideorbit && weapons.some(wp => wp.type === 'ORBIT')) dmg *= 1.05;
     let killN = Math.min(N, Math.max(0, dmg) / Math.max(1e-9, avgHp));
     // G8 step 2 CHAIN REACTION, run-level: every kill detonates
     // (4 + 0.5 x weapon damage — the live rewriteBoom numbers), credited at
     // BOOM_FRESH fresh bodies per detonation. Single step, no chain recursion:
     // a boom's victims detonate next tick, which is the conservative bound of
     // the live frame-by-frame propagation.
+    // G21 AFTERSHOCK: the one echo lands 0.4s later at AFTERSHOCK_DAMAGE_MULT
+    // of the detonation — credited as a flat multiplier on the same bodies.
     if (held.rewrites.onkillboom && killN > 0) {
       const boom = rewriteBoom(heldState);
-      killN = Math.min(N, killN + killN * SIM_TUNING.BOOM_FRESH * boom.damage / avgHp);
+      const echo = held.rewrites.aftershock ? 1 + AFTERSHOCK_DAMAGE_MULT : 1;
+      killN = Math.min(N, killN + killN * SIM_TUNING.BOOM_FRESH * echo * boom.damage / avgHp);
     }
+    // G21 IGNITE / LIVE WIRE, run-level: the burn is a parallel damage stream
+    // on already-struck bodies and every 5th hit zaps one extra body at 0.5x —
+    // both coarse multiplicative credits on the kill stream (the same numbers
+    // cardImpact prices, so the picker and the run agree).
+    if (held.rewrites.ignite && killN > 0) killN = Math.min(N, killN * 1.08);
+    if (held.rewrites.livewire && killN > 0) killN = Math.min(N, killN * 1.05);
     // G8 step 2 BLOOD HARVEST, run-level: ~DROP_CHANCE potions per kill reach
     // the inventory (the healBank seam); each pickup blasts
     // 10 + 1.0 x weapon damage at HARVEST_FRESH fresh bodies (the live
@@ -963,7 +1023,11 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       ? contactHitDamage(C.SURVIVAL.BASE_CONTACT, dm, heavyType, bossId === 'GRAVELMAW' ? 1.5 : 1,
         player.stats.maxHp)
       : 0;
-    const hurtRaw = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT * damageTakenMult(heldState);
+    const hurtRaw = (hits * ambient + (heavy > 0 ? 0.25 * heavy : 0)) * DT * damageTakenMult(heldState)
+      // G21 RIME, run-level: chilled bodies (x0.75 speed, refreshing on hit)
+      // arrive slower — fewer contact overlaps. No movement layer here, so a
+      // coarse 5% pressure relief, matching cardImpact's +10% ehp pricing.
+      * (held.rewrites.rime ? 0.95 : 1);
     // W7a SHIELD arch: absorbs are whole HITS (shieldHits per grant); priced
     // at the wave's ambient hit and subtracted at the expected grant rate.
     const hurt = Math.max(0, hurtRaw - arch.shieldPerSec * ambient * DT);
@@ -1421,6 +1485,27 @@ async function main() {
     console.log(`   so checkpoint kills/gold tie for any run still alive — divergence reads on survival + waves.)`);
     console.log(`  OWNER TARGET (W7b, reported not enacted): >= x${d.target.toFixed(1)} on BOTH axes -> ` +
       `${d.meetsTarget ? 'MET' : 'NOT MET'} (survival x${d.goodBad.toFixed(2)}, waves x${d.goodBadWaves.toFixed(2)})`);
+    console.log('');
+  }
+
+  if (args.includes('--rewrite-weight')) {
+    // G21 slice 1, C5: the rewrite family's per-card weight curve, measured
+    // through the REAL pool seam (buildDraftPool -> rewriteCards, with
+    // patch.rewriteWeight as the absolute per-card weight). Same method as
+    // the 3-card family's HISTORY curve: good/bad MEAN survival ratio per
+    // cell, with the two acceptance invariants printed per cell so a
+    // failure is visible, never averaged away.
+    console.log(`REWRITE FAMILY WEIGHT CURVE — ${runs} runs/cell, seed ${seed}, ` +
+      `absolute per-card weight (live ${REWRITE_CARD_WEIGHT} x 8 cards = family share ~0.06):`);
+    const meanS = a => a.reduce((s, r) => s + r.survivalTime, 0) / a.length;
+    for (const w of [0.005, 0.0075, 0.01, 0.015, 0.02]) {
+      const g = simulateCohort(seed, runs, 'GREED_DAMAGE', { rewriteWeight: w });
+      const b = simulateCohort(seed, runs, 'ADVERSARIAL_BAD', { rewriteWeight: w });
+      const vv = divergenceVerdict(g, b);
+      const badFail = b.filter(r => r.dead).length / b.length;
+      console.log(`  weight ${w.toFixed(4)} -> good/bad x${(meanS(g) / meanS(b)).toFixed(2)}` +
+        `  | bad fails ${(100 * badFail).toFixed(0)}%  | metric wins ${vv.winCount}/5`);
+    }
     console.log('');
   }
 

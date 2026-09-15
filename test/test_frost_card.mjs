@@ -18,6 +18,9 @@ import {
   FROST_CARD_ID, FROST_CARD_WEIGHT,
   frostCard, frostCardOffered, grantFrost, hasFrost, frostCardTick,
 } from '../src/frostcard.js';
+// G21 slice 1 (C2): the armed cooldown pays the empty-rewrite-slot mult
+// through skillCooldown's one read — the cast-count window reads it live.
+import { emptySlotCooldownMult } from '../src/rewrites.js';
 
 const s = suite('test_frost_card');
 const FN = C.SKILLS.FROST_NOVA;
@@ -119,17 +122,22 @@ const simWindow = (seconds, dt, mana) => {
 };
 
 let n60 = 0, n120 = 0;
-s.check('120s with the card held and mana pinned HIGH: 15 casts at BOTH 60Hz and 120Hz', () => {
+s.check('120s with the card held and mana pinned HIGH: the cooldown-armed cast count at BOTH 60Hz and 120Hz', () => {
   grantFrost(st);
   p.skillCd.FROST_NOVA = 0;
   const hi = () => p.stats.maxMana;
   const a = simWindow(120, 1 / 60, hi());
   const b = simWindow(120, 1 / 120, hi());
   n60 = a.casts; n120 = b.casts;
+  // RETARGET (G21 slice 1, C2): the armed cooldown is FN.COOLDOWN x the
+  // empty-rewrite-slot payment (x0.80 on this zero-rewrite fixture), so the
+  // expected count is 120 / (8 x 0.80) = 18.75 -> 19, same +/-2 band.
+  const want = Math.round(120 / (FN.COOLDOWN * emptySlotCooldownMult(st)));
   console.log('    measured: casts@60Hz=' + n60 + ' casts@120Hz=' + n120 +
-    ' (cooldown ' + FN.COOLDOWN + 's over 120s -> 15 expected, 13-17 accepted)');
-  if (n60 < 13 || n60 > 17) throw new Error('60Hz casts ' + n60 + ' outside 13-17');
-  if (n120 < 13 || n120 > 17) throw new Error('120Hz casts ' + n120 + ' outside 13-17');
+    ' (cooldown ' + (FN.COOLDOWN * emptySlotCooldownMult(st)).toFixed(1) + 's over 120s -> ' +
+    want + ' expected, ' + (want - 2) + '-' + (want + 2) + ' accepted)');
+  if (n60 < want - 2 || n60 > want + 2) throw new Error('60Hz casts ' + n60 + ' outside ' + (want - 2) + '-' + (want + 2));
+  if (n120 < want - 2 || n120 > want + 2) throw new Error('120Hz casts ' + n120 + ' outside ' + (want - 2) + '-' + (want + 2));
   if (n60 !== n120) throw new Error('dt dependence: 60Hz ' + n60 + ' != 120Hz ' + n120);
 });
 

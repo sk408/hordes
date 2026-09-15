@@ -379,6 +379,13 @@ export const CONFIG = {
   // state.weaponSlots, set by startRun.
   WEAPON_SLOTS: 6,
 
+  // G21 slice 1: the rule-REWRITE family's finite build slots (rewrites.js).
+  // A run holding REWRITE_SLOTS rewrites is offered NO rewrite cards — with 8
+  // cards in the family, every pick excludes at least 4 others, so the slot
+  // pressure is structural, not cosmetic. Empty slots PAY through
+  // emptySlotCooldownMult (-5% skill/ult cooldown each, floored at x0.80).
+  REWRITE_SLOTS: 4,
+
   // Wave-6 loot (loot.js): rare equippables drop from kills. Bosses always
   // drop one (rolled up-tier), elites often, normals rarely.
   ITEMS: {

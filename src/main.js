@@ -40,8 +40,10 @@ import {
 import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcard.js';
 // G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
 // Blood Harvest) — mechanic rewrites, granted through the same card contract.
+// G21 slice 1: + the ONE on-weapon-hit rider writer and AFTERSHOCK's echo tick.
 import {
   rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast, REWRITES,
+  onWeaponHit, tickRewriteEchoes,
 } from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
@@ -1389,6 +1391,10 @@ function detonateMineAt(mine) {
       let d = dmg;
       if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
       e.hp -= d; e.flash = 0.08;
+      // G21 rider: the mine's PRIMARY payload is a direct weapon hit wherever
+      // the detonation is triggered from (weapons.js detonateMine rides via
+      // hurt(); this mirror rides identically).
+      onWeaponHit(state, e);
       state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 });
     }
   }
@@ -1415,6 +1421,7 @@ function synergyZapFork(zw) {
     hit.add(tgt);
     tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, (P.jumps || WEAPONS.ZAP.JUMPS) + 1 + k);
     tgt.flash = 0.08;
+    onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
     from = tgt;
   }
@@ -1481,6 +1488,7 @@ function synergyScytheZap() {
     if (!t) continue;
     t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5;   // 50% falloff
     t.flash = 0.08;
+    onWeaponHit(state, t);   // G21 rider: the scythe-zap lash is a direct hit
     state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
       age: 0, ttl: 0.15 });
   }
@@ -1686,6 +1694,7 @@ function update(dt) {
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
         e.hp -= dmg; e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
+        onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
           p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
         }
@@ -1736,8 +1745,20 @@ function update(dt) {
   for (const e of state.enemies) {
     e.age = (e.age || 0) + dt;
     if (e.flash > 0) e.flash -= dt;
-    if (e.slow > 0) e.slow -= dt;
-    const spd = e.speed * (e.slow > 0 && !e.flying ? C.SKILLS.FROST_NOVA.SLOW_FACTOR : 1) *
+    if (e.slow > 0) {
+      e.slow -= dt;
+      if (e.slow <= 0) e.slowMult = 0;   // G21 RIME: the chill's grip dies with it
+    }
+    // G21 slice 1 IGNITE: the burn DoT, dt-driven (60Hz and 120Hz pay the same
+    // total). Burn damage is applied HERE — never through hurt/onWeaponHit, so
+    // it never triggers riders; a burn-LETHAL tick stamps the corpse so the
+    // death pass never detonates it (no chain-of-chains, the card's contract).
+    if (e.burn > 0) {
+      e.burn -= dt;
+      e.hp -= (e.burnDps || 0) * dt;
+      if (e.hp <= 0) e.burnLethal = true;
+    }
+    const spd = e.speed * (e.slow > 0 && !e.flying ? (e.slowMult || C.SKILLS.FROST_NOVA.SLOW_FACTOR) : 1) *
       (wm.enemySpeedMult || 1);      // SNOW: the horde trudges
     // E2 (R9): a flyer's altitude is drawn, never simulated — z is a pure
     // function of age (flyingZ: dt-free, so 60Hz and 120Hz fly the same
@@ -1965,7 +1986,11 @@ function update(dt) {
       // useSkill) detonates through the SAME blast — boomBlast owns the
       // numbers/price/dry-fallback, so there is ONE detonation implementation
       // and a rewrite-holding Witch still detonates each corpse exactly once.
-      const boom = rewriteBoom(state) || (e.chainBoom ? boomBlast(state.player) : null);
+      // G21 slice 1 IGNITE: a corpse the BURN killed never detonates (the
+      // card's contract: burn damage never detonates anything — no
+      // chain-of-chains). Stamped by the burn tick beside the slow decay.
+      const boom = e.burnLethal ? null
+        : (rewriteBoom(state) || (e.chainBoom ? boomBlast(state.player) : null));
       if (boom) {
         // CHAIN REACTION draws on the pool per detonation; a dry run still
         // detonates, just smaller (rewriteBoom owns that decision).
@@ -2308,6 +2333,9 @@ function update(dt) {
   }
 
   // Skill/weapon visual effects + HUD toasts.
+  // G21 slice 1 AFTERSHOCK: scheduled detonation echoes fire HERE, dt-driven,
+  // through the ONE blast path — a ground blast, so flyers take nothing.
+  flyingGuard('blast', () => tickRewriteEchoes(state, dt));
   for (const fx of state.effects) {
     fx.age += dt;
     if (fx.kind === 'charge') { fx.x = p.x; fx.y = p.y; } // follows the player
