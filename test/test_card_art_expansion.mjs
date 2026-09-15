@@ -18,10 +18,35 @@
 //      joins the deck card BY NAME, and every id they emit is in the
 //      enumeration (the enumeration covers the whole pool, checked against
 //      the pool, not against a number);
-//   3. the deck contract holds for whatever CARD_EXPANSION holds: COMMON
-//      number ranks only (face/ace/joker stay exclusive to the W7b ladder),
-//      suit = family, integer grids (0 = transparent), the ONE shared frame,
-//      rank+suit pips top-left and rotated bottom-right;
+//   3. the deck contract holds for whatever CARD_EXPANSION holds: rank class
+//      AGREES with the card's declared tier (number = COMMON, face = RARE —
+//      the expansion's two legal tiers), suit = family, integer grids
+//      (0 = transparent), the ONE shared frame, rank+suit pips top-left and
+//      rotated bottom-right;
+//
+// CONTRACT UPDATE — owner decision 2026-09-15 (rare-tier expansion cards):
+// this file used to require that EVERY expansion card be a COMMON number card
+// ("face/ace/joker stay exclusive to the W7b ladder"). That requirement is now
+// WRONG BY DESIGN, and here is the arithmetic that forced it: the COMMON
+// number-rank space is `2..9 x 4 suits` = 32 rank+suit pairs, TOTAL. The frozen
+// 13-card core deck pins 5 of them (2H / 5C / 6D / 7S / 8S), so the expansion
+// can hold at most 27 number cards — and after G21 slice 1 it held 24, leaving
+// exactly THREE free pairs (7D / 8D / 9D). G21 slice 2 adds SIX cards (three
+// singles + three combos), so three of them CANNOT be number cards at all.
+// Approved fix: the three always-offered SINGLES (glacier / wildfire /
+// overload) take the three free number slots, and the three prerequisite-gated
+// CROSS-TAG COMBOS (thermalshock / stormreaper / glacialorbit) become RARE FACE
+// cards (JH / JD / QH — free, since the W7b ladder holds KH / QS / JC / QD /
+// KS). The deck lands at 43 cards with the number space exactly full (32/32)
+// and zero rank+suit duplicates.
+// This is a CONTRACT UPDATE, not a weakening — every other requirement is
+// unchanged and still EXACT: every pool id resolves to a real card, no
+// plain-text fallback, motifs pairwise-distinct (pip-free window), no deck-wide
+// exact rank+suit duplicate — and the tier is still DERIVED, never trusted:
+// face rank must mean RARE and number rank must mean COMMON, and the RARE
+// expansion cards must be EXACTLY the cards the live rewrite registry reports as
+// cross-tag combos (`isComboRewrite`), so the allowance cannot be widened by
+// adding an id to a list here.
 //   4. NO two cards in the deck share a rank+suit, and motifs are distinct
 //      ACROSS THE DECK — computed from CARD_ART, with the two documented
 //      cross-registry identity reuses (VOLLEY = three_arrows, PIERCE ALL =
@@ -31,7 +56,7 @@
 //   5. drawCard paints every card in the deck one rect per inked cell.
 import {
   CARD_ART, CARD_DECK, CARD_IDS, CARD_EXPANSION, EXPANSION_IDS, CARD_W, CARD_H, SUITS,
-  SUIT_COLOUR, cardArt,
+  SUIT_COLOUR, RANK_CLASS, cardArt,
 } from '../src/art/cards.js';
 import { drawCard } from '../src/render_cards.js';
 import { deckIdForOffer, OFFER_TO_DECK, WEAPON_OFFER_TO_DECK } from '../src/draft_card_art.js';
@@ -39,7 +64,7 @@ import { WEAPON_TYPES, WEAPON_NAMES, WEAPON_MAX_LEVEL } from '../src/weapons.js'
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
 import { RULES, RULE_IDS, ruleCards } from '../src/rules.js';
 import { SKILL_PERKS, SKILL_PERK_IDS, skillCards } from '../src/perks.js';
-import { REWRITES, REWRITE_IDS, rewriteCards } from '../src/rewrites.js';
+import { REWRITES, REWRITE_IDS, rewriteCards, isComboRewrite } from '../src/rewrites.js';
 import { FROST_CARD_ID, frostCard, frostCardOffered } from '../src/frostcard.js';
 
 let failed = 0;
@@ -56,7 +81,10 @@ function eqList(actual, expected, msg) {
 }
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 // 3x5 rank glyphs (the test's own copy, so a glyph edited in cards.js is
-// re-measured here rather than trusted).
+// re-measured here rather than trusted). The number glyphs are the COMMON
+// family; J/Q/K are the FACE family the rare-tier combos carry (see the
+// CONTRACT UPDATE note above) — a face rank with no glyph here must FAIL, not
+// silently pass.
 const RANK_GLYPHS = {
   '2': ['111', '001', '111', '100', '111'],
   '3': ['111', '001', '111', '001', '111'],
@@ -66,6 +94,9 @@ const RANK_GLYPHS = {
   '7': ['111', '001', '010', '010', '010'],
   '8': ['111', '101', '111', '101', '111'],
   '9': ['111', '101', '111', '001', '111'],
+  'J': ['011', '001', '001', '101', '010'],
+  'Q': ['111', '101', '101', '111', '001'],
+  'K': ['101', '101', '110', '101', '101'],
 };
 const SUIT_PIPS = {
   spades:   ['00100', '01110', '11111', '00100', '01110'],
@@ -85,6 +116,21 @@ const SUIT_PIPS = {
 const interiorOf = (id) => CARD_ART[id]
   ? JSON.stringify(CARD_ART[id].grid.slice(10, 25).map((r) => r.slice(7, 17)))
   : 'MISSING:' + id;
+// CONTRACT UPDATE 2026-09-15 (owner decision — see the header): a CARD_EXPANSION
+// entry may declare EITHER of two tiers, and the declaration must agree with the
+// rank class the card carries: COMMON = a number rank, RARE = a face rank. The
+// mapping is read off RANK_CLASS so it lives in ONE place in the codebase; a
+// card declaring ace/joker/chase (the W7b ladder + the two jokers) is refused,
+// and so is a card whose rank contradicts its declaration.
+const TIER_RANK_CLASS = { COMMON: 'number', RARE: 'face' };
+const DEF_BY_ID = Object.fromEntries(CARD_EXPANSION.map((c) => [c.id, c]));
+// The ONLY rare-tier expansion cards: the live rewrite registry's cross-tag
+// combos (two reserved tags). Derived, never a frozen id list — and the deck id
+// is read through the LIVE join (OFFER_TO_DECK), not assumed from a prefix, so a
+// missing row shows up as a mismatch rather than as a silently passing check.
+const COMBO_REWRITE_IDS = REWRITE_IDS.filter(isComboRewrite);
+const COMBO_OFFER_IDS = COMBO_REWRITE_IDS.map((id) => 'rewrite_' + id);
+const COMBO_DECK_IDS = COMBO_OFFER_IDS.map((offer) => OFFER_TO_DECK[offer]);
 // The deck card an offer resolves to, or null. Guarded so a missing card
 // FAILS a check instead of throwing: `cardArt(null)` is null, never a crash.
 const artForOffer = (offerId) => cardArt(deckIdForOffer(offerId));
@@ -145,8 +191,17 @@ console.log('DECK CONTRACT (derived from CARD_EXPANSION — no frozen count):');
     ok(!!a, 'cardArt(' + def.id + ') exists');
     if (!a) continue;
     eq(a.name, def.name, def.id + ' cardArt name matches its definition');
-    eq(a.rankClass, 'number', def.id + ' rank class is NUMBER (COMMON pool content)');
-    eq(a.tier, 'COMMON', def.id + ' tier (rank IS the rarity)');
+    // CONTRACT UPDATE 2026-09-15 (owner decision — see the header): the
+    // expansion holds TWO legal tiers and the card's own declaration must agree
+    // with the rank it carries. COMMON = a number rank; RARE = a face rank.
+    // ace/joker/chase (the W7b ladder + the two jokers) still cannot appear.
+    const declared = def.tier || 'COMMON';
+    ok(declared in TIER_RANK_CLASS, def.id + ' declares a legal expansion tier (got ' + declared + ')');
+    eq(a.rankClass, TIER_RANK_CLASS[declared], def.id + ' rank class agrees with its declared tier');
+    eq(a.tier, RANK_CLASS[a.rankClass], def.id + ' tier IS the rank class (rank IS the rarity)');
+    eq(a.tier, declared, def.id + ' derived tier matches the declaration');
+    ok(declared === 'RARE' || a.rankClass === 'number',
+      def.id + ' COMMON expansion cards keep a NUMBER rank (only the rare tier carries a face)');
     ok(!!SUITS[a.suit], def.id + ' suit is one of the four suits');
     eq(a.family, SUITS[a.suit] && SUITS[a.suit].family, def.id + ' family (suit IS the family)');
     eq(a.motif, def.motif, def.id + ' motif');
@@ -335,16 +390,32 @@ console.log('FULL POOL COVERAGE (every offer id the pool can produce is enumerat
     if (deckId) eq(cardArt(deckId).name, c.name, c.id + ' -> ' + deckId + ' joins the live pool by NAME');
     ok(OFFER_SET.has(c.id), c.id + ' (live pool) is in the enumeration');
   }
-  // Rank-class correctness across the join: commons are numbers, the RARE
-  // ladder is face cards, the MYTHIC chase is ace/joker. (dmg is the ONE
-  // common pool card the FROZEN core deck ships as a face card — Q of
-  // spades, pinned by test_card_art.mjs; not this brief's to move.)
+  // Rank-class correctness across the join: pool cards are COMMON number cards,
+  // EXCEPT the cross-tag combos, which are RARE face cards by the owner decision
+  // 2026-09-15 — the allowance is derived from the LIVE rewrite registry
+  // (`isComboRewrite`: a card carrying two reserved tags), never an id list
+  // written here, so it cannot be widened by editing this file. (dmg is the ONE
+  // common pool card the FROZEN core deck ships as a face card — Q of spades,
+  // pinned by test_card_art.mjs; not this brief's to move.)
   for (const u of UPGRADES.filter((u) => u.id !== 'dmg')) {
     eq(classForOffer(u.id), 'number', u.id + ' is a COMMON number card');
   }
   for (const id of OFFER_IDS) {
     if (!/^(wpn_|lvl_|rule_|skill_|rewrite_)/.test(id)) continue;
-    eq(classForOffer(id), 'number', id + ' is a COMMON number card');
+    const combo = id.startsWith('rewrite_') && isComboRewrite(id.slice('rewrite_'.length));
+    const wantClass = combo ? 'face' : 'number';
+    eq(classForOffer(id), wantClass,
+      id + ' is a ' + (combo ? 'RARE face' : 'COMMON number') + ' card');
+  }
+  // The rare tier is EXACTLY the combo set, and each combo really is RARE-tier
+  // (the card art derives the tier from the rank, so this pins the declaration
+  // AND the face rank together).
+  eqList(EXPANSION_IDS.filter((id) => (DEF_BY_ID[id].tier || 'COMMON') === 'RARE'), COMBO_DECK_IDS,
+    'the rare-tier expansion cards are exactly the live cross-tag combos');
+  for (const offerId of COMBO_OFFER_IDS) {
+    eq(classForOffer(offerId), 'face', offerId + ' (combo) is a RARE face card');
+    const art = artForOffer(offerId);
+    eq(art && art.tier, 'RARE', offerId + ' (combo) tier is RARE');
   }
   eq(artForOffer('dmg') && artForOffer('dmg').rank, 'Q', 'dmg keeps its frozen core-deck rank (Q of spades)');
   for (const u of DRAFT_RARE_UPGRADES) {

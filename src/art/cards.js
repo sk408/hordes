@@ -678,6 +678,128 @@ const MOTIFS = {
       '000050000',
     ),
   },
+
+  // ---- G21 slice 2: the three CROSS-TAG COMBO cards ------------------------
+  // (docs/briefs/G21_SLICE2_COMBOS.md D2). One genuinely NEW grid per combo,
+  // never an alias: the interior-distinctness contract is about the ART.
+  // THERMAL SHOCK (FROST+BURN) — the ice that catches fire: a shell of light
+  // ice crystal, spiked top and bottom, split by the flame bursting from its
+  // core (RIME's chill + IGNITE's burn in ONE shape).
+  thermal_crack: {
+    palette: { 5: '#4a86c8', 6: '#9ad0f4', 7: '#e07828', 8: '#ffe07a' },
+    grid: G(
+      '00006000000',
+      '00006000000',
+      '00056650000',
+      '00567765000',
+      '05678876500',
+      '05678876500',
+      '00567765000',
+      '00056650000',
+      '00006000000',
+      '00006000000',
+    ),
+  },
+  // STORM REAPER (CONDUCT+CHAIN) — the zap kill: a gold bolt landing on the
+  // detonation it leaves behind (a blast diamond ring around a white core).
+  thunder_blast: {
+    palette: { 5: '#c89a2a', 6: '#ffe07a', 7: '#f4f4f8' },
+    grid: G(
+      '0000600',
+      '0006600',
+      '0006600',
+      '0066000',
+      '0066000',
+      '0006600',
+      '0006700',
+      '0005000',
+      '0050500',
+      '5507055',
+      '0050500',
+      '0005000',
+    ),
+  },
+  // GLACIAL ORBIT (ORBIT+FROST) — the icy ring: a frost-blue orbit carrying
+  // crystal at its edges and a white core. NOT `orbit` (the steel blade inside
+  // its gold ring) and NOT `wide_orbit` (the gold ellipse): a new grid.
+  glacier_ring: {
+    palette: { 5: '#4a86c8', 6: '#9ad0f4', 7: '#f4f4f8' },
+    grid: G(
+      '00006000000',
+      '00006000000',
+      '00065656000',
+      '00650005600',
+      '06500000560',
+      '65000700056',
+      '06500000560',
+      '00650005600',
+      '00065656000',
+      '00006000000',
+      '00006000000',
+    ),
+  },
+  // ---- G21 slice 2: the three ALWAYS-OFFERED single-tag cards --------------
+  // (second card per tag: GLACIER / WILDFIRE / OVERLOAD). These take the three
+  // COMMON number slots the combos vacated (7D / 8D / 9D) — see the owner
+  // decision in the CARD_EXPANSION header below. One genuinely NEW grid each,
+  // never an alias of an existing motif: the interior-distinctness contract is
+  // about the ART.
+  // GLACIER (FROST) — the ice mass itself: a crystalline peak with a white cap
+  // over a blue body, wider and blunter than RIME's `frost_shard` spike.
+  glacier_peak: {
+    palette: { 5: '#3a6aa8', 6: '#5a90c8', 7: '#f4f4f8' },
+    grid: G(
+      '00000700000',
+      '00000700000',
+      '00000770000',
+      '00006770000',
+      '00067776000',
+      '00677777600',
+      '06777777760',
+      '67776667776',
+      '56666666665',
+      '55666666655',
+      '55555555555',
+    ),
+  },
+  // WILDFIRE (BURN) — the burn LEAVING a corpse: one fire with two flanking
+  // tongues and ember sparks rising off them (a spread, not IGNITE's single
+  // taper). Its own grid.
+  wildfire_spread: {
+    palette: { 5: '#b03a1a', 6: '#e07828', 7: '#ffe07a' },
+    grid: G(
+      '00600000600',
+      '00660006600',
+      '00666066600',
+      '05676667650',
+      '05677777650',
+      '00567776500',
+      '00567776500',
+      '00056765000',
+      '00005650000',
+      '00005500000',
+      '00005000000',
+    ),
+  },
+  // OVERLOAD (CONDUCT) — the discharge: gold spokes thrown to the corners off
+  // a white-hot core inside a steel ring. NOT `spark_arc` (the clamped gap) and
+  // NOT `pulse` (the nova ring): a radial burst of its own.
+  overload_nova: {
+    palette: { 5: '#9aa4b8', 6: '#ffe07a', 7: '#f4f4f8' },
+    grid: G(
+      '60000000006',
+      '06000000060',
+      '00600500600',
+      '00065056000',
+      '00057775000',
+      '06057775060',
+      '00057775000',
+      '00065056000',
+      '00600500600',
+      '06000000060',
+      '60000000006',
+    ),
+  },
 };
 
 // ---------------------------------------------------------------- deck ------
@@ -709,8 +831,15 @@ export const CARD_IDS = CARD_DECK.map((c) => c.id);
 // built through the SAME frame/pip/palette pipeline below and registered into
 // CARD_ART, so cardArt()/drawCard find them exactly like a core card.
 //
-// Every entry is COMMON pool content, so every rank is a NUMBER (rank class
-// IS the rarity; the face/ace/joker ranks stay exclusive to the W7b ladder).
+// Expansion cards are COMMON-pool content by default, so their rank is a
+// NUMBER (rank class IS the rarity: number = COMMON). ONE exception, by owner
+// decision 2026-09-15 (see the G21 slice 2 block below): the three CROSS-TAG
+// COMBO cards are RARE-tier, so they take FACE ranks (J/Q/K) and declare
+// `tier: 'RARE'`. A card's declared tier and its rank class must AGREE —
+// test/test_card_art_expansion.mjs derives the expected rank class from the
+// declared tier (never a hardcoded id list), so a RARE card on a number rank
+// (or a COMMON one on a face rank) goes red. The face/ace/joker ranks stay
+// exclusive to the W7b ladder and the two jokers otherwise.
 // Suit = family, matched to how the core cards assign suit (spades damage,
 // hearts survival, diamonds economy, clubs utility):
 //   - weapons are the DAMAGE family (spades), by identity. Two exceptions,
@@ -764,6 +893,40 @@ export const CARD_EXPANSION = [
   { id: 'rw_livewire',    name: 'Live Wire',     desc: 'rewrite card',        rank: '4', suit: 'diamonds', motif: 'spark_arc' },
   { id: 'rw_aftershock',  name: 'Aftershock',    desc: 'rewrite card',        rank: '8', suit: 'hearts',   motif: 'echo_rings' },
   { id: 'rw_wideorbit',   name: 'Wide Orbit',    desc: 'rewrite card',        rank: '5', suit: 'diamonds', motif: 'wide_orbit' },
+  // G21 slice 2: the three SECOND-PER-TAG SINGLES (Glacier / Wildfire /
+  // Overload — the always-offered cards) plus the three CROSS-TAG COMBOS.
+  //
+  // CAPACITY ARITHMETIC (measured, and the reason this block is shaped this
+  // way). The COMMON number-rank space is `2..9 x 4 suits` = 32 rank+suit
+  // pairs, TOTAL. The frozen 13-card core deck pins 5 of them (2H / 5C / 6D /
+  // 7S / 8S), so expansion cards can hold at most 27 — and after G21 slice 1 the
+  // expansion held 24 of them, leaving exactly THREE free pairs (7D / 8D / 9D).
+  // G21 slice 2 adds SIX cards (three singles + three combos), so three of them
+  // CANNOT be number cards at all.
+  //
+  // OWNER DECISION (2026-09-15, approved): the three COMBO cards become
+  // FACE-RANK (J/Q/K), RARE-tier, and the three always-offered SINGLES take the
+  // three COMMON number slots the combos vacate (7D / 8D / 9D). Rationale: the
+  // singles (glacier / wildfire / overload) are offered UNCONDITIONALLY, so they
+  // are the visible common cards; the combos (thermalshock / stormreaper /
+  // glacialorbit) are prerequisite-gated premium content (both constituents
+  // owned) and belong in the rare tier. `rank = rarity` still holds: face rank
+  // IS the RARE tier (RANK_CLASS below), and each combo declares `tier: 'RARE'`
+  // so the deck states its tier rather than letting it be inferred silently.
+  //
+  // SUIT/FAMILY for the combos: each sits in the family its constituents live
+  // in — THERMAL SHOCK (FROST+BURN) with the frost read in HEARTS (beside Rime
+  // 7H and Aftershock 8H), STORM REAPER (CONDUCT+CHAIN) with CONDUCT in
+  // DIAMONDS (Live Wire 4D), GLACIAL ORBIT (ORBIT+FROST) with the frost/orbit
+  // chill in HEARTS (Q, beside the other frost cards). J H / J D / Q H are free
+  // face slots (the W7b ladder holds K H, Q S, J C, Q D, K S) — no exact
+  // rank+suit duplicate anywhere in the deck.
+  { id: 'rw_glacier',      name: 'Glacier',      desc: 'rewrite card',        rank: '7', suit: 'diamonds', motif: 'glacier_peak' },
+  { id: 'rw_wildfire',     name: 'Wildfire',     desc: 'rewrite card',        rank: '8', suit: 'diamonds', motif: 'wildfire_spread' },
+  { id: 'rw_overload',     name: 'Overload',     desc: 'rewrite card',        rank: '9', suit: 'diamonds', motif: 'overload_nova' },
+  { id: 'rw_thermalshock', name: 'Thermal Shock', desc: 'rewrite card',      rank: 'J', suit: 'hearts',   motif: 'thermal_crack',  tier: 'RARE' },
+  { id: 'rw_stormreaper',  name: 'Storm Reaper',  desc: 'rewrite card',      rank: 'J', suit: 'diamonds', motif: 'thunder_blast',  tier: 'RARE' },
+  { id: 'rw_glacialorbit', name: 'Glacial Orbit', desc: 'rewrite card',      rank: 'Q', suit: 'hearts',   motif: 'glacier_ring',   tier: 'RARE' },
 ];
 export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 
@@ -867,6 +1030,10 @@ for (const def of [...CARD_DECK, ...CARD_EXPANSION]) {
   a.rank = def.rank;
   a.rankClass = RANK_CLASS_OF(def.rank);
   a.tier = RANK_CLASS[a.rankClass];            // COMMON / RARE / MYTHIC / CHASE
+  // The tier is DERIVED from the rank class (rank IS the rarity) — a def may
+  // declare `tier` to state its intent, and test/test_card_art_expansion.mjs
+  // pins the declaration AGAINST this derived value, so a card that declares
+  // RARE while carrying a number rank goes red.
   a.suit = def.suit;                            // null on the jokers
   a.family = def.suit ? SUITS[def.suit].family : null;
   a.fullArt = !!def.joker;                      // the two jokers are the only ones

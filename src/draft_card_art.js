@@ -43,6 +43,13 @@ export const OFFER_TO_DECK = {
   // G21 slice 1 keyword rewrites (one per REWRITE_TAGS family)
   rewrite_rime: 'rw_rime', rewrite_ignite: 'rw_ignite', rewrite_livewire: 'rw_livewire',
   rewrite_aftershock: 'rw_aftershock', rewrite_wideorbit: 'rw_wideorbit',
+  // G21 slice 2 second-per-tag singles (always offered until taken/full)
+  rewrite_glacier: 'rw_glacier', rewrite_wildfire: 'rw_wildfire', rewrite_overload: 'rw_overload',
+  // G21 slice 2 cross-tag combos (predicate-offered: both constituents owned).
+  // RARE-tier cards (face rank) since the owner decision 2026-09-15 — the same
+  // join, the same art pipeline; only the rank/suit differ.
+  rewrite_thermalshock: 'rw_thermalshock', rewrite_stormreaper: 'rw_stormreaper',
+  rewrite_glacialorbit: 'rw_glacialorbit',
 };
 
 // Weapon grant (wpn_<TYPE>) and level-up (lvl_<TYPE>_<lv>) offers share the
