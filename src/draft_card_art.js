@@ -40,6 +40,9 @@ export const OFFER_TO_DECK = {
   // G8 rewrites (rewrites.js rewriteCards: 'rewrite_' + id)
   rewrite_pierceall: 'rw_pierceall', rewrite_onkillboom: 'rw_onkillboom',
   rewrite_healthdamage: 'rw_healthdamage',
+  // G21 slice 1 keyword rewrites (one per REWRITE_TAGS family)
+  rewrite_rime: 'rw_rime', rewrite_ignite: 'rw_ignite', rewrite_livewire: 'rw_livewire',
+  rewrite_aftershock: 'rw_aftershock', rewrite_wideorbit: 'rw_wideorbit',
 };
 
 // Weapon grant (wpn_<TYPE>) and level-up (lvl_<TYPE>_<lv>) offers share the

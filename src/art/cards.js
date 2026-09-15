@@ -298,7 +298,9 @@ const MOTIFS = {
   // ============================================================ expansion ====
   // CARD ART COVERAGE (docs/briefs/CARD_ART_COVERAGE.md): motifs for the rest
   // of the draft pool — the nine weapon cards, Quick Hands, the G8 rule /
-  // perk / rewrite families and the Pocket Frost card. Same discipline as the
+  // perk / rewrite families and the Pocket Frost card, plus the five G21
+  // slice 1 keyword rewrites (Rime / Ignite / Live Wire / Aftershock / Wide
+  // Orbit). Same discipline as the
   // core motifs: integer grids via G(), palette keys 5..9, ink kept out of
   // the pip corners (TL x<=6,y<=12 and the rotated BR) so the pips read.
   // ORBIT BLADE — a steel blade circling inside its gold orbit ring.
@@ -584,6 +586,98 @@ const MOTIFS = {
       '00555500',
     ),
   },
+
+  // ---- G21 slice 1: the five KEYWORD rewrite cards -------------------------
+  // (docs/briefs/G21_RULE_CARDS.md): one motif per keyword family — FROST /
+  // BURN / CONDUCT / CHAIN / ORBIT. Five genuinely NEW grids, never an alias
+  // of an existing motif: the expansion's interior-distinctness contract
+  // (test/test_card_art_expansion.mjs) is about the ART, so reusing a grid
+  // under a new name would defeat it.
+  // RIME (FROST) — the chill itself: an ice crystal, white core, frost spikes.
+  frost_shard: {
+    palette: { 5: '#5a90c8', 6: '#9ad0f4', 7: '#f4f4f8' },
+    grid: G(
+      '000060000',
+      '000060000',
+      '000560000',
+      '000565000',
+      '050565050',
+      '005565500',
+      '000767000',
+      '005565500',
+      '050565050',
+      '000565000',
+      '000050000',
+    ),
+  },
+  // IGNITE (BURN) — the flame: ember body, hot gold heart, tapering wick.
+  flame: {
+    palette: { 5: '#b03a1a', 6: '#e07828', 7: '#ffe07a' },
+    grid: G(
+      '000060000',
+      '000060000',
+      '000560000',
+      '005660000',
+      '005676000',
+      '056776600',
+      '056777650',
+      '056777650',
+      '005667600',
+      '000566500',
+      '000055000',
+    ),
+  },
+  // LIVE WIRE (CONDUCT) — the spark ACROSS its own gap: a gold conductor
+  // between steel clamp plates, white-hot core bursting at the break.
+  spark_arc: {
+    palette: { 5: '#9aa4b8', 6: '#f4f4f8', 7: '#ffe07a' },
+    grid: G(
+      '000070000',
+      '000070000',
+      '005000500',
+      '005555500',
+      '000606000',
+      '006666600',
+      '000606000',
+      '005555500',
+      '005000500',
+      '000070000',
+      '000070000',
+    ),
+  },
+  // AFTERSHOCK (CHAIN) — the echo: a white-hot core inside a gold detonation
+  // ring, inside the wider amber shockwave the first blast leaves behind.
+  echo_rings: {
+    palette: { 5: '#f0b45a', 6: '#ffe07a', 7: '#f4f4f8' },
+    grid: G(
+      '000050000',
+      '005000500',
+      '050000050',
+      '500666005',
+      '000676000',
+      '500666005',
+      '050000050',
+      '005000500',
+      '000050000',
+    ),
+  },
+  // WIDE ORBIT (ORBIT) — the blade ring at full spread: a steel ellipse,
+  // wider than the core 'orbit' motif's circle, gold blade tips held at the
+  // poles around a glowing core.
+  wide_orbit: {
+    palette: { 5: '#c89a2a', 6: '#9aa4b8', 7: '#f4f4f8' },
+    grid: G(
+      '000050000',
+      '000050000',
+      '006666600',
+      '060000060',
+      '000777000',
+      '060000060',
+      '006666600',
+      '000050000',
+      '000050000',
+    ),
+  },
 };
 
 // ---------------------------------------------------------------- deck ------
@@ -654,6 +748,22 @@ export const CARD_EXPANSION = [
   { id: 'rw_pierceall',   name: 'Pierce All',    desc: 'rewrite card',        rank: '9', suit: 'clubs',    motif: 'spear' },
   { id: 'rw_onkillboom',  name: 'Chain Reaction', desc: 'rewrite card',       rank: '9', suit: 'hearts',   motif: 'blast' },
   { id: 'rw_healthdamage', name: 'Blood Harvest', desc: 'rewrite card',       rank: '6', suit: 'hearts',   motif: 'potion' },
+  // G21 slice 1: the five KEYWORD rewrite cards (Rime / Ignite / Live Wire /
+  // Aftershock / Wide Orbit), one per REWRITE_TAGS family. SUIT by what the
+  // card does in play, like every other expansion card: RIME (chill) and
+  // AFTERSHOCK (the CHAIN echo) are the crowd-control reads that keep bodies
+  // off you, so they sit in survival beside CHAIN REACTION and Blood Harvest.
+  // IGNITE / LIVE WIRE / WIDE ORBIT are weapon riders of the damage family,
+  // but every spade AND club number 2..9 is already spoken for (the deck's
+  // own rank+suit contract), so they take the one family still open —
+  // diamonds. That is a space constraint, NOT a claim burn is economy.
+  // Ranks are COMMON pool numbers, chosen to leave no exact rank+suit
+  // duplicate anywhere in the deck: 7H / 8H / 2D / 4D / 5D.
+  { id: 'rw_rime',        name: 'Rime',          desc: 'rewrite card',        rank: '7', suit: 'hearts',   motif: 'frost_shard' },
+  { id: 'rw_ignite',      name: 'Ignite',        desc: 'rewrite card',        rank: '2', suit: 'diamonds', motif: 'flame' },
+  { id: 'rw_livewire',    name: 'Live Wire',     desc: 'rewrite card',        rank: '4', suit: 'diamonds', motif: 'spark_arc' },
+  { id: 'rw_aftershock',  name: 'Aftershock',    desc: 'rewrite card',        rank: '8', suit: 'hearts',   motif: 'echo_rings' },
+  { id: 'rw_wideorbit',   name: 'Wide Orbit',    desc: 'rewrite card',        rank: '5', suit: 'diamonds', motif: 'wide_orbit' },
 ];
 export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 

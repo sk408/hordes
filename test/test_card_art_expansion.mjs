@@ -2,37 +2,45 @@
 // Self-contained, no runner, no DOM:
 //   node test/test_card_art_expansion.mjs
 //
-// PINS what docs/briefs/CARD_ART_COVERAGE.md shipped, through the REAL seams
-// (never a restated copy):
-//   1. the expansion deck contract: 19 cards, every rank a NUMBER (COMMON
-//      pool content — face/ace/joker stay exclusive to the W7b ladder), suit
-//      = family, the SAME shared frame as the core 13;
-//   2. the format discipline of test_card_art.mjs applied to the expansion:
-//      INTEGER grids (0 = transparent), transparent silhouette corners, hex
-//      palettes, rank+suit pips top-left and rotated bottom-right;
-//   3. expansion motifs pairwise distinct (the TWO documented cross-registry
-//      reuses — wpn_volley = three_arrows, rw_pierceall = spear — are the
-//      only interior collisions with the core deck);
-//   4. the NAME joins: every weapon card is named WEAPON_NAMES[type], the
-//      utility/rule/perk/rewrite cards are named from their source module —
-//      a rename on either side goes red here;
-//   5. FULL POOL COVERAGE: every offer id src/main.js openDraft can produce
-//      (weapon grants, weapon level-ups at ANY level incl. over-cap, stat
-//      cards, the RARE/MYTHIC ladder, rules, perks, Pocket Frost, rewrites)
-//      resolves to a REAL card — no plain-text fallback — and only a
-//      genuinely unknown id gets null;
-//   6. drawCard paints every expansion card one rect per inked cell.
+// PINS the coverage contract through the REAL seams (never a restated copy).
+// The first cut of this file froze a 19-card id list and a "54 pool ids"
+// count; G21 slice 1 then grew the rewrite family 3 -> 8 and the file went
+// red on its own contract rather than on a real gap. So every expectation
+// here is now DERIVED from the pool and the deck — a frozen count cannot be
+// written, and the file still fails the instant a card loses its art:
+//   1. every offer id the draft pool can PRODUCE resolves to a REAL card (no
+//      plain-text fallback), enumerated from the live registries
+//      (WEAPON_TYPES / WEAPON_NAMES, UPGRADES + both ladder tiers, RULE_IDS,
+//      SKILL_PERK_IDS, REWRITE_IDS, FROST_CARD_ID) so a new pool family — or
+//      a new card in an existing one — is covered automatically;
+//   2. the LIVE pool builders (ruleCards / skillCards / rewriteCards /
+//      frostCard) agree with the deck: every card they emit resolves AND
+//      joins the deck card BY NAME, and every id they emit is in the
+//      enumeration (the enumeration covers the whole pool, checked against
+//      the pool, not against a number);
+//   3. the deck contract holds for whatever CARD_EXPANSION holds: COMMON
+//      number ranks only (face/ace/joker stay exclusive to the W7b ladder),
+//      suit = family, integer grids (0 = transparent), the ONE shared frame,
+//      rank+suit pips top-left and rotated bottom-right;
+//   4. NO two cards in the deck share a rank+suit, and motifs are distinct
+//      ACROSS THE DECK — computed from CARD_ART, with the two documented
+//      cross-registry identity reuses (VOLLEY = three_arrows, PIERCE ALL =
+//      spear) as the ONLY permitted interior collisions, and only because
+//      they share the motif NAME (an aliased grid under a new name is a
+//      failure, not a reuse);
+//   5. drawCard paints every card in the deck one rect per inked cell.
 import {
-  CARD_ART, CARD_DECK, CARD_EXPANSION, EXPANSION_IDS, CARD_W, CARD_H, SUITS, SUIT_COLOUR, cardArt,
+  CARD_ART, CARD_DECK, CARD_IDS, CARD_EXPANSION, EXPANSION_IDS, CARD_W, CARD_H, SUITS,
+  SUIT_COLOUR, cardArt,
 } from '../src/art/cards.js';
 import { drawCard } from '../src/render_cards.js';
 import { deckIdForOffer, OFFER_TO_DECK, WEAPON_OFFER_TO_DECK } from '../src/draft_card_art.js';
 import { WEAPON_TYPES, WEAPON_NAMES, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
-import { RULES, RULE_IDS } from '../src/rules.js';
-import { SKILL_PERKS, SKILL_PERK_IDS } from '../src/perks.js';
-import { REWRITES, REWRITE_IDS } from '../src/rewrites.js';
-import { FROST_CARD_ID, frostCard } from '../src/frostcard.js';
+import { RULES, RULE_IDS, ruleCards } from '../src/rules.js';
+import { SKILL_PERKS, SKILL_PERK_IDS, skillCards } from '../src/perks.js';
+import { REWRITES, REWRITE_IDS, rewriteCards } from '../src/rewrites.js';
+import { FROST_CARD_ID, frostCard, frostCardOffered } from '../src/frostcard.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -43,31 +51,12 @@ function eq(actual, expected, msg) {
   const brief = (v) => (v === null || typeof v !== 'object') ? JSON.stringify(v) : '[' + typeof v + ']';
   ok(actual === expected, msg + ' (got ' + brief(actual) + ', want ' + brief(expected) + ')');
 }
-
-// The expansion contract, owned HERE like test_card_art owns the core table.
-const EXPECTED = [
-  { id: 'wpn_volley',     rank: '2', suit: 'spades',   family: 'damage',   motif: 'three_arrows' },
-  { id: 'wpn_orbit',      rank: '3', suit: 'spades',   family: 'damage',   motif: 'orbit' },
-  { id: 'wpn_boomerang',  rank: '4', suit: 'spades',   family: 'damage',   motif: 'boomerang' },
-  { id: 'wpn_zap',        rank: '5', suit: 'spades',   family: 'damage',   motif: 'bolt' },
-  { id: 'wpn_scythe',     rank: '6', suit: 'spades',   family: 'damage',   motif: 'scythe' },
-  { id: 'wpn_beam',       rank: '9', suit: 'spades',   family: 'damage',   motif: 'beam' },
-  { id: 'wpn_nova_pulse', rank: '3', suit: 'hearts',   family: 'survival', motif: 'pulse' },
-  { id: 'wpn_seeker',     rank: '4', suit: 'clubs',    family: 'utility',  motif: 'seeker' },
-  { id: 'wpn_mine',       rank: '2', suit: 'clubs',    family: 'utility',  motif: 'mine' },
-  { id: 'quick_hands',    rank: '3', suit: 'clubs',    family: 'utility',  motif: 'hourglass' },
-  { id: 'rule_hordebait', rank: '3', suit: 'diamonds', family: 'economy',  motif: 'chest' },
-  { id: 'rule_once',      rank: '8', suit: 'clubs',    family: 'utility',  motif: 'lone_card' },
-  { id: 'skill_regrowth', rank: '4', suit: 'hearts',   family: 'survival', motif: 'sprout' },
-  { id: 'skill_focus',    rank: '6', suit: 'clubs',    family: 'utility',  motif: 'orb' },
-  { id: 'skill_thick',    rank: '5', suit: 'hearts',   family: 'survival', motif: 'shield' },
-  { id: 'skill_frost',    rank: '7', suit: 'clubs',    family: 'utility',  motif: 'snowflake' },
-  { id: 'rw_pierceall',   rank: '9', suit: 'clubs',    family: 'utility',  motif: 'spear' },
-  { id: 'rw_onkillboom',  rank: '9', suit: 'hearts',   family: 'survival', motif: 'blast' },
-  { id: 'rw_healthdamage', rank: '6', suit: 'hearts',  family: 'survival', motif: 'potion' },
-];
+function eqList(actual, expected, msg) {
+  eq(JSON.stringify(actual), JSON.stringify(expected), msg);
+}
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-// 3x5 rank glyphs (the test's own copy, incl. the 3/4/9 the coverage added).
+// 3x5 rank glyphs (the test's own copy, so a glyph edited in cards.js is
+// re-measured here rather than trusted).
 const RANK_GLYPHS = {
   '2': ['111', '001', '111', '100', '111'],
   '3': ['111', '001', '111', '001', '111'],
@@ -84,27 +73,89 @@ const SUIT_PIPS = {
   diamonds: ['00100', '01110', '11111', '01110', '00100'],
   clubs:    ['00100', '01110', '11011', '00100', '01110'],
 };
+// The motif INTERIOR is the painted shape, not the frame, compared in a
+// window that CANNOT carry pip ink: the top-left pips live at x<=6 and the
+// rotated bottom-right pips at x>=17, so cols 7..16 are motif-only at every
+// row. (Rows 2..12 alone would not do it — the suit pip reaches x=6 there,
+// and a duplicated grid under a different suit would compare UNEQUAL and slip
+// through. Measured: an aliased snowflake on a hearts card passed a
+// rows10-24/cols5-18 window.) Two cards "share a motif" when these match.
+// A card that is NOT registered gets a sentinel (never a crash) — its absence
+// is reported by the deck-contract section, and the sentinel cannot collide.
+const interiorOf = (id) => CARD_ART[id]
+  ? JSON.stringify(CARD_ART[id].grid.slice(10, 25).map((r) => r.slice(7, 17)))
+  : 'MISSING:' + id;
+// The deck card an offer resolves to, or null. Guarded so a missing card
+// FAILS a check instead of throwing: `cardArt(null)` is null, never a crash.
+const artForOffer = (offerId) => cardArt(deckIdForOffer(offerId));
+const nameForOffer = (offerId) => { const a = artForOffer(offerId); return a && a.name; };
+const classForOffer = (offerId) => { const a = artForOffer(offerId); return a && a.rankClass; };
+// The ONLY two documented interior collisions with the core deck — motif
+// reuse BY IDENTITY (VOLLEY is the arrow volley Split Shot extends; PIERCE
+// ALL is pierce itself). Anything else that duplicates a grid is a bug.
+const IDENTITY_REUSE = { wpn_volley: 'multi', rw_pierceall: 'pierce' };
 
-console.log('EXPANSION DECK (19 cards, all COMMON number ranks):');
-{
-  eq(EXPANSION_IDS.length, 19, 'the expansion is exactly 19 cards');
-  eq(JSON.stringify(EXPANSION_IDS), JSON.stringify(EXPECTED.map((c) => c.id)),
-     'the expansion ids match the contract, in order');
-  eq(CARD_EXPANSION.length, 19, 'CARD_EXPANSION carries 19 entries');
-  eq(CARD_DECK.length, 13, 'the CORE deck is untouched (still 13)');
-  for (const e of EXPECTED) {
-    const a = cardArt(e.id);
-    ok(!!a, 'cardArt(' + e.id + ') exists');
-    if (!a) continue;
-    eq(a.rank, e.rank, e.id + ' rank');
-    eq(a.rankClass, 'number', e.id + ' rank class is NUMBER (COMMON pool content)');
-    eq(a.tier, 'COMMON', e.id + ' tier (rank IS the rarity)');
-    eq(a.suit, e.suit, e.id + ' suit');
-    eq(a.family, e.family, e.id + ' family (suit IS the family)');
-    eq(a.motif, e.motif, e.id + ' motif');
-    eq(a.fullArt, false, e.id + ' is not full-art (jokers stay exclusive)');
-    eq(a.joker, null, e.id + ' is no joker');
+// ------------------------------------------------------------ the pool ------
+// Every offer id src/main.js openDraft can produce, built from the LIVE
+// registries — no frozen list, no frozen count.
+function poolOfferIds() {
+  const ids = [];
+  for (const type of Object.keys(WEAPON_TYPES)) ids.push('wpn_' + type);
+  for (const type of Object.keys(WEAPON_NAMES)) {
+    ids.push('lvl_' + type + '_1', 'lvl_' + type + '_' + WEAPON_MAX_LEVEL,
+      'lvl_' + type + '_' + (WEAPON_MAX_LEVEL + 1));
   }
+  for (const u of [...UPGRADES, ...DRAFT_RARE_UPGRADES, ...DRAFT_MYTHIC_UPGRADES]) ids.push(u.id);
+  for (const id of RULE_IDS) ids.push('rule_' + id);
+  for (const id of SKILL_PERK_IDS) ids.push('skill_' + id);
+  ids.push(FROST_CARD_ID);
+  for (const id of REWRITE_IDS) ids.push('rewrite_' + id);
+  return ids;
+}
+const OFFER_IDS = poolOfferIds();
+const OFFER_SET = new Set(OFFER_IDS);
+// Fresh run states, built only to reach every model that gates a card (the
+// G21 slice 1 predicates: a blast source for AFTERSHOCK, an ORBIT weapon for
+// WIDE ORBIT, a non-FROST_NOVA class Q for the Pocket Frost card).
+const PROBE_STATES = [
+  { player: {} },
+  { player: {}, weapons: [{ type: 'ORBIT' }] },
+  { player: { rewrites: { onkillboom: true } }, weapons: [] },
+  { player: {}, character: { skill: 'CHAIN_REACTION' }, weapons: [] },
+];
+const livePoolCards = () => {
+  const out = [];
+  for (const s of PROBE_STATES) {
+    out.push(...ruleCards(s), ...skillCards(s), ...rewriteCards(s));
+    if (frostCardOffered(s)) out.push(frostCard());
+  }
+  return out;
+};
+
+console.log('DECK CONTRACT (derived from CARD_EXPANSION — no frozen count):');
+{
+  ok(EXPANSION_IDS.length > 0, 'the expansion carries at least one card');
+  eq(new Set(EXPANSION_IDS).size, EXPANSION_IDS.length, 'every expansion id is unique');
+  eqList(EXPANSION_IDS, CARD_EXPANSION.map((c) => c.id), 'EXPANSION_IDS is CARD_EXPANSION in order');
+  eq(CARD_DECK.length, 13, 'the CORE deck is untouched (still 13)');
+  eqList(EXPANSION_IDS.filter((id) => CARD_IDS.includes(id)), [],
+    'no expansion id shadows a core deck id');
+  for (const def of CARD_EXPANSION) {
+    const a = cardArt(def.id);
+    ok(!!a, 'cardArt(' + def.id + ') exists');
+    if (!a) continue;
+    eq(a.name, def.name, def.id + ' cardArt name matches its definition');
+    eq(a.rankClass, 'number', def.id + ' rank class is NUMBER (COMMON pool content)');
+    eq(a.tier, 'COMMON', def.id + ' tier (rank IS the rarity)');
+    ok(!!SUITS[a.suit], def.id + ' suit is one of the four suits');
+    eq(a.family, SUITS[a.suit] && SUITS[a.suit].family, def.id + ' family (suit IS the family)');
+    eq(a.motif, def.motif, def.id + ' motif');
+    eq(a.fullArt, false, def.id + ' is not full-art (jokers stay exclusive)');
+    eq(a.joker, null, def.id + ' is no joker');
+  }
+  // The jokers stay the ONLY full-art cards, in the whole deck.
+  eqList(Object.keys(CARD_ART).filter((id) => CARD_ART[id].fullArt), ['second_wind', 'storm_shards'],
+    'the two jokers are the only full-art cards in the deck');
 }
 
 console.log('FORMAT + FRAME (same discipline as the core deck):');
@@ -115,6 +166,8 @@ console.log('FORMAT + FRAME (same discipline as the core deck):');
   const coreBorder = borderOf(CARD_ART.hp.grid);
   for (const id of EXPANSION_IDS) {
     const a = CARD_ART[id];
+    ok(!!a, id + ' is registered in CARD_ART');
+    if (!a) continue;
     eq(a.w, CARD_W, id + ' backing width is ' + CARD_W);
     eq(a.h, CARD_H, id + ' backing height is ' + CARD_H);
     let allInt = true, inRange = true, keyKnown = true, paletteHex = true;
@@ -131,8 +184,7 @@ console.log('FORMAT + FRAME (same discipline as the core deck):');
     ok(allInt, id + ' every cell is an INTEGER (never a string cell)');
     ok(inRange && keyKnown, id + ' every inked cell has a palette key 1..9');
     ok(paletteHex, id + ' every palette value is a hex colour');
-    eq(JSON.stringify(a.rows), JSON.stringify(a.grid.map((r) => r.join(''))),
-       id + ' rows view === grid');
+    eqList(a.rows, a.grid.map((r) => r.join('')), id + ' rows view === grid');
     eq(a.grid[0][0] + a.grid[0][CARD_W - 1] + a.grid[CARD_H - 1][0] + a.grid[CARD_H - 1][CARD_W - 1],
        0, id + ' corner pixels transparent (card silhouette)');
     eq(borderOf(a.grid), coreBorder, id + ' shares the ONE frame keyline + silhouette');
@@ -140,6 +192,8 @@ console.log('FORMAT + FRAME (same discipline as the core deck):');
     eq(a.palette[4], SUIT_COLOUR[SUITS[a.suit].colour], id + ' pips stamp in its suit colour');
   }
   // No rank+suit collision anywhere in the FULL deck (core + expansion).
+  // Numbers may repeat ACROSS suits (7S and 7H are different cards); the
+  // prohibition is the exact duplicate card.
   const seen = {};
   let clash = null;
   for (const id of Object.keys(CARD_ART)) {
@@ -154,10 +208,16 @@ console.log('FORMAT + FRAME (same discipline as the core deck):');
 
 console.log('PIPS (rank + suit, top-left and rotated bottom-right):');
 {
-  for (const e of EXPECTED) {
-    const g = CARD_ART[e.id].grid;
-    const glyph = RANK_GLYPHS[e.rank];
-    const pip = SUIT_PIPS[e.suit];
+  for (const id of EXPANSION_IDS) {
+    const a = CARD_ART[id];
+    ok(!!a, id + ' is registered in CARD_ART (pips)');
+    if (!a) continue;
+    const g = a.grid;
+    const glyph = RANK_GLYPHS[a.rank];
+    const pip = SUIT_PIPS[a.suit];
+    ok(!!glyph, id + ' rank ' + a.rank + ' has a glyph in this independent copy');
+    ok(!!pip, id + ' suit ' + a.suit + ' has a pip in this independent copy');
+    if (!glyph || !pip) continue;
     let tl = true, br = true;
     for (let ry = 0; ry < 5; ry++) {
       for (let rx = 0; rx < 3; rx++) {
@@ -169,31 +229,67 @@ console.log('PIPS (rank + suit, top-left and rotated bottom-right):');
         if (pip[ry][rx] === '1' && g[CARD_H - 2 - 5 + (4 - ry)][CARD_W - 2 - 5 + (4 - rx)] !== 4) br = false;
       }
     }
-    ok(tl, e.id + ' top-left rank+suit pip inked in the suit colour (key 4)');
-    ok(br, e.id + ' bottom-right pip is the same stamp rotated 180deg');
+    ok(tl, id + ' top-left rank+suit pip inked in the suit colour (key 4)');
+    ok(br, id + ' bottom-right pip is the same stamp rotated 180deg');
   }
 }
 
-console.log('MOTIFS (pairwise distinct inside the expansion; two documented reuses):');
+console.log('MOTIFS (computed from the deck: distinct, with two identity reuses):');
 {
-  const interior = (id) => JSON.stringify(
-    CARD_ART[id].grid.slice(10, 25).map((r) => r.slice(5, 19)));
-  const interiors = new Set(EXPANSION_IDS.map(interior));
-  eq(interiors.size, EXPANSION_IDS.length, 'all 19 expansion motifs are pairwise distinct');
-  // The documented cross-registry reuses — by IDENTITY, not convenience:
-  // VOLLEY is the arrow volley Split Shot extends; PIERCE ALL is pierce itself.
-  eq(interior('wpn_volley'), interior('multi'), 'VOLLEY shares the volley-arrows motif by identity');
-  eq(interior('rw_pierceall'), interior('pierce'), 'PIERCE ALL shares the spear motif by identity');
-  const coreOnly = ['hp', 'speed', 'pickup', 'hp_pct', 'dmg', 'scholars_stone',
-    'gilded_palm', 'crimson_edge', 'full_hand'];
-  const collisions = EXPANSION_IDS.filter((id) =>
-    !['wpn_volley', 'rw_pierceall'].includes(id) &&
-    coreOnly.some((c) => interior(c) === interior(id)));
-  eq(JSON.stringify(collisions), '[]', 'no other expansion motif duplicates a core motif');
+  // 1. inside the expansion: every interior is its own.
+  const dupes = [];
+  const seen = new Map();
+  for (const id of EXPANSION_IDS) {
+    const k = interiorOf(id);
+    if (seen.has(k)) dupes.push(seen.get(k) + ' + ' + id);
+    else seen.set(k, id);
+  }
+  eqList(dupes, [], 'all ' + EXPANSION_IDS.length + ' expansion motifs are pairwise distinct');
+  // 2. against the core deck: only the two documented identity reuses.
+  const coreCollisions = [];
+  for (const id of EXPANSION_IDS) {
+    for (const cid of CARD_IDS) {
+      if (interiorOf(id) !== interiorOf(cid)) continue;
+      if (IDENTITY_REUSE[id] === cid) continue;
+      coreCollisions.push(id + ' == ' + cid);
+    }
+  }
+  eqList(coreCollisions, [],
+    'no expansion motif duplicates a core motif (bar the two documented reuses)');
+  // 3. the reuses are REAL reuses — same motif NAME and same pixels.
+  for (const [id, cid] of Object.entries(IDENTITY_REUSE)) {
+    eq(CARD_ART[id] && CARD_ART[id].motif, CARD_ART[cid] && CARD_ART[cid].motif,
+       id + ' shares ' + cid + "'s motif by NAME");
+    eq(interiorOf(id), interiorOf(cid), id + ' shares ' + cid + "'s motif by PIXELS");
+  }
+  // 4. across the WHOLE deck: cards may share motif pixels only when they
+  //    share the motif name (an identity reuse). Two different motif names
+  //    painting the same grid is an aliased grid under a new name — the exact
+  //    cheat this assertion exists to catch.
+  const byInterior = new Map();
+  for (const id of Object.keys(CARD_ART)) {
+    const k = interiorOf(id);
+    if (!byInterior.has(k)) byInterior.set(k, []);
+    byInterior.get(k).push(id);
+  }
+  const aliases = [];
+  for (const ids of byInterior.values()) {
+    if (ids.length < 2) continue;
+    if (new Set(ids.map((id) => CARD_ART[id].motif)).size > 1) aliases.push(ids.join(' + '));
+  }
+  eqList(aliases, [], 'shared motif pixels always mean a shared motif NAME (no aliased grids)');
 }
 
 console.log('NAME JOINS (a rename on either side goes red):');
 {
+  // Every OFFER_TO_DECK / WEAPON_OFFER_TO_DECK row must point at a real card.
+  for (const [offer, deckId] of Object.entries(OFFER_TO_DECK)) {
+    ok(!!cardArt(deckId), 'OFFER_TO_DECK.' + offer + ' -> ' + deckId + ' is a real card');
+    eq(deckIdForOffer(offer), deckId, offer + ' resolves through deckIdForOffer');
+  }
+  for (const [type, deckId] of Object.entries(WEAPON_OFFER_TO_DECK)) {
+    ok(!!cardArt(deckId), 'WEAPON_OFFER_TO_DECK.' + type + ' -> ' + deckId + ' is a real card');
+  }
   for (const type of Object.keys(WEAPON_NAMES)) {
     const deckId = WEAPON_OFFER_TO_DECK[type];
     ok(!!deckId, 'weapon type ' + type + ' has a card join');
@@ -204,68 +300,71 @@ console.log('NAME JOINS (a rename on either side goes red):');
   for (const type of Object.keys(WEAPON_TYPES)) {
     ok(Object.keys(WEAPON_NAMES).includes(type), 'WEAPON_TYPES[' + type + '] has a WEAPON_NAMES entry');
   }
-  eq(cardArt(deckIdForOffer('rate')).name, UPGRADES.find((u) => u.id === 'rate').name, 'Quick Hands joins by NAME');
+  eq(nameForOffer('rate'), UPGRADES.find((u) => u.id === 'rate').name, 'Quick Hands joins by NAME');
   for (const id of RULE_IDS) {
-    eq(cardArt(deckIdForOffer('rule_' + id)).name, RULES[id].name, 'rule_' + id + ' joins by NAME');
+    eq(nameForOffer('rule_' + id), RULES[id].name, 'rule_' + id + ' joins by NAME');
   }
   for (const id of SKILL_PERK_IDS) {
-    eq(cardArt(deckIdForOffer('skill_' + id)).name, SKILL_PERKS[id].name, 'skill_' + id + ' joins by NAME');
+    eq(nameForOffer('skill_' + id), SKILL_PERKS[id].name, 'skill_' + id + ' joins by NAME');
   }
-  eq(cardArt(deckIdForOffer(FROST_CARD_ID)).name, frostCard().name, 'the Pocket Frost card joins by NAME');
+  eq(nameForOffer(FROST_CARD_ID), frostCard().name, 'the Pocket Frost card joins by NAME');
   for (const id of REWRITE_IDS) {
-    eq(cardArt(deckIdForOffer('rewrite_' + id)).name, REWRITES[id].name, 'rewrite_' + id + ' joins by NAME');
+    eq(nameForOffer('rewrite_' + id), REWRITES[id].name, 'rewrite_' + id + ' joins by NAME');
   }
 }
 
-console.log('FULL POOL COVERAGE (every offer id openDraft can produce resolves):');
+console.log('FULL POOL COVERAGE (every offer id the pool can produce is enumerated):');
 {
-  const offerIds = [];
-  // Weapon grants: wpn_<TYPE> for every registry type.
-  for (const type of Object.keys(WEAPON_TYPES)) offerIds.push('wpn_' + type);
-  // Weapon level-ups: lvl_<TYPE>_<lv> at the first level, the cap, and past
-  // it (the ONE OF EACH over-cap conversion keeps the card offered).
-  for (const type of Object.keys(WEAPON_NAMES)) {
-    offerIds.push('lvl_' + type + '_1', 'lvl_' + type + '_' + WEAPON_MAX_LEVEL,
-      'lvl_' + type + '_' + (WEAPON_MAX_LEVEL + 1));
-  }
-  // Stat cards + the W7b ladder.
-  for (const u of [...UPGRADES, ...DRAFT_RARE_UPGRADES, ...DRAFT_MYTHIC_UPGRADES]) offerIds.push(u.id);
-  // Run rules, perks, Pocket Frost, rewrites.
-  for (const id of RULE_IDS) offerIds.push('rule_' + id);
-  for (const id of SKILL_PERK_IDS) offerIds.push('skill_' + id);
-  offerIds.push(FROST_CARD_ID);
-  for (const id of REWRITE_IDS) offerIds.push('rewrite_' + id);
-
-  eq(offerIds.length, 8 + 9 * 3 + 7 + 4 + 3 + 2 + 3 + 1 + 3, 'the enumeration covers the whole pool (54 ids)');
-  for (const id of offerIds) {
+  eq(new Set(OFFER_IDS).size, OFFER_IDS.length, 'the enumeration lists each offer id exactly once');
+  ok(OFFER_IDS.length > 0, 'the enumeration is not empty');
+  for (const id of OFFER_IDS) {
     const deckId = deckIdForOffer(id);
     ok(!!deckId, id + ' resolves to deck card ' + (deckId || 'NULL — PLAIN-TEXT FALLBACK'));
     if (deckId) ok(!!cardArt(deckId), id + ' -> ' + deckId + ' is a REAL card');
+  }
+  // The enumeration must COVER the pool: every card the LIVE builders emit
+  // has to be in it (checked against the pool, never against a count), and
+  // every live card must resolve AND join the deck card by name.
+  const live = livePoolCards();
+  ok(live.length > 0, 'the live pool builders emit cards for a fresh run');
+  eqList(live.filter((c) => !OFFER_SET.has(c.id)).map((c) => c.id), [],
+    'the enumeration covers every id the live pool builders emit');
+  for (const c of live) {
+    const deckId = deckIdForOffer(c.id);
+    ok(!!deckId, c.id + ' (live pool) resolves to a deck card');
+    if (deckId) eq(cardArt(deckId).name, c.name, c.id + ' -> ' + deckId + ' joins the live pool by NAME');
+    ok(OFFER_SET.has(c.id), c.id + ' (live pool) is in the enumeration');
   }
   // Rank-class correctness across the join: commons are numbers, the RARE
   // ladder is face cards, the MYTHIC chase is ace/joker. (dmg is the ONE
   // common pool card the FROZEN core deck ships as a face card — Q of
   // spades, pinned by test_card_art.mjs; not this brief's to move.)
-  for (const id of [...UPGRADES.filter((u) => u.id !== 'dmg').map((u) => u.id),
-    'wpn_ORBIT', 'lvl_SCYTHE_3', 'rule_once', 'skill_thick', FROST_CARD_ID, 'rewrite_pierceall']) {
-    eq(cardArt(deckIdForOffer(id)).rankClass, 'number', id + ' is a COMMON number card');
+  for (const u of UPGRADES.filter((u) => u.id !== 'dmg')) {
+    eq(classForOffer(u.id), 'number', u.id + ' is a COMMON number card');
   }
-  eq(cardArt(deckIdForOffer('dmg')).rank, 'Q', 'dmg keeps its frozen core-deck rank (Q of spades)');
+  for (const id of OFFER_IDS) {
+    if (!/^(wpn_|lvl_|rule_|skill_|rewrite_)/.test(id)) continue;
+    eq(classForOffer(id), 'number', id + ' is a COMMON number card');
+  }
+  eq(artForOffer('dmg') && artForOffer('dmg').rank, 'Q', 'dmg keeps its frozen core-deck rank (Q of spades)');
   for (const u of DRAFT_RARE_UPGRADES) {
-    eq(cardArt(deckIdForOffer(u.id)).rankClass, 'face', u.id + ' is a RARE face card');
+    eq(classForOffer(u.id), 'face', u.id + ' is a RARE face card');
   }
-  eq(cardArt(deckIdForOffer('full_hand')).rankClass, 'ace', 'full_hand is the MYTHIC ace');
-  eq(cardArt(deckIdForOffer('second_wind')).rankClass, 'joker', 'second_wind is the RED joker');
-  eq(cardArt(deckIdForOffer('storm_shards')).rankClass, 'joker', 'storm_shards is the BLACK joker');
+  for (const u of DRAFT_MYTHIC_UPGRADES) {
+    ok(['ace', 'joker'].includes(classForOffer(u.id)), u.id + ' is a MYTHIC ace/joker card');
+  }
+  eq(classForOffer('full_hand'), 'ace', 'full_hand is the MYTHIC ace');
+  eq(classForOffer('second_wind'), 'joker', 'second_wind is the RED joker');
+  eq(classForOffer('storm_shards'), 'joker', 'storm_shards is the BLACK joker');
   // Only a genuinely unknown id fails safe.
   eq(deckIdForOffer('no_such_offer'), null, 'unknown offer id -> null (never a blank card)');
   eq(deckIdForOffer('wpn_NO_SUCH_WEAPON'), null, 'unknown weapon type -> null');
   eq(deckIdForOffer(undefined), null, 'undefined -> null');
 }
 
-console.log('RENDERER (every expansion card paints one rect per inked cell):');
+console.log('RENDERER (every card in the deck paints one rect per inked cell):');
 {
-  for (const id of EXPANSION_IDS) {
+  for (const id of Object.keys(CARD_ART)) {
     const a = CARD_ART[id];
     let ink = 0;
     for (const row of a.grid) for (const v of row) if (v) ink++;

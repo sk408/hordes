@@ -53,3 +53,36 @@ NOTE: `test_run_structure.mjs` ("the maw milestone") is a PRE-EXISTING
 order/RNG-dependent flake on this branch — it failed at the clean tip 712cbb6
 with this slice stashed, passes standalone 2/2, and passes on the main tree;
 out of this slice's footprint, reported not fixed.
+
+## UPDATE 2026-09-15 — G21 slice 1 closed the gap; the test is now DERIVED
+
+The evidence lines above are HISTORICAL (that artifact, that SHA): "19 cards"
+and "54 pool ids enumerated" describe the tree at `/tmp/hordes-integ @ 712cbb6`.
+G21 slice 1 then added five rule-rewrite cards (`rime`, `ignite`, `livewire`,
+`aftershock`, `wideorbit`) with no art, and the frozen contract in
+`test/test_card_art_expansion.mjs` went red on its own hardcoded count and id
+list instead of on the real gap.
+
+Now landed in the main tree (uncommitted at time of writing):
+- the five cards exist as `rw_rime` (7H), `rw_ignite` (2D), `rw_livewire` (4D),
+  `rw_aftershock` (8H), `rw_wideorbit` (5D) with five NEW motif grids
+  (`frost_shard`, `flame`, `spark_arc`, `echo_rings`, `wide_orbit`) — no motif
+  alias, no rank+suit duplicate anywhere in the deck;
+- `OFFER_TO_DECK` carries the five `rewrite_* -> rw_*` rows;
+- the test no longer freezes counts or an id list: it enumerates the pool from
+  the live registries, asserts every id resolves to a real card, cross-checks
+  the LIVE pool builders (`ruleCards` / `skillCards` / `rewriteCards` /
+  `frostCard`) resolve AND join by NAME, and computes rank+suit and motif
+  distinctness from `CARD_ART` itself. The pool stands at 63 ids / 24
+  expansion cards.
+
+Measured: `test_card_art_expansion.mjs` 1171 checks PASS; `bash
+tools/run_suite.sh` → `TREE: /home/claude/projects/hordes @ 4ce423d | dirty=3`,
+`SUITE greenfiles=91 redfiles=0`. Mutation battery (7 breaks run in a /tmp
+copy): dropping an `OFFER_TO_DECK` row, aliasing an existing motif grid under
+the same name or a new one, a rank+suit collision, a rename in `rewrites.js`,
+deleting a card, and a synthetic slice-2 rewrite with no art EACH go red with a
+precise message and no crash. Trap found while doing it: the motif-interior
+comparison window must be PIP-FREE (cols 7..16 of the 24x34 backing) — a
+rows10-24/cols5-18 window carries suit-pip ink, so a duplicated grid under a
+different suit compares unequal and slips through.
