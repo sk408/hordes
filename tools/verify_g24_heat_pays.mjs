@@ -21,11 +21,11 @@
 // EVIDENCE DISCLOSURE: the verdict is live-DOM measurement + PNG dimensions
 // and ink read back off the committed file - there is NO vision model in this
 // job, so "looks right" is never claimed; ink and state are the evidence.
-// FIXTURE DISCLOSURE: the same owner-approved probe buff the suite uses
+// FIXTURE DISCLOSURE: the owner-approved probe-buff precedent the suite uses
 // (smoke.mjs:326 - "the test character might need a buff, just for that test
-// scenario"; maxHp x80, damage x60) keeps the hero alive long enough to cross
-// three wave-end intermissions; it is applied identically and touches no heat
-// or payout code path.
+// scenario"; maxHp x80, damage x250 here so the wave-end intermissions arrive
+// inside the tool's budget) keeps the hero alive long enough to cross three
+// of them; it is applied identically and touches no heat or payout code path.
 // Run: node tools/verify_g24_heat_pays.mjs
 import { withPage } from './browser.mjs';
 import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
@@ -69,7 +69,7 @@ async function readBack(p, file, box) {
 // count; the level-up subtraction does not) plus the reads the checks assert.
 const PROBE = `(() => {
   const T = window.__G24_T;
-  const g = window.__G24 || (window.__G24 = { xp: 0, cur: 0, pRef: null, minted: 0, gemsRef: null });
+  const g = window.__G24 || (window.__G24 = { xp: 0, cur: 0, pRef: null, minted: 0, gemXp: 0, gemsRef: null });
   const p = T.state.player;
   if (g.pRef !== p) {
     g.cur = p.xp;
@@ -78,18 +78,25 @@ const PROBE = `(() => {
       set: (v) => { if (v > g.cur) g.xp += v - g.cur; g.cur = v; } });
     g.pRef = p;
     // Fixture buff re-armed per fresh player (a RETRY resets stats).
-    p.stats.maxHp *= 80; p.hp = p.stats.maxHp; p.stats.damage *= 60;
+    p.stats.maxHp *= 80; p.hp = p.stats.maxHp; p.stats.damage *= 250;
   }
-  // Gem-mint counter: Σ gem.xp of everything pushed into the live gems array.
-  // The per-kill XP ESCALATES with the wave, so the honest cross-window
-  // comparison is Δ(collected xp) / Δ(minted gem xp) - the escalation cancels
-  // and what remains is the effective multiplier stack (heat included).
+  // Gem counters: Σ gem.xp MINTED (pushed) and Σ gem.xp COLLECTED (spliced by
+  // the real collect loop at main.js's gem pass). The per-kill XP escalates
+  // with the wave and gem collection lags minting, so the honest cross-window
+  // comparison is Δ(collected xp) / Δ(collected gem xp): both sides scale with
+  // e.xp and both count only gems actually run over, so what remains is the
+  // effective multiplier stack the collect site applied (heat included).
   if (g.gemsRef !== T.state.gems) {
-    const arr = T.state.gems; const orig = arr.push.bind(arr);
+    const arr = T.state.gems;
+    const orig = arr.push.bind(arr); const origSp = arr.splice.bind(arr);
     arr.push = (...items) => { for (const it of items) g.minted += (it && it.xp) || 0; return orig(...items); };
+    arr.splice = (i, n, ...rest) => {
+      for (let k = i; k < i + (n || 0) && k < arr.length; k++) g.gemXp += (arr[k] && arr[k].xp) || 0;
+      return origSp(i, n, ...rest);
+    };
     g.gemsRef = arr;
   }
-  return { xp: g.xp, minted: g.minted, kills: p.kills | 0, mode: T.state.mode, time: T.state.time };
+  return { xp: g.xp, minted: g.minted, gemXp: g.gemXp, kills: p.kills | 0, mode: T.state.mode, time: T.state.time };
 })()`;
 
 const out = await withPage({ w: 390, h: 844, dpr: 3,
@@ -121,7 +128,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     T.hudText.set(true);
     T.banners.suppressAll();
     const p = T.state.player;
-    p.stats.maxHp *= 80; p.hp = p.stats.maxHp; p.stats.damage *= 60;
+    p.stats.maxHp *= 80; p.hp = p.stats.maxHp; p.stats.damage *= 250;
     return { time: T.state.time, mode: T.state.mode };
   })()`, true);
   check('probe seam armed AFTER the frozen-game assertion (fixture buff disclosed)',
@@ -192,14 +199,14 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   const a0 = await p.evaluate(PROBE, true);
   const winA = await windowOfKills(a0.kills, 90000);
   const xpA = winA.probe.xp - a0.xp, killsA = winA.probe.kills - a0.kills;
-  const mintedA = winA.probe.minted - a0.minted;   // escalation control
+  const gemXpA = winA.probe.gemXp - a0.gemXp;   // collected-gem escalation control
   check(`window A (manual 0): >=${KILLS_PER_WINDOW} kills measured live`,
     killsA >= KILLS_PER_WINDOW && !winA.short,
-    { kills: killsA, xp: Math.round(xpA), mintedGemXp: Math.round(mintedA),
+    { kills: killsA, xp: Math.round(xpA), collectedGemXp: Math.round(gemXpA),
       perKill: +(xpA / Math.max(1, killsA)).toFixed(2),
-      effMult: +(xpA / Math.max(1, mintedA)).toFixed(3),
+      effMult: +(xpA / Math.max(1, gemXpA)).toFixed(3),
       simClock: +winA.probe.time.toFixed(1), waitedMs: winA.waitedMs });
-  const effA = xpA / Math.max(1, mintedA);
+  const effA = xpA / Math.max(1, gemXpA);
 
   // ---- advance the dial with REAL taps on RAISE THE STAKES (x3) ----
   // NOTE: built-in heat (new-slot draft picks, evolutions) ALSO moves the HEAT
@@ -207,7 +214,7 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   // pin the PAYOUT strings and the manual ledger, not the total heat value.
   const manBefore = await p.evaluate(`(async () => (await import('./src/heat.js')).manualPushes(window.__G24_T.state))()`, true);
   const stakesTaps = [];
-  const deadline = Date.now() + 240000;   // three waves, generously
+  const deadline = Date.now() + 420000;   // three wave-end intermissions
   while (Date.now() < deadline) {
     const { probe, tapped } = await stepLive(null);   // NEVER auto-continue here
     const man = await p.evaluate(`(async () => (await import('./src/heat.js')).manualPushes(window.__G24_T.state))()`, true);
@@ -218,14 +225,15 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
         await p.tap(s[0], s[1]);
         const manAfter = await p.evaluate(`(async () => (await import('./src/heat.js')).manualPushes(window.__G24_T.state))()`, true);
         stakesTaps.push(manAfter);
-        // the tap re-renders the intermission; continue into the next wave so
-        // the run keeps living (another REAL tap, on CONTINUE)
-        const c = await centerOf('CONTINUE');
-        if (c) await p.tap(c[0], c[1]);
-      } else {
-        const c = await centerOf('CONTINUE');   // stakes hidden (cap): just go on
-        if (c) await p.tap(c[0], c[1]);
+        if (process.env.G24_DEBUG) console.log('    [debug] stakes tap at', JSON.stringify(s), '-> manual', manAfter, 'sim', +probe.time.toFixed(1));
+      } else if (process.env.G24_DEBUG) {
+        const cards = await p.evaluate(`(() => document.getElementById('ov-cards').children.map(c => (c.textContent || '').split('\\n')[0].slice(0, 24)))()`);
+        console.log('    [debug] intermission WITHOUT a stakes card at sim', +probe.time.toFixed(1), JSON.stringify(cards));
       }
+      // the tap re-renders (or the stakes card is gone): continue into the
+      // next wave so the run keeps living (another REAL tap, on CONTINUE)
+      const c = await centerOf('CONTINUE');
+      if (c) await p.tap(c[0], c[1]);
     }
     await new Promise((r) => setTimeout(r, 150));
   }
@@ -247,18 +255,18 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
   const b0 = await p.evaluate(PROBE, true);
   const winB = await windowOfKills(b0.kills, 90000);
   const xpB = winB.probe.xp - b0.xp, killsB = winB.probe.kills - b0.kills;
-  const mintedB = winB.probe.minted - b0.minted;
-  const effB = xpB / Math.max(1, mintedB);
+  const gemXpB = winB.probe.gemXp - b0.gemXp;
+  const effB = xpB / Math.max(1, gemXpB);
   check(`window B (manual 3): >=${KILLS_PER_WINDOW} kills measured live`,
     killsB >= KILLS_PER_WINDOW && !winB.short,
-    { kills: killsB, xp: Math.round(xpB), mintedGemXp: Math.round(mintedB),
+    { kills: killsB, xp: Math.round(xpB), collectedGemXp: Math.round(gemXpB),
       perKill: +(xpB / Math.max(1, killsB)).toFixed(2), effMult: +effB.toFixed(3),
       simClock: +winB.probe.time.toFixed(1), waitedMs: winB.waitedMs });
   check('XP PER KILL strictly rises with manual heat (0 -> 3 pushes; escalation-normalized)',
     effB > effA,
     { effMultManual0: +effA.toFixed(3), effMultManual3: +effB.toFixed(3),
       ratio: +(effB / effA).toFixed(3),
-      note: 'effMult = collected xp / minted gem xp; the wave escalation cancels' });
+      note: 'effMult = collected xp / collected gem xp, both windows; escalation and coverage cancel' });
 
   // ---- ONE PNG of the live HUD, then READ THE COPIED ARTIFACT BACK ----
   const hudBox = await p.evaluate(`(() => { const r = document.getElementById('hud').getBoundingClientRect();
