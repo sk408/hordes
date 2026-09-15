@@ -22,7 +22,7 @@
 //      run can legitimately last that long now.
 //
 // Usage: node tools/boss_sim.mjs [--runs N] [--max-seconds S]
-//        [--profile fresh|partial|maxed]
+//        [--profile fresh|partial|maxed|hours:H] [--seed S]
 import { CONFIG as CFG } from '../src/config.js';
 import { makeProfile, buyUpgrade, SHOP_UPGRADES } from '../src/meta.js';
 
@@ -40,6 +40,28 @@ const MAX_SECONDS = argOf('--max-seconds', 31 * 60);   // > the 30:00 run limit
 const PROFILE = args.includes('--profile') ? args[args.indexOf('--profile') + 1] : 'fresh';
 const PARTIAL = PROFILE === 'partial';
 const MAXED = PROFILE === 'maxed';
+// --profile hours:H (G17 slice 1 BEATABILITY ARM): a save with ~H PLAY HOURS of
+// purchases, built through the REAL meta API — a purse of H x the MEASURED
+// end-game gold/hour (tools/economy_ledger.mjs goldPerHour('maxed'), the
+// measurement record) spent along the greedy priority order from
+// tools/balance_sim.mjs. The owner's target: the finale is beatable at ~40
+// play hours of shop items, and NOT before. DISCLOSED reading: pricing the
+// whole budget at the END-GAME rate is the GENEROUS arm — a real player's
+// first hours earn far less (tier 0-1 bank ~70-160/run), so the career-
+// integrated 40h build would be SMALLER. If the generous arm cannot clear
+// the finale, the honest answer is still NULL-or-no, never a tuned pass.
+const HOURS = typeof PROFILE === 'string' && PROFILE.startsWith('hours:')
+  ? Number(PROFILE.slice(6)) : 0;
+// --seed S: replace Math.random with a seeded mulberry32 (weather.js — the
+// game's own deterministic rng helper) so a cohort REPRODUCES bit-for-bit
+// (spawns, elite rolls, drafts). Measurement reproducibility only; the game
+// itself is untouched.
+const SEED = argOf('--seed', 0);
+if (SEED) {
+  const { mulberry32 } = await import('../src/weather.js');
+  Math.random = mulberry32(SEED);
+  console.log(`[--seed] Math.random := mulberry32(${SEED})`);
+}
 // DIAGNOSTIC KNOBS (experiment only — they scale freshly spawned BOSS bodies
 // in the SIM, they do not touch the game): used to find out WHICH gate blocks
 // a developed build from climbing the ladder (can't-kill-it vs can't-survive-it).
@@ -129,6 +151,28 @@ if (MAXED) {
     `slots ${prof.purchased.slots} · weapons ${prof.unlockedWeapons.length} · ` +
     `elites ${prof.unlockedElites.join('/') || 'none'}`);
 }
+if (HOURS > 0) {
+  // G17 slice 1: the ~H-PLAY-HOUR save, greedy through the REAL buyers. The
+  // priority order is balance_sim's own GREEDY_PRIORITY export (dmg/hp/crit
+  // power first, weapons/elites next, trophies last) — no second strategy
+  // table; the budget comes from the ledger's measured end-game rate.
+  const { goldPerHour } = await import('./economy_ledger.mjs');
+  const { GREEDY_PRIORITY } = await import('./balance_sim.mjs');
+  const budget = Math.round(HOURS * goldPerHour('maxed'));
+  const prof = makeProfile();
+  prof.gold = budget;
+  const bought = [];
+  for (const id of GREEDY_PRIORITY) {
+    const def = SHOP_UPGRADES.find(u => u.id === id);
+    if (!def) continue;
+    for (let i = 0; i < def.maxLevel; i++) if (buyUpgrade(prof, id)) bought.push(id); else break;
+  }
+  lsBack.set('hordes_profile_v1', JSON.stringify(prof));
+  console.log(`hours:${HOURS} profile: budget ${budget}g (${HOURS}h x ` +
+    `${Math.round(goldPerHour('maxed'))}g/h measured) · spent ${budget - prof.gold}g · ` +
+    `rows bought ${bought.length} · slots ${prof.purchased.slots} · ` +
+    `weapons ${prof.unlockedWeapons.length} · elites ${prof.unlockedElites.join('/') || 'none'}`);
+}
 globalThis.localStorage = {
   getItem: (k) => (lsBack.has(k) ? lsBack.get(k) : null),
   setItem: (k, v) => { lsBack.set(k, String(v)); },
@@ -173,6 +217,17 @@ function frame() {
     const play = cardTitled('PLAY');
     if (play) { play.click(); return; }
     keyHandler({ key: '1' });
+  }
+  // SKILL POLICY (G17 slice 1; mirrors tools/real_loop.mjs :174-196 verbatim
+  // in spirit — measured there: dormant-vs-casting on the FRESH stage moved
+  // mean survival 204.8s -> 277.8s). Press both skill keys while a boss is up
+  // so a finale-clearability measurement is a measurement of a PLAYER, not of
+  // a skill layer left dormant.
+  if (keyHandler && (st.mode === 'playing' || st.mode === 'finale')) {
+    const bossUp = (st.wave.bosses || []).some(b => b && b.hp > 0)
+      || (st.wave.midBosses || []).some(b => b && b.hp > 0)
+      || !!(st.finalBoss && st.finalBoss.hp > 0);
+    if (bossUp) { keyHandler({ key: 'q' }); keyHandler({ key: 'e' }); }
   }
   return 'playing';
 }
@@ -220,14 +275,17 @@ for (let r = 1; r <= RUNS; r++) {
   }
   // RUN-STRUCTURE: a run that reaches the limit ends in the WIN state, not in
   // death (state.runWon), and must not be folded into the truncation case.
+  // G17 slice 1: mawCleared stamps THE FINALE BEAT — the maw was slain this
+  // run (a run can die after slaying it; the stamp survives the run).
+  const maw = !!st.mawCleared;
   const rec = st.runWon
-    ? { wave: st.wave.num, time: Math.floor(st.time), cause: 'RUN SURVIVED', killer: '-' }
+    ? { wave: st.wave.num, time: Math.floor(st.time), cause: 'RUN SURVIVED', killer: '-', maw }
     : ended
       ? { wave: ended.wave ?? st.wave.num, time: Math.floor(ended.time ?? st.time),
-          cause: classify(ended), killer: ended.name || ended.typeId || '?' }
-      : { wave: st.wave.num, time: Math.floor(st.time), cause: 'TRUNCATED', killer: '-' };
+          cause: classify(ended), killer: ended.name || ended.typeId || '?', maw }
+      : { wave: st.wave.num, time: Math.floor(st.time), cause: 'TRUNCATED', killer: '-', maw };
   runs.push(rec);
-  console.log(`run ${String(r).padStart(2)}: wave ${rec.wave} @ ${rec.time}s — ${rec.cause}${rec.killer !== '-' ? ' (' + rec.killer + ')' : ''}`);
+  console.log(`run ${String(r).padStart(2)}: wave ${rec.wave} @ ${rec.time}s — ${rec.cause}${rec.killer !== '-' ? ' (' + rec.killer + ')' : ''}${maw ? ' · MAW SLAIN' : ''}`);
 }
 
 // ---- report: deaths per wave x cause ---------------------------------------
@@ -253,6 +311,11 @@ console.log(`\nwave-1 clear rate: ${clear1}/${RUNS} · deepest wave reached: ${M
 const avg = (runs.reduce((s, r) => s + r.time, 0) / runs.length).toFixed(0);
 console.log(`mean survival: ${avg}s (run limit ${CFG.RUN.LIMIT}s, WAVE_LENGTH=${CFG.ESCALATION.WAVE_LENGTH}s, MIDBOSS at ${CFG.ESCALATION.WAVE_LENGTH * (1 - CFG.ESCALATION.MIDBOSS.AT_FRACTION)}s)`);
 console.log(`RUN SURVIVED: ${survived}/${RUNS} runs reached the limit`);
+// G17 slice 1: the beatability headline — the owner's actual target. Raw rate
+// over the whole cohort; an arm where the maw never even APPEARS reports 0
+// with its deepest wave visible above (an honest no, not a tuned pass).
+const mawRuns = runs.filter(r => r.maw).length;
+console.log(`MAW SLAIN (finale beaten): ${mawRuns}/${RUNS} runs (${(100 * mawRuns / RUNS).toFixed(0)}%)`);
 if (MAXED) {
   const deepest = Math.max(...totalWaves);
   console.log(`maxed-build reach: ${deepest}/${CFG.LADDER.WAVES} waves, best ${Math.max(...runs.map(r => r.time))}s of ${CFG.RUN.LIMIT}s`);
