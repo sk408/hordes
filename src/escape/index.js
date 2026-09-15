@@ -28,6 +28,11 @@ let auto = true;
 let holdT = 0;              // dt accumulated since the outcome landed
 let ended = false;
 let endedPayload = null;
+// V1 play-test entry (the in-run settings TEST button): the escape's payout
+// is REPEATABLE currency, so a test entry wired to the normal path would be a
+// repeatable faucet. A test entry collects NOTHING — the flag travels this
+// module's own begin opts, never a second entry point.
+let testEntry = false;
 
 // MANUAL input state (the escape's own controller surface — never the
 // overhead decide() seam; the brief forbids branching that).
@@ -40,13 +45,14 @@ function paidSkipOwned() {
   return !!(profile && profile.purchased && (profile.purchased.escapeskip | 0) >= 1);
 }
 
-// Begin the escape. opts: { seed, ctx, profile, auto, onEnd }.
+// Begin the escape. opts: { seed, ctx, profile, auto, onEnd, test }.
 export function begin(opts = {}) {
   sim = createSim((opts.seed | 0) || 1);
   ctx = opts.ctx || null;
   profile = opts.profile || null;
   onEnd = opts.onEnd || null;
   auto = opts.auto !== false;
+  testEntry = !!opts.test;
   holdT = 0; ended = false; endedPayload = null;
   held.left = held.right = false;
   jumpEdge = dashEdge = tapJump = false;
@@ -72,12 +78,14 @@ function finish(result) {
   // Payout rule: COMPLETE always pays; SKIP pays ONLY with the paid-skip
   // unlock (the owner's "skip = forgo" rule, overridable by purchase);
   // caught/fell NEVER pay — the failure is soft but the purse is not.
-  if (profile && (result === 'complete' || (result === 'skip' && paidSkipOwned()))) {
+  // A TEST entry never pays, whatever the outcome (see `testEntry` above).
+  if (profile && !testEntry && (result === 'complete' || (result === 'skip' && paidSkipOwned()))) {
     payout = collect(profile);
   }
   endedPayload = {
     result,
     payout,
+    test: testEntry,
     paidSkipUsed: result === 'skip' && paidSkipOwned(),
     bestGold: profile ? bestGoldOf(profile) : 0,
     seconds: sim.t,
@@ -128,11 +136,13 @@ export function frame(c, dt) {
     const pay = paidSkipOwned();
     R.draw(c, sim, {
       paidSkip: pay,
-      outcomeSub: sim.outcome === 'complete'
-        ? '+ ' + payoutFor(bestGoldOf(profile || {})) + ' gold to the bank'
-        : sim.outcome === 'skip'
-          ? (pay ? 'paid skip: payout collected' : 'skipped: payout forgone')
-          : '',
+      outcomeSub: testEntry
+        ? 'TEST RUN — NO PAYOUT'
+        : sim.outcome === 'complete'
+          ? '+ ' + payoutFor(bestGoldOf(profile || {})) + ' gold to the bank'
+          : sim.outcome === 'skip'
+            ? (pay ? 'paid skip: payout collected' : 'skipped: payout forgone')
+            : '',
     });
   }
 }

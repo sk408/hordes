@@ -42,6 +42,16 @@ function runToIntermission() {
       const c = cards()[0];
       if (c) { c.click(); continue; }
     }
+    // RETARGETED 2026-09-15 (V1): the wave-1 boss now hands the run through
+    // the ESCAPE before the intermission (95-135s of corridor — over this
+    // loop's frame budget when it runs long). Skip it through the mode's own
+    // seam (the contract the painted SKIP rect drives) and pump through the
+    // outcome hold to the intermission this test is about.
+    if (st.mode === 'escape') {
+      T.escape.skip();
+      step();
+      continue;
+    }
     step();
   }
 }

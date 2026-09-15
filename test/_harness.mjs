@@ -67,6 +67,11 @@ export async function boot(opts = {}) {
     style: {},
     getContext: () => ctx,
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 }),
+    // G15: capture the canvas pointer handlers main.js registers behind
+    // `if (canvas.addEventListener)` — the tap-skip path needs the REAL
+    // pointerdown listener, same capture shape as el() below.
+    addEventListener(ev, cb) { (this._ev ?? (this._ev = {}))[ev] = cb; },
+    removeEventListener() {},
   };
   // G13: createElement('canvas') must return a canvas-shaped stub (the
   // character selector builds live portrait canvases in the DOM overlay);

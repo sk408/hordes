@@ -71,6 +71,11 @@ import { rollChoices, applyChoice } from './choices.js';
 import { paintOfferArt } from './draft_card_art.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
+// G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
+// the win or the deliberate exit), composed BEFORE and handing back to the
+// WAVE-26 payoff overlay — it never replaces it. Structure mirrors the portal
+// cine; the whole movie lives in its own file (one writer per file).
+import * as DCINE from './death_cine.js';
 // V1 THE ESCAPE SEQUENCE: the side-scrolling change of pace owns its whole
 // world in src/escape/ (sim, generator, auto controller, render, payout). The
 // integration is this import plus ONE frame branch, ONE keydown/keyup branch,
@@ -322,7 +327,9 @@ const state = {
   // G12: 'title' is the startup menu over the composed title card (the other
   // meta screens keep 'menu' over the frozen world); 'farewell' is the
   // EXIT GAME screen.
-  mode: 'menu',      // 'menu' | 'title' | 'farewell' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'dead'
+  // G15: 'death-cine' is the death movie — a frozen beat between die() and
+  // the 'dead' payoff screen.
+  mode: 'menu',      // 'menu' | 'title' | 'farewell' | 'intro' | 'playing' | 'draft' | 'evolve' | 'intermission' | 'death-cine' | 'dead'
   // N2 TITLE ART REVEAL — the assertable seam for the menu fade-in + the
   // START GAME art hold: { phase, t, dur, opacity }. Phases: 'art' (card
   // alone) -> 'fade' (menu up, first entry only) | 'return' (<=150ms re-fade)
@@ -3401,7 +3408,9 @@ function die(finale) {
     audio.playSfx('levelup');
     return;
   }
-  state.mode = 'dead';
+  state.mode = 'death-cine';   // G15: the death movie owns the beat between
+  // here and the payoff screen — die() still composes the overlay BELOW, the
+  // cine merely delays its reveal (and never touches what it says).
   state.deathBy = {
     ...(lastDamageSource || { cause: 'unknown' }),
     wave: state.wave.num,
@@ -3425,8 +3434,12 @@ function die(finale) {
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
-  overlay.style.display = 'flex';
-  maybeDeathCoach();
+  // G15 THE DEATH MOVIE: the payoff above is COMPOSED but stays HIDDEN while
+  // the movie plays; endDeathCine() reveals it untouched. Gold was settled
+  // exactly once above (settleRunGold) — the cine never pays, never re-stamps
+  // deathBy, and never recomposes the card.
+  overlay.style.display = 'none';
+  startDeathCine();
 }
 
 // ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
@@ -4999,6 +5012,15 @@ function showSettings(disarm = true, inRun = false) {
         endRun();
       });
   }
+  // V1 play-test affordance (owner ask): the escape's real trigger is beating
+  // the wave-1 boss and entering the portal, unreachable while play-testing —
+  // so the paused run offers the entry here. It goes through the REAL
+  // startEscape seam flagged as a test entry (no payout, no intermission:
+  // every exit returns to this screen with the run still live).
+  if (inRun) menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
+    closeSettings();
+    startEscape({ test: true });
+  });
   // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
   // instead of bailing to the title (which would abandon it).
   if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
@@ -5907,6 +5929,16 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
+  if (state.mode === 'death-cine') {                    // G15: any key skips
+    // Same contract as the other movies: the guard eats the tap tail so the
+    // skipping gesture cannot also press the RETRY card waiting underneath.
+    if (C.CINE.SKIPPABLE) {
+      if (ev.preventDefault) ev.preventDefault();
+      uiGuard.arm();
+      endDeathCine();
+    }
+    return;
+  }
   if (state.mode === 'escape') {                        // V1: the mode's own keys
     // The escape owns its input surface (arrows/AD run, space/W/up jump,
     // shift/X dash, ESC skips) — never the overhead skill/potion paths.
@@ -6280,6 +6312,8 @@ function chromeOn() {
   // scroller's d-pad/cog/? are meaningless (and inert: its input never routes
   // through the touch layer), so the whole layer stands down for the whole
   // mode (verified in test_v1_escape + the phone verifier).
+  // G15 REGISTRATION: 'death-cine' is chrome-OFF BY NAME too — a cinematic,
+  // not a run screen (verified in test_death_cine + the phone verifier).
   return state.mode === 'playing' || state.mode === 'finale';
 }
 function syncChrome() {
@@ -6588,10 +6622,11 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   }
   // Armed ONLY when this gesture actually ended a cinematic — never during play.
   const skipping = state.mode === 'intro' ||
-    (state.mode === 'portal-cine' && C.CINE.SKIPPABLE);
+    (state.mode === 'portal-cine' && C.CINE.SKIPPABLE) ||
+    (state.mode === 'death-cine' && C.CINE.SKIPPABLE);
   if (skipping) uiGuard.arm();
   endIntro();
-  if (C.CINE.SKIPPABLE) endPortalCine();
+  if (C.CINE.SKIPPABLE) { endPortalCine(); endDeathCine(); }
 });
 
 // ---------- Portal-entry cinematic (WAVE-8/A) ----------
@@ -6625,10 +6660,31 @@ function endPortalCine() {
   openIntermission();
 }
 
+// ---------- G15: the death movie (src/death_cine.js) ------------------------
+// The movie plays on DEATH ONLY: die() composes the payoff overlay, HIDES it,
+// and hands the beat to this mode; the run survived (runSurvived) and the
+// deliberate exit (endRun) never come through here and keep their instant
+// overlay. endDeathCine() is the single hand-off back: it reveals the
+// ALREADY-COMPOSED overlay (never recomposes it — gold was settled exactly
+// once in die()) and lands in the terminal 'dead' mode. Same skip contract as
+// the intro / portal cine: any key or tap, gated by C.CINE.SKIPPABLE, with
+// uiGuard.arm() so the skipping gesture cannot also press RETRY.
+let deathCineT0 = 0;
+function startDeathCine() {
+  deathCineT0 = performance.now();
+  state.mode = 'death-cine';
+}
+function endDeathCine() {
+  if (state.mode !== 'death-cine') return;
+  state.mode = 'dead';
+  overlay.style.display = 'flex';
+  maybeDeathCoach();
+}
+
 // ---------- V1: THE ESCAPE SEQUENCE (src/escape/) ----------------------------
 // The mode's whole engine lives in its own directory; main.js only starts it,
 // routes input to it while it is live, and takes the (always-soft) hand-back.
-function startEscape() {
+function startEscape(opts = {}) {
   state.portal = null;
   state.mode = 'escape';
   ESCAPE.begin({
@@ -6640,8 +6696,21 @@ function startEscape() {
     // a MANUAL pilot plays the escape by hand — same seam as the overhead
     // movement-authority predicate, read once at hand-over.
     auto: !pilotMovesYou(),
-    onEnd: endEscape,
+    onEnd: opts.test ? endEscapeTest : endEscape,
+    // The in-run settings TEST button: a play-test entry that PAYS NOTHING
+    // (the payout is repeatable currency — a paying test button would be a
+    // faucet) and returns to the paused settings screen, not the wave-2
+    // intermission the real portal entry hands off to.
+    test: !!opts.test,
   });
+}
+// The test entry's hand-back: the run is still live underneath — reopen the
+// paused settings screen the button came from (BACK resumes the run through
+// the normal closeSettings path, so chrome re-registers by name).
+function endEscapeTest() {
+  state.mode = state.settingsReturn || 'playing';
+  overlay.style.display = 'none';
+  openSettings();
 }
 function endEscape(r) {
   // The ladder resumes exactly where the portal would have taken it: wave 1
@@ -7014,6 +7083,16 @@ function frame(now) {
     requestAnimationFrame(frame);
     return;
   }
+  if (state.mode === 'death-cine') {
+    // G15: the death movie — frozen like the other movies, wall-clock driven
+    // (frame-rate parity by construction), cause-flavored from the recorded
+    // death source. isDone hands back to the composed payoff overlay.
+    const t = now - deathCineT0;
+    DCINE.render(renderer.ctx, t, state.deathBy ? state.deathBy.cause : 'unknown');
+    if (DCINE.isDone(t)) endDeathCine();
+    requestAnimationFrame(frame);
+    return;
+  }
   // V1: the escape owns the canvas like the movies do — the overhead world
   // render, the HUD and the touch pads all stand down for the change of pace
   // (chromeOn already excludes every mode but playing/finale). realDt, NOT
@@ -7318,5 +7397,14 @@ export const __TEST = {
     onKey: ESCAPE.onKey,
     pointer: ESCAPE.pointer,
     get payload() { return ESCAPE.payload(); },
+  },
+  // ---- G15 death-movie seam: the same start/end the real die()/skip path
+  // drives, plus the clock — tests and the browser verifier prove the
+  // integrated hand-off, never a copy of it.
+  deathCine: {
+    start: startDeathCine,
+    end: endDeathCine,
+    get t() { return performance.now() - deathCineT0; },
+    duration: DCINE.CINE_DURATION,
   },
 };

@@ -14,9 +14,10 @@ import { boot, suite } from './_harness.mjs';
 import { makeTypedEnemy } from '../src/enemy_types.js';
 
 const S = suite('wave-26 death as payoff');
-const { T, state, elements, pump } = await boot({
+const h = await boot({
   storage: [['hordes_onboarded', '1']],
 });
+const { T, state, elements, pump } = h;
 
 const ovSub = () => elements['ov-sub'].innerHTML;
 
@@ -121,7 +122,16 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   state.enemies.push(killer);
 
   pump(30, () => { state.enemies.forEach(e => { e.speed = 0; e.x = p.x; e.y = p.y; }); });
-  assert.equal(state.mode, 'dead', 'the hero died');
+  // RETARGETED 2026-09-15 (G15 death movie): death no longer lands DIRECTLY
+  // in 'dead' — it plays the short cinematic first, with the payoff overlay
+  // composed by die() but HIDDEN. Same strength, new invariant: the movie is
+  // up (mode + hidden overlay), then any key hands back and EVERY payoff
+  // assertion below runs unchanged against the identical composed DOM.
+  assert.equal(state.mode, 'death-cine', 'the hero died (the movie is playing)');
+  assert.equal(elements.overlay.style.display, 'none', 'the payoff overlay is hidden during the movie');
+  h.key('keydown', { key: 'x', preventDefault() {} });   // the skip contract
+  assert.equal(state.mode, 'dead', 'the skip hands back to the payoff screen');
+  assert.equal(elements.overlay.style.display, 'flex', 'the payoff overlay is revealed by the hand-off');
   assert.equal(state.deathBy.cause, 'contact', 'the damage source was recorded');
   assert.equal(state.deathBy.typeId, 'SPITTER', 'the killer was recorded');
   assert.equal(state.deathBy.wave, state.wave.num, 'the wave was recorded');

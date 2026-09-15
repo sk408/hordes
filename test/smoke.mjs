@@ -2044,7 +2044,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     st.player.invuln = 0;
     shot(79);
     now += dtMs; cb = rafQueue.shift(); cb(now);
-    assert(st.mode === 'dead', 'three volley hits must kill the hero (mode=' + st.mode + ')');
+    // RETARGETED 2026-09-15 (G15 death movie): the lethal hit lands in the
+    // death cinematic first — close it with any key (the movie's own skip
+    // contract, via the same keyHandler seam the whole file drives), then the
+    // kill is terminal. The end-card assertions below are unchanged.
+    assert(st.mode === 'death-cine', 'three volley hits must kill the hero (mode=' + st.mode + ')');
+    keyHandler({ key: 'x' });
+    assert(st.mode === 'dead', 'the skip hands back to the end card');
     assert(elements['ov-title'].textContent === 'THE HORDE CLAIMS ALL',
       'finale death must show the distinct end card (got ' +
       elements['ov-title'].textContent + ')');

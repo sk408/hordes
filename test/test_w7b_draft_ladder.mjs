@@ -190,6 +190,11 @@ s.check('Second Wind: revive once at 50% max HP through the ONE death seam', () 
   p.hp = 0;
   p.invuln = 0;
   T.die();
+  // RETARGETED 2026-09-15 (G15 death movie): the lethal hit now lands in the
+  // death cinematic first — end it through the same hand-off the skip drives,
+  // then the kill is terminal.
+  assert.equal(state.mode, 'death-cine', 'the second lethal hit kills — the movie is playing');
+  T.deathCine.end();
   assert.equal(state.mode, 'dead', 'the second lethal hit kills — once per run');
 });
 
@@ -197,6 +202,10 @@ s.check('without the card, the same hit kills outright (no free revive)', () => 
   T.startRun();
   state.player.hp = 0;
   T.die();
+  // RETARGETED 2026-09-15 (G15 death movie): the hit lands in the cinematic
+  // first; end it through the same seam the skip drives, then it is terminal.
+  assert.equal(state.mode, 'death-cine', 'the kill opens the movie');
+  T.deathCine.end();
   assert.equal(state.mode, 'dead');
 });
 

@@ -104,7 +104,13 @@ S.check('a REAL death earns the four counter trophies and grants PALADIN', () =>
   // every assertion below is unchanged.
   st.player.potions.hp = 0;
   parkOnHero();
-  for (let i = 0; i < 30 && st.mode !== 'dead'; i++) h.pump(1);
+  // RETARGETED 2026-09-15 (G15 death movie): die() now lands in 'death-cine'
+  // first — pump to the movie, skip it with any key (the movie's own skip
+  // contract), then the run has ended through die() and every assertion
+  // below runs unchanged.
+  for (let i = 0; i < 30 && st.mode !== 'death-cine' && st.mode !== 'dead'; i++) h.pump(1);
+  h.key('keydown', { key: 'x', preventDefault() {} });   // any key skips the movie
+  for (let i = 0; i < 4 && st.mode !== 'dead'; i++) h.pump(1);
   assert.equal(st.mode, 'dead', 'the run ended through die()');
 
   for (const id of ['FIRST_BOSS', 'CHESTS_25', 'UNTOUCHED_WAVE']) {

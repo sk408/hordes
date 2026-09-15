@@ -110,6 +110,19 @@ S.check('the portal cinematic arms the guard too', () => {
   press();                               // leave clean for later checks
 });
 
+S.check('the death cinematic arms the guard too (G15)', () => {
+  h.pump(2);
+  st.mode = 'death-cine';
+  T.uiGuard.standDown();
+  key('x');
+  assert.equal(st.mode, 'dead', 'the key skipped the death movie (the payoff screen is up)');
+  assert.equal(T.uiGuard.armed(), true, 'the hand-off into the payoff screen is guarded');
+  let fired = 0;
+  clickThrough({ click() { fired++; } });
+  assert.equal(fired, 0, 'RETRY cannot be pressed by the skipping gesture');
+  press();                               // leave clean for later checks
+});
+
 S.check('ordinary play never arms it', () => {
   h.pump(2);
   T.uiGuard.standDown();

@@ -381,6 +381,13 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
         else keyHandler({ key: '1' });
         continue;
       }
+      if (st.mode === 'death-cine') {
+        // RETARGETED 2026-09-15 (G15 death movie): a death now plays the
+        // short cinematic before 'dead' — skip it with any key (the movie's
+        // own skip contract); the 'dead' branch below then restarts the run.
+        keyHandler({ key: 'x' });
+        continue;
+      }
       if (st.mode === 'dead' || st.mode === 'intermission') {
         // WAVE-23 (#6): any-key advance means main.js swallows keys while a
         // tour is live — dismiss the coach root directly (death/intermission
