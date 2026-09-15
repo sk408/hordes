@@ -2539,7 +2539,7 @@ are what make stage choice a build decision. Gate stages by achievement-style un
 defeat a boss), not gold. Add a separate Hyper/Inverse/Endless-style modifier axis — the highest-ROI
 variety lever in either game. **Never ship a reskin:** players judge maps on mechanics.
 
-**G21 — RULE-CHANGING CARDS + A SMALL ACTIVE SET.**  [status: IN PROGRESS 2026-09-14 (SLICE 1) — BRIEF AUTHORED + ANCHOR-VERIFIED, DISPATCH BLOCKED BY A PROVIDER QUOTA WALL, NOT BY THE WORK. **NEXT TICK: RE-ISSUE, DO NOT VERIFY.** Task msg_01M2H2HK5S5D0374TV5PHENFH7 exists in `.hub-worker/logs/` and its spawn line reads `exit 1`, but that exit 1 is a kimi PROVIDER AUTH ERROR, not a build: the task log ends `provider.auth_error: 403 You've reached your 5-hour usage limit` - ZERO tokens were produced and NO G21 code was written. Treat exit 1 on this task id as `not started` and re-issue the SAME brief; do NOT run `verify_g21_rewrite_cards.mjs` (it does not exist) and do NOT mark anything landed. RE-CONFIRMED BY TICK 43 (2026-09-14 23:40 UTC): the wall is STILL up - a direct provider probe (`kimi -p "reply with exactly: PROBE_OK"`) returned the same `403 You've reached your 5-hour usage limit`, so tick 43 dispatched NOTHING (a blind re-issue reproduces exit 1 and adds hub noise, it does not build). The lane queue is EMPTY (`hub-worker queue hub` => no output = no pending and no running task), so nothing stale will fire when the quota returns. NEXT TICK: PROBE FIRST (~10s), then re-issue the SAME brief only if the probe answers; if the 403 persists there is NO fallback lane (cli:glm-hordes-g8 retired, quota resets 2026-09-15 15:49:58 UTC) and the queue stays stalled until the owner decides. Dispatched by the goal-pilot tick on the post-M1 dirty tree (`4d79210`, dirty=16, suite greenfiles=88 redfiles=0), builder lane cli:kimi-hordes-g8 (up, pid 1576690), brief `docs/briefs/G21_RULE_CARDS.md` (authored pre-M1, its executed DISPATCH ANCHOR CHECK + the one corrected anchor are INSIDE it). Slice 1 = the SYSTEM: `REWRITE_SLOTS = 4` finite slots, the empty-slot cooldown incentive, the FROST/CHAIN/ORBIT/BURN/CONDUCT tag taxonomy on the draft desc, and FIVE new cards (RIME/IGNITE/LIVE WIRE/AFTERSHOCK/WIDE ORBIT) through ONE `onWeaponHit` writer + the predicate-offered contract, family share held at ~0.06. Slice 2 (cross-tag combos + the rest of the 12-20) is NOT in this dispatch.] Neither leader has player-triggered actives (VS is
+**G21 — RULE-CHANGING CARDS + A SMALL ACTIVE SET.**  [status: IN PROGRESS 2026-09-14 (SLICE 1) — BRIEF AUTHORED + ANCHOR-VERIFIED, DISPATCH BLOCKED BY A PROVIDER QUOTA WALL, NOT BY THE WORK. **NEXT TICK: RE-ISSUE, DO NOT VERIFY.** Task msg_01M2H2HK5S5D0374TV5PHENFH7 exists in `.hub-worker/logs/` and its spawn line reads `exit 1`, but that exit 1 is a kimi PROVIDER AUTH ERROR, not a build: the task log ends `provider.auth_error: 403 You've reached your 5-hour usage limit` - ZERO tokens were produced and NO G21 code was written. Treat exit 1 on this task id as `not started` and re-issue the SAME brief; do NOT run `verify_g21_rewrite_cards.mjs` (it does not exist) and do NOT mark anything landed. RE-CONFIRMED BY TICK 43 (2026-09-14 23:40 UTC): the wall is STILL up - a direct provider probe (`kimi -p "reply with exactly: PROBE_OK"`) returned the same `403 You've reached your 5-hour usage limit`, so tick 43 dispatched NOTHING (a blind re-issue reproduces exit 1 and adds hub noise, it does not build). TICK 44 (2026-09-15 00:35 UTC) RE-CONFIRMED IT AND ELIMINATED THE LAST CANDIDATE LANE: the hub's `claude` lane (binary `/home/claude/bin/claude`) was probed and returns the SAME kimi 403 (`Failed to authenticate. API Error: 403 {... kimi.com/membership ...}`), because that lane runs the claude CLI against the kimi backend - so kimi and claude share ONE meter, and glm is the only lane with a dated reset (2026-09-15 15:49:58 UTC). Tick 44 still issued NOTHING, the lane queue is still empty, and G21 slice 1 is still NOT STARTED. The lane queue is EMPTY (`hub-worker queue hub` => no output = no pending and no running task), so nothing stale will fire when the quota returns. NEXT TICK: PROBE FIRST (~10s), then re-issue the SAME brief only if the probe answers; if the 403 persists there is NO fallback lane (cli:glm-hordes-g8 retired, quota resets 2026-09-15 15:49:58 UTC) and the queue stays stalled until the owner decides. Dispatched by the goal-pilot tick on the post-M1 dirty tree (`4d79210`, dirty=16, suite greenfiles=88 redfiles=0), builder lane cli:kimi-hordes-g8 (up, pid 1576690), brief `docs/briefs/G21_RULE_CARDS.md` (authored pre-M1, its executed DISPATCH ANCHOR CHECK + the one corrected anchor are INSIDE it). Slice 1 = the SYSTEM: `REWRITE_SLOTS = 4` finite slots, the empty-slot cooldown incentive, the FROST/CHAIN/ORBIT/BURN/CONDUCT tag taxonomy on the draft desc, and FIVE new cards (RIME/IGNITE/LIVE WIRE/AFTERSHOCK/WIDE ORBIT) through ONE `onWeaponHit` writer + the predicate-offered contract, family share held at ~0.06. Slice 2 (cross-tag combos + the rest of the 12-20) is NOT in this dispatch.] Neither leader has player-triggered actives (VS is
 100% auto; Megabonk's "abilities" are passive character traits) — so our actives were never the gap. Keep
 3-4 actives on distinct ROLES (CC / burst / mobility / defense) and add **12-20 rule-changing cards** that
 rewrite how abilities behave ("on-kill explosions", "healing also damages nearby enemies", "empty slots
@@ -5508,3 +5508,51 @@ once the two bad arms exit (their `.err` files are still empty and `progress.txt
 **nothing issued** (no live builder), lock RELEASED. Commits remain the orchestrator's.
 **NOT verified by me, said plainly:** nothing about G21 (no code exists), and the visual/gameplay meaning of the A/B numbers beyond the
 survival medians above.
+
+## TICK NOTE 44 - 2026-09-15 00:35 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G21 STILL BLOCKED - the provider wall is now confirmed to cover EVERY configured lane; the pilot advanced the W7b measurement lane instead)
+
+**State picked up.** Lock FREE at tick start, `hub-worker queue hub` EMPTY, HEAD `5518792` tree CLEAN (dirty=0). The last dispatch is still
+`msg_01M2H2HK5S5D0374TV5PHENFH7` (G21 slice 1) - `exit 1`, ZERO tokens, provider 403. Nothing to verify on the artifact (no G21 code exists),
+so G21 slice 1 remains NOT STARTED.
+
+**1. THE WALL - third consecutive blocked tick, and this time "no fallback lane" was CHECKED rather than assumed.** Two probes:
+- `kimi -p "reply with exactly: PROBE_OK"` (from /tmp, ~10s) => `provider.auth_error: 403 You've reached your 5-hour usage limit`.
+- **NEW THIS TICK: the hub's third lane was probed for the first time.** `hub-worker --help` lists three lanes (`kimi`, `glm`, `claude`), so
+  the pilot ran `claude -p "reply with exactly: PROBE_OK"` (lane binary `/home/claude/bin/claude`). It failed with
+  `Failed to authenticate. API Error: 403 {... kimi.com/membership ...}` - the SAME kimi quota, same URL. **The `claude` lane is kimi-backed
+  (it runs the claude CLI against the kimi backend, hub_worker.py:546-557), not an independent provider: two live lanes, one meter.** The
+  glm lane (`~/.claude-zai`) is the only one with a dated reset (2026-09-15 15:49:58 UTC) and its config dir still exists (retired, not
+  deleted) - re-opening it is the owner's call, not the pilot's.
+- **NO DISPATCH MADE.** A blind re-issue of the G21 brief reproduces `exit 1` and adds another stale task id, and there is still nothing
+  queued in the lane to fire on reset (`queue hub` => no output).
+
+**2. W7b DRAFT A/B - THE OFF ARM IS COMPLETE (24/24) AND IT SUPERSEDES THE TICK-43 PARTIAL READ: the ladder's x1.9 good-arm boost was an
+n=12 artifact.** Arms, read by the pilot with `node tools/w7b_draft_ab.mjs --aggregate` over `/tmp/w7b_ab/*.jsonl`:
+
+| arm | runs | median | mean | won | at the 1800s cap |
+|---|---|---|---|---|---|
+| off_good | 24/24 | 209.5s | 405.4s | 2 | 2 |
+| off_bad  | 24/24 | 555.6s | 953.6s | 10 | 10 |
+| on_good  | 24/24 | 261.1s | 698.4s | 7 | 7 |
+| on_bad   | 14/24 (STILL RUNNING, pid 1694565) | 1800.0s | - | 12 | 12 |
+
+Paired divergence (median-of-ratios / ratio-of-medians):
+- good/bad, ladder OFF = **x0.323 / x0.377** (n=24/24, FINAL; tick 43's partial read was x0.443).
+- good/bad, ladder ON = x0.279 / x0.210 (on_bad still partial).
+- **on/off, GOOD arm = x1.001 / x1.246** (n=24/24, FINAL). **THIS IS THE CORRECTION: tick 43 reported x1.932 median-of-ratios from 12
+  seeds; at the full 24 the ladder is MEDIAN-NEUTRAL.** Its good-arm effect is in the tail and the win rate, not the median: wins 2 -> 7,
+  mean 405.4s -> 698.4s, cap-hits 2 -> 7.
+- on/off, BAD arm (partial): median 555.6s -> 1800.0s.
+**Sign unchanged, size sharpened: the draft-policy divergence is INVERTED in BOTH builds - the utility-favoring "bad" order (Light Boots /
+Gem Magnet / run rules first) outlives the ladder-chasing "good" one - and the rarity ladder does not flip it.** G6 and the W7b bar stay
+OPEN: 31 of 86 runs sit at the 1800s cap (12 of the 14 on_bad runs), so every "bad survives longer" figure is a LOWER bound, and the ON-arm
+divergence (x0.28) is not the owner's x1.6 on the intended side. The final aggregate waits on on_bad's exit - no re-dispatch needed.
+
+**3. Suite not re-run this tick:** HEAD `5518792`, dirty=0, tree byte-unchanged from tick 43's two green runs at `354ce02` (the only commit
+since is the orchestrator's doc commit), so a re-run would re-measure an identical tree. Recorded so no later tick reads the absent suite
+line in tick 44 as a skipped suite. Tick 43's standing flag still applies: `test/test_run_structure.mjs`'s maw check is a 1-in-2 FLAKE
+(unseeded draw-dependent loop, `docs/briefs/SUITE_FLAKES_POWER.md` is the existing brief for that class of defect).
+
+**Held/issued this tick:** lock acquired (`ACQUIRED hordes as pid 1686244`), doc edits ONLY (this note + the G21 marker re-confirmation),
+**nothing issued** (no live lane), lock RELEASED. Commits remain the orchestrator's.
+**NOT verified by me, stated plainly:** anything about G21 (no code exists), and the gameplay meaning behind the survival medians.
