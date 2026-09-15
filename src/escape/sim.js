@@ -36,6 +36,62 @@ function wallSpeed(sim) {
   return v;
 }
 
+// V1c (owner-reported: "no enemies show up from behind during the test run"):
+// pursuers used to spawn AT THE WALL — ~300px behind the runner and outside
+// the camera window (render.js CAM_LEAD 150) — and every one died in the
+// first pit behind the runner before it could ever be seen. The pursuit was
+// implemented but unreachable. They now spawn just BEHIND THE RUNNER, on real
+// ground INSIDE the camera window: the runner's own platform when the runner
+// is grounded on one, else the nearest platform behind whose right edge is
+// still on-camera. A spawn point is only valid with GROUND under it (the same
+// test the pit filter uses — never place a doomed pursuer over a gap) and
+// ahead of the wall's leading edge (never inside the mass). A tick with no
+// valid point is SKIPPED, not forced; the cadence and every threat constant
+// are untouched, and the PIT FILTER below is unchanged — a pursuer led across
+// a gap still falls. That is the tactic this fix makes reachable.
+const CAM_LEAD = 150;   // render.js: the runner's fixed screen x (keep in sync)
+function pursuerSpawn(sim) {
+  const p = sim.player;
+  const FLOOR = BAND.FLOOR_Y;
+  const camL = p.x - CAM_LEAD;
+  const wallEdge = sim.wall.x + WALL.WIDTH + 8;
+  // Spawns are FLOOR-LEVEL ONLY: a pursuer has no gravity (the pit filter is
+  // positional), so one spawned on a terrace would float at that height
+  // forever — unkillable by the hip-height gun and lethal the moment the
+  // runner's terrain rises back level with it. Floor y is also the pre-V1c
+  // contract every other threat number is authored against.
+  const floorGround = (x) => sim.plats.some(pl =>
+    x >= pl.x && x <= pl.x + pl.w && Math.abs(pl.y - FLOOR) <= 2);
+  // A spawn is only VALID with breathing room behind the runner: a pursuer
+  // materialising inside (or a hair outside) the contact radius is a spawn
+  // bug, not pressure (this bit seed 2 — a runner fresh off a gap landing
+  // stands near the platform's left lip, where the clamp wanted to put it).
+  const MIN_GAP_BEHIND = 40;
+  const place = (pl) => {
+    // ~90px behind the runner, clamped inside the platform (the clamp is the
+    // never-over-a-gap guarantee: ground is re-asserted below regardless).
+    const x = Math.max(pl.x + 4, Math.min(pl.x + pl.w - 8, Math.round(p.x) - 90));
+    return (x <= p.x - MIN_GAP_BEHIND && x >= camL && x > wallEdge && floorGround(x)) ? x : null;
+  };
+  // The runner's own platform, when it is grounded on floor-level ground.
+  const own = sim.plats.find(pl => p.x >= pl.x && p.x <= pl.x + pl.w &&
+    Math.abs(pl.y - FLOOR) <= 2 && Math.abs(p.y - pl.y) <= 2) || null;
+  if (own) {
+    const x = place(own);
+    if (x !== null) return { x, y: FLOOR };
+  }
+  // Mid-air over a gap (or the runner elevated): the nearest floor-level
+  // platform behind whose right edge is still on-camera.
+  const behind = sim.plats
+    .filter(pl => Math.abs(pl.y - FLOOR) <= 2 && pl.x + pl.w >= camL && pl.x + pl.w <= p.x - 4)
+    .sort((a, b) => (b.x + b.w) - (a.x + a.w))[0] || null;
+  if (behind) {
+    const x = place(behind);
+    if (x !== null) return { x, y: FLOOR };
+  }
+  return null;
+}
+
 export function createSim(seed) {
   const corridor = generateCorridor(seed);
   const plats = platformsOf(corridor);
@@ -58,6 +114,15 @@ export function createSim(seed) {
     rng: mulberry32(seed ^ 0x5f3759df),
     nextPursuer: 2.2, nextFlier: Infinity, nextShot: 0,
     destroyedPlats: [],
+    // V1c reporting ledger (pure counters, no behaviour): pursuit pressure is
+    // a measured statement — spawned, removed-by-pit, closest approach.
+    spawnedPursuers: 0, pittedPursuers: 0, closestPursuit: Infinity,
+    // V1b event ledger (pure records, no behaviour): every enemy EXIT gets an
+    // event — 'pit' (no ground under it: it FELL) or 'kill' (shot damage: it
+    // BURST). The render derives its fall/burst animations from these alone
+    // (fx.js); nothing ever reads them back into the sim, so the purity
+    // contract (step is a function of (sim, dt, input)) is untouched.
+    events: [], eventSeq: 0,
   };
 }
 
@@ -119,13 +184,18 @@ export function step(sim, dt, input = {}) {
   if (sim.wall.x + WALL.WIDTH >= p.x) { sim.outcome = 'caught'; return sim; }
 
   // ---- threats --------------------------------------------------------------
-  // Ground pursuers: spawn from the wall's edge on a fixed schedule, run
-  // faster than it, and CANNOT platform — a gap under them removes them
+  // Ground pursuers: V1c spawn placement (see pursuerSpawn above — just behind
+  // the runner, on camera, never over a gap), on the fixed schedule. They run
+  // faster than the runner and CANNOT platform — a gap under them removes them
   // (gaps double as enemy filters, the free mechanic the goals doc loves).
   sim.nextPursuer -= dt;
   if (sim.nextPursuer <= 0) {
     sim.nextPursuer = THREATS.PURSUER_EVERY + sim.rng() * 0.7;
-    sim.pursuers.push({ x: sim.wall.x, y: BAND.FLOOR_Y, hp: THREATS.PURSUER_HP });
+    const sp = pursuerSpawn(sim);
+    if (sp) {
+      sim.pursuers.push({ x: sp.x, y: sp.y, hp: THREATS.PURSUER_HP });
+      sim.spawnedPursuers++;
+    }
   }
   // Fliers spawn from ESCALATION on; they ignore gaps (the gap-kiting
   // counter). NOTE: fliers NEVER make contact — a runner mid-arc or on the
@@ -142,7 +212,14 @@ export function step(sim, dt, input = {}) {
   for (const pu of sim.pursuers) {
     pu.x += THREATS.PURSUER_SPEED * dt;
     // Enemy filter: no ground under a pursuer -> it falls (removed).
-    if (!sim.plats.some(pl => pu.x >= pl.x && pu.x <= pl.x + pl.w && pl.y >= pu.y - 40)) pu.hp = -1;
+    // V1c: counted — the pit-fall tactic is now reachable, so the ledger
+    // says so (reporting only; no behaviour change).
+    if (pu.hp > 0 && !sim.plats.some(pl => pu.x >= pl.x && pu.x <= pl.x + pl.w && pl.y >= pu.y - 40)) {
+      pu.hp = -1;
+      sim.pittedPursuers++;
+      sim.events.push({ type: 'pit', x: pu.x, y: pu.y, t: sim.t, n: sim.eventSeq++ });
+    }
+    sim.closestPursuit = Math.min(sim.closestPursuit, Math.abs(pu.x - p.x));
     if (Math.abs(pu.x - p.x) < THREATS.CONTACT_R && Math.abs(pu.y - p.y) < THREATS.CONTACT_R + 6) { sim.outcome = 'caught'; return sim; }
   }
   sim.pursuers = sim.pursuers.filter(pu => pu.hp > 0 && pu.x < p.x + 320);
@@ -171,7 +248,11 @@ export function step(sim, dt, input = {}) {
   for (const s of sim.shots) {
     s.x += s.vx * dt;
     for (const e of [...sim.pursuers, ...sim.fliers]) {
-      if (e.hp > 0 && Math.abs(e.x - s.x) < 10 && Math.abs(e.y - s.y) < 12) { e.hp -= THREATS.SHOT_DMG; s.x = Infinity; break; }
+      if (e.hp > 0 && Math.abs(e.x - s.x) < 10 && Math.abs(e.y - s.y) < 12) {
+        e.hp -= THREATS.SHOT_DMG;
+        if (e.hp <= 0) sim.events.push({ type: 'kill', x: e.x, y: e.y, t: sim.t, n: sim.eventSeq++ });
+        s.x = Infinity; break;
+      }
     }
   }
   sim.shots = sim.shots.filter(s => s.x < p.x + 320 && s.x !== Infinity);
@@ -203,6 +284,12 @@ export function step(sim, dt, input = {}) {
         b.target = null;
       }
     }
+  }
+
+  // Event ledger upkeep: keep only events a fall/burst animation can still be
+  // rendering (fx.js caps at 0.8s; 2s is generous). Bounded, deterministic.
+  if (sim.events.length && sim.t - sim.events[0].t > 2) {
+    sim.events = sim.events.filter(e => sim.t - e.t <= 2);
   }
 
   // ---- the exit (P1's portal rules): contact ENDS the sequence immediately -

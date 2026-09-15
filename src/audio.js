@@ -7,7 +7,7 @@
 // WAVE-8/B cinematic stingers (SFX-class: gated by the sfx toggle ONLY, never
 // the music toggle; fire once per phase transition — hb1 polls phaseAt()):
 //   playIntroCue(phase):  OVERTAKE|HORDE, TITLE_SLAM|TITLE, FADE
-//   playPortalCue(phase): BOSS_YELL|KILL, DISSOLVE, FADE, WALK
+//   playPortalCue(phase): BOSS_YELL|KILL, DISSOLVE, FADE, WALK, PAUSE, LINGER
 // Call init() from a user gesture (autoplay policy): it lazily creates the
 // AudioContext, resumes it if suspended, and is idempotent.
 //
@@ -240,10 +240,15 @@ const INTRO_CUES = {
   TITLE_SLAM: introTitleSlam, TITLE: introTitleSlam,
   FADE: introFade,
 };
-const PORTAL_CUES = {
+// G16: exported read-only so test/test_portal_cine.mjs can assert every PHASES
+// name has a cue (a silent transition is a defect — binding rule 5).
+export const PORTAL_CUES = {
   BOSS_YELL: portalBossYell, KILL: portalBossYell,
   DISSOLVE: portalDissolve,
   FADE: cueBlip, WALK: cueBlip,
+  // G16 beats (binding rule 5 — a silent transition is a defect): the held
+  // pause and the linger-on-the-portal both take the transitional blip.
+  PAUSE: cueBlip, LINGER: cueBlip,
 };
 
 const CUE_REFIRE = 0.4; // s — cues are one-shot per phase transition

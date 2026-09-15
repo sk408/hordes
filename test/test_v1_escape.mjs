@@ -23,6 +23,7 @@ import { VIEW_W } from '../src/escape/config.js';
 import * as ESCAPE from '../src/escape/index.js';
 import { skipHit, SKIP_RECT } from '../src/escape/render.js';
 import { bestGoldOf, payoutFor, collect } from '../src/escape/payout.js';
+import { effectsFor } from '../src/escape/fx.js';
 import { recordRun, ensureAchievements, normalizeAchievements } from '../src/achievements.js';
 import { makeProfile } from '../src/meta.js';
 
@@ -137,7 +138,8 @@ S.check('the escape modules never import the profile-side stat chain', () => {
   // stat read anywhere in src/escape to scale them).
   assert(THREATS.SHOT_DMG === 1 && THREATS.PURSUER_HP === 1,
     'threat lethality is flat by construction (SHOT_DMG/PURSUER_HP)');
-  for (const f of ['config.js', 'generator.js', 'sim.js', 'auto.js', 'render.js', 'payout.js', 'index.js']) {
+  for (const f of ['config.js', 'generator.js', 'sim.js', 'auto.js', 'render.js', 'payout.js', 'index.js',
+    'sprites.js', 'fx.js']) {
     const src = readFileSync(new URL('../src/escape/' + f, import.meta.url), 'utf8');
     // Comments are prose, not code — strip them so the scan reads the CODE only.
     const code = src.replace(/^[ \t]*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -387,6 +389,137 @@ S.check('#5 no leaked writes: the OVERHEAD world is byte-identical across the es
   let n = 0;
   while (st.mode === 'escape' && n < 300) { h.pump(1); n++; }
   assert(st.mode === 'intermission', 'handed back soft');
+});
+
+// ---------------------------------------------------------------------------
+// V1c — the pursuit is REACHABLE (owner-reported: "no enemies show up from
+// behind during the test run"). Deterministic, seeded, in-process.
+// ---------------------------------------------------------------------------
+S.check('V1c: a pursuer ENTERS THE CAMERA WINDOW from behind within seconds', () => {
+  // render.js CAM_LEAD 150: the camera shows [p.x-150, p.x+330].
+  for (let seed = 1; seed <= 6; seed++) {
+    const sim = createSim(seed);
+    let enteredAt = null;
+    let n = 0;
+    while (!sim.outcome && n < 60 * 12 && enteredAt === null) {
+      step(sim, 1 / 60, inputFor(sim));
+      n++;
+      for (const pu of sim.pursuers) {
+        if (pu.hp > 0 && pu.x >= sim.player.x - 150 && pu.x <= sim.player.x + 330) {
+          enteredAt = sim.t;
+          break;
+        }
+      }
+    }
+    assert(enteredAt !== null,
+      'seed ' + seed + ': no pursuer ever entered the camera window in 12s');
+    assert(enteredAt <= 5.0,
+      'seed ' + seed + ': first on-camera pursuer at t=' + enteredAt.toFixed(1) + 's (> 5s)');
+  }
+  console.log('  MEASURED V1c camera-entry: seeds 1-6 all show a pursuer on camera by t=5s');
+});
+S.check('V1c: the pit filter still kills a led pursuer (fall, not a kill)', () => {
+  const sim = createSim(7);
+  sim.nextShot = Infinity;          // isolate the filter: no gun in this probe
+  const gaps = sim.corridor.segs.flatMap(s => s.gaps);
+  assert(gaps.length > 0, 'seed 7 has gaps');
+  const g = gaps[0];
+  // Advance the runner (auto) until the gap is just AHEAD — the cull filter
+  // (pu.x < p.x + 320) drops anything far from the runner, so the probe must
+  // be placed in the runner's neighborhood to be observing the PIT, not the
+  // cull. inputFor everywhere: an input without moveX is a NaN bomb
+  // (wantVx = RUN_SPEED * undefined) that poisons every comparison after it.
+  let a = 0;
+  while (sim.player.x < g.x - 200 && !sim.outcome && a < 60 * 60) {
+    step(sim, 1 / 60, inputFor(sim)); a++;
+  }
+  assert(!sim.outcome, 'the approach run completed (' + sim.outcome + ')');
+  // Park the wall far back so the ~1.5s soft-catch cannot race the ~0.1s pit.
+  sim.wall.x = sim.player.x - 2000;
+  // A pursuer placed on solid ground just before the gap lip, running forward.
+  sim.pursuers.length = 0;          // only the probe is under observation
+  sim.pursuers.push({ x: g.x - 24, y: 252, hp: THREATS.PURSUER_HP });
+  const wasOnGround = sim.plats.some(pl =>
+    g.x - 24 >= pl.x && g.x - 24 <= pl.x + pl.w && Math.abs(pl.y - 252) <= 2);
+  assert(wasOnGround, 'the probe pursuer starts on real ground');
+  // Observe by IDENTITY and the LEDGER: the pit marks hp=-1 and the cull
+  // filter drops the body within the SAME step() call, so hp<=0 is never
+  // observable from outside — the removal reads as the object leaving the
+  // array while pittedPursuers increments.
+  const probe = sim.pursuers[0];
+  let lastX = probe.x;
+  let n = 0;
+  while (sim.pursuers.includes(probe) && !sim.outcome && n < 60 * 3) {
+    lastX = probe.x;
+    step(sim, 1 / 60, { moveX: 0 });
+    n++;
+  }
+  assert(n < 60 * 3, 'the probe was never removed (n hit the cap)');
+  assert(!sim.pursuers.includes(probe), 'the pursuer was removed by the pit filter');
+  assert(lastX >= g.x - 12 && lastX <= g.x + g.w,
+    'the removal happened at the gap (last seen x=' + lastX.toFixed(0) +
+    ' vs gap [' + g.x + ',' + (g.x + g.w) + ']) — a fall, not anything else');
+  assert(sim.pittedPursuers >= 1, 'the ledger counted the pit-fall');
+});
+S.check('V1c: pursuit pressure is a MEASURED statement (spawned/pitted/closest)', () => {
+  for (let seed = 1; seed <= 6; seed++) {
+    const sim = playOut(seed, 60);
+    assert(sim.outcome === 'complete', 'seed ' + seed + ': outcome ' + sim.outcome);
+    assert(sim.spawnedPursuers > 0, 'seed ' + seed + ': no pursuers spawned');
+    assert(sim.closestPursuit < 60,
+      'seed ' + seed + ': closest approach ' + Math.round(sim.closestPursuit) + 'px (never a real threat?)');
+    console.log('  MEASURED seed ' + seed + ': spawned=' + sim.spawnedPursuers +
+      ' pitted=' + sim.pittedPursuers +
+      ' closest=' + Math.round(sim.closestPursuit) + 'px' +
+      ' outcome=' + sim.outcome);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// V1b — the pit-fall and the shot-kill are DISTINCT renderable states (brief
+// acceptance #3): a pursuer that runs out of ground leaves as a FALL (a drop
+// arc from the gap), a pursuer the gun drops leaves as a BURST (fixed spot,
+// expanding). The sim records pure events; fx.effectsFor derives the shapes.
+// ---------------------------------------------------------------------------
+S.check('V1b: a pitted pursuer FALLS (y drops over sim time) — distinct from a shot KILL', () => {
+  const sim = createSim(7);
+  // Isolate the two exits: no scheduled spawns, no wall, the runner parked.
+  sim.nextPursuer = Infinity; sim.nextFlier = Infinity; sim.nextShot = Infinity;
+  sim.wall.x = sim.player.x - 5000;
+  const g = sim.corridor.segs.flatMap(s => s.gaps)[0];
+  // THE FALL: a pursuer already PAST the lip of the first floor gap.
+  sim.pursuers.push({ x: g.x + 6, y: 252, hp: THREATS.PURSUER_HP });
+  step(sim, 1 / 60, { moveX: 0 });
+  const pit = sim.events.find(e => e.type === 'pit');
+  assert(pit && pit.x >= g.x && pit.x <= g.x + g.w,
+    'the pit event is recorded over the gap (x=' + (pit && pit.x) + ')');
+  let fxa = effectsFor(sim).filter(e => e.kind === 'fall');
+  assert(fxa.length === 1, 'the fall is a live renderable effect');
+  const y0 = fxa[0].y;
+  step(sim, 1 / 60, { moveX: 0 });
+  step(sim, 1 / 60, { moveX: 0 });
+  const fxb = effectsFor(sim).filter(e => e.kind === 'fall');
+  assert(fxb.length === 1 && fxb[0].y > y0,
+    'the fall DROPS over sim time (' + y0 + ' -> ' + (fxb[0] && fxb[0].y) + ')');
+
+  // THE KILL: a fresh pursuer ahead of the runner, gun re-enabled, one shot.
+  sim.pursuers.push({ x: sim.player.x + 60, y: 252, hp: THREATS.PURSUER_HP });
+  sim.nextShot = 0;
+  let kill = null, n = 0;
+  while (!kill && n < 90) { step(sim, 1 / 60, { moveX: 0 }); kill = sim.events.find(e => e.type === 'kill'); n++; }
+  assert(kill, 'the shot kill event was recorded (' + n + ' frames)');
+  assert(!sim.outcome, 'the runner is untouched by both exits (' + sim.outcome + ')');
+  const burstAt = () => effectsFor(sim).find(e => e.kind === 'burst');
+  const b1 = burstAt();
+  assert(b1 && b1.y === kill.y && b1.x === kill.x, 'the burst sits AT the kill spot');
+  const r1 = b1.r;
+  step(sim, 1 / 60, { moveX: 0 });
+  step(sim, 1 / 60, { moveX: 0 });
+  const b2 = burstAt();
+  assert(b2 && b2.y === b1.y && b2.r > r1,
+    'the burst EXPANDS in place (r ' + r1 + ' -> ' + (b2 && b2.r) + ') — never drops');
+  // The two states are structurally distinct kinds, not one animation reused.
+  assert(fxb[0].kind !== b2.kind, 'fall and burst are different renderable kinds');
 });
 
 S.done();

@@ -32,6 +32,9 @@ export const ART_LIMITS = {
   SHOP_ICON: { w: [12, 16], h: [12, 16] },
   PORTAL: { w: [48, 48], h: [48, 48] },
   TITLE_LAYER: { w: [1, 480], h: [1, 300] },
+  // V1b escape sprites (src/escape/sprites.js): side-view actors in the mode's
+  // 480x300 virtual view — 2-3x the shop icon's box, well under a portrait's.
+  ESCAPE: { w: [8, 32], h: [8, 32] },
 };
 
 // { w, h } of a pixel grid.

@@ -3602,7 +3602,39 @@ function showHowToPlay() {
 // only — the canvas child is the contract there, the pixels are the
 // browser's, exactly like paintTitleHeader.
 let frameHotEl = null;
-function frameCard(el) {
+// SHOP-LATENCY FIX (owner 2026-09-15: "~2 second delay in the shop"): the old
+// path called renderer.drawGrid PER CARD on a ~9,400-non-zero-cell composed
+// frame, so a 47-row shop open painted ~440k fillRects and read clientWidth
+// after every append (a forced relayout per row). Two changes, same pixels:
+//   ATLAS - each distinct (w x h x tone) frame is composed and drawn through
+//   the SAME renderer.drawGrid ONCE into an offscreen canvas, then blitted
+//   onto the card's canvas with one drawImage (menus share 2-3 card sizes, so
+//   a 47-row screen paints ~3 frames, not 47). The atlas is the drawGrid
+//   seam's cache, never a second painting idiom.
+//   BATCHED PAINT - showShop appends the whole card list BEFORE any frame
+//   measures (menuCard's deferFrame option), so one layout serves all rows
+//   instead of a forced relayout per append; paint itself stays synchronous.
+const frameAtlas = new Map();
+function frameBlit(cv, wpx, hpx, tone) {
+  const W = wpx + MENU_FRAME_SHADOW.dx, H = hpx + MENU_FRAME_SHADOW.dy;
+  const key = W + 'x' + H + ':' + tone;
+  let src = frameAtlas.get(key);
+  if (!src) {
+    src = document.createElement('canvas');
+    src.width = W; src.height = H;
+    const sg = src.getContext && src.getContext('2d');
+    if (!sg) return false;   // stub DOM without 2d: markup only, as before
+    renderer.drawGrid(sg, composeMenuFrame(wpx, hpx).grid, MENU_FRAME_PALETTES[tone], 0, 0);
+    frameAtlas.set(key, src);
+  }
+  cv.width = W; cv.height = H;
+  const g = cv.getContext && cv.getContext('2d');
+  if (!g) return true;        // stub canvas: the child element stays the contract
+  if (g.drawImage) g.drawImage(src, 0, 0);
+  else renderer.drawGrid(g, composeMenuFrame(wpx, hpx).grid, MENU_FRAME_PALETTES[tone], 0, 0);
+  return true;
+}
+function frameCard(el, lazy = false) {
   if (!el || typeof el.appendChild !== 'function') return el;
   let cv = null;
   for (const c of (el.children || [])) { if (c && c.className === 'frame') { cv = c; break; } }
@@ -3616,28 +3648,32 @@ function frameCard(el) {
     const w = el.clientWidth, h = el.clientHeight;
     if (typeof w !== 'number' || typeof cv.getContext !== 'function') return true;
     if (!w || !h) return false;   // real browser, overlay not laid out yet: retry below
-    const g = cv.getContext('2d');
-    if (!g) return true;
     const cls = el.className || '';
     const tone = cls.includes('selected') ? 'sel'
       : (frameHotEl === el && !cls.includes('dim')) ? 'hot' : 'base';
-    const wpx = Math.round(w), hpx = Math.round(h);
-    cv.width = wpx + MENU_FRAME_SHADOW.dx;
-    cv.height = hpx + MENU_FRAME_SHADOW.dy;
-    renderer.drawGrid(g, composeMenuFrame(wpx, hpx).grid, MENU_FRAME_PALETTES[tone], 0, 0);
-    return true;
+    return frameBlit(cv, Math.round(w), Math.round(h), tone);
   };
+  // Late relayout (a menu re-wrap, a viewport change, a state line settling)
+  // re-measures and repaints — the frame always matches the card's live box.
+  // SHOP-LATENCY `lazy`: skip the sync paint and let the OBSERVER deliver the
+  // first paint after the browser's own layout pass (RO fires on observe) —
+  // no forced reflow, and the initial observation IS the first paint. Stub
+  // DOMs have no ResizeObserver: lazy there simply means markup-only, which
+  // is exactly what the stub contract already was.
+  if (typeof ResizeObserver === 'function' && !el._frameRO) {
+    el._frameRO = new ResizeObserver(() => { paint(); });
+    el._frameRO.observe(el);
+    if (lazy) return wireFrameEvents(el, paint);
+  }
   if (!paint()) {
     let tries = 0;
     const retry = () => { if (!paint() && ++tries < 8) requestAnimationFrame(retry); };
     requestAnimationFrame(retry);
   }
-  // Late relayout (a menu re-wrap, a viewport change, a state line settling)
-  // re-measures and repaints — the frame always matches the card's live box.
-  if (typeof ResizeObserver === 'function' && !el._frameRO) {
-    el._frameRO = new ResizeObserver(() => { paint(); });
-    el._frameRO.observe(el);
-  }
+  wireFrameEvents(el, paint);
+  return el;
+}
+function wireFrameEvents(el, paint) {
   if (typeof el.addEventListener === 'function' && !el._frameWired) {
     el._frameWired = true;
     const on = () => { frameHotEl = el; paint(); };
@@ -3650,13 +3686,15 @@ function frameCard(el) {
   return el;
 }
 
-function menuCard(name, sub, onclick, dim) {
+function menuCard(name, sub, onclick, dim, deferFrame = false) {
   const el = document.createElement('div');
   el.className = 'card' + (dim ? ' dim' : '');
   el.innerHTML = `<div class="name">${name}</div><div class="desc">${sub || ''}</div>`;
   el.onclick = () => { audio.playSfx('button'); onclick(); };
   ovCards.appendChild(el);
-  frameCard(el);
+  // SHOP-LATENCY: big screens pass deferFrame and frame the whole list AFTER
+  // the appends (one layout serves every row - see frameCard's atlas note).
+  if (!deferFrame) frameCard(el);
   return el;
 }
 
@@ -4510,6 +4548,9 @@ function showShop() {
   // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
   ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  // SHOP-LATENCY: defer every row's frame so the WHOLE list appends (and lays
+  // out once) before the first frame measures - then frame them all together.
+  const framed = [];
   for (const def of SHOP_UPGRADES) {
     // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
     // lives in profile.unlockedWeapons/unlockedElites (meta.js shopRowOwned),
@@ -4537,7 +4578,9 @@ function showShop() {
         }
       },
       capped || !afford,
+      true,   // deferFrame: batched with `framed` below
     );
+    framed.push(el);
     if (capped) el.onclick = () => audio.playSfx('button');
     // G14: every row carries its authored 16x16 icon (src/art/shop_icons.js)
     // as a live canvas painted through the renderer's own drawGrid — same
@@ -4562,6 +4605,7 @@ function showShop() {
     menuCard('APEX', 'the post-completion tier — rule-breakers, priced for the grind', () => showApexShop());
   }
   menuCard('BACK', 'to title [ESC]', () => showTitle());
+  for (const el of framed) frameCard(el, true);   // lazy: the observer paints after the browser's own layout pass
 }
 
 // ---------- G25 slice 1: THE APEX PANEL ------------------------------------
@@ -7406,5 +7450,12 @@ export const __TEST = {
     end: endDeathCine,
     get t() { return performance.now() - deathCineT0; },
     duration: DCINE.CINE_DURATION,
+  },
+  // ---- G16 portal-cine seam: the same read-only clock the G15 death movie
+  // exposes — start/end stay internal (the real boss-kill path drives them);
+  // the browser verifier samples the PAUSE/LINGER beats off this t.
+  portalCine: {
+    get t() { return performance.now() - cineT0; },
+    duration: CINE.CINE_DURATION,
   },
 };

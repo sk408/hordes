@@ -16,6 +16,8 @@ import {
   PORTAL_ART, PORTAL_BOX, portalFrame,
   APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt,
 } from '../src/art/index.js';
+// V1b: the escape sprites live with their mode (src/escape/), not in src/art/.
+import { PURSUER_ART, FLIER_ART } from '../src/escape/sprites.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -37,6 +39,12 @@ const LIMITS = {
   SHOP_ICON: { w: [12, 16], h: [12, 16] },
   PORTAL: { w: [48, 48], h: [48, 48] },
   TITLE_LAYER: { w: [1, 480], h: [1, 300] },
+  // V1b (2026-09-15): the escape mode's enemy sprites, in src/escape/sprites.js
+  // (the house rule keeps the slice in src/escape/, so they are NOT enumerated
+  // in ART_ASSETS — the format checks below still apply in full). Both sides of
+  // this table were widened TOGETHER (format.js ART_LIMITS), so the keys-match
+  // assertion above is a tightening, not a relaxation.
+  ESCAPE: { w: [8, 32], h: [8, 32] },
 };
 const SECTION_LIMIT = {
   trophies: 'TROPHY', portraits: 'PORTRAIT', shop: 'SHOP_ICON',
@@ -331,6 +339,22 @@ console.log('TITLE CARD:');
   ok(rects.every(r => r.palette && Object.keys(r.palette).length > 0), 'every title layer paints with a real palette');
   ok(rects[0].grid.length === 300 && rects[0].grid[0].length === 480, 'the sky layer covers the whole 480x300 card');
   drawnLayers.push(...rects);
+}
+
+console.log('ESCAPE SPRITES (V1b, src/escape/sprites.js):');
+{
+  // Same format contract as every src/art/ family — the grids, palettes and
+  // frame rules are verified with the SAME helpers, only the enumeration
+  // differs (ART_ASSETS does not list them; the escape render imports them
+  // directly, per the brief's self-containment house rule).
+  for (const a of [PURSUER_ART, FLIER_ART]) {
+    verifyAsset(a, 'escape', 'ESCAPE', { minFrames: 2, minCoverage: 0.15, requireInk: true });
+    const f0 = a.frames[0].flat().join(',');
+    const f1 = a.frames[1].flat().join(',');
+    ok(f0 !== f1, 'escape/' + a.id + ': the two frames actually differ (not a still)');
+  }
+  eq(PURSUER_ART.id, 'ESCAPE_PURSUER', 'the pursuer sprite id is stable');
+  eq(FLIER_ART.id, 'ESCAPE_FLIER', 'the flier sprite id is stable');
 }
 
 console.log('COVERAGE CROSS-CHECK (soft, meta.js):');
