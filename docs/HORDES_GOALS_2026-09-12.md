@@ -2572,7 +2572,7 @@ data. See TICK NOTE 15] Per-enemy KILL COUNTER (proof of progress), combat stats
 (number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
 a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
 
-**G24 — OPT-IN DIFFICULTY THAT PAYS.** Both leaders pair a difficulty dial with MORE rewards (VS Curse →
+**G24 — OPT-IN DIFFICULTY THAT PAYS.** [status: **SLICE 1 DISPATCHED 2026-09-15 07:54 UTC as `msg_01M2J0YAWHA5FHBBNWHQ5BKDYY` -> `cli:glm-hordes-g8`, brief `docs/briefs/G24_HEAT_PAYS.md`, HEAD `d2744a3`, suite greenfiles=91 redfiles=0 - see TICK NOTE 51; NOT YET VERIFIED.**] Both leaders pair a difficulty dial with MORE rewards (VS Curse →
 more kills/XP/gold, Hyper +50% gold; Megabonk Difficulty → more XP/Silver/gold). This is the genre's
 primary long-tail progression tool and ours only hurts. Heat must visibly PAY MORE, not just bite harder.
 
@@ -5730,3 +5730,32 @@ future dispatches (every builder/pilot/subagent loads it).
   (landed and pushed). The brief's own DISPATCH ANCHOR CHECK block must still be RUN at issue time.
 - Left untouched, deliberately: the orchestrator's in-flight `tools/w7b_draft_ab.mjs` (+256/-72) and its
   `docs/` edit. No git state command was run by the pilot.
+
+## TICK NOTE 51 - 2026-09-15 07:55 UTC - THE LANE CAME BACK; G24 IS DISPATCHED
+- **The glm lane is LIVE.** Direct probe at 07:51:58 UTC (`CLAUDE_CONFIG_DIR=~/.claude-zai claude
+  --permission-mode bypassPermissions --model glm-5.3 --print "reply with exactly: PROBE_OK"`) => `PROBE_OK`
+  in 4s. The `429 ... reset at 2026-09-15 15:49:58` stamp is PROVIDER-LOCAL (Beijing +8h) = **07:49:58 UTC**,
+  so tick 49's correction is CONFIRMED BY A LIVE ANSWER here, not inferred.
+- **GOTCHA WORTH KEEPING (cost this tick one wasted probe):** without `CLAUDE_CONFIG_DIR=~/.claude-zai`,
+  `claude --model glm-5.3` SILENTLY falls through to the kimi backend and returns the kimi 403
+  `You've reached your weekly (7-day) usage limit`. A glm probe run that way reads as "glm still walled" while
+  glm is healthy. Always set the config dir - it is exactly what `hub_worker.py` `build_command('glm')` (:545-551) does.
+- kimi lane: still `403 weekly (7-day) usage limit`, no reset date published. The `claude` lane is kimi-metered
+  (`hub_worker.py:555`), so two of the three lanes are one dead meter. Nothing in this job FINISHED since
+  02:51 UTC; the only thing in `.hub-worker/logs/` newer than that is this tick's own dispatch.
+- **DISPATCHED: G24 slice 1** = `msg_01M2J0YAWHA5FHBBNWHQ5BKDYY`, issuer `cron:spawncron_ea`, target
+  `cli:glm-hordes-g8` (worker re-minted this tick, pid 1941929, log
+  `.hub-worker/logs/spawn-glm-hordes-g8-20260915-075403.log`). Brief `docs/briefs/G24_HEAT_PAYS.md` was moved
+  into the repo under the agentlock, with a DISPATCH RE-ANCHOR addendum appended. **PICKUP CONFIRMED ON THE
+  ARTIFACT:** the spawn log carries the task line for that id and `.hub-worker/logs/msg_01M2J0YAWHA5FHBBNWHQ5BKDYY.log`
+  is being written (4,159 bytes at +15s) - it is running, not a dead letter.
+- **Pre-dispatch gate, re-run by the pilot on HEAD `d2744a3`, tree CLEAN (`dirty=0`):**
+  `TREE: /home/claude/projects/hordes @ d2744a3 | dirty=0` / `SUITE greenfiles=91 redfiles=0`. Anchor
+  spot-check against that same HEAD: `src/heat.js` :22 `HEAT_CAP`, :33 `HEAT_CURVES`, :124 `describeHeat`;
+  `src/entities.js` :117-118 foe hp + `e.maxHp`; `src/main.js` :2378 kill-XP grant, :3147 purse credit,
+  :6053 HUD heat line - zero drift measured, so the brief's anchor block is trusted but must still be RUN.
+- **NOTHING IN G24 IS CLAIMED YET.** Next tick: read the exit line for `msg_01M2J0YAWHA5FHBBNWHQ5BKDYY`, then
+  verify on the artifact against acceptance bar 1-7 (suite `redfiles=0`; both heat test files green with the
+  per-channel multiplier table at manual 0/3/6; the cohort raw output with n and seeds; heat-0 income unchanged;
+  `tools/verify_g24_heat_pays.mjs` PASS in a real browser at 390x844 @dpr3 with the PNG read back by ink/state)
+  BEFORE marking anything landed.
