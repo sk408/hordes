@@ -68,7 +68,7 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt, INSPECT_ART_SCALE } from './draft_card_art.js';
+import { paintOfferArt } from './draft_card_art.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
 import {
@@ -2671,7 +2671,6 @@ function openDraft() {
   }
   ovTitle.textContent = 'LEVEL ' + state.player.level;
   ovSub.textContent = 'choose your build';
-  hideDraftInspect();          // a re-opened draft (pendingDrafts > 1) starts clean
   draftFocus = -1;
   ovCards.innerHTML = '';
   choices.forEach((u, i) => {
@@ -2693,9 +2692,9 @@ function openDraft() {
     el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
       (hint ? `<div class="syn">${hint}</div>` : '') +
       `<div class="key">[${i + 1}]</div>`;
-    // R2 (owner directive 2026-09-14): the FIRST activation INSPECTS, the
-    // SECOND takes — see activateDraftCard below.
-    el.onclick = () => activateDraftCard(u, el);
+    // ONE activation takes the card (owner directive 2026-09-15: the text is on
+    // the card, so there is no confirm step) — see activateDraftCard below.
+    el.onclick = () => activateDraftCard(u);
     ovCards.appendChild(el);
     // R1: the offer's playing-card art, painted by the REAL drawCard
     // (src/draft_card_art.js). On top of the text in a live DOM (insertBefore);
@@ -2720,86 +2719,21 @@ function openDraft() {
   }
 }
 
-// ---------- DRAFT INSPECT -> CONFIRM (owner directive 2026-09-14, R2) --------
-// "How does the player know which card does what? Maybe they push to select,
-// it shows a box with what it does and they confirm selection."
-// The FIRST activation on a draft card (tap/click, or Enter on the keyboard
-// cursor) never takes it: it opens the inspect box — the card's art LARGE,
-// its name, its ladder tier, and its own effect text with the COMPUTED values
-// (the offer's desc is built at offer time by the real pool code: Second
-// Wind's revive fraction, Iron Heart's percent, a weapon level's actual
-// deltas out of describeWeaponLevel — shown verbatim, never restated here).
-// A SECOND activation on the SAME card takes it. ESC cancels back to the
-// offer. The 1-4 number keys stay the one-press quick-pick they always were
-// (test_w7b_draft_ladder pins a single [4] press taking the fourth offer);
-// the inspect flow's keyboard parity is arrows + Enter + ESC.
-const draftInspectEl = document.getElementById('draft-inspect');
-let draftInspect = null;   // { u, el } — the offer under inspection, or null
+// ---------- DRAFT CARD ACTIVATION: ONE ACTIVATION TAKES THE CARD ------------
+// OWNER DIRECTIVE 2026-09-15 (Sk408, verbatim): "with the text boxes in the card
+// select, we don't need the confirm step. It can go back to just touching will
+// choose that card." — so the R2 inspect->confirm step (2026-09-14) is RETIRED.
+// The reason it existed is gone: the card ITSELF now carries the art, the name,
+// the tier badge, its own COMPUTED effect text (built at offer time by the real
+// pool code — Second Wind's revive fraction, Iron Heart's percent, a weapon
+// level's actual deltas out of describeWeaponLevel), the synergy hint and the
+// [N] key hint, so there is nothing left for a second screen to reveal. One
+// activation picks; tap/click, and arrows + Enter on the keyboard, are the same
+// single confirmation. The 1-4 number keys stay the one-press quick-pick they
+// always were (test_w7b_draft_ladder pins a single [4] press taking the fourth
+// offer). ESC does nothing here by design: with no intermediate state there is
+// nothing to back out of.
 let draftFocus = -1;       // keyboard cursor over the offer row (-1: none)
-
-function hideDraftInspect() {
-  if (draftInspect && draftInspect.el) markDraftSelected(draftInspect.el, false);
-  draftInspect = null;
-  if (draftInspectEl) draftInspectEl.style.display = 'none';
-}
-
-// The 'selected' class doubles as frameCard's crimson 'sel' tone (it reads
-// className), so the inspected card's painted frame reacts too.
-function markDraftSelected(el, on) {
-  if (!el) return;
-  const parts = (el.className || '').split(' ').filter(c => c && c !== 'selected');
-  if (on) parts.push('selected');
-  el.className = parts.join(' ');
-}
-
-function openDraftInspect(u, el) {
-  if (draftInspect && draftInspect.el && draftInspect.el !== el) markDraftSelected(draftInspect.el, false);
-  draftInspect = { u, el };
-  markDraftSelected(el, true);
-  if (!draftInspectEl) return;
-  // Styled inline: index.html's stylesheet is another track's file (the same
-  // rule the W7b tier badge follows).
-  const st = draftInspectEl.style;
-  st.maxWidth = '360px';
-  st.margin = '14px auto 0';
-  st.padding = '14px';
-  st.background = '#12121c';
-  st.border = '2px solid #c9a05a';
-  st.textAlign = 'center';
-  st.color = '#f0dfc0';
-  const hint = synergyHintForCard(u);
-  const tier = u.tier
-    ? `<div style="font-size:11px;letter-spacing:1px;color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
-    : '';
-  draftInspectEl.innerHTML =
-    `<div style="color:#ffd75e;font-weight:bold;letter-spacing:1px;text-shadow:2px 2px 0 #0a0603">${u.name}</div>` +
-    tier +
-    `<div style="margin-top:8px;font-size:13px;color:#d6c09a;text-shadow:1px 1px 0 #0a0603">${u.desc}</div>` +
-    (hint ? `<div style="margin-top:8px;font-size:11px;color:#7ad0ff;letter-spacing:1px">${hint}</div>` : '') +
-    `<div style="margin-top:10px;font-size:11px;color:#6a6a8a">TAP AGAIN / [ENTER] TO TAKE · [ESC] BACK</div>`;
-  // The large art is LIVE drawCard output, rebuilt per open — never a cached
-  // or re-drawn look. Above the text in a live DOM, appended in a stub.
-  const artCv = document.createElement('canvas');
-  artCv.className = 'card-art-inspect';
-  if (artCv.setAttribute) artCv.setAttribute('data-card', u.id);
-  if (paintOfferArt(artCv, u.id, INSPECT_ART_SCALE)) {
-    if (typeof draftInspectEl.insertBefore === 'function') draftInspectEl.insertBefore(artCv, draftInspectEl.firstChild);
-    else draftInspectEl.appendChild(artCv);
-  }
-  st.display = 'block';
-}
-
-// The ONE activation seam every pointer path takes: first activation inspects,
-// second activation on the SAME card takes it, activating a DIFFERENT card
-// moves the inspection.
-function activateDraftCard(u, el) {
-  if (draftInspect && draftInspect.u === u) {
-    hideDraftInspect();
-    pick(u);
-  } else {
-    openDraftInspect(u, el);
-  }
-}
 
 // Arrows walk the keyboard cursor over the offer row (wraps). Element focus
 // follows so frameCard's hover/'hot' repaint fires for a keyboard player the
@@ -2810,6 +2744,13 @@ function draftFocusStep(d) {
   draftFocus = (((draftFocus < 0 ? (d > 0 ? -1 : 0) : draftFocus) + d) % n + n) % n;
   const el = ovCards.children[draftFocus];
   if (el && typeof el.focus === 'function') el.focus();
+}
+
+// The ONE activation seam every pointer and keyboard path takes: it TAKES the
+// offer. There is no first-activation branch to make — see the directive above.
+function activateDraftCard(u) {
+  if (!u) return;
+  pick(u);
 }
 
 // WAVE-11 LEVEL-UP SLOWDOWN (Sk408): the SCALING stat cards now DIMINISH per
@@ -2901,7 +2842,6 @@ function pick(u) {
   }
   state.pendingDrafts--;
   if (state.pendingDrafts > 0) { openDraft(); return; }
-  hideDraftInspect();          // R2: the box dies with the draft it inspects
   draftFocus = -1;
   overlay.style.display = 'none';
   state.mode = 'playing';
@@ -5566,23 +5506,25 @@ window.addEventListener('keydown', (ev) => {
     if (['1', '2', '3', '4'].includes(ev.key)) {
       // 1-4: the W7b Full Hand mythic adds a fourth offer, and its card carries
       // a [4] key hint — the routing must cover what the markup promises. These
-      // stay the ONE-PRESS quick-pick (test_w7b_draft_ladder pins a single [4]
-      // press taking the offer); the R2 inspect->confirm flow lives on
-      // tap/click and on arrows + Enter below.
+      // are the ONE-PRESS quick-pick (test_w7b_draft_ladder pins a single [4]
+      // press taking the offer), and since 2026-09-15 they match the pointer
+      // path exactly: one activation takes the card, no confirm step.
       const card = ovCards.children[Number(ev.key) - 1];
-      if (card && card._draftOffer) { hideDraftInspect(); pick(card._draftOffer); }
+      if (card && card._draftOffer) pick(card._draftOffer);
     } else if (k === 'arrowleft' || k === 'arrowup') {
       draftFocusStep(-1);
     } else if (k === 'arrowright' || k === 'arrowdown') {
       draftFocusStep(1);
     } else if (k === 'enter' || k === ' ') {
-      // Keyboard parity for the inspect flow: Enter on the cursor card is the
-      // same activation as a tap — first press inspects, second takes.
+      // Keyboard parity with the tap: Enter on the cursor card TAKES it in one
+      // press. (The former second-press confirm was retired with the inspect
+      // box — see activateDraftCard.)
       const card = ovCards.children[draftFocus >= 0 ? draftFocus : 0];
-      if (card && card._draftOffer) activateDraftCard(card._draftOffer, card);
-    } else if (k === 'escape') {
-      hideDraftInspect();      // cancels the inspect, returns to the offer
+      if (card && card._draftOffer) activateDraftCard(card._draftOffer);
     }
+    // ESC is deliberately NOT handled here: with no confirm step there is no
+    // intermediate state to back out of, and the offer must not be dismissible
+    // (skipping a draft is not a thing the game offers).
   } else if (state.mode === 'evolve' && ['1', '2', '3', '4'].includes(ev.key)) {
     const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
     if (card) card.click();
@@ -6774,9 +6716,9 @@ export const __TEST = {
   endScreenBody,
   synergyHintForCard,
   openDraft,
-  // R2 draft inspect seams: which offer the box holds + where the arrows
-  // cursor sits (headless tests read these instead of poking module scope).
-  draftInspectId: () => (draftInspect && draftInspect.u ? draftInspect.u.id : null),
+  // Arrow-cursor seam: where the keyboard cursor sits on the offer row
+  // (headless tests read this instead of poking module scope). The R2
+  // inspect seam is gone with the inspect box — one activation takes the card.
   draftFocus: () => draftFocus,
   synWeaponDmg,
   stanceOf: () => controller.stance,

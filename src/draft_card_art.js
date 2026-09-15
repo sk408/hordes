@@ -76,9 +76,10 @@ export function deckIdForOffer(offerId) {
 }
 
 // INTEGER scales only (the house pixel-art rule; drawCard refuses sub-pixel).
-// 24x34 card: 4x -> 96x136 (fits the 170px .card box), 6x -> 144x204 (inspect).
+// 24x34 card: 4x -> 96x136 (fits the 170px .card box). The 6x inspect scale
+// was retired 2026-09-15 with the draft inspect box (owner directive: one
+// activation takes the card, so no second, larger view exists).
 export const OFFER_ART_SCALE = 4;
-export const INSPECT_ART_SCALE = 6;
 
 // Paint the offer's playing-card art onto a canvas element through the REAL
 // drawCard (never a re-drawn look). Returns false when the offer has no art —

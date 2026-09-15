@@ -1,6 +1,14 @@
 // HORDES — CARD ART INTEGRATION: the draft offers render their playing-card
-// art through the REAL drawCard (R1), and the first activation INSPECTS while
-// the second TAKES (R2, owner directive 2026-09-14).
+// art through the REAL drawCard (R1), and ONE activation TAKES the card.
+//
+// CONTRACT UPDATE 2026-09-15 (owner directive, verbatim): "with the text boxes
+// in the card select, we don't need the confirm step. It can go back to just
+// touching will choose that card." The R2 inspect->confirm step is RETIRED, so
+// sections 4-7 below now pin the NEW contract — and they are STRICTER, not
+// softer: a single activation must take the offer (a re-added confirm step fails
+// these), the retired inspect box must not exist in the DOM at all, ESC must not
+// cancel anything, and the card's own text must carry the computed effect values
+// that the box used to show.
 //
 // What is pinned here (all through the REAL seams — src/main.js openDraft /
 // pick / the keydown routing, src/draft_card_art.js, never a restated copy):
@@ -12,16 +20,20 @@
 //      the harness ctx) at the integer backing size;
 //   3. openDraft wires a .card-art canvas into every art-backed offer and
 //      into NO offer without deck art (fail-safe, never a blank rectangle);
-//   4. inspect->confirm by CLICK: first click opens the box (draft stays
-//      open, the box shows the card's own name + computed desc), second
-//      click on the SAME card takes it; clicking a DIFFERENT card moves the
-//      inspection; ESC cancels back to the offer;
-//   5. KEYBOARD parity: arrows walk the cursor, Enter inspects, Enter again
-//      takes, ESC cancels;
-//   6. the 1-4 number keys stay the ONE-PRESS quick-pick (the contract
-//      test_w7b_draft_ladder pins for [4]);
-//   7. the box dies with its draft (taken -> hidden, overlay closed).
+//   4. ONE activation by CLICK takes the card: the draft closes, the pick
+//      lands, the ledger records it, the overlay hides — in a SINGLE click;
+//   5. activating a different card takes THAT card (there is no selection to
+//      move — nothing between the tap and the take);
+//   6. ESC does nothing: with no confirm step there is no intermediate state,
+//      and the offer must not be dismissible;
+//   7. KEYBOARD parity: arrows walk the cursor, Enter TAKES in one press;
+//   8. the 1-4 number keys are the ONE-PRESS quick-pick (the contract
+//      test_w7b_draft_ladder pins for [4]) — same single press as a tap;
+//   9. the CARD's own markup carries the computed effect text (the ladder
+//      percent, a weapon level's real describeWeaponLevel deltas) and its tier
+//      badge, because that is what replaced the inspect box.
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 import { CARD_DECK, cardArt } from '../src/art/cards.js';
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
@@ -112,58 +124,63 @@ s.check('openDraft wires .card-art into art-backed offers only', () => {
   }
 });
 
-// ---- 4. inspect->confirm by click --------------------------------------------
-s.check('first click INSPECTS (draft stays open, box shows name + computed desc)', () => {
-  const kids = openDraftUntil(ks => ks.length > 0);
-  const el = kids[0], u = offerOf(el);
-  el.click();
-  assert.equal(state.mode, 'draft', 'the first activation did NOT take the card');
-  assert.equal(T.draftInspectId(), u.id, 'the box holds this offer');
-  const box = elements['draft-inspect'];
-  assert.notEqual(box.style.display, 'none', 'the box is visible');
-  assert.ok((box.innerHTML || '').includes(u.name), 'the box shows the card title');
-  assert.ok((box.innerHTML || '').includes(u.desc), 'the box shows the computed effect text verbatim');
-  assert.ok((el.className || '').includes('selected'), 'the inspected card reads selected');
-  assert.equal(state.pendingDrafts, 1, 'nothing was taken');
-  // a DIFFERENT card moves the inspection instead of taking
-  if (kids.length > 1) {
-    kids[1].click();
-    assert.equal(state.mode, 'draft');
-    assert.equal(T.draftInspectId(), offerOf(kids[1]).id, 'the inspection moved');
-    assert.ok(!(kids[0].className || '').includes('selected'), 'the old card clears');
-  }
+// ---- 4. ONE activation takes the card (no confirm step) ----------------------
+s.check('the retired inspect machinery is GONE from the shipped source', () => {
+  // A RUNTIME absence check is not possible in this harness: getElementById
+  // fabricates a stub element for ANY id (`elements[id] ?? (elements[id] = el())`),
+  // so a deleted #draft-inspect would still "exist" here and the old test passed
+  // against a stub. Pin the real artifact instead — the shipped markup + the
+  // module — so a re-added confirm step fails this file.
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const art = readFileSync(new URL('../src/draft_card_art.js', import.meta.url), 'utf8');
+  assert.ok(!html.includes('draft-inspect'), 'index.html must not carry the retired #draft-inspect element');
+  assert.ok(!/draftInspect|\bopenDraftInspect\b|\bhideDraftInspect\b|\bmarkDraftSelected\b/.test(main),
+    'main.js must not carry the retired inspect machinery');
+  assert.ok(!main.includes('INSPECT_ART_SCALE'), 'main.js must not reference the retired 6x inspect scale');
+  assert.ok(!art.includes('INSPECT_ART_SCALE'), 'the retired inspect scale must be gone from the wiring module');
+  assert.ok(/function activateDraftCard\(u\)/.test(main), 'the ONE-argument activation seam still exists');
 });
-
-s.check('second click on the SAME card TAKES it (box dies with the draft)', () => {
+s.check('ONE click TAKES the card (no confirm step): draft closes, pick lands', () => {
   const kids = openDraftUntil(ks => ks.length > 0);
   const el = kids[0], u = offerOf(el);
   el.click();
-  assert.equal(T.draftInspectId(), u.id);
-  el.click();
-  assert.equal(T.draftInspectId(), null, 'the box closed');
-  assert.equal(elements['draft-inspect'].style.display, 'none');
+  assert.equal(state.mode, 'playing', 'the SINGLE activation took the card and closed the draft');
   assert.equal(state.pendingDrafts, 0, 'the pick landed');
-  assert.equal(state.mode, 'playing', 'the draft closed');
-  assert.equal(elements.overlay.style.display, 'none');
+  assert.equal(elements.overlay.style.display, 'none', 'the overlay is hidden');
   if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_')) && !u.rule && !u.skill && !u.rewrite) {
     assert.ok((state.player.takenStats || {})[u.id], 'the stat ledger recorded the take');
   }
 });
 
-s.check('ESC cancels the inspect and returns to the offer', () => {
-  const kids = openDraftUntil(ks => ks.length > 0);
-  kids[0].click();
-  assert.equal(T.draftInspectId(), offerOf(kids[0]).id);
-  key('keydown', { key: 'Escape' });
-  assert.equal(T.draftInspectId(), null, 'the box is cancelled');
-  assert.equal(elements['draft-inspect'].style.display, 'none');
-  assert.equal(state.mode, 'draft', 'the offer is still open');
-  assert.equal(state.pendingDrafts, 1, 'nothing was taken');
-  assert.ok(!(kids[0].className || '').includes('selected'), 'the selection cleared');
+// ---- 5. each activation is a TAKE, not a selection ---------------------------
+s.check('clicking a DIFFERENT card takes THAT card (there is no selection to move)', () => {
+  const kids = openDraftUntil(ks => ks.length > 1);
+  const second = offerOf(kids[1]);
+  kids[1].click();
+  assert.equal(state.mode, 'playing', 'the click took the card it was on');
+  assert.equal(state.pendingDrafts, 0);
+  // The ledger/takenStats write proves WHICH offer was applied, not just that
+  // some offer was. (Weapon/level cards level a weapon instead — check the id
+  // family before reading a ledger row.)
+  if (!(second.id.startsWith('wpn_') || second.id.startsWith('lvl_')) && !second.rule && !second.skill && !second.rewrite) {
+    assert.ok((state.player.takenStats || {})[second.id], 'the SECOND card is what landed');
+  }
 });
 
-// ---- 5. KEYBOARD parity -------------------------------------------------------
-s.check('arrows walk the cursor, Enter inspects, Enter again TAKES', () => {
+// ---- 6. ESC must not cancel anything ----------------------------------------
+s.check('ESC does not cancel the draft (there is no confirm step to back out of)', () => {
+  const kids = openDraftUntil(ks => ks.length > 0);
+  const before = kids.map(offerOf);
+  key('keydown', { key: 'Escape' });
+  assert.equal(state.mode, 'draft', 'the offer is still open');
+  assert.equal(state.pendingDrafts, 1, 'nothing was taken');
+  assert.deepEqual(Array.from(elements['ov-cards'].children).map(offerOf), before,
+    'the SAME offers are on screen — ESC changed nothing');
+});
+
+// ---- 7. KEYBOARD parity: one Enter takes -------------------------------------
+s.check('arrows walk the cursor and ONE Enter TAKES the card', () => {
   const kids = openDraftUntil(ks => ks.length > 1);
   key('keydown', { key: 'ArrowRight' });
   assert.equal(T.draftFocus(), 0, 'the first arrow lands on the first card');
@@ -174,50 +191,39 @@ s.check('arrows walk the cursor, Enter inspects, Enter again TAKES', () => {
   assert.equal(T.draftFocus(), kids.length - 1, 'the cursor wraps');
   key('keydown', { key: 'ArrowRight' });
   assert.equal(T.draftFocus(), 0);
-  const u0 = offerOf(kids[0]);
   key('keydown', { key: 'Enter' });
-  assert.equal(state.mode, 'draft', 'the first Enter INSPECTED');
-  assert.equal(T.draftInspectId(), u0.id);
-  key('keydown', { key: 'Escape' });
-  assert.equal(state.mode, 'draft', 'ESC backed out to the offer');
-  key('keydown', { key: 'Enter' });
-  key('keydown', { key: 'Enter' });
-  assert.equal(state.pendingDrafts, 0, 'the second Enter TOOK the card');
-  assert.equal(state.mode, 'playing');
+  assert.equal(state.mode, 'playing', 'the FIRST and only Enter took the card');
+  assert.equal(state.pendingDrafts, 0, 'one press picked');
 });
 
-// ---- 6. the number keys stay the one-press quick-pick -------------------------
+// ---- 8. the number keys stay the one-press quick-pick ------------------------
 s.check('a number key still TAKES in one press (the pinned [4] contract)', () => {
   openDraftUntil(ks => ks.length > 0);
   key('keydown', { key: '2' });
   assert.equal(state.pendingDrafts, 0, 'one press picked');
   assert.equal(state.mode, 'playing', 'the draft closed on one press');
-  assert.equal(T.draftInspectId(), null, 'no inspect was left open');
 });
 
-// ---- 7. computed values in the box (the brief's own examples) -----------------
-s.check('the box shows the ladder cards\' computed effect text', () => {
+// ---- 9. the CARD carries the computed text (what replaced the box) -----------
+s.check("the card's own markup shows the ladder card's computed effect text", () => {
   // Iron Heart +25%: the rare anchor, offered at RARE weight — loop until seen.
   const kids = openDraftUntil(ks => ks.some(el => offerOf(el).id === 'hp_pct'));
   assert.ok(kids, 'Iron Heart +25% was offered within the cap');
   const el = kids.find(k => offerOf(k).id === 'hp_pct');
-  el.click();
-  const html = elements['draft-inspect'].innerHTML || '';
-  assert.ok(html.includes('+25% max HP'), 'the percent is in the box, not a restatement');
-  assert.ok(html.includes('RARE'), 'the tier rides along');
-  key('keydown', { key: 'Escape' });
+  const html = el.innerHTML || '';
+  assert.ok(html.includes('+25% max HP'), 'the computed percent is ON THE CARD, not a restatement');
+  assert.ok(html.includes('RARE'), 'the tier badge rides along on the card');
+  assert.ok(html.includes('[2]') || html.includes('['), 'the key hint rides along too');
 });
-s.check('a weapon level-up card shows the REAL describeWeaponLevel deltas', () => {
+s.check("the card's own markup shows a weapon level-up card's REAL describeWeaponLevel deltas", () => {
   const kids = openDraftUntil(ks => ks.some(el => offerOf(el).id.startsWith('lvl_')));
   assert.ok(kids, 'a level-up card was offered within the cap');
   const el = kids.find(k => offerOf(k).id.startsWith('lvl_'));
   const u = offerOf(el);
   const [type, lv] = [u.id.split('_')[1], Number(u.id.split('_')[2])];
-  el.click();
-  const html = elements['draft-inspect'].innerHTML || '';
+  const html = el.innerHTML || '';
   const want = describeWeaponLevel(type, lv + 1);
-  if (want) assert.ok(html.includes(want), 'the weapon\'s actual next-level deltas are in the box');
-  key('keydown', { key: 'Escape' });
+  if (want) assert.ok(html.includes(want), "the weapon's actual next-level deltas are on the card");
 });
 
 s.done();

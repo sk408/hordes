@@ -7,7 +7,9 @@
 // ONE draft offers BOTH a WEAPON level-up card (lvl_*) AND Quick Hands (rate)
 // — the two families that used to fall back to plain text. Every offered card
 // must carry a .card-art canvas with REAL drawCard pixels (inked, on-palette);
-// the level-up card is then INSPECTED (the R2 flow) and the big inspect art is
+// the level-up card's OWN canvas is then read back (the card IS the interface:
+// one activation takes the offer, so the retired inspect box has no successor to
+// check) and the big card art is
 // asserted inked too. ONE PNG (1170x2532) of the offer view is captured, then
 // READ BACK: for the lvl_* and rate canvases, EVERY inked backing cell is
 // centre-sampled in the decoded screenshot and compared against the exact
@@ -99,28 +101,25 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     check('every offered canvas is REAL deck art (inked, every inked cell on-palette)',
       cards.every((k) => k.ink > 200 && k.badCells === 0), cards.map((k) => k.offer + ':ink' + k.ink + ':bad' + k.badCells));
 
-    // ---- R2: the inspect box shows the big art for the level-up card too ---
-    report.inspect = await p.evaluate(`(async () => {
-      const T = (await import('./src/main.js')).__TEST;
+    // ---- the level-up offer's OWN canvas carries the big art (the retired
+    // inspect box used to be where its art was shown; 2026-09-15 directive) ---
+    report.lvlArt = await p.evaluate(`(async () => {
       const el = [...document.querySelectorAll('#ov-cards > div')]
         .find((k) => k._draftOffer && k._draftOffer.id.startsWith('lvl_'));
       if (!el) return { ok: false, why: 'no lvl card element' };
       const id = el._draftOffer.id;
-      el.click();
-      const box = document.getElementById('draft-inspect');
-      const cv = box ? [...box.querySelectorAll('canvas')].find((k) => k.className === 'card-art-inspect') : null;
+      const cv = el.querySelector('canvas.card-art');
       let ink = 0;
       if (cv) {
         const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
         for (let i = 3; i < d.length; i += 4) if (d[i] > 0) ink++;
       }
-      const shown = box && box.style.display !== 'none' && T.draftInspectId() === id;
-      // ESC back to the offer view for the artifact screenshot.
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      const back = T.draftInspectId() === null;
-      return { ok: !!(shown && cv && ink > 400 && back), id, ink, shown, hasCanvas: !!cv, back };
+      return { ok: !!(cv && ink > 4000 && cv.width === 96 && cv.height === 136), id, ink,
+        hasCanvas: !!cv, text: (el.querySelector('.desc') || {}).textContent || '',
+        retiredBoxInDom: document.getElementById('draft-inspect') !== null };
     })()`, true);
-    check('inspect->confirm shows the BIG card art for the weapon level-up (R2)', report.inspect.ok, report.inspect);
+    check('the level-up offer paints its own card art (96x136 backing) — the inspect box is RETIRED, one activation takes the card',
+      report.lvlArt.ok && !report.lvlArt.retiredBoxInDom, report.lvlArt);
 
     // ---- settle, capture the ONE artifact PNG, READ IT BACK ----------------
     await p.evaluate("(async () => { for (let i = 0; i < 4; i++) await new Promise(r => requestAnimationFrame(r)); })()");
