@@ -5673,3 +5673,27 @@ read the returned id.
 **Cost guidance for the watchdog ticks:** before ~07:50 UTC probe KIMI ONLY (~8s; it fails fast). Do not burn 200s+ on the glm probe every 10 minutes - it cannot answer before its reset. `hub-worker queue hub` reads EMPTY, so nothing stale fires when a lane returns.
 
 **Issued: NOTHING**, deliberately (ticks 44-48 precedent: a blind re-issue reproduces `exit 1` and adds a dead task id). `docs/briefs/G21_SLICE2_COMBOS.md` remains authored, anchor-checked and STAGED - re-issue it verbatim, to `cli:kimi-hordes-g8` (colon form, sourced from `coordinator.env` as remy:orchestrator), on the first tick a lane answers a probe. Nothing was lost by the wait: no builder was running (pid 1576690 idle, lock FREE), the tree is untouched at HEAD `e4e0a0c`, `git status --porcelain` = clean, and slice 1's verified state (`d08ba68` -> `e4e0a0c`, suite `greenfiles=88 redfiles=0` at tick 47) is intact. This tick wrote this note and nothing else - no suite run (nothing finished to verify), no code, no dispatch.
+
+---
+
+## OWNER RULE — MEASUREMENT ECONOMICS (recorded 2026-09-15)
+
+Sk408's own read, and it is the correct one. Also recorded in the `hordes-project-ops`
+skill under "Measuring" — this note is the history; the skill is what actually governs
+future dispatches (every builder/pilot/subagent loads it).
+
+**Buy signals cheaply, buy verdicts rarely — and settle balance on the REAL loop.**
+
+- A design signal needs a READING, not a verdict. The W7b imbalance that produced the
+  rarity ladder and, through it, the whole playing-card art direction, was visible in
+  about eight runs. Stop the moment the sign is clear; do not grind to full n to make a
+  reading respectable.
+- HARD-CAP runs and wall-clock, and read the CENSORING RATE as the tell. The W7b A/B was
+  96 runs with 36 censored at the 1800s ceiling — a third of the spend bought "it ran
+  long", not information.
+- The sim never gets the last word on BALANCE: it reads x1.36 where the real loop reads
+  x2.49 for the same behaviour. Sim-vs-real disagreement is a FINDING, not noise.
+- Tests are a DISCOVERY instrument. Discovery is cheap; confirmation is expensive — stop
+  paying confirmation prices for discovery work. The bounded runs that EARNED their keep:
+  the L1+L2 real-loop A/B (caught x2.49 -> x1.22, stopping a change that narrowed
+  divergence) and the maw/smoke flake hunts.
