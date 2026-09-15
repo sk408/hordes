@@ -17,6 +17,7 @@ import { CHARACTER_PORTRAITS, CHARACTER_IDS, characterPortrait } from './portrai
 import { SHOP_ICONS, SHOP_ICON_IDS, SHOP_ICON_FALLBACK_ID, shopIcon } from './shop_icons.js';
 import { TITLE_ART, TITLE_LAYERS, TITLE_WIDTH, TITLE_HEIGHT, composeTitle, drawTitle } from './title.js';
 import { PORTAL_ART, PORTAL_PALETTE, PORTAL_BOX, portalFrame } from './portal.js';
+import { APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt } from './apex.js';
 
 export * from './format.js';
 export {
@@ -25,6 +26,7 @@ export {
   SHOP_ICONS, SHOP_ICON_IDS, SHOP_ICON_FALLBACK_ID, shopIcon,
   TITLE_ART, TITLE_LAYERS, TITLE_WIDTH, TITLE_HEIGHT, composeTitle, drawTitle,
   PORTAL_ART, PORTAL_PALETTE, PORTAL_BOX, portalFrame,
+  APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt,
 };
 
 export const ART_SECTIONS = [
@@ -52,6 +54,15 @@ export const ART_SECTIONS = [
     id: 'portal', kind: 'framed', scale: 4,
     label: 'DETAILED PORTAL — 48x48, 4 frames (boss-defeat cinematic)',
     items: [PORTAL_ART],
+  },
+  {
+    // G25 slice 2: the apex tier's own 32x32 emblems. APEX_IDS walks the
+    // AUTHORED art only; an apex item shipping without art yet (items 3..6)
+    // resolves to the shared LOCKED silhouette at draw time via apexArt, so
+    // this enumeration never gates the catalogue.
+    id: 'apex', kind: 'flat', scale: 4,
+    label: 'APEX EMBLEMS — 32x32, one per apex item, shown full-screen',
+    items: APEX_IDS.map(id => APEX_ART[id]),
   },
 ];
 

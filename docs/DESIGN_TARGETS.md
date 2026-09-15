@@ -125,7 +125,9 @@ below is approved and is not open for re-litigation in later waves:
 
 Optional, deliberately game-breaking shop items ABOVE the normal catalogue. **Excluded from every
 completion/pacing calculation** — they are a stretch goal for the committed player, and the visible proof
-that the player did it.
+that the player did it. The ~60h completion figure is computed WITHOUT apex (`SIM_ASSUMPTIONS.apex = false`
+in tools/balance_sim.mjs, which prints the partition at the top of its report) — apex costs sit on top of a
+finished catalogue, never inside the curve.
 
 - **Cost is calibrated against measured END-GAME income** (a fully developed late build), never against
   early runs. This is the one place a long grind is correct — because it sits *after* the content, not in

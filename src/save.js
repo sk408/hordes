@@ -40,7 +40,7 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 7;
+export const PROFILE_VERSION = 8;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -234,6 +234,17 @@ const MIGRATIONS = {
   6: (p) => {
     const next = { ...p };
     if (next.runPurse === undefined) next.runPurse = 0;
+    return next;
+  },
+  // v7 -> v8: G25 apex tier namespace. Guarantee the container is a plain
+  // object and NOTHING ELSE — no apex item is granted, the toggle stays OFF,
+  // and no existing field is touched, so this step is lossless for every v7
+  // save (a pre-slice player sees the tier exactly as a fresh one does:
+  // locked, off, nothing owned). Present-but-garbage contents are left for
+  // validateProfile to repair + report (one repair path, not two).
+  7: (p) => {
+    const next = { ...p };
+    if (!plainObject(next.apex)) next.apex = {};
     return next;
   },
 };
@@ -603,6 +614,38 @@ export function validateProfile(profile, cat) {
   if (unlockedElites.length !== elitesIn.length) repairs.push('unlockedElites');
   out.unlockedElites = unlockedElites;
   if (p.unlockedElites !== undefined && !Array.isArray(p.unlockedElites)) repairs.push('unlockedElites');
+
+  // ---- apex (v8: G25 post-completion prestige tier) ----
+  // DEFAULTS: { owned: [], enabled: false }. The toggle ships OFF and a save
+  // from before the tier loads with nothing owned (the migration only
+  // guarantees the container; ABSENT subfields default silently — a pre-slice
+  // save is not damaged). WRONG-TYPED data repairs to the default and NAMES
+  // the field, exactly like every other section. Unknown owned ids are
+  // preserved verbatim (the newer-build round-trip rule `purchased` uses).
+  const apex = { owned: [], enabled: false };
+  if (plainObject(p.apex)) {
+    if (Array.isArray(p.apex.owned)) {
+      for (const id of p.apex.owned) {
+        if (typeof id === 'string' && id) apex.owned.push(id);
+        else repairs.push('apex.owned');
+      }
+      if (new Set(apex.owned).size !== apex.owned.length) {
+        // duplicates collapsed — the ledger is a set, not a list
+        apex.owned = [...new Set(apex.owned)];
+        repairs.push('apex.owned');
+      }
+    } else if (p.apex.owned !== undefined) {
+      repairs.push('apex.owned');
+    }
+    if (typeof p.apex.enabled === 'boolean') {
+      apex.enabled = p.apex.enabled;
+    } else if (p.apex.enabled !== undefined) {
+      repairs.push('apex.enabled');
+    }
+  } else if (p.apex !== undefined) {
+    repairs.push('apex');
+  }
+  out.apex = apex;
 
   // ---- version stamp ----
   if (out.version !== PROFILE_VERSION) repairs.push('version');

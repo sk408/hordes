@@ -14,6 +14,7 @@ import {
   SHOP_ICONS, SHOP_ICON_IDS, SHOP_ICON_FALLBACK_ID, shopIcon,
   TITLE_ART, TITLE_LAYERS, TITLE_WIDTH, TITLE_HEIGHT, composeTitle, drawTitle,
   PORTAL_ART, PORTAL_BOX, portalFrame,
+  APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt,
 } from '../src/art/index.js';
 
 let failed = 0;
@@ -40,6 +41,10 @@ const LIMITS = {
 const SECTION_LIMIT = {
   trophies: 'TROPHY', portraits: 'PORTRAIT', shop: 'SHOP_ICON',
   title: 'TITLE_LAYER', portal: 'PORTAL',
+  // G25 slice 2: apex emblems are 32x32 showcase art — the SAME documented
+  // box the trophy emblems use (they render through the same full-screen
+  // showcase), so they inherit the TROPHY limit rather than minting a new one.
+  apex: 'TROPHY',
 };
 const EXPECTED_TROPHIES = [
   'FIRST_BLOOD', 'KILLS_100', 'KILLS_1000', 'KILLS_10000', 'FIRST_BOSS',
@@ -56,7 +61,8 @@ const EXPECTED_PORTRAITS = ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN'];
 // cap row and the A1 'focus' engagement-radius line) + 7 priced weapon unlock
 // rows + 3 elite unlock rows = 29 rows, PLUS the two STARTER_WEAPONS (VOLLEY,
 // BOOMERANG) which have no shop row but do have art (the draft pool / roster UI
-// uses the same icons), PLUS the generic fallback = 32 keys.
+// uses the same icons), PLUS the two G25 APEX rows (their OWN catalogue,
+// APEX_UPGRADES — same icon convention), PLUS the generic fallback = 34 keys.
 const EXPECTED_SHOP = [
   'dmg', 'hp', 'potions', 'regen', 'focus', 'thrifty', 'well', 'siphon', 'xp', 'crit',
   'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'split', 'slots', 'arcade',
@@ -64,10 +70,15 @@ const EXPECTED_SHOP = [
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',
   'elite_swift', 'elite_splitting', 'elite_vampiric',
+  'apex_mark', 'apex_endless_fire',
   '__fallback',
 ];
 // Art that legitimately has no SHOP_UPGRADES row today (starters are free).
 const NO_SHOP_ROW_OK = ['weapon_volley', 'weapon_boomerang'];
+// G25 slice 2: the apex emblems, keyed by the LIVE apex catalogue ids
+// (meta.js APEX_UPGRADES). The mask is NOT re-authored — an unowned or
+// unknown id resolves to the trophies' ONE LOCKED silhouette.
+const EXPECTED_APEX = ['apex_mark', 'apex_endless_fire'];
 const EXPECTED_LAYERS = ['SKY', 'HORIZON', 'CREST', 'PLATE', 'WORDMARK', 'RULE', 'FRAME'];
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -177,16 +188,18 @@ function verifyAsset(asset, sectionLabel, limitKey, opts = {}) {
 
 console.log('SECTIONS / ENUMERATION:');
 {
-  eq(ART_SECTIONS.length, 5, 'five art sections are enumerated');
+  // G25 slice 2 retarget: 5 -> 6 sections (apex emblems appended). The ids
+  // assertion stays an EXACT list — the new section is named, not wildcarded.
+  eq(ART_SECTIONS.length, 6, 'six art sections are enumerated');
   const ids = ART_SECTIONS.map(s => s.id).join(',');
-  eq(ids, 'trophies,portraits,shop,title,portal', 'section ids are stable');
+  eq(ids, 'trophies,portraits,shop,title,portal,apex', 'section ids are stable');
   eq(ART_ASSETS.length, TROPHY_IDS.length + CHARACTER_IDS.length + SHOP_ICON_IDS.length + 1 +
-     TITLE_LAYERS.length + 1, 'ART_ASSETS enumerates every asset exactly once');
+     TITLE_LAYERS.length + 1 + APEX_IDS.length, 'ART_ASSETS enumerates every asset exactly once');
   const all = ART_ASSETS.map(a => a.section + '/' + a.id);
   eq(new Set(all).size, all.length, 'no duplicate asset ids across the whole library');
   const frames = ART_ASSETS.reduce((n, a) => n + (a.frames ? a.frames.length : 1), 0);
-  eq(ART_COUNTS.trophies + ART_COUNTS.portraits + ART_COUNTS.shop + ART_COUNTS.title + ART_COUNTS.portal,
-     frames, 'ART_COUNTS totals the enumerated frames');
+  eq(ART_COUNTS.trophies + ART_COUNTS.portraits + ART_COUNTS.shop + ART_COUNTS.title + ART_COUNTS.portal +
+     ART_COUNTS.apex, frames, 'ART_COUNTS totals the enumerated frames');
   ok(frames >= 60, 'the library ships ' + frames + ' pixel layers (>= 60)');
 }
 
@@ -233,6 +246,36 @@ console.log('SHOP ICONS (' + SHOP_ICON_IDS.length + '):');
   }
   eq(SHOP_ICONS[SHOP_ICON_FALLBACK_ID], shopIcon('no_such_row'), 'unknown shop row resolves to the generic rune icon');
   ok(SHOP_ICON_IDS.length + 1 === Object.keys(SHOP_ICONS).length, 'the fallback is excluded from SHOP_ICON_IDS');
+}
+
+console.log('APEX EMBLEMS (' + APEX_IDS.length + ') — G25 slice 2:');
+{
+  // Same shape as the trophies block: exact id list, the A2 house-rule
+  // verification (TROPHY box, ink outline, silhouette mass), plus the ONE
+  // contract this section owns — the mask is the trophies' LOCKED emblem,
+  // REUSED, not a second silhouette.
+  const ids = Object.keys(APEX_ART);
+  eq(ids.length, EXPECTED_APEX.length, 'one emblem per expected apex id');
+  for (const id of EXPECTED_APEX) ok(!!APEX_ART[id], 'APEX_ART.' + id + ' exists');
+  eq(APEX_IDS.join(','), EXPECTED_APEX.join(','), 'APEX_IDS matches the live apex catalogue ids in order');
+  const extra = ids.filter(i => !EXPECTED_APEX.includes(i));
+  eq(extra.length, 0, 'no unexpected apex ids');
+  for (const id of ids) {
+    verifyAsset(APEX_ART[id], 'apex', 'TROPHY', { maxKeys: 6, minCoverage: 0.35, requireInk: true });
+    // APEX emblems carry pixels only — the catalogue (meta.js APEX_UPGRADES)
+    // owns every name/desc the game shows, so a stray copy here is a drift bug.
+    ok(!APEX_ART[id].name && !APEX_ART[id].desc, 'apex/' + id + ': carries NO name/desc (the catalogue owns the strings)');
+  }
+  // THE ONE MASK: the fallback IS the trophies' LOCKED id, and both resolvers
+  // agree — an unknown apex id paints the same emblem the trophy gallery
+  // paints for an unearned trophy. No second mask can be authored without
+  // failing the identity here.
+  eq(APEX_FALLBACK_ID, TROPHY_FALLBACK_ID, 'the apex fallback id IS the trophies\' LOCKED id (one mask, reused)');
+  eq(apexArt('NOT_A_REAL_ID'), TROPHY_ART[TROPHY_FALLBACK_ID], 'unknown apex id resolves to the shared LOCKED silhouette');
+  eq(apexArt('apex_mark'), APEX_ART.apex_mark, 'known apex id resolves to its own emblem');
+  // The catalogue drives the ids: every APEX_UPGRADES row resolves to art
+  // (authored or the shared mask), so items 3..6 can ship with no lint change.
+  eq(APEX_IDS.every(id => !!apexArt(id)), true, 'every authored apex id resolves through apexArt');
 }
 
 console.log('PORTAL:');
@@ -287,19 +330,25 @@ console.log('COVERAGE CROSS-CHECK (soft, meta.js):');
   // The shop icon ids are authored to mirror SHOP_UPGRADES. Import the real
   // table when it is loadable so drift is caught here rather than in the shop
   // UI; the hardcoded list above is the assertion that must always hold.
-  let rows = null, starters = null;
+  let rows = null, starters = null, apex = null;
   try {
     const meta = await import('../src/meta.js');
     rows = meta.SHOP_UPGRADES;
     starters = meta.STARTER_WEAPONS;
+    apex = meta.APEX_UPGRADES;
   } catch (e) {
     console.log('  SKIP could not import src/meta.js (' + (e && e.message) + ') — hardcoded list still enforced');
   }
   if (rows) {
     const missing = rows.map(r => r.id).filter(id => !SHOP_ICONS[id]);
     eq(missing.length, 0, 'every row in meta.js SHOP_UPGRADES has an icon (' + rows.length + ' rows)');
+    // G25: apex rows live in their OWN catalogue — their icons are rows of
+    // APEX_UPGRADES, not SHOP_UPGRADES, so the dead-icon walk must know both.
+    const apexIds = (apex || []).map(r => r.id);
+    const missingApex = apexIds.filter(id => !SHOP_ICONS[id]);
+    eq(missingApex.length, 0, 'every row in meta.js APEX_UPGRADES has an icon (' + apexIds.length + ' rows)');
     const dead = SHOP_ICON_IDS.filter(id =>
-      !rows.some(r => r.id === id) && !NO_SHOP_ROW_OK.includes(id));
+      !rows.some(r => r.id === id) && !apexIds.includes(id) && !NO_SHOP_ROW_OK.includes(id));
     eq(dead.length, 0, 'no shop icon exists for a row that is gone (outside the documented starter exception)');
     if (starters) {
       const starterIcons = starters.map(w => 'weapon_' + w.toLowerCase());

@@ -10,6 +10,7 @@ import {
   ELITE_MODIFIERS, eliteUnlocked, unlockElite,
   LUCK_MAX_LEVEL, BASE_RARITY_WEIGHTS, luckDropWeights,
   shopRowOwned, catalogCost,
+  APEX_UPGRADES, APEX_BY_ID, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
 } from '../src/meta.js';
 import { WEAPON_TYPES } from '../src/weapons.js';   // read-only: drift guard
 import { CONFIG as C, ladderHp, ladderDmg, volleyProjectileCap } from '../src/config.js';  // read-only: sim sync anchor
@@ -708,6 +709,112 @@ console.log('SIM SYNC:');
   ok(applyMetaBonuses(stats, { split: 0 }).splitCap === 0, 'and 0 unowned');
   ok(row.baseCost > 0 && row.costGrowth > 1,
      'the row prices on a real ladder (a cap this deep is a long-term buy)');
+}
+
+// ---------- (G25 slice 1) THE APEX TIER: partition, gate, pricing, toggle ----
+// THE PARTITION is the whole design: apex rows live in their OWN catalogue and
+// the shop economy must not know they exist. The number 290500 is the MEASURED
+// pre-slice value of catalogCost(MID+TOP) — pinned here so any drift (an apex
+// row leaking into SHOP_UPGRADES, a repriced mid/top row) fails this file.
+console.log('APEX TIER (G25):');
+{
+  // -- partition: apex is invisible to the shop economy --
+  const partition = catalogCost([...GOLD_MODEL.MID_TIER_IDS, ...GOLD_MODEL.TOP_TIER_IDS]);
+  ok(partition === 290500,
+     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, pre-slice 290500)`);
+  ok(SHOP_UPGRADES.length === 29,
+     `SHOP_UPGRADES still holds exactly its 29 pre-apex rows (got ${SHOP_UPGRADES.length})`);
+  ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
+  ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
+     'every APEX_UPGRADES row carries apex:true + kind:"apex"');
+  ok(SHOP_UPGRADES.every(u => !u.apex && u.kind !== 'apex'),
+     'no SHOP_UPGRADES row carries the apex tag');
+  ok(APEX_UPGRADES.every(u => !SHOP_BY_ID[u.id]),
+     'no apex id is reachable through SHOP_BY_ID (buyUpgrade/nextUnlockWithinReach cannot see them)');
+  ok(Object.keys(APEX_BY_ID).length === APEX_UPGRADES.length
+     && APEX_UPGRADES.every(u => APEX_BY_ID[u.id] === u),
+     'APEX_BY_ID enumerates the apex catalogue exactly');
+  // The completion crossing above (PROGRESSION LADDER, run 60-100) iterates
+  // SHOP_UPGRADES — with apex ids structurally absent from that array the
+  // crossing CANNOT move. Asserted here once more so the G25 report can quote
+  // this line as the numeric partition proof.
+  let fullBuyCost2 = 0;
+  for (const u of SHOP_UPGRADES) {
+    if (u.id === 'arcade' || u.kind) continue;
+    for (let l = 0; l < u.maxLevel; l++) fullBuyCost2 += upgradeCost(u, l);
+  }
+  for (const c of Object.values(CHARACTERS)) fullBuyCost2 += c.unlockCost;
+  let cum3 = 0, crossRun3 = null;
+  for (let n = 1; n <= 300; n++) {
+    cum3 += projectRunGold(n, {});
+    if (cum3 >= fullBuyCost2) { crossRun3 = n; break; }
+  }
+  ok(crossRun3 !== null && crossRun3 >= 60 && crossRun3 <= 100,
+     `the apex-free completion crossing is unmoved (run ${crossRun3}, target 60-100)`);
+
+  // -- pricing: calibrated against the MEASURED tier-3 income --
+  // Brief §5 charters the arithmetic: 11000 gold/run (INCOME_TIERS[3], measured
+  // cohort median 11694, censored ~287s of the 300s cap) x 12 runs/hr (the
+  // cohort's 300s run cap — NOT C.RUN.LIMIT; the calibration is pinned to how
+  // the income was MEASURED) = 132,000 gold/hr. The BAND is the contract, the
+  // gold is the calibration.
+  const goldPerHour = GOLD_MODEL.INCOME_TIERS[3].gold * (3600 / 300);
+  ok(goldPerHour === 132000,
+     `tier-3 income is 11000/run x 12 runs/hr = 132,000 gold/hr (got ${goldPerHour})`);
+  const mark = APEX_BY_ID.apex_mark, fire = APEX_BY_ID.apex_endless_fire;
+  const markH = mark.baseCost / goldPerHour, fireH = fire.baseCost / goldPerHour;
+  ok(markH >= 2 && markH <= 6,
+     `apex_mark (${mark.baseCost}g) costs ${(markH).toFixed(2)}h of tier-3 income (band 2-6h)`);
+  ok(fireH >= 30 && fireH <= 60,
+     `apex_endless_fire (${fire.baseCost}g) costs ${(fireH).toFixed(2)}h of tier-3 income (band 30-60h)`);
+
+  // -- gate: DERIVED from shop ownership, no second source of truth --
+  const fresh = makeProfile();
+  ok(JSON.stringify(fresh.apex) === '{"owned":[],"enabled":false}',
+     'a fresh profile ships apex locked + off');
+  ok(apexUnlocked(fresh) === false, 'a fresh profile has the apex gate closed');
+  fresh.gold = 999999999;
+  const goldBefore = fresh.gold, ownedBefore = JSON.stringify(fresh.apex.owned);
+  ok(buyApex(fresh, 'apex_mark') === false,
+     'buyApex REFUSES with the gate closed even at 999,999,999 gold');
+  ok(fresh.gold === goldBefore && JSON.stringify(fresh.apex.owned) === ownedBefore,
+     'the refused purchase mutated NOTHING (gold and owned untouched)');
+
+  // Completed profile: buy EVERY shop row to its own ownership bar.
+  const done = makeProfile();
+  done.gold = 1e12;
+  for (const def of SHOP_UPGRADES) {
+    let guard = 0;
+    while (!shopRowOwned(done, def) && buyUpgrade(done, def.id)) {
+      if (++guard > 100) throw new Error('runaway buy loop on ' + def.id);
+    }
+  }
+  ok(SHOP_UPGRADES.every(def => shopRowOwned(done, def)),
+     'the fixture really owns every shop row (the gate condition, verbatim)');
+  ok(apexUnlocked(done) === true, 'owning every shop row OPENS the apex gate');
+  const goldBefore2 = done.gold;
+  ok(buyApex(done, 'apex_mark') === true, 'buyApex succeeds with the gate open');
+  ok(done.gold === goldBefore2 - mark.baseCost,
+     `the purchase debits EXACTLY baseCost (${goldBefore2} -> ${done.gold}, -${mark.baseCost})`);
+  ok(apexOwned(done, 'apex_mark') === true, 'apexOwned sees the purchase');
+  ok(buyApex(done, 'apex_mark') === false && done.gold === goldBefore2 - mark.baseCost,
+     'a second buy of the same item is refused (no double charge)');
+  ok(buyApex(done, 'not_an_apex_id') === false, 'an unknown apex id is refused');
+  ok(buyUpgrade(done, 'apex_endless_fire') === false,
+     'the classic buy path can NEVER spend on an apex row');
+  ok(buyApex(null, 'apex_mark') === false && buyApex(done) === false,
+     'buyApex rejects a null profile / missing id without throwing');
+
+  // -- toggle: one boolean, one writer --
+  ok(apexEnabled(done) === false, 'the apex toggle defaults OFF');
+  ok(setApexEnabled(done, true) === true && apexEnabled(done) === true,
+     'setApexEnabled(true) flips the live flag');
+  ok(done.apex.enabled === true, 'the flag is persisted on profile.apex.enabled');
+  ok(setApexEnabled(done, false) === true && apexEnabled(done) === false,
+     'setApexEnabled(false) restores OFF');
+  ok(setApexEnabled(null, true) === false, 'a null profile cannot be toggled');
+  ok(apexEnabled(null) === false && apexOwned(null, 'apex_mark') === false,
+     'readers on a null profile are false, never throw');
 }
 
 // ---------- Summary ----------

@@ -2346,7 +2346,7 @@ Compose with the earned slow-motion that already fires on a boss kill (it should
 Skippable with any key, and verification must be VISUAL (real browser + vision read), since this item is
 entirely about how it reads.
 
-### G17 — THE ECONOMY MUST REQUIRE A REAL GRIND  [status: open]
+### G17 — THE ECONOMY MUST REQUIRE A REAL GRIND  [status: IN PROGRESS - SLICE 1 SPLIT AFTER A WEDGE. Slice 1 (the ledger + price spine, brief `docs/briefs/G17_REPRICING.md`) was issued 2026-09-15 10:58 UTC as `msg_01M2JBEAQE60AR4C60VQV6HB67` and its builder was WATCHDOG-KILLED TWICE (exit -9, `zero progress (cpu+log+files) for 900s`, design #62 sec 4.5) at 11:31/11:46 UTC: it landed `tools/economy_ledger.mjs` (10317 B, `node --check` OK) and NOTHING else - the tool still throws `no measured baseline for stage maxed` because its `MEASURED` table is zeros. SLICE 1a (FILL + PROVE THE LEDGER: brief `docs/briefs/G17_SLICE1A_MEASURE.md`) is DISPATCHED; SLICE 1b (the actual REPRICE, plus `test/test_economy_reprice.mjs` and the `halfRuns` band re-baseline) is chartered but NOT yet issued. NOTHING about G17 is verified yet]
 Owner, verbatim: *"also we might still be earning too much gold per run. their feeling of being
 overpowered also reads as they want to grind a bit for improvements"*
 Read: "overpowered" is also a REQUEST FOR A LONGER LADDER — the shop should be a project, not a
@@ -2572,7 +2572,7 @@ data. See TICK NOTE 15] Per-enemy KILL COUNTER (proof of progress), combat stats
 (number visible, name and stats masked), and a HOOK (unlock-tied entries highlighted + flavour text). Plus
 a "which entry am I missing" filter — chasing the last entries is real player activity in VS.
 
-**G24 — OPT-IN DIFFICULTY THAT PAYS.** [status: **SLICE 1 DISPATCHED 2026-09-15 07:54 UTC as `msg_01M2J0YAWHA5FHBBNWHQ5BKDYY` -> `cli:glm-hordes-g8`, brief `docs/briefs/G24_HEAT_PAYS.md`, HEAD `d2744a3`, suite greenfiles=91 redfiles=0 - see TICK NOTE 51; NOT YET VERIFIED.**] Both leaders pair a difficulty dial with MORE rewards (VS Curse →
+**G24 — OPT-IN DIFFICULTY THAT PAYS.** [status: **SLICE 1 LANDED, COMMITTED AND PILOT-VERIFIED 2026-09-15** - feature `b5e86db` plus the verify-tool retarget `c40abcb`, both committed, tree clean. PILOT VERIFICATION ON THE ARTIFACT, not from a builder report: `bash tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ c40abcb | dirty=0` / `SUITE greenfiles=91 redfiles=0`; `node test/test_heat.mjs` 15 assertion groups OK and `node test/test_heat_ledger.mjs` ALL PASSED, both printing the per-channel table (manual 0: PAYS GOLD x1 / XP x1 | manual 3: GOLD x1.9 / XP x1.36 | manual 6: GOLD x2.8 / XP x1.72, against cost hp x1.00/1.36/1.72); `node tools/verify_g24_heat_pays.mjs` => **ALL 10 CHECKS PASSED** in real Chrome at 390x844 @dpr3 (real tap start, sim clock asserted past 1.0s BEFORE measuring, three REAL taps on RAISE THE STAKES drove the manual ledger 0 -> 3, the HUD line states the cost half byte-identically AND the payout `HEAT 7 (+84% foe HP) · PAYS GOLD x1.9 · XP x1.36`, XP per kill rises x1.915 escalation-normalized, PNG 1170x2532 with HUD ink 125405 read back by ink/state - NO vision model in this job). The symmetry rule holds and is asserted (built-in heat pays NOTHING, `addHeat` the one mutator, `grep heat src/save.js` still empty). **NOT re-run by the pilot: the seeded cohort raw numbers** (`tools/heat_pays_cohort.mjs`, committed and re-runnable; the builder's own raw output is quoted in its done post) - skipped to avoid CPU contention with the freshly dispatched builder. DISCLOSED, not hidden. See TICK NOTE 53.] Both leaders pair a difficulty dial with MORE rewards (VS Curse →
 more kills/XP/gold, Hyper +50% gold; Megabonk Difficulty → more XP/Silver/gold). This is the genre's
 primary long-tail progression tool and ours only hurts. Heat must visibly PAY MORE, not just bite harder.
 
@@ -2594,7 +2594,7 @@ primary long-tail progression tool and ours only hurts. Heat must visibly PAY MO
 
 Full consolidated numbers live in `docs/DESIGN_TARGETS.md` (supersedes scattered figures elsewhere).
 
-**G25 — THE APEX TIER: deliberately game-breaking prestige items.** Owner, verbatim: *"there should also be
+**G25 — THE APEX TIER: deliberately game-breaking prestige items.** [status: **SLICES 1 AND 2 LANDED + PILOT-VERIFIED ON THE ARTIFACT (UNCOMMITTED: tree dirty=25 at HEAD `c40abcb`; orchestrator owns the commit)** - brief `docs/briefs/G25_SLICE2_GALLERY.md`, re-anchored on this tree this tick. Slice 1 = the data partition (`APEX_UPGRADES` as its OWN array `src/meta.js` :629 + `APEX_BY_ID` :657) + the DERIVED gate + the toggle (`profile.apex {owned, enabled:false}`) + the v7->v8 save migration (`src/save.js` :239, normalize/repair :618) + EXACTLY TWO items (`apex_mark` 550,000 = ~4.17h, `apex_endless_fire` 5,500,000 = ~41.7h, against the measured 132,000 gold/hr tier-3 end-game income) + the apex panel + ONE `src/weapons.js` re-arm seam (`if (state.apexFire) return 0;` :204). Pilot evidence on the artifact: `bash tools/run_suite.sh` => `SUITE greenfiles=92 redfiles=0`; `node tools/verify_g25_apex.mjs` => `VERIFY G25 APEX: ALL 19 CHECKS PASSED` in real Chrome at 390x844 @dpr3. Slice 2 = the pixel-art proof gallery (`src/art/apex.js` + a full-screen gallery reusing the G9 showcase renderer), in flight now. See TICK NOTES 53 and 54.]
 some mecha ultra super powered items in the shop that basically break the game once they are purchased.
 their cost should require a grind even with top level gear, and they shouldn't be considered when it comes
 to length of time for completion of the game. they are strictly to offer a stretch goal for an extra
@@ -5759,3 +5759,116 @@ future dispatches (every builder/pilot/subagent loads it).
   per-channel multiplier table at manual 0/3/6; the cohort raw output with n and seeds; heat-0 income unchanged;
   `tools/verify_g24_heat_pays.mjs` PASS in a real browser at 390x844 @dpr3 with the PNG read back by ink/state)
   BEFORE marking anything landed.
+## TICK NOTE 53 - 2026-09-15 09:50 UTC - G24 SLICE 1 VERIFIED AND LANDED; G25 SLICE 1 ISSUED IN THE SAME TICK
+
+- **Pickup.** G24 slice 1 (`msg_01M2J0YAWHA5FHBBNWHQ5BKDYY`, `cli:glm-hordes-g8`) FINISHED: the spawn line reads
+  `exit 0` and its msg log exists. HEAD `c40abcb`, tree CLEAN (`dirty=0`) - the commit watcher landed both
+  `b5e86db` (the feature: heat pays on GOLD and on XP per kill) and `c40abcb` (verify tool: effMult moved to
+  COLLECTED gem xp + refreshed capture).
+- **Verified by the pilot ON THE ARTIFACT this tick, not read from a report:** suite `TREE ... @ c40abcb |
+  dirty=0` / `SUITE greenfiles=91 redfiles=0`; `test_heat.mjs` 15 groups OK; `test_heat_ledger.mjs` ALL PASSED;
+  both print the per-channel table at manual 0 / 3 / 6 (PAYS GOLD x1 / x1.9 / x2.8 and XP x1 / x1.36 / x1.72
+  beside the cost side hp x1.00 / 1.36 / 1.72); `tools/verify_g24_heat_pays.mjs` **ALL 10 CHECKS PASSED** in real
+  Chrome at 390x844 @dpr3 - real tap start, sim clock asserted past 1.0s BEFORE measuring, three real taps on
+  RAISE THE STAKES drove the manual ledger 0 -> 3, the HUD line states the cost half byte-identically AND the
+  payout (`HEAT 7 (+84% foe HP) · PAYS GOLD x1.9 · XP x1.36`), XP per kill rises (effMult 1.181 -> 2.261,
+  x1.915 escalation-normalized), PNG 1170x2532 with HUD ink 125405 read back by ink/state (NO vision model here).
+- **NOT verified by the pilot:** the seeded cohort raw numbers from `tools/heat_pays_cohort.mjs` (committed and
+  re-runnable per arm+seed; the builder's raw output is quoted in its done post). The pilot deliberately did NOT
+  re-run it this tick because the freshly issued G25 builder runs the suite repeatedly and a heavy concurrent
+  cohort is a known source of load flakes (the `c40abcb` commit itself names one). Recorded so it is not read as
+  verified.
+- **G25 SLICE 1 ISSUED IN THE SAME TICK** (zero-latency handoff): the brief was drafted OUTSIDE the repo on tick
+  52, moved into `docs/briefs/G25_APEX_TIER.md` under the agentlock, and given a DISPATCH RE-ANCHOR block measured
+  live on `c40abcb`. Anchor drift corrected in place: `INCOME_TIERS` :231, `checkRunLimit()` call :1548 / def
+  :3225, `nextUnlockWithinReach` :3022, `endScreenBody` :3038, `showShop` :4278, `MIGRATIONS` :167.
+  `grep -rn "apex" src/ tools/ test/` is EMPTY, as the brief predicts. Lane `cli:glm-hordes-g8` answered a direct
+  probe `PROBE_OK` this tick (kimi still on the 7-day wall; `claude` is kimi-metered). Task id
+  `msg_01M2J7A8W382DHHJKYSNCJRWA5`, pickup confirmed by its msg log appearing in `.hub-worker/logs/`.
+- **Dispatch mechanics worth keeping:** `hub-worker spawn ... cli:glm-hordes-g8` REFUSES when the lane is already
+  tracked and alive ("retire it first") - the G24 worker was still up, so no spawn was needed; the task must be
+  issued with `coordinator.env` sourced (the remy:orchestrator identity), the only authoring path a worker accepts.
+
+## TICK NOTE 54 - 2026-09-15 10:27 UTC - G25 SLICE 1 VERIFIED AND LANDED (UNCOMMITTED); SLICE 2 ISSUED IN THE SAME TICK
+
+- **PICKUP**: G25 slice 1 `msg_01M2J7A8W382DHHJKYSNCJRWA5` (`cli:glm-hordes-g8`) reached `exit 0` at 10:14 UTC
+  (spawn log `.hub-worker/logs/spawn-glm-hordes-g8-20260915-075403.log`) - ~2h20m of wall clock for the tier +
+  gate + toggle + migration + two items + panel + a 19-check real-browser verifier.
+- **VERIFIED ON THE ARTIFACT** (not the builder's self-report): `bash tools/run_suite.sh` =>
+  `TREE: /home/claude/projects/hordes @ c40abcb | dirty=19` / `SUITE greenfiles=92 redfiles=0`;
+  `node tools/verify_g25_apex.mjs` => `VERIFY G25 APEX: ALL 19 CHECKS PASSED` in real Chrome at 390x844 @dpr3.
+  What the browser actually proved: a fresh profile boots with the gate LOCKED and NO save; the shop has NO
+  apex row at all (ABSENT, not greyed) but 29 normal rows; a seeded completed save boots at v8 with the gate
+  open; the apex row then exists and the panel opens on a REAL tap showing `BANK: 500000` with both item costs
+  equal to their `baseCost`; a real tap at 500,000 gold on the 550,000 item debits NOTHING and owns NOTHING;
+  after the top-up the SAME tap buys it, debits exactly `baseCost` and persists to localStorage; the toggle
+  row flips `enabled` OFF -> ON in the live profile AND localStorage; a real START GAME run carries the apex
+  stamps with the clock past 1.0s and the HUD paints `APEX MARK OF THE GRIND`; `endScreenBody` is
+  BYTE-IDENTICAL to the absent-field shape with apex OFF and is exactly OFF + one clause with apex ON; the
+  death screen renders the `APEX RUN` clause; a second run toggled OFF has no stamps and NO apex text in a
+  rendered HUD; both PNGs are 1170x2532 and paint ink. Source spot-check by the pilot agrees: `APEX_UPGRADES`
+  is its own array (`src/meta.js` :629) with `APEX_BY_ID` :657, the migration is a real v7->v8 step
+  (`src/save.js` :239 with the normalize/repair block :618), and `src/weapons.js` carries exactly ONE apex
+  line, the re-arm seam `if (state.apexFire) return 0;` at :204. Prices: `apex_mark` 550,000 (~4.17h) and
+  `apex_endless_fire` 5,500,000 (~41.7h) against the measured 132,000 gold/hr tier-3 end-game income.
+- **TRANSIENT SUITE RED - DIAGNOSED, NOT A REGRESSION**: one pilot suite run printed
+  `RED test/test_rewrites.mjs :: no assertion line captured` and `/tmp/hordes_suite/test_rewrites.log` did not
+  exist at all. That file passes standalone (`rewrites: PASS=56 FAIL=0`) and the immediate re-run is
+  `greenfiles=92 redfiles=0`. Cause: two suite runs overlapping (the builder's final run + the pilot's) clobber
+  `/tmp/hordes_suite`. RULE FOR EVERY FUTURE TICK: a red reading `no assertion line captured` is a runner race
+  until you have confirmed the log file exists - re-run before believing it.
+- **ZERO-LATENCY HANDOFF**: the slice-2 brief was already drafted OUTSIDE the repo on the previous tick
+  (`/tmp/hordes_briefs/G25_SLICE2_GALLERY.md`). Under the lock the pilot moved it to
+  `docs/briefs/G25_SLICE2_GALLERY.md` and appended a **DISPATCH RE-ANCHOR** block (HEAD `c40abcb`, dirty=19,
+  suite 92/0, the full list of slice-1 files to treat as the baseline, the live ids `apex_mark` /
+  `apex_endless_fire`, the transient-red warning, and a LINE-ANCHOR WARNING: `main.js` and `save.js` both grew
+  during slice 1 so every anchor naming them is drifted and must be re-measured in place). Slice 2 was issued
+  the SAME tick as `msg_01M2J9KVM9PXBRYPDNS6JJ14NT` to `cli:glm-hordes-g8` - the builder never sat idle.
+  `cli:kimi-hordes-g8` is still 403-walled (7-day provider wall, no reset date), so glm remains the only live
+  lane and the pilot did not waste a probe on kimi.
+- **NOT VERIFIED / FLAGS**: slice 1's work is UNCOMMITTED (dirty=19; commits belong to the orchestrator, not
+  this job). Its suite run rewrote `docs/art/browser-verify-2026-09-12/g24-heat-pays-phone.png` - the only
+  image it touched, worth naming at commit time. Slice 1 ships NO apex art beyond two shop icons, so the tier
+  is not yet VIEWABLE as a screen - that is exactly slice 2. Apex items 3..6, the aura and the title flourish
+  stay deferred to a possible slice 3. The ~60h completion figure stays apex-free (`docs/DESIGN_TARGETS.md`
+  updated by the builder; apex OFF asserted in `tools/balance_sim.mjs`).
+- **NEXT TICK**: check `msg_01M2J9KVM9PXBRYPDNS6JJ14NT` for its exit line. If finished, verify slice 2 on the
+  artifact against `docs/briefs/G25_SLICE2_GALLERY.md` acceptance bar 1-7 (real Chrome 390x844 @dpr3, PNG read
+  back) and issue the next queued goal in the same tick; if still running, PREP the next brief outside the repo
+  and reply [SILENT]. Queue after G25 slice 2: G17 repricing, then the numbered queue (G13/G14, G20, N1b, G4);
+  G21's slices are LANDED, G5 stays blocked on W7a tooling, G6 still NEEDS AN OWNER CALL.
+
+## TICK NOTE 56 - 2026-09-15 10:58 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G25 SLICE 2 PILOT-VERIFIED ON THE ARTIFACT; G17 SLICE 1 ISSUED IN THE SAME TICK)
+
+**Pickup:** G25 slice 2 (`msg_01M2J9KVM9PXBRYPDNS6JJ14NT`, builder `cli:glm-hordes-g8`) exited 0 at 10:47 UTC on `spawn-glm-hordes-g8-20260915-075403.log`. The lock was FREE, so this was a pickup tick and it ended with the next task ISSUED (zero-latency handoff).
+
+**G25 SLICE 2 - VERIFIED BY THE PILOT ON THE ARTIFACT, not from the builder report:**
+- `bash tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ c40abcb | dirty=25`, `SUITE greenfiles=92 redfiles=0`, empty REDLIST (pilot's own serial run).
+- `node tools/verify_g25_apex_gallery.mjs` => **VERIFY G25 APEX GALLERY: ALL 17 CHECKS PASSED** in real Chrome at 390x844 @dpr3: REAL tap start; `state.time > 1.0` asserted BEFORE any measurement ({advancing:true}); the gated apex panel opens carrying the GALLERY card; ONE real tap opens the gallery (mode apex); the REUSED G9 seam is populated - `trophyShowcase {scale:5 (INTEGER), x:160, y:70, w:160, h:160, id:'apex_mark', locked:false}`; PREV/NEXT walks the ring and WRAPS at both ends; the step onto `apex_endless_fire` paints the SHARED LOCKED mask BY ART ID (`artId:'LOCKED'`) with the price caption `LOCKED - 5500000 gold`; the chrome gate reads `display:none` for `#hud #hints #touch #joy`; canvas ink read-back inside the box => `nonBg=618`; ESC (real keydown) returns to the panel and the seam is NULL; and the CLOSED-gate session proves there is NO path in (no apex row, no GALLERY card, real key events never enter the mode, seam stays NULL).
+- Pilot cross-checks, independent of the builder: `node test/test_art_lint.mjs` => `test_art_lint: all checks passed` (incl. "every row in meta.js APEX_UPGRADES has an icon"); `grep -n "Math.random" src/art/apex.js` => EMPTY; the CLEAN-CLEAR byte-identity is pinned by `test/test_apex.mjs` ("a live run with apex OFF renders the HUD byte-identically (string equality)", "the run-end body: apex OFF is byte-identical", "gate open + apex unowned: the title and trophy gallery stay byte-identical") plus 8 awaited gallery seam checks - green inside the 92-file suite.
+- Both captures re-read by the pilot as real PNGs: `g25-apex-gallery-phone.png` and `g25-apex-gallery-closed-phone.png`, each 1170x2532, 1266 vs 4853 distinct sampled colours (non-blank, and different screens).
+- **COULD NOT VERIFY, disclosed not papered over:** the captures were read back by ink/state/geometry, NOT by a vision model (this job has no vision tool), so the emblem's ART QUALITY is not pilot-judged - only proven non-blank and structurally correct. Nothing else about slice 2 is unverified.
+
+**G17 SLICE 1 - ISSUED IN THE SAME TICK (zero-latency handoff):** the brief was authored OUTSIDE the repo at `/tmp/hordes_briefs/G17_REPRICING.md` (tick 55, while G25 slice 2 was in flight), so this tick ran the DISPATCH ANCHOR CHECK on the LIVE tree, corrected the drifts IN PLACE, appended a DISPATCH RE-ANCHOR block, moved it to `docs/briefs/G17_REPRICING.md` and issued it. Drifts corrected: `MAX_WEAPON_SLOTS` :336 -> :335; "the luck ladder (:478, baseCost 400, growth 1.35, max 10)" -> :478 is the SPLIT row, the LUCK row is :454-455 (500/2.0/5); "the top-tier pass row (:480, 5000/2.9/3)" -> :480 is the `slots` row, the pass row is `arcade` :481-482 (140000/1/1); header dirty=19 -> 25. Re-confirmed unchanged: RUN_GOLD :167 (FIRST_CLEAR 250, AWARD 70 :181), GOLD_MODEL :214 / INCOME_TIERS :231 / TOP_TIER_MIN_GOOD_RUNS :237, GOLD_TIER :271 (ELITE 15 / MID_BOSS 60 / BOSS 150), WEAPON_PRICES :342 (BEAM 110000 :352), ELITE_MODIFIERS :362, SHOP_UPGRADES :390, upgradeCost :499, buyUpgrade :508, applyMetaBonuses :889, balance_sim SIM_TUNING :67 (GOOD_RUN_TARGET :74, MID_TIER_TOL :80), SIM_ASSUMPTIONS.apex:false :157, test_meta halfRuns band [1.5, 2.5] :599-601. `ls tools/economy_ledger.mjs` => No such file (the STOP condition did NOT fire; this slice builds it). Dispatch `msg_01M2JBEAQE60AR4C60VQV6HB67` -> `cli:glm-hordes-g8`, confirmed RUNNING (the issuing command's 300s foreground wait timed out BECAUSE the worker picked the task up and held the wait open - the `task msg_01M2JBEAQE60AR4C60VQV6HB67` line is in the spawn log, so the dispatch succeeded).
+
+**LANES:** glm is the live lane (it completed two tasks today and picked up G17). kimi remains on the 7-day provider wall (403) - do NOT spend a probe on it.
+
+**ORCHESTRATOR REMAINDER:** the commit. G21 slice 2, G24 slice 1, G25 slices 1+2 and G17's eventual slice are all uncommitted on the tree (dirty=25 at c40abcb).
+
+## TICK NOTE 57 - 2026-09-15 12:00 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G17 SLICE 1 FOUND WEDGED AND SPLIT IN TWO; SLICE 1a ISSUED IN THE SAME TICK)
+
+**Pickup:** the task dispatched last tick, `msg_01M2JBEAQE60AR4C60VQV6HB67` (G17 slice 1, builder `cli:glm-hordes-g8`), was found in `spawn-glm-hordes-g8-20260915-075403.log` as **`exit -9` after TWO watchdog kills**: `watchdog: zero progress (cpu+log+files) for 900s -- killing wedged model (design #62 sec 4.5)`, then `respawning model after wedge`, then the same kill again. The lock was FREE, so this was a pickup tick and it ends with the next task ISSUED (zero-latency handoff).
+
+**WHAT THE DEAD RUN ACTUALLY LANDED (measured on the tree, not taken from its report):** `tools/economy_ledger.mjs` EXISTS - 10317 B, written 11:04 UTC, `node --check` clean; `test/test_economy_reprice.mjs` does NOT exist; `git status --short` shows no `src/` file touched by it beyond the G25/G24 baseline already recorded. The tool is structurally complete (`ledgerRows` :79, `ledger` :96, `printLedger` :125, `measure` :160-176) but `node tools/economy_ledger.mjs` THROWS, raw: `Error: economy_ledger: no measured baseline for stage maxed` / `at goldPerHour (tools/economy_ledger.mjs:69:45)` - the `MEASURED` table :58-62 is still the zero placeholder `{ n: 0, seed: 0, goldMean: 0, goldMedian: 0, lenMeanS: 1, tier: 0 }`. So the parent brief's step-4 STOP condition ("`ls tools/economy_ledger.mjs` still does NOT exist") has since FIRED - the ledger is built, and what is missing is its BASELINE.
+
+**PILOT RECON - WHY IT WEDGED (all measured by the pilot this tick, raw):**
+- `node tools/economy_ledger.mjs --measure fresh 2 1337` finishes in **0.6s wall**: `BASELINE fresh: n=2 seed=1337 goldMean=321.0 goldMedian=321 lenMeanS=11.5 won=0/2`. The fresh stage is trivial.
+- `node tools/economy_ledger.mjs --measure maxed 2 1337` was killed by a 400s wall cap with **ZERO output**; `--measure maxed 1 1337` was still running at **4m13s** and still running past 7 min. A maxed run costs roughly **5 minutes of wall time** (and it is multi-core: 400s wall consumed 9m50s user CPU).
+- `measure()` :164-175 prints EVERYTHING ONLY AFTER THE WHOLE COHORT RESOLVES, so a large maxed cohort is a **FLAT LOG for tens of minutes** - exactly what the watchdog reads as wedged and kills at 900s. The flat log is the real defect; the wedge was a measurement of it, not a mystery, and the fix is the harness's already-existing `onRun` hook (`tools/real_loop.mjs` :138-139), not a new loop.
+- `bash tools/run_suite.sh` (pilot, serial) => `TREE: /home/claude/projects/hordes @ c40abcb | dirty=28` / `SUITE greenfiles=92 redfiles=0` / empty REDLIST. **The dead run broke nothing.**
+
+**G17 SLICE 1 SPLIT IN TWO; SLICE 1a ISSUED THIS TICK:** slice 1 was too large for one run and its slowest step is the step that killed it. The slice is now: **1a = FILL AND PROVE THE LEDGER** (brief `docs/briefs/G17_SLICE1A_MEASURE.md`, moved in from `/tmp/hordes_briefs/` this tick with a DISPATCH RE-ANCHOR block measured on the live tree): make `--measure` log ONE LINE PER FINISHED RUN through that existing `onRun` hook so the log can never sit flat; measure fresh 8 / partial 8 / maxed 3 at seed 1337, ONE PROCESS PER STAGE, each under an explicit `timeout`, with an honest reduce-n-not-hang escape; fill `MEASURED` :58-62 from the raw `BASELINE` lines; `node tools/economy_ledger.mjs` must print the whole ledger with no throw. **1b = the actual REPRICE** (the price spine + `test/test_economy_reprice.mjs` + the `halfRuns` band re-baseline + the payout-identity proof) is chartered but **NOT issued yet** - it goes next tick carrying 1a's measured before-numbers, which makes for a far better brief than the one that wedged.
+
+**LANES:** glm is the live lane (3 hub-worker processes up; the wedge was its model run, not its bridge). kimi remains on the 7-day provider wall (403) - no probe spent on it.
+
+**ORCHESTRATOR REMAINDER:** the commit. G21 slice 2, G24 slice 1, G25 slices 1+2, the G17 ledger tool and both G17 briefs are uncommitted on the tree (dirty=28 at c40abcb).

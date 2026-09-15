@@ -616,6 +616,85 @@ export function catalogCost(rowIds) {
   return sum;
 }
 
+// ---------- G25 slice 1: THE APEX TIER (post-completion prestige) ----------
+// Charter: docs/briefs/G25_APEX_TIER.md + the G25 goals entry. Deliberately
+// game-breaking prestige items ABOVE the finished catalogue. APEX rows live
+// in their OWN array — NEVER appended to SHOP_UPGRADES — so every existing
+// consumer (the shop screen, nextUnlockWithinReach, catalogCost callers, the
+// ladder test, the pacing sim) is apex-free BY CONSTRUCTION, which is the
+// goal's PARTITION-THE-DATA rule. Every row ALSO carries apex:true so tooling
+// can ask without knowing the array. Deterministic only (no random rolls),
+// always toggleable OFF, never required by any achievement/trophy/stage/ending,
+// and a run with apex ON is marked so a clean clear stays distinguishable.
+export const APEX_UPGRADES = [
+  // PRICING (measured, not invented — the arithmetic test_meta.mjs pins):
+  // GOLD_MODEL.INCOME_TIERS tier 3 = 11000 gold/run at runs 46+ (median banked
+  // 11694, 5/6 runs censored at ~287s of the 300s cap). The run CAP bounds
+  // throughput: 300s/run = 12 runs/hour -> 11000 x 12 = 132,000 gold/hour of
+  // top-tier play.
+  //   apex_mark          550,000 / 132,000 = ~4.17h  (chartered band 2h-6h)
+  //   apex_endless_fire 5,500,000 / 132,000 = ~41.7h  (chartered band 30h-60h)
+  // The BAND is the contract; the gold number is the calibration against the
+  // measured tier-3 income. The pure-proof item is the reachable first trophy;
+  // the rule-breaker is the long-haul goal. These costs are EXCLUDED from
+  // every completion/pacing figure (SIM_ASSUMPTIONS.apex = false).
+  {
+    id: 'apex_mark', name: 'THE MARK OF THE GRIND',
+    desc: 'Pure proof. No power at all — a HUD flourish while apex is ON, and your runs are marked APEX so a clean clear stays clean.',
+    baseCost: 550000, apex: true, kind: 'apex',
+    removes: 'Nothing — it removes no constraint; it is the visible proof you did the grind',
+    proof: 'proof-only',
+  },
+  {
+    id: 'apex_endless_fire', name: 'ASCENDANT ARSENAL',
+    desc: 'Weapons never stop firing. While apex is ON, every re-arm writes zero cooldown. Deliberately absurd; do not tune it down.',
+    baseCost: 5500000, apex: true, kind: 'apex',
+    removes: 'The firing cooldown — weapons fire every frame, forever',
+    proof: 'rule-breaker',
+  },
+];
+
+export const APEX_BY_ID = Object.fromEntries(APEX_UPGRADES.map(u => [u.id, u]));
+
+// Ownership reads/writes live HERE (single source of truth, like buyUpgrade).
+export function apexOwned(profile, id) {
+  return !!profile && !!(profile.apex && Array.isArray(profile.apex.owned) &&
+    profile.apex.owned.includes(id));
+}
+
+// THE GATE — DERIVED from real ownership, never a hand-kept flag: every
+// non-apex row of the normal catalogue owned/maxed. Until this is true the
+// apex panel is not rendered at all (not greyed: absent) and buyApex refuses.
+export function apexUnlocked(profile) {
+  return SHOP_UPGRADES.every(def => shopRowOwned(profile, def));
+}
+
+// Buy one apex item. Refuses when the gate is closed, the id is unknown, the
+// item is already owned, or gold is short — and mutates NOTHING on refusal.
+export function buyApex(profile, id) {
+  const def = APEX_BY_ID[id];
+  if (!def || !profile) return false;
+  if (!apexUnlocked(profile)) return false;            // gate closed
+  if (apexOwned(profile, id)) return false;            // already owned
+  if (profile.gold < def.baseCost) return false;       // insufficient gold
+  profile.gold -= def.baseCost;
+  profile.apex.owned.push(id);
+  return true;
+}
+
+// The TOGGLE (Megabonk lesson: apex must always be switchable off). This pair
+// is the ONLY sanctioned reader/writer of the raw enabled field.
+export function apexEnabled(profile) {
+  return !!profile && !!(profile.apex && profile.apex.enabled === true);
+}
+
+export function setApexEnabled(profile, on) {
+  if (!profile) return false;
+  if (!profile.apex || typeof profile.apex !== 'object') return false;
+  profile.apex.enabled = on === true;
+  return true;
+}
+
 // ---------- LUCK (WAVE-11; consumed by loot.js / hb4's loot task) ----------
 // BASE_RARITY_WEIGHTS is the SHARED export hb4 rebases loot.js onto (its
 // current hardcoded RARITY_WEIGHTS already match these values, so nothing

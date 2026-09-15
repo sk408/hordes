@@ -70,9 +70,9 @@ const CAT = {
 console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
-  // must be updated with it (v6 = the one-time-banner ledger).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 7,
-    `schema version constant is 7 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // must be updated with it (v8 = the G25 apex namespace).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 8,
+    `schema version constant is 8 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -401,6 +401,8 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
     v: 1,
     entries: { 'enemy:CHASER': { firstWave: 1, firstAt: 30, kills: 41, bestWave: 4, bestTier: 'RARE' } },
   };
+  // G25: the apex namespace rides the same lossless round trip.
+  rich.apex = { owned: ['apex_mark'], enabled: true };
 
   const at = '2026-01-02T03:04:05.000Z';
   const text = exportProfileText(rich, { at });
@@ -454,6 +456,68 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
   ok(dirty.ok && dirty.profile.gold === 0 && dirty.profile.purchased.dmg === SHOP_BY_ID.dmg.maxLevel,
     'an imported save is validated/reparied on the way in');
   ok(dirty.repairs.length > 0, 'import reports what it repaired');
+}
+
+// =====================================================================
+console.log('APEX NAMESPACE (G25, v8):');
+{
+  // Pre-slice v7 payload: no `apex` field at all. It must MIGRATE (7 -> 8)
+  // with the apex defaults filled in — locked, off, nothing owned — and with
+  // an EMPTY repairs list: an absent subfield is a legacy fill-in, not damage.
+  const v7 = loadProfileResult(seededJson({ version: 7, gold: 120, runPurse: 0 }));
+  ok(v7.status === 'migrated' && v7.from === 7 && v7.profile.version === 8,
+    'a v7 (pre-apex) save migrates to v8');
+  ok(v7.profile.apex && Array.isArray(v7.profile.apex.owned) && v7.profile.apex.owned.length === 0
+     && v7.profile.apex.enabled === false,
+    'a pre-slice save loads apex LOCKED and OFF, nothing owned');
+  ok(v7.repairs.length === 0 && v7.profile.gold === 120,
+    'the v7 -> v8 migration reports NO repairs (absent subfields default silently)');
+
+  // A garbage apex field on an ALREADY-v8 payload repairs in the VALIDATOR and
+  // is NAMED there, never silently dropped. (The v7->v8 migration step only
+  // guarantees the container exists — the same banners convention: a v7 save
+  // CARRYING 'yes' has it replaced by the migration's container guarantee,
+  // which is reported as the migration itself.)
+  const junk = loadProfileResult(seededJson({ version: 8, gold: 5, runPurse: 0, apex: 'yes' }));
+  ok(junk.profile.apex && junk.profile.apex.owned.length === 0 && junk.profile.apex.enabled === false,
+    'a garbage apex field repairs to the locked/off defaults');
+  ok(junk.repairs.includes('apex') && junk.status === 'repaired',
+    'the garbage apex field is NAMED in repairs');
+
+  // Damaged contents: non-string owned entries dropped, duplicates collapsed,
+  // a non-boolean toggle repaired — each flagged by name.
+  const dmg = validateProfile({
+    version: 8, gold: 1, runPurse: 0,
+    apex: { owned: [42, 'apex_mark', 'apex_mark', ''], enabled: 'x' },
+  });
+  ok(JSON.stringify(dmg.profile.apex.owned) === '["apex_mark"]',
+    `owned keeps the real ids only, deduped (got ${JSON.stringify(dmg.profile.apex.owned)})`);
+  ok(dmg.profile.apex.enabled === false, 'a non-boolean enabled repairs to OFF');
+  ok(dmg.repairs.filter(r => r.startsWith('apex.')).length >= 2 && dmg.repairs.includes('apex.enabled'),
+    'every damaged apex subfield is flagged (got: ' + dmg.repairs.join(', ') + ')');
+
+  // An unknown owned id is PRESERVED (the newer-build round-trip rule).
+  const newer = validateProfile({ version: 8, gold: 3, runPurse: 0,
+    apex: { owned: ['apex_future_thing'], enabled: true } });
+  ok(newer.profile.apex.owned[0] === 'apex_future_thing' && newer.profile.apex.enabled === true,
+    'unknown apex ids + a boolean toggle round-trip verbatim');
+  ok(newer.repairs.length === 0, 'a well-formed apex namespace triggers no repairs');
+
+  // makeProfile ships the namespace from day one.
+  ok(JSON.stringify(makeProfile().apex) === '{"owned":[],"enabled":false}',
+    'a fresh profile ships apex = { owned: [], enabled: false }');
+
+  // saveProfile stamps v8; the stored payload carries the namespace.
+  const s = fakeStorage();
+  const p = makeProfile();
+  p.apex = { owned: ['apex_endless_fire'], enabled: true };
+  saveProfile(p, s);
+  const stored = JSON.parse(s.getItem(STORAGE_KEY));
+  ok(stored.version === 8 && stored.apex.owned[0] === 'apex_endless_fire'
+     && stored.apex.enabled === true,
+    'saveProfile persists the apex namespace under the version-8 stamp');
+  // (The lossless export/import round trip for apex is pinned by the `rich`
+  // fixture above, which carries apex through deepEq.)
 }
 
 // =====================================================================

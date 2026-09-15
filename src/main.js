@@ -81,6 +81,9 @@ import {
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
+  // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
+  // the derived gate, the buy path, and the sanctioned toggle pair.
+  APEX_UPGRADES, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
   luckDropWeights,
   draftCardWeight,
   draftLadderWeight,
@@ -101,7 +104,7 @@ import {
   recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
   earnedCount, totalAchievements, isEarned,
 } from './achievements.js';
-import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon } from './art/index.js';
+import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } from './art/index.js';
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
@@ -380,6 +383,13 @@ const state = {
   // persisted). bestiaryIdx is normalised against the FILTERED list inside
   // refreshBestiaryView, so switching filters can never index out of range.
   bestiaryFilter: 'ALL',
+  // ---- G25 slice 2: THE APEX GALLERY (presentation only; never persisted) ----
+  // Same ring contract as the trophy gallery: apexIdx is the position into the
+  // APEX_UPGRADES catalogue (wrapped by refreshApexView). There is no
+  // apexView — the screen REUSES the one grid-showcase contract, state.trophyView
+  // (see showApexGallery), so renderer.drawTrophyShowcase paints it and the
+  // trophyShowcase seam measures it. No second screen idiom.
+  apexIdx: 0,
   wave: makeWave(),
 };
 state.player.x = C.VIEW_W / 2;
@@ -3048,6 +3058,14 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   if (!isDefaultStage(state.stage)) {
     html = `<span class="cause">${stageOf(state.stage).name}</span><br>` + html;
   }
+  // G25 slice 1: PROTECT THE CLEAN CLEAR — a run played with apex ON is
+  // marked through the same non-standard-run pattern above (the run-scoped
+  // state.apexRun stamp, read once at startRun), so a boosted run is always
+  // distinguishable from a clean clear. Apex OFF renders byte-identically to
+  // today (the stamp is falsy for every pre-slice profile too).
+  if (state.apexRun) {
+    html = `<span class="cause">APEX RUN</span><br>` + html;
+  }
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
@@ -4319,7 +4337,156 @@ function showShop() {
     renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
     shopIconCanvases[def.id] = cv;
   }
+  // G25 slice 1: the APEX entry row exists ONLY when the gate is open — the
+  // panel is absent (not greyed) until the normal catalogue is finished, so
+  // an in-progress shopper never sees the tier at all.
+  if (apexUnlocked(profile)) {
+    menuCard('APEX', 'the post-completion tier — rule-breakers, priced for the grind', () => showApexShop());
+  }
   menuCard('BACK', 'to title [ESC]', () => showTitle());
+}
+
+// ---------- G25 slice 1: THE APEX PANEL ------------------------------------
+// Its own screen (ovTitle 'APEX'), one row per apex item + the toggle, all
+// through the same menuCard/widget/icon conventions as the shop. Reaching it
+// requires apexUnlocked (the only door is the gated row above), but the body
+// still states the gate so the tier is never mistaken for normal shop stock.
+function showApexShop() {
+  openMenu();
+  ovTitle.textContent = 'APEX';
+  ovTitle.className = 'logo';
+  const open = apexUnlocked(profile);
+  const missing = SHOP_UPGRADES.filter(d => !shopRowOwned(profile, d)).length;
+  ovSub.innerHTML = `BANK: ${profile.gold}` +
+    (open ? '' : ` · COMPLETE THE CATALOGUE FIRST — ${missing} ROW${missing === 1 ? '' : 'S'} LEFT`);
+  for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  if (open) {
+    // The TOGGLE (one activation flips it, persisted immediately): apex must
+    // always be switchable off — the Megabonk lesson. Apex ON marks every
+    // run (and powers the rule-breakers you own); OFF restores an honest run.
+    const on = apexEnabled(profile);
+    menuCard(`APEX ${on ? 'ON' : 'OFF'}`,
+      on ? 'boosted runs — your results are marked APEX'
+        : 'clean runs — toggle on to use your apex items',
+      () => { setApexEnabled(profile, !on); saveProfile(profile); showApexShop(); });
+    // G25 slice 2: the ONE door to the full-screen apex gallery. It lives
+    // inside the gate-open branch, so a locked shopper gets no card, no key
+    // and no path (requirement 4: the tier cannot even be LISTED early).
+    menuCard('GALLERY', 'the apex emblems, full-screen [ESC to return]', () => showApexGallery());
+    for (const def of APEX_UPGRADES) {
+      const owned = apexOwned(profile, def.id);
+      const afford = profile.gold >= def.baseCost;
+      const sub = owned ? 'OWNED' : `${def.baseCost} gold`;
+      const el = menuCard(
+        def.name,
+        `${def.desc}<br>REMOVES: ${def.removes}<br>${sub}`,
+        () => {
+          if (buyApex(profile, def.id)) { saveProfile(profile); showApexShop(); }
+        },
+        owned || !afford,
+      );
+      if (owned) el.onclick = () => audio.playSfx('button');
+      // Same G14 icon convention as every shop row (authored 16x16 grid,
+      // integer CSS scale, unknown ids fall back to the rune — never a
+      // blank box).
+      const cv = document.createElement('canvas');
+      cv.className = 'shop-icon';
+      cv.width = 16; cv.height = 16;
+      if (el.insertBefore) el.insertBefore(cv, el.firstChild);
+      else el.appendChild(cv);
+      const icon = shopIcon(def.id);
+      renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
+      shopIconCanvases[def.id] = cv;
+    }
+  }
+  menuCard('BACK', 'to shop', () => showShop());
+}
+
+// ---------- G25 slice 2: THE APEX GALLERY (mode 'apex') ---------------------
+// The tier's trophy case, as a screen: ONE apex item at a time, drawn
+// FULL-SCREEN by renderer.drawTrophyShowcase — the G9 showcase renderer, NOT a
+// second idiom (the bestiary comment in render.js names that rule). This is
+// done by writing the SAME state.trophyView contract the trophy gallery
+// writes, so the renderer, its geometry seam (this.trophyShowcase) and its
+// no-op-when-null behaviour are all inherited rather than duplicated.
+//
+// REACHABILITY: the only door is the GALLERY card inside the gated apex panel
+// (openMenu above renders it solely when apexUnlocked). showApexGallery ALSO
+// re-checks the gate itself, so a stale handler or a probe cannot open it on a
+// locked profile. BACK/ESC return to the PANEL, never the title.
+//
+// WHAT LEAKS: nothing beyond the panel. The ring walks APEX_UPGRADES (the ONE
+// catalogue — name/desc/removes/cost are read off it, never restated here).
+// An UNOWNED entry paints the shared LOCKED silhouette with a LOCKED caption
+// and its price — the panel two taps away already shows the same name and
+// price to the same gate-open player, so the mask is the tease, not a spoiler,
+// and a gate-closed player sees none of this.
+function apexGalleryModel() {
+  return APEX_UPGRADES.map(def => ({
+    id: def.id, def,
+    owned: apexOwned(profile, def.id),
+    art: apexOwned(profile, def.id) ? apexArt(def.id) : apexArt(APEX_FALLBACK_ID),
+  }));
+}
+
+function refreshApexView() {
+  const model = apexGalleryModel();
+  const n = model.length;
+  if (n === 0) {
+    state.trophyView = null;
+    ovTitle.textContent = 'APEX';
+    ovTitle.className = 'logo';
+    ovSub.textContent = 'no apex items authored';
+    return;
+  }
+  state.apexIdx = ((state.apexIdx % n) + n) % n;
+  const e = model[state.apexIdx];
+  ovTitle.textContent = 'APEX';
+  ovTitle.className = 'logo';
+  // The SAME payload shape the trophy gallery writes: { art, locked, id }.
+  // The art is ALREADY masked (LOCKED silhouette when unowned), so the
+  // showcase cannot disagree with the caption about what is owned.
+  state.trophyView = { art: e.art, locked: !e.owned, id: e.id };
+  const lines = [
+    `${state.apexIdx + 1} / ${n}`,
+    `${e.def.name} — REMOVES: ${e.def.removes}`,
+    e.owned ? 'OWNED' : `LOCKED — ${e.def.baseCost} gold`,
+  ];
+  ovSub.innerHTML = lines.join('<br>');
+}
+
+function showApexGallery() {
+  // The gate is checked HERE too, not only at the card: an unreachable screen
+  // must stay unreachable, whatever calls this.
+  if (!apexUnlocked(profile)) return;
+  state.apexReturn = state.mode;
+  openMenu('apex');
+  // Same inline overrides as showTrophies: the canvas showcase owns the middle
+  // of the view, the cards sit at the bottom edge, no sheet background.
+  overlay.style.background = 'transparent';
+  overlay.style.justifyContent = 'flex-end';
+  refreshApexView();
+  menuCard('PREV', 'previous apex item', () => apexStep(-1));
+  menuCard('NEXT', 'next apex item', () => apexStep(1));
+  menuCard('BACK', 'to the apex panel [ESC]', () => { closeApexGallery(); showApexShop(); });
+}
+
+// Step the ring by `delta` and repaint — the trophy gallery's exact contract
+// (wrap at both ends; a no-op outside the screen so a stale card cannot
+// repaint another screen's caption).
+function apexStep(delta) {
+  if (state.mode !== 'apex') return;
+  state.apexIdx += (Number(delta) || 0);
+  refreshApexView();
+}
+
+// Leave the gallery. NULLS the shared trophyView so the next frame paints no
+// showcase over the panel (the seam contract: null on every exit path).
+function closeApexGallery() {
+  if (state.mode !== 'apex') return;
+  state.trophyView = null;
+  state.mode = state.apexReturn || 'menu';
+  overlay.style.display = 'none';
 }
 
 // ---------- G13: the animated character selector --------------------------------
@@ -4671,6 +4838,15 @@ function startRun() {
   // G20a: the run knows its stage — stamped beside the challenge, reset the
   // same way (the declaration above + this stamp = the full run-scoped reset).
   state.stage = pendingStage;
+  // G25 slice 1: run-scoped apex stamps, read ONCE here through the meta.js
+  // accessors (never the raw fields) — the weapons re-arm seam
+  // (state.apexFire), the HUD flourish (state.apexMark) and the run-end mark
+  // (state.apexRun) all read the stamps, so a menu-screen toggle never
+  // rewrites a live run's history. All three default falsy, so a profile
+  // without apex (every pre-slice save) plays byte-identically to before.
+  state.apexRun = apexEnabled(profile);
+  state.apexFire = state.apexRun && apexOwned(profile, 'apex_endless_fire');
+  state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
   refreshHints();   // G11: the hints line names the live mode (swapPilotMode early-returns on same-mode runs)
   const rules = challengeRules(state.challenge);
   state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
@@ -5568,6 +5744,13 @@ window.addEventListener('keydown', (ev) => {
     else if (k === 'arrowleft') bestiaryStep(-1);
     else if (k === 'arrowright') bestiaryStep(1);
     else if (k === 'f') cycleBestiaryFilter();
+  } else if (state.mode === 'apex') {
+    // G25 slice 2 APEX GALLERY: the trophy gallery's exact key contract —
+    // ESC backs out (to the apex panel, what BACK promises; the panel is the
+    // only door in) and the arrows walk the ring the PREV/NEXT cards step.
+    if (k === 'escape') { closeApexGallery(); showApexShop(); }
+    else if (k === 'arrowleft') apexStep(-1);
+    else if (k === 'arrowright') apexStep(1);
   } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters') && k === 'escape') {
     showTitle();                     // every sub-menu (and the farewell) backs out to title
   } else if (state.mode === 'settings') {
@@ -6070,6 +6253,10 @@ function hudTextBlock(p) {
     `RUN ${runClock(state.time)}/${runClock(C.RUN.LIMIT)}   WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     // G11: the mode badge line — only while a NON-standard mode is live, so a
     // STANDARD run's text HUD is byte-identical to before.
+    // G25 slice 1: THE MARK OF THE GRIND — pure proof, no power. The flourish
+    // line rides the text HUD ONLY while the run's apex mark stamp is live
+    // (owned + toggled ON); a normal run renders byte-identically to before.
+    (state.apexMark ? 'APEX MARK OF THE GRIND\n' : '') +
     (isStandard(state.challenge) ? '' : `MODE ${challengeOf(state.challenge).name}\n`) +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
@@ -6584,6 +6771,11 @@ export const __TEST = {
   // (the ring, so a test can wrap every display id without a DOM click per
   // entry) — same shape as the gallery seam above.
   openBestiary: showBestiary, closeBestiary, bestiaryStep, bestiaryDisplayIds,
+  // G25 slice 2 apex-gallery seam: open/close (the mode + return-mode
+  // contract) and step (the ring, so a test can wrap the catalogue without a
+  // DOM click per entry) — same shape as the gallery seam above. The showcase
+  // itself is measured off renderer.trophyShowcase (the REUSED G9 seam).
+  openApexGallery: showApexGallery, closeApexGallery, apexStep, apexGalleryModel,
   // G23/G11 filter seam: read the live filter, cycle it through the REAL
   // card/key path (guarded to the bestiary mode).
   bestiaryFilter: { get: () => state.bestiaryFilter, cycle: cycleBestiaryFilter },
@@ -6729,6 +6921,10 @@ export const __TEST = {
   deathCauseLabel,
   nextUnlockWithinReach,
   endScreenBody,
+  // G25 slice 1: the text-HUD block (same string the DOM node renders), so
+  // the APEX MARK flourish is assertable by STRING equality — a run with the
+  // mark off must be byte-identical to the pre-apex output.
+  hudTextBlock,
   synergyHintForCard,
   openDraft,
   // Arrow-cursor seam: where the keyboard cursor sits on the offer row

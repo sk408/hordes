@@ -194,6 +194,14 @@ function archMods(state) {
 
 function rateScale(state, weapon) {
   const p = state.player;
+  // G25 slice 1 — ASCENDANT ARSENAL (apex rule-breaker): while the run's
+  // apex fire stamp is live, weapons NEVER stop firing — this ONE mapping
+  // seam returns 0, so every re-arm site below writes zero cooldown and each
+  // weapon fires once per frame. Deliberately game-breaking by charter; do
+  // not tune it down, do not cap it "for balance". With apex OFF (or not
+  // owned) the stamp is false and the mapping below runs byte-identically to
+  // pre-apex — no call site grows a second special case.
+  if (state.apexFire) return 0;
   // Map the player's leveled cooldown onto this weapon: 1.0 at stock speed.
   // rateMult (loot Rapid Trigger / DOUBLE_FIRE arch) DIVIDES the interval —
   // the same convention main.js's volley loop uses: cooldown * overcharge /

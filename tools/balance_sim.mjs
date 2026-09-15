@@ -151,6 +151,10 @@ export const SIM_ASSUMPTIONS = {
   TOP_TIER_MIN_GOOD_RUNS: GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
   goodRunGold: computeRunGold(GOLD_MODEL.GOOD_RUN),
   midTierCost: catalogCost(GOLD_MODEL.MID_TIER_IDS),
+  // G25: the apex tier is EXCLUDED from every completion figure below — the
+  // ~60h completion crossing describes the APEX-FREE catalogue (the goal's
+  // partition rule; apex is post-completion prestige by charter).
+  apex: false,
 };
 
 // ---------- rng (mulberry32 — deterministic, seedable) ---------------------
@@ -593,6 +597,9 @@ async function main() {
     `knee at tick ${L.KNEE_TICK} (${runClock(L.KNEE_TICK * 30)})`);
   console.log(`reference: GOOD_RUN ${SIM_ASSUMPTIONS.goodRunGold}g, mid-tier catalog ` +
     `${SIM_ASSUMPTIONS.midTierCost}g`);
+  // G25: state the partition OUT LOUD — every completion number this tool
+  // prints is computed with the apex tier switched off.
+  console.log(`apex tier: ${SIM_ASSUMPTIONS.apex ? 'ON' : 'OFF'} — completion figures below EXCLUDE apex`);
   // G10: the tier rate the demand/xp folds are built from, MEASURED through the
   // real rollRarity — the same discipline as the draft sim's fold line.
   {
