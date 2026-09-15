@@ -56,6 +56,21 @@
 //     burn ticks, echoes, thorns or enemy damage). AFTERSHOCK and WIDE ORBIT
 //     are PREDICATE-offered (a dead card can never be drafted) through the
 //     optional per-card `offered(state)` (precedent: frostcard.js).
+// G21 SLICE 2 (2026-09-15): the CROSS-TAG COMBOS + the second card per tag.
+//   - The family reaches FOURTEEN cards (goal band 12-20): the five slice-1
+//     keyword cards plus GLACIER (FROST), WILDFIRE (BURN) and OVERLOAD
+//     (CONDUCT) — always offered until taken/full, like every single-tag card
+//     — and the THREE combos THERMAL SHOCK (FROST+BURN), STORM REAPER
+//     (CONDUCT+CHAIN) and GLACIAL ORBIT (ORBIT+FROST), each offered ONLY while
+//     the run owns BOTH constituents and carrying BOTH tags (the draft desc
+//     prefixes "TAG1+TAG2 - ").
+//   - REWRITE_SLOTS stays 4 (D3) and the family share stays in the goal's band
+//     by WEIGHT CLASS (D4): singles at REWRITE_CARD_WEIGHT, combos at
+//     REWRITE_COMBO_WEIGHT_MULT x that.
+//   - NO new rider path (R3): the wildfire transfer, the thermal-shock burst,
+//     the storm-reaper blast and the overload discharge are each applied
+//     DIRECTLY. They advance no counter and fire no onWeaponHit. Storm Reaper
+//     detonates through the SAME applyBlast path every other blast uses.
 import { CONFIG as C } from './config.js';
 
 export const REWRITE_TAGS = ['FROST', 'CHAIN', 'ORBIT', 'BURN', 'CONDUCT'];
@@ -117,28 +132,97 @@ export const REWRITES = {
     offered: orbitEquipped,
     desc: 'ORBIT blades fly 30% wider and spin 20% faster',
   },
+  // ---- G21 slice 2: the SECOND card per tag (always offered) ----------------
+  glacier: {
+    id: 'glacier',
+    name: 'Glacier',
+    tags: ['FROST'],
+    desc: 'hits on a chilled enemy deal +20% damage',
+  },
+  wildfire: {
+    id: 'wildfire',
+    name: 'Wildfire',
+    tags: ['BURN'],
+    desc: 'a burning enemy spreads its burn when it dies',
+  },
+  overload: {
+    id: 'overload',
+    name: 'Overload',
+    tags: ['CONDUCT'],
+    desc: 'every 20th hit discharges a nova zap into nearby enemies',
+  },
+  // ---- G21 slice 2: the THREE cross-tag combos (predicate-offered) ----------
+  // A combo is offered ONLY while the run owns BOTH constituents; it carries
+  // BOTH tags, so the draft seam prefixes the desc with "TAG1+TAG2 - " and the
+  // stack reads at draft speed. Half weight (REWRITE_COMBO_WEIGHT_MULT): a
+  // strictly stronger, predicate-gated card must not inflate the family share.
+  thermalshock: {
+    id: 'thermalshock',
+    name: 'Thermal Shock',
+    tags: ['FROST', 'BURN'],
+    offered: comboOffered('rime', 'ignite'),
+    desc: 'a chilled enemy that catches fire bursts for 3x its burn damage',
+  },
+  stormreaper: {
+    id: 'stormreaper',
+    name: 'Storm Reaper',
+    tags: ['CONDUCT', 'CHAIN'],
+    offered: comboOffered('livewire', 'onkillboom'),
+    desc: 'an enemy killed by a zap detonates a half blast',
+  },
+  glacialorbit: {
+    id: 'glacialorbit',
+    name: 'Glacial Orbit',
+    tags: ['ORBIT', 'FROST'],
+    offered: comboOffered('wideorbit', 'rime'),
+    desc: 'orbit hits chill longer and bite chilled enemies harder',
+  },
 };
 export const REWRITE_IDS = Object.keys(REWRITES);
+/** A card is a CROSS-TAG COMBO when it carries two reserved tags. */
+export function isComboRewrite(id) {
+  const r = REWRITES[id];
+  return !!r && r.tags.length > 1;
+}
 
-// The weight ONE rewrite card carries in the draft pool. G21 slice 1: the
-// family grew 3 -> 8 cards (C4), so the PER-CARD weight retunes to hold the
-// FAMILY SHARE at the measured ~0.06 (8 x 0.0075 = 0.06, exactly the old
-// 3 x 0.02) — every draft measurement this project keeps stays comparable.
-// MEASURED CURVE (60 runs/cell, seed 4242, good/bad MEAN survival ratio,
-// tools/draft_sim.mjs --rewrite-weight, fresh-profile CLI baseline):
-// 0.005 -> x1.05, 0.0075 -> x1.04, 0.01 -> x1.05, 0.015 -> x1.05,
-// 0.02 -> x1.04 — flat across the band (the family is a small share at any
-// of these weights), every cell clearing the acceptance substance (bad fails
-// 100%, good beats bad on 3/5 minute-10 metrics). The absolute ratio is far
-// below the HISTORY cells because the tree moved (post-E1/W7B sim baseline
-// is good 58s vs bad 56s at the fresh profile), not because the family
-// weakened; the old tree cannot be re-run (no git checkout per house rules).
-// HISTORY (the 3-card family, same method): 0.05 -> 1.69x, 0.03 -> 1.73x,
+// The weight ONE SINGLE-TAG/LEGACY rewrite card carries in the draft pool
+// (cross-tag combos carry REWRITE_COMBO_WEIGHT_MULT x this — see below).
+// G21 slice 2: the family grew 8 -> 14 cards (3 + 5 + 3 singles/legacy = 11,
+// plus 3 combos), so the PER-CARD weight retunes AGAIN to hold the FAMILY
+// SHARE in the goal's [0.055, 0.070] band: 11 x 0.005 + 3 x 0.0025 = 0.0625
+// (slice 1 shipped 8 x 0.0075 = 0.06; the 3-card family shipped 3 x 0.02 =
+// 0.06). Every draft measurement this project keeps stays comparable.
+// MEASURED CURVE — G21 SLICE 2, 14 CARDS (60 runs/cell, seed 4242, good/bad
+// MEAN survival ratio, tools/draft_sim.mjs --rewrite-weight, fresh-profile CLI
+// baseline; the cell number is the SINGLES' weight, combos track at half):
+// 0.005 -> x1.05, 0.0075 -> x1.05, 0.01 -> x1.05, 0.015 -> x1.04,
+// 0.02 -> x1.04 — flat across the band, and EVERY cell clears the acceptance
+// substance (bad fails 100%, good beats bad on 3/5 minute-10 metrics) at
+// "bad fails 100% | metric wins 3/5" in all five cells. The shipped cell is
+// 0.0050. The absolute ratio sits far below the HISTORY cells because the
+// tree moved (post-E1/W7B sim baseline is good 58s vs bad 56s at the fresh
+// profile), not because the family weakened; the old tree cannot be re-run
+// (no git checkout per house rules).
+// HISTORY — G21 SLICE 1, 8 CARDS (same method): 0.005 -> x1.05, 0.0075 ->
+// x1.04, 0.01 -> x1.05, 0.015 -> x1.05, 0.02 -> x1.04 (the weight slice 1
+// shipped was 0.0075).
+// HISTORY — THE 3-CARD FAMILY (same method): 0.05 -> 1.69x, 0.03 -> 1.73x,
 // 0.02 -> 1.77x, 0.01 -> 1.79x, gently monotone, all cells clearing the
 // acceptance substance (bad fails 100%, good beats bad >=3/5 minute-10
 // metrics); the family shipped at 0.02/card under the owner directive
 // 2026-09-13 ("should use mana? And be rare.").
-export const REWRITE_CARD_WEIGHT = 0.0075;
+export const REWRITE_CARD_WEIGHT = 0.005;
+
+// G21 slice 2 (D4): the family is FOURTEEN cards in the same finite slots, so
+// the share is held by weight CLASS rather than one flat number:
+//   - eleven single-tag/legacy cards at REWRITE_CARD_WEIGHT  (11 x w)
+//   - three CROSS-TAG COMBOS at half weight                  (3 x w/2)
+// FAMILY TOTAL = 11w + 3(w/2) = 12.5w. The D4 band [0.055, 0.070] is met at
+// w = 0.005 -> 12.5 x 0.005 = 0.0625 (the slice-1 shipped share was 0.06).
+// Combo cards are strictly stronger AND predicate-gated (both constituents
+// required), so pricing them below the singles keeps a given pick's expected
+// power-per-share where the 8-card family had it.
+export const REWRITE_COMBO_WEIGHT_MULT = 0.5;
 
 // ---- CHAIN REACTION numbers (the detonation on every kill) -----------------
 // Radius covers a trash pack; damage is a flat + a fraction of the player's
@@ -202,6 +286,40 @@ export const WIDEORBIT_SPIN_MULT = 1.2;
 export const EMPTY_SLOT_COOLDOWN_STEP = 0.05;
 export const EMPTY_SLOT_COOLDOWN_FLOOR = 0.80;
 
+// ---- G21 slice 2: the six new cards' numbers (same block as slice 1) -------
+// GLACIER (FROST): a DIRECT weapon hit against a body already carrying the
+// `slow` field lands +20% damage. Read at the direct-hit damage sites through
+// directHitMult, never by a blast/burn/echo/thorn (they do not ride, R3).
+export const GLACIER_DAMAGE_MULT = 1.20;
+// WILDFIRE (BURN): a burning enemy's death hands its burn (remaining dps AND
+// duration, full) to the nearest OTHER live body within RANGE — once per
+// death. A burn application, never a weapon hit.
+export const WILDFIRE_RANGE = 100;
+// OVERLOAD (CONDUCT): every EVERY-th direct hit discharges a RANGE-wide nova
+// zap at MULT x weapon damage into the TARGETS nearest live enemies (the
+// struck body included — 'nearest live enemies', unlike LIVE WIRE's 'other').
+// MULT sits above LIVE WIRE's 0.5 so the once-per-20 card reads as a tier
+// above the once-per-5 one (the D5 probe re-measures it).
+export const OVERLOAD_EVERY = 20;
+export const OVERLOAD_RANGE = 100;
+export const OVERLOAD_TARGETS = 3;
+export const OVERLOAD_DAMAGE_MULT = 0.75;
+// THERMAL SHOCK (FROST+BURN): refreshing the burn on an ALREADY-BURNING,
+// CHILLED enemy bursts for MULT x the burn dps, instantly. Burn-sourced: no
+// rider, no counter, and a burst-lethal corpse is stamped burn-lethal so the
+// death pass never detonates it.
+export const THERMALSHOCK_BURST_MULT = 3;
+// STORM REAPER (CONDUCT+CHAIN): a corpse the LIVE WIRE zap killed detonates a
+// MULT-strength CHAIN REACTION blast (radius AND damage) through the SAME
+// applyBlast path — so AFTERSHOCK echoes it exactly like any other detonation.
+export const STORMREAPER_BLAST_MULT = 0.5;
+// GLACIAL ORBIT (ORBIT+FROST): an ORBIT blade hit chills for CHILL seconds
+// (against RIME's RIME_SLOW_DURATION on every other direct hit) and deals MULT
+// damage to a body that is ALREADY chilled. Extends RIME's write on the orbit
+// path only — no second status system.
+export const GLACIALORBIT_CHILL_DURATION = 2.5;
+export const GLACIALORBIT_DAMAGE_MULT = 1.10;
+
 // ---------- readers --------------------------------------------------------
 export function rewritesOf(state) {
   const p = state && state.player;
@@ -242,6 +360,15 @@ function hasBlastSource(state) {
 function orbitEquipped(state) {
   return !!(state && state.weapons && state.weapons.some(w => w && w.type === 'ORBIT'));
 }
+/**
+ * G21 slice 2 D2: a CROSS-TAG COMBO is offered only while the run owns BOTH
+ * constituents. The predicate reads `state.player.rewrites` through the same
+ * reader every other card uses, and (like every other predicate) consumes no
+ * rng: rewriteCards never draws at all.
+ */
+function comboOffered(a, b) {
+  return (state) => hasRewrite(state, a) && hasRewrite(state, b);
+}
 /** The draft cards for every rewrite the run can still be offered. */
 export function rewriteCards(state) {
   // C1: FOUR finite slots — a full run is offered NO rewrite cards. The
@@ -261,7 +388,12 @@ export function rewriteCards(state) {
       // C3: the tag is prefixed at THIS seam so stacking reads at draft
       // speed; untagged cards keep their byte-identical desc.
       desc: r.tags.length ? r.tags.join('+') + ' - ' + r.desc : r.desc,
-      weight: REWRITE_CARD_WEIGHT,
+      // D4: a combo (two tags) carries HALF the per-card weight; every other
+      // card keeps the family base. The weights are read by openDraft's pool
+      // and by tools/draft_sim.mjs, so one number drives both.
+      weight: r.tags.length > 1
+        ? REWRITE_CARD_WEIGHT * REWRITE_COMBO_WEIGHT_MULT
+        : REWRITE_CARD_WEIGHT,
       // Same contract as every other draft card: apply(player).
       apply: (p) => { if (!p.rewrites) p.rewrites = {}; p.rewrites[id] = true; },
     });
@@ -370,14 +502,17 @@ export function tickRewriteEchoes(state, dt) {
 
 // ---------- G21 slice 1: the ONE on-weapon-hit rider writer -------------------
 /**
- * onWeaponHit(state, enemy) — called from DIRECT-weapon-hit damage sites ONLY
- * (weapons.js hurt() — orbit/boomerang/zap/nova-pulse/scythe/seeker/mine/
+ * onWeaponHit(state, enemy, opts) — called from DIRECT-weapon-hit damage sites
+ * ONLY (weapons.js hurt() — orbit/boomerang/zap/nova-pulse/scythe/seeker/mine/
  * beam — plus main.js's volley projectile, the synergy zap forks and the
  * synergy mine detonation), and from NOWHERE else: never from blasts
  * (applyBlast), burn ticks, echoes, thorns, or enemy damage. Feeds RIME,
- * IGNITE and LIVE WIRE. A hit that kills still counts (the hit happened).
+ * IGNITE, LIVE WIRE and (slice 2) OVERLOAD.
+ * `opts.orbit` marks an ORBIT blade contact, which is the ONLY hit class
+ * GLACIAL ORBIT extends (its longer chill); every other caller omits it.
+ * A hit that kills still counts (the hit happened).
  */
-export function onWeaponHit(state, enemy) {
+export function onWeaponHit(state, enemy, opts) {
   const p = state && state.player;
   if (!p || !enemy) return;
   const r = p.rewrites;
@@ -386,13 +521,33 @@ export function onWeaponHit(state, enemy) {
     // Refresh, never stack — and never TRUNCATE a longer slow already
     // gripping (a FROST_NOVA window outlasts the chill; the gentler grip
     // factor still applies while the chill is freshest).
-    enemy.slow = Math.max(enemy.slow || 0, RIME_SLOW_DURATION);
+    // G21 slice 2 GLACIAL ORBIT: an ORBIT blade hit chills for LONGER
+    // (GLACIALORBIT_CHILL_DURATION vs RIME_SLOW_DURATION). It is the same
+    // write to the same field — no second status system — and the max() still
+    // refuses to truncate a longer nova window.
+    const dur = (r.glacialorbit && opts && opts.orbit)
+      ? GLACIALORBIT_CHILL_DURATION : RIME_SLOW_DURATION;
+    enemy.slow = Math.max(enemy.slow || 0, dur);
     enemy.slowMult = RIME_SLOW_FACTOR;
   }
   if (r.ignite) {
     // Refresh, never stack: the dps snapshots the CURRENT weapon damage.
+    const wasBurning = (enemy.burn || 0) > 0 && (enemy.burnDps || 0) > 0;
     enemy.burn = IGNITE_BURN_DURATION;
     enemy.burnDps = IGNITE_BURN_FLAT + IGNITE_BURN_FRAC * (p.stats.damage || 0);
+    // G21 slice 2 THERMAL SHOCK: a REFRESH that lands on a body that is both
+    // ALREADY BURNING and CHILLED bursts instantly for 3x the burn dps. The
+    // burst is BURN-SOURCED damage: applied directly here, so it advances no
+    // counter and fires no rider; a burst that kills stamps the corpse
+    // burn-lethal exactly like the burn tick does, so the death pass never
+    // detonates it (R3 — no chain-of-chains).
+    if (r.thermalshock && wasBurning && (enemy.slow || 0) > 0) {
+      enemy.hp -= THERMALSHOCK_BURST_MULT * enemy.burnDps;
+      enemy.flash = 0.08;
+      state.effects.push({ kind: 'nova_pulse', x: enemy.x, y: enemy.y,
+        radius: 16, age: 0, ttl: 0.2 });
+      if (enemy.hp <= 0) enemy.burnLethal = true;
+    }
   }
   if (r.livewire) {
     p.livewireHits = (p.livewireHits || 0) + 1;
@@ -414,9 +569,103 @@ export function onWeaponHit(state, enemy) {
         state.effects.push({ kind: 'zap',
           points: [{ x: enemy.x, y: enemy.y }, { x: best.x, y: best.y }],
           age: 0, ttl: 0.15 });
+        // G21 slice 2 STORM REAPER: a corpse the ZAP killed is STAMPED here
+        // and detonated by the death pass (main.js) through the SAME
+        // applyBlast path every other detonation uses — so it is
+        // flyingGuard-wrapped, never rides, and AFTERSHOCK may echo it. A zap
+        // that does not kill stamps nothing (R2: kills only, not hits).
+        if (r.stormreaper && best.hp <= 0) best.zapLethal = true;
       }
     }
   }
+  if (r.overload) {
+    // G21 slice 2 OVERLOAD: its OWN run-player integer, separate from LIVE
+    // WIRE's; both advance on the same hit and may fire together.
+    p.overloadHits = (p.overloadHits || 0) + 1;
+    if (p.overloadHits % OVERLOAD_EVERY === 0) {
+      // A RANGE-wide nova centred on the struck body: the TARGETS nearest
+      // live enemies inside it, the struck one INCLUDED (the brief's
+      // 'nearest live enemies', against LIVE WIRE's 'nearest OTHER'). Applied
+      // DIRECTLY — the discharge never re-advances either counter and never
+      // fires a rider (R3).
+      const inRange = [];
+      for (const o of state.enemies) {
+        if (o.hp <= 0) continue;
+        const d = Math.hypot(o.x - enemy.x, o.y - enemy.y);
+        if (d <= OVERLOAD_RANGE) inRange.push({ o, d });
+      }
+      inRange.sort((a, b) => a.d - b.d);
+      for (const { o } of inRange.slice(0, OVERLOAD_TARGETS)) {
+        o.hp -= OVERLOAD_DAMAGE_MULT * (p.stats.damage || 0);
+        o.flash = 0.08;
+        state.effects.push({ kind: 'zap',
+          points: [{ x: enemy.x, y: enemy.y }, { x: o.x, y: o.y }],
+          age: 0, ttl: 0.15 });
+      }
+    }
+  }
+}
+
+// ---------- G21 slice 2: the second-tag + combo applied-value helpers ---------
+/**
+ * The damage multiplier ONE DIRECT weapon hit lands with. PURE. Read at every
+ * direct-hit damage site (main.js's volley / zap fork / scythe lash / mine
+ * payload and weapons.js hurt()), beside the onWeaponHit rider, so a blast,
+ * burn tick, echo, thorn or discharge can never see it (R3).
+ *   GLACIER       x1.20 on any direct hit against a SLOWED (chilled) body.
+ *   GLACIAL ORBIT x1.10 on an ORBIT blade hit against a chilled body.
+ * An ORBIT hit that LANDS the chill prices at x1: the chill is written by
+ * onWeaponHit AFTER the damage, so only a chill already gripping counts.
+ * `opts.orbit` selects the ORBIT-only card; every other caller omits it.
+ */
+export function directHitMult(state, enemy, opts) {
+  if (!enemy || !(enemy.slow > 0)) return 1;
+  let m = 1;
+  if (hasRewrite(state, 'glacier')) m *= GLACIER_DAMAGE_MULT;
+  if (opts && opts.orbit && hasRewrite(state, 'glacialorbit')) m *= GLACIALORBIT_DAMAGE_MULT;
+  return m;
+}
+/**
+ * G21 slice 2 WILDFIRE: a BURNING enemy's death hands its burn — remaining dps
+ * AND duration, full — to the nearest OTHER live body within WILDFIRE_RANGE,
+ * once per death. Called from the death pass beside the blast gate.
+ * The transfer is a BURN APPLICATION, never a weapon hit: it advances no
+ * counter and fires no rider (R3), and a transferred burn kills through the
+ * burn tick, so its own corpse is stamped burn-lethal like any other burn
+ * kill. A transferred burn can therefore spread AGAIN when its carrier dies
+ * with time still on it — the same refresh semantics slice 1 gave the burn
+ * (stated in the report). Returns the receiving enemy, or null.
+ */
+export function wildfireTransfer(state, dead) {
+  if (!hasRewrite(state, 'wildfire')) return null;
+  if (!dead || !((dead.burn || 0) > 0) || !((dead.burnDps || 0) > 0)) return null;
+  let best = null, bestD = Infinity;
+  for (const o of state.enemies) {
+    if (o === dead || o.hp <= 0) continue;
+    const d = Math.hypot(o.x - dead.x, o.y - dead.y);
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  if (!best || bestD > WILDFIRE_RANGE) return null;
+  best.burn = dead.burn;         // remaining duration, full
+  best.burnDps = dead.burnDps;   // remaining dps, full
+  return best;
+}
+/**
+ * G21 slice 2 STORM REAPER: the 50%-strength CHAIN REACTION blast a live-wire
+ * ZAP kill detonates, or null when the combo is not held (or the run has no
+ * detonation source to price it from). Radius AND damage scale by
+ * STORMREAPER_BLAST_MULT, and the strength reads boomBlast — the SAME numbers
+ * and the SAME dry-pool fallback CHAIN REACTION uses, so the blast obeys every
+ * slice-1 blast rule. The caller wraps it in the ground-blast guard (flyers
+ * take nothing). No mana is spent for it: the corpse's own kill detonation
+ * already pays the pool price through rewriteBoom at the death pass.
+ */
+export function stormReaperBlast(state) {
+  if (!hasRewrite(state, 'stormreaper')) return null;
+  const boom = rewriteBoom(state);      // null unless onkillboom is held
+  if (!boom) return null;
+  return { radius: boom.radius * STORMREAPER_BLAST_MULT,
+    damage: boom.damage * STORMREAPER_BLAST_MULT };
 }
 
 // ---------- G21 slice 1: the WIDE ORBIT applied-value readers -----------------

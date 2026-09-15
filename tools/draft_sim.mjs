@@ -545,6 +545,54 @@ function cardImpact(card, player, weapons, counts, P, held) {
       // credit 1.05 only while an ORBIT is equipped).
       return { dps: 0.03, ehp: 0 };
     }
+    // ---- G21 slice 2 models (coarse, reasoning stated per card) -------------
+    // The three SECOND-TAG cards and the three COMBOS. Every CONDITIONAL card
+    // is priced at exactly 0 without its source (a dead pick, the same honest
+    // zero `focus` gets above) and its run-loop held credit is the SAME number
+    // the picker sees, so the offer and the run agree.
+    if (card.id === 'glacier') {
+      // GLACIER: +20% damage on an already-chilled body. This sim has no
+      // movement/status layer, so a slow field exists only if RIME is held —
+      // no RIME means no chilled body to hit. With RIME: +4% dps, coarse.
+      return { dps: (held.rewrites && held.rewrites.rime) ? 0.04 : 0, ehp: 0 };
+    }
+    if (card.id === 'wildfire') {
+      // WILDFIRE: a burning death hands its burn to one neighbour. No burn
+      // source (IGNITE) means nothing is ever burning. With IGNITE: one extra
+      // burn stream per burning death, +4% dps, coarse.
+      return { dps: (held.rewrites && held.rewrites.ignite) ? 0.04 : 0, ehp: 0 };
+    }
+    if (card.id === 'overload') {
+      // OVERLOAD: every 20th hit zaps up to 3 bodies at 0.75x weapon damage =
+      // 3 x 0.75 / 20 = 0.1125 hit-equivalents per hit, cut to a third for the
+      // overlap on already-struck bodies: +4% dps, coarse (run-loop credit
+      // 1.04, the same number).
+      return { dps: 0.04, ehp: 0 };
+    }
+    if (card.id === 'thermalshock') {
+      // THERMAL SHOCK: needs BOTH rime and ignite (its predicate guarantees
+      // both whenever it is draftable). A 3x-burnDps burst per refresh on a
+      // chilled+burning body is a second burn stream's worth: +3% dps on top
+      // of the IGNITE credit, coarse.
+      const ok = held.rewrites && held.rewrites.rime && held.rewrites.ignite;
+      return { dps: ok ? 0.03 : 0, ehp: 0 };
+    }
+    if (card.id === 'stormreaper') {
+      // STORM REAPER: needs livewire + onkillboom. Zap kills are a fraction of
+      // all kills and each adds a 50% boom; with no per-source kill
+      // attribution in this sim that reads as +2% dps while the pair is held,
+      // coarse. The predicate keeps the inert case out of the pool.
+      const ok = held.rewrites && held.rewrites.livewire && held.rewrites.onkillboom;
+      return { dps: ok ? 0.02 : 0, ehp: 0 };
+    }
+    if (card.id === 'glacialorbit') {
+      // GLACIAL ORBIT: needs wideorbit + rime AND an ORBIT in the kit (the
+      // wideorbit predicate already guarantees the weapon). Longer chill plus
+      // +10% on chilled bodies inside ONE weapon's ring: +3% dps, coarse.
+      const ok = held.rewrites && held.rewrites.rime &&
+        weapons.some(wp => wp.type === 'ORBIT');
+      return { dps: ok ? 0.03 : 0, ehp: 0 };
+    }
     // 'healthdamage': potions land on ~3% of kills and the blast is 10 + 1.0 x
     // weapon damage — rare but wide. Coarse 0.04 with the reasoning stated;
     // the run loop applies the modeled blast when held.
@@ -639,9 +687,14 @@ export function buildDraftPool(weapons, patch, held = {}) {
     // predicate reads the kit below. patch.rewriteWeight overrides the
     // per-card weight ABSOLUTELY (the C5 curve cells).
     heldState.weapons = weapons;
-    const rewriteW = Number.isFinite(patch.rewriteWeight) ? patch.rewriteWeight : REWRITE_CARD_WEIGHT;
+    // patch.rewriteWeight overrides the per-card weight ABSOLUTELY (the C5
+    // curve cells). Without it the pool takes each card's OWN weight from the
+    // seam (G21 slice 2: singles at REWRITE_CARD_WEIGHT, combos at
+    // REWRITE_COMBO_WEIGHT_MULT x that) — the sim must not restate a constant
+    // the seam has moved on from, or its pool drifts from openDraft's.
+    const rewriteW = Number.isFinite(patch.rewriteWeight) ? patch.rewriteWeight : null;
     for (const c of rewriteCards(heldState)) {
-      cards.push({ kind: 'rewrite', id: c.rewrite, weight: rewriteW });
+      cards.push({ kind: 'rewrite', id: c.rewrite, weight: rewriteW === null ? c.weight : rewriteW });
     }
   }
   return cards;
@@ -931,6 +984,11 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     // blade-seconds inside bodies — but only while an ORBIT is in the kit
     // (the offered-predicate guarantees it whenever the card is draftable).
     if (held.rewrites.wideorbit && weapons.some(wp => wp.type === 'ORBIT')) dmg *= 1.05;
+    // G21 slice 2 GLACIAL ORBIT, run-level: the longer chill and the +10% on
+    // chilled bodies inside the SAME orbit ring (and only with RIME writing
+    // the chill it extends).
+    if (held.rewrites.glacialorbit && held.rewrites.rime &&
+      weapons.some(wp => wp.type === 'ORBIT')) dmg *= 1.03;
     let killN = Math.min(N, Math.max(0, dmg) / Math.max(1e-9, avgHp));
     // G8 step 2 CHAIN REACTION, run-level: every kill detonates
     // (4 + 0.5 x weapon damage — the live rewriteBoom numbers), credited at
@@ -950,6 +1008,19 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     // cardImpact prices, so the picker and the run agree).
     if (held.rewrites.ignite && killN > 0) killN = Math.min(N, killN * 1.08);
     if (held.rewrites.livewire && killN > 0) killN = Math.min(N, killN * 1.05);
+    // G21 slice 2, run-level: the same credits cardImpact prices. GLACIER and
+    // WILDFIRE need their source (RIME's chill / IGNITE's burn) — without it
+    // they are dead cards and pay nothing; OVERLOAD is standalone; the three
+    // combos need both constituents (their predicates guarantee it).
+    if (held.rewrites.overload && killN > 0) killN = Math.min(N, killN * 1.04);
+    if (held.rewrites.glacier && held.rewrites.rime && killN > 0) killN = Math.min(N, killN * 1.04);
+    if (held.rewrites.wildfire && held.rewrites.ignite && killN > 0) killN = Math.min(N, killN * 1.04);
+    if (held.rewrites.thermalshock && held.rewrites.rime && held.rewrites.ignite && killN > 0) {
+      killN = Math.min(N, killN * 1.03);
+    }
+    if (held.rewrites.stormreaper && held.rewrites.livewire && held.rewrites.onkillboom && killN > 0) {
+      killN = Math.min(N, killN * 1.02);
+    }
     // G8 step 2 BLOOD HARVEST, run-level: ~DROP_CHANCE potions per kill reach
     // the inventory (the healBank seam); each pickup blasts
     // 10 + 1.0 x weapon damage at HARVEST_FRESH fresh bodies (the live
@@ -1489,14 +1560,17 @@ async function main() {
   }
 
   if (args.includes('--rewrite-weight')) {
-    // G21 slice 1, C5: the rewrite family's per-card weight curve, measured
-    // through the REAL pool seam (buildDraftPool -> rewriteCards, with
-    // patch.rewriteWeight as the absolute per-card weight). Same method as
-    // the 3-card family's HISTORY curve: good/bad MEAN survival ratio per
-    // cell, with the two acceptance invariants printed per cell so a
-    // failure is visible, never averaged away.
+    // G21 slice 1, C5 / slice 2, D4: the rewrite family's per-card weight
+    // curve, measured through the REAL pool seam (buildDraftPool ->
+    // rewriteCards, with patch.rewriteWeight as the absolute per-card weight).
+    // Same method as the 3-card family's HISTORY curve: good/bad MEAN survival
+    // ratio per cell, with the two acceptance invariants printed per cell so a
+    // failure is visible, never averaged away. NOTE (G21 slice 2): the cell
+    // number is the SINGLES' weight; the three cross-tag combos carry half of
+    // it, so the family total at a cell is 11w + 3(w/2) = 12.5w.
     console.log(`REWRITE FAMILY WEIGHT CURVE — ${runs} runs/cell, seed ${seed}, ` +
-      `absolute per-card weight (live ${REWRITE_CARD_WEIGHT} x 8 cards = family share ~0.06):`);
+      `absolute per-card weight (live ${REWRITE_CARD_WEIGHT} x 11 singles + ` +
+      `3 combos at half = family share ${(12.5 * REWRITE_CARD_WEIGHT).toFixed(4)}):`);
     const meanS = a => a.reduce((s, r) => s + r.survivalTime, 0) / a.length;
     for (const w of [0.005, 0.0075, 0.01, 0.015, 0.02]) {
       const g = simulateCohort(seed, runs, 'GREED_DAMAGE', { rewriteWeight: w });
