@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   HEAT_CAP, HEAT_SOURCES, HEAT_CURVES,
   heatMultipliers, goldMult, heatOf, manualPushes, initHeat,
-  addHeat, describeHeat,
+  addHeat, describeHeat, describeHeatPayout, heatXpMult,
 } from '../src/heat.js';
 
 let passed = 0;
@@ -177,5 +177,56 @@ check('HEAT_CURVES exported (hp 0.12 / damage 0.08 / spawn 0.06 / gold 0.30)', (
   assert.ok(Math.abs(HEAT_CURVES.GOLD - 0.30) < 1e-9);
   for (const k of Object.keys(HEAT_SOURCES)) assert.ok(HEAT_SOURCES[k].label, `${k} label`);
 });
+
+// --- G24 slice 1: the SECOND payout channel (XP per kill) -------------------------
+check('heatXpMult is the exact symmetry of goldMult (x1 + 0.12 per MANUAL push)', () => {
+  assert.ok(Math.abs(HEAT_CURVES.XP - 0.12) < 1e-9, 'chartered starting point 0.12/push');
+  assert.equal(heatXpMult(0), 1);
+  assert.ok(Math.abs(heatXpMult(3) - 1.36) < 1e-9, 'x1.36 at 3 pushes');
+  assert.ok(Math.abs(heatXpMult(6) - 1.72) < 1e-9, 'x1.72 at 6 pushes');
+  assert.equal(heatXpMult(-4), 1, 'garbage clamps to neutral');
+});
+
+check('XP pays on MANUAL pushes only — the symmetry rule (built-in heat stays cost-only)', () => {
+  // a full cap of BUILT-IN heat: xp still 1x, exactly like gold
+  const r = run();
+  for (let i = 0; i < 10; i++) addHeat(r, 'WEAPON_EVOLUTION');
+  assert.equal(heatOf(r), HEAT_CAP);
+  assert.equal(heatXpMult(manualPushes(r)), 1, '20 built-in heat -> xp still 1x');
+  // 3 manual pushes on a fresh run -> x1.36, via the ledger's own count
+  const m = run();
+  for (let i = 0; i < 3; i++) addHeat(m, 'MANUAL_PUSH');
+  assert.ok(Math.abs(heatXpMult(manualPushes(m)) - 1.36) < 1e-9);
+  // and a BLOCKED push at the cap never reaches the curve
+  const c = run();
+  fill19Manual(c);
+  addHeat(c, 'MANUAL_PUSH');   // 19 -> 20: charged, manual hits 20
+  addHeat(c, 'MANUAL_PUSH');   // at cap: blocked, manual stays 20
+  assert.ok(Math.abs(heatXpMult(manualPushes(c)) - (1 + 0.12 * 20)) < 1e-9);
+});
+function fill19Manual(r) { for (let i = 0; i < 19; i++) addHeat(r, 'MANUAL_PUSH'); }
+
+check('describeHeatPayout states BOTH channels; the cost half stays byte-identical', () => {
+  assert.equal(describeHeatPayout(0), 'PAYS GOLD x1 · XP x1');
+  assert.equal(describeHeatPayout(3), 'PAYS GOLD x1.9 · XP x1.36');
+  assert.equal(describeHeatPayout(6), 'PAYS GOLD x2.8 · XP x1.72');
+  // the payout is read BESIDE the cost string, never inside it
+  assert.equal(describeHeat(3), 'HEAT 3 (+36% foe HP)', 'cost wording untouched');
+  // consistency with the live multipliers, per channel
+  assert.ok(describeHeatPayout(3).includes(`GOLD x${goldMult(3).toFixed(2).replace(/\.?0+$/, '')}`));
+  assert.ok(describeHeatPayout(3).includes(`XP x${heatXpMult(3).toFixed(2).replace(/\.?0+$/, '')}`));
+});
+
+// --- the side-by-side readout the acceptance bar quotes ----------------------------
+// Per-channel multipliers at manual 0/3/6: COST (what heat takes) beside
+// PAYOUT (what the dial pays). Each manual push is also +1 heat, so the cost
+// columns are heatMultipliers(manual) and the payout columns are the two
+// MANUAL-only reads.
+console.log('  per-channel multipliers at manual 0 / 3 / 6 (cost vs payout):');
+for (const m of [0, 3, 6]) {
+  const cost = heatMultipliers(m, m);
+  console.log(`    manual ${m}: COST hp x${cost.hp.toFixed(2)} damage x${cost.damage.toFixed(2)} ` +
+    `spawn x${cost.spawnRate.toFixed(2)} | PAYOUT ${describeHeatPayout(m)}`);
+}
 
 console.log(`\n${passed} assertion groups passed — test_heat OK`);

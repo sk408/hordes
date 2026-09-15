@@ -15,7 +15,8 @@
 //
 // Run: node test/test_heat_ledger.mjs   (exit 0 = pass)
 import assert from 'node:assert/strict';
-import { HEAT_CAP, addHeat, heatOf, manualPushes } from '../src/heat.js';
+import { HEAT_CAP, addHeat, heatOf, manualPushes, heatMultipliers,
+  goldMult, heatXpMult, describeHeatPayout } from '../src/heat.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -100,6 +101,44 @@ console.log('UNKNOWN source / untouched contracts');
   addHeat(r, 'WEAPON_EVOLUTION', null, 'e1');
   assert.equal(JSON.stringify({ ...r, heat: null }), snap, 'addHeat only touches run.heat');
   console.log('  PASS addHeat only touches run.heat');
+}
+
+console.log('G24: the MANUAL ledger count drives BOTH payout channels');
+{
+  // 10 evolutions hit the cap with ZERO manual pushes: both payouts flat 1x.
+  const builtin = run();
+  for (let i = 0; i < 10; i++) addHeat(builtin, 'WEAPON_EVOLUTION');
+  ok(heatOf(builtin) === HEAT_CAP && manualPushes(builtin) === 0,
+    'a full cap of BUILT-IN heat leaves the manual count at 0');
+  ok(goldMult(manualPushes(builtin)) === 1 && heatXpMult(manualPushes(builtin)) === 1,
+    'built-in heat pays NOTHING on either channel (the symmetry rule)');
+
+  // 3 manual pushes on a fresh ledger: gold x1.9, xp x1.36.
+  const m = run();
+  fill(m, 3);
+  ok(Math.abs(goldMult(manualPushes(m)) - 1.9) < 1e-9 &&
+     Math.abs(heatXpMult(manualPushes(m)) - 1.36) < 1e-9,
+    '3 manual pushes pay gold x1.9 AND xp x1.36');
+  ok(heatMultipliers(heatOf(m), manualPushes(m)).gold === goldMult(manualPushes(m)),
+    'the multipliers bag gold field and goldMult agree on the manual read');
+
+  // A blocked push at the cap never reaches either curve (id not burned,
+  // manual not counted) — the ledger-hygiene half of the payout rule.
+  const c = run();
+  fill(c, HEAT_CAP);
+  const blocked = addHeat(c, 'MANUAL_PUSH');
+  ok(blocked.added === 0 && manualPushes(c) === HEAT_CAP &&
+     Math.abs(goldMult(manualPushes(c)) - (1 + 0.30 * HEAT_CAP)) < 1e-9 &&
+     Math.abs(heatXpMult(manualPushes(c)) - (1 + 0.12 * HEAT_CAP)) < 1e-9,
+    'a blocked push at the cap leaves both curves at exactly the capped count');
+
+  // The readout both channels produce, side by side at 0 / 3 / 6.
+  console.log('  per-channel multipliers at manual 0 / 3 / 6 (cost vs payout):');
+  for (const n of [0, 3, 6]) {
+    const cost = heatMultipliers(n, n);
+    console.log(`    manual ${n}: COST hp x${cost.hp.toFixed(2)} damage x${cost.damage.toFixed(2)} ` +
+      `spawn x${cost.spawnRate.toFixed(2)} | PAYOUT ${describeHeatPayout(n)}`);
+  }
 }
 
 if (failed) { console.error(`\n${failed} FAILURES`); process.exit(1); }

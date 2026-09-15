@@ -35,6 +35,11 @@ export const HEAT_CURVES = {
   DAMAGE: 0.08,     // foe damage       x (1 + 0.08 h)
   SPAWN_RATE: 0.06, // spawn clock rate x (1 + 0.06 h)   (divide the interval)
   GOLD: 0.30,       // MANUAL pushes ONLY — see goldMult
+  // G24 slice 1: the SECOND payout channel. XP per kill rides the same
+  // symmetry rule as gold — MANUAL pushes only, never built-in heat — at the
+  // chartered starting point 0.12 per push (x1.36 at 3 pushes), read at the
+  // ONE kill-XP site (main.js's gem-collect grant) through heatXpMult.
+  XP: 0.12,         // MANUAL pushes ONLY — see heatXpMult
 };
 
 // ---------- Multipliers (pure) ----------
@@ -42,7 +47,9 @@ export const HEAT_CURVES = {
 // BUILT-IN heat (evolutions, new slots) does NOT inflate gold — the `gold`
 // field is goldMult(manualPushes), so callers that only pass heat always get
 // gold: 1. The gold reward exists to pay the player for using the dial, not
-// to make free built-in power self-funding.
+// to make free built-in power self-funding. G24 slice 1 adds the SECOND
+// payout channel as its own standalone read (heatXpMult below), the exact
+// shape of goldMult — the multipliers bag's pinned shape is unchanged.
 export function heatMultipliers(heat, manualPushes = 0) {
   const h = Math.max(0, heat || 0);
   return {
@@ -57,6 +64,14 @@ export function heatMultipliers(heat, manualPushes = 0) {
 // heat: evolutions/new-slot equips must not inflate gold payouts.
 export function goldMult(manualPushes = 0) {
   return 1 + HEAT_CURVES.GOLD * Math.max(0, manualPushes || 0);
+}
+
+// heatXpMult(manualPushes) — the SECOND payout channel (G24 slice 1), the
+// exact symmetry of goldMult: MANUAL count ONLY, never total heat, so
+// evolutions/new-slot equips must not inflate XP either. At the chartered
+// 0.12/push a 3-push run earns x1.36 XP per kill.
+export function heatXpMult(manualPushes = 0) {
+  return 1 + HEAT_CURVES.XP * Math.max(0, manualPushes || 0);
 }
 
 // ---------- Ledger accessors ----------
@@ -125,4 +140,16 @@ export function describeHeat(heat) {
   const h = Math.max(0, heat || 0);
   const pct = Math.round(HEAT_CURVES.HP * h * 100);
   return `HEAT ${h} (+${pct}% foe HP)`;
+}
+
+// describeHeatPayout(manualPushes) -> the PAYOUT half of the readout, e.g.
+// 'PAYS GOLD x1.9 · XP x1.36' (G24 slice 1: heat must visibly PAY, not just
+// bite). PURE, and read beside describeHeat — never inside it — so the cost
+// string's wording stays byte-identical and every assertion pinning it holds.
+// Driven by the MANUAL count only (the symmetry rule): a run with built-in
+// heat and no dial reads x1 / x1, honestly.
+export function describeHeatPayout(manualPushes = 0) {
+  const m = Math.max(0, manualPushes || 0);
+  const fmt = (v) => v.toFixed(2).replace(/\.?0+$/, '');
+  return `PAYS GOLD x${fmt(goldMult(m))} · XP x${fmt(heatXpMult(m))}`;
 }

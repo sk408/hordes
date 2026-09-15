@@ -72,8 +72,8 @@ import { paintOfferArt } from './draft_card_art.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
 import {
-  HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, heatOf,
-  manualPushes, addHeat, initHeat,
+  HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
+  heatXpMult, heatOf, manualPushes, addHeat, initHeat,
 } from './heat.js';
 import {
   loadProfileResult, saveProfile, makeProfile,
@@ -1023,14 +1023,17 @@ function openIntermission(opts = {}) {
   }
   // WAVE-9 manual heat dial: RAISE THE STAKES pushes +1 heat (harder, faster
   // foes) and pays for it with goldMult — which tracks MANUAL pushes only.
+  // G24 slice 1: the dial now pays on BOTH channels (gold + the new per-kill
+  // XP multiplier), and every readout states the payout, not only the cost.
   // Card is hidden once the ledger sits at HEAT_CAP.
   if (heatOf(state) < HEAT_CAP) {
     const nextGold = goldMult(manualPushes(state) + 1);
+    const nextXp = heatXpMult(manualPushes(state) + 1);
     menuCard('RAISE THE STAKES',
-      `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')}`,
+      `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')} · run xp x${nextXp.toFixed(2).replace(/\.?0+$/, '')}`,
       () => {
         addHeat(state, 'MANUAL_PUSH');
-        interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · run gold x${goldMult(manualPushes(state))}`;
+        interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}`;
         audio.playSfx('levelup');
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
       });
@@ -2375,7 +2378,12 @@ function update(dt) {
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
       if (controller.stance === 'GREEDY' && d > basePickR) greedyScoop++;
-      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();   // Scholar + SUNNY + WAVE-11 rampage
+      // G24 slice 1: the SECOND heat payout channel. heatXpMult tracks MANUAL
+      // pushes only (the symmetry rule — built-in heat stays cost-only), read
+      // here at the ONE kill-XP site alongside the Scholar/SUNNY/rampage
+      // multipliers. At manual 0 it is exactly 1, so a non-heat run's income
+      // is byte-identical to before.
+      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
@@ -3047,6 +3055,13 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
     html += `<br><span class="earn">AWARD +${parts.award}` +
       `${parts.winBonus ? ` · BONUS +${parts.winBonus}` : ''}` +
       ` · PURSE BANKED +${parts.purseBanked}</span>`;
+  }
+  // G24 slice 1: the end-of-run summary states what the dial PAID (both
+  // channels), only when the dial was used — a stakes-free run renders
+  // byte-identically to before (the G11/G20a precedent two blocks up).
+  const stakesPaid = manualPushes(state);
+  if (stakesPaid > 0) {
+    html += `<br><span class="earn">STAKES x${stakesPaid} PAID: ${describeHeatPayout(stakesPaid)}</span>`;
   }
   if (goal) {
     const gap = goal.cost - profile.gold;
@@ -6050,7 +6065,7 @@ function hudTextBlock(p) {
     (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
-    `   ${describeHeat(heatOf(state))}` +
+    `   ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
     `RUN ${runClock(state.time)}/${runClock(C.RUN.LIMIT)}   WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
     // G11: the mode badge line — only while a NON-standard mode is live, so a
