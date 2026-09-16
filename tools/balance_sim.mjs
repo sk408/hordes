@@ -60,6 +60,13 @@ import { makePlayer, contactHitDamage } from '../src/entities.js';
 // rolls — folded into the wave demand (tiered hp lengthens kills) and the
 // kills -> level map (tiered xp). See the fold constants below.
 import { RARITY, rollRarity } from '../src/rarity.js';
+// W7a slice 1: THE ARCH TERM. Measured uptimes -> dps mult (DOUBLE_FIRE rate x
+// BERSERK damage, time-weighted) + the SHIELD absorb credit, parameters from
+// tools/arch_model.mjs MEASURED_ARCH (real_loop counters, raw logs quoted in
+// that file). `--arches off` prints the same run WITHOUT the term; the block
+// below always states both readings, so no existing number is redefined
+// silently.
+import { MEASURED_ARCH, pooledMeasured, archDpsMult, shieldAbsorbsPerWave, ARCH_TYPES } from './arch_model.mjs';
 
 const L = C.LADDER, RUN = C.RUN;
 
@@ -176,6 +183,29 @@ function mulberry32(seed) {
   };
 }
 const logistic = (x) => 1 / (1 + Math.exp(-CAL.GATE_K * x));
+
+// ---------- W7a: the ARCH TERM (measured, toggleable) -------------------------
+// Identity until calibrateArchTerm() runs (so importing this module for the
+// SIM_ASSUMPTIONS/SIM_TUNING contract stays exactly the pre-W7a model), then
+// the MEASURED dps mult + SHIELD absorb rate. simulateRun applies it only when
+// ARCH_TERM.on, and main()'s ARCH MODEL block prints the off/on margin pair so
+// the term is never a silent redefinition of a printed number.
+export const ARCH_TERM = { on: false, dpsMult: 1, absorbsPerWave: 0 };
+export function calibrateArchTerm() {
+  const P = pooledMeasured();
+  ARCH_TERM.dpsMult = archDpsMult(P.meanUptimeByType);
+  ARCH_TERM.absorbsPerWave = shieldAbsorbsPerWave(P.grantsByType.SHIELD / P.runs);
+  return { ...ARCH_TERM, pooled: P };
+}
+// The SHIELD credit in HP: measured absorbs per wave priced at the SAME live
+// minion hit the wave-damage budget uses (same contactHitDamage call shape as
+// waveDamageHp's minion term — a derived call, not a second table).
+function archAbsorbCreditHp(b, poolHp) {
+  if (!ARCH_TERM.on || ARCH_TERM.absorbsPerWave <= 0) return 0;
+  const tick = Math.min(Math.ceil(RUN.LIMIT / 30), Math.round((b * WAVE_SECONDS) / 30));
+  const minion = contactHitDamage(C.SURVIVAL.BASE_CONTACT, ladderDmg(tick), contactMix(tick), 1, poolHp);
+  return ARCH_TERM.absorbsPerWave * minion;
+}
 
 // The three wave-level indices, all NORMALISED to the wave-1 tick so the gap
 // reads as "how many x ahead of wave 1 is the build / is the ladder". A fresh
@@ -330,11 +360,12 @@ export function simulateRun(profile, rng, pre = null) {
   let b = 1, dead = false, killer = null, killerKind = null;
   let killGap = 0, survGap = 0;
   for (; b <= WAVES; b++) {
-    const power = powerAtWave(power0, b);
+    const power = powerAtWave(power0, b) * (ARCH_TERM.on ? ARCH_TERM.dpsMult : 1);
     const poolHp = poolAtWaveHp(startHp, b);
     const demand = demandIdx(b);
     killGap = Math.log2(Math.max(1e-9, power) / Math.max(1e-9, demand)) - CAL.KILL_M0;
-    survGap = Math.log2(Math.max(1e-9, poolHp) / Math.max(1e-9, waveDamageHp(b, poolHp)))
+    survGap = Math.log2(Math.max(1e-9, poolHp)
+      / Math.max(1e-9, waveDamageHp(b, poolHp) - archAbsorbCreditHp(b, poolHp)))
       - CAL.SURVIVE_M0;
     if (rng() < logistic(killGap) * logistic(survGap)) continue;   // wave cleared
     dead = true;
@@ -531,6 +562,64 @@ export function simulateCareer(seed) {
   };
 }
 
+// ---------- W7a slice 2 (ADDITIVE): --meta-order measured -------------------
+// The brief freezes greedyShop/simulateCareer/GREEDY_PRIORITY byte-for-byte,
+// so the measured-order arm gets its OWN walk + career mirror here. Keep this
+// mirror in sync with simulateCareer above ONLY in the order it consults; any
+// other drift between the two is a defect.
+function greedyShopOrdered(profile, order) {
+  const bought = [];
+  for (;;) {
+    let hit = false;
+    for (const id of order) {
+      const def = SHOP_BY_ID[id];
+      if (!def || shopRowDone(profile, def)) continue;
+      if (profile.gold < nextCost(profile, def)) continue;
+      if (buyUpgrade(profile, id)) { bought.push(id); hit = true; break; }
+    }
+    if (!hit) return bought;
+  }
+}
+function simulateCareerOrdered(seed, order) {
+  const rng = mulberry32(seed);
+  const profile = makeProfile();
+  const milestones = [];
+  const purchaseOrder = [];
+  let goodRuns = 0, totalRuns = 0, payoutSum = 0, chestSum = 0, goodPayoutSum = 0;
+  let limitRuns = 0;
+  while (goodRuns < SIM_TUNING.GOOD_RUN_TARGET && totalRuns < SIM_TUNING.RUN_CAP) {
+    totalRuns++;
+    const run = simulateRun(profile, rng);
+    profile.gold += run.payout;
+    payoutSum += run.payout;
+    chestSum += run.chestGold;
+    if (run.reachedLimit) limitRuns++;
+    for (const id of greedyShopOrdered(profile, order)) purchaseOrder.push(id);
+    if (run.good) {
+      goodRuns++;
+      goodPayoutSum += run.payout;
+      if (goodRuns % 5 === 0) {
+        milestones.push({
+          goodRuns, totalRuns, gold: profile.gold,
+          midFrac: midTierOwnedFrac(profile),
+          goodFrac: goodPayoutSum / SIM_ASSUMPTIONS.midTierCost,
+          greed: profile.purchased.greed || 0,
+        });
+      }
+    }
+  }
+  const avg = a => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+  return {
+    milestones, purchaseOrder, totalRuns, limitRuns,
+    goodFracAt10: milestones.length >= 2 ? milestones[1].goodFrac : null,
+    lateGoodPayout: 0,   // not tracked in the mirror — the order delta reads the figures below
+    lateGoodGross: 0,
+    avgRunPayout: payoutSum / Math.max(1, totalRuns),
+    avgRunChest: chestSum / Math.max(1, totalRuns),
+    hitTarget: goodRuns >= SIM_TUNING.GOOD_RUN_TARGET,
+  };
+}
+
 // ---------- the power-curve-vs-demand GAP -----------------------------------
 // For each stage: the build's power index at wave b (shop x in-run draft growth)
 // against the ladder's demand index at that wave. gap = power/demand, in
@@ -608,6 +697,21 @@ function stageReport(name, profile, runs, seed) {
 }
 
 // ---------- main -------------------------------------------------------------
+// The three progression-stage profiles (same definitions the stage reports and
+// the W7a arch margin block both read — one place, never two copies).
+function makeStageProfiles() {
+  return {
+    fresh: makeProfile(),
+    partial: (() => { const p = makeProfile(); p.purchased = { dmg: 2, hp: 3 };
+      p.unlockedWeapons = STARTER_WEAPONS.concat(['ORBIT', 'ZAP']);
+      p.unlockedCharacters = ['KNIGHT']; p.equippedCharacter = 'KNIGHT'; return p; })(),
+    maxed: (() => { const p = makeProfile(); p.gold = 1_000_000_000;   // G17 1b: full-buy grant above any plausible catalogue
+      for (const def of SHOP_UPGRADES) {
+        for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(p, def.id)) break;
+      } return p; })(),
+  };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const flag = (name, dflt) => {
@@ -619,6 +723,69 @@ async function main() {
   const seed = Math.max(1, Math.floor(flag('--seed', 1337)));
   const doValidate = args.includes('--validate');
   const stageRuns = Math.max(2, Math.floor(flag('--stage-runs', 24)));
+  // W7a slice 2 (additive): --meta-order greedy|measured. DEFAULT greedy =
+  // today's behaviour, output byte-identical (the measured block below only
+  // prints when the flag is passed). 'measured' shops the SAME careers in the
+  // MEASURED marginal-value order from tools/meta_rank.mjs.
+  let metaOrder = 'greedy';
+  {
+    const i = args.indexOf('--meta-order');
+    if (i >= 0) {
+      const v = args[i + 1] ? args[i + 1].toLowerCase() : '';
+      if (v !== 'greedy' && v !== 'measured') { console.error('--meta-order wants greedy|measured'); process.exit(2); }
+      metaOrder = v;
+    }
+  }
+  // W7a: --arches on|off (default ON, calibrated). The term is the MEASURED
+  // collection rate — see the honesty block in tools/arch_model.mjs.
+  {
+    const i = args.indexOf('--arches');
+    const v = i >= 0 && args[i + 1] ? args[i + 1].toLowerCase() : 'on';
+    if (v !== 'on' && v !== 'off') { console.error('--arches wants on|off'); process.exit(2); }
+    const cal = calibrateArchTerm();
+    ARCH_TERM.on = v === 'on';
+    // The ARCH MODEL block: five types, the measured grants/uptime, and the
+    // kill-gate margin off vs on as explicit before/after numbers.
+    console.log('\n=== ARCH MODEL (W7a slice 1 — measured uptime, --arches ' + v + ') ===');
+    for (const t of Object.keys(MEASURED_ARCH.stages.fresh.grantsByType)) {
+      const d = ARCH_TYPES[t];
+      console.log(`  ${t.padEnd(12)} ${d.name.padEnd(16)} duration=${String(d.duration).padStart(3)}s ` +
+        `mods=${JSON.stringify(d.mods)}${d.shieldHits ? ` shieldHits=${d.shieldHits}` : ''}`);
+    }
+    for (const [stage, A] of Object.entries(MEASURED_ARCH.stages)) {
+      console.log(`  measured ${stage}: n=${A.runs} spawned/run=${A.spawnedPerRun} grantRuns=${A.grantRuns} ` +
+        `grantsByType=${JSON.stringify(A.grantsByType)} meanUptime=${JSON.stringify(A.meanUptimeByType)}`);
+    }
+    console.log(`  measured maxed: ${MEASURED_ARCH.maxed.note}`);
+    console.log(`  pooled (n=${cal.pooled.runs}): arch dps mult x${cal.dpsMult.toFixed(4)} · ` +
+      `shield absorbs/wave ${cal.absorbsPerWave.toFixed(4)}`);
+    // Kill-gate margin off vs on, wave 1, all three stage profiles — computed
+    // directly from the same gap arithmetic simulateRun uses.
+    const margin = (prof, on) => {
+      ARCH_TERM.on = on;
+      const power0 = buildPower(prof), startHp = buildPool(prof).hp;
+      const power = powerAtWave(power0, 1) * (on ? ARCH_TERM.dpsMult : 1);
+      const poolHp = poolAtWaveHp(startHp, 1);
+      const kill = Math.log2(power / demandIdx(1)) - CAL.KILL_M0;
+      const surv = Math.log2(poolHp / (waveDamageHp(1, poolHp) - archAbsorbCreditHp(1, poolHp))) - CAL.SURVIVE_M0;
+      return { kill, surv };
+    };
+    const stageMarginPair = {};
+    for (const [name, prof] of Object.entries(makeStageProfiles())) {
+      const off = margin(prof, false), on = margin(prof, true);
+      stageMarginPair[name] = { off, on };
+      console.log(`  kill-gate margin ${name} (wave 1): off ${off.kill >= 0 ? '+' : ''}${off.kill.toFixed(3)} ` +
+        `-> on ${on.kill >= 0 ? '+' : ''}${on.kill.toFixed(3)} (delta ${(on.kill - off.kill).toFixed(4)}) · ` +
+        `survive: off ${off.surv.toFixed(3)} -> on ${on.surv.toFixed(3)}`);
+    }
+    ARCH_TERM.on = v === 'on';
+    // An honest NULL is a valid outcome: if the measured term moves the margin
+    // less than the calibration residual (|KILL_M0| fitting slack ~0.1), say so.
+    const maxDelta = Math.max(...Object.values(stageMarginPair).map(p => Math.abs(p.on.kill - p.off.kill)));
+    console.log(`  arch term moves the kill-gate margin by at most ${maxDelta.toFixed(4)} ` +
+      `(calibration residual scale |KILL_M0|=${CAL.KILL_M0}, |SURVIVE_M0|=${CAL.SURVIVE_M0}) -> ` +
+      (maxDelta < 0.1 ? 'ARCH BUFFS ARE NOT THE DOMINANT TERM at the measured collection rate (honest NULL)' : 'the arch term is material at the measured rate'));
+  }
 
   console.log(`HORDES BALANCE SIM v2 — ${careers} careers, seed ${seed}`);
   console.log(`run structure: ${WAVES} waves x ${WAVE_SECONDS}s = ${RUN.LIMIT}s (${runClock(RUN.LIMIT)}), ` +
@@ -651,16 +818,7 @@ async function main() {
   }
 
   // ---- stage cohorts (fresh / partial / maxed) ----
-  const stages = {
-    fresh: makeProfile(),
-    partial: (() => { const p = makeProfile(); p.purchased = { dmg: 2, hp: 3 };
-      p.unlockedWeapons = STARTER_WEAPONS.concat(['ORBIT', 'ZAP']);
-      p.unlockedCharacters = ['KNIGHT']; p.equippedCharacter = 'KNIGHT'; return p; })(),
-    maxed: (() => { const p = makeProfile(); p.gold = 1_000_000_000;   // G17 1b: full-buy grant above any plausible catalogue
-      for (const def of SHOP_UPGRADES) {
-        for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(p, def.id)) break;
-      } return p; })(),
-  };
+  const stages = makeStageProfiles();
   const reports = {};
   for (const [name, prof] of Object.entries(stages)) {
     reports[name] = stageReport(name, prof, stageRuns, seed + 101);
@@ -719,6 +877,40 @@ async function main() {
   console.log(`TARGET (b) top-tier costs ${SIM_ASSUMPTIONS.TOP_TIER_MIN_GOOD_RUNS}+ good runs: ` +
     topRefs.map(t => `${t.id} ${t.refRuns.toFixed(1)}/${t.grossRuns.toFixed(1)}`).join(', ') +
     ` -> ${passB ? 'PASS' : 'FAIL'}`);
+
+  // ---- W7a slice 2 (additive): the MEASURED-ORDER block (--meta-order measured)
+  // Shops the SAME career seeds under the measured marginal-value order and
+  // prints the affected figures as explicit BEFORE(greedy)/AFTER(measured)
+  // pairs — never a silent redefinition of a number printed above.
+  if (metaOrder === 'measured') {
+    const { buildRankTable, measuredPriorityFromTable, RANK_BASELINES } = await import('./meta_rank.mjs');
+    const tbl = buildRankTable({ seed: 4242, runs: 8, baselineKey: 'developed' });
+    const order = measuredPriorityFromTable(tbl);
+    const nCar = Math.min(careers, 12);
+    console.log('\n=== META ORDER (W7a slice 2 — measured marginal-value order) ===');
+    console.log(`measured order (baseline ${RANK_BASELINES.developed.label}, seed 4242, 8 paired runs/cell):`);
+    console.log(`  ${order.join(' > ')}`);
+    console.log(`hardcoded GREEDY_PRIORITY (for comparison):`);
+    console.log(`  ${GREEDY_PRIORITY.join(' > ')}`);
+    const greedyRes = [], measuredRes = [];
+    for (let i = 0; i < nCar; i++) {
+      greedyRes.push(simulateCareerOrdered(seed + i * 7919, GREEDY_PRIORITY));
+      measuredRes.push(simulateCareerOrdered(seed + i * 7919, order));
+    }
+    const fig = (rs, f) => rs.reduce((s, r) => s + f(r), 0) / rs.length;
+    console.log(`same ${nCar} career seeds, both orders (BEFORE = greedy as printed above):`);
+    for (const [label, f, fmt] of [
+      ['runs to target', r => r.totalRuns, v => String(Math.round(v))],
+      ['avg run payout', r => r.avgRunPayout, v => Math.round(v) + 'g'],
+      ['mid-tier from 10 good runs', r => r.goodFracAt10 ?? 0, v => (100 * v).toFixed(1) + '%'],
+    ]) {
+      console.log(`  ${label.padEnd(30)} BEFORE ${fmt(fig(greedyRes, f))} -> AFTER ${fmt(fig(measuredRes, f))}`);
+    }
+    console.log(`  first 12 purchases: BEFORE [${greedyRes[0].purchaseOrder.slice(0, 12).join(',')}]`);
+    console.log(`                        AFTER [${measuredRes[0].purchaseOrder.slice(0, 12).join(',')}]`);
+    console.log(`  (the measured order changes WHICH rows gold lands on first; every other`);
+    console.log(`   printed figure above stays the greedy-arm number it has always been.)`);
+  }
 
   // ---- validation against the REAL loop --------------------------------------
   if (doValidate) {

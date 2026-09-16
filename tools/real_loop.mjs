@@ -18,7 +18,7 @@
 // so the sims can import this file from a pure context (test_meta imports
 // balance_sim) without a DOM.
 import { CONFIG as CFG } from '../src/config.js';
-import { makeProfile, buyUpgrade, SHOP_UPGRADES } from '../src/meta.js';
+import { makeProfile, buyUpgrade, SHOP_UPGRADES, STARTER_WEAPONS, startWeaponSlots } from '../src/meta.js';
 import { TOUR_KEYS } from '../src/tour.js';
 
 // ---- the three progression stages ------------------------------------------
@@ -153,8 +153,42 @@ export async function runRealCohort(stage, runs, {
   const h = await bootReal(stage);
   const st = h.state;
   const out = [];
+  // ---- W7a slice 1: ADDITIVE arch counters (pure reads, no behaviour change).
+  // Per run: arches SPAWNED (distinct arch objects seen in st.arches), buffs
+  // GRANTED (new {type,t} object identities in st.archBuffs), REFRESHES (a
+  // tracked buff's t RISING frame-over-frame — tickArches only ever decrements
+  // t, so a rise is the same-type refresh to full duration), granted SECONDS
+  // (1/60 per frame a buff object is live) and the time-weighted UPTIME share
+  // per type. Ground truth for tools/arch_model.mjs; printed as ONE greppable
+  // 'ARCHES ' line per run and attached to the record as rec.arches.
+  const ARCH_DT = 1 / 60;
+  const sampleArchState = (cnt, archSeen, buffMap) => {
+    if (Array.isArray(st.arches)) {
+      for (const a of st.arches) {
+        if (!archSeen.has(a)) { archSeen.add(a); cnt.spawned++; }
+      }
+    }
+    if (Array.isArray(st.archBuffs)) {
+      for (const b of st.archBuffs) {
+        const e = buffMap.get(b);
+        if (!e) {
+          buffMap.set(b, { type: b.type, prevT: b.t });
+          cnt.grants[b.type] = (cnt.grants[b.type] || 0) + 1;   // new identity = a grant
+        } else {
+          if (b.t > e.prevT + ARCH_DT + 1e-9) cnt.refreshes[b.type] = (cnt.refreshes[b.type] || 0) + 1;
+          e.prevT = b.t;
+        }
+        cnt.seconds[b.type] = (cnt.seconds[b.type] || 0) + ARCH_DT;
+      }
+    }
+  };
   for (let r = 1; r <= runs; r++) {
     const goldBefore = h.profile().gold;
+    // W7a arch counters: fresh per run (st.arches/st.archBuffs are reset by
+    // the run seam itself; these locals only ever READ them).
+    const archCnt = { spawned: 0, grants: {}, refreshes: {}, seconds: {} };
+    const archSeen = new Set();
+    const buffMap = new Map();
     h.startRun();
     let ended = null;
     const capFrames = Math.floor(maxSeconds * 60);
@@ -166,6 +200,7 @@ export async function runRealCohort(stage, runs, {
       const cb = h.dom.rafQueue.shift();
       if (!cb) throw new Error('real_loop: raf queue died');
       cb(performance.now());
+      sampleArchState(archCnt, archSeen, buffMap);   // W7a: pure read, post-tick
       if (st.mode === 'dead') { ended = st.deathBy; break; }
       // Overlay auto-play (the smoke.mjs policy): draft/evolve picks a new
       // weapon when offered else card 1; intermissions CONTINUE.
@@ -221,6 +256,29 @@ export async function runRealCohort(stage, runs, {
     rec.level = st.player.level;
     rec.gold = gold;
     rec.hp = Math.round(st.player.stats.maxHp);
+    // W7a slice 1: the MEASURED arch reality for this run, on the record and
+    // as ONE greppable stdout line. uptime = granted seconds / run length
+    // (time-weighted fraction of the run under each buff).
+    rec.arches = { ...archCnt, uptime: {} };
+    for (const t of Object.keys(archCnt.seconds)) rec.arches.uptime[t] = +(archCnt.seconds[t] / Math.max(1, rec.time)).toFixed(4);
+    console.log(`ARCHES run=${r}/${runs} stage=${typeof stage === 'string' ? stage : 'profile'} time=${rec.time}s ` +
+      `spawned=${archCnt.spawned} grants=${JSON.stringify(archCnt.grants)} refreshes=${JSON.stringify(archCnt.refreshes)} ` +
+      `seconds=${JSON.stringify(archCnt.seconds)} uptime=${JSON.stringify(rec.arches.uptime)}`);
+    // W7a slice 2 (ADDITIVE): ONE greppable 'META ' line per run — which meta
+    // order shaped the profile (a real loop is always 'live': the profile's
+    // own purchases; greedy/measured are sim-side orders) plus the unlocks
+    // the run owned and the slot count it ran at. Pure profile reads.
+    {
+      const prof = h.profile();
+      const unlocks = (prof.unlockedWeapons || []).filter(w => !STARTER_WEAPONS.includes(w));
+      rec.meta = {
+        order: 'live', slots: startWeaponSlots(prof),
+        unlocks: [...unlocks], purchasedRows: Object.keys(prof.purchased || {}).length,
+      };
+      console.log(`META run=${r}/${runs} stage=${typeof stage === 'string' ? stage : 'profile'} order=live ` +
+        `slots=${rec.meta.slots} unlocks=${JSON.stringify(rec.meta.unlocks)} ` +
+        `purchasedRows=${rec.meta.purchasedRows}`);
+    }
     out.push(rec);
     if (onRun) onRun(rec, r);
   }

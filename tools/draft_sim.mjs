@@ -624,6 +624,26 @@ export const POLICIES = {
   ADVERSARIAL_BAD: { label: 'ADVERSARIAL-BAD', pick: m => m.dps + m.ehp, argmax: false },
 };
 
+// W7a slice 2 (ADDITIVE — no existing key, caller or printed line changes):
+// two extra pick policies for the meta_rank dilution axis. Neither is used by
+// main() (its cohort table enumerates its own fixed three) nor by any existing
+// caller; they exist so tools/meta_rank.mjs can answer the owner's unlock
+// question under declared policies beyond the sim's own.
+//   GREED_DPS     pure marginal-dps argmax (ties keep the first offer).
+//   RANDOM_PICK   uniform over the OFFER. Offers are rolled in rng order; a
+//                 strictly-increasing score flips every pairwise comparison,
+//                 so the LAST rolled offer wins — uniform over the three the
+//                 run's own rng produced. The counter is module state:
+//                 meta_rank RESETS it before every cohort so tables stay
+//                 deterministic (same seed list -> byte-identical table).
+POLICIES.GREED_DPS = { label: 'GREED-DPS', pick: m => m.dps, argmax: true };
+POLICIES.RANDOM_PICK = {
+  label: 'RANDOM',
+  pick: () => (RANDOM_PICK_STATE.n = ((RANDOM_PICK_STATE.n + 1) >>> 0)),
+  argmax: true,
+};
+export const RANDOM_PICK_STATE = { n: 0 };
+
 // `held` mirrors the run player's card state so the pool shrinks exactly like
 // openDraft's does: { rules: {id:true}, skills: {id:true}, takenStats: {id:1} }.
 // Default = a fresh run (nothing held), which is what measureDraftOffers uses.
