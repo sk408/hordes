@@ -405,5 +405,29 @@ const setup = () => {
   console.log(`ok: arrangement — ${SONG.sections.length} sections, ${SONG.totalBars} bars, cycle ${cycle.toFixed(2)}s, all distinct, seam resolves ${pf.chord} -> Am`);
 }
 
+// ---- S2 (audit 2026-09-16): a suspended context self-heals on sound ----
+// The autoplay-policy state: the context exists but is suspended. Every sound
+// attempt (the first one lands inside the user's gesture handler) must try to
+// resume it — pre-fix, playSfx/startMusic silently "succeeded" into a frozen
+// clock and the game stayed silent forever.
+{
+  const { st, theCtx, made } = setup();
+  init();
+  assert.strictEqual(theCtx.resumes, 0, 'sanity: construction was running, nothing resumed yet');
+  theCtx.state = 'suspended';
+  assert.strictEqual(playSfx('button'), true, 'sfx accepted while suspended');
+  assert.ok(theCtx.resumes >= 1, 'playSfx must attempt resume on a suspended ctx');
+  theCtx.state = 'running';
+  playSfx('hit');
+  assert.strictEqual(theCtx.resumes, 1, 'a running ctx is left alone (no resume spam)');
+  setMusicEnabled(true);
+  theCtx.state = 'suspended';
+  assert.strictEqual(startMusic(), true, 'music starts while suspended');
+  assert.strictEqual(theCtx.resumes, 2, 'startMusic must attempt resume on a suspended ctx');
+  stopMusic();
+  assert.strictEqual(made(), 1, 'self-healing never constructs a second ctx');
+  console.log('ok: suspended ctx self-heals on sfx and music (S2)');
+}
+
 AUDIO_TEST.reset();
 console.log('AUDIO TESTS PASSED');

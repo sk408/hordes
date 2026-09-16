@@ -153,6 +153,15 @@ try {
   if (mod && mod.init) audio = mod;
 } catch { /* audio.js not built yet — shim stays in place */ }
 try { audio.init(); } catch { /* audio init must never block the game */ }
+// S2 (audit 2026-09-16): the init above runs at MODULE LOAD, before any user
+// gesture — on a gesture-gated browser (iOS Safari) the context is created
+// suspended and stays that way: a permanently silent game. init() is
+// idempotent and resumes a suspended context, so re-enter it on user input.
+// Called from the keydown/pointerdown handlers below; never throws, never
+// blocks gameplay, and constructs at most the one context init() ever does.
+function audioUnlockGesture() {
+  try { audio.init(); } catch { /* never block gameplay */ }
+}
 
 // ---------- DOM ----------
 const canvas = document.getElementById('game');
@@ -469,6 +478,7 @@ const state = {
   lastMinute: 0,     // last whole minute the clock toast fired for
   finalCall: false,  // 29:00 "one minute left" callout fired
   mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
+  runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
   // ---- G9 TROPHY GALLERY (presentation only; never persisted) ----
   // The gallery browses achievement-gallery entries one at a time. trophyIdx is
@@ -3435,6 +3445,15 @@ function recordRunAchievements(gold) {
 }
 
 function settleRunGold({ winBonus = 0 } = {}) {
+  // S1 (audit 2026-09-16): settlement is RUN-ONCE. The maw milestone settles
+  // mid-run and the run CONTINUES — every later ending (runSurvived / die /
+  // endRun) used to settle AGAIN, paying RUN_GOLD.AWARD twice, re-paying
+  // FIRST_CLEAR, and folding the FULL run summary into lifetime totals a
+  // second time (achievements.js recordRun bumps are read-then-add). A second
+  // call now returns the first settlement's numbers unchanged. (The purse
+  // zeroing below guards a DIFFERENT trap — the double-BANK of the remainder —
+  // and stays.) Cleared in startRun.
+  if (state.runSettled) return state.runSettled;
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
   if (firstClear) profile.bestTime = Math.floor(state.time);
@@ -3458,6 +3477,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // so the trophies and the gold they were settled alongside persist together.
   recordRunAchievements(gold);
   saveProfile(profile);
+  state.runSettled = { gold, award, purseBanked, winBonus, firstClear };
   return { gold, award, purseBanked, winBonus, firstClear };
 }
 
@@ -5456,6 +5476,13 @@ function startRun() {
   state.lastMinute = 0;
   state.finalCall = false;
   state.mawCleared = false;
+  // S1 (audit 2026-09-16): the run-once settle guard re-arms with the run.
+  state.runSettled = null;
+  // M1: a boss-stance save left over from a run that ended mid-boss (or at the
+  // maw victory) must not leak into this run's first boss approach.
+  state.preBossStance = null;
+  // M2: the previous run's last killer must not print on this run's death card.
+  lastDamageSource = null;
   state.mawDeadline = 0;
   lastPurseFlush = 0;   // E1: the periodic purse flush restarts with the run
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
@@ -6263,9 +6290,16 @@ const REPEAT_GUARDED = new Set([
   'i', '?', 'f1',         // stats overlay + hints toggle
   's',                    // held "down" in MANUAL — swallow ONLY its repeat
   '+', '=', '-', '_',    // zoom ladder
+  // M4 (audit 2026-09-16): the overlay card keys. The intermission maps 1-4
+  // to card.click() — an OS auto-repeat tail re-fired the click ~30x/s and
+  // held-key purchases drained the purse one paid chest at a time. Honest
+  // taps are single presses by construction; repeats are never honest.
+  '1', '2', '3', '4',    // overlay card picks (draft/evolve/intermission)
+  'c', 'enter',          // intermission CONTINUE (idempotent, but repeat-clean)
 ]);
 
 window.addEventListener('keydown', (ev) => {
+  audioUnlockGesture();   // S2: a keydown IS a user gesture — unlock audio
   // While a tour is live the keys are the TOUR's: Right/Enter/Space advance,
   // Left backs, Escape skips (the tour's own document-level handler, which
   // fires before this one). Everything else must NOT reach the game — the
@@ -6633,6 +6667,7 @@ if (touchLayer && touchLayer.addEventListener) {
   const isJoyPointer = (ev) => joyPointerId !== null && ev.pointerId === joyPointerId;
 
   touchLayer.addEventListener('pointerdown', (ev) => {
+    audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
     const joy = ev.target && ev.target.closest
       ? ev.target.closest('[data-joy]') : null;
     if (joy) {
@@ -6984,6 +7019,7 @@ if (overlay && overlay.addEventListener) {
 // V1: during the escape a tap is PLAY — mapped into the mode's own virtual
 // 480x300 (the skip rect first, then a tap anywhere jumps for MANUAL play).
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
+  audioUnlockGesture();     // S2: a tap IS a user gesture — unlock audio
   if (state.mode === 'escape') {
     const r = canvas.getBoundingClientRect();
     if (r.width && r.height) {
@@ -7262,7 +7298,7 @@ function updateFinale(dt) {
         resetRampage();   // WAVE-11: the maw's hits end the streak too
         state.effects.push({ kind: 'hit_spark', x: p.x, y: p.y, age: 0, ttl: 0.15 });
         audio.playSfx('hit');
-        if (p.hp <= 0) { die(true); return; }
+        if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; die(true); return; }
       }
     }
   }
@@ -7280,7 +7316,7 @@ function updateFinale(dt) {
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: the maw's bite ends the streak too
       audio.playSfx('hit');
-      if (p.hp <= 0) { die(true); return; }
+      if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; die(true); return; }
     }
   }
 
@@ -7362,6 +7398,10 @@ function mawDefeated() {
   state.enemyShots.length = 0;
   state.mawCleared = true;
   state.mode = 'intermission';   // clears the field; openIntermission re-arms it
+  // M1 (audit 2026-09-16): nothing boss-shaped is left — hand the doctrine
+  // back, exactly as mawWithdrew does. Without this the saved pre-boss stance
+  // stayed pending and leaked into the NEXT run (startRun did not clear it).
+  restoreBossStance();
   audio.playSfx('levelup');
   // The biggest earned moment in the game — same flourish the finale used.
   triggerEarnedMoment('finale', state.player.x, state.player.y);

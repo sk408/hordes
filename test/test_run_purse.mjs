@@ -190,16 +190,22 @@ S.check('settlement banks ONCE: fixed award x mult + remainder, purse zeroed', (
   assert(settle1.purseBanked === 500, 'the purse remainder banks in full');
   assert(bank1 === wantAward + 500, `banked ${bank1} = award ${wantAward} + purse 500`);
   assert(T.purse.get() === 0, 'runPurse returns to 0 after settlement');
-  assert(settle2.purseBanked === 0 && settle2.gold === settle2.award,
-    'the second settlement does NOT re-bank the already-banked remainder');
-  assert(bank2 === bank1 + settle2.award,
-    'the second settlement adds only its own award, never the first purse');
+  // S1 (audit 2026-09-16): settlement is RUN-ONCE. The old second settle here
+  // paid a SECOND full award into the bank — exactly the maw-then-death
+  // inflation the audit flagged. A second call now returns the FIRST numbers
+  // and banks NOTHING (strictly stronger than the old "no second purse").
+  assert(settle2.gold === settle1.gold && settle2.award === settle1.award
+    && settle2.purseBanked === settle1.purseBanked,
+    'the second settlement returns the first settlement\'s numbers unchanged');
+  assert(bank2 === bank1, 'the second settlement banks NOTHING (award paid exactly once)');
   assert(st.player.kills >= 0, 'sanity');
 });
 S.check('FIRST_CLEAR and the maw bonus ride ON TOP, goldMult multiplies the award', () => {
+  T.startRun(); h.pump(2);   // S1: settlement is run-once — a fresh run re-arms it
   const prof = T.getProfile();
   prof.bestTime = 99999;                       // no first clear this time
   prof.runPurse = 0;
+  st.player.stats.goldMult = 2;                // re-applied: startRun rebuilt stats
   const before = prof.gold;
   const r = T.purse.settle({ winBonus: 1200 });
   const wantAward = Math.round(RUN_GOLD.AWARD * 2);   // goldMult still 2, no FIRST_CLEAR
@@ -208,6 +214,7 @@ S.check('FIRST_CLEAR and the maw bonus ride ON TOP, goldMult multiplies the awar
   assert(prof.gold === before + r.gold, 'bank delta matches the settled total');
 });
 S.check('a zero run settles the flat award, not the retired formula', () => {
+  T.startRun(); h.pump(2);   // S1: run-once — this needs its own fresh run
   const prof = T.getProfile();
   prof.bestTime = 99999;
   prof.runPurse = 0;

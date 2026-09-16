@@ -608,7 +608,11 @@ export function buyUpgrade(profile, id) {
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
   const cost = upgradeCost(def, level);
-  if (profile.gold < cost) return false;                 // insufficient gold
+  // M5 (audit 2026-09-16): NaN < cost is FALSE, so a poisoned wallet used to
+  // pass this gate and get the level "for free" (the NaN then survived to be
+  // repaired to 0 by save.js — a silent bank wipe). >= is NaN-safe: the gate
+  // fails CLOSED.
+  if (!(profile.gold >= cost)) return false;             // insufficient gold
   profile.gold -= cost;
   profile.purchased[id] = level + 1;
   return true;
@@ -624,7 +628,7 @@ export function weaponUnlocked(profile, weaponId) {
 export function unlockWeapon(profile, weaponId) {
   const price = WEAPON_PRICES[weaponId];
   if (price === undefined || weaponUnlocked(profile, weaponId)) return false;
-  if (profile.gold < price) return false;
+  if (!(profile.gold >= price)) return false;   // M5: NaN-safe gate (see buyUpgrade)
   profile.gold -= price;
   profile.unlockedWeapons.push(weaponId);
   return true;

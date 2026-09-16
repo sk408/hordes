@@ -220,6 +220,17 @@ function noise(c, dest, { dur, gain, when }) {
 }
 
 // ---------- Public API ----------
+// S2 (audit 2026-09-16): gesture-gated browsers (iOS Safari) create the
+// AudioContext SUSPENDED, and before the audit nothing ever resumed it — every
+// playSfx/startMusic "succeeded" silently into a frozen clock and the game
+// stayed mute forever. Any sound attempt now re-tries the resume (the first
+// one lands inside the user's gesture handler, where the browser allows it).
+// Never throws, never blocks; a running ctx costs one property read.
+function resumeIfSuspended() {
+  if (!ctx || ctx.state !== 'suspended' || typeof ctx.resume !== 'function') return;
+  try { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); } catch { /* ignore */ }
+}
+
 export function init() {
   if (ctx) {
     if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
@@ -277,6 +288,7 @@ export { SFX };
 export function playSfx(name) {
   const def = SFX[name];
   if (!def || !sfxEnabled || !ctx) return false;
+  resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   const now = ctx.currentTime;
   const limit = SFX_LIMITS[name] ?? 0.02;
   if (lastPlayed[name] !== undefined && now - lastPlayed[name] < limit) return false;
@@ -415,6 +427,7 @@ function scheduleAhead() {
 
 export function startMusic() {
   if (!musicEnabled || !ctx || musicRunning) return false;
+  resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   musicRunning = true;
   step = 0;
   nextNoteTime = ctx.currentTime + 0.05;
