@@ -81,7 +81,8 @@ import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.j
 // ONBOARDING REWORK (owner-approved 2026-09-16): the engine for the
 // non-pausing, non-capturing hint strip + object tags (see its header for
 // the six invariants).
-import { HintStrip, ObjectTags, makeHintStore, HINT_IDS } from './onboarding.js';
+import { HintStrip, makeHintStore, HINT_IDS } from './onboarding.js';
+import { introLine, controlById } from './controls_ref.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
 // volleyId; the mercy rule + 3-hit damage live there. NOTE (RUN-STRUCTURE):
@@ -698,6 +699,7 @@ function pilotPrefLabel() {
 }
 function togglePilotMode() {
   // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
+  controlUsed('pilot');   // PER-CONTROL INTRODUCTIONS: the user cycled it
   const i = PILOT_MODES.indexOf(normalizePilotMode(state.pilotMode));
   swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
 }
@@ -1324,6 +1326,9 @@ function buyPaidChest(tier) {
 
 function continueRun() {
   const p = state.player;
+  // PER-CONTROL INTRODUCTIONS: reaching CONTINUE means an intermission
+  // happened — the moment stance and the pilot choice pay differently.
+  introSawIntermission = true;
   // G9 FOLLOW-UP: the wave that just ENDED is "untouched" when nothing landed
   // on the hero during it. Reaching CONTINUE means the wave was finished (the
   // portal only opens on a clear), so this is the completion seam. The
@@ -2821,6 +2826,9 @@ function openDraft() {
   // re-rendered below, so the ceremony must not tear down what it no longer
   // owns (endDraftCeremony(false) leaves the display to this presenter).
   if (draftCeremony) endDraftCeremony(false);
+  // PER-CONTROL INTRODUCTIONS: a draft IS the first level-up — the moment
+  // focus and the field report start to matter.
+  introSawDraft = true;
   state.mode = 'draft';
   ovTitle.className = '';
   // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
@@ -3958,7 +3966,9 @@ function showHowToPlay() {
     'C — continue &middot; R / T — retry / title<br>' +
     '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
     'ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus<br>' +
-    '? — show / hide the on-screen key hints');
+    // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
+    // drift from the hint that names the glyph.
+    '? — ' + controlById('help').purpose);
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
   // the tour skips must be documented HERE or dropped).
@@ -4171,49 +4181,98 @@ const onboardingAvoid = () => ONBOARDING_AVOID_IDS
   .map(el => el.getBoundingClientRect())
   .filter(r => r && (r.width > 0 || r.height > 0));
 const hintStrip = new HintStrip({ anchor: onboardingAnchor, avoid: onboardingAvoid });
-const objTags = new ObjectTags({ anchor: onboardingAnchor, view: () => canvas.getBoundingClientRect() });
-
+// OBJECT LABELS REMOVED (owner 2026-09-16: "The on screen labels for arch and
+// shrine are a bit annoying, and sometimes they persist after the run"): the
+// ObjectTags layer — chest / portal / arch / shrine floating labels, their
+// edge arrows, fade timers and per-run seen-state — is deleted outright, not
+// flagged off. The persistence fault was real: tags only ticked in 'playing'
+// and only cleared at startRun, so a label mounted near a run's end SURVIVED
+// death, RUN SURVIVED and RETURN TO TITLE. Object knowledge lives in THE
+// FIELD reference page now (single teaching surface). Pinned by
+// test/test_notags.mjs.
+//
 // Run-scoped onboarding state (reset in startRun; NOT state.* — nothing here
 // needs to survive the run, and the state-reset guard stays untouched).
 let hintShownRun = {};   // hint id -> already shown this run (max once per run)
 let hintMoveTime = 0;    // seconds of demonstrated movement this run
 let hintPrevPos = null;  // last player position, for the displacement test
-let tagSeenRun = {};     // tag kind -> already tagged this run
+
+// PER-CONTROL INTRODUCTIONS (owner 2026-09-16: "It's the per button cards.
+// We don't have to have cards, really, but at least something that shows
+// people how to use them.") — every control names itself at the FIRST moment
+// it matters. The retired timer-scheduled cards fired on a CLOCK regardless
+// of context and PAUSED the sim; both failure modes stay dead: triggers here
+// are EVENTS (hp actually dropped, skill actually ready, draft actually
+// opened...), and the scheduler paces them — at most one hint per
+// HINT_SPACING_S of play, never during a boss fight, never stacked (the
+// strip's own one-at-a-time queue serializes what slips past).
+const HINT_SPACING_S = 20;
+let hintPending = [];          // armed ids waiting on the spacing / boss gate
+let hintLastShownAt = -1e9;    // state.time of the last hint DISPLAY
+let introSawDraft = false;     // a level-up draft opened this run
+let introSawIntermission = false;   // an intermission was reached this run
 
 function resetOnboarding() {
-  hintShownRun = {}; hintMoveTime = 0; hintPrevPos = null; tagSeenRun = {};
-  hintStrip.clear(); objTags.clear();
+  hintShownRun = {}; hintMoveTime = 0; hintPrevPos = null;
+  hintPending = []; hintLastShownAt = -1e9;
+  introSawDraft = false; introSawIntermission = false;
+  hintStrip.clear();
 }
 
-// A hint may show at most once per run; teach-until-demonstrated lives in the
-// hintStore (performed-action flag + give-up-after-3-runs counter).
+// ARM a hint: its moment arrived, but display is the scheduler's call. Once
+// per run (deduped here), teach-until-demonstrated + give-up in the store.
 function maybeHint(id, trigger, text) {
-  if (!trigger || hintShownRun[id] || hintStore.done(id) || hintStore.runs(id) >= 3) return;
-  hintShownRun[id] = true;
-  hintStrip.show(id, text);
+  if (!trigger) return;
+  if (hintShownRun[id] || hintPending.some(h => h.id === id)) return;
+  if (hintStore.done(id) || hintStore.runs(id) >= 3) return;
+  hintPending.push({ id, text });
 }
 
-// Object tags: name the thing the player is already looking at, on FIRST
-// SIGHTING per run (chest / portal / arch / shrine).
-const TAG_SOURCES = [
-  ['chest', 'CHEST', () => state.chests[0] || null],
-  ['portal', 'PORTAL', () => state.portal],
-  ['arch', 'ARCH', () => state.arches[0] || null],
-  ['shrine', 'SHRINE', () => (state.shrine && !state.shrine.used) ? state.shrine : null],
-];
-function maybeTags() {
-  for (const [kind, label, get] of TAG_SOURCES) {
-    if (tagSeenRun[kind]) continue;
-    const o = get();
-    if (!o) continue;
-    tagSeenRun[kind] = true;
-    const obj = o;   // tag the OBJECT, not the slot (it may move)
-    objTags.show(kind, label, () => {
-      const r = worldRegion(obj.x, obj.y, 8).getBoundingClientRect();
-      return { left: r.left + r.width / 2, top: r.top + r.height / 2 };
-    });
+// A boss fight is the wrong teacher — the player has enough to read there.
+// Hints wait it out (the pending list drains when the cast is down).
+function bossFightLive() {
+  return !!(
+    (state.wave.bosses && state.wave.bosses.some(b => b && b.hp > 0)) ||
+    (state.wave.midBosses && state.wave.midBosses.some(b => b && b.hp > 0)) ||
+    (state.finalBoss && state.finalBoss.hp > 0));
+}
+
+// The scheduler: one hint at a time, >= HINT_SPACING_S apart, never during a
+// boss fight. Entries demonstrated while waiting are dropped silently.
+function pumpHints() {
+  if (hintStrip.visibleId !== null) return;
+  if (state.time - hintLastShownAt < HINT_SPACING_S) return;
+  if (bossFightLive()) return;
+  while (hintPending.length) {
+    const h = hintPending.shift();
+    if (hintStore.done(h.id)) continue;
+    hintShownRun[h.id] = true;
+    hintLastShownAt = state.time;
+    hintStrip.show(h.id, h.text);
+    break;
   }
 }
+
+// The touch path names the TOUCH control — a phone player is never told to
+// press a key they do not have. Read live off the touch layer's own class
+// (set at boot from hasTouch), so tests can flip it through the DOM.
+function isTouchPath() {
+  return !!(touchLayer && touchLayer.classList && touchLayer.classList.contains('on'));
+}
+
+// DEMONSTRATION: the player just used this control — the introduction has
+// done its job. Retires the store flag forever and pulls any live instance.
+function controlUsed(id) {
+  if (!HINT_IDS.includes(id)) return;
+  if (!hintStore.done(id)) hintStore.setDone(id);
+  hintStrip.retire(id);
+  hintPending = hintPending.filter(h => h.id !== id);
+}
+
+// Object tags (first-sighting labels) were REMOVED with the layer — see the
+// note above the run-scoped state: no sources, no arming call, no engine
+// instance. updateOnboarding below cannot arm a label, and test_notags.mjs
+// pins exactly that (symbol absence in the shipped source).
 
 // Runs every PLAYING frame — after update(), banner or not. It can never gate
 // the sim (invariant 1) and never sees an input event (invariant 2).
@@ -4225,6 +4284,71 @@ function updateOnboarding(dt) {
   // (b) FIRST PORTAL: bank the wave. Replaces the portal card.
   maybeHint('portal', !!state.portal,
     'Walk through the portal to bank the wave.');
+  // (c) PER-CONTROL INTRODUCTIONS: every control names itself at the FIRST
+  // moment it matters — an EVENT, never a clock. The texts come from
+  // src/controls_ref.js (the same rows the reference screens read — no
+  // forked strings) and name the TOUCH control on a touch path. The 2s
+  // grace keeps the RUN-START move line the first thing anyone reads —
+  // skills are ready and enemies seeded at t=0, and without it a per-control
+  // line would win the first display slot before the move hint's t>0.75.
+  if (state.time > 2) {
+    const touch = isTouchPath();
+    const qid = classSkillId(state);
+    const qDef = C.SKILLS[qid] || {};
+    const uq = ultCharge(state, qid);
+    const qReady = uq ? uq.ready
+      : ((p.skillCd[qid] || 0) <= 0 && p.mana >= skillManaCost(qid, state));
+    const wReady = (p.skillCd.OVERCHARGE || 0) <= 0 &&
+      p.mana >= skillManaCost('OVERCHARGE', state);
+    const inCombat = state.enemies.some(e => e && e.hp > 0);
+    // Skills matter the first time one is READY with a live enemy to spend
+    // it on; potions the first time the resource is actually down.
+    maybeHint('skill-q', inCombat && qReady,
+      introLine('skill-q', touch, { keys: [String(qDef.KEY || 'q').toUpperCase()], touch: String(qDef.NAME || 'skill').toUpperCase() }));
+    maybeHint('skill-w', inCombat && wReady, introLine('skill-w', touch));
+    maybeHint('potion-hp', p.potions.hp > 0 && p.hp < p.stats.maxHp * 0.85,
+      introLine('potion-hp', touch));
+    maybeHint('potion-mp', p.potions.mp > 0 && p.mana < skillManaCost(qid, state),
+      introLine('potion-mp', touch));
+    // Focus / stance / stats matter from the first level-up (there is
+    // something to aim and to read); the pilot choice from the first
+    // intermission (banking is when AUTO vs MANUAL pays differently).
+    maybeHint('focus', introSawDraft, introLine('focus', touch));
+    maybeHint('stance', introSawDraft || introSawIntermission, introLine('stance', touch));
+    maybeHint('stats', introSawDraft, introLine('stats', touch));
+    maybeHint('pilot', introSawIntermission, introLine('pilot', touch));
+    // RADAR / MAP matter the first time the world exceeds the screen: a live
+    // horde with enemies beyond the view arms RADAR, a chest or shrine
+    // beyond it arms MAP. Scanned only while the hint is still wanted (cheap
+    // by design); the horde-size floor keeps RADAR for real pressure, not
+    // the lone spawn-time straggler.
+    const offView = (x, y) => {
+      // Guarded like onboardingAnchor above: a headless stub without a canvas
+      // rect cannot prove off-view — never arm on a guess, never throw.
+      try {
+        const r = worldRegion(x, y, 0).getBoundingClientRect();
+        const v = canvas.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        return cx < v.left || cx > v.right || cy < v.top || cy > v.bottom;
+      } catch { return false; }
+    };
+    if (!hintShownRun.radar && !hintStore.done('radar') &&
+        state.enemies.length >= 6 &&
+        state.enemies.some(e => e && e.hp > 0 && offView(e.x, e.y))) {
+      maybeHint('radar', true, introLine('radar', touch));
+    }
+    if (!hintShownRun.map && !hintStore.done('map') &&
+        (((state.chests || []).some(c => offView(c.x, c.y))) ||
+         ((state.shrines || []).some(s => !s.used && offView(s.x, s.y))))) {
+      maybeHint('map', true, introLine('map', touch));
+    }
+    // '?' SUPPLEMENT (owner 2026-09-16): the "?" IS a control — it names
+    // itself the first time the player is in a fight they can actually lose
+    // (a real hit landed). Until then nothing urgently needs explaining, and
+    // the sole existing explanation lived INSIDE the screen it opens
+    // (circular: you had to know '?' to learn '?'). Retires when pressed.
+    maybeHint('help', p.hp > 0 && p.hp < p.stats.maxHp * 0.9, introLine('help', touch));
+  }
   // Teach-until-demonstrated (movement): ~3 seconds of real travel retires
   // the hint permanently (hintStore flag), even mid-display.
   if (!hintStore.done('move')) {
@@ -4240,9 +4364,8 @@ function updateOnboarding(dt) {
     }
     hintPrevPos = { x: p.x, y: p.y };
   }
-  maybeTags();
+  pumpHints();
   hintStrip.update(dt);
-  objTags.update(dt);
 }
 
 // Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
@@ -5828,6 +5951,7 @@ function iconHtml(grid, palette, px) {
 
 function openStats() {
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
+  controlUsed('stats');   // PER-CONTROL INTRODUCTIONS: opened = learned
   state.statsReturn = state.mode;   // the finale resumes its own tick
   state.mode = 'stats';
   overlay.style.display = 'flex';
@@ -6232,7 +6356,8 @@ function runAction(act) {
     return;
   }
   // WAVE-22c: the "?" button — toggles the key-hints panel.
-  if (act === 'help') { toggleHints(); return; }
+  // '?' SUPPLEMENT: pressing "?" (button or key) IS the demonstration.
+  if (act === 'help') { controlUsed('help'); toggleHints(); return; }
   // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
   // must not flip controllers under the smoke probes' feet).
   if (act === 'pilot') {
@@ -6253,18 +6378,22 @@ function runAction(act) {
   }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
-  if (act === 'focus') controller.cycleFocus();
-  else if (act === 'stance') cycleStanceWithFeedback();
+  // PER-CONTROL INTRODUCTIONS: this is the MANUAL action seam (key or touch
+  // button — the AUTOPILOT casts/drinks through other paths and never
+  // retires a hint), so every act here is a demonstration.
+  if (act === 'focus') { controlUsed('focus'); controller.cycleFocus(); }
+  else if (act === 'stance') { controlUsed('stance'); cycleStanceWithFeedback(); }
   else if (act === 'q') {
+    controlUsed('skill-q');
     // E2 (R9): ground-AoE casts can't touch flyers (see flyingGuard); the
     // Witch's chain beam is a DIRECT hit — its damage lands, only the
     // frost-slow rider is refused ('beam').
     const qid = classSkillId(state);
     flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
   }
-  else if (act === 'w') useSkill(state, 'OVERCHARGE');
-  else if (act === 'h') drinkHealthPotion(state);
-  else if (act === 'n') drinkManaPotion(state);
+  else if (act === 'w') { controlUsed('skill-w'); useSkill(state, 'OVERCHARGE'); }
+  else if (act === 'h') { controlUsed('potion-hp'); drinkHealthPotion(state); }
+  else if (act === 'n') { controlUsed('potion-mp'); drinkManaPotion(state); }
 }
 
 // ---------- THE ONE POTION SEAM (WAVE-28) -----------------------------------
@@ -6586,7 +6715,7 @@ window.addEventListener('keydown', (ev) => {
     // a movement key — no conflict with WASD).
     if (k === 'r') { toggleRadar(); return; }
     // WAVE-22c: ? (or F1) toggles the on-screen control hints.
-    if (ev.key === '?' || k === 'f1') { if (ev.preventDefault) ev.preventDefault(); toggleHints(); return; }
+    if (ev.key === '?' || k === 'f1') { if (ev.preventDefault) ev.preventDefault(); controlUsed('help'); toggleHints(); return; }
     // WAVE-16 quick zoom: '+'/'=' zooms in, '-' zooms out — no settings trip
     // needed. Live mid-run in both pilot modes (render reads state.zoom
     // every frame).
@@ -6703,8 +6832,33 @@ const HINT_LINES = {
 // one array, so the copy cannot diverge between the two names.
 HINT_LINES.AUTO = HINT_LINES.AUTO_ALL;
 
+// '?' SUPPLEMENT (owner 2026-09-16): one glyph, one meaning, BOTH input
+// modes. The panel content used to be chosen by PILOT MODE only, so a phone
+// player tapping "?" was taught keyboard keys they do not have (H / N / TAB
+// / Q / E). On a touch path the same affordance now names the TOUCH
+// controls — built FROM the same controls_ref rows as the per-control hints
+// (names only; the connective grammar mirrors HINT_LINES above). Not a
+// third panel: the same #hints element, same toggle, same glyph.
+function touchHintLines() {
+  const qDef = C.SKILLS[classSkillId(state)] || {};
+  // The NAME half of introLine (no forked strings): 'HP: drink...' -> 'HP'.
+  const nm = (id, ov) => {
+    const line = introLine(id, true, ov);
+    return line ? line.split(':')[0] : id.toUpperCase();
+  };
+  const q = { touch: String(qDef.NAME || 'skill').toUpperCase() };
+  const helpRow = controlById('help');
+  return [
+    nm('pilot') + ' — auto / manual movement &middot; ' + nm('focus') + ' / ' + nm('stance') + ' — targeting & doctrine',
+    q.touch + ' / ' + nm('skill-w') + ' — skills &middot; ' + nm('potion-hp') + ' / ' + nm('potion-mp') + ' — potions',
+    nm('stats') + ' — field report &middot; ' + nm('map') + ' — world map &middot; ' + nm('radar') + ' — off-screen enemies',
+    'cog — settings &middot; ? — ' + (helpRow ? helpRow.purpose : 'show / hide these hints'),
+  ];
+}
 function refreshHints() {
-  const lines = [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
+  const lines = isTouchPath()
+    ? [...touchHintLines()]
+    : [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
   // G11: name the live challenge mode while a non-standard run is up (the
   // hints are in-run chrome; a STANDARD run sees the same four lines as
   // before).
@@ -6744,6 +6898,7 @@ applyHints();
 // the discovery feedback, same pattern as the stance cycle.
 function toggleRadar() {
   state.radarOn = !state.radarOn;
+  controlUsed('radar');   // PER-CONTROL INTRODUCTIONS: used = learned
   toast('RADAR ' + (state.radarOn ? 'ON' : 'OFF') + ' (R)', '#b8e0ff');
   return state.radarOn;
 }
@@ -6752,6 +6907,7 @@ function toggleRadar() {
 // (C6); the sim KEEPS RUNNING while it is open (C1 — no free dodge button).
 function toggleMap() {
   state.mapOpen = !state.mapOpen;
+  controlUsed('map');   // PER-CONTROL INTRODUCTIONS: used = learned
   toast('MAP ' + (state.mapOpen ? 'OPEN' : 'CLOSED') + ' (M)', '#b8e0ff');
   return state.mapOpen;
 }
@@ -7728,15 +7884,23 @@ export const __TEST = {
   // M3: the ground-item overflow wrappers (test seam — the same functions the
   // kill funnel and drop events call).
   m3: { pushGem, pushDrop, pushItemDrop },
-  // ONBOARDING seam: the live hint strip / object-tag engines + the flag
-  // store, so tests drive the REAL layer (never a copy of its rules).
+  // ONBOARDING seam: the live hint strip engine + the flag store, so tests
+  // drive the REAL layer (never a copy of its rules). The object-tag engine
+  // was REMOVED (2026-09-16) — there is deliberately no tags seam anymore.
   onboarding: {
     strip: hintStrip,
-    tags: objTags,
     store: hintStore,
     shownRun: () => hintShownRun,
-    tagSeenRun: () => tagSeenRun,
     reset: resetOnboarding,
+    // PER-CONTROL INTRODUCTIONS seams: the scheduler's gate state (tests
+    // drive the REAL pacing), the demonstration hook, and the live
+    // touch-path read (tests flip it by toggling #touch's 'on' class).
+    pending: () => hintPending.map(h => h.id),
+    spacing: HINT_SPACING_S,
+    lastShownAt: () => hintLastShownAt,
+    controlUsed,
+    bossFightLive,
+    touchPath: isTouchPath,
   },
   // N1a: the Q-slot seam — the class's own skill id, and the key act that
   // routes through it (so a probe casts what the button casts).

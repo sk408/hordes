@@ -40,11 +40,13 @@ export async function boot(opts = {}) {
 
   const el = () => {
     const e = {
-      textContent: '', style: {}, children: [], onclick: null,
+      textContent: '', style: { cssText: '' }, children: [], parentNode: null, onclick: null,
       click() { if (this.onclick) this.onclick(); },
       addEventListener(ev, cb) { (this._ev ?? (this._ev = {}))[ev] = cb; },
       removeEventListener() {},
-      appendChild(c) { this.children.push(c); return c; },
+      appendChild(c) { c.parentNode = e; this.children.push(c); return c; },
+      removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; },
+      remove() { if (e.parentNode) e.parentNode.removeChild(e); },
       getBoundingClientRect() { return { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 }; },
       querySelector() { return null; },
       setAttribute() {}, focus() {},

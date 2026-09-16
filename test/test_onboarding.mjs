@@ -3,8 +3,8 @@
 // The 25-card tour is deleted (7 title cards, 4 intermission cards, 10
 // timer/event-scheduled in-run cards — galaxy.click feedback: "tons of
 // information thrown at you without context", "skipped like 8 tutorial blurbs
-// because I was moving manually"). Its replacement is 3 IN-CONTEXT touches +
-// OBJECT TAGS, and this file pins the SIX INVARIANTS the dispatch demands:
+// because I was moving manually"). Its replacement is the IN-CONTEXT hint
+// strip, and this file pins the SIX INVARIANTS the dispatch demands:
 //   1. a hint NEVER pauses the sim (state.time advances while one is visible);
 //   2. a hint NEVER captures input (pointer-events:none, zero listeners, no
 //      dismiss controls — movement keys and joystick drags steer straight
@@ -14,14 +14,24 @@
 //      action happens (move ~3s / portal entry), gives up after 3 runs;
 //   5. anchored to the game container, clamped fully inside it, never
 //      overlapping the joystick or the touch buttons;
-//   6. NO EMOJIS anywhere (the off-screen arrow is ASCII).
+//   6. NO EMOJIS anywhere.
 // Part A drives the PURE engine (src/onboarding.js) with a fake doc; Part B
 // drives the REAL main.js frame loop through the onboarding test seam.
+//
+// OBJECT LABELS RETIRED (owner 2026-09-16: "a bit annoying, and sometimes
+// they persist after the run"): the ObjectTags engine checks (old A3/A3b),
+// the live chest-tag leg (old B8) and the tag displayability legs (old
+// C1/C2/C4) were DELETED with the layer — 29 checks. What replaces them:
+// test/test_notags.mjs (10 checks) pins the removal itself — no label ever
+// mounts during play, none survives death / victory / RETURN TO TITLE /
+// restart / mode changes, the arming is gone from the shipped source, and
+// THE FIELD reference page still documents every object. The hint-strip
+// checks here are untouched.
 // Run: node test/test_onboarding.mjs
 import assert from 'node:assert/strict';
 import {
-  HintStrip, ObjectTags, makeHintStore, layoutStrip,
-  HINT_FADE_S, TAG_FADE_S, GIVE_UP_RUNS, HINT_IDS,
+  HintStrip, makeHintStore, layoutStrip,
+  HINT_FADE_S, GIVE_UP_RUNS, HINT_IDS,
 } from '../src/onboarding.js';
 import { TOUR_KEYS } from '../src/tour.js';
 
@@ -131,82 +141,28 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
   }
 }
 
-// A3. ObjectTags (invariants 5, 6): anchored to the object, ASCII edge arrow.
-{
-  const doc = mkDoc();
-  const tags = new ObjectTags({ anchor: () => CONT, view: () => CONT, mount: doc.body, doc });
-  let at = { left: 240, top: 150 };
-  tags.show('chest', 'CHEST', () => at);
-  tags.update(0.016);
-  let el = doc.body.children[0];
-  ok('A: a tag mounted for the sighted object', el && el._text === 'CHEST', el && el._text);
-  ok('A: a tag is a label, never a button (pointer-events:none, zero listeners)',
-    /pointer-events:\s*none/.test(el.style.cssText) && !handlers.has(el));
-  ok('A: an in-view tag sits just above its object with no arrow',
-    !/^[\^v<>] /.test(el._text) && parseFloat(el.style.top) < 150, { text: el._text, top: el.style.top });
-  ok('A: tag text is ASCII (invariant 6)', ASCII.test(el._text));
-  // Off-screen: clamped to the edge, ASCII arrow pointing the way.
-  at = { left: 600, top: 150 }; tags.update(0.016);
-  ok('A: off-screen right -> "> " arrow, clamped inside the view',
-    el._text === '> CHEST' && parseFloat(el.style.left) <= 480, { text: el._text, left: el.style.left });
-  at = { left: -50, top: 150 }; tags.update(0.016);
-  ok('A: off-screen left -> "< " arrow', el._text === '< CHEST', el._text);
-  at = { left: 240, top: 400 }; tags.update(0.016);
-  ok('A: off-screen below -> "v " arrow', el._text === 'v CHEST', el._text);
-  at = { left: 240, top: -30 }; tags.update(0.016);
-  ok('A: off-screen above -> "^ " arrow', el._text === '^ CHEST', el._text);
-  at = { left: 240, top: 150 };
-  // The object is gone -> the tag leaves with it; and it fades at TAG_FADE_S.
-  at = null; tags.update(0.016);
-  ok('A: the tag unmounts the moment its object is gone', !doc.body.children.includes(el));
-  let p = { left: 240, top: 150 };
-  tags.show('portal', 'PORTAL', () => p);
-  tags.update(0.016);
-  const el2 = doc.body.children[0];
-  tags.update(TAG_FADE_S);
-  ok('A: a tag auto-fades at TAG_FADE_S', !doc.body.children.includes(el2));
-}
-
-// A3b. DISPLAY BUG 2026-09-16 — the two invisible failure modes are COUNTED,
-// never swallowed. (a) a locate() throw unmounts the tag (object-gone
-// semantics) but leaves a NUMBER behind, not a silent catch; (b) a
-// non-finite placement never mounts and never writes 'NaNpx' — in a real
-// browser that style value is dropped and the element falls below the fold,
-// clipped by overflow:hidden: mounted-but-invisible, the reported symptom.
-{
-  const doc = mkDoc();
-  const tags = new ObjectTags({ anchor: () => CONT, view: () => CONT, mount: doc.body, doc });
-  ok('A: a healthy engine starts with zero failures counted',
-    tags.failures.locate === 0 && tags.failures.place === 0, tags.failures);
-  let at = { left: NaN, top: 150 };
-  tags.show('chest', 'CHEST', () => at);
-  tags.update(0.016);
-  ok('A: a non-finite placement is COUNTED, not silently misplaced',
-    tags.failures.place === 1 && tags.failures.locate === 0, tags.failures);
-  ok('A: a tag with a non-finite position NEVER mounts (nothing to clip below the fold)',
-    !doc.body.children.some(c => c.id === 'tag-chest'), doc.body.children.length);
-  ok('A: the tag stays armed for a later good frame (life still burns)',
-    tags.active('chest'));
-  at = { left: 240, top: 150 };
-  tags.update(0.016);
-  ok('A: the tag recovers on the next finite frame and mounts',
-    doc.body.children.some(c => c.id === 'tag-chest' && c._text === 'CHEST'));
-  tags.update(TAG_FADE_S);   // clean slate for the throw leg
-  let boom = true;
-  tags.show('arch', 'ARCH', () => { if (boom) throw new Error('locate died'); return { left: 10, top: 10 }; });
-  tags.update(0.016);
-  ok('A: a locate() throw is COUNTED (visible, never a silent swallow)',
-    tags.failures.locate === 1, tags.failures);
-  ok('A: a thrown locate still means object-gone (tag unmounts gracefully)',
-    !doc.body.children.some(c => c.id === 'tag-arch'));
-}
+// A3 / A3b — the pure ObjectTags engine checks (anchoring, ASCII edge
+// arrows, fade, the locate()/NaN failure counters) — RETIRED with the
+// layer. Replaced by test/test_notags.mjs: the removal itself, the
+// run-end persistence assertions, and THE FIELD reference coverage.
 
 // A4. the flag store (invariant 4's persistence side).
 {
   const shim = new Map();
   const storage = { getItem: k => (shim.has(k) ? shim.get(k) : null), setItem: (k, v) => shim.set(k, String(v)), removeItem: k => shim.delete(k) };
   const store = makeHintStore(storage);
-  ok('A: HINT_IDS is exactly move + portal', JSON.stringify(HINT_IDS) === '["move","portal"]', HINT_IDS);
+  // PER-CONTROL INTRODUCTIONS (2026-09-16) widened the id set: move + portal
+  // (the in-context touches) plus every self-introducing control. The store
+  // treats them all the same: retire-on-demonstration, once per run,
+  // give up after 3 runs.
+  ok('A: HINT_IDS is the in-context touches + every per-control id',
+    JSON.stringify(HINT_IDS) === JSON.stringify([
+      'move', 'portal',
+      'potion-hp', 'potion-mp', 'skill-q', 'skill-w',
+      'focus', 'stance', 'pilot', 'radar', 'map', 'stats',
+      // '?' SUPPLEMENT (2026-09-16): the "?" affordance introduces itself too
+      'help',
+    ]), HINT_IDS);
   ok('A: GIVE_UP_RUNS is 3', GIVE_UP_RUNS === 3, GIVE_UP_RUNS);
   ok('A: a fresh store has neither done flags nor runs',
     !store.done('move') && store.runs('move') === 0);
@@ -282,7 +238,6 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
   };
   const tick = (s) => { for (let i = 0, n = Math.round(s * 60); i < n; i++) frame(); };
   const stripEls = () => globalThis.document.body.children.filter(c => c.id === 'hint-strip');
-  const tagEl = (kind) => globalThis.document.body.children.find(c => c.id === 'tag-' + kind);
   const OB = T.onboarding;
 
   keyHandler({ key: 'x', preventDefault() {} });   // skip the intro movie
@@ -333,24 +288,10 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
   ok('B4: the demonstrated hint left the screen immediately',
     !stripEls().some(e => e.textContent.includes('WASD or drag')), stripEls().length);
 
-  // ---- B8: object tags — chest first-sighting, anchored, clamped --------------
-  st.chests.push({ x: st.player.x + 40, y: st.player.y, age: 0 });
-  tick(0.2);
-  const tag = tagEl('chest');
-  ok('B8: a chest sighting mounts a CHEST tag', !!tag && tag.textContent.includes('CHEST'),
-    tag && tag.textContent);
-  ok('B8: the tag is inert (pointer-events:none, zero listeners)',
-    /pointer-events:\s*none/.test(tag.style.cssText || '') && !domHandlers.has(tag));
-  {
-    const left = parseFloat(tag.style.left), top = parseFloat(tag.style.top);
-    const c = elements['wrap'].getBoundingClientRect();
-    ok('B8: the tag is clamped fully inside the game container (invariant 5)',
-      left >= c.left - 0.5 && left <= c.right + 0.5 && top >= c.top - 0.5 && top <= c.bottom + 0.5,
-      { left, top, c });
-    ok('B8: the tag text carries no emoji (invariant 6)', !NO_EMOJI.test(tag.textContent));
-  }
-  tick(TAG_FADE_S + 0.2);
-  ok('B8: the tag auto-faded after its linger', !tagEl('chest'));
+  // ---- B8 (the live chest-tag leg) — RETIRED with the object-label layer
+  // (owner 2026-09-16: "a bit annoying, and sometimes they persist after the
+  // run"). Replaced by test/test_notags.mjs: no label ever mounts, none
+  // survives any run ending, THE FIELD reference still documents objects.
 
   // ---- B5: queue-not-stack — the portal hint waits for the move hint ----------
   T.startRun();
@@ -404,16 +345,13 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
   ok('B7: after ' + GIVE_UP_RUNS + ' un-demonstrated runs the move hint gives up (never shown)',
     stripEls().length === 0, stripEls().length);
 
-  // ---- Part C: DISPLAY BUG 2026-09-16 — live-path displayability -------------
-  // Owner report: "the button tooltips for tutorial never display. Only one
-  // that displays is the movement one." This leg proves, and forever pins,
-  // displayability through the REAL path for every surface in the layer: the
-  // tags arm via maybeTags() off REAL state objects and place through the
-  // REAL canvas rect at 1x, at the top of the zoom ladder (the off-screen
-  // edge-arrow case), and inside a 480x300 embed; the portal hint shows on
-  // FRESH hint flags; and a healthy run counts ZERO locate() failures — the
-  // counter that turns the old invisible failure modes (swallowed throw,
-  // 'NaNpx' placement falling below the fold) into a number.
+  // ---- Part C: the STRIP through the real path, on fresh hint flags -----------
+  // DISPLAY BUG 2026-09-16's original legs (old C1 arch/shrine tags at 1x,
+  // C2 chest edge-arrow at max zoom, C4 locate()-failure counters) were
+  // RETIRED with the ObjectTags layer (owner 2026-09-16) — test/test_notags.mjs
+  // pins the removal and the run-end persistence fault. What remains live in
+  // this layer is the STRIP, and this leg still proves it through the REAL
+  // scheduler path on FRESH hint flags, inside a 480x300 embed.
   OB.store.reset();   // fresh hint flags — the fresh-profile read
   document.getElementById('wrap').getBoundingClientRect = () =>
     ({ left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 });
@@ -424,55 +362,20 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
   T.setPilotMode('MANUAL');
   st.player.stats.xpMult = 0;
   st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  const placedInside = (kind) => {
-    const el = tagEl(kind);
-    if (!el) return { ok: false, why: 'no element mounted' };
-    const left = parseFloat(el.style.left), top = parseFloat(el.style.top);
-    const c = document.getElementById('wrap').getBoundingClientRect();
-    return { el, left, top, text: el.textContent,
-      ok: Number.isFinite(left) && Number.isFinite(top) && el.textContent.length > 0 &&
-        left >= c.left && left <= c.right && top >= c.top && top <= c.bottom };
-  };
-  // C1: 1x, 480x300 embed — the run-start first sightings (arch + shrine)
-  // come from the REAL maybeTags() with REAL state objects.
   tick(2.0);
-  const rArch = placedInside('arch');
-  ok('C1: the ARCH tag displays through the real path at 1x in a 480x300 embed (exists, finite placement inside the container)',
-    rArch.ok, rArch);
-  const rShrine = placedInside('shrine');
-  ok('C1: the SHRINE tag displays through the real path at 1x in a 480x300 embed',
-    rShrine.ok, rShrine);
-  ok('C1: both tags are inert (pointer-events:none, zero listeners)',
-    /pointer-events:\s*none/.test(rArch.el.style.cssText || '') && !domHandlers.has(rArch.el) &&
-    /pointer-events:\s*none/.test(rShrine.el.style.cssText || '') && !domHandlers.has(rShrine.el));
-  const tc0 = st.time;
-  tick(0.5);
-  ok('C1: the sim ADVANCES while the tags are visible (invariant 1 re-asserted)',
-    st.time > tc0 + 0.4, { was: tc0, now: st.time });
 
-  // C2: MAX ZOOM (ladder top) — a far-off chest clamps to the view edge with
-  // an ASCII arrow; still placed, still inside the container.
-  T.zoom.set(T.zoom.ladder[T.zoom.ladder.length - 1]);
-  st.chests.push({ x: st.player.x + 400, y: st.player.y, age: 0 });
-  tick(0.2);
-  const rChest = placedInside('chest');
-  ok('C2: the CHEST tag displays through the real path at max zoom (exists, finite placement inside the container)',
-    rChest.ok, rChest);
-  ok('C2: an off-screen object at max zoom gets the ASCII edge arrow, never a lost tag',
-    /^[<>v^] CHEST$/.test(rChest.text), rChest.text);
-
-  // C3: the PORTAL HINT on fresh flags, through the real queue: it waits for
-  // the current move hint to fade, then shows.
+  // C3: the PORTAL HINT on fresh flags, through the real scheduler: it waits
+  // for the move hint to fade AND for the per-control pacing gap (one hint
+  // per ~20s of play, PER-CONTROL INTRODUCTIONS 2026-09-16), behind whatever
+  // per-control lines armed first. Pump until it is on the strip.
   st.portal = { x: st.player.x + 200, y: st.player.y, age: 0 };
-  tick(0.2);
-  tick(HINT_FADE_S + 0.2);
+  let sawPortalHint = false;
+  for (let i = 0; i < (OB.spacing * 5 + HINT_FADE_S * 5) * 60 && !sawPortalHint; i++) {
+    tick(1 / 60);
+    if (stripEls().some(e => e.textContent.includes('portal'))) sawPortalHint = true;
+  }
   ok('C3: on fresh hint flags a portal sighting shows the portal hint through the real path',
-    stripEls().length === 1 && stripEls()[0].textContent.includes('portal'),
-    stripEls().map(e => e.textContent));
-
-  // C4: the whole healthy leg swallowed ZERO locate() failures.
-  ok('C4: a healthy run counts ZERO locate() throws and ZERO non-finite placements',
-    OB.tags.failures.locate === 0 && OB.tags.failures.place === 0, OB.tags.failures);
+    sawPortalHint, stripEls().map(e => e.textContent));
 }
 
 console.log('test_onboarding: all ' + passed + ' checks passed');

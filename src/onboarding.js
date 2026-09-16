@@ -1,9 +1,9 @@
 // HORDES — ONBOARDING REWORK (owner-approved 2026-09-16).
 //
-// The 25-card tour is replaced by 3 IN-CONTEXT touches + OBJECT TAGS, in
-// answer to the galaxy.click feedback ("tons of information thrown at you
+// The 25-card tour is replaced by IN-CONTEXT touches through one hint strip,
+// in answer to the galaxy.click feedback ("tons of information thrown at you
 // without context", "skipped like 8 tutorial blurbs because I was moving
-// manually"). This module is the ENGINE for the new layer; main.js owns the
+// manually"). This module is the ENGINE for the layer; main.js owns the
 // triggers, the demonstration detection and the storage flags.
 //
 // THE INVARIANTS (every one asserted in test/test_onboarding.mjs):
@@ -18,17 +18,18 @@
 //      engine only offers `retire` so a demonstrated hint leaves immediately.
 //   5. Anchored to the GAME CONTAINER, clamped fully inside it, never
 //      overlapping the joystick or the skill buttons (layoutStrip).
-//   6. No emojis anywhere (owner rule) — the off-screen arrow is ASCII.
+//   6. No emojis anywhere (owner rule).
 //
-// Object tags (chest / portal / arch / shrine) name the thing the player is
-// already looking at: a small floating label anchored to the OBJECT's screen
-// position, plus an ASCII edge arrow when the object is off-screen.
+// OBJECT LABELS (the old chest / portal / arch / shrine tags) were REMOVED
+// 2026-09-16 — see the note at HINT_FADE_S below.
 
 // Visible lifetime of a hint strip (spec: "auto-fade after ~5-6s").
 export const HINT_FADE_S = 5.5;
-// A tag lingers a beat longer than a hint — it rides an object the player
-// may still be walking toward.
-export const TAG_FADE_S = 6;
+// OBJECT LABELS REMOVED (owner 2026-09-16: "a bit annoying, and sometimes
+// they persist after the run"): the tag engine class and its fade constant
+// are deleted outright — no dormant copy behind a flag. Object knowledge
+// lives in the reference screen's THE FIELD page. Pinned by
+// test/test_notags.mjs (symbol absence in the shipped source).
 
 // ---------------------------------------------------------------------------
 // PURE layout: where does a w x h strip sit inside the container?
@@ -158,118 +159,6 @@ export class HintStrip {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Object tags: chest / portal / arch / shrine, anchored to the object.
-// ---------------------------------------------------------------------------
-export class ObjectTags {
-  // view: () => the canvas's CSS rect (the visible world). A tag whose
-  // object is OUTSIDE that rect clamps to the edge and carries an ASCII
-  // arrow pointing at it; a tag inside sits just above the object.
-  constructor({ anchor, view, mount, doc } = {}) {
-    this.doc = doc || globalThis.document;
-    this.anchor = anchor;
-    this.view = view;
-    this.mount = mount || (this.doc && this.doc.body);
-    this.tags = new Map();  // kind -> { label, locate, life, el }
-    // DISPLAY BUG 2026-09-16 (owner: "only the movement one displays"): this
-    // layer had TWO invisible failure modes — a locate() throw was swallowed
-    // by a bare catch (silent unmount), and a non-finite placement wrote
-    // style.left='NaNpx', which a real browser IGNORES: the element falls to
-    // its static position below the fold and overflow:hidden clips it —
-    // mounted but invisible, the exact reported symptom. Both are COUNTED
-    // here, never swallowed; a healthy run asserts zero (test_onboarding C).
-    this.failures = { locate: 0, place: 0 };
-  }
-
-  // locate: () => { left, top } CSS px (the object's screen point), or null
-  // when the object is gone (the tag leaves with it).
-  show(kind, label, locate) {
-    this.tags.set(kind, { label, locate, life: TAG_FADE_S, el: null });
-  }
-
-  active(kind) { return this.tags.has(kind); }
-
-  clear() {
-    for (const t of this.tags.values()) this._unmount(t);
-    this.tags.clear();
-  }
-
-  update(dt) {
-    for (const [kind, t] of [...this.tags]) {
-      let at = null;
-      let threw = false;
-      try { at = t.locate(); } catch { threw = true; }
-      if (threw) this.failures.locate++;   // visible, never a silent swallow
-      t.life -= dt;
-      if (!at || t.life <= 0) {
-        this._unmount(t);
-        this.tags.delete(kind);
-        continue;
-      }
-      // NaN-safe placement: never write a non-finite left/top (the browser
-      // drops 'NaNpx' and the tag renders below the fold, clipped). Count it,
-      // skip the frame — the tag stays armed and its life keeps burning.
-      if (!Number.isFinite(at.left) || !Number.isFinite(at.top)) {
-        this.failures.place++;
-        continue;
-      }
-      if (!t.el) this._mount(kind, t);
-      this._place(t, at);
-    }
-  }
-
-  _mount(kind, t) {
-    const el = this.doc.createElement('div');
-    el.id = 'tag-' + kind;
-    if (el.style && el.style.cssText !== undefined) {
-      // pointer-events:none — a tag is a label, never a button.
-      el.style.cssText =
-        'position:absolute;pointer-events:none;z-index:59;' +
-        'padding:2px 6px;font-size:10px;letter-spacing:1px;color:#ffe07a;' +
-        'background:rgba(6,6,12,0.75);border:1px solid #4a4a5c;';
-    }
-    if (this.mount && this.mount.appendChild) this.mount.appendChild(el);
-    t.el = el;
-  }
-
-  _place(t, at) {
-    let vRect;
-    try { vRect = this.view(); } catch { vRect = null; }
-    if (!vRect || !t.el) return;
-    let x = at.left, y = at.top, arrow = '';
-    const inL = vRect.left + 6, inR = vRect.right - 6;
-    const inT = vRect.top + 6, inB = vRect.bottom - 6;
-    if (x < vRect.left || x > vRect.right || y < vRect.top || y > vRect.bottom) {
-      // Off-screen: clamp to the edge and point the way (ASCII — no emojis).
-      const cx = Math.max(inL, Math.min(inR, x));
-      const cy = Math.max(inT, Math.min(inB, y));
-      const dx = x - cx, dy = y - cy;
-      arrow = Math.abs(dx) >= Math.abs(dy)
-        ? (dx > 0 ? '> ' : '< ')
-        : (dy > 0 ? 'v ' : '^ ');
-      x = cx; y = cy;
-    } else {
-      y = y - 14;   // sit just above the object
-    }
-    // Clamp inside the game container (never overlap the HUD chrome edges).
-    let cRect;
-    try { cRect = this.anchor(); } catch { cRect = null; }
-    if (cRect) {
-      x = Math.max(cRect.left + 4, Math.min(cRect.right - 40, x));
-      y = Math.max(cRect.top + 4, Math.min(cRect.bottom - 16, y));
-    }
-    t.el.textContent = arrow + t.label;
-    if (t.el.style) { t.el.style.left = x + 'px'; t.el.style.top = y + 'px'; }
-  }
-
-  _unmount(t) {
-    if (t.el) {
-      if (t.el.remove) t.el.remove();
-      else if (t.el.parentNode) t.el.parentNode.removeChild(t.el);
-      t.el = null;
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Teach-until-demonstrated flags (the persistence side of invariant 4).
@@ -281,7 +170,18 @@ export class ObjectTags {
 //             exactly how a hint gets permanently missed, so the hint keeps
 //             its chance across runs — but not forever.
 export const GIVE_UP_RUNS = 3;
-export const HINT_IDS = ['move', 'portal'];
+// PER-CONTROL INTRODUCTIONS (owner 2026-09-16) widened the id set from the
+// two in-context touches (move, portal) to every control that names itself
+// at its first relevant moment. Every id here gets the same store treatment:
+// retire-on-demonstration, at most once per run, give up after 3 runs.
+export const HINT_IDS = [
+  'move', 'portal',
+  'potion-hp', 'potion-mp', 'skill-q', 'skill-w',
+  'focus', 'stance', 'pilot', 'radar', 'map', 'stats',
+  // '?' SUPPLEMENT (2026-09-16): the "?" affordance introduces itself too —
+  // its explanation used to live only INSIDE the screen it opens (circular).
+  'help',
+];
 const keyDone = (id) => 'hordes_hint_' + id + '_done';
 const keyRuns = (id) => 'hordes_hint_' + id + '_runs';
 
