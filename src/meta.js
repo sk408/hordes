@@ -595,6 +595,17 @@ export function upgradeCost(def, currentLevel) {
   return Math.round(def.baseCost * Math.pow(def.costGrowth, currentLevel));
 }
 
+// F9 (audit round 3, 2026-09-16): THE ONE insufficient-gold gate every buyer
+// shares. The M5 audit finding was a CLASS, not a spot bug: `NaN < cost` (and
+// `undefined < cost`) evaluate FALSE, so the old `<` form let a poisoned
+// wallet PASS the check and buy for free — the NaN then survived into the save
+// and was repaired to 0 by save.js, a silent bank wipe. `gold >= cost` fails
+// CLOSED for NaN, undefined and negatives alike. All six buyers below route
+// through this one helper so the class cannot regrow as a seventh copy.
+export function canAfford(profile, cost) {
+  return profile.gold >= cost;
+}
+
 // Buy one level of an upgrade. Validates gold + level cap. Mutates profile
 // (gold -= cost, purchased[id]++). Returns true on success. WAVE-11: rows
 // tagged kind 'weapon'/'elite' dispatch to the unlock paths instead — they
@@ -608,11 +619,9 @@ export function buyUpgrade(profile, id) {
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
   const cost = upgradeCost(def, level);
-  // M5 (audit 2026-09-16): NaN < cost is FALSE, so a poisoned wallet used to
-  // pass this gate and get the level "for free" (the NaN then survived to be
-  // repaired to 0 by save.js — a silent bank wipe). >= is NaN-safe: the gate
-  // fails CLOSED.
-  if (!(profile.gold >= cost)) return false;             // insufficient gold
+  // M5 (audit 2026-09-16) -> F9 (round 3): the gate itself moved to the shared
+  // canAfford helper (one home for the NaN-fails-closed rule, all buyers).
+  if (!canAfford(profile, cost)) return false;           // insufficient gold
   profile.gold -= cost;
   profile.purchased[id] = level + 1;
   return true;
@@ -628,7 +637,7 @@ export function weaponUnlocked(profile, weaponId) {
 export function unlockWeapon(profile, weaponId) {
   const price = WEAPON_PRICES[weaponId];
   if (price === undefined || weaponUnlocked(profile, weaponId)) return false;
-  if (!(profile.gold >= price)) return false;   // M5: NaN-safe gate (see buyUpgrade)
+  if (!canAfford(profile, price)) return false;   // F9: shared NaN-safe gate
   profile.gold -= price;
   profile.unlockedWeapons.push(weaponId);
   return true;
@@ -687,7 +696,7 @@ export function eliteUnlocked(profile, eliteId) {
 export function unlockElite(profile, eliteId) {
   const def = ELITE_MODIFIERS[eliteId];
   if (!def || eliteUnlocked(profile, eliteId)) return false;
-  if (profile.gold < def.cost) return false;
+  if (!canAfford(profile, def.cost)) return false;   // F9: shared NaN-safe gate
   profile.gold -= def.cost;
   profile.unlockedElites.push(eliteId);
   return true;
@@ -775,7 +784,7 @@ export function buyApex(profile, id) {
   if (!def || !profile) return false;
   if (!apexUnlocked(profile)) return false;            // gate closed
   if (apexOwned(profile, id)) return false;            // already owned
-  if (profile.gold < def.baseCost) return false;       // insufficient gold
+  if (!canAfford(profile, def.baseCost)) return false; // F9: shared NaN-safe gate
   profile.gold -= def.baseCost;
   profile.apex.owned.push(id);
   return true;
@@ -1121,7 +1130,7 @@ export function buyCharacterUpgrade(profile, characterId, id) {
   const level = getCharacterUpgradeLevel(profile, characterId, id);
   if (level >= def.maxLevel) return false;                // level cap
   const cost = upgradeCost(def, level);
-  if (profile.gold < cost) return false;                  // insufficient gold
+  if (!canAfford(profile, cost)) return false;            // F9: shared NaN-safe gate
   profile.gold -= cost;
   addCharacterUpgrade(profile, characterId, id, 1);
   return true;
@@ -1292,7 +1301,7 @@ export function applyCharacter(stats, characterId) {
 export function unlockCharacter(profile, id) {
   const ch = CHARACTERS[id];
   if (!ch || profile.unlockedCharacters.includes(id)) return false;
-  if (profile.gold < ch.unlockCost) return false;
+  if (!canAfford(profile, ch.unlockCost)) return false;   // F9: shared NaN-safe gate
   profile.gold -= ch.unlockCost;
   profile.unlockedCharacters.push(id);
   return true;

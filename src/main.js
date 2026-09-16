@@ -3456,7 +3456,6 @@ function settleRunGold({ winBonus = 0 } = {}) {
   if (state.runSettled) return state.runSettled;
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
-  if (firstClear) profile.bestTime = Math.floor(state.time);
   // E1 (owner directive 2026-09-14): the end-of-run meta award is a FIXED
   // amount — computeRunGold is RETIRED as the payout authority (it stays a
   // pure helper with its own test). The goldMult chain (GREED x manual stakes
@@ -3468,17 +3467,33 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
   const purseBanked = profile.runPurse | 0;
   const gold = award + purseBanked + winBonus;
-  profile.gold += gold;
-  // THE DOUBLE-BANK TRAP: the purse MUST be zeroed as part of settlement, or
-  // the next run's settlement banks the same remainder a second time.
-  profile.runPurse = 0;
-  state.runPurse = 0;
-  // G9: fold the finished run into the profile (earn + grant) BEFORE the save,
-  // so the trophies and the gold they were settled alongside persist together.
-  recordRunAchievements(gold);
-  saveProfile(profile);
+  // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
+  // written LAST, after every side effect — if anything threw in between
+  // (bestTime write, banking, the achievements fold, the save), runSettled
+  // stayed null and the NEXT ending settled a SECOND time: the exact S1
+  // double-pay, re-opened by a partial failure. The claim now precedes the
+  // effects, and the effects run inside try/catch so a partial failure can
+  // neither re-open settlement nor kill the caller — it is reported and the
+  // save is re-attempted once so the run does not strand silently. The return
+  // value is the claim itself: byte-identical numbers on the normal path.
   state.runSettled = { gold, award, purseBanked, winBonus, firstClear };
-  return { gold, award, purseBanked, winBonus, firstClear };
+  try {
+    if (firstClear) profile.bestTime = Math.floor(state.time);
+    profile.gold += gold;
+    // THE DOUBLE-BANK TRAP: the purse MUST be zeroed as part of settlement, or
+    // the next run's settlement banks the same remainder a second time.
+    profile.runPurse = 0;
+    state.runPurse = 0;
+    // G9: fold the finished run into the profile (earn + grant) BEFORE the
+    // save, so the trophies and the gold they were settled alongside persist
+    // together.
+    recordRunAchievements(gold);
+    saveProfile(profile);
+  } catch (err) {
+    console.error('settleRunGold: settlement claimed but an effect failed', err);
+    try { saveProfile(profile); } catch { /* last-ditch save; nothing more to do */ }
+  }
+  return state.runSettled;
 }
 
 // ---------- RUN LIMIT + THE WIN STATE (RUN-STRUCTURE wave) -------------------
