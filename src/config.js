@@ -69,6 +69,27 @@ export const CONFIG = {
     HIT_CAP_FRAC: 0.5,    // a single hit never eats more than this x max HP
     HP_PER_LEVEL: 0.015,  // level-up adds this x the run's START max HP
     MAX_DRAIN_TICKS: 2,   // TICK latches: only this many bleed at once
+    // F1 (audit 2026-09-16): the ENEMY-side twin of HEAL_BUDGET — the VAMPIRIC
+    // elite mod's contact heal is a throughput heal with the same two defects
+    // G34/G36 closed on the player side (uncapped rate, no attribution: every
+    // lifesteal enemy within 13px healed, so N stacked elites healed N x). Same
+    // TOKEN-BUCKET mechanism (src/heal.js helpers), mirrored PER ELITE off the
+    // elite's OWN maxHp — the player-side budget/seam in heal.js is deliberately
+    // NOT widened (its exemptions are a settled contract; see heal.js header).
+    //
+    // CAP_FRAC is DERIVED, not guessed: the uncapped heal is 0.5 x touchDmg per
+    // contact / 0.6s i-frames ~= 0.83 x touchDmg/s. MEASURED on a fresh build
+    // (elite maxHp 300, player maxHp 130, typical contact hit ~29): a single
+    // vampiric elite sustained 24.0 HP/s = 8.0% of ITS OWN maxHp/s, and a
+    // 3-stack healed exactly 3x that (72 HP/s). 0.10/s is the smallest round
+    // number ABOVE the measured single-elite typical, so an ordinary lone
+    // vampiric elite heals byte-identically to before (the bucket never
+    // empties below it) while the stacked case (3x measured) and the hit-cap
+    // worst case (touchDmg = 0.5 x PLAYER maxHp scaled inversely with player
+    // safety — a big-health player made elites heal MORE, up to ~42% of the
+    // player's bar per second per elite) are bounded at 10% of the elite's own
+    // maxHp/s. A cap, not a removal: the mod still visibly sustains.
+    ELITE_VAMP_CAP_FRAC: 0.10,   // max VAMPIRIC contact heal, fraction of THE ELITE'S OWN max HP per second
   },
 
   WEAPON: {
@@ -469,6 +490,25 @@ export const CONFIG = {
   // p.invuln to it while the portal is open AND the pilot is steering
   // (AUTO_ALL and AUTO_MOVE; MANUAL gets nothing, ever).
   PORTAL: { RADIUS: 16, APPROACH: 40, STANDOFF: 24, DWELL: 0.4, INVULN: 0.1 },
+
+  // ---- M3 GROUND-ITEM OVERFLOW CAPS (audit 2026-09-16) ---------------------
+  // state.gems / state.drops / state.itemDrops were unbounded arrays with
+  // three O(n) pickup scans per frame. The caps bound the scans; the
+  // VALUE-PRESERVING merge (entities.js pushGroundCapped) means nothing is
+  // lost: at cap, the nearest same-kind ground item absorbs the newcomer's
+  // value (gems sum xp; potions merge into a count the pickup path pays out
+  // in full, respecting the run's potion cap with the remainder left on the
+  // ground). GEM_CAP 600 sits well above a dense wave's natural pile
+  // (~100-300) so ordinary play never merges; DROP_CAP 48 above any sane
+  // uncollected potion litter. ITEM_CAP 30 is the DISCLOSED FALLBACK: rare
+  // equippables are unique — merging two would destroy one — so the OLDEST
+  // ignored drop gives way when the belt is full (main.js pushItemDrop).
+  // No magnetism, no auto-collect: reachability is unchanged.
+  GROUND_ITEMS: {
+    GEM_CAP: 600,
+    DROP_CAP: 48,
+    ITEM_CAP: 30,
+  },
 
   // WAVE-8/A portal-entry cinematic: plays once when the wave's FINAL boss
   // dies (between the kill and the intermission). SKIPPABLE gates the

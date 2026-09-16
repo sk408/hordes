@@ -47,7 +47,12 @@ export const ELITE_MODS = {
   },
   VAMPIRIC: {
     id: 'VAMPIRIC', name: 'Vampiric',
-    desc: 'Heals itself for half the contact damage it deals. Kill it fast.',
+    // F1 (audit 2026-09-16): the heal is ATTRIBUTED (only the elite whose
+    // contact landed heals — a neighbour that dealt nothing gains nothing)
+    // and sustained-capped at CONFIG.SURVIVAL.ELITE_VAMP_CAP_FRAC of ITS OWN
+    // max HP per second (the G36 token-bucket pattern, per-elite). Below the
+    // cap it is exactly half the contact damage it deals, as before.
+    desc: 'Heals itself for half the contact damage it deals (its own touch only, at a bounded rate). Kill it fast.',
     speedMult: 1.0, hpMult: 1.0,
     onDeathSplit: null, lifesteal: 0.5,
     dropGuaranteed: true, visual: 'leech',

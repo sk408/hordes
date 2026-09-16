@@ -225,7 +225,8 @@ console.log('0.98 D2 — AN OWNED PILOT KEEPS ITS ABILITY DESCRIPTION (DOM)');
 
   // ---- copy truthfulness (0.98: I is the ONE stats key; S is movement) ----
   // The keyboard card is what a player reads before their first run.
-  clickCard('SETUP');                        // U1: the reference lives behind the SETUP door
+  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again — one
+  // tap from the menu, not two.
   clickCard('HOW TO PLAY');
   ok(/I — field report \(the ONE stats key\)/.test(html()),
     'HOW TO PLAY names I as the ONE stats key');
@@ -291,8 +292,14 @@ console.log('0.98 COPY — THE STATS / S BINDING IN EVERY STATIC SURFACE');
   ok(/'I stats &middot; ESC close \/ pause'/.test(main) &&
      /'I stats \(S = move down\) &middot; ESC close \/ pause'/.test(main),
     'both hint panels name I as the stats key (MANUAL warns S is movement)');
-  ok(/STATS \(I\) opens the FIELD REPORT/.test(main),
-    'the in-run stats coachmark names I');
+  // ONBOARDING REWORK (2026-09-16, owner-approved): the scheduled in-run
+  // coachmarks are deleted (hint layer replaces them, test_onboarding.mjs).
+  // The stats coach's copy ('STATS (I) opens the FIELD REPORT') retired with
+  // it — what remains is the NEGATIVE: no coach copy may survive in main.js
+  // teaching any stats binding, because the binding is taught by the HOW TO
+  // PLAY keyboard card + the live hint panels, both asserted above.
+  ok(!/opens the FIELD REPORT/.test(main),
+    'the retired stats coachmark left no copy behind (the hint layer owns the teaching now)');
   // And the truthful MANUAL warning survives the sweep (not over-corrected).
   ok(/S = move down/.test(main), 'the MANUAL hint still tells the player what S does');
 }

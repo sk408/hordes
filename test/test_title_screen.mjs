@@ -145,16 +145,18 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
 check('the menu carries START GAME, EXIT GAME as the LAST card, and every existing card', () => {
   const n = names();
   // U1 (owner 2026-09-14): six/seven top-level cards after the subnav split —
-  // TROPHIES/BESTIARY moved behind PROGRESS, CHALLENGE/STAGE/SETTINGS/HOW TO
-  // PLAY behind SETUP. This assertion is retargeted, NOT weakened: the moved
-  // cards are asserted below, one level down.
-  for (const want of ['START GAME', 'SHOP', 'CHARACTERS', 'PROGRESS', 'SETUP', 'EXIT GAME']) {
+  // TROPHIES/BESTIARY moved behind PROGRESS, CHALLENGE/STAGE/SETTINGS behind
+  // SETUP. This assertion is retargeted, NOT weakened: the moved cards are
+  // asserted below, one level down. ONBOARDING REWORK (2026-09-16): HOW TO
+  // PLAY moved BACK to the title (one tap from the menu — the reference must
+  // be findable), so it is asserted present, not moved.
+  for (const want of ['START GAME', 'SHOP', 'CHARACTERS', 'PROGRESS', 'SETUP', 'HOW TO PLAY', 'EXIT GAME']) {
     assert.ok(n.includes(want), 'card present: ' + want);
   }
   assert.equal(n[n.length - 1], 'EXIT GAME', 'EXIT GAME is the LAST card');
   assert.ok(!n.includes('PLAY'), 'the old PLAY name is gone');
   // The pile that made the menu eleven cards is gone from the top level.
-  for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'SETTINGS', 'HOW TO PLAY']) {
+  for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'SETTINGS']) {
     assert.ok(!n.includes(moved), 'moved behind a submenu, not on the title: ' + moved);
   }
 });
@@ -168,7 +170,7 @@ check('U1 submenus: PROGRESS carries TROPHIES + BESTIARY, SETUP carries the run 
 
   cardWith('SETUP').click();
   const s = names();
-  for (const want of ['CHALLENGE', 'STAGE', 'SETTINGS', 'HOW TO PLAY', 'BACK']) {
+  for (const want of ['CHALLENGE', 'STAGE', 'SETTINGS', 'BACK']) {
     assert.ok(s.includes(want), 'SETUP holds: ' + want);
   }
   assert.equal(s[s.length - 1], 'BACK', 'BACK is the LAST card in SETUP');

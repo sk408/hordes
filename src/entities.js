@@ -173,3 +173,27 @@ export function makeGem(x, y, xp) {
   const at = clampLootToArena(x, y);
   return { x: at.x, y: at.y, xp };
 }
+
+// M3 (audit 2026-09-16): the ground-item arrays (gems / potion drops / item
+// drops) were UNBOUNDED — a 10,000-corpse wave left 10,000 gems on the floor
+// and every pickup scan is O(n) per frame. VALUE-PRESERVING overflow: when
+// the array is at cap, the new item is ABSORBED into the NEAREST same-kind
+// entry — the proximity-chosen SURVIVOR keeps its own position (the pile
+// stays where the pile is) and the caller's `absorb` moves the value across,
+// so the total collectable value never changes. Below the cap this is a
+// plain push (single-item behaviour byte-identical).PURE apart from the arr
+// mutation the caller asked for.
+export function pushGroundCapped(arr, item, cap, kindOf, absorb) {
+  if (arr.length < cap) { arr.push(item); return item; }
+  const kind = kindOf(item);
+  let best = -1, bd = Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    if (kindOf(arr[i]) !== kind) continue;
+    const dx = arr[i].x - item.x, dy = arr[i].y - item.y;
+    const d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = i; }
+  }
+  if (best < 0) { arr.push(item); return item; }   // no same-kind peer (never for gems/potions)
+  absorb(arr[best], item);
+  return arr[best];
+}

@@ -28,34 +28,29 @@
 // HEADLESS: every DOM touch goes through the `doc` (default
 // globalThis.document) and storage is injectable — test_tour.mjs feeds
 // fakes, exactly the meta.js pattern.
+// ONBOARDING REWORK (owner-approved 2026-09-16): the tour family is the FOUR
+// KEPT CARDS — each rides a screen that already freezes the sim by MODE (a
+// card on a modal is in context; a card over live play was the complaint).
+// Retired with the owner's explicit decision: stage1 (the 7 title cards),
+// the 4 intermission cards, and the 10 in-run timer/event cards (hud, pilot,
+// focus, stance, move, skills, potions, stats, cog, edge, chest, portal,
+// arch, shrine) — replaced by the non-pausing hint/tag layer in
+// src/onboarding.js and the self-labelling screens themselves. The old
+// storage flags a browser may still hold are simply never read again.
 export const TOUR_KEYS = {
-  stage1: 'hordes_tour_stage1',   // menu tour seen (done OR skipped)
-  hud: 'hordes_tour_hud',         // stage-2 coachmarks, each fires once
-  pilot: 'hordes_tour_pilot',
-  focus: 'hordes_tour_focus',     // WAVE-22 (rev 4): the doctrine levers +
-  stance: 'hordes_tour_stance',   // everything else in CONTROLS_INVENTORY's
-  move: 'hordes_tour_move',       // MUST-COACHMARK list — the inventory's
-  skills: 'hordes_tour_skills',   // coverage column is the acceptance bar.
-  potions: 'hordes_tour_potions',
-  stats: 'hordes_tour_stats',
-  cog: 'hordes_tour_cog',
+  // the DRAFT card (level-up): the draft IS a modal, so a card there is in
+  // context — one of the three kept in-context touches.
   draft: 'hordes_tour_draft',
-  edge: 'hordes_tour_edge',
-  // world interactables — fire the moment each first exists on the field
-  chest: 'hordes_tour_chest',
-  portal: 'hordes_tour_portal',
-  arch: 'hordes_tour_arch',
-  shrine: 'hordes_tour_shrine',
-  // overlay screens that arrive with zero onboarding today
-  intermission: 'hordes_tour_intermission',
+  // the death card: it carries "gold is banked even when you die" — it
+  // prevents a fear-of-loss decision.
   death: 'hordes_tour_death',
-  settings: 'hordes_tour_settings',   // END RUN card, first in-run settings visit
-  // G26 pre-run loadout: the just-in-time door coach. Owner 2026-09-15: "can it
-  // present the coaching after the first weapon buyable is bought?" — it fires
-  // the FIRST time the UNLOCKED-WEAPON SET grows beyond the starter kit (a
-  // weapon shop purchase or grant), never from the title walk, once only. The
-  // dedicated event test in test/test_g26_loadout.mjs pays for the
-  // DISCOVERY_EXEMPT this door carries in test_tour.mjs.
+  // END RUN card, first in-run settings visit: "END RUN banks your gold".
+  settings: 'hordes_tour_settings',
+  // G26 pre-run loadout: the just-in-time door coach (owner 2026-09-15: "can
+  // it present the coaching after the first weapon buyable is bought?").
+  // Fires the FIRST time the UNLOCKED-WEAPON SET grows beyond the starter
+  // kit, never from the title walk, once only; pinned by
+  // test/test_g26_loadout.mjs.
   loadout: 'hordes_tour_loadout',
 };
 
@@ -79,7 +74,6 @@ export function setTourFlag(key, val, storage) {
   const s = storage || detectStorage();
   try { val ? s.setItem(key, '1') : s.removeItem(key); } catch { /* best effort */ }
 }
-export function tourStage1Done(storage) { return tourFlag(TOUR_KEYS.stage1, storage); }
 export function tourDone(storage) {
   return Object.values(TOUR_KEYS).every((k) => tourFlag(k, storage));
 }

@@ -5,7 +5,30 @@ import {
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp,
 } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
+
+// ---------- M3 (audit 2026-09-16): ground-item overflow caps ----------
+// The three ground arrays were unbounded (10k corpses -> 10k gems, three
+// O(n) scans/frame). EVERY push now routes through one of these wrappers:
+//   pushGem / pushDrop — merge-on-overflow into the NEAREST same-kind item
+//     (entities.js pushGroundCapped), VALUE-PRESERVING: gems sum xp; potions
+//     merge into a count the pickup path pays out in full (below cap, plain
+//     push — single-item behaviour byte-identical).
+//   pushItemDrop — the DISCLOSED FALLBACK: rare equippables are unique, a
+//     merge would destroy one, so the OLDEST drop gives way at ITEM_CAP.
+// No magnetism, no auto-collect — reachability and pickup rules unchanged.
+function pushGem(gm) {
+  return pushGroundCapped(state.gems, gm, C.GROUND_ITEMS.GEM_CAP,
+    () => 'gem', (s, n) => { s.xp += n.xp; });
+}
+function pushDrop(d) {
+  return pushGroundCapped(state.drops, d, C.GROUND_ITEMS.DROP_CAP,
+    x => x.kind, (s, n) => { s.count = (s.count || 1) + (n.count || 1); });
+}
+function pushItemDrop(d) {
+  if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
+  state.itemDrops.push(d);
+}
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
@@ -54,7 +77,11 @@ import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
 import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
-import { Tour, TOUR_KEYS, tourFlag, setTourFlag, tourStage1Done, clearTourFlags } from './tour.js';
+import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.js';
+// ONBOARDING REWORK (owner-approved 2026-09-16): the engine for the
+// non-pausing, non-capturing hint strip + object tags (see its header for
+// the six invariants).
+import { HintStrip, ObjectTags, makeHintStore, HINT_IDS } from './onboarding.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
 // volleyId; the mercy rule + 3-hit damage live there. NOTE (RUN-STRUCTURE):
@@ -609,6 +636,17 @@ function applyStancePref() {
   manualController.stance = s;
   return s;
 }
+// AUTO-PICK PREFERENCE — RETIRED (owner 2026-09-16, verbatim): "I didn't want
+// the card choice to be instant because I wanted to slow progress for someone
+// playing too idle so they dont miss the whole game and then complain they are
+// too powerful when they didn't witness the growth." An earlier brief asked
+// for an INSTANT/6S/MANUAL settings row riding a 'hordes_autopick' key; that
+// brief was CANCELLED and the preference surface is removed whole — the draft
+// delay is a PACING MECHANIC, not an inconvenience. The shipped behaviour is
+// the pre-brief one: a FIXED C.AUTOPILOT.DRAFT_TIMEOUT countdown for AUTO
+// players, suspended (not reset) in MANUAL, and MANUAL pilots never
+// auto-pick. Nothing may read or write 'hordes_autopick' in any form
+// (setting, debug toggle, hidden key). test/test_autopick_pref.mjs pins this.
 
 // Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
 // Also snaps the knob visual back to center.
@@ -1203,25 +1241,8 @@ function openIntermission(opts = {}) {
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
       });
   }
-  // WAVE-22 (rev-4 item 3): intermission lands at the end of wave 1 with
-  // zero onboarding — coach it ONCE (the flag makes re-renders after a chest
-  // buy / stakes push silent; 'intermission' mode already freezes the sim).
-  if (!tourFlag(TOUR_KEYS.intermission)) {
-    startCoach([
-      { id: 'inter-continue',
-        text: 'Wave cleared — CONTINUE (C or Enter) heads into the next.',
-        target: () => cardByTitle('CONTINUE') },
-      { id: 'inter-chest',
-        text: 'Paid chests gamble gold for items — real odds on the cards: 40 / 25 / 10% nothing by tier.',
-        target: () => cardByTitle('BRONZE CHEST') },
-      { id: 'inter-blessing',
-        text: 'BLESSINGS are free run powers — take one each wave, or leave it.',
-        target: () => [...ovCards.children].find(c => (c.innerHTML || '').includes('BLESSING')) || null },
-      { id: 'inter-stakes',
-        text: 'RAISE THE STAKES: +1 heat — harder, faster foes — buys a permanent run gold multiplier.',
-        target: () => cardByTitle('RAISE THE STAKES') },
-    ], TOUR_KEYS.intermission);
-  }
+  // ONBOARDING REWORK 2026-09-16: the 4 intermission cards are RETIRED —
+  // that screen labels itself (CONTINUE, chest, blessing, stakes).
 }
 
 // ---------- BLESSING RE-PICK (Sk408 playtest) --------------------------------
@@ -1774,6 +1795,10 @@ function update(dt) {
       if (len < C.PORTAL.RADIUS) {
         po.entering = true;
         po.enterT = 0;
+        // ONBOARDING (teach-until-demonstrated): entering the portal IS the
+        // taught action — the portal hint retires permanently, now.
+        hintStore.setDone('portal');
+        hintStrip.retire('portal');
       } else if (len > C.PORTAL.STANDOFF) {
         // One-way approach: the step never overshoots the standoff ring.
         const step = Math.min(C.PORTAL.APPROACH * dt, len - C.PORTAL.STANDOFF);
@@ -2103,12 +2128,33 @@ function update(dt) {
       state.runCounts.waveTookDamage = true;   // G9: contact landed this wave
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: ANY hp loss ends the rampage streak
-      // VAMPIRIC elite mod (elite_mods.js): touching elites heal themselves a
-      // fraction of the contact damage they dealt.
-      for (const e of state.enemies) {
-        if (e.hp > 0 && (e.lifesteal || 0) > 0 && Math.hypot(p.x - e.x, p.y - e.y) < 13) {
-          e.hp = Math.min(e.maxHp, e.hp + touchDmg * e.lifesteal);
+      // F1 (audit 2026-09-16): the VAMPIRIC elite mod's contact heal, now
+      // ATTRIBUTED and RATE-CAPPED. Attribution: only the elite that actually
+      // landed THIS touch (touchKiller, selected above by largest hit) heals —
+      // the old proximity scan (<13px) healed every lifesteal enemy near the
+      // player, so N stacked vampiric elites healed N x per hit (measured 3x),
+      // and the per-enemy scan is gone entirely (the F2 perf nit in the same
+      // lines: O(1) now). Cap: the same token-bucket mechanism the G36 player
+      // budget uses (heal.js), mirrored PER ELITE off the ELITE'S OWN maxHp —
+      // refills at C.SURVIVAL.ELITE_VAMP_CAP_FRAC * e.maxHp per second, so a
+      // lone elite heals byte-identically in ordinary play (measured typical
+      // 8%/s sits under the 10%/s cap) while stacking and the hit-cap worst
+      // case are bounded. Lazy bucket: no per-frame cost, initialized full on
+      // the elite's first vampiric contact.
+      if (touchKiller && touchKiller.hp > 0 && (touchKiller.lifesteal || 0) > 0) {
+        const capFrac = C.SURVIVAL.ELITE_VAMP_CAP_FRAC;
+        const budget1s = capFrac * touchKiller.maxHp;
+        if (touchKiller.vampBudget === undefined) {
+          touchKiller.vampBudget = budget1s;      // starts full (startRun precedent)
+          touchKiller.vampT = state.time;
+        } else {
+          touchKiller.vampBudget = refillHealBudget(touchKiller.vampBudget,
+            state.time - touchKiller.vampT, touchKiller.maxHp, capFrac);
+          touchKiller.vampT = state.time;
         }
+        const heal = healFromBudget(touchKiller.vampBudget, touchDmg * touchKiller.lifesteal);
+        touchKiller.vampBudget -= heal;
+        touchKiller.hp = Math.min(touchKiller.maxHp, touchKiller.hp + heal);
       }
       if (p.hp <= 0) { lastDamageSource = { ...shotSrc(touchKiller || {}), cause: 'contact' }; die(); return; }
     }
@@ -2211,7 +2257,7 @@ function update(dt) {
       // the same corpse already fired; stated in the report.
       const zapBoom = e.zapLethal ? stormReaperBlast(state) : null;
       if (zapBoom) flyingGuard('blast', () => applyBlast(state, e.x, e.y, zapBoom));
-      state.gems.push(makeGem(e.x, e.y, e.xp));
+      pushGem(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
       // Alchemist's Blessing curse: dropChanceMult scales the whole chance.
@@ -2227,7 +2273,7 @@ function update(dt) {
           C.POTIONS.ADAPTIVE.REF_KPS, C.POTIONS.ADAPTIVE.FLOOR_FRAC);
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
-      if (drop) state.drops.push(drop);
+      if (drop) pushDrop(drop);
       if (e.boss) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
@@ -2249,7 +2295,7 @@ function update(dt) {
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
         const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
-        state.itemDrops.push({ x: bossLoot.x, y: bossLoot.y,
+        pushItemDrop({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
         maybeGrantToken('drop');   // EVOLUTION TOKEN, world-drop channel (1 in 500)
         state.wave.pendingClear = true;
@@ -2277,7 +2323,7 @@ function update(dt) {
           ((p.choices && p.choices.itemDropMult) || 1);
         if (e.eliteMod || Math.random() < chance) {
           const at = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
-          state.itemDrops.push({
+          pushItemDrop({
             x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
@@ -2362,7 +2408,7 @@ function update(dt) {
   if (state.wave.pendingClear) {
     state.wave.pendingClear = false;
     for (const o of state.enemies) {
-      if (o.hp > 0) state.gems.push(makeGem(o.x, o.y, o.xp));
+      if (o.hp > 0) pushGem(makeGem(o.x, o.y, o.xp));
     }
     state.enemies.length = 0;
     state.enemyShots.length = 0;   // no post-clear potshots
@@ -2487,7 +2533,7 @@ function update(dt) {
       // ONE world-drop pickup path owns the equip decision, so a full belt
       // still gets the normal swap-or-ignore rule rather than a second
       // equip code path.
-      state.itemDrops.push({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
+      pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
       toast('LEGENDARY: ' + ev.item.name.toUpperCase(), RARITY_TINTS.LEGENDARY);
       audio.playSfx('levelup');
     }
@@ -2509,8 +2555,15 @@ function update(dt) {
     const d = state.drops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
       if (p.potions[d.kind] < state.potionCap) {   // G11: the run's rule ceiling
-        p.potions[d.kind]++;
-        state.drops.splice(i, 1);
+        // M3: a merged ground potion carries a count (overflow merges same-
+        // kind drops value-preservingly). Pay out as many as the potion cap
+        // allows; the remainder STAYS on the ground — value is never created
+        // or destroyed. count 1 (the never-merged case) is byte-identical.
+        const want = d.count || 1;
+        const take = Math.min(want, state.potionCap - p.potions[d.kind]);
+        p.potions[d.kind] += take;
+        if (take >= want) state.drops.splice(i, 1);
+        else d.count = want - take;
         toast((d.kind === 'hp' ? 'HEALTH' : 'MANA') + ' POTION FOUND');
         // G8 step 2 BLOOD HARVEST rewrite: the PICKUP retaliates. Hooked on
         // the collect path (NOT drinkPotion — the ask is "health pickups also
@@ -2764,6 +2817,10 @@ function maybeGrantToken(channel) {
 const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
 
 function openDraft() {
+  // A queued/new draft supersedes any live pick ceremony — the cards are
+  // re-rendered below, so the ceremony must not tear down what it no longer
+  // owns (endDraftCeremony(false) leaves the display to this presenter).
+  if (draftCeremony) endDraftCeremony(false);
   state.mode = 'draft';
   ovTitle.className = '';
   // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
@@ -2937,6 +2994,12 @@ function draftFocusStep(d) {
 // offer. There is no first-activation branch to make — see the directive above.
 function activateDraftCard(u) {
   if (!u) return;
+  // CEREMONY GUARD: after pick() resolves a draft the overlay can stay up
+  // briefly for the ceremony while the sim already runs underneath. The
+  // still-visible cards keep their onclick, so a second tap in that window
+  // arrives HERE — it must be inert (the draft is closed; the number keys are
+  // already gated by the 'draft' mode router, this closes the pointer path).
+  if (state.mode !== 'draft') return;
   pick(u);
 }
 
@@ -3030,7 +3093,18 @@ function pick(u) {
   state.pendingDrafts--;
   if (state.pendingDrafts > 0) { openDraft(); return; }
   draftFocus = -1;
-  overlay.style.display = 'none';
+  // DRAFT PICK CEREMONY: the PICK is unchanged and lands THIS call — mode
+  // flips now, so a MANUAL tap resumes with zero added latency and the
+  // G30 auto-pick timing/count contracts are untouched. The ceremony is pure
+  // presentation: the resolved cards stay up over the LIVE game for
+  // DRAFT_CEREMONY_S (the chosen card lifts, the others disintegrate), then
+  // the frame loop tears the overlay down. Reduced motion: no ceremony at
+  // all — the overlay drops exactly as it did before the feature.
+  if (draftCeremonyEnabled()) {
+    startDraftCeremony(u);
+  } else {
+    overlay.style.display = 'none';
+  }
   state.mode = 'playing';
   clearDraftAutoPick();   // G30: the draft resolved — no timer may outlive it
 }
@@ -3071,7 +3145,7 @@ function draftObstructed() {
   // MANUAL never auto-picks: the countdown is suspended (not reset), so a
   // flip to AUTO mid-draft owes the player the full unspent window.
   if (normalizePilotMode(state.pilotMode) === 'MANUAL') return true;
-  if (coachActive() || (menuTour && menuTour.active())) return true;
+  if (coachActive()) return true;
   try { return !!(typeof document !== 'undefined' && document && document.hidden); }
   catch { return false; }
 }
@@ -3080,6 +3154,9 @@ function armDraftAutoPick(offers) {
   // Armed on every presentation (MANUAL included): the TICK and the LINE are
   // what gate on AUTO, so a player who flips AUTO mid-draft gets the full
   // window from that moment, and a MANUAL player gets nothing at all.
+  // The window is the FIXED DRAFT_TIMEOUT (the retired INSTANT preference
+  // armed at 0 — the delay is the pacing feature, see the retirement note
+  // above; no reachable state may shorten it).
   draftOffers = Array.isArray(offers) ? offers : [];
   draftTimer = { left: C.AUTOPILOT.DRAFT_TIMEOUT, done: false };
   updateDraftCountdownLine();
@@ -3143,6 +3220,84 @@ function tickDraftAutoPick(dt) {
   updateDraftCountdownLine();
 }
 
+// ---------- DRAFT PICK CEREMONY (owner 2026-09-16) -----------------------------
+// The chosen card scales/brightens and settles; the others disintegrate with a
+// STEPPED (crackle) fade — never a smooth ease. The whole ceremony is
+// presentation over an already-resolved draft:
+//   * the PICK lands in pick() this frame (mode flips there — zero added
+//     latency for a manual tap, byte-identical auto-pick timing/count);
+//   * the overlay merely STAYS UP DRAFT_CEREMONY_S over the live game, with
+//     pointer-events off so taps pass through to the running sim;
+//   * frame-driven off the frame loop's wall-clock dt (same rule as
+//     tickDraftAutoPick) — no setTimeout, deterministic headless;
+//   * ONE timing constant + ONE class-name pair (the CSS in index.html and
+//     the tests agree on exactly these names);
+//   * any screen that takes the overlay over (a queued draft, the field
+//     report, death, the title) supersedes the ceremony — it stands down
+//     without touching what that screen drew;
+//   * prefers-reduced-motion: the ceremony is cut to the resolved state (the
+//     overlay drops at the pick, exactly the pre-ceremony behaviour). The
+//     query is scoped to THIS animation only — nothing else reads it.
+const DRAFT_CEREMONY_S = 0.45;            // <= 0.5s by spec; covers lift+settle
+const CEREMONY_CHOSEN_CLS = 'card-picked';   // the chosen card's emphasis mark
+const CEREMONY_BURN_CLS = 'card-burn';       // the others' disintegration mark
+const CEREMONY_FLAG_CLS = 'draft-ceremony';  // the overlay's own ceremony flag
+let draftCeremony = null;                    // { left } | null
+
+function draftCeremonyEnabled() {
+  try {
+    return !(typeof window !== 'undefined' && window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch { return true; }
+}
+
+function setDraftCeremonyFlag(on) {
+  if (overlay.classList && typeof overlay.classList.add === 'function') {
+    if (on) overlay.classList.add(CEREMONY_FLAG_CLS);
+    else overlay.classList.remove(CEREMONY_FLAG_CLS);
+    return;
+  }
+  const cur = String(overlay.className || '').split(' ').filter(c => c && c !== CEREMONY_FLAG_CLS);
+  if (on) cur.push(CEREMONY_FLAG_CLS);
+  overlay.className = cur.join(' ');
+}
+
+function startDraftCeremony(u) {
+  const chosen = Array.from(ovCards.children).find(el => el._draftOffer === u) || null;
+  for (const el of Array.from(ovCards.children)) {
+    el.className = String(el.className || '') + ' ' +
+      (el === chosen ? CEREMONY_CHOSEN_CLS : CEREMONY_BURN_CLS);
+  }
+  setDraftCeremonyFlag(true);
+  overlay.style.pointerEvents = 'none';   // taps pass through to the live game
+  draftCeremony = { left: DRAFT_CEREMONY_S };
+}
+
+// `ownOverlay` true only when the ceremony still owns the screen (mode stayed
+// 'playing'): it hides the overlay and clears the cards. When superseded, the
+// taking screen owns all of that — only the ceremony's own state is dropped.
+function endDraftCeremony(ownOverlay) {
+  if (!draftCeremony) return;
+  draftCeremony = null;
+  setDraftCeremonyFlag(false);
+  overlay.style.pointerEvents = '';
+  for (const el of Array.from(ovCards.children)) {
+    el.className = String(el.className || '')
+      .split(' ').filter(c => c && c !== CEREMONY_CHOSEN_CLS && c !== CEREMONY_BURN_CLS).join(' ');
+  }
+  if (ownOverlay) {
+    ovCards.innerHTML = '';
+    overlay.style.display = 'none';
+  }
+}
+
+function tickDraftCeremony(dt) {
+  if (!draftCeremony) return;
+  if (state.mode !== 'playing') { endDraftCeremony(false); return; }
+  draftCeremony.left -= dt;
+  if (draftCeremony.left <= 0) endDraftCeremony(true);
+}
+
 // ---------- EVOLUTION draft (wave-7/A, evolutions.js) -----------------------
 // Surfaced the moment a weapon hits Lv8 AND its required item kind is
 // equipped AND a token is banked. The card is built from describeEvolution;
@@ -3167,6 +3322,12 @@ function maybeOpenEvolve() {
   if (state.mode !== 'playing') return;
   const cands = evolutionCandidates();
   if (cands.length === 0) return;
+  // The evolve overlay bypasses openMenu — supersede a live pick ceremony
+  // here too (it would otherwise block the evolve cards' clicks for a frame
+  // with its pointer-events gate). Placed AFTER the candidates gate: this
+  // function runs every update(), and only an ACTUAL evolve screen takes the
+  // overlay over.
+  if (draftCeremony) endDraftCeremony(false);
   state.mode = 'evolve';
   overlay.style.display = 'flex';
   ovTitle.textContent = 'EVOLUTION';
@@ -3477,6 +3638,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
   state.runSettled = { gold, award, purseBanked, winBonus, firstClear };
+  // ONBOARDING (teach-until-demonstrated): the run ENDED — every hint that
+  // never got its demonstration burns one of its 3 chances. Bumped beside the
+  // claim (before the effects) so a partial settle failure cannot skip it.
+  for (const id of HINT_IDS) if (!hintStore.done(id)) hintStore.bumpRuns(id);
   try {
     if (firstClear) profile.bestTime = Math.floor(state.time);
     profile.gold += gold;
@@ -3929,6 +4094,9 @@ function openMenu(mode = 'menu') {
   // Common frame for every meta screen; caller fills ovCards. WAVE-17: the
   // in-run SETTINGS screen passes its own pause mode ('settings') so the
   // frame loop keeps NOT ticking — identical pause contract to 'stats'.
+  // DRAFT PICK CEREMONY: any meta screen supersedes a live ceremony — it
+  // stands down without touching what this screen is about to draw.
+  if (draftCeremony) endDraftCeremony(false);
   state.mode = mode;
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
@@ -3951,13 +4119,13 @@ function openMenu(mode = 'menu') {
   overlay.style.pointerEvents = '';
 }
 
-// ---------- WAVE-21 FIRST-RUN TOUR (docs/FIRST_RUN_TOUR_2026-09-11.md) ------
-// Staged spotlight walkthrough. Stage 1 = title cards, first load only; stage
-// 2 = in-run coachmarks that fire the first time each element matters, with
-// the sim PAUSED under them (frame() gates update on coachActive()). The doc's
-// "mode select"/"division selector" have no on-screen elements — the tour's
-// never-break rule skips them; EXIT-RUN is taught at the in-run cog (the only
-// place it exists).
+// ---------- FIRST-RUN TOUR — the KEPT cards (onboarding rework 2026-09-16) --
+// The staged walkthrough lost its stage 1 (title cards) and its in-run
+// schedule to the owner-approved onboarding rework: every labelled button and
+// every timer-scheduled card was "information without context". What remains
+// are the four KEPT cards — draft (level-up), death, loadout, first-cog END
+// RUN — each on a screen that already freezes the sim by MODE, plus the
+// non-pausing hint/tag layer in src/onboarding.js (see updateOnboarding).
 const cardByTitle = (t) => [...ovCards.children].find(c => (c.innerHTML || '').includes(`>${t}<`));
 
 // Canvas-region pseudo-target: a rect in the 480x300 native space projected
@@ -3977,57 +4145,104 @@ function canvasRegion(x, y, w, h) {
   };
 }
 
-let menuTour = null;
 let coach = null;
 function coachActive() { return !!(coach && coach.active()); }
 
-function maybeStartMenuTour() {
-  if (tourStage1Done() || menuTour || (state.mode !== 'menu' && state.mode !== 'title')) return;
-  const finish = () => { setTourFlag(TOUR_KEYS.stage1, true); menuTour = null; };
-  // G12: the tour is built against the LIVE title menu, so the fresh-browser
-  // LOAD FROM DISK card is taught exactly when it exists (a step for a missing
-  // card would be skipped by the never-break rule, but naming it here keeps
-  // the taught-count contract exact: every title card, or a recorded
-  // discovery exemption).
-  const steps = [
-    { id: 'START', text: 'START GAME begins a run — pilot the horde as long as you can.',
-      target: () => cardByTitle('START GAME') },
-  ];
-  if (!hasLocalSave()) {
-    steps.push({ id: 'LOAD', text: 'LOAD FROM DISK imports a saved profile from another browser.',
-      target: () => cardByTitle('LOAD FROM DISK') });
+// ---------- ONBOARDING REWORK (owner-approved 2026-09-16) ----------------------
+// The 25-card tour is retired. What remains: the KEPT cards (draft at level-up,
+// death, loadout, first-cog END RUN — all on screens that already freeze the
+// sim by mode), the 3 IN-CONTEXT touches below, and the OBJECT TAGS. The
+// players' words this answers: "tons of information thrown at you without
+// context", "I must've skipped like 8 tutorial blurbs because I was moving
+// manually". The hint engine (src/onboarding.js) NEVER pauses the sim and
+// NEVER captures input — there is no shade, no swallow-all handler, no
+// NEXT/BACK/SKIP: nothing to dismiss, so nothing can be closed by accident.
+const hintStore = makeHintStore(prefStorage);
+const onboardingAnchor = () => {
+  const wrap = document.getElementById('wrap');
+  return (wrap && typeof wrap.getBoundingClientRect === 'function')
+    ? wrap.getBoundingClientRect() : { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 };
+};
+// The strip keeps clear of the joystick and the touch buttons (invariant 5).
+const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog'];
+const onboardingAvoid = () => ONBOARDING_AVOID_IDS
+  .map(id => document.getElementById(id))
+  .filter(el => el && typeof el.getBoundingClientRect === 'function')
+  .map(el => el.getBoundingClientRect())
+  .filter(r => r && (r.width > 0 || r.height > 0));
+const hintStrip = new HintStrip({ anchor: onboardingAnchor, avoid: onboardingAvoid });
+const objTags = new ObjectTags({ anchor: onboardingAnchor, view: () => canvas.getBoundingClientRect() });
+
+// Run-scoped onboarding state (reset in startRun; NOT state.* — nothing here
+// needs to survive the run, and the state-reset guard stays untouched).
+let hintShownRun = {};   // hint id -> already shown this run (max once per run)
+let hintMoveTime = 0;    // seconds of demonstrated movement this run
+let hintPrevPos = null;  // last player position, for the displacement test
+let tagSeenRun = {};     // tag kind -> already tagged this run
+
+function resetOnboarding() {
+  hintShownRun = {}; hintMoveTime = 0; hintPrevPos = null; tagSeenRun = {};
+  hintStrip.clear(); objTags.clear();
+}
+
+// A hint may show at most once per run; teach-until-demonstrated lives in the
+// hintStore (performed-action flag + give-up-after-3-runs counter).
+function maybeHint(id, trigger, text) {
+  if (!trigger || hintShownRun[id] || hintStore.done(id) || hintStore.runs(id) >= 3) return;
+  hintShownRun[id] = true;
+  hintStrip.show(id, text);
+}
+
+// Object tags: name the thing the player is already looking at, on FIRST
+// SIGHTING per run (chest / portal / arch / shrine).
+const TAG_SOURCES = [
+  ['chest', 'CHEST', () => state.chests[0] || null],
+  ['portal', 'PORTAL', () => state.portal],
+  ['arch', 'ARCH', () => state.arches[0] || null],
+  ['shrine', 'SHRINE', () => (state.shrine && !state.shrine.used) ? state.shrine : null],
+];
+function maybeTags() {
+  for (const [kind, label, get] of TAG_SOURCES) {
+    if (tagSeenRun[kind]) continue;
+    const o = get();
+    if (!o) continue;
+    tagSeenRun[kind] = true;
+    const obj = o;   // tag the OBJECT, not the slot (it may move)
+    objTags.show(kind, label, () => {
+      const r = worldRegion(obj.x, obj.y, 8).getBoundingClientRect();
+      return { left: r.left + r.width / 2, top: r.top + r.height / 2 };
+    });
   }
-  steps.push(
-      { id: 'SHOP', text: 'SHOP: every run (even a death) pays gold for PERMANENT upgrades.',
-        target: () => cardByTitle('SHOP') },
-      { id: 'CHARACTERS', text: 'CHARACTERS unlock pilots with different starting kits.',
-        target: () => cardByTitle('CHARACTERS') },
-      // U1 (owner 2026-09-14): TROPHIES/BESTIARY moved behind PROGRESS and
-      // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY behind SETUP. The tour teaches the
-      // DOORS and names their contents, so the moved screens are still taught
-      // (never merely exempted) and test_tour's "TROPHIES is taught" contract
-      // keeps biting. One step per title card remains the rule.
-      { id: 'PROGRESS', text: 'PROGRESS \u2014 TROPHIES and the BESTIARY: everything you have earned and met.',
-        target: () => cardByTitle('PROGRESS') },
-      { id: 'SETUP', text: 'SETUP \u2014 CHALLENGE, STAGE, SETTINGS and HOW TO PLAY.',
-        target: () => cardByTitle('SETUP') },
-      // G12: the new LAST card is taught too — a quit button nobody introduced
-      // reads as dangerous.
-      { id: 'EXIT', text: 'EXIT GAME saves your progress and quits.',
-        target: () => cardByTitle('EXIT GAME') },
-  );
-  menuTour = new Tour({
-    // Player-flow order: what you press first reads first.
-    steps,
-    onDone: finish,
-    // TUTORIAL_OVERLAY: a skip must not strand the player — the walkthrough
-    // is replayable, and the owner's complaint was that nobody knew.
-    onSkip: () => { finish(); toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS'); },
-    // WAVE-31: a tap that lands ON a menu card presses the card (the shade
-    // swallows every OTHER tap — tour.js).
-    passThrough: '#ov-cards > .card',
-  });
-  menuTour.start();
+}
+
+// Runs every PLAYING frame — after update(), banner or not. It can never gate
+// the sim (invariant 1) and never sees an input event (invariant 2).
+function updateOnboarding(dt) {
+  const p = state.player;
+  // (a) RUN START: movement, one line. Replaces the move + pilot + hud cards.
+  maybeHint('move', state.time > 0.75,
+    'WASD or drag to move — your weapons fire on their own.');
+  // (b) FIRST PORTAL: bank the wave. Replaces the portal card.
+  maybeHint('portal', !!state.portal,
+    'Walk through the portal to bank the wave.');
+  // Teach-until-demonstrated (movement): ~3 seconds of real travel retires
+  // the hint permanently (hintStore flag), even mid-display.
+  if (!hintStore.done('move')) {
+    if (hintPrevPos && dt > 0) {
+      const d = Math.hypot(p.x - hintPrevPos.x, p.y - hintPrevPos.y);
+      if (d / dt > 20) {   // >20 px/s reads as deliberate movement
+        hintMoveTime += dt;
+        if (hintMoveTime >= 3) {
+          hintStore.setDone('move');
+          hintStrip.retire('move');
+        }
+      }
+    }
+    hintPrevPos = { x: p.x, y: p.y };
+  }
+  maybeTags();
+  hintStrip.update(dt);
+  objTags.update(dt);
 }
 
 // Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
@@ -4041,24 +4256,6 @@ function startCoach(steps, key) {
     // TUTORIAL_OVERLAY: name the replay path on the way out of a skip.
     onSkip: () => { end(); toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS'); } });
   coach.start();
-}
-
-// The joystick mounts only while MANUAL is bound — when it's hidden, point
-// at the screen region where it appears (bottom-center) so the movement
-// coachmark still lands.
-function joyTarget() {
-  const j = document.getElementById('joy');
-  if (j && j.style.display !== 'none') return j;
-  return canvasRegion(C.VIEW_W / 2 - 60, C.VIEW_H - 124, 120, 120);
-}
-
-// STATS button equivalent (joyTarget precedent): the touch layer is hidden
-// on keyboard-only devices — fall back to the canvas region where the
-// loadout sits, since the caption names the I key either way.
-function statsTarget() {
-  const b = document.getElementById('tc-stats');
-  if (b && b.getBoundingClientRect().width > 0) return b;
-  return canvasRegion(4, C.VIEW_H - 46, 130, 40);
 }
 
 // Project a world position through the SAME transform render.js uses (cam
@@ -4179,103 +4376,6 @@ function updateCamera(p, dt) {
   state.camBase.y = state.cam.y - state.camLead.y;
 }
 
-// Called every frame in 'playing' (frame()); fires each coachmark the first
-// time its moment arrives. Coverage = CONTROLS_INVENTORY.md's coverage
-// column (the rev-4 acceptance bar): the doctrine levers FOCUS + STANCE
-// (Sk408's named complaint), dual-target skills/potions pairs, STATS, and
-// the world interactables as each first appears. The DRAFT coachmark fires
-// from openDraft, INTERMISSION from openIntermission, DEATH from die()/
-// endRun() — those screens already freeze the sim by mode.
-function updateTourCoach() {
-  if (coachActive()) return;
-  // World interactables next — event-driven beats schedule: each fires the
-  // moment it first exists on the field (rev-4 item 5). Arches exist from
-  // wave start, so a small time gate keeps the gauges intro first.
-  const fieldReady = state.time > 2;
-  if (fieldReady && !tourFlag(TOUR_KEYS.chest) && state.chests.length) {
-    const ch = state.chests[0];
-    startCoach({ id: 'chest',
-      text: 'A CHEST — walk into it: an item, upgrades… or nothing and a mini-horde. It drifts to you.',
-      target: () => worldRegion(ch.x, ch.y, 14) }, TOUR_KEYS.chest);
-  } else if (fieldReady && !tourFlag(TOUR_KEYS.portal) && state.portal) {
-    const po = state.portal;
-    startCoach({ id: 'portal',
-      text: 'The PORTAL — walk through to bank the wave. It chases you; take it when ready.',
-      target: () => worldRegion(po.x, po.y, 18) }, TOUR_KEYS.portal);
-  } else if (fieldReady && !tourFlag(TOUR_KEYS.arch) && state.arches.length) {
-    const a = state.arches[0];
-    startCoach({ id: 'arch',
-      text: 'An ARCH — fly through the gate for a timed buff.',
-      target: () => worldRegion(a.x, a.y, 18) }, TOUR_KEYS.arch);
-  } else if (fieldReady && !tourFlag(TOUR_KEYS.shrine) && state.shrine && !state.shrine.used) {
-    const sh = state.shrine;
-    startCoach({ id: 'shrine',
-      text: 'A SHRINE — walk close and gold buys a random blessing.',
-      target: () => worldRegion(sh.x, sh.y, 16) }, TOUR_KEYS.shrine);
-  } else if (!tourFlag(TOUR_KEYS.hud) && state.time > 1) {
-    startCoach({ id: 'hud',
-      text: 'Health, mana and XP, top-left — level-ups draft your build.',
-      target: () => canvasRegion(0, 4, 150, 44) }, TOUR_KEYS.hud);
-  } else if (!tourFlag(TOUR_KEYS.pilot) && state.time > 4) {
-    startCoach({ id: 'pilot',
-      text: 'PILOT: AUTO flies for you — here or O takes MANUAL control anytime.',
-      target: () => document.getElementById('tc-pilot') }, TOUR_KEYS.pilot);
-  } else if (!tourFlag(TOUR_KEYS.focus) && state.time > 7) {
-    // Rev-4 headline gap: without this, AUTO aiming reads as "whatever it
-    // feels like" — it's steerable.
-    startCoach({ id: 'focus',
-      text: 'FOCUS steers your volleys: NEAREST, TOUGHEST, SWARM or RANGED — cycle with TAB.',
-      target: () => document.getElementById('tc-focus') }, TOUR_KEYS.focus);
-  } else if (!tourFlag(TOUR_KEYS.stance) && state.time > 10) {
-    // Sk408 named this one. A choice about the run you want, not a setting.
-    startCoach({ id: 'stance',
-      text: 'STANCE is how bold you fly: SAFE kites far, GREEDY hugs the loot. G cycles — pick the run you want.',
-      target: () => document.getElementById('tc-stance') }, TOUR_KEYS.stance);
-  } else if (!tourFlag(TOUR_KEYS.move) && state.time > 13) {
-    startCoach({ id: 'move',
-      text: 'MANUAL movement: drag the joystick — or WASD / arrow keys.',
-      target: () => joyTarget() }, TOUR_KEYS.move);
-  } else if (!tourFlag(TOUR_KEYS.skills) && state.time > 16) {
-    // Rev-4 partial fix: BOTH buttons get their own spotlight; the W-in-AUTO
-    // vs E-always subtlety is named where it belongs.
-    startCoach([
-      { id: 'skills-q',
-        text: 'FROST nova (Q) freezes the swarm around you.',
-        target: () => document.getElementById('tc-q') },
-      { id: 'skills-w',
-        text: 'OVERCHARGE (E — or W in AUTO) speeds your fire.',
-        target: () => document.getElementById('tc-w') },
-    ], TOUR_KEYS.skills);
-  } else if (!tourFlag(TOUR_KEYS.potions) && state.time > 19) {
-    // Rev-4 partial fix: both potions, and the H / N keys — not touch-only
-    // "tap to drink" framing on a keyboard game.
-    startCoach([
-      { id: 'potions-h',
-        text: 'HP potion heals 35 — carry 3, refilled by chests & kills. Button, or H.',
-        target: () => document.getElementById('tc-h') },
-      { id: 'potions-n',
-        text: 'MP potion restores 40 for skills — button, or N.',
-        target: () => document.getElementById('tc-n') },
-    ], TOUR_KEYS.potions);
-  } else if (!tourFlag(TOUR_KEYS.stats) && state.time > 22) {
-    startCoach({ id: 'stats',
-      text: 'STATS (I) opens the FIELD REPORT — read your build, see why you died.',
-      target: () => statsTarget() }, TOUR_KEYS.stats);
-  } else if (!tourFlag(TOUR_KEYS.cog) && state.time > 25) {
-    startCoach({ id: 'cog',
-      text: 'The cog opens in-run settings — END RUN lives there.',
-      target: () => document.getElementById('tc-cog') }, TOUR_KEYS.cog);
-  } else if (!tourFlag(TOUR_KEYS.edge) &&
-             (Math.abs(state.player.x) > 480 || Math.abs(state.player.y) > 480)) {
-    const p = state.player;
-    const strip = Math.abs(p.x) >= Math.abs(p.y)
-      ? (p.x > 0 ? canvasRegion(C.VIEW_W - 16, 0, 16, C.VIEW_H) : canvasRegion(0, 0, 16, C.VIEW_H))
-      : (p.y > 0 ? canvasRegion(0, C.VIEW_H - 16, C.VIEW_W, 16) : canvasRegion(0, 0, C.VIEW_W, 16));
-    startCoach({ id: 'edge',
-      text: 'The arena has walls — the horde funnels along them.',
-      target: () => strip }, TOUR_KEYS.edge);
-  }
-}
 
 
 // W1: show a save-layer notice (unreadable / from a newer version / repaired /
@@ -4314,7 +4414,7 @@ const TITLE_HOLD_S = 1.0;        // the art holds alone before the run starts
 const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S,
   out: TITLE_OUT_FADE_S, hold: TITLE_HOLD_S };
 let titleRevealPlayed = false;   // the full reveal runs ONCE per page load
-let tourPendingAfterReveal = false;
+let tourPendingAfterReveal = false;   // the G26 loadout coach waits for the settle
 let holdSnap = null;             // the wordmark region snapshot for the hold shimmer
 let titleRunStarts = 0;          // startRun calls issued by the hold path (assertable)
 
@@ -4408,7 +4508,7 @@ function advanceTitleReveal(dt) {
         // (a coachmark popping mid-fade reads as a glitch). G26: the loadout
         // door coach rides the same settle gate (achievement grants land at
         // run settle, so the next title visit is the first legal moment).
-        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeStartMenuTour(); maybeCoachLoadoutDoor(); }
+        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeCoachLoadoutDoor(); }
         return;
       }
     } else if (rv.phase === 'out') {
@@ -4514,7 +4614,8 @@ function showSetup() {
   menuCard('STAGE', stageCardSub(),
     () => { cyclePendingStage(); showSetup(); });
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
-  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  // ONBOARDING REWORK: HOW TO PLAY now lives on the TITLE screen; SETUP keeps
+  // CHALLENGE / STAGE / SETTINGS only.
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
@@ -4693,7 +4794,7 @@ function chosenLoadout() {
 function maybeCoachLoadoutDoor() {
   if (tourFlag(TOUR_KEYS.loadout)) return;
   if (!(profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w))) return;
-  if (coachActive() || (menuTour && menuTour.active())) return;
+  if (coachActive()) return;
   startCoach({
     id: 'loadout',
     text: 'NEW WEAPON UNLOCKED — the next run only brings what you pick. Choose your LOADOUT from the title screen.',
@@ -4742,6 +4843,10 @@ function showTitle() {
     `${seenCount(profile)} / ${totalEncounters()} met`, () => showProgress());
   menuCard('SETUP', stageCardSub().split(' · ')[0] + ' · challenge, stage, options',
     () => showSetup());
+  // ONBOARDING REWORK (owner-approved 2026-09-16): HOW TO PLAY moves OUT of
+  // SETUP onto the title — a confused player does not open SETUP to look for
+  // help. SETUP keeps CHALLENGE / STAGE / SETTINGS.
+  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
   // G12 DO 2: EXIT GAME is the LAST card.
   menuCard('EXIT GAME', 'save & quit', () => exitGame());
   // N2 DO 1: the FIRST title entry per page load shows the art alone for a
@@ -4758,9 +4863,9 @@ function showTitle() {
     }
   }
   applyRevealStyles();
-  // N2 DO 4: the first-run tour starts only once the reveal has settled (it
-  // fires from advanceTitleReveal); flags-done boots start it right here.
-  if (revealSettled()) { maybeStartMenuTour(); maybeCoachLoadoutDoor(); }   // WAVE-21: stage-1 tour, first load only
+  // N2 DO 4 (onboarding rework): only the G26 loadout door coach waits for
+  // the reveal settle now — the title-card tour is retired.
+  if (revealSettled()) { maybeCoachLoadoutDoor(); }
   else tourPendingAfterReveal = true;
 }
 
@@ -5342,11 +5447,14 @@ function showSettings(disarm = true, inRun = false) {
   // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
   menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
     clearTourFlags();
+    // ONBOARDING REWORK: the replay re-arms the hint layer as well — the
+    // demonstration flags AND the give-up counters (onboarding.js reset()).
+    hintStore.reset();
     if (inRun) {
       closeSettings();
-      toast('TOUR REPLAYS NOW');   // hud/cog/edge flags cleared -> re-arm live
+      toast('TOUR REPLAYS NOW');   // the kept cards + hints re-arm live
     } else {
-      showTitle();                 // stage-1 flag cleared -> menu tour restarts
+      showTitle();                 // the kept cards re-arm on their screens
     }
   });
   // W1 SAVE FOUNDATION: export/import, plus the preserved payload of an
@@ -5418,6 +5526,9 @@ function showSettings(disarm = true, inRun = false) {
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
 function startRun() {
+  // DRAFT PICK CEREMONY: a fresh run drops any live ceremony (RETRY while a
+  // ceremony rides, etc.) — the run setup below owns the screen from here.
+  if (draftCeremony) endDraftCeremony(false);
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   state.character = ch;
   state.player = makePlayer();
@@ -5507,6 +5618,8 @@ function startRun() {
   // queue, likewise run-scoped. All start empty for every run; the guard test
   // (test_audit_round2.mjs) mechanically holds every one of these here.
   state.rewriteEchoes = [];
+  // ONBOARDING REWORK: per-run hint/tag bookkeeping restarts with the run.
+  resetOnboarding();
   state.apexReturn = null;
   state.bestiaryReturn = null;
   state.settingsReturn = null;
@@ -6334,7 +6447,7 @@ window.addEventListener('keydown', (ev) => {
   // fires before this one). Everything else must NOT reach the game — the
   // same press firing a skill or toggling the pilot under a paused coachmark
   // is exactly the "goes away too easily / without context" complaint.
-  if (coachActive() || (menuTour && menuTour.active())) return;
+  if (coachActive()) return;
   const k = ev.key.toLowerCase();
   if (ev.repeat && REPEAT_GUARDED.has(k)) return;
   if (state.mode === 'intro') {                              // any key skips the movie
@@ -7534,6 +7647,9 @@ function frame(now) {
   // mode freezes the sim, so this cannot ride update()). Suspend-aware and
   // AUTO-only; a no-op in every other mode.
   tickDraftAutoPick(realDt);
+  // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
+  // resolved draft. A no-op in every other mode.
+  tickDraftCeremony(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -7579,8 +7695,10 @@ function frame(now) {
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
-    updateTourCoach();
+    // ONBOARDING REWORK: hints/tags tick on the frame's dt and NEVER gate the
+    // sim — update() runs regardless of what the strip is doing (invariant 1).
     if (!coachActive() && state.bannerHold <= 0) update(dt);
+    updateOnboarding(dt);
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
@@ -7607,6 +7725,19 @@ requestAnimationFrame(frame);
 export const __TEST = {
   state, get controller() { return controller; }, startRun,
   getProfile: () => profile, refreshSynergies,
+  // M3: the ground-item overflow wrappers (test seam — the same functions the
+  // kill funnel and drop events call).
+  m3: { pushGem, pushDrop, pushItemDrop },
+  // ONBOARDING seam: the live hint strip / object-tag engines + the flag
+  // store, so tests drive the REAL layer (never a copy of its rules).
+  onboarding: {
+    strip: hintStrip,
+    tags: objTags,
+    store: hintStore,
+    shownRun: () => hintShownRun,
+    tagSeenRun: () => tagSeenRun,
+    reset: resetOnboarding,
+  },
   // N1a: the Q-slot seam — the class's own skill id, and the key act that
   // routes through it (so a probe casts what the button casts).
   classSkillId, runAction,
@@ -7811,6 +7942,16 @@ export const __TEST = {
     get lastId() { return draftAutoLastId; },
     get left() { return draftTimer ? draftTimer.left : null; },
     get armed() { return !!draftTimer; },
+  },
+  // ---- DRAFT PICK CEREMONY seam: the one timing constant + the one
+  // class-name pair the CSS (index.html) and the tests agree on, plus the
+  // live state, so a headless probe can assert markers/teardown without
+  // timers. Never read by the browser page.
+  ceremony: {
+    S: DRAFT_CEREMONY_S,
+    classes: { chosen: CEREMONY_CHOSEN_CLS, others: CEREMONY_BURN_CLS, flag: CEREMONY_FLAG_CLS },
+    get active() { return !!draftCeremony; },
+    get left() { return draftCeremony ? draftCeremony.left : null; },
   },
   synWeaponDmg,
   stanceOf: () => controller.stance,

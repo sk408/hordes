@@ -145,9 +145,9 @@ const dtMs = 1000 / 60;
     'GOT IT lands on the HORDES title screen');
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
-  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it. U1: the
-  // reference now lives behind the SETUP door, so route through it.
-  byTitle0('SETUP').click();
+  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it.
+  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again — one
+  // tap from the menu, not two.
   byTitle0('HOW TO PLAY').click();
   assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'title HOW TO PLAY re-opens it');
   keyHandler({ key: 'Escape' });

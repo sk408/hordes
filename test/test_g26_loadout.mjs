@@ -132,23 +132,18 @@ pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 settleReveal();
 
-// The stage-1 title tour fires on the fresh boot (storage has no flags) —
-// walk it to the end the way test_tour.mjs does, and pin WHILE it runs that
-// it never teaches the LOADOUT door (the DISCOVERY_EXEMPT behaviour).
+// RETIRED (onboarding rework, owner-approved 2026-09-16): the stage-1 title
+// walk no longer exists — the 25-card tour was deleted in answer to the
+// galaxy.click feedback ("skipped like 8 tutorial blurbs because I was moving
+// manually"), replaced by 3 in-context touches + object tags
+// (src/onboarding.js; test/test_onboarding.mjs). The old check ("the walk
+// does not teach LOADOUT") is subsumed by a stronger one: NO tour-root
+// mounts on a fresh boot at all, so nothing can tease a locked thing — and
+// the LOADOUT door stays EVENT-taught (the coachmark checks below).
 {
-  const root = tourRoots()[0];
-  assert.ok(root, 'stage-1 title tour mounted on the fresh boot');
-  const taught = [];
-  // TUTORIAL_OVERLAY: the walk advances on the tip's own primary (NEXT /
-  // GOT IT); a root pointerdown is an inert shade tap now.
-  for (let i = 0; i < 12 && tourRoots().length; i++) {
-    const tip = root.children.find(c => c.id === 'tour-tip');
-    if (tip) taught.push(tip._html);
-    const btn = tip && tip.querySelector('.tour-next');
-    if (btn) btn.fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
-  }
-  ok('the title walk does NOT teach LOADOUT (it is event-taught instead)',
-    !taught.some(h => h.includes('LOADOUT')), taught.filter(h => h.includes('LOADOUT')).length);
+  pump(2);
+  ok('no title tour mounts on a fresh boot (stage-1 retired 2026-09-16)',
+    tourRoots().length === 0, tourRoots().length);
 }
 
 // ---- 3. the coachmark event (the DISCOVERY_EXEMPT payment) -------------------

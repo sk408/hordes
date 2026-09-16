@@ -304,11 +304,10 @@ s.check('HOW TO PLAY documents the challenge selection', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   key('escape');                                       // title
-  // U1: HOW TO PLAY is behind the SETUP door now.
-  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
-  if (!door) throw new Error('no SETUP door on the title (U1)');
-  door.click();
+  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again (the
+  // reference must be one tap from the menu, not two).
   const howTo = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>HOW TO PLAY<'));
+  if (!howTo) throw new Error('no HOW TO PLAY card on the title');
   howTo.click();
   const field = cardsNow().find(t => t.includes('CHALLENGE'));
   if (!field || !field.includes('ONE WEAPON')) throw new Error('THE FIELD card does not document CHALLENGE');

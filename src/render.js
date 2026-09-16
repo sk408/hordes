@@ -93,6 +93,33 @@ export function groundTheme(waveNum) {
   return t[(Math.max(1, waveNum || 1) - 1) % t.length];
 }
 
+// F8 (audit 2026-09-16): the HUD purse readout clamped at 99999 — a maxed run
+// banks 754,689g (G17 slice 1b), so the on-screen wallet SATURATED mid-run and
+// every value past 99,999 read identically. Pure formatter, ONE definition,
+// called by the GOLD badge below. Contract:
+//   * 0..99999 — byte-identical to the old field: the number, space-padded to
+//     5 chars.
+//   * 100k..999k — ' 100k'..' 999k'; >=1M — '  1.0M'..' 9.9M' (one decimal),
+//     then ' 10M'..' 999M'. Compacts are TRUNCATED (floor), never rounded up:
+//     999,999 shows ' 999k', not '1000k'; 9,999,999 shows ' 9.9M', not '10M'.
+//   * EVERY output is exactly 5 chars, so the badge's fixed-width geometry
+//     (the H1 no-reflow contract this badge was built under) holds at any
+//     purse size. >=1B extends the same ladder ('B'), still 5 chars.
+//   * negative/NaN/undefined read as the zero field — never 'NaN' or 'undefined'
+//     on the HUD.
+export function fmtGold(n) {
+  const v = Math.max(0, Math.floor(Number(n) || 0));
+  if (v <= 99999) return String(v).padStart(5, ' ');
+  const band = (div, dec, suf) => dec
+    ? (Math.floor(v / div) / 10).toFixed(1) + suf
+    : Math.floor(v / div) + suf;
+  if (v < 1e6) return band(1e3, false, 'k').padStart(5, ' ');   // 100k..999k
+  if (v < 1e7) return band(1e5, true, 'M').padStart(5, ' ');    // 1.0M..9.9M
+  if (v < 1e9) return band(1e6, false, 'M').padStart(5, ' ');   // 10M..999M
+  if (v < 1e10) return band(1e8, true, 'B').padStart(5, ' ');   // 1.0B..9.9B
+  return band(1e9, false, 'B').padStart(5, ' ');                // 10B..999B
+}
+
 // Wave-6: item-drop glow colors by rarity (loot.js) + arch gate colors.
 const RARITY_COLORS = { COMMON: '#a8a8c0', RARE: '#4a8cff', EPIC: '#c46ad8', LEGENDARY: '#ffd75e' };
 const ARCH_COLORS = {
@@ -1542,12 +1569,13 @@ export class Renderer {
     // publishes profile.runPurse every frame; the renderer never touches the
     // profile). Same badge language as the LV plate: gold border, dark inset,
     // 11px bold. H1 NO-REFLOW CONTRACT: the digit column is RESERVED — the
-    // value is right-aligned in a fixed 5-digit field (saturating at 99999),
-    // so a 1-digit purse and a 5-digit purse paint BYTE-IDENTICAL geometry.
-    // A counter whose width grows as it counts is the control-pad reflow bug
-    // H1 just fixed; the canvas HUD obeys the same rule.
+    // value is right-aligned in a fixed 5-char field (fmtGold: compact k/M
+    // past 99999, still exactly 5 chars), so a 1-digit purse and a 750k purse
+    // paint BYTE-IDENTICAL geometry. A counter whose width grows as it counts
+    // is the control-pad reflow bug H1 just fixed; the canvas HUD obeys the
+    // same rule.
     const purseVal = state.runPurse | 0;
-    const goldTxt = 'GOLD ' + String(Math.min(purseVal, 99999)).padStart(5, ' ');
+    const goldTxt = 'GOLD ' + fmtGold(purseVal);
     const goldPx = H.CLOCK_PX;
     const goldW = goldTxt.length * Math.round(goldPx * 0.62) + 6;
     const goldH = goldPx + 4;

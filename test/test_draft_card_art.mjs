@@ -72,7 +72,7 @@ s.check('every offer id the pool can offer resolves to deck art (CARD ART COVERA
 });
 
 // ---- boot the REAL game ------------------------------------------------------
-const { T, state, elements, rec, key } = await boot({ storage: [['hordes_onboarded', '1']] });
+const { T, state, elements, rec, key, pump } = await boot({ storage: [['hordes_onboarded', '1']] });
 
 // ---- 2. paintOfferArt paints REAL drawCard pixels ----------------------------
 s.check('paintOfferArt paints through the REAL drawCard at the integer backing size', () => {
@@ -147,7 +147,14 @@ s.check('ONE click TAKES the card (no confirm step): draft closes, pick lands', 
   el.click();
   assert.equal(state.mode, 'playing', 'the SINGLE activation took the card and closed the draft');
   assert.equal(state.pendingDrafts, 0, 'the pick landed');
-  assert.equal(elements.overlay.style.display, 'none', 'the overlay is hidden');
+  // DRAFT PICK CEREMONY (2026-09-16): the pick lands IN the click (asserted
+  // above, synchronously — zero added latency), but the overlay now rides a
+  // ~T.ceremony.S presentation over the LIVE game before it hides. The hide
+  // lands when the ceremony ends (or at once when none engages — the
+  // reduced-motion cut). The full ceremony contract is pinned by
+  // test/test_draft_ceremony.mjs.
+  pump(Math.ceil(T.ceremony.S * 60) + 5);
+  assert.equal(elements.overlay.style.display, 'none', 'the overlay is hidden (at the pick, or when the ceremony ends)');
   if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_')) && !u.rule && !u.skill && !u.rewrite) {
     assert.ok((state.player.takenStats || {})[u.id], 'the stat ledger recorded the take');
   }
