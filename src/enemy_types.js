@@ -197,6 +197,43 @@ export const ENEMY_TYPES = {
   },
 };
 
+// ---- G19 slice 2: THE FAMILY MAP --------------------------------------------
+// All TEN types classified into exactly four families, derived from the table's
+// OWN role flags where they exist and from the documented role where they do
+// not. ONE lookup table (enumerable by tests), never a chain of ifs at call
+// sites. enemyFamily() is PURE: an unknown id returns null — it never throws
+// and never guesses a family, so an unclassified type reads as NEUTRAL (x1)
+// everywhere the specialty terms are applied.
+//   CHAFF   — the chaff:true horde bodies (E2's wave-2 swarm triplers).
+//   RANGED  — the attackers that hurt from a distance: SPITTER (table comment:
+//             "Ranged threat"), WARLOCK ("dedicated ranged HUNTER"), PILLAR
+//             (stationary WAVE-20 turret that chips with steady shots).
+//   HEAVY   — the heavy bodies: BRUTE, DASHER, TICK all carry the table's own
+//             heavy:true flag (E2 R1 mid-boss-tier hp); COLOSSUS is the
+//             mini-boss tier of the same role (main.js :856/:887).
+//   FLYING  — the flyer flag (E2 R9): SHRIKE, the z-drawn ground-AoE-immune
+//             diver. The flag wins over its heavy:true — the flying identity
+//             is the more specific role.
+export const ENEMY_FAMILY = {
+  CHASER: 'CHAFF',     // chaff: true
+  SWARMER: 'CHAFF',    // chaff: true
+  SPITTER: 'RANGED',   // "Ranged threat: holds ~120px ... spits steady shots"
+  WARLOCK: 'RANGED',   // "dedicated ranged HUNTER"
+  PILLAR: 'RANGED',    // stationary turret, "chips the player with a steady slow shot"
+  BRUTE: 'HEAVY',      // heavy: true — "Slow, tanky, big contact damage"
+  DASHER: 'HEAVY',     // heavy: true (judgement: it lunges FAST, but the table's own flag says heavy)
+  TICK: 'HEAVY',       // heavy: true (judgement: tiny latcher, but the table's own flag says heavy)
+  COLOSSUS: 'HEAVY',   // mini-boss tier: "massive HP, slow, huge body"
+  SHRIKE: 'FLYING',    // flying: true — wins over heavy: true (more specific role)
+};
+
+// The family of a type id, or null for an unknown id. Pure, total, never throws.
+export function enemyFamily(typeId) {
+  return Object.prototype.hasOwnProperty.call(ENEMY_FAMILY, typeId)
+    ? ENEMY_FAMILY[typeId]
+    : null;
+}
+
 // ELITE template: applies to ANY type — 4x hp, 1.5x size, guaranteed chest.
 export const ELITE_TEMPLATE = {
   hpMult: 4.0,

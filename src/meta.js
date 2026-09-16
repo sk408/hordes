@@ -18,6 +18,8 @@ import { CONFIG as C, setEngagementRange, DRAFT_LADDER } from './config.js';
 import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
 import { ENCOUNTER_IDS } from './encounters.js';   // G10: derived bestiary catalog
 import { TIER_RANK } from './rarity.js';           // G10: tier ordering for bestTier
+import { enemyFamily } from './enemy_types.js';    // G19 slice 2: family map for the specialty terms
+import { setSpecialtyResolver } from './rewrites.js';   // G19 slice 2: registers the outgoing term (acyclic: rewrites imports config only)
 // W1 SAVE FOUNDATION (src/save.js): versioning, migration, validation and
 // export/import live there, catalog-injected so that module stays free of any
 // dependency on this one. meta.js is the composition root that supplies the
@@ -1043,25 +1045,186 @@ export function applyMetaBonuses(stats, purchased) {
   };
 }
 
-// Starting potion count per kind: character base + Travel Pack levels.
-// (Not a stat — potions live on player.potions; cap MAX_CARRIED applies to
-// ground pickup only, so over-cap starts are mechanically fine.)
-export function startPotionCount(profile) {
-  const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
-  return ch.startPotions + (profile.purchased.potions || 0);
+// G19 slice 1: the ROGUE 'Deep Satchel' row's bonus, read through the accessor
+// seam. Shared by startPotionCount (the run seam) and the pilotKit preview so
+// the two cannot drift — one definition of the satchel's effect.
+export function characterPotionBonus(profile, characterId) {
+  const def = CHARACTER_UPGRADE_BY_ID.rogue_satchel;
+  if (!def || characterId !== def.characterId) return 0;
+  return def.perLevel * getCharacterUpgradeLevel(profile, characterId, def.id);
 }
 
-// ---------- PER-CHARACTER UPGRADES (G19 — catalog seam, EMPTY for now) ------
-// The progression feature wave fills this with per-character upgrade rows. The
-// save layer already understands the shape and clamps a KNOWN row's level to
-// its maxLevel exactly like the shared `purchased` map, so adding rows here
-// later needs no schema change and no migration. Row shape mirrors the shop:
-//   { id, characterId, name, desc, baseCost, costGrowth, maxLevel, perLevel }
-// Nothing consumes this yet; the profile's characters namespace stays empty
-// until the feature wave populates it through the accessors above.
-export const CHARACTER_UPGRADES = [];
+// Starting potion count per kind: character base + Travel Pack levels + the
+// ROGUE satchel row (G19). (Not a stat — potions live on player.potions; cap
+// MAX_CARRIED applies to ground pickup only, so over-cap starts are
+// mechanically fine.)
+export function startPotionCount(profile) {
+  const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
+  return ch.startPotions + (profile.purchased.potions || 0) +
+    characterPotionBonus(profile, profile.equippedCharacter);
+}
+
+// ---------- PER-CHARACTER UPGRADES (G19 slice 1: the 8-row table) -----------
+// Two rows per character. The row shape is the one the save layer has always
+// validated ({ id, characterId, name, desc, baseCost, costGrowth, maxLevel,
+// perLevel }); the per-row EFFECT semantics live in applyCharacterUpgrades()
+// below, so the shape stays exactly the shared contract. Every perLevel knob
+// names its CONSUMPTION SITE (proven with before/after numbers in
+// test/test_g19_character_upgrades.mjs):
+//   maxHp        main.js startRun (p.hp = stats.maxHp) + HUD
+//   damageMult   weapons.js weaponDamage + main.js contact/volley damage
+//   maxMana      main.js mana regen/kill fills + HUD (render.js)
+//   manaCostMult weapons.js weaponManaCost + perks.js Focus
+//   speed        main.js move step (stats.speed * speedMult)
+//   healOnChest  main.js chest-open heal (reads stats.healOnChest first —
+//                wired by this slice; the character-def fallback is untouched)
+//   potions      startPotionCount below (rogue_satchel — the run seam,
+//                main.js startRun) and the pilotKit preview, via
+//                characterPotionBonus() so the two cannot drift.
+// Prices are BREADTH, not a gold sink: maxLevel 3-4, costGrowth 1.5, and no
+// row's FULL ladder exceeds 3200 x 1.5^3 = 10800 gold (asserted in the test).
+export const CHARACTER_UPGRADES = [
+  { id: 'knight_vigor', characterId: 'KNIGHT', name: 'Iron Vigor',
+    desc: '+12 max HP per level', baseCost: 1200, costGrowth: 1.5, maxLevel: 4, perLevel: 12 },
+  { id: 'knight_force', characterId: 'KNIGHT', name: 'Heavy Guard',
+    desc: '+6% damage per level', baseCost: 1600, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
+  { id: 'witch_wellspring', characterId: 'WITCH', name: 'Wellspring',
+    desc: '+15 max mana per level', baseCost: 1000, costGrowth: 1.5, maxLevel: 4, perLevel: 15 },
+  { id: 'witch_focus', characterId: 'WITCH', name: 'Focused Mind',
+    desc: 'spells cost 6% less per level', baseCost: 1800, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
+  { id: 'rogue_fleet', characterId: 'ROGUE', name: 'Fleetfoot',
+    desc: '+6 move speed per level', baseCost: 1400, costGrowth: 1.5, maxLevel: 3, perLevel: 6 },
+  { id: 'rogue_satchel', characterId: 'ROGUE', name: 'Deep Satchel',
+    desc: '+1 starting potion per level', baseCost: 900, costGrowth: 1.5, maxLevel: 3, perLevel: 1 },
+  { id: 'paladin_bulwark', characterId: 'PALADIN', name: 'Bulwark',
+    desc: '+10 max HP per level', baseCost: 1100, costGrowth: 1.5, maxLevel: 4, perLevel: 10 },
+  { id: 'paladin_blessing', characterId: 'PALADIN', name: 'Blessed Chests',
+    desc: '+3 HP healed on chest per level', baseCost: 1500, costGrowth: 1.5, maxLevel: 3, perLevel: 3 },
+];
 export const CHARACTER_UPGRADE_BY_ID = Object.fromEntries(
   CHARACTER_UPGRADES.map(u => [u.id, u]));
+
+// Buy one level of a per-character row. Mirrors buyUpgrade exactly: validate
+// the row (and that it belongs to characterId), cap at maxLevel, the same
+// upgradeCost gold check, debit profile.gold, and persist the level through
+// the EXISTING accessor — never a direct write to profile.characters.
+// A LOCKED character (not in unlockedCharacters) is refused here too, so the
+// data layer enforces what the shop screen shows.
+export function buyCharacterUpgrade(profile, characterId, id) {
+  const def = CHARACTER_UPGRADE_BY_ID[id];
+  if (!def || def.characterId !== characterId) return false;
+  if (!profile.unlockedCharacters.includes(characterId)) return false;
+  const level = getCharacterUpgradeLevel(profile, characterId, id);
+  if (level >= def.maxLevel) return false;                // level cap
+  const cost = upgradeCost(def, level);
+  if (profile.gold < cost) return false;                  // insufficient gold
+  profile.gold -= cost;
+  addCharacterUpgrade(profile, characterId, id, 1);
+  return true;
+}
+
+// Apply a character's OWN upgrade levels to a stats object. PURE — returns a
+// NEW object, input untouched — and ISOLATED — it reads only characterId's
+// levels, so a level bought on the KNIGHT can never move the WITCH's numbers.
+// A character with no levels adds nothing. Composition order is fixed at the
+// two seams that call it (main.js startRun + pilotKit):
+//   applyCharacterUpgrades(applyCharacter(applyMetaBonuses(base, purchased),
+//     characterId), profile, characterId)
+// so the GLOBAL floor keeps applying to every character exactly as today, and
+// switching characters resets the per-character portion and never the global.
+export function applyCharacterUpgrades(stats, profile, characterId) {
+  const out = { ...stats };
+  if (!CHARACTERS[characterId]) return out;
+  const add = (id, fn) => {
+    const n = getCharacterUpgradeLevel(profile, characterId, id);
+    if (n > 0) fn(n, CHARACTER_UPGRADE_BY_ID[id].perLevel);
+  };
+  add('knight_vigor', (n, p) => { out.maxHp += p * n; });
+  add('knight_force', (n, p) => { out.damageMult = (out.damageMult || 1) + p * n; });
+  add('witch_wellspring', (n, p) => { out.maxMana += p * n; });
+  add('witch_focus', (n, p) => { out.manaCostMult = (out.manaCostMult || 1) * Math.pow(1 - p, n); });
+  add('rogue_fleet', (n, p) => { out.speed += p * n; });
+  add('paladin_bulwark', (n, p) => { out.maxHp += p * n; });
+  add('paladin_blessing', (n, p) => {
+    out.healOnChest = (CHARACTERS[characterId].healOnChest || 0) + p * n;
+  });
+  return out;
+}
+
+// ---------- G19 slice 2: SPECIALISATION (the family identity) ----------------
+// Static character data: the specialty is WHO the pilot is, never a purchase —
+// nothing here is written to the profile, and no branch anywhere may refuse a
+// run, stage, character or unlock because of it. The terms apply on every run
+// with zero purchases through the two existing damage chokes:
+//   OUTGOING  src/rewrites.js directHitMult() — every direct weapon hit.
+//   INCOMING  the typeMult argument of entities.js contactHitDamage() at its
+//             one call site (main.js, the contact loop).
+// NEUTRAL IS THE DEFAULT: a character facing a family it has no term for gets
+// exactly 1.0 in both directions, and an unknown character or type falls
+// through to 1.0 (x1 is byte-identical to today's numbers).
+export const SPECIALTY_TERMS = {
+  OUT_STRONG: 1.15,   // player deals  +15% to the strong family
+  OUT_WEAK: 0.92,     // player deals   -8% to the weak family
+  IN_STRONG: 0.88,    // player takes  -12% from the strong family
+  IN_WEAK: 1.12,      // player takes  +12% from the weak family
+};
+
+// Exactly one strong + one weak family per character. Deliberate assignment:
+// every family has exactly one character strong against it and exactly one
+// weak, so no family is uniformly trivial and no character is dominant.
+export const CHARACTER_SPECIALTIES = {
+  KNIGHT: { strong: 'HEAVY', weak: 'RANGED' },   // tanks the slow bodies; ranged chip beats his guard
+  WITCH: { strong: 'CHAFF', weak: 'FLYING' },    // area clears the swarm; the flier goes over her ground AoE
+  ROGUE: { strong: 'RANGED', weak: 'HEAVY' },    // mobility closes the gap; heavy bodies punish her low HP
+  PALADIN: { strong: 'FLYING', weak: 'CHAFF' },  // sustain shrugs off the flier; the swarm outpaces his healing
+};
+
+// The OUTGOING term a direct hit carries against typeId. Pure; 1 for any
+// unknown character, unknown type, or family the character has no term for.
+export function specialtyOutgoingMult(characterId, typeId) {
+  const spec = CHARACTER_SPECIALTIES[characterId];
+  if (!spec) return 1;
+  const fam = enemyFamily(typeId);
+  if (!fam) return 1;
+  if (fam === spec.strong) return SPECIALTY_TERMS.OUT_STRONG;
+  if (fam === spec.weak) return SPECIALTY_TERMS.OUT_WEAK;
+  return 1;
+}
+// Hand the pure term to the OUTGOING choke (src/rewrites.js directHitMult).
+// Registered rather than imported there: a static rewrites->meta import would
+// close the meta->weapons->rewrites cycle whose evaluation order differs
+// between Node and the browser (see rewrites.js).
+setSpecialtyResolver(specialtyOutgoingMult);
+
+// The INCOMING term a contact hit from typeId carries. Pure; 1 by default.
+export function specialtyIncomingMult(characterId, typeId) {
+  const spec = CHARACTER_SPECIALTIES[characterId];
+  if (!spec) return 1;
+  const fam = enemyFamily(typeId);
+  if (!fam) return 1;
+  if (fam === spec.strong) return SPECIALTY_TERMS.IN_STRONG;
+  if (fam === spec.weak) return SPECIALTY_TERMS.IN_WEAK;
+  return 1;
+}
+
+// The legible identity: the STRONG/WEAK lines every surface renders. DERIVED
+// from CHARACTER_SPECIALTIES + the family map at render time via the shared
+// per-family blurbs below, so the screens cannot disagree with the combat
+// terms (both surfaces call THIS function; nothing is hand-typed per character).
+const FAMILY_LINES = {
+  HEAVY: { strong: 'takes the big bodies', weak: 'the big bodies punish' },
+  RANGED: { strong: 'closes down chip fire', weak: 'chip fire hurts' },
+  CHAFF: { strong: 'clears the swarm', weak: 'the swarm overwhelms' },
+  FLYING: { strong: 'answers the flier', weak: 'the flier overruns' },
+};
+export function specialtyLines(characterId) {
+  const spec = CHARACTER_SPECIALTIES[characterId];
+  if (!spec) return null;
+  return {
+    strong: `STRONG: ${spec.strong} — ${FAMILY_LINES[spec.strong].strong}`,
+    weak: `WEAK: ${spec.weak} — ${FAMILY_LINES[spec.weak].weak}`,
+  };
+}
 
 // ---------- Characters ----------
 // startingWeapon ids match WEAPON_TYPES keys in weapons.js; null = base volley.

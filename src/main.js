@@ -92,6 +92,13 @@ import {
   SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
+  // G19 slice 1: the per-character upgrade layer — the table, the buy path,
+  // the pure applicator (run + preview seams), and the satchel's shared bonus.
+  CHARACTER_UPGRADES, buyCharacterUpgrade, applyCharacterUpgrades,
+  getCharacterUpgradeLevel, characterPotionBonus,
+  // G19 slice 2: the family specialty — terms for the two damage chokes and
+  // the derived STRONG/WEAK identity lines the screens render.
+  specialtyOutgoingMult, specialtyIncomingMult, specialtyLines,
   // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
   // the derived gate, the buy path, and the sanctioned toggle pair.
   APEX_UPGRADES, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
@@ -2005,8 +2012,13 @@ function update(dt) {
       // See CONFIG.SURVIVAL for the measured reason (a wave-1 charger used to
       // one-shot a maxed 230 HP build for 120 and killed every tier at wave 1).
       const chargeMult = e.charging ? 1.5 : 1;
+      // G19 slice 2: the character's INCOMING specialty term rides the existing
+      // typeMult argument (the model's own per-enemy-type slot) — neutral
+      // characters/types read exactly 1, so the number is byte-identical to
+      // today's for everyone without a term.
       const hit = contactHitDamage(C.SURVIVAL.BASE_CONTACT, dmgMult,
-        e.contactDamageMult || 1, chargeMult, p.stats.maxHp);
+        (e.contactDamageMult || 1) * specialtyIncomingMult(state.character && state.character.id, e.typeId),
+        chargeMult, p.stats.maxHp);
       if (hit > touchDmg) { touchDmg = hit; touchKiller = e; }
     }
   }
@@ -2383,8 +2395,12 @@ function update(dt) {
       toast('CHEST OPENED: ' + ev.rarity.toUpperCase(),
         RARITY_TINTS[ev.rarity.toUpperCase()] || null);   // WAVE-14 feed tint
       audio.playSfx('chest');
-      // PALADIN bless: heal on chest open.
-      const heal = state.character ? (state.character.healOnChest || 0) : 0;
+      // PALADIN bless: heal on chest open. G19: the per-level Blessed Chests
+      // row rides stats.healOnChest (stamped by applyCharacterUpgrades at the
+      // run seam); every character without the row has no key, so the def
+      // fallback below is byte-for-byte today's behaviour.
+      const heal = p.stats.healOnChest != null ? p.stats.healOnChest
+        : (state.character ? (state.character.healOnChest || 0) : 0);
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
       // EVOLUTION TOKEN, chest channel (1 in 200). Rolled HERE rather than
       // inside rollContents so the chest module's documented rng draw order is
@@ -4604,8 +4620,96 @@ function showShop() {
   if (apexUnlocked(profile)) {
     menuCard('APEX', 'the post-completion tier — rule-breakers, priced for the grind', () => showApexShop());
   }
+  // G19 slice 1: the per-character layer's door, ON the shop screen beside
+  // the global catalogue it sits on top of — the owner wants it FOUND. Same
+  // menuCard door pattern as SHOP/APEX above.
+  menuCard('CHARACTERS', 'per-pilot upgrades', () => showCharacterShop());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
   for (const el of framed) frameCard(el, true);   // lazy: the observer paints after the browser's own layout pass
+}
+
+// ---------- G19 slice 1: the per-character shop surface ---------------------
+// Two screens, both built from the shop's own conventions (menuCard rows,
+// shopIcon + shopIconCanvases, saveProfile then re-render). The DOOR lists
+// the four pilots with their unlock state; a pilot's screen lists THAT
+// pilot's rows as `LV <n>/<max> · <cost> gold` or `MAXED`. A LOCKED pilot's
+// rows are visible but the purchase is REFUSED with the reason legible on
+// the row itself — the same dim + sfx-only click the capped global rows use,
+// and buyCharacterUpgrade enforces it at the data layer too.
+function showCharacterShop() {
+  openMenu();
+  ovTitle.textContent = 'CHARACTERS';
+  ovTitle.className = '';
+  // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
+  ovSub.textContent = `BANK: ${profile.gold}`;
+  for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  for (const ch of Object.values(CHARACTERS)) {
+    const owned = profile.unlockedCharacters.includes(ch.id);
+    const rows = CHARACTER_UPGRADES.filter(u => u.characterId === ch.id);
+    const lvls = rows.reduce((s, u) => s + getCharacterUpgradeLevel(profile, ch.id, u.id), 0);
+    menuCard(ch.name,
+      `${owned ? 'owned' : 'locked — ' + ch.unlockCost + ' gold'}<br>` +
+      `${rows.length} upgrades · ${lvls} level${lvls === 1 ? '' : 's'} bought`,
+      () => showCharacterRows(ch.id));
+  }
+  menuCard('BACK', 'to shop', () => showShop());
+}
+
+function showCharacterRows(characterId) {
+  const ch = CHARACTERS[characterId];
+  if (!ch) return showCharacterShop();
+  openMenu();
+  ovTitle.textContent = ch.name.toUpperCase();
+  ovTitle.className = '';
+  const owned = profile.unlockedCharacters.includes(characterId);
+  // E1: the banked meta balance reads BANK; a locked pilot names the reason in
+  // the sub-line so the refusal is legible before any row is tapped.
+  // G19 slice 2: the STRONG/WEAK identity rides the sub-line too, DERIVED from
+  // CHARACTER_SPECIALTIES via specialtyLines (the same helper the kit panel
+  // reads), legible for LOCKED pilots as well.
+  const idLines = specialtyLines(characterId) || { strong: '', weak: '' };
+  ovSub.innerHTML = `BANK: ${profile.gold}` +
+    (owned ? '' : ` · LOCKED — ${ch.name} not unlocked (${ch.unlockCost} gold)`) +
+    `<br>${idLines.strong} · ${idLines.weak}`;
+  for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  const framed = [];
+  for (const def of CHARACTER_UPGRADES.filter(u => u.characterId === characterId)) {
+    const lvl = getCharacterUpgradeLevel(profile, characterId, def.id);
+    const capped = lvl >= def.maxLevel;
+    const cost = upgradeCost(def, lvl);
+    const afford = profile.gold >= cost;
+    const sub = !owned
+      ? `LOCKED — buy ${ch.name} first (${ch.unlockCost} gold)`
+      : `LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`;
+    const el = menuCard(
+      def.name,
+      `${def.desc}<br>${sub}`,
+      () => {
+        if (buyCharacterUpgrade(profile, characterId, def.id)) {
+          saveProfile(profile);
+          showCharacterRows(characterId);
+        }
+      },
+      !owned || capped || !afford,
+      true,   // deferFrame: batched with `framed` below, like showShop's rows
+    );
+    framed.push(el);
+    if (!owned || capped) el.onclick = () => audio.playSfx('button');
+    // The icon path is the shop's own (src/art/shop_icons.js): authored grid
+    // per id, authored __fallback otherwise — the SAME fallback every
+    // un-arted global row gets, no second icon system (disclosed in the G19
+    // report: these ids have no authored icons yet).
+    const cv = document.createElement('canvas');
+    cv.className = 'shop-icon';
+    cv.width = 16; cv.height = 16;
+    if (el.insertBefore) el.insertBefore(cv, el.firstChild);
+    else el.appendChild(cv);          // stub DOM: markup string is the contract
+    const icon = shopIcon(def.id);
+    renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
+    shopIconCanvases[def.id] = cv;
+  }
+  menuCard('BACK', 'to characters', () => showCharacterShop());
+  for (const e of framed) frameCard(e, true);
 }
 
 // ---------- G25 slice 1: THE APEX PANEL ------------------------------------
@@ -4800,7 +4904,11 @@ function advanceCharIdle(dt) {
 function pilotKit(id) {
   const ch = CHARACTERS[id] || CHARACTERS.KNIGHT;
   const base = makePlayer().stats;
-  const st = applyCharacter(applyMetaBonuses({ ...base }, profile.purchased), ch.id);
+  // G19: the preview runs the RUN'S OWN chain (meta bonuses -> character ->
+  // that character's upgrade levels), so it cannot drift from startRun.
+  const st = applyCharacterUpgrades(
+    applyCharacter(applyMetaBonuses({ ...base }, profile.purchased), ch.id),
+    profile, ch.id);
   const owned = profile.unlockedCharacters.includes(ch.id);
   return {
     id: ch.id, name: ch.name,
@@ -4810,11 +4918,13 @@ function pilotKit(id) {
     maxMana: st.maxMana,
     speedMult: +(st.speed / base.speed).toFixed(2),
     spellCostMult: st.manaCostMult || 1,
-    // startPotionCount's formula, inlined for a pilot that is not equipped.
-    potions: ch.startPotions + (profile.purchased.potions || 0),
+    // startPotionCount's formula, inlined for a pilot that is not equipped —
+    // including the G19 satchel term (characterPotionBonus, the same helper
+    // startPotionCount reads, so preview and run share one definition).
+    potions: ch.startPotions + (profile.purchased.potions || 0) + characterPotionBonus(profile, ch.id),
     weapon: ch.startingWeapon ? WEAPON_NAMES[ch.startingWeapon] : WEAPON_NAMES.VOLLEY + ' (BASE)',
     skill: C.SKILLS[ch.skill].NAME,
-    healOnChest: ch.healOnChest,
+    healOnChest: st.healOnChest != null ? st.healOnChest : ch.healOnChest,
   };
 }
 
@@ -4827,6 +4937,12 @@ function kitPanelHtml(kit) {
     `SKILL [Q]: ${kit.skill}`,
   ];
   if (kit.healOnChest) lines.push(`CHESTS: heals ${kit.healOnChest} HP on open`);
+  // G19 slice 2: the legible identity — DERIVED from CHARACTER_SPECIALTIES via
+  // specialtyLines (the same helper the per-character shop rows read), so this
+  // screen can never disagree with the combat terms. Shown for LOCKED pilots
+  // too: the point is legibility BEFORE the player invests.
+  const idLines = specialtyLines(kit.id);
+  if (idLines) { lines.push(idLines.strong); lines.push(idLines.weak); }
   const status = kit.equipped ? 'EQUIPPED'
     : kit.owned ? 'owned — tap to equip'
     : `locked — ${kit.unlockCost} gold`;
@@ -5093,7 +5209,9 @@ function startRun() {
   // (crit/critMult/rateMult/damageMult/xpMult/goldMult/speedMult/pickupMult/
   // thorns/lifesteal) so every consumer can read them unguarded.
   p.stats = applyAffixes(
-    applyCharacter(applyMetaBonuses(p.stats, profile.purchased), profile.equippedCharacter), []);
+    applyCharacterUpgrades(
+      applyCharacter(applyMetaBonuses(p.stats, profile.purchased), profile.equippedCharacter),
+      profile, profile.equippedCharacter), []);
   // SURVIVAL-GAP: the pool this run levels up FROM (CONFIG.SURVIVAL.HP_PER_LEVEL
   // is linear in it), stamped before any in-run change.
   state.baseMaxHp = p.stats.maxHp;

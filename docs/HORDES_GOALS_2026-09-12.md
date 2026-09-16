@@ -2364,7 +2364,7 @@ Skippable with any key (matching the intro and portal cinematics), and registere
 
 **TICK 74 UPDATE (2026-09-15 23:35 UTC): THE SKIP-BAR RED IS CLOSED BY THE ORCHESTRATOR'S OWN RULE — the in-page delta reads 12.1ms against the untouched 250ms bar — but the VERIFIER has an open flow blocker, so G16 is still not marked DONE.** Three pilot runs on `10b30f9`: runs 1 and 2 both died `Error: never reached WALK t=2500 (not in cine, mode=draft)` at `tools/verify_g16_portal_cine.mjs:227`; run 3 was a FULL PASS — `skipMs 12.099999904632568` (< 250ms, in-page), natural cine 6874ms (design 6857, bar 8000), PAUSE hero delta 0 / portal delta 489, portal detail 150->1866 ink and 9->42 colours, LINGER portal 489 with ZERO hero ink, `chromeOn() === false` by name at all four beats, 4 PNGs at native dpr3, no console errors. Leading diagnosis handed to the builder to CONFIRM OR REFUTE: TAKE 1's real boss kill queues a draft (`src/main.js` :2570-2571 `pendingDrafts++` / open only when `mode === 'playing'`), the escape->intermission->'c' resume then OPENS it (`:2681` `openDraft()`, `:2682` `mode = 'draft'`), and TAKE 2's `BOSS_LIVE`/`portal-cine` waits are BARE awaits whose booleans are never checked, so the silent timeout read as progress. FIX DISPATCHED in the same tick: `docs/briefs/G16_SKIP_BAR_RESPEC_PART2.md`, task `msg_01M2KP9ZBJN8RNT1X9MYBVK3R7`. Acceptance stays THREE CONSECUTIVE rc=0 runs; the bar value and its predicate stay untouched.
 
-### G16 — PORTAL-ENTRY CINEMATIC UPGRADE  [status: BUILT 2026-09-15, PILOT-VERIFIED ON CONTENT, ONE ASSERTION STILL RED — NOT MARKED DONE. LANDED by builder `cli:glm-hordes-g8` (task `msg_01M2KEXSR2N97YF4P40TTRVS96`, brief `docs/briefs/G16_PORTAL_CINEMATIC.md`) on the UNCOMMITTED tree at `0c13b08` (dirty=23). The PILOT re-ran the artifacts itself: `bash tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ 0c13b08 | dirty=23`, `SUITE greenfiles=98 redfiles=0`; `node test/test_portal_cine.mjs` => `ALL PORTAL CINEMATIC TESTS PASSED`; `node tools/verify_g16_portal_cine.mjs` was run THREE TIMES and FAILED EVERY TIME - run 1 died `Error: never reached WALK t=2500` (`tools/verify_g16_portal_cine.mjs:204`), runs 2 and 3 passed every content check and failed ONLY `(e) REAL gesture skip out in 262ms` / `306ms` against the brief's `< 250ms` bar (the builder's own single reading was 243ms). CONTENT EVIDENCE THE PILOT REPRODUCED in real Chrome 390x844 @dpr3, all 20 TOUR_KEYS set and `state.time > 1.0` asserted first: natural cine 6873ms / 6888ms (design 6857ms, bar <= 8000ms); PAUSE hero delta 0 vs portal delta 489; portal detail 150 -> 1866/1867 ink, 9 -> 42/51 colours; LINGER still animating with ZERO hero ink; `chromeOn() === false` at all four beats; 4 dpr3 PNGs written to `docs/art/g16-portal-cine-2026-09-15/`; no console errors. THE RED IS NOT WAIVED and the bar was NOT weakened: see TICK NOTE 71 for the instrument analysis (the reading includes the harness's own 40 ms touch-down/up sleep plus CDP round-trips). The author-time text below this marker is BOUND by that note.]
+### G16 — PORTAL-ENTRY CINEMATIC UPGRADE  [status: DONE 2026-09-16 — THE RED IS CLOSED, see TICK NOTE 75. Three CONSECUTIVE clean pilot runs of `node tools/verify_g16_portal_cine.mjs` on the committed tree `a52e84f` (rc=0 each) with real-tap skip 28.6ms / 27.4ms / 20.5ms, all well under the UNTOUCHED 250ms bar, plus natural cine 6875/6895/6875ms <= 8000ms, pause hero delta 0 / portal delta 489, portal detail 150->1866 ink, chrome-off at all four beats, 4 dpr3 PNGs, zero console errors. Orchestrator committed the respec part 2 + V1d/V1e at `a52e84f`. PREVIOUS MARKER TEXT (history, superseded): LANDED by builder `cli:glm-hordes-g8` (task `msg_01M2KEXSR2N97YF4P40TTRVS96`, brief `docs/briefs/G16_PORTAL_CINEMATIC.md`) on the UNCOMMITTED tree at `0c13b08` (dirty=23). The PILOT re-ran the artifacts itself: `bash tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ 0c13b08 | dirty=23`, `SUITE greenfiles=98 redfiles=0`; `node test/test_portal_cine.mjs` => `ALL PORTAL CINEMATIC TESTS PASSED`; `node tools/verify_g16_portal_cine.mjs` was run THREE TIMES and FAILED EVERY TIME - run 1 died `Error: never reached WALK t=2500` (`tools/verify_g16_portal_cine.mjs:204`), runs 2 and 3 passed every content check and failed ONLY `(e) REAL gesture skip out in 262ms` / `306ms` against the brief's `< 250ms` bar (the builder's own single reading was 243ms). CONTENT EVIDENCE THE PILOT REPRODUCED in real Chrome 390x844 @dpr3, all 20 TOUR_KEYS set and `state.time > 1.0` asserted first: natural cine 6873ms / 6888ms (design 6857ms, bar <= 8000ms); PAUSE hero delta 0 vs portal delta 489; portal detail 150 -> 1866/1867 ink, 9 -> 42/51 colours; LINGER still animating with ZERO hero ink; `chromeOn() === false` at all four beats; 4 dpr3 PNGs written to `docs/art/g16-portal-cine-2026-09-15/`; no console errors. THE RED IS NOT WAIVED and the bar was NOT weakened: see TICK NOTE 71 for the instrument analysis (the reading includes the harness's own 40 ms touch-down/up sleep plus CDP round-trips). The author-time text below this marker is BOUND by that note.]
 Owner: *"the boss kill movie could use a tune to show a more detailed portal that the pilot enters upon
 defeating the boss. it could show them approach and pause before they enter. fade the pilot and linger
 on the movie for a beat or two before fading out of the movie too"*
@@ -2482,7 +2482,7 @@ SHORT (the player dies in minutes); late runs approach a long cap (30 minutes in
 minutes, a developed profile can last many times longer), the economy is priced off income per HOUR at
 each stage rather than a flat per-run figure, and the sim can report the curve.
 
-### G19 — PER-CHARACTER PROGRESSION + SPECIALISATION  [status: open]
+### G19 — PER-CHARACTER PROGRESSION + SPECIALISATION  [status: IN PROGRESS 2026-09-16 — SLICE 1 (the per-character upgrade layer) LANDED ON THE TREE at `a52e84f` (dirty=8, uncommitted — commits are the ORCHESTRATOR's): `CHARACTER_UPGRADES` is populated with 8 rows (2 per character, `src/meta.js` :1084-1101), `CHARACTER_UPGRADE_BY_ID` :1102, the new `buyCharacterUpgrade` :1111 (mirrors `buyUpgrade`: row validation, level cap, `upgradeCost` gold check, debit, then the EXISTING `addCharacterUpgrade` accessor — never a direct write to `profile.characters`), the pure/isolated `applyCharacterUpgrades` :1133 called at the ONE run seam (`src/main.js` :5193) and the ONE preview seam (:4896, `pilotKit`), and a found-not-presented CHARACTERS door on the shop (`src/main.js` :4618 `showCharacterShop` :4631 / `showCharacterRows` :4650). PILOT-VERIFIED ON THE ARTIFACT by this tick, not taken from the builder report: `bash tools/run_suite.sh` => `TREE @ a52e84f | dirty=8` / `SUITE greenfiles=99 redfiles=0` / REDLIST empty (the builder's own claim of greenfiles=99 redfiles=0 reproduces exactly), `git status` shows the expected modified `src/meta.js` + `src/main.js` and the new `test/test_g19_character_upgrades.mjs` + `tools/verify_g19_characters.mjs` + `docs/art/g19-characters-2026-09-15/`, and the landed code was READ directly: the 8-row table, the buy path, and `applyCharacterUpgrades` reading ONLY that character's levels (7 effects wired — `rogue_satchel`'s starting-potion effect is consumed through `characterPotionBonus`/`startPotionCount`, the pilot read the helper at `src/main.js` :4915 rather than the apply block, which is why the apply block shows 7 of 8). `src/save.js` UNTOUCHED — no schema change, `PROFILE_VERSION` still 8, NO migration needed (the slice-1 recon had already confirmed the `profile.characters` namespace + accessors existed). Builder-reported, NOT re-run by the pilot: `tools/verify_g19_characters.mjs` PASS 10/10 in real Chrome at 390x844 @dpr3 (two builder-side fixes during the run: the equip-screen title is `CHARACTERS` not `PILOTS`, and the tour-flag count reads only `TOUR_KEYS` keys, of which this tree has **20**, not the 19 the brief said) — the PNGs in `docs/art/g19-characters-2026-09-15/` were NOT read by any vision model (none exists in this job). SLICE 2 (SPECIALISATION — the family matrix, the two combat terms, the legible identity) ISSUED IN THE SAME TICK, see TICK NOTE 76. Remains for the orchestrator: LAND THE COMMIT (dirty=8). Previous text: `[status: open]`]
 Owner, verbatim: *"another mechanic some games use is that some of your gained skill that makes the game
 easier is tied to the character. so you purchase upgrades for that specific character and they generally
 aren't good at everything, so eventually you switch characters because they are better at beating certain
@@ -6213,3 +6213,100 @@ So per the orchestrator's G16 SKIP-BAR RULING (in-page < 250ms closes the red, t
 **V1 ESCAPE — OWNER SPEC UPDATE + G18 RULING (Remy, 2026-09-15).** Owner, verbatim: *"Let's cut escape to 1 minute. Cut either the shooting altogether or cut the shooting rate to 1/5th of current. The idea is there should be a literal horde chasing the pilot. There should never be less than 3 enemies trying to run after pilot. They appear slightly off screen and charge towards pilot but match pilots speed right before catching pilot."* Taken as: **1-minute escape** (beats compressed; the finale must land inside the minute — V1E brief amended); **shooting cut to 1/5th rate, NOT removed** (the reversible option the owner offered, and weapons stay flavour per his earlier directive); **>=3 live chasers at every frame** (a hard floor sampled every step, maintained by respawning so a pit buys RELIEF but never silence); **chasers spawn slightly off-screen** (behind the camera edge — nothing pops in on screen), **charge, then match the runner's speed just before contact**, which makes catching STRUCTURALLY impossible rather than merely unlikely; the settle moment gets a readable tell so the charge still sells. **Losing is therefore the collapsing WALL, not the horde** — the horde is the drama, the wall is the timer. Pit-falls survive as the player's tactic. PARKED as known balance debt (do NOT tune now, per the owner's "tuned later" rule): halving the escape's length DOUBLES payout-per-hour at the same `bestGold x K`. The old V1d dispatch (`msg_01M2KPAT2W0WR5WYPWEAPM3FAM`) was superseded and is no longer queued; re-issued with the full spec as `msg_01M2KR6FA7KE1A92DAWAV53XNA` (verified present in `pending_tasks`).
 
 **G18 FRESH-FLOOR — RULING: PARK, DO NOT STALL (Remy, 2026-09-15).** The pilot escalated it as "a design call, not a knob": the fresh arm dies in EXACTLY 2 CHASER hits because every contact hit is capped at 0.5 x maxHp (65), so the damage/HP dial family is a no-op — both single dials were turned and reverted (CHASER speedMult 0.5 -> 10.7s mean; SPAWN_INTERVAL 2.70 -> 12.7s mean; both far outside the 180-360s floor). RULING: **this is a BALANCE question, and balance is explicitly deferred by the owner's own directive** ("live with known inconsistencies; these can be tuned later; make sure it WORKS, not that it is balanced now"), so it does NOT get a knob turned and it does NOT block the queue — record the finding and move to G19. When the tuning pass comes, the shape of the fix is already known from the evidence: the per-hit cap (0.5 x maxHp) must stop being the binding constraint so the damage/HP dials are live again, while keeping the rule that no single hit can kill (i.e. cap somewhere at or below 1/4 of maxHp so hits-to-kill has room, rather than uncapping into one-shot deaths). The TARGET for that pass is the owner's own published bar: a fresh profile dies in 3-6 minutes, not 5-18 seconds.
+
+## TICK NOTE 75 - 2026-09-16 00:55 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G16 RED CLOSED BY THREE CONSECUTIVE CLEAN RUNS AND MARKED DONE; G19 SLICE 1 ISSUED IN THE SAME TICK)
+
+**PICKUP.** Lane quiescent on pickup (`python3 worker/hub-worker queue hub` prints nothing, no `running.json`,
+no model child), lock FREE -> acquired by `subagent:spawnfa`. The tree is CLEAN at `a52e84f` — the
+orchestrator committed V1d escape spectacle + V1e finale (1-minute escape, horde floor, 1/5 fire rate) +
+the G16 skip-bar respec PART 2 + the G19 slice-1 brief, so the whole V1/G16 backlog is LANDED, and this
+tick had no commit debt to report.
+
+**G16 — THE LAST OPEN ITEM UNDER FIX-BEFORE-NEW IS CLOSED, ON THREE CONSECUTIVE RUNS, NOT ONE.** The
+acceptance asked for three clean runs and tick 74 was 1-for-3 (runs 1-2 died on the swallowed WALK-wait,
+`tools/verify_g16_portal_cine.mjs:227`). On `a52e84f` the pilot ran the tool three times, all rc=0:
+- run 1 `PASS` — skip **28.6ms**, natural cine 6875ms;
+- run 2 `PASS` — skip **27.4ms**, natural cine 6895ms;
+- run 3 `PASS` — skip **20.5ms**, natural cine 6875ms.
+Every run also carried the content assertions: pause proof hero delta 0 / portal delta 489, portal detail
+150 -> 1866 ink samples, `chromeOn() === false` by name at all four beats, 4 PNGs at 1170x2532 (390x844
+@dpr3), no console errors. **The 250ms bar VALUE was never touched and the predicate is unchanged** — per
+the orchestrator's own G16 SKIP-BAR RULING the in-page delta closes the red, and 20-29ms is the game's own
+latency. G16's marker is now `DONE 2026-09-16` (the stale "NOT MARKED DONE" text is retained after it as
+history). Raw logs: `/tmp/g16_run{1,2,3}.txt`.
+
+**SUITE, PILOT-RUN ON THE COMMITTED TREE:** `TREE: /home/claude/projects/hordes @ a52e84f | dirty=1`,
+`SUITE greenfiles=98 redfiles=0`, REDLIST empty. The one dirty path is `docs/art/g16-portal-cine-2026-09-15/g16-linger-390x844.png`
+— a PNG REGENERATED BY MY OWN verifier runs, not code, and not a builder edit. This is the independent
+green banner for `a52e84f`, and it is the FIRST `redfiles=0` banner since tick 72 (ticks 73 and 74 both
+ended on lone flaky reds).
+
+**G19 SLICE 1 ISSUED IN THE SAME TICK (zero-latency handoff; the brief was already drafted by tick 74).**
+`docs/briefs/G19_SLICE1_CHARACTER_UPGRADES.md` (166 lines) — a dispatch-time ADDENDUM was appended at the
+top of this tick's work re-resolving every anchor on the receiving tree `a52e84f`, not trusting the
+author-time `10b30f9` block: `src/meta.js` :419 SHOP_UPGRADES, :592 upgradeCost, :601 buyUpgrade, :1062
+`CHARACTER_UPGRADES = []` (still EMPTY — populating it IS the slice), :1063 CHARACTER_UPGRADE_BY_ID, :1068
+CHARACTERS, :1108 applyCharacter; `src/save.js` :43 `PROFILE_VERSION = 8`; `src/main.js` :4544 showShop,
+:4803 preview seam, :5096 run-start seam. All confirmed verbatim. The brief also carries the inherited
+suite state so the builder starts from green and owns any red. Issued to `cli:glm-hordes-g8` as
+**`msg_01M2KTYZN0ZDHEENMSRYW0BRBK`** (channel `hub`, author `remy:orchestrator`, `coordinator.env` sourced
+first — the only authoring path that delivers). **DELIVERY CONFIRMED INDEPENDENTLY, not from the
+`{"issued": ...}` response:** the id is present in `cli_glm-hordes-g8/queued.json`, the lane spawn log
+carries `task msg_01M2KTYZN0ZDHEENMSRYW0BRBK from remy:orchestrator`, `.hub-worker/logs/msg_01M2KTYZN0ZDHEENMSRYW0BRBK.log`
+exists (3070 B), and `cli_glm-hordes-g8/running.json` = `{"task_id": "msg_01M2KTYZN0ZDHEENMSRYW0BRBK", "pid": 2209860, "started": 1789519691.45}`.
+The lane was NOT parked in a `wait` at issue time (`queued.json` had no `wait` key), which is the condition
+present in most of today's dropped dispatches.
+
+**REMAINS / UNVERIFIED:** (1) G19 slice 1's outcome is unverified by definition — issued, not run; the next
+tick picks it up. (2) The G18 early-run floor is still an OPEN OWNER DESIGN DECISION (the 65-damage hit cap
+pins hits-to-kill at exactly 2) — PARKED by the orchestrator's ruling, carried not re-measured, and it does
+NOT block the queue. (3) The `test_run_purse` corpse-credit intermittent (tick 73) did not recur here (the
+suite was green) and remains an open intermittent. (4) PNGs are still read by no vision model in this job
+(none exists); the evidence remains real-Chrome programmatic pixel sampling + asserted geometry. (5) Stale
+lane bookkeeping persists — `cli_glm-hordes-g8/queued.json` lists the three long-finished G16/G18 ids
+alongside the live one while `hub-worker queue hub` reports nothing; not cancelled (a cancel is hub noise).
+
+**LOCK:** acquired `subagent:spawnfa` at tick start, released at tick end. Read-only `git log`/`git status`/
+`git diff --stat` only; no commit/checkout/reset/stash/clean. No sim and no cohort ran (the owner's 60s cap
+respected — the longest commands were the three verifier runs and one suite).
+
+
+## TICK NOTE 76 - 2026-09-16 01:08 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G19 SLICE 1 PICKED UP AND PILOT-VERIFIED, G19 SLICE 2 AUTHORED AND ISSUED IN THE SAME TICK)
+
+**PICKUP - the lane was IDLE at tick start, so this tick VERIFIED and ISSUED rather than prepped.** Last task on
+`cli:glm-hordes-g8` (`msg_01M2KTYZN0ZDHEENMSRYW0BRBK`) exited 0 at 01:02:06 - the builder's own tail reads "G19 slice 1 complete
+and reported ... END RUN" - and no `running.json` remains for it. Lock was FREE on arrival; acquired by `subagent:spawnfa`.
+
+**G19 SLICE 1 VERIFIED ON THE ARTIFACT (read-only, pilot-run, not the builder's claim).** `bash tools/run_suite.sh` =>
+`TREE @ a52e84f | dirty=8`, `SUITE greenfiles=99 redfiles=0`, REDLIST empty - the builder's reported numbers reproduce exactly,
+so the slice is green on the tree the pilot actually holds. The landed code was read at the source: `src/meta.js` :1084-1101 the
+8 rows (2 per character, 900-3200 base, costGrowth 1.5, maxLevel 3-4), :1111 `buyCharacterUpgrade` with the level cap + gold check +
+the existing accessor write, :1133 `applyCharacterUpgrades` PURE and ISOLATED (a KNIGHT level cannot move a WITCH number), and
+`src/main.js` :5193 (run seam) / :4896 (pilotKit preview seam) as the only two consumers. `git status` shows exactly the expected
+edits and the three new paths. **NOT re-verified by the pilot this tick:** the real-Chrome verifier `tools/verify_g19_characters.mjs`
+(builder reports PASS 10/10 at 390x844 @dpr3 after two builder-side fixes - the equip title is `CHARACTERS` not `PILOTS`, and this
+tree carries **20** `TOUR_KEYS`, not the 19 the brief asserted); the visual state of the CHARACTERS door is therefore a builder claim,
+not a pilot observation. The two PNGs in `docs/art/g19-characters-2026-09-15/` were NOT read by any vision model - none exists in
+this job; the strongest instrument here remains a real-Chrome programmatic read.
+
+**G19 SLICE 2 AUTHORED AND ISSUED IN THE SAME TICK (zero-latency handoff; no brief existed, so it was authored now, under the
+lock).** `docs/briefs/G19_SLICE2_SPECIALISATION.md` (189 lines, 14790 B) executes PART (2) of the owner's goal - specialisation with
+real weaknesses - on the two seams the tree already has: OUTGOING `directHitMult` (`src/rewrites.js` :621, called at `src/main.js`
+:1513/:1817) and INCOMING `contactHitDamage`'s existing `typeMult` argument (`src/entities.js` :93). It fixes the AXIS to enemy
+FAMILY (CHAFF/RANGED/FLYING/HEAVY over the 10 types in `src/enemy_types.js` :35), the assignment so that every family has exactly
+one strong and one weak character and no character is strong twice (KNIGHT strong HEAVY / weak RANGED, WITCH CHAFF/FLYING, ROGUE
+RANGED/HEAVY, PALADIN FLYING/CHAFF), and the terms (outgoing 1.15/0.92, incoming 0.88/1.12, neutral 1.0). It carries the G18 lesson
+forward as a REQUIRED finding: `HIT_CAP_FRAC` pins hits-to-kill near 2, so an incoming weakness may be a structural no-op - the
+brief demands the raw/post-cap/hits-to-kill numbers per character per family and forbids "fixing" it by touching the capped
+constant. It also demands the owner's legibility mitigation (STRONG/WEAK lines on the character screen and the per-character shop
+rows, DERIVED from the table at render, shown for LOCKED characters too), a coverage/no-dominance proof, a NEUTRALITY regression
+proof (neutral terms reproduce today's numbers byte-identically), and the part-(3) demonstration that switching characters drops the
+per-character portion while keeping the global floor. ISSUED as **`msg_01M2KW2G34AWEMWHRFF90NRAGP`** to `cli:glm-hordes-g8` and **DELIVERY CONFIRMED INDEPENDENTLY, not assumed:** `.hub-worker/cli_glm-hordes-g8/running.json` = `{"task_id": "msg_01M2KW2G34AWEMWHRFF90NRAGP", "pid": 2209860, "started": 1789520855.170719}` (01:07:35 UTC) and the lane's spawn log carries `task msg_01M2KW2G34AWEMWHRFF90NRAGP from subagent:spawndec`. The builder was IDLE before the issue, so there is no idle gap: slice 1 exited 0 at 01:02:06, slice 2 was in flight by 01:07:35.
+
+**REMAINS / UNVERIFIED:** (1) G19 slice 2's outcome is unverified by definition - issued, not run; the next tick picks it up.
+(2) Slice 1's real-browser proof and its PNGs are builder-reported, not pilot-observed (above). (3) The G18 early-run floor is still
+an OPEN OWNER DESIGN DECISION (the 65-damage hit cap pins hits-to-kill at exactly 2, so the damage/HP dial family is a no-op) -
+carried from tick 73, not re-measured; slice 2 deliberately does NOT reopen it. (4) Stale lane bookkeeping persists -
+`cli_glm-hordes-g8/queued.json` lists long-finished task ids while `hub-worker queue hub` reports nothing. (5) The tree is dirty=8
+(the slice-1 brief + goals doc + `src/main.js` + `src/meta.js` + one regenerated PNG + three untracked paths); commits are the
+ORCHESTRATOR's.

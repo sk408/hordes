@@ -73,6 +73,17 @@
 //     detonates through the SAME applyBlast path every other blast uses.
 import { CONFIG as C } from './config.js';
 
+// G19 slice 2: the character specialty term. meta.js OWNS the table and the
+// terms, but a static import from here back into meta.js would close a module
+// cycle (main -> weapons -> rewrites -> meta -> weapons) whose evaluation
+// order differs between Node and the browser — the browser enters meta.js
+// mid-weapons and its top-level WEAPON_NAMES reads hit the TDZ. So the
+// dependency is INVERTED: meta.js (which imports rewrites.js acyclically)
+// registers its pure specialtyOutgoingMult here at module init. Until it
+// registers — a consumer of rewrites.js alone — the term is neutral 1.
+let specialtyResolver = null;
+export function setSpecialtyResolver(fn) { specialtyResolver = fn; }
+
 export const REWRITE_TAGS = ['FROST', 'CHAIN', 'ORBIT', 'BURN', 'CONDUCT'];
 
 export const REWRITES = {
@@ -614,15 +625,27 @@ export function onWeaponHit(state, enemy, opts) {
  * burn tick, echo, thorn or discharge can never see it (R3).
  *   GLACIER       x1.20 on any direct hit against a SLOWED (chilled) body.
  *   GLACIAL ORBIT x1.10 on an ORBIT blade hit against a chilled body.
+ * G19 slice 2 adds the character specialty FIRST, before the slow guard, so it
+ * rides every direct hit (not just chilled bodies): x1.15/x0.92 against the
+ * equipped character's strong/weak enemy family, x1 otherwise.
  * An ORBIT hit that LANDS the chill prices at x1: the chill is written by
  * onWeaponHit AFTER the damage, so only a chill already gripping counts.
  * `opts.orbit` selects the ORBIT-only card; every other caller omits it.
  */
 export function directHitMult(state, enemy, opts) {
-  if (!enemy || !(enemy.slow > 0)) return 1;
-  let m = 1;
-  if (hasRewrite(state, 'glacier')) m *= GLACIER_DAMAGE_MULT;
-  if (opts && opts.orbit && hasRewrite(state, 'glacialorbit')) m *= GLACIALORBIT_DAMAGE_MULT;
+  if (!enemy) return 1;
+  // G19 slice 2: the character's family specialty rides EVERY direct hit —
+  // computed FIRST, before the slow guard, so it applies to un-slowed bodies
+  // too (the guard only gates the GLACIER terms). Neutral by construction:
+  // unknown character, unknown type or no term reads exactly 1, so the
+  // rewritten slow branch below is byte-identical to the old one.
+  let m = specialtyResolver
+    ? specialtyResolver(state && state.character && state.character.id, enemy.typeId)
+    : 1;
+  if (enemy.slow > 0) {
+    if (hasRewrite(state, 'glacier')) m *= GLACIER_DAMAGE_MULT;
+    if (opts && opts.orbit && hasRewrite(state, 'glacialorbit')) m *= GLACIALORBIT_DAMAGE_MULT;
+  }
   return m;
 }
 /**
