@@ -93,11 +93,14 @@ const rectOfSel = (sel) => `(() => {
 const tourMissing = (keysJson) => `${keysJson}.filter(k => localStorage.getItem(k) !== '1').length`;
 // Event-gated coachmarks (chest/portal/draft/...) can pop at any moment and
 // their z-50 root swallows taps - clear any live one before interactive taps.
+// TUTORIAL_OVERLAY retarget: a shade tap is INERT now, so press the tip card's
+// own primary control (NEXT / GOT IT) with a REAL tap at its center.
 async function dismissAnyCoachmark(p) {
   for (let i = 0; i < 40; i++) {
     const active = await p.evaluate(`(() => { const r = document.getElementById('tour-root'); return !!(r && r.isConnected); })()`);
     if (!active) return true;
-    await p.tap(30, 200);
+    const btn = await p.evaluate(`(() => { const b = document.querySelector('#tour-tip .tour-next'); if (!b) return null; const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; })()`);
+    if (btn) await p.tap(btn[0], btn[1]);
     await p.sleep(250);
   }
   return false;
@@ -221,7 +224,16 @@ try {
       for (let i = 0; i < 30; i++) {
         const active = await p.evaluate(`(() => { const r = document.getElementById('tour-root'); return !!(r && r.isConnected); })()`);
         if (!active) break;
-        await p.tap(30, 200);   // passThrough only covers menu cards; in-run any tap advances
+        // TUTORIAL_OVERLAY retarget: in-run taps on the shade are INERT now —
+        // press the tip card's own primary control (NEXT / GOT IT) with a
+        // REAL tap at its center. (Multi-step coaches may need several.)
+        for (let j = 0; j < 4; j++) {
+          const btn = await p.evaluate(`(() => { const b = document.querySelector('#tour-tip .tour-next'); if (!b) return null; const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; })()`);
+          if (!btn) break;
+          await p.tap(btn[0], btn[1]);
+          await p.sleep(150);
+          if (!await p.evaluate(`(() => { const r = document.getElementById('tour-root'); return !!(r && r.isConnected); })()`)) break;
+        }
         await p.sleep(200);
         const got = await p.evaluate(`[${JSON.stringify(ALL_KEYS)}].filter(k => localStorage.getItem(k) === '1')`);
         consumed.length = 0; consumed.push(...got);

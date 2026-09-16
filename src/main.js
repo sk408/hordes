@@ -2832,6 +2832,9 @@ function openDraft() {
       text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
+  // G30: every presented draft re-arms the AUTO countdown (the coach above
+  // suspends it until dismissed — tickDraftAutoPick).
+  armDraftAutoPick(choices);
 }
 
 // ---------- DRAFT CARD ACTIVATION: ONE ACTIVATION TAKES THE CARD ------------
@@ -2960,6 +2963,115 @@ function pick(u) {
   draftFocus = -1;
   overlay.style.display = 'none';
   state.mode = 'playing';
+  clearDraftAutoPick();   // G30: the draft resolved — no timer may outlive it
+}
+
+// ---------- G30 AUTO DRAFT AUTO-PICK (owner 2026-09-16) -----------------------
+// Owner, verbatim: "Can we add so on auto, the card selection screen has a 6
+// second timeout and then it auto picks a random card." The pilot drives
+// movement, potions and casts — the DRAFT is the one screen that still parks
+// an AUTO run on a modal waiting for a human. In AUTO, after
+// CONFIG.AUTOPILOT.DRAFT_TIMEOUT seconds of VISIBLE, unobstructed draft the
+// pilot takes a card uniformly at random through activateDraftCard — the
+// ONE activation seam a tap and the number keys take — so every side effect
+// (WAVE-11 taper, the `once` ledger, achievements, purse, audit) is
+// byte-identical to a human pick.
+//   * AUTO ONLY: a MANUAL player sees no countdown line and never gets an
+//     auto-pick (the tick and the line both gate on normalizePilotMode).
+//   * frame-driven from the frame loop's wall-clock dt, NOT setTimeout:
+//     'draft' mode freezes the sim, so the sim clock cannot carry it, and a
+//     frame timer stops on its own when the tab hides.
+//   * SUSPEND, not run, while the draft coachmark (or any tour) rides on
+//     top, another mode owns the screen, or the document is hidden — resume
+//     where it left off: the player is owed the full window of unobstructed
+//     draft. Re-armed by every openDraft().
+//   * never twice for one draft (the `done` latch); a human tap during the
+//     countdown resolves the draft through pick(), which clears the timer.
+let draftTimer = null;            // { left: seconds remaining, done: picked }
+let draftOffers = [];             // the CURRENT draft's offers, captured at
+                                  // presentation (openDraft) — the DOM card
+                                  // elements are presentation, not the source
+                                  // of truth, so expiry never re-reads them
+let draftCountdownEl = null;      // the "AUTO-PICK IN 4.2s" line
+let draftAutoRng = Math.random;   // injectable rng (chests.js :291 pattern)
+let draftAutoCount = 0;           // test seam: auto-picks made
+let draftAutoLastId = null;       // test seam: the last auto-picked offer id
+
+function draftObstructed() {
+  if (state.mode !== 'draft') return true;
+  // MANUAL never auto-picks: the countdown is suspended (not reset), so a
+  // flip to AUTO mid-draft owes the player the full unspent window.
+  if (normalizePilotMode(state.pilotMode) === 'MANUAL') return true;
+  if (coachActive() || (menuTour && menuTour.active())) return true;
+  try { return !!(typeof document !== 'undefined' && document && document.hidden); }
+  catch { return false; }
+}
+
+function armDraftAutoPick(offers) {
+  // Armed on every presentation (MANUAL included): the TICK and the LINE are
+  // what gate on AUTO, so a player who flips AUTO mid-draft gets the full
+  // window from that moment, and a MANUAL player gets nothing at all.
+  draftOffers = Array.isArray(offers) ? offers : [];
+  draftTimer = { left: C.AUTOPILOT.DRAFT_TIMEOUT, done: false };
+  updateDraftCountdownLine();
+}
+
+function clearDraftAutoPick() {
+  draftTimer = null;
+  draftOffers = [];
+  if (draftCountdownEl) {
+    if (draftCountdownEl.remove) draftCountdownEl.remove();
+    else if (draftCountdownEl.parentNode) draftCountdownEl.parentNode.removeChild(draftCountdownEl);
+    draftCountdownEl = null;
+  }
+}
+
+function updateDraftCountdownLine() {
+  const show = state.mode === 'draft' && draftTimer && !draftTimer.done
+    && normalizePilotMode(state.pilotMode) !== 'MANUAL';
+  if (!show) {
+    if (draftCountdownEl) {
+      if (draftCountdownEl.remove) draftCountdownEl.remove();
+      else if (draftCountdownEl.parentNode) draftCountdownEl.parentNode.removeChild(draftCountdownEl);
+      draftCountdownEl = null;
+    }
+    return;
+  }
+  if (!draftCountdownEl || !draftCountdownEl.parentNode) {
+    draftCountdownEl = document.createElement('div');
+    draftCountdownEl.id = 'draft-autopick';
+    // Small and unemphatic by design: it must never read as the primary
+    // action. Inline style — the draft overlay's own inline-style precedent
+    // (the tier badge above).
+    if (draftCountdownEl.style && draftCountdownEl.style.cssText !== undefined) {
+      draftCountdownEl.style.cssText =
+        'margin:2px auto 6px;width:max-content;font-size:11px;letter-spacing:1px;color:#6a6a8a;';
+    }
+    if (typeof overlay.insertBefore === 'function' && ovCards && ovCards.parentNode === overlay) {
+      overlay.insertBefore(draftCountdownEl, ovCards);
+    } else {
+      overlay.appendChild(draftCountdownEl);
+    }
+  }
+  draftCountdownEl.textContent = 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
+}
+
+function tickDraftAutoPick(dt) {
+  if (!draftObstructed() && draftTimer && !draftTimer.done) {
+    draftTimer.left -= dt;
+    if (draftTimer.left <= 0 && draftOffers.length) {
+      draftTimer.done = true;   // latch FIRST: never two picks for one draft
+      // Uniformly at random across the offered cards (captured at
+      // presentation), through the ONE activation seam (activateDraftCard) —
+      // byte-identical to a tap.
+      const u = draftOffers[Math.min(draftOffers.length - 1, Math.floor(draftAutoRng() * draftOffers.length))];
+      draftAutoCount++;
+      draftAutoLastId = u.id;
+      activateDraftCard(u);
+      return;   // pick() closed (or chained into) the next draft
+    }
+  }
+  updateDraftCountdownLine();
 }
 
 // ---------- EVOLUTION draft (wave-7/A, evolutions.js) -----------------------
@@ -3564,7 +3676,10 @@ function showHowToPlay() {
   ovTitle.className = '';
   ovSub.innerHTML =
     'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
-    'you steer the BUILD: draft weapons, bank gold, outlast the finale.';
+    'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
+    // TUTORIAL_OVERLAY (complaint 3): the replay path existed but nobody
+    // found it — HOW TO PLAY is the onboarding surface, so name it here.
+    '<br>Missed the guided tour? Replay it any time: SETUP, SETTINGS, REPLAY TOUR.';
   menuCard('TOUCH',
     'joystick — move (manual pilot)<br>' +
     'FOCUS — volley target: NEAREST / TOUGHEST / SWARM / RANGED<br>' +
@@ -3574,7 +3689,9 @@ function showHowToPlay() {
     'FROST / OVER — skills &middot; HP / MP — potions<br>' +
     'cog (top-right) — settings: zoom, END RUN');
   menuCard('KEYBOARD',
-    'M — pilot auto/manual &middot; arrows / WASD — move<br>' +
+    // M1 mechanical fix: O is the pilot toggle (M was taken by the map) —
+    // the tour tip and the key handler already say O; this line was stale.
+    'O — pilot auto/manual &middot; M — map &middot; arrows / WASD — move<br>' +
     'TAB — focus &middot; G — stance<br>' +
     'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
     'H / N — potions &middot; I — field report (the ONE stats key)<br>' +
@@ -3808,12 +3925,12 @@ function maybeStartMenuTour() {
   menuTour = new Tour({
     // Player-flow order: what you press first reads first.
     steps,
-    onDone: finish, onSkip: finish,
-    // WAVE-23 (#6): input-aware advance wording — "TAP" reads wrong on a
-    // desktop with no touch (Sk408). Any key also advances (tour.js).
-    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY',
-    // WAVE-31: a tap that lands ON a menu card presses the card (the tour's
-    // "tap anywhere advances" rule cost a real finger tap its target).
+    onDone: finish,
+    // TUTORIAL_OVERLAY: a skip must not strand the player — the walkthrough
+    // is replayable, and the owner's complaint was that nobody knew.
+    onSkip: () => { finish(); toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS'); },
+    // WAVE-31: a tap that lands ON a menu card presses the card (the shade
+    // swallows every OTHER tap — tour.js).
     passThrough: '#ov-cards > .card',
   });
   menuTour.start();
@@ -3826,8 +3943,9 @@ function startCoach(steps, key) {
   if (coachActive()) return;
   setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
   const end = () => { coach = null; };
-  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end, onSkip: end,
-    advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY' });
+  coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end,
+    // TUTORIAL_OVERLAY: name the replay path on the way out of a skip.
+    onSkip: () => { end(); toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS'); } });
   coach.start();
 }
 
@@ -6067,10 +6185,11 @@ const REPEAT_GUARDED = new Set([
 ]);
 
 window.addEventListener('keydown', (ev) => {
-  // WAVE-23 (#6): any key advances a live tour step (tour.js), so swallow the
-  // key here — otherwise the same press would ALSO fire a skill / toggle the
-  // pilot under the paused coachmark. Escape still reaches the tour's own
-  // document-level skip handler.
+  // While a tour is live the keys are the TOUR's: Right/Enter/Space advance,
+  // Left backs, Escape skips (the tour's own document-level handler, which
+  // fires before this one). Everything else must NOT reach the game — the
+  // same press firing a skill or toggling the pilot under a paused coachmark
+  // is exactly the "goes away too easily / without context" complaint.
   if (coachActive() || (menuTour && menuTour.active())) return;
   const k = ev.key.toLowerCase();
   if (ev.repeat && REPEAT_GUARDED.has(k)) return;
@@ -7223,6 +7342,10 @@ function frame(now) {
       if (state.bossBanner.ttl <= 0) state.bossBanner = null;
     }
   }
+  // G30 AUTO DRAFT AUTO-PICK: wall-clock countdown on the frame loop ('draft'
+  // mode freezes the sim, so this cannot ride update()). Suspend-aware and
+  // AUTO-only; a no-op in every other mode.
+  tickDraftAutoPick(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -7481,6 +7604,16 @@ export const __TEST = {
   // (headless tests read this instead of poking module scope). The R2
   // inspect seam is gone with the inspect box — one activation takes the card.
   draftFocus: () => draftFocus,
+  // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
+  // rng injection point (a pinned-index test drives the SAME draw the live
+  // loop makes), and the suspend state. Never read by the browser page.
+  draftAuto: {
+    set rng(fn) { draftAutoRng = fn; },
+    get count() { return draftAutoCount; },
+    get lastId() { return draftAutoLastId; },
+    get left() { return draftTimer ? draftTimer.left : null; },
+    get armed() { return !!draftTimer; },
+  },
   synWeaponDmg,
   stanceOf: () => controller.stance,
   // ---- WAVE-28 AUTO-DRINK seam: the pure decision step, so a headless probe

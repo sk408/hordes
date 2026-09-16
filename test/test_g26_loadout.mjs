@@ -54,6 +54,15 @@ const fakeCtx = new Proxy({}, {
   set() { return true; },
 });
 const handlers = new WeakMap();
+// TUTORIAL_OVERLAY: the tip-card controls (NEXT/GOT IT, BACK, SKIP) are lazy
+// children materialised from the rendered HTML — FRESH after every innerHTML
+// set, like a real DOM replacing its children (so handlers never accumulate).
+const controls = new WeakMap();
+const controlFor = (tip, cls) => {
+  const m = controls.get(tip) || {};
+  if (!m[cls]) { const a = mk(); a.className = cls; m[cls] = a; controls.set(tip, m); }
+  return m[cls];
+};
 const mk = () => {
   const el = {
     tagName: 'div', className: '', id: '', style: {}, children: [], parentNode: null, onclick: null,
@@ -64,14 +73,17 @@ const mk = () => {
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
     remove() { if (el.parentNode) { const i = el.parentNode.children.indexOf(el); if (i >= 0) el.parentNode.children.splice(i, 1); el.parentNode = null; } },
     getBoundingClientRect() { return { left: 10, top: 10, right: 90, bottom: 60, width: 80, height: 50 }; },
-    querySelector(sel) { return (sel === '.tour-skip' && el._html.includes('tour-skip')) ? el : null; },
+    querySelector(sel) {
+      if (sel.startsWith('.tour-') && el._html.includes(sel.slice(1))) return controlFor(el, sel.slice(1));
+      return null;
+    },
     click() { if (el.onclick) el.onclick(); el.fire('click'); },
     getContext: () => fakeCtx,
     width: 0, height: 0,
   };
   Object.defineProperty(el, 'innerHTML', {
     get() { return el._html; },
-    set(v) { el._html = String(v); if (v === '') el.children.length = 0; },
+    set(v) { el._html = String(v); if (v === '') el.children.length = 0; controls.delete(el); },
   });
   return el;
 };
@@ -127,10 +139,13 @@ settleReveal();
   const root = tourRoots()[0];
   assert.ok(root, 'stage-1 title tour mounted on the fresh boot');
   const taught = [];
+  // TUTORIAL_OVERLAY: the walk advances on the tip's own primary (NEXT /
+  // GOT IT); a root pointerdown is an inert shade tap now.
   for (let i = 0; i < 12 && tourRoots().length; i++) {
     const tip = root.children.find(c => c.id === 'tour-tip');
     if (tip) taught.push(tip._html);
-    root.fire('pointerdown', { stopPropagation() {} });
+    const btn = tip && tip.querySelector('.tour-next');
+    if (btn) btn.fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
   }
   ok('the title walk does NOT teach LOADOUT (it is event-taught instead)',
     !taught.some(h => h.includes('LOADOUT')), taught.filter(h => h.includes('LOADOUT')).length);
@@ -170,7 +185,13 @@ ok('the flag is set the moment it fires (once only, tour flag store)',
   ls.get(TOUR_KEYS.loadout) === '1', ls.get(TOUR_KEYS.loadout));
 
 // (d) the flag persists and prevents a repeat.
-roots[0].fire('pointerdown', { stopPropagation() {} });   // dismiss like every coachmark
+// TUTORIAL_OVERLAY: dismiss through the coach's own primary (GOT IT — a
+// single-step coach); a root pointerdown is an inert shade tap now.
+{
+  const tip = roots[0].children.find(c => c.id === 'tour-tip');
+  const btn = tip && tip.querySelector('.tour-next');
+  if (btn) btn.fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+}
 T.showTitle();
 settleReveal();
 pump(2);

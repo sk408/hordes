@@ -698,9 +698,17 @@ console.log(`wave-5 trio (soft): tick=${sawTick} warlock=${sawWarlock} colossus=
 // flaked (~1/60). Fall back to the live run's cap (the same number the HUD
 // prints, set by startRun) when no draft was ever sampled.
 if (!slotCapSeen && Number.isFinite(st.weaponSlots)) slotCapSeen = st.weaponSlots;
-assert(slotCapSeen === 3, `fresh profile should start with 3 weapon slots (saw ${slotCapSeen})`);
+// G30-era flake fix (2026-09-16): a run SHRINE can sell Merchant's Pact
+// (choices.js weaponSlotBonus) mid-run, legally raising the LIVE cap past 3
+// (measured: WPN 1/5 at 90s). "Fresh profile STARTS with 3" is a claim about
+// the run's base cap (baseWeaponSlots, stamped by startRun and never touched
+// by shrines), and "count respects the cap" is a claim about the LIVE cap the
+// HUD prints — neither is a claim that the cap is forever 3. Both assertions
+// below are retargeted to the value each one is actually about.
+assert(st.baseWeaponSlots === 3,
+  `fresh profile should start with 3 weapon slots (base ${st.baseWeaponSlots})`);
 assert(!grantAtCap, 'grant cards must NOT appear once the weapon slots are full');
-assert(wpnCount <= 3, `weapon count must respect the slot cap (${wpnCount}/3)`);
+assert(wpnCount <= slotCapSeen, `weapon count must respect the slot cap (${wpnCount}/${slotCapSeen})`);
 // WAVE-25 FIX (agent F): this used to hard-assert that a NEW WEAPON grant card
 // appeared during the 90s sim. Whether the weighted 3-of-N draft draw lands on
 // the one grantable starter weapon is pure RNG — measured 3 failures in 40

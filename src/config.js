@@ -359,6 +359,18 @@ export const CONFIG = {
       // upgrade moves both the volleys AND this gate.
       get ELITE_RANGE() { return liveEngagementRange(); },
     },
+    // DRAFT_TIMEOUT (owner 2026-09-16, verbatim: "Can we add so on auto, the
+    // card selection screen has a 6 second timeout and then it auto picks a
+    // random card."). The draft is the one screen that still parks an AUTO
+    // run on a modal waiting for a human; in AUTO the run now continues
+    // hands-free: after this many seconds of VISIBLE, unobstructed draft the
+    // pilot takes a card uniformly at random through the same activation
+    // seam a tap takes. AUTO ONLY — a MANUAL player sees no countdown and
+    // never gets an auto-pick. The countdown is frame-driven (not
+    // setTimeout), suspends while the draft coachmark or any modal is up,
+    // and resumes where it left off: the player is owed the full window of
+    // unobstructed draft.
+    DRAFT_TIMEOUT: 6.0,
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):

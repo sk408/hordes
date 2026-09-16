@@ -14,7 +14,8 @@ async function check(name, fn) {
 
 // ---- fakes -------------------------------------------------------------------
 // A DOM element that supports everything tour.js touches: handler storage,
-// innerHTML, appendChild/remove, querySelector('.tour-skip'), and a NON-ZERO
+// innerHTML, appendChild/remove, querySelector for the tip-card controls
+// ('.tour-skip' / '.tour-next' / '.tour-back' / '.tour-count'), and a NON-ZERO
 // rect (a zero rect reads as "target missing" and the step would skip).
 const handlers = new WeakMap();
 function fakeEl(tag = 'div') {
@@ -28,25 +29,25 @@ function fakeEl(tag = 'div') {
     remove() { if (el.parentNode) { const i = el.parentNode.children.indexOf(el); if (i >= 0) el.parentNode.children.splice(i, 1); el.parentNode = null; } },
     getBoundingClientRect() { return { left: 100, top: 50, right: 200, bottom: 100, width: 100, height: 50 }; },
     querySelector(sel) {
-      if (sel === '.tour-skip' && el._html.includes('tour-skip')) return skipLinkFor(el);
+      // Controls are lazy children materialised from the rendered HTML —
+      // one element per class, FRESH after every innerHTML set (a real DOM
+      // replaces children on innerHTML, so handlers never accumulate).
+      if (sel.startsWith('.tour-') && el._html.includes(sel.slice(1))) return controlFor(el, sel.slice(1));
       return null;
     },
   };
   Object.defineProperty(el, 'innerHTML', {
     get() { return el._html; },
-    set(v) { el._html = String(v); if (v === '') el.children.length = 0; },
+    set(v) { el._html = String(v); if (v === '') el.children.length = 0; controls.delete(el); },
   });
   return el;
 }
-// The skip <a> is inside innerHTML — model it as a lazy child handler slot.
-const skipLinks = new WeakMap();
-function skipLinkFor(tip) {
-  if (!skipLinks.has(tip)) {
-    const a = fakeEl('a');
-    a.className = 'tour-skip';
-    skipLinks.set(tip, a);
-  }
-  return skipLinks.get(tip);
+// tip element -> { className: fakeEl } — the tip-card controls.
+const controls = new WeakMap();
+function controlFor(tip, cls) {
+  const m = controls.get(tip) || {};
+  if (!m[cls]) { const a = fakeEl('a'); a.className = cls; m[cls] = a; controls.set(tip, m); }
+  return m[cls];
 }
 
 function fakeDoc() {
@@ -78,15 +79,23 @@ check('tour starts on step 0, spotlight + one-line tip rendered', () => {
   t.start();
   assert.ok(t.active(), 'root mounted');
   assert.ok(t.tip._html.includes('First button'), 'step text shown');
-  assert.ok(t.tip._html.includes('TAP TO CONTINUE'), 'advance hint');
   assert.ok(t.tip._html.includes('SKIP TOUR'), 'visible skip');
+  // TUTORIAL_OVERLAY: explicit controls + counter, not a tap-anywhere hint.
+  assert.ok(t.tip._html.includes('1 OF 2'), 'step counter on a multi-step tour');
+  assert.ok(t.tip._html.includes('>NEXT<'), 'NEXT is the primary mid-tour');
+  assert.ok(!t.tip._html.includes('tour-back'), 'BACK is absent on the first step (no dead button)');
   // shades laid out around the target rect (100,50)-(200,100) + pad 8
   const top = t.shades[0].style;
   assert.equal(top.height, (50 - 8) + 'px', 'shade above hole = target top - pad');
   t.skip();
 });
 
-check('clicking anywhere advances; tip text swaps to the next step', () => {
+// RETARGETED 2026-09-16 (TUTORIAL_OVERLAY; acceptance 1): this group asserted
+// the OLD contract "clicking anywhere advances" (t.root pointerdown -> next).
+// It now asserts the replacement contract: a shade tap is INERT (the player
+// reaching for the thing the tip describes must not lose it — complaint 1),
+// and the NEXT control advances.
+check('a shade tap does NOT advance or dismiss; the NEXT control advances', () => {
   const a = fakeEl(), b = fakeEl();
   const doc = fakeDoc(), st = fakeStorage();
   let done = 0;
@@ -95,11 +104,58 @@ check('clicking anywhere advances; tip text swaps to the next step', () => {
     steps: [{ id: 'a', text: 'First', target: () => a }, { id: 'b', text: 'Second', target: () => b }],
   });
   t.start();
+  // A tap on the shade (root, outside the card's controls): inert.
   t.root.fire('pointerdown', { stopPropagation() {} });
-  assert.ok(t.tip._html.includes('Second'), 'advanced to step 2');
+  assert.ok(t.active(), 'shade tap did not dismiss');
+  assert.ok(t.tip._html.includes('First') && t.tip._html.includes('1 OF 2'), 'shade tap did not advance');
+  assert.equal(done, 0, 'shade tap did not complete');
+  // The NEXT control advances.
+  t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.ok(t.tip._html.includes('Second') && t.tip._html.includes('2 OF 2'), 'NEXT advanced to step 2');
+  // A shade tap on the LAST step still does not finish the tour.
   t.root.fire('pointerdown', { stopPropagation() {} });
-  assert.equal(done, 1, 'past the last step -> onDone');
+  assert.ok(t.active() && done === 0, 'shade tap on the final step is still inert');
+  t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.equal(done, 1, 'the final step primary completes the tour');
   assert.ok(!t.active(), 'torn down');
+});
+
+// NEW (TUTORIAL_OVERLAY; acceptance 1): BACK returns; the final primary is
+// labelled as a finish and carries the replay note; a single-step card hides
+// BACK, shows no counter, and reads as a finish.
+check('BACK returns to the previous step; final step primary is a labelled finish', () => {
+  const a = fakeEl(), b = fakeEl();
+  const doc = fakeDoc(), st = fakeStorage();
+  let done = 0;
+  const t = new Tour({
+    doc, storage: st, onDone: () => done++,
+    steps: [{ id: 'a', text: 'First', target: () => a }, { id: 'b', text: 'Second', target: () => b }],
+  });
+  t.start();
+  t.next();
+  assert.ok(t.tip._html.includes('tour-back'), 'BACK present on step 2');
+  t.tip.querySelector('.tour-back').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.ok(t.tip._html.includes('First') && t.tip._html.includes('1 OF 2'), 'BACK returned to step 1');
+  // Walk to the final step: the primary is the finish, and it names the replay path.
+  t.next();
+  assert.ok(t.tip._html.includes('>GOT IT<'), 'final step primary reads as the finish');
+  assert.ok(t.tip._html.includes('Replay this any time from SETTINGS'), 'final card tells the player how to replay');
+  assert.ok(!t.tip._html.includes('>NEXT<'), 'the final step is not labelled NEXT');
+  t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.equal(done, 1, 'GOT IT completes');
+});
+
+check('single-step tour: no BACK, no counter, primary reads as a finish', () => {
+  const a = fakeEl();
+  const doc = fakeDoc(), st = fakeStorage();
+  let done = 0;
+  const t = new Tour({ doc, storage: st, onDone: () => done++, steps: [{ id: 'a', text: 'Only', target: () => a }] });
+  t.start();
+  assert.ok(!t.tip._html.includes('tour-back'), 'no BACK on a single-step tour');
+  assert.ok(!t.tip._html.includes('OF 1'), 'no counter on a single-step tour');
+  assert.ok(t.tip._html.includes('>GOT IT<'), 'primary is the finish');
+  t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.equal(done, 1, 'GOT IT completes a single-step tour');
 });
 
 check('missing targets are skipped silently, never break', () => {
@@ -128,7 +184,7 @@ check('SKIP link and Escape both exit early with onSkip', () => {
       steps: [{ id: 'a', text: 'x', target: () => fakeEl() }, { id: 'b', text: 'y', target: () => fakeEl() }],
     });
     t.start();
-    skipLinks.get(t.tip).fire('pointerdown', { stopPropagation() {} });
+    controlFor(t.tip, 'tour-skip').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
     assert.ok(!t.active(), 'skip link tore it down');
     assert.equal(skipped, 0, 'onSkip reports the step');
   }
@@ -146,20 +202,45 @@ check('SKIP link and Escape both exit early with onSkip', () => {
   }
 });
 
-check('WAVE-23: any non-Escape key advances; custom advanceHint renders', () => {
+// RETARGETED 2026-09-16 (TUTORIAL_OVERLAY; acceptance 1): this group asserted
+// the OLD WAVE-23 (#6) contract "any non-Escape key advances" (a plain 'm'
+// keypress moved the step). It now asserts the replacement keyboard contract:
+// Right/Enter/Space advance, Left backs, and NO other key does anything.
+check('keyboard: Right/Enter/Space next, Left back, no other key advances', () => {
   const a = fakeEl(), b = fakeEl();
   const doc = fakeDoc(), st = fakeStorage();
   const t = new Tour({
     doc, storage: st,
-    advanceHint: 'CLICK OR PRESS ANY KEY',
     steps: [{ id: 'a', text: 'First', target: () => a }, { id: 'b', text: 'Second', target: () => b }],
   });
   t.start();
-  assert.ok(t.tip._html.includes('CLICK OR PRESS ANY KEY'), 'input-aware hint rendered');
-  doc.fireKey('keydown', { key: 'm' });          // no preventDefault needed
-  assert.ok(t.tip._html.includes('Second'), 'plain key advanced the step');
+  doc.fireKey('keydown', { key: 'm' });          // a game key the OLD engine ate
+  assert.ok(t.tip._html.includes('First'), 'a plain key does NOT advance');
+  doc.fireKey('keydown', { key: 'ArrowRight', preventDefault() {} });
+  assert.ok(t.tip._html.includes('Second'), 'ArrowRight advances');
+  doc.fireKey('keydown', { key: 'ArrowLeft', preventDefault() {} });
+  assert.ok(t.tip._html.includes('First'), 'ArrowLeft backs up');
+  doc.fireKey('keydown', { key: 'Enter', preventDefault() {} });
+  assert.ok(t.tip._html.includes('Second'), 'Enter advances');
   doc.fireKey('keydown', { key: 'Escape', preventDefault() {} });
   assert.ok(!t.active(), 'Escape still skips');
+});
+
+check('keyboard: Space advances; keys past the final step do nothing weird', () => {
+  const a = fakeEl(), b = fakeEl();
+  const doc = fakeDoc(), st = fakeStorage();
+  let done = 0;
+  const t = new Tour({
+    doc, storage: st, onDone: () => done++,
+    steps: [{ id: 'a', text: 'First', target: () => a }, { id: 'b', text: 'Second', target: () => b }],
+  });
+  t.start();
+  doc.fireKey('keydown', { key: ' ', preventDefault() {} });
+  assert.ok(t.tip._html.includes('Second'), 'Space advances');
+  doc.fireKey('keydown', { key: ' ', preventDefault() {} });
+  assert.equal(done, 1, 'Space on the final step completes the tour');
+  doc.fireKey('keydown', { key: 'ArrowLeft', preventDefault() {} });   // dead tour
+  assert.equal(done, 1, 'keys after teardown change nothing');
 });
 
 check('a target that disappears mid-step (zero rect) ends gracefully', () => {
@@ -265,6 +346,16 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   assert.ok(tourRoot, 'menu tour mounted');
   const tipOf = () => tourRoot.children.find(c => c.id === 'tour-tip');
   assert.ok(tipOf()._html.includes('START GAME'), 'first step spotlights START GAME');
+  // TUTORIAL_OVERLAY: tours advance on the tip card's OWN primary control
+  // (NEXT / GOT IT) — a root pointerdown is now an inert shade tap.
+  const pressPrimary = (rootEl) => {
+    const tip = rootEl.children.find(c => c.id === 'tour-tip');
+    const btn = tip && tip.querySelector('.tour-next');
+    if (btn) btn.fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  };
+  const dismissTour = (rootEl) => {
+    for (let i = 0; i < 8 && globalThis.document.body.children.includes(rootEl); i++) pressPrimary(rootEl);
+  };
 
   // Advance through every step by clicking (pointerdown contract). WAVE-31: the
   // tour is no longer a fixed 5 - TROPHIES shipped after the tour was written and
@@ -298,7 +389,7 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   const seen = [];
   for (let i = 0; i < 12 && globalThis.document.body.children.includes(tourRoot); i++) {
     seen.push(tipOf()._html);
-    tourRoot.fire('pointerdown', { stopPropagation() {} });
+    pressPrimary(tourRoot);
   }
   const taught = seen.length;
   const exempt = cards().filter(c => DISCOVERY_EXEMPT.some(t => (c._html || '').includes('>' + t + '<'))).length;
@@ -328,8 +419,8 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
   for (let i = 0; i < 60; i++) frame();   // a full second of frames
   assert.equal(st.time, frozenAt, 'sim PAUSED under the coachmark');
 
-  // Dismiss it; the sim resumes.
-  coachRoot.fire('pointerdown', { stopPropagation() {} });
+  // Dismiss it through its own primary (GOT IT — a single-step coach); the sim resumes.
+  pressPrimary(coachRoot);
   const t0 = st.time;
   for (let i = 0; i < 60; i++) frame();
   assert.ok(st.time > t0, 'sim resumed after dismiss');
@@ -389,11 +480,11 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
         continue;
       }
       if (st.mode === 'dead' || st.mode === 'intermission') {
-        // WAVE-23 (#6): any-key advance means main.js swallows keys while a
-        // tour is live — dismiss the coach root directly (death/intermission
-        // coaches), then drive the screen key (r / c).
+        // main.js swallows game keys while a tour is live — dismiss the
+        // coach root through its own controls (death/intermission coaches),
+        // then drive the screen key (r / c).
         const r = globalThis.document.body.children.find(c => c.id === 'tour-root');
-        if (r) { r.fire('pointerdown', { stopPropagation() {} }); continue; }
+        if (r) { dismissTour(r); continue; }
         keyHandler({ key: st.mode === 'dead' ? 'r' : 'c' });
         continue;
       }
@@ -401,18 +492,20 @@ await check('integration: menu tour -> run -> coachmark pauses -> dismiss resume
       if (r) {
         const tip = r.children.find(c => c.id === 'tour-tip');
         if (tip && tip._html.includes(word)) root2 = r;
-        else r.fire('pointerdown', { stopPropagation() {} });   // off-chain coach: dismiss
+        else dismissTour(r);   // off-chain coach: dismiss through its controls
       }
     }
     assert.ok(root2, `coachmark for ${flagKey} mounted (stalled at mode=${st.mode}, t=${st.time.toFixed(0)}s)`);
     const tip = root2.children.find(c => c.id === 'tour-tip');
     assert.ok(tip._html.includes(word), `${flagKey} tip covers "${word}"`);
     // Caption TEXT stays one line-ish (~3 short lines on a 220px tip): strip
-    // the hint/skip markup before measuring.
-    const caption = tip._html.replace(/<[^>]+>/g, '').replace('TAP TO CONTINUE', '').replace('SKIP TOUR', '');
+    // the counter/control markup before measuring.
+    const caption = tip._html.replace(/<[^>]+>/g, '')
+      .replace(/\d+ OF \d+/g, '')
+      .replace(/GOT IT|NEXT|BACK|SKIP TOUR|Replay this any time from SETTINGS/g, '');
     assert.ok(caption.length < 200, `${flagKey} caption stays one line-ish (${caption.length} chars)`);
     assert.equal(ls.get(flagKey), '1', `${flagKey} flag persisted`);
-    root2.fire('pointerdown', { stopPropagation() {} });   // dismiss -> resume
+    dismissTour(root2);   // dismiss -> resume
   }
 });
 
@@ -442,8 +535,11 @@ check('passThrough: a tap on a real control under the shade presses it and ends 
 });
 
 // The pass-through is OPT-IN: the in-run coachmarks pause the sim under the shade,
-// so a tap over a draft card there must still only dismiss the tip.
-check('passThrough is opt-in - without it a tap over a card still just advances', () => {
+// so a tap over a draft card there must not press it. RETARGETED 2026-09-16
+// (TUTORIAL_OVERLAY; acceptance 1): this group asserted the old outcome
+// "a tap over a card still just ADVANCES". The tap is now INERT — it neither
+// presses the card nor advances the tip (the whole point of the overlay).
+check('passThrough is opt-in - without it a tap over a card is inert (no press, no advance)', () => {
   const card = fakeEl();
   card.className = 'card';
   let pressed = 0;
@@ -457,21 +553,27 @@ check('passThrough is opt-in - without it a tap over a card still just advances'
   });
   t.start();
   t.root.fire('pointerdown', { clientX: 10, clientY: 10, stopPropagation() {} });
-  assert.equal(pressed, 0, 'no pass-through by default');
-  assert.ok(t.tip._html.includes('Second'), 'advanced instead (coachmarks keep tap-to-dismiss)');
+  assert.equal(pressed, 0, 'no pass-through by default: the card is never pressed in-run');
+  assert.ok(t.active() && t.tip._html.includes('First'), 'the tap did not advance or dismiss either');
   t.skip();   // tear down: the relayout interval is the only thing keeping node alive
 });
 
-// A fake doc / old browser with no elementsFromPoint must not break advancing.
+// A fake doc / old browser with no elementsFromPoint must not break the swallow.
+// RETARGETED 2026-09-16: the old group asserted "no hit-test -> plain advance
+// -> tour completed". Without hit-test the pass-through simply never fires, so
+// the tap is inert; the tour still ends cleanly through its own controls.
 check('passThrough falls back safely when the doc cannot hit-test', () => {
   const doc = fakeDoc(), st = fakeStorage();
+  let done = 0;
   const t = new Tour({
     doc, storage: st, steps: [{ id: 'a', text: 'First', target: () => fakeEl() }],
-    passThrough: '#ov-cards > .card',
+    passThrough: '#ov-cards > .card', onDone: () => { done++; },
   });
   t.start();
   t.root.fire('pointerdown', { clientX: 5, clientY: 5, stopPropagation() {} });
-  assert.ok(!t.active(), 'no hit-test -> plain advance -> tour completed');
+  assert.ok(t.active() && done === 0, 'no hit-test -> inert tap, tour still up');
+  t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
+  assert.ok(!t.active() && done === 1, 'the primary control completes the tour');
 });
 
 console.log(`\n${passed} assertion groups passed — test_tour OK`);

@@ -152,9 +152,11 @@
      staged spotlight walkthrough. #tour-root is appended to <body> (above
      every layer incl. #touch z5 and #overlay); four .tour-shade rects dim
      the screen except a padded hole around the live target, relaid out on
-     a 120ms interval so the spotlight tracks moving UI. Click/tap anywhere
-     advances; SKIP + Escape exits; each step's flag persists so it never
-     replays uninvited. ---- */
+     a 120ms interval so the spotlight tracks moving UI. TUTORIAL_OVERLAY
+     (2026-09-16): the shade SWALLOWS taps — only the tip card's own
+     BACK / NEXT (GOT IT on the final step) / SKIP controls advance;
+     Right/Enter/Space next, Left back, Escape skips; each step's flag
+     persists so it never replays uninvited. ---- */
   #tour-root {
     position: fixed; inset: 0; z-index: 50;
     touch-action: manipulation; user-select: none; -webkit-user-select: none;
@@ -165,10 +167,25 @@
     padding: 8px 10px; box-sizing: border-box;
     background: #14141f; border: 2px solid #ffd75e;
     color: #e8e8f0; font-size: 13px; line-height: 1.45;
-    cursor: pointer;
   }
-  #tour-tip .tour-hint { display: block; margin-top: 6px; font-size: 10px; color: #6a6a8a; letter-spacing: 1px; }
-  #tour-tip .tour-skip { color: #ff5a3c; text-decoration: underline; }
+  #tour-tip .tour-count { display: block; font-size: 10px; color: #6a6a8a; letter-spacing: 1px; margin-bottom: 2px; }
+  #tour-tip .tour-replay { display: block; margin-top: 6px; font-size: 10px; color: #6a6a8a; }
+  #tour-tip .tour-controls { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 8px; }
+  /* Real hit targets, >=44px on both axes (phone-thumb sized), inside the
+     card and above the shade — the mobile rule: overlap is the acceptable
+     failure mode, never an unusable control. */
+  #tour-tip .tour-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 72px; min-height: 44px; padding: 0 12px; box-sizing: border-box;
+    border: 2px solid #ffd75e; background: #14141f; color: #ffd75e;
+    font-size: 12px; letter-spacing: 1px; text-decoration: none;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #tour-tip .tour-next { background: #ffd75e; color: #14141f; font-weight: bold; }
+  #tour-tip .tour-skip {
+    display: inline-flex; align-items: center; color: #ff5a3c;
+    text-decoration: underline; padding: 0 2px;
+  }
 
   /* ---- Touch control layer (Sk408): shown on coarse pointers / touch
      devices; buttons route through the same actions as the keyboard. ---- */

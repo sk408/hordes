@@ -16,7 +16,10 @@
 //   - dim the screen, spotlight ONE real element at a time; the spotlight
 //     TRACKS the element (interval relayout — if the UI moves, it moves)
 //   - one-line description per step
-//   - advance ONLY on click/tap (pointerdown); no timers
+//   - advance ONLY on the tip card's own controls: NEXT / GOT IT button,
+//     or Right / Enter / Space; Left backs up. A tap on the SHADE is INERT
+//     (TUTORIAL_OVERLAY 2026-09-16: "the popups go away too easily" — the
+//     old any-tap-advance burned a multi-step tip one stray tap at a time).
 //   - first run only: flags persist via localStorage (injectable storage)
 //   - always skippable: a visible SKIP control + Escape
 //   - never break on a missing target: a step whose target() returns null
@@ -90,13 +93,12 @@ export function clearTourFlags(storage) {
 // it works identically on a phone (targets are real tappable elements).
 // ---------------------------------------------------------------------------
 export class Tour {
-  constructor({ steps, doc, storage, onDone, onSkip, advanceHint = 'TAP TO CONTINUE', passThrough = null }) {
+  constructor({ steps, doc, storage, onDone, onSkip, passThrough = null }) {
     this.steps = steps;
     this.doc = doc || globalThis.document;
     this.storage = storage || detectStorage();
     this.onDone = onDone || (() => {});
     this.onSkip = onSkip || (() => {});
-    this.advanceHint = advanceHint;
     // OPT-IN: a CSS selector for controls a tap may reach THROUGH the shade.
     // Only the title tour sets it (see _underlyingControl for why).
     this.passThrough = passThrough;
@@ -151,14 +153,20 @@ export class Tour {
     this.tip.id = 'tour-tip';
     this.tip.innerHTML = '';
     this.root.appendChild(this.tip);
-    // Click ANYWHERE on the shade = advance (the player sets the pace). The
-    // SKIP control inside the tip stops propagation.
+    // TUTORIAL_OVERLAY (owner-relayed 2026-09-16: "the popups go away too
+    // easily when they try to push other things"): the shade SWALLOWS taps.
+    // A tap that is not on a control of the tip card neither advances nor
+    // dismisses — reaching for the thing the tip describes must not lose it.
+    // The card's own buttons do the advancing; every button handler stops
+    // propagation so this root handler never sees a control press.
     this.onPointerDown = (ev) => {
       if (ev && ev.stopPropagation) ev.stopPropagation();
       // WAVE-31: a finger tap on a title menu card used to be swallowed by the
       // shade (the tick note's "TAP TO CONTINUE, not the card you aimed at").
       // End the tour - the player has chosen their own path - and forward the
-      // press so the card does what it looks like it does.
+      // press so the card does what it looks like it does. The title tour is
+      // the ONLY pass-through site; in-run coachmarks keep the swallow (a
+      // pass-through there would silently pick a draft card).
       const under = this._underlyingControl(ev);
       if (under) {
         this._teardown();
@@ -166,16 +174,19 @@ export class Tour {
         if (typeof under.click === 'function') under.click();
         return;
       }
-      this.next();
+      // Anything else: INERT by design (no advance, no dismiss).
     };
     this.root.addEventListener('pointerdown', this.onPointerDown);
+    // Keyboard: Right/Enter/Space = next, Left = back, Escape = skip. No other
+    // key does anything — the old WAVE-23 any-key advance was the other half
+    // of the "goes away too easily" complaint. main.js swallows game keys
+    // while a tour is live, so these presses have nowhere else to go.
     this.onKey = (ev) => {
-      if (ev && ev.key === 'Escape') { ev.preventDefault?.(); this.skip(); }
-      // WAVE-23 (#6): ANY other key advances too — the hint wording is
-      // input-aware ("CLICK OR PRESS ANY KEY" on desktop), so the engine
-      // honors it. No preventDefault: the game is paused while a coachmark
-      // is up, so the key has nowhere else to go.
-      else this.next();
+      if (!ev) return;
+      if (ev.key === 'Escape') { ev.preventDefault?.(); this.skip(); }
+      else if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault?.(); this.next();
+      } else if (ev.key === 'ArrowLeft') { ev.preventDefault?.(); this.back(); }
     };
     d.addEventListener?.('keydown', this.onKey);
     (d.body || this.root).appendChild(this.root);
@@ -188,6 +199,14 @@ export class Tour {
   next() {
     if (!this.root) return;
     this._apply(this.idx + 1);
+  }
+
+  back() {
+    if (!this.root || this.idx <= 0) return;
+    // _apply scans FORWARD from i for the first live target, and the CURRENT
+    // step is live by construction — so back() can at worst land back on the
+    // current step; it can never fall through to onDone.
+    this._apply(this.idx - 1);
   }
 
   skip() {
@@ -210,19 +229,38 @@ export class Tour {
 
   _show(el, step) {
     this.target = el;
-    // One line of description + the advance hint + SKIP. innerHTML is set
-    // once per step (fakeEl test shims understand innerHTML text).
+    // The card carries real controls (TUTORIAL_OVERLAY): a step counter on
+    // multi-step tours ("2 OF 5"), BACK (hidden on the first step — never a
+    // dead button), NEXT as the primary, and the standing SKIP. The final
+    // step's primary COMPLETES the tour, so it reads as a finish (GOT IT) —
+    // and it carries the replay note: REPLAY TOUR already exists in SETTINGS
+    // (main.js); players only needed to be told. innerHTML is set once per
+    // step (fakeEl test shims understand innerHTML text).
+    const n = this.steps.length;
+    const last = this.idx === n - 1;
     this.tip.innerHTML =
+      (n > 1 ? `<span class="tour-count">${this.idx + 1} OF ${n}</span>` : '') +
       `<span class="tour-text">${step.text}</span>` +
-      `<span class="tour-hint">${this.advanceHint} · </span>` +
-      `<a class="tour-skip">SKIP TOUR</a>`;
-    const skipEl = this.tip.querySelector ? this.tip.querySelector('.tour-skip') : null;
-    if (skipEl) {
-      skipEl.addEventListener('pointerdown', (ev) => {
+      (last ? `<span class="tour-replay">Replay this any time from SETTINGS</span>` : '') +
+      `<span class="tour-controls">` +
+        (this.idx > 0 ? `<a class="tour-btn tour-back">BACK</a>` : '') +
+        `<a class="tour-btn tour-next">${last ? 'GOT IT' : 'NEXT'}</a>` +
+        `<a class="tour-skip">SKIP TOUR</a>` +
+      `</span>`;
+    // Every control press stops propagation so the root's swallow-all handler
+    // never sees it. Buttons are >=44px hit targets inside the card (CSS),
+    // never under the shade — the tip sits above the shade rects in DOM order.
+    const bind = (sel, fn) => {
+      const c = this.tip.querySelector ? this.tip.querySelector(sel) : null;
+      if (c) c.addEventListener('pointerdown', (ev) => {
         if (ev && ev.stopPropagation) ev.stopPropagation();
-        this.skip();
+        if (ev && ev.preventDefault) ev.preventDefault();
+        fn();
       });
-    }
+    };
+    bind('.tour-next', () => this.next());
+    bind('.tour-back', () => this.back());
+    bind('.tour-skip', () => this.skip());
     this._layout();
   }
 

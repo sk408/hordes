@@ -2024,6 +2024,36 @@ number. First-ever token: full banner (same treatment as the top-tier pickup in
 
 **PILOT: verify on the artifact, not the builder's word** — re-run `test/test_audio.mjs` and the suite yourself, read the structure map, and if a render exists report its measured duration. The music is judged by the owner's ear, so the WAV paths must reach him.
 
+## G29 — TUTORIAL OVERLAY: STOP THE ACCIDENTAL DISMISS, MAKE REPLAY FINDABLE (owner-relayed player feedback, 2026-09-16)  [status: DISPATCHING]
+
+**Player complaint, owner's words:** "People are still mad at the tutorial. They are mad that the popups go away too easily when they try to push other things." Owner's own suggestion: "a full on screen overlay that has next and back buttons when showing multiple popups at the same time". Plus: "notify the user that they can replay the tutorial", and "they feel like the information is without context".
+
+**ROOT CAUSE (measured):** `src/tour.js` :156-170 — the shade's `pointerdown` handler calls `this.next()` for ANY tap anywhere that is not a pass-through control, so a player reaching for the thing the tip describes dismisses the tip instead. Multi-step coachmarks (`startCoach`, `main.js` :3824) burn through steps one stray tap at a time. Any key advances too (:172-179).
+
+**REPLAY ALREADY EXISTS:** `src/main.js` :5123 `menuCard('REPLAY TOUR', ...)` in SETTINGS calls `clearTourFlags()` and re-arms. The work is discoverability, NOT a second mechanism.
+
+**DO NOT BREAK (deliberate, commented):** WAVE-31 pass-through on the title menu (a tap on a real menu card under the shade presses that card and ends the tour, :158-168) — but ONLY on the title; the in-run pass-through prohibition (:110-114) stays. The sim stays paused during in-run coachmarks. Missing targets stay silently skipped.
+
+**THE WORK:** brief at `docs/briefs/TUTORIAL_OVERLAY.md`. (a) A real overlay whose shade swallows taps, with BACK / NEXT / SKIP controls, a step counter on multi-step tours, keyboard bindings (Right/Enter/Space, Left, Escape) and >=44px tap targets. (b) Replay discoverability: tell the player on the final card and after a skip that the tour is replayable, and name the path in the HOW TO PLAY text. (c) A context audit of every `TOUR_KEYS` entry (where it fires, what it explains, whether the thing it describes is on screen at that moment) — fix ONLY mechanical misalignment (fires before the thing exists, or long after), report the rest, and do NOT rewrite copy.
+
+**ACCEPTANCE:** new `test/test_tour.mjs` assertions (shade tap inert, NEXT/BACK work, BACK absent on step 1, final primary completes, counter correct, Escape skips, WAVE-31 still holds, REPLAY TOUR re-arms); `tools/verify_tour_overlay.mjs` driving REAL taps in real Chrome at 390x844 @dpr3 plus one landscape size, buttons >=44px and fully on-screen, PNGs; suite `redfiles=0` with nothing weakened; the audit table + retarget list reported.
+
+**PILOT:** verify on the artifact — re-run the tour test and the suite yourself, re-run the browser verifier, and confirm by real tap that tapping the shade no longer kills the card (that is the player complaint).
+
+## G30 — AUTO DRAFT AUTO-PICK: 6s TIMEOUT, RANDOM CARD (owner request, 2026-09-16)  [status: DONE 2026-09-16 — suite 105/0; browser verifier: AUTO expiry measured 5.96-6.01s across runs, taken card id read from live state, MANUAL inert for 7s; unit test 26 checks, 12/12 deterministic reruns]
+
+**Owner, verbatim: "Can we add so on auto, the card selection screen has a 6 second timeout and then it auto picks a random card."**
+
+**WHY:** the game is an auto-player (`main.js` :1). The pilot drives movement, potions and casts; the DRAFT is the one screen that still parks the run on a modal waiting for a human. This gives AUTO its hands-free continuation. AUTO-ONLY: a MANUAL player sees no countdown and gets no auto-pick.
+
+**SEAMS (measured):** `normalizePilotMode` / `PILOT_MODES` (`main.js` :581-582, `'AUTO'` is the persisted alias of `AUTO_ALL`, AUTO means mode !== MANUAL); `openDraft()` :2697 + `ovCards` :2790-2825 + `ovTitle` :2787; **the one activation seam `activateDraftCard(u)` :2866 -> `pick(u)` :2892** (the auto-pick must go through it so every side effect matches a human tap); the draft coachmark `startCoach({id:'draft'})` :2830 which rides on top of the cards; `frame(now)` :7192 with the sim in `update(dt)` :1657 — 'draft' mode freezes the sim, so the countdown must be driven by the frame's wall-clock dt, NOT `setTimeout` and NOT the sim clock.
+
+**THE WORK:** brief at `docs/briefs/AUTO_DRAFT_AUTOPICK.md`. A 6.0s frame-driven countdown that starts when a draft is presented in AUTO; on expiry pick UNIFORMLY AT RANDOM from the offered cards through `activateDraftCard`, with an injectable rng so tests can pin it; the countdown SUSPENDS while the draft coachmark or any modal is up, while `mode !== 'draft'`, or while the document is hidden, and resumes where it left off; a small live countdown line on the draft screen, AUTO only; a tap before expiry cancels it; a knob in `CONFIG.AUTOPILOT.DRAFT_TIMEOUT` with the owner's request in the comment.
+
+**ACCEPTANCE:** `test/test_auto_draft.mjs` (5.9s no pick / 6.0s exactly one pick with a pinned rng / suspended under the coachmark / suspended out of mode / never in MANUAL / countdown line present in AUTO and absent in MANUAL / a tap cancels it), `tools/verify_auto_draft.mjs` in real Chrome at 390x844 @dpr3 (AUTO: no taps, assert a card was taken within ~7s and the draft closed; MANUAL: nothing after 7s; PNG of the countdown), suite `redfiles=0` with nothing weakened.
+
+**PILOT:** verify on the artifact — re-run the unit test and the browser verifier yourself, and confirm by real elapsed time that an untouched AUTO draft resolves.
+
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the

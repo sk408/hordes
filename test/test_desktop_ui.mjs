@@ -387,13 +387,19 @@ const chromeHidden = () => touchLayer.style.display === 'none';
 // ---- 8. NO TAP-ONLY TOUR PHRASING ---------------------------------------
 {
   const src = read('src/main.js');
-  const hints = src.match(/advanceHint:[^,\n]+/g) || [];
-  assert(hints.length === 2 && hints.every(h => /hasTouch \? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY'/.test(h)),
-    'both tour factories must stay input-aware: ' + hints.join(' | '));
+  // RETARGETED 2026-09-16 (TUTORIAL_OVERLAY): the old assertion pinned the two
+  // `advanceHint: hasTouch ? 'TAP TO CONTINUE' : 'CLICK OR PRESS ANY KEY'`
+  // lines in main.js. Advance is no longer a hint string — it is the tip
+  // card's own BACK / NEXT / GOT IT buttons (tour.js), identical wording on
+  // touch and desktop, so input-awareness is structural now. What must still
+  // hold: no leftover hint plumbing in main.js, and no tap-only step copy.
+  assert(!/advanceHint/.test(src), 'tour factories must not pass the removed advanceHint option');
+  const tourSrc = read('src/tour.js');
+  assert(!/advanceHint/.test(tourSrc), 'the engine must not reintroduce hint-string advancing (buttons are input-agnostic)');
   const texts = src.match(/text: '[^']*'/g) || [];
   const tapOnly = texts.filter(t => /\btap\b/i.test(t) && !/\bor\b|\bpress\b|click/i.test(t));
   assert(tapOnly.length === 0, 'no tour step may say TAP with no non-touch path: ' + tapOnly.join(' | '));
-  console.log('tour copy: ' + texts.length + ' step texts checked, 0 tap-only; both advance hints input-aware');
+  console.log('tour copy: ' + texts.length + ' step texts checked, 0 tap-only; advance is button-labelled (input-agnostic)');
 }
 
 console.log('\nALL DESKTOP-UI PROBES PASSED');

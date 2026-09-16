@@ -207,6 +207,12 @@ s.check('a number key still TAKES in one press (the pinned [4] contract)', () =>
 // ---- 9. the CARD carries the computed text (what replaced the box) -----------
 s.check("the card's own markup shows the ladder card's computed effect text", () => {
   // Iron Heart +25%: the rare anchor, offered at RARE weight — loop until seen.
+  // Earlier checks force-pick cards blind (kids[0].click(), key '2'); if one of
+  // them took hp_pct, the ONE-OF-EACH ledger (takenStats) removes it from the
+  // pool and the loop below can never see it (a rare-RNG flake, seen once in a
+  // full-suite pass). This check is about the CARD's markup, not the ledger —
+  // hand the card back to the pool first.
+  if (state.player.takenStats) delete state.player.takenStats.hp_pct;
   const kids = openDraftUntil(ks => ks.some(el => offerOf(el).id === 'hp_pct'));
   assert.ok(kids, 'Iron Heart +25% was offered within the cap');
   const el = kids.find(k => offerOf(k).id === 'hp_pct');
