@@ -1,75 +1,83 @@
-# HORDES 1.0 — released 16 September 2026
+# HORDES 1.0 — 16 September 2026
 
 **Play it:** https://sk408.github.io/hordes/ — hard-refresh when you load it (static site, aggressive caching).
 Also embedded on galaxy.click.
 
-HORDES is a pixel-art survivor game: you hold a shrinking arena against escalating waves, draft a build as you
-go, and bank gold into permanent upgrades between runs. Version 1.0 is the first release build.
+HORDES is a pixel-art survivor game. You hold a shrinking arena against waves that keep escalating, draft a
+build as you go, and bank your gold into permanent upgrades between runs. The run ends when you do — or when
+you beat the boss, take the portal, and make the escape.
 
 ---
 
-## What's new in 1.0
+## How a run works
 
-### The draft is a deck of playing cards
-- Every draft offer is a real **playing card**: **rank = rarity**, **suit = family**, and the two **jokers**
-  are the rare 1-in-10 chasers (*Second Wind* red, *Storm Shards* black). Thirteen hand-authored motifs —
-  no more plain-text offers.
-- **Combos are face cards** (J/Q/K) and single rewrites take the freed number slots. The rewrite family is
-  **14 cards** strong.
-- **One tap takes the card.** No select-then-confirm step.
+1. **Hold the arena.** Enemies arrive in waves and get heavier as the clock runs.
+2. **Draft as you level.** Each level-up offers you cards. Take one.
+3. **Kill the boss, take the portal.** Each boss you kill opens a portal, and the portal is a way out.
+4. **Bank the gold.** Everything you earn between runs buys permanent upgrades. Death pays.
 
-### The escape sequence — a side-scrolling change of pace
-- A **~1-minute escape** that flips the game side-on. It arrives after a boss (through the portal), and
-  **Settings → TEST: ESCAPE SEQUENCE** drops you straight into one if you'd rather not fight for it.
-- **You are being chased by a literal horde.** There are never fewer than **3 pursuers** on you: they appear
-  just off-screen, charge, and **match your speed as they arrive** — so they get genuinely close and then hang
-  at your heels. They don't catch you. **Losing is the collapsing wall behind you, or your own fall.**
-- **The pits are your weapon.** Pursuers can't jump, so a gap in the floor eats them — and new ones keep coming.
-- Platforming is real: gravity, jump arcs, terraces and lethal gaps. **The finale** puts a boss between you and
-  the portal, with an **upper route over it** as the way past — the boss owns the floor, not the whole screen.
-- Colour and parallax: it's built to read like a **playable pixel movie**, with the portal and the horde's edge
-  as the two brightest things on screen.
-- **Shooting is dialled right down** (a fifth of what it was). The chase is the point; the gun is flavour.
+## The draft is a deck of playing cards
 
-### Choose your weapons before the run
-The weapon menu is **something you find** in the shop, not something the game pushes at you. A coachmark fires
-once, after your first weapon purchase, so you know it exists.
+- Every offer is a real **playing card**: **rank = rarity**, **suit = family**.
+- The two **jokers** are the rare 1-in-10 chasers — *Second Wind* (red) and *Storm Shards* (black).
+- **Combos are the face cards** (J/Q/K); single rewrites take the number slots. Thirteen hand-authored
+  motifs mean every card is drawn, never described.
+- **One tap takes the card.**
 
-### The shop is a long game
-- **48 items, ~60+ hours** of end-game income to buy the lot.
-- Priced so the first real upgrade lands in **2–3 runs** instead of feeling out of reach.
+## The escape sequence
+
+- A **~1-minute escape** that flips the game side-on — a playable pixel movie, with colour and parallax, the
+  portal and the horde's edge the two brightest things on screen.
+- **You are being chased by a literal horde.** There are never fewer than **3 pursuers** on you. They appear
+  just off-screen, charge, and **match your speed as they arrive** — so they get genuinely close, then hang at
+  your heels. They don't take you. **You lose to the collapsing wall behind you, or to your own fall.**
+- **The pits are your weapon.** Pursuers can't jump, so a gap in the floor eats them — and more keep coming.
+- Platforming is real: gravity, jump arcs, terraces, lethal gaps.
+- **The finale** puts a boss between you and the portal, with an **upper route over it** as the way past. The
+  boss owns the floor, not the whole screen.
+- **Shooting is deliberately sparse.** The chase is the point; the gun is flavour.
+
+## You choose your weapons before the run
+
+The weapon menu is **something you find** in the shop, not something the game hands you. A one-time coachmark
+fires after your first weapon purchase so you know it's there.
+
+## The shop is a long game
+
+- **48 items** — roughly **60+ hours** of end-game income to buy the lot.
+- Paced so the first real upgrade lands in **2–3 runs**.
 - **Apex tier** for post-catalogue players: *The Mark of the Grind* and *Ascendant Arsenal*.
-- **Heat pays now, on both channels** — running manual heat raises both your gold and your per-kill XP.
+- **Heat pays on both channels** — running manual heat raises your gold *and* your per-kill XP.
 
-### Characters
-- **Per-character upgrade rows** — each character grows differently.
-- **Specialisation**: every character has families it's strong and weak against (KNIGHT HA/RA, WITCH CH/FL,
-  ROGUE RA/HA, PALADIN FL/CH), shown on the character screens.
+## Characters
 
-### Content and cinematics
+- **Per-character upgrade rows**, so each character grows differently.
+- **Specialisation**: each character has families it is strong and weak against — KNIGHT HA/RA, WITCH CH/FL,
+  ROGUE RA/HA, PALADIN FL/CH — shown on the character screens.
+
+## Enemies, cinematics and extras
+
+- A **horde wave** with heavy and flying enemies, plus **shrines**.
 - A **death movie** and a **portal-entry cinematic**.
 - A **per-run map screen**.
-- A **new horde wave** with heavy and flying enemies, plus **shrines**.
 
-## Fixed in 1.0
+## On a phone
 
-- **Phone layout.** The on-screen controls used to sit over the playing field, and on landscape the view
-  collapsed almost to nothing (as small as 11×7 px). The field is now bounded to the free space between the
-  HUD and the pads — a full 624×390 in landscape — and where things do overlap you get a usable field rather
-  than a broken one.
-- **Shop responsiveness.** Opening the shop and buying from it no longer lags.
-- **Fewer taps everywhere** — the draft confirm step is gone.
+The playing field is bounded to the free space between the HUD and the on-screen controls, in portrait and in
+landscape both, so the controls never sit over the action. Where space runs short you get a smaller field
+rather than a broken one.
 
 ## Known issues
 
-- **A fresh profile still dies fast** (sometimes in single-digit minutes). The damage cap that pins
-  hits-to-kill is being reworked; expect this to move.
-- **Two balance dials are deliberately unsettled:** apex pricing, and the escape's payout rate now that the
-  escape is a minute rather than two. Both are queued for a tuning pass — known, not forgotten.
+- **A fresh profile dies fast** — sometimes in single-digit minutes. The damage cap that pins hits-to-kill is
+  being reworked; expect this to move.
+- **Two balance dials are deliberately unsettled:** apex pricing, and the escape's payout rate, which is set
+  for a longer escape than the minute it is now. Both are queued for a tuning pass.
 - Some visual checks are **programmatic pixel reads** rather than a human pass, so odd-looking-but-correct
   edge cases can still slip through. If something looks wrong, it probably is — say so.
 
-## Before you play
+## Getting started
 
-1. **Hard-refresh.** The build is a static site and caches hard. If something seems missing, that's usually why.
+1. **Hard-refresh** when you load it. The build is a static site and caches hard; if something seems missing,
+   that's usually why.
 2. **The escape is one tap away** — Settings → TEST: ESCAPE SEQUENCE. No boss fight required.
