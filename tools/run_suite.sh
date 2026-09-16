@@ -32,16 +32,40 @@ rm -rf "$LOGDIR"; mkdir -p "$LOGDIR"
 echo "TREE: $(pwd) @ $(git rev-parse --short HEAD 2>/dev/null || echo no-git) | dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 
 okf=0; badf=0; failed=""
+FAILDIR=/tmp/hordes_suite_failures   # reds preserved HERE survive the LOGDIR wipe above
 for f in test/test_*.mjs test/smoke.mjs; do
   log="$LOGDIR/$(basename "$f").log"
-  if node "$f" > "$log" 2>&1; then
+  rc=0
+  node "$f" > "$log" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
     okf=$((okf+1))
   else
     badf=$((badf+1))
     failed="$failed $f"
     # One line of WHY, so a red is diagnosable without re-running by hand.
-    why=$(grep -oE "AssertionError.*|Error: .*" "$log" | head -1 | cut -c1-110)
-    echo "  RED $f :: ${why:-no assertion line captured}"
+    # SUITE_HARDENING Part 1: the two old patterns miss house-style FAIL lines
+    # (test_rewrites.mjs prints `  FAIL <check name>` and exits 1, no
+    # AssertionError ever reaches the log — the recorded `no assertion line
+    # captured` reds) and every process-death signature (V8's `FATAL ERROR:
+    # Reached heap limit` fails the case-sensitive `Error: `; a SIGKILL leaves
+    # the log EMPTY). Priority order: real assertion errors first, then the
+    # process-death set, then house FAIL lines.
+    why=$(grep -oE "AssertionError.*|Error: .*|FATAL.*|fatal.*|Aborted.*|Killed.*|out of memory.*|OOM.*|Segmentation.*|FAIL .*" "$log" | head -1 | cut -c1-110)
+    if [ -z "$why" ]; then
+      if [ ! -s "$log" ]; then
+        why="(empty log — the process died before writing anything, e.g. SIGKILL/OOM-kill)"
+      else
+        # Nothing matched: print the LAST non-empty line rather than a bare
+        # fallback, so even an unknown death shape carries one clue.
+        why="(no matched signature; last line) $(grep -v '^[[:space:]]*$' "$log" | tail -1 | cut -c1-90)"
+      fi
+    fi
+    # Preserve the failing log across the next run's LOGDIR wipe.
+    mkdir -p "$FAILDIR"
+    cp "$log" "$FAILDIR/$(date -u +%Y%m%dT%H%M%SZ)_$(basename "$f").log"
+    # Keep at most the newest 50 preserved logs.
+    ls -1t "$FAILDIR" | tail -n +51 | while read -r old; do rm -f "$FAILDIR/$old"; done
+    echo "  RED $f :: rc=$rc :: $why"
   fi
 done
 echo "SUITE greenfiles=$okf redfiles=$badf"

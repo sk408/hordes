@@ -404,12 +404,45 @@ const closeWindow = () => {
   const save = { spawnTimer: st.spawnTimer, endsAt: st.wave.endsAt, midAt: st.wave.midAt,
     dropBonus: p.stats.dropBonus, weapons: st.weapons, shrine: st.shrine,
     shrines: st.shrines,               // S1: the world-seeded set rides too
+    arches: st.arches, archBuffs: st.archBuffs,
+                                  // SUITE_HARDENING Part 2 — THE ARCH LEAK, the
+                                  // last unpinned random source inside the
+                                  // window. startRun() rolls 1-2 arch gates at
+                                  // UNSEEDED random positions 120-380px out
+                                  // (src/main.js spawnWaveArches) and they sit
+                                  // on the field for the whole run; the AUTO
+                                  // pilot keeps moving the player every frame
+                                  // (runController), so it can cross a gate's
+                                  // 26px trigger radius MID-PROBE. Two recorded
+                                  // intermittents both route through here:
+                                  // (a) `NO toast per kill` (:484) — an arch
+                                  //     grant/refresh is one of the ~3-line
+                                  // toast feed's legitimate pushes
+                                  //     (`TWIN FURY ARCH! 60s`, main.js:1676);
+                                  // (b) the GLACIER/other exact-value arms —
+                                  //     a BERSERK gate scales every weapon hit
+                                  //     x1.5 through weapons.js dmgScale()
+                                  //     (activeArchMods), repricing the ratio.
+                                  // Measured: 1 in 12 boots acquired an arch
+                                  // buff inside the probe spans, near-misses
+                                  // (<=51px) in 4 more (/tmp probe, tick
+                                  // 2026-09-16). Closing the arch system's OWN
+                                  // state contract (arches.js: state.arches /
+                                  // state.archBuffs) is the same pin class as
+                                  // the shrine/chest clears above: the probes
+                                  // never deliberately place a gate, and the
+                                  // code under measurement (kill funnel, toast
+                                  // feed, contact damage) runs unstubbed —
+                                  // test_arches.mjs still tests the arch system
+                                  // itself at its real seams.
     attackTimer: p.attackTimer, skillCd: { ...p.skillCd } };
   st.spawnTimer = st.time + 1e9;   // no ambient packs
   st.wave.endsAt = st.time + 1e9;  // no wave boss
   st.wave.midAt = st.time + 1e9;   // no herald
   p.stats.dropBonus = -1;          // no drop rolls inside the window
   st.weapons = [];                 // no weapon damage into the field
+  st.arches = [];                  // no arch triggers inside the window (above)
+  st.archBuffs = [];               // ...and no active arch mods price a hit
   for (const id in p.skillCd) p.skillCd[id] = 1e9;
                                   // N1b AUTO_CAST: skills pinned ON COOLDOWN so
                                   // the pilot's cast hand stays quiet — an AUTO
@@ -437,7 +470,8 @@ const closeWindow = () => {
   //                                is +2 the probe never priced
   return () => { st.spawnTimer = save.spawnTimer; st.wave.endsAt = save.endsAt;
     st.wave.midAt = save.midAt; p.stats.dropBonus = save.dropBonus; st.weapons = save.weapons;
-    st.shrine = save.shrine; st.shrines = save.shrines; p.attackTimer = save.attackTimer;
+    st.shrine = save.shrine; st.shrines = save.shrines; st.arches = save.arches;
+    st.archBuffs = save.archBuffs; p.attackTimer = save.attackTimer;
     Object.assign(p.skillCd, save.skillCd); };
 };
 
