@@ -50,6 +50,7 @@
 
 import { CONFIG as C } from './config.js';
 import { activeArchMods } from './arches.js';
+import { healFromBudget } from './heal.js';
 // G8 step 2 PIERCE ALL (src/rewrites.js): read at the boomerang's SPAWN site
 // so the rule is weapon-agnostic. rewrites.js imports nothing from here, so
 // the edge stays acyclic. G21 slice 1: the ONE on-weapon-hit rider writer
@@ -540,7 +541,14 @@ function updateScythe(state, weapon, dt) {
       state.effects.push({ kind: 'scythe_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
     }
     if (souls > 0 && evoHas(weapon, 'harvestSouls')) {
-      p.hp = Math.min(p.stats.maxHp, p.hp + 2 * souls);
+      // G36: harvest is a THROUGHPUT heal (2 HP per kill — it scales with the
+      // kill rate, which scales with the damage shop). It draws from the SAME
+      // shared per-run budget as lifesteal (src/heal.js; CONFIG.HEAL_BUDGET),
+      // so no combination of throughput sites can out-heal bounded inbound.
+      // Below the cap this is EXACTLY the old 2 * souls.
+      const heal = healFromBudget(state.healBudget, 2 * souls);
+      state.healBudget -= heal;
+      p.hp = Math.min(p.stats.maxHp, p.hp + heal);
     }
     state.effects.push({
       kind: 'scythe_arc', x: p.x, y: p.y, dir, radius: W.RANGE, arc, age: 0, ttl: 0.25,

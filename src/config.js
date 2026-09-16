@@ -248,6 +248,56 @@ export const CONFIG = {
     DROP_CHANCE: 0.03,   // per enemy kill (was 0.05)
     MAX_CARRIED: 3,      // per kind
     START: 1,            // per kind at run start
+    // G33 ADAPTIVE DROPS (owner 2026-09-16: "we should have adaptive potion drops
+    // as the enemies killed per second increases, potion drop rate should drop in
+    // a somewhat inverse pattern"). At or below REF_KPS kills/second the chance is
+    // EXACTLY DROP_CHANCE — the early game is byte-identical. Above it the chance
+    // is scaled by clamp(REF_KPS/kps, FLOOR_FRAC, 1), so effective income
+    // potions/second = DROP_CHANCE * min(kps, REF_KPS): linear below the
+    // reference, then FLAT — a dense swarm stops printing potions. FLOOR_FRAC 0.2
+    // keeps a trickle and holds the flat asymptote through the whole MEASURED
+    // swarm band (flat to kps = REF_KPS/FLOOR_FRAC = 100, observed swarm max 93;
+    // measurement log quoted in the G33 report). TAU is the time constant of the
+    // dt-driven EWMA kill-rate estimator (loot.js ewmaKillRate).
+    ADAPTIVE: { REF_KPS: 20, FLOOR_FRAC: 0.2, TAU: 6 },
+  },
+
+  // ---- G34+G36 SHARED SUSTAINED-HEALING BUDGET (owner 2026-09-16: "Ok let's
+  // fix that issue" / "Ok let's fix it, yeah") -----------------------------
+  // The same defect appeared at TWO independent sites: the lifesteal heal
+  // (main.js volley hit; docs/briefs/INVINCIBILITY_FINDINGS_2026-09-16.md)
+  // and the GRAVE HARVEST evolution's 2-HP-per-kill sweep heal (weapons.js;
+  // docs/briefs/OTHER_SURVIVAL_PATHS_FINDINGS_2026-09-16.md). Both are
+  // THROUGHPUT heals — rate proportional to damage dealt or kills — so they
+  // scale with the compounding damage shop (Forged Edge L5 = 243x) while
+  // inbound damage IS bounded (HIT_CAP_FRAC 0.5 per hit + 0.6s i-frames
+  // ~= 0.83 x maxHp/s max inbound). Measured: FE5+lifesteal 0.24 healed
+  // 79.3 HP/s for 300s on a 287 pool (G32); post-G34, harvest stacked on the
+  // capped lifesteal healed 7,985 HP over 300s at up to 89.6 kills/s (G35).
+  //
+  // The fix caps the RATE, never the FRACTION (stats still stack from every
+  // source; reaching the cap faster is the reward). ONE shared per-run TOKEN
+  // BUCKET (src/heal.js refillHealBudget/healFromBudget — the Consecration
+  // altar's banked-and-capped precedent applied to every throughput healer):
+  // refills at CAP_FRAC * maxHp per second (dt-driven, never wall clock),
+  // never accumulates beyond one second's budget, and EVERY throughput heal
+  // spends from it — heal = min(want, budget). A burst within a second still
+  // lands in full; the SUSTAINED rate from ALL throughput sites COMBINED is
+  // bounded. Potions (burst escape), regrowth (flat 0.7 HP/s) and the altar
+  // (independently capped at DPS*TICK, see :236-237) deliberately do NOT route
+  // through it; the full per-source table is in the G36 goal-doc entry.
+  //
+  // CAP_FRAC is DERIVED, not guessed: it must sit BELOW the inbound a heavy
+  // swarm can deliver or death stays impossible. Max inbound ~= 0.83 x maxHp/s
+  // (the burst ceiling); the G32 repro's SUSTAINED inbound was ~= 0.27 x
+  // maxHp/s (78.8 HP/s on 287 max HP); the G35 harvest arm peaked at ~0.60 x
+  // maxHp/s of heal (179 HP/s on 298). 0.25 sits below all of them — the
+  // stacked arm now bleeds net negative at peak pressure (so it dies) and a
+  // hard focus still kills through it. Unchanged from G34: sharing one budget
+  // across sites can only be stricter than each site alone, and the harvest
+  // arithmetic gives no reason to move it.
+  HEAL_BUDGET: {
+    CAP_FRAC: 0.25,   // max THROUGHPUT healing (lifesteal + harvest combined), fraction of max HP per second
   },
 
   // AutoPilot doctrine levers (general-vs-pilot controls; see controllers.js).

@@ -122,6 +122,24 @@ export const STAT_DEFAULTS = {
   thorns: 0, lifesteal: 0,
 };
 
+// ---------- G33 adaptive potion drops (owner 2026-09-16) ---------------------
+// The inverse-rate multiplier: at or below refKps the factor is EXACTLY 1 (the
+// early game is byte-identical); above it the chance falls roughly inverse to
+// the kill rate, floored at floorFrac so a swarm still drops something. PURE.
+export function adaptiveDropFactor(kps, refKps, floorFrac) {
+  if (!(kps > refKps) || !(refKps > 0)) return 1;
+  return Math.min(1, Math.max(floorFrac, refKps / kps));
+}
+
+// One dt-driven EWMA step of the rolling kill rate (kills/second). No wall
+// clock, no allocation; the caller owns the accumulator. PURE.
+// (The G34 lifesteal bucket helpers that used to live here moved to heal.js in
+// G36 and became the SHARED sustained-healing budget — lifesteal + harvest.)
+export function ewmaKillRate(prev, frameKills, dt, tau) {
+  const a = dt > 0 ? Math.min(1, dt / tau) : 0;
+  return prev * (1 - a) + (dt > 0 ? frameKills / dt : 0) * a;
+}
+
 // ---------- Rolling --------------------------------------------------------
 let nextId = 1;
 

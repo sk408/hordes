@@ -12,7 +12,9 @@ import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './s
 import {
   rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
   decideEquip, flashTargets, shouldFlashDrop, describeFlash,
+  adaptiveDropFactor, ewmaKillRate,
 } from './loot.js';
+import { refillHealBudget, healFromBudget } from './heal.js';
 import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
@@ -318,6 +320,9 @@ const state = {
   arches: [],        // field arch gates (arches.js; 1-2 spawned per wave)
   archBuffs: [],     // active arch buffs (arches.js tickArches-owned)
   shieldAbsorbs: 0,  // remaining AEGIS absorbs while the SHIELD buff lives
+  killRateEwma: 0,   // G33: rolling kills/second (loot.js ewmaKillRate; feeds the adaptive potion curve)
+  killsAtRateTick: 0,// G33: p.kills at the last estimator tick (the per-frame delta)
+  healBudget: 0,      // G36: SHARED sustained-heal budget (HP units; heal.js helpers — lifesteal + harvest)
   portal: null,      // open portal after a boss clear ({ x, y, age }) — wave-6
   effects: [],       // transient skill/weapon visuals ({ kind, x, y, age, ttl })
   toasts: [],        // transient HUD messages ({ msg, ttl, tint }) — WAVE-14: also the event feed
@@ -1697,6 +1702,16 @@ function update(dt) {
   // this frame can resolve. Reaching the limit is a victory, not a death.
   if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
+  // G33: rolling kill rate — one dt-driven EWMA step from the p.kills delta
+  // (loot.js). No per-kill work in the death pass, no wall clock anywhere.
+  state.killRateEwma = ewmaKillRate(state.killRateEwma,
+    p.kills - state.killsAtRateTick, dt, C.POTIONS.ADAPTIVE.TAU);
+  state.killsAtRateTick = p.kills;
+  // G34/G36: refill the SHARED heal budget (dt-driven, clamped to one second's
+  // budget; heal.js). Runs every frame so the rate is bounded whether or not a
+  // hit lands this frame.
+  state.healBudget = refillHealBudget(
+    state.healBudget, dt, p.stats.maxHp, C.HEAL_BUDGET.CAP_FRAC);
 
   // Weather: advance the particle field; grab this frame's modifiers.
   updateWeather(state, state.weather, dt);
@@ -1847,7 +1862,8 @@ function update(dt) {
       if (pr.hit.has(e) || e.hp <= 0) continue;
       if (Math.abs(pr.x - e.x) < 7 && Math.abs(pr.y - e.y) < 7) {
         // Crit roll per hit (Deadly Aim + Keen Eye items; crits deal
-        // dmg * critMult) + Vampiric lifesteal heals a fraction of damage.
+        // dmg * critMult) + Vampiric lifesteal heals a fraction of damage
+        // (through the G34 rate bucket).
         let dmg = pr.damage;
         if (evoCrit > 0 && Math.random() < evoCrit) {
           dmg *= evoCritMult;
@@ -1856,7 +1872,12 @@ function update(dt) {
         e.hp -= dmg * directHitMult(state, e); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
-          p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
+          // G34/G36: heal = min(dmg * lifesteal, budget) — the RATE is capped
+          // through the SHARED budget (heal.js; harvest draws the same one),
+          // the fraction still stacks from every source.
+          const heal = healFromBudget(state.healBudget, dmg * p.stats.lifesteal);
+          state.healBudget -= heal;
+          p.hp = Math.min(p.stats.maxHp, p.hp + heal);
         }
         // NOVA_SHOT `novaRounds`: a volley kill bursts a micro-nova (half
         // damage to everything within 24px of the kill point).
@@ -2191,7 +2212,9 @@ function update(dt) {
       const dropChance = (C.POTIONS.DROP_CHANCE + (p.stats.dropBonus || 0) +
         (e.dropBonus || 0)) *   // G10: rarity tiers pay a drop bonus
         ((p.choices && p.choices.dropChanceMult) || 1) *
-        (e2Chaff ? C.E2.CHAFF_DROP_MULT : 1);   // E2 (R6): chaff pays ~zero
+        (e2Chaff ? C.E2.CHAFF_DROP_MULT : 1) *   // E2 (R6): chaff pays ~zero
+        adaptiveDropFactor(state.killRateEwma,   // G33: inverse to the swarm rate
+          C.POTIONS.ADAPTIVE.REF_KPS, C.POTIONS.ADAPTIVE.FLOOR_FRAC);
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) state.drops.push(drop);
@@ -5534,6 +5557,12 @@ function startRun() {
   state.arches = [];
   state.archBuffs = [];
   state.shieldAbsorbs = 0;
+  state.killRateEwma = 0;   // G33: fresh estimator per run
+  state.killsAtRateTick = 0;
+  // G34/G36: the shared heal budget starts each run FULL (one second's
+  // budget), so a first-second burst with lifesteal or harvest heals exactly
+  // as it did pre-cap.
+  state.healBudget = C.HEAL_BUDGET.CAP_FRAC * p.stats.maxHp;
   state.portal = null;
   interMsg = '';
   state.effects = [];
@@ -7152,6 +7181,15 @@ function updateFinale(dt) {
   // reaches 30:00 while fighting the maw has still survived the run.
   if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
+  // G33: the estimator ticks in the finale loop too, so a maw kill streak
+  // counts toward the adaptive curve and the rate stays honest on re-entry.
+  state.killRateEwma = ewmaKillRate(state.killRateEwma,
+    p.kills - state.killsAtRateTick, dt, C.POTIONS.ADAPTIVE.TAU);
+  state.killsAtRateTick = p.kills;
+  // G34/G36: the shared heal budget refills in the finale loop too — the maw
+  // fight's lifesteal rides the same rate cap as the normal run.
+  state.healBudget = refillHealBudget(
+    state.healBudget, dt, p.stats.maxHp, C.HEAL_BUDGET.CAP_FRAC);
   // The milestone WINDOW: survive it and the maw withdraws, the run continues.
   if (state.time >= state.mawDeadline) { mawWithdrew(); return; }
   updateWeather(state, state.weather, dt);
@@ -7285,7 +7323,10 @@ function updateFinale(dt) {
     state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
     audio.playSfx('hit');
     if ((p.stats.lifesteal || 0) > 0) {
-      p.hp = Math.min(p.stats.maxHp, p.hp + dmg * p.stats.lifesteal);
+      // G34/G36: the finale heal site rides the same shared budget as update().
+      const heal = healFromBudget(state.healBudget, dmg * p.stats.lifesteal);
+      state.healBudget -= heal;
+      p.hp = Math.min(p.stats.maxHp, p.hp + heal);
     }
     if (b.hp <= 0) { mawDefeated(); return; }
     if (pr.hit.size > pr.pierce) pr.age = 99;
