@@ -2056,7 +2056,7 @@ there is exactly ONE source of truth for the doctrine values in code, the stance
 information still reaches the player (via the cycle toast), and no coachmark is left pointing at
 removed content.
 
-## G4 — PLAYTEST COMPLAINTS CLOSED (each verified against the build, not assumed)  [status: partial]
+## G4 — PLAYTEST COMPLAINTS CLOSED (each verified against the build, not assumed)  [status: IN PROGRESS 2026-09-16 — TICK 77: the item-by-item VERIFICATION is DISPATCHED as `msg_01M2KZDJYCNTTPTKWRZWFFECAY` (builder `cli:glm-hordes-g8`, brief `docs/briefs/G4_COMPLAINTS_VERIFICATION.md`), which is the last item of BUILD_PLAN W10 ("re-check the original playtest complaints item by item"). Deliverable: `tools/verify_g4_complaints.mjs` (real Chrome 390x844 @dpr3, all 20 TOUR_KEYS, `state.time > 1.0` asserted first, `--item N` arms each <= 60s wall, 8 PNGs at 1170x2532, machine-readable `G4 ITEM <n> | <verdict> | <numbers> | <png>`) plus `test/test_g4_complaints_report.mjs`. **NO `src/` edits in that slice** — a check that exposes a real defect is reported as a FINDING and the builder STOPS on that item. **Item 5 (balance) is NOT VERIFIABLE under the owner's measurement freeze** and cross-references G5. Confirmed running, not assumed: lane spawn log carries the task, `running.json` pid 2209860 at 02:06:04 UTC, msg log 3964 B with the brief body. Verdicts are unverified by definition until the next tick.)
 The original galaxy.click feedback, item by item. Verify each and record VERIFIED FIXED / STILL TRUE:
 1. "no idea what is going on at all" — tour + hints panel + on-screen labels.
 2. "there's no xp bar" — bar exists and its EMPTY state reads as a bar.
@@ -2482,7 +2482,7 @@ SHORT (the player dies in minutes); late runs approach a long cap (30 minutes in
 minutes, a developed profile can last many times longer), the economy is priced off income per HOUR at
 each stage rather than a flat per-run figure, and the sim can report the curve.
 
-### G19 — PER-CHARACTER PROGRESSION + SPECIALISATION  [status: IN PROGRESS 2026-09-16 — SLICE 1 (the per-character upgrade layer) LANDED ON THE TREE at `a52e84f` (dirty=8, uncommitted — commits are the ORCHESTRATOR's): `CHARACTER_UPGRADES` is populated with 8 rows (2 per character, `src/meta.js` :1084-1101), `CHARACTER_UPGRADE_BY_ID` :1102, the new `buyCharacterUpgrade` :1111 (mirrors `buyUpgrade`: row validation, level cap, `upgradeCost` gold check, debit, then the EXISTING `addCharacterUpgrade` accessor — never a direct write to `profile.characters`), the pure/isolated `applyCharacterUpgrades` :1133 called at the ONE run seam (`src/main.js` :5193) and the ONE preview seam (:4896, `pilotKit`), and a found-not-presented CHARACTERS door on the shop (`src/main.js` :4618 `showCharacterShop` :4631 / `showCharacterRows` :4650). PILOT-VERIFIED ON THE ARTIFACT by this tick, not taken from the builder report: `bash tools/run_suite.sh` => `TREE @ a52e84f | dirty=8` / `SUITE greenfiles=99 redfiles=0` / REDLIST empty (the builder's own claim of greenfiles=99 redfiles=0 reproduces exactly), `git status` shows the expected modified `src/meta.js` + `src/main.js` and the new `test/test_g19_character_upgrades.mjs` + `tools/verify_g19_characters.mjs` + `docs/art/g19-characters-2026-09-15/`, and the landed code was READ directly: the 8-row table, the buy path, and `applyCharacterUpgrades` reading ONLY that character's levels (7 effects wired — `rogue_satchel`'s starting-potion effect is consumed through `characterPotionBonus`/`startPotionCount`, the pilot read the helper at `src/main.js` :4915 rather than the apply block, which is why the apply block shows 7 of 8). `src/save.js` UNTOUCHED — no schema change, `PROFILE_VERSION` still 8, NO migration needed (the slice-1 recon had already confirmed the `profile.characters` namespace + accessors existed). Builder-reported, NOT re-run by the pilot: `tools/verify_g19_characters.mjs` PASS 10/10 in real Chrome at 390x844 @dpr3 (two builder-side fixes during the run: the equip-screen title is `CHARACTERS` not `PILOTS`, and the tour-flag count reads only `TOUR_KEYS` keys, of which this tree has **20**, not the 19 the brief said) — the PNGs in `docs/art/g19-characters-2026-09-15/` were NOT read by any vision model (none exists in this job). SLICE 2 (SPECIALISATION — the family matrix, the two combat terms, the legible identity) ISSUED IN THE SAME TICK, see TICK NOTE 76. Remains for the orchestrator: LAND THE COMMIT (dirty=8). Previous text: `[status: open]`]
+### G19 — PER-CHARACTER PROGRESSION + SPECIALISATION  [status: IN PROGRESS 2026-09-16 — **TICK 77: SLICE 2 PILOT-VERIFIED ON THE COMMITTED ARTIFACT `7373953`.** `bash tools/run_suite.sh` => `SUITE greenfiles=100 redfiles=0`; `node test/test_g19_specialisation.mjs` => `specialisation: ALL CHECKS PASSED` (switching to WITCH drops the per-character portion, the global Well floor survives the switch 200 = 150 base + 50 well, the no-gate grep reads 29 specialty references all in owned files with 0 inside a refusal/gate branch); `node tools/verify_g19_specialisation.mjs` => PASS in real Chrome at 390x844 @dpr3, `state.time` 1.15 asserted BEFORE measuring, all **20** TOUR_KEYS set, the DERIVED STRONG/WEAK copy read back off the rendered equip screen for all four characters (three of them LOCKED) and off the shop rows screen, zero console errors, 2 PNGs at 1170x2532 in `docs/art/g19-specialisation-2026-09-16/`. Builder's cap-masking finding stands: 8/8 weak-family INCOMING arms masked by `HIT_CAP_FRAC`, cap untouched. **THE ONLY OPEN G19 ITEM is the sim sentence ("report progression for a fresh vs a developed character") — DEFERRED under the owner's measurement freeze, not a defect.** Commits are the orchestrator's and slice 1+2 are already committed. Previous text: SLICE 1 (the per-character upgrade layer) LANDED ON THE TREE at `a52e84f` (dirty=8, uncommitted — commits are the ORCHESTRATOR's): `CHARACTER_UPGRADES` is populated with 8 rows (2 per character, `src/meta.js` :1084-1101), `CHARACTER_UPGRADE_BY_ID` :1102, the new `buyCharacterUpgrade` :1111 (mirrors `buyUpgrade`: row validation, level cap, `upgradeCost` gold check, debit, then the EXISTING `addCharacterUpgrade` accessor — never a direct write to `profile.characters`), the pure/isolated `applyCharacterUpgrades` :1133 called at the ONE run seam (`src/main.js` :5193) and the ONE preview seam (:4896, `pilotKit`), and a found-not-presented CHARACTERS door on the shop (`src/main.js` :4618 `showCharacterShop` :4631 / `showCharacterRows` :4650). PILOT-VERIFIED ON THE ARTIFACT by this tick, not taken from the builder report: `bash tools/run_suite.sh` => `TREE @ a52e84f | dirty=8` / `SUITE greenfiles=99 redfiles=0` / REDLIST empty (the builder's own claim of greenfiles=99 redfiles=0 reproduces exactly), `git status` shows the expected modified `src/meta.js` + `src/main.js` and the new `test/test_g19_character_upgrades.mjs` + `tools/verify_g19_characters.mjs` + `docs/art/g19-characters-2026-09-15/`, and the landed code was READ directly: the 8-row table, the buy path, and `applyCharacterUpgrades` reading ONLY that character's levels (7 effects wired — `rogue_satchel`'s starting-potion effect is consumed through `characterPotionBonus`/`startPotionCount`, the pilot read the helper at `src/main.js` :4915 rather than the apply block, which is why the apply block shows 7 of 8). `src/save.js` UNTOUCHED — no schema change, `PROFILE_VERSION` still 8, NO migration needed (the slice-1 recon had already confirmed the `profile.characters` namespace + accessors existed). Builder-reported, NOT re-run by the pilot: `tools/verify_g19_characters.mjs` PASS 10/10 in real Chrome at 390x844 @dpr3 (two builder-side fixes during the run: the equip-screen title is `CHARACTERS` not `PILOTS`, and the tour-flag count reads only `TOUR_KEYS` keys, of which this tree has **20**, not the 19 the brief said) — the PNGs in `docs/art/g19-characters-2026-09-15/` were NOT read by any vision model (none exists in this job). SLICE 2 (SPECIALISATION — the family matrix, the two combat terms, the legible identity) ISSUED IN THE SAME TICK, see TICK NOTE 76. Remains for the orchestrator: LAND THE COMMIT (dirty=8). Previous text: `[status: open]`]
 Owner, verbatim: *"another mechanic some games use is that some of your gained skill that makes the game
 easier is tied to the character. so you purchase upgrades for that specific character and they generally
 aren't good at everything, so eventually you switch characters because they are better at beating certain
@@ -6310,3 +6310,55 @@ carried from tick 73, not re-measured; slice 2 deliberately does NOT reopen it. 
 `cli_glm-hordes-g8/queued.json` lists long-finished task ids while `hub-worker queue hub` reports nothing. (5) The tree is dirty=8
 (the slice-1 brief + goals doc + `src/main.js` + `src/meta.js` + one regenerated PNG + three untracked paths); commits are the
 ORCHESTRATOR's.
+
+
+## TICK NOTE 77 - 2026-09-16 02:10 UTC (goal pilot tick, subagent:spawnfa, agentlock held then released; G19 SLICE 2 PICKED UP AND PILOT-VERIFIED, G4 COMPLAINT VERIFICATION AUTHORED AND ISSUED IN THE SAME TICK)
+
+**PICKUP.** The lane was IDLE at tick start: the G19 slice-2 task (`msg_01M2KW2G34AWEMWHRFF90NRAGP`) exited 0 at 01:36:23
+(spawn-log line `task ... exit 0`), no `running.json` remained, and the worker queue holds nothing pending. Lock FREE on
+arrival, acquired as `subagent:spawnfa`.
+
+**G19 SLICE 2 VERIFIED ON THE ARTIFACT - every number re-run by the pilot, never read from the builder report.** `bash
+tools/run_suite.sh` => `TREE: /home/claude/projects/hordes @ 7373953 | dirty=0`, `SUITE greenfiles=100 redfiles=0`, REDLIST
+empty. `node test/test_g19_specialisation.mjs` => `specialisation: ALL CHECKS PASSED`, printing the KNIGHT/WITCH stat blocks
+(178 hp vs 75), "switching to WITCH drops the per-character portion", the global floor surviving the switch (witch mana 200 =
+150 base + 50 well), and the no-gate grep (29 specialty references, all inside `src/meta.js`, `src/rewrites.js`,
+`src/main.js`, `src/enemy_types.js`; 0 inside a refusal/gate branch). `node tools/verify_g19_specialisation.mjs` => PASS in
+real Chrome at 390x844 @dpr3 with `state.time` 1.15 asserted BEFORE any measurement and all **20** `TOUR_KEYS` set on this
+tree: the DERIVED STRONG/WEAK copy was read back off the rendered equip screen for all four characters (three of them LOCKED)
+and off the shop rows screen, zero console errors, 2 PNGs at 1170x2532 in `docs/art/g19-specialisation-2026-09-16/`. The
+builder's own cap-masking finding stands as reported: 8/8 weak-family INCOMING arms are masked by `HIT_CAP_FRAC` and the cap
+was NOT touched. The orchestrator had already committed slice 1 + slice 2 as `7373953`.
+
+**G4 AUTHORED AND ISSUED IN THE SAME TICK (zero-latency handoff; no brief existed, so it was authored now, under the lock).**
+The next open item is the last item of BUILD_PLAN W10 - "re-check the original playtest complaints item by item" - and G4 is
+the only goal still `partial`. `docs/briefs/G4_COMPLAINTS_VERIFICATION.md` (144 lines) is a VERIFICATION slice:
+`tools/verify_g4_complaints.mjs` walks the EIGHT verbatim galaxy.click complaints (`docs/HORDES_GOALS_2026-09-12.md`
+:2059-2068) in real Chrome at 390x844 @dpr3 through the shared `tools/browser.mjs` harness, with a `--item N` arm flag,
+per-arm wall ms printed, one PNG per arm at exactly 1170x2532, a machine-readable `G4 ITEM <n> | <verdict> | <numbers> |
+<png>` summary, and rc=0 whenever the report was produced (an honest `STILL TRUE` is a VALID outcome; rc=1 only when a check
+could not run). It is paired with `test/test_g4_complaints_report.mjs`, which asserts the report table is complete (8 items,
+verdicts from the allowed set, non-empty evidence, item 5 carrying the freeze cross-reference). Two binding constraints:
+**NO `src/` edits** - a check that exposes a real defect is reported as a FINDING and the builder STOPS on that item, so the
+game code keeps one writer - and **item 5 (balance) is NOT VERIFIABLE under the owner's standing measurement freeze**, stated
+in place with the G5 cross-reference instead of a cohort. Every arm is capped at 60s wall per the directive. DISPATCHED as
+`msg_01M2KZDJYCNTTPTKWRZWFFECAY` to `cli:glm-hordes-g8`, and DELIVERY CONFIRMED INDEPENDENTLY, not from the issue response:
+`.hub-worker/cli_glm-hordes-g8/running.json` = `{"task_id": "msg_01M2KZDJYCNTTPTKWRZWFFECAY", "pid": 2209860, "started":
+1789524364.26}` (02:06:04 UTC), the lane spawn log carries `task msg_01M2KZDJYCNTTPTKWRZWFFECAY from subagent:spawndec`, and
+the msg log exists (3964 B) with the brief path in its body. FOR THE RECORD: the `hub-worker issue` call blocked past the
+180s command timeout even though the task had in fact been queued and started ~30s in - delivery was confirmed from
+`running.json` and the spawn log, never from the call's return value.
+
+**REMAINS / UNVERIFIED:** (1) G4's verdicts are unverified by definition - issued, not run; the next tick picks them up.
+(2) G19's ONLY open item is the sim sentence ("report progression for a fresh vs a developed character"), DEFERRED under the
+freeze; the marker now says so rather than reading as a defect. (3) `test/test_stages.mjs` carried a suspected ~17%
+spawn-clause flake from ticks 32/35 - the pilot re-ran it 4x standalone this tick, **4/4 green**, so no flake reproduced (that
+is not a proof of absence; 4 runs is a screen, not a rate). (4) PNGs are still read by NO vision model in this job (none
+exists); the evidence remains real-Chrome programmatic pixel sampling plus asserted geometry, and that gap is stated on every
+visual claim. (5) The tree carries 2 regenerated PNGs from the pilot's own verifier re-run (dirty=2); commits are the
+ORCHESTRATOR's. (6) Stale lane bookkeeping persists - `cli_glm-hordes-g8/queued.json` lists long-finished G16/G18 ids while
+`hub-worker queue hub` reports nothing pending; not cancelled (a cancel is hub noise).
+
+**LOCK:** acquired `subagent:spawnfa` at tick start, released at tick end. Read-only `git log`/`git branch`/`git status`/
+`git diff` only; no commit/checkout/reset/stash/clean. No sim and no cohort ran - the owner's 60s cap was respected; the
+longest commands were the suite, two verifier runs and four standalone `test_stages` runs.
