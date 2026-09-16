@@ -1,15 +1,15 @@
-# HORDES 1.0 — 16 September 2026
+# HORDES 1.0
 
-**Play it:** https://sk408.github.io/hordes/ (hard-refresh when you load it: static site, caches hard)
+**Play it:** https://sk408.github.io/hordes/
 
-HORDES is a pixel-art survivor game. You hold a shrinking arena against waves that keep escalating, draft your
-build as you level, and kill the boss to open a portal out. Everything you earn between runs buys permanent
-upgrades, so death pays. Take the portal and the game flips side-on into the escape: a minute-long run for your
-life with a horde at your heels, never fewer than three pursuers and close enough to touch, where the pits
-between you and the way out are as much a weapon as the gun.
+HORDES is a pixel-art survivor game about managing a squeeze. Waves pour in and keep getting heavier, and
+staying alive is all movement: cutting through gaps, dragging a horde behind you, making a shrinking arena
+work in your favour. Level up and you draft a card. Kill the boss and a portal opens. It is the same fight
+every time and it keeps rewarding you for learning it.
 
-Version 1.0 is the game as it stands. A draft played with a real deck of pixel playing cards, where rank is
-rarity, suit is family and the combos are the face cards. Weapons you choose before the run, and have to go
-find. A 48-item shop holding roughly sixty hours of upgrades. Four characters who each grow differently and
-specialise against different enemy families. Runs end in a death movie, or on the far side of a portal. It
-plays on a phone, portrait or landscape.
+Your build is a deck of playing cards: rank is rarity, suit is family, the combos are the face cards, and the
+jokers are the ones everybody chases. You pick your weapons before the run, and you have to go find them. Turn
+up the heat and the rewards get richer. Take the portal and the game flips side-on for the escape, a minute of
+running for your life with three pursuers minimum at your heels matching your speed, every pit a chance to
+watch them drop. Four characters play it differently, a 48-item shop gives you a long climb, and death always
+pays, because what you bank becomes the upgrades that make the next run meaner.
