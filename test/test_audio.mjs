@@ -323,5 +323,87 @@ const setup = () => {
   console.log('ok: unknown phases + missing AudioContext no-op cleanly');
 }
 
+// ---- arrangement (2026-09-16 owner request: "longer music") ----
+// The song: >= 8 distinct sections, every bar accounted for exactly once,
+// cycle >= 180s COMPUTED from the constants, correct step->position mapping,
+// and a final bar that resolves back into bar 1's Am.
+{
+  const SONG = MUSIC.SONG;
+  const stepDur = 60 / MUSIC.BPM / 4;                  // 16th note @ BPM
+  const bars = SONG.sections.reduce((n, s) => n + s.bars, 0);
+
+  assert.ok(SONG.sections.length >= 8, `at least 8 sections (got ${SONG.sections.length})`);
+  for (const s of SONG.sections) {
+    assert.ok(s.bars >= 8 && s.bars <= 16, `section ${s.id} is 8-16 bars (got ${s.bars})`);
+    assert.ok(s.prog.length >= 1 && s.prog.every(c => typeof c === 'string'),
+      `section ${s.id} has a real progression`);
+  }
+  // Cycle length computed FROM THE CONSTANTS, never a hardcoded literal.
+  const cycle = bars * MUSIC.STEPS * stepDur;
+  assert.strictEqual(SONG.totalBars, bars, 'totalBars equals the sum of section bars');
+  assert.strictEqual(SONG.totalSteps, bars * MUSIC.STEPS, 'totalSteps = bars x STEPS');
+  assert.ok(Math.abs(SONG.cycleSeconds - cycle) < 1e-9, 'cycleSeconds matches the constants');
+  assert.ok(cycle >= 180, `full cycle >= 180s (computed ${cycle.toFixed(2)}s)`);
+
+  // Every bar accounted for EXACTLY once: each of totalSteps steps maps into
+  // a distinct (bar, stepInBar) pair, each bar seen 16 times, and section
+  // runs are contiguous with barInSection cycling 0..bars-1.
+  const barCounts = new Map();
+  for (let s = 0; s < SONG.totalSteps; s++) {
+    const p = MUSIC.mapStep(s);
+    assert.strictEqual(p.stepInBar, s % MUSIC.STEPS, 'stepInBar follows the step index');
+    barCounts.set(p.bar, (barCounts.get(p.bar) || 0) + 1);
+  }
+  assert.strictEqual(barCounts.size, SONG.totalBars, 'every bar is reachable');
+  for (const [bar, n] of barCounts) {
+    assert.strictEqual(n, MUSIC.STEPS, `bar ${bar} covered exactly ${MUSIC.STEPS} times`);
+  }
+  // First bar / every section boundary / final bar.
+  const p0 = MUSIC.mapStep(0);
+  assert.strictEqual(p0.section, SONG.sections[0].id, 'song opens on section 0');
+  assert.strictEqual(p0.barInSection, 0, 'first step is bar 0 of the section');
+  let acc = 0;
+  for (let i = 0; i < SONG.sections.length; i++) {
+    const pb = MUSIC.mapStep(acc * MUSIC.STEPS);
+    assert.strictEqual(pb.section, SONG.sections[i].id, `boundary ${i}: section id`);
+    assert.strictEqual(pb.sectionIndex, i, `boundary ${i}: section index`);
+    assert.strictEqual(pb.barInSection, 0, `boundary ${i}: barInSection resets`);
+    const mid = MUSIC.mapStep((acc + (SONG.sections[i].bars >> 1)) * MUSIC.STEPS + 7);
+    assert.strictEqual(mid.section, SONG.sections[i].id, `mid-section ${i} still inside it`);
+    const lastBar = MUSIC.mapStep((acc + SONG.sections[i].bars - 1) * MUSIC.STEPS);
+    assert.strictEqual(lastBar.section, SONG.sections[i].id, `last bar of ${i} still inside it`);
+    acc += SONG.sections[i].bars;
+  }
+  assert.strictEqual(acc, SONG.totalBars, 'section boundaries tile the song exactly');
+  // The final bar resolves back into the opening root: E or G -> Am.
+  const pf = MUSIC.mapStep(SONG.totalSteps - 1);
+  assert.ok(pf.chord === 'E' || pf.chord === 'G',
+    `final bar leads home (got ${pf.chord}, want E or G)`);
+  assert.strictEqual(MUSIC.mapStep(0).chord, 'Am', 'the opening is A-minor rooted');
+  assert.ok(pf.bar === SONG.totalBars - 1 && pf.barInSection === SONG.sections[SONG.sections.length - 1].bars - 1,
+    'final step is the final section\'s final bar');
+
+  // Distinctness: no two sections share an identical (bass, lead, hat)
+  // signature — asserted on the RENDERED first bar of each section, not
+  // eyeballed on the definitions.
+  const firstBars = SONG.bars.filter((b, i) => i === 0 || SONG.bars[i - 1].section !== b.section);
+  assert.strictEqual(firstBars.length, SONG.sections.length, 'one first-bar per section');
+  const sigs = new Set();
+  for (const b of firstBars) {
+    const sig = JSON.stringify([b.bass, b.lead, b.hats]);
+    assert.ok(!sigs.has(sig), `section ${b.section} must not share a signature`);
+    sigs.add(sig);
+  }
+  assert.strictEqual(sigs.size, SONG.sections.length, 'all section signatures mutually distinct');
+
+  // Bar 1 renders the legacy hook VERBATIM (compat: BASS/LEAD/HAT_STEPS stay
+  // the first 16 steps of the song).
+  assert.strictEqual(JSON.stringify(SONG.bars[0].bass), JSON.stringify(MUSIC.BASS));
+  assert.strictEqual(JSON.stringify(SONG.bars[0].lead), JSON.stringify(MUSIC.LEAD));
+  assert.strictEqual(JSON.stringify(SONG.bars[0].hats), JSON.stringify(MUSIC.HAT_STEPS));
+
+  console.log(`ok: arrangement — ${SONG.sections.length} sections, ${SONG.totalBars} bars, cycle ${cycle.toFixed(2)}s, all distinct, seam resolves ${pf.chord} -> Am`);
+}
+
 AUDIO_TEST.reset();
 console.log('AUDIO TESTS PASSED');

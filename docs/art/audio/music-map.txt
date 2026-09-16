@@ -1,0 +1,121 @@
+HORDES music structure map — generated from src/audio.js mapStep() (2026-09-16)
+BPM 132 | 16 steps/bar | bar = 1.8182s
+cycle: 104 bars = 1664 steps = 189.09s before the loop returns to bar 1
+
+sections (id | label | bars | first-last bar | progression per bar):
+  dawn   | Dawn (opening)        | 12 bars |   0- 11 | Am F C G
+  march  | March (main A)        | 12 bars |  12- 23 | Am F C G
+  flight | Flight (main B)       | 12 bars |  24- 35 | C G Am F
+  fold   | Fold (turn)           | 12 bars |  36- 47 | F G Am Em
+  press  | Press (tension)       | 12 bars |  48- 59 | Am Am F E
+  storm  | Storm (tension peak)  | 16 bars |  60- 75 | Dm Am E Am
+  return | Return (varied)       | 16 bars |  76- 91 | Am F C G Am F Dm E
+  settle | Settle (coda)         | 12 bars |  92-103 | F G Am F C G Am G F G Am E
+
+bar | section  | chord
+  0 | dawn     | Am   (legacy hook bar: walks Am-C-F-G, rests on Am)
+  1 | dawn     | F
+  2 | dawn     | C
+  3 | dawn     | G
+  4 | dawn     | Am
+  5 | dawn     | F
+  6 | dawn     | C
+  7 | dawn     | G
+  8 | dawn     | Am
+  9 | dawn     | F
+ 10 | dawn     | C
+ 11 | dawn     | G
+ 12 | march    | Am
+ 13 | march    | F
+ 14 | march    | C
+ 15 | march    | G
+ 16 | march    | Am
+ 17 | march    | F
+ 18 | march    | C
+ 19 | march    | G
+ 20 | march    | Am
+ 21 | march    | F
+ 22 | march    | C
+ 23 | march    | G
+ 24 | flight   | C
+ 25 | flight   | G
+ 26 | flight   | Am
+ 27 | flight   | F
+ 28 | flight   | C
+ 29 | flight   | G
+ 30 | flight   | Am
+ 31 | flight   | F
+ 32 | flight   | C
+ 33 | flight   | G
+ 34 | flight   | Am
+ 35 | flight   | F
+ 36 | fold     | F
+ 37 | fold     | G
+ 38 | fold     | Am
+ 39 | fold     | Em
+ 40 | fold     | F
+ 41 | fold     | G
+ 42 | fold     | Am
+ 43 | fold     | Em
+ 44 | fold     | F
+ 45 | fold     | G
+ 46 | fold     | Am
+ 47 | fold     | Em
+ 48 | press    | Am
+ 49 | press    | Am
+ 50 | press    | F
+ 51 | press    | E
+ 52 | press    | Am
+ 53 | press    | Am
+ 54 | press    | F
+ 55 | press    | E
+ 56 | press    | Am
+ 57 | press    | Am
+ 58 | press    | F
+ 59 | press    | E
+ 60 | storm    | Dm
+ 61 | storm    | Am
+ 62 | storm    | E
+ 63 | storm    | Am
+ 64 | storm    | Dm
+ 65 | storm    | Am
+ 66 | storm    | E
+ 67 | storm    | Am
+ 68 | storm    | Dm
+ 69 | storm    | Am
+ 70 | storm    | E
+ 71 | storm    | Am
+ 72 | storm    | Dm
+ 73 | storm    | Am
+ 74 | storm    | E
+ 75 | storm    | Am
+ 76 | return   | Am
+ 77 | return   | F
+ 78 | return   | C
+ 79 | return   | G
+ 80 | return   | Am
+ 81 | return   | F
+ 82 | return   | Dm
+ 83 | return   | E
+ 84 | return   | Am
+ 85 | return   | F
+ 86 | return   | C
+ 87 | return   | G
+ 88 | return   | Am
+ 89 | return   | F
+ 90 | return   | Dm
+ 91 | return   | E
+ 92 | settle   | F
+ 93 | settle   | G
+ 94 | settle   | Am
+ 95 | settle   | F
+ 96 | settle   | C
+ 97 | settle   | G
+ 98 | settle   | Am
+ 99 | settle   | G
+100 | settle   | F
+101 | settle   | G
+102 | settle   | Am
+103 | settle   | E
+
+loop seam: bar 103 ends on E (V) -> bar 0 Am (i); render-measured: final-20ms max|x|=0, wrapDelta=0 (/tmp/hordes_music_full.wav)

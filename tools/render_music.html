@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- HORDES — offline music render harness (2026-09-16 MUSIC_ARRANGEMENT).
+     Loaded by tools/render_music.mjs through tools/browser.mjs (real Chrome,
+     served over http so ES modules resolve). NOT a game page: it imports
+     src/audio.js itself, injects an OfflineAudioContext as the module's
+     context via the AUDIO_TEST seam, schedules the ENTIRE song cycle with the
+     module's own scheduleStep (the same function the live lookahead scheduler
+     calls — the REAL synthesis path, not a re-implementation), then streams
+     the raw float32 render to the driver's sink. window.SINK_URL is injected
+     as a startup script before this page loads. -->
+<meta charset="utf-8">
+<title>hordes music render</title>
+<script type="module">
+import { AUDIO_TEST, MUSIC, init } from '/src/audio.js';
+
+const SR = 44100;
+const stepDur = 60 / MUSIC.BPM / 4;
+const LEAD = 0.05;                                   // silence before bar 1
+const TAIL = 0.35;                                   // room past the final bar
+const total = LEAD + MUSIC.SONG.cycleSeconds + TAIL;
+const oc = new OfflineAudioContext(1, Math.ceil(total * SR), SR);
+const noopStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+
+AUDIO_TEST.reset();
+// A CONSTRUCTIBLE factory (init() does `new AudioCtxCtor()` — an arrow fn
+// would throw and land in the catch). A constructor returning an object
+// hands init() exactly our offline context.
+AUDIO_TEST.setDeps({ AudioContext: function () { return oc; }, storage: noopStorage });
+if (!init()) throw new Error('init() failed against the OfflineAudioContext');
+
+for (let s = 0; s < MUSIC.SONG.totalSteps; s++) {
+  AUDIO_TEST.scheduleStep(s, LEAD + s * stepDur);    // real tone()/noise() calls
+}
+const buf = await oc.startRendering();
+const data = buf.getChannelData(0);
+
+// Stream the raw float32 PCM to the driver (CORS-ok sink, 1 MiB chunks).
+const bytes = new Uint8Array(data.buffer);
+for (let off = 0; off < bytes.length; off += 1048576) {
+  const r = await fetch(window.SINK_URL, { method: 'POST', body: bytes.subarray(off, off + 1048576) });
+  if (!r.ok) throw new Error('sink rejected chunk at ' + off);
+}
+window.__RENDER_DONE = { samples: data.length, sr: SR, lead: LEAD, cycle: MUSIC.SONG.cycleSeconds };
+</script>

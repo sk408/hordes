@@ -2010,6 +2010,20 @@ number. First-ever token: full banner (same treatment as the top-tier pickup in
 
 ---
 
+## G28 — LONGER MUSIC: THE ARRANGEMENT (player request, owner-PRIORITISED 2026-09-16)  [status: DISPATCHED — PRIORITY, running as `msg_01M2N654G6H0K7FXEFBXMQQ90D`]
+
+**Player request, relayed by the owner: "longer music because it loops too fast." Owner, on hearing it: "This should be a priority change."**
+
+**MEASURED CAUSE:** `src/audio.js` :56-69 — `BPM = 132`, `STEPS = 16`, so one pass of the pattern is **1.818 seconds**, and `BASS` (:64) and `LEAD` (:66) are each exactly 16 entries. Bass line, melody and hats therefore all repeat every 1.82s — roughly **33 repetitions per minute**. The tune is one bar long. Nothing is broken; there is no arrangement.
+
+**THE WORK:** brief at `docs/briefs/MUSIC_ARRANGEMENT.md` (that file is the spec). Turn the bar into a song: >= 8 mutually distinct sections of 8-16 bars each; a full cycle **>= 180 seconds** before returning to its start; harmony that actually moves (the per-bar Am-C-F-G extended into real progressions); a final bar that resolves back into bar 1 without a click; the `step -> {section, bar, stepInBar, chord}` mapping exposed as a PURE testable function; the scheduler still sample-accurate (`nextNoteTime` accumulation, LOOKAHEAD 0.12s, TICK_MS 25ms, no per-note timers); public surface unchanged (`startMusic`/`stopMusic`/toggles/`playIntroCue`/`playPortalCue`/the `MUSIC` export's existing fields). Synthesis and character stay exactly as they are — this is ARRANGEMENT, not new sounds.
+
+**DELIVERABLE THE OWNER JUDGES (by ear):** an offline render through the REAL synthesis path — `/tmp/hordes_music_full.wav` (the whole cycle) and `/tmp/hordes_music_30s.wav` (mid-cycle excerpt) — plus `docs/art/audio/music-map.txt` (bar | section | chord, committed) and the seam measurement (max sample delta / RMS across the loop point). Audio files are NOT committed (tens of MB).
+
+**ACCEPTANCE:** new assertions in `test/test_audio.mjs` — cycle >= 180s COMPUTED from the constants (never a hardcoded literal), >= 8 sections mutually distinct, every bar accounted for exactly once, the mapper correct at the first bar / section boundaries / the final bar, and the final bar resolving to the opening root. Suite `tools/run_suite.sh` to `redfiles=0` with NO assertion weakened or deleted.
+
+**PILOT: verify on the artifact, not the builder's word** — re-run `test/test_audio.mjs` and the suite yourself, read the structure map, and if a render exists report its measured duration. The music is judged by the owner's ear, so the WAV paths must reach him.
+
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the

@@ -66,7 +66,121 @@ const BASS = [110, 0, 110, 0, 130.8, 0, 130.8, 0, 87.3, 0, 87.3, 0, 98, 0, 98, 0
 const LEAD = [440, 0, 523.3, 587.3, 659.3, 0, 587.3, 0, 523.3, 440, 0, 349.2, 392, 440, 0, 0];
 // Noise hats on the off-beats.
 const HAT_STEPS = [2, 6, 10, 14];
-export const MUSIC = { BPM, STEPS, BASS, LEAD, HAT_STEPS };
+
+// ---------- Song arrangement (2026-09-16 owner request: "longer music") ------
+// The 16 steps above are the HOOK, not the song: BASS/LEAD/HAT_STEPS used to
+// BE the entire arrangement, so the whole tune looped every 1.818s (~33x per
+// minute). The song is now 8 sections of 8-16 bars, ONE CHORD PER BAR (the
+// hook's four chords in one bar became a real progression across bars), 104
+// bars = 189.09s before the cycle returns to bar 1. Bar 1 of the song renders
+// the legacy hook VERBATIM (see SECTIONS[0].intro), so every consumer of
+// BASS/LEAD/HAT_STEPS — including the first-loop note-count test — still sees
+// exactly the old pattern. Synthesis, gains and the lookahead scheduler are
+// unchanged; only the arrangement grew.
+
+// Chord table (bass octave): [name, root, third, fifth].
+const CHORDS = {
+  Am: ['Am', 110.00, 130.81, 164.81],
+  C:  ['C',  130.81, 164.81, 196.00],
+  Dm: ['Dm',  73.42,  87.31, 110.00],
+  E:  ['E',   82.41, 103.83, 123.47],
+  Em: ['Em',  82.41,  98.00, 123.47],
+  F:  ['F',   87.31, 110.00, 130.81],
+  G:  ['G',   98.00, 123.47, 146.83],
+};
+// Lead scale (A4..A5): the register the original hook sang in. 'scale' lead
+// patterns index this; 'chord' patterns index the bar's own chord tones
+// [root, third, fifth, octave] x4 (root 110 -> lead 440, as the hook did).
+const SCALE = [440, 493.88, 523.25, 587.33, 659.25, 698.46, 783.99, 880];
+
+// Bass styles: a 16-step pattern of chord degrees (-1 rest, 0 root, 1 third,
+// 2 fifth, 3 octave) plus the tone() duration factor. Styles are shared
+// between sections; the (bass, lead, hat) SIGNATURE per section stays unique.
+const BASS_STYLES = {
+  sparse:  { deg: [0, -1, -1, -1, -1, -1, -1, -1, 2, -1, -1, -1, -1, -1, -1, -1], dur: 3 },
+  sparse2: { deg: [0, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1, -1, -1], dur: 3 },
+  pulse:   { deg: [0, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1, -1], dur: 0.9 },
+  pulse2:  { deg: [0, -1, -1, -1, 0, -1, -1, -1, 2, -1, -1, -1, 0, -1, 2, -1], dur: 0.9 },
+  walk:    { deg: [0, -1, -1, -1, 2, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1], dur: 0.9 },
+  eighths: { deg: [0, -1, 0, -1, 0, -1, 2, -1, 0, -1, 0, -1, 0, -1, 2, -1], dur: 0.9 },
+  drive:   { deg: [0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, 0, 1, 2], dur: 0.9 },
+  drive2:  { deg: [0, 0, -1, 0, -1, 0, -1, 0, 0, -1, 0, 0, -1, 0, 1, -1], dur: 0.9 },
+};
+
+// The SONG: opening (sparse, states the airy theme) -> main body -> turn ->
+// tension -> tension peak -> VARIED return (same theme as the opening,
+// ornamented and fuller, second half departs to Dm/E) -> coda that lands the
+// final bar on E (V) so the cycle resolves back into bar 1's Am.
+const SECTIONS = [
+  { id: 'dawn',   label: 'Dawn (opening)',       bars: 12, prog: ['Am', 'F', 'C', 'G'],
+    bass: 'sparse',  hats: [6, 14],
+    lead: { mode: 'scale', pat: [5, -1, -1, -1, 4, -1, 2, -1, -1, -1, 4, -1, 2, -1, -1, -1] },
+    intro: true },
+  { id: 'march',  label: 'March (main A)',       bars: 12, prog: ['Am', 'F', 'C', 'G'],
+    bass: 'pulse',   hats: [2, 6, 10, 14],
+    lead: { mode: 'scale', pat: [0, -1, 2, 3, 4, -1, 3, -1, 2, 0, -1, 5, 4, -1, 3, -1] } },
+  { id: 'flight', label: 'Flight (main B)',      bars: 12, prog: ['C', 'G', 'Am', 'F'],
+    bass: 'walk',    hats: [0, 4, 8, 12],
+    lead: { mode: 'chord', pat: [0, -1, 1, 2, 3, -1, 2, 1, 0, -1, 1, 2, 3, 2, 1, -1] } },
+  { id: 'fold',   label: 'Fold (turn)',          bars: 12, prog: ['F', 'G', 'Am', 'Em'],
+    bass: 'eighths', hats: [2, 6, 10, 14],
+    lead: { mode: 'scale', pat: [7, -1, 6, -1, 5, -1, 4, -1, 3, -1, 2, -1, 1, -1, 0, -1] } },
+  { id: 'press',  label: 'Press (tension)',      bars: 12, prog: ['Am', 'Am', 'F', 'E'],
+    bass: 'drive',   hats: [0, 2, 4, 6, 8, 10, 12, 14],
+    lead: { mode: 'chord', pat: [3, -1, -1, 3, -1, -1, 2, -1, 3, -1, -1, 3, -1, 4, -1, -1] } },
+  { id: 'storm',  label: 'Storm (tension peak)', bars: 16, prog: ['Dm', 'Am', 'E', 'Am'],
+    bass: 'drive2',  hats: [0, 2, 4, 6, 8, 10, 12, 14],
+    lead: { mode: 'scale', pat: [7, -1, 5, 7, -1, 4, 5, -1, 7, 5, 4, -1, 2, 4, -1, 0] } },
+  { id: 'return', label: 'Return (varied)',      bars: 16, prog: ['Am', 'F', 'C', 'G', 'Am', 'F', 'Dm', 'E'],
+    bass: 'pulse2',  hats: [2, 6, 10, 12, 14],
+    lead: { mode: 'scale', pat: [5, -1, 4, 5, -1, 4, -1, 2, -1, 4, 5, -1, 1, 2, 4, -1] } },
+  { id: 'settle', label: 'Settle (coda)',        bars: 12, prog: ['F', 'G', 'Am', 'F', 'C', 'G', 'Am', 'G', 'F', 'G', 'Am', 'E'],
+    bass: 'sparse2', hats: [6, 14],
+    lead: { mode: 'scale', pat: [4, -1, -1, 2, -1, -1, 0, -1, 4, -1, -1, 2, -1, -1, 1, -1] } },
+];
+
+// Bar table: flattened, built once at module load — scheduleStep does zero
+// allocation in the hot loop (array reads only).
+const BAR_TABLE = SECTIONS.map((sec, sectionIndex) => {
+  const st = BASS_STYLES[sec.bass];
+  const rows = [];
+  for (let b = 0; b < sec.bars; b++) {
+    const ch = CHORDS[sec.prog[b % sec.prog.length]];
+    const isIntro = sec.intro && b === 0;
+    const bass = isIntro ? BASS.slice()
+      : st.deg.map(d => d < 0 ? 0 : ch[1 + d] * (d === 3 ? 2 : 1));
+    const lead = isIntro ? LEAD.slice()
+      : sec.lead.pat.map(d => d < 0 ? 0
+        : sec.lead.mode === 'chord' ? [ch[1] * 4, ch[2] * 4, ch[3] * 4, ch[1] * 8][d]
+        : SCALE[d]);
+    rows.push({
+      section: sec.id, sectionIndex, barInSection: b,
+      chord: isIntro ? 'Am' : ch[0],   // the hook bar walks Am-C-F-G; Am is its root
+      bass, lead, hats: isIntro ? HAT_STEPS.slice() : sec.hats, bassDur: isIntro ? 0.9 : st.dur,
+    });
+  }
+  return rows;
+}).flat();
+const TOTAL_BARS = BAR_TABLE.length;
+const TOTAL_STEPS = TOTAL_BARS * STEPS;
+const CYCLE_SECONDS = TOTAL_STEPS * STEP_DUR;
+
+// PURE step -> position mapper (tests and the structure map read this; the
+// scheduler itself reads BAR_TABLE directly to stay allocation-free).
+export function mapStep(s) {
+  const g = ((s % TOTAL_STEPS) + TOTAL_STEPS) % TOTAL_STEPS;
+  const t = BAR_TABLE[(g / STEPS) | 0];
+  return { step: g, section: t.section, sectionIndex: t.sectionIndex,
+    bar: (g / STEPS) | 0, barInSection: t.barInSection, stepInBar: g % STEPS,
+    chord: t.chord };
+}
+
+export const MUSIC = {
+  BPM, STEPS, BASS, LEAD, HAT_STEPS,
+  SONG: { sections: SECTIONS, totalBars: TOTAL_BARS, totalSteps: TOTAL_STEPS,
+    cycleSeconds: CYCLE_SECONDS, bars: BAR_TABLE },
+  mapStep,
+};
 
 // ---------- WebAudio helpers ----------
 function ensureNoiseBuffer(c) {
@@ -277,11 +391,17 @@ export function playPortalCue(phase) {
 
 // ---------- Music sequencer (lookahead scheduler) ----------
 function scheduleStep(s, when) {
-  const bass = BASS[s % STEPS];
-  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * 0.9, gain: 0.35, when });
-  const lead = LEAD[s % STEPS];
+  // Song arrangement: the bar table is precomputed, so the hot path is pure
+  // array reads — no per-step allocation, no drift (times still accumulate in
+  // scheduleAhead). Bar 1 renders the legacy hook verbatim.
+  const g = ((s % TOTAL_STEPS) + TOTAL_STEPS) % TOTAL_STEPS;
+  const bar = BAR_TABLE[(g / STEPS) | 0];
+  const i = g % STEPS;
+  const bass = bar.bass[i];
+  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.35, when });
+  const lead = bar.lead[i];
   if (lead) tone(ctx, musicBus, { type: 'triangle', freq: lead, dur: STEP_DUR * 0.8, gain: 0.3, when });
-  if (HAT_STEPS.includes(s % STEPS)) noise(ctx, musicBus, { dur: 0.03, gain: 0.08, when });
+  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.08, when });
 }
 
 function scheduleAhead() {
@@ -289,7 +409,7 @@ function scheduleAhead() {
   while (nextNoteTime < ctx.currentTime + LOOKAHEAD) {
     scheduleStep(step, nextNoteTime);
     nextNoteTime += STEP_DUR;
-    step = (step + 1) % STEPS;
+    step = (step + 1) % TOTAL_STEPS;   // the whole SONG cycles, not one bar
   }
 }
 
@@ -325,5 +445,6 @@ export const AUDIO_TEST = {
     hydrateFlags();
   },
   scheduleAhead,                    // manual scheduler pass (fake clock)
+  scheduleStep,                     // real per-step synthesis (offline render drives this)
   state: () => ({ ctx, musicRunning, master, musicBus, sfxBus }),
 };
