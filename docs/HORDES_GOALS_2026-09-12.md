@@ -2010,7 +2010,7 @@ number. First-ever token: full banner (same treatment as the top-tier pickup in
 
 ---
 
-## G28 — LONGER MUSIC: THE ARRANGEMENT (player request, owner-PRIORITISED 2026-09-16)  [status: DISPATCHED — PRIORITY, running as `msg_01M2N654G6H0K7FXEFBXMQQ90D`]
+## G28 — LONGER MUSIC: THE ARRANGEMENT (player request, owner-PRIORITISED 2026-09-16)  [status: DONE 2026-09-16 — LANDED in `a2f307d`, PUSHED to both remotes, VERIFIED LIVE on Pages (served `src/audio.js` 13286 -> 20016 bytes), and PILOT-VERIFIED ON THE ARTIFACT this tick, every remaining item closed by the pilot's own runs: (1) `node test/test_audio.mjs` => AUDIO TESTS PASSED including the exact arrangement line (8 sections, 104 bars, cycle 189.09s, all distinct, seam resolves E -> Am); (2) `bash tools/run_suite.sh` => TREE a2f307d dirty=1 (this marker edit), SUITE greenfiles=104 redfiles=0; (3) `docs/art/audio/music-map.txt` read — 104 bar|section|chord rows generated from `mapStep`, cycle header matches the test; (4) LIVE PLAYBACK VERIFIED in real Chrome (the one item nobody had checked): a real AudioContext through the real `init()`/`startMusic()` path came up `state: "running"`, `startMusic()` returned true, and the scheduler clock advanced 2.50s of `currentTime` in 2.5s of wall with `musicRunning: true` — the live scheduler path plays, not just the offline render. G28 is fully closed.]
 
 **Player request, relayed by the owner: "longer music because it loops too fast." Owner, on hearing it: "This should be a priority change."**
 
