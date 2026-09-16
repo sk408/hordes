@@ -147,6 +147,37 @@
      frameCard (the old --hi/--lo custom props were never consumed) */
   .card.kit-card { width: min(92vw, 380px); text-align: left; cursor: default; }
   .card.kit-card .desc { font-size: 13px; line-height: 1.7; }
+  /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
+     formatting of the how to play screen, at least on mobile. It's hard to
+     read the text because of the narrow width and it wraps"). The reference
+     screen is a DOCUMENT, not a tip: showHowToPlay puts .howto on #overlay
+     and .ref on its three reference cards, and ONLY those get the wide
+     readable panel — every other menu (and the KEPT coachmark #tour-tip
+     cards, 1-2 lines each) keeps the compact box. Rows are TWO COLUMNS:
+     purpose left (may wrap), trigger right (white-space: nowrap — a key
+     name never splits mid-token). The body scrolls INTERNALLY so nothing is
+     ever clipped, and GOT IT is a >=44px sticky card so it is never pushed
+     out of reach. Geometry measured live by tools/verify_help_mobile.mjs. */
+  #overlay.howto .cards { width: 100%; }
+  #overlay.howto .card.ref {
+    box-sizing: border-box;
+    width: 100%; max-width: 560px;
+    text-align: left; padding: 12px 14px;
+  }
+  #overlay.howto .card.ref .desc {
+    font-size: 15px; line-height: 1.5; text-align: left;
+    max-height: min(56vh, 420px); overflow-y: auto; overscroll-behavior: contain;
+  }
+  #overlay.howto .rr { display: flex; justify-content: space-between;
+    align-items: baseline; gap: 10px; }
+  #overlay.howto .rl { flex: 1 1 auto; text-align: left; }
+  #overlay.howto .rv { flex: 0 0 auto; white-space: nowrap; color: #ffd75e;
+    text-align: right; }
+  #overlay.howto .card.gotit {
+    position: sticky; bottom: 2px; min-height: 44px; box-sizing: border-box;
+    width: 100%; max-width: 560px;
+    display: flex; align-items: center; justify-content: center;
+  }
   /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
      canvas — 16x16 backing store, INTEGER 2x CSS scale (32px), pixelated
      (same convention as the G13 portraits; no smoothing, no blur). */

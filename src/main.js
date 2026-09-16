@@ -82,7 +82,7 @@ import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.j
 // non-pausing, non-capturing hint strip + object tags (see its header for
 // the six invariants).
 import { HintStrip, makeHintStore, HINT_IDS } from './onboarding.js';
-import { introLine, controlById } from './controls_ref.js';
+import { introLine, controlById, CONTROLS } from './controls_ref.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
 // volleyId; the mercy rule + 3-hit damage live there. NOTE (RUN-STRUCTURE):
@@ -3939,6 +3939,16 @@ function completeOnboarding() {
 // one-time flag; ESC dismisses via the standard menu-escape branch.
 function showHowToPlay() {
   openMenu();
+  // HOW TO PLAY readability (owner 2026-09-16): the reference is a DOCUMENT,
+  // not a tip — this screen alone carries the .howto wide-panel modifier
+  // (index.html sizes it: width 100% capped 560px, 15px body, internal
+  // scroll, sticky GOT IT). Every other menu keeps the compact .card.
+  const addCls = (el, c) => {
+    if (el.classList) el.classList.add(c);
+    else el.className = (el.className ? el.className + ' ' : '') + c;
+  };
+  if (overlay.classList) overlay.classList.add('howto');
+  else addCls(overlay, 'howto');
   ovTitle.textContent = 'HOW TO PLAY';
   ovTitle.className = '';
   ovSub.innerHTML =
@@ -3947,32 +3957,45 @@ function showHowToPlay() {
     // TUTORIAL_OVERLAY (complaint 3): the replay path existed but nobody
     // found it — HOW TO PLAY is the onboarding surface, so name it here.
     '<br>Missed the guided tour? Replay it any time: SETUP, SETTINGS, REPLAY TOUR.';
-  menuCard('TOUCH',
-    'joystick — move (manual pilot)<br>' +
-    'FOCUS — volley target: NEAREST / TOUGHEST / SWARM / RANGED<br>' +
-    'STANCE — risk dial: SAFE / BALANCED / GREEDY<br>' +
-    'PILOT — auto &harr; manual<br>' +
-    'STATS — your build &amp; gear<br>' +
-    'FROST / OVER — skills &middot; HP / MP — potions<br>' +
-    'cog (top-right) — settings: zoom, END RUN');
-  menuCard('KEYBOARD',
+  // Rows are TWO COLUMNS: purpose left (wraps), trigger right (nowrap — a
+  // key or button name never splits mid-token). The canonical control rows
+  // are BUILT FROM controls_ref (one source of truth, no forked strings);
+  // the composite lines below carry copy other suites pin verbatim, so they
+  // ride whole in a single-cell row.
+  const refRow = (label, value) =>
+    '<div class="rr"><span class="rl">' + label + '</span>' +
+    (value === undefined ? '' : '<span class="rv">' + value + '</span>') + '</div>';
+  const cTouch = menuCard('TOUCH',
+    refRow('move (manual pilot)', 'joystick') +
+    refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
+    refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
+    refRow('auto &harr; manual', 'PILOT') +
+    refRow('your build &amp; gear', 'STATS') +
+    refRow('skills', 'FROST / OVER') +
+    refRow('potions', 'HP / MP') +
+    refRow('settings: zoom, END RUN', 'cog'));
+  addCls(cTouch, 'ref');
+  const cKeys = menuCard('KEYBOARD',
     // M1 mechanical fix: O is the pilot toggle (M was taken by the map) —
-    // the tour tip and the key handler already say O; this line was stale.
-    'O — pilot auto/manual &middot; M — map &middot; arrows / WASD — move<br>' +
-    'TAB — focus &middot; G — stance<br>' +
-    'Q — frost nova &middot; E — overcharge (W too, in AUTO)<br>' +
-    'H / N — potions &middot; I — field report (the ONE stats key)<br>' +
-    '1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs<br>' +
-    'C — continue &middot; R / T — retry / title<br>' +
-    '+ / - — zoom &middot; mouse — the cog (top-right) opens settings<br>' +
-    'ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus<br>' +
+    // the tour tip and the key handler already say O; the row says it too.
+    CONTROLS
+      .filter(c => !['potion-hp', 'potion-mp', 'stats'].includes(c.id))
+      .map(c => refRow(c.purpose, c.keys.join(' / ')))
+      .join('') +
+    refRow('move', 'arrows / WASD') +
+    refRow('H / N — potions &middot; I — field report (the ONE stats key)') +
+    refRow('1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs') +
+    refRow('C — continue &middot; R / T — retry / title') +
+    refRow('+ / - — zoom &middot; mouse — the cog (top-right) opens settings') +
+    refRow('ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus') +
     // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
     // drift from the hint that names the glyph.
-    '? — ' + controlById('help').purpose);
+    refRow('? — ' + controlById('help').purpose));
+  addCls(cKeys, 'ref');
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
   // the tour skips must be documented HERE or dropped).
-  menuCard('THE FIELD',
+  const cField = menuCard('THE FIELD',
     'chests — walk in: item, upgrades… or nothing + a mini-horde<br>' +
     'portal — walk through to bank the wave<br>' +
     'arches — cross the gate for a timed buff<br>' +
@@ -3981,10 +4004,12 @@ function showHowToPlay() {
     'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons<br>' +
     'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
     '(ONE WEAPON / NO POTIONS); the HUD names the live mode');
-  menuCard('GOT IT', 'into the horde (shows once)', () => {
+  addCls(cField, 'ref');
+  const cGot = menuCard('GOT IT', 'into the horde (shows once)', () => {
     completeOnboarding();
     showTitle();
   });
+  addCls(cGot, 'gotit');
 }
 
 // ---------- Meta screens: title / shop / characters / settings ----------
@@ -4108,6 +4133,11 @@ function openMenu(mode = 'menu') {
   // stands down without touching what this screen is about to draw.
   if (draftCeremony) endDraftCeremony(false);
   state.mode = mode;
+  // HOW TO PLAY readability: the .howto wide-panel modifier belongs to that
+  // screen alone — reset it HERE so no other menu can inherit the wide rows.
+  // (class-list-less DOM stubs keep a plain className string — same state.)
+  if (overlay.classList) overlay.classList.remove('howto');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   ovCards.style.flexWrap = 'wrap';
