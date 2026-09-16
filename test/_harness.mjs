@@ -96,11 +96,25 @@ export async function boot(opts = {}) {
 
   // Event handlers the game registers (routed by type, smoke.mjs precedent).
   const handlers = {};
+  // DEVICE surface (help-mode wording, later the first-class device work):
+  // opts.device='touch' sets the REAL browser tells together — ontouchstart,
+  // navigator.maxTouchPoints, matchMedia coarse — BEFORE main.js loads, so
+  // the game derives its own touch class. Tests never set a game flag by
+  // hand; that is how device bugs survive green suites.
+  const touchDevice = opts.device === 'touch';
+  if (touchDevice) {
+    // Node 22 ships a getter-only navigator global — define over it.
+    try { delete globalThis.navigator; } catch { /* not defined yet */ }
+    Object.defineProperty(globalThis, 'navigator',
+      { value: { maxTouchPoints: 5, userAgent: 'harness touch device' }, configurable: true });
+  }
   globalThis.window = {
     addEventListener: (ev, cb) => { handlers[ev] = cb; },
     removeEventListener: noop,
     innerWidth: 480, innerHeight: 300,
-    matchMedia: () => ({ matches: false, addEventListener: noop, addListener: noop }),
+    ...(touchDevice ? { ontouchstart: {} } : {}),
+    matchMedia: (q) => ({ matches: touchDevice && /coarse|hover:\s*none/.test(String(q)),
+      addEventListener: noop, addListener: noop }),
   };
 
   let now = 0;
@@ -127,7 +141,10 @@ export async function boot(opts = {}) {
     for (const k of Object.values(TOUR_KEYS)) store.set(k, '1');
   } catch { /* tour module always present, defensive */ }
 
-  const mainMod = await import('../src/main.js');
+  // opts.variant busts the ESM cache so ONE test file can boot the game twice
+  // (e.g. a desktop arm and a touch-device arm) — each boot re-evaluates
+  // main.js against its own globals; the pure data modules stay shared.
+  const mainMod = await import('../src/main.js' + (opts.variant ? '?v=' + opts.variant : ''));
 
   // Pump n real frames. opts.frameMs lets a test choose the refresh rate;
   // it is read PER FRAME so setFrameMs() below actually takes effect (it used

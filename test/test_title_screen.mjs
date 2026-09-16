@@ -262,13 +262,17 @@ check('SETTINGS keeps IMPORT SAVE reachable either way (the permanent home)', ()
 });
 
 // ---- 5. the chrome gate + tour (DO 5) -------------------------------------------
-check('chrome is OFF in the title (pad layer, hints) — the wave-23 contract', () => {
+// RETARGETED 2026-09-16 (help mode): the #hints key-list panel is retired;
+// the help-mode strip is the "?" surface now, and it is mode-armed — the
+// title must show it only while the player asked for it.
+check('chrome is OFF in the title (pad layer, help strip) — the wave-23 contract', () => {
   h.pump(2);                                  // syncChrome runs on every mode's first frame
   assert.equal(T.chromeOn(), false, 'chromeOn() is false in the title');
   assert.equal(h.elements['touch'].style.display, 'none',
     'syncChrome hid the touch/pad layer');
-  const hints = h.elements['hints'];
-  assert.ok(!hints.classList.contains('on'), 'the key-hints panel is not shown');
+  assert.equal(st.helpMode, false, 'help mode is not armed');
+  assert.equal(h.elements['help-hud'].style.display, 'none',
+    'the help-mode strip is not shown');
   // The harness preseeds every tour flag: no tour may render over the title.
   const tourRoot = [...(globalThis.document.body.children || [])].find(c => c.id === 'tour-root');
   assert.equal(tourRoot, undefined, 'no tour renders over the title (flags done)');

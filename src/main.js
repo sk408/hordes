@@ -267,10 +267,12 @@ function touchLayerLive() {
     touch.classList.contains('on') && getComputedStyle(touch).display !== 'none');
 }
 // ROUND 2 union (kept): the bottom edge of the WHOLE visible top-strip chrome
-// row — #hud plus every #touch button.cog (settings / "?" / radar / map)
-// plus #hints when .on — measured LIVE. The selectors iterate whatever is
-// displayed, so a future button added to the row is placed-below
-// automatically, and no button name or pixel value is hardcoded.
+// row — #hud plus every #touch button.cog (settings / "?" / radar / map) —
+// measured LIVE. The selectors iterate whatever is displayed, so a future
+// button added to the row is placed-below automatically, and no button name
+// or pixel value is hardcoded. (The retired #hints panel used to ride this
+// row; the help-mode strip is pointer-events:none and bottom-anchored, so it
+// owns no layout here.)
 function topChromeBottom() {
   let bottom = 0;
   const consider = (el) => {
@@ -283,8 +285,6 @@ function topChromeBottom() {
   consider(document.getElementById('hud'));
   const touch = document.getElementById('touch');
   for (const el of touch ? touch.querySelectorAll('button.cog') : []) consider(el);
-  const hints = document.getElementById('hints');
-  if (hints && hints.classList && hints.classList.contains('on')) consider(hints);
   return bottom;
 }
 function fitCanvas() {
@@ -513,6 +513,8 @@ const state = {
   // re-settling gold). Both are screen-scoped, cleared at the run boundary.
   helpFrom: null,    // 'gate' | 'run' | 'end' | 'title' — where GOT IT goes
   endScreen: null,   // { titleText, titleCls, subHtml } of the last end card
+  helpMode: false,   // HELP MODE: the "?" inspect mode is armed
+  helpOrigin: null,  // the mode it was armed on (leaving returns there)
   // ---- G9 TROPHY GALLERY (presentation only; never persisted) ----
   // The gallery browses achievement-gallery entries one at a time. trophyIdx is
   // the ring position (wrapped by refreshTrophyView, so PREV from the first
@@ -691,10 +693,9 @@ function swapPilotMode(mode) {
     clearPilotInput();
   }
   savePilotPref(mode);
-  // WAVE-23 FIX (desktop audit #3): the hints list is mode-dependent (the S
-  // and W keys swap meaning), so a pilot swap must re-render it — otherwise
-  // the panel keeps teaching the outgoing mode's keys.
-  refreshHints();
+  // (WAVE-23's mode-dependent hints re-render retired with the panel — the
+  // compact list lives in the reference's KEYBOARD page now, built live at
+  // open time from HINT_LINES, so a pilot swap can never teach a stale mode.)
   toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick'
     : mode === 'AUTO_MOVE' ? 'AUTO MOVE — pilot drives, skills + potions are yours'
     : 'AUTOPILOT ENGAGED — move, skills and potions');
@@ -2948,7 +2949,11 @@ function openDraft() {
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
-    el.onclick = () => activateDraftCard(u);
+    // HELP MODE: a tap on a draft card explains it and picks NOTHING.
+    el.onclick = () => {
+      if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || '')); return; }
+      activateDraftCard(u);
+    };
     ovCards.appendChild(el);
     // R1: the offer's playing-card art, painted by the REAL drawCard
     // (src/draft_card_art.js). On top of the text in a live DOM (insertBefore);
@@ -4010,7 +4015,7 @@ function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {})
     // ... and every authored cog-row button is named here, so the canonical
     // list (test_ref_access, harvested from the touch layer's own buttons)
     // can never silently outrun the reference.
-    refRow('show / hide the on-screen hints', 'HELP') +
+    refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
     refRow('settings: zoom, END RUN', 'SETTINGS (cog)'));
@@ -4030,17 +4035,20 @@ function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {})
     refRow('ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus') +
     // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
     // drift from the hint that names the glyph.
-    refRow('? — ' + controlById('help').purpose));
+    refRow('? — ' + controlById('help').purpose) +
+    // RETIRED '?' PANEL (2026-09-16): the compact four-line key list lives
+    // HERE now — the SAME HINT_LINES table the panel read, so nobody loses
+    // the list; it stops being the whole of "?".
+    compactKeyLines().map(l => refRow(l)).join(''));
   addCls(cKeys, 'ref');
   // WAVE-22: the field itself was undocumented — the exhaustive reference
   // for everything that isn't a button or a key lives here (rev-4: controls
-  // the tour skips must be documented HERE or dropped).
+  // the tour skips must be documented HERE or dropped). HELP MODE: the
+  // object rows render from OBJECT_HELP — the SAME table the inspect mode's
+  // world-space picks explain from, so the two surfaces cannot drift.
   const cField = menuCard('THE FIELD',
-    'chests — walk in: item, upgrades… or nothing + a mini-horde<br>' +
-    'portal — walk through to bank the wave<br>' +
-    'arches — cross the gate for a timed buff<br>' +
-    'shrines — walk close, gold buys a blessing<br>' +
-    'intermission — paid chests (40/25/10% nothing), blessings,<br>' +
+    OBJECT_HELP.filter(o => o.field).map(o => o.field).join('<br>') +
+    '<br>intermission — paid chests (40/25/10% nothing), blessings,<br>' +
     'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons<br>' +
     'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
     '(ONE WEAPON / NO POTIONS); the HUD names the live mode');
@@ -4175,7 +4183,11 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   const el = document.createElement('div');
   el.className = 'card' + (dim ? ' dim' : '');
   el.innerHTML = `<div class="name">${name}</div><div class="desc">${sub || ''}</div>`;
-  el.onclick = () => { audio.playSfx('button'); onclick(); };
+  el.onclick = () => {
+    // HELP MODE: an overlay-card tap explains the card, never presses it.
+    if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || '')); return; }
+    audio.playSfx('button'); onclick();
+  };
   ovCards.appendChild(el);
   // SHOP-LATENCY: big screens pass deferFrame and frame the whole list AFTER
   // the appends (one layout serves every row - see frameCard's atlas note).
@@ -5787,7 +5799,6 @@ function startRun() {
   state.apexRun = apexEnabled(profile);
   state.apexFire = state.apexRun && apexOwned(profile, 'apex_endless_fire');
   state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
-  refreshHints();   // G11: the hints line names the live mode (swapPilotMode early-returns on same-mode runs)
   const rules = challengeRules(state.challenge);
   state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
   state.potionCap = rules.potions !== undefined ? rules.potions : C.POTIONS.MAX_CARRIED;
@@ -5843,6 +5854,10 @@ function startRun() {
   // death screen, nor recompose a settled payload.
   state.helpFrom = null;
   state.endScreen = null;
+  // HELP MODE: the inspect mode is player-armed and run-scoped — a new run
+  // never starts with the UI inert, and no origin marker leaks between runs.
+  state.helpMode = false;
+  state.helpOrigin = null;
   // ONBOARDING REWORK: per-run hint/tag bookkeeping restarts with the run.
   resetOnboarding();
   state.apexReturn = null;
@@ -6457,9 +6472,14 @@ function runAction(act) {
     else openSettings();
     return;
   }
-  // WAVE-22c: the "?" button — toggles the key-hints panel.
-  // '?' SUPPLEMENT: pressing "?" (button or key) IS the demonstration.
-  if (act === 'help') { controlUsed('help'); toggleHints(); return; }
+  // WAVE-22c -> HELP MODE (2026-09-16): the "?" button arms / leaves the
+  // tap-to-learn inspect mode (the key-list panel is retired). Pressing "?"
+  // IS the demonstration, same as before.
+  if (act === 'help') {
+    controlUsed('help');
+    if (state.helpMode) leaveHelpMode(); else enterHelpMode();
+    return;
+  }
   // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
   // must not flip controllers under the smoke probes' feet).
   if (act === 'pilot') {
@@ -6708,6 +6728,25 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
+  // HELP MODE (owner 2026-09-16): '?' arms / leaves the tap-to-learn mode on
+  // every screen it can serve — desktop included, which is where the old
+  // key-list panel made "?" look broken. While the mode is up, every other
+  // key is INERT (a key must never fire what the player is trying to read
+  // about) except ESC, which also leaves. This gate sits before the mode
+  // dispatch so no mode branch can bypass it.
+  if (ev.key === '?' || k === 'f1') {
+    if (ev.preventDefault) ev.preventDefault();
+    controlUsed('help');
+    if (state.helpMode) leaveHelpMode(); else enterHelpMode();
+    return;
+  }
+  if (state.helpMode) {
+    if (k === 'escape') {
+      if (ev.preventDefault) ev.preventDefault();
+      leaveHelpMode();
+    } else if (ev.preventDefault) ev.preventDefault();
+    return;
+  }
   if (state.mode === 'escape') {                        // V1: the mode's own keys
     // The escape owns its input surface (arrows/AD run, space/W/up jump,
     // shift/X dash, ESC skips) — never the overhead skill/potion paths.
@@ -6819,8 +6858,6 @@ window.addEventListener('keydown', (ev) => {
     // A2: R toggles the radar in BOTH pilot modes (it is a HUD readout, not
     // a movement key — no conflict with WASD).
     if (k === 'r') { toggleRadar(); return; }
-    // WAVE-22c: ? (or F1) toggles the on-screen control hints.
-    if (ev.key === '?' || k === 'f1') { if (ev.preventDefault) ev.preventDefault(); controlUsed('help'); toggleHints(); return; }
     // WAVE-16 quick zoom: '+'/'=' zooms in, '-' zooms out — no settings trip
     // needed. Live mid-run in both pilot modes (render reads state.zoom
     // every frame).
@@ -6883,19 +6920,46 @@ if (touchLayer && touchLayer.classList) {
   touchLayer.classList.add(hasTouch ? 'on' : 'cog-only');
 }
 
-// WAVE-22c ON-SCREEN CONTROL HINTS (Sk408): desktop players get no touch
-// labels, so a compact key list rides under the cog. Persisted pref
-// (prefStorage shim, same pattern as the text HUD); default ON for
-// non-touch, OFF for touch (the buttons there are self-labeled). Toggle:
-// the "?" button beside the cog or the ? / F1 key, both in-run.
-const hintsEl = document.getElementById('hints');
-const KEY_HINTS = 'hordes_hints';
-let hintsOn = (() => {
-  try {
-    const v = prefStorage.getItem(KEY_HINTS);
-    return v === null ? !hasTouch : v === '1';
-  } catch { return !hasTouch; }
-})();
+// ---------- HELP MODE (owner 2026-09-16, two briefs, one behaviour) ----------
+// "?" does ONE thing on BOTH input paths: it arms a quiet inspect mode
+// ("tap a control to learn what it does"). The old WAVE-22c panel — a
+// four-line key list under the cog — is RETIRED: the list belongs to the
+// reference's KEYBOARD page (which reads the same HINT_LINES table below),
+// not to "?". While the mode is up, every input funnel intercepts: touch
+// taps, overlay-card clicks and gameplay keys EXPLAIN what they touch
+// instead of activating it, the sim is paused by the player's own
+// invitation (that is what makes the pause acceptable), and leaving returns
+// to exactly the screen the mode was armed on. One glyph, one door.
+const helpHudEl = document.getElementById('help-hud');
+const helpTipEl = document.getElementById('help-tip');
+const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft']);
+// The two controls with no controls_ref row (movement + the cog): one table,
+// read by the explainer; the reference's TOUCH card carries the same names
+// (joystick / SETTINGS (cog)) so the wording cannot fork.
+const HELP_EXTRAS = {
+  move: { keys: 'arrows / WASD', touch: 'joystick',
+    purpose: 'move your hero (manual pilot) - weapons fire on their own' },
+  settings: { keys: 'the cog (top-right)', touch: 'SETTINGS (cog)',
+    purpose: 'settings: zoom, END RUN' },
+};
+// THE FIELD object meanings: ONE table for two consumers — the reference's
+// THE FIELD card renders the `field` lines verbatim, the help-mode object
+// pick renders `name` + `purpose`. No forked strings by construction.
+const OBJECT_HELP = [
+  { id: 'chest', name: 'CHEST', purpose: 'walk in: item, upgrades… or nothing + a mini-horde',
+    field: 'chests — walk in: item, upgrades… or nothing + a mini-horde' },
+  { id: 'portal', name: 'PORTAL', purpose: 'walk through to bank the wave',
+    field: 'portal — walk through to bank the wave' },
+  { id: 'arch', name: 'ARCH', purpose: 'cross the gate for a timed buff',
+    field: 'arches — cross the gate for a timed buff' },
+  { id: 'shrine', name: 'SHRINE', purpose: 'walk close, gold buys a blessing',
+    field: 'shrines — walk close, gold buys a blessing' },
+  // Ground potions have no THE FIELD row of their own (the TOUCH card's
+  // potions row carries the restore wording); the explainer still names
+  // what a dropped vial does when the player points at one.
+  { id: 'potion', name: 'GROUND POTION', purpose: 'walk over to pick it up — restores health / mana' },
+];
+const helpObject = (id) => OBJECT_HELP.find(o => o.id === id) || null;
 // WAVE-23 FIX (desktop audit #3): the list is MODE-AWARE, not static.
 // (owner rule, later): `I` is the ONE stats key in BOTH modes — `S` is pure
 // movement and never opens a screen — so the old static "S / I stats" line is
@@ -6918,19 +6982,19 @@ const HINT_LINES = {
     'O pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   AUTO_MOVE: [
     'O pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
     'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   MANUAL: [
     'O pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
     'I stats (S = move down) &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? hide',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
 };
 // The pre-(h) persisted mode name 'AUTO' is an alias, not a lookalike table:
@@ -6960,40 +7024,135 @@ function touchHintLines() {
     'cog — settings &middot; ? — ' + (helpRow ? helpRow.purpose : 'show / hide these hints'),
   ];
 }
-function refreshHints() {
-  const lines = isTouchPath()
-    ? [...touchHintLines()]
-    : [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
-  // G11: name the live challenge mode while a non-standard run is up (the
-  // hints are in-run chrome; a STANDARD run sees the same four lines as
-  // before).
+// The compact key list the retired panel showed, kept as DATA: the
+// reference's KEYBOARD page renders these lines (nobody loses the list; it
+// stops being the whole of "?"), and touchHintLines stays the touch-name
+// table the reference's TOUCH wording is built from.
+function compactKeyLines() {
+  const lines = [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
+  // G11: name the live challenge mode while a non-standard run is up.
   if (!isStandard(state.challenge)) {
     lines.splice(1, 0, 'CHALLENGE: ' + challengeOf(state.challenge).name);
   }
-  if (hintsEl) hintsEl.innerHTML = lines.join('<br>');
+  return lines;
 }
-function applyHints() {
-  refreshHints();
-  // WAVE-25 (audit 2.1/2.12): visibility is syncChrome's job (screen gate +
-  // pref + intro/portal-cine correctness), not a bare class toggle here.
-  syncChrome();
+
+// ---- HELP MODE machinery -------------------------------------------------------
+function enterHelpMode() {
+  if (state.helpMode || !HELP_ENTRY_MODES.has(state.mode)) return false;
+  state.helpMode = true;
+  state.helpOrigin = state.mode;
+  showHelpTip(null);
+  syncHelpHud();
+  return true;
 }
-function toggleHints() {
-  hintsOn = !hintsOn;
-  try { prefStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
-  applyHints();
+function leaveHelpMode() {
+  if (!state.helpMode) return;
+  state.helpMode = false;
+  state.helpOrigin = null;
+  showHelpTip(null);
+  syncHelpHud();
+}
+// The single-entry explainer. null = explain nothing (and say nothing on
+// empty ground — no invented messages).
+function showHelpTip(html) {
+  if (!helpTipEl) return;
+  helpTipEl.innerHTML = html || '';
+  if (helpTipEl.style) helpTipEl.style.display = html ? 'block' : 'none';
+}
+function helpLine({ keys, touch, purpose }) {
+  const how = isTouchPath() ? touch : keys;
+  return String(how).toUpperCase() + ': ' + purpose;
+}
+// data-act -> explainer text. Controls with a controls_ref row go through
+// introLine (the SAME rows the reference pages read — no forked strings).
+function helpActText(act) {
+  const ACT_ROW = {
+    focus: 'focus', stance: 'stance', pilot: 'pilot', q: 'skill-q', w: 'skill-w',
+    h: 'potion-hp', n: 'potion-mp', radar: 'radar', map: 'map', stats: 'stats',
+  };
+  if (ACT_ROW[act]) return introLine(ACT_ROW[act], isTouchPath());
+  if (act === 'settings') return helpLine(HELP_EXTRAS.settings);
+  if (act === 'help') return introLine('help', isTouchPath());
+  return null;
+}
+function syncHelpHud() {
+  if (!helpHudEl || !helpHudEl.style) return;
+  const want = state.helpMode ? 'block' : 'none';
+  if (helpHudEl.style.display === want) return;
+  helpHudEl.style.display = want;
+  if (state.helpMode) {
+    helpHudEl.textContent = isTouchPath()
+      ? 'HELP MODE - TAP A CONTROL OR OBJECT TO LEARN IT · TAP HELP TO LEAVE'
+      : 'HELP MODE - CLICK A CONTROL OR OBJECT TO LEARN IT · ? OR ESC TO LEAVE';
+  }
+}
+// Pointer client coords -> world coords, the exact inverse of the render
+// camera (worldRegion below is the forward projection; this is its inverse,
+// so the pick cannot drift from the draw).
+function screenToWorld(cx, cy) {
+  try {
+    const r = canvas.getBoundingClientRect();
+    if (!r || !r.width) return null;
+    const Z = zoomScale(state.zoom);
+    const vx = (cx - r.left) * (C.VIEW_W / r.width);
+    const vy = (cy - r.top) * (C.VIEW_H / r.height);
+    return {
+      x: state.cam.x + C.VIEW_W / 2 + (vx - C.VIEW_W / 2) / Z,
+      y: state.cam.y + C.VIEW_H / 2 + (vy - C.VIEW_H / 2) / Z,
+    };
+  } catch { return null; }
+}
+// World-space hit test for the canvas-drawn objects (chest / portal / arch /
+// shrine / ground potions). Nearest within a finger-sized radius wins; empty
+// ground explains nothing.
+function pickHelpObject(cx, cy) {
+  const w = screenToWorld(cx, cy);
+  if (!w) return null;
+  const R = 30;
+  let best = null, bestD = R * R;
+  const consider = (x, y, id) => {
+    const d = (x - w.x) * (x - w.x) + (y - w.y) * (y - w.y);
+    if (d <= bestD) { bestD = d; best = helpObject(id); }
+  };
+  if (state.portal) consider(state.portal.x, state.portal.y, 'portal');
+  for (const c of state.chests || []) consider(c.x, c.y, 'chest');
+  for (const s of state.shrines || []) if (!s.used) consider(s.x, s.y, 'shrine');
+  for (const a of state.arches || []) consider(a.x, a.y, 'arch');
+  for (const d of state.drops || []) consider(d.x, d.y, 'potion');
+  return best;
+}
+// The touch-layer probe while the mode is armed: explain what was touched,
+// never activate it. The "?" button itself is the one act that LEAVES.
+function helpProbe(ev) {
+  const t = ev.target;
+  const joy = t && t.closest ? t.closest('[data-joy]') : null;
+  if (joy) { showHelpTip(helpLine(HELP_EXTRAS.move)); return; }
+  const btn = t && t.closest ? t.closest('[data-act]') : null;
+  if (btn) {
+    if (btn.dataset.act === 'help') { leaveHelpMode(); return; }
+    showHelpTip(helpActText(btn.dataset.act));
+    return;
+  }
+  const hit = pickHelpObject(ev.clientX ?? 0, ev.clientY ?? 0);
+  showHelpTip(hit ? (hit.name + ' — ' + hit.purpose) : null);
 }
 
 // G31: apply the persisted pilot + stance prefs ONCE at boot, so a reload
 // keeps the player's choice (title + settings reflect it). swapPilotMode's
 // same-mode early return makes the default (AUTO_ALL / BALANCED) a silent
 // no-op — no boot toast, no controller churn. NOTE: this runs LATE in module
-// init on purpose — swapPilotMode fans out into refreshHints (HINT_LINES)
-// and clearPilotInput (joyKnobEl), whose consts initialise above but after
-// the swapPilotMode definition itself.
+// init on purpose — swapPilotMode fans out into clearPilotInput (joyKnobEl),
+// whose consts initialise above but after the swapPilotMode definition
+// itself.
 swapPilotMode(loadPilotPref());
 applyStancePref();
-applyHints();
+// WAVE-25 (audit 2.1) init-time sync: the chrome gate must hold from the
+// FIRST frame of every mode — including before any frame at all (the intro
+// check reads the layer state straight after module load). The retired
+// applyHints() boot call used to be what ran this; the sync is the part
+// that survives the panel's retirement.
+syncChrome();
 
 // A2 THE RADAR: one toggle, one code path — the R key and the RADAR touch
 // button both land here (the button through runAction, the key directly).
@@ -7071,6 +7230,13 @@ if (touchLayer && touchLayer.addEventListener) {
 
   touchLayer.addEventListener('pointerdown', (ev) => {
     audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
+    // HELP MODE: the funnel intercepts FIRST — a tap explains what it
+    // touches (control, joystick or world object), never activates it.
+    if (state.helpMode) {
+      if (ev.preventDefault) ev.preventDefault();
+      helpProbe(ev);
+      return;
+    }
     const joy = ev.target && ev.target.closest
       ? ev.target.closest('[data-joy]') : null;
     if (joy) {
@@ -7174,17 +7340,15 @@ function syncChrome() {
     if (joyEl.style.display !== wantJoy) { joyEl.style.display = wantJoy; chromeLayoutChanged = true; }
   }
   // MOBILE EMBED LAYOUT: the free band the canvas is bounded to changes the
-  // moment the pad layer, the joystick, or the hints panel (ROUND 2: it
-  // reserves top-strip space when shown) appears/disappears — re-fit when one
+  // moment the pad layer or the joystick appears/disappears — re-fit when one
   // of those writes actually flipped (all are change-guarded, so this fires
-  // on transitions, never per frame).
-  if (hintsEl && hintsEl.classList) {
-    const wantHints = on && hintsOn;
-    if (hintsEl.classList.contains('on') !== wantHints) {
-      hintsEl.classList.toggle('on', wantHints);
-      chromeLayoutChanged = true;
-    }
-  }
+  // on transitions, never per frame). (The retired hints panel's top-strip
+  // reservation went with the panel; the help strip is pointer-inert overlay
+  // chrome that does not reflow the canvas.)
+  // HELP MODE: if the mode somehow outlives a screen it cannot serve (a mode
+  // change mid-inspect), it stands down here — the strip can never strand.
+  if (state.helpMode && !HELP_ENTRY_MODES.has(state.mode)) leaveHelpMode();
+  syncHelpHud();
   if (chromeLayoutChanged) fitCanvas();
 }
 function updateTouchHud() {
@@ -7959,7 +8123,9 @@ function frame(now) {
     // a dimming overlay is confusing — the game plays itself otherwise).
     // ONBOARDING REWORK: hints/tags tick on the frame's dt and NEVER gate the
     // sim — update() runs regardless of what the strip is doing (invariant 1).
-    if (!coachActive() && state.bannerHold <= 0) update(dt);
+    // HELP MODE: the pause is the player's own invitation (their "?" armed
+    // it) — same freeze, and leaving resumes the clock without a trace.
+    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) update(dt);
     updateOnboarding(dt);
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
@@ -8011,6 +8177,16 @@ export const __TEST = {
   // N1a: the Q-slot seam — the class's own skill id, and the key act that
   // routes through it (so a probe casts what the button casts).
   classSkillId, runAction,
+  // HELP MODE seam: arm/leave, the touch-layer probe and the world-object
+  // pick (the same functions the real funnels route through), plus the
+  // camera projections — the retirement/inertness probes drive the REAL
+  // interception, never a copy of its rules.
+  helpmode: {
+    enter: enterHelpMode, leave: leaveHelpMode,
+    probe: helpProbe, pick: pickHelpObject, screenToWorld,
+    region: (x, y, r) => worldRegion(x, y, r || 8),
+    objectText: (id) => { const o = helpObject(id); return o ? o.name + ' — ' + o.purpose : null; },
+  },
   renderer, openStats, closeStats,
   // WAVE-17 settings-cog seam: in-run open/close (pause contract probes).
   openSettings, closeSettings,

@@ -80,8 +80,8 @@ const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
 // Preseed: onboarded + every first-run tour flag, so the stage-2 coachmarks
-// stay out of the way (they pause the sim and swallow keys). No hordes_hints
-// key: the hints panel must hydrate to its non-touch default (ON).
+// stay out of the way (they pause the sim and swallow keys). (The retired
+// hordes_hints pref went with the panel: "?" is help mode now.)
 const lsBack = new Map([['hordes_onboarded', '1']]);
 for (const k of ['stage1', 'hud', 'pilot', 'focus', 'stance', 'move', 'skills', 'potions',
   'stats', 'cog', 'draft', 'edge', 'chest', 'portal', 'arch', 'shrine', 'intermission',
@@ -99,7 +99,9 @@ const dtMs = 1000 / 60;
 const pump = (n) => { for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); } };
 const key = (k, extra = {}) => keyHandler({ key: k, preventDefault() {}, ...extra });
 const touchLayer = elements['touch'];
-const hintsEl = elements['hints'];
+// RETIRED 2026-09-16 (help mode): the #hints key-list panel is gone; the
+// help-mode strip is the "?" surface now (mode-armed, not a default panel).
+const helpHud = elements['help-hud'];
 const chromeHidden = () => touchLayer.style.display === 'none';
 
 // ---- 0. SCREEN CHROME GATE: the intro regression --------------------------
@@ -108,36 +110,41 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   // Before a single frame: the module must already have hidden the chrome.
   assert(chromeHidden(),
     'the desktop chrome layer must be hidden on the intro (display="' + touchLayer.style.display + '")');
-  assert(!hintsEl.classList.contains('on'), 'the hints panel must not show over the intro');
+  assert(helpHud.style.display === 'none', 'the help strip must not show over the intro');
   pump(30);   // ~0.5s into the ~7s movie
   assert(st.mode === 'intro', 'still in the intro after 0.5s');
   assert(chromeHidden(), 'the pads/cog must stay hidden right through the intro');
-  assert(!hintsEl.classList.contains('on'), 'the hints must stay hidden right through the intro');
-  console.log('chrome gate: pad layer + hints are hidden from the first frame of the intro');
+  assert(helpHud.style.display === 'none', 'the help strip must stay hidden right through the intro');
+  console.log('chrome gate: pad layer + help strip are hidden from the first frame of the intro');
 
   // Boot out of the intro into the menu — chrome must stay hidden there too.
   for (let i = 0; i < 60 * 12 && st.mode === 'intro'; i++) pump(1);
   assert(st.mode !== 'intro', 'the intro must finish (mode=' + st.mode + ')');
   assert(chromeHidden(), 'no chrome on the title/menu screens');
-  assert(!hintsEl.classList.contains('on'), 'no hints panel on the title/menu screens');
+  assert(helpHud.style.display === 'none', 'no help strip on the title/menu screens');
 
   // Live run: chrome appears.
   T.startRun();
   pump(2);
   assert(st.mode === 'playing', 'the run must be live (mode=' + st.mode + ')');
   assert(touchLayer.style.display === '', 'the pads must be visible during a live run');
-  assert(hintsEl.classList.contains('on'), 'the hints panel must be visible during a live run');
+  assert(helpHud.style.display === 'none', 'the strip stays down until the player arms it');
+  key('?');
+  assert(st.helpMode === true && helpHud.style.display === 'block',
+    'the ? KEY arms help mode on the DESKTOP path (the owner-visible fix)');
+  key('?');
+  assert(st.helpMode === false && helpHud.style.display === 'none', '? leaves it again');
 
   // Paused (SETTINGS): chrome hidden again, exactly as the audit observed live.
   T.openSettings();
   pump(1);
   assert(st.mode === 'settings', 'openSettings must pause (mode=' + st.mode + ')');
   assert(chromeHidden(), 'the pads must be hidden while paused in SETTINGS');
-  assert(!hintsEl.classList.contains('on'), 'the hints must be hidden while paused in SETTINGS');
+  assert(helpHud.style.display === 'none', 'the help strip is down while paused in SETTINGS');
   T.closeSettings();
   pump(1);
   assert(st.mode === 'playing', 'closeSettings must resume');
-  assert(touchLayer.style.display === '' && hintsEl.classList.contains('on'),
+  assert(touchLayer.style.display === '' && helpHud.style.display === 'none',
     'closing SETTINGS must bring the chrome back for the live run');
   console.log('chrome gate: hidden on menu + pause, shown for a live run');
 
@@ -196,31 +203,54 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   console.log('pause key: ESC + P pause from playing, clock frozen, ESC resumes');
 }
 
-// ---- 2. MODE-AWARE HINTS -------------------------------------------------
+// ---- 2. MODE-AWARE COMPACT KEY LIST ---------------------------------------
+// RETARGETED 2026-09-16 (help mode): the old #hints panel is retired — "?" is
+// help mode now. The compact MODE-AWARE key list lives in the reference's
+// KEYBOARD card, built live at open time from the SAME HINT_LINES table the
+// panel read, so the contract these checks pin survives unchanged: open the
+// reference through the in-run door after each pilot swap and read the card.
 {
-  const hints = elements['hints'];
-  const html = () => hints.innerHTML || '';
+  const byCard = (t) => Array.from(elements['ov-cards'].children)
+    .find(c => (c.innerHTML || '').includes(t));
+  const openRefKb = () => {
+    T.openSettings();                      // the in-run pause door
+    const howto = byCard('HOW TO PLAY');
+    assert(howto, 'the in-run SETTINGS must offer HOW TO PLAY');
+    howto.click();                         // menuCard guard inert: help mode off
+    pump(2);
+    const kb = byCard('KEYBOARD');
+    assert(kb, 'the reference must carry the KEYBOARD card');
+    return kb.innerHTML || '';
+  };
+  const closeRef = () => { key('Escape'); pump(1); assert(st.mode === 'playing', 'ESC from the reference resumes the run'); };
+  let html = openRefKb();
   // OWNER RULE (2026-09-13): `I` is the ONE stats key in BOTH modes — `S` is
   // movement-only and must never be advertised as a screen key. These checks
-  // used to pin the old "S / I stats" copy; they now pin the new contract and
-  // additionally assert that S is NOT taught (the negative is the point).
-  assert(/I stats/.test(html()), 'AUTO hints must advertise I stats: ' + html());
-  assert(!/S \/ I stats/.test(html()), 'NO mode may teach S as the stat key: ' + html());
-  assert(/Q \/ E/.test(html()), 'the panel must keep the Q / E overcharge claim');
-  assert(!/1-6 cards/.test(html()), 'the unscoped number-key claim must be gone');
-  assert(/ESC close \/ pause/.test(html()),
-    'the hints must teach the ESC close/pause contract: ' + html());
+  // used to pin the old panel copy; they now pin the same contract in the
+  // KEYBOARD card and additionally assert that S is NOT taught (the negative
+  // is the point).
+  assert(/I stats/.test(html), 'the AUTO list must advertise I stats: ' + html);
+  assert(!/S \/ I stats/.test(html), 'NO mode may teach S as the stat key: ' + html);
+  assert(/Q \/ E/.test(html), 'the list must keep the Q / E overcharge claim');
+  assert(!/1-6 cards/.test(html), 'the unscoped number-key claim must be gone');
+  assert(/ESC close \/ pause/.test(html),
+    'the list must teach the ESC close/pause contract: ' + html);
+  closeRef();
   T.setPilotMode('MANUAL');
-  assert(/I stats \(S = move down\)/.test(html()),
-    'MANUAL hints must warn that S is movement: ' + html());
-  assert(!/S \/ I stats/.test(html()), 'MANUAL must not teach S as the stat key');
-  assert(/Q frost/.test(html()) && /E overcharge/.test(html()),
+  html = openRefKb();   // the list is built at OPEN time: the swap must be reflected
+  assert(/I stats \(S = move down\)/.test(html),
+    'the MANUAL list must warn that S is movement: ' + html);
+  assert(!/S \/ I stats/.test(html), 'MANUAL must not teach S as the stat key');
+  assert(/Q frost/.test(html) && /E overcharge/.test(html),
     'MANUAL must still list both skills via their always-valid keys');
-  assert(/WASD \/ arrows move/.test(html()), 'MANUAL must document held movement');
+  assert(/WASD \/ arrows move/.test(html), 'MANUAL must document held movement');
+  closeRef();
   T.setPilotMode('AUTO');
-  assert(/I stats/.test(html()) && !/S \/ I stats/.test(html()),
-    'an AUTO swap must re-render the AUTO list back');
-  console.log('hints: panel renders AUTO/MANUAL variants and re-renders on pilot swap');
+  html = openRefKb();
+  assert(/I stats/.test(html) && !/S \/ I stats/.test(html),
+    'an AUTO swap must render the AUTO list back');
+  closeRef();
+  console.log('compact key list: the reference KEYBOARD card renders AUTO/MANUAL variants at open time');
 }
 
 // ---- 3. EVOLVE CARD LABELS ----------------------------------------------
@@ -310,15 +340,16 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   assert(st.mode === 'playing', 'a fresh I still closes it');
   pump(1);   // let the frame's chrome sync settle after leaving the FIELD REPORT
 
-  // Held ? must not strobe the hints panel.
-  const hintsOn0 = elements['hints'].classList.contains('on');
-  assert(hintsOn0, 'the hints panel must be showing again for the live run');
+  // Held ? must not strobe help mode (the retired hints panel's successor).
+  assert(st.helpMode === false, 'help mode must be off before the ? repeat probe');
   key('?', { repeat: true });
-  assert(elements['hints'].classList.contains('on') === hintsOn0, 'a repeated ? must not toggle the hints');
+  assert(st.helpMode === false, 'a repeated ? must not toggle help mode');
   key('?');
-  assert(elements['hints'].classList.contains('on') !== hintsOn0, 'a fresh ? still toggles the hints');
+  assert(st.helpMode === true, 'a fresh ? still arms help mode');
+  key('?', { repeat: true });
+  assert(st.helpMode === true, 'a repeated ? must not leave help mode either');
   key('?');
-  assert(elements['hints'].classList.contains('on') === hintsOn0, 'a second fresh ? restores the panel');
+  assert(st.helpMode === false, 'a second fresh ? leaves help mode');
 
   // Held +/- must not walk the zoom ladder.
   const z0 = T.zoom.get();

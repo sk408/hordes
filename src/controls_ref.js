@@ -36,11 +36,12 @@ export const CONTROLS = [
     purpose: 'open the world map (the fight keeps running)' },
   { id: 'stats', keys: ['I'], touch: 'STATS',
     purpose: 'open the field report for this run' },
-  // '?' SUPPLEMENT (2026-09-16): the "?" IS a control — same glyph, same
-  // meaning on both input paths. The reference screen's KEYBOARD card
-  // carries this same wording; this row is the source, that card mirrors it.
+  // '?' SUPPLEMENT (2026-09-16) -> HELP MODE (same day, retirement brief):
+  // the "?" IS a control — same glyph, same meaning on both input paths,
+  // and it now arms the tap-to-learn inspect mode. The reference screen's
+  // KEYBOARD card carries this same wording; this row is the source.
   { id: 'help', keys: ['?'], touch: '?',
-    purpose: 'show / hide the on-screen control hints' },
+    purpose: 'help mode: tap any control or object to learn it' },
 ];
 
 export function controlById(id) {

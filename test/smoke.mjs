@@ -1799,13 +1799,14 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   pump(1);
   console.log('touch cog: opens/pauses in-run, clock frozen, RESET re-opens disarmed, BACK/ESC resume');
 
-  // ---- WAVE-22c: the "?" control-hints panel ------------------------------
-  // Headless has no touch -> default ON (desktop). Toggle via the "?" button
-  // (real pointer routing -> runAction('help')) and via the ? key; the pref
-  // persists through the hudStorage shim.
-  const hints = elements['hints'];
-  assert(hints && hints.classList.contains('on'),
-    'hints default ON for non-touch (desktop) devices');
+  // ---- HELP MODE (2026-09-16): the retired "?" panel's replacement ----------
+  // "?" arms a quiet inspect mode on BOTH paths (desktop included). The old
+  // four-line key-list panel is GONE (its compact list lives in the
+  // reference's KEYBOARD page); a probe on a control explains THAT control
+  // and consumes nothing, and leaving resumes the live run.
+  const hudEl = elements['help-hud'];
+  const tipEl = elements['help-tip'];
+  assert(!elements['hints'], 'the #hints panel element is retired');
   const fireHelp = () => elements['touch']._ev['pointerdown']({
     preventDefault() {}, pointerId: 42, clientX: 0, clientY: 0,
     target: {
@@ -1813,16 +1814,36 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
         : (s === '[data-act]' ? { dataset: { act: 'help' } } : null),
     },
   });
-  fireHelp();
-  assert(!hints.classList.contains('on'), '"?" button must hide the hints');
-  keyHandler({ key: '?' });                    // ? key shows them again
-  assert(hints.classList.contains('on'), '? key must show the hints');
-  keyHandler({ key: 'F1', preventDefault() {} });  // F1 aliases ?
-  assert(!hints.classList.contains('on'), 'F1 must toggle the hints too');
-  assert(globalThis.localStorage.getItem('hordes_hints') === '0',
-    'the hints pref persists');
-  keyHandler({ key: '?' });                    // restore ON for later probes
-  console.log('hints panel: desktop default ON, button + ?/F1 toggle, pref persists');
+  const fireProbe = (act) => elements['touch']._ev['pointerdown']({
+    preventDefault() {}, pointerId: 43, clientX: 0, clientY: 0,
+    target: {
+      closest: (s) => (s === '[data-joy]') ? null
+        : (s === '[data-act]' ? { dataset: { act } } : null),
+    },
+  });
+  const timeAtArm = st.time;
+  fireHelp();                                  // the "?" BUTTON arms help mode
+  assert(st.helpMode === true && hudEl.style.display === 'block',
+    '"?" button arms help mode (strip visible)');
+  const hpBefore = st.player.potions.hp, manaBefore = st.player.mana;
+  fireProbe('h'); fireProbe('q');
+  assert(/: drink a health potion/.test(tipEl.innerHTML) ||
+    /: cast your class skill/.test(tipEl.innerHTML),
+    'a tap explains the control (' + tipEl.innerHTML + ')');
+  pump(3);
+  assert(st.player.potions.hp === hpBefore && st.player.mana === manaBefore,
+    'help-mode taps consume nothing (potions/mana untouched)');
+  assert(st.time === timeAtArm, 'the sim is paused while help mode is up');
+  keyHandler({ key: '?' });                    // ? key leaves
+  assert(st.helpMode === false && hudEl.style.display === 'none',
+    '? key leaves help mode (strip down)');
+  keyHandler({ key: 'F1', preventDefault() {} });   // F1 aliases ? (arms again)
+  assert(st.helpMode === true, 'F1 must arm help mode too');
+  keyHandler({ key: 'Escape', preventDefault() {} });
+  assert(st.helpMode === false, 'ESC leaves help mode');
+  pump(3);
+  assert(st.time > timeAtArm, 'leaving resumes the clock (never left paused)');
+  console.log('help mode: ? button/? key/F1 arm it, taps explain + consume nothing, ESC leaves, clock resumes');
 }
 
 // ---- WAVE-18 LEGIBILITY DEFECTS (galaxy.click playtest) -------------------------

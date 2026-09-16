@@ -146,14 +146,24 @@ s.check('the shipped source carries no object-label machinery (gone, not flagged
 });
 
 // ---- 4. THE FIELD reference page survives -----------------------------------------
+// RETARGETED 2026-09-16 (help mode): the object copy moved into the
+// OBJECT_HELP table so the reference's THE FIELD card and the help-mode
+// world-object picks read ONE source. The card now renders FROM the table,
+// so the pin walks the table (same words, same guarantee: the objects stay
+// documented in the reference).
 s.check('object knowledge stays in the reference: THE FIELD still documents the objects', () => {
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const t = main.indexOf('const OBJECT_HELP = [');
+  assert.ok(t > 0, 'the OBJECT_HELP table exists');
+  const table = main.slice(t, main.indexOf('\n];', t));
+  for (const word of ['chests', 'portal', 'arches', 'shrines']) {
+    assert.ok(table.includes(word), 'OBJECT_HELP no longer documents ' + word);
+  }
   const i = main.indexOf("menuCard('THE FIELD'");
   assert.ok(i > 0, 'the THE FIELD card exists');
   const card = main.slice(i, main.indexOf('menuCard', i + 10));
-  for (const word of ['chests', 'portal', 'arches', 'shrines']) {
-    assert.ok(card.includes(word), 'THE FIELD no longer documents ' + word);
-  }
+  assert.ok(card.includes('OBJECT_HELP'),
+    'the THE FIELD card must render FROM the table (no forked strings)');
 });
 
 s.done();

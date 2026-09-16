@@ -429,9 +429,9 @@
       -8px 16px 0 #ffd75e, 8px 16px 0 #ffd75e,
       -8px 8px 0 #ffd75e, 8px 8px 0 #ffd75e;
   }
-  /* WAVE-22c "?" button (Sk408): desktop on-screen control hints — a small
-     text "?" sits beside the cog (all devices; the hints panel itself
-     defaults to desktop-only) and toggles the #hints key list. */
+  /* WAVE-22c "?" button (Sk408) — HELP MODE since 2026-09-16: the glyph
+     beside the cog arms / leaves the tap-to-learn inspect mode on every
+     device (the old key-list panel is retired). */
   #touch button.cog.help {
     right: max(111px, calc(env(safe-area-inset-right, 10px) + 101px));
     font-size: 10px; font-weight: bold; color: #e8e8f0;
@@ -457,21 +457,22 @@
     font-size: 10px; font-weight: bold; color: #e8e8f0;
   }
   #touch button.cog.map.on { border-color: #ffd75e; color: #ffd75e; }
-  /* The hints panel: compact one-glance key list, top-right under the cog.
-     Shown only when main.js adds .on (persisted pref; default = non-touch).
-     WAVE-23 (#6): the primary desktop reference — 14px, full-contrast text
-     with a black knock-out shadow (the old 11px low-grey was the least
-     readable thing on screen). */
-  #hints {
-    position: absolute;
-    top: 64px; right: max(10px, env(safe-area-inset-right, 10px));
-    display: none; padding: 9px 12px;
-    font-size: 14px; line-height: 1.8; color: #e8e8f0; text-align: left;
-    text-shadow: 1px 1px 0 #000;
-    background: rgba(20,20,31,0.88); border: 2px solid #5a5a7a; border-radius: 10px;
-    pointer-events: none; z-index: 6; white-space: nowrap;
+  /* HELP MODE (2026-09-16): the "?" no longer lists controls — it arms a
+     quiet inspect mode. These two elements are its whole chrome: the
+     one-line leave strip and the single-entry explainer above it. Both are
+     pointer-inert reads; leaving is the "?" glyph itself (the HELP button,
+     the ? key or ESC). Retired here: the #hints key-list panel (the compact
+     list lives in the reference's KEYBOARD page now). */
+  #help-hud, #help-tip {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: none; padding: 7px 12px; z-index: 7;
+    font-size: 13px; line-height: 1.5; color: #e8e8f0; text-align: center;
+    text-shadow: 1px 1px 0 #000; white-space: nowrap;
+    background: rgba(20,20,31,0.92); border: 2px solid #ffd75e; border-radius: 10px;
+    pointer-events: none;
   }
-  #hints.on { display: block; }
+  #help-hud { bottom: 118px; font-size: 12px; border-color: #5a5a7a; }
+  #help-tip { bottom: 150px; }
 
   /* Bigger tap targets for draft cards on small/touch screens. */
   @media (pointer: coarse), (max-width: 700px) {
@@ -515,12 +516,10 @@
     <button class="cog radar" id="tc-radar" data-act="radar" aria-label="radar">RADAR</button>
     <button class="cog map" id="tc-map" data-act="map" aria-label="map">MAP</button>
   </div>
-  <!-- WAVE-25 (audit 2.11): the authored key list that used to sit here was
-       dead markup — applyHints()/refreshHints() (main.js) overwrite this
-       element's innerHTML at module load with the mode-aware AUTO/MANUAL
-       variant, so the static copy was never rendered and had already drifted
-       once. The element stays as the hook; main.js owns the content. -->
-  <div id="hints"></div>
+  <!-- HELP MODE: the retired #hints key-list panel's slot. "?" arms the
+       inspect mode; these are its strip + single-entry explainer. -->
+  <div id="help-hud"></div>
+  <div id="help-tip"></div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>
     <div class="sub" id="ov-sub"></div>
@@ -531,7 +530,7 @@
          its own art + name + tier + computed text, so one activation takes the
          offer and there is nothing for a second screen to show. -->
     
-    <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; O pilot (WASD+arrows manual) &middot; M map &middot; + / - zoom &middot; R radar &middot; I stats &middot; ESC close / pause &middot; ? key hints &middot; or the on-screen buttons</div>
+    <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; O pilot (WASD+arrows manual) &middot; M map &middot; + / - zoom &middot; R radar &middot; I stats &middot; ESC close / pause &middot; ? help mode &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

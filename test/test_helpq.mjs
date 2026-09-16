@@ -136,32 +136,46 @@ st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable: no fight to l
 }
 
 // ---- 4. ONE GLYPH, ONE MEANING: touch-worded help ---------------------------------
+// RETARGETED 2026-09-16 (help mode): the ? panel is retired; the same
+// guarantees now run against the inspect mode's single-entry explainer
+// (a probe through the REAL pointer routing, one control at a time).
 {
+  const fireProbe = (act) => elements['touch']._ev['pointerdown']({
+    preventDefault() {}, pointerId: 61, clientX: 0, clientY: 0,
+    target: {
+      closest: (s) => (s === '[data-joy]') ? null
+        : (s === '[data-act]' ? { dataset: { act } } : null),
+    },
+  });
   elements['touch'].classList.add('on');   // the touch layer is the live path read
-  T.runAction('help');                     // same glyph, same toggle
-  const html = elements['hints'].innerHTML;
-  const text = html.replace(/<br>/g, ' ').replace(/&middot;/g, '|').replace(/&amp;/g, '&');
-  s.check('on a touch path the ? panel names TOUCH controls (at least one)', () => {
+  T.startRun(); step(2);                   // a live run help mode can serve
+  T.runAction('help');                     // same glyph: arms help mode
+  assert.ok(st.helpMode, 'the button arms help mode');
+  fireProbe('pilot');
+  const text = elements['help-tip'].innerHTML;
+  s.check('on a touch path the ? explainer names TOUCH controls (at least one)', () => {
     const names = ['PILOT', 'FOCUS', 'STANCE', 'OVER', 'HP', 'MP', 'STATS', 'MAP', 'RADAR'];
     // the live class skill name (FROST NOVA & co) counts too
     const live = (st.player && st.player.classId) ? String(st.player.classId).toUpperCase() : '';
     assert.ok(names.some(n => text.includes(n)) || (live && text.includes(live)), text);
   });
-  s.check('on a touch path the ? panel names NO keyboard key (no TAB / H / Q / E tokens)', () => {
+  s.check('on a touch path the explainer names NO keyboard key (no TAB / H / Q / E tokens)', () => {
     // Standalone key tokens with non-letter boundaries (words like "hints"
     // or "report" must not trip it).
     const token = (k) => new RegExp('(^|[^A-Z])' + k + '([^A-Z]|$)');
     for (const k of ['TAB', 'H', 'Q', 'E', 'WASD']) {
-      assert.ok(!token(k).test(text), `the touch panel teaches the key "${k}": ${text}`);
+      assert.ok(!token(k).test(text), `the touch explainer teaches the key "${k}": ${text}`);
     }
+    assert.equal(text, introLine('pilot', true), 'built from the controls_ref touch row');
   });
-  s.check('the keyboard path still names keys (the panel did not go touch-only)', () => {
+  s.check('the keyboard path still names keys (the explainer did not go touch-only)', () => {
     elements['touch'].classList.remove('on');
-    T.runAction('help');   // toggle back on with the keyboard path live
-    const kb = elements['hints'].innerHTML;
-    // TAB is a keyboard-only token (the touch panel is pinned to have none);
-    // '? hide' is the keyboard panel's own closing line.
-    assert.ok(/TAB/.test(kb) && /\? hide/.test(kb), kb);
+    fireProbe('focus');   // keyboard path live now
+    const kb = elements['help-tip'].innerHTML;
+    // TAB is a keyboard-only token (the touch explainer is pinned to have none).
+    assert.ok(/TAB/.test(kb), kb);
+    assert.equal(kb, introLine('focus', false), 'built from the controls_ref key row');
+    T.runAction('help');   // leave help mode for whatever follows
   });
 }
 
