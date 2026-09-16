@@ -143,10 +143,18 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   assert.ok(/WAVE \d+/.test(html) && /survived \d+s/.test(html), 'progress on screen');
   assert.ok(/\u00b7/.test(html) || /·/.test(html), 'single-line scannable layout');
   // RETRY stays the primary action and R still retries.
+  // RETARGETED 2026-09-16 (IN-RUN REFERENCE ACCESS supplement): the death
+  // screen now deliberately carries a third card — the HOW TO PLAY door (the
+  // owner directive: the end screens are when a player realises what they
+  // did not understand). The retry loop stays fast the same way it always
+  // was: RETRY first, TITLE second, and NOTHING beyond the sanctioned set.
   const cards = elements['ov-cards'].children;
   assert.ok((cards[0].innerHTML || '').includes('RETRY'), 'RETRY is the FIRST card');
   assert.ok((cards[1].innerHTML || '').includes('TITLE'), 'TITLE second');
-  assert.ok(cards.length === 2, 'no extra buttons slowing the retry loop');
+  assert.ok(cards.length === 3 && (cards[2].innerHTML || '').includes('HOW TO PLAY'),
+    'exactly one sanctioned third card: the HOW TO PLAY door (' + cards.length + ' cards)');
+  assert.ok(!(cards[2].innerHTML || '').includes('CONFIRM'),
+    'the third card is a door, never an armed confirm that slows RETRY');
 });
 
 S.check('R retries straight from the death screen', () => {

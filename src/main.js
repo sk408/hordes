@@ -508,6 +508,11 @@ const state = {
   mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
   runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
+  // ---- IN-RUN REFERENCE ACCESS: the reference's return door + the end
+  // screen's composed payload (reshowEndScreen recomposes from it WITHOUT
+  // re-settling gold). Both are screen-scoped, cleared at the run boundary.
+  helpFrom: null,    // 'gate' | 'run' | 'end' | 'title' — where GOT IT goes
+  endScreen: null,   // { titleText, titleCls, subHtml } of the last end card
   // ---- G9 TROPHY GALLERY (presentation only; never persisted) ----
   // The gallery browses achievement-gallery entries one at a time. trophyIdx is
   // the ring position (wrapped by refreshTrophyView, so PREV from the first
@@ -3695,21 +3700,45 @@ function runSurvived() {
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
   const { gold, firstClear, award, purseBanked } = settleRunGold({ winBonus: bonus });
-  ovTitle.textContent = 'RUN SURVIVED';
-  ovTitle.className = 'logo';
-  ovSub.innerHTML = endScreenBody({
-    lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
-      ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
-      `<br><span class="earn">COMPLETION BONUS: +${bonus}` +
-      `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
-    cause: null,                // you did not die — you won
-    gold, firstClear,
-    parts: { award, purseBanked, winBonus: bonus },
+  composeEndScreen({
+    titleText: 'RUN SURVIVED',
+    titleCls: 'logo',
+    subHtml: endScreenBody({
+      lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
+        ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
+        `<br><span class="earn">COMPLETION BONUS: +${bonus}` +
+        `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
+      cause: null,                // you did not die — you won
+      gold, firstClear,
+      parts: { award, purseBanked, winBonus: bonus },
+    }),
   });
+}
+
+// IN-RUN REFERENCE ACCESS supplement: every end screen (death, victory,
+// deliberate END RUN) is composed HERE, and every one carries the HOW TO
+// PLAY door — the two moments a player actually realises what they did not
+// understand. The composed payload is stored on state so leaving (and
+// returning) through the reference can recompose the IDENTICAL screen:
+// reshowEndScreen re-renders the cards fresh and NEVER re-settles gold
+// (settleRunGold ran exactly once, when the ending fired).
+function composeEndScreen({ titleText, titleCls, subHtml }) {
+  state.mode = 'dead';
+  state.helpFrom = null;
+  state.endScreen = { titleText, titleCls, subHtml };
+  ovTitle.textContent = titleText;
+  ovTitle.className = titleCls || '';
+  ovSub.innerHTML = subHtml;
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
+  menuCard('HOW TO PLAY', 'what every control &amp; object does', () => showHowToPlay({ fromEnd: true }));
   overlay.style.display = 'flex';
+}
+function reshowEndScreen() {
+  if (!state.endScreen) { showTitle(); return; }   // nothing to return to
+  composeEndScreen(state.endScreen);
+  maybeDeathCoach();      // idempotent (once-ever flag) — parity with the direct paths
 }
 
 // Per simulated frame, AFTER state.time advances and BEFORE any damage is
@@ -3754,19 +3783,17 @@ function endRun() {
   audio.stopMusic();
   audio.playSfx('button');
   const { gold, firstClear, award, purseBanked } = settleRunGold();
-  ovTitle.textContent = 'RUN ENDED';
-  ovTitle.className = '';
-  ovSub.innerHTML = endScreenBody({
-    lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-      ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
-    cause: null,          // a deliberate exit has no killer
-    gold, firstClear,
-    parts: { award, purseBanked, winBonus: 0 },
+  composeEndScreen({
+    titleText: 'RUN ENDED',
+    titleCls: '',
+    subHtml: endScreenBody({
+      lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
+      cause: null,          // a deliberate exit has no killer
+      gold, firstClear,
+      parts: { award, purseBanked, winBonus: 0 },
+    }),
   });
-  ovCards.innerHTML = '';
-  menuCard('RETRY', 'straight back in [R]', () => startRun());
-  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
-  overlay.style.display = 'flex';
   maybeDeathCoach();
 }
 
@@ -3816,19 +3843,18 @@ function die(finale) {
   const { gold, firstClear, award, purseBanked } = settleRunGold();
 
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
-  ovTitle.textContent = finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS';
-  ovTitle.className = finale ? 'logo' : '';
-  ovSub.innerHTML = endScreenBody({
-    lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
-      `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-      ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
-    cause: deathCauseLabel(state.deathBy),
-    gold, firstClear,
-    parts: { award, purseBanked, winBonus: 0 },
+  composeEndScreen({
+    titleText: finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS',
+    titleCls: finale ? 'logo' : '',
+    subHtml: endScreenBody({
+      lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
+        `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
+      cause: deathCauseLabel(state.deathBy),
+      gold, firstClear,
+      parts: { award, purseBanked, winBonus: 0 },
+    }),
   });
-  ovCards.innerHTML = '';
-  menuCard('RETRY', 'straight back in [R]', () => startRun());
-  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
   // G15 THE DEATH MOVIE: the payoff above is COMPOSED but stays HIDDEN while
   // the movie plays; endDeathCine() reveals it untouched. Gold was settled
   // exactly once above (settleRunGold) — the cine never pays, never re-stamps
@@ -3937,8 +3963,14 @@ function completeOnboarding() {
 // cards, existing .card styling): it can only be reached from the title menu
 // or first boot, so it NEVER pauses a live run. GOT IT dismisses + sets the
 // one-time flag; ESC dismisses via the standard menu-escape branch.
-function showHowToPlay({ intoRun = false } = {}) {
-  openMenu();
+function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {}) {
+  // IN-RUN REFERENCE ACCESS (owner 2026-09-16): the reference is reachable
+  // mid-run (the in-run SETTINGS door, under the 'settings' pause mode so
+  // ESC and GOT IT resume the fight through closeSettings) and from the end
+  // screens (fromEnd — GOT IT recomposes the SAME end card, never re-settling
+  // gold). state.helpFrom remembers the door GOT IT walks back out of.
+  state.helpFrom = intoRun ? 'gate' : inRun ? 'run' : fromEnd ? 'end' : 'title';
+  openMenu(inRun ? 'settings' : 'menu');
   // HOW TO PLAY readability (owner 2026-09-16): the reference is a DOCUMENT,
   // not a tip — this screen alone carries the .howto wide-panel modifier
   // (index.html sizes it: width 100% capped 560px, 15px body, internal
@@ -3972,8 +4004,16 @@ function showHowToPlay({ intoRun = false } = {}) {
     refRow('auto &harr; manual', 'PILOT') +
     refRow('your build &amp; gear', 'STATS') +
     refRow('skills', 'FROST / OVER') +
-    refRow('potions', 'HP / MP') +
-    refRow('settings: zoom, END RUN', 'cog'));
+    // IN-RUN REFERENCE ACCESS: the objects clause names what the drinks DO
+    // (owner named potions among the on-screen objects) ...
+    refRow('potions — restore health / mana', 'HP / MP') +
+    // ... and every authored cog-row button is named here, so the canonical
+    // list (test_ref_access, harvested from the touch layer's own buttons)
+    // can never silently outrun the reference.
+    refRow('show / hide the on-screen hints', 'HELP') +
+    refRow('edge blips mark enemies off-screen', 'RADAR') +
+    refRow('the world map (fight keeps running)', 'MAP') +
+    refRow('settings: zoom, END RUN', 'SETTINGS (cog)'));
   addCls(cTouch, 'ref');
   const cKeys = menuCard('KEYBOARD',
     // M1 mechanical fix: O is the pilot toggle (M was taken by the map) —
@@ -4005,13 +4045,26 @@ function showHowToPlay({ intoRun = false } = {}) {
     'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
     '(ONE WEAPON / NO POTIONS); the HUD names the live mode');
   addCls(cField, 'ref');
-  const cGot = menuCard('GOT IT', 'into the horde (shows once)', () => {
+  const gotSub = state.helpFrom === 'gate' ? 'into the horde (shows once)'
+    : state.helpFrom === 'run' ? 'back to the fight'
+    : state.helpFrom === 'end' ? 'back to this screen'
+    : 'back to the title';
+  const cGot = menuCard('GOT IT', gotSub, () => {
     completeOnboarding();
     // UP-FRONT CONTROLS: opened as the FIRST-RUN GATE (fresh START GAME),
     // GOT IT starts the run (no title-art hold here — the hold belongs to
     // the title screen, and the gate's job is to get the briefed player
-    // into the horde); opened from the title card it returns there.
-    if (intoRun) startRun();
+    // into the horde).
+    // IN-RUN REFERENCE ACCESS: every door returns to where it was opened —
+    // the in-run door resumes the FIGHT (closeSettings: the same close/
+    // return discipline as BACK), the end screens recompose the SAME end
+    // card (reshowEndScreen: never re-settles gold, never restarts), the
+    // title door returns there.
+    const back = state.helpFrom;
+    state.helpFrom = null;
+    if (back === 'gate') startRun();
+    else if (back === 'run') closeSettings();
+    else if (back === 'end') reshowEndScreen();
     else showTitle();
   });
   addCls(cGot, 'gotit');
@@ -5606,6 +5659,11 @@ function showSettings(disarm = true, inRun = false) {
       togglePilotMode();
       showSettings(true, inRun);
     });
+  // IN-RUN REFERENCE ACCESS (owner 2026-09-16: "the users want to know what
+  // each control does..."): the reference is ONE screen, reachable from every
+  // door. In-run it opens under this same pause mode, so GOT IT (and ESC)
+  // resume the fight through closeSettings — the BACK discipline.
+  menuCard('HOW TO PLAY', 'every control + the field objects', () => showHowToPlay({ inRun }));
   // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
   menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
     clearTourFlags();
@@ -5780,6 +5838,11 @@ function startRun() {
   // queue, likewise run-scoped. All start empty for every run; the guard test
   // (test_audit_round2.mjs) mechanically holds every one of these here.
   state.rewriteEchoes = [];
+  // IN-RUN REFERENCE ACCESS: the reference door and the last end card are
+  // run-scoped — a new run must not return GOT IT into the previous run's
+  // death screen, nor recompose a settled payload.
+  state.helpFrom = null;
+  state.endScreen = null;
   // ONBOARDING REWORK: per-run hint/tag bookkeeping restarts with the run.
   resetOnboarding();
   state.apexReturn = null;
@@ -6712,6 +6775,9 @@ window.addEventListener('keydown', (ev) => {
     else if (k === 'arrowright') apexStep(1);
   } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters'
       || state.mode === 'loadout') && k === 'escape') {
+    // IN-RUN REFERENCE ACCESS: the reference opened from an END screen backs
+    // out to that screen, not to the title (return-to-origin discipline).
+    if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
     showTitle();                     // every sub-menu (and the farewell) backs out to title
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).

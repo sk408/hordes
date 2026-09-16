@@ -62,21 +62,45 @@ const MEASURE = `(() => {
   };
 })()`;
 
-const BOOT_WAIT = [
-  ["window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))", null],
-  ["(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000],
-  ["document.getElementById('ov-title') && document.getElementById('ov-title').textContent === 'HOW TO PLAY'", 8000],
-];
+import { TOUR_KEYS } from '../src/tour.js';
 
 async function arm(w, h, dpr, mobile = true) {
   return withPage({ w, h, dpr, mobile,
-    // FRESH profile: the first boot pops HOW TO PLAY by itself — the screen
-    // a new player reads, reached the way a new player reaches it.
-    startupScript: "try { localStorage.removeItem('hordes_onboarded'); } catch (e) {}" },
+    // FRESH profile (the gate's subject), tour flags preseeded so the tour
+    // shade cannot swallow the title-card tap (the tour has its own coverage).
+    // UP-FRONT CONTROLS (2026-09-16): a fresh boot now lands on the TITLE —
+    // the howto pop moved to the first START GAME gate. This tool's subject
+    // is the SCREEN's geometry, so it opens the reference the re-openable
+    // way: the title's own HOW TO PLAY card.
+    startupScript: "try { localStorage.removeItem('hordes_onboarded'); } catch (e) {};" +
+      Object.values(TOUR_KEYS).map(k => `try { localStorage.setItem('${k}', '1'); } catch (e) {}`).join('') },
     async (p) => {
-      await p.evaluate(BOOT_WAIT[0][0]);
-      await p.waitFor(BOOT_WAIT[1][0], BOOT_WAIT[1][1]);
-      await p.waitFor(BOOT_WAIT[2][0], BOOT_WAIT[2][1]);
+      await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+      await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000);
+      await p.waitFor("(async () => { const st = (await import('./src/main.js')).__TEST.state; return st.mode === 'title' || st.mode === 'menu'; })()", 8000);
+      await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal; return !rv || rv.phase === 'settled'; })()", 8000);
+      // Tap the title's HOW TO PLAY card (retry: a card mid-handoff has a
+      // zero rect).
+      let opened = false;
+      for (let tries = 0; tries < 12 && !opened; tries++) {
+        const c = await p.evaluate(`(() => {
+          const el = [...document.getElementById('ov-cards').children]
+            .find(k => (k.textContent || '').toUpperCase().includes('HOW TO PLAY'));
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center' });
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return [];
+          return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
+        })()`);
+        if (c && c.length === 2) {
+          await p.sleep(80);
+          await p.tap(c[0], c[1]);
+          opened = await p.waitFor("document.getElementById('ov-title').textContent === 'HOW TO PLAY'", 2000).catch(() => false);
+        } else {
+          await p.sleep(250);
+        }
+      }
+      if (!opened) throw new Error(w + 'x' + h + ': could not open HOW TO PLAY from the title');
       const r = await p.evaluate(MEASURE);
       const shot = await p.shot('help-mobile-' + w + 'x' + h);
       return { r, shot, errors: p.errors };
