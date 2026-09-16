@@ -61,6 +61,50 @@ export const PURSUER_ART = makeFrames({
   ],
 });
 
+// Keys: 1 ink outline, 2 body, 3 shade, 4 eye (the SAME palette as the run
+// cycle — the lunge is the same body, a different POSTURE).
+// V1d LUNGE ART: the burst pose — the whole body pitched forward, arms
+// THRUST to full reach right, legs trailing. Two frames (the strike beat:
+// arms level / arms a hair raised) so the lint's frames-differ pin holds.
+export const PURSUER_LUNGE_ART = makeFrames({
+  id: 'ESCAPE_PURSUER_LUNGE',
+  palette: PURSUER_PALETTE,
+  frames: [
+    [
+      [0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,1,1,1,1,1,0,0,0,0],
+      [0,0,1,2,2,2,4,1,1,0,0,0],
+      [0,0,1,2,2,1,2,2,2,2,1,1],
+      [0,1,1,1,2,1,1,1,1,1,2,1],
+      [0,1,2,2,2,2,2,2,1,1,2,1],
+      [1,1,2,2,2,3,3,2,1,1,1,1],
+      [1,2,2,2,3,3,3,2,2,1,0,0],
+      [1,2,2,3,3,3,3,3,2,1,0,0],
+      [0,1,1,2,3,3,3,2,1,0,0,0],
+      [0,0,1,1,2,2,2,1,1,0,0,0],
+      [0,0,1,2,1,1,1,2,1,0,0,0],
+      [0,1,2,1,1,0,0,1,1,1,0,0],
+      [0,1,1,1,1,0,0,0,1,1,0,0],
+    ],
+    [
+      [0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,1,1,1,1,1,0,0,0,0],
+      [0,0,1,2,2,2,4,1,1,1,0,0],
+      [0,0,1,2,2,1,1,2,2,2,1,1],
+      [0,1,1,1,2,1,1,2,2,2,2,1],
+      [0,1,2,2,2,2,2,2,1,1,1,1],
+      [1,1,2,2,2,3,3,2,1,1,0,0],
+      [1,2,2,2,3,3,3,2,2,1,0,0],
+      [1,2,2,3,3,3,3,3,2,1,0,0],
+      [0,1,1,2,3,3,3,2,1,0,0,0],
+      [0,0,1,1,2,2,2,1,1,0,0,0],
+      [0,0,0,1,1,2,1,1,1,0,0,0],
+      [0,0,1,2,1,2,1,1,0,0,0,0],
+      [0,0,1,2,1,1,2,2,1,0,0,0],
+    ],
+  ],
+});
+
 // Keys: 1 ink outline, 2 membrane, 3 dark body, 4 eye.
 const FLIER_PALETTE = {
   1: '#100e16',

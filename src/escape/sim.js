@@ -36,67 +36,71 @@ function wallSpeed(sim) {
   return v;
 }
 
-// V1c (owner-reported: "no enemies show up from behind during the test run"):
-// pursuers used to spawn AT THE WALL — ~300px behind the runner and outside
-// the camera window (render.js CAM_LEAD 150) — and every one died in the
-// first pit behind the runner before it could ever be seen. The pursuit was
-// implemented but unreachable. They now spawn just BEHIND THE RUNNER, on real
-// ground INSIDE the camera window: the runner's own platform when the runner
-// is grounded on one, else the nearest platform behind whose right edge is
-// still on-camera. A spawn point is only valid with GROUND under it (the same
-// test the pit filter uses — never place a doomed pursuer over a gap) and
-// ahead of the wall's leading edge (never inside the mass). A tick with no
-// valid point is SKIPPED, not forced; the cadence and every threat constant
-// are untouched, and the PIT FILTER below is unchanged — a pursuer led across
-// a gap still falls. That is the tactic this fix makes reachable.
+
+// OWNER SPEC UPDATE (docs/briefs/V1D_ESCAPE_SPECTACLE.md, end section):
+// chasers spawn SLIGHTLY OFF-SCREEN behind the camera edge (render.js
+// CAM_LEAD 150 — they ENTER from outside the visible band, never pop in),
+// on real ground so the pit filter never dooms a fresh body. When the wall
+// itself has crowded up to the off-screen band, new chasers POUR from its
+// leading edge instead (the horde spitting out its front rank — still an
+// entry from outside the clear band, never a mid-screen pop). A step with
+// no valid point is SKIPPED and retried next step; the PIT FILTER below is
+// unchanged — a chaser led across a gap still falls (pits buy relief, the
+// floor below refills, never silence).
 const CAM_LEAD = 150;   // render.js: the runner's fixed screen x (keep in sync)
-function pursuerSpawn(sim) {
+function chaserSpawn(sim) {
   const p = sim.player;
   const FLOOR = BAND.FLOOR_Y;
   const camL = p.x - CAM_LEAD;
-  const wallEdge = sim.wall.x + WALL.WIDTH + 8;
-  // Spawns are FLOOR-LEVEL ONLY: a pursuer has no gravity (the pit filter is
-  // positional), so one spawned on a terrace would float at that height
-  // forever — unkillable by the hip-height gun and lethal the moment the
-  // runner's terrain rises back level with it. Floor y is also the pre-V1c
-  // contract every other threat number is authored against.
-  const floorGround = (x) => sim.plats.some(pl =>
-    x >= pl.x && x <= pl.x + pl.w && Math.abs(pl.y - FLOOR) <= 2);
-  // A spawn is only VALID with breathing room behind the runner: a pursuer
-  // materialising inside (or a hair outside) the contact radius is a spawn
-  // bug, not pressure (this bit seed 2 — a runner fresh off a gap landing
-  // stands near the platform's left lip, where the clamp wanted to put it).
-  const MIN_GAP_BEHIND = 40;
-  const place = (pl) => {
-    // ~90px behind the runner, clamped inside the platform (the clamp is the
-    // never-over-a-gap guarantee: ground is re-asserted below regardless).
-    const x = Math.max(pl.x + 4, Math.min(pl.x + pl.w - 8, Math.round(p.x) - 90));
-    return (x <= p.x - MIN_GAP_BEHIND && x >= camL && x > wallEdge && floorGround(x)) ? x : null;
-  };
-  // The runner's own platform, when it is grounded on floor-level ground.
-  const own = sim.plats.find(pl => p.x >= pl.x && p.x <= pl.x + pl.w &&
-    Math.abs(pl.y - FLOOR) <= 2 && Math.abs(p.y - pl.y) <= 2) || null;
-  if (own) {
-    const x = place(own);
-    if (x !== null) return { x, y: FLOOR };
-  }
-  // Mid-air over a gap (or the runner elevated): the nearest floor-level
-  // platform behind whose right edge is still on-camera.
-  const behind = sim.plats
-    .filter(pl => Math.abs(pl.y - FLOOR) <= 2 && pl.x + pl.w >= camL && pl.x + pl.w <= p.x - 4)
-    .sort((a, b) => (b.x + b.w) - (a.x + a.w))[0] || null;
-  if (behind) {
-    const x = place(behind);
-    if (x !== null) return { x, y: FLOOR };
+  const wallEdge = sim.wall.x + WALL.WIDTH;
+  // Ground = the pit filter's own predicate (a platform under x whose top is
+  // within 40px above the chaser's feet). Scan a few offsets back so a gap
+  // behind the camera edge cannot starve the floor.
+  const groundOK = (x) => sim.plats.some(pl =>
+    x >= pl.x && x <= pl.x + pl.w && pl.y >= FLOOR - 40);
+  for (let k = 0; k < 12; k++) {
+    const x = Math.max(wallEdge, camL - THREATS.SPAWN_OFFSCREEN - k * 14);
+    if (groundOK(x)) {
+      return { x, y: FLOOR, poured: x >= camL };   // poured: out of the wall's face
+    }
+    if (x <= wallEdge) break;                      // nothing further back exists
   }
   return null;
+}
+
+// THE HORDE FLOOR (owner spec): never fewer than CHASER_FLOOR live chasers.
+// Called BEFORE the update loop (the run starts hunted) and again AFTER the
+// cull filter (a pitted or shot body is replaced the same step), so the
+// live count sampled at any step boundary never drops below the floor.
+function maintainFloor(sim) {
+  while (sim.pursuers.length < THREATS.CHASER_FLOOR) {
+    const sp = chaserSpawn(sim);
+    if (!sp) return;
+    // Stagger same-step refills (seeded rng, purity intact) so a replenished
+    // rank does not stack three bodies on one pixel: a normal spawn staggers
+    // BACK (never behind the wall's leading edge), a POURED spawn staggers
+    // FORWARD out of the wall's face (the horde spitting out its front rank).
+    const jitter = Math.floor(sim.rng() * 36);
+    const sx = sp.poured
+      ? sp.x + Math.floor(sim.rng() * 30)
+      : Math.max(sim.wall.x + WALL.WIDTH, sp.x - jitter);
+    const gap = sim.player.x - sx;
+    sim.pursuers.push({
+      x: sx, y: sp.y, hp: THREATS.PURSUER_HP,
+      state: 'charge', matchT: 0,
+    });
+    sim.spawnedPursuers++;
+    if (sp.poured) sim.pouredSpawns++;
+    else sim.minSpawnGap = Math.min(sim.minSpawnGap, gap);
+    sim.maxSpawnGap = Math.max(sim.maxSpawnGap, gap);
+  }
 }
 
 export function createSim(seed) {
   const corridor = generateCorridor(seed);
   const plats = platformsOf(corridor);
   const triggers = triggersOf(corridor).map(t => ({ ...t, fired: false }));
-  const startPlat = plats[0];
+  const startPlat = plats.filter(pl => pl.x >= 0)[0] || plats[0];   // skip the pre-corridor floor
   return {
     seed, corridor, plats, triggers,
     t: 0, frames: 0,
@@ -112,11 +116,16 @@ export function createSim(seed) {
     } : null,
     outcome: null,     // null | 'complete' | 'caught' | 'fell'
     rng: mulberry32(seed ^ 0x5f3759df),
-    nextPursuer: 2.2, nextFlier: Infinity, nextShot: 0,
+    nextFlier: Infinity, nextShot: 0,
     destroyedPlats: [],
-    // V1c reporting ledger (pure counters, no behaviour): pursuit pressure is
-    // a measured statement — spawned, removed-by-pit, closest approach.
+    // V1c/owner-spec reporting ledger (pure counters, no behaviour): pursuit
+    // pressure is a measured statement — spawned, removed-by-pit, closest
+    // approach — plus the horde-floor readings: min/max spawn gap (the
+    // off-screen entry proof), wall-pour count, settle count, the minimum
+    // live-chaser count sampled every step, and shots fired (the 1/5 rate).
     spawnedPursuers: 0, pittedPursuers: 0, closestPursuit: Infinity,
+    minSpawnGap: Infinity, maxSpawnGap: 0, pouredSpawns: 0, settles: 0,
+    chasersMin: Infinity, shotsFired: 0,
     // V1b event ledger (pure records, no behaviour): every enemy EXIT gets an
     // event — 'pit' (no ground under it: it FELL) or 'kill' (shot damage: it
     // BURST). The render derives its fall/burst animations from these alone
@@ -184,19 +193,16 @@ export function step(sim, dt, input = {}) {
   if (sim.wall.x + WALL.WIDTH >= p.x) { sim.outcome = 'caught'; return sim; }
 
   // ---- threats --------------------------------------------------------------
-  // Ground pursuers: V1c spawn placement (see pursuerSpawn above — just behind
-  // the runner, on camera, never over a gap), on the fixed schedule. They run
-  // faster than the runner and CANNOT platform — a gap under them removes them
-  // (gaps double as enemy filters, the free mechanic the goals doc loves).
-  sim.nextPursuer -= dt;
-  if (sim.nextPursuer <= 0) {
-    sim.nextPursuer = THREATS.PURSUER_EVERY + sim.rng() * 0.7;
-    const sp = pursuerSpawn(sim);
-    if (sp) {
-      sim.pursuers.push({ x: sp.x, y: sp.y, hp: THREATS.PURSUER_HP });
-      sim.spawnedPursuers++;
-    }
-  }
+  // THE HORDE (owner spec update): a hard floor of live chasers, every step.
+  // They spawn slightly OFF-SCREEN behind the camera edge (or pour from the
+  // wall's face when it has crowded up to the band), CHARGE at PURSUER_SPEED,
+  // and — just before reaching the pilot — MATCH the pilot's run speed, so
+  // they close to a hair and hang there. Contact is STRUCTURALLY impossible:
+  // the matched speed never exceeds the run, and the hard MATCH_FLOOR keeps
+  // the gap above twice the contact radius. Losing is the WALL, not the
+  // horde. Chasers still cannot platform: a gap under one removes it (pits
+  // buy relief — the floor refills, never silence).
+  maintainFloor(sim);
   // Fliers spawn from ESCALATION on; they ignore gaps (the gap-kiting
   // counter). NOTE: fliers NEVER make contact — a runner mid-arc or on the
   // overpass has no vertical control, so sine-phase contact would be
@@ -210,7 +216,34 @@ export function step(sim, dt, input = {}) {
     sim.fliers.push({ x: p.x + 300, y: 60, phase: sim.rng() * Math.PI * 2, hp: THREATS.FLIER_HP });
   }
   for (const pu of sim.pursuers) {
-    pu.x += THREATS.PURSUER_SPEED * dt;
+    // CHARGE then MATCH (owner spec): far away a chaser runs PURSUER_SPEED;
+    // inside MATCH_HOLD it throttles to the pilot's own pace and settles on
+    // their tail (the SETTLE — counted, and given a readable tell in the
+    // render). Fields default safely: probes may inject literal {x,y,hp}
+    // pursuers; those simply charge.
+    if (pu.state === undefined) pu.state = 'charge';
+    if (pu.matchT === undefined) pu.matchT = 0;
+    const gap = p.x - pu.x;
+    const nextState = gap > THREATS.MATCH_HOLD ? 'charge' : 'matched';
+    if (nextState === 'matched' && pu.state !== 'matched') { pu.matchT = 0; sim.settles++; }
+    pu.state = nextState;
+    if (pu.state === 'matched') pu.matchT += dt;
+    const spd = pu.state === 'charge' ? THREATS.PURSUER_SPEED : THREATS.PURSUER_MATCH_SPEED;
+    pu.x += spd * dt;
+    // The hard floor: a chaser NEVER closes inside MATCH_FLOOR of the pilot
+    // (> 2x the contact radius). This is the structural half of the
+    // speed-match guarantee — the counter-case (match disabled) sets
+    // MATCH_FLOOR negative and lets the charge run home into contact.
+    if (gap > 0 && pu.x > p.x - THREATS.MATCH_FLOOR) pu.x = p.x - THREATS.MATCH_FLOOR;
+    // V1e: the boss's body is SOLID to pursuers. The pack piles up behind
+    // the horde's front rank instead of ghosts through it, so the runner's
+    // drop off the overpass lands on clear ground — the only things that
+    // can catch you past the boss's reach are the wall and the body itself
+    // (a mid-fall pursuer contact would be UNAVOIDABLE damage, forbidden).
+    if (sim.boss) {
+      const bodyL = sim.boss.x - THREATS.BOSS_W / 2 - 6;
+      if (pu.x > bodyL) pu.x = bodyL;
+    }
     // Enemy filter: no ground under a pursuer -> it falls (removed).
     // V1c: counted — the pit-fall tactic is now reachable, so the ledger
     // says so (reporting only; no behaviour change).
@@ -223,10 +256,23 @@ export function step(sim, dt, input = {}) {
     if (Math.abs(pu.x - p.x) < THREATS.CONTACT_R && Math.abs(pu.y - p.y) < THREATS.CONTACT_R + 6) { sim.outcome = 'caught'; return sim; }
   }
   sim.pursuers = sim.pursuers.filter(pu => pu.hp > 0 && pu.x < p.x + 320);
+  // The floor's SECOND call (after the cull filter): a pitted or shot body is
+  // replaced the SAME step, so the live count sampled at any step boundary
+  // never drops below CHASER_FLOOR. chasersMin is that sample, kept every step.
+  maintainFloor(sim);
+  sim.chasersMin = Math.min(sim.chasersMin, sim.pursuers.length);
   for (const fl of sim.fliers) {
     fl.phase += dt * 2.4;
     fl.x -= THREATS.FLIER_SPEED * dt;
     fl.y = 90 + Math.sin(fl.phase) * 46;
+    // V1d altitude keep-clear: a flier never dips within 22px of the runner's
+    // CURRENT height. Their teeth are presence (they never contact by
+    // construction — see above); this makes the vertical separation
+    // STRUCTURAL instead of seed-luck, so the no-unavoidable-damage contract
+    // holds for every rng stream (the V1d pack rolls shifted the shared
+    // stream and seed 5's sine phases landed on the overpass height).
+    const cap = p.y - 22;
+    if (fl.y > cap) fl.y = Math.max(2, cap);
   }
   sim.fliers = sim.fliers.filter(fl => fl.hp > 0 && fl.x > sim.wall.x - 40);
 
@@ -243,7 +289,7 @@ export function step(sim, dt, input = {}) {
     const tgt = [...sim.pursuers, ...sim.fliers]
       .filter(e => e.hp > 0 && Math.abs(e.x - p.x) < 260 && Math.abs(e.y - p.y) < 60)
       .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
-    if (tgt) sim.shots.push({ x: p.x + 8, y: p.y - 8, vx: Math.sign(tgt.x - p.x) * THREATS.SHOT_SPEED });
+    if (tgt) { sim.shots.push({ x: p.x + 8, y: p.y - 8, vx: Math.sign(tgt.x - p.x) * THREATS.SHOT_SPEED }); sim.shotsFired++; }
   }
   for (const s of sim.shots) {
     s.x += s.vx * dt;

@@ -17,7 +17,7 @@ import {
   APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt,
 } from '../src/art/index.js';
 // V1b: the escape sprites live with their mode (src/escape/), not in src/art/.
-import { PURSUER_ART, FLIER_ART } from '../src/escape/sprites.js';
+import { PURSUER_ART, PURSUER_LUNGE_ART, FLIER_ART } from '../src/escape/sprites.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -347,13 +347,14 @@ console.log('ESCAPE SPRITES (V1b, src/escape/sprites.js):');
   // frame rules are verified with the SAME helpers, only the enumeration
   // differs (ART_ASSETS does not list them; the escape render imports them
   // directly, per the brief's self-containment house rule).
-  for (const a of [PURSUER_ART, FLIER_ART]) {
+  for (const a of [PURSUER_ART, PURSUER_LUNGE_ART, FLIER_ART]) {
     verifyAsset(a, 'escape', 'ESCAPE', { minFrames: 2, minCoverage: 0.15, requireInk: true });
     const f0 = a.frames[0].flat().join(',');
     const f1 = a.frames[1].flat().join(',');
     ok(f0 !== f1, 'escape/' + a.id + ': the two frames actually differ (not a still)');
   }
   eq(PURSUER_ART.id, 'ESCAPE_PURSUER', 'the pursuer sprite id is stable');
+  eq(PURSUER_LUNGE_ART.id, 'ESCAPE_PURSUER_LUNGE', 'the V1d lunge-posture sprite id is stable');
   eq(FLIER_ART.id, 'ESCAPE_FLIER', 'the flier sprite id is stable');
 }
 

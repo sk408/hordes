@@ -77,10 +77,27 @@ S.check('every trigger band is AUTO-only data with a sane window and width', () 
       assert(t.vMax <= PHYS.RUN_SPEED * 1.3, 'silliness cap breached at ' + t.x0 + ' (vMax ' + t.vMax + ')');
       assert(t.x1 - t.x0 >= 52, 'band too narrow for the prologue landing at ' + t.x0);
     }
-    // The boss beat carries NO triggers (weaving, not bands — by design).
+    // RETARGET (V1e, docs/briefs/V1E_ESCAPE_FINALE.md): the boss segment is
+    // the FINALE now and its two up-route hops are the owner's OWN jump-box
+    // bands (fired at authored x with the speed-window fudge), verified by
+    // the same invariant — test_v1_escape.mjs:80-83 previously pinned the
+    // OLD design ("the boss beat must be trigger-free terrain") because the
+    // mid-corridor boss was spatial steering; V1e replaced that mechanism
+    // with bands, so the pin asserts the bands instead (a strengthening: it
+    // demands exactly the two authored hops and their landing platforms).
     const bossSeg = c.segs.find(s => s.kind === 'boss');
-    assert(bossSeg && bossSeg.triggers.length === 0 && bossSeg.gaps.length === 0,
-      'the boss beat must be trigger-free terrain');
+    assert(bossSeg && bossSeg.finale === true, 'the boss segment is the finale');
+    assert(bossSeg.gaps.length === 0, 'the finale floor is whole (a missed hop is the boss\'s ground, never a pit)');
+    const hops = bossSeg.triggers.filter(t => t.up);
+    assert(bossSeg.triggers.length === 2 && hops.length === 2,
+      'the finale carries exactly the two up-hop bands (got ' + bossSeg.triggers.length + ')');
+    for (const t of hops) {
+      assert(bossSeg.plats.includes(t.land), 'an up-hop band must land on one of the finale platforms');
+      assert(t.x0 < t.land.x, 'an up-hop fires before its landing platform starts');
+    }
+    // The portal sits BEYOND the boss — the upper level is the way to it.
+    assert(c.portalX > c.bossX, 'portal ' + c.portalX + ' must sit beyond the boss ' + c.bossX);
+    assert(c.bossPlat && c.bossPlat.y < 252 - 42, 'the overpass crosses OVER the boss');
   }
 });
 
@@ -472,6 +489,111 @@ S.check('V1c: pursuit pressure is a MEASURED statement (spawned/pitted/closest)'
       ' pitted=' + sim.pittedPursuers +
       ' closest=' + Math.round(sim.closestPursuit) + 'px' +
       ' outcome=' + sim.outcome);
+  }
+});
+
+// V1d OWNER SPEC UPDATE (supersedes the first-cut pack/lunge machinery): the
+// horde is a LITERAL horde — a hard floor of live chasers, spawned slightly
+// OFF-SCREEN behind the camera edge, that charge in and MATCH the pilot's
+// speed just before reaching them (close to a hair, never a catch; losing is
+// the WALL). Pinned: every seed completes with the floor held EVERY step
+// (chasersMin >= CHASER_FLOOR), the closest approach lands between the
+// contact radius and the settle band, non-poured spawns are provably
+// off-screen (minSpawnGap >= CAM_LEAD - SPAWN_OFFSCREEN), and the
+// counter-case — speed-match DISABLED — DOES catch (the guarantee is
+// load-bearing and the check can fail).
+S.check('V1d spec: the horde floor holds every step; matched chasers close to a hair, never catch', () => {
+  let minClosest = Infinity;
+  for (let seed = 1; seed <= 12; seed++) {
+    const sim = playOut(seed, 60);
+    assert(sim.outcome === 'complete', 'seed ' + seed + ': outcome ' + sim.outcome);
+    assert(sim.chasersMin >= THREATS.CHASER_FLOOR,
+      'seed ' + seed + ': live chasers dipped to ' + sim.chasersMin + ' (< ' + THREATS.CHASER_FLOOR + ')');
+    assert(sim.closestPursuit > THREATS.CONTACT_R,
+      'seed ' + seed + ': closest ' + Math.round(sim.closestPursuit) +
+      'px broke the ' + THREATS.CONTACT_R + 'px contact radius');
+    assert(sim.closestPursuit < THREATS.MATCH_HOLD + 8,
+      'seed ' + seed + ': closest ' + Math.round(sim.closestPursuit) +
+      'px never got really close (< ' + (THREATS.MATCH_HOLD + 8) + ')');
+    minClosest = Math.min(minClosest, sim.closestPursuit);
+    console.log('  MEASURED V1d-spec seed ' + seed + ': spawned=' + sim.spawnedPursuers +
+      ' pitted=' + sim.pittedPursuers + ' settles=' + sim.settles +
+      ' chasersMin=' + sim.chasersMin + ' closest=' + Math.round(sim.closestPursuit) + 'px' +
+      ' outcome=' + sim.outcome);
+  }
+  // The off-screen entry proof: a spawn that did NOT pour from the wall's face
+  // entered from behind the camera edge (render.js CAM_LEAD 150) minus the
+  // off-screen slack (SPAWN_OFFSCREEN 14).
+  for (let seed = 1; seed <= 6; seed++) {
+    const sim = playOut(seed, 60);
+    assert(sim.minSpawnGap === Infinity || sim.minSpawnGap >= 150 - THREATS.SPAWN_OFFSCREEN - 1,
+      'seed ' + seed + ': a non-poured spawn appeared on-screen (min gap ' + Math.round(sim.minSpawnGap) + 'px)');
+    console.log('  MEASURED V1d-spec seed ' + seed + ': spawn gap [' + Math.round(sim.minSpawnGap) +
+      ',' + Math.round(sim.maxSpawnGap) + ']px poured=' + sim.pouredSpawns +
+      ' (camera edge at 150px; poured = out of the wall face, still off/barely-on)');
+  }
+  assert(minClosest < THREATS.MATCH_HOLD + 4,
+    'no seed got really close (min closest ' + Math.round(minClosest) + 'px)');
+});
+S.check('V1d spec counter-case: speed-match DISABLED — the charge runs home into a catch', () => {
+  // config.js exports live mutable objects, so the counter-case flips the two
+  // structural constants (match speed beyond the charge, MATCH_FLOOR negative
+  // = clamp off) and RESTORES them after — nothing outside this check sees it.
+  const keepSpeed = THREATS.PURSUER_MATCH_SPEED, keepFloor = THREATS.MATCH_FLOOR;
+  let caught = 0;
+  try {
+    THREATS.PURSUER_MATCH_SPEED = 999;
+    THREATS.MATCH_FLOOR = -60;
+    for (let seed = 1; seed <= 4; seed++) {
+      const sim = playOut(seed, 60, 45);
+      if (sim.outcome === 'caught') caught++;
+      console.log('  MEASURED V1d-spec counter-case seed ' + seed + ': outcome=' + sim.outcome +
+        ' at t=' + sim.t.toFixed(1) + 's');
+    }
+  } finally {
+    THREATS.PURSUER_MATCH_SPEED = keepSpeed;
+    THREATS.MATCH_FLOOR = keepFloor;
+  }
+  assert(caught === 4,
+    'only ' + caught + '/4 seeds caught with the match disabled — the guarantee is not load-bearing');
+});
+
+// V1e — THE FINALE (docs/briefs/V1E_ESCAPE_FINALE.md): the corridor ENDS at
+// the boss and the upper level is the way over it to the portal. Pinned both
+// ways: the AUTO pilot completes VIA THE UPPER ROUTE (it is on the overpass
+// directly OVER the body, and both up-hop bands fired), and the counter-case
+// — the same pilot with the finale bands suppressed — does NOT reach the
+// portal, proving the route is load-bearing and the check can fail.
+S.check('V1e: the AUTO pilot crosses the finale OVER the boss to the portal', () => {
+  for (let seed = 1; seed <= 6; seed++) {
+    const sim = createSim(seed);
+    const bands = sim.triggers.filter(t => t.up);
+    let onTopFrame = -1, n = 0;
+    while (!sim.outcome && n < 60 * 170) {
+      step(sim, 1 / 60, inputFor(sim));
+      n++;
+      const c = sim.corridor;
+      if (onTopFrame < 0 && c.bossPlat && Math.abs(sim.player.y - c.bossPlat.y) < 1 &&
+          sim.player.x > c.bossX - THREATS.BOSS_W / 2 &&
+          sim.player.x < c.bossX + THREATS.BOSS_W / 2) onTopFrame = n;
+    }
+    assert(sim.outcome === 'complete', 'seed ' + seed + ': outcome ' + sim.outcome);
+    assert(onTopFrame >= 0, 'seed ' + seed + ': the pilot never crossed OVER the boss');
+    assert(bands.every(t => t.fired), 'seed ' + seed + ': a finale up-hop band never fired');
+    console.log('  MEASURED V1e seed ' + seed + ': over the body at frame ' + onTopFrame +
+      ' (t=' + (onTopFrame / 60).toFixed(1) + 's), outcome=' + sim.outcome);
+  }
+});
+S.check('V1e: counter-case — the ground route does NOT reach the portal', () => {
+  for (let seed = 1; seed <= 4; seed++) {
+    const sim = createSim(seed);
+    for (const t of sim.triggers) if (t.up) t.fired = true;   // up-route suppressed
+    let n = 0;
+    while (!sim.outcome && n < 60 * 170) { step(sim, 1 / 60, inputFor(sim)); n++; }
+    assert(sim.outcome !== 'complete',
+      'seed ' + seed + ': the ground route completed anyway — the up-route is not load-bearing');
+    console.log('  MEASURED V1e counter-case seed ' + seed + ': outcome=' + sim.outcome +
+      ' at x=' + Math.round(sim.player.x) + ' t=' + sim.t.toFixed(1) + 's');
   }
 });
 

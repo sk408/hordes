@@ -174,29 +174,128 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
       return { mode: T2.state.mode, time: +T2.state.time.toFixed(2), flags,
                wave: T2.state.wave.num }; })()`);
 
+    // ---- G16 respec PART 2: step-boundary instrumentation + draft hygiene --
+    // The pilot's three runs hard-failed 2-in-3 at the WALK waiter with
+    // mode='draft'. Every step boundary of BOTH takes prints mode +
+    // pendingDrafts so the queued-draft diagnosis is CONFIRMED OR REFUTED by
+    // observation, not reasoning (docs/briefs/G16_SKIP_BAR_RESPEC_PART2.md).
+    const stepBoundary = async (label) => {
+      const b = await p.evaluate(`(async () => ({ mode: ${T}.state.mode, pendingDrafts: ${T}.state.pendingDrafts }))()`);
+      console.log('[boundary] ' + label + ' :: mode=' + b.mode + ' pendingDrafts=' + b.pendingDrafts);
+      return b;
+    };
+    // Resolve a queued/open draft the way the GAME ITSELF expects: the draft
+    // screen's own keydown handler documents the one-press quick-pick '1'-'4'
+    // (src/main.js draft keydown clause) -- a REAL game interaction, never a
+    // hand-mutation of state.mode or state.pendingDrafts. A boss kill grants
+    // XP; a level-up queues a draft that is DEFERRED while the cine/escape/
+    // intermission own the mode, so it surfaces whenever play resumes.
+    const settleDrafts = async (label, acceptModes) => {
+      // A draft queued outside 'playing' stays queued until the NEXT level-up
+      // while playing calls openDraft() again (src/main.js has no other caller),
+      // so while playing-with-pending we wait for play itself to surface the
+      // draft, then quick-pick it. A queued draft is HARMLESS during the cine
+      // (the movie owns the mode), so 'portal-cine' with a queue is accepted.
+      const deadline = Date.now() + 15000;
+      let picks = 0;
+      for (;;) {
+        const b = await stepBoundary(label);
+        const settled = acceptModes.includes(b.mode) &&
+          (b.pendingDrafts === 0 || b.mode === 'portal-cine');
+        if (settled) return b;
+        if (b.mode === 'draft') {
+          await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }))");
+          picks++;
+          if (picks > 12) break;
+        } else if (Date.now() > deadline) {
+          break;
+        }
+        await p.sleep(150);
+      }
+      const b = await p.evaluate(`(async () => ({ mode: ${T}.state.mode, pendingDrafts: ${T}.state.pendingDrafts,
+        cards: (document.getElementById('ov-cards') || { children: [] }).children.length }))()`);
+      throw new Error(label + ': draft did not settle (mode=' + b.mode + ', pendingDrafts=' +
+        b.pendingDrafts + ', cardCount=' + b.cards + ')');
+    };
+
     // ---- TAKE 1: the NATURAL movie (no skip) -> measured wall duration -----
     await p.evaluate(BOSS_SEED);
-    await p.waitFor(BOSS_LIVE, 10000, 50);
+    if (!await p.waitFor(BOSS_LIVE, 10000, 50)) {
+      const b = await stepBoundary('take1 BOSS_LIVE timeout');
+      throw new Error('take 1 boss never spawned (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+    }
+    await stepBoundary('take1 BOSS_LIVE');
     await p.evaluate(BOSS_SLAY);
-    await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 15000, 25);
-    let naturalMs = null, exitMode = null;
+    await stepBoundary('take1 BOSS_SLAY');
+    if (!await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 15000, 25)) {
+      // A kill's XP can level the player while still 'playing' and open the
+      // draft after the settle pass (orbit blades keep cutting): settle the
+      // real way and give the queued cine one more bounded window.
+      await settleDrafts('take1 cine-wait settle', ['playing', 'portal-cine']);
+      if (!await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 5000, 25)) {
+        const b = await stepBoundary('take1 portal-cine timeout');
+        throw new Error('take 1 never entered the cine (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+      }
+    }
+    const cineStart = await stepBoundary('take1 cine start');
+    let naturalMs = null, exitMode = null, midCineExit = null;
     for (let i = 0; i < 400; i++) {
       await p.sleep(30);
-      const st = await p.evaluate(`(async () => ({ m: ${T}.state.mode, t: Math.round(${T}.portalCine.t) }))()`);
-      if (st.m !== 'portal-cine') { naturalMs = st.t; exitMode = st.m; break; }
+      const st = await p.evaluate(`(async () => ({ m: ${T}.state.mode, t: Math.round(${T}.portalCine.t), pd: ${T}.state.pendingDrafts }))()`);
+      if (st.m !== 'portal-cine') {
+        naturalMs = st.t; exitMode = st.m;
+        if (st.t < CINE_DURATION - 400) midCineExit = { mode: st.m, t: st.t, pendingDrafts: st.pd };
+        break;
+      }
     }
+    const cineEnd = await stepBoundary('take1 cine end');
     // Wave 1: the cine's natural end hands the run to the escape; ESC exits it.
-    await p.waitFor(`(async () => ${T}.state.mode === 'escape')()`, 5000, 50);
+    if (!await p.waitFor(`(async () => ${T}.state.mode === 'escape')()`, 5000, 50)) {
+      const b = await stepBoundary('take1 escape timeout');
+      throw new Error('take 1 cine did not hand off to the escape (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+    }
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
-    await p.waitFor(`(async () => ${T}.state.mode === 'intermission')()`, 5000, 50);
+    if (!await p.waitFor(`(async () => ${T}.state.mode === 'intermission')()`, 5000, 50)) {
+      const b = await stepBoundary('take1 intermission timeout');
+      throw new Error('take 1 escape did not land in intermission (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+    }
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))");
-    await p.waitFor(`(async () => ${T}.state.mode === 'playing')()`, 5000, 50);
+    if (!await p.waitFor(`(async () => ${T}.state.mode === 'playing' || ${T}.state.mode === 'draft')()`, 5000, 50)) {
+      const b = await stepBoundary('take1 c-resume timeout');
+      throw new Error('take 1 intermission never resumed (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+    }
+    // PART 2 item 1: resolve TAKE 1's queued draft through the game's own key
+    // path, then HOLD the TAKE 2 precondition: playing AND no pending draft.
+    const settled = await settleDrafts('take1 after c-resume', ['playing']);
+    if (settled.mode !== 'playing' || settled.pendingDrafts !== 0) {
+      throw new Error('TAKE 2 precondition unmet after draft settlement (mode=' + settled.mode +
+        ', pendingDrafts=' + settled.pendingDrafts + ')');
+    }
 
     // ---- TAKE 2: sampled beats + the skip ----------------------------------
     await p.evaluate(BOSS_SEED);
-    await p.waitFor(BOSS_LIVE, 10000, 50);
+    if (!await p.waitFor(BOSS_LIVE, 10000, 50)) {
+      const b = await stepBoundary('take2 BOSS_LIVE timeout');
+      throw new Error('take 2 boss never spawned (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+    }
+    await stepBoundary('take2 BOSS_LIVE');
     await p.evaluate(BOSS_SLAY);
-    await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 15000, 25);
+    await stepBoundary('take2 BOSS_SLAY');
+    // The kill's XP can level the player while still in 'playing', opening the
+    // draft BEFORE the queued cine can start (cinePending waits for 'playing').
+    // Settle it the same real way; the cine starting mid-settle is SUCCESS, so
+    // 'portal-cine' is accepted here (a draft queued behind the movie is
+    // harmless and is what the natural-cine assertion covers).
+    await settleDrafts('take2 after BOSS_SLAY', ['playing', 'portal-cine']);
+    if (!await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 15000, 25)) {
+      // Same mid-window race as take 1: settle and retry once, bounded.
+      await settleDrafts('take2 cine-wait settle', ['playing', 'portal-cine']);
+      if (!await p.waitFor(`(async () => ${T}.state.mode === 'portal-cine')()`, 5000, 25)) {
+        const b = await stepBoundary('take2 portal-cine timeout');
+        throw new Error('take 2 never entered the cine (mode=' + b.mode + ', pendingDrafts=' + b.pendingDrafts + ')');
+      }
+    }
+    await stepBoundary('take2 cine start');
 
     const chromeNow = () => p.evaluate(`(async () => ${T}.chromeOn())()`);
 
@@ -209,7 +308,7 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
     // 'never reached WALK t=2500' exception.
     const walk = await p.evaluate(`(async () => {
       const T2 = ${T};
-      const fail = (why) => ({ ok: false, why, mode: T2.state.mode });
+      const fail = (why) => ({ ok: false, why, mode: T2.state.mode, pendingDrafts: T2.state.pendingDrafts });
       if (T2.state.mode !== 'portal-cine') return fail('not in cine');
       const deadline = performance.now() + 10000;
       await new Promise((res) => {
@@ -224,7 +323,8 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
       if (T2.portalCine.t < 2500) return fail('deadline');
       return { ok: true, t: Math.round(T2.portalCine.t), snap: await ${SNAP} };
     })()`);
-    if (!walk.ok) throw new Error('never reached WALK t=2500 (' + walk.why + ', mode=' + walk.mode + ')');
+    if (!walk.ok) throw new Error('never reached WALK t=2500 (' + walk.why + ', mode=' + walk.mode +
+      ', pendingDrafts=' + walk.pendingDrafts + ')');
     const walkSnap = walk.snap;
     const walkChrome = await chromeNow();
     const shotWalk = await p.shot('g16-walk');
@@ -313,7 +413,7 @@ const arm = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
     }
 
     return {
-      runLive, naturalMs, exitMode,
+      runLive, naturalMs, exitMode, cineStart, cineEnd, midCineExit,
       walk: { heroInk: heroInkOf(walkSnap.hero), chrome: walkChrome, shot: shotWalk },
       pause: {
         heroDelta: diffCount(pauseA.hero, pauseB.hero),
@@ -339,6 +439,12 @@ check('TAKE 1 natural end: measured wall duration ' + arm.naturalMs + 'ms (desig
   'ms, bar <= 8000ms), hand-off mode=' + arm.exitMode,
   arm.naturalMs !== null && arm.naturalMs >= CINE_DURATION - 400 && arm.naturalMs <= 8000,
   { naturalMs: arm.naturalMs, CINE_DURATION });
+check('TAKE 1 natural movie: the deferred draft never interrupts the cine (mode sampled every 30ms, never left ' +
+  'portal-cine before the natural end; pendingDrafts start=' + arm.cineStart.pendingDrafts + ' end=' +
+  arm.cineEnd.pendingDrafts + ')',
+  arm.midCineExit === null && Number.isInteger(arm.cineStart.pendingDrafts) && arm.cineStart.pendingDrafts >= 0 &&
+  Number.isInteger(arm.cineEnd.pendingDrafts) && arm.cineEnd.pendingDrafts >= 0,
+  { midCineExit: arm.midCineExit, start: arm.cineStart.pendingDrafts, end: arm.cineEnd.pendingDrafts });
 check('(a) APPROACH: hero-region ink non-zero mid-WALK (' + arm.walk.heroInk + ' hero-palette samples)',
   arm.walk.heroInk > 0, arm.walk);
 check('(b) PAUSE proof: hero region IDENTICAL (' + arm.pause.heroDelta + ' differing samples) while portal region CHANGES (' +

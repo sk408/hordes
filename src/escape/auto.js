@@ -33,34 +33,19 @@ export function inputFor(sim) {
     return input;   // inside a live band: nothing else may fire this frame
   }
 
-  // 2) The boss beat has NO triggers — steering only. Authored route: floor ->
-  // approach terrace (a plain-jump 42px step) -> overpass OVER the body ->
-  // drop past. Both hops are stepped at authored offsets (see generator.js);
-  // the body itself is never touched (contact is the soft fail 'caught').
-  const c = sim.corridor;
-  if (c.bossX != null && p.x > c.bossSegX0 - 200 && p.x < c.bossX && p.onGround) {
-    if (p.y > c.bossApproachY + 0.5) {
-      // ON THE FLOOR (below the terrace top): hop onto the approach terrace
-      // just before it. Strictly-below-the-top matters — standing ON the
-      // terrace (y === approachY) must fall through to the hop below.
-      if (p.x >= c.bossApproachX - 40 && p.x < c.bossApproachX + c.bossApproachW - 60) {
-        input.jump = true;
-        input.snapX = c.bossApproachX - 40;
-      }
-    } else if (Math.abs(p.y - c.bossApproachY) < 1 && p.x >= c.bossOverpassX - 30) {
-      // ON THE TERRACE ONLY (y matches its top): hop onto the overpass before
-      // the body arrives. The exact-height match matters — a looser test also
-      // fires from the overpass itself (a spurious hop mid-crossing).
-      input.jump = true;
-      input.snapX = c.bossOverpassX - 30;
-    }
-    return input;   // no clamp through the boss beat; the dash waits for rule 3
-  }
+  // 2) (V1e) The finale's up-route needs NO steering rule of its own: the two
+  // hops are the owner's OWN jump-box bands from the V1 brief — authored fire
+  // lines with the speed-window clamp (the fudge) — so rule 1 carries the
+  // pilot up and over the boss exactly as it carries every gap. The old
+  // spatial-steering rule for the mid-corridor boss beat was superseded and
+  // removed; no second mechanism is invented.
 
   // 3) Speed is life: burn the dash on COOLDOWN whenever the terrain ahead is
-  // clear of unfired bands and the boss's HOP WINDOWS (a dash burst through a
-  // fire line or an authored hop offset would break the arc). Past the body
-  // the dash is free again — the boss beat's exit stretch is dash country.
+  // clear of unfired bands and the FINALE APPROACH (a dash burst through a
+  // fire line would break the arc, and dashing into the boss's reach on the
+  // ground route is the one place speed kills). Past the body the dash is
+  // free again — the finale's exit stretch is dash country.
+  const c = sim.corridor;
   if (p.onGround && p.dashCd <= 0 &&
       !sim.triggers.some(t => !t.fired && t.x0 > p.x - 64 && t.x0 - p.x < CLEAR_AHEAD) &&
       !(c.bossX != null && p.x < c.bossX && c.bossX - p.x < CLEAR_AHEAD + 220)) {

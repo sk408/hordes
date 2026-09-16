@@ -29,20 +29,26 @@ export const BAND = {
   KILL_Y: 400,       // below this a fall is the soft failure 'fell'
 };
 
-// ---- pacing (docs goals: 4 acts over ~2 minutes; timings indicative) ----
+// ---- pacing (owner spec update 2026-09-15: a ~60-SECOND escape, not two
+// minutes — the palette shift and the ramp compress onto the minute; the
+// finale still fits inside it) ----
 export const PACING = {
   // Fractions of corridor length, in order. The generator RAMPS — it never
   // shuffles (a template's difficulty tier is a function of its act).
+  // V1e (docs/briefs/V1E_ESCAPE_FINALE.md): the boss no longer interrupts
+  // mid-corridor — the corridor ENDS at the boss, with the authored upper
+  // level over it to the portal (generator finaleSegment). The 0.58 act is
+  // plain ESCALATION++ terrain now.
   ACTS: [
     { name: 'WARM-UP', from: 0.00, tier: 0 },      // flat, one easy gap
     { name: 'ESCALATION', from: 0.18, tier: 1 },   // terraces, harder gaps, fliers
     { name: 'ESCALATION+', from: 0.42, tier: 2 },
-    { name: 'THE BOSS BEAT', from: 0.58, tier: 2, boss: true },
+    { name: 'ESCALATION++', from: 0.58, tier: 2 },
     { name: 'THE FINAL SPRINT', from: 0.66, tier: 3 },  // simplest terrain, max pressure
   ],
   NOMINAL_SPEED: 200,   // px/s the duration estimate divides by (see generator)
-  MIN_SECONDS: 95,      // corridor length bounds derived from the ~2min target
-  MAX_SECONDS: 135,
+  MIN_SECONDS: 54,      // corridor length bounds derived from the ~1min target
+  MAX_SECONDS: 66,
 };
 
 // ---- the horde wall (the real timer — visible, never an invisible clock) ----
@@ -62,14 +68,44 @@ export const WALL = {
 };
 
 // ---- threats (a shot or two kills ANY of them, FLAT — cosmetic-plus) ----
+// OWNER SPEC UPDATE (docs/briefs/V1D_ESCAPE_SPECTACLE.md, the section at the
+// end SUPERSEDES the first cut): the horde is a LITERAL horde — a hard floor
+// of live chasers, spawned slightly OFF-SCREEN behind the camera edge, that
+// CHARGE in and then MATCH the pilot's speed just before reaching them, so
+// they close to a hair, hang there, and contact is STRUCTURALLY impossible
+// (losing is the WALL, not the horde). The V1d pack-cadence/lunge machinery
+// is superseded by this spec.
 export const THREATS = {
-  SHOT_EVERY: 0.35,    // auto-fire cadence (s)
+  SHOT_EVERY: 1.75,   // auto-fire cadence (s) — the owner's 1/5 cut (was 0.35)
   SHOT_SPEED: 420,
   SHOT_DMG: 1,
-  PURSUER_HP: 1,       // one shot
-  PURSUER_EVERY: 1.6,  // spawn cadence (s) — deterministic schedule, seeded jitter
-  PURSUER_SPEED: 236,  // faster than the wall; they fall in gaps (the filter)
+  PURSUER_HP: 1,       // one shot (a hit thins the pack; the floor refills)
+  // MEASURED (spec2 first cut): a 236px/s charge closes only 36px/s on the
+  // run — ~4s of uninterrupted same-floor travel, longer than any flat, so
+  // chasers dived into gap lips before EVER matching (289/314 pitted,
+  // settles=0: a horde that never hung on the tail). The charge is the
+  // DASH speed: it closes the ~164px off-screen gap in under a second, and
+  // the MATCH_FLOOR clamp still holds contact structurally impossible.
+  PURSUER_SPEED: 340,  // the CHARGE (=== PHYS.DASH_SPEED; they fall in gaps — the filter)
   PURSUER_R: 7,
+  // THE HORDE FLOOR: never fewer than this many live chasers, every step.
+  CHASER_FLOOR: 3,
+  // Spawn slightly OFF-SCREEN behind the camera edge (render.js CAM_LEAD
+  // 150): a chaser must ENTER from outside the visible band, never pop in.
+  SPAWN_OFFSCREEN: 14,
+  // CHARGE then MATCH: inside MATCH_HOLD the chaser throttles to the pilot's
+  // own run speed, and the hard MATCH_FLOOR keeps the gap above the contact
+  // radius forever — a matched chaser can never overtake or pass through.
+  // MEASURED (spec2): MATCH_HOLD must clear MATCH_FLOOR + one step of pilot
+  // advance (200/60 = 3.3px) or the state machine OSCILLATES — the pre-move
+  // gap never dips inside the band, the body clamps to MATCH_FLOOR while
+  // still reading 'charge', and the settle (the readable near-miss tell)
+  // never engages. 34 = 24 + 10 clears it with margin; the settle reads as a
+  // near-catch at ~26-34px against the 11px contact radius.
+  PURSUER_MATCH_SPEED: 200,  // === PHYS.RUN_SPEED (the pilot's pace)
+  MATCH_HOLD: 34,      // gap (px) inside which the chaser settles
+  MATCH_FLOOR: 24,     // hard minimum gap — > 2x the 11px contact radius
+  MATCH_TELL: 0.45,    // s of settle flash (the readable near-miss tell)
   FLIER_HP: 2,         // two shots
   FLIER_EVERY: 2.6,
   FLIER_SPEED: 96,     // dives on a sine; ignores gaps (the gap-kiting counter)
@@ -102,6 +138,9 @@ export const EXIT = {
 // read time, so the intOr floor trap cannot fire): K = 1/30 lands a completed
 // escape near the owner's 1/3-of-rate intent (~40s of income for a 2-minute
 // escape keyed to a ~20min best run).
+// PARKED, DO NOT TUNE (owner spec 2026-09-15): the 60-second escape roughly
+// doubles payout-per-hour for the same bestGold x K. Known, deliberate debt
+// for a later balance pass — K is NOT adjusted now.
 export const PAYOUT_K = 1 / 30;
 
 // ---- the paid skip (owner directive 2026-09-14: a one-time meta-shop unlock
@@ -110,4 +149,38 @@ export const PAYOUT_K = 1 / 30;
 export const PAID_SKIP = {
   SHOP_ID: 'escapeskip',
   PRICE: 100000,
+};
+
+// ---- V1d LOOK (owner: "needs some color to it. Like a pixel movie but as a
+// playable"): the mode's OWN authored palette, four acts keyed on the same
+// corridor fraction the wall speed reads, so the two-minute run TRAVELS —
+// amber dusk into magenta twilight into violet night into a teal dawn as the
+// portal nears. render.js never reaches into the arena's art; every colour
+// the sky/bands/pits/poles use lives HERE. Selection is a pure function of
+// progress (no clock, no rng), so 60/120Hz parity and the purity contract
+// hold by construction.
+export const LOOK = {
+  ACT_FRACS: [0.18, 0.42, 0.66],   // act boundaries (wallSpeed's own keys)
+  PALETTES: [
+    {   // act 0 WARM-UP — amber dusk
+      skyTop: '#1a1230', skyBottom: '#472a52', horizon: '#b0523c',
+      far: '#2a1c44', near: '#3d2450', voidGlow: '#b0523c', ember: '#ff9a4a',
+    },
+    {   // act 1 ESCALATION — magenta twilight
+      skyTop: '#140f2e', skyBottom: '#3c1c4e', horizon: '#c04a6a',
+      far: '#241640', near: '#38204e', voidGlow: '#c04a6a', ember: '#ff6a7a',
+    },
+    {   // act 2 ESCALATION+ / THE BOSS BEAT — violet night
+      skyTop: '#0d0f2a', skyBottom: '#2a1c54', horizon: '#8a5ae0',
+      far: '#1a1440', near: '#2a2050', voidGlow: '#8a5ae0', ember: '#c08aff',
+    },
+    {   // act 3 THE FINAL SPRINT — teal dawn (the portal's own light)
+      skyTop: '#061828', skyBottom: '#0e3a4a', horizon: '#38e0c0',
+      far: '#0a2438', near: '#10303f', voidGlow: '#38e0c0', ember: '#60e0c0',
+    },
+  ],
+  // The two poles are the BRIGHTEST things on screen (owner): emissive
+  // treatments for the portal ahead and the horde's leading edge behind.
+  PORTAL_HALO: '#60e0c0',   // matches the beacon column (EXIT light)
+  HORDE_EDGE: '#ff6a3c',    // the wall's molten leading edge (hot in every act)
 };

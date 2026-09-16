@@ -46,6 +46,13 @@ export function mulberry32(seed) {
 export const AIRTIME = (2 * PHYS.JUMP_VY) / PHYS.GRAVITY;           // 0.8s
 export const reach = (v) => v * AIRTIME;                             // px
 
+// The DESCENDING crossing of an up-hop: time from fire until the arc falls
+// back DOWN through a ledge h px above the launch top (the only landing
+// chance — the sim lands from above, so the rising pass-through does not
+// count). Pure physics, the same constants the templates author against.
+export const upHopT = (h) =>
+  (PHYS.JUMP_VY + Math.sqrt(PHYS.JUMP_VY * PHYS.JUMP_VY - 2 * PHYS.GRAVITY * h)) / PHYS.GRAVITY;
+
 // The prologue: distance from segment x0 to the fire line (see header). 64px
 // covers the worst elevated drop (34px falls land within ~52px) with ground
 // time to spare before the band.
@@ -160,28 +167,44 @@ function pairSegment(x0, tier, rng) {
   };
 }
 
-// THE BOSS BEAT: a long flat, the obstacle-boss body occupying the corridor,
-// and an authored PASS PLATFORM over it (approach terrace + overpass). NO
-// triggers — weaving is spatial steering, the controller's home turf; the
-// overpass approach is climbable by a plain jump when blocked (auto.js).
-function bossSegment(x0, tier, rng) {
-  const run = 700;
-  // The overpass top IS THREATS.BOSS_PASS_Y (the single authored constant — the
-  // body height keeps its top below it; see config.js). The approach terrace is
-  // a plain-jump step up (42px), and from it the overpass (62px higher) sits
-  // inside the arc's fat middle: floor -> approach -> overpass -> drop past.
-  const overpass = { x: x0 + 250, y: THREATS.BOSS_PASS_Y, w: 320 };
-  const approach = { x: x0 + 130, y: BAND.FLOOR_Y - 42, w: 110 };
+// THE FINALE (V1e, docs/briefs/V1E_ESCAPE_FINALE.md): the corridor ENDS at
+// the boss. The ground route is the boss's ground — the floor runs straight
+// under its body, and walking into the body is the soft 'caught' — while the
+// way past is the authored UPPER LEVEL: floor -> approach terrace (a 42px
+// step) -> overpass OVER the body -> drop to the portal beyond. Both hops
+// are the owner's OWN mechanism from the V1 brief — the invisible JUMP BOX
+// (an auto-only trigger band firing at an authored x) with the speed FUDGE
+// (the window clamp) — re-used, not re-invented, and verified by the SAME
+// invariant as every gap: at vMin the arc lands inside the upper platform,
+// at vMax it does not overshoot (checkTrigger's `up` branch).
+//
+// Authored offsets from x0 (all integer pixels; heights 42 and 62 sit inside
+// the arc's usable window — upHopT re-derives the crossings):
+//   floor     [0, 900)  approach-flagged (the boss never tears its own ground)
+//   band 1    fire 64   floor -> terrace,  land window [186, 213) c terrace [154, 264)
+//   terrace   [154, 264)  y 210
+//   band 2    fire 232  terrace -> overpass, land window [338, 362) c overpass [314, 634)
+//   overpass  [314, 634)  y 148 (THREATS.BOSS_PASS_Y — the single authored constant)
+//   boss      x 474     body [432, 516) centered UNDER the overpass
+//   drop      634 -> ~725 (a 104px fall at 200px/s carries ~91px)
+//   portal    760       on the floor, breathing room to x1 = 900
+function finaleSegment(x0) {
+  const run = 900;
+  const floor = { x: x0, y: BAND.FLOOR_Y, w: run, approach: true };
+  const terrace = { x: x0 + 154, y: BAND.FLOOR_Y - 42, w: 110 };
+  const overpass = { x: x0 + 314, y: THREATS.BOSS_PASS_Y, w: 320 };
+  const [vMin, vMax] = SPEED.std;
   return {
-    kind: 'boss', tier, x0, x1: x0 + run,
-    plats: [
-      { x: x0, y: BAND.FLOOR_Y, w: run, approach: true },
-      approach, overpass,
+    kind: 'boss', finale: true, tier: 3, x0, x1: x0 + run,
+    plats: [floor, terrace, overpass],
+    gaps: [],
+    triggers: [
+      { x0: x0 + 64, x1: x0 + 64 + BAND_W, vMin, vMax, seg: x0, up: true, land: terrace },
+      { x0: x0 + 232, x1: x0 + 232 + BAND_W, vMin, vMax, seg: x0, up: true, land: overpass },
     ],
-    gaps: [], triggers: [],   // NO triggers in the boss beat (by design)
-    bossX: x0 + 430, bossPlat: overpass,
-    bossApproachX: approach.x, bossApproachY: approach.y,
-    bossApproachW: approach.w, bossOverpassX: overpass.x,
+    bossX: x0 + 474, bossPlat: overpass,
+    bossApproachX: terrace.x, bossApproachY: terrace.y,
+    bossApproachW: terrace.w, bossOverpassX: overpass.x,
   };
 }
 
@@ -197,21 +220,29 @@ export function tierAt(frac) {
 
 // ---- generate ---------------------------------------------------------------
 // Deterministic in the seed. Total length is bounded by the pacing target:
-// L between MIN_SECONDS and MAX_SECONDS of NOMINAL_SPEED travel.
+// L between MIN_SECONDS and MAX_SECONDS of NOMINAL_SPEED travel. The finale
+// is RESERVED out of the loop budget (V1e): the corridor always ENDS at the
+// boss + upper level + portal, never a random tail.
+const FINALE_RESERVE = 900;
 export function generateCorridor(seed) {
   const rng = mulberry32(seed);
   const targetL = PACING.MIN_SECONDS * PACING.NOMINAL_SPEED +
     rng() * (PACING.MAX_SECONDS - PACING.MIN_SECONDS) * PACING.NOMINAL_SPEED;
   const segs = [];
   let x = 0;
-  let sawBoss = false;
-  // The first segment is always flat (the warm-up's learning floor).
-  segs.push(flatSegment(0, 0, rng)); x = segs[0].x1;
-  while (x < targetL) {
+  // The first segment is always flat (the warm-up's learning floor), and a
+  // PRE-CORRIDOR floor runs 260px behind x=0 (approach-flagged: the boss never
+  // tears it). The camera at t=0 looks 150px behind the runner — without this
+  // floor there is NO ground in the off-screen band at the start, and the
+  // horde floor's spawner starves (measured: chasersMin dipped to 0 for the
+  // first ~2s of every seed). The horde starts hunted, from step 1.
+  segs.push(flatSegment(0, 0, rng));
+  segs[0].plats.unshift({ x: -260, y: BAND.FLOOR_Y, w: 260, approach: true });
+  x = segs[0].x1;
+  while (x < targetL - FINALE_RESERVE) {
     const frac = x / targetL;
-    const { tier, boss } = tierAt(frac);
-    if (boss && !sawBoss) { segs.push(bossSegment(x, tier, rng)); sawBoss = true; }
-    else if (frac >= 0.66) segs.push(flatSegment(x, tier, rng));          // final sprint: simplest terrain, max pressure
+    const { tier } = tierAt(frac);
+    if (frac >= 0.66) segs.push(flatSegment(x, tier, rng));          // final sprint: simplest terrain, max pressure
     else if (tier === 0) segs.push(rng() < 0.34 ? gapSegment(x, 0, { rng }) : flatSegment(x, 0, rng));
     else if (tier === 1) {
       const r = rng();
@@ -225,14 +256,15 @@ export function generateCorridor(seed) {
     }
     x = segs[segs.length - 1].x1;
   }
-  // The exit portal sits at the end, on a final flat with breathing room.
-  const tail = flatSegment(x, 3, rng);
-  segs.push(tail);
-  const bossSeg = segs.find(s => s.kind === 'boss') || null;
+  // V1e: the corridor ENDS at the boss — the finale's upper level is the way
+  // over it to the portal (see finaleSegment above).
+  const finale = finaleSegment(x);
+  segs.push(finale);
+  const bossSeg = finale;
   return {
     seed, targetL, segs,
-    length: tail.x1,
-    portalX: tail.x1 - 140,
+    length: finale.x1,
+    portalX: finale.x1 - 140,
     bossX: bossSeg ? bossSeg.bossX : null,
     bossPlat: bossSeg ? bossSeg.bossPlat : null,
     bossSegX0: bossSeg ? bossSeg.x0 : null,
@@ -263,6 +295,32 @@ export function triggersOf(corridor) {
 // MARGIN; the arc at vMax must land >= MARGIN inside the landing platform.
 // Deterministic over the geometry alone.
 export function checkTrigger(trigger, plats, gaps) {
+  // The UP-HOP branch (V1e finale): a band with `up` + `land` fires from one
+  // platform onto a HIGHER one — no gap involved. The invariant is the same
+  // statement as the gap branch in up-hop form: the arc at the speed-window
+  // FLOOR must land INSIDE the upper platform (>= MARGIN past its near edge,
+  // on the descending crossing — land-from-above is the sim's only landing)
+  // and at the CEILING must not overshoot its far edge.
+  if (trigger.up) {
+    const appr = plats.filter(p => p.x <= trigger.x0 + 1 && p.x + p.w >= trigger.x0)
+      .sort((a, b) => a.y - b.y)[0] || null;
+    if (!appr) return { ok: false, why: 'no platform under the up-hop fire line' };
+    const land = trigger.land;
+    const h = appr.y - land.y;
+    if (h <= 0 || h > 80 - 16) {
+      return { ok: false, why: `up-hop height ${h} outside the arc (apex 80px, 16px safety)` };
+    }
+    const t = upHopT(h);
+    const lo = trigger.x0 + t * trigger.vMin;
+    const hi = trigger.x0 + t * trigger.vMax;
+    if (lo < land.x + MARGIN) {
+      return { ok: false, why: `floor arc lands ${Math.round(lo)} short of the upper platform near edge ${land.x} (+${MARGIN})` };
+    }
+    if (hi > land.x + land.w - MARGIN) {
+      return { ok: false, why: `ceiling arc lands ${Math.round(hi)} past the upper platform far edge ${land.x + land.w} (-${MARGIN})` };
+    }
+    return { ok: true, gap: null, land };
+  }
   // The gap this trigger serves: the first gap whose left edge is ahead of
   // the fire line.
   const gap = gaps.filter(g => g.x >= trigger.x0 - 0.5).sort((a, b) => a.x - b.x)[0] || null;
