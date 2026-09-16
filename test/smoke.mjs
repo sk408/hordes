@@ -144,8 +144,14 @@ const dtMs = 1000 / 60;
   assert(elements['ov-title'].textContent === 'HOW TO PLAY',
     'fresh START GAME must show HOW TO PLAY before the run');
   // The point of the game (ovSub lead line) + both control schemes (cards).
+  // MANUAL v2 (2026-09-16): the reference is paginated — collect the whole
+  // manual through the real page seam before asserting on its content.
   const htSub = elements['ov-sub'].innerHTML;
-  const htHtml = Array.from(cards0.children).map(c => c.innerHTML || '').join('');
+  let htHtml = '';
+  for (let p = 1; p <= 4; p++) {
+    mainMod.__TEST.manual.goto(p);
+    htHtml += Array.from(cards0.children).map(c => c.innerHTML || '').join('');
+  }
   assert(/auto-fights/.test(htSub) && /draft weapons/.test(htSub),
     'the one-line point of the game must lead the overlay');
   assert(/joystick/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&

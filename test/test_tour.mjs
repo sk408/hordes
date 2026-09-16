@@ -371,11 +371,18 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
 
   // REPLACEMENT 2: HOW TO PLAY is a real title card, opens the reference
   // screen, and returns to the title through its own GOT IT.
+  // MANUAL v2 (2026-09-16): the reference is paginated — page 3 is ONE merged
+  // YOUR CONTROLS card teaching BOTH input schemes as subheads (the separate
+  // TOUCH / KEYBOARD cards are retired).
   const htp = cardTitled('HOW TO PLAY');
   assert.ok(htp, 'HOW TO PLAY card present on the title');
   htp.click();
-  assert.ok(cardTitled('TOUCH') && cardTitled('KEYBOARD'),
-    'the how-to screen teaches BOTH input schemes');
+  T.manual.goto(3);
+  const ctlCard = cardTitled('YOUR CONTROLS');
+  assert.ok(ctlCard, 'the how-to screen carries the merged YOUR CONTROLS card');
+  const ctlHtml = (ctlCard._html || ctlCard.innerHTML || '');
+  assert.ok(/TOUCH CONTROLS/.test(ctlHtml) && /KEYBOARD CONTROLS/.test(ctlHtml),
+    'the how-to card teaches BOTH input schemes');
   cardTitled('GOT IT').click();
   assert.equal(st.mode, 'title', 'GOT IT returns to the title');
   settleReveal();

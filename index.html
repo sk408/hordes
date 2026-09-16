@@ -150,14 +150,17 @@
   /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
      formatting of the how to play screen, at least on mobile. It's hard to
      read the text because of the narrow width and it wraps"). The reference
-     screen is a DOCUMENT, not a tip: showHowToPlay puts .howto on #overlay
-     and .ref on its three reference cards, and ONLY those get the wide
+     screen is a DOCUMENT, not a tip: the manual puts .howto on #overlay
+     and .ref on its reference cards, and ONLY those get the wide
      readable panel — every other menu (and the KEPT coachmark #tour-tip
      cards, 1-2 lines each) keeps the compact box. Rows are TWO COLUMNS:
      purpose left (may wrap), trigger right (white-space: nowrap — a key
      name never splits mid-token). The body scrolls INTERNALLY so nothing is
-     ever clipped, and GOT IT is a >=44px sticky card so it is never pushed
-     out of reach. Geometry measured live by tools/verify_help_mobile.mjs. */
+     ever clipped. MANUAL v2 (owner 2026-09-16, portrait phone: "the card
+     doesn't show on the screen. It's cut off"): the screen is PAGINATED
+     (four pages, one ref card per page) and GOT IT is a FLOW footer card in
+     the layout — the sticky version pinned itself over the scrolling body.
+     Geometry measured live by tools/verify_help_mobile.mjs. */
   #overlay.howto .cards { width: 100%; }
   #overlay.howto .card.ref {
     box-sizing: border-box;
@@ -173,8 +176,22 @@
   #overlay.howto .rl { flex: 1 1 auto; text-align: left; }
   #overlay.howto .rv { flex: 0 0 auto; white-space: nowrap; color: #ffd75e;
     text-align: right; }
+  /* The LIVE callout value is several short tokens ('AUTO_ALL · NEAREST ·
+     BALANCED') — it may wrap BETWEEN tokens (never mid-token: the browser
+     never breaks at a non-space) so a 320px phone never overflows the row. */
+  #overlay.howto .rv.wrap { white-space: normal; flex: 0 1 auto; min-width: 0; }
+  /* MANUAL v2 subheads inside the ONE CONTROLS card (the retired TOUCH /
+     KEYBOARD cards live on as section headings, input-path-ordered). */
+  #overlay.howto .subhead {
+    margin: 12px 0 4px; font-size: 12px; letter-spacing: 2px; color: #ffd75e;
+    border-bottom: 1px solid #4a4a5e; padding-bottom: 3px;
+  }
+  #overlay.howto .subhead:first-child { margin-top: 0; }
+  /* GOT IT: a FLOW footer (manual v2) — an ordinary card at the end of the
+     stack, never sticky over the scrolling body. The 44px touch floor
+     stays. */
   #overlay.howto .card.gotit {
-    position: sticky; bottom: 2px; min-height: 44px; box-sizing: border-box;
+    min-height: 44px; box-sizing: border-box;
     width: 100%; max-width: 560px;
     display: flex; align-items: center; justify-content: center;
   }
@@ -386,6 +403,33 @@
     color: #b8e0ff; background: rgba(74,74,106,0.4);
     border: 1px solid #4a4a6a; border-radius: 3px;
   }
+  /* POTION VIALS (owner 2026-09-16: "we need some way for the player to know
+     the HP and mana buttons are potions"). Pixel-art vial AHEAD of the label,
+     same slot discipline as .key above: INLINE in the label's 16.9px line
+     box with its own fixed 12x16px box, so no pad dimension can change (the
+     H1 no-reflow contract) and the badge's reserved box is never touched.
+     DRAWN WITH THE COG MECHANISM (pure CSS box-shadow pixels on a 2px grid,
+     no image assets): cork + neck + body from one 2x2 base pixel and its
+     shadow map; the liquid is the --liq custom property so the two variants
+     read as DIFFERENT drinks at a glance — health red, mana blue. */
+  #touch .potion {
+    display: inline-block; position: relative; width: 12px; height: 16px;
+    margin-right: 3px; vertical-align: -2px;
+  }
+  #touch .potion::before {        /* base pixel = cork top-left; map below */
+    content: ''; position: absolute; left: 4px; top: 0; width: 2px; height: 2px;
+    background: #c9c9d6;
+    box-shadow:
+      0 2px 0 #c9c9d6,
+      0 4px 0 var(--liq), 2px 4px 0 var(--liq),
+      -2px 6px 0 var(--liq), 0 6px 0 var(--liq), 2px 6px 0 var(--liq), 4px 6px 0 var(--liq),
+      -2px 8px 0 #ffffff, 0 8px 0 var(--liq), 2px 8px 0 var(--liq), 4px 8px 0 var(--liq),
+      -2px 10px 0 var(--liq), 0 10px 0 var(--liq), 2px 10px 0 var(--liq), 4px 10px 0 var(--liq),
+      -2px 12px 0 var(--liq), 0 12px 0 var(--liq), 2px 12px 0 var(--liq), 4px 12px 0 var(--liq),
+      -2px 14px 0 #c9c9d6, 0 14px 0 #c9c9d6, 2px 14px 0 #c9c9d6, 4px 14px 0 #c9c9d6;
+  }
+  #touch .potion.hp { --liq: #ff5a5a; }   /* health: red */
+  #touch .potion.mp { --liq: #5aa8ff; }   /* mana: blue */
   /* WAVE-17 SETTINGS COG (Sk408): small pixel gear, top-right of the touch
      layer — screen chrome, kept OUT of the bottom thumb zone. Opens the
      in-run SETTINGS pause screen (main.js openSettings: same pause contract
@@ -508,8 +552,8 @@
     <div class="pad right">
       <button data-act="q"><span class="key">[Q]</span><span id="q-skill">FROST</span><span class="badge" id="tc-q">RDY</span></button>
       <button data-act="w"><span class="key">[E]</span>OVER<span class="badge" id="tc-w">RDY</span></button>
-      <button data-act="h">HP<span class="badge" id="tc-h">1</span></button>
-      <button data-act="n">MP<span class="badge" id="tc-n">1</span></button>
+      <button data-act="h"><span class="potion hp" aria-hidden="true"></span>HP<span class="badge" id="tc-h">1</span></button>
+      <button data-act="n"><span class="potion mp" aria-hidden="true"></span>MP<span class="badge" id="tc-n">1</span></button>
     </div>
     <button class="cog" id="tc-cog" data-act="settings" aria-label="settings"><span class="cog-gear"></span>SETTINGS</button>
     <button class="cog help" id="tc-help" data-act="help" aria-label="controls">HELP</button>

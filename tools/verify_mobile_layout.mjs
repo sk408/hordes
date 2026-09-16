@@ -39,6 +39,7 @@ const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); 
 
 const MEASURE = `(async () => {
   const T = (await import('./src/main.js')).__TEST;
+  const { introLine, CONTROLS } = await import('./src/controls_ref.js');
   const px = (v) => Math.round(v * 100) / 100;
   const box = (el) => { const r = el.getBoundingClientRect();
     return { x: px(r.left), y: px(r.top), r: px(r.right), b: px(r.bottom), w: px(r.width), h: px(r.height) }; };
@@ -62,6 +63,17 @@ const MEASURE = `(async () => {
     // 1.6:1, where the width-limited height is the largest field possible.
     floor: px(Math.min(0.55 * vh, vw / 1.6)),
     canvasPosition: document.getElementById('game').style.position || '(flex centred)',
+    // DEVICE WORDING (2026-09-16): this tool genuinely derives touch state
+    // from the device (CDP), but it used to measure GEOMETRY only and never
+    // read the panel — which is precisely how a green suite and a passing
+    // phone-verifier coexisted with a phone being taught keyboard keys.
+    // Record the wording the device produces: the live hint strip's text
+    // (when one is up) and every introLine the per-control layer would
+    // render at this device's touch-path read.
+    touchPath: T.onboarding.touchPath(),
+    stripText: (() => { const el = document.getElementById('hint-strip');
+      return (el && visible(el)) ? el.textContent : null; })(),
+    introLines: CONTROLS.map(c => introLine(c.id, T.onboarding.touchPath())),
   };
   rec.aspect = px(cv.w / cv.h);
   // Every LIVE chrome element, iterated (a future button is caught
@@ -208,6 +220,26 @@ for (const [w, h] of SIZES.map(([w, h]) => [w, h])) {
   const b3 = BEFORE[key].r3;
   check(tag + ' touch layer is LIVE (#touch.' + r.touchClass + ', display ' + r.touchDisplay + ')',
     r.touchClass.includes('on') && r.touchDisplay !== 'none', r.touchClass);
+  // ---- DEVICE WORDING (2026-09-16): the panel the device actually gets ----
+  // Every intro line the per-control layer renders at this device's
+  // touch-path read: no keyboard token (TAB/WASD/ESC/H/N/Q/E/I), at least
+  // one touch-control name, the class write agreeing with the CSS signal,
+  // and the LIVE strip (when one is up) just as clean.
+  {
+    const tok = (k) => new RegExp('(^|[^A-Z])' + k + '([^A-Z]|$)');
+    const KEY = ['TAB', 'WASD', 'ESC', 'H', 'N', 'Q', 'E', 'I'];
+    const NAMES = ['PILOT', 'FOCUS', 'STANCE', 'STATS', 'MAP', 'RADAR', 'OVER', 'HP', 'MP', 'SETTINGS'];
+    const bad = [];
+    for (const l of r.introLines) for (const k of KEY) if (tok(k).test(l)) bad.push(k + ' in "' + l + '"');
+    check(tag + ' the device wording follows the DEVICE: no key token in any intro line, touch names present',
+      r.touchPath === true && bad.length === 0 &&
+      r.introLines.some(l => NAMES.some(n => tok(n).test(l))),
+      { touchPath: r.touchPath, bad });
+    if (r.stripText) {
+      const sb = KEY.filter(k => tok(k).test(r.stripText));
+      check(tag + ' the LIVE hint strip reads touch-worded ("' + r.stripText + '")', sb.length === 0, sb);
+    }
+  }
   check(tag + ' run is live and advancing (t=' + r.time + 's)', r.mode === 'playing' && a.playing && a.advancing && r.time > 1, r.time);
   // ---- R4 priority 1 (HARD): the canvas is always usable ----
   check(tag + ' canvas present at 480x300 aspect (' + r.aspect + ')' + (b3 ? ' [r3 BEFORE: ' + b3.w + 'x' + b3.h + 'px]' : ''),
@@ -243,6 +275,15 @@ for (const [w, h] of SIZES.map(([w, h]) => [w, h])) {
     d.canvasPosition === '(flex centred)' && d.canvas.w === 1280 && d.canvas.h === 800 &&
     Math.abs(d.canvas.y - (800 - d.canvas.h) / 2) <= 1,
     { canvas: d.canvas, position: d.canvasPosition });
+  // DEVICE WORDING, desktop arm: the keyboard table survives the device
+  // work — key tokens present, no touch-control names, cog-only class.
+  const tok = (k) => new RegExp('(^|[^A-Z])' + k + '([^A-Z]|$)');
+  const NAMES = ['PILOT', 'FOCUS', 'STANCE', 'STATS', 'MAP', 'RADAR', 'OVER', 'HP', 'MP', 'SETTINGS'];
+  const strayNames = NAMES.filter(n => d.introLines.some(l => tok(n).test(l)));
+  check('1280x800 desktop: keyboard wording (keys named, no touch-control names)',
+    d.touchPath === false && d.touchClass.includes('cog-only') &&
+    d.introLines.some(l => tok('TAB').test(l)) && strayNames.length === 0,
+    { touchPath: d.touchPath, touchClass: d.touchClass, strayNames });
 }
 const allErrors = [...SIZES.map(([w, h]) => phones[w + 'x' + h].errors), desktop.errors].flat();
 check('no console errors in any arm', allErrors.length === 0, allErrors);

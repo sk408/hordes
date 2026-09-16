@@ -157,7 +157,13 @@ S.check('the object explainers come from THE FIELD reference rows (parity)', () 
   const byTitle = (t) => [...elements['ov-cards'].children]
     .find(c => (c.innerHTML || '').includes(t));
   byTitle('HOW TO PLAY').click(); pump(2);
-  const refHtml = [...elements['ov-cards'].children].map(c => c.innerHTML || '').join('\n');
+  // MANUAL v2 (2026-09-16): the reference is paginated — THE FIELD rows live
+  // on page 4, so the parity sweep collects ALL pages through the page seam.
+  let refHtml = '';
+  for (let p = 1; p <= 4; p++) {
+    T.manual.goto(p);
+    refHtml += [...elements['ov-cards'].children].map(c => c.innerHTML || '').join('\n') + '\n';
+  }
   T.startRun(); pump(3); quietField();
   key('keydown', { key: '?', preventDefault() {} });
   st.shrines.length = 0;

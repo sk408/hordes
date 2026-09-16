@@ -40,7 +40,15 @@ export const HINT_FADE_S = 5.5;
 // clamped fully inside the container (4px inset) so a 480x300 embed can
 // never clip it — the tour's own embed lesson (tour.js _layout) applied to
 // the hint strip. PURE: rects in, rect out.
-export function layoutStrip(cRect, w, h, avoidRects = []) {
+//
+// VIEWPORT CLAMP (owner 2026-09-16, msg_01M2P2714VDKY07BBWWCX3G7CC: "text
+// runs past the right edge"): the letterboxed game container can be WIDER
+// than a narrow phone's viewport (AUTO fit floors at 1 on short edges, and
+// PIXEL-PERFECT/forced modes floor at min 1 too — the container legally
+// overflows both sides). A strip clamped only into the CONTAINER can then
+// land its right edge off-screen. vpRect (optional, viewport coords) clamps
+// the result a second time, INTO THE VIEWPORT (4px inset).
+export function layoutStrip(cRect, w, h, avoidRects = [], vpRect = null) {
   const hit = (r) => avoidRects.some(a =>
     r.left < a.right + 4 && r.right > a.left - 4 &&
     r.top < a.bottom + 4 && r.bottom > a.top - 4);
@@ -55,11 +63,13 @@ export function layoutStrip(cRect, w, h, avoidRects = []) {
     const r = { left: c.left, top: c.top, right: c.left + w, bottom: c.top + h };
     if (!hit(r)) { pick = c; break; }
   }
-  return {
-    left: Math.max(cRect.left + 4, Math.min(cRect.right - w - 4, pick.left)),
-    top: Math.max(cRect.top + 4, Math.min(cRect.bottom - h - 4, pick.top)),
-    width: w, height: h,
-  };
+  let left = Math.max(cRect.left + 4, Math.min(cRect.right - w - 4, pick.left));
+  let top = Math.max(cRect.top + 4, Math.min(cRect.bottom - h - 4, pick.top));
+  if (vpRect) {
+    left = Math.max(Math.min(left, vpRect.right - w - 4), vpRect.left + 4);
+    top = Math.max(Math.min(top, vpRect.bottom - h - 4), vpRect.top + 4);
+  }
+  return { left, top, right: left + w, bottom: top + h, width: w, height: h };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +129,7 @@ export class HintStrip {
       // invariant: the strip can never eat a tap a movement key or a joystick
       // drag — everything passes through to the canvas under it.
       el.style.cssText =
-        'position:absolute;pointer-events:none;z-index:60;' +
+        'position:absolute;pointer-events:none;z-index:60;box-sizing:border-box;' +
         'max-width:280px;padding:5px 10px;font-size:11px;letter-spacing:1px;' +
         'color:#e8e8f4;background:rgba(6,6,12,0.82);border:1px solid #6a6a7c;';
     }
@@ -134,17 +144,31 @@ export class HintStrip {
     let cRect;
     try { cRect = this.anchor(); } catch { return; }
     if (!cRect) return;
-    const w = Math.min(280, (cRect.width || 480) - 8);
-    const h = 24;
+    // VIEWPORT CAP (owner 2026-09-16: "runs past the right edge"): the strip
+    // WIDTH itself is capped to the viewport, so the text wraps INSIDE the
+    // phone screen instead of running past its edge. And the height is
+    // MEASURED from the laid-out element — a wrapped strip is two lines tall
+    // and the old fixed h=24 lied about it (mid-sentence clipping).
+    const de = this.doc && this.doc.documentElement;
+    const vw = de ? de.clientWidth : 0;
+    const vh = de ? de.clientHeight : 0;
+    const hasVp = Number.isFinite(vw) && vw > 0 && Number.isFinite(vh) && vh > 0;
+    let w = Math.min(280, (cRect.width || 480) - 8);
+    if (hasVp) w = Math.min(w, vw - 8);
+    let h = 24;
+    if (this.el.offsetHeight > 0) h = this.el.offsetHeight;
+    else if (this.el.scrollHeight > 0) h = this.el.scrollHeight;
     let avoid = [];
     try { avoid = this.avoid() || []; } catch { avoid = []; }
-    const r = layoutStrip(cRect, w, h, avoid);
+    const vp = hasVp ? { left: 0, top: 0, right: vw, bottom: vh, width: vw, height: vh } : null;
+    const r = layoutStrip(cRect, w, h, avoid, vp);
     if (this.el.style) {
       // NaN-safe (display bug 2026-09-16): 'NaNpx' is dropped by the browser
       // and the strip falls below the fold, clipped — never write it.
       if (Number.isFinite(r.left) && Number.isFinite(r.top)) {
         this.el.style.left = r.left + 'px';
         this.el.style.top = r.top + 'px';
+        this.el.style.width = w + 'px';
       }
     }
   }

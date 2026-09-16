@@ -52,12 +52,16 @@ s.check('START GAME on a fresh profile shows the reference gate BEFORE the run',
   }
   if (st.mode === 'playing') throw new Error('the gate must precede the run, not interrupt one');
 });
-s.check('the gate is the real reference (TOUCH / KEYBOARD / THE FIELD + GOT IT, one source)', () => {
-  const h = cards().map(c => c.innerHTML || '').join('');
-  for (const t of ['>TOUCH<', '>KEYBOARD<', '>THE FIELD<', '>GOT IT<']) {
+s.check('the gate is the real reference (the manual pages + GOT IT, one source)', () => {
+  // MANUAL v2 (2026-09-16): the reference is paginated — the check walks all
+  // four pages and collects the whole manual. The retired TOUCH / KEYBOARD
+  // cards live on as the merged CONTROLS page's subheads.
+  let h = '';
+  for (let p = 1; p <= 4; p++) { T.manual.goto(p); h += cards().map(c => c.innerHTML || '').join(''); }
+  for (const t of ['>KEYBOARD CONTROLS<', '>TOUCH CONTROLS<', '>THE FIELD<', '>GOT IT<']) {
     if (!h.includes(t)) throw new Error('gate lost ' + t);
   }
-  // parity: every canonical row is on the gate screen (no forked copy).
+  // parity: every canonical row is on the gate manual (no forked copy).
   const onComposite = new Set(['potion-hp', 'potion-mp', 'stats']);
   for (const c of CONTROLS) {
     if (onComposite.has(c.id)) continue;

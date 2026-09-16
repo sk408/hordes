@@ -96,24 +96,32 @@ export async function boot(opts = {}) {
 
   // Event handlers the game registers (routed by type, smoke.mjs precedent).
   const handlers = {};
-  // DEVICE surface (help-mode wording, later the first-class device work):
-  // opts.device='touch' sets the REAL browser tells together — ontouchstart,
-  // navigator.maxTouchPoints, matchMedia coarse — BEFORE main.js loads, so
-  // the game derives its own touch class. Tests never set a game flag by
-  // hand; that is how device bugs survive green suites.
-  const touchDevice = opts.device === 'touch';
-  if (touchDevice) {
+  // DEVICE surface (first-class device input, 2026-09-16): opts.device sets
+  // the REAL browser tells TOGETHER, before main.js loads, so the game
+  // derives its own touch class — no test may set the layer's class by hand
+  // afterwards (a stub that sets derived state is how device bugs survive
+  // green suites). Three profiles:
+  //   'touch'       ontouchstart + maxTouchPoints 5 + coarse pointer  (a phone)
+  //   'coarse-only' coarse pointer, NO touch events, maxTouchPoints 0 (the
+  //                 residual class: pads revealed by the CSS coarse media
+  //                 while the JS used to think keyboard)
+  //   'desktop'     fine pointer, no touch tells                    (default)
+  const device = opts.device || 'desktop';
+  const touchDevice = device === 'touch';
+  const coarse = device !== 'desktop';
+  if (device !== 'desktop') {
     // Node 22 ships a getter-only navigator global — define over it.
     try { delete globalThis.navigator; } catch { /* not defined yet */ }
     Object.defineProperty(globalThis, 'navigator',
-      { value: { maxTouchPoints: 5, userAgent: 'harness touch device' }, configurable: true });
+      { value: { maxTouchPoints: touchDevice ? 5 : 0, userAgent: 'harness ' + device + ' device' },
+        configurable: true });
   }
   globalThis.window = {
     addEventListener: (ev, cb) => { handlers[ev] = cb; },
     removeEventListener: noop,
     innerWidth: 480, innerHeight: 300,
     ...(touchDevice ? { ontouchstart: {} } : {}),
-    matchMedia: (q) => ({ matches: touchDevice && /coarse|hover:\s*none/.test(String(q)),
+    matchMedia: (q) => ({ matches: coarse && /coarse|hover:\s*none/.test(String(q)),
       addEventListener: noop, addListener: noop }),
   };
 

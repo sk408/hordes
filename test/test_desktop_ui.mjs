@@ -218,8 +218,12 @@ const chromeHidden = () => touchLayer.style.display === 'none';
     assert(howto, 'the in-run SETTINGS must offer HOW TO PLAY');
     howto.click();                         // menuCard guard inert: help mode off
     pump(2);
-    const kb = byCard('KEYBOARD');
-    assert(kb, 'the reference must carry the KEYBOARD card');
+    // MANUAL v2 (2026-09-16): the reference is paginated — the compact key
+    // list lives on page 3's merged YOUR CONTROLS card (subheads, no
+    // separate cards). Built live at open time, same as before.
+    T.manual.goto(3); pump(1);
+    const kb = byCard('YOUR CONTROLS');
+    assert(kb, 'the reference must carry the YOUR CONTROLS card');
     return kb.innerHTML || '';
   };
   const closeRef = () => { key('Escape'); pump(1); assert(st.mode === 'playing', 'ESC from the reference resumes the run'); };
@@ -250,7 +254,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   assert(/I stats/.test(html) && !/S \/ I stats/.test(html),
     'an AUTO swap must render the AUTO list back');
   closeRef();
-  console.log('compact key list: the reference KEYBOARD card renders AUTO/MANUAL variants at open time');
+  console.log('compact key list: the YOUR CONTROLS page renders AUTO/MANUAL variants at open time');
 }
 
 // ---- 3. EVOLVE CARD LABELS ----------------------------------------------

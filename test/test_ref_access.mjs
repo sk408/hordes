@@ -58,8 +58,13 @@ s.check('in-run SETTINGS opens the SAME reference; GOT IT returns to the LIVE ru
   assert(entry, 'the in-run SETTINGS screen must offer HOW TO PLAY');
   entry.click();
   assert(title() === 'HOW TO PLAY', 'the entry opens the reference (got ' + title() + ')');
-  assert(byTitle('TOUCH') && byTitle('KEYBOARD') && byTitle('THE FIELD'),
-    'the SAME reference cards (no forked copy)');
+  // MANUAL v2 (2026-09-16): the reference is paginated — the SAME manual
+  // (merged CONTROLS page + THE FIELD page), reached through the real page
+  // seam (no forked copy).
+  T.manual.goto(3);
+  assert(byTitle('YOUR CONTROLS'), 'the merged CONTROLS page is here');
+  T.manual.goto(4);
+  assert(byTitle('THE FIELD'), 'THE FIELD page is here');
   assert(st.mode !== 'playing', 'the reference pauses the run (mode ' + st.mode + ')');
 
   // GAMEPLAY INPUT MUST NOT DISMISS (failure mode c): movement, skills,
@@ -104,8 +109,10 @@ s.check('the touch cog routing alone reaches the reference mid-run (no keyboard 
   const entry = byTitle('HOW TO PLAY');
   assert(entry, 'the HOW TO PLAY entry is a TAP TARGET on the touch path too');
   entry.click();
-  assert(title() === 'HOW TO PLAY' && byTitle('TOUCH'),
-    'a phone player reads the touch-worded reference mid-run');
+  assert(title() === 'HOW TO PLAY', 'the touch path opens the manual mid-run');
+  T.manual.goto(3);
+  assert(/TOUCH CONTROLS/.test(byTitle('YOUR CONTROLS').innerHTML || ''),
+    'a phone player reads the touch-worded controls page mid-run');
   byTitle('GOT IT').click();
   assert(st.mode === 'playing', 'GOT IT returns to the fight from the touch path');
 });
@@ -127,6 +134,7 @@ s.check('death screen: HOW TO PLAY card opens the reference, GOT IT returns HERE
   const endRef = byTitle('HOW TO PLAY');
   assert(endRef, 'the death screen must offer HOW TO PLAY');
   endRef.click();
+  T.manual.goto(4);
   assert(title() === 'HOW TO PLAY' && byTitle('THE FIELD'),
     'same reference, opened from the death screen');
   byTitle('GOT IT').click();
@@ -190,7 +198,9 @@ s.check('the title settings door also opens it (and returns to the title)', () =
 s.check('the canonical control list: every authored control is NAMED in the reference', () => {
   byTitle('HOW TO PLAY').click();
   assert(title() === 'HOW TO PLAY', 'reference open for the canonical sweep');
-  const refHtml = cards().map(c => c.innerHTML || '').join('\n');
+  // MANUAL v2: the sweep collects ALL FOUR pages through the real page seam.
+  let refHtml = '';
+  for (let p = 1; p <= 4; p++) { T.manual.goto(p); refHtml += cards().map(c => c.innerHTML || '').join('\n') + '\n'; }
 
   // The game's own ACTION TABLE: every data-act authored on the touch layer,
   // harvested live from index.html. The map below is this test's inventory of
@@ -220,14 +230,20 @@ s.check('the canonical control list: every authored control is NAMED in the refe
 });
 
 s.check('object MEANINGS, not just names (chest / portal / arch / shrine / potions)', () => {
-  const refHtml = cards().map(c => c.innerHTML || '').join('\n');
+  // MANUAL v2: same page walk — objects live on THE FIELD, potions on
+  // CONTROLS; neither page alone carries both.
+  let refHtml = '';
+  for (let p = 1; p <= 4; p++) { T.manual.goto(p); refHtml += cards().map(c => c.innerHTML || '').join('\n') + '\n'; }
   for (const tok of ['chests', 'portal', 'arches', 'shrines']) {
     assert(refHtml.includes(tok), 'the reference must list ' + tok);
   }
   // Potions must say WHAT they restore (owner named them among the objects).
-  const pot = /potions[^<]*restore/i.test(refHtml) || /restore[^<]*potions/i.test(refHtml);
-  assert(pot, 'the potions row must say what HP / MP restore (got: ' +
-    (refHtml.match(/potions[^<]*/i) || ['none'])[0] + ')');
+  // POTION ICONS retarget (2026-09-16): the single combined
+  // 'potions — restore health / mana' row became TWO per-potion rows (owner:
+  // the HP/MP rows must use the word "potion" and say what each restores).
+  const pot = /health potion[^<]*restor/i.test(refHtml) && /mana potion[^<]*restor/i.test(refHtml);
+  assert(pot, 'the potion rows must say what HP / MP restore (got: ' +
+    (refHtml.match(/potion[^<]*/i) || ['none'])[0] + ')');
 });
 
 // ---- 8. failure mode (c): the ambient layer can never eat a tap ------------------

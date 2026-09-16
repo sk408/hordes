@@ -218,9 +218,12 @@ st.player.mana = 0;   // both skills UNREADY: the skill moment has not arrived
 }
 
 // ---- RUN 2: the boss gate FIRST (fresh run => the pacing clock reset), then
-// mobile wording + the demonstrated control stays retired -------------------------
+// the demonstrated control stays retired. RETARGETED (device work,
+// 2026-09-16): this block stays on the file's DESKTOP boot — the touch
+// layer's class is never set by hand anymore; the mobile-wording check
+// moved to its own TOUCH DEVICE boot below (a second boot replaces the DOM
+// globals, so it must come after every pump of this one).
 {
-  elements['touch'].classList.add('on');   // the touch layer is the live path read
   leg();
   st.player.mana = 0;   // skills unready: the armed queue is potions/map only
 
@@ -247,15 +250,6 @@ st.player.mana = 0;   // both skills UNREADY: the skill moment has not arrived
   s.check('the waiting hint displays once the boss fight ends', () => {
     assert.ok(after, 'nothing displayed within 15s of the boss dying');
   });
-
-  // 5. MOBILE WORDING: with the touch layer on, the hint names the TOUCH
-  // control — the HP moment returns and the line must read "HP: ...".
-  st.player.hp = st.player.stats.maxHp * 0.4;
-  const hit = pumpUntilCalm(ts => ts.some(t => t === HINT_TEXTS['potion-hp'].touch), 60);
-  s.check('with the touch layer on, the hint names the TOUCH control (HP, not H)', () => {
-    assert.ok(hit, 'no HP: line within 60s');
-    assert.ok(!hit.includes(HINT_TEXTS['potion-hp'].key), 'the keyboard wording must not be the one shown');
-  });
   let skillReturned = false;
   s.check('a demonstrated control never introduces itself again (next run)', () => {
     // scan the rest of the window for the retired skill hint
@@ -266,7 +260,55 @@ st.player.mana = 0;   // both skills UNREADY: the skill moment has not arrived
     }
     assert.ok(!skillReturned, 'the OVERCHARGE hint returned after demonstration');
   });
-  elements['touch'].classList.remove('on');
+}
+
+// ---- 5. MOBILE WORDING, on a TOUCH DEVICE boot ------------------------------------
+// The old block set #touch's class by hand mid-run; the device work makes
+// that illegal — the wording must be DERIVED (a stub that sets derived
+// state is how device bugs survive green suites). A fresh touch-device
+// boot: same quiet leg, same pre-known controls, and the HP moment must
+// bring the TOUCH-worded line.
+{
+  const td = await boot({ device: 'touch', variant: 'perctl-touch',
+    storage: [['hordes_onboarded', '1']] });
+  const tT = td.T, tst = td.state;
+  const tOB = tT.onboarding;
+  const tBody = globalThis.document.body;
+  const tTexts = () => (tBody.children || []).filter(c => c.id === 'hint-strip').map(c => c.textContent);
+  const tStep = (n = 1) => {
+    for (let i = 0; i < n; i++) {
+      td.pump(1);
+      if (tst.mode === 'draft') {
+        const card = (td.elements['ov-cards'].children || [])[0];
+        if (card && card.click) card.click();
+      }
+    }
+  };
+  for (const id of ['skill-q', 'potion-mp', 'radar', 'focus', 'stance', 'pilot', 'stats', 'help'])
+    tOB.store.setDone(id);
+  tT.startRun();
+  tT.setPilotMode('MANUAL');
+  tst.enemies.length = 0; tst.gems.length = 0; tst.spawnTimer = 999;
+  tst.wave.endsAt = tst.time + 9999; tst.wave.bosses = []; tst.wave.boss = null; tst.portal = null;
+  tst.player.stats.xpMult = 0;
+  tst.player.stats.maxHp = 1e9; tst.player.hp = 1e9;
+  tst.player.mana = 0; tst.player.potions.hp = 2; tst.player.potions.mp = 2;
+  let waited = 0;
+  while (waited < 10 && !tTexts().length) { tStep(1); waited += 1 / 60; }   // the run-start line
+  tst.player.hp = tst.player.stats.maxHp * 0.4;
+  let hit = null;
+  waited = 0;
+  while (waited < 60) {
+    for (const b of (tst.wave.bosses || [])) if (b && b.hp > 0) b.hp = 0;
+    for (const b of (tst.wave.midBosses || [])) if (b && b.hp > 0) b.hp = 0;
+    tStep(1); waited += 1 / 60;
+    if (tTexts().some(t => t === HINT_TEXTS['potion-hp'].touch)) { hit = tTexts(); break; }
+  }
+  s.check('on a touch DEVICE (derived class) the hint names the TOUCH control (HP, not H)', () => {
+    assert.ok(tOB.touchPath(), 'the boot really is a touch device');
+    assert.ok(hit, 'no HP: line within 60s');
+    assert.ok(!hit.includes(HINT_TEXTS['potion-hp'].key), 'the keyboard wording must not be the one shown');
+  });
 }
 
 // 3b. PACING across the whole file: consecutive display events are >= the

@@ -512,6 +512,7 @@ const state = {
   // screen's composed payload (reshowEndScreen recomposes from it WITHOUT
   // re-settling gold). Both are screen-scoped, cleared at the run boundary.
   helpFrom: null,    // 'gate' | 'run' | 'end' | 'title' — where GOT IT goes
+  manualPage: null,  // MANUAL v2: the open page (1..4) while the manual is up
   endScreen: null,   // { titleText, titleCls, subHtml } of the last end card
   helpMode: false,   // HELP MODE: the "?" inspect mode is armed
   helpOrigin: null,  // the mode it was armed on (leaving returns there)
@@ -3961,66 +3962,34 @@ function completeOnboarding() {
   try { prefStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
 }
 
-// ---------- WAVE-19 HOW TO PLAY (Sk408: first-run onboarding) -------------------
-// One screen, terse pixel tone, no walls: the point of the game in one line,
-// then per-button callouts for BOTH input schemes (same overlay for desktop
-// and mobile — the lists carry both). Built as a menu-family screen (openMenu
-// cards, existing .card styling): it can only be reached from the title menu
-// or first boot, so it NEVER pauses a live run. GOT IT dismisses + sets the
-// one-time flag; ESC dismisses via the standard menu-escape branch.
-function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {}) {
-  // IN-RUN REFERENCE ACCESS (owner 2026-09-16): the reference is reachable
-  // mid-run (the in-run SETTINGS door, under the 'settings' pause mode so
-  // ESC and GOT IT resume the fight through closeSettings) and from the end
-  // screens (fromEnd — GOT IT recomposes the SAME end card, never re-settling
-  // gold). state.helpFrom remembers the door GOT IT walks back out of.
-  state.helpFrom = intoRun ? 'gate' : inRun ? 'run' : fromEnd ? 'end' : 'title';
-  openMenu(inRun ? 'settings' : 'menu');
-  // HOW TO PLAY readability (owner 2026-09-16): the reference is a DOCUMENT,
-  // not a tip — this screen alone carries the .howto wide-panel modifier
-  // (index.html sizes it: width 100% capped 560px, 15px body, internal
-  // scroll, sticky GOT IT). Every other menu keeps the compact .card.
-  const addCls = (el, c) => {
-    if (el.classList) el.classList.add(c);
-    else el.className = (el.className ? el.className + ' ' : '') + c;
-  };
-  if (overlay.classList) overlay.classList.add('howto');
-  else addCls(overlay, 'howto');
-  ovTitle.textContent = 'HOW TO PLAY';
-  ovTitle.className = '';
-  ovSub.innerHTML =
-    'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
-    'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
-    // TUTORIAL_OVERLAY (complaint 3): the replay path existed but nobody
-    // found it — HOW TO PLAY is the onboarding surface, so name it here.
-    '<br>Missed the guided tour? Replay it any time: SETUP, SETTINGS, REPLAY TOUR.';
-  // Rows are TWO COLUMNS: purpose left (wraps), trigger right (nowrap — a
-  // key or button name never splits mid-token). The canonical control rows
-  // are BUILT FROM controls_ref (one source of truth, no forked strings);
-  // the composite lines below carry copy other suites pin verbatim, so they
-  // ride whole in a single-cell row.
-  const refRow = (label, value) =>
-    '<div class="rr"><span class="rl">' + label + '</span>' +
-    (value === undefined ? '' : '<span class="rv">' + value + '</span>') + '</div>';
-  const cTouch = menuCard('TOUCH',
-    refRow('move (manual pilot)', 'joystick') +
-    refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
-    refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
-    refRow('auto &harr; manual', 'PILOT') +
-    refRow('your build &amp; gear', 'STATS') +
-    refRow('skills', 'FROST / OVER') +
-    // IN-RUN REFERENCE ACCESS: the objects clause names what the drinks DO
-    // (owner named potions among the on-screen objects) ...
-    refRow('potions — restore health / mana', 'HP / MP') +
-    // ... and every authored cog-row button is named here, so the canonical
-    // list (test_ref_access, harvested from the touch layer's own buttons)
-    // can never silently outrun the reference.
-    refRow('help mode: tap any control or object to learn it', 'HELP') +
-    refRow('edge blips mark enemies off-screen', 'RADAR') +
-    refRow('the world map (fight keeps running)', 'MAP') +
-    refRow('settings: zoom, END RUN', 'SETTINGS (cog)'));
-  addCls(cTouch, 'ref');
-  const cKeys = menuCard('KEYBOARD',
+// ---------- THE MANUAL v2 (owner 2026-09-16, msg_01M2P2714VDKY07BBWWCX3G7CC) ----
+// The single-screen reference is PAGINATED: four pages (HOW A RUN WORKS /
+// OPTIONS AND MODES / CONTROLS / THE FIELD), a page indicator, PREV/NEXT
+// cards with arrow-key parity, a CONTENTS row that jumps, and GOT IT as a
+// FLOW footer (never sticky over the body). The separate TOUCH and KEYBOARD
+// cards are RETIRED — one CONTROLS page with subheads, the player's OWN
+// input path first (touch device -> touch first; desktop -> keys first).
+// Live callouts read state at OPEN time. The old single screen put three
+// ref cards in one column: on a portrait phone the column outran the fold
+// and the cards clipped (owner: "the card doesn't show on the screen").
+const MANUAL_PAGES = 4;
+const MANUAL_TITLES = ['HOW A RUN WORKS', 'OPTIONS AND MODES', 'CONTROLS', 'THE FIELD'];
+// Rows are TWO COLUMNS: purpose left (wraps), trigger right (nowrap — a
+// key or button name never splits mid-token). The canonical control rows
+// are BUILT FROM controls_ref (one source of truth, no forked strings);
+// the composite lines below carry copy other suites pin verbatim, so they
+// ride whole in a single-cell row.
+const refRow = (label, value, wrap) =>
+  '<div class="rr"><span class="rl">' + label + '</span>' +
+  (value === undefined ? '' : '<span class="rv' + (wrap ? ' wrap' : '') + '">' + value + '</span>') + '</div>';
+// Subheads inside the ONE CONTROLS card. 'KEYBOARD CONTROLS' / 'TOUCH
+// CONTROLS' — never the bare word, so no markup can read '>TOUCH<' (that
+// token is how the retired two-card layout is detected and kept out).
+const refSub = (t) => '<div class="subhead">' + t + '</div>';
+
+function manualRowsControls() {
+  // ONE CARD, NOT TWO: both input schemes, the player's OWN path first.
+  const kbRows =
     // M1 mechanical fix: O is the pilot toggle (M was taken by the map) —
     // the tour tip and the key handler already say O; the row says it too.
     CONTROLS
@@ -4039,26 +4008,118 @@ function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {})
     // RETIRED '?' PANEL (2026-09-16): the compact four-line key list lives
     // HERE now — the SAME HINT_LINES table the panel read, so nobody loses
     // the list; it stops being the whole of "?".
-    compactKeyLines().map(l => refRow(l)).join(''));
-  addCls(cKeys, 'ref');
-  // WAVE-22: the field itself was undocumented — the exhaustive reference
-  // for everything that isn't a button or a key lives here (rev-4: controls
-  // the tour skips must be documented HERE or dropped). HELP MODE: the
-  // object rows render from OBJECT_HELP — the SAME table the inspect mode's
-  // world-space picks explain from, so the two surfaces cannot drift.
-  const cField = menuCard('THE FIELD',
-    OBJECT_HELP.filter(o => o.field).map(o => o.field).join('<br>') +
-    '<br>intermission — paid chests (40/25/10% nothing), blessings,<br>' +
-    'RAISE THE STAKES (+heat for run gold) &middot; tokens evolve maxed weapons<br>' +
-    'CHALLENGE &mdash; title-screen card: pick a rule-constrained run mode<br>' +
-    '(ONE WEAPON / NO POTIONS); the HUD names the live mode');
-  addCls(cField, 'ref');
+    compactKeyLines().map(l => refRow(l)).join('');
+  const tchRows =
+    refRow('move (manual pilot)', 'joystick') +
+    refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
+    refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
+    refRow('auto &harr; manual', 'PILOT') +
+    refRow('your build &amp; gear', 'STATS') +
+    refRow('skills', 'FROST / OVER') +
+    // IN-RUN REFERENCE ACCESS + POTION ICONS (owner 2026-09-16: the rows must
+    // use the word "potion" and say what each one restores — one row each, the
+    // key named, so both name sets stay one-glyph-one-meaning) ...
+    refRow('health potion — restores HP (heals you)', 'H') +
+    refRow('mana potion — restores MP (refuels skills)', 'N') +
+    // ... and every authored cog-row button is named here, so the canonical
+    // list (test_ref_access, harvested from the touch layer's own buttons)
+    // can never silently outrun the reference.
+    refRow('help mode: tap any control or object to learn it', 'HELP') +
+    refRow('edge blips mark enemies off-screen', 'RADAR') +
+    refRow('the world map (fight keeps running)', 'MAP') +
+    refRow('settings: zoom, END RUN', 'SETTINGS (cog)');
+  return isTouchPath()
+    ? refSub('TOUCH CONTROLS') + tchRows + refSub('KEYBOARD CONTROLS') + kbRows
+    : refSub('KEYBOARD CONTROLS') + kbRows + refSub('TOUCH CONTROLS') + tchRows;
+}
+
+// Draw one page. Re-entrant: every page turn rebuilds the card stack (the
+// indicator, the nav row, the contents row and the GOT IT footer with it).
+function manualGoto(page) {
+  const p = Math.max(1, Math.min(MANUAL_PAGES, page));
+  state.manualPage = p;
+  ovCards.innerHTML = '';
+  // HOW TO PLAY readability (owner 2026-09-16): the reference is a DOCUMENT,
+  // not a tip — this screen alone carries the .howto wide-panel modifier
+  // (index.html sizes it: width 100% capped 560px, 15px body, internal
+  // scroll). openMenu cleared it; every page re-adds it.
+  if (overlay.classList) overlay.classList.add('howto');
+  else if (overlay.className) overlay.className = (overlay.className ? overlay.className + ' ' : '') + 'howto';
+  ovTitle.textContent = 'HOW TO PLAY';
+  ovTitle.className = '';
+  ovSub.innerHTML = p === 1
+    // The one-line point of the game leads the FIRST page (the first-run
+    // gate opens here), with the replay-tour pointer (complaint 3: the
+    // replay path existed but nobody found it).
+    ? 'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
+      'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
+      '<br>Missed the guided tour? Replay it any time: SETUP, SETTINGS, REPLAY TOUR.' +
+      '<br>PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0]
+    : 'PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1];
+  const addCls = (el, c) => {
+    if (el.classList) el.classList.add(c);
+    else el.className = (el.className ? el.className + ' ' : '') + c;
+  };
+  if (p === 1) {
+    // HOW A RUN WORKS: waves and what ends one, the intermission, what the
+    // choices do, both endings — dense, numbers where they exist.
+    const c = menuCard('HOW A RUN WORKS',
+      'every wave: 120s of horde (a mid-boss rings you at half-time),<br>' +
+      'then the wave BOSS spawns — slay it and the PORTAL opens; walk in.<br><br>' +
+      'INTERMISSION (between waves): paid chests (40/25/10% nothing),<br>' +
+      'blessings, RAISE THE STAKES (+1 heat = +30% run gold per push, capped)<br>' +
+      '&middot; evolve tokens turn weapons maxed at Lv 8 into something new.<br><br>' +
+      'the field, mid-wave: DRAFT / upgrade picks on level-up &middot; SHRINE<br>' +
+      'altars sell blessings for run gold &middot; ARCH gates grant a timed buff &middot;<br>' +
+      'CHEST boxes gamble items (walk in, take the roll).<br><br>' +
+      'CHALLENGE (title-screen card): rule-constrained runs (ONE WEAPON /<br>' +
+      'NO POTIONS); the HUD names the live mode.<br><br>' +
+      'a run ends two ways: DEATH — the horde claims all, gold banked —<br>' +
+      'or VICTORY: outlast all five waves and slay THE MAW OF THE HORDE.');
+    addCls(c, 'ref');
+  } else if (p === 2) {
+    // OPTIONS AND MODES: one plain line each + the LIVE callout row read
+    // from state at OPEN time (never bitmaps, never stale defaults).
+    const c = menuCard('OPTIONS AND MODES',
+      refRow('AUTO: the pilot plays &middot; MANUAL: the stick / keys are yours', 'PILOT (O)') +
+      refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
+      refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
+      refRow('yours right now', state.pilotMode + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
+      '<div class="rl">every lever is on the touch pads too — and in help mode (?),<br>' +
+      'a tap on any control explains it.</div>');
+    addCls(c, 'ref');
+  } else if (p === 3) {
+    // ONE CARD, NOT TWO: the merged controls page (see manualRowsControls).
+    const c = menuCard('YOUR CONTROLS', manualRowsControls());
+    addCls(c, 'ref');
+  } else {
+    // WAVE-22: the field itself — the exhaustive reference for everything
+    // that isn't a button or a key. HELP MODE: the object rows render from
+    // OBJECT_HELP — the SAME table the inspect mode's world-space picks
+    // explain from, so the two surfaces cannot drift.
+    const c = menuCard('THE FIELD',
+      OBJECT_HELP.filter(o => o.field).map(o => o.field).join('<br>') +
+      '<br>ground potions — walk over to pick one up (restores health / mana).');
+    addCls(c, 'ref');
+  }
+  // Nav row: PREV/NEXT with the ends dimmed (arrow keys are their twins).
+  menuCard('PREV', 'page ' + Math.max(1, p - 1), () => manualGoto(p - 1), p <= 1);
+  menuCard('NEXT', 'page ' + Math.min(MANUAL_PAGES, p + 1), () => manualGoto(p + 1), p >= MANUAL_PAGES);
+  // CONTENTS row: the four pages, current one dimmed (a place-you-marker,
+  // still clickable — dim is opacity, not disabled).
+  const toc = [['A RUN', 1], ['OPTIONS', 2], ['CONTROLS', 3], ['FIELD', 4]];
+  for (const [t, n] of toc) {
+    menuCard(t, n === p ? 'this page' : 'page ' + n, () => manualGoto(n), n === p);
+  }
+  // GOT IT: a FLOW footer card at the end of the stack — in the layout,
+  // never sticky over the scrolling body.
   const gotSub = state.helpFrom === 'gate' ? 'into the horde (shows once)'
     : state.helpFrom === 'run' ? 'back to the fight'
     : state.helpFrom === 'end' ? 'back to this screen'
     : 'back to the title';
   const cGot = menuCard('GOT IT', gotSub, () => {
     completeOnboarding();
+    state.manualPage = null;
     // UP-FRONT CONTROLS: opened as the FIRST-RUN GATE (fresh START GAME),
     // GOT IT starts the run (no title-art hold here — the hold belongs to
     // the title screen, and the gate's job is to get the briefed player
@@ -4076,6 +4137,19 @@ function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {})
     else showTitle();
   });
   addCls(cGot, 'gotit');
+}
+function manualPrev() { if (state.manualPage && state.manualPage > 1) manualGoto(state.manualPage - 1); }
+function manualNext() { if (state.manualPage && state.manualPage < MANUAL_PAGES) manualGoto(state.manualPage + 1); }
+
+function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {}) {
+  // IN-RUN REFERENCE ACCESS (owner 2026-09-16): the reference is reachable
+  // mid-run (the in-run SETTINGS door, under the 'settings' pause mode so
+  // ESC and GOT IT resume the fight through closeSettings) and from the end
+  // screens (fromEnd — GOT IT recomposes the SAME end card, never re-settling
+  // gold). state.helpFrom remembers the door GOT IT walks back out of.
+  state.helpFrom = intoRun ? 'gate' : inRun ? 'run' : fromEnd ? 'end' : 'title';
+  openMenu(inRun ? 'settings' : 'menu');
+  manualGoto(1);
 }
 
 // ---------- Meta screens: title / shop / characters / settings ----------
@@ -4203,6 +4277,10 @@ function openMenu(mode = 'menu') {
   // stands down without touching what this screen is about to draw.
   if (draftCeremony) endDraftCeremony(false);
   state.mode = mode;
+  // MANUAL v2: pagination is manual-scoped — every other screen (and every
+  // re-open of a non-manual menu) starts with the page marker cleared, so
+  // the arrow keys can never turn a page of a screen that is not there.
+  state.manualPage = null;
   // HOW TO PLAY readability: the .howto wide-panel modifier belongs to that
   // screen alone — reset it HERE so no other menu can inherit the wide rows.
   // (class-list-less DOM stubs keep a plain className string — same state.)
@@ -4277,11 +4355,24 @@ const onboardingAnchor = () => {
 // UP-FRONT CONTROLS: the named cog row (SETTINGS / HELP / RADAR / MAP) is
 // wider than the old glyphs — all four buttons are avoid rects now.
 const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog', 'tc-help', 'tc-radar', 'tc-map'];
-const onboardingAvoid = () => ONBOARDING_AVOID_IDS
-  .map(id => document.getElementById(id))
-  .filter(el => el && typeof el.getBoundingClientRect === 'function')
-  .map(el => el.getBoundingClientRect())
-  .filter(r => r && (r.width > 0 || r.height > 0));
+const onboardingAvoid = () => {
+  const rects = ONBOARDING_AVOID_IDS
+    .map(id => document.getElementById(id))
+    .filter(el => el && typeof el.getBoundingClientRect === 'function')
+    .map(el => el.getBoundingClientRect())
+    .filter(r => r && (r.width > 0 || r.height > 0));
+  // MANUAL v2 (owner 2026-09-16, portrait phone: the hint card "overlaps HUD
+  // bars (HP/MP/XP/GOLD)"): the canvas HUD readout block — native
+  // (0,0)-(200,52): HP/MP labels+bars+values (render.js drawHud: label x=6,
+  // bars to x=132, value plates past x=136, y 11..33) and the XP bar
+  // (y 35..45) — projected to screen coords. The strip's top-centre
+  // candidate used to sit right on the bars.
+  try {
+    const r = canvasRegion(0, 0, 200, 52).getBoundingClientRect();
+    if (r && Number.isFinite(r.left) && (r.width > 0 || r.height > 0)) rects.push(r);
+  } catch { /* headless stub canvas has no rect: no avoid, no crash */ }
+  return rects;
+};
 const hintStrip = new HintStrip({ anchor: onboardingAnchor, avoid: onboardingAvoid });
 // OBJECT LABELS REMOVED (owner 2026-09-16: "The on screen labels for arch and
 // shrine are a bit annoying, and sometimes they persist after the run"): the
@@ -4381,8 +4472,13 @@ function controlUsed(id) {
 function updateOnboarding(dt) {
   const p = state.player;
   // (a) RUN START: movement, one line. Replaces the move + pilot + hud cards.
+  // DEVICE (2026-09-16): device-derived — a touch-path player is told to
+  // drag, never taught a key they do not have (the line used to say "WASD
+  // or drag" on every device).
   maybeHint('move', state.time > 0.75,
-    'WASD or drag to move — your weapons fire on their own.');
+    isTouchPath()
+      ? 'drag to move — your weapons fire on their own.'
+      : 'WASD or drag to move — your weapons fire on their own.');
   // (b) FIRST PORTAL: bank the wave. Replaces the portal card.
   maybeHint('portal', !!state.portal,
     'Walk through the portal to bank the wave.');
@@ -5853,6 +5949,7 @@ function startRun() {
   // run-scoped — a new run must not return GOT IT into the previous run's
   // death screen, nor recompose a settled payload.
   state.helpFrom = null;
+  state.manualPage = null;
   state.endScreen = null;
   // HELP MODE: the inspect mode is player-armed and run-scoped — a new run
   // never starts with the UI inert, and no origin marker leaks between runs.
@@ -6747,6 +6844,13 @@ window.addEventListener('keydown', (ev) => {
     } else if (ev.preventDefault) ev.preventDefault();
     return;
   }
+  // MANUAL v2: while the paginated reference is open (any door — title,
+  // first-run gate, in-run pause, end screen), the arrows turn pages. Key
+  // parity with the PREV/NEXT cards; the ends are no-ops (the cards dim).
+  if (state.manualPage !== null) {
+    if (k === 'arrowleft') { manualPrev(); return; }
+    if (k === 'arrowright') { manualNext(); return; }
+  }
   if (state.mode === 'escape') {                        // V1: the mode's own keys
     // The escape owns its input surface (arrows/AD run, space/W/up jump,
     // shift/X dash, ESC skips) — never the overhead skill/potion paths.
@@ -6914,8 +7018,16 @@ for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', '
 // most; this catches the rest, e.g. hybrid laptops). WAVE-22b: non-touch
 // devices get COG-ONLY — the settings cog is the in-run menu button and
 // desktop must reach it with a mouse too.
+// DEVICE (2026-09-16): a coarse pointer with NO touch events used to fall
+// through to 'cog-only' here while the CSS coarse media still revealed the
+// on-screen pads — those users saw touch controls and were taught key
+// names. The class write now honours the SAME signal the CSS reads, so
+// isTouchPath() is true whenever the touch layer is actually visible.
+const coarsePointer = !!(typeof window !== 'undefined' && window.matchMedia &&
+  window.matchMedia('(pointer: coarse)').matches);
 const hasTouch = ('ontouchstart' in window) ||
-  ((typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) || 0) > 0;
+  ((typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) || 0) > 0 ||
+  coarsePointer;
 if (touchLayer && touchLayer.classList) {
   touchLayer.classList.add(hasTouch ? 'on' : 'cog-only');
 }
@@ -7001,33 +7113,11 @@ const HINT_LINES = {
 // one array, so the copy cannot diverge between the two names.
 HINT_LINES.AUTO = HINT_LINES.AUTO_ALL;
 
-// '?' SUPPLEMENT (owner 2026-09-16): one glyph, one meaning, BOTH input
-// modes. The panel content used to be chosen by PILOT MODE only, so a phone
-// player tapping "?" was taught keyboard keys they do not have (H / N / TAB
-// / Q / E). On a touch path the same affordance now names the TOUCH
-// controls — built FROM the same controls_ref rows as the per-control hints
-// (names only; the connective grammar mirrors HINT_LINES above). Not a
-// third panel: the same #hints element, same toggle, same glyph.
-function touchHintLines() {
-  const qDef = C.SKILLS[classSkillId(state)] || {};
-  // The NAME half of introLine (no forked strings): 'HP: drink...' -> 'HP'.
-  const nm = (id, ov) => {
-    const line = introLine(id, true, ov);
-    return line ? line.split(':')[0] : id.toUpperCase();
-  };
-  const q = { touch: String(qDef.NAME || 'skill').toUpperCase() };
-  const helpRow = controlById('help');
-  return [
-    nm('pilot') + ' — auto / manual movement &middot; ' + nm('focus') + ' / ' + nm('stance') + ' — targeting & doctrine',
-    q.touch + ' / ' + nm('skill-w') + ' — skills &middot; ' + nm('potion-hp') + ' / ' + nm('potion-mp') + ' — potions',
-    nm('stats') + ' — field report &middot; ' + nm('map') + ' — world map &middot; ' + nm('radar') + ' — off-screen enemies',
-    'cog — settings &middot; ? — ' + (helpRow ? helpRow.purpose : 'show / hide these hints'),
-  ];
-}
-// The compact key list the retired panel showed, kept as DATA: the
-// reference's KEYBOARD page renders these lines (nobody loses the list; it
-// stops being the whole of "?"), and touchHintLines stays the touch-name
-// table the reference's TOUCH wording is built from.
+// The compact key list the retired '?' panel showed, kept as DATA: the
+// reference's KEYBOARD CONTROLS section renders these lines (nobody loses
+// the list; it stops being the whole of "?"). The touch-side wording is the
+// controls_ref rows themselves (introLine(id, true)) — read live off the
+// device-derived touch path, never a second table.
 function compactKeyLines() {
   const lines = [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
   // G11: name the live challenge mode while a non-standard run is up.
@@ -8153,6 +8243,9 @@ requestAnimationFrame(frame);
 export const __TEST = {
   state, get controller() { return controller; }, startRun,
   getProfile: () => profile, refreshSynergies,
+  // MANUAL v2 seam: page turns through the real renderer (goto re-draws the
+  // whole stack — indicator, nav, contents, footer).
+  manual: { next: manualNext, prev: manualPrev, goto: manualGoto },
   // M3: the ground-item overflow wrappers (test seam — the same functions the
   // kill funnel and drop events call).
   m3: { pushGem, pushDrop, pushItemDrop },

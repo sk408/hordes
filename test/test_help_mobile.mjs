@@ -48,12 +48,18 @@ const cardHtml = (t) => {
 s.check('the HOW TO PLAY overlay carries the .howto wide-panel modifier', () => {
   if (!overlay.classList.contains('howto')) throw new Error('no howto class');
 });
-s.check('the three reference cards carry .ref (the readable panel)', () => {
-  for (const t of ['TOUCH', 'KEYBOARD', 'THE FIELD']) {
-    if (!cardHtml(t).el.classList.contains('ref')) throw new Error(t + ' is not .ref');
+// MANUAL v2 (2026-09-16): the reference is PAGINATED — one ref card per
+// page, walked through the real page seam. The retired TOUCH / KEYBOARD
+// cards live on as the merged CONTROLS page's subheads.
+s.check('every page body carries .ref (the readable panel)', () => {
+  for (const p of [1, 2, 3, 4]) {
+    T.manual.goto(p);
+    const ref = cards().find(k => k.classList.contains('ref'));
+    if (!ref) throw new Error('page ' + p + ' has no .ref card');
   }
+  T.manual.goto(1);
 });
-s.check('the GOT IT control is the tall sticky .gotit card', () => {
+s.check('the GOT IT control is the .gotit footer card', () => {
   const g = cardHtml('GOT IT');
   if (!g.el.classList.contains('gotit')) throw new Error('GOT IT is not .gotit');
 });
@@ -68,23 +74,26 @@ s.check('the modifier leaves with the screen (GOT IT -> title, no howto)', () =>
 });
 
 // ---- 2. two-column rows, built from the canonical control list -----------------
+// MANUAL v2: the CONTROLS page (3) is ONE card — 'YOUR CONTROLS' — with the
+// keyboard and touch sections as subheads inside it.
 s.check('rows are TWO COLUMNS (.rr rows with a right-hand .rv trigger cell)', () => {
-  const kb = cardHtml('KEYBOARD').html;
+  T.manual.goto(3);
+  const kb = cardHtml('YOUR CONTROLS').html;
   if (!kb.includes('<div class="rr">')) throw new Error('no .rr row markup');
   if (!kb.includes('<span class="rv">')) throw new Error('no .rv value cell');
 });
-s.check('every canonical control is a KEYBOARD row: purpose left, keys right (controls_ref parity)', () => {
-  const kb = cardHtml('KEYBOARD').html;
+s.check('every canonical control is a CONTROLS row: purpose left, keys right (controls_ref parity)', () => {
+  const kb = cardHtml('YOUR CONTROLS').html;
   // potions and the field report ride their pinned composite line below.
   const onComposite = new Set(['potion-hp', 'potion-mp', 'stats']);
   for (const c of CONTROLS) {
     if (onComposite.has(c.id)) continue;
-    if (!kb.includes(c.purpose)) throw new Error('KEYBOARD lost the purpose of ' + c.id);
-    if (!kb.includes('>' + c.keys.join(' / ') + '<')) throw new Error('KEYBOARD lost the key(s) of ' + c.id);
+    if (!kb.includes(c.purpose)) throw new Error('CONTROLS lost the purpose of ' + c.id);
+    if (!kb.includes('>' + c.keys.join(' / ') + '<')) throw new Error('CONTROLS lost the key(s) of ' + c.id);
   }
 });
 s.check('the pinned composite lines survive whole (potions / stats / draft / pause copy)', () => {
-  const kb = cardHtml('KEYBOARD').html;
+  const kb = cardHtml('YOUR CONTROLS').html;
   for (const needle of [
     'H / N — potions &middot; I — field report (the ONE stats key)',
     '1 – 3 — draft cards (1 – 4 in evolve / intermission)',
@@ -93,13 +102,14 @@ s.check('the pinned composite lines survive whole (potions / stats / draft / pau
     if (!kb.includes(needle)) throw new Error('lost pinned copy: ' + needle);
   }
 });
-s.check('the TOUCH card still names the touch surface (joystick / FOCUS / STANCE / cog)', () => {
-  const tc = cardHtml('TOUCH').html;
-  for (const tok of ['joystick', 'FOCUS', 'STANCE', 'cog']) {
-    if (!tc.includes(tok)) throw new Error('TOUCH card lost ' + tok);
+s.check('the touch section still names the touch surface (joystick / FOCUS / STANCE / cog)', () => {
+  const tc = cardHtml('YOUR CONTROLS').html;
+  for (const tok of ['joystick', 'FOCUS', 'STANCE', 'cog', 'TOUCH CONTROLS', 'KEYBOARD CONTROLS']) {
+    if (!tc.includes(tok)) throw new Error('the CONTROLS card lost ' + tok);
   }
 });
 s.check('THE FIELD still documents the objects (chests / portal / arches / shrines)', () => {
+  T.manual.goto(4);
   const fd = cardHtml('THE FIELD').html;
   for (const tok of ['chests', 'portal', 'arches', 'shrines']) {
     if (!fd.includes(tok)) throw new Error('THE FIELD lost ' + tok);
@@ -128,12 +138,11 @@ s.check('rows are the two-column flex (label left, value right)', () => {
   const m = /#overlay\.howto \.rr\s*\{([^}]*)\}/.exec(css);
   if (!m || !m[1].includes('display: flex')) throw new Error('no .rr flex rule');
 });
-s.check('GOT IT is >=44px and stays pinned while the panel scrolls', () => {
+s.check('GOT IT is a >=44px FLOW footer (manual v2: sticky is retired)', () => {
   const m = /#overlay\.howto \.card\.gotit\s*\{([^}]*)\}/.exec(css);
   if (!m) throw new Error('no .gotit rule');
-  for (const needle of ['min-height: 44px', 'position: sticky']) {
-    if (!m[1].includes(needle)) throw new Error('.gotit lost ' + needle);
-  }
+  if (!m[1].includes('min-height: 44px')) throw new Error('.gotit lost the 44px floor');
+  if (/position:\s*sticky/.test(m[1])) throw new Error('.gotit must not be sticky (owner: in the layout, never over content)');
 });
 s.check('the KEPT coachmark card keeps the compact box (#tour-tip max-width: 220px)', () => {
   const m = /#tour-tip\s*\{([^}]*)\}/.exec(css);

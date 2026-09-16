@@ -139,27 +139,52 @@ st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable: no fight to l
 // RETARGETED 2026-09-16 (help mode): the ? panel is retired; the same
 // guarantees now run against the inspect mode's single-entry explainer
 // (a probe through the REAL pointer routing, one control at a time).
+// RETARGETED again (device work, same day): the touch arm no longer sets
+// #touch's class by hand — it boots a TOUCH DEVICE (the harness installs
+// ontouchstart / maxTouchPoints / coarse matchMedia together and main.js
+// derives the class itself). The keyboard arm runs FIRST on this file's own
+// desktop boot because a second boot() replaces the DOM globals: no earlier
+// arm may pump afterwards.
 {
-  const fireProbe = (act) => elements['touch']._ev['pointerdown']({
+  const fireProbe = (elems, act) => elems['touch']._ev['pointerdown']({
     preventDefault() {}, pointerId: 61, clientX: 0, clientY: 0,
     target: {
       closest: (s) => (s === '[data-joy]') ? null
         : (s === '[data-act]' ? { dataset: { act } } : null),
     },
   });
-  elements['touch'].classList.add('on');   // the touch layer is the live path read
-  T.startRun(); step(2);                   // a live run help mode can serve
-  T.runAction('help');                     // same glyph: arms help mode
-  assert.ok(st.helpMode, 'the button arms help mode');
-  fireProbe('pilot');
-  const text = elements['help-tip'].innerHTML;
-  s.check('on a touch path the ? explainer names TOUCH controls (at least one)', () => {
+  // The KEYBOARD arm: this file's desktop boot (the product derived
+  // #touch.cog-only at load — no class is set by the test).
+  T.startRun(); step(2);
+  T.runAction('help');
+  assert.ok(st.helpMode, 'the button arms help mode (keyboard arm)');
+  fireProbe(elements, 'focus');
+  s.check('the keyboard path still names keys (the explainer did not go touch-only)', () => {
+    const kb = elements['help-tip'].innerHTML;
+    // TAB is a keyboard-only token (the touch explainer is pinned to have none).
+    assert.ok(/TAB/.test(kb), kb);
+    assert.equal(kb, introLine('focus', false), 'built from the controls_ref key row');
+  });
+  T.runAction('help');   // leave help mode
+
+  // The TOUCH arm: a TOUCH DEVICE boot (variant busts the ESM cache; the
+  // storage seeds the same fresh profile).
+  const td = await boot({ device: 'touch', variant: 'helpq-touch',
+    storage: [['hordes_onboarded', '1']] });
+  const tT = td.T, tSt = td.state, tEl = td.elements;
+  tT.startRun();
+  for (let i = 0; i < 2; i++) td.pump(1);
+  tT.runAction('help');
+  assert.ok(tSt.helpMode, 'the button arms help mode (touch arm)');
+  fireProbe(tEl, 'pilot');
+  const text = tEl['help-tip'].innerHTML;
+  s.check('on a touch device the ? explainer names TOUCH controls (at least one)', () => {
     const names = ['PILOT', 'FOCUS', 'STANCE', 'OVER', 'HP', 'MP', 'STATS', 'MAP', 'RADAR'];
     // the live class skill name (FROST NOVA & co) counts too
-    const live = (st.player && st.player.classId) ? String(st.player.classId).toUpperCase() : '';
+    const live = (tSt.player && tSt.player.classId) ? String(tSt.player.classId).toUpperCase() : '';
     assert.ok(names.some(n => text.includes(n)) || (live && text.includes(live)), text);
   });
-  s.check('on a touch path the explainer names NO keyboard key (no TAB / H / Q / E tokens)', () => {
+  s.check('on a touch device the explainer names NO keyboard key (no TAB / H / Q / E tokens)', () => {
     // Standalone key tokens with non-letter boundaries (words like "hints"
     // or "report" must not trip it).
     const token = (k) => new RegExp('(^|[^A-Z])' + k + '([^A-Z]|$)');
@@ -167,15 +192,6 @@ st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable: no fight to l
       assert.ok(!token(k).test(text), `the touch explainer teaches the key "${k}": ${text}`);
     }
     assert.equal(text, introLine('pilot', true), 'built from the controls_ref touch row');
-  });
-  s.check('the keyboard path still names keys (the explainer did not go touch-only)', () => {
-    elements['touch'].classList.remove('on');
-    fireProbe('focus');   // keyboard path live now
-    const kb = elements['help-tip'].innerHTML;
-    // TAB is a keyboard-only token (the touch explainer is pinned to have none).
-    assert.ok(/TAB/.test(kb), kb);
-    assert.equal(kb, introLine('focus', false), 'built from the controls_ref key row');
-    T.runAction('help');   // leave help mode for whatever follows
   });
 }
 

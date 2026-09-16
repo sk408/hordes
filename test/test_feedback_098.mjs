@@ -224,16 +224,19 @@ console.log('0.98 D2 — AN OWNED PILOT KEEPS ITS ABILITY DESCRIPTION (DOM)');
   const charIds = Object.keys(CHARACTERS);
 
   // ---- copy truthfulness (0.98: I is the ONE stats key; S is movement) ----
-  // The keyboard card is what a player reads before their first run.
+  // The controls page is what a player reads before their first run.
   // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again — one
-  // tap from the menu, not two.
+  // tap from the menu, not two. MANUAL v2: the reference is paginated, so the
+  // copy sweep collects ALL FOUR pages through the real page seam.
   clickCard('HOW TO PLAY');
-  ok(/I — field report \(the ONE stats key\)/.test(html()),
-    'HOW TO PLAY names I as the ONE stats key');
-  ok(!STALE_S_STATS.test(html()),
-    'HOW TO PLAY never teaches S as the stats key (the stale "(S too, in AUTO)" line is gone)');
   ok(/SURVIVE THE WAVES/.test(elements['ov-sub'].innerHTML || ''),
     'the HOW TO PLAY screen is the real one (point line present)');
+  let refHtml = '';
+  for (let p = 1; p <= 4; p++) { T.manual.goto(p); refHtml += html() + '\n'; }
+  ok(/I — field report \(the ONE stats key\)/.test(refHtml),
+    'HOW TO PLAY names I as the ONE stats key');
+  ok(!STALE_S_STATS.test(refHtml),
+    'HOW TO PLAY never teaches S as the stats key (the stale "(S too, in AUTO)" line is gone)');
   clickCard('GOT IT');                       // -> title
 
   // (a) the starting state: one owned (equipped) pilot, three locked.
