@@ -555,11 +555,44 @@ const KEY_DIRS = {
   arrowright: 'right', d: 'right',
 };
 
-// Last pilot choice per browser (hudText settings pattern). Write-only for
-// the record — per the build directive EVERY run starts in AUTO regardless.
+// Last pilot choice per browser (hudText settings pattern). G31 (owner
+// 2026-09-16, verbatim: "The players want the selections they made for auto
+// and manual to persist between runs."): the pref is now READ back — at boot
+// and at run start — replacing the OLD build directive ("EVERY run starts in
+// AUTO regardless") that the owner has reversed. Absent / unreadable /
+// unrecognised -> AUTO_ALL (the fresh-player default); the legacy persisted
+// name 'AUTO' maps to AUTO_ALL via normalizePilotMode.
 const KEY_PILOT = 'hordes_pilot';
 function savePilotPref(mode) {
   try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
+}
+function loadPilotPref() {
+  try { return normalizePilotMode(prefStorage.getItem(KEY_PILOT)); }
+  catch { return 'AUTO_ALL'; }
+}
+// G31: the doctrine STANCE persists on the same prefStorage seam. The pilot
+// mode is a screen-level preference; the stance rides the same contract
+// (write on cycle, read at boot + run start, validate, BALANCED fallback).
+// state.focus is deliberately NOT persisted — it is tactical, moment-to-
+// moment targeting, not a preference.
+const KEY_STANCE = 'hordes_stance';
+function saveStancePref(s) {
+  try { prefStorage.setItem(KEY_STANCE, s); } catch { /* shim */ }
+}
+function loadStancePref() {
+  try {
+    const v = prefStorage.getItem(KEY_STANCE);
+    return v && C.AUTOPILOT.STANCES[v] ? v : 'BALANCED';
+  } catch { return 'BALANCED'; }
+}
+// Apply the persisted stance to BOTH controllers (swapPilotMode carries
+// stance across a swap, so both must agree). Direct assignment is the
+// established pattern — easeToBossStance does the same.
+function applyStancePref() {
+  const s = loadStancePref();
+  autoController.stance = s;
+  manualController.stance = s;
+  return s;
 }
 
 // Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
@@ -606,6 +639,9 @@ function swapPilotMode(mode) {
   toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick'
     : mode === 'AUTO_MOVE' ? 'AUTO MOVE — pilot drives, skills + potions are yours'
     : 'AUTOPILOT ENGAGED — move, skills and potions');
+}
+function pilotPrefLabel() {
+  return { AUTO_ALL: 'AUTO ALL', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO ALL';
 }
 function togglePilotMode() {
   // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
@@ -5237,6 +5273,14 @@ function showSettings(disarm = true, inRun = false) {
     fitCanvas();
     showSettings(true, inRun);
   });
+  // G31: the pilot cycle, selectable PRE-RUN as well as in-run (the O key /
+  // touch PILOT button were mid-run only, so the persisted choice could not
+  // be set before the first run). Same togglePilotMode seam as the key.
+  menuCard('PILOT', 'currently ' + pilotPrefLabel() +
+    ' (auto all / auto move / manual) — persists between runs', () => {
+      togglePilotMode();
+      showSettings(true, inRun);
+    });
   // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
   menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
     clearTourFlags();
@@ -5403,10 +5447,17 @@ function startRun() {
   state.runPurse = profile.runPurse | 0;
   dilation.scale = 1;
   dilation.remaining = 0;
-  // WAVE-13: every run starts in AUTO (the persisted last choice is a record,
-  // not a preselect) — rebind the seam and drop any held directions.
-  swapPilotMode('AUTO_ALL');
+  // G31 (owner 2026-09-16): the run starts in the PERSISTED pilot choice
+  // (applied through swapPilotMode — the controller binding, focus/stance
+  // inheritance, held-input clearing, hint refresh and toast all behave as
+  // they do for a mid-run toggle). The same-mode early return makes this a
+  // no-op when the last run already ended in that mode. Absent/unrecognised
+  // stored value -> AUTO_ALL, the fresh-player default.
+  swapPilotMode(loadPilotPref());
   clearPilotInput();
+  // G31: the stance pref rides along (the boot apply already covers a
+  // reload; this re-reads so storage edited between runs is honoured).
+  applyStancePref();
   // N1a: a class may declare a default focus doctrine (WITCH -> SWARM: the
   // chain only pays off on a clump, and the SWARM branch already exists in
   // controllers.js). Classes without one keep whatever focus is live — TAB/G
@@ -5950,6 +6001,7 @@ function restoreBossStanceIfClear() {
 // tinted with the stance's risk color.
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
+  saveStancePref(s);   // G31: the stance choice persists between runs
   const d = C.AUTOPILOT.STANCES[s] || {};
   toast('STANCE ' + s + ' - ' + (d.TAG || '') +
     ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
@@ -6467,6 +6519,16 @@ function toggleHints() {
   try { prefStorage.setItem(KEY_HINTS, hintsOn ? '1' : '0'); } catch { /* shim */ }
   applyHints();
 }
+
+// G31: apply the persisted pilot + stance prefs ONCE at boot, so a reload
+// keeps the player's choice (title + settings reflect it). swapPilotMode's
+// same-mode early return makes the default (AUTO_ALL / BALANCED) a silent
+// no-op — no boot toast, no controller churn. NOTE: this runs LATE in module
+// init on purpose — swapPilotMode fans out into refreshHints (HINT_LINES)
+// and clearPilotInput (joyKnobEl), whose consts initialise above but after
+// the swapPilotMode definition itself.
+swapPilotMode(loadPilotPref());
+applyStancePref();
 applyHints();
 
 // A2 THE RADAR: one toggle, one code path — the R key and the RADAR touch
@@ -7559,6 +7621,16 @@ export const __TEST = {
     enabled: () => oneTimeBanners,
   },
   setPilotMode: swapPilotMode, pilotInput,
+  // G31: the persistence seam — the real storage object plus the real
+  // load/apply helpers (tests mutate storage and re-run startRun, exactly
+  // what a reload does).
+  pilotPrefs: {
+    storage: prefStorage,
+    loadPilot: loadPilotPref,
+    loadStance: loadStancePref,
+    applyStance: applyStancePref,
+    KEY_PILOT, KEY_STANCE,
+  },
   // ---- E1 RUN PURSE seam: the live wallet plus the REAL credit / spend /
   // settle functions the game loop itself calls (never copies) — a headless
   // test drives the SAME code path a kill, a shrine walk and a run end drive.

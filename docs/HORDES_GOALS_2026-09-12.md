@@ -2054,6 +2054,20 @@ number. First-ever token: full banner (same treatment as the top-tier pickup in
 
 **PILOT:** verify on the artifact — re-run the unit test and the browser verifier yourself, and confirm by real elapsed time that an untouched AUTO draft resolves.
 
+## G31 — PILOT PREFERENCE PERSISTENCE (owner-relayed player request, 2026-09-16)  [status: DONE 2026-09-16 — suite 106/0 (two consecutive passes); browser verifier: pre-run SETTINGS PILOT row persists AUTO_MOVE, mid-run MANUAL + GREEDY survive a NEW run AND a full page RELOAD (joystick shown), cleared storage returns AUTO_ALL/BALANCED; unit test 21 checks, 5/5 stable]
+
+**Owner, verbatim: "The players want the selections they made for auto and manual to persist between runs."**
+
+**ROOT CAUSE (measured):** (1) `src/main.js` :560-563 — `KEY_PILOT` is WRITTEN by `savePilotPref` and NEVER READ; `grep -rn KEY_PILOT src/` returns only the declaration and the write. (2) `startRun()` hard-forces the mode: `src/main.js` :5408 `swapPilotMode('AUTO_ALL')`, so a player who chose MANUAL or AUTO MOVE is put back into AUTO ALL every run. The comment at :558-559 documents the old directive ("per the build directive EVERY run starts in AUTO regardless") — the owner has reversed it, so that comment must be updated or it will document behaviour the code no longer has. (3) The doctrine stance is NOT persisted at all: `controller.stance` is born 'BALANCED' (`controllers.js` :62), cycled by the doctrine key (`main.js` :6007), on module-level singleton controllers (:545-547) — survives a session by accident, lost on reload. No `KEY_STANCE` exists.
+
+**THE WORK:** brief at `docs/briefs/PILOT_PREF_PERSISTENCE.md`. Read `KEY_PILOT` back and apply it at run start AND at boot, through the existing `swapPilotMode()` seam (never by hand-assigning `state.pilotMode`), defaulting to AUTO_ALL for absent/unreadable/garbage values and normalising the legacy `'AUTO'`. Add `KEY_STANCE` on the same `prefStorage` seam, written when the doctrine key cycles, read back and validated against `STANCES` at run start and boot, applied to the live controller. Make the pilot cycle selectable from the SETTINGS row pre-run as well as in-run (it is currently mid-run only, :5874) so the persisted choice can actually be set. Do NOT persist `state.focus` (tactical, not a preference) — and say so in the report.
+
+**AUDIT (required):** every place that forces or assumes the mode at run start, with file:line and a verdict — `startRun` :5408, the AUTO-only features (auto-drink :1756, auto-cast :1761, the AUTO-only invuln window `config.js` :406-408) and the escape's own auto controller (`main.js` :80).
+
+**ACCEPTANCE:** `test/test_pilot_pref.mjs` (stored MANUAL -> run starts MANUAL with the manual controller bound; AUTO_MOVE; nothing -> AUTO_ALL; `'AUTO'` -> AUTO_ALL; garbage -> AUTO_ALL; stance GREEDY round-trips; garbage stance -> BALANCED; double-apply is a no-op; the doctrine cycle writes the key); `tools/verify_pilot_pref.mjs` in real Chrome at 390x844 @dpr3 (mid-run MANUAL -> next run starts MANUAL with the joystick shown; a page RELOAD still starts MANUAL; cleared storage starts AUTO_ALL; the stance survives the same round trip); suite `redfiles=0` with nothing weakened — and if an existing test asserts the old "every run starts AUTO" rule, report it with file:line rather than deleting it.
+
+**PILOT:** verify on the artifact — re-run the unit test, the browser verifier and the suite yourself, and confirm by your own reload that the choice survives.
+
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the

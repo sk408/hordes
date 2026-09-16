@@ -1300,11 +1300,24 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     for (let i = 0; i < n; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   };
 
-  // Every run starts in AUTO — even straight out of a MANUAL one.
+  // G31 (2026-09-16): the owner REVERSED the old "every run starts in AUTO"
+  // directive — a run now starts in the PERSISTED pilot choice. This block
+  // (which asserted the old rule verbatim) now asserts its successor:
+  // unset pref -> AUTO_ALL (the fresh-player default), stored MANUAL ->
+  // the run starts MANUAL on the manual controller.
+  T.pilotPrefs.storage.removeItem(T.pilotPrefs.KEY_PILOT);
   T.startRun();
   quietField();
-  assert(st.pilotMode === 'AUTO_ALL', 'runs must start in AUTO (got ' + st.pilotMode + ')');
+  assert(st.pilotMode === 'AUTO_ALL', 'no stored pref: runs must start AUTO_ALL (got ' + st.pilotMode + ')');
   assert(/Pilot:AUTO_ALL/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
+  T.pilotPrefs.storage.setItem(T.pilotPrefs.KEY_PILOT, 'MANUAL');
+  T.startRun();
+  quietField();
+  assert(st.pilotMode === 'MANUAL', 'stored MANUAL: the run starts MANUAL (got ' + st.pilotMode + ')');
+  assert(T.controller.input === T.pilotInput, 'stored MANUAL: the manual controller is bound');
+  // Leave the ladder probes the AUTO_ALL start they were written for.
+  T.pilotPrefs.storage.setItem(T.pilotPrefs.KEY_PILOT, 'AUTO_ALL');
+  T.setPilotMode('AUTO_ALL');
 
   // Doctrine decorations survive the toggle (both directions, tested below).
   keyHandler({ key: 'Tab', preventDefault: () => {} });   // NEAREST -> TOUGHEST
@@ -1347,9 +1360,9 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // Diagonal: w+d keys normalize to equal displacement on both axes.
   T.startRun();
   quietField();
-  // (h) ASK for the manual pilot: T.startRun() resets the ladder to AUTO_ALL and
-  // a single M press now lands on AUTO_MOVE, where held KEYS do not drive the
-  // player at all. The M key's own three-rung behaviour is asserted above.
+  // (h) ASK for the manual pilot: with G31 the run starts in the PERSISTED
+  // mode, so pin it here rather than counting on the old forced AUTO_ALL
+  // (setPilotMode is idempotent — an already-MANUAL run is a no-op).
   T.setPilotMode('MANUAL');
   pump(2);
   assert(st.pilotMode === 'MANUAL', 'the diagonal probe runs under the manual pilot');
@@ -1946,6 +1959,10 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   };
 
   mainMod.__TEST.startRun();
+  // G31: the pilot pref persists now, and earlier sections leave MANUAL
+  // stored — pin this probe to the AUTO it was written for (the pilot must
+  // walk into the portal to hand off to the finale).
+  mainMod.__TEST.setPilotMode('AUTO_ALL');
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   // Jump straight to the END_WAVE fight and slay the cast.
   st.wave.num = CFG.ESCALATION.END_WAVE;

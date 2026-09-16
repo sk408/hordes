@@ -182,8 +182,11 @@ for (const hz of [60, 120]) {
 
 // --- R2 + R3(AUTO_ALL): the pilot walks in and enters with the chase gone ----
 {
-  const p = freshRun();   // startRun re-engages AUTO_ALL
-  if (st.pilotMode !== 'AUTO_ALL') throw new Error('startRun did not re-engage AUTO_ALL');
+  // G31: the pilot pref persists now (the R3 half above leaves MANUAL
+  // stored), so pin the AUTO this half was written for through the helper
+  // instead of relying on the old forced AUTO_ALL at startRun.
+  const p = freshRun('AUTO_ALL');
+  if (st.pilotMode !== 'AUTO_ALL') throw new Error('startRun did not engage AUTO_ALL');
   p.x = 0; p.y = 0;
   const po = openPortalAt(200, 0);
   const tOpen = st.time;
@@ -273,7 +276,7 @@ s.check('R4 dwell: 0.35-0.5s on contact, identical wall-clock at 60Hz and 120Hz'
 
 // --- FLOW: the cinematic is entry-driven (the measured BEFORE was 0.000s) ----
 {
-  const p = freshRun();   // AUTO_ALL
+  const p = freshRun('AUTO_ALL');   // G31: pin the pref (it persists now)
   p.x = 0; p.y = 0;
   openPortalAt(200, 0, true);   // pendingClear + cinePending, as the final reap sets both
   let framesPlayingWithCinePending = 0, cineStarted = false, enteringSeen = false;
