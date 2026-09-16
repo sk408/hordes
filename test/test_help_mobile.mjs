@@ -21,11 +21,18 @@ import { CONTROLS } from '../src/controls_ref.js';
 const s = suite('test_help_mobile');
 const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
-// Fresh profile: the first boot pops HOW TO PLAY right after the intro.
+// Fresh profile: the first boot lands on the title (the howto pop moved to
+// the START GAME gate); the title card opens the reference.
 const { T, elements, pump } = await boot({});
 let cards = () => [...elements['ov-cards'].children];
 for (let i = 0; i < 60 * 12 && cards().length === 0; i++) pump(1);
-s.check('fresh boot reaches the HOW TO PLAY screen', () => {
+s.check('the title HOW TO PLAY card opens the reference screen', () => {
+  if (elements['ov-title'].textContent !== 'HORDES') {
+    throw new Error('ov-title is ' + elements['ov-title'].textContent);
+  }
+  const howTo = cards().find(k => (k.innerHTML || '').includes('>HOW TO PLAY<'));
+  if (!howTo) throw new Error('no HOW TO PLAY card on the title');
+  howTo.click();
   if (elements['ov-title'].textContent !== 'HOW TO PLAY') {
     throw new Error('ov-title is ' + elements['ov-title'].textContent);
   }

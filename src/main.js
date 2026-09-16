@@ -3937,7 +3937,7 @@ function completeOnboarding() {
 // cards, existing .card styling): it can only be reached from the title menu
 // or first boot, so it NEVER pauses a live run. GOT IT dismisses + sets the
 // one-time flag; ESC dismisses via the standard menu-escape branch.
-function showHowToPlay() {
+function showHowToPlay({ intoRun = false } = {}) {
   openMenu();
   // HOW TO PLAY readability (owner 2026-09-16): the reference is a DOCUMENT,
   // not a tip — this screen alone carries the .howto wide-panel modifier
@@ -4007,7 +4007,12 @@ function showHowToPlay() {
   addCls(cField, 'ref');
   const cGot = menuCard('GOT IT', 'into the horde (shows once)', () => {
     completeOnboarding();
-    showTitle();
+    // UP-FRONT CONTROLS: opened as the FIRST-RUN GATE (fresh START GAME),
+    // GOT IT starts the run (no title-art hold here — the hold belongs to
+    // the title screen, and the gate's job is to get the briefed player
+    // into the horde); opened from the title card it returns there.
+    if (intoRun) startRun();
+    else showTitle();
   });
   addCls(cGot, 'gotit');
 }
@@ -4204,7 +4209,9 @@ const onboardingAnchor = () => {
     ? wrap.getBoundingClientRect() : { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 };
 };
 // The strip keeps clear of the joystick and the touch buttons (invariant 5).
-const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog'];
+// UP-FRONT CONTROLS: the named cog row (SETTINGS / HELP / RADAR / MAP) is
+// wider than the old glyphs — all four buttons are avoid rects now.
+const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog', 'tc-help', 'tc-radar', 'tc-map'];
 const onboardingAvoid = () => ONBOARDING_AVOID_IDS
   .map(id => document.getElementById(id))
   .filter(el => el && typeof el.getBoundingClientRect === 'function')
@@ -4969,7 +4976,9 @@ function showTitle() {
   const fresh = !hasLocalSave();
   paintTitleHeader();
   menuCard('START GAME', fresh ? 'start a run · or LOAD FROM DISK below' : 'start a run',
-    () => beginTitleHold());   // N2: fade out + hold the art ~1s, then startRun()
+    // UP-FRONT CONTROLS: a fresh profile meets the reference FIRST (the
+    // gate), GOT IT starts the run; everyone else goes straight in.
+    () => (onboardingDone() ? beginTitleHold() : showHowToPlay({ intoRun: true })));   // N2: fade out + hold the art ~1s, then startRun()
   // G12 DO 4: on a fresh browser (no local save) the startup menu itself
   // offers load-from-disk, through the SAME validated import path SETTINGS
   // uses (pickImportFile -> importSaveText -> importProfileText). Once ANY
@@ -7314,11 +7323,12 @@ let introT0 = performance.now();
 function endIntro() {
   if (state.mode !== 'intro') return;
   state.mode = 'menu';
-  // WAVE-19: first boot pops HOW TO PLAY once, before the first run starts;
-  // returning players go straight to the title. Never mid-run by construction
-  // (the intro only ever plays pre-menu).
-  if (!onboardingDone()) showHowToPlay();
-  else showTitle();
+  // UP-FRONT CONTROLS (owner 2026-09-16): the WAVE-19 first-boot auto-pop
+  // moved to the FIRST-RUN GATE — a fresh boot lands on the title, and the
+  // FIRST START GAME shows HOW TO PLAY once, GOT IT starts the run. The
+  // explanation now sits at the moment it matters (right before the first
+  // fight) instead of before the menu. Never mid-run by construction.
+  showTitle();
 }
 // ---------- CINEMATIC GESTURE GUARD (Sk408 playtest) ------------------------
 // "During the opening cinematic, if I push on the screen, it pushes whatever

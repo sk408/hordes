@@ -117,32 +117,18 @@ const dtMs = 1000 / 60;
     const cb = rafQueue.shift();
     if (!cb) break;
     cb(now);
-    // WAVE-19: empty shim storage = first boot, so the intro hands off to
-    // the auto-popped HOW TO PLAY overlay (not the bare title).
-    if (elements['ov-title'] && elements['ov-title'].textContent === 'HOW TO PLAY' &&
+    // UP-FRONT CONTROLS (2026-09-16): the WAVE-19 first-boot auto-pop moved
+    // to the FIRST-RUN GATE — a fresh boot lands on the TITLE; the FIRST
+    // START GAME shows HOW TO PLAY once, GOT IT starts the run.
+    if (elements['ov-title'] && elements['ov-title'].textContent === 'HORDES' &&
         elements['ov-cards'] && elements['ov-cards'].children.length >= 3) break;
   }
   const cards0 = elements['ov-cards'];
   const byTitle0 = (t) => Array.from(cards0.children)
     .find(c => (c.innerHTML || '').includes(t));
-  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HOW TO PLAY',
-    'first boot (storage empty) must auto-pop HOW TO PLAY after the intro');
+  assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
+    'first boot (storage empty) must land on the title (the howto pop moved to START GAME)');
   assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
-  // The point of the game (ovSub lead line) + both control schemes (cards).
-  const htSub = elements['ov-sub'].innerHTML;
-  const htHtml = Array.from(cards0.children).map(c => c.innerHTML || '').join('');
-  assert(/auto-fights/.test(htSub) && /draft weapons/.test(htSub),
-    'the one-line point of the game must lead the overlay');
-  assert(/joystick/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&
-         /cog/.test(htHtml), 'touch callouts: joystick/FOCUS/STANCE/cog');
-  assert(/KEYBOARD/.test(htHtml) && /WASD/.test(htHtml) && /GOT IT/.test(htHtml),
-    'keyboard callouts + GOT IT present');
-  // GOT IT dismisses + sets the one-time flag, landing on the title.
-  byTitle0('GOT IT').click();
-  assert(globalThis.localStorage.getItem('hordes_onboarded') === '1',
-    "GOT IT must set hordes_onboarded='1'");
-  assert(elements['ov-title'].textContent === 'HORDES',
-    'GOT IT lands on the HORDES title screen');
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
   // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it.
@@ -152,8 +138,43 @@ const dtMs = 1000 / 60;
   assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'title HOW TO PLAY re-opens it');
   keyHandler({ key: 'Escape' });
   assert(elements['ov-title'].textContent === 'HORDES', 'ESC dismisses HOW TO PLAY');
-  console.log(`intro: played ${introFrames} frames, then first-boot HOW TO PLAY ` +
-    '(auto-pop -> GOT IT flags -> title -> reopen -> ESC)');
+  // THE FIRST-RUN GATE: on a fresh profile START GAME shows the reference
+  // BEFORE the run (owner 2026-09-16: the buttons are explained right away).
+  byTitle0('START GAME').click();
+  assert(elements['ov-title'].textContent === 'HOW TO PLAY',
+    'fresh START GAME must show HOW TO PLAY before the run');
+  // The point of the game (ovSub lead line) + both control schemes (cards).
+  const htSub = elements['ov-sub'].innerHTML;
+  const htHtml = Array.from(cards0.children).map(c => c.innerHTML || '').join('');
+  assert(/auto-fights/.test(htSub) && /draft weapons/.test(htSub),
+    'the one-line point of the game must lead the overlay');
+  assert(/joystick/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&
+         /cog/.test(htHtml), 'touch callouts: joystick/FOCUS/STANCE/cog');
+  assert(/KEYBOARD/.test(htHtml) && /WASD/.test(htHtml) && /GOT IT/.test(htHtml),
+    'keyboard callouts + GOT IT present');
+  // GOT IT dismisses + sets the one-time flag, STARTS THE RUN.
+  byTitle0('GOT IT').click();
+  assert(globalThis.localStorage.getItem('hordes_onboarded') === '1',
+    "GOT IT must set hordes_onboarded='1'");
+  for (let i = 0; i < 60 * 8 && mainMod.__TEST.state.mode !== 'playing'; i++) {
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+  }
+  assert(mainMod.__TEST.state.mode === 'playing',
+    'gate GOT IT must start the run (mode ' + mainMod.__TEST.state.mode + ')');
+  // Back to the title for the sections that follow: die, skip the movie,
+  // RETURN TO TITLE (the real paths).
+  mainMod.__TEST.die();
+  for (let i = 0; i < 10 && mainMod.__TEST.state.mode !== 'dead' &&
+       mainMod.__TEST.state.mode !== 'death-cine'; i++) {
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+  }
+  if (mainMod.__TEST.state.mode === 'death-cine') keyHandler({ key: 'x' });
+  keyHandler({ key: 't' });
+  for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  assert(elements['ov-title'].textContent === 'HORDES',
+    'the death screen TITLE return lands on the HORDES title');
+  console.log(`intro: played ${introFrames} frames, then title -> first-run gate ` +
+    '(START GAME -> HOW TO PLAY -> GOT IT starts the run)');
 }
 
 // Sk408 bug regression: RESET PROFILE must actually wipe. The arm flag used
