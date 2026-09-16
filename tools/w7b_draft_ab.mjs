@@ -21,6 +21,15 @@
 //   node tools/w7b_draft_ab.mjs --ladder on  --policy good --seed 4242 --runs 12 --cap 300
 //   node tools/w7b_draft_ab.mjs --ladder on  --policy bad  --seed 4242 --runs 12 --cap 300
 //   node tools/w7b_draft_ab.mjs --aggregate good.jsonl bad.jsonl
+// G6 (THE COHERENCE INSTRUMENT) adds two policies at the SAME seam:
+//   node tools/w7b_draft_ab.mjs --ladder on --policy coherent --seed 1337 --runs 1 --cap 60 --stage fresh
+//   node tools/w7b_draft_ab.mjs --ladder on --policy scatter  --seed 1337 --runs 1 --cap 60 --stage fresh
+//   node tools/w7b_draft_ab.mjs --aggregate coherent.jsonl scatter.jsonl
+// coherent/scatter differ ONLY in build coherence (commit to one weapon
+// family and its riders vs scatter across the brought families); their shared
+// neutral/tier block sits at IDENTICAL ranks, so a divergence between them
+// cannot be re-read as tier greed. Table + proof: tools/g6_coherence.mjs and
+// test/test_g6_coherence_policies.mjs.
 //
 // Pairing: run i in every arm seeds Math.random = mulberry32(seed + i) before
 // startRun, so within a build the good and bad arms see the SAME spawn stream
@@ -85,72 +94,29 @@ import { RULE_IDS } from '../src/rules.js';
 import { SKILL_PERK_IDS } from '../src/perks.js';
 import { REWRITE_IDS } from '../src/rewrites.js';
 import { FROST_CARD_ID } from '../src/frostcard.js';
+// G6 (THE COHERENCE INSTRUMENT): the tier table moved VERBATIM into the
+// shared importable module (same registries, same TIER_ORDER, same fallback
+// chain) plus the coherent/scatter rank tables — one source of truth for
+// good/bad AND coherent/scatter so the four policies can never drift.
+import {
+  TIER_ORDER, TIER_COUNT, ID_TIER, tierOf, goodRank,
+  isCoherencePolicy, g6Rank, committedWeapon, COH_RANK, NEUTRAL_BASE,
+} from './g6_coherence.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith('--')) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : true]);
   return acc;
 }, []));
 
-// ---------- THE TIER TABLE (derived from the live registries) ------------------
-// TIER_ORDER is best -> worst for the good policy; a tier's INDEX is its good
-// rank. Both policies read this ONE list, so they can never drift apart.
-const TIER_ORDER = [
-  'mythic',         // DRAFT_MYTHIC_UPGRADES (run-gated chase)
-  'rare',           // DRAFT_RARE_UPGRADES (percent/scaling chase)
-  'stat:RARE',      // flat family by DRAFT_RARITY (meta.js)
-  'stat:UNCOMMON',
-  'stat:COMMON',
-  'weapon',         // NEW WEAPON grant + weapon level-up
-  'family',         // RUN RULE / SKILL / REWRITE / Frost
-  'unknown',
-];
-const TIER_COUNT = TIER_ORDER.length;              // 8 — `bad` = 7 - good
+// ---------- THE TIER TABLE -----------------------------------------------------
+// (G6: moved VERBATIM into tools/g6_coherence.mjs and imported above — the
+// table is derived from the same live registries it always was; good/bad rank
+// behaviour is unchanged and the tier table now has ONE home shared with the
+// coherence policies. The historical order comment is preserved there.)
 
-const ID_TIER = new Map();
-for (const u of DRAFT_MYTHIC_UPGRADES) ID_TIER.set(u.id, 'mythic');
-for (const u of DRAFT_RARE_UPGRADES) ID_TIER.set(u.id, 'rare');
-for (const u of UPGRADES) ID_TIER.set(u.id, 'stat:' + (DRAFT_RARITY[u.id] || 'COMMON'));
-for (const id of RULE_IDS) ID_TIER.set('rule_' + id, 'family');
-for (const id of SKILL_PERK_IDS) ID_TIER.set('skill_' + id, 'family');
-for (const id of REWRITE_IDS) ID_TIER.set('rewrite_' + id, 'family');
-ID_TIER.set(FROST_CARD_ID, 'family');
-
-// Markup fallback: classify off the LIVE rendered card markup only, exactly
-// the way the offer is drawn by openDraft — badge first (so the RARE ladder's
-// "Iron Heart" is never confused with the flat Iron Heart), then desc/name.
-function htmlTier(html) {
-  const s = html || '';
-  if (s.includes('>MYTHIC</div>')) return 'mythic';
-  if (s.includes('>RARE</div>')) return 'rare';
-  if (s.includes('NEW WEAPON')) return 'weapon';
-  if (s.includes(' UP</div>')) return 'weapon';              // "<weapon> UP" name
-  if (s.includes('RUN RULE') || s.includes('SKILL -')) return 'family';
-  for (const u of DRAFT_RARE_UPGRADES) if (s.includes(u.name + '</div>')) return 'rare';
-  for (const u of DRAFT_MYTHIC_UPGRADES) if (s.includes(u.name + '</div>')) return 'mythic';
-  for (const u of UPGRADES) if (s.includes(u.name + '</div>')) return ID_TIER.get(u.id);
-  return 'unknown';
-}
-
-/** Tier of one live offer: the offer OBJECT first (its id + the tier badge
- *  openDraft wrote), the rendered markup as the fallback. */
-function tierOf(offer, html) {
-  if (offer) {
-    if (offer.tier === 'MYTHIC') return 'mythic';
-    if (offer.tier === 'RARE') return 'rare';
-    if (offer.id) {
-      const t = ID_TIER.get(offer.id);
-      if (t) return t;
-      if (offer.id.startsWith('wpn_') || offer.id.startsWith('lvl_')) return 'weapon';
-    }
-  }
-  return htmlTier(html);
-}
-
-const goodRank = (tier) => {
-  const i = TIER_ORDER.indexOf(tier);
-  return i < 0 ? TIER_COUNT - 1 : i;
-};
-/** good chases the ladder; bad is the exact reverse — ladder cards LAST. */
+/** good chases the ladder; bad is the exact reverse — ladder cards LAST.
+ *  (G6: coherent/scatter do NOT come through here — they rank through
+ *  g6Rank() at the pick loop, state-aware, so the commitment can be read.) */
 const policyRank = (tier) => (policy === 'good' ? goodRank(tier) : TIER_COUNT - 1 - goodRank(tier));
 
 const sumHist = (objs) => {
@@ -211,7 +177,35 @@ const runs = Number(args.runs || 24);
 const cap = Number(args.cap || 0);           // seconds of sim per run; 0 = RUN.LIMIT + 60
 const stage = args.stage || 'maxed';
 
+// G6: the coherence policies (see tools/g6_coherence.mjs). Validated here so
+// a typo cannot silently fall through to `good`.
+const isCoh = isCoherencePolicy(policy);
+if (!isCoh && policy !== 'good' && policy !== 'bad') {
+  console.error(`--policy wants good|bad|coherent|scatter (got ${policy})`);
+  process.exit(2);
+}
+
 if (!ladder) globalThis.HORDES_DRAFT_LADDER = false;   // BEFORE arm: the HEAD pool
+
+// G26/G6: --loadout TYPE,TYPE — arm the run's BROUGHT kit (the post-G26
+// weapon surface). Without it a headless profile has loadout=null, so
+// startRun arms the default kit (VOLLEY + a character starting weapon when
+// equipped) and the offer stream's weapon side is ONE family's level-up
+// cards: the coherence axis collapses to deepen-vs-neutral. Passing a
+// loadout (auto-adding any not-yet-unlocked types to the profile, so a
+// fresh-stage arm can still bring a real kit) is what makes coherent vs
+// scatter measurable at the seam the owner re-scoped.
+let bootStage = stage;
+if (args.loadout) {
+  const { stageProfile } = await import('./real_loop.mjs');
+  const prof = stageProfile(stage);
+  const list = String(args.loadout).split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  for (const t of list) {
+    if (!prof.unlockedWeapons.includes(t)) prof.unlockedWeapons.push(t);
+  }
+  prof.loadout = list;
+  bootStage = prof;
+}
 
 // State the shipped order OUT LOUD in the output, so a reader never has to
 // take the transcript's word for what the arm was chasing.
@@ -221,8 +215,17 @@ console.log(`POOL-DERIVED tiers: mythic=${DRAFT_MYTHIC_UPGRADES.map(u => u.id).j
   `rare=${DRAFT_RARE_UPGRADES.map(u => u.id).join(',')} ` +
   `stat:${UPGRADES.map(u => u.id + '/' + (DRAFT_RARITY[u.id] || 'COMMON')).join(' ')} ` +
   `family=${['rule_' + RULE_IDS[0], RULE_IDS.length + ' rules', SKILL_PERK_IDS.length + ' skills', REWRITE_IDS.length + ' rewrites', FROST_CARD_ID].join(' ')}`);
+// G6: state the coherence orders OUT LOUD too. The neutral/tier block prints
+// IDENTICAL ranks for both arms — that identity is the "not tier greed"
+// property the instrument exists for. Post-G26 there are no wpn_* grant
+// offers, so the classes below are the whole live coherence axis.
+if (isCoh) {
+  const cls = Object.entries(COH_RANK[policy]).sort((a, b) => a[1] - b[1]).map(([k, v]) => `${k}=${v}`).join(' ');
+  console.log(`ORDER-G6 policy=${policy} committed=first-non-VOLLEY-in-state.weapons ` +
+    `classes ${cls} neutral(tier-ordered, IDENTICAL ranks in coherent/scatter)=${NEUTRAL_BASE}..${NEUTRAL_BASE + TIER_COUNT - 1}`);
+}
 
-const h = await bootReal(stage);
+const h = await bootReal(bootStage);
 const st = h.state;
 const dtMs = 1000 / 60;
 const capFrames = Math.floor((cap || (1860 + 60)) * 60);
@@ -233,6 +236,10 @@ try {
     const seed = seed0 + i;
     Math.random = mulberry32(seed);
     h.startRun();
+    // G6: the run's committed weapon family, read once per run from the LIVE
+    // loadout (post-G26 state.weapons never changes mid-run — no grant cards).
+    // Deterministic + seeded by construction: it is profile/run state, no rng.
+    const committed = committedWeapon(st);
     const took = {};            // cardId -> count (WHAT this arm took)
     const seen = {};            // tier   -> count (offer rows shown to this arm)
     let t = 0;
@@ -250,12 +257,16 @@ try {
         if (st.mode === 'draft') {
           // THE POLICY: pick the best-ranked card. The tier comes off the live
           // offer (its id + the badge openDraft wrote), never a restated pool.
+          // G6: coherent/scatter rank through the shared g6Rank table instead
+          // of the tier-reverse — state-aware (the committed family is read
+          // from st.weapons), with the neutral/tier block at IDENTICAL ranks
+          // in both arms so the pair differs only in coherence.
           let best = 0, bestRank = Infinity, bestTier = 'unknown';
           for (let c = 0; c < cards.length; c++) {
             const offer = cards[c]._draftOffer;
             const tier = tierOf(offer, cards[c].innerHTML || '');
             seen[tier] = (seen[tier] || 0) + 1;         // offered rows, per tier
-            const r = policyRank(tier);
+            const r = isCoh ? g6Rank(policy, offer, tier, committed) : policyRank(tier);
             if (r < bestRank) { bestRank = r; best = c; bestTier = tier; }
           }
           const chosen = cards[best]._draftOffer;
@@ -282,9 +293,10 @@ try {
     const rec = {
       i, seed, time: Math.floor(t * 10) / 10, won: !!st.runWon, level: st.player.level, kills: st.player.kills,
       took,                                                     // {cardId: count} — what this run took
-      seen,                                                     // {tier: count} — what it was OFFERED
+      seen,                                                     // {tier: count} — what this run was OFFERED
       chase: Object.keys(st.chasePool || {}),                   // the run's chase-gate result (ladder on)
       rules: Object.keys(st.player.rules || {}),                // run-rule flags held
+      ...(isCoh ? { committed } : {}),                          // G6: the run's committed family
     };
     out.push(rec);
     console.log('RUN ' + JSON.stringify(rec));
