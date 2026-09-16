@@ -2068,6 +2068,16 @@ number. First-ever token: full banner (same treatment as the top-tier pickup in
 
 **PILOT:** verify on the artifact — re-run the unit test, the browser verifier and the suite yourself, and confirm by your own reload that the choice survives.
 
+## G32 — INVINCIBILITY INVESTIGATION (owner report, 2026-09-16)  [status: DISPATCHED — PRIORITY, FIND-IT ONLY]
+
+**Owner, verbatim: "User reports that they were able to become invincible. We need to see whether we can find the mechanics that are allowing this. It's only been available for a couple hours so it has to be a series of upgrades and or cards and or shrines and or chests that can be acquired in the first couple hours at most."**
+
+**NOT a fix task.** Locate the mechanics, prove them, report. No balance or code changes.
+
+**LEADS ALREADY LOCATED (in the brief, do not re-hunt from scratch):** (1) `main.js` :1731-1737 — while the portal is open and the pilot is steering, `p.invuln` is refreshed EVERY FRAME to `C.PORTAL.INVULN` (0.1s), AUTO only. If the portal can persist while the player keeps playing, an AUTO player is continuously invulnerable. (2) `arches.js` :21/:109-116 — `shieldHits` sums across arches, and the W7A arch-buff model landed TODAY (`ad9cc90`). (3) FORTIFY (`config.js` :210-211) via the single funnel `damageTakenFortified()` (`main.js` :653-659). (4) `HIT_CAP_FRAC 0.5` (`config.js` :69, `entities.js` :85-94) — two hits always needed. (5) The PREVIOUSLY MEASURED heal-outpacing defect (owner feedback item (a): 4471 heal writes/288s, healed 4528.8 vs 4162.5 taken, lifesteal 0 -> 0.06, `applyRegrowth` :1308, level-up heals :1921). (6) chests / evolutions / shrines / rules / perks that heal, shield, revive or grant immunity.
+
+**DELIVERABLES:** a mechanic inventory (what | file:line | how acquired | renewable or one-shot | verdict); the minimal combo with its acquisition cost and estimated time-to-reach at the measured gold rates (~51k/h fresh, ~21k partial, ~1.5M maxed); an EMPIRICAL repro bounded to <= 60s per command via `tools/real_loop.mjs` `stageProfile()`, measured against a control run of the same length, or a bounded browser check (e.g. open a portal and take a hit without entering); and a plain verdict naming the most likely mechanic. Check whether it coincides with a recent commit (W7A arch buffs landed today in `ad9cc90`). No reproduction = a valid result, reported as "not reproduced" with what was ruled out.
+
 ## G1 — SHIP THE CURRENT BUILD  [status: DONE 2026-09-12]
 The published site is ~5 waves stale (still pre-wave-23). Testers are playing a game that does not
 have the tour, the legibility fixes, the resolution setting, the desktop pads, the bug fixes or the
