@@ -119,7 +119,10 @@ s.check('THE FIELD still documents the objects (chests / portal / arches / shrin
 // ---- 3. the CSS that sizes the panel (source pins; geometry is the browser tool)
 s.check('the wide panel exists: .ref spans the card row, capped at 560px', () => {
   const m = /#overlay\.howto \.card\.ref\s*\{([^}]*)\}/.exec(css);
-  if (!m || !m[1].includes('width: 100%') || !m[1].includes('max-width: 560px')) {
+  // RETARGETED (help-fit task, 2026-09-16): the 560px cap now rides the ONE
+  // shared viewport clamp (max-width: min(560px, var(--fit-w))) — same cap,
+  // plus a phone can never be handed a panel wider than its screen.
+  if (!m || !m[1].includes('width: 100%') || !m[1].includes('max-width: min(560px, var(--fit-w))')) {
     throw new Error('no wide .ref width rule');
   }
 });

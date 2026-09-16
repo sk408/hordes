@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>HORDES</title>
 <style>
+  /* THE ONE VIEWPORT CLAMP for every help surface (owner 2026-09-16: "the
+     popups are too wide for mobile screen"). Any box that shows help text
+     sizes itself min(design width, var(--fit-w)) — a phone can never be
+     handed a panel wider than its screen minus both margins. New help
+     surfaces must go through this same helper, not their own rule. */
+  :root { --fit-margin: 8px; --fit-w: calc(100vw - 2 * var(--fit-margin)); }
   html, body {
     margin: 0; padding: 0; height: 100%;
     background: #0b0b12; overflow: hidden;
@@ -164,7 +170,7 @@
   #overlay.howto .cards { width: 100%; }
   #overlay.howto .card.ref {
     box-sizing: border-box;
-    width: 100%; max-width: 560px;
+    width: 100%; max-width: min(560px, var(--fit-w));
     text-align: left; padding: 12px 14px;
   }
   #overlay.howto .card.ref .desc {
@@ -192,7 +198,7 @@
      stays. */
   #overlay.howto .card.gotit {
     min-height: 44px; box-sizing: border-box;
-    width: 100%; max-width: 560px;
+    width: 100%; max-width: min(560px, var(--fit-w));
     display: flex; align-items: center; justify-content: center;
   }
   /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
@@ -511,7 +517,17 @@
     position: absolute; left: 50%; transform: translateX(-50%);
     display: none; padding: 7px 12px; z-index: 7;
     font-size: 13px; line-height: 1.5; color: #e8e8f0; text-align: center;
-    text-shadow: 1px 1px 0 #000; white-space: nowrap;
+    text-shadow: 1px 1px 0 #000;
+    /* FIT THE MOBILE VIEWPORT (owner 2026-09-16): nowrap + no cap pushed a
+       long explainer line past BOTH screen edges (529px of text on a 320px
+       phone). The shared --fit-w clamp + wrapping text keeps the line
+       inside; border-box keeps the padding inside the cap. width:
+       max-content (capped by that max-width) stops the abs-pos
+       shrink-to-fit at left:50% from folding the box to the remaining
+       half-viewport — the popup uses its whole clamp and wraps only as
+       much as it must. */
+    box-sizing: border-box; width: max-content;
+    max-width: min(480px, var(--fit-w)); white-space: normal;
     background: rgba(20,20,31,0.92); border: 2px solid #ffd75e; border-radius: 10px;
     pointer-events: none;
   }
