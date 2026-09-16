@@ -13,6 +13,11 @@ import { isReachableLoot, lootLimit } from './entities.js';
 export const FOCUS_MODES = ['NEAREST', 'TOUGHEST', 'SWARM', 'RANGED'];
 export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
 
+// AUDIT ROUND 2 (2026-09-16): the SWARM picker's exact O(n^2) density scan is
+// kept BYTE-IDENTICAL at or below this horde size (every shipped pick is a
+// small-horde pick); above it the grid-scored path takes over (see pickTarget).
+export const SWARM_EXACT_MAX = 256;
+
 // RANGED doctrine: enemy types with fire capability get shot FIRST (Sk408
 // playtest — the volleys ignored spitters/warlocks while they chipped the
 // player down from off-screen).
@@ -138,16 +143,56 @@ export class AutoPilotController {
 
     // SWARM: enemy in the densest cluster (most enemies within SWARM_CLUSTER_R
     // of the candidate) — point the volley where the horde is thickest.
-    const cr2 = C.AUTOPILOT.SWARM_CLUSTER_R ** 2;
+    // AUDIT ROUND 2 (2026-09-16): this picker was O(n^2) — every candidate
+    // rescanned the whole field — which the benchmark (tools/swarm_bench.mjs)
+    // measures in the tens of ms at a 10k horde. HYBRID now: small hordes
+    // (<= SWARM_EXACT_MAX) keep the EXACT scan below byte-for-byte, so every
+    // shipped pick is unchanged; above it the density score becomes a
+    // uniform-grid cell-count sum (cell = SWARM_CLUSTER_R, 3x3 neighbourhood).
+    // DISCLOSED APPROXIMATION: the 3x3 sum is an L-infinity superset of the
+    // exact L2 disc, so cluster-edge scores can differ from the exact count —
+    // only reachable past 256 enemies, where "which dense blob" (not "which
+    // member of it") is the decision that matters. O(n) either way; the
+    // tie-break comparator is the same on both paths.
+    const cr = C.AUTOPILOT.SWARM_CLUSTER_R;
+    const cr2 = cr ** 2;
+    const enemies = state.enemies;
+    let scores = null;
+    if (enemies.length > SWARM_EXACT_MAX) {
+      const cells = new Map();
+      for (const o of enemies) {
+        if (!alive(o)) continue;
+        const k = Math.floor(o.x / cr) + ',' + Math.floor(o.y / cr);
+        cells.set(k, (cells.get(k) || 0) + 1);
+      }
+      scores = new Map();
+      for (const e of enemies) {
+        if (!alive(e)) continue;
+        const cx = Math.floor(e.x / cr), cy = Math.floor(e.y / cr);
+        const key = cx + ',' + cy;
+        if (!scores.has(key)) {
+          let s = 0;
+          for (let gx = cx - 1; gx <= cx + 1; gx++)
+            for (let gy = cy - 1; gy <= cy + 1; gy++)
+              s += cells.get(gx + ',' + gy) || 0;
+          scores.set(key, s);
+        }
+      }
+    }
     let best = null, bc = -1, bd = Infinity;
-    for (const e of state.enemies) {
+    for (const e of enemies) {
       if (!alive(e)) continue;
       const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
       if (d > r2) continue;
-      let count = 0;
-      for (const o of state.enemies) {
-        if (!alive(o)) continue;
-        if ((o.x - e.x) ** 2 + (o.y - e.y) ** 2 <= cr2) count++;
+      let count;
+      if (scores) {
+        count = scores.get(Math.floor(e.x / cr) + ',' + Math.floor(e.y / cr));
+      } else {
+        count = 0;
+        for (const o of enemies) {
+          if (!alive(o)) continue;
+          if ((o.x - e.x) ** 2 + (o.y - e.y) ** 2 <= cr2) count++;
+        }
       }
       if (count > bc || (count === bc && d < bd)) { bc = count; bd = d; best = e; }
     }

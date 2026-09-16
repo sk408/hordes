@@ -5483,6 +5483,20 @@ function startRun() {
   state.preBossStance = null;
   // M2: the previous run's last killer must not print on this run's death card.
   lastDamageSource = null;
+  // AUDIT ROUND 2 (2026-09-16): run-boundary presentation state that used to
+  // survive startRun. The meta-screen RETURN markers are mode snapshots a run
+  // that ends inside a screen leaves behind — a stale settingsReturn could
+  // resume the WRONG mode the next time that screen closed (it is read with a
+  // `|| 'playing'` fallback, so a value from a MENU-context visit flips a
+  // mid-run close back to the menu). rewriteEchoes is the rewrites.js echo
+  // queue, likewise run-scoped. All start empty for every run; the guard test
+  // (test_audit_round2.mjs) mechanically holds every one of these here.
+  state.rewriteEchoes = [];
+  state.apexReturn = null;
+  state.bestiaryReturn = null;
+  state.settingsReturn = null;
+  state.statsReturn = null;
+  state.trophiesReturn = null;
   state.mawDeadline = 0;
   lastPurseFlush = 0;   // E1: the periodic purse flush restarts with the run
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
@@ -6693,8 +6707,24 @@ if (touchLayer && touchLayer.addEventListener) {
       joyRecenter();   // release = stick snaps back to center
     }
   };
-  touchLayer.addEventListener('pointerup', releasePointer);
-  touchLayer.addEventListener('pointercancel', releasePointer);
+  // AUDIT ROUND 2 (2026-09-16): the release listeners moved from touchLayer to
+  // WINDOW. pointerup fired on the touch layer only reaches the layer when the
+  // finger lifts back OVER it — steer off the layer (or off the canvas) and the
+  // lift never arrived: joyPointerId stayed captured and the last drag vector
+  // steered the pilot forever. The lift can land anywhere, so the listener must
+  // be global. WINDOW LISTENERS over setPointerCapture: capture would also
+  // retarget the lift to the layer, but it depends on browser capture semantics
+  // the headless DOM cannot exercise, and it breaks silently when the layer is
+  // hidden/re-rendered mid-drag (lostpointercapture edge cases); a global
+  // listener is the plain, testable fix. Multi-touch stays safe (isJoyPointer
+  // filters by pointer id) and blur -> clearPilotInput still covers alt-tab.
+  if (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
+    window.addEventListener('pointerup', releasePointer);
+    window.addEventListener('pointercancel', releasePointer);
+  } else {   // no window (never in the shipped build; keeps the seam total)
+    touchLayer.addEventListener('pointerup', releasePointer);
+    touchLayer.addEventListener('pointercancel', releasePointer);
+  }
   joyVec = applyJoyVector;
   joyRelease = joyRecenter;
 }
