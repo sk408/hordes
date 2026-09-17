@@ -298,72 +298,163 @@ function drawWall(ctx, sim, w2s, pal) {
   }
 }
 
-// ---- V1f THE GRAB ARM (the art budget goes here: wind-up, extend, contact,
-// retract — a procedural chain keyed PURELY on the sim's own grab machine, so
-// the pixels are a function of (sim, phase, t) and parity holds by
-// construction). The arm anchors on the body's left flank and the claw rides
-// four authored posts: COILED at the flank (idle), RAISED high (the wind-up
-// tell), FULL REACH past the pilot's lane (extend/hold), and back. The
-// wind-up also stripes the landing zone on the floor — the phone-size tell.
-function drawGrabArm(ctx, sim, w2s) {
-  const b = sim.boss, g = b.grab, G = THREATS;
+// ---- VK9P4 THE APPENDAGES (owner: "multiple appendages"): THREE arms, each
+// a procedural chain keyed PURELY on the sim's own per-arm machine, so the
+// pixels are a function of (sim, arm, phase, t) and parity holds by
+// construction. Each arm anchors on the body's left flank and its tip rides
+// four authored posts: COILED at the flank (idle), RAISED (the wind-up tell),
+// FULL REACH in its lane (extend/hold), and back. Every wind-up also stripes
+// its landing zone — the phone-size tell (ground arms stripe the floor at
+// their band; the sickle stripes its AIR lane, the band it alone can hit).
+function drawArms(ctx, sim, w2s) {
+  const b = sim.boss;
   const bx0 = w2s(b.x - THREATS.BOSS_W / 2);
-  const sx = bx0 + 12;                                  // the shoulder anchor
-  const sy = BAND.FLOOR_Y - THREATS.BOSS_H + 34;
-  const extX = w2s(b.x - G.GRAB_REACH), extY = BAND.FLOOR_Y - 26;
-  const coilX = bx0 + 2, coilY = BAND.FLOOR_Y - 52;
-  const raiseX = bx0 - 4, raiseY = BAND.FLOOR_Y - THREATS.BOSS_H + 2;
-  let cx, cy, open, hot;
-  if (g.phase === 'windup') { cx = raiseX; cy = raiseY; open = true; hot = true; }
-  else if (g.phase === 'extend') {
-    const q = Math.min(1, g.t / G.GRAB_EXTEND);
-    cx = raiseX + (extX - raiseX) * q; cy = raiseY + (extY - raiseY) * q; open = true; hot = true;
-  } else if (g.phase === 'hold') { cx = extX; cy = extY; open = sim.grabbed == null; hot = true; }
-  else if (g.phase === 'retract') {
-    const q = 1 - Math.min(1, g.t / G.GRAB_RETRACT);
-    cx = coilX + (extX - coilX) * q; cy = coilY + (extY - coilY) * q; open = false; hot = false;
-  } else { cx = coilX; cy = coilY; open = false; hot = false; }
-  cx = Math.round(cx); cy = Math.round(cy);
-  // THE WIND-UP TELL: striped landing zone on the floor + a faint shimmer
-  // column over the band — readable at phone size, ahead of the arm moving.
-  if (g.phase === 'windup') {
-    const zl = w2s(b.x - G.GRAB_REACH - G.GRAB_R), zr = w2s(b.x - G.GRAB_REACH + G.GRAB_R);
-    ctx.fillStyle = rgba('#e06050', 0.10);
-    ctx.fillRect(zl, BAND.FLOOR_Y - 72, zr - zl, 72);
-    if (Math.floor(sim.t * 10) % 2) {
-      ctx.fillStyle = C_TELEGRAPH;
-      for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 4, 6, 4);
+  for (const g of b.arms) {
+    // The per-arm posts: shoulder on the flank, the reach lane's tip height,
+    // the coil and raise rests. The claw keeps the V1f geometry; the sickle
+    // anchors HIGH and reaches into the AIR lane; the tendril anchors low
+    // and sweeps the floor.
+    let sx, sy, extY, coilX, coilY, raiseX, raiseY;
+    if (g.id === 'sickle') {
+      sx = bx0 + 18; sy = BAND.FLOOR_Y - THREATS.BOSS_H + 12;
+      extY = BAND.FLOOR_Y - 92;                          // the AIR lane it alone contacts
+      coilX = bx0 + 6; coilY = BAND.FLOOR_Y - THREATS.BOSS_H + 8;
+      raiseX = bx0 + 2; raiseY = BAND.FLOOR_Y - THREATS.BOSS_H - 4;
+    } else if (g.id === 'tendril') {
+      sx = bx0 + 8; sy = BAND.FLOOR_Y - 40;
+      extY = BAND.FLOOR_Y - 16;                          // the floor sweep
+      coilX = bx0 + 4; coilY = BAND.FLOOR_Y - 34;
+      raiseX = bx0 - 2; raiseY = BAND.FLOOR_Y - 64;
+    } else {                                             // the claw (V1f geometry)
+      sx = bx0 + 12; sy = BAND.FLOOR_Y - THREATS.BOSS_H + 34;
+      extY = BAND.FLOOR_Y - 26;
+      coilX = bx0 + 2; coilY = BAND.FLOOR_Y - 52;
+      raiseX = bx0 - 4; raiseY = BAND.FLOOR_Y - THREATS.BOSS_H + 2;
     }
-  }
-  // The arm: a chain of hide-toned segments, shoulder -> elbow -> claw.
-  const elbowX = Math.round((sx + cx) / 2 - 8), elbowY = Math.round((sy + cy) / 2 - 12);
-  const seg = (x1, y1, x2, y2) => {
-    const steps = Math.max(3, Math.round(Math.hypot(x2 - x1, y2 - y1) / 5));
-    for (let i = 0; i <= steps; i++) {
-      const x = Math.round(x1 + (x2 - x1) * i / steps), y = Math.round(y1 + (y2 - y1) * i / steps);
-      ctx.fillStyle = '#4c2834'; ctx.fillRect(x - 3, y - 3, 6, 6);
-      ctx.fillStyle = '#6e3844'; ctx.fillRect(x - 2, y - 2, 4, 4);
+    const extX = w2s(b.x - g.reach);
+    let cx, cy, open, hot;
+    if (g.phase === 'windup') { cx = raiseX; cy = raiseY; open = true; hot = true; }
+    else if (g.phase === 'extend') {
+      const q = Math.min(1, g.t / g.extend);
+      cx = raiseX + (extX - raiseX) * q; cy = raiseY + (extY - raiseY) * q; open = true; hot = true;
+    } else if (g.phase === 'hold') { cx = extX; cy = extY; open = sim.grabbed == null; hot = true; }
+    else if (g.phase === 'retract') {
+      const q = 1 - Math.min(1, g.t / g.retract);
+      cx = coilX + (extX - coilX) * q; cy = coilY + (extY - coilY) * q; open = false; hot = false;
+    } else { cx = coilX; cy = coilY; open = false; hot = false; }
+    cx = Math.round(cx); cy = Math.round(cy);
+    // THE WIND-UP TELL: striped landing zone at the arm's OWN band. Ground
+    // arms stripe the floor under their reach; the sickle shimmers its AIR
+    // lane (the pilot is safe there on the floor — the tell TEACHES the lane).
+    if (g.phase === 'windup') {
+      const zl = w2s(b.x - g.reach - g.r), zr = w2s(b.x - g.reach + g.r);
+      if (g.high) {
+        ctx.fillStyle = rgba('#e06050', 0.12);
+        ctx.fillRect(zl, BAND.FLOOR_Y - 110, zr - zl, 40);
+        if (Math.floor(sim.t * 10) % 2) {
+          ctx.fillStyle = C_TELEGRAPH;
+          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 74, 6, 3);
+        }
+      } else {
+        ctx.fillStyle = rgba('#e06050', 0.10);
+        ctx.fillRect(zl, BAND.FLOOR_Y - 72, zr - zl, 72);
+        if (Math.floor(sim.t * 10) % 2) {
+          ctx.fillStyle = C_TELEGRAPH;
+          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 4, 6, 4);
+        }
+      }
     }
-  };
-  seg(sx, sy, elbowX, elbowY);
-  seg(elbowX, elbowY, cx, cy);
-  if (g.phase === 'extend') {                           // the sweep streaks
-    ctx.fillStyle = 'rgba(255,122,60,0.40)';
-    ctx.fillRect(cx + 10, cy - 2, 12, 2);
-    ctx.fillRect(cx + 14, cy - 9, 9, 2);
-  }
-  // The CLAW: ink palm + hot hide + fingers (open reaches, closed grips).
-  ctx.fillStyle = '#140f12'; ctx.fillRect(cx - 7, cy - 6, 14, 12);
-  ctx.fillStyle = hot ? '#ff7a3c' : '#6e3844'; ctx.fillRect(cx - 5, cy - 4, 10, 8);
-  const f = open ? 6 : 2;
-  ctx.fillStyle = '#140f12';
-  ctx.fillRect(cx - 8, cy - 9 - f, 3, 7 + f); ctx.fillRect(cx + 5, cy - 9 - f, 3, 7 + f);
-  ctx.fillRect(cx - 8, cy + 3 + (open ? f - 2 : 1), 3, 5); ctx.fillRect(cx + 5, cy + 3 + (open ? f - 2 : 1), 3, 5);
-  if (hot) {                                            // the gold glint (the eye follows it)
-    ctx.fillStyle = '#ffd54a';
-    ctx.fillRect(cx - 6, cy - 7, 2, 2); ctx.fillRect(cx + 4, cy - 7, 2, 2);
+    // THE ARM ITSELF — a distinct silhouette per id (owner: readable which
+    // arm is which): the claw's thick hide chain + gripping fingers (V1f),
+    // the sickle's rigid limb + curved STEEL blade, the tendril's thin whip
+    // with an ember tip.
+    const elbowX = Math.round((sx + cx) / 2 - 8), elbowY = Math.round((sy + cy) / 2 - 12);
+    if (g.id === 'tendril') {
+      // The whip: a 2px polyline that BOWS (sagging rope) between shoulder
+      // and tip, with a curl at the elbow.
+      const steps = Math.max(6, Math.round(Math.hypot(cx - sx, cy - sy) / 4));
+      ctx.fillStyle = hot ? '#8a4a3a' : '#5c3a34';
+      for (let i = 0; i <= steps; i++) {
+        const q = i / steps;
+        const sag = Math.sin(q * Math.PI) * 10;
+        const x = Math.round(sx + (cx - sx) * q);
+        const y = Math.round(sy + (cy - sy) * q + sag);
+        ctx.fillRect(x - 1, y, 2, 2);
+      }
+      ctx.fillStyle = hot ? '#ffcf6a' : '#7a4a40';       // the ember tip
+      ctx.fillRect(cx - 2, cy - 2, 4, 4);
+      if (hot) { ctx.fillStyle = '#ffd54a'; ctx.fillRect(cx - 1, cy - 5, 2, 3); }
+    } else if (g.id === 'sickle') {
+      // The rigid limb: two straight bone segments, then the curved blade —
+      // a steel crescent that reads COLD against the horde's hot hide.
+      const seg = (x1, y1, x2, y2, w2) => {
+        const steps = Math.max(3, Math.round(Math.hypot(x2 - x1, y2 - y1) / 5));
+        for (let i = 0; i <= steps; i++) {
+          const x = Math.round(x1 + (x2 - x1) * i / steps), y = Math.round(y1 + (y2 - y1) * i / steps);
+          ctx.fillStyle = '#3c3440'; ctx.fillRect(x - w2, y - w2, w2 * 2, w2 * 2);
+          ctx.fillStyle = '#5a5064'; ctx.fillRect(x - w2 + 1, y - w2 + 1, w2 * 2 - 2, w2 * 2 - 2);
+        }
+      };
+      seg(sx, sy, elbowX, elbowY, 3);
+      seg(elbowX, elbowY, cx + 6, cy - 4, 2);
+      // The blade: a downward crescent off the wrist.
+      ctx.fillStyle = '#c8ccd8';
+      ctx.fillRect(cx - 2, cy - 8, 4, 10);
+      ctx.fillRect(cx - 6, cy + 1, 4, 8);
+      ctx.fillRect(cx - 9, cy + 7, 3, 6);
+      ctx.fillStyle = hot ? '#ffffff' : '#8a8ea0';
+      ctx.fillRect(cx - 2, cy - 8, 2, 10); ctx.fillRect(cx - 6, cy + 1, 2, 8); ctx.fillRect(cx - 9, cy + 7, 2, 6);
+      if (g.phase === 'extend') {                        // the arc streak
+        ctx.fillStyle = 'rgba(200,204,216,0.45)';
+        ctx.fillRect(cx + 8, cy - 6, 14, 2);
+        ctx.fillRect(cx + 12, cy - 12, 10, 2);
+      }
+    } else {
+      // THE CLAW (V1f art, unchanged): hide chain + gripping fingers.
+      const seg = (x1, y1, x2, y2) => {
+        const steps = Math.max(3, Math.round(Math.hypot(x2 - x1, y2 - y1) / 5));
+        for (let i = 0; i <= steps; i++) {
+          const x = Math.round(x1 + (x2 - x1) * i / steps), y = Math.round(y1 + (y2 - y1) * i / steps);
+          ctx.fillStyle = '#4c2834'; ctx.fillRect(x - 3, y - 3, 6, 6);
+          ctx.fillStyle = '#6e3844'; ctx.fillRect(x - 2, y - 2, 4, 4);
+        }
+      };
+      seg(sx, sy, elbowX, elbowY);
+      seg(elbowX, elbowY, cx, cy);
+      if (g.phase === 'extend') {                        // the sweep streaks
+        ctx.fillStyle = 'rgba(255,122,60,0.40)';
+        ctx.fillRect(cx + 10, cy - 2, 12, 2);
+        ctx.fillRect(cx + 14, cy - 9, 9, 2);
+      }
+      ctx.fillStyle = '#140f12'; ctx.fillRect(cx - 7, cy - 6, 14, 12);
+      ctx.fillStyle = hot ? '#ff7a3c' : '#6e3844'; ctx.fillRect(cx - 5, cy - 4, 10, 8);
+      const f = open ? 6 : 2;
+      ctx.fillStyle = '#140f12';
+      ctx.fillRect(cx - 8, cy - 9 - f, 3, 7 + f); ctx.fillRect(cx + 5, cy - 9 - f, 3, 7 + f);
+      ctx.fillRect(cx - 8, cy + 3 + (open ? f - 2 : 1), 3, 5); ctx.fillRect(cx + 5, cy + 3 + (open ? f - 2 : 1), 3, 5);
+      if (hot) {                                         // the gold glint (the eye follows it)
+        ctx.fillStyle = '#ffd54a';
+        ctx.fillRect(cx - 6, cy - 7, 2, 2); ctx.fillRect(cx + 4, cy - 7, 2, 2);
+      }
+    }
   }
 }
+
+// ---- VK9P4 the touch affordances (manual play on a phone). JUMP and KICK
+// are MANUAL-ONLY (the auto path needs no buttons); MODE is for BOTH players
+// (owner: "both players need a way of switching"). Real hit-testable rects,
+// the SKIP_RECT precedent: right-thumb standard placement, translucent so the
+// corridor stays readable underneath, clear of the HUD (top-left clock /
+// pressure, top-right skip).
+export const JUMP_RECT = { x: 398, y: 226, w: 74, h: 62 };   // the big right-thumb pad
+export const KICK_RECT = { x: 316, y: 244, w: 72, h: 44 };   // left of JUMP, smaller
+export const MODE_RECT = { x: 388, y: 40, w: 84, h: 22 };    // under SKIP, both players
+function inRect(r, px, py) {
+  return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+}
+export function jumpHit(px, py) { return inRect(JUMP_RECT, px, py); }
+export function kickHit(px, py) { return inRect(KICK_RECT, px, py); }
+export function modeHit(px, py) { return inRect(MODE_RECT, px, py); }
 
 export function draw(ctx, sim, opts = {}) {
   const p = sim.player;
@@ -462,7 +553,7 @@ export function draw(ctx, sim, opts = {}) {
       ctx.fillRect(gx, gy, gw, 2);
       ctx.fillRect(gx, gy, 2, gh);
       ctx.fillRect(gx + gw - 2, gy, 2, gh);
-      drawGrabArm(ctx, sim, w2s);
+      drawArms(ctx, sim, w2s);
       // TELEGRAPH (terrain destruction, retained): a striped bar over the
       // platform it is about to tear out — never subtle, always behind the runner.
       if (b.telegraph > 0 && b.target) {
@@ -590,6 +681,29 @@ export function draw(ctx, sim, opts = {}) {
   ctx.fillRect(8, 34, barW, 5);
   ctx.fillStyle = pr > 120 ? '#60e0c0' : pr > 50 ? '#ffd54a' : '#e06050';
   ctx.fillRect(8, 34, Math.round(fill), 5);
+
+  // ---- VK9P4 the tail-clear tell: while the kick's suppression window runs
+  // the HUD says so (the manual player sees WHAT they bought and for how long).
+  if (sim.tailT > 0) {
+    ctx.fillStyle = '#80d0a0';
+    ctx.fillText('TAIL CLEAR ' + sim.tailT.toFixed(1) + 's', 8, 44);
+  }
+
+  // ---- VK9P4 the touch affordances: JUMP/KICK manual-only, MODE both ------
+  const btn = (r, label, dim) => {
+    ctx.fillStyle = dim ? 'rgba(24,24,38,0.45)' : 'rgba(24,24,38,0.66)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = dim ? '#3a3a52' : '#5a5a7e';
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    ctx.fillStyle = dim ? '#6a6a88' : C_TEXT;
+    ctx.font = '10px monospace';
+    ctx.fillText(label, r.x + Math.round((r.w - label.length * 6) / 2), r.y + Math.round(r.h / 2) - 5);
+  };
+  if (opts.manual) {
+    btn(JUMP_RECT, 'JUMP', false);
+    btn(KICK_RECT, 'KICK', sim.kickCd > 0);   // dimmed while the cooldown runs
+  }
+  btn(MODE_RECT, opts.manual ? 'MODE·AUTO' : 'MODE·MANUAL', false);
 
   // ---- the skip affordance (frame one, every frame) ------------------------
   ctx.fillStyle = '#26263a';

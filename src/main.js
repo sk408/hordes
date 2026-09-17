@@ -7376,7 +7376,7 @@ if (touchLayer && touchLayer.classList) {
 // to exactly the screen the mode was armed on. One glyph, one door.
 const helpHudEl = document.getElementById('help-hud');
 const helpTipEl = document.getElementById('help-tip');
-const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft']);
+const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft', 'escape']);
 // The two controls with no controls_ref row (movement + the cog): one table,
 // read by the explainer; the reference's TOUCH card carries the same names
 // (joystick / SETTINGS (cog)) so the wording cannot fork.
@@ -8238,6 +8238,21 @@ if (overlay && overlay.addEventListener) {
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   audioUnlockGesture();     // S2: a tap IS a user gesture — unlock audio
   if (state.mode === 'escape') {
+    // HELP MODE (VK9P4: the escape joined the entry set): a tap EXPLAINS,
+    // never activates — the touchLayer funnel's mirror on the canvas path, so
+    // the JUMP/KICK pads cannot fire (and cannot be swallowed silently) with
+    // the reference open.
+    if (state.helpMode) {
+      if (ev.preventDefault) ev.preventDefault();
+      const hr = canvas.getBoundingClientRect();
+      if (hr.width && hr.height) {
+        const vx = (ev.clientX - hr.left) / hr.width * C.VIEW_W;
+        const vy = (ev.clientY - hr.top) / hr.height * C.VIEW_H;
+        showHelpTip(ESCAPE.explain(vx, vy),
+          { left: ev.clientX - 1, top: ev.clientY - 1, right: ev.clientX + 1, bottom: ev.clientY + 1, width: 2, height: 2 });
+      }
+      return;
+    }
     const r = canvas.getBoundingClientRect();
     if (r.width && r.height) {
       ESCAPE.pointer((ev.clientX - r.left) / r.width * C.VIEW_W,
@@ -8325,8 +8340,14 @@ function startEscape(opts = {}) {
     profile,
     // AUTO pilots ride the template controller (bands, clamps, boss steering);
     // a MANUAL pilot plays the escape by hand — same seam as the overhead
-    // movement-authority predicate, read once at hand-over.
+    // movement-authority predicate. VK9P4: `getAuto` is read LIVE every frame
+    // (the pilot pref is the ONE source of truth — a flip mid-run changes who
+    // drives on the next frame, no restart, no lost progress), and
+    // `onToggleMode` hands the escape's MODE button/key back into main's own
+    // swapPilotMode (persisted pref + toast — no second pilot anywhere).
     auto: !pilotMovesYou(),
+    getAuto: () => !pilotMovesYou(),
+    onToggleMode: () => swapPilotMode(pilotMovesYou() ? 'AUTO_ALL' : 'MANUAL'),
     onEnd: opts.test ? endEscapeTest : endEscape,
     // The in-run settings TEST button: a play-test entry that PAYS NOTHING
     // (the payout is repeatable currency — a paying test button would be a
@@ -8761,7 +8782,10 @@ function frame(now) {
   // (chromeOn already excludes every mode but playing/finale). realDt, NOT
   // the earned-moment dt: the escape keeps a steady clock by design.
   if (state.mode === 'escape') {
-    ESCAPE.frame(renderer.ctx, realDt);
+    // HELP MODE (VK9P4): the pause is the player's own invitation — same
+    // freeze the playing branch grants, so reading the reference mid-escape
+    // never costs wall-clock distance (the horde is the timer).
+    ESCAPE.frame(renderer.ctx, state.helpMode ? 0 : realDt);
     requestAnimationFrame(frame);
     return;
   }
@@ -9155,6 +9179,8 @@ export const __TEST = {
     frame: ESCAPE.frame,
     onKey: ESCAPE.onKey,
     pointer: ESCAPE.pointer,
+    explain: ESCAPE.explain,
+    isAuto: ESCAPE.isAuto,
     get payload() { return ESCAPE.payload(); },
   },
   // ---- G15 death-movie seam: the same start/end the real die()/skip path

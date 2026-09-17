@@ -656,8 +656,16 @@ S.check('V1f: no late grabs — the retract phase has NO hitbox; a cleared pilot
     'a pilot standing in the band during retract was touched (invisible hitbox)');
   // And the reach is measured against the lane: the claw's full extension
   // must reach PAST the body's face by a stated margin.
+  // RETARGET (VK9P4, disclosed): the margin was >= 100 under the V1f reach
+  // of 150; the owner asked for a "slightly shorter reach so manual players
+  // can see the boss to react to it", and the claw is now 132 (config.js
+  // THREATS.ARMS row 0) with a LONGER wind-up tell (0.50 -> 0.65) — the
+  // trade the task names. The margin floor drops with the reach itself
+  // (>= 80); the reach is separately bounded ABOVE by the on-screen
+  // visibility derivation in test_vk9p4_escape.mjs (reach <= 272 keeps the
+  // full body on screen at the farthest reaction band edge).
   const pastFace = THREATS.GRAB_REACH - THREATS.BOSS_W / 2;
-  assert(pastFace >= 100, 'the claw reaches only ' + pastFace + 'px past the body face (want >= 100)');
+  assert(pastFace >= 80, 'the claw reaches only ' + pastFace + 'px past the body face (want >= 80)');
   console.log('  MEASURED V1f reach: claw lands ' + pastFace + 'px past the body face, band width ' +
     (THREATS.GRAB_R * 2) + 'px; retract (' + THREATS.GRAB_RETRACT + 's) is hitbox-free');
 });

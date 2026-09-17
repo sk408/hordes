@@ -119,22 +119,70 @@ export const THREATS = {
   BOSS_H: 88,
   BOSS_DESTROY_LEAD: 1.0,   // telegraph (s) before it tears out terrain BEHIND
   BOSS_DESTROY_EVERY: 4.0,
-  // ---- V1f THE GRAB (owner refinement 2026-09-17, msg superseding the
-  // floating-bypass shape: "the boss reaching to grab the pilot and the pilot
-  // being able to run past. Has to look convincing"). The boss stands OUT IN
-  // THE OPEN on the finale floor; its one threat is a telegraphed GRAB: a
-  // fixed cadence the player can learn by watching one cycle, a visible
-  // WIND-UP tell, contact ONLY while the arm is out (extend/hold) — a pilot
-  // who has cleared the arm, or arrives during idle/windup/retract, is
-  // structurally safe (no invisible hitboxes, no late grabs).
-  GRAB_EVERY: 2.0,     // the full cycle (s): idle + windup + extend + hold + retract
-  GRAB_REACH: 150,     // the claw's full-extension x, LEFT of the boss center (px)
-  GRAB_WINDUP: 0.50,   // the visible tell before the arm moves (the dodge window)
-  GRAB_EXTEND: 0.22,   // the sweep out to full reach
-  GRAB_HOLD: 0.25,     // claw closed at full reach (the contact window)
-  GRAB_RETRACT: 0.40,  // the pull-back — NO contact in this phase, ever
-  GRAB_R: 12,          // claw contact half-width (px)
+  // ---- V1f THE GRAB, VK9P4 THE APPENDAGES (owner 2026-09-17: "It would be
+  // nice for the boss to have multiple appendages. And maybe a slightly
+  // shorter reach so manual players can see the boss to react to it"). The
+  // boss stands OUT IN THE OPEN on the finale floor; its threats are now
+  // THREE telegraphed appendages on ONE learnable cadence (GRAB_EVERY per
+  // arm, STAGGERED by each arm's `offset` within the rhythm), each with its
+  // own readable wind-up, contact ONLY while the arm is out (extend/hold) —
+  // a pilot who has cleared an arm, or arrives during idle/windup/retract,
+  // is structurally safe (no invisible hitboxes, no late grabs).
+  //
+  // THE REACH BOUND (the owner's "see the boss to react to it", made a
+  // number): the camera shows [p.x-150, p.x+330] (CAM_LEAD 150, VIEW_W 480),
+  // so a pilot reacting at the FARTHEST band edge (p.x = b.x - reach - r - 6,
+  // the auto brake point) sees the boss's full body while
+  //   reach + r + 6 + 150 + BOSS_W/2 <= 480  ->  reach <= 272 (fully on)
+  // and any part of it while reach <= 372. Every arm is inside the FULL
+  // bound with room; the CLAW was nonetheless shortened 150 -> 132 per the
+  // owner's "slightly shorter" and its tell LENGTHENED 0.50 -> 0.65 (the
+  // trade the task names: shorter reach, longer telegraph).
+  //
+  // THE COMBINED WINDOW (stated, per 2.4s cycle, ground arms only — the
+  // sickle is airborne-only): tendril dangerous (0.50, 1.10], claw dangerous
+  // (1.53, 2.00] -> the clear window is 0.90s (2.00 -> 2.90). The ground
+  // gauntlet's x-span is [b.x-160, b.x-120] = 40px; the crossing costs
+  // ~0.26s at run speed (~0.15s dashed) — survivable with >3x margin, and
+  // the two ground arms are NEVER dangerous simultaneously.
+  GRAB_EVERY: 2.4,     // the full cycle (s) PER ARM: idle + windup + extend + hold + retract
+                       // (was 2.0 — three staggered arms need the longer rhythm; the
+                       // per-arm cadence stays exactly this, so the beat is learnable)
+  // The CLAW's numbers are the claw ROW of ARMS below (row 0) — the getters
+  // keep the historical GRAB_* names reading ONE definition, so the V1f
+  // seams/tests and the arm table can never drift apart.
+  get GRAB_REACH() { return this.ARMS[0].reach; },     // was 150 — VK9P4 "slightly shorter"
+  get GRAB_WINDUP() { return this.ARMS[0].windup; },   // was 0.50 — lengthened with it
+  get GRAB_EXTEND() { return this.ARMS[0].extend; },
+  get GRAB_HOLD() { return this.ARMS[0].hold; },
+  get GRAB_RETRACT() { return this.ARMS[0].retract; },
+  get GRAB_R() { return this.ARMS[0].r; },
   GRAB_HOLD_PILOT: 0.7,// the visible HELD beat before the soft outcome 'caught'
+  // THE THREE APPENDAGES. `high` arms contact only an AIRBORNE pilot
+  // (p.y <= FLOOR_Y - 70); ground arms only a pilot near the floor
+  // (p.y > FLOOR_Y - 70) — the claw's own predicate, unchanged. `offset`
+  // staggers the arm's phase inside the shared rhythm (seconds into the
+  // first cycle). Row 0 IS the claw (see the getters above).
+  ARMS: [
+    { id: 'claw',    reach: 132, r: 12, high: false, offset: 0.0,
+      windup: 0.65, extend: 0.22, hold: 0.25, retract: 0.40 },
+    { id: 'sickle',  reach: 96,  r: 14, high: true,  offset: 0.8,
+      windup: 0.70, extend: 0.20, hold: 0.25, retract: 0.35 },
+    { id: 'tendril', reach: 150, r: 10, high: false, offset: 1.6,
+      windup: 0.95, extend: 0.30, hold: 0.30, retract: 0.50 },
+  ],
+  // ---- VK9P4 THE KICK (owner: "some sort of way for the pursuers to be
+  // eliminated for manual players so they can take their time"). A MANUAL-
+  // ONLY stomp that clears the chase pack on the runner's tail and holds the
+  // horde floor down for a few seconds — BOUNDED, not an off switch: the
+  // cooldown keeps it to a beat, the suppression window is shorter than the
+  // cooldown, and the WALL (the real timer) never pauses. AUTO never kicks
+  // (inputFor sets no kick), so the auto path is byte-identical. A wall
+  // PACE control is deliberately NOT built — that is a separate owner
+  // decision, flagged in the VK9P4 report.
+  KICK_RANGE: 96,      // px behind the runner the kick reaches
+  KICK_CD: 8.0,        // seconds between kicks
+  KICK_SUPPRESS: 3.0,  // seconds the horde floor stops refilling after a kick
 };
 
 // ---- the exit (P1's portal entity + rules, reused — not a second lookalike) ----

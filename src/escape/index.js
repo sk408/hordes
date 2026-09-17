@@ -33,19 +33,30 @@ let endedPayload = null;
 // repeatable faucet. A test entry collects NOTHING — the flag travels this
 // module's own begin opts, never a second entry point.
 let testEntry = false;
+// VK9P4 THE LIVE MODE TOGGLE: main.js hands in `getAuto` (read LIVE each
+// frame — the pilot pref is the ONE source of truth, and a flip mid-run takes
+// effect on the very next frame) and `onToggleMode` (the callback into
+// main's swapPilotMode, which persists the pref and toasts). The escape keeps
+// NO pilot state of its own: `auto` above remains only the entry default for
+// the case where main hands over no getter (tests, the __TEST seam).
+let getAutoFn = null;
+let onToggleMode = null;
+let lastAuto = true;         // the flip detector (edges dropped on a change)
 
 // MANUAL input state (the escape's own controller surface — never the
 // overhead decide() seam; the brief forbids branching that).
 const held = { left: false, right: false };
 let jumpEdge = false;       // EDGE-gated: one press = one jump
 let dashEdge = false;
+let kickEdge = false;       // VK9P4: the manual-only KICK (auto never sets it)
 let tapJump = false;
 
 function paidSkipOwned() {
   return !!(profile && profile.purchased && (profile.purchased.escapeskip | 0) >= 1);
 }
 
-// Begin the escape. opts: { seed, ctx, profile, auto, onEnd, test }.
+// Begin the escape. opts: { seed, ctx, profile, auto, onEnd, test,
+// getAuto, onToggleMode }.
 export function begin(opts = {}) {
   sim = createSim((opts.seed | 0) || 1);
   ctx = opts.ctx || null;
@@ -53,21 +64,30 @@ export function begin(opts = {}) {
   onEnd = opts.onEnd || null;
   auto = opts.auto !== false;
   testEntry = !!opts.test;
+  getAutoFn = opts.getAuto || null;
+  onToggleMode = opts.onToggleMode || null;
   holdT = 0; ended = false; endedPayload = null;
   held.left = held.right = false;
-  jumpEdge = dashEdge = tapJump = false;
+  jumpEdge = dashEdge = kickEdge = tapJump = false;
+  lastAuto = isAuto();
 }
 
 export function current() { return sim; }
+// The LIVE pilot mode (VK9P4): when main hands in getAuto the escape reads it
+// EVERY frame — a flip mid-run changes the input path on the next frame with
+// no restart and no lost progress (the sim is untouched; only WHO drives it
+// changes). Falls back to the entry default when no getter was handed in.
+export function isAuto() { return getAutoFn ? !!getAutoFn() : auto; }
 
 function manualInput() {
   const input = {
     moveX: held.right ? 1 : held.left ? -1 : 0,
     jump: jumpEdge || tapJump,
     dash: dashEdge,
+    kick: kickEdge,       // VK9P4: the manual-only pursuer clear
     autoClamp: null,
   };
-  jumpEdge = false; dashEdge = false; tapJump = false;
+  jumpEdge = false; dashEdge = false; kickEdge = false; tapJump = false;
   return input;
 }
 
@@ -101,12 +121,32 @@ export function skip() {
   holdT = 0;
 }
 
-// A pointer in VIRTUAL coordinates (main.js maps the click for us): the skip
-// rect first, then a tap anywhere is a JUMP (manual play on a phone).
+// A pointer in VIRTUAL coordinates (main.js maps the click for us). Hit
+// order: SKIP, then the MODE switch (both players — owner ask), then the
+// MANUAL pads (JUMP right-thumb, KICK beside it), then a tap anywhere else is
+// a JUMP (manual play on a phone). The button pads only fire in manual — in
+// auto the pads are not drawn and their rects stay inert (the auto path is
+// byte-identical to before).
 export function pointer(px, py) {
   if (!sim || sim.outcome) return;
   if (R.skipHit(px, py)) { skip(); return; }
+  if (R.modeHit(px, py)) { if (onToggleMode) onToggleMode(); return; }
+  if (!isAuto()) {
+    if (R.jumpHit(px, py)) { tapJump = true; return; }
+    if (R.kickHit(px, py)) { kickEdge = true; return; }
+  }
   tapJump = true;
+}
+
+// A help-mode probe (main.js calls it while the reference is armed, INSTEAD
+// of pointer()): explain the touch target under the point — never activate
+// it. The strings are the escape's own (this directory owns its copy).
+export function explain(px, py) {
+  if (R.skipHit(px, py)) return 'SKIP — end the escape now; the payout is forgone without the paid writ';
+  if (R.modeHit(px, py)) return 'MODE — switch between the AUTO pilot and MANUAL play (same setting as the run)';
+  if (R.jumpHit(px, py)) return 'JUMP — manual pad: leap the gaps (same jump as the auto pilot)';
+  if (R.kickHit(px, py)) return 'KICK — manual pad: stomp the pursuit pack off your tail (bounded: cooldown + a short clear window)';
+  return 'THE ESCAPE — run right. Gaps are lethal falls, the horde wall behind is the timer, the boss arms guard the finale.';
 }
 
 export function onKey(k, down) {
@@ -116,6 +156,8 @@ export function onKey(k, down) {
   else if (key === 'arrowright' || key === 'd') held.right = down;
   else if ((key === ' ' || key === 'arrowup' || key === 'w') && down) jumpEdge = true;
   else if ((key === 'shift' || key === 'x') && down) dashEdge = true;
+  else if ((key === 's' || key === 'arrowdown') && down && !isAuto()) kickEdge = true;
+  else if ((key === 'o' || key === 'm') && down) { if (onToggleMode) onToggleMode(); }
   else if (key === 'escape' && down) skip();
 }
 
@@ -123,8 +165,18 @@ export function onKey(k, down) {
 // earned-moment dilation — a change of pace keeps a steady clock).
 export function frame(c, dt) {
   if (!sim) return;
+  const autoNow = isAuto();
+  // A mid-run flip changes WHO drives the sim, never the sim. On the frame
+  // the mode CHANGES, the manual edges are dropped (a half-press can never
+  // leak across the switch) — the runner keeps position, velocity and the
+  // wall keeps its clock: no lost progress, no double-fire.
+  if (autoNow !== lastAuto) {
+    held.left = held.right = false;
+    jumpEdge = dashEdge = kickEdge = tapJump = false;
+    lastAuto = autoNow;
+  }
   if (!sim.outcome) {
-    const input = auto ? inputFor(sim) : manualInput();
+    const input = autoNow ? inputFor(sim) : manualInput();
     step(sim, Math.min(0.05, Math.max(0, dt)), input);
     if (sim.outcome) holdT = 0;
   } else if (!ended) {
@@ -136,6 +188,7 @@ export function frame(c, dt) {
     const pay = paidSkipOwned();
     R.draw(c, sim, {
       paidSkip: pay,
+      manual: !autoNow,
       outcomeSub: testEntry
         ? 'TEST RUN — NO PAYOUT'
         : sim.outcome === 'complete'

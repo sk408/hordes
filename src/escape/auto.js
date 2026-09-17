@@ -18,29 +18,48 @@ const CLEAR_AHEAD = 260;
 // arrives at the claw band at the readable RUN speed, under steering.
 const BOSS_APPROACH = 450;
 
-// V1f THE GRAB GAUNTLET, as a pure function of the sim. Returns true when it
-// is SAFE to run the claw band NOW: either the danger window opens only after
-// the pilot would be CLEAR of it (dangerIn > timeToClear + margin), or it is
-// open now but will close before the pilot REACHES the band (the remaining
-// danger is shorter than the approach). Both timings are dead reckoning off
-// the machine's own authored durations — no clocks, no rng, parity-safe.
-function grabSafe(sim) {
-  const b = sim.boss, g = b.grab, G = THREATS;
-  const idleDur = G.GRAB_EVERY - (G.GRAB_WINDUP + G.GRAB_EXTEND + G.GRAB_HOLD + G.GRAB_RETRACT);
-  let dangerIn, dangerFor;   // seconds until the claw is out / for how long remaining
-  if (g.phase === 'idle') { dangerIn = (idleDur - g.t) + G.GRAB_WINDUP; dangerFor = G.GRAB_EXTEND + G.GRAB_HOLD; }
-  else if (g.phase === 'windup') { dangerIn = G.GRAB_WINDUP - g.t; dangerFor = G.GRAB_EXTEND + G.GRAB_HOLD; }
-  else if (g.phase === 'extend') { dangerIn = 0; dangerFor = (G.GRAB_EXTEND - g.t) + G.GRAB_HOLD; }
-  else if (g.phase === 'hold') { dangerIn = 0; dangerFor = G.GRAB_HOLD - g.t; }
-  else { /* retract */ dangerIn = (G.GRAB_RETRACT - g.t) + idleDur + G.GRAB_WINDUP; dangerFor = G.GRAB_EXTEND + G.GRAB_HOLD; }
-  const p = sim.player;
-  const clawL = b.x - G.GRAB_REACH - G.GRAB_R;
-  const clearX = b.x - G.GRAB_REACH + G.GRAB_R + 26;   // past the band, still left of the body face
-  const timeToBand = Math.max(0, (clawL - 6 - p.x) / PHYS.RUN_SPEED);
+// VK9P4 THE APPENDAGE GAUNTLET, as a pure function of the sim. The pilot runs
+// the boss beat ON THE GROUND, so only the GROUND arms matter (a `high` arm
+// contacts an airborne pilot — the overpass drop is authored to clear it).
+// Returns true when it is SAFE to run the ground band NOW: the pilot is clear
+// of the danger intervals by the same two-way test the single claw used — a
+// window must open only after the pilot would be CLEAR of the whole band
+// (start > timeToClear + margin), or be open now but close before the pilot
+// REACHES it (end < timeToBand - margin). Both timings are dead reckoning off
+// each arm's OWN authored durations plus the GRAB_EVERY recurrence — no
+// clocks, no rng, parity-safe. One cycle ahead is sufficient: the per-arm
+// cadence is exactly GRAB_EVERY (2.4s), far longer than any crossing.
+function gauntletSafe(sim) {
+  const b = sim.boss, G = THREATS, p = sim.player;
+  const grounds = b.arms.filter(a => !a.high);
+  if (!grounds.length) return true;
+  // The band the grounded pilot must cross: the union of the ground arms'
+  // reach spans, padded like the old claw test (6 in, r + 26 out per arm).
+  const bandL = Math.min(...grounds.map(a => b.x - a.reach - a.r));
+  const clearX = Math.max(...grounds.map(a => b.x - a.reach + a.r)) + 26;
+  const timeToBand = Math.max(0, (bandL - 6 - p.x) / PHYS.RUN_SPEED);
   const timeToClear = Math.max(0, (clearX - p.x) / PHYS.RUN_SPEED);
-  return dangerIn > 0
-    ? dangerIn > timeToClear + 0.12
-    : dangerFor < timeToBand - 0.12;
+  for (const g of grounds) {
+    const idleDur = G.GRAB_EVERY - (g.windup + g.extend + g.hold + g.retract);
+    const dangerSpan = g.extend + g.hold;
+    // The next danger interval [s, e] in seconds from NOW (the one the run
+    // through the band would meet), per phase, plus the cycle AFTER it (a
+    // slow approach may straddle two cycles; two intervals bound it).
+    const intervals = [];
+    let s, e;
+    if (g.phase === 'idle') { s = (idleDur - g.t) + g.windup; e = s + dangerSpan; }
+    else if (g.phase === 'windup') { s = g.windup - g.t; e = s + dangerSpan; }
+    else if (g.phase === 'extend') { s = 0; e = (g.extend - g.t) + g.hold; }
+    else if (g.phase === 'hold') { s = 0; e = g.hold - g.t; }
+    else { /* retract */ s = (g.retract - g.t) + idleDur + g.windup; e = s + dangerSpan; }
+    intervals.push([s, e], [s + G.GRAB_EVERY, e + G.GRAB_EVERY]);
+    for (const [is, ie] of intervals) {
+      // UNSAFE iff the danger overlaps the pilot's crossing window [reach
+      // band, clear band] — exactly the old claw test, unioned over arms.
+      if (is < timeToClear + 0.12 && ie > timeToBand - 0.12) return false;
+    }
+  }
+  return true;
 }
 
 export function inputFor(sim) {
@@ -62,13 +81,16 @@ export function inputFor(sim) {
     return input;   // inside a live band: nothing else may fire this frame
   }
 
-  // 2) (V1f) THE GRAB GAUNTLET: approaching the boss, brake outside the claw
-  // band until dead reckoning says the run through it is safe, then commit
-  // (dash if it is up — speed only shrinks the exposure). This is the same
-  // dodge-by-timing a manual player reads off the wind-up tell.
-  const clawL = sim.boss ? sim.boss.x - THREATS.GRAB_REACH - THREATS.GRAB_R : Infinity;
-  if (sim.boss && p.x < sim.boss.x && sim.boss.x - p.x < BOSS_APPROACH && p.x < clawL - 6) {
-    if (!grabSafe(sim)) {
+  // 2) (VK9P4) THE APPENDAGE GAUNTLET: approaching the boss, brake outside
+  // the ground arms' band until dead reckoning says the run through it is
+  // safe, then commit (dash if it is up — speed only shrinks the exposure).
+  // This is the same dodge-by-timing a manual player reads off the staggered
+  // wind-up tells. `high` arms are airborne-only and the pilot is grounded.
+  const bandL = sim.boss
+    ? Math.min(...sim.boss.arms.filter(a => !a.high).map(a => sim.boss.x - a.reach - a.r))
+    : Infinity;
+  if (sim.boss && p.x < sim.boss.x && sim.boss.x - p.x < BOSS_APPROACH && p.x < bandL - 6) {
+    if (!gauntletSafe(sim)) {
       input.moveX = 0;   // hold the line outside the band; the wall is the clock
       return input;
     }

@@ -73,6 +73,12 @@ function chaserSpawn(sim) {
 // cull filter (a pitted or shot body is replaced the same step), so the
 // live count sampled at any step boundary never drops below the floor.
 function maintainFloor(sim) {
+  // VK9P4 THE KICK suppression: while the tail-clear window runs, the floor
+  // does NOT refill — that is the whole point of the kick (a manual player
+  // buys a few seconds of empty tail to take their time). The WALL never
+  // pauses (the real timer keeps running), so this is bounded relief, not an
+  // off switch.
+  if (sim.tailT > 0) return;
   while (sim.pursuers.length < THREATS.CHASER_FLOOR) {
     const sp = chaserSpawn(sim);
     if (!sp) return;
@@ -113,9 +119,22 @@ export function createSim(seed) {
     boss: corridor.bossX != null ? {
       x: corridor.bossX, plat: corridor.bossPlat,
       destroyT: THREATS.BOSS_DESTROY_EVERY, telegraph: 0, destroyed: 0,
-      grab: { phase: 'idle', t: 0 },   // V1f: idle -> windup -> extend -> hold -> retract
+      // VK9P4: the boss's THREE appendages (config THREATS.ARMS), each its own
+      // state machine on the ONE shared cadence, staggered by each arm's
+      // `offset` (t starts NEGATIVE — an arm with offset 1.6 first moves 1.6s
+      // into the rhythm). The `grab` getter is the CLAW row (arms[0]) BY
+      // REFERENCE — the V1f seams/tests read AND write the claw through the
+      // historical name; the getter keeps them on the SAME object (they
+      // cannot drift apart by construction).
+      arms: THREATS.ARMS.map(a => ({ ...a, phase: 'idle', t: -a.offset })),
+      get grab() { return this.arms[0]; },
     } : null,
     grabbed: null,      // V1f: set the frame the claw closes on the pilot (the visible HELD beat)
+    // VK9P4 THE KICK state: kickCd counts down between kicks, tailT counts
+    // down the horde-floor suppression window, kickedPursuers is the ledger
+    // count (reporting only). AUTO never sets input.kick (auto.js), so the
+    // auto path through step() is byte-identical to before.
+    kickCd: 0, tailT: 0, kickedPursuers: 0,
     outcome: null,     // null | 'complete' | 'caught' | 'fell'
     rng: mulberry32(seed ^ 0x5f3759df),
     nextFlier: Infinity, nextShot: 0,
@@ -211,6 +230,26 @@ export function step(sim, dt, input = {}) {
   // ---- the horde wall (the real timer; visible, never invisible) -----------
   sim.wall.x += wallSpeed(sim) * dt;
   if (sim.wall.x + WALL.WIDTH >= p.x) { sim.outcome = 'caught'; return sim; }
+
+  // ---- VK9P4 THE KICK (manual only — auto.js never sets input.kick) ---------
+  // A stomp that clears the chase pack on the runner's tail and holds the
+  // horde floor down for KICK_SUPPRESS seconds. BOUNDED by design: the
+  // cooldown keeps it to a beat, the suppression is shorter than the
+  // cooldown, and the WALL (the real timer) never pauses — a manual player
+  // buys room to look, not an off switch.
+  sim.kickCd = Math.max(0, sim.kickCd - dt);
+  sim.tailT = Math.max(0, sim.tailT - dt);
+  if (input.kick && sim.kickCd <= 0) {
+    sim.kickCd = THREATS.KICK_CD;
+    sim.tailT = THREATS.KICK_SUPPRESS;
+    for (const pu of sim.pursuers) {
+      const gap = p.x - pu.x;
+      if (pu.hp > 0 && gap > 0 && gap <= THREATS.KICK_RANGE) {
+        pu.hp = -1; sim.kickedPursuers++;
+        sim.events.push({ type: 'kill', x: pu.x, y: pu.y, t: sim.t, n: sim.eventSeq++ });
+      }
+    }
+  }
 
   // ---- threats --------------------------------------------------------------
   // THE HORDE (owner spec update): a hard floor of live chasers, every step.
@@ -326,27 +365,32 @@ export function step(sim, dt, input = {}) {
   // ---- the obstacle-boss (UNKILLABLE: hp Infinity by construction) ---------
   if (sim.boss) {
     const b = sim.boss;
-    // V1f THE GRAB (owner refinement: run PAST the boss, dodge the reach).
-    // The body is PASSABLE — the pilot sprints past at floor level — and the
-    // only threat is the claw. The machine runs on a FIXED cadence (the cycle
-    // sums to exactly GRAB_EVERY), so the rhythm is learnable by watching one
-    // cycle. Contact is tested ONLY in extend/hold (the arm is out); a pilot
-    // who has cleared the claw band is structurally safe — the band sits LEFT
-    // of the body, and retract has no hitbox, so no grab can land late.
+    // VK9P4 THE APPENDAGES (owner: "It would be nice for the boss to have
+    // multiple appendages"): THREE arms, each its own idle -> windup ->
+    // extend -> hold -> retract machine on the ONE shared cadence (the cycle
+    // sums to exactly GRAB_EVERY per arm), staggered by each arm's `offset`.
+    // The body stays PASSABLE — the pilot sprints past at floor level — and
+    // the threats are the arms. Contact is tested ONLY in extend/hold (the
+    // arm is out); each arm's `high` flag picks its lane (airborne vs near
+    // the floor — the claw's own predicate, one definition), so a pilot who
+    // has cleared an arm's band, or arrives during idle/windup/retract, is
+    // structurally safe: no invisible hitboxes, no late grabs.
     const G = THREATS;
-    const g = b.grab;
-    const idleDur = G.GRAB_EVERY - (G.GRAB_WINDUP + G.GRAB_EXTEND + G.GRAB_HOLD + G.GRAB_RETRACT);
-    g.t += dt;
-    if (g.phase === 'idle' && g.t >= idleDur) { g.phase = 'windup'; g.t = 0; }
-    else if (g.phase === 'windup' && g.t >= G.GRAB_WINDUP) { g.phase = 'extend'; g.t = 0; }
-    else if (g.phase === 'extend' && g.t >= G.GRAB_EXTEND) { g.phase = 'hold'; g.t = 0; }
-    else if (g.phase === 'hold' && g.t >= G.GRAB_HOLD) { g.phase = 'retract'; g.t = 0; }
-    else if (g.phase === 'retract' && g.t >= G.GRAB_RETRACT) { g.phase = 'idle'; g.t = 0; }
-    if (g.phase === 'extend' || g.phase === 'hold') {
-      const clawX = b.x - G.GRAB_REACH;
-      if (Math.abs(p.x - clawX) < G.GRAB_R && p.y > BAND.FLOOR_Y - 70) {
-        sim.grabbed = { t: 0, x: clawX };   // the held beat; the outcome lands after it
-        return sim;
+    for (const g of b.arms) {
+      const idleDur = G.GRAB_EVERY - (g.windup + g.extend + g.hold + g.retract);
+      g.t += dt;
+      if (g.phase === 'idle' && g.t >= idleDur) { g.phase = 'windup'; g.t = 0; }
+      else if (g.phase === 'windup' && g.t >= g.windup) { g.phase = 'extend'; g.t = 0; }
+      else if (g.phase === 'extend' && g.t >= g.extend) { g.phase = 'hold'; g.t = 0; }
+      else if (g.phase === 'hold' && g.t >= g.hold) { g.phase = 'retract'; g.t = 0; }
+      else if (g.phase === 'retract' && g.t >= g.retract) { g.phase = 'idle'; g.t = 0; }
+      if (g.phase === 'extend' || g.phase === 'hold') {
+        const tipX = b.x - g.reach;
+        const laneOK = g.high ? p.y <= BAND.FLOOR_Y - 70 : p.y > BAND.FLOOR_Y - 70;
+        if (Math.abs(p.x - tipX) < g.r && laneOK) {
+          sim.grabbed = { t: 0, x: tipX, arm: g.id };   // the held beat; the outcome lands after it
+          return sim;
+        }
       }
     }
     // Terrain destruction: TELEGRAPHED, and only the route BEHIND THE RUNNER —
