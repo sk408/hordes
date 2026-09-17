@@ -161,18 +161,19 @@ console.log('WAVE-24 / #2 — CANVAS TEXT CONTRAST + SIZE');
   ok(!!wlv && plateFor(rec, wlv),
     'the weapon level number is painted on its own plate');
 
-  // Boss banner, RETARGETED 2026-09-17 (review addendum: the centre banner
-  // covered the dodge path). A LIVE-COMBAT banner (no bannerHold) renders the
-  // PERIPHERAL horde warning: HUD-band strip + edge cue, ZERO paint inside the
-  // play area. A HELD banner (token / top-tier: the sim is paused) keeps the
-  // cinematic centre plate — the title/sub print at screen center over a
-  // HELD frame, so the plate must exist or contrast depends on the scene.
+  // Boss banner, SCOPE-LIMITED 2026-09-17 (owner correction): a banner
+  // stamped `peripheral: true` (the repeated mid-combat HERALD warning)
+  // renders the peripheral horde warning: HUD-band strip + edge cue, ZERO
+  // paint inside the play area. Set-piece banners (boss cast, finale, HELD
+  // token / top-tier) keep the cinematic centre plate — the title/sub print
+  // at screen center over a HELD frame, so the plate must exist or contrast
+  // depends on the scene.
   {
     const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
     const WN = C.HUD.WARNING;
     R2.drawBossBanner(ctx2, hudState({
       bossBanner: { title: 'GRAVELMAW', names: ['GRAVELMAW'], sub: 'THE WAVE BREAKS HERE',
-        ttl: 2.0, dur: 2.0, edges: ['right'] },
+        peripheral: true, ttl: 2.0, dur: 2.0, edges: ['right'] },
     }));
     const strip = textOf(rec2, 'HORDE: GRAVELMAW');
     ok(!!strip, 'horde warning strip painted');

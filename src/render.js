@@ -1207,8 +1207,10 @@ export class Renderer {
       landmarks: marks, player: { x: px, y: py } };
   }
 
-  // ---- HORDE WARNING (2026-09-17 review addendum) -----------------------------
-  // The peripheral treatment every LIVE-COMBAT bossBanner renders through: the
+  // ---- HORDE WARNING (2026-09-17 review addendum; SCOPE-LIMITED same day) -----
+  // The peripheral treatment the HERALD's banner (peripheral: true) renders
+  // through — the repeated mid-combat warning the no-play-area-pixels rule
+  // protects. Set-piece banners do NOT route here (owner correction).
   // warning never touches the play area (the region the player dodges through).
   // Channels, all outside the play area:
   //   (a) HUD STATE — an urgent strip in the top HUD band: dark plate, blood
@@ -1287,22 +1289,17 @@ export class Renderer {
 
   // ---- WAVE-14 boss-arrival overlay ------------------------------------------
   // state.bossBanner = { names:[...], verb, title, sub, ttl } (main.js sets it
-  // at boss spawn / herald / finale start). TWO treatments since the 2026-09-17
-  // review addendum (player: the centre banner "is really hard to see through"
-  // on the dodge path; owner: keep the warning, ZERO warning pixels inside the
-  // play area):
-  //   LIVE COMBAT (sim running — boss cast / herald / the maw): the peripheral
-  //   HORDE WARNING (drawHordeWarning below): an urgent HUD-band strip + a
-  //   pulsing edge cue on the side the horde enters from + the BOSS_YELL sting
-  //   main.js already fires. Nothing paints inside the play area.
-  //   HELD (state.bannerHold > 0 — token / top-tier first-ever: the sim is
-  //   PAUSED, nothing is being dodged): the owner-approved cinematic centre
-  //   plate is kept. `this.bossBanner` is the test seam (the exact values
-  //   painted this frame; null when no banner is live).
+  // at boss spawn / herald / finale start). OWNER CORRECTION 2026-09-17: the
+  // no-play-area-pixels rule is SCOPE-LIMITED to the repeated mid-combat
+  // HORDE WARNING (the herald — the banner main.js stamps `peripheral: true`
+  // on). Set-piece announcements (boss cast, elite, finale, and the HELD
+  // token / top-tier banners) keep their prominent cinematic centre plate.
+  // `this.bossBanner` is the test seam (the exact values painted this frame;
+  // null when no banner is live).
   drawBossBanner(g, state) {
     const b = state.bossBanner;
     if (!b || !(b.ttl > 0)) { this.bossBanner = null; return; }
-    if (!(state.bannerHold > 0)) return this.drawHordeWarning(g, state, b);
+    if (b.peripheral) return this.drawHordeWarning(g, state, b);
     const DUR = 2.5;
     const aIn = Math.min(1, (DUR - b.ttl) / 0.35);
     const aOut = Math.min(1, b.ttl / 0.6);

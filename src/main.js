@@ -1404,11 +1404,8 @@ function spawnBoss() {
   const w = Math.floor(state.time / 30);
   const cast = pickBossForWave(state.wave.num);
   state.wave.bosses = [];
-  let etaMin = 1e9;                 // fastest spawn's estimated contact (timing below)
-  const edges = new Set();          // the screen edges the horde enters from
   cast.forEach((desc, i) => {
     const a = Math.random() * Math.PI * 2 + (i / cast.length) * Math.PI * 2;
-    edges.add(warningEdgeOf(a));
     const d = C.ENEMY.SPAWN_DIST * 0.7;
     const boss = makeTypedEnemy('BRUTE',
       state.player.x + Math.cos(a) * d,
@@ -1423,7 +1420,6 @@ function spawnBoss() {
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
     boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
     boss.speed *= B.SPEED_MULT * desc.speedMult;
-    etaMin = Math.min(etaMin, d / boss.speed);   // stationary-player estimate
     boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
     boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
@@ -1441,21 +1437,20 @@ function spawnBoss() {
   });
   // Named announce: BOTH names on double waves (3/6/9 — the events).
   toast(cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH!' : ' APPROACHES!'));
-  // WAVE-14 boss arrival, retargeted 2026-09-17 (review addendum): the
-  // arrival is announced by the PERIPHERAL warning (render.js
-  // drawHordeWarning) — HUD-band strip + an edge cue on the spawn sides + the
-  // BOSS_YELL sting — never a centre overlay over the dodge path. The ttl
-  // ends CLEAR_MARGIN before the fastest spawn's estimated contact
-  // (warningTtl); spawn timing/size/difficulty are untouched.
-  const ttl = warningTtl(etaMin);
+  // WAVE-14 boss arrival, RESTORED 2026-09-17 (owner correction: "I didn't
+  // intend on you removing the boss banner completely"). The no-play-area-
+  // pixels rule is now SCOPE-LIMITED to the repeated mid-combat HORDE
+  // WARNING (the herald, below); set-piece announcements — boss cast, elite,
+  // finale — keep their prominent cinematic presentation. This is the
+  // pre-rule behaviour: two-line centre banner, ttl 2.5.
   state.bossBanner = {
     names: cast.map(b => b.name),
     verb: cast.length > 1 ? 'APPROACH' : 'APPROACHES',
-    title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : 'APPROACHES'),
+    title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : ' APPROACHES'),
     sub: cast.length > 1
       ? cast.map(b => b.flavor.toUpperCase()).join(' / ')
       : cast[0].flavor.toUpperCase(),
-    ttl, dur: ttl, edges: [...edges],
+    ttl: 2.5,
   };
   audio.playPortalCue('BOSS_YELL');
   easeToBossStance();       // BOSS_STANCE: the camera leans in; see CONFIG
@@ -1527,12 +1522,15 @@ function spawnMidBoss() {
   state.enemies.push(boss);
   state.wave.midBosses.push(boss);
   toast(desc.name + ' APPROACHES!');
-  // 2026-09-17: the herald's announce rides the PERIPHERAL horde warning too
-  // (she is the fastest closer in the game — the old 2.5s centre banner was
-  // still on screen at first contact; see the review addendum).
+  // 2026-09-17 scope-limited rule (owner correction): the HERALD is the
+  // repeated mid-combat HORDE WARNING the no-play-area-pixels rule protects —
+  // she is the fastest closer in the game, spawns once per wave, and the old
+  // 2.5s centre banner was still on screen at first contact (review
+  // addendum). Set-piece bosses and the finale are NOT routed here.
   state.bossBanner = {
     names: [desc.name], verb: 'APPROACHES',
     title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(),
+    peripheral: true,
     ttl, dur: ttl, edges: [edge],
   };
   audio.playPortalCue('BOSS_YELL');
@@ -8372,15 +8370,14 @@ function startFinale() {
   state.mode = 'finale';
   toast(FINAL_BOSS.name + ' APPROACHES');
   toast(FINAL_BOSS.flavor.toUpperCase());
-  // WAVE-14, retargeted 2026-09-17: the maw's arrival rides the PERIPHERAL
-  // horde warning as well — the finale is live combat (updateFinale runs
-  // while the banner would be up), so the dodge path stays clear.
-  const mawTtl = warningTtl((C.ENEMY.SPAWN_DIST * 0.6) / b.speed);
+  // WAVE-14, RESTORED 2026-09-17 (owner correction): the maw's arrival is a
+  // set-piece finale announcement — the prominent centre banner is back (the
+  // peripheral rule no longer applies to the finale).
   state.bossBanner = {
     names: [FINAL_BOSS.name], verb: 'APPROACHES',
     title: FINAL_BOSS.name,
     sub: FINAL_BOSS.flavor.toUpperCase(),   // "EVERY HORDE WAS ALWAYS ONE HUNGER."
-    ttl: mawTtl, dur: mawTtl, edges: [warningEdgeOf(a)],
+    ttl: 2.5,
   };
   audio.playPortalCue('BOSS_YELL');
   audio.playSfx('death');

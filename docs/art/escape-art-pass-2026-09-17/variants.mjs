@@ -32,7 +32,7 @@ export const FAMILIES = [
       { skyTop: '#141026', skyBottom: '#5a2a3a', horizon: '#ff8a4a', far: '#241a38', near: '#33204a', haze: '#c25a3c', win: '#ffc86a', voidGlow: '#ff8a4a', ember: '#ff9a4a' },
       { skyTop: '#0f0c24', skyBottom: '#4a1e42', horizon: '#ff5f6a', far: '#1e1434', near: '#2c1a44', haze: '#b04a6a', win: '#ff9a8a', voidGlow: '#ff5f6a', ember: '#ff6a7a' },
       { skyTop: '#0a0a20', skyBottom: '#32205c', horizon: '#9a6aff', far: '#161238', near: '#221a4c', haze: '#6a5ac0', win: '#d0b0ff', voidGlow: '#9a6aff', ember: '#c08aff' },
-      { skyTop: '#061828', skyBottom: '#0e3a4a', horizon: '#38e0c0', far: '#0a2438', near: '#10303f', haze: '#3aa8a0', win: '#a0ffe8', voidGlow: '#38e0c0', ember: '#60e0c0' },
+      { skyTop: '#1a1230', skyBottom: '#7a3a4a', horizon: '#ffc07a', far: '#241a44', near: '#302450', haze: '#e0a070', win: '#ffe8b0', voidGlow: '#7ad0b8', ember: '#ffcf8a' },
     ],
   },
   {
@@ -42,7 +42,7 @@ export const FAMILIES = [
       { skyTop: '#1c1016', skyBottom: '#6e2a20', horizon: '#ffb04a', far: '#2a1620', near: '#3a1c24', haze: '#d07040', win: '#ffe08a', voidGlow: '#ff9a4a', ember: '#ffcf6a' },
       { skyTop: '#180c12', skyBottom: '#5c2018', horizon: '#ff7a3c', far: '#241018', near: '#32161f', haze: '#c05a30', win: '#ffc06a', voidGlow: '#ff8a4a', ember: '#ff9a5a' },
       { skyTop: '#120a12', skyBottom: '#401a2c', horizon: '#e05a5a', far: '#1c0e20', near: '#281428', haze: '#a03848', win: '#ff9a9a', voidGlow: '#e05a5a', ember: '#ff7a6a' },
-      { skyTop: '#0a1a20', skyBottom: '#16443c', horizon: '#5ae0b0', far: '#0e2a28', near: '#143832', haze: '#3a9880', win: '#c0fff0', voidGlow: '#5ae0b0', ember: '#8ae8c8' },
+      { skyTop: '#1c1410', skyBottom: '#6a4028', horizon: '#ffb04a', far: '#2a1a14', near: '#36241a', haze: '#d08a50', win: '#ffe0a0', voidGlow: '#5ae0b0', ember: '#ffb06a' },
     ],
   },
   {
@@ -52,7 +52,7 @@ export const FAMILIES = [
       { skyTop: '#0c1226', skyBottom: '#3a2a5a', horizon: '#b08aff', far: '#182040', near: '#222a4e', haze: '#8a9ae0', win: '#e8f4ff', voidGlow: '#b08aff', ember: '#c8b0ff' },
       { skyTop: '#0a0e22', skyBottom: '#2e2250', horizon: '#d06ae0', far: '#141a3a', near: '#1e2446', haze: '#9a7ae0', win: '#f0e0ff', voidGlow: '#d06ae0', ember: '#d8a0ff' },
       { skyTop: '#080c1e', skyBottom: '#221c48', horizon: '#7a8aff', far: '#101438', near: '#181e42', haze: '#5a6ad0', win: '#c0e0ff', voidGlow: '#7a8aff', ember: '#a0b8ff' },
-      { skyTop: '#061624', skyBottom: '#0e3a4a', horizon: '#38e0c0', far: '#0a2438', near: '#10303f', haze: '#3aa8a0', win: '#a0ffe8', voidGlow: '#38e0c0', ember: '#60e0c0' },
+      { skyTop: '#061420', skyBottom: '#1a3a54', horizon: '#a0e8e0', far: '#0a2030', near: '#102c3e', haze: '#70b8c8', win: '#e0ffff', voidGlow: '#38e0c0', ember: '#b0e8ff' },
     ],
   },
 ];
