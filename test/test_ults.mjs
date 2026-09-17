@@ -7,8 +7,11 @@
 //     and not before, and a cast banks exactly KILLS (leftover carries);
 //   - the cooldown floor: a dense window (kills flooding in) cannot cast more
 //     often than COOLDOWN allows — cast counts printed, exact at 60Hz/120Hz;
-//   - NON-mana: the pool is BYTE-identical across a cast and the ult fires at
-//     p.mana = 0 (the Witch stays the only mana class);
+//   - MANA (RETARGET 2026-09-17, owner directive "player ults must cost a
+//     significant amount of mana" — supersedes N1's NON-mana clause): every
+//     ult costs MANA 60; a short pool REFUSES the cast with the pool
+//     byte-identical, a paid cast spends exactly 60 (test_ult_mana.mjs owns
+//     the full refusal/payout contract; this file keeps the live-run side);
 //   - a wave roll-over (state.wave.startKills advancing, main.js:952) does
 //     NOT reset the charge (it reads p.kills - p.ultSpent, never startKills);
 //   - the effect is REAL per spec: Earthshatter hits inside RADIUS 240 only
@@ -33,19 +36,18 @@ const s = suite('test_ults');
 // ---------------------------------------------------------------------------
 // 1. Pure pins: the spec blocks, the meta rows, the helper shape.
 // ---------------------------------------------------------------------------
-s.check('the three spec blocks are byte-exact (the pilot\'s numbers, no MANA key)', () => {
+s.check('the three spec blocks are byte-exact (the pilot\'s numbers, MANA 60)', () => {
   const want = {
-    EARTHSHATTER: { KEY: 'q', NAME: 'Earthshatter', LABEL: 'EARTH', KILLS: 40, COOLDOWN: 12,
+    EARTHSHATTER: { KEY: 'q', NAME: 'Earthshatter', LABEL: 'EARTH', KILLS: 40, MANA: 60, COOLDOWN: 12,
       RADIUS: 240, DAMAGE: 40, DAMAGE_MAXHP: 1.2, FORTIFY_TIME: 3, FORTIFY_MULT: 0.5 },
-    AFTERIMAGE: { KEY: 'q', NAME: 'Afterimage', LABEL: 'AFTER', KILLS: 30, COOLDOWN: 10,
+    AFTERIMAGE: { KEY: 'q', NAME: 'Afterimage', LABEL: 'AFTER', KILLS: 30, MANA: 60, COOLDOWN: 10,
       DURATION: 3, SPEED_MULT: 1.5, TICK: 0.25, RADIUS: 70, DAMAGE: 30, DAMAGE_WEAPON: 0.6 },
-    CONSECRATION: { KEY: 'q', NAME: 'Consecration', LABEL: 'ALTAR', KILLS: 40, COOLDOWN: 15,
+    CONSECRATION: { KEY: 'q', NAME: 'Consecration', LABEL: 'ALTAR', KILLS: 40, MANA: 60, COOLDOWN: 15,
       RADIUS: 140, DURATION: 6, DPS: 18, TICK: 0.5, HEAL_PER_KILL: 2 },
   };
   for (const id of Object.keys(want)) {
     const def = C.SKILLS[id];
     if (!def) throw new Error(id + ' missing from CONFIG.SKILLS');
-    if ('MANA' in def) throw new Error(id + ' carries a MANA key — ults are NON-mana');
     for (const k of Object.keys(want[id])) {
       if (def[k] !== want[id][k]) throw new Error(id + '.' + k + ' = ' + def[k] + ' (spec ' + want[id][k] + ')');
     }
@@ -192,20 +194,23 @@ for (const [charId, ultId] of CLASSES) {
     if (useSkill(st, ultId) !== false) throw new Error('a second cast chained inside the floor');
   });
 
-  s.check(charId + ': NON-mana — the pool is BYTE-identical across a cast, and it fires at mana 0', () => {
+  s.check(charId + ': MANA — a short pool REFUSES byte-identical; a paid cast spends exactly 60', () => {
     const p = runAs(charId);
     resetUlt(p, ultId);
     clearFoes();
-    p.mana = 37.25;                       // an odd, non-round pool value
+    p.mana = 37.25;                       // an odd, non-round pool value, short of 60
     p.kills = def.KILLS;
     const before = p.mana;
-    if (useSkill(st, ultId) !== true) throw new Error('cast refused at full charge');
-    console.log('    measured: mana ' + before + ' -> ' + p.mana + ' (cast 1)');
-    if (p.mana !== before) throw new Error('the pool moved: ' + before + ' -> ' + p.mana);
-    resetUlt(p, ultId);
+    if (useSkill(st, ultId) !== false) throw new Error('cast landed on a short pool');
+    console.log('    measured: refused at ' + before + ' -> ' + p.mana + ' (nothing spent)');
+    if (p.mana !== before) throw new Error('the pool moved on refusal: ' + before + ' -> ' + p.mana);
+    if (ultCharge(st, ultId).charge !== def.KILLS) throw new Error('a refusal banked charge');
+    p.mana = 100;
+    if (useSkill(st, ultId) !== true) throw new Error('cast refused at full charge + full pool');
+    console.log('    measured: mana 100 -> ' + p.mana + ' (paid cast)');
+    if (p.mana !== 100 - def.MANA) throw new Error('the pool moved by ' + (100 - p.mana) + ' (want ' + def.MANA + ')');
     p.mana = 0;
-    if (useSkill(st, ultId) !== true) throw new Error('cast refused at mana 0');
-    console.log('    measured: mana 0 -> ' + p.mana + ' (cast 2, fired with an EMPTY pool)');
+    if (useSkill(st, ultId) !== false) throw new Error('cast landed at mana 0');
     if (p.mana !== 0) throw new Error('the pool moved at 0: ' + p.mana);
   });
 
@@ -252,6 +257,10 @@ for (const [charId, ultId] of CLASSES) {
         p.invuln = 1e9;
         anchor.x = p.x + 10; anchor.y = p.y;   // the pilot kites; the target follows
         if (i === Math.round(10 / dt)) p.kills += 500;   // mid-window kill flood
+        // 2026-09-17 ult mana: the pool is topped EVERY frame so this check
+        // still measures ONLY the cooldown floor (the mana dimension has its
+        // own contract in test_ult_mana.mjs — refill cost is not this test).
+        p.mana = p.stats.maxMana;
         T.autoCast(st);
         const cd = p.skillCd[ultId] || 0;
         if (cd > prevCd + 1e-9) casts++;
@@ -353,6 +362,10 @@ s.check('AFTERIMAGE: detonations on the move through the ONE blast path; the x1.
     const seen = new Set();
     let booms = 0;
     h.setFrameMs(dt * 1000);
+    // 2026-09-17 ult mana: top the pool (the speed-measurement cast earlier in
+    // this check already spent 60; detonations are what is measured here —
+    // the mana contract lives in test_ult_mana.mjs).
+    p.mana = p.stats.maxMana;
     useSkill(st, 'AFTERIMAGE');
     const per = def.DAMAGE + def.DAMAGE_WEAPON * (p.stats.damage || 0);
     const frames = Math.round(def.DURATION / dt) + Math.round(0.2 / dt);   // window + settle
@@ -407,6 +420,7 @@ s.check('CONSECRATION: densest-cluster placement, full 6s of ticks, inside-only 
     resetUlt(p, 'CONSECRATION');
     clearFoes();
     p.kills = def.KILLS;
+    p.mana = p.stats.maxMana;       // 2026-09-17: the placement cast above spent 60
     useSkill(st, 'CONSECRATION');   // empty field -> placed AT the player (the fallback)
     const fld = p.consecField;
     if (Math.hypot(fld.x - p.x, fld.y - p.y) > 1e-9) throw new Error('empty-field fallback missed the player');
@@ -444,6 +458,7 @@ s.check('CONSECRATION: densest-cluster placement, full 6s of ticks, inside-only 
   p.kills = def.KILLS;
   p.hp = p.stats.maxHp - 100;
   st.weapons.length = 0;   // no weapon may kill near the field mid-measurement
+  p.mana = p.stats.maxMana;   // 2026-09-17: this check's earlier casts spent 60 each
   useSkill(st, 'CONSECRATION');
   const fld2 = { x: p.consecField.x, y: p.consecField.y };
   const hp0 = p.hp;

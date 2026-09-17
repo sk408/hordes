@@ -138,8 +138,12 @@ S.check('F10: the normal path is byte-identical ({gold,award,purseBanked,winBonu
   const before = prof.gold;
   const r = T.purse.settle({ winBonus: 1200 });
   const wantAward = Math.round(RUN_GOLD.AWARD * 2) + RUN_GOLD.FIRST_CLEAR;
+  // goldPool (2026-09-17 challenge +200% additive): the ADDITIVE breakdown now
+  // rides the settled shape — an identity pool on this standard stakes-free
+  // fixture; every pre-F10 number is unchanged.
   assert.deepEqual(r, { gold: wantAward + 42 + 1200, award: wantAward,
-    purseBanked: 42, winBonus: 1200, firstClear: true },
+    purseBanked: 42, winBonus: 1200, firstClear: true,
+    goldPool: { base: 1, challenge: 0, heat: 0, total: 1 } },
     'the settled shape is exactly the pre-F10 numbers');
   assert.equal(prof.gold, before + r.gold, 'bank delta matches (effects ran on the normal path)');
   assert.equal(prof.runPurse, 0, 'the purse zeroed on the normal path');

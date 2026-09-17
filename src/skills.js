@@ -25,14 +25,17 @@ export function useSkill(state, id) {
   const p = state.player;
   const def = C.SKILLS[id];
   if (!def) return false;   // unknown id: fail, never throw
-  // N1 slice 3: a kill-charged, NON-mana ult (a def with KILLS, no MANA key)
-  // NEVER enters the mana-price path below — skillManaCost would read
-  // def.MANA undefined -> NaN, and the Witch stays the only mana class. The
-  // gate is charge (from the LIVE kill counter) AND the cooldown floor; the
-  // spend banks KILLS kills on the player, never a drop of mana.
+  // N1 slice 3, SUPERSEDED 2026-09-17 (owner: "player ults must cost a
+  // significant amount of mana"): a kill-charged ult (a def with KILLS) is
+  // charged in KILLS and PRICED in MANA. The gate is charge AND the cooldown
+  // floor AND the pool (ultCharge.ready reads all three); a refused cast
+  // spends nothing; a paid cast spends exactly skillManaCost ONCE and then
+  // banks KILLS kills on the player. A hypothetical def with KILLS and no
+  // MANA key prices at 0 through the same helper (never NaN).
   if (def.KILLS != null) {
     const u = ultCharge(state, id);
     if (!u.ready) return false;
+    p.mana -= u.manaCost;
     p.ultSpent = p.ultSpent || {};
     p.ultSpent[id] = (p.ultSpent[id] || 0) + def.KILLS;
     p.skillCd[id] = skillCooldown(id, state);
@@ -117,6 +120,9 @@ export function isUlt(id) {
 /**
  * The live charge state of an ult, or null for a non-ult id. Every readout
  * (tc-q badge, text HUD, AUTO-cast gate) reads THIS so they cannot disagree.
+ * 2026-09-17: readiness now includes the MANA price — an ult the pool cannot
+ * afford is NOT ready, so every control that reads `ready` shows unavailable
+ * until the pool recovers (manaCost/mana are carried for the LOW readouts).
  */
 export function ultCharge(state, id) {
   const def = C.SKILLS[id];
@@ -125,7 +131,11 @@ export function ultCharge(state, id) {
   const spent = (p.ultSpent && p.ultSpent[id]) || 0;
   const charge = Math.min(def.KILLS, Math.max(0, (p.kills || 0) - spent));
   const cooldown = (p.skillCd && p.skillCd[id]) || 0;
-  return { charge, need: def.KILLS, cooldown, ready: charge >= def.KILLS && cooldown <= 0 };
+  const manaCost = def.MANA != null ? skillManaCost(id, state) : 0;
+  return {
+    charge, need: def.KILLS, cooldown, manaCost, mana: p.mana,
+    ready: charge >= def.KILLS && cooldown <= 0 && p.mana >= manaCost,
+  };
 }
 
 // The three casts. Gates are already paid by useSkill (charge banked, floor

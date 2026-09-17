@@ -166,18 +166,19 @@ ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
     for (const st of [off, on]) { st.enemies = [park()]; st.effects = []; }
     const a = off.player, b = on.player;
     a.mana = b.mana = 999;
-    // RETARGET (N1 slice 3): an ult (KILLS, no MANA key) is legal only at full
-    // charge, so the fixture banks the kills — and its cast spends ZERO mana
-    // in BOTH perk states (Focus has no price to discount; the byte-exact
-    // pool proof lives in test_ults.mjs). The cooldown assertions below are
-    // the shipped ones, verbatim, ults included.
+    // RETARGET (N1 slice 3): an ult (KILLS) is legal only at full charge, so
+    // the fixture banks the kills. RETARGET (2026-09-17 owner directive:
+    // "player ults must cost a significant amount of mana" — the N1 zero-mana
+    // exemption is OVERTURNED): the cast spends exactly skillManaCost in EACH
+    // perk state — Focus discounts the ult price through the ONE helper, same
+    // as any skill. The byte-exact price/regen pins live in test_ult_mana.mjs.
     const isUlt = C.SKILLS[id].KILLS != null;
     if (isUlt) a.kills = b.kills = C.SKILLS[id].KILLS;
     assert.equal(useSkill(off, id), true);
     assert.equal(useSkill(on, id), true);
     if (isUlt) {
-      assert.equal(a.mana, 999, id + ' left the perk-off pool untouched');
-      assert.equal(b.mana, 999, id + ' left the Focus pool untouched');
+      assert.equal(a.mana, 999 - skillManaCost(id, off), id + ' charged the perk-off pool the exact ult price');
+      assert.equal(b.mana, 999 - skillManaCost(id, on), id + ' charged the Focus pool the discounted ult price');
     } else {
       assert.ok(Math.abs((b.mana - a.mana) - C.SKILLS[id].MANA * (1 - FOCUS_MANA_MULT)) < 1e-9,
         id + ' mana delta');

@@ -232,11 +232,15 @@ function fakeProfile(bestGold) {
 S.check('payout = floor(bestGold x K), credited to the BANK, never the purse', () => {
   const p = fakeProfile(12000);
   assert(bestGoldOf(p) === 12000, 'bestGold rides the achievements fold');
-  assert(PAYOUT_K === 1 / 30, 'K is the owner-tuned constant');
-  assert(payoutFor(12000) === 400, 'floor(12000/30) = 400');
+  // RETARGET (PLAYER REVIEW 2026-09-17 item 4, disclosed): K was pinned at
+  // the parked 2026-09-15 value 1/30; the review ("not enough payout means I
+  // always click skip") is the balance pass the park was waiting for, and
+  // raises K to 1/15 alongside the halved corridor (see escape/config.js).
+  assert(PAYOUT_K === 1 / 15, 'K is the owner-tuned constant');
+  assert(payoutFor(12000) === 800, 'floor(12000/15) = 800');
   const purseBefore = p.runPurse;
   const paid = collect(p);
-  assert(paid === 400 && p.gold === 400, 'collect credits profile.gold directly');
+  assert(paid === 800 && p.gold === 800, 'collect credits profile.gold directly');
   assert(p.runPurse === purseBefore, 'the run purse never sees escape income');
 });
 S.check('twice in a row compounds NOTHING: equal payouts, bestGold unmoved', () => {
@@ -244,7 +248,7 @@ S.check('twice in a row compounds NOTHING: equal payouts, bestGold unmoved', () 
   const a = collect(p);
   const best = bestGoldOf(p);
   const b = collect(p);
-  assert(a === b && a === 300, 'the second collection is identical (' + a + ' then ' + b + ')');
+  assert(a === b && a === 600, 'the second collection is identical (' + a + ' then ' + b + ')');
   assert(bestGoldOf(p) === best, 'collecting cannot grow bestGold (it is a max)');
 });
 S.check('a zero-history profile pays nothing (no division poison, no free gold)', () => {
@@ -284,9 +288,9 @@ S.check('skip ends soft with NO payout by default; the writ collects anyway', ()
   ESCAPE.skip();
   let m = 0;
   while (!ESCAPE.isEnded() && m < 300) { ESCAPE.frame(null, 1 / 60); m++; }
-  assert(ended2.paidSkipUsed === true && ended2.payout === 400,
+  assert(ended2.paidSkipUsed === true && ended2.payout === 800,
     'the writ collects on skip (' + ended2.payout + ')');
-  assert(vet.gold === 400, 'the writ credit landed in the bank');
+  assert(vet.gold === 800, 'the writ credit landed in the bank');
 });
 S.check('a caught/fell escape is soft too: no payout, the hand-back fires', () => {
   const p = fakeProfile(12000);

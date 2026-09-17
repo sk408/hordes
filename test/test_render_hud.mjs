@@ -161,20 +161,55 @@ console.log('WAVE-24 / #2 — CANVAS TEXT CONTRAST + SIZE');
   ok(!!wlv && plateFor(rec, wlv),
     'the weapon level number is painted on its own plate');
 
-  // Boss banner: the title/sub print at SCREEN CENTER (over gameplay), so the
-  // plate must exist or contrast depends on the scene behind it.
-  const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
-  R2.drawBossBanner(ctx2, hudState({
-    bossBanner: { title: 'GRAVELMAW', sub: 'THE WAVE BREAKS HERE', ttl: 2.0 },
-  }));
-  const title = textOf(rec2, 'GRAVELMAW');
-  ok(!!title, 'boss banner title painted');
-  const bPlate = rec2.rects.find(q => isDarkPlate(q.style) &&
-    q.w >= 'GRAVELMAW'.length * 12 && q.h >= 40 &&
-    Math.abs((q.x + q.w / 2) - C.VIEW_W / 2) <= 2);
-  ok(!!bPlate, 'the banner title/sub ride a centered dark plate');
-  const subPx = title ? parseInt(/\d+px/.exec((textOf(rec2, 'THE WAVE BREAKS HERE') || {}).font || '0px')[0], 10) : 0;
-  ok(subPx >= 10, 'banner sub-line is >= 10px (got ' + subPx + ')');
+  // Boss banner, RETARGETED 2026-09-17 (review addendum: the centre banner
+  // covered the dodge path). A LIVE-COMBAT banner (no bannerHold) renders the
+  // PERIPHERAL horde warning: HUD-band strip + edge cue, ZERO paint inside the
+  // play area. A HELD banner (token / top-tier: the sim is paused) keeps the
+  // cinematic centre plate — the title/sub print at screen center over a
+  // HELD frame, so the plate must exist or contrast depends on the scene.
+  {
+    const { R: R2, rec: rec2, ctx: ctx2 } = makeRenderer();
+    const WN = C.HUD.WARNING;
+    R2.drawBossBanner(ctx2, hudState({
+      bossBanner: { title: 'GRAVELMAW', names: ['GRAVELMAW'], sub: 'THE WAVE BREAKS HERE',
+        ttl: 2.0, dur: 2.0, edges: ['right'] },
+    }));
+    const strip = textOf(rec2, 'HORDE: GRAVELMAW');
+    ok(!!strip, 'horde warning strip painted');
+    ok(strip && strip.y < 18 && /bold/.test(strip.font),
+      'the strip is bold ink inside the top HUD band (y=' + (strip && strip.y) + ')');
+    const sPlate = strip && plateFor(rec2, strip);
+    ok(!!sPlate && sPlate.y <= WN.STRIP_Y + WN.STRIP_H,
+      'the strip rides a dark plate in the top band');
+    // ZERO banner paint inside the play area (view minus HUD band minus the
+    // screen-edge frame the edge cue owns — band + its 1px hot rule).
+    const E = WN.EDGE_PX + 1;
+    const offenders = rec2.rects.filter(q =>
+      q.x + q.w > E && q.x < C.VIEW_W - E &&
+      q.y + q.h > WN.STRIP_Y + WN.STRIP_H && q.y < C.VIEW_H - E);
+    ok(offenders.length === 0, 'no banner rect enters the play area',
+      JSON.stringify(offenders.slice(0, 2)));
+    ok(rec2.rects.some(q => q.style === '#7a1028' && q.h > 10 &&
+      q.x >= C.VIEW_W - WN.EDGE_PX),
+      'the edge cue paints the RIGHT edge band (spawn side)');
+    ok(R2.bossBanner && R2.bossBanner.peripheral === true && R2.bossBanner.alpha === 1,
+      'the seam reads peripheral at full alpha');
+  }
+  {
+    const { R: R3, rec: rec3, ctx: ctx3 } = makeRenderer();
+    R3.drawBossBanner(ctx3, hudState({
+      bannerHold: 2.0,
+      bossBanner: { title: 'GRAVELMAW', sub: 'THE WAVE BREAKS HERE', ttl: 2.0 },
+    }));
+    const title = textOf(rec3, 'GRAVELMAW');
+    ok(!!title, 'held banner title painted');
+    const bPlate = rec3.rects.find(q => isDarkPlate(q.style) &&
+      q.w >= 'GRAVELMAW'.length * 12 && q.h >= 40 &&
+      Math.abs((q.x + q.w / 2) - C.VIEW_W / 2) <= 2);
+    ok(!!bPlate, 'a HELD banner keeps the centered dark plate');
+    const subPx = title ? parseInt(/\d+px/.exec((textOf(rec3, 'THE WAVE BREAKS HERE') || {}).font || '0px')[0], 10) : 0;
+    ok(subPx >= 10, 'held banner sub-line is >= 10px (got ' + subPx + ')');
+  }
 }
 
 console.log('WAVE-24 / #3 — GROUND DECOR: LANDMARKS + RIM CLIP');

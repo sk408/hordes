@@ -154,9 +154,14 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
     pump(5);
     assert.equal(R.radarPlateBuilds, before, 'a later frame rebuilt the static plate');
   });
+  // 2026-09-17 retarget: the measureText fit ladder now serves only HELD
+  // banners (token / top-tier — the live-comput APPROACH banners render the
+  // peripheral horde warning, which has no fit ladder). The fixture is a HELD
+  // banner (bannerHold > 0), so the cache contract under test is unchanged.
   s.check('N6: the banner fit runs once per banner STRINGS, refits only on a new banner', () => {
     st.bossBanner = { names: ['GRIMWARDEN THE UNDYING'], verb: 'APPROACHES',
       title: 'GRIMWARDEN THE UNDYING APPROACHES', sub: 'THE CRYPT YAWNS FOR YOU', ttl: 2.5 };
+    st.bannerHold = 60;   // held: the cinematic plate path (fit ladder runs)
     pump(1);
     assert.equal(R.bossBannerFits, 1, 'the first banner frame did not fit');
     const f1 = R._bannerFit;
@@ -168,6 +173,7 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
     pump(1);
     assert.equal(R.bossBannerFits, 2, 'a different banner did not refit');
     st.bossBanner = null;
+    st.bannerHold = 0;
   });
 }
 

@@ -183,6 +183,18 @@ export const RUN_GOLD = {
   // so the award is ~0.6% of a good run's income — a pure floor, never the
   // dominant term; a fresh death still banks it in full.
   AWARD: 70,
+  // CHALLENGE GOLD (owner directive 2026-09-17: "Challenge modes could award
+  // multipliers to gold... Right now we can just make them 200% additive. And
+  // gives us another lever to change later if needed"). THE FORMULA — ADDITIVE,
+  // never multiplicative: the end-of-run AWARD pool is
+  //   total = 100% (base) + CHALLENGE bonus (this constant, any non-standard
+  //           mode) + HEAT bonus (+30% per manual stakes push)
+  //         — SUMMED. With BONUS_PCT 200 a challenge run pays 300% of base;
+  //         heat at x2 pushes stacks to 100+200+60 = 360%, never 100x3x1.6.
+  //         The performance axis (shop goldMult x rampage best) multiplies the
+  //         POOL result — stats, not stated-percentage bonuses. Retuning to
+  //         "150%" is the one-line edit below.
+  CHALLENGE_BONUS_PCT: 200,   // percentage POINTS; ONE home, no second literal
 };
 
 // WAVE-11 ECONOMY TARGETS (Sk408 directives), RE-DERIVED for the E1 run purse

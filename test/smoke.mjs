@@ -789,7 +789,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
         const ban = mainMod.__TEST.renderer.bossBanner;
         assert(ban && /APPROACH/.test(ban.name),
           'boss arrival banner must be live at spawn (got ' + JSON.stringify(ban) + ')');
-        assert(ban.letterbox === true, 'banner paints the cinematic letterbox');
+        // 2026-09-17 retarget: the arrival is the PERIPHERAL horde warning
+        // (review addendum — the centre banner covered the dodge path); the
+        // cinematic letterbox survives only on HELD banners.
+        assert(ban.peripheral === true, 'arrival renders the peripheral warning');
+        assert(Array.isArray(ban.edges) && ban.edges.length > 0,
+          'the warning carries the spawn-side edge cue');
         assert(ban.alpha > 0 && ban.alpha <= 1, 'banner ramps in from >0 alpha');
         assert(typeof ban.sub === 'string' && ban.sub.length > 3,
           'banner carries the flavor sub-line');
@@ -1614,17 +1619,21 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.wave.bosses.length > 0, 'a boss must spawn for the banner probe');
   const bossName = st.wave.bosses[0].name;
   const ban = r.bossBanner;
-  assert(ban && ban.letterbox === true && ban.name.startsWith(bossName),
-    'banner is live at spawn with the boss name: ' + JSON.stringify(ban));
+  assert(ban && ban.peripheral === true && ban.name.startsWith(bossName),
+    'peripheral warning live at spawn with the boss name: ' + JSON.stringify(ban));
   assert(/APPROACHES$/.test(ban.name), 'the default copy line is "<NAME> APPROACHES"');
   assert(typeof ban.sub === 'string' && ban.sub.length > 3,
     'banner carries the flavor sub-line');
-  pump(Math.round(60 * 0.6));   // past the 0.35s ramp-in
-  assert(r.bossBanner && r.bossBanner.alpha === 1, 'banner fully visible past ramp-in');
-  pump(Math.round(60 * 2.4));   // past the 2.5s ttl (+ the 0.6 above)
+  assert(ban.strip && ban.strip.text.startsWith('HORDE: '),
+    'the HUD-band strip names the horde: ' + JSON.stringify(ban.strip));
+  pump(Math.round(60 * 0.6));   // past any ramp-in
+  assert(r.bossBanner && r.bossBanner.alpha === 1, 'warning fully visible past ramp-in');
+  // TTL is eta-clamped (C.HUD.WARNING.TTL_MAX 1.5 — gone CLEAR_MARGIN before
+  // first contact); 1.5 + margin comfortably below the old 2.5s budget.
+  pump(Math.round(60 * 2.0));   // past the ttl cap (+ the 0.6 above)
   assert(r.bossBanner === null,
-    'the banner must expire after ~2.5s (got ' + JSON.stringify(r.bossBanner) + ')');
-  console.log(`boss overlay: ${bossName} letterbox banner + sub-line, expired on ttl`);
+    'the warning must expire by TTL_MAX (got ' + JSON.stringify(r.bossBanner) + ')');
+  console.log(`boss overlay: ${bossName} peripheral horde warning + strip, expired on ttl`);
 }
 
 // ---- WAVE-16 WORLD ZOOM, live through the real loop ----------------------------

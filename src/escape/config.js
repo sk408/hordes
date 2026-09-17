@@ -30,25 +30,27 @@ export const BAND = {
 };
 
 // ---- pacing (owner spec update 2026-09-15: a ~60-SECOND escape, not two
-// minutes — the palette shift and the ramp compress onto the minute; the
-// finale still fits inside it) ----
+// minutes — SUPERSEDED 2026-09-17 by PLAYER REVIEW item 4: "Too long, not
+// enough payout means I always click skip." The corridor is roughly HALVED
+// (~33s nominal) and one act FOLDED: ESCALATION++ was tier 2 following a
+// tier 2 act (ESCALATION+ runs straight to the sprint now, 5 acts -> 4) —
+// the tier ramp itself is untouched, so wall/act/palette fractions and the
+// generator's ramp all hold by construction) ----
 export const PACING = {
   // Fractions of corridor length, in order. The generator RAMPS — it never
   // shuffles (a template's difficulty tier is a function of its act).
   // V1e (docs/briefs/V1E_ESCAPE_FINALE.md): the boss no longer interrupts
   // mid-corridor — the corridor ENDS at the boss, with the authored upper
-  // level over it to the portal (generator finaleSegment). The 0.58 act is
-  // plain ESCALATION++ terrain now.
+  // level over it to the portal (generator finaleSegment).
   ACTS: [
     { name: 'WARM-UP', from: 0.00, tier: 0 },      // flat, one easy gap
     { name: 'ESCALATION', from: 0.18, tier: 1 },   // terraces, harder gaps, fliers
     { name: 'ESCALATION+', from: 0.42, tier: 2 },
-    { name: 'ESCALATION++', from: 0.58, tier: 2 },
     { name: 'THE FINAL SPRINT', from: 0.66, tier: 3 },  // simplest terrain, max pressure
   ],
   NOMINAL_SPEED: 200,   // px/s the duration estimate divides by (see generator)
-  MIN_SECONDS: 54,      // corridor length bounds derived from the ~1min target
-  MAX_SECONDS: 66,
+  MIN_SECONDS: 30,      // corridor length bounds derived from the ~33s target
+  MAX_SECONDS: 36,
 };
 
 // ---- the horde wall (the real timer — visible, never an invisible clock) ----
@@ -135,13 +137,13 @@ export const EXIT = {
 
 // ---- the payout (owner mechanism: bestGold x K, repeatable currency) ----
 // K is ONE tunable constant (never stored, never derived — no division at
-// read time, so the intOr floor trap cannot fire): K = 1/30 lands a completed
-// escape near the owner's 1/3-of-rate intent (~40s of income for a 2-minute
-// escape keyed to a ~20min best run).
-// PARKED, DO NOT TUNE (owner spec 2026-09-15): the 60-second escape roughly
-// doubles payout-per-hour for the same bestGold x K. Known, deliberate debt
-// for a later balance pass — K is NOT adjusted now.
-export const PAYOUT_K = 1 / 30;
+// read time, so the intOr floor trap cannot fire). K = 1/30 was parked at the
+// 2026-09-15 60-second-escape spec ("DO NOT TUNE ... for a later balance
+// pass"); PLAYER REVIEW 2026-09-17 item 4 IS that pass ("not enough payout
+// means I always click skip") and supersedes the park: K = 1/15 with the
+// corridor halved (~33s) puts a completion at >3.6x the old gold-per-second —
+// 12000 bestGold banks 800 per completed escape (was 400 for ~60s).
+export const PAYOUT_K = 1 / 15;
 
 // ---- the paid skip (owner directive 2026-09-14: a one-time meta-shop unlock
 // that lets the player skip AND still collect — a paid override of the

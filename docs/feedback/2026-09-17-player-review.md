@@ -53,3 +53,14 @@ C. Path differentiation: mana regen is strong enough that the cap never matters 
    health swings so fast that only max HP matters. The resources need to differ in KIND, not quantity.
 D. Settings surface: too many options, arenas barely distinguishable, run modifiers under-explained.
 E. The headline: the game carries too many concepts without a clear "what am I working towards".
+
+## Addendum — 2026-09-17 (later same day, relayed by the owner)
+
+PLAYER, verbatim: "ive literally only just begun but could you please remove the big flashing warning in the
+middle of the game when a horde is coming, im still at the point where i need to focus on where i need to go
+to dodge enemies and it is really hard to see through it"
+
+OWNER: "I don't want to get rid of it but we do need to help manual players a bit because of how the banner
+overlays gameplay" — and, follow-up: "Is there a way to take it off the Dodge path? Seems hard on mobile size
+screen". Ruling: keep the warning, ZERO warning pixels inside the play area (HUD band + screen edges +
+audio only), and the warning must be gone before first contact.

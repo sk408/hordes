@@ -1207,18 +1207,102 @@ export class Renderer {
       landmarks: marks, player: { x: px, y: py } };
   }
 
+  // ---- HORDE WARNING (2026-09-17 review addendum) -----------------------------
+  // The peripheral treatment every LIVE-COMBAT bossBanner renders through: the
+  // warning never touches the play area (the region the player dodges through).
+  // Channels, all outside the play area:
+  //   (a) HUD STATE — an urgent strip in the top HUD band: dark plate, blood
+  //       rules, gold text, the word HORDE. Sits between the left bar column
+  //       and the right clock column (STRIP_SIDE keeps it clear of both).
+  //   (b) EDGE CUE — a pulsing blood band along each screen edge the horde
+  //       enters from (banner.edges, computed at spawn from the spawn angle).
+  //       The SIDE carries "from where"; the pulse rate (2 Hz) is "how soon".
+  //   (c) AUDIO — the BOSS_YELL sting main.js fires at every banner set.
+  // Timing is main.js's (C.HUD.WARNING: ttl ends CLEAR_MARGIN before the
+  // fastest spawn's estimated contact). Alpha eases OUT over the last 0.4s and
+  // slams in at full — a warning, not a curtain. `this.bossBanner` carries the
+  // painted geometry (peripheral: true) as the test seam.
+  drawHordeWarning(g, state, b) {
+    const WN = C.HUD.WARNING;
+    const W = C.VIEW_W, H = C.VIEW_H;
+    const alpha = Math.max(0, Math.min(1, b.ttl / 0.4));
+    const age = (b.dur || WN.TTL_MAX) - b.ttl;
+    const pulse = 0.45 + 0.55 * Math.abs(Math.sin(Math.PI * age / WN.PULSE_S));
+    // (a) the HUD-band strip: "HORDE: <name(s)>" (the announce toast already
+    // carries the verb + flavor; the strip is the urgent state, not a lecture).
+    const names = (b.names && b.names.length) ? b.names : (b.title ? [b.title] : []);
+    const maxTextW = W - 2 * WN.STRIP_SIDE - 2 * 4;
+    const widthOf = (txt, px) => {
+      g.font = 'bold ' + px + 'px monospace';
+      if (typeof g.measureText === 'function') {
+        const m = g.measureText(txt);
+        if (m && typeof m.width === 'number' && isFinite(m.width) && m.width > 0) return m.width;
+      }
+      return txt.length * px * 0.6021;   // the stub-ctx fallback (feed's rule)
+    };
+    let txt = names.length ? 'HORDE: ' + names.join(' + ') : 'HORDE INCOMING';
+    let px = WN.STRIP_PX_MAX;
+    while (px > WN.STRIP_PX_MIN && widthOf(txt, px) > maxTextW) px--;
+    while (txt.length > 1 && widthOf(txt, px) > maxTextW) txt = txt.slice(0, -1);
+    const textW = widthOf(txt, px);
+    const plateW = Math.min(Math.round(textW + 2 * 4), W - 2 * WN.STRIP_SIDE);
+    const plateX = Math.round(W / 2 - plateW / 2);
+    const plateY = WN.STRIP_Y, plateH = WN.STRIP_H;
+    g.globalAlpha = alpha;
+    g.fillStyle = C.HUD.PLATE_SOLID;
+    g.fillRect(plateX, plateY, plateW, plateH);
+    g.fillStyle = '#7a1028';                       // the blood rules, same language as the plate
+    g.fillRect(plateX, plateY, plateW, 1);
+    g.fillRect(plateX, plateY + plateH - 1, plateW, 1);
+    g.font = 'bold ' + px + 'px monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ffd75e';
+    g.fillText(txt, W / 2, plateY + Math.round(plateH / 2));
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    // (b) the edge cue: blood band + a 1px hot rule at its inner boundary,
+    // on every edge the horde enters from. Screen edges are not play area.
+    const E = WN.EDGE_PX;
+    g.globalAlpha = alpha * pulse;
+    for (const edge of (b.edges || [])) {
+      g.fillStyle = '#7a1028';
+      if (edge === 'top') g.fillRect(0, 0, W, E);
+      else if (edge === 'bottom') g.fillRect(0, H - E, W, E);
+      else if (edge === 'left') g.fillRect(0, 0, E, H);
+      else if (edge === 'right') g.fillRect(W - E, 0, E, H);
+      g.fillStyle = '#ff2f5e';
+      if (edge === 'top') g.fillRect(0, E, W, 1);
+      else if (edge === 'bottom') g.fillRect(0, H - E - 1, W, 1);
+      else if (edge === 'left') g.fillRect(E, 0, 1, H);
+      else if (edge === 'right') g.fillRect(W - E - 1, 0, 1, H);
+    }
+    g.globalAlpha = 1;
+    this.bossBanner = {
+      name: b.title, sub: b.sub, peripheral: true, alpha,
+      strip: { x: plateX, y: plateY, w: plateW, h: plateH, text: txt, px },
+      edges: (b.edges || []).slice(),
+    };
+  }
+
   // ---- WAVE-14 boss-arrival overlay ------------------------------------------
   // state.bossBanner = { names:[...], verb, title, sub, ttl } (main.js sets it
-  // at boss spawn / herald / finale start; ~2.5s). Cinematic letterbox bands +
-  // a fitted two-line block (huge NAME(S) over the big title verb) + the flavor
-  // sub-line. `names`/`verb` drive the split; `title` is the flat legacy string
-  // and is used as line 1 when a caller passes no split. Ramps in over the
-  // first 0.35s and out over the last 0.6s so it slams in and eases away.
-  // `this.bossBanner` is the test seam (the exact values painted this frame;
-  // null when no banner is live).
+  // at boss spawn / herald / finale start). TWO treatments since the 2026-09-17
+  // review addendum (player: the centre banner "is really hard to see through"
+  // on the dodge path; owner: keep the warning, ZERO warning pixels inside the
+  // play area):
+  //   LIVE COMBAT (sim running — boss cast / herald / the maw): the peripheral
+  //   HORDE WARNING (drawHordeWarning below): an urgent HUD-band strip + a
+  //   pulsing edge cue on the side the horde enters from + the BOSS_YELL sting
+  //   main.js already fires. Nothing paints inside the play area.
+  //   HELD (state.bannerHold > 0 — token / top-tier first-ever: the sim is
+  //   PAUSED, nothing is being dodged): the owner-approved cinematic centre
+  //   plate is kept. `this.bossBanner` is the test seam (the exact values
+  //   painted this frame; null when no banner is live).
   drawBossBanner(g, state) {
     const b = state.bossBanner;
     if (!b || !(b.ttl > 0)) { this.bossBanner = null; return; }
+    if (!(state.bannerHold > 0)) return this.drawHordeWarning(g, state, b);
     const DUR = 2.5;
     const aIn = Math.min(1, (DUR - b.ttl) / 0.35);
     const aOut = Math.min(1, b.ttl / 0.6);

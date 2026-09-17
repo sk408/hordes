@@ -156,7 +156,7 @@ import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } 
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
-  challengeRules, nextChallengeId, describeChallenge, challengeGoldMult,
+  challengeRules, nextChallengeId, describeChallenge, challengeGoldBonusPct,
 } from './challenges.js';
 // G20a STAGES — the third axis (the PLACE): pool/mods/hazard rows stamped onto
 // the run exactly like challenges are. Same purity contract, same session-
@@ -1390,8 +1390,11 @@ function spawnBoss() {
   const w = Math.floor(state.time / 30);
   const cast = pickBossForWave(state.wave.num);
   state.wave.bosses = [];
+  let etaMin = 1e9;                 // fastest spawn's estimated contact (timing below)
+  const edges = new Set();          // the screen edges the horde enters from
   cast.forEach((desc, i) => {
     const a = Math.random() * Math.PI * 2 + (i / cast.length) * Math.PI * 2;
+    edges.add(warningEdgeOf(a));
     const d = C.ENEMY.SPAWN_DIST * 0.7;
     const boss = makeTypedEnemy('BRUTE',
       state.player.x + Math.cos(a) * d,
@@ -1406,6 +1409,7 @@ function spawnBoss() {
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
     boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
     boss.speed *= B.SPEED_MULT * desc.speedMult;
+    etaMin = Math.min(etaMin, d / boss.speed);   // stationary-player estimate
     boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
     boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
@@ -1423,21 +1427,39 @@ function spawnBoss() {
   });
   // Named announce: BOTH names on double waves (3/6/9 — the events).
   toast(cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH!' : ' APPROACHES!'));
-  // WAVE-14 boss-arrival overlay (render.js drawBossBanner): cinematic
-  // letterbox + name + flavor sub-line, ~2.5s. The BOSS_YELL portal sting is
-  // the reusable cinematic seam (audio.js — no new audio invented).
+  // WAVE-14 boss arrival, retargeted 2026-09-17 (review addendum): the
+  // arrival is announced by the PERIPHERAL warning (render.js
+  // drawHordeWarning) — HUD-band strip + an edge cue on the spawn sides + the
+  // BOSS_YELL sting — never a centre overlay over the dodge path. The ttl
+  // ends CLEAR_MARGIN before the fastest spawn's estimated contact
+  // (warningTtl); spawn timing/size/difficulty are untouched.
+  const ttl = warningTtl(etaMin);
   state.bossBanner = {
-    // TWO-LINE BANNER: the names own line 1 (one per boss), the verb line 2.
     names: cast.map(b => b.name),
     verb: cast.length > 1 ? 'APPROACH' : 'APPROACHES',
-    title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : ' APPROACHES'),
+    title: cast.map(b => b.name).join(' + ') + (cast.length > 1 ? ' APPROACH' : 'APPROACHES'),
     sub: cast.length > 1
       ? cast.map(b => b.flavor.toUpperCase()).join(' / ')
       : cast[0].flavor.toUpperCase(),
-    ttl: 2.5,
+    ttl, dur: ttl, edges: [...edges],
   };
   audio.playPortalCue('BOSS_YELL');
-  easeToBossStance();       // BOSS_STANCE: the banner owns the screen; see CONFIG
+  easeToBossStance();       // BOSS_STANCE: the camera leans in; see CONFIG
+}
+
+// ---------- HORDE WARNING timing + direction (C.HUD.WARNING) ------------------
+// PRESENTATION ONLY (review 2026-09-17): these govern the warning's LIFE, not
+// the horde's — spawn timing, size and difficulty never read these helpers.
+function warningTtl(etaS) {
+  const W = C.HUD.WARNING;
+  return Math.max(W.TTL_MIN, Math.min(W.TTL_MAX, etaS - W.CLEAR_MARGIN));
+}
+// Which screen edge a spawn angle enters from (world and canvas share y-down,
+// and the camera window centres on the player, so the world offset maps
+// directly onto screen sides).
+function warningEdgeOf(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return Math.abs(c) >= Math.abs(s) ? (c > 0 ? 'right' : 'left') : (s > 0 ? 'bottom' : 'top');
 }
 
 // ---------- WAVE-20 MID-WAVE BOSS: VYRN, THE HERALD --------------------------
@@ -1455,6 +1477,7 @@ function spawnMidBoss() {
   const desc = MIDBOSS.HERALD;
   const a = Math.random() * Math.PI * 2;
   const d = C.ENEMY.SPAWN_DIST * 0.7;
+  const edge = warningEdgeOf(a);   // the horde warning's edge cue (see below)
   const boss = makeTypedEnemy('CHASER',
     state.player.x + Math.cos(a) * d,
     state.player.y + Math.sin(a) * d,
@@ -1473,6 +1496,7 @@ function spawnMidBoss() {
   // Speed stays the makeTypedEnemy linear curve (BASE_SPEED * (1+0.05w)) —
   // SPEED_MULT pushes it above the player's 60px/s at every wave.
   boss.speed *= M.SPEED_MULT;
+  const ttl = warningTtl(d / boss.speed);   // gone CLEAR_MARGIN before contact
   boss.contactDamageMult = M.CONTACT_MULT;
   boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * M.XP_KILLS;
   boss.boss = true;               // routes through decideBossAction
@@ -1489,9 +1513,13 @@ function spawnMidBoss() {
   state.enemies.push(boss);
   state.wave.midBosses.push(boss);
   toast(desc.name + ' APPROACHES!');
+  // 2026-09-17: the herald's announce rides the PERIPHERAL horde warning too
+  // (she is the fastest closer in the game — the old 2.5s centre banner was
+  // still on screen at first contact; see the review addendum).
   state.bossBanner = {
     names: [desc.name], verb: 'APPROACHES',
-    title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(), ttl: 2.5,
+    title: desc.name + ' APPROACHES', sub: desc.flavor.toUpperCase(),
+    ttl, dur: ttl, edges: [edge],
   };
   audio.playPortalCue('BOSS_YELL');
   easeToBossStance();       // BOSS_STANCE: same ease for the mid-wave herald
@@ -3543,6 +3571,18 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
     html += `<br><span class="earn">AWARD +${parts.award}` +
       `${parts.winBonus ? ` · BONUS +${parts.winBonus}` : ''}` +
       ` · PURSE BANKED +${parts.purseBanked}</span>`;
+    // OWNER DIRECTIVE 2026-09-17 (challenge gold "200% additive"): the result
+    // screen states the multiplier being applied, so the bigger number is
+    // explained rather than mysterious. The additive parts are named in the
+    // pool's own terms; a plain standard stakes-free run renders
+    // byte-identically (no clause).
+    const gp = parts.goldPool;
+    if (gp && (gp.challenge > 0 || gp.heat > 0)) {
+      const bits = ['100%'];
+      if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
+      if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
+      html += `<br><span class="earn">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
+    }
   }
   // G24 slice 1: the end-of-run summary states what the dial PAID (both
   // channels), only when the dial was used — a stakes-free run renders
@@ -3655,10 +3695,20 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // completion winBonus stay SEPARATE additions on top. Performance pays
   // through the banked purse remainder: the run's tier-weighted in-run
   // earnings land here, unspent.
-  const mult = (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult()
-    // PLAYER REVIEW 2026-09-17 item 2: a restricted run's stated reward pays
-    // here — the AWARD component only, never the purse (kills already paid).
-    * challengeGoldMult(state.challenge);
+  // THE ADDITIVE GOLD POOL (owner 2026-09-17: challenge gold is "200%
+  // additive"). The AWARD's percentage bonuses SUM — never multiply:
+  //   pool = 100% base + CHALLENGE bonus (+RUN_GOLD.CHALLENGE_BONUS_PCT
+  //          percentage points, any non-standard mode)
+  //        + HEAT bonus (+HEAT_CURVES.GOLD per manual stakes push)
+  // (a NIGHT-MODE penalty joins this same pool when that mode lands). The
+  // performance axis — shop goldMult x rampage best — multiplies the POOL
+  // result; those are stats, not stated-percentage bonuses, and were not part
+  // of the named formula. The pool applies to the AWARD only, never the purse
+  // (kills already paid).
+  const challengePct = challengeGoldBonusPct(state.challenge);
+  const heatPct = goldMult(manualPushes(state)) - 1;
+  const pool = 1 + challengePct / 100 + heatPct;
+  const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
   const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
   const purseBanked = purseClamp(profile.runPurse);
   const gold = award + purseBanked + winBonus;
@@ -3671,7 +3721,8 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // neither re-open settlement nor kill the caller — it is reported and the
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
-  state.runSettled = { gold, award, purseBanked, winBonus, firstClear };
+  state.runSettled = { gold, award, purseBanked, winBonus, firstClear,
+    goldPool: { base: 1, challenge: challengePct / 100, heat: heatPct, total: pool } };
   // ONBOARDING (teach-until-demonstrated): the run ENDED — every hint that
   // never got its demonstration burns one of its 3 chances. Bumped beside the
   // claim (before the effects) so a partial settle failure cannot skip it.
@@ -3720,7 +3771,7 @@ function runSurvived() {
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
-  const { gold, firstClear, award, purseBanked } = settleRunGold({ winBonus: bonus });
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold({ winBonus: bonus });
   composeEndScreen({
     titleText: 'RUN SURVIVED',
     titleCls: 'logo',
@@ -3731,7 +3782,7 @@ function runSurvived() {
         `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
       cause: null,                // you did not die — you won
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: bonus },
+      parts: { award, purseBanked, winBonus: bonus, goldPool },
     }),
   });
 }
@@ -3803,7 +3854,7 @@ function endRun() {
   state.mode = 'dead';
   audio.stopMusic();
   audio.playSfx('button');
-  const { gold, firstClear, award, purseBanked } = settleRunGold();
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
   composeEndScreen({
     titleText: 'RUN ENDED',
     titleCls: '',
@@ -3812,7 +3863,7 @@ function endRun() {
         ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
       cause: null,          // a deliberate exit has no killer
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0 },
+      parts: { award, purseBanked, winBonus: 0, goldPool },
     }),
   });
   maybeDeathCoach();
@@ -3861,7 +3912,7 @@ function die(finale) {
   };
   audio.stopMusic();
   audio.playSfx('death');
-  const { gold, firstClear, award, purseBanked } = settleRunGold();
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
 
   // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   composeEndScreen({
@@ -3873,7 +3924,7 @@ function die(finale) {
         ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
       cause: deathCauseLabel(state.deathBy),
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0 },
+      parts: { award, purseBanked, winBonus: 0, goldPool },
     }),
   });
   // G15 THE DEATH MOVIE: the payoff above is COMPOSED but stays HIDDEN while
@@ -4004,12 +4055,19 @@ const refSub = (t) => '<div class="subhead">' + t + '</div>';
 
 function manualRowsControls() {
   // ONE CARD, NOT TWO: both input schemes, the player's OWN path first.
+  // ULT MANA (2026-09-17): when the live class's Q is an ULT, its row states
+  // the charge AND the mana price — built from the config at render time so
+  // the copy can never drift from what useSkill charges.
+  const qDef = C.SKILLS[classSkillId(state)] || {};
+  const qPurpose = qDef.KILLS != null
+    ? 'unleash your class ULT (' + qDef.KILLS + ' kills charged + ' + (qDef.MANA || 0) + ' mana)'
+    : null;
   const kbRows =
     // M1 mechanical fix: O is the pilot toggle (M was taken by the map) —
     // the tour tip and the key handler already say O; the row says it too.
     CONTROLS
       .filter(c => !['potion-hp', 'potion-mp', 'stats'].includes(c.id))
-      .map(c => refRow(c.purpose, c.keys.join(' / ')))
+      .map(c => refRow(c.id === 'skill-q' && qPurpose ? qPurpose : c.purpose, c.keys.join(' / ')))
       .join('') +
     refRow('move', 'arrows / WASD') +
     refRow('H / N — potions &middot; I — field report (the ONE stats key)') +
@@ -4034,8 +4092,8 @@ function manualRowsControls() {
     // IN-RUN REFERENCE ACCESS + POTION ICONS (owner 2026-09-16: the rows must
     // use the word "potion" and say what each one restores — one row each, the
     // key named, so both name sets stay one-glyph-one-meaning) ...
-    refRow('health potion — restores HP (heals you)', 'H') +
-    refRow('mana potion — restores MP (refuels skills)', 'N') +
+    refRow('health potion — restores a carried charge: +' + C.POTIONS.HP_HEAL + ' HP', 'H') +
+    refRow('mana potion — restores a carried charge: +' + C.POTIONS.MP_RESTORE + ' MP', 'N') +
     // ... and every authored cog-row button is named here, so the canonical
     // list (test_ref_access, harvested from the touch layer's own buttons)
     // can never silently outrun the reference.
@@ -4114,7 +4172,21 @@ function manualGoto(page) {
     // explain from, so the two surfaces cannot drift.
     const c = menuCard('THE FIELD',
       OBJECT_HELP.filter(o => o.field).map(o => o.field).join('<br>') +
-      '<br>ground potions — walk over to pick one up (restores health / mana).');
+      // PLAYER REVIEW 2026-09-17 item 3: potions get their own block — the
+      // review's "not clear how they work". Every number here is the code's
+      // own (config.js POTIONS + AUTOPILOT.AUTO_DRINK; the boss curse is
+      // main.js drinkHealthPotion's state.wave.boss halving), pinned by
+      // test_review_round1 item 3 so the copy cannot drift from the config.
+      '<br><br>POTIONS — carried charges, not skills:' +
+      '<br>enemies drop them (' + Math.round(C.POTIONS.DROP_CHANCE * 100) + '% per kill;' +
+      ' rarer in dense swarms) — picked up automatically in pickup range,' +
+      ' LEFT ON THE GROUND at your cap (' + C.POTIONS.MAX_CARRIED + ' of each).' +
+      '<br>a run starts with ' + C.POTIONS.START + ' of each; Travel Pack (shop) adds more.' +
+      '<br>HEALTH potion: +' + C.POTIONS.HP_HEAL + ' HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
+      ' &middot; never spent at full.' +
+      '<br>AUTO pilot drinks for you: HP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) +
+      '%, MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
+      '<br>boss curse: while the wave boss lives, health potions heal HALF.');
     addCls(c, 'ref');
   }
   // Nav row: PREV/NEXT with the ends dimmed (arrow keys are their twins).
@@ -4518,13 +4590,23 @@ function updateOnboarding(dt) {
     const uq = ultCharge(state, qid);
     const qReady = uq ? uq.ready
       : ((p.skillCd[qid] || 0) <= 0 && p.mana >= skillManaCost(qid, state));
+    // ULT MANA (2026-09-17): the Q hint states the ult's charge AND price
+    // (same words as the manual's row — controls_ref is the base, this is the
+    // live-class override).
+    const qIntroPurpose = qDef.KILLS != null
+      ? 'unleash your class ULT (' + qDef.KILLS + ' kills charged + ' + (qDef.MANA || 0) + ' mana)'
+      : null;
     const wReady = (p.skillCd.OVERCHARGE || 0) <= 0 &&
       p.mana >= skillManaCost('OVERCHARGE', state);
     const inCombat = state.enemies.some(e => e && e.hp > 0);
     // Skills matter the first time one is READY with a live enemy to spend
     // it on; potions the first time the resource is actually down.
     maybeHint('skill-q', inCombat && qReady,
-      introLine('skill-q', touch, { keys: [String(qDef.KEY || 'q').toUpperCase()], touch: String(qDef.NAME || 'skill').toUpperCase() }));
+      introLine('skill-q', touch, {
+        keys: [String(qDef.KEY || 'q').toUpperCase()],
+        touch: String(qDef.NAME || 'skill').toUpperCase(),
+        ...(qIntroPurpose ? { purpose: qIntroPurpose } : {}),
+      }));
     maybeHint('skill-w', inCombat && wReady, introLine('skill-w', touch));
     maybeHint('potion-hp', p.potions.hp > 0 && p.hp < p.stats.maxHp * 0.85,
       introLine('potion-hp', touch));
@@ -6733,9 +6815,18 @@ function autoDrinkPotions(state, dt) {
   }
   if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {
     const starved = Object.keys(C.SKILLS).some(id => {
-      // N1 slice 3: an ult has NO MANA key — it never waits on the pool, so
-      // it must not count as "starved" (skillManaCost would also read NaN).
+      // N1 slice 3: a def that carries no MANA key never waits on the pool,
+      // so it must not count as "starved" (skillManaCost would read NaN).
+      // 2026-09-17: the three ults now DO carry MANA — a CHARGED ult the
+      // pool cannot afford is a skill genuinely waiting on mana, same as
+      // Q/W. An UNCHARGED ult waits on KILLS, not the pool: without this
+      // gate the AUTO pilot burns a mana potion every time the pool dips
+      // early in a run, for a cast that cannot fire anyway.
       if (C.SKILLS[id].MANA == null) return false;
+      if (C.SKILLS[id].KILLS != null) {
+        const u = ultCharge(state, id);
+        return u.cooldown <= 0 && u.charge >= u.need && p.mana < u.manaCost;
+      }
       const cd = p.skillCd[id] || 0;
       return cd <= 0 && p.mana < skillManaCost(id, state);
     });
@@ -6774,8 +6865,9 @@ function autoCastSkills(state) {
   // The Q slot (N1a classSkillId — the ONE place a class's skill id is read).
   // FROST_NOVA gates on its RADIUS; a Q skill without one (the Witch's
   // CHAIN_REACTION — an aimed chain) falls back to "any live enemy" rather
-  // than a blind cast. N1 slice 3: an ult's readiness is charge + the cooldown
-  // floor (ultCharge), NEVER mana; CONSECRATION is PLACED at the densest
+  // than a blind cast. N1 slice 3 + 2026-09-17: an ult's readiness is charge
+  // + the cooldown floor + the mana price (all inside ultCharge.ready);
+  // CONSECRATION is PLACED at the densest
   // cluster (not centred on the player), so its honest lands-test is "any
   // live enemy" like the Witch's chain, while EARTHSHATTER/AFTERIMAGE keep
   // the player-centred RADIUS test (their payoff zone IS around the player).
@@ -7713,12 +7805,15 @@ function updateTouchHud() {
     ? state.pilotMode + ' \u00b7 ' + act
     : state.pilotMode);
   const skill = (id, defId) => {
-    // N1 slice 3: an ult badge reads the charge state, never mana — cooling
-    // (`12.0s`) while the floor runs, then RDY at full charge, else `34/40`.
+    // N1 slice 3 + 2026-09-17 mana price: an ult badge reads charge AND the
+    // pool — cooling (`12.0s`) while the floor runs, LOW when charged but
+    // unaffordable (the same word the Q/W readouts use), RDY at full charge
+    // with the pool up, else `34/40`.
     const u = ultCharge(state, defId);
     if (u) {
       set(id, u.cooldown > 0 ? u.cooldown.toFixed(1) + 's'
-        : (u.charge >= u.need ? 'RDY' : u.charge + '/' + u.need));
+        : (u.charge < u.need ? u.charge + '/' + u.need
+          : (u.mana < u.manaCost ? 'LOW' : 'RDY')));
       return;
     }
     const cd = p.skillCd[defId];
@@ -7785,12 +7880,14 @@ function hudTextBlock(p) {
   const filled = Math.max(0, Math.min(bars, Math.round(bars * p.hp / p.stats.maxHp)));
   const mFilled = Math.max(0, Math.min(bars, Math.round(bars * p.mana / p.stats.maxMana)));
   const skillTxt = (id, label) => {
-    // N1 slice 3: an ult reads charge / RDY / cooling, never mana (it has no
-    // MANA key — the old `p.mana >= def.MANA` read would be NaN-false forever).
+    // N1 slice 3 + 2026-09-17 mana price: an ult reads charge / RDY / cooling
+    // / LOW — a charged ult the pool cannot afford says LOW, matching the
+    // touch badge and the Q/W readouts (one word, one meaning).
     const u = ultCharge(state, id);
     if (u) {
       if (u.cooldown > 0) return `${label} ${u.cooldown.toFixed(1)}s`;
-      return u.charge >= u.need ? `${label} RDY` : `${label} ${u.charge}/${u.need}`;
+      if (u.charge < u.need) return `${label} ${u.charge}/${u.need}`;
+      return u.mana < u.manaCost ? `${label} LOW` : `${label} RDY`;
     }
     const cd = p.skillCd[id];
     const def = C.SKILLS[id];
@@ -8120,12 +8217,15 @@ function startFinale() {
   state.mode = 'finale';
   toast(FINAL_BOSS.name + ' APPROACHES');
   toast(FINAL_BOSS.flavor.toUpperCase());
-  // WAVE-14: the maw's arrival gets the banner too — doom-ier sub-line.
+  // WAVE-14, retargeted 2026-09-17: the maw's arrival rides the PERIPHERAL
+  // horde warning as well — the finale is live combat (updateFinale runs
+  // while the banner would be up), so the dodge path stays clear.
+  const mawTtl = warningTtl((C.ENEMY.SPAWN_DIST * 0.6) / b.speed);
   state.bossBanner = {
     names: [FINAL_BOSS.name], verb: 'APPROACHES',
     title: FINAL_BOSS.name,
     sub: FINAL_BOSS.flavor.toUpperCase(),   // "EVERY HORDE WAS ALWAYS ONE HUNGER."
-    ttl: 2.5,
+    ttl: mawTtl, dur: mawTtl, edges: [warningEdgeOf(a)],
   };
   audio.playPortalCue('BOSS_YELL');
   audio.playSfx('death');

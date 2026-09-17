@@ -1,5 +1,10 @@
 // HORDES — VERIFY the two-line boss banner at phone size (390x844 CSS, the
-// canvas view space is 480x300).
+// canvas view space is 480x300). RETARGETED 2026-09-17: the two-line centre
+// plate now serves only HELD banners (EVOLUTION TOKEN / top-tier first-ever —
+// the sim is paused, nothing is dodged); live-comput arrivals render the
+// peripheral horde warning, verified by tools/verify_horde_warning.mjs. The
+// strings below still come from real forced boss waves; the paint is drawn as
+// a HELD banner (bannerHold > 0).
 //
 // WHY THIS EXISTS: there is no vision model on this host, so "look at the
 // screenshot" is not evidence. This drives a REAL headless Chrome (tools/
@@ -77,7 +82,7 @@ const PAGE = `
     const cv = new OffscreenCanvas(C.VIEW_W, C.VIEW_H);
     const real = cv.getContext('2d', { willReadFrequently: true });
     const { ctx, rec } = recorder(real);
-    T.renderer.drawBossBanner(ctx, { bossBanner: { names: live.names, verb: live.verb, title: live.title, sub: live.sub, ttl: 2.0 } });
+    T.renderer.drawBossBanner(ctx, { bannerHold: 2, bossBanner: { names: live.names, verb: live.verb, title: live.title, sub: live.sub, ttl: 2.0 } });
 
     // ---- plate bbox: the widest dark plate rect (PLATE_SOLID) ----
     const plateColor = C.HUD.PLATE_SOLID;

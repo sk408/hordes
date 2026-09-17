@@ -6,14 +6,15 @@
 // modes are deliberately RULE changes, never stat multipliers — a constraint
 // the player chooses, not a dial that pays. Nothing here touches heat.js.
 //
-// PLAYER REVIEW 2026-09-17 item 2 supersedes G11's "settles gold EXACTLY like
-// a standard run" clause (owner, verbatim: "special (no potion, etc) runs
-// don't clearly explain what you GET from doing them"): a restriction with no
-// stated reward is a trap, not a choice. Each non-standard mode now carries a
-// rewardGoldMult that multiplies the END-OF-RUN AWARD (never the in-run purse
-// — performance earnings stay honest), and describeChallenge states the
-// reward up front so the selection card, the HUD badge and the end screen
-// can never disagree about what the run pays.
+// PLAYER REVIEW 2026-09-17 item 2: a restriction with no stated reward is a
+// trap, not a choice. OWNER UPDATE same day (verbatim: "Challenge modes could
+// award multipliers to gold... just make them 200% additive"): every
+// non-standard mode adds RUN_GOLD.CHALLENGE_BONUS_PCT percentage points to
+// the end-of-run AWARD's ADDITIVE pool (100% base + challenge + heat, SUMMED
+// — never a product; see meta.js RUN_GOLD for the formula). The bonus applies
+// to the AWARD only, never the in-run purse, and describeChallenge states it
+// up front so the selection card, the HUD badge and the end screen can never
+// disagree about what the run pays.
 //
 // THE CONTRACT (docs/briefs/G11_CHALLENGE_MODES.md PART B)
 //   * Pure and declarative: no DOM, no game state, so a headless test owns it.
@@ -27,14 +28,19 @@
 // Application is ONE seam per rule inside startRun() — this file never reads
 // or writes the run itself, it only describes the constraint.
 
+import { RUN_GOLD } from './meta.js';
+
 export const DEFAULT_CHALLENGE_ID = 'STANDARD';
 
+// No per-mode reward field: the bonus is ONE constant (RUN_GOLD.
+// CHALLENGE_BONUS_PCT) shared by every non-standard mode — the owner's
+// "another lever to change later" is that single line.
 export const CHALLENGES = [
   { id: 'STANDARD', name: 'STANDARD RUN', blurb: 'the game as designed', rules: {} },
   { id: 'ONE_WEAPON', name: 'ONE WEAPON', blurb: 'one weapon slot, the whole run',
-    rules: { weaponSlots: 1 }, rewardGoldMult: 1.5 },
+    rules: { weaponSlots: 1 } },
   { id: 'NO_POTIONS', name: 'NO POTIONS', blurb: 'no potions, start to end',
-    rules: { potions: 0 }, rewardGoldMult: 1.5 },
+    rules: { potions: 0 } },
 ];
 
 export const CHALLENGE_IDS = CHALLENGES.map(c => c.id);
@@ -69,10 +75,11 @@ export function prevChallengeId(id) {
   return CHALLENGE_IDS[(i - 1 + CHALLENGE_IDS.length) % CHALLENGE_IDS.length];
 }
 
-// The reward multiplier a challenge run's END-OF-RUN AWARD pays (STANDARD and
-// any unknown id: 1 — the total-over-garbage rule; garbage never pays).
-export function challengeGoldMult(id) {
-  return challengeOf(id).rewardGoldMult || 1;
+// The percentage POINTS a challenge run adds to the end-of-run AWARD's
+// ADDITIVE pool (STANDARD and any unknown id: 0 — the total-over-garbage
+// rule; garbage never pays). ONE home: meta.js RUN_GOLD.CHALLENGE_BONUS_PCT.
+export function challengeGoldBonusPct(id) {
+  return isStandard(id) ? 0 : RUN_GOLD.CHALLENGE_BONUS_PCT;
 }
 
 // The one-line player-facing string. This is the ONLY sanctioned phrasing
@@ -83,7 +90,6 @@ export function challengeGoldMult(id) {
 export function describeChallenge(id) {
   const c = challengeOf(id);
   if (c.id === DEFAULT_CHALLENGE_ID) return c.name;
-  const pct = Math.round((challengeGoldMult(id) - 1) * 100);
   return c.name + ' — ' + c.blurb +
-    ' · REWARD: +' + pct + '% END-OF-RUN GOLD';
+    ' · REWARD: +' + challengeGoldBonusPct(id) + '% END-OF-RUN GOLD';
 }

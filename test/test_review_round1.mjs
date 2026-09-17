@@ -177,7 +177,7 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
 // multiplier on the SELECTION surface itself, and the reward must be REAL
 // (the settle pays it) — copy the code cannot disagree with.
 {
-  const { describeChallenge, challengeGoldMult, CHALLENGES } = await import('../src/challenges.js');
+  const { describeChallenge, challengeGoldBonusPct, CHALLENGES } = await import('../src/challenges.js');
 
   // The phrasing surface: restriction AND reward in one line, for every
   // non-standard mode; STANDARD (no restriction) promises nothing.
@@ -189,12 +189,12 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
       ok('2: ' + c.id + ' states the restriction', line.includes(c.name) && line.includes(c.blurb), line);
       ok('2: ' + c.id + ' states its REWARD with the multiplier',
         /REWARD: \+\d+% END-OF-RUN GOLD/.test(line), line);
-      ok('2: ' + c.id + "'s copy matches its actual multiplier",
-        line.includes('+' + Math.round((challengeGoldMult(c.id) - 1) * 100) + '%'), line);
+      ok('2: ' + c.id + "'s copy matches its actual bonus points",
+        line.includes('+' + challengeGoldBonusPct(c.id) + '%'), line);
     }
   }
   ok('2: garbage ids pay and promise nothing (total-over-garbage holds)',
-    challengeGoldMult('GARBAGE') === 1 && !describeChallenge('GARBAGE').includes('REWARD'));
+    challengeGoldBonusPct('GARBAGE') === 0 && !describeChallenge('GARBAGE').includes('REWARD'));
 
   // The settle math: the reward is paid, on the AWARD component.
   const ovCards = globalThis.document.getElementById('ov-cards');
@@ -224,9 +224,35 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   tick(1);
   settled = killAndSettle();
   const oneAward = settled && settled.award;
-  ok('2: a ONE_WEAPON run settles the AWARD at exactly +50% over STANDARD',
-    stdAward === 70 && oneAward === Math.round(70 * 1.5),
+  ok('2: a ONE_WEAPON run settles the AWARD at exactly +200% over STANDARD (300% total)',
+    stdAward === 70 && oneAward === Math.round(70 * 3),
     { std: stdAward, one: oneAward });
+  ok('2: the settled goldPool reads the additive parts (challenge +2.00, summed)',
+    settled && settled.goldPool && settled.goldPool.base === 1 &&
+    settled.goldPool.challenge === 2 && settled.goldPool.heat === 0 &&
+    settled.goldPool.total === 3, settled && settled.goldPool);
+
+  // ADDITIVE STACKING with a known HEAT level (owner formula: 100% base +
+  // challenge + heat, SUMMED — never multiplied). Heat at manual=2 pays
+  // +60% (0.30/manual push), so pool = 1 + 2 + 0.6 = 3.6 — a multiplicative
+  // misread would pay 1 x 3 x 1.6 = 4.8 instead.
+  T.startRun();
+  tick(1);
+  st.heat.manual = 2;
+  settled = killAndSettle();
+  ok('2: heat stacks ADDITIVELY — ONE_WEAPON + heat(manual 2) settles at x3.6',
+    settled && settled.award === 252 &&
+    Math.abs(settled.goldPool.heat - 0.6) < 1e-9 &&
+    Math.abs(settled.goldPool.total - 3.6) < 1e-9,
+    settled && settled.goldPool);
+  // The result screen states the multiplier: the end card's sub-panel carries
+  // the GOLD POOL clause while the settled run is still displayed.
+  tick(0.5);   // let the dead-screen overlay repaint
+  const endSub = globalThis.document.getElementById('ov-sub');
+  const endHtml = (endSub && endSub._html) || '';
+  ok('2: the result screen shows the GOLD POOL multiplier clause',
+    /GOLD POOL x3\.60/.test(endHtml) && endHtml.includes('CHALLENGE +200%') &&
+    endHtml.includes('HEAT +60%'), endHtml.slice(0, 300));
 
   // The SELECTION surface shows the reward (the title CHALLENGE card renders
   // describeChallenge verbatim — sub text is the card's desc line).
@@ -243,8 +269,124 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   tick(0.5);
   const chCard = [...ovCards.children].find(c => (c._html || '').includes('CHALLENGE'));
   ok('2: the CHALLENGE selection card is up', !!chCard);
-  ok('2: the selection card itself carries the reward line (NO_POTIONS, +50%)',
-    chCard && chCard._html.includes('REWARD: +50% END-OF-RUN GOLD'), chCard && chCard._html);
+  ok('2: the selection card itself carries the reward line (NO_POTIONS, +200%)',
+    chCard && chCard._html.includes('REWARD: +200% END-OF-RUN GOLD'), chCard && chCard._html);
+
+  // SINGLE-CONSTANT proof: the bonus lives in ONE place (RUN_GOLD.CHALLENGE_BONUS_PCT
+  // in meta.js) and is never re-literalled in the challenge/selection code.
+  const metaSrc = readFileSync(new URL('../src/meta.js', import.meta.url), 'utf8');
+  const chSrc = readFileSync(new URL('../src/challenges.js', import.meta.url), 'utf8');
+  const mainSrc = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  ok('2: CHALLENGE_BONUS_PCT is defined exactly once (meta.js)',
+    (metaSrc.match(/CHALLENGE_BONUS_PCT\s*:/g) || []).length === 1);
+  ok('2: the challenge/selection code reads the constant, not a duplicate literal',
+    chSrc.includes('RUN_GOLD.CHALLENGE_BONUS_PCT') && !/:\s*200\b/.test(chSrc), chSrc.slice(0, 200));
+  ok('2: the settle path reads the constant, not a duplicate literal',
+    mainSrc.includes('challengeGoldBonusPct(state.challenge)'), '');
 }
 
-console.log('test_review_round1: ' + passed + ' checks passed (items 1-2)');
+console.log('test_review_round1: items 1-2 ' + passed + ' checks');
+
+// ---- ITEM 3: POTIONS EXPLAINED IN THE MANUAL -------------------------------------
+// Owner: "Potions are illusory - there's always enough on the ground and it's
+// not clear how they work." The manual (existing 4-page HOW TO PLAY, no new
+// panel) must explain pickup, capacity, effect and refill, and the wording
+// must match the CODE — the numbers below are read from config at test time,
+// so a future config change that leaves the copy stale fails here.
+{
+  const ovCards = globalThis.document.getElementById('ov-cards');
+  const { CONFIG } = await import('../src/config.js');
+  const P = CONFIG.POTIONS;
+  const AD = CONFIG.AUTOPILOT.AUTO_DRINK;
+
+  // The manual's page 4 (THE FIELD) is where the field's objects live.
+  T.manual.goto(4);
+  tick(0.2);
+  const fieldCard = [...ovCards.children].find(c => (c._html || '').includes('THE FIELD'));
+  ok('3: the manual FIELD page is up', !!fieldCard);
+  const F = (fieldCard && fieldCard._html) || '';
+  // Pickup: automatic in range; at cap the potion STAYS on the ground.
+  ok('3: pickup is explained as automatic', /automatic/.test(F), F.slice(0, 200));
+  ok('3: cap behaviour explained — full inventory leaves them on the ground',
+    /ON THE GROUND/.test(F) && F.includes(String(P.MAX_CARRIED)), F.slice(0, 300));
+  // Effect: exact amounts, straight from config.
+  ok('3: health potion effect stated and matches code (+' + P.HP_HEAL + ' HP)',
+    F.includes('+' + P.HP_HEAL + ' HP'), F);
+  ok('3: mana potion effect stated and matches code (+' + P.MP_RESTORE + ' MP)',
+    F.includes('+' + P.MP_RESTORE + ' MP'), F);
+  ok('3: no spend at full is stated (charges are never wasted)', /never spent at full|not at full/.test(F), F);
+  // Refill: drop chance per kill, adaptive scarcity, run start, Travel Pack.
+  ok('3: refill stated and matches code (' + Math.round(P.DROP_CHANCE * 100) + '% per kill)',
+    F.includes(Math.round(P.DROP_CHANCE * 100) + '% per kill'), F);
+  ok('3: dense swarms drop fewer (adaptive scarcity is named)', /swarm/.test(F), F);
+  ok('3: run start count stated (' + P.START + ' of each)', F.includes('starts with ' + P.START + ' of each'), F);
+  // AUTO pilot: the fractions straight from config.
+  ok('3: AUTO auto-drink thresholds stated and match code',
+    F.includes(Math.round(AD.HP_FRACTION * 100) + '%') && F.includes(Math.round(AD.MP_FRACTION * 100) + '%'), F);
+  // The boss curse: a live boss halves the heal (main.js drinkHealthPotion).
+  ok('3: the boss curse is stated (boss live = health potions heal half)',
+    /boss curse/i.test(F) && /half/i.test(F), F);
+
+  // The controls page: the H/N rows must read as CONSUMABLES (carried
+  // charges with amounts), matching the same config numbers.
+  T.manual.goto(3);
+  tick(0.2);
+  const ctlCard = [...ovCards.children].find(c => (c._html || '').includes('YOUR CONTROLS'));
+  ok('3: the manual CONTROLS page is up', !!ctlCard);
+  const K = (ctlCard && ctlCard._html) || '';
+  ok('3: the health-potion control row reads as a consumable with its amount',
+    /health potion/.test(K) && K.includes('+' + P.HP_HEAL + ' HP'), K.slice(0, 400));
+  ok('3: the mana-potion control row reads as a consumable with its amount',
+    /mana potion/.test(K) && K.includes('+' + P.MP_RESTORE + ' MP'), K.slice(0, 400));
+}
+
+console.log('test_review_round1: items 1-3 ' + passed + ' checks');
+
+// ---- ITEM 4: MINIGAME LENGTH VS PAYOUT -------------------------------------------
+// Owner: "The minigame is a nice idea but, for me, just breaks the experience.
+// Too long, not enough payout means I always click skip." Shorten the
+// interaction (one act fewer, corridor ~halved) and raise the payout (K 1/30
+// -> 1/15). Declining stays free and instant-then-carded (skip pays 0 without
+// the paid writ, ends after the 1.4s outcome card).
+{
+  const { PACING, PAYOUT_K } = await import('../src/escape/config.js');
+  const { generateCorridor } = await import('../src/escape/generator.js');
+  const { nominalSeconds } = await import('../src/escape/sim.js');
+  const { payoutFor } = await import('../src/escape/payout.js');
+
+  // BEFORE (read at RED time): 5 acts, nominal 54-66s, K = 1/30.
+  ok('4: the escape is FOUR acts (was five)', PACING.ACTS.length === 4,
+    PACING.ACTS.map(a => a.name));
+  let worst = 0, bestS = Infinity;
+  for (let seed = 1; seed <= 20; seed++) {
+    const s = nominalSeconds(generateCorridor(seed));
+    worst = Math.max(worst, s); bestS = Math.min(bestS, s);
+  }
+  ok('4: nominal escape duration ~halved — every seed <= 40s (was 54-66s)',
+    worst <= 40, { bestS, worst });
+  ok('4: the tier ramp is intact (tiers never decrease, sprint last)',
+    PACING.ACTS.every((a, i) => i === 0 || a.tier >= PACING.ACTS[i - 1].tier) &&
+    PACING.ACTS[PACING.ACTS.length - 1].tier === 3);
+  ok('4: payout raised — K = 1/15 (was 1/30)',
+    Math.abs(PAYOUT_K - 1 / 15) < 1e-12, PAYOUT_K);
+  ok('4: payoutFor pays floor(bestGold/15) — 12000 banks 800 (was 400)',
+    payoutFor(12000) === 800, payoutFor(12000));
+  // Gold per second of escape time: before bestGold/(30x~60s) = /1800; after
+  // bestGold/(15x~33s) = /495 — >3.6x per minute spent, for a completion.
+  ok('4: payout-per-second at least TRIPLES vs the old length x old K',
+    (1 / 15) / (worst || 1) > 3 * (1 / 30) / 60, { worst });
+
+  // Declining stays FREE (and ends after the short outcome card, no corridor):
+  // drive the real escape module headlessly, skip on frame one.
+  const ESCAPE = await import('../src/escape/index.js');
+  let end = null;
+  ESCAPE.begin({ seed: 7, ctx: null, auto: false, onEnd: (e) => { end = e; }, test: false });
+  ESCAPE.skip();
+  for (let i = 0; i < 120 && !end; i++) ESCAPE.frame(null, 1 / 60);
+  ok('4: skip ends the sequence without playing it out', end && end.result === 'skip', end);
+  ok('4: declining pays NOTHING (no writ held)', end && end.payout === 0, end);
+  ok('4: declining is quick — under 3s wall of outcome card, no corridor time',
+    end && end.seconds < 3, end && end.seconds);
+}
+
+console.log('test_review_round1: ' + passed + ' checks passed (items 1-4)');

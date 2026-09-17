@@ -63,8 +63,16 @@ running, the game plays itself honestly and pays reduced rates for it.
 
 ## 4. PROGRESSION CURVE
 
+**STATUS 2026-09-17 (owner correction): UNVERIFIED — DO NOT USE THESE NUMBERS.** The income figures below
+were read off a constant table (meta.js:235-245) and interpreted as run income; that interpretation is
+WRONG (owner: "Mid game run is NOT 200g. That's obscenely wrong. A new player can get 300g easily. One with
+a couple upgrades can get near 2000g"). A measured table (gold/second headless, x run duration, calibrated
+to the owner's anchors) is being produced for docs/PACING.md; until it exists the ladder-compression
+proposal in this section is WITHDRAWN, not proposed. The price citations (what upgrades COST) stand; only
+the income side was misread.
+
 Invariant to hold: "a good run is worth about one next-step upgrade at every stage of the game."
-CURRENT numbers (all code-cited, no long sims):
+CONSTANT-TABLE reading (UNVERIFIED, see status above):
 
 - Early: runs 1-5 pay ~70g (meta.js:235-245 band), cheapest upgrades 120-200g → ~2 runs per upgrade.
   About right.
@@ -97,7 +105,14 @@ around it, config.js:166-169) and "health drops (and regains) so rapidly that on
   economy (speed feeds skill cooldown); Witch: spend economy (deep mana, paper HP). One line each;
   effort in §8. These are alternatives — the owner picks a direction, not all three.
 
-## 6. AUTO / IDLE SUPPORT — TWO DIRECTIONS, OWNER'S CALL (not decided; both under evaluation)
+## 6. AUTO / IDLE SUPPORT — TWO DIRECTIONS, OWNER'S CALL
+
+**STATUS 2026-09-17 (later same day): the owner has CHOSEN DIRECTION B (NIGHT MODE, opt-in full auto, 50%
+gold) as the answer to unattended progress.** Direction A (idle currency) is PARKED as the fallback — its
+build is on hold; it gets a real night of Night Mode play before any second idle system is considered
+(adding both would add exactly the complexity the review complains about). The Direction A bullets below
+are kept as the accrual DESIGN RECORD for that fallback: rate per hour, cap, upgrades-per-night at each
+band, and the "no idle detection needed — elapsed wall-clock from a saved timestamp, clamped" insight.
 
 Review evidence: "The fact that runs don't auto-restart (nor waves) means I can't actually let the game idle
 for hours and expect to come up with at least one or two upgrades the following night."
@@ -108,10 +123,11 @@ about ONE OR TWO UPGRADES. Against the game's own bands (meta.js:235-245; cheap 
 ships must deliver ~120-400g of bankable progress per night at the EARLY band (1-2 cheapest upgrades) and
 the equivalent fraction of a next-step upgrade at every later band. Numbers per direction below.
 
-### DIRECTION A — IDLE CURRENCY (in flight separately)
-A currency that accrues while the game is closed/idle and converts to shop gold. Numbers to state at
-delivery: accrual rate per hour, cap (if any), and the resulting upgrades-per-night at each income band.
-Not specced here — see its own task thread.
+### DIRECTION A — IDLE CURRENCY (PARKED fallback; design record only, do not build)
+A currency that accrues while the game is closed/idle and converts to shop gold. Design record: accrual by
+elapsed wall-clock from a saved timestamp, clamped (no idle detection needed); rate per hour + cap to be
+sized from the measured income table once it exists; re-enters evaluation only if Night Mode's real
+overnight numbers come in short of "one or two upgrades".
 
 ### DIRECTION B — OPT-IN FULL AUTO ("NIGHT MODE", spec)
 - B1. Toggle, OFF by default, title-screen only.
@@ -125,11 +141,10 @@ Not specced here — see its own task thread.
 - B6. What the player gives up (pick one): (a) gold at 50% of normal, records kept; (b) full gold,
   runs flagged ASSISTED and excluded from best-run records; (c) both. Recommend (b) — the review wants
   overnight income, punishing it by half defeats the point, and record integrity survives a flag.
-- B7. Upgrades-per-night estimate (B6b, full gold): an auto run dies earlier than a piloted one —
-  assume half the survival of an average run. Early band: ~30-50 auto runs/night x ~70g = 2,100-3,500g
-  = 10-20 cheap upgrades (OVER-delivers vs the review's "one or two" — a reason to consider (a) or a
-  tighter cap); mid band (runs 21-45, ~200g/run): ~6,000-10,000g = several mid upgrades. The exact
-  number needs one overnight soak, outside the 60-second sim cap — report after build, not promised here.
+- B7. Upgrades-per-night estimate (B6b, full gold): UNVERIFIED pending the measured income table (see
+  §4 status) — the earlier draft multiplied run counts by constant-table "bands" that do not represent
+  run income. Redo from the measured gold/second once docs/PACING.md has it; the exact number also needs
+  one overnight soak, outside the 60-second sim cap.
 
 ## 7. WHAT AM I WORKING TOWARDS (candidates — pick one, maybe two)
 

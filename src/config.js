@@ -211,19 +211,23 @@ export const CONFIG = {
       SLOW: 2.5,          // FROST_NOVA's slow duration, applied to every touch
       SLOW_FACTOR: 0.45,
     },
-    // N1 slice 3 (docs/briefs/N1_ULTS_SPECS.md — the pilot's AUTHORITATIVE
-    // content; do not rebalance): the three non-Witch class ults. Shared
-    // contract: KILL-CHARGED (charge from the live p.kills counter), a
-    // COOLDOWN floor so one dense wave cannot chain the ult, and NON-mana —
-    // NO MANA key here, so skills.js routes them around the mana-price path
-    // and the Witch stays the only mana class. LABEL (<=5 chars) is the
-    // on-screen short form for the fixed 96px H1 touch button + text HUD;
-    // NAME stays the long spec name.
+    // N1 slice 3 (docs/briefs/N1_ULTS_SPECS.md): the three non-Witch class
+    // ults. Shared contract: KILL-CHARGED (charge from the live p.kills
+    // counter), a COOLDOWN floor so one dense wave cannot chain the ult, and
+    // — SUPERSEDED 2026-09-17 by owner directive "player ults must cost a
+    // significant amount of mana" — a MANA price of 60: 60% of the 100 base
+    // pool, so at base regen 0.5/s the refund from an empty pool is a full
+    // 120s wave (never more than about one ult per wave without potions;
+    // Mana Spring/potions buy more, as shop investment should). The N1
+    // "NON-mana / no MANA key" clause is overturned; skills.js charges AND
+    // prices all three. LABEL (<=5 chars) is the on-screen short form for the
+    // fixed 96px H1 touch button + text HUD; NAME stays the long spec name.
     EARTHSHATTER: {       // KNIGHT — one huge player-centred shockwave + a
       KEY: 'q',           // defensive rider (the free tank stands in the clump)
       NAME: 'Earthshatter',
       LABEL: 'EARTH',
       KILLS: 40,          // charge: kills to READY
+      MANA: 60,           // 60% of the base pool — one ult per wave at base regen
       COOLDOWN: 12,       // seconds — the chain-proof floor
       RADIUS: 240,        // radial shockwave centred on the player
       DAMAGE: 40,         // flat + ...
@@ -236,6 +240,7 @@ export const CONFIG = {
       NAME: 'Afterimage', // tick through the ONE blast path (rewrites.js)
       LABEL: 'AFTER',
       KILLS: 30,
+      MANA: 60,
       COOLDOWN: 10,
       DURATION: 3,        // seconds the window lives
       SPEED_MULT: 1.5,    // move speed multiplier (stat shape, NO dash/teleport)
@@ -249,6 +254,7 @@ export const CONFIG = {
       NAME: 'Consecration',
       LABEL: 'ALTAR',     // UI label for the consecrated ground, not a rename
       KILLS: 40,
+      MANA: 60,
       COOLDOWN: 15,
       RADIUS: 140,        // field radius
       DURATION: 6,        // seconds the field lives
@@ -647,6 +653,33 @@ export const CONFIG = {
     BANNER_EDGE_MARGIN: 14,   // px the plate keeps off the view edge (never
                               // edge-to-edge) — the text box is inset from it
                               // by BANNER_PLATE_PAD_X again
+    // ---- HORDE WARNING (player review 2026-09-17 addendum: the centre -----
+    // banner "is really hard to see through" on the dodge path; owner: keep
+    // the warning, ZERO warning pixels inside the play area). PRESENTATION
+    // ONLY — spawn timing, horde size and difficulty are untouched. The
+    // live-comput warning renders as: an urgent HUD-band strip (top), a
+    // pulsing edge cue on the side the horde enters from, and the existing
+    // BOSS_YELL audio sting. The cinematic centre plate survives ONLY on
+    // HELD banners (token / top-tier: the sim is paused, nothing is dodged).
+    WARNING: {
+      TTL_MAX: 1.5,      // s — the warning's whole life, capped so it can
+                         // never sit over the dodge (measured worst case:
+                         // the pre-fix banner lived 2.5s against a 1.8s
+                         // first contact)
+      TTL_MIN: 0.4,      // s — floor: shorter than this cannot be read
+      CLEAR_MARGIN: 0.5, // s — the warning ends at least this long before the
+                         // FASTEST spawn's estimated contact with a
+                         // stationary player (moving toward it is sooner, so
+                         // this is the generous bound)
+      PULSE_S: 0.5,      // edge-cue pulse period (2 Hz — the "how soon" rate)
+      EDGE_PX: 7,        // edge band thickness (screen edges are not play area)
+      STRIP_Y: 3,        // HUD-band strip top (inside the top HUD band)
+      STRIP_H: 14,       // HUD-band strip height
+      STRIP_SIDE: 130,   // strip keeps this far from each side edge — clear
+                         // of the left bar column and the right clock column
+      STRIP_PX_MAX: 11,  // strip text size ceiling (feed-family type)
+      STRIP_PX_MIN: 7,   // floor; below this the names truncate instead
+    },
     FRAME: '#6a6a7c',     // outer steel frame around every bar/plate
     TROUGH: '#2e2e38',    // dark empty track (a 0% bar must read EMPTY)
     PLATE: 'rgba(4,4,10,0.72)',   // dark plate behind label text
