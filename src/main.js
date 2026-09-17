@@ -5378,10 +5378,13 @@ function showLoadout() {
     const on = sel.has(id);
     const full = !on && sel.size >= cap;
     // Unselected rows ride the existing 'dim' card style (the shop's owned/
-    // unaffordable look) — "not selected" reads at a glance without new CSS.
+    // unaffordable look). SGKV4 (opt-out language): the row NAMES the one-tap
+    // action both ways — EQUIPPED rows say "tap to BENCH", benched rows say
+    // "tap to equip" — so the opt-out affordance is on the screen itself,
+    // not in a manual.
     const el = menuCard(
       WEAPON_NAMES[id],
-      (on ? 'SELECTED' : full ? 'slots full' : 'not selected')
+      (on ? 'EQUIPPED — tap to BENCH' : full ? 'slots full' : 'BENCHED — tap to equip')
         + ' · ' + (describeWeaponLevel(id, 2) || ''),
       () => toggleLoadoutWeapon(id),
       !on,
@@ -5538,9 +5541,24 @@ function showShop() {
       def.name,
       `${def.desc}<br>${sub}`,
       () => {
+        // SGKV4: read the loadout BEFORE the buy — the weapon path equips on
+        // buy (buyUpgrade -> equipBoughtWeapon), and the displacement (if the
+        // loadout was full) is diffed from these two reads so the line the
+        // player sees can NAME both halves. A swap must never be silent.
+        const kitBefore = profile.loadout ? [...profile.loadout] : null;
         if (buyUpgrade(profile, def.id)) {
           saveProfile(profile);
           showShop();
+          if (def.kind === 'weapon') {
+            const now = profile.loadout || [];
+            const added = now.find(w => !kitBefore || !kitBefore.includes(w));
+            const benched = kitBefore ? kitBefore.find(w => !now.includes(w)) : null;
+            if (added != null) {
+              toast(benched != null
+                ? 'EQUIPPED ' + WEAPON_NAMES[added] + ' / BENCHED ' + WEAPON_NAMES[benched] + ' — see LOADOUT'
+                : 'EQUIPPED ' + WEAPON_NAMES[added] + ' — in your LOADOUT');
+            }
+          }
           // G26: a successful WEAPON purchase is the just-in-time moment the
           // owner picked ("after the first weapon buyable is bought") — the
           // unlocked set just grew, so the loadout door coach checks now, on

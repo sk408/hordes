@@ -563,7 +563,10 @@ export const SHOP_UPGRADES = [
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
     id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
     name: WEAPON_NAMES[wid] || wid,
-    desc: `Unlock the ${WEAPON_NAMES[wid] || wid} archetype for the draft pool.`,
+    // SGKV4: the row copy states the opt-out rule itself — bought IS
+    // equipped (the old "for the draft pool" wording predates G26, which
+    // moved weapon acquisition to the loadout).
+    desc: `Unlock the ${WEAPON_NAMES[wid] || wid} archetype — equipped into your LOADOUT on buy.`,
     baseCost: price, costGrowth: 1, maxLevel: 1, perLevel: 0,
   })),
   // ---- WAVE-11: elite modifier unlock rows (kind 'elite') ----
@@ -633,11 +636,17 @@ export function canAfford(profile, cost) {
 // (gold -= cost, purchased[id]++). Returns true on success. WAVE-11: rows
 // tagged kind 'weapon'/'elite' dispatch to the unlock paths instead — they
 // record ownership in profile.unlockedWeapons/unlockedElites, never in
-// profile.purchased (single source of truth per row kind).
+// profile.purchased (single source of truth per row kind). SGKV4: a WEAPON
+// buy also EQUIPS into the loadout (equipBoughtWeapon — bought means active;
+// the caller names any displacement), so no buy path can skip the equip.
 export function buyUpgrade(profile, id) {
   const def = SHOP_BY_ID[id];
   if (!def) return false;
-  if (def.kind === 'weapon') return unlockWeapon(profile, def.weaponId);
+  if (def.kind === 'weapon') {
+    if (!unlockWeapon(profile, def.weaponId)) return false;
+    equipBoughtWeapon(profile, def.weaponId);
+    return true;
+  }
   if (def.kind === 'elite') return unlockElite(profile, def.eliteId);
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
@@ -664,6 +673,42 @@ export function unlockWeapon(profile, weaponId) {
   profile.gold -= price;
   profile.unlockedWeapons.push(weaponId);
   return true;
+}
+
+// SGKV4 PURCHASES ARE OPT-OUT (owner 2026-09-17: "New weapons purchase should
+// already be selected for load out. Weapons and items should be opt out not
+// opt in"). Buying a weapon puts it in the loadout IMMEDIATELY — the player's
+// job is to bench what they do not want, not to fetch what they bought.
+// - With a free slot: appended, nothing displaced.
+// - With a FULL loadout: the LONGEST-STANDING pick (index 0 — adds push) is
+//   benched to make room. The CALLER names the displacement on screen (the
+//   shop's toast diffs the loadout across the buy); silently breaking a build
+//   the player liked is auto-equip's failure mode, so the swap is never
+//   invisible here either.
+// - A NULL loadout is "no choice" = the default kit, which arms the
+//   character's starting weapon. That kit weapon counts as occupying its
+//   slot, so the first purchase rides ALONGSIDE it — the default kit can
+//   never be silently dropped by a buy.
+// Returns { benched } with the displaced weapon id (or null), or null when
+// there is nothing to equip (not unlocked / not a slot weapon).
+// Achievement GRANTS do not route here (grantWeapon): a grant is not a
+// purchase, and grants fire mid-flow where a silent loadout edit would be a
+// surprise. Only buys equip.
+export function equipBoughtWeapon(profile, weaponId) {
+  if (!weaponUnlocked(profile, weaponId)) return null;
+  const cap = Math.max(0, startWeaponSlots(profile) - 1);   // slot 1 = the base volley
+  if (cap === 0) return null;
+  // The current selection: the stored choice, or the default kit's one weapon.
+  const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
+  const kit = ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)
+    ? [ch.startingWeapon] : [];
+  const cur = profile.loadout ? [...profile.loadout] : kit;
+  if (cur.includes(weaponId)) return { benched: null };
+  let benched = null;
+  if (cur.length >= cap) benched = cur.shift();   // the longest-standing pick
+  cur.push(weaponId);
+  profile.loadout = cur.length ? cur : null;
+  return { benched };
 }
 
 // ---------- Achievement grant paths (G9) ----------------------------------
