@@ -440,19 +440,28 @@ function drawArms(ctx, sim, w2s) {
   }
 }
 
-// ---- VK9P4 the touch affordances (manual play on a phone). JUMP and KICK
-// are MANUAL-ONLY (the auto path needs no buttons); MODE is for BOTH players
-// (owner: "both players need a way of switching"). Real hit-testable rects,
-// the SKIP_RECT precedent: right-thumb standard placement, translucent so the
-// corridor stays readable underneath, clear of the HUD (top-left clock /
-// pressure, top-right skip).
-export const JUMP_RECT = { x: 398, y: 226, w: 74, h: 62 };   // the big right-thumb pad
-export const KICK_RECT = { x: 316, y: 244, w: 72, h: 44 };   // left of JUMP, smaller
+// ---- VK9P4/P2B99 the touch affordances (manual play on a phone). The pads
+// mirror the AUTO-PILOT'S FULL ACTION SET (P2B99: "every action available to
+// the auto-pilot must have a manual control"): MOVE left/right (HOLD pads —
+// the gauntlet's brake is lifting the finger), JUMP, DASH. KICK is the one
+// MANUAL-ONLY verb (auto never kicks). MODE is for BOTH players (owner:
+// "both players need a way of switching"). Real hit-testable rects, the
+// SKIP_RECT precedent: left thumb steers (LEFT/RIGHT), right thumb acts
+// (JUMP over KICK over DASH), translucent so the corridor stays readable,
+// clear of the HUD (top-left clock/pressure, top-right skip/mode).
+export const LEFT_RECT = { x: 6, y: 236, w: 58, h: 58 };     // hold to run left
+export const RIGHT_RECT = { x: 72, y: 236, w: 58, h: 58 };   // hold to run right (the main verb)
+export const JUMP_RECT = { x: 388, y: 184, w: 86, h: 56 };   // the big right-thumb pad
+export const DASH_RECT = { x: 314, y: 246, w: 66, h: 48 };   // left of the right-thumb stack
+export const KICK_RECT = { x: 388, y: 246, w: 86, h: 48 };   // under JUMP
 export const MODE_RECT = { x: 388, y: 40, w: 84, h: 22 };    // under SKIP, both players
 function inRect(r, px, py) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
+export function leftHit(px, py) { return inRect(LEFT_RECT, px, py); }
+export function rightHit(px, py) { return inRect(RIGHT_RECT, px, py); }
 export function jumpHit(px, py) { return inRect(JUMP_RECT, px, py); }
+export function dashHit(px, py) { return inRect(DASH_RECT, px, py); }
 export function kickHit(px, py) { return inRect(KICK_RECT, px, py); }
 export function modeHit(px, py) { return inRect(MODE_RECT, px, py); }
 
@@ -700,7 +709,10 @@ export function draw(ctx, sim, opts = {}) {
     ctx.fillText(label, r.x + Math.round((r.w - label.length * 6) / 2), r.y + Math.round(r.h / 2) - 5);
   };
   if (opts.manual) {
+    btn(LEFT_RECT, '\u25C0', false);
+    btn(RIGHT_RECT, '\u25B6', false);
     btn(JUMP_RECT, 'JUMP', false);
+    btn(DASH_RECT, 'DASH', false);
     btn(KICK_RECT, 'KICK', sim.kickCd > 0);   // dimmed while the cooldown runs
   }
   btn(MODE_RECT, opts.manual ? 'MODE·AUTO' : 'MODE·MANUAL', false);

@@ -45,7 +45,15 @@ async function viewport(w, h, tag) {
       return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
     await p.tap(cog[0], cog[1]);
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'settings')()`, 5000);
-    if (!(await clickCard('TEST: ESCAPE SEQUENCE'))) throw new Error('no TEST card');
+    // The cards compose a beat AFTER the mode flips (openSettings builds the
+    // DOM); at the small viewport that beat loses the race with one instant
+    // clickCard. Retry — a wait-then-fail shape, never an infinite one.
+    let testCard = false;
+    for (let i = 0; i < 10 && !testCard; i++) {
+      testCard = await clickCard('TEST: ESCAPE SEQUENCE');
+      if (!testCard) await p.sleep(150);
+    }
+    if (!testCard) throw new Error('no TEST card');
     await p.waitFor(`(async () => { const T2 = ${T}; return T2.state.mode === 'escape' && T2.escape.sim; })()`, 5000, 50);
     console.log('[' + tag + '] escape entered via the real TEST card');
 
@@ -160,7 +168,8 @@ async function viewport(w, h, tag) {
     await p.sleep(150);
     const j = await p.evaluate(`(() => { const c = document.getElementById('game');
       const r = c.getBoundingClientRect();
-      return { cssX: r.x + 435 / 480 * r.width, cssY: r.y + 257 / 300 * r.height,
+      // P2B99 moved the pads: JUMP_RECT is now (388,184 86x56) — center 431,212.
+      return { cssX: r.x + 431 / 480 * r.width, cssY: r.y + 212 / 300 * r.height,
         onGround: (window.__vk_probe = true) }; })()`);
     await p.tap(j.cssX, j.cssY);
     const jumped = await p.waitFor(`(async () => { const T2 = ${T};
@@ -168,6 +177,10 @@ async function viewport(w, h, tag) {
     ok(jumped, 'help CLOSED: the JUMP pad tap left the ground (same physics path)');
 
     // ---- 5b. the JUMP pad with help OPEN: the tap EXPLAINS, never activates.
+    // (Wait for the landing first: the pause under help must freeze a GROUNDED
+    // pose or the y-compare reads the tail of the last jump arc.)
+    await p.waitFor(`(async () => { const T2 = ${T};
+      return T2.escape.sim && T2.escape.sim.player.onGround; })()`, 3000, 60);
     const helpArm = await p.evaluate(`(async () => { const T2 = ${T};
       window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
       return T2.state.helpMode === true; })()`);
@@ -190,8 +203,12 @@ async function viewport(w, h, tag) {
       return { helpMode: T2.state.helpMode, outcome: T2.escape.sim.outcome }; })()`);
     ok(!left.helpMode && left.outcome === null, 'ESC LEAVES help without skipping the escape');
 
-    // ---- 6. the MODE toggle, both ways (real taps on the MODE rect).
-    await p.evaluate(`(async () => { const T2 = ${T}; T2.escape.begin({ seed: 11, auto: true }); })()`);
+    // ---- 6. the MODE toggle, both ways (real taps on the MODE rect). This
+    // enters through the REAL startEscape seam (T2.escape.start): the mode
+    // callbacks (getAuto / onToggleMode -> swapPilotMode) are main's own, and
+    // a bare begin() would drop them — the escape would have no toggle at all.
+    await p.evaluate(`(async () => { const T2 = ${T}; T2.escape.start({ test: true }); })()`);
+    await p.waitFor(`(async () => { const T2 = ${T}; return T2.escape.sim && T2.escape.isAuto() === true; })()`, 3000, 50);
     await p.sleep(400);   // let auto advance the runner a beat
     const m = await p.evaluate(`(() => { const c = document.getElementById('game');
       const r = c.getBoundingClientRect();

@@ -112,6 +112,12 @@ import * as DCINE from './death_cine.js';
 // ONE pointer route and ONE hook in endPortalCine — a narrow seam by house
 // rule; the escape never touches the overhead movement, p.stats or the draft.
 import * as ESCAPE from './escape/index.js';
+// P2B99: the escape's touch pads are CANVAS-DRAWN — the help-placement ladder
+// below cannot see them in the DOM, so their rects come in explicitly (the
+// same "every help-mode surface must clear the controls" rule, extended to
+// the escape's own controls).
+import { LEFT_RECT, RIGHT_RECT, JUMP_RECT, DASH_RECT, KICK_RECT, MODE_RECT, SKIP_RECT }
+  from './escape/render.js';
 import {
   HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
   heatXpMult, heatOf, manualPushes, addHeat, initHeat,
@@ -4268,7 +4274,17 @@ function manualRowsControls() {
     refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
-    refRow('settings: zoom, END RUN', 'SETTINGS (cog)');
+    refRow('settings: zoom, END RUN', 'SETTINGS (cog)') +
+    // P2B99: THE ESCAPE's manual pads, named (the how-to card must carry the
+    // controls a manual player presses — the pads mirror the auto-pilot's
+    // whole action set: hold LEFT/RIGHT to run, LIFT to brake, plus the verbs).
+    refSub('THE ESCAPE (manual)') +
+    refRow('hold to run &middot; LIFT to brake (that is how you time the boss arms)', '\u25C0 / \u25B6') +
+    refRow('leap the gaps (same jump as the auto pilot)', 'JUMP') +
+    refRow('the short speed burst', 'DASH') +
+    refRow('stomp the pursuit pack off your tail (cooldown)', 'KICK') +
+    refRow('switch pilot &harr; manual mid-escape (same O setting)', 'MODE') +
+    refRow('keys work too: A/D move &middot; SPACE jump &middot; X dash &middot; S kick &middot; O mode', 'KEYS');
   return isTouchPath()
     ? refSub('TOUCH CONTROLS') + tchRows + refSub('KEYBOARD CONTROLS') + kbRows
     : refSub('KEYBOARD CONTROLS') + kbRows + refSub('TOUCH CONTROLS') + tchRows;
@@ -7556,6 +7572,27 @@ function helpControlRects(excludeEl) {
   if (typeof document.querySelectorAll === 'function') {
     document.querySelectorAll('#touch button, #joy').forEach(see);
   }
+  // P2B99: the escape's pads are canvas-drawn, not DOM — feed their LIVE
+  // rects (mapped through the canvas's own letterboxed rect) into the ladder
+  // so a help surface can never sit on them. SKIP/MODE are always up in the
+  // escape; the action pads only exist in MANUAL.
+  if (state.mode === 'escape' && typeof document.getElementById === 'function') {
+    const c = document.getElementById('game');
+    if (c && typeof c.getBoundingClientRect === 'function') {
+      const g = c.getBoundingClientRect();
+      if (g.width > 0 && g.height > 0) {
+        const rects = [SKIP_RECT, MODE_RECT];
+        if (!ESCAPE.isAuto()) rects.push(LEFT_RECT, RIGHT_RECT, JUMP_RECT, DASH_RECT, KICK_RECT);
+        for (const q of rects) {
+          out.push({
+            left: g.left + q.x / 480 * g.width, right: g.left + (q.x + q.w) / 480 * g.width,
+            top: g.top + q.y / 300 * g.height, bottom: g.top + (q.y + q.h) / 300 * g.height,
+            width: q.w / 480 * g.width, height: q.h / 300 * g.height,
+          });
+        }
+      }
+    }
+  }
   // the OTHER help surface and the leave strip are visible chrome too
   see(helpTipEl);
   see(helpHudEl);
@@ -8256,7 +8293,7 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     const r = canvas.getBoundingClientRect();
     if (r.width && r.height) {
       ESCAPE.pointer((ev.clientX - r.left) / r.width * C.VIEW_W,
-        (ev.clientY - r.top) / r.height * C.VIEW_H);
+        (ev.clientY - r.top) / r.height * C.VIEW_H, ev.pointerId);
     }
     return;
   }
@@ -8268,6 +8305,20 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   endIntro();
   if (C.CINE.SKIPPABLE) { endPortalCine(); endDeathCine(); }
 });
+// P2B99: the lift of a touch. The escape's LEFT/RIGHT pads HOLD — a finger
+// down keeps running, and the LIFT is the brake the appendage gauntlet is
+// timed around. pointerup/pointercancel (either one ends a press) route to
+// the escape WITH the pointerId: the lift releases only ITS OWN pad, so the
+// right thumb tapping JUMP mid-run cannot drop the left thumb's RUN finger
+// (the two-thumb phone pattern); a finger that slid off its pad still cannot
+// leave a phantom run pinned.
+if (canvas.addEventListener) {
+  for (const type of ['pointerup', 'pointercancel']) {
+    canvas.addEventListener(type, (ev) => {
+      if (state.mode === 'escape') ESCAPE.pointerUp(ev.pointerId);
+    });
+  }
+}
 
 // ---------- Portal-entry cinematic (WAVE-8/A) ----------
 // Plays once when the wave's FINAL boss dies: gameplay freezes, CINE.render
@@ -9179,6 +9230,7 @@ export const __TEST = {
     frame: ESCAPE.frame,
     onKey: ESCAPE.onKey,
     pointer: ESCAPE.pointer,
+    pointerUp: ESCAPE.pointerUp,
     explain: ESCAPE.explain,
     isAuto: ESCAPE.isAuto,
     get payload() { return ESCAPE.payload(); },
