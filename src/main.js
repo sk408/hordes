@@ -7182,6 +7182,11 @@ function showHelpTip(html, anchor) {
         helpTipEl.style[k] = '';
       }
     }
+    // If the banner had to yield its space to a tip, it comes back the
+    // moment no tip is up (still placed by the same free-space rule).
+    helpHudYielded = false;
+    if (state.helpMode && helpHudEl && helpHudEl.style &&
+        helpHudEl.style.display === 'none') syncHelpHud();
     return;
   }
   let rect = null;
@@ -7190,17 +7195,31 @@ function showHelpTip(html, anchor) {
   } else if (anchor && Number.isFinite(anchor.left) && Number.isFinite(anchor.top)) {
     rect = anchor;
   }
-  placeHelpTip(rect);
+  if (!placeHelpSurface(helpTipEl, rect) && state.helpMode &&
+      helpHudEl && helpHudEl.style && helpHudEl.style.display === 'block') {
+    // The viewport cannot fit BOTH surfaces (568x320 with the pads, the
+    // joystick and the banner all up leaves no free band at any width). The
+    // tip the player just asked for wins: the banner's "tap a control to
+    // learn it" instruction is spent the moment one is shown. Hiding is not
+    // covering — every help surface still DISPLAYED clears the controls.
+    helpHudYielded = true;
+    helpHudEl.style.display = 'none';
+    placeHelpSurface(helpTipEl, rect);
+  }
 }
 
-// THE EXPLAINER MUST NOT COVER THE CONTROLS IT IS EXPLAINING (owner
-// 2026-09-17, via remy:orchestrator). The card is placed in FREE SPACE by a
-// ladder whose every rung is geometry READ FROM THE DOM at open time
-// (getBoundingClientRect on the live chrome) — no layout constant is restated
-// here, so the rule survives the UI moving exactly the way the width clamp
-// survives a new phone. Ladder, in the brief's priority order:
+// EVERY HELP-MODE SURFACE MUST CLEAR THE CONTROLS (owner 2026-09-17: the
+// pre-tap BANNER still sat on the buttons; the rule is general now, not
+// explainer-specific). The banner (#help-hud), the explainer (#help-tip) and
+// any future help-mode prompt is placed in FREE SPACE by a ladder whose every
+// rung is geometry READ FROM THE DOM at open time (getBoundingClientRect on
+// the live chrome) — no layout constant is restated here, so the rule
+// survives the UI moving exactly the way the width clamp survives a new
+// phone. Ladder, in the brief's priority order:
 //   1. free space BESIDE the tapped control (over the play area is correct,
-//      sitting on the pads is not): above / below / left / right;
+//      sitting on the pads is not): above / below / left / right — for an
+//      un-anchored surface (the banner) this is free space above the cluster,
+//      below the top chrome;
 //   2. (a) the OPPOSITE side of the cluster (anchor mirrored through the
 //      viewport centre);
 //   3. (b) SHRINK toward a readable minimum (the ladder re-runs 1+2 at each
@@ -7208,16 +7227,19 @@ function showHelpTip(html, anchor) {
 //      --fit-w clamp, never widens past it);
 //   4. (c) DOCK to the top or bottom edge of the play area.
 // A candidate is valid only if it clears EVERY visible control rect (the
-// touch cluster, the cog row, the leave strip) by HELP_CLEAR px AND stays
-// inside the viewport. The explained control itself is NEVER covered, at any
-// size: the last resort docks on the side opposite the anchor.
+// touch cluster, the cog row, the OTHER help surfaces) by HELP_CLEAR px AND
+// stays inside the viewport. The explained control itself is NEVER covered,
+// at any size: the last resort docks on the side opposite the anchor.
 const HELP_CLEAR = 8;      // px of clearance required from every control rect
 const HELP_MIN_W = 190;    // the shrink ladder's readable minimum
+// True while the banner has YIELDED its space to a tip the viewport could not
+// otherwise fit (the per-tick chrome sync must not resurrect it mid-tip).
+let helpHudYielded = false;
 
-function helpControlRects() {
+function helpControlRects(excludeEl) {
   const out = [];
   const see = (el) => {
-    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    if (!el || el === excludeEl || typeof el.getBoundingClientRect !== 'function') return;
     let r;
     try { r = el.getBoundingClientRect(); } catch { return; }
     if (r && r.width > 0 && r.height > 0) out.push(r);
@@ -7225,17 +7247,21 @@ function helpControlRects() {
   if (typeof document.querySelectorAll === 'function') {
     document.querySelectorAll('#touch button, #joy').forEach(see);
   }
-  see(helpHudEl);   // the leave strip is visible chrome the card must not hide
+  // the OTHER help surface and the leave strip are visible chrome too
+  see(helpTipEl);
+  see(helpHudEl);
   see(document.getElementById('hud'));
   return out;
 }
 
-function placeHelpTip(anchor) {
-  const el = helpTipEl;
-  if (!el || !el.style || !el.innerHTML) return;
+// Returns true when the surface sits in space that clears every visible
+// control rect; false when it had to fall back (spared / opposite-half dock).
+// Stub contexts count as placed (there is no layout to violate there).
+function placeHelpSurface(el, anchor) {
+  if (!el || !el.style || !el.innerHTML) return true;
   if (typeof document.querySelectorAll !== 'function' ||
       typeof el.getBoundingClientRect !== 'function' ||
-      !globalThis.innerWidth || !globalThis.innerHeight) return;
+      !globalThis.innerWidth || !globalThis.innerHeight) return true;
   const vw = globalThis.innerWidth, vh = globalThis.innerHeight;
   // The stylesheet's clamp stays the WIDTH authority: every inline cap in the
   // ladder is <= this value, so the card can only wrap earlier, never wider.
@@ -7244,7 +7270,7 @@ function placeHelpTip(anchor) {
     const m = parseFloat(getComputedStyle(el).maxWidth);
     if (Number.isFinite(m) && m > 0) cssMax = Math.min(cssMax, m);
   } catch { /* stub context */ }
-  const controls = helpControlRects();
+  const controls = helpControlRects(el);
   const A = anchor && Number.isFinite(anchor.left) && Number.isFinite(anchor.top)
     ? anchor
     : { left: vw / 2 - 1, top: vh / 2 - 1, right: vw / 2 + 1, bottom: vh / 2 + 1,
@@ -7309,21 +7335,30 @@ function placeHelpTip(anchor) {
       [A.right + HELP_CLEAR, cy - rung.h / 2],              // right
       [vw - cx - rung.w / 2, vh - cy - rung.h / 2],         // (a) opposite side
     ];
-    for (const [x, y] of cands) if (tryCand(x, y, rung)) return;
+    for (const [x, y] of cands) if (tryCand(x, y, rung)) return true;
   }
-  // PASS 2 — (c) free space over the PLAY AREA: a coarse grid whose edges ARE
-  // the top/bottom docks (centre-top, centre-bottom included), with quarter
-  // points besides — at 320x568 the pads stack 4 rows tall (y 272..558) and
-  // the only free band is y 64..264, which the pure mid-point misses. Over
-  // the play area is the explicitly correct answer; sitting on the pads is not.
+  // PASS 2 — (c) free space over the PLAY AREA, as a 2D scan whose candidate
+  // positions come from the CONTROL RECT EDGES themselves (read from the same
+  // DOM rects): a tight fit can only occur flush against a control edge (+
+  // clearance) or a viewport edge or the centre. A 1D band scan is not
+  // enough — at 568x320 the pads stack 4 rows and project onto EVERY y, yet
+  // the mid-column is free; only the 2D rects know that. Top edge first
+  // (above the cluster, below the top chrome — the brief's preferred spot),
+  // then downwards; the outermost edges ARE the top/bottom docks.
   for (const rung of ladder) {
-    const xs = [HELP_CLEAR, (vw - rung.w) * 0.25, (vw - rung.w) / 2,
-                (vw - rung.w) * 0.75, vw - HELP_CLEAR - rung.w];
-    const ys = [HELP_CLEAR, (vh - rung.h) * 0.25, (vh - rung.h) / 2,
-                (vh - rung.h) * 0.75, vh - HELP_CLEAR - rung.h];
-    for (const y of ys) for (const x of xs) if (tryCand(x, y, rung)) return;
+    const xs = new Set([HELP_CLEAR, (vw - rung.w) / 2, vw - HELP_CLEAR - rung.w]);
+    const ys = new Set([HELP_CLEAR, (vh - rung.h) / 2, vh - HELP_CLEAR - rung.h]);
+    for (const c of controls) {
+      xs.add(c.right + HELP_CLEAR);
+      xs.add(c.left - HELP_CLEAR - rung.w);
+      ys.add(c.bottom + HELP_CLEAR);
+      ys.add(c.top - HELP_CLEAR - rung.h);
+    }
+    for (const y of [...ys].sort((p, q) => p - q)) {
+      for (const x of [...xs].sort((p, q) => p - q)) if (tryCand(x, y, rung)) return true;
+    }
   }
-  if (spared) { set(spared.x, spared.y, spared.rung); return; }
+  if (spared) { set(spared.x, spared.y, spared.rung); return false; }
   // Last resort: the narrowest rung, docked on the half OPPOSITE the anchor —
   // geometrically clear of the explained control whatever else it clips.
   const rung = ladder[ladder.length - 1];
@@ -7333,6 +7368,7 @@ function placeHelpTip(anchor) {
     set(Math.max(HELP_CLEAR, Math.min(vw - HELP_CLEAR - rung.w, x)),
         Math.max(HELP_CLEAR, Math.min(vh - HELP_CLEAR - rung.h, y)), rung);
   }
+  return false;
 }
 function helpLine({ keys, touch, purpose }) {
   const how = isTouchPath() ? touch : keys;
@@ -7352,13 +7388,18 @@ function helpActText(act) {
 }
 function syncHelpHud() {
   if (!helpHudEl || !helpHudEl.style) return;
-  const want = state.helpMode ? 'block' : 'none';
+  // While the banner has yielded to a tip, it stays down (the per-tick chrome
+  // sync calls this too — it must not resurrect it mid-tip).
+  const want = state.helpMode && !helpHudYielded ? 'block' : 'none';
   if (helpHudEl.style.display === want) return;
   helpHudEl.style.display = want;
   if (state.helpMode) {
     helpHudEl.textContent = isTouchPath()
       ? 'HELP MODE - TAP A CONTROL OR OBJECT TO LEARN IT · TAP HELP TO LEAVE'
       : 'HELP MODE - CLICK A CONTROL OR OBJECT TO LEARN IT · ? OR ESC TO LEAVE';
+    // The banner is a HELP SURFACE: same free-space rule as the explainer,
+    // placed over the play area, never on the controls it wants to help with.
+    placeHelpSurface(helpHudEl, null);
   }
 }
 // Pointer client coords -> world coords, the exact inverse of the render

@@ -38,13 +38,17 @@ const center = (sel) => `(() => {
 })()`;
 
 // Every control rect the placement must clear, read from the live DOM at
-// measure time (the same set the placement rule reads).
-const MEASURE = `(() => {
+// measure time (the same set the placement rule reads). Generalised over the
+// SURFACE being measured (owner 2026-09-17: the pre-tap BANNER must clear the
+// controls too, and the rule must hold for EVERY help-mode surface): the
+// surface's own rect is excluded from its control set, every OTHER help
+// surface that is currently visible counts as chrome it must not cover.
+const measureOf = (surfaceId) => `(() => {
   const px = (v) => Math.round(v * 100) / 100;
-  const tip = document.getElementById('help-tip');
+  const surf = document.getElementById('${surfaceId}');
   const controls = [];
   const see = (el) => {
-    if (!el) return;
+    if (!el || el === surf) return;
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0)
       controls.push({ id: el.id || el.dataset.act || el.tagName, x: px(r.left), y: px(r.top),
@@ -52,11 +56,12 @@ const MEASURE = `(() => {
   };
   document.querySelectorAll('#touch button, #joy').forEach(see);
   see(document.getElementById('help-hud'));
-  const tr = tip.getBoundingClientRect();
+  see(document.getElementById('help-tip'));
+  const tr = surf.getBoundingClientRect();
   return { vw: innerWidth, vh: innerHeight,
     tip: { x: px(tr.left), y: px(tr.top), r: px(tr.right), b: px(tr.bottom),
-      w: px(tr.width), h: px(tr.height), display: getComputedStyle(tip).display,
-      text: (tip.textContent || '').slice(0, 60) },
+      w: px(tr.width), h: px(tr.height), display: getComputedStyle(surf).display,
+      text: (surf.textContent || '').slice(0, 60) },
     controls,
     docOverflowX: document.documentElement.scrollWidth - innerWidth };
 })()`;
@@ -128,6 +133,13 @@ async function arm(w, h, dpr) {
       }
       if (!armed) throw new Error(w + 'x' + h + ': could not arm help mode');
 
+      // SURFACE 1 of the general rule: the PRE-TAP BANNER (#help-hud) — what
+      // the owner sees the moment ? is pushed, before anything is tapped. It
+      // must be up, and it must clear the controls exactly like the explainer.
+      const banner = await p.evaluate(measureOf('help-hud'));
+      if (banner.tip.display !== 'block')
+        throw new Error(w + 'x' + h + ': help-mode banner never showed');
+
       const probes = [];
       for (const [sel, needle] of PROBES) {
         let up = false;
@@ -142,12 +154,12 @@ async function arm(w, h, dpr) {
           if (!up) await p.sleep(200);
         }
         if (!up) throw new Error(w + 'x' + h + ': ' + sel + ' probe showed no explainer');
-        probes.push({ sel, m: await p.evaluate(MEASURE) });
+        probes.push({ sel, m: await p.evaluate(measureOf('help-tip')) });
       }
       const live = await p.evaluate(`(async () => { const st = (await import('./src/main.js')).__TEST.state;
         return { help: st.helpMode, mapOpen: st.mapOpen, radarOn: st.radarOn,
           stance: (document.getElementById('tc-stance') || {}).textContent }; })()`);
-      return { before, probes, live, errors: p.errors };
+      return { before, banner, probes, live, errors: p.errors };
     });
 }
 
@@ -155,20 +167,24 @@ const arms = {};
 for (const [w, h, dpr] of SIZES) arms[w + 'x' + h] = await arm(w, h, dpr);
 
 // ------------------------------------------------------------------ verdict --
+const checkSurface = (tag, label, m) => {
+  const clipped = m.controls.filter((c) => !clears(m.tip, c));
+  check(tag + ' ' + label + ': clears EVERY visible control rect by >= ' +
+    CLEAR + 'px (rect ' + m.tip.x + ',' + m.tip.y + ' ' + m.tip.w + 'x' + m.tip.h +
+    ' vs ' + m.controls.length + ' controls; clipped: ' +
+    (clipped.map((c) => c.id).join(',') || 'none') + ')',
+    clipped.length === 0, { rect: m.tip, clipped });
+  check(tag + ' ' + label + ': stays inside the viewport',
+    m.tip.x >= -0.5 && m.tip.y >= -0.5 && m.tip.r <= m.vw + 0.5 && m.tip.b <= m.vh + 0.5, m.tip);
+  check(tag + ' ' + label + ': no horizontal page overflow (' + m.docOverflowX + 'px)',
+    m.docOverflowX <= 1, m.docOverflowX);
+};
 for (const [w, h] of SIZES) {
   const tag = w + 'x' + h, a = arms[tag];
-  for (const { sel, m } of a.probes) {
-    const clipped = m.controls.filter((c) => !clears(m.tip, c));
-    check(tag + ' ' + sel + ': the explainer clears EVERY visible control rect by >= ' +
-      CLEAR + 'px (tip ' + m.tip.x + ',' + m.tip.y + ' ' + m.tip.w + 'x' + m.tip.h +
-      ' vs ' + m.controls.length + ' controls; clipped: ' +
-      (clipped.map((c) => c.id).join(',') || 'none') + ')',
-      clipped.length === 0, { tip: m.tip, clipped });
-    check(tag + ' ' + sel + ': the explainer stays inside the viewport',
-      m.tip.x >= -0.5 && m.tip.y >= -0.5 && m.tip.r <= m.vw + 0.5 && m.tip.b <= m.vh + 0.5, m.tip);
-    check(tag + ' ' + sel + ': no horizontal page overflow (' + m.docOverflowX + 'px)',
-      m.docOverflowX <= 1, m.docOverflowX);
-  }
+  // SURFACE 1: the pre-tap banner (owner 2026-09-17's report).
+  checkSurface(tag, 'banner #help-hud (shown when ? is pushed, before any tap)', a.banner);
+  // SURFACE 2: the explainer, one check set per tappable control.
+  for (const { sel, m } of a.probes) checkSurface(tag, sel + ' explainer', m);
   check(tag + ' the probes EXPLAIN, not activate (help armed, stance unchanged, radar off, map closed)',
     a.live.help === true && a.live.mapOpen === false && a.live.radarOn === false &&
     a.live.stance === a.before &&
@@ -184,8 +200,9 @@ const bad = results.filter((r) => !r.ok).length;
 for (const r of results) console.log((r.ok ? 'ok   ' : 'FAIL ') + r.name + (r.ok ? '' : ' :: ' + JSON.stringify(r.detail)));
 console.log(bad ? 'VERIFY HELP CLEARANCE: FAIL' :
   'VERIFY HELP CLEARANCE: PASS - at ' + SIZES.map(([w, h]) => w + 'x' + h).join(', ') +
-  ' (real run, real taps): for every tappable control the explainer clears every visible ' +
-  'control rect (incl. the leave strip and the joystick) by >= 8px, stays inside the ' +
-  'viewport, causes no horizontal overflow, and the taps explain rather than activate (' +
+  ' (real run, real taps): EVERY help-mode surface (the pre-tap banner #help-hud AND the ' +
+  'explainer for every tappable control) clears every visible control rect (incl. the ' +
+  'leave strip and the joystick) by >= 8px, stays inside the viewport, causes no ' +
+  'horizontal overflow, and the taps explain rather than activate (' +
   results.length + ' checks)');
 process.exit(bad ? 1 : 0);
