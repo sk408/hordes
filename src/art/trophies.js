@@ -1010,7 +1010,7 @@ export const TROPHY_ART = {
   WAVE5_UNDER_3MIN: makeAsset({
     id: 'WAVE5_UNDER_3MIN',
     name: "Off the Line",
-    desc: "Wave 5+ in a run that ended under 3:00.",
+    desc: "Wave 5+ in a run that ended in 3:00 or less.",
     palette: {"1":"#0a0a0e","2":"#2a6a8a","3":"#6fc4e8","4":"#174358","5":"#f4f4f8","6":"#b0703a"},
     grid: [
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -1050,7 +1050,7 @@ export const TROPHY_ART = {
   WAVE8_UNDER_5MIN: makeAsset({
     id: 'WAVE8_UNDER_5MIN',
     name: "Breakneck",
-    desc: "Wave 8+ in a run that ended under 5:00.",
+    desc: "Wave 8+ in a run that ended in 5:00 or less.",
     palette: {"1":"#0a0a0e","2":"#2a8a6a","3":"#6fe8b8","4":"#175845","5":"#f4f4f8","6":"#c8ccd4"},
     grid: [
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -1090,7 +1090,7 @@ export const TROPHY_ART = {
   KILLS_500_UNDER_5MIN: makeAsset({
     id: 'KILLS_500_UNDER_5MIN',
     name: "Five-Minute Fury",
-    desc: "500 kills in a run that ended under 5:00.",
+    desc: "500 kills in a run that ended in 5:00 or less.",
     palette: {"1":"#0a0a0e","2":"#8a3a2a","3":"#e88a6f","4":"#582215","5":"#f4f4f8","6":"#c8ccd4"},
     grid: [
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -1130,7 +1130,7 @@ export const TROPHY_ART = {
   GOLD_600_UNDER_6MIN: makeAsset({
     id: 'GOLD_600_UNDER_6MIN',
     name: "Quick Fortune",
-    desc: "600 gold banked in a run that ended under 6:00.",
+    desc: "600 gold banked in a run that ended in 6:00 or less.",
     palette: {"1":"#0a0a0e","2":"#a0802a","3":"#ffe07a","4":"#6a5218","5":"#f4f4f8","6":"#b0703a"},
     grid: [
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],

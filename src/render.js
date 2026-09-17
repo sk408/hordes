@@ -183,6 +183,17 @@ export class Renderer {
     // this.landmarks = the structures painted this frame (world coords),
     // this.arenaWall / this.hudChrome / this.bossBanner = the existing seams.
     this.landmarks = [];
+    // N6 (audit 2026-09-16) static-content caches, measured before landing in
+    // real Chrome (tools/verify_nits_n6.mjs): the radar's plate/rim disc
+    // (0.24 ms/frame as ~4,700 sqrt-gated 1px fills) is painted ONCE into an
+    // offscreen canvas and blitted per frame; the boss banner's text FIT
+    // (0.15 ms/frame as a per-frame measureText ladder) is computed once per
+    // banner strings. Counters expose the cache-hit seam to the tests.
+    this._radarPlate = null;
+    this._radarPlateKey = '';
+    this.radarPlateBuilds = 0;
+    this._bannerFit = null;
+    this.bossBannerFits = 0;
     this.resize();
   }
 
@@ -1018,23 +1029,12 @@ export class Renderer {
   // exact box + the screen-space dots painted this frame, null while the
   // radar is off — so "toggle off restores the HUD" is assertable as
   // radar === null plus zero paint in the box.
-  drawRadar(g, state) {
-    const p = state.player;
-    if (!state.radarOn || !p || !p.stats) { this.radar = null; return; }
-    const R = RADAR_DISPLAY_R;
-    const cx = C.VIEW_W - RADAR_CORNER_INSET - R;
-    const cy = C.VIEW_H - RADAR_CORNER_INSET - R;
-    const scale = R / RADAR_RADIUS;
-    const focusR = Math.round((C.AUTOPILOT.FOCUS_RANGE || 0) * scale);
-
-    // The dot set, from the real data layer: live enemies only, classified by
-    // classifyTier inside radar.js (BOSS > ELITE > CHAFF — never restated here).
-    const live = [];
-    for (const e of state.enemies) if (e && e.hp > 0) live.push(e);
-    const dots = radarDots(p, live, { radius: RADAR_RADIUS, displayRadius: R });
-
-    // Plate: a filled dark disc painted as pixel rows (integer half-widths —
-    // no arc(), no antialiasing, per the pixel-art rule), then a 1px rim.
+  // N6: the radar's STATIC paint — plate rows, steel rim, focus ring, centre
+  // pip — exactly the loops drawRadar used to run per frame. Kept verbatim as
+  // the cache BUILDER (and the parity reference): same fills, same integer
+  // coordinates, just aimed at the offscreen canvas once instead of the main
+  // canvas every frame.
+  _paintRadarPlate(g, cx, cy, R, focusR) {
     for (let dy = -R; dy <= R; dy++) {
       const half = Math.floor(Math.sqrt(R * R - dy * dy));
       g.fillStyle = C.HUD.PLATE;
@@ -1062,6 +1062,48 @@ export class Renderer {
     // The player pip at the centre (the radar is player-relative by contract).
     g.fillStyle = '#e8e8f0';
     g.fillRect(cx - 1, cy - 1, 3, 3);
+  }
+
+  drawRadar(g, state) {
+    const p = state.player;
+    if (!state.radarOn || !p || !p.stats) { this.radar = null; return; }
+    const R = RADAR_DISPLAY_R;
+    const cx = C.VIEW_W - RADAR_CORNER_INSET - R;
+    const cy = C.VIEW_H - RADAR_CORNER_INSET - R;
+    const scale = R / RADAR_RADIUS;
+    const focusR = Math.round((C.AUTOPILOT.FOCUS_RANGE || 0) * scale);
+
+    // The dot set, from the real data layer: live enemies only, classified by
+    // classifyTier inside radar.js (BOSS > ELITE > CHAFF — never restated here).
+    const live = [];
+    for (const e of state.enemies) if (e && e.hp > 0) live.push(e);
+    const dots = radarDots(p, live, { radius: RADAR_RADIUS, displayRadius: R });
+
+    // Plate: a filled dark disc painted as pixel rows (integer half-widths —
+    // no arc(), no antialiasing, per the pixel-art rule), then a 1px rim.
+    // N6: all of plate + rim + focus ring + centre pip is a pure function of
+    // (R, focusR) — both constants of the view — so it is painted ONCE into an
+    // offscreen canvas (via _paintRadarPlate, the ORIGINAL loops verbatim, so
+    // parity is by construction; tools/verify_nits_n6_parity.mjs byte-compares
+    // the cache against the same loops) and blitted per frame. The one
+    // drawImage here is this cache's blit — render.js stays free of image
+    // ASSETS (the module rule); a cached raster of its own paint is not one.
+    const plateKey = R + '@' + focusR;
+    if (!this._radarPlate || this._radarPlateKey !== plateKey) {
+      // DOM-free by preference (WAVE-27 pin: render.js never touches the DOM
+      // global): OffscreenCanvas where it exists (every target browser), else
+      // a scratch canvas borrowed from the MAIN canvas's own ownerDocument —
+      // the headless-test path, which stubs it on the canvas it hands in.
+      const off = (typeof OffscreenCanvas === 'function')
+        ? new OffscreenCanvas(2 * R + 1, 2 * R + 1)
+        : this.canvas.ownerDocument.createElement('canvas');
+      off.width = 2 * R + 1; off.height = 2 * R + 1;
+      this._paintRadarPlate(off.getContext('2d'), R, R, R, focusR);
+      this._radarPlate = off;
+      this._radarPlateKey = plateKey;
+      this.radarPlateBuilds++;
+    }
+    g.drawImage(this._radarPlate, cx - R, cy - R);
 
     // Dots: size + colour by tier, centred on the integer radar-space offset
     // radarDots returned (screen = centre + offset; the mapping is 1:1).
@@ -1235,35 +1277,50 @@ export class Renderer {
 
     // Line 1..N: the boss names (one per line; see CONFIG for why not shared).
     const names = (b.names && b.names.length) ? b.names.slice() : (b.title ? [b.title] : []);
-    const longestName = names.reduce((a, s) => (s.length > a.length ? s : a), '');
-    const namePx = fitPx(longestName, HUD.BANNER_NAME_MIN_PX, HUD.BANNER_NAME_MAX_PX, true);
-    // Title line: a fixed fraction of the name size, still fitted + clamped.
     const verb = b.verb || '';
-    const verbMax = Math.max(HUD.BANNER_VERB_MIN_PX,
-      Math.min(HUD.BANNER_VERB_MAX_PX, Math.round(namePx * HUD.BANNER_VERB_RATIO)));
-    const verbPx = verb ? fitPx(verb, HUD.BANNER_VERB_MIN_PX, verbMax, true) : 0;
-    // Flavor sub-line: the old 11px small print (never below 10 — the panel's
-    // floor), fitted so a two-boss flavor pair cannot overrun either.
-    const subPx = b.sub ? fitPx(b.sub, 10, HUD.BANNER_SUB_PX, false) : 0;
-
-    const lines = [];
-    for (const s of names) lines.push({ txt: s, px: namePx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
-    if (verb) lines.push({ txt: verb, px: verbPx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
-    if (b.sub) lines.push({ txt: b.sub, px: subPx, bold: false, ink: '#e4e4ee', shade: null });
+    // N6 (audit 2026-09-16): the fit — every px size and the plate box — is a
+    // PURE function of the banner's strings (plus view constants), but was
+    // recomputed through the measureText ladder every frame of the banner's
+    // life (0.15 ms/frame, 15.8 measureText calls/frame in real Chrome,
+    // tools/verify_nits_n6.mjs). Cached per strings; a different banner
+    // (new boss, new flavor) simply misses and refits. The paint itself is
+    // untouched — same lines, same plate, same fonts.
+    const fitKey = JSON.stringify([names, verb, b.sub || '']);
+    let fit = (this._bannerFit && this._bannerFit.key === fitKey) ? this._bannerFit : null;
+    if (!fit) {
+      const longestName = names.reduce((a, s) => (s.length > a.length ? s : a), '');
+      const namePx = fitPx(longestName, HUD.BANNER_NAME_MIN_PX, HUD.BANNER_NAME_MAX_PX, true);
+      // Title line: a fixed fraction of the name size, still fitted + clamped.
+      const verbMax = Math.max(HUD.BANNER_VERB_MIN_PX,
+        Math.min(HUD.BANNER_VERB_MAX_PX, Math.round(namePx * HUD.BANNER_VERB_RATIO)));
+      const verbPx = verb ? fitPx(verb, HUD.BANNER_VERB_MIN_PX, verbMax, true) : 0;
+      // Flavor sub-line: the old 11px small print (never below 10 — the panel's
+      // floor), fitted so a two-boss flavor pair cannot overrun either.
+      const subPx = b.sub ? fitPx(b.sub, 10, HUD.BANNER_SUB_PX, false) : 0;
+      const lines = [];
+      for (const s of names) lines.push({ txt: s, px: namePx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
+      if (verb) lines.push({ txt: verb, px: verbPx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
+      if (b.sub) lines.push({ txt: b.sub, px: subPx, bold: false, ink: '#e4e4ee', shade: null });
+      for (const l of lines) l.h = Math.round(l.px * 1.16) + gap;   // line box
+      // The plate is built from the MEASURED widest line, then clamped inside
+      // the view edge — the two-boss case can no longer be underestimated.
+      const widest = lines.reduce((m, l) => Math.max(m, widthOf(l.txt, l.px, l.bold)), 0);
+      const plateW = Math.min(Math.round(widest + 2 * padX), W - 2 * edge);
+      const bodyH = lines.reduce((a, l) => a + l.h, 0) - gap;
+      const plateH = Math.round(bodyH + 2 * padY);
+      fit = { key: fitKey, namePx, verbPx, subPx, lines, plateW, plateH };
+      this._bannerFit = fit;
+      this.bossBannerFits++;
+    }
+    const lines = fit.lines;
     if (!lines.length) {
       g.textAlign = 'left'; g.textBaseline = 'top'; g.globalAlpha = 1;
       this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
       return;
     }
-    for (const l of lines) l.h = Math.round(l.px * 1.16) + gap;   // line box
-
-    // The plate is built from the MEASURED widest line, then clamped inside
-    // the view edge — the two-boss case can no longer be underestimated.
-    const widest = lines.reduce((m, l) => Math.max(m, widthOf(l.txt, l.px, l.bold)), 0);
-    const plateW = Math.min(Math.round(widest + 2 * padX), W - 2 * edge);
+    const plateW = fit.plateW;
     const plateX = Math.round(W / 2 - plateW / 2);
-    const bodyH = lines.reduce((a, l) => a + l.h, 0) - gap;
-    const plateH = Math.round(bodyH + 2 * padY);
+    const plateH = fit.plateH;
     const plateY = Math.round(H / 2 - plateH / 2);
     g.fillStyle = HUD.PLATE_SOLID;
     g.fillRect(plateX, plateY, plateW, plateH);

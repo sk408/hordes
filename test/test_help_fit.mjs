@@ -65,10 +65,26 @@ s.check('the explainer WRAPS inside its box (white-space: nowrap is gone from bo
 });
 
 // ---- 3. NO INLINE SIZING FIGHTS THE CLAMP ---------------------------------------
-s.check('showHelpTip positions nothing inline (no width/white-space write fights the CSS clamp)', () => {
-  const m = /function showHelpTip\(html\)\s*\{([^}]*)\}/.exec(js);
+// RETARGETED 2026-09-17 (disclosed, help-card placement task): showHelpTip now
+// takes an anchor and delegates PLACEMENT to placeHelpTip, which may write an
+// inline maxWidth — but only as a rung <= the stylesheet's computed clamp (the
+// card can wrap earlier, never wider). What stays pinned: showHelpTip itself
+// writes no width/white-space, and placeHelpTip seeds its ladder from the
+// COMPUTED max-width (the clamp stays the width authority). The real geometry
+// is measured by tools/verify_help_clearance.mjs.
+s.check('showHelpTip writes no width/white-space inline (nothing fights the CSS clamp)', () => {
+  const m = /function showHelpTip\(html[^)]*\)\s*\{([^}]*)\}/.exec(js);
   assert.ok(m, 'no showHelpTip');
-  assert.ok(!/\.style\.width|\.style\.whiteSpace|\.style\.maxWidth/.test(m[1]), m[1]);
+  assert.ok(!/\.style\.width|\.style\.whiteSpace/.test(m[1]), m[1]);
+});
+s.check('placement never widens past the clamp: the ladder seeds from the COMPUTED max-width', () => {
+  const m = /function placeHelpTip\(anchor\)\s*\{/.exec(js);
+  assert.ok(m, 'no placeHelpTip');
+  const body = js.slice(m.index, m.index + 2500);
+  assert.ok(/getComputedStyle\(el\)\.maxWidth/.test(body),
+    'the width ladder must read the stylesheet clamp, not invent widths');
+  assert.ok(/cssMax = Math\.min\(cssMax, m\)/.test(body),
+    'every rung cap must be clamped to the stylesheet value');
 });
 
 // ---- 4. BEHAVIOUR on a TOUCH DEVICE (the fit work must not regress the mode) ----

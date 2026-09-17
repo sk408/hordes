@@ -141,7 +141,7 @@ import {
   // banners, so they fire once per PROFILE rather than once per run.
   bannerSeen, markBannerSeen,
   downloadProfile, saveProfileToDisk, readSaveFile,
-  readRecovery, downloadRecovery, STORAGE_KEY,
+  readRecovery, downloadRecovery, STORAGE_KEY, RECOVERY_PREV_KEY,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -1127,6 +1127,18 @@ function resetRampage() {
 //   settleRunGold — banks FIXED award x goldMult + the purse remainder into
 //     profile.gold and ZEROES the purse (zeroing is what stops the next
 //     settlement banking the same remainder twice).
+//
+// N1 (audit 2026-09-16): the writers used to coerce with `| 0` (int32 — wraps
+// NEGATIVE past 2^31) while validateProfile repairs the purse into
+// [0, MAX_SAFE_INTEGER]. The domains agree at ONE bound now, applied by this
+// single clamp at every read-modify-write seam: [0, 2^31-1]. Inside that range
+// every |0 read in the HUD/shop is exact, so no writer can wrap the purse
+// negative regardless of what storage hands it.
+const PURSE_MAX = 0x7FFFFFFF;
+function purseClamp(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(PURSE_MAX, Math.max(0, Math.floor(n))) : 0;
+}
 function purseCredit(e) {
   // W7b RARE Gilded Palm: +30% purse gold per kill per pick, compounding. The
   // multiplier lives on the run's stats (1 = the shipped payout bit-for-bit,
@@ -1135,7 +1147,7 @@ function purseCredit(e) {
   const mult = (state.player && state.player.stats.purseKillMult) || 1;
   const v = Math.round(purseValue(e) * mult);
   const tier = purseTier(e);
-  profile.runPurse = (profile.runPurse | 0) + v;
+  profile.runPurse = purseClamp(profile.runPurse + v);
   const g = state.runCounts.gold;
   g.earned += v;
   g.kills[tier] = (g.kills[tier] || 0) + 1;
@@ -1147,8 +1159,8 @@ function purseCredit(e) {
 // resurrects gold that was already spent.
 function purseSpend(amount) {
   amount = Math.max(0, Math.floor(Number(amount) || 0));
-  if ((profile.runPurse | 0) < amount) return false;
-  profile.runPurse = (profile.runPurse | 0) - amount;
+  if (purseClamp(profile.runPurse) < amount) return false;
+  profile.runPurse = purseClamp(profile.runPurse - amount);
   state.runCounts.gold.spent += amount;
   state.runPurse = profile.runPurse;
   saveProfile(profile);
@@ -1207,15 +1219,15 @@ function openIntermission(opts = {}) {
     ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
     `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
-    `<br>GOLD ${profile.runPurse | 0} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
+    `<br>GOLD ${purseClamp(profile.runPurse)} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
     const cost = chestCost(def);
     const el = menuCard(tier + ' CHEST',
       `${cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)` +
       (shopPriceMult() !== 1 ? ' · CURSED PRICES' : ''),
-      () => buyPaidChest(tier), (profile.runPurse | 0) < cost);
-    if ((profile.runPurse | 0) < cost) el.onclick = () => audio.playSfx('button');
+      () => buyPaidChest(tier), purseClamp(profile.runPurse) < cost);
+    if (purseClamp(profile.runPurse) < cost) el.onclick = () => audio.playSfx('button');
   }
   // The wave's blessing/curse offers: rolled once per wave (re-renders after
   // a chest buy reuse the same pending set; taken ones drop off).
@@ -1307,14 +1319,14 @@ function buyPaidChest(tier) {
   // chests are in-run spending that exists today). loot.js's rollPaidChest
   // takes a { gold } wallet, so hand it a purse VIEW: loot.js stays untouched
   // and the bank is never in scope here.
-  if ((profile.runPurse | 0) < cost) return;
-  const wallet = { gold: profile.runPurse | 0 };
+  if (purseClamp(profile.runPurse) < cost) return;
+  const wallet = { gold: purseClamp(profile.runPurse) };
   const res = rollPaidChest(wallet, tier);
   if (!res.ok) return;
-  profile.runPurse = wallet.gold;
   // rollPaidChest debits the BASE cost; the Merchant's Pact surcharge is
-  // taken here so loot.js stays untouched.
-  profile.runPurse -= cost - def.cost;
+  // taken here so loot.js stays untouched. Both writes go through the N1
+  // clamp so a purse near the cap cannot wrap on the surcharge subtraction.
+  profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
   state.runCounts.gold.spent += cost;
   state.runPurse = profile.runPurse;
   saveProfile(profile);
@@ -2497,7 +2509,7 @@ function update(dt) {
       }
       if (!sh.blessing) {
         sh.used = true;   // blessing pool exhausted — the altar goes dark
-      } else if (canAfford(profile.runPurse | 0, sh.blessing.cost) && purseSpend(sh.blessing.cost)) {
+      } else if (canAfford(purseClamp(profile.runPurse), sh.blessing.cost) && purseSpend(sh.blessing.cost)) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
@@ -2952,7 +2964,7 @@ function openDraft() {
     // the card, so there is no confirm step) — see activateDraftCard below.
     // HELP MODE: a tap on a draft card explains it and picks NOTHING.
     el.onclick = () => {
-      if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || '')); return; }
+      if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || ''), el); return; }
       activateDraftCard(u);
     };
     ovCards.appendChild(el);
@@ -3645,7 +3657,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // earnings land here, unspent.
   const mult = (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult();
   const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
-  const purseBanked = profile.runPurse | 0;
+  const purseBanked = purseClamp(profile.runPurse);
   const gold = award + purseBanked + winBonus;
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
@@ -4259,7 +4271,7 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   el.innerHTML = `<div class="name">${name}</div><div class="desc">${sub || ''}</div>`;
   el.onclick = () => {
     // HELP MODE: an overlay-card tap explains the card, never presses it.
-    if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || '')); return; }
+    if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || ''), el); return; }
     audio.playSfx('button'); onclick();
   };
   ovCards.appendChild(el);
@@ -5805,6 +5817,17 @@ function showSettings(disarm = true, inRun = false) {
         saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
         showSettings(false);
       });
+      // N5 (audit 2026-09-16): the recovery system keeps TWO slots now — the
+      // latest incident at RECOVERY_KEY, the one before it at '.prev'. Both
+      // are offered when both exist, so an older incident is never silently
+      // unreachable.
+      if (readRecovery(null, RECOVERY_PREV_KEY)) {
+        menuCard('RECOVERY FILE (PREVIOUS)', 'download the earlier preserved save', () => {
+          const r = downloadRecovery(null, globalThis, { key: RECOVERY_PREV_KEY });
+          saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
+          showSettings(false);
+        });
+      }
     }
   }
   menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
@@ -5973,7 +5996,7 @@ function startRun() {
   // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
   // whatever profile.runPurse persisted (R4: nothing earned is confiscated).
   // profile.gold is never a purse source.
-  state.runPurse = profile.runPurse | 0;
+  state.runPurse = purseClamp(profile.runPurse);
   dilation.scale = 1;
   dilation.remaining = 0;
   // G31 (owner 2026-09-16): the run starts in the PERSISTED pilot choice
@@ -7144,11 +7167,172 @@ function leaveHelpMode() {
   syncHelpHud();
 }
 // The single-entry explainer. null = explain nothing (and say nothing on
-// empty ground — no invented messages).
-function showHelpTip(html) {
+// empty ground — no invented messages). `anchor` is WHAT the tip explains
+// (a DOM element, or a plain client-space rect for a world-object tap) —
+// the card is PLACED around it and must never sit on it.
+function showHelpTip(html, anchor) {
   if (!helpTipEl) return;
   helpTipEl.innerHTML = html || '';
   if (helpTipEl.style) helpTipEl.style.display = html ? 'block' : 'none';
+  if (!html) {
+    // Hide = hand placement back to the stylesheet default (centred above
+    // the leave strip); every inline placement write is undone.
+    if (helpTipEl.style) {
+      for (const k of ['left', 'top', 'bottom', 'transform', 'maxWidth']) {
+        helpTipEl.style[k] = '';
+      }
+    }
+    return;
+  }
+  let rect = null;
+  if (anchor && typeof anchor.getBoundingClientRect === 'function') {
+    try { const r = anchor.getBoundingClientRect(); if (r && r.width >= 0) rect = r; } catch { /* stub */ }
+  } else if (anchor && Number.isFinite(anchor.left) && Number.isFinite(anchor.top)) {
+    rect = anchor;
+  }
+  placeHelpTip(rect);
+}
+
+// THE EXPLAINER MUST NOT COVER THE CONTROLS IT IS EXPLAINING (owner
+// 2026-09-17, via remy:orchestrator). The card is placed in FREE SPACE by a
+// ladder whose every rung is geometry READ FROM THE DOM at open time
+// (getBoundingClientRect on the live chrome) — no layout constant is restated
+// here, so the rule survives the UI moving exactly the way the width clamp
+// survives a new phone. Ladder, in the brief's priority order:
+//   1. free space BESIDE the tapped control (over the play area is correct,
+//      sitting on the pads is not): above / below / left / right;
+//   2. (a) the OPPOSITE side of the cluster (anchor mirrored through the
+//      viewport centre);
+//   3. (b) SHRINK toward a readable minimum (the ladder re-runs 1+2 at each
+//      smaller width cap — the cap only ever narrows the stylesheet's own
+//      --fit-w clamp, never widens past it);
+//   4. (c) DOCK to the top or bottom edge of the play area.
+// A candidate is valid only if it clears EVERY visible control rect (the
+// touch cluster, the cog row, the leave strip) by HELP_CLEAR px AND stays
+// inside the viewport. The explained control itself is NEVER covered, at any
+// size: the last resort docks on the side opposite the anchor.
+const HELP_CLEAR = 8;      // px of clearance required from every control rect
+const HELP_MIN_W = 190;    // the shrink ladder's readable minimum
+
+function helpControlRects() {
+  const out = [];
+  const see = (el) => {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    let r;
+    try { r = el.getBoundingClientRect(); } catch { return; }
+    if (r && r.width > 0 && r.height > 0) out.push(r);
+  };
+  if (typeof document.querySelectorAll === 'function') {
+    document.querySelectorAll('#touch button, #joy').forEach(see);
+  }
+  see(helpHudEl);   // the leave strip is visible chrome the card must not hide
+  see(document.getElementById('hud'));
+  return out;
+}
+
+function placeHelpTip(anchor) {
+  const el = helpTipEl;
+  if (!el || !el.style || !el.innerHTML) return;
+  if (typeof document.querySelectorAll !== 'function' ||
+      typeof el.getBoundingClientRect !== 'function' ||
+      !globalThis.innerWidth || !globalThis.innerHeight) return;
+  const vw = globalThis.innerWidth, vh = globalThis.innerHeight;
+  // The stylesheet's clamp stays the WIDTH authority: every inline cap in the
+  // ladder is <= this value, so the card can only wrap earlier, never wider.
+  let cssMax = Math.min(480, vw - 2 * HELP_CLEAR);
+  try {
+    const m = parseFloat(getComputedStyle(el).maxWidth);
+    if (Number.isFinite(m) && m > 0) cssMax = Math.min(cssMax, m);
+  } catch { /* stub context */ }
+  const controls = helpControlRects();
+  const A = anchor && Number.isFinite(anchor.left) && Number.isFinite(anchor.top)
+    ? anchor
+    : { left: vw / 2 - 1, top: vh / 2 - 1, right: vw / 2 + 1, bottom: vh / 2 + 1,
+        width: 2, height: 2 };
+  const clearsAll = (x, y, w, h) => {
+    if (x < HELP_CLEAR - 0.5 || y < HELP_CLEAR - 0.5 ||
+        x + w > vw - HELP_CLEAR + 0.5 || y + h > vh - HELP_CLEAR + 0.5) return false;
+    for (const c of controls) {
+      if (!(x + w + HELP_CLEAR <= c.left || c.right + HELP_CLEAR <= x ||
+            y + h + HELP_CLEAR <= c.top || c.bottom + HELP_CLEAR <= y)) return false;
+    }
+    return true;
+  };
+  const clearsAnchor = (x, y, w, h) =>
+    x + w + HELP_CLEAR <= A.left || A.right + HELP_CLEAR <= x ||
+    y + h + HELP_CLEAR <= A.top || A.bottom + HELP_CLEAR <= y;
+  const inVw = (x, y, w, h) =>
+    x >= HELP_CLEAR - 0.5 && y >= HELP_CLEAR - 0.5 &&
+    x + w <= vw - HELP_CLEAR + 0.5 && y + h <= vh - HELP_CLEAR + 0.5;
+  const set = (x, y, rung) => {
+    el.style.transform = 'none';
+    el.style.bottom = 'auto';
+    el.style.maxWidth = rung.mw + 'px';
+    el.style.left = Math.round(x) + 'px';
+    el.style.top = Math.round(y) + 'px';
+  };
+  // Measure each width rung's real wrapped size ONCE (an abs-pos max-content
+  // box sizes the same wherever it sits, so position is irrelevant here).
+  el.style.transform = 'none';
+  el.style.bottom = 'auto';
+  const ladder = [];
+  for (const mw of [cssMax, 300, 240, HELP_MIN_W]) {
+    if (ladder.some((r) => r.mw <= mw)) continue;   // strictly narrower each rung
+    el.style.maxWidth = mw + 'px';
+    el.style.left = '0px';
+    el.style.top = '0px';
+    const r = el.getBoundingClientRect();
+    if (r && r.width > 0 && r.height > 0) ladder.push({ mw, w: r.width, h: r.height });
+  }
+  const cx = A.left + (A.width || 0) / 2, cy = A.top + (A.height || 0) / 2;
+  let spared = null;   // best-effort: clears the ANCHOR + viewport, if nothing else
+  // Candidates are ROUNDED TO PIXELS BEFORE validation (a card that validates
+  // at 724.5 then rounds UP to 725 lands 0.5px inside the 8px clearance).
+  const tryCand = (x, y, rung) => {
+    const hiX = Math.floor(vw - HELP_CLEAR - rung.w), hiY = Math.floor(vh - HELP_CLEAR - rung.h);
+    if (hiX < HELP_CLEAR || hiY < HELP_CLEAR) return false;   // rung too big
+    x = Math.max(HELP_CLEAR, Math.min(hiX, Math.round(x)));
+    y = Math.max(HELP_CLEAR, Math.min(hiY, Math.round(y)));
+    if (clearsAll(x, y, rung.w, rung.h)) { set(x, y, rung); return true; }
+    if (!spared && clearsAnchor(x, y, rung.w, rung.h) && inVw(x, y, rung.w, rung.h)) {
+      spared = { x, y, rung };
+    }
+    return false;
+  };
+  // PASS 1 — beside the anchor, then (a) the opposite side of the cluster,
+  // at every width rung ((b) the shrink ladder re-runs both).
+  for (const rung of ladder) {
+    const cands = [
+      [cx - rung.w / 2, A.top - rung.h - HELP_CLEAR],       // above
+      [cx - rung.w / 2, A.bottom + HELP_CLEAR],             // below
+      [A.left - rung.w - HELP_CLEAR, cy - rung.h / 2],      // left
+      [A.right + HELP_CLEAR, cy - rung.h / 2],              // right
+      [vw - cx - rung.w / 2, vh - cy - rung.h / 2],         // (a) opposite side
+    ];
+    for (const [x, y] of cands) if (tryCand(x, y, rung)) return;
+  }
+  // PASS 2 — (c) free space over the PLAY AREA: a coarse grid whose edges ARE
+  // the top/bottom docks (centre-top, centre-bottom included), with quarter
+  // points besides — at 320x568 the pads stack 4 rows tall (y 272..558) and
+  // the only free band is y 64..264, which the pure mid-point misses. Over
+  // the play area is the explicitly correct answer; sitting on the pads is not.
+  for (const rung of ladder) {
+    const xs = [HELP_CLEAR, (vw - rung.w) * 0.25, (vw - rung.w) / 2,
+                (vw - rung.w) * 0.75, vw - HELP_CLEAR - rung.w];
+    const ys = [HELP_CLEAR, (vh - rung.h) * 0.25, (vh - rung.h) / 2,
+                (vh - rung.h) * 0.75, vh - HELP_CLEAR - rung.h];
+    for (const y of ys) for (const x of xs) if (tryCand(x, y, rung)) return;
+  }
+  if (spared) { set(spared.x, spared.y, spared.rung); return; }
+  // Last resort: the narrowest rung, docked on the half OPPOSITE the anchor —
+  // geometrically clear of the explained control whatever else it clips.
+  const rung = ladder[ladder.length - 1];
+  if (rung) {
+    const x = cx < vw / 2 ? vw - HELP_CLEAR - rung.w : HELP_CLEAR;
+    const y = cy < vh / 2 ? vh - HELP_CLEAR - rung.h : HELP_CLEAR;
+    set(Math.max(HELP_CLEAR, Math.min(vw - HELP_CLEAR - rung.w, x)),
+        Math.max(HELP_CLEAR, Math.min(vh - HELP_CLEAR - rung.h, y)), rung);
+  }
 }
 function helpLine({ keys, touch, purpose }) {
   const how = isTouchPath() ? touch : keys;
@@ -7213,19 +7397,23 @@ function pickHelpObject(cx, cy) {
   return best;
 }
 // The touch-layer probe while the mode is armed: explain what was touched,
-// never activate it. The "?" button itself is the one act that LEAVES.
+// never activate it. The "?" button itself is the one act that LEAVES. Every
+// tip is ANCHORED to what it explains (the control's rect, or the tap point
+// for a world object) so the placement ladder can keep the card off it.
 function helpProbe(ev) {
   const t = ev.target;
   const joy = t && t.closest ? t.closest('[data-joy]') : null;
-  if (joy) { showHelpTip(helpLine(HELP_EXTRAS.move)); return; }
+  if (joy) { showHelpTip(helpLine(HELP_EXTRAS.move), joy); return; }
   const btn = t && t.closest ? t.closest('[data-act]') : null;
   if (btn) {
     if (btn.dataset.act === 'help') { leaveHelpMode(); return; }
-    showHelpTip(helpActText(btn.dataset.act));
+    showHelpTip(helpActText(btn.dataset.act), btn);
     return;
   }
-  const hit = pickHelpObject(ev.clientX ?? 0, ev.clientY ?? 0);
-  showHelpTip(hit ? (hit.name + ' — ' + hit.purpose) : null);
+  const px = ev.clientX ?? 0, py = ev.clientY ?? 0;
+  const hit = pickHelpObject(px, py);
+  showHelpTip(hit ? (hit.name + ' — ' + hit.purpose) : null,
+    { left: px - 1, top: py - 1, right: px + 1, bottom: py + 1, width: 2, height: 2 });
 }
 
 // G31: apply the persisted pilot + stance prefs ONCE at boot, so a reload
@@ -7416,7 +7604,7 @@ function syncChrome() {
   state.stanceAct = controller.act || 'PATROL';
   // E1: publish the live purse for the canvas HUD readout (render.js paints
   // state.*, never the profile).
-  state.runPurse = profile.runPurse | 0;
+  state.runPurse = purseClamp(profile.runPurse);
   state.zoomScale = zoomScale(state.zoom);
   const on = chromeOn();
   let chromeLayoutChanged = false;
@@ -8431,7 +8619,7 @@ export const __TEST = {
   // settle functions the game loop itself calls (never copies) — a headless
   // test drives the SAME code path a kill, a shrine walk and a run end drive.
   purse: {
-    get: () => profile.runPurse | 0,
+    get: () => purseClamp(profile.runPurse),
     credit: purseCredit,
     spend: purseSpend,
     settle: settleRunGold,

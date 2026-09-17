@@ -34,6 +34,8 @@ export const PROFILE_VERSION = SAVE.PROFILE_VERSION;
 export const SCHEMA_VERSION = SAVE.SCHEMA_VERSION;
 export const STORAGE_KEY = SAVE.STORAGE_KEY;
 export const RECOVERY_KEY = SAVE.RECOVERY_KEY;
+// N5: the PRIOR recovery slot ('<key>.prev') — see save.js preservePayload.
+export const RECOVERY_PREV_KEY = SAVE.RECOVERY_PREV_KEY;
 export const EXPORT_FORMAT = SAVE.EXPORT_FORMAT;
 export const VERSION_HISTORY = SAVE.VERSION_HISTORY;
 export const detectStorage = SAVE.detectStorage;

@@ -50,6 +50,10 @@ export const STORAGE_KEY = 'hordes_profile_v1';
 // Where an unreadable or future-version payload is preserved so it can be
 // recovered (never silently dropped).
 export const RECOVERY_KEY = 'hordes_profile_recovery';
+// N5 (audit 2026-09-16): the recovery slots — the LATEST incident lives at
+// RECOVERY_KEY (unchanged), the one BEFORE it at RECOVERY_KEY + '.prev'. Two
+// slots, never more: a third incident rotates the oldest out.
+export const RECOVERY_PREV_KEY = RECOVERY_KEY + '.prev';
 
 // Export envelope marker. Lets an import tell a HORDES export from any other
 // JSON file the player might pick.
@@ -826,10 +830,21 @@ export function resetCharacterProgress(profile, characterId, cat) {
 /**
  * Copy an unreadable payload into the recovery slot so nothing is ever
  * silently discarded. Returns true when the copy succeeded. Never throws.
+ * N5 (audit 2026-09-16): TWO slots. When a new incident arrives and the
+ * primary slot is occupied, the existing payload moves to '<key>.prev'
+ * (overwriting any older one) before the new payload is written — latest
+ * stays primary, the prior incident stays recoverable, storage stays
+ * bounded at two.
  */
 export function preservePayload(storage, raw, reason, key = RECOVERY_KEY) {
   try {
-    resolveStorage(storage).setItem(key, JSON.stringify({
+    const s = resolveStorage(storage);
+    let prev = null;
+    try { prev = s.getItem(key); } catch { prev = null; }
+    if (typeof prev === 'string' && prev) {
+      try { s.setItem(key + '.prev', prev); } catch { /* rotation is best-effort */ }
+    }
+    s.setItem(key, JSON.stringify({
       at: new Date().toISOString(), reason, raw,
     }));
     return true;
@@ -928,11 +943,17 @@ export function loadProfileFrom(storage, cat, opts = {}) {
   };
 }
 
-/** Persist a profile. Always stamps the current schema version. */
-export function saveProfileTo(profile, storage) {
+/**
+ * Persist a profile. Always stamps the current schema version.
+ * N2 (audit 2026-09-16): honours `opts.key` symmetrically with loadProfileFrom
+ * — a profile loaded from a non-default slot saves back to THAT slot. No key
+ * passed: the default slot, byte-identical to the old behaviour.
+ */
+export function saveProfileTo(profile, storage, opts = {}) {
   const p = plainObject(profile) ? profile : {};
+  const key = (opts && opts.key) || STORAGE_KEY;
   try {
-    resolveStorage(storage).setItem(STORAGE_KEY, JSON.stringify({ ...p, version: PROFILE_VERSION }));
+    resolveStorage(storage).setItem(key, JSON.stringify({ ...p, version: PROFILE_VERSION }));
     return true;
   } catch { return false; }
 }

@@ -28,6 +28,20 @@ export async function boot(opts = {}) {
         };
       }
       if (prop === 'strokeRect') return noop;
+      // N6 (radar plate cache): the static plate blits per frame as ONE
+      // drawImage — recorded as a rect op so ink-count/box-containment checks
+      // still see it (the 3/5/9-argument canvas forms map to their dest box).
+      if (prop === 'drawImage') {
+        return (...a) => {
+          if (!rec.on) return;
+          const img = a[0];
+          let x = 0, y = 0, w = 0, h = 0;
+          if (a.length >= 9) { x = a[5]; y = a[6]; w = a[7]; h = a[8]; }
+          else if (a.length >= 5) { x = a[1]; y = a[2]; w = a[3]; h = a[4]; }
+          else { x = a[1]; y = a[2]; w = (img && img.width) || 0; h = (img && img.height) || 0; }
+          rec.rects.push({ x, y, w, h, d: rec.depth, n: rec.rects.length });
+        };
+      }
       if (prop === 'fillText') {
         return (txt, x, y) => {
           if (rec.on) rec.texts.push({ txt: String(txt), x, y, d: rec.depth, n: rec.rects.length });
@@ -93,6 +107,10 @@ export async function boot(opts = {}) {
     addEventListener: noop, removeEventListener: noop,
     body: el(),
   };
+  // N6: the renderer's offscreen plate cache borrows a scratch canvas from the
+  // MAIN canvas's ownerDocument (Node has no OffscreenCanvas) — same shape a
+  // real browser's canvas carries.
+  canvas.ownerDocument = globalThis.document;
 
   // Event handlers the game registers (routed by type, smoke.mjs precedent).
   const handlers = {};

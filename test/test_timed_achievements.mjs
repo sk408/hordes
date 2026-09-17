@@ -53,12 +53,16 @@ s.check('at least two timed goals carry an EXISTING unlock kind and target', () 
 s.check('goalText states the conjunction honestly (never "before")', () => {
   for (const a of ACHIEVEMENTS.filter(x => x.goal.kind === 'run')) {
     const t = goalText(a);
-    if (!/in a run under \d+:\d\d/.test(t)) throw new Error(a.id + ' goal text is not the honest shape: ' + t);
-    if (/before/i.test(t)) throw new Error(a.id + ' claims "before" — the measurement does not honour that: ' + t);
+    // RETARGETED (N4, audit 2026-09-16): the earn check is INCLUSIVE (rt ===
+    // within earns — pinned by the boundary test below), so the text says
+    // "in mm:ss or less". The old pin "in a run under mm:ss" claimed an
+    // exclusive boundary the code never enforced.
+    if (!/in a run in \d+:\d\d or less/.test(t)) throw new Error(a.id + ' goal text is not the honest shape: ' + t);
+    if (/before|under \d/i.test(t)) throw new Error(a.id + ' claims a boundary the measurement does not honour: ' + t);
     if (/_/.test(t)) throw new Error(a.id + ' leaks a raw stat id: ' + t);
   }
   // Spot-check the exact rendering for one goal.
-  if (goalText(ACHIEVEMENT_BY_ID.WAVE5_UNDER_3MIN) !== 'Wave 5+ in a run under 3:00') {
+  if (goalText(ACHIEVEMENT_BY_ID.WAVE5_UNDER_3MIN) !== 'Wave 5+ in a run in 3:00 or less') {
     throw new Error('WAVE5 text: ' + goalText(ACHIEVEMENT_BY_ID.WAVE5_UNDER_3MIN));
   }
 });

@@ -141,9 +141,20 @@ S.check('painted dots equal radarDots() exactly — positions and RADAR_TIERS cl
         `no ${size}px rect at ${d.tier} dot (${d.x},${d.y})`);
     }
   });
-  S.check('the radar box itself is painted (plate rows + rim pixels inside the box)', () => {
+  S.check('the radar box itself is painted (ONE cached-plate blit + the dot rects)', () => {
+    // N6 retarget (audit 2026-09-16, disclosed): the plate/rim/ring/pip paint
+    // moved OFFSCREEN — prerendered once into a canvas cache and blitted per
+    // frame as a single drawImage (the harness recorder maps it to its dest
+    // box). The old pin (>100 plate-row fills in the box) pinned the wasteful
+    // per-frame repaint the cache removed; the plate's PIXELS are pinned
+    // byte-identical by tools/verify_nits_n6_parity.mjs in real Chrome.
     const boxRects = rects.filter(inBox);
-    assert.ok(boxRects.length > 100, `expected plate+rim+dots paint, got ${boxRects.length} rects`);
+    const blits = boxRects.filter((r) => r.w === 2 * R + 1 && r.h === 2 * R + 1);
+    assert.equal(blits.length, 1, `expected exactly one plate blit, got ${blits.length}`);
+    assert.equal(blits[0].x, CX - R, 'the blit is not anchored at the box corner');
+    assert.equal(blits[0].y, CY - R, 'the blit is not anchored at the box corner');
+    assert.ok(boxRects.length > blits.length, 'the dots must paint inside the box too');
+    assert.equal(T.renderer.radarPlateBuilds, 1, 'the static plate was rebuilt mid-run');
   });
 }
 

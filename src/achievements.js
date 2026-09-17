@@ -146,7 +146,11 @@ export function normalizeAchievements(raw) {
   const out = emptyAchievements();
   if (plainObject(src.earned)) {
     for (const [id, at] of Object.entries(src.earned)) {
-      if (!ACHIEVEMENT_BY_ID[id]) continue;
+      // N3 (audit 2026-09-16): an id the live catalog does not know is a
+      // NEWER BUILD's trophy — carried VERBATIM (the policy save.js states
+      // for unknown fields), so a structural repair on a same-version
+      // downgrade cannot destroy it. KNOWN ids are repaired as before.
+      if (!ACHIEVEMENT_BY_ID[id]) { out.earned[id] = at; continue; }
       if (at === false || at === null || at === undefined) continue;
       const n = intOr(at, 0);
       out.earned[id] = n > 0 ? n : 1;   // a truthy-but-unstamped earn still counts as earned
@@ -154,7 +158,7 @@ export function normalizeAchievements(raw) {
   }
   if (plainObject(src.progress)) {
     for (const [id, n] of Object.entries(src.progress)) {
-      if (!ACHIEVEMENT_BY_ID[id]) continue;
+      if (!ACHIEVEMENT_BY_ID[id]) { out.progress[id] = n; continue; }   // N3: verbatim
       out.progress[id] = intOr(n, 0);
     }
   }
@@ -175,8 +179,10 @@ export function normalizeAchievements(raw) {
   }
   // An achievement can be earned without a stamped progress value (older save,
   // or earned via a state goal that has no number) — backfill so the gallery
-  // never shows "0 / 5" next to a finished trophy.
+  // never shows "0 / 5" next to a finished trophy. N3: an unknown id (a newer
+  // build's, preserved above) has no catalog row to backfill from — skip it.
   for (const id of Object.keys(out.earned)) {
+    if (!ACHIEVEMENT_BY_ID[id]) continue;
     const need = ACHIEVEMENT_BY_ID[id].goal.n;
     if (need !== undefined && (out.progress[id] || 0) < need) out.progress[id] = need;
   }
@@ -505,7 +511,10 @@ export function goalText(ach) {
   if (g.kind === 'run') {
     const noun = { wave: 'Wave', kills: 'Enemies slain', gold: 'Gold earned' }[g.stat] || label;
     const mm = Math.floor(g.within / 60), ss = String(g.within % 60).padStart(2, '0');
-    return `${noun} ${g.n}+ in a run under ${mm}:${ss}`;
+    // N4 (audit 2026-09-16): the earn check is INCLUSIVE (rt === within earns,
+    // achievements.js recordRun) — the text must say so. "under mm:ss" claimed
+    // an exclusive boundary the code never enforced.
+    return `${noun} ${g.n}+ in a run in ${mm}:${ss} or less`;
   }
   return label + ' (single run)';
 }
