@@ -159,6 +159,9 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
     JSON.stringify(HINT_IDS) === JSON.stringify([
       'move', 'portal',
       'potion-hp', 'potion-mp', 'skill-q', 'skill-w',
+      // RSS8 (2026-09-17): the card-granted magnet sweep is a control too —
+      // armed only when the run holds the mythic (see updateOnboarding).
+      'skill-magnet',
       'focus', 'stance', 'pilot', 'radar', 'map', 'stats',
       // '?' SUPPLEMENT (2026-09-16): the "?" affordance introduces itself too
       'help',

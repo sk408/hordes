@@ -767,7 +767,8 @@ export class Renderer {
       const t = fx.age / fx.ttl; // 0 -> 1
       if (fx.kind === 'nova' || fx.kind === 'nova_pulse' || fx.kind === 'boss_nova' ||
           fx.kind === 'mine_blast' || fx.kind === 'colossus_shock' ||
-          fx.kind === 'rewrite_boom' || fx.kind === 'rewrite_harvest') {
+          fx.kind === 'rewrite_boom' || fx.kind === 'rewrite_harvest' ||
+          fx.kind === 'magnet') {
         // Expanding ring: 1px rects sampled along a circle. Color per kind.
         const r = fx.radius * t;
         g.fillStyle = fx.kind === 'nova'
@@ -779,11 +780,14 @@ export class Renderer {
               : fx.kind === 'colossus_shock'
                 ? (t < 0.5 ? '#e8e8f0' : '#8a8a96')
                 // G8 step 2: Chain Reaction (warm ember) / Blood Harvest (red).
+                // RSS8 magnet: gold loot tell — matches nothing else on the field.
                 : fx.kind === 'rewrite_boom'
                   ? (t < 0.5 ? '#ffb066' : '#b05a2a')
                   : fx.kind === 'rewrite_harvest'
                     ? (t < 0.5 ? '#ff6a7a' : '#a02a3a')
-                    : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
+                    : fx.kind === 'magnet'
+                      ? (t < 0.5 ? '#ffe98a' : '#c8a03a')
+                      : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
         const steps = 48;
         for (let i = 0; i < steps; i++) {
           const a = (i / steps) * Math.PI * 2;

@@ -24,6 +24,12 @@ export const CONTROLS = [
     purpose: 'cast your class skill (mana + cooldown)' },
   { id: 'skill-w', keys: ['E'], touch: 'OVER',
     purpose: 'overdrive every weapon for a burst (mana + cooldown)' },
+  // RSS8 MAGNET COLLECTOR: a CARD-granted skill, so unlike the rows above it
+  // exists only in runs that drafted the mythic — the touch button is hidden
+  // without the card and the key is a no-op without it. Stated in the purpose
+  // so the reference never promises a control a run does not hold.
+  { id: 'skill-magnet', keys: ['X'], touch: 'MAG',
+    purpose: 'sweep every ground drop to you (the Magnet Collector card skill, 30s cooldown)' },
   { id: 'focus', keys: ['TAB'], touch: 'FOCUS',
     purpose: 'choose what the auto-attack targets' },
   { id: 'stance', keys: ['G'], touch: 'STANCE',

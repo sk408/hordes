@@ -168,6 +168,23 @@ export const CONFIG = {
     REGEN: 0.5,         // mana/s — base trickle; Mana Spring is the way up
   },
 
+  // RSS8 MAGNET COLLECTOR (owner 2026-09-17: "We could have a magnet
+  // collector card. A very rare card that gives a skill to collect all drops
+  // every 30 seconds."). The sweep's own numbers. SWEEP_S is how long the
+  // pull runs (the visible streak-in); PULL_RATE is the exponential pull
+  // strength per second (distance shrinks by e^-PULL_RATE*SWEEP_S ~= 0.2% —
+  // everything lands inside the pickup radius from any field distance);
+  // AUTO_MIN is the AUTO-PILOT's floor-value policy: fire when that many
+  // ground drops are outstanding. The COOLDOWN lives on the skill def below
+  // (30s, the owner's number; NO mana price — the cooldown is the whole
+  // cost).
+  MAGNET: {
+    SWEEP_S: 0.45,
+    PULL_RATE: 14,
+    AUTO_MIN: 25,
+    RING_RADIUS: 110,   // the expanding-ring tell, in world px
+  },
+
   // Player-triggered skills. Keys: Q = FROST_NOVA, W = OVERCHARGE.
   SKILLS: {
     FROST_NOVA: {
@@ -262,6 +279,24 @@ export const CONFIG = {
       TICK: 0.5,          // seconds per tick (9 dmg/tick; heal cap = 9 HP/tick)
       HEAL_PER_KILL: 2,   // HP per enemy KILLED inside, banked and paid per
                           // tick, capped at DPS*TICK so it cannot out-heal a boss
+    },
+    // RSS8 MAGNET COLLECTOR: the card-granted, player-FIRED collection skill.
+    // Not a class skill — it exists only in runs that drafted the MYTHIC
+    // 'Magnet Collector' card (main.js gates the act on the run holding it,
+    // the same card-flag pattern the Frost Nova card uses). Fired on X / the
+    // MAG touch button; 30s cooldown, no mana (the cooldown is the cost).
+    // The effect itself is a PULL, not an instant credit: the sweep moves
+    // every ground drop to the player and the NORMAL pickup loop pays every
+    // one through the one credit path (XP mults, potion cap, equip
+    // decisions) — the skill never invents a second payout.
+    MAGNET_PULL: {
+      KEY: 'x',
+      NAME: 'Magnet Pull',
+      LABEL: 'MAG',
+      MANA: 0,
+      COOLDOWN: 30,      // seconds — the owner's number; the whole cost
+      FLAT_CD: true,     // EXACTLY 30 (perks.js): Focus/rewrite-slot cooldown
+                         // mults do not apply — the card SAYS 30s, so it IS 30s
     },
   },
 
@@ -1022,6 +1057,20 @@ export const DRAFT_MYTHIC_UPGRADES = [
   { id: 'storm_shards', name: 'Storm Shards', desc: 'XP pickups chip nearby enemies', apply: (p) => { p.stats.stormShards = true; } },
   // A compounding draft investment: worth it early, dead late.
   { id: 'full_hand',  name: 'Full Hand',     desc: '+1 draft offer for the rest of the run', apply: (p) => { p.stats.draftOffers = (p.stats.draftOffers || 0) + 1; } },
+  // RSS8 MAGNET COLLECTOR (owner 2026-09-17: "a very rare card that gives a
+  // skill to collect all drops every 30 seconds"). "Very rare" maps onto THIS
+  // tier — the top draft tier that exists (run-gated chase pool, violet
+  // badge) — no new tier is invented. The apply writes the run-local skill
+  // flag (the Frost Nova card's pattern: never the save schema, nothing to
+  // migrate); pick()'s MYTHIC branch keeps the once-per-run ledger. POOL
+  // DILUTION, disclosed: with a 4th card in the chase draw each specific
+  // mythic's per-run rate moves from 0.1 x 1.55/3 = 5.17% to 0.1 x 1.55/4 =
+  // 3.88% of runs — rarity is the owner's lever, no gate constant changed.
+  // The desc states WHAT it does AND its cooldown (the player-review rule:
+  // specials must say what you get).
+  { id: 'magnet_collector', name: 'Magnet Collector',
+    desc: 'SKILL [X]: every gem, potion and item on the field sweeps to you · 30s cooldown',
+    apply: (p) => { if (!p.skills) p.skills = {}; p.skills.magnet = true; } },
 ];
 
 // ============================================================================

@@ -2609,6 +2609,7 @@ function update(dt) {
     }
   }
 
+
   // Effective pickup radius: base + Loot Vortex items + MAGNET arch.
   const basePickR = p.stats.pickup * (p.stats.pickupMult || 1) * am.pickupMult;
   // WAVE-26 "stance that bites": STANCE loot magnetism. GREEDY reaches further
@@ -4263,6 +4264,9 @@ function manualRowsControls() {
     refRow('auto &harr; manual', 'PILOT') +
     refRow('your build &amp; gear', 'STATS') +
     refRow('skills', 'FROST / OVER') +
+    // RSS8: the card-granted sweep, named so the touch layer's MAG button can
+    // never outrun the reference (the button only exists with the card).
+    refRow('magnet sweep: every drop flies to you (the Magnet Collector card\u2019s skill, 30s cooldown)', 'MAG') +
     // IN-RUN REFERENCE ACCESS + POTION ICONS (owner 2026-09-16: the rows must
     // use the word "potion" and say what each one restores — one row each, the
     // key named, so both name sets stay one-glyph-one-meaning) ...
@@ -4625,7 +4629,7 @@ const onboardingAnchor = () => {
 // The strip keeps clear of the joystick and the touch buttons (invariant 5).
 // UP-FRONT CONTROLS: the named cog row (SETTINGS / HELP / RADAR / MAP) is
 // wider than the old glyphs — all four buttons are avoid rects now.
-const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog', 'tc-help', 'tc-radar', 'tc-map'];
+const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog', 'tc-help', 'tc-radar', 'tc-map', 'tc-magnet'];
 const onboardingAvoid = () => {
   const rects = ONBOARDING_AVOID_IDS
     .map(id => document.getElementById(id))
@@ -4792,6 +4796,14 @@ function updateOnboarding(dt) {
         ...(qIntroPurpose ? { purpose: qIntroPurpose } : {}),
       }));
     maybeHint('skill-w', inCombat && wReady, introLine('skill-w', touch));
+    // RSS8 MAGNET COLLECTOR: a CARD-granted control — it can only matter once
+    // the run drafted the mythic, and the first moment it matters is the first
+    // time there is actually something on the floor to sweep. Runs without the
+    // card never arm it (the control does not exist for them).
+    maybeHint('skill-magnet',
+      magnetHeld(state) &&
+      (state.gems.length + state.drops.length + state.itemDrops.length) > 0,
+      introLine('skill-magnet', touch));
     maybeHint('potion-hp', p.potions.hp > 0 && p.hp < p.stats.maxHp * 0.85,
       introLine('potion-hp', touch));
     maybeHint('potion-mp', p.potions.mp > 0 && p.mana < skillManaCost(qid, state),
@@ -6414,6 +6426,7 @@ function startRun() {
   state.gems = [];
   state.drops = [];
   state.itemDrops = [];
+  state.magnetSnap = null;   // RSS8: a fresh run owes no sweep total
   state.chests = [];
   state.items = [];
   state.arches = [];
@@ -6911,6 +6924,14 @@ function classSkillId(st) {
   return (st.character && st.character.skill) || 'FROST_NOVA';
 }
 
+// RSS8: does THIS run hold the Magnet Collector card? Run-local flag on the
+// player's skills bag (the Frost Nova card's pattern), read by the manual
+// act, the auto-cast gate and the touch button's visibility — one definition.
+function magnetHeld(st) {
+  const q = st && st.player;
+  return !!(q && q.skills && q.skills.magnet);
+}
+
 function runAction(act) {
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
@@ -6967,6 +6988,12 @@ function runAction(act) {
     flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
   }
   else if (act === 'w') { controlUsed('skill-w'); useSkill(state, 'OVERCHARGE'); }
+  // RSS8 MAGNET COLLECTOR: the card-granted skill's MANUAL act (X key / the
+  // MAG touch button). Gated on the run HOLDING the card — without it the act
+  // is a no-op (the def exists in C.SKILLS regardless, like FROST_NOVA).
+  else if (act === 'magnet') {
+    if (magnetHeld(state)) { controlUsed('skill-magnet'); useSkill(state, 'MAGNET_PULL'); }
+  }
   else if (act === 'h') { controlUsed('potion-hp'); drinkHealthPotion(state); }
   else if (act === 'n') { controlUsed('potion-mp'); drinkManaPotion(state); }
 }
@@ -7123,6 +7150,16 @@ function autoCastSkills(state) {
     if (bossUp || p.mana >= p.stats.maxMana * ac.NEAR_FULL) {
       useSkill(state, 'OVERCHARGE');
     }
+  }
+  // RSS8 MAGNET COLLECTOR: the AUTO policy — the parity rule in the other
+  // direction (an ability the player has must have an auto policy). A pure
+  // FLOOR-VALUE gate: fire when that many drops are outstanding, never on a
+  // timer, so the pilot banks the field exactly when the field is worth
+  // banking. MANA 0, so the pool check is vacuous but kept for symmetry.
+  if (magnetHeld(state) && (p.skillCd.MAGNET_PULL || 0) <= 0 &&
+      p.mana >= skillManaCost('MAGNET_PULL', state)) {
+    const floor = state.gems.length + state.drops.length + state.itemDrops.length;
+    if (floor >= C.MAGNET.AUTO_MIN) useSkill(state, 'MAGNET_PULL');
   }
 }
 
@@ -7347,6 +7384,7 @@ window.addEventListener('keydown', (ev) => {
       [C.SKILLS[classSkillId(state)].KEY]: 'q',
       [C.SKILLS.OVERCHARGE.KEY]: 'w',   // AUTO only in practice: in MANUAL, 'w' is held 'up'
       e: 'w',
+      [C.SKILLS.MAGNET_PULL.KEY]: 'magnet',   // RSS8: a no-op unless the run holds the card
       h: 'h', n: 'n',
     };
     const act = keyMap[k];
@@ -7376,7 +7414,7 @@ const touchLayer = document.getElementById('touch');
 const joyEl = document.getElementById('joy');         // WAVE-15 joystick base
 const joyKnobEl = document.getElementById('joy-knob');
 const touchEls = {};
-for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-radar', 'tc-map']) {
+for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-radar', 'tc-map', 'tc-magnet', 'tc-mag']) {
   touchEls[id] = document.getElementById(id);
 }
 
@@ -8073,6 +8111,12 @@ function updateTouchHud() {
   };
   skill('tc-q', classSkillId(state));
   skill('tc-w', 'OVERCHARGE');
+  // RSS8: the MAGNET button exists only in runs that hold the card (hidden
+  // otherwise — a control for an ability you do not have is noise), and its
+  // badge reads the SAME helpers useSkill pays, like Q/W above.
+  const magBtn = touchEls['tc-magnet'];
+  if (magBtn) magBtn.hidden = !magnetHeld(state);
+  if (magnetHeld(state)) skill('tc-mag', 'MAGNET_PULL');
   set('tc-h', String(p.potions.hp));
   set('tc-n', String(p.potions.mp));
   // A2: the RADAR button carries no badge — its lit frame IS the readout
@@ -8760,6 +8804,41 @@ function mawWithdrew() {
   openIntermission();
 }
 
+// RSS8 MAGNET COLLECTOR: the live sweep tick. While it runs, every ground drop
+// is pulled exponentially toward the player — the credit itself happens ONLY in
+// the NORMAL pickup loop inside update() (the one payout path), so collection
+// through the sweep is worth exactly collection on foot. When the sweep ends,
+// the diff against the cast-time snapshot becomes the visible per-type total;
+// items the run's own rules refuse (an over-cap potion, an IGNOREd equip)
+// honestly stay on the floor at the player's feet.
+//
+// WALL-CLOCK slot (the bannerHold/tickNight rule), NOT inside update(): the
+// sweep collects XP, and XP levels fire openDraft() — which parks the run in
+// 'draft' mode and FREEZES update() mid-sweep (a sweep frozen at 0.25s of 0.45
+// never printed its total; the freeze was the bug). Ticking here on realDt
+// also makes the streak immune to the earned-moment dilation by construction.
+function tickMagnetSweep(realDt) {
+  const p = state.player;
+  if (!p || !(p.magnetSweep > 0)) return;
+  p.magnetSweep -= realDt;
+  const pull = Math.min(1, realDt * C.MAGNET.PULL_RATE);
+  for (const arr of [state.gems, state.drops, state.itemDrops]) {
+    for (const g of arr) { g.x += (p.x - g.x) * pull; g.y += (p.y - g.y) * pull; }
+  }
+  if (p.magnetSweep <= 0 && state.magnetSnap) {
+    const a = state.magnetSnap;
+    const gems = a.gems - state.gems.length;
+    const potions = a.potions - state.drops.reduce((s, d) => s + (d.count || 1), 0);
+    const items = a.items - state.itemDrops.length;
+    const parts = [];
+    if (gems > 0) parts.push(gems + ' GEM' + (gems === 1 ? '' : 'S'));
+    if (potions > 0) parts.push(potions + ' POTION' + (potions === 1 ? '' : 'S'));
+    if (items > 0) parts.push(items + ' ITEM' + (items === 1 ? '' : 'S'));
+    toast(parts.length ? 'MAGNET SWEEP: ' + parts.join(' \u00b7 ') : 'MAGNET SWEEP: nothing to collect');
+    state.magnetSnap = null;
+  }
+}
+
 state.mode = 'intro';
 let last = performance.now();
 let lastIntroPhase = null;
@@ -8814,6 +8893,9 @@ function frame(now) {
   // NIGHT MODE: the intermission auto-CONTINUE + the end-card auto-RETRY,
   // same wall-clock slot (mode-gated no-ops in every other mode).
   tickNight(realDt);
+  // RSS8: the magnet sweep ticks on the same wall-clock slot (see
+  // tickMagnetSweep — it must keep running while a level-up draft parks the sim).
+  tickMagnetSweep(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);

@@ -125,6 +125,26 @@ const MOTIFS = {
       '007777700',
     ),
   },
+  // RSS8 MAGNET COLLECTOR — a HORSESHOE: the classic U with steel pole tips
+  // at the opening and the gold it is pulling up between them. NOT gem_magnet
+  // (that is the pickup-RADIUS stat card's field-line motif); this is the
+  // active sweep's own shape, opening DOWN onto the loot.
+  horseshoe: {
+    palette: { 5: '#b23a3a', 6: '#e08a8a', 7: '#9aa4b8', 8: '#ffe07a' },
+    grid: G(
+      '066666660',
+      '655555556',
+      '650000056',
+      '650000056',
+      '650000056',
+      '650000056',
+      '650000056',
+      '670000076',
+      '670000076',
+      '007808700',
+      '000787000',
+    ),
+  },
   spear: {
     palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#8a5f2c' },
     grid: G(
@@ -927,6 +947,14 @@ export const CARD_EXPANSION = [
   { id: 'rw_thermalshock', name: 'Thermal Shock', desc: 'rewrite card',      rank: 'J', suit: 'hearts',   motif: 'thermal_crack',  tier: 'RARE' },
   { id: 'rw_stormreaper',  name: 'Storm Reaper',  desc: 'rewrite card',      rank: 'J', suit: 'diamonds', motif: 'thunder_blast',  tier: 'RARE' },
   { id: 'rw_glacialorbit', name: 'Glacial Orbit', desc: 'rewrite card',      rank: 'Q', suit: 'hearts',   motif: 'glacier_ring',   tier: 'RARE' },
+  // RSS8 MAGNET COLLECTOR (owner 2026-09-17): the 4th MYTHIC chase card, so
+  // the expansion tier vocabulary grows a third entry — `tier: 'MYTHIC'` on
+  // an ACE rank (the tier is still DERIVED from the rank: ace = MYTHIC, the
+  // same RANK_CLASS mapping the core-deck mythics ride). Suit: DIAMONDS, the
+  // economy/loot family (the card's whole job is collecting the floor), and
+  // the one free ace beside full_hand's A of clubs — no rank+suit duplicate
+  // anywhere in the full deck.
+  { id: 'magnet_collector', name: 'Magnet Collector', desc: 'SKILL [X]: sweep every drop · 30s cooldown', rank: 'A', suit: 'diamonds', motif: 'horseshoe', tier: 'MYTHIC' },
 ];
 export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 

@@ -149,6 +149,12 @@ export function skillManaCost(defId, state) {
 export function skillCooldown(defId, state) {
   const def = C.SKILLS[defId];
   if (!def) return 0;
+  // RSS8: a FLAT_CD def is EXACTLY its COOLDOWN — the Focus perk and the
+  // empty-rewrite-slot economy do not touch it. The Magnet Collector card
+  // states "30s cooldown" in its own draft copy, and a stated number the run
+  // quietly shaves to 24s is precisely the "specials do not explain what you
+  // get" complaint; the owner's 30s rhythm is the whole contract.
+  if (def.FLAT_CD) return def.COOLDOWN;
   // G21 slice 1 (C2): the empty-rewrite-slot payment multiplies the COOLDOWN
   // part ONLY, HERE — the ONE applied-value read — so the game and the HUD
   // can never disagree. A kill-charged ult's KILL count never touches this

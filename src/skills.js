@@ -99,6 +99,24 @@ export function useSkill(state, id) {
       if (head && Math.hypot(head.x - from.x, head.y - from.y) > def.CHAIN_RANGE) head = null;
     }
     state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.25 });
+  } else if (id === 'MAGNET_PULL') {
+    // RSS8 MAGNET COLLECTOR: a PULL, never a second payout. The cast arms a
+    // short sweep (p.magnetSweep) that main.js's update moves every ground
+    // drop along; the NORMAL pickup loop then credits each one through the
+    // one path — XP mults, the potion cap and the equip decisions all apply,
+    // so an over-cap potion honestly stays on the floor and an IGNOREd item
+    // honestly stays put. The snapshot at cast is what the completion toast
+    // diffs against (the collected total, per drop type). No rng, no DOM.
+    p.magnetSweep = C.MAGNET.SWEEP_S;
+    state.magnetSnap = {
+      // (|| [] : useSkill is also cast on bare fixtures — test_perks runs the
+      // WHOLE catalog through it — and an empty floor is a legal snapshot.)
+      gems: (state.gems || []).length,
+      potions: (state.drops || []).reduce((s, d) => s + (d.count || 1), 0),
+      items: (state.itemDrops || []).length,
+    };
+    state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0,
+      ttl: C.MAGNET.SWEEP_S + 0.15, radius: C.MAGNET.RING_RADIUS });
   }
   return true;
 }

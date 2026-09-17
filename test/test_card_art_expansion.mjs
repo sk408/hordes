@@ -97,6 +97,9 @@ const RANK_GLYPHS = {
   'J': ['011', '001', '001', '101', '010'],
   'Q': ['111', '101', '101', '111', '001'],
   'K': ['101', '101', '110', '101', '101'],
+  // RSS8 (disclosed 2026-09-17): the expansion deck's first ACE — the
+  // magnet_collector MYTHIC. Same glyph the core deck's ace (full_hand) rides.
+  'A': ['010', '101', '111', '101', '101'],
 };
 const SUIT_PIPS = {
   spades:   ['00100', '01110', '11111', '00100', '01110'],
@@ -117,12 +120,17 @@ const interiorOf = (id) => CARD_ART[id]
   ? JSON.stringify(CARD_ART[id].grid.slice(10, 25).map((r) => r.slice(7, 17)))
   : 'MISSING:' + id;
 // CONTRACT UPDATE 2026-09-15 (owner decision — see the header): a CARD_EXPANSION
-// entry may declare EITHER of two tiers, and the declaration must agree with the
-// rank class the card carries: COMMON = a number rank, RARE = a face rank. The
-// mapping is read off RANK_CLASS so it lives in ONE place in the codebase; a
-// card declaring ace/joker/chase (the W7b ladder + the two jokers) is refused,
-// and so is a card whose rank contradicts its declaration.
-const TIER_RANK_CLASS = { COMMON: 'number', RARE: 'face' };
+// entry may declare a tier, and the declaration must agree with the rank class
+// the card carries: COMMON = a number rank, RARE = a face rank. The mapping is
+// read off RANK_CLASS so it lives in ONE place in the codebase; a card whose
+// rank contradicts its declaration is refused.
+// CONTRACT UPDATE 2026-09-17 (RSS8, disclosed): the expansion tier vocabulary
+// grows MYTHIC = an ace rank — the 4th MYTHIC chase card (magnet_collector)
+// lives in the EXPANSION deck because the core deck's 13-card pin does not
+// move, and it must resolve as an ace/joker like every other
+// DRAFT_MYTHIC_UPGRADES member (see the FULL POOL COVERAGE section). Joker
+// stays refused here: the two full-art jokers are core-deck-only.
+const TIER_RANK_CLASS = { COMMON: 'number', RARE: 'face', MYTHIC: 'ace' };
 const DEF_BY_ID = Object.fromEntries(CARD_EXPANSION.map((c) => [c.id, c]));
 // The ONLY rare-tier expansion cards: the live rewrite registry's cross-tag
 // combos (two reserved tags). Derived, never a frozen id list — and the deck id
@@ -205,8 +213,10 @@ console.log('DECK CONTRACT (derived from CARD_EXPANSION — no frozen count):');
     eq(a.rankClass, TIER_RANK_CLASS[declared], def.id + ' rank class agrees with its declared tier');
     eq(a.tier, RANK_CLASS[a.rankClass], def.id + ' tier IS the rank class (rank IS the rarity)');
     eq(a.tier, declared, def.id + ' derived tier matches the declaration');
-    ok(declared === 'RARE' || a.rankClass === 'number',
-      def.id + ' COMMON expansion cards keep a NUMBER rank (only the rare tier carries a face)');
+    // (RSS8 2026-09-17, disclosed: MYTHIC joins RARE as a non-number tier —
+    // the 4th mythic chase card rides an ACE in this deck.)
+    ok(declared === 'RARE' || declared === 'MYTHIC' || a.rankClass === 'number',
+      def.id + ' COMMON expansion cards keep a NUMBER rank (rare = face, mythic = ace)');
     ok(!!SUITS[a.suit], def.id + ' suit is one of the four suits');
     eq(a.family, SUITS[a.suit] && SUITS[a.suit].family, def.id + ' family (suit IS the family)');
     eq(a.motif, def.motif, def.id + ' motif');

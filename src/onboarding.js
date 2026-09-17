@@ -201,6 +201,10 @@ export const GIVE_UP_RUNS = 3;
 export const HINT_IDS = [
   'move', 'portal',
   'potion-hp', 'potion-mp', 'skill-q', 'skill-w',
+  // RSS8 MAGNET COLLECTOR (2026-09-17): a card-granted control — the intro is
+  // armed by the run DRAFTING the mythic, never by the clock (see main.js
+  // updateOnboarding), and retires the first time the sweep is fired.
+  'skill-magnet',
   'focus', 'stance', 'pilot', 'radar', 'map', 'stats',
   // '?' SUPPLEMENT (2026-09-16): the "?" affordance introduces itself too —
   // its explanation used to live only INSIDE the screen it opens (circular).

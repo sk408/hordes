@@ -1732,9 +1732,16 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   const leftHtml = seg('class="pad left"', '<div id="joy"');
   const rightHtml = seg('class="pad right"', '<button class="cog"');
   const countBtn = (s) => (s.match(/<button/g) || []).length;
-  assert(countBtn(leftHtml) === 4 && countBtn(rightHtml) === 4,
-    'both pads must be single-column 4-button stacks (L=' + countBtn(leftHtml) +
-    ' R=' + countBtn(rightHtml) + ')');
+  // RSS8 (disclosed 2026-09-17): the right pad is the 4-button stack PLUS the
+  // card-gated MAG button — a run that has not drafted the Magnet Collector
+  // must still see EXACTLY the WAVE-17 stack, so the fifth button ships
+  // `hidden` in the markup (main.js only ever un-hides it when the card is
+  // held). Single column either way (the pair ban below still holds), and the
+  // horizontal math is count-independent (the fixed 96px pad width).
+  assert(countBtn(leftHtml) === 4 && countBtn(rightHtml) === 5 &&
+         /id="tc-magnet"\s+hidden/.test(rightHtml),
+    'both pads stay single-column stacks — 4 buttons, plus the card-gated MAG button shipped hidden (L=' +
+    countBtn(leftHtml) + ' R=' + countBtn(rightHtml) + ')');
   assert(!/class="pair"/.test(touchHtml),
     'no side-by-side pair may widen the right pad');
   assert(/data-act="settings"/.test(touchHtml) && /cog-gear/.test(touchHtml),

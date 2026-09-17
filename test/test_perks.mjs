@@ -123,8 +123,16 @@ ok('skillManaCost / skillCooldown: Focus multiplies, unknown ids cost 0', () => 
     // the COOLDOWN through the same one seam, so the exact pin is now
     // COOLDOWN [x Focus] x emptySlotCooldownMult(state) — x0.80 on these
     // zero-rewrite fixtures, x1.00 at a full house (covered in test_rewrites).
-    assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off));
-    assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on));
+    // RSS8 (disclosed 2026-09-17): a FLAT_CD def is EXACTLY its COOLDOWN —
+    // the Magnet Collector card states "30s cooldown" in its own draft copy,
+    // so neither Focus nor the empty-slot economy may shave the stated number.
+    if (C.SKILLS[id].FLAT_CD) {
+      assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN);
+      assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN);
+    } else {
+      assert.equal(skillCooldown(id, off), C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off));
+      assert.equal(skillCooldown(id, on), C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on));
+    }
   }
   assert.equal(skillManaCost('NOPE', on), 0, 'same guard as useSkill');
   assert.equal(skillCooldown('NOPE', on), 0);
@@ -185,8 +193,15 @@ ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
     }
     // RETARGET (G21 slice 1, C2): same empty-slot payment, same one seam —
     // the exact pins multiply by emptySlotCooldownMult(state).
-    assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on), id + ' cooldown');
-    assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off), 'and the perk-off run is the shipped price');
+    // RSS8 (disclosed 2026-09-17): a FLAT_CD def rolls EXACTLY its COOLDOWN
+    // (the Magnet Collector's stated 30s is the whole contract).
+    if (C.SKILLS[id].FLAT_CD) {
+      assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN, id + ' cooldown (flat, Focus-proof)');
+      assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN, 'and the perk-off run rolls the same flat 30');
+    } else {
+      assert.equal(b.skillCd[id], C.SKILLS[id].COOLDOWN * FOCUS_COOLDOWN_MULT * emptySlotCooldownMult(on), id + ' cooldown');
+      assert.equal(a.skillCd[id], C.SKILLS[id].COOLDOWN * emptySlotCooldownMult(off), 'and the perk-off run is the shipped price');
+    }
   }
 });
 

@@ -21,16 +21,26 @@ await withPage({ w: 390, h: 844, dpr: 3, mobile: true }, async (p) => {
   await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()`, 15000);
   await p.waitFor(`(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal; return !rv || rv.phase === 'settled'; })()`, 8000);
 
-  // Fund the wallet through the live profile, then persist it.
-  await p.evaluate(`(async () => { const T2 = ${T};
+  // Fund the wallet through the live profile, then persist it. The loadout
+  // door coach is suppressed (its localStorage flag, read live by tourFlag) —
+  // same as the node battery: the BUYS here must not need the coach, whose own
+  // flow is pinned by test_g26_loadout / tour tests. Unsuppressed it lays its
+  // spotlight over the shop's BACK row and eats the tap.
+  await p.evaluate(`(async () => {
+    localStorage.setItem('hordes_onboarded', '1');
+    localStorage.setItem('hordes_tour_loadout', '1');
+    const T2 = ${T};
     T2.getProfile().gold = 10000000; T2.save.autosave(); })()`);
 
-  // The tap targets are REAL cards: find by text, tap by rect centre (CDP).
+  // The tap targets are REAL cards: find by text, SCROLL #overlay until the row
+  // is on-screen (the shop ladder runs past the fold), tap by rect centre (CDP).
   const tapCard = async (text) => {
     const r = await p.evaluate(`(() => {
       const el = [...document.getElementById('ov-cards').children]
         .find(k => (k.textContent || '').toUpperCase().includes(${JSON.stringify(text)}));
-      if (!el) return null; const q = el.getBoundingClientRect();
+      if (!el) return null;
+      el.scrollIntoView({ block: 'center' });
+      const q = el.getBoundingClientRect();
       return [q.x + q.width / 2, q.y + q.height / 2]; })()`);
     if (!r) throw new Error('no card: ' + text);
     await p.tap(r[0], r[1]);

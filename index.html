@@ -568,6 +568,9 @@
     <div class="pad right">
       <button data-act="q"><span class="key">[Q]</span><span id="q-skill">FROST</span><span class="badge" id="tc-q">RDY</span></button>
       <button data-act="w"><span class="key">[E]</span>OVER<span class="badge" id="tc-w">RDY</span></button>
+      <!-- RSS8 MAGNET COLLECTOR: a fired skill on a 30s cooldown; the button
+           exists only in runs that hold the card (main.js hides it otherwise). -->
+      <button data-act="magnet" id="tc-magnet" hidden>MAG<span class="badge" id="tc-mag">RDY</span></button>
       <button data-act="h"><span class="potion hp" aria-hidden="true"></span>HP<span class="badge" id="tc-h">1</span></button>
       <button data-act="n"><span class="potion mp" aria-hidden="true"></span>MP<span class="badge" id="tc-n">1</span></button>
     </div>
@@ -590,7 +593,7 @@
          its own art + name + tier + computed text, so one activation takes the
          offer and there is nothing for a second screen to show. -->
     
-    <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; H / N potions &middot; O pilot (WASD+arrows manual) &middot; M map &middot; + / - zoom &middot; R radar &middot; I stats &middot; ESC close / pause &middot; ? help mode &middot; or the on-screen buttons</div>
+    <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; X magnet (card) &middot; H / N potions &middot; O pilot (WASD+arrows manual) &middot; M map &middot; + / - zoom &middot; R radar &middot; I stats &middot; ESC close / pause &middot; ? help mode &middot; or the on-screen buttons</div>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>
