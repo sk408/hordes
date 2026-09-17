@@ -51,9 +51,25 @@ export const STAGES = [
     // STARTING ARENA IMPROVE (2026-09-17): BASIN is the HOLLOW — an authored
     // radial flatten at the arena heart (relief.js envelope), so the map's
     // name is its shape: a calm clearing at the centre, terraces climbing
-    // out toward the rim. Still the shipped model: pure, non-blocking, the
-    // same grade for pilot and horde.
-    relief: { CELL: 480, LEVELS: 3, BASIN: 560 },   // the hollow: flat heart, rising rim
+    // out toward the rim.
+    // BLOCKING ELEVATION PROTOTYPE (2026-09-17, msg_01M2RK5B — the owner:
+    // "let's prototype elevation... add it in and then work on getting it
+    // right"): WALL is the authored RIM WALL — a ring at [r0, r1] raised to
+    // topLevel, with four GATE terraces (gapLevel) at the cardinals, aligned
+    // with the authored GATE landmark stones (render.js, at RIM-150). One
+    // cliff rule in relief.js (a >=2-level step blocks, both sides slide);
+    // the geometry is the stage's own, scoped HERE so the other seven stages
+    // ship byte-identical terrain. Choke points live at the gates.
+    relief: {
+      CELL: 480, LEVELS: 3, BASIN: 560,   // the hollow: flat heart, rising rim
+      WALL: {
+        r0: 700, r1: 760,                 // the rim wall band (world px radius)
+        gaps: [0, Math.PI / 2, Math.PI, -Math.PI / 2],   // N/E/S/W — the gates
+        gapHalf: 0.10,                    // gate half-width (radians, ~146px arc)
+        gapLevel: 1,                      // the gate terrace: one step up, one down
+        topLevel: 2,                      // the rampart top (the stage's tallest)
+      },
+    },
     unlock: null,
   },
   {

@@ -26,7 +26,10 @@ function makeCtx() {
     textAlign: 'left', textBaseline: 'top', imageSmoothingEnabled: true,
     lineWidth: 1, strokeStyle: '#000000',
     setTransform() {}, translate() {}, scale() {}, rotate() {},
-    clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+    // arc(): no-op RECORDING-FREE like the other path ops — the wall band's
+    // ring stroke (render.js drawWall, blocking elevation) arcs; this test's
+    // assertions are fillRect/fillText-geometry only, so the arc adds no seam.
+    clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, arc() {},
     save() { rec.depth++; },
     restore() { rec.depth = Math.max(0, rec.depth - 1); },
     fillRect(x, y, w, h) {

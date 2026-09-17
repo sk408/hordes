@@ -177,6 +177,7 @@ import {
 // radius (the radar's world reach). See src/relief.js for the contract.
 import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
+  reliefLevelAt, reliefStep,
 } from './relief.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -758,8 +759,14 @@ function runController(p, dt, am) {
     // slows whoever climbs it, pilot or horde, by the same rule.
     const grade = reliefGrade(p.x, p.y, decision.moveX, decision.moveY,
       state.groundSeed || 0, stageRelief(state.stage));
-    p.x += decision.moveX * spd * grade * dt;
-    p.y += decision.moveY * spd * grade * dt;
+    // BLOCKING ELEVATION (msg_01M2RK5B): the cliff rule + tangent slide, the
+    // SAME reliefStep the enemy move seam reads — one geometry function, both
+    // sides, no wall-hacks for either (pinned in test_blocking_elevation.mjs).
+    const stepped = reliefStep(p.x, p.y,
+      p.x + decision.moveX * spd * grade * dt,
+      p.y + decision.moveY * spd * grade * dt,
+      state.groundSeed || 0, stageRelief(state.stage));
+    p.x = stepped[0]; p.y = stepped[1];
   }
   // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
   // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
@@ -2094,8 +2101,20 @@ function update(dt) {
     e.charging = !!act.charging;     // GRAVELMAW contact-damage window
     e.recovering = !!act.recovering; // GRAVELMAW punish window
     const grade = reliefGrade(e.x, e.y, act.mx, act.my, relSeed, relCfg);
-    e.x += act.mx * spd * grade * dt;
-    e.y += act.my * spd * grade * dt;
+    // BLOCKING ELEVATION (msg_01M2RK5B): the same cliff rule + tangent slide
+    // the pilot's move seam reads (reliefStep), so pilot and horde obey ONE
+    // geometry — a walker pressed against a cliff slides along it and routes
+    // to a gate (the choke funnel). FLYERS are exempt: they fly over the
+    // wall, which is exactly the vertical reach the horde-mix work will use.
+    if (e.flying) {
+      e.x += act.mx * spd * grade * dt;
+      e.y += act.my * spd * grade * dt;
+    } else {
+      const stepped = reliefStep(e.x, e.y,
+        e.x + act.mx * spd * grade * dt,
+        e.y + act.my * spd * grade * dt, relSeed, relCfg);
+      e.x = stepped[0]; e.y = stepped[1];
+    }
     // TICK latch: once attached it rides the player and drains hp/s INSTEAD
     // of contact damage (its contactDamageMult is 0) until killed.
     if (act.attach) {

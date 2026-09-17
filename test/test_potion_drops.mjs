@@ -106,16 +106,35 @@ ok('30s later the live rate is under a quarter of the burst peak (decay, not lat
 // EVERY corpse drops; at a swarm rate strictly fewer do. Wave 1 keeps CHASER
 // non-chaff (E2's chaff discount starts at C.E2.WAVE). Corpses sit 200px out —
 // beyond pickup radius — so nothing is collected out from under the count.
+//
+// FIXTURE REPAIR (blocking-elevation suite run, 2026-09-17, disclosed): the
+// old corpse shape carried no `speed`, so the enemy move seam computed
+// spd = undefined*... = NaN and EVERY corpse teleported to (NaN, NaN) before
+// the death pass — every drop clamped to (NaN, NaN), where pushGroundCapped's
+// nearest-same-kind merge FAILS (NaN peer distances), so all 3000 drops
+// bypassed DROP_CAP and st.drops.length equalled the raw winning rolls. The
+// old count assertion passed BY EXPLOITING that NaN cap-evasion. The wall's
+// cliff rule (reliefStep) double-blocks the NaN-target move for a corpse
+// standing at level 0 and returns its FINITE origin, so part of the batch
+// stayed finite, merged at cap 48, and the count became terrain-dependent
+// (measured 274..557 across runs — the suite red). The repair: corpses carry
+// speed: 0 (no NaN anywhere; behaviour a real kill actually has) and the
+// pilot is pinned MANUAL at (0,0) so no pickup can siphon value mid-frame;
+// the assertion counts TOTAL POTION VALUE (merged drops carry count) — the
+// same 3000-roll 0.2-floor statistics, now measured through the cap instead
+// of around it.
 ok('probe runs in the live play loop', st.mode === 'playing', st.mode);
 const savedChance = C.POTIONS.DROP_CHANCE;
+st.pilotMode = 'MANUAL'; st.player.x = 0; st.player.y = 0;   // pin: drop line stays 200px+ away
+const dropValue = () => st.drops.reduce((s, d) => s + (d.count || 1), 0);
 const corpses = (n) => { for (let i = 0; i < n; i++) st.enemies.push(
-  { x: st.player.x + 200, y: st.player.y + i, hp: 0, typeId: 'CHASER', xp: 0 }); };
+  { x: st.player.x + 200, y: st.player.y + i, hp: 0, typeId: 'CHASER', xp: 0, speed: 0 }); };
 try {
   C.POTIONS.DROP_CHANCE = 1;
   st.killRateEwma = 0; st.killsAtRateTick = st.player.kills;
   corpses(30); frame();
   ok('rate 0 + chance 1: all 30 corpses drop (factor 1, byte-identical low end)',
-    st.drops.length === 30, st.drops.length);
+    dropValue() === 30, dropValue());
   st.drops.length = 0;
   st.killRateEwma = 1000; st.killsAtRateTick = st.player.kills;   // deep-swarm rate
   // 3000 corpses, not 30: at rate 1000 the FLOOR binds (factor = clamp(20/1000,
@@ -123,9 +142,12 @@ try {
   // "> 0" half was a lottery (0.1% zero-odds, and it did fail in a G36 suite
   // run). A 3000-roll batch expects 600: assert the 0.16..0.24 factor band
   // (480..720, ~4 sigma) — a MUCH tighter pin of the floor than before.
+  // Counted as VALUE: past DROP_CAP (48) the overflow merges same-kind drops
+  // into counts, so the floor is pinned through the merge, not by evading it.
   corpses(3000); frame();
+  const v = dropValue();
   ok('rate 1000: the floor binds — drops at the 0.2 factor band (480..720 of 3000)',
-    st.drops.length >= 480 && st.drops.length <= 720, st.drops.length);
+    v >= 480 && v <= 720, v);
 } finally {
   C.POTIONS.DROP_CHANCE = savedChance;
 }

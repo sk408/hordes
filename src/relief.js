@@ -88,8 +88,11 @@ export function reliefGrade(x, y, dirX, dirY, seed, rel) {
   const len = Math.hypot(dirX, dirY);
   if (len <= 0) return 1;
   const ux = dirX / len, uy = dirY / len;
-  const dh = reliefLevel(x + ux * R.GRADE_LOOK, y + uy * R.GRADE_LOOK, seed, rel)
-    - reliefLevel(x, y, seed, rel);
+  // BLOCKING ELEVATION: the grade reads the COMPOSITE level (authored band
+  // included), so climbing toward a gate terrace or a rampart grades exactly
+  // like climbing the natural ridge it sits on — the symmetry holds.
+  const dh = reliefLevelAt(x + ux * R.GRADE_LOOK, y + uy * R.GRADE_LOOK, seed, rel)
+    - reliefLevelAt(x, y, seed, rel);
   if (dh === 0) return 1;
   const f = 1 - dh * R.GRADE_COST;
   return Math.max(1 - R.GRADE_CAP, Math.min(1 + R.GRADE_CAP, f));
@@ -125,3 +128,111 @@ export function reliefBiasAngle(angle, playerLevel, uphillAzimuth) {
 export function reliefVisionRadius(baseRadius, playerLevel) {
   return playerLevel >= C.RELIEF.HIGH_LEVEL ? baseRadius * C.RELIEF.VISION_MULT : baseRadius;
 }
+
+// ---- BLOCKING ELEVATION (prototype 2026-09-17, msg_01M2RK5B) ------------------
+//
+// THE OWNER'S DEFINITION: elevation has to BLOCK A MOVER or it is not
+// elevation. The prototype's shape, composable with the pure lattice above:
+//
+//   * an AUTHORED WALL BAND — a ring at [W.r0, W.r1] raised to W.topLevel
+//     (the stage's tallest ground), standing on the natural field;
+//   * GATES — angular sectors (W.gaps, half-width W.gapHalf) where the band
+//     drops to W.gapLevel, a TERRACE: one level above the hollow floor, one
+//     below the rampart top. A gate is a standable ramp THROUGH the wall, so
+//     every crossing is a choke point.
+//
+// THE ONE RULE (shared by the pilot and every walking enemy, no exceptions):
+// a mover may not step up or down MORE THAN ONE LEVEL in a single move. A
+// >=2-level step is a cliff and blocks; a 1-level step is a ramp and climbs.
+// Everything else — grade, spawn cadence, counts — is untouched.
+//
+// WHY THE NATURAL FIELD CAN NEVER TRAP (the no-trap proof, V1): the bilinear
+// lattice is Lipschitz with constant ~1.5/CELL over the smoothstep, so a
+// single mover step (a few px at 60Hz or 120Hz) changes the smooth height by
+// << 1/LEVELS — the quantized level can cross at most ONE boundary per step.
+// A 2-level step therefore only ever occurs at an AUTHORED band edge, and the
+// band is a closed ring whose only interior boundaries are its two edges,
+// bridged at the four gates. The arena decomposes into three open connected
+// regions (hollow disc, rampart ring, outer field) joined at the gates —
+// no dead ends exist. test_blocking_elevation.mjs pins this with a flood
+// fill over the composite field.
+function angDist(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+// The authored band's level at a point, or null when the point is off the
+// band (natural field) — or when the stage ships no wall.
+export function wallLevelAt(x, y, rel) {
+  const W = rel && rel.WALL;
+  if (!W) return null;
+  const r = Math.hypot(x, y);
+  if (r < W.r0 || r > W.r1) return null;
+  for (const gap of W.gaps) {
+    if (Math.abs(angDist(Math.atan2(y, x), gap)) <= W.gapHalf) return W.gapLevel;
+  }
+  return W.topLevel;
+}
+
+// THE COMPOSITE LEVEL — one quantization, one truth: the authored band
+// overrides the lattice inside the ring, the lattice rules everywhere else.
+// Movement, blocking, the render tints and the level reads all go through
+// THIS function, so the wall can never disagree with the map the player sees.
+export function reliefLevelAt(x, y, seed, rel) {
+  const w = wallLevelAt(x, y, rel);
+  return w !== null ? w : reliefLevel(x, y, seed, rel);
+}
+
+// THE CLIFF RULE — true when the move (x0,y0)->(x1,y1) steps more than one
+// level. Pure; read at the same seam for the pilot and for every enemy.
+export function reliefBlocked(x0, y0, x1, y1, seed, rel) {
+  if (!(rel && rel.WALL)) return false;
+  const l0 = reliefLevelAt(x0, y0, seed, rel);
+  const l1 = reliefLevelAt(x1, y1, seed, rel);
+  return Math.abs(l1 - l0) > 1;
+}
+
+// THE LEGAL STEP. An unblocked move passes through untouched; a blocked one
+// SLIDES — the step is projected onto the local tangent of the wall ring, so
+// a mover pressed against a cliff walks along it (and a ring walked along
+// always reaches a gate; that is the choke funnel). Returns [x, y].
+// ONE function, BOTH sides (main.js's pilot and enemy seams call this and
+// nothing else) — no wall-hacks for either side, pinned in
+// test_blocking_elevation.mjs.
+export function reliefStep(x0, y0, x1, y1, seed, rel) {
+  if (!reliefBlocked(x0, y0, x1, y1, seed, rel)) return [x1, y1];
+  const W = rel.WALL;
+  const r = Math.hypot(x0, y0);
+  if (r < 1e-6) return [x0, y0];
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 0;
+  const tx = -y0 / r, ty = x0 / r;          // the ring tangent at (x0, y0)
+  // GATEWARD SLIDE (probe findings 2026-09-17, two defects in the naive
+  // intent-projection slide):
+  //   * A pressed-RADIAL move projects to ZERO tangent — the mover stalls at
+  //     the cliff face forever (with the pilot at the arena heart, every
+  //     outer enemy's intent is exactly antiradial: the whole horde freezes).
+  //   * Worse, an attractor ON the wall top makes the projection OSCILLATE:
+  //     enemies cluster at the inner edge directly below it, sliding toward
+  //     its angle from both sides and never leaving — the wall top measured a
+  //     perfect 0% contact sanctuary against 91% on flat ground.
+  // The fix is the funnel itself: a blocked mover slides toward the NEAREST
+  // GATE along the ring tangent, at its own move speed, regardless of intent.
+  // Pure (a function of position + the wall block), stateless, identical for
+  // pilot and horde — and a ring slid gateward always crosses a gate edge,
+  // where the terrace's 1-level steps are ramps. That is the choke: crossing
+  // the wall means walking to a gate.
+  const theta = Math.atan2(y0, x0);
+  let toward = 0, bestD = Infinity;
+  for (const g of W.gaps) {
+    const d = angDist(theta, g);            // + : the gate lies CW of us
+    if (Math.abs(d) < bestD) { bestD = Math.abs(d); toward = d >= 0 ? -1 : 1; }
+  }
+  const mag = Math.max(len, Math.abs(dx * tx + dy * ty));
+  const sx = x0 + tx * toward * mag, sy = y0 + ty * toward * mag;
+  if (!reliefBlocked(x0, y0, sx, sy, seed, rel)) return [sx, sy];
+  return [x0, y0];
+}
+

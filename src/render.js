@@ -18,7 +18,7 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
-import { reliefLevel, reliefVisionRadius } from './relief.js';
+import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // A2 RADAR paint constants (geometry rationale lives on drawRadar below).
 // RADAR_DISPLAY_R is the HUD-px radius of the drawn circle; the world->radar
@@ -383,6 +383,9 @@ export class Renderer {
     // ARENA RELIEF: quantized height tints + contour edges, under the decor
     // so elevation reads as terrain without competing with the play pieces.
     this.drawRelief(g, state, cam, theme);
+    // BLOCKING ELEVATION: the authored rim wall — cliff lips + gate terraces,
+    // drawn from the same WALL block the collision reads (one truth).
+    this.drawWall(g, state, cam);
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
@@ -2143,7 +2146,7 @@ export class Renderer {
     if (!rel || rel.LEVELS <= 1) return;
     const c0 = Math.floor(cam.x / RC), c1 = Math.floor((cam.x + C.VIEW_W) / RC);
     const r0 = Math.floor(cam.y / RC), r1 = Math.floor((cam.y + C.VIEW_H) / RC);
-    const lvAt = (wx, wy) => reliefLevel(wx, wy, seed, rel);
+    const lvAt = (wx, wy) => reliefLevelAt(wx, wy, seed, rel);
     for (let cy = r0; cy <= r1; cy++) {
       for (let cx = c0; cx <= c1; cx++) {
         const wx = cx * RC + RC / 2, wy = cy * RC + RC / 2;
@@ -2173,6 +2176,47 @@ export class Renderer {
     }
     g.globalAlpha = 1;
     this.reliefCells = (c1 - c0 + 1) * (r1 - r0 + 1);
+  }
+
+  // ---- the authored rim wall (BLOCKING ELEVATION prototype 2026-09-17) --------
+  // Draw the stage's WALL block: the rampart ring, its cliff lips (the
+  // >=2-level steps that block a mover), and the gate terraces. ART ONLY —
+  // the collision reads the same WALL block through relief.js's
+  // reliefLevelAt, so the wall the player SEES and the wall the mover FEELS
+  // are one structure. Readability contract (msg_01M2RK5B non-negotiable 5):
+  // it must read on a 320x568 phone — the band is a full RENDER_CELL thick,
+  // the lips are the darkest ground marks on the field, and each gate paints
+  // a terrace-level floor with post ticks at its edges.
+  drawWall(g, state, cam) {
+    const rel = stageRelief(state.stage);
+    const W = rel && rel.WALL;
+    if (!W) return;
+    const cx = -cam.x, cy = -cam.y;              // world origin, screen space
+    const rm = (W.r0 + W.r1) / 2, band = W.r1 - W.r0;
+    // The rampart top: one light band (the tallest ground on the field).
+    g.strokeStyle = 'rgba(255,255,255,0.07)';
+    g.lineWidth = band;
+    g.beginPath(); g.arc(cx, cy, rm, 0, Math.PI * 2); g.stroke();
+    // The cliff lips — the blocking edges, the darkest marks on the ground.
+    g.strokeStyle = 'rgba(0,0,0,0.40)';
+    g.lineWidth = 2;
+    g.beginPath(); g.arc(cx, cy, W.r0 - 1, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(cx, cy, W.r1 + 1, 0, Math.PI * 2); g.stroke();
+    // The gates: a terrace-level floor cut through the band.
+    g.strokeStyle = 'rgba(255,255,255,0.03)';
+    g.lineWidth = band;
+    for (const a of W.gaps) {
+      g.beginPath(); g.arc(cx, cy, rm, a - W.gapHalf, a + W.gapHalf); g.stroke();
+    }
+    // Post ticks at each gate edge — the gate's leaf, the choke's read.
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    for (const a of W.gaps) {
+      for (const da of [-W.gapHalf, W.gapHalf]) {
+        const px = cx + Math.cos(a + da) * rm, py = cy + Math.sin(a + da) * rm;
+        g.fillRect(Math.round(px) - 1, Math.round(py) - 3, 2, 6);
+      }
+    }
+    this.wallDrawn = true;
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------
