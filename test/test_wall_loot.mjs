@@ -75,9 +75,22 @@ S.check('maybeSpawnChest clamps a kill outside the wall (audit probe)', () => {
 });
 
 // ---- through the REAL kill path -------------------------------------------
+// FLAKE FIX (2026-09-17, diagnosed in a loop): every kill rolls the EVOLUTION
+// TOKEN 'kill' channel (chests.js, 1/1200) and every item drop rolls the
+// 'drop' channel (1/500). A grant arms state.bannerHold = TOKEN_BANNER_SEC
+// (2.5s = 150 pumped frames), and frame() skips update() while it burns
+// (main.js:9123 — the banner is an intended sim pause). This check kills 7
+// enemies, so ~1% of runs won a token mid-check and the NEXT kill was not
+// processed by its pump(1) — 'a potion dropped' failed 0 !== 1 with the
+// enemy still unprocessed (caught live: P1 hold0=2.5, kills frozen, enemy
+// still in the array). The hold is a UI moment, not loot logic, so the
+// fixture zeroes it before every pumped frame below (pumpLive) — every loot
+// path (gem/chest/potion/item funnel, clamps, scatter, sweep arming) still
+// runs through the real update(). No assertion is changed.
+const pumpLive = (n) => { for (let i = 0; i < n; i++) { state.bannerHold = 0; pump(1); } };
 S.check('the live kill path clamps gems, item drops and chests', () => {
   T.startRun();
-  pump(3);
+  pumpLive(3);
   state.spawnTimer = 99999;
   state.wave.endsAt = state.time + 99999;
   const clearDrops = () => {
@@ -93,7 +106,7 @@ S.check('the live kill path clamps gems, item drops and chests', () => {
     typeId: 'CHASER', x: 780, y: -700, hp: 0, maxHp: 500, w: 10, h: 10,
     speed: 0, xp: 5, age: 0, elite: true, eliteMod: 'SWIFT', guaranteesChest: true,
   });
-  pump(2);
+  pumpLive(2);
   assert.equal(state.gems.length, 1, 'the gem dropped');
   assert.ok(inside(state.gems[0]), 'gem clamped (' + state.gems[0].x + ',' + state.gems[0].y + ')');
   assert.ok(state.itemDrops.length >= 1, 'the elite-mod kill dropped an item');
@@ -111,7 +124,7 @@ S.check('the live kill path clamps gems, item drops and chests', () => {
         typeId: 'CHASER', x: -820, y: 900, hp: 0, maxHp: 12, w: 10, h: 10,
         speed: 0, xp: 1, age: 0,
       });
-      pump(1);
+      pumpLive(1);
       assert.equal(state.drops.length, 1, 'a potion dropped');
       assert.ok(inside(state.drops[0]), 'potion clamped');
     }
@@ -131,7 +144,7 @@ S.check('the live kill path clamps gems, item drops and chests', () => {
     speed: 0, xp: 9, age: 0, boss: true, name: 'PROBE BOSS',
   });
   state.wave.bosses = [];
-  pump(3);
+  pumpLive(3);
   assert.ok(state.itemDrops.length >= 1, 'the boss dropped an item');
   assert.ok(state.itemDrops.every(inside), 'boss item drop clamped');
   assert.ok(state.chests.length >= 1 && state.chests.every(inside), 'boss chests clamped');

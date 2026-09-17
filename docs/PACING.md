@@ -44,6 +44,30 @@ tier 3 runs 46+ 754,689g (a WON 1800s maxed run; G17 slice 1b measure, raw
 log /tmp/g17_1b/maxed_r1.log). The 3,700x cliff between tier 2 and tier 3 is
 the single most load-bearing fact in this file.
 
+**Provenance of that table (addendum msg_01M2RNE0J6AT8WWG2BY31376EF, checked
+2026-09-17 — the answer is (a): §1 IS the measured series, and the tail (§2,
+§6) cites IT, not the withdrawn one):**
+- **tier 0-2 (70/100/200): the E1 run-purse cohorts, MEASURED 2026-09-14** —
+  6 seeded real-loop runs per arm, 300s cap, banked income per run; medians
+  70-floor / 95.5 / 185 (docs/briefs/E1_RUN_PURSE.md, meta.js:209-222).
+  Tiers 0-1 were re-confirmed twice: the G17 1b baseline cohorts (n=8,
+  seed 1337, medians 71 / 98) and §1's own 60s remeasure above (322g / 77g).
+  Tier 2 is a 300s-CAPPED median: at shipped difficulty half-max builds die
+  inside the cap — that degeneracy is the measured fact §2(d) reports as the
+  tier-2 FAIL, not a misread of a constant.
+- **tier 3 (754,689): the G17 slice 1b measure, 2026-09-15** — ONE WON 1800s
+  maxed run (n=1, seed 1337, tools/economy_ledger.mjs --measure) settled
+  through the REAL settleRunGold: kills 244185, cause RUN SURVIVED. Raw log
+  /tmp/g17_1b/maxed_r1.log, re-verified on disk 2026-09-17 (line: `run 1/1:
+  time=1800s ... gold=754689 WON`). A n=1 measurement — the one-run sample is
+  itself a disclosed limitation, but it is a measurement.
+- **The WITHDRAWN series (CONDENSE_PROPOSAL §4, "UNVERIFIED — DO NOT USE")
+  was a different one:** the pre-E1 analytic bands 700/1200/1800/2800, read
+  off the old constant table and misinterpreted as run income (owner
+  correction 2026-09-17). None of those four figures is cited as income
+  anywhere in this file; wherever §2/§6 below say 70/100/200/754,689 they are
+  citing the measured series above.
+
 ---
 
 ## 2. THE FOUR INVARIANTS — testable sentences, today's numbers
@@ -113,7 +137,9 @@ Stated multiple: **6 good runs** (the G17 3h single-item cap; measured max
 **Verdict: PASS at the top, FAIL by 100-1000x at the middle.** This is the
 player-review "quarter of a weapon" case with numbers attached: the G17
 catalog is priced against tier-3 income (754k/run), but tier-2 income is
-200g/run — the 3,700x income cliff between runs 21-45 and 46+ IS the dead
+200g/run (the MEASURED 300s-capped tier-2 median, §1 provenance — the
+degeneracy itself, not a constant-table read) — the 3,700x income cliff
+between runs 21-45 and 46+ IS the dead
 tail. Root cause is difficulty, not price: sub-max builds die in minutes and
 earn ~nothing (E1 measured bands), so mid-tier income is degenerate. Levers
 (either/or, owner decision): raise tier-2 survival/income, or insert a
@@ -206,7 +232,9 @@ stood then and still stands, now re-based on §1's measured numbers:
   intended shape.
 - **Ladder vs income:** the price ladder spans ~x22,500 (hp L1 120g to BEAM
   4.5M) while income spans ~x10,800 across tiers (70 -> 754,689) but is
-  FLAT-THEN-CLIFFED inside the mid game (100 -> 200 -> 754,689) — the shape
+  FLAT-THEN-CLIFFED inside the mid game (100 -> 200 -> 754,689 — every figure
+  the §1 measured series, provenance above; NOT the withdrawn
+  700/1200/1800/2800 constant table) — the shape
   mismatch is concentrated at the tier-2/tier-3 seam, not spread evenly.
 - **The withdrawn idea** (compress the price ladder to match a smoother
   income curve) must not be re-proposed from the old numbers; any future

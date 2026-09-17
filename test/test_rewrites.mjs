@@ -289,7 +289,20 @@ h.T.startRun();
 h.pump(2);
 assert.equal(st.mode, 'playing', 'run live');
 const p = st.player;
-const quiet = () => { st.enemies.length = 0; st.enemyShots.length = 0; st.projectiles.length = 0; };
+const quiet = () => {
+  st.enemies.length = 0; st.enemyShots.length = 0; st.projectiles.length = 0;
+  // SUITE_HARDENING Part 3 — THE TOKEN-BANNER HOLD (suite red 2026-09-17,
+  // diagnosed live): every kill rolls the EVOLUTION TOKEN 'kill' channel
+  // (chests.js, 1/1200) and a grant arms state.bannerHold = 2.5s (150 pumped
+  // frames), during which frame() SKIPS update() (main.js:9123 — the banner
+  // is an intended sim pause). This file kills dozens of corpses, so a run
+  // occasionally won a token mid-probe and the next window's kills/pickups
+  // never processed (3 consecutive reds: both BLOOD HARVEST arms + the
+  // dt-parity check). The hold is a UI moment, not the code under
+  // measurement — zeroed per frame below, exactly the pin class of the
+  // arch/chest/shrine clears in closeWindow. Nothing else is stubbed.
+  st.bannerHold = 0;
+};
 
 ok('PIERCE ALL is read at the VOLLEY spawn site (live loop)', () => {
   p.rewrites.pierceall = true;
@@ -543,7 +556,7 @@ ok('BLOOD HARVEST retaliates through the REAL drop-collect path (damage exact)',
     // the field IS the probe: exactly the two bodies and the one pushed potion
     assert.deepEqual(st.enemies, [near, far], 'the field holds exactly the probe bodies');
     assert.deepEqual(st.drops, [potion], 'the ground holds exactly the pushed hp potion');
-    h.pump(3, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+    h.pump(3, () => { st.projectiles.length = 0; st.enemyShots.length = 0; st.bannerHold = 0; });
     p.rewrites.healthdamage = false;
     assert.equal(p.stats.damage, dmg0, 'no stat leaked into the window');
     assert.equal(p.potions.hp, 1, 'exactly ONE potion was collected');
@@ -565,7 +578,7 @@ ok('BLOOD HARVEST is hp-kind only: a mana pickup never blasts', () => {
     const potion = { x: p.x, y: p.y, kind: 'mp' };
     st.drops.push(potion);
     assert.deepEqual(st.drops, [potion], 'the ground holds exactly the pushed mana potion');
-    h.pump(3, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+    h.pump(3, () => { st.projectiles.length = 0; st.enemyShots.length = 0; st.bannerHold = 0; });
     p.rewrites.healthdamage = false;
     assert.equal(p.potions.mp, 1, 'exactly one mana potion was collected');
     assert.equal(near.hp, 1e9, 'no blast on a mana pickup');
@@ -602,7 +615,7 @@ ok('the rewrite payouts are dt-correct: 60Hz == 120Hz over the same second', () 
       const seen = new Set();   // distinct fx objects (per-frame scans would double-count)
       h.setFrameMs(1000 / hz);
       h.pump(hz, () => {
-        st.projectiles.length = 0; st.enemyShots.length = 0;
+        st.projectiles.length = 0; st.enemyShots.length = 0; st.bannerHold = 0;
         for (const fx of st.effects) if (!seen.has(fx)) { seen.add(fx);
           if (fx.kind === 'rewrite_boom') booms++;
           else if (fx.kind === 'rewrite_harvest') blasts++; }
