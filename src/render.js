@@ -2281,10 +2281,10 @@ export class Renderer {
     // play piece (gems #ffd75e, potions, lit foes) while giving the authored
     // set the value separation the field lacks. Only the hollow ever sees them.
     const A = {
-      bark: '#4a3826', wood: '#7c603c', ring: '#a8906a',   // the stump: cut wood
-      moss: '#3f7a46', mossLit: '#5ea668',                  // living green
+      bark: '#3e2e1e', wood: '#7c603c', ring: '#a8906a',   // the stump: cut wood
+      moss: '#4c9455', mossLit: '#6cc47c',                  // living green
       leaf: '#2e5c38',                                      // grove canopy base
-      rock: '#4c5c54', rockLit: '#84988c',                  // the gate stones
+      rock: '#5e6a5e', rockLit: '#98ad9a',                  // the gate stones
       shadow: '#060a07',
     };
     const grove = (x, y) => {          // tree stand: canopy + trunks + a log
@@ -2423,52 +2423,81 @@ export class Renderer {
       };
       put('STUMP', 0, 0, (x, y) => {   // the OLD STUMP: the hollow's heart
         // Big enough to read around the pilot who spawns on it (the pilot is
-        // ~14px; the cut face is 44 wide), and two value bands above the
-        // ground so it reads at phone scale.
-        g.fillStyle = A.shadow;                                // root shadow
-        g.fillRect(x - 30, y + 20, 62, 3);
-        g.fillStyle = A.bark;                                  // bark ring
-        g.fillRect(x - 24, y - 24, 48, 46);
-        g.fillStyle = A.wood;                                  // cut face
-        g.fillRect(x - 18, y - 18, 36, 36);
+        // ~14px; the cut face is 40 wide), and two value bands above the
+        // ground so it reads at phone scale. Second readability pass
+        // (2026-09-17, measured against a phone shot): a stepped OCTAGON
+        // silhouette instead of a square (a round thing reads "stump", a
+        // square reads "crate"), a 2px darker outer bark rim, a soft drop
+        // shadow wider than the base so the mass sits ON the ground.
+        g.fillStyle = A.shadow;                                // drop shadow
+        g.fillRect(x - 26, y + 20, 52, 4);
+        g.fillRect(x - 32, y + 22, 64, 3);
+        g.fillStyle = A.bark;                                  // bark: octagon
+        g.fillRect(x - 16, y - 26, 32, 4);
+        g.fillRect(x - 22, y - 22, 44, 8);
+        g.fillRect(x - 24, y - 14, 48, 32);
+        g.fillRect(x - 22, y + 18, 44, 6);
+        g.fillRect(x - 16, y + 24, 32, 4);
+        g.fillStyle = A.wood;                                  // cut face (stepped in)
+        g.fillRect(x - 12, y - 20, 24, 4);
+        g.fillRect(x - 16, y - 16, 32, 34);
+        g.fillRect(x - 12, y + 18, 24, 4);
         g.fillStyle = A.ring;                                  // growth rings
-        g.fillRect(x - 18, y - 18, 36, 2); g.fillRect(x - 13, y - 11, 26, 2);
-        g.fillRect(x - 8, y - 4, 16, 2); g.fillRect(x - 14, y + 5, 28, 2);
+        g.fillRect(x - 14, y - 14, 28, 2); g.fillRect(x - 11, y - 8, 22, 2);
+        g.fillRect(x - 8, y - 2, 16, 2); g.fillRect(x - 11, y + 4, 22, 2);
+        g.fillRect(x - 7, y + 10, 14, 2);
         g.fillStyle = A.bark;                                  // heartwood
-        g.fillRect(x - 4, y - 4, 8, 8);
+        g.fillRect(x - 3, y + 14, 6, 4);
         g.fillStyle = A.moss;                                  // moss caps
-        g.fillRect(x - 24, y - 22, 7, 5); g.fillRect(x + 11, y - 16, 9, 6);
-        g.fillRect(x - 22, y + 12, 10, 6);
+        g.fillRect(x - 20, y - 22, 8, 5); g.fillRect(x + 12, y - 18, 9, 6);
+        g.fillRect(x - 20, y + 16, 11, 6);
         g.fillStyle = A.mossLit;                               // lit moss
-        g.fillRect(x - 24, y - 22, 7, 2); g.fillRect(x + 11, y - 16, 9, 2);
-        g.fillRect(x + 17, y - 20, 4, 3);
+        g.fillRect(x - 20, y - 22, 8, 2); g.fillRect(x + 12, y - 18, 9, 2);
+        g.fillRect(x + 17, y - 14, 4, 3);
         g.fillStyle = A.bark;                                  // roots
-        g.fillRect(x - 38, y + 14, 15, 3); g.fillRect(x + 23, y + 16, 16, 3);
-        g.fillRect(x - 3, y + 22, 6, 10);
-        return 16;
+        g.fillRect(x - 36, y + 18, 14, 3); g.fillRect(x + 22, y + 20, 15, 3);
+        g.fillRect(x - 3, y + 26, 6, 8);
+        return 23;
       });
       const G = RIM - 150;             // just inside the wall, on the flat rim
       for (const [gx, gy] of [[0, -G], [0, G], [-G, 0], [G, 0]]) {
         put('GATE', gx, gy, (x, y) => {  // twin stones, moss-capped
-          g.fillStyle = A.shadow;                              // ground shadow
-          g.fillRect(x - 14, y + 18, 52, 3);
-          g.fillStyle = A.rock;                                // the monoliths
-          g.fillRect(x - 14, y - 26, 13, 44);
-          g.fillRect(x + 12, y - 32, 11, 50);
+          // Second readability pass (2026-09-17): 3-step TAPERED monoliths
+          // (wide base, narrow cap — standing stones, not wall blocks), a cast
+          // shadow spanning both stones so the pair reads as one gate, and the
+          // lintel BROKEN — lying fallen at a stepped diagonal between the
+          // pillars, which reads as a ruin instead of a lintel-shaped bar.
+          g.fillStyle = A.shadow;                              // cast shadow
+          g.fillRect(x - 18, y + 14, 56, 3);
+          g.fillRect(x - 12, y + 17, 44, 2);
+          g.fillStyle = A.rock;                                // left monolith
+          g.fillRect(x - 16, y - 8, 15, 24);                   // base course
+          g.fillRect(x - 14, y - 22, 13, 14);                  // mid course
+          g.fillRect(x - 12, y - 32, 10, 10);                  // cap course
+          g.fillStyle = A.rock;                                // right monolith
+          g.fillRect(x + 4, y - 4, 13, 20);
+          g.fillRect(x + 6, y - 18, 11, 14);
+          g.fillRect(x + 8, y - 30, 8, 12);
           g.fillStyle = A.rockLit;                             // lit faces
-          g.fillRect(x - 14, y - 26, 13, 3); g.fillRect(x + 12, y - 32, 11, 3);
-          g.fillRect(x - 14, y - 12, 3, 28); g.fillRect(x + 12, y - 14, 3, 30);
-          g.fillStyle = A.rock;                                // fallen lintel
-          g.fillRect(x - 8, y - 20, 22, 5);
+          g.fillRect(x - 16, y - 8, 15, 2); g.fillRect(x - 14, y - 22, 13, 2);
+          g.fillRect(x - 12, y - 32, 10, 2);
+          g.fillRect(x + 4, y - 4, 13, 2); g.fillRect(x + 6, y - 18, 11, 2);
+          g.fillRect(x + 8, y - 30, 8, 2);
+          g.fillRect(x - 16, y - 8, 2, 24); g.fillRect(x + 4, y - 4, 2, 20);
+          g.fillStyle = A.rock;                                // broken lintel,
+          g.fillRect(x - 10, y + 4, 8, 4);                     // fallen at a step
+          g.fillRect(x - 4, y + 2, 8, 4);                      // diagonal between
+          g.fillRect(x + 2, y + 4, 8, 4);                      // the pillars
           g.fillStyle = A.rockLit;
-          g.fillRect(x - 8, y - 20, 22, 2);
+          g.fillRect(x - 10, y + 4, 8, 1); g.fillRect(x - 4, y + 2, 8, 1);
+          g.fillRect(x + 2, y + 4, 8, 1);
           g.fillStyle = A.moss;                                // moss caps
-          g.fillRect(x - 13, y - 25, 7, 3); g.fillRect(x + 13, y - 31, 6, 3);
-          g.fillRect(x - 11, y + 12, 6, 3);
+          g.fillRect(x - 12, y - 32, 9, 3); g.fillRect(x + 8, y - 30, 7, 3);
+          g.fillRect(x - 13, y + 8, 7, 4);
           g.fillStyle = A.mossLit;                             // lit moss
-          g.fillRect(x - 13, y - 25, 7, 1); g.fillRect(x + 13, y - 31, 6, 1);
-          g.fillRect(x - 5, y - 19, 8, 2);
-          return 16;
+          g.fillRect(x - 12, y - 32, 9, 1); g.fillRect(x + 8, y - 30, 7, 1);
+          g.fillRect(x - 13, y + 8, 7, 1);
+          return 21;
         });
       }
     }
