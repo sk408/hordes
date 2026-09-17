@@ -43,15 +43,31 @@ const lerp = (a, b, t) => a + (b - a) * t;
 
 // Smooth (unquantized) height in [0, 1). Bilinear over the stage's CELL
 // lattice with smoothstep easing, so contours are round, not diamond-shaped.
+//
+// STARTING ARENA IMPROVE (2026-09-17): `rel.BASIN` (world px radius) is an
+// authored HOLLOW — a radial flatten at the arena heart. Inside the inner
+// third the field is pinched to ~12% of its height (quantizes to LEVEL 0:
+// a genuinely flat clearing), then eases back to the untouched field by the
+// BASIN radius, so the terraces the stage name promises actually read: calm
+// clearing at the centre, rim climbing outward. Pure and per-run like the
+// rest of the field; a stage without BASIN is byte-identical to before.
 export function reliefHeight(x, y, seed, rel) {
   const fx = x / rel.CELL, fy = y / rel.CELL;
   const x0 = Math.floor(fx), y0 = Math.floor(fy);
   const tx = fx - x0, ty = fy - y0;
   const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
-  return lerp(
+  let h = lerp(
     lerp(h2(x0, y0, seed), h2(x0 + 1, y0, seed), sx),
     lerp(h2(x0, y0 + 1, seed), h2(x0 + 1, y0 + 1, seed), sx),
     sy);
+  if (rel.BASIN) {
+    const d = Math.hypot(x, y);
+    const inner = rel.BASIN * 0.35;
+    let t = (d - inner) / (rel.BASIN - inner);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    h *= 0.12 + 0.88 * (t * t * (3 - 2 * t));
+  }
+  return h;
 }
 
 // The quantized LEVEL at a world point: 0 (floor) .. LEVELS-1 (the stage's

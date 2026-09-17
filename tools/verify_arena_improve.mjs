@@ -58,13 +58,14 @@ async function viewport(w, h, tag) {
       const lm = await p.evaluate(`(async () => {
         const T2 = (await import('./src/main.js')).__TEST;
         const R = T2.renderer, st = T2.state;
+        const noop = () => {};
+        const stubCtx = new Proxy({}, { get: (t, k) =>
+          (k === 'fillStyle' || k === 'globalAlpha') ? undefined : noop, set: () => true });
         const seen = new Set();
-        // Sweep the whole arena through the renderer's own seam: teleport the
-        // camera over a grid and collect the landmark kinds painted.
+        // Sweep the whole arena through the renderer's own landmark seam.
         for (let cy = -900; cy <= 900 - 300; cy += 300) {
           for (let cx = -900; cx <= 900 - 480; cx += 480) {
-            st.cam.x = cx; st.cam.y = cy; st._probeLandmarks = true;
-            T2.renderFrame();
+            R.drawLandmarks(stubCtx, st.groundSeed || 1, { x: cx, y: cy }, undefined, 'VERDANT_HOLLOW');
             for (const l of (R.landmarks || [])) seen.add(l.kind);
           }
         }

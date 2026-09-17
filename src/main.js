@@ -169,7 +169,7 @@ import {
 // scoped pending selection, nothing persisted.
 import {
   DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
-  nextStageId, describeStage, lockedStageLines, stageRelief,
+  nextStageId, describeStage, lockedStageLines, stageRelief, stageFactsLine,
 } from './stages.js';
 // ARENA ELEVATED PATHS (scale-up 2026-09-17): the deterministic height field
 // and its three reads — the grade term (player + enemies, the same pure
@@ -4207,12 +4207,18 @@ function cyclePendingStage() {
 // 8-stage ladder the full locked list no longer fits a 390px phone card, so
 // the card names the FIRST TWO (the next rungs on the ladder) and counts the
 // rest — lockedStageLines() still emits every line for tests.
+// STARTING ARENA IMPROVE (2026-09-17): the card now carries the MEASURED
+// table (stageFactsLine — ranged/heavy share, foe hp/dmg/spawn, hazard,
+// relief) computed from the same catalog the spawner reads, so what the
+// card promises is what the run does. setupCard's split(' · ')[0] below
+// still gets the stage NAME.
 function stageCardSub() {
   const locked = lockedStageLines(stageUnlocked);
   const head = locked.slice(0, 2).join(', ');
   const more = locked.length > 2 ? ' +' + (locked.length - 2) + ' more' : '';
-  return describeStage(pendingStage) +
-    (locked.length ? ' · locked: ' + head + more : '') + ' · press to change';
+  return describeStage(pendingStage) + ' · press to change' +
+    '<br>' + stageFactsLine(pendingStage) +
+    (locked.length ? '<br>locked: ' + head + more : '');
 }
 
 // ---------- WAVE-16: world zoom setting (persisted, same storage shim) --------
@@ -4426,7 +4432,14 @@ function manualGoto(page) {
       ' &middot; never spent at full.' +
       '<br>AUTO pilot drinks for you: HP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) +
       '%, MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
-      '<br>boss curse: while the wave boss lives, health potions heal HALF.');
+      '<br>boss curse: while the wave boss lives, health potions heal HALF.' +
+      // STARTING ARENA IMPROVE (2026-09-17): the arena itself explained —
+      // the review's "what things are" gap for the starting field. The
+      // claims are the code's own: BASIN flat heart (relief.js), GROVE/GATE/
+      // STUMP landmarks (render.js), grade + vision (relief.js knobs).
+      '<br><br>THE LIE OF THE LAND — the hollow reads as a map:' +
+      '<br>the OLD STUMP marks the arena heart — your flat spawn clearing; twin GATE stones mark each compass wall.' +
+      '<br>the ground rises toward the rim: climbing costs a little speed (foes pay it too), high ground widens your radar reach.');
     addCls(c, 'ref');
   }
   // Nav row: PREV/NEXT with the ends dimmed (arrow keys are their twins).

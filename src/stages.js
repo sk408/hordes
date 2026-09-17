@@ -48,7 +48,12 @@ export const STAGES = [
     // RELIEF (arena scale-up 2026-09-17): per-stage elevation character —
     // CELL is the terrain lattice grain in world px, LEVELS the height count
     // (0..LEVELS-1). Read by src/relief.js only, through stageRelief().
-    relief: { CELL: 480, LEVELS: 3 },   // rolling hollows: broad, gentle rises
+    // STARTING ARENA IMPROVE (2026-09-17): BASIN is the HOLLOW — an authored
+    // radial flatten at the arena heart (relief.js envelope), so the map's
+    // name is its shape: a calm clearing at the centre, terraces climbing
+    // out toward the rim. Still the shipped model: pure, non-blocking, the
+    // same grade for pilot and horde.
+    relief: { CELL: 480, LEVELS: 3, BASIN: 560 },   // the hollow: flat heart, rising rim
     unlock: null,
   },
   {
@@ -244,6 +249,65 @@ export function prevStageId(id, unlocked) {
 export function describeStage(id) {
   const s = stageOf(id);
   return s.id === DEFAULT_STAGE_ID ? s.name : s.name + ' — ' + s.blurb;
+}
+
+// STARTING ARENA IMPROVE (2026-09-17): the STAGE card's measured table. Pure
+// arithmetic over this catalog — the shares come from the pool weights, the
+// multipliers from mods — so the card can never drift from the spawn table it
+// describes. RANGED = shooters (SPITTER, WARLOCK); HEAVY = the wall family
+// (BRUTE, COLOSSUS). Multipliers default to 1 where a stage doesn't declare
+// one (the shipped experience).
+export const RANGED_TYPES = ['SPITTER', 'WARLOCK'];
+export const HEAVY_TYPES = ['BRUTE', 'COLOSSUS'];
+
+export function stageFacts(id) {
+  const s = stageOf(id);
+  const total = s.pool.reduce((a, [, w]) => a + w, 0);
+  const share = (types) => {
+    let w = 0;
+    for (const [t, wt] of s.pool) if (types.includes(t)) w += wt;
+    return Math.round((100 * w) / total);
+  };
+  const m = s.mods;
+  return {
+    ranged: share(RANGED_TYPES),
+    heavy: share(HEAVY_TYPES),
+    hp: m.hpMult ?? 1,
+    dmg: m.dmgMult ?? 1,
+    spawn: m.spawnMult ?? 1,
+    speed: m.speedMult ?? 1,
+    hazard: s.hazard ? { ...s.hazard } : null,
+    relief: { ...(s.relief || DEFAULT_RELIEF) },
+  };
+}
+
+// The one-line facts string the STAGE card carries under the name. Hazard and
+// relief get plain words (players never see ids here).
+function hazardWord(h) {
+  if (h.kind === 'eliteRate') return 'elite +' + Math.round(h.add * 100) + '%';
+  if (h.kind === 'spawnBand') return 'spawn ring ' + Math.round(h.ring * 100) + '%';
+  if (h.kind === 'packBurst') return 'packs x' + h.burst;
+  return h.id.toLowerCase();
+}
+function reliefWord(id, rel) {
+  const lv = rel.LEVELS + ' relief levels';
+  return stageOf(id).relief && stageOf(id).relief.BASIN
+    ? 'a hollow at the heart, ' + lv
+    : lv;
+}
+export function stageFactsLine(id) {
+  const f = stageFacts(id);
+  const mult = (v) => 'x' + Math.round(v * 100) / 100;
+  const parts = [
+    'ranged ' + f.ranged + '%',
+    'heavies ' + f.heavy + '%',
+    'foe hp ' + mult(f.hp),
+    'dmg ' + mult(f.dmg),
+    'spawn ' + mult(f.spawn),
+  ];
+  if (f.hazard) parts.push(hazardWord(f.hazard));
+  parts.push(reliefWord(id, f.relief));
+  return parts.join(' · ');
 }
 
 export function lockedStageLines(unlocked) {

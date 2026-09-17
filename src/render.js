@@ -388,7 +388,7 @@ export class Renderer {
     this.drawGround(g, state.groundSeed || 1, cam, theme);
     // WAVE-24 (#3): deliberate structures over the fine field (see
     // drawLandmarks) — the coarse layer that gives the floor a sense of place.
-    this.drawLandmarks(g, state.groundSeed || 1, cam, theme);
+    this.drawLandmarks(g, state.groundSeed || 1, cam, theme, state.stage);
     this.drawArenaWall(g, cam, theme);   // WAVE-18 (#7): the rim made visible
 
     // Gems.
@@ -2263,11 +2263,46 @@ export class Renderer {
   // texture) but still UNDER every entity. Quiet by contract: dark tones,
   // never brighter than a play piece. `this.landmarks` is the smoke seam
   // (what was painted this frame: { kind, x, y, rects } in world coords).
-  drawLandmarks(g, seed, cam, theme) {
+  drawLandmarks(g, seed, cam, theme, stage) {
     const FC = C.GROUND.LANDMARK_CELL, DENS = C.GROUND.LANDMARK_DENSITY;
     const RIM = C.GROUND.RIM;
     const pal = theme || groundTheme(1);
     const tIdx = C.GROUND.THEMES.indexOf(pal);
+    // STARTING ARENA IMPROVE (2026-09-17): `stage` (optional) lets ONE arena
+    // carry its own landmark identity without touching the other seven —
+    // the VERDANT HOLLOW grows grove stands and two authored structures
+    // (the heart stump + the cardinal gates) so the run reads as a PLACE.
+    const hollow = stage === 'VERDANT_HOLLOW';
+    // The hollow's AUTHORED accents. The hash field above stays whisper-quiet
+    // by contract (same value band as the ground), but the stump, gates and
+    // groves are the MAP a first-timer orients by — measured against a phone
+    // shot (2026-09-17): the quiet palette rendered faint-to-invisible next to
+    // base #0e1610. These accents keep the landmark layer clearly under every
+    // play piece (gems #ffd75e, potions, lit foes) while giving the authored
+    // set the value separation the field lacks. Only the hollow ever sees them.
+    const A = {
+      bark: '#4a3826', wood: '#7c603c', ring: '#a8906a',   // the stump: cut wood
+      moss: '#3f7a46', mossLit: '#5ea668',                  // living green
+      leaf: '#2e5c38',                                      // grove canopy base
+      rock: '#4c5c54', rockLit: '#84988c',                  // the gate stones
+      shadow: '#060a07',
+    };
+    const grove = (x, y) => {          // tree stand: canopy + trunks + a log
+      g.fillStyle = A.shadow;                                    // bed shadow
+      g.fillRect(x - 2, y + 12, 30, 2);
+      g.fillStyle = A.leaf;                                      // canopy
+      g.fillRect(x - 2, y, 14, 8); g.fillRect(x + 9, y + 2, 15, 8);
+      g.fillStyle = A.moss;                                      // lit canopy
+      g.fillRect(x - 2, y, 14, 2); g.fillRect(x + 9, y + 2, 15, 2);
+      g.fillStyle = A.mossLit;                                   // sun-lit crowns
+      g.fillRect(x + 2, y, 5, 2); g.fillRect(x + 13, y + 2, 6, 2);
+      g.fillRect(x + 4, y + 5, 4, 2);
+      g.fillStyle = A.bark;                                      // trunks
+      g.fillRect(x + 4, y + 8, 4, 5); g.fillRect(x + 15, y + 10, 4, 3);
+      g.fillStyle = A.wood;                                      // fallen log
+      g.fillRect(x - 2, y + 9, 8, 3);
+      return 11;
+    };
     const out = [];
     const c0 = Math.floor(cam.x / FC), c1 = Math.floor((cam.x + C.VIEW_W) / FC);
     const r0 = Math.floor(cam.y / FC), r1 = Math.floor((cam.y + C.VIEW_H) / FC);
@@ -2296,6 +2331,9 @@ export class Renderer {
           for (let i = 0; i < n; i++) { if (i !== gap) g.fillRect(x + i * 11, y, 10, 5); }
           g.fillStyle = pal.stoneTop;                                    // lit course
           for (let i = 0; i < n; i++) { if (i !== gap) g.fillRect(x + i * 11, y, 10, 1); }
+        } else if (hollow && pick < 0.52) {   // THE HOLLOW: grove stands
+          kind = 'GROVE';                     // (the wooded arena's filler)
+          rects = grove(x, y);
         } else if (pick < 0.48) {     // FALLEN PILLAR: stepped column + base
           kind = 'PILLAR';
           const n = 3 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 3..5
@@ -2333,6 +2371,9 @@ export class Renderer {
             g.fillRect(Math.round(x + 12 + Math.cos(a) * R),
                        Math.round(y + 10 + Math.sin(a) * R), 3, 2);
           }
+        } else if (hollow) {          // THE HOLLOW: the tail grows groves too
+          kind = 'GROVE';
+          rects = grove(x, y);
         } else if (tIdx === 5) {      // VOID REACH: crystal shard cluster
           kind = 'CRYSTAL';
           rects = 7;
@@ -2365,6 +2406,70 @@ export class Renderer {
           g.fillRect(x + 14, y + 8, 4, 3);
         }
         out.push({ kind, x: wx, y: wy, rects });
+      }
+    }
+    // THE HOLLOW'S AUTHORED LANDMARKS (STARTING ARENA IMPROVE 2026-09-17) —
+    // not hash-gated: the OLD STUMP stands at the exact arena heart (the
+    // spawn clearing the BASIN relief flattens) and a GATE of twin stones
+    // marks each cardinal rim approach, so the 1800x1800 field reads as a
+    // MAP: from anywhere, "the stump" is home and the nearest gate names
+    // the wall you are walking toward. Deterministic, camera-culled, the
+    // same palette and the same landmarks seam as the field structures.
+    if (hollow) {
+      const put = (kind, wx, wy, draw) => {
+        const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
+        if (x < -80 || x > C.VIEW_W + 80 || y < -80 || y > C.VIEW_H + 80) return;
+        out.push({ kind, x: wx, y: wy, rects: draw(x, y) });
+      };
+      put('STUMP', 0, 0, (x, y) => {   // the OLD STUMP: the hollow's heart
+        // Big enough to read around the pilot who spawns on it (the pilot is
+        // ~14px; the cut face is 44 wide), and two value bands above the
+        // ground so it reads at phone scale.
+        g.fillStyle = A.shadow;                                // root shadow
+        g.fillRect(x - 30, y + 20, 62, 3);
+        g.fillStyle = A.bark;                                  // bark ring
+        g.fillRect(x - 24, y - 24, 48, 46);
+        g.fillStyle = A.wood;                                  // cut face
+        g.fillRect(x - 18, y - 18, 36, 36);
+        g.fillStyle = A.ring;                                  // growth rings
+        g.fillRect(x - 18, y - 18, 36, 2); g.fillRect(x - 13, y - 11, 26, 2);
+        g.fillRect(x - 8, y - 4, 16, 2); g.fillRect(x - 14, y + 5, 28, 2);
+        g.fillStyle = A.bark;                                  // heartwood
+        g.fillRect(x - 4, y - 4, 8, 8);
+        g.fillStyle = A.moss;                                  // moss caps
+        g.fillRect(x - 24, y - 22, 7, 5); g.fillRect(x + 11, y - 16, 9, 6);
+        g.fillRect(x - 22, y + 12, 10, 6);
+        g.fillStyle = A.mossLit;                               // lit moss
+        g.fillRect(x - 24, y - 22, 7, 2); g.fillRect(x + 11, y - 16, 9, 2);
+        g.fillRect(x + 17, y - 20, 4, 3);
+        g.fillStyle = A.bark;                                  // roots
+        g.fillRect(x - 38, y + 14, 15, 3); g.fillRect(x + 23, y + 16, 16, 3);
+        g.fillRect(x - 3, y + 22, 6, 10);
+        return 16;
+      });
+      const G = RIM - 150;             // just inside the wall, on the flat rim
+      for (const [gx, gy] of [[0, -G], [0, G], [-G, 0], [G, 0]]) {
+        put('GATE', gx, gy, (x, y) => {  // twin stones, moss-capped
+          g.fillStyle = A.shadow;                              // ground shadow
+          g.fillRect(x - 14, y + 18, 52, 3);
+          g.fillStyle = A.rock;                                // the monoliths
+          g.fillRect(x - 14, y - 26, 13, 44);
+          g.fillRect(x + 12, y - 32, 11, 50);
+          g.fillStyle = A.rockLit;                             // lit faces
+          g.fillRect(x - 14, y - 26, 13, 3); g.fillRect(x + 12, y - 32, 11, 3);
+          g.fillRect(x - 14, y - 12, 3, 28); g.fillRect(x + 12, y - 14, 3, 30);
+          g.fillStyle = A.rock;                                // fallen lintel
+          g.fillRect(x - 8, y - 20, 22, 5);
+          g.fillStyle = A.rockLit;
+          g.fillRect(x - 8, y - 20, 22, 2);
+          g.fillStyle = A.moss;                                // moss caps
+          g.fillRect(x - 13, y - 25, 7, 3); g.fillRect(x + 13, y - 31, 6, 3);
+          g.fillRect(x - 11, y + 12, 6, 3);
+          g.fillStyle = A.mossLit;                             // lit moss
+          g.fillRect(x - 13, y - 25, 7, 1); g.fillRect(x + 13, y - 31, 6, 1);
+          g.fillRect(x - 5, y - 19, 8, 2);
+          return 16;
+        });
       }
     }
     this.landmarks = out;

@@ -970,4 +970,163 @@ s.check('G20C: boss summon/ring foes carry the stage mult (CHOIR_MOTHER swarmers
   }
 });
 
+// ---------------------------------------------------------------------------
+// 7. STARTING ARENA IMPROVE (2026-09-17): the measured card + the hollow's
+//    relief character + the authored landmarks. The card's numbers are PURE
+//    arithmetic over this same catalog (stageFacts), so they can never drift
+//    from the spawn table they describe; the BASIN is the hollow's shape; the
+//    stump + gates make the 1800x1800 field navigable.
+// ---------------------------------------------------------------------------
+import { stageFacts, stageFactsLine, stageRelief } from '../src/stages.js';
+import { reliefHeight, reliefLevel } from '../src/relief.js';
+import { Renderer } from '../src/render.js';
+
+s.check('stageFacts: the measured table is the catalog\'s own arithmetic (every stage)', () => {
+  for (const stage of STAGES) {
+    const f = stageFacts(stage.id);
+    const total = stage.pool.reduce((a, [, w]) => a + w, 0);
+    const shareOf = (ids) => {
+      let w = 0;
+      for (const [t, wt] of stage.pool) if (ids.includes(t)) w += wt;
+      return Math.round((100 * w) / total);
+    };
+    if (f.ranged !== shareOf(['SPITTER', 'WARLOCK'])) throw new Error(stage.id + ' ranged share');
+    if (f.heavy !== shareOf(['BRUTE', 'COLOSSUS'])) throw new Error(stage.id + ' heavy share');
+    if (f.hp !== (stage.mods.hpMult ?? 1) || f.dmg !== (stage.mods.dmgMult ?? 1) ||
+        f.spawn !== (stage.mods.spawnMult ?? 1) || f.speed !== (stage.mods.speedMult ?? 1)) {
+      throw new Error(stage.id + ' mods not mirrored (undeclared mods must read 1)');
+    }
+    if (JSON.stringify(f.hazard) !== JSON.stringify(stage.hazard ? { ...stage.hazard } : null)) {
+      throw new Error(stage.id + ' hazard not mirrored');
+    }
+    // FRESH objects: editing a fact must never corrupt the catalog.
+    f.relief.CELL = 1;
+    if (stageRelief(stage.id).CELL === 1) throw new Error(stage.id + ' facts leak the catalog relief');
+  }
+  // The starting arena's own numbers, named: the table a first-timer reads.
+  const v = stageFacts('VERDANT_HOLLOW');
+  if (v.ranged !== 22 || v.heavy !== 15) throw new Error('verdant shares: ' + JSON.stringify(v));
+  if (v.hp !== 1 || v.dmg !== 1 || v.spawn !== 1) throw new Error('verdant mults must be the shipped 1s');
+  if (v.hazard !== null) throw new Error('the starting arena carries no hazard');
+  if (v.relief.CELL !== 480 || v.relief.LEVELS !== 3 || v.relief.BASIN !== 560) {
+    throw new Error('verdant relief character: ' + JSON.stringify(v.relief));
+  }
+});
+
+s.check('stageFactsLine: plain words, hazard words, the hollow named', () => {
+  const v = stageFactsLine('VERDANT_HOLLOW');
+  for (const tok of ['ranged 22%', 'heavies 15%', 'foe hp x1', 'dmg x1', 'spawn x1',
+                     'a hollow at the heart', '3 relief levels']) {
+    if (!v.includes(tok)) throw new Error('the verdant line lacks "' + tok + '": ' + v);
+  }
+  if (stageFacts('ASHEN_WASTE').ranged !== 0 || !stageFactsLine('ASHEN_WASTE').includes('ranged 0%')) {
+    throw new Error('ashen ranged share wrong: ' + stageFactsLine('ASHEN_WASTE'));
+  }
+  if (!stageFactsLine('ASHEN_WASTE').includes('elite +5%')) {
+    throw new Error('the EMBER_SURGE word: ' + stageFactsLine('ASHEN_WASTE'));
+  }
+  if (!stageFactsLine('SNOWFIELD').includes('spawn ring 70%')) {
+    throw new Error('the COLD_FRONT word: ' + stageFactsLine('SNOWFIELD'));
+  }
+  if (!stageFactsLine('BONE_DESERT').includes('packs x1.5')) {
+    throw new Error('the BRITTLE_BLOOM word: ' + stageFactsLine('BONE_DESERT'));
+  }
+  if (stageFactsLine('CINDER_MAW').includes('hollow')) throw new Error('only the hollow says hollow');
+});
+
+s.check('the STAGE card carries the measured line (the live surface)', () => {
+  st.mode = 'menu';
+  h.elements['ov-cards'].innerHTML = '';
+  T.stages.select(DEFAULT_STAGE_ID);
+  h.key('keydown', { key: 'Escape', preventDefault() {} });
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
+  if (!door) throw new Error('no SETUP door');
+  door.click();
+  const card = cardsNow().find(t => t.includes('>STAGE<'));
+  if (!card) throw new Error('no STAGE card');
+  const want = stageFactsLine(DEFAULT_STAGE_ID);
+  if (!card.includes(want)) throw new Error('the card does not carry the facts line "' + want + '": ' + card);
+  if (!card.includes('ranged 22%') || !card.includes('foe hp x1')) {
+    throw new Error('the numbers are not on the card: ' + card);
+  }
+  // The name still leads the card (setupCard's split(' · ')[0] reads it).
+  if (!/class="desc">VERDANT HOLLOW/.test(card)) throw new Error('the name no longer leads: ' + card);
+});
+
+s.check('the BASIN is the hollow: a flat heart, an untouched rim, every level still exists', () => {
+  const seed = 4242;
+  const plain = { CELL: 480, LEVELS: 3 };
+  const basin = { CELL: 480, LEVELS: 3, BASIN: 560 };
+  // The heart is LEVEL 0 everywhere inside the inner third (a real clearing).
+  for (let a = 0; a < 16; a++) {
+    const x = Math.cos((a / 16) * Math.PI * 2) * 190, y = Math.sin((a / 16) * Math.PI * 2) * 190;
+    if (reliefLevel(x, y, seed, basin) !== 0) {
+      throw new Error('the heart is not flat at (' + x + ',' + y + ')');
+    }
+  }
+  // The pinch only ever LOWERS ground, and past the BASIN radius the field is
+  // byte-identical to the un-authored model (the other stages' experience).
+  for (let y = -900; y <= 900; y += 37) {
+    for (let x = -900; x <= 900; x += 53) {
+      const hPlain = reliefHeight(x, y, seed, plain);
+      const hBasin = reliefHeight(x, y, seed, basin);
+      if (hBasin > hPlain + 1e-12) throw new Error('the basin RAISED ground at ' + x + ',' + y);
+      if (Math.hypot(x, y) >= 560 && hBasin !== hPlain) {
+        throw new Error('past the BASIN the field changed at ' + x + ',' + y);
+      }
+    }
+  }
+  // The quantized ladder is intact: levels 0..2 all exist on the authored field.
+  const seen = new Set();
+  for (let y = -880; y <= 880; y += 24) {
+    for (let x = -880; x <= 880; x += 24) seen.add(reliefLevel(x, y, seed, basin));
+  }
+  if (seen.size !== 3 || ![...seen].every(l => l >= 0 && l <= 2)) {
+    throw new Error('the hollow lost a relief level: ' + [...seen].join(','));
+  }
+  // The stage's catalog relief still carries BASIN, and stageRelief hands a
+  // fresh copy (the seam the run reads).
+  if (stageRelief('VERDANT_HOLLOW').BASIN !== 560) throw new Error('catalog BASIN gone');
+});
+
+s.check('the authored landmarks: stump at the heart, gates at the cardinals, groves in between', () => {
+  const noop = () => {};
+  const ctx = new Proxy({}, {
+    get: (t, k) => (k === 'fillStyle' || k === 'globalAlpha') ? undefined : noop,
+    set: () => true,
+  });
+  const canvas = { width: 0, height: 0, getContext: () => ctx,
+    getBoundingClientRect: () => ({ width: 0, height: 0 }) };
+  const R = new Renderer(canvas);
+  // The whole arena, swept: the authored kinds are all there.
+  const kinds = new Set();
+  for (let cy = -900; cy <= 900 - 300; cy += 300) {
+    for (let cx = -900; cx <= 900 - 480; cx += 480) {
+      R.drawLandmarks(ctx, 4242, { x: cx, y: cy }, undefined, 'VERDANT_HOLLOW');
+      for (const l of R.landmarks) kinds.add(l.kind);
+    }
+  }
+  for (const k of ['STUMP', 'GATE', 'GROVE']) {
+    if (!kinds.has(k)) throw new Error('the hollow lacks ' + k + ' (' + [...kinds].join(',') + ')');
+  }
+  // The authored set, exactly: the stump at the heart, four gates on the
+  // cardinals just inside the rim.
+  R.drawLandmarks(ctx, 4242, { x: 0, y: 0 }, undefined, 'VERDANT_HOLLOW');
+  const stump = R.landmarks.filter(l => l.kind === 'STUMP');
+  if (stump.length !== 1 || stump[0].x !== 0 || stump[0].y !== 0) {
+    throw new Error('the stump is not alone at the heart: ' + JSON.stringify(stump));
+  }
+  if (stump[0].rects < 10) throw new Error('the stump is not composed (' + stump[0].rects + ' rects)');
+  R.drawLandmarks(ctx, 4242, { x: 0, y: -(C.GROUND.RIM - 150) }, undefined, 'VERDANT_HOLLOW');
+  const gate = R.landmarks.find(l => l.kind === 'GATE');
+  if (!gate) throw new Error('no gate at the north cardinal');
+  if (gate.rects < 8) throw new Error('the gate is not composed');
+  // STAGE-GATED: without the stage param the authored set does not exist —
+  // the other seven arenas render byte-identically to before.
+  R.drawLandmarks(ctx, 4242, { x: 0, y: 0 }, undefined, undefined);
+  if (R.landmarks.some(l => l.kind === 'STUMP' || l.kind === 'GATE' || l.kind === 'GROVE')) {
+    throw new Error('the authored set leaked into a non-hollow draw');
+  }
+});
+
 s.done();
