@@ -194,15 +194,17 @@ const dtMs = 1000 / 60;
       .find(c => (c.innerHTML || '').includes(t));
     byTitle('SETUP').click();   // U1: behind the SETUP door
     byTitle('SETTINGS').click();
+    byTitle('SAVE DATA').click();   // M3: reset lives behind SAVE DATA now
     const r1 = byTitle('RESET PROFILE');
-    assert(r1, 'settings should show a RESET PROFILE card');
+    assert(r1, 'SAVE DATA should show a RESET PROFILE card');
     r1.click();
     const confirm = byTitle('CONFIRM RESET?');
     assert(confirm, 'first reset click should ARM the CONFIRM RESET? card');
     confirm.click();
     assert(gp().gold === 0, `RESET should wipe gold (got ${gp().gold})`);
     console.log('settings probe: RESET PROFILE armed + wiped gold');
-    byTitle('BACK').click();
+    byTitle('BACK').click();   // SAVE DATA -> settings
+    byTitle('BACK').click();   // settings -> title
   }
 }
 
@@ -217,8 +219,9 @@ const dtMs = 1000 / 60;
     .find(c => (c.innerHTML || '').includes(t));
   byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
+  byTitle('DISPLAY').click();   // M1: the hud toggle lives behind DISPLAY now
   const hudCard = byTitle('TEXT HUD');
-  assert(hudCard, 'settings must offer a TEXT HUD card');
+  assert(hudCard, 'DISPLAY must offer a TEXT HUD card');
   assert(/OFF/.test(hudCard.innerHTML), 'TEXT HUD card reads OFF by default');
   hudCard.click();   // ON
   for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
@@ -227,7 +230,8 @@ const dtMs = 1000 / 60;
   byTitle('TEXT HUD').click();   // back OFF
   for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(elements['hud'].style.display === 'none', 'TEXT HUD OFF must hide it again');
-  byTitle('BACK').click();
+  byTitle('BACK').click();   // DISPLAY -> settings
+  byTitle('BACK').click();   // settings -> title
   console.log('text HUD: hidden by default, settings toggle round-trips');
 }
 
@@ -243,6 +247,7 @@ const dtMs = 1000 / 60;
     .find(c => (c.innerHTML || '').includes(t));
   byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
+  byTitle('DISPLAY').click();   // M1: the zoom ladder lives behind DISPLAY now
   const z = byTitle('ZOOM');
   assert(z && /currently 6x/.test(z.innerHTML),
     'settings must offer the ZOOM row (got ' + (z && z.innerHTML) + ')');
@@ -252,7 +257,8 @@ const dtMs = 1000 / 60;
   byTitle('ZOOM').click();   // 8 -> wraps to 1
   assert(st.zoom === 1 && globalThis.localStorage.getItem('hordes_zoom') === '1',
     'the ladder must wrap 8x -> 1x and persist');
-  byTitle('BACK').click();
+  byTitle('BACK').click();   // DISPLAY -> settings
+  byTitle('BACK').click();   // settings -> title
   console.log('zoom setting: hydrated 6x at boot, ZOOM row cycles + persists, 8x wraps to 1x');
 }
 
@@ -270,6 +276,7 @@ const dtMs = 1000 / 60;
     .find(c => (c.innerHTML || '').includes(t));
   byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
+  byTitle('DISPLAY').click();   // M1: resolution lives behind DISPLAY now
   const cv = elements['game'];
   const size = () => cv.style.width + 'x' + cv.style.height;
   const r0 = byTitle('RESOLUTION');
@@ -291,7 +298,8 @@ const dtMs = 1000 / 60;
   byTitle('RESOLUTION').click();   // -> wraps to AUTO (visible, reversible)
   assert(globalThis.localStorage.getItem('hordes_resolution') === 'AUTO' && size() === '1152pxx720px',
     'wraps back to AUTO and re-fits 1152x720');
-  byTitle('BACK').click();
+  byTitle('BACK').click();   // DISPLAY -> settings
+  byTitle('BACK').click();   // settings -> title
   console.log('resolution setting: AUTO/PIXEL-PERFECT/2/3/4 cycle, persist, and re-fit ' +
     'the canvas (1152x720 <-> 960x600 at a 1280x720 window)');
 }
@@ -1806,23 +1814,27 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   pump(5);
   assert(st.time === t0, 'the game clock must be frozen while settings is open');
 
-  // RESET disarm: arm it, leave, come back via the cog — never pre-armed.
+  // Two-tap arm disarm: END RUN arms in-run now (condense E1 moved RESET to
+  // the title-only SAVE DATA door), leave, come back via the cog — never
+  // pre-armed. RESET itself must be ABSENT in-run (E1).
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
-  byTitle('RESET PROFILE').click();          // arm
-  assert(byTitle('CONFIRM RESET?'), 'arm click shows CONFIRM RESET?');
-  byTitle('BACK').click();                   // closeSettings -> resume
+  assert(!byTitle('RESET PROFILE') && !byTitle('SAVE DATA'),
+    'condense E1: no RESET / SAVE DATA on the in-run settings screen');
+  byTitle('END RUN').click();                 // arm
+  assert(byTitle('CONFIRM END RUN?'), 'arm click shows CONFIRM END RUN?');
+  byTitle('BACK').click();                    // closeSettings -> resume
   assert(st.mode === 'playing', 'BACK must resume the run');
   pump(2);
   assert(st.time > t0, 'closing must resume the game clock');
   fireCog();                                  // re-open via the cog
-  assert(st.mode === 'settings' && byTitle('RESET PROFILE') && !byTitle('CONFIRM RESET?'),
+  assert(st.mode === 'settings' && byTitle('END RUN') && !byTitle('CONFIRM END RUN?'),
     'the cog must re-open DISARMED (never pre-armed from the prior visit)');
   keyHandler({ key: 'Escape' });              // ESC closes too
   assert(st.mode === 'playing', 'ESC must close the in-run settings');
   pump(1);
-  console.log('touch cog: opens/pauses in-run, clock frozen, RESET re-opens disarmed, BACK/ESC resume');
+  console.log('touch cog: opens/pauses in-run, clock frozen, END RUN re-opens disarmed, BACK/ESC resume');
 
   // ---- HELP MODE (2026-09-16): the retired "?" panel's replacement ----------
   // "?" arms a quiet inspect mode on BOTH paths (desktop included). The old

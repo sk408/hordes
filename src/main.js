@@ -147,7 +147,7 @@ import {
   // banners, so they fire once per PROFILE rather than once per run.
   bannerSeen, markBannerSeen,
   downloadProfile, saveProfileToDisk, readSaveFile,
-  readRecovery, downloadRecovery, STORAGE_KEY, RECOVERY_PREV_KEY,
+  readRecovery, downloadRecovery, STORAGE_KEY,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -4366,7 +4366,7 @@ function manualGoto(page) {
     // replay path existed but nobody found it).
     ? 'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
       'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
-      '<br>Missed the guided tour? Replay it any time: SETUP, SETTINGS, REPLAY TOUR.' +
+      '<br>Missed the guided tour? The REPLAY TOUR card at the bottom runs it again.' +
       '<br>PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0]
     : 'PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1];
   const addCls = (el, c) => {
@@ -4437,6 +4437,34 @@ function manualGoto(page) {
   const toc = [['A RUN', 1], ['OPTIONS', 2], ['CONTROLS', 3], ['FIELD', 4]];
   for (const [t, n] of toc) {
     menuCard(t, n === p ? 'this page' : 'page ' + n, () => manualGoto(n), n === p);
+  }
+  // M4: REPLAY TOUR (WAVE-21, docs/FIRST_RUN_TOUR doc #7) lives HERE now — a
+  // footer card on every manual page EXCEPT the first-run gate (a fresh
+  // player has not seen the tour yet; replaying it from the gate would be a
+  // trap). Behavior unchanged from the old settings card: re-arm the
+  // demonstration flags AND the give-up counters, lift a skip's session
+  // suppression, then return exactly where GOT IT would.
+  if (state.helpFrom !== 'gate') {
+    menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
+      clearTourFlags();
+      // ONBOARDING REWORK: the replay re-arms the hint layer as well — the
+      // demonstration flags AND the give-up counters (onboarding.js reset()).
+      hintStore.reset();
+      // ...and lifts a skip's session suppression (PLAYER REVIEW item 1: the
+      // player who asks for the tour back gets the chips back too).
+      hintsSuppressed = false;
+      const back = state.helpFrom;
+      state.manualPage = null;
+      state.helpFrom = null;
+      if (back === 'run') {
+        closeSettings();
+        toast('TOUR REPLAYS NOW');   // the kept cards + hints re-arm live
+      } else if (back === 'end') {
+        reshowEndScreen();
+      } else {
+        showTitle();                 // the kept cards re-arm on their screens
+      }
+    });
   }
   // GOT IT: a FLOW footer card at the end of the stack — in the layout,
   // never sticky over the scrolling body.
@@ -5306,7 +5334,7 @@ function showSetup() {
         ? 'press again to CONFIRM: runs full-auto at HALF gold'
         : 'overnight full-auto · 50% gold · two presses to turn ON (OFF by default)',
     () => { toggleNight(); showSetup(); });
-  menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
+  menuCard('SETTINGS', 'display, audio & save data', () => showSettings());
   // ONBOARDING REWORK: HOW TO PLAY now lives on the TITLE screen; SETUP keeps
   // CHALLENGE / STAGE / SETTINGS only.
   menuCard('BACK', 'to title [ESC]', () => showTitle());
@@ -5518,17 +5546,14 @@ function showTitle() {
   overlay.style.background = 'transparent';
   const fresh = !hasLocalSave();
   paintTitleHeader();
-  menuCard('START GAME', fresh ? 'start a run · or LOAD FROM DISK below' : 'start a run',
+  menuCard('START GAME', 'start a run',
     // UP-FRONT CONTROLS: a fresh profile meets the reference FIRST (the
     // gate), GOT IT starts the run; everyone else goes straight in.
     () => (onboardingDone() ? beginTitleHold() : showHowToPlay({ intoRun: true })));   // N2: fade out + hold the art ~1s, then startRun()
-  // G12 DO 4: on a fresh browser (no local save) the startup menu itself
-  // offers load-from-disk, through the SAME validated import path SETTINGS
-  // uses (pickImportFile -> importSaveText -> importProfileText). Once ANY
-  // save exists the card adds no friction and disappears.
-  if (fresh) {
-    menuCard('LOAD FROM DISK', 'import a saved profile (.json)', () => pickImportFile(() => showTitle()));
-  }
+  // MENU CONDENSE M5: the fresh-browser LOAD FROM DISK card is folded into
+  // SAVE DATA (SETUP -> SETTINGS -> SAVE DATA -> IMPORT SAVE) — the same
+  // validated pickImportFile -> importSaveText -> importProfileText path.
+  // The `fresh` flag stays live for paintTitleHeader's fresh copy.
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
   // G26: the LOADOUT door. A destination the player FINDS (owner: "the player
@@ -5540,10 +5565,15 @@ function showTitle() {
       ? profile.loadout.length + '/' + (startWeaponSlots(profile) - 1) + ' weapons chosen'
       : 'pick this run\'s weapons', () => showLoadout());
   // U1 (owner 2026-09-14): the menu was eleven cards. TROPHIES/BESTIARY and
-  // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, so the
-  // title is six (seven on a fresh browser). The doors' sub-lines carry the
-  // live numbers the moved cards used to show, so nothing is hidden that a
-  // player needs before pressing.
+  // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, and the
+  // doors' sub-lines carry the live numbers the moved cards used to show,
+  // so nothing is hidden that a player needs before pressing.
+  // MENU CONDENSE (2026-09-17, owner rulings VJBFV): D3 EXIT GAME is removed
+  // (closing the tab saves & quits — autosave already fires); M5 folded the
+  // fresh LOAD FROM DISK card into SAVE DATA; D4 CHARACTERS is KEPT (owner
+  // wants the card; the duplicate SHOP door is not a removal reason) — so
+  // the title is SEVEN cards, HOW TO PLAY last. exitGame()/showFarewell and
+  // the `game: exitGame` __TEST seam survive unreached by cards.
   menuCard('PROGRESS', `${earnedCount(profile)} / ${totalAchievements()} emblems · ` +
     `${seenCount(profile)} / ${totalEncounters()} met`, () => showProgress());
   menuCard('SETUP', stageCardSub().split(' · ')[0] + ' · challenge, stage, options',
@@ -5552,8 +5582,6 @@ function showTitle() {
   // SETUP onto the title — a confused player does not open SETUP to look for
   // help. SETUP keeps CHALLENGE / STAGE / SETTINGS.
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
-  // G12 DO 2: EXIT GAME is the LAST card.
-  menuCard('EXIT GAME', 'save & quit', () => exitGame());
   // N2 DO 1: the FIRST title entry per page load shows the art alone for a
   // beat, then fades the menu in over it; every return re-fades short. A
   // hold already in flight (out/hold) is never interrupted by a rebuild.
@@ -6118,6 +6146,16 @@ function importSaveText(text) {
 
 let resetArmed = false;
 let endArmed = false;   // WAVE-18 (#6): END RUN two-tap arm (same pattern as RESET)
+// MENU CONDENSE (2026-09-17, owner rulings on the VJBFV prune proposal): the
+// 12/14-card settings wall is now SIX cards in both contexts — AUDIO,
+// DISPLAY, PILOT, HOW TO PLAY, SAVE DATA (title) / END RUN (in-run), BACK —
+// with the full ladders one tap deeper in the three sub-screens below.
+// Merges: M1 zoom+resolution+text hud -> DISPLAY; M2 music+sfx -> AUDIO;
+// M3 export+import+recovery+reset -> SAVE DATA. Removals: D1 TEST: ESCAPE
+// SEQUENCE (debug-gated below), D2 RECOVERY FILE (PREVIOUS) (one rescue
+// slot), REPLAY TOUR moved into HOW TO PLAY (M4). E1/E2 follow: RESET keeps
+// its two-tap arm, and the FULL zoom/resolution ladders stay reachable one
+// tap deeper inside DISPLAY.
 function showSettings(disarm = true, inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
   // Sk408 bug: the arm click re-rendered through here, which cleared the
@@ -6126,36 +6164,13 @@ function showSettings(disarm = true, inRun = false) {
   if (disarm) { resetArmed = false; endArmed = false; }
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
-  ovSub.textContent = 'audio, hud & profile' + (saveNotice ? ' · ' + saveNotice : '');
-  menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
-    audio.setMusicEnabled(!audio.getMusicEnabled());
-    showSettings(true, inRun);
-  });
-  menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
-    audio.setSfxEnabled(!audio.getSfxEnabled());
-    showSettings(true, inRun);
-  });
-  // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
-  menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
-    setHudTextEnabled(!hudTextEnabled());
-    showSettings(true, inRun);
-  });
-  // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
-  menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
-    cycleZoom(1);
-    showSettings(true, inRun);
-  });
-  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
-  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
-  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
-  menuCard('RESOLUTION', 'currently ' + resMode() +
-    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
-    ' — crisper text everywhere', () => {
-    const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
-    prefStorage.setItem(KEY_RESOLUTION, next);
-    fitCanvas();
-    showSettings(true, inRun);
-  });
+  ovSub.textContent = 'display, audio & save data' + (saveNotice ? ' · ' + saveNotice : '');
+  menuCard('AUDIO',
+    'music ' + (audio.getMusicEnabled() ? 'ON' : 'OFF') + ' &middot; sfx ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'),
+    () => showAudioSettings(inRun));
+  menuCard('DISPLAY',
+    state.zoom + 'x &middot; ' + resMode().toLowerCase() + ' &middot; hud ' + (hudTextEnabled() ? 'ON' : 'OFF'),
+    () => showDisplaySettings(inRun));
   // G31: the pilot cycle, selectable PRE-RUN as well as in-run (the O key /
   // touch PILOT button were mid-run only, so the persisted choice could not
   // be set before the first run). Same togglePilotMode seam as the key.
@@ -6169,64 +6184,11 @@ function showSettings(disarm = true, inRun = false) {
   // door. In-run it opens under this same pause mode, so GOT IT (and ESC)
   // resume the fight through closeSettings — the BACK discipline.
   menuCard('HOW TO PLAY', 'every control + the field objects', () => showHowToPlay({ inRun }));
-  // WAVE-21: replay the first-run tour on demand (docs/FIRST_RUN_TOUR doc #7).
-  menuCard('REPLAY TOUR', 'run the walkthrough again from the start', () => {
-    clearTourFlags();
-    // ONBOARDING REWORK: the replay re-arms the hint layer as well — the
-    // demonstration flags AND the give-up counters (onboarding.js reset()).
-    hintStore.reset();
-    // ...and lifts a skip's session suppression (PLAYER REVIEW item 1: the
-    // player who asks for the tour back gets the chips back too).
-    hintsSuppressed = false;
-    if (inRun) {
-      closeSettings();
-      toast('TOUR REPLAYS NOW');   // the kept cards + hints re-arm live
-    } else {
-      showTitle();                 // the kept cards re-arm on their screens
-    }
-  });
-  // W1 SAVE FOUNDATION: export/import, plus the preserved payload of an
-  // unreadable or newer-version save when one exists. Title settings only.
+  // M3: export/import/recovery/reset live behind ONE door, title-only (the
+  // in-run screen deliberately carries END RUN instead — E1).
   if (!inRun) {
-    menuCard('EXPORT SAVE', 'download a .json backup of everything', () => {
-      const done = (r) => {
-        if (r && r.aborted) return;   // player cancelled the save dialog — say nothing
-        saveNotice = r && r.ok ? 'SAVE EXPORTED.' : 'EXPORT FAILED — try again.';
-        showSettings(false);
-      };
-      const res = saveProfileToDisk(profile);
-      if (res && typeof res.then === 'function') res.then(done, () => done(null));
-      else done(res);
-    });
-    menuCard('IMPORT SAVE', 'load a .json backup (validated + migrated)', () => pickImportFile());
-    if (readRecovery()) {
-      menuCard('RECOVERY FILE', 'download the preserved damaged save', () => {
-        const r = downloadRecovery();
-        saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
-        showSettings(false);
-      });
-      // N5 (audit 2026-09-16): the recovery system keeps TWO slots now — the
-      // latest incident at RECOVERY_KEY, the one before it at '.prev'. Both
-      // are offered when both exist, so an older incident is never silently
-      // unreachable.
-      if (readRecovery(null, RECOVERY_PREV_KEY)) {
-        menuCard('RECOVERY FILE (PREVIOUS)', 'download the earlier preserved save', () => {
-          const r = downloadRecovery(null, globalThis, { key: RECOVERY_PREV_KEY });
-          saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
-          showSettings(false);
-        });
-      }
-    }
+    menuCard('SAVE DATA', 'export, import & reset', () => showSaveData());
   }
-  menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
-    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
-    () => {
-      if (!resetArmed) { resetArmed = true; showSettings(false, inRun); return; }
-      profile = makeProfile();
-      saveProfile(profile);
-      resetArmed = false;
-      showSettings(false, inRun);
-    });
   // WAVE-18 (#6): END RUN — the early exit the playtest demanded, only on
   // the in-run settings screen (never the title's). Same two-tap arm/
   // confirm pattern as RESET PROFILE.
@@ -6244,10 +6206,15 @@ function showSettings(disarm = true, inRun = false) {
   // so the paused run offers the entry here. It goes through the REAL
   // startEscape seam flagged as a test entry (no payout, no intermission:
   // every exit returns to this screen with the run still live).
-  if (inRun) menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
-    closeSettings();
-    startEscape({ test: true });
-  });
+  // MENU CONDENSE D1: off the player surface — offered ONLY when the debug
+  // flag is set (localStorage 'hordes_debug' = '1'; the dev runbook flips
+  // it from the console). Card order still ahead of BACK when present.
+  if (inRun && (() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
+    menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
+      closeSettings();
+      startEscape({ test: true });
+    });
+  }
   // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
   // instead of bailing to the title (which would abandon it).
   if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
@@ -6261,6 +6228,118 @@ function showSettings(disarm = true, inRun = false) {
       text: 'END RUN banks your gold and ends the run early — confirm twice.',
       target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
   }
+}
+
+// ---------- MENU CONDENSE sub-screens (M1/M2/M3) -------------------------------
+// Each is a plain menu: the merged rows, verbatim mechanics, plus a BACK that
+// returns to SETTINGS in the SAME context (title or in-run pause). The arms
+// (RESET two-tap) disarm only via showSettings's fresh-open rule, so walking
+// back out of a sub-screen disarms honestly — the Sk408 arm bug stays fixed.
+
+// M2: MUSIC + SFX behind one AUDIO door.
+function showAudioSettings(inRun = false) {
+  openMenu(inRun ? 'settings' : 'menu');
+  ovTitle.textContent = 'AUDIO';
+  ovTitle.className = '';
+  ovSub.textContent = 'music & sound effects';
+  menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
+    audio.setMusicEnabled(!audio.getMusicEnabled());
+    showAudioSettings(inRun);
+  });
+  menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
+    audio.setSfxEnabled(!audio.getSfxEnabled());
+    showAudioSettings(inRun);
+  });
+  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
+}
+
+// The four one-press display presets (E2's fast path): resolution + zoom
+// applied together, so the common destinations are one press and the exact
+// ladders stay one tap deeper for everything else.
+const DISPLAY_PRESETS = [
+  { name: 'AUTO',    res: 'AUTO',          zoom: 1 },
+  { name: 'CRISP',   res: 'PIXEL-PERFECT', zoom: 1 },
+  { name: 'BIGGER',  res: 'AUTO',          zoom: 2 },
+  { name: 'BIGGEST', res: 'AUTO',          zoom: 4 },
+];
+
+// M1: ZOOM + RESOLUTION + TEXT HUD behind one DISPLAY door.
+function showDisplaySettings(inRun = false) {
+  openMenu(inRun ? 'settings' : 'menu');
+  ovTitle.textContent = 'DISPLAY';
+  ovTitle.className = '';
+  ovSub.textContent = 'zoom, resolution & hud';
+  const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
+  menuCard('DISPLAY PRESET', 'currently ' + (cur ? cur.name : 'CUSTOM') +
+    ' (auto / crisp / bigger / biggest)', () => {
+    const i = cur ? (DISPLAY_PRESETS.indexOf(cur) + 1) % DISPLAY_PRESETS.length : 0;
+    const pr = DISPLAY_PRESETS[i];
+    prefStorage.setItem(KEY_RESOLUTION, pr.res);
+    setZoom(pr.zoom);
+    fitCanvas();
+    showDisplaySettings(inRun);
+  });
+  // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
+  menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
+    cycleZoom(1);
+    showDisplaySettings(inRun);
+  });
+  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
+  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
+  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
+  menuCard('RESOLUTION', 'currently ' + resMode() +
+    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
+    ' — crisper text everywhere', () => {
+    const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
+    prefStorage.setItem(KEY_RESOLUTION, next);
+    fitCanvas();
+    showDisplaySettings(inRun);
+  });
+  // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
+  menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
+    setHudTextEnabled(!hudTextEnabled());
+    showDisplaySettings(inRun);
+  });
+  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
+}
+
+// M3: EXPORT + IMPORT + RECOVERY + RESET behind one SAVE DATA door (title
+// only). D2: ONE rescue slot is offered — RECOVERY FILE (PREVIOUS) is gone;
+// the two-slot STORAGE write logic is untouched, only the older slot's card
+// was removed.
+function showSaveData() {
+  openMenu('menu');
+  ovTitle.textContent = 'SAVE DATA';
+  ovTitle.className = '';
+  ovSub.textContent = 'export, import & reset' + (saveNotice ? ' · ' + saveNotice : '');
+  menuCard('EXPORT SAVE', 'download a .json backup of everything', () => {
+    const done = (r) => {
+      if (r && r.aborted) return;   // player cancelled the save dialog — say nothing
+      saveNotice = r && r.ok ? 'SAVE EXPORTED.' : 'EXPORT FAILED — try again.';
+      showSaveData();
+    };
+    const res = saveProfileToDisk(profile);
+    if (res && typeof res.then === 'function') res.then(done, () => done(null));
+    else done(res);
+  });
+  menuCard('IMPORT SAVE', 'load a .json backup (validated + migrated)', () => pickImportFile());
+  if (readRecovery()) {
+    menuCard('RECOVERY FILE', 'download the preserved damaged save', () => {
+      const r = downloadRecovery();
+      saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
+      showSaveData();
+    });
+  }
+  menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
+    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
+    () => {
+      if (!resetArmed) { resetArmed = true; showSaveData(); return; }
+      profile = makeProfile();
+      saveProfile(profile);
+      resetArmed = false;
+      showSaveData();
+    });
+  menuCard('BACK', 'to settings', () => showSettings(false));
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --

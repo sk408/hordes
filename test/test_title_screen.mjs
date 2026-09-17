@@ -1,10 +1,11 @@
 // G12 TITLE SCREEN tests — the startup-menu contract through the REAL
 // src/main.js (shared harness): the composed title card owns the canvas in
-// mode 'title' (renderer seam geometry, null outside it), the menu carries
-// START GAME + EXIT GAME (last) + every existing card, EXIT GAME runs its
-// three steps in order (autosave -> window.close -> farewell), the fresh
-// browser offers LOAD FROM DISK on the title and the offer disappears once a
-// save exists, and the chrome gate is OFF in the title.
+// mode 'title' (renderer seam geometry, null outside it), the menu is the
+// SEVEN condense cards with HOW TO PLAY last (EXIT GAME removed D3, fresh
+// LOAD FROM DISK folded into SAVE DATA M5), exitGame keeps its three-step
+// contract through the __TEST seam (autosave -> window.close -> farewell),
+// the import offer lives behind SETUP -> SETTINGS -> SAVE DATA, and the
+// chrome gate is OFF in the title.
 //
 // Run: node test/test_title_screen.mjs   (exit 0 = pass)
 import assert from 'node:assert/strict';
@@ -142,23 +143,28 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
 });
 
 // ---- 2. the startup menu (DO 2) ----------------------------------------------
-check('the menu carries START GAME, EXIT GAME as the LAST card, and every existing card', () => {
+check('the menu is SEVEN cards, HOW TO PLAY last, EXIT GAME gone (condense D3/D4)', () => {
   const n = names();
-  // U1 (owner 2026-09-14): six/seven top-level cards after the subnav split —
-  // TROPHIES/BESTIARY moved behind PROGRESS, CHALLENGE/STAGE/SETTINGS behind
-  // SETUP. This assertion is retargeted, NOT weakened: the moved cards are
-  // asserted below, one level down. ONBOARDING REWORK (2026-09-16): HOW TO
-  // PLAY moved BACK to the title (one tap from the menu — the reference must
-  // be findable), so it is asserted present, not moved.
-  for (const want of ['START GAME', 'SHOP', 'CHARACTERS', 'PROGRESS', 'SETUP', 'HOW TO PLAY', 'EXIT GAME']) {
-    assert.ok(n.includes(want), 'card present: ' + want);
-  }
-  assert.equal(n[n.length - 1], 'EXIT GAME', 'EXIT GAME is the LAST card');
+  // MENU CONDENSE (2026-09-17, owner rulings VJBFV): D3 removed EXIT GAME
+  // (autosave already fires; closing the tab is save & quit), M5 folded the
+  // fresh LOAD FROM DISK offer into SAVE DATA, and D4 KEPT CHARACTERS (owner
+  // override — the count is 7, not the proposed 6). Retargeted, not weakened:
+  // the exact seven-card ORDER is asserted, and the removed cards are asserted
+  // ABSENT at every level they used to occupy.
+  assert.deepEqual(n,
+    ['START GAME', 'SHOP', 'CHARACTERS', 'LOADOUT', 'PROGRESS', 'SETUP', 'HOW TO PLAY'],
+    'the title is exactly the seven surviving cards, in order');
   assert.ok(!n.includes('PLAY'), 'the old PLAY name is gone');
   // The pile that made the menu eleven cards is gone from the top level.
   for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'SETTINGS']) {
     assert.ok(!n.includes(moved), 'moved behind a submenu, not on the title: ' + moved);
   }
+  // ...and the condense removals are gone from the title entirely.
+  for (const gone of ['EXIT GAME', 'LOAD FROM DISK']) {
+    assert.ok(!n.includes(gone), 'removed from the title by the condense: ' + gone);
+  }
+  assert.ok(!(cardWith('START GAME').innerHTML || '').includes('LOAD FROM DISK'),
+    'START GAME no longer names the folded-away offer');
 });
 
 check('U1 submenus: PROGRESS carries TROPHIES + BESTIARY, SETUP carries the run options, both return', () => {
@@ -181,15 +187,66 @@ check('U1 submenus: PROGRESS carries TROPHIES + BESTIARY, SETUP carries the run 
   assert.ok(names().includes('START GAME'), 'BACK returns to the title from SETUP');
 });
 
-// ---- 3. EXIT GAME, honestly (DO 3 + DO 6) -------------------------------------
-check('EXIT GAME: autosave -> window.close attempt -> farewell, in that order', () => {
-  // Arm a window.close spy on the harness window stub, then dirty the profile
-  // so the autosave is observable, and click the REAL card.
+check('MENU CONDENSE: settings is SIX cards in both contexts; the merged rows sit one tap deeper', () => {
+  // Title context: AUDIO / DISPLAY / PILOT / HOW TO PLAY / SAVE DATA / BACK —
+  // exactly, in order. The old wall (MUSIC, SFX, TEXT HUD, ZOOM, RESOLUTION,
+  // REPLAY TOUR, EXPORT, IMPORT, RECOVERY, RESET) is behind the three doors.
+  cardWith('SETUP').click();
+  cardWith('SETTINGS').click();
+  assert.deepEqual(names(), ['AUDIO', 'DISPLAY', 'PILOT', 'HOW TO PLAY', 'SAVE DATA', 'BACK'],
+    'title settings is exactly the six condense cards, in order');
+  // DISPLAY (M1): preset row + the FULL ladders one tap deeper (E2).
+  cardWith('DISPLAY').click();
+  assert.deepEqual(names(), ['DISPLAY PRESET', 'ZOOM', 'RESOLUTION', 'TEXT HUD', 'BACK'],
+    'DISPLAY carries the preset plus the full zoom/resolution/hud ladders');
+  cardWith('BACK').click();
+  // AUDIO (M2).
+  cardWith('AUDIO').click();
+  assert.deepEqual(names(), ['MUSIC', 'SFX', 'BACK'], 'AUDIO carries MUSIC + SFX');
+  cardWith('BACK').click();
+  // SAVE DATA (M3): export/import/(recovery)/reset — RESET still two-tap.
+  cardWith('SAVE DATA').click();
+  const sd = names();
+  assert.deepEqual(sd.slice(0, 2), ['EXPORT SAVE', 'IMPORT SAVE'], 'SAVE DATA leads with export/import');
+  if (sd.includes('RECOVERY FILE')) assert.ok(sd.indexOf('RECOVERY FILE') === 2, 'recovery rides after import');
+  const resetIdx = sd.indexOf('RESET PROFILE');
+  assert.ok(resetIdx === sd.length - 2, 'RESET PROFILE sits just before BACK');
+  cardWith('RESET PROFILE').click();
+  assert.ok(names().includes('CONFIRM RESET?'), 'the arm still arms inside SAVE DATA');
+  cardWith('BACK').click();
+  cardWith('BACK').click();
+  assert.ok(names().includes('START GAME'), 'BACK chains home: SAVE DATA -> settings -> title');
+
+  // In-run context: the same six, with END RUN instead of SAVE DATA (E1) and
+  // NO debug card unless the flag is set (D1).
+  cardWith('START GAME').click();
+  for (let i = 0; i < 200 && st.mode !== 'playing'; i++) h.pump(1);
+  assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
+  T.openSettings();
+  assert.deepEqual(names(), ['AUDIO', 'DISPLAY', 'PILOT', 'HOW TO PLAY', 'END RUN', 'BACK'],
+    'in-run settings is the same six with END RUN (no SAVE DATA, no TEST: ESCAPE)');
+  cardWith('BACK').click();
+  assert.equal(st.mode, 'playing', 'BACK resumes the run');
+  // Leave the run cleanly for the checks below.
+  T.openSettings();
+  cardWith('END RUN').click();
+  cardWith('CONFIRM END RUN?').click();
+  assert.ok(st.mode === 'dead' || st.mode === 'end' || st.mode === 'title',
+    'END RUN leaves the run (' + st.mode + ')');
+  if (st.mode !== 'title') { key('t'); h.pump(2); }
+  assert.equal(st.mode, 'title', 'back on the title');
+});
+
+// ---- 3. EXIT GAME: card REMOVED (condense D3), the path itself still honest ---
+check('EXIT GAME card is gone; exitGame (the __TEST seam) still autosaves -> close -> farewell', () => {
+  // MENU CONDENSE D3: the card is off the title. The FUNCTION keeps its
+  // honest three-step contract (the `game: exitGame` seam), so this check now
+  // drives the seam directly — same assertions, no card.
   const w = globalThis.window;
   let closes = 0;
   w.close = () => { closes++; };
   T.getProfile().gold += 7;
-  cardWith('EXIT GAME').click();
+  T.exit.game();
   assert.deepEqual(T.exit.steps, ['autosave', 'window.close', 'farewell'],
     'the three steps ran in order');
   assert.equal(closes, 1, 'window.close was attempted exactly once');
@@ -213,50 +270,48 @@ check('the farewell backs out to the title (BACK card + ESC)', () => {
   assert.equal(st.mode, 'title', 'ESC also returns to the title');
 });
 
-// ---- 4. START GAME: load-from-disk offer (DO 4) --------------------------------
-check('a FRESH browser offers LOAD FROM DISK on the title; a save removes it', () => {
-  // A save exists by now (the exit autosave wrote it): no offer, no friction.
+// ---- 4. load-from-disk: FOLDED into SAVE DATA (condense M5) --------------------
+check('a FRESH browser has NO title load offer; the offer lives in SAVE DATA', () => {
+  // MENU CONDENSE M5: the fresh-browser LOAD FROM DISK title card is folded
+  // into SETTINGS -> SAVE DATA (same validated pickImportFile path), so the
+  // title is the same seven cards fresh or not.
   assert.ok(cardWith('START GAME'), 'START GAME present');
-  assert.equal(cardWith('LOAD FROM DISK'), undefined, 'no load offer once a save exists');
-  // Wipe it the way a fresh browser looks, re-render the title: the offer appears.
+  // Wipe it the way a fresh browser looks, re-render the title: STILL seven.
   h.storage.delete('hordes_profile_v1');
   T.showTitle();
-  const load = cardWith('LOAD FROM DISK');
-  assert.ok(load, 'the fresh title offers LOAD FROM DISK');
-  assert.equal(names().indexOf('LOAD FROM DISK'), 1,
-    'the offer rides directly under START GAME');
-  assert.ok((cardWith('START GAME').innerHTML || '').includes('LOAD FROM DISK'),
-    'START GAME names the offer while no save exists');
-  // The offer disappears again once a save lands.
+  assert.equal(cardWith('LOAD FROM DISK'), undefined,
+    'no fresh-browser load offer on the title (folded into SAVE DATA)');
+  assert.equal(names().length, 7, 'fresh title is the same seven cards');
+  // The permanent home: SETUP -> SETTINGS -> SAVE DATA offers IMPORT SAVE,
+  // fresh or not (a save exists again by the end of this check's tail).
+  cardWith('SETUP').click();
+  cardWith('SETTINGS').click();
+  assert.ok(cardWith('SAVE DATA'), 'settings offers the SAVE DATA door');
+  cardWith('SAVE DATA').click();
+  assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')),
+    'SAVE DATA offers IMPORT SAVE');
+  cardWith('BACK').click();
+  cardWith('BACK').click();
+  key('escape');
+  assert.equal(st.mode, 'title', 'back to the title');
   T.save.autosave();
-  T.showTitle();
-  assert.equal(cardWith('LOAD FROM DISK'), undefined, 'offer gone after a save exists');
 });
 
-check('the load offer is wired to the same file picker SETTINGS uses', () => {
-  h.storage.delete('hordes_profile_v1');
-  T.showTitle();
+check('IMPORT SAVE is wired to the file picker; the import path round-trips', () => {
+  cardWith('SETUP').click();
+  cardWith('SETTINGS').click();
+  cardWith('SAVE DATA').click();
   const bodyKids = () => [...(globalThis.document.body.children || [])];
   const before = bodyKids().length;
-  cardWith('LOAD FROM DISK').click();
+  cardWith('IMPORT SAVE').click();
   const input = bodyKids().slice(before).find(c => c.type === 'file');
   assert.ok(input, 'a hidden <input type=file> was created (the pickImportFile path)');
-  // Simulate the picker's success tail: a validated import lands, persists,
-  // and the title re-renders WITHOUT the offer.
+  // Simulate the picker's success tail: a validated import lands and persists.
   const exported = T.save.exportText({ at: '2026-01-01T00:00:00.000Z' });
   h.storage.delete('hordes_profile_v1');
   const res = T.save.importText(exported);
   assert.equal(res.ok, true, 'the import path round-trips the export');
   assert.equal(T.hasLocalSave(), true, 'the imported profile was persisted');
-  T.showTitle();
-  assert.equal(cardWith('LOAD FROM DISK'), undefined, 'back on the title, the offer is gone');
-});
-
-check('SETTINGS keeps IMPORT SAVE reachable either way (the permanent home)', () => {
-  cardWith('SETUP').click();          // U1: options live behind the SETUP door
-  cardWith('SETTINGS').click();
-  assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')),
-    'settings offers IMPORT SAVE');
   key('escape');
   assert.equal(st.mode, 'title', 'back to the title');
 });

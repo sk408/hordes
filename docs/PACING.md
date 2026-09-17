@@ -182,6 +182,8 @@ violation of §0.
 | LADDER (HP_LATE 1.055, DMG_LATE 1.010, XP_LATE 1.030, KNEE 8) | — | src/config.js:886-900 | bounded post-knee escalation (+23.9%/wave hp) | RUN-STRUCTURE wave (superseded §4 of CONDENSE_PROPOSAL) |
 | ENEMY.SPAWN_INTERVAL | 1.35 | src/config.js:135 | ambient pressure budget (floor 0.25s at t≥137.5) | WAVE-20 tuning (1.05 was killing half the cohort pre-boss) |
 | ESCALATION.BOSS.HP_MULT | 500 + 60/wave | src/config.js:831-832 | the wave boss is the wall (5-8 of 10 runs die there) | WAVE-20 (60/30 -> 260/75 -> 500/60 measured ladder) |
+| ZAP mana gate | HARD: no fire at mana < cost, cd held at 0 | src/weapons.js:434-441 | owner 2026-09-17: "a mana-consuming weapon fires when mana is insufficient, including at exactly zero" — the dry 0.5x bolt was masking the mana budget | 2026-09-17 chain-gate task (was N1a soft gate, MANA_DRY_MULT 0.5) |
+| boomBlast mana gate | HARD: null at mana < 6 (no blast, no spend) | src/rewrites.js:433-447 | same directive — the ONE detonation (CHAIN REACTION card, Witch Q, STORMREAPER) | 2026-09-17 same task (was dry fallback 0.6 radius / 0.4 damage) |
 
 OPEN items (owner decision pending — guards pin, do not fix):
 - (b) end-game multi-level rows vaporize (<1 run): reprice fleetfoot/luck

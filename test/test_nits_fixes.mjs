@@ -194,14 +194,14 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
     assert.equal(readRecovery(f, RECOVERY_KEY + '.prev').raw, '{bad2',
       'the oldest was not rotated out (storage must stay bounded at two)');
   });
-  s.check('N5: the settings RECOVERY offer surfaces BOTH slots when both exist', () => {
+  s.check('N5 (retargeted, condense D2): ONE rescue card in SAVE DATA; the .prev slot stays stored but unoffered', () => {
     // Both slots populated the way preservePayload leaves them...
     const mk = (raw) => JSON.stringify({ at: '2026-09-16T00:00:00.000Z', reason: 'corrupt', raw });
     storage.set(RECOVERY_KEY, mk('{latest'));
     storage.set(RECOVERY_KEY + '.prev', mk('{prior'));
-    // The recovery offer is TITLE-settings only (never the in-run door) —
-    // open it the real way: title -> SETUP -> SETTINGS.
-    const openTitleSettings = () => {
+    // The recovery offer is TITLE-only, behind SAVE DATA now (condense M3) —
+    // open it the real way: title -> SETUP -> SETTINGS -> SAVE DATA.
+    const openSaveData = () => {
       T.showTitle();
       const cards = () => [... (globalThis.document.getElementById('ov-cards') || { children: [] }).children];
       const setup = cards().find(k => (k.innerHTML || '').includes('>SETUP<'));
@@ -210,20 +210,26 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
       const settings = cards().find(k => (k.innerHTML || '').includes('>SETTINGS<'));
       assert.ok(settings, 'no SETTINGS card in SETUP');
       settings.click();
+      const saveData = cards().find(k => (k.innerHTML || '').includes('>SAVE DATA<'));
+      assert.ok(saveData, 'no SAVE DATA card in settings');
+      saveData.click();
     };
-    openTitleSettings();
+    openSaveData();
     const cards = [... (globalThis.document.getElementById('ov-cards') || { children: [] }).children]
       .map(k => k.innerHTML || '');
+    // D2 (owner ruling 2026-09-17): ONE rescue slot on the surface. The
+    // two-slot STORAGE rotation above still holds (this check's first half);
+    // the earlier incident is simply not offered a card anymore.
     assert.ok(cards.some(h => h.includes('>RECOVERY FILE<')), 'the primary recovery card went missing');
-    assert.ok(cards.some(h => h.includes('RECOVERY FILE (PREVIOUS)')),
-      'the prior slot is not offered anywhere — only the latest incident is recoverable');
-    // And when only the primary exists, no ghost card for the previous.
+    assert.ok(!cards.some(h => h.includes('(PREVIOUS)')),
+      'the prior slot is offered a card — D2 removed the second rescue card');
+    // And when only the primary exists, still exactly one card.
     storage.delete(RECOVERY_KEY + '.prev');
-    openTitleSettings();
+    openSaveData();
     const cards2 = [... (globalThis.document.getElementById('ov-cards') || { children: [] }).children]
       .map(k => k.innerHTML || '');
-    assert.ok(!cards2.some(h => h.includes('RECOVERY FILE (PREVIOUS)')),
-      'a PREVIOUS card shows with no .prev slot');
+    assert.ok(cards2.some(h => h.includes('>RECOVERY FILE<')), 'the primary card stays');
+    assert.ok(!cards2.some(h => h.includes('(PREVIOUS)')), 'no PREVIOUS card either way');
   });
 }
 

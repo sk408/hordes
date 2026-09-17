@@ -151,8 +151,9 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   ok('1: a NEW run in the same session shows no chips after skip',
     stripEls().length === 0, stripEls().map(e => e.textContent));
 
-  // REPLAY TOUR re-arms the layer (the settings card's real handler calls the
-  // same re-arm; the wiring itself is pinned textually below).
+  // REPLAY TOUR re-arms the layer (the manual's REPLAY TOUR card's real
+  // handler calls the same re-arm; the wiring itself is pinned textually
+  // below).
   OB.replayRearm();
   ok('1: REPLAY TOUR re-arms the hint layer', OB.suppressed() === false);
   T.startRun();

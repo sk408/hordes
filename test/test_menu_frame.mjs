@@ -113,11 +113,14 @@ S.check('ov-cards children are STILL the clickable cards, each with a frame canv
   }
 });
 
-S.check('START GAME is children[0] and EXIT GAME last, frame canvases included', () => {
+S.check('START GAME is children[0] and HOW TO PLAY last, frame canvases included', () => {
   const cards = h.elements['ov-cards'].children;
   assert.ok((cards[0].innerHTML || '').includes('>START GAME<'), 'children[0] is START GAME');
   const last = cards[cards.length - 1];
-  assert.ok((last.innerHTML || '').includes('>EXIT GAME<'), 'EXIT GAME stays last');
+  // MENU CONDENSE D3: EXIT GAME is gone; HOW TO PLAY is the last card.
+  assert.ok((last.innerHTML || '').includes('>HOW TO PLAY<'), 'HOW TO PLAY stays last');
+  assert.ok(![...cards].some(c => (c.innerHTML || '').includes('>EXIT GAME<')),
+    'EXIT GAME is gone from the title');
   // Clicking children[0] still drives the title hold (not a wrapper).
   const before = T.title.runStarts;
   cards[0].click();

@@ -54,19 +54,24 @@ assert.equal(flushed2.version, SCHEMA_VERSION, 'beforeunload also flushes (secon
 assert.ok(T.save.autosave() === true, 'the autosave seam reports success');
 console.log('exit paths: pagehide/beforeunload/autosave all flush the profile');
 
-// ---- title SETTINGS offers export/import + the recovery download ----
+// ---- title SETTINGS -> SAVE DATA offers export/import + the recovery download ----
 const cards = h.elements['ov-cards'];
 const byTitle = (t) => Array.from(cards.children).find(c => (c.innerHTML || '').includes(t));
 byTitle('SETUP').click();   // U1: SETTINGS lives behind the SETUP door
 const settings = byTitle('SETTINGS');
 assert.ok(settings, 'the title offers SETTINGS');
 settings.click();
-assert.ok(byTitle('EXPORT SAVE'), 'settings offers EXPORT SAVE');
-assert.ok(byTitle('IMPORT SAVE'), 'settings offers IMPORT SAVE');
+// MENU CONDENSE M3: export/import/recovery/reset live behind SAVE DATA now,
+// and the sub-line carries the save notice there.
+assert.ok(byTitle('SAVE DATA'), 'settings offers the SAVE DATA door');
+byTitle('SAVE DATA').click();
+assert.ok(byTitle('EXPORT SAVE'), 'SAVE DATA offers EXPORT SAVE');
+assert.ok(byTitle('IMPORT SAVE'), 'SAVE DATA offers IMPORT SAVE');
 assert.ok(byTitle('RECOVERY FILE'), 'the preserved damaged save is offered for download');
-assert.ok(/UNREADABLE|profile/.test(h.elements['ov-sub'].textContent || ''),
-  'the settings sub-line carries the save notice');
-console.log('settings: EXPORT SAVE / IMPORT SAVE / RECOVERY FILE present');
+assert.ok(!byTitle('(PREVIOUS)'), 'the D2 removal holds: no second rescue card');
+assert.ok(/UNREADABLE|profile|export/i.test(h.elements['ov-sub'].textContent || ''),
+  'the SAVE DATA sub-line carries the save notice');
+console.log('save data: EXPORT SAVE / IMPORT SAVE / RECOVERY FILE present');
 
 // ---- export -> import round trip through the LIVE profile ----
 T.getProfile().gold = 4242;
@@ -117,7 +122,7 @@ assert.ok(/\.json$/.test(dl.filename), 'the download is a .json file');
 const read = await T.save.readFile({ text: async () => exported });
 assert.equal(read.ok, true, 'the file-read helper reads a picked file');
 
-assert.equal(h.elements['ov-title'].textContent, 'SETTINGS',
-  'the settings screen stayed open through the import flow');
+assert.equal(h.elements['ov-title'].textContent, 'SAVE DATA',
+  'the SAVE DATA screen stayed open through the import flow');
 console.log(`save-ui: ${frames} intro frames, corrupt-notice + autosave + export/import verified`);
 console.log('ALL SAVE UI WIRING TESTS PASSED');
