@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- ESCAPE ART PASS 2026-09-17 — variant exhibit page (NOT part of the game).
+     Balance-neutral: reads the real escape sim/sprites, draws variants only. -->
+<meta charset="utf-8">
+<title>ESCAPE ART PASS — twilight metropolis ruins</title>
+<style>
+  body { background:#0a0a10; color:#b8b8cc; font:12px monospace; margin:0; padding:12px; }
+  h2 { margin:18px 0 4px; font-size:13px; }
+  .pal { color:#8a8ab0; margin:0 0 8px; }
+  canvas { display:block; image-rendering:pixelated; border:1px solid #26263a; background:#000; }
+  .phone { width:390px; height:244px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+</style>
+<script type="module">
+import { createSim, step } from '../../../src/escape/sim.js';
+import { inputFor } from '../../../src/escape/auto.js';
+import { FAMILIES, drawScene, drawContactSheet } from './variants.mjs';
+
+// Deterministic exhibit drive: each canvas holds a sim stepped to a target
+// time with the REAL autopilot (the same inputFor the AUTO pilot uses), then
+// advanced live by rAF so the parallax and the 4-frame loops MOVE.
+const DT = 1 / 60;
+function makeDriven(seed, upto) {
+  const sim = createSim(seed);
+  for (let i = 0; i < Math.round(upto / DT); i++) {
+    step(sim, DT, inputFor(sim));
+    if (sim.outcome) break;
+  }
+  return { sim };
+}
+function advance(d) {
+  step(d.sim, DT, inputFor(d.sim));
+}
+
+const canvases = [];
+function mount(id, family, seed, upto, px, cssPhone) {
+  const el = document.getElementById(id);
+  const ctx = el.getContext('2d');
+  const driven = makeDriven(seed, upto);
+  const rec = { ctx, driven, family, px };
+  canvases.push(rec);
+  el.dataset.family = family;
+  void cssPhone;
+}
+// One seed, three moments: act-1 mid-run (t=13), the wall closing (t=22), act-3 (t=29).
+mount('a1', 0, 20260917, 13, 1, true);
+mount('a2', 0, 20260918, 22, 1, true);
+mount('a3', 0, 20260919, 29, 1, true);
+mount('b1', 1, 20260917, 13, 1, true);
+mount('b2', 1, 20260918, 22, 1, true);
+mount('b3', 1, 20260919, 29, 1, true);
+mount('c1', 2, 20260917, 13, 1, true);
+mount('c2', 2, 20260918, 22, 1, true);
+mount('c3', 2, 20260919, 29, 1, true);
+mount('a2x', 0, 20260918, 22, 2, false);   // per-scene 2x render scale demo
+drawContactSheet(document.getElementById('sheet').getContext('2d'));
+
+let live = false;
+function frame() {
+  for (const r of canvases) {
+    if (live) advance(r.driven);
+    drawScene(r.ctx, r.driven.sim, { family: r.family, px: r.px });
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+// Freeze for deterministic screenshots: ?static=1 keeps the driven moment.
+if (new URLSearchParams(location.search).get('static') === '1') live = false;
+else live = true;
+
+// Label the canvases (outside the 480x300 art — never inside the frame).
+for (const el of document.querySelectorAll('canvas[data-family]')) {
+  const f = FAMILIES[+el.dataset.family];
+  const h = document.createElement('div');
+  h.className = 'pal';
+  h.textContent = f.name + ' — ' + f.line;
+  el.after(h);
+}
+</script>
+<div class="row">
+  <div><h2>VARIANT A — mid-run (act 1, t=13s)</h2><canvas id="a1" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT A — wall closing (t=22s)</h2><canvas id="a2" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT A — final sprint (act 3, t=29s)</h2><canvas id="a3" class="phone" width="480" height="300"></canvas></div>
+</div>
+<div class="row">
+  <div><h2>VARIANT B — mid-run</h2><canvas id="b1" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT B — wall closing</h2><canvas id="b2" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT B — final sprint</h2><canvas id="b3" class="phone" width="480" height="300"></canvas></div>
+</div>
+<div class="row">
+  <div><h2>VARIANT C — mid-run</h2><canvas id="c1" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT C — wall closing</h2><canvas id="c2" class="phone" width="480" height="300"></canvas></div>
+  <div><h2>VARIANT C — final sprint</h2><canvas id="c3" class="phone" width="480" height="300"></canvas></div>
+</div>
+<div class="row">
+  <div><h2>PER-SCENE 2x RENDER SCALE (variant A, wall closing) — chunkier pixels, same view</h2><canvas id="a2x" width="960" height="600" style="width:390px;height:244px"></canvas></div>
+  <div><h2>ACTOR SETS — 4-frame loops at 2x (run / lunge / flier; frames 2+4 are NEW)</h2><canvas id="sheet" width="240" height="100" style="width:468px;height:195px"></canvas></div>
+</div>
