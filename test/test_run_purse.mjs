@@ -51,6 +51,15 @@ function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg
 // --------------------------------- per-kill credit at the REAL death funnel
 T.startRun();
 h.pump(5);
+// HERMETICITY (2026-09-17): the probe measures ONE death pass, but the live
+// spawner can land a fresh CHASER inside the auto-attack's range in the same
+// frame — its +1 GRUNT credit lands in the same funnel and the exact-sum
+// check reads 238 vs 237 (suite flake, 1-in-N). Quiet the field first (the
+// smoke quietField pattern: no bodies, no spawns, no boss/portal). The
+// assertions below are unchanged.
+st.enemies.length = 0; st.gems.length = 0;
+st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
+st.wave.bosses = []; st.wave.boss = null; st.portal = null;
 const purse0 = T.purse.get();
 const kills0 = st.player.kills;
 {

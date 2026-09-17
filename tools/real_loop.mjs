@@ -149,6 +149,12 @@ function classify(d) {
  */
 export async function runRealCohort(stage, runs, {
   maxSeconds = CFG.RUN.LIMIT + 60, onRun = null, onProgress = null,
+  // RSS8 (2026-09-17): optional per-run START hook, called immediately after
+  // startRun() with the live state — for arms that differ by ONE run-local
+  // flag (e.g. tools/rss8_gold_delta.mjs arming the magnet card). The shims
+  // cannot be installed twice in one process, so a second bootReal-based
+  // harness next to this cohort is not an option; the hook is the seam.
+  onRunStart = null,
 } = {}) {
   const h = await bootReal(stage);
   const st = h.state;
@@ -190,6 +196,7 @@ export async function runRealCohort(stage, runs, {
     const archSeen = new Set();
     const buffMap = new Map();
     h.startRun();
+    if (onRunStart) onRunStart(st, r);   // RSS8: arm run-local arm flags
     let ended = null;
     const capFrames = Math.floor(maxSeconds * 60);
     for (let i = 0; i < capFrames; i++) {

@@ -22,10 +22,37 @@ export const PHYS = {
   DASH_COOLDOWN: 1.2,
 };
 
+// ---- MAP EXTENT (owner directive 2026-09-17: "make the map quite a bit
+// larger. I'd say if we call 1/4 of this map a unit, one more unit to the side
+// and more unit up for a total of 5 more units" — 2x2 units -> 3x3 = 9) ------
+// UNIT READING (confirmed against the shipped map before building): the
+// escape is a ONE-WAY side-scrolling corridor, so the owner's 2x2->3x3 AREA
+// reading maps onto the corridor's TWO world axes — the LENGTH ("one more
+// unit to the side") grows 2 -> 3 units and the authored VERTICAL band ("one
+// more unit up", the elevated paths) grows 2 -> 3 units. One unit is pinned
+// in px as HALF of each axis of the shipped map: UNIT_W 3000 (the shipped
+// corridor's guaranteed-minimum 6000px = exactly 2 units) and UNIT_H 66 (the
+// shipped 132px authored band [MIN_TOP 120 .. FLOOR_Y 252] = exactly 2).
+// The unit is EXTENT, not zoom: tile sizes, camera scale and sprite sizes
+// are untouched — nothing looks smaller, there is just MORE corridor, with
+// the new vertical unit spent on multi-level routes (generator deckSegment /
+// stackSegment). PACING is likewise untouched: its act fractions and the wall
+// ramp still shape the run; only the extent the ramp spans is units-based
+// now, so the escape takes LONGER by construction (the task says report the
+// duration/gold-per-second change, never retune it away).
+export const MAP = {
+  UNITS_X: 3,   // was 2 — one more unit to the side
+  UNITS_Y: 3,   // was 2 — one more unit up (the elevated paths' budget)
+  UNIT_W: 3000,
+  UNIT_H: 66,
+};
+
 // ---- corridor geometry band (a floor, a ceiling-ish limit, x one way) ----
 export const BAND = {
   FLOOR_Y: 252,      // virtual-y of the base floor top (integer pixels)
-  MIN_TOP: 120,      // ceiling-ish: no platform top may rise above this
+  // MIN_TOP derives from the vertical unit count (was the flat 120 = FLOOR_Y
+  // - 2 units x 66): the third unit up admits the stacked elevated route.
+  MIN_TOP: 252 - MAP.UNITS_Y * MAP.UNIT_H,   // 54
   KILL_Y: 400,       // below this a fall is the soft failure 'fell'
 };
 

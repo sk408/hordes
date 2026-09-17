@@ -26,7 +26,7 @@
 // is RUNNING ON THE GROUND well before the fire line at x0 + PRO. The band is
 // entered grounded, so the invariant's known-arc-start holds for every legal
 // arrival class.
-import { PHYS, BAND, PACING, THREATS } from './config.js';
+import { PHYS, BAND, PACING, THREATS, MAP } from './config.js';
 
 // mulberry32 — the codebase's standard seeded rng (weather.js shape), local
 // so the escape stays self-contained.
