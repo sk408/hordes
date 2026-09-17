@@ -16,7 +16,7 @@
 import { VIEW_W, VIEW_H, BAND, THREATS, EXIT, LOOK } from './config.js';
 import { pressure } from './sim.js';
 import { effectsFor } from './fx.js';
-import { PURSUER_ART, PURSUER_LUNGE_ART, FLIER_ART } from './sprites.js';
+import { PURSUER_RUN_4, PURSUER_LUNGE_4, FLIER_4, PILOT_ART, PILOT_JUMP_ART, PILOT_DASH_ART, BOSS_ART } from './sprites.js';
 import { PORTAL_ART, portalFrame } from '../art/index.js';
 
 // Palette (matches the game's dark field art).
@@ -24,9 +24,7 @@ const C_PLAT = '#3a3a52';
 const C_PLAT_TOP = '#5a5a7e';
 const C_PLAT_UNDER = '#2c2c40';
 const C_WALL = '#7a2430';
-const C_PLAYER = '#e8e8f0';
 const C_SHOT = '#f0d060';
-const C_BOSS = '#904858';
 const C_TELEGRAPH = '#e06050';
 const C_BEACON = '#60e0c0';
 const C_TEXT = '#b8b8cc';
@@ -44,7 +42,7 @@ function paletteFor(sim) {
   const fr = LOOK.ACT_FRACS;
   let i = 0;
   while (i < fr.length && f >= fr[i]) i++;
-  return LOOK.PALETTES[i];
+  return { pal: LOOK.PALETTES[i], act: i };
 }
 function hexRGB(h) {
   return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
@@ -93,66 +91,113 @@ function hash32(a, b) {
   return (n ^ (n >>> 16)) >>> 0;
 }
 
-// ---- V1d the SKY: a banded gradient (skyTop -> skyBottom) with a lit horizon
-// line — integer-height bands, the pixel-movie way to say "gradient" without a
-// single sub-pixel edge. 10 fillRects, static per act (the palette does the
-// travelling; the sky itself never animates, so there is nothing to desync).
-function drawSky(ctx, pal) {
-  const BANDS = 10;
+// ---- the SKY (VARIANT B "SMOKE INFERNO", adopted 2026-09-17 — owner:
+// "Variant b is good"): a 12-band gradient with a lit horizon, a low pixel
+// SUN, drifting LIGHT SHAFTS through the smoke (family B's signature), and
+// HAZE bands at the layer seams. Static per act (the palette travels; the sky
+// never animates, so there is nothing to desync). Palette: config.js LOOK.
+function drawSky(ctx, pal, act) {
+  const BANDS = 12;
   for (let i = 0; i < BANDS; i++) {
     ctx.fillStyle = mix(pal.skyTop, pal.skyBottom, i / (BANDS - 1));
-    ctx.fillRect(0, i * 21, VIEW_W, 21);
+    ctx.fillRect(0, i * 18, VIEW_W, 18);
   }
-  // The lit horizon: the far band's baseline (y=210) carries a horizon glow.
   ctx.fillStyle = rgba(pal.horizon, 0.55);
-  ctx.fillRect(0, 209, VIEW_W, 2);
+  ctx.fillRect(0, 214, VIEW_W, 2);
+  // The low SUN (a pixel sun: stacked squares sinking as the acts advance).
+  const sx = 330 - act * 40, sy = 208;
+  ctx.fillStyle = rgba(pal.horizon, 0.28); ctx.fillRect(sx - 16, sy - 12, 32, 12);
+  ctx.fillStyle = rgba(pal.horizon, 0.55); ctx.fillRect(sx - 11, sy - 16, 22, 16);
+  ctx.fillStyle = mix(pal.horizon, '#ffffff', 0.35); ctx.fillRect(sx - 6, sy - 18, 12, 18);
+  // Drifting LIGHT SHAFTS through the smoke (leaning quads).
+  for (let i = 0; i < 3; i++) {
+    const x = (i * 170 + act * 30) % (VIEW_W + 80) - 40;
+    ctx.fillStyle = rgba(pal.horizon, 0.06);
+    ctx.fillRect(x, 120, 26, 94);
+    ctx.fillRect(x + 10, 90, 12, 30);
+  }
+  // HAZE: one translucent band per layer seam (the depth cue).
+  ctx.fillStyle = rgba(pal.haze, 0.10);
+  ctx.fillRect(0, 152, VIEW_W, 5);
+  ctx.fillStyle = rgba(pal.haze, 0.14);
+  ctx.fillRect(0, 196, VIEW_W, 5);
 }
 
-// ---- the parallax: a far ridge and nearer ruins scrolling at fractions of
-// the camera x, in the ACT's OWN band colours with a lit top rim on every
-// silhouette. Only ~36 fillRects total — this runs on a phone.
+// ---- the METROPOLIS RUINS parallax (variant B stack, adopted 2026-09-17):
+// FAR skyline silhouette 0.18x · MID broken towers with LIT WINDOWS and jagged
+// crowns 0.45x · NEAR rubble 0.7x · FOREGROUND debris 1.15x. Static per act;
+// deterministic hash32 silhouettes; ~60 fillRects — this runs on a phone.
 function drawParallax(ctx, camX, pal) {
-  const rimF = mix(pal.far, '#ffffff', 0.20);
-  const rimN = mix(pal.near, '#ffffff', 0.24);
-  // Far band (0.3x): spires on a ridge line, y baseline 210.
-  const offF = Math.round(camX * 0.3);
-  const baseF = 210;
+  // FAR SKYLINE (0.18x): silhouette towers + antenna masts, baseline 216.
+  const offF = Math.round(camX * 0.18);
+  const baseF = 216;
   ctx.fillStyle = pal.far;
-  ctx.fillRect(0, baseF, VIEW_W, 62);
-  for (let i = -1; i < VIEW_W / 24 + 1; i++) {
-    const col = i + Math.floor(offF / 24);
-    const x = col * 24 - offF;
-    const h = 24 + hash32(col, 11) % 58;
+  ctx.fillRect(0, baseF, VIEW_W, 84);
+  for (let i = -1; i < VIEW_W / 20 + 1; i++) {
+    const col = i + Math.floor(offF / 20);
+    const x = col * 20 - offF;
+    const h = 28 + hash32(col, 11) % 72;
+    const w = 14 + hash32(col, 13) % 6;
     ctx.fillStyle = pal.far;
-    ctx.fillRect(x, baseF - h, 22, h);
-    ctx.fillStyle = rimF;
-    ctx.fillRect(x, baseF - h, 22, 1);                       // the lit crest
-    if (hash32(col, 12) % 3 === 0) {
-      ctx.fillStyle = pal.far;
-      ctx.fillRect(x + 8, baseF - h - 6, 5, 6);              // spire tip
-      ctx.fillStyle = rimF;
-      ctx.fillRect(x + 8, baseF - h - 6, 5, 1);
+    ctx.fillRect(x, baseF - h, w, h);
+    if (hash32(col, 14) % 3 === 0) ctx.fillRect(x + ((w / 2) | 0), baseF - h - 7, 1, 7);
+  }
+  // MID BROKEN TOWERS (0.45x): lit windows + jagged crowns, baseline 236.
+  const offM = Math.round(camX * 0.45);
+  const baseM = 236;
+  const cM = mix(pal.far, pal.near, 0.5);
+  ctx.fillStyle = cM;
+  ctx.fillRect(0, baseM, VIEW_W, 64);
+  const rimM = mix(pal.near, '#ffffff', 0.22);
+  for (let i = -1; i < VIEW_W / 28 + 1; i++) {
+    const col = i + Math.floor(offM / 28);
+    const x = col * 28 - offM;
+    const h = 30 + hash32(col, 21) % 66;
+    const w = 18 + hash32(col, 23) % 8;
+    ctx.fillStyle = cM;
+    ctx.fillRect(x, baseM - h, w, h);
+    ctx.fillStyle = rimM;                                     // the crown's last light
+    ctx.fillRect(x, baseM - h, w, 1);
+    // The jagged BROKEN top: notches knocked out of the crown.
+    const nN = 1 + hash32(col, 24) % 3;
+    for (let k = 0; k < nN; k++) {
+      const nx = x + 2 + hash32(col, 25 + k) % Math.max(1, w - 6);
+      ctx.fillStyle = mix(cM, pal.skyBottom, 0.85);           // sky shows through
+      ctx.fillRect(nx, baseM - h, 4 + hash32(col, 30 + k) % 4, 4 + hash32(col, 35 + k) % 5);
+    }
+    // LIT WINDOWS: sparse, warm, deterministic — the "someone was here" read.
+    const wins = 2 + hash32(col, 41) % 5;
+    for (let k = 0; k < wins; k++) {
+      const wx = x + 2 + hash32(col, 42 + k) % Math.max(1, w - 5);
+      const wy = baseM - h + 4 + hash32(col, 47 + k) % Math.max(1, h - 9);
+      ctx.fillStyle = rgba(pal.win, 0.75);
+      ctx.fillRect(wx, wy, 2, 3);
     }
   }
-  // Near band (0.55x): broken walls / rubble, y baseline 240.
-  const offN = Math.round(camX * 0.55);
-  const baseN = 240;
+  // NEAR RUBBLE (0.7x): heaped broken masonry, baseline 252.
+  const offN = Math.round(camX * 0.7);
+  const baseN = 252;
   ctx.fillStyle = pal.near;
-  ctx.fillRect(0, baseN, VIEW_W, 34);
-  for (let i = -1; i < VIEW_W / 40 + 1; i++) {
-    const col = i + Math.floor(offN / 40);
-    const x = col * 40 - offN;
-    const h = 14 + hash32(col, 21) % 38;
+  ctx.fillRect(0, baseN, VIEW_W, 48);
+  for (let i = -1; i < VIEW_W / 16 + 1; i++) {
+    const col = i + Math.floor(offN / 16);
+    const x = col * 16 - offN;
+    const h = 4 + hash32(col, 51) % 14;
     ctx.fillStyle = pal.near;
-    ctx.fillRect(x, baseN - h, 34, h);
-    ctx.fillStyle = rimN;
-    ctx.fillRect(x, baseN - h, 34, 1);                       // the broken coping's light
-    if (hash32(col, 22) % 4 === 0) {
-      ctx.fillStyle = pal.near;
-      ctx.fillRect(x + 12, baseN - h - 5, 8, 5);
-      ctx.fillStyle = rimN;
-      ctx.fillRect(x + 12, baseN - h - 5, 8, 1);
-    }
+    ctx.fillRect(x, baseN - h, 13, h);
+    ctx.fillStyle = mix(pal.near, '#ffffff', 0.14);
+    ctx.fillRect(x, baseN - h, 13, 1);
+  }
+  // FOREGROUND DEBRIS (1.15x — faster than the camera): dark chunks BELOW the
+  // play band only (y >= 268), never over terrain/actors — the readability rule.
+  const offG = Math.round(camX * 1.15);
+  ctx.fillStyle = mix(pal.near, '#000000', 0.55);
+  for (let i = -1; i < VIEW_W / 34 + 1; i++) {
+    const col = i + Math.floor(offG / 34);
+    const x = col * 34 - offG;
+    const h = 6 + hash32(col, 61) % 18;
+    ctx.fillRect(x, 300 - h, 20 + hash32(col, 62) % 12, h);
+    if (hash32(col, 63) % 3 === 0) ctx.fillRect(x + 24, 304 - h, 7, h - 4);
   }
 }
 
@@ -253,13 +298,80 @@ function drawWall(ctx, sim, w2s, pal) {
   }
 }
 
+// ---- V1f THE GRAB ARM (the art budget goes here: wind-up, extend, contact,
+// retract — a procedural chain keyed PURELY on the sim's own grab machine, so
+// the pixels are a function of (sim, phase, t) and parity holds by
+// construction). The arm anchors on the body's left flank and the claw rides
+// four authored posts: COILED at the flank (idle), RAISED high (the wind-up
+// tell), FULL REACH past the pilot's lane (extend/hold), and back. The
+// wind-up also stripes the landing zone on the floor — the phone-size tell.
+function drawGrabArm(ctx, sim, w2s) {
+  const b = sim.boss, g = b.grab, G = THREATS;
+  const bx0 = w2s(b.x - THREATS.BOSS_W / 2);
+  const sx = bx0 + 12;                                  // the shoulder anchor
+  const sy = BAND.FLOOR_Y - THREATS.BOSS_H + 34;
+  const extX = w2s(b.x - G.GRAB_REACH), extY = BAND.FLOOR_Y - 26;
+  const coilX = bx0 + 2, coilY = BAND.FLOOR_Y - 52;
+  const raiseX = bx0 - 4, raiseY = BAND.FLOOR_Y - THREATS.BOSS_H + 2;
+  let cx, cy, open, hot;
+  if (g.phase === 'windup') { cx = raiseX; cy = raiseY; open = true; hot = true; }
+  else if (g.phase === 'extend') {
+    const q = Math.min(1, g.t / G.GRAB_EXTEND);
+    cx = raiseX + (extX - raiseX) * q; cy = raiseY + (extY - raiseY) * q; open = true; hot = true;
+  } else if (g.phase === 'hold') { cx = extX; cy = extY; open = sim.grabbed == null; hot = true; }
+  else if (g.phase === 'retract') {
+    const q = 1 - Math.min(1, g.t / G.GRAB_RETRACT);
+    cx = coilX + (extX - coilX) * q; cy = coilY + (extY - coilY) * q; open = false; hot = false;
+  } else { cx = coilX; cy = coilY; open = false; hot = false; }
+  cx = Math.round(cx); cy = Math.round(cy);
+  // THE WIND-UP TELL: striped landing zone on the floor + a faint shimmer
+  // column over the band — readable at phone size, ahead of the arm moving.
+  if (g.phase === 'windup') {
+    const zl = w2s(b.x - G.GRAB_REACH - G.GRAB_R), zr = w2s(b.x - G.GRAB_REACH + G.GRAB_R);
+    ctx.fillStyle = rgba('#e06050', 0.10);
+    ctx.fillRect(zl, BAND.FLOOR_Y - 72, zr - zl, 72);
+    if (Math.floor(sim.t * 10) % 2) {
+      ctx.fillStyle = C_TELEGRAPH;
+      for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 4, 6, 4);
+    }
+  }
+  // The arm: a chain of hide-toned segments, shoulder -> elbow -> claw.
+  const elbowX = Math.round((sx + cx) / 2 - 8), elbowY = Math.round((sy + cy) / 2 - 12);
+  const seg = (x1, y1, x2, y2) => {
+    const steps = Math.max(3, Math.round(Math.hypot(x2 - x1, y2 - y1) / 5));
+    for (let i = 0; i <= steps; i++) {
+      const x = Math.round(x1 + (x2 - x1) * i / steps), y = Math.round(y1 + (y2 - y1) * i / steps);
+      ctx.fillStyle = '#4c2834'; ctx.fillRect(x - 3, y - 3, 6, 6);
+      ctx.fillStyle = '#6e3844'; ctx.fillRect(x - 2, y - 2, 4, 4);
+    }
+  };
+  seg(sx, sy, elbowX, elbowY);
+  seg(elbowX, elbowY, cx, cy);
+  if (g.phase === 'extend') {                           // the sweep streaks
+    ctx.fillStyle = 'rgba(255,122,60,0.40)';
+    ctx.fillRect(cx + 10, cy - 2, 12, 2);
+    ctx.fillRect(cx + 14, cy - 9, 9, 2);
+  }
+  // The CLAW: ink palm + hot hide + fingers (open reaches, closed grips).
+  ctx.fillStyle = '#140f12'; ctx.fillRect(cx - 7, cy - 6, 14, 12);
+  ctx.fillStyle = hot ? '#ff7a3c' : '#6e3844'; ctx.fillRect(cx - 5, cy - 4, 10, 8);
+  const f = open ? 6 : 2;
+  ctx.fillStyle = '#140f12';
+  ctx.fillRect(cx - 8, cy - 9 - f, 3, 7 + f); ctx.fillRect(cx + 5, cy - 9 - f, 3, 7 + f);
+  ctx.fillRect(cx - 8, cy + 3 + (open ? f - 2 : 1), 3, 5); ctx.fillRect(cx + 5, cy + 3 + (open ? f - 2 : 1), 3, 5);
+  if (hot) {                                            // the gold glint (the eye follows it)
+    ctx.fillStyle = '#ffd54a';
+    ctx.fillRect(cx - 6, cy - 7, 2, 2); ctx.fillRect(cx + 4, cy - 7, 2, 2);
+  }
+}
+
 export function draw(ctx, sim, opts = {}) {
   const p = sim.player;
   const camX = Math.max(0, p.x - CAM_LEAD);
   const w2s = (x) => Math.round(x - camX);          // world -> virtual screen x
-  const pal = paletteFor(sim);                      // the V1d act palette
+  const { pal, act } = paletteFor(sim);             // the V1d act palette + its index
 
-  drawSky(ctx, pal);
+  drawSky(ctx, pal, act);
   drawParallax(ctx, camX, pal);
 
   // ---- terrain: only the spans on screen (integer pixels) -----------------
@@ -327,38 +439,32 @@ export function draw(ctx, sim, opts = {}) {
     }
   }
 
-  // ---- the boss body + its telegraph ---------------------------------------
+  // ---- the boss (V1f): REAL ART, out in the open, plus the GRAB ARM ---------
+  // The "box" is gone and named: it was (a) the plain fillRect slab body and
+  // (b) the platform terrain's solid columns running top->KILL_Y, which
+  // engulfed the body under the V1e overpass. The body is now the BOSS_ART
+  // colossus (29x30 at 3x) standing ON the floor in open sky, and the one
+  // threat is the telegraphed claw (drawGrabArm below).
   if (sim.boss) {
     const b = sim.boss;
     const bx0 = w2s(b.x - THREATS.BOSS_W / 2);
-    if (bx0 < VIEW_W + 60) {
-      ctx.fillStyle = C_BOSS;
-      ctx.fillRect(bx0, BAND.FLOOR_Y - THREATS.BOSS_H, THREATS.BOSS_W, THREATS.BOSS_H);
-      ctx.fillStyle = '#583040';
-      ctx.fillRect(bx0, BAND.FLOOR_Y - THREATS.BOSS_H, THREATS.BOSS_W, 6);
-      ctx.fillStyle = '#6e3844';                          // hide plates (mass, not slab)
-      for (let y = BAND.FLOOR_Y - THREATS.BOSS_H + 16; y < BAND.FLOOR_Y - 8; y += 18) {
-        for (let x = bx0 + 8; x < bx0 + THREATS.BOSS_W - 10; x += 16) {
-          ctx.fillRect(x, y, 10, 8);
-        }
-      }
-      // V1e PRESENCE (brief: "it should be the loudest thing on screen at
-      // that moment"): a hot PULSING rim on the body's crest and flanks in
-      // the horde's own molten colour, and a pair of gold eyes — the boss
-      // reads as the horde's front rank, not a slab. Pure sim.t animation.
+    if (bx0 < VIEW_W + 120) {
+      const bob = Math.floor(sim.t * 2) % 2;         // the idle sway (1px beat)
+      const px = 3;
+      const gw = BOSS_ART.w * px, gh = BOSS_ART.h * px;
+      const gx = Math.round(bx0 + THREATS.BOSS_W / 2 - gw / 2);
+      const gy = BAND.FLOOR_Y - gh + bob;
+      drawGridScaled(ctx, BOSS_ART.frames[0], BOSS_ART.palette, gx, gy, px);
+      // The molten crest pulse (the horde's front rank): a breathing rim on
+      // the sprite's crest and flanks, pure sim.t.
       const bPulse = 0.5 + 0.5 * Math.sin(sim.t * 5.0);
-      ctx.fillStyle = rgba(LOOK.HORDE_EDGE, 0.35 + 0.3 * bPulse);
-      ctx.fillRect(bx0, BAND.FLOOR_Y - THREATS.BOSS_H, THREATS.BOSS_W, 2);
-      ctx.fillRect(bx0, BAND.FLOOR_Y - THREATS.BOSS_H, 2, THREATS.BOSS_H);
-      ctx.fillRect(bx0 + THREATS.BOSS_W - 2, BAND.FLOOR_Y - THREATS.BOSS_H, 2, THREATS.BOSS_H);
-      if (Math.floor(sim.t * 3) % 2) {                    // the slow blink
-        ctx.fillStyle = '#ffd54a';
-        const ey = BAND.FLOOR_Y - THREATS.BOSS_H + 12;
-        ctx.fillRect(bx0 + 14, ey, 7, 3);
-        ctx.fillRect(bx0 + THREATS.BOSS_W - 21, ey, 7, 3);
-      }
-      // TELEGRAPH: a striped bar over the platform it is about to tear out —
-      // never subtle, always ahead of the runner's current x.
+      ctx.fillStyle = rgba(LOOK.HORDE_EDGE, 0.28 + 0.22 * bPulse);
+      ctx.fillRect(gx, gy, gw, 2);
+      ctx.fillRect(gx, gy, 2, gh);
+      ctx.fillRect(gx + gw - 2, gy, 2, gh);
+      drawGrabArm(ctx, sim, w2s);
+      // TELEGRAPH (terrain destruction, retained): a striped bar over the
+      // platform it is about to tear out — never subtle, always behind the runner.
       if (b.telegraph > 0 && b.target) {
         const tx0 = w2s(b.target.x), tx1 = w2s(b.target.x + b.target.w);
         ctx.fillStyle = C_TELEGRAPH;
@@ -377,15 +483,15 @@ export function draw(ctx, sim, opts = {}) {
   // first MATCH_TELL seconds of the settle, flashes gold — the readable
   // "it is on your tail and it is NOT catching" tell. All keyed off sim state
   // and sim.t: pure, parity-safe.
-  const puFrame = Math.floor(sim.t * 10) % 2;
+  const puFrame = Math.floor(sim.t * 10) % 4;
   for (const pu of sim.pursuers) {
     const x = w2s(pu.x);
     if (x < -14 || x > VIEW_W + 14) continue;
     const bob = (Math.floor(sim.t * 10) % 2) ? 0 : 1;    // the sprint beat
     const matched = pu.state === 'matched';
-    const art = matched ? PURSUER_ART : PURSUER_LUNGE_ART;
-    const fr = matched ? puFrame : Math.floor(sim.t * 14) % 2;
-    drawGridScaled(ctx, art.frames[fr], art.palette,
+    const set = matched ? PURSUER_RUN_4 : PURSUER_LUNGE_4;
+    const fr = matched ? puFrame : Math.floor(sim.t * 14) % 4;
+    drawGridScaled(ctx, set[fr].rows, set[fr].palette,
       x - 6, Math.round(pu.y) - 14 + bob, 1);
     if (!matched) {
       // The charge read: hard sprint streaks trailing the body.
@@ -405,8 +511,8 @@ export function draw(ctx, sim, opts = {}) {
   for (const fl of sim.fliers) {
     const x = w2s(fl.x);
     if (x < -18 || x > VIEW_W + 18) continue;
-    const frame = Math.floor(fl.phase * 2) % 2;          // flap locks to the dive phase
-    drawGridScaled(ctx, FLIER_ART.frames[frame], FLIER_ART.palette, x - 8, Math.round(fl.y) - 6, 1);
+    const frame = Math.floor(fl.phase * 2) % 4;          // flap locks to the dive phase
+    drawGridScaled(ctx, FLIER_4[frame].rows, FLIER_4[frame].palette, x - 8, Math.round(fl.y) - 6, 1);
     // The dive streak: when the sine is DESCENDING on screen (dy/dt > 0) the
     // flier is attacking downward — trail it so the dive reads as aggression.
     if (Math.cos(fl.phase) > 0) {
@@ -427,8 +533,9 @@ export function draw(ctx, sim, opts = {}) {
     const sx = w2s(e.x);
     if (e.kind === 'fall') {
       ctx.globalAlpha = Math.max(0, 1 - e.age / e.life);
-      drawGridScaled(ctx, PURSUER_ART.frames[Math.floor(sim.t * 14 + e.n) % 2],
-        PURSUER_ART.palette, sx - 6, Math.round(e.y) - 14, 1);
+      const ff = Math.floor(sim.t * 14 + e.n) % 4;
+      drawGridScaled(ctx, PURSUER_RUN_4[ff].rows,
+        PURSUER_RUN_4[ff].palette, sx - 6, Math.round(e.y) - 14, 1);
       ctx.globalAlpha = 1;
       if (e.age < 0.18) {                                 // dust at the lip
         ctx.fillStyle = '#6a6a8a';
@@ -447,15 +554,24 @@ export function draw(ctx, sim, opts = {}) {
   // ---- the horde wall (the real timer, always visible when in range) -------
   drawWall(ctx, sim, w2s, pal);
 
-  // ---- the runner (side-view: a lithe 8x14 block with a face direction) ----
+  // ---- the runner: the PILOT sprite (12x17, silhouette-first — outline,
+  // 3-tone ramp, ONE teal visor accent; run x4 / tuck / dash postures) --------
   const px = w2s(p.x), py = Math.round(p.y);
-  ctx.fillStyle = C_PLAYER;
-  ctx.fillRect(px - 4, py - 14, 8, 14);
-  ctx.fillStyle = '#9a9ac2';                              // a face-direction visor
-  ctx.fillRect(px - 4 + (p.dir > 0 ? 4 : 0), py - 12, 4, 2);
-  if (p.dashT > 0) {                                    // the dash tell
-    ctx.fillStyle = '#9090c0';
-    ctx.fillRect(px - 4 - 8 * p.dir, py - 10, 8, 6);
+  {
+    const art = !p.onGround ? PILOT_JUMP_ART.frames[0]
+      : p.dashT > 0 ? PILOT_DASH_ART.frames[0]
+        : (Math.abs(p.vx) > 1 ? PILOT_ART.frames[Math.floor(sim.t * 10) % 4] : PILOT_ART.frames[1]);
+    let jx = 0;
+    if (sim.grabbed && Math.floor(sim.t * 14) % 2) jx = 1;   // the struggle beat while HELD
+    drawGridScaled(ctx, art, PILOT_ART.palette, px - 6 + jx, py - 17, 1);
+    if (sim.grabbed) {
+      // Contact reads as CONTACT: the closed claw's fingers close OVER the
+      // held pilot (drawn here, after the pilot, so the grip is on top).
+      ctx.fillStyle = '#140f12';
+      ctx.fillRect(px - 8, py - 14, 3, 9); ctx.fillRect(px + 5, py - 14, 3, 9);
+      ctx.fillStyle = '#ff7a3c';
+      ctx.fillRect(px - 7, py - 16, 14, 3);
+    }
   }
 
   // ---- readouts (integer pixel text, no anti-aliased floats) ---------------

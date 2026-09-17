@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>escape grab finale proof — 2026-09-17</title>
+<style>
+  body { margin: 0; background: #08080e; font: 11px monospace; color: #8888a0; }
+  .shot { margin: 8px 4px; }
+  .shot .cap { padding: 2px 4px; color: #b8b8cc; }
+  canvas { display: block; width: 100%; image-rendering: pixelated; border: 1px solid #22223a; }
+</style>
+</head>
+<body>
+<div id="shots"></div>
+<script type="module">
+// Deterministic scenario harness: each panel is a real sim stepped to a named
+// moment, drawn by THIS TREE'S OWN render.js. No clocks, no randomness beyond
+// the seeded rng. The same page runs in the before worktree (c0aab00) and the
+// after tree — each imports its own modules, so the comparison is honest.
+import { createSim, step } from '../../../src/escape/sim.js';
+import { inputFor } from '../../../src/escape/auto.js';
+import { draw } from '../../../src/escape/render.js';
+import { THREATS } from '../../../src/escape/config.js';
+
+const hasGrab = THREATS.GRAB_REACH !== undefined;   // the before tree has no grab machine
+const W = 480, H = 300;
+
+function panel(id, caption) {
+  const div = document.createElement('div');
+  div.className = 'shot';
+  div.innerHTML = '<div class="cap">' + caption + '</div>';
+  const cv = document.createElement('canvas');
+  cv.id = id; cv.width = W; cv.height = H;
+  div.appendChild(cv);
+  document.getElementById('shots').appendChild(div);
+  return cv.getContext('2d');
+}
+
+// Run a sim under AUTO until cond(sim) (or cap); returns the sim AT that frame.
+function runTo(seed, cond, capSecs = 160) {
+  const sim = createSim(seed);
+  let n = 0;
+  while (!sim.outcome && n < 60 * capSecs) {
+    if (cond(sim)) return { sim, atFrame: true };
+    step(sim, 1 / 60, inputFor(sim));
+    n++;
+  }
+  return { sim, atFrame: false };
+}
+
+// S1 — mid-run: the pilot under pursuit, act 1 terrain (pilot detail read).
+{
+  const { sim } = runTo(9, s => s.t >= 10);
+  const g = panel('midrun', 'S1 mid-run t=10s — pilot + matched chasers (pilot detail)');
+  draw(g, sim, {});
+}
+
+// S2 — finale approach: the auto pilot braking outside the claw band / boss zone.
+{
+  const boss = createSim(9).corridor.bossX;
+  const { sim } = runTo(9, s => s.player.x > boss - 340 && s.player.x < boss - 300);
+  const g = panel('approach', 'S2 finale approach — boss visible, pilot closing (the read at phone size)');
+  draw(g, sim, {});
+}
+
+if (hasGrab) {
+  // S3 — WINDUP: the striped landing zone + raised arm (the tell).
+  {
+    const boss = createSim(9).corridor.bossX;
+    const { sim } = runTo(9,
+      s => s.boss && s.boss.grab.phase === 'windup' && s.player.x > boss - 380 && s.player.x < boss - 240);
+    const g = panel('windup', 'S3 WINDUP — striped band tell, arm raised (0.50s before the claw)');
+    draw(g, sim, {});
+  }
+  // S4 — EXTEND: the claw sweeping out past the pilot's lane.
+  {
+    const boss = createSim(9).corridor.bossX;
+    const { sim } = runTo(9,
+      s => s.boss && s.boss.grab.phase === 'extend' && s.player.x > boss - 380 && s.player.x < boss - 240);
+    const g = panel('extend', 'S4 EXTEND — claw at full reach, 108px past the body face');
+    draw(g, sim, {});
+  }
+  // S5 — HELD: contact read as CONTACT (forced, deterministic): a pilot parked
+  // dead centre of the band when the claw closes.
+  {
+    const sim = createSim(9);
+    sim.wall.x = sim.player.x - 5000;              // isolate the machine from the timer
+    sim.pursuers.length = 0; sim.nextShot = Infinity; sim.nextFlier = Infinity;
+    sim.player.x = sim.boss.x - THREATS.GRAB_REACH; sim.player.y = 252;
+    let n = 0;
+    while (!sim.grabbed && !sim.outcome && n < 60 * 5) { step(sim, 1 / 60, { moveX: 0 }); n++; }
+    for (let k = 0; k < 24; k++) step(sim, 1 / 60, { moveX: 0 });   // 0.4s INTO the held beat
+    const g = panel('held', 'S5 HELD — the pilot visibly pinned in the closed claw (contact reads as contact)');
+    draw(g, sim, {});
+  }
+  // S6 — PAST: the pilot through the gauntlet, boss behind, portal ahead.
+  {
+    const boss = createSim(9).corridor.bossX;
+    const { sim } = runTo(9, s => s.player.x > boss + 60 && s.player.x < boss + 180);
+    const g = panel('past', 'S6 RUN-PAST — through the gauntlet at floor level, portal ahead');
+    draw(g, sim, {});
+  }
+} else {
+  // BEFORE tree: the same two finale moments it can produce — the approach and
+  // the (V1e) route onto the overpass, so the "box" is on record.
+  {
+    const boss = createSim(9).corridor.bossX;
+    const { sim } = runTo(9, s => s.player.x > boss - 300 && s.player.x < boss - 220);
+    const g = panel('before-boss', 'S3(before) the boss zone — the box: slab body + terrain columns to KILL_Y');
+    draw(g, sim, {});
+  }
+  {
+    const boss = createSim(9).corridor.bossX;
+    const { sim } = runTo(9, s => s.player.x > boss + 40 && s.player.x < boss + 160);
+    const g = panel('before-past', 'S4(before) past the boss on the V1e overpass');
+    draw(g, sim, {});
+  }
+}
+
+document.title = 'proof-ready';
+</script>
+</body>
+</html>

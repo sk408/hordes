@@ -167,44 +167,25 @@ function pairSegment(x0, tier, rng) {
   };
 }
 
-// THE FINALE (V1e, docs/briefs/V1E_ESCAPE_FINALE.md): the corridor ENDS at
-// the boss. The ground route is the boss's ground — the floor runs straight
-// under its body, and walking into the body is the soft 'caught' — while the
-// way past is the authored UPPER LEVEL: floor -> approach terrace (a 42px
-// step) -> overpass OVER the body -> drop to the portal beyond. Both hops
-// are the owner's OWN mechanism from the V1 brief — the invisible JUMP BOX
-// (an auto-only trigger band firing at an authored x) with the speed FUDGE
-// (the window clamp) — re-used, not re-invented, and verified by the SAME
-// invariant as every gap: at vMin the arc lands inside the upper platform,
-// at vMax it does not overshoot (checkTrigger's `up` branch).
-//
-// Authored offsets from x0 (all integer pixels; heights 42 and 62 sit inside
-// the arc's usable window — upHopT re-derives the crossings):
-//   floor     [0, 900)  approach-flagged (the boss never tears its own ground)
-//   band 1    fire 64   floor -> terrace,  land window [186, 213) c terrace [154, 264)
-//   terrace   [154, 264)  y 210
-//   band 2    fire 232  terrace -> overpass, land window [338, 362) c overpass [314, 634)
-//   overpass  [314, 634)  y 148 (THREATS.BOSS_PASS_Y — the single authored constant)
-//   boss      x 474     body [432, 516) centered UNDER the overpass
-//   drop      634 -> ~725 (a 104px fall at 200px/s carries ~91px)
-//   portal    760       on the floor, breathing room to x1 = 900
+// THE FINALE (V1f — owner refinement 2026-09-17: "the boss reaching to grab
+// the pilot and the pilot being able to run past. Has to look convincing"):
+// the corridor still ENDS at the boss, but the way past is the FLOOR ITSELF.
+// The boss stands OUT IN THE OPEN on flat ground (no box, no overpass — the
+// V1e upper level is superseded), and the encounter is its telegraphed GRAB:
+// a fixed, learnable cadence (THREATS.GRAB_*) whose claw lands in a marked
+// band left of the body. The pilot runs straight through at boss level,
+// dodging by timing; the direct route through the boss IS the route, so no
+// jump is authored and the invariant is trivially whole. Platform jumps: NONE
+// required — required jump distance 0px against a 160px reach.
 function finaleSegment(x0) {
   const run = 900;
   const floor = { x: x0, y: BAND.FLOOR_Y, w: run, approach: true };
-  const terrace = { x: x0 + 154, y: BAND.FLOOR_Y - 42, w: 110 };
-  const overpass = { x: x0 + 314, y: THREATS.BOSS_PASS_Y, w: 320 };
-  const [vMin, vMax] = SPEED.std;
   return {
     kind: 'boss', finale: true, tier: 3, x0, x1: x0 + run,
-    plats: [floor, terrace, overpass],
+    plats: [floor],
     gaps: [],
-    triggers: [
-      { x0: x0 + 64, x1: x0 + 64 + BAND_W, vMin, vMax, seg: x0, up: true, land: terrace },
-      { x0: x0 + 232, x1: x0 + 232 + BAND_W, vMin, vMax, seg: x0, up: true, land: overpass },
-    ],
-    bossX: x0 + 474, bossPlat: overpass,
-    bossApproachX: terrace.x, bossApproachY: terrace.y,
-    bossApproachW: terrace.w, bossOverpassX: overpass.x,
+    triggers: [],
+    bossX: x0 + 460, bossPlat: floor,
   };
 }
 
@@ -256,8 +237,8 @@ export function generateCorridor(seed) {
     }
     x = segs[segs.length - 1].x1;
   }
-  // V1e: the corridor ENDS at the boss — the finale's upper level is the way
-  // over it to the portal (see finaleSegment above).
+  // V1f: the corridor ENDS at the boss — out in the open on the finale floor,
+  // the grab gauntlet between the runner and the portal (see finaleSegment).
   const finale = finaleSegment(x);
   segs.push(finale);
   const bossSeg = finale;
@@ -269,10 +250,6 @@ export function generateCorridor(seed) {
     bossPlat: bossSeg ? bossSeg.bossPlat : null,
     bossSegX0: bossSeg ? bossSeg.x0 : null,
     bossSegX1: bossSeg ? bossSeg.x1 : null,
-    bossApproachX: bossSeg ? bossSeg.bossApproachX : null,
-    bossApproachY: bossSeg ? bossSeg.bossApproachY : null,
-    bossApproachW: bossSeg ? bossSeg.bossApproachW : null,
-    bossOverpassX: bossSeg ? bossSeg.bossOverpassX : null,
   };
 }
 

@@ -113,7 +113,9 @@ export function createSim(seed) {
     boss: corridor.bossX != null ? {
       x: corridor.bossX, plat: corridor.bossPlat,
       destroyT: THREATS.BOSS_DESTROY_EVERY, telegraph: 0, destroyed: 0,
+      grab: { phase: 'idle', t: 0 },   // V1f: idle -> windup -> extend -> hold -> retract
     } : null,
+    grabbed: null,      // V1f: set the frame the claw closes on the pilot (the visible HELD beat)
     outcome: null,     // null | 'complete' | 'caught' | 'fell'
     rng: mulberry32(seed ^ 0x5f3759df),
     nextFlier: Infinity, nextShot: 0,
@@ -141,6 +143,24 @@ export function createSim(seed) {
 export function step(sim, dt, input = {}) {
   if (sim.outcome) return sim;
   const p = sim.player;
+
+  // ---- V1f THE HELD BEAT: the claw closed on the pilot -----------------------
+  // Contact must read as CONTACT (owner: "the pilot visibly held, not clipped
+  // through"): the pilot is pinned in the claw, time holds except for the wall
+  // (the horde keeps coming — the pressure story), and after GRAB_HOLD_PILOT
+  // seconds the soft outcome 'caught' lands. Pure timers, no rng.
+  if (sim.grabbed) {
+    sim.t += dt; sim.frames++;
+    sim.grabbed.t += dt;
+    p.x = sim.grabbed.x + 4;            // pinned INTO the claw's palm
+    p.y = BAND.FLOOR_Y - 26; p.vx = 0; p.vy = 0; p.onGround = false;
+    sim.wall.x += wallSpeed(sim) * dt;
+    if (sim.grabbed.t >= THREATS.GRAB_HOLD_PILOT || sim.wall.x + WALL.WIDTH >= p.x) {
+      sim.outcome = 'caught';
+    }
+    return sim;
+  }
+
   sim.t += dt; sim.frames++;
 
   // ---- the escape's own movement layer (never the shared one) --------------
@@ -306,9 +326,29 @@ export function step(sim, dt, input = {}) {
   // ---- the obstacle-boss (UNKILLABLE: hp Infinity by construction) ---------
   if (sim.boss) {
     const b = sim.boss;
-    const bossTop = BAND.FLOOR_Y - THREATS.BOSS_H;
-    const onBody = p.x > b.x - THREATS.BOSS_W / 2 && p.x < b.x + THREATS.BOSS_W / 2;
-    if (onBody && p.y > bossTop + 4) { sim.outcome = 'caught'; return sim; }   // walk into the body: soft
+    // V1f THE GRAB (owner refinement: run PAST the boss, dodge the reach).
+    // The body is PASSABLE — the pilot sprints past at floor level — and the
+    // only threat is the claw. The machine runs on a FIXED cadence (the cycle
+    // sums to exactly GRAB_EVERY), so the rhythm is learnable by watching one
+    // cycle. Contact is tested ONLY in extend/hold (the arm is out); a pilot
+    // who has cleared the claw band is structurally safe — the band sits LEFT
+    // of the body, and retract has no hitbox, so no grab can land late.
+    const G = THREATS;
+    const g = b.grab;
+    const idleDur = G.GRAB_EVERY - (G.GRAB_WINDUP + G.GRAB_EXTEND + G.GRAB_HOLD + G.GRAB_RETRACT);
+    g.t += dt;
+    if (g.phase === 'idle' && g.t >= idleDur) { g.phase = 'windup'; g.t = 0; }
+    else if (g.phase === 'windup' && g.t >= G.GRAB_WINDUP) { g.phase = 'extend'; g.t = 0; }
+    else if (g.phase === 'extend' && g.t >= G.GRAB_EXTEND) { g.phase = 'hold'; g.t = 0; }
+    else if (g.phase === 'hold' && g.t >= G.GRAB_HOLD) { g.phase = 'retract'; g.t = 0; }
+    else if (g.phase === 'retract' && g.t >= G.GRAB_RETRACT) { g.phase = 'idle'; g.t = 0; }
+    if (g.phase === 'extend' || g.phase === 'hold') {
+      const clawX = b.x - G.GRAB_REACH;
+      if (Math.abs(p.x - clawX) < G.GRAB_R && p.y > BAND.FLOOR_Y - 70) {
+        sim.grabbed = { t: 0, x: clawX };   // the held beat; the outcome lands after it
+        return sim;
+      }
+    }
     // Terrain destruction: TELEGRAPHED, and only the route BEHIND THE RUNNER —
     // the pass ahead never closes (fairness rule: no unavoidable fail). Note
     // "behind the boss" would be WRONG here: the player approaches the boss

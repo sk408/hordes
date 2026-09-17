@@ -114,16 +114,27 @@ export const THREATS = {
   FLIER_R: 8,
   CONTACT_R: 11,       // any contact is the SOFT failure 'caught' — never death
   BOSS_W: 84,          // the obstacle-boss body (UNKILLABLE by construction)
-  // BOSS_H must keep the body's top BELOW BOSS_PASS_Y - clearance: the overpass
-  // is the authored route OVER the boss, and a runner standing on it at
-  // BOSS_PASS_Y must read as ABOVE the body (sim.js: p.y > bossTop + 4 is the
-  // caught test). 88 leaves a 20px margin AND stays too tall to cheese: a plain
-  // floor jump apex (FLOOR_Y - 80 = 172) is still inside the body's span.
+  // BOSS_H is the body's rendered height; the V1e overpass constants are GONE
+  // (the V1f grab finale runs the pilot past the body ON THE FLOOR — see GRAB).
   BOSS_H: 88,
-  BOSS_PASS_Y: 148,    // the pass platform OVER the boss (its approach terrace
-  BOSS_PASS_W: 120,    // is authored by the BOSS template — see generator.js)
   BOSS_DESTROY_LEAD: 1.0,   // telegraph (s) before it tears out terrain BEHIND
   BOSS_DESTROY_EVERY: 4.0,
+  // ---- V1f THE GRAB (owner refinement 2026-09-17, msg superseding the
+  // floating-bypass shape: "the boss reaching to grab the pilot and the pilot
+  // being able to run past. Has to look convincing"). The boss stands OUT IN
+  // THE OPEN on the finale floor; its one threat is a telegraphed GRAB: a
+  // fixed cadence the player can learn by watching one cycle, a visible
+  // WIND-UP tell, contact ONLY while the arm is out (extend/hold) — a pilot
+  // who has cleared the arm, or arrives during idle/windup/retract, is
+  // structurally safe (no invisible hitboxes, no late grabs).
+  GRAB_EVERY: 2.0,     // the full cycle (s): idle + windup + extend + hold + retract
+  GRAB_REACH: 150,     // the claw's full-extension x, LEFT of the boss center (px)
+  GRAB_WINDUP: 0.50,   // the visible tell before the arm moves (the dodge window)
+  GRAB_EXTEND: 0.22,   // the sweep out to full reach
+  GRAB_HOLD: 0.25,     // claw closed at full reach (the contact window)
+  GRAB_RETRACT: 0.40,  // the pull-back — NO contact in this phase, ever
+  GRAB_R: 12,          // claw contact half-width (px)
+  GRAB_HOLD_PILOT: 0.7,// the visible HELD beat before the soft outcome 'caught'
 };
 
 // ---- the exit (P1's portal entity + rules, reused — not a second lookalike) ----
@@ -163,22 +174,32 @@ export const PAID_SKIP = {
 // hold by construction.
 export const LOOK = {
   ACT_FRACS: [0.18, 0.42, 0.66],   // act boundaries (wallSpeed's own keys)
+  // ADOPTED 2026-09-17 (owner: "Variant b is good"): VARIANT B "SMOKE INFERNO"
+  // from docs/art/escape-art-pass-2026-09-17/variants.mjs — a choked amber-red
+  // dusk: near-black skyline, ember windows, thick haze, drifting light
+  // shafts, the corridor still travelling dusk->dawn. This table is the ONE
+  // home of every scene hex value (named keys, one act per row) — tune here,
+  // never in render.js. `win` is the lit-window tone; `haze` the layer seams.
   PALETTES: [
-    {   // act 0 WARM-UP — amber dusk
-      skyTop: '#1a1230', skyBottom: '#472a52', horizon: '#b0523c',
-      far: '#2a1c44', near: '#3d2450', voidGlow: '#b0523c', ember: '#ff9a4a',
+    {   // act 0 WARM-UP — choked amber dusk
+      skyTop: '#1c1016', skyBottom: '#6e2a20', horizon: '#ffb04a',
+      far: '#2a1620', near: '#3a1c24', haze: '#d07040', win: '#ffe08a',
+      voidGlow: '#ff9a4a', ember: '#ffcf6a',
     },
-    {   // act 1 ESCALATION — magenta twilight
-      skyTop: '#140f2e', skyBottom: '#3c1c4e', horizon: '#c04a6a',
-      far: '#241640', near: '#38204e', voidGlow: '#c04a6a', ember: '#ff6a7a',
+    {   // act 1 ESCALATION — deepening red smoke
+      skyTop: '#180c12', skyBottom: '#5c2018', horizon: '#ff7a3c',
+      far: '#241018', near: '#32161f', haze: '#c05a30', win: '#ffc06a',
+      voidGlow: '#ff8a4a', ember: '#ff9a5a',
     },
-    {   // act 2 ESCALATION+ / THE BOSS BEAT — violet night
-      skyTop: '#0d0f2a', skyBottom: '#2a1c54', horizon: '#8a5ae0',
-      far: '#1a1440', near: '#2a2050', voidGlow: '#8a5ae0', ember: '#c08aff',
+    {   // act 2 ESCALATION+ / THE BOSS BEAT — magenta ember night
+      skyTop: '#120a12', skyBottom: '#401a2c', horizon: '#e05a5a',
+      far: '#1c0e20', near: '#281428', haze: '#a03848', win: '#ff9a9a',
+      voidGlow: '#e05a5a', ember: '#ff7a6a',
     },
-    {   // act 3 THE FINAL SPRINT — teal dawn (the portal's own light)
-      skyTop: '#061828', skyBottom: '#0e3a4a', horizon: '#38e0c0',
-      far: '#0a2438', near: '#10303f', voidGlow: '#38e0c0', ember: '#60e0c0',
+    {   // act 3 THE FINAL SPRINT — ember dawn (the portal's own light)
+      skyTop: '#1c1410', skyBottom: '#6a4028', horizon: '#ffb04a',
+      far: '#2a1a14', near: '#36241a', haze: '#d08a50', win: '#ffe0a0',
+      voidGlow: '#5ae0b0', ember: '#ffb06a',
     },
   ],
   // The two poles are the BRIGHTEST things on screen (owner): emissive

@@ -71,33 +71,34 @@ S.check('every trigger band is AUTO-only data with a sane window and width', () 
   for (let seed = 1; seed <= 20; seed++) {
     const c = generateCorridor(seed);
     const trig = triggersOf(c);
-    assert(trig.length > 4, 'seed ' + seed + ': only ' + trig.length + ' triggers');
+    // RETARGET (V1f, disclosed): the count pin was >4, which the V1e finale's
+    // two up-hop bands propped up; the grab finale carries no bands, so the
+    // pin is the non-finale ramp's own floor (>= 3 authored bands). The
+    // window/width checks below are unchanged.
+    assert(trig.length >= 3, 'seed ' + seed + ': only ' + trig.length + ' triggers');
     for (const t of trig) {
       assert(t.vMin <= t.vMax, 'window inverted at ' + t.x0);
       assert(t.vMax <= PHYS.RUN_SPEED * 1.3, 'silliness cap breached at ' + t.x0 + ' (vMax ' + t.vMax + ')');
       assert(t.x1 - t.x0 >= 52, 'band too narrow for the prologue landing at ' + t.x0);
     }
-    // RETARGET (V1e, docs/briefs/V1E_ESCAPE_FINALE.md): the boss segment is
-    // the FINALE now and its two up-route hops are the owner's OWN jump-box
-    // bands (fired at authored x with the speed-window fudge), verified by
-    // the same invariant — test_v1_escape.mjs:80-83 previously pinned the
-    // OLD design ("the boss beat must be trigger-free terrain") because the
-    // mid-corridor boss was spatial steering; V1e replaced that mechanism
-    // with bands, so the pin asserts the bands instead (a strengthening: it
-    // demands exactly the two authored hops and their landing platforms).
+    // RETARGET (V1f, owner refinement 2026-09-17 — "the boss reaching to grab
+    // the pilot and the pilot being able to run past"): the finale's V1e
+    // up-route (two up-hop bands onto an overpass) is superseded. The boss
+    // now stands OUT IN THE OPEN on the finale floor and the way past is the
+    // floor itself, dodging the telegraphed GRAB — so the finale carries NO
+    // bands (required jump distance 0px against a 160px reach) and the pins
+    // assert the open-floor shape instead: whole floor, no gaps, no triggers,
+    // the portal beyond the boss, and the boss ON the walkable ground.
     const bossSeg = c.segs.find(s => s.kind === 'boss');
     assert(bossSeg && bossSeg.finale === true, 'the boss segment is the finale');
-    assert(bossSeg.gaps.length === 0, 'the finale floor is whole (a missed hop is the boss\'s ground, never a pit)');
-    const hops = bossSeg.triggers.filter(t => t.up);
-    assert(bossSeg.triggers.length === 2 && hops.length === 2,
-      'the finale carries exactly the two up-hop bands (got ' + bossSeg.triggers.length + ')');
-    for (const t of hops) {
-      assert(bossSeg.plats.includes(t.land), 'an up-hop band must land on one of the finale platforms');
-      assert(t.x0 < t.land.x, 'an up-hop fires before its landing platform starts');
-    }
-    // The portal sits BEYOND the boss — the upper level is the way to it.
+    assert(bossSeg.gaps.length === 0, 'the finale floor is whole (the run-past is never a pit)');
+    assert(bossSeg.triggers.length === 0,
+      'the finale is the open run-past: no jump bands (got ' + bossSeg.triggers.length + ')');
+    assert(bossSeg.plats.length === 1 && bossSeg.plats[0].y === 252 && bossSeg.plats[0].w >= 880,
+      'the finale is ONE open floor at ground level');
+    // The portal sits BEYOND the boss — past the grab gauntlet.
     assert(c.portalX > c.bossX, 'portal ' + c.portalX + ' must sit beyond the boss ' + c.bossX);
-    assert(c.bossPlat && c.bossPlat.y < 252 - 42, 'the overpass crosses OVER the boss');
+    assert(c.bossPlat && c.bossPlat.y === 252, 'the boss stands ON the walkable floor (out in the open)');
   }
 });
 
@@ -562,43 +563,103 @@ S.check('V1d spec counter-case: speed-match DISABLED — the charge runs home in
     'only ' + caught + '/4 seeds caught with the match disabled — the guarantee is not load-bearing');
 });
 
-// V1e — THE FINALE (docs/briefs/V1E_ESCAPE_FINALE.md): the corridor ENDS at
-// the boss and the upper level is the way over it to the portal. Pinned both
-// ways: the AUTO pilot completes VIA THE UPPER ROUTE (it is on the overpass
-// directly OVER the body, and both up-hop bands fired), and the counter-case
-// — the same pilot with the finale bands suppressed — does NOT reach the
-// portal, proving the route is load-bearing and the check can fail.
-S.check('V1e: the AUTO pilot crosses the finale OVER the boss to the portal', () => {
+// V1f — THE GRAB FINALE (owner refinement 2026-09-17: "the boss reaching to
+// grab the pilot and the pilot being able to run past. Has to look
+// convincing"). Pinned both ways: the AUTO pilot completes BY RUNNING PAST the
+// boss at floor level (never grabbed — the dodge is load-bearing), and the
+// counter-cases prove the claw is real: a pilot parked in the claw band when
+// the arm closes IS grabbed (fail-first: contact exists), a pilot who has
+// cleared the band is NEVER caught late (retract has no hitbox), and the
+// machine's cycle is exactly the learnable GRAB_EVERY cadence.
+S.check('V1f: the AUTO pilot runs the finale PAST the boss at floor level', () => {
   for (let seed = 1; seed <= 6; seed++) {
     const sim = createSim(seed);
-    const bands = sim.triggers.filter(t => t.up);
-    let onTopFrame = -1, n = 0;
+    const c = sim.corridor;
+    let passedFrame = -1, sawGrabPhases = 0, n = 0;
     while (!sim.outcome && n < 60 * 170) {
       step(sim, 1 / 60, inputFor(sim));
       n++;
-      const c = sim.corridor;
-      if (onTopFrame < 0 && c.bossPlat && Math.abs(sim.player.y - c.bossPlat.y) < 1 &&
-          sim.player.x > c.bossX - THREATS.BOSS_W / 2 &&
-          sim.player.x < c.bossX + THREATS.BOSS_W / 2) onTopFrame = n;
+      if (sim.boss.grab.phase === 'windup' || sim.boss.grab.phase === 'extend') sawGrabPhases++;
+      if (passedFrame < 0 && sim.player.x > c.bossX + THREATS.BOSS_W / 2 &&
+          Math.abs(sim.player.y - 252) < 1) passedFrame = n;
     }
     assert(sim.outcome === 'complete', 'seed ' + seed + ': outcome ' + sim.outcome);
-    assert(onTopFrame >= 0, 'seed ' + seed + ': the pilot never crossed OVER the boss');
-    assert(bands.every(t => t.fired), 'seed ' + seed + ': a finale up-hop band never fired');
-    console.log('  MEASURED V1e seed ' + seed + ': over the body at frame ' + onTopFrame +
-      ' (t=' + (onTopFrame / 60).toFixed(1) + 's), outcome=' + sim.outcome);
+    assert(!sim.grabbed, 'seed ' + seed + ': the auto pilot was GRABBED (the dodge failed)');
+    assert(passedFrame >= 0, 'seed ' + seed + ': the pilot never passed the boss on the floor');
+    assert(sawGrabPhases > 10, 'seed ' + seed + ': the grab machine never engaged (' + sawGrabPhases + ' phase frames)');
+    console.log('  MEASURED V1f seed ' + seed + ': past the body at t=' + (passedFrame / 60).toFixed(1) +
+      's, grab cycles observed (' + sawGrabPhases + ' tell frames), outcome=' + sim.outcome);
   }
 });
-S.check('V1e: counter-case — the ground route does NOT reach the portal', () => {
-  for (let seed = 1; seed <= 4; seed++) {
-    const sim = createSim(seed);
-    for (const t of sim.triggers) if (t.up) t.fired = true;   // up-route suppressed
-    let n = 0;
-    while (!sim.outcome && n < 60 * 170) { step(sim, 1 / 60, inputFor(sim)); n++; }
-    assert(sim.outcome !== 'complete',
-      'seed ' + seed + ': the ground route completed anyway — the up-route is not load-bearing');
-    console.log('  MEASURED V1e counter-case seed ' + seed + ': outcome=' + sim.outcome +
-      ' at x=' + Math.round(sim.player.x) + ' t=' + sim.t.toFixed(1) + 's');
+S.check('V1f: the grab machine cycles on exactly the learnable GRAB_EVERY cadence', () => {
+  const sim = createSim(9);
+  sim.wall.x = sim.player.x - 5000;      // isolate the machine from the timer
+  sim.player.x = sim.boss.x - 200; sim.player.y = 252;   // inside engage range, outside the band
+  sim.pursuers.length = 0; sim.nextShot = Infinity; sim.nextFlier = Infinity;
+  const G = THREATS;
+  const cycle = G.GRAB_EVERY;
+  const phases = [];
+  let n = 0, last = 'idle', t0 = null;
+  while (n < 60 * 10) {
+    step(sim, 1 / 60, { moveX: 0 });
+    n++;
+    const ph = sim.boss.grab.phase;
+    if (ph !== last) { phases.push([ph, sim.t]); last = ph; }
+    if (ph === 'windup' && t0 === null) t0 = sim.t;
+    if (t0 !== null && phases.filter(p => p[0] === 'windup').length >= 3) break;
   }
+  const winds = phases.filter(p => p[0] === 'windup').map(p => p[1]);
+  assert(winds.length >= 3, 'the machine did not cycle 3x in 10s (' + winds.length + ')');
+  for (let i = 1; i < winds.length; i++) {
+    // One frame of quantization per phase transition (5 phases) bounds the
+    // sampling drift at ~5 frames — 0.1s tolerates that and nothing more.
+    assert(Math.abs((winds[i] - winds[i - 1]) - cycle) < 0.1,
+      'cadence drifted: ' + (winds[i] - winds[i - 1]).toFixed(3) + 's vs GRAB_EVERY ' + cycle);
+  }
+  // The timing window, stated as a number: the tell is visible for
+  // GRAB_WINDUP seconds before the claw can touch anything, and the claw is
+  // dangerous for GRAB_EXTEND + GRAB_HOLD seconds per cycle.
+  const danger = G.GRAB_EXTEND + G.GRAB_HOLD;
+  assert(G.GRAB_WINDUP >= 0.45 && G.GRAB_WINDUP + G.GRAB_EXTEND >= 0.65,
+    'the visible warning (' + G.GRAB_WINDUP + '+' + G.GRAB_EXTEND + 's) must beat a human reaction budget');
+  console.log('  MEASURED V1f cadence: cycle ' + cycle + 's, danger window ' + danger.toFixed(2) +
+    's, tell ' + G.GRAB_WINDUP + 's (safe ' + (cycle - danger).toFixed(2) + 's per cycle)');
+});
+S.check('V1f counter-case: a pilot IN the claw band when it closes IS grabbed (contact is real)', () => {
+  const sim = createSim(9);
+  sim.wall.x = sim.player.x - 5000;
+  sim.player.x = sim.boss.x - THREATS.GRAB_REACH;        // dead centre of the band
+  sim.player.y = 252;
+  sim.pursuers.length = 0; sim.nextShot = Infinity; sim.nextFlier = Infinity;
+  sim.boss.grab.phase = 'windup'; sim.boss.grab.t = THREATS.GRAB_WINDUP - 1 / 60;  // closes next frame
+  step(sim, 1 / 60, { moveX: 0 });
+  assert(sim.grabbed, 'the closing claw missed a pilot standing in the band — contact is not real');
+  assert(!sim.outcome, 'the HELD beat precedes the outcome (contact must read as held)');
+  let n = 0;
+  while (!sim.outcome && n < 120) { step(sim, 1 / 60, { moveX: 0 }); n++; }
+  assert(sim.outcome === 'caught', 'the grab resolves to the soft caught (' + sim.outcome + ')');
+  console.log('  MEASURED V1f counter-case: held for ' + (n / 60).toFixed(2) +
+    's then caught — the claw has a real hitbox');
+});
+S.check('V1f: no late grabs — the retract phase has NO hitbox; a cleared pilot is safe', () => {
+  const sim = createSim(9);
+  sim.wall.x = sim.player.x - 5000;
+  sim.pursuers.length = 0; sim.nextShot = Infinity; sim.nextFlier = Infinity;
+  sim.boss.grab.phase = 'retract'; sim.boss.grab.t = 0;
+  // Park the pilot dead in the band for the WHOLE retract + idle (the arm is
+  // pulling back / parked: structurally harmless).
+  sim.player.x = sim.boss.x - THREATS.GRAB_REACH; sim.player.y = 252;
+  let n = 0;
+  const safeWindow = THREATS.GRAB_RETRACT + 0.05;
+  while (n < 60 * safeWindow) { step(sim, 1 / 60, { moveX: 0 }); n++; }
+  assert(!sim.grabbed && !sim.outcome,
+    'a pilot standing in the band during retract was touched (invisible hitbox)');
+  // And the reach is measured against the lane: the claw's full extension
+  // must reach PAST the body's face by a stated margin.
+  const pastFace = THREATS.GRAB_REACH - THREATS.BOSS_W / 2;
+  assert(pastFace >= 100, 'the claw reaches only ' + pastFace + 'px past the body face (want >= 100)');
+  console.log('  MEASURED V1f reach: claw lands ' + pastFace + 'px past the body face, band width ' +
+    (THREATS.GRAB_R * 2) + 'px; retract (' + THREATS.GRAB_RETRACT + 's) is hitbox-free');
 });
 
 // ---------------------------------------------------------------------------
