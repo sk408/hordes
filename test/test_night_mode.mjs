@@ -121,9 +121,9 @@ S.check('night+challenge+heat(1): 100 - 50 + 200 + 30 = 280% (the full additive 
   assert.equal(r.award, 196, 'award = round(70 x 2.8)');
   assert.equal(r.goldPool.total, 2.8);
 });
-S.check('the named constants: penalty 50, CONTINUE 3s, RESTART 3s', () => {
+S.check('the named constants: penalty 50, CONTINUE 3s, RESTART 3s, STALL 30s', () => {
   assert.deepEqual(T.night.constants,
-    { CONTINUE_S: 3.0, RESTART_S: 3.0, PENALTY_PCT: 50 });
+    { CONTINUE_S: 3.0, RESTART_S: 3.0, STALL_S: 30.0, PENALTY_PCT: 50 });
 });
 
 // ---- 4. RECORDS ARE KEPT -------------------------------------------------------
@@ -213,6 +213,64 @@ S.check('a finished night run auto-restarts after NIGHT_RESTART_S with build + a
 S.check('the auto-RETRY arms only on death and survival (a deliberate END RUN never loops)', () => {
   assert.equal((src.match(/nightRestartLeft = C\.AUTOPILOT\.NIGHT_RESTART_S/g) || []).length, 2,
     'armed in exactly die() and runSurvived()');
+});
+
+// ---- 6b. OBSERVABLE restart (defect follow-up 2026-09-17): the flags above
+// are not what a player sees. The end card must be GONE — no composed screen,
+// no RETRY card, a fresh run clock — not merely mode === 'playing'.
+S.check('the auto-RETRY leaves NO summary behind: endScreen cleared, fresh clock, fresh run', () => {
+  nightOn();
+  T.startRun(); h.pump(2);
+  st.time = 91;
+  T.die();
+  assert.equal(st.mode, 'dead');
+  assert.ok(st.endScreen, 'the summary was composed');
+  h.pump(60 * 3.2);
+  assert.equal(st.mode, 'playing', 'the run restarted');
+  assert.equal(st.endScreen, null, 'the composed summary is GONE (a player-visible clear, not a flag)');
+  assert.equal(st.time < 1, true, 'the run clock restarted at 0 (a NEW run, not a resume)');
+  assert.equal(st.runCounts.bossKills, 0, 'the run-scoped counters reset');
+});
+
+// ---- 6c. THE NO-WEDGE WATCHDOG. The defect class is "a night run parks on a
+// waiting screen". The named timers cover their transitions; the watchdog is
+// the guarantee for every OTHER way a run can end up waiting. Counter-case
+// through a REAL path: a deliberate END RUN composes the same end card but
+// deliberately never arms the auto-RETRY — without the watchdog that screen
+// parks forever (the owner-visible defect); with it, the run restarts inside
+// NIGHT_STALL_S.
+S.check('watchdog: an UNARMED end card (deliberate END RUN) still restarts within NIGHT_STALL_S', () => {
+  assert.equal(st.mode, 'playing');
+  // The real deliberate-exit path: settle + compose the end card, no arm.
+  // (endRun is two-tap confirmed in the UI; the settle seam composes the same
+  // screen — the auto-RETRY's own test above proves die() arms, so here we
+  // need the UNARMED card only.)
+  T.purse.settle();
+  st.mode = 'dead';                       // the composed card state
+  assert.equal(T.night.restartLeft, null, 'the card is unarmed (the defect shape)');
+  h.pump(60 * 5);
+  assert.equal(st.mode, 'dead', 'short of STALL_S the watchdog has NOT fired');
+  assert.ok(T.night.stall.mode === 'dead' && T.night.stall.t > 4, 'the stall clock is running: ' + JSON.stringify(T.night.stall));
+  h.pump(60 * (T.night.constants.STALL_S + 1));
+  assert.equal(st.mode, 'playing', 'the watchdog restarted the parked run');
+  assert.equal(st.nightRun, true, 'still a night run');
+});
+S.check('watchdog: the LIVE modes and human surfaces are never "unstuck"', () => {
+  assert.equal(st.mode, 'playing');
+  // The title (a human surface) with the night on: no run is live, nothing to
+  // advance — the watchdog must stay quiet.
+  st.mode = 'title';
+  h.pump(60 * (T.night.constants.STALL_S + 2));
+  assert.equal(st.mode, 'title', 'the watchdog did not start a run from the title');
+  // A LIVE run is not a stall either. Hold the field empty (no enemies -> no
+  // deaths, no kills, no level-up draft) so ONLY the watchdog could move the
+  // mode — and assert it does not.
+  st.mode = 'playing';
+  st.enemies.length = 0; st.enemyShots.length = 0;
+  freezeSpawns();
+  h.pump(60 * (T.night.constants.STALL_S + 2), () => { st.player.hp = st.player.stats.maxHp; });
+  assert.equal(st.mode, 'playing', 'a playing night run is not a stall');
+  assert.equal(T.night.stall.mode, null, 'no stall clock while playing');
 });
 
 // ---- 7. THE RETURN LINE --------------------------------------------------------

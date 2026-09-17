@@ -3323,6 +3323,7 @@ let nightArmed = false;          // the SETUP card's two-press confirm
 let nightSession = null;         // { t0, gold0 } while the night runs on
 let nightContinueLeft = null;    // s left on the intermission auto-CONTINUE
 let nightRestartLeft = null;     // s left on the end-card auto-RETRY
+let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
 export function nightDraftPickIndex(offers) {
   const rank = (u) => (u && u.tier === 'MYTHIC') ? 2 : (u && u.tier === 'RARE') ? 1 : 0;
@@ -3346,6 +3347,57 @@ function tickNight(realDt) {
       startRun();   // same build, same arena: RETRY's contract
     }
   }
+  // NIGHT STALL WATCHDOG (defect follow-up 2026-09-17: the owner reported a
+  // night run parked on the end-of-run summary). The named timers above cover
+  // the transitions they were wired to; this covers EVERYTHING ELSE that could
+  // leave an unattended run standing still: if any single waiting mode of the
+  // run ladder is held longer than NIGHT_STALL_S, advance it through that
+  // mode's own sanctioned action (the same call the named timer makes, so the
+  // watchdog can only ever do early what the timer would have done — never
+  // anything a human path does differently). Deliberately NOT fired on the
+  // live modes (playing/finale — the run IS moving), the human surfaces
+  // (title/intro), or the pause screens a present human is reading
+  // (settings/stats): those are not stalls.
+  if (state.nightRun) {
+    const m = state.mode;
+    if (m === 'dead' || m === 'intermission' || m === 'escape' || m === 'draft' ||
+        m === 'portal-cine' || m === 'death-cine') {
+      if (nightStall.mode !== m) nightStall = { mode: m, t: 0 };
+      else {
+        nightStall.t += realDt;
+        if (nightStall.t >= C.AUTOPILOT.NIGHT_STALL_S) {
+          nightStall = { mode: null, t: 0 };
+          nightUnstick(m);
+        }
+      }
+    } else {
+      nightStall = { mode: null, t: 0 };
+    }
+  } else {
+    nightStall = { mode: null, t: 0 };
+  }
+}
+
+// The watchdog's one action: per waiting mode, the same advance its own named
+// timer / auto path would have made. A thrown error here must not wedge the
+// loop either, so each action is isolated and the watchdog re-arms (the stall
+// clock restarts; a persistent failure surfaces as a 30s cadence, not a freeze).
+function nightUnstick(m) {
+  try {
+    if (m === 'dead') startRun();
+    else if (m === 'intermission') continueRun();
+    else if (m === 'escape') ESCAPE.skip();
+    else if (m === 'draft') {
+      if (draftOffers && draftOffers.length && draftTimer && !draftTimer.done) {
+        draftTimer.done = true;
+        draftAutoCount++;
+        const u = draftOffers[nightDraftPickIndex(draftOffers)];
+        draftAutoLastId = u.id;
+        activateDraftCard(u);
+      }
+    } else if (m === 'portal-cine') endPortalCine();
+    else if (m === 'death-cine') endDeathCine();
+  } catch (e) { /* the loop lives; the stall clock restarts on the next tick */ }
 }
 
 // The SETUP card's ONE handler. First press ARMS (the toggle must not be
@@ -8950,9 +9002,14 @@ export const __TEST = {
     pickIndex: nightDraftPickIndex,
     get continueLeft() { return nightContinueLeft; },
     get restartLeft() { return nightRestartLeft; },
+    // Watchdog seam: the live stall clock (null mode = not stalled) and a
+    // direct probe for the unstick action, so tests drive the REAL backstop.
+    get stall() { return { mode: nightStall.mode, t: nightStall.t }; },
+    unstick: nightUnstick,
     get constants() {
       return { CONTINUE_S: C.AUTOPILOT.NIGHT_CONTINUE_S,
         RESTART_S: C.AUTOPILOT.NIGHT_RESTART_S,
+        STALL_S: C.AUTOPILOT.NIGHT_STALL_S,
         PENALTY_PCT: RUN_GOLD.NIGHT_PENALTY_PCT };
     },
   },

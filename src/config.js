@@ -457,6 +457,17 @@ export const CONFIG = {
     // construction, and they stop on their own when the tab hides.
     NIGHT_CONTINUE_S: 3.0,
     NIGHT_RESTART_S: 3.0,
+    // NIGHT STALL WATCHDOG (defect follow-up 2026-09-17: "still sitting on the
+    // end of run summary"). The named timers above are the FRONT line; this is
+    // the backstop that makes "a night run never parks" a guarantee instead of
+    // a wiring hope. If a night run holds any single waiting mode of the run
+    // ladder (dead / intermission / escape / draft / portal-cine / death-cine)
+    // for longer than NIGHT_STALL_S, the watchdog advances it through that
+    // mode's OWN sanctioned action — the same call the named timer makes. It
+    // can never race the named timers (30s >> 3s/3s/6s) and never touches the
+    // live modes (playing/finale) or the human surfaces (title/intro,
+    // settings/stats while a person is reading them).
+    NIGHT_STALL_S: 30.0,
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):
