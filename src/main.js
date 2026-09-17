@@ -156,7 +156,7 @@ import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } 
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
 import {
   DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
-  challengeRules, nextChallengeId, describeChallenge,
+  challengeRules, nextChallengeId, describeChallenge, challengeGoldMult,
 } from './challenges.js';
 // G20a STAGES — the third axis (the PLACE): pool/mods/hazard rows stamped onto
 // the run exactly like challenges are. Same purity contract, same session-
@@ -3655,7 +3655,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // completion winBonus stay SEPARATE additions on top. Performance pays
   // through the banked purse remainder: the run's tier-weighted in-run
   // earnings land here, unspent.
-  const mult = (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult();
+  const mult = (p.stats.goldMult || 1) * goldMult(manualPushes(state)) * rampageGoldMult()
+    // PLAYER REVIEW 2026-09-17 item 2: a restricted run's stated reward pays
+    // here — the AWARD component only, never the purse (kills already paid).
+    * challengeGoldMult(state.challenge);
   const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
   const purseBanked = purseClamp(profile.runPurse);
   const gold = award + purseBanked + winBonus;
@@ -4416,6 +4419,12 @@ let hintPending = [];          // armed ids waiting on the spacing / boss gate
 let hintLastShownAt = -1e9;    // state.time of the last hint DISPLAY
 let introSawDraft = false;     // a level-up draft opened this run
 let introSawIntermission = false;   // an intermission was reached this run
+// PLAYER REVIEW 2026-09-17 item 1 ("clicking 'skip' still shows you the next
+// chips"): skipping a tour ENDS the tutorial sequence. Session-scoped (never
+// persisted — a reload is a fresh chance to teach); deliberately NOT reset by
+// resetOnboarding, so the suppression survives run starts and title returns.
+// REPLAY TOUR is the only way back in.
+let hintsSuppressed = false;
 
 function resetOnboarding() {
   hintShownRun = {}; hintMoveTime = 0; hintPrevPos = null;
@@ -4428,6 +4437,7 @@ function resetOnboarding() {
 // per run (deduped here), teach-until-demonstrated + give-up in the store.
 function maybeHint(id, trigger, text) {
   if (!trigger) return;
+  if (hintsSuppressed) return;   // a skipped tutorial never chips again
   if (hintShownRun[id] || hintPending.some(h => h.id === id)) return;
   if (hintStore.done(id) || hintStore.runs(id) >= 3) return;
   hintPending.push({ id, text });
@@ -4587,7 +4597,16 @@ function startCoach(steps, key) {
   const end = () => { coach = null; };
   coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end,
     // TUTORIAL_OVERLAY: name the replay path on the way out of a skip.
-    onSkip: () => { end(); toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS'); } });
+    // PLAYER REVIEW 2026-09-17 item 1: skipping ENDS the sequence — no further
+    // chip, card or hint from it appears this session. A chip already on
+    // screen or queued when skip is pressed is cancelled, in any click order.
+    onSkip: () => {
+      end();
+      hintsSuppressed = true;
+      hintPending = [];
+      hintStrip.clear();
+      toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS');
+    } });
   coach.start();
 }
 
@@ -5790,6 +5809,9 @@ function showSettings(disarm = true, inRun = false) {
     // ONBOARDING REWORK: the replay re-arms the hint layer as well — the
     // demonstration flags AND the give-up counters (onboarding.js reset()).
     hintStore.reset();
+    // ...and lifts a skip's session suppression (PLAYER REVIEW item 1: the
+    // player who asks for the tour back gets the chips back too).
+    hintsSuppressed = false;
     if (inRun) {
       closeSettings();
       toast('TOUR REPLAYS NOW');   // the kept cards + hints re-arm live
@@ -8492,6 +8514,10 @@ export const __TEST = {
     pending: () => hintPending.map(h => h.id),
     spacing: HINT_SPACING_S,
     lastShownAt: () => hintLastShownAt,
+    // PLAYER REVIEW item 1 seams: the skip-suppression state + the REPLAY
+    // TOUR re-arm (the settings card calls this same function).
+    suppressed: () => hintsSuppressed,
+    replayRearm: () => { hintsSuppressed = false; },
     controlUsed,
     bossFightLive,
     touchPath: isTouchPath,
