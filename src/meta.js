@@ -195,6 +195,15 @@ export const RUN_GOLD = {
   //         POOL result — stats, not stated-percentage bonuses. Retuning to
   //         "150%" is the one-line edit below.
   CHALLENGE_BONUS_PCT: 200,   // percentage POINTS; ONE home, no second literal
+  // NIGHT MODE penalty (owner 2026-09-17: "Let's start it at half gold. Still
+  // too much but could let more people 'finish' the game which also feels
+  // rewarding"). The opt-in full-auto mode pays 50%. It rides the SAME
+  // ADDITIVE pool as the challenge bonus — never its own multiplier — so a
+  // night challenge run pays 100 - 50 + 200 = 250% of base, not 100 x 0.5 x 3.
+  // Deliberately NOT tuned down (the owner's stated goal is more players
+  // finishing; any future reduction is a new owner decision, not a balance
+  // fix).
+  NIGHT_PENALTY_PCT: 50,   // percentage POINTS subtracted in the pool; ONE home
 };
 
 // WAVE-11 ECONOMY TARGETS (Sk408 directives), RE-DERIVED for the E1 run purse

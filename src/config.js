@@ -448,6 +448,15 @@ export const CONFIG = {
     // and resumes where it left off: the player is owed the full window of
     // unobstructed draft.
     DRAFT_TIMEOUT: 6.0,
+    // NIGHT MODE (owner 2026-09-17, the authorized exception to the feature
+    // freeze): the two NAMED auto-advance delays. The intermission CONTINUE
+    // auto-fires NIGHT_CONTINUE_S after the intermission screen opens; a
+    // finished night run auto-restarts (same build, same arena)
+    // NIGHT_RESTART_S after the end card settles. Wall-clock seconds ticked
+    // on the frame loop beside the draft timer — frame-rate independent by
+    // construction, and they stop on their own when the tab hides.
+    NIGHT_CONTINUE_S: 3.0,
+    NIGHT_RESTART_S: 3.0,
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):

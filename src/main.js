@@ -506,6 +506,14 @@ const state = {
   lastMinute: 0,     // last whole minute the clock toast fired for
   finalCall: false,  // 29:00 "one minute left" callout fired
   mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
+  // NIGHT MODE (owner-authorized 2026-09-17): `night` is the SESSION toggle
+  // (title SETUP only, OFF by default, never persisted — a reload ends the
+  // night); `nightRun` is the run-scoped stamp (the apexRun pattern) frozen
+  // at startRun, so a toggle between runs can never rewrite a live run's
+  // payout class; `nightSummary` is the return-to-game line the title shows.
+  night: false,
+  nightRun: false,
+  nightSummary: null,
   runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
   // ---- IN-RUN REFERENCE ACCESS: the reference's return door + the end
@@ -1264,6 +1272,11 @@ function openIntermission(opts = {}) {
   }
   // ONBOARDING REWORK 2026-09-16: the 4 intermission cards are RETIRED —
   // that screen labels itself (CONTINUE, chest, blessing, stakes).
+  // NIGHT MODE: arm the auto-CONTINUE once per intermission (the null guard
+  // keeps a chest-buy re-render from resetting the countdown).
+  if (state.nightRun && nightContinueLeft === null) {
+    nightContinueLeft = C.AUTOPILOT.NIGHT_CONTINUE_S;
+  }
 }
 
 // ---------- BLESSING RE-PICK (Sk408 playtest) --------------------------------
@@ -1344,6 +1357,7 @@ function buyPaidChest(tier) {
 }
 
 function continueRun() {
+  nightContinueLeft = null;   // NIGHT MODE: a human CONTINUE cancels the auto one
   const p = state.player;
   // PER-CONTROL INTRODUCTIONS: reaching CONTINUE means an intermission
   // happened — the moment stance and the pilot choice pay differently.
@@ -3204,7 +3218,9 @@ function draftObstructed() {
   // MANUAL never auto-picks: the countdown is suspended (not reset), so a
   // flip to AUTO mid-draft owes the player the full unspent window.
   if (normalizePilotMode(state.pilotMode) === 'MANUAL') return true;
-  if (coachActive()) return true;
+  // NIGHT MODE: a coach must not park an unattended run — the countdown runs
+  // through it (the coach's own DOM is untouched).
+  if (coachActive() && !state.nightRun) return true;
   try { return !!(typeof document !== 'undefined' && document && document.hidden); }
   catch { return false; }
 }
@@ -3269,7 +3285,9 @@ function tickDraftAutoPick(dt) {
       // Uniformly at random across the offered cards (captured at
       // presentation), through the ONE activation seam (activateDraftCard) —
       // byte-identical to a tap.
-      const u = draftOffers[Math.min(draftOffers.length - 1, Math.floor(draftAutoRng() * draftOffers.length))];
+      const u = state.nightRun
+        ? draftOffers[nightDraftPickIndex(draftOffers)]   // NIGHT: highest tier, first slot on tie
+        : draftOffers[Math.min(draftOffers.length - 1, Math.floor(draftAutoRng() * draftOffers.length))];
       draftAutoCount++;
       draftAutoLastId = u.id;
       activateDraftCard(u);
@@ -3277,6 +3295,85 @@ function tickDraftAutoPick(dt) {
     }
   }
   updateDraftCountdownLine();
+}
+
+// ---------- NIGHT MODE (opt-in full auto, owner 2026-09-17) --------------------
+// Owner, verbatim: "Yes, full auto run is one of the toughest balances without
+// skipping the content. We can try it though. Let's start it at half gold.
+// Still too much but could let more people 'finish' the game which also feels
+// rewarding." The authorized exception to the feature freeze.
+//
+// WHAT IT IS: with the toggle ON (title SETUP, two confirming presses, OFF by
+// default), every run plays itself end to end — the pilot already drives
+// movement/casts/potions; the DRAFT auto-pick, the intermission CONTINUE, the
+// run-end RETRY and the two cinematics are the beats that still parked an auto
+// run on a human, and each now fires on a NAMED wall-clock delay
+// (CONFIG.AUTOPILOT.NIGHT_CONTINUE_S / NIGHT_RESTART_S). Runs auto-restart
+// with the SAME build and arena (startRun re-reads the persisted loadout,
+// character, pending challenge and pending stage — RETRY's exact contract).
+//
+// NO SKIPPING THE CONTENT: a night run still fights every wave, drafts every
+// card, meets elites and bosses. The ONE auto-skip is the escape minigame (an
+// unattended run cannot play a side-scroller) — the known content gap, and
+// part of why the 50% rate is defensible.
+//
+// THE DRAFT POLICY (one documented rule, no heuristic knob): take the
+// HIGHEST-TIER offer — MYTHIC beats RARE beats everything else — and the
+// FIRST SLOT on a tie. Deterministic: the same offers always pick the same
+// card.
+let nightArmed = false;          // the SETUP card's two-press confirm
+let nightSession = null;         // { t0, gold0 } while the night runs on
+let nightContinueLeft = null;    // s left on the intermission auto-CONTINUE
+let nightRestartLeft = null;     // s left on the end-card auto-RETRY
+
+export function nightDraftPickIndex(offers) {
+  const rank = (u) => (u && u.tier === 'MYTHIC') ? 2 : (u && u.tier === 'RARE') ? 1 : 0;
+  let best = 0;
+  for (let i = 1; i < offers.length; i++) if (rank(offers[i]) > rank(offers[best])) best = i;
+  return best;   // strict > keeps the FIRST slot on a tie
+}
+
+function tickNight(realDt) {
+  if (state.nightRun && nightContinueLeft !== null && state.mode === 'intermission') {
+    nightContinueLeft -= realDt;
+    if (nightContinueLeft <= 0) {
+      nightContinueLeft = null;
+      if (state.mode === 'intermission') continueRun();
+    }
+  }
+  if (state.nightRun && nightRestartLeft !== null && state.mode === 'dead') {
+    nightRestartLeft -= realDt;
+    if (nightRestartLeft <= 0) {
+      nightRestartLeft = null;
+      startRun();   // same build, same arena: RETRY's contract
+    }
+  }
+}
+
+// The SETUP card's ONE handler. First press ARMS (the toggle must not be
+// reachable by accident); the second turns the night on. Turning OFF is a
+// single press and writes the return-to-game summary the title renders.
+function toggleNight() {
+  if (state.night) {
+    state.night = false;
+    nightArmed = false;
+    if (nightSession) {
+      state.nightSummary = {
+        awayS: Math.max(0, (Date.now() - nightSession.t0) / 1000),
+        gold: profile.gold - nightSession.gold0,
+        mult: (100 - RUN_GOLD.NIGHT_PENALTY_PCT) / 100,
+      };
+      nightSession = null;
+    }
+    audio.playSfx('button');
+    return;
+  }
+  if (!nightArmed) { nightArmed = true; audio.playSfx('button'); return; }
+  nightArmed = false;
+  state.night = true;
+  state.nightSummary = null;   // a new night replaces the old line
+  nightSession = { t0: Date.now(), gold0: profile.gold };
+  audio.playSfx('levelup');
 }
 
 // ---------- DRAFT PICK CEREMONY (owner 2026-09-16) -----------------------------
@@ -3564,6 +3661,11 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   if (state.apexRun) {
     html = `<span class="cause">APEX RUN</span><br>` + html;
   }
+  // NIGHT MODE: the run class is stated on the card — a half-gold auto run
+  // must never read as a full one (the apexRun pattern beside it).
+  if (state.nightRun) {
+    html = `<span class="cause">NIGHT RUN</span><br>` + html;
+  }
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
@@ -3577,8 +3679,9 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
     // pool's own terms; a plain standard stakes-free run renders
     // byte-identically (no clause).
     const gp = parts.goldPool;
-    if (gp && (gp.challenge > 0 || gp.heat > 0)) {
+    if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
       const bits = ['100%'];
+      if (gp.night > 0) bits.push(`NIGHT -${Math.round(gp.night * 100)}%`);
       if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
       if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
       html += `<br><span class="earn">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
@@ -3707,10 +3810,20 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // (kills already paid).
   const challengePct = challengeGoldBonusPct(state.challenge);
   const heatPct = goldMult(manualPushes(state)) - 1;
-  const pool = 1 + challengePct / 100 + heatPct;
+  // NIGHT MODE (owner 2026-09-17): the -50% rides the SAME additive pool —
+  // total = 100% - NIGHT + CHALLENGE + HEAT, summed, never multiplied — and
+  // the night term ALSO scales the per-run purse and the completion bonus,
+  // because "start it at half gold" means the whole payout, not the flat
+  // award the pool multiplies (the purse is the dominant income; halving
+  // only the 70g award would be a ~0.01% cut). FIRST_CLEAR stays a separate
+  // one-time record bonus, unhalved, like the challenge settle before it.
+  const nightPct = state.nightRun ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
+  const pool = 1 - nightPct / 100 + challengePct / 100 + heatPct;
+  const nightFactor = 1 - nightPct / 100;
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
   const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
-  const purseBanked = purseClamp(profile.runPurse);
+  const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
+  winBonus = Math.round(winBonus * nightFactor);
   const gold = award + purseBanked + winBonus;
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
@@ -3722,7 +3835,8 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
   state.runSettled = { gold, award, purseBanked, winBonus, firstClear,
-    goldPool: { base: 1, challenge: challengePct / 100, heat: heatPct, total: pool } };
+    goldPool: { base: 1, night: nightPct / 100, challenge: challengePct / 100,
+      heat: heatPct, total: pool } };
   // ONBOARDING (teach-until-demonstrated): the run ENDED — every hint that
   // never got its demonstration burns one of its 3 chances. Bumped beside the
   // claim (before the effects) so a partial settle failure cannot skip it.
@@ -3785,6 +3899,7 @@ function runSurvived() {
       parts: { award, purseBanked, winBonus: bonus, goldPool },
     }),
   });
+  if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
 }
 
 // IN-RUN REFERENCE ACCESS supplement: every end screen (death, victory,
@@ -3927,6 +4042,9 @@ function die(finale) {
       parts: { award, purseBanked, winBonus: 0, goldPool },
     }),
   });
+  // NIGHT MODE: the auto-RETRY (a deliberate END RUN never arms it — a human
+  // pressed that button).
+  if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
   // G15 THE DEATH MOVIE: the payoff above is COMPOSED but stays HIDDEN while
   // the movie plays; endDeathCine() reveals it untouched. Gold was settled
   // exactly once above (settleRunGold) — the cine never pays, never re-stamps
@@ -5047,6 +5165,17 @@ function showSetup() {
   // G20a: same cycling-card pattern through UNLOCKED stage rows only.
   menuCard('STAGE', stageCardSub(),
     () => { cyclePendingStage(); showSetup(); });
+  // NIGHT MODE (owner-authorized 2026-09-17): opt-in full auto at 50% gold.
+  // SETUP is its ONLY surface (never a run key, never persisted — a reload
+  // ends the night), OFF by default, and turning ON needs a SECOND
+  // confirming press so the toggle cannot be tripped by accident.
+  menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
+    state.night
+      ? 'runs play themselves at 50% gold · press to turn OFF'
+      : nightArmed
+        ? 'press again to CONFIRM: runs full-auto at HALF gold'
+        : 'overnight full-auto · 50% gold · two presses to turn ON (OFF by default)',
+    () => { toggleNight(); showSetup(); });
   menuCard('SETTINGS', 'audio, hud & reset', () => showSettings());
   // ONBOARDING REWORK: HOW TO PLAY now lives on the TITLE screen; SETUP keeps
   // CHALLENGE / STAGE / SETTINGS only.
@@ -5091,7 +5220,14 @@ function paintTitleHeader() {
       (hasArcadePass(profile) ? '<span class="pass">ARCADE PASS</span>' : '') +
     '</div>' +
     '<canvas class="bust" width="32" height="32"></canvas>' +
-    saveNoticeHtml();
+    saveNoticeHtml() +
+    // NIGHT MODE: the return-to-game line — time away, gold earned, the
+    // multiplier applied. One line, computed when the night was toggled OFF.
+    (state.nightSummary
+      ? `<div class="pass">NIGHT: away ${(state.nightSummary.awayS / 3600).toFixed(1)}h` +
+        ` · gold +${state.nightSummary.gold}` +
+        ` · x${state.nightSummary.mult.toFixed(2)}</div>`
+      : '');
   // Markup-built like every menuCard; the live canvases are resolved exactly the
   // way the character selector resolves its portraits (stub-DOM safe).
   const canvasIn = (cls) => {
@@ -6022,6 +6158,8 @@ function startRun() {
   state.apexRun = apexEnabled(profile);
   state.apexFire = state.apexRun && apexOwned(profile, 'apex_endless_fire');
   state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
+  // NIGHT MODE: the run-scoped stamp, frozen here (the apexRun pattern).
+  state.nightRun = state.night === true;
   const rules = challengeRules(state.challenge);
   state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
   state.potionCap = rules.potions !== undefined ? rules.potions : C.POTIONS.MAX_CARRIED;
@@ -6110,6 +6248,13 @@ function startRun() {
   // no-op when the last run already ended in that mode. Absent/unrecognised
   // stored value -> AUTO_ALL, the fresh-player default.
   swapPilotMode(loadPilotPref());
+  // NIGHT MODE: an unattended run must pilot itself — AUTO_ALL regardless of
+  // the stored preference (the pref itself is untouched; the next normal run
+  // re-reads it two lines up).
+  if (state.nightRun) swapPilotMode('AUTO_ALL');
+  // NIGHT MODE: no auto-advance timer survives a run boundary.
+  nightContinueLeft = null;
+  nightRestartLeft = null;
   clearPilotInput();
   // G31: the stance pref rides along (the boot apply already covers a
   // reload; this re-reads so storage edited between runs is honoured).
@@ -8073,6 +8218,9 @@ function startPortalCine() {
   cineT0 = performance.now();
   lastCinePhase = null;
   state.mode = 'portal-cine';
+  // NIGHT MODE: no one is watching the movie — hand straight to the end
+  // handler (the same call isDone would make).
+  if (state.nightRun) endPortalCine();
 }
 function endPortalCine() {
   if (state.mode !== 'portal-cine') return;
@@ -8103,6 +8251,9 @@ let deathCineT0 = 0;
 function startDeathCine() {
   deathCineT0 = performance.now();
   state.mode = 'death-cine';
+  // NIGHT MODE: skip the movie — straight to the composed payoff card (the
+  // auto-RETRY is armed beside the compose in die()).
+  if (state.nightRun) endDeathCine();
 }
 function endDeathCine() {
   if (state.mode !== 'death-cine') return;
@@ -8133,6 +8284,10 @@ function startEscape(opts = {}) {
     // intermission the real portal entry hands off to.
     test: !!opts.test,
   });
+  // NIGHT MODE: the ONE sanctioned content skip (an unattended run cannot
+  // play a side-scroller). Skipping without the paid writ forgoes the payout
+  // — the escape's own rule, unchanged.
+  if (state.nightRun && !opts.test) ESCAPE.skip();
 }
 // The test entry's hand-back: the run is still live underneath — reopen the
 // paused settings screen the button came from (BACK resumes the run through
@@ -8517,6 +8672,9 @@ function frame(now) {
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
+  // NIGHT MODE: the intermission auto-CONTINUE + the end-card auto-RETRY,
+  // same wall-clock slot (mode-gated no-ops in every other mode).
+  tickNight(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -8781,6 +8939,25 @@ export const __TEST = {
     loadStance: loadStancePref,
     applyStance: applyStancePref,
     KEY_PILOT, KEY_STANCE,
+  },
+  // ---- NIGHT MODE seam: the session toggle + two-press arm, the run stamp,
+  // the pure draft policy, the live auto-advance timers, and the return
+  // summary — so every night behaviour is drivable headlessly through the
+  // real paths (never copies).
+  night: {
+    get on() { return state.night; },
+    get run() { return state.nightRun; },
+    get armed() { return nightArmed; },
+    press: toggleNight,
+    get summary() { return state.nightSummary; },
+    pickIndex: nightDraftPickIndex,
+    get continueLeft() { return nightContinueLeft; },
+    get restartLeft() { return nightRestartLeft; },
+    get constants() {
+      return { CONTINUE_S: C.AUTOPILOT.NIGHT_CONTINUE_S,
+        RESTART_S: C.AUTOPILOT.NIGHT_RESTART_S,
+        PENALTY_PCT: RUN_GOLD.NIGHT_PENALTY_PCT };
+    },
   },
   // ---- E1 RUN PURSE seam: the live wallet plus the REAL credit / spend /
   // settle functions the game loop itself calls (never copies) — a headless

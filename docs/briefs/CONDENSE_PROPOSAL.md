@@ -63,6 +63,11 @@ running, the game plays itself honestly and pays reduced rates for it.
 
 ## 4. PROGRESSION CURVE
 
+**FOLDED 2026-09-17 into docs/PACING.md** (the one pacing document; task
+msg_01M2QV1H7EJ3NSHAZT57SW944P). The section below is retained as the
+historical record only — see PACING.md §1 (measured income) and §2 (the four
+invariants) for the live numbers and §6 there for the folded citations.
+
 **STATUS 2026-09-17 (owner correction): UNVERIFIED — DO NOT USE THESE NUMBERS.** The income figures below
 were read off a constant table (meta.js:235-245) and interpreted as run income; that interpretation is
 WRONG (owner: "Mid game run is NOT 200g. That's obscenely wrong. A new player can get 300g easily. One with
