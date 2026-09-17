@@ -223,7 +223,7 @@ export const CONFIG = {
     // gun (WEAPONS.ZAP: 3 jumps / 90 reach / 0.75 falloff on a 1.4s cadence),
     // so it EXCEEDS the gun on every axis: more jumps, longer reach, GENTLER
     // per-jump falloff. Every enemy it kills detonates at the ESTABLISHED
-    // onkillboom price (rewrites.js BOOM_MANA_COST 6, dry fallback — item 2:
+    // onkillboom price (rewrites.js BOOM_MANA_COST 6, hard gate — item 2:
     // the relief valve is the shop, never a balance change), and FROST_NOVA's
     // slow moved ONTO the chain (same constants; FROST_NOVA itself is
     // UNCHANGED and returns as a draftable card in N1 slice 2).
@@ -470,8 +470,9 @@ export const CONFIG = {
     //     first, so useSkill is only ever called when it will say yes.
     //   * never a new withhold: casting is synchronous in the frame and reads
     //     the same pool the manual buttons act on; it cannot block, delay or
-    //     starve a weapon (weapons tick on their own cooldowns, and ZAP's N1a
-    //     soft gate still fires dry at 0.5x if a cast just drained the pool).
+    //     starve a weapon (weapons tick on their own cooldowns, and ZAP's hard
+    //     gate holds at cd 0 if a cast just drained the pool — no bolt lost
+    //     beyond the dry window itself).
     AUTO_CAST: {
       ENABLED: true,
       NEAR_FULL: 0.8,      // pool at/above this share of max: spill, don't waste

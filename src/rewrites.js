@@ -244,13 +244,10 @@ export const BOOM_DAMAGE_FLAT = 4;
 export const BOOM_DAMAGE_FRAC = 0.5;   // + 50% of the player's weapon damage
 
 // CHAIN REACTION's mana price. A detonation on EVERY kill is the strongest
-// engine in the family (one-bad-pick probe 1.20x), so it now draws on the pool.
-// SOFT gate, not a hard one: when the run cannot pay, the blast still fires at
-// a reduced radius and damage rather than vanishing, so the card never goes
-// dark mid-fight (the failure mode measured on Chain Zap's first cut).
+// engine in the family (one-bad-pick probe 1.20x), so it draws on the pool.
+// HARD gate (owner 2026-09-17, superseding the N1a soft gate): when the run
+// cannot pay, the blast does NOT fire — null, no partial numbers, no spend.
 export const BOOM_MANA_COST = 6;
-export const BOOM_DRY_RADIUS_MULT = 0.6;
-export const BOOM_DRY_DAMAGE_MULT = 0.4;
 
 // ---- BLOOD HARVEST numbers (the blast on every health pickup) --------------
 // Potions are ~rare (POTIONS.DROP_CHANCE 0.03/kill), so the blast is allowed
@@ -423,24 +420,24 @@ export function grantRewrite(state, id) {
 
 // ---------- applied-value helpers (the ONE source the game reads) -----------
 /**
- * The detonation numbers (radius/damage/manaCost) for a pool state. PURE.
- * N1 slice 1: the Witch's Q chain detonates its kills with THESE numbers —
- * the same blast, the same 6-mana price, the same dry fallback — so there is
- * exactly ONE detonation implementation in the game. rewriteBoom (the
- * draftable card: EVERY kill detonates) and the Q (CHAIN kills detonate)
- * both call this; only their gating differs.
+ * The detonation numbers (radius/damage/manaCost) for a pool state, or NULL
+ * when the pool cannot pay. PURE. N1 slice 1: the Witch's Q chain detonates
+ * its kills with THESE numbers — the same blast, the same 6-mana price, the
+ * same HARD gate — so there is exactly ONE detonation implementation in the
+ * game. rewriteBoom (the draftable card: EVERY kill detonates) and the Q
+ * (CHAIN kills detonate) both call this; only their gating differs.
  */
 export function boomBlast(p) {
   // PURE: the helper decides what the blast WOULD be and what it WOULD cost;
   // the caller performs the spend. A state with no finite mana pool (unit
   // tests, any non-run caller) cannot bind the cost, so it reads funded.
   const pool = typeof p.mana === 'number' ? p.mana : Infinity;
-  const funded = pool >= BOOM_MANA_COST;
+  if (pool < BOOM_MANA_COST) return null;
   const base = BOOM_DAMAGE_FLAT + BOOM_DAMAGE_FRAC * (p.stats.damage || 0);
   return {
-    radius: funded ? BOOM_RADIUS : BOOM_RADIUS * BOOM_DRY_RADIUS_MULT,
-    damage: funded ? base : base * BOOM_DRY_DAMAGE_MULT,
-    manaCost: funded ? BOOM_MANA_COST : 0,
+    radius: BOOM_RADIUS,
+    damage: base,
+    manaCost: BOOM_MANA_COST,
   };
 }
 /** CHAIN REACTION (the rewrite card)'s detonation at the kill site, or null when not held. */
@@ -678,7 +675,7 @@ export function wildfireTransfer(state, dead) {
  * ZAP kill detonates, or null when the combo is not held (or the run has no
  * detonation source to price it from). Radius AND damage scale by
  * STORMREAPER_BLAST_MULT, and the strength reads boomBlast — the SAME numbers
- * and the SAME dry-pool fallback CHAIN REACTION uses, so the blast obeys every
+ * and the SAME hard gate CHAIN REACTION uses, so the blast obeys every
  * slice-1 blast rule. The caller wraps it in the ground-blast guard (flyers
  * take nothing). No mana is spent for it: the corpse's own kill detonation
  * already pays the pool price through rewriteBoom at the death pass.

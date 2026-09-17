@@ -90,17 +90,19 @@ export const WEAPONS = {
     // so it draws on the pool. This is the first weapon to opt in; the seam is
     // general (any def may carry MANA) and only ZAP does today.
     //
-    // N1a: the gate is now SOFT (owner: "for witch with no mana, the chain zap
-    // is weaker, and with mana we buff it"). A bolt ALWAYS fires on cooldown;
-    // a funded one spends and hits for full, a dry one spends nothing and hits
-    // at MANA_DRY_MULT. The hard gate starved the Witch's STARTING weapon — a
-    // class must not open with its signature weapon offline.
+    // THE GATE IS HARD (owner 2026-09-17, superseding N1a's soft gate: "A
+    // MANA-CONSUMING WEAPON fires when mana is insufficient, including at
+    // exactly zero. Fix the gate."). A dry pool does NOT fire: no bolt, no
+    // damage, no cooldown. The moment the pool can pay, the next cooldown
+    // tick fires — a dry attempt holds cd at 0, so recovery is instant.
     //
     // Sizing: 0.714 bolts/s at base (1.4s CD) x 4 mana = 2.86 mana/s against a
-    // 0.5/s base trickle, so a fresh save that wants FULL damage drains its
-    // pool in ~35s of held fire and then fights at the dry multiplier until
-    // regen/potions pay again. Maxed Mana Spring (2.5/s) very nearly covers
-    // it, which is the intended shape: strained at base, solved by the shop.
+    // 0.5/s base trickle, so a fresh save that wants to keep firing drains its
+    // pool in ~35s of held fire and then goes SILENT until regen/potions pay
+    // again (the hard gate — the Witch's starting weapon goes dark on a dry
+    // pool; that consequence is reported, not compensated). Maxed Mana Spring
+    // (2.5/s) very nearly covers it, which is the intended shape: strained at
+    // base, solved by the shop.
     // OVERCHARGE's 0.45 rate multiplier roughly doubles the burn.
     MANA: 4,
   },
@@ -407,12 +409,12 @@ function updateBoomerang(state, weapon, dt) {
   }
 }
 
-// ---------- MANA-COST WEAPONS: the N1a SOFT-gate seam ------------------------
+// ---------- MANA-COST WEAPONS: the HARD-gate seam -----------------------------
 // Every mana cost is read through weaponManaCost() so a character's
 // manaCostMult (CHARACTERS[].mods, threaded by applyCharacter — WITCH 0.5 so
-// ZAP costs her 2, everyone else 4) moves the number in ONE place. A dry pool
-// never silences a weapon: the bolt still fires, at MANA_DRY_MULT damage.
-export const MANA_DRY_MULT = 0.5;
+// ZAP costs her 2, everyone else 4) moves the number in ONE place. The gate is
+// HARD (owner 2026-09-17): mana < cost => the weapon does not fire at all;
+// mana === cost fires and spends exactly the cost.
 export function weaponManaCost(id, state) {
   const def = WEAPONS[id];
   if (!def || !def.MANA) return 0;
@@ -431,21 +433,18 @@ function updateZap(state, weapon, dt) {
   const jumps = P.jumps || W.JUMPS;
   const p = state.player;
   const forkPerJump = evoHas(weapon, 'chainZap') ? 2 : 1;
-  // N1a SOFT GATE: `funded` is decided once, from the ONE cost seam. A dry
-  // bolt spends nothing and deals MANA_DRY_MULT damage; a funded bolt spends
-  // and deals full. Either way the cooldown arms identically — the floor
-  // cadence IS the cooldown (the owner's "minimum fire speed" in one knob).
+  // HARD GATE (owner 2026-09-17): the cost is read once, from the ONE seam.
+  // The gate sits AFTER the target test (an empty field never burns a charge)
+  // and BEFORE the fire: a dry attempt spends nothing, deals nothing, and
+  // holds cd at 0 — the bolt fires the moment the pool can pay.
   const cost = weaponManaCost('ZAP', state);
-  const funded = !W.MANA || p.mana >= cost;
-  const baseDmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon)
-    * (funded ? 1 : MANA_DRY_MULT);
+  const baseDmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon);
   weapon.cd -= dt;
   if (weapon.cd > 0) return;
   const primary = nearestEnemy(state, p.x, p.y);
   if (!primary) { weapon.cd = 0; return; }
-  // MANA-COST WEAPON (see WEAPONS.ZAP.MANA). The spend sits AFTER the target
-  // test — an empty field must never burn a charge.
-  if (W.MANA && funded) p.mana -= cost;
+  if (W.MANA && p.mana < cost) { weapon.cd = 0; return; }
+  if (W.MANA) p.mana -= cost;
   weapon.cd = W.COOLDOWN * rateScale(state, weapon);
 
   const points = [{ x: p.x, y: p.y }];

@@ -333,6 +333,15 @@ s.check('AFTERIMAGE: detonations on the move through the ONE blast path; the x1.
   clearFoes();
   // Speed: MANUAL pilot, held ArrowRight, one second unbuffed vs one second
   // inside the window. Same controller seam, only SPEED_MULT differs.
+  // ARENA SCALE-UP FIXTURE RETARGET (2026-09-17, 2nd fix): the relief grade
+  // multiplies movement speed by up to ±0.36 per level, and the two windows
+  // sample different ground (the buffed window also covers ~1.5x the distance,
+  // so even rewinding to the same start leaves a different average grade —
+  // measured x1.4777 vs spec x1.5 on ~1/6 runs). The probe now pins the run's
+  // groundSeed to 1, whose VERDANT corridor (x -200..-20 at y=0, level 1
+  // throughout — verified against reliefLevel directly) is grade-flat, so the
+  // ratio measures ONLY the ult's speed. The ratio assertion is unchanged.
+  st.groundSeed = 1;
   p.x = -200; p.y = 0;
   h.key('keydown', { key: 'ArrowRight' });
   let x0 = p.x;

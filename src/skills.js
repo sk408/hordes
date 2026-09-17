@@ -90,8 +90,8 @@ export function useSkill(state, id) {
       head.slow = def.SLOW;
       // Every enemy the chain KILLS detonates — flagged here, PAID and fired
       // by the death pass through boomBlast (the ONE blast: the same numbers
-      // as the draftable card, 6 mana per detonation, dry fallback when the
-      // pool cannot pay). Flag-not-fire keeps a rewrite-holding Witch to
+      // as the draftable card, 6 mana per detonation, hard-gated — a dry pool
+      // fires nothing). Flag-not-fire keeps a rewrite-holding Witch to
       // exactly one detonation per corpse.
       if (head.hp <= 0) head.chainBoom = true;
       const from = head;

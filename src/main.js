@@ -2331,7 +2331,7 @@ function update(dt) {
       // across frames. NO toast: the feed is for rare moments, not every kill.
       // N1 slice 1: a corpse the Witch's CHAIN_REACTION Q killed (flagged by
       // useSkill) detonates through the SAME blast — boomBlast owns the
-      // numbers/price/dry-fallback, so there is ONE detonation implementation
+      // numbers/price/hard gate, so there is ONE detonation implementation
       // and a rewrite-holding Witch still detonates each corpse exactly once.
       // G21 slice 1 IGNITE: a corpse the BURN killed never detonates (the
       // card's contract: burn damage never detonates anything — no
@@ -2339,8 +2339,8 @@ function update(dt) {
       const boom = e.burnLethal ? null
         : (rewriteBoom(state) || (e.chainBoom ? boomBlast(state.player) : null));
       if (boom) {
-        // CHAIN REACTION draws on the pool per detonation; a dry run still
-        // detonates, just smaller (rewriteBoom owns that decision).
+        // CHAIN REACTION draws on the pool per detonation; a dry pool returns
+        // null above and detonates nothing (the hard gate, owner 2026-09-17).
         if (boom.manaCost) state.player.mana -= boom.manaCost;
         // N1 slice 3: the application loop moved INTO rewrites.js applyBlast —
         // the ONE blast implementation the Rogue's AFTERIMAGE phantoms now
@@ -7165,7 +7165,8 @@ function autoDrinkPotions(state, dt) {
 //     is only ever called when it will say yes.
 //   * never a new withhold: casting is synchronous in the frame; it cannot
 //     block, delay or starve a weapon (weapons tick on their own cooldowns,
-//     and ZAP's N1a soft gate still fires dry at 0.5x if a cast drained it).
+//     and ZAP's hard gate holds at cd 0 if a cast drained it, so the next
+//     funded tick fires the bolt).
 function autoCastSkills(state) {
   if (!pilotAssistsYou()) return;
   const ac = C.AUTOPILOT.AUTO_CAST;

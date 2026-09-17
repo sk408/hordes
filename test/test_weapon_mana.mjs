@@ -2,23 +2,30 @@
 // maybe should use mana").
 //
 // ZAP is the first weapon to opt into the mana pool: a def may carry MANA.
-// N1a turned the shipped hard gate (730a04b: no fire below cost) into a SOFT
-// gate (owner: "for witch with no mana, the chain zap is weaker, and with mana
-// we buff it"). What is pinned here:
+// HARD GATE (owner 2026-09-17, superseding N1a's soft gate): "A
+// MANA-CONSUMING WEAPON fires when mana is insufficient, including at
+// exactly zero. Fix the gate." A dry weapon does NOT fire — no bolt, no
+// damage, no cooldown, no spend. What is pinned here:
 //   1. a funded ZAP spends exactly its cost and fires full damage;
-//   2. a DRY ZAP still fires (the class must not open with its signature
-//      weapon offline) at exactly MANA_DRY_MULT damage, spends NOTHING, and
-//      is charged the SAME cooldown — the floor cadence IS the cooldown, so
-//      60Hz and 120Hz land on the same bolts-per-second;
-//   3. an empty field never burns a charge (the target test comes FIRST);
-//   4. weapons without MANA never touch the pool;
-//   5. the cost lives on the weapon def, read through weaponManaCost() —
+//   2. a DRY ZAP (mana < cost, INCLUDING ZERO) does not fire AT ALL — no
+//      damage, no zap effect, cd stays 0, mana untouched;
+//   3. the boundary is exact: it CAN fire at mana === cost and CANNOT at
+//      cost - 1, and the deduction happens exactly once per fire;
+//   4. the cadence contract rides the dt: a funded pool fires 10/COOLDOWN
+//      bolts in 10s at 60Hz AND 120Hz, and a dry pool fires ZERO;
+//   5. an empty field never burns a charge (the target test comes FIRST);
+//   6. weapons without MANA never touch the pool;
+//   7. the cost lives on the weapon def, read through weaponManaCost() —
 //      the WITCH's manaCostMult (0.5) makes ZAP cost her 2, everyone else 4;
-//   6. the Witch's pilot defaults to SWARM (cluster-seeking), still cyclable.
+//   8. the Witch's pilot defaults to SWARM (cluster-seeking), still cyclable.
 // Run: node test/test_weapon_mana.mjs
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
-import { WEAPONS, WEAPON_TYPES, MANA_DRY_MULT, weaponManaCost } from '../src/weapons.js';
+import { WEAPONS, WEAPON_TYPES, weaponManaCost } from '../src/weapons.js';
+import { boomBlast } from '../src/rewrites.js';
+import { useSkill, ultCharge } from '../src/skills.js';
+import { skillManaCost } from '../src/perks.js';
+import { CONFIG } from '../src/config.js';
 
 const S = suite('WEAPON MANA COST');
 const h = await boot();
@@ -65,15 +72,35 @@ S.check('a funded ZAP spends its cost and fires', () => {
 });
 
 // ============================================================================
-S.check('a DRY ZAP still fires — at MANA_DRY_MULT, spending nothing', () => {
+// THE REPRODUCTION (owner 2026-09-17: "A MANA-CONSUMING WEAPON fires when mana
+// is insufficient, including at exactly zero"). Red-lined against the N1a soft
+// gate: the shipped build fires a dry bolt at 0.5x damage here. The hard-gate
+// fix must make this check green without touching the cost constant.
+S.check('a DRY ZAP does NOT fire — no damage, no effect, no cooldown, no spend', () => {
   const w = liveWithEnemy();
-  st.player.mana = cost() - 1;          // one short
+  st.enemies.length = 1;
+  const e = st.enemies[0];
+  st.player.stats.crit = 0;
+  e.maxHp = e.hp = 1e9;                 // cannot die: damage would show in e.hp
+  const effectsBefore = st.effects.length;
+  // mana < cost, ONE SHORT.
+  st.player.mana = cost() - 1;
   const before = st.player.mana;
   fire(w);
+  assert.equal(e.hp, 1e9,
+    'a dry bolt must deal ZERO damage (hp ' + e.hp + ')');
+  assert.equal(st.effects.length, effectsBefore,
+    'a dry bolt must spawn NO zap effect (+' + (st.effects.length - effectsBefore) + ')');
+  assert.ok(w.cd <= 0,
+    'a dry attempt must arm NO cooldown (cd=' + w.cd + ')');
   assert.equal(st.player.mana, before,
-    'a dry bolt spends NOTHING (' + before + ' -> ' + st.player.mana + ')');
-  assert.ok(w.cd > 0, 'and arms the SAME cooldown — dry is not throttled (cd=' + w.cd + ')');
-
+    'a dry attempt spends NOTHING (' + before + ' -> ' + st.player.mana + ')');
+  // ...and at EXACTLY ZERO, the headline case from the directive.
+  st.player.mana = 0;
+  fire(w);
+  assert.equal(e.hp, 1e9, 'at mana 0 the bolt still must not deal damage');
+  assert.ok(w.cd <= 0, 'at mana 0 no cooldown may arm (cd=' + w.cd + ')');
+  assert.equal(st.player.mana, 0, 'at mana 0 nothing is spent');
   // ...and the moment the pool CAN pay, the next bolt is full-price again.
   st.player.mana = cost();
   w.cd = 0;
@@ -82,11 +109,9 @@ S.check('a DRY ZAP still fires — at MANA_DRY_MULT, spending nothing', () => {
 });
 
 // ============================================================================
-S.check('the dry damage ratio is exactly MANA_DRY_MULT', () => {
-  // One enemy on the field (no chain jumps), crits off (critRoll is the only
-  // random site in weapons.js), huge HP so neither bolt kills: the two arms
-  // differ ONLY in funding. hurt() applies every live modifier identically to
-  // both, so the ratio isolates the dry multiplier.
+S.check('the boundary is exact: fires at mana === cost, once, for exactly the cost', () => {
+  // One enemy (no chain jumps), crits off, huge HP: the arms differ ONLY in
+  // funding, and the funded arm isolates the full-damage baseline.
   const w = liveWithEnemy();
   st.enemies.length = 1;
   const e = st.enemies[0];
@@ -98,22 +123,28 @@ S.check('the dry damage ratio is exactly MANA_DRY_MULT', () => {
     fire(w);
     return 1e9 - e.hp;
   };
+  // Funded baseline (100 mana, well past cost).
   st.player.mana = 100;
   const full = shot();
-  st.player.mana = 0;
-  const dry = shot();
   assert.ok(full > 0, 'the funded bolt did damage (' + full + ')');
-  assert.ok(dry > 0, 'the dry bolt still did damage (' + dry + ')');
-  assert.ok(Math.abs(dry / full - MANA_DRY_MULT) <= 0.02,
-    'dry/full = ' + (dry / full).toFixed(4) + ' must be MANA_DRY_MULT ' + MANA_DRY_MULT +
-    ' within 0.02');
+  // AT the cost, exactly: full damage (NOT scaled), and the deduction is the
+  // cost, once.
+  st.player.mana = cost();
+  const atEdge = shot();
+  assert.equal(atEdge, full,
+    'mana === cost must fire FULL damage (' + atEdge + ' vs ' + full + ')');
+  assert.equal(st.player.mana, 0,
+    'the boundary fire deducts exactly the cost, ONCE (left ' + st.player.mana + ')');
+  // ONE BELOW the cost: nothing.
+  st.player.mana = cost() - 1;
+  const before = st.player.mana;
+  const dry = shot();
+  assert.equal(dry, 0, 'one below the cost must deal zero damage');
+  assert.equal(st.player.mana, before, 'one below the cost must spend nothing');
 });
 
 // ============================================================================
-S.check('fire cadence is the cooldown at 60Hz AND 120Hz — nothing counts frames', () => {
-  // A fully DRY pool over 10 simulated seconds: the bolts that DO fire prove
-  // the floor cadence, and equal counts at both frame rates prove the timing
-  // rides the dt, not a frame tally.
+S.check('fire cadence is the cooldown at 60Hz AND 120Hz; a dry pool fires ZERO', () => {
   const w = liveWithEnemy();
   st.enemies.length = 1;
   st.enemies[0].maxHp = st.enemies[0].hp = 1e12;   // never dies, never spawns a gap
@@ -123,7 +154,6 @@ S.check('fire cadence is the cooldown at 60Hz AND 120Hz — nothing counts frame
   // measures ZAP's OWN cadence, so the buff must not ride along (it never
   // ticks down here: this loop drives the weapon directly, not the frame).
   st.player.buffs.overcharge = 0;
-  st.player.mana = 0;
   const run10s = (dt) => {
     let bolts = 0;
     const seen = new Set(st.effects);   // ignore bolts from earlier checks
@@ -136,15 +166,24 @@ S.check('fire cadence is the cooldown at 60Hz AND 120Hz — nothing counts frame
     }
     return bolts;
   };
+  // A FULLY FUNDED pool proves the cadence contract (equal counts at both
+  // frame rates prove the timing rides the dt, not a frame tally).
+  st.player.mana = 1e9;
   const at60 = run10s(1 / 60);
   const at120 = run10s(1 / 120);
   const want = 10 / ZAP.COOLDOWN;                  // 1.4s CD -> ~7.14
   for (const [tag, n] of [['60Hz', at60], ['120Hz', at120]]) {
     assert.ok(Math.abs(n - want) <= 1,
-      tag + ' fired ' + n + ' bolts in 10s of dry fire (want ~' + want.toFixed(2) + ')');
+      tag + ' fired ' + n + ' bolts in 10s of funded fire (want ~' + want.toFixed(2) + ')');
   }
   assert.ok(Math.abs(at60 - at120) <= 1,
-    'the same dry cadence at both rates (60Hz ' + at60 + ' vs 120Hz ' + at120 + ')');
+    'the same cadence at both rates (60Hz ' + at60 + ' vs 120Hz ' + at120 + ')');
+  // A DRY pool proves the gate: zero bolts over the same window.
+  st.player.mana = 0;
+  w.cd = 0;
+  const dryBolts = run10s(1 / 60);
+  assert.equal(dryBolts, 0,
+    'a dry pool must fire ZERO bolts in 10s (got ' + dryBolts + ')');
 });
 
 // ============================================================================
@@ -211,6 +250,70 @@ S.check('the WITCH discount: ZAP costs her 2, everyone else 4', () => {
     prof.unlockedCharacters = restore.unlocked;
     prof.unlockedWeapons = restore.weapons;
     T.startRun();   // leave the harness on a plain run for the checks below
+  }
+});
+
+// ============================================================================
+S.check('the boundary table: EVERY mana consumer refuses below cost, fires at cost', () => {
+  // One row per mana consumer in the game, each through its OWN live seam:
+  //   weapon (ZAP, cost 4)          -> WEAPON_TYPES.ZAP.update (pinned above)
+  //   blast   (boomBlast, cost 6)   -> rewrites.boomBlast (pinned in test_chain_q)
+  //   skill   (a MANA skill)        -> useSkill (its own gate, pinned HERE)
+  //   ult     (charge skills w/ MANA) -> ultCharge.ready (includes the price)
+  // This check owns the SKILL and ULT rows plus the cross-consumer table
+  // itself, so a future consumer cannot ship without joining it.
+  const w = liveWithEnemy();
+  st.enemies.length = 1;
+  st.enemies[0].maxHp = st.enemies[0].hp = 1e9;
+  st.player.stats.crit = 0;
+
+  // --- weapon row: ZAP, cost 4 (and the Witch's 2 via manaCostMult) --------
+  const zapCost = weaponManaCost('ZAP', st);
+  st.player.mana = zapCost - 1; w.cd = 0;
+  fire(w);
+  assert.equal(st.enemies[0].hp, 1e9, '[ZAP ' + zapCost + '] below cost: no damage');
+  st.player.mana = zapCost; w.cd = 0;
+  fire(w);
+  assert.ok(st.enemies[0].hp < 1e9, '[ZAP ' + zapCost + '] at cost: fires');
+  assert.equal(st.player.mana, 0, '[ZAP ' + zapCost + '] at cost: deducts to exactly 0');
+
+  // --- blast row: boomBlast, cost 6 ----------------------------------------
+  st.player.stats.damage = 10;
+  st.player.mana = 6;
+  const bFunded = boomBlast(st.player);
+  assert.ok(bFunded && bFunded.manaCost === 6, '[boom 6] at cost: full blast');
+  st.player.mana = 5;
+  assert.equal(boomBlast(st.player), null, '[boom 6] below cost: null');
+
+  // --- skill row: the first MANA skill (useSkill's own gate) ---------------
+  const manaSkillId = Object.keys(CONFIG.SKILLS)
+    .find(id => CONFIG.SKILLS[id].MANA != null && CONFIG.SKILLS[id].KILLS == null);
+  assert.ok(manaSkillId, 'a plain MANA skill must exist for the table');
+  const skCost = skillManaCost(manaSkillId, st);
+  st.player.skillCd[manaSkillId] = 0;
+  st.player.mana = skCost - 1;
+  assert.equal(useSkill(st, manaSkillId), false,
+    '[' + manaSkillId + ' ' + skCost + '] below cost: useSkill refuses');
+  assert.equal(st.player.mana, skCost - 1, '[' + manaSkillId + '] refused cast spends nothing');
+  st.player.mana = skCost;
+  const cast = useSkill(st, manaSkillId);
+  assert.ok(cast === true || cast === undefined,
+    '[' + manaSkillId + ' ' + skCost + '] at cost: the cast goes through');
+  assert.ok(st.player.mana <= 0.0001,
+    '[' + manaSkillId + '] at-cost cast deducts to exactly 0 (left ' + st.player.mana + ')');
+
+  // --- ult row: if any charge-ult carries a MANA price, readiness gates it --
+  const manaUltId = Object.keys(CONFIG.SKILLS)
+    .find(id => CONFIG.SKILLS[id].MANA != null && CONFIG.SKILLS[id].KILLS != null);
+  if (manaUltId) {
+    const p = st.player;
+    p.kills = 1e9; p.ultSpent = {}; p.skillCd[manaUltId] = 0;
+    p.mana = skillManaCost(manaUltId, st) - 1;
+    assert.equal(ultCharge(st, manaUltId).ready, false,
+      '[' + manaUltId + '] below cost: NOT ready');
+    p.mana = skillManaCost(manaUltId, st);
+    assert.equal(ultCharge(st, manaUltId).ready, true,
+      '[' + manaUltId + '] at cost: ready');
   }
 });
 

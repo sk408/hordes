@@ -4,8 +4,9 @@
 // The contract under test: the Q EXCEEDS her gun (WEAPONS.ZAP) on jumps and
 // reach with GENTLER falloff, FROST_NOVA's slow rides the chain with its
 // constants unchanged, every enemy the chain KILLS detonates through the ONE
-// existing blast (rewrites.js boomBlast: 6 mana funded / dry fallback, never
-// a second blast), the draftable Chain Reaction card and her gun are
+// existing blast (rewrites.js boomBlast: 6 mana, HARD gate — a dry pool fires
+// no blast at all, never a second implementation), the draftable Chain
+// Reaction card and her gun are
 // untouched, and the per-class routing (classSkillId) lands the new skill on
 // the Witch alone. Every number is MEASURED through the real seams — useSkill,
 // the live death pass, startRun's Q label — never asserted from a copy.
@@ -204,7 +205,7 @@ s.check('every enemy the chain KILLS detonates through the ONE blast (funded: 6 
   }
 });
 
-s.check('a DRY pool still detonates: smaller, free (the soft gate, never dark)', () => {
+s.check('a DRY pool detonates NOTHING — the blast gate is hard (owner 2026-09-17)', () => {
   quiet();
   p.potions.mp = 0;
   p.skillCd.OVERCHARGE = 99;
@@ -212,13 +213,28 @@ s.check('a DRY pool still detonates: smaller, free (the soft gate, never dark)',
   p.mana = 16; p.skillCd.CHAIN_REACTION = 0;
   useSkill(st, 'CHAIN_REACTION');              // spends 15, leaves 1 (< 6: dry)
   if (p.mana !== 1) throw new Error('post-cast mana ' + p.mana + ' (want exactly 1)');
-  h.pump(2);
+  // The corpses are still flagged (the SKILL fired; only the blast is gated)...
+  const flagged = st.enemies.filter(e => e.chainBoom).length;
+  h.pump(2);                                   // the real death pass runs here
+  // ...but a dry pool fires NO detonation at all and spends nothing.
   const booms = st.effects.filter(e => e.kind === 'rewrite_boom');
-  if (booms.length !== 2) throw new Error(booms.length + ' dry detonations (want 2)');
-  for (const b of booms) {
-    if (b.radius !== 40 * 0.6) throw new Error('dry detonation radius ' + b.radius + ' (want 24 = 40 x 0.6)');
-  }
+  if (booms.length !== 0) throw new Error(booms.length + ' dry detonations (want 0)');
   if (p.mana > 1.1) throw new Error('dry detonations spent mana: pool now ' + p.mana.toFixed(2));
+});
+
+s.check('the blast boundary is exact: fires at 6, dark at 5 (blast, not cast)', () => {
+  // boomBlast is the pure seam: at exactly BOOM_MANA_COST it returns the full
+  // blast; one below it returns null (no blast object, no partial numbers).
+  p.mana = 6;
+  const fundedBlast = boomBlast(p);
+  if (!fundedBlast || fundedBlast.radius !== 40 || fundedBlast.manaCost !== 6) {
+    throw new Error('at mana 6 the blast must be full: ' + JSON.stringify(fundedBlast));
+  }
+  p.mana = 5;
+  if (boomBlast(p) !== null) {
+    throw new Error('at mana 5 (cost 6) boomBlast must be null, not ' +
+      JSON.stringify(boomBlast(p)));
+  }
 });
 
 s.check('an aimed cast into an EMPTY field never happens (no spend, no cooldown)', () => {
