@@ -45,6 +45,10 @@ export const STAGES = [
     ],
     mods: { hpMult: 1.0, dmgMult: 1.0 },
     hazard: null,
+    // RELIEF (arena scale-up 2026-09-17): per-stage elevation character —
+    // CELL is the terrain lattice grain in world px, LEVELS the height count
+    // (0..LEVELS-1). Read by src/relief.js only, through stageRelief().
+    relief: { CELL: 480, LEVELS: 3 },   // rolling hollows: broad, gentle rises
     unlock: null,
   },
   {
@@ -63,6 +67,7 @@ export const STAGES = [
     // points (existing elite roll, existing surge ceiling at 1) — the arena
     // reads as more aggressive without new spawn code.
     hazard: { id: 'EMBER_SURGE', kind: 'eliteRate', add: 0.05 },
+    relief: { CELL: 340, LEVELS: 4 },   // scorched mesas: sharp, tall blocks
     unlock: { achievementId: 'FIRST_BOSS', hint: 'beat your first boss' },
   },
   {
@@ -80,6 +85,7 @@ export const STAGES = [
     // COLD_FRONT: the spawn ring tightens to 70% of its shipped radius (the
     // same SPAWN_DIST draw, one multiplier) — the swarm arrives closer.
     hazard: { id: 'COLD_FRONT', kind: 'spawnBand', ring: 0.7 },
+    relief: { CELL: 520, LEVELS: 3 },   // long drifts: wide, even swells
     unlock: { achievementId: 'WAVE_5', hint: 'reach wave 5' },
   },
   {
@@ -96,6 +102,7 @@ export const STAGES = [
     // CRIMSON COURT: the spawn-time elite chance gets a large additive bump
     // (0.15) — the arena's whole identity is elite pressure.
     hazard: { id: 'CRIMSON_COURT', kind: 'eliteRate', add: 0.15 },
+    relief: { CELL: 300, LEVELS: 4 },   // broken badlands: the choppiest field
     unlock: { achievementId: 'BOSS_SLAYER_5', hint: 'slay 5 bosses' },
   },
   {
@@ -112,6 +119,7 @@ export const STAGES = [
     // BRITTLE BLOOM: every pack pops round(pack x 1.5) bodies at the EXISTING
     // pack site — a swarmers-5 pop becomes 8, a tick-3 latch becomes 5.
     hazard: { id: 'BRITTLE_BLOOM', kind: 'packBurst', burst: 1.5 },
+    relief: { CELL: 640, LEVELS: 2 },   // dunes: near-flat, one broad shelf
     unlock: { achievementId: 'WAVE_10', hint: 'reach wave 10' },
   },
   {
@@ -128,6 +136,7 @@ export const STAGES = [
     // EVENT HORIZON: the spawn ring tightens to 85% — projectiles start
     // closer, so the gauntlet has less warning time than SNOWFIELD's squeeze.
     hazard: { id: 'EVENT_HORIZON', kind: 'spawnBand', ring: 0.85 },
+    relief: { CELL: 280, LEVELS: 4 },   // shattered plateaus: the tallest relief
     unlock: { achievementId: 'SURVIVE_10MIN', hint: 'survive 10 minutes' },
   },
   {
@@ -144,6 +153,7 @@ export const STAGES = [
     // SLOW BURN: a small elite bump (0.03) — the tanky bodies are the threat,
     // elites just decorate it.
     hazard: { id: 'SLOW_BURN', kind: 'eliteRate', add: 0.03 },
+    relief: { CELL: 420, LEVELS: 3 },   // volcanic ridges: long climbable spines
     unlock: { achievementId: 'KILLS_10000', hint: '10000 total kills' },
   },
   {
@@ -162,6 +172,7 @@ export const STAGES = [
     // WHITE DEATH: a real elite bump (0.08) on the fullest pool — the
     // endgame stage's signature pressure.
     hazard: { id: 'WHITE_DEATH', kind: 'eliteRate', add: 0.08 },
+    relief: { CELL: 500, LEVELS: 3 },   // white hills: heavy going, wide faces
     unlock: { achievementId: 'SURVIVE_20MIN', hint: 'survive 20 minutes' },
   },
 ];
@@ -185,6 +196,15 @@ export function isDefaultStage(id) {
 // mutate the catalog by editing the result.
 export function stageMods(id) {
   return { ...stageOf(id).mods };
+}
+
+// The stage's RELIEF character (arena scale-up 2026-09-17): the terrain
+// lattice grain + height count src/relief.js reads. FRESH object, and any
+// stage without one (or an unknown id) gets the default rolling field —
+// relief is a character dial, never a gate.
+export const DEFAULT_RELIEF = { CELL: 480, LEVELS: 3 };
+export function stageRelief(id) {
+  return { ...(stageOf(id).relief || DEFAULT_RELIEF) };
 }
 
 // The cycle the title menu walks, wrapping — but LOCKED stages are skipped:

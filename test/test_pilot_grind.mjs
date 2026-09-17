@@ -204,7 +204,12 @@ S.check('the pilot RESUMES normally when the target comes inside', () => {
   pump(1);
   assert.equal(T.controller.gem, inside, 'the pilot commits the moment the target is reachable');
   const x0 = p.x;
-  for (let i = 0; i < 90; i++) pump(1);
+  // ARENA SCALE-UP RETARGET (was 90 straight frames): the relief grade term
+  // slows the pilot on uphill stretches (bounded 0.64x), so the ~110px walk
+  // to the gem can outrun a flat-speed frame budget. Bounded-wait up to 6s;
+  // the movement assertion and the collection assertion are unchanged.
+  let collected = false;
+  for (let i = 0; i < 360 && !collected; i++) { pump(1); collected = state.gems.length === 0; }
   assert.ok(p.x < x0 - 20,
     'and moves toward it again (x ' + x0.toFixed(1) + ' -> ' + p.x.toFixed(1) + ')');
   assert.equal(state.gems.length, 0, 'it actually collected the gem');

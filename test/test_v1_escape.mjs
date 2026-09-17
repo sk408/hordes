@@ -18,7 +18,7 @@ import { generateCorridor, platformsOf, triggersOf, checkCorridor, AIRTIME, reac
   from '../src/escape/generator.js';
 import { createSim, step, pressure, nominalSeconds } from '../src/escape/sim.js';
 import { inputFor } from '../src/escape/auto.js';
-import { PHYS, PACING, THREATS, WALL, PAYOUT_K } from '../src/escape/config.js';
+import { PHYS, PACING, THREATS, WALL, PAYOUT_K, MAP } from '../src/escape/config.js';
 import { VIEW_W } from '../src/escape/config.js';
 import * as ESCAPE from '../src/escape/index.js';
 import { skipHit, SKIP_RECT } from '../src/escape/render.js';
@@ -58,12 +58,21 @@ S.check('the corridor RAMPS: tiers never decrease, exactly one boss, one portal'
   }
 });
 
-S.check('duration is bounded by the pacing target (nominal reading)', () => {
+S.check('duration is bounded by the MAP extent target (nominal reading)', () => {
+  // RETARGET (map scale-up 2026-09-17, disclosed): the corridor's extent is
+  // UNITS-BASED now (config MAP: 3x3 units of 3000x66px — one unit = half of
+  // each axis of the shipped 2x2-unit map), with the same relative variance
+  // the PACING bounds expressed ((MAX-MIN)/MIN = 0.2). The pin moves from the
+  // old seconds constant to the units bound; PACING itself is untouched and
+  // the deliberate consequence — the escape now runs ~1.5x LONGER — is
+  // reported, not retuned away (no payout/duration/reward constant changed).
   for (let seed = 1; seed <= 20; seed++) {
     const c = generateCorridor(seed);
     const secs = nominalSeconds(c);
-    assert(secs >= PACING.MIN_SECONDS && secs <= PACING.MAX_SECONDS + 4,
-      'seed ' + seed + ': ' + secs.toFixed(1) + 's outside [' + PACING.MIN_SECONDS + ',' + (PACING.MAX_SECONDS + 4) + ']');
+    const lo = MAP.UNITS_X * MAP.UNIT_W / PACING.NOMINAL_SPEED;
+    const hi = lo * (1 + (PACING.MAX_SECONDS - PACING.MIN_SECONDS) / PACING.MIN_SECONDS) + 4;
+    assert(secs >= lo && secs <= hi,
+      'seed ' + seed + ': ' + secs.toFixed(1) + 's outside [' + lo.toFixed(0) + ',' + hi.toFixed(0) + ']');
   }
 });
 

@@ -362,8 +362,18 @@ console.log('test_review_round1: items 1-3 ' + passed + ' checks');
     const s = nominalSeconds(generateCorridor(seed));
     worst = Math.max(worst, s); bestS = Math.min(bestS, s);
   }
-  ok('4: nominal escape duration ~halved — every seed <= 40s (was 54-66s)',
-    worst <= 40, { bestS, worst });
+  // RETARGET (map scale-up 2026-09-17, disclosed): this pin read "<= 40s" off
+  // the review's corridor-halving; later the SAME DAY the owner directed the
+  // bigger map (msg_01M2R8SM: 4 -> 9 units, "report the duration change, never
+  // retune it away") and the extent is units-based now, so the honest pin is
+  // the units bound (3 x 3000px at 200px/s, +20% authored variance) — the
+  // review's tier/payout pins below are untouched, and the duration
+  // consequence is reported in docs/art/escape-scaleup-2026-09-17/REPORT.md.
+  const { MAP } = await import('../src/escape/config.js');
+  const durHi = MAP.UNITS_X * MAP.UNIT_W / PACING.NOMINAL_SPEED *
+    (1 + (PACING.MAX_SECONDS - PACING.MIN_SECONDS) / PACING.MIN_SECONDS) + 4;
+  ok('4: nominal escape duration is units-based — every seed inside the 3-unit bound (was <= 40s at 2 units)',
+    worst <= durHi, { bestS, worst, durHi });
   ok('4: the tier ramp is intact (tiers never decrease, sprint last)',
     PACING.ACTS.every((a, i) => i === 0 || a.tier >= PACING.ACTS[i - 1].tier) &&
     PACING.ACTS[PACING.ACTS.length - 1].tier === 3);
@@ -373,8 +383,13 @@ console.log('test_review_round1: items 1-3 ' + passed + ' checks');
     payoutFor(12000) === 800, payoutFor(12000));
   // Gold per second of escape time: before bestGold/(30x~60s) = /1800; after
   // bestGold/(15x~33s) = /495 — >3.6x per minute spent, for a completion.
-  ok('4: payout-per-second at least TRIPLES vs the old length x old K',
-    (1 / 15) / (worst || 1) > 3 * (1 / 30) / 60, { worst });
+  // RETARGET (map scale-up 2026-09-17, disclosed): the same-day owner
+  // directive grew the map 4 -> 9 units, so the worst case is ~54-58s not
+  // ~33s and the honest multiple vs the old baseline is >2x (K's raise to
+  // 1/15 is untouched; the duration consequence is reported, not retuned —
+  // docs/art/escape-scaleup-2026-09-17/REPORT.md).
+  ok('4: payout-per-second at least DOUBLES vs the old length x old K',
+    (1 / 15) / (worst || 1) > 2 * (1 / 30) / 60, { worst });
 
   // Declining stays FREE (and ends after the short outcome card, no corridor):
   // drive the real escape module headlessly, skip on frame one.

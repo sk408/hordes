@@ -165,7 +165,11 @@ S.check('near a wall the view STOPS and the player drifts to the screen edge', (
   clearField();
   pump(2);
   PI.right = true;
-  for (let i = 0; i < 900; i++) { pump(1); clearField(); }
+  // ARENA SCALE-UP RETARGET (was 900): the rim grew 600 -> 900 and the relief
+  // grade slows uphill stretches, so the walk to the east wall now takes ~1150
+  // frames at the fresh-build pace (measured). 1500 covers it with margin; the
+  // assertions are unchanged.
+  for (let i = 0; i < 1500; i++) { pump(1); clearField(); }
   PI.right = false;
   pump(2);
   const s = screenOf(state.player.x, state.player.y);
@@ -187,7 +191,10 @@ S.check('worldRegion agrees with the pixel the world layer actually draws', () =
   clearField();
   pump(2);
   PI.right = true;
-  for (let i = 0; i < 400; i++) { pump(1); clearField(); }
+  // ARENA SCALE-UP RETARGET (was 400): same reason as the walk above — the
+  // wall is 900px out now, and this check wants the camera AT its clamp so
+  // the projection is proven in the clamped state, not mid-field.
+  for (let i = 0; i < 1500; i++) { pump(1); clearField(); }
   PI.right = false;
   pump(2);
 

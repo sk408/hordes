@@ -111,12 +111,13 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 }
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xeb);   // FIXTURE RETARGET 2026-09-15 (was 0xe5): G26 removed
-  // wpn_* grants from the draft pool (the pre-run LOADOUT owns weapon choice now),
-  // so the seeded stream legitimately shifted again and 0xe5 split a boundary kill
-  // (13 vs 14) across the frame-rate arms - the same failure class the 0xe1->0xe3 and
-  // 0xe3->0xe5 retargets above document. Assertion unchanged - 0xeb measures the same
-  // parity at equal kills / equal purse on both arms (test_run_purse: 11 checks passed).
+  Math.random = mulberry32(0xed);   // FIXTURE RETARGET 2026-09-17 (was 0xeb): the ARENA
+  // SCALE-UP's relief grade term (src/relief.js) multiplies pilot AND horde
+  // speed by the terrain grade — a position-continuous field, so the two
+  // frame-rate arms' micro-diverging positions shifted a boundary kill
+  // (15 vs 16) at 0xeb. The same failure class the 0xe1->0xe3->0xe5->0xeb
+  // retargets document; assertion unchanged — equal kills / equal purse at
+  // both rates. (0xeb itself was: G26 removed wpn_* grants, 0xe5 split 13/14.)
   try {
     T.banners.suppressAll();               // one-time banners hold the sim 2.5s
     T.getProfile().runPurse = 0;               // isolate the arm's earnings
@@ -178,6 +179,16 @@ S.check('banked gold buys NOTHING at the shrine (purse 0, bank 0 -> no sale)', (
 
 // ------------------------------------------------------- settlement shape
 T.startRun();
+// HERMETICITY (2026-09-17, the line-51 fix applied to the settlement blocks):
+// a stray spawn killed inside pump(2) bumps the rampage mult and the exact
+// award pin reads 391 vs 390 (suite flake, 1-in-N). Quiet the field BEFORE
+// the pump so every settlement block below measures pure math.
+function quietField() {
+  st.enemies.length = 0; st.gems.length = 0;
+  st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
+  st.wave.bosses = []; st.wave.boss = null; st.portal = null;
+}
+quietField();
 h.pump(2);
 {
   const prof = T.getProfile();
@@ -210,7 +221,7 @@ S.check('settlement banks ONCE: fixed award x mult + remainder, purse zeroed', (
   assert(st.player.kills >= 0, 'sanity');
 });
 S.check('FIRST_CLEAR and the maw bonus ride ON TOP, goldMult multiplies the award', () => {
-  T.startRun(); h.pump(2);   // S1: settlement is run-once — a fresh run re-arms it
+  T.startRun(); quietField(); h.pump(2);   // S1: settlement is run-once — a fresh run re-arms it
   const prof = T.getProfile();
   prof.bestTime = 99999;                       // no first clear this time
   prof.runPurse = 0;
@@ -223,7 +234,7 @@ S.check('FIRST_CLEAR and the maw bonus ride ON TOP, goldMult multiplies the awar
   assert(prof.gold === before + r.gold, 'bank delta matches the settled total');
 });
 S.check('a zero run settles the flat award, not the retired formula', () => {
-  T.startRun(); h.pump(2);   // S1: run-once — this needs its own fresh run
+  T.startRun(); quietField(); h.pump(2);   // S1: run-once — this needs its own fresh run
   const prof = T.getProfile();
   prof.bestTime = 99999;
   prof.runPurse = 0;

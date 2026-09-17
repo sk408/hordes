@@ -167,6 +167,106 @@ function pairSegment(x0, tier, rng) {
   };
 }
 
+// ---- THE ELEVATED PATHS (map scale-up 2026-09-17: "one more unit up") ------
+// Multi-level routing, STRUCTURAL not decorative: an authored UP-HOP onto a
+// raised DECK that runs ABOVE the continuing floor. The floor below stays
+// WHOLE (the horde keeps charging under the walkway — chasers cannot platform
+// by construction, so the deck is bounded relief from the pack, never an
+// exploit), while the deck's own lane is where the FLIERS hunt (sim.js spawns
+// them into the pilot's lane when elevated). The up-hop and any deck-level
+// gap ride the SAME trigger-band invariant as every other arc — checkTrigger
+// proves each one, so an unjumpable deck is a template bug, not a bad run.
+// Heights respect the physical bound (single-hop apex 80px minus the 16px
+// safety = 64px max per hop); the entry landing width covers the arc's
+// speed-window spread (t(h) * (vMax - vMin)) plus margins both sides.
+
+// The shared up-hop author: returns the trigger + the deck platform it lands
+// on. deckX/deckW leave the invariant's margins plus 12px of authored slack
+// past the +MARGIN bound (see checkTrigger's up-hop branch).
+function upHop(fire, fromY, h, vWin, runW) {
+  const [vMin, vMax] = vWin;
+  const t = upHopT(h);
+  const spread = Math.ceil(t * (vMax - vMin));
+  const deckX = Math.round(fire + t * vMin - MARGIN - 12);
+  const entryW = spread + 60;
+  const deck = { x: deckX, y: fromY - h, w: entryW + runW, deck: true };
+  return { deck, entryW };
+}
+
+// A single-deck elevated stretch (tier 1-2). h=48 (tier 1) / 56 (tier 2).
+// Tier 2 decks carry one UPPER GAP — a deck-level jump between two deck
+// platforms, authored exactly like a floor gap (the approach is the deck).
+function deckSegment(x0, tier, rng) {
+  const h = tier >= 2 ? 56 : 48;
+  const vWin = SPEED.std;
+  const [vMin, vMax] = vWin;
+  const fire = x0 + PRO;
+  const { deck, entryW } = upHop(fire, BAND.FLOOR_Y, h, vWin, 0);
+  const plats = [approachPlat(x0, rng)];
+  const triggers = [];
+  const gaps = [];
+  let deckEnd;
+  if (tier >= 2) {
+    // Split the deck run: the first platform (the up-hop's landing) stops PRE
+    // before an upper gap, the second catches reach(vMax) like any landing
+    // (gapSegment's own math). The up-hop trigger's land IS the first plat.
+    const run1 = 120 + Math.floor(rng() * 60);
+    const first = { x: deck.x, y: deck.y, w: entryW + run1, deck: true };
+    const fire2 = first.x + first.w - 32;                 // grounded run past the landing
+    const gw = GAP_W[1] + Math.floor(rng() * 9) - 4;
+    const landW = Math.ceil(reach(vMax) - PRE - gw) + 50 + Math.floor(rng() * 30);
+    const deck2 = { x: fire2 + PRE + gw, y: deck.y, w: landW, deck: true };
+    plats.push(first, deck2);
+    gaps.push({ x: fire2 + PRE, w: gw });
+    triggers.push({ x0: fire, x1: fire + BAND_W, vMin, vMax, up: true, land: first, seg: x0 });
+    triggers.push({ x0: fire2, x1: fire2 + BAND_W, vMin, vMax, seg: x0 });
+    deckEnd = deck2.x + deck2.w;
+  } else {
+    deck.w = entryW + 120 + Math.floor(rng() * 70);
+    plats.push(deck);
+    triggers.push({ x0: fire, x1: fire + BAND_W, vMin, vMax, up: true, land: deck, seg: x0 });
+    deckEnd = deck.x + deck.w;
+  }
+  // The floor UNDER the deck runs whole to the segment end, and PAST the deck
+  // by enough that the drop-off (h px, ~95px of travel at worst) lands
+  // grounded inside this segment — the next segment's prologue then meets a
+  // floor-level arrival, exactly the class it is authored for.
+  const tail = 170 + Math.floor(rng() * 40);
+  const x1 = Math.max(deckEnd, fire + PRE) + tail;
+  plats.push({ x: fire + PRE - 2, y: BAND.FLOOR_Y, w: x1 - (fire + PRE - 2) });
+  return { kind: 'deck', tier, x0, x1, plats, gaps, triggers };
+}
+
+// A STACKED elevated stretch (tier 2): floor -> deck1 -> deck2 (two up-hops,
+// h=56 each, deck2's top 112px over the floor — inside the third vertical
+// unit) -> a long drop back to the floor. The tallest authored point of the
+// corridor; the camera pans up with the pilot (render.js camY).
+function stackSegment(x0, tier, rng) {
+  const [vMin, vMax] = SPEED.std;
+  const fire1 = x0 + PRO;
+  const a = upHop(fire1, BAND.FLOOR_Y, 56, SPEED.std, 130 + Math.floor(rng() * 50));
+  // The second hop fires from deck1's run, onto deck2 (56 more up).
+  const fire2 = a.deck.x + a.deck.w - 44;
+  const b = upHop(fire2, a.deck.y, 56, SPEED.std, 150 + Math.floor(rng() * 70));
+  const deckEndX = b.deck.x + b.deck.w;
+  const tail = 200 + Math.floor(rng() * 40);   // the 112px drop lands well inside
+  const x1 = deckEndX + tail;
+  return {
+    kind: 'stack', tier, x0, x1,
+    plats: [
+      approachPlat(x0, rng),
+      a.deck,
+      b.deck,
+      { x: fire1 + PRE - 2, y: BAND.FLOOR_Y, w: x1 - (fire1 + PRE - 2) },
+    ],
+    gaps: [],
+    triggers: [
+      { x0: fire1, x1: fire1 + BAND_W, vMin, vMax, up: true, land: a.deck, seg: x0 },
+      { x0: fire2, x1: fire2 + BAND_W, vMin, vMax, up: true, land: b.deck, seg: x0 },
+    ],
+  };
+}
+
 // THE FINALE (V1f — owner refinement 2026-09-17: "the boss reaching to grab
 // the pilot and the pilot being able to run past. Has to look convincing"):
 // the corridor still ENDS at the boss, but the way past is the FLOOR ITSELF.
@@ -200,15 +300,18 @@ export function tierAt(frac) {
 }
 
 // ---- generate ---------------------------------------------------------------
-// Deterministic in the seed. Total length is bounded by the pacing target:
-// L between MIN_SECONDS and MAX_SECONDS of NOMINAL_SPEED travel. The finale
-// is RESERVED out of the loop budget (V1e): the corridor always ENDS at the
-// boss + upper level + portal, never a random tail.
+// Deterministic in the seed. MAP EXTENT (scale-up 2026-09-17): the corridor's
+// length target is UNITS-BASED — UNITS_X x UNIT_W px with the SAME relative
+// variance the pacing bounds expressed on the shipped 2-unit map ((MAX-MIN)/
+// MIN = 0.2, read from PACING, never retuned). PACING keeps owning the run's
+// SHAPE (act fractions, wall ramp); the extent it spans is the map's. The
+// finale is RESERVED out of the loop budget (V1e): the corridor always ENDS
+// at the boss + portal, never a random tail.
 const FINALE_RESERVE = 900;
 export function generateCorridor(seed) {
   const rng = mulberry32(seed);
-  const targetL = PACING.MIN_SECONDS * PACING.NOMINAL_SPEED +
-    rng() * (PACING.MAX_SECONDS - PACING.MIN_SECONDS) * PACING.NOMINAL_SPEED;
+  const VARIANCE = (PACING.MAX_SECONDS - PACING.MIN_SECONDS) / PACING.MIN_SECONDS;
+  const targetL = MAP.UNITS_X * MAP.UNIT_W * (1 + rng() * VARIANCE);
   const segs = [];
   let x = 0;
   // The first segment is always flat (the warm-up's learning floor), and a
@@ -226,14 +329,24 @@ export function generateCorridor(seed) {
     if (frac >= 0.66) segs.push(flatSegment(x, tier, rng));          // final sprint: simplest terrain, max pressure
     else if (tier === 0) segs.push(rng() < 0.34 ? gapSegment(x, 0, { rng }) : flatSegment(x, 0, rng));
     else if (tier === 1) {
+      // ESCALATION gains the single-deck elevated path (the "up" unit's first
+      // tier): flat .26 / gap .56 / terrace .78 / deck 1.0 — the shipped
+      // flat/gap/terrace shares kept proportionally, the deck carved out of
+      // each (pool dilution disclosed in the scale-up report).
       const r = rng();
-      segs.push(r < 0.3 ? flatSegment(x, tier, rng)
-        : r < 0.62 ? gapSegment(x, tier, { rng }) : terraceSegment(x, tier, rng));
+      segs.push(r < 0.26 ? flatSegment(x, tier, rng)
+        : r < 0.56 ? gapSegment(x, tier, { rng })
+          : r < 0.78 ? terraceSegment(x, tier, rng) : deckSegment(x, tier, rng));
     } else {
+      // ESCALATION+ carries the tall routes: the tier-2 deck (56px, with its
+      // upper gap) and the STACK (two hops, 112px — the corridor's tallest
+      // authored point, inside the third vertical unit).
       const r = rng();
-      segs.push(r < 0.18 ? flatSegment(x, tier, rng)
-        : r < 0.5 ? gapSegment(x, tier, { up: (rng() < 0.5 ? 0 : 34), rng })
-          : r < 0.78 ? terraceSegment(x, tier, rng) : pairSegment(x, tier, rng));
+      segs.push(r < 0.12 ? flatSegment(x, tier, rng)
+        : r < 0.38 ? gapSegment(x, tier, { up: (rng() < 0.5 ? 0 : 34), rng })
+          : r < 0.58 ? terraceSegment(x, tier, rng)
+            : r < 0.74 ? pairSegment(x, tier, rng)
+              : r < 0.9 ? deckSegment(x, tier, rng) : stackSegment(x, tier, rng));
     }
     x = segs[segs.length - 1].x1;
   }

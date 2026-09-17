@@ -139,6 +139,14 @@ export const THREATS = {
   FLIER_EVERY: 2.6,
   FLIER_SPEED: 96,     // dives on a sine; ignores gaps (the gap-kiting counter)
   FLIER_R: 8,
+  // ELEVATED LANES (map scale-up 2026-09-17): a pilot at least FLIER_LANE_DROP
+  // above the floor counts as ELEVATED (on a deck); fliers spawned then enter
+  // the pilot's OWN lane (FLIER_LANE_Y above their head) instead of the sky —
+  // the deck trades the ground horde for flier pressure. Cadence/speed/hp
+  // UNCHANGED (the flier itself is not retuned); the keep-clear cap in sim.js
+  // still forbids contact, so no unavoidable damage is introduced.
+  FLIER_LANE_DROP: 40,   // px above FLOOR_Y that counts as "on a deck"
+  FLIER_LANE_Y: 54,      // an elevated spawn's base offset above the pilot
   CONTACT_R: 11,       // any contact is the SOFT failure 'caught' — never death
   BOSS_W: 84,          // the obstacle-boss body (UNKILLABLE by construction)
   // BOSS_H is the body's rendered height; the V1e overpass constants are GONE

@@ -22,6 +22,7 @@
 import assert from 'node:assert';
 import { suite, boot } from './_harness.mjs';
 import { SHRINE_WORLD_COUNT, SHRINE_WORLD_MARGIN, shrineCost } from '../src/shrines.js';
+import { CONFIG as C } from '../src/config.js';
 
 const s = suite('test_s1_shrines');
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
@@ -75,7 +76,9 @@ const advanceWave = () => {
   freshRun('MANUAL');
   s.check('R1: run start seeds exactly ' + SHRINE_WORLD_COUNT + ' altars, integer px, in-bounds, view = first', () => {
     assert.equal(st.shrines.length, SHRINE_WORLD_COUNT, 'the world set is exactly the count dial');
-    const half = 600 - SHRINE_WORLD_MARGIN;
+    // ARENA SCALE-UP (2026-09-17) RETARGET: the bound is the units-based
+    // GROUND.RIM now (the module reads the one knob), not the literal 600.
+    const half = C.GROUND.RIM - SHRINE_WORLD_MARGIN;
     for (const sh of st.shrines) {
       assert.equal(sh.used, false, 'fresh altar is unused');
       assert.equal(sh.x, Math.round(sh.x), 'integer pixel x');
@@ -90,10 +93,10 @@ const advanceWave = () => {
 // --- R3a: corner-park invariance ----------------------------------------------
 {
   const p = freshRun('MANUAL');
-  p.x = -560; p.y = -560;                 // one corner
+  p.x = -(C.GROUND.RIM - SHRINE_WORLD_MARGIN); p.y = -(C.GROUND.RIM - SHRINE_WORLD_MARGIN); // one corner
   h.pump(30);
   const a = snap();
-  p.x = 560; p.y = 560;                   // the opposite corner
+  p.x = C.GROUND.RIM - SHRINE_WORLD_MARGIN; p.y = C.GROUND.RIM - SHRINE_WORLD_MARGIN;       // the opposite corner
   h.pump(30);
   const b = snap();
   s.check('R3: corner-park invariance — the set is byte-identical in opposite corners', () => {

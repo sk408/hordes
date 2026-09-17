@@ -31,20 +31,23 @@ const RIM = C.GROUND.RIM, CELL = C.ATLAS.MAP_CELL, VR = C.ATLAS.VISIT_RADIUS, DR
 const SIDE = atlasGridSide(RIM, CELL);
 
 // ---------------------------------------------------------------- pure grid
-s.check('config + geometry: 40px cells divide the +-600 arena EXACTLY into 30x30 = 900', () => {
-  assert.equal(CELL, 40, 'MAP_CELL (C3: 40 was chosen because 1200/40 = 30 exactly)');
-  assert.equal(SIDE, 30, 'grid side');
-  assert.equal(SIDE * SIDE, 900, '900 cells');
+// ARENA SCALE-UP (2026-09-17) RETARGET: the extent pins read the units-based
+// GROUND.RIM (was the literal 600 -> 30x30/900); the exact-division invariant
+// is stated, not a hardcoded side.
+s.check('config + geometry: 40px cells divide the +-RIM arena EXACTLY (side = 2*RIM/40)', () => {
+  assert.equal(CELL, 40, 'MAP_CELL (C3: 40 divides the arena axis exactly)');
+  assert.equal((2 * RIM) % CELL, 0, 'the cell divides the arena EXACTLY (no partial edge cell)');
+  assert.equal(SIDE, (2 * RIM) / CELL, 'grid side derived from RIM');
   assert.equal(VR, 300, 'VISIT_RADIUS >= the 480x300 half-diagonal (~283)');
   assert.equal(DR, 120, 'DISCOVER_RADIUS');
 });
 
-s.check('index rule: c = clamp(floor((w + 600) / 40), 0, 29), both axes', () => {
+s.check('index rule: c = clamp(floor((w + RIM) / 40), 0, side-1), both axes', () => {
   const a = createAtlas(RIM, CELL);
-  assert.deepEqual(atlasCell(a, -600, -600), { cx: 0, cy: 0 }, 'rim corner -> (0,0)');
-  assert.deepEqual(atlasCell(a, 599.9, 599.9), { cx: 29, cy: 29 }, 'far corner -> (29,29)');
-  assert.deepEqual(atlasCell(a, 0, 0), { cx: 15, cy: 15 }, 'origin -> (15,15)');
-  assert.deepEqual(atlasCell(a, -700, 900), { cx: 0, cy: 29 }, 'past the rim clamps, never out of bounds');
+  assert.deepEqual(atlasCell(a, -RIM, -RIM), { cx: 0, cy: 0 }, 'rim corner -> (0,0)');
+  assert.deepEqual(atlasCell(a, RIM - 0.1, RIM - 0.1), { cx: SIDE - 1, cy: SIDE - 1 }, 'far corner -> (side-1,side-1)');
+  assert.deepEqual(atlasCell(a, 0, 0), { cx: Math.floor(SIDE / 2), cy: Math.floor(SIDE / 2) }, 'origin -> centre cell');
+  assert.deepEqual(atlasCell(a, -RIM - 100, RIM + 100), { cx: 0, cy: SIDE - 1 }, 'past the rim clamps, never out of bounds');
 });
 
 s.check('R3: a straight-line walk marks EXACTLY the expected cell SET', () => {
@@ -70,34 +73,39 @@ s.check('R3: a straight-line walk marks EXACTLY the expected cell SET', () => {
   const got = new Set();
   for (let i = 0; i < a.visited.length; i++) if (a.visited[i]) got.add(i);
   assert.deepEqual(got, want, 'the marked SET is exactly the radius rule, cell by cell');
-  console.log('    straight walk marked ' + got.size + ' / 900 cells');
+  console.log('    straight walk marked ' + got.size + ' / ' + SIDE * SIDE + ' cells');
 });
 
-s.check('R3: rim path clamps at 0 and 29 and never writes out of bounds', () => {
+s.check('R3: rim path clamps at the edge cells and never writes out of bounds', () => {
   const a = createAtlas(RIM, CELL);
   for (let i = 0; i <= 500; i++) {           // walk far PAST the rim
-    const w = 590 + (310 * i) / 500;         // 590 -> 900
+    const w = RIM - 10 + (310 * i) / 500;    // RIM-10 -> RIM+300
     atlasMarkVisited(a, w, w, VR);
   }
-  assert.equal(a.visited.length, 900, 'the array never grows');
-  assert.equal(a.visited[29 * SIDE + 29], 1, 'the corner cell is marked');
-  for (let i = 0; i < 900; i++) assert.ok(a.visited[i] === 0 || a.visited[i] === 1, 'only 0/1 writes');
+  assert.equal(a.visited.length, SIDE * SIDE, 'the array never grows');
+  assert.equal(a.visited[(SIDE - 1) * SIDE + (SIDE - 1)], 1, 'the corner cell is marked');
+  for (let i = 0; i < SIDE * SIDE; i++) assert.ok(a.visited[i] === 0 || a.visited[i] === 1, 'only 0/1 writes');
 });
 
 s.check('R3: a cell outside VISIT_RADIUS is NOT marked; idempotent; never grows', () => {
   const a = createAtlas(RIM, CELL);
-  // Player at (0,20): the cells in row 15 have centre y = 20, so cells on
-  // this row sit at EXACT x distances (260, 300, 340) — clean boundaries.
-  atlasMarkVisited(a, 0, 20, VR);
-  const at = (wx) => { const c = atlasCell(a, wx, 20); return c.cy * SIDE + c.cx; };
-  assert.equal(a.visited[at(260)], 1, 'cell centre 260 away: marked (< 300)');
-  assert.equal(a.visited[at(300)], 1, 'cell centre exactly 300 away: marked (inclusive boundary)');
-  assert.equal(a.visited[at(340)], 0, 'cell centre 340 away: NOT marked (> 300)');
+  // Player on a row CENTRE (y equals a cell centre), x = 3*CELL*2.5 so the
+  // same-row cell centres sit at EXACT x distances (260, 300, 340) — clean
+  // boundaries. RETARGET (arena scale-up): the row/y are derived from RIM,
+  // not the old hardcoded row 15 at (0,20).
+  const cy0 = Math.floor(SIDE / 2);
+  const py = cy0 * CELL - RIM + CELL / 2;
+  const px = 300;
+  atlasMarkVisited(a, px, py, VR);
+  const at = (wx) => { const c = atlasCell(a, wx, py); return c.cy * SIDE + c.cx; };
+  assert.equal(a.visited[at(px - 40)], 1, 'cell centre 260 away: marked (< 300)');
+  assert.equal(a.visited[at(px - 300)], 1, 'cell centre exactly 300 away: marked (inclusive boundary)');
+  assert.equal(a.visited[at(px - 340)], 0, 'cell centre 340 away: NOT marked (> 300)');
   const n0 = atlasVisitedCount(a);
-  const again = atlasMarkVisited(a, 0, 20, VR);
+  const again = atlasMarkVisited(a, px, py, VR);
   assert.equal(again, 0, 're-visit marks nothing new (idempotent)');
   assert.equal(atlasVisitedCount(a), n0, 'count unchanged on re-visit');
-  assert.equal(a.visited.length, 900, 'the array never grows');
+  assert.equal(a.visited.length, SIDE * SIDE, 'the array never grows');
 });
 
 s.check('zero rng: no atlas call touches Math.random', () => {
@@ -146,8 +154,9 @@ const freshRun = (safe = false) => {
     // happen BEFORE the first pump: atlasUpdate runs every frame. (The suite
     // caught a seed where a shrine sat 120px from the origin.)
     let bx = 0, by = 0, bd = -1;
-    for (let x = -560; x <= 560; x += 40) {
-      for (let y = -560; y <= 560; y += 40) {
+    const bnd = C.GROUND.RIM - 40;
+    for (let x = -bnd; x <= bnd; x += 40) {
+      for (let y = -bnd; y <= bnd; y += 40) {
         let d = Infinity;
         for (const sh of st.shrines) d = Math.min(d, Math.hypot(x - sh.x, y - sh.y));
         if (d > bd) { bd = d; bx = x; by = y; }
@@ -166,7 +175,7 @@ const freshRun = (safe = false) => {
 s.check('R5: startRun registers EXACTLY S1s seeded shrines — one path, no re-roll', () => {
   freshRun(true);
   assert.ok(st.atlas, 'the atlas exists at run start');
-  assert.equal(st.atlas.side, 30, '30x30 grid over the real arena');
+  assert.equal(st.atlas.side, atlasGridSide(C.GROUND.RIM, CELL), 'units-derived grid over the real arena');
   assert.equal(st.mapOpen, false, 'C6: every run boots map-CLOSED');
   assert.equal(st.atlas.landmarks.length, st.shrines.length, 'one landmark per S1 shrine');
   for (let i = 0; i < st.shrines.length; i++) {
@@ -185,9 +194,20 @@ s.check('R4 live: an undiscovered landmark is drawn NOWHERE; discovery paints it
   const seam0 = T.renderer.atlasMap;
   assert.ok(seam0, 'the map paints while open');
   assert.equal(seam0.landmarks.length, 0, 'undiscovered landmark: drawn NOWHERE (map)');
-  assert.equal(seam0.x, 120, 'fixed integer geometry x');
-  assert.equal(seam0.y, 30, 'fixed integer geometry y');
-  assert.equal(seam0.size, 240, '240x240 map on the 480x300 view');
+  // ARENA SCALE-UP RETARGET: the box geometry is derived (the cell shrinks so
+  // the whole arena fits the view at any unit count) — was the 30-cell
+  // literals 120/30/240.
+  {
+    const cellPx = Math.max(2, Math.floor(240 / st.atlas.side));
+    const sizePx = cellPx * st.atlas.side;
+    assert.equal(seam0.cell, cellPx, 'map cell derived from the grid side');
+    assert.equal(seam0.size, sizePx, 'the whole arena inside a <=240px box');
+    assert.ok(seam0.size <= 240 && seam0.x >= 0 && seam0.y >= 0 &&
+      seam0.x + seam0.size <= 480 && seam0.y + seam0.size <= 300,
+      'the map box fits the 480x300 view');
+    assert.equal(seam0.x, Math.round((480 - sizePx) / 2), 'centred integer geometry x');
+    assert.equal(seam0.y, Math.round((300 - sizePx) / 2), 'centred integer geometry y');
+  }
   // Walk onto the first shrine: discovery flips through the real update.
   // FIXTURE, not a goalpost move: shrine placement is a per-run roll
   // (choiceSeed), so two of the three world-seeded altars can land inside

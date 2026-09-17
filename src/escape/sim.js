@@ -268,11 +268,21 @@ export function step(sim, dt, input = {}) {
   // UNAVOIDABLE damage (forbidden by acceptance #9) and a seeded-random
   // death (unprovable for parity). Their teeth are the pressure of their
   // presence and the gun's cadence: a shot or two kills any of them.
+  // ELEVATED LANES (map scale-up 2026-09-17): a pilot on a raised deck
+  // (p.y < FLOOR_Y - FLIER_LANE_DROP) has left the ground horde's reach
+  // (chasers cannot platform, structurally), so NEW fliers spawn INTO the
+  // pilot's lane instead of the sky — the vertical trade is deliberate: the
+  // deck buys relief from the pack and pays for it in flier pressure. The
+  // keep-clear cap below still holds (never within 22px of the runner), so
+  // the no-unavoidable-damage contract is untouched; pure function of the
+  // sim state, parity-safe.
   if (sim.nextFlier === Infinity && p.x > sim.corridor.length * 0.18) sim.nextFlier = 1.0;
   sim.nextFlier -= dt;
   if (sim.nextFlier <= 0) {
     sim.nextFlier = THREATS.FLIER_EVERY + sim.rng() * 1.2;
-    sim.fliers.push({ x: p.x + 300, y: 60, phase: sim.rng() * Math.PI * 2, hp: THREATS.FLIER_HP });
+    const elevated = p.y < BAND.FLOOR_Y - THREATS.FLIER_LANE_DROP;
+    const y0 = elevated ? Math.max(2, p.y - THREATS.FLIER_LANE_Y) : 60;
+    sim.fliers.push({ x: p.x + 300, y: y0, lane: y0, phase: sim.rng() * Math.PI * 2, hp: THREATS.FLIER_HP });
   }
   for (const pu of sim.pursuers) {
     // CHARGE then MATCH (owner spec): far away a chaser runs PURSUER_SPEED;
@@ -323,7 +333,7 @@ export function step(sim, dt, input = {}) {
   for (const fl of sim.fliers) {
     fl.phase += dt * 2.4;
     fl.x -= THREATS.FLIER_SPEED * dt;
-    fl.y = 90 + Math.sin(fl.phase) * 46;
+    fl.y = (fl.lane != null ? fl.lane : 90) + Math.sin(fl.phase) * 46;
     // V1d altitude keep-clear: a flier never dips within 22px of the runner's
     // CURRENT height. Their teeth are presence (they never contact by
     // construction — see above); this makes the vertical separation

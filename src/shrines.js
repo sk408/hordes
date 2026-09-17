@@ -24,6 +24,7 @@
 // owns rolls + math only.
 
 import { rollChoices } from './choices.js';
+import { CONFIG as C } from './config.js';
 
 // ---------- tuning ----------
 export const SHRINE_WORLD_COUNT = 3;       // fixed set per run (the "rarer" dial:
@@ -36,13 +37,16 @@ export const SHRINE_COST_USED_MULT = 1.25; // x1.25 per prior shrine THIS RUN
 
 // ---------- world seed --------------------------------------------------------
 // S1: the set is chosen ONCE at run start off the run's shrineRng stream.
-// Uniform scatter over the +-(600-MARGIN) box — integer pixels, no centre
+// Uniform scatter over the +-(RIM-MARGIN) box — integer pixels, no centre
 // weighting, no radius band, no player-relative term (the function takes no
 // player argument; corner-park invariance is a code fact). Exactly 2 rng
 // draws per shrine (8 for the default set), then ZERO draws for the rest of
 // the run — stepping waves consumes no randomness.
+// ARENA SCALE-UP (2026-09-17): the old literal 600 duplicated GROUND.RIM by
+// hand and could not follow the units-based extent; the scatter now reads
+// the one knob (WAVE-25 audit-2.4 rule applied to the last straggler).
 export function seedShrines(rng = Math.random, count = SHRINE_WORLD_COUNT) {
-  const half = 600 - SHRINE_WORLD_MARGIN;
+  const half = C.GROUND.RIM - SHRINE_WORLD_MARGIN;
   const out = [];
   for (let i = 0; i < count; i++) {
     out.push({

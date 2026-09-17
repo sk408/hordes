@@ -144,7 +144,10 @@ S.check('enemy spawns are NOT clamped (arriving from outside is intended)', () =
   T.startRun();
   pump(3);
   state.enemies.length = 0;
-  state.player.x = 500;
+  // ARENA SCALE-UP RETARGET: park 100px inside the rim (was the literal 500,
+  // which sat past the old 600 rim) — the min-radius spawn ring at angle 0
+  // still lands beyond the rim at any unit count.
+  state.player.x = RIM - 100;
   state.player.y = 0;
   state.spawnTimer = 0;
   const savedRnd = Math.random;

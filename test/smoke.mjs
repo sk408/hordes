@@ -1438,6 +1438,14 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(Math.abs(fullD - 2 * halfD) < fullD * 0.25,
     `movement scales with deflection (${fullD.toFixed(1)} ~= 2 x ${halfD.toFixed(1)})`);
   // Full tilt == keyboard speed over the same window.
+  // ARENA SCALE-UP FIXTURE RETARGET (2026-09-17): the two windows used to run
+  // back-to-back, so with the relief grade term they sampled DIFFERENT ground
+  // (the keyboard window starts where the joystick window ended) and an
+  // uphill contour split them by more than the 1.5px tolerance (33.6 vs
+  // 31.6, grade shifting mid-walk). Rewind the pilot to the joystick
+  // window's start so both windows measure the SAME terrain; the assertion
+  // (identical commanded speed -> identical distance) is unchanged.
+  st.player.x = rx0;
   // G20D DIAG2 (temporary): per-frame x deltas of BOTH windows, dumped only on
   // a mismatch, to locate which frame(s) the extra distance comes from.
   const joyDeltas = [];
@@ -1932,31 +1940,34 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   delete window.devicePixelRatio; r.resize();   // back to the headless default
   assert(r.dpr === 1 && cv.width === CFG.VIEW_W, 'resize without dpr falls back to 1');
 
-  // --- (4) ARENA WALL: nothing painted mid-arena; the rim (±600) becomes a
-  // stone wall + gloom BEFORE the player reaches the clamp, at 1x AND 2x. ---
+  // --- (4) ARENA WALL: nothing painted mid-arena; the rim becomes a stone
+  // wall + gloom BEFORE the player reaches the clamp, at 1x AND 2x. ---
+  // ARENA SCALE-UP (2026-09-17) RETARGET: the rim pin reads the units-based
+  // GROUND.RIM (was the literal 600) — the wall follows the one knob.
+  const RIM = CFG.GROUND.RIM;
   T.zoom.set(1);
   T.setPilotMode('MANUAL');           // (h) ask, do not count presses: nothing held = stationary
   p.x = 0; p.y = 0;
   pump(60);                           // let the camera lerp converge on center
-  assert(r.arenaWall && r.arenaWall.rim === 600 && r.arenaWall.sides.length === 0,
+  assert(r.arenaWall && r.arenaWall.rim === RIM && r.arenaWall.sides.length === 0,
     'mid-arena: no wall sides visible');
-  p.x = 560; p.y = 0;                 // 40px from the E clamp — rim on screen
+  p.x = RIM - 40; p.y = 0;            // 40px from the E clamp — rim on screen
   pump(60);
   const eSide = r.arenaWall.sides.find(s => s.side === 'E');
-  assert(eSide && eSide.x === 600 && eSide.w === r.arenaWall.thickness,
+  assert(eSide && eSide.x === RIM && eSide.w === r.arenaWall.thickness,
     'the E wall band sits at the clamp rim in world coords');
   ctxRec.rec = true; ctxRec.rects.length = 0;
   pump(1);
   ctxRec.rec = false;
-  assert(ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === 600),
-    'wall rects paint INSIDE the world layer at world x=600 (1x)');
+  assert(ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === RIM),
+    'wall rects paint INSIDE the world layer at world x=' + RIM + ' (1x)');
   T.zoom.set(2);                      // the wall is world geometry: same rim at 2x
   ctxRec.rec = true; ctxRec.rects.length = 0;
   pump(1);
   ctxRec.rec = false;
-  assert(r.arenaWall.sides.some(s => s.side === 'E' && s.x === 600) &&
-         ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === 600),
-    'wall rects paint at world x=600 at 2x too (zooms with the world)');
+  assert(r.arenaWall.sides.some(s => s.side === 'E' && s.x === RIM) &&
+         ctxRec.rects.some(q => q.d === 1 && Math.round(q.x + st.cam.x) === RIM),
+    'wall rects paint at world x=' + RIM + ' at 2x too (zooms with the world)');
   T.zoom.set(1);
 
   // --- (3) END RUN: two-tap confirm in the in-run settings; one tap + BACK

@@ -169,8 +169,15 @@ import {
 // scoped pending selection, nothing persisted.
 import {
   DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
-  nextStageId, describeStage, lockedStageLines,
+  nextStageId, describeStage, lockedStageLines, stageRelief,
 } from './stages.js';
+// ARENA ELEVATED PATHS (scale-up 2026-09-17): the deterministic height field
+// and its three reads — the grade term (player + enemies, the same pure
+// function), the exposure bias (spawn azimuth on high ground), and the vision
+// radius (the radar's world reach). See src/relief.js for the contract.
+import {
+  reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
+} from './relief.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -745,8 +752,14 @@ function runController(p, dt, am) {
   const spd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult *
     (p.buffs.afterimage > 0 ? C.SKILLS.AFTERIMAGE.SPEED_MULT : 1);
   if (decision.moveX !== 0 || decision.moveY !== 0) {
-    p.x += decision.moveX * spd * dt;
-    p.y += decision.moveY * spd * dt;
+    // ARENA RELIEF — the grade term (uphill slower / downhill faster), read
+    // HERE for the pilot and at the enemy move seam through the SAME pure
+    // function off the SAME field: the anti-sanctuary symmetry. High ground
+    // slows whoever climbs it, pilot or horde, by the same rule.
+    const grade = reliefGrade(p.x, p.y, decision.moveX, decision.moveY,
+      state.groundSeed || 0, stageRelief(state.stage));
+    p.x += decision.moveX * spd * grade * dt;
+    p.y += decision.moveY * spd * grade * dt;
   }
   // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
   // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
@@ -944,8 +957,20 @@ function spawnWave(dt) {
   const hz = stageOf(state.stage).hazard;
   if (hz && hz.kind === 'eliteRate') eliteChance = Math.min(1, eliteChance + hz.add);
   const wave = Math.floor(state.time / 30);
+  // ARENA RELIEF — EXPOSURE BIAS (the risk half of high ground): a pilot
+  // standing high draws the horde's azimuth partway toward the uphill side,
+  // so the pressure takes the ridge with them instead of paying the climb
+  // alone. A pure transform of the angle each spawn just drew — count,
+  // cadence and ring distance are untouched, and the rng stream cannot shift.
+  const relCfgS = stageRelief(state.stage);
+  const relSeedS = state.groundSeed || 0;
+  const pilotLevel = reliefLevel(state.player.x, state.player.y, relSeedS, relCfgS);
+  const uphillAz = pilotLevel >= C.RELIEF.HIGH_LEVEL
+    ? reliefUphillAzimuth(state.player.x, state.player.y, relSeedS, relCfgS)
+    : 0;
   for (let i = 0; i < groups; i++) {
-    const a = Math.random() * Math.PI * 2;
+    let a = Math.random() * Math.PI * 2;
+    if (pilotLevel >= C.RELIEF.HIGH_LEVEL) a = reliefBiasAngle(a, pilotLevel, uphillAz);
     // G20a hazard: a spawnBand stage squeezes the SAME SPAWN_DIST draw by its
     // ring factor (default stage: no hazard, no change).
     const d = C.ENEMY.SPAWN_DIST * (0.85 + Math.random() * 0.3) *
@@ -2017,6 +2042,12 @@ function update(dt) {
   // contract is unchanged.
   const dmgMult = ladderDmg(Math.floor(state.time / 30)) *
     heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1);
+  // ARENA RELIEF: the stage's terrain character, read ONCE for the whole
+  // enemy pass. The grade term at the move seam below is the SAME pure
+  // function the pilot's own movement reads — a chaser climbs the ridge at
+  // exactly the grade the pilot would (the anti-sanctuary symmetry).
+  const relCfg = stageRelief(state.stage);
+  const relSeed = state.groundSeed || 0;
   // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
   // every damage path stamps the source right before die() can fire.
   const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
@@ -2062,8 +2093,9 @@ function update(dt) {
     e.telegraph = !!act.telegraph;   // WARLOCK/boss windup -> render flash
     e.charging = !!act.charging;     // GRAVELMAW contact-damage window
     e.recovering = !!act.recovering; // GRAVELMAW punish window
-    e.x += act.mx * spd * dt;
-    e.y += act.my * spd * dt;
+    const grade = reliefGrade(e.x, e.y, act.mx, act.my, relSeed, relCfg);
+    e.x += act.mx * spd * grade * dt;
+    e.y += act.my * spd * grade * dt;
     // TICK latch: once attached it rides the player and drains hp/s INSTEAD
     // of contact damage (its contactDamageMult is 0) until killed.
     if (act.attach) {
@@ -2139,11 +2171,14 @@ function update(dt) {
     // is where the cage forms. Staggered ages turn the ring into a rolling
     // barrage instead of one synchronized volley. Clamped inside the walls.
     if (act.ring) {
+      // ARENA SCALE-UP: the ring plants inside the walls — the old literal
+      // 590 duplicated RIM-10 by hand (WAVE-25 audit-2.4's last straggler).
+      const ringRim = C.GROUND.RIM - 10;
       for (let s = 0; s < act.ring.count; s++) {
         const ang = (s / act.ring.count) * Math.PI * 2;
         const m = makeTypedEnemy(act.ring.type,
-          Math.max(-590, Math.min(590, p.x + Math.cos(ang) * act.ring.radius)),
-          Math.max(-590, Math.min(590, p.y + Math.sin(ang) * act.ring.radius)),
+          Math.max(-ringRim, Math.min(ringRim, p.x + Math.cos(ang) * act.ring.radius)),
+          Math.max(-ringRim, Math.min(ringRim, p.y + Math.sin(ang) * act.ring.radius)),
           state.time, { variant: rollVariant(act.ring.type) });
         m.age = (s % 4) * 0.45;   // phase-offset the fire cadence per quadrant
         escalate(m, state.time);
@@ -2484,6 +2519,23 @@ function update(dt) {
     state.enemyShots.length = 0;   // no post-clear potshots
     state.wave.bosses = [];
     state.wave.boss = null;
+    // ARENA SCALE-UP additions (msg_01M2R966): BOSS-CLEAR SWEEP. The wave is
+    // won — the field's ground drops are swept to the pilot through the
+    // magnet's own pull mechanics (visible motion toward the player; the
+    // CREDIT still happens only in the normal pickup loop, so collection is
+    // worth exactly collection on foot) and the collected total is toasted
+    // as part of the boss-clear moment. NO silent loss: nothing is deleted,
+    // and what the run's own rules refuse (an over-cap potion, an IGNOREd
+    // equip) honestly stays on the floor at the pilot's feet. Armed AFTER
+    // the scatter above so the fresh corpse-gems ride the same sweep.
+    p.bossSweep = C.BOSS_SWEEP.SWEEP_S;
+    state.bossSweepSnap = {
+      gems: state.gems.length,
+      potions: (state.drops || []).reduce((s, d) => s + (d.count || 1), 0),
+      items: (state.itemDrops || []).length,
+    };
+    state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0,
+      ttl: C.BOSS_SWEEP.SWEEP_S + 0.15, radius: C.BOSS_SWEEP.RING_RADIUS });
     state.portal = { x: state.wave.portalX || p.x, y: state.wave.portalY || p.y, age: 0 };
     toast('THE PORTAL OPENS - WALK THROUGH');
   }
@@ -6427,6 +6479,7 @@ function startRun() {
   state.drops = [];
   state.itemDrops = [];
   state.magnetSnap = null;   // RSS8: a fresh run owes no sweep total
+  state.bossSweepSnap = null; // ARENA SCALE-UP: ditto the boss-clear sweep's total
   state.chests = [];
   state.items = [];
   state.arches = [];
@@ -8819,7 +8872,33 @@ function mawWithdrew() {
 // also makes the streak immune to the earned-moment dilation by construction.
 function tickMagnetSweep(realDt) {
   const p = state.player;
-  if (!p || !(p.magnetSweep > 0)) return;
+  if (!p) return;
+  // BOSS-CLEAR SWEEP (msg_01M2R966): ticks on the SAME wall-clock slot and
+  // the SAME pull shape as the magnet — the whole freeze-proof argument
+  // above applies verbatim (a sweep collecting XP can fire openDraft()
+  // mid-sweep and freeze update(); ticking here on realDt is immune). The
+  // total is the boss-clear moment's own line, not the magnet's.
+  if (p.bossSweep > 0) {
+    p.bossSweep -= realDt;
+    const bPull = Math.min(1, realDt * C.BOSS_SWEEP.PULL_RATE);
+    for (const arr of [state.gems, state.drops, state.itemDrops]) {
+      for (const g of arr) { g.x += (p.x - g.x) * bPull; g.y += (p.y - g.y) * bPull; }
+    }
+    if (p.bossSweep <= 0 && state.bossSweepSnap) {
+      const a = state.bossSweepSnap;
+      const gems = a.gems - state.gems.length;
+      const potions = a.potions - state.drops.reduce((s, d) => s + (d.count || 1), 0);
+      const items = a.items - state.itemDrops.length;
+      const parts = [];
+      if (gems > 0) parts.push(gems + ' GEM' + (gems === 1 ? '' : 'S'));
+      if (potions > 0) parts.push(potions + ' POTION' + (potions === 1 ? '' : 'S'));
+      if (items > 0) parts.push(items + ' ITEM' + (items === 1 ? '' : 'S'));
+      toast(parts.length ? 'BOSS CLEAR SWEEP: ' + parts.join(' \u00b7 ')
+        : 'BOSS CLEAR SWEEP: field is clear');
+      state.bossSweepSnap = null;
+    }
+  }
+  if (!(p.magnetSweep > 0)) return;
   p.magnetSweep -= realDt;
   const pull = Math.min(1, realDt * C.MAGNET.PULL_RATE);
   for (const arr of [state.gems, state.drops, state.itemDrops]) {

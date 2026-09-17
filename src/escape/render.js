@@ -205,7 +205,7 @@ function drawParallax(ctx, camX, pal) {
 // geometry. Floor-level gap spans get a darkening depth and a lip glow; the
 // parallax bands stay faintly visible through the hole (they are drawn behind
 // the terrain, the hole simply does not cover them).
-function drawPits(ctx, sim, w2s, pal) {
+function drawPits(ctx, sim, w2s, pal, camY) {
   const floors = sim.plats
     .filter(pl => Math.abs(pl.y - BAND.FLOOR_Y) <= 2)
     .sort((a, b) => a.x - b.x);
@@ -213,23 +213,24 @@ function drawPits(ctx, sim, w2s, pal) {
     const a = w2s(floors[i].x + floors[i].w), b = w2s(floors[i + 1].x);
     if (b < 0 || a > VIEW_W || b <= a) continue;
     const w = b - a;
+    const fy = BAND.FLOOR_Y - camY;
     // Depth: three darkening bands down to the void.
     ctx.fillStyle = '#0a0a12';
-    ctx.fillRect(a, BAND.FLOOR_Y, w, 20);
+    ctx.fillRect(a, fy, w, 20);
     ctx.fillStyle = '#07070d';
-    ctx.fillRect(a, BAND.FLOOR_Y + 20, w, 22);
+    ctx.fillRect(a, fy + 20, w, 22);
     ctx.fillStyle = '#04040a';
-    ctx.fillRect(a, BAND.FLOOR_Y + 42, w, VIEW_H - BAND.FLOOR_Y - 42);
+    ctx.fillRect(a, fy + 42, w, VIEW_H - fy - 42);
     // The COLOURED FAR SIDE: the void is not empty black — the act's glow
     // bleeds up its floor and washes the far wall (a place, not a hole).
     ctx.fillStyle = rgba(pal.voidGlow, 0.22);
     ctx.fillRect(a + 2, VIEW_H - 14, w - 4, 3);
     ctx.fillStyle = rgba(pal.voidGlow, 0.14);
-    ctx.fillRect(b - 3, BAND.FLOOR_Y + 4, 3, VIEW_H - BAND.FLOOR_Y - 4);
+    ctx.fillRect(b - 3, fy + 4, 3, VIEW_H - fy - 4);
     // The lip GLOWS on both sides (the no-blind-drops rule, lit).
     ctx.fillStyle = '#a8a8d0';
-    ctx.fillRect(a, BAND.FLOOR_Y, 2, 9);
-    ctx.fillRect(b - 2, BAND.FLOOR_Y, 2, 9);
+    ctx.fillRect(a, fy, 2, 9);
+    ctx.fillRect(b - 2, fy, 2, 9);
   }
 }
 
@@ -306,9 +307,10 @@ function drawWall(ctx, sim, w2s, pal) {
 // FULL REACH in its lane (extend/hold), and back. Every wind-up also stripes
 // its landing zone — the phone-size tell (ground arms stripe the floor at
 // their band; the sickle stripes its AIR lane, the band it alone can hit).
-function drawArms(ctx, sim, w2s) {
+function drawArms(ctx, sim, w2s, camY) {
   const b = sim.boss;
   const bx0 = w2s(b.x - THREATS.BOSS_W / 2);
+  const FY = BAND.FLOOR_Y - camY;   // the floor line under the vertical pan
   for (const g of b.arms) {
     // The per-arm posts: shoulder on the flank, the reach lane's tip height,
     // the coil and raise rests. The claw keeps the V1f geometry; the sickle
@@ -316,20 +318,20 @@ function drawArms(ctx, sim, w2s) {
     // and sweeps the floor.
     let sx, sy, extY, coilX, coilY, raiseX, raiseY;
     if (g.id === 'sickle') {
-      sx = bx0 + 18; sy = BAND.FLOOR_Y - THREATS.BOSS_H + 12;
-      extY = BAND.FLOOR_Y - 92;                          // the AIR lane it alone contacts
-      coilX = bx0 + 6; coilY = BAND.FLOOR_Y - THREATS.BOSS_H + 8;
-      raiseX = bx0 + 2; raiseY = BAND.FLOOR_Y - THREATS.BOSS_H - 4;
+      sx = bx0 + 18; sy = FY - THREATS.BOSS_H + 12;
+      extY = FY - 92;                                    // the AIR lane it alone contacts
+      coilX = bx0 + 6; coilY = FY - THREATS.BOSS_H + 8;
+      raiseX = bx0 + 2; raiseY = FY - THREATS.BOSS_H - 4;
     } else if (g.id === 'tendril') {
-      sx = bx0 + 8; sy = BAND.FLOOR_Y - 40;
-      extY = BAND.FLOOR_Y - 16;                          // the floor sweep
-      coilX = bx0 + 4; coilY = BAND.FLOOR_Y - 34;
-      raiseX = bx0 - 2; raiseY = BAND.FLOOR_Y - 64;
+      sx = bx0 + 8; sy = FY - 40;
+      extY = FY - 16;                                    // the floor sweep
+      coilX = bx0 + 4; coilY = FY - 34;
+      raiseX = bx0 - 2; raiseY = FY - 64;
     } else {                                             // the claw (V1f geometry)
-      sx = bx0 + 12; sy = BAND.FLOOR_Y - THREATS.BOSS_H + 34;
-      extY = BAND.FLOOR_Y - 26;
-      coilX = bx0 + 2; coilY = BAND.FLOOR_Y - 52;
-      raiseX = bx0 - 4; raiseY = BAND.FLOOR_Y - THREATS.BOSS_H + 2;
+      sx = bx0 + 12; sy = FY - THREATS.BOSS_H + 34;
+      extY = FY - 26;
+      coilX = bx0 + 2; coilY = FY - 52;
+      raiseX = bx0 - 4; raiseY = FY - THREATS.BOSS_H + 2;
     }
     const extX = w2s(b.x - g.reach);
     let cx, cy, open, hot;
@@ -350,17 +352,17 @@ function drawArms(ctx, sim, w2s) {
       const zl = w2s(b.x - g.reach - g.r), zr = w2s(b.x - g.reach + g.r);
       if (g.high) {
         ctx.fillStyle = rgba('#e06050', 0.12);
-        ctx.fillRect(zl, BAND.FLOOR_Y - 110, zr - zl, 40);
+        ctx.fillRect(zl, FY - 110, zr - zl, 40);
         if (Math.floor(sim.t * 10) % 2) {
           ctx.fillStyle = C_TELEGRAPH;
-          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 74, 6, 3);
+          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, FY - 74, 6, 3);
         }
       } else {
         ctx.fillStyle = rgba('#e06050', 0.10);
-        ctx.fillRect(zl, BAND.FLOOR_Y - 72, zr - zl, 72);
+        ctx.fillRect(zl, FY - 72, zr - zl, 72);
         if (Math.floor(sim.t * 10) % 2) {
           ctx.fillStyle = C_TELEGRAPH;
-          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, BAND.FLOOR_Y - 4, 6, 4);
+          for (let x = Math.max(0, zl); x < Math.min(VIEW_W, zr); x += 10) ctx.fillRect(x, FY - 4, 6, 4);
         }
       }
     }
@@ -465,35 +467,69 @@ export function dashHit(px, py) { return inRect(DASH_RECT, px, py); }
 export function kickHit(px, py) { return inRect(KICK_RECT, px, py); }
 export function modeHit(px, py) { return inRect(MODE_RECT, px, py); }
 
+// THE VERTICAL PAN (map scale-up 2026-09-17), as ONE exported pure function
+// (the draw and the tests share the definition): 0 on the floor, up to 48px
+// on the stacked decks, so the runner always sees where they are going UP and
+// the floor they will drop back DOWN to stays on screen. No state, no clock:
+// the same sim paints the same pixels, parity-safe by construction.
+// (Megabonk's static camera is a standing community complaint there; this is
+// the deliberate fix, not a copy of the thing being complained about.)
+export function camYFor(p) {
+  return Math.round(Math.max(0, Math.min(48, (BAND.FLOOR_Y - p.y - 44) * 0.55)));
+}
+
 export function draw(ctx, sim, opts = {}) {
   const p = sim.player;
   const camX = Math.max(0, p.x - CAM_LEAD);
   const w2s = (x) => Math.round(x - camX);          // world -> virtual screen x
+  const camY = camYFor(p);
+  const wy = (y) => Math.round(y) - camY;           // world -> virtual screen y
   const { pal, act } = paletteFor(sim);             // the V1d act palette + its index
 
   drawSky(ctx, pal, act);
   drawParallax(ctx, camX, pal);
 
   // ---- terrain: only the spans on screen (integer pixels) -----------------
+  // ELEVATED PATHS (scale-up): a raised platform (deck) is a STRUCTURAL
+  // walkway — an 18px slab on support struts — never a full-height column
+  // (a solid column at deck height would wall off the floor route below,
+  // which stays a real, walkable lane). Floor-level terrain keeps the solid
+  // column it always had.
+  const DECK_LEVEL = BAND.FLOOR_Y - 40;
+  const killY = BAND.KILL_Y - camY;
   for (const pl of sim.plats) {
     const x0 = w2s(pl.x), x1 = w2s(pl.x + pl.w);
     if (x1 < 0 || x0 > VIEW_W) continue;
-    const top = Math.round(pl.y);
-    ctx.fillStyle = C_PLAT;
-    ctx.fillRect(x0, top, x1 - x0, BAND.KILL_Y - top);
-    ctx.fillStyle = C_PLAT_UNDER;                       // the visible underside
-    ctx.fillRect(x0, BAND.KILL_Y - 8, x1 - x0, 8);
-    ctx.fillStyle = C_PLAT_TOP;                         // the lit standable edge
-    ctx.fillRect(x0, top, x1 - x0, 3);
+    const top = wy(pl.y);
+    if (pl.y <= DECK_LEVEL) {
+      // THE DECK: slab + underside + struts down to the kill line.
+      ctx.fillStyle = C_PLAT;
+      ctx.fillRect(x0, top, x1 - x0, 18);
+      ctx.fillStyle = C_PLAT_UNDER;
+      ctx.fillRect(x0, top + 14, x1 - x0, 4);
+      ctx.fillStyle = '#242438';                        // the struts (the structure reads)
+      for (let sx = x0 + 6; sx < x1 - 6; sx += 96) ctx.fillRect(sx, top + 18, 3, killY - top - 18);
+      ctx.fillRect(x1 - 9, top + 18, 3, killY - top - 18);
+      ctx.fillStyle = C_PLAT_TOP;                       // the lit standable edge
+      ctx.fillRect(x0, top, x1 - x0, 3);
+    } else {
+      ctx.fillStyle = C_PLAT;
+      ctx.fillRect(x0, top, x1 - x0, killY - top);
+      ctx.fillStyle = C_PLAT_UNDER;                     // the visible underside
+      ctx.fillRect(x0, killY - 8, x1 - x0, 8);
+      ctx.fillStyle = C_PLAT_TOP;                       // the lit standable edge
+      ctx.fillRect(x0, top, x1 - x0, 3);
+    }
     // V1d material: static wear specks keyed on the platform's OWN coords
     // (hash32, never Math.random) — the masonry reads as aged, and the wear
     // is stable for a given corridor at any frame rate.
     ctx.fillStyle = '#2e2e44';
     const pid = hash32(Math.round(pl.x), Math.round(pl.y));
     const nSpecks = 2 + pid % 3;
+    const bodyH = pl.y <= DECK_LEVEL ? 12 : Math.max(1, killY - top - 16);
     for (let s = 0; s < nSpecks; s++) {
       const sx = x0 + 6 + hash32(pid, s) % Math.max(1, (x1 - x0) - 12);
-      const sy = top + 6 + hash32(pid, s + 40) % Math.max(1, BAND.KILL_Y - top - 16);
+      const sy = top + 6 + hash32(pid, s + 40) % Math.max(1, bodyH - 8);
       ctx.fillRect(sx, sy, 2, 2);
     }
     // The lip: a 2px bright edge on BOTH sides of every gap — the no-blind-
@@ -502,13 +538,13 @@ export function draw(ctx, sim, opts = {}) {
     ctx.fillRect(x0, top, 2, 8);
     ctx.fillRect(x1 - 2, top, 2, 8);
   }
-  drawPits(ctx, sim, w2s, pal);
+  drawPits(ctx, sim, w2s, pal, camY);
   // Destroyed terrain scars (the boss's wake — the pressure story, visible).
   ctx.fillStyle = '#221218';
   for (const pl of sim.destroyedPlats) {
     const x0 = w2s(pl.x), x1 = w2s(pl.x + pl.w);
     if (x1 < 0 || x0 > VIEW_W) continue;
-    ctx.fillRect(x0, Math.round(pl.y), x1 - x0, 4);
+    ctx.fillRect(x0, wy(pl.y), x1 - x0, 4);
   }
 
   // ---- the exit portal: the game's OWN portal art (4-frame loop, reused),
@@ -516,24 +552,25 @@ export function draw(ctx, sim, opts = {}) {
   const bx = w2s(sim.corridor.portalX);
   if (bx > -80 && bx < VIEW_W + 80) {
     const pulse = 0.5 + 0.5 * Math.sin(sim.t * 3.2);
+    const fyP = BAND.FLOOR_Y - camY;
     // The EMISSIVE POLE AHEAD (owner: portal + horde edge are the two
     // brightest things on screen) — a wide breathing halo, LOOK.PORTAL_HALO.
     ctx.fillStyle = rgba(LOOK.PORTAL_HALO, 0.045 + 0.035 * pulse);
-    ctx.fillRect(bx - 26, 0, 52, BAND.FLOOR_Y);
+    ctx.fillRect(bx - 26, 0, 52, fyP);
     ctx.fillStyle = rgba(LOOK.PORTAL_HALO, 0.07 + 0.06 * pulse);
-    ctx.fillRect(bx - 14, 0, 28, BAND.FLOOR_Y);
+    ctx.fillRect(bx - 14, 0, 28, fyP);
     ctx.fillStyle = rgba(LOOK.PORTAL_HALO, 0.12 + 0.08 * pulse);
-    ctx.fillRect(bx - 6, 0, 12, BAND.FLOOR_Y);
+    ctx.fillRect(bx - 6, 0, 12, fyP);
     // The pillar beacon stays (legible from 330px out — acceptance #9).
     ctx.fillStyle = C_BEACON;
-    ctx.fillRect(bx - 2, BAND.FLOOR_Y - EXIT.BEACON_H, 4, EXIT.BEACON_H);
-    ctx.fillRect(bx - 8, BAND.FLOOR_Y - EXIT.BEACON_H, 16, 6);
+    ctx.fillRect(bx - 2, fyP - EXIT.BEACON_H, 4, EXIT.BEACON_H);
+    ctx.fillRect(bx - 8, fyP - EXIT.BEACON_H, 16, 6);
     // The gate itself, at the floor.
     const fr = portalFrame(Math.floor(sim.t * 6));
-    drawGridScaled(ctx, fr, PORTAL_ART.palette, bx - PORTAL_ART.w, BAND.FLOOR_Y - PORTAL_ART.h * 2, 2);
+    drawGridScaled(ctx, fr, PORTAL_ART.palette, bx - PORTAL_ART.w, fyP - PORTAL_ART.h * 2, 2);
     // Shimmer bars drifting up the column (integer rows).
     for (let k = 0; k < 3; k++) {
-      const yy = (BAND.FLOOR_Y - ((sim.t * 26 + k * 44) % 132)) | 0;
+      const yy = (fyP - ((sim.t * 26 + k * 44) % 132)) | 0;
       ctx.fillStyle = 'rgba(158,255,224,0.30)';
       ctx.fillRect(bx - 9, yy, 18, 1);
     }
@@ -553,7 +590,7 @@ export function draw(ctx, sim, opts = {}) {
       const px = 3;
       const gw = BOSS_ART.w * px, gh = BOSS_ART.h * px;
       const gx = Math.round(bx0 + THREATS.BOSS_W / 2 - gw / 2);
-      const gy = BAND.FLOOR_Y - gh + bob;
+      const gy = BAND.FLOOR_Y - camY - gh + bob;
       drawGridScaled(ctx, BOSS_ART.frames[0], BOSS_ART.palette, gx, gy, px);
       // The molten crest pulse (the horde's front rank): a breathing rim on
       // the sprite's crest and flanks, pure sim.t.
@@ -562,14 +599,14 @@ export function draw(ctx, sim, opts = {}) {
       ctx.fillRect(gx, gy, gw, 2);
       ctx.fillRect(gx, gy, 2, gh);
       ctx.fillRect(gx + gw - 2, gy, 2, gh);
-      drawArms(ctx, sim, w2s);
+      drawArms(ctx, sim, w2s, camY);
       // TELEGRAPH (terrain destruction, retained): a striped bar over the
       // platform it is about to tear out — never subtle, always behind the runner.
       if (b.telegraph > 0 && b.target) {
         const tx0 = w2s(b.target.x), tx1 = w2s(b.target.x + b.target.w);
         ctx.fillStyle = C_TELEGRAPH;
         for (let x = Math.max(0, tx0); x < Math.min(VIEW_W, tx1); x += 12) {
-          ctx.fillRect(x, b.target.y - 10, 6, 4);
+          ctx.fillRect(x, wy(b.target.y) - 10, 6, 4);
         }
       }
     }
@@ -591,41 +628,42 @@ export function draw(ctx, sim, opts = {}) {
     const matched = pu.state === 'matched';
     const set = matched ? PURSUER_RUN_4 : PURSUER_LUNGE_4;
     const fr = matched ? puFrame : Math.floor(sim.t * 14) % 4;
+    const py = wy(pu.y);
     drawGridScaled(ctx, set[fr].rows, set[fr].palette,
-      x - 6, Math.round(pu.y) - 14 + bob, 1);
+      x - 6, py - 14 + bob, 1);
     if (!matched) {
       // The charge read: hard sprint streaks trailing the body.
       ctx.fillStyle = 'rgba(255,213,74,0.45)';
-      ctx.fillRect(x - 16, Math.round(pu.y) - 10 + bob, 9, 1);
-      ctx.fillRect(x - 13, Math.round(pu.y) - 6 + bob, 7, 1);
-      ctx.fillRect(x - 18, Math.round(pu.y) - 2 + bob, 11, 1);
+      ctx.fillRect(x - 16, py - 10 + bob, 9, 1);
+      ctx.fillRect(x - 13, py - 6 + bob, 7, 1);
+      ctx.fillRect(x - 18, py - 2 + bob, 11, 1);
     } else if ((pu.matchT || 0) < THREATS.MATCH_TELL && Math.floor(sim.t * 10) % 2) {
       // The settle read: a gold flash for the first beat of the hang.
       ctx.fillStyle = '#ffd54a';
-      ctx.fillRect(x - 7, Math.round(pu.y) - 15 + bob, 1, 14);
-      ctx.fillRect(x + 6, Math.round(pu.y) - 15 + bob, 1, 14);
-      ctx.fillRect(x - 7, Math.round(pu.y) - 15 + bob, 14, 1);
-      ctx.fillRect(x - 7, Math.round(pu.y) - 2 + bob, 14, 1);
+      ctx.fillRect(x - 7, py - 15 + bob, 1, 14);
+      ctx.fillRect(x + 6, py - 15 + bob, 1, 14);
+      ctx.fillRect(x - 7, py - 15 + bob, 14, 1);
+      ctx.fillRect(x - 7, py - 2 + bob, 14, 1);
     }
   }
   for (const fl of sim.fliers) {
     const x = w2s(fl.x);
     if (x < -18 || x > VIEW_W + 18) continue;
     const frame = Math.floor(fl.phase * 2) % 4;          // flap locks to the dive phase
-    drawGridScaled(ctx, FLIER_4[frame].rows, FLIER_4[frame].palette, x - 8, Math.round(fl.y) - 6, 1);
+    drawGridScaled(ctx, FLIER_4[frame].rows, FLIER_4[frame].palette, x - 8, wy(fl.y) - 6, 1);
     // The dive streak: when the sine is DESCENDING on screen (dy/dt > 0) the
     // flier is attacking downward — trail it so the dive reads as aggression.
     if (Math.cos(fl.phase) > 0) {
       ctx.fillStyle = 'rgba(128,96,192,0.5)';
-      ctx.fillRect(x + 7, Math.round(fl.y) - 9, 6, 1);
-      ctx.fillRect(x + 11, Math.round(fl.y) - 13, 5, 1);
+      ctx.fillRect(x + 7, wy(fl.y) - 9, 6, 1);
+      ctx.fillRect(x + 11, wy(fl.y) - 13, 5, 1);
     }
   }
   ctx.fillStyle = C_SHOT;
   for (const s of sim.shots) {
     const x = w2s(s.x);
     if (x < -12 || x > VIEW_W + 12) continue;
-    ctx.fillRect(x - 2, Math.round(s.y) - 2, 5, 3);
+    ctx.fillRect(x - 2, wy(s.y) - 2, 5, 3);
   }
 
   // ---- V1b fx: the pit-fall (drop arc, tumbling) and the shot-kill (burst) -
@@ -635,18 +673,18 @@ export function draw(ctx, sim, opts = {}) {
       ctx.globalAlpha = Math.max(0, 1 - e.age / e.life);
       const ff = Math.floor(sim.t * 14 + e.n) % 4;
       drawGridScaled(ctx, PURSUER_RUN_4[ff].rows,
-        PURSUER_RUN_4[ff].palette, sx - 6, Math.round(e.y) - 14, 1);
+        PURSUER_RUN_4[ff].palette, sx - 6, wy(e.y) - 14, 1);
       ctx.globalAlpha = 1;
       if (e.age < 0.18) {                                 // dust at the lip
         ctx.fillStyle = '#6a6a8a';
-        ctx.fillRect(sx - 5, Math.round(e.y) - 4, 3, 2);
-        ctx.fillRect(sx + 3, Math.round(e.y) - 3, 3, 2);
+        ctx.fillRect(sx - 5, wy(e.y) - 4, 3, 2);
+        ctx.fillRect(sx + 3, wy(e.y) - 3, 3, 2);
       }
     } else if (e.kind === 'burst') {
       ctx.fillStyle = '#ffd54a';
       for (let k = 0; k < 6; k++) {
         const ang = (k * Math.PI) / 3 + (e.n % 2) * 0.3;
-        ctx.fillRect(Math.round(sx + Math.cos(ang) * e.r), Math.round(e.y + Math.sin(ang) * e.r * 0.7), 2, 2);
+        ctx.fillRect(Math.round(sx + Math.cos(ang) * e.r), wy(e.y + Math.sin(ang) * e.r * 0.7), 2, 2);
       }
     }
   }
@@ -656,7 +694,7 @@ export function draw(ctx, sim, opts = {}) {
 
   // ---- the runner: the PILOT sprite (12x17, silhouette-first — outline,
   // 3-tone ramp, ONE teal visor accent; run x4 / tuck / dash postures) --------
-  const px = w2s(p.x), py = Math.round(p.y);
+  const px = w2s(p.x), py = wy(p.y);
   {
     const art = !p.onGround ? PILOT_JUMP_ART.frames[0]
       : p.dashT > 0 ? PILOT_DASH_ART.frames[0]

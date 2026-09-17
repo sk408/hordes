@@ -9,6 +9,11 @@ import {
 import { CHOICE_POOL, RARITIES, applyChoice } from '../src/choices.js';
 import { makePlayer } from '../src/entities.js';
 import { mulberry32 } from '../src/weather.js';
+import { CONFIG as C } from '../src/config.js';
+// ARENA SCALE-UP (2026-09-17) RETARGET: the scatter bound is the units-based
+// GROUND.RIM now (was the literal 600 the module hardcoded). Every extent pin
+// below is RIM-derived, so a future unit change moves them with the arena.
+const HALF = C.GROUND.RIM - SHRINE_WORLD_MARGIN;
 
 // Deterministic rng helper: replays a fixed sequence.
 const seq = (vals) => { let i = 0; return () => vals[i++ % vals.length]; };
@@ -27,18 +32,18 @@ const seq = (vals) => { let i = 0; return () => vals[i++ % vals.length]; };
     assert.deepEqual(Object.keys(s).sort(), ['used', 'x', 'y'], 'plain {x,y,used} shape');
     assert.equal(s.x, Math.round(s.x), 'integer pixel x');
     assert.equal(s.y, Math.round(s.y), 'integer pixel y');
-    const half = 600 - SHRINE_WORLD_MARGIN;
+    const half = HALF;
     assert.ok(Math.abs(s.x) <= half && Math.abs(s.y) <= half,
       `inside the rim with margin (|x|,|y| <= ${half})`);
   }
 }
 
-// Fixed draws pin the placement: every draw 0.25 -> (0.25*2-1)*560 = -280.
+// Fixed draws pin the placement: every draw 0.25 -> (0.25*2-1)*HALF.
 {
   const set = seedShrines(seq([0.25]));
   for (const s of set) {
-    assert.equal(s.x, -280, 'pinned x from the fixed draw');
-    assert.equal(s.y, -280, 'pinned y from the fixed draw');
+    assert.equal(s.x, Math.round((0.25 * 2 - 1) * HALF), 'pinned x from the fixed draw');
+    assert.equal(s.y, Math.round((0.25 * 2 - 1) * HALF), 'pinned y from the fixed draw');
   }
 }
 
@@ -74,8 +79,8 @@ assert.notDeepEqual(seedShrines(mulberry32(11)), seedShrines(mulberry32(12)),
   assert.ok(inside > 0, 'scatter reaches INSIDE the old 250 ring (not centre-ringed)');
   assert.ok(outside > 0, 'scatter reaches OUTSIDE the old 420 ring (whole-map)');
   const meanAbsX = sumAbsX / n;
-  assert.ok(meanAbsX > 250 && meanAbsX < 310,
-    `|x| mean ~280 for a uniform box (got ${meanAbsX.toFixed(1)})`);
+  assert.ok(meanAbsX > HALF * 0.45 && meanAbsX < HALF * 0.55,
+    `|x| mean ~HALF/2 (${HALF / 2}) for a uniform box (got ${meanAbsX.toFixed(1)})`);
 }
 
 // ---- exact cost curve --------------------------------------------------------

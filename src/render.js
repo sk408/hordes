@@ -17,6 +17,8 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
 import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
+import { stageRelief } from './stages.js';
+import { reliefLevel, reliefVisionRadius } from './relief.js';
 
 // A2 RADAR paint constants (geometry rationale lives on drawRadar below).
 // RADAR_DISPLAY_R is the HUD-px radius of the drawn circle; the world->radar
@@ -378,6 +380,9 @@ export class Renderer {
       for (let x = ox - gs; x < C.VIEW_W; x += gs) g.fillRect(x, y, 1, 1);
     }
 
+    // ARENA RELIEF: quantized height tints + contour edges, under the decor
+    // so elevation reads as terrain without competing with the play pieces.
+    this.drawRelief(g, state, cam, theme);
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
@@ -1074,14 +1079,20 @@ export class Renderer {
     const R = RADAR_DISPLAY_R;
     const cx = C.VIEW_W - RADAR_CORNER_INSET - R;
     const cy = C.VIEW_H - RADAR_CORNER_INSET - R;
-    const scale = R / RADAR_RADIUS;
+    // ARENA RELIEF — VISION (the reward half of high ground): the radar's
+    // WORLD reach widens while the drawn disc stays the same fixed-geometry
+    // box, so the same plate maps more world (the dots compress). The radius
+    // always still covers the spawn ring — on high ground with room to spare.
+    const vision = reliefVisionRadius(RADAR_RADIUS,
+      reliefLevel(p.x, p.y, state.groundSeed || 0, stageRelief(state.stage)));
+    const scale = R / vision;
     const focusR = Math.round((C.AUTOPILOT.FOCUS_RANGE || 0) * scale);
 
     // The dot set, from the real data layer: live enemies only, classified by
     // classifyTier inside radar.js (BOSS > ELITE > CHAFF — never restated here).
     const live = [];
     for (const e of state.enemies) if (e && e.hp > 0) live.push(e);
-    const dots = radarDots(p, live, { radius: RADAR_RADIUS, displayRadius: R });
+    const dots = radarDots(p, live, { radius: vision, displayRadius: R });
 
     // Plate: a filled dark disc painted as pixel rows (integer half-widths —
     // no arc(), no antialiasing, per the pixel-art rule), then a 1px rim.
@@ -1133,7 +1144,7 @@ export class Renderer {
         if (!lm.discovered) continue;
         const dx = lm.x - p.x, dy = lm.y - p.y;
         const dist = Math.hypot(dx, dy);
-        if (!(dist <= RADAR_RADIUS)) continue;   // radar.js's inclusive rule
+        if (!(dist <= vision)) continue;   // radar.js's inclusive rule, at the vision radius
         const mx = cx + Math.round(dx * scale), my = cy + Math.round(dy * scale);
         g.fillStyle = '#ffd75e';
         g.fillRect(mx - 1, my - 1, 3, 3);
@@ -1165,11 +1176,15 @@ export class Renderer {
   drawAtlasMap(g, state) {
     const atlas = state.atlas;
     if (!state.mapOpen || !atlas || !state.player) { this.atlasMap = null; return; }
-    const CELL = 8;
     const side = atlas.side;
-    const size = side * CELL;                          // 240
-    const ox = Math.round((C.VIEW_W - size) / 2);      // 120
-    const oy = Math.round((C.VIEW_H - size) / 2);      // 30
+    // ARENA SCALE-UP: the map must FIT the 480x300 view at any arena size —
+    // the cell shrinks so the whole arena reads inside a <=240px box (the
+    // shipped 30x30 grid -> 8px cells; the 45x45 nine-unit grid -> 5px).
+    // Integer px either way, same paint, same fields.
+    const CELL = Math.max(2, Math.floor(240 / side));
+    const size = side * CELL;
+    const ox = Math.round((C.VIEW_W - size) / 2);
+    const oy = Math.round((C.VIEW_H - size) / 2);
     // The plate: one OPAQUE dark rect (the field is hidden BY DESIGN — C1),
     // the unvisited haze as the field's own base fill.
     g.fillStyle = '#04060a';
@@ -2111,6 +2126,53 @@ export class Renderer {
     }
 
     this.bestiary = { scale, x, y, w, h, id: bv.id, discovered: !!bv.discovered };
+  }
+
+  // ---- arena relief (world space; the elevated-paths height field) ------------
+  // ARENA SCALE-UP (2026-09-17): the stage's quantized height, painted as a
+  // per-level lighten step + a 1px contour edge where the level changes. The
+  // field is hashed on the fly from the run's groundSeed (the drawGround
+  // pattern — nothing is stored, off-view cells are never visited) and sits
+  // UNDER the decor, so elevation reads as terrain without competing with
+  // the play pieces. A LEVELS<=1 stage paints nothing (flat is a character).
+  drawRelief(g, state, cam, theme) {
+    const seed = state.groundSeed || 1;
+    const RC = C.RELIEF.RENDER_CELL;
+    const RIM = C.GROUND.RIM;
+    const rel = stageRelief(state.stage);
+    if (!rel || rel.LEVELS <= 1) return;
+    const c0 = Math.floor(cam.x / RC), c1 = Math.floor((cam.x + C.VIEW_W) / RC);
+    const r0 = Math.floor(cam.y / RC), r1 = Math.floor((cam.y + C.VIEW_H) / RC);
+    const lvAt = (wx, wy) => reliefLevel(wx, wy, seed, rel);
+    for (let cy = r0; cy <= r1; cy++) {
+      for (let cx = c0; cx <= c1; cx++) {
+        const wx = cx * RC + RC / 2, wy = cy * RC + RC / 2;
+        // Relief never paints past the rim (the WAVE-24 decor rule).
+        if (wx < -RIM || wx > RIM || wy < -RIM || wy > RIM) continue;
+        const lv = lvAt(wx, wy);
+        const x = Math.round(cx * RC - cam.x), y = Math.round(cy * RC - cam.y);
+        if (lv > 0) {
+          // Each level lightens the theme base one step — terraced ground.
+          g.globalAlpha = 0.05 * lv;
+          g.fillStyle = '#ffffff';
+          g.fillRect(x, y, RC + 1, RC + 1);
+        }
+        // Contour edges: a 1px shadowed lip where the neighbour rises or
+        // falls — the elevation's read at a glance, and free at RC 60.
+        if (lvAt(wx + RC, wy) !== lv) {
+          g.globalAlpha = 0.22;
+          g.fillStyle = '#000000';
+          g.fillRect(x + RC, y, 1, RC + 1);
+        }
+        if (lvAt(wx, wy + RC) !== lv) {
+          g.globalAlpha = 0.22;
+          g.fillStyle = '#000000';
+          g.fillRect(x, y + RC, RC + 1, 1);
+        }
+      }
+    }
+    g.globalAlpha = 1;
+    this.reliefCells = (c1 - c0 + 1) * (r1 - r0 + 1);
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------

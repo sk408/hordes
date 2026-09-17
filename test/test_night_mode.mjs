@@ -162,7 +162,16 @@ S.check('a night run clears the wave, auto-skips ONLY the escape, lands in the i
   st.wave.cinePending = true;
   st.portal = null;
   guard = 0;
-  while (st.mode === 'playing' && guard++ < 600) step();
+  // ARENA SCALE-UP (boss-clear sweep, disclosed): the clear now BANKS the
+  // wave's ground gems, and a level-up draft can open mid-hand-off — the
+  // same overlay the seeded parity runs resolve (AUTO picks after its
+  // window). Click it through; the assertions below are unchanged.
+  while (st.mode !== 'intermission' && st.mode !== 'escape' && guard++ < 600) {
+    step();
+    if (st.mode === 'draft' || st.mode === 'evolve') {
+      const c0 = h.elements['ov-cards'].children[0]; c0 && c0.click();
+    }
+  }
   assert.ok(st.mode === 'intermission' || st.mode === 'escape',
     'the clear handed off (mode=' + st.mode + ')');
   guard = 0;

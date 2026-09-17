@@ -185,6 +185,19 @@ export const CONFIG = {
     RING_RADIUS: 110,   // the expanding-ring tell, in world px
   },
 
+  // ARENA SCALE-UP additions (msg_01M2R966): BOSS-CLEAR SWEEP. The moment the
+  // wave's last boss falls and the portal opens, the field's ground drops are
+  // swept to the pilot through the SAME pull mechanics as the magnet (visible
+  // motion, credited by the NORMAL pickup loop — never a second payout path),
+  // and the collected total is toasted as part of the boss-clear moment. No
+  // silent loss: nothing is deleted; items the run's own rules refuse (an
+  // over-cap potion, an IGNOREd equip) honestly stay on the floor.
+  BOSS_SWEEP: {
+    SWEEP_S: 0.9,        // sweep duration, s (a beat longer than the magnet's)
+    PULL_RATE: 10,       // exponential pull toward the pilot, per second
+    RING_RADIUS: 150,    // the expanding-ring tell, in world px
+  },
+
   // Player-triggered skills. Keys: Q = FROST_NOVA, W = OVERCHARGE.
   SKILLS: {
     FROST_NOVA: {
@@ -585,10 +598,19 @@ export const CONFIG = {
     DENSITY: 0.36,     // chance a cell carries a fine piece (WAVE-24: 0.42 ->
                        // 0.36 — with the landmark layer added below, the fine
                        // field read busy; the coarse structures carry identity)
-    RIM: 600,          // arena clamp edge in world px (MUST match main.js's
-                       // +-600 player clamp and the arena wall in render.js).
-                       // Decor/landmarks never paint past it (WAVE-24: the old
-                       // BOUND 660 let pieces spill into the off-map gloom).
+    // ARENA SCALE-UP (2026-09-17, owner directive msg_01M2R90M): the extent is
+    // UNITS-BASED. One unit = 600 world px per axis (a quarter of the shipped
+    // 2x2 arena on each axis); UNITS 3 -> a 1800x1800 field, RIM 900. RIM is a
+    // GETTER over the unit count (the THREATS.GRAB_* getter precedent) so
+    // every reader — the player clamp, the wall render, the loot limit, the
+    // camera, the atlas — follows the ONE knob; no reader re-derivations.
+    // Decor/landmarks still never paint past it (WAVE-24 rule, now automatic).
+    UNIT: 600,
+    UNITS: 3,
+    _rimOverride: null,   // the test seam: a written RIM wins until restored
+    get RIM() { return this._rimOverride != null ? this._rimOverride
+      : (this.UNIT * this.UNITS) / 2; },
+    set RIM(v) { this._rimOverride = v; },
     WALL: 12,          // drawn wall-band thickness in world px (RIM..RIM+WALL,
                        // render.js drawArenaWall). ONE definition: the loot
                        // clamp (entities.clampLootToArena) subtracts this band
@@ -629,6 +651,33 @@ export const CONFIG = {
         tuft: '#241e44', tuft2: '#30285c', stone: '#1c1834', stoneTop: '#2c2650',
         crack: '#080614', slab: '#131024', tint: 'rgba(110,80,200,0.05)' },
     ],
+  },
+
+  // ---- ELEVATED PATHS (arena scale-up 2026-09-17) -----------------------------
+  // The arena's RELIEF: a deterministic per-run height field (src/relief.js,
+  // the ground-decor hash pattern — no stored arrays, same seed -> same field)
+  // quantized to integer LEVELS whose grain and height are the STAGE's
+  // character (stages.js `relief`). The anti-sanctuary contract, by
+  // construction:
+  //   * the GRADE term (uphill slower / downhill faster) applies to the PLAYER
+  //     and to every ENEMY at the same movement seams, read from the same
+  //     pure function — high ground slows an attacker's climb exactly as much
+  //     as it would slow the pilot's, and nothing blocks enemy motion, so the
+  //     Megabonk stuck-on-ledges / camp-the-deck safe-spot bug is structurally
+  //     absent;
+  //   * standing on HIGH ground is a TRADE, not a haven: the radar's world
+  //     reach widens (VISION_MULT — the reward) while the horde's spawn
+  //     AZIMUTH biases toward the uphill side (EXPOSURE_BIAS — the risk), so
+  //     the pressure arrives over the ridge with you. Spawn COUNT, cadence
+  //     and ring distance are untouched (the pacing invariants hold).
+  RELIEF: {
+    HIGH_LEVEL: 2,      // standing at >= this level is "high ground"
+    GRADE_LOOK: 60,     // px lookahead the grade reads along the move direction
+    GRADE_COST: 0.12,   // speed cost per level of climb over that lookahead
+    GRADE_CAP: 0.36,    // |grade effect| bound, up or down (3 levels max)
+    VISION_MULT: 1.5,   // radar world radius multiplier on high ground
+    EXPOSURE_BIAS: 0.35,// elevated pilot: spawn azimuth mixed toward uphill
+    RENDER_CELL: 60,    // relief render quantization (the contour cell)
   },
 
   // ---- M1 THE PER-RUN ATLAS (src/atlas.js) ------------------------------------
