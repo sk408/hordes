@@ -2,7 +2,9 @@
 // portrait Android phone: "the card doesn't show on the screen. It's cut
 // off."). Structure + geometry-source pins for the rebuilt manual:
 //   1. PAGES: the manual is paginated - page indicator (n / N), PREV/NEXT
-//      cards, arrow-key parity, a CONTENTS row that jumps;
+//      cards, arrow-key parity; the CONTENTS index row is GONE (settled
+//      shape 2026-09-18: small PREV/NEXT under the instructions, text
+//      dominant);
 //   2. ONE CARD, NOT TWO: the separate TOUCH and KEYBOARD cards are retired -
 //      a single CONTROLS page with subheads, the PLAYER'S OWN input path
 //      first (touch device -> touch first; desktop -> keys first);
@@ -141,14 +143,26 @@ check('arrow keys navigate pages too (Left/Right parity with the cards)', () => 
   kdown('ArrowLeft'); kdown('ArrowLeft'); kdown('ArrowLeft');
   assert.ok(/PAGE 1 \/ 4/.test(elements['ov-sub'].innerHTML), 'ArrowLeft walks back to page 1');
 });
-check('the CONTENTS row lists the four pages and jumps', () => {
-  for (const t of ['A RUN', 'OPTIONS', 'CONTROLS', 'FIELD']) {
-    assert.ok(cardWith(t), 'contents card present: ' + t);
+check('the CONTENTS row is GONE (settled shape 2026-09-18) — no index cards anywhere', () => {
+  // HOW-TO-PLAY SETTLED SHAPE (owner: the index buttons are the worst part —
+  // "just the forward and back remain"). INVERTED, not deleted: no A RUN /
+  // OPTIONS / CONTROLS / FIELD jump cards on ANY page, and PREV/NEXT are the
+  // only paging cards — small (.nav), directly under the instructions.
+  for (let p = 1; p <= 4; p++) {
+    T.manual.goto(p);
+    for (const t of ['A RUN', 'OPTIONS', 'FIELD', 'this page']) {
+      assert.ok(!cardWith(t), 'no index card ' + t + ' on page ' + p);
+    }
+    const prev = cardWith('PREV'), next = cardWith('NEXT');
+    assert.ok(prev && next, 'PREV/NEXT present on page ' + p);
+    assert.ok(prev.classList.contains('nav') && next.classList.contains('nav'),
+      'PREV/NEXT carry the small .nav class on page ' + p);
+    // Reading order: the instructions card sits ABOVE the nav buttons.
+    const ref = cards().find(c => (c.classList && c.classList.contains('ref')) || /class="[^"]*ref/.test(c.className || '') || (c.className || '').includes('ref'));
+    assert.ok(ref, 'the instructions card is present on page ' + p);
+    assert.ok(cards().indexOf(ref) < cards().indexOf(prev),
+      'the nav buttons are UNDERNEATH the instructions on page ' + p);
   }
-  cardWith('A RUN').click();
-  assert.ok(/PAGE 1 \/ 4/.test(elements['ov-sub'].innerHTML), 'contents jump to page 1');
-  cardWith('CONTROLS').click();
-  assert.ok(/PAGE 3 \/ 4/.test(elements['ov-sub'].innerHTML), 'contents jump to page 3');
 });
 check('state.manualPage is cleared when the manual closes (GOT IT -> title)', () => {
   cardWith('GOT IT').click();

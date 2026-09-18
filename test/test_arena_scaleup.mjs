@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { CONFIG as C } from '../src/config.js';
 import { STAGES, stageRelief, DEFAULT_RELIEF } from '../src/stages.js';
 import {
-  reliefHeight, reliefLevel, reliefGrade, reliefUphillAzimuth,
+  reliefHeight, reliefLevel, reliefLevelAt, reliefGrade, reliefUphillAzimuth,
   reliefBiasAngle, reliefVisionRadius,
 } from '../src/relief.js';
 import { lootLimit } from '../src/entities.js';
@@ -91,8 +91,16 @@ S.check('every stage declares a distinct relief character; the field is determin
   const seen = new Set();
   for (const st of STAGES) {
     const rel = stageRelief(st.id);
-    assert(rel.CELL >= 200 && rel.CELL <= 700 && rel.LEVELS >= 2 && rel.LEVELS <= 4,
-      st.id + ' declares a relief character in range: ' + JSON.stringify(rel));
+    // ELEVATION ROLLBACK (2026-09-18): the starting arena ships FLAT —
+    // LEVELS 1, no BASIN, no TERRACE — while the seven unlockable arenas
+    // keep their authored (graded, never blocking) characters untouched.
+    if (st.id === 'VERDANT_HOLLOW') {
+      assert(rel.LEVELS === 1 && !rel.TERRACE && !rel.BASIN,
+        'VERDANT ships the flat rollback: ' + JSON.stringify(rel));
+    } else {
+      assert(rel.CELL >= 200 && rel.CELL <= 700 && rel.LEVELS >= 2 && rel.LEVELS <= 4,
+        st.id + ' declares a relief character in range: ' + JSON.stringify(rel));
+    }
     seen.add(rel.CELL + 'x' + rel.LEVELS);
     // The field: deterministic per seed, bounded 0..LEVELS-1, and EVERY level
     // is reachable somewhere in the arena (the elevated routes exist).
@@ -400,105 +408,58 @@ S.check('KITE ROOM (the armed fight): contact, surrounded, disengages, distance 
     ' | travelled ' + Math.round(k2.dist) + 'px -> ' + Math.round(k3.dist) + 'px');
   assert(k3.dist > k2.dist * 0.8, 'the pilot still roams on the bigger field (kite room is real)');
 });
-S.check('ANTI-SANCTUARY: high ground is not measurably safer than flat (the guard)', () => {
-  // RETARGET (STARTING ARENA IMPROVE 2026-09-17): the hollow's BASIN flattens
-  // the arena heart the autonomous pilot roams, so this guard's old
-  // precondition ("the arm really sampled both grounds") went 97% flat / 0%
-  // high — the arm was measuring WHERE the pilot wanders, not how ground
-  // behaves. The comparison is now PARK-AND-MEASURE: pin the pilot at a HIGH
-  // spot and at a matched FLAT spot — both found on the SAME live field the
-  // measurement runs on, BEYOND the BASIN (so the pinch is never why a spot
-  // reads flat) — and measure contact at each. Two disclosed fixture pins,
-  // both in the measureArm tradition: p.invuln = 1e9 (nothing dies to the
-  // pilot's body) and the run's WEAPONS STRIPPED — this suite's shared
-  // profile carries the maxed shop build by this point, which kills chaff at
-  // range and would measure the loadout, not the ground. Stripped, the horde
-  // reaches the parked pilot and the ground itself is the only variable.
-  const parkedContact = (seed) => {
+S.check('ELEVATION ROLLBACK: the live field is FLAT and the old high ground is ordinary ground', () => {
+  // INVERTED 2026-09-18 (owner: "equalize the elevation so it's all equal"):
+  // the shipped VERDANT relief is LEVELS 1 with no TERRACE, so this guard's
+  // old high-vs-flat park comparison has nothing to compare — high ground no
+  // longer exists. The inversion: (a) the live field the measurement runs on
+  // is FLAT everywhere (no level > 0 anywhere sampled — a mover is never
+  // graded, never blocked), and (b) a PARK-AND-MEASURE at the OLD terrace-top
+  // coordinates shows the would-be sanctuary is now ordinary ground: the
+  // disarmed, parked pilot takes full contact there exactly as on the floor.
+  // (Same disclosed fixtures as always: p.invuln = 1e9, weapons stripped.)
+  const parkContact = (spot) => {
     const realRandom = Math.random;
-    Math.random = mulberry32(seed);
-    let high = null, flat = null, touching = 0, frames = 0;
+    Math.random = mulberry32(0x5eed2);
+    let touching = 0, frames = 0;
     try {
       T.banners.suppressAll();
       T.startRun();
-      // DISARMED ARM (disclosed, the measureArm fixture tradition): the maxed
-      // profile this suite shares would measure the loadout, not the ground —
-      // the base volley is STATS-driven (fireVolley reads p.stats.projectiles,
-      // not the weapons list), Briarmail thorns reflect ON contact, and Static
-      // Field shards chip around vacuumed gems. All three neutralized, the
-      // horde reaches the parked pilot, and the GROUND is the only variable.
       st.weapons.length = 0;
       st.player.stats.projectiles = 0;
       st.player.stats.thorns = 0;
       st.player.stats.stormShards = false;
-      const relNow = stageRelief(st.stage);
-      const liveSeed = st.groundSeed || 0;
-      // HIGH = the tallest level, FLAT = level 0, both past the BASIN.
-      const basinR = (relNow.BASIN || 0) + 80;
-      for (let y = -850; y <= 850 && !(high && flat); y += 40) {
-        for (let x = -850; x <= 850 && !(high && flat); x += 40) {
-          const r = Math.hypot(x, y);
-          if (r < basinR || r > C.GROUND.RIM - 60) continue;
-          const lv = reliefLevel(x, y, liveSeed, relNow);
-          if (!high && lv >= relNow.LEVELS - 1) high = { x, y };
-          else if (!flat && lv === 0) flat = { x, y };
-        }
-      }
-      assert(high && flat,
-        'the live field must hold both grounds beyond the hollow (high ' + JSON.stringify(high) +
-        ' / flat ' + JSON.stringify(flat) + ' @ seed ' + liveSeed + ')');
       const p = st.player;
-      const spot = high;                // measure the HIGH ground on THIS run
       autoplayFrames(20 * 60, () => {
         p.invuln = 1e9;
-        p.x = spot.x; p.y = spot.y;      // parked: re-pinned each frame
+        p.x = spot.x; p.y = spot.y;
         frames++;
         for (const e of st.enemies) {
           if (e.hp <= 0) continue;
-          if (Math.hypot(e.x - spot.x, e.y - spot.y) < Math.max(12, 6 + (e.w || 10) / 2)) {
-            touching++; break;
-          }
+          if (Math.hypot(e.x - spot.x, e.y - spot.y) < Math.max(12, 6 + (e.w || 10) / 2)) { touching++; break; }
         }
       });
-      // FLAT on the SAME field: restart the clock, park at the flat spot.
-      // (Same seed -> same groundSeed sequence -> the same field geometry.)
-      T.startRun();
-      st.weapons.length = 0;            // the same disclosed disarm
-      st.player.stats.projectiles = 0;
-      st.player.stats.thorns = 0;
-      st.player.stats.stormShards = false;
-      const rel2 = stageRelief(st.stage);
-      assert(rel2.LEVELS === relNow.LEVELS, 'same stage both arms');
-      const p2 = st.player;
-      const spot2 = flat;
-      let touching2 = 0, frames2 = 0;
-      autoplayFrames(20 * 60, () => {
-        p2.invuln = 1e9;
-        p2.x = spot2.x; p2.y = spot2.y;
-        frames2++;
-        for (const e of st.enemies) {
-          if (e.hp <= 0) continue;
-          if (Math.hypot(e.x - spot2.x, e.y - spot2.y) < Math.max(12, 6 + (e.w || 10) / 2)) {
-            touching2++; break;
-          }
-        }
-      });
-      const highRate = frames ? touching / frames : 0;
-      const flatRate = frames2 ? touching2 / frames2 : 0;
-      assert(frames > 600 && frames2 > 600,
-        'both parked arms really ran (high ' + frames + ' / flat ' + frames2 + ' frames)');
-      return { highRate, flatRate, high, flat, seed: liveSeed };
-    } finally {
-      Math.random = realRandom;
-    }
+    } finally { Math.random = realRandom; }
+    return frames ? touching / frames : 0;
   };
-  const { highRate, flatRate, high, flat } = parkedContact(0x5eed2);
-  assert(highRate >= flatRate * 0.5,
-    'high ground contact rate ' + (highRate * 100).toFixed(1) +
-    '% is not a sanctuary vs flat ' + (flatRate * 100).toFixed(1) + '%');
-  console.log('  MEASURED anti-sanctuary (parked, disarmed): contact-while-high ' +
-    (highRate * 100).toFixed(1) + '% vs contact-while-flat ' + (flatRate * 100).toFixed(1) +
-    '% (grade is symmetric; exposure bias pulls the horde uphill)');
+  const relNow = stageRelief(st.stage);
+  assert(relNow.LEVELS === 1 && !relNow.TERRACE, 'the live stage ships the flat rollback');
+  const seedRel = st.groundSeed || 0;
+  let maxLv = 0;
+  for (let y = -850; y <= 850; y += 40) {
+    for (let x = -850; x <= 850; x += 40) {
+      if (Math.hypot(x, y) > C.GROUND.RIM) continue;
+      maxLv = Math.max(maxLv, reliefLevelAt(x, y, seedRel, relNow));
+    }
+  }
+  assert(maxLv === 0, 'the live field is FLAT everywhere (max level ' + maxLv + ')');
+  // The old upper-path top (SPAN_MID at band radius 630) is now ordinary ground.
+  const topSpot = { x: 0, y: 630 };
+  const rate = parkContact(topSpot);
+  assert(rate > 0.5, 'full contact at the old terrace-top coordinates (' +
+    (rate * 100).toFixed(1) + '%) — no elevation advantage remains');
+  console.log('  MEASURED flat field: contact at the OLD top spot ' +
+    (rate * 100).toFixed(1) + '% (max relief level anywhere: ' + maxLv + ')');
 });
 
 // ---------------------------------------------------------------------------

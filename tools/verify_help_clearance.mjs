@@ -93,6 +93,14 @@ async function arm(w, h, dpr) {
     async (p) => {
       await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
       await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000);
+      // FIRST-RUN PROLOGUE (2026-09-18): a fresh browser profile's run #1
+      // opens the choreographed prologue (the pilot is not player-driven) —
+      // stamp runs=1 (the harness convention) so this verifier drives an
+      // ordinary run.
+      await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+        const pr = T2.getProfile();
+        if (pr && pr.achievements && pr.achievements.totals) pr.achievements.totals.runs = 1;
+        return true; })()`);
       await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'title')()", 8000);
       await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal; return !rv || rv.phase === 'settled'; })()", 8000);
       let playing = false;

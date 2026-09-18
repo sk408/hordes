@@ -66,17 +66,33 @@ export const STAGES = [
     // the shelf never cliffs itself) — without it the natural rim terraces
     // would merge into the top and the separation would leak. Scoped HERE so
     // the other seven stages ship byte-identical terrain.
+    // ELEVATION ROLLBACK (owner 2026-09-18: "We need to rollback elevation
+    // for the time being. It needs more work before we put it back. The
+    // mechanic can be left in, just equalize the elevation so it's all
+    // equal"). A VALUES-ONLY change: LEVELS 3 -> 1 flattens the quantized
+    // field (reliefLevel is 0 everywhere -> no grades, no tints, no contours;
+    // render.js drawRelief paints nothing at LEVELS <= 1) and the BASIN /
+    // TERRACE blocks are REMOVED from the shipped data (reliefBlocked is
+    // false without a TERRACE block, so nothing blocks a mover anywhere).
+    // Every hook in src/relief.js is intact and dormant — re-enabling is a
+    // DATA RESTORE, not a re-implementation: paste the authored block below
+    // back into `relief` and set LEVELS back to 3.
+    //
+    //   THE AUTHORED ELEVATION (2026-09-17/18, to restore verbatim):
+    //   relief: {
+    //     CELL: 480, LEVELS: 3, BASIN: 560,   // the hollow: flat heart, rising rim
+    //     TERRACE: {
+    //       r0: 560, r1: 700,                 // the upper-path band (world px radius)
+    //       A0: Math.PI / 2 - 0.75,           // the top span, north-centred (~86 deg)
+    //       A1: Math.PI / 2 + 0.75,
+    //       rampW: 0.30,                      // each ramp's angular run (~380px, 2 graded steps)
+    //       topLevel: 2,                      // the path top (the stage's tallest ground)
+    //       apron: 120,                       // the flattened shelf's reach beyond the band edges
+    //       feather: 0.35,                    // the apron's angular ease (never a cliff)
+    //     },
+    //   },
     relief: {
-      CELL: 480, LEVELS: 3, BASIN: 560,   // the hollow: flat heart, rising rim
-      TERRACE: {
-        r0: 560, r1: 700,                 // the upper-path band (world px radius)
-        A0: Math.PI / 2 - 0.75,           // the top span, north-centred (~86 deg)
-        A1: Math.PI / 2 + 0.75,
-        rampW: 0.30,                      // each ramp's angular run (~380px, 2 graded steps)
-        topLevel: 2,                      // the path top (the stage's tallest ground)
-        apron: 120,                       // the flattened shelf's reach beyond the band edges
-        feather: 0.35,                    // the apron's angular ease (never a cliff)
-      },
+      CELL: 480, LEVELS: 1,   // ROLLBACK 2026-09-18: flat (was 3 + BASIN + TERRACE)
     },
     unlock: null,
   },
@@ -314,6 +330,9 @@ function hazardWord(h) {
   return h.id.toLowerCase();
 }
 function reliefWord(id, rel) {
+  // ROLLBACK 2026-09-18: a flat stage (LEVELS <= 1) says so in one plain word;
+  // the authored-character wording returns with the authored numbers.
+  if (rel.LEVELS <= 1) return 'flat ground';
   const lv = rel.LEVELS + ' relief levels';
   return stageOf(id).relief && stageOf(id).relief.BASIN
     ? 'a hollow at the heart, ' + lv

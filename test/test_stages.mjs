@@ -1008,15 +1008,18 @@ s.check('stageFacts: the measured table is the catalog\'s own arithmetic (every 
   if (v.ranged !== 22 || v.heavy !== 15) throw new Error('verdant shares: ' + JSON.stringify(v));
   if (v.hp !== 1 || v.dmg !== 1 || v.spawn !== 1) throw new Error('verdant mults must be the shipped 1s');
   if (v.hazard !== null) throw new Error('the starting arena carries no hazard');
-  if (v.relief.CELL !== 480 || v.relief.LEVELS !== 3 || v.relief.BASIN !== 560) {
-    throw new Error('verdant relief character: ' + JSON.stringify(v.relief));
+  // ELEVATION ROLLBACK (2026-09-18): the shipped verdant relief is FLAT —
+  // LEVELS 1, no BASIN, no TERRACE (the authored values live verbatim in a
+  // comment block in stages.js; restoring them re-enables the feature).
+  if (v.relief.CELL !== 480 || v.relief.LEVELS !== 1 || v.relief.BASIN !== undefined) {
+    throw new Error('verdant relief must be the flat rollback: ' + JSON.stringify(v.relief));
   }
 });
 
 s.check('stageFactsLine: plain words, hazard words, the hollow named', () => {
   const v = stageFactsLine('VERDANT_HOLLOW');
   for (const tok of ['ranged 22%', 'heavies 15%', 'foe hp x1', 'dmg x1', 'spawn x1',
-                     'a hollow at the heart', '3 relief levels']) {
+                     'flat ground']) {
     if (!v.includes(tok)) throw new Error('the verdant line lacks "' + tok + '": ' + v);
   }
   if (stageFacts('ASHEN_WASTE').ranged !== 0 || !stageFactsLine('ASHEN_WASTE').includes('ranged 0%')) {
@@ -1084,9 +1087,13 @@ s.check('the BASIN is the hollow: a flat heart, an untouched rim, every level st
   if (seen.size !== 3 || ![...seen].every(l => l >= 0 && l <= 2)) {
     throw new Error('the hollow lost a relief level: ' + [...seen].join(','));
   }
-  // The stage's catalog relief still carries BASIN, and stageRelief hands a
-  // fresh copy (the seam the run reads).
-  if (stageRelief('VERDANT_HOLLOW').BASIN !== 560) throw new Error('catalog BASIN gone');
+  // ROLLBACK 2026-09-18, INVERTED: the shipped catalog relief no longer
+  // carries BASIN (or TERRACE) — the stage is flat — but the pure BASIN model
+  // above still honours it when handed the values, which is the
+  // mechanic-present half (re-enabling is a data restore).
+  if (stageRelief('VERDANT_HOLLOW').BASIN !== undefined) throw new Error('catalog BASIN must be dormant');
+  if (stageRelief('VERDANT_HOLLOW').TERRACE) throw new Error('catalog TERRACE must be dormant');
+  if (stageRelief('VERDANT_HOLLOW').LEVELS !== 1) throw new Error('catalog LEVELS must be the flat 1');
 });
 
 s.check('the authored landmarks: stump at the heart, gates at the cardinals, groves in between', () => {

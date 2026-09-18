@@ -219,6 +219,17 @@
     width: 100%; max-width: min(560px, var(--fit-w));
     display: flex; align-items: center; justify-content: center;
   }
+  /* HOW-TO-PLAY SETTLED SHAPE (owner 2026-09-18: the index buttons are gone —
+     "just the forward and back remain... the main text over small forward and
+     back buttons", "underneath the instructions"): PREV/NEXT are SMALL
+     side-by-side buttons directly UNDER the instructions card — the manual
+     text dominates the screen. The 44px touch floor stays. */
+  #overlay.howto .card.nav {
+    width: 118px; min-width: 118px; max-width: 118px; min-height: 44px;
+    box-sizing: border-box; padding: 6px 8px; flex: 0 0 auto;
+  }
+  #overlay.howto .card.nav .name { font-size: 12px; margin-bottom: 3px; }
+  #overlay.howto .card.nav .desc { font-size: 10px; }
   /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
      canvas — 16x16 backing store, INTEGER 2x CSS scale (32px), pixelated
      (same convention as the G13 portraits; no smoothing, no blur). */

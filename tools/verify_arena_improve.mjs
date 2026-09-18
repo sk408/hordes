@@ -41,7 +41,8 @@ async function viewport(w, h, tag) {
       '[' + tag + '] the STAGE card states the measured shares: ' + sub.slice(0, 120));
     ok(/hp x\d/.test(sub) && /dmg x\d/.test(sub) && /spawn x\d/.test(sub),
       '[' + tag + '] the STAGE card states the foe multipliers');
-    ok(/relief/.test(sub), '[' + tag + '] the STAGE card states the relief character');
+    ok(/flat ground/.test(sub), '[' + tag + '] the STAGE card states the rolled-back flat relief (' +
+      (sub.match(/flat ground/) ? 'flat ground' : sub.slice(0, 120)) + ')');
 
     // ---- the field: a live VERDANT run, mid-fight.
     t = await T();

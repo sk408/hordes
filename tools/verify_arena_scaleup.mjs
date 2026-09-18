@@ -67,34 +67,45 @@ async function viewport(w, h, tag) {
     ok(Math.abs(clamped.x) <= 900 && Math.abs(clamped.y) <= 900,
       'the pilot clamps at the new rim through the real loop (' + clamped.x + ',' + clamped.y + ')');
 
-    // ---- 2. ELEVATION: the relief layer paints, and a HIGH-GROUND frame.
-    const reliefPaints = await p.waitFor(`(async () => { const T2 = ${T};
-      return T2.renderer.reliefCells > 0; })()`, 5000, 60);
-    ok(reliefPaints, 'the relief layer paints on the live field (contours + level tint)');
+    // ---- 2. ELEVATION ROLLBACK (2026-09-18): the default field is FLAT — the
+    // relief layer paints NOTHING, no high ground exists anywhere, and the
+    // radar stays at base radius. The high-ground WIDENING is still proven as
+    // a pure function (the mechanic sleeps, it is not deleted).
+    await p.evaluate(`(async () => { const T2 = ${T};
+      T2.renderer.reliefCells = -1; return true; })()`);   // sentinel
+    await p.sleep(400);                                     // several frames pass
+    const reliefPaints = await p.evaluate(`(async () => { const T2 = ${T};
+      return T2.renderer.reliefCells; })()`);
+    ok(reliefPaints === -1,
+      'the relief layer paints NOTHING on the flat field (sentinel untouched, got ' + reliefPaints + ')');
     let shot = await p.shot('arena-relief-' + tag);
     copyFileSync(shot, ART + '/relief-' + tag + '.png');
-    // Park the pilot on the nearest HIGH point (level >= HIGH_LEVEL) and read
-    // the widened radar radius the HUD actually draws from.
+    // Sweep the whole field: no high ground exists; park at the OLD top spot
+    // and read the radar radius the HUD draws from there (base — flat).
     const high = await p.evaluate(`(async () => { const T2 = ${T};
       const C = (await import('./src/config.js')).CONFIG;
       const { reliefLevel, reliefVisionRadius } = await import('./src/relief.js');
       const { stageRelief } = await import('./src/stages.js');
       const st = T2.state, p2 = st.player;
       const rel = stageRelief(st.stage), seed = st.groundSeed || 0;
-      let bx = 0, by = 0, found = false;
-      for (let r = 60; r <= 840 && !found; r += 30) {
-        for (let a = 0; a < Math.PI * 2 && !found; a += Math.PI / 24) {
+      let maxLv = 0;
+      for (let r = 60; r <= 840; r += 30) {
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 24) {
           const x = Math.round(Math.cos(a) * r), y = Math.round(Math.sin(a) * r);
-          if (reliefLevel(x, y, seed, rel) >= C.RELIEF.HIGH_LEVEL) { bx = x; by = y; found = true; }
+          maxLv = Math.max(maxLv, reliefLevel(x, y, seed, rel));
         }
       }
-      p2.x = bx; p2.y = by;
-      const lv = reliefLevel(bx, by, seed, rel);
-      return { found, lv, base: 330, vision: Math.round(reliefVisionRadius(330, lv)) }; })()`);
-    ok(high.found && high.lv >= 2,
-      'the pilot parked on HIGH ground (level ' + high.lv + ' of the stage field)');
-    ok(high.vision === 495,
-      'the radar disc the HUD draws widens to ' + high.vision + 'px on high ground (base ' + high.base + ')');
+      p2.x = 0; p2.y = 630;                                 // the OLD terrace-top spot
+      const lv = reliefLevel(0, 630, seed, rel);
+      return { maxLv, lv, base: 330, vision: Math.round(reliefVisionRadius(330, lv)),
+        widened: Math.round(reliefVisionRadius(330, C.RELIEF.HIGH_LEVEL)) }; })()`);
+    ok(high.maxLv === 0,
+      'the whole live field is level 0 (max ' + high.maxLv + ') — no high ground exists');
+    ok(high.lv === 0 && high.vision === 330,
+      'the OLD top spot reads flat and the radar stays at base ' + high.vision + 'px');
+    ok(high.widened === 495,
+      'MECHANIC PRESENT: reliefVisionRadius still widens to ' + high.widened +
+      'px on authored high ground (base ' + high.base + ') — dormant, not deleted');
     await p.sleep(300);   // the camera settles on the new position
     shot = await p.shot('arena-highground-' + tag);
     copyFileSync(shot, ART + '/highground-' + tag + '.png');

@@ -4907,15 +4907,17 @@ function manualGoto(page) {
       '<br>the ground rises toward the rim: climbing costs a little speed (foes pay it too), high ground widens your radar reach.');
     addCls(c, 'ref');
   }
-  // Nav row: PREV/NEXT with the ends dimmed (arrow keys are their twins).
-  menuCard('PREV', 'page ' + Math.max(1, p - 1), () => manualGoto(p - 1), p <= 1);
-  menuCard('NEXT', 'page ' + Math.min(MANUAL_PAGES, p + 1), () => manualGoto(p + 1), p >= MANUAL_PAGES);
-  // CONTENTS row: the four pages, current one dimmed (a place-you-marker,
-  // still clickable — dim is opacity, not disabled).
-  const toc = [['A RUN', 1], ['OPTIONS', 2], ['CONTROLS', 3], ['FIELD', 4]];
-  for (const [t, n] of toc) {
-    menuCard(t, n === p ? 'this page' : 'page ' + n, () => manualGoto(n), n === p);
-  }
+  // Nav row (HOW-TO-PLAY SETTLED SHAPE, owner 2026-09-18: the index buttons
+  // are GONE — "just removing the supposed index buttons and keeping prev and
+  // next and making sure they are underneath the instructions"): PREV/NEXT
+  // stay, as SMALL side-by-side buttons (the .nav class, index.html) directly
+  // UNDER the instructions card, so the manual TEXT dominates the screen. The
+  // ends dim; arrow keys are their twins; the PAGE n / N subtitle is the
+  // position marker.
+  const cPrev = menuCard('PREV', 'page ' + Math.max(1, p - 1), () => manualGoto(p - 1), p <= 1);
+  addCls(cPrev, 'nav');
+  const cNext = menuCard('NEXT', 'page ' + Math.min(MANUAL_PAGES, p + 1), () => manualGoto(p + 1), p >= MANUAL_PAGES);
+  addCls(cNext, 'nav');
   // M4: REPLAY TOUR (WAVE-21, docs/FIRST_RUN_TOUR doc #7) lives HERE now — a
   // footer card on every manual page EXCEPT the first-run gate (a fresh
   // player has not seen the tour yet; replaying it from the gate would be a
