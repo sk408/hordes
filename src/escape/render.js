@@ -501,7 +501,27 @@ export function draw(ctx, sim, opts = {}) {
     const x0 = w2s(pl.x), x1 = w2s(pl.x + pl.w);
     if (x1 < 0 || x0 > VIEW_W) continue;
     const top = wy(pl.y);
-    if (pl.y <= DECK_LEVEL) {
+    if (pl.float) {
+      // THE BYPASS FLOAT (owner 2026-09-18: "platforms can be floating with
+      // no connection to solid ground"): a slab with NO struts and NO column
+      // — but NEVER ambiguous against the parallax behind it. The readability
+      // rule: every STANDABLE surface in this scene carries the lit top lip
+      // and the two bright side lips (the gap-lip language, drawn for all
+      // plats below); the parallax layers are unlit silhouettes with no lips
+      // at all. The float doubles the tell with an ember underglow row and
+      // hanging studs, so "this one is solid" reads at phone size.
+      ctx.fillStyle = C_PLAT;
+      ctx.fillRect(x0, top, x1 - x0, 14);
+      ctx.fillStyle = C_PLAT_UNDER;
+      ctx.fillRect(x0, top + 10, x1 - x0, 4);
+      ctx.fillStyle = C_PLAT_TOP;                        // the lit standable edge
+      ctx.fillRect(x0, top, x1 - x0, 3);
+      ctx.fillStyle = rgba(pal.win, 0.22);               // the ember underglow row
+      ctx.fillRect(x0 + 2, top + 14, x1 - x0 - 4, 1);
+      ctx.fillStyle = C_PLAT_UNDER;                      // hanging studs (the float reads)
+      for (let sx = x0 + 8; sx < x1 - 6; sx += 26) ctx.fillRect(sx, top + 15, 2, 3);
+      ctx.fillRect(x1 - 6, top + 15, 2, 3);
+    } else if (pl.y <= DECK_LEVEL) {
       // THE DECK: slab + underside + struts down to the kill line.
       ctx.fillStyle = C_PLAT;
       ctx.fillRect(x0, top, x1 - x0, 18);

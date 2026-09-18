@@ -175,7 +175,7 @@ export function explain(px, py) {
   if (R.jumpHit(px, py)) return 'JUMP — manual pad: leap the gaps (same jump as the auto pilot)';
   if (R.dashHit(px, py)) return 'DASH — manual pad: the short speed burst (same dash as the auto pilot)';
   if (R.kickHit(px, py)) return 'KICK — manual pad: stomp the pursuit pack off your tail (bounded: cooldown + a short clear window)';
-  return 'THE ESCAPE — run right. Gaps are lethal falls, the horde wall behind is the timer, the boss arms guard the finale.';
+  return 'THE ESCAPE — run right. Gaps are lethal falls, the horde wall behind is the timer, the boss arms guard the finale (floating slabs lead over the boss — the high road dodges the claw but pays in the sickle\'s timing).';
 }
 
 export function onKey(k, down) {

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>HORDES — shop paging mockup (7R4PW)</title>
+<!--
+  SHOP PAGING MOCKUP (task 7R4PW, 2026-09-18). MOCKUP ONLY — the live shop in
+  src/main.js showShop() is untouched. Two variants, switchable at the top:
+
+    ARROW PAGER — fixed-size pages, prev/next arrows at the screen edges within
+    thumb reach, a "2 / 7" indicator, AND horizontal swipe as a first-class
+    input (on a phone swipe is the primary gesture).
+    BOOK — pagination presented as a book: a two-page spread, a spine, page
+    corners as the turn affordance (tap or swipe).
+
+  THROUGH THE REAL THING (the condense-mockup house pattern): this page fetches
+  the LIVE index.html at runtime and injects its <style> unchanged, so every
+  card below renders with the game's OWN CSS (.card / .name / .desc / .dim /
+  .shop-icon, the #overlay chrome); the rows are the REAL SHOP_UPGRADES data
+  (src/meta.js) at a believable mid-save profile, priced by the REAL
+  upgradeCost(), framed by the REAL composeMenuFrame() art and icons by the
+  REAL shopIcon() — only the paging chrome is new, and that is the point.
+
+  The rows are INTERACTIVE: tapping an affordable row buys it (bank decrements,
+  LV climbs, MAXED/OWNED at cap), a weapon row demonstrates the opt-out buy UI
+  (bought = EQUIPPED, tap again to bench), and an unaffordable row refuses —
+  the exact tap-to-buy contract the live shop has.
+
+  Open on a phone (GitHub Pages, repo main):
+  https://sk408.github.io/hordes/docs/art/shop-paging-2026-09-18/mockup.html
+-->
+<style>
+  /* MOCKUP-ONLY chrome (paging furniture + the unmistakable banner). None of
+     this is game CSS; everything inside .page uses the injected real rules. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05050a;
+    font-family: monospace, monospace; }
+  #mock-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    background: #7a1f33; color: #ffd75e; text-align: center; font-size: 11px;
+    letter-spacing: 1px; padding: 4px 0; }
+  #mock-switch { position: fixed; top: 24px; left: 0; right: 0; z-index: 50;
+    display: flex; justify-content: center; gap: 8px; }
+  #mock-switch button { font: inherit; font-size: 12px; letter-spacing: 1px;
+    background: #14141c; color: #f0dfc0; border: 1px solid #4a4a6a;
+    padding: 6px 12px; }
+  #mock-switch button.on { background: #4a3050; color: #ffd75e; }
+  #mock-bank { position: fixed; top: 56px; left: 0; right: 0; z-index: 50;
+    text-align: center; color: #ffe07a; font-size: 12px; }
+  #stage { position: fixed; top: 76px; bottom: 44px; left: 0; right: 0;
+    overflow: hidden; touch-action: pan-y; }
+  #mock-note { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+    color: #9ec2ff; font-size: 10px; text-align: center; padding: 4px 8px;
+    background: rgba(5,5,10,0.8); min-height: 14px; }
+
+  /* ---- variant A: ARROW PAGER ---- */
+  .pg-page { position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 56px;
+    box-sizing: border-box; transition: transform .18s ease-out, opacity .18s ease-out; }
+  .pg-page.left { transform: translateX(-100%); opacity: 0; pointer-events: none; }
+  .pg-page.right { transform: translateX(100%); opacity: 0; pointer-events: none; }
+  .pg-arrow { position: absolute; top: 50%; transform: translateY(-50%);
+    width: 44px; height: 56px; z-index: 40; font-size: 22px; line-height: 56px;
+    text-align: center; color: #ffd75e; background: rgba(20,20,28,0.85);
+    border: 1px solid #4a4a6a; user-select: none; -webkit-user-select: none; }
+  #pg-prev { left: 4px; } #pg-next { right: 4px; }
+  .pg-arrow.dead { opacity: 0.3; }
+  #pg-indicator { position: fixed; bottom: 22px; left: 0; right: 0; z-index: 45;
+    text-align: center; color: #f0dfc0; font-size: 13px; letter-spacing: 2px; }
+
+  /* ---- variant B: BOOK ---- */
+  #book { position: absolute; inset: 0 0 34px 0; display: flex; }
+  .bk-page { flex: 1 1 50%; display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; gap: 8px; padding: 8px 6px 8px 10px;
+    box-sizing: border-box; overflow: hidden;
+    background: linear-gradient(180deg, #101018, #0a0a12); position: relative; }
+  .bk-page.rightpage { padding: 8px 10px 8px 6px; }
+  #book.spread .bk-page:first-child { box-shadow: inset -14px 0 20px -12px #000; }
+  #book.spread .bk-page:last-child { box-shadow: inset 14px 0 20px -12px #000; }
+  #spine { width: 10px; background: linear-gradient(180deg,#3a2a1a,#1a120a,#3a2a1a); }
+  .bk-corner { position: absolute; bottom: 6px; width: 34px; height: 34px;
+    font-size: 16px; color: #ffd75e; opacity: 0.75; z-index: 40; }
+  .bk-corner.tl { top: 6px; left: 8px; } .bk-corner.tr { top: 6px; right: 8px; }
+  .bk-corner.bl { bottom: 6px; left: 8px; } .bk-corner.br { bottom: 6px; right: 8px; }
+  .bk-leaf { transition: transform .22s ease-in, opacity .22s ease-in; }
+  #bk-indicator { position: fixed; bottom: 22px; left: 0; right: 0; z-index: 45;
+    text-align: center; color: #f0dfc0; font-size: 13px; letter-spacing: 2px; }
+  .page-frozen { transition: none !important; }
+</style>
+</head>
+<body>
+<div id="mock-banner">MOCKUP — SHOP PAGING (7R4PW) · not the live game</div>
+<div id="mock-switch">
+  <button id="sw-arrow" class="on">ARROW PAGER</button>
+  <button id="sw-book">BOOK</button>
+</div>
+<div id="mock-bank">BANK: 4,000</div>
+<div id="stage"></div>
+<div id="mock-note"></div>
+
+<script type="module">
+const R = '../../../';
+
+// ---- 1. the REAL game CSS, injected unchanged --------------------------------
+const html = await (await fetch(R + 'index.html')).text();
+const css = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+document.head.appendChild(Object.assign(document.createElement('style'), { textContent: css }));
+
+// ---- 2. the REAL shop data + art ----------------------------------------------
+const { SHOP_UPGRADES, upgradeCost } = await import(R + 'src/meta.js');
+const { shopIcon } = await import(R + 'src/art/shop_icons.js');
+const { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } =
+  await import(R + 'src/art/menu_frame.js');
+
+// drawGrid: verbatim behaviour copy of the pixel-grid painter (render.js:264,
+// a Renderer method) — 8 lines, kept identical so the frames/icons paint
+// exactly as the live shop paints them, without importing the whole renderer.
+function drawGrid(g, grid, palette, x, y, scale = 1) {
+  const s = Math.max(1, Math.floor(scale));
+  for (let ry = 0; ry < grid.length; ry++) {
+    const row = grid[ry];
+    for (let rx = 0; rx < row.length; rx++) {
+      const v = row[rx];
+      if (v) { g.fillStyle = palette[v]; g.fillRect(x + rx * s, y + ry * s, s, s); }
+    }
+  }
+}
+
+// A believable MID-SAVE profile: some levels bought, one weapon owned+equipped,
+// bank 4000 — so the pages show every state the live shop shows (LV n/max,
+// MAXED, OWNED, affordable, dim-unaffordable).
+const profile = { gold: 4000, purchased: { dmg: 3, hp: 2, regen: 1, luck: 4, crit: 2 },
+  unlockedWeapons: ['ORBIT'], equippedWeapons: ['ORBIT'] };
+
+function rowState(def) {
+  const lvl = def.kind ? 0 : (profile.purchased[def.id] || 0);
+  const owned = def.kind ? (profile.unlockedWeapons || []).includes(widOf(def)) : false;
+  const capped = def.kind ? owned : lvl >= def.maxLevel;
+  const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
+  return { lvl, owned, capped, cost, afford: profile.gold >= cost };
+}
+
+// ONE row, the showShop() markup verbatim (menuCard + shop-icon canvas).
+function buildCard(def) {
+  const st = rowState(def);
+  const el = document.createElement('div');
+  el.className = 'card' + ((st.capped || !st.afford) ? ' dim' : '');
+  const sub = def.kind
+    ? (st.owned ? ownedLabel(def) : st.cost + ' gold')
+    : `LV ${st.lvl}/${def.maxLevel} · ${st.capped ? 'MAXED' : st.cost + ' gold'}`;
+  el.innerHTML = `<div class="name">${def.name}</div><div class="desc">${def.desc}<br>${sub}</div>`;
+  const cv = document.createElement('canvas');
+  cv.className = 'shop-icon'; cv.width = 16; cv.height = 16;
+  el.insertBefore(cv, el.firstChild);
+  const icon = shopIcon(def.id);
+  drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
+  el.onclick = () => tapRow(def, el);
+  return el;
+}
+function ownedLabel(def) {
+  if (def.kind !== 'weapon') return 'OWNED';
+  const eq = (profile.equippedWeapons || []).includes(widOf(def));
+  return eq ? 'OWNED · EQUIPPED' : 'OWNED · BENCHED';
+}
+function frameIt(el, tone) {
+  const cv = document.createElement('canvas');
+  cv.className = 'frame';
+  el.insertBefore(cv, el.firstChild);
+  requestAnimationFrame(() => {   // paint after layout, like frameCard's lazy RO
+    const w = el.clientWidth, h = el.clientHeight;
+    const W = w + MENU_FRAME_SHADOW.dx, H = h + MENU_FRAME_SHADOW.dy;
+    cv.width = W; cv.height = H;
+    drawGrid(cv.getContext('2d'), composeMenuFrame(w, h).grid, MENU_FRAME_PALETTES[tone] || MENU_FRAME_PALETTES.base, 0, 0);
+  });
+}
+// The opt-out buy UI preserved: a bought WEAPON is EQUIPPED; tapping it again
+// benches it (the live shop's EQUIPPED X / BENCHED Y contract, one line).
+function tapRow(def, el) {
+  const st = rowState(def);
+  const note = document.getElementById('mock-note');
+  if (def.kind === 'weapon' && st.owned) {
+    const id = widOf(def), eq = profile.equippedWeapons.includes(id);
+    profile.equippedWeapons = eq ? profile.equippedWeapons.filter(w => w !== id)
+      : [...profile.equippedWeapons, id];
+    note.textContent = eq ? 'BENCHED ' + def.name + ' — see LOADOUT' : 'EQUIPPED ' + def.name + ' — in your LOADOUT';
+    refreshRow(def, el); return;
+  }
+  if (st.capped) { note.textContent = def.name + ': ' + (st.owned ? 'OWNED' : 'MAXED'); return; }
+  if (!st.afford) { note.textContent = def.name + ': not enough gold'; return; }
+  profile.gold -= st.cost;
+  if (def.kind) { profile.unlockedWeapons = [...(profile.unlockedWeapons || []), widOf(def)];
+    if (def.kind === 'weapon') { profile.equippedWeapons = [...(profile.equippedWeapons || []), widOf(def)];
+      note.textContent = 'EQUIPPED ' + def.name + ' — in your LOADOUT'; } else note.textContent = 'OWNED ' + def.name;
+  } else { profile.purchased[def.id] = st.lvl + 1; note.textContent = def.name + ' → LV ' + (st.lvl + 1); }
+  document.getElementById('mock-bank').textContent = 'BANK: ' + profile.gold.toLocaleString('en-US');
+  refreshRow(def, el);
+}
+function refreshRow(def, el) {
+  const fresh = buildCard(def);
+  fresh.classList.add('page-frozen');
+  el.replaceWith(fresh);
+  frameIt(fresh, fresh.classList.contains('dim') ? 'base' : 'base');
+}
+
+// The full row list the live shop renders (47 upgrade rows + the two doors the
+// mock keeps for context). Weapon rows already carry their real weaponId
+// (meta.js stamps it); every id read below uses (weaponId || id).
+const DEFS = SHOP_UPGRADES;
+const widOf = (def) => def.weaponId || def.id;
+const DOORS = [
+  { id: 'characters', name: 'CHARACTERS', desc: 'per-pilot upgrades', kind: 'door' },
+  { id: 'back', name: 'BACK', desc: 'to title [ESC]', kind: 'door' },
+];
+
+// ---- 3. the two pagers ---------------------------------------------------------
+const stage = document.getElementById('stage');
+let variant = new URLSearchParams(location.search).get('v') === 'book' ? 'book' : 'arrow';
+let page = 0, perPage = 1, pages = 1;
+const allCards = () => [...DEFS, ...DOORS].map(buildCard);
+
+function capacity() {
+  const probe = buildCard(DEFS[0]);
+  stage.appendChild(probe);
+  const h = probe.getBoundingClientRect().height + 8;
+  const w = probe.getBoundingClientRect().width;
+  probe.remove();
+  const cols = Math.max(1, Math.floor((stage.clientWidth - 112) / (w + 8)));
+  const rows = Math.max(1, Math.floor((stage.clientHeight - 12) / h));
+  return { cols, rows, per: cols * rows };
+}
+
+// ---- ARROW PAGER: fixed-size pages + edge arrows + indicator + swipe -----------
+function buildArrow() {
+  stage.innerHTML = '';
+  const cap = capacity(); perPage = cap.per;
+  const list = allCards();
+  pages = Math.max(1, Math.ceil(list.length / perPage));
+  if (page >= pages) page = pages - 1;
+  const wrap = [];
+  for (let i = 0; i < pages; i++) {
+    const pg = document.createElement('div');
+    pg.className = 'pg-page' + (i < page ? ' left' : i > page ? ' right' : '');
+    list.slice(i * perPage, (i + 1) * perPage).forEach(c => pg.appendChild(c));
+    stage.appendChild(pg); wrap.push(pg);
+  }
+  const prev = document.createElement('div'); prev.id = 'pg-prev'; prev.className = 'pg-arrow'; prev.textContent = '‹';
+  const next = document.createElement('div'); next.id = 'pg-next'; next.className = 'pg-arrow'; next.textContent = '›';
+  prev.onclick = () => turn(-1); next.onclick = () => turn(1);
+  const ind = document.createElement('div'); ind.id = 'pg-indicator';
+  stage.appendChild(prev); stage.appendChild(next); stage.appendChild(ind);
+  function show() {
+    wrap.forEach((pg, i) => { pg.classList.toggle('left', i < page); pg.classList.toggle('right', i > page); });
+    prev.classList.toggle('dead', page === 0); next.classList.toggle('dead', page === pages - 1);
+    ind.textContent = (page + 1) + ' / ' + pages + '  ·  ' + cap.cols + ' col × ' + cap.rows + ' rows';
+  }
+  function turn(d) { const n = Math.min(pages - 1, Math.max(0, page + d)); if (n !== page) { page = n; show(); } }
+  window.__turn = turn; window.__state = () => ({ page, pages, perPage });
+  swipeGestures(stage, turn);
+  show();
+  frameAll(stage);
+}
+
+// ---- BOOK: a spread, a spine, page corners -------------------------------------
+function buildBook() {
+  stage.innerHTML = '';
+  const book = document.createElement('div'); book.id = 'book'; book.className = 'spread';
+  stage.appendChild(book);
+  const list = allCards();
+  const ind = document.createElement('div'); ind.id = 'bk-indicator'; stage.appendChild(ind);
+  const L = document.createElement('div'); L.className = 'bk-page';
+  const S = document.createElement('div'); S.id = 'spine';
+  const Rp = document.createElement('div'); Rp.className = 'bk-page rightpage';
+  book.appendChild(L); book.appendChild(S); book.appendChild(Rp);
+  // A page holds what fits in HALF the width, one column (the honest cost the
+  // report measures: the spread halves the usable width). The probe MUST be
+  // measured INSIDE a .bk-page: #book is a row flexbox, so a bare child
+  // stretch-aligns to the book's full height and perSide collapses to 1.
+  const probe = buildCard(DEFS[0]); L.appendChild(probe);
+  const ch = probe.getBoundingClientRect().height + 8; probe.remove();
+  const perSide = Math.max(1, Math.floor((stage.clientHeight - 46) / ch));
+  perPage = perSide * 2; pages = Math.max(1, Math.ceil(list.length / perPage));
+  if (page >= pages) page = pages - 1;
+  function show() {
+    L.innerHTML = ''; Rp.innerHTML = '';
+    list.slice(page * perPage, page * perPage + perSide).forEach(c => L.appendChild(c));
+    list.slice(page * perPage + perSide, (page + 1) * perPage).forEach(c => Rp.appendChild(c));
+    for (const [el, txt, d] of [[L, '‹', -1], [Rp, '›', 1]]) {
+      const cor = document.createElement('div'); cor.className = 'bk-corner ' + (el === L ? 'tl' : 'tr');
+      cor.textContent = txt; cor.onclick = () => turn(d); el.appendChild(cor);
+    }
+    ind.textContent = 'SPREAD ' + (page + 1) + ' / ' + pages + '  ·  ' + perSide + ' rows per page';
+    frameAll(stage);
+  }
+  function turn(d) { const n = Math.min(pages - 1, Math.max(0, page + d)); if (n !== page) { page = n; show(); } }
+  window.__turn = turn; window.__state = () => ({ page, pages, perPage, perSide });
+  swipeGestures(stage, turn);
+  show();
+}
+
+function frameAll(root) {
+  root.querySelectorAll('.card').forEach(el => {
+    if (!el.querySelector('.frame')) frameIt(el, el.classList.contains('dim') ? 'base' : 'base');
+  });
+}
+function swipeGestures(el, turn) {
+  // Bind the LISTENERS once per element and route through the CURRENT
+  // variant's turn (el.__swipeTurn): both builders attach to the same #stage,
+  // and un-routed rebinding made one physical swipe fire twice (page +2).
+  el.__swipeTurn = turn;
+  if (el.__swipeBound) return;
+  el.__swipeBound = true;
+  let x0 = null, y0 = null, fired = false, lastTouch = 0;
+  el.addEventListener('touchstart', (e) => {
+    const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; fired = false;
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (fired || x0 === null) return;
+    const t = e.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      el.__swipeTurn(dx < 0 ? 1 : -1); fired = true;
+    }
+  }, { passive: true });
+  el.addEventListener('touchend', () => { x0 = null; lastTouch = Date.now(); }, { passive: true });
+  // mouse drag too, so the mock turns on a desktop probe — but skip the
+  // compatibility mouse events the browser synthesises right after a touch,
+  // or one gesture turns the page twice.
+  let m0 = null;
+  el.addEventListener('mousedown', (e) => { m0 = [e.clientX, e.clientY]; });
+  el.addEventListener('mouseup', (e) => {
+    if (!m0) return;
+    const dx = e.clientX - m0[0], dy = e.clientY - m0[1]; m0 = null;
+    if (Date.now() - lastTouch < 500) return;
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) el.__swipeTurn(dx < 0 ? 1 : -1);
+  });
+}
+
+// ---- variant switch -------------------------------------------------------------
+const swA = document.getElementById('sw-arrow'), swB = document.getElementById('sw-book');
+function render() {
+  page = 0;
+  swA.classList.toggle('on', variant === 'arrow'); swB.classList.toggle('on', variant === 'book');
+  document.getElementById('mock-bank').textContent = 'BANK: ' + profile.gold.toLocaleString('en-US');
+  if (variant === 'arrow') buildArrow(); else buildBook();
+}
+swA.onclick = () => { variant = 'arrow'; render(); };
+swB.onclick = () => { variant = 'book'; render(); };
+window.addEventListener('resize', () => render());
+render();
+window.__mockReady = true;
+</script>
+</body>
+</html>
