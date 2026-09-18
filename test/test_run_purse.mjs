@@ -111,13 +111,13 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 }
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xed);   // FIXTURE RETARGET 2026-09-17 (was 0xeb): the ARENA
-  // SCALE-UP's relief grade term (src/relief.js) multiplies pilot AND horde
-  // speed by the terrain grade — a position-continuous field, so the two
-  // frame-rate arms' micro-diverging positions shifted a boundary kill
-  // (15 vs 16) at 0xeb. The same failure class the 0xe1->0xe3->0xe5->0xeb
-  // retargets document; assertion unchanged — equal kills / equal purse at
-  // both rates. (0xeb itself was: G26 removed wpn_* grants, 0xe5 split 13/14.)
+  Math.random = mulberry32(0xee);   // FIXTURE RETARGET 2026-09-18 (was 0xed): ELEVATION
+  // v2's reliefRampRoute intent bias (src/relief.js) re-paths walkers toward
+  // the terrace ramps — the arms' micro-diverging positions shifted a boundary
+  // kill again (15 vs 14) at 0xed. The same failure class the
+  // 0xe1->0xe3->0xe5->0xeb->0xed retargets document; assertion unchanged —
+  // equal kills / equal purse at both rates. (0xed was: the ARENA SCALE-UP's
+  // grade term split 15/16 at 0xeb; 0xee parity 16/16.)
   try {
     T.banners.suppressAll();               // one-time banners hold the sim 2.5s
     T.getProfile().runPurse = 0;               // isolate the arm's earnings

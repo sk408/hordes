@@ -401,7 +401,7 @@ export class Renderer {
     this.drawRelief(g, state, cam, theme);
     // BLOCKING ELEVATION: the authored rim wall — cliff lips + gate terraces,
     // drawn from the same WALL block the collision reads (one truth).
-    this.drawWall(g, state, cam);
+    this.drawTerrace(g, state, cam);
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     this.drawGround(g, state.groundSeed || 1, cam, theme);
@@ -2250,45 +2250,82 @@ export class Renderer {
     this.reliefCells = (c1 - c0 + 1) * (r1 - r0 + 1);
   }
 
-  // ---- the authored rim wall (BLOCKING ELEVATION prototype 2026-09-17) --------
-  // Draw the stage's WALL block: the rampart ring, its cliff lips (the
-  // >=2-level steps that block a mover), and the gate terraces. ART ONLY —
-  // the collision reads the same WALL block through relief.js's
-  // reliefLevelAt, so the wall the player SEES and the wall the mover FEELS
-  // are one structure. Readability contract (msg_01M2RK5B non-negotiable 5):
-  // it must read on a 320x568 phone — the band is a full RENDER_CELL thick,
-  // the lips are the darkest ground marks on the field, and each gate paints
-  // a terrace-level floor with post ticks at its edges.
-  drawWall(g, state, cam) {
+  // ---- the authored upper terrace (ELEVATION v2 2026-09-18) --------------------
+  // Draw the stage's TERRACE block: the upper path, its ramps, and the cliff
+  // faces. ART ONLY — the collision reads the same TERRACE block through
+  // relief.js's reliefLevelAt, so the cliff the player SEES and the cliff the
+  // mover FEELS are one structure: a lip is painted ONLY where the composite
+  // field really steps >= CLIFF_STEP levels (a natural-ramp merge paints no
+  // cliff, because it is not one). Readability contract ("if possible form
+  // our view"): the cliff reads as a DROP LINE (the darkest lip on the
+  // field) + FACE SHADING (a dark inner shadow just inside the edge), the
+  // ramps read as light shelves climbing to the bright path top, and the
+  // whole thing must legible on a 320x568 phone — the band is 140px thick
+  // against a ~480px-wide view.
+  drawTerrace(g, state, cam) {
     const rel = stageRelief(state.stage);
-    const W = rel && rel.WALL;
-    if (!W) return;
+    const T = rel && rel.TERRACE;
+    if (!T) return;
+    const seed = state.groundSeed || 1;
     const cx = -cam.x, cy = -cam.y;              // world origin, screen space
-    const rm = (W.r0 + W.r1) / 2, band = W.r1 - W.r0;
-    // The rampart top: one light band (the tallest ground on the field).
+    const rm = (T.r0 + T.r1) / 2, band = T.r1 - T.r0;
+    const rampRun = 2 * T.rampW;
+    // The upper path top: the brightest band on the field (the tallest ground).
     g.strokeStyle = 'rgba(255,255,255,0.07)';
     g.lineWidth = band;
-    g.beginPath(); g.arc(cx, cy, rm, 0, Math.PI * 2); g.stroke();
-    // The cliff lips — the blocking edges, the darkest marks on the ground.
-    g.strokeStyle = 'rgba(0,0,0,0.40)';
-    g.lineWidth = 2;
-    g.beginPath(); g.arc(cx, cy, W.r0 - 1, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.arc(cx, cy, W.r1 + 1, 0, Math.PI * 2); g.stroke();
-    // The gates: a terrace-level floor cut through the band.
-    g.strokeStyle = 'rgba(255,255,255,0.03)';
-    g.lineWidth = band;
-    for (const a of W.gaps) {
-      g.beginPath(); g.arc(cx, cy, rm, a - W.gapHalf, a + W.gapHalf); g.stroke();
-    }
-    // Post ticks at each gate edge — the gate's leaf, the choke's read.
-    g.fillStyle = 'rgba(0,0,0,0.45)';
-    for (const a of W.gaps) {
-      for (const da of [-W.gapHalf, W.gapHalf]) {
-        const px = cx + Math.cos(a + da) * rm, py = cy + Math.sin(a + da) * rm;
-        g.fillRect(Math.round(px) - 1, Math.round(py) - 3, 2, 6);
+    g.beginPath(); g.arc(cx, cy, rm, T.A0, T.A1); g.stroke();
+    // The ramps: lighter shelves flanking the span — the visible way up.
+    g.strokeStyle = 'rgba(255,255,255,0.035)';
+    g.beginPath(); g.arc(cx, cy, rm, T.A0 - rampRun, T.A0); g.stroke();
+    g.beginPath(); g.arc(cx, cy, rm, T.A1, T.A1 + rampRun); g.stroke();
+    // The cliff spans — sampled against the run's own field so the paint
+    // never claims a cliff where a natural merge lets walkers up.
+    const lvAt = (wx, wy) => reliefLevelAt(wx, wy, seed, rel);
+    const cliffy = (rIn, rOut, a) =>
+      Math.abs(lvAt(Math.cos(a) * rIn, Math.sin(a) * rIn) -
+               lvAt(Math.cos(a) * rOut, Math.sin(a) * rOut)) >= C.RELIEF.CLIFF_STEP;
+    const spans = (rIn, rOut) => {
+      const out = [];
+      const STEP = 0.02;
+      let start = null;
+      for (let a = T.A0 - rampRun; a <= T.A1 + rampRun + 1e-9; a += STEP) {
+        if (cliffy(rIn, rOut, a)) { if (start === null) start = a; }
+        else if (start !== null) { out.push([start, a]); start = null; }
       }
+      if (start !== null) out.push([start, T.A1 + rampRun]);
+      return out;
+    };
+    // The DROP LINE + FACE SHADING on each cliff edge (inner r0, outer r1).
+    for (const [rIn, rOut, lipR, shadeR] of [
+      [T.r0 + 2, T.r0 - 4, T.r0 - 1, T.r0 + 7],     // the inner face (hollow side)
+      [T.r1 - 2, T.r1 + 4, T.r1 + 1, T.r1 - 7],     // the outer face (field side)
+    ]) {
+      const ss = spans(rIn, rOut);
+      if (!ss.length) continue;
+      g.strokeStyle = 'rgba(0,0,0,0.18)';           // face shading, inside the edge
+      g.lineWidth = 8;
+      g.beginPath();
+      for (const [a, b] of ss) {
+        g.moveTo(cx + Math.cos(a) * shadeR, cy + Math.sin(a) * shadeR);
+        g.arc(cx, cy, shadeR, a, b);
+      }
+      g.stroke();
+      g.strokeStyle = 'rgba(0,0,0,0.40)';           // the drop line itself
+      g.lineWidth = 2;
+      g.beginPath();
+      for (const [a, b] of ss) {
+        g.moveTo(cx + Math.cos(a) * lipR, cy + Math.sin(a) * lipR);
+        g.arc(cx, cy, lipR, a, b);
+      }
+      g.stroke();
     }
-    this.wallDrawn = true;
+    // Post ticks at the ramp mouths (the span ends) — the way up, marked.
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    for (const a of [T.A0, T.A1]) {
+      const px = cx + Math.cos(a) * rm, py = cy + Math.sin(a) * rm;
+      g.fillRect(Math.round(px) - 1, Math.round(py) - 3, 2, 6);
+    }
+    this.terraceDrawn = true;
   }
 
   // ---- ground decor (world space; deterministic hash field) ------------------

@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<!-- HOW TO PLAY RESTRUCTURE — VARIANT B — accordion section list (2x2 tab grid on desktop). A MODEL, not game code (task
+     msg_01M2SWS5FARJQN49V6T9JRPKJC). The <style> below is the game's REAL
+     stylesheet, extracted verbatim from index.html by build.mjs; the variant
+     layout rules come after the GAME-VARIANT CSS banner. Reuses the same card CSS; sections fold to one-open, desktop opens a two-column reference sheet. -->
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HOW TO PLAY — VARIANT B — accordion section list (2x2 tab grid on desktop)</title>
+<style>
+  /* THE ONE VIEWPORT CLAMP for every help surface (owner 2026-09-16: "the
+     popups are too wide for mobile screen"). Any box that shows help text
+     sizes itself min(design width, var(--fit-w)) — a phone can never be
+     handed a panel wider than its screen minus both margins. New help
+     surfaces must go through this same helper, not their own rule. */
+  :root { --fit-margin: 8px; --fit-w: calc(100vw - 2 * var(--fit-margin)); }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0b0b12; overflow: hidden;
+    overscroll-behavior: none;
+    font-family: monospace;
+  }
+  /* Canvas is letterboxed by JS (fitCanvas in main.js): internal resolution
+     stays 480x300, CSS size preserves aspect so pixels never stretch. */
+  #wrap {
+    position: relative; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas#game {
+    display: block;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    /* FLOATING JOYSTICK (owner 2026-09-18): a canvas press arms the stick at
+       the touch point and the drag steers — the browser must not claim the
+       gesture for panning/zooming mid-drag. */
+    touch-action: none;
+  }
+  #hud {
+    position: absolute; top: 8px; left: 8px;
+    color: #e8e8f0; font-size: 14px; line-height: 1.5;
+    text-shadow: 1px 1px 0 #000; pointer-events: none;
+    white-space: pre-wrap;               /* was: pre - grew the box past the screen edge */
+    max-width: calc(100vw - 16px);
+  }
+  #overlay {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    /* safe center: long lists (SHOP now has 14 rows) scroll instead of
+       clipping their top edge on small screens. */
+    justify-content: safe center;
+    background: rgba(5,5,10,0.75); color: #e8e8f0;
+    flex-direction: column; gap: 12px;
+    padding: 12px; box-sizing: border-box;
+    overflow-y: auto;
+  }
+  #overlay h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: 4px; }
+  #overlay h1.logo {
+    font-size: 46px; color: #ffd75e;
+    text-shadow: 3px 3px 0 #7a1f33, 6px 6px 0 #000;
+  }
+  #overlay .cards { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  #overlay .sub br { line-height: 1.8; }
+  /* ---- THEMED BUTTONS (owner 2026-09-14). Reference: a pixel-art SIGN that
+     reads as part of the scene. U1b: the plaque is now an AUTHORED 9-slice
+     pixel frame (src/art/menu_frame.js) painted through the renderer's
+     drawGrid seam onto a canvas INSIDE each card — the CSS clip-path plaque
+     is gone because the clip also clipped the card's own 0-blur drop-shadow,
+     so the cards could never cast onto the screen art. The canvas is the
+     card's box PLUS the shadow offset, so the cast shadow is painted pixels
+     outside the card box. The card element itself stays transparent and
+     keeps only layout + type; states repaint the canvas, never the CSS. */
+  .card {
+    width: 170px; padding: 14px; border: 0; cursor: pointer; text-align: center;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+    position: relative; color: #f0dfc0;
+    background: transparent;
+  }
+  /* the painted frame: inset 0 at the card's own pixel size plus the shadow
+     spill (backing store sized in JS, 1 backing pixel = 1 CSS pixel — an
+     INTEGER 3x on a dpr-3 phone — pixelated, no smoothing, no blur). Never
+     interactive: the card stays the click target. */
+  .card canvas.frame {
+    position: absolute; left: 0; top: 0; display: block;
+    pointer-events: none; z-index: 0;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  /* every content layer sits above the painted frame */
+  .card .name, .card .desc, .card .key, .card .syn,
+  .card canvas.portrait, .card canvas.shop-icon { position: relative; z-index: 1; }
+  .card:active { transform: translateY(1px); }
+  .card.dim { opacity: 0.45; }
+  .card.dim:hover { cursor: default; }
+  /* DRAFT PICK CEREMONY (owner 2026-09-16): the pick resolves instantly (the
+     sim already runs underneath — zero added latency); the overlay stays up
+     ~DRAFT_CEREMONY_S purely as presentation. The chosen card lifts,
+     brightens and settles; the others disintegrate with STEPPED (crackle)
+     timing, never a smooth ease. prefers-reduced-motion cuts the whole
+     ceremony — the code then drops the overlay at the pick itself (scoped to
+     this animation only; no other motion reads the query). */
+  #overlay.draft-ceremony { pointer-events: none; }
+  .card.card-picked {
+    animation: cardPicked .3s cubic-bezier(.2,1.4,.4,1) forwards,
+               cardPickedSettle .15s .3s ease-out forwards;
+  }
+  @keyframes cardPicked {
+    0%   { transform: translateY(0)    scale(1);    filter: brightness(1); }
+    70%  { transform: translateY(-6px) scale(1.14); filter: brightness(1.6); }
+    100% { transform: translateY(-4px) scale(1.1);  filter: brightness(1.35); }
+  }
+  @keyframes cardPickedSettle {
+    from { transform: translateY(-4px) scale(1.1); }
+    to   { transform: translateY(-3px) scale(1.08); }
+  }
+  .card.card-burn {
+    pointer-events: none;
+    animation: cardBurn .45s steps(6, jump-none) forwards;
+  }
+  @keyframes cardBurn {
+    0%   { opacity: 1;   transform: scale(1);    filter: contrast(1)   brightness(1); }
+    40%  { opacity: .8;  transform: scale(.97);  filter: contrast(1.5) brightness(.8); }
+    60%  { opacity: .5;  transform: scale(.93);  filter: contrast(2)   brightness(1.1); }
+    100% { opacity: 0;   transform: scale(.84);  filter: contrast(2.5) brightness(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card.card-picked, .card.card-burn { animation: none; }
+  }
+  .card .name {
+    color: #ffd75e; font-weight: bold; margin-bottom: 8px;
+    letter-spacing: 1px; text-shadow: 2px 2px 0 #0a0603;
+    position: relative;
+  }
+  /* caret sits OUTSIDE the centred text run (absolute), so it cannot skew the
+     title's centring — a visual read caught the title pushed right */
+  .card .name::before {
+    content: '\2023'; position: absolute; left: 8px; color: #c9a05a;
+  }
+  .card:hover .name::before { color: #ffd75e; }
+  /* body copy lifts OFF the grain with a hard 1px shadow (a visual read found
+     the text sitting "in" the grain and reading muddy) */
+  .card .desc { font-size: 12px; color: #d6c09a; text-shadow: 1px 1px 0 #0a0603; }
+  /* SHOP buy line at the ABBREVIATED width: one line, always — "LV" may
+     never orphan from its fraction. main.js sizes --shop-buy-fs to the widest
+     sub the catalogue can show at the measured card width (clamped 9-12px). */
+  .card .desc .buy { white-space: nowrap; font-size: var(--shop-buy-fs, 12px); }
+  /* WAVE-26 draft synergy hint: a real, code-backed pair with something the
+     player already owns. Cyan so it reads as information, not flavor text;
+     absent entirely when the card has no genuine synergy. */
+  .card .syn {
+    margin-top: 8px; font-size: 11px; color: #7ad0ff;
+    letter-spacing: 1px;
+  }
+  .card .key { margin-top: 10px; font-size: 11px; color: #6a6a8a; }
+  /* ---- G13 CHARACTER SELECTOR: the authored 32x32 idle busts as LIVE
+     canvases inside the pilot cards. The backing store stays 32x32 (the
+     pixel grid itself, painted by the renderer's own drawGrid); CSS scales
+     it by an INTEGER factor (2) with pixelated rendering — no smoothing, no
+     blur, per house rules. The kit panel is one wide card at the top. */
+  .card canvas.portrait {
+    display: block; margin: 0 auto 8px;
+    width: 64px; height: 64px;           /* 32x32 backing, integer 2x */
+    background: #0e0e16;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  /* the equipped pilot's card is painted with the GOLD frame palette by
+     frameCard (the old --hi/--lo custom props were never consumed) */
+  .card.kit-card { width: min(92vw, 380px); text-align: left; cursor: default; }
+  .card.kit-card .desc { font-size: 13px; line-height: 1.7; }
+  /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
+     formatting of the how to play screen, at least on mobile. It's hard to
+     read the text because of the narrow width and it wraps"). The reference
+     screen is a DOCUMENT, not a tip: the manual puts .howto on #overlay
+     and .ref on its reference cards, and ONLY those get the wide
+     readable panel — every other menu (and the KEPT coachmark #tour-tip
+     cards, 1-2 lines each) keeps the compact box. Rows are TWO COLUMNS:
+     purpose left (may wrap), trigger right (white-space: nowrap — a key
+     name never splits mid-token). The body scrolls INTERNALLY so nothing is
+     ever clipped. MANUAL v2 (owner 2026-09-16, portrait phone: "the card
+     doesn't show on the screen. It's cut off"): the screen is PAGINATED
+     (four pages, one ref card per page) and GOT IT is a FLOW footer card in
+     the layout — the sticky version pinned itself over the scrolling body.
+     Geometry measured live by tools/verify_help_mobile.mjs. */
+  #overlay.howto .cards { width: 100%; }
+  #overlay.howto .card.ref {
+    box-sizing: border-box;
+    width: 100%; max-width: min(560px, var(--fit-w));
+    text-align: left; padding: 12px 14px;
+  }
+  #overlay.howto .card.ref .desc {
+    font-size: 15px; line-height: 1.5; text-align: left;
+    max-height: min(56vh, 420px); overflow-y: auto; overscroll-behavior: contain;
+  }
+  #overlay.howto .rr { display: flex; justify-content: space-between;
+    align-items: baseline; gap: 10px; }
+  #overlay.howto .rl { flex: 1 1 auto; text-align: left; }
+  #overlay.howto .rv { flex: 0 0 auto; white-space: nowrap; color: #ffd75e;
+    text-align: right; }
+  /* The LIVE callout value is several short tokens ('AUTO_ALL · NEAREST ·
+     BALANCED') — it may wrap BETWEEN tokens (never mid-token: the browser
+     never breaks at a non-space) so a 320px phone never overflows the row. */
+  #overlay.howto .rv.wrap { white-space: normal; flex: 0 1 auto; min-width: 0; }
+  /* MANUAL v2 subheads inside the ONE CONTROLS card (the retired TOUCH /
+     KEYBOARD cards live on as section headings, input-path-ordered). */
+  #overlay.howto .subhead {
+    margin: 12px 0 4px; font-size: 12px; letter-spacing: 2px; color: #ffd75e;
+    border-bottom: 1px solid #4a4a5e; padding-bottom: 3px;
+  }
+  #overlay.howto .subhead:first-child { margin-top: 0; }
+  /* GOT IT: a FLOW footer (manual v2) — an ordinary card at the end of the
+     stack, never sticky over the scrolling body. The 44px touch floor
+     stays. */
+  #overlay.howto .card.gotit {
+    min-height: 44px; box-sizing: border-box;
+    width: 100%; max-width: min(560px, var(--fit-w));
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
+     canvas — 16x16 backing store, INTEGER 2x CSS scale (32px), pixelated
+     (same convention as the G13 portraits; no smoothing, no blur). */
+  .card canvas.shop-icon {
+    display: block; margin: 0 auto 8px;
+    width: 32px; height: 32px;           /* 16x16 backing, integer 2x */
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
+  /* U1 HEADER (owner 2026-09-14): gold reads as a coin glyph + number, and the
+     equipped pilot as their own bust. Both canvases are integer-scaled with
+     pixelated rendering (no smoothing, no blur) — the coin is an 8x8 grid at
+     2x, the bust is the authored 32x32 portrait at 2x, same convention as the
+     character selector. */
+  #overlay .sub .purse-row {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+  }
+  #overlay .sub canvas.coin {
+    width: 16px; height: 16px;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  #overlay .sub .gold { color: #ffd75e; font-weight: bold; letter-spacing: 1px; }
+  #overlay .sub .pass { color: #7ad0ff; font-size: 11px; letter-spacing: 1px; }
+  #overlay .sub canvas.bust {
+    display: block; margin: 6px auto 4px; width: 64px; height: 64px;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  /* WAVE-26 "death as payoff": the end screen is the most-seen screen in the
+     game, so its three facts get color-coded and scannable in one pass —
+     cause (hot red), earnings (gold), and the next shop unlock (cool cyan).
+     Monospace + no decoration: still the pixel look, just legible. */
+  #overlay .sub .cause { color: #ff7a6a; }
+  #overlay .sub .earn  { color: #ffd75e; }
+  #overlay .sub .next  { color: #7ad0ff; }
+  /* The gold-POOL multiplier clause: gold family, but a touch quieter than
+     the earn line it explains (it is the why, not the payout). */
+  #overlay .sub .pool  { color: #ffd75e; opacity: 0.8; }
+  /* END-OF-RUN SUMMARY PANEL (owner 2026-09-17: "hud fix is needed. It looks
+     sloppy"). With the HUD and every status message suppressed behind it, the
+     summary is the only surface on screen — so it gets deliberate spacing,
+     a deeper scrim (the frozen arena reads as background, not clutter) and
+     one point more type size for the 3-second read. The .end class is set by
+     composeEndScreen and reset by openMenu for every other screen. */
+  #overlay.end { background: rgba(5,5,10,0.86); gap: 18px; }
+  /* The summary is a SHORT panel: the coarse-pointer media query below
+     top-aligns #overlay (a scrolling-menu rule) and left it stranded in the
+     upper third with an empty band below. Center it in the viewport —
+     safe center, same as the base rule, so a tall summary still scrolls
+     rather than clipping its ends on the smallest phone. */
+  #overlay.end { align-items: center; justify-content: safe center; }
+  #overlay.end > h1 { margin: 0 0 2px; }
+  #overlay.end > .sub { font-size: 14px; color: #b8b8cc; line-height: 1.55; }
+  #overlay.end > .sub br { line-height: 2.1; }
+  #overlay.end > .cards { margin-top: 6px; }
+
+  /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
+     staged spotlight walkthrough. #tour-root is appended to <body> (above
+     every layer incl. #touch z5 and #overlay); four .tour-shade rects dim
+     the screen except a padded hole around the live target, relaid out on
+     a 120ms interval so the spotlight tracks moving UI. TUTORIAL_OVERLAY
+     (2026-09-16): the shade SWALLOWS taps — only the tip card's own
+     BACK / NEXT (GOT IT on the final step) / SKIP controls advance;
+     Right/Enter/Space next, Left back, Escape skips; each step's flag
+     persists so it never replays uninvited. ---- */
+  #tour-root {
+    position: fixed; inset: 0; z-index: 50;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  .tour-shade { position: absolute; background: rgba(5,5,10,0.78); }
+  #tour-tip {
+    position: absolute; max-width: 220px;
+    padding: 8px 10px; box-sizing: border-box;
+    background: #14141f; border: 2px solid #ffd75e;
+    color: #e8e8f0; font-size: 13px; line-height: 1.45;
+  }
+  #tour-tip .tour-count { display: block; font-size: 10px; color: #6a6a8a; letter-spacing: 1px; margin-bottom: 2px; }
+  #tour-tip .tour-replay { display: block; margin-top: 6px; font-size: 10px; color: #6a6a8a; }
+  #tour-tip .tour-controls { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 8px; }
+  /* Real hit targets, >=44px on both axes (phone-thumb sized), inside the
+     card and above the shade — the mobile rule: overlap is the acceptable
+     failure mode, never an unusable control. */
+  #tour-tip .tour-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 72px; min-height: 44px; padding: 0 12px; box-sizing: border-box;
+    border: 2px solid #ffd75e; background: #14141f; color: #ffd75e;
+    font-size: 12px; letter-spacing: 1px; text-decoration: none;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #tour-tip .tour-next { background: #ffd75e; color: #14141f; font-weight: bold; }
+  #tour-tip .tour-skip {
+    display: inline-flex; align-items: center; color: #ff5a3c;
+    text-decoration: underline; padding: 0 2px;
+  }
+
+  /* ---- Touch control layer (Sk408): shown on coarse pointers / touch
+     devices; buttons route through the same actions as the keyboard. ---- */
+  #touch {
+    position: fixed; inset: 0; display: none;
+    pointer-events: none; z-index: 5;
+  }
+  #touch.on { display: block; }
+  @media (pointer: coarse) { #touch { display: block; } }
+  /* WAVE-22b DESKTOP MENU BUTTON (Sk408): the cog is the in-run menu —
+     without the touch layer, desktop had NO on-screen way to reach settings
+     (zoom, END RUN, replay tour). WAVE-23 (#6): non-touch devices get the
+     full layer (main.js adds .cog-only) — the pads are real mouse-clickable
+     buttons (parity with touch), NOT zero-sized ghosts. The joystick is
+     pointer-captured, so it mouse-drags too when MANUAL is bound (WASD
+     remains the keyboard path). */
+  #touch.cog-only { display: block; }
+  #touch.cog-only button { cursor: pointer; }
+  #touch.cog-only #joy { cursor: grab; }
+  /* WAVE-23 desktop refinement (post-audit): a mouse user does not need
+     thumb-sized 56px targets, and at 0.85 opacity the pads sat on top of the
+     arena's bottom corners. On the fine-pointer desktop they dim to 0.55,
+     snapping back to full opacity while the cursor is over them. Touch /
+     hybrid (#touch.on) keeps the full-size layer untouched — this block is
+     cog-only devices. H1: the old 44px click-target shrink is gone — the
+     no-reflow contract (#touch .pad button below: fixed 64px height holding
+     the badge's reserved two-line box) applies to this variant too, so its
+     min-width/min-height knobs were dead declarations and are removed. */
+  #touch.cog-only .pad button { font-size: 12px; }
+  #touch.cog-only .pad { opacity: 0.55; }
+  #touch.cog-only .pad:hover { opacity: 1; }
+  /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
+     2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
+     canvas button enters immersive mode instead. The wrap grows to the
+     DYNAMIC viewport (100dvh — 100vh is the mobile trap that sizes to the
+     large viewport and clips under the collapsed address bar); the pads,
+     which ARE the controls, stay up and get BIGGER touch targets in the
+     reclaimed room; the non-gameplay chrome (the text HUD block, SETTINGS,
+     HELP) stands down. RADAR/MAP stay — they are in-run tactical toggles,
+     not chrome. Exits: the same button (it re-shows on any interaction),
+     or Escape. Honest limits: the OS status bar remains; true fullscreen
+     is Add to Home Screen (see the head metas + manifest.webmanifest). */
+  body.immersive #wrap { height: 100dvh; }
+  body.immersive #hud,
+  body.immersive #tc-cog,
+  body.immersive #tc-help { display: none !important; }
+  body.immersive #touch .pad button { min-height: 78px; }
+  /* ---- TOP-CHROME TRANSIENCE — the canvas ladder (owner 2026-09-17/18,
+     msgs 78PTR/7BRBS/9MV7F): where MEASURING both canvas rects says the top
+     strip is the bottleneck (short landscape), the cog row + the text HUD
+     become transient overlays on the SAME show-on-interaction window as the
+     fullscreen button (body.chrome-reveal is set by syncChrome from the shared
+     fsOverlay timer — ONE system, not a second one). Hidden = opacity 0 +
+     pointer-events none: visually gone AND completely inert (an invisible
+     enlarged target must never eat a gameplay tap), while getBoundingClientRect
+     still measures them, so the band math never loses their geometry. Portrait
+     never engages — the measured gain there is ~0 (the canvas is width-bound)
+     and permanent UI is better UX when it costs the canvas nothing. */
+  body.top-transient #touch button.cog,
+  body.top-transient #hud { opacity: 0; pointer-events: none; }
+  body.top-transient.chrome-reveal #touch button.cog { opacity: 1; pointer-events: auto; }
+  body.top-transient.chrome-reveal #hud { opacity: 1; }
+  /* LADDER STEP 2 — COMPACT PADS (owner: "having the buttons resize
+     themselves if needed to help that"): engaged ONLY where measured — the
+     ordinary fit has fallen back AND the compact fit holds. Narrower pads,
+     shorter buttons, smaller badges (the pilot rungs abbreviate to the
+     owner's own A1/A2/M). The H1 no-reflow contract carries over: width and
+     height stay FIXED values, only smaller ones; the badge keeps a reserved
+     box (22px min) so no live text can change a dimension mid-run. Nothing
+     crosses the 44px touch floor (C.PADS_COMPACT.HIT_MIN). */
+  body.pads-compact #touch .pad { width: 64px; gap: 6px; }
+  body.pads-compact #touch .pad button { height: 52px; padding: 4px 6px; font-size: 11px; }
+  body.pads-compact #touch button .badge { font-size: 9px; min-height: 22px; margin-top: 1px; }
+  body.pads-compact #touch button .key { font-size: 9px; line-height: 12px; }
+  #touch .pad {
+    position: absolute;
+    bottom: max(10px, env(safe-area-inset-bottom, 10px));
+    display: flex; flex-direction: column; gap: 10px;
+    /* H1 (Sk408: "the on screen controls fluctuate in size during a run"):
+       the pad width is FIXED, never text-driven. With no width here the live
+       badge text (updateTouchHud) set the pad's max-content width and swung
+       the left pad 74.97px -> 147.22px mid-run. 96px is the budget the
+       repo's layout math (test/smoke.mjs, tools/verify_skill_keys.mjs)
+       already assumes; at 96 the centered 120px joystick clears both pads
+       at 360px (gap 14) and 390px (gap 29). Both pads identical, so the
+       WAVE-17 "equal pads" claim below is finally literally true. */
+    width: 96px;
+    pointer-events: auto;
+  }
+  #touch .pad.left { left: max(10px, env(safe-area-inset-left, 10px)); }
+  #touch .pad.right { right: max(10px, env(safe-area-inset-right, 10px)); }
+  /* WAVE-17 BALANCE (Sk408): both pads are identical single-column 4-button
+     stacks (the old HP/MP side-by-side pair made the right pad ~2x wider so
+     the centered joystick looked pushed left). Equal pads + the centered
+     joystick split the side gaps equally at every width — verified by layout
+     math in test/smoke.mjs. */
+  /* WAVE-15 analog joystick (replaces the WAVE-13 d-pad, Sk408 playtest):
+     circular base + drag knob, shown only while the manual pilot is bound
+     (main.js toggles display). Drag vector = knob offset from center,
+     clamped to the base radius; ~15% dead zone; release recenters. */
+  #joy {
+    display: none;
+    position: absolute;
+    bottom: max(14px, env(safe-area-inset-bottom, 14px));
+    left: 50%; margin-left: -60px;      /* 120px base, centered */
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: rgba(20,20,31,0.72);
+    border: 3px solid #4a4a6a;
+    box-shadow: inset 0 0 0 6px rgba(74,74,106,0.25);
+    pointer-events: auto;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  /* pixel-style ring guides: four cardinal notches via inset shadows */
+  #joy::before {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 6px,  #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at 50% calc(100% - 6px), #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at 6px 50%,  #4a4a6a 3px, transparent 4px),
+      radial-gradient(circle at calc(100% - 6px) 50%, #4a4a6a 3px, transparent 4px);
+  }
+  #joy-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px; margin: -20px 0 0 -20px;  /* centered */
+    border-radius: 50%;
+    background: #2a2a3a;
+    border: 3px solid #6a6a8a;
+    box-shadow: inset 0 -6px 0 rgba(0,0,0,0.35), inset 0 3px 0 rgba(255,255,255,0.12);
+    transform: translate(0px, 0px);   /* main.js drives the drag offset */
+  }
+  #joy-knob:active { border-color: #ffd75e; }
+  /* ---- FLOATING (DYNAMIC) JOYSTICK (owner 2026-09-18): touch anywhere on
+     the canvas in MANUAL play steers — the origin ring + knob are painted AT
+     the touch point. POINTER-INERT by design (pointer-events: none): the
+     CANVAS owns the gesture (main.js arms on canvas pointerdown, after the
+     fullscreen hit-test), so the visual can never intercept its own drag.
+     Sized 2*C.JOY.FLOAT_R across with the C.JOY.FLOAT_KNOB knob; translucent
+     enough to read the arena under it, contrasted enough to read at 320x568
+     (geometry asserted in test_floating_joystick.mjs). */
+  #fjoy {
+    position: absolute; display: none;
+    width: 120px; height: 120px;         /* 2 * C.JOY.FLOAT_R (60) */
+    border-radius: 50%;
+    background: rgba(20,20,31,0.5);
+    border: 2px solid rgba(138,138,172,0.9);
+    box-shadow: inset 0 0 0 5px rgba(74,74,106,0.3);
+    pointer-events: none; z-index: 6;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #fjoy-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px; margin: -20px 0 0 -20px;   /* C.JOY.FLOAT_KNOB, centered */
+    border-radius: 50%;
+    background: rgba(42,42,58,0.92);
+    border: 3px solid #8a8aac;
+    box-shadow: inset 0 -6px 0 rgba(0,0,0,0.35), inset 0 3px 0 rgba(255,255,255,0.12);
+    transform: translate(0px, 0px);   /* main.js drives the drag offset */
+  }
+  /* ---- CONTROL BANDS / STICK HOME (owner 2026-09-18, msg_01M2S6XRT0:
+     "it should do its best to keep the buttons off the canvas in landscape").
+     #steer-zone is the floating stick's HOME band — the LEFT band in
+     landscape, the bottom-centre strip (the fixed joystick's old slot,
+     between the pads) in portrait — sized and placed by fitCanvas's live
+     band measurement. A press on it arms the floating stick through the SAME
+     fjoyTryArm the canvas uses. It sits FIRST in #touch's DOM so the pads
+     (later siblings) stay on top and keep their own presses; it is hidden
+     with the layer outside playing/finale. */
+  #steer-zone {
+    position: absolute; display: none;
+    pointer-events: auto; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
+  #touch button {
+    min-width: 68px; min-height: 56px; padding: 6px 12px;
+    font-family: monospace; font-size: 13px; line-height: 1.3;
+    color: #e8e8f0; background: rgba(20,20,31,0.85);
+    border: 2px solid #4a4a6a; border-radius: 10px;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  /* H1: pad buttons fill the FIXED pad and so can never size it — width 100%
+     of the 96px pad (border-box, so padding and border stay inside) and a
+     fixed HEIGHT, so no badge text can change any dimension. 64px = the
+     measured two-line-badge case (62.89/63.48px) rounded up to an integer:
+     6+6 padding + 16.9 label line + 2 badge margin + 28.6 badge box + 4
+     border = 63.5 <= 64. The .cog-only desktop variant inherits the same
+     guarantee through this rule. */
+  #touch .pad button { width: 100%; box-sizing: border-box; height: 64px; }
+  #touch button:active { border-color: #ffd75e; background: #1c1c2c; }
+  #touch button .badge {
+    display: block; font-size: 11px; color: #ffd75e; margin-top: 2px;
+    /* H1: the badge RESERVES its box — min-height is the measured two-line
+       height (28.59px), wrapping allowed, NEVER clipped: the pilot badge is
+       the doctrine's only on-screen home for FLEE/LOOT/PATROL and must stay
+       fully readable at every value (a clip variant was measured and
+       REJECTED). Content can never change a dimension now. */
+    min-height: 28.6px; white-space: normal; overflow-wrap: anywhere;
+  }
+  /* WAVE-28 KEY LETTERS (playtest: "put a [Q] and [E] by the timer"). The badge
+     below the label is the LIVE cooldown readout (RDY / LOW / 8.0s, written by
+     updateTouchHud) and stays exactly that — so the key lives INLINE ahead of
+     the label instead, boxed like a key cap so it reads as a key and not as
+     part of the skill name. Pixel-art styling (monospace, 1px hard border, 3px
+     radius) matches .badge and the cog.
+     SIZING IS MEASURED, not assumed (tools/verify_skill_keys.mjs, real Chrome
+     at 390x844 dpr3 coarse pointer): the buttons are border-box, so the 68px
+     min-width leaves a 40px content box and "FROST" at 13px monospace already
+     fills it — the letters therefore DO grow the skill buttons, 68 -> 94.2px,
+     and (flex column) the whole right pad with them. That is deliberate and
+     still inside the 96px per-button budget index.html's pad math is written
+     against, and it moves the right pad TOWARD the 114.09px left pad (joystick
+     clearance 360px: 15.8px). Height is untouched (the 16px key box sits in the
+     label's 16.9px line box) and the key's box never touches the badge's. */
+  #touch button .key {
+    display: inline-block; margin-right: 3px; padding: 0 2px;
+    font-size: 10px; line-height: 14px; vertical-align: 1px;
+    color: #b8e0ff; background: rgba(74,74,106,0.4);
+    border: 1px solid #4a4a6a; border-radius: 3px;
+  }
+  /* POTION VIALS (owner 2026-09-16: "we need some way for the player to know
+     the HP and mana buttons are potions"). Pixel-art vial AHEAD of the label,
+     same slot discipline as .key above: INLINE in the label's 16.9px line
+     box with its own fixed 12x16px box, so no pad dimension can change (the
+     H1 no-reflow contract) and the badge's reserved box is never touched.
+     DRAWN WITH THE COG MECHANISM (pure CSS box-shadow pixels on a 2px grid,
+     no image assets): cork + neck + body from one 2x2 base pixel and its
+     shadow map; the liquid is the --liq custom property so the two variants
+     read as DIFFERENT drinks at a glance — health red, mana blue. */
+  #touch .potion {
+    display: inline-block; position: relative; width: 12px; height: 16px;
+    margin-right: 3px; vertical-align: -2px;
+  }
+  #touch .potion::before {        /* base pixel = cork top-left; map below */
+    content: ''; position: absolute; left: 4px; top: 0; width: 2px; height: 2px;
+    background: #c9c9d6;
+    box-shadow:
+      0 2px 0 #c9c9d6,
+      0 4px 0 var(--liq), 2px 4px 0 var(--liq),
+      -2px 6px 0 var(--liq), 0 6px 0 var(--liq), 2px 6px 0 var(--liq), 4px 6px 0 var(--liq),
+      -2px 8px 0 #ffffff, 0 8px 0 var(--liq), 2px 8px 0 var(--liq), 4px 8px 0 var(--liq),
+      -2px 10px 0 var(--liq), 0 10px 0 var(--liq), 2px 10px 0 var(--liq), 4px 10px 0 var(--liq),
+      -2px 12px 0 var(--liq), 0 12px 0 var(--liq), 2px 12px 0 var(--liq), 4px 12px 0 var(--liq),
+      -2px 14px 0 #c9c9d6, 0 14px 0 #c9c9d6, 2px 14px 0 #c9c9d6, 4px 14px 0 #c9c9d6;
+  }
+  #touch .potion.hp { --liq: #ff5a5a; }   /* health: red */
+  #touch .potion.mp { --liq: #5aa8ff; }   /* mana: blue */
+  /* WAVE-17 SETTINGS COG (Sk408): small pixel gear, top-right of the touch
+     layer — screen chrome, kept OUT of the bottom thumb zone. Opens the
+     in-run SETTINGS pause screen (main.js openSettings: same pause contract
+     as the FIELD REPORT; BACK/ESC resumes). Gear drawn in pure CSS: ring
+     body + 8 box-shadow teeth, no image assets. */
+  /* UP-FRONT CONTROLS (owner 2026-09-16): a player must not need a tooltip
+     to know what a button is — the cog row NAMES its buttons (SETTINGS /
+     HELP / RADAR / MAP) instead of bare glyphs (gear / ? / R / M). Same row,
+     same 46px hit height, auto width for the labels; HP / MP / FROST / OVER
+     in the pads keep their labels. */
+  #touch button.cog {
+    position: absolute;
+    top: max(10px, env(safe-area-inset-top, 10px));
+    right: max(10px, env(safe-area-inset-right, 10px));
+    width: auto; min-width: 46px; height: 46px; min-height: 0; padding: 0 9px;
+    gap: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: bold; letter-spacing: 0.5px; color: #e8e8f0;
+    pointer-events: auto;
+  }
+  .cog-gear { position: relative; width: 18px; height: 18px; }
+  .cog-gear::before {          /* ring body */
+    content: ''; position: absolute; inset: 3px;
+    border: 3px solid #e8e8f0; border-radius: 50%;
+  }
+  .cog-gear::after {           /* 8 teeth: 4 cardinal + 4 diagonal dots */
+    content: ''; position: absolute; left: 8px; top: 0;
+    width: 2px; height: 2px; background: #e8e8f0;
+    box-shadow:
+      -8px 0 0 #e8e8f0, 8px 0 0 #e8e8f0,
+      0 16px 0 #e8e8f0,
+      -8px 16px 0 #e8e8f0, 8px 16px 0 #e8e8f0,
+      -8px 8px 0 #e8e8f0, 8px 8px 0 #e8e8f0;
+  }
+  #touch button.cog:active .cog-gear::before { border-color: #ffd75e; }
+  #touch button.cog:active .cog-gear::after {
+    background: #ffd75e;
+    box-shadow:
+      -8px 0 0 #ffd75e, 8px 0 0 #ffd75e,
+      0 16px 0 #ffd75e,
+      -8px 16px 0 #ffd75e, 8px 16px 0 #ffd75e,
+      -8px 8px 0 #ffd75e, 8px 8px 0 #ffd75e;
+  }
+  /* WAVE-22c "?" button (Sk408) — HELP MODE since 2026-09-16: the glyph
+     beside the cog arms / leaves the tap-to-learn inspect mode on every
+     device (the old key-list panel is retired). */
+  #touch button.cog.help {
+    right: max(111px, calc(env(safe-area-inset-right, 10px) + 101px));
+    font-size: 10px; font-weight: bold; color: #e8e8f0;
+  }
+  /* A2 RADAR button: the radar's on-screen toggle, a third top-right chrome
+     button in the cog row (left of "?"), so it never touches the H1 pad
+     geometry. Routes data-act="radar" through runAction like every other
+     touch action. While the radar is on main.js adds .on (updateTouchHud,
+     every frame) — a lit gold frame is its readout; no badge text. */
+  #touch button.cog.radar {
+    right: max(165px, calc(env(safe-area-inset-right, 10px) + 155px));
+    font-size: 10px; font-weight: bold; color: #e8e8f0;
+  }
+  #touch button.cog.radar.on { border-color: #ffd75e; color: #ffd75e; }
+  /* M1 MAP button: the per-run map screen's touch entry (the owner plays on
+     a phone — C6), a fourth top-right chrome button in the cog row (left of
+     the RADAR button), so it never touches the H1 pad geometry. Routes
+     data-act="map" through runAction like every other touch action. While
+     the map is open main.js adds .on (updateTouchHud, every frame) — a lit
+     gold frame is its readout; no badge text. */
+  #touch button.cog.map {
+    right: max(224px, calc(env(safe-area-inset-right, 10px) + 214px));
+    font-size: 10px; font-weight: bold; color: #e8e8f0;
+  }
+  #touch button.cog.map.on { border-color: #ffd75e; color: #ffd75e; }
+  /* HELP MODE (2026-09-16): the "?" no longer lists controls — it arms a
+     quiet inspect mode. These two elements are its whole chrome: the
+     one-line leave strip and the single-entry explainer above it. Both are
+     pointer-inert reads; leaving is the "?" glyph itself (the HELP button,
+     the ? key or ESC). Retired here: the #hints key-list panel (the compact
+     list lives in the reference's KEYBOARD page now). */
+  #help-hud, #help-tip {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: none; padding: 7px 12px; z-index: 7;
+    font-size: 13px; line-height: 1.5; color: #e8e8f0; text-align: center;
+    text-shadow: 1px 1px 0 #000;
+    /* FIT THE MOBILE VIEWPORT (owner 2026-09-16): nowrap + no cap pushed a
+       long explainer line past BOTH screen edges (529px of text on a 320px
+       phone). The shared --fit-w clamp + wrapping text keeps the line
+       inside; border-box keeps the padding inside the cap. width:
+       max-content (capped by that max-width) stops the abs-pos
+       shrink-to-fit at left:50% from folding the box to the remaining
+       half-viewport — the popup uses its whole clamp and wraps only as
+       much as it must. */
+    box-sizing: border-box; width: max-content;
+    max-width: min(480px, var(--fit-w)); white-space: normal;
+    background: rgba(20,20,31,0.92); border: 2px solid #ffd75e; border-radius: 10px;
+    pointer-events: none;
+  }
+  #help-hud { bottom: 118px; font-size: 12px; border-color: #5a5a7a; }
+  #help-tip { bottom: 150px; }
+
+  /* Bigger tap targets for draft cards on small/touch screens. */
+  @media (pointer: coarse), (max-width: 700px) {
+    /* A centred flex container whose content is taller than it squeezes its rows
+       instead of scrolling, which is what stacked the guide/gallery buttons on top
+       of each other. Top-align it and let it scroll. */
+    #overlay { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain;
+               padding: 10px 8px 14px; }
+    /* c4aee80's top-align is needed for the wrapped card rows (it is what stopped the
+       guide/gallery buttons stacking) but it also shrink-wraps the heading and the
+       sub-lines and pins them left. Centre only those; the card rows keep top-align. */
+    #overlay > h1, #overlay > .sub { align-self: center; }
+    #overlay .cards { flex-wrap: wrap; justify-content: center; align-content: flex-start;
+                      gap: 10px; width: 100%; }
+    .card { width: min(30vw, 172px); min-height: 0; padding: 12px 10px; margin-bottom: 2px; }
+    .card .desc { font-size: 13px; }
+    .card .key { display: none; } /* no number keys on touch; just tap */
+  }
+  /* ---- SHOP PAGING + THE CARD GRID (owner 2026-09-18: "Arrow pages are
+     better. The cards need to dynamically resize and fit a minimum of 3
+     across. Max size of a card being the current size they are"). The shop
+     screen puts .shopgrid on the card container: cards become border-box and
+     size DYNAMICALLY as (container - gaps) / columns, floored at 3 columns
+     (main.js shopGridPlan sets --shop-cols; 3 is the phone floor) and CAPPED
+     at today's card box (--shop-cap 198px = 170px content + 2x14 padding —
+     cards never grow past the size they already are). Wide windows get MORE
+     COLUMNS, not bigger cards, and the container itself caps at 5 columns
+     (1046px) and centres — the surplus becomes margin (owner addendum:
+     "If that makes sense for desktop too"). */
+  #overlay .cards.shopgrid {
+    gap: var(--shop-gap, 12px);
+    max-width: calc(5 * var(--shop-cap, 198px) + 4 * var(--shop-gap, 12px));
+    margin-left: auto; margin-right: auto;
+  }
+  #overlay .cards.shopgrid > .card {
+    box-sizing: border-box;
+    width: calc((100% - (var(--shop-cols, 3) - 1) * var(--shop-gap, 12px)) / var(--shop-cols, 3));
+    max-width: var(--shop-cap, 198px);
+    padding: 12px 8px;
+  }
+  /* The pager chrome: edge arrows (44px touch floor on the target box,
+     vertically centred, never more than ~60px of the viewport edge — thumb
+     reach) and a bottom-centre page indicator. Single page = both removed
+     (main.js), never merely dimmed. */
+  #overlay .shop-arr {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 46px; height: 64px; z-index: 5;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; color: #ffd75e; background: rgba(20,20,31,0.72);
+    border: 2px solid #5a5a7e; border-radius: 8px;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  #overlay .shop-arr:active { transform: translateY(calc(-50% + 1px)); }
+  #overlay .shop-arr.dim { opacity: 0.35; }
+  #overlay .shop-arr.prev { left: 6px; }
+  #overlay .shop-arr.next { right: 6px; }
+  /* ARROW PLACEMENT (320px read, 2026-09-18): where the grid FILLS the
+     viewport width (phones — the first card starts inside the edge arrow's
+     band), a mid-height arrow sits ON the edge column and hides its price
+     text. main.js adds .low (finalizeShopPager measures) and the arrows drop
+     to the BOTTOM band flanking the indicator — the prime thumb zone anyway.
+     Desktop keeps the mid-height arrows: the capped container centres with
+     margin, so no card ever sits under them. Same 46x64 target box. */
+  #overlay .shop-arr.low { top: auto; bottom: 8px; transform: none; height: 44px; }
+  #overlay .shop-arr.low:active { transform: translateY(1px); }
+  /* with the bottom-band arrows the overlay top-aligns: the safe-centre rule
+     would push the last row DOWN past the band the page math already paid
+     for (availH is measured from the top). Paged content is never taller
+     than the viewport, so top-align never clips. */
+  #overlay.shop-low { justify-content: flex-start; }
+  #overlay .shop-ind {
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: 8px;
+    z-index: 5; padding: 4px 12px; font-size: 12px; color: #e8e8f0;
+    background: rgba(20,20,31,0.82); border: 1px solid #4a4a5e; border-radius: 8px;
+    pointer-events: none; white-space: nowrap;
+  }
+</style>
+<style>/* -------- GAME-VARIANT CSS (this model only) -------- */
+#overlay { display: flex; }
+
+#overlay.howto .cards { width: 100%; max-width: none; padding: 10px; }
+#ov-title { font-size: 22px; letter-spacing: 3px; margin: 4px 0 2px; }
+#ov-sub { font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
+.b-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.b-tab { background: #26263a; color: #8888a8; border: 1px solid #4a4a5e;
+  font: 700 13px/1.4 inherit; font-family: inherit; letter-spacing: 1px;
+  padding: 10px 12px; min-height: 44px; cursor: pointer; }
+.b-tab.open { color: #ffd75e; border-color: #ffd75e; }
+.b-sec { display: none; width: 100%; max-width: none; }
+.b-sec.open { display: block; }
+.b-sec .desc { max-height: none; overflow: visible; }
+.replay-line { font-size: 13px; color: #8888a8; padding: 8px 2px; border-top: 1px solid #4a4a5e; margin-top: 4px; }
+.replay-line span { color: #ffd75e; }
+@media (min-width: 900px) {
+  #overlay.howto .cards { max-width: 1100px; margin: 0 auto; }
+  .b-grid { display: grid; grid-template-columns: 1fr 1fr; }
+  .b-tab { font-size: 15px; padding: 14px; }
+  .b-sec.open .desc { columns: 2; column-gap: 28px; font-size: 15px; }
+}
+</style></head>
+<body>
+<div id="overlay" class="howto">
+  <div class="cards">
+    <div id="ov-title">HOW TO PLAY</div>
+    <div class="sub" id="ov-sub">SURVIVE THE WAVES. your pilot auto-fights — you steer the BUILD: draft weapons, bank gold, outlast the finale.</div>
+
+    <div class="b-grid">
+      
+      <button class="b-tab open" data-i="0">HOW A RUN WORKS</button>
+      <button class="b-tab" data-i="1">OPTIONS AND MODES</button>
+      <button class="b-tab" data-i="2">YOUR CONTROLS</button>
+      <button class="b-tab" data-i="3">THE FIELD</button>
+    </div>
+    
+    <section class="card ref b-sec open" data-i="0">
+      <div class="t">HOW A RUN WORKS</div>
+      <div class="desc"><div class="rr"><div class="rl">every wave: 120s of horde (a mid-boss rings you at half-time), then the wave BOSS spawns — slay it and the PORTAL opens; walk in.</div></div><div class="subhead">INTERMISSION (between waves)</div><div class="rr"><div class="rl">paid chests (40/25/10% nothing), blessings, RAISE THE STAKES (+1 heat = +30% run gold per push, capped) · evolve tokens turn weapons maxed at Lv 8 into something new.</div></div><div class="subhead">THE FIELD, MID-WAVE</div><div class="rr"><div class="rl">DRAFT / upgrade picks on level-up · SHRINE altars sell blessings for run gold · ARCH gates grant a timed buff · CHEST boxes gamble items (walk in, take the roll).</div></div><div class="subhead">CHALLENGE (title-screen card)</div><div class="rr"><div class="rl">rule-constrained runs (ONE WEAPON / NO POTIONS); the HUD names the live mode.</div></div><div class="subhead">TWO ENDINGS</div><div class="rr"><div class="rl">DEATH — the horde claims all, gold banked — or VICTORY: outlast all five waves and slay THE MAW OF THE HORDE.</div></div></div>
+    </section>
+    <section class="card ref b-sec" data-i="1">
+      <div class="t">OPTIONS AND MODES</div>
+      <div class="desc"><div class="rr"><div class="rl">the pilot plays · MANUAL: the stick / keys are yours</div><div class="rv">PILOT (O)</div></div><div class="rr"><div class="rl">volley target: NEAREST / TOUGHEST / SWARM / RANGED</div><div class="rv">FOCUS (TAB)</div></div><div class="rr"><div class="rl">risk dial: SAFE / BALANCED / GREEDY</div><div class="rv">STANCE (G)</div></div><div class="rr"><div class="rl">yours right now</div><div class="rv wrap">AUTO · NEAREST · BALANCED</div></div><div class="rl">every lever is on the touch pads too — and in help mode (?), a tap on any control explains it.</div></div>
+    </section>
+    <section class="card ref b-sec" data-i="2">
+      <div class="t">YOUR CONTROLS</div>
+      <div class="desc"><div class="subhead">TOUCH CONTROLS</div><div class="rr"><div class="rl">move (manual pilot)</div><div class="rv">joystick</div></div><div class="rr"><div class="rl">volley target: NEAREST / TOUGHEST / SWARM / RANGED</div><div class="rv">FOCUS</div></div><div class="rr"><div class="rl">risk dial: SAFE / BALANCED / GREEDY</div><div class="rv">STANCE</div></div><div class="rr"><div class="rl">auto &harr; manual</div><div class="rv">PILOT</div></div><div class="rr"><div class="rl">your build &amp; gear</div><div class="rv">STATS</div></div><div class="rr"><div class="rl">skills</div><div class="rv">FROST / OVER</div></div><div class="rr"><div class="rl">magnet sweep: every drop flies to you (the Magnet Collector card’s skill, 30s cooldown)</div><div class="rv">MAG</div></div><div class="rr"><div class="rl">health potion — restores a carried charge: +35 HP</div><div class="rv">H</div></div><div class="rr"><div class="rl">mana potion — restores a carried charge: +40 MP</div><div class="rv">N</div></div><div class="rr"><div class="rl">help mode: tap any control or object to learn it</div><div class="rv">HELP</div></div><div class="rr"><div class="rl">edge blips mark enemies off-screen</div><div class="rv">RADAR</div></div><div class="rr"><div class="rl">the world map (fight keeps running)</div><div class="rv">MAP</div></div><div class="rr"><div class="rl">settings: zoom, END RUN</div><div class="rv">SETTINGS (cog)</div></div><div class="subhead">THE ESCAPE (manual)</div><div class="rr"><div class="rl">hold to run · LIFT to brake (that is how you time the boss arms)</div><div class="rv">◀ / ▶</div></div><div class="rr"><div class="rl">leap the gaps (same jump as the auto pilot)</div><div class="rv">JUMP</div></div><div class="rr"><div class="rl">the short speed burst</div><div class="rv">DASH</div></div><div class="rr"><div class="rl">stomp the pursuit pack off your tail (cooldown)</div><div class="rv">KICK</div></div><div class="rr"><div class="rl">switch pilot &harr; manual mid-escape (same O setting)</div><div class="rv">MODE</div></div><div class="rr"><div class="rl">keys work too: A/D move · SPACE jump · X dash · S kick · O mode</div><div class="rv">KEYS</div></div><div class="subhead">KEYBOARD CONTROLS</div><div class="rr"><div class="rl">drink a health potion to heal</div><div class="rv">H</div></div><div class="rr"><div class="rl">drink a mana potion to refuel skills</div><div class="rv">N</div></div><div class="rr"><div class="rl">cast your class skill (mana + cooldown)</div><div class="rv">Q</div></div><div class="rr"><div class="rl">overdrive every weapon for a burst (mana + cooldown)</div><div class="rv">E</div></div><div class="rr"><div class="rl">sweep every ground drop to you (the Magnet Collector card skill, 30s cooldown)</div><div class="rv">X</div></div><div class="rr"><div class="rl">choose what the auto-attack targets</div><div class="rv">TAB</div></div><div class="rr"><div class="rl">tune the run: SAFE keeps clear, GREEDY banks loot faster</div><div class="rv">G</div></div><div class="rr"><div class="rl">switch pilot movement AUTO / MANUAL</div><div class="rv">O</div></div><div class="rr"><div class="rl">edge blips mark enemies outside the screen</div><div class="rv">R</div></div><div class="rr"><div class="rl">open the world map (the fight keeps running)</div><div class="rv">M</div></div><div class="rr"><div class="rl">help mode: tap any control or object to learn it</div><div class="rv">?</div></div><div class="rr"><div class="rl">move</div><div class="rv">arrows / WASD</div></div><div class="rr"><div class="rl">I — field report (the ONE stats key) · 1 – 3 — draft cards (1 – 4 in evolve / intermission) · 1 – 6 — stat tabs</div></div><div class="rr"><div class="rl">C — continue · R / T — retry / title</div></div><div class="rr"><div class="rl">+ / - — zoom · mouse — the cog (top-right) opens settings</div></div><div class="rr"><div class="rl">ESC or P — pause in a run · ESC — close menus</div></div></div>
+    </section>
+    <section class="card ref b-sec" data-i="3">
+      <div class="t">THE FIELD</div>
+      <div class="desc"><div class="rr"><div class="rl">chests — walk in: item, upgrades… or nothing + a mini-horde</div></div><div class="rr"><div class="rl">portal — walk through to bank the wave</div></div><div class="rr"><div class="rl">arches — cross the gate for a timed buff</div></div><div class="rr"><div class="rl">shrines — walk close, gold buys a blessing</div></div><div class="subhead">POTIONS — carried charges, not skills</div><div class="rr"><div class="rl">enemies drop them (5.0% per kill; rarer in dense swarms) — picked up automatically in pickup range, LEFT ON THE GROUND at your cap (3 of each).</div></div><div class="rr"><div class="rl">a run starts with 1 of each; Travel Pack (shop) adds more.</div></div><div class="rr"><div class="rl">HEALTH potion: +35 HP · MANA potion: +40 MP · never spent at full.</div></div><div class="rr"><div class="rl">AUTO pilot drinks for you: HP under a potion’s heal, MP under 35% of max.</div></div><div class="rr"><div class="rl">boss curse: while the wave boss lives, health potions heal HALF.</div></div><div class="subhead">THE LIE OF THE LAND — the hollow reads as a map</div><div class="rr"><div class="rl">the OLD STUMP marks the arena heart — your flat spawn clearing; twin GATE stones mark each compass wall.</div></div><div class="rr"><div class="rl">the ground rises toward the rim: climbing costs a little speed (foes pay it too), high ground widens your radar reach.</div></div></div>
+    </section>
+    <div class="replay-line" id="replay-tour">MISSED THE GUIDED TOUR? <span>REPLAY TOUR</span> runs it again — a quiet inline row, not a button card.</div>
+    <div class="card gotit"><div class="t">GOT IT</div><div class="sub">back to the title</div></div>
+  </div>
+</div>
+</body></html>

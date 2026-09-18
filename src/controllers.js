@@ -9,6 +9,8 @@
 // from main.js key handling — the controller itself never touches input.
 import { CONFIG as C } from './config.js';
 import { isReachableLoot, lootLimit } from './entities.js';
+import { stageRelief } from './stages.js';
+import { reliefRampRoute } from './relief.js';
 
 export const FOCUS_MODES = ['NEAREST', 'TOUGHEST', 'SWARM', 'RANGED'];
 export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
@@ -236,10 +238,22 @@ export class AutoPilotController {
     const g = this.gem;
     let gx = 0, gy = 0;
     if (g) {
-      const gd = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
-      const len = Math.sqrt(gd) || 1;
-      gx = (g.x - p.x) / len;
-      gy = (g.y - p.y) / len;
+      // ELEVATION v2 (reliefRampRoute): a gem on the upper path is reached
+      // through the RAMPS, not the cliff face — the same route bias the
+      // enemy move seam reads, so pilot and horde path the terrain alike.
+      // Without it the pilot orbits in the gem's tangential shadow below
+      // the face (the stuck-on-a-ledge defect). Null when the direct line
+      // is already walkable, so flat-terrain looting is byte-identical.
+      const route = reliefRampRoute(p.x, p.y, g.x, g.y,
+        state.groundSeed || 0, stageRelief(state.stage));
+      if (route) {
+        gx = route[0]; gy = route[1];
+      } else {
+        const gd = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
+        const len = Math.sqrt(gd) || 1;
+        gx = (g.x - p.x) / len;
+        gy = (g.y - p.y) / len;
+      }
     }
 
     // WAVE-27 EDGE HOLD (the grind fix). Every branch below routes its vector
@@ -385,6 +399,12 @@ export class AutoPilotController {
         const clen = Math.hypot(p.x, p.y) || 1;
         return put(-p.x / clen, -p.y / clen);
       }
+      // ELEVATION v2: a portal on the upper path is entered through the
+      // ramps (same bias as the gem drift above); the approach invuln is
+      // unchanged and the portal's drift re-parks it at STANDOFF regardless.
+      const route = reliefRampRoute(p.x, p.y, state.portal.x, state.portal.y,
+        state.groundSeed || 0, stageRelief(state.stage));
+      if (route) return put(route[0], route[1], rim);
       return put(pdx / plen, pdy / plen, rim);
     }
 

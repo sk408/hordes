@@ -52,22 +52,30 @@ export const STAGES = [
     // radial flatten at the arena heart (relief.js envelope), so the map's
     // name is its shape: a calm clearing at the centre, terraces climbing
     // out toward the rim.
-    // BLOCKING ELEVATION PROTOTYPE (2026-09-17, msg_01M2RK5B — the owner:
-    // "let's prototype elevation... add it in and then work on getting it
-    // right"): WALL is the authored RIM WALL — a ring at [r0, r1] raised to
-    // topLevel, with four GATE terraces (gapLevel) at the cardinals, aligned
-    // with the authored GATE landmark stones (render.js, at RIM-150). One
-    // cliff rule in relief.js (a >=2-level step blocks, both sides slide);
-    // the geometry is the stage's own, scoped HERE so the other seven stages
-    // ship byte-identical terrain. Choke points live at the gates.
+    // ELEVATION v2 (2026-09-18, owner msg: "It should be a gradient
+    // upward/downward that would create a separate path blocked off by a
+    // cliff"): TERRACE is the authored UPPER PATH, superseding the 2026-09-17
+    // rim-wall prototype. An arc band at [r0, r1] north-centred, raised to
+    // topLevel — a genuinely SEPARATE upper route (~940px of level-2 walk).
+    // RAMPS at both angular ends grade topLevel -> level 0 over 2*rampW
+    // radians in whole 1-level steps (walkable GRADEs, the gradient term
+    // rides them); everywhere else the band's radial edges are 2-level
+    // CLIFFS (the blocking threshold, CONFIG.RELIEF.CLIFF_STEP) — reach the
+    // path via a ramp or not at all. APRON is the flattened shelf pinned to
+    // level 0 in the wedge around the band (feathered over `feather` rad so
+    // the shelf never cliffs itself) — without it the natural rim terraces
+    // would merge into the top and the separation would leak. Scoped HERE so
+    // the other seven stages ship byte-identical terrain.
     relief: {
       CELL: 480, LEVELS: 3, BASIN: 560,   // the hollow: flat heart, rising rim
-      WALL: {
-        r0: 700, r1: 760,                 // the rim wall band (world px radius)
-        gaps: [0, Math.PI / 2, Math.PI, -Math.PI / 2],   // N/E/S/W — the gates
-        gapHalf: 0.10,                    // gate half-width (radians, ~146px arc)
-        gapLevel: 1,                      // the gate terrace: one step up, one down
-        topLevel: 2,                      // the rampart top (the stage's tallest)
+      TERRACE: {
+        r0: 560, r1: 700,                 // the upper-path band (world px radius)
+        A0: Math.PI / 2 - 0.75,           // the top span, north-centred (~86 deg)
+        A1: Math.PI / 2 + 0.75,
+        rampW: 0.30,                      // each ramp's angular run (~380px, 2 graded steps)
+        topLevel: 2,                      // the path top (the stage's tallest ground)
+        apron: 120,                       // the flattened shelf's reach beyond the band edges
+        feather: 0.35,                    // the apron's angular ease (never a cliff)
       },
     },
     unlock: null,

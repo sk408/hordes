@@ -703,6 +703,17 @@ export const CONFIG = {
     VISION_MULT: 1.5,   // radar world radius multiplier on high ground
     EXPOSURE_BIAS: 0.35,// elevated pilot: spawn azimuth mixed toward uphill
     RENDER_CELL: 60,    // relief render quantization (the contour cell)
+    // ELEVATION v2 (2026-09-18, owner: "a gradient upward/downward that would
+    // create a separate path blocked off by a cliff"). The model's two
+    // primitives, ONE threshold: a height discontinuity below CLIFF_STEP is a
+    // GRADE (a walkable slope — the grade term above rides it); at or above it
+    // is a CLIFF and blocks the mover. 2 because (a) the natural lattice is
+    // Lipschitz — it can never step 2 levels in one mover move, so cliffs
+    // exist ONLY where a stage authors a face and the no-trap proof stays
+    // local to authored geometry; (b) with 3 levels a 2-break is a full
+    // floor-to-top face, mechanically and visually unambiguous; (c) a
+    // threshold of 1 would cliff every natural terrace edge and wall the map.
+    CLIFF_STEP: 2,      // |level after - level before| >= this blocks the move
   },
 
   // ---- M1 THE PER-RUN ATLAS (src/atlas.js) ------------------------------------

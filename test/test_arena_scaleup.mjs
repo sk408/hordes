@@ -147,10 +147,12 @@ S.check('the grade is symmetric: uphill costs, downhill pays, flat is free — s
   assert(flat !== null && reliefGrade(flat, 0, 1, 0, seed, rel) === 1, 'flat ground costs nothing');
   // THE SYMMETRY: reliefGrade has no mover argument — the pilot seam and the
   // enemy seam in main.js call the SAME function (pinned textually, the
-  // single-home rule).
+  // single-home rule). ELEVATION v2: the enemy seam grades mvx/mvy — the
+  // movement vector AFTER the reliefRampRoute intent bias — so the grade
+  // reads the direction the enemy actually moves, same as the pilot seam.
   const src = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   const playerSeam = /reliefGrade\(p\.x, p\.y, decision\.moveX, decision\.moveY/.test(src);
-  const enemySeam = /reliefGrade\(e\.x, e\.y, act\.mx, act\.my/.test(src);
+  const enemySeam = /reliefGrade\(e\.x, e\.y, mvx, mvy/.test(src);
   assert(playerSeam && enemySeam, 'the SAME grade function is read at the player and enemy move seams');
 });
 S.check('the trade: exposure bias + vision fire ONLY on high ground, and both are pure', () => {

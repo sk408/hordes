@@ -177,7 +177,7 @@ import {
 // radius (the radar's world reach). See src/relief.js for the contract.
 import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
-  reliefLevelAt, reliefStep,
+  reliefLevelAt, reliefStep, reliefRampRoute,
 } from './relief.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -2469,19 +2469,32 @@ function update(dt) {
     e.telegraph = !!act.telegraph;   // WARLOCK/boss windup -> render flash
     e.charging = !!act.charging;     // GRAVELMAW contact-damage window
     e.recovering = !!act.recovering; // GRAVELMAW punish window
-    const grade = reliefGrade(e.x, e.y, act.mx, act.my, relSeed, relCfg);
-    // BLOCKING ELEVATION (msg_01M2RK5B): the same cliff rule + tangent slide
+    // ELEVATION v2 ROUTE BIAS: a PURSUING walker whose target stands on the
+    // terrace >= CLIFF_STEP above routes its INTENT to the nearest ramp door
+    // (reliefRampRoute — the anti-orbit fix; see relief.js). Gated on the
+    // intent actually pointing at the player, so kiters, stationary pillars
+    // and latched ticks keep their own doctrine. Bosses keep their own
+    // action model; flyers overfly the cliffs by design.
+    let mvx = act.mx, mvy = act.my;
+    if (!e.flying && !e.boss && (mvx || mvy) &&
+        mvx * (p.x - e.x) + mvy * (p.y - e.y) > 0) {
+      const route = reliefRampRoute(e.x, e.y, p.x, p.y, relSeed, relCfg);
+      if (route) { mvx = route[0]; mvy = route[1]; }
+    }
+    const grade = reliefGrade(e.x, e.y, mvx, mvy, relSeed, relCfg);
+    // BLOCKING ELEVATION (ELEVATION v2): the same cliff rule + rampward slide
     // the pilot's move seam reads (reliefStep), so pilot and horde obey ONE
-    // geometry — a walker pressed against a cliff slides along it and routes
-    // to a gate (the choke funnel). FLYERS are exempt: they fly over the
-    // wall, which is exactly the vertical reach the horde-mix work will use.
+    // geometry — a walker pressed against a cliff face slides along it and
+    // routes to a ramp (the funnel; the horde CLIMBS, so the upper path is
+    // never a sanctuary). FLYERS are exempt: they fly over the cliffs, which
+    // is exactly the vertical reach the horde-mix work will use.
     if (e.flying) {
       e.x += act.mx * spd * grade * dt;
       e.y += act.my * spd * grade * dt;
     } else {
       const stepped = reliefStep(e.x, e.y,
-        e.x + act.mx * spd * grade * dt,
-        e.y + act.my * spd * grade * dt, relSeed, relCfg);
+        e.x + mvx * spd * grade * dt,
+        e.y + mvy * spd * grade * dt, relSeed, relCfg);
       e.x = stepped[0]; e.y = stepped[1];
     }
     // TICK latch: once attached it rides the player and drains hp/s INSTEAD
