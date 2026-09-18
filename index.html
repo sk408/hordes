@@ -36,6 +36,10 @@
   canvas#game {
     display: block;
     image-rendering: pixelated; image-rendering: crisp-edges;
+    /* FLOATING JOYSTICK (owner 2026-09-18): a canvas press arms the stick at
+       the touch point and the drag steers — the browser must not claim the
+       gesture for panning/zooming mid-drag. */
+    touch-action: none;
   }
   #hud {
     position: absolute; top: 8px; left: 8px;
@@ -409,6 +413,33 @@
     transform: translate(0px, 0px);   /* main.js drives the drag offset */
   }
   #joy-knob:active { border-color: #ffd75e; }
+  /* ---- FLOATING (DYNAMIC) JOYSTICK (owner 2026-09-18): touch anywhere on
+     the canvas in MANUAL play steers — the origin ring + knob are painted AT
+     the touch point. POINTER-INERT by design (pointer-events: none): the
+     CANVAS owns the gesture (main.js arms on canvas pointerdown, after the
+     fullscreen hit-test), so the visual can never intercept its own drag.
+     Sized 2*C.JOY.FLOAT_R across with the C.JOY.FLOAT_KNOB knob; translucent
+     enough to read the arena under it, contrasted enough to read at 320x568
+     (geometry asserted in test_floating_joystick.mjs). */
+  #fjoy {
+    position: absolute; display: none;
+    width: 120px; height: 120px;         /* 2 * C.JOY.FLOAT_R (60) */
+    border-radius: 50%;
+    background: rgba(20,20,31,0.5);
+    border: 2px solid rgba(138,138,172,0.9);
+    box-shadow: inset 0 0 0 5px rgba(74,74,106,0.3);
+    pointer-events: none; z-index: 6;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #fjoy-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px; margin: -20px 0 0 -20px;   /* C.JOY.FLOAT_KNOB, centered */
+    border-radius: 50%;
+    background: rgba(42,42,58,0.92);
+    border: 3px solid #8a8aac;
+    box-shadow: inset 0 -6px 0 rgba(0,0,0,0.35), inset 0 3px 0 rgba(255,255,255,0.12);
+    transform: translate(0px, 0px);   /* main.js drives the drag offset */
+  }
   #touch button {
     min-width: 68px; min-height: 56px; padding: 6px 12px;
     font-family: monospace; font-size: 13px; line-height: 1.3;
@@ -611,6 +642,10 @@
       <button data-act="stats" id="tc-stats">STATS</button>
     </div>
     <div id="joy" data-joy="1"><div id="joy-knob"></div></div>
+    <!-- FLOATING JOYSTICK visual: painted at the touch point by main.js
+         (fjoyShow) while a canvas drag steers; pointer-inert, never a hit
+         target (the canvas owns the gesture). -->
+    <div id="fjoy" aria-hidden="true"><div id="fjoy-knob"></div></div>
     <div class="pad right">
       <button data-act="q"><span class="key">[Q]</span><span id="q-skill">FROST</span><span class="badge" id="tc-q">RDY</span></button>
       <button data-act="w"><span class="key">[E]</span>OVER<span class="badge" id="tc-w">RDY</span></button>

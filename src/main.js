@@ -680,11 +680,14 @@ function applyStancePref() {
 // (setting, debug toggle, hidden key). test/test_autopick_pref.mjs pins this.
 
 // Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
-// Also snaps the knob visual back to center.
+// Also snaps the knob visual back to center. FLOATING JOYSTICK (2026-09-18):
+// a hard release of the floating drag too — no id filter (this is the
+// "everything stands down" path: blur, mode swap, run start).
 function clearPilotInput() {
   pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
   pilotInput.x = 0; pilotInput.y = 0; pilotInput.mag = 0;
   if (joyKnobEl && joyKnobEl.style) joyKnobEl.style.transform = 'translate(0px,0px)';
+  if (fjoyApi) fjoyApi.release();
 }
 
 // WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry// across BOTH directions (the incoming controller inherits the outgoing one's
@@ -8218,13 +8221,19 @@ function toggleMap() {
 // PlayerController + JOY_DEAD_ZONE). Release recenters to zero.
 // Lifted to __TEST for the smoke probes (null when no touch layer exists).
 let joyVec = null, joyRelease = null;
+// FLOATING JOYSTICK api (null when the touch layer is absent — every caller
+// degrades to a no-op). Assigned at the bottom of the block below.
+let fjoyApi = null;
 
 if (touchLayer && touchLayer.addEventListener) {
   let joyPointerId = null;   // the finger that owns the stick (null = free)
 
   // Offset (px from base center, client space) -> analog input + knob visual.
   // rad = base radius in px. Exposed via __TEST as joyVec for the smoke probes.
-  function applyJoyVector(dx, dy, rad) {
+  // knobEl (2026-09-18): which knob visual moves — the fixed base's #joy-knob
+  // or the floating stick's #fjoy-knob; same math, same clamping.
+  function applyJoyVector(dx, dy, rad, knobEl) {
+    if (knobEl === undefined) knobEl = joyKnobEl;
     const max = Math.max(1, rad || 1);
     const len = Math.hypot(dx, dy);
     const clamped = Math.min(len, max);
@@ -8237,8 +8246,8 @@ if (touchLayer && touchLayer.addEventListener) {
     pilotInput.y = uy;
     pilotInput.mag = clamped / max;
     // Knob visual: the clamped offset (edge drag parks the knob at the rim).
-    if (joyKnobEl && joyKnobEl.style) {
-      joyKnobEl.style.transform =
+    if (knobEl && knobEl.style) {
+      knobEl.style.transform =
         'translate(' + Math.round(ux * clamped) + 'px,' + Math.round(uy * clamped) + 'px)';
     }
   }
@@ -8258,6 +8267,62 @@ if (touchLayer && touchLayer.addEventListener) {
       r.width / 2);
   }
   const isJoyPointer = (ev) => joyPointerId !== null && ev.pointerId === joyPointerId;
+
+  // ---- FLOATING (DYNAMIC) JOYSTICK (owner 2026-09-18, msg_01M2S5BMY6) ----
+  // Touch anywhere on the CANVAS in MANUAL play steers: the press arms the
+  // stick AT the touch point (the canvas handler runs fsHit FIRST, so the
+  // fullscreen button's own tap still toggles; the pads/cog row are DOM above
+  // the canvas and never reach this path). The visual — origin ring + knob —
+  // is #fjoy, pointer-inert: the canvas owns the gesture, so the ring can
+  // never intercept its own drag. The drag feeds the SAME applyJoyVector /
+  // pilotInput the fixed base uses (dead zone JOY_DEAD_ZONE, magnitude =
+  // deflection fraction); release is a DEAD STOP (joyRecenter), identical to
+  // a keyboard keyup. Guards: touch paths only, one stick at a time (pointer
+  // id), playing mode only, help-mode declines, MANUAL only.
+  const fjoyEl = document.getElementById('fjoy');
+  const fjoyKnobEl = document.getElementById('fjoy-knob');
+  const fjoy = { pointerId: null, ox: 0, oy: 0, rad: C.JOY.FLOAT_R };
+  let fjoyCaptures = 0;
+  function fjoyShow() {
+    if (!fjoyEl || !fjoyEl.style) return;
+    fjoyEl.style.left = (fjoy.ox - fjoy.rad) + 'px';
+    fjoyEl.style.top = (fjoy.oy - fjoy.rad) + 'px';
+    fjoyEl.style.display = 'block';
+    if (fjoyKnobEl && fjoyKnobEl.style) fjoyKnobEl.style.transform = 'translate(0px,0px)';
+  }
+  function fjoyRelease(ev) {
+    if (fjoy.pointerId === null) return;
+    if (ev && ev.pointerId !== undefined && ev.pointerId !== fjoy.pointerId) return;
+    fjoy.pointerId = null;
+    joyRecenter();   // dead stop — same as keyup, no coast
+    if (fjoyKnobEl && fjoyKnobEl.style) fjoyKnobEl.style.transform = 'translate(0px,0px)';
+    if (fjoyEl && fjoyEl.style) fjoyEl.style.display = 'none';
+  }
+  function fjoyTryArm(ev) {
+    if (!C.JOY.FLOAT || !isTouchPath()) return false;
+    if (fjoy.pointerId !== null) return false;                  // one stick
+    if (state.mode !== 'playing') return false;                  // runs only
+    if (state.helpMode) return false;                            // "?" owns taps
+    if (normalizePilotMode(state.pilotMode) !== 'MANUAL') return false;
+    fjoy.pointerId = ev.pointerId ?? 0;
+    fjoy.ox = ev.clientX ?? 0; fjoy.oy = ev.clientY ?? 0;
+    // POINTER CAPTURE: keep THIS finger's moves/lifts arriving even if the
+    // drag leaves the canvas — belt to the window listeners' braces (capture
+    // semantics are unverifiable headless; the global id-filtered listeners
+    // are the testable path, audit-round-2 precedent).
+    if (typeof canvas.setPointerCapture === 'function') {
+      try { canvas.setPointerCapture(fjoy.pointerId); fjoyCaptures++; }
+      catch { /* captured or not, the window listeners own the lift */ }
+    }
+    fjoyShow();
+    return true;
+  }
+  function fjoyPointerMove(ev) {
+    if (fjoy.pointerId === null || ev.pointerId !== fjoy.pointerId) return;
+    if (ev.preventDefault) ev.preventDefault();
+    applyJoyVector((ev.clientX ?? 0) - fjoy.ox, (ev.clientY ?? 0) - fjoy.oy,
+      fjoy.rad, fjoyKnobEl);
+  }
 
   touchLayer.addEventListener('pointerdown', (ev) => {
     audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
@@ -8293,6 +8358,7 @@ if (touchLayer && touchLayer.addEventListener) {
       joyPointerId = null;
       joyRecenter();   // release = stick snaps back to center
     }
+    fjoyRelease(ev);   // floating stick: same lift, same brake (id-filtered)
   };
   // AUDIT ROUND 2 (2026-09-16): the release listeners moved from touchLayer to
   // WINDOW. pointerup fired on the touch layer only reaches the layer when the
@@ -8308,12 +8374,25 @@ if (touchLayer && touchLayer.addEventListener) {
   if (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
     window.addEventListener('pointerup', releasePointer);
     window.addEventListener('pointercancel', releasePointer);
+    // FLOATING JOYSTICK: the drag's moves arrive wherever the pointer lands
+    // (the press started on the canvas; capture retargets to it in a real
+    // browser, and this global listener is the headless-testable twin).
+    window.addEventListener('pointermove', fjoyPointerMove);
   } else {   // no window (never in the shipped build; keeps the seam total)
     touchLayer.addEventListener('pointerup', releasePointer);
     touchLayer.addEventListener('pointercancel', releasePointer);
   }
   joyVec = applyJoyVector;
   joyRelease = joyRecenter;
+  fjoyApi = {
+    tryArm: fjoyTryArm,
+    release: fjoyRelease,
+    armed: () => fjoy.pointerId !== null,
+    origin: () => ({ x: fjoy.ox, y: fjoy.oy, rad: fjoy.rad }),
+    captures: () => fjoyCaptures,
+    el: fjoyEl,
+    knob: fjoyKnobEl,
+  };
 }
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
 // The touch layer is only relevant mid-run — menus are directly tappable.
@@ -8376,8 +8455,13 @@ function syncChrome() {
     if (touchLayer.style.display !== want) { touchLayer.style.display = want; chromeLayoutChanged = true; }
   }
   // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
+  // FLOATING JOYSTICK (2026-09-18): on touch paths the floating stick IS the
+  // movement idiom, so the fixed base stands down (C.JOY.FLOAT is the
+  // one-line flip back); desktop/cog-only keeps the fixed base for mouse-drag
+  // (WAVE-23 parity). The [data-joy] handler above stays live either way.
   if (joyEl && joyEl.style) {
-    const wantJoy = (on && state.pilotMode === 'MANUAL') ? 'block' : 'none';
+    const wantJoy = (on && state.pilotMode === 'MANUAL' &&
+      !(C.JOY.FLOAT && isTouchPath())) ? 'block' : 'none';
     if (joyEl.style.display !== wantJoy) { joyEl.style.display = wantJoy; chromeLayoutChanged = true; }
   }
   // MOBILE EMBED LAYOUT: the free band the canvas is bounded to changes the
@@ -8668,6 +8752,15 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
+  // FLOATING JOYSTICK (owner 2026-09-18): a canvas press in MANUAL play arms
+  // the stick AT the touch point. AFTER fsHit above (the fullscreen button's
+  // own tap toggles, never steers); the hook itself declines help-mode,
+  // non-playing modes and non-MANUAL pilots, so everything below (escape,
+  // cinematic skips) is untouched.
+  if (fjoyApi && fjoyApi.tryArm(ev)) {
+    if (ev.preventDefault) ev.preventDefault();
+    return;
+  }
   if (state.mode === 'escape') {
     // HELP MODE (VK9P4: the escape joined the entry set): a tap EXPLAINS,
     // never activates — the touchLayer funnel's mirror on the canvas path, so
@@ -9603,6 +9696,10 @@ export const __TEST = {
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
+  // FLOATING JOYSTICK seam (2026-09-18): tryArm/release/armed/origin/captures
+  // + the live DOM elements, so the guard drives the REAL canvas path and
+  // asserts the visual without touching main.js internals.
+  get fjoy() { return fjoyApi; },
   // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
   // Pure helpers + the live dilation state, so the new behaviour is testable
   // headlessly without driving the rAF loop.

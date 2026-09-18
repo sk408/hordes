@@ -835,6 +835,19 @@ export const CONFIG = {
     INSET: 8,        // kept this far off the view's right edge
   },
 
+  // FLOATING (DYNAMIC) JOYSTICK (owner 2026-09-18): on touch paths a canvas
+  // press in MANUAL play arms the stick AT the touch point — the origin ring
+  // + knob are painted there (DOM, pointer-inert) and the drag vector feeds
+  // the SAME analog pilotInput (controllers.js PlayerController, dead zone
+  // JOY_DEAD_ZONE 0.15, magnitude = deflection fraction). FLOAT is the one
+  // line that restores the fixed bottom-center base on touch too (desktop
+  // keeps the fixed base for mouse-drag either way).
+  JOY: {
+    FLOAT: true,     // floating stick replaces the fixed base on touch paths
+    FLOAT_R: 60,     // base radius, CSS px (ring is 2R across)
+    FLOAT_KNOB: 40,  // knob box, CSS px
+  },
+
   // Intercept drift for pickup-adjacent world objects (the AutoPilot is
   // chest/arch/portal-BLIND by design — controllers never learn these exist,
   // so the objects close the last distance themselves). CHEST is eager (pure

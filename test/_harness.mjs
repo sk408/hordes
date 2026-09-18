@@ -155,13 +155,14 @@ export async function boot(opts = {}) {
   const device = opts.device || 'desktop';
   const touchDevice = device === 'touch';
   const coarse = device !== 'desktop';
-  if (device !== 'desktop') {
-    // Node 22 ships a getter-only navigator global — define over it.
-    try { delete globalThis.navigator; } catch { /* not defined yet */ }
-    Object.defineProperty(globalThis, 'navigator',
-      { value: { maxTouchPoints: touchDevice ? 5 : 0, userAgent: 'harness ' + device + ' device' },
-        configurable: true });
-  }
+  // ALWAYS (re)define navigator, for every profile: a touch boot in the same
+  // test file used to leave maxTouchPoints=5 behind, so a LATER desktop boot
+  // derived hasTouch=true from the stale tell (cross-boot leak, caught by
+  // test_floating_joystick.mjs's desktop arm 2026-09-18).
+  try { delete globalThis.navigator; } catch { /* not defined yet */ }
+  Object.defineProperty(globalThis, 'navigator',
+    { value: { maxTouchPoints: touchDevice ? 5 : 0, userAgent: 'harness ' + device + ' device' },
+      configurable: true });
   globalThis.window = {
     addEventListener: (ev, cb) => { handlers[ev] = cb; },
     removeEventListener: noop,
