@@ -294,12 +294,55 @@ function topChromeBottom() {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
     const r = el.getBoundingClientRect();
-    if (r.height > 0 && r.bottom > bottom) bottom = r.bottom;
+    // /uiScaleNow: LAYOUT px — the UI-fit transform below scales the paint,
+    // never the layout, so every band measurement divides it back out.
+    const b = r.bottom / uiScaleNow;
+    if (r.height > 0 && b > bottom) bottom = b;
   };
   consider(document.getElementById('hud'));
   const touch = document.getElementById('touch');
   for (const el of touch ? touch.querySelectorAll('button.cog') : []) consider(el);
   return bottom;
+}
+// FIT-TO-VIEWPORT UI SCALE (owner 2026-09-18, msg_01M2S72CF4902CWRWE7VJ3Y22M:
+// "The whole interface should be able to shrink itself to fit a little better"
+// — galaxy.click keeps a header on screen unless the game is fullscreen, so
+// the box the game actually GETS is shorter than the screen). The viewport
+// source below is the VISUAL viewport when the platform has one, never the
+// screen: in a host iframe that is the iframe's visible box. A pinch-zoomed
+// visual viewport is IGNORED (the user's zoom is honoured; auto-fit is a
+// floor, not an override).
+function viewSize() {
+  const vv = window.visualViewport;
+  if (vv && Math.abs(vv.scale - 1) < 0.01 && vv.width >= 1 && vv.height >= 1)
+    return { vw: vv.width, vh: vv.height };
+  return { vw: window.innerWidth, vh: window.innerHeight };
+}
+// The one uniform scale the whole interface (canvas, pads, HUD, overlays —
+// everything lives inside #wrap) is painted at. Layout positions stay
+// UNSCALED (a transform does not change layout), so the round-5 band
+// arithmetic runs in layout space and a uniform scale preserves its
+// zero-overlap result; only the paint shrinks. getBoundingClientRect returns
+// VISUAL (post-transform) rects, so every band measurement divides by
+// uiScaleNow to get back to the layout space it positions in.
+let uiScaleNow = 1;
+let uiFitState = { scale: 1, wanted: 1, floored: false };
+// fitCanvas's last round-5 verdict, so verifiers can tell an honest zero
+// (band fit) from the NAMED FALLBACK (round-4 letterbox, overlap accepted).
+let lastFitFellBack = false;
+// Pure: the largest scale <= 1 that pulls layout-space bounds `b` fully
+// inside the vw x vh viewport under a centre-origin uniform transform,
+// clamped to the legibility floor. {wanted, floored} report the unclamped
+// value and whether the floor had to stop it. Exposed via __TEST (uiFitScale)
+// so the node suite can matrix-test the arithmetic without a layout engine.
+function uiFitScale(vw, vh, b, floor) {
+  const cx = vw / 2, cy = vh / 2;
+  let s = 1;
+  if (b.left < 0) s = Math.min(s, cx / (cx - b.left));
+  if (b.top < 0) s = Math.min(s, cy / (cy - b.top));
+  if (b.right > vw) s = Math.min(s, (vw - cx) / (b.right - cx));
+  if (b.bottom > vh) s = Math.min(s, (vh - cy) / (b.bottom - cy));
+  return { scale: Math.max(floor, s), wanted: s, floored: s < floor };
 }
 // ROUND 5 (owner 2026-09-18, msg_01M2S6XRT0 — seen on his own phone in
 // fullscreen landscape: "it should do its best to keep the buttons off the
@@ -317,7 +360,9 @@ function topChromeBottom() {
 function controlBands() {
   // Live-measured reserved bands, px from the viewport edges, plus the pad
   // geometry the steer-zone placement needs. Caller checked touchLayerLive().
-  const vw = window.innerWidth, vh = window.innerHeight;
+  // All rects are LAYOUT px (divided out of the current UI-fit scale) because
+  // the canvas this sizes is positioned in layout space, under the transform.
+  const { vw, vh } = viewSize();
   const landscape = vw > vh;
   const bands = { left: 0, right: 0, top: topChromeBottom() + BAND_MARGIN, bottom: 0,
     padTop: vh, padInnerLeft: 0, padInnerRight: vw };
@@ -326,8 +371,9 @@ function controlBands() {
     if (!el.isConnected) continue;
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-    const r = el.getBoundingClientRect();
-    if (!r.width && !r.height) continue;
+    const v = el.getBoundingClientRect();
+    if (!v.width && !v.height) continue;
+    const r = { left: v.left / uiScaleNow, right: v.right / uiScaleNow, top: v.top / uiScaleNow };
     tops.push(r.top);
     sides.push(r);
   }
@@ -370,7 +416,7 @@ function placeSteerZone(bands) {
   const zone = document.getElementById('steer-zone');
   if (!zone || !zone.style) return;
   if (!bands || bands.fallback) { zone.style.display = 'none'; return; }
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const { vw, vh } = viewSize();
   if (vw > vh) {
     zone.style.left = '0px';
     zone.style.top = Math.round(bands.top) + 'px';
@@ -386,12 +432,39 @@ function placeSteerZone(bands) {
   }
   zone.style.display = 'block';
 }
+// The fixed-px chrome whose LAYOUT bounds the UI-fit scale must keep on
+// screen: the thumb pads, the cog row, the text HUD and the stick's home
+// band. (The transient #joy/#fjoy are drag visuals placed at the touch point
+// — never layout actors.) Returns layout-space rects.
+function chromeLayoutRects() {
+  const out = [];
+  const consider = (el) => {
+    if (!el || !el.isConnected) return;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    const v = el.getBoundingClientRect();
+    if (!v.width && !v.height) return;
+    out.push({ left: v.left / uiScaleNow, top: v.top / uiScaleNow,
+      right: v.right / uiScaleNow, bottom: v.bottom / uiScaleNow });
+  };
+  const touch = document.getElementById('touch');
+  if (touch && touch.isConnected && getComputedStyle(touch).display !== 'none') {
+    for (const el of touch.querySelectorAll('.pad')) consider(el);
+    for (const el of touch.querySelectorAll('button.cog')) consider(el);
+    consider(document.getElementById('steer-zone'));
+  }
+  consider(document.getElementById('hud'));
+  return out;
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
+  lastFitFellBack = false;
+  // The viewport the game actually GOT (visualViewport-first, see viewSize).
+  const { vw, vh } = viewSize();
   // ROUND 4 base: the scale is the VIEWPORT-limited letterbox only — chrome
   // NEVER shrinks the field (that is how round 2 collapsed landscape to
   // 41x26 / 0x0). ROUND 5 narrows it ON TOUCH LAYOUTS ONLY, below.
-  const fit = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
+  const fit = Math.min(vw / C.VIEW_W, vh / C.VIEW_H);
   let scale = displayScale(fit);
   // A forced resolution mode (PIXEL-PERFECT / 2 / 3 / 4) can round the scale
   // ABOVE the viewport-limited fit on a phone (floor(0.81) -> max(1, 0) = 1
@@ -400,12 +473,16 @@ function fitCanvas() {
   if (scale > fit) scale = fit;
   let w = Math.floor(C.VIEW_W * scale), h = Math.floor(C.VIEW_H * scale);
   let placed = false, bands = null, fellBack = false;
+  // The interface union bounds in LAYOUT space — the seed is the viewport
+  // itself (the round-4 letterbox is viewport-limited, so the canvas never
+  // starts outside it); the chrome below can only push it further out.
+  let bounds = { left: 0, top: 0, right: vw, bottom: vh };
   // No real layout API (node harness stub DOM) -> no live chrome to place
   // against: the whole-viewport letterbox stands exactly as before.
   if (typeof getComputedStyle === 'function' && touchLayerLive()) {
     placed = true;
     bands = controlBands();
-    const bf = bandFit(window.innerWidth, window.innerHeight, bands);
+    const bf = bandFit(vw, vh, bands);
     if (!bf.fallback) {
       // ROUND 5: fitted into the bands, centred in what remains — overlap
       // with the reserved chrome is impossible by construction.
@@ -413,15 +490,25 @@ function fitCanvas() {
       canvas.style.position = 'absolute';
       canvas.style.top = Math.round(bf.top) + 'px';
       canvas.style.left = Math.round(bf.left) + 'px';
+      bounds = { left: bf.left, top: bf.top, right: bf.left + w, bottom: bf.top + h };
     } else {
       // The NAMED FALLBACK (a viewport too small for zero overlap): the
       // round-4 letterbox — top-aligned below the chrome row, clamped INSIDE
       // the viewport, overlap accepted, never a collapsed canvas.
       fellBack = true;
-      const top = Math.min(bands.top, window.innerHeight - h);
+      lastFitFellBack = true;
+      const top = Math.min(bands.top, vh - h);
+      const left = (vw - w) / 2;
       canvas.style.position = 'absolute';
       canvas.style.top = Math.round(top) + 'px';
-      canvas.style.left = Math.round((window.innerWidth - w) / 2) + 'px';
+      canvas.style.left = Math.round(left) + 'px';
+      bounds = { left, top, right: left + w, bottom: top + h };
+    }
+    for (const r of chromeLayoutRects()) {
+      bounds.left = Math.min(bounds.left, r.left);
+      bounds.top = Math.min(bounds.top, r.top);
+      bounds.right = Math.max(bounds.right, r.right);
+      bounds.bottom = Math.max(bounds.bottom, r.bottom);
     }
   }
   canvas.style.width = w + 'px';
@@ -431,12 +518,41 @@ function fitCanvas() {
     canvas.style.top = '';
     canvas.style.left = '';
   }
+  // FIT-TO-VIEWPORT UI SCALE (hosted/small boxes): when the fixed-px chrome
+  // would clip (a header ate the height, a host narrowed the box), the WHOLE
+  // interface shrinks as ONE unit — uniform transform on #wrap, layout
+  // untouched, so the band fit above and its zero-overlap result are exactly
+  // preserved. Never below the legibility floor; a floored scale that still
+  // clips is the STATED degradation (reported by the verifier, not hidden).
+  // Fullscreen/immersive gets the full viewport back, so the scale relaxes
+  // to 1 on the same live measurement — no special case.
+  const wrap = document.getElementById('wrap');
+  if (C.UI_FIT.FIT_SCALE && wrap && wrap.style) {
+    const st = uiFitScale(vw, vh, bounds, C.UI_FIT.SCALE_FLOOR);
+    uiFitState = st;
+    uiScaleNow = st.scale;
+    if (st.scale < 0.999) {
+      wrap.style.transformOrigin = '50% 50%';
+      wrap.style.transform = 'scale(' + st.scale + ')';
+    } else {
+      wrap.style.transformOrigin = '';
+      wrap.style.transform = '';
+    }
+  } else {
+    uiScaleNow = 1;
+    uiFitState = { scale: 1, wanted: 1, floored: false };
+  }
   placeSteerZone(placed && !fellBack ? bands : null);
   renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', fitCanvas);
+// The hosted/iframed dynamic viewport (and the collapsing mobile toolbar in
+// immersive mode) resize WITHOUT a window resize event — visualViewport's own
+// resize is the production signal (the 100vh trap, measured).
+if (window.visualViewport && window.visualViewport.addEventListener)
+  window.visualViewport.addEventListener('resize', fitCanvas);
 
 // ---------- State ----------
 // WAVE-25 (audit 2.6): ONE wave shape. There used to be two — a short
@@ -9813,6 +9929,12 @@ export const __TEST = {
   // node suite can matrix-test the zero-overlap math without a layout
   // engine (the real-browser proof is tools/verify_control_bands.mjs).
   get bandFit() { return bandFit; },
+  // UI-FIT seam (2026-09-18, msg_01M2S72CF4): the pure scale arithmetic +
+  // the live applied state, so the node suite can matrix-test the clip math
+  // and the browser verifier can report the engaged scale directly.
+  get uiFitScale() { return uiFitScale; },
+  get uiFit() { return { ...uiFitState, applied: uiScaleNow, fellBack: lastFitFellBack }; },
+  viewSize,
   // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
   // Pure helpers + the live dilation state, so the new behaviour is testable
   // headlessly without driving the rAF loop.

@@ -206,3 +206,42 @@ height, or the width-limited scale, whichever is smaller) and justify it in one 
 4. One PNG per size in `docs/art/mobile-embed-<date>/`, read back visually.
 5. `bash tools/run_suite.sh` to `redfiles=0`; no assertion weakened; retargets as file + line + why.
 6. **NO SIMS** (owner directive: nothing over 60 seconds). Browser geometry only.
+
+---
+
+## ROUND 5 — CONTROL BANDS (owner, 2026-09-18, msg_01M2S6XRT0: "it should do its best to keep the
+buttons off the canvas in landscape. There's plenty of screen room on my phone and it still overlaps")
+
+Round 4 made overlap acceptable; the owner then saw that landscape phones have ample room that the
+round-4 layout was not using — the bands are now RESERVED FIRST and the canvas fitted into what
+remains. Round 4's priorities still hold underneath: the floor and the viewport bounds are hard, and
+below the breaking size the round-4 letterbox (overlap accepted) is the NAMED FALLBACK, not a
+collapse.
+
+**POLICY (fitCanvas, src/main.js — ROUND 5 block):**
+- LANDSCAPE: side bands for the pads (live-measured pad rects + 6px `BAND_MARGIN`), top band for the
+  cog row; the canvas is fitted into the remainder, CENTRED, aspect preserved (letterbox, not zoom —
+  the extent-not-zoom rule stands). The floating stick's HOME band (`#steer-zone`) is the whole LEFT
+  band.
+- PORTRAIT: bottom band for the pads, top band for the cog row; `#steer-zone` is the bottom-centre
+  strip between the pads (the fixed joystick's old slot).
+- `bandFit(vw, vh, bands)` is a PURE function (exposed via `__TEST`) — largest 480x300-aspect rect
+  inside the unreserved area; if the R4 floor (`min(0.55vh, vw/1.6)`, 1px rounding slack) is missed,
+  it returns `fallback: true` and fitCanvas takes the round-4 viewport-limited top-aligned letterbox.
+- Desktop / `#touch.cog-only` keeps round 4 verbatim (the bands only exist on the live touch layer).
+- Bands are re-measured LIVE on every fit, so immersive mode's 78px pad buttons grow the bands
+  automatically.
+
+**BREAKING SIZE (measured, not guessed):** pure-fit zero-overlap stops being possible at roughly a
+540px landscape width at 360px height (side bands 112+112px leave too little for the floor). Below
+it: the named round-4 fallback — the canvas holds the floor, the pads overlap, and the verifier
+REPORTS the overlap instead of asserting it away.
+
+**ACCEPTANCE — round 5 (on top of round 4's hard priorities):** at landscape **844x390 @dpr3,
+896x414, 780x360, 640x360** and portrait **390x844 @dpr3, 320x568**: ZERO intersection between the
+canvas rect and every visible control rect (both pads and every touch button, the cog row, `#hud`,
+`#joy` when shown, `#steer-zone`), measured LIVE by getBoundingClientRect in a REAL browser with the
+touch layer live and a run playing — `tools/verify_control_bands.mjs` (41 checks; also drives MANUAL
+through REAL pilot taps and arms the floating stick from `#steer-zone` with a real
+press-drag-release, asserting the live `pilotInput`). Node guard: `test/test_control_bands.mjs`
+(pure bandFit matrix + steer-zone routing, incl. the 480x320 fallback probe).

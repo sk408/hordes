@@ -29,9 +29,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
-export async function serveRoot(root = ROOT) {
+export async function serveRoot(root = ROOT, extra = {}) {
   const srv = http.createServer((req, res) => {
     const rel = decodeURIComponent(String(req.url).split('?')[0]);
+    // HOST-PAGE SIMULATION (verify_host_fit.mjs): extra maps a served path to
+    // inline HTML — a page that embeds the game in an iframe under a header,
+    // the galaxy.click scenario, without writing a file into the repo.
+    if (Object.prototype.hasOwnProperty.call(extra, rel)) {
+      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
+      return res.end(extra[rel]);
+    }
     const f = path.join(root, rel === '/' ? 'index.html' : rel);
     let st = null;
     try { st = fs.statSync(f); } catch { /* 404 below */ }
@@ -77,7 +84,7 @@ export async function withPage(opts, fn) {
     startupScript = '', timeoutMs = 30000 } = opts || {};
   if (!fs.existsSync(CHROME)) throw new Error('no chrome binary at ' + CHROME);
   fs.mkdirSync(SHOT_DIR, { recursive: true });
-  const srv = await serveRoot();
+  const srv = await serveRoot(ROOT, opts.extra || {});
   const dir = fs.mkdtempSync('/tmp/hordes-chrome-');
   const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',

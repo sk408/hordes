@@ -848,6 +848,23 @@ export const CONFIG = {
     FLOAT_KNOB: 40,  // knob box, CSS px
   },
 
+  // FIT-TO-VIEWPORT UI SCALE (owner 2026-09-18, msg_01M2S72CF4902CWRWE7VJ3Y22M:
+  // "The whole interface should be able to shrink itself to fit a little better"
+  // on a host page whose header eats vertical space). When the viewport the game
+  // actually GOT cannot hold the interface's fixed-px chrome (the 4-button pad
+  // stack, the cog row), the WHOLE interface — canvas, pads, HUD, overlays —
+  // scales as ONE unit (a uniform transform on #wrap) by the live-measured
+  // overhang, never below SCALE_FLOOR: below the floor text stops being legible
+  // (the player review's readability complaint), so the layout DEGRADES instead
+  // (residual clip reported by the verifier) rather than shrinking further.
+  // The user's own ZOOM/RESOLUTION setting is untouched — auto-fit only
+  // prevents clipping, it never overrides a deliberate zoom. FIT_SCALE is the
+  // one line that turns the whole mechanism off.
+  UI_FIT: {
+    FIT_SCALE: true,
+    SCALE_FLOOR: 0.75,   // text legibility floor; below it the clip is reported, not shrunk away
+  },
+
   // Intercept drift for pickup-adjacent world objects (the AutoPilot is
   // chest/arch/portal-BLIND by design — controllers never learn these exist,
   // so the objects close the last distance themselves). CHEST is eager (pure
