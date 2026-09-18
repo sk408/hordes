@@ -232,6 +232,11 @@ Recommendation: keep exactly this split. The touch layer is big, labeled and
 familiar-shaped, so greyed communicates "coming"; a tiny canvas glyph has no
 such affordance, so hiding is the honest read.
 
+> **SUPERSEDED by ADDENDUM 2 below**: the owner answered the hidden-vs-greyed
+> question directly — HIDDEN, with a staged introduction. The split above was
+> the addendum-1 state; the lock is now `visibility: hidden` + `.pr-on`
+> reveals.
+
 ### Tests + verification (the addendum's own)
 
 - `test/test_prologue.mjs` — now 11 checks, all green: cadence (no banner at
@@ -263,3 +268,152 @@ applies in-page) before the page's scripts run, for every verifier by
 default; verify_prologue opts out with `skipPrologue: false`. An earlier
 checkpoint said tools/real_loop.mjs would need an auto-OK driver — moot: it
 already stamps `runs = 1` at boot, so fresh cohorts never arm the phase.
+
+## ADDENDUM 2 (owner 2026-09-18): HIDDEN CONTROLS => STAGED INTRODUCTION WITH TOOLTIPS
+
+Owner: "Hmm.. if we hide the controls, then we would need to introduce the
+buttons one at a time with the tooltip explaining what they do."
+
+The hidden-vs-greyed question is answered: HIDDEN, and each control arrives
+with its own tooltip. Banner 4 (the potion) reveals nothing — three stages,
+one finale.
+
+### The reveal set and order (three of the ~four budget)
+
+Chosen by the brief's test — "what does a player need in the first 60
+seconds?" — with each control arriving exactly when it is about to matter:
+
+1. **MOVE** (banner 1) — the floating stick / WASD. Nothing else in the game
+   works until the player can move, and the phase's own first act is a walk.
+2. **PILOT** (banner 2, the `tc-pilotbtn` button) — a fresh profile defaults
+   to AUTO_ALL, and the first interesting decision a new player faces is
+   "who is flying this thing?" The banner copy explains AUTO vs MANUAL; the
+   button appears with the explanation and can be practised immediately
+   (harmlessly — the world is inert).
+3. **STATS** (banner 3, the `tc-stats` button) — the FIELD REPORT. It is the
+   game's core feedback loop (draft results, level-ups), and it sits beside
+   LEVEL UP in first-run pacing. The report opens under the tooltip, pauses
+   the phase clock (menu-like), and ESC resumes.
+
+NOT staged, and why: the cog (SETTINGS — nothing to configure in minute
+one), HELP/RADAR/MAP (reference tools, not first-minute needs), Q/E
+skills/potions (the run has not given the player any yet). They stay hidden
+AND inert through the whole phase and return at the end with everything
+else.
+
+### The movement-control assumption (the stated dependency)
+
+The MOVE stage introduces **the floating stick** — the joystick task's
+settled, SHIPPED outcome (owner 2026-09-18: touch-anywhere-on-canvas steers;
+the fixed base is retired on touch paths; WASD/arrows are the desktop twin).
+Nothing about movement is pending replacement, so revealing it is safe. The
+tooltip copy is per-path: "DRAG ANYWHERE TO STEER" on touch, "WASD OR
+ARROWS TO STEER" on desktop — read live off `#touch.on`, the same
+`isTouchPath()` the copy everywhere else uses.
+
+### The tooltip lifecycle (learn by doing)
+
+- A stage's banner OK reveals its control (`.pr-on` -> `visibility: visible`,
+  `pointer-events: auto`) AND raises the tooltip: `#prologue-tip`, anchored
+  at the control it belongs to (centred above the drag field for MOVE; over
+  the left pad for PILOT/STATS), plain ASCII, no emojis.
+- The tooltip clears on FIRST USE of that control — never on an OK. MOVE:
+  the first real steer (drag or key). PILOT: the first mode toggle (button,
+  `runAction('pilot')`, or the `O` twin). STATS: the first report open
+  (`I` twin or button). The OK banners keep the explanations; the tooltips
+  belong to the controls.
+- Copy source: PILOT/STATS reuse `introLine(id, touch)` from
+  controls_ref.js verbatim — the same strings the existing hint layer uses,
+  no forked text. Only MOVE has prologue-specific copy (the hint layer's
+  move line predates the floating stick's settle).
+- The inert phase is what makes practice safe: no spawns, clock frozen, and
+  the phase itself keeps walking the pilot whenever the player is not
+  steering (the idle-completion rule below), so toggling PILOT to MANUAL and
+  then doing nothing cannot strand the choreography.
+
+### The idle-completion rule
+
+`runController` overrides the decision during the phase: a banner up => the
+pilot HOLDS; the player's revealed input (any pilot mode — the drag IS the
+lesson) => the input steers; otherwise, if the pilot is MANUAL and idle, the
+phase walks toward the potion itself. The choreography completes for an
+idle player in ANY mode; SKIP and the 60s bound remain the rescues.
+
+### THE GUARD (the failure mode that matters most)
+
+At phase end — drink, bound, or SKIP — `endPrologue` sweeps: the tooltip is
+hidden, every `.pr-on` mark removed, `body.prologue-locked` dropped, the
+keydown/runAction gates lifted. `startRun` runs the SAME sweep at arm time
+(re-arms stay clean). test_prologue asserts the post-phase control set
+EQUALS run #2's, field for field: lock off, no staging marks, no tooltip,
+settings openable, the PILOT toggle an ordinary control again. The
+real-browser verifier asserts every `#touch button` computes
+`visibility: visible` with zero `.pr-on` survivors, and that the very keys
+that were inert at arm time (I) act after.
+
+### SKIP — APPROVED (owner 2026-09-18: "Sure, skip is fine"); ONE JUDGMENT CALL flagged for overrule
+
+During the prologue exactly two controls are live: the banner's OK and the
+**SKIP ALL** button painted on the canvas card's lower-left corner (rect
+`prologueSkipRect()`, hit-tested by the same canvas funnel; quiet — dimmer,
+smaller, 9px — never mistakable for OK, in-view and clear of it at every
+viewport), plus the **Escape twin** while a banner is up (the tour's own
+skip idiom). One skip ends the phase at once and restores the FULL control
+set immediately; it reuses the tour-skip session suppression (no hint chip
+arms later this session; REPLAY TOUR restores them). Toast:
+"TUTORIAL SKIPPED - THE RUN BEGINS".
+
+**THE JUDGMENT CALL — the skip skips the TUTORIAL, NOT THE ASSIST.**
+Skipping ends the phase through the DRINK path: the potion counts as drunk,
+the named 45s invincibility + the on-screen clearing pulse + the rainbow
+survive, and the run clock and enemy spawns start at that moment. Reason:
+the only players who ever see this are real new players (run #1 of a fresh
+profile) — exactly who the assist exists for; a skip that also stripped the
+shield would punish the opt-out with a cold start. **Stated plainly so the
+owner can overrule**: if he wants a skip to also skip the potion, the change
+is one line (`prologueSkip` calls `endPrologue('skip')` directly instead of
+`prologueDrink(state.player, 'skip')`) plus flipping the assist-survives
+asserts in test_prologue/verify_prologue back to no-shield ones.
+
+### Tests + verification (the addendum's own)
+
+- `test/test_prologue.mjs` — 14 checks, all green: arm-time cleanliness
+  (nothing revealed, no tooltip, no staging marks — including across a
+  RE-ARM), MOVE reveal + tooltip + first-steer clear + steering in
+  AUTO_ALL + WASD/arrows, PILOT/STATS inert-before/live-after with `.pr-on`
+  and tooltip lifecycle through the real funnels (`runAction`, key twins),
+  the report pausing the phase clock, banner 4 revealing nothing, the
+  unstaged controls hidden+inert through the whole phase (15 keys, 13
+  actions), SKIP via canvas rect AND Escape (full set restored, the assist
+  surviving — 45s invuln, clearing pulse, clock started at the skip,
+  session suppression), THE GUARD equality vs run #2, and every base-brief
+  check retained (exits, boundary, clear, rainbow, absorb).
+- `tools/verify_prologue.mjs` — ALL OK at BOTH 390x844 and 320x568 on a real
+  fresh profile: computed `visibility: hidden` on every touch button at arm
+  time, the MOVE tooltip painted after banner 1's real OK tap (shot kept:
+  `prologue-staged-*`), a REAL CDP touch drag steering the pilot +11wu and
+  clearing the tooltip, PILOT/STATS going `visibility: visible` at their
+  reveals, a real tap on the revealed PILOT button toggling the mode, the
+  previously-inert `I` key opening the report once STATS is staged, the
+  real SKIP-rect tap and the Escape twin both ending the phase with the
+  full control set back AND the assist intact (invuln 44.5s, clock
+  started), and all 13 buttons visible with no staging marks after the
+  drink.
+- Verifier note (honesty): the drag check zeroes `walkT` with its start
+  sample — movement itself accrues the banner cadence, so without the reset
+  banner 2 rises mid-drag and (correctly, by the modal rule) freezes the
+  pilot before the drag has steered anywhere.
+
+### Files (addendum 2)
+
+- `src/main.js` — PROLOGUE_STAGES + reveal/tooltip block (~150 lines),
+  prologueReveal/prologueTipShow/prologueTipUsed/prologueTipHide/
+  prologueActAllowed/prologueManualVec/prologueSkip, runController override,
+  keydown + runAction gates, canvas SKIP hit-test, fjoy arm extension,
+  startRun arm-time sweep, endPrologue sweep + skip toast, __TEST seams.
+- `src/render.js` — `prologueSkipRect()` export; the banner card paints the
+  SKIP ALL button.
+- `index.html` — lock CSS flipped to `visibility: hidden` + `.pr-on`;
+  `#prologue-tip` element + anchors; `tc-pilotbtn` id.
+- `test/test_prologue.mjs` — rewritten per above (14 checks).
+- `tools/verify_prologue.mjs` — staged real-browser checks per above.

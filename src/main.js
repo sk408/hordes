@@ -7477,7 +7477,7 @@ function prologueOk() {
 // the bottom of update() reaps), then the phase ends. The clear fires AT the
 // drink, i.e. BEFORE the shield ends, trivially. On-screen = the visible
 // field at the current zoom plus CLEAR_MARGIN world units — NOT the arena.
-function prologueDrink(p) {
+function prologueDrink(p, via) {
   if (!state.prologue || state.prologue.drunk) return;
   state.prologue.drunk = true;
   p.invuln = Math.max(p.invuln, C.PROLOGUE.INVULN_S);
@@ -7489,7 +7489,7 @@ function prologueDrink(p) {
   for (const e of state.enemies) {
     if (e.hp > 0 && e.x >= x0 && e.x <= x1 && e.y >= y0 && e.y <= y1) e.hp = 0;
   }
-  endPrologue('drunk');
+  endPrologue(via === 'skip' ? 'skip' : 'drunk');
 }
 
 // THE BOUND: the phase ends when the potion is drunk OR at MAX_S of UNPAUSED
@@ -7653,16 +7653,21 @@ function prologueManualVec() {
   return { x: mx, y: my };
 }
 
-// SKIP ALL — the PROPOSED second enabled exception alongside OK (the owner's
-// all-buttons rule made this his call; proposed openly, he can veto). One
-// press ends the phase AND restores the full control set immediately. It
-// reuses the TOUR SKIP's session-suppression pattern (hintsSuppressed — the
-// player who skipped the tutorial is never chipped at later this session;
-// REPLAY TOUR is the way back in), rather than inventing another.
+// SKIP ALL — APPROVED by the owner 2026-09-18 as the second enabled
+// exception alongside OK (during the prologue exactly two controls are live:
+// the banner's OK and this). ONE JUDGMENT CALL, flagged for overrule: the
+// skip skips the TUTORIAL, NOT THE ASSIST — it ends the phase through the
+// DRINK path, so the potion effect survives (45s invuln + the clearing
+// pulse + the rainbow) and the run clock starts at that moment. Reason: the
+// only players who ever see this are real new players (run #1 of a fresh
+// profile), exactly who the assist exists for. The full control set returns
+// immediately, and the tour skip's session-suppression pattern is reused
+// (hintsSuppressed — no chips at a player who opted out; REPLAY TOUR is the
+// way back in).
 function prologueSkip() {
   if (!state.prologue || state.prologue.drunk) return;
   hintsSuppressed = true;
-  endPrologue('skip');
+  prologueDrink(state.player, 'skip');
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------

@@ -32,9 +32,11 @@
 //             stays hidden AND inert through the whole phase.
 //   EXITS     the potion drunk, the stated bound (PROLOGUE.MAX_S of
 //             UNPAUSED time — a held banner freezes the bound's clock
-//             too), or SKIP (the PROPOSED second enabled exception on the
-//             banner card — canvas rect + the Escape twin, the tour-skip
-//             idiom with its session suppression).
+//             too), or SKIP (APPROVED 2026-09-18, the second enabled
+//             exception on the banner card — canvas rect + the Escape
+//             twin, the tour-skip idiom with its session suppression; it
+//             skips the TUTORIAL, NOT THE ASSIST: the drink path fires, so
+//             the 45s shield + clear + clock-start all survive a skip).
 //   THE GUARD at phase end the control set is EXACTLY a normal run's —
 //             every control live, nothing left hidden or inert, no tooltip,
 //             no staging marks. Pinned against run #2's own state.
@@ -388,10 +390,12 @@ S.check('STAGED: nothing else is live through the phase — the unstaged control
 });
 
 // ---------------------------------------------------------------------------
-// THE SKIP — the PROPOSED second enabled exception: one press ends the phase
-// and restores the FULL control set immediately (tour-skip session pattern).
+// THE SKIP — APPROVED by the owner 2026-09-18 as the second enabled
+// exception: one press ends the phase, restores the FULL control set
+// immediately (tour-skip session pattern), and — the approved judgment call —
+// skips the TUTORIAL, NOT THE ASSIST: the potion effect survives the skip.
 // ---------------------------------------------------------------------------
-S.check('SKIP: the canvas rect and the Escape twin both end the phase at once, everything restored', () => {
+S.check('SKIP: the canvas rect and the Escape twin both end the phase at once, everything restored + the assist survives', () => {
   Math.random = mulberry32b(0x9a44);
   try {
     T.banners.suppressAll();
@@ -400,16 +404,22 @@ S.check('SKIP: the canvas rect and the Escape twin both end the phase at once, e
     h.pump(2);
     quietField();
     // Banner #1 up, nothing revealed: the canvas SKIP tap ends the phase.
+    // An on-screen walker proves the clearing pulse fires on a skip too.
     autoplay(60);
     assert(T.prologue.banner() !== null && T.prologue.buttonsLocked === true, 'fixture: banner up, locked');
+    st.enemies.push({ hp: 10, x: st.player.x + 10, y: st.player.y });
     const sc = skipCenter();
     h.elements['game']._ev['pointerdown']({
       preventDefault() {}, pointerId: 2, clientX: sc.x, clientY: sc.y,
     });
+    h.pump(2);
     assert(!T.prologue.active, 'the canvas SKIP tap ended the phase');
     assert(T.prologue.buttonsLocked === false && !hasPrOn('tc-pilotbtn') && tipEl().hidden === true,
       'the FULL control set restored immediately (no hidden or inert leftovers)');
-    assert(st.player.invuln < C.PROLOGUE.INVULN_S, 'a skip grants no shield');
+    assert(st.player.invuln >= C.PROLOGUE.INVULN_S - 1 && st.prologueShieldT > 40,
+      'the skip KEEPS the assist: 45s invuln + the shield (the skip skips the TUTORIAL, not the potion)');
+    assert(st.enemies.every((e) => e.hp <= 0), 'the clearing pulse fired on the skip too');
+    assert(st.time > 0, 'the run clock started at the skip');
     // And everything WORKS right away: the settings pause, the report.
     T.runAction('settings');
     assert(st.mode === 'settings', 'the settings pause works after a skip');
