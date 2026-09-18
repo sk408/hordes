@@ -52,6 +52,7 @@
 //   3. The full buy (maxed, every row incl. mana) clears — the gap is the
 //      build, not the harness. All three are handed to the pilot.
 import { runRealCohort, mean } from '../tools/real_loop.mjs';
+import { ARM_CAP_S } from './_sim_budget.mjs';
 import { mulberry32 } from '../src/weather.js';
 import { goldPerHour, ledger } from '../tools/economy_ledger.mjs';
 import { CONFIG as CFG } from '../src/config.js';
@@ -86,7 +87,14 @@ console.log('BEATABILITY — fresh arm (LIVE, real frame loop):');
   Math.random = mulberry32(SEED);
   let recs;
   try {
-    recs = await runRealCohort('fresh', N, { maxSeconds: CFG.RUN.LIMIT + 60 });
+    // SIM BUDGET (2026-09-18): this live cohort is the measurement chassis, so
+    // it DECLARES its ceiling (N runs x the 60s arm cap; fresh runs die in
+    // wave 1, so the real cost is ~12s) and caps each run at ARM_CAP_S — the
+    // old RUN.LIMIT+60 maxSeconds could never be reached by a fresh arm
+    // without the early-death assertion below already failing.
+    recs = await runRealCohort('fresh', N, {
+      maxSeconds: ARM_CAP_S, budgetSimSeconds: N * ARM_CAP_S,
+    });
   } finally {
     Math.random = rand;
   }

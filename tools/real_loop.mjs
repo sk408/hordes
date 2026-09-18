@@ -20,6 +20,12 @@
 import { CONFIG as CFG } from '../src/config.js';
 import { makeProfile, buyUpgrade, SHOP_UPGRADES, STARTER_WEAPONS, startWeaponSlots } from '../src/meta.js';
 import { TOUR_KEYS } from '../src/tour.js';
+// SIM BUDGET (2026-09-18, machine-checked): the cohort chassis is the exact
+// "dozens of real-time runs" vector the owner capped. A cohort now REFUSES
+// to start without a declared process budget, marks each RUN as its own arm
+// (the 60s cap prices one run, not the cohort), and clamps the per-run cap
+// to the owner's 60s — a longer arm is a reported limitation, never a run.
+import { markArm, declareSimBudget, chargeSimSeconds, ARM_CAP_S } from '../test/_sim_budget.mjs';
 
 // ---- the three progression stages ------------------------------------------
 // PARTIAL mirrors boss_sim.mjs's --profile partial verbatim (~2.2kg spent:
@@ -91,6 +97,9 @@ function installDom(profile) {
   const rafQueue = [];
   globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
   globalThis.location = { reload: noop };
+  // SIM BUDGET: every advanced ms is charged before the frame runs, so an
+  // over-cap arm throws mid-run (the loud failure, not a silent overage).
+  const advance = (ms) => { chargeSimSeconds(ms / 1000); now += ms; };
   const ls = new Map([['hordes_onboarded', '1']]);
   for (const k of Object.values(TOUR_KEYS)) ls.set(k, '1');   // no coachmark pauses
   ls.set('hordes_profile_v1', JSON.stringify(profile));
@@ -99,7 +108,7 @@ function installDom(profile) {
     setItem: (k, v) => { ls.set(k, String(v)); },
     removeItem: (k) => { ls.delete(k); },
   };
-  return { elements, rafQueue, keyHandler: () => keyHandler, advance: (ms) => { now += ms; } };
+  return { elements, rafQueue, keyHandler: () => keyHandler, advance };
 }
 
 /**
@@ -149,6 +158,11 @@ function classify(d) {
  */
 export async function runRealCohort(stage, runs, {
   maxSeconds = CFG.RUN.LIMIT + 60, onRun = null, onProgress = null,
+  // SIM BUDGET (2026-09-18): REQUIRED — the process's declared total
+  // sim-second budget for THIS cohort call (charged runs x cap at most).
+  // Undeclared or over-budget throws instead of running: soft guidance was
+  // bypassed (owner 2026-09-17), so the budget fails loudly.
+  budgetSimSeconds = null,
   // RSS8 (2026-09-17): optional per-run START hook, called immediately after
   // startRun() with the live state — for arms that differ by ONE run-local
   // flag (e.g. tools/rss8_gold_delta.mjs arming the magnet card). The shims
@@ -156,6 +170,17 @@ export async function runRealCohort(stage, runs, {
   // harness next to this cohort is not an option; the hook is the seam.
   onRunStart = null,
 } = {}) {
+  if (!(budgetSimSeconds > 0)) {
+    throw new Error('SIM BUDGET: runRealCohort requires opts.budgetSimSeconds — declare the ' +
+      'process budget (e.g. runs x ' + ARM_CAP_S + 's). Guidance was bypassed; the budget is ' +
+      'machine-enforced (test/test_sim_budget.mjs).');
+  }
+  if (maxSeconds > ARM_CAP_S + 1e-9) {
+    throw new Error('SIM BUDGET: maxSeconds ' + maxSeconds + 's exceeds the ' + ARM_CAP_S +
+      's per-arm cap — measure gold/second inside the cap and state the extrapolation ' +
+      '(a longer run is never the answer; test/test_sim_budget.mjs).');
+  }
+  declareSimBudget(budgetSimSeconds);
   const h = await bootReal(stage);
   const st = h.state;
   const out = [];
@@ -196,6 +221,7 @@ export async function runRealCohort(stage, runs, {
     const archSeen = new Set();
     const buffMap = new Map();
     h.startRun();
+    markArm('cohort:' + (typeof stage === 'string' ? stage : 'profile') + ':run' + r);
     if (onRunStart) onRunStart(st, r);   // RSS8: arm run-local arm flags
     let ended = null;
     const capFrames = Math.floor(maxSeconds * 60);

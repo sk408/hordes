@@ -1036,6 +1036,7 @@ export class Renderer {
   drawPlayHud(g, state) {
     if (hudSuppressed(state)) {
       this.hudChrome = null; this.bossBanner = null; this.radar = null;
+      this.fsButton = null;   // the fullscreen toggle rides the same gate
       this.hudDrawn = false;
       return;
     }
@@ -1043,10 +1044,50 @@ export class Renderer {
     this.drawHudChrome(g, state);
     this.drawRadar(g, state);
     this.drawBossBanner(g, state);
+    this.drawFsButton(g, state);
     // SEAM (end-summary HUD suppression, 2026-09-17): one flag the browser
     // tests read — TRUE iff the play HUD (bars, feed, radar, banner) actually
     // painted this frame. The end-of-run summary asserts it FALSE in 'dead'.
     this.hudDrawn = true;
+  }
+
+  // ---- FULLSCREEN — the transient canvas toggle (owner 2026-09-17) --------
+  // Painted INSIDE drawPlayHud, so every modal-suppression rule
+  // (hudSuppressed: dead/trophies/bestiary) covers it for free — the
+  // end-of-run summary inherits the same gate the owner's suppression task
+  // built — and main.js's fsVisible() keeps it to the pad screens
+  // (playing/finale), so menus, draft cards and cinematics never carry it.
+  // The box is mid-right of the view, the one column with no HUD chrome and
+  // no DOM pad at any phone size (geometry asserted in
+  // test_fullscreen_button.mjs). Icon: house plate + four corner brackets
+  // (the expand metaphor); while fullscreen is ACTIVE a centre dot joins
+  // them — "you are in; this exits". No glyphs, no text.
+  drawFsButton(g, state) {
+    const f = state.fsOverlay;
+    if (!f || !f.supported || !f.visible) { this.fsButton = null; return; }
+    const F = C.FULLSCREEN;
+    const b = { x: C.VIEW_W - F.INSET - F.W, y: (C.VIEW_H - F.H) / 2, w: F.W, h: F.H };
+    g.fillStyle = C.HUD.PLATE;
+    g.fillRect(b.x, b.y, b.w, b.h);
+    g.fillStyle = C.HUD.FRAME;
+    g.fillRect(b.x, b.y, b.w, 1);
+    g.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    g.fillRect(b.x, b.y, 1, b.h);
+    g.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    g.fillStyle = '#e8e8f0';
+    const inset = 3, arm = 5, t = 2;
+    for (const [cx, cy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const hx = b.x + (cx ? b.w - inset - arm : inset);
+      const vy = b.y + (cy ? b.h - inset - t : inset);
+      g.fillRect(hx, vy, arm, t);
+      const vx = b.x + (cx ? b.w - inset - t : inset);
+      const hy = b.y + (cy ? b.h - inset - arm : inset);
+      g.fillRect(vx, hy, t, arm);
+    }
+    if (f.active) g.fillRect(b.x + b.w / 2 - 1, b.y + b.h / 2 - 1, 3, 3);
+    // SEAM: the painted box this frame (view coords) — the tests' geometry
+    // source, mirroring the radar/banner seams above.
+    this.fsButton = b;
   }
 
   // ---- A2 THE RADAR (owner-suggested 2026-09-14, pair to A1's AUTO pilot) ----

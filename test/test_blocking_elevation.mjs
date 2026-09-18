@@ -248,55 +248,72 @@ S.check('NO-TRAP: the composite field is fully connected (flood fill, several se
 // SAME RULE, BOTH SIDES — then the live navigation bars.
 // ---------------------------------------------------------------------------
 S.check('BOTH SIDES: a live enemy funnels through a gate to a pilot at the heart', () => {
-  T.banners.suppressAll();
-  T.startRun();
-  h.pump(2);
-  quietField();
-  const rel = stageRelief(st.stage);
-  const seed = st.groundSeed || 0;
-  assert(rel.WALL, 'the default run carries the wall (stage ' + st.stage + ')');
-  const p = st.player;
-  p.x = 0; p.y = 0; p.invuln = 1e9;
-  const a = cliffAngle(seed, rel);
-  st.enemies.push({ typeId: 'CHASER', x: Math.cos(a) * 820, y: Math.sin(a) * 820,
-    w: 10, hp: 1000, maxHp: 1000, speed: 60, mx: 0, my: 0, age: 0, elite: false });
-  let enteredR = null, minR = 1e9;
-  autoplay(60 * 60, () => {
-    st.spawnTimer = 999;
-    p.invuln = 1e9; p.x = 0; p.y = 0;
-    const e = st.enemies[0];
-    if (!e || e.hp <= 0) return;
-    const r = Math.hypot(e.x, e.y);
-    minR = Math.min(minR, r);
-    if (enteredR === null && r < 700) enteredR = e;
-  });
-  assert(enteredR, 'the enemy crossed into the hollow (min r ' + minR.toFixed(0) +
-    ') — the wall delayed it, never stopped it');
-  assert(minR < 30, 'the funneled enemy actually reached the pilot (min r ' + minR.toFixed(0) + ')');
+  // FLAKE PIN (2026-09-18, the ANTI-SANCTUARY pin's shape — commit 8a14817's
+  // suite hardening missed these two live checks): startRun rolls an UNSEEDED
+  // groundSeed (main.js startRun), and the wall/gate field is a pure function
+  // of that seed — the funnel ran against a different world every invocation
+  // and intermittently missed its window. Seeded, the world (and the whole
+  // autoplay) is deterministic; the assertions are unchanged.
+  const realRandom = Math.random;
+  Math.random = mulberry32(0x6a7e1);
+  try {
+    T.banners.suppressAll();
+    T.startRun();
+    h.pump(2);
+    quietField();
+    const rel = stageRelief(st.stage);
+    const seed = st.groundSeed || 0;
+    assert(rel.WALL, 'the default run carries the wall (stage ' + st.stage + ')');
+    const p = st.player;
+    p.x = 0; p.y = 0; p.invuln = 1e9;
+    const a = cliffAngle(seed, rel);
+    st.enemies.push({ typeId: 'CHASER', x: Math.cos(a) * 820, y: Math.sin(a) * 820,
+      w: 10, hp: 1000, maxHp: 1000, speed: 60, mx: 0, my: 0, age: 0, elite: false });
+    let enteredR = null, minR = 1e9;
+    autoplay(60 * 60, () => {
+      st.spawnTimer = 999;
+      p.invuln = 1e9; p.x = 0; p.y = 0;
+      const e = st.enemies[0];
+      if (!e || e.hp <= 0) return;
+      const r = Math.hypot(e.x, e.y);
+      minR = Math.min(minR, r);
+      if (enteredR === null && r < 700) enteredR = e;
+    });
+    assert(enteredR, 'the enemy crossed into the hollow (min r ' + minR.toFixed(0) +
+      ') — the wall delayed it, never stopped it');
+    assert(minR < 30, 'the funneled enemy actually reached the pilot (min r ' + minR.toFixed(0) + ')');
+  } finally { Math.random = realRandom; }
 });
 S.check('AUTO: the pilot routes around the wall to a beyond-wall gem, unattended', () => {
-  T.banners.suppressAll();
-  T.startRun();
-  h.pump(2);
-  quietField();
-  const rel = stageRelief(st.stage), seed = st.groundSeed || 0;
-  const p = st.player;
-  p.x = 0; p.y = 0; p.invuln = 1e9;
-  const a = cliffAngle(seed, rel);
-  const gx = Math.cos(a) * 850, gy = Math.sin(a) * 850;
-  st.gems.push({ x: gx, y: gy, xp: 5 });
-  let minDist = 1e9, crossed = false;
-  autoplay(60 * 90, () => {
-    st.spawnTimer = 999;                 // the quiet-field fixture holds
-    p.invuln = 1e9;
-    minDist = Math.min(minDist, Math.hypot(p.x - gx, p.y - gy));
-    const r = Math.hypot(p.x, p.y);
-    if (r > 765) crossed = true;
-  });
-  assert(st.gems.length === 0, 'the gem was collected (the pilot crossed for it)');
-  assert(crossed, 'the pilot left the hollow (max r crossed the band outer edge)');
-  console.log('  MEASURED AUTO route: closest approach ' + minDist.toFixed(0) +
-    'px to the beyond-wall gem; the wall was crossed via the choke funnel');
+  // FLAKE PIN (2026-09-18): same unseeded-groundSeed flake as BOTH SIDES above
+  // — this was the observed RED (failed ~1-in-3 across suite + standalone
+  // runs, passed the other two). Seed pins the world; assertions unchanged.
+  const realRandom = Math.random;
+  Math.random = mulberry32(0x6a7e3);
+  try {
+    T.banners.suppressAll();
+    T.startRun();
+    h.pump(2);
+    quietField();
+    const rel = stageRelief(st.stage), seed = st.groundSeed || 0;
+    const p = st.player;
+    p.x = 0; p.y = 0; p.invuln = 1e9;
+    const a = cliffAngle(seed, rel);
+    const gx = Math.cos(a) * 850, gy = Math.sin(a) * 850;
+    st.gems.push({ x: gx, y: gy, xp: 5 });
+    let minDist = 1e9, crossed = false;
+    autoplay(60 * 90, () => {
+      st.spawnTimer = 999;                 // the quiet-field fixture holds
+      p.invuln = 1e9;
+      minDist = Math.min(minDist, Math.hypot(p.x - gx, p.y - gy));
+      const r = Math.hypot(p.x, p.y);
+      if (r > 765) crossed = true;
+    });
+    assert(st.gems.length === 0, 'the gem was collected (the pilot crossed for it)');
+    assert(crossed, 'the pilot left the hollow (max r crossed the band outer edge)');
+    console.log('  MEASURED AUTO route: closest approach ' + minDist.toFixed(0) +
+      'px to the beyond-wall gem; the wall was crossed via the choke funnel');
+  } finally { Math.random = realRandom; }
 });
 S.check('NIGHT: a walled run clears the wave and auto-continues, unattended', () => {
   while (!T.night.on) T.night.press();

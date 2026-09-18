@@ -15,58 +15,141 @@ disclose the old and new bound in the same commit. No naked number tweaks.**
 A change that cannot say which invariant it serves is a regression, not a
 tune.
 
+**Cheapest-source rule (owner context 2026-09-18: "we limited simulations to
+max 60s" — sims were eating progress)**: every income figure in this file is
+labeled with its source class — **[TABLE]** pure meta.js/config.js exports
+evaluated in node (no sim), **[ARM]** a capped live run (the fixed 4-arm
+battery, §1, ~12 capped runs worst case), **[CITED]** a prior measurement on
+disk. Answer from [TABLE] first; spend an [ARM] only when a number genuinely
+requires live play; [CITED] only for load-bearing history. Re-measuring the
+baseline is NOT routine: it happens only when a change makes a baseline
+stale, and the ledger row for that change states the staleness reason.
+
+**The budget is ENFORCED BY A TEST, not by guidance (owner 2026-09-17:
+"The agent wouldn't limit them on its own without my hard rule. It kept
+bypassing the guidance to keep testing to minimal.")** Guidance was tried
+and bypassed; the cap now throws. The machine check lives at
+**test/test_sim_budget.mjs** (the guard) and **test/_sim_budget.mjs:62**
+(`chargeSimSeconds` — the enforcement point every pumped frame passes
+through, in BOTH harnesses: test/_harness.mjs pump() and
+tools/real_loop.mjs advance()). It enforces: no single simulated arm over
+60s (a boundary arm at exactly 60.0s passes; one more frame throws —
+test/test_sim_budget.mjs:57 is the deliberate over-long arm); a declared
+process budget throws the moment the total passes it; a real_loop cohort
+without opts.budgetSimSeconds refuses to start (tools/real_loop.mjs:173).
+There is deliberately NO off switch on the registry. **Every measurement
+report carries the number**: `SIM: <n>s across <k> arms (budget <b>s
+declared; sources: [TABLE]/[ARM]/[CITED] per figure)` — a figure with no
+stated source is unverified. When a figure needs more than the budget, the
+correct output is a REPORTED LIMITATION (what could not be measured and what
+it would cost), never a longer run — the owner decides.
+
 ---
 
 ## 1. MEASURED INCOME (the calibration base)
 
-MEASURED directive msg_01M2QW6H9AFKQWEN4QV2KZA0VV: gold/second headless
-through the REAL loop (test/_harness.mjs boot, AUTO_ALL pilot, no hp refills,
-no cheats), 60s sim cap per arm — 3 arms, ≤180 sim-seconds total (~3,900
-frames, ~10s wall). Script: /tmp/pacing_measure.mjs (one-shot; numbers below).
+**Re-measured 2026-09-18 (msg_01M2R0RAH5SYCK2MMM09R743X1 + refinements
+01M2R12SW / 01M2R16J) after the died-early audit**: the original 3 arms
+(322g / 77g / 35g, dying at 23s / 15s / 10s) were a BOT FLOOR, and the
+flat per-run tier table below them assumed short runs. A run is now a
+**PAIR (length, gold)** everywhere in this file. Tool:
+tools/measure_income_stages.mjs (seeded mulberry32, n=6/arm, 60s cap,
+income = the REAL settlement through the run-once purse seam).
 
-| arm | died at | banked | breakdown |
+**Policy (player-real levers only, no cheats — no hp inflation, no refills):
+AUTO_ALL pilot + stance SAFE (the shipped STANCES dial, applied through the
+real persisted-pref seam) + the real_loop cohort overlay policy (draft: NEW
+WEAPON else card 1; intermission: CONTINUE) + q/e at bosses.** A 4-variant
+sweep (stance SAFE/BALANCED x skills boss-only/on-ready) showed fresh death
+is POLICY-INVARIANT: every variant died in wave 1 in 7-15s with **0 kills**.
+The bot cannot play wave 1; that is the bot's flaw, not the game's (E1
+measured the same "~15s / 0 kills" on 2026-09-14).
+
+| arm (build, spend) | survival (median) | (length, gold) per run | label |
 |---|---|---|---|
-| A fresh profile | t=23s | **322g** | award 70 + FIRST_CLEAR 250 + purse 1 |
-| B fresh + dmg L1 + hp L1 | t=15s | **77g** | award 70 + purse 4 + 3 residual |
-| C fresh, NIGHT MODE | t=10s | **35g** | award 70 x 0.5 (pool total exactly 0.5) |
+| fresh, tier 0 | dies 7-18s (9s) | (9s, 70g steady; 320g on first-clear runs) | BOT FLOOR |
+| couple = fresh + hp L1 + dmg L1 (270g) | dies 7-16s (9.5s) | (9.5s, 70-330g) | BOT FLOOR — the two cheap upgrades do NOT extend survival |
+| partial (dmg 2, hp 3, 4 weapons, KNIGHT, ~2.2kg) | dies 19-37s (21s) | (21s, 81-85g steady; up to 357g w/ first-clear) | BOT FLOOR |
+| half = cheapest 24 of 47 rows by full-buy (**6.83M spent**) | survives cap 6/6 | (60s cap, 569g) = 9.48 g/s wave-1 | survivable arm (deep end-game build, NOT tier 2) |
+| maxed (98.5M catalogue) | survives cap 6/6; WON at 1800s | (60s cap, 572g) = 9.54 g/s wave-1; (1800s, 754,689g) WON | the good-run reference |
 
-**Owner anchors**: "new player ~300g" — measured first run 322g, MATCH
-(disclose: includes the one-time 250 FIRST_CLEAR; the steady-state fresh run
-is 70-77g, matching GOLD_MODEL.INCOME_TIERS tiers 0-1 of 70/100).
-"a couple upgrades ~2000g" — at 70-100g/run that is **cumulative** income
-over ~20-28 runs (tiers 0-1 band), consistent with the measured tier table;
-two cheap upgrades do NOT extend survival inside one run (arm B died at 15s
-vs arm A's 23s — run-to-run seed variance, not a survival gain).
+**The survival cliff sits between ~2.2k and ~6.8M spent**: no mid build was
+measured that survives wave 1 for 60s (partial dies at 21s; the 6.8M half
+sails). Which purchases extend survival, measured: hp L1 + dmg L1 (270g) —
+NO extension (9s -> 9.5s, seed variance); the partial basket (+3 weapons,
+KNIGHT, dmg 2/hp 3) — +12s median (9.5 -> 21s) and kills 0 -> 7-23; the
+6.8M half — at least +39s (dies 21s -> survives the cap), via the hp/dmg
+ladders plus the mid-catalogue rows.
 
-Reference tier table (meta.js:256-267, MEASURED 2026-09-14/15 — see ledger):
-tier 0 runs 1-5 ~70g/run · tier 1 runs 6-20 ~100g · tier 2 runs 21-45 ~200g ·
-tier 3 runs 46+ 754,689g (a WON 1800s maxed run; G17 slice 1b measure, raw
-log /tmp/g17_1b/maxed_r1.log). The 3,700x cliff between tier 2 and tier 3 is
-the single most load-bearing fact in this file.
+**INCOME IS SUPER-LINEAR IN RUN LENGTH — never extrapolate the 60s cap
+linearly.** The maxed wave-1 rate is 9.54 g/s, but the WON 1800s run
+averaged 754,689/1800 = **419.3 g/s** (kills 2.1/s in wave 1 vs 135.7/s
+whole-run): wave density ramps. A 60s rate x 30 understates a WON run by
+~44x. The (length, gold) curve is pinned only at the poles (dies-in-9s
+floors and the WON run); the mid-game band is where the bot cannot follow
+a player, and any per-run figure for it is a floor, not an income.
 
-**Provenance of that table (addendum msg_01M2RNE0J6AT8WWG2BY31376EF, checked
-2026-09-17 — the answer is (a): §1 IS the measured series, and the tail (§2,
-§6) cites IT, not the withdrawn one):**
-- **tier 0-2 (70/100/200): the E1 run-purse cohorts, MEASURED 2026-09-14** —
-  6 seeded real-loop runs per arm, 300s cap, banked income per run; medians
-  70-floor / 95.5 / 185 (docs/briefs/E1_RUN_PURSE.md, meta.js:209-222).
-  Tiers 0-1 were re-confirmed twice: the G17 1b baseline cohorts (n=8,
-  seed 1337, medians 71 / 98) and §1's own 60s remeasure above (322g / 77g).
-  Tier 2 is a 300s-CAPPED median: at shipped difficulty half-max builds die
-  inside the cap — that degeneracy is the measured fact §2(d) reports as the
-  tier-2 FAIL, not a misread of a constant.
-- **tier 3 (754,689): the G17 slice 1b measure, 2026-09-15** — ONE WON 1800s
-  maxed run (n=1, seed 1337, tools/economy_ledger.mjs --measure) settled
-  through the REAL settleRunGold: kills 244185, cause RUN SURVIVED. Raw log
-  /tmp/g17_1b/maxed_r1.log, re-verified on disk 2026-09-17 (line: `run 1/1:
-  time=1800s ... gold=754689 WON`). A n=1 measurement — the one-run sample is
-  itself a disclosed limitation, but it is a measurement.
-- **The WITHDRAWN series (CONDENSE_PROPOSAL §4, "UNVERIFIED — DO NOT USE")
-  was a different one:** the pre-E1 analytic bands 700/1200/1800/2800, read
-  off the old constant table and misinterpreted as run income (owner
-  correction 2026-09-17). None of those four figures is cited as income
-  anywhere in this file; wherever §2/§6 below say 70/100/200/754,689 they are
-  citing the measured series above.
+**Owner anchors, reconciled:**
+- "a new player can get 300g easily" — measured first run **320g = AWARD 70
+  + FIRST_CLEAR 250** (award-dominated, so the bot reconciles it without
+  needing human skill; a surviving human adds a purse term on top). MATCH.
+- "one with a couple upgrades can get near 2000g" — **NOT one run**: the
+  couple arm's per-run income is unchanged (70-330g); 2000g is CUMULATIVE
+  over ~7-29 runs at the measured band. The owner's phrasing reads as
+  per-run; the measurement says the per-run reading is impossible at 270g
+  of upgrades — the gap driver is run count, and for a human also run
+  LENGTH (the bot banks ~0 purse at fresh; kills/sec 0.00 vs a human's
+  unknown-but-positive — the bot is strictly a worse player, quantified
+  where measurable: 0 kills, purse 0-1g per fresh run).
+
+**Tier table verdict (the audit the task demanded):**
+- **tier 0 (70) = the AWARD floor by construction** — it is what a run that
+  dies with 0 kills banks; verified today again. Sound AS A FLOOR; it is a
+  bot floor, labeled.
+- **tier 1 (100, partial median 95.5 on 2026-09-14)** — same cohort method;
+  today's partial arm re-confirms the order (steady 81-85g). BOT FLOOR,
+  labeled.
+- **tier 2 (200, "half-maxed median 185") — UNVERIFIED / DO NOT USE as
+  player income.** It shared the died-early flaw in its worst form: a
+  300s-CAPPED median over runs truncated then settled — truncation plus
+  degenerate survival, so it measures neither a player's run nor a stable
+  bot income. It stays ONLY as the bot-floor calibration the guards pin
+  (G7); it is not evidence about tier-2 player income.
+- **tier 3 (754,689) — SOUND**: one WON full-length 1800s run through the
+  real settle (n=1, disclosed; raw log /tmp/g17_1b/maxed_r1.log,
+  re-verified 2026-09-17). The 3,700x tier2->tier3 cliff is therefore REAL
+  AS MEASURED but is a measurement of TODAY's DIFFICULTY SHAPE (builds
+  below the survival cliff earn the award floor; builds above it farm a
+  ramping field) — it is not an economy constant and will move if mid-build
+  survival moves.
+
+Prior §1 (the 60s three-arm table and its reconciliation) is retained in
+git history (2026-09-17 state) and is superseded by this re-measure; its
+arm-C night figure (35g = 70 x 0.5, pool exactly 0.5) is unchanged by this
+task and remains the G6 fixture.
+
+### THE INCOME BASELINE (named, persisted — the one-time 2026-09-18 cost)
+
+Future balance changes compare against THIS table, not a fresh sim. Method:
+tools/measure_income_stages.mjs — the FIXED battery is 4 arms (fresh /
+couple / partial=mid / maxed=late), n=3 seeded runs, 60s cap each, ~12
+capped runs worst case, income through the REAL run-once settlement, policy
+as stated above (AUTO_ALL + SAFE + cohort overlay + q/e). This audit's
+figures below are the n=6 run of the same battery (same seeds 1-3 shared);
+[ARM] = capped live run, [CITED] = prior measurement on disk.
+
+| stage | typical run | gold/run (steady) | rate + basis | source |
+|---|---|---|---|---|
+| fresh (tier 0) | dies ~9s (7-18) | 70 (+250 one-time FIRST_CLEAR) | 7.8 g/s of AWARD only — not a farming rate | [ARM] |
+| couple (+hp L1 +dmg L1, 270g) | dies ~9.5s (7-16) | 70 — UNCHANGED by the upgrades | same | [ARM] |
+| partial (mid, ~2.2kg) | dies ~21s (19-37) | 81-85 (+ first-clear runs to 357) | 4.0 g/s incl. award | [ARM] |
+| maxed (late) | survives any cap; WON at 1800s | 754,689 | 9.54 g/s wave-1 in-cap; 419.3 g/s WON-run average — super-linear (§1), NEVER linearly extrapolated | [ARM] + [CITED] |
+
+**Staleness rule**: a change touches survival (hp/dmg ladders, enemy
+pressure, wave shape, potion supply) or the purse/award constants => the
+affected rows are stale; the change's ledger row must say so, and only then
+does the battery re-run. Price-only changes never stale the income side
+(compare [TABLE] arithmetic against the same baselines).
 
 ---
 
@@ -78,9 +161,9 @@ good runs (measured per tier, upgrades-per-good-run in [0.5, 2]).
 
 | stage | good run | typical next row (level) | upgrades / run | verdict |
 |---|---|---|---|---|
-| tier 0 (runs 1-5) | 70g | hp L1 120g / dmg L1 150g | 0.47-0.58 | **PASS** (0.5 floor brushed) |
-| tier 1 (runs 6-20) | 100g | dmg L2 240g / focus L1 200g | 0.42-0.83 | **PASS** (same) |
-| tier 2 (runs 21-45) | 200g | cheap-row ladder 120-500g | 0.4-1.6 | **PASS** |
+| tier 0 (runs 1-5) | 70g (BOT FLOOR, §1) | hp L1 120g / dmg L1 150g | 0.47-0.58 | **PASS** (0.5 floor brushed) |
+| tier 1 (runs 6-20) | 100g (BOT FLOOR, §1) | dmg L2 240g / focus L1 200g | 0.42-0.83 | **PASS** (same) |
+| tier 2 (runs 21-45) | 200g (UNVERIFIED floor, §1) | cheap-row ladder 120-500g | 0.4-1.6 | **PASS** as floor |
 | tier 3 (runs 46+) | 754,689g | fleetfoot L1 65,000g | **11.6** | fail-overshoot (pocket change) |
 | tier 3 | 754,689g | BEAM 4,500,000g | **0.17** | **BY DESIGN** — owner: "a few hours to get ONE top tier item" (see (d)) |
 
@@ -102,6 +185,15 @@ same row, at the tier where the row is bought.
 | luck L1 -> L2 (tier 3) | 280,000g | **0.37** | **FAIL** |
 | top single-purchase rows | — | 5-6 each | **PASS** |
 
+**Re-derived per-SECOND (2026-09-18 re-measure, run length made explicit):**
+the 754,689g reference already EMBEDS the 1800s WON-run length, so the FAIL
+verdicts do not change when length is accounted for — restated on the
+per-second basis: fleetfoot L2 130,000g = 130,000 / 419.3 g/s = **310s** of
+end-game farming (0.17 x 1800s); luck L2 280,000g = **668s** (0.37 x 1800s).
+There is no shorter end-game run to price against (a maxed build does not
+die; the run ends at the 1800s limit), so the verdicts are FAIL, unchanged,
+now length-explicit.
+
 **Verdict: FAIL at the end-game multi-level rows.** The owner complaint
 ("upgrades don't feel long enough lasting") maps exactly here: at 754k/run,
 the 65k-433k multi-level rungs vaporize in a fraction of a run. Fix lever
@@ -117,11 +209,12 @@ below 0.1 good runs while the FAIL is open).
   overnight run was NOT simulated, per the 60s cap rule):** at tier 3 a WON
   night run takes 1800s + 3s restart = 16.0 runs per 8h night x 377,345g =
   **6.02M = 1.34 top-tier items** — **PASS** at the end-game reading.
-  Disclosed: at the fresh end (35g x ~1,250 cycles of ~23s) an overnight
-  banks ~44k, which buys the whole EARLY catalog — but so does ~10 minutes
-  of active play; the floor's job binds only where items are expensive, and
-  there it lands at 1-2. The real overnight figure should be confirmed from
-  the owner's first night-mode session.
+  Disclosed: at the fresh end the re-measured bot cycle is ~9s death + 3s
+  restart = 12s, so an overnight banks 35g x ~2,400 cycles = **~84k** (was
+  ~44k on the old 23s+3s cycle; same order, still the whole EARLY catalog —
+  but so does ~10 minutes of active play; the floor's job binds only where
+  items are expensive, and there it lands at 1-2). The real overnight figure
+  should be confirmed from the owner's first night-mode session.
 
 ### (d) NO DEAD TAIL — "the next upgrade never costs more than a stated multiple of a good run's gold."
 Stated multiple: **6 good runs** (the G17 3h single-item cap; measured max
@@ -137,13 +230,17 @@ Stated multiple: **6 good runs** (the G17 3h single-item cap; measured max
 **Verdict: PASS at the top, FAIL by 100-1000x at the middle.** This is the
 player-review "quarter of a weapon" case with numbers attached: the G17
 catalog is priced against tier-3 income (754k/run), but tier-2 income is
-200g/run (the MEASURED 300s-capped tier-2 median, §1 provenance — the
-degeneracy itself, not a constant-table read) — the 3,700x income cliff
-between runs 21-45 and 46+ IS the dead
-tail. Root cause is difficulty, not price: sub-max builds die in minutes and
-earn ~nothing (E1 measured bands), so mid-tier income is degenerate. Levers
-(either/or, owner decision): raise tier-2 survival/income, or insert a
-140k-600k-priced rung band reachable at ~200-400g/run. **OPEN** — guarded by
+200g/run (now labeled UNVERIFIED / bot floor in §1 — the 300s-capped
+degenerate median). The 3,700x income cliff between runs 21-45 and 46+ IS
+the dead tail. **The 3,000-runs figure is an UPPER bound priced against a
+floor**: a tier-2 PLAYER who survives longer banks more per run (income is
+super-linear in length, §1), so the true player figure is fewer runs — but
+still FAIL by orders of magnitude at any measured rate (even the 6.8M
+build's 9.5 g/s wave-1 rate makes ZAP = 600,000/9.5 = 17.5 HOURS of
+farming). Root cause is difficulty, not price: sub-cliff builds die in
+seconds and earn the award floor (§1 re-measure). Levers (either/or, owner
+decision): raise tier-2 survival/income, or insert a 140k-600k-priced rung
+band reachable at ~200-400g/run. **OPEN** — guarded by
 G7 (regression ceiling: ZAP must not exceed 3,200 tier-2 runs while open).
 
 ---
@@ -172,12 +269,18 @@ the ledger rows carry the open items.
 
 ## 4. WHAT WAS SIMULATED
 
-- 3 headless arms x ≤60 sim-seconds (≤180 sim-s total, ~3,900 frames, ~10s
-  wall) through the real loop — §1.
+- The 2026-09-18 re-measure: 5 arms x 6 seeded runs x ≤60 sim-seconds
+  (≤1,800 sim-s total) through the real loop, real settlement — §1
+  (tools/measure_income_stages.mjs); plus a 4-variant fresh policy sweep
+  (stance x skill cadence) establishing fresh death is policy-invariant.
+- The 2026-09-17 measure it replaced: 3 arms x ≤60s (its numbers survive
+  only as the G6 night fixture, §1).
 - Pure-table arithmetic from src/meta.js + src/config.js exports (no sim).
 - **Not** simulated (per the 60s cap rule): overnight idle (projected from
-  in-cap rates, §2c); long-run tier-3 confirmation (cited from the G17
-  measured ledger instead).
+  in-cap rates + the measured 12s bot cycle, §2c); long-run tier-3
+  confirmation (cited from the G17 measured ledger instead); any mid-build
+  run longer than 60s (the mid band is unmeasurable by the bot today, §1 —
+  its figures are floors).
 
 ---
 

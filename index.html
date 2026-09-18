@@ -3,6 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- FULLSCREEN ADDENDUM (owner 2026-09-17): iPhone Safari has no element
+     Fullscreen API, so the same canvas button enters IMMERSIVE MODE there.
+     These metas + the manifest make the HONEST answer first-class: "Add to
+     Home Screen" launches standalone (zero browser chrome). The status bar
+     itself cannot be removed from in-page Safari — stated plainly, not
+     worked around. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
 <title>HORDES</title>
 <style>
   /* THE ONE VIEWPORT CLAMP for every help surface (owner 2026-09-16: "the
@@ -325,6 +335,22 @@
   #touch.cog-only .pad button { font-size: 12px; }
   #touch.cog-only .pad { opacity: 0.55; }
   #touch.cog-only .pad:hover { opacity: 1; }
+  /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
+     2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
+     canvas button enters immersive mode instead. The wrap grows to the
+     DYNAMIC viewport (100dvh — 100vh is the mobile trap that sizes to the
+     large viewport and clips under the collapsed address bar); the pads,
+     which ARE the controls, stay up and get BIGGER touch targets in the
+     reclaimed room; the non-gameplay chrome (the text HUD block, SETTINGS,
+     HELP) stands down. RADAR/MAP stay — they are in-run tactical toggles,
+     not chrome. Exits: the same button (it re-shows on any interaction),
+     or Escape. Honest limits: the OS status bar remains; true fullscreen
+     is Add to Home Screen (see the head metas + manifest.webmanifest). */
+  body.immersive #wrap { height: 100dvh; }
+  body.immersive #hud,
+  body.immersive #tc-cog,
+  body.immersive #tc-help { display: none !important; }
+  body.immersive #touch .pad button { min-height: 78px; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));

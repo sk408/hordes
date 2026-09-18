@@ -248,7 +248,11 @@ S.check('guard: every state.* referenced in src/ is factory-initialized, startRu
   //   focus / stance  — the doctrine dial (syncChrome mirror of controller
   //                     state; tactical, moment-to-moment, never persisted)
   //   zoomScale       — the published world-zoom factor (sticky session pref)
-  const ALLOWLIST = new Set(['focus', 'stance', 'zoomScale']);
+  //   fsOverlay       — the transient fullscreen toggle's published state
+  //                     (supported/visible/active; a syncChrome mirror like
+  //                     focus/stance, session-scoped, never run-reset — the
+  //                     0.5s window must survive a run boundary)
+  const ALLOWLIST = new Set(['focus', 'stance', 'zoomScale', 'fsOverlay']);
 
   // The census over every module in src/.
   const missing = [];

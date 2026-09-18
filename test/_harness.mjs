@@ -11,6 +11,13 @@
 // main.js is imported (static imports are hoisted).
 export const dtMs = 1000 / 60;
 
+// SIM BUDGET (2026-09-18): every pumped frame is charged to the registry in
+// test/_sim_budget.mjs — one arm segment per boot() by default; multi-run
+// tools call markArm() between runs. Enforcement (60s/arm, declared process
+// budgets) lives THERE; re-exported here for callers.
+export { markArm, declareSimBudget, simStats, ARM_CAP_S } from './_sim_budget.mjs';
+import { markArm as markArmSeg, chargeSimSeconds } from './_sim_budget.mjs';
+
 export async function boot(opts = {}) {
   const noop = () => {};
 
@@ -112,6 +119,27 @@ export async function boot(opts = {}) {
   // real browser's canvas carries.
   canvas.ownerDocument = globalThis.document;
 
+  // FULLSCREEN (2026-09-17): opts.fullscreen arms the stub document with the
+  // Fullscreen API surface BEFORE main.js loads — documentElement carrying
+  // requestFullscreen, document.exitFullscreen, and a LIVE fullscreenElement
+  // the toggle actually flips — so the button's support probe (main.js, once
+  // at module eval) sees a real-API browser. Default (no opt) = the iPhone
+  // iOS Safari case: NO API surface at all, and the button must be absent.
+  let fsCalls = null;
+  if (opts.fullscreen) {
+    fsCalls = { enter: 0, exit: 0 };
+    const doc = globalThis.document;
+    doc.fullscreenEnabled = true;
+    doc.fullscreenElement = null;
+    doc.exitFullscreen = () => { doc.fullscreenElement = null; fsCalls.exit++; };
+    doc.documentElement = {
+      requestFullscreen() {
+        doc.fullscreenElement = doc.documentElement; fsCalls.enter++;
+        return Promise.resolve();
+      },
+    };
+  }
+
   // Event handlers the game registers (routed by type, smoke.mjs precedent).
   const handlers = {};
   // DEVICE surface (first-class device input, 2026-09-16): opts.device sets
@@ -175,8 +203,17 @@ export async function boot(opts = {}) {
   // Pump n real frames. opts.frameMs lets a test choose the refresh rate;
   // it is read PER FRAME so setFrameMs() below actually takes effect (it used
   // to be captured once at boot, which made the seam a no-op).
+  // SIM BUDGET: each frame's simulated seconds are charged to the current
+  // arm segment (test/_sim_budget.mjs) BEFORE the callback runs, so an
+  // over-cap arm throws mid-pump and the build fails loudly.
+  // A boot is a FUNCTIONAL session by default (counted, not arm-capped —
+  // gameplay tests legitimately run one session past 60s); a measurement
+  // boot opts in with measurement:true, which caps the boot's arm too.
+  markArmSeg('boot' + (opts.variant ? ':' + opts.variant : ''), !!opts.measurement);
   function pump(n = 1, onFrame) {
     for (let i = 0; i < n; i++) {
+      const frameSimS = (opts.frameMs || dtMs) / 1000;
+      chargeSimSeconds(frameSimS);
       now += (opts.frameMs || dtMs);
       const cb = raf.shift();
       if (!cb) throw new Error('rAF queue drained at frame ' + i);
@@ -196,7 +233,13 @@ export async function boot(opts = {}) {
     handlers,
     key: (name, arg) => { if (handlers[name]) handlers[name](arg); },
     storage: store,
+    // FULLSCREEN: the enter/exit counters for the opts.fullscreen stub
+    // (null in the no-API arm — iPhone iOS Safari).
+    fsCalls,
     setFrameMs: (ms) => { opts.frameMs = ms; },
+    // SIM BUDGET: open a new arm segment (multi-run measurement tools call
+    // this between runs so the 60s arm cap prices ONE run, not the boot).
+    markArm: markArmSeg,
   };
 }
 

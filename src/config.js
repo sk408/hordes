@@ -817,6 +817,24 @@ export const CONFIG = {
     STANCE_COLORS: { SAFE: '#68e080', BALANCED: '#ffd75e', GREEDY: '#ff8848' },
   },
 
+  // ---- FULLSCREEN — the transient canvas toggle (owner 2026-09-17) --------
+  // An on-canvas button (NOT a settings card): appears on interaction, hides
+  // HIDE_S after the LAST interaction, re-shows on the next one. Painted in
+  // the play-HUD pass (render.js drawFsButton) mid-right of the view — the
+  // one column with no HUD chrome (bars/XP/feed top-left, clock/weather
+  // top-right, weapon/item rows bottom-left, radar bottom-right) and clear
+  // of the DOM pads at every phone size (geometry asserted in
+  // test_fullscreen_button.mjs). Where the Fullscreen API is missing
+  // (iPhone iOS Safari) the button is absent entirely — a dead control is
+  // worse than no control. HIDE_S is the owner's number verbatim ("0.5s");
+  // feel is REPORTED, never tuned unilaterally.
+  FULLSCREEN: {
+    HIDE_S: 0.5,     // seconds the button outlives the last interaction
+    W: 22,           // button box, view px
+    H: 18,
+    INSET: 8,        // kept this far off the view's right edge
+  },
+
   // Intercept drift for pickup-adjacent world objects (the AutoPilot is
   // chest/arch/portal-BLIND by design — controllers never learn these exist,
   // so the objects close the last distance themselves). CHEST is eager (pure

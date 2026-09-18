@@ -7381,6 +7381,7 @@ const REPEAT_GUARDED = new Set([
 
 window.addEventListener('keydown', (ev) => {
   audioUnlockGesture();   // S2: a keydown IS a user gesture — unlock audio
+  fsBump();               // FULLSCREEN: any key is an interaction — re-show the toggle
   // While a tour is live the keys are the TOUR's: Right/Enter/Space advance,
   // Left backs, Escape skips (the tour's own document-level handler, which
   // fires before this one). Everything else must NOT reach the game — the
@@ -7389,6 +7390,10 @@ window.addEventListener('keydown', (ev) => {
   if (coachActive()) return;
   const k = ev.key.toLowerCase();
   if (ev.repeat && REPEAT_GUARDED.has(k)) return;
+  // FULLSCREEN (addendum guard): Escape always leaves immersive mode — an
+  // immersive mode with no way out is a trap. Native fullscreen exits with
+  // Escape by the browser's own default; this is the fallback's mirror.
+  if (k === 'escape' && immersiveOn) { applyImmersive(false); return; }
   if (state.mode === 'intro') {                              // any key skips the movie
     // CINEMATIC GESTURE GUARD: the same press must not also activate the button
     // that appears with the menu (preventDefault kills the synthesized click on
@@ -8047,6 +8052,123 @@ function helpProbe(ev) {
     { left: px - 1, top: py - 1, right: px + 1, bottom: py + 1, width: 2, height: 2 });
 }
 
+// ---- FULLSCREEN — the transient canvas toggle (owner 2026-09-17) ----------
+// The Fullscreen API needs a REAL user gesture, so the toggle fires on the
+// button's own pointerdown (main canvas handler, hit-test FIRST — before any
+// skip/interaction logic, so the show-on-interaction bump can never swallow
+// the gesture that enters fullscreen). The button itself is PAINTED by the
+// renderer in the play-HUD pass; this block owns the STATE: support probe
+// (once, at module eval), the 0.5s visibility window, and the toggle.
+// Support: iPhone iOS Safari ships no element Fullscreen API at all —
+// requestFullscreen/webkitRequestFullscreen are both absent — so the probe
+// reads false there and the button never paints (no dead control).
+// fullscreenEnabled === false is the browser's explicit policy 'no' (e.g. a
+// non-allowing iframe); undefined (old stubs / not consulted) is not a veto.
+// Placement note: these consts sit BEFORE the init-time syncChrome() call
+// below on purpose — syncChrome publishes state.fsOverlay and would trip the
+// TDZ otherwise.
+const FS_ROOT = (typeof document !== 'undefined' && document.documentElement) || null;
+const FS_ENTER = FS_ROOT && (FS_ROOT.requestFullscreen || FS_ROOT.webkitRequestFullscreen);
+const FS_EXIT = (typeof document !== 'undefined' &&
+  (document.exitFullscreen || document.webkitExitFullscreen)) || null;
+const FS_ELEMENT = () => (typeof document !== 'undefined' &&
+  (document.fullscreenElement || document.webkitFullscreenElement)) || null;
+const FS_NATIVE_SUPPORTED = !!(FS_ENTER && FS_EXIT &&
+  (typeof document === 'undefined' || document.fullscreenEnabled !== false ||
+    document.webkitFullscreenEnabled !== false));
+// ADDENDUM (owner 2026-09-17): ONE fullscreen abstraction, two
+// implementations — where the Fullscreen API exists the toggle uses it
+// (desktop / Android / iPad); where it does NOT but this is a touch device
+// (iPhone Safari — the API is iPad-only on iOS), the SAME button enters
+// IMMERSIVE MODE: the wrap grows to 100dvh with safe-area insets, the
+// non-gameplay chrome stands down, and the pads get bigger targets. Only a
+// no-API NON-touch client gets no button at all. Evaluated LIVE (not at
+// module eval) because the touch path is itself derived at boot.
+function fsMode() {
+  if (FS_NATIVE_SUPPORTED) return 'native';
+  if (isTouchPath()) return 'immersive';
+  return 'none';
+}
+const fsOverlay = { t: 0 };        // seconds of button visibility remaining
+let immersiveOn = false;
+let immersiveHintShown = false;    // the Add-to-Home-Screen toast is once/session
+let fsReapplies = 0;               // address-bar collapse nudges (seam counter)
+function fsBump() {
+  fsOverlay.t = C.FULLSCREEN.HIDE_S;
+  // Safari brings the address bar back on interaction — re-attempt the
+  // collapse nudge every time while immersive (no-op elsewhere).
+  if (immersiveOn) fsReapplyBarCollapse();
+}
+// Safari only collapses its address bar for a SCROLLED page, and the page
+// here is overflow:hidden — the nudge is attempted anyway (guarded; harmless
+// where the page cannot scroll) and its COUNT is reported, because the
+// collapse itself cannot be verified outside a real device.
+function fsReapplyBarCollapse() {
+  fsReapplies++;
+  try { window.scrollTo(0, 1); } catch { /* no scroll (headless / desktop) */ }
+}
+function applyImmersive(on) {
+  immersiveOn = on;
+  const body = typeof document !== 'undefined' && document.body;
+  if (body && body.classList) body.classList.toggle('immersive', on);
+  // The re-fit is the whole point: the CSS grows the wrap to 100dvh and
+  // enlarges the pads; fitCanvas recomputes the letterbox against the new
+  // viewport — the SAME path the resize/orientationchange listener takes,
+  // so immersive, dynamic viewport changes and rotation share one code path.
+  fitCanvas();
+  if (on) {
+    fsReapplyBarCollapse();
+    // The honest iPhone answer, said once: true fullscreen is Add to Home
+    // Screen (standalone). The manifest + apple metas make that work.
+    if (!immersiveHintShown) {
+      immersiveHintShown = true;
+      toast('No true fullscreen in Safari — Add to Home Screen for it');
+    }
+  }
+}
+// Visible only where SOME mode can work, the window is live, and the pad
+// screens are up (chromeOn: playing/finale) — menus, draft cards, the
+// end-of-run summary and the cinematics keep their surfaces clear of the
+// button (the task's non-overlap rule), and it cannot eat an intro-skip tap.
+function fsVisible() {
+  // The 1e-9 epsilon makes the hide land at EXACTLY C.FULLSCREEN.HIDE_S of
+  // frames (30 at 60Hz) — the decay arithmetic leaves ~1e-17 residue
+  // otherwise and the button would linger one frame past its named window.
+  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn();
+}
+// The button box in VIEW coordinates — the ONE geometry source the renderer
+// paints, the hit-test reads and the tests assert (canvasRegion projects it
+// to CSS for the phone-size overlap checks).
+function fsButtonRect() {
+  return {
+    x: C.VIEW_W - C.FULLSCREEN.INSET - C.FULLSCREEN.W,
+    y: (C.VIEW_H - C.FULLSCREEN.H) / 2,
+    w: C.FULLSCREEN.W, h: C.FULLSCREEN.H,
+  };
+}
+// A pointer event -> view coords -> inside the on-screen button. Reads the
+// canvas's REAL rect, so it lands correctly at any letterbox scale.
+function fsHit(ev) {
+  if (!fsVisible()) return false;
+  const r = canvas.getBoundingClientRect();
+  if (!r || !r.width || !r.height) return false;
+  const b = fsButtonRect();
+  const vx = ((ev.clientX ?? 0) - r.left) / r.width * C.VIEW_W;
+  const vy = ((ev.clientY ?? 0) - r.top) / r.height * C.VIEW_H;
+  return vx >= b.x && vx <= b.x + b.w && vy >= b.y && vy <= b.y + b.h;
+}
+function toggleFullscreen() {
+  const mode = fsMode();
+  if (mode === 'none') return false;
+  if (mode === 'native') {
+    if (FS_ELEMENT()) FS_EXIT.call(document);
+    else FS_ENTER.call(FS_ROOT);
+    return true;
+  }
+  applyImmersive(!immersiveOn);   // iPhone Safari: the immersive fallback
+  return true;
+}
+
 // G31: apply the persisted pilot + stance prefs ONCE at boot, so a reload
 // keeps the player's choice (title + settings reflect it). swapPilotMode's
 // same-mode early return makes the default (AUTO_ALL / BALANCED) a silent
@@ -8139,6 +8261,7 @@ if (touchLayer && touchLayer.addEventListener) {
 
   touchLayer.addEventListener('pointerdown', (ev) => {
     audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
+    fsBump();               // FULLSCREEN: a pad/joystick press is an interaction
     // HELP MODE: the funnel intercepts FIRST — a tap explains what it
     // touches (control, joystick or world object), never activates it.
     if (state.helpMode) {
@@ -8192,7 +8315,6 @@ if (touchLayer && touchLayer.addEventListener) {
   joyVec = applyJoyVector;
   joyRelease = joyRecenter;
 }
-
 // Badges mirror HUD state, written each frame (same numbers as the HUD).
 // The touch layer is only relevant mid-run — menus are directly tappable.
 //
@@ -8237,6 +8359,16 @@ function syncChrome() {
   // state.*, never the profile).
   state.runPurse = purseClamp(profile.runPurse);
   state.zoomScale = zoomScale(state.zoom);
+  // FULLSCREEN toggle state for the renderer, published once per frame: the
+  // button paints only where the API exists, the 0.5s window is live and the
+  // pad screens are up (fsVisible = the chromeOn gate — same screens as the
+  // pads, so menus/drafts/summary never carry it).
+  state.fsOverlay = {
+    mode: fsMode(),
+    supported: fsMode() !== 'none',
+    visible: fsVisible(),
+    active: fsMode() === 'native' ? !!FS_ELEMENT() : immersiveOn,
+  };
   const on = chromeOn();
   let chromeLayoutChanged = false;
   if (touchLayer && touchLayer.style) {
@@ -8524,6 +8656,18 @@ if (overlay && overlay.addEventListener) {
 // 480x300 (the skip rect first, then a tap anywhere jumps for MANUAL play).
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   audioUnlockGesture();     // S2: a tap IS a user gesture — unlock audio
+  // FULLSCREEN (owner 2026-09-17): the button's OWN tap toggles — hit-test
+  // FIRST, before the skip/interaction logic below, so nothing can swallow
+  // the gesture (the same press that shows the button is the user gesture
+  // the Fullscreen API requires; the bump keeps it visible through the
+  // toggle rather than hiding it mid-press).
+  if (fsHit(ev)) {
+    if (ev.preventDefault) ev.preventDefault();
+    toggleFullscreen();
+    fsBump();
+    return;
+  }
+  fsBump();                 // any other canvas tap is still an interaction
   if (state.mode === 'escape') {
     // HELP MODE (VK9P4: the escape joined the entry set): a tap EXPLAINS,
     // never activates — the touchLayer funnel's mirror on the canvas path, so
@@ -9085,6 +9229,13 @@ function frame(now) {
   // frame of EVERY mode. This must run before the 'intro' / 'portal-cine' early
   // returns below: those modes never reached updateTouchHud(), so the whole
   // desktop UI rendered on top of the intro movie for its full ~7s.
+  // FULLSCREEN: the transient button outlives the last interaction by
+  // C.FULLSCREEN.HIDE_S of WALL-CLOCK time (same rule as the banner hold —
+  // frame-rate independent, never frame-counted, and it keeps decaying in
+  // modes that early-return below so a parked window can never strand). It
+  // decays BEFORE syncChrome() publishes visibility so the painted state and
+  // the timer never disagree by a frame.
+  if (fsOverlay.t > 0) fsOverlay.t = Math.max(0, fsOverlay.t - realDt);
   syncChrome();
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
@@ -9248,6 +9399,26 @@ export const __TEST = {
   // entry). chromeOn is exposed so the pad-layer gate for the new mode is
   // asserted directly, not inferred from a style string.
   openTrophies: showTrophies, closeTrophies, trophiesStep, chromeOn,
+  // ---- FULLSCREEN seam (owner 2026-09-17): the support probe, the 0.5s
+  // window (bump/visible), the toggle, the button's view-rect and its CSS
+  // projection (canvasRegion — the same math the coachmark spotlights use),
+  // and the hit-test itself, so tests drive the REAL paths.
+  fullscreen: {
+    supported: () => fsMode() !== 'none',
+    mode: fsMode,
+    visible: fsVisible,
+    bump: fsBump,
+    toggle: toggleFullscreen,
+    rect: fsButtonRect,
+    rectCss: (x, y, w, h) => canvasRegion(x, y, w, h).getBoundingClientRect(),
+    hit: fsHit,
+    // Immersive fallback seams (addendum): live state, the exit path, the
+    // address-bar nudge count, and the once-per-session A2HS hint flag.
+    immersive: () => immersiveOn,
+    leave: () => applyImmersive(false),
+    reapplies: () => fsReapplies,
+    hintShown: () => immersiveHintShown,
+  },
   // G10 bestiary seam: open/close (the mode + return-mode contract) and step
   // (the ring, so a test can wrap every display id without a DOM click per
   // entry) — same shape as the gallery seam above.
