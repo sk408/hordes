@@ -203,6 +203,19 @@
     color: #3f3016; text-shadow: none;
   }
   .card.paper-note .key { color: #7a5f35; }
+  /* OPT-IN OFFER (owner 2026-09-17: "Ask them if they want to see it"): the
+     one obvious button on the note — the ACCEPT. Bold ink on a wax-seal red
+     plate so it cannot be missed, while the DECLINE stays the easiest action
+     (the whole card taps closed). */
+  .card.paper-note .offer {
+    display: block; margin-top: 10px; padding: 9px 10px;
+    font-size: 13px; font-weight: bold; letter-spacing: 0.04em;
+    text-align: center; color: #f8ecd0; cursor: pointer;
+    background: #7a3428; border: 1px solid #5a241b; border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    text-shadow: none; width: 100%; box-sizing: border-box;
+  }
+  .card.paper-note .offer:active { background: #632a20; }
   /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
      formatting of the how to play screen, at least on mobile. It's hard to
      read the text because of the narrow width and it wraps"). The reference

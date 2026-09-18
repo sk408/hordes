@@ -901,6 +901,16 @@ const state = {
   night: false,
   nightRun: false,
   nightSummary: null,
+  // OPT-IN GUIDED RUN (owner 2026-09-17: "The one off run for old players to
+  // see the new tutorial would have to be opt-in"): `assistedRun` is the
+  // run-scoped stamp (the nightRun pattern) frozen at startRun from the
+  // in-memory OPT-IN (veteranTutorialPending — set ONLY by the what's-new
+  // offer's accept button or REPLAY TOUR). An assisted run is the veteran's
+  // guided tutorial: FULL gold (no night penalty), but per the B6 decision
+  // (docs/briefs/CONDENSE_PROPOSAL.md B6 option b) it is flagged ASSISTED on
+  // the end screen and EXCLUDED from best-run records — the assist's free
+  // kills must never write a best.
+  assistedRun: false,
   runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
   // ---- IN-RUN REFERENCE ACCESS: the reference's return door + the end
@@ -972,17 +982,18 @@ let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'futu
 // totals.runs is past 0, which is what arms the prologue).
 //
 // ADDENDUM (owner 2026-09-17): ONE TREATMENT, TWO AUDIENCES — "We could even
-// let older players have a one off run just like new players would have." A
-// returning player on a MARKED release gets the note AND the same one-off
-// GUIDED RUN a new player gets (potion, banners, assisted start — the whole
-// state.prologue machinery, nothing veteran-specific). NO new field: it keys
-// off lastSeenUpdate. The DISMISS writes lastSeenUpdate = id immediately (the
-// save IS the proof the player saw it); startRun then arms the guided run
-// while lastSeenUpdate === id (or the note is still due — a player who taps
-// START GAME without dismissing is converting too), and the ARM consumes the
-// one-off by clearing lastSeenUpdate and persisting: the run that opened with
-// the tutorial is the offer, never repeated. Population rules, plainly:
-//   no lastPlayed + other save data -> older player -> note + one-off run;
+// let older players have a one off run just like new players would have" —
+// then RULLED OPT-IN: "The one off run for old players to see the new tutorial
+// would have to be opt-in. Ask them if they want to see it." A returning
+// player on a MARKED release gets the note, which MAKES THE OFFER (an obvious
+// accept button). Accepting starts the same guided run a new player gets
+// (potion, banners, assisted start — the whole state.prologue machinery,
+// nothing veteran-specific), flagged ASSISTED per B6. Dismissing = declining =
+// normal play, nothing automatic ever happens. NO new field: the ask keys off
+// lastSeenUpdate (the dismiss AND the accept both write it — the offer is
+// asked ONCE per marked release, no nagging). The declined offer is not lost:
+// REPLAY TOUR re-arms it. Population rules, plainly:
+//   no lastPlayed + other save data -> older player -> note (with the offer);
 //   no lastPlayed + no save at all  -> fresh profile -> prologue, no note;
 //   lastPlayed present              -> normal rules (lastSeenUpdate decides).
 const WHATS_NEW = {
@@ -991,9 +1002,9 @@ const WHATS_NEW = {
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
   lines: [
-    'Your next run opens with the same short tutorial a new player gets.',
-    'Walk to the potion and drink it - skipping the explaining keeps the shield.',
+    'New: a short guided run with a free shielding potion.',
     'Controls appear one at a time, each with a tip, as you need them.',
+    'Skipping the explaining keeps the free potion and shield.',
     'Level-up picks land with a card ceremony while play continues.',
     'The shop now pages with arrows and fits three cards across.',
   ],
@@ -1007,18 +1018,20 @@ function whatsNewDueFor(prof, rel, freshBoot) {
   const last = prof && typeof prof.lastPlayed === 'number' ? prof.lastPlayed : null;
   return last === null || last < rel.dateMs;     // missing stamp = has not seen it
 }
-// ADDENDUM (owner 2026-09-17): is the ONE-OFF GUIDED RUN due for this player?
-// Pure, and keyed off lastSeenUpdate only (NO new field). True when the player
-// has DISMISSED this release's note (lastSeenUpdate === id) but not yet taken
-// the offered run — the arm at startRun consumes it — or when the note is due
-// RIGHT NOW (they tapped START GAME without dismissing; converting all the
-// same). A brand-new profile never qualifies: the prologue is theirs already.
-function veteranIntroDueFor(prof, rel, freshBoot) {
-  if (!rel || !rel.worthTelling) return false;   // unmarked release: no run either
-  if (freshBoot) return false;                   // brand-new profile: prologue owns it
-  if (prof && prof.lastSeenUpdate === rel.id) return true;    // dismissed, run not yet taken
-  return whatsNewDueFor(prof, rel, false);       // note due this very launch
-}
+// OPT-IN ADDENDUM (owner 2026-09-17: "would have to be opt-in. Ask them if
+// they want to see it"): the guided run is OFFERED, never automatic. The note
+// carries an obvious accept button; tapping it (acceptWhatsNew) marks the
+// release seen, arms the in-memory opt-in below, and starts the guided run
+// right there. Dismissing = declining = normal play, nothing happens to the
+// player — and the declined offer is not lost: REPLAY TOUR (the manual's
+// footer card) re-arms the same opt-in, so the experience stays available
+// without ever being forced. The opt-in is in-memory ON PURPOSE: the ask
+// itself is once-per-release (lastSeenUpdate), so nothing can nag on later
+// launches; if the player closes the tab without running, REPLAY TOUR is the
+// way back in.
+let veteranTutorialPending = false;
+// Arm the opt-in (the note's accept path and REPLAY TOUR both land here).
+function armVeteranTutorial() { veteranTutorialPending = true; }
 let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry only
 
 // ---------- W1 AUTOSAVE before any exit path ----------
@@ -4334,6 +4347,7 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   const goal = nextUnlockWithinReach(profile);
   const tags = [];
   if (state.nightRun) tags.push('NIGHT RUN');
+  if (state.assistedRun) tags.push('ASSISTED');   // B6 option (b): the flag rides the end card
   if (state.apexRun) tags.push('APEX RUN');
   if (!isDefaultStage(state.stage)) tags.push(stageOf(state.stage).name);
   if (!isStandard(state.challenge)) tags.push(challengeOf(state.challenge).name + ' RUN');
@@ -4412,6 +4426,9 @@ function recordRunAchievements(gold) {
     chests: state.runCounts.chests,
     untouchedWave: !!state.runCounts.untouchedWave,
     survived: !!state.runWon,
+    // B6 option (b): the opted-in guided run is flagged ASSISTED — full gold,
+    // but excluded from best-run records (recordRun honors the flag).
+    assisted: state.assistedRun,
   });
 
   // AT MOST TWO toasts, ever: a run can earn several trophies at once and the
@@ -5027,6 +5044,12 @@ function manualGoto(page) {
   // trap). Behavior unchanged from the old settings card: re-arm the
   // demonstration flags AND the give-up counters, lift a skip's session
   // suppression, then return exactly where GOT IT would.
+  // OPT-IN ADDENDUM (owner 2026-09-17: the declined guided-run offer "stays
+  // available without ever being forced"): invoked from the TITLE, the replay
+  // ALSO arms the veteran guided run — the next START GAME opens with the
+  // tutorial + assist, exactly what the what's-new offer's accept button
+  // starts. From 'run'/'end' it does not (those contexts return to a live or
+  // settled run; arming there would surprise).
   if (state.helpFrom !== 'gate') {
     menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
       clearTourFlags();
@@ -5045,7 +5068,9 @@ function manualGoto(page) {
       } else if (back === 'end') {
         reshowEndScreen();
       } else {
+        armVeteranTutorial();        // the declined offer's way back in
         showTitle();                 // the kept cards re-arm on their screens
+        toast('NEXT RUN: THE GUIDED WALKTHROUGH');
       }
     });
   }
@@ -6130,19 +6155,31 @@ function maybeCoachLoadoutDoor() {
 // to the title's card list so it is the first thing read and NEVER blocks
 // anything (the title is not the run; START GAME sits right below it). Tap
 // anywhere on the note to dismiss; the dismiss is what persists
-// lastSeenUpdate, so "shown once" survives reloads.
+// lastSeenUpdate, so "shown once" survives reloads. OPT-IN ADDENDUM: the note
+// also carries the OFFER — one obvious button. Accepting starts the guided
+// run immediately (with the assist); tapping anywhere else on the note is the
+// DECLINE (the safe action is the easy one to hit: the whole card dismisses).
 function addWhatsNewCard() {
   const el = document.createElement('div');
   el.className = 'card paper-note';
   el.innerHTML =
     `<div class="name">${WHATS_NEW.title}</div>` +
     `<div class="desc">${WHATS_NEW.lines.map(l => '- ' + l).join('<br>')}</div>` +
-    '<div class="key">tap to close</div>';
+    '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' +
+    '<div class="key">tap anywhere else to close</div>';
   el.onclick = () => {
     // HELP MODE parity with menuCard: a tap explains, never presses.
     if (state.helpMode) { showHelpTip('<b>' + WHATS_NEW.title + '</b> — release notes for returning players', el); return; }
     audio.playSfx('button');
     dismissWhatsNew(el);
+  };
+  const offer = el.querySelector ? el.querySelector('.offer') : null;
+  if (offer) offer.onclick = (ev) => {
+    // The accept must not also ride the note's dismiss handler up the tree.
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (state.helpMode) { showHelpTip('<b>SHOW ME</b> — start the guided tutorial run now', offer); return; }
+    audio.playSfx('button');
+    acceptWhatsNew(el);
   };
   ovCards.insertBefore(el, ovCards.firstChild);
   return el;
@@ -6151,6 +6188,16 @@ function dismissWhatsNew(el) {
   profile.lastSeenUpdate = WHATS_NEW.id;
   persistProfile();
   if (el && el.remove) el.remove();
+}
+// ACCEPT (the opt-in): the ask happened (write it — ONCE per release), the
+// opt-in arms, and the guided run starts RIGHT NOW. The run is flagged
+// ASSISTED (state.assistedRun) and excluded from best-run records per B6.
+function acceptWhatsNew(el) {
+  profile.lastSeenUpdate = WHATS_NEW.id;
+  persistProfile();
+  armVeteranTutorial();
+  if (el && el.remove) el.remove();
+  startRun();
 }
 
 function showTitle() {
@@ -7480,15 +7527,17 @@ function startRun() {
   state.prologueShieldT = 0;
   const prologueRunsPlayed = Number(profile.achievements && profile.achievements.totals &&
     profile.achievements.totals.runs) || 0;
-  // ADDENDUM (owner 2026-09-17, "one off run just like new players"): a
-  // RETURNING player converting on a marked release arms the SAME prologue a
-  // fresh profile gets — keyed off lastSeenUpdate (see veteranIntroDueFor),
-  // never a second saved field. The arm CONSUMES the one-off right here:
-  // clearing lastSeenUpdate and persisting means this run — the one that
-  // opened with the tutorial — is the whole offer; no later run re-arms it
-  // (the persist also stamps lastPlayed, which closes the note's date gate).
-  const veteranIntro = veteranIntroDueFor(profile, WHATS_NEW, bootResult.status === 'fresh');
-  state.prologue = (prologueRunsPlayed === 0 || veteranIntro)
+  // OPT-IN GUIDED RUN (owner 2026-09-17): the veteran's guided run arms ONLY
+  // on the in-memory opt-in (veteranTutorialPending — the what's-new offer's
+  // accept button, or REPLAY TOUR for a player who declined). Nothing
+  // automatic ever happens to a returning player: no pending opt-in, no
+  // prologue (the fresh profile's runs === 0 arm above is the only automatic
+  // path, and it stays). The opt-in is CONSUMED by the arm — the run that
+  // opens with the tutorial is the offer — and the run is stamped ASSISTED
+  // (B6: full gold, flagged, excluded from best-run records).
+  state.assistedRun = veteranTutorialPending;
+  veteranTutorialPending = false;
+  state.prologue = (prologueRunsPlayed === 0 || state.assistedRun)
     ? { t: 0, drunk: false, walkT: 0,
         // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
         // at a time with the tooltip explaining what they do"): each staged
@@ -7529,15 +7578,6 @@ function startRun() {
         if (el && el.classList) el.classList.remove('pr-on');
       }
     }
-  }
-  // The one-off is SPENT at the arm (addendum 2026-09-17): the guided run is
-  // happening right now, so the offer comes off the table in the same breath.
-  // Clearing lastSeenUpdate + persisting (which stamps lastPlayed past the
-  // release date) closes BOTH re-arm paths — the veteran gate and the note's
-  // date gate — through the ONE existing save path. No second writer.
-  if (veteranIntro) {
-    profile.lastSeenUpdate = null;
-    persistProfile();
   }
   state.pendingDrafts = 0;
   state.wave = makeWave();
@@ -10802,14 +10842,15 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
-  // ---- v9 WHAT'S NEW seam: the pure gates (matrix-testable), the live release
-  // constant, the card add/dismiss pair, and the once-per-launch flag — so the
-  // suite can drive the REAL title path without scraping for the card.
-  // veteranDue is the ADDENDUM's one-off-run gate (keys off lastSeenUpdate).
+  // ---- v9 WHAT'S NEW seam: the pure gate (matrix-testable), the live release
+  // constant, the card add/dismiss/accept triple, the once-per-launch flag,
+  // and the OPT-IN arm — so the suite can drive the REAL title path without
+  // scraping for the card.
   whatsNew: {
     due: whatsNewDueFor,
-    veteranDue: veteranIntroDueFor,
     release: WHATS_NEW,
+    accept: acceptWhatsNew,
+    arm: armVeteranTutorial,
     add: addWhatsNewCard,
     dismiss: dismissWhatsNew,
     get tried() { return whatsNewTried; },

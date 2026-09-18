@@ -342,6 +342,7 @@ function goalMet(profile, ach) {
  *   kills, bossKills, gold, chests, evolutions, legendaries (per-run counts)
  *   wave, time (seconds), weaponLevel (best in-run weapon level)
  *   untouchedWave (bool), survived (bool)
+ *   assisted (bool) — B6: full gold + counters, but NO best-run records
  *
  * Returns { earned: [ids], unlocks: [{achievement, kind, id, ok}], totals }.
  * MUTATES the profile (counters, progress, earned stamps, granted content).
@@ -361,13 +362,21 @@ export function recordRun(profile, run) {
   bump('chests', r.chests);
   bump('evolutions', r.evolutions);
   bump('legendaries', r.legendaries);
-  t.bestWave = Math.max(intOr(t.bestWave, 0), intOr(r.wave, 0));
-  t.bestTime = Math.max(intOr(t.bestTime, 0), intOr(r.time, 0));
-  t.bestWeaponLevel = Math.max(intOr(t.bestWeaponLevel, 0), intOr(r.weaponLevel, 0));
-  // V1: the escape payout's basis rides the same fold (a MAX, so collecting a
-  // payout can never grow it — the twice-in-a-row clause).
-  t.bestGold = Math.max(intOr(t.bestGold, 0), intOr(r.gold, 0));
-  t.untouchedWave = Math.max(intOr(t.untouchedWave, 0), r.untouchedWave ? 1 : 0);
+  // B6 option (b) (docs/briefs/CONDENSE_PROPOSAL.md, reused for the OPT-IN
+  // guided run, owner 2026-09-17): an ASSISTED run keeps FULL gold and every
+  // cumulative counter — but writes NO best-run record. The assist grants
+  // invincibility + a clearing pulse (free kills), so a best set under it
+  // would be a lie; the flag excludes every MAX below (and the timed fold)
+  // without touching the payout.
+  if (r.assisted !== true) {
+    t.bestWave = Math.max(intOr(t.bestWave, 0), intOr(r.wave, 0));
+    t.bestTime = Math.max(intOr(t.bestTime, 0), intOr(r.time, 0));
+    t.bestWeaponLevel = Math.max(intOr(t.bestWeaponLevel, 0), intOr(r.weaponLevel, 0));
+    // V1: the escape payout's basis rides the same fold (a MAX, so collecting a
+    // payout can never grow it — the twice-in-a-row clause).
+    t.bestGold = Math.max(intOr(t.bestGold, 0), intOr(r.gold, 0));
+    t.untouchedWave = Math.max(intOr(t.untouchedWave, 0), r.untouchedWave ? 1 : 0);
+  }
   bump('survived', r.survived ? 1 : 0);
   bump('runs', 1);
 
@@ -375,9 +384,10 @@ export function recordRun(profile, run) {
   // run's own clock (at settle) is inside the ceiling, the bucket keeps the
   // best stat value seen under that ceiling. A run that never settled a time
   // (time 0/missing) records nothing — a summary without a clock cannot honour
-  // a clock ceiling, and 0 would poison a real best.
+  // a clock ceiling, and 0 would poison a real best. ASSISTED runs skip it for
+  // the same B6 reason as the MAXes above.
   const rt = intOr(r.time, 0);
-  if (rt > 0) {
+  if (rt > 0 && r.assisted !== true) {
     for (const ach of ACHIEVEMENTS) {
       const g = ach.goal;
       if (g.kind !== 'run') continue;

@@ -24,12 +24,13 @@
 //             entry per page load), tap-dismisses, and the dismiss PERSISTS
 //             lastSeenUpdate — shown once per marked release, across
 //             reloads. After the dismiss the title is fully playable.
-//   VETERAN   (addendum 2026-09-17, "one off run just like new players") a
-//             returning player converting on a marked release gets the SAME
-//             guided run a fresh profile gets — armed at startRun, keyed off
-//             lastSeenUpdate (NO second field), CONSUMED at the arm (one-off,
-//             persisted), the approved SKIP works from this entry point, and
-//             the sentinel population rules hold end to end.
+//   VETERAN   (addendum 2026-09-17, ruled OPT-IN: "would have to be opt-in.
+//             Ask them if they want to see it") the note MAKES THE OFFER (an
+//             obvious accept button). Declining = normal play + the release
+//             marked seen. Accepting starts the SAME guided run a new player
+//             gets, flagged ASSISTED (B6: full gold, EXCLUDED from best-run
+//             records). REPLAY TOUR re-arms a declined offer. Nothing
+//             automatic ever happens to a returning player.
 // Run: node test/test_whatsnew.mjs
 import { TOUR_KEYS } from '../src/tour.js';
 
@@ -227,7 +228,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('the title is still fully playable under it (START GAME card present)',
     cards().some(el => /START GAME/.test(el.innerHTML || '')));
   ok('the note carries the release copy and a dismiss affordance',
-    /WHAT'S NEW/.test(note.innerHTML) && /tap to close/i.test(note.innerHTML));
+    /WHAT'S NEW/.test(note.innerHTML) && /tap anywhere else to close/i.test(note.innerHTML));
   // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
   // the popup should write a save" — the same prove-it-moved discipline the
@@ -280,62 +281,109 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     W.due({ lastPlayed: null, lastSeenUpdate: null }, rel, false) === true);
 }
 
-// ---- 7. ADDENDUM: the veteran one-off guided run + population rules ---------
+// ---- 7. ADDENDUM: the OPT-IN guided run (the offer, decline, accept, B6) ----
 {
   const rel = W.release;
-  // The pure one-off gate, matrixed (the population rules, stated as code).
-  ok('VETERAN RUN DUE: no lastPlayed + other save facts (the older player)',
-    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, rel, false) === true);
-  ok('VETERAN RUN DUE: dismissed the note, run not yet taken (keys off lastSeenUpdate)',
-    W.veteranDue({ lastPlayed: rel.dateMs + 1000, lastSeenUpdate: rel.id }, rel, false) === true);
-  ok('NOT DUE: a brand-new profile — the first-run PROLOGUE is theirs alone',
-    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, rel, true) === false);
-  ok('NOT DUE: an active player past the release who never saw a note',
-    W.veteranDue({ lastPlayed: rel.dateMs + 1, lastSeenUpdate: null }, rel, false) === false);
-  ok('NOT DUE: an UNMARKED release offers no run either',
-    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, { ...rel, worthTelling: false }, false) === false);
-  ok('POPULATION RULE: lastPlayed present -> normal rules (lastSeenUpdate decides the note)',
-    W.due({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: rel.id }, rel, false) === false &&
-    W.due({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: null }, rel, false) === true);
-
-  // THE REAL ARM: this module booted from the v8 save (status 'migrated'), so
-  // startRun on the reset profile is exactly the veteran conversion path.
   const prof = T.getProfile();
-  prof.lastPlayed = null; prof.lastSeenUpdate = null;   // the migrated pre-v9 state
+
+  // DECLINING (the dismiss) = normal play: nothing automatic EVER happens to a
+  // returning player — the previous auto-arm is gone.
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;
   T.startRun();
-  ok('a returning player arms the SAME guided run a new player gets (potion on screen)',
-    T.prologue.active === true && T.prologue.ran === true && !!T.prologue.potion,
-    { active: T.prologue.active, potion: T.prologue.potion });
-  ok('the arm is the full treatment: stage-clean, nothing revealed, buttons locked',
-    T.prologue.bannerIdx === 0 && T.prologue.revealed.move === false &&
-    T.prologue.revealed.pilot === false && T.prologue.revealed.stats === false &&
-    T.prologue.buttonsLocked === true);
-  ok('the arm CONSUMED the one-off in the same breath: lastSeenUpdate cleared + a save WRITTEN',
-    prof.lastSeenUpdate === null && stored().lastSeenUpdate === null &&
-    typeof stored().lastPlayed === 'number' && stored().lastPlayed > 0,
-    { seen: stored().lastSeenUpdate, lastPlayed: stored().lastPlayed });
+  ok('DECLINED/undismissed: startRun opens a NORMAL run (no prologue, nothing automatic)',
+    T.prologue.active === false && st.prologue === null && st.mode === 'playing',
+    { prologue: st.prologue, mode: st.mode });
+  ok('no run is flagged ASSISTED without the opt-in', st.assistedRun === false);
+  // (end that run's state: back to title for the offer leg)
+  T.showTitle();
+
+  // THE OFFER: the note carries the accept affordance (the real browser wires
+  // the .offer button; the seam drives the same acceptWhatsNew function).
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;
+  W.tried = false;
+  T.showTitle();
+  const note = noteEl();
+  ok('fixture: the note is up with the offer copy in it',
+    !!note && /SHOW ME/.test(note.innerHTML) && /tap anywhere else to close/i.test(note.innerHTML));
+  ok('the note copy names the guided run and the potion (what the player GETS)',
+    rel.lines.some(l => /guided run/i.test(l)) && rel.lines.some(l => /potion/i.test(l)));
+
+  // DECLINE through the real card tap: marks the release seen, normal play.
+  const rawBefore = ls.get('hordes_profile_v1');
+  note.click();
+  ok('DECLINE: the tap dismissed the note, marked the release seen, WROTE the save',
+    !noteEl() && stored().lastSeenUpdate === rel.id && ls.get('hordes_profile_v1') !== rawBefore);
+  T.startRun();
+  ok('DECLINE leads to normal play: the next run has NO prologue and NO assist flag',
+    T.prologue.active === false && st.assistedRun === false && st.mode === 'playing');
+  T.showTitle();
+
+  // ACCEPT: starts the guided run NOW, flagged ASSISTED.
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;
+  W.tried = false;
+  T.showTitle();
+  ok('fixture: the note is up for the accept', !!noteEl());
+  W.accept(noteEl());
+  ok('ACCEPT starts the guided run immediately: prologue armed, potion on screen, run live',
+    T.prologue.active === true && !!T.prologue.potion && st.mode === 'playing');
+  ok('the accepted run is flagged ASSISTED (B6: the run-scoped stamp)',
+    st.assistedRun === true);
+  ok('ACCEPT marks the release seen + writes the save (the ask happened ONCE)',
+    prof.lastSeenUpdate === rel.id && stored().lastSeenUpdate === rel.id);
+  ok('the note is gone after the accept', !noteEl());
 
   // THE APPROVED SKIP, from THIS entry point: stop explaining, keep the potion.
   T.prologue.skip();
-  ok('skip from the veteran arm: explaining stops, the phase STAYS armed (skipped mode)',
+  ok('skip from the accepted run: explaining stops, the phase STAYS armed (skipped mode)',
     T.prologue.active === true && st.prologue.skipped === true &&
     st.prologue.revealed.move === true && T.prologue.buttonsLocked === false);
   T.prologue.drink();
   ok('the post-skip drink pays the shield and ends the phase (skip keeps the potion)',
-    T.prologue.active === false && T.prologue.shieldT > 0 && st.mode === 'playing');
+    T.prologue.active === false && T.prologue.shieldT > 0 && st.mode === 'playing',
+    { active: T.prologue.active, shieldT: T.prologue.shieldT, mode: st.mode });
 
-  // ONCE: the offer is spent — the next run is a normal run.
-  T.startRun();
-  ok('the one-off run happens ONCE: the next startRun opens a normal run',
-    T.prologue.active === false && st.prologue === null);
+  // The offer is asked once per marked release: a later launch never re-offers.
+  W.tried = false;
+  T.showTitle();
+  ok('the offer is asked ONCE per marked release (seen id: no note on later launches)',
+    !noteEl());
 
-  // Dismissed-but-never-ran: the run is still owed on a later session.
-  prof.lastSeenUpdate = rel.id;                  // dismissed earlier, never took the run
+  // ONCE: the opt-in is consumed by the arm — the next run is normal.
   T.startRun();
-  ok('a player who dismissed but never ran gets the guided run on their NEXT run',
-    T.prologue.active === true);
+  ok('the guided run happens once per opt-in: the next startRun is a normal run',
+    T.prologue.active === false && st.assistedRun === false);
+  T.showTitle();
+
+  // THE DECLINED OFFER IS NOT LOST: REPLAY TOUR re-arms the same opt-in.
+  W.arm();
+  T.startRun();
+  ok('REPLAY TOUR (the seam it calls) re-arms the guided run for the next START GAME',
+    T.prologue.active === true && st.assistedRun === true);
   T.prologue.drink();                            // end the phase; leave state tidy
   ok('cleanup: the phase ended and the run is live', T.prologue.active === false && st.mode === 'playing');
+
+  // B6 OPTION (b): an ASSISTED summary keeps FULL gold + counters but writes
+  // NO best-run record — and the end screen carries the flag.
+  const ach = await import('../src/achievements.js');
+  const mkProf = () => ({ purchased: {}, unlockedWeapons: [], unlockedElites: [],
+    achievements: { totals: {}, earned: {}, progress: {}, timed: {} } });
+  const p1 = mkProf();
+  ach.recordRun(p1, { kills: 500, gold: 900, wave: 40, time: 600, weaponLevel: 9, assisted: true });
+  ok('an ASSISTED run writes NO best-run record (bestWave/bestTime/bestWeapon/bestGold all unset)',
+    p1.achievements.totals.bestWave === undefined && p1.achievements.totals.bestTime === undefined &&
+    p1.achievements.totals.bestWeaponLevel === undefined && p1.achievements.totals.bestGold === undefined,
+    p1.achievements.totals);
+  ok('an ASSISTED run keeps FULL gold + the cumulative counters (kills, gold, runs)',
+    p1.achievements.totals.gold === 900 && p1.achievements.totals.kills === 500 &&
+    p1.achievements.totals.runs === 1, p1.achievements.totals);
+  ok('a normal run still writes the records',
+    (ach.recordRun(p1, { kills: 1, gold: 10, wave: 5, time: 60 }), p1.achievements.totals.bestWave === 5));
+  st.assistedRun = true;
+  ok('the end screen flags the run ASSISTED (the B6 tag rides the end card)',
+    /ASSISTED/.test(T.endScreenBody({ lead: 'RUN OVER', gold: 10 })));
+  st.assistedRun = false;
+  ok('a normal end screen carries no ASSISTED tag',
+    !/ASSISTED/.test(T.endScreenBody({ lead: 'RUN OVER', gold: 10 })));
 }
 
 console.log('test_whatsnew: all ' + passed + ' checks passed');

@@ -2,10 +2,14 @@
 // auto saves yet? ... We can give them a fancy paper looking popup explaining
 // new features." This verifier drives the REAL returning-player path on a
 // real browser profile at both viewports: an OLD (pre-timestamp) save
-// migrates, the paper note pops on the title at launch, a REAL finger tap
-// dismisses it and PERSISTS lastSeenUpdate, the title stays fully playable,
-// and a reload never pops it again. Screenshots of the parchment note are
-// kept for the report. Run: node tools/verify_whatsnew.mjs
+// migrates, the paper note pops on the title at launch (carrying the OPT-IN
+// offer button), a REAL finger tap dismisses it and PERSISTS lastSeenUpdate,
+// the title stays fully playable, and a reload never pops it again. The
+// opt-in legs: a DECLINED veteran plays normally (nothing automatic); a real
+// tap on SHOW ME starts the guided run flagged ASSISTED (B6), the approved
+// skip + drink still pays the shield, and the opt-in is consumed once.
+// Screenshots of the parchment note are kept for the report.
+// Run: node tools/verify_whatsnew.mjs
 import { withPage } from './browser.mjs';
 import { copyFileSync, mkdirSync } from 'node:fs';
 
@@ -122,34 +126,68 @@ async function viewport(w, h, tag) {
     ok(stamp2 > stamp1,
       '[' + tag + '] the timestamp MOVES between saves (' + stamp1 + ' -> ' + stamp2 + ')');
 
-    // 5. THE VETERAN ONE-OFF RUN (addendum 2026-09-17: "one off run just like
-    //    new players"): this profile DISMISSED the note (lastSeenUpdate = id)
-    //    and even has a fresh stamp — the run is still owed, and it is the
-    //    FULL treatment. CDP returnByValue strips functions, so every seam
-    //    call runs inline.
-    const arm1 = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+    // 5. OPT-IN (addendum: "would have to be opt-in. Ask them if they want to
+    //    see it"): this profile DECLINED (dismissed) — nothing automatic may
+    //    happen. CDP returnByValue strips functions, so every seam call runs
+    //    inline.
+    const declined = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
       T2.startRun();
-      return { active: T2.prologue.active, ran: T2.prologue.ran,
-        potion: T2.prologue.potion, locked: T2.prologue.buttonsLocked,
-        revealed: T2.prologue.revealed,
-        seen: T2.getProfile().lastSeenUpdate,
-        stored: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastSeenUpdate,
-        stamped: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastPlayed }; })()`);
-    ok(arm1.active === true && arm1.ran === true && !!arm1.potion,
-      '[' + tag + '] the dismissed veteran arms the SAME guided run (potion on screen)');
-    ok(arm1.locked === true && arm1.revealed && arm1.revealed.move === false,
-      '[' + tag + '] the full new-player treatment (buttons locked, nothing revealed)');
-    ok(arm1.seen === null && arm1.stored === null && typeof arm1.stamped === 'number' && arm1.stamped > 0,
-      '[' + tag + '] the arm CONSUMED the one-off (lastSeenUpdate cleared + persisted, lastPlayed stamped)');
+      return { active: T2.prologue.active, assisted: T2.state.assistedRun,
+        mode: T2.state.mode }; })()`);
+    ok(declined.active === false && declined.assisted === false && declined.mode === 'playing',
+      '[' + tag + '] a DECLINED veteran plays normally (no prologue, no assist, nothing automatic)');
+    const backTitle = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      T2.showTitle();
+      T2.getProfile().lastPlayed = null; T2.getProfile().lastSeenUpdate = null;
+      T2.whatsNew.tried = false; T2.showTitle();
+      const cards = [...document.getElementById('ov-cards').children];
+      const note = cards.find(c => c.className.includes('paper-note'));
+      const offer = note && note.querySelector('.offer');
+      const r = offer ? offer.getBoundingClientRect() : null;
+      const cs = offer ? getComputedStyle(offer) : null;
+      return { note: !!note, offer: !!offer, txt: offer ? offer.textContent : '',
+        rect: r ? { x: r.x, y: r.y, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight } : null,
+        cursor: cs && cs.cursor }; })()`);
+    ok(backTitle.note && backTitle.offer,
+      '[' + tag + '] the note carries the OFFER button ("' + backTitle.txt + '")');
+    ok(backTitle.cursor === 'pointer' && backTitle.rect && backTitle.rect.x >= 0 &&
+       backTitle.rect.y >= 0 && backTitle.rect.x + backTitle.rect.w <= backTitle.rect.vw + 1 &&
+       backTitle.rect.y + backTitle.rect.h <= backTitle.rect.vh + 1,
+      '[' + tag + '] the offer button is legible + hittable, nothing clipped (' +
+      JSON.stringify(backTitle.rect) + ')');
+
+    // 6. ACCEPT through a REAL tap on the offer button: the guided run starts
+    //    NOW, flagged ASSISTED (B6), the ask marked seen, the skip still safe.
+    const offerRect = await p.evaluate(`(() => {
+      const offer = [...document.getElementById('ov-cards').children]
+        .find(c => c.className.includes('paper-note')).querySelector('.offer');
+      const r = offer.getBoundingClientRect();
+      return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    await p.tap(offerRect[0], offerRect[1], 2);
+    await p.sleep(300);
+    const accepted = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      const cards = [...document.getElementById('ov-cards').children];
+      return { active: T2.prologue.active, potion: T2.prologue.potion,
+        assisted: T2.state.assistedRun, mode: T2.state.mode,
+        seen: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastSeenUpdate,
+        noteGone: !cards.some(c => c.className.includes('paper-note')) }; })()`);
+    ok(accepted.active === true && !!accepted.potion && accepted.mode === 'playing',
+      '[' + tag + '] the real tap on SHOW ME starts the guided run (potion on screen, run live)');
+    ok(accepted.assisted === true,
+      '[' + tag + '] the accepted run is flagged ASSISTED (B6: the run-scoped stamp)');
+    ok(accepted.seen === relId && accepted.noteGone,
+      '[' + tag + '] the accept marked the release seen (asked once) and closed the note');
     const skipDrink = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
       T2.prologue.skip(); T2.prologue.drink();
       return { active: T2.prologue.active, shieldT: T2.prologue.shieldT,
         mode: T2.state.mode }; })()`);
     ok(skipDrink.active === false && skipDrink.shieldT > 0 && skipDrink.mode === 'playing',
       '[' + tag + '] skip + drink from this entry point: shield paid, run live (the approved skip)');
-    const arm2 = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
-      T2.startRun(); return T2.prologue.active; })()`);
-    ok(arm2 === false, '[' + tag + '] the one-off happens ONCE (the next run is a normal run)');
+    const next = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      T2.startRun();
+      return { active: T2.prologue.active, assisted: T2.state.assistedRun }; })()`);
+    ok(next.active === false && next.assisted === false,
+      '[' + tag + '] the opt-in is consumed: the next run is a normal run');
 
     const errors = p.errors;
     if (errors.length) { console.log('[' + tag + '] PAGE ERRORS: ' + errors.join(' | ').slice(0, 300)); fails++; }

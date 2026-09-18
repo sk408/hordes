@@ -75,41 +75,68 @@ never blocks the menu behind it.
 No network anywhere in the path: the release id/date live in code, the
 shown-flag and timestamp live in the same localStorage profile.
 
-## Addendum (owner 2026-09-17): one treatment, two audiences
+## Addendum (owner 2026-09-17): one treatment, two audiences — then ruled OPT-IN
 
 > "We could even let older players have a one off run just like new players
 > would have. ... And dismissing the popup should write a save so we know the
-> player saw it"
+> player saw it" — followed by: **"The one off run for old players to see the
+> new tutorial would have to be opt-in. Ask them if they want to see it."**
 
-### The one-off guided run
+### The offer
 
-A returning player converting on a marked release gets the note AND the
-**same one-off guided run a new player gets** — potion, banners, staged
-controls, assisted start: the whole `state.prologue` machinery, nothing
-veteran-specific. **No new field:** it keys off `lastSeenUpdate`.
+The note **makes the offer**: one obvious button — `SHOW ME - START THE
+GUIDED RUN` — a bold ink plate on the parchment (a wax-seal red that cannot
+be missed), with the copy above saying what the player GETS. The hierarchy is
+deliberate: the **decline is the safe action and the easy one to hit** —
+tapping anywhere on the card (everywhere except the button) dismisses it.
+Both are legible and hittable at 320×568 (the button measures ~270×50 there;
+the browser verifier fit-checks both).
 
-The lifecycle, end to end:
+- **Decline** (tap the card): normal play. Nothing automatic ever happens to
+  a returning player — no prologue, no assist flag, the run starts as
+  always. The decline writes `lastSeenUpdate = <release id>` through the one
+  save choke point (the persisted bytes change on the tap — pinned the same
+  "prove it moved" way the timestamp is), so **the offer is asked ONCE per
+  marked release**; no later launch nags.
+- **Accept** (tap the button): marks the release seen, arms the in-memory
+  opt-in, and **starts the guided run right there** — the same treatment a
+  new player gets (potion, banners, staged controls, button lock, assisted
+  start: the whole `state.prologue` machinery, nothing veteran-specific). The
+  opt-in is consumed by the run that uses it; the next run is normal. The
+  approved SKIP works from this entry point (tested): skipping stops the
+  explaining and the drink still pays the 45s shield.
 
-- The note's dismissal writes `lastSeenUpdate = <release id>` **immediately**
-  through the one save choke point (a player who closes the tab right after
-  the tap never sees it again — the persisted BYTES change on the tap, which
-  a test asserts the same way the timestamp's "prove it moved" discipline
-  does).
-- `veteranIntroDueFor` (pure, in `main.js`) says the guided run is due when
-  `lastSeenUpdate === <release id>` (dismissed, run not yet taken) OR the
-  note is due right now (the player tapped START GAME without dismissing —
-  converting all the same).
-- `startRun` arms the prologue for that player and **consumes the offer in
-  the same breath**: it clears `lastSeenUpdate` and persists — so the run
-  that opened with the tutorial IS the one-off, and the persist also stamps
-  `lastPlayed` past the release date, closing the note's date gate too.
-  One save path, no second writer.
-- A player who dismisses but quits before running gets the guided run on
-  their NEXT run, days later — the offer survives reloads because it lives
-  in `lastSeenUpdate`, not in memory.
-- The approved SKIP works from this entry point (tested): skipping stops
-  the explaining, the phase stays armed in skipped mode, and the drink still
-  pays the 45s shield.
+**Named scope:** the opt-in applies only to the returning-player path. A NEW
+profile still gets the prologue automatically, with no ask (the fresh arm is
+`achievements.totals.runs === 0`, unchanged).
+
+**The declined offer is not lost:** REPLAY TOUR (the manual's footer card)
+re-arms the same opt-in when invoked from the title — the next START GAME
+opens with the guided walkthrough, and a toast says so. The card is a durable
+affordance, so the experience stays available without ever being forced.
+
+### The ASSISTED flag (the B6 precedent, reused)
+
+An opted-in guided run grants the assist — invincibility, a clearing pulse —
+which means free kills and gold for a veteran. Per the B6 decision
+(`docs/briefs/CONDENSE_PROPOSAL.md`, option (b): *"full gold, runs flagged
+ASSISTED and excluded from best-run records"*), that run is stamped
+`state.assistedRun` (the same run-scoped pattern Night Mode's `nightRun`
+uses) and:
+
+- **full gold** — no penalty of any kind on the payout;
+- **flagged ASSISTED** on the end card (the `NIGHT RUN`/`APEX RUN` tags row);
+- **excluded from best-run records**: `recordRun` (`src/achievements.js`)
+  skips every best-run MAX (`bestWave`, `bestTime`, `bestWeaponLevel`,
+  `bestGold`, `untouchedWave`) and the G11 timed buckets for an assisted
+  summary, while the cumulative counters (kills, gold, runs) still fold —
+  full gold, honest records.
+
+**Did the flag already exist? No.** Night Mode shipped with B6 option (a)
+(the 50% gold penalty, `RUN_GOLD.NIGHT_PENALTY_PCT`) — no ASSISTED flag
+existed anywhere in `src/`. This change ADDS it: `state.assistedRun`, the
+`assisted: true` summary field, the end-screen tag, and the `recordRun`
+exclusion. One mechanism, B6-shaped, not a second one.
 
 ### Converting players without a timestamp: the documented sentinel
 
@@ -122,15 +149,15 @@ worse). The first real save stamps a true timestamp over it.
 
 | profile state | treatment |
 |---|---|
-| no `lastPlayed` + other save data | older player → note + one-off guided run |
-| no `lastPlayed` + no save at all | fresh profile → prologue, no note |
+| no `lastPlayed` + other save data | older player → note **with the offer** |
+| no `lastPlayed` + no save at all | fresh profile → prologue, no note, no ask |
 | `lastPlayed` present | normal rules (`lastSeenUpdate` decides) |
 
 Two fields total, one version bump (v9), one migration step — unchanged.
 
 ## Verification
 
-### Headless tests (`test/test_whatsnew.mjs`, 46 checks)
+### Headless tests (`test/test_whatsnew.mjs`, 54 checks)
 
 - the timestamp MOVES between saves (silent-failure trap);
 - a v8 save migrates losslessly (gold, purchases, unlocks verbatim) with both
@@ -143,8 +170,21 @@ Two fields total, one version bump (v9), one migration step — unchanged.
 - launch-only (a mid-session state change does not summon it);
 - prologue precedence both ways;
 - the dismiss WRITES THE SAVE (the persisted bytes change on the tap);
-- the veteran matrix: older player → run due; dismissed-not-run → due;
-  fresh profile → not due; active player → not due; unmarked → not due;
+- OPT-IN: undismissed or declined, `startRun` opens a NORMAL run (the
+  auto-arm is gone — nothing automatic ever happens to a returning player);
+- the DECLINE marks the release seen, writes the save, and leads to normal
+  play (no prologue, no assist flag);
+- the ACCEPT starts the guided run immediately (prologue + potion + run
+  live), flags it ASSISTED, marks the release seen + writes the save, and
+  removes the note; the offer is asked once per marked release;
+- the approved SKIP from this entry point stays armed in skipped mode and the
+  drink still pays the shield;
+- the opt-in is consumed once — the next `startRun` is a normal run;
+- REPLAY TOUR (the seam the card calls) re-arms the guided run;
+- B6: an ASSISTED summary writes NO best-run record (all MAXes + timed
+  buckets skipped) while keeping FULL gold and the cumulative counters; a
+  normal run still writes records; the end screen carries the ASSISTED tag
+  for an assisted run and no tag otherwise.
   `lastPlayed` present → `lastSeenUpdate` decides;
 - the REAL arm: `startRun` on the returning profile arms the full treatment
   (potion, stage-clean, buttons locked) and CONSUMES the one-off in the same
@@ -169,10 +209,11 @@ Seeds a real v8 profile, loads the real page in Chromium (CDP), and proves:
 migration on load, the note is the first card, the parchment gradient +
 cursor styles are live, the card fits the viewport with the menu reachable
 behind it, a real tap dismisses + persists, a reload does not re-pop, the
-lastPlayed stamp moves across the session — and (the addendum leg) the
-dismissed veteran arms the full guided run on START GAME, the arm consumes
-the one-off persistently, the approved skip + drink pays the shield, and the
-next run is a normal run.
+lastPlayed stamp moves across the session — and (the opt-in legs) a DECLINED
+veteran plays normally (nothing automatic), the note carries the offer
+button legible + hittable at both viewports, a real tap on SHOW ME starts
+the guided run flagged ASSISTED, the ask is marked seen, the approved skip +
+drink pays the shield, and the opt-in is consumed once.
 
 ### Screenshots
 
@@ -190,12 +231,16 @@ game's title as "HEROES".)
 
 - `src/save.js` — v9 bump, migration step (null sentinel, documented),
   validation for both fields
-- `src/main.js` — `WHATS_NEW` constant, `whatsNewDueFor`,
-  `veteranIntroDueFor` (the addendum's one-off-run gate), `persistProfile`
-  choke point, `addWhatsNewCard` / `dismissWhatsNew` (dismiss writes the
-  save immediately), the startRun veteran arm + consume, launch gate,
+- `src/main.js` — `WHATS_NEW` constant, `whatsNewDueFor`, `persistProfile`
+  choke point, `addWhatsNewCard` (with the SHOW ME offer button) /
+  `dismissWhatsNew` (decline; writes the save immediately) /
+  `acceptWhatsNew` (opt-in; starts the guided run), the `armVeteranTutorial`
+  opt-in REPLAY TOUR re-arms, the `state.assistedRun` stamp at startRun,
+  the ASSISTED end-card tag, the `assisted` summary field, launch gate,
   `__TEST.whatsNew` seam
-- `index.html` — `.card.paper-note` parchment CSS
+- `src/achievements.js` — `recordRun` honors `assisted` (B6: no best-run
+  records, full counters)
+- `index.html` — `.card.paper-note` parchment CSS + the `.offer` button
 - `test/test_whatsnew.mjs` — new
 - `test/test_save.mjs`, `test_g19_character_upgrades.mjs`,
   `test_save_v3_characters.mjs`, `test_encounters.mjs`,
