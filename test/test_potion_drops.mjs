@@ -155,6 +155,19 @@ try {
   ok('rate 0 + chance 1: all 30 corpses drop (factor 1, byte-identical low end)',
     dropValue() === 30, dropValue());
   st.drops.length = 0;
+  // FLAKE PIN (2026-09-18, suite red / standalone green x65 — disclosed, the
+  // test_audit_f8 fixture-precedent): a corpse's kill path rolls an EVOLUTION
+  // TOKEN (rollEvolutionToken, Math.random), and the FIRST-ever token holds the
+  // sim for its teach-once banner (state.bannerHold = TOKEN_BANNER_SEC 2.5s,
+  // grantEvolutionToken main.js:3271). When that first grant lands inside the
+  // 30-corpse frame above, the very NEXT frame — this probe's — is
+  // banner-frozen (main.js:9820 skips update()) and all 3000 corpses sit
+  // unprocessed: v reads 0. The hold decays on WALL clock (main.js:9748), so
+  // draining it with frames is exactly what a player staring at the banner
+  // does. A token granted INSIDE the 3000-kill pass itself is harmless: the
+  // drop rolls happen in the same pass, before any hold can bite. Assertion
+  // untouched.
+  for (let i = 0; i < 4000 && st.bannerHold > 0; i++) frame();
   st.killRateEwma = 1000; st.killsAtRateTick = st.player.kills;   // deep-swarm rate
   // 3000 corpses, not 30: at rate 1000 the FLOOR binds. POTION TUNE RETARGET
   // (2026-09-17): factor = clamp((20/1000)^2, 0.04, 1) = 0.04 (was 0.2), so a

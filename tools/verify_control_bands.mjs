@@ -35,7 +35,9 @@ const MEASURE = `(async () => {
   const visible = (el) => {
     if (!el || !el.isConnected) return false;
     const cs = getComputedStyle(el);
-    return cs.display !== 'none' && cs.visibility !== 'hidden';
+    // CANVAS LADDER (2026-09-18): a control hidden by the transience window is
+    // opacity 0 — visually gone and inert. It is not visible chrome.
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0.01;
   };
   const cv = box(document.getElementById('game'));
   const vw = innerWidth, vh = innerHeight;
@@ -59,13 +61,26 @@ const MEASURE = `(async () => {
     if (visible(zone)) chrome.push({ name: '#steer-zone', el: zone });
   }
   if (visible(document.getElementById('hud'))) chrome.push({ name: '#hud', el: document.getElementById('hud') });
-  rec.chromeRects = {}; rec.overlaps = []; rec.chromeOffscreen = [];
+  // CANVAS LADDER (2026-09-18, msgs 78PTR/9MV7F): where the MEASURED gain says
+  // so, the top strip (cog row + #hud) is TRANSIENT — it may overlap the canvas
+  // by rule while revealed, and while hidden it is opacity 0 (skipped as not
+  // visible). PERSISTENT chrome (the pads, everything else) still owns the
+  // round-5 zero-overlap bar.
+  rec.ladder = T.ladder;
+  const transientOn = !!(T.ladder && T.ladder.transient);
+  const isTransientChrome = (el) => transientOn &&
+    (el.classList.contains('cog') || el.id === 'hud');
+  rec.chromeRects = {}; rec.overlaps = []; rec.transientRects = []; rec.chromeOffscreen = [];
   for (const c of chrome) {
     if (!visible(c.el)) continue;
     const b = box(c.el);
     if (b.w <= 0 && b.h <= 0) continue;
     rec.chromeRects[c.name] = b;
     const area = px(ov(cv, b));
+    if (isTransientChrome(c.el)) {
+      if (area > 0) rec.transientRects.push({ name: c.name, area });
+      continue;
+    }
     if (area > 0) rec.overlaps.push({ name: c.name, area, box: b });
     if (b.x < -0.01 || b.y < -0.01 || b.r > vw + 0.01 || b.b > vh + 0.01)
       rec.chromeOffscreen.push({ name: c.name, box: b });
@@ -114,11 +129,13 @@ async function phoneArm(w, h, dpr, label) {
 
       // MANUAL by REAL taps on the PILOT button (ladder AUTO_ALL -> AUTO_MOVE
       // -> MANUAL). Detection reads the PILOT MODE (the floating stick keeps
-      // #joy hidden on touch — display would never flip).
+      // #joy hidden on touch — display would never flip). The tap point is the
+      // button's LIVE rect — compact pads (the canvas ladder) change its
+      // height and spacing, so no fixed-px formula.
       let manual = false, pilotReads = [];
+      const pilotRect = await p.rectOf('#touch .pad.left [data-act="pilot"]');
       for (let i = 0; i < 5 && !manual; i++) {
-        await p.tap(Math.round(auto.padLeft.x + auto.padLeft.w / 2),
-          Math.round(auto.padLeft.y + 2 * 64 + 2 * 10 + 64 / 2));   // 3rd button (PILOT)
+        await p.tap(Math.round(pilotRect[0]), Math.round(pilotRect[1]));
         await p.sleep(250);
         pilotReads.push(await p.evaluate("(async () => (await import('./src/main.js')).__TEST.state.pilotMode)()"));
         manual = pilotReads[pilotReads.length - 1] === 'MANUAL';
@@ -169,10 +186,25 @@ for (const [w, h, dpr, label] of MATRIX) {
     { canvas: r.auto.canvas, floor: r.auto.floor });
   check(size + ': every chrome element on-screen', r.auto.chromeOffscreen.length === 0,
     r.auto.chromeOffscreen);
-  // THE BAR: zero overlap, AUTO and MANUAL both. The 480x320 landscape probe
-  // is the BELOW-BREAKING case (pure-fit break ~540px width at 360h): the
-  // named fallback (round-4 letterbox, overlap accepted) is EXPECTED there
-  // and reported, never greenwashed.
+  // CANVAS LADDER (measured, never orientation-guessed): height-bound
+  // landscape engages transience; width-bound sizes (640x360 landscape, every
+  // portrait) and below-break sizes (fallback -> gain 0) persist.
+  const expectTransient = { '844x390': true, '896x414': true, '780x360': true,
+    '640x360': false, '390x844': false, '320x568': false, '480x320': false }[label];
+  check(size + ': transience decided by MEASUREMENT (expected engaged=' + expectTransient + ')',
+    r.auto.ladder.transient === expectTransient,
+    { ladder: r.auto.ladder,
+      note: '640x360 landscape is WIDTH-bound — the top strip is not the bottleneck, so it persists' });
+  if (label === '480x320') {
+    check(size + ': below the pure-fit break, COMPACT pads rescue a clean fit (no fallback overlap)',
+      r.auto.ladder.compact === true && r.auto.overlapCount === 0,
+      { ladder: r.auto.ladder, overlaps: r.auto.overlaps });
+  }
+  // THE BAR: zero overlap for PERSISTENT chrome, AUTO and MANUAL both. The
+  // 480x320 landscape probe sits below the pure-fit break (~540px @360h):
+  // either the canvas ladder's compact pads rescue a clean fit (measured) or
+  // the named fallback (round-4 letterbox, overlap accepted) owns it —
+  // reported either way, never greenwashed.
   const breaking = label === '480x320';
   for (const which of ['auto', 'manRec']) {
     const rec = r[which];

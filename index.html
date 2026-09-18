@@ -355,6 +355,33 @@
   body.immersive #tc-cog,
   body.immersive #tc-help { display: none !important; }
   body.immersive #touch .pad button { min-height: 78px; }
+  /* ---- TOP-CHROME TRANSIENCE — the canvas ladder (owner 2026-09-17/18,
+     msgs 78PTR/7BRBS/9MV7F): where MEASURING both canvas rects says the top
+     strip is the bottleneck (short landscape), the cog row + the text HUD
+     become transient overlays on the SAME show-on-interaction window as the
+     fullscreen button (body.chrome-reveal is set by syncChrome from the shared
+     fsOverlay timer — ONE system, not a second one). Hidden = opacity 0 +
+     pointer-events none: visually gone AND completely inert (an invisible
+     enlarged target must never eat a gameplay tap), while getBoundingClientRect
+     still measures them, so the band math never loses their geometry. Portrait
+     never engages — the measured gain there is ~0 (the canvas is width-bound)
+     and permanent UI is better UX when it costs the canvas nothing. */
+  body.top-transient #touch button.cog,
+  body.top-transient #hud { opacity: 0; pointer-events: none; }
+  body.top-transient.chrome-reveal #touch button.cog { opacity: 1; pointer-events: auto; }
+  body.top-transient.chrome-reveal #hud { opacity: 1; }
+  /* LADDER STEP 2 — COMPACT PADS (owner: "having the buttons resize
+     themselves if needed to help that"): engaged ONLY where measured — the
+     ordinary fit has fallen back AND the compact fit holds. Narrower pads,
+     shorter buttons, smaller badges (the pilot rungs abbreviate to the
+     owner's own A1/A2/M). The H1 no-reflow contract carries over: width and
+     height stay FIXED values, only smaller ones; the badge keeps a reserved
+     box (22px min) so no live text can change a dimension mid-run. Nothing
+     crosses the 44px touch floor (C.PADS_COMPACT.HIT_MIN). */
+  body.pads-compact #touch .pad { width: 64px; gap: 6px; }
+  body.pads-compact #touch .pad button { height: 52px; padding: 4px 6px; font-size: 11px; }
+  body.pads-compact #touch button .badge { font-size: 9px; min-height: 22px; margin-top: 1px; }
+  body.pads-compact #touch button .key { font-size: 9px; line-height: 12px; }
   #touch .pad {
     position: absolute;
     bottom: max(10px, env(safe-area-inset-bottom, 10px));

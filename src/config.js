@@ -830,9 +830,54 @@ export const CONFIG = {
   // feel is REPORTED, never tuned unilaterally.
   FULLSCREEN: {
     HIDE_S: 0.5,     // seconds the button outlives the last interaction
-    W: 22,           // button box, view px
+    W: 22,           // button box (the PAINTED icon), view px
     H: 18,
     INSET: 8,        // kept this far off the view's right edge
+    // HIT AREA (owner 2026-09-17, msg_01M2S9GX95: "you could make the hit area
+    // or clickable area larger... keep the visual size of the icon the same"):
+    // a separate hit box CENTRED on the icon and clamped inside the view.
+    // 64x56 view px ~= 52x45 CSS px at the common phone letterbox (390-wide
+    // portrait -> scale 0.81) — above the 44px touch floor at every acceptance
+    // size while the icon itself stays 22x18.
+    HIT_W: 64,       // hit box, view px (>= the icon, never smaller)
+    HIT_H: 56,
+    // EDGE_GUARD (2026-09-18, found by the verifier's REAL edge taps): the
+    // canvas's right edge abuts the right pad with only a ~6 CSS px seam at
+    // landscape letterboxes, and Chromium's touch hit-testing snaps a tap to
+    // the pad button from ~10 CSS px away — a right flank reaching the view
+    // edge was the PAD'S territory, not ours. The hit box keeps this many
+    // view px off the view's right edge, inside the canvas, clear of the
+    // seam. The enlargement that pays is the LEFT flank (32 view px of new
+    // target vs 8 right); the icon stays fully covered.
+    EDGE_GUARD: 8,
+  },
+
+  // ---- TOP-CHROME TRANSIENCE — the canvas ladder (owner 2026-09-17,
+  // msgs 78PTR + 7BRBS + 9MV7F): "max canvas size in any setting... First
+  // thing to sacrifice could be the top buttons. They could become overlays
+  // like the full screen button" / "transience must pay for itself". The top
+  // strip (cog row + text HUD) goes TRANSIENT — same show-on-interaction
+  // window as the fullscreen button, one system — ONLY when MEASURING both
+  // canvas rects says the strip is the bottleneck. Portrait measures ~0 gain
+  // (the canvas is width-bound there) and persists automatically; there is no
+  // orientation check or device list anywhere, only the measured delta.
+  TOP_CHROME: {
+    GAIN_ENGAGE: 0.03,   // engage only if the canvas grows >= 3% of vh in height
+    GAIN_RELEASE: 0.015, // hysteresis: relax only when the gain falls below 1.5%
+  },
+
+  // LADDER STEP 2 — COMPACT PADS (owner 2026-09-17: "having the buttons
+  // resize themselves if needed to help that"). Below the sizes where even a
+  // transient top strip leaves a fitting canvas, the pad stacks themselves
+  // compact (narrower pads, shorter buttons, abbreviated pilot-rung badges
+  // A1/A2/M — the owner's own examples) so the SIDE bands give the canvas
+  // width back. Applied ONLY where it pays: it engages when the ordinary fit
+  // has fallen back AND the compact fit holds; it relaxes the moment the
+  // ordinary fit holds again.
+  PADS_COMPACT: {
+    WIDTH: 64,       // pad width, CSS px (96 -> 64)
+    BTN_H: 52,       // button height, CSS px (64 -> 52)
+    HIT_MIN: 44,     // the touch floor nothing in compact mode may cross
   },
 
   // FLOATING (DYNAMIC) JOYSTICK (owner 2026-09-18): on touch paths a canvas

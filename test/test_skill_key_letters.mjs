@@ -93,8 +93,15 @@ S.check('each skill button KEEPS its live cooldown badge, as a sibling', () => {
   }
   // The pixel-art styling for the new span exists (an unstyled span would be a
   // bare glyph at the default size on the label's line).
-  assert.ok(/#touch button \.key \{/.test(html), 'the .key span must be styled');
-  const css = html.slice(html.indexOf('#touch button .key {'));
+  // LOOKUP FIX (2026-09-18): the compact-pads ladder step added
+  // `body.pads-compact #touch button .key { font-size: 9px ... }` EARLIER in
+  // index.html, so a bare substring search for '#touch button .key {' started
+  // reading at the compact VARIANT and failed the 10px check. The anchor below
+  // pins the BASE rule (line-initial, two-space indented — the compact rule is
+  // prefixed by its body.pads-compact selector, so it can never match). The
+  // assertion itself is unchanged: the BASE key cap is still 10px.
+  assert.ok(/\n  #touch button \.key \{/.test(html), 'the .key span must be styled');
+  const css = html.slice(html.search(/\n  #touch button \.key \{/));
   assert.ok(/font-size: 10px/.test(css.slice(0, 400)),
     'the key must be sized down so it reads as a key cap, not as the skill name');
 });

@@ -289,14 +289,16 @@ function touchLayerLive() {
 // owns no layout here.)
 function topChromeBottom() {
   let bottom = 0;
+  const vh = viewSize().vh;
   const consider = (el) => {
     if (!el || !el.isConnected) return;
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
     const r = el.getBoundingClientRect();
-    // /uiScaleNow: LAYOUT px — the UI-fit transform below scales the paint,
-    // never the layout, so every band measurement divides it back out.
-    const b = r.bottom / uiScaleNow;
+    // visToLayoutY: LAYOUT px — the UI-fit transform below scales the paint,
+    // never the layout, so every band measurement inverts it (centre-origin
+    // inverse; visual/scale was the WRONG inverse, see visToLayoutY).
+    const b = visToLayoutY(r.bottom, vh);
     if (r.height > 0 && b > bottom) bottom = b;
   };
   consider(document.getElementById('hud'));
@@ -327,6 +329,16 @@ function viewSize() {
 // uiScaleNow to get back to the layout space it positions in.
 let uiScaleNow = 1;
 let uiFitState = { scale: 1, wanted: 1, floored: false };
+// VISUAL -> LAYOUT under the centre-origin UI-fit transform. getBoundingClientRect
+// returns VISUAL (post-transform) coordinates; the inverse is
+// layout = origin + (visual - origin)/scale — NOT visual/scale, which is only
+// correct at a 0,0 origin. The wrong inverse bent every band away from the
+// true pad positions wherever a scale was applied (measured at 480x270: the
+// right band read ~60px instead of ~106px and the canvas slid under the pad).
+// The transform origin is #wrap's centre; #wrap fills the viewport, so the
+// origin is the viewport centre — a fixed point of the transform.
+function visToLayoutX(x, vw) { return vw / 2 + (x - vw / 2) / uiScaleNow; }
+function visToLayoutY(y, vh) { return vh / 2 + (y - vh / 2) / uiScaleNow; }
 // fitCanvas's last round-5 verdict, so verifiers can tell an honest zero
 // (band fit) from the NAMED FALLBACK (round-4 letterbox, overlap accepted).
 let lastFitFellBack = false;
@@ -373,7 +385,10 @@ function controlBands() {
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     const v = el.getBoundingClientRect();
     if (!v.width && !v.height) continue;
-    const r = { left: v.left / uiScaleNow, right: v.right / uiScaleNow, top: v.top / uiScaleNow };
+    // Centre-origin transform: positions invert as origin + (v-origin)/scale
+    // (plain division is only right at origin 0,0 — the 480x270 probe caught
+    // the right band reading ~60px instead of ~106px off that assumption).
+    const r = { left: visToLayoutX(v.left, vw), right: visToLayoutX(v.right, vw), top: visToLayoutY(v.top, vh) };
     tops.push(r.top);
     sides.push(r);
   }
@@ -444,16 +459,21 @@ function chromeLayoutRects() {
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
     const v = el.getBoundingClientRect();
     if (!v.width && !v.height) return;
-    out.push({ left: v.left / uiScaleNow, top: v.top / uiScaleNow,
-      right: v.right / uiScaleNow, bottom: v.bottom / uiScaleNow });
+    out.push({ left: visToLayoutX(v.left, VW), top: visToLayoutY(v.top, VH),
+      right: visToLayoutX(v.right, VW), bottom: visToLayoutY(v.bottom, VH) });
   };
+  const { vw: VW, vh: VH } = viewSize();
   const touch = document.getElementById('touch');
   if (touch && touch.isConnected && getComputedStyle(touch).display !== 'none') {
     for (const el of touch.querySelectorAll('.pad')) consider(el);
-    for (const el of touch.querySelectorAll('button.cog')) consider(el);
+    // LADDER (2026-09-18): while the top strip is TRANSIENT it is not a layout
+    // actor — an overlay may intersect the canvas by the ladder rule, and
+    // keeping it out of the UI-fit bounds stops the scale churning with the
+    // reveal window (shown/hidden must not re-shrink the interface).
+    if (!topTransient) for (const el of touch.querySelectorAll('button.cog')) consider(el);
     consider(document.getElementById('steer-zone'));
   }
-  consider(document.getElementById('hud'));
+  if (!topTransient) consider(document.getElementById('hud'));
   return out;
 }
 // UI-TIGHT (owner 2026-09-18, hosted-short-landscape follow-on to
@@ -493,7 +513,7 @@ function placeCogRow(tight, vw) {
   const hud = document.getElementById('hud');
   if (hud && hud.isConnected) {
     const hr = hud.getBoundingClientRect();
-    if (hr.width > 0) start = Math.max(start, hr.right / uiScaleNow + 8);
+    if (hr.width > 0) start = Math.max(start, visToLayoutX(hr.right, vw) + 8);
   }
   let x = Math.min(start, vw - 10 - rowW);
   for (const r of rects) {
@@ -501,6 +521,33 @@ function placeCogRow(tight, vw) {
     r.el.style.right = 'auto';
     x += r.w + GAP;
   }
+}
+// CANVAS LADDER — SACRIFICE 1: TOP-CHROME TRANSIENCE (owner 2026-09-17,
+// msgs 78PTR + 7BRBS + the 9MV7F measurement ruling: "TRANSIENCE MUST PAY
+// FOR ITSELF, decided by MEASURING whether the canvas rect actually grows...
+// No orientation checks, no hardcoded device list"). Where the persistent
+// top strip (cog row + text HUD) is the bottleneck, it goes TRANSIENT on the
+// SAME show-on-interaction window as the fullscreen button (fsOverlay — one
+// system); where it is not, it persists. The pure decision below is exposed
+// via __TEST (ladderDecide) so the node suite can matrix-test the threshold
+// and the hysteresis deadband without a layout engine.
+let topTransient = false;      // current engaged state (hysteresis carries it)
+let ladderMeasure = null;      // last {persistentH, transientH, gain} for __TEST
+let ladderOverride = null;     // __TEST only: 'off' pins the persistent ladder
+// Pure: engage when the measured canvas-height gain >= GAIN_ENGAGE*vh; relax
+// only when it falls below GAIN_RELEASE*vh (the deadband — a gain hovering at
+// the threshold cannot flicker the row between persistent and transient).
+function ladderDecide(gainH, vh, engaged, cfg) {
+  const bar = engaged ? cfg.GAIN_RELEASE : cfg.GAIN_ENGAGE;
+  return gainH >= bar * vh;
+}
+// CANVAS LADDER — SACRIFICE 2: COMPACT PADS. state carries the hysteresis
+// (compact holds while the ordinary fit is in fallback, relaxes the moment
+// the ordinary fit holds — measured each fit, never assumed).
+let padsCompact = false;
+function setBodyClass(name, on) {
+  const body = typeof document !== 'undefined' && document.body;
+  if (body && body.classList) body.classList.toggle(name, !!on);
 }
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
@@ -527,20 +574,58 @@ function fitCanvas() {
   // against: the whole-viewport letterbox stands exactly as before.
   if (typeof getComputedStyle === 'function' && touchLayerLive()) {
     placed = true;
-    // UI-TIGHT detection (layout px): the pads' highest top vs the cog row's
-    // bottom — less than a 4px guard between them and the two stacks collide.
-    // placeCogRow runs BEFORE any rects are read so the fit, the bands and the
-    // UI scale all measure the DEGRADED layout the player will actually see.
+    // LADDER STEP 1 — measure transience BEFORE placing anything: the top
+    // band's height is placement-independent (the cog row is 46px tall
+    // wherever it sits horizontally), so both fits can be priced from the
+    // persistent bands. Gain is ZERO wherever the persistent fit has already
+    // fallen back — there the canvas is the round-4 viewport-limited letterbox
+    // and reclaiming the strip cannot grow it, so the buttons persist.
+    bands = controlBands();
+    const fitP = bandFit(vw, vh, bands);
+    const fitT = bandFit(vw, vh, { ...bands, top: 0 });
+    const gain = fitP.fallback ? 0 : fitT.h - fitP.h;
+    ladderMeasure = { persistentH: fitP.h, transientH: fitT.h, gain };
+    topTransient = ladderOverride === 'off' ? false
+      : ladderDecide(gain, vh, topTransient, C.TOP_CHROME);
+    setBodyClass('top-transient', topTransient);
+    if (topTransient) bands = { ...bands, top: 0 };
+    let bf = bandFit(vw, vh, bands);
+    // LADDER STEP 2 — compact pads, ONLY where they pay: engaged when the
+    // ordinary fit has fallen back, kept only when the compact fit HOLDS (the
+    // narrower pads buy the canvas enough width/height to leave fallback); if
+    // compact cannot rescue the fit either it reverts (a sacrifice that buys
+    // nothing is UX lost for nothing). Relaxes the moment the ordinary fit
+    // holds again — re-measured on every fit, never assumed.
+    if (ladderOverride === 'off') {
+      if (padsCompact) { padsCompact = false; setBodyClass('pads-compact', false); }
+    } else if (bf.fallback) {
+      if (!padsCompact) { padsCompact = true; setBodyClass('pads-compact', true); }
+      const bandsC = controlBands();
+      const bandsC2 = topTransient ? { ...bandsC, top: 0 } : bandsC;
+      const bfC = bandFit(vw, vh, bandsC2);
+      if (!bfC.fallback) { bands = bandsC2; bf = bfC; }
+      else { padsCompact = false; setBodyClass('pads-compact', false); }
+    } else if (padsCompact) {
+      padsCompact = false; setBodyClass('pads-compact', false);
+    }
+    // UI-TIGHT placement runs AFTER the ladder steps (compact changes the pad
+    // stack's height, transient makes the collision moot): the pads' highest
+    // top vs the cog row's bottom — less than a 4px guard between them and the
+    // two stacks collide. The band math above is placement-independent (the
+    // row's vertical extent is the same wherever it sits), so measuring the
+    // degraded layout here loses nothing.
     let padTopMin = Infinity;
     for (const el of document.querySelectorAll('#touch .pad')) {
       if (!el.isConnected) continue;
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-      padTopMin = Math.min(padTopMin, el.getBoundingClientRect().top / uiScaleNow);
+      padTopMin = Math.min(padTopMin, visToLayoutY(el.getBoundingClientRect().top, vh));
     }
+    // ui-tight runs under transience too (2026-09-18, hdr90 arm): a hosted
+    // 300px-tall box puts the pads at the viewport top where the cog row
+    // (revealed) would stack on the pad BUTTONS — transient chrome may overlap
+    // the CANVAS, never other chrome.
     placeCogRow(padTopMin < topChromeBottom() + 4, vw);
-    bands = controlBands();
-    const bf = bandFit(vw, vh, bands);
     if (!bf.fallback) {
       // ROUND 5: fitted into the bands, centred in what remains — overlap
       // with the reserved chrome is impossible by construction.
@@ -8419,13 +8504,32 @@ function fsButtonRect() {
     w: C.FULLSCREEN.W, h: C.FULLSCREEN.H,
   };
 }
-// A pointer event -> view coords -> inside the on-screen button. Reads the
-// canvas's REAL rect, so it lands correctly at any letterbox scale.
+// THE HIT BOX (owner 2026-09-17, msg_01M2S9GX95: "make the hit area or
+// clickable area larger... keep the visual size of the icon the same"):
+// centred on the painted icon, clamped inside the view, never smaller than
+// the icon. 64x56 view px is ~52x45 CSS px at the common phone letterbox —
+// above the 44px touch floor while the ICON stays 22x18. fsVisible gates
+// fsHit below, so the enlarged target is COMPLETELY INERT while hidden (it
+// can never eat a gameplay tap) and while the pad screens are down.
+function fsHitRect() {
+  const icon = fsButtonRect();
+  const w = Math.max(C.FULLSCREEN.HIT_W, icon.w), h = Math.max(C.FULLSCREEN.HIT_H, icon.h);
+  // EDGE_GUARD on the right: the view's right edge abuts the right pad's
+  // touch territory (~6 CSS px seam at landscape letterboxes; Chromium snaps
+  // touch targets from ~10 px out) — the hit box stays inside the canvas,
+  // clear of the pad. 8 view px guard keeps the icon's right edge (INSET 8)
+  // exactly on the hit box's right edge: still fully covered.
+  const x = Math.max(0, Math.min(icon.x + icon.w / 2 - w / 2, C.VIEW_W - C.FULLSCREEN.EDGE_GUARD - w));
+  const y = Math.max(0, Math.min(icon.y + icon.h / 2 - h / 2, C.VIEW_H - h));
+  return { x, y, w, h };
+}
+// A pointer event -> view coords -> inside the on-screen button's HIT box.
+// Reads the canvas's REAL rect, so it lands correctly at any letterbox scale.
 function fsHit(ev) {
   if (!fsVisible()) return false;
   const r = canvas.getBoundingClientRect();
   if (!r || !r.width || !r.height) return false;
-  const b = fsButtonRect();
+  const b = fsHitRect();
   const vx = ((ev.clientX ?? 0) - r.left) / r.width * C.VIEW_W;
   const vy = ((ev.clientY ?? 0) - r.top) / r.height * C.VIEW_H;
   return vx >= b.x && vx <= b.x + b.w && vy >= b.y && vy <= b.y + b.h;
@@ -8732,6 +8836,12 @@ function syncChrome() {
     active: fsMode() === 'native' ? !!FS_ELEMENT() : immersiveOn,
   };
   const on = chromeOn();
+  // LADDER: while the top strip is transient, the cog row + text HUD ride the
+  // SAME reveal window as the fullscreen button — fsOverlay is bumped by every
+  // interaction (key, pad press, canvas tap), so there is ONE show/fade
+  // system, not a second one. While the window is closed the strip is opacity
+  // 0 + pointer-events none (index.html): visually gone AND completely inert.
+  setBodyClass('chrome-reveal', topTransient && on && fsOverlay.t > 1e-9);
   let chromeLayoutChanged = false;
   if (touchLayer && touchLayer.style) {
     const want = on ? '' : 'none';
@@ -8759,6 +8869,17 @@ function syncChrome() {
   syncHelpHud();
   if (chromeLayoutChanged) fitCanvas();
 }
+// LADDER STEP 2 text (owner 2026-09-17: "2nd would be reduced text in the
+// control buttons. A1/A2/M, that kind of thing"): in compact mode the pilot
+// rungs abbreviate to the owner's own short forms. Pure — exposed via __TEST
+// (pilotBadgeText) so the node suite pins the mapping. The full wording stays
+// reachable off the button: the SETTINGS PILOT card (pilotPrefLabel) and the
+// help-mode explainer carry it.
+function pilotBadgeText(mode, act, compact) {
+  const ABBR = { AUTO_ALL: 'A1', AUTO_MOVE: 'A2', MANUAL: 'M' };
+  const m = compact ? (ABBR[mode] || mode) : mode;
+  return act && act !== mode ? m + ' \u00b7 ' + act : m;
+}
 function updateTouchHud() {
   syncChrome();
   const p = state.player;
@@ -8776,9 +8897,7 @@ function updateTouchHud() {
   const act = state.stanceAct;
   set('tc-focus', state.focus);
   set('tc-stance', state.stance);
-  set('tc-pilot', act && act !== state.pilotMode
-    ? state.pilotMode + ' \u00b7 ' + act
-    : state.pilotMode);
+  set('tc-pilot', pilotBadgeText(state.pilotMode, act, padsCompact));
   const skill = (id, defId) => {
     // N1 slice 3 + 2026-09-17 mana price: an ult badge reads charge AND the
     // pool — cooling (`12.0s`) while the floor runs, LOW when charged but
@@ -9786,6 +9905,7 @@ export const __TEST = {
     bump: fsBump,
     toggle: toggleFullscreen,
     rect: fsButtonRect,
+    hitRect: fsHitRect,
     rectCss: (x, y, w, h) => canvasRegion(x, y, w, h).getBoundingClientRect(),
     hit: fsHit,
     // Immersive fallback seams (addendum): live state, the exit path, the
@@ -9992,6 +10112,16 @@ export const __TEST = {
   // and the browser verifier can report the engaged scale directly.
   get uiFitScale() { return uiFitScale; },
   get uiFit() { return { ...uiFitState, applied: uiScaleNow, fellBack: lastFitFellBack }; },
+  // CANVAS LADDER seam (2026-09-18, msgs 78PTR/7BRBS/9MV7F): the measured
+  // persistent/transient canvas heights + gain, the engaged flags, the pure
+  // decision + abbreviation functions, and a pinned-ladder override so a
+  // verifier can A/B the SAME viewport with the ladder off and on.
+  get ladder() {
+    return { transient: topTransient, compact: padsCompact,
+      measure: ladderMeasure && { ...ladderMeasure }, override: ladderOverride };
+  },
+  setLadderOverride(v) { ladderOverride = v; fitCanvas(); },
+  ladderDecide, pilotBadgeText,
   viewSize,
   // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
   // Pure helpers + the live dilation state, so the new behaviour is testable

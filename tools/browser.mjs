@@ -172,14 +172,35 @@ export async function withPage(opts, fn) {
     };
     // A REAL finger tap: pointerdown -> pointerup -> click is what the game's own
     // overlay handlers and its cinematic gesture guard are written against.
-    const tap = async (x, y) => {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, radiusX: 8, radiusY: 8, force: 1 }] });
+    // radius (CSS px, default 8) is the touch disc: Chromium hit-tests by the
+    // disc, so a point whose disc overlaps a neighbouring control hands the
+    // touch to THAT control before any game handler runs (2026-09-18, the fs
+    // hit-box right edge 6 CSS px from the right pad's W at 844x390). A
+    // centre-point tap (iOS's hit-test) is tap(x, y, 1).
+    const tap = async (x, y, radius = 8) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, radiusX: radius, radiusY: radius, force: 1 }] });
       await sleep(40);
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     };
+    // A REAL drag/swipe through the same touch pipeline: touchStart at (x,y0),
+    // stepped touchMoves to (x+dx, y0+dy), touchEnd. The browser's own scroll
+    // physics engage (this is how a thumb flicks a list); steps keep the
+    // gesture continuous so it is never read as a jump. Positive dy = downward
+    // drag (scrolls up); negative dy = upward flick (scrolls down the list).
+    const swipe = async (x, y0, dx, dy, steps = 6) => {
+      const pt = (t) => ({ x: Math.round(x + dx * t), y: Math.round(y0 + dy * t), force: 1 });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt(0)] });
+      for (let i = 1; i <= steps; i++) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt(i / steps)] });
+        await sleep(16);
+      }
+      await sleep(30);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await sleep(220);   // let inertial scrolling settle
+    };
     const rectOf = (sel) => evaluate("(() => { const e = document.querySelector(" + JSON.stringify(sel) +
       "); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]; })()");
-    const api = { evaluate, waitFor, shot, readShot, click, tap, rectOf, sleep, port: srv.port, viewport: { w, h, dpr } };
+    const api = { evaluate, waitFor, shot, readShot, click, tap, swipe, rectOf, sleep, port: srv.port, viewport: { w, h, dpr } };
     Object.defineProperty(api, 'errors', { get: () => cdp.errors });
     return await fn(api);
   } finally {

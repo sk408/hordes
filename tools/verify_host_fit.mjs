@@ -59,7 +59,10 @@ const MEASURE = `(async () => {
   const box = (el) => { const r = el.getBoundingClientRect();
     return { x: px(r.left), y: px(r.top), r: px(r.right), b: px(r.bottom), w: px(r.width), h: px(r.height) }; };
   const visible = (el) => { if (!el || !el.isConnected) return false;
-    const cs = getComputedStyle(el); return cs.display !== 'none' && cs.visibility !== 'hidden'; };
+    // CANVAS LADDER (2026-09-18): hidden-by-transience chrome is opacity 0 —
+    // not visible chrome.
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0.01; };
   const cv = box(document.getElementById('game'));
   const vv = window.visualViewport;
   const rec = { mode: T.state.mode, time: +T.state.time.toFixed(2), uiFit: T.uiFit,
@@ -78,18 +81,34 @@ const MEASURE = `(async () => {
   if (visible(document.getElementById('hud'))) chrome.push(['#hud', document.getElementById('hud')]);
   const ov = (a, b) => Math.max(0, Math.min(a.r, b.r) - Math.max(a.x, b.x)) *
                           Math.max(0, Math.min(a.b, b.b) - Math.max(a.y, b.y));
-  rec.chromeRects = []; rec.overlaps = [];
+  // CANVAS LADDER (2026-09-18, msgs 78PTR/9MV7F): where the measured gain
+  // says so, the top strip (cog row + #hud) is TRANSIENT — overlap with the
+  // canvas is the RULE there, reported separately; PERSISTENT chrome keeps the
+  // round-5 zero-overlap bar.
+  const transientOn = !!(T.ladder && T.ladder.transient);
+  rec.ladder = T.ladder;
+  rec.chromeRects = []; rec.overlaps = []; rec.transientOverlaps = [];
   for (const [name, el] of chrome) {
     const b = box(el); if (b.w <= 0 && b.h <= 0) continue;
     rec.chromeRects.push({ name, ...b });
+    // (cog buttons are collected under BOTH the 'btn' and 'cog' tags — filter
+    // by the ELEMENT, not the tag, or the duplicate escapes the rule.)
+    const isTransient = transientOn &&
+      (!!((el.classList && el.classList.contains('cog'))) || el.id === 'hud');
+    if (isTransient) {
+      if (ov(cv, b) > 0) rec.transientOverlaps.push({ name, area: px(ov(cv, b)) });
+      continue;
+    }
     if (ov(cv, b) > 0) rec.overlaps.push({ name, area: px(ov(cv, b)) });
   }
   // UI-TIGHT: chrome must never stack on chrome — but only among the TOP-LEVEL
   // actors (pads, the cog row, #hud). Skill buttons sit ON their pads and the
   // #steer-zone underlays the controls BY DESIGN (the pads own the pointer);
   // those pairs are excluded. The ui-tight defect this catches is the pad
-  // stack vs the cog row / #hud on a short hosted landscape box.
-  const TOP = new Set(['pad', 'cog', '#hud']);
+  // stack vs the cog row / #hud on a short hosted landscape box. While the
+  // ladder has the top strip transient, that strip is an overlay — its pairs
+  // are excluded for the same reason (transient MAY intersect).
+  const TOP = new Set(transientOn ? ['pad'] : ['pad', 'cog', '#hud']);
   rec.chromeClash = [];
   for (let i = 0; i < rec.chromeRects.length; i++)
     for (let j = i + 1; j < rec.chromeRects.length; j++) {
@@ -167,6 +186,14 @@ for (const a of arms.slice(1)) {
     { vv: r.vv, inner: r.inner });
   check(tag + ': run is live (playing, time advancing)', a.advancing && r.mode === 'playing' && r.time > 1,
     { mode: r.mode, time: r.time });
+  // CANVAS LADDER: hosted landscape is height-bound (the header ate the
+  // height) so transience pays; hosted portrait is width-bound so it does not.
+  // The measurement decides — these are expectations, not the mechanism.
+  const expectTr = w > h;
+  check(tag + ': canvas ladder — transience ' + (expectTr
+      ? 'ENGAGES (the header made the top strip the bottleneck)'
+      : 'stays off (portrait is width-bound — measured gain ~0, the buttons persist)'),
+    r.ladder.transient === expectTr, r.ladder);
   // THE BAR: every rect fully inside the VISIBLE viewport (top-page coords).
   const outside = [];
   for (const b of [{ name: 'canvas', ...r.canvas }, ...r.chromeRects]) {
