@@ -291,7 +291,20 @@ export class AutoPilotController {
     // (inside the hollow), so the direct line is always walkable — no relief
     // routing needed. Pickup runs in main.js's drop loop (same pickR as an
     // ordinary potion).
+    // ADDENDUM (owner 2026-09-18: the pilot PAUSES for banners — "we haven't
+    // given the player any control yet"): while a banner is up (bannerIdx
+    // still has one AND the walk clock since the last OK has reached
+    // C.PROLOGUE.BANNER_WALK_S — the same gate main.js's prologueBanner()
+    // reads) the pilot HOLDS position. Choreography: walk -> banner -> OK ->
+    // walk ... -> potion -> drink -> effect.
     if (state.prologue && !state.prologue.drunk) {
+      const banners = state.prologue.banners || [];
+      const bannerUp = state.prologue.bannerIdx < banners.length &&
+        (state.prologue.walkT || 0) >= C.PROLOGUE.BANNER_WALK_S;
+      if (bannerUp) {
+        this.act = 'PROLOGUE_HOLD';
+        return put(0, 0);
+      }
       const dx = state.prologue.potion.x - p.x;
       const dy = state.prologue.potion.y - p.y;
       const len = Math.hypot(dx, dy);
@@ -485,6 +498,16 @@ export class PlayerController extends AutoPilotController {
   }
 
   decide(p, state, cfg) {
+    // PROLOGUE ADDENDUM (owner 2026-09-18: "we haven't given the player any
+    // control yet"): the MANUAL pilot is inert through the whole first-run
+    // phase — the choreography owns the walk (the AUTO branch above), the
+    // banners own the screen, and the pilot-mode switch itself is disabled,
+    // so a fresh profile cannot even reach MANUAL mid-phase. Held input is
+    // swallowed, never queued.
+    if (state.prologue) {
+      this.act = 'PROLOGUE_HOLD';
+      return { moveX: 0, moveY: 0, target: null };
+    }
     const target = this.pickTarget(p, state, cfg, nearestEnemy(p, state));
     // WAVE-26: manual movement means the STANCE's kite/XP-drift behaviour is
     // inert (by design — manual means manual). The HUD says so ('MANUAL')

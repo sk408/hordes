@@ -666,6 +666,20 @@
   }
   #help-hud { bottom: 118px; font-size: 12px; border-color: #5a5a7a; }
   #help-tip { bottom: 150px; }
+  /* ---- PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
+     during this initial period"): through the whole first-run phase the touch
+     layer is SHOWN BUT GREYED and completely inert (pointer-events none — the
+     logic gates live in main.js's runAction/keydown funnels; this is the
+     visual + DOM half). Set ONLY at prologue arm time, cleared ONLY at phase
+     end (endPrologue) — nothing re-enables early, and the opacity jump back
+     to 1 is the obvious enabled/disabled difference at the end. The canvas
+     fullscreen glyph is HIDDEN instead (a 22x18 glyph cannot read as greyed).
+     The banner's OK is a canvas hit-region — unaffected, the single live
+     control of the phase. */
+  body.prologue-locked #touch button {
+    opacity: 0.35;
+    pointer-events: none;
+  }
 
   /* Bigger tap targets for draft cards on small/touch screens. */
   @media (pointer: coarse), (max-width: 700px) {

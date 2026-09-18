@@ -2214,10 +2214,16 @@ function update(dt) {
   // state.time here EXCLUDES the prologue from run duration, gold/second and
   // every pacing figure by construction (they all read state.time). The
   // phase tick below is the bound: drunk OR t >= MAX_S, never neither.
+  // ADDENDUM (owner 2026-09-18): the pilot PAUSES while a banner is up, and
+  // the bound counts UNPAUSED time only — a held banner freezes BOTH clocks
+  // (t and walkT), so reading time never rushes a player mid-lesson.
   if (state.prologue) {
-    state.prologue.t += dt;
-    if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
-      endPrologue('bound');
+    if (!prologueBanner()) {
+      state.prologue.t += dt;
+      state.prologue.walkT += dt;
+      if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
+        endPrologue('bound');
+      }
     }
   } else {
     state.time += dt;
@@ -7342,7 +7348,7 @@ function startRun() {
   const prologueRunsPlayed = Number(profile.achievements && profile.achievements.totals &&
     profile.achievements.totals.runs) || 0;
   state.prologue = prologueRunsPlayed === 0
-    ? { t: 0, drunk: false,
+    ? { t: 0, drunk: false, walkT: 0,
         // Side placement (up-RIGHT, clamped on-screen): the straight-up
         // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
         // see the POTION_DX comment in config.js.
@@ -7353,6 +7359,12 @@ function startRun() {
         bannerIdx: 0, banners: PROLOGUE_BANNERS }
     : null;
   state.prologueRan = !!state.prologue;
+  // PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
+  // during this initial period"): the body class is the DOM half of the lock
+  // (index.html greys the whole #touch layer out and pulls its pointer
+  // events); the logic half is the runAction/keydown gates. Run #2+ never
+  // arms it — and an explicit OFF here clears any stale class.
+  prologueLockButtons(!!state.prologue);
   state.pendingDrafts = 0;
   state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
@@ -7380,11 +7392,14 @@ function startRun() {
 // banners explaining some of the basics of the game."
 //
 // The banners: at most four, one at a time, each short and plain. They are
-// CANVAS-drawn with an OK hit-region on the canvas pointer path — NON-MODAL
-// by construction (nothing here touches bannerHold, coach or the update
-// gate; the pilot keeps walking while one is up). Copy rule (the player
-// review's ask): state what the thing IS or what you GET. No emojis (house
-// rule). Numbers ride the named constant so the copy can never lie.
+// CANVAS-drawn with an OK hit-region on the canvas pointer path — the ONLY
+// live control of the phase (everything else is locked, see prologueLockButtons
+// and the runAction gate). ADDENDUM (owner 2026-09-18: the pilot PAUSES for
+// banners — the withdrawn "the pilot can keep walking" line): a banner goes up
+// only after C.PROLOGUE.BANNER_WALK_S of unpaused walking since the last OK,
+// and while one is up the pilot holds position and BOTH prologue clocks freeze.
+// Copy rule (the player review's ask): state what the thing IS or what you GET.
+// No emojis (house rule). Numbers ride the named constant so the copy can never lie.
 const PROLOGUE_BANNERS = [
   { title: 'MOVE', body: 'Drag anywhere on the field, or use WASD or the arrow keys. You walk where you point.' },
   { title: 'POTIONS', body: 'Red refills health, blue refills mana. Walk over one to drink it.' },
@@ -7395,14 +7410,22 @@ const PROLOGUE_BANNERS = [
 
 function prologueBanner() {
   if (!state.prologue || state.prologue.drunk) return null;
-  return PROLOGUE_BANNERS[state.prologue.bannerIdx] || null;
+  if (state.prologue.bannerIdx >= PROLOGUE_BANNERS.length) return null;
+  // The cadence gate: up only after BANNER_WALK_S of walking since the last
+  // OK (walk -> banner -> OK -> walk ... -> potion). While below it there is
+  // no banner on screen and the pilot is free to walk.
+  return state.prologue.walkT >= C.PROLOGUE.BANNER_WALK_S
+    ? PROLOGUE_BANNERS[state.prologue.bannerIdx] : null;
 }
 
-// OK (button tap or the seam): advance. Never modal, never blocks the walk.
+// OK (button tap or the seam): advance — the phase's SINGLE live control.
+// Gated on a banner actually being up (the canvas hit-region is drawn only
+// then; the seam matches). OK resets the walk clock, so the next banner
+// waits for its own stretch of walking.
 function prologueOk() {
-  if (state.prologue && !state.prologue.drunk &&
-    state.prologue.bannerIdx < PROLOGUE_BANNERS.length) {
+  if (prologueBanner()) {
     state.prologue.bannerIdx++;
+    state.prologue.walkT = 0;
   }
 }
 
@@ -7426,9 +7449,10 @@ function prologueDrink(p) {
   endPrologue('drunk');
 }
 
-// THE BOUND: the phase ends when the potion is drunk OR at MAX_S — stated,
-// tested. A player who never walks, or leaves a banner open, cannot hold the
-// run hostage. ONBOARDING ABSORB: the prologue taught the entry basics, so
+// THE BOUND: the phase ends when the potion is drunk OR at MAX_S of UNPAUSED
+// time (addendum 2026-09-18: a held banner freezes the bound's clock, so the
+// lesson is never rushed — the OK button is the only way past a banner, like
+// any menu). ONBOARDING ABSORB: the prologue taught the entry basics, so
 // the stage-2 coachmark flags are marked seen HERE (run #1 never stacks a
 // second onboarding path); REPLAY TOUR in settings re-arms them deliberately
 // and the non-modal HintStrip is untouched (it resumes after the phase).
@@ -7436,8 +7460,22 @@ function endPrologue(why) {
   if (!state.prologue) return;
   state.prologueRan = true;
   state.prologue = null;
+  prologueLockButtons(false);
   for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);
   toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S' : 'THE RUN BEGINS');
+}
+
+// The DOM half of the all-buttons-disabled lock (owner 2026-09-18): body class
+// `prologue-locked` — index.html greys the whole touch layer out (opacity 0.35)
+// and pulls its pointer events, an OBVIOUS disabled read that flips to full
+// opacity the moment the phase ends. Nothing else re-enables early: the class
+// is set ONLY at prologue arm time and cleared ONLY here.
+function prologueLockButtons(on) {
+  const body = typeof document !== 'undefined' && document.body;
+  if (body && body.classList) {
+    if (on) body.classList.add('prologue-locked');
+    else body.classList.remove('prologue-locked');
+  }
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
@@ -7872,6 +7910,13 @@ function magnetHeld(st) {
 }
 
 function runAction(act) {
+  // PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
+  // during this initial period"): through the WHOLE first-run phase every
+  // button is inert — pads (skills, potions, FOCUS/STANCE/PILOT/STATS), the
+  // cog row (SETTINGS/HELP/RADAR/MAP), and their keyboard twins that funnel
+  // through here. The SINGLE exception is the banner's own OK, which lives
+  // on the canvas pointer path, not this seam.
+  if (state.prologue) return;
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
   if (act === 'stats') {
@@ -8197,7 +8242,7 @@ window.addEventListener('keydown', (ev) => {
   // key is INERT (a key must never fire what the player is trying to read
   // about) except ESC, which also leaves. This gate sits before the mode
   // dispatch so no mode branch can bypass it.
-  if (ev.key === '?' || k === 'f1') {
+  if ((ev.key === '?' || k === 'f1') && !state.prologue) {
     if (ev.preventDefault) ev.preventDefault();
     controlUsed('help');
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
@@ -8306,6 +8351,11 @@ window.addEventListener('keydown', (ev) => {
       if (card) card.click();
     }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
+    // PROLOGUE ADDENDUM: no in-run keys through the phase — not ESC/P (the
+    // in-run menu), not O (the pilot-mode switch), not zoom, not the action
+    // twins. runAction carries the same gate; the banners' OK (canvas path)
+    // is the only live control.
+    if (state.prologue) return;
     // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
     // ESC was routed only in menu/settings/stats, and the in-run settings
     // screen (the game's only pause) opened solely from the mouse-only cog.
@@ -8911,7 +8961,13 @@ function fsVisible() {
   // The 1e-9 epsilon makes the hide land at EXACTLY C.FULLSCREEN.HIDE_S of
   // frames (30 at 60Hz) — the decay arithmetic leaves ~1e-17 residue
   // otherwise and the button would linger one frame past its named window.
-  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn();
+  // PROLOGUE ADDENDUM (owner 2026-09-18): the fullscreen button stands DOWN
+  // through the whole first-run phase ("all buttons should be disabled") —
+  // HIDDEN rather than greyed because a canvas glyph cannot carry a disabled
+  // affordance legibly at 22x18 view px (disclosed in the report). fsVisible
+  // gates fsHit, so the enlarged target is inert too — it can never eat the
+  // banner-OK tap.
+  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn() && !state.prologue;
 }
 // The button box in VIEW coordinates — the ONE geometry source the renderer
 // paints, the hit-test reads and the tests assert (canvasRegion projects it
@@ -10215,6 +10271,7 @@ function frame(now) {
   if (state.mode === 'portal-cine') {
     // WAVE-8/A: gameplay is frozen (update() only runs in 'playing'); the
     // movie owns the canvas until isDone, then the intermission takes over.
+    renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
     const t = now - cineT0;
     CINE.render(renderer.ctx, t);
     const cph = CINE.phaseAt(t);
@@ -10227,6 +10284,13 @@ function frame(now) {
     // G15: the death movie — frozen like the other movies, wall-clock driven
     // (frame-rate parity by construction), cause-flavored from the recorded
     // death source. isDone hands back to the composed payoff overlay.
+    // SEAM HYGIENE (2026-09-18, caught live by test_fullscreen_button's
+    // enlarged-hit-box loop): these movie branches early-return BEFORE
+    // renderer.render(), so a seam like fsButton keeps its last playing-frame
+    // value through the whole movie — the canvas is honestly repainted, but
+    // the seam reads as if the button were still up (a test flake whenever
+    // the pilot dies inside a hide-window). Clear it: nothing is live here.
+    renderer.fsButton = null;
     const t = now - deathCineT0;
     DCINE.render(renderer.ctx, t, state.deathBy ? state.deathBy.cause : 'unknown');
     if (DCINE.isDone(t)) endDeathCine();
@@ -10238,6 +10302,7 @@ function frame(now) {
   // (chromeOn already excludes every mode but playing/finale). realDt, NOT
   // the earned-moment dt: the escape keeps a steady clock by design.
   if (state.mode === 'escape') {
+    renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
     // HELP MODE (VK9P4): the pause is the player's own invitation — same
     // freeze the playing branch grants, so reading the reference mid-escape
     // never costs wall-clock distance (the horde is the timer).
@@ -10503,7 +10568,9 @@ export const __TEST = {
     get ran() { return state.prologueRan; },
     get potion() { return state.prologue ? { ...state.prologue.potion } : null; },
     get t() { return state.prologue ? state.prologue.t : null; },
+    get walkT() { return state.prologue ? state.prologue.walkT : null; },
     get bannerIdx() { return state.prologue ? state.prologue.bannerIdx : null; },
+    get paused() { return !!prologueBanner(); },
     banners: PROLOGUE_BANNERS,
     banner: prologueBanner,
     ok: prologueOk,
@@ -10511,6 +10578,12 @@ export const __TEST = {
     drink: () => prologueDrink(state.player),
     end: endPrologue,
     get shieldT() { return state.prologueShieldT; },
+    // The all-buttons-disabled lock (addendum 2026-09-18): the live DOM state.
+    get buttonsLocked() {
+      const body = typeof document !== 'undefined' && document.body;
+      return !!(body && body.classList && body.classList.contains &&
+        body.classList.contains('prologue-locked'));
+    },
   },
   setPilotMode: swapPilotMode, pilotInput,
   // G31: the persistence seam — the real storage object plus the real

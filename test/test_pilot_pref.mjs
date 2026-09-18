@@ -89,6 +89,13 @@ globalThis.location = { reload: noop };
 // pilot/stance keys are deliberately ABSENT: the boot apply must be a silent
 // no-op defaulting to AUTO_ALL / BALANCED.
 const ls = new Map([['hordes_onboarded', '1'],
+  // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+  // 2026-09-18): this file imports main.js directly on a fake localStorage,
+  // so without this stamp every startRun below arms the prologue — and its
+  // all-buttons-disabled lockout would swallow the very key/act each check
+  // drives ('g' stance cycle, the PILOT row, ...). These tests want it out
+  // of the way.
+  ['hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } })],
   ...Object.values(TOUR_KEYS).map(k => [k, '1'])]);
 globalThis.localStorage = {
   getItem: k => (ls.has(k) ? ls.get(k) : null),

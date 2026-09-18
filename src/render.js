@@ -1617,6 +1617,11 @@ export class Renderer {
     const idx = state.prologue.bannerIdx || 0;
     const B = state.prologue.banners ? state.prologue.banners[idx] : null;
     if (!B) return;
+    // ADDENDUM (owner 2026-09-18: the pilot PAUSES for banners): the card is
+    // up only after C.PROLOGUE.BANNER_WALK_S of walking since the last OK —
+    // the SAME gate main.js's prologueBanner() reads, so the paint, the pause
+    // and the OK hit-test can never disagree.
+    if ((state.prologue.walkT || 0) < C.PROLOGUE.BANNER_WALK_S) return;
     const W = Math.min(300, C.VIEW_W - 20);
     const x0 = Math.round((C.VIEW_W - W) / 2), y0 = PROLOGUE_CARD_Y;
     const pad = 10;

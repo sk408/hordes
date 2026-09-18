@@ -130,9 +130,18 @@ async function arm(w, h, dpr) {
 
       const before = await p.evaluate(
         "(document.getElementById('tc-stance') || { textContent: 'BALANCED' }).textContent");
-      // Arm help mode the REAL way: tap the HELP cog.
+      // Arm help mode the REAL way: tap the HELP cog. The cog row can ride the
+      // transient chrome window (canvas-ladder / immersive: hidden = rect 0 +
+      // inert until an interaction re-shows it), so each try FIRST bumps the
+      // reveal window with a key interaction, then taps while it is open —
+      // otherwise the retry loop can deadlock (it never interacts, so the cog
+      // never comes back).
       let armed = false;
       for (let tries = 0; tries < 8 && !armed; tries++) {
+        // F2: an inert key (no game binding) — an interaction that re-opens
+        // the reveal window without casting/pressing anything.
+        await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))");
+        await p.sleep(100);
         const c = await p.evaluate(center('#tc-help'));
         if (c && c.length === 2) {
           await p.tap(c[0], c[1]);
@@ -149,7 +158,18 @@ async function arm(w, h, dpr) {
         throw new Error(w + 'x' + h + ': help-mode banner never showed');
 
       const probes = [];
+      const skipped = [];
       for (const [sel, needle] of PROBES) {
+        // FLOATING JOYSTICK (2026-09-18): on touch paths the fixed #joy base
+        // stands down (the floating stick arms on canvas press — and "?" owns
+        // taps, so it can never arm under this probe). There is no live rect
+        // to tap and no explainer to raise: record the skip BY NAME instead
+        // of tapping (0,0) forever.
+        if (sel === '#joy') {
+          const joyLive = await p.evaluate(`(() => { const j = document.getElementById('joy');
+            const r = j.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`);
+          if (!joyLive) { skipped.push(sel); continue; }
+        }
         let up = false;
         for (let tries = 0; tries < 8 && !up; tries++) {
           const c = await p.evaluate(center(sel));
@@ -167,12 +187,18 @@ async function arm(w, h, dpr) {
       const live = await p.evaluate(`(async () => { const st = (await import('./src/main.js')).__TEST.state;
         return { help: st.helpMode, mapOpen: st.mapOpen, radarOn: st.radarOn,
           stance: (document.getElementById('tc-stance') || {}).textContent }; })()`);
-      return { before, banner, probes, live, errors: p.errors };
+      return { before, banner, probes, skipped, live, errors: p.errors };
     });
 }
 
 const arms = {};
-for (const [w, h, dpr] of SIZES) arms[w + 'x' + h] = await arm(w, h, dpr);
+for (const [w, h, dpr] of SIZES) {
+  arms[w + 'x' + h] = await arm(w, h, dpr);
+  if (arms[w + 'x' + h].skipped && arms[w + 'x' + h].skipped.length) {
+    console.log('  note - ' + w + 'x' + h + ': ' + arms[w + 'x' + h].skipped.join(',') +
+      ' skipped (floating stick: no fixed base on touch paths — disclosed, not green)');
+  }
+}
 
 // ------------------------------------------------------------------ verdict --
 const checkSurface = (tag, label, m) => {

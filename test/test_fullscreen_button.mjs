@@ -57,6 +57,12 @@ const dt = 1 / 60;
   const fs = T.fullscreen;
   T.startRun();
   h.pump(2);
+  // QUIET FIELD (2026-09-18 flake): this arm pumps ~20s of a LIVE unattended
+  // run across its hide windows, and the AUTO pilot can DIE mid-check (the
+  // death movie then owns the frame loop — checks downstream of a death read
+  // a frame() that never reaches renderer.render). The button's behaviour is
+  // the subject; the horde is not. Same idiom as every other gameplay test.
+  st.enemies.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
   const b = fs.rect();
   const tap = (x, y) => {
     let prevented = false;
@@ -219,6 +225,8 @@ const dt = 1 / 60;
   const body = h.elements['game'].ownerDocument.body;
   T.startRun();
   h.pump(2);
+  // QUIET FIELD: see the fs-api arm (a mid-check death owns the frame loop).
+  st.enemies.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
   const b = fs.rect();
   const tap = (x, y) => {
     let prevented = false;

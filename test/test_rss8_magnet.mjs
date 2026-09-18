@@ -78,6 +78,11 @@ const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
 const ls = new Map([['hordes_onboarded', '1']]);   // no intro reference
+// FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+// 2026-09-18): without this stamp the skill-battery run below is run #1 of a
+// fresh profile — the prologue's all-buttons-disabled lockout would swallow
+// the very 'x' act this file exists to prove fires.
+ls.set('hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } }));
 // Coach suppressed (the tour's own localStorage flags): the drafts this test
 // opens would otherwise summon the draft coach, whose overlay parks the keys.
 for (const k of Object.values(TOUR_KEYS)) ls.set(k, '1');

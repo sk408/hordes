@@ -4,6 +4,10 @@ Owner ask: "a potion seen on screen and the pilot walks towards it... no
 enemies spawn and the timer hasn't started... dismissible (with an ok button)
 banners explaining some of the basics."
 
+ADDENDUM (owner, same day): "pilot could pause for these since we haven't
+given the player any control yet..all buttons should be disabled during this
+initial period." — see the ADDENDUM section at the bottom.
+
 ## What shipped
 
 ### The phase (run #1 only, no new saved field)
@@ -45,8 +49,11 @@ While the phase lives:
 
 ### The banners (copy, and why)
 
-Four, OK-dismissible, one at a time, NON-MODAL (the walk continues while one
-is up; only the OK rect consumes its tap). Plain ASCII, <= 100 chars each,
+Four, OK-dismissible, one at a time. ORIGINALLY non-modal; the same-day
+addendum WITHDREW that ("the pilot can keep walking" line) — banners are now
+MODAL: the pilot HOLDS while one is up, and each banner waits for
+`BANNER_WALK_S = 0.35` of unpaused walking since the last OK (walk -> banner
+-> OK -> walk -> ... -> potion). Plain ASCII, <= 100 chars each,
 sized to fit 320x568. Copy:
 
 1. **MOVE** — "Drag anywhere on the field, or use WASD or the arrow keys.
@@ -165,3 +172,94 @@ custom profile with `runs` already set is untouched), and all six are green.
 - `src/render.js` — 2x potion + beacon; `drawPrologueBanner` + `prologueOkRect`;
   `prologueShieldColor` + rainbow ring; `prefersReducedMotion`.
 - `test/test_prologue.mjs`, `tools/verify_prologue.mjs` — the pins.
+
+---
+
+## ADDENDUM (owner 2026-09-18): the pilot PAUSES for banners; ALL buttons disabled
+
+Owner: "pilot could pause for these since we haven't given the player any
+control yet.. all buttons should be disabled during this initial period."
+
+### The pause (the withdrawn non-modal line)
+
+- The choreography is now WALK -> banner -> OK -> WALK -> ... -> potion ->
+  drink -> effect. A banner goes up only after `C.PROLOGUE.BANNER_WALK_S`
+  (0.35s) of UNPAUSED walking since the last OK — never banner-first.
+- While a banner is up the pilot HOLDS: the AUTO pilot flies a
+  `PROLOGUE_HOLD` branch (zero input) and the MANUAL controller is fully
+  gated (returns zero movement) — "we haven't given the player any control
+  yet" is literal; even harness-seeded held MANUAL input cannot move the
+  pilot through the phase.
+- Painter/hit-test/pause all share the same `prologueBanner()` gate, and the
+  render pass re-checks `walkT >= BANNER_WALK_S` so the painted card, the OK
+  hit-region and the hold never disagree.
+
+### The bound counts UNPAUSED time only
+
+`prologue.t` and `walkT` both freeze while a banner is up, so a never-OK'd
+banner holds the phase indefinitely past `MAX_S` of wall time (menu-like: the
+OK is the only way past a banner). Once the banners are exhausted (or OK-ed
+away), the 60s bound accrues and ends the phase without the potion and
+without the shield.
+
+### ALL buttons disabled — the inventory
+
+Through the whole phase (arm -> end, including after the last OK):
+
+- Touch pads (FOCUS/STANCE/PILOT/STATS, Q/E/MAG/HP/MP) and the cog row
+  (SETTINGS/HELP/RADAR/MAP) — `runAction()` early-returns.
+- Their keyboard twins (ESC/P menus, I stats, O pilot, M map, R radar,
+  +/- zoom, Q/E/H/N skills, Tab focus, G stance) — the playing-branch
+  keydown funnel early-returns.
+- The `?`/F1 help-mode handler (which sits BEFORE the mode dispatch — found
+  live by a test probe; now also gated).
+- The canvas fullscreen glyph — HIDDEN (see below).
+
+SINGLE EXCEPTION: the banner's OK (a canvas hit-region, not a DOM button).
+Nothing re-enables early; the lock is set only at arm time and cleared only
+in `endPrologue`.
+
+### HIDDEN vs SHOWN-BUT-GREYED — the choice + recommendation
+
+- DOM buttons (`#touch button`): SHOWN BUT GREYED via `body.prologue-locked`
+  — `opacity: 0.35; pointer-events: none`. The opacity jump back to 1 at
+  phase end is the obvious enabled/disabled difference the owner asked for.
+- The canvas fullscreen glyph: HIDDEN instead (`fsVisible()` returns false
+  during the phase) — at 22x18 view px the glyph cannot read as "greyed", it
+  would read as broken.
+
+Recommendation: keep exactly this split. The touch layer is big, labeled and
+familiar-shaped, so greyed communicates "coming"; a tiny canvas glyph has no
+such affordance, so hiding is the honest read.
+
+### Tests + verification (the addendum's own)
+
+- `test/test_prologue.mjs` — now 11 checks, all green: cadence (no banner at
+  t=0; held banner freezes the phase clock over 8s wall), MODALITY (held
+  MANUAL input does not move the pilot; canvas OK tap advances; ok() is a
+  no-op with no banner up; banner #2 waits for its walk), the LOCKOUT (15
+  keys + 13 touch actions all inert through the phase; lock holds past the
+  last OK; lifts at the drink; `i` then opens the FIELD REPORT), no player
+  control, both exits (the AUTO trace shows a real >= 0.6s hold stretch; the
+  bound fires only once unpaused), 44.9/45.1 boundary anchored at PICKUP,
+  the clear, rainbow, run #2, the ABSORB.
+- `tools/verify_prologue.mjs` — ALL OK at BOTH 390x844 and 320x568 on a real
+  fresh profile, including the new real-browser checks: the pilot PAUSES
+  while a banner is up (0.00wu moved in 600ms), `body.prologue-locked` on,
+  computed `pointer-events: none` + `opacity 0.35` on the real cog, real
+  keydowns inert, the lock lifting to `opacity 1` at phase end, and the
+  FIELD REPORT opening through the real key funnel afterwards.
+- Shots refreshed: banner/field/rainbow at both viewports now show the
+  GREYED touch layer through the phase.
+
+### Harness disclosure (the pause's blast radius)
+
+With banners modal + the bound unpaused-only, an unattended fresh-profile run
+now STALLS at banner #1 forever — previously the non-modal AUTO pilot drank
+in ~1.4s, which quietly rescued every harness. Fixed centrally:
+`tools/browser.mjs` `withPage` now seeds a settled profile
+(`achievements.totals.runs = 1`, the same stamp verify_blocking_elevation
+applies in-page) before the page's scripts run, for every verifier by
+default; verify_prologue opts out with `skipPrologue: false`. An earlier
+checkpoint said tools/real_loop.mjs would need an auto-OK driver — moot: it
+already stamps `runs = 1` at boot, so fresh cohorts never arm the phase.

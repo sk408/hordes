@@ -26,7 +26,7 @@ async function viewport(w, h, tag) {
   // hordes_onboarded skips the HOW-TO-PLAY gate so START GAME starts the run;
   // everything else stays FRESH (totals.runs absent) so run #1 arms the
   // prologue for real.
-  await withPage({ w, h, dpr: 3, mobile: true,
+  await withPage({ w, h, dpr: 3, mobile: true, skipPrologue: false,
     startupScript: "try { localStorage.setItem('hordes_onboarded', '1'); } catch (e) {}" },
   async (p) => {
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
@@ -40,6 +40,20 @@ async function viewport(w, h, tag) {
         .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
       if (el) el.click(); })()`);
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()`, 20000);
+
+    // 0. THE CHOREOGRAPHY (addendum 2026-09-18: the pilot PAUSES for
+    //    banners): the AUTO pilot walks, banner #1 goes up after
+    //    BANNER_WALK_S of unpaused walking — and the pilot HOLDS while it
+    //    is up (the withdrawn "the pilot can keep walking" line).
+    await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.prologue.paused === true)()`, 5000);
+    const posA = await p.evaluate(`(async () => { const s = (await import('./src/main.js')).__TEST.state;
+      return [s.player.x, s.player.y]; })()`);
+    await p.sleep(600);
+    const posB = await p.evaluate(`(async () => { const s = (await import('./src/main.js')).__TEST.state;
+      return [s.player.x, s.player.y]; })()`);
+    ok(Math.hypot(posB[0] - posA[0], posB[1] - posA[1]) < 0.5,
+      '[' + tag + '] the pilot PAUSES while a banner is up (moved ' +
+      Math.hypot(posB[0] - posA[0], posB[1] - posA[1]).toFixed(2) + 'wu in 600ms)');
 
     // 1. THE PHASE IS ARMED: inert world, frozen clock, potion on screen,
     //    banner up. Park the pilot (MANUAL, nothing held) so the shot holds
@@ -67,7 +81,27 @@ async function viewport(w, h, tag) {
     ok(b1 && b1.title, '[' + tag + '] a banner is up (' + (b1 && b1.title) + ')');
     const shotBanner = await p.shot('prologue-banner-' + tag);
     copyFileSync(shotBanner, ART + '/prologue-banner-' + tag + '.png');
-    ok(true, '[' + tag + '] banner shot (potion visible + banner up)');
+    ok(true, '[' + tag + '] banner shot (potion visible + banner up, touch layer GREYED)');
+
+    // 1b. THE LOCKOUT (addendum 2026-09-18: "all buttons should be disabled
+    //     during this initial period"): the REAL DOM state — greyed +
+    //     pointer-inert — and the REAL keydown funnel swallows everything.
+    const lock = await p.evaluate(`(() => {
+      const btn = document.getElementById('tc-cog');
+      const cs = btn ? getComputedStyle(btn) : null;
+      return { locked: document.body.classList.contains('prologue-locked'),
+        pe: cs ? cs.pointerEvents : 'n/a', op: cs ? cs.opacity : 'n/a' }; })()`);
+    ok(lock.locked, '[' + tag + '] body.prologue-locked is ON through the phase');
+    ok(lock.pe === 'none',
+      '[' + tag + '] the touch buttons are pointer-inert (pointer-events: ' + lock.pe + ')');
+    ok(isFinite(parseFloat(lock.op)) && parseFloat(lock.op) <= 0.4,
+      '[' + tag + '] the touch buttons are SHOWN BUT GREYED (opacity ' + lock.op + ')');
+    await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }))");
+    await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await p.sleep(150);
+    const modeMid = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.mode)()`);
+    ok(modeMid === 'playing',
+      '[' + tag + '] keys are inert through the phase (I/ESC did nothing; mode ' + modeMid + ')');
 
     // 2. THE OK BUTTON, through a REAL finger tap at the canvas hit-region.
     //    The OK rect lives in 480x300 view coords; map it to CSS in-page.
@@ -121,6 +155,21 @@ async function viewport(w, h, tag) {
     ok(t3.state.enemies.length === 1 && t3.state.enemies[0].hp > 0,
       '[' + tag + '] the OFF-SCREEN walker survived the clear');
     ok(t3.state.time > 0, '[' + tag + '] the run clock started at phase end');
+
+    // 4b. THE LIFT: the lock drops at phase end with the obvious difference
+    //     (grey -> full opacity), and the very keys that were inert now act.
+    const lock2 = await p.evaluate(`(() => ({
+      locked: document.body.classList.contains('prologue-locked'),
+      op: getComputedStyle(document.getElementById('tc-cog')).opacity }))()`);
+    ok(lock2.locked === false && parseFloat(lock2.op) > 0.9,
+      '[' + tag + '] the lock lifted at phase end (buttons visibly live again, opacity ' + lock2.op + ')');
+    await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }))");
+    await p.sleep(150);
+    const modeAfter = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.mode)()`);
+    ok(modeAfter === 'stats',
+      '[' + tag + '] buttons WORK again after the phase (I opened the FIELD REPORT)');
+    await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await p.sleep(150);
 
     // 5. THE RAINBOW + THE CLEARED FIELD: same camera, the ring around the
     //    pilot, the near field empty.

@@ -614,6 +614,15 @@ export const CONFIG = {
     CLEAR_MARGIN: 120,
     POTION_DX: 115,
     POTION_DY: -20,
+    // ADDENDUM (owner 2026-09-18: the pilot PAUSES for banners — "we haven't
+    // given the player any control yet"): the choreography is WALK -> banner ->
+    // OK -> WALK -> ... -> potion -> drink -> effect. Each banner goes up only
+    // after this much UNPAUSED walking since the last OK, so there is a real
+    // walk between banners. Arithmetic: the spawn->potion walk is
+    // ~hypot(115,20)=117wu at SPEED 60 = ~1.95s, and 4 banners x 0.35s =
+    // 1.4s < 1.95s — all four banners (incl. "the potion ahead is free") show
+    // BEFORE the drink, with ~0.55s of approach walk left after the last OK.
+    BANNER_WALK_S: 0.35,
   },
 
 

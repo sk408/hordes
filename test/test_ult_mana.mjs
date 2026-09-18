@@ -59,7 +59,12 @@ globalThis.performance = { now: () => now };
 const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
-const ls = new Map([['hordes_onboarded', '1']]);
+const ls = new Map([['hordes_onboarded', '1'],
+  // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+  // 2026-09-18): without this stamp the cast runs are run #1 of a fresh
+  // profile — the prologue's all-buttons-disabled lockout would swallow the
+  // very ult cast whose mana spend this file pins.
+  ['hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } })]]);
 globalThis.localStorage = {
   getItem: k => (ls.has(k) ? ls.get(k) : null),
   setItem: (k, v) => ls.set(k, String(v)),

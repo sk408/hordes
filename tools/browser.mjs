@@ -81,6 +81,18 @@ class CDP {
 
 export async function withPage(opts, fn) {
   const { w = 390, h = 844, dpr = 3, mobile = true, url = 'index.html', skipTour = true,
+    // FIRST-RUN PROLOGUE neutralization (the _harness.mjs / real_loop.mjs
+    // convention, 2026-09-18): a fresh browser profile's run #1 opens the
+    // choreographed prologue, and since the addendum (the pilot PAUSES at
+    // banners until OK) an unattended run STALLS at banner #1 — every
+    // ordinary-run verifier would hang on its first waitFor. Default: seed a
+    // settled profile (achievements.totals.runs = 1, the same stamp
+    // verify_blocking_elevation / verify_help_clearance apply in-page) BEFORE
+    // the page's own scripts run. The seed is a valid current-version payload
+    // (version 8, sparse fields filled by validation), never clobbers a
+    // profile the verifier seeded itself, and verify_prologue.mjs opts out
+    // with skipPrologue: false — the phase is ITS subject.
+    skipPrologue = true,
     startupScript = '', timeoutMs = 30000 } = opts || {};
   if (!fs.existsSync(CHROME)) throw new Error('no chrome binary at ' + CHROME);
   fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -118,6 +130,7 @@ export async function withPage(opts, fn) {
     // screen (z-index 50) and would ruin every screenshot, so mark every stage as seen.
     const pre = [];
     if (skipTour) pre.push("for (const k of ['stage1','hud','pilot','focus','stance','move','skills']) { try { localStorage.setItem('hordes_tour_' + k, '1'); } catch (e) {} }");
+    if (skipPrologue) pre.push("try { if (!localStorage.getItem('hordes_profile_v1')) localStorage.setItem('hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } })); } catch (e) {}");
     if (startupScript) pre.push(startupScript);
     if (pre.length) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: pre.join('\n') });
 
