@@ -47,6 +47,14 @@ assert.equal(fmtGold(null), '    0');
   const h = await boot();
   const st = h.state, T = h.T;
   T.startRun(); h.pump(2);
+  // FLAKE PIN (2026-09-18): a wave-0 shrine costs exactly 60g (shrines.js
+  // cost(0,0)=60) and the AUTO pilot sometimes spawns within its 26px
+  // proximity ring — the purchase raced the purse write below and the badge
+  // read 'GOLD 99939' instead of 'GOLD 99999' (suite red 2026-09-18, standalone
+  // control green x3). The shrine debit is NOT the seam under test here;
+  // emptying state.shrines pins the purse to what this test writes. The
+  // assertion itself is untouched.
+  st.shrines = [];
   // The badge publishes profile.runPurse through state.runPurse each frame —
   // write the PROFILE wallet, not just the state mirror.
   T.getProfile().runPurse = 99999; st.runPurse = 99999;

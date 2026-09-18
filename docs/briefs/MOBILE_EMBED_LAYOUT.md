@@ -245,3 +245,43 @@ touch layer live and a run playing — `tools/verify_control_bands.mjs` (41 chec
 through REAL pilot taps and arms the floating stick from `#steer-zone` with a real
 press-drag-release, asserting the live `pilotInput`). Node guard: `test/test_control_bands.mjs`
 (pure bandFit matrix + steer-zone routing, incl. the 480x320 fallback probe).
+
+---
+
+## ROUND 6 — FIT-TO-VIEWPORT UI SCALE + UI-TIGHT (owner, 2026-09-18, msg_01M2S72CF4: galaxy.click
+"has a header that stays on screen... The whole interface should be able to shrink itself to fit")
+
+A host header (or any viewport the game did not choose) can leave a box the round-5 layout cannot
+fit. Rounds 4-5 sized the canvas; round 6 sizes the WHOLE INTERFACE as one unit, and degrades the
+LAYOUT where a scale cannot help.
+
+**VIEWPORT SOURCE:** `viewSize()` (src/main.js ~:407) — the game's own `visualViewport`, ignored
+while pinch-zoomed (`|scale-1| > 0.01`, so user ZOOM is honoured; world scale never touched), falling
+back to `innerWidth/innerHeight`. In an iframe the visualViewport IS the iframe box — the measured
+viewport is the box the game GOT, never the screen.
+
+**SCALE:** a uniform `transform: scale(s)` on `#wrap` (centre-origin), applied only when
+`uiFitScale(vw, vh, bounds, floor)` says chrome would clip. Bounds = the canvas rect unioned with
+every visible control rect, in LAYOUT px (visual rects divided by the applied scale), so the round-5
+band math keeps its zero-overlap invariant under any uniform scale. Pure function + live state via
+`__TEST.uiFitScale` / `__TEST.uiFit`.
+
+**FLOOR:** `C.UI_FIT.SCALE_FLOOR` = 0.75. Below it the scale clamps AT the floor and flags
+`floored: true` — text is never shrunk into mud; the residual clip is reportable, not hidden.
+
+**UI-TIGHT (the LAYOUT degradation — a uniform scale cannot fix chrome-on-chrome collision, it
+preserves relative geometry):** when the 296px pad stack's top comes within 4px of the cog row's
+bottom (landscape layout vh < ~352), `placeCogRow` (src/main.js:473) moves the cog row to
+TOP-CENTRE (MAP, RADAR, HELP, SETTINGS; GAP 6; clamped right of a live `#hud` rect +8 and to
+vw-10-rowW; inline left/right cleared on relax). It runs inside fitCanvas BEFORE any rect is read,
+so the fit, the bands and the scale all measure the degraded layout the player actually sees.
+
+**MEASURED ENGAGEMENT (tools/verify_host_fit.mjs, 94 checks — host page = fixed 56/90px header +
+iframe, 844x390@3 / 780x360 / 667x375 landscape, 390x844@3 / 320x568 portrait, + one standalone
+arm):** 844x334 and 844x300 resolved by ui-tight alone at scale 1; 780x270 -> 0.8385 and
+667x285 -> 0.9283 (cogs-centre + scale); every other arm scale 1; portrait never scales;
+320x568 portrait = the named round-4 fallback with reported overlap. Floor never hit (engages below
+~262px landscape height). Every control and canvas rect fully inside the visible viewport in
+top-page coords; chrome pairwise disjoint among TOP-LEVEL actors only (pads / cog row / #hud) —
+skill buttons sit ON their pads and `#steer-zone` underlays the controls BY DESIGN
+(verify_host_fit.mjs:87-91). Node guard: `test/test_ui_fit.mjs` (pure uiFitScale matrix).
