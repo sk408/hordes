@@ -66,6 +66,13 @@ export async function boot(opts = {}) {
       addEventListener(ev, cb) { (this._ev ?? (this._ev = {}))[ev] = cb; },
       removeEventListener() {},
       appendChild(c) { c.parentNode = e; this.children.push(c); return c; },
+      // v9 WHAT'S NEW: the paper note PREPENDS through insertBefore (main.js
+      // addWhatsNewCard) — same shape as test_whatsnew.mjs's stub.
+      insertBefore(c, ref) {
+        const i = ref ? this.children.indexOf(ref) : -1;
+        if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
+        c.parentNode = e; return c;
+      },
       removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; },
       remove() { if (e.parentNode) e.parentNode.removeChild(e); },
       getBoundingClientRect() { return { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 }; },

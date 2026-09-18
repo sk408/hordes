@@ -955,13 +955,59 @@ let profile = bootResult.profile;
 let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'future-version')
   ? bootResult.notice : null;
 
+// ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
+// "Have we timestamped last played for our auto saves yet? ... so we can
+// inform older players of significant updates like this. We can give them a
+// fancy paper looking popup explaining new features."
+// The CURRENT RELEASE carries its id + ship date AS CONSTANTS IN CODE (no
+// lookup, no build step): bump WHATS_NEW.id/dateMs/copy when a release worth
+// telling ships, or set worthTelling false and nothing pops. Gating rule
+// (whatsNewDueFor): the note pops at launch, on the title, for a player whose
+// save EXISTS, who has not dismissed THIS release (lastSeenUpdate), and whose
+// lastPlayed predates the release (a MISSING timestamp — an older, pre-v9
+// save — counts as "has not seen it", so existing players get it exactly
+// once). PRECEDENCE with the first-run PROLOGUE, stated so the two intros can
+// never fight: a BRAND-NEW profile (no save at all) gets the prologue and NOT
+// this note; a RETURNING profile gets this note and no prologue (their
+// totals.runs is past 0, which is what arms the prologue).
+const WHATS_NEW = {
+  id: '2026-09-18',                    // RELEASE_ID — one per marked release
+  dateMs: Date.UTC(2026, 8, 18),       // the ship date (2026-09-18)
+  worthTelling: true,                  // the gate: only MARKED releases pop
+  title: "WHAT'S NEW",
+  lines: [
+    'Your first run now opens with a short tutorial and a free shielding potion.',
+    'Controls appear one at a time, each with a tip, as you need them.',
+    'Skipping the tutorial keeps the free potion and shield.',
+    'Level-up picks land with a card ceremony while play continues.',
+    'The shop now pages with arrows and fits three cards across.',
+  ],
+};
+// Pure: is the note due for THIS profile/release/boot state? Exported via
+// __TEST so the gate is matrix-testable without a DOM.
+function whatsNewDueFor(prof, rel, freshBoot) {
+  if (!rel || !rel.worthTelling) return false;   // unmarked release: nothing, ever
+  if (freshBoot) return false;                   // brand-new profile: prologue owns the intro
+  if (prof && prof.lastSeenUpdate === rel.id) return false;   // already dismissed
+  const last = prof && typeof prof.lastPlayed === 'number' ? prof.lastPlayed : null;
+  return last === null || last < rel.dateMs;     // missing stamp = has not seen it
+}
+let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry only
+
 // ---------- W1 AUTOSAVE before any exit path ----------
 // Tab close, navigation and backgrounding all flush the profile. Writes are
 // synchronous, so they survive beforeunload/pagehide. The explicit Exit Game
 // flow is W4's work; this is the guarantee it can build on, and it means a
 // player can never lose progress by closing the page.
-export function autosave(reason = 'exit') {
+// v9 WHAT'S NEW (owner 2026-09-17): every persisted save stamps lastPlayed —
+// the launch gate reads it to find returning players who were away before a
+// marked release shipped. ONE choke point, so no save path can forget it.
+function persistProfile() {
+  profile.lastPlayed = Date.now();
   return saveProfile(profile);
+}
+export function autosave(reason = 'exit') {
+  return persistProfile();
 }
 try {
   const evWin = (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function')
@@ -1611,7 +1657,7 @@ function purseSpend(amount) {
   profile.runPurse = purseClamp(profile.runPurse - amount);
   state.runCounts.gold.spent += amount;
   state.runPurse = profile.runPurse;
-  saveProfile(profile);
+  persistProfile();
   return true;
 }
 
@@ -1782,7 +1828,7 @@ function buyPaidChest(tier) {
   profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
   state.runCounts.gold.spent += cost;
   state.runPurse = profile.runPurse;
-  saveProfile(profile);
+  persistProfile();
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
     const msg = applyEquipDecision(it);
@@ -4435,10 +4481,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
     // save, so the trophies and the gold they were settled alongside persist
     // together.
     recordRunAchievements(gold);
-    saveProfile(profile);
+    persistProfile();
   } catch (err) {
     console.error('settleRunGold: settlement claimed but an effect failed', err);
-    try { saveProfile(profile); } catch { /* last-ditch save; nothing more to do */ }
+    try { persistProfile(); } catch { /* last-ditch save; nothing more to do */ }
   }
   return state.runSettled;
 }
@@ -4545,7 +4591,7 @@ function checkRunLimit() {
   // can lose; localStorage writes are synchronous and tiny.
   if (state.time - lastPurseFlush >= 10) {
     lastPurseFlush = state.time;
-    saveProfile(profile);
+    persistProfile();
   }
   const mins = Math.floor(state.time / 60);
   if (mins > state.lastMinute) {
@@ -5973,7 +6019,7 @@ function toggleLoadoutWeapon(id) {
   // An empty selection is "no choice" (the default kit), never a zero-weapon
   // run — the save layer stores the same null either way.
   profile.loadout = cur.size ? [...cur] : null;
-  saveProfile(profile);
+  persistProfile();
   showLoadout();
 }
 
@@ -6013,7 +6059,7 @@ function showLoadout() {
   }
   menuCard('DEFAULT KIT', 'clear the choice — runs use the character kit', () => {
     profile.loadout = null;
-    saveProfile(profile);
+    persistProfile();
     showLoadout();
   });
   menuCard('BACK', 'to title [ESC]', () => showTitle());
@@ -6052,6 +6098,34 @@ function maybeCoachLoadoutDoor() {
   }, TOUR_KEYS.loadout);
 }
 
+// The note itself: a PARCHMENT card on the game's real card skeleton
+// (.card/.name/.desc/.key — the same classes every menu card rides), prepended
+// to the title's card list so it is the first thing read and NEVER blocks
+// anything (the title is not the run; START GAME sits right below it). Tap
+// anywhere on the note to dismiss; the dismiss is what persists
+// lastSeenUpdate, so "shown once" survives reloads.
+function addWhatsNewCard() {
+  const el = document.createElement('div');
+  el.className = 'card paper-note';
+  el.innerHTML =
+    `<div class="name">${WHATS_NEW.title}</div>` +
+    `<div class="desc">${WHATS_NEW.lines.map(l => '- ' + l).join('<br>')}</div>` +
+    '<div class="key">tap to close</div>';
+  el.onclick = () => {
+    // HELP MODE parity with menuCard: a tap explains, never presses.
+    if (state.helpMode) { showHelpTip('<b>' + WHATS_NEW.title + '</b> — release notes for returning players', el); return; }
+    audio.playSfx('button');
+    dismissWhatsNew(el);
+  };
+  ovCards.insertBefore(el, ovCards.firstChild);
+  return el;
+}
+function dismissWhatsNew(el) {
+  profile.lastSeenUpdate = WHATS_NEW.id;
+  persistProfile();
+  if (el && el.remove) el.remove();
+}
+
 function showTitle() {
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
@@ -6065,6 +6139,14 @@ function showTitle() {
   overlay.style.background = 'transparent';
   const fresh = !hasLocalSave();
   paintTitleHeader();
+  // v9 WHAT'S NEW: the note is a LAUNCH artifact — attempted on the FIRST
+  // title entry per page load only (never on death-screen TITLE returns),
+  // and whatsNewDueFor owns every gate (marked release, returning profile,
+  // not-yet-dismissed, lastPlayed predates the ship date).
+  if (!whatsNewTried) {
+    whatsNewTried = true;
+    if (whatsNewDueFor(profile, WHATS_NEW, bootResult.status === 'fresh')) addWhatsNewCard();
+  }
   menuCard('START GAME', 'start a run',
     // UP-FRONT CONTROLS: a fresh profile meets the reference FIRST (the
     // gate), GOT IT starts the run; everyone else goes straight in.
@@ -6380,7 +6462,7 @@ function showShop() {
         // player sees can NAME both halves. A swap must never be silent.
         const kitBefore = profile.loadout ? [...profile.loadout] : null;
         if (buyUpgrade(profile, def.id)) {
-          saveProfile(profile);
+          persistProfile();
           showShop();
           if (def.kind === 'weapon') {
             const now = profile.loadout || [];
@@ -6497,7 +6579,7 @@ function showCharacterRows(characterId) {
       `${def.desc}<br>${sub}`,
       () => {
         if (buyCharacterUpgrade(profile, characterId, def.id)) {
-          saveProfile(profile);
+          persistProfile();
           showCharacterRows(characterId);
         }
       },
@@ -6545,7 +6627,7 @@ function showApexShop() {
     menuCard(`APEX ${on ? 'ON' : 'OFF'}`,
       on ? 'boosted runs — your results are marked APEX'
         : 'clean runs — toggle on to use your apex items',
-      () => { setApexEnabled(profile, !on); saveProfile(profile); showApexShop(); });
+      () => { setApexEnabled(profile, !on); persistProfile(); showApexShop(); });
     // G25 slice 2: the ONE door to the full-screen apex gallery. It lives
     // inside the gate-open branch, so a locked shopper gets no card, no key
     // and no path (requirement 4: the tier cannot even be LISTED early).
@@ -6558,7 +6640,7 @@ function showApexShop() {
         def.name,
         `${def.desc}<br>REMOVES: ${def.removes}<br>${sub}`,
         () => {
-          if (buyApex(profile, def.id)) { saveProfile(profile); showApexShop(); }
+          if (buyApex(profile, def.id)) { persistProfile(); showApexShop(); }
         },
         owned || !afford,
       );
@@ -6805,12 +6887,12 @@ function renderCharSelector() {
       charSelected = ch.id;
       if (!equipped) {
         if (owned) {
-          if (equipCharacter(profile, ch.id)) saveProfile(profile);
+          if (equipCharacter(profile, ch.id)) persistProfile();
         } else if (afford) {
           // buy -> equip in one flow (preserved verbatim from the 0.98 screen)
           if (unlockCharacter(profile, ch.id)) {
             equipCharacter(profile, ch.id);
-            saveProfile(profile);
+            persistProfile();
           }
         }
       }
@@ -6883,7 +6965,7 @@ function importSaveText(text) {
     return res;
   }
   profile = res.profile;
-  saveProfile(profile);
+  persistProfile();
   saveNotice = res.status === 'imported-migrated'
     ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
     : 'SAVE IMPORTED.';
@@ -7081,7 +7163,7 @@ function showSaveData() {
     () => {
       if (!resetArmed) { resetArmed = true; showSaveData(); return; }
       profile = makeProfile();
-      saveProfile(profile);
+      persistProfile();
       resetArmed = false;
       showSaveData();
     });
@@ -10676,6 +10758,17 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
+  // ---- v9 WHAT'S NEW seam: the pure gate (matrix-testable), the live release
+  // constant, the card add/dismiss pair, and the once-per-launch flag — so the
+  // suite can drive the REAL title path without scraping for the card.
+  whatsNew: {
+    due: whatsNewDueFor,
+    release: WHATS_NEW,
+    add: addWhatsNewCard,
+    dismiss: dismissWhatsNew,
+    get tried() { return whatsNewTried; },
+    set tried(v) { whatsNewTried = !!v; },
+  },
   // ---- G26 pre-run-loadout seam: the screen, the live stored choice, and the
   // validated kit startRun will arm (so a test compares the menu's state
   // against the SAME chain the run applies — never the menu's bookkeeping).

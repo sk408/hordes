@@ -70,9 +70,10 @@ const CAT = {
 console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
-  // must be updated with it (v8 = the G25 apex namespace).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 8,
-    `schema version constant is 8 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // must be updated with it (v9 = the returning-player lastPlayed/lastSeenUpdate
+  // pair; the pin to the literal is intentional — never relax to >=).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 9,
+    `schema version constant is 9 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -184,8 +185,10 @@ console.log('FUTURE-VERSION SAVE (fail safe, never half-load):');
       `a non-integer/malformed version (${bad}) is treated as legacy, not future`);
   }
   // E1 (v7): the current-version shape carries the run purse — a v7 payload
-  // without it is incomplete and repairs (runPurse added at 0).
-  const exact = loadProfileResult(seededJson({ version: SCHEMA_VERSION, gold: 7, runPurse: 0 }));
+  // without it is incomplete and repairs (runPurse added at 0). v9 likewise:
+  // the current shape carries lastPlayed/lastSeenUpdate (null = not seen).
+  const exact = loadProfileResult(seededJson({ version: SCHEMA_VERSION, gold: 7, runPurse: 0,
+    lastPlayed: null, lastSeenUpdate: null }));
   ok(exact.status === 'current' && exact.from === SCHEMA_VERSION,
     'an exact current-version save is not migrated');
   // A v2 save (the previous schema) now migrates forward.
@@ -465,8 +468,8 @@ console.log('APEX NAMESPACE (G25, v8):');
   // with the apex defaults filled in — locked, off, nothing owned — and with
   // an EMPTY repairs list: an absent subfield is a legacy fill-in, not damage.
   const v7 = loadProfileResult(seededJson({ version: 7, gold: 120, runPurse: 0 }));
-  ok(v7.status === 'migrated' && v7.from === 7 && v7.profile.version === 8,
-    'a v7 (pre-apex) save migrates to v8');
+  ok(v7.status === 'migrated' && v7.from === 7 && v7.profile.version === 9,
+    'a v7 (pre-apex) save migrates to the current schema (v9 since the lastPlayed bump)');
   ok(v7.profile.apex && Array.isArray(v7.profile.apex.owned) && v7.profile.apex.owned.length === 0
      && v7.profile.apex.enabled === false,
     'a pre-slice save loads apex LOCKED and OFF, nothing owned');
@@ -487,7 +490,7 @@ console.log('APEX NAMESPACE (G25, v8):');
   // Damaged contents: non-string owned entries dropped, duplicates collapsed,
   // a non-boolean toggle repaired — each flagged by name.
   const dmg = validateProfile({
-    version: 8, gold: 1, runPurse: 0,
+    version: 9, gold: 1, runPurse: 0, lastPlayed: null, lastSeenUpdate: null,
     apex: { owned: [42, 'apex_mark', 'apex_mark', ''], enabled: 'x' },
   });
   ok(JSON.stringify(dmg.profile.apex.owned) === '["apex_mark"]',
@@ -497,7 +500,8 @@ console.log('APEX NAMESPACE (G25, v8):');
     'every damaged apex subfield is flagged (got: ' + dmg.repairs.join(', ') + ')');
 
   // An unknown owned id is PRESERVED (the newer-build round-trip rule).
-  const newer = validateProfile({ version: 8, gold: 3, runPurse: 0,
+  const newer = validateProfile({ version: 9, gold: 3, runPurse: 0,
+    lastPlayed: null, lastSeenUpdate: null,
     apex: { owned: ['apex_future_thing'], enabled: true } });
   ok(newer.profile.apex.owned[0] === 'apex_future_thing' && newer.profile.apex.enabled === true,
     'unknown apex ids + a boolean toggle round-trip verbatim');
@@ -507,15 +511,15 @@ console.log('APEX NAMESPACE (G25, v8):');
   ok(JSON.stringify(makeProfile().apex) === '{"owned":[],"enabled":false}',
     'a fresh profile ships apex = { owned: [], enabled: false }');
 
-  // saveProfile stamps v8; the stored payload carries the namespace.
+  // saveProfile stamps the current version; the stored payload carries the namespace.
   const s = fakeStorage();
   const p = makeProfile();
   p.apex = { owned: ['apex_endless_fire'], enabled: true };
   saveProfile(p, s);
   const stored = JSON.parse(s.getItem(STORAGE_KEY));
-  ok(stored.version === 8 && stored.apex.owned[0] === 'apex_endless_fire'
+  ok(stored.version === 9 && stored.apex.owned[0] === 'apex_endless_fire'
      && stored.apex.enabled === true,
-    'saveProfile persists the apex namespace under the version-8 stamp');
+    'saveProfile persists the apex namespace under the current version stamp (v9)');
   // (The lossless export/import round trip for apex is pinned by the `rich`
   // fixture above, which carries apex through deepEq.)
 }

@@ -198,7 +198,7 @@ S.check('v4 -> v5: migration [4], an empty namespace appears, no entry invented'
   const v4 = { version: 4, gold: 10, purchased: { dmg: 1 } };
   const res = loadProfileResult(fakeStorage({ hordes_profile_v1: JSON.stringify(v4) }));
   assert.equal(res.status, 'migrated', 'status migrated (got ' + res.status + ')');
-  assert.deepEqual(res.migrations, [4, 5, 6, 7], 'v4->v5 ran, then v5->v6 (banner ledger), then the v6->v7 run-purse step, then this build\'s v7->v8 apex step');
+  assert.deepEqual(res.migrations, [4, 5, 6, 7, 8], 'v4->v5 ran, then v5->v6 (banner ledger), then the v6->v7 run-purse step, the v7->v8 apex step, then this build\'s v8->v9 lastPlayed/lastSeenUpdate step');
   assert.deepEqual(res.profile.encounters, emptyEncounters(),
     'the namespace exists and is EMPTY — no bestiary is invented for an old save');
 });
@@ -208,14 +208,14 @@ S.check('v4 with garbage encounters: entry-safe either way', () => {
   // carried no entries to lose) — the save lands migrated, clean.
   const str = loadProfileResult(fakeStorage({ hordes_profile_v1:
     JSON.stringify({ version: 4, encounters: 'x' }) }));
-  assert.deepEqual(str.migrations, [4, 5, 6, 7], 'the migration ran');
+  assert.deepEqual(str.migrations, [4, 5, 6, 7, 8], 'the migration ran (through the v8→v9 lastPlayed step)');
   assert.deepEqual(str.profile.encounters, emptyEncounters(),
     'the namespace is empty-but-valid');
   // A malformed NAMESPACE (object shape, broken entries) passes the migration
   // untouched and is flagged + repaired by validation — one repair path.
   const bad = loadProfileResult(fakeStorage({ hordes_profile_v1:
     JSON.stringify({ version: 4, encounters: { v: 1, entries: 'garbage' } }) }));
-  assert.deepEqual(bad.migrations, [4, 5, 6, 7], 'the migration ran');
+  assert.deepEqual(bad.migrations, [4, 5, 6, 7, 8], 'the migration ran (through the v8→v9 lastPlayed step)');
   assert.ok(bad.repairs.some(r => r.startsWith('encounters')),
     'present-but-garbage encounters is flagged as a repair');
   assert.deepEqual(bad.profile.encounters, emptyEncounters(),

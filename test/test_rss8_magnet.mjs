@@ -51,6 +51,13 @@ const mk = () => {
     removeEventListener(ev, cb) { const h = handlers.get(el) || {}; h[ev] = (h[ev] || []).filter(f => f !== cb); },
     fire(ev, arg) { for (const cb of ((handlers.get(el) || {})[ev] || []).slice()) cb(arg); },
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
+    // v9 WHAT'S NEW: the paper note PREPENDS through insertBefore (main.js
+    // addWhatsNewCard) — same shape as test_whatsnew.mjs's stub.
+    insertBefore(c, ref) {
+      const i = ref ? el.children.indexOf(ref) : -1;
+      if (i < 0) el.children.push(c); else el.children.splice(i, 0, c);
+      c.parentNode = el; return c;
+    },
     remove() { if (el.parentNode) { const i = el.parentNode.children.indexOf(el); if (i >= 0) el.parentNode.children.splice(i, 1); } el.parentNode = null; },
     getBoundingClientRect() { return { left: 10, top: 10, right: 90, bottom: 60, width: 80, height: 50 }; },
     click() { if (el.onclick) el.onclick(); el.fire('click'); },

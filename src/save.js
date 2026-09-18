@@ -40,7 +40,10 @@
 
 // Current schema version. Bump this and add a MIGRATIONS step whenever a
 // change cannot be expressed as an additive field.
-export const PROFILE_VERSION = 8;
+// v9 (owner 2026-09-17): profile gains lastPlayed (epoch ms stamped on every
+// persisted save) and lastSeenUpdate (the release id of the last "what's new"
+// note the player dismissed) — see the v9 history + migration entries.
+export const PROFILE_VERSION = 9;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -118,6 +121,23 @@ export const VERSION_HISTORY = [
       'debit it, and settlement banks the remainder into profile.gold and zeroes it. ' +
       'Populated 0 — a v6 save earned no purse, and the clamp below keeps a ' +
       'hand-edited value finite / non-negative / integer.',
+  },
+  {
+    version: 8,
+    note: 'G25 apex tier namespace: profile.apex = { owned: [], enabled: false }. ' +
+      'Populated empty — a pre-slice player sees the tier exactly as a fresh one ' +
+      'does: locked, off, nothing owned. (History entry backfilled with the ' +
+      'migration that shipped it; the chain itself is unchanged.)',
+  },
+  {
+    version: 9,
+    note: 'Returning-player "what\'s new" (owner 2026-09-17): profile gains ' +
+      'lastPlayed (epoch-ms integer, stamped by the game on every persisted ' +
+      'save) and lastSeenUpdate (the RELEASE_ID of the last release note the ' +
+      'player dismissed). BOTH populate null for older saves: a missing ' +
+      'timestamp means "has not seen the note", which is exactly the ' +
+      'once-per-marked-release contract. Nothing else is touched, so the step ' +
+      'is lossless for every v8 save.',
   },
 ];
 
@@ -249,6 +269,17 @@ const MIGRATIONS = {
   7: (p) => {
     const next = { ...p };
     if (!plainObject(next.apex)) next.apex = {};
+    return next;
+  },
+  // v8 -> v9: the returning-player pair. Guarantee BOTH fields EXIST as null
+  // (an older save has neither a last-play stamp nor a seen-release mark) and
+  // NOTHING ELSE — no timestamp is invented for a v8 save (a missing stamp
+  // legitimately reads as "has not seen the note"), and a present value is left
+  // alone for validateProfile to check + report (one repair path, not two).
+  8: (p) => {
+    const next = { ...p };
+    if (next.lastPlayed === undefined) next.lastPlayed = null;
+    if (next.lastSeenUpdate === undefined) next.lastSeenUpdate = null;
     return next;
   },
 };
@@ -675,6 +706,22 @@ export function validateProfile(profile, cat) {
     repairs.push('apex');
   }
   out.apex = apex;
+
+  // ---- lastPlayed / lastSeenUpdate (v9: the returning-player pair) ----
+  // lastPlayed: a positive epoch-ms integer or null (absent is NOT a repair —
+  // a migrated v8 save legitimately carries null). lastSeenUpdate: a non-empty
+  // release-id string or null. Garbage repairs to null + names the field,
+  // exactly like every other section; null is the safe direction for both
+  // (null lastPlayed = "has not seen the note", null lastSeenUpdate = same).
+  const lpRaw = p.lastPlayed;
+  const lastPlayed = (typeof lpRaw === 'number' && Number.isFinite(lpRaw) && lpRaw > 0)
+    ? Math.floor(lpRaw) : null;
+  if (lastPlayed !== lpRaw) repairs.push('lastPlayed');
+  out.lastPlayed = lastPlayed;
+  const lsuRaw = p.lastSeenUpdate;
+  const lastSeenUpdate = (typeof lsuRaw === 'string' && lsuRaw.length > 0) ? lsuRaw : null;
+  if (lastSeenUpdate !== lsuRaw) repairs.push('lastSeenUpdate');
+  out.lastSeenUpdate = lastSeenUpdate;
 
   // ---- version stamp ----
   if (out.version !== PROFILE_VERSION) repairs.push('version');

@@ -130,7 +130,10 @@ export async function withPage(opts, fn) {
     // screen (z-index 50) and would ruin every screenshot, so mark every stage as seen.
     const pre = [];
     if (skipTour) pre.push("for (const k of ['stage1','hud','pilot','focus','stance','move','skills']) { try { localStorage.setItem('hordes_tour_' + k, '1'); } catch (e) {} }");
-    if (skipPrologue) pre.push("try { if (!localStorage.getItem('hordes_profile_v1')) localStorage.setItem('hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } })); } catch (e) {}");
+    // v9: the seeded settle-stamp also carries lastPlayed = now, so the harness
+    // profile reads as an ACTIVE player — the What's-New launch note (gated on
+    // lastPlayed predating the current release) must not pop in every verifier.
+    if (skipPrologue) pre.push("try { if (!localStorage.getItem('hordes_profile_v1')) localStorage.setItem('hordes_profile_v1', JSON.stringify({ version: 8, lastPlayed: Date.now(), achievements: { totals: { runs: 1 } } })); } catch (e) {}");
     if (startupScript) pre.push(startupScript);
     if (pre.length) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: pre.join('\n') });
 

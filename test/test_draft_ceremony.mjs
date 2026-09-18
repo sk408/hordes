@@ -251,9 +251,22 @@ T.draftAuto.rng = () => 0;
   cards()[0].click();
   ok('the final pick of the queue resolves and rides the ceremony',
     st.mode === 'playing' && CER.active, [st.mode, CER.active]);
+  // FLAKE FIX (2026-09-18): the ceremony runs over the LIVE game, and any
+  // screen that takes the overlay over SUPERSEDES it (endDraftCeremony(false)
+  // — by contract the superseding screen owns the cards, so they stay until
+  // it renders; main.js: "a queued draft, the field report, death, the
+  // title"). Two random paths did that here, ~1-in-20 unseeded: a pick that
+  // LEVELS the pilot re-queues a draft, and a death in the 0.55s window
+  // flips mode to 'death-cine'. Neither is a leak. Park the death risk
+  // (invuln + no enemies) and click through any re-queued drafts; the
+  // teardown assert then holds deterministically.
+  st.player.invuln = 5; st.enemies.length = 0; st.spawnTimer = 999;
+  tick(CER.S + 0.1);
+  let requeues = 0;
+  while (st.mode === 'draft' && requeues < 6) { cards()[0].click(); requeues++; }
   tick(CER.S + 0.1);
   ok('queue drain teardown is clean', overlayClean() && !CER.active && cards().length === 0,
-    { kids: cards().length, active: CER.active });
+    { kids: cards().length, active: CER.active, mode: st.mode, pending: st.pendingDrafts });
 }
 
 // ---- 6. v1 scope: EVOLVE is untouched ----------------------------------------
