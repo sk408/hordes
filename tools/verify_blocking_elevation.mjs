@@ -27,6 +27,14 @@ async function viewport(w, h, tag) {
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()`, 15000);
     await p.sleep(400);
     const T = () => p.evaluate(`(async () => (await import('./src/main.js')).__TEST)()`);
+    // FIRST-RUN PROLOGUE (2026-09-18): a fresh browser profile's run #1 opens
+    // INERT (no spawns, frozen clock) — stamp runs=1 (the harness convention)
+    // so this verifier photographs an ordinary run. The prologue itself has
+    // its own verifier (tools/verify_prologue.mjs).
+    await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      const pr = T2.getProfile();
+      if (pr && pr.achievements && pr.achievements.totals) pr.achievements.totals.runs = 1;
+      return true; })()`);
     // START GAME on the title card.
     await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST; T2.showTitle(); })()`);
     await p.sleep(150);

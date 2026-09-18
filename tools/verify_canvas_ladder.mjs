@@ -21,7 +21,8 @@
 //      while HIDDEN it is completely inert (opacity 0, pointer-events none,
 //      elementFromPoint at its centre hits the canvas, not the button).
 //   4. ONE SHOW/FADE SYSTEM: a real interaction reveals the cog row + text HUD
-//      on the SAME 0.5s window as the fullscreen button (body.chrome-reveal),
+//      on the SAME window as the fullscreen button — C.FULLSCREEN.HIDE_S,
+//      1.3s since the owner's 2026-09-18 retune (body.chrome-reveal),
 //      and they hide again after it closes.
 //   5. HIT-BOX AUDIT (9GX95): every on-screen control's hit box measured and
 //      reported, all >= 44px both axes; the fullscreen button's HIT box is
@@ -134,7 +135,7 @@ async function arm(w, h, dpr, label, hosted) {
         await p.tap(Math.round(cv.x + cv.w / 2 + off * 0), Math.round(cv.y + cv.h / 2) + off);
         await p.sleep(120);
         reveal.shown = await p.evaluate(G("(()=>{ const cs=getComputedStyle(document.getElementById('tc-cog')); return { reveal: document.body.classList.contains('chrome-reveal'), opacity: +cs.opacity, pe: cs.pointerEvents }; })()"));
-        await p.sleep(700);   // > HIDE_S: the window closes
+        await p.sleep(1700);  // > HIDE_S (1.3s, owner 2026-09-18): the window closes
         reveal.hidden = await p.evaluate(G("(()=>{ const cs=getComputedStyle(document.getElementById('tc-cog')); return { reveal: document.body.classList.contains('chrome-reveal'), opacity: +cs.opacity, pe: cs.pointerEvents }; })()"));
       }
 
@@ -190,7 +191,7 @@ async function arm(w, h, dpr, label, hosted) {
       }
       // INERT while hidden: window closed, tap the same centre point — the
       // toggle must NOT fire (the tap plays the game instead).
-      await p.sleep(700);
+      await p.sleep(1700);  // > HIDE_S (1.3s): every tap above re-opened the window
       const inertBefore = await p.evaluate(G("(async()=> (await import('./src/main.js')).__TEST.state.fsOverlay.active)()"));
       const cI = await p.evaluate(CRM);
       await p.tap(Math.round(cI[0] + pts.centre[0] * (cI[2] / 480)), Math.round(cI[1] + pts.centre[1] * (cI[2] / 480)));

@@ -72,6 +72,15 @@ globalThis.localStorage = {
 
 const mainMod = await import('../src/main.js');
 const T = mainMod.__TEST;
+// FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+// 2026-09-18): fresh profile here, and run #1 would open INERT (frozen
+// clock, hints gated) — stamp runs=1 so the review legs run an ordinary run.
+{
+  const pr = T.getProfile();
+  pr.achievements = pr.achievements || {};
+  pr.achievements.totals = pr.achievements.totals || {};
+  pr.achievements.totals.runs = 1;
+}
 const st = T.state;
 const OB = T.onboarding;
 const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now); };

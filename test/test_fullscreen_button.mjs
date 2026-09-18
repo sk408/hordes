@@ -1,8 +1,9 @@
 // FULLSCREEN BUTTON GUARD (owner 2026-09-17, msg_01M2S3Y289YVRKZY33S0TF1MAE)
 // — the transient CANVAS toggle:
 //   * painted ON THE CANVAS in the play-HUD pass (not a settings card),
-//     appears on interaction, hides 0.5s (C.FULLSCREEN.HIDE_S, the owner's
-//     number verbatim) after the LAST interaction, re-shows on the next;
+//     appears on interaction, hides 1.3s (C.FULLSCREEN.HIDE_S, the owner's
+//     2026-09-18 retune of the original "0.5s") after the LAST interaction,
+//     re-shows on the next;
 //   * the button's OWN tap toggles fullscreen and is never swallowed by the
 //     show-on-interaction logic (hit-test runs FIRST in the canvas handler);
 //   * iPhone iOS Safari ships no element Fullscreen API -> the support probe
@@ -77,16 +78,23 @@ const dt = 1 / 60;
     assert.equal(b.y, (C.VIEW_H - C.FULLSCREEN.H) / 2);
   });
 
-  S.check('hidden at rest; an interaction shows it; 0.5s of frames later it is gone', () => {
+  S.check('the duration constant is EXACTLY the owner retune (1.3s), not implied', () => {
+    assert.equal(C.FULLSCREEN.HIDE_S, 1.3, 'HIDE_S is the owner\'s 2026-09-18 number');
+  });
+
+  S.check('hidden at rest; an interaction shows it; HIDE_S of frames later it is gone', () => {
     h.pump(2);
     assert.equal(T.renderer.fsButton, null, 'no interaction yet -> nothing painted');
     h.elements['touch']._ev.pointerdown({ pointerId: 1 });
     h.pump(1);
     assert.ok(T.renderer.fsButton, 'the interaction showed the button');
     assert.deepEqual(T.renderer.fsButton, b, 'painted exactly at the declared box');
-    h.pump(28);                                            // 29 frames = 0.483s
-    assert.ok(T.renderer.fsButton, 'still visible at 29 frames (0.483s < 0.5s)');
-    h.pump(1);                                             // 30 frames = 0.500s
+    // 1.3s at 60Hz is exactly 78 frames — the fade FOLLOWS the constant.
+    const frames = Math.round(C.FULLSCREEN.HIDE_S / dt);
+    assert.equal(frames, 78, '1.3s is a whole number of 60Hz frames');
+    h.pump(frames - 2);   // + the 1 frame above = frames-1 total: still inside
+    assert.ok(T.renderer.fsButton, `still visible at ${frames - 1} frames (${(C.FULLSCREEN.HIDE_S - dt).toFixed(3)}s < 1.3s)`);
+    h.pump(1);
     assert.equal(T.renderer.fsButton, null, 'hidden at exactly C.FULLSCREEN.HIDE_S');
   });
 
@@ -96,7 +104,7 @@ const dt = 1 / 60;
     h.elements['touch']._ev.pointerdown({ pointerId: 2 });
     h.pump(1);
     assert.ok(T.renderer.fsButton, 're-shows on the next touch interaction');
-    h.pump(35);                                            // hide again
+    h.pump(80);                                            // hide again (past 1.3s)
     assert.equal(T.renderer.fsButton, null);
     h.key('keydown', { key: 'F2' });                       // unbound key: interaction only
     h.pump(1);
@@ -117,11 +125,48 @@ const dt = 1 / 60;
   });
 
   S.check('a tap while HIDDEN never toggles (no invisible control)', () => {
-    h.pump(35);                                            // let it hide fully
+    h.pump(80);                                            // let it hide fully (past 1.3s)
     assert.equal(T.renderer.fsButton, null);
     tap(b.x + b.w / 2, b.y + b.h / 2);
     assert.equal(h.fsCalls.enter, 1, 'enter count unchanged');
     assert.equal(h.fsCalls.exit, 0, 'exit count unchanged');
+  });
+
+  // GUARD 1 re-assert (2026-09-18 retune): the hit box is ~3x the icon, so
+  // while hidden the ENLARGED target must be completely inert across its
+  // whole area — an invisible 64x56 box over mid-field play would eat taps.
+  S.check('the ENLARGED hit box is completely inert while hidden (all four corners + centre)', () => {
+    const hb = fs.hitRect();
+    assert.ok(hb.w >= b.w * 2 && hb.h >= b.h * 2, 'fixture: the hit box is genuinely enlarged');
+    for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]]) {
+      h.pump(80);   // hidden again before every press (a tap re-shows by design)
+      assert.equal(T.renderer.fsButton, null, 'fixture: hidden');
+      tap(hb.x + fx * hb.w, hb.y + fy * hb.h);
+      assert.equal(h.fsCalls.enter, 1, `no enter from the hidden hit-box tap at (${fx},${fy})`);
+      assert.equal(h.fsCalls.exit, 0, `no exit from the hidden hit-box tap at (${fx},${fy})`);
+    }
+    // (each tap itself IS an interaction and re-shows the button — inertness
+    // while hidden means no TOGGLE: fsHit() reads false at the moment the
+    // button is not visible, so the enlarged box can never eat a gameplay
+    // tap, only re-show the chrome.)
+  });
+
+  // GUARD 2 (2026-09-18 retune): one show per interaction. An OS auto-repeat
+  // key stream (a HELD movement key fires ~30 keydowns/s with repeat:true)
+  // must not re-bump the window — at 1.3s that would pin the transient
+  // chrome on screen for the whole hold.
+  S.check('a HELD key (repeat stream) never re-shows it; one honest press does', () => {
+    h.pump(80);                                            // fully hidden
+    assert.equal(T.renderer.fsButton, null, 'fixture: hidden');
+    for (let i = 0; i < 90; i++) {                         // 1.5s of held key
+      h.key('keydown', { key: 'w', repeat: true });
+      h.pump(1);
+    }
+    assert.equal(T.renderer.fsButton, null, 'a 1.5s auto-repeat stream never re-shows it');
+    h.key('keydown', { key: 'w' });                        // an honest press
+    h.pump(1);
+    assert.ok(T.renderer.fsButton, 'a real keypress is still an interaction');
+    h.pump(80);                                            // tidy: hide again
   });
 
   S.check('tapping the button AGAIN exits fullscreen (one tap, either way)', () => {
@@ -333,7 +378,7 @@ const dt = 1 / 60;
       r.x === b.x && r.y === b.y && r.w === b.w && r.h === b.h);
     assert.ok(plate.length >= 1, 'the plate fillRect landed at the box');
     h.rec.on = false; h.rec.rects.length = 0; h.rec.texts.length = 0;
-    h.pump(35);                                            // past the window
+    h.pump(80);                                            // past the 1.3s window
     h.rec.on = true; h.pump(1);
     const gone = h.rec.rects.filter(r =>
       r.x === b.x && r.y === b.y && r.w === b.w && r.h === b.h);

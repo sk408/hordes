@@ -86,6 +86,15 @@ globalThis.localStorage = {
 
 const mainMod = await import('../src/main.js');
 const T = mainMod.__TEST;
+// FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+// 2026-09-18): fresh profile here, and run #1 would open INERT (frozen
+// clock) — stamp runs=1 so the ceremony legs run an ordinary run.
+{
+  const pr = T.getProfile();
+  pr.achievements = pr.achievements || {};
+  pr.achievements.totals = pr.achievements.totals || {};
+  pr.achievements.totals.runs = 1;
+}
 const st = T.state;
 const frame = () => {
   now += 1000 / 60;

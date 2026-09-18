@@ -232,6 +232,17 @@ const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300
 
   const mainMod = await import('../src/main.js');
   const T = mainMod.__TEST;
+  // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+  // 2026-09-18): this section boots a FRESH profile, and run #1 would open
+  // INERT (no spawns, frozen clock, hints gated) — stamp runs=1 so startRun
+  // opens an ordinary run. The hint layer's own give-up counters live in
+  // separate localStorage keys and are unaffected.
+  {
+    const pr = T.getProfile();
+    pr.achievements = pr.achievements || {};
+    pr.achievements.totals = pr.achievements.totals || {};
+    pr.achievements.totals.runs = 1;
+  }
   const st = T.state;
   const frame = () => {
     now += 1000 / 60;

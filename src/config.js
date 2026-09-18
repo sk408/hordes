@@ -590,6 +590,33 @@ export const CONFIG = {
   // (AUTO_ALL and AUTO_MOVE; MANUAL gets nothing, ever).
   PORTAL: { RADIUS: 16, APPROACH: 40, STANDOFF: 24, DWELL: 0.4, INVULN: 0.1 },
 
+  // ---- FIRST-RUN PROLOGUE (owner 2026-09-18) ------------------------------
+  // Run #1 of a fresh profile (derived from achievements.totals.runs === 0
+  // at startRun — NO new saved field) opens INERT: no enemy spawns, the run
+  // clock has not started, and a tinted potion sits on screen. The pilot
+  // WALKS to it and drinks it (manual or AUTO — the auto pilot's first act
+  // is that walk). INVULN_S is the named 45s shield granted at the drink;
+  // the clear (on-screen enemies die with normal drops, BEFORE the shield
+  // ends — it fires at the drink itself) reaches CLEAR_MARGIN world units
+  // past the view edge, not the whole arena. MAX_S bounds the phase — a
+  // player who never walks, or leaves banners open, still starts the run:
+  // exit is drunk OR t >= MAX_S, whichever comes first. POTION_DX/DY park the
+  // potion this many world units up-RIGHT of the spawn, clamped on-screen at
+  // every viewport (the view is always VIEW_W x VIEW_H world units). The
+  // offset must CLEAR THE BANNER CARD's band (the card plate spans view
+  // x 90..390, y 24..116): a straight-up potion lands at (240,50), directly
+  // behind card #1, INVISIBLE behind the plate — found in the 320x568
+  // verification shot. The side placement puts run #1's potion at ~(355,130),
+  // past the card's lower edge and still a real (>40wu) walk.
+  PROLOGUE: {
+    INVULN_S: 45,
+    MAX_S: 60,
+    CLEAR_MARGIN: 120,
+    POTION_DX: 115,
+    POTION_DY: -20,
+  },
+
+
   // ---- M3 GROUND-ITEM OVERFLOW CAPS (audit 2026-09-16) ---------------------
   // state.gems / state.drops / state.itemDrops were unbounded arrays with
   // three O(n) pickup scans per frame. The caps bound the scans; the
@@ -844,10 +871,14 @@ export const CONFIG = {
   // of the DOM pads at every phone size (geometry asserted in
   // test_fullscreen_button.mjs). Where the Fullscreen API is missing
   // (iPhone iOS Safari) the button is absent entirely — a dead control is
-  // worse than no control. HIDE_S is the owner's number verbatim ("0.5s");
-  // feel is REPORTED, never tuned unilaterally.
+  // worse than no control. HIDE_S is the owner's number verbatim (was "0.5s",
+  // retuned 2026-09-18: "the full screen/overlay controls disappear too
+  // fast... make it 1.3 seconds"); feel is REPORTED, never tuned
+  // unilaterally. This ONE window is shared by BOTH transient surfaces — the
+  // painted fullscreen button AND the transient top-chrome strip (the
+  // canvas-ladder work) — there is no second duration constant anywhere.
   FULLSCREEN: {
-    HIDE_S: 0.5,     // seconds the button outlives the last interaction
+    HIDE_S: 1.3,     // seconds the transient surfaces outlive the last interaction
     W: 22,           // button box (the PAINTED icon), view px
     H: 18,
     INSET: 8,        // kept this far off the view's right edge

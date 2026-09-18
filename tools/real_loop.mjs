@@ -122,6 +122,17 @@ export async function bootReal(stage = 'fresh') {
   const dom = installDom(typeof stage === 'string' ? stageProfile(stage) : stage);
   const mainMod = await import('../src/main.js');
   const T = mainMod.__TEST;
+  // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
+  // 2026-09-18): the 'fresh' stage profiles a first-ever player, and run #1
+  // would open INERT (no spawns, frozen clock) — every bootReal consumer
+  // measures ordinary-run behaviour, so stamp runs=1. (A custom profile
+  // object with runs already set is untouched by the defensive writes.)
+  {
+    const pr = T.getProfile();
+    pr.achievements = pr.achievements || {};
+    pr.achievements.totals = pr.achievements.totals || {};
+    pr.achievements.totals.runs = 1;
+  }
   return {
     state: T.state,
     startRun: () => T.startRun(),

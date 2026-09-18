@@ -193,6 +193,36 @@ function rarityRing(g, e, state, x, y, w, h) {
   g.fillRect(x + w + o, y - o, 1, h + 2 * o);
 }
 
+// ---- FIRST-RUN PROLOGUE (owner 2026-09-18) ----------------------------------
+// The potion, the OK-banner card and the shield's rainbow pulse all live in
+// this file; main.js owns the phase. Geometry rule: the OK button's rect is
+// defined ONCE here (prologueOkRect) — the canvas hit-test in main.js and the
+// headless tests read the same numbers the painter paints.
+export function prologueOkRect() {
+  return { x: C.VIEW_W / 2 - 32, y: PROLOGUE_CARD_Y + PROLOGUE_CARD_H - 24, w: 64, h: 16 };
+}
+const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 92;
+
+// Reduced motion is read LIVE (the draftCeremonyEnabled precedent — one
+// handler per feature, nothing global). False in the headless stub, which
+// only matches coarse-pointer queries.
+export function prefersReducedMotion() {
+  try {
+    const mm = (typeof window !== 'undefined') && window.matchMedia;
+    return !!(mm && mm('(prefers-reduced-motion: reduce)').matches);
+  } catch { return false; }
+}
+
+// The rainbow pulse's colour — a GENTLE cycle (40 deg/s), never a strobe;
+// reduced motion gets a fixed healing-green. offsetDeg spreads the ring's
+// ticks around the wheel (i*30 = a 180-deg arc) so one frame reads RAINBOW,
+// not six dots of one hue (found in the verification shot); the reduced-motion
+// branch ignores it (fixed colour, no motion at all). Pure, so testable.
+export function prologueShieldColor(elapsedS, reduced, offsetDeg = 0) {
+  const hue = reduced ? 140 : (Math.round(elapsedS * 40) + offsetDeg) % 360;
+  return 'hsl(' + hue + ',85%,64%)';
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -457,6 +487,40 @@ export class Renderer {
         g.fillStyle = col;
         g.fillRect(x - 4, y, 1, 1); g.fillRect(x + 4, y, 1, 1);
         g.fillRect(x, y - 4, 1, 1); g.fillRect(x, y + 4, 1, 1);
+      }
+    }
+
+    // FIRST-RUN PROLOGUE potion (main.js owns the phase): a TALLER bottle
+    // than an ordinary drop, tinted iridescent — a slow hue cycle (static
+    // when the OS asks for reduced motion) — plus a beacon ring so it reads
+    // as THE thing to walk to from anywhere on screen. The pulse rides the
+    // phase's own clock (state.time is frozen by design during the prologue).
+    if (state.prologue && !state.prologue.drunk) {
+      const po = state.prologue.potion;
+      const x = Math.round(po.x - cam.x), y = Math.round(po.y - cam.y);
+      if (!cull(x, y, 20)) {
+        const pt = state.prologue.t || 0;
+        const ph = (pt % 1.6) / 1.6;
+        const ringR = 5 + Math.round(ph * 11);
+        // Alpha floor 0.25 (was 0.6 fading to 0): a static frame of the pulse
+        // could catch the beacon fully faded — the ring floor keeps the walk
+        // target readable in any single frame (pixel-probe finding, 2026-09-18).
+        g.fillStyle = 'rgba(125,255,208,' + (0.25 + 0.5 * (1 - ph)).toFixed(2) + ')';
+        g.fillRect(x - ringR, y - 1, 3, 2); g.fillRect(x + ringR - 2, y - 1, 3, 2);
+        g.fillRect(x - 1, y - ringR, 2, 3); g.fillRect(x - 1, y + ringR - 2, 2, 3);
+        const hue = prefersReducedMotion() ? 160 : Math.round((160 + pt * 24) % 360);
+        // The body is drawn at 2x (12x18 view px — the player sprite's own
+        // size class): two vision passes on the 320x568 shot could not resolve
+        // the old 6x9 bottle (~4x6 CSS px there) even with the paint proven
+        // on the backing store by tools/probe (236 bright pixels). The
+        // tutorial's ONE centerpiece reads at the smallest viewport.
+        g.fillStyle = 'hsl(' + hue + ',85%,62%)';        // the distinct body tint
+        g.fillRect(x - 6, y - 10, 12, 18);               // body (2x)
+        g.fillRect(x - 2, y - 16, 4, 6);                 // neck (2x)
+        g.fillStyle = '#e8e8f0';
+        g.fillRect(x - 4, y - 12, 2, 4);                 // glint (2x)
+        g.fillStyle = '#7d5a2e';
+        g.fillRect(x - 4, y - 18, 8, 2);                 // cork (2x)
       }
     }
 
@@ -946,6 +1010,22 @@ export class Renderer {
       Math.round(pl.x - cam.x - 6),
       Math.round(pl.y - cam.y - 6));
     g.globalAlpha = 1;
+    // FIRST-RUN PROLOGUE — the shield's rainbow pulse: six slowly-spinning
+    // ticks, each on its own hue (i*30 around the wheel) in a gentle shared
+    // cycle (prologueShieldColor: 40 deg/s, static green under reduced
+    // motion). Own lifetime (state.prologueShieldT), so the ring stops at
+    // expiry and a later portal invuln cannot restart it.
+    if (state.prologueShieldT > 0) {
+      const elapsed = C.PROLOGUE.INVULN_S - state.prologueShieldT;
+      const reduced = prefersReducedMotion();
+      const spin = reduced ? 0 : elapsed * 0.9;
+      for (let i = 0; i < 6; i++) {
+        const a = spin + i * Math.PI / 3;
+        g.fillStyle = prologueShieldColor(elapsed, reduced, i * 30);
+        g.fillRect(Math.round(pl.x - cam.x + Math.cos(a) * 13) - 1,
+          Math.round(pl.y - cam.y + Math.sin(a) * 13) - 1, 3, 3);
+      }
+    }
 
     // Weather PARTICLES (weather.js): camera-anchored rain/snow/wind/bugs —
     // they ride the world zoom like everything else in this layer. The
@@ -1044,6 +1124,7 @@ export class Renderer {
     this.drawHudChrome(g, state);
     this.drawRadar(g, state);
     this.drawBossBanner(g, state);
+    this.drawPrologueBanner(g, state);
     this.drawFsButton(g, state);
     // SEAM (end-summary HUD suppression, 2026-09-17): one flag the browser
     // tests read — TRUE iff the play HUD (bars, feed, radar, banner) actually
@@ -1521,6 +1602,73 @@ export class Renderer {
     g.textBaseline = 'top';
     g.globalAlpha = 1;
     this.bossBanner = { name: b.title, sub: b.sub, letterbox: true, alpha };
+  }
+
+  // ---- FIRST-RUN PROLOGUE: the OK-banner card (owner 2026-09-18) -------------
+  // Native 1x (never zoomed), top-centre under the HUD clock. Non-modal by
+  // construction: nothing here gates update() — the pilot keeps walking while
+  // it is up; only the OK rect consumes a tap (main.js hit-tests FIRST, so a
+  // banner tap never arms the joystick). Fixed card geometry = a stable hit
+  // region (prologueOkRect). The seam: this.prologueBanner carries the exact
+  // { title, body, idx, total } painted this frame, or null.
+  drawPrologueBanner(g, state) {
+    this.prologueBanner = null;
+    if (!state.prologue || state.prologue.drunk) return;
+    const idx = state.prologue.bannerIdx || 0;
+    const B = state.prologue.banners ? state.prologue.banners[idx] : null;
+    if (!B) return;
+    const W = Math.min(300, C.VIEW_W - 20);
+    const x0 = Math.round((C.VIEW_W - W) / 2), y0 = PROLOGUE_CARD_Y;
+    const pad = 10;
+    // Plate + border (the boss-banner plate idiom).
+    g.fillStyle = 'rgba(8,8,15,0.92)';
+    g.fillRect(x0, y0, W, PROLOGUE_CARD_H);
+    g.fillStyle = '#3a3a56';
+    g.fillRect(x0, y0, W, 1); g.fillRect(x0, y0 + PROLOGUE_CARD_H - 1, W, 1);
+    g.fillRect(x0, y0, 1, PROLOGUE_CARD_H); g.fillRect(x0 + W - 1, y0, 1, PROLOGUE_CARD_H);
+    // Counter, title, wrapped body.
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillStyle = '#6a6a86';
+    g.font = '8px monospace';
+    g.fillText((idx + 1) + '/' + (state.prologue.banners ? state.prologue.banners.length : '?'),
+      x0 + W - pad - 20, y0 + 7);
+    g.fillStyle = '#ffd75e';
+    g.font = 'bold 11px monospace';
+    g.fillText(B.title, x0 + pad, y0 + 7);
+    g.fillStyle = '#e8e8f0';
+    g.font = '9px monospace';
+    const maxW = W - 2 * pad;
+    const adv = 0.6021 * 9;   // the headless fallback advance (drawBossBanner idiom)
+    let line = '', lines = [];
+    for (const word of B.body.split(' ')) {
+      const cand = line ? line + ' ' + word : word;
+      if (typeof g.measureText === 'function') {
+        const m = g.measureText(cand);
+        if (m && typeof m.width === 'number' && isFinite(m.width) && m.width > 0 && m.width <= maxW) {
+          line = cand; continue;
+        }
+        if (m && typeof m.width === 'number' && isFinite(m.width) && m.width > 0) {
+          lines.push(line); line = word; continue;
+        }
+      }
+      if (cand.length * adv <= maxW) { line = cand; } else { lines.push(line); line = word; }
+    }
+    if (line) lines.push(line);
+    lines = lines.slice(0, 3);
+    for (let i = 0; i < lines.length; i++) g.fillText(lines[i], x0 + pad, y0 + 24 + i * 11);
+    // The OK button — the rect main.js hit-tests (ONE geometry).
+    const ok = prologueOkRect();
+    g.fillStyle = '#1c1c2e';
+    g.fillRect(ok.x, ok.y, ok.w, ok.h);
+    g.fillStyle = '#7dffd0';
+    g.fillRect(ok.x, ok.y, ok.w, 1); g.fillRect(ok.x, ok.y + ok.h - 1, ok.w, 1);
+    g.fillRect(ok.x, ok.y, 1, ok.h); g.fillRect(ok.x + ok.w - 1, ok.y, 1, ok.h);
+    g.textAlign = 'center';
+    g.font = 'bold 10px monospace';
+    g.fillText('OK', ok.x + ok.w / 2, ok.y + 4);
+    g.textAlign = 'left';
+    this.prologueBanner = { title: B.title, body: B.body, idx,
+      total: state.prologue.banners.length };
   }
 
   // ---- WAVE-27: the DOCTRINE canvas readout is REMOVED ------------------------

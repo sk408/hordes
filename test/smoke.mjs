@@ -106,6 +106,18 @@ globalThis.localStorage = {
 const mainMod = await import('../src/main.js');
 const st = mainMod.__TEST.state;
 
+// FIRST-RUN PROLOGUE (2026-09-18): this boot is a FRESH profile, so run #1
+// would open INERT (no spawns, frozen clock) and change what every section
+// below measures. The prologue derives from achievements.totals.runs === 0
+// at startRun — stamping runs=1 neutralizes it (test/_harness.mjs's own
+// convention). RESET PROFILE below wipes the stamp, so it is re-applied in
+// that arm. The prologue itself is tested for real in test_prologue.mjs.
+const stampNotFresh = () => {
+  const pr = mainMod.__TEST.getProfile();
+  if (pr && pr.achievements && pr.achievements.totals) pr.achievements.totals.runs = 1;
+};
+stampNotFresh();
+
 // ---- WAVE-7/D intro movie: plays BEFORE the title menu on page load ----
 // Pump rAF frames until the 7s movie finishes and the menu lands. Skipping
 // is exercised separately at the end of the file (fresh module re-import).
@@ -203,6 +215,9 @@ const dtMs = 1000 / 60;
     confirm.click();
     assert(gp().gold === 0, `RESET should wipe gold (got ${gp().gold})`);
     console.log('settings probe: RESET PROFILE armed + wiped gold');
+    // The wipe also reset the prologue-neutralization stamp (runs back to 0)
+    // — re-apply so the runs this file starts later stay ordinary.
+    stampNotFresh();
     byTitle('BACK').click();   // SAVE DATA -> settings
     byTitle('BACK').click();   // settings -> title
   }

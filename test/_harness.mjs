@@ -201,6 +201,22 @@ export async function boot(opts = {}) {
   // main.js against its own globals; the pure data modules stay shared.
   const mainMod = await import('../src/main.js' + (opts.variant ? '?v=' + opts.variant : ''));
 
+  // FIRST-RUN PROLOGUE (2026-09-18): every boot here is a FRESH profile, so
+  // run #1 would open INERT (no spawns, frozen clock) and silently change
+  // what every gameplay test measures. The prologue is derived from
+  // achievements.totals.runs === 0 at startRun — stamping runs=1 neutralizes
+  // it for boots that are not about it (the tour-flags preseed's own
+  // convention: "these tests want it out of the way"). test_prologue.mjs
+  // boots with { prologue: true } to keep the real fresh-profile behaviour.
+  if (!opts.prologue) {
+    try {
+      const pr = mainMod.__TEST.getProfile();
+      if (pr && pr.achievements && pr.achievements.totals) {
+        pr.achievements.totals.runs = 1;
+      }
+    } catch { /* the profile seam is always present; defensive */ }
+  }
+
   // Pump n real frames. opts.frameMs lets a test choose the refresh rate;
   // it is read PER FRAME so setFrameMs() below actually takes effect (it used
   // to be captured once at boot, which made the seam a no-op).

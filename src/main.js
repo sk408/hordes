@@ -29,7 +29,7 @@ function pushItemDrop(d) {
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
 }
-import { Renderer } from './render.js';
+import { Renderer, prologueOkRect } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
@@ -744,6 +744,15 @@ const state = {
   bossBanner: null,  // WAVE-14: boss-arrival overlay
                      // ({ names, verb, title, sub, ttl } | null) — names/verb
                      // drive the two-line fit, title stays the flat legacy form
+  // FIRST-RUN PROLOGUE (owner 2026-09-18): while `prologue` is non-null the
+  // run is INERT — no enemy spawns, the run clock frozen, a tinted potion on
+  // screen ({ t, drunk, potion: { x, y }, bannerIdx }). `prologueRan` marks
+  // the whole run that OPENED with a prologue (the coach-absorb marker);
+  // `prologueShieldT` is the rainbow ring's own lifetime, parallel to
+  // p.invuln so a later portal refresh can never restart the pulse.
+  prologue: null,
+  prologueRan: false,
+  prologueShieldT: 0,
   // EVOLUTION TOKEN banner: seconds the sim is HELD while the first token of a
   // run owns the screen (frame() decays it on wall-clock dt and gates update()).
   bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
@@ -1303,6 +1312,8 @@ function flyingGuard(mode, fn) {
 
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
+  if (state.prologue) return; // FIRST-RUN PROLOGUE: the world is inert until
+                              // the potion is drunk (or the phase bound)
   state.spawnTimer -= dt;
   if (state.spawnTimer > 0) return;
   // WAVE-9: heat speeds the spawn clock (interval / spawnRate).
@@ -2199,11 +2210,25 @@ function wireSynergies(dt, preFire) {
 // ---------- Update ----------
 function update(dt) {
   const p = state.player;
-  state.time += dt;
+  // FIRST-RUN PROLOGUE: the run clock starts at phase END — freezing
+  // state.time here EXCLUDES the prologue from run duration, gold/second and
+  // every pacing figure by construction (they all read state.time). The
+  // phase tick below is the bound: drunk OR t >= MAX_S, never neither.
+  if (state.prologue) {
+    state.prologue.t += dt;
+    if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
+      endPrologue('bound');
+    }
+  } else {
+    state.time += dt;
+  }
   // RUN-STRUCTURE: the clock + the RUN SURVIVED win, checked before any damage
   // this frame can resolve. Reaching the limit is a victory, not a death.
   if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
+  // PROLOGUE rainbow ring lifetime — parallel to p.invuln (it must survive on
+  // its own so a later portal invuln refresh cannot restart the pulse).
+  if (state.prologueShieldT > 0) state.prologueShieldT -= dt;
   // G33: rolling kill rate — one dt-driven EWMA step from the p.kills delta
   // (loot.js). No per-kill work in the death pass, no wall clock anywhere.
   state.killRateEwma = ewmaKillRate(state.killRateEwma,
@@ -3075,6 +3100,13 @@ function update(dt) {
   // Potion drops: auto-pickup within gem radius, but only if not at cap —
   // a full inventory leaves the potion on the ground for later.
   // WAVE-14: pickups announce in the event feed (Sk408 request).
+  // FIRST-RUN PROLOGUE: the prologue potion uses the SAME pickup semantics
+  // (the same radius, the same loop position) — it is just not an inventory
+  // potion; drinking it runs the prologue payoff instead.
+  if (state.prologue && !state.prologue.drunk) {
+    const po = state.prologue.potion;
+    if (Math.hypot(po.x - p.x, po.y - p.y) < pickR) prologueDrink(p);
+  }
   for (let i = state.drops.length - 1; i >= 0; i--) {
     const d = state.drops[i];
     if (Math.hypot(d.x - p.x, d.y - p.y) < pickR) {
@@ -5284,6 +5316,10 @@ function controlUsed(id) {
 // the sim (invariant 1) and never sees an input event (invariant 2).
 function updateOnboarding(dt) {
   const p = state.player;
+  // FIRST-RUN PROLOGUE: the prologue banners OWN the intro — no hint arms or
+  // shows during the phase (the strip still ticks so a fade finishes). The
+  // HintStrip resumes the moment the phase ends; nothing is retired.
+  if (state.prologue) { hintStrip.update(dt); return; }
   // (a) RUN START: movement, one line. Replaces the move + pilot + hud cards.
   // DEVICE (2026-09-16): device-derived — a touch-path player is told to
   // drag, never taught a key they do not have (the line used to say "WASD
@@ -7292,6 +7328,29 @@ function startRun() {
   state.secondWindUsed = false;
   state.time = 0;
   state.spawnTimer = 0;
+  // FIRST-RUN PROLOGUE (owner 2026-09-18, walking version): run #1 of a
+  // FRESH profile — derived from the existing counter
+  // (achievements.totals.runs at startRun; recordRun bumps it at run END, so
+  // it reads 0/absent through run #1) — opens INERT: no spawns, the clock
+  // frozen, a shimmering potion on screen 100wu above the spawn. NO new
+  // saved field. Absent counts as 0: the sanitized save keeps totals SPARSE
+  // ({} on a fresh profile), and a player who has settled even one run
+  // carries runs >= 1 — so absent really does mean "never finished a run".
+  state.prologueShieldT = 0;
+  const prologueRunsPlayed = Number(profile.achievements && profile.achievements.totals &&
+    profile.achievements.totals.runs) || 0;
+  state.prologue = prologueRunsPlayed === 0
+    ? { t: 0, drunk: false,
+        // Side placement (up-RIGHT, clamped on-screen): the straight-up
+        // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
+        // see the POTION_DX comment in config.js.
+        potion: {
+          x: Math.min(C.VIEW_W - 30, Math.max(30, p.x + C.PROLOGUE.POTION_DX)),
+          y: Math.min(C.VIEW_H - 40, Math.max(40, p.y + C.PROLOGUE.POTION_DY)),
+        },
+        bannerIdx: 0, banners: PROLOGUE_BANNERS }
+    : null;
+  state.prologueRan = !!state.prologue;
   state.pendingDrafts = 0;
   state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
@@ -7310,6 +7369,73 @@ function startRun() {
   state.mode = 'playing';
   overlay.style.display = 'none';
   audio.startMusic();
+}
+
+// ---------- FIRST-RUN PROLOGUE (owner 2026-09-18) -----------------------------
+// "It should be a potion seen on screen and the pilot walks towards it. It
+// could be a controlled sequence where no enemies spawn and the timer hasn't
+// started. We can even use this time to have dismissible (with an ok button)
+// banners explaining some of the basics of the game."
+//
+// The banners: at most four, one at a time, each short and plain. They are
+// CANVAS-drawn with an OK hit-region on the canvas pointer path — NON-MODAL
+// by construction (nothing here touches bannerHold, coach or the update
+// gate; the pilot keeps walking while one is up). Copy rule (the player
+// review's ask): state what the thing IS or what you GET. No emojis (house
+// rule). Numbers ride the named constant so the copy can never lie.
+const PROLOGUE_BANNERS = [
+  { title: 'MOVE', body: 'Drag anywhere on the field, or use WASD or the arrow keys. You walk where you point.' },
+  { title: 'POTIONS', body: 'Red refills health, blue refills mana. Walk over one to drink it.' },
+  { title: 'LEVEL UP', body: 'Gems fill the bar at the top of the screen. Each level offers a draft: pick 1 of 3 upgrades.' },
+  { title: 'THE POTION', body: 'The shimmering potion ahead is free. Drink it for ' +
+    C.PROLOGUE.INVULN_S + ' seconds of shielding and a clear field.' },
+];
+
+function prologueBanner() {
+  if (!state.prologue || state.prologue.drunk) return null;
+  return PROLOGUE_BANNERS[state.prologue.bannerIdx] || null;
+}
+
+// OK (button tap or the seam): advance. Never modal, never blocks the walk.
+function prologueOk() {
+  if (state.prologue && !state.prologue.drunk &&
+    state.prologue.bannerIdx < PROLOGUE_BANNERS.length) {
+    state.prologue.bannerIdx++;
+  }
+}
+
+// The drink. Invincibility (named constant), the on-screen clear THROUGH the
+// normal death pass (normal drops, normal credit — hp=0, the enemies loop at
+// the bottom of update() reaps), then the phase ends. The clear fires AT the
+// drink, i.e. BEFORE the shield ends, trivially. On-screen = the visible
+// field at the current zoom plus CLEAR_MARGIN world units — NOT the arena.
+function prologueDrink(p) {
+  if (!state.prologue || state.prologue.drunk) return;
+  state.prologue.drunk = true;
+  p.invuln = Math.max(p.invuln, C.PROLOGUE.INVULN_S);
+  state.prologueShieldT = C.PROLOGUE.INVULN_S;
+  const Z = zoomScale(state.zoom);
+  const m = C.PROLOGUE.CLEAR_MARGIN;
+  const x0 = state.cam.x - m, x1 = state.cam.x + C.VIEW_W / Z + m;
+  const y0 = state.cam.y - m, y1 = state.cam.y + C.VIEW_H / Z + m;
+  for (const e of state.enemies) {
+    if (e.hp > 0 && e.x >= x0 && e.x <= x1 && e.y >= y0 && e.y <= y1) e.hp = 0;
+  }
+  endPrologue('drunk');
+}
+
+// THE BOUND: the phase ends when the potion is drunk OR at MAX_S — stated,
+// tested. A player who never walks, or leaves a banner open, cannot hold the
+// run hostage. ONBOARDING ABSORB: the prologue taught the entry basics, so
+// the stage-2 coachmark flags are marked seen HERE (run #1 never stacks a
+// second onboarding path); REPLAY TOUR in settings re-arms them deliberately
+// and the non-modal HintStrip is untouched (it resumes after the phase).
+function endPrologue(why) {
+  if (!state.prologue) return;
+  state.prologueRan = true;
+  state.prologue = null;
+  for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);
+  toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S' : 'THE RUN BEGINS');
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
@@ -8019,7 +8145,11 @@ const REPEAT_GUARDED = new Set([
 
 window.addEventListener('keydown', (ev) => {
   audioUnlockGesture();   // S2: a keydown IS a user gesture — unlock audio
-  fsBump();               // FULLSCREEN: any key is an interaction — re-show the toggle
+  // FULLSCREEN: a key is an interaction — but an OS auto-REPEAT is not a new
+  // interaction (guard 2026-09-18): at HIDE_S 1.3 a held movement key's
+  // ~30/s repeat tail would re-bump the window forever and pin the transient
+  // chrome on screen during play. One show per interaction, then it fades.
+  if (!ev.repeat) fsBump();
   // While a tour is live the keys are the TOUR's: Right/Enter/Space advance,
   // Left backs, Escape skips (the tour's own document-level handler, which
   // fires before this one). Everything else must NOT reach the game — the
@@ -9441,6 +9571,23 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
+  // FIRST-RUN PROLOGUE: the banner's OK button — hit-test BEFORE the
+  // joystick arms, so the tap that dismisses a banner never steers. Only the
+  // button itself consumes the gesture; every other press during the
+  // prologue is an ordinary steering press (the banners are non-modal).
+  if (state.prologue && prologueBanner()) {
+    const r0 = canvas.getBoundingClientRect();
+    if (r0.width && r0.height) {
+      const vx0 = (ev.clientX - r0.left) / r0.width * C.VIEW_W;
+      const vy0 = (ev.clientY - r0.top) / r0.height * C.VIEW_H;
+      const okR = prologueOkRect();
+      if (vx0 >= okR.x && vx0 <= okR.x + okR.w && vy0 >= okR.y && vy0 <= okR.y + okR.h) {
+        if (ev.preventDefault) ev.preventDefault();
+        prologueOk();
+        return;
+      }
+    }
+  }
   // FLOATING JOYSTICK (owner 2026-09-18): a canvas press in MANUAL play arms
   // the stick AT the touch point. AFTER fsHit above (the fullscreen button's
   // own tap toggles, never steers); the hook itself declines help-mode,
@@ -10345,6 +10492,23 @@ export const __TEST = {
     // Turn every one-time banner off for this process (see `oneTimeBanners`).
     suppressAll: () => { oneTimeBanners = false; },
     enabled: () => oneTimeBanners,
+  },
+  // FIRST-RUN PROLOGUE seam: the live phase, the banner copy/engine, the OK
+  // act (the same function the canvas hit-region calls), the drink payoff,
+  // and the layout the hit-test reads — tests drive the REAL paths.
+  prologue: {
+    get active() { return !!state.prologue; },
+    get ran() { return state.prologueRan; },
+    get potion() { return state.prologue ? { ...state.prologue.potion } : null; },
+    get t() { return state.prologue ? state.prologue.t : null; },
+    get bannerIdx() { return state.prologue ? state.prologue.bannerIdx : null; },
+    banners: PROLOGUE_BANNERS,
+    banner: prologueBanner,
+    ok: prologueOk,
+    okRect: prologueOkRect,
+    drink: () => prologueDrink(state.player),
+    end: endPrologue,
+    get shieldT() { return state.prologueShieldT; },
   },
   setPilotMode: swapPilotMode, pilotInput,
   // G31: the persistence seam — the real storage object plus the real

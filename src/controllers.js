@@ -283,6 +283,24 @@ export class AutoPilotController {
       target,
     });
 
+    // FIRST-RUN PROLOGUE (owner 2026-09-18): the auto pilot's FIRST ACT is
+    // the walk — straight to the prologue potion. It outranks everything
+    // below by necessity: no enemies exist (spawn-suppressed), no gems have
+    // dropped, and no portal can open, so every other branch is inert anyway
+    // during the phase. The potion sits 100wu above the spawn on flat floor
+    // (inside the hollow), so the direct line is always walkable — no relief
+    // routing needed. Pickup runs in main.js's drop loop (same pickR as an
+    // ordinary potion).
+    if (state.prologue && !state.prologue.drunk) {
+      const dx = state.prologue.potion.x - p.x;
+      const dy = state.prologue.potion.y - p.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) {
+        this.act = 'PROLOGUE';
+        return put(dx / len, dy / len);
+      }
+    }
+
     // Threat response: flee the nearest enemy when it crosses the stance's
     // kite line. GREEDY keeps a foot pointed at the loot even while fleeing.
     // A1: this reads `nearest` and its OWN kite radii (enterR2/exitR2 below) and
