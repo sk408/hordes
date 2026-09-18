@@ -1702,12 +1702,11 @@ function detonateMineAt(mine) {
 }
 
 // Superconductor (ZAP+BEAM): each fired chain zap throws an EXTRA fork chain
-// of zapExtraForks jumps — a supplemental bolt walking nearest-first from the
-// player, damage continuing the level-falloff curve past the base jump count.
+// of zapExtraForks hops — a supplemental bolt walking nearest-first from the
+// player, damage continuing the falloff curve past the base fire's depth.
 function synergyZapFork(zw) {
   const extra = syn('zapExtraForks') || 0;
   const p = state.player;
-  const P = weaponLevelParams('ZAP', zw.level);
   const baseDmg = synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT);
   const points = [{ x: p.x, y: p.y }];
   const hit = new Set();
@@ -1716,7 +1715,10 @@ function synergyZapFork(zw) {
     const tgt = nearestFoe(from.x, from.y, hit);
     if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
     hit.add(tgt);
-    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, (P.jumps || WEAPONS.ZAP.JUMPS) + 1 + k) *
+    // CHAIN ZAP REWORK (msg_01M2RENZ): the base fire now spends COUNT-1 hop
+    // depths, so the supplemental fork's falloff continues past that depth
+    // (the old (P.jumps || JUMPS)+1+k exponent read the retired ladder field).
+    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, WEAPONS.ZAP.COUNT + k) *
       directHitMult(state, tgt);   // G21 GLACIER (direct hit)
     tgt.flash = 0.08;
     onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit

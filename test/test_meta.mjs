@@ -151,8 +151,12 @@ console.log('PROGRESSION LADDER:');
   // fullBuyCost 4,490,433 -> 69,596,033g, so the measured-income crossing is
   // 92-94 runs (~46-47h). The invariant is unchanged: the zero-purchase
   // analytic projection can no longer cross the catalogue (checked below).
-  ok(crossRun !== null && crossRun >= 92 && crossRun <= 94,
-     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 92-94 runs post-breadth)`);
+  // CHAIN ZAP RETARGET (2026-09-17, owner msg_01M2RENZ): the Storm Conduit kit
+  // row ('zapchain', full-buy 3,771,020g = 5.0 measured runs = 2.50h) moved
+  // fullBuyCost 69,596,033 -> 73,367,053g, crossing 93 -> 98 runs (~49h). Old
+  // band 92-94; new band 97-99. The invariant is unchanged.
+  ok(crossRun !== null && crossRun >= 97 && crossRun <= 99,
+     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 97-99 runs post-zapchain)`);
 
   // ARCADE PASS sits beyond full-buy (G17 1b: 4,200,000g = 5.6 measured runs,
   // and the pass alone costs less than the luck ladder it follows home).
@@ -197,8 +201,10 @@ console.log('EXPANSION LINES:');
   // ESCAPE") joins the classic stat lines. The invariant this fixture guards is
   // "one row per stat line, nothing silently added or dropped", so the number
   // tracks the catalogue rather than being deleted or turned into a >= check.
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 34,
-     'thirty-four stat lines total (18 classic + 16 G17-slice-2 breadth rows)');
+  // RETARGETED 2026-09-17 (chain zap rework, owner msg_01M2RENZ): 34 -> 35 —
+  // the Storm Conduit kit row ('zapchain') joins the flat stat lines.
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 35,
+     'thirty-five stat lines total (18 classic + 16 G17-slice-2 breadth + 1 chain-zap kit row)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
@@ -759,8 +765,10 @@ console.log('APEX TIER (G25):');
   // ('escapeskip', owner directive 2026-09-14) joined SHOP_UPGRADES with the
   // escape slice. The pin's JOB is unchanged: apex rows must never leak into
   // the normal catalogue, so the count tracks the pre-apex rows exactly.
-  ok(SHOP_UPGRADES.length === 46,
-     `SHOP_UPGRADES holds exactly its 46 pre-apex rows (30 classic + 16 breadth; got ${SHOP_UPGRADES.length})`);
+  // RETARGETED 2026-09-17 (chain zap rework, owner msg_01M2RENZ): 46 -> 47 —
+  // the Storm Conduit kit row ('zapchain') joined SHOP_UPGRADES. Same JOB.
+  ok(SHOP_UPGRADES.length === 47,
+     `SHOP_UPGRADES holds exactly its 47 pre-apex rows (30 classic + 16 breadth + 1 zapchain; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');
@@ -798,7 +806,11 @@ console.log('APEX TIER (G25):');
     cum3 += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum3 >= fullBuyCost2) { crossRun3 = n; break; }
   }
-  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 92 && crossRun3 <= 94,
+  // CHAIN ZAP RETARGET (2026-09-17, owner msg_01M2RENZ): the apex partition is
+  // untouched by 'zapchain' (it is not in MID/TOP tier ids), but the row rides
+  // SHOP_UPGRADES so the apex-free crossing moved 93 -> 98 with its full-buy
+  // (3,771,020g). Old band 92-94; new band 97-99. The pin's JOB is unchanged.
+  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 97 && crossRun3 <= 99,
      `the apex-free completion crossing is unmoved (${crossRun3} runs x 754,689g at the measured tier-3 income = ${(crossRun3 * 0.5).toFixed(1)}h)`);
 
   // -- pricing: G17 slice 1b RETARGET of the calibration frame --

@@ -112,7 +112,11 @@ console.log('ZAP:');
 
   WEAPON_TYPES.ZAP.update(st, w, 0.016);
   ok(primary.hp < 100, 'zap hits the primary target');
-  ok(c1.hp < 100 && c2.hp < 100 && c3.hp < 100, 'zap chains through neighbors');
+  // CHAIN ZAP REWORK (msg_01M2RENZ, 2026-09-17): base fire is EXACTLY 3
+  // TOTAL enemies (was primary + 3 jumps = 4). c3 — the old 3rd jump target,
+  // still well inside range — is now the untouched witness.
+  ok(c1.hp < 100 && c2.hp < 100 && c3.hp === 100,
+     'zap chains to exactly 2 neighbors (base 3 total, owner reduction)');
   ok(tooFar.hp === 100, 'zap never reaches an out-of-range enemy');
 
   // Damage falloff (measured off the FIRST fire, before any refire).
@@ -121,16 +125,16 @@ console.log('ZAP:');
   ok(dPrimary === 10 && dC1 === 10 * WEAPONS.ZAP.FALLOFF,
      'zap damage falls off per jump');
 
-  // Exactly 3 jumps: a 4th in-range candidate stays untouched.
+  // The count is 3 on every refire too (no cap creep).
   const extra = mkEnemy(240, 120);
   st.enemies.push(extra);
   const z2 = makeWeapon('ZAP');
   for (let i = 0; i < 100; i++) WEAPON_TYPES.ZAP.update(st, z2, 0.016);  // cd expires, refires
-  ok(extra.hp === 100, 'zap chains to exactly 3 neighbors (4th untouched)');
+  ok(extra.hp === 100, 'zap never touches the 4th enemy (base 3 total, every fire)');
 
   const fx = st.effects.filter(f => f.kind === 'zap');
-  ok(fx.length >= 1 && fx[0].points.length === 5,
-     'zap pushes a polyline effect (player + 4 struck enemies)');
+  ok(fx.length >= 1 && fx[0].points.length === 4,
+     'zap pushes a polyline effect (player + 3 struck enemies)');
 }
 
 // ---------- NOVA_PULSE ----------
@@ -188,9 +192,15 @@ console.log('LEVELS:');
   ok(b5.speedMult === 1 + 0.12 * 4, 'boomerang: +12% flight speed per level');
   ok(b5.dmgMult === 1 + 0.2 * 4, 'boomerang: +20% damage per level');
 
-  // ZAP: chains.
-  ok(weaponLevelParams('ZAP', 1).jumps === 3 && weaponLevelParams('ZAP', 8).jumps === 7,
-     'zap: +1 chain jump every even level (3 -> 7)');
+  // ZAP: chains. CHAIN ZAP REWORK (msg_01M2RENZ, 2026-09-17): the ladder's
+  // +1-jump-per-even-level growth is RETIRED — count growth moved to the
+  // 'zapchain' shop row (pinned in test_chain_zap.mjs: base 3 at EVERY weapon
+  // level). The ladder is damage-only now; this pin states the new contract,
+  // it does not silently drop the old one.
+  ok(weaponLevelParams('ZAP', 1).jumps === undefined &&
+     weaponLevelParams('ZAP', 8).jumps === undefined &&
+     weaponLevelParams('ZAP', 8).dmgMult === 1 + 0.15 * 7,
+     'zap: ladder is damage-only (count growth retired to the shop)');
 
   // NOVA: radius.
   ok(weaponLevelParams('NOVA_PULSE', 3).radius === WEAPONS.NOVA_PULSE.RADIUS + 12,
@@ -204,8 +214,9 @@ console.log('LEVELS:');
      `levelUpWeapon refuses past max (${WEAPON_MAX_LEVEL})`);
   ok(levelUpWeapon(null) === false, 'levelUpWeapon tolerates a null weapon');
 
-  // describeWeaponLevel: card text for the draft UI.
-  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +1 chain (total 4 jumps), +15% damage`,
+  // describeWeaponLevel: card text for the draft UI. CHAIN ZAP REWORK
+  // (msg_01M2RENZ): the ladder is damage-only — no '+1 chain' line anymore.
+  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +15% damage`,
      'describeWeaponLevel returns card text');
   ok(describeWeaponLevel('NOPE', 2) === null, 'describeWeaponLevel: unknown id -> null');
   ok(describeWeaponLevel('ZAP', 99).includes('MAX'), 'describeWeaponLevel: past cap -> MAX');
@@ -245,7 +256,9 @@ console.log('LEVEL EFFECTS:');
   ok(stN1.enemies[0].hp === 100, 'nova Lv1 misses an enemy at 75px');
   ok(stN2.enemies[0].hp < 100, 'nova Lv3 reaches the enemy at 75px');
 
-  // Zap Lv2 chains to a 4th neighbor that Lv1 leaves untouched.
+  // Zap Lv2 damage ladder: CHAIN ZAP REWORK (msg_01M2RENZ) retired the
+  // +1-jump-per-even-level growth (count growth is the 'zapchain' shop row's
+  // job), so Lv2 hits the SAME 3 enemies — but measurably harder.
   const mkZap = () => {
     const st = stubState();
     st.enemies.push(
@@ -258,8 +271,12 @@ console.log('LEVEL EFFECTS:');
   z2.level = 2;
   WEAPON_TYPES.ZAP.update(z1s, z1, 0.016);
   WEAPON_TYPES.ZAP.update(z2s, z2, 0.016);
-  ok(z1s.enemies[4].hp === 100, 'zap Lv1 leaves the 5th enemy untouched');
-  ok(z2s.enemies[4].hp < 100, 'zap Lv2 chains one jump further');
+  ok(z1s.enemies[4].hp === 100 && z2s.enemies[4].hp === 100,
+     'zap Lv1 AND Lv2 leave the 5th enemy untouched (count retired to the shop)');
+  ok(z2s.enemies[2].hp < 100 && z2s.enemies[3].hp === 100,
+     'zap Lv2 still hits exactly 3 total (primary + 2 hops)');
+  ok(z2s.enemies[0].hp < z1s.enemies[0].hp,
+     'zap Lv2 hits harder (+15% damage per level)');
 
   // Boomerang Lv5: pierce field on the thrown body reflects the table.
   const stB = stubState();

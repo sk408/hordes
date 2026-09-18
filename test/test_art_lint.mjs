@@ -82,6 +82,9 @@ const EXPECTED_SHOP = [
   // V1 ESCAPE (owner directive 2026-09-14): the paid-skip shop row rides the
   // same slice as the mode itself — RETARGET, not weaken (one icon per row).
   'escapeskip',
+  // CHAIN ZAP REWORK (owner msg_01M2RENZ, 2026-09-17): the Storm Conduit row
+  // gets its own authored icon — never the fallback.
+  'zapchain',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',

@@ -601,6 +601,24 @@ export const SHOP_UPGRADES = [
   // Doubles as an economy sink aimed at veterans who outgrew the beat.
   { id: 'escapeskip', name: 'Escape Writ', desc: 'Skip the escape sequence AND still collect its payout (one-time).',
     baseCost: 100000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
+  // ---- CHAIN ZAP REWORK (owner msg_01M2RENZXZR6MRT4Y5F2RQFRJ7, 2026-09-17):
+  // "reduce it to 3 to start with a buyable to improve it? Could be
+  // technically uncapped buyable but with a limit on range". Each level does
+  // TWO things, both in the desc: arms the UNCAPPED chain count (bounded only
+  // by WEAPONS.ZAP.MAX_HOPS + the visited set — no per-level count numbers
+  // anywhere) and widens the hop range by RANGE_PER_LEVEL (weapons.js). The
+  // FIRST level is the big step: 3 enemies -> uncapped-with-reach; the rest
+  // are reach. perLevel 0 — the row owns nothing in the additive stat field
+  // contract; applyMetaBonuses publishes the LEVEL as stats.zapChain and
+  // updateZap (weapons.js) is the one consumer. Priced between Escape Writ
+  // and the Arcade Pass: full-buy = 200,000 x (1+1.7+2.89+4.913+8.352) =
+  // 3,771,020g = 2.50h at the measured end-game rate (1,509,378g/h), inside
+  // the ~3h single-item cap. Worthless without ZAP unlocked — the desc says
+  // so; the row is a Witch-kit line, priced for a player who already owns
+  // the gun (600,000g).
+  { id: 'zapchain', name: 'Storm Conduit',
+    desc: 'Chain Zap: UNCAP the chain count (range-limited) and +20 hop range per level. Needs Chain Zap.',
+    baseCost: 200000, costGrowth: 1.7, maxLevel: 5, perLevel: 0 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
@@ -1123,6 +1141,11 @@ export function applyMetaBonuses(stats, purchased) {
     // A1 engagement radius (Rangefinder). ADDITIVE distance, and the value
     // published to config.js above is this exact expression — one definition.
     focusRange,
+    // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the Storm Conduit
+    // LEVEL, published as a level (not a stat amount — the row's effect is
+    // conditional, arming the uncapped count, so no additive field fits).
+    // updateZap (weapons.js) is the one consumer; escapeskip-style perLevel 0.
+    zapChain: lvl('zapchain'),
   };
 }
 

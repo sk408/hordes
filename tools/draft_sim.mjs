@@ -353,9 +353,11 @@ export function weaponDps(type, level, player, P) {
   }
   let bodies = 1;
   if (type === 'ZAP') {
-    // Primary + jumps with the live per-jump falloff — derived, not tuned.
+    // CHAIN ZAP REWORK (msg_01M2RENZ): the base fire is COUNT total enemies
+    // with per-depth falloff — derived, not tuned. (A bought 'zapchain' row
+    // raises this, but the sim models base-kit builds.)
     let sum = 0, f = 1;
-    for (let j = 0; j <= (lp.jumps || def.JUMPS); j++) { sum += f; f *= def.FALLOFF; }
+    for (let j = 0; j < def.COUNT; j++) { sum += f; f *= def.FALLOFF; }
     bodies = sum;
   } else if (type === 'NOVA_PULSE') bodies = SIM_TUNING.NOVA_HIT;
   else if (type === 'SCYTHE') bodies = ((lp.arc || def.ARC) / (2 * Math.PI)) * SIM_TUNING.SCYTHE_RING;

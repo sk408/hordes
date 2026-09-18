@@ -26,7 +26,10 @@ const Q = C.SKILLS.CHAIN_REACTION, ZAP = WEAPONS.ZAP, FN = C.SKILLS.FROST_NOVA;
 //    move (the gun, FROST_NOVA, the draftable card, the class rows).
 // ---------------------------------------------------------------------------
 s.check('the Q exceeds the gun on jumps and reach, with GENTLER falloff', () => {
-  if (!(Q.JUMPS > ZAP.JUMPS)) throw new Error('jumps ' + Q.JUMPS + ' <= gun ' + ZAP.JUMPS);
+  // CHAIN ZAP REWORK (msg_01M2RENZ): the gun's JUMPS field is gone — its base
+  // fire is now COUNT total enemies (3), so the Q-vs-gun comparison reads
+  // COUNT. The Q is untouched (6 jumps vs the gun's 3 total).
+  if (!(Q.JUMPS > ZAP.COUNT)) throw new Error('jumps ' + Q.JUMPS + ' <= gun count ' + ZAP.COUNT);
   if (!(Q.CHAIN_RANGE > ZAP.CHAIN_RANGE)) throw new Error('range ' + Q.CHAIN_RANGE + ' <= gun ' + ZAP.CHAIN_RANGE);
   // GENTLER falloff = damage decays SLOWER per jump: a HIGHER multiplier,
   // still below 1 (it must decay).
@@ -38,7 +41,12 @@ s.check('the Q exceeds the gun on jumps and reach, with GENTLER falloff', () => 
 });
 
 s.check('WEAPONS.ZAP is untouched (the shipped literals, pinned)', () => {
-  const want = { NAME: 'Chain Zap', COOLDOWN: 1.4, DAMAGE_MULT: 1.0, JUMPS: 3, CHAIN_RANGE: 90, FALLOFF: 0.75, MANA: 4 };
+  // CHAIN ZAP REWORK (msg_01M2RENZ): JUMPS: 3 (3 EXTRA, 4 total) became
+  // COUNT: 3 (3 TOTAL) — the owner's reduction — plus the buyable's
+  // RANGE_PER_LEVEL and the MAX_HOPS iteration bound. The skill constants
+  // this file pins are untouched.
+  const want = { NAME: 'Chain Zap', COOLDOWN: 1.4, DAMAGE_MULT: 1.0, COUNT: 3,
+    CHAIN_RANGE: 90, RANGE_PER_LEVEL: 20, MAX_HOPS: 64, FALLOFF: 0.75, MANA: 4 };
   for (const k of Object.keys(want)) {
     if (ZAP[k] !== want[k]) throw new Error('ZAP.' + k + ' = ' + ZAP[k] + ' (pinned ' + want[k] + ')');
   }

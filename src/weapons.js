@@ -81,9 +81,34 @@ export const WEAPONS = {
     NAME: 'Chain Zap',
     COOLDOWN: 1.4,
     DAMAGE_MULT: 1.0,
-    JUMPS: 3,           // extra enemies hit after the primary target
-    CHAIN_RANGE: 90,    // max jump distance between chained enemies
-    FALLOFF: 0.75,      // damage multiplier per jump
+    // CHAIN ZAP REWORK (owner msg_01M2RENZXZR6MRT4Y5F2RQFRJ7, 2026-09-17):
+    // "How many enemies does chain zap currently chain? We should reduce it
+    // to 3 to start with a buyable to improve it? Could be technically
+    // uncapped buyable but with a limit on range."
+    //   COUNT            TOTAL enemies per fire at zero shop levels (primary
+    //                    included): 4 -> 3. The old JUMPS: 3 meant 3 EXTRA
+    //                    after the primary (4 total) — the reduction is real.
+    //   RANGE_PER_LEVEL  each 'zapchain' shop level (meta.js, Storm Conduit)
+    //                    widens the hop range by this much. A level ALSO arms
+    //                    the uncapped count (below) — one row, two effects,
+    //                    both stated in its shop description.
+    //   MAX_HOPS         the HARD iteration bound. With the buyable armed the
+    //                    count is TECHNICALLY UNCAPPED (no per-level count
+    //                    numbers anywhere) but the walk can never exceed this
+    //                    many hitSet additions — the loop's second guard
+    //                    after the visited set itself, so termination is
+    //                    proven twice over: every continuing iteration adds
+    //                    >=1 to hitSet AND consumes from the hit budget.
+    // WEAPON LEVELS no longer grow the count (the ladder's +1 jump / even
+    // level is RETIRED, disclosed at the WEAPON_LEVELS table below): count
+    // growth is the SHOP's job now. Falloff continues per hop depth
+    // (0.75^depth — by depth ~17 the tail is under 1% damage; the long
+    // chains are for reach, not deep-wallet damage).
+    COUNT: 3,           // total enemies per fire (primary included), no shop levels
+    CHAIN_RANGE: 90,    // max jump distance between chained enemies (base)
+    RANGE_PER_LEVEL: 20,// hop-range growth per 'zapchain' shop level
+    MAX_HOPS: 64,       // hard iteration bound on the uncapped walk
+    FALLOFF: 0.75,      // damage multiplier per hop depth
     // MANA-COST WEAPON (Sk408: "Chain Zap seemed pretty powerful ... maybe
     // should use mana"). ZAP is a spell, not a swing — it hits the primary plus
     // every jump for a 1.4s cooldown, which is a lot of damage for no cost —
@@ -429,9 +454,17 @@ export function weaponManaCost(id, state) {
 // bolt strikes the 2nd-nearest enemy and chains with the same rules.
 function updateZap(state, weapon, dt) {
   const W = WEAPONS.ZAP;
-  const P = weaponLevelParams('ZAP', weapon.level);
-  const jumps = P.jumps || W.JUMPS;
+  const P = weaponLevelParams('ZAP', weapon.level);   // dmgMult only (count growth retired)
   const p = state.player;
+  // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the shop level (meta.js
+  // 'zapchain', published to stats by applyMetaBonuses) does TWO things —
+  // widens the hop range by RANGE_PER_LEVEL per level and ARMS the uncapped
+  // count. At zero levels the fire is exactly COUNT total enemies (primary
+  // included); at any level the walk runs until no unvisited enemy stands
+  // inside the (raised) hop range, bounded by MAX_HOPS.
+  const chainLvl = p.stats.zapChain || 0;
+  const hopRange = W.CHAIN_RANGE + W.RANGE_PER_LEVEL * chainLvl;
+  const maxHits = chainLvl > 0 ? W.MAX_HOPS : W.COUNT;
   const forkPerJump = evoHas(weapon, 'chainZap') ? 2 : 1;
   // HARD GATE (owner 2026-09-17): the cost is read once, from the ONE seam.
   // The gate sits AFTER the target test (an empty field never burns a charge)
@@ -450,19 +483,32 @@ function updateZap(state, weapon, dt) {
   const points = [{ x: p.x, y: p.y }];
   const hitSet = new Set([primary]);
 
-  // One bolt = primary strike + a (possibly forking) chain walk.
+  // One bolt = primary strike + a (possibly forking) chain walk. The walk
+  // terminates on THREE independent guards, in order: the hit budget
+  // (maxHits: W.COUNT at zero shop levels, W.MAX_HOPS once the buyable arms
+  // the uncapped count — shared across both bolts so forkBolt cannot double
+  // it), the hop range (no unvisited enemy within hopRange of the frontier),
+  // and the visited set (nearestEnemy never returns a hitSet member, so the
+  // walk can never loop). Every continuing iteration adds >=1 to hitSet AND
+  // consumes from the budget: both counters strictly decrease, so the loop
+  // provably terminates whatever the enemy field looks like.
+  let hitsLeft = maxHits;
   const bolt = (head, origin) => {
     points.push(origin ? { x: origin.x, y: origin.y } : { x: head.x, y: head.y });
     hurt(state, head, baseDmg * critRoll(p, weapon));
+    hitsLeft--;
     let frontier = [head];
-    for (let j = 0; j < jumps; j++) {
+    let depth = 0;
+    while (hitsLeft > 0) {
       const next = [];
       for (const from of frontier) {
         for (let f = 0; f < forkPerJump; f++) {
+          if (hitsLeft <= 0) break;
           const tgt = nearestEnemy(state, from.x, from.y, hitSet);
-          if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > W.CHAIN_RANGE) break;
-          hurt(state, tgt, baseDmg * critRoll(p, weapon) * Math.pow(W.FALLOFF, j + 1));
+          if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > hopRange) break;
+          hurt(state, tgt, baseDmg * critRoll(p, weapon) * Math.pow(W.FALLOFF, depth + 1));
           hitSet.add(tgt);
+          hitsLeft--;
           // Polyline: append the victim; on a FORK, re-append the branch
           // node first so each fork draws its own from->to segment.
           if (f > 0) points.push({ x: from.x, y: from.y });
@@ -470,14 +516,15 @@ function updateZap(state, weapon, dt) {
           next.push(tgt);
         }
       }
+      if (next.length === 0) break;
       frontier = next;
-      if (frontier.length === 0) break;
+      depth++;
     }
   };
   bolt(primary);
   if (evoHas(weapon, 'forkBolt')) {
     const second = nearestEnemy(state, p.x, p.y, hitSet);
-    if (second && Math.hypot(second.x - p.x, second.y - p.y) <= W.CHAIN_RANGE) bolt(second, p);
+    if (second && Math.hypot(second.x - p.x, second.y - p.y) <= hopRange) bolt(second, p);
   }
 
   state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15 });
@@ -864,13 +911,16 @@ export const WEAPON_LEVELS = {
     return L % 2 === 1 ? '+20% damage, +12% speed, +1 pierce'
                        : '+20% damage, +12% speed';
   }),
-  // +1 chain jump every even level, +15% damage every level past 1.
+  // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the +1 chain jump per
+  // even level is RETIRED — count growth is the 'zapchain' SHOP row's job
+  // (meta.js Storm Conduit: uncapped count + hop range per level). The ladder
+  // is damage-only now, so a level-8 zap still hits exactly COUNT=3 enemies
+  // per fire unless the shop row is bought. This is a real nerf to the old
+  // L8 ladder (8 enemies -> 3) and is reported as such, not compensated here.
   ZAP: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.jumps = WEAPONS.ZAP.JUMPS + Math.floor(L / 2);
     c.dmgMult = 1 + 0.15 * (L - 1);
     if (L === 1) return 'Base chain zap';
-    return L % 2 === 0 ? `+1 chain (total ${c.jumps} jumps), +15% damage`
-                       : '+15% damage';
+    return '+15% damage';
   }),
   // +6 radius and +15% damage per level past 1.
   NOVA_PULSE: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {

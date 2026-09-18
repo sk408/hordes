@@ -209,6 +209,8 @@ violation of §0.
 | ENEMY.SPAWN_INTERVAL | 1.35 | src/config.js:135 | ambient pressure budget (floor 0.25s at t≥137.5) | WAVE-20 tuning (1.05 was killing half the cohort pre-boss) |
 | ESCALATION.BOSS.HP_MULT | 500 + 60/wave | src/config.js:831-832 | the wave boss is the wall (5-8 of 10 runs die there) | WAVE-20 (60/30 -> 260/75 -> 500/60 measured ladder) |
 | ZAP mana gate | HARD: no fire at mana < cost, cd held at 0 | src/weapons.js:434-441 | owner 2026-09-17: "a mana-consuming weapon fires when mana is insufficient, including at exactly zero" — the dry 0.5x bolt was masking the mana budget | 2026-09-17 chain-gate task (was N1a soft gate, MANA_DRY_MULT 0.5) |
+| ZAP base chain count | COUNT 3 TOTAL enemies/fire (was JUMPS 3 = 4 total); weapon ladder is damage-only now | src/weapons.js:84-110 | owner msg_01M2RENZ: "reduce it to 3 to start with a buyable" — kill rate is run value | 2026-09-17 chain-zap rework (also retired the ladder's +1 jump/even level: L8 was 8 enemies, now 3 — disclosed nerf) |
+| zapchain row (Storm Conduit) | base 200,000, growth 1.7, max 5 (full-buy 3,771,020g = 2.50h) | src/meta.js SHOP_UPGRADES 'zapchain' | owner msg_01M2RENZ: "technically uncapped buyable but with a limit on range" — L1 arms the uncapped count + 20px hop range/level (MAX_HOPS 64 hard bound) | 2026-09-17 chain-zap rework |
 | boomBlast mana gate | HARD: null at mana < 6 (no blast, no spend) | src/rewrites.js:433-447 | same directive — the ONE detonation (CHAIN REACTION card, Witch Q, STORMREAPER) | 2026-09-17 same task (was dry fallback 0.6 radius / 0.4 damage) |
 
 OPEN items (owner decision pending — guards pin, do not fix):

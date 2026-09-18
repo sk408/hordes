@@ -91,13 +91,17 @@ console.log('G17 REPRICE — CATALOGUE HOURS vs THE 60h OWNER TARGET:');
   // the pin is now the LANDED total: the catalogue must hold 60-64h at the
   // measured rate, so any accidental price cut (or an uncoordinated further
   // inflation) fails this line.
+  // CHAIN ZAP RETARGET (2026-09-17, owner msg_01M2RENZ): the Storm Conduit kit
+  // row ('zapchain', full-buy 3,771,020g = 2.50h) added owner-directed content
+  // and moved the landed total 62.8 -> 65.3h. Old band 60-64h; new band 60-66h.
+  // The pin's JOB is unchanged (bounds accidental reprices BOTH ways).
   const SLICE2_SHORTFALL_H = 0;      // G17 slice 2 landed: breadth closed the gap
   const L = ledger();
   const hours = L.total / L.rate;
   ok(hours + SLICE2_SHORTFALL_H >= 60,
      `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h >= the 60h owner target`);
-  ok(hours >= 60 && hours <= 64,
-     `landed catalogue is ${hours.toFixed(1)}h (band 60-64h post-breadth; an accidental reprice fails this line)`);
+  ok(hours >= 60 && hours <= 66,
+     `landed catalogue is ${hours.toFixed(1)}h (band 60-66h post-zapchain; an accidental reprice fails this line)`);
   const capCeiling = (singleItemCapGold() * L.rows.length) / L.rate;
   ok(60 < capCeiling,
      `60h is reachable by breadth alone: ${L.rows.length} items x 3h cap = ${capCeiling.toFixed(1)}h ceiling — no trophy inflation needed`);

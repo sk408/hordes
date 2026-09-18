@@ -30,7 +30,9 @@ import { WEAPON_NAMES } from './weapons.js';
 // flag docs (per entry, what hb1 wires):
 //   orbitVolley        volley projectiles orbit the player once (~1 rev) before
 //                      flying out along their aim vector
-//   zapExtraForks      +N extra fork jumps on chain zap (stacks with level jumps)
+//   zapExtraForks      +N extra fork hops on chain zap (its own bolt; the
+//                      weapon ladder no longer grows the count — CHAIN ZAP
+//                      REWORK msg_01M2RENZ, count growth is the shop's)
 //   boomerangHoming    boomerang return leg homes weakly (seeker turn rate * 0.5)
 //   novaDetonatesMines nova pulse blasts detonate every mine inside the radius
 //   scytheArcZap       each landed scythe sweep zaps the nearest enemy from the
