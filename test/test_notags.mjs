@@ -13,15 +13,17 @@
 //      TO TITLE, after a RESTART, and across MODE CHANGES, no tag element
 //      exists in the document — the reported persistence fault, now
 //      structurally impossible (the layer that created the elements is gone);
-//   3. NO RESURRECTION: updateOnboarding keeps ticking through all of it and
-//      cannot re-create a label (its arming — TAG_SOURCES / maybeTags /
-//      objTags — is deleted from the shipped source, pinned here);
+//   3. NO RESURRECTION: the frame loop keeps ticking through all of it and
+//      nothing re-creates a label (the arming — TAG_SOURCES / maybeTags /
+//      objTags — is deleted from the shipped source, pinned here; and
+//      src/onboarding.js, the module the tags lived in, is itself DELETED
+//      with the hint layer, ONBOARDING RETIREMENT 2026-09-18);
 //   4. THE FIELD reference page SURVIVES: object knowledge stays documented
 //      (chests, portal, arches, shrines) — that page is the single teaching
 //      surface for objects now.
 // Run: node test/test_notags.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 
 const s = suite('test_notags');
@@ -58,9 +60,11 @@ st.portal = { x: st.player.x + 80, y: st.player.y, age: 0 };       // in view
   s.check('no object label EVER mounts during play (chest+portal present, 12s)', () => {
     assert.equal(mounted, 0, mounted + ' tag-element frames mounted');
   });
-  // updateOnboarding keeps ticking through the objects being there: the
-  // arming itself is gone, not merely the timing.
-  s.check('updateOnboarding cannot re-create a label (objects present, strip live)', () => {
+  // ONBOARDING RETIREMENT 2026-09-18 retarget: updateOnboarding no longer
+  // exists (the hint layer is deleted). The surviving guarantee: the frame
+  // loop keeps ticking with the objects present and STILL never mounts a
+  // tag element.
+  s.check('the frame loop keeps ticking with objects present and still never mounts a tag', () => {
     assert.equal(tagEls().length, 0);
     assert.ok(st.time > 10, 'the sim ran the whole leg');
   });
@@ -107,8 +111,9 @@ st.portal = { x: st.player.x + 80, y: st.player.y, age: 0 };       // in view
     assert.equal(tagEls().length, 0, tagEls().map(e => e.id));
   });
   // MODE CHANGES: pause (settings) and portal entry (intermission) — real,
-  // deterministic paths; the frame loop ticks updateOnboarding throughout
-  // and nothing mounts anywhere.
+  // deterministic paths; the frame loop ticks throughout and nothing mounts
+  // anywhere (ONBOARDING RETIREMENT 2026-09-18: the updateOnboarding tick is
+  // gone with the layer — the pin is the loop itself staying clean).
   T.showTitle();
   leg();
   const modes = new Set([st.mode]);
@@ -140,9 +145,14 @@ s.check('the shipped source carries no object-label machinery (gone, not flagged
   for (const sym of ['objTags', 'TAG_SOURCES', 'maybeTags', 'tagSeenRun']) {
     assert.ok(!main.includes(sym), 'main.js still references ' + sym);
   }
-  const ob = readFileSync(new URL('../src/onboarding.js', import.meta.url), 'utf8');
-  assert.ok(!ob.includes('class ObjectTags'), 'the ObjectTags class still exists');
-  assert.ok(!ob.includes('TAG_FADE_S'), 'the tag fade timer still exists');
+  // ONBOARDING RETIREMENT 2026-09-18: src/onboarding.js — the module the
+  // ObjectTags class and TAG_FADE_S lived in — is DELETED with the hint
+  // layer. The pin inverts: the file must NOT exist (and therefore no tag
+  // engine can ever come back through it).
+  assert.equal(existsSync(new URL('../src/onboarding.js', import.meta.url)), false,
+    'src/onboarding.js is back on disk');
+  assert.ok(!/\bfrom\s+['"][^'"]*\bonboarding\.js['"]/.test(main),
+    'main.js still imports onboarding.js');
 });
 
 // ---- 4. THE FIELD reference page survives -----------------------------------------

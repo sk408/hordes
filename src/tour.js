@@ -13,8 +13,11 @@
 //     element matters. main.js pauses the sim while a coachmark is up.
 //
 // MECHANICS CONTRACT (all doc requirements):
-//   - dim the screen, spotlight ONE real element at a time; the spotlight
-//     TRACKS the element (interval relayout — if the UI moves, it moves)
+//   - dim the screen, spotlight ONE real element at a time; the mark FORMS
+//     IN PLACE (owner 2026-09-18: "they keep moving themselves onto the
+//     screen instead of forming in the right spot") — placed ONCE when the
+//     step shows, never repositioned while it lives; the interval only
+//     watches for the target VANISHING (its screen closed -> advance)
 //   - one-line description per step
 //   - advance ONLY on the tip card's own controls: NEXT / GOT IT button,
 //     or Right / Enter / Space; Left backs up. A tap on the SHADE is INERT
@@ -34,9 +37,11 @@
 // Retired with the owner's explicit decision: stage1 (the 7 title cards),
 // the 4 intermission cards, and the 10 in-run timer/event cards (hud, pilot,
 // focus, stance, move, skills, potions, stats, cog, edge, chest, portal,
-// arch, shrine) — replaced by the non-pausing hint/tag layer in
-// src/onboarding.js and the self-labelling screens themselves. The old
-// storage flags a browser may still hold are simply never read again.
+// arch, shrine). The non-pausing hint layer that replaced them
+// (src/onboarding.js) was itself RETIRED 2026-09-18 — a tutorial belongs
+// before gameplay; the HOW TO PLAY manual + the first-run prologue carry
+// the material now. The old storage flags a browser may still hold are
+// simply never read again.
 export const TOUR_KEYS = {
   // the DRAFT card (level-up): the draft IS a modal, so a card there is in
   // context — one of the three kept in-context touches.
@@ -134,8 +139,8 @@ export class Tour {
     this.root = d.createElement('div');
     this.root.id = 'tour-root';
     // 4 shade rects leave a hole around the target (a plain overlay with a
-    // CSS "hole" needs clip-path/mask tricks; 4 rects track a moving target
-    // trivially and cost nothing).
+    // CSS "hole" needs clip-path/mask tricks; 4 rects cost nothing and need
+    // no compositing support).
     this.shades = [];
     for (let i = 0; i < 4; i++) {
       const s = d.createElement('div');
@@ -184,9 +189,18 @@ export class Tour {
     };
     d.addEventListener?.('keydown', this.onKey);
     (d.body || this.root).appendChild(this.root);
-    // Track the target while mounted (menus are mostly static, but overlays
-    // relayout — 120ms relayout keeps the hole on the real element).
-    this.tracker = setInterval(() => this._layout(), 120);
+    // FORM-IN-PLACE (owner 2026-09-18, coachmarks addendum: "the menu
+    // tutorials still do that thing where they keep moving themselves onto
+    // the screen instead of forming in the right spot"). The mechanism was
+    // this tracker RE-PLACING the mark every 120ms as the target's rect
+    // settled — no CSS transition anywhere on the tour selectors (index.html),
+    // the visible slide was purely these rewrites. Now the mark is placed
+    // ONCE at _show (its synchronous offsetWidth read forces layout BEFORE
+    // the first paint, so the first visible frame already carries the final
+    // rect) and the tracker survives ONLY as a VANISH DETECTOR: a target
+    // whose rect collapsed means its screen closed — advance, never chase.
+    // No fade/slide animation either, so reduced-motion needs no branch.
+    this.tracker = setInterval(() => this._pollVanish(), 120);
     this._apply(-1 + 1); // step 0
   }
 
@@ -227,7 +241,7 @@ export class Tour {
     // multi-step tours ("2 OF 5"), BACK (hidden on the first step — never a
     // dead button), NEXT as the primary, and the standing SKIP. The final
     // step's primary COMPLETES the tour, so it reads as a finish (GOT IT) —
-    // and it carries the replay note: REPLAY TOUR already exists in SETTINGS
+    // and it carries the replay note: REPLAY TOUR lives in HOW TO PLAY
     // (main.js); players only needed to be told. innerHTML is set once per
     // step (fakeEl test shims understand innerHTML text).
     const n = this.steps.length;
@@ -235,7 +249,7 @@ export class Tour {
     this.tip.innerHTML =
       (n > 1 ? `<span class="tour-count">${this.idx + 1} OF ${n}</span>` : '') +
       `<span class="tour-text">${step.text}</span>` +
-      (last ? `<span class="tour-replay">Replay this any time from SETTINGS</span>` : '') +
+      (last ? `<span class="tour-replay">Replay this any time from HOW TO PLAY</span>` : '') +
       `<span class="tour-controls">` +
         (this.idx > 0 ? `<a class="tour-btn tour-back">BACK</a>` : '') +
         `<a class="tour-btn tour-next">${last ? 'GOT IT' : 'NEXT'}</a>` +
@@ -256,6 +270,17 @@ export class Tour {
     bind('.tour-back', () => this.back());
     bind('.tour-skip', () => this.skip());
     this._layout();
+  }
+
+  // The tracker's whole remaining job: did the target VANISH? (The kept
+  // cards ride mode-frozen screens — a zero-rect target means its screen
+  // closed underneath the mark, so move on; a LIVE target is never
+  // re-placed — the mark formed in place and stays there.)
+  _pollVanish() {
+    if (!this.root || !this.target) return;
+    let r;
+    try { r = this.target.getBoundingClientRect(); } catch { this.next(); return; }
+    if (!r || (!r.width && !r.height)) this.next();   // vanished: move on, don't die
   }
 
   _layout() {

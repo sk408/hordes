@@ -1,395 +1,268 @@
-// ONBOARDING REWORK (owner-approved 2026-09-16) — the engine + wiring contract.
+// ONBOARDING RETIREMENT (owner 2026-09-18) — the whole in-run hint layer is
+// DELETED: src/onboarding.js (HintStrip / makeHintStore / HINT_IDS /
+// GIVE_UP_RUNS / HINT_FADE_S / layoutStrip) is gone from the tree, and
+// main.js carries no scheduler (maybeHint / pumpHints / updateOnboarding /
+// HINT_SPACING_S / hintsSuppressed / controlUsed / resetOnboarding /
+// bossFightLive / introSawDraft / introSawIntermission). The owner's
+// tutorial principle: "a tutorial should happen mostly prior to full
+// gameplay" — the manual (HOW TO PLAY) and the first-run prologue carry the
+// teaching now; the four KEPT coach cards (draft / death / settings /
+// loadout) are untouched.
 //
-// The 25-card tour is deleted (7 title cards, 4 intermission cards, 10
-// timer/event-scheduled in-run cards — galaxy.click feedback: "tons of
-// information thrown at you without context", "skipped like 8 tutorial blurbs
-// because I was moving manually"). Its replacement is the IN-CONTEXT hint
-// strip, and this file pins the SIX INVARIANTS the dispatch demands:
-//   1. a hint NEVER pauses the sim (state.time advances while one is visible);
-//   2. a hint NEVER captures input (pointer-events:none, zero listeners, no
-//      dismiss controls — movement keys and joystick drags steer straight
-//      through it, a canvas tap reaches the canvas);
-//   3. auto-fade after ~5-6s; at most ONE hint visible; later triggers QUEUE;
-//   4. TEACH-UNTIL-DEMONSTRATED: once per run, retires the moment the taught
-//      action happens (move ~3s / portal entry), gives up after 3 runs;
-//   5. anchored to the game container, clamped fully inside it, never
-//      overlapping the joystick or the touch buttons;
-//   6. NO EMOJIS anywhere.
-// Part A drives the PURE engine (src/onboarding.js) with a fake doc; Part B
-// drives the REAL main.js frame loop through the onboarding test seam.
-//
-// OBJECT LABELS RETIRED (owner 2026-09-16: "a bit annoying, and sometimes
-// they persist after the run"): the ObjectTags engine checks (old A3/A3b),
-// the live chest-tag leg (old B8) and the tag displayability legs (old
-// C1/C2/C4) were DELETED with the layer — 29 checks. What replaces them:
-// test/test_notags.mjs (10 checks) pins the removal itself — no label ever
-// mounts during play, none survives death / victory / RETURN TO TITLE /
-// restart / mode changes, the arming is gone from the shipped source, and
-// THE FIELD reference page still documents every object. The hint-strip
-// checks here are untouched.
+// This file pins the retirement the way test_notags.mjs pinned the
+// object-tags removal:
+//   1. SOURCE: src/onboarding.js does not exist; no src module imports it;
+//      main.js has no hint-scheduler code (usage-shaped pins — the
+//      retirement comment in main.js names the old symbols as history,
+//      which is provenance, not code);
+//   2. RUNTIME: a REAL run driven end to end — play, wave boss KILL,
+//      portal, intermission, CONTINUE, death, RETURN TO TITLE — mounts no
+//      element with id 'hint-strip' on ANY frame (the old layer mounted its
+//      first hint inside ~1s of run start; this assertion was RED against
+//      it);
+//   3. THE KEPT COACHES STILL WORK: the draft coach mounts its tour root on
+//      the first draft and SKIP (the real Escape path) ends it — the
+//      retirement took the hint layer, not the coach layer.
 // Run: node test/test_onboarding.mjs
 import assert from 'node:assert/strict';
-import {
-  HintStrip, makeHintStore, layoutStrip,
-  HINT_FADE_S, GIVE_UP_RUNS, HINT_IDS,
-} from '../src/onboarding.js';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { boot, suite } from './_harness.mjs';
 import { TOUR_KEYS } from '../src/tour.js';
 
-let passed = 0;
-function ok(name, cond, detail) {
-  if (!cond) { console.error('  FAIL ' + name + (detail !== undefined ? ' :: ' + JSON.stringify(detail) : '')); process.exit(1); }
-  passed++;
-  console.log('  ok - ' + name);
-}
-// Invariant 6: NO EMOJIS anywhere (owner rule). Em dashes / middle dots are
-// the game's established UI punctuation, not emoji; the banned set is the
-// emoji blocks AND the arrow codepoints (the off-screen arrow must be ASCII).
-const NO_EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}]/u;
-const ASCII = /^[\x20-\x7E]*$/;   // the pure-engine texts are plain ASCII
+const s = suite('test_onboarding');
+const SRC = new URL('../src/', import.meta.url);
+const MAIN = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-// ---- Part A: the PURE engine ---------------------------------------------------
-const handlers = new WeakMap();
-const mkEl = () => {
-  const el = {
-    tagName: 'div', className: '', id: '', style: { cssText: '' }, children: [], parentNode: null,
-    _text: '',
-    addEventListener(ev, cb) { const h = handlers.get(el) || {}; (h[ev] = h[ev] || []).push(cb); handlers.set(el, h); },
-    removeEventListener(ev, cb) { const h = handlers.get(el) || {}; h[ev] = (h[ev] || []).filter(f => f !== cb); },
-    appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
-    remove() { if (el.parentNode) { const i = el.parentNode.children.indexOf(el); if (i >= 0) el.parentNode.children.splice(i, 1); el.parentNode = null; } },
-    set textContent(v) { el._text = String(v); }, get textContent() { return el._text; },
-  };
-  return el;
-};
-const mkDoc = () => ({ createElement: () => mkEl(), body: mkEl() });
-const CONT = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 };
-
-// A1. layoutStrip (invariant 5): the strip sits inside the container and
-// never on the joystick / touch buttons.
-{
-  const w = 280, h = 24;
-  const free = layoutStrip(CONT, w, h);
-  ok('A: default placement is top-centre, fully inside the container',
-    free.top === 6 && free.left === (480 - w) / 2, free);
-  // The joystick pad owns bottom-centre: the strip must move off it.
-  const joy = { left: 190, top: 210, right: 290, bottom: 300 };
-  const avoidJoy = layoutStrip(CONT, w, h, [joy]);
-  ok('A: the strip never overlaps the joystick rect (top-centre wins)',
-    avoidJoy.top === 6, avoidJoy);
-  // Both top and bottom blocked (HUD bar + touch buttons): mid-centre, still
-  // clear of everything and inside the container.
-  const hud = { left: 0, top: 0, right: 480, bottom: 60 };
-  const mid = layoutStrip(CONT, w, h, [joy, hud]);
-  ok('A: with top and bottom blocked the strip takes the clear mid candidate',
-    mid.top === (300 - h) / 2, mid);
-  // A tiny 480x300 EMBED region can never clip it (tour lesson applied).
-  const tiny = { left: 0, top: 280, right: 480, bottom: 580, width: 480, height: 300 };
-  const inTiny = layoutStrip(tiny, w, h, [{ left: 0, top: 280, right: 480, bottom: 340 }]);
-  ok('A: a 480x300 embed never clips the strip (clamped 4px inside)',
-    inTiny.top >= 284 && inTiny.top + h <= 576, inTiny);
-}
-
-// A2. HintStrip (invariants 2, 3, 6): queued, auto-fading, inert by construction.
-{
-  const doc = mkDoc();
-  const strip = new HintStrip({ anchor: () => CONT, mount: doc.body, doc });
-  strip.show('a', 'first line');
-  strip.show('b', 'second line');
-  strip.update(0.016);
-  const el = doc.body.children[0];
-  ok('A: the strip mounted with the first hint text', el && el._text === 'first line', el && el._text);
-  ok('A: pointer-events:none BY CONSTRUCTION (invariant 2)',
-    /pointer-events:\s*none/.test(el.style.cssText), el.style.cssText);
-  ok('A: the strip registered ZERO listeners (invariant 2)', !handlers.has(el));
-  ok('A: the strip has NO dismiss controls — nothing to close by accident (invariant 2)',
-    el.children.length === 0);
-  ok('A: hint text is ASCII (invariant 6)', ASCII.test(el._text));
-  ok('A: at most ONE strip element exists while two hints are pending (invariant 3)',
-    doc.body.children.filter(c => c._text !== undefined || c.id === 'hint-strip').length === 1);
-  // A duplicate show of the CURRENT id is dropped, not re-queued.
-  strip.show('a', 'first line again');
-  strip.update(0.016);
-  // Fade: after HINT_FADE_S the current leaves and the QUEUED one takes over.
-  strip.update(HINT_FADE_S);
-  ok('A: the first hint auto-faded at HINT_FADE_S (invariant 3)',
-    !doc.body.children.includes(el));
-  strip.update(0.016);
-  const el2 = doc.body.children.find(c => c !== el);
-  ok('A: the queued hint showed AFTER the current one faded (queue, never stack)',
-    el2 && el2._text === 'second line', el2 && el2._text);
-  // retire: out of the queue AND off the screen mid-display.
-  strip.retire('b');
-  ok('A: retire takes a displayed hint off the screen immediately (invariant 4)',
-    !doc.body.children.includes(el2));
-  // A retired-before-display id never mounts.
-  strip.show('c', 'third'); strip.retire('c'); strip.update(0.016);
-  ok('A: retire of a QUEUED hint means it is never shown',
-    !doc.body.children.some(c => c._text === 'third'));
-  // DISPLAY BUG 2026-09-16: a NaN anchor rect must never write 'NaNpx' — a
-  // real browser drops that value and the strip falls to its static position
-  // below the fold, clipped by overflow:hidden (mounted but invisible).
-  {
-    const doc2 = mkDoc();
-    const badAnchor = { left: NaN, top: NaN, right: NaN, bottom: NaN, width: 480, height: 300 };
-    const s2 = new HintStrip({ anchor: () => badAnchor, mount: doc2.body, doc: doc2 });
-    s2.show('x', 'line');
-    s2.update(0.016);
-    const e2 = doc2.body.children[0];
-    ok('A: a NaN anchor rect never writes a NaNpx position (no below-the-fold strip)',
-      e2 && e2.style.left === undefined && e2.style.top === undefined,
-      { left: e2 && e2.style.left, top: e2 && e2.style.top });
-  }
-}
-
-// A3 / A3b — the pure ObjectTags engine checks (anchoring, ASCII edge
-// arrows, fade, the locate()/NaN failure counters) — RETIRED with the
-// layer. Replaced by test/test_notags.mjs: the removal itself, the
-// run-end persistence assertions, and THE FIELD reference coverage.
-
-// A4. the flag store (invariant 4's persistence side).
-{
-  const shim = new Map();
-  const storage = { getItem: k => (shim.has(k) ? shim.get(k) : null), setItem: (k, v) => shim.set(k, String(v)), removeItem: k => shim.delete(k) };
-  const store = makeHintStore(storage);
-  // PER-CONTROL INTRODUCTIONS (2026-09-16) widened the id set: move + portal
-  // (the in-context touches) plus every self-introducing control. The store
-  // treats them all the same: retire-on-demonstration, once per run,
-  // give up after 3 runs.
-  ok('A: HINT_IDS is the in-context touches + every per-control id',
-    JSON.stringify(HINT_IDS) === JSON.stringify([
-      'move', 'portal',
-      'potion-hp', 'potion-mp', 'skill-q', 'skill-w',
-      // RSS8 (2026-09-17): the card-granted magnet sweep is a control too —
-      // armed only when the run holds the mythic (see updateOnboarding).
-      'skill-magnet',
-      'focus', 'stance', 'pilot', 'radar', 'map', 'stats',
-      // '?' SUPPLEMENT (2026-09-16): the "?" affordance introduces itself too
-      'help',
-    ]), HINT_IDS);
-  ok('A: GIVE_UP_RUNS is 3', GIVE_UP_RUNS === 3, GIVE_UP_RUNS);
-  ok('A: a fresh store has neither done flags nor runs',
-    !store.done('move') && store.runs('move') === 0);
-  store.setDone('move');
-  ok('A: a demonstrated hint is done forever (persisted)', store.done('move') && shim.get('hordes_hint_move_done') === '1');
-  store.bumpRuns('portal'); store.bumpRuns('portal');
-  ok('A: runs accumulate per un-demonstrated run end', store.runs('portal') === 2, store.runs('portal'));
-  store.reset();
-  ok('A: reset (REPLAY TOUR) re-arms flags AND give-up counters',
-    !store.done('move') && store.runs('portal') === 0);
-}
-
-// ---- Part B: the REAL main.js loop ---------------------------------------------
-{
-  const noop = () => {};
-  const fakeCtx = new Proxy({}, {
-    get(t, p) { if (p === 'fillStyle' || p === 'globalAlpha') return undefined; return typeof p === 'string' ? noop : undefined; },
-    set() { return true; },
-  });
-  const domHandlers = new WeakMap();
-  const mk = () => {
-    const el = {
-      tagName: 'div', className: '', id: '', style: { cssText: '' }, children: [], parentNode: null, onclick: null,
-      _html: '',
-      addEventListener(ev, cb) { const h = domHandlers.get(el) || {}; (h[ev] = h[ev] || []).push(cb); domHandlers.set(el, h); },
-      removeEventListener(ev, cb) { const h = domHandlers.get(el) || {}; h[ev] = (h[ev] || []).filter(f => f !== cb); },
-      fire(ev, arg) { for (const cb of ((domHandlers.get(el) || {})[ev] || []).slice()) cb(arg); },
-      appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
-      remove() { if (el.parentNode) { const i = el.parentNode.children.indexOf(el); if (i >= 0) el.parentNode.children.splice(i, 1); el.parentNode = null; } },
-      getBoundingClientRect() { return { left: 10, top: 10, right: 90, bottom: 60, width: 80, height: 50 }; },
-      getContext: () => fakeCtx,
-      click() { if (el.onclick) el.onclick(); el.fire('click'); },
-      width: 0, height: 0,
-    };
-    Object.defineProperty(el, 'innerHTML', {
-      get() { return el._html; },
-      set(v) { el._html = String(v); },
-    });
-    return el;
-  };
-  const elements = {};
-  globalThis.document = {
-    getElementById: (id) => elements[id] ?? (elements[id] = mk()),
-    createElement: () => mk(),
-    body: mk(),
-    addEventListener() {},
-  };
-  let keyHandler = null;
-  globalThis.window = { addEventListener: (ev, cb) => { if (ev === 'keydown') keyHandler = cb; }, innerWidth: 480, innerHeight: 300 };
-  let now = 0;
-  globalThis.performance = { now: () => now };
-  const rafQueue = [];
-  globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
-  globalThis.location = { reload: noop };
-  // Onboarded + every tour flag (the KEPT coaches stay out of the way — this
-  // file owns the HINT layer, test_tour owns the coaches) + NO hint flags.
-  const ls = new Map([['hordes_onboarded', '1'],
-    ...Object.values(TOUR_KEYS).map(k => [k, '1'])]);
-  globalThis.localStorage = {
-    getItem: k => (ls.has(k) ? ls.get(k) : null),
-    setItem: (k, v) => ls.set(k, String(v)),
-    removeItem: k => ls.delete(k),
-  };
-
-  const mainMod = await import('../src/main.js');
-  const T = mainMod.__TEST;
-  // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
-  // 2026-09-18): this section boots a FRESH profile, and run #1 would open
-  // INERT (no spawns, frozen clock, hints gated) — stamp runs=1 so startRun
-  // opens an ordinary run. The hint layer's own give-up counters live in
-  // separate localStorage keys and are unaffected.
-  {
-    const pr = T.getProfile();
-    pr.achievements = pr.achievements || {};
-    pr.achievements.totals = pr.achievements.totals || {};
-    pr.achievements.totals.runs = 1;
-  }
-  const st = T.state;
-  const frame = () => {
-    now += 1000 / 60;
-    const cb = rafQueue.shift();
-    if (!cb) throw new Error('raf died');
-    cb(now);
-  };
-  const tick = (s) => { for (let i = 0, n = Math.round(s * 60); i < n; i++) frame(); };
-  const stripEls = () => globalThis.document.body.children.filter(c => c.id === 'hint-strip');
-  const OB = T.onboarding;
-
-  keyHandler({ key: 'x', preventDefault() {} });   // skip the intro movie
-  tick(1);
-  T.startRun();
-  ok('B: the run is live', st.mode === 'playing', st.mode);
-  T.setPilotMode('MANUAL');   // swaps the controller too — st.pilotMode alone does not steer                // the human owns movement in this leg
-  st.player.stats.xpMult = 0;             // no drafts mid-test
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // nothing interrupts the leg
-
-  // ---- B1+B2+B3: the run-start hint — live, inert, never pausing -------------
-  tick(1.0);
-  const strip = stripEls()[0];
-  ok('B1: the move hint is visible after ~1s of run (once, no tour to walk first)',
-    !!strip && strip.textContent.includes('WASD or drag'), strip && strip.textContent);
-  ok('B1: the strip text carries no emoji (invariant 6)', !NO_EMOJI.test(strip.textContent));
-  const t0 = st.time;
-  tick(0.5);
-  ok('B1: the sim ADVANCES while the hint is visible (invariant 1: never pauses)',
-    st.time > t0 + 0.4, { was: t0, now: st.time });
-  ok('B2: the strip carries pointer-events:none inline (invariant 2)',
-    /pointer-events:\s*none/.test(strip.style.cssText || ''), strip.style.cssText);
-  ok('B2: the strip registered ZERO DOM listeners (invariant 2)', !domHandlers.has(strip));
-  ok('B2: the strip has NO dismiss controls (invariant 2)', strip.children.length === 0);
-
-  // Input steers STRAIGHT THROUGH the visible hint.
-  const px0 = st.player.x, py0 = st.player.y;
-  keyHandler({ key: 'w', preventDefault() {} });    // held 'up' in MANUAL
-  tick(0.5);
-  ok('B3: a held movement key steers the player WHILE the hint is up (invariant 2)',
-    st.player.y < py0 - 10, { was: py0, now: st.player.y });
-  T.pilotInput.up = false;                          // release (no keyup in the stub)
-  // The joystick path writes the same input seam the real pad does.
-  const px1 = st.player.x;
-  T.pilotInput.x = 1; T.pilotInput.y = 0; T.pilotInput.mag = 1;
-  tick(0.5);
-  ok('B3: a joystick drag steers the player WHILE the hint is up (invariant 2)',
-    st.player.x > px1 + 10, { was: px1, now: st.player.x });
-  T.pilotInput.x = 0; T.pilotInput.mag = 0;
-
-  // ---- B4: teach-until-demonstrated — movement retires the hint ---------------
-  // ~3s of deliberate travel (>20px/s) while the hint is mid-display.
-  T.pilotInput.x = 1; T.pilotInput.mag = 1;
-  tick(3.2);
-  T.pilotInput.x = 0; T.pilotInput.mag = 0;
-  ok('B4: ~3s of movement marks the move hint DONE (persisted)',
-    OB.store.done('move') && ls.get('hordes_hint_move_done') === '1');
-  ok('B4: the demonstrated hint left the screen immediately',
-    !stripEls().some(e => e.textContent.includes('WASD or drag')), stripEls().length);
-
-  // ---- B8 (the live chest-tag leg) — RETIRED with the object-label layer
-  // (owner 2026-09-16: "a bit annoying, and sometimes they persist after the
-  // run"). Replaced by test/test_notags.mjs: no label ever mounts, none
-  // survives any run ending, THE FIELD reference still documents objects.
-
-  // ---- B5: queue-not-stack — the portal hint waits for the move hint ----------
-  T.startRun();
-  T.setPilotMode('MANUAL');   // swaps the controller too — st.pilotMode alone does not steer
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  tick(1.0);
-  ok('B5: run 2 — the DEMONSTRATED move hint does not show again (the done flag persisted)',
-    !stripEls().some(e => e.textContent.includes('WASD or drag')));
-  // Force the portal open: its hint is the second in-context touch.
-  st.portal = { x: st.player.x + 200, y: st.player.y, age: 0 };
-  tick(0.2);
-  ok('B5: the portal hint is visible once a portal exists',
-    stripEls().length === 1 && stripEls()[0].textContent.includes('portal'), stripEls().length);
-
-  // ---- B6: entering the portal IS the demonstration ---------------------------
-  st.portal.x = st.player.x + 5; st.portal.y = st.player.y;   // inside RADIUS
-  tick(0.1);
-  ok('B6: portal entry retires the portal hint permanently (persisted)',
-    OB.store.done('portal') && ls.get('hordes_hint_portal_done') === '1');
-  ok('B6: the demonstrated portal hint left the screen',
-    !stripEls().some(e => e.textContent.includes('portal')));
-  tick(0.5);   // DWELL 0.4 -> the intermission takes the wave
-  ok('B6: the portal flow itself still works under the hint layer (intermission reached)',
-    st.mode === 'intermission', st.mode);
-
-  // ---- B7: give-up-after-3-runs (an un-demonstrated hint is not forever) ------
-  OB.store.reset();   // REPLAY TOUR re-arms everything
-  ok('B7: reset re-armed both hints', !OB.store.done('move') && OB.store.runs('move') === 0);
-  for (let run = 1; run <= GIVE_UP_RUNS; run++) {
-    T.startRun();
-    T.setPilotMode('MANUAL');   // swaps the controller too — st.pilotMode alone does not steer          // stand still: no demonstration
-    st.player.stats.xpMult = 0;
-    st.player.stats.maxHp = 1; st.player.hp = 1;   // contact ends the run fast
-    let ended = false;
-    for (let i = 0; i < 60 * 120 && !ended; i++) {
-      frame();
-      if (st.mode === 'death-cine' || st.mode === 'dead') ended = true;
+// ---- 1. SOURCE: the layer is gone, not flagged off ------------------------------
+s.check('src/onboarding.js does not exist (deleted, not flagged off)', () => {
+  assert.equal(existsSync(new URL('../src/onboarding.js', import.meta.url)), false,
+    'src/onboarding.js is still on disk');
+});
+s.check('no src module imports the retired engine', () => {
+  const walk = function* (dir) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = dir + '/' + e.name;
+      if (e.isDirectory()) yield* walk(p);
+      else if (e.name.endsWith('.js')) yield p;
     }
-    ok('B7: give-up run ' + run + ' ended in death', ended, st.mode);
-    ok('B7: run ' + run + ' burned one of the move hint\'s chances',
-      OB.store.runs('move') === run && ls.get('hordes_hint_move_runs') === String(run),
-      { runs: OB.store.runs('move'), ls: ls.get('hordes_hint_move_runs') });
-    if (st.mode === 'death-cine') keyHandler({ key: 'x', preventDefault() {} });  // skip the movie
+  };
+  for (const f of walk(SRC.pathname)) {
+    const src = readFileSync(f, 'utf8');
+    assert.ok(!/\bfrom\s+['"][^'"]*\bonboarding\.js['"]/.test(src),
+      f + ' still imports onboarding.js');
   }
-  T.startRun();
-  T.setPilotMode('MANUAL');   // swaps the controller too — st.pilotMode alone does not steer
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  tick(2.0);
-  ok('B7: after ' + GIVE_UP_RUNS + ' un-demonstrated runs the move hint gives up (never shown)',
-    stripEls().length === 0, stripEls().length);
-
-  // ---- Part C: the STRIP through the real path, on fresh hint flags -----------
-  // DISPLAY BUG 2026-09-16's original legs (old C1 arch/shrine tags at 1x,
-  // C2 chest edge-arrow at max zoom, C4 locate()-failure counters) were
-  // RETIRED with the ObjectTags layer (owner 2026-09-16) — test/test_notags.mjs
-  // pins the removal and the run-end persistence fault. What remains live in
-  // this layer is the STRIP, and this leg still proves it through the REAL
-  // scheduler path on FRESH hint flags, inside a 480x300 embed.
-  OB.store.reset();   // fresh hint flags — the fresh-profile read
-  document.getElementById('wrap').getBoundingClientRect = () =>
-    ({ left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 });
-  document.getElementById('game').getBoundingClientRect = () =>
-    ({ left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 });
-  T.zoom.set(1);
-  T.startRun();
-  T.setPilotMode('MANUAL');
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  tick(2.0);
-
-  // C3: the PORTAL HINT on fresh flags, through the real scheduler: it waits
-  // for the move hint to fade AND for the per-control pacing gap (one hint
-  // per ~20s of play, PER-CONTROL INTRODUCTIONS 2026-09-16), behind whatever
-  // per-control lines armed first. Pump until it is on the strip.
-  st.portal = { x: st.player.x + 200, y: st.player.y, age: 0 };
-  let sawPortalHint = false;
-  for (let i = 0; i < (OB.spacing * 5 + HINT_FADE_S * 5) * 60 && !sawPortalHint; i++) {
-    tick(1 / 60);
-    if (stripEls().some(e => e.textContent.includes('portal'))) sawPortalHint = true;
+});
+s.check('main.js carries no hint-scheduler code (the retirement comment names history; the CODE is gone)', () => {
+  // Usage-shaped pins: the retired identifiers as CALLS / DEFINITIONS /
+  // STATE. (main.js:5353+ keeps a retirement comment naming maybeHint /
+  // pumpHints / HINT_SPACING_S / updateOnboarding as history — a bare
+  // substring pin would match provenance, so these match live code only.)
+  for (const [label, re] of [
+    ['maybeHint(', /\bmaybeHint\s*\(/],
+    ['pumpHints(', /\bpumpHints\s*\(/],
+    ['updateOnboarding(', /\bupdateOnboarding\s*\(/],
+    ['new HintStrip', /\bnew\s+HintStrip\b/],
+    ['makeHintStore(', /\bmakeHintStore\s*\(/],
+    ['layoutStrip(', /\blayoutStrip\s*\(/],
+    ['HINT_SPACING_S definition', /\bHINT_SPACING_S\s*=/],
+    ['hintsSuppressed', /\bhintsSuppressed\b/],
+    ['hintStore', /\bhintStore\b/],
+    ['controlUsed(', /\bcontrolUsed\s*\(/],
+    ['resetOnboarding', /\bresetOnboarding\b/],
+    ['bossFightLive(', /\bbossFightLive\s*\(/],
+    ['introSawDraft', /\bintroSawDraft\b/],
+    ['introSawIntermission', /\bintroSawIntermission\b/],
+    ['HINT_IDS', /\bHINT_IDS\b/],
+    ['GIVE_UP_RUNS', /\bGIVE_UP_RUNS\b/],
+    ['HINT_FADE_S', /\bHINT_FADE_S\b/],
+  ]) {
+    assert.ok(!re.test(MAIN), 'main.js still carries ' + label);
   }
-  ok('C3: on fresh hint flags a portal sighting shows the portal hint through the real path',
-    sawPortalHint, stripEls().map(e => e.textContent));
+});
+s.check('no hint-strip surface can be built: no hint-strip id/cssText, no hordes_hint_* keys in main.js', () => {
+  assert.ok(!MAIN.includes("'hint-strip'") && !MAIN.includes('"hint-strip"') &&
+    !MAIN.includes('#hint-strip'), 'main.js still builds the hint-strip element');
+  assert.ok(!/hordes_hint_[a-z]/.test(MAIN),
+    'main.js still reads/writes a hordes_hint_* storage key');
+});
+s.check('the __TEST onboarding seam exposes ONLY the touch-path read (no store/scheduler left)', () => {
+  const seam = MAIN.slice(MAIN.indexOf('onboarding: {'));
+  assert.ok(seam.indexOf('touchPath') >= 0 && seam.indexOf('touchPath') < 200,
+    'the touchPath read survives (the prologue tooltips use it)');
+  for (const dead of ['store', 'pending', 'spacing', 'suppressed', 'replayRearm']) {
+    assert.ok(!new RegExp('\\b' + dead + '\\b').test(seam.slice(0, 220)),
+      'the onboarding seam still exposes ' + dead);
+  }
+});
+
+// ---- 2. RUNTIME: a full run cycle mounts NO hint strip, ever ---------------------
+const h = await boot({ storage: [['hordes_onboarded', '1']] });
+const T = h.T, st = h.state, elements = h.elements, pump = h.pump, key = h.key;
+const body = globalThis.document.body;
+const stripEls = () => (body.children || []).filter(c => c && c.id === 'hint-strip');
+let stripFrames = 0;   // frames on which ANY hint-strip element was mounted
+let stripSaw = null;   // first mounted text, for the failure message
+
+T.banners.suppressAll();   // frame-counting probe: no one-time banner holds
+
+function step(n = 1) {
+  for (let i = 0; i < n; i++) {
+    pump(1);
+    st.bannerHold = 0;   // the token-banner fixture (test_prologue precedent)
+    if (st.mode === 'draft' || st.mode === 'evolve') {
+      const c0 = (elements['ov-cards'].children || [])[0];
+      if (c0 && c0.click) c0.click();
+    }
+    const els = stripEls();
+    if (els.length) { stripFrames += els.length; if (!stripSaw) stripSaw = els[0].textContent; }
+  }
+}
+// Pump until pred, resolving overlays the way a player would; every frame is
+// still scanned for hint strips. Returns true when pred fired.
+function stepUntil(pred, capSeconds) {
+  for (let i = 0, n = Math.round(capSeconds * 60); i < n; i++) {
+    step(1);
+    if (st.mode === 'portal-cine') { key('keydown', { key: 'x', preventDefault() {} }); }
+    if (pred()) return true;
+  }
+  return false;
 }
 
-console.log('test_onboarding: all ' + passed + ' checks passed');
+const t0run = () => {
+  T.startRun();
+  step(2);
+  T.setPilotMode('MANUAL');
+  st.player.stats.xpMult = 0;                       // no drafts mid-leg
+  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;  // nothing ends the leg early
+};
+
+// The OLD trigger surface, all live at once (the retired layer's own
+// conditions: potions carried with HP dropped, skills ready with combat
+// live, a portal open, a crowd on and off the view, chests on the field):
+t0run();
+st.player.potions.hp = 2; st.player.potions.mp = 2;
+st.player.hp = st.player.stats.maxHp * 0.5;
+st.player.mana = st.player.stats.maxMana;
+for (let i = 0; i < 8; i++) {
+  st.enemies.push({ typeId: 'CHASER', x: st.player.x + 60 + i * 30, y: st.player.y,
+    w: 10, hp: 1e6, maxHp: 1e6, speed: 0, mx: 0, my: 0, age: 0, elite: false });
+}
+st.enemies.push({ typeId: 'CHASER', x: st.player.x + 5000, y: st.player.y,
+  w: 10, hp: 1e6, maxHp: 1e6, speed: 0, mx: 0, my: 0, age: 0, elite: false });   // off-view
+st.chests.push({ x: st.player.x - 4000, y: st.player.y, age: 0 });               // off-view
+step(60 * 8);
+s.check('plain play with every old hint trigger live mounts NO hint strip (8s)', () => {
+  assert.equal(stripFrames, 0, stripFrames + ' hint-strip frames (first: ' + stripSaw + ')');
+  assert.ok(st.time > 6, 'the sim really ran (t=' + st.time.toFixed(1) + ')');
+});
+
+// BOSS KILL -> PORTAL -> INTERMISSION (the real path: spawnBoss at the wave
+// end, the kill funnel's pendingClear, the walk-in, the skippable cine).
+// wave.num = 2: the wave-1 portal enters the ESCAPE instead of the plain
+// intermission — this leg wants the ordinary ladder.
+{
+  st.wave.num = 2;
+  st.wave.midAt = st.time + 1e9; st.wave.midBossDone = true;
+  st.wave.endsAt = st.time;   // the wave ends NOW: spawnBoss fires next tick
+  const sawBoss = stepUntil(() => !!st.wave.boss, 5);
+  s.check('the wave boss spawned through the real scheduler', () => {
+    assert.ok(sawBoss, 'no wave boss within 5s of endsAt');
+  });
+  // Leave the parked trigger crowd in place (harmless — speed 0): the boss
+  // object lives IN st.enemies, so clearing the array here would exempt it
+  // from the reap pass that opens the portal.
+  st.wave.boss.hp = 0;        // the kill: the reap sets pendingClear + portal coords
+  const opened = stepUntil(() => !!st.portal, 5);
+  s.check('the boss kill opened the portal (pendingClear -> portal, real path)', () => {
+    assert.ok(opened, 'no portal within 5s of the boss dying');
+  });
+  st.portal.x = st.player.x + 5; st.portal.y = st.player.y;   // walk-in range
+  const inter = stepUntil(() => st.mode === 'intermission', 8);
+  s.check('boss kill -> portal -> intermission (the full earned beat)', () => {
+    assert.ok(inter, 'intermission not reached (mode ' + st.mode + ')');
+  });
+  const cont = (elements['ov-cards'].children || []).find(c => (c.innerHTML || '').includes('CONTINUE'));
+  s.check('the intermission offers CONTINUE', () => assert.ok(cont, 'no CONTINUE card'));
+  cont.click();
+  step(60 * 2);
+  s.check('CONTINUE resumed the run, still strip-free', () => {
+    assert.equal(st.mode, 'playing', st.mode);
+    assert.equal(stripFrames, 0, stripFrames + ' hint-strip frames (first: ' + stripSaw + ')');
+  });
+}
+
+// DEATH -> death screen -> RETURN TO TITLE.
+{
+  T.die();
+  step(5);
+  if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });
+  step(10);
+  s.check('the run ended on the death screen', () => {
+    assert.equal(st.mode, 'dead', st.mode);
+  });
+  step(60 * 3);   // park on the death screen — nothing fades in late
+  key('keydown', { key: 't', preventDefault() {} });
+  step(5);
+  s.check('RETURN TO TITLE after death, still strip-free', () => {
+    assert.equal(st.mode, 'title', st.mode);
+  });
+}
+s.check('no element with id hint-strip mounted on ANY frame of the whole cycle', () => {
+  assert.equal(stripFrames, 0, stripFrames + ' hint-strip frames (first text: ' + stripSaw + ')');
+});
+
+// ---- 3. THE KEPT COACHES STILL WORK ----------------------------------------------
+// The retirement took the hint layer, NOT the coach cards. Force the draft
+// coach through the REAL first-draft path (flag cleared -> openDraft) and
+// end it through the REAL Escape path (the Tour's own document keydown —
+// captured here because the harness document stub does not record listener
+// registrations).
+{
+  h.storage.delete(TOUR_KEYS.draft);   // a player who has not seen the draft card
+  const docKeys = [];
+  const prevAdd = globalThis.document.addEventListener;
+  globalThis.document.addEventListener = (ev, cb) => { if (ev === 'keydown') docKeys.push(cb); };
+  try {
+    T.startRun();
+    step(2);
+    T.setPilotMode('MANUAL');   // suspends the auto-pick: the coach owns the screen
+    st.player.stats.xpMult = 0;
+    st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
+    st.pendingDrafts = 1;
+    T.openDraft();
+    // Pump WITHOUT the auto-pick step(): the coach is the thing under test —
+    // it suspends the AUTO countdown, so nothing resolves the draft but us.
+    const coachStep = (n) => { for (let i = 0; i < n; i++) { pump(1); stripFrames += stripEls().length; } };
+    coachStep(2);
+    const tourRoot = () => (body.children || []).find(c => c && c.id === 'tour-root') || null;
+    s.check('the draft coach mounts its tour root on the first draft', () => {
+      assert.equal(st.mode, 'draft', st.mode);
+      assert.ok(tourRoot(), 'no tour-root after the first draft opened');
+    });
+    s.check('the coach names THE DRAFT', () => {
+      const tip = (tourRoot().children || []).find(c => c && c.id === 'tour-tip');
+      assert.ok(tip && (tip.innerHTML || '').includes('THE DRAFT'),
+        'tip: ' + (tip && tip.innerHTML));
+    });
+    for (const cb of docKeys.slice()) cb({ key: 'Escape', preventDefault() {} });   // SKIP
+    s.check('SKIP (Escape) ends the coach — the tour root is gone', () => {
+      assert.ok(!tourRoot(), 'the tour root survived Escape');
+    });
+    s.check('the skip toasted the replay pointer', () => {
+      assert.ok((st.toasts || []).some(t => /TOUR SKIPPED/.test(t.msg)),
+        'toasts: ' + JSON.stringify((st.toasts || []).map(t => t.msg)));
+    });
+    const c0 = (elements['ov-cards'].children || [])[0];
+    if (c0 && c0.click) c0.click();
+    s.check('the draft resolves under the dismissed coach (run continues)', () => {
+      assert.equal(st.mode, 'playing', st.mode);
+    });
+    s.check('... and the coach never mounted a hint strip either', () => {
+      assert.equal(stripFrames, 0, stripFrames + ' hint-strip frames');
+    });
+  } finally {
+    globalThis.document.addEventListener = prevAdd;
+  }
+}
+
+s.done();

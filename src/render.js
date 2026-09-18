@@ -202,11 +202,11 @@ function rarityRing(g, e, state, x, y, w, h) {
 // DEFECT (a) FIX (owner 2026-09-18: "there is no opt out, there's only a
 // button to start the tutorial"): SKIP is a PERSISTENT button in the
 // top-right corner, painted for the WHOLE phase — walk, banner, wait — not
-// a link that only exists on the card. One skip ends the explaining and
-// restores the full control set immediately (main.js prologueSkip); it also
-// carries the tour-skip session suppression (hintsSuppressed) so no chip
-// fires later either. REPLAY TOUR restores. The corner is clear of the
-// banner card (card x 90..390 at W=300; this x 392..472) and of the
+// a link that only exists on the card. The skip is TWO-TAP (main.js
+// prologueSkip arms on the first press; this painter flips the label while
+// armed) so a stray press can never end the explaining, and a confirmed
+// skip restores the full control set immediately. The corner is clear of
+// the banner card (card x 90..390 at W=300; this x 392..472) and of the
 // centred HUD clock.
 export function prologueSkipRect() {
   return { x: C.VIEW_W - 88, y: 24, w: 80, h: 16 };
@@ -1782,18 +1782,23 @@ export class Renderer {
   // asked for, reachable at every moment. Rect = prologueSkipRect (ONE
   // geometry, the same numbers main.js hit-tests). Dimmer than the card: the
   // secondary action, never the loudest thing on screen.
+  // TWO-TAP CONFIRM (owner 2026-09-18: skipping must be DELIBERATE): while
+  // the arm window is live (state.prologue.skipArmT > 0 — main.js
+  // prologueSkip opens it) the button BRIGHTENS and asks for the second
+  // tap; the rect itself never moves or grows.
   drawPrologueSkip(g, state) {
     if (!state.prologue || state.prologue.drunk || state.prologue.skipped) return;
+    const armed = (state.prologue.skipArmT || 0) > 0;
     const sk = prologueSkipRect();
-    g.fillStyle = '#14141f';
+    g.fillStyle = armed ? '#3a2a1a' : '#14141f';
     g.fillRect(sk.x, sk.y, sk.w, sk.h);
-    g.fillStyle = '#4a4a66';
+    g.fillStyle = armed ? '#d8a04a' : '#4a4a66';
     g.fillRect(sk.x, sk.y, sk.w, 1); g.fillRect(sk.x, sk.y + sk.h - 1, sk.w, 1);
     g.fillRect(sk.x, sk.y, 1, sk.h); g.fillRect(sk.x + sk.w - 1, sk.y, 1, sk.h);
     g.textAlign = 'center';
     g.font = '9px monospace';
-    g.fillStyle = '#c8c8dd';
-    g.fillText('SKIP TUTORIAL', sk.x + sk.w / 2, sk.y + 5);
+    g.fillStyle = armed ? '#ffd75e' : '#c8c8dd';
+    g.fillText(armed ? 'TAP AGAIN?' : 'SKIP TUTORIAL', sk.x + sk.w / 2, sk.y + 5);
     g.textAlign = 'left';
   }
 

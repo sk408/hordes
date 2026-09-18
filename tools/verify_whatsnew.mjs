@@ -31,14 +31,14 @@ const OLD_SAVE = JSON.stringify({
   achievements: { totals: { runs: 7 } },
 });
 
-async function viewport(w, h, tag) {
+async function viewport(w, h, tag, mobile = true) {
   // The seed is GUARDED so the page-reload leg (step 3) keeps whatever the
   // dismiss persisted — addScriptToEvaluateOnNewDocument re-runs on reload.
   // skipPrologue: false — the default settle-seed would pre-empt this file's
   // OWN old-save seed (both run as new-document scripts, first-writer-wins),
   // and it stamps lastPlayed=now, which is exactly the ACTIVE player this
   // verifier must NOT be. The seeded save carries runs: 7, so no prologue.
-  await withPage({ w, h, dpr: 3, mobile: true, skipPrologue: false,
+  await withPage({ w, h, dpr: mobile ? 3 : 1, mobile, skipPrologue: false,
     startupScript: "try { localStorage.setItem('hordes_onboarded', '1'); " +
       "if (!localStorage.getItem('hordes_profile_v1')) localStorage.setItem('hordes_profile_v1', " +
       JSON.stringify(OLD_SAVE) + "); } catch (e) {}" },
@@ -47,8 +47,10 @@ async function viewport(w, h, tag) {
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()`, 15000);
     await p.sleep(600);   // the title reveal fade
 
-    // 1. THE NOTE IS UP: the parchment card is the FIRST card on the title,
-    //    the real menu sits under it, and the save migrated (v9, null stamp).
+    // 1. THE NOTE IS UP: the parchment card floats ON THE OVERLAY SHEET —
+    //    OVER the title, out of the card flow (owner 2026-09-18: "the update
+    //    message should overlay the title screen instead of pushing it
+    //    down"), the real menu sits UNMOVED under it, and the save migrated.
     const prof = () => p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
       return T2.getProfile(); })()`);
     const t0 = await prof();
@@ -56,18 +58,31 @@ async function viewport(w, h, tag) {
       '[' + tag + '] the old save migrated with null lastPlayed/lastSeenUpdate (returning player, not seen)');
     const noteInfo = await p.evaluate(`(() => {
       const cards = [...document.getElementById('ov-cards').children];
-      const note = cards.find(c => c.className.includes('paper-note'));
+      const note = document.querySelector('#overlay .paper-note');
       const cs = note ? getComputedStyle(note) : null;
       const r = note ? note.getBoundingClientRect() : null;
+      const start = cards.find(c => (c.textContent || '').toUpperCase().includes('START GAME'));
+      const sr = start ? start.getBoundingClientRect() : null;
       return { first: cards[0] && cards[0].className, isNote: !!note,
+        inFlow: !!note && cards.includes(note), position: cs && cs.position,
         n: cards.length, bg: cs && cs.backgroundImage.slice(0, 30),
-        border: cs && cs.borderColor, cursor: cs && cs.cursor,
-        txt: note ? note.textContent.slice(0, 60) : '',
+        cursor: cs && cs.cursor,
+        txt: note ? note.textContent : '',
+        startTop: sr && sr.top, startLeft: sr && sr.left,
         rect: r ? { x: r.x, y: r.y, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight } : null }; })()`);
-    ok(noteInfo.isNote && noteInfo.first.includes('paper-note'),
-      '[' + tag + '] the paper note is the FIRST card on the title');
+    ok(noteInfo.isNote && !noteInfo.inFlow,
+      '[' + tag + '] the paper note floats on #overlay, OUT of the title card flow');
+    ok(noteInfo.position === 'absolute',
+      '[' + tag + '] the note is positioned over the title (computed position: ' + noteInfo.position + ')');
     ok(/WHAT'S NEW/.test(noteInfo.txt),
-      '[' + tag + '] the note carries the release title ("' + noteInfo.txt + '")');
+      '[' + tag + '] the note carries the release title');
+    ok(/index buttons are gone/i.test(noteInfo.txt) && /prev and next/i.test(noteInfo.txt) &&
+      /under the text/i.test(noteInfo.txt),
+      '[' + tag + '] the ENTRY tells the HOW TO PLAY fix (index gone, prev/next under the text)');
+    ok(/CLOSE/.test(noteInfo.txt),
+      '[' + tag + '] the note carries an OBVIOUS dismiss button');
+    ok(!/SHOW ME/.test(noteInfo.txt) && !/guided run/i.test(noteInfo.txt),
+      '[' + tag + '] no guided-run offer or copy while the prologue gate is off');
     ok(/linear-gradient/.test(noteInfo.bg) && noteInfo.cursor === 'pointer',
       '[' + tag + '] the parchment treatment is live (gradient tint, tap-to-dismiss cursor)');
     ok(noteInfo.rect && noteInfo.rect.x >= 0 && noteInfo.rect.y >= 0 &&
@@ -75,29 +90,46 @@ async function viewport(w, h, tag) {
        noteInfo.rect.y + noteInfo.rect.h <= noteInfo.rect.vh + 1,
       '[' + tag + '] the note fits the viewport, nothing clipped (' +
       JSON.stringify(noteInfo.rect) + ')');
-    ok(noteInfo.n >= 8, '[' + tag + '] the real menu is fully present under the note (' + noteInfo.n + ' cards)');
+    ok(noteInfo.n >= 7, '[' + tag + '] the real menu is fully present under the note (' + noteInfo.n + ' cards)');
     const shot = await p.shot('whatsnew-' + tag);
     copyFileSync(shot, ART + '/whatsnew-' + tag + '.png');
-    ok(true, '[' + tag + '] paper-note shot (parchment popup over the title)');
+    ok(true, '[' + tag + '] paper-note shot (parchment popup OVERLAYING the title)');
 
-    // 2. THE DISMISS, through a REAL finger tap on the note.
-    const noteRect = await p.evaluate(`(() => {
-      const note = [...document.getElementById('ov-cards').children]
-        .find(c => c.className.includes('paper-note'));
-      const r = note.getBoundingClientRect();
-      return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
-    await p.tap(noteRect[0], noteRect[1], 2);
+    // 2. THE DISMISS, through a REAL finger tap on the CLOSE button — and
+    //    the title must not move a pixel (overlay, not reflow).
+    const bytesBefore = await p.evaluate(`localStorage.getItem('hordes_profile_v1')`);
+    // A CDP touch tap can land soft intermittently; retry the REAL tap (a
+    // second real gesture, not a synthetic click) while the note stands.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const noteRect = await p.evaluate(`(() => {
+        const btn = document.querySelector('#overlay .paper-note .wn-close');
+        if (!btn) return null;
+        const r = btn.getBoundingClientRect();
+        return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+      if (!noteRect) break;
+      await p.tap(noteRect[0], noteRect[1], 2);
+      await p.sleep(250);
+    }
     await p.sleep(200);
     const after = await p.evaluate(`(() => {
       const cards = [...document.getElementById('ov-cards').children];
-      return { note: cards.some(c => c.className.includes('paper-note')), n: cards.length,
-        start: cards.some(c => (c.textContent || '').includes('START GAME')) }; })()`);
+      const start = cards.find(c => (c.textContent || '').toUpperCase().includes('START GAME'));
+      const sr = start ? start.getBoundingClientRect() : null;
+      return { note: !!document.querySelector('#overlay .paper-note'), n: cards.length,
+        startTop: sr && sr.top, startLeft: sr && sr.left,
+        start: !!start }; })()`);
     ok(!after.note && after.start && after.n >= 7,
-      '[' + tag + '] the real tap dismissed the note; the title is whole and playable');
+      '[' + tag + '] the real tap on CLOSE dismissed the note; the title is whole and playable');
+    ok(Math.abs((after.startTop || 0) - (noteInfo.startTop || 0)) < 0.5 &&
+      Math.abs((after.startLeft || 0) - (noteInfo.startLeft || 0)) < 0.5,
+      '[' + tag + '] the title did NOT reflow: START GAME top ' + noteInfo.startTop +
+      ' -> ' + after.startTop + ' (identical with the note up and after dismiss)');
     const persisted = await p.evaluate(`JSON.parse(localStorage.getItem('hordes_profile_v1')).lastSeenUpdate`);
     const relId = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.whatsNew.release.id)()`);
     ok(persisted === relId,
       '[' + tag + '] the dismiss PERSISTED lastSeenUpdate = this release ("' + persisted + '")');
+    ok(await p.evaluate(`localStorage.getItem('hordes_profile_v1')`) !== bytesBefore,
+      '[' + tag + '] the persisted BYTES changed on the dismiss tap');
 
     // 3. RELOAD: shown once — the note never pops again for this release.
     await p.evaluate("location.reload()");
@@ -107,7 +139,7 @@ async function viewport(w, h, tag) {
     await p.sleep(600);
     const reloaded = await p.evaluate(`(() => {
       const cards = [...document.getElementById('ov-cards').children];
-      return { note: cards.some(c => c.className.includes('paper-note')),
+      return { note: !!document.querySelector('#overlay .paper-note'),
         start: cards.some(c => (c.textContent || '').includes('START GAME')) }; })()`);
     ok(!reloaded.note && reloaded.start,
       '[' + tag + '] after reload the note does NOT pop again (shown once per release)');
@@ -136,41 +168,52 @@ async function viewport(w, h, tag) {
         mode: T2.state.mode }; })()`);
     ok(declined.active === false && declined.assisted === false && declined.mode === 'playing',
       '[' + tag + '] a DECLINED veteran plays normally (no prologue, no assist, nothing automatic)');
-    const backTitle = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
-      T2.showTitle();
+    // 5b. THE GATE (owner 2026-09-18): while C.PROLOGUE.ENABLED is off the
+    //     note makes NO offer — it cannot advertise a run it cannot start.
+    const gated = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      const CFG = await import('./src/config.js');
       T2.getProfile().lastPlayed = null; T2.getProfile().lastSeenUpdate = null;
       T2.whatsNew.tried = false; T2.showTitle();
-      const cards = [...document.getElementById('ov-cards').children];
-      const note = cards.find(c => c.className.includes('paper-note'));
-      const offer = note && note.querySelector('.offer');
+      const note = document.querySelector('#overlay .paper-note');
+      const gateOff = CFG.CONFIG.PROLOGUE.ENABLED === false;
+      const offerless = note && !note.querySelector('.offer') && !/SHOW ME/.test(note.textContent);
+      // Then the gate ON, in-page (the kill switch flips back at the leg's end):
+      // the SAME note now offers.
+      const n = note; if (n && n.remove) n.remove();
+      T2.getProfile().lastPlayed = null; T2.getProfile().lastSeenUpdate = null;
+      T2.whatsNew.tried = false;
+      CFG.CONFIG.PROLOGUE.ENABLED = true;
+      T2.showTitle();
+      const note2 = document.querySelector('#overlay .paper-note');
+      const offer = note2 && note2.querySelector('.offer');
       const r = offer ? offer.getBoundingClientRect() : null;
       const cs = offer ? getComputedStyle(offer) : null;
-      return { note: !!note, offer: !!offer, txt: offer ? offer.textContent : '',
+      return { gateOff, offerless, note: !!note2, offer: !!offer, txt: offer ? offer.textContent : '',
         rect: r ? { x: r.x, y: r.y, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight } : null,
         cursor: cs && cs.cursor }; })()`);
-    ok(backTitle.note && backTitle.offer,
-      '[' + tag + '] the note carries the OFFER button ("' + backTitle.txt + '")');
-    ok(backTitle.cursor === 'pointer' && backTitle.rect && backTitle.rect.x >= 0 &&
-       backTitle.rect.y >= 0 && backTitle.rect.x + backTitle.rect.w <= backTitle.rect.vw + 1 &&
-       backTitle.rect.y + backTitle.rect.h <= backTitle.rect.vh + 1,
+    ok(gated.gateOff && gated.offerless,
+      '[' + tag + '] GATE OFF (the shipped default): the note carries NO offer button');
+    ok(gated.note && gated.offer,
+      '[' + tag + '] GATE ON: the note carries the OFFER button ("' + gated.txt + '")');
+    ok(gated.cursor === 'pointer' && gated.rect && gated.rect.x >= 0 &&
+       gated.rect.y >= 0 && gated.rect.x + gated.rect.w <= gated.rect.vw + 1 &&
+       gated.rect.y + gated.rect.h <= gated.rect.vh + 1,
       '[' + tag + '] the offer button is legible + hittable, nothing clipped (' +
-      JSON.stringify(backTitle.rect) + ')');
+      JSON.stringify(gated.rect) + ')');
 
     // 6. ACCEPT through a REAL tap on the offer button: the guided run starts
     //    NOW, flagged ASSISTED (B6), the ask marked seen, the skip still safe.
     const offerRect = await p.evaluate(`(() => {
-      const offer = [...document.getElementById('ov-cards').children]
-        .find(c => c.className.includes('paper-note')).querySelector('.offer');
+      const offer = document.querySelector('#overlay .paper-note .offer');
       const r = offer.getBoundingClientRect();
       return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
     await p.tap(offerRect[0], offerRect[1], 2);
     await p.sleep(300);
     const accepted = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
-      const cards = [...document.getElementById('ov-cards').children];
       return { active: T2.prologue.active, potion: T2.prologue.potion,
         assisted: T2.state.assistedRun, mode: T2.state.mode,
         seen: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastSeenUpdate,
-        noteGone: !cards.some(c => c.className.includes('paper-note')) }; })()`);
+        noteGone: !document.querySelector('#overlay .paper-note') }; })()`);
     ok(accepted.active === true && !!accepted.potion && accepted.mode === 'playing',
       '[' + tag + '] the real tap on SHOW ME starts the guided run (potion on screen, run live)');
     ok(accepted.assisted === true,
@@ -178,12 +221,15 @@ async function viewport(w, h, tag) {
     ok(accepted.seen === relId && accepted.noteGone,
       '[' + tag + '] the accept marked the release seen (asked once) and closed the note');
     const skipDrink = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
-      T2.prologue.skip(); T2.prologue.drink();
+      // the skip is a TWO-PRESS gesture since the 2026-09-18 rework
+      T2.prologue.skip(); T2.prologue.skip(); T2.prologue.drink();
       return { active: T2.prologue.active, shieldT: T2.prologue.shieldT,
         mode: T2.state.mode }; })()`);
     ok(skipDrink.active === false && skipDrink.shieldT > 0 && skipDrink.mode === 'playing',
-      '[' + tag + '] skip + drink from this entry point: shield paid, run live (the approved skip)');
+      '[' + tag + '] skip (two-press) + drink from this entry point: shield paid, run live');
     const next = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      const CFG = await import('./src/config.js');
+      CFG.CONFIG.PROLOGUE.ENABLED = false;   // back to the shipped default
       T2.startRun();
       return { active: T2.prologue.active, assisted: T2.state.assistedRun }; })()`);
     ok(next.active === false && next.assisted === false,
@@ -196,5 +242,6 @@ async function viewport(w, h, tag) {
 
 await viewport(390, 844, '390x844');
 await viewport(320, 568, '320x568');
+await viewport(1280, 800, 'desktop-1280x800', false);
 console.log(fails ? 'FAILURES: ' + fails : 'ALL OK');
 process.exit(fails ? 1 : 0);

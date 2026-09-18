@@ -216,6 +216,29 @@
     text-shadow: none; width: 100%; box-sizing: border-box;
   }
   .card.paper-note .offer:active { background: #632a20; }
+  /* ---- WHAT'S NEW OVERLAY (owner 2026-09-18: "the update message should
+     overlay the title screen instead of pushing it down or whatever. Overlay
+     with a dismiss button"). The note floats OVER the title, centred, out of
+     the card flow (position:absolute — the title cards keep their exact
+     positions underneath; nothing reflows either way). */
+  #overlay .card.paper-note.wn-over {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 30; margin: 0; cursor: pointer;
+    max-height: calc(100% - 24px); overflow-y: auto;
+  }
+  /* THE DISMISS BUTTON: obvious, its own plate — a big target that reads as
+     a button (the whole card still taps closed; this makes the affordance
+     unmissable, per the owner's "Overlay with a dismiss button"). */
+  .card.paper-note .wn-close {
+    display: block; margin-top: 10px; padding: 10px;
+    font-size: 14px; font-weight: bold; letter-spacing: 0.08em;
+    text-align: center; color: #3c2c14; cursor: pointer;
+    background: #d2ba88; border: 2px solid #8a6d3f; border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    text-shadow: none; width: 100%; box-sizing: border-box;
+  }
+  .card.paper-note .wn-close:active { background: #c3a973; }
   /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
      formatting of the how to play screen, at least on mobile. It's hard to
      read the text because of the narrow width and it wraps"). The reference
@@ -841,8 +864,8 @@
   <div id="touch">
     <div id="steer-zone" aria-hidden="true"></div>
     <div class="pad left">
-      <button data-act="focus">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
-      <button data-act="stance">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>
+      <button data-act="focus" id="tc-focusbtn">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
+      <button data-act="stance" id="tc-stancebtn">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>
       <button data-act="pilot" id="tc-pilotbtn">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
       <button data-act="stats" id="tc-stats">STATS</button>
     </div>

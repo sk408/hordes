@@ -314,6 +314,19 @@ export class AutoPilotController {
         this.act = 'PROLOGUE_HOLD';
         return put(0, 0);
       }
+      // ADDENDUM 3 (owner 2026-09-18 — focus/stance/scripted draft): with
+      // seven explaining banners the accumulated walk windows now carry the
+      // pilot to the potion BEFORE the lessons finish, ending the phase
+      // mid-tutorial. The choreography therefore homes on the potion only
+      // once the DRINK banner is the current card (or the phase is skipped,
+      // which has nothing left to explain); until then the pilot HOLDS
+      // between cards too. The cadence is TIME-driven (walkT accrues by wall
+      // clock in main.js), so the banners still rise on schedule.
+      if (!state.prologue.skipped &&
+          (banners[state.prologue.bannerIdx] || {}).action !== 'drink') {
+        this.act = 'PROLOGUE_HOLD';
+        return put(0, 0);
+      }
       const dx = state.prologue.potion.x - p.x;
       const dy = state.prologue.potion.y - p.y;
       const len = Math.hypot(dx, dy);

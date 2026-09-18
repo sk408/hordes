@@ -146,7 +146,7 @@ check('BACK returns to the previous step; final step primary is a labelled finis
   // Walk to the final step: the primary is the finish, and it names the replay path.
   t.next();
   assert.ok(t.tip._html.includes('>GOT IT<'), 'final step primary reads as the finish');
-  assert.ok(t.tip._html.includes('Replay this any time from SETTINGS'), 'final card tells the player how to replay');
+  assert.ok(t.tip._html.includes('Replay this any time from HOW TO PLAY'), 'final card tells the player how to replay');
   assert.ok(!t.tip._html.includes('>NEXT<'), 'the final step is not labelled NEXT');
   t.tip.querySelector('.tour-next').fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
   assert.equal(done, 1, 'GOT IT completes');

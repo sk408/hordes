@@ -122,7 +122,10 @@ const T = mainMod.__TEST;
 const st = T.state;
 const W = T.whatsNew;
 const cards = () => elements['ov-cards'] ? elements['ov-cards'].children : [];
-const noteEl = () => cards().find(el => String(el.className).includes('paper-note'));
+// OVERLAY (owner 2026-09-18): the note now floats on #overlay — NOT in the
+// card flow — so the title underneath never reflows.
+const noteEl = () => (elements['overlay'] ? elements['overlay'].children : [])
+  .find(el => String(el.className).includes('paper-note'));
 const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now); };
 
 ok('the boot migrated the v8 save (a returning player, not fresh)',
@@ -214,7 +217,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     W.due(P(), { ...rel, worthTelling: false }, false) === false);
 }
 
-// ---- 4. THE SHOW: launch-only paper note on the REAL title, dismiss persists -
+// ---- 4. THE SHOW: launch-only paper note OVERLAID on the title, dismiss persists
 {
   // Boot state: the profile's lastPlayed is still the migrated null (the
   // saves in section 1 stamped the STORE, and getProfile() reads the live
@@ -224,18 +227,46 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   W.tried = false;
   T.showTitle();
   const note = noteEl();
-  ok('the paper note rides the REAL title card list (first card, parchment class)',
-    !!note && cards()[0] === note, { first: cards()[0] && cards()[0].className, n: cards().length });
+  // The reference title (no note): dismiss, then re-open the SAME title and
+  // compare the card lists — with the note up the list must be IDENTICAL.
+  note.click();
+  const refCards = cards().map(c => c.innerHTML || '');
+  // Re-arm BOTH stamps: the dismiss's persistProfile stamped lastPlayed=now
+  // on the live profile, which would read as "active player" and veto the
+  // note (the gate's own rule, working as designed).
+  T.getProfile().lastPlayed = null;
+  T.getProfile().lastSeenUpdate = null;
+  W.tried = false;   // the note is a LAUNCH artifact: re-arm the launch flag
+  T.showTitle();
+  const cardsWithNoteUp = cards().map(c => c.innerHTML || '');
+  const noteUp = noteEl();
+  // OVERLAY, NOT REFLOW (owner 2026-09-18: "the update message should overlay
+  // the title screen instead of pushing it down"): the note is a child of the
+  // OVERLAY SHEET, never of the card flow — the title's card list is
+  // BYTE-IDENTICAL with the note up (nothing was pushed, inserted or
+  // rewrapped; the browser verifier pins the geometry on top of this).
+  ok('the paper note floats on the OVERLAY sheet, out of the card flow',
+    !!noteUp && elements['overlay'].children.includes(noteUp) && !cards().includes(noteUp),
+    { parent: 'overlay', inFlow: cards().includes(noteUp) });
+  ok('the title card list is UNCHANGED with the note up (no reflow, no insertion)',
+    JSON.stringify(cardsWithNoteUp) === JSON.stringify(refCards) &&
+    cardsWithNoteUp.length === refCards.length && cardsWithNoteUp.length > 0,
+    { ref: refCards.length, up: cardsWithNoteUp.length });
   ok('the title is still fully playable under it (START GAME card present)',
     cards().some(el => /START GAME/.test(el.innerHTML || '')));
-  ok('the note carries the release copy and a dismiss affordance',
-    /WHAT'S NEW/.test(note.innerHTML) && /tap anywhere else to close/i.test(note.innerHTML));
+  ok('the note carries the release copy, an OBVIOUS dismiss button, and the close hint',
+    /WHAT'S NEW/.test(noteUp.innerHTML) && /CLOSE/.test(noteUp.innerHTML) &&
+    /tap anywhere on the note to close/i.test(noteUp.innerHTML));
+  ok('the release copy tells returning players about the HOW TO PLAY fix (the entry IS the point)',
+    W.release.lines.some(l => /HOW TO PLAY/i.test(l)) &&
+    W.release.lines.some(l => /index buttons are gone/i.test(l)) &&
+    W.release.lines.some(l => /prev and next/i.test(l) && /under the text/i.test(l)));
   // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
   // the popup should write a save" — the same prove-it-moved discipline the
   // timestamp gets, or a player who closes the tab sees it again).
   const rawBefore = ls.get('hordes_profile_v1');
-  note.click();
+  noteUp.click();
   ok('the dismiss removed the note and PERSISTED lastSeenUpdate (shown once)',
     !noteEl() && stored().lastSeenUpdate === W.release.id,
     { seen: stored().lastSeenUpdate });
@@ -264,7 +295,8 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   // Player ignores it and navigates: the next title return (same page load)
   // does not stack a second note.
   T.showTitle();
-  ok('no second note stacks on a later title return', cards().filter(el => String(el.className).includes('paper-note')).length <= 1);
+  ok('no second note stacks on a later title return',
+    (elements['overlay'].children || []).filter(el => String(el.className).includes('paper-note')).length <= 1);
   // Clean up: dismiss so the module state ends tidy.
   const n = noteEl(); if (n) n.click();
 }
@@ -298,20 +330,43 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   // (end that run's state: back to title for the offer leg)
   T.showTitle();
 
-  // THE OFFER: the note carries the accept affordance (the real browser wires
-  // the .offer button; the seam drives the same acceptWhatsNew function).
+  // THE OFFER and ITS GATE (owner 2026-09-18): the offer must NOT appear
+  // while the prologue gate is disabled — the note cannot advertise a guided
+  // run it cannot start. C.PROLOGUE.ENABLED is false by default on this tree,
+  // so the DEFAULT note carries neither the button nor the guided-run copy.
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;
+  W.tried = false;
+  T.showTitle();
+  const gatedNote = noteEl();
+  ok('GATE OFF (the shipped default): the note is up WITHOUT the offer button',
+    !!gatedNote && !/SHOW ME/.test(gatedNote.innerHTML) &&
+    CONFIG.PROLOGUE.ENABLED === false,
+    { enabled: CONFIG.PROLOGUE.ENABLED, html: gatedNote && gatedNote.innerHTML });
+  ok('GATE OFF: the guided-run copy is held back too (no broken promise)',
+    !/guided run/i.test(gatedNote.innerHTML) && !/potion/i.test(gatedNote.innerHTML));
+  gatedNote.click();                          // tidy: dismiss the gated note
+
+  // THE OFFER, GATE ON (the real browser wires the .offer button; the seam
+  // drives the same acceptWhatsNew function).
+  CONFIG.PROLOGUE.ENABLED = true;
   prof.lastPlayed = null; prof.lastSeenUpdate = null;
   W.tried = false;
   T.showTitle();
   const note = noteEl();
   ok('fixture: the note is up with the offer copy in it',
-    !!note && /SHOW ME/.test(note.innerHTML) && /tap anywhere else to close/i.test(note.innerHTML));
+    !!note && /SHOW ME/.test(note.innerHTML) && /tap anywhere on the note to close/i.test(note.innerHTML));
   ok('the note copy names the guided run and the potion (what the player GETS)',
-    rel.lines.some(l => /guided run/i.test(l)) && rel.lines.some(l => /potion/i.test(l)));
+    rel.guidedLines.some(l => /guided run/i.test(l)) && rel.guidedLines.some(l => /potion/i.test(l)));
 
   // DECLINE through the real card tap: marks the release seen, normal play.
+  // (Advance a fake clock first: the earlier gated-note dismiss already
+  // persisted this release id, and two persists inside the same millisecond
+  // would write byte-identical saves.)
+  const realNowD = Date.now; let fakeNow = realNowD() + 5000; Date.now = () => fakeNow;
   const rawBefore = ls.get('hordes_profile_v1');
-  note.click();
+  try {
+    note.click();
+  } finally { Date.now = realNowD; }
   ok('DECLINE: the tap dismissed the note, marked the release seen, WROTE the save',
     !noteEl() && stored().lastSeenUpdate === rel.id && ls.get('hordes_profile_v1') !== rawBefore);
   T.startRun();
@@ -337,7 +392,13 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     prof.lastSeenUpdate === rel.id && stored().lastSeenUpdate === rel.id);
   ok('the note is gone after the accept', !noteEl());
 
-  // THE APPROVED SKIP, from THIS entry point: stop explaining, keep the potion.
+  // THE APPROVED SKIP, from THIS entry point: stop explaining, keep the
+  // potion. (The skip is now a TWO-PRESS gesture — arm, then confirm — since
+  // the 2026-09-18 rework; drive both presses.)
+  T.prologue.skip();
+  ok('the first skip press only ARMS (two-press confirm rework)',
+    st.prologue && st.prologue.skipArmT > 0 && st.prologue.skipped !== true,
+    { skipArmT: st.prologue && st.prologue.skipArmT });
   T.prologue.skip();
   ok('skip from the accepted run: explaining stops, the phase STAYS armed (skipped mode)',
     T.prologue.active === true && st.prologue.skipped === true &&

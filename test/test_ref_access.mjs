@@ -25,11 +25,13 @@
 //      purpose, so a new binding cannot be added silently without a row.
 //   7. OBJECT MEANINGS — chest / portal / arch / shrine / potion all carry
 //      what they DO, not just their names.
-//   8. FAILURE MODE (c) SOURCE PIN — the hint strip (the only ambient
-//      explainer) is pointer-events:none by construction.
+//   8. FAILURE MODE (c) RETIREMENT PIN — the hint strip (the old ambient
+//      explainer) is DELETED with the layer (ONBOARDING RETIREMENT
+//      2026-09-18): src/onboarding.js absent, no '#hint-strip' cssText in
+//      main.js — so no ambient surface can ever eat a tap again.
 // Run: node test/test_ref_access.mjs
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 import { CONTROLS } from '../src/controls_ref.js';
 
@@ -248,11 +250,16 @@ s.check('object MEANINGS, not just names (chest / portal / arch / shrine / potio
 });
 
 // ---- 8. failure mode (c): the ambient layer can never eat a tap ------------------
-s.check('the hint strip is pointer-inert by construction (source pin)', () => {
-  const onb = readFileSync(new URL('../src/onboarding.js', import.meta.url), 'utf8');
-  const m = /#hint-strip[\s\S]{0,400}pointer-events:\s*none/.test(onb) ||
-    /'[^']*pointer-events:none[^']*'/.test(onb);
-  assert(m, 'the hint strip style must carry pointer-events:none');
+// ONBOARDING RETIREMENT 2026-09-18: the old pin read src/onboarding.js for the
+// strip's pointer-events:none construction. The strip is DELETED with the
+// layer, so the guarantee inverts: the file must not exist and main.js must
+// carry no '#hint-strip' surface at all.
+s.check('the hint strip is RETIRED — no ambient explainer can eat a tap (source pin)', () => {
+  assert.equal(existsSync(new URL('../src/onboarding.js', import.meta.url)), false,
+    'src/onboarding.js is back on disk');
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.ok(!main.includes('#hint-strip') && !main.includes("'hint-strip'") &&
+    !main.includes('"hint-strip"'), 'main.js still builds a hint-strip surface');
 });
 
 s.done();

@@ -5,14 +5,17 @@
 // in docs/briefs/CONDENSE_PROPOSAL.md.
 //
 // ITEM 1 — TUTORIAL SKIP STILL SHOWS THE NEXT CHIPS (defect). Owner:
-//   "clicking 'skip' still shows you the next chips." Skipping a tour must
-//   END the sequence: no further chip, card or hint appears this session, in
-//   any order of clicking; a chip already queued when skip is pressed is
-//   cancelled; the suppression survives a run start and a return to the
-//   title; REPLAY TOUR re-arms it.
+//   "clicking 'skip' still shows you the next chips." RETARGETED
+//   (ONBOARDING RETIREMENT 2026-09-18): the hint chips are DELETED with the
+//   layer, so the defect is now structurally impossible — pinned as source
+//   absence + a zero-mount runtime leg. What stays live: SKIP still ends
+//   the COACH sequence and toasts the replay pointer, and the REPLAY TOUR
+//   card (rewired same-day to start the special prologue run) is pinned in
+//   both its contexts (arm-next-run from a live run, immediate start from
+//   the title).
 // Run: node test/test_review_round1.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 let passed = 0;
 function ok(name, cond, detail) {
@@ -42,7 +45,10 @@ const mk = () => {
     click() { if (el.onclick) el.onclick(); el.fire('click'); },
     width: 0, height: 0,
   };
-  Object.defineProperty(el, 'innerHTML', { get() { return el._html; }, set(v) { el._html = String(v); } });
+  // innerHTML = '' clears the children (the harness el() behavior — a stub
+  // that keeps stale cards around lets a find() click a DEAD screen's card).
+  Object.defineProperty(el, 'innerHTML', { get() { return el._html; },
+    set(v) { el._html = String(v); if (v === '') el.children.length = 0; } });
   Object.defineProperty(el, 'textContent', { get() { return el._text; }, set(v) { el._text = String(v); } });
   return el;
 };
@@ -61,8 +67,9 @@ globalThis.performance = { now: () => now };
 const rafQueue = [];
 globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
 globalThis.location = { reload: noop };
-// Fresh profile: onboarded, but NO tour flags (the draft coach must fire) and
-// NO hint flags (the chips must be live).
+// Fresh profile: onboarded, but NO tour flags (the draft coach must fire).
+// ONBOARDING RETIREMENT 2026-09-18: the "hint flags" half of this comment is
+// gone with the layer — there are no hint flags anymore.
 const ls = new Map([['hordes_onboarded', '1']]);
 globalThis.localStorage = {
   getItem: k => (ls.has(k) ? ls.get(k) : null),
@@ -82,14 +89,25 @@ const T = mainMod.__TEST;
   pr.achievements.totals.runs = 1;
 }
 const st = T.state;
-const OB = T.onboarding;
 const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now); };
 const tick = (s) => { for (let i = 0, n = Math.round(s * 60); i < n; i++) frame(); };
 const stripEls = () => globalThis.document.body.children.filter(c => c.id === 'hint-strip');
 const tourRoot = () => globalThis.document.body.children.find(c => c.id === 'tour-root');
 const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preventDefault: noop }); };
 
-// ---- ITEM 1: SKIP ENDS THE SEQUENCE --------------------------------------------
+// ---- ITEM 1: SKIP ENDS THE SEQUENCE (RETARGETED, ONBOARDING RETIREMENT 2026-09-18)
+// The original item pinned the hint chips (a visible chip + a queued one
+// cancelled by the skip, session suppression, REPLAY TOUR re-arm). The hint
+// layer is DELETED, so the item's surviving surfaces are pinned instead:
+//   a. SKIP still ends the COACH sequence and still TOASTS the replay
+//      pointer ('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS');
+//   b. "no chips after skip" is now STRUCTURAL — there is no hint layer to
+//      mount one (source pin), and the pumped play after the skip mounts no
+//      'hint-strip' element (runtime pin);
+//   c. REPLAY TOUR is REWIRED (owner 2026-09-18): from a live run's settings
+//      it arms the NEXT run and toasts; from the TITLE it starts the special
+//      prologue run IMMEDIATELY (state.prologue live, state.assistedRun,
+//      inert world, frozen clock — the kill switch bypassed by the opt-in).
 {
   keyHandler({ key: 'x', preventDefault() {} });   // skip the intro movie
   tick(1);
@@ -97,19 +115,10 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   ok('1: the run is live', st.mode === 'playing', st.mode);
   // AUTO pilot (the default): the draft auto-picks after its window, so no
   // card clicking is needed after the skip.
-
-  // A chip is VISIBLE (the move hint, time-triggered) and a second chip is
-  // QUEUED (potion-hp: a potion in hand, hp under 85%, above the auto-drink
-  // threshold so it is never demonstrated away).
   st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1000; st.player.hp = 600;   // 60%: hint arms, no auto-drink
+  st.player.stats.maxHp = 1000; st.player.hp = 600;
   st.player.potions.hp = 1;
   tick(1.0);
-  ok('1: a hint chip is visible before the skip', stripEls().length === 1, stripEls().length);
-  let queued = false;
-  for (let i = 0; i < 60 * 10 && !queued; i++) { tick(1 / 60); queued = OB.pending().includes('potion-hp'); }
-  ok('1: a second chip is queued (potion-hp) when the tour appears',
-    queued, OB.pending());
 
   // The tour: the first draft (a level-up) coaches through the REAL path —
   // xp crosses the bar through the REAL gem-pickup loop, not a state write.
@@ -123,60 +132,96 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   // the same Tour.skip()).
   docKey('Escape');
   ok('1: the tour is gone after skip', !tourRoot());
-  ok('1: the skip cancelled the chip on screen (no hint surface left)',
-    stripEls().length === 0, stripEls().map(e => e.textContent));
-  ok('1: the skip cancelled the chip already QUEUED',
-    OB.pending().length === 0, OB.pending());
-  ok('1: the suppression is on record (session flag)', OB.suppressed() === true);
+  ok('1: the skip TOASTS the replay pointer (the tour layer\'s own contract)',
+    (st.toasts || []).some(t => /TOUR SKIPPED/.test(t.msg)),
+    (st.toasts || []).map(t => t.msg));
 
-  // The draft resolves itself (AUTO window) and the rest of the run stays
-  // chip-free — including new triggers that would otherwise arm.
+  // (b) STRUCTURAL "no chips after skip": there is no hint layer left to
+  // mount a chip — not suppressed, DELETED.
+  const src = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  ok('1: no chips can exist after a skip — the hint layer is DELETED (source pin)',
+    !existsSync(new URL('../src/onboarding.js', import.meta.url)) &&
+    !/\bmaybeHint\s*\(|\bpumpHints\s*\(|\bupdateOnboarding\s*\(|\bhintsSuppressed\b/.test(src) &&
+    !src.includes("'hint-strip'") && !src.includes('#hint-strip'), '');
+
+  // (b, runtime half) The draft resolves itself (AUTO window) and the rest
+  // of the run mounts no hint-strip — the stripEls readout stays empty
+  // because the element kind no longer exists.
   let playing = false;
   for (let i = 0; i < 60 * 15 && !playing; i++) { frame(); playing = st.mode === 'playing'; }
   ok('1: the draft auto-resolved after the skip (run continues)', playing, st.mode);
+  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable for the sweep
   let leaked = null;
-  for (let i = 0; i < 60 * 40; i++) {
+  for (let i = 0; i < 60 * 15; i++) {
     frame();
     if (stripEls().length) { leaked = stripEls().map(e => e.textContent); break; }
   }
-  ok('1: NO chip appears for the rest of the run after skip', leaked === null, leaked);
+  ok('1: NO hint-strip element appears for the rest of the run after skip', leaked === null, leaked);
 
-  // Across a run END and a return to the title, then a NEW run: still quiet.
-  st.player.stats.maxHp = 1; st.player.hp = 1;   // contact ends the run fast
-  let ended = false;
-  for (let i = 0; i < 60 * 120 && !ended; i++) { frame(); ended = st.mode === 'death-cine' || st.mode === 'dead'; }
-  if (st.mode === 'death-cine') keyHandler({ key: 'x', preventDefault() {} });
+  // (c) REPLAY TOUR from a LIVE RUN's settings: arms the NEXT run + toasts
+  // (never yanks the player out of a fight).
+  keyHandler({ key: 'escape', preventDefault() {} });   // pause -> settings
+  ok('1: settings open mid-run', st.mode === 'settings', st.mode);
+  const ovCards1 = globalThis.document.getElementById('ov-cards');
+  const htpRun = [...ovCards1.children].find(c => (c._html || '').includes('>HOW TO PLAY<'));
+  ok('1: the in-run settings offers HOW TO PLAY', !!htpRun);
+  htpRun.click();
+  const replayInRun = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
+  ok('1: the REPLAY TOUR card exists in the manual (non-gate context)', !!replayInRun);
+  replayInRun.click();
+  ok('1: REPLAY TOUR from a live run ARMS THE NEXT RUN and says so',
+    (st.toasts || []).some(t => /GUIDED WALKTHROUGH ARMS AT NEXT RUN/.test(t.msg)),
+    (st.toasts || []).map(t => t.msg));
+  ok('1: ...and the live run was NOT yanked (still playing, no prologue)',
+    st.mode === 'playing' && !st.prologue, st.mode);
+
+  // End the run through the real path (END RUN -> CONFIRM -> TITLE).
+  // NOTE: this file's boot seeds NO tour flags, so the first settings open
+  // fired the KEPT settings coach — and while any coach is live the keydown
+  // handler yields EVERY key to the tour (coachActive() swallows). Reopen
+  // the pause through T.openSettings(), the same function the Escape branch
+  // calls (the coach is dismissed below, before the TITLE key).
+  T.openSettings();
+  const endCard = [...ovCards1.children].find(c => (c._html || '').includes('>END RUN<'));
+  ok('1: END RUN card present in settings', !!endCard,
+    { mode: st.mode, cards: [...ovCards1.children].map(c => (c._html || '').slice(0, 60)) });
+  endCard.click();
+  const confirm = [...ovCards1.children].find(c => (c._html || '').includes('CONFIRM END RUN'));
+  confirm && confirm.click();
   ok('1: the run ended', st.mode === 'dead', st.mode);
-  ok('1: no chip survived the run ending', stripEls().length === 0);
-  // Fresh tour flags: the DEATH coach owns the keys until dismissed — skip it
-  // through the same real Escape path (a second skip, also suppressed).
-  if (tourRoot()) docKey('Escape');
+  if (tourRoot()) docKey('Escape');   // a fresh death coach may own the keys
   keyHandler({ key: 't', preventDefault() {} });   // TITLE
   ok('1: back on the title', st.mode === 'title', st.mode);
-  T.startRun();
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1000; st.player.hp = 600;
-  tick(5.0);
-  ok('1: a NEW run in the same session shows no chips after skip',
-    stripEls().length === 0, stripEls().map(e => e.textContent));
 
-  // REPLAY TOUR re-arms the layer (the manual's REPLAY TOUR card's real
-  // handler calls the same re-arm; the wiring itself is pinned textually
-  // below).
-  OB.replayRearm();
-  ok('1: REPLAY TOUR re-arms the hint layer', OB.suppressed() === false);
+  // (c) REPLAY TOUR from the TITLE: arms + STARTS the special prologue run
+  // immediately (the opt-in bypasses C.PROLOGUE.ENABLED, which is OFF here).
+  const htpTitle = [...ovCards1.children].find(c => (c._html || '').includes('>HOW TO PLAY<'));
+  ok('1: the title offers HOW TO PLAY', !!htpTitle);
+  htpTitle.click();
+  const replayTitle = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
+  ok('1: the REPLAY TOUR card is on the manual from the title too', !!replayTitle);
+  replayTitle.click();
+  tick(0.2);
+  ok('1: REPLAY TOUR from the title STARTS the special run immediately (prologue live)',
+    st.mode === 'playing' && !!st.prologue, { mode: st.mode, prologue: !!st.prologue });
+  ok('1: the replayed run is flagged ASSISTED', st.assistedRun === true);
+  ok('1: the special level stages its potion', !!(st.prologue && st.prologue.potion));
+  {
+    let maxEnemies = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      frame();
+      maxEnemies = Math.max(maxEnemies, st.enemies.length);
+    }
+    ok('1: the special level is INERT — no enemies spawn while the prologue lives',
+      maxEnemies === 0 && !!st.prologue, { maxEnemies, t: st.time });
+    ok('1: the run clock is frozen while the prologue lives', st.time === 0, st.time);
+  }
+  // Reset into an ordinary run for ITEM 2 (the opt-in is CONSUMED by the arm).
   T.startRun();
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  let rearmed = false;
-  for (let i = 0; i < 60 * 15 && !rearmed; i++) { tick(1 / 60); rearmed = stripEls().length === 1; }
-  ok('1: after REPLAY TOUR a fresh run shows chips again', rearmed);
-
-  // The wiring pin: the REPLAY TOUR card re-arms the suppression in the
-  // SHIPPED source (not only through the test seam).
-  const src = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  ok('1: the REPLAY TOUR handler resets the suppression in the shipped source',
-    /REPLAY TOUR[\s\S]{0,500}hintsSuppressed = false/.test(src));
+  tick(0.5);
+  ok('1: the next run is ordinary again (opt-in consumed, gate still OFF)',
+    !st.prologue && st.assistedRun === false && st.mode === 'playing',
+    { prologue: !!st.prologue, assisted: st.assistedRun, mode: st.mode });
 }
 
 console.log('test_review_round1: item 1 ' + passed + ' checks');
@@ -218,6 +263,11 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
       ended = st.mode === 'death-cine' || st.mode === 'dead';
     }
     if (st.mode === 'death-cine') { keyHandler({ key: 'x', preventDefault() {} }); }
+    // ITEM 1 retarget side effect (ONBOARDING RETIREMENT 2026-09-18): the real
+    // REPLAY TOUR card clearTourFlags()s, so the KEPT death coach is re-armed
+    // and mounts on this death screen — an undismissed coach freezes the NEXT
+    // run's sim. Skip it through the same real Escape path as ITEM 1.
+    if (tourRoot()) docKey('Escape');
     return st.runSettled;
   };
   T.getProfile().bestTime = 1e9;   // kill FIRST_CLEAR: isolate the award

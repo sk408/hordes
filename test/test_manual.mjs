@@ -16,89 +16,34 @@
 //   5. GOT IT sits in the layout (a flow footer card), never sticky over the
 //      scrolling body;
 //   6. THE FIELD page still renders from OBJECT_HELP (one source);
-//   7. HINT STRIP GEOMETRY (the owner's mirror fault - "text runs past the
-//      right edge and wraps mid-sentence"): layoutStrip clamps into the
-//      VIEWPORT as well as the container, and the strip's width is capped to
-//      the viewport when the letterboxed container overflows it.
+//   7. RETARGETED (ONBOARDING RETIREMENT 2026-09-18): the old item 7 pinned
+//      the HINT STRIP's geometry (layoutStrip viewport clamps, width cap,
+//      the HUD-avoid projection) — the strip is DELETED with the hint layer,
+//      so those pins are gone. What replaces them is the manual-content pin
+//      below: the retired hints' SUBJECTS (radar, map, and the rest of the
+//      control rows) stay documented on the manual's CONTROLS page.
 // The real-browser bounding boxes (320x568 / 360x800 / 568x320) live in
 // tools/verify_help_mobile.mjs - a stub DOM cannot lay text out.
 // Run: node test/test_manual.mjs
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
-import { layoutStrip, HintStrip } from '../src/onboarding.js';
 
-const s = suite('test_manual-strip');
+const s = suite('test_manual');
 const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
-// ---- 7. HINT STRIP GEOMETRY first (pure unit level) -------------------------
+// ---- 7. RETIRED HINT-STRIP GEOMETRY -> MANUAL CONTENT PIN -------------------------
+// (ONBOARDING RETIREMENT 2026-09-18) The layoutStrip / HintStrip unit checks
+// and the onboardingAvoid source pin died with src/onboarding.js. Their
+// intent — the player must always be able to learn what the on-screen
+// subjects ARE — survives on the manual: the CONTROLS page must carry the
+// radar and map rows (two of the retired hints' subjects). The DOM-side pin
+// runs after the boot below (page 3 is the merged CONTROLS page); here the
+// source pin: onboardingAvoid is gone from main.js.
 {
-  // The owner fault: a phone whose letterboxed game container is WIDER than
-  // the viewport (AUTO fit floors at 1 on short edges). The container here is
-  // ASYMMETRICALLY off-centre (left -80, right 480 on a 320px screen) so the
-  // centred strip genuinely lands past the right edge at 340 without the
-  // viewport clamp — a symmetric fixture would pass by accident.
-  const cRect = { left: -80, top: 0, right: 480, bottom: 568, width: 560, height: 568 };
-  const vp = { left: 0, top: 0, right: 320, bottom: 568, width: 320, height: 568 };
-  const r = layoutStrip(cRect, 280, 24, [], vp);
-  s.check('layoutStrip clamps the strip fully inside the VIEWPORT, not just the container', () => {
-    assert.ok(r.left >= 0 && r.right <= 320,
-      'strip must sit in [0,320] (got ' + r.left + '..' + r.right + ')');
-  });
-  // And a container shifted above the viewport (the phone's letterbox can do
-  // this too) still pins the strip inside it vertically.
-  const cUp = { left: -80, top: -100, right: 400, bottom: 468, width: 480, height: 568 };
-  const r2 = layoutStrip(cUp, 280, 24, [], vp);
-  s.check('layoutStrip clamps vertically too (the strip never leaves the viewport)', () => {
-    assert.ok(r2.top >= 0 && r2.bottom <= 568, 'got ' + r2.top + '..' + r2.bottom);
-  });
-  // No viewport given: the old container-only behaviour (nothing breaks).
-  const r3 = layoutStrip(cRect, 280, 24, []);
-  s.check('without a viewport rect the container clamp is unchanged (compat)', () => {
-    assert.ok(r3.left >= -76 && r3.right <= 476, 'got ' + r3.left + '..' + r3.right);
-  });
-}
-{
-  // The strip element's WIDTH is capped to the viewport at mount/layout time
-  // (the owner's "runs past the right edge"): a stub element with no layout
-  // still exposes the computed style, which is what the browser reads. The
-  // viewport here (260px) is NARROWER than the 280px max so the cap genuinely
-  // binds — on a wider viewport the check would pass by accident.
-  const doc = {
-    createElement: () => ({ id: '', style: {}, textContent: '' }),
-    documentElement: { clientWidth: 260, clientHeight: 568 },
-    body: { appendChild() {} },
-  };
-  const strip = new HintStrip({
-    anchor: () => ({ left: -80, top: 0, right: 400, bottom: 568, width: 480, height: 568 }),
-    mount: doc.body, doc,
-  });
-  strip.show('map', 'MAP: open the world map (the fight keeps running)');
-  strip.update(1 / 60);
-  s.check('the strip width is capped to the viewport (owner: runs past the right edge)', () => {
-    const w = parseFloat(strip.el.style.width);
-    assert.ok(Number.isFinite(w) && w <= 252,
-      'width must be <= viewport-8 = 252 (style.width="' + strip.el.style.width + '")');
-  });
-}
-
-{
-  // THE OWNER'S OTHER FAULT (msg_01M2P2714VDKY07BBWWCX3G7CC: the hint card
-  // "overlaps HUD bars (HP/MP/XP/GOLD)"): the top-centre candidate must
-  // YIELD when the HUD readout block is an avoid rect (it lands bottom).
-  const cRect = { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 };
-  const hud = { left: 0, top: 0, right: 200, bottom: 52 };   // the native HUD block
-  const r = layoutStrip(cRect, 280, 24, [hud]);
-  s.check('layoutStrip yields the top row to the HUD readout block (owner: overlaps HUD bars)', () => {
-    assert.ok(r.bottom <= hud.top + 4 || r.top >= hud.bottom - 4,
-      'the strip must clear the HUD block (got ' + r.top + '..' + r.bottom + ')');
-  });
-  // ... and the live avoid list carries the projected block (source pin:
-  // the projection is canvasRegion, the same seam the coachmarks use).
   const src = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  s.check('the strip avoid list includes the projected HUD readout block', () => {
-    assert.ok(/canvasRegion\(0, 0, 200, 52\)/.test(src),
-      'onboardingAvoid must avoid canvasRegion(0,0,200,52)');
+  s.check('the strip avoid-list wiring is gone with the layer (no onboardingAvoid)', () => {
+    assert.ok(!src.includes('onboardingAvoid'), 'main.js still carries onboardingAvoid');
   });
 }
 
@@ -193,6 +138,22 @@ check('the CONTROLS page is ONE card carrying BOTH subheads, KEYS first on a des
     assert.ok(c.innerHTML.includes(row.purpose), 'controls card lost the purpose of ' + row.id);
   }
 });
+// ONBOARDING RETIREMENT 2026-09-18 (the old item 7's replacement pin): the
+// retired hint strip's SUBJECTS stay documented — the CONTROLS page must
+// carry the radar and map rows by NAME and purpose (built from the
+// controls_ref rows, so the wording can never fork).
+check('the CONTROLS page documents the retired hints’ radar and map subjects', async () => {
+  T.manual.goto(3);
+  const c = cards().find(k => /YOUR CONTROLS/.test(k.innerHTML || ''));
+  assert.ok(c, 'the merged controls card exists');
+  const { controlById } = await import('../src/controls_ref.js');
+  for (const id of ['radar', 'map']) {
+    const row = controlById(id);
+    assert.ok(c.innerHTML.includes(row.touch), 'controls page lost the ' + id + ' touch name');
+    assert.ok(c.innerHTML.includes(row.keys.join(' / ')), 'controls page lost the ' + id + ' key');
+    assert.ok(c.innerHTML.includes(row.purpose), 'controls page lost the ' + id + ' purpose');
+  }
+});
 
 // ---- 3. HOW A RUN WORKS ------------------------------------------------------
 check('page 1 is HOW A RUN WORKS: waves, intermission, the choices, both endings, with numbers', () => {
@@ -244,4 +205,4 @@ check('page 4 (THE FIELD) still renders from OBJECT_HELP (one source)', () => {
   }
 });
 
-console.log('\nmanual v2: ' + passed + ' structure checks + strip geometry above');
+console.log('\nmanual v2: ' + passed + ' structure checks + retirement pin above');

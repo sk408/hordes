@@ -1,26 +1,26 @@
-// '?' AFFORDANCE SUPPLEMENT (owner 2026-09-16, msg_01M2NWTJDK54ENX9FWR6TFPBFW).
-//
-// The "?" IS a control, and nothing in the game ever told the player so: the
-// button is a bare glyph (aria-label only), and the sole explanation lived
-// INSIDE the reference screen it opens — circular. This file pins:
+// '?' AFFORDANCE (owner 2026-09-16, msg_01M2NWTJDK54ENX9FWR6TFPBFW) —
+// RETARGETED for the ONBOARDING RETIREMENT (owner 2026-09-18). The '?' HINT
+// (the intro chip that used to fire on the first losable fight) is gone with
+// the hint layer; the '?' CONTROL — help MODE, the tap-to-learn inspector —
+// is NOT retired. This file pins:
 //   1. SOURCE: a 'help' row in src/controls_ref.js (keys '?' / touch '?',
-//      one purpose), in HINT_IDS (retire / give-up / reset coverage), and
-//      the reference screen's KEYBOARD card line is BUILT from it (parity
-//      by construction, no forked strings);
-//   2. FIRST-EVENT INTRO: on a fresh profile the '?' hint appears ONCE, at
-//      the first moment the player is in a fight they can actually lose (a
-//      real hit landed) — and NOT BEFORE;
-//   3. RETIRE ON PRESS: both '?' seams (the runAction button path and the
-//      raw keydown path) retire it permanently; it never returns next run;
-//   4. ONE GLYPH, ONE MEANING, BOTH MODES: with the touch layer on, opening
-//      help names at least one TOUCH control and NO keyboard key names
-//      (TAB / H / Q / E tokens) — a phone player is never taught keys.
+//      one purpose), ASCII, and the reference screen's KEYBOARD card line
+//      BUILT from it (parity by construction, no forked strings);
+//   2. THE CONTROL LIVES: pressing '?' through the real keydown seam arms
+//      help mode and ESC leaves it; the button path (runAction 'help') arms
+//      it too;
+//   3. RETIREMENT: the old hint's trigger (a real hit landed — the fight
+//      became losable) across 25s of pumped play mounts ZERO 'hint-strip'
+//      elements (the old layer showed the '?' intro inside this window);
+//   4. ONE GLYPH, ONE MEANING, BOTH MODES: with the touch layer on, the
+//      help-mode explainer names at least one TOUCH control and NO keyboard
+//      key names (TAB / H / Q / E tokens) — a phone player is never taught
+//      keys.
 // Run: node test/test_helpq.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 import { CONTROLS, introLine, controlById } from '../src/controls_ref.js';
-import { HINT_IDS } from '../src/onboarding.js';
 
 const s = suite('test_helpq');
 const HELP_KEY_LINE = introLine('help', false);
@@ -35,9 +35,8 @@ s.check('the help row exists with the ? glyph on both paths and is ASCII', () =>
   assert.ok(row.purpose.length >= 8);
   assert.ok(/^[\x20-\x7E]*$/.test(row.keys.join('') + row.touch + row.purpose), 'no emojis (owner rule)');
 });
-s.check('the help id is in HINT_IDS — retire, give-up and REPLAY-TOUR reset cover it', () => {
-  assert.ok(HINT_IDS.includes('help'), HINT_IDS);
-});
+// (The old HINT_IDS membership check is RETIRED with the layer — ONBOARDING
+// RETIREMENT 2026-09-18: there is no hint store left to cover the id.)
 s.check('introLine builds "?: purpose" from the row on both paths', () => {
   assert.equal(HELP_KEY_LINE, '?: ' + controlById('help').purpose);
   assert.equal(HELP_TOUCH_LINE, HELP_KEY_LINE, 'the glyph is the same on both paths');
@@ -53,98 +52,56 @@ s.check('the reference card line is BUILT from the row (parity, no forked string
 
 // ---- boot a FRESH profile through the REAL seams ---------------------------------
 const { T, state: st, elements, pump, key } = await boot({ storage: [['hordes_onboarded', '1']] });
-const OB = T.onboarding;
 const body = globalThis.document.body;
-const stripTexts = () => (body.children || []).filter(c => c.id === 'hint-strip').map(c => c.textContent);
+const stripEls = () => (body.children || []).filter(c => c && c.id === 'hint-strip');
 function step(n = 1) {
   for (let i = 0; i < n; i++) {
     pump(1);
     if (st.mode === 'draft') { const card = (elements['ov-cards'].children || [])[0]; if (card && card.click) card.click(); }
   }
 }
-function pumpUntil(pred, capSeconds) {
-  let waited = 0;
-  while (waited < capSeconds) {
-    for (const b of (st.wave.bosses || [])) if (b && b.hp > 0) b.hp = 0;
-    for (const b of (st.wave.midBosses || [])) if (b && b.hp > 0) b.hp = 0;
-    step(1); waited += 1 / 60;
-    if (pred(stripTexts())) return stripTexts();
-  }
-  return null;
-}
-// Isolate the '?' hint: every other control is pre-known (the real store
-// API) — the 20s display slots then belong to the one id under test.
-for (const c of CONTROLS) if (c.id !== 'help') OB.store.setDone(c.id);
-OB.store.setDone('move'); OB.store.setDone('portal');
 
+// ---- 2. THE CONTROL LIVES: '?' arms help mode, ESC leaves -------------------------
 T.startRun();
 T.setPilotMode('MANUAL');
 st.player.stats.xpMult = 0;
-st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable: no fight to lose
+st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
+step(2);
+key('keydown', { key: '?', preventDefault() {} });
+s.check('the raw ? KEYPRESS arms help mode (the control is not retired)', () => {
+  assert.ok(st.helpMode === true, 'helpMode after ? keydown');
+});
+key('keydown', { key: 'Escape', preventDefault() {} });
+s.check('ESC leaves help mode', () => {
+  assert.ok(st.helpMode === false, 'helpMode after ESC');
+});
+T.runAction('help');
+s.check('the ? BUTTON (runAction seam) arms help mode too', () => {
+  assert.ok(st.helpMode === true, 'helpMode after runAction');
+});
+T.runAction('help');
+assert.ok(st.helpMode === false, 'fixture: help mode left for the next leg');
 
-// ---- 2. NOT BEFORE ---------------------------------------------------------------
+// ---- 3. RETIREMENT: the old "?" HINT's trigger mounts nothing ---------------------
+// The retired hint fired at the first losable fight (HP dropped). Force
+// exactly that and pump 25s: the strip can never mount — the layer is gone.
 {
-  let stray = false;
-  for (let i = 0; i < 60 * 25; i++) {
-    st.player.hp = st.player.stats.maxHp;   // pin full HP: the moment never arrives
-    step(1);
-    if (stripTexts().includes(HELP_KEY_LINE)) stray = true;
-  }
-  s.check('no "?" intro while the player cannot lose the fight (25s, full HP)', () => {
-    assert.ok(!stray, 'the help hint armed at full HP');
-  });
-}
-
-// ---- 2b. THE MOMENT: the first real hit ------------------------------------------
-{
-  st.player.hp = st.player.stats.maxHp * 0.5;   // a fight they can lose
-  const hit = pumpUntil(ts => ts.includes(HELP_KEY_LINE), 30);
-  s.check('the "?" intro appears once a real hit lands (built from the row)', () => {
-    assert.ok(hit, 'not shown within 30s of the hit');
-    assert.equal(stripTexts()[0], HELP_KEY_LINE);
-  });
-}
-
-// ---- 3. RETIRE ON PRESS — BOTH SEAMS ----------------------------------------------
-{
-  // Seam 1: the raw keydown path ('?' / F1 key).
-  key('keydown', { key: '?', preventDefault() {} });
-  s.check('the raw ? KEYPRESS retires the hint permanently (persisted done flag)', () => {
-    assert.ok(OB.store.done('help'));
-    step(2);
-    assert.ok(!stripTexts().includes(HELP_KEY_LINE), 'off the screen');
-  });
-  // And it never comes back — not even in a fresh run at the same trigger.
-  OB.store.reset();   // REPLAY-TOUR reset re-arms EVERYTHING — including the
-  for (const c of CONTROLS) if (c.id !== 'help') OB.store.setDone(c.id);   // other
-  OB.store.setDone('move'); OB.store.setDone('portal');                    // controls
-  assert.ok(!OB.store.done('help'));
-  T.startRun();
-  T.setPilotMode('MANUAL');
-  st.player.stats.xpMult = 0;
-  st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
-  st.player.hp = st.player.stats.maxHp * 0.5;
-  const again = pumpUntil(ts => ts.includes(HELP_KEY_LINE), 30);
-  assert.ok(again, 're-armed leg: the intro returns after REPLAY-TOUR reset');
-  // Seam 2: the button path (runAction 'help' — the tc-help touch button).
-  T.runAction('help');
-  s.check('the ? BUTTON (runAction seam) retires the hint too', () => {
-    assert.ok(OB.store.done('help'));
-    step(2);
-    assert.ok(!stripTexts().includes(HELP_KEY_LINE), 'off the screen');
+  st.player.potions.hp = 2; st.player.potions.mp = 2;
+  st.player.hp = st.player.stats.maxHp * 0.5;   // a fight they can lose (the old trigger)
+  let mounts = 0;
+  for (let i = 0; i < 60 * 25; i++) { step(1); mounts += stripEls().length; }
+  s.check('no hint strip appears when HP drops (the ? hint is retired with the layer)', () => {
+    assert.equal(mounts, 0, mounts + ' hint-strip frames in 25s after the hit');
+    assert.ok(st.time > 20, 'the sim really ran the window (t=' + st.time.toFixed(1) + ')');
   });
 }
 
 // ---- 4. ONE GLYPH, ONE MEANING: touch-worded help ---------------------------------
-// RETARGETED 2026-09-16 (help mode): the ? panel is retired; the same
-// guarantees now run against the inspect mode's single-entry explainer
-// (a probe through the REAL pointer routing, one control at a time).
-// RETARGETED again (device work, same day): the touch arm no longer sets
-// #touch's class by hand — it boots a TOUCH DEVICE (the harness installs
-// ontouchstart / maxTouchPoints / coarse matchMedia together and main.js
-// derives the class itself). The keyboard arm runs FIRST on this file's own
-// desktop boot because a second boot() replaces the DOM globals: no earlier
-// arm may pump afterwards.
+// The help-mode explainer legs are UNTOUCHED by the retirement (help MODE is
+// a live feature): a probe through the REAL pointer routing, one control at
+// a time. The keyboard arm runs FIRST on this file's own desktop boot because
+// a second boot() replaces the DOM globals: no earlier arm may pump
+// afterwards.
 {
   const fireProbe = (elems, act) => elems['touch']._ev['pointerdown']({
     preventDefault() {}, pointerId: 61, clientX: 0, clientY: 0,
@@ -194,5 +151,11 @@ st.player.stats.maxHp = 1e9; st.player.hp = 1e9;   // untouchable: no fight to l
     assert.equal(text, introLine('pilot', true), 'built from the controls_ref touch row');
   });
 }
+
+// ---- 5. the layer the old ? hint rode on is GONE (source pin) ----------------------
+s.check('the hint layer itself is deleted (src/onboarding.js absent)', () => {
+  assert.equal(existsSync(new URL('../src/onboarding.js', import.meta.url)), false,
+    'src/onboarding.js is still on disk');
+});
 
 s.done();

@@ -2,17 +2,16 @@
 // 2026-09-16: "It's the per button cards. We don't have to have cards,
 // really, but at least something that shows people how to use them.")
 //
-// ONE SOURCE OF TRUTH for what each control IS and DOES: the per-control
-// hint lines (main.js updateOnboarding) are built FROM these rows, and the
-// reference screens (HOW TO PLAY / the in-run reference) must read the same
-// rows — never a forked string. Each row carries the keyboard trigger(s),
-// the TOUCH control name (a phone player is never told to press a key they
-// do not have), and a one-line purpose. NO EMOJIS (owner rule).
+// ONE SOURCE OF TRUTH for what each control IS and DOES: the reference
+// screens (HOW TO PLAY / the in-run reference) and the prologue's staged
+// tooltips (main.js prologueTipText) both build their lines FROM these rows
+// — never a forked string. Each row carries the keyboard trigger(s), the
+// TOUCH control name (a phone player is never told to press a key they do
+// not have), and a one-line purpose. NO EMOJIS (owner rule).
 //
-// The move/portal IN-CONTEXT touches predate this list and keep their own
-// hand-written lines (they teach moments, not buttons); a reference screen
-// may fold them in here later, but until then their strings live in
-// main.js updateOnboarding and nowhere else.
+// 2026-09-18: the in-run hint strip (the layer that used to fire these lines
+// mid-run) is RETIRED — a tutorial belongs before gameplay, and these rows
+// now teach from the manual + the prologue only.
 export const CONTROLS = [
   { id: 'potion-hp', keys: ['H'], touch: 'HP',
     purpose: 'drink a health potion to heal' },

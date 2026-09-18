@@ -81,7 +81,8 @@ import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.j
 // ONBOARDING REWORK (owner-approved 2026-09-16): the engine for the
 // non-pausing, non-capturing hint strip + object tags (see its header for
 // the six invariants).
-import { HintStrip, makeHintStore, HINT_IDS } from './onboarding.js';
+// The in-run hint layer (src/onboarding.js) is RETIRED (owner 2026-09-18) —
+// nothing imports it any more; the module file itself is deleted.
 import { introLine, controlById, CONTROLS } from './controls_ref.js';
 // WAVE-10 finale (hb6's module — read its header before touching wiring):
 // mawDecide keys choreography off enemy.age; barrage projectiles each carry
@@ -1020,12 +1021,22 @@ const WHATS_NEW = {
   dateMs: Date.UTC(2026, 8, 18),       // the ship date (2026-09-18)
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
+  // THE ENTRY (owner 2026-09-18: "We can use the last played update to tell
+  // the player about the fix to how to play"): the manual rework is the
+  // release's news — index buttons gone, prev/next under the text, the text
+  // owns the screen. Plain short sentences, what the player GETS, no emojis.
   lines: [
+    'HOW TO PLAY is reworked: the index buttons are gone.',
+    'Prev and next sit under the text, so more of the screen is the manual.',
+    'The shop pages with arrows and fits three cards across.',
+  ],
+  // The guided-run lines ride the SAME gate as the offer (below): while
+  // C.PROLOGUE.ENABLED is off, the note neither offers nor advertises the
+  // run — advertising what cannot be taken is a broken promise.
+  guidedLines: [
     'New: a short guided run with a free shielding potion.',
     'Controls appear one at a time, each with a tip, as you need them.',
     'Skipping the explaining keeps the free potion and shield.',
-    'Level-up picks land with a card ceremony while play continues.',
-    'The shop now pages with arrows and fits three cards across.',
   ],
 };
 // Pure: is the note due for THIS profile/release/boot state? Exported via
@@ -1209,7 +1220,6 @@ function pilotPrefLabel() {
 }
 function togglePilotMode() {
   // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
-  controlUsed('pilot');   // PER-CONTROL INTRODUCTIONS: the user cycled it
   const i = PILOT_MODES.indexOf(normalizePilotMode(state.pilotMode));
   swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
 }
@@ -1916,9 +1926,6 @@ function buyPaidChest(tier) {
 function continueRun() {
   nightContinueLeft = null;   // NIGHT MODE: a human CONTINUE cancels the auto one
   const p = state.player;
-  // PER-CONTROL INTRODUCTIONS: reaching CONTINUE means an intermission
-  // happened — the moment stance and the pilot choice pay differently.
-  introSawIntermission = true;
   // G9 FOLLOW-UP: the wave that just ENDED is "untouched" when nothing landed
   // on the hero during it. Reaching CONTINUE means the wave was finished (the
   // portal only opens on a clear), so this is the completion seam. The
@@ -2366,8 +2373,32 @@ function update(dt) {
     // while a card is up (the walk -> banner rhythm is unchanged).
     state.prologue.t += dt;
     if (!prologueBanner()) state.prologue.walkT += dt;
+    // TWO-TAP SKIP: the arm window decays on the same phase clock (a held
+    // banner does not extend it — the second press must be deliberate and
+    // prompt, never banked).
+    if (state.prologue.skipArmT > 0) {
+      state.prologue.skipArmT = Math.max(0, state.prologue.skipArmT - dt);
+    }
     prologueAdvanceIfEarned();
     prologueReveal();
+    // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger
+    // a level up and tell the player about the card selections"): when THE
+    // DRAFT banner has walked into view, the phase grants ONE free level-up
+    // — scripted, not earned (no enemies, the clock still frozen) — and the
+    // REAL draft screen opens with the explanation riding its subtitle. The
+    // draft's auto-pick pacing is UNTOUCHED: DRAFT_TIMEOUT keeps the owner's
+    // deliberate slowdown, unshortened.
+    if (state.prologue && !state.prologue.draftFired && !state.prologue.skipped &&
+        state.mode === 'playing') {
+      const db = PROLOGUE_BANNERS[state.prologue.bannerIdx];
+      if (db && db.action === 'draft' && prologueBanner()) {
+        state.prologue.draftFired = true;
+        // top the XP bar up first so levelUp's xp -= xpNext lands the bar at
+        // 0, not negative (scripted, not earned — nothing was killed for it)
+        state.player.xp = Math.max(state.player.xp, state.player.xpNext);
+        levelUp();   // mode is 'playing' here, so the draft opens right now
+      }
+    }
     if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
       endPrologue('bound');
     }
@@ -2443,10 +2474,6 @@ function update(dt) {
       if (len < C.PORTAL.RADIUS) {
         po.entering = true;
         po.enterT = 0;
-        // ONBOARDING (teach-until-demonstrated): entering the portal IS the
-        // taught action — the portal hint retires permanently, now.
-        hintStore.setDone('portal');
-        hintStrip.retire('portal');
       } else if (len > C.PORTAL.STANDOFF) {
         // One-way approach: the step never overshoots the standoff ring.
         const step = Math.min(C.PORTAL.APPROACH * dt, len - C.PORTAL.STANDOFF);
@@ -3432,8 +3459,15 @@ function toast(msg, tint = null) {
   if (state.toasts.length > 3) state.toasts.shift();
 }
 
-// WAVE-14: the boss-arrival banner lives ~2.5s (ticked beside the toasts in
-// update() AND updateFinale() so the maw's banner expires mid-finale too).
+// WAVE-14: the boss-arrival banner lives ~2.5s. STUCK-OVERLAY GUARANTEE
+// (owner 2026-09-18, tooltip-stuck addendum: "an overlay's dismissal must
+// NEVER depend on the thing it overlays"): update()/updateFinale() tick it on
+// the sim clock exactly as before, and frame() ticks it on the WALL clock in
+// every mode where those sim tickers are NOT running (intermission, draft,
+// dead, settings, map, help, the token banner-hold, a coach card, the
+// cinematics) — a state change can no longer freeze a live banner on screen
+// (the old sim-only tick is exactly how one could). The two paths are
+// mutually exclusive per frame, so the decay rate is unchanged in play.
 function tickBossBanner(dt) {
   if (!state.bossBanner) return;
   state.bossBanner.ttl -= dt;
@@ -3535,9 +3569,6 @@ function openDraft() {
   // re-rendered below, so the ceremony must not tear down what it no longer
   // owns (endDraftCeremony(false) leaves the display to this presenter).
   if (draftCeremony) endDraftCeremony(false);
-  // PER-CONTROL INTRODUCTIONS: a draft IS the first level-up — the moment
-  // focus and the field report start to matter.
-  introSawDraft = true;
   state.mode = 'draft';
   ovTitle.className = '';
   // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
@@ -3629,6 +3660,12 @@ function openDraft() {
   }
   ovTitle.textContent = 'LEVEL ' + state.player.level;
   ovSub.textContent = 'choose your build';
+  // PROLOGUE SCRIPTED DRAFT (owner addendum 2026-09-18: use the level-up to
+  // "tell the player about the card selections"): the explanation rides the
+  // REAL draft screen — what the choice is, and that the pick changes the run.
+  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
+    ovSub.textContent = 'pick 1 of the 3 cards - the one you take changes the run';
+  }
   draftFocus = -1;
   ovCards.innerHTML = '';
   choices.forEach((u, i) => {
@@ -3747,6 +3784,13 @@ function volleyAtProjCap() {
 
 function pick(u) {
   const p = state.player;
+  // PROLOGUE (owner addendum 2026-09-18): THE DRAFT banner's action is the
+  // pick itself — the card taken feeds the action ledger, so the banner
+  // advances the moment the draft resolves (the auto-pick's card counts the
+  // same as a tapped one: it IS a pick).
+  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
+    prologueActionDone('draft');
+  }
   // G8 step 3: a RUN RULE card grants a persistent condition instead of a
   // number; every other card records itself in the `once` ledger (stat cards
   // only — weapon grant/level cards are the weapon economy, not the stats).
@@ -4552,10 +4596,6 @@ function settleRunGold({ winBonus = 0 } = {}) {
   state.runSettled = { gold, award, purseBanked, winBonus, firstClear,
     goldPool: { base: 1, night: nightPct / 100, challenge: challengePct / 100,
       heat: heatPct, total: pool } };
-  // ONBOARDING (teach-until-demonstrated): the run ENDED — every hint that
-  // never got its demonstration burns one of its 3 chances. Bumped beside the
-  // claim (before the effects) so a partial settle failure cannot skip it.
-  for (const id of HINT_IDS) if (!hintStore.done(id)) hintStore.bumpRuns(id);
   try {
     if (firstClear) profile.bestTime = Math.floor(state.time);
     profile.gold += gold;
@@ -5083,36 +5123,38 @@ function manualGoto(page) {
   // M4: REPLAY TOUR (WAVE-21, docs/FIRST_RUN_TOUR doc #7) lives HERE now — a
   // footer card on every manual page EXCEPT the first-run gate (a fresh
   // player has not seen the tour yet; replaying it from the gate would be a
-  // trap). Behavior unchanged from the old settings card: re-arm the
-  // demonstration flags AND the give-up counters, lift a skip's session
-  // suppression, then return exactly where GOT IT would.
-  // OPT-IN ADDENDUM (owner 2026-09-17: the declined guided-run offer "stays
-  // available without ever being forced"): invoked from the TITLE, the replay
-  // ALSO arms the veteran guided run — the next START GAME opens with the
-  // tutorial + assist, exactly what the what's-new offer's accept button
-  // starts. From 'run'/'end' it does not (those contexts return to a live or
-  // settled run; arming there would surprise).
+  // trap).
+  // REPLAY-TOUR REWIRE (owner 2026-09-18: "replay tutorial doesn't restart
+  // the special starting level"): the replay now restarts THE SPECIAL LEVEL
+  // itself — the inert prologue run (the potion walk, the banners, the
+  // shield) — not just the coach flags. THE GATE-VERSUS-REPLAY DISTINCTION:
+  // the AUTOMATIC fresh-profile prologue stays parked behind
+  // C.PROLOGUE.ENABLED (the owner's kill switch; startRun reads it for the
+  // runs===0 arm ONLY), while a player who DELIBERATELY asks here bypasses
+  // the park — the assistedRun arm is an opt-in, exactly like the what's-new
+  // offer's accept button, and opt-ins are what the kill switch protects
+  // nobody FROM. The replayed run is ASSISTED (B6: full gold, flagged on the
+  // end screen, excluded from best-run records) via the existing
+  // veteranTutorialPending -> state.assistedRun seam — no new mechanism.
+  // Contexts: from the TITLE and from an END screen the replay starts the
+  // guided run immediately (the what's-new accept precedent); from a LIVE
+  // run's settings it arms the NEXT run instead (yanking the player out of a
+  // live fight would surprise — the prior design's call, kept).
   if (state.helpFrom !== 'gate') {
     menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
-      clearTourFlags();
-      // ONBOARDING REWORK: the replay re-arms the hint layer as well — the
-      // demonstration flags AND the give-up counters (onboarding.js reset()).
-      hintStore.reset();
-      // ...and lifts a skip's session suppression (PLAYER REVIEW item 1: the
-      // player who asks for the tour back gets the chips back too).
-      hintsSuppressed = false;
+      clearTourFlags();   // the kept modal cards (draft/death/settings/loadout) re-arm
       const back = state.helpFrom;
       state.manualPage = null;
       state.helpFrom = null;
       if (back === 'run') {
         closeSettings();
-        toast('TOUR REPLAYS NOW');   // the kept cards + hints re-arm live
-      } else if (back === 'end') {
-        reshowEndScreen();
+        armVeteranTutorial();
+        toast('GUIDED WALKTHROUGH ARMS AT NEXT RUN');
       } else {
-        armVeteranTutorial();        // the declined offer's way back in
-        showTitle();                 // the kept cards re-arm on their screens
-        toast('NEXT RUN: THE GUIDED WALKTHROUGH');
+        // 'title' or 'end': the player asked for the special level — give
+        // them THAT run, right now (the acceptWhatsNew precedent).
+        armVeteranTutorial();
+        startRun();
       }
     });
   }
@@ -5300,6 +5342,15 @@ function openMenu(mode = 'menu') {
   // SHOP PAGING: the pager chrome + grid mode are shop-scoped — every menu
   // open starts clean (and a later showShop re-applies them itself).
   clearShopPager();
+  // WHAT'S NEW OVERLAY: the floating note rides #overlay (out of the card
+  // flow), so ovCards.innerHTML='' above does not catch it. Navigating away
+  // from the title is NOT a dismiss — the element goes, nothing is persisted
+  // (the note returns next launch until actually dismissed; whatsNewTried
+  // already keeps this page load quiet).
+  for (const e of [...(overlay.children || [])]) {
+    if (e && e.classList && e.classList.contains('wn-over')) e.remove();
+    else if (e && typeof e.className === 'string' && /\bwn-over\b/.test(e.className) && e.remove) e.remove();
+  }
   // G9: the TROPHY GALLERY is the one screen that wants the canvas art visible
   // behind the cards, so it sets these two inline overrides AFTER calling this
   // function (showTrophies). The reset lives HERE so the overrides cannot leak:
@@ -5322,8 +5373,10 @@ function openMenu(mode = 'menu') {
 // schedule to the owner-approved onboarding rework: every labelled button and
 // every timer-scheduled card was "information without context". What remains
 // are the four KEPT cards — draft (level-up), death, loadout, first-cog END
-// RUN — each on a screen that already freezes the sim by MODE, plus the
-// non-pausing hint/tag layer in src/onboarding.js (see updateOnboarding).
+// RUN — each on a screen that already freezes the sim by MODE. The
+// non-pausing hint layer they used to sit beside is RETIRED too
+// (2026-09-18 — see the ONBOARDING note above isTouchPath): a tutorial
+// belongs BEFORE gameplay, and the manual + the prologue carry it now.
 const cardByTitle = (t) => [...ovCards.children].find(c => (c.innerHTML || '').includes(`>${t}<`));
 
 // Canvas-region pseudo-target: a rect in the 480x300 native space projected
@@ -5346,263 +5399,34 @@ function canvasRegion(x, y, w, h) {
 let coach = null;
 function coachActive() { return !!(coach && coach.active()); }
 
-// ---------- ONBOARDING REWORK (owner-approved 2026-09-16) ----------------------
-// The 25-card tour is retired. What remains: the KEPT cards (draft at level-up,
-// death, loadout, first-cog END RUN — all on screens that already freeze the
-// sim by mode), the 3 IN-CONTEXT touches below, and the OBJECT TAGS. The
-// players' words this answers: "tons of information thrown at you without
-// context", "I must've skipped like 8 tutorial blurbs because I was moving
-// manually". The hint engine (src/onboarding.js) NEVER pauses the sim and
-// NEVER captures input — there is no shade, no swallow-all handler, no
-// NEXT/BACK/SKIP: nothing to dismiss, so nothing can be closed by accident.
-const hintStore = makeHintStore(prefStorage);
-const onboardingAnchor = () => {
-  const wrap = document.getElementById('wrap');
-  return (wrap && typeof wrap.getBoundingClientRect === 'function')
-    ? wrap.getBoundingClientRect() : { left: 0, top: 0, right: 480, bottom: 300, width: 480, height: 300 };
-};
-// The strip keeps clear of the joystick and the touch buttons (invariant 5).
-// UP-FRONT CONTROLS: the named cog row (SETTINGS / HELP / RADAR / MAP) is
-// wider than the old glyphs — all four buttons are avoid rects now.
-const ONBOARDING_AVOID_IDS = ['joy', 'tc-focus', 'tc-stance', 'tc-pilot', 'tc-stats', 'tc-q', 'tc-w', 'tc-h', 'tc-n', 'tc-cog', 'tc-help', 'tc-radar', 'tc-map', 'tc-magnet'];
-const onboardingAvoid = () => {
-  const rects = ONBOARDING_AVOID_IDS
-    .map(id => document.getElementById(id))
-    .filter(el => el && typeof el.getBoundingClientRect === 'function')
-    .map(el => el.getBoundingClientRect())
-    .filter(r => r && (r.width > 0 || r.height > 0));
-  // MANUAL v2 (owner 2026-09-16, portrait phone: the hint card "overlaps HUD
-  // bars (HP/MP/XP/GOLD)"): the canvas HUD readout block — native
-  // (0,0)-(200,52): HP/MP labels+bars+values (render.js drawHud: label x=6,
-  // bars to x=132, value plates past x=136, y 11..33) and the XP bar
-  // (y 35..45) — projected to screen coords. The strip's top-centre
-  // candidate used to sit right on the bars.
-  try {
-    const r = canvasRegion(0, 0, 200, 52).getBoundingClientRect();
-    if (r && Number.isFinite(r.left) && (r.width > 0 || r.height > 0)) rects.push(r);
-  } catch { /* headless stub canvas has no rect: no avoid, no crash */ }
-  return rects;
-};
-const hintStrip = new HintStrip({ anchor: onboardingAnchor, avoid: onboardingAvoid });
-// OBJECT LABELS REMOVED (owner 2026-09-16: "The on screen labels for arch and
-// shrine are a bit annoying, and sometimes they persist after the run"): the
-// ObjectTags layer — chest / portal / arch / shrine floating labels, their
-// edge arrows, fade timers and per-run seen-state — is deleted outright, not
-// flagged off. The persistence fault was real: tags only ticked in 'playing'
-// and only cleared at startRun, so a label mounted near a run's end SURVIVED
-// death, RUN SURVIVED and RETURN TO TITLE. Object knowledge lives in THE
-// FIELD reference page now (single teaching surface). Pinned by
-// test/test_notags.mjs.
+// ---------- ONBOARDING: THE IN-RUN HINT LAYER IS RETIRED (owner 2026-09-18) ----
+// The non-pausing hint strip (src/onboarding.js's HintStrip, the maybeHint /
+// pumpHints scheduler, the teach-until-demonstrated store) is DELETED, not
+// flagged off — the owner's tutorial principle: "a tutorial should happen
+// mostly prior to full gameplay", and the layer's own mechanics made that
+// impossible: hints were CONDITION-GATED (a tip fired the first time its
+// trigger became true — minutes into a run, e.g. the RADAR tip at 02:58 on
+// an established LV31 profile) and drip-paced by HINT_SPACING_S ("wayyy too
+// spread out"), and because updateOnboarding ticked only in 'playing' a
+// live strip FROZE on screen at the boss kill / intermission / run end (the
+// stuck-tooltip report). The material lives in the pre-gameplay surfaces
+// now: the HOW TO PLAY manual (the fresh profile's gate; its controls page
+// reads the SAME src/controls_ref.js rows the hints were built from) and
+// the first-run PROLOGUE's action-gated banners. The four KEPT coach cards
+// (draft / death / settings / loadout — each on a screen that already
+// freezes the sim by mode) are untouched. Pinned by test_onboarding.mjs,
+// which now asserts the layer's absence the way test_notags.mjs pins the
+// object-tags removal. GIVE-UP counters, `hordes_hint_*` storage keys and
+// the REPLAY-TOUR hint re-arm are gone with it (old keys are simply never
+// read again — the retired tour flags precedent).
 //
-// Run-scoped onboarding state (reset in startRun; NOT state.* — nothing here
-// needs to survive the run, and the state-reset guard stays untouched).
-let hintShownRun = {};   // hint id -> already shown this run (max once per run)
-let hintMoveTime = 0;    // seconds of demonstrated movement this run
-let hintPrevPos = null;  // last player position, for the displacement test
-
-// PER-CONTROL INTRODUCTIONS (owner 2026-09-16: "It's the per button cards.
-// We don't have to have cards, really, but at least something that shows
-// people how to use them.") — every control names itself at the FIRST moment
-// it matters. The retired timer-scheduled cards fired on a CLOCK regardless
-// of context and PAUSED the sim; both failure modes stay dead: triggers here
-// are EVENTS (hp actually dropped, skill actually ready, draft actually
-// opened...), and the scheduler paces them — at most one hint per
-// HINT_SPACING_S of play, never during a boss fight, never stacked (the
-// strip's own one-at-a-time queue serializes what slips past).
-const HINT_SPACING_S = 20;
-let hintPending = [];          // armed ids waiting on the spacing / boss gate
-let hintLastShownAt = -1e9;    // state.time of the last hint DISPLAY
-let introSawDraft = false;     // a level-up draft opened this run
-let introSawIntermission = false;   // an intermission was reached this run
-// PLAYER REVIEW 2026-09-17 item 1 ("clicking 'skip' still shows you the next
-// chips"): skipping a tour ENDS the tutorial sequence. Session-scoped (never
-// persisted — a reload is a fresh chance to teach); deliberately NOT reset by
-// resetOnboarding, so the suppression survives run starts and title returns.
-// REPLAY TOUR is the only way back in.
-let hintsSuppressed = false;
-
-function resetOnboarding() {
-  hintShownRun = {}; hintMoveTime = 0; hintPrevPos = null;
-  hintPending = []; hintLastShownAt = -1e9;
-  introSawDraft = false; introSawIntermission = false;
-  hintStrip.clear();
-}
-
-// ARM a hint: its moment arrived, but display is the scheduler's call. Once
-// per run (deduped here), teach-until-demonstrated + give-up in the store.
-function maybeHint(id, trigger, text) {
-  if (!trigger) return;
-  if (hintsSuppressed) return;   // a skipped tutorial never chips again
-  if (hintShownRun[id] || hintPending.some(h => h.id === id)) return;
-  if (hintStore.done(id) || hintStore.runs(id) >= 3) return;
-  hintPending.push({ id, text });
-}
-
-// A boss fight is the wrong teacher — the player has enough to read there.
-// Hints wait it out (the pending list drains when the cast is down).
-function bossFightLive() {
-  return !!(
-    (state.wave.bosses && state.wave.bosses.some(b => b && b.hp > 0)) ||
-    (state.wave.midBosses && state.wave.midBosses.some(b => b && b.hp > 0)) ||
-    (state.finalBoss && state.finalBoss.hp > 0));
-}
-
-// The scheduler: one hint at a time, >= HINT_SPACING_S apart, never during a
-// boss fight. Entries demonstrated while waiting are dropped silently.
-function pumpHints() {
-  if (hintStrip.visibleId !== null) return;
-  if (state.time - hintLastShownAt < HINT_SPACING_S) return;
-  if (bossFightLive()) return;
-  while (hintPending.length) {
-    const h = hintPending.shift();
-    if (hintStore.done(h.id)) continue;
-    hintShownRun[h.id] = true;
-    hintLastShownAt = state.time;
-    hintStrip.show(h.id, h.text);
-    break;
-  }
-}
-
 // The touch path names the TOUCH control — a phone player is never told to
 // press a key they do not have. Read live off the touch layer's own class
 // (set at boot from hasTouch), so tests can flip it through the DOM.
+// (Kept: the prologue's staged tooltips still name their control through
+// this — prologueTipText below.)
 function isTouchPath() {
   return !!(touchLayer && touchLayer.classList && touchLayer.classList.contains('on'));
-}
-
-// DEMONSTRATION: the player just used this control — the introduction has
-// done its job. Retires the store flag forever and pulls any live instance.
-function controlUsed(id) {
-  if (!HINT_IDS.includes(id)) return;
-  if (!hintStore.done(id)) hintStore.setDone(id);
-  hintStrip.retire(id);
-  hintPending = hintPending.filter(h => h.id !== id);
-}
-
-// Object tags (first-sighting labels) were REMOVED with the layer — see the
-// note above the run-scoped state: no sources, no arming call, no engine
-// instance. updateOnboarding below cannot arm a label, and test_notags.mjs
-// pins exactly that (symbol absence in the shipped source).
-
-// Runs every PLAYING frame — after update(), banner or not. It can never gate
-// the sim (invariant 1) and never sees an input event (invariant 2).
-function updateOnboarding(dt) {
-  const p = state.player;
-  // FIRST-RUN PROLOGUE: the prologue banners OWN the intro — no hint arms or
-  // shows during the phase (the strip still ticks so a fade finishes). The
-  // HintStrip resumes the moment the phase ends; nothing is retired.
-  if (state.prologue) { hintStrip.update(dt); return; }
-  // (a) RUN START: movement, one line. Replaces the move + pilot + hud cards.
-  // DEVICE (2026-09-16): device-derived — a touch-path player is told to
-  // drag, never taught a key they do not have (the line used to say "WASD
-  // or drag" on every device).
-  maybeHint('move', state.time > 0.75,
-    isTouchPath()
-      ? 'drag to move — your weapons fire on their own.'
-      : 'WASD or drag to move — your weapons fire on their own.');
-  // (b) FIRST PORTAL: bank the wave. Replaces the portal card.
-  maybeHint('portal', !!state.portal,
-    'Walk through the portal to bank the wave.');
-  // (c) PER-CONTROL INTRODUCTIONS: every control names itself at the FIRST
-  // moment it matters — an EVENT, never a clock. The texts come from
-  // src/controls_ref.js (the same rows the reference screens read — no
-  // forked strings) and name the TOUCH control on a touch path. The 2s
-  // grace keeps the RUN-START move line the first thing anyone reads —
-  // skills are ready and enemies seeded at t=0, and without it a per-control
-  // line would win the first display slot before the move hint's t>0.75.
-  if (state.time > 2) {
-    const touch = isTouchPath();
-    const qid = classSkillId(state);
-    const qDef = C.SKILLS[qid] || {};
-    const uq = ultCharge(state, qid);
-    const qReady = uq ? uq.ready
-      : ((p.skillCd[qid] || 0) <= 0 && p.mana >= skillManaCost(qid, state));
-    // ULT MANA (2026-09-17): the Q hint states the ult's charge AND price
-    // (same words as the manual's row — controls_ref is the base, this is the
-    // live-class override).
-    const qIntroPurpose = qDef.KILLS != null
-      ? 'unleash your class ULT (' + qDef.KILLS + ' kills charged + ' + (qDef.MANA || 0) + ' mana)'
-      : null;
-    const wReady = (p.skillCd.OVERCHARGE || 0) <= 0 &&
-      p.mana >= skillManaCost('OVERCHARGE', state);
-    const inCombat = state.enemies.some(e => e && e.hp > 0);
-    // Skills matter the first time one is READY with a live enemy to spend
-    // it on; potions the first time the resource is actually down.
-    maybeHint('skill-q', inCombat && qReady,
-      introLine('skill-q', touch, {
-        keys: [String(qDef.KEY || 'q').toUpperCase()],
-        touch: String(qDef.NAME || 'skill').toUpperCase(),
-        ...(qIntroPurpose ? { purpose: qIntroPurpose } : {}),
-      }));
-    maybeHint('skill-w', inCombat && wReady, introLine('skill-w', touch));
-    // RSS8 MAGNET COLLECTOR: a CARD-granted control — it can only matter once
-    // the run drafted the mythic, and the first moment it matters is the first
-    // time there is actually something on the floor to sweep. Runs without the
-    // card never arm it (the control does not exist for them).
-    maybeHint('skill-magnet',
-      magnetHeld(state) &&
-      (state.gems.length + state.drops.length + state.itemDrops.length) > 0,
-      introLine('skill-magnet', touch));
-    maybeHint('potion-hp', p.potions.hp > 0 && p.hp < p.stats.maxHp * 0.85,
-      introLine('potion-hp', touch));
-    maybeHint('potion-mp', p.potions.mp > 0 && p.mana < skillManaCost(qid, state),
-      introLine('potion-mp', touch));
-    // Focus / stance / stats matter from the first level-up (there is
-    // something to aim and to read); the pilot choice from the first
-    // intermission (banking is when AUTO vs MANUAL pays differently).
-    maybeHint('focus', introSawDraft, introLine('focus', touch));
-    maybeHint('stance', introSawDraft || introSawIntermission, introLine('stance', touch));
-    maybeHint('stats', introSawDraft, introLine('stats', touch));
-    maybeHint('pilot', introSawIntermission, introLine('pilot', touch));
-    // RADAR / MAP matter the first time the world exceeds the screen: a live
-    // horde with enemies beyond the view arms RADAR, a chest or shrine
-    // beyond it arms MAP. Scanned only while the hint is still wanted (cheap
-    // by design); the horde-size floor keeps RADAR for real pressure, not
-    // the lone spawn-time straggler.
-    const offView = (x, y) => {
-      // Guarded like onboardingAnchor above: a headless stub without a canvas
-      // rect cannot prove off-view — never arm on a guess, never throw.
-      try {
-        const r = worldRegion(x, y, 0).getBoundingClientRect();
-        const v = canvas.getBoundingClientRect();
-        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-        return cx < v.left || cx > v.right || cy < v.top || cy > v.bottom;
-      } catch { return false; }
-    };
-    if (!hintShownRun.radar && !hintStore.done('radar') &&
-        state.enemies.length >= 6 &&
-        state.enemies.some(e => e && e.hp > 0 && offView(e.x, e.y))) {
-      maybeHint('radar', true, introLine('radar', touch));
-    }
-    if (!hintShownRun.map && !hintStore.done('map') &&
-        (((state.chests || []).some(c => offView(c.x, c.y))) ||
-         ((state.shrines || []).some(s => !s.used && offView(s.x, s.y))))) {
-      maybeHint('map', true, introLine('map', touch));
-    }
-    // '?' SUPPLEMENT (owner 2026-09-16): the "?" IS a control — it names
-    // itself the first time the player is in a fight they can actually lose
-    // (a real hit landed). Until then nothing urgently needs explaining, and
-    // the sole existing explanation lived INSIDE the screen it opens
-    // (circular: you had to know '?' to learn '?'). Retires when pressed.
-    maybeHint('help', p.hp > 0 && p.hp < p.stats.maxHp * 0.9, introLine('help', touch));
-  }
-  // Teach-until-demonstrated (movement): ~3 seconds of real travel retires
-  // the hint permanently (hintStore flag), even mid-display.
-  if (!hintStore.done('move')) {
-    if (hintPrevPos && dt > 0) {
-      const d = Math.hypot(p.x - hintPrevPos.x, p.y - hintPrevPos.y);
-      if (d / dt > 20) {   // >20 px/s reads as deliberate movement
-        hintMoveTime += dt;
-        if (hintMoveTime >= 3) {
-          hintStore.setDone('move');
-          hintStrip.retire('move');
-        }
-      }
-    }
-    hintPrevPos = { x: p.x, y: p.y };
-  }
-  pumpHints();
-  hintStrip.update(dt);
 }
 
 // Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
@@ -5614,15 +5438,11 @@ function startCoach(steps, key) {
   const end = () => { coach = null; };
   coach = new Tour({ steps: Array.isArray(steps) ? steps : [steps], onDone: end,
     // TUTORIAL_OVERLAY: name the replay path on the way out of a skip.
-    // PLAYER REVIEW 2026-09-17 item 1: skipping ENDS the sequence — no further
-    // chip, card or hint from it appears this session. A chip already on
-    // screen or queued when skip is pressed is cancelled, in any click order.
+    // (The hint-layer suppression this used to set is gone with the layer —
+    // the in-run hints are retired; the skip simply ends the card sequence.)
     onSkip: () => {
       end();
-      hintsSuppressed = true;
-      hintPending = [];
-      hintStrip.clear();
-      toast('TOUR SKIPPED — REPLAY IT ANY TIME IN SETTINGS');
+      toast('TOUR SKIPPED — REPLAY IT ANY TIME IN HOW TO PLAY');
     } });
   coach.start();
 }
@@ -6193,22 +6013,30 @@ function maybeCoachLoadoutDoor() {
 }
 
 // The note itself: a PARCHMENT card on the game's real card skeleton
-// (.card/.name/.desc/.key — the same classes every menu card rides), prepended
-// to the title's card list so it is the first thing read and NEVER blocks
-// anything (the title is not the run; START GAME sits right below it). Tap
-// anywhere on the note to dismiss; the dismiss is what persists
-// lastSeenUpdate, so "shown once" survives reloads. OPT-IN ADDENDUM: the note
-// also carries the OFFER — one obvious button. Accepting starts the guided
-// run immediately (with the assist); tapping anywhere else on the note is the
-// DECLINE (the safe action is the easy one to hit: the whole card dismisses).
+// (.card/.name/.desc/.key — the same classes every menu card rides), OVERLAID
+// on the title (owner 2026-09-18: "the update message should overlay the
+// title screen instead of pushing it down or whatever. Overlay with a
+// dismiss button"). It mounts on #overlay — NOT in the card flow — so the
+// title cards keep their exact positions underneath (.wn-over is
+// position:absolute out of flow; the title never reflows either way). The
+// dismiss is an OBVIOUS button (the whole card taps closed too — the decline
+// stays the easy action), and it is the dismiss that persists
+// lastSeenUpdate, so "shown once" survives reloads. OPT-IN ADDENDUM + GATE:
+// the offer renders ONLY while C.PROLOGUE.ENABLED is on — while the prologue
+// is parked, the note must not advertise a run it cannot start (the
+// guided-run copy rides the same gate). Accepting starts the guided run
+// immediately (with the assist).
 function addWhatsNewCard() {
   const el = document.createElement('div');
-  el.className = 'card paper-note';
+  el.className = 'card paper-note wn-over';
+  const lines = C.PROLOGUE.ENABLED
+    ? [...WHATS_NEW.guidedLines, ...WHATS_NEW.lines] : WHATS_NEW.lines;
   el.innerHTML =
     `<div class="name">${WHATS_NEW.title}</div>` +
-    `<div class="desc">${WHATS_NEW.lines.map(l => '- ' + l).join('<br>')}</div>` +
-    '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' +
-    '<div class="key">tap anywhere else to close</div>';
+    `<div class="desc">${lines.map(l => '- ' + l).join('<br>')}</div>` +
+    (C.PROLOGUE.ENABLED ? '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' : '') +
+    '<div class="wn-close">CLOSE</div>' +
+    '<div class="key">tap anywhere on the note to close</div>';
   el.onclick = () => {
     // HELP MODE parity with menuCard: a tap explains, never presses.
     if (state.helpMode) { showHelpTip('<b>' + WHATS_NEW.title + '</b> — release notes for returning players', el); return; }
@@ -6223,7 +6051,7 @@ function addWhatsNewCard() {
     audio.playSfx('button');
     acceptWhatsNew(el);
   };
-  ovCards.insertBefore(el, ovCards.firstChild);
+  overlay.appendChild(el);
   return el;
 }
 function dismissWhatsNew(el) {
@@ -7391,8 +7219,6 @@ function startRun() {
   // never starts with the UI inert, and no origin marker leaks between runs.
   state.helpMode = false;
   state.helpOrigin = null;
-  // ONBOARDING REWORK: per-run hint/tag bookkeeping restarts with the run.
-  resetOnboarding();
   state.apexReturn = null;
   state.bestiaryReturn = null;
   state.settingsReturn = null;
@@ -7579,10 +7405,15 @@ function startRun() {
   // (B6: full gold, flagged, excluded from best-run records).
   state.assistedRun = veteranTutorialPending;
   veteranTutorialPending = false;
-  // KILL SWITCH: C.PROLOGUE.ENABLED (default false) gates the WHOLE phase —
-  // the automatic fresh-profile arm AND the opt-in veteran arm — so OFF
-  // restores the exact pre-prologue run #1 (and run N) for every player.
-  state.prologue = C.PROLOGUE.ENABLED && (prologueRunsPlayed === 0 || state.assistedRun)
+  // KILL SWITCH, GATE-VERSUS-REPLAY (owner 2026-09-18, REPLAY TOUR brief
+  // item 3): C.PROLOGUE.ENABLED (default false) gates ONLY the AUTOMATIC
+  // fresh-profile arm — the owner's park of the unsolicited tutorial. A
+  // DELIBERATE opt-in (the what's-new offer's accept button, or the
+  // manual's REPLAY TOUR card) is the player asking for the special level,
+  // and the kill switch protects nobody from that: the assistedRun arm
+  // bypasses it. OFF therefore still restores the exact pre-prologue run #1
+  // for every player who never asks.
+  state.prologue = (state.assistedRun || (C.PROLOGUE.ENABLED && prologueRunsPlayed === 0))
     ? { t: 0, drunk: false, walkT: 0,
         // DEFECT (c) LEDGER: which staged actions the player has DONE this
         // phase (move/pilot/stats). A banner advances the moment its action
@@ -7592,13 +7423,20 @@ function startRun() {
         // at a time with the tooltip explaining what they do"): each staged
         // control is hidden until its banner's OK, revealed with a tooltip,
         // and live from that moment (see PROLOGUE_STAGES below).
-        revealed: { move: false, pilot: false, stats: false }, tip: null,
+        revealed: { move: false, pilot: false, focus: false, stance: false, stats: false }, tip: null,
+        // SCRIPTED LEVEL-UP (owner addendum 2026-09-18): fired once when THE
+        // DRAFT banner walks into view — see the prologue tick in update().
+        draftFired: false,
         // SKIPPED (owner 2026-09-18: "No, potion exists for the skipped
         // tutorial too"): a skip is "stop explaining", NOT "start the run
         // instantly" — the phase STAYS ARMED in skipped mode (banners and
         // tooltips gone, the FULL control set live, the potion sequence
         // running as normal) until the drink or the bound ends it.
         skipped: false,
+        // TWO-TAP SKIP (owner 2026-09-18: "a bit too easy to skip without
+        // meaning to"): seconds left on the ARM window opened by the first
+        // SKIP/Escape press; only a second press inside the window skips.
+        skipArmT: 0,
         // Side placement (up-RIGHT, clamped on-screen): the straight-up
         // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
         // see the POTION_DX comment in config.js.
@@ -7773,12 +7611,29 @@ const PROLOGUE_BANNERS = [
   { title: 'THE PILOT BUTTON', action: 'pilot',
     body: 'PILOT hands the flying back and forth between you and the autopilot.',
     cue: 'PRESS PILOT (OR O) TO CONTINUE' },
+  // FOCUS + STANCE (owner addendum 2026-09-18: "it should give a message
+  // about focus and stance also"): same shape as the others — action-gated,
+  // the press IS the continue. What the thing IS and what you GET, no emoji.
+  { title: 'FOCUS', action: 'focus',
+    body: 'FOCUS aims the auto-attack: NEAREST, TOUGHEST, SWARM or RANGED. The pilot picks targets for you.',
+    cue: 'PRESS FOCUS (OR TAB) TO CONTINUE' },
+  { title: 'STANCE', action: 'stance',
+    body: 'STANCE is the risk dial: SAFE, BALANCED, GREEDY. GREEDY earns more; SAFE keeps you alive.',
+    cue: 'PRESS STANCE (OR G) TO CONTINUE' },
   { title: 'LEVEL UP', action: 'stats',
     body: 'Gems fill the bar at the top. Each level offers a draft: pick 1 of 3. STATS tracks your numbers.',
     cue: 'OPEN STATS (OR I) TO CONTINUE' },
+  // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger a
+  // level up and tell the player about the card selections"): when this
+  // banner walks into view the phase grants ONE free level-up (scripted, not
+  // earned — the opening stays inert) and the real draft screen opens with
+  // the explanation riding its subtitle. The pick is the banner's action.
+  { title: 'THE DRAFT', action: 'draft',
+    body: 'A free level-up, right now. Pick 1 of the 3 cards: the one you take changes the run.',
+    cue: 'PICK A CARD TO CONTINUE' },
   { title: 'THE POTION', action: 'drink',
-    body: 'The shimmering potion ahead is free. Walk into it for ' +
-      C.PROLOGUE.INVULN_S + ' seconds of shielding and a clear field.',
+    body: 'The potion ahead is free. Walk into it for ' +
+      C.PROLOGUE.INVULN_S + 's of shielding and a clear field. More in HOW TO PLAY.',
     cue: 'WALK INTO THE POTION' },
 ];
 
@@ -7841,8 +7696,8 @@ function prologueDrink(p) {
 // lesson is never rushed — the OK button is the only way past a banner, like
 // any menu). ONBOARDING ABSORB: the prologue taught the entry basics, so
 // the stage-2 coachmark flags are marked seen HERE (run #1 never stacks a
-// second onboarding path); REPLAY TOUR in settings re-arms them deliberately
-// and the non-modal HintStrip is untouched (it resumes after the phase).
+// second onboarding path); REPLAY TOUR re-arms them deliberately. (The
+// non-modal HintStrip this used to hand the moment back to is RETIRED.)
 function endPrologue(why) {
   if (!state.prologue) return;
   state.prologueRan = true;
@@ -7902,7 +7757,9 @@ function prologueLockButtons(on) {
 const PROLOGUE_STAGES = [
   { kind: 'move', afterBanner: 1, btns: [] },
   { kind: 'pilot', afterBanner: 2, btns: ['tc-pilotbtn'] },
-  { kind: 'stats', afterBanner: 3, btns: ['tc-stats'] },
+  { kind: 'focus', afterBanner: 3, btns: ['tc-focusbtn'] },
+  { kind: 'stance', afterBanner: 4, btns: ['tc-stancebtn'] },
+  { kind: 'stats', afterBanner: 5, btns: ['tc-stats'] },
 ];
 
 // The reveal: called every phase frame from update() — stage N's control
@@ -7936,6 +7793,8 @@ function prologueTipText(kind) {
     ? 'DRAG ANYWHERE TO STEER - try it now'
     : 'WASD OR ARROWS TO STEER - try it now';
   if (kind === 'pilot') return introLine('pilot', touch);
+  if (kind === 'focus') return introLine('focus', touch);
+  if (kind === 'stance') return introLine('stance', touch);
   if (kind === 'stats') return introLine('stats', touch);
   return '';
 }
@@ -7973,6 +7832,8 @@ function prologueActAllowed(act) {
   const rv = state.prologue.revealed || {};
   if (act === 'pilot' && rv.pilot) return true;
   if (act === 'stats' && rv.stats) return true;
+  if (act === 'focus' && rv.focus) return true;
+  if (act === 'stance' && rv.stance) return true;
   return false;
 }
 
@@ -8011,16 +7872,25 @@ function prologueManualVec() {
 // NORMAL (the AUTO pilot walks to the visible potion, drinks it, gets the
 // 45s invuln + the clearing pulse — or the MANUAL fallback walk carries an
 // idle pilot; the un-walked potion still answers to MAX_S). endPrologue at
-// the drink is the phase's end, unchanged. The tour skip's session
-// suppression is reused (hintsSuppressed — no chips at a player who opted
-// out; REPLAY TOUR is the way back in).
+// the drink is the phase's end, unchanged.
+// TWO-TAP CONFIRM (owner 2026-09-18: "it was a bit too easy to skip without
+// meaning to"): the gesture must be DELIBERATE. The first press ARMS the
+// corner button (the label flips to TAP AGAIN, render.js drawPrologueSkip)
+// for C.PROLOGUE.SKIP_CONFIRM_S; only a second press inside the window
+// actually skips. A normal play press cannot trip it: field taps steer, and
+// even a tap ON the corner only arms — the arm expires on its own.
 function prologueSkip() {
   const pr = state.prologue;
   if (!pr || pr.drunk || pr.skipped) return;
-  hintsSuppressed = true;
+  if (!(pr.skipArmT > 0)) {
+    pr.skipArmT = C.PROLOGUE.SKIP_CONFIRM_S;
+    toast('TAP SKIP AGAIN TO CONFIRM');
+    return;
+  }
+  pr.skipArmT = 0;
   pr.skipped = true;
   // Nothing left to introduce: every control is already live.
-  pr.revealed.move = pr.revealed.pilot = pr.revealed.stats = true;
+  pr.revealed.move = pr.revealed.pilot = pr.revealed.focus = pr.revealed.stance = pr.revealed.stats = true;
   prologueLockButtons(false);
   prologueTipHide();
   for (const s of PROLOGUE_STAGES) {
@@ -8065,7 +7935,6 @@ function iconHtml(grid, palette, px) {
 
 function openStats() {
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
-  controlUsed('stats');   // PER-CONTROL INTRODUCTIONS: opened = learned
   state.statsReturn = state.mode;   // the finale resumes its own tick
   state.mode = 'stats';
   overlay.style.display = 'flex';
@@ -8472,7 +8341,7 @@ function runAction(act) {
   // banner's continue). The always-visible SKIP lives on the canvas pointer
   // path, not this seam.
   if (state.prologue && !prologueActAllowed(act)) return;
-  if (state.prologue && (act === 'pilot' || act === 'stats')) {
+  if (state.prologue && (act === 'pilot' || act === 'stats' || act === 'focus' || act === 'stance')) {
     prologueActionDone(act);
     prologueTipUsed(act);
   }
@@ -8490,10 +8359,8 @@ function runAction(act) {
     return;
   }
   // WAVE-22c -> HELP MODE (2026-09-16): the "?" button arms / leaves the
-  // tap-to-learn inspect mode (the key-list panel is retired). Pressing "?"
-  // IS the demonstration, same as before.
+  // tap-to-learn inspect mode (the key-list panel is retired).
   if (act === 'help') {
-    controlUsed('help');
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
     return;
   }
@@ -8517,28 +8384,24 @@ function runAction(act) {
   }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
-  // PER-CONTROL INTRODUCTIONS: this is the MANUAL action seam (key or touch
-  // button — the AUTOPILOT casts/drinks through other paths and never
-  // retires a hint), so every act here is a demonstration.
-  if (act === 'focus') { controlUsed('focus'); controller.cycleFocus(); }
-  else if (act === 'stance') { controlUsed('stance'); cycleStanceWithFeedback(); }
+  if (act === 'focus') { controller.cycleFocus(); }
+  else if (act === 'stance') { cycleStanceWithFeedback(); }
   else if (act === 'q') {
-    controlUsed('skill-q');
     // E2 (R9): ground-AoE casts can't touch flyers (see flyingGuard); the
     // Witch's chain beam is a DIRECT hit — its damage lands, only the
     // frost-slow rider is refused ('beam').
     const qid = classSkillId(state);
     flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
   }
-  else if (act === 'w') { controlUsed('skill-w'); useSkill(state, 'OVERCHARGE'); }
+  else if (act === 'w') { useSkill(state, 'OVERCHARGE'); }
   // RSS8 MAGNET COLLECTOR: the card-granted skill's MANUAL act (X key / the
   // MAG touch button). Gated on the run HOLDING the card — without it the act
   // is a no-op (the def exists in C.SKILLS regardless, like FROST_NOVA).
   else if (act === 'magnet') {
-    if (magnetHeld(state)) { controlUsed('skill-magnet'); useSkill(state, 'MAGNET_PULL'); }
+    if (magnetHeld(state)) { useSkill(state, 'MAGNET_PULL'); }
   }
-  else if (act === 'h') { controlUsed('potion-hp'); drinkHealthPotion(state); }
-  else if (act === 'n') { controlUsed('potion-mp'); drinkManaPotion(state); }
+  else if (act === 'h') { drinkHealthPotion(state); }
+  else if (act === 'n') { drinkManaPotion(state); }
 }
 
 // ---------- THE ONE POTION SEAM (WAVE-28) -----------------------------------
@@ -8803,7 +8666,6 @@ window.addEventListener('keydown', (ev) => {
   // dispatch so no mode branch can bypass it.
   if ((ev.key === '?' || k === 'f1') && !(state.prologue && !state.prologue.skipped)) {
     if (ev.preventDefault) ev.preventDefault();
-    controlUsed('help');
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
     return;
   }
@@ -8929,6 +8791,11 @@ window.addEventListener('keydown', (ev) => {
         if (dir) { pilotInput[dir] = true; return; }
       }
       if (rv.pilot && k === 'o') { prologueActionDone('pilot'); togglePilotMode(); return; }
+      // ADDENDUM 3 (2026-09-18): the FOCUS/STANCE key twins, live at their
+      // stages — routed through runAction so the ledger + tooltip lifecycles
+      // are the same seam the touch buttons use.
+      if (rv.focus && k === 'tab') { runAction('focus'); return; }
+      if (rv.stance && k === 'g') { runAction('stance'); return; }
       if (rv.stats && k === 'i') { runAction('stats'); return; }
       return;
     }
@@ -9622,7 +9489,6 @@ syncChrome();
 // the discovery feedback, same pattern as the stance cycle.
 function toggleRadar() {
   state.radarOn = !state.radarOn;
-  controlUsed('radar');   // PER-CONTROL INTRODUCTIONS: used = learned
   toast('RADAR ' + (state.radarOn ? 'ON' : 'OFF') + ' (R)', '#b8e0ff');
   return state.radarOn;
 }
@@ -9631,7 +9497,6 @@ function toggleRadar() {
 // (C6); the sim KEEPS RUNNING while it is open (C1 — no free dodge button).
 function toggleMap() {
   state.mapOpen = !state.mapOpen;
-  controlUsed('map');   // PER-CONTROL INTRODUCTIONS: used = learned
   toast('MAP ' + (state.mapOpen ? 'OPEN' : 'CLOSED') + ' (M)', '#b8e0ff');
   return state.mapOpen;
 }
@@ -10817,15 +10682,29 @@ function frame(now) {
   advanceCharIdle(realDt);
   // EVOLUTION TOKEN banner hold: the first token of a run holds the sim for
   // TOKEN_BANNER_SEC. The hold decays on WALL-CLOCK dt (the same rule as the
-  // earned-moment flourish and the title reveal above), and while it is live it
-  // also ages the banner itself — tickBossBanner only runs INSIDE update(),
-  // which is exactly what is being held, so the banner would otherwise never
-  // expire. Frame-rate independent: 2.5s of real time at 60Hz and at 120Hz.
+  // earned-moment flourish and the title reveal above). Frame-rate
+  // independent: 2.5s of real time at 60Hz and at 120Hz.
   if (state.bannerHold > 0) {
     state.bannerHold = Math.max(0, state.bannerHold - realDt);
-    if (state.bossBanner) {
-      state.bossBanner.ttl -= realDt;
-      if (state.bossBanner.ttl <= 0) state.bossBanner = null;
+  }
+  // STUCK-OVERLAY GUARANTEE (owner 2026-09-18, tooltip-stuck addendum: "I
+  // killed the boss with a tooltip on screen so now it's just sitting there
+  // because its expiration method is gone" — the DOM hint strip that did
+  // this is RETIRED with the in-run tour; this is the same guarantee for the
+  // remaining CANVAS transients). A transient's expiry must never depend on
+  // the state it overlays: the boss banner and the toast feed decay on the
+  // WALL clock HERE whenever the sim's own tickers are not running (every
+  // frozen mode — intermission, draft, dead, settings, map, help, the token
+  // hold, a live coach card — plus the death-cine/escape early returns
+  // below, which this block precedes). In playing/finale the sim tick owns
+  // them (unchanged); the two never tick the same frame.
+  const simTicksTransients = state.mode === 'finale' ||
+    (state.mode === 'playing' && !coachActive() && state.bannerHold <= 0 && !state.helpMode);
+  if (!simTicksTransients) {
+    tickBossBanner(realDt);
+    for (let i = state.toasts.length - 1; i >= 0; i--) {
+      state.toasts[i].ttl -= realDt;
+      if (state.toasts[i].ttl <= 0) state.toasts.splice(i, 1);
     }
   }
   // G30 AUTO DRAFT AUTO-PICK: wall-clock countdown on the frame loop ('draft'
@@ -10901,12 +10780,11 @@ function frame(now) {
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
-    // ONBOARDING REWORK: hints/tags tick on the frame's dt and NEVER gate the
-    // sim — update() runs regardless of what the strip is doing (invariant 1).
+    // The in-run hint strip is RETIRED (2026-09-18) — nothing ticks beside
+    // update() here any more, and no transient DOM overlay exists in play.
     // HELP MODE: the pause is the player's own invitation (their "?" armed
     // it) — same freeze, and leaving resumes the clock without a trace.
     if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) update(dt);
-    updateOnboarding(dt);
   } else if (state.mode === 'finale') updateFinale(dt);
   renderer.render(state, state.cam);
   drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
@@ -10939,26 +10817,11 @@ export const __TEST = {
   // M3: the ground-item overflow wrappers (test seam — the same functions the
   // kill funnel and drop events call).
   m3: { pushGem, pushDrop, pushItemDrop },
-  // ONBOARDING seam: the live hint strip engine + the flag store, so tests
-  // drive the REAL layer (never a copy of its rules). The object-tag engine
+  // ONBOARDING seam: the in-run hint layer is RETIRED (2026-09-18) — no
+  // strip, no store, no scheduler. What remains for tests is the touch-path
+  // read the prologue's staged tooltips still use. The object-tag engine
   // was REMOVED (2026-09-16) — there is deliberately no tags seam anymore.
   onboarding: {
-    strip: hintStrip,
-    store: hintStore,
-    shownRun: () => hintShownRun,
-    reset: resetOnboarding,
-    // PER-CONTROL INTRODUCTIONS seams: the scheduler's gate state (tests
-    // drive the REAL pacing), the demonstration hook, and the live
-    // touch-path read (tests flip it by toggling #touch's 'on' class).
-    pending: () => hintPending.map(h => h.id),
-    spacing: HINT_SPACING_S,
-    lastShownAt: () => hintLastShownAt,
-    // PLAYER REVIEW item 1 seams: the skip-suppression state + the REPLAY
-    // TOUR re-arm (the settings card calls this same function).
-    suppressed: () => hintsSuppressed,
-    replayRearm: () => { hintsSuppressed = false; },
-    controlUsed,
-    bossFightLive,
     touchPath: isTouchPath,
   },
   // N1a: the Q-slot seam — the class's own skill id, and the key act that

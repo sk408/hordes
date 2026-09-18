@@ -613,10 +613,13 @@ export const CONFIG = {
     // pushed to GitHub, we need to revert immediately, if possible without
     // breaking things"). OFF = run #1 opens exactly as it did before the
     // prologue existed (no phase, no banners, no potion — the derived
-    // totals.runs === 0 trigger never fires). Everything the feature built
-    // stays: the config values, the code paths, the tests — the same
-    // rollback shape as the elevation rollback the owner chose. It comes
-    // back ON only when the three owner defects are fixed behind it:
+    // totals.runs === 0 trigger never fires). GATE-VERSUS-REPLAY (REPLAY TOUR
+    // brief, 2026-09-18): the switch parks ONLY the AUTOMATIC arm — a
+    // DELIBERATE opt-in (the what's-new accept button, the manual's REPLAY
+    // TOUR card) bypasses it through the assistedRun path, so the special
+    // level stays reachable for anyone who asks while the automatic path
+    // stays off. It comes back ON only when the three owner defects are
+    // fixed behind it:
     //   a. a REAL, always-visible opt-out control;
     //   b. lesson/mode coherence (never teach steering while AUTO drives);
     //   c. each step waits for the player to DO the thing, not to press OK.
@@ -635,6 +638,13 @@ export const CONFIG = {
     // 1.4s < 1.95s — all four banners (incl. "the potion ahead is free") show
     // BEFORE the drink, with ~0.55s of approach walk left after the last OK.
     BANNER_WALK_S: 0.35,
+    // TWO-TAP SKIP (owner 2026-09-18: "it was a bit too easy to skip without
+    // meaning to"): the opt-out must be DELIBERATE. The first press on the
+    // corner SKIP (or Escape) ARMS it for this many seconds — the button's
+    // label flips to TAP AGAIN — and only a second press inside the window
+    // actually skips. A stray steering tap on the corner can never skip by
+    // itself (one tap = arm only, and the arm expires harmlessly).
+    SKIP_CONFIRM_S: 2,
   },
 
   // ---- RUN-COUNT MILESTONE CHESTS (owner 2026-09-17) -----------------------
