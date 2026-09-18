@@ -666,19 +666,49 @@
   }
   #help-hud { bottom: 118px; font-size: 12px; border-color: #5a5a7a; }
   #help-tip { bottom: 150px; }
-  /* ---- PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
-     during this initial period"): through the whole first-run phase the touch
-     layer is SHOWN BUT GREYED and completely inert (pointer-events none — the
-     logic gates live in main.js's runAction/keydown funnels; this is the
-     visual + DOM half). Set ONLY at prologue arm time, cleared ONLY at phase
-     end (endPrologue) — nothing re-enables early, and the opacity jump back
-     to 1 is the obvious enabled/disabled difference at the end. The canvas
-     fullscreen glyph is HIDDEN instead (a 22x18 glyph cannot read as greyed).
-     The banner's OK is a canvas hit-region — unaffected, the single live
-     control of the phase. */
+  /* ---- PROLOGUE ADDENDUM (owner 2026-09-18): "if we hide the controls, then
+     we would need to introduce the buttons one at a time with the tooltip
+     explaining what they do" — the hidden-vs-greyed question is answered:
+     HIDDEN, with a STAGED INTRODUCTION. Through the first-run phase every
+     touch button is INVISIBLE and inert (visibility keeps the pad frame
+     stable, so a revealed control APPEARS in place — one at a time, each with
+     its tooltip); the logic gates live in main.js's runAction/keydown
+     funnels. A staged button carries .pr-on from its reveal until the phase
+     ends. The body class is set ONLY at prologue arm time and cleared ONLY at
+     phase end (endPrologue) — so the flip to the full control set at the end
+     is one obvious moment, every button appearing at once. The canvas
+     fullscreen glyph is HIDDEN too (never staged). The banner's OK is a
+     canvas hit-region — unaffected; SKIP (the proposed second exception)
+     lives on the same card. */
   body.prologue-locked #touch button {
-    opacity: 0.35;
+    visibility: hidden;
     pointer-events: none;
+  }
+  body.prologue-locked #touch button.pr-on {
+    visibility: visible;
+    pointer-events: auto;
+  }
+  /* ---- PROLOGUE STAGED INTRODUCTION: the tooltip that appears WITH its
+     control and disappears when the control is USED (learn by doing — not an
+     OK press; main.js owns the lifecycle). Fixed-anchored per stage: the MOVE
+     tip floats over the steering field (the floating stick's home band is
+     centred-low), the PILOT / STATS tips sit above the LEFT pad, which is
+     where those two buttons live. Pointer-inert: it explains, it never eats a
+     gesture. Plain ASCII, 320px-safe. */
+  #prologue-tip {
+    position: fixed; z-index: 60; pointer-events: none;
+    max-width: 250px; padding: 6px 9px; text-align: center;
+    background: rgba(8,8,15,0.92); border: 1px solid #7dffd0;
+    color: #e8e8f0; font: 10px/1.4 monospace; white-space: normal;
+  }
+  #prologue-tip[hidden] { display: none; }
+  #prologue-tip.tip-move {
+    left: 50%; transform: translateX(-50%);
+    bottom: max(170px, calc(env(safe-area-inset-bottom, 0px) + 170px));
+  }
+  #prologue-tip.tip-pilot, #prologue-tip.tip-stats {
+    left: max(10px, env(safe-area-inset-left, 10px)); transform: none;
+    bottom: max(300px, calc(env(safe-area-inset-bottom, 0px) + 300px));
   }
 
   /* Bigger tap targets for draft cards on small/touch screens. */
@@ -768,7 +798,7 @@
     <div class="pad left">
       <button data-act="focus">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
       <button data-act="stance">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>
-      <button data-act="pilot">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
+      <button data-act="pilot" id="tc-pilotbtn">PILOT<span class="badge" id="tc-pilot">AUTO</span></button>
       <button data-act="stats" id="tc-stats">STATS</button>
     </div>
     <div id="joy" data-joy="1"><div id="joy-knob"></div></div>
@@ -793,6 +823,10 @@
   <!-- HELP MODE: the retired #hints key-list panel's slot. "?" arms the
        inspect mode; these are its strip + single-entry explainer. -->
   <div id="help-hud"></div>
+  <!-- PROLOGUE STAGED INTRODUCTION: the tooltip that appears with each
+       revealed control (see the CSS block above; main.js owns text + the
+       used-means-learned lifecycle). -->
+  <div id="prologue-tip" hidden></div>
   <div id="help-tip"></div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>

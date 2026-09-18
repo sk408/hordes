@@ -201,6 +201,16 @@ function rarityRing(g, e, state, x, y, w, h) {
 export function prologueOkRect() {
   return { x: C.VIEW_W / 2 - 32, y: PROLOGUE_CARD_Y + PROLOGUE_CARD_H - 24, w: 64, h: 16 };
 }
+// PROLOGUE STAGED INTRODUCTION (owner 2026-09-18): the SKIP link — the
+// PROPOSED second enabled exception alongside OK ("the players who hated the
+// old tutorial need a way out... propose it, do not smuggle it in"). Same
+// card, left of OK, deliberately dimmer (the secondary action). One skip
+// ends the whole phase AND restores the full control set immediately
+// (main.js prologueSkip); it also carries the tour-skip session suppression
+// (hintsSuppressed) so no chip fires later either. REPLAY TOUR restores.
+export function prologueSkipRect() {
+  return { x: C.VIEW_W / 2 - 96, y: PROLOGUE_CARD_Y + PROLOGUE_CARD_H - 24, w: 52, h: 16 };
+}
 const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 92;
 
 // Reduced motion is read LIVE (the draftCeremonyEnabled precedent — one
@@ -1671,6 +1681,17 @@ export class Renderer {
     g.textAlign = 'center';
     g.font = 'bold 10px monospace';
     g.fillText('OK', ok.x + ok.w / 2, ok.y + 4);
+    // SKIP — the proposed second live control of the phase (see
+    // prologueSkipRect above): dimmer, no plate weight, same row as OK.
+    const sk = prologueSkipRect();
+    g.fillStyle = '#14141f';
+    g.fillRect(sk.x, sk.y, sk.w, sk.h);
+    g.fillStyle = '#4a4a66';
+    g.fillRect(sk.x, sk.y, sk.w, 1); g.fillRect(sk.x, sk.y + sk.h - 1, sk.w, 1);
+    g.fillRect(sk.x, sk.y, 1, sk.h); g.fillRect(sk.x + sk.w - 1, sk.y, 1, sk.h);
+    g.font = '9px monospace';
+    g.fillStyle = '#9a9ab8';
+    g.fillText('SKIP ALL', sk.x + sk.w / 2, sk.y + 4);
     g.textAlign = 'left';
     this.prologueBanner = { title: B.title, body: B.body, idx,
       total: state.prologue.banners.length };

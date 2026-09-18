@@ -29,7 +29,7 @@ function pushItemDrop(d) {
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
 }
-import { Renderer, prologueOkRect } from './render.js';
+import { Renderer, prologueOkRect, prologueSkipRect } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
@@ -1122,6 +1122,30 @@ function damageTakenFortified(state, amount) {
 
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
+  // PROLOGUE STAGED INTRODUCTION — the movement override, AFTER the
+  // controller's own decide: (a) a banner up owns the pilot (the pause), so
+  // movement is zeroed whatever the controller said; (b) once MOVE is
+  // revealed, the player's held drag/keys steer the phase in ANY pilot mode
+  // (the choreography's walk yields for as long as the input is held — the
+  // lesson IS the walk); (c) a pilot who TOGGLED to MANUAL and then went
+  // idle still gets the phase's fallback walk to the potion, so practising
+  // the PILOT toggle can never strand the choreography (the bound rescues,
+  // but the run should not need it). AUTO already walks (controllers.js).
+  if (state.prologue && !state.prologue.drunk) {
+    if (prologueBanner()) {
+      decision.moveX = 0; decision.moveY = 0;
+    } else {
+      const m = prologueManualVec();
+      if (m) {
+        decision.moveX = m.x; decision.moveY = m.y;
+      } else if (state.pilotMode === 'MANUAL') {
+        const dx = state.prologue.potion.x - p.x;
+        const dy = state.prologue.potion.y - p.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 1) { decision.moveX = dx / len; decision.moveY = dy / len; }
+      }
+    }
+  }
   // Movement. Loot speedMult (Windwalker boots) + SWIFT/BERSERK arch mods
   // multiply the base speed (controller decides WHERE, stats say HOW FAST).
   // N1 slice 3 AFTERIMAGE: her ult's speed window rides the SAME stat-
@@ -7349,6 +7373,11 @@ function startRun() {
     profile.achievements.totals.runs) || 0;
   state.prologue = prologueRunsPlayed === 0
     ? { t: 0, drunk: false, walkT: 0,
+        // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
+        // at a time with the tooltip explaining what they do"): each staged
+        // control is hidden until its banner's OK, revealed with a tooltip,
+        // and live from that moment (see PROLOGUE_STAGES below).
+        revealed: { move: false, pilot: false, stats: false }, tip: null,
         // Side placement (up-RIGHT, clamped on-screen): the straight-up
         // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
         // see the POTION_DX comment in config.js.
@@ -7365,6 +7394,19 @@ function startRun() {
   // events); the logic half is the runAction/keydown gates. Run #2+ never
   // arms it — and an explicit OFF here clears any stale class.
   prologueLockButtons(!!state.prologue);
+  if (state.prologue) {
+    // A re-armed phase starts STAGE-CLEAN: no leftover .pr-on marks, no
+    // leftover tooltip (endPrologue sweeps both, but a re-arm within one
+    // session — the test harness's back-to-back arms — must not inherit
+    // the previous arm's staging state either).
+    prologueTipHide();
+    for (const s of PROLOGUE_STAGES) {
+      for (const id of s.btns) {
+        const el = typeof document !== 'undefined' && document.getElementById(id);
+        if (el && el.classList) el.classList.remove('pr-on');
+      }
+    }
+  }
   state.pendingDrafts = 0;
   state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
@@ -7426,6 +7468,7 @@ function prologueOk() {
   if (prologueBanner()) {
     state.prologue.bannerIdx++;
     state.prologue.walkT = 0;
+    prologueReveal();
   }
 }
 
@@ -7461,8 +7504,22 @@ function endPrologue(why) {
   state.prologueRan = true;
   state.prologue = null;
   prologueLockButtons(false);
+  // STAGED INTRODUCTION close-out — THE GUARD THAT MATTERS MOST: at phase
+  // end the control set is EXACTLY a normal run's. The body class lift
+  // restores every hidden button; this sweep drops the staged .pr-on marks
+  // and the tooltip, so nothing of the staging survives into the run. A
+  // control that never came back would be this feature's worst failure.
+  prologueTipHide();
+  for (const s of PROLOGUE_STAGES) {
+    for (const id of s.btns) {
+      const el = typeof document !== 'undefined' && document.getElementById(id);
+      if (el && el.classList) el.classList.remove('pr-on');
+    }
+  }
   for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);
-  toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S' : 'THE RUN BEGINS');
+  toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S'
+    : why === 'skip' ? 'TUTORIAL SKIPPED - THE RUN BEGINS'
+    : 'THE RUN BEGINS');
 }
 
 // The DOM half of the all-buttons-disabled lock (owner 2026-09-18): body class
@@ -7476,6 +7533,136 @@ function prologueLockButtons(on) {
     if (on) body.classList.add('prologue-locked');
     else body.classList.remove('prologue-locked');
   }
+}
+
+// ---------- PROLOGUE STAGED INTRODUCTION (owner 2026-09-18) --------------------
+// "If we hide the controls, then we would need to introduce the buttons one
+// at a time with the tooltip explaining what they do." The set and the order
+// answer ONE question — what does a player need in the first 60 seconds?
+//   1. MOVE (banner 1): without steering nothing else matters; the control is
+//      the FLOATING STICK / WASD (the joystick task's settled outcome — the
+//      floating stick with the home band IS the shipped movement control, so
+//      nothing revealed here is about to be replaced). No DOM button: the
+//      field itself; the tooltip floats over the stick's home band.
+//   2. PILOT (banner 2): the fresh default is AUTO_ALL — the highest-value
+//      fact the pads carry in the first minute is that the player can take
+//      the controls over.
+//   3. STATS (banner 3, beside LEVEL UP): the field report is where the
+//      level-up's numbers live; it opens read-only and pauses nothing that
+//      matters in an inert phase.
+// Banner 4 (THE POTION) reveals nothing — the potion is the finale. The cog
+// row / skills / potions are NEVER staged: in the first 60 seconds they are
+// either empty (no skills drafted, full HP), replaced by banners, or
+// settings-shaped — the hint layer introduces them post-run at their own
+// first-matter moments.
+const PROLOGUE_STAGES = [
+  { kind: 'move', afterBanner: 1, btns: [] },
+  { kind: 'pilot', afterBanner: 2, btns: ['tc-pilotbtn'] },
+  { kind: 'stats', afterBanner: 3, btns: ['tc-stats'] },
+];
+
+// The reveal: called from prologueOk — after OK of banner N, stage N's
+// control appears (its button un-hides via .pr-on) with its tooltip. The
+// logic gates (runAction / keydown / movement) read `revealed`, so the
+// control is live the same instant it becomes visible.
+function prologueReveal() {
+  const pr = state.prologue;
+  if (!pr) return;
+  for (const s of PROLOGUE_STAGES) {
+    if (pr.bannerIdx >= s.afterBanner && !pr.revealed[s.kind]) {
+      pr.revealed[s.kind] = true;
+      for (const id of s.btns) {
+        const el = typeof document !== 'undefined' && document.getElementById(id);
+        if (el && el.classList) el.classList.add('pr-on');
+      }
+      prologueTipShow(s.kind);
+    }
+  }
+}
+
+// The tooltip: appears WITH its control, points at it, and DISAPPEARS WHEN
+// THE CONTROL IS USED (learn by doing — never an OK press). Texts come from
+// controls_ref's own rows where a control exists (no forked strings); MOVE
+// is prologue-only copy because it introduces the field, not a button.
+function prologueTipText(kind) {
+  const touch = isTouchPath();
+  if (kind === 'move') return touch
+    ? 'DRAG ANYWHERE TO STEER - try it now'
+    : 'WASD OR ARROWS TO STEER - try it now';
+  if (kind === 'pilot') return introLine('pilot', touch);
+  if (kind === 'stats') return introLine('stats', touch);
+  return '';
+}
+function prologueTipShow(kind) {
+  if (state.prologue) state.prologue.tip = kind;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) {
+    el.className = 'tip-' + kind;
+    el.textContent = prologueTipText(kind);
+    el.hidden = false;
+  }
+}
+// Used = learned. Called from every live seam of a staged control (the
+// movement override, runAction's allow path, the keydown twins).
+function prologueTipUsed(kind) {
+  const pr = state.prologue;
+  if (!pr || pr.tip !== kind) return;
+  pr.tip = null;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) el.hidden = true;
+}
+function prologueTipHide() {
+  const pr = state.prologue;
+  if (pr) pr.tip = null;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) el.hidden = true;
+}
+
+// The staged-act gate: through the phase ONLY the revealed controls' actions
+// pass runAction (everything else stays inert — the owner's all-buttons-
+// disabled rule, now with the staged exceptions).
+function prologueActAllowed(act) {
+  if (!state.prologue) return true;
+  const rv = state.prologue.revealed || {};
+  if (act === 'pilot' && rv.pilot) return true;
+  if (act === 'stats' && rv.stats) return true;
+  return false;
+}
+
+// The manual steering vector during the phase (the MOVE stage): the revealed
+// input wins over the choreography's walk for as long as it is held — in ANY
+// pilot mode (the drag/keys ARE the lesson). The moment it goes non-zero the
+// MOVE tooltip is done: used means learned.
+function prologueManualVec() {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || !pr.revealed || !pr.revealed.move) return null;
+  const i = pilotInput || {};
+  let mx = 0, my = 0;
+  const mag = Math.min(1, Math.max(0, i.mag || 0));
+  if (mag > 0.15) {   // the stick's dead zone (controllers.js JOY_DEAD_ZONE)
+    const len = Math.hypot(i.x || 0, i.y || 0) || 1;
+    mx = ((i.x || 0) / len) * mag;
+    my = ((i.y || 0) / len) * mag;
+  } else {
+    mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
+    my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
+    if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
+  }
+  if (mx === 0 && my === 0) return null;
+  prologueTipUsed('move');
+  return { x: mx, y: my };
+}
+
+// SKIP ALL — the PROPOSED second enabled exception alongside OK (the owner's
+// all-buttons rule made this his call; proposed openly, he can veto). One
+// press ends the phase AND restores the full control set immediately. It
+// reuses the TOUR SKIP's session-suppression pattern (hintsSuppressed — the
+// player who skipped the tutorial is never chipped at later this session;
+// REPLAY TOUR is the way back in), rather than inventing another.
+function prologueSkip() {
+  if (!state.prologue || state.prologue.drunk) return;
+  hintsSuppressed = true;
+  endPrologue('skip');
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
@@ -7910,13 +8097,14 @@ function magnetHeld(st) {
 }
 
 function runAction(act) {
-  // PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
-  // during this initial period"): through the WHOLE first-run phase every
-  // button is inert — pads (skills, potions, FOCUS/STANCE/PILOT/STATS), the
-  // cog row (SETTINGS/HELP/RADAR/MAP), and their keyboard twins that funnel
-  // through here. The SINGLE exception is the banner's own OK, which lives
-  // on the canvas pointer path, not this seam.
-  if (state.prologue) return;
+  // PROLOGUE ADDENDUM (owner 2026-09-18): through the first-run phase every
+  // button is inert EXCEPT the staged introductions — the controls already
+  // revealed by their banner's OK (prologueActAllowed: PILOT after banner 2,
+  // STATS after banner 3). Using a staged control retires its tooltip (used
+  // means learned). The banner's own OK and SKIP live on the canvas pointer
+  // path, not this seam.
+  if (state.prologue && !prologueActAllowed(act)) return;
+  if (state.prologue && (act === 'pilot' || act === 'stats')) prologueTipUsed(act);
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
   if (act === 'stats') {
@@ -8351,11 +8539,24 @@ window.addEventListener('keydown', (ev) => {
       if (card) card.click();
     }
   } else if (state.mode === 'playing' || state.mode === 'finale') {
-    // PROLOGUE ADDENDUM: no in-run keys through the phase — not ESC/P (the
-    // in-run menu), not O (the pilot-mode switch), not zoom, not the action
-    // twins. runAction carries the same gate; the banners' OK (canvas path)
-    // is the only live control.
-    if (state.prologue) return;
+    // PROLOGUE ADDENDUM: no in-run keys through the phase EXCEPT the staged
+    // introductions — the revealed controls' key twins are live (MOVE: WASD/
+    // arrows steer the phase in any pilot mode; PILOT: O; STATS: I — each
+    // use retires its tooltip), and ESC while a banner is up is SKIP (the
+    // tour's own skip idiom, proposed as the second enabled exception).
+    // runAction carries the same staging gate; the banners' OK and SKIP are
+    // the canvas-path controls.
+    if (state.prologue) {
+      const rv = state.prologue.revealed || {};
+      if (prologueBanner() && k === 'escape') { prologueSkip(); return; }
+      if (rv.move) {
+        const dir = KEY_DIRS[k];
+        if (dir) { pilotInput[dir] = true; return; }
+      }
+      if (rv.pilot && k === 'o') { togglePilotMode(); return; }
+      if (rv.stats && k === 'i') { runAction('stats'); return; }
+      return;
+    }
     // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
     // ESC was routed only in menu/settings/stats, and the in-run settings
     // screen (the game's only pause) opened solely from the mouse-only cog.
@@ -9152,7 +9353,13 @@ if (touchLayer && touchLayer.addEventListener) {
     if (fjoy.pointerId !== null) return false;                  // one stick
     if (state.mode !== 'playing') return false;                  // runs only
     if (state.helpMode) return false;                            // "?" owns taps
-    if (normalizePilotMode(state.pilotMode) !== 'MANUAL') return false;
+    if (normalizePilotMode(state.pilotMode) !== 'MANUAL' &&
+        // PROLOGUE STAGED INTRODUCTION: once MOVE is revealed the drag IS
+        // the lesson — the floating stick arms in ANY pilot mode through
+        // the phase (the banner's OK/SKIP rects were hit-tested BEFORE
+        // this, so a banner tap still never steers).
+        !(state.prologue && state.prologue.revealed &&
+          state.prologue.revealed.move)) return false;
     fjoy.pointerId = ev.pointerId ?? 0;
     fjoy.ox = ev.clientX ?? 0; fjoy.oy = ev.clientY ?? 0;
     // POINTER CAPTURE: keep THIS finger's moves/lifts arriving even if the
@@ -9642,6 +9849,14 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
       if (vx0 >= okR.x && vx0 <= okR.x + okR.w && vy0 >= okR.y && vy0 <= okR.y + okR.h) {
         if (ev.preventDefault) ev.preventDefault();
         prologueOk();
+        return;
+      }
+      // SKIP ALL — the proposed second live control (see prologueSkipRect):
+      // one press ends the phase and restores the full control set.
+      const skR = prologueSkipRect();
+      if (vx0 >= skR.x && vx0 <= skR.x + skR.w && vy0 >= skR.y && vy0 <= skR.y + skR.h) {
+        if (ev.preventDefault) ev.preventDefault();
+        prologueSkip();
         return;
       }
     }
@@ -10575,8 +10790,16 @@ export const __TEST = {
     banner: prologueBanner,
     ok: prologueOk,
     okRect: prologueOkRect,
+    skip: prologueSkip,
+    skipRect: prologueSkipRect,
     drink: () => prologueDrink(state.player),
     end: endPrologue,
+    // STAGED INTRODUCTION: the reveal state, the live tooltip kind, the
+    // stage table and the tip texts — tests drive the REAL reveal paths.
+    get revealed() { return state.prologue ? { ...state.prologue.revealed } : null; },
+    get tip() { return state.prologue ? state.prologue.tip : null; },
+    stages: PROLOGUE_STAGES,
+    tipText: prologueTipText,
     get shieldT() { return state.prologueShieldT; },
     // The all-buttons-disabled lock (addendum 2026-09-18): the live DOM state.
     get buttonsLocked() {
