@@ -1172,6 +1172,13 @@ function applyStancePref() {
 // Also snaps the knob visual back to center. FLOATING JOYSTICK (2026-09-18):
 // a hard release of the floating drag too — no id filter (this is the
 // "everything stands down" path: blur, mode swap, run start).
+// FLOATING JOYSTICK API (moved up 2026-09-18). This is declared HERE, before any
+// reader, because the boot path (swapPilotMode -> clearPilotInput) reaches it
+// during module init: a `let` read before its declaration throws
+// "Cannot access 'fjoyApi' before initialization" and kills the whole game at
+// load. Keep the declaration above every use.
+let fjoyApi = null;
+
 function clearPilotInput() {
   pilotInput.up = pilotInput.down = pilotInput.left = pilotInput.right = false;
   pilotInput.x = 0; pilotInput.y = 0; pilotInput.mag = 0;
@@ -9512,9 +9519,11 @@ function toggleMap() {
 // PlayerController + JOY_DEAD_ZONE). Release recenters to zero.
 // Lifted to __TEST for the smoke probes (null when no touch layer exists).
 let joyVec = null, joyRelease = null;
-// FLOATING JOYSTICK api (null when the touch layer is absent — every caller
-// degrades to a no-op). Assigned at the bottom of the block below.
-let fjoyApi = null;
+// FLOATING JOYSTICK api — DECLARED ABOVE, next to clearPilotInput. Do NOT
+// declare it here: the boot path (swapPilotMode -> clearPilotInput) reads it
+// during module init, and a second `let` this late re-introduces the TDZ crash
+// that took the whole page down (2026-09-18). Assigned at the bottom of the
+// block below.
 
 if (touchLayer && touchLayer.addEventListener) {
   let joyPointerId = null;   // the finger that owns the stick (null = free)
