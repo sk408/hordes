@@ -1,107 +1,107 @@
-// Escape-scene evidence shots (before/after the 2026-09-18 boss-bypass
-// rework). Drives the REAL game through the TEST-card funnel, then the live
-// escape via the __TEST seam, steering MANUAL (held run + jump edges) to
-// exact camera positions around the finale. Usage:
+// Escape-scene evidence shots (before/after the 2026-09-18 REACH-ROUTE
+// rework: the floating-slab bypass superseded by the owner's preferred shape
+// — "the boss reaching to grab the pilot and the pilot being able to run
+// past. Has to look convincing"). Drives the REAL game through the TEST-card
+// funnel, then the live escape via the __TEST seam. Usage:
 //   node tools/escape_shots.mjs before   # HEAD as-is (pre-change evidence)
-//   node tools/escape_shots.mjs after    # + the scripted UPPER-ROUTE run
-// Shots land in docs/art/escape-bypass-2026-09-18/shots/.
+//   node tools/escape_shots.mjs after    # + the four grab-PHASE evidence shots
+// Shots land in docs/art/escape-reach-2026-09-18/shots/. The after-mode
+// phases (one fresh run each, wall LIVE — the clock is part of the scene):
+//   windup — the claw RAISED, its striped landing zone on the floor, pilot
+//            approaching (criterion a: the tell)
+//   reach  — the claw OUT at full extension in the pilot's lane, pilot still
+//            short of it (criterion b: reaches past the lane, not short)
+//   held   — the pilot GRIPPED in the closed fingers (criterion c: contact
+//            reads as contact)
+//   miss   — the pilot CLEAR past the holding claw (criterion d: the clean
+//            miss reads as a near miss)
 import { withPage } from '/home/claude/projects/hordes/tools/browser.mjs';
 import { copyFileSync, mkdirSync } from 'node:fs';
 
-const ART = '/home/claude/projects/hordes/docs/art/escape-bypass-2026-09-18/shots';
+const ART = '/home/claude/projects/hordes/docs/art/escape-reach-2026-09-18/shots';
 mkdirSync(ART, { recursive: true });
 const MODE = process.argv[2] || 'after';
 const SEED = 9;
 
-// The scripted MANUAL controller for the upper route (installed on the page).
-// Deterministic: hold RUN RIGHT; fire the jump when grounded inside the next
-// platform's fire window; before the gap jump that crosses the sickle's band,
-// BRAKE on the safe standable span until dead reckoning says the crossing is
-// clear (the same two-way interval test auto.js uses, applied to the one
-// airborne arm). Dashes burn on cooldown when no fire window is near — speed
-// is life, the wall is the clock. __drive() returns ONE frame's decision;
-// __shotHook (optional) can freeze the drive loop for a screenshot.
+// The page-side driver. AUTO rides every approach (the corridor's own bands
+// are AUTO-only data; this tool tests the FINALE, which is what changed).
+// __autoLoop(hookFn) steps AUTO until hookFn() fires (frozen mid-scene for a
+// shot). __grabRun() rides AUTO to the claw's wind-up just outside the band,
+// then switches to MANUAL hold-right — running INTO the close on purpose —
+// and freezes 0.35s into the HELD beat.
 const DRIVER = `
 window.__T = (await import('./src/main.js')).__TEST;
 const T = window.__T;
 const sim = T.escape.sim;
-const FLOOR = 252;
-const x0 = sim.corridor.bossSegX0;
 const bossX = sim.corridor.bossX;
-// Fire windows (rel the finale x0), derived the way the generator's up-hop
-// author works: the landing must sit >= 8px inside the target span at run
-// speed 200 (up-hop descending-crossing time H64; the drop-hop T64; the
-// level hop the full 0.8s airtime).
-const H64 = (400 + Math.sqrt(400 * 400 - 2 * 1000 * 64)) / 1000;   // 0.579s
-const T64 = (400 + Math.sqrt(400 * 400 + 2 * 1000 * 64)) / 1000;   // 0.937s
-const hops = [
-  { win: [x0 + 60, x0 + 148] },                                // floor -> F1 (up 64)
-  { win: [x0 + 180, x0 + 220] },                               // F1 -> F2 (up 64)
-  { win: [x0 + 288, x0 + 336], gate: true },                   // F2 -> F3 (level, crosses the sickle band)
-  { win: [x0 + 392, x0 + 437] },                               // F3 -> F4 (down 64)
-];
-let hopI = 0, lastJumpT = -1, overBossMax = -999;
-window.__overBossMax = () => overBossMax;
-const sickle = () => sim.boss.arms.find(a => a.id === 'sickle');
-function sickleSafe(p) {
-  const g = sickle(), cyc = 2.4, danger = g.extend + g.hold;
-  const idle = cyc - (g.windup + g.extend + g.hold + g.retract);
-  let s, e;
-  if (g.phase === 'idle') { s = (idle - g.t) + g.windup; e = s + danger; }
-  else if (g.phase === 'windup') { s = g.windup - g.t; e = s + danger; }
-  else if (g.phase === 'extend') { s = 0; e = (g.extend - g.t) + g.hold; }
-  else if (g.phase === 'hold') { s = 0; e = g.hold - g.t; }
-  else { s = (g.retract - g.t) + idle + g.windup; e = s + danger; }
-  const iv = [[s, e], [s + cyc, e + cyc]];
-  const bandL = bossX - g.reach - g.r, clearX = bossX - g.reach + g.r + 26;
-  const tToBand = Math.max(0, (bandL - 6 - p.x) / 200);
-  const tToClear = Math.max(0, (clearX - p.x) / 200);
-  return !iv.some(([is, ie]) => is < tToClear + 0.12 && ie > tToBand - 0.12);
-}
-window.__drive = () => {
-  const p = sim.player;
-  if (p.x > x0 + 300 && p.x < x0 + 505) overBossMax = Math.max(overBossMax, p.y);
-  const hop = hops[hopI];
-  let moveX = 1, jump = false;
-  if (!hop) return { moveX, jump, dash: p.onGround && p.dashCd <= 0 };
-  if (hop.gate && p.onGround && p.x > hop.win[0] - 40 && !sickleSafe(p)) moveX = 0;
-  if (p.onGround && p.x >= hop.win[0] && p.x <= hop.win[1] && sim.t - lastJumpT > 0.3) {
-    jump = true; lastJumpT = sim.t; hopI++;
-  }
-  const nearWin = p.x > hop.win[0] - 120 && p.x < hop.win[1] + 40;
-  return { moveX, jump, dash: p.onGround && p.dashCd <= 0 && !nearWin };
-};
-window.__pos = (x) => {
-  for (let i = 0; i < 60 * 150 && !sim.outcome; i++) {
-    if (sim.player.x >= x) { T.escape.onKey('d', false); return true; }
-    T.escape.onKey('d', true);
-    T.escape.frame(null, 1 / 60);
-  }
-  return false;
-};
-// The full upper-route drive. The APPROACH (everything before the finale) is
-// AUTO-ridden directly through sim.step — the corridor's own jump bands are
-// AUTO-only data and this tool tests the FINALE, which is what changed. The
-// manual bypass driver takes over at the finale's x0.
-window.__x0 = x0;
+const claw = () => sim.boss.arms.find(a => a.id === 'claw');
 window.__SIM = await import('./src/escape/sim.js');
 window.__AUTO = await import('./src/escape/auto.js');
-window.__driveLoop = (hookFn, maxSecs) => {
+window.__autoLoop = (hookFn, maxSecs = 150) => {
   for (let i = 0; i < 60 * maxSecs && !sim.outcome; i++) {
-    if (sim.player.x < x0 + 10) {
-      window.__SIM.step(sim, 1 / 60, window.__AUTO.inputFor(sim));
-      continue;
-    }
-    if (hookFn && hookFn()) return { froze: true };
-    const inp = window.__drive();
-    T.escape.onKey('d', inp.moveX === 1);
-    if (inp.jump) T.escape.onKey('w', true);
-    if (inp.dash) T.escape.onKey('x', true);
-    T.escape.frame(null, 1 / 60);
+    if (hookFn && hookFn()) return { froze: true, t: +sim.t.toFixed(2) };
+    window.__SIM.step(sim, 1 / 60, window.__AUTO.inputFor(sim));
   }
   return { froze: false, outcome: sim.outcome, t: +sim.t.toFixed(2) };
 };
+window.__grabRun = (maxSecs = 150) => {
+  for (let i = 0; i < 60 * maxSecs && !sim.outcome; i++) {
+    const p = sim.player, d = bossX - p.x;
+    if (d < 260 && p.onGround) {
+      // manual takeover: run INTO the claw band's centre, then stand and wait
+      // for the close (whichever ground arm's band that is — the log says which)
+      for (let j = 0; j < 60 * 6 && !sim.grabbed && !sim.outcome; j++) {
+        T.escape.onKey('d', (bossX - sim.player.x) > 132);
+        T.escape.frame(null, 1 / 60);
+      }
+      if (sim.grabbed) {
+        for (let j = 0; j < 21; j++) T.escape.frame(null, 1 / 60);   // 0.35s INTO the held beat
+        return { froze: true, held: +sim.grabbed.t.toFixed(2), arm: sim.grabbed.arm };
+      }
+      return { froze: false, why: 'never grabbed' };
+    }
+    window.__SIM.step(sim, 1 / 60, window.__AUTO.inputFor(sim));
+  }
+  return { froze: false, outcome: sim.outcome };
+};
+// The NEAR-MISS run (criterion d): AUTO brings the pilot to its brake point
+// left of the zone, then the manual player brakes until the claw is
+// 0.25s into its wind-up and runs — the band is crossed JUST ahead of the
+// close. Freeze while the claw is EXTENDED at the band and the pilot is
+// clear of it.
+window.__missRun = (maxSecs = 150) => {
+  for (let i = 0; i < 60 * maxSecs && !sim.outcome; i++) {
+    const p = sim.player, d = bossX - p.x;
+    if (d < 200 && p.onGround) {
+      let go = false;
+      for (let j = 0; j < 60 * 8 && !sim.outcome; j++) {
+        const g = claw(), dd = bossX - sim.player.x;
+        if (!go) {
+          // creep to the timing mark (178: 18px clear of the zone), hold there
+          T.escape.onKey('d', dd > 178);
+          if (g.phase === 'windup' && g.t >= 0.25 && dd <= 180) go = true;   // 0.40s of wind-up left: the run clears the band
+        } else {
+          T.escape.onKey('d', dd > 20);                              // latch: run THROUGH the close
+        }
+        T.escape.frame(null, 1 / 60);
+        if (g.phase === 'extend' && dd < 110 && dd > 50) return { froze: true, dd: Math.round(dd) };
+        if (dd < 20) break;                                         // ran it clean — retry next cycle
+      }
+      return { froze: false, why: 'no near-miss window this pass' };
+    }
+    window.__SIM.step(sim, 1 / 60, window.__AUTO.inputFor(sim));
+  }
+  return { froze: false, outcome: sim.outcome };
+};
 `;
+
+async function beginRun(p, T, wallOff) {
+  await p.evaluate(`(async () => { const T2 = ${T};
+    T2.escape.begin({ seed: ${SEED}, auto: false, test: true });
+    ${wallOff ? 'T2.escape.sim.wall.x = -1e6;' : ''}
+    ${DRIVER}
+    return true; })()`);
+}
 
 async function viewport(w, h, tag) {
   await withPage({ w, h, dpr: 3, mobile: true }, async (p) => {
@@ -114,8 +114,9 @@ async function viewport(w, h, tag) {
         .find(k => (k.textContent || '').toUpperCase().includes(${JSON.stringify(label2)}));
       if (!el) return false; el.click(); return true; })()`);
     await clickCard('START GAME');
-    if (!(await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()`, 4000, 100))) {
-      await clickCard('GOT IT');
+    // the onboarding deck can sit in front (page 1 of N with NEXT, GOT IT last)
+    for (let i = 0; i < 8 && !(await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()`, 500, 100)); i++) {
+      if (!(await clickCard('GOT IT'))) await clickCard('NEXT');
     }
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()`, 8000);
     // MENU CONDENSE D1: the TEST: ESCAPE SEQUENCE card is debug-gated now.
@@ -141,48 +142,61 @@ async function viewport(w, h, tag) {
     await p.waitFor(`(async () => { const T2 = ${T}; return T2.state.mode === 'escape' && T2.escape.sim; })()`, 5000, 50);
     console.log('[' + tag + '] escape entered via the real TEST card');
 
-    // ---- the frozen-position LAYOUT shots (manual sim, wall disabled — the
-    // shot is about GEOMETRY, not the clock): two exact camera stops.
-    await p.evaluate(`(async () => { const T2 = ${T};
-      T2.escape.begin({ seed: ${SEED}, auto: false, test: true });
-      T2.escape.sim.wall.x = -1e6;
-      ${DRIVER}
-      return true; })()`);
-    const stops = await p.evaluate(`[window.__T.escape.sim.corridor.bossX - 200, window.__T.escape.sim.corridor.bossX + 10]`);
-    for (let s = 0; s < stops.length; s++) {
-      await p.evaluate(`window.__pos(${stops[s]})`);
+    const take = async (name) => {
       await p.sleep(120);
       const shot = await p.shot('esc-shot');
-      const name = MODE + '-layout' + (s ? '-portal' : '') + '-' + tag + '.png';
       copyFileSync(shot, ART + '/' + name);
-      console.log('[' + tag + '] layout stop ' + s + ' @ x=' + stops[s] + ' -> ' + name);
+      console.log('[' + tag + '] ' + name);
+    };
+
+    // ---- the frozen-position LAYOUT shots (manual sim, wall disabled — the
+    // shot is about GEOMETRY, not the clock): two exact camera stops.
+    const stops = await p.evaluate(`(async () => { const T2 = ${T};
+      T2.escape.begin({ seed: ${SEED}, auto: false, test: true });
+      return [T2.escape.sim.corridor.bossX - 200, T2.escape.sim.corridor.bossX + 10]; })()`);
+    for (let s = 0; s < stops.length; s++) {
+      await beginRun(p, T, true);
+      await p.evaluate(`(function () {
+        for (let i = 0; i < 60 * 150 && !window.__T.escape.sim.outcome; i++) {
+          const s = window.__T.escape.sim;
+          if (s.player.x >= ${stops[s]}) { window.__T.escape.onKey('d', false); break; }
+          window.__T.escape.onKey('d', true);
+          window.__T.escape.frame(null, 1 / 60);
+        }
+        return true; })()`);
+      await take(MODE + '-layout' + (s ? '-portal' : '') + '-' + tag + '.png');
     }
 
     if (MODE === 'after') {
-      // ---- the scripted UPPER ROUTE (wall LIVE — the clock is part of the
-      // trade). Frozen once standing on the far high slab for the money shot,
-      // then driven to the portal.
-      await p.evaluate(`(async () => { const T2 = ${T};
-        T2.escape.begin({ seed: ${SEED}, auto: false, test: true });
-        ${DRIVER}
-        return true; })()`);
-      const froze = await p.evaluate(`window.__driveLoop(() => {
-        const p = window.__T.escape.sim.player;
-        return p.onGround && p.y <= 130 && p.x > window.__x0 + 380;   // standing on the far high slab
-      }, 150)`);
-      if (froze.froze) {
-        await p.sleep(120);
-        const shot = await p.shot('esc-shot');
-        copyFileSync(shot, ART + '/after-upper-route-' + tag + '.png');
-        console.log('[' + tag + '] upper-route mid-shot taken');
-      } else {
-        console.log('[' + tag + '] WARNING: never reached the high slab stand');
+      // ---- the four grab-PHASE evidence shots (fresh run each, wall LIVE).
+      const phases = [
+        ['after-windup', `() => { const s = window.__T.escape.sim, c = s.boss.arms[0], p = s.player;
+          return c.phase === 'windup' && p.x > s.corridor.bossX - 430 && p.x < s.corridor.bossX - 140 && p.onGround; }`],
+        ['after-reach', `() => { const s = window.__T.escape.sim, c = s.boss.arms[0], p = s.player;
+          return c.phase === 'hold' && (s.corridor.bossX - p.x) < 470 && (s.corridor.bossX - p.x) > 152; }`],
+      ];
+      for (const [name, hookSrc] of phases) {
+        await beginRun(p, T, false);
+        const r = await p.evaluate(`window.__autoLoop(${hookSrc}, 150)`);
+        if (r.froze) await take(name + '-' + tag + '.png');
+        else console.log('[' + tag + '] WARNING: ' + name + ' never froze: ' + JSON.stringify(r));
       }
-      const done = await p.evaluate(`(window.__driveLoop(null, 60),
+      // the HELD shot: stand in the band and let the close land
+      await beginRun(p, T, false);
+      const r = await p.evaluate(`window.__grabRun(150)`);
+      if (r.froze) { await take('after-held-' + tag + '.png'); console.log('[' + tag + '] held by: ' + r.arm + ' at t+' + r.held + 's'); }
+      else console.log('[' + tag + '] WARNING: held never froze: ' + JSON.stringify(r));
+      // the NEAR-MISS shot: cross just ahead of the close
+      await beginRun(p, T, false);
+      const m = await p.evaluate(`window.__missRun(150)`);
+      if (m.froze) await take('after-miss-' + tag + '.png');
+      else console.log('[' + tag + '] WARNING: miss never froze: ' + JSON.stringify(m));
+      // the completion log (AUTO all the way — the route completes at the clock)
+      await beginRun(p, T, false);
+      const done = await p.evaluate(`(window.__autoLoop(null, 150),
         { outcome: window.__T.escape.sim.outcome, t: +window.__T.escape.sim.t.toFixed(2),
-          pressure: Math.round(Math.max(0, window.__T.escape.sim.player.x - (window.__T.escape.sim.wall.x + 46))),
-          maxPyOverBoss: Math.round(window.__overBossMax()) })`);
-      console.log('[' + tag + '] upper-route completion: ' + JSON.stringify(done));
+          pressure: Math.round(Math.max(0, window.__T.escape.sim.player.x - (window.__T.escape.sim.wall.x + 46))) })`);
+      console.log('[' + tag + '] AUTO completion: ' + JSON.stringify(done));
     }
 
     const errors = p.errors;

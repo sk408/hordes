@@ -198,12 +198,22 @@ export const THREATS = {
   // (p.y > FLOOR_Y - 70) — the claw's own predicate, unchanged. `offset`
   // staggers the arm's phase inside the shared rhythm (seconds into the
   // first cycle). Row 0 IS the claw (see the getters above).
+  //
+  // `tipY` (REACH ROUTE 2026-09-18: owner "the boss reaching to grab the
+  // pilot and the pilot being able to run past. Has to look convincing") is
+  // the ONE named place for the extended tip's height ABOVE THE FLOOR: the
+  // sim's held-pin, the draw's reach post and checkReachRoute's lane-margin
+  // proof all read this row, so the grab can never be drawn short of (or
+  // past) the body it claims to hold. Ground-arm tips sit INSIDE the
+  // standing pilot's 17px body span (claw at the torso, tendril at the
+  // ankles); the sickle's blade rides INSIDE its own air lane (heights
+  // >= 70 — a blade drawn above the lane would be an invisible hitbox).
   ARMS: [
-    { id: 'claw',    reach: 132, r: 12, high: false, offset: 0.0,
+    { id: 'claw',    reach: 132, r: 12, high: false, offset: 0.0, tipY: 14,
       windup: 0.65, extend: 0.22, hold: 0.25, retract: 0.40 },
-    { id: 'sickle',  reach: 96,  r: 14, high: true,  offset: 0.8,
+    { id: 'sickle',  reach: 96,  r: 14, high: true,  offset: 0.8, tipY: 76,
       windup: 0.70, extend: 0.20, hold: 0.25, retract: 0.35 },
-    { id: 'tendril', reach: 150, r: 10, high: false, offset: 1.6,
+    { id: 'tendril', reach: 150, r: 10, high: false, offset: 1.6, tipY: 6,
       windup: 0.95, extend: 0.30, hold: 0.30, retract: 0.50 },
   ],
   // ---- VK9P4 THE KICK (owner: "some sort of way for the pursuers to be

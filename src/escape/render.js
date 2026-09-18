@@ -313,23 +313,25 @@ function drawArms(ctx, sim, w2s, camY) {
   const FY = BAND.FLOOR_Y - camY;   // the floor line under the vertical pan
   for (const g of b.arms) {
     // The per-arm posts: shoulder on the flank, the reach lane's tip height,
-    // the coil and raise rests. The claw keeps the V1f geometry; the sickle
-    // anchors HIGH and reaches into the AIR lane; the tendril anchors low
-    // and sweeps the floor.
+    // the coil and raise rests. The extended tip rides at the arm's OWN tipY
+    // (config ARMS row — the ONE place): the claw's fingers close on the
+    // standing pilot's TORSO, the tendril sweeps its ANKLES, and the sickle's
+    // blade rides INSIDE the air lane it alone contacts (a blade drawn above
+    // the lane would grab what it cannot touch — the reach-route rule).
     let sx, sy, extY, coilX, coilY, raiseX, raiseY;
     if (g.id === 'sickle') {
       sx = bx0 + 18; sy = FY - THREATS.BOSS_H + 12;
-      extY = FY - 92;                                    // the AIR lane it alone contacts
+      extY = FY - g.tipY;                                // the AIR lane it alone contacts
       coilX = bx0 + 6; coilY = FY - THREATS.BOSS_H + 8;
       raiseX = bx0 + 2; raiseY = FY - THREATS.BOSS_H - 4;
     } else if (g.id === 'tendril') {
       sx = bx0 + 8; sy = FY - 40;
-      extY = FY - 16;                                    // the floor sweep
+      extY = FY - g.tipY;                                // the floor sweep
       coilX = bx0 + 4; coilY = FY - 34;
       raiseX = bx0 - 2; raiseY = FY - 64;
     } else {                                             // the claw (V1f geometry)
       sx = bx0 + 12; sy = FY - THREATS.BOSS_H + 34;
-      extY = FY - 26;
+      extY = FY - g.tipY;
       coilX = bx0 + 2; coilY = FY - 52;
       raiseX = bx0 - 4; raiseY = FY - THREATS.BOSS_H + 2;
     }
@@ -339,7 +341,7 @@ function drawArms(ctx, sim, w2s, camY) {
     else if (g.phase === 'extend') {
       const q = Math.min(1, g.t / g.extend);
       cx = raiseX + (extX - raiseX) * q; cy = raiseY + (extY - raiseY) * q; open = true; hot = true;
-    } else if (g.phase === 'hold') { cx = extX; cy = extY; open = sim.grabbed == null; hot = true; }
+    } else if (g.phase === 'hold') { cx = extX; cy = extY; open = sim.grabbed == null || sim.grabbed.arm !== g.id; hot = true; }
     else if (g.phase === 'retract') {
       const q = 1 - Math.min(1, g.t / g.retract);
       cx = coilX + (extX - coilX) * q; cy = coilY + (extY - coilY) * q; open = false; hot = false;
@@ -501,27 +503,7 @@ export function draw(ctx, sim, opts = {}) {
     const x0 = w2s(pl.x), x1 = w2s(pl.x + pl.w);
     if (x1 < 0 || x0 > VIEW_W) continue;
     const top = wy(pl.y);
-    if (pl.float) {
-      // THE BYPASS FLOAT (owner 2026-09-18: "platforms can be floating with
-      // no connection to solid ground"): a slab with NO struts and NO column
-      // — but NEVER ambiguous against the parallax behind it. The readability
-      // rule: every STANDABLE surface in this scene carries the lit top lip
-      // and the two bright side lips (the gap-lip language, drawn for all
-      // plats below); the parallax layers are unlit silhouettes with no lips
-      // at all. The float doubles the tell with an ember underglow row and
-      // hanging studs, so "this one is solid" reads at phone size.
-      ctx.fillStyle = C_PLAT;
-      ctx.fillRect(x0, top, x1 - x0, 14);
-      ctx.fillStyle = C_PLAT_UNDER;
-      ctx.fillRect(x0, top + 10, x1 - x0, 4);
-      ctx.fillStyle = C_PLAT_TOP;                        // the lit standable edge
-      ctx.fillRect(x0, top, x1 - x0, 3);
-      ctx.fillStyle = rgba(pal.win, 0.22);               // the ember underglow row
-      ctx.fillRect(x0 + 2, top + 14, x1 - x0 - 4, 1);
-      ctx.fillStyle = C_PLAT_UNDER;                      // hanging studs (the float reads)
-      for (let sx = x0 + 8; sx < x1 - 6; sx += 26) ctx.fillRect(sx, top + 15, 2, 3);
-      ctx.fillRect(x1 - 6, top + 15, 2, 3);
-    } else if (pl.y <= DECK_LEVEL) {
+    if (pl.y <= DECK_LEVEL) {
       // THE DECK: slab + underside + struts down to the kill line.
       ctx.fillStyle = C_PLAT;
       ctx.fillRect(x0, top, x1 - x0, 18);

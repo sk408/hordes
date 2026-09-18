@@ -171,8 +171,9 @@ export function step(sim, dt, input = {}) {
   if (sim.grabbed) {
     sim.t += dt; sim.frames++;
     sim.grabbed.t += dt;
-    p.x = sim.grabbed.x + 4;            // pinned INTO the claw's palm
-    p.y = BAND.FLOOR_Y - 26; p.vx = 0; p.vy = 0; p.onGround = false;
+    p.x = sim.grabbed.x + 4;            // pinned INTO the closing palm
+    p.y = Math.min(BAND.FLOOR_Y, sim.grabbed.y + 10);   // feet 10px under the tip: the body sits IN the grip (tipY row, config)
+    p.vx = 0; p.vy = 0; p.onGround = false;
     sim.wall.x += wallSpeed(sim) * dt;
     if (sim.grabbed.t >= THREATS.GRAB_HOLD_PILOT || sim.wall.x + WALL.WIDTH >= p.x) {
       sim.outcome = 'caught';
@@ -398,7 +399,7 @@ export function step(sim, dt, input = {}) {
         const tipX = b.x - g.reach;
         const laneOK = g.high ? p.y <= BAND.FLOOR_Y - 70 : p.y > BAND.FLOOR_Y - 70;
         if (Math.abs(p.x - tipX) < g.r && laneOK) {
-          sim.grabbed = { t: 0, x: tipX, arm: g.id };   // the held beat; the outcome lands after it
+          sim.grabbed = { t: 0, x: tipX, arm: g.id, y: BAND.FLOOR_Y - g.tipY };   // the held beat (pinned AT the tip's own height); the outcome lands after it
           return sim;
         }
       }

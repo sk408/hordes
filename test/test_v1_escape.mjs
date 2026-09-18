@@ -103,16 +103,16 @@ S.check('every trigger band is AUTO-only data with a sane window and width', () 
     assert(bossSeg.gaps.length === 0, 'the finale floor is whole (the run-past is never a pit)');
     assert(bossSeg.triggers.length === 0,
       'the finale is the open run-past: no jump bands (got ' + bossSeg.triggers.length + ')');
-    // RETARGET (bypass, owner directive 2026-09-18: "platforms arranged that
-    // allow it to be bypassed... floating with no connection to solid ground
-    // ... That is acceptable"): the finale's plats are now the ONE whole floor
-    // (the direct gauntlet, unchanged: no gaps, no triggers, boss on the
-    // ground) PLUS four manual-only floating slabs over the boss. The floor
-    // pin below is the same statement as before, filtered to the floor; the
-    // floats' own geometry + hop invariant live in test_escape_bypass.mjs.
-    const floors = bossSeg.plats.filter(p => !p.float && p.y === 252);
-    assert(floors.length === 1 && floors[0].w >= 880,
-      'the finale is ONE open floor at ground level (plus the bypass floats)');
+    // RETARGET (reach route, owner restatement 2026-09-18: "the boss reaching
+    // to grab the pilot and the pilot being able to run past. Has to look
+    // convincing"): the floating-slab detour was the FALLBACK shape and is
+    // superseded — the run-past at boss level is THE route, so the finale's
+    // plats are again the ONE whole floor and nothing else. The convincing
+    // criteria (tell / tip-vs-body / timing windows) live in
+    // test_escape_reach.mjs.
+    const floors = bossSeg.plats.filter(p => p.y === 252);
+    assert(bossSeg.plats.length === 1 && floors.length === 1 && floors[0].w >= 880,
+      'the finale is ONE open floor at ground level (the run-past IS the route)');
     // The portal sits BEYOND the boss — past the grab gauntlet.
     assert(c.portalX > c.bossX, 'portal ' + c.portalX + ' must sit beyond the boss ' + c.bossX);
     assert(c.bossPlat && c.bossPlat.y === 252, 'the boss stands ON the walkable floor (out in the open)');

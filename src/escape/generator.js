@@ -267,117 +267,113 @@ function stackSegment(x0, tier, rng) {
   };
 }
 
-// THE FINALE (V1f — owner refinement 2026-09-17: "the boss reaching to grab
-// the pilot and the pilot being able to run past. Has to look convincing"):
-// the corridor still ENDS at the boss, but the way past is the FLOOR ITSELF.
-// The boss stands OUT IN THE OPEN on flat ground (no box, no overpass — the
-// V1e upper level is superseded), and the encounter is its telegraphed GRAB:
-// a fixed, learnable cadence (THREATS.GRAB_*) whose claw lands in a marked
-// band left of the body. The pilot runs straight through at boss level,
-// dodging by timing; the direct route through the boss IS the route, so no
-// jump is authored and the invariant is trivially whole. Platform jumps: NONE
-// required — required jump distance 0px against a 160px reach.
+// THE FINALE (V1f — owner refinement 2026-09-17, RESTATED as the preferred
+// shape 2026-09-18: "the boss reaching to grab the pilot and the pilot being
+// able to run past. Has to look convincing"): the corridor still ENDS at the
+// boss, and the way past is the FLOOR ITSELF. The boss stands OUT IN THE OPEN
+// on flat ground (no box, no overpass — the V1e upper level is superseded),
+// and the encounter is its telegraphed GRAB: a fixed, learnable cadence
+// (THREATS.GRAB_EVERY, 2.4s per arm) whose appendages land in marked bands
+// left of the body. The pilot runs straight through at boss level, dodging
+// BY TIMING — watch the wind-up tell, go on the rest beat. The direct route
+// through the boss IS the route: no jump is authored, the required jump
+// distance is 0px against a 160px reach, and the invariant lives in
+// checkReachRoute (the convincing criteria, made checkable).
 //
-// THE BYPASS (owner directive 2026-09-18: "It needs to be out in the open
-// with platforms arranged that allow it to be bypassed. Platforms can be
-// floating with no connection to solid ground. That is acceptable"): a SECOND,
-// MANUAL-ONLY route over the boss — four floating slabs (no struts, no
-// connection to the ground: explicitly owner-blessed) rising in two 64px
-// up-hops to the AIR LANE (p.y <= FLOOR_Y-70, where only the sickle hunts),
-// crossing ABOVE the colossus, and stepping back down before the portal.
-// THE TRADE this builds: the direct floor route is shorter and jump-free but
-// runs the two ground arms' gauntlet (claw 132 + tendril 150 reach); the
-// bypass is four timed hops whose ONLY arm exposure is the sickle's narrow
-// band, crossed mid-jump — a timing gate, never a standable hazard (no slab
-// span overlaps any arm's tip band in its own lane; checkBypass proves it).
-// It stays out of `triggers` ON PURPOSE: trigger bands are AUTO-ONLY data,
-// so AUTO keeps running the authored floor gauntlet byte-identically and the
-// bypass is exactly what the owner asked for — a player's choice. The floor
-// stays WHOLE under the floats (the ground gauntlet is not deleted), and a
-// missed hop lands back on that floor (soft retry, the wall is the clock).
+// The 2026-09-18 floating-slab detour was SUPERSEDED the same day by the
+// owner's restatement above (the run-past is the preferred bypass; the slabs
+// were the fallback shape and the physics supports the run-past, so they are
+// gone — the record lives in docs/art/escape-bypass-2026-09-18/).
 function finaleSegment(x0) {
   const run = 900;
   const floor = { x: x0, y: BAND.FLOOR_Y, w: run, approach: true };
-  // The four floats, rel x0 (see checkBypass for the hop math these encode):
-  //   F1 [168,272] y188  up-hop 64 from the floor    (ground lane, clear of
-  //   the claw/tendril bands [300,340])
-  //   F2 [284,344] y124  up-hop 64 from F1           (air lane, ENDS 6px shy
-  //   of the sickle band [350,378] — standing here is always safe)
-  //   F3 [392,504] y124  level gap 48 over the sickle band and the body
-  //   F4 [536,648] y188  drop-hop down 64; walk-off lands ~x0+720 on the
-  //   floor, grounded well before the portal at x0+760
-  const floats = [
-    { x: x0 + 168, y: BAND.FLOOR_Y - 64, w: 104, float: true },
-    { x: x0 + 284, y: BAND.FLOOR_Y - 128, w: 60, float: true },
-    { x: x0 + 392, y: BAND.FLOOR_Y - 128, w: 112, float: true },
-    { x: x0 + 536, y: BAND.FLOOR_Y - 64, w: 112, float: true },
-  ];
   return {
     kind: 'boss', finale: true, tier: 3, x0, x1: x0 + run,
-    plats: [floor, ...floats],
+    plats: [floor],
     gaps: [],
     triggers: [],
     bossX: x0 + 460, bossPlat: floor,
   };
 }
 
-// THE BYPASS INVARIANT (the 2026-09-18 owner ask, made a checkable statement
-// the same way checkTrigger makes the ramp's): for every hop of the float
-// route, a fire window must exist ON the source span (>= MARGIN inside the
-// landing at run speed, and at least 40px wide — a pixel-perfect jump is a
-// misdesign, the task's own readability rule); every hop height must be
-// inside the apex bound (<= 64, the same 16px safety the up-hop author uses);
-// every level/drop gap must clear with MARGIN against reach(RUN_SPEED); and
-// NO standable span may overlap an arm's tip band in that arm's own lane (a
-// slab you can stand on inside a danger band would be a trap, not a route).
-// Returns the hop table (the report's jump-distance evidence) or a fail.
-export function checkBypass(seg) {
-  const FLOOR = BAND.FLOOR_Y;
-  const laneY = FLOOR - 70;                       // the arms' own lane split
+// THE REACH-ROUTE INVARIANT (owner 2026-09-18: "Has to look convincing" —
+// each acceptance criterion as a checkable statement, the same way
+// checkTrigger makes the ramp's). The route needs NO jumps (0px vs the
+// 160px reach — criterion: no impossible jumps). What it must prove:
+//   (a) every arm WINDS UP (a tell >= 0.5s) before its danger phase;
+//   (b) every ground arm's extended tip BOX (tipY +/- 9, the drawn fingers'
+//       own span) reaches INTO the standing pilot's 17px body — past its
+//       lane, not short of it — with the overlap stated;
+//   (d) contact exists ONLY inside extend/hold and the danger intervals are
+//       a pure function of the cadence (no late grabs, no invisible windows);
+//   (e)+timing: the ground arms' combined danger intervals per GRAB_EVERY
+//       cycle leave a safe window >= the human reaction budget (0.40s) plus
+//       the crossing time of the combined band at run speed — dodge by
+//       timing, not luck.
+// Returns the per-arm table + the safe windows (the report's evidence).
+export function checkReachRoute(seg) {
+  const G = THREATS;
+  const CYC = G.GRAB_EVERY;
   const v = PHYS.RUN_SPEED;
+  const PILOT_H = 17;                        // sprites.js PILOT: 12x17
+  const REACT = 0.40;                        // the stated human reaction budget (s)
   const fails = [];
-  const table = [];
-  const floats = seg.plats.filter(p => p.float).sort((a, b) => a.x - b.x);
-  const spans = [{ x: seg.x0, y: FLOOR, w: 900 }, ...floats];
-  for (let i = 0; i < floats.length; i++) {
-    const from = spans[i], to = floats[i];
-    const h = from.y - to.y;
-    // The landing x at run speed: the descending crossing for an up-hop, the
-    // full airtime for a level hop, the drop crossing for a down-hop.
-    let t, kind;
-    if (h > 0) { t = upHopT(h); kind = 'up ' + h; }
-    else if (h === 0) { t = AIRTIME; kind = 'level'; }
-    else { t = (PHYS.JUMP_VY + Math.sqrt(PHYS.JUMP_VY ** 2 - 2 * PHYS.GRAVITY * h)) / PHYS.GRAVITY; kind = 'down ' + (-h); }
-    if (h > 80 - 16) fails.push({ hop: i, why: `up-hop ${h} outside the arc (apex 80, 16 safety)` });
-    const lo = to.x + MARGIN, hi = to.x + to.w - MARGIN;   // landable landing span
-    const fireLo = lo - t * v, fireHi = hi - t * v;        // fire-x window on the source
-    const srcLo = from.x + (i === 0 ? 40 : 8), srcHi = from.x + from.w;  // 40px of run-up on the floor
-    const win = [Math.max(fireLo, srcLo), Math.min(fireHi, srcHi)];
-    if (win[1] - win[0] < 40) {
-      fails.push({ hop: i, why: `fire window ${Math.round(win[1] - win[0])}px < 40 (a pixel-perfect jump)` });
+  const arms = [];
+  for (const g of G.ARMS) {
+    const tipX = seg.bossX - g.reach;
+    const band = [tipX - g.r, tipX + g.r];
+    const dangerDur = g.extend + g.hold;
+    // (a) the tell: windup is the visible warning, >= 0.5s reads at phone size
+    if (g.windup < 0.5) fails.push({ arm: g.id, why: `windup ${g.windup}s < 0.5s (the tell is not readable)` });
+    // (b) the tip box vs the pilot's body span (heights above the floor)
+    const tipBox = [g.tipY - 9, g.tipY + 8];
+    const laneSpan = g.high ? [70, 70 + PILOT_H] : [0, PILOT_H];   // its own lane's pilot span
+    const ovLo = Math.max(tipBox[0], laneSpan[0]), ovHi = Math.min(tipBox[1], laneSpan[1]);
+    const overlap = ovHi - ovLo;
+    if (!g.high && overlap < 8) {
+      fails.push({ arm: g.id, why: `tip box [${tipBox}] overlaps the standing pilot [0,${PILOT_H}] by only ${overlap}px — the grab stops short (or swings past) the body` });
     }
-    const gap = to.x - (from.x + from.w);
-    const need = gap > 0 ? gap + PRE + MARGIN : 0;   // the gap-branch's own bound
-    if (need > reach(v)) {
-      fails.push({ hop: i, why: `gap ${gap}px needs ${Math.round(need)}px vs reach ${Math.round(reach(v))}` });
+    if (g.high && overlap < 4) {
+      fails.push({ arm: g.id, why: `tip box [${tipBox}] misses its air lane's pilot span ${laneSpan} — an invisible hitbox` });
     }
-    table.push({ hop: i, from: `y${from.y}`, to: `y${to.y}`, kind,
-      gapPx: gap > 0 ? gap : 0, needPx: Math.round(need),
-      reachPx: Math.round(reach(v)), fireWin: win.map(n => Math.round(n - seg.x0)) });
+    arms.push({ id: g.id, reach: g.reach, band: band.map(n => Math.round(n - seg.x0)), lane: g.high ? 'air' : 'ground',
+      tell: g.windup, danger: +dangerDur.toFixed(2), cadence: CYC, tipY: g.tipY, overlapPx: overlap });
   }
-  // Standable spans must be CLEAR of every arm's tip band in that arm's lane.
-  const band = (a) => [seg.bossX - a.reach - a.r, seg.bossX - a.reach + a.r];
-  for (const pl of floats) {
-    for (const a of THREATS.ARMS) {
-      const inLane = a.high ? pl.y <= laneY : pl.y > laneY;
-      if (!inLane) continue;
-      const [b0, b1] = band(a);
-      if (pl.x < b1 && pl.x + pl.w > b0) {
-        fails.push({ slab: pl.x - seg.x0, why: `standable span overlaps the ${a.id} band [${Math.round(b0 - seg.x0)},${Math.round(b1 - seg.x0)}] in its lane` });
-      }
+  // (e)+timing: the combined ground-gauntlet schedule per cycle. Arm phases
+  // start idle at t = -offset, so windup begins at idleDur+offset and the
+  // danger interval is [idleDur+offset+windup, +extend+hold) mod CYC. Merge
+  // the (possibly wrapping) intervals, take the complement on [0, CYC).
+  const ivs = [];
+  for (const g of G.ARMS.filter(a => !a.high)) {
+    const idle = CYC - (g.windup + g.extend + g.hold + g.retract);
+    const s0 = idle + g.offset + g.windup, e0 = s0 + g.extend + g.hold;
+    for (let k = Math.floor(s0 / CYC); k <= Math.floor(e0 / CYC); k++) {
+      const a = Math.max(s0, k * CYC) - k * CYC, b = Math.min(e0, (k + 1) * CYC) - k * CYC;
+      if (b > a) ivs.push([a, b]);
     }
   }
-  return { ok: fails.length === 0, fails, table };
+  ivs.sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const iv of ivs) {
+    const last = merged[merged.length - 1];
+    if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+    else merged.push([...iv]);
+  }
+  const windows = [];
+  let cur = 0;
+  for (const [s, e] of merged) { if (s > cur) windows.push(+(s - cur).toFixed(2)); cur = Math.max(cur, e); }
+  if (CYC > cur) windows.push(+(CYC - cur).toFixed(2));
+  // the window that WRAPS the cycle boundary is last+first, contiguous on the circle
+  const wrapWin = windows.length >= 2 ? +(windows[windows.length - 1] + windows[0]).toFixed(2) : 0;
+  const groundBands = G.ARMS.filter(a => !a.high).map(a => [seg.bossX - a.reach - a.r, seg.bossX - a.reach + a.r]);
+  const zoneL = Math.min(...groundBands.map(b => b[0])), zoneR = Math.max(...groundBands.map(b => b[1]));
+  const crossT = (zoneR - zoneL) / v;
+  const best = Math.max(...windows, wrapWin);
+  if (best < REACT + crossT) {
+    fails.push({ why: `best safe window ${best}s < reaction ${REACT}s + crossing ${crossT.toFixed(2)}s (dodge by luck, not timing)` });
+  }
+  return { ok: fails.length === 0, fails, arms, windows,
+    zone: [Math.round(zoneL - seg.x0), Math.round(zoneR - seg.x0)], crossT: +crossT.toFixed(2), react: REACT, bestWin: best };
 }
 
 // ---- the ramp ---------------------------------------------------------------
