@@ -29,7 +29,7 @@ function pushItemDrop(d) {
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
 }
-import { Renderer, prologueOkRect, prologueSkipRect } from './render.js';
+import { Renderer, prologueSkipRect } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
 import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
@@ -122,6 +122,10 @@ import {
   HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
   heatXpMult, heatOf, manualPushes, addHeat, initHeat,
 } from './heat.js';
+// RUN-COUNT MILESTONE CHESTS (owner 2026-09-17): the one table (milestones,
+// runs-worth, the measured gold band) + the two pure helpers (next chest due,
+// the chest's gold). No other number for the feature lives in this file.
+import { RUN_CHESTS, nextRunChest, runChestGold } from './meta.js';
 import {
   loadProfileResult, saveProfile, makeProfile,
   GOLD_TIER, purseTier, purseValue, RUN_GOLD,
@@ -911,6 +915,13 @@ const state = {
   // the end screen and EXCLUDED from best-run records — the assist's free
   // kills must never write a best.
   assistedRun: false,
+  // RUN-COUNT MILESTONE CHEST (owner 2026-09-17): the run-scoped chest object
+  // while one is on the field — { milestone, x, y }. Spawned at startRun when
+  // the run CROSSES an unclaimed milestone (>=, never ===), removed ONLY by
+  // collection (collectRunChest), NEVER by time: an uncollected chest is
+  // re-offered by the next startRun, so a player who never reaches it cannot
+  // lose it (claim-at-collection; profile.milestoneChest is the claim).
+  runChest: null,
   runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
   // ---- IN-RUN REFERENCE ACCESS: the reference's return door + the end
@@ -1218,18 +1229,30 @@ function runController(p, dt, am) {
   // the PILOT toggle can never strand the choreography (the bound rescues,
   // but the run should not need it). AUTO already walks (controllers.js).
   if (state.prologue && !state.prologue.drunk) {
-    if (prologueBanner()) {
-      decision.moveX = 0; decision.moveY = 0;
+    // DEFECT (b)/(c) FIX (owner 2026-09-18): the player's steering works
+    // WHILE a banner is up — banner 1's action IS steering, so the card
+    // must never make its own lesson impossible. The pilot's choreography
+    // walk still holds for a banner (the owner's pause directive); only the
+    // human's input outranks it.
+    const m = prologueManualVec();
+    // DEFECT (c) completeness: the POTION banner's action is the walk-in
+    // itself — a card that freezes the choreography would make its own ask
+    // impossible for an idle pilot. Only the EXPLAINING banners hold the
+    // walk (controllers.js holds by the same rule).
+    const upCard = prologueBanner();
+    const holdsWalk = !!upCard && upCard.action !== 'drink';
+    if (m) {
+      decision.moveX = m.x; decision.moveY = m.y;
+    } else if (!holdsWalk && state.pilotMode === 'MANUAL') {
+      const dx = state.prologue.potion.x - p.x;
+      const dy = state.prologue.potion.y - p.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) { decision.moveX = dx / len; decision.moveY = dy / len; }
+    } else if (!holdsWalk) {
+      // AUTO's own walk (controllers.js PROLOGUE branch) lands here too;
+      // zeroed only under an EXPLAINING card.
     } else {
-      const m = prologueManualVec();
-      if (m) {
-        decision.moveX = m.x; decision.moveY = m.y;
-      } else if (state.pilotMode === 'MANUAL') {
-        const dx = state.prologue.potion.x - p.x;
-        const dy = state.prologue.potion.y - p.y;
-        const len = Math.hypot(dx, dy);
-        if (len > 1) { decision.moveX = dx / len; decision.moveY = dy / len; }
-      }
+      decision.moveX = 0; decision.moveY = 0;
     }
   }
   // Movement. Loot speedMult (Windwalker boots) + SWIFT/BERSERK arch mods
@@ -2324,16 +2347,21 @@ function update(dt) {
   // state.time here EXCLUDES the prologue from run duration, gold/second and
   // every pacing figure by construction (they all read state.time). The
   // phase tick below is the bound: drunk OR t >= MAX_S, never neither.
-  // ADDENDUM (owner 2026-09-18): the pilot PAUSES while a banner is up, and
-  // the bound counts UNPAUSED time only — a held banner freezes BOTH clocks
-  // (t and walkT), so reading time never rushes a player mid-lesson.
+  // ADDENDUM (owner 2026-09-18): the pilot PAUSES while a banner is up.
+  // DEFECT (c) FIX (2026-09-18): the bound is no longer frozen by a banner —
+  // see the tick below.
   if (state.prologue) {
-    if (!prologueBanner()) {
-      state.prologue.t += dt;
-      state.prologue.walkT += dt;
-      if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
-        endPrologue('bound');
-      }
+    // DEFECT (c) FIX (owner 2026-09-18): the bound now counts the WHOLE
+    // phase — a player who never does the action is still escaped by
+    // MAX_S (the old both-clocks-freeze let an idle player sit on a
+    // waiting banner forever). Only the WALKT cadence clock stays frozen
+    // while a card is up (the walk -> banner rhythm is unchanged).
+    state.prologue.t += dt;
+    if (!prologueBanner()) state.prologue.walkT += dt;
+    prologueAdvanceIfEarned();
+    prologueReveal();
+    if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
+      endPrologue('bound');
     }
   } else {
     state.time += dt;
@@ -3222,6 +3250,12 @@ function update(dt) {
   if (state.prologue && !state.prologue.drunk) {
     const po = state.prologue.potion;
     if (Math.hypot(po.x - p.x, po.y - p.y) < pickR) prologueDrink(p);
+  }
+  // RUN-COUNT MILESTONE CHEST: the SAME pickup semantics as the prologue
+  // potion (the same radius, the same loop position) — the pilot collects it
+  // by walking into it, manual or AUTO.
+  if (state.runChest) {
+    if (Math.hypot(state.runChest.x - p.x, state.runChest.y - p.y) < pickR) collectRunChest();
   }
   for (let i = state.drops.length - 1; i >= 0; i--) {
     const d = state.drops[i];
@@ -7537,8 +7571,15 @@ function startRun() {
   // (B6: full gold, flagged, excluded from best-run records).
   state.assistedRun = veteranTutorialPending;
   veteranTutorialPending = false;
-  state.prologue = (prologueRunsPlayed === 0 || state.assistedRun)
+  // KILL SWITCH: C.PROLOGUE.ENABLED (default false) gates the WHOLE phase —
+  // the automatic fresh-profile arm AND the opt-in veteran arm — so OFF
+  // restores the exact pre-prologue run #1 (and run N) for every player.
+  state.prologue = C.PROLOGUE.ENABLED && (prologueRunsPlayed === 0 || state.assistedRun)
     ? { t: 0, drunk: false, walkT: 0,
+        // DEFECT (c) LEDGER: which staged actions the player has DONE this
+        // phase (move/pilot/stats). A banner advances the moment its action
+        // lands here — see prologueActionDone / prologueAdvanceIfEarned.
+        done: { move: false, pilot: false, stats: false },
         // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
         // at a time with the tooltip explaining what they do"): each staged
         // control is hidden until its banner's OK, revealed with a tooltip,
@@ -7579,6 +7620,29 @@ function startRun() {
       }
     }
   }
+  // RUN-COUNT MILESTONE CHEST (owner 2026-09-17: "We have run 50 start with a
+  // big chest on the screen that pilot collects"): the counting rule is A RUN
+  // COUNTS WHEN IT STARTS — this run is runsStarted = settled runs + 1, so
+  // the run that crosses milestone M carries M itself. The gate is >= (never
+  // ===): a jumped counter still pays every skipped milestone's chest, one at
+  // a time (nextRunChest returns the SMALLEST unclaimed one first). Claimed
+  // milestones live in profile.milestoneChest (v10) — the chest spawns again
+  // next run if this one ends uncollected: UNLOSABLE by construction.
+  state.runChest = null;
+  {
+    const settled = Number(profile.achievements && profile.achievements.totals &&
+      profile.achievements.totals.runs) || 0;
+    const milestone = nextRunChest(settled + 1, profile.milestoneChest || 0);
+    if (milestone) {
+      state.runChest = {
+        milestone,
+        // Up-LEFT of the spawn (config.js RUN_CHEST) — the prologue potion's
+        // mirrored slot, clamped on-screen the same way.
+        x: Math.min(C.VIEW_W - 30, Math.max(30, p.x + C.RUN_CHEST.DX)),
+        y: Math.min(C.VIEW_H - 40, Math.max(40, p.y + C.RUN_CHEST.DY)),
+      };
+    }
+  }
   state.pendingDrafts = 0;
   state.wave = makeWave();
   // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
@@ -7599,6 +7663,51 @@ function startRun() {
   audio.startMusic();
 }
 
+// ---------- RUN-COUNT MILESTONE CHESTS (owner 2026-09-17) ----------------------
+// "reward players for the number of runs they've played... run 50 start with a
+// big chest on the screen that pilot collects and it could reward maybe 10 runs
+// worth of gold. Same at 100, 200, and 500." The payoff runs at COLLECTION —
+// the one moment the feature's promises all land at once:
+//   * the reward is a DIRECT BANK WRITE (profile.gold += reward, persisted
+//     through the one choke point) — NOT the run purse. The purse is spendable
+//     in-run and settles through settleRunGold's death/bank split; a milestone
+//     reward is already-earned meta gold and must be un-losable even if the
+//     player dies one second later (the escape payout's direct-write
+//     precedent, src/escape/payout.js).
+//   * the CLAIM (profile.milestoneChest = milestone) is written in the SAME
+//     save, BEFORE the celebration card opens — even a tab close mid-firework
+//     cannot double-pay or lose the chest.
+//   * the card explains WHAT WAS GAINED (owner: "a card explains what they
+//     gained") on the settings pause contract: mode 'chest' is not a ticked
+//     mode, so the frozen arena backs the card exactly like SETTINGS / the
+//     field report; GOT IT resumes.
+function collectRunChest() {
+  if (!state.runChest) return;
+  const milestone = state.runChest.milestone;
+  const reward = runChestGold(profile.achievements && profile.achievements.totals);
+  state.runChest = null;                    // first: off the field, once
+  profile.gold = Math.min(Number.MAX_SAFE_INTEGER, profile.gold + reward);
+  profile.milestoneChest = milestone;       // the claim: highest COLLECTED
+  persistProfile();                         // bank + claim in ONE save
+  toast('MILESTONE CHEST: +' + reward + ' GOLD BANKED');
+  audio.playSfx('chest');
+  openChestCard(milestone, reward);
+}
+
+function openChestCard(milestone, reward) {
+  openMenu('chest');
+  ovTitle.textContent = 'RUN ' + milestone + '!';
+  menuCard('MILESTONE CHEST',
+    'The pilot hauls a chest from the vault: <b>+' + reward + ' gold</b>, banked for good.<br>' +
+    RUN_CHESTS.RUNS_WORTH + ' runs\' worth, by your own average income.', closeChestCard);
+}
+
+function closeChestCard() {
+  if (state.mode !== 'chest') return;
+  state.mode = 'playing';
+  overlay.style.display = 'none';
+}
+
 // ---------- FIRST-RUN PROLOGUE (owner 2026-09-18) -----------------------------
 // "It should be a potion seen on screen and the pilot walks towards it. It
 // could be a controlled sequence where no enemies spawn and the timer hasn't
@@ -7606,20 +7715,42 @@ function startRun() {
 // banners explaining some of the basics of the game."
 //
 // The banners: at most four, one at a time, each short and plain. They are
-// CANVAS-drawn with an OK hit-region on the canvas pointer path — the ONLY
-// live control of the phase (everything else is locked, see prologueLockButtons
-// and the runAction gate). ADDENDUM (owner 2026-09-18: the pilot PAUSES for
-// banners — the withdrawn "the pilot can keep walking" line): a banner goes up
-// only after C.PROLOGUE.BANNER_WALK_S of unpaused walking since the last OK,
-// and while one is up the pilot holds position and BOTH prologue clocks freeze.
+// CANVAS-drawn; the phase's live controls are the ACTION each banner asks
+// for plus the ALWAYS-VISIBLE SKIP (see prologueSkipRect — the owner's
+// defect (a) fix, 2026-09-18: an opt-out that is on screen for the WHOLE
+// phase, not only while a card is up). ADDENDUM (owner 2026-09-18: the
+// pilot PAUSES for banners): a banner goes up only after
+// C.PROLOGUE.BANNER_WALK_S of walking since the last advance, and while one
+// is up the pilot holds position (the player's own steering still moves
+// them — the lesson's action is doable with the card up).
+// DEFECT (c) FIX (owner 2026-09-18: "it doesn't wait for you to do an
+// action before presenting the next action so it's not effective"): each
+// banner names the ACTION that advances it (`action` + the `cue` line the
+// card paints). There is NO OK button any more — doing the thing IS the
+// continue. MAX_S still escapes a player who never does, and SKIP is the
+// second escape.
+// DEFECT (b) FIX (owner 2026-09-18: "it assumes you want to do manual so it
+// starts with steering" while AUTO flies): the LESSON now states the truth
+// of the MODE — banner 1 opens with "the pilot flies for you", and taking
+// the wheel is the ACTION (the phase's manual override makes the steering
+// lesson true in ANY pilot mode). Steering is never taught as the default;
+// it is taught as the opt-in it is.
 // Copy rule (the player review's ask): state what the thing IS or what you GET.
 // No emojis (house rule). Numbers ride the named constant so the copy can never lie.
 const PROLOGUE_BANNERS = [
-  { title: 'MOVE', body: 'Drag anywhere on the field, or use WASD or the arrow keys. You walk where you point.' },
-  { title: 'POTIONS', body: 'Red refills health, blue refills mana. Walk over one to drink it.' },
-  { title: 'LEVEL UP', body: 'Gems fill the bar at the top of the screen. Each level offers a draft: pick 1 of 3 upgrades.' },
-  { title: 'THE POTION', body: 'The shimmering potion ahead is free. Drink it for ' +
-    C.PROLOGUE.INVULN_S + ' seconds of shielding and a clear field.' },
+  { title: 'WHO FLIES?', action: 'move',
+    body: 'The pilot flies for you. Drag the field or press a move key to take the wheel whenever you want.',
+    cue: 'STEER NOW TO CONTINUE' },
+  { title: 'THE PILOT BUTTON', action: 'pilot',
+    body: 'PILOT hands the flying back and forth between you and the autopilot.',
+    cue: 'PRESS PILOT (OR O) TO CONTINUE' },
+  { title: 'LEVEL UP', action: 'stats',
+    body: 'Gems fill the bar at the top. Each level offers a draft: pick 1 of 3. STATS tracks your numbers.',
+    cue: 'OPEN STATS (OR I) TO CONTINUE' },
+  { title: 'THE POTION', action: 'drink',
+    body: 'The shimmering potion ahead is free. Walk into it for ' +
+      C.PROLOGUE.INVULN_S + ' seconds of shielding and a clear field.',
+    cue: 'WALK INTO THE POTION' },
 ];
 
 function prologueBanner() {
@@ -7627,21 +7758,32 @@ function prologueBanner() {
   if (state.prologue.skipped) return null;   // a skip stops the explaining
   if (state.prologue.bannerIdx >= PROLOGUE_BANNERS.length) return null;
   // The cadence gate: up only after BANNER_WALK_S of walking since the last
-  // OK (walk -> banner -> OK -> walk ... -> potion). While below it there is
-  // no banner on screen and the pilot is free to walk.
+  // advance (walk -> banner -> DO THE THING -> walk ... -> potion). While
+  // below it there is no banner on screen and the pilot is free to walk.
   return state.prologue.walkT >= C.PROLOGUE.BANNER_WALK_S
     ? PROLOGUE_BANNERS[state.prologue.bannerIdx] : null;
 }
 
-// OK (button tap or the seam): advance — the phase's SINGLE live control.
-// Gated on a banner actually being up (the canvas hit-region is drawn only
-// then; the seam matches). OK resets the walk clock, so the next banner
-// waits for its own stretch of walking.
-function prologueOk() {
-  if (prologueBanner()) {
-    state.prologue.bannerIdx++;
-    state.prologue.walkT = 0;
-    prologueReveal();
+// DEFECT (c): the action ledger + the advance. prologueActionDone(kind) is
+// called from EVERY live seam of a staged action (the steering override,
+// runAction's pilot/stats, the 'O' key twin) — the banner whose action it
+// is advances the MOMENT the player does the thing (the update loop checks
+// the ledger against the up-banner each frame, so an action done before the
+// card appears still advances it the frame it comes up). The drink needs no
+// ledger entry: it ENDS the phase.
+function prologueActionDone(kind) {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  if (pr.done) pr.done[kind] = true;
+}
+function prologueAdvanceIfEarned() {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  const b = PROLOGUE_BANNERS[pr.bannerIdx];
+  if (!b || !b.action || b.action === 'drink') return;
+  if (pr.done && pr.done[b.action] && prologueBanner()) {
+    pr.bannerIdx++;
+    pr.walkT = 0;
   }
 }
 
@@ -7734,15 +7876,17 @@ const PROLOGUE_STAGES = [
   { kind: 'stats', afterBanner: 3, btns: ['tc-stats'] },
 ];
 
-// The reveal: called from prologueOk — after OK of banner N, stage N's
-// control appears (its button un-hides via .pr-on) with its tooltip. The
-// logic gates (runAction / keydown / movement) read `revealed`, so the
-// control is live the same instant it becomes visible.
+// The reveal: called every phase frame from update() — stage N's control
+// appears WHEN ITS BANNER IS UP (bannerIdx + 1 >= afterBanner), so the
+// action the card asks for is doable the moment the card asks (defect (c):
+// the control can no longer arrive only after an OK press that no longer
+// exists). The logic gates (runAction / keydown / movement) read
+// `revealed`, so the control is live the same instant it becomes visible.
 function prologueReveal() {
   const pr = state.prologue;
   if (!pr) return;
   for (const s of PROLOGUE_STAGES) {
-    if (pr.bannerIdx >= s.afterBanner && !pr.revealed[s.kind]) {
+    if (pr.bannerIdx + 1 >= s.afterBanner && !pr.revealed[s.kind]) {
       pr.revealed[s.kind] = true;
       for (const id of s.btns) {
         const el = typeof document !== 'undefined' && document.getElementById(id);
@@ -7823,6 +7967,7 @@ function prologueManualVec() {
     if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
   }
   if (mx === 0 && my === 0) return null;
+  prologueActionDone('move');
   prologueTipUsed('move');
   return { x: mx, y: my };
 }
@@ -8291,13 +8436,17 @@ function magnetHeld(st) {
 
 function runAction(act) {
   // PROLOGUE ADDENDUM (owner 2026-09-18): through the first-run phase every
-  // button is inert EXCEPT the staged introductions — the controls already
-  // revealed by their banner's OK (prologueActAllowed: PILOT after banner 2,
-  // STATS after banner 3). Using a staged control retires its tooltip (used
-  // means learned). The banner's own OK and SKIP live on the canvas pointer
+  // button is inert EXCEPT the staged introductions — the controls revealed
+  // while their banner is up (prologueActAllowed: PILOT on banner 2, STATS
+  // on banner 3). Using a staged control retires its tooltip (used means
+  // learned) AND feeds the action ledger (defect (c): the press IS the
+  // banner's continue). The always-visible SKIP lives on the canvas pointer
   // path, not this seam.
   if (state.prologue && !prologueActAllowed(act)) return;
-  if (state.prologue && (act === 'pilot' || act === 'stats')) prologueTipUsed(act);
+  if (state.prologue && (act === 'pilot' || act === 'stats')) {
+    prologueActionDone(act);
+    prologueTipUsed(act);
+  }
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
   if (act === 'stats') {
@@ -8721,6 +8870,9 @@ window.addEventListener('keydown', (ev) => {
     // out to that screen, not to the title (return-to-origin discipline).
     if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
     showTitle();                     // every sub-menu (and the farewell) backs out to title
+  } else if (state.mode === 'chest') {
+    // MILESTONE CHEST card: ESC / Enter / Space is GOT IT (the card's twin).
+    if (k === 'escape' || k === 'enter' || k === ' ') closeChestCard();
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
     if (k === 'escape') closeSettings();
@@ -8735,18 +8887,19 @@ window.addEventListener('keydown', (ev) => {
     // PROLOGUE ADDENDUM: no in-run keys through the phase EXCEPT the staged
     // introductions — the revealed controls' key twins are live (MOVE: WASD/
     // arrows steer the phase in any pilot mode; PILOT: O; STATS: I — each
-    // use retires its tooltip), and ESC while a banner is up is SKIP (the
-    // tour's own skip idiom, proposed as the second enabled exception).
-    // runAction carries the same staging gate; the banners' OK and SKIP are
-    // the canvas-path controls.
+    // use feeds the action ledger and retires its tooltip), and ESC is SKIP
+    // for the WHOLE phase (defect (a): the opt-out is always reachable, not
+    // only while a card is up — the same always-visible rule as the canvas
+    // SKIP button). runAction carries the same staging gate; the SKIP
+    // button is the canvas-path control.
     if (state.prologue && !state.prologue.skipped) {
       const rv = state.prologue.revealed || {};
-      if (prologueBanner() && k === 'escape') { prologueSkip(); return; }
+      if (k === 'escape') { prologueSkip(); return; }
       if (rv.move) {
         const dir = KEY_DIRS[k];
         if (dir) { pilotInput[dir] = true; return; }
       }
-      if (rv.pilot && k === 'o') { togglePilotMode(); return; }
+      if (rv.pilot && k === 'o') { prologueActionDone('pilot'); togglePilotMode(); return; }
       if (rv.stats && k === 'i') { runAction('stats'); return; }
       return;
     }
@@ -10030,23 +10183,16 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
-  // FIRST-RUN PROLOGUE: the banner's OK button — hit-test BEFORE the
-  // joystick arms, so the tap that dismisses a banner never steers. Only the
-  // button itself consumes the gesture; every other press during the
+  // FIRST-RUN PROLOGUE: the ALWAYS-VISIBLE SKIP button — hit-test BEFORE
+  // the joystick arms, and NOT gated on a banner being up (defect (a): the
+  // opt-out is reachable at every moment of the phase, walk included). Only
+  // the button itself consumes the gesture; every other press during the
   // prologue is an ordinary steering press (the banners are non-modal).
-  if (state.prologue && prologueBanner()) {
+  if (state.prologue && !state.prologue.skipped) {
     const r0 = canvas.getBoundingClientRect();
     if (r0.width && r0.height) {
       const vx0 = (ev.clientX - r0.left) / r0.width * C.VIEW_W;
       const vy0 = (ev.clientY - r0.top) / r0.height * C.VIEW_H;
-      const okR = prologueOkRect();
-      if (vx0 >= okR.x && vx0 <= okR.x + okR.w && vy0 >= okR.y && vy0 <= okR.y + okR.h) {
-        if (ev.preventDefault) ev.preventDefault();
-        prologueOk();
-        return;
-      }
-      // SKIP ALL — the proposed second live control (see prologueSkipRect):
-      // one press ends the phase and restores the full control set.
       const skR = prologueSkipRect();
       if (vx0 >= skR.x && vx0 <= skR.x + skR.w && vy0 >= skR.y && vy0 <= skR.y + skR.h) {
         if (ev.preventDefault) ev.preventDefault();
@@ -10856,6 +11002,18 @@ export const __TEST = {
     get tried() { return whatsNewTried; },
     set tried(v) { whatsNewTried = !!v; },
   },
+  // ---- v10 RUN-COUNT MILESTONE CHEST seam: the live chest object (get/set),
+  // the collect payoff (the real one: bank + claim + card), and the card's
+  // close — so the suite drives the REAL path without scraping the DOM.
+  runChests: {
+    table: RUN_CHESTS,
+    next: nextRunChest,
+    gold: runChestGold,
+    collect: collectRunChest,
+    closeCard: closeChestCard,
+    get chest() { return state.runChest; },
+    set chest(v) { state.runChest = v; },
+  },
   // ---- G26 pre-run-loadout seam: the screen, the live stored choice, and the
   // validated kit startRun will arm (so a test compares the menu's state
   // against the SAME chain the run applies — never the menu's bookkeeping).
@@ -10996,8 +11154,7 @@ export const __TEST = {
     get paused() { return !!prologueBanner(); },
     banners: PROLOGUE_BANNERS,
     banner: prologueBanner,
-    ok: prologueOk,
-    okRect: prologueOkRect,
+    act: prologueActionDone,
     skip: prologueSkip,
     skipRect: prologueSkipRect,
     drink: () => prologueDrink(state.player),

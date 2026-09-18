@@ -292,6 +292,61 @@ export const GOLD_MODEL = {
   ],
 };
 
+// ---------- RUN-COUNT MILESTONE CHESTS (owner 2026-09-17) --------------------
+// "After it lands, we need to work to reward players for the number of runs
+// they've played. We have run 50 start with a big chest on the screen that
+// pilot collects and it could reward maybe 10 runs worth of gold. Same at
+// 100, 200, and 500." ONE table, the whole feature's numbers:
+//   * MILESTONES — the run counts that pay a chest, ascending. 1000 is a
+//     later line (owner), not shipped here.
+//   * RUNS_WORTH — the reward multiplier: a chest pays this many runs' worth
+//     of the player's own MEASURED income (see runChestGold).
+// The basis for "a run's worth": the player's OWN stored lifetime average —
+// achievements.totals.gold / achievements.totals.runs, the two counters every
+// finished run already folds (recordRun). Chosen over the PACING bands
+// (GOLD_MODEL.INCOME_TIERS) because the bands are keyed by run INDEX and the
+// tier-3 row is a maxed-build WON run (754,689g) — a run-50 player on a fresh
+// build would be handed a maxed player's chest, 10,000x their real income.
+// The lifetime average self-scales with the player's actual progression, and
+// both bounds are MEASURED (PACING.md §1): the floor is RUN_GOLD.AWARD (70g,
+// the fresh-death income), the cap is the tier-3 measured max (754,689g/run —
+// no chest can exceed 10x the best measured run, even for a profile whose
+// average is inflated by one huge won run).
+export const RUN_CHESTS = {
+  MILESTONES: [50, 100, 200, 500],
+  RUNS_WORTH: 10,
+  GOLD_PER_RUN_FLOOR: RUN_GOLD.AWARD,   // 70 — PACING §1 fresh-run floor
+  GOLD_PER_RUN_CAP: 754689,             // PACING §1 tier-3 measured max
+};
+
+/** The next milestone whose chest is unclaimed, or null. PURE.
+ *  `runsStarted` counts runs the way the feature counts them: a run counts
+ *  when it STARTS (startRun), so the run that crosses M carries M itself.
+ *  Crossing is >= by construction, never === — a player whose counter jumps
+ *  past a milestone (offline imports, repaired saves, missed sessions) still
+ *  gets every chest. `claimed` is profile.milestoneChest: the HIGHEST
+ *  milestone whose chest has been COLLECTED — one monotonic number, not a
+ *  set, so "fired once" is arithmetic (claimed >= M), not membership. */
+export function nextRunChest(runsStarted, claimed) {
+  const cl = Number.isFinite(claimed) ? Math.max(0, Math.floor(claimed)) : 0;
+  for (const m of RUN_CHESTS.MILESTONES) {
+    if (runsStarted >= m && cl < m) return m;
+  }
+  return null;
+}
+
+/** The gold a milestone chest pays. PURE. totals is the profile's
+ *  achievements.totals ({ runs, gold, ... }); the average is clamped to the
+ *  MEASURED band above, then multiplied by RUNS_WORTH and floored. */
+export function runChestGold(totals) {
+  const t = totals || {};
+  const runs = Math.max(1, Number(t.runs) || 0);
+  const gold = Number(t.gold) || 0;
+  const avg = Math.min(RUN_CHESTS.GOLD_PER_RUN_CAP,
+    Math.max(RUN_CHESTS.GOLD_PER_RUN_FLOOR, gold / runs));
+  return Math.floor(avg * RUN_CHESTS.RUNS_WORTH);
+}
+
 export function computeRunGold(runStats) {
   const kills = Number(runStats.kills) || 0;
   const level = Number(runStats.level) || 0;

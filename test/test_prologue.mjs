@@ -1,57 +1,61 @@
 // FIRST-RUN PROLOGUE (owner 2026-09-18): "a potion seen on screen and the
 // pilot walks towards it... no enemies spawn and the timer hasn't started...
-// dismissible (with an ok button) banners explaining some of the basics."
+// dismissible banners explaining some of the basics."
 //
-// ADDENDUM 1 (owner 2026-09-18): "pilot could pause for these since we
-// haven't given the player any control yet.. all buttons should be disabled
-// during this initial period."
+// ADDENDUM 1 (owner 2026-09-18): "pilot could pause for these... all buttons
+// should be disabled during this initial period."
 //
-// ADDENDUM 2 — STAGED INTRODUCTION (owner 2026-09-18): "if we hide the
-// controls, then we would need to introduce the buttons one at a time with
-// the tooltip explaining what they do." Hidden beats greyed; the controls
-// appear ONE AT A TIME, each when it is about to matter, each with a
-// tooltip that DISAPPEARS WHEN THE CONTROL IS USED (learn by doing).
+// ADDENDUM 2 — STAGED INTRODUCTION (owner 2026-09-18): "introduce the buttons
+// one at a time with the tooltip explaining what they do." Hidden beats
+// greyed; the controls appear ONE AT A TIME, each when it is about to matter,
+// each with a tooltip that DISAPPEARS WHEN THE CONTROL IS USED.
 //
-// What this file pins, per the briefs + both addenda:
+// DEFECT FIXES (owner 2026-09-18, "the how to play is broken"):
+//   (a) OPT-OUT the SKIP is a PERSISTENT corner button, live at EVERY moment
+//       of the phase (walk, banner, wait — not a link on the card), plus the
+//       Escape twin for the whole phase.
+//   (b) LESSON/MODE COHERENCE banner 1 states the mode truth ("The pilot
+//       flies for you... take the wheel whenever you want") — steering is
+//       taught as the opt-in it is, in any pilot mode, and the player's
+//       input STEERS even while a card is up (the card can never make its
+//       own lesson impossible).
+//   (c) ACTION-GATED each banner carries an ACTION + a cue line ("STEER NOW
+//       TO CONTINUE"); the banner advances the moment the player DOES the
+//       thing (a ledger fed from every live seam), an action done early is
+//       remembered, and MAX_S still escapes a never-acting player — a held
+//       banner no longer freezes the bound.
+//
+// What this file pins:
 //   PHASE     armed ONLY on run #1 of a fresh profile (derived from
 //             achievements.totals.runs === 0 — no new saved field); the
-//             world is INERT (no spawns) and state.time is FROZEN, so the
-//             prologue is excluded from run duration and every pacing
-//             figure by construction. Inert until the potion is drunk.
-//   CHOREO    walk -> banner -> OK -> (reveal) -> walk -> ... -> potion ->
+//             world is INERT (no spawns) and state.time is FROZEN until the
+//             phase ends. Inert until the potion is drunk.
+//   CHOREO    walk -> banner -> DO THE THING -> walk -> ... -> potion ->
 //             drink -> effect. Each banner goes up only after BANNER_WALK_S
-//             of UNPAUSED walking since the last OK; while one is up the
-//             pilot HOLDS and BOTH phase clocks freeze. The phase walks the
-//             pilot itself whenever the player is not steering (any pilot
-//             mode): the choreography completes even for an idle pilot.
-//   STAGED    three controls, in first-60-seconds order: MOVE (banner 1 —
-//             the floating stick / WASD, the joystick task's settled
-//             outcome), PILOT (banner 2), STATS (banner 3). Hidden until
-//             their banner's OK (.pr-on reveals), tooltip up with the
-//             reveal, gone on FIRST USE of that control. Everything else
-//             stays hidden AND inert through the whole phase.
-//   EXITS     the potion drunk, the stated bound (PROLOGUE.MAX_S of
-//             UNPAUSED time — a held banner freezes the bound's clock
-//             too), or SKIP (APPROVED 2026-09-18, the second enabled
-//             exception on the banner card — canvas rect + the Escape
-//             twin, the tour-skip idiom with its session suppression; it
-//             skips the TUTORIAL, NOT THE ASSIST: the drink path fires, so
-//             the 45s shield + clear + clock-start all survive a skip).
-//   THE GUARD at phase end the control set is EXACTLY a normal run's —
-//             every control live, nothing left hidden or inert, no tooltip,
-//             no staging marks. Pinned against run #2's own state.
+//             of walking since the last advance; while one is up the
+//             choreography HOLDS (the pilot pauses) but the PLAYER'S input
+//             still steers. The phase walks the pilot itself whenever the
+//             player is not steering: the choreography completes even idle.
+//   STAGED    three controls, in first-60-seconds order: MOVE (revealed from
+//             the first frame — banner 1's action must be doable when its
+//             card arrives), PILOT (at banner 2's index), STATS (banner 3's).
+//             Tooltip up with the reveal, gone on FIRST USE.
+//   EXITS     the potion drunk, the stated bound (PROLOGUE.MAX_S of phase
+//             time — ticks THROUGH a held banner, defect (c)), or SKIP (the
+//             persistent corner button + the Escape twin; it skips the
+//             TUTORIAL, NOT THE SEQUENCE: the drink path fires, so the 45s
+//             shield + clear + clock-start all survive a skip).
+//   THE GUARD at phase end the control set is EXACTLY a normal run's.
 //   EFFECT    the named 45s shield ANCHORED AT PICKUP, damage blocked at
 //             44.9s and landing at 45.1s; the clear removes ON-SCREEN
-//             enemies (view + margin) and NOT off-screen ones, through the
-//             normal death pass.
+//             enemies (view + margin) and NOT off-screen ones.
 //   RUN #2    no prologue (the derivation contract), no lock.
-//   ABSORB    the stage-2 tour flags are marked seen when the phase ends
-//             (run #1 never stacks a second onboarding path); the HintStrip
-//             is gated only DURING the phase.
+//   ABSORB    the stage-2 tour flags are marked seen when the phase ends;
+//             the HintStrip is gated only DURING the phase.
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { TOUR_KEYS } from '../src/tour.js';
-import { prologueShieldColor, prefersReducedMotion } from '../src/render.js';
+import { prologueShieldColor, prefersReducedMotion, prologueSkipRect } from '../src/render.js';
 
 const S = suite('test_prologue');
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
@@ -65,7 +69,8 @@ function mulberry32b(a) {
 }
 
 // THE prologue boot: fresh profile kept fresh ({ prologue: true } opts the
-// harness's neutralization stamp OUT), own module instance.
+// harness's neutralization stamp OUT — it also flips the kill switch ON),
+// own module instance.
 const h = await boot({ prologue: true, variant: 'prologue' });
 const T = h.T, st = h.state;
 const realRandom = Math.random;
@@ -90,17 +95,20 @@ function autoplay(frames, onFrame) {
     if (onFrame && st.mode === 'playing') onFrame(i);
   }
 }
-const okCenter = () => {
-  const r = T.prologue.okRect();
-  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+// DEFECT (c): the advance is ACTION-gated — this reader DOES the current
+// banner's stated action through the ledger seam (the same call every live
+// input path makes) while the card is up.
+const actBanners = () => {
+  const b = T.prologue.banner();
+  if (b && b.action && b.action !== 'drink') T.prologue.act(b.action);
 };
 const skipCenter = () => {
   const r = T.prologue.skipRect();
   return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
 };
-// The addendum's player role: OK each banner as it comes (each OK reveals
-// the next staged control) while the choreography walks.
-const okBanners = () => { if (T.prologue.banner()) T.prologue.ok(); };
+const tapCanvas = (x, y) => h.elements['game']._ev['pointerdown']({
+  preventDefault() {}, pointerId: 1, clientX: x, clientY: y,
+});
 const kdown = (k) => h.key('keydown', { key: k, preventDefault() {} });
 const steer = (x, y, mag = 1) => { T.pilotInput.x = x; T.pilotInput.y = y; T.pilotInput.mag = mag; };
 const park = () => steer(0, 0, 0);
@@ -128,20 +136,22 @@ S.check('run #1 of a fresh profile opens the prologue: potion visible, world ine
       'the potion sits a real walk away (' + JSON.stringify(po) + ')');
     assert(po.x >= 0 && po.x <= C.VIEW_W && po.y >= 0 && po.y <= C.VIEW_H,
       'the potion is ON SCREEN (view ' + C.VIEW_W + 'x' + C.VIEW_H + ', got ' + JSON.stringify(po) + ')');
-    // CADENCE: at t=0 NO banner is up — it takes BANNER_WALK_S of unpaused
-    // walking for the first one (walk -> banner, never banner-first).
+    // CADENCE: at t=0 NO banner is up — it takes BANNER_WALK_S of walking
+    // for the first one (walk -> banner, never banner-first).
     assert(T.prologue.banner() === null && T.prologue.bannerIdx === 0,
       'no banner before the first stretch of walking (walkT=' + T.prologue.walkT + ')');
-    // STAGED: nothing is revealed at arm time — the controls are all hidden.
-    assert(T.prologue.revealed.move === false && T.prologue.revealed.pilot === false &&
-      T.prologue.revealed.stats === false, 'no stage is revealed at arm time');
-    assert(T.prologue.tip === null, 'no tooltip at arm time');
-    assert(!hasPrOn('tc-pilotbtn') && !hasPrOn('tc-stats'), 'no staging marks at arm time');
+    // DEFECT (c): MOVE is revealed from the FIRST frames — banner 1's action
+    // is steering, so the control must already be live when its card arrives.
+    assert(T.prologue.revealed.move === true,
+      'MOVE is revealed from the first frame (its banner asks the player to steer)');
+    assert(T.prologue.revealed.pilot === false && T.prologue.revealed.stats === false,
+      'PILOT and STATS stay hidden until their own banners');
+    assert(T.prologue.tip === 'move', 'the MOVE tooltip is up with its control');
+    assert(!hasPrOn('tc-pilotbtn') && !hasPrOn('tc-stats'), 'no staging marks for the later stages');
     // 8 seconds of an untouched run: nothing spawns, the clock never starts.
-    // With no OK ever tapped, the banner that appears at BANNER_WALK_S stays
-    // up and FREEZES the phase clock with it (the phase walks the pilot
-    // itself — addendum 2's idle-completion rule — but a banner still owns
-    // the pause).
+    // With no action ever done, the banner that appears at BANNER_WALK_S
+    // stays up — but the BOUND now ticks through it (defect (c): a held
+    // banner no longer freezes the phase clock).
     let maxEnemies = 0;
     autoplay(60 * 8, () => {
       maxEnemies = Math.max(maxEnemies, st.enemies.length);
@@ -149,16 +159,14 @@ S.check('run #1 of a fresh profile opens the prologue: potion visible, world ine
     });
     assert(maxEnemies === 0, 'NO enemies spawn during the prologue (max ' + maxEnemies + ')');
     assert(T.prologue.banner() !== null && T.prologue.bannerIdx === 0,
-      'banner #1 is up and waiting for its OK after 8s of wall time');
-    // THE BOUND COUNTS UNPAUSED TIME ONLY: 8s of wall time elapsed, only the
-    // ~BANNER_WALK_S before the banner counted.
-    assert(Math.abs(T.prologue.t - C.PROLOGUE.BANNER_WALK_S) < 0.15,
-      'a held banner froze the phase clock (t=' + T.prologue.t.toFixed(2) +
-      ' after 8s wall; BANNER_WALK_S=' + C.PROLOGUE.BANNER_WALK_S + ')');
+      'banner #1 is up and waiting for its ACTION after 8s of wall time');
+    assert(Math.abs(T.prologue.t - 8) < 0.2,
+      'the bound clock TICKED through the held banner (t=' + T.prologue.t.toFixed(2) +
+      's after 8s wall — defect (c))');
   } finally { Math.random = realRandom; }
 });
 
-S.check('the banners: at most four, plain copy, cadence-gated, OK to advance — and MODAL (the pilot pauses)', () => {
+S.check('the banners: four, action-gated with cue lines, cadence-gated, mode-coherent - and the ACTION advances', () => {
   Math.random = mulberry32b(0x9f2a);
   try {
     T.banners.suppressAll();
@@ -170,64 +178,75 @@ S.check('the banners: at most four, plain copy, cadence-gated, OK to advance —
     // drink (the idle phase would otherwise walk the pilot onto it).
     st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
     const B = T.prologue.banners;
-    assert(B.length === 4 && B.length <= 4, 'exactly four banners (got ' + B.length + ')');
+    assert(B.length === 4, 'exactly four banners (got ' + B.length + ')');
     for (const b of B) {
-      assert(!/[^\x00-\x7F]/.test(b.title + b.body), 'no emojis / non-ASCII in UI copy: ' + b.title);
+      assert(!/[^\x00-\x7F]/.test(b.title + b.body + (b.cue || '')), 'no emojis / non-ASCII in UI copy: ' + b.title);
       assert(b.body.length <= 100, 'short and plain: ' + b.title + ' body is ' + b.body.length + ' chars');
+      assert(!!b.action && !!b.cue, 'every banner carries an ACTION and a cue line: ' + b.title);
     }
+    assert(B.map((b) => b.action).join(',') === 'move,pilot,stats,drink',
+      'the actions are the staged controls, then the drink');
     assert(B[3].body.includes(String(C.PROLOGUE.INVULN_S)),
       'the potion banner states what you GET (the ' + C.PROLOGUE.INVULN_S + 's shield)');
-    // MODAL (the withdrawn non-modal line): with banner #1 up — MOVE not yet
-    // revealed — held input does NOT steer ("we haven't given the player any
-    // control yet").
-    autoplay(30);   // let banner #1 come up (walkT accrues unpaused)
-    assert(T.prologue.banner() !== null, 'banner #1 is up');
+    // DEFECT (b) — LESSON/MODE COHERENCE: banner 1 states the mode truth:
+    // the PILOT flies, steering is the player's opt-in (true in any mode).
+    assert(/pilot flies for you/i.test(B[0].body),
+      'banner 1 states the mode truth (teaching steering as the opt-in it is)');
+    // THE CHOREOGRAPHY PAUSE: with banner #1 up and NO input, the pilot
+    // holds (the owner's pause directive survives — only the human's input
+    // outranks the card).
+    autoplay(30);   // banner #1 comes up (walkT accrues)
+    assert(T.prologue.banner() !== null, 'fixture: banner #1 is up');
     const x0 = st.player.x, y0 = st.player.y;
-    steer(1, 0);
-    autoplay(30, () => {
-      assert(T.prologue.banner() !== null, 'the banner stays up (no OK is tapped)');
-    });
-    park();
+    autoplay(30);
     assert(Math.abs(st.player.x - x0) < 0.5 && Math.abs(st.player.y - y0) < 0.5,
-      'the pilot HELD while a banner was up (moved ' +
-      Math.hypot(st.player.x - x0, st.player.y - y0).toFixed(2) + 'wu — banners gate the pilot)');
-    // OK dismisses through the REAL canvas hit-region (the pointer funnel).
-    const c0 = okCenter();
-    h.elements['game']._ev['pointerdown']({
-      preventDefault() {}, pointerId: 1, clientX: c0.x, clientY: c0.y,
-    });
+      'the choreography HELD while a banner was up (moved ' +
+      Math.hypot(st.player.x - x0, st.player.y - y0).toFixed(2) + 'wu)');
+    // DEFECT (c): the WRONG action does not advance the card.
+    T.prologue.act('pilot');
+    autoplay(3);
+    assert(T.prologue.bannerIdx === 0 && T.prologue.banner() !== null,
+      'a non-matching action does not advance banner #1 (needs move)');
+    // THE ACTION: steering advances the card — and steers WHILE it is up
+    // (the card can never make its own lesson impossible).
+    const x1 = st.player.x;
+    steer(1, 0);
+    autoplay(20);
+    park();
     assert(T.prologue.bannerIdx === 1 && T.prologue.banner() === null,
-      'the canvas OK tap advanced the banner and the walk clock reset (idx ' + T.prologue.bannerIdx + ')');
-    // The seam is CADENCE-GATED like the painted card: ok() with no banner
-    // up is a no-op...
-    T.prologue.ok();
-    assert(T.prologue.bannerIdx === 1, 'ok() with no banner up does nothing (idx ' + T.prologue.bannerIdx + ')');
-    // ...and the next banner waits for its own stretch of walking.
-    autoplay(Math.floor(60 * C.PROLOGUE.BANNER_WALK_S) - 5);
-    assert(T.prologue.banner() === null, 'banner #2 waits for its walk (walkT=' + T.prologue.walkT.toFixed(2) + ')');
-    autoplay(10);
-    assert(T.prologue.banner() !== null, 'banner #2 is up after BANNER_WALK_S of unpaused walk');
-    T.prologue.ok(); autoplay(30);
-    assert(T.prologue.banner() !== null, 'banner #3 is up (idx ' + T.prologue.bannerIdx + ')');
-    T.prologue.ok(); autoplay(30);
-    assert(T.prologue.banner() !== null, 'banner #4 is up (idx ' + T.prologue.bannerIdx + ')');
-    T.prologue.ok();
-    assert(T.prologue.bannerIdx === 4 && T.prologue.banner() === null,
-      'four OKs exhaust the banners (banner() null, idx ' + T.prologue.bannerIdx + ')');
-    const r = T.prologue.okRect();
-    assert(r.x >= 0 && r.x + r.w <= C.VIEW_W && r.y >= 0 && r.y + r.h <= C.VIEW_H,
-      'the OK rect is inside the view at every viewport (the canvas is one 480x300 source)');
-    const sk = T.prologue.skipRect();
-    assert(sk.x >= 0 && sk.x + sk.w <= C.VIEW_W && sk.y >= 0 && sk.y + sk.h <= C.VIEW_H &&
-      (sk.x > r.x + r.w || sk.x + sk.w < r.x), 'the SKIP rect is in-view and clear of OK');
+      'steering advanced banner #1 the moment it landed (idx ' + T.prologue.bannerIdx + ')');
+    assert(st.player.x > x1 + 5,
+      'the player STEERED while the card was up (' + (st.player.x - x1).toFixed(1) + 'wu +x)');
+    assert(T.prologue.walkT < C.PROLOGUE.BANNER_WALK_S,
+      'the advance reset the walk clock (walkT=' + T.prologue.walkT.toFixed(2) + ')');
+    // AN ACTION DONE EARLY IS REMEMBERED: act('pilot') with no banner up
+    // does not advance anything NOW...
+    T.prologue.act('pilot');
+    assert(T.prologue.bannerIdx === 1 && T.prologue.banner() === null,
+      'act() with no banner up does not advance on the spot');
+    // ...but the next banner barely paints — the ledger already holds its
+    // action, so it advances the frame after it comes up (at most one
+    // observable frame; the card after it can hold normally, waiting for
+    // its own action).
+    let b2Frames = 0;
+    autoplay(40, () => { if (T.prologue.banner() !== null && T.prologue.bannerIdx === 1) b2Frames++; });
+    assert(b2Frames <= 1 && T.prologue.bannerIdx >= 2,
+      'the done action carried banner #2 past a hold (idx ' + T.prologue.bannerIdx +
+      ', banner #2 visible ' + b2Frames + ' frames)');
+    // RECT GEOMETRY (defect (a)): the SKIP button is in-view and clear of the
+    // banner card (the card plate spans x 90..390 at W=480).
+    const sk = prologueSkipRect();
+    assert(sk.x >= 0 && sk.x + sk.w <= C.VIEW_W && sk.y >= 0 && sk.y + sk.h <= C.VIEW_H,
+      'the SKIP rect is inside the view at every viewport');
+    assert(sk.x >= 390, 'the SKIP rect sits clear of the banner card (x ' + sk.x + ')');
   } finally { Math.random = realRandom; }
 });
 
 // ---------------------------------------------------------------------------
-// THE STAGED INTRODUCTION — hidden until their banner, revealed with a
-// tooltip, tooltip clears on FIRST USE (learn by doing).
+// THE STAGED INTRODUCTION — MOVE from the first frame, tooltip clears on
+// first use, input steers in ANY mode.
 // ---------------------------------------------------------------------------
-S.check('STAGED: MOVE revealed by banner 1 — the tooltip clears on first drag, and the input STEERS', () => {
+S.check('STAGED: MOVE live from frame one - steering advances banner 1, clears the tooltip, works in any mode', () => {
   Math.random = mulberry32b(0x9a11);
   try {
     T.banners.suppressAll();
@@ -236,44 +255,34 @@ S.check('STAGED: MOVE revealed by banner 1 — the tooltip clears on first drag,
     h.pump(2);
     quietField();
     st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
-    // PRE-REVEAL: held input does not steer — the choreography owns the walk
-    // (the potion sits at x=-3900, so the choreography walks -x; the held
-    // input below points +x, dead against it).
     T.setPilotMode('MANUAL');
-    const x0 = st.player.x;
-    steer(1, 0);
-    autoplay(30);   // ~0.5s: banner #1 comes up and HOLDS (no OK is tapped)
-    park();
-    assert(st.player.x < x0 - 5,
-      'pre-reveal held input did NOT steer (choreography walked -x toward its potion anyway: ' +
-      (st.player.x - x0).toFixed(1) + 'wu)');
-    assert(T.prologue.revealed.move === false, 'MOVE is not revealed before banner 1\'s OK');
-    // Banner #1 is already up (the pre-reveal window ended on its hold) —
-    // OK it: the MOVE reveal.
-    assert(T.prologue.banner() !== null, 'fixture: banner #1 is up');
-    T.prologue.ok();
-    assert(T.prologue.revealed.move === true, 'banner 1\'s OK revealed MOVE');
-    assert(T.prologue.tip === 'move', 'the MOVE tooltip is up with its control');
+    assert(T.prologue.revealed.move === true && T.prologue.tip === 'move',
+      'MOVE is live with its tooltip from the first frames');
     assert(/STEER/.test(T.prologue.tipText('move')), 'the MOVE tooltip says what it does');
     assert(!/[^\x00-\x7F]/.test(T.prologue.tipText('move')), 'tooltip copy is plain ASCII');
     assert(tipEl().hidden === false, 'the tooltip DOM element is shown');
-    // USED = LEARNED: the first real steer clears the tooltip and steers the
-    // phase — in ANY pilot mode (the drag IS the lesson). Input +x against
-    // the choreography's -x walk: the input must win.
+    // USED = LEARNED: the first real steer clears the tooltip, steers the
+    // phase in ANY pilot mode, and advances banner #1 the frame it comes up
+    // (the ledger was fed at the first steer — the card never blocks on an
+    // OK that no longer exists).
     T.setPilotMode('AUTO_ALL');
     const x1 = st.player.x;
     steer(1, 0);
-    autoplay(20, okBanners);
+    autoplay(25);
     park();
-    assert(T.prologue.tip === null, 'the MOVE tooltip cleared on first use (not on an OK)');
-    assert(tipEl().hidden === true, 'the tooltip DOM element is hidden again');
+    assert(T.prologue.bannerIdx >= 1,
+      'steering advanced banner #1 (idx ' + T.prologue.bannerIdx + ')');
+    assert(T.prologue.tip !== 'move',
+      'the MOVE tooltip cleared on first use (tip now ' + T.prologue.tip + ' — the next stage\'s own)');
+    assert(T.prologue.tip === 'pilot' && tipEl().hidden === false,
+      'the PILOT tooltip is up with its freshly revealed control');
     assert(st.player.x > x1 + 5,
-      'post-reveal held input STEERS the phase in AUTO mode too (' +
+      'held input STEERS the phase in AUTO mode too (' +
       (st.player.x - x1).toFixed(1) + 'wu against the choreography)');
     // And the keyboard twin steers as well (the desktop MOVE control).
     const x2 = st.player.x;
     kdown('d'); kdown('d');   // keydown twice: repeat-guard safe, held 'right'
-    autoplay(20, okBanners);
+    autoplay(20, actBanners);
     kdown('ArrowRight');
     assert(st.player.x > x2 + 5,
       'WASD/arrows steer the phase once MOVE is revealed (' + (st.player.x - x2).toFixed(1) + 'wu)');
@@ -281,7 +290,7 @@ S.check('STAGED: MOVE revealed by banner 1 — the tooltip clears on first drag,
   } finally { Math.random = realRandom; }
 });
 
-S.check('STAGED: PILOT revealed by banner 2, STATS by banner 3 — live on reveal, tooltip on first use', () => {
+S.check('STAGED: PILOT revealed at banner 2\'s index, STATS at banner 3\'s - live on reveal, tooltip on first use', () => {
   Math.random = mulberry32b(0x9a22);
   try {
     T.banners.suppressAll();
@@ -291,22 +300,23 @@ S.check('STAGED: PILOT revealed by banner 2, STATS by banner 3 — live on revea
     quietField();
     st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
     T.setPilotMode('AUTO_ALL');
-    // PILOT is NOT live before its reveal. Banner #1 up -> OK -> MOVE only.
+    // PILOT is NOT live before its reveal. Banner #1 up -> DO move -> PILOT.
     autoplay(30);              // banner #1 comes up (0.35s) and holds
     assert(T.prologue.banner() !== null, 'fixture: banner #1 up');
-    T.prologue.ok();
-    assert(T.prologue.revealed.move === true && T.prologue.revealed.pilot === false,
-      'after banner 1 only MOVE is revealed');
     T.runAction('pilot'); kdown('o');
-    assert(st.pilotMode === 'AUTO_ALL', 'the PILOT switch is inert before banner 2 (mode ' + st.pilotMode + ')');
+    assert(st.pilotMode === 'AUTO_ALL', 'the PILOT switch is inert before its stage (mode ' + st.pilotMode + ')');
     assert(!hasPrOn('tc-pilotbtn'), 'the PILOT button carries no staging mark');
-    // Banner #2 -> the PILOT reveal: visible, live, tooltip up.
-    while (!T.prologue.banner()) autoplay(5);
-    T.prologue.ok();
-    assert(T.prologue.revealed.pilot === true, 'banner 2\'s OK revealed PILOT');
+    T.prologue.act('move');
+    autoplay(3);
+    assert(T.prologue.bannerIdx === 1, 'the move action advanced banner #1');
+    assert(T.prologue.revealed.pilot === true,
+      'PILOT revealed at banner 2\'s index — the control is live before its card asks');
     assert(hasPrOn('tc-pilotbtn'), 'the PILOT button is un-hidden (.pr-on)');
     assert(T.prologue.tip === 'pilot', 'the PILOT tooltip is up with its control');
     assert(/AUTO/.test(T.prologue.tipText('pilot')), 'the PILOT tooltip says what it does');
+    // STATS is still gated (its stage has not arrived).
+    T.runAction('stats');
+    assert(st.mode === 'playing', 'the FIELD REPORT is inert before its stage (mode ' + st.mode + ')');
     // USE: the touch funnel toggles (and the choreography survives an idle
     // MANUAL pilot — the phase keeps walking; pinned again in the EXITs).
     T.runAction('pilot');
@@ -316,13 +326,15 @@ S.check('STAGED: PILOT revealed by banner 2, STATS by banner 3 — live on revea
     assert(st.pilotMode === 'MANUAL', 'the O key twin works once revealed (mode ' + st.pilotMode + ')');
     T.runAction('pilot');
     assert(st.pilotMode === 'AUTO_ALL', 'cycled back to AUTO_ALL (practice is reversible)');
-    // Banner #3 -> the STATS reveal.
-    assert(T.prologue.revealed.stats === false, 'STATS not revealed before banner 3');
-    T.runAction('stats');
-    assert(st.mode === 'playing', 'the FIELD REPORT is inert before banner 3 (mode ' + st.mode + ')');
-    while (!T.prologue.banner()) autoplay(5);
-    T.prologue.ok();
-    assert(T.prologue.revealed.stats === true, 'banner 3\'s OK revealed STATS');
+    // Banner #2 barely paints (its action is already done) — banner #3's
+    // index arrives, and with it the STATS reveal. (The card that CAN show
+    // after it is #4, the potion, which has no ledger advance.)
+    let b2Frames = 0;
+    autoplay(45, () => { if (T.prologue.banner() !== null && T.prologue.bannerIdx === 1) b2Frames++; });
+    assert(b2Frames <= 1 && T.prologue.bannerIdx >= 2,
+      'the done pilot action carried the index past banner #2 (idx ' + T.prologue.bannerIdx +
+      ', banner #2 visible ' + b2Frames + ' frames)');
+    assert(T.prologue.revealed.stats === true, 'STATS revealed at banner 3\'s index');
     assert(hasPrOn('tc-stats'), 'the STATS button is un-hidden (.pr-on)');
     assert(T.prologue.tip === 'stats', 'the STATS tooltip is up with its control');
     // USE through the real key twin: the report opens, the game pauses under
@@ -336,16 +348,24 @@ S.check('STAGED: PILOT revealed by banner 2, STATS by banner 3 — live on revea
       'the phase clock pauses under the report (menu-like)');
     kdown('Escape');
     assert(st.mode === 'playing', 'ESC resumes the phase from the report');
-    // Banner 4 reveals nothing — the potion is the finale.
-    while (!T.prologue.banner()) autoplay(5);
-    T.prologue.ok();
+    // Banner #4 (the potion) has no ledger advance — it comes up and WAITS
+    // for the walk-in; it reveals nothing new.
+    T.prologue.act('stats');   // the report use already fed the ledger; belt+braces
+    let potionCard = null;
+    autoplay(60, () => { if (T.prologue.banner() !== null) potionCard = T.prologue.banner(); });
+    assert(potionCard !== null && potionCard.title === 'THE POTION',
+      'banner #4 is up and waiting for the walk-in');
+    autoplay(30, () => {
+      assert(T.prologue.banner() !== null && T.prologue.bannerIdx === 3,
+        'the potion banner does not advance on its own (the drink IS the action)');
+    });
     assert(T.prologue.revealed.move && T.prologue.revealed.pilot && T.prologue.revealed.stats &&
       T.prologue.tip === null,
       'banner 4 reveals nothing new (all three stages already out, no tooltip)');
   } finally { Math.random = realRandom; }
 });
 
-S.check('STAGED: nothing else is live through the phase — the unstaged controls stay hidden and inert', () => {
+S.check('STAGED: nothing else is live through the phase - the unstaged controls stay hidden and inert', () => {
   Math.random = mulberry32b(0x9a33);
   try {
     T.banners.suppressAll();
@@ -358,13 +378,16 @@ S.check('STAGED: nothing else is live through the phase — the unstaged control
       'body.prologue-locked is ON from arm time (the hidden touch layer)');
     const radar0 = st.radarOn, map0 = st.mapOpen, zoom0 = st.zoom,
       focus0 = T.controller.focus, stance0 = T.controller.stance;
-    // Exhaust every banner (all three stages revealed) — the unstaged
-    // controls must STILL be inert after the last OK.
+    // Do every staged action (all three stages revealed) — the unstaged
+    // controls must STILL be inert after the last advance.
     T.setPilotMode('AUTO_ALL');
-    autoplay(60 * 6, okBanners);
-    assert(T.prologue.bannerIdx === 4 && T.prologue.revealed.pilot && T.prologue.revealed.stats,
-      'fixture: all banners OK-ed, all stages revealed');
-    for (const k of ['Escape', 'p', 'm', 'r', '?', '+', '-', 'q', 'e', 'h', 'n', 'Tab', 'g']) kdown(k);
+    autoplay(60 * 6, actBanners);
+    assert(T.prologue.bannerIdx === 3 && T.prologue.banner() !== null &&
+      T.prologue.revealed.pilot && T.prologue.revealed.stats,
+      'fixture: every banner action done, all stages revealed (the potion card waits for the walk-in)');
+    // (Escape is NOT in this list: it is the SKIP twin — a live control by
+    // design, pinned in its own checks below.)
+    for (const k of ['p', 'm', 'r', '?', '+', '-', 'q', 'e', 'h', 'n', 'Tab', 'g']) kdown(k);
     assert(st.mode === 'playing', 'no screen opened (settings/help inert; mode ' + st.mode + ')');
     assert(st.radarOn === radar0 && st.mapOpen === map0, 'radar and map inert');
     assert(st.zoom === zoom0, 'zoom inert');
@@ -373,7 +396,7 @@ S.check('STAGED: nothing else is live through the phase — the unstaged control
       T.runAction(act);
     assert(st.mode === 'playing' && st.mapOpen === map0 && st.radarOn === radar0,
       'runAction stays swallowed for the unstaged acts');
-    assert(T.prologue.buttonsLocked === true, 'the lock holds past the last OK');
+    assert(T.prologue.buttonsLocked === true, 'the lock holds past the last advance');
     assert(!hasPrOn('tc-cog') && !hasPrOn('tc-stats') === false, 'fixture: staged marks only where staged');
     // THE LIFT: at the drink, everything comes back at once.
     T.prologue.drink();
@@ -390,14 +413,29 @@ S.check('STAGED: nothing else is live through the phase — the unstaged control
 });
 
 // ---------------------------------------------------------------------------
-// THE SKIP — APPROVED (owner 2026-09-18), then CLARIFIED ("No, potion exists
-// for the skipped tutorial too"): the skip removes the EXPLANATIONS, not the
-// SEQUENCE. "Stop explaining", NOT "start the run instantly" — banners and
-// tooltips never appear again, the FULL control set is live from the press,
-// and the POTION SEQUENCE RUNS AS NORMAL (walk -> drink -> 45s invuln +
-// clearing pulse -> the run clock starts). The un-walked potion still
-// answers to the time bound.
+// THE SKIP — DEFECT (a): a PERSISTENT opt-out, reachable at EVERY moment of
+// the phase (the walk window included — not a link on the banner card).
+// CLARIFIED ("No, potion exists for the skipped tutorial too"): the skip
+// removes the EXPLANATIONS, not the SEQUENCE — banners and tooltips never
+// appear again, the FULL control set is live from the press, and the POTION
+// SEQUENCE RUNS AS NORMAL.
 // ---------------------------------------------------------------------------
+S.check('SKIP (a): the corner button works in the WALK window too - no banner needs to be up', () => {
+  Math.random = mulberry32b(0x9a41);
+  try {
+    T.banners.suppressAll();
+    T.getProfile().achievements.totals.runs = 0;
+    T.startRun();
+    h.pump(5);   // t < BANNER_WALK_S: no banner on screen, just the walk
+    assert(T.prologue.banner() === null, 'fixture: the walk window (no card up)');
+    tapCanvas(skipCenter().x, skipCenter().y);
+    h.pump(2);
+    assert(T.prologue.active === true && st.prologue.skipped === true,
+      'the SKIP tap entered skipped mode with NO banner up (opt-out at every moment)');
+    assert(T.prologue.buttonsLocked === false, 'the full control set restored immediately');
+  } finally { Math.random = realRandom; }
+});
+
 S.check('SKIP: "stop explaining" - banners/tooltips gone, full set live, the potion sequence still runs', () => {
   Math.random = mulberry32b(0x9a44);
   try {
@@ -406,7 +444,7 @@ S.check('SKIP: "stop explaining" - banners/tooltips gone, full set live, the pot
     T.startRun();
     h.pump(2);
     quietField();
-    // Banner #1 up, nothing revealed: the canvas SKIP tap enters skipped mode.
+    // Banner #1 up, nothing done: the canvas SKIP tap enters skipped mode.
     // A parked on-screen walker (speed 0, full shape — the walk is ~90 frames,
     // a stub would drift to NaN) proves the clearing pulse still fires at the
     // drink.
@@ -415,9 +453,7 @@ S.check('SKIP: "stop explaining" - banners/tooltips gone, full set live, the pot
     st.enemies.push({ typeId: 'CHASER', hp: 10, maxHp: 10, x: st.player.x + 10, y: st.player.y,
       w: 10, speed: 0, mx: 0, my: 0, age: 0, elite: false });
     const sc = skipCenter();
-    h.elements['game']._ev['pointerdown']({
-      preventDefault() {}, pointerId: 2, clientX: sc.x, clientY: sc.y,
-    });
+    tapCanvas(sc.x, sc.y);
     h.pump(2);
     assert(T.prologue.active === true && st.prologue.skipped === true,
       'the skip does NOT end the phase - it enters skipped mode ("stop explaining")');
@@ -499,10 +535,10 @@ S.check('THE GUARD: after a full staged phase, the control set equals a normal r
     T.startRun();
     h.pump(2);
     quietField();
-    // Complete the whole phase the intended way: every banner OK-ed (all
-    // stages revealed + used), then the drink.
+    // Complete the whole phase the intended way: every banner's action done
+    // (all stages revealed + used), then the drink.
     T.setPilotMode('AUTO_ALL');
-    autoplay(60 * 12, okBanners);
+    autoplay(60 * 12, actBanners);
     assert(!T.prologue.active, 'fixture: the phase completed via the drink');
     // The control-set snapshot: DOM + logic + key liveness.
     const controlSet = () => ({
@@ -538,10 +574,10 @@ S.check('THE GUARD: after a full staged phase, the control set equals a normal r
 });
 
 // ---------------------------------------------------------------------------
-// THE EXITS — drunk (the choreography, OKs carried by the player) and
+// THE EXITS — drunk (the choreography, actions carried by the player) and
 // the stated bound.
 // ---------------------------------------------------------------------------
-S.check('EXIT 1, AUTO: the choreography walks and PAUSES at each banner; OKs carry it to the drink', () => {
+S.check('EXIT 1, AUTO: the choreography walks and PAUSES at each banner; actions carry it to the drink', () => {
   Math.random = mulberry32b(0x9f4c);
   try {
     T.banners.suppressAll();
@@ -553,11 +589,11 @@ S.check('EXIT 1, AUTO: the choreography walks and PAUSES at each banner; OKs car
     T.setPilotMode('AUTO');
     let sawHold = false, sawWalk = false, invulnAtEnd = 0, endedAtFrame = -1, tAtEnd = -1;
     const px = [];
-    // A deliberate reader: OKs land at most once a second, so each banner
-    // actually HOLDS the pilot for a visible stretch (an instant-OK driver
-    // would never pause the walk at all).
+    // A deliberate reader: actions land at most once a second, so each
+    // banner actually HOLDS the pilot for a visible stretch (an instant-act
+    // driver would never pause the walk at all).
     autoplay(60 * 15, (i) => {
-      if (i % 60 === 0) okBanners();
+      if (i % 60 === 0) actBanners();
       if (T.controller && T.controller.act === 'PROLOGUE_HOLD') sawHold = true;
       if (T.controller && T.controller.act === 'PROLOGUE') sawWalk = true;
       if (i % 12 === 0) px.push(st.player.x);
@@ -589,7 +625,7 @@ S.check('EXIT 1, AUTO: the choreography walks and PAUSES at each banner; OKs car
   } finally { Math.random = realRandom; }
 });
 
-S.check('EXIT 2, the bound: UNPAUSED time ends the phase; a held banner freezes the bound (menu-like)', () => {
+S.check('EXIT 2, the bound: MAX_S escapes a never-acting player - a held banner no longer freezes it', () => {
   Math.random = mulberry32b(0x9f5d);
   try {
     T.banners.suppressAll();
@@ -601,16 +637,23 @@ S.check('EXIT 2, the bound: UNPAUSED time ends the phase; a held banner freezes 
     st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
     const bound = C.PROLOGUE.MAX_S;
     assert(bound === 60, 'the bound is stated: 60s (PROLOGUE.MAX_S)');
-    // Banner #1 up, never OK-ed: the bound clock is FROZEN — the phase
-    // outlasts any wall-clock window (the OK is the only way past a banner).
-    autoplay(60 * (bound + 10));
-    assert(T.prologue.active, 'a held banner holds the phase past MAX_S of wall time');
-    // OK the banners away: now the bound accrues and fires.
-    autoplay(60 * 3, okBanners);
-    assert(T.prologue.bannerIdx === 4 && T.prologue.banner() === null,
-      'banners exhausted; the potion is still a walk away');
-    autoplay(Math.floor(60 * (bound + 2)));
-    assert(!T.prologue.active, 'the phase ended at the UNPAUSED bound without the potion');
+    // DEFECT (c), INVERTED from the old contract: banner #1 comes up at
+    // BANNER_WALK_S and NEVER receives its action — the WALKT cadence clock
+    // freezes under the card (the walk -> banner rhythm), but the BOUND
+    // clock keeps ticking, and MAX_S ends the phase with the card still up.
+    let endedAt = -1;
+    autoplay(60 * (bound + 5), (i) => {
+      if (i === 60 * 30) {
+        assert(T.prologue.banner() !== null && T.prologue.bannerIdx === 0,
+          'mid-check: banner #1 still up, never acted (idx ' + T.prologue.bannerIdx + ')');
+        assert(Math.abs(T.prologue.walkT - C.PROLOGUE.BANNER_WALK_S) < 0.05,
+          'the WALKT cadence clock froze under the card (walkT=' + T.prologue.walkT.toFixed(2) + ')');
+        assert(T.prologue.t > 25,
+          'the bound clock kept TICKING under the card (t=' + T.prologue.t.toFixed(1) + 's at 30s wall)');
+      }
+      if (endedAt < 0 && !T.prologue.active) endedAt = i;
+    });
+    assert(endedAt > 0, 'the phase ended at MAX_S with the banner still waiting (frame ' + endedAt + ')');
     assert(st.player.invuln < C.PROLOGUE.INVULN_S,
       'no shield on the bound exit (invuln ' + st.player.invuln.toFixed(2) + 's)');
     autoplay(60);
@@ -631,7 +674,7 @@ S.check('the shield boundary: contact damage is blocked at 44.9s and lands at 45
     T.setPilotMode('AUTO');
     let drank = false, tDrink = -1;
     autoplay(60 * 12, (i) => {
-      okBanners();
+      actBanners();
       if (!drank && !T.prologue.active) { drank = true; tDrink = i; }
     });
     assert(drank, 'the potion was drunk this arm');
@@ -680,7 +723,7 @@ S.check('the clear: on-screen enemies die with normal credit, off-screen ones su
       hp: 500, maxHp: 500, speed: 0, mx: 0, my: 0, age: 0, elite: false };  // off-screen
     st.enemies.push(far);
     const kills0 = p.kills;
-    autoplay(60 * 12, (i) => { okBanners(); st.spawnTimer = 999; });
+    autoplay(60 * 12, (i) => { actBanners(); st.spawnTimer = 999; });
     assert(!T.prologue.active, 'the drink happened');
     assert(p.kills === kills0 + 1, 'the cleared enemy died with normal kill credit (' + p.kills + ' vs ' + kills0 + ')');
     assert(!st.enemies.includes(near) || near.hp <= 0,
@@ -738,17 +781,36 @@ S.check('THE ABSORB: the phase end marks the stage-2 tour flags seen; hints wait
     // staged controls are the intro, not the chips).
     T.setPilotMode('AUTO');
     autoplay(60 * 3, (i) => {
-      okBanners();
+      actBanners();
       assert(T.onboarding.pending().length === 0,
         'no hint arms while the prologue banners own the intro');
     });
-    autoplay(60 * 12, (i) => { okBanners(); });
+    autoplay(60 * 12, (i) => { actBanners(); });
     assert(!T.prologue.active, 'the drink ended the phase');
     for (const k of Object.values(TOUR_KEYS)) {
       assert(globalThis.localStorage.getItem(k) === '1',
         'tour flag ' + k + ' marked seen (the coach layer is absorbed, not stacked)');
     }
   } finally { Math.random = realRandom; }
+});
+
+// ---------------------------------------------------------------------------
+// THE KILL SWITCH (owner 2026-09-18): C.PROLOGUE.ENABLED ships default OFF —
+// run #1 opens EXACTLY as it did before the prologue existed. Every section
+// above runs with the flag ON (the { prologue: true } boot flips it); this
+// one pins the SHIPPED DEFAULT: fresh profile, flag untouched, no phase, no
+// lock, a live ordinary run.
+S.check('kill switch: default OFF restores the pre-prologue run #1', () => {
+  C.PROLOGUE.ENABLED = false;
+  try {
+    T.getProfile().achievements.totals.runs = 0;
+    T.startRun();
+    h.pump(2);
+    assert(T.prologue.active === false,
+      'run #1 of a fresh profile does NOT arm the prologue with the flag OFF');
+    assert(T.prologue.buttonsLocked === false, 'no button lock without the phase');
+    assert(st.mode === 'playing', 'the run is an ordinary live run');
+  } finally { C.PROLOGUE.ENABLED = true; }   // this file's own boot state
 });
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ export const dtMs = 1000 / 60;
 // budgets) lives THERE; re-exported here for callers.
 export { markArm, declareSimBudget, simStats, ARM_CAP_S } from './_sim_budget.mjs';
 import { markArm as markArmSeg, chargeSimSeconds } from './_sim_budget.mjs';
+import { CONFIG as configMod } from '../src/config.js';
 
 export async function boot(opts = {}) {
   const noop = () => {};
@@ -215,6 +216,12 @@ export async function boot(opts = {}) {
   // it for boots that are not about it (the tour-flags preseed's own
   // convention: "these tests want it out of the way"). test_prologue.mjs
   // boots with { prologue: true } to keep the real fresh-profile behaviour.
+  // KILL SWITCH (owner 2026-09-18): the feature is gated by C.PROLOGUE.ENABLED
+  // (default OFF). { prologue: true } also flips the flag ON — those tests
+  // test the FEATURE BEHIND the gate, never the shipped default.
+  if (opts.prologue) {
+    configMod.PROLOGUE.ENABLED = true;
+  }
   if (!opts.prologue) {
     try {
       const pr = mainMod.__TEST.getProfile();

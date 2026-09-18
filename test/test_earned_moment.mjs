@@ -109,7 +109,7 @@ S.check('the ONLY trigger sites are a weapon evolution and a boss kill', () => {
   const forbidden = [
     [/function levelUp\([\s\S]{0,900}?triggerEarnedMoment/, 'level-up'],
     [/maybeSpawnChest[\s\S]{0,600}?triggerEarnedMoment/, 'chest drop'],
-    [/openChest|applyContents[\s\S]{0,600}?triggerEarnedMoment/, 'chest open'],
+    [/(openChest\w*|applyContents)[\s\S]{0,600}?triggerEarnedMoment/, 'chest open'],
   ];
   for (const [re, what] of forbidden) {
     assert.ok(!re.test(src), 'no dilation on ' + what);

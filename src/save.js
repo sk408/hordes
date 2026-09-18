@@ -43,7 +43,11 @@
 // v9 (owner 2026-09-17): profile gains lastPlayed (epoch ms stamped on every
 // persisted save) and lastSeenUpdate (the release id of the last "what's new"
 // note the player dismissed) — see the v9 history + migration entries.
-export const PROFILE_VERSION = 9;
+// v10 (owner 2026-09-17): profile gains milestoneChest — the HIGHEST
+// run-count milestone (meta.js RUN_CHESTS) whose chest the player has
+// COLLECTED. One monotonic integer (0 = none), never a set, so once-only is
+// arithmetic. See the v10 history + migration entries.
+export const PROFILE_VERSION = 10;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -138,6 +142,18 @@ export const VERSION_HISTORY = [
       'timestamp means "has not seen the note", which is exactly the ' +
       'once-per-marked-release contract. Nothing else is touched, so the step ' +
       'is lossless for every v8 save.',
+  },
+  {
+    version: 10,
+    note: 'Run-count milestone chests (owner 2026-09-17): profile gains ' +
+      'milestoneChest, the HIGHEST milestone (50/100/200/500 — meta.js ' +
+      'RUN_CHESTS) whose chest the player has COLLECTED. Populated 0 — no ' +
+      'chest is pre-claimed for an older save (a veteran at 300 runs finds ' +
+      'the 200 chest waiting, then 500). One monotonic integer, not a set: ' +
+      'once-only is claimed >= milestone arithmetic, and the value only ever ' +
+      'moves when the pilot touches the chest (claim-at-collection, so an ' +
+      'uncollected chest can never be lost). Nothing else is touched, so the ' +
+      'step is lossless for every v9 save.',
   },
 ];
 
@@ -286,6 +302,14 @@ const MIGRATIONS = {
     const next = { ...p };
     if (next.lastPlayed === undefined) next.lastPlayed = null;
     if (next.lastSeenUpdate === undefined) next.lastSeenUpdate = null;
+    return next;
+  },
+  // v9 -> v10: the milestone-chest claim. Guarantee the field EXISTS (0 — no
+  // chest is pre-claimed) and NOTHING ELSE; a present-but-garbage value is
+  // left for validateProfile to clamp + report (one repair path, not two).
+  9: (p) => {
+    const next = { ...p };
+    if (next.milestoneChest === undefined) next.milestoneChest = 0;
     return next;
   },
 };
@@ -728,6 +752,18 @@ export function validateProfile(profile, cat) {
   const lastSeenUpdate = (typeof lsuRaw === 'string' && lsuRaw.length > 0) ? lsuRaw : null;
   if (lastSeenUpdate !== lsuRaw) repairs.push('lastSeenUpdate');
   out.lastSeenUpdate = lastSeenUpdate;
+
+  // ---- milestoneChest (v10: the highest COLLECTED run-count milestone) ----
+  // Same currency-family rule as gold/runPurse: a finite number floors and
+  // clamps to a non-negative integer, anything else becomes 0. The safe
+  // direction is DOWN (0 = no chest claimed — the worst outcome is the chest
+  // re-offering itself, never a silently skipped milestone).
+  const mc = Number(p.milestoneChest);
+  const milestoneChest = Number.isFinite(mc)
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(mc)))
+    : 0;
+  if (milestoneChest !== p.milestoneChest) repairs.push('milestoneChest');
+  out.milestoneChest = milestoneChest;
 
   // ---- version stamp ----
   if (out.version !== PROFILE_VERSION) repairs.push('version');

@@ -194,22 +194,22 @@ function rarityRing(g, e, state, x, y, w, h) {
 }
 
 // ---- FIRST-RUN PROLOGUE (owner 2026-09-18) ----------------------------------
-// The potion, the OK-banner card and the shield's rainbow pulse all live in
-// this file; main.js owns the phase. Geometry rule: the OK button's rect is
-// defined ONCE here (prologueOkRect) — the canvas hit-test in main.js and the
-// headless tests read the same numbers the painter paints.
-export function prologueOkRect() {
-  return { x: C.VIEW_W / 2 - 32, y: PROLOGUE_CARD_Y + PROLOGUE_CARD_H - 24, w: 64, h: 16 };
-}
-// PROLOGUE STAGED INTRODUCTION (owner 2026-09-18): the SKIP link — the
-// PROPOSED second enabled exception alongside OK ("the players who hated the
-// old tutorial need a way out... propose it, do not smuggle it in"). Same
-// card, left of OK, deliberately dimmer (the secondary action). One skip
-// ends the whole phase AND restores the full control set immediately
-// (main.js prologueSkip); it also carries the tour-skip session suppression
-// (hintsSuppressed) so no chip fires later either. REPLAY TOUR restores.
+// The potion, the banner card and the shield's rainbow pulse all live in
+// this file; main.js owns the phase. Geometry rule: the SKIP button's rect
+// is defined ONCE here (prologueSkipRect) — the canvas hit-test in main.js
+// and the headless tests read the same numbers the painter paints.
+//
+// DEFECT (a) FIX (owner 2026-09-18: "there is no opt out, there's only a
+// button to start the tutorial"): SKIP is a PERSISTENT button in the
+// top-right corner, painted for the WHOLE phase — walk, banner, wait — not
+// a link that only exists on the card. One skip ends the explaining and
+// restores the full control set immediately (main.js prologueSkip); it also
+// carries the tour-skip session suppression (hintsSuppressed) so no chip
+// fires later either. REPLAY TOUR restores. The corner is clear of the
+// banner card (card x 90..390 at W=300; this x 392..472) and of the
+// centred HUD clock.
 export function prologueSkipRect() {
-  return { x: C.VIEW_W / 2 - 96, y: PROLOGUE_CARD_Y + PROLOGUE_CARD_H - 24, w: 52, h: 16 };
+  return { x: C.VIEW_W - 88, y: 24, w: 80, h: 16 };
 }
 const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 92;
 
@@ -531,6 +531,47 @@ export class Renderer {
         g.fillRect(x - 4, y - 12, 2, 4);                 // glint (2x)
         g.fillStyle = '#7d5a2e';
         g.fillRect(x - 4, y - 18, 8, 2);                 // cork (2x)
+      }
+    }
+
+    // RUN-COUNT MILESTONE CHEST (owner 2026-09-17): a BIG chest (the 2x size
+    // class — bigger than any ground drop) with a GOLD beacon ring so it
+    // reads as THE thing to walk to from anywhere on screen. The pulse rides
+    // state.time (the sim clock — this is ordinary play, not the frozen
+    // prologue); the chest has NO ttl and never fades: unmissable and
+    // unlosable are the feature's contract (render.js only ever paints what
+    // state.runChest says; main.js clears it at collection alone).
+    if (state.runChest) {
+      const chx = Math.round(state.runChest.x - cam.x);
+      const chy = Math.round(state.runChest.y - cam.y);
+      if (!cull(chx, chy, 30)) {
+        const ct = state.time || 0;
+        const cph = (ct % 2) / 2;
+        const cringR = 8 + Math.round(cph * 16);
+        // Alpha floor 0.25, same rule as the prologue potion's beacon.
+        g.fillStyle = 'rgba(255,215,94,' + (0.25 + 0.5 * (1 - cph)).toFixed(2) + ')';
+        g.fillRect(chx - cringR, chy - 1, 3, 2); g.fillRect(chx + cringR - 2, chy - 1, 3, 2);
+        g.fillRect(chx - 1, chy - cringR, 2, 3); g.fillRect(chx - 1, chy + cringR - 2, 2, 3);
+        // The chest, 2x (24x16 body): dark timber body, arched lid, gold
+        // bands + lock plate, a lit keyhole.
+        g.fillStyle = '#6b4a26';                          // lid (arched)
+        g.fillRect(chx - 12, chy - 12, 24, 6);
+        g.fillRect(chx - 10, chy - 14, 20, 2);
+        g.fillStyle = '#8a6d3f';                          // body
+        g.fillRect(chx - 12, chy - 6, 24, 10);
+        g.fillStyle = '#ffd75e';                          // bands + lock
+        g.fillRect(chx - 12, chy - 6, 24, 2);
+        g.fillRect(chx - 8, chy - 12, 2, 16);
+        g.fillRect(chx + 6, chy - 12, 2, 16);
+        g.fillRect(chx - 3, chy - 5, 6, 6);
+        g.fillStyle = '#3c2c14';                          // keyhole
+        g.fillRect(chx - 1, chy - 3, 2, 3);
+        // The sparkle: a slow blink on the lock, the "there's gold inside"
+        // tell (static when the OS asks for reduced motion).
+        if (prefersReducedMotion() || Math.floor(ct * 2) % 2 === 0) {
+          g.fillStyle = '#ffffff';
+          g.fillRect(chx + 5, chy - 15, 2, 2);
+        }
       }
     }
 
@@ -1135,6 +1176,7 @@ export class Renderer {
     this.drawRadar(g, state);
     this.drawBossBanner(g, state);
     this.drawPrologueBanner(g, state);
+    this.drawPrologueSkip(g, state);
     this.drawFsButton(g, state);
     // SEAM (end-summary HUD suppression, 2026-09-17): one flag the browser
     // tests read — TRUE iff the play HUD (bars, feed, radar, banner) actually
@@ -1671,30 +1713,37 @@ export class Renderer {
     if (line) lines.push(line);
     lines = lines.slice(0, 3);
     for (let i = 0; i < lines.length; i++) g.fillText(lines[i], x0 + pad, y0 + 24 + i * 11);
-    // The OK button — the rect main.js hit-tests (ONE geometry).
-    const ok = prologueOkRect();
-    g.fillStyle = '#1c1c2e';
-    g.fillRect(ok.x, ok.y, ok.w, ok.h);
-    g.fillStyle = '#7dffd0';
-    g.fillRect(ok.x, ok.y, ok.w, 1); g.fillRect(ok.x, ok.y + ok.h - 1, ok.w, 1);
-    g.fillRect(ok.x, ok.y, 1, ok.h); g.fillRect(ok.x + ok.w - 1, ok.y, 1, ok.h);
+    // DEFECT (c) FIX: the card no longer carries an OK button — the CUE line
+    // states the ACTION that advances it (main.js prologueActionDone feeds
+    // the ledger; update() advances the banner the frame the action lands).
+    // Accent colour, centred, the row OK used to own.
     g.textAlign = 'center';
-    g.font = 'bold 10px monospace';
-    g.fillText('OK', ok.x + ok.w / 2, ok.y + 4);
-    // SKIP — the proposed second live control of the phase (see
-    // prologueSkipRect above): dimmer, no plate weight, same row as OK.
+    g.font = 'bold 9px monospace';
+    g.fillStyle = '#7dffd0';
+    g.fillText(B.cue || '', x0 + W / 2, y0 + PROLOGUE_CARD_H - 20);
+    g.textAlign = 'left';
+    this.prologueBanner = { title: B.title, body: B.body, idx,
+      total: state.prologue.banners.length };
+  }
+
+  // ---- PROLOGUE: the ALWAYS-VISIBLE SKIP button (defect (a) fix) --------------
+  // Painted for the WHOLE phase (walk, banner, wait) — the opt-out the owner
+  // asked for, reachable at every moment. Rect = prologueSkipRect (ONE
+  // geometry, the same numbers main.js hit-tests). Dimmer than the card: the
+  // secondary action, never the loudest thing on screen.
+  drawPrologueSkip(g, state) {
+    if (!state.prologue || state.prologue.drunk || state.prologue.skipped) return;
     const sk = prologueSkipRect();
     g.fillStyle = '#14141f';
     g.fillRect(sk.x, sk.y, sk.w, sk.h);
     g.fillStyle = '#4a4a66';
     g.fillRect(sk.x, sk.y, sk.w, 1); g.fillRect(sk.x, sk.y + sk.h - 1, sk.w, 1);
     g.fillRect(sk.x, sk.y, 1, sk.h); g.fillRect(sk.x + sk.w - 1, sk.y, 1, sk.h);
+    g.textAlign = 'center';
     g.font = '9px monospace';
-    g.fillStyle = '#9a9ab8';
-    g.fillText('SKIP ALL', sk.x + sk.w / 2, sk.y + 4);
+    g.fillStyle = '#c8c8dd';
+    g.fillText('SKIP TUTORIAL', sk.x + sk.w / 2, sk.y + 5);
     g.textAlign = 'left';
-    this.prologueBanner = { title: B.title, body: B.body, idx,
-      total: state.prologue.banners.length };
   }
 
   // ---- WAVE-27: the DOCTRINE canvas readout is REMOVED ------------------------

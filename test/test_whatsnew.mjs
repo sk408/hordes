@@ -33,6 +33,7 @@
 //             automatic ever happens to a returning player.
 // Run: node test/test_whatsnew.mjs
 import { TOUR_KEYS } from '../src/tour.js';
+import { CONFIG } from '../src/config.js';
 
 let passed = 0;
 function ok(name, cond, detail) {
@@ -138,7 +139,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     const s1 = stored();
     ok('the first save stamps lastPlayed (a real epoch-ms integer)',
       typeof s1.lastPlayed === 'number' && s1.lastPlayed > 0 && Number.isInteger(s1.lastPlayed), s1.lastPlayed);
-    ok('the save stamps the v9 schema version', s1.version === 9, s1.version);
+    ok('the save stamps the v10 schema version', s1.version === 10, s1.version);
     fake += 60000;                       // a minute passes
     mainMod.autosave('exit');
     const s2 = stored();
@@ -168,7 +169,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     (res.profile.achievements.totals.runs || 0) === 7,
     { gold: res.profile.gold, dmg: res.profile.purchased.dmg, runs: res.profile.achievements.totals.runs });
   // Garbage stamps repair to null and NAME the field (validateProfile path).
-  const bad = { ...OLD_SAVE, version: 9, lastPlayed: 'yesterday', lastSeenUpdate: 42 };
+  const bad = { ...OLD_SAVE, version: 10, lastPlayed: 'yesterday', lastSeenUpdate: 42, milestoneChest: 0 };
   const badStore = { _m: new Map([['hordes_profile_v1', JSON.stringify(bad)]]),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); }, removeItem(k) { this._m.delete(k); } };
@@ -177,7 +178,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     rb.status === 'repaired' && rb.repairs.includes('lastPlayed') && rb.repairs.includes('lastSeenUpdate') &&
     rb.profile.lastPlayed === null && rb.profile.lastSeenUpdate === null,
     { status: rb.status, repairs: rb.repairs });
-  const good = { ...OLD_SAVE, version: 9, lastPlayed: 1893456000000, lastSeenUpdate: 'x' };
+  const good = { ...OLD_SAVE, version: 10, lastPlayed: 1893456000000, lastSeenUpdate: 'x', milestoneChest: 0 };
   const goodStore = { _m: new Map([['hordes_profile_v1', JSON.stringify(good)]]),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); }, removeItem(k) { this._m.delete(k); } };
@@ -318,7 +319,11 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     T.prologue.active === false && st.assistedRun === false && st.mode === 'playing');
   T.showTitle();
 
-  // ACCEPT: starts the guided run NOW, flagged ASSISTED.
+  // ACCEPT: starts the guided run NOW, flagged ASSISTED. (The prologue rides
+  // the kill switch C.PROLOGUE.ENABLED, default OFF since 2026-09-18 — this
+  // section tests the FEATURE, so the flag comes ON here and goes back OFF
+  // at the section's end.)
+  CONFIG.PROLOGUE.ENABLED = true;
   prof.lastPlayed = null; prof.lastSeenUpdate = null;
   W.tried = false;
   T.showTitle();
@@ -384,6 +389,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   st.assistedRun = false;
   ok('a normal end screen carries no ASSISTED tag',
     !/ASSISTED/.test(T.endScreenBody({ lead: 'RUN OVER', gold: 10 })));
+  CONFIG.PROLOGUE.ENABLED = false;   // back to the shipped default
 }
 
 console.log('test_whatsnew: all ' + passed + ' checks passed');

@@ -609,6 +609,18 @@ export const CONFIG = {
   // verification shot. The side placement puts run #1's potion at ~(355,130),
   // past the card's lower edge and still a real (>40wu) walk.
   PROLOGUE: {
+    // KILL SWITCH (owner 2026-09-18: "The how to play is broken..if this was
+    // pushed to GitHub, we need to revert immediately, if possible without
+    // breaking things"). OFF = run #1 opens exactly as it did before the
+    // prologue existed (no phase, no banners, no potion — the derived
+    // totals.runs === 0 trigger never fires). Everything the feature built
+    // stays: the config values, the code paths, the tests — the same
+    // rollback shape as the elevation rollback the owner chose. It comes
+    // back ON only when the three owner defects are fixed behind it:
+    //   a. a REAL, always-visible opt-out control;
+    //   b. lesson/mode coherence (never teach steering while AUTO drives);
+    //   c. each step waits for the player to DO the thing, not to press OK.
+    ENABLED: false,
     INVULN_S: 45,
     MAX_S: 60,
     CLEAR_MARGIN: 120,
@@ -623,6 +635,21 @@ export const CONFIG = {
     // 1.4s < 1.95s — all four banners (incl. "the potion ahead is free") show
     // BEFORE the drink, with ~0.55s of approach walk left after the last OK.
     BANNER_WALK_S: 0.35,
+  },
+
+  // ---- RUN-COUNT MILESTONE CHESTS (owner 2026-09-17) -----------------------
+  // A milestone chest (meta.js RUN_CHESTS: runs 50/100/200/500) spawns at
+  // startRun near the spawn, up-LEFT — the MIRRORED side of the prologue
+  // potion's up-RIGHT slot, so the two can never collide even on the one run
+  // where both exist (an opted-in veteran guided run that crosses a
+  // milestone). Same clamp discipline as the potion: the offset is applied to
+  // the spawn and clamped on-screen, and the chest NEVER despawns (no ttl) —
+  // a player who ends the run without collecting it finds it again next
+  // startRun (claim-at-collection; profile.milestoneChest moves only when the
+  // pilot touches the chest).
+  RUN_CHEST: {
+    DX: -115,
+    DY: -20,
   },
 
 

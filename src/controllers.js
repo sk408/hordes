@@ -305,7 +305,11 @@ export class AutoPilotController {
       // the same skipped flag).
       const bannerUp = !state.prologue.skipped &&
         state.prologue.bannerIdx < banners.length &&
-        (state.prologue.walkT || 0) >= C.PROLOGUE.BANNER_WALK_S;
+        (state.prologue.walkT || 0) >= C.PROLOGUE.BANNER_WALK_S &&
+        // DEFECT (c) completeness: the POTION banner's action is the walk-in
+        // itself — a card that freezes the choreography would make its own
+        // ask impossible for an idle pilot. Only the EXPLAINING banners hold.
+        (banners[state.prologue.bannerIdx] || {}).action !== 'drink';
       if (bannerUp) {
         this.act = 'PROLOGUE_HOLD';
         return put(0, 0);
@@ -386,6 +390,25 @@ export class AutoPilotController {
       return put(fx, fy);
     }
     this.fleeing = false;
+
+    // RUN-COUNT MILESTONE CHEST (owner 2026-09-17: "a big chest on the screen
+    // that pilot collects"): the pilot beelines for the milestone chest. It
+    // sits BELOW the flee branch on purpose — the celebration must not walk
+    // the player through a horde (and if the run dies short of the chest,
+    // nothing is lost: the claim is at collection, so the next run re-offers
+    // it). Above LOOT/PATROL for the same reason as the portal: banking gems
+    // while the reward waits would stall the moment. The chest is clamped
+    // INSIDE the loot edge at spawn (main.js), so the default put() edge is
+    // the right boundary and the direct line always converges.
+    if (state.runChest) {
+      const cdx = state.runChest.x - p.x;
+      const cdy = state.runChest.y - p.y;
+      const clen = Math.hypot(cdx, cdy);
+      if (clen > 1) {
+        this.act = 'CHEST';
+        return put(cdx / clen, cdy / clen);
+      }
+    }
 
     // P1 PORTAL — the ONE exception to PILOT-BLIND (owner directive
     // 2026-09-14: "the auto pathing heads toward it automatically"). The
