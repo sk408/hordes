@@ -235,6 +235,26 @@
   #overlay .sub .cause { color: #ff7a6a; }
   #overlay .sub .earn  { color: #ffd75e; }
   #overlay .sub .next  { color: #7ad0ff; }
+  /* The gold-POOL multiplier clause: gold family, but a touch quieter than
+     the earn line it explains (it is the why, not the payout). */
+  #overlay .sub .pool  { color: #ffd75e; opacity: 0.8; }
+  /* END-OF-RUN SUMMARY PANEL (owner 2026-09-17: "hud fix is needed. It looks
+     sloppy"). With the HUD and every status message suppressed behind it, the
+     summary is the only surface on screen — so it gets deliberate spacing,
+     a deeper scrim (the frozen arena reads as background, not clutter) and
+     one point more type size for the 3-second read. The .end class is set by
+     composeEndScreen and reset by openMenu for every other screen. */
+  #overlay.end { background: rgba(5,5,10,0.86); gap: 18px; }
+  /* The summary is a SHORT panel: the coarse-pointer media query below
+     top-aligns #overlay (a scrolling-menu rule) and left it stranded in the
+     upper third with an empty band below. Center it in the viewport —
+     safe center, same as the base rule, so a tall summary still scrolls
+     rather than clipping its ends on the smallest phone. */
+  #overlay.end { align-items: center; justify-content: safe center; }
+  #overlay.end > h1 { margin: 0 0 2px; }
+  #overlay.end > .sub { font-size: 14px; color: #b8b8cc; line-height: 1.55; }
+  #overlay.end > .sub br { line-height: 2.1; }
+  #overlay.end > .cards { margin-top: 6px; }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
      staged spotlight walkthrough. #tour-root is appended to <body> (above

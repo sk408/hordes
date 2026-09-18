@@ -20,6 +20,22 @@ import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
+// ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
+// Owner 2026-09-17 (msg_01M2RVD9HHZZDSR7FKNTRRSSY5 + addendum): while ANY
+// full-screen/modal surface is up, the HUD and every status message (the
+// toast/event feed, the boss banner — all painted inside the play HUD) must
+// be hidden. A modal joins by adding its mode here; drawPlayHud (and only
+// drawPlayHud) reads this predicate, so the next modal inherits the whole
+// suppression for one list entry. The DOM half of the same gate is
+// main.js chromeOn() (touch pads/joystick). Members:
+//   'dead'      the end-of-run summary (the shipped defect this fixes)
+//   'trophies'  G9 gallery showcase
+//   'bestiary'  G10 bestiary guide
+export const HUD_SUPPRESSED_MODES = new Set(['dead', 'trophies', 'bestiary']);
+export function hudSuppressed(state) {
+  return HUD_SUPPRESSED_MODES.has(state.mode);
+}
+
 // A2 RADAR paint constants (geometry rationale lives on drawRadar below).
 // RADAR_DISPLAY_R is the HUD-px radius of the drawn circle; the world->radar
 // scale is RADAR_DISPLAY_R / RADAR_RADIUS (34/330). Bottom-right corner box:
@@ -1006,16 +1022,31 @@ export class Renderer {
   // showcase. The DOM side already does this via chromeOn(); this is the canvas
   // half of the same gate. Folded into ONE method so it is directly assertable
   // (test_trophy_gallery) — paint order is unchanged: moment, chrome, banner.
+  //
+  // MODAL SURFACE SUPPRESSION (owner 2026-09-17, msg_01M2RVD9HHZZDSR7FKNTRRSSY5
+  // + addendum): "any full-screen or modal surface must suppress the HUD and
+  // all status messages while it is up — ONE shared mechanism so the next
+  // modal inherits it." That mechanism is hudSuppressed() below: a modal
+  // surface joins by adding its mode to HUD_SUPPRESSED_MODES, and the whole
+  // play HUD (chrome + the toast/event feed inside it, radar, moment flourishes
+  // and the boss banner) stops painting for its duration. The end-of-run
+  // summary ('dead') was the shipped defect — the death cause printed over the
+  // stat bars and the GOLD counter over the gold line (owner screenshot
+  // 2026-09-17); the gallery states (G9/G10) fold into the same list.
   drawPlayHud(g, state) {
-    // G10: the bestiary is the same non-play showcase state — the readouts
-    // must not bleed through the guide either (the G9 follow-up, extended).
-    if (state.mode === 'trophies' || state.mode === 'bestiary') {
-      this.hudChrome = null; this.bossBanner = null; this.radar = null; return;
+    if (hudSuppressed(state)) {
+      this.hudChrome = null; this.bossBanner = null; this.radar = null;
+      this.hudDrawn = false;
+      return;
     }
     this.drawMoment(g, state);
     this.drawHudChrome(g, state);
     this.drawRadar(g, state);
     this.drawBossBanner(g, state);
+    // SEAM (end-summary HUD suppression, 2026-09-17): one flag the browser
+    // tests read — TRUE iff the play HUD (bars, feed, radar, banner) actually
+    // painted this frame. The end-of-run summary asserts it FALSE in 'dead'.
+    this.hudDrawn = true;
   }
 
   // ---- A2 THE RADAR (owner-suggested 2026-09-14, pair to A1's AUTO pilot) ----

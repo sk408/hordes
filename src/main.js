@@ -3764,63 +3764,47 @@ function nextUnlockWithinReach(prof) {
 }
 
 // Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
-// `cause` the cause line, `gold` this run's payout. E1: the payout has TWO
-// parts now (the FIXED award and the banked purse remainder) and the card
-// shows both, never one blended number — `parts` is settleRunGold's breakdown.
-// The unlock line is omitted entirely when every row is owned — no filler.
+// `cause` the cause line, `gold` this run's payout, `parts` settleRunGold's
+// breakdown (only the GOLD POOL multiplier clause reads it now).
+//
+// END-SUMMARY CONTENT PASS (owner 2026-09-17, msg_01M2RVD9HHZZDSR7FKNTRRSSY5
+// + addendum: "no more than five lines above the buttons; one gold line with
+// at most two numbers, earned and banked; the freed space is NOT for more
+// text"). The shape, top to bottom:
+//   1. the LEAD line, carrying the run's identity clauses (NIGHT / APEX /
+//      challenge / stage — G25/G11/G20a's clean-clear protection, FOLDED into
+//      the one line instead of stacked) and the run's numbers.
+//   2. KILLED BY (death only) — its own label, structurally incapable of
+//      sitting over data (its own line, DOM-composed, HUD suppressed).
+//   3. THE ONE GOLD LINE — GOLD EARNED +N · BANK N, exactly two numbers. The
+//      E1 award/purse breakdown line and the G24 STAKES PAID line are RETIRED
+//      from the card (every number they carried is inside GOLD EARNED; the
+//      per-run breakdown lives in the settle/ledger seam, not the player's
+//      3-second read). Disclosed supersession: E1 (2026-09-14) wanted the two
+//      payout parts named separately; this pass's one-gold-line rule wins.
+//   4. GOLD POOL multiplier — only when the pool is non-neutral (the
+//      challenge-gold directive stands: the bigger number is EXPLAINED, not
+//      mysterious; a standard stakes-free run renders no clause).
+//   5. NEXT UNLOCK — omitted entirely when every row is owned (no filler).
 function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   const goal = nextUnlockWithinReach(profile);
-  // G11: a challenge result must be distinguishable from a clean clear — the
-  // mode is the LEAD line's first clause, and only when non-standard (a
-  // STANDARD run renders byte-identically to today). G20a: a non-default
-  // stage gets its own clause beside it (same rule: the default stage renders
-  // byte-identically to today).
-  let html = !isStandard(state.challenge)
-    ? `<span class="cause">${challengeOf(state.challenge).name} RUN</span><br>` + lead
-    : lead;
-  if (!isDefaultStage(state.stage)) {
-    html = `<span class="cause">${stageOf(state.stage).name}</span><br>` + html;
-  }
-  // G25 slice 1: PROTECT THE CLEAN CLEAR — a run played with apex ON is
-  // marked through the same non-standard-run pattern above (the run-scoped
-  // state.apexRun stamp, read once at startRun), so a boosted run is always
-  // distinguishable from a clean clear. Apex OFF renders byte-identically to
-  // today (the stamp is falsy for every pre-slice profile too).
-  if (state.apexRun) {
-    html = `<span class="cause">APEX RUN</span><br>` + html;
-  }
-  // NIGHT MODE: the run class is stated on the card — a half-gold auto run
-  // must never read as a full one (the apexRun pattern beside it).
-  if (state.nightRun) {
-    html = `<span class="cause">NIGHT RUN</span><br>` + html;
-  }
+  const tags = [];
+  if (state.nightRun) tags.push('NIGHT RUN');
+  if (state.apexRun) tags.push('APEX RUN');
+  if (!isDefaultStage(state.stage)) tags.push(stageOf(state.stage).name);
+  if (!isStandard(state.challenge)) tags.push(challengeOf(state.challenge).name + ' RUN');
+  let html = lead;
+  for (const t of tags.slice().reverse()) html = `<span class="cause">${t}</span><br>` + html;
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
-  if (parts) {
-    html += `<br><span class="earn">AWARD +${parts.award}` +
-      `${parts.winBonus ? ` · BONUS +${parts.winBonus}` : ''}` +
-      ` · PURSE BANKED +${parts.purseBanked}</span>`;
-    // OWNER DIRECTIVE 2026-09-17 (challenge gold "200% additive"): the result
-    // screen states the multiplier being applied, so the bigger number is
-    // explained rather than mysterious. The additive parts are named in the
-    // pool's own terms; a plain standard stakes-free run renders
-    // byte-identically (no clause).
-    const gp = parts.goldPool;
-    if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
-      const bits = ['100%'];
-      if (gp.night > 0) bits.push(`NIGHT -${Math.round(gp.night * 100)}%`);
-      if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
-      if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
-      html += `<br><span class="earn">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
-    }
-  }
-  // G24 slice 1: the end-of-run summary states what the dial PAID (both
-  // channels), only when the dial was used — a stakes-free run renders
-  // byte-identically to before (the G11/G20a precedent two blocks up).
-  const stakesPaid = manualPushes(state);
-  if (stakesPaid > 0) {
-    html += `<br><span class="earn">STAKES x${stakesPaid} PAID: ${describeHeatPayout(stakesPaid)}</span>`;
+  const gp = parts && parts.goldPool;
+  if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
+    const bits = ['100%'];
+    if (gp.night > 0) bits.push(`NIGHT -${Math.round(gp.night * 100)}%`);
+    if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
+    if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
+    html += `<br><span class="pool">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
   }
   if (goal) {
     const gap = goal.cost - profile.gold;
@@ -4018,10 +4002,12 @@ function runSurvived() {
     titleText: 'RUN SURVIVED',
     titleCls: 'logo',
     subHtml: endScreenBody({
+      // The completion bonus rides the LEAD line (the content pass's one-
+      // gold-line rule): it is already inside GOLD EARNED, named here so the
+      // bigger number stays explained, and MAW SLAIN stays its own clause.
       lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
         ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
-        `<br><span class="earn">COMPLETION BONUS: +${bonus}` +
-        `${state.mawCleared ? ' · MAW SLAIN' : ''}</span>`,
+        ` · COMPLETION BONUS: +${bonus}${state.mawCleared ? ' · MAW SLAIN' : ''}`,
       cause: null,                // you did not die — you won
       gold, firstClear,
       parts: { award, purseBanked, winBonus: bonus, goldPool },
@@ -4041,13 +4027,32 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
   state.mode = 'dead';
   state.helpFrom = null;
   state.endScreen = { titleText, titleCls, subHtml };
+  // MODAL SUPPRESSION (owner 2026-09-17, msg_01M2RVD9): the summary is the
+  // ONLY text on screen. The whole canvas HUD — bars, feed, radar, banner —
+  // is gated by the shared hudSuppressed('dead') predicate (render.js
+  // HUD_SUPPRESSED_MODES), so nothing in the queue can PAINT behind the
+  // summary. The queue itself is NOT purged here: the win funnel's trophy /
+  // unlock announcements (settleRunGold) are the payload the test suite reads
+  // and they harmlessly expire unpainted. The DEATH path purges for real at
+  // the cine reveal (endDeathCine) — that is where a toast queued DURING the
+  // movie (ttl frozen outside update()) could otherwise pop through.
   ovTitle.textContent = titleText;
   ovTitle.className = titleCls || '';
+  // The G12 title screen HIDES the DOM h1 (the canvas title card owns it,
+  // main.js showTitle) and only openMenu restores it — every run launched
+  // from the title flow composed its summary with an invisible 'THE HORDE
+  // WINS' header (caught on the 2026-09-17 summary screenshots). Same
+  // restore idiom as openMenu.
+  if (ovTitle.style) ovTitle.style.display = '';
   ovSub.innerHTML = subHtml;
   ovCards.innerHTML = '';
   menuCard('RETRY', 'straight back in [R]', () => startRun());
   menuCard('TITLE', 'spend your gold [T]', () => showTitle());
   menuCard('HOW TO PLAY', 'what every control &amp; object does', () => showHowToPlay({ fromEnd: true }));
+  // 'end': the summary's own panel styling (index.html) — spacing, hierarchy
+  // and the dim scrim over the frozen arena. Removed everywhere else a menu
+  // composes (showTitle/showHowToPlay paths reset the overlay class).
+  if (overlay.classList) { overlay.classList.add('end'); }
   overlay.style.display = 'flex';
 }
 function reshowEndScreen() {
@@ -4671,8 +4676,10 @@ function openMenu(mode = 'menu') {
   // HOW TO PLAY readability: the .howto wide-panel modifier belongs to that
   // screen alone — reset it HERE so no other menu can inherit the wide rows.
   // (class-list-less DOM stubs keep a plain className string — same state.)
-  if (overlay.classList) overlay.classList.remove('howto');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto').join(' ');
+  // 'end' (the end-of-run summary's panel styling) gets the same reset — no
+  // menu may inherit the summary's spacing/scrim.
+  if (overlay.classList) overlay.classList.remove('howto', 'end');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   ovCards.style.flexWrap = 'wrap';
@@ -8601,6 +8608,15 @@ function startDeathCine() {
 function endDeathCine() {
   if (state.mode !== 'death-cine') return;
   state.mode = 'dead';
+  // MODAL SUPPRESSION (the reveal half, owner 2026-09-17 msg_01M2RVD9): the
+  // queue is purged HERE and only here — this is the moment the summary
+  // becomes the visible surface, and a toast can land at any point up to it
+  // (ttl is frozen outside update(), the known late-message source). The win
+  // path never runs a cine and never purges, so the funnel's trophy /
+  // unlock announcements survive for the suite (they cannot paint: 'dead' is
+  // in HUD_SUPPRESSED_MODES).
+  state.toasts.length = 0;
+  state.bossBanner = null;
   overlay.style.display = 'flex';
   maybeDeathCoach();
 }
