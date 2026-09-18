@@ -108,9 +108,27 @@ await withPage({ w: 390, h: 844, dpr: 3 }, async (pg) => {
     for (const b of (st.wave.bosses || [])) if (b.hp > 0) b.hp = 0;
     st.wave.cinePending = true; st.portal = null;
   })()`);
-  const escaped = await pg.waitFor("window.__T.state.mode === 'escape'", 15000);
-  record('the portal cine is skipped straight to the escape', escaped === true);
-  const inter = await pg.waitFor("window.__T.state.mode === 'intermission'", 15000);
+  // THE CINE SKIP, PROVEN BY SAMPLING: the mode ring starts BEFORE the boss
+  // falls (250ms samples). A PLAYED portal cine holds 'portal-cine' for its
+  // full 6857ms (~27 samples); the night skip transits inside a single update
+  // tick and never samples. "Intermission reached + no portal-cine in the
+  // ring" is therefore the skip's proof — robust against the transient-mode
+  // races that broke two earlier shapes of this check (2026-09-18: the
+  // escape→skip chain is synchronous, and the hand-off can legally take
+  // >15s — a level-up draft may open mid-sweep and auto-resolve on its own
+  // 6s window before the intermission opens).
+  await pg.evaluate(`(() => {
+    window.__modes = [];
+    let last = null;
+    window.__modeWatch = setInterval(() => {
+      const m = window.__T.state.mode;
+      if (m !== last) { window.__modes.push((performance.now() / 1000).toFixed(1) + 's:' + m); last = m; }
+    }, 250);
+  })()`);
+  const inter = await pg.waitFor("window.__T.state.mode === 'intermission'", 30000);
+  const ring = await pg.evaluate('clearInterval(window.__modeWatch), window.__modes.join(" > ")');
+  record('the portal cine is skipped straight to the escape ladder (no portal-cine sampled; intermission reached)',
+    inter === true && !ring.includes('portal-cine'), ring.slice(-200));
   const interSub = (await pg.evaluate(PAGE)).sub;
   record('the escape auto-skipped back to the intermission', inter === true, JSON.stringify(interSub));
   const CONTINUE_MS = Math.round((await pg.evaluate('window.__T.night.constants.CONTINUE_S')) * 1000);
@@ -119,17 +137,30 @@ await withPage({ w: 390, h: 844, dpr: 3 }, async (pg) => {
     CONTINUE_MS + 4000, 100);
   record('the intermission auto-CONTINUE fired on its named delay', wave2 === true);
 
-  // 3. A draft resolves itself (level-up drafts arrive during real play; the
-  //    pilot is sustained so the run lives long enough to see one).
-  const draftSeen = await pg.waitFor("window.__T.state.mode === 'draft'", 150000);
+  // 3. A draft resolves itself through the REAL level-up: a gem seeded at
+  //    the pilot's feet (the game's own XP income — makeGem's exact shape)
+  //    levels the run on its next pickup scan and openDraft presents. The
+  //    assertion is the AUTO-PICK on the documented window; organic kills
+  //    cannot carry this arm because the AUTO pilot stalls near the arena rim
+  //    (the known queued defect — measured 2026-09-18: kills frozen at 4 with
+  //    400+ enemies on the field and the frame loop alive, so gems drop but
+  //    are never walked over).
+  await pg.evaluate('window.__T.state.spawnTimer = 0');
+  await pg.evaluate(`(() => { const st = window.__T.state, p = st.player;
+    st.gems.push({ x: p.x, y: p.y, xp: p.xpNext }); })()`);
+  const draftSeen = await pg.waitFor("window.__T.state.mode === 'draft'", 20000);
   if (draftSeen) {
     const resolved = await pg.waitFor("window.__T.state.mode !== 'draft'", 10000, 100);
     record('a draft auto-picked within DRAFT_TIMEOUT + grace', resolved === true);
   } else {
-    record('a draft auto-picked within DRAFT_TIMEOUT + grace', false, 'no draft presented in 150s of play');
+    record('a draft auto-picked within DRAFT_TIMEOUT + grace', false,
+      'the seeded level-up never presented a draft');
   }
 
   // 4. Second death AFTER the ladder: the loop keeps turning end to end.
+  // Guarded on 'playing' first — die() is the playing-state death seam, and
+  // calling it from any other mode is not a real transition.
+  await pg.waitFor("window.__T.state.mode === 'playing'", 15000, 100);
   await pg.evaluate('window.__T.die()');
   const second = await pg.waitFor("window.__T.state.mode === 'playing' && window.__T.state.time < 1",
     RESTART_MS + 2500, 100);

@@ -3770,6 +3770,7 @@ let nightArmed = false;          // the SETUP card's two-press confirm
 let nightSession = null;         // { t0, gold0 } while the night runs on
 let nightContinueLeft = null;    // s left on the intermission auto-CONTINUE
 let nightRestartLeft = null;     // s left on the end-card auto-RETRY
+let nightEvolveLeft = null;      // s left on the EVOLUTION overlay auto-pick
 let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
 export function nightDraftPickIndex(offers) {
@@ -3794,6 +3795,17 @@ function tickNight(realDt) {
       startRun();   // same build, same arena: RETRY's contract
     }
   }
+  if (state.nightRun && nightEvolveLeft !== null && state.mode === 'evolve') {
+    nightEvolveLeft -= realDt;
+    if (nightEvolveLeft <= 0) {
+      nightEvolveLeft = null;
+      if (state.mode === 'evolve') {
+        const cands = evolutionCandidates();
+        if (cands.length) doEvolve(cands[0]);   // first candidate: the draft policy's first-slot rule
+        else closeEvolve();                      // candidates vanished under us: just leave the overlay
+      }
+    }
+  }
   // NIGHT STALL WATCHDOG (defect follow-up 2026-09-17: the owner reported a
   // night run parked on the end-of-run summary). The named timers above cover
   // the transitions they were wired to; this covers EVERYTHING ELSE that could
@@ -3808,7 +3820,7 @@ function tickNight(realDt) {
   if (state.nightRun) {
     const m = state.mode;
     if (m === 'dead' || m === 'intermission' || m === 'escape' || m === 'draft' ||
-        m === 'portal-cine' || m === 'death-cine') {
+        m === 'evolve' || m === 'portal-cine' || m === 'death-cine') {
       if (nightStall.mode !== m) nightStall = { mode: m, t: 0 };
       else {
         nightStall.t += realDt;
@@ -3842,6 +3854,12 @@ function nightUnstick(m) {
         draftAutoLastId = u.id;
         activateDraftCard(u);
       }
+    } else if (m === 'evolve') {
+      // the same action the named timer makes (main.js doEvolve) — first
+      // candidate, the draft policy's first-slot rule
+      const cands = evolutionCandidates();
+      if (cands.length) doEvolve(cands[0]);
+      else closeEvolve();
     } else if (m === 'portal-cine') endPortalCine();
     else if (m === 'death-cine') endDeathCine();
   } catch (e) { /* the loop lives; the stall clock restarts on the next tick */ }
@@ -3999,21 +4017,7 @@ function maybeOpenEvolve() {
       `<div class="name">EVOLVE: ${card.name}</div>` +
       `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
       `<div class="key">[${i + 1}]</div>`;
-    el.onclick = () => {
-      const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
-      if (res.ok) {
-        state.evoTokens = res.tokens;
-        // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
-        // double-fired tick can never double-charge).
-        addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
-        toast(res.name.toUpperCase() + ' UNLEASHED');
-        audio.playSfx('levelup');
-        // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
-        // moments — brief dilation + the crackle flare, back to normal after.
-        triggerEarnedMoment('evolution', state.player.x, state.player.y);
-      }
-      closeEvolve();
-    };
+    el.onclick = () => doEvolve(w);
     ovCards.appendChild(el);
     frameCard(el);
   });
@@ -4030,6 +4034,29 @@ function maybeOpenEvolve() {
     // mutation (the stub DOM keeps the child and this is a no-op repaint).
     frameCard(notNow);
   }
+  // NIGHT MODE (gap found 2026-09-18): this overlay was human-click-only —
+  // an unattended run with a token over a maxed weapon parked here forever.
+  // Same named-timer shape as CONTINUE/RETRY: the night takes the FIRST
+  // candidate after NIGHT_EVOLVE_S (the draft policy's first-slot rule).
+  if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
+}
+
+// The ONE evolve action — the card's own onclick path, shared verbatim with
+// the night auto-pick (never a second implementation of the same transition).
+function doEvolve(w) {
+  const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
+  if (res.ok) {
+    state.evoTokens = res.tokens;
+    // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
+    // double-fired tick can never double-charge).
+    addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
+    toast(res.name.toUpperCase() + ' UNLEASHED');
+    audio.playSfx('levelup');
+    // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
+    // moments — brief dilation + the crackle flare, back to normal after.
+    triggerEarnedMoment('evolution', state.player.x, state.player.y);
+  }
+  closeEvolve();
 }
 
 function closeEvolve() {
@@ -7120,6 +7147,7 @@ function startRun() {
   // NIGHT MODE: no auto-advance timer survives a run boundary.
   nightContinueLeft = null;
   nightRestartLeft = null;
+  nightEvolveLeft = null;
   clearPilotInput();
   // G31: the stance pref rides along (the boot apply already covers a
   // reload; this re-reads so storage edited between runs is honoured).
@@ -10329,6 +10357,7 @@ export const __TEST = {
     pickIndex: nightDraftPickIndex,
     get continueLeft() { return nightContinueLeft; },
     get restartLeft() { return nightRestartLeft; },
+    get evolveLeft() { return nightEvolveLeft; },
     // Watchdog seam: the live stall clock (null mode = not stalled) and a
     // direct probe for the unstick action, so tests drive the REAL backstop.
     get stall() { return { mode: nightStall.mode, t: nightStall.t }; },
@@ -10336,6 +10365,7 @@ export const __TEST = {
     get constants() {
       return { CONTINUE_S: C.AUTOPILOT.NIGHT_CONTINUE_S,
         RESTART_S: C.AUTOPILOT.NIGHT_RESTART_S,
+        EVOLVE_S: C.AUTOPILOT.NIGHT_EVOLVE_S,
         STALL_S: C.AUTOPILOT.NIGHT_STALL_S,
         PENALTY_PCT: RUN_GOLD.NIGHT_PENALTY_PCT };
     },

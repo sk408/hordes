@@ -67,3 +67,80 @@ untouched; NIGHT_STALL_S is a new backstop only.
 
 - `night-loop-second-run.png` — the second run playing on its own after a death
 - `night-loop-after-second-death.png` — the loop still turning after a second death
+
+---
+
+# FOLLOW-UP 2026-09-18 — the re-run found one more wedge + two verifier races
+
+The owner's interrupt re-asked for this task; the post-death restart itself
+was already fixed (above). Re-running `tools/verify_night_loop.mjs` on the
+current tree surfaced two FALSE REDS in the tool and one REAL gap in the game:
+
+## The real gap: the EVOLUTION overlay had NO auto path (fixed)
+
+`maybeOpenEvolve()` (main.js) is a human-click-only screen — EVOLVE cards /
+NOT NOW. It was missing from BOTH the named timers AND the watchdog's mode
+list, so an unattended run that banks a token over a maxed weapon parked on
+the EVOLUTION screen FOREVER: exactly the "standing still" failure class this
+task says can never happen. Fix, same shape as the siblings:
+
+- **NIGHT_EVOLVE_S = 3.0s** (config AUTOPILOT): when the overlay opens on a
+  night run the timer arms; on expiry the night takes the FIRST candidate —
+  the draft policy's own first-slot rule — through `doEvolve(w)`, the SAME
+  function the card's own onclick now calls (one implementation, shared).
+- The watchdog's mode list gains `evolve`, with the same action as the timer.
+- No run-boundary leak: `startRun()` clears the timer with its siblings.
+
+Node-suite proof (test_night_mode.mjs, new section 6d): the overlay opens
+through the REAL path (max a weapon, bank a token, equip the item kind, one
+update tick — no direct mode writes), arms at the named value, still up at
+2.9s, takes the candidate at 3.0s, the weapon actually evolves; and the
+disarmed-timer counter-case (the pre-fix wedge shape) is closed by the
+watchdog inside NIGHT_STALL_S.
+
+## The two verifier false reds (the tool now pins the real contracts)
+
+1. **"portal cine skipped" raced its own chain**: the night skips the cine AND
+   the escape synchronously in one tick, so the transient `escape` mode is
+   unobservable between polls — and the hand-off can legally take >15s (the
+   ring caught it: `draft > playing > draft > playing > escape >
+   intermission` — level-up drafts open mid-sweep and auto-resolve on their
+   own 6s window BEFORE the intermission). The check now proves the skip by
+   SAMPLING: a 250ms mode ring runs from before the boss falls; a PLAYED cine
+   holds `portal-cine` for its full 6.857s (~27 samples), the skip never
+   samples. "Intermission reached + no portal-cine in the ring" is the proof.
+2. **"no draft in 150s" was the tool's own doing + a real pilot defect**:
+   the force-clear parks `spawnTimer` at 1e9, suppressing ALL later spawning
+   (released now); and the AUTO pilot STALLS NEAR THE ARENA RIM — the known
+   queued defect, measured here: kills frozen at 4 with 400+ enemies on the
+   field and the frame loop alive (time advancing), so gems drop but are
+   never walked over and no XP ever levels the run. The arm now drives the
+   REAL level-up (a gem seeded at the pilot's feet, makeGem's exact shape)
+   and asserts the auto-PICK on the documented window. The pilot stall
+   remains open under its own task.
+
+## State after the follow-up
+
+- `tools/verify_night_loop.mjs`: **13/13 green** in the real browser at
+  390x844 (off-by-default, two-press on, summary shows on death, auto-dismiss
+  into a new run within RESTART_S+grace, boss ladder, cine skip proven by
+  sampling, escape skip, CONTINUE at 3.0s, draft auto-pick at 6.0s, second
+  death restarts, zero page errors).
+- `test/test_night_mode.mjs`: all checks green incl. the two new evolve pins.
+- Full suite: **151 files / 0 red**.
+
+## Auto paths, delays as named (updated)
+
+- draft auto-pick: 6.0s (DRAFT_TIMEOUT), highest tier / first slot
+- EVOLUTION overlay: 3.0s (NIGHT_EVOLVE_S, NEW), first candidate
+- escape auto-skip: immediate on entry
+- intermission CONTINUE: 3.0s (NIGHT_CONTINUE_S)
+- end-card RETRY: 3.0s (NIGHT_RESTART_S)
+- any other waiting mode (now incl. evolve): 30s backstop (NIGHT_STALL_S)
+- toggle: OFF by default, two-press confirm, session-only
+
+## Balance (unchanged)
+
+No balance constant moved: the 50% gold penalty and every existing delay are
+byte-identical; NIGHT_EVOLVE_S is a new timing constant only, and it spends a
+token the run already owned on the same evolution a human click would buy.

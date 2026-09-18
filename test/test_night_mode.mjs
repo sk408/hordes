@@ -7,6 +7,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
+import { EVOLUTION_DEFS } from '../src/evolutions.js';
+import { WEAPON_MAX_LEVEL } from '../src/weapons.js';
 
 const h = await boot();
 const T = h.T;
@@ -121,9 +123,9 @@ S.check('night+challenge+heat(1): 100 - 50 + 200 + 30 = 280% (the full additive 
   assert.equal(r.award, 196, 'award = round(70 x 2.8)');
   assert.equal(r.goldPool.total, 2.8);
 });
-S.check('the named constants: penalty 50, CONTINUE 3s, RESTART 3s, STALL 30s', () => {
+S.check('the named constants: penalty 50, CONTINUE 3s, RESTART 3s, EVOLVE 3s, STALL 30s', () => {
   assert.deepEqual(T.night.constants,
-    { CONTINUE_S: 3.0, RESTART_S: 3.0, STALL_S: 30.0, PENALTY_PCT: 50 });
+    { CONTINUE_S: 3.0, RESTART_S: 3.0, EVOLVE_S: 3.0, STALL_S: 30.0, PENALTY_PCT: 50 });
 });
 
 // ---- 4. RECORDS ARE KEPT -------------------------------------------------------
@@ -280,6 +282,42 @@ S.check('watchdog: the LIVE modes and human surfaces are never "unstuck"', () =>
   h.pump(60 * (T.night.constants.STALL_S + 2), () => { st.player.hp = st.player.stats.maxHp; });
   assert.equal(st.mode, 'playing', 'a playing night run is not a stall');
   assert.equal(T.night.stall.mode, null, 'no stall clock while playing');
+});
+
+// ---- 6d. THE EVOLVE WEDGE (gap found 2026-09-18): the EVOLUTION overlay was
+// human-click-only — an unattended run with a token over a maxed weapon
+// parked there forever. It now has BOTH covers: a named timer that takes the
+// FIRST candidate (the draft policy's first-slot rule) and a watchdog branch.
+// Forced through the REAL surface: max a weapon that HAS an evolution def,
+// bank a token, equip the def's item kind — then update() itself opens the
+// overlay (maybeOpenEvolve), no direct mode writes for the open.
+S.check('the EVOLUTION overlay auto-picks the first candidate after NIGHT_EVOLVE_S', () => {
+  assert.equal(st.mode, 'playing');
+  const w = st.weapons.find(x => EVOLUTION_DEFS[x.type]);
+  assert.ok(w, 'the kit carries an evolvable weapon');
+  w.level = WEAPON_MAX_LEVEL;
+  st.evoTokens = 1;
+  st.items.push({ affixes: [{ id: EVOLUTION_DEFS[w.type].itemKind }] });
+  step();   // update() -> maybeOpenEvolve() opens the real overlay
+  assert.equal(st.mode, 'evolve', 'the overlay opened through the real path');
+  assert.ok(T.night.evolveLeft > 0 && T.night.evolveLeft <= 3.0,
+    'the auto-pick armed at the named value: ' + T.night.evolveLeft);
+  h.pump(Math.round(60 * 2.9));
+  assert.equal(st.mode, 'evolve', '2.9s in: still on the overlay');
+  h.pump(30);   // cross 3.0s
+  assert.equal(st.mode, 'playing', 'the night took the candidate');
+  assert.ok(w.evolutionId, 'the FIRST candidate actually evolved: ' + w.evolutionId);
+  assert.equal(T.night.evolveLeft, null, 'the timer is spent');
+});
+S.check('watchdog: a parked EVOLUTION screen (timer disarmed) still advances within NIGHT_STALL_S', () => {
+  // The counter-case shape: the overlay is up with NO armed timer (exactly
+  // the pre-fix wedge). Only the watchdog can move it.
+  st.mode = 'evolve';
+  assert.equal(T.night.evolveLeft, null, 'no named timer (the defect shape)');
+  h.pump(60 * 5);
+  assert.equal(st.mode, 'evolve', 'short of STALL_S the watchdog has NOT fired');
+  h.pump(60 * (T.night.constants.STALL_S + 1));
+  assert.equal(st.mode, 'playing', 'the watchdog closed the parked overlay');
 });
 
 // ---- 7. THE RETURN LINE --------------------------------------------------------
