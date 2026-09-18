@@ -922,6 +922,14 @@ const state = {
   // re-offered by the next startRun, so a player who never reaches it cannot
   // lose it (claim-at-collection; profile.milestoneChest is the claim).
   runChest: null,
+  // The collection BURST (the "big and cool" addendum): while set, the frozen
+  // field (mode 'burst') paints the coin/spark shower at the spot the chest
+  // stood (render.js drawChestBurst); tickChestBurst ages it on the WALL
+  // clock and opens the celebration card when it expires. { x, y, t,
+  // milestone, reward } — the bank + claim are ALREADY persisted when this
+  // is armed, so a tab close mid-firework can neither double-pay nor lose
+  // the chest.
+  chestBurst: null,
   runSettled: null,  // S1: the run's ONE settlement (numbers, once paid) — run-once guard
   mawDeadline: 0,    // sim time the maw encounter's window closes
   // ---- IN-RUN REFERENCE ACCESS: the reference's return door + the end
@@ -7629,6 +7637,7 @@ function startRun() {
   // milestones live in profile.milestoneChest (v10) — the chest spawns again
   // next run if this one ends uncollected: UNLOSABLE by construction.
   state.runChest = null;
+  state.chestBurst = null;   // a burst never carries across the run boundary
   {
     const settled = Number(profile.achievements && profile.achievements.totals &&
       profile.achievements.totals.runs) || 0;
@@ -7685,13 +7694,33 @@ function collectRunChest() {
   if (!state.runChest) return;
   const milestone = state.runChest.milestone;
   const reward = runChestGold(profile.achievements && profile.achievements.totals);
+  const bx = state.runChest.x, by = state.runChest.y;
   state.runChest = null;                    // first: off the field, once
   profile.gold = Math.min(Number.MAX_SAFE_INTEGER, profile.gold + reward);
   profile.milestoneChest = milestone;       // the claim: highest COLLECTED
   persistProfile();                         // bank + claim in ONE save
   toast('MILESTONE CHEST: +' + reward + ' GOLD BANKED');
   audio.playSfx('chest');
-  openChestCard(milestone, reward);
+  // BURST THEN CARD (the "big and cool" addendum): the payoff's first beat
+  // is the shower on the FROZEN field (mode 'burst' is not a ticked mode —
+  // the same contract the card itself rides), and the card opens only when
+  // it expires (tickChestBurst). The bank + claim above are already saved,
+  // so the sequencing is cosmetic — a tab close mid-firework loses nothing.
+  state.mode = 'burst';
+  state.chestBurst = { x: bx, y: by, t: 0, milestone, reward };
+}
+
+// The wall-clock half of the burst: ages the shower (frame-rate
+// independent — progress is accumulated realDt, never per-frame assumed)
+// and hands off to the card exactly once.
+function tickChestBurst(realDt) {
+  const b = state.chestBurst;
+  if (!b) return;
+  b.t += realDt;
+  if (b.t >= C.RUN_CHEST.BURST_TTL) {
+    state.chestBurst = null;
+    if (state.mode === 'burst') openChestCard(b.milestone, b.reward);
+  }
 }
 
 function openChestCard(milestone, reward) {
@@ -10812,6 +10841,9 @@ function frame(now) {
   // RSS8: the magnet sweep ticks on the same wall-clock slot (see
   // tickMagnetSweep — it must keep running while a level-up draft parks the sim).
   tickMagnetSweep(realDt);
+  // v10 milestone chest: the collection burst ages on this same wall-clock
+  // slot (mode 'burst' freezes the sim — the shower would never age on dt).
+  tickChestBurst(realDt);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -11013,6 +11045,7 @@ export const __TEST = {
     closeCard: closeChestCard,
     get chest() { return state.runChest; },
     set chest(v) { state.runChest = v; },
+    get burst() { return state.chestBurst; },
   },
   // ---- G26 pre-run-loadout seam: the screen, the live stored choice, and the
   // validated kit startRun will arm (so a test compares the menu's state

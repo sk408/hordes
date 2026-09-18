@@ -302,6 +302,25 @@ const setup = () => {
   console.log('ok: stinger gating (sfx gates, music does not) + refire guard');
 }
 
+// ---- chest arp (v10 milestone chest): the SFX toggle gates it; it is its own voice ----
+{
+  const { theCtx } = setup();
+  init();
+  setSfxEnabled(false);
+  assert.strictEqual(playSfx('chest'), false, 'sfx off -> the chest arp is silent');
+  assert.strictEqual(theCtx.notes.length, 0, 'sfx off -> zero nodes scheduled');
+  setSfxEnabled(true);
+  theCtx.advance(1);   // clear the rate limit window
+  assert.strictEqual(playSfx('chest'), true, 'sfx on -> the chest arp plays');
+  const oscs = theCtx.notes.filter(n => n.kind === 'osc');
+  assert.strictEqual(oscs.length, 3, 'the chest arp is a 3-note triangle chord');
+  theCtx.advance(1);
+  assert.strictEqual(playSfx('levelup'), true);
+  const lvl = theCtx.notes.filter(n => n.kind === 'osc').length;
+  assert.strictEqual(lvl, 3 + 4, 'and it is DISTINCT from the level-up arp (3 vs 4 notes)');
+  console.log('ok: chest arp gated by the sfx toggle, distinct from level-up');
+}
+
 // ---- stingers: unknown phase no-ops; no throws without AudioContext ----
 {
   const { theCtx } = setup();

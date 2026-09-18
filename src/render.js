@@ -233,6 +233,49 @@ export function prologueShieldColor(elapsedS, reduced, offsetDeg = 0) {
   return 'hsl(' + hue + ',85%,64%)';
 }
 
+// RUN-COUNT MILESTONE CHEST — the collection BURST (the "big and cool"
+// addendum): a coin/spark shower + expanding ring at the spot the chest
+// stood, aged by main.js on the WALL clock (mode 'burst' freezes the sim,
+// so the shower plays out over the frozen field BEFORE the card opens —
+// the burst-then-card contract). Integer pixels only; DETERMINISTIC angles
+// (no per-frame randomness — the same shower every collection, and a test
+// can pin it). Reduced motion: one static gold ring fading out, no flight.
+// Pure painter: g + state + cam in, painted/not out.
+export function drawChestBurst(g, state, cam) {
+  const b = state.chestBurst;
+  if (!b) return false;
+  const p = Math.max(0, Math.min(1, b.t / C.RUN_CHEST.BURST_TTL));
+  const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+  const ring = (rr, col) => {
+    g.fillStyle = col;
+    g.fillRect(x - rr, y - 1, 2, 2); g.fillRect(x + rr - 2, y - 1, 2, 2);
+    g.fillRect(x - 1, y - rr, 2, 2); g.fillRect(x - 1, y + rr - 2, 2, 2);
+  };
+  if (prefersReducedMotion()) {
+    ring(10, 'rgba(255,215,94,' + (0.8 * (1 - p)).toFixed(2) + ')');
+    return true;
+  }
+  // White core flash only in the first fifth of the window.
+  if (p < 0.2) {
+    g.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - p / 0.2)).toFixed(2) + ')';
+    g.fillRect(x - 10, y - 10, 20, 20);
+  }
+  // The beacon's goodbye: an expanding ring of arc ticks, alpha fading.
+  ring(6 + Math.round(p * 26), 'rgba(255,215,94,' + (0.9 * (1 - p)).toFixed(2) + ')');
+  // The coin/spark shower: fixed angles, ease-out radius, a slight lift —
+  // every third spark white-hot, the rest chest-gold.
+  const n = C.RUN_CHEST.BURST_SPARKS;
+  const dist = 4 + Math.round(p * 22);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const sx = x + Math.round(Math.cos(a) * dist);
+    const sy = y + Math.round(Math.sin(a) * dist) - Math.round(p * 6);
+    g.fillStyle = i % 3 === 0 ? '#ffffff' : '#ffd75e';
+    g.fillRect(sx - 1, sy - 1, 2, 2);
+  }
+  return true;
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -543,7 +586,12 @@ export class Renderer {
     // state.runChest says; main.js clears it at collection alone).
     if (state.runChest) {
       const chx = Math.round(state.runChest.x - cam.x);
-      const chy = Math.round(state.runChest.y - cam.y);
+      // The idle BOUNCE (the "big and cool" addendum): a 2px integer hop on
+      // the sim clock — a treasure sits alive on the field, not painted into
+      // the ground. Static when the OS asks for reduced motion.
+      const bob = prefersReducedMotion() ? 0 :
+        Math.round(Math.abs(Math.sin((state.time || 0) * C.RUN_CHEST.BOB_HZ * Math.PI)) * C.RUN_CHEST.BOB_PX);
+      const chy = Math.round(state.runChest.y - cam.y) - bob;
       if (!cull(chx, chy, 30)) {
         const ct = state.time || 0;
         const cph = (ct % 2) / 2;
@@ -574,6 +622,9 @@ export class Renderer {
         }
       }
     }
+
+    // RUN-COUNT MILESTONE CHEST — the collection BURST, same world slot.
+    drawChestBurst(g, state, cam);
 
     // Arches (arches.js): pixel gates — twin pillars, lintel + stepped cap,
     // shimmering field in the arch type's color (pulse while untriggered).

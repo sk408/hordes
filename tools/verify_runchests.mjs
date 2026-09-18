@@ -62,12 +62,36 @@ async function viewport(w, h, tag) {
     ok(true, '[' + tag + '] field shot: the BIG chest in-world at run start');
 
     // 2. THE WALK-IN: let the real autopilot collect it (unlosable — no
-    //    despawn; it stays until flown into).
-    const collected = await p.waitFor(`(async () => { const s = (await import('./src/main.js')).__TEST.state;
-      return s.runChest === null && s.mode === 'chest'; })()`, 25000);
+    //    despawn; it stays until flown into). The collect's FIRST beat is the
+    //    burst: the frozen field with the coin/spark shower (mode 'burst').
+    //    The field is live — if the horde wins the race to the pilot, the
+    //    chest is re-offered by the next startRun (claim-at-collection), so
+    //    the leg simply retries on a death.
+    let collected = false;
+    let goldBefore = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.getProfile().gold)()`);
+    for (let attempt = 0; attempt < 4 && !collected; attempt++) {
+      const ended = await p.waitFor(`(async () => { const s = (await import('./src/main.js')).__TEST.state;
+        return s.runChest === null || s.mode === 'dead'; })()`, 25000);
+      const mode = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.mode)()`);
+      if (ended && mode === 'dead') {
+        await p.evaluate(`(async () => { (await import('./src/main.js')).__TEST.startRun(); })()`);
+        await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()`, 8000);
+        goldBefore = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.getProfile().gold)()`);
+        continue;               // the SAME 50 chest, re-offered (unlosable)
+      }
+      collected = ended;
+    }
     ok(collected, '[' + tag + '] the autopilot WALKED INTO the chest (collected in ordinary play, no despawn)');
+    const burst0 = await p.evaluate(`(async () => { const s = (await import('./src/main.js')).__TEST.state;
+      return s.chestBurst && { m: s.chestBurst.milestone, x: s.chestBurst.x, y: s.chestBurst.y }; })()`);
+    ok(burst0 && burst0.m === 50, '[' + tag + '] the BURST is up first (the shower on the frozen field, before any card)');
+    const shotBurst = await p.shot('runchests-burst-' + tag);
+    copyFileSync(shotBurst, ART + '/runchests-burst-' + tag + '.png');
+    ok(true, '[' + tag + '] burst shot: the coin/spark shower at the collection spot');
+    const cardUp = await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.state.mode === 'chest')()`, 5000);
+    ok(cardUp, '[' + tag + '] the burst EXPIRES into the card (burst-then-card)');
 
-    // 3. BURST THEN CARD: the card is up and explains what was gained.
+    // 3. THE CARD: it is up and explains what was gained.
     const card = await p.evaluate(`(() => {
       const title = document.getElementById('ov-title');
       const cards = [...document.getElementById('ov-cards').children];
@@ -83,7 +107,7 @@ async function viewport(w, h, tag) {
     // 4. The claim + bank persisted; GOT IT resumes; run #51 has NO chest.
     const stored = await p.evaluate(`(() => JSON.parse(localStorage.getItem('hordes_profile_v1')))()`);
     ok(stored.milestoneChest === 50, '[' + tag + '] the claim persisted (milestoneChest 50)');
-    ok(stored.gold === 512 + 3000, '[' + tag + '] the reward BANKED to the saved gold (512 + 3000 = ' + (512 + 3000) + ', got ' + stored.gold + ')');
+    ok(stored.gold === goldBefore + 3000, '[' + tag + '] the reward BANKED to the saved gold (' + goldBefore + ' before the walk-in + 3000 = ' + (goldBefore + 3000) + ', got ' + stored.gold + ')');
     await p.evaluate(`(() => {
       const el = [...document.getElementById('ov-cards').children]
         .find(k => /GOT IT/i.test(k.textContent || ''));

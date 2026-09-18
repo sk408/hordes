@@ -650,6 +650,15 @@ export const CONFIG = {
   RUN_CHEST: {
     DX: -115,
     DY: -20,
+    // The "big and cool" addendum's drawn-art motion, both integer-pixel:
+    // BOB is the idle field bounce (a 2px hop on the sim clock, static under
+    // reduced motion); BURST is the collection payoff — a ~0.9s coin/spark
+    // shower on the WALL clock that plays out on the frozen field (mode
+    // 'burst') BEFORE the card opens, so the payoff reads burst-then-card.
+    BOB_HZ: 2.5,
+    BOB_PX: 2,
+    BURST_TTL: 0.9,
+    BURST_SPARKS: 12,
   },
 
 

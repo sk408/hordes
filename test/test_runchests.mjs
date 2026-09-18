@@ -21,7 +21,9 @@
 //             chest stays; only collection clears it).
 //   COLLECT   the real payoff banks the gold DIRECTLY (not the purse),
 //             claims + persists in ONE save (the bytes change on the tap),
-//             opens the card that says what was gained, resumes on GOT IT,
+//             then BURST-THEN-CARD: a wall-clock coin/spark shower on the
+//             frozen field (mode 'burst', render.js drawChestBurst) expires
+//             into the card that says what was gained, resumes on GOT IT,
 //             and pays exactly once (the second collect is a no-op).
 //   UNLOSABLE a run ended without collecting re-offers the SAME chest next
 //             startRun (claim-at-collection, not claim-at-spawn).
@@ -221,6 +223,40 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
     { stored: stored().milestoneChest, gold: stored().gold });
   ok('the chest is off the field (collect clears it)', st.runChest === null);
   const chestCard = () => elements['ov-cards'].children.find(el => /MILESTONE CHEST/.test(el.innerHTML || ''));
+  // BURST THEN CARD (the "big and cool" addendum): the collect's first beat
+  // is the coin/spark shower on the FROZEN field — mode 'burst', no card yet.
+  ok('the collect opens the BURST first (mode burst, shower armed at the spot, reward carried)',
+    st.mode === 'burst' && !!CH.burst && CH.burst.milestone === 50 &&
+    CH.burst.reward === 700 && CH.burst.t === 0,
+    { mode: st.mode, burst: CH.burst });
+  ok('no card yet (the card waits for the shower to finish)',
+    !chestCard() && elements['ov-title'].textContent === '');
+  // The shower PAINTS: drive the real painter with a recording ctx and count
+  // the gold it puts on the frozen field (deterministic angles — no dice).
+  {
+    const { drawChestBurst } = await import('../src/render.js');
+    const { CONFIG } = await import('../src/config.js');
+    const paints = [];
+    const rg = { set fillStyle(v) { paints.push(String(v)); },
+      fillRect(x, y, w, h) { paints.push([x, y, w, h]); } };
+    const painted = drawChestBurst(rg, st, st.cam);
+    const goldRects = paints.filter(Array.isArray);
+    const goldInks = paints.filter(p => typeof p === 'string' && /255,\s*215,\s*94|ffd75e|ffffff/.test(p));
+    ok('the burst PAINTS the shower (12 sparks + ring + flash, all integer pixels)',
+      painted === true && goldRects.length >= CONFIG.RUN_CHEST.BURST_SPARKS + 4 &&
+      goldInks.length >= CONFIG.RUN_CHEST.BURST_SPARKS &&
+      goldRects.every(r => Number.isInteger(r[0]) && Number.isInteger(r[1])),
+      { rects: goldRects.length, inks: goldInks.length });
+    ok('the burst paints NOTHING once expired (painter is state-driven)',
+      drawChestBurst(rg, { chestBurst: null }, st.cam) === false);
+  }
+  // Age the shower on the REAL frame loop (wall clock): it expires into the
+  // card exactly once.
+  let cardAt = -1;
+  for (let i = 0; i < 200 && cardAt < 0; i++) { frame(); if (st.mode === 'chest') cardAt = i; }
+  ok('the burst EXPIRES into the card (burst-then-card; ~' +
+    (cardAt >= 0 ? ((cardAt + 1) / 60).toFixed(2) : 'NEVER') + 's of shower first)',
+    cardAt >= 0 && st.chestBurst === null);
   ok('the card explains WHAT WAS GAINED (mode chest, gold named, milestone named)',
     st.mode === 'chest' && !!chestCard() &&
     /\+700 gold/.test(chestCard().innerHTML) &&
@@ -230,8 +266,8 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
   ok('GOT IT resumes the run (mode back to playing)', st.mode === 'playing');
   const goldAfter = prof.gold;
   CH.collect();
-  ok('the payoff fires EXACTLY ONCE (a second collect is a no-op)',
-    prof.gold === goldAfter && st.runChest === null);
+  ok('the payoff fires EXACTLY ONCE (a second collect is a no-op: no gold, no chest, no second burst)',
+    prof.gold === goldAfter && st.runChest === null && CH.burst === null);
   // CANNOT FIRE TWICE across runs: claimed 50 means no 50 chest ever again.
   T.startRun();
   ok('the next startRun spawns NO chest for an already-claimed milestone',
@@ -322,9 +358,14 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
     collectedAt >= 0);
   ok('the walk-in collect BANKS the same reward (fresh totals: floor 70 x 10 = +700)',
     prof.gold === goldBefore + 700, { gold: prof.gold, before: goldBefore });
+  ok('the walk-in collect opens the BURST (frozen field first, card not yet)',
+    st.mode === 'burst' && !!CH.burst && CH.burst.milestone === 100,
+    { mode: st.mode, burst: CH.burst });
+  let walkCardAt = -1;
+  for (let i = 0; i < 200 && walkCardAt < 0; i++) { frame(); if (st.mode === 'chest') walkCardAt = i; }
   const chestCard = () => elements['ov-cards'].children.find(el => /MILESTONE CHEST/.test(el.innerHTML || ''));
-  ok('the walk-in collect opens the card (the burst-then-card contract)',
-    st.mode === 'chest' && !!chestCard() && /RUN 100/.test(elements['ov-title'].textContent || ''),
+  ok('the walk-in ends in the card (the burst-then-card contract, RUN 100)',
+    walkCardAt >= 0 && !!chestCard() && /RUN 100/.test(elements['ov-title'].textContent || ''),
     { title: elements['ov-title'].textContent });
   CH.closeCard();
   ok('GOT IT resumes the run after the walk-in collect', st.mode === 'playing');
