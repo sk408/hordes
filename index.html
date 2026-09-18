@@ -144,6 +144,10 @@
   /* body copy lifts OFF the grain with a hard 1px shadow (a visual read found
      the text sitting "in" the grain and reading muddy) */
   .card .desc { font-size: 12px; color: #d6c09a; text-shadow: 1px 1px 0 #0a0603; }
+  /* SHOP buy line at the ABBREVIATED width: one line, always — "LV" may
+     never orphan from its fraction. main.js sizes --shop-buy-fs to the widest
+     sub the catalogue can show at the measured card width (clamped 9-12px). */
+  .card .desc .buy { white-space: nowrap; font-size: var(--shop-buy-fs, 12px); }
   /* WAVE-26 draft synergy hint: a real, code-backed pair with something the
      player already owns. Cyan so it reads as information, not flavor text;
      absent entirely when the card has no genuine synergy. */
@@ -668,6 +672,65 @@
     .card { width: min(30vw, 172px); min-height: 0; padding: 12px 10px; margin-bottom: 2px; }
     .card .desc { font-size: 13px; }
     .card .key { display: none; } /* no number keys on touch; just tap */
+  }
+  /* ---- SHOP PAGING + THE CARD GRID (owner 2026-09-18: "Arrow pages are
+     better. The cards need to dynamically resize and fit a minimum of 3
+     across. Max size of a card being the current size they are"). The shop
+     screen puts .shopgrid on the card container: cards become border-box and
+     size DYNAMICALLY as (container - gaps) / columns, floored at 3 columns
+     (main.js shopGridPlan sets --shop-cols; 3 is the phone floor) and CAPPED
+     at today's card box (--shop-cap 198px = 170px content + 2x14 padding —
+     cards never grow past the size they already are). Wide windows get MORE
+     COLUMNS, not bigger cards, and the container itself caps at 5 columns
+     (1046px) and centres — the surplus becomes margin (owner addendum:
+     "If that makes sense for desktop too"). */
+  #overlay .cards.shopgrid {
+    gap: var(--shop-gap, 12px);
+    max-width: calc(5 * var(--shop-cap, 198px) + 4 * var(--shop-gap, 12px));
+    margin-left: auto; margin-right: auto;
+  }
+  #overlay .cards.shopgrid > .card {
+    box-sizing: border-box;
+    width: calc((100% - (var(--shop-cols, 3) - 1) * var(--shop-gap, 12px)) / var(--shop-cols, 3));
+    max-width: var(--shop-cap, 198px);
+    padding: 12px 8px;
+  }
+  /* The pager chrome: edge arrows (44px touch floor on the target box,
+     vertically centred, never more than ~60px of the viewport edge — thumb
+     reach) and a bottom-centre page indicator. Single page = both removed
+     (main.js), never merely dimmed. */
+  #overlay .shop-arr {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 46px; height: 64px; z-index: 5;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; color: #ffd75e; background: rgba(20,20,31,0.72);
+    border: 2px solid #5a5a7e; border-radius: 8px;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  #overlay .shop-arr:active { transform: translateY(calc(-50% + 1px)); }
+  #overlay .shop-arr.dim { opacity: 0.35; }
+  #overlay .shop-arr.prev { left: 6px; }
+  #overlay .shop-arr.next { right: 6px; }
+  /* ARROW PLACEMENT (320px read, 2026-09-18): where the grid FILLS the
+     viewport width (phones — the first card starts inside the edge arrow's
+     band), a mid-height arrow sits ON the edge column and hides its price
+     text. main.js adds .low (finalizeShopPager measures) and the arrows drop
+     to the BOTTOM band flanking the indicator — the prime thumb zone anyway.
+     Desktop keeps the mid-height arrows: the capped container centres with
+     margin, so no card ever sits under them. Same 46x64 target box. */
+  #overlay .shop-arr.low { top: auto; bottom: 8px; transform: none; height: 44px; }
+  #overlay .shop-arr.low:active { transform: translateY(1px); }
+  /* with the bottom-band arrows the overlay top-aligns: the safe-centre rule
+     would push the last row DOWN past the band the page math already paid
+     for (availH is measured from the top). Paged content is never taller
+     than the viewport, so top-align never clips. */
+  #overlay.shop-low { justify-content: flex-start; }
+  #overlay .shop-ind {
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: 8px;
+    z-index: 5; padding: 4px 12px; font-size: 12px; color: #e8e8f0;
+    background: rgba(20,20,31,0.82); border: 1px solid #4a4a5e; border-radius: 8px;
+    pointer-events: none; white-space: nowrap;
   }
 </style>
 </head>

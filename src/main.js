@@ -689,13 +689,22 @@ function fitCanvas() {
   renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
-window.addEventListener('resize', fitCanvas);
-window.addEventListener('orientationchange', fitCanvas);
+// SHOP PAGING rides the SAME viewport listeners (one handler per event name —
+// the node harness routes a single handler per type): a viewport change
+// (rotate, desktop window resize, the mobile toolbar collapse) re-chunks the
+// pages — the wanted page is kept, clamped to the new page count. The null
+// pager guards every non-shop screen.
+function onViewportResize() {
+  fitCanvas();
+  if (shopPager) finalizeShopPager();
+}
+window.addEventListener('resize', onViewportResize);
+window.addEventListener('orientationchange', onViewportResize);
 // The hosted/iframed dynamic viewport (and the collapsing mobile toolbar in
 // immersive mode) resize WITHOUT a window resize event — visualViewport's own
 // resize is the production signal (the 100vh trap, measured).
 if (window.visualViewport && window.visualViewport.addEventListener)
-  window.visualViewport.addEventListener('resize', fitCanvas);
+  window.visualViewport.addEventListener('resize', onViewportResize);
 
 // ---------- State ----------
 // WAVE-25 (audit 2.6): ONE wave shape. There used to be two — a short
@@ -5044,6 +5053,9 @@ function openMenu(mode = 'menu') {
   ovCards.innerHTML = '';
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
+  // SHOP PAGING: the pager chrome + grid mode are shop-scoped — every menu
+  // open starts clean (and a later showShop re-applies them itself).
+  clearShopPager();
   // G9: the TROPHY GALLERY is the one screen that wants the canvas art visible
   // behind the cards, so it sets these two inline overrides AFTER calling this
   // function (showTrophies). The reset lives HERE so the overrides cannot leak:
@@ -6006,6 +6018,202 @@ function showTitle() {
 // scraping heuristics.
 const shopIconCanvases = {};
 
+// ---------- SHOP PAGING + THE CARD GRID (owner 2026-09-18) ------------------
+// Owner verbatim: "Arrow pages are better. The cards need to dynamically
+// resize and fit a minimum of 3 across. Max size of a card being the current
+// size they are". Variant A of docs/art/shop-paging-2026-09-18/REPORT.md,
+// built into the LIVE shop: fixed pages, edge arrows + swipe + "n / m"
+// indicator. The GRID RULE is one pure function (shopGridPlan — the uiFitScale
+// precedent: matrix-testable without a layout engine) and the page chunking
+// is pure too (shopPageChunk over measured row heights). Paging changes how
+// rows are REACHED, never what a row does: purchases, counts, the opt-out
+// rule, the apex/characters doors and every balance constant are untouched.
+const SHOP_GAP = 12;          // the one grid gap (the old 10/14 split is superseded here)
+const SHOP_CARD_CAP = 198;    // today's card border-box (170 + 2x14): the HARD ceiling
+const SHOP_MIN_COLS = 3;      // the owner's floor, at EVERY size including 320-wide
+const SHOP_MAX_COLS = 5;      // the container cap's own width: 5x198+4x12 (desktop addendum)
+const SHOP_IND_H = 26;        // the indicator strip pages must clear
+const SHOP_ARR_W = 46;        // the arrow target's box (44px floor + border), edge-mounted
+const SHOP_ARR_H = 64;        // mid-height arrow (desktop)
+const SHOP_ARR_LOW_H = 44;    // the bottom-band arrow sits at exactly the 44px touch floor
+
+// Pure: the column plan for a container availW CSS px wide. Cards size
+// DYNAMICALLY as (availW - (cols-1)*gap)/cols, floored at 3 columns and
+// capped at the current card box — a wide window gains COLUMNS (never bigger
+// cards) and the container's own max-width stops the count at 5, the surplus
+// becoming centred margin; a narrow one shrinks the card to hold 3. Int px.
+function shopGridPlan(availW) {
+  const cols = Math.max(SHOP_MIN_COLS,
+    Math.min(SHOP_MAX_COLS, Math.floor((availW + SHOP_GAP) / (SHOP_CARD_CAP + SHOP_GAP))));
+  const w = Math.min(Math.floor((availW - (cols - 1) * SHOP_GAP) / cols), SHOP_CARD_CAP);
+  return { cols, cardW: Math.max(w, 1) };
+}
+
+// Pure: chunk rows (each its tallest card's height, CSS px) into pages that
+// fit availH. A row never splits; every page takes at least one row (a row
+// taller than the viewport pages alone — content is never crushed to fit).
+function shopPageChunk(rowHs, availH) {
+  const pages = []; let cur = [], used = 0;
+  for (let i = 0; i < rowHs.length; i++) {
+    const h = rowHs[i];
+    if (cur.length && used + SHOP_GAP + h > availH) { pages.push(cur); cur = []; used = 0; }
+    cur.push(i);
+    used += (cur.length > 1 ? SHOP_GAP : 0) + h;
+  }
+  if (cur.length) pages.push(cur);
+  return pages;
+}
+
+let shopPager = null;         // { pages: [rowIdx[]], rows: [{cards, h}], page, cols }
+let shopPageWanted = 1;       // survives the buy re-render: you stay on your page
+function shopPagerActive() { return !!shopPager && state.mode === 'menu'; }
+
+function clearShopPager() {
+  shopPager = null;
+  for (const id of ['shop-prev', 'shop-next', 'shop-ind']) {
+    const el = document.getElementById(id);
+    if (el && el.remove) el.remove();
+  }
+  if (ovCards.classList) ovCards.classList.remove('shopgrid');
+  else if (ovCards.className && typeof ovCards.className === 'string') {
+    ovCards.className = ovCards.className.replace(/\bshopgrid\b/g, '').trim();
+  }
+  // the low-band top-align is shop-scoped with the rest of the chrome
+  if (overlay.classList) overlay.classList.remove('shop-low');
+  else if (typeof overlay.className === 'string') {
+    overlay.className = overlay.className.replace(/\bshop-low\b/g, '').trim();
+  }
+}
+
+// Applies the grid class + cols var BEFORE the rows are built, so the first
+// layout already sizes the cards and the pager measures true heights. Stub
+// DOMs (no clientWidth) fall back to viewSize() — the abbreviation decision
+// stays deterministic in the node suite.
+function applyShopGrid() {
+  const w = (typeof ovCards.clientWidth === 'number' && ovCards.clientWidth > 0)
+    ? ovCards.clientWidth : Math.max(0, viewSize().vw - 16);
+  const plan = shopGridPlan(w);
+  if (ovCards.classList) ovCards.classList.add('shopgrid');
+  if (ovCards.style && typeof ovCards.style.setProperty === 'function') {
+    ovCards.style.setProperty('--shop-cols', String(plan.cols));
+  }
+  return plan;
+}
+
+// After the browser's layout pass (rAF — it runs before the first paint, so
+// the un-paged list never flashes; the frameCard-lazy precedent): measure the
+// rows, chunk them into pages, show the wanted page, mount the chrome.
+function finalizeShopPager() {
+  if (state.mode !== 'menu' || !ovCards.children || !ovCards.children.length) return;
+  if (typeof ovCards.clientWidth !== 'number' || !ovCards.clientWidth) return;   // stub: markup is the contract
+  armShopSwipe();
+  const cards = [...ovCards.children];
+  const plan = shopGridPlan(ovCards.clientWidth);
+  // uniform card widths -> DOM order fills rows of exactly `cols` (the last
+  // row may be short); a row's height is its tallest card (flex stretch).
+  const rows = [];
+  for (let i = 0; i < cards.length; i += plan.cols) {
+    const row = cards.slice(i, i + plan.cols);
+    rows.push({ cards: row, h: Math.max(...row.map(c => (c.offsetHeight || 0))) });
+  }
+  // ARROW PLACEMENT: a mid-height edge arrow sits ON the edge column whenever
+  // the grid fills the viewport width (phones: the first card starts inside
+  // the arrow's band) and hides that card's price text — measured in the
+  // 320x568 shot, 2026-09-18. There the arrows drop to the BOTTOM band,
+  // flanking the indicator (the prime thumb zone anyway); desktop keeps the
+  // mid-height arrows (the capped container centres with margin, no overlap).
+  const firstRect = (typeof cards[0].getBoundingClientRect === 'function')
+    ? cards[0].getBoundingClientRect() : null;
+  const low = firstRect ? firstRect.left < SHOP_ARR_W + 8 : false;
+  // top-align with the bottom band (the safe-centre rule would push the last
+  // row back down under the arrows the page math already cleared).
+  if (overlay.classList) overlay.classList.toggle('shop-low', low);
+  else if (typeof overlay.className === 'string' && low && !/\bshop-low\b/.test(overlay.className)) {
+    overlay.className += ' shop-low';
+  }
+  // the low band (44px arrows + indicator, both at bottom:8) is taller than
+  // the indicator strip alone — the last row must clear the real chrome.
+  const availH = Math.max(60, overlay.clientHeight - (ovCards.offsetTop || 0)
+    - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10);
+  const pages = shopPageChunk(rows.map(r => r.h), availH);
+  shopPager = { pages, rows, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
+  shopPageGoto(shopPager.page);
+}
+
+function shopPageGoto(p) {
+  if (!shopPager) return;
+  const n = Math.min(Math.max(1, p), shopPager.pages.length);
+  shopPager.page = n;
+  shopPageWanted = n;
+  const show = new Set();
+  for (const ri of shopPager.pages[n - 1]) for (const c of shopPager.rows[ri].cards) show.add(c);
+  for (const c of ovCards.children) c.style.display = show.has(c) ? '' : 'none';
+  shopChromeUpdate();
+}
+
+// The chrome: edge arrows + "n / m · cols x rowsOnPage" indicator. A SINGLE
+// page shows NEITHER (the desktop addendum: "a single page shows no arrows
+// (there is nothing to page) and no empty affordance").
+function shopChromeUpdate() {
+  const one = !shopPager || shopPager.pages.length <= 1;
+  for (const [id, dir, glyph] of [['shop-prev', -1, '\u2039'], ['shop-next', 1, '\u203a']]) {
+    let el = document.getElementById(id);
+    if (one) { if (el && el.remove) el.remove(); continue; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'shop-arr ' + (dir < 0 ? 'prev' : 'next');
+      el.textContent = glyph;
+      el.onclick = () => { audio.playSfx('button'); shopPageGoto(shopPager.page + dir); };
+      overlay.appendChild(el);
+    }
+    const dim = (dir < 0 && shopPager.page <= 1) || (dir > 0 && shopPager.page >= shopPager.pages.length);
+    if (el.classList) { el.classList.toggle('dim', dim); el.classList.toggle('low', !!shopPager.low); }
+    else if (el.className !== undefined) el.className = 'shop-arr ' + (dir < 0 ? 'prev' : 'next')
+      + (dim ? ' dim' : '') + (shopPager.low ? ' low' : '');
+  }
+  let ind = document.getElementById('shop-ind');
+  if (one) { if (ind && ind.remove) ind.remove(); return; }
+  if (!ind) { ind = document.createElement('div'); ind.id = 'shop-ind'; overlay.appendChild(ind); }
+  ind.textContent = shopPager.page + ' / ' + shopPager.pages.length +
+    ' \u00b7 ' + shopPager.cols + '\u00d7' + shopPager.pages[shopPager.page - 1].length;
+}
+
+// Swipe (the phone's first-class input — carousel convention: finger left =
+// next page). Mounted ONCE on the overlay; inert whenever the pager is not
+// the live screen. A horizontal-dominant 60px+ flick turns the page; taps and
+// vertical scrolls never do. TOUCH carries the phone (a real finger AND the
+// CDP touch pipeline both speak touchstart/touchend); the pointer path stays
+// as the MOUSE fallback only — never a double turn on a real touch device.
+let shopSwipeArmed = false;
+function armShopSwipe() {
+  if (shopSwipeArmed || typeof overlay.addEventListener !== 'function') return;
+  shopSwipeArmed = true;
+  let x0 = null, y0 = null;
+  const begin = (x, y) => { x0 = shopPagerActive() ? x : null; y0 = y; };
+  const end = (x, y) => {
+    if (x0 === null || !shopPagerActive()) { x0 = null; return; }
+    const dx = x - x0, dy = y - y0;
+    x0 = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < 1.5 * Math.abs(dy)) return;
+    shopPageGoto(shopPager.page + (dx < 0 ? 1 : -1));
+  };
+  overlay.addEventListener('touchstart', (ev) => {
+    const t = ev.changedTouches && ev.changedTouches[0];
+    if (t) begin(t.clientX, t.clientY);
+  }, { passive: true });
+  overlay.addEventListener('touchend', (ev) => {
+    const t = ev.changedTouches && ev.changedTouches[0];
+    if (t) end(t.clientX, t.clientY);
+  }, { passive: true });
+  overlay.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType === 'mouse') begin(ev.clientX, ev.clientY);
+  });
+  overlay.addEventListener('pointerup', (ev) => {
+    if (ev.pointerType === 'mouse') end(ev.clientX, ev.clientY);
+  });
+}
+
 function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
@@ -6013,10 +6221,21 @@ function showShop() {
   // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
   ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
-  // SHOP-LATENCY: defer every row's frame so the WHOLE list appends (and lays
-  // out once) before the first frame measures - then frame them all together.
-  const framed = [];
-  for (const def of SHOP_UPGRADES) {
+  // SHOP PAGING: the grid class + cols var go on BEFORE the rows are built
+  // (first layout sizes the cards; the pager then measures true heights).
+  // ABBREV (owner: the buy line "may be abbreviated for the narrower card but
+  // it stays TEXTUAL and stateful"): under 112px the sub-line shortens to
+  // `LV n/max·Ng` — OWNED/MAX stay words, the state is never an icon.
+  const gridPlan = applyShopGrid();
+  const abbrev = gridPlan.cardW < 112;
+  // ONE-LINE BUY FLOOR (320px shot read, 2026-09-18): the abbreviated buy
+  // line "LV 0/5·180g" must stay on ONE line — "LV" may never orphan from its
+  // fraction (it wrapped at cardW 93: 77px of text width vs an ~79px string
+  // at 12px monospace). The buy span is nowrap and its font auto-sizes to the
+  // WIDEST sub this catalogue state can show at this width (monospace advance
+  // is 0.6em), clamped to [9,12] — still textual, still stateful, never
+  // clipped. First pass computes every sub, second pass renders.
+  const rows0 = SHOP_UPGRADES.map(def => {
     // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
     // lives in profile.unlockedWeapons/unlockedElites (meta.js shopRowOwned),
     // not profile.purchased. buyUpgrade dispatches on kind either way.
@@ -6025,12 +6244,27 @@ function showShop() {
     const capped = def.kind ? owned : lvl >= def.maxLevel;
     const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
     const afford = profile.gold >= cost;
-    const sub = def.kind
-      ? (owned ? 'OWNED' : cost + ' gold')
-      : `LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`;
+    const sub = abbrev
+      ? (def.kind
+        ? (owned ? 'OWNED' : cost + 'g')
+        : `LV ${lvl}/${def.maxLevel}\u00b7${capped ? 'MAX' : cost + 'g'}`)
+      : (def.kind
+        ? (owned ? 'OWNED' : cost + ' gold')
+        : `LV ${lvl}/${def.maxLevel} \u00b7 ${capped ? 'MAXED' : cost + ' gold'}`);
+    return { def, sub, capped, afford };
+  });
+  if (abbrev && ovCards.style && typeof ovCards.style.setProperty === 'function') {
+    const maxCh = Math.max(...rows0.map(r => r.sub.length));
+    const fs = Math.max(9, Math.min(12, Math.floor((gridPlan.cardW - 16) / (0.6 * maxCh))));
+    ovCards.style.setProperty('--shop-buy-fs', fs + 'px');
+  }
+  // SHOP-LATENCY: defer every row's frame so the WHOLE list appends (and lays
+  // out once) before the first frame measures - then frame them all together.
+  const framed = [];
+  for (const { def, sub, capped, afford } of rows0) {
     const el = menuCard(
       def.name,
-      `${def.desc}<br>${sub}`,
+      abbrev ? `${def.desc}<br><span class="buy">${sub}</span>` : `${def.desc}<br>${sub}`,
       () => {
         // SGKV4: read the loadout BEFORE the buy — the weapon path equips on
         // buy (buyUpgrade -> equipBoughtWeapon), and the displacement (if the
@@ -6090,6 +6324,11 @@ function showShop() {
   menuCard('CHARACTERS', 'per-pilot upgrades', () => showCharacterShop());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
   for (const el of framed) frameCard(el, true);   // lazy: the observer paints after the browser's own layout pass
+  // SHOP PAGING: pages are chunked after the browser's layout pass (the rAF
+  // runs before the first paint — the un-paged list never flashes) and the
+  // wanted page SURVIVES this re-render: buying keeps you where you bought.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finalizeShopPager);
+  else finalizeShopPager();
 }
 
 // ---------- G19 slice 1: the per-character shop surface ---------------------
@@ -7804,6 +8043,13 @@ window.addEventListener('keydown', (ev) => {
   if (state.manualPage !== null) {
     if (k === 'arrowleft') { manualPrev(); return; }
     if (k === 'arrowright') { manualNext(); return; }
+  }
+  // SHOP PAGING (desktop addendum: "DESKTOP HAS NO SWIPE: ... add keyboard
+  // arrow-key paging (left/right)"): while the paged shop is the live menu
+  // screen, the arrows turn pages — parity with the edge arrows and swipe.
+  if (shopPagerActive()) {
+    if (k === 'arrowleft') { shopPageGoto(shopPager.page - 1); return; }
+    if (k === 'arrowright') { shopPageGoto(shopPager.page + 1); return; }
   }
   if (state.mode === 'escape') {                        // V1: the mode's own keys
     // The escape owns its input surface (arrows/AD run, space/W/up jump,
@@ -9941,6 +10187,22 @@ export const __TEST = {
     kit: chosenLoadout,
     choices: loadoutChoices,
     slotCap: loadoutSlotCap,
+  },
+  // ---- SHOP PAGING seam (owner 2026-09-18): the screen, the PURE grid/page
+  // planners (matrix-testable without a layout engine — the uiFitScale
+  // precedent), the named constants, and the live pager state + turn (the
+  // same functions the arrows, the swipe and the keys drive).
+  shop: {
+    open: showShop,
+    plan: shopGridPlan,
+    chunk: shopPageChunk,
+    caps: { gap: SHOP_GAP, cardCap: SHOP_CARD_CAP, minCols: SHOP_MIN_COLS,
+            maxCols: SHOP_MAX_COLS, indH: SHOP_IND_H },
+    active: () => !!shopPager,
+    page: () => (shopPager ? shopPager.page : null),
+    pages: () => (shopPager ? shopPager.pages.length : null),
+    goto: shopPageGoto,
+    wanted: () => shopPageWanted,
   },
   // ---- G13 character-selector seam: the screen, the live selection, the kit
   // derivation (so a test compares the DOM numbers against the SAME chain the
