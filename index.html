@@ -440,6 +440,20 @@
     box-shadow: inset 0 -6px 0 rgba(0,0,0,0.35), inset 0 3px 0 rgba(255,255,255,0.12);
     transform: translate(0px, 0px);   /* main.js drives the drag offset */
   }
+  /* ---- CONTROL BANDS / STICK HOME (owner 2026-09-18, msg_01M2S6XRT0:
+     "it should do its best to keep the buttons off the canvas in landscape").
+     #steer-zone is the floating stick's HOME band — the LEFT band in
+     landscape, the bottom-centre strip (the fixed joystick's old slot,
+     between the pads) in portrait — sized and placed by fitCanvas's live
+     band measurement. A press on it arms the floating stick through the SAME
+     fjoyTryArm the canvas uses. It sits FIRST in #touch's DOM so the pads
+     (later siblings) stay on top and keep their own presses; it is hidden
+     with the layer outside playing/finale. */
+  #steer-zone {
+    position: absolute; display: none;
+    pointer-events: auto; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
   #touch button {
     min-width: 68px; min-height: 56px; padding: 6px 12px;
     font-family: monospace; font-size: 13px; line-height: 1.3;
@@ -635,6 +649,7 @@
   <canvas id="game"></canvas>
   <div id="hud"></div>
   <div id="touch">
+    <div id="steer-zone" aria-hidden="true"></div>
     <div class="pad left">
       <button data-act="focus">FOCUS<span class="badge" id="tc-focus">NEAREST</span></button>
       <button data-act="stance">STANCE<span class="badge" id="tc-stance">BALANCED</span></button>

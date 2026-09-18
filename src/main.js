@@ -301,11 +301,96 @@ function topChromeBottom() {
   for (const el of touch ? touch.querySelectorAll('button.cog') : []) consider(el);
   return bottom;
 }
+// ROUND 5 (owner 2026-09-18, msg_01M2S6XRT0 — seen on his own phone in
+// fullscreen landscape: "it should do its best to keep the buttons off the
+// canvas in landscape. There's plenty of screen room on my phone and it
+// still overlaps"): ZERO overlap is now the bar on touch layouts. The
+// canvas is fitted into the viewport MINUS live-measured CONTROL BANDS —
+// SIDE bands in landscape (never the top+bottom stack that collapsed the
+// field in round 2: a short landscape viewport keeps its whole height),
+// a BOTTOM band in portrait, the top-strip chrome row always. The round-4
+// priorities still rule the corners: below the R4 floor (canvas height <
+// min(55% vh, vw/1.6)) the ROUND-4 letterbox stands and overlap is ACCEPTED
+// — the named fallback, never a collapsed field. Desktop / '.cog-only'
+// keeps the round-4 flex-centred layout verbatim (WAVE-23: the dimmed pads
+// deliberately sit over the arena there; the touchLayerLive gate covers it).
+function controlBands() {
+  // Live-measured reserved bands, px from the viewport edges, plus the pad
+  // geometry the steer-zone placement needs. Caller checked touchLayerLive().
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const landscape = vw > vh;
+  const bands = { left: 0, right: 0, top: topChromeBottom() + BAND_MARGIN, bottom: 0,
+    padTop: vh, padInnerLeft: 0, padInnerRight: vw };
+  const tops = [], sides = [];
+  for (const el of document.querySelectorAll('#touch .pad')) {
+    if (!el.isConnected) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) continue;
+    tops.push(r.top);
+    sides.push(r);
+  }
+  for (const r of sides) {
+    if (r.left < vw / 2) {
+      bands.padInnerLeft = Math.max(bands.padInnerLeft, r.right);
+      if (landscape) bands.left = Math.max(bands.left, r.right + BAND_MARGIN);
+    } else {
+      bands.padInnerRight = Math.min(bands.padInnerRight, r.left);
+      if (landscape) bands.right = Math.max(bands.right, vw - r.left + BAND_MARGIN);
+    }
+  }
+  if (tops.length && !landscape) {
+    bands.padTop = Math.min(...tops);
+    bands.bottom = Math.max(bands.bottom, vh - bands.padTop + BAND_MARGIN);
+  }
+  return bands;
+}
+// Pure fit: the canvas box inside the avail rect (bands already subtracted),
+// or {fallback} below the R4 floor. Exposed via __TEST (bandFit) so the node
+// suite can matrix-test the zero-overlap arithmetic without a layout engine.
+function bandFit(vw, vh, b) {
+  const aw = Math.max(0, vw - b.left - b.right);
+  const ah = Math.max(0, vh - b.top - b.bottom);
+  const scale = Math.min(aw / C.VIEW_W, ah / C.VIEW_H);
+  const w = Math.floor(C.VIEW_W * scale), h = Math.floor(C.VIEW_H * scale);
+  const floor = Math.min(CANVAS_FLOOR_FRACTION * vh, vw / 1.6);
+  // 1px slack: a width-limited fit lands at floor(vw/1.6) — the floor itself
+  // minus rounding, never a real shortfall (390x844: 243 vs 243.75).
+  if (floor - h > 1) return { fallback: true, h, floor };
+  return { fallback: false, w, h, scale,
+    left: b.left + (aw - w) / 2, top: b.top + (ah - h) / 2 };
+}
+// The floating stick's HOME band (the addendum: "it should not be confined
+// to the canvas alone"): the LEFT band in landscape, the bottom-centre strip
+// between the pads (the fixed joystick's old slot) in portrait. Hidden when
+// the bands are not placed (no layout engine) or the fit fell back (keep the
+// whole canvas armable there).
+function placeSteerZone(bands) {
+  const zone = document.getElementById('steer-zone');
+  if (!zone || !zone.style) return;
+  if (!bands || bands.fallback) { zone.style.display = 'none'; return; }
+  const vw = window.innerWidth, vh = window.innerHeight;
+  if (vw > vh) {
+    zone.style.left = '0px';
+    zone.style.top = Math.round(bands.top) + 'px';
+    zone.style.width = Math.round(bands.left) + 'px';
+    zone.style.height = Math.round(vh - bands.top) + 'px';
+  } else {
+    const left = bands.padInnerLeft, right = bands.padInnerRight;
+    if (right - left < 40) { zone.style.display = 'none'; return; }
+    zone.style.left = Math.round(left) + 'px';
+    zone.style.top = Math.round(bands.padTop) + 'px';
+    zone.style.width = Math.round(right - left) + 'px';
+    zone.style.height = Math.round(vh - bands.padTop) + 'px';
+  }
+  zone.style.display = 'block';
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
-  // ROUND 4: the scale is the VIEWPORT-limited letterbox only — chrome
+  // ROUND 4 base: the scale is the VIEWPORT-limited letterbox only — chrome
   // NEVER shrinks the field (that is how round 2 collapsed landscape to
-  // 41x26 / 0x0). Overlap with chrome is accepted; see the block comment.
+  // 41x26 / 0x0). ROUND 5 narrows it ON TOUCH LAYOUTS ONLY, below.
   const fit = Math.min(window.innerWidth / C.VIEW_W, window.innerHeight / C.VIEW_H);
   let scale = displayScale(fit);
   // A forced resolution mode (PIXEL-PERFECT / 2 / 3 / 4) can round the scale
@@ -313,29 +398,40 @@ function fitCanvas() {
   // -> a 480px field on a 390px screen). Priority 1: never outside the
   // viewport — clamp back to the fit.
   if (scale > fit) scale = fit;
-  const w = Math.floor(C.VIEW_W * scale), h = Math.floor(C.VIEW_H * scale);
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
-  let placed = false;
+  let w = Math.floor(C.VIEW_W * scale), h = Math.floor(C.VIEW_H * scale);
+  let placed = false, bands = null, fellBack = false;
   // No real layout API (node harness stub DOM) -> no live chrome to place
   // against: the whole-viewport letterbox stands exactly as before.
   if (typeof getComputedStyle === 'function' && touchLayerLive()) {
     placed = true;
-    // Top-aligned below the chrome row, horizontally centred by hand. When
-    // the field is tall enough to meet the chrome (landscape: the field is
-    // height-limited and fills the viewport), the clamp keeps it INSIDE the
-    // viewport and the chrome overlaps the field's top strip — the accepted
-    // failure mode, never a collapsed or clipped canvas.
-    const top = Math.min(topChromeBottom() + BAND_MARGIN, window.innerHeight - h);
-    canvas.style.position = 'absolute';
-    canvas.style.top = Math.round(top) + 'px';
-    canvas.style.left = Math.round((window.innerWidth - w) / 2) + 'px';
+    bands = controlBands();
+    const bf = bandFit(window.innerWidth, window.innerHeight, bands);
+    if (!bf.fallback) {
+      // ROUND 5: fitted into the bands, centred in what remains — overlap
+      // with the reserved chrome is impossible by construction.
+      w = bf.w; h = bf.h;
+      canvas.style.position = 'absolute';
+      canvas.style.top = Math.round(bf.top) + 'px';
+      canvas.style.left = Math.round(bf.left) + 'px';
+    } else {
+      // The NAMED FALLBACK (a viewport too small for zero overlap): the
+      // round-4 letterbox — top-aligned below the chrome row, clamped INSIDE
+      // the viewport, overlap accepted, never a collapsed canvas.
+      fellBack = true;
+      const top = Math.min(bands.top, window.innerHeight - h);
+      canvas.style.position = 'absolute';
+      canvas.style.top = Math.round(top) + 'px';
+      canvas.style.left = Math.round((window.innerWidth - w) / 2) + 'px';
+    }
   }
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
   if (!placed) {
     canvas.style.position = '';
     canvas.style.top = '';
     canvas.style.left = '';
   }
+  placeSteerZone(placed && !fellBack ? bands : null);
   renderer.resize();   // re-size the backing store to the new CSS size
 }
 fitCanvas();
@@ -8323,6 +8419,19 @@ if (touchLayer && touchLayer.addEventListener) {
     applyJoyVector((ev.clientX ?? 0) - fjoy.ox, (ev.clientY ?? 0) - fjoy.oy,
       fjoy.rad, fjoyKnobEl);
   }
+  // CONTROL BANDS (owner 2026-09-18, msg_01M2S6XRT0): the stick's HOME band
+  // — #steer-zone, placed by fitCanvas (the LEFT band in landscape, the
+  // bottom-centre strip between the pads in portrait). SAME arm path as the
+  // canvas (fjoyTryArm and all its guards); the pads sit ABOVE it in DOM
+  // order so their presses stay theirs; the bubbled event still reaches the
+  // touchLayer funnel (audio unlock, fs bump, help probe) and help-mode
+  // declines INSIDE the hook.
+  const steerZoneEl = document.getElementById('steer-zone');
+  if (steerZoneEl && steerZoneEl.addEventListener) {
+    steerZoneEl.addEventListener('pointerdown', (ev) => {
+      if (fjoyTryArm(ev) && ev.preventDefault) ev.preventDefault();
+    });
+  }
 
   touchLayer.addEventListener('pointerdown', (ev) => {
     audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
@@ -9700,6 +9809,10 @@ export const __TEST = {
   // + the live DOM elements, so the guard drives the REAL canvas path and
   // asserts the visual without touching main.js internals.
   get fjoy() { return fjoyApi; },
+  // CONTROL BANDS seam (2026-09-18): the PURE band-fit arithmetic, so the
+  // node suite can matrix-test the zero-overlap math without a layout
+  // engine (the real-browser proof is tools/verify_control_bands.mjs).
+  get bandFit() { return bandFit; },
   // ---- WAVE-26 seams (earned slow-mo / death payoff / draft hints) ----
   // Pure helpers + the live dilation state, so the new behaviour is testable
   // headlessly without driving the rAF loop.

@@ -149,20 +149,22 @@ async function phoneArm(w, h, dpr) {
       const auto = await p.evaluate(MEASURE);
 
       // Toggle the PILOT button (REAL TAPs): the ladder is AUTO ALL -> AUTO
-      // MOVE -> MANUAL, so up to two taps bind MANUAL, which shows the
-      // joystick — that tap is also the live proof the re-fit fires on a
-      // toggle. The taps run back-to-back with short polls: a slow loop
-      // gives the run time to level up and pop a DRAFT overlay over the
-      // pads, which would swallow the next tap.
-      const JOY = "(() => ({ joy: getComputedStyle(document.getElementById('joy')).display," +
-        " mode: (document.getElementById('ov-cards') || {}).childElementCount > 0 ? 'cards' : 'none' }))()";
+      // MOVE -> MANUAL, so up to two taps bind MANUAL — that tap is also the
+      // live proof the re-fit fires on a toggle. DETECTION reads the PILOT
+      // MODE, not #joy's display: since the floating joystick (2026-09-18)
+      // the fixed base stays HIDDEN on touch paths (one movement idiom), so
+      // display would never flip. The taps run back-to-back with short
+      // polls: a slow loop gives the run time to level up and pop a DRAFT
+      // overlay over the pads, which would swallow the next tap.
+      const JOY = "(async () => ({ mode: (document.getElementById('ov-cards') || {}).childElementCount > 0 ? 'cards' : 'none'," +
+        " pilot: (await import('./src/main.js')).__TEST.state.pilotMode }))()";
       let manual = false, pilotReads = [];
       for (let i = 0; i < 5 && !manual; i++) {
         await p.tap(Math.round(auto.padLeft.x + auto.padLeft.w / 2),
           Math.round(auto.padLeft.y + 2 * 64 + 2 * 10 + 64 / 2));   // 3rd button (PILOT)
         await p.sleep(250);
         pilotReads.push(await p.evaluate(JOY));
-        manual = pilotReads[pilotReads.length - 1].joy === 'block';
+        manual = pilotReads[pilotReads.length - 1].pilot === 'MANUAL';
       }
       await p.sleep(150);
       const manRec = await p.evaluate(MEASURE);
