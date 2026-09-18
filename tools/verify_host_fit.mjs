@@ -71,6 +71,7 @@ const MEASURE = `(async () => {
   if (visible(touch)) {
     for (const el of touch.querySelectorAll('.pad')) chrome.push(['pad', el]);
     for (const el of touch.querySelectorAll('button')) chrome.push(['btn', el]);
+    for (const el of touch.querySelectorAll('button.cog')) chrome.push(['cog', el]);
     if (visible(document.getElementById('joy'))) chrome.push(['#joy', document.getElementById('joy')]);
     if (visible(document.getElementById('steer-zone'))) chrome.push(['#steer-zone', document.getElementById('steer-zone')]);
   }
@@ -83,6 +84,19 @@ const MEASURE = `(async () => {
     rec.chromeRects.push({ name, ...b });
     if (ov(cv, b) > 0) rec.overlaps.push({ name, area: px(ov(cv, b)) });
   }
+  // UI-TIGHT: chrome must never stack on chrome — but only among the TOP-LEVEL
+  // actors (pads, the cog row, #hud). Skill buttons sit ON their pads and the
+  // #steer-zone underlays the controls BY DESIGN (the pads own the pointer);
+  // those pairs are excluded. The ui-tight defect this catches is the pad
+  // stack vs the cog row / #hud on a short hosted landscape box.
+  const TOP = new Set(['pad', 'cog', '#hud']);
+  rec.chromeClash = [];
+  for (let i = 0; i < rec.chromeRects.length; i++)
+    for (let j = i + 1; j < rec.chromeRects.length; j++) {
+      const a = rec.chromeRects[i], b = rec.chromeRects[j];
+      if (!TOP.has(a.name) || !TOP.has(b.name)) continue;
+      if (ov(a, b) > 0) rec.chromeClash.push({ a: a.name, b: b.name, area: px(ov(a, b)) });
+    }
   return rec;
 })()`;
 
@@ -140,6 +154,8 @@ for (const [w, h, dpr] of MATRIX) for (const hdr of [56, 90]) {
     r.uiFit.applied === 1 && r.uiFit.wanted === 1, r.uiFit);
   check('standalone 844x390: zero overlap still holds (round-5 untouched by the scale work)',
     r.uiFit.fellBack === false && r.overlaps.length === 0, r.overlaps);
+  check('standalone 844x390: chrome pairwise disjoint (ui-tight must NOT engage at a full viewport)',
+    r.chromeClash.length === 0, r.chromeClash);
 }
 for (const a of arms.slice(1)) {
   const { w, h, hdr } = a;
@@ -159,6 +175,8 @@ for (const a of arms.slice(1)) {
   }
   check(tag + ': EVERY control and canvas rect fully inside the visible viewport (nothing under the header, nothing off any edge)',
     outside.length === 0, outside);
+  check(tag + ': chrome never stacks on chrome (pad stack vs cog row vs HUD pairwise disjoint — the ui-tight degradation)',
+    r.chromeClash.length === 0, r.chromeClash);
   // Zero overlap where the band fit held; REPORT where the named fallback owns the size.
   if (r.uiFit.fellBack) {
     check(tag + ': below the band-fit breaking size — NAMED FALLBACK engaged, overlap REPORTED not asserted',

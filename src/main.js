@@ -456,6 +456,52 @@ function chromeLayoutRects() {
   consider(document.getElementById('hud'));
   return out;
 }
+// UI-TIGHT (owner 2026-09-18, hosted-short-landscape follow-on to
+// msg_01M2S72CF4902CWRWE7VJ3Y22M): the bottom-anchored pad stack (296px)
+// and the top-right cog row (~56px) COLLIDE once a host header eats ~60px —
+// buttons stacked on buttons, the owner's "everything is a little cut off".
+// A uniform scale cannot fix this (it preserves relative geometry), so the
+// LAYOUT degrades instead, exactly as the task mandates: while the box is
+// tight the cog row moves to the top CENTRE — horizontally clear of the side
+// pads at every acceptance width, still inside the live-measured top band
+// the canvas fit already reserves (round-5 zero-overlap untouched), and
+// clamped right of the live HUD block so chrome never stacks on chrome.
+// Inline placement (this file's house style for canvas/steer-zone): left is
+// set and right cleared, so relaxing clears both and the CSS right-anchored
+// row returns on the next fit.
+let cogTight = false;
+function placeCogRow(tight, vw) {
+  const touch = document.getElementById('touch');
+  if (!touch || !touch.querySelectorAll) return;
+  const cogs = [...touch.querySelectorAll('button.cog')];
+  if (!tight) {
+    if (cogTight) for (const el of cogs) { el.style.left = ''; el.style.right = ''; }
+    cogTight = false;
+    return;
+  }
+  cogTight = true;
+  // Visual left-to-right order is MAP, RADAR, HELP, SETTINGS — the reverse
+  // of the DOM's right-anchored order.
+  const ordered = [...cogs].reverse();
+  const GAP = 6;
+  const rects = ordered.map((el) => {
+    const v = el.getBoundingClientRect();
+    return { el, w: v.width / uiScaleNow };
+  });
+  const rowW = rects.reduce((s, r) => s + r.w, 0) + GAP * (rects.length - 1);
+  let start = (vw - rowW) / 2;
+  const hud = document.getElementById('hud');
+  if (hud && hud.isConnected) {
+    const hr = hud.getBoundingClientRect();
+    if (hr.width > 0) start = Math.max(start, hr.right / uiScaleNow + 8);
+  }
+  let x = Math.min(start, vw - 10 - rowW);
+  for (const r of rects) {
+    r.el.style.left = Math.round(x) + 'px';
+    r.el.style.right = 'auto';
+    x += r.w + GAP;
+  }
+}
 function fitCanvas() {
   if (!window.innerWidth || !canvas.style) return; // stub/headless guard
   lastFitFellBack = false;
@@ -481,6 +527,18 @@ function fitCanvas() {
   // against: the whole-viewport letterbox stands exactly as before.
   if (typeof getComputedStyle === 'function' && touchLayerLive()) {
     placed = true;
+    // UI-TIGHT detection (layout px): the pads' highest top vs the cog row's
+    // bottom — less than a 4px guard between them and the two stacks collide.
+    // placeCogRow runs BEFORE any rects are read so the fit, the bands and the
+    // UI scale all measure the DEGRADED layout the player will actually see.
+    let padTopMin = Infinity;
+    for (const el of document.querySelectorAll('#touch .pad')) {
+      if (!el.isConnected) continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      padTopMin = Math.min(padTopMin, el.getBoundingClientRect().top / uiScaleNow);
+    }
+    placeCogRow(padTopMin < topChromeBottom() + 4, vw);
     bands = controlBands();
     const bf = bandFit(vw, vh, bands);
     if (!bf.fallback) {
