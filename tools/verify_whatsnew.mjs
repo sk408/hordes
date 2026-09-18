@@ -122,6 +122,35 @@ async function viewport(w, h, tag) {
     ok(stamp2 > stamp1,
       '[' + tag + '] the timestamp MOVES between saves (' + stamp1 + ' -> ' + stamp2 + ')');
 
+    // 5. THE VETERAN ONE-OFF RUN (addendum 2026-09-17: "one off run just like
+    //    new players"): this profile DISMISSED the note (lastSeenUpdate = id)
+    //    and even has a fresh stamp — the run is still owed, and it is the
+    //    FULL treatment. CDP returnByValue strips functions, so every seam
+    //    call runs inline.
+    const arm1 = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      T2.startRun();
+      return { active: T2.prologue.active, ran: T2.prologue.ran,
+        potion: T2.prologue.potion, locked: T2.prologue.buttonsLocked,
+        revealed: T2.prologue.revealed,
+        seen: T2.getProfile().lastSeenUpdate,
+        stored: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastSeenUpdate,
+        stamped: JSON.parse(localStorage.getItem('hordes_profile_v1')).lastPlayed }; })()`);
+    ok(arm1.active === true && arm1.ran === true && !!arm1.potion,
+      '[' + tag + '] the dismissed veteran arms the SAME guided run (potion on screen)');
+    ok(arm1.locked === true && arm1.revealed && arm1.revealed.move === false,
+      '[' + tag + '] the full new-player treatment (buttons locked, nothing revealed)');
+    ok(arm1.seen === null && arm1.stored === null && typeof arm1.stamped === 'number' && arm1.stamped > 0,
+      '[' + tag + '] the arm CONSUMED the one-off (lastSeenUpdate cleared + persisted, lastPlayed stamped)');
+    const skipDrink = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      T2.prologue.skip(); T2.prologue.drink();
+      return { active: T2.prologue.active, shieldT: T2.prologue.shieldT,
+        mode: T2.state.mode }; })()`);
+    ok(skipDrink.active === false && skipDrink.shieldT > 0 && skipDrink.mode === 'playing',
+      '[' + tag + '] skip + drink from this entry point: shield paid, run live (the approved skip)');
+    const arm2 = await p.evaluate(`(async () => { const T2 = (await import('./src/main.js')).__TEST;
+      T2.startRun(); return T2.prologue.active; })()`);
+    ok(arm2 === false, '[' + tag + '] the one-off happens ONCE (the next run is a normal run)');
+
     const errors = p.errors;
     if (errors.length) { console.log('[' + tag + '] PAGE ERRORS: ' + errors.join(' | ').slice(0, 300)); fails++; }
   });

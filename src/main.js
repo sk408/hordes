@@ -970,15 +970,30 @@ let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'futu
 // never fight: a BRAND-NEW profile (no save at all) gets the prologue and NOT
 // this note; a RETURNING profile gets this note and no prologue (their
 // totals.runs is past 0, which is what arms the prologue).
+//
+// ADDENDUM (owner 2026-09-17): ONE TREATMENT, TWO AUDIENCES — "We could even
+// let older players have a one off run just like new players would have." A
+// returning player on a MARKED release gets the note AND the same one-off
+// GUIDED RUN a new player gets (potion, banners, assisted start — the whole
+// state.prologue machinery, nothing veteran-specific). NO new field: it keys
+// off lastSeenUpdate. The DISMISS writes lastSeenUpdate = id immediately (the
+// save IS the proof the player saw it); startRun then arms the guided run
+// while lastSeenUpdate === id (or the note is still due — a player who taps
+// START GAME without dismissing is converting too), and the ARM consumes the
+// one-off by clearing lastSeenUpdate and persisting: the run that opened with
+// the tutorial is the offer, never repeated. Population rules, plainly:
+//   no lastPlayed + other save data -> older player -> note + one-off run;
+//   no lastPlayed + no save at all  -> fresh profile -> prologue, no note;
+//   lastPlayed present              -> normal rules (lastSeenUpdate decides).
 const WHATS_NEW = {
   id: '2026-09-18',                    // RELEASE_ID — one per marked release
   dateMs: Date.UTC(2026, 8, 18),       // the ship date (2026-09-18)
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
   lines: [
-    'Your first run now opens with a short tutorial and a free shielding potion.',
+    'Your next run opens with the same short tutorial a new player gets.',
+    'Walk to the potion and drink it - skipping the explaining keeps the shield.',
     'Controls appear one at a time, each with a tip, as you need them.',
-    'Skipping the tutorial keeps the free potion and shield.',
     'Level-up picks land with a card ceremony while play continues.',
     'The shop now pages with arrows and fits three cards across.',
   ],
@@ -991,6 +1006,18 @@ function whatsNewDueFor(prof, rel, freshBoot) {
   if (prof && prof.lastSeenUpdate === rel.id) return false;   // already dismissed
   const last = prof && typeof prof.lastPlayed === 'number' ? prof.lastPlayed : null;
   return last === null || last < rel.dateMs;     // missing stamp = has not seen it
+}
+// ADDENDUM (owner 2026-09-17): is the ONE-OFF GUIDED RUN due for this player?
+// Pure, and keyed off lastSeenUpdate only (NO new field). True when the player
+// has DISMISSED this release's note (lastSeenUpdate === id) but not yet taken
+// the offered run — the arm at startRun consumes it — or when the note is due
+// RIGHT NOW (they tapped START GAME without dismissing; converting all the
+// same). A brand-new profile never qualifies: the prologue is theirs already.
+function veteranIntroDueFor(prof, rel, freshBoot) {
+  if (!rel || !rel.worthTelling) return false;   // unmarked release: no run either
+  if (freshBoot) return false;                   // brand-new profile: prologue owns it
+  if (prof && prof.lastSeenUpdate === rel.id) return true;    // dismissed, run not yet taken
+  return whatsNewDueFor(prof, rel, false);       // note due this very launch
 }
 let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry only
 
@@ -7453,7 +7480,15 @@ function startRun() {
   state.prologueShieldT = 0;
   const prologueRunsPlayed = Number(profile.achievements && profile.achievements.totals &&
     profile.achievements.totals.runs) || 0;
-  state.prologue = prologueRunsPlayed === 0
+  // ADDENDUM (owner 2026-09-17, "one off run just like new players"): a
+  // RETURNING player converting on a marked release arms the SAME prologue a
+  // fresh profile gets — keyed off lastSeenUpdate (see veteranIntroDueFor),
+  // never a second saved field. The arm CONSUMES the one-off right here:
+  // clearing lastSeenUpdate and persisting means this run — the one that
+  // opened with the tutorial — is the whole offer; no later run re-arms it
+  // (the persist also stamps lastPlayed, which closes the note's date gate).
+  const veteranIntro = veteranIntroDueFor(profile, WHATS_NEW, bootResult.status === 'fresh');
+  state.prologue = (prologueRunsPlayed === 0 || veteranIntro)
     ? { t: 0, drunk: false, walkT: 0,
         // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
         // at a time with the tooltip explaining what they do"): each staged
@@ -7494,6 +7529,15 @@ function startRun() {
         if (el && el.classList) el.classList.remove('pr-on');
       }
     }
+  }
+  // The one-off is SPENT at the arm (addendum 2026-09-17): the guided run is
+  // happening right now, so the offer comes off the table in the same breath.
+  // Clearing lastSeenUpdate + persisting (which stamps lastPlayed past the
+  // release date) closes BOTH re-arm paths — the veteran gate and the note's
+  // date gate — through the ONE existing save path. No second writer.
+  if (veteranIntro) {
+    profile.lastSeenUpdate = null;
+    persistProfile();
   }
   state.pendingDrafts = 0;
   state.wave = makeWave();
@@ -10758,11 +10802,13 @@ export const __TEST = {
   // REAL startup menu), the no-local-save test the LOAD FROM DISK card rides
   // on, and the honest-exit contract (the step log + the two screens).
   showTitle, hasLocalSave,
-  // ---- v9 WHAT'S NEW seam: the pure gate (matrix-testable), the live release
+  // ---- v9 WHAT'S NEW seam: the pure gates (matrix-testable), the live release
   // constant, the card add/dismiss pair, and the once-per-launch flag — so the
   // suite can drive the REAL title path without scraping for the card.
+  // veteranDue is the ADDENDUM's one-off-run gate (keys off lastSeenUpdate).
   whatsNew: {
     due: whatsNewDueFor,
+    veteranDue: veteranIntroDueFor,
     release: WHATS_NEW,
     add: addWhatsNewCard,
     dismiss: dismissWhatsNew,

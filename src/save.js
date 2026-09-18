@@ -276,6 +276,12 @@ const MIGRATIONS = {
   // NOTHING ELSE — no timestamp is invented for a v8 save (a missing stamp
   // legitimately reads as "has not seen the note"), and a present value is left
   // alone for validateProfile to check + report (one repair path, not two).
+  // THE SENTINEL (addendum, owner 2026-09-17): lastPlayed === null is the
+  // DOCUMENTED meaning "played before we tracked this" — an honest unknown,
+  // deliberately NOT a fabricated plausible-looking date (false data would be
+  // worse). The game treats null exactly like that: an older player with other
+  // save facts present gets the returning-player treatment, and the first real
+  // save stamps a true timestamp over it.
   8: (p) => {
     const next = { ...p };
     if (next.lastPlayed === undefined) next.lastPlayed = null;

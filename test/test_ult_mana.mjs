@@ -70,8 +70,14 @@ const ls = new Map([['hordes_onboarded', '1'],
   // FIRST-RUN PROLOGUE neutralization (the _harness.mjs convention,
   // 2026-09-18): without this stamp the cast runs are run #1 of a fresh
   // profile — the prologue's all-buttons-disabled lockout would swallow the
-  // very ult cast whose mana spend this file pins.
-  ['hordes_profile_v1', JSON.stringify({ version: 8, achievements: { totals: { runs: 1 } } })]]);
+  // very ult cast whose mana spend this file pins. v9 ADDENDUM: the seeded
+  // lastPlayed is the SECOND neutralization — a migrated save with no stamp
+  // is exactly the "older player converting on a marked release" population,
+  // and startRun would arm the veteran ONE-OFF GUIDED RUN (same lockout).
+  // An ACTIVE player (recent stamp) gets neither intro (tools/browser.mjs
+  // precedent).
+  ['hordes_profile_v1', JSON.stringify({ version: 9, lastPlayed: Date.now(),
+    achievements: { totals: { runs: 1 } } })]]);
 globalThis.localStorage = {
   getItem: k => (ls.has(k) ? ls.get(k) : null),
   setItem: (k, v) => ls.set(k, String(v)),

@@ -24,6 +24,12 @@
 //             entry per page load), tap-dismisses, and the dismiss PERSISTS
 //             lastSeenUpdate — shown once per marked release, across
 //             reloads. After the dismiss the title is fully playable.
+//   VETERAN   (addendum 2026-09-17, "one off run just like new players") a
+//             returning player converting on a marked release gets the SAME
+//             guided run a fresh profile gets — armed at startRun, keyed off
+//             lastSeenUpdate (NO second field), CONSUMED at the arm (one-off,
+//             persisted), the approved SKIP works from this entry point, and
+//             the sentinel population rules hold end to end.
 // Run: node test/test_whatsnew.mjs
 import { TOUR_KEYS } from '../src/tour.js';
 
@@ -46,6 +52,13 @@ const mk = () => {
   const el = {
     tagName: 'div', className: '', id: '', style: { cssText: '' }, children: [], parentNode: null, onclick: null,
     _html: '',
+    // v9 ADDENDUM: the veteran guided run arms the REAL prologue, whose button
+    // lock rides body.classList (prologueLockButtons) — the stub needs it.
+    classList: {
+      _s: new Set(),
+      add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); },
+      toggle(c, on) { if (on === undefined) { this._s.has(c) ? this._s.delete(c) : this._s.add(c); } else if (on) this._s.add(c); else this._s.delete(c); },
+    },
     addEventListener(ev, cb) { const h = handlers.get(el) || {}; (h[ev] = h[ev] || []).push(cb); handlers.set(el, h); },
     removeEventListener(ev, cb) { const h = handlers.get(el) || {}; h[ev] = (h[ev] || []).filter(f => f !== cb); },
     fire(ev, arg) { for (const cb of ((handlers.get(el) || {})[ev] || []).slice()) cb(arg); },
@@ -215,11 +228,17 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     cards().some(el => /START GAME/.test(el.innerHTML || '')));
   ok('the note carries the release copy and a dismiss affordance',
     /WHAT'S NEW/.test(note.innerHTML) && /tap to close/i.test(note.innerHTML));
-  // DISMISS: persists lastSeenUpdate; the title stays whole.
+  // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
+  // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
+  // the popup should write a save" — the same prove-it-moved discipline the
+  // timestamp gets, or a player who closes the tab sees it again).
+  const rawBefore = ls.get('hordes_profile_v1');
   note.click();
   ok('the dismiss removed the note and PERSISTED lastSeenUpdate (shown once)',
     !noteEl() && stored().lastSeenUpdate === W.release.id,
     { seen: stored().lastSeenUpdate });
+  ok('the dismiss WROTE THE SAVE immediately (the persisted bytes changed on the tap)',
+    ls.get('hordes_profile_v1') !== rawBefore && JSON.parse(ls.get('hordes_profile_v1')).lastSeenUpdate === W.release.id);
   ok('after the dismiss the title is unchanged and playable',
     st.mode === 'title' && cards().some(el => /START GAME/.test(el.innerHTML || '')));
   // A later title return never re-adds it (launch-only + seen).
@@ -259,6 +278,64 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     W.due(freshProfile, rel, true) === false);
   ok('returning boot + migrated save: the note (the arm this file tested in 4)',
     W.due({ lastPlayed: null, lastSeenUpdate: null }, rel, false) === true);
+}
+
+// ---- 7. ADDENDUM: the veteran one-off guided run + population rules ---------
+{
+  const rel = W.release;
+  // The pure one-off gate, matrixed (the population rules, stated as code).
+  ok('VETERAN RUN DUE: no lastPlayed + other save facts (the older player)',
+    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, rel, false) === true);
+  ok('VETERAN RUN DUE: dismissed the note, run not yet taken (keys off lastSeenUpdate)',
+    W.veteranDue({ lastPlayed: rel.dateMs + 1000, lastSeenUpdate: rel.id }, rel, false) === true);
+  ok('NOT DUE: a brand-new profile — the first-run PROLOGUE is theirs alone',
+    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, rel, true) === false);
+  ok('NOT DUE: an active player past the release who never saw a note',
+    W.veteranDue({ lastPlayed: rel.dateMs + 1, lastSeenUpdate: null }, rel, false) === false);
+  ok('NOT DUE: an UNMARKED release offers no run either',
+    W.veteranDue({ lastPlayed: null, lastSeenUpdate: null }, { ...rel, worthTelling: false }, false) === false);
+  ok('POPULATION RULE: lastPlayed present -> normal rules (lastSeenUpdate decides the note)',
+    W.due({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: rel.id }, rel, false) === false &&
+    W.due({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: null }, rel, false) === true);
+
+  // THE REAL ARM: this module booted from the v8 save (status 'migrated'), so
+  // startRun on the reset profile is exactly the veteran conversion path.
+  const prof = T.getProfile();
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;   // the migrated pre-v9 state
+  T.startRun();
+  ok('a returning player arms the SAME guided run a new player gets (potion on screen)',
+    T.prologue.active === true && T.prologue.ran === true && !!T.prologue.potion,
+    { active: T.prologue.active, potion: T.prologue.potion });
+  ok('the arm is the full treatment: stage-clean, nothing revealed, buttons locked',
+    T.prologue.bannerIdx === 0 && T.prologue.revealed.move === false &&
+    T.prologue.revealed.pilot === false && T.prologue.revealed.stats === false &&
+    T.prologue.buttonsLocked === true);
+  ok('the arm CONSUMED the one-off in the same breath: lastSeenUpdate cleared + a save WRITTEN',
+    prof.lastSeenUpdate === null && stored().lastSeenUpdate === null &&
+    typeof stored().lastPlayed === 'number' && stored().lastPlayed > 0,
+    { seen: stored().lastSeenUpdate, lastPlayed: stored().lastPlayed });
+
+  // THE APPROVED SKIP, from THIS entry point: stop explaining, keep the potion.
+  T.prologue.skip();
+  ok('skip from the veteran arm: explaining stops, the phase STAYS armed (skipped mode)',
+    T.prologue.active === true && st.prologue.skipped === true &&
+    st.prologue.revealed.move === true && T.prologue.buttonsLocked === false);
+  T.prologue.drink();
+  ok('the post-skip drink pays the shield and ends the phase (skip keeps the potion)',
+    T.prologue.active === false && T.prologue.shieldT > 0 && st.mode === 'playing');
+
+  // ONCE: the offer is spent — the next run is a normal run.
+  T.startRun();
+  ok('the one-off run happens ONCE: the next startRun opens a normal run',
+    T.prologue.active === false && st.prologue === null);
+
+  // Dismissed-but-never-ran: the run is still owed on a later session.
+  prof.lastSeenUpdate = rel.id;                  // dismissed earlier, never took the run
+  T.startRun();
+  ok('a player who dismissed but never ran gets the guided run on their NEXT run',
+    T.prologue.active === true);
+  T.prologue.drink();                            // end the phase; leave state tidy
+  ok('cleanup: the phase ended and the run is live', T.prologue.active === false && st.mode === 'playing');
 }
 
 console.log('test_whatsnew: all ' + passed + ' checks passed');
