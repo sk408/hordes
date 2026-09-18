@@ -618,12 +618,13 @@ export const CONFIG = {
     // DELIBERATE opt-in (the what's-new accept button, the manual's REPLAY
     // TOUR card) bypasses it through the assistedRun path, so the special
     // level stays reachable for anyone who asks while the automatic path
-    // stays off. It comes back ON only when the three owner defects are
-    // fixed behind it:
-    //   a. a REAL, always-visible opt-out control;
+    // stays off. RE-ENABLED 2026-09-18: the three owner defects are fixed behind
+    // it and tools/verify_prologue.mjs is green at both phone sizes (empty
+    // storage, no seeded run count — the owner's own cleared-data test):
+    //   a. a REAL, always-visible opt-out control (the armed two-tap SKIP);
     //   b. lesson/mode coherence (never teach steering while AUTO drives);
     //   c. each step waits for the player to DO the thing, not to press OK.
-    ENABLED: false,
+    ENABLED: true,
     INVULN_S: 45,
     MAX_S: 60,
     CLEAR_MARGIN: 120,

@@ -259,9 +259,32 @@ async function legA(w, h, tag) {
     copyFileSync(shotDraft, ART + '/prologue-draft-' + tag + '.png');
     ok(true, '[' + tag + '] scripted-draft shot (the free level-up + its explanation)');
     await p.evaluate(`(() => {
-      const c = [...document.getElementById('ov-cards').children].filter(k => !k.hidden)[0];
-      if (c) c.click(); })()`);
+      const cards = [...document.getElementById('ov-cards').children].filter(k => !k.hidden);
+      const c = cards[0];
+      if (!c) { window.__probe = 'no card'; return; }
+      const frame = c.querySelector('.frame');
+      window.__probe = JSON.stringify({
+        tag: c.tagName, cls: String(c.className).slice(0, 40), hidden: c.hidden,
+        onclick: typeof c.onclick, attr: c.getAttribute('onclick'),
+        pe: getComputedStyle(c).pointerEvents,
+        w: Math.round(c.getBoundingClientRect().width),
+        frameOnclick: frame ? typeof frame.onclick : 'no-frame'
+      });
+      // the sequence a finger actually produces
+      const r = c.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, isPrimary: true };
+      const send = (el, type) => {
+        try {
+          el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, opts)
+            : new MouseEvent(type, opts));
+        } catch (e) { try { el.dispatchEvent(new MouseEvent(type, opts)); } catch (e2) {} }
+      };
+      for (const type of ['pointerdown', 'pointerup', 'click']) send(c, type);
+    })()`);
     await p.sleep(500);
+    console.log('  probe[' + tag + '] cards[0]=' + await p.evaluate('window.__probe')
+      + ' bannerIdx=' + await p.evaluate(tx('t.prologue.bannerIdx')));
     ok(await p.evaluate(tx('t.prologue.bannerIdx')) === 6,
       '[' + tag + '] the PICK advanced banner 6 (5 -> 6)');
 
