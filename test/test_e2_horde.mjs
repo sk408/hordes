@@ -223,10 +223,14 @@ s.check('R3: heavies are the rare tier; the SHRIKE flies with the horde', () => 
 s.check('R6: chaff potion/chest rolls collapse at the horde wave', () => {
   // Deterministic through the REAL kill funnel: ONE planted plain-chaff
   // corpse (hp 0, reaped live) with Math.random forced to a constant. A
-  // roll at 0.02 lands under the ungated chances (potion 0.03, chest 0.35)
-  // but over the horde-wave scaled ones (x CHAFF_DROP_MULT) — so wave 1 pays
-  // and wave 2 does not, bit-exact, no Poisson noise. A second roll UNDER
-  // the scaled chance proves near-zero is not zero.
+  // roll at 0.02 lands under the ungated chest chance (0.35) but over the
+  // horde-wave scaled ones (x CHAFF_DROP_MULT) — so wave 1 pays and wave 2
+  // does not, bit-exact, no Poisson noise. A second roll UNDER the scaled
+  // chance proves near-zero is not zero.
+  // POTION TUNE RETARGET (2026-09-17, owner msg_01M2R9CX "cut it TO 1/5th"):
+  // DROP_CHANCE 0.03 -> 0.006 (x0.05 chaff = 0.0003), so the POTION control
+  // rolls moved 0.02 -> 0.003 (wave 1 pays, horde wave blocks) and the
+  // near-zero roll 0.001 -> 0.0001. The CHEST rolls are untouched (0.35).
   const reap = (num, rngVal, eliteish) => {
     st.wave.num = num; st.enemies.length = 0; st.drops.length = 0; st.chests.length = 0;
     const e = makeTypedEnemy('CHASER', p.x + 400, p.y, st.time);
@@ -239,12 +243,12 @@ s.check('R6: chaff potion/chest rolls collapse at the horde wave', () => {
     return { potions: st.drops.length, chests: st.chests.length };
   };
   // Potions (not elite-ish: the chest roll stays out of the way).
-  if (reap(1, 0.02, false).potions !== 1) throw new Error('the wave-1 chaff potion channel regressed');
-  if (reap(C.E2.WAVE, 0.02, false).potions !== 0) {
-    throw new Error('a chaff potion paid out at the un-scaled roll (0.02)');
+  if (reap(1, 0.003, false).potions !== 1) throw new Error('the wave-1 chaff potion channel regressed');
+  if (reap(C.E2.WAVE, 0.003, false).potions !== 0) {
+    throw new Error('a chaff potion paid out at the un-scaled roll (0.003)');
   }
-  if (reap(C.E2.WAVE, 0.001, false).potions !== 1) {
-    throw new Error('the scaled chaff potion roll is ZERO, not near-zero (0.001 must pay)');
+  if (reap(C.E2.WAVE, 0.0001, false).potions !== 1) {
+    throw new Error('the scaled chaff potion roll is ZERO, not near-zero (0.0001 must pay)');
   }
   // Chests (elite-ish by hp: the chest roll REALLY runs).
   if (reap(1, 0.02, true).chests !== 1) throw new Error('the wave-1 chaff chest channel regressed');

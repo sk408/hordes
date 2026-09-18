@@ -124,11 +124,16 @@ export const STAT_DEFAULTS = {
 
 // ---------- G33 adaptive potion drops (owner 2026-09-16) ---------------------
 // The inverse-rate multiplier: at or below refKps the factor is EXACTLY 1 (the
-// early game is byte-identical); above it the chance falls roughly inverse to
-// the kill rate, floored at floorFrac so a swarm still drops something. PURE.
+// early game is byte-identical); above it the chance falls as the SQUARED
+// inverse of the kill rate — the 2026-09-17 POTION TUNE (owner msg_01M2R9CX:
+// "steepen the trail off") replaced the linear ratio REF/kps with (REF/kps)^2,
+// strictly steeper at every rate above the reference. Floored at floorFrac so
+// a swarm still drops something (floor 0.2 -> 0.04 the same day; bind point
+// refKps/sqrt(floorFrac) = 100 unchanged). PURE.
 export function adaptiveDropFactor(kps, refKps, floorFrac) {
   if (!(kps > refKps) || !(refKps > 0)) return 1;
-  return Math.min(1, Math.max(floorFrac, refKps / kps));
+  const r = refKps / kps;
+  return Math.min(1, Math.max(floorFrac, r * r));
 }
 
 // One dt-driven EWMA step of the rolling kill rate (kills/second). No wall

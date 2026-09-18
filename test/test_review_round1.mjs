@@ -317,13 +317,16 @@ console.log('test_review_round1: items 1-2 ' + passed + ' checks');
     F.includes('+' + P.MP_RESTORE + ' MP'), F);
   ok('3: no spend at full is stated (charges are never wasted)', /never spent at full|not at full/.test(F), F);
   // Refill: drop chance per kill, adaptive scarcity, run start, Travel Pack.
-  ok('3: refill stated and matches code (' + Math.round(P.DROP_CHANCE * 100) + '% per kill)',
-    F.includes(Math.round(P.DROP_CHANCE * 100) + '% per kill'), F);
+  // POTION TUNE RETARGET (2026-09-17): the copy now prints 0.6% via toFixed(1)
+  // (Math.round would show "1%" for the new 0.006 chance).
+  ok('3: refill stated and matches code (' + (P.DROP_CHANCE * 100).toFixed(1) + '% per kill)',
+    F.includes((P.DROP_CHANCE * 100).toFixed(1) + '% per kill'), F);
   ok('3: dense swarms drop fewer (adaptive scarcity is named)', /swarm/.test(F), F);
   ok('3: run start count stated (' + P.START + ' of each)', F.includes('starts with ' + P.START + ' of each'), F);
-  // AUTO pilot: the fractions straight from config.
+  // AUTO pilot: the HP line is the potion's heal (msg_01M2RE1V, 2026-09-17 —
+  // the HP_FRACTION knob is retired); MP stays a fraction from config.
   ok('3: AUTO auto-drink thresholds stated and match code',
-    F.includes(Math.round(AD.HP_FRACTION * 100) + '%') && F.includes(Math.round(AD.MP_FRACTION * 100) + '%'), F);
+    F.includes("a potion's heal") && F.includes(Math.round(AD.MP_FRACTION * 100) + '%'), F);
   // The boss curse: a live boss halves the heal (main.js drinkHealthPotion).
   ok('3: the boss curse is stated (boss live = health potions heal half)',
     /boss curse/i.test(F) && /half/i.test(F), F);

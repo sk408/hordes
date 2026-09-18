@@ -24,6 +24,13 @@ const h = await boot();
 const st = h.state;
 const T = h.T;
 const AD = C.AUTOPILOT.AUTO_DRINK;
+// POTION TUNE RETARGET (2026-09-17, owner msg_01M2RE1V: "If HP drops below
+// what a potion would heal, it should be used" — "In auto mode that is"): the
+// HP line is no longer max*HP_FRACTION (the knob is retired); it is the
+// POTION'S HEAL VALUE with the same healMult the drink applies.
+const hpLine = (p) => C.POTIONS.HP_HEAL *
+  (((p || st.player).choices && (p || st.player).choices.potionHealMult) || 1) *
+  ((p || st.player).stats.potionPower || 1);
 
 // A world with nothing in it: these checks are about the pilot's potion hand,
 // so no enemy may land a hit (and no boss may re-stance the pilot) mid-pump.
@@ -48,8 +55,11 @@ const live = (mode = 'AUTO') => {
 S.check('the knobs exist in CONFIG.AUTOPILOT and are sane', () => {
   assert.ok(AD, 'CONFIG.AUTOPILOT.AUTO_DRINK must exist');
   assert.equal(AD.ENABLED, true, 'shipped enabled');
-  assert.ok(AD.HP_FRACTION > 0 && AD.HP_FRACTION < 1,
-    'HP_FRACTION is a fraction of max, not a flat number: ' + AD.HP_FRACTION);
+  // POTION TUNE RETARGET (2026-09-17): HP_FRACTION is RETIRED — the HP gate is
+  // the potion's heal value (main.js autoDrinkPotions), so asserting a fraction
+  // knob here would pin a line the code no longer reads.
+  assert.ok(AD.HP_FRACTION === undefined,
+    'HP_FRACTION is retired; the HP line is the potion\'s heal: ' + AD.HP_FRACTION);
   assert.ok(AD.MP_FRACTION > 0 && AD.MP_FRACTION < 1,
     'MP_FRACTION is a fraction of max: ' + AD.MP_FRACTION);
   assert.ok(AD.COOLDOWN > 0, 'COOLDOWN must be positive: ' + AD.COOLDOWN);
@@ -59,7 +69,7 @@ S.check('the knobs exist in CONFIG.AUTOPILOT and are sane', () => {
 S.check('a REAL run: HP below the line drinks and recovers (live frame loop)', () => {
   live('AUTO');
   const p = st.player;
-  const line = p.stats.maxHp * AD.HP_FRACTION;
+  const line = hpLine(p);
   p.potions.hp = 2;
   p.potions.mp = 0;
   p.mana = p.stats.maxMana;               // mana is not in play in this check
@@ -77,7 +87,7 @@ S.check('a REAL run: HP below the line drinks and recovers (live frame loop)', (
 S.check('never at or above the line — the boundary costs nothing', () => {
   live('AUTO');
   const p = st.player;
-  const line = p.stats.maxHp * AD.HP_FRACTION;
+  const line = hpLine(p);
   p.potions.hp = 2;
   p.potions.mp = 0;
   p.mana = p.stats.maxMana;
@@ -111,7 +121,7 @@ S.check('MANUAL drinks nothing — the player keeps 100% of the decision', () =>
   live('MANUAL');
   assert.equal(st.pilotMode, 'MANUAL', 'the manual pilot is bound');
   const p = st.player;
-  const line = p.stats.maxHp * AD.HP_FRACTION;
+  const line = hpLine(p);
   p.potions.hp = 3;
   p.potions.mp = 3;
   p.hp = 1;
@@ -187,9 +197,16 @@ S.check('one drink per dip — a deep hole cannot chug the stack', () => {
   h.pump(29, quiet);
   assert.equal(p.potions.hp, 2,
     'inside the ' + AD.COOLDOWN + 's gate no second charge is spent');
-  // Past the gate, a still-starved pilot drinks again (it is not a one-shot).
+  // POTION TUNE RETARGET (2026-09-17): the line is the potion's heal (35), and
+  // one heal from hp 1 lands at 36 — AT/above the line — so past the cooldown
+  // the pilot HOLDS until the next real dip. Both halves asserted: no spend
+  // while healed above the line (even past the cooldown), spend on a re-dip.
   h.pump(Math.ceil(AD.COOLDOWN * 60) + 2, quiet);
-  assert.ok(p.potions.hp < 2, 'past the cooldown the pilot drinks again');
+  assert.equal(p.potions.hp, 2,
+    'past the cooldown but above the line (healed to ' + p.hp.toFixed(1) + '): still holding');
+  p.hp = 10;                              // the next dip
+  h.pump(1, quiet);
+  assert.equal(p.potions.hp, 1, 'a fresh dip past the cooldown drinks again');
 });
 
 // ============================================================================

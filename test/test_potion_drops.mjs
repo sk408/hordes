@@ -5,10 +5,15 @@
 // Pins, per docs/briefs/ADAPTIVE_POTION_DROPS.md:
 //   - the curve (loot.js adaptiveDropFactor): EXACTLY 1 at kps = 0 and at every
 //     low rate (early game byte-identical, BASE untouched); monotonically
-//     non-increasing above REF_KPS; the FLOOR holds as kps grows without bound;
-//     derived income kps*BASE*factor is linear below the reference and FLAT
-//     above it (the asymptote asserted NUMERICALLY: BASE*min(kps, REF_KPS))
-//     through the whole measured swarm band (max observed 93 <= REF/FLOOR=100).
+//     non-increasing above REF_KPS; the FLOOR holds as kps grows without bound.
+//     POTION TUNE RETARGET (2026-09-17, owner msg_01M2R9CX: "Cut their drop by
+//     about 1/5th and steepen the trail off" — clarified "cut it TO 1/5th"):
+//     BASE 0.03 -> 0.006, the ratio SQUARED above the reference, FLOOR 0.2 ->
+//     0.04 (bind point REF/sqrt(FLOOR) = 100 unchanged). Derived income
+//     kps*BASE*factor is linear below the reference, then FALLS as BASE*REF^2/kps
+//     through the measured swarm band (max observed 93 < 100) — the swarm no
+//     longer prints a flat potion income (see test_potion_tune.mjs for the
+//     full old-vs-new rate table).
 //   - the estimator (loot.js ewmaKillRate): dt-driven (dt=0 is a frozen no-op),
 //     converges on a constant kill stream, and DECAYS back down when kills stop.
 //   - the wiring (real loop, tools/real_loop.mjs bootReal): update() ticks the
@@ -37,14 +42,18 @@ const income = (kps) => kps * BASE * factor(kps);   // potions/second the curve 
 
 // ---- 1. the low-rate end is byte-identical ------------------------------------
 ok('config: ADAPTIVE knobs present, TAU in the 5-10s band',
-  REF_KPS > 0 && FLOOR_FRAC >= 0.2 && FLOOR_FRAC <= 0.3 && TAU >= 5 && TAU <= 10,
+  // POTION TUNE RETARGET (2026-09-17): FLOOR_FRAC band 0.2-0.3 -> exactly 0.04
+  // (one fifth of the old floor, same day the base was cut to 0.006).
+  REF_KPS > 0 && FLOOR_FRAC === 0.04 && TAU >= 5 && TAU <= 10,
   { REF_KPS, FLOOR_FRAC, TAU });
 ok('kps = 0: factor is EXACTLY 1 (fresh save, measured 0.2-0.3 kps)', factor(0) === 1);
 ok('measured ordinary rates (0.3, 0.6, 6.9 kps): factor EXACTLY 1',
   factor(0.3) === 1 && factor(0.6) === 1 && factor(6.9) === 1);
 ok('at kps === REF_KPS: factor EXACTLY 1 (the bend starts strictly above)',
   factor(REF_KPS) === 1);
-ok('BASE itself is untouched (0.03, was the flat per-kill chance)', BASE === 0.03);
+// POTION TUNE RETARGET (2026-09-17, owner msg_01M2R9CX "cut it TO 1/5th"):
+// 0.03 -> 0.006, exactly one fifth of the old flat per-kill chance.
+ok('BASE is exactly one fifth of the pre-tune 0.03 (0.006)', BASE === 0.006);
 
 // ---- 2. above the reference: monotone, floored, income FLAT --------------------
 let mono = true;
@@ -52,12 +61,22 @@ for (let k = REF_KPS; k <= 200; k += 5) if (factor(k + 5) > factor(k) + 1e-12) m
 ok('monotonically non-increasing from REF_KPS to 200 kps', mono);
 ok('the floor holds as kps grows large', factor(1e6) === FLOOR_FRAC && factor(1e9) === FLOOR_FRAC);
 ok('just above the reference the curve bends (REF+1 < 1)', factor(REF_KPS + 1) < 1);
-let flat = true;
-for (const k of [REF_KPS, 25, 30, 50, 66.8, 80, 93, 100]) {   // 66.8/93 = measured p90/max
-  if (!near(income(k), BASE * Math.min(k, REF_KPS), 1e-6)) flat = false;
+// POTION TUNE RETARGET (2026-09-17): the income shape above the reference is no
+// longer FLAT (BASE*min(kps,REF)) — the squared ratio makes it FALL as
+// BASE*REF^2/kps, asserted NUMERICALLY through the measured swarm band.
+{
+  let falling = true;
+  for (let k = REF_KPS + 1; k < 100; k++) if (!(income(k + 1) < income(k) - 1e-15)) falling = false;
+  ok('income STRICTLY FALLS from the reference to the floor bind (steepened trail-off)', falling);
+  let shape = true;
+  for (const k of [25, 30, 50, 66.8, 80, 93]) {   // 66.8/93 = measured p90/max
+    if (!near(income(k), BASE * REF_KPS * REF_KPS / k, 1e-9)) shape = false;
+  }
+  ok('income = BASE*REF^2/kps NUMERICALLY through the whole measured swarm band',
+    shape, [income(66.8), income(93)]);
+  ok('at the floor bind (kps 100) the income is the floor linear 100*BASE*FLOOR',
+    near(income(100), 100 * BASE * FLOOR_FRAC, 1e-9), income(100));
 }
-ok('income = BASE*min(kps,REF) NUMERICALLY through the whole measured swarm band (flat at 0.6/s)',
-  flat, [income(66.8), income(93)]);
 ok('linear below the reference: income(10) == BASE*10 exactly', income(10) === BASE * 10);
 
 // ---- 3. the estimator -----------------------------------------------------------
@@ -137,17 +156,16 @@ try {
     dropValue() === 30, dropValue());
   st.drops.length = 0;
   st.killRateEwma = 1000; st.killsAtRateTick = st.player.kills;   // deep-swarm rate
-  // 3000 corpses, not 30: at rate 1000 the FLOOR binds (factor = clamp(20/1000,
-  // 0.2, 1) = 0.2), so a 30-corpse batch expects just 6 drops and the old
-  // "> 0" half was a lottery (0.1% zero-odds, and it did fail in a G36 suite
-  // run). A 3000-roll batch expects 600: assert the 0.16..0.24 factor band
-  // (480..720, ~4 sigma) — a MUCH tighter pin of the floor than before.
-  // Counted as VALUE: past DROP_CAP (48) the overflow merges same-kind drops
-  // into counts, so the floor is pinned through the merge, not by evading it.
+  // 3000 corpses, not 30: at rate 1000 the FLOOR binds. POTION TUNE RETARGET
+  // (2026-09-17): factor = clamp((20/1000)^2, 0.04, 1) = 0.04 (was 0.2), so a
+  // 3000-roll batch expects 120: assert the 0.027..0.053 factor band (80..160,
+  // ~4 sigma). Counted as VALUE: past DROP_CAP (48) the overflow merges
+  // same-kind drops into counts, so the floor is pinned through the merge, not
+  // by evading it.
   corpses(3000); frame();
   const v = dropValue();
-  ok('rate 1000: the floor binds — drops at the 0.2 factor band (480..720 of 3000)',
-    v >= 480 && v <= 720, v);
+  ok('rate 1000: the floor binds — drops at the 0.04 factor band (80..160 of 3000)',
+    v >= 80 && v <= 160, v);
 } finally {
   C.POTIONS.DROP_CHANCE = savedChance;
 }

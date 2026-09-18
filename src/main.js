@@ -4450,14 +4450,14 @@ function manualGoto(page) {
       // main.js drinkHealthPotion's state.wave.boss halving), pinned by
       // test_review_round1 item 3 so the copy cannot drift from the config.
       '<br><br>POTIONS — carried charges, not skills:' +
-      '<br>enemies drop them (' + Math.round(C.POTIONS.DROP_CHANCE * 100) + '% per kill;' +
+      '<br>enemies drop them (' + (C.POTIONS.DROP_CHANCE * 100).toFixed(1) + '% per kill;' +
       ' rarer in dense swarms) — picked up automatically in pickup range,' +
       ' LEFT ON THE GROUND at your cap (' + C.POTIONS.MAX_CARRIED + ' of each).' +
       '<br>a run starts with ' + C.POTIONS.START + ' of each; Travel Pack (shop) adds more.' +
       '<br>HEALTH potion: +' + C.POTIONS.HP_HEAL + ' HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
       ' &middot; never spent at full.' +
-      '<br>AUTO pilot drinks for you: HP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) +
-      '%, MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
+      '<br>AUTO pilot drinks for you: HP under a potion\'s heal (' + C.POTIONS.HP_HEAL + ' + bonuses)' +
+      ', MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
       '<br>boss curse: while the wave boss lives, health potions heal HALF.' +
       // STARTING ARENA IMPROVE (2026-09-17): the arena itself explained —
       // the review's "what things are" gap for the starting field. The
@@ -7219,8 +7219,16 @@ function drinkManaPotion(state) {
 // Contract (CONFIG.AUTOPILOT.AUTO_DRINK — the knobs, with the reasoning):
 //   * AUTO only. A MANUAL player keeps 100% of the decision: nothing here can
 //     drink a manual player's charge.
-//   * strictly BELOW the line (HP/MP < max * FRACTION), never at or above it,
-//     and never with an empty count — no charge is burned at the boundary.
+//   * strictly BELOW the line, never at or above it, and never with an empty
+//     count — no charge is burned at the boundary. The HP line is THE POTION'S
+//     HEAL VALUE (owner 2026-09-17, msg_01M2RE1V: "If HP drops below what a
+//     potion would heal, it should be used" — "In auto mode that is"):
+//     C.POTIONS.HP_HEAL x the SAME healMult drinkHealthPotion applies (Alchemy
+//     potionPower + choice potionHealMult), so the trigger and the drink can
+//     never disagree on what a potion is worth. The old 0.35-of-max gate sat
+//     far above any lethal dip on a big pool, so the pilot hoarded its whole
+//     stack and died rich. The MP line stays max * MP_FRACTION (+ a starved
+//     skill) — mana restores a COOLDOWN economy, not a heal.
 //   * mana is only worth a charge when a skill is genuinely WAITING on it: off
 //     cooldown AND short of its cost (skillManaCost carries the perks). Low
 //     mana with everything on cooldown is not a reason to spend.
@@ -7239,7 +7247,13 @@ function autoDrinkPotions(state, dt) {
   const d = C.AUTOPILOT.AUTO_DRINK;
   if (!d || !d.ENABLED) return;
   const p = state.player;
-  if (ad.hp === 0 && p.potions.hp > 0 && p.hp < p.stats.maxHp * d.HP_FRACTION) {
+  // POTION TUNE 2026-09-17: the HP trigger is the potion's heal value — the
+  // SAME healMult the drink itself applies (Alchemy + choices), computed here
+  // from the same expression drinkHealthPotion uses, so the threshold tracks
+  // every potion-heal modifier the drink does. Nominal heal (pre boss-curse):
+  // the curse taxes the heal, not the trigger.
+  const healMult = ((p.choices && p.choices.potionHealMult) || 1) * (p.stats.potionPower || 1);
+  if (ad.hp === 0 && p.potions.hp > 0 && p.hp < C.POTIONS.HP_HEAL * healMult) {
     if (drinkHealthPotion(state)) ad.hp = d.COOLDOWN;
   }
   if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {

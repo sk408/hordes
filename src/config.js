@@ -320,21 +320,30 @@ export const CONFIG = {
   POTIONS: {
     HP_HEAL: 35,
     MP_RESTORE: 40,
-    DROP_CHANCE: 0.03,   // per enemy kill (was 0.05)
+    // POTION TUNE (owner 2026-09-17, msg_01M2R9CX: "I noticed during my runs
+    // that there were a lot of potions on the ground. Cut their drop by about
+    // 1/5th and steepen the trail off" — clarified: "cut it TO 1/5th not BY
+    // 1/5th"). DROP_CHANCE 0.03 -> 0.006 (exactly one fifth); the trail-off is
+    // squared (see ADAPTIVE below). The cut is the PER-KILL GROUND channel
+    // only: chest contents, starting inventory and the hordebait rule bump are
+    // untouched.
+    DROP_CHANCE: 0.006,  // per enemy kill (was 0.03 until 2026-09-17; 0.05 before G32)
     MAX_CARRIED: 3,      // per kind
     START: 1,            // per kind at run start
     // G33 ADAPTIVE DROPS (owner 2026-09-16: "we should have adaptive potion drops
     // as the enemies killed per second increases, potion drop rate should drop in
     // a somewhat inverse pattern"). At or below REF_KPS kills/second the chance is
     // EXACTLY DROP_CHANCE — the early game is byte-identical. Above it the chance
-    // is scaled by clamp(REF_KPS/kps, FLOOR_FRAC, 1), so effective income
-    // potions/second = DROP_CHANCE * min(kps, REF_KPS): linear below the
-    // reference, then FLAT — a dense swarm stops printing potions. FLOOR_FRAC 0.2
-    // keeps a trickle and holds the flat asymptote through the whole MEASURED
-    // swarm band (flat to kps = REF_KPS/FLOOR_FRAC = 100, observed swarm max 93;
-    // measurement log quoted in the G33 report). TAU is the time constant of the
+    // is scaled by clamp((REF_KPS/kps)^2, FLOOR_FRAC, 1): the POTION TUNE
+    // (2026-09-17) squared the inverse ratio and cut the floor 0.2 -> 0.04 (both
+    // one fifth), a STEEPER trail-off that stays strictly below the old linear
+    // ratio at every rate above REF_KPS. Income potions/second = DROP_CHANCE *
+    // min(kps, REF_KPS) below the reference, then FALLS as 1/kps (was: flat) —
+    // a dense swarm stops printing potions outright. The floor binds at
+    // kps = REF_KPS/sqrt(FLOOR_FRAC) = 100, the SAME bind point as the old
+    // curve (observed swarm max 93; G33 report). TAU is the time constant of the
     // dt-driven EWMA kill-rate estimator (loot.js ewmaKillRate).
-    ADAPTIVE: { REF_KPS: 20, FLOOR_FRAC: 0.2, TAU: 6 },
+    ADAPTIVE: { REF_KPS: 20, FLOOR_FRAC: 0.04, TAU: 6 },
   },
 
   // ---- G34+G36 SHARED SUSTAINED-HEALING BUDGET (owner 2026-09-16: "Ok let's
@@ -429,10 +438,16 @@ export const CONFIG = {
     // you too. Scope is deliberately narrow:
     //   * AUTO ONLY. The manual pilot's potions stay 100% the player's call;
     //     nothing here can ever drink a MANUAL player's charge.
-    //   * HP_FRACTION — drink a health potion once HP is STRICTLY BELOW this
-    //     fraction of max (at or above the line nothing is drunk: no wasted
-    //     charge). A fraction, not a flat number, so the line tracks max HP
-    //     through the whole ladder.
+    //   * HP THRESHOLD (the potion's heal, not a config fraction) — drink a
+    //     health potion once HP is STRICTLY BELOW what the potion would heal
+    //     (C.POTIONS.HP_HEAL x the same healMult the drink applies: Alchemy +
+    //     choice potionHealMult; owner 2026-09-17, msg_01M2RE1V: "If HP drops
+    //     below what a potion would heal, it should be used. It feels unfair as
+    //     the player" — clarified: "In auto mode that is"). At or above the
+    //     line nothing is drunk: no wasted charge. RETIRED 2026-09-17: the old
+    //     HP_FRACTION 0.35-of-max gate — at maxed stats 35% of a big pool sat
+    //     far above any lethal dip, so the pilot NEVER drank and died rich;
+    //     the heal-value line tracks the potion, not the pool.
     //   * MP_FRACTION — drink a mana potion only when mana is below this
     //     fraction AND a skill is actually BLOCKED ON MANA (off cooldown and
     //     short of its cost). Low mana with everything on cooldown is not a
@@ -445,7 +460,9 @@ export const CONFIG = {
     // drunk during the arrival banner leaves the eased stance exactly as it was.
     AUTO_DRINK: {
       ENABLED: true,
-      HP_FRACTION: 0.35,   // strictly below this share of max HP
+      // HP gate lives in main.js autoDrinkPotions: strictly below the potion's
+      // heal value (C.POTIONS.HP_HEAL x healMult). No HP_FRACTION knob since
+      // the 2026-09-17 potion tune — a fraction of max is the wrong line.
       MP_FRACTION: 0.30,   // strictly below this share of max mana (+ a starved skill)
       COOLDOWN: 1.5,       // seconds between auto-drinks of the same kind
     },
