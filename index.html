@@ -298,6 +298,41 @@
   }
   #overlay.howto .card.nav .name { font-size: 12px; margin-bottom: 3px; }
   #overlay.howto .card.nav .desc { font-size: 10px; }
+  /* ---- HOW TO PLAY WIDESCREEN (owner 2026-09-18: "the desktop layout for
+     how to play still needs work on a widescreen. the navigation and got it
+     buttons should be underneath the how a run works panel"). WIDE-VIEWPORT
+     RULE: the panel IS the page — it takes the available width (up to a
+     readable measure), the content is never a column squeezed beside the
+     controls — and EVERY control (PREV, NEXT, GOT IT, REPLAY TOUR) sits
+     BELOW it as ONE row, with the PAGE n / N indicator in that same row
+     (the query hides the subtitle's .pgline up top and shows .howto-page,
+     the marker main.js parks in the card flow, down with the buttons).
+     The panel's internal scroll cap comes OFF here: a viewport wide/tall
+     enough to show the text shows it WITHOUT a scrollbar (the overlay page
+     itself scrolls if a page is genuinely longer than the screen). This
+     query never matches a phone — the stacked phone flow above is the only
+     layout they get. The 44px touch floors are untouched by this block. */
+  #overlay.howto .howto-page { display: none; }
+  @media (min-width: 860px) {
+    #overlay.howto .sub .pgline { display: none; }  /* the indicator moves down */
+    #overlay.howto .cards { align-items: center; }  /* the row, not stretched columns */
+    #overlay.howto .card.ref {
+      order: 1; flex: 0 0 100%;     /* the panel takes its WHOLE line */
+      width: 100%; max-width: none; /* no cap beside it — the content is the page */
+    }
+    #overlay.howto .card.ref .desc { max-height: none; overflow-y: visible; }
+    #overlay.howto .howto-page {
+      display: block; order: 6; flex: 0 0 auto; align-self: center;
+      font-size: 12px; letter-spacing: 2px; color: #ffd75e;
+      text-shadow: 1px 1px 0 #000; cursor: default;
+    }
+    #overlay.howto .card.nav { order: 3; }
+    #overlay.howto .card.gotit {
+      order: 4; flex: 0 0 auto; width: auto; max-width: none;
+      min-height: 44px; box-sizing: border-box; padding: 6px 18px;
+    }
+    #overlay.howto .card.replay { order: 5; flex: 0 0 auto; }
+  }
   /* G14 SHOP ICONS: every shop row carries its authored 16x16 icon as a live
      canvas — 16x16 backing store, INTEGER 2x CSS scale (32px), pixelated
      (same convention as the G13 portraits; no smoothing, no blur). */

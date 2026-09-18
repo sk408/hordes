@@ -3718,7 +3718,16 @@ function openDraft() {
   // WAVE-21: the draft IS the game — coachmark it the first time it appears.
   // ('draft' mode already freezes the sim; the coach rides on top of the
   // real cards and dismisses on the same click-to-advance contract.)
-  if (!tourFlag(TOUR_KEYS.draft)) {
+  // PROLOGUE ABSORB (owner 2026-09-18): the scripted draft inside the
+  // first-run phase is its OWN lesson — banner 6 explains the selection and
+  // the explanation rides the draft's subtitle — so the coach must not
+  // stack on top of it. Stacking was not just redundant: the coach's shade
+  // swallows the first card click BY DESIGN (tour.js — a pass-through would
+  // dismiss-and-pick in one tap), turning the one-click pick into two and
+  // freezing the sim under the shade after it (coachActive gates update),
+  // which stalled the phase itself. endPrologue marks every TOUR_KEYS flag
+  // seen, so the coach is ABSORBED by the phase, never skipped.
+  if (!state.prologue && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
       text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
@@ -4976,7 +4985,7 @@ function manualRowsControls() {
       .filter(c => !['potion-hp', 'potion-mp', 'stats'].includes(c.id))
       .map(c => refRow(c.id === 'skill-q' && qPurpose ? qPurpose : c.purpose, c.keys.join(' / ')))
       .join('') +
-    refRow('move', 'arrows / WASD') +
+    refRow('move (a move key also takes the wheel from AUTO)', 'arrows / WASD') +
     refRow('H / N — potions &middot; I — field report (the ONE stats key)') +
     refRow('1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs') +
     refRow('C — continue &middot; R / T — retry / title') +
@@ -4990,7 +4999,7 @@ function manualRowsControls() {
     // the list; it stops being the whole of "?".
     compactKeyLines().map(l => refRow(l)).join('');
   const tchRows =
-    refRow('move (manual pilot)', 'joystick') +
+    refRow('move (a drag also takes the wheel from AUTO)', 'joystick') +
     refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
     refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
     refRow('auto &harr; manual', 'PILOT') +
@@ -5043,12 +5052,16 @@ function manualGoto(page) {
   ovSub.innerHTML = p === 1
     // The one-line point of the game leads the FIRST page (the first-run
     // gate opens here), with the replay-tour pointer (complaint 3: the
-    // replay path existed but nobody found it).
+    // replay path existed but nobody found it). The PAGE n / N line rides a
+    // .pgline span: on a WIDE viewport index.html hides it up here and the
+    // .howto-page marker below the panel carries it instead (the widescreen
+    // task: the indicator belongs with the controls) — on a phone the span
+    // is plain inline and renders byte-identically.
     ? 'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
       'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
       '<br>Missed the guided tour? The REPLAY TOUR card at the bottom runs it again.' +
-      '<br>PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0]
-    : 'PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1];
+      '<br><span class="pgline">PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0] + '</span>'
+    : '<span class="pgline">PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1] + '</span>';
   const addCls = (el, c) => {
     if (el.classList) el.classList.add(c);
     else el.className = (el.className ? el.className + ' ' : '') + c;
@@ -5074,7 +5087,7 @@ function manualGoto(page) {
     // OPTIONS AND MODES: one plain line each + the LIVE callout row read
     // from state at OPEN time (never bitmaps, never stale defaults).
     const c = menuCard('OPTIONS AND MODES',
-      refRow('AUTO: the pilot plays &middot; MANUAL: the stick / keys are yours', 'PILOT (O)') +
+      refRow('AUTO: the pilot plays &middot; MANUAL: the stick / keys are yours &middot; a move key or drag takes the wheel', 'PILOT (O)') +
       refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
       refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
       refRow('yours right now', state.pilotMode + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
@@ -5116,6 +5129,16 @@ function manualGoto(page) {
       '<br>the ground rises toward the rim: climbing costs a little speed (foes pay it too), high ground widens your radar reach.');
     addCls(c, 'ref');
   }
+  // WIDESCREEN INDICATOR (owner 2026-09-18: the navigation and GOT IT belong
+  // UNDER the panel — and "The page indicator (PAGE 1 / 4) belongs with the
+  // controls"): a plain marker div (NOT a card — no frame, no click) parked
+  // in the card flow between the panel and the nav row. index.html's wide
+  // media query shows it and re-orders it into the controls row; on a phone
+  // it is display:none and the subtitle's .pgline carries the same text.
+  const ind = document.createElement('div');
+  ind.className = 'howto-page';
+  ind.textContent = 'PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1];
+  ovCards.appendChild(ind);
   // Nav row (HOW-TO-PLAY SETTLED SHAPE, owner 2026-09-18: the index buttons
   // are GONE — "just removing the supposed index buttons and keeping prev and
   // next and making sure they are underneath the instructions"): PREV/NEXT
@@ -5148,7 +5171,7 @@ function manualGoto(page) {
   // run's settings it arms the NEXT run instead (yanking the player out of a
   // live fight would surprise — the prior design's call, kept).
   if (state.helpFrom !== 'gate') {
-    menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
+    const cRep = menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
       clearTourFlags();   // the kept modal cards (draft/death/settings/loadout) re-arm
       const back = state.helpFrom;
       state.manualPage = null;
@@ -5164,6 +5187,9 @@ function manualGoto(page) {
         startRun();
       }
     });
+    // WIDESCREEN: the wide query pulls this card INTO the controls row (its
+    // own tall column beside the panel was the layout the owner rejected).
+    addCls(cRep, 'replay');
   }
   // GOT IT: a FLOW footer card at the end of the stack — in the layout,
   // never sticky over the scrolling body.
@@ -7613,7 +7639,19 @@ function closeChestCard() {
 // No emojis (house rule). Numbers ride the named constant so the copy can never lie.
 const PROLOGUE_BANNERS = [
   { title: 'WHO FLIES?', action: 'move',
-    body: 'The pilot flies for you. Drag the field or press a move key to take the wheel whenever you want.',
+    // THE TAKEOVER PROMISE (owner 2026-09-18: "But the instruction says drag
+    // the field so the desktop user will try it and it doesn't work"): the
+    // copy names the input the player's OWN platform has — keys on desktop,
+    // the drag on touch (isTouchPath(), the touch layer's own boot class)
+    // and both halves are TRUE now: either input IS the mode switch to
+    // MANUAL (the keydown + floating-stick arms), never a pretend borrow.
+    // A GETTER, not a string: the touch class is written at boot, after
+    // this table's module-init evaluation, so the body must resolve late.
+    get body() {
+      return isTouchPath()
+        ? 'The pilot flies for you. Drag the field to take the wheel whenever you want.'
+        : 'The pilot flies for you. Press a move key to take the wheel whenever you want.';
+    },
     cue: 'STEER NOW TO CONTINUE' },
   { title: 'THE PILOT BUTTON', action: 'pilot',
     body: 'PILOT hands the flying back and forth between you and the autopilot.',
@@ -8840,11 +8878,23 @@ window.addEventListener('keydown', (ev) => {
     // every frame).
     if (k === '+' || k === '=') { cycleZoom(1); return; }
     if (k === '-' || k === '_') { cycleZoom(-1); return; }
-    // Held movement. MANUAL only — and checked BEFORE any screen opener, so a
-    // movement key can never be swallowed by a menu.
-    if (state.pilotMode === 'MANUAL') {
-      const dir = KEY_DIRS[k];
-      if (dir) { pilotInput[dir] = true; return; }
+    // Held movement — checked BEFORE any screen opener, so a movement key
+    // can never be swallowed by a menu.
+    // THE WHEEL IS YOURS (owner 2026-09-18: "It's a good idea though to let
+    // the user break auto by using a movement key... It's either manual or
+    // auto. You can't take over without changing that"): a MOVE KEY pressed
+    // while the pilot flies on AUTO IS the takeover. There is no third
+    // 'borrowed' state — the mode SWITCHES TO MANUAL (the announcement
+    // toast + the touch PILOT badge read state.pilotMode, so both reflect
+    // it on the same frame); O / the PILOT button cycle back up the ladder
+    // (MANUAL -> AUTO ALL -> AUTO MOVE), exactly as before. (W note: in
+    // AUTO, W used to fire Overcharge — E is Overcharge's permanent home in
+    // EVERY mode, so nothing is lost when W becomes a move key here.)
+    const dir = KEY_DIRS[k];
+    if (dir) {
+      if (normalizePilotMode(state.pilotMode) !== 'MANUAL') swapPilotMode('MANUAL');
+      pilotInput[dir] = true;
+      return;
     }
     // (owner rule: `s` is NOT a stats key in any mode — `I` is the only one.
     // A stale `s` opener lived here and cost MANUAL-vs-AUTO confusion; do not
@@ -9603,13 +9653,19 @@ if (touchLayer && touchLayer.addEventListener) {
     if (fjoy.pointerId !== null) return false;                  // one stick
     if (state.mode !== 'playing') return false;                  // runs only
     if (state.helpMode) return false;                            // "?" owns taps
-    if (normalizePilotMode(state.pilotMode) !== 'MANUAL' &&
-        // PROLOGUE STAGED INTRODUCTION: once MOVE is revealed the drag IS
-        // the lesson — the floating stick arms in ANY pilot mode through
-        // the phase (the banner's OK/SKIP rects were hit-tested BEFORE
-        // this, so a banner tap still never steers).
-        !(state.prologue && state.prologue.revealed &&
-          state.prologue.revealed.move)) return false;
+    if (normalizePilotMode(state.pilotMode) !== 'MANUAL') {
+      // PROLOGUE STAGED INTRODUCTION: until MOVE is revealed the field
+      // stays inert — the phase's own lock owns the early drag.
+      if (state.prologue && !(state.prologue.revealed && state.prologue.revealed.move)) {
+        return false;
+      }
+      // THE WHEEL IS YOURS (owner 2026-09-18): a DRAG on the field while
+      // the pilot flies on AUTO is the takeover — the same hand-over a
+      // move key performs on desktop (see the keydown arm). No third
+      // state: the mode switches to MANUAL (badge + toast announce it on
+      // this frame); O / the PILOT button cycle back to AUTO.
+      swapPilotMode('MANUAL');
+    }
     fjoy.pointerId = ev.pointerId ?? 0;
     fjoy.ox = ev.clientX ?? 0; fjoy.oy = ev.clientY ?? 0;
     // POINTER CAPTURE: keep THIS finger's moves/lifts arriving even if the

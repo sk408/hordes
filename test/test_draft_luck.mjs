@@ -24,6 +24,8 @@
 // MEASURED (this file prints it every run; DRAFT_LUCK_TRANSFER = 0.05/level):
 //   offers/3-card offer   rare 0.495 -> 0.606, common 0.495 -> 0.377, weapons flat
 //   GREED-DAMAGE 60 runs  survival 1377.1s -> 1588.0s (x1.153), gold 239925 -> 306978 (x1.279)
+//   (2026-09-18 retarget, owner damage triple 8->24: fixture dmg 5->3, now
+//    survival 408.7s -> 694.4s (x1.699), gold 44693 -> 97533 (x2.182))
 //   (W7a re-measure 2026-09-14, post-E1 purse + arch layer + pool-gated unlocks.
 //    The cohort grew 30 -> 60 runs for a better mean estimate — same seed, same
 //    loadout, same x1.15 bar: the 30-run estimate read x1.149 on survival, the
@@ -209,7 +211,19 @@ console.log('draft luck: run-level effect, measured and honest');
 // +16.1% / +12.6% / +0.1% for those three policies. So the cohorts below run a
 // PURCHASED profile and the bars are unchanged.
 const META_LOADOUT = {
-  dmg: SHOP_BY_ID.dmg.maxLevel,       // all damage upgrades
+  // RETARGET (2026-09-18, owner damage triple): CONFIG.WEAPON.DAMAGE 8 -> 24
+  // (owner: "starting damage 200% more so the pilot can kill a few enemies")
+  // pushed the full-dmg fixture's luck-0 survival to 1756.9s against the 1800s
+  // RUN.LIMIT - 97.6% censored, so the survival arm's x1.10 bar was
+  // GEOMETRICALLY dead (needs 1932s of an 1800s cap). dmg 5 -> 3 restores
+  // headroom; measured on this tree, seed 4242, same cohorts:
+  //   dmg=5 (dead):  surv 1756.9 -> 1781.7 (x1.014)  gold x1.024
+  //   dmg=4 (thin):  surv 1400.9 -> 1567.8 (x1.119)  gold x1.218
+  //   dmg=3 (PICKED):surv  408.7 ->  694.4 (x1.699)  gold x2.182
+  //   primacy bad@5 < good@0: 123.1 < 408.7 TRUE; floor bad5/bad0 = 1.001.
+  // The BARS are unchanged (x1.10 surv / x1.15 gold / primacy / 0.95 floor);
+  // only the fixture's purchase level moved, exactly the G21 retarget pattern.
+  dmg: 3,                             // damage upgrades (was maxLevel - see above)
   split: 3,                           // some split shot
   thrifty: 2,                         // some mana reduction
   slots: 1,                           // +1 weapon slot

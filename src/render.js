@@ -212,6 +212,25 @@ export function prologueSkipRect() {
   return { x: C.VIEW_W - 88, y: 24, w: 80, h: 16 };
 }
 const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 92;
+// PROLOGUE HUD CLEARANCE (brief docs/briefs/PROLOGUE_BANNER_CLEARANCE.md,
+// owner tutorial priority 2026-09-18; the overlap was disclosed in
+// docs/art/prologue-2026-09-18/REPORT.md): the banner card band (x 90..390,
+// y 24..116) crosses the top-left HUD readouts and the event feed's first
+// lines. During the LIVE phase those readouts are INERT — nothing can
+// damage, cast, level or earn while the world is frozen — so drawHudChrome
+// suppresses them (mechanism (b) of the brief) and drops the feed start
+// below the card; the drink restores everything byte-identically.
+const PROLOGUE_FEED_Y = PROLOGUE_CARD_Y + PROLOGUE_CARD_H + 10;   // 126: plate top (fy-2) clears the card by 8
+
+// The ONE shared seam for the card's rect (the brief's prologueOkRect role —
+// the OK button itself went away with the action-gating fix): the painter,
+// the headless geometry tests and the browser verifier all read these exact
+// numbers, so paint and assertion can never disagree.
+export function prologueCardRect() {
+  const W = Math.min(300, C.VIEW_W - 20);
+  return { x: Math.round((C.VIEW_W - W) / 2), y: PROLOGUE_CARD_Y, w: W, h: PROLOGUE_CARD_H };
+}
+export function prologueFeedY() { return PROLOGUE_FEED_Y; }
 
 // Reduced motion is read LIVE (the draftCeremonyEnabled precedent — one
 // handler per feature, nothing global). False in the headless stub, which
@@ -1723,10 +1742,10 @@ export class Renderer {
     // ADDENDUM (owner 2026-09-18: the pilot PAUSES for banners): the card is
     // up only after C.PROLOGUE.BANNER_WALK_S of walking since the last OK —
     // the SAME gate main.js's prologueBanner() reads, so the paint, the pause
-    // and the OK hit-test can never disagree.
+    // and the action-advance can never disagree.
     if ((state.prologue.walkT || 0) < C.PROLOGUE.BANNER_WALK_S) return;
-    const W = Math.min(300, C.VIEW_W - 20);
-    const x0 = Math.round((C.VIEW_W - W) / 2), y0 = PROLOGUE_CARD_Y;
+    const card = prologueCardRect();            // the ONE shared rect seam
+    const W = card.w, x0 = card.x, y0 = card.y;
     const pad = 10;
     // Plate + border (the boss-banner plate idiom).
     g.fillStyle = 'rgba(8,8,15,0.92)';
@@ -1897,6 +1916,16 @@ export class Renderer {
     if (!p || !p.stats) { this.hudChrome = null; return; }
     const t = state.time || 0;
     const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, challenge: null };
+    // PROLOGUE HUD CLEARANCE (2026-09-18): while the first-run prologue phase
+    // is live (up to the drink) the banner card owns the top band — every
+    // readout that CANNOT change during the phase AND overlaps the card band
+    // (HP/MP labels+bars, the hp/mp value plate, XP bar + LV badge + xpText)
+    // is suppressed rather than painted under the card, and the feed drops to
+    // PROLOGUE_FEED_Y. The purse (x 6..~66) never reaches the card (x 90+) and
+    // KEEPS painting. The seam flags it so tests can pin "hidden, not
+    // overlapped"; run #2+ (no prologue) is byte-identical to before.
+    const prologueLive = !!(state.prologue && !state.prologue.drunk);
+    if (prologueLive) chrome.prologueHud = true;
 
     // --- graphic HP + mana bars, top-left (below the boss-bar zone) ---
     // Damage flash: when hp DROPS, the lost segment stays white for ~0.45s
@@ -1966,10 +1995,12 @@ export class Renderer {
     // WAVE-23 (#4/#6) gave every bar a text label to its left (the vision pass
     // called the unlabeled bars "placeholders"); WAVE-24 (#2) puts each label
     // on a plate and lifts 8px -> 9px bold with a brighter tint.
-    label('HP', 6, 15, H.HP, H.LABEL_PX);
-    label('MP', 6, 25, H.MP, H.LABEL_PX);
-    drawBar(22, 16, 110, 5, hpFrac, flashFrac, '#ff5566');
-    drawBar(22, 26, 110, 5, manaFrac, 0, '#4a8cff');
+    if (!prologueLive) {                    // inert during the prologue — hidden, not overlapped
+      label('HP', 6, 15, H.HP, H.LABEL_PX);
+      label('MP', 6, 25, H.MP, H.LABEL_PX);
+      drawBar(22, 16, 110, 5, hpFrac, flashFrac, '#ff5566');
+      drawBar(22, 26, 110, 5, manaFrac, 0, '#4a8cff');
+    }
 
     // 0.98 feedback (defect 3): a 5px bar carries no readable text, and the
     // current/max numbers existed ONLY in the opt-in text HUD (default OFF) —
@@ -1998,7 +2029,7 @@ export class Renderer {
     g.textBaseline = 'top';
     const valBox = Math.ceil(Math.max(valTextW(hpTxt), valTextW(mpTxt))) + 4;
     const valRight = C.VIEW_W - 24 - 44;          // the clock plate starts at ~417
-    if (valX + valBox <= valRight) {
+    if (!prologueLive && valX + valBox <= valRight) {
       g.fillStyle = H.PLATE;                      // one plate behind both rows
       g.fillRect(valX - 2, 11, valBox, 22);
       g.fillStyle = H.HP;
@@ -2024,49 +2055,53 @@ export class Renderer {
     chrome.xpFrac = p.xpNext > 0 ? p.xp / p.xpNext : 0;
     chrome.level = p.level || 1;
     const xb = 22, yb = 37, wb = 134, hb = 6;
-    label('XP', 6, yb - 1, H.XP, H.LABEL_PX);
-    g.fillStyle = H.FRAME;                         // steel container frame
-    g.fillRect(xb - 2, yb - 2, wb + 4, hb + 4);
-    g.fillStyle = '#000000';                       // 1px pixel border
-    g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
-    g.fillStyle = H.TROUGH;                        // dark empty track
-    g.fillRect(xb, yb, wb, hb);
-    g.fillStyle = H.TICK;                          // ticks run the FULL track
-    for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
-    g.fillStyle = H.TICK_MAJOR;                    // 25 / 50 / 75% majors
-    for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
-    const xfw = Math.round(wb * xpFrac);
-    g.fillStyle = '#ffd75e';                       // the gold fill
-    g.fillRect(xb, yb, xfw, hb);
-    g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
-    g.fillRect(xb, yb, xfw, 1);
-    g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky segments on the fill
-    for (let sx = xb + 5; sx < xb + xfw; sx += 6) g.fillRect(sx, yb + 1, 1, hb - 1);
-    g.fillStyle = '#ffd75e';                       // gold goal tick at the end
-    g.fillRect(xb + wb - 1, yb, 1, hb);
-    // WAVE-23 (#4) added the LV badge; WAVE-24 (#2) makes it a BADGE: 9 -> 11px
-    // bold on a gold-bordered dark plate (the vision pass: "washed out, reads
-    // like an unpolished placeholder"), vertically centered on the bar.
+    // LV badge geometry is pure math (no paint) — hoisted above the
+    // prologue-suppressed paint block so the xpText row can read it.
     const lvTxt = 'LV ' + (p.level || 1);
     const lvPx = H.LV_PX;
     const lvW = lvTxt.length * Math.round(lvPx * 0.62) + 6;
     const lvH = lvPx + 4;
     const lvX = xb + wb + 4, lvY = yb + Math.round(hb / 2) - Math.round(lvH / 2);
-    g.fillStyle = '#ffd75e';                       // gold badge border
-    g.fillRect(lvX, lvY, lvW, lvH);
-    g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
-    g.fillRect(lvX + 1, lvY + 1, lvW - 2, lvH - 2);
-    g.font = 'bold ' + lvPx + 'px monospace';
-    g.textBaseline = 'top';
-    g.fillStyle = '#fff3c4';
-    g.fillText(lvTxt, lvX + 3, lvY + 2);
+    if (!prologueLive) {                    // inert during the prologue — hidden, not overlapped
+      label('XP', 6, yb - 1, H.XP, H.LABEL_PX);
+      g.fillStyle = H.FRAME;                         // steel container frame
+      g.fillRect(xb - 2, yb - 2, wb + 4, hb + 4);
+      g.fillStyle = '#000000';                       // 1px pixel border
+      g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
+      g.fillStyle = H.TROUGH;                        // dark empty track
+      g.fillRect(xb, yb, wb, hb);
+      g.fillStyle = H.TICK;                          // ticks run the FULL track
+      for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
+      g.fillStyle = H.TICK_MAJOR;                    // 25 / 50 / 75% majors
+      for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
+      const xfw = Math.round(wb * xpFrac);
+      g.fillStyle = '#ffd75e';                       // the gold fill
+      g.fillRect(xb, yb, xfw, hb);
+      g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
+      g.fillRect(xb, yb, xfw, 1);
+      g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky segments on the fill
+      for (let sx = xb + 5; sx < xb + xfw; sx += 6) g.fillRect(sx, yb + 1, 1, hb - 1);
+      g.fillStyle = '#ffd75e';                       // gold goal tick at the end
+      g.fillRect(xb + wb - 1, yb, 1, hb);
+      // WAVE-23 (#4) added the LV badge; WAVE-24 (#2) makes it a BADGE: 9 -> 11px
+      // bold on a gold-bordered dark plate (the vision pass: "washed out, reads
+      // like an unpolished placeholder"), vertically centered on the bar.
+      g.fillStyle = '#ffd75e';                       // gold badge border
+      g.fillRect(lvX, lvY, lvW, lvH);
+      g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
+      g.fillRect(lvX + 1, lvY + 1, lvW - 2, lvH - 2);
+      g.font = 'bold ' + lvPx + 'px monospace';
+      g.textBaseline = 'top';
+      g.fillStyle = '#fff3c4';
+      g.fillText(lvTxt, lvX + 3, lvY + 2);
+    }
     // 0.98 feedback (defect 3): the XP row keeps its LV badge, and the
     // progress numbers join it to the badge's right (the badge owns the bar's
     // right end, so the value cannot ride the bar itself). Same plate + bold
     // language as the HP/MP values, same guard: dropped rather than allowed to
     // reach the clock column, and never painted at the level cap (xpNext = 0 —
     // "0/0" would be noise).
-    if (p.xpNext > 0) {
+    if (!prologueLive && p.xpNext > 0) {
       const xpTxt = Math.max(0, Math.floor(p.xp)) + '/' + Math.floor(p.xpNext);
       const xpValX = lvX + lvW + 4;
       if (xpValX + xpTxt.length * Math.round(H.LABEL_PX * 0.62) + 4 <= valRight) {
@@ -2091,6 +2126,9 @@ export class Renderer {
     const goldW = goldTxt.length * Math.round(goldPx * 0.62) + 6;
     const goldH = goldPx + 4;
     const goldX = 6, goldY = 52;           // left column, under the XP row, clear of the feed (y 84+)
+    // PROLOGUE CLEARANCE: the purse column (x 6..~66) never reaches the card
+    // band (x 90+) — it KEEPS painting during the phase (only what overlapped
+    // is suppressed).
     g.fillStyle = '#ffd75e';                       // gold badge border
     g.fillRect(goldX, goldY, goldW, goldH);
     g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
@@ -2216,7 +2254,10 @@ export class Renderer {
       if (line) out.push(line);
       return out.length ? out : [''];
     };
-    let fy = 86;
+    // PROLOGUE HUD CLEARANCE: while the phase is live the feed starts below
+    // the banner card (PROLOGUE_FEED_Y = card bottom + 10, so the plate's
+    // fy-2 top edge clears the card by exactly 8) instead of under the XP row.
+    let fy = prologueLive ? PROLOGUE_FEED_Y : 86;
     for (const ft of feed) {
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
       if (alpha <= 0) continue;

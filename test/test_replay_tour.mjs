@@ -1,18 +1,24 @@
 // REPLAY TOUR — the brief's acceptance (owner 2026-09-18, REPLAY-TOUR REWIRE):
 // the manual's REPLAY TOUR card no longer re-arms coach flags only — it
 // restarts THE SPECIAL LEVEL itself (the inert prologue run), IMMEDIATELY
-// from the title, for a RETURNING player, with the kill switch OFF.
+// from the title, for a RETURNING player.
+//
+// RETARGET 2026-09-18 (commit 56e1a93 "prologue: RE-ENABLE the guided run for
+// new players"): the orchestrator flipped the kill switch back ON after the
+// three owner defects landed — the shipped default is now ENABLED === true.
+// What this file pins is UNCHANGED in substance: the deliberate replay path,
+// and that a RETURNING profile (runs >= 1) never gets the automatic arm.
 //
 // What this file pins, through the REAL seams:
 //   1. SETUP: a returning profile (achievements.totals.runs >= 1 — the
-//      harness's own stamp) with C.PROLOGUE.ENABLED === false (the shipped
-//      default);
+//      harness's own stamp) with C.PROLOGUE.ENABLED === true (the shipped
+//      default since 56e1a93);
 //   2. THE CARD: HOW TO PLAY from the title carries REPLAY TOUR; clicking it
 //      starts a NEW run RIGHT NOW with state.prologue live and
 //      state.assistedRun === true (the deliberate opt-in bypasses the kill
 //      switch); the level is INERT (no enemy spawns, the clock frozen at 0)
 //      and stages its potion (state.prologue.potion);
-//   3. THE AUTOMATIC GATE STAYS OFF: a second boot of the same returning
+//   3. THE AUTOMATIC ARM STAYS FRESH-ONLY: a second boot of the same returning
 //      profile starting a run the PLAIN way gets no prologue
 //      (state.prologue === null) and no assisted stamp;
 //   4. THE ASSISTED EXCLUSION FLOWS: the run's end card is tagged ASSISTED,
@@ -28,8 +34,13 @@ import { TOUR_KEYS } from '../src/tour.js';
 const s = suite('test_replay_tour');
 
 // ---- 0. the shipped gate state this whole file stands on -------------------------
-s.check('C.PROLOGUE.ENABLED ships false (the kill switch default)', () => {
-  assert.equal(C.PROLOGUE.ENABLED, false);
+// RETARGET 2026-09-18 (commit 56e1a93): the kill switch was deliberately
+// re-enabled by the orchestrator once the three owner defects were fixed
+// behind it. The pin keeps its INTENT — the shipped default is a deliberate,
+// asserted value — now true. Not a weakening: the automatic arm is still
+// fresh-profile-only, pinned below.
+s.check('C.PROLOGUE.ENABLED ships true (re-enabled at 56e1a93, defects fixed)', () => {
+  assert.equal(C.PROLOGUE.ENABLED, true);
 });
 s.check('the arm expression: assistedRun OR (ENABLED && fresh profile) — opt-in bypasses the park', () => {
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -139,7 +150,7 @@ s.check('the special level stages its potion (state.prologue.potion, on screen)'
   });
 }
 
-// ---- 3. THE AUTOMATIC GATE STAYS OFF (second boot, plain start) -------------------
+// ---- 3. THE AUTOMATIC ARM STAYS FRESH-ONLY (second boot, plain start) -------------
 // (A second boot replaces the DOM globals — nothing above may pump after this.)
 {
   const h2 = await boot({ variant: 'replay-auto', storage: [['hordes_onboarded', '1']] });
@@ -149,7 +160,7 @@ s.check('the special level stages its potion (state.prologue.potion, on screen)'
     'same returning-profile shape (the harness stamp)');
   T2.startRun();
   h2.pump(2);
-  s.check('the plain start path arms NO prologue for a returning profile (automatic gate OFF)', () => {
+  s.check('the plain start path arms NO prologue for a RETURNING profile (the automatic arm is fresh-profile-only)', () => {
     assert.equal(st2.prologue, null, 'a prologue armed without an opt-in');
     assert.equal(T2.prologue.active, false);
     assert.equal(st2.assistedRun, false, 'no assisted stamp without the opt-in');

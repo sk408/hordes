@@ -34,7 +34,9 @@ export const CONTROLS = [
   { id: 'stance', keys: ['G'], touch: 'STANCE',
     purpose: 'tune the run: SAFE keeps clear, GREEDY banks loot faster' },
   { id: 'pilot', keys: ['O'], touch: 'PILOT',
-    purpose: 'switch pilot movement AUTO / MANUAL' },
+    // THE WHEEL IS YOURS (owner 2026-09-18): a move key (desktop) or a field
+    // drag (touch) takes the wheel FROM AUTO — this row names the way back.
+    purpose: 'switch pilot AUTO / MANUAL (a move key or drag takes the wheel from AUTO)' },
   { id: 'radar', keys: ['R'], touch: 'RADAR',
     purpose: 'edge blips mark enemies outside the screen' },
   { id: 'map', keys: ['M'], touch: 'MAP',

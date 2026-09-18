@@ -107,6 +107,13 @@ const tourRoot = () => globalThis.document.body.children.find(c => c.id === 'tou
 
 // Skip the intro -> title -> straight into a run (AUTO_ALL is the default
 // pilot mode: state.pilotMode initial value).
+// PROLOGUE NEUTRALIZATION (2026-09-18, same convention as test/_harness.mjs):
+// since 56e1a93 the guided first run is live by default — this file boots a
+// FRESH profile through startRun, which would arm the inert prologue phase
+// (and with it the draft-coach absorb). These tests measure the AUTO-pick
+// countdown on ORDINARY runs; stamp the returning-player counter so run #1
+// here is ordinary, exactly like every harness-booted gameplay test.
+T.getProfile().achievements.totals.runs = 1;
 keyHandler({ key: 'x', preventDefault() {} });
 tick(1);
 T.startRun();

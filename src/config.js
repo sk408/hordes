@@ -93,7 +93,11 @@ export const CONFIG = {
   },
 
   WEAPON: {
-    DAMAGE: 8,
+    // OWNER 2026-09-18: "the first run pilot is too weak. we need to make
+    // starting damage 200% more so the pilot can kill a few enemies."
+    // 8 -> 24 (200% MORE = triple). Applies to every run's base; say the word
+    // if it should instead be run-1 only, which is a different change.
+    DAMAGE: 24,
     COOLDOWN: 0.55,     // seconds between shots
     PROJ_SPEED: 190,
     PROJ_SIZE: 4,

@@ -332,19 +332,32 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
 
   // THE OFFER and ITS GATE (owner 2026-09-18): the offer must NOT appear
   // while the prologue gate is disabled — the note cannot advertise a guided
-  // run it cannot start. C.PROLOGUE.ENABLED is false by default on this tree,
-  // so the DEFAULT note carries neither the button nor the guided-run copy.
+  // run it cannot start. RETARGET 2026-09-18 (commit 56e1a93 "prologue:
+  // RE-ENABLE the guided run for new players"): the shipped default flipped
+  // to ENABLED === true with the three owner defects fixed, so the DEFAULT
+  // note now CARRIES the offer; the WITHHELD behavior is still pinned below,
+  // driven deliberately OFF. (Not a weakening: both directions are asserted.)
+  prof.lastPlayed = null; prof.lastSeenUpdate = null;
+  W.tried = false;
+  T.showTitle();
+  const gateOnNote = noteEl();
+  ok('GATE ON (the shipped default since 56e1a93): the note is up WITH the offer button',
+    !!gateOnNote && /SHOW ME/.test(gateOnNote.innerHTML) &&
+    CONFIG.PROLOGUE.ENABLED === true,
+    { enabled: CONFIG.PROLOGUE.ENABLED });
+  gateOnNote.click();                       // tidy: dismiss before the OFF leg
+  CONFIG.PROLOGUE.ENABLED = false;
   prof.lastPlayed = null; prof.lastSeenUpdate = null;
   W.tried = false;
   T.showTitle();
   const gatedNote = noteEl();
-  ok('GATE OFF (the shipped default): the note is up WITHOUT the offer button',
-    !!gatedNote && !/SHOW ME/.test(gatedNote.innerHTML) &&
-    CONFIG.PROLOGUE.ENABLED === false,
-    { enabled: CONFIG.PROLOGUE.ENABLED, html: gatedNote && gatedNote.innerHTML });
+  ok('GATE OFF (driven deliberately): the note is up WITHOUT the offer button',
+    !!gatedNote && !/SHOW ME/.test(gatedNote.innerHTML),
+    { html: gatedNote && gatedNote.innerHTML });
   ok('GATE OFF: the guided-run copy is held back too (no broken promise)',
     !/guided run/i.test(gatedNote.innerHTML) && !/potion/i.test(gatedNote.innerHTML));
   gatedNote.click();                          // tidy: dismiss the gated note
+  CONFIG.PROLOGUE.ENABLED = true;             // back to the shipped default
 
   // THE OFFER, GATE ON (the real browser wires the .offer button; the seam
   // drives the same acceptWhatsNew function).
@@ -374,10 +387,9 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     T.prologue.active === false && st.assistedRun === false && st.mode === 'playing');
   T.showTitle();
 
-  // ACCEPT: starts the guided run NOW, flagged ASSISTED. (The prologue rides
-  // the kill switch C.PROLOGUE.ENABLED, default OFF since 2026-09-18 — this
-  // section tests the FEATURE, so the flag comes ON here and goes back OFF
-  // at the section's end.)
+  // ACCEPT: starts the guided run NOW, flagged ASSISTED. (The shipped default
+  // is ENABLED === true since 56e1a93; the explicit set stays so this section
+  // never depends on the shipped value.)
   CONFIG.PROLOGUE.ENABLED = true;
   prof.lastPlayed = null; prof.lastSeenUpdate = null;
   W.tried = false;
@@ -450,7 +462,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   st.assistedRun = false;
   ok('a normal end screen carries no ASSISTED tag',
     !/ASSISTED/.test(T.endScreenBody({ lead: 'RUN OVER', gold: 10 })));
-  CONFIG.PROLOGUE.ENABLED = false;   // back to the shipped default
+  CONFIG.PROLOGUE.ENABLED = true;   // the shipped default since 56e1a93
 }
 
 console.log('test_whatsnew: all ' + passed + ' checks passed');

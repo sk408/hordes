@@ -5,12 +5,18 @@ import {
   CHOICE_POOL, RARITIES, RARITY_SCALE, rollChoices, applyChoice, ensureChoices,
 } from '../src/choices.js';
 import { makePlayer } from '../src/entities.js';
+import { CONFIG } from '../src/config.js';
 import { mulberry32 } from '../src/weather.js';
 
 // Deterministic rng helper: replays a fixed sequence.
 const seq = (vals) => { let i = 0; return () => vals[i++ % vals.length]; };
 const near = (a, b, eps = 1e-9, msg = '') =>
   assert.ok(Math.abs(a - b) <= eps, `${msg} expected ~${b}, got ${a}`);
+
+// Base weapon damage is the OWNER-TUNED dial (CONFIG.WEAPON.DAMAGE; 8 -> 24 on
+// 2026-09-18, owner: "starting damage 200% more so the pilot can kill a few
+// enemies"). These bars pin the blessing/curse RATIOS, never the dial itself.
+const BASE_DMG = CONFIG.WEAPON.DAMAGE;
 
 // Apply one pool entry at a rarity to a fresh makePlayer.
 function applyAt(id, rarity) {
@@ -93,7 +99,7 @@ for (let seed = 0; seed < 300; seed++) {
 // COMMON (scale 1) — exact numbers.
 {
   let p = applyAt('blood_pact', 'COMMON').p;
-  near(p.stats.damage, 10); near(p.stats.maxHp, 85); near(p.hp, 85, 1e-9, 'hp clamped after maxHp loss');
+  near(p.stats.damage, BASE_DMG * 1.25); near(p.stats.maxHp, 85); near(p.hp, 85, 1e-9, 'hp clamped after maxHp loss');
   p = applyAt('zephyr_stride', 'COMMON').p;
   near(p.stats.speed, 72); near(p.stats.pickup, 19.8);
   p = applyAt('scholars_pact', 'COMMON').p;
@@ -103,7 +109,7 @@ for (let seed = 0; seed < 300; seed++) {
   p = applyAt('alchemists_blessing', 'COMMON').p;
   near(p.choices.potionHealMult, 2); near(p.choices.dropChanceMult, 0.5);
   p = applyAt('stone_skin', 'COMMON').p;
-  near(p.stats.maxHp, 125); near(p.stats.damage, 7.2);
+  near(p.stats.maxHp, 125); near(p.stats.damage, BASE_DMG * 0.9);
   p = applyAt('hair_trigger', 'COMMON').p;
   near(p.stats.cooldown, 0.44); near(p.stats.maxMana, 80);
   p = applyAt('vampires_kiss', 'COMMON').p;
@@ -112,20 +118,20 @@ for (let seed = 0; seed < 300; seed++) {
   near(p.stats.maxHp, 150); near(p.hp, 150, 1e-9, 'giants heart heals what it grants');
   near(p.stats.speed, 51);
   p = applyAt('keen_edge', 'COMMON').p;
-  near(p.stats.crit, 0.10); near(p.stats.damage, 6.8);
+  near(p.stats.crit, 0.10); near(p.stats.damage, BASE_DMG * 0.85);
   p = applyAt('lancers_discipline', 'COMMON').p;
   near(p.stats.pierce, 1); near(p.stats.cooldown, 0.55 * 1.15);
   p = applyAt('merchants_pact', 'COMMON').p;
   near(p.choices.weaponSlotBonus, 2); near(p.choices.shopPriceMult, 1.5);
   p = applyAt('glass_cannon', 'COMMON').p;
-  near(p.stats.damage, 11.2); near(p.choices.damageTakenMult, 1.3);
+  near(p.stats.damage, BASE_DMG * 1.4); near(p.choices.damageTakenMult, 1.3);
   p = applyAt('fortunes_favor', 'COMMON').p;
   near(p.choices.itemDropMult, 2); near(p.stats.goldMult, 0.75);
 }
 // EPIC (scale 2.2) — buffs AND curses both scale.
 {
   let p = applyAt('blood_pact', 'EPIC').p;
-  near(p.stats.damage, 8 * (1 + 0.25 * 2.2)); near(p.stats.maxHp, 100 * (1 - 0.15 * 2.2));
+  near(p.stats.damage, BASE_DMG * (1 + 0.25 * 2.2)); near(p.stats.maxHp, 100 * (1 - 0.15 * 2.2));
   p = applyAt('hair_trigger', 'EPIC').p;
   near(p.stats.cooldown, 0.55 * (1 - 0.44)); near(p.stats.maxMana, 100 * (1 - 0.44));
   p = applyAt('alchemists_blessing', 'EPIC').p;
@@ -135,7 +141,7 @@ for (let seed = 0; seed < 300; seed++) {
   p = applyAt('lancers_discipline', 'EPIC').p;
   near(p.stats.pierce, 2);
   p = applyAt('glass_cannon', 'EPIC').p;
-  near(p.stats.damage, 8 * (1 + 0.88)); near(p.choices.damageTakenMult, 1 + 0.66);
+  near(p.stats.damage, BASE_DMG * (1 + 0.88)); near(p.choices.damageTakenMult, 1 + 0.66);
   p = applyAt('giants_heart', 'EPIC').p;
   near(p.stats.maxHp, 100 + 110); near(p.stats.speed, 60 * (1 - 0.33));
 }

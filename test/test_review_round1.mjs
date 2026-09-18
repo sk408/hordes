@@ -95,6 +95,50 @@ const stripEls = () => globalThis.document.body.children.filter(c => c.id === 'h
 const tourRoot = () => globalThis.document.body.children.find(c => c.id === 'tour-root');
 const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preventDefault: noop }); };
 
+// ---- SHARED PHASE-BOUNDARY GUARD (LOAD-FLAKE HARDENING, 2026-09-18) ----------
+// Brief docs/briefs/REVIEW_ROUND1_HARDENING.md: this file reded three times in
+// one day under suite load, on three DIFFERENT legs, each green standalone —
+// one CLASS: a modal overlay (death/settings coach, prologue banner, level-up
+// draft) mounts asynchronously, lands inside a later leg's window, the sim
+// pauses, and whatever that leg waited for never happens (the 21:43 red:
+// killAndSettle pumped 7200 frames with no death because a re-armed coach had
+// frozen the sim). sweepOverlays() dismisses ANY live overlay through its
+// REAL path — doc-level Escape for a coach (the Tour.skip funnel; the game
+// pause is WINDOW-level, so docKey cannot open settings), a real card click
+// for a draft, the real two-tap window-level Escape SKIP for a live prologue
+// banner (main.js window keydown -> prologueSkip) — and ensureSimLive() then
+// PROVES the sim is unpaused: mode is 'playing' and the run clock advances
+// across a tick. A boundary that cannot be unpaused through the real paths is
+// a GAME bug — the ok() below goes red; nothing here papers over it.
+const draftCard = () => [...globalThis.document.getElementById('ov-cards').children]
+  .find(c => c.onclick || (domHandlers.get(c) || {}).click);
+const sweepOverlays = () => {
+  let swept = false;
+  for (let i = 0; i < 40; i++) {
+    if (tourRoot()) { docKey('Escape'); tick(0.1); swept = true; continue; }
+    if (st.mode === 'draft') {
+      const c = draftCard();
+      if (c) { c.click(); tick(0.1); swept = true; continue; }
+      tick(0.2); continue;   // cards mount asynchronously under load — give the renderer frames
+    }
+    if (st.prologue && !st.prologue.drunk && !st.prologue.skipped) {
+      keyHandler({ key: 'escape', preventDefault: noop }); tick(0.1);   // tap 1: arm
+      keyHandler({ key: 'escape', preventDefault: noop }); tick(0.1);   // tap 2: confirm
+      swept = true; continue;
+    }
+    break;
+  }
+  return swept;
+};
+const ensureSimLive = (tag) => {
+  sweepOverlays();
+  ok(tag + ': the boundary is live play (overlay-free)', st.mode === 'playing', st.mode);
+  const t0 = st.time;
+  tick(0.25);
+  ok(tag + ': the sim is UNPAUSED (the run clock advances)', st.time > t0,
+    { mode: st.mode, t0, t: st.time, coach: !!tourRoot() });
+};
+
 // ---- ITEM 1: SKIP ENDS THE SEQUENCE (RETARGETED, ONBOARDING RETIREMENT 2026-09-18)
 // The original item pinned the hint chips (a visible chip + a queued one
 // cancelled by the skip, session suppression, REPLAY TOUR re-arm). The hint
@@ -119,6 +163,10 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   st.player.stats.maxHp = 1000; st.player.hp = 600;
   st.player.potions.hp = 1;
   tick(1.0);
+  // BOUNDARY GUARD: a boot/title coach mounting here would freeze the run
+  // before the gem-push below — the draft would never open (the 12:29-class
+  // red). Prove the sim is live before waiting on sim progress.
+  ensureSimLive('1: run start');
 
   // The tour: the first draft (a level-up) coaches through the REAL path —
   // xp crosses the bar through the REAL gem-pickup loop, not a state write.
@@ -158,6 +206,12 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   }
   ok('1: NO hint-strip element appears for the rest of the run after skip', leaked === null, leaked);
 
+  // BOUNDARY GUARD (the 20:54 red: the Escape reached a queued draft, not the
+  // settings — 'settings open mid-run :: "draft"'). The 15s sweep above can
+  // queue a level-up draft/evolve or a coach; dismiss ANY of it through the
+  // real paths and prove the sim is unpaused before the pause key lands.
+  ensureSimLive('1: pre-pause boundary');
+
   // (c) REPLAY TOUR from a LIVE RUN's settings: arms the NEXT run + toasts
   // (never yanks the player out of a fight).
   keyHandler({ key: 'escape', preventDefault() {} });   // pause -> settings
@@ -169,6 +223,9 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   const replayInRun = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
   ok('1: the REPLAY TOUR card exists in the manual (non-gate context)', !!replayInRun);
   replayInRun.click();
+  // BOUNDARY GUARD: the arm must leave live play live (nothing modal may be
+  // holding the sim when the 'not yanked' check reads the mode).
+  ensureSimLive('1: post-REPLAY-arm boundary');
   ok('1: REPLAY TOUR from a live run ARMS THE NEXT RUN and says so',
     (st.toasts || []).some(t => /GUIDED WALKTHROUGH ARMS AT NEXT RUN/.test(t.msg)),
     (st.toasts || []).map(t => t.msg));
@@ -189,7 +246,11 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   const confirm = [...ovCards1.children].find(c => (c._html || '').includes('CONFIRM END RUN'));
   confirm && confirm.click();
   ok('1: the run ended', st.mode === 'dead', st.mode);
-  if (tourRoot()) docKey('Escape');   // a fresh death coach may own the keys
+  // BOUNDARY GUARD: the death coach mounts on the death screen ASYNCHRONOUSLY
+  // — under load the one-frame-late mount lands after an immediate check and
+  // swallows the TITLE key. Let it mount, then dismiss it via the real path.
+  tick(0.3);
+  sweepOverlays();
   keyHandler({ key: 't', preventDefault() {} });   // TITLE
   ok('1: back on the title', st.mode === 'title', st.mode);
 
@@ -219,6 +280,9 @@ const docKey = (key) => { for (const cb of docKeydowns.slice()) cb({ key, preven
   // Reset into an ordinary run for ITEM 2 (the opt-in is CONSUMED by the arm).
   T.startRun();
   tick(0.5);
+  // BOUNDARY GUARD: the special run's phase END must not leave anything modal
+  // behind (a stale banner/coach here freezes every ITEM 2 leg downstream).
+  ensureSimLive('1: ordinary-run reset');
   ok('1: the next run is ordinary again (opt-in consumed, gate still OFF)',
     !st.prologue && st.assistedRun === false && st.mode === 'playing',
     { prologue: !!st.prologue, assisted: st.assistedRun, mode: st.mode });
@@ -256,9 +320,15 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   const killAndSettle = () => {
     st.player.stats.goldMult = 1;                 // zero the persistent chain drift
     st.player.stats.maxHp = 1; st.player.hp = 1;
+    // BOUNDARY GUARD (the 21:43 red: 7200 frames, no death — a re-armed coach
+    // had frozen the sim). Clear anything modal at entry, then sweep EVERY
+    // frame of the wait: a level-up draft or a coach mounting mid-wait pauses
+    // the sim and the death never comes. All dismissals are the real paths.
+    sweepOverlays();
     let ended = false;
     for (let i = 0; i < 60 * 120 && !ended; i++) {
       frame();
+      sweepOverlays();
       st.rampage.best = 0; st.rampage.streak = 0; // rampage re-accrues on kills
       ended = st.mode === 'death-cine' || st.mode === 'dead';
     }
@@ -277,11 +347,13 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   T.challenge.select('STANDARD');
   T.startRun();
   tick(1);
+  ensureSimLive('2: STANDARD run start');
   let settled = killAndSettle();
   const stdAward = settled && settled.award;
   T.challenge.select('ONE_WEAPON');
   T.startRun();
   tick(1);
+  ensureSimLive('2: ONE_WEAPON run start');
   settled = killAndSettle();
   const oneAward = settled && settled.award;
   ok('2: a ONE_WEAPON run settles the AWARD at exactly +200% over STANDARD (300% total)',
@@ -298,6 +370,7 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   // misread would pay 1 x 3 x 1.6 = 4.8 instead.
   T.startRun();
   tick(1);
+  ensureSimLive('2: heat run start');
   st.heat.manual = 2;
   settled = killAndSettle();
   ok('2: heat stacks ADDITIVELY — ONE_WEAPON + heat(manual 2) settles at x3.6',
@@ -318,8 +391,19 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   // describeChallenge verbatim — sub text is the card's desc line).
   T.challenge.select('NO_POTIONS');
   keyHandler({ key: 't', preventDefault() {} });   // TITLE from the dead screen
-  if (tourRoot()) docKey('Escape');                 // a fresh death coach may own the keys
-  while (st.mode !== 'title' && st.mode !== 'menu') { keyHandler({ key: 't', preventDefault() {} }); tick(0.5); }
+  // BOUNDARY GUARD: the death coach mounts a frame LATE under load — an
+  // immediate one-shot check misses it and it swallows every TITLE key (the
+  // old loop then spun forever). Let it mount, sweep via the real Escape path,
+  // and keep pressing T through a BOUNDED loop: a genuinely stuck transition
+  // must fail the assert below, never hang the suite.
+  tick(0.3);
+  for (let i = 0; i < 60 && st.mode !== 'title' && st.mode !== 'menu'; i++) {
+    sweepOverlays();
+    keyHandler({ key: 't', preventDefault() {} });
+    tick(0.5);
+  }
+  ok('2: the dead screen reaches the title (nothing swallowed the transition)',
+    st.mode === 'title' || st.mode === 'menu', st.mode);
   tick(1);
   // The selection surface: the title SETUP card opens the page whose CHALLENGE
   // row renders describeChallenge verbatim (menuCard: name + desc).
@@ -360,6 +444,9 @@ console.log('test_review_round1: items 1-2 ' + passed + ' checks');
   const AD = CONFIG.AUTOPILOT.AUTO_DRINK;
 
   // The manual's page 4 (THE FIELD) is where the field's objects live.
+  // BOUNDARY GUARD: clear any lingering title coach before driving the manual
+  // surface (a live tour swallows keys and its overlay outlives the leg).
+  sweepOverlays();
   T.manual.goto(4);
   tick(0.2);
   const fieldCard = [...ovCards.children].find(c => (c._html || '').includes('THE FIELD'));

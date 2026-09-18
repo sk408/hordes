@@ -9,7 +9,8 @@
 //   * COEXISTENCE: the fullscreen button's hit-test runs FIRST (its tap
 //     toggles, never steers), help-mode taps never arm, pads/cog never reach
 //     the canvas (DOM above it), a second finger on a pad keeps the stick
-//     alive, AUTO_ALL/AUTO_MOVE never arm, non-playing modes never arm;
+//     alive, a drag while AUTO TAKES THE WHEEL (owner 2026-09-18 — the mode
+//     switches to MANUAL under the arm), non-playing modes never arm;
 //   * on touch paths the fixed #joy base stands down (one movement idiom);
 //     desktop keeps the fixed base for mouse-drag (C.JOY.FLOAT is the flip);
 //   * pointer capture is attempted on arm (counted; unverifiable headless —
@@ -145,16 +146,23 @@ const S = suite('test_floating_joystick');
     st.mode = 'playing';
   });
 
-  S.check('AUTO_ALL / AUTO_MOVE never arm — MANUAL only', () => {
+  // THE WHEEL IS YOURS (owner 2026-09-18: "a drag on the field while AUTO
+  // hands over control, matching the key behaviour"): a canvas drag while the
+  // pilot flies on AUTO IS the takeover — no third state, the mode switches
+  // to MANUAL and the stick arms under it.
+  S.check('a drag while AUTO takes the wheel (AUTO_MOVE and AUTO_ALL alike)', () => {
     T.setPilotMode('AUTO_MOVE');
     h.pump(1);
     down(200, 150); move(260, 150);
-    assert.equal(fj.armed(), false, 'AUTO_MOVE: the pilot drives, the canvas does not steer');
+    assert.equal(st.pilotMode, 'MANUAL', 'AUTO_MOVE: the drag IS the takeover');
+    assert.equal(fj.armed(), true, 'AUTO_MOVE: the stick arms under the takeover');
+    lift('pointerup');
     T.setPilotMode('AUTO_ALL');
     h.pump(1);
     down(200, 150); move(260, 150);
-    assert.equal(fj.armed(), false, 'AUTO_ALL: equally dead');
-    assert.ok(T.pilotInput.mag === 0, 'and pilotInput was never written');
+    assert.equal(st.pilotMode, 'MANUAL', 'AUTO_ALL: equally a takeover');
+    assert.ok(T.pilotInput.mag > 0, 'the drag steers the moment it lands');
+    lift('pointerup');
     T.setPilotMode('MANUAL');
     h.pump(1);
     down(200, 150); move(260, 150);

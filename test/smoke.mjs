@@ -1308,6 +1308,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 's' });
   assert(st.mode === 'playing',
     'S must NOT open the FIELD REPORT in any mode (mode=' + st.mode + ')');
+  // THE WHEEL IS YOURS (owner 2026-09-18: "let the user break auto by using
+  // a movement key"): S is a MOVE KEY — pressed while the pilot flies on
+  // AUTO it TAKES THE WHEEL (the mode switches to MANUAL). It still never
+  // opens the report.
+  assert(st.pilotMode === 'MANUAL',
+    'a move key must take the wheel from AUTO (got ' + st.pilotMode + ')');
   keyHandler({ key: 'i' });
   assert(st.mode === 'stats', 'I must open the FIELD REPORT (mode=' + st.mode + ')');
   assert(elements['overlay'].style.display === 'flex', 'stats overlay must show');
@@ -1362,6 +1368,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   T.pilotPrefs.storage.removeItem(T.pilotPrefs.KEY_PILOT);
   T.startRun();
   quietField();
+  pump(1);   // render the fresh run — the HUD string is built per frame
   assert(st.pilotMode === 'AUTO_ALL', 'no stored pref: runs must start AUTO_ALL (got ' + st.pilotMode + ')');
   assert(/Pilot:AUTO_ALL/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
   T.pilotPrefs.storage.setItem(T.pilotPrefs.KEY_PILOT, 'MANUAL');
