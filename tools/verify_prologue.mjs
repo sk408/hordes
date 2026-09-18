@@ -300,12 +300,14 @@ async function viewport(w, h, tag) {
     copyFileSync(shotRainbow, ART + '/prologue-rainbow-' + tag + '.png');
     ok(true, '[' + tag + '] rainbow + cleared field shot');
 
-    // 6. THE SKIP (APPROVED 2026-09-18, the second enabled exception): one
-    //    real tap on the canvas SKIP rect — from a LIVE phase, banner #1 up,
-    //    nothing revealed — ends it at once with the full control set back
-    //    AND the assist intact (the approved judgment call: the skip skips
-    //    the TUTORIAL, not the potion — 45s invuln + shield, clock started).
-    //    Then the ESCAPE twin, same ending.
+    // 6. THE SKIP (APPROVED 2026-09-18, CLARIFIED: "No, potion exists for the
+    //    skipped tutorial too") — "stop explaining", NOT "start the run
+    //    instantly": one real tap on the canvas SKIP rect from a LIVE phase
+    //    (banner #1 up, nothing revealed) enters SKIPPED MODE — the phase
+    //    stays armed, no banner and no tooltip will appear again, and the
+    //    FULL control set is live from the press. The potion sequence then
+    //    runs as normal: the AUTO pilot walks to the visible potion, drinks,
+    //    and the effect is granted with the run clock starting at the drink.
     await p.evaluate(`(async () => {
       const T2 = (await import('./src/main.js')).__TEST;
       T2.getProfile().achievements.totals.runs = 0;
@@ -318,40 +320,54 @@ async function viewport(w, h, tag) {
       return { x: b.left + (r.x + r.w / 2) * (b.width / 480),
                y: b.top + (r.y + r.h / 2) * (b.height / 300) }; })()`);
     await p.tap(skCss.x, skCss.y, 1);
-    await p.sleep(400);
+    await p.sleep(250);
     const afterSkip = await p.evaluate(`(async () => {
       const T2 = (await import('./src/main.js')).__TEST;
       const btns = [...document.querySelectorAll('#touch button')];
-      return { active: T2.prologue.active, locked: T2.prologue.buttonsLocked,
-        invuln: T2.state.player.invuln, shield: T2.state.prologueShieldT,
-        time: T2.state.time,
+      return { active: T2.prologue.active, skipped: T2.state.prologue && T2.state.prologue.skipped,
+        locked: T2.prologue.buttonsLocked, paused: T2.prologue.paused,
+        tip: document.getElementById('prologue-tip').hidden,
         allVis: btns.every((b) => getComputedStyle(b).visibility === 'visible') }; })()`);
-    ok(afterSkip.active === false && afterSkip.locked === false && afterSkip.allVis,
-      '[' + tag + '] the real SKIP tap ended the phase with the FULL control set back');
-    ok(afterSkip.invuln > 40 && afterSkip.shield > 40,
-      '[' + tag + '] the ASSIST SURVIVES the skip (invuln ' + afterSkip.invuln.toFixed(1) +
-      's, shield ' + afterSkip.shield.toFixed(1) + 's)');
-    ok(afterSkip.time > 0, '[' + tag + '] the run clock started at the skip');
+    ok(afterSkip.active === true && afterSkip.skipped === true,
+      '[' + tag + '] the skip did NOT end the phase - skipped mode ("stop explaining")');
+    ok(afterSkip.locked === false && afterSkip.allVis && afterSkip.tip === true,
+      '[' + tag + '] the FULL control set is live from the skip press');
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }))");
     await p.sleep(200);
     ok(await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.mode)()`) === 'stats',
-      '[' + tag + '] buttons WORK right after a skip (FIELD REPORT opened)');
+      '[' + tag + '] buttons WORK mid-skipped-phase (FIELD REPORT opened)');
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
-    await p.sleep(200);
+    await p.sleep(150);
+    // The potion sequence runs as normal; no banner interrupts it now.
+    const drank = await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.prologue.active === false)()`, 12000, 250);
+    const afterDrink = await p.evaluate(`(async () => {
+      const T2 = (await import('./src/main.js')).__TEST;
+      return { invuln: T2.state.player.invuln, shield: T2.state.prologueShieldT,
+        time: T2.state.time }; })()`);
+    ok(drank, '[' + tag + '] the pilot walked to the potion and drank it after the skip');
+    ok(afterDrink.invuln > 40 && afterDrink.shield > 40,
+      '[' + tag + '] the effect was granted at the post-skip drink (invuln ' +
+      afterDrink.invuln.toFixed(1) + 's, shield ' + afterDrink.shield.toFixed(1) + 's)');
+    ok(afterDrink.time > 0, '[' + tag + '] the run clock started at the drink');
 
-    // 6b. The ESCAPE twin, from a fresh live phase.
+    // 6b. The ESCAPE twin, from a fresh live phase: same skipped mode, then
+    //     the same run-as-normal ending.
     await p.evaluate(`(async () => {
       const T2 = (await import('./src/main.js')).__TEST;
       T2.getProfile().achievements.totals.runs = 0;
       T2.startRun(); return true; })()`);
     await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.prologue.paused === true)()`, 8000);
     await p.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
-    await p.sleep(200);
+    await p.sleep(250);
     const afterEsc = await p.evaluate(`(async () => {
       const T2 = (await import('./src/main.js')).__TEST;
-      return { active: T2.prologue.active, locked: T2.prologue.buttonsLocked }; })()`);
-    ok(afterEsc.active === false && afterEsc.locked === false,
-      '[' + tag + '] the Escape twin skipped the phase too');
+      return { active: T2.prologue.active, skipped: T2.state.prologue && T2.state.prologue.skipped,
+        locked: T2.prologue.buttonsLocked }; })()`);
+    ok(afterEsc.active === true && afterEsc.skipped === true && afterEsc.locked === false,
+      '[' + tag + '] the Escape twin entered skipped mode too');
+    await p.waitFor(`(async () => (await import('./src/main.js')).__TEST.prologue.active === false)()`, 12000);
+    ok(await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.player.invuln)()`) > 40,
+      '[' + tag + '] the Escape-twin phase ended at the drink with the effect granted');
 
     const errors = p.errors;
     if (errors.length) { console.log('[' + tag + '] PAGE ERRORS: ' + errors.join(' | ').slice(0, 300)); fails++; }

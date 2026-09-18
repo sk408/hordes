@@ -390,12 +390,15 @@ S.check('STAGED: nothing else is live through the phase — the unstaged control
 });
 
 // ---------------------------------------------------------------------------
-// THE SKIP — APPROVED by the owner 2026-09-18 as the second enabled
-// exception: one press ends the phase, restores the FULL control set
-// immediately (tour-skip session pattern), and — the approved judgment call —
-// skips the TUTORIAL, NOT THE ASSIST: the potion effect survives the skip.
+// THE SKIP — APPROVED (owner 2026-09-18), then CLARIFIED ("No, potion exists
+// for the skipped tutorial too"): the skip removes the EXPLANATIONS, not the
+// SEQUENCE. "Stop explaining", NOT "start the run instantly" — banners and
+// tooltips never appear again, the FULL control set is live from the press,
+// and the POTION SEQUENCE RUNS AS NORMAL (walk -> drink -> 45s invuln +
+// clearing pulse -> the run clock starts). The un-walked potion still
+// answers to the time bound.
 // ---------------------------------------------------------------------------
-S.check('SKIP: the canvas rect and the Escape twin both end the phase at once, everything restored + the assist survives', () => {
+S.check('SKIP: "stop explaining" - banners/tooltips gone, full set live, the potion sequence still runs', () => {
   Math.random = mulberry32b(0x9a44);
   try {
     T.banners.suppressAll();
@@ -403,46 +406,85 @@ S.check('SKIP: the canvas rect and the Escape twin both end the phase at once, e
     T.startRun();
     h.pump(2);
     quietField();
-    // Banner #1 up, nothing revealed: the canvas SKIP tap ends the phase.
-    // An on-screen walker proves the clearing pulse fires on a skip too.
+    // Banner #1 up, nothing revealed: the canvas SKIP tap enters skipped mode.
+    // A parked on-screen walker (speed 0, full shape — the walk is ~90 frames,
+    // a stub would drift to NaN) proves the clearing pulse still fires at the
+    // drink.
     autoplay(60);
     assert(T.prologue.banner() !== null && T.prologue.buttonsLocked === true, 'fixture: banner up, locked');
-    st.enemies.push({ hp: 10, x: st.player.x + 10, y: st.player.y });
+    st.enemies.push({ typeId: 'CHASER', hp: 10, maxHp: 10, x: st.player.x + 10, y: st.player.y,
+      w: 10, speed: 0, mx: 0, my: 0, age: 0, elite: false });
     const sc = skipCenter();
     h.elements['game']._ev['pointerdown']({
       preventDefault() {}, pointerId: 2, clientX: sc.x, clientY: sc.y,
     });
     h.pump(2);
-    assert(!T.prologue.active, 'the canvas SKIP tap ended the phase');
+    assert(T.prologue.active === true && st.prologue.skipped === true,
+      'the skip does NOT end the phase - it enters skipped mode ("stop explaining")');
     assert(T.prologue.buttonsLocked === false && !hasPrOn('tc-pilotbtn') && tipEl().hidden === true,
       'the FULL control set restored immediately (no hidden or inert leftovers)');
-    assert(st.player.invuln >= C.PROLOGUE.INVULN_S - 1 && st.prologueShieldT > 40,
-      'the skip KEEPS the assist: 45s invuln + the shield (the skip skips the TUTORIAL, not the potion)');
-    assert(st.enemies.every((e) => e.hp <= 0), 'the clearing pulse fired on the skip too');
-    assert(st.time > 0, 'the run clock started at the skip');
-    // And everything WORKS right away: the settings pause, the report.
+    // And everything WORKS from the press, mid-phase: the settings pause, the
+    // map key (the settings pause freezes the skipped phase's clock too —
+    // menu-like, unchanged).
     T.runAction('settings');
     assert(st.mode === 'settings', 'the settings pause works after a skip');
     kdown('Escape');
     assert(st.mode === 'playing', 'ESC resumes after a skip');
-    kdown('i');
-    assert(st.mode === 'stats', 'the FIELD REPORT works after a skip');
-    kdown('Escape');
-    // The ESCAPE twin, from a live phase: re-arm, walk to a banner, Esc.
-    T.getProfile().achievements.totals.runs = 0;
-    T.startRun();
-    h.pump(2);
-    quietField();
-    autoplay(60);
-    assert(T.prologue.banner() !== null, 'fixture: banner #1 up again');
-    kdown('Escape');
-    assert(!T.prologue.active && T.prologue.buttonsLocked === false,
-      'the Escape twin skipped the phase (the tour\'s own skip idiom)');
+    kdown('m');
+    assert(st.mode === 'playing' && st.mapOpen === true, 'the MAP key works after a skip (unstaged, now live)');
+    kdown('m');
+    // No banner and no tooltip ever again (the walk to the potion is ~2s, so
+    // this window stays inside the skipped phase).
+    let leak = false;
+    autoplay(45, () => { if (T.prologue.banner() !== null || st.prologue.tip !== null) leak = true; });
+    assert(!leak, 'no banner and no tooltip appears after the skip');
+    // THE POTION SEQUENCE RUNS AS NORMAL: the AUTO pilot walks to the visible
+    // potion and drinks it; the effect is granted, the run clock starts.
+    let drank = false, invAt = 0, shieldAt = 0, aliveAt = -1;
+    autoplay(60 * 8, () => {
+      if (!T.prologue.active && !drank) {
+        drank = true; invAt = st.player.invuln; shieldAt = st.prologueShieldT;
+        aliveAt = st.enemies.filter((e) => e.hp > 0).length;
+      }
+    });
+    assert(drank, 'the pilot walked to the potion and drank it after the skip');
+    assert(invAt >= C.PROLOGUE.INVULN_S - 1 && shieldAt > 40,
+      'the effect was granted at the post-skip drink (45s invuln + shield)');
+    assert(aliveAt === 0, 'the clearing pulse fired at the drink');
+    assert(st.time > 0, 'the run clock started at the drink');
     // THE SESSION SUPPRESSION (the tour-skip pattern reused): no hint chip
     // arms for a player who skipped the tutorial.
     let armed = false;
     autoplay(60 * 3, () => { if (T.onboarding.pending().length > 0) armed = true; });
     assert(!armed, 'no hint arms after a skip (session suppression, REPLAY TOUR restores)');
+  } finally { Math.random = realRandom; }
+});
+
+S.check('SKIP: the Escape twin + the un-walked potion still answers to the time bound', () => {
+  Math.random = mulberry32b(0x2f17);
+  try {
+    T.banners.suppressAll();
+    T.getProfile().achievements.totals.runs = 0;
+    T.startRun();
+    h.pump(2);
+    quietField();
+    autoplay(60);
+    assert(T.prologue.banner() !== null, 'fixture: banner #1 up');
+    kdown('Escape');
+    h.pump(2);
+    assert(T.prologue.active === true && st.prologue.skipped === true &&
+      T.prologue.buttonsLocked === false,
+      'the Escape twin entered skipped mode too (the tour\'s own skip idiom)');
+    // The bound: park the potion far (the EXIT-2 fixture) — MAX_S of
+    // unpaused time (skipped mode has no banner to freeze it) ends the
+    // phase before the walk ever arrives, no shield.
+    st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
+    let bound = false;
+    autoplay(60 * (C.PROLOGUE.MAX_S + 2), () => { if (!T.prologue.active) bound = true; });
+    assert(bound, 'the un-walked potion answered to the time bound after a skip');
+    assert(st.player.invuln < 5 && st.prologueShieldT <= 0,
+      'the bound exit grants no shield');
+    assert(st.time > 0, 'the run clock started at the bound');
   } finally { Math.random = realRandom; }
 });
 

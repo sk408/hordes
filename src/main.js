@@ -7378,6 +7378,12 @@ function startRun() {
         // control is hidden until its banner's OK, revealed with a tooltip,
         // and live from that moment (see PROLOGUE_STAGES below).
         revealed: { move: false, pilot: false, stats: false }, tip: null,
+        // SKIPPED (owner 2026-09-18: "No, potion exists for the skipped
+        // tutorial too"): a skip is "stop explaining", NOT "start the run
+        // instantly" — the phase STAYS ARMED in skipped mode (banners and
+        // tooltips gone, the FULL control set live, the potion sequence
+        // running as normal) until the drink or the bound ends it.
+        skipped: false,
         // Side placement (up-RIGHT, clamped on-screen): the straight-up
         // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
         // see the POTION_DX comment in config.js.
@@ -7452,6 +7458,7 @@ const PROLOGUE_BANNERS = [
 
 function prologueBanner() {
   if (!state.prologue || state.prologue.drunk) return null;
+  if (state.prologue.skipped) return null;   // a skip stops the explaining
   if (state.prologue.bannerIdx >= PROLOGUE_BANNERS.length) return null;
   // The cadence gate: up only after BANNER_WALK_S of walking since the last
   // OK (walk -> banner -> OK -> walk ... -> potion). While below it there is
@@ -7477,7 +7484,7 @@ function prologueOk() {
 // the bottom of update() reaps), then the phase ends. The clear fires AT the
 // drink, i.e. BEFORE the shield ends, trivially. On-screen = the visible
 // field at the current zoom plus CLEAR_MARGIN world units — NOT the arena.
-function prologueDrink(p, via) {
+function prologueDrink(p) {
   if (!state.prologue || state.prologue.drunk) return;
   state.prologue.drunk = true;
   p.invuln = Math.max(p.invuln, C.PROLOGUE.INVULN_S);
@@ -7489,7 +7496,7 @@ function prologueDrink(p, via) {
   for (const e of state.enemies) {
     if (e.hp > 0 && e.x >= x0 && e.x <= x1 && e.y >= y0 && e.y <= y1) e.hp = 0;
   }
-  endPrologue(via === 'skip' ? 'skip' : 'drunk');
+  endPrologue('drunk');
 }
 
 // THE BOUND: the phase ends when the potion is drunk OR at MAX_S of UNPAUSED
@@ -7620,9 +7627,10 @@ function prologueTipHide() {
 
 // The staged-act gate: through the phase ONLY the revealed controls' actions
 // pass runAction (everything else stays inert — the owner's all-buttons-
-// disabled rule, now with the staged exceptions).
+// disabled rule, now with the staged exceptions). A SKIPPED phase is fully
+// live: the skip restores the whole control set at the press.
 function prologueActAllowed(act) {
-  if (!state.prologue) return true;
+  if (!state.prologue || state.prologue.skipped) return true;
   const rv = state.prologue.revealed || {};
   if (act === 'pilot' && rv.pilot) return true;
   if (act === 'stats' && rv.stats) return true;
@@ -7655,19 +7663,33 @@ function prologueManualVec() {
 
 // SKIP ALL — APPROVED by the owner 2026-09-18 as the second enabled
 // exception alongside OK (during the prologue exactly two controls are live:
-// the banner's OK and this). ONE JUDGMENT CALL, flagged for overrule: the
-// skip skips the TUTORIAL, NOT THE ASSIST — it ends the phase through the
-// DRINK path, so the potion effect survives (45s invuln + the clearing
-// pulse + the rainbow) and the run clock starts at that moment. Reason: the
-// only players who ever see this are real new players (run #1 of a fresh
-// profile), exactly who the assist exists for. The full control set returns
-// immediately, and the tour skip's session-suppression pattern is reused
-// (hintsSuppressed — no chips at a player who opted out; REPLAY TOUR is the
-// way back in).
+// the banner's OK and this). CLARIFIED 2026-09-18 ("No, potion exists for
+// the skipped tutorial too"): the skip removes the EXPLANATIONS, not the
+// SEQUENCE — "stop explaining", NOT "start the run instantly". It sets the
+// skipped mode: no banner and no tooltip will ever appear again, the FULL
+// control set is live from the press, and the POTION SEQUENCE RUNS AS
+// NORMAL (the AUTO pilot walks to the visible potion, drinks it, gets the
+// 45s invuln + the clearing pulse — or the MANUAL fallback walk carries an
+// idle pilot; the un-walked potion still answers to MAX_S). endPrologue at
+// the drink is the phase's end, unchanged. The tour skip's session
+// suppression is reused (hintsSuppressed — no chips at a player who opted
+// out; REPLAY TOUR is the way back in).
 function prologueSkip() {
-  if (!state.prologue || state.prologue.drunk) return;
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
   hintsSuppressed = true;
-  prologueDrink(state.player, 'skip');
+  pr.skipped = true;
+  // Nothing left to introduce: every control is already live.
+  pr.revealed.move = pr.revealed.pilot = pr.revealed.stats = true;
+  prologueLockButtons(false);
+  prologueTipHide();
+  for (const s of PROLOGUE_STAGES) {
+    for (const id of s.btns) {
+      const el = typeof document !== 'undefined' && document.getElementById(id);
+      if (el && el.classList) el.classList.remove('pr-on');
+    }
+  }
+  toast('TUTORIAL SKIPPED');
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
@@ -8435,7 +8457,7 @@ window.addEventListener('keydown', (ev) => {
   // key is INERT (a key must never fire what the player is trying to read
   // about) except ESC, which also leaves. This gate sits before the mode
   // dispatch so no mode branch can bypass it.
-  if ((ev.key === '?' || k === 'f1') && !state.prologue) {
+  if ((ev.key === '?' || k === 'f1') && !(state.prologue && !state.prologue.skipped)) {
     if (ev.preventDefault) ev.preventDefault();
     controlUsed('help');
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
@@ -8551,7 +8573,7 @@ window.addEventListener('keydown', (ev) => {
     // tour's own skip idiom, proposed as the second enabled exception).
     // runAction carries the same staging gate; the banners' OK and SKIP are
     // the canvas-path controls.
-    if (state.prologue) {
+    if (state.prologue && !state.prologue.skipped) {
       const rv = state.prologue.revealed || {};
       if (prologueBanner() && k === 'escape') { prologueSkip(); return; }
       if (rv.move) {
@@ -9173,7 +9195,8 @@ function fsVisible() {
   // affordance legibly at 22x18 view px (disclosed in the report). fsVisible
   // gates fsHit, so the enlarged target is inert too — it can never eat the
   // banner-OK tap.
-  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn() && !state.prologue;
+  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn() &&
+    !(state.prologue && !state.prologue.skipped);
 }
 // The button box in VIEW coordinates — the ONE geometry source the renderer
 // paints, the hit-test reads and the tests assert (canvasRegion projects it

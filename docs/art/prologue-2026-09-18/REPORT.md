@@ -351,42 +351,44 @@ real-browser verifier asserts every `#touch button` computes
 `visibility: visible` with zero `.pr-on` survivors, and that the very keys
 that were inert at arm time (I) act after.
 
-### SKIP — APPROVED (owner 2026-09-18: "Sure, skip is fine"); ONE JUDGMENT CALL flagged for overrule
+### SKIP — APPROVED (owner 2026-09-18: "Sure, skip is fine"), then CLARIFIED ("No, potion exists for the skipped tutorial too")
 
 During the prologue exactly two controls are live: the banner's OK and the
 **SKIP ALL** button painted on the canvas card's lower-left corner (rect
 `prologueSkipRect()`, hit-tested by the same canvas funnel; quiet — dimmer,
 smaller, 9px — never mistakable for OK, in-view and clear of it at every
 viewport), plus the **Escape twin** while a banner is up (the tour's own
-skip idiom). One skip ends the phase at once and restores the FULL control
-set immediately; it reuses the tour-skip session suppression (no hint chip
-arms later this session; REPLAY TOUR restores them). Toast:
-"TUTORIAL SKIPPED - THE RUN BEGINS".
+skip idiom). The tour-skip session suppression is reused
+(hintsSuppressed — no hint chip arms later this session; REPLAY TOUR
+restores them).
 
-**THE JUDGMENT CALL — the skip skips the TUTORIAL, NOT THE ASSIST.**
-Skipping ends the phase through the DRINK path: the potion counts as drunk,
-the named 45s invincibility + the on-screen clearing pulse + the rainbow
-survive, and the run clock and enemy spawns start at that moment. Reason:
-the only players who ever see this are real new players (run #1 of a fresh
-profile) — exactly who the assist exists for; a skip that also stripped the
-shield would punish the opt-out with a cold start. **Stated plainly so the
-owner can overrule**: if he wants a skip to also skip the potion, the change
-is one line (`prologueSkip` calls `endPrologue('skip')` directly instead of
-`prologueDrink(state.player, 'skip')`) plus flipping the assist-survives
-asserts in test_prologue/verify_prologue back to no-shield ones.
+**THE CLARIFIED SEMANTICS — the skip removes the EXPLANATIONS, not the
+SEQUENCE.** "Stop explaining", NOT "start the run instantly": a skip enters
+SKIPPED MODE, the phase stays armed — no banner and no tooltip will ever
+appear again, the FULL control set (buttons, keys, help, the fullscreen
+glyph) is live from the press, and the POTION SEQUENCE RUNS AS NORMAL: the
+pilot walks to the visible potion, drinks it, gets the named 45s
+invincibility + the on-screen clearing pulse + the rainbow, and the run
+clock starts at the drink. The un-walked potion still answers to the MAX_S
+bound (skipped mode has no banner to freeze the bound's clock). The 45s
+invincibility, the clear, the rainbow and the ordering rules are unchanged
+from the base briefs. Toast at the press: "TUTORIAL SKIPPED"; at the drink:
+"SHIELDED 45S", same as the taught path.
 
 ### Tests + verification (the addendum's own)
 
-- `test/test_prologue.mjs` — 14 checks, all green: arm-time cleanliness
+- `test/test_prologue.mjs` — 15 checks, all green: arm-time cleanliness
   (nothing revealed, no tooltip, no staging marks — including across a
   RE-ARM), MOVE reveal + tooltip + first-steer clear + steering in
   AUTO_ALL + WASD/arrows, PILOT/STATS inert-before/live-after with `.pr-on`
   and tooltip lifecycle through the real funnels (`runAction`, key twins),
   the report pausing the phase clock, banner 4 revealing nothing, the
   unstaged controls hidden+inert through the whole phase (15 keys, 13
-  actions), SKIP via canvas rect AND Escape (full set restored, the assist
-  surviving — 45s invuln, clearing pulse, clock started at the skip,
-  session suppression), THE GUARD equality vs run #2, and every base-brief
+  actions), SKIP via canvas rect AND Escape (skipped mode: phase stays
+  armed, full set live at the press, no banner/tooltip ever again, then the
+  potion sequence runs as normal — walk, drink, 45s invuln, clearing pulse,
+  clock at the drink — and the un-walked potion answers to the bound; session
+  suppression), THE GUARD equality vs run #2, and every base-brief
   check retained (exits, boundary, clear, rainbow, absorb).
 - `tools/verify_prologue.mjs` — ALL OK at BOTH 390x844 and 320x568 on a real
   fresh profile: computed `visibility: hidden` on every touch button at arm
@@ -395,10 +397,11 @@ asserts in test_prologue/verify_prologue back to no-shield ones.
   clearing the tooltip, PILOT/STATS going `visibility: visible` at their
   reveals, a real tap on the revealed PILOT button toggling the mode, the
   previously-inert `I` key opening the report once STATS is staged, the
-  real SKIP-rect tap and the Escape twin both ending the phase with the
-  full control set back AND the assist intact (invuln 44.5s, clock
-  started), and all 13 buttons visible with no staging marks after the
-  drink.
+  real SKIP-rect tap and the Escape twin both entering SKIPPED MODE (phase
+  still armed, full set live at the press, the FIELD REPORT openable
+  mid-skipped-phase) and then ending at the DRINK with the effect granted
+  (invuln 44.8s, clock started), and all 13 buttons visible with no staging
+  marks after the drink.
 - Verifier note (honesty): the drag check zeroes `walkT` with its start
   sample — movement itself accrues the banner cadence, so without the reset
   banner 2 rises mid-drag and (correctly, by the modal rule) freezes the
@@ -415,5 +418,5 @@ asserts in test_prologue/verify_prologue back to no-shield ones.
   SKIP ALL button.
 - `index.html` — lock CSS flipped to `visibility: hidden` + `.pr-on`;
   `#prologue-tip` element + anchors; `tc-pilotbtn` id.
-- `test/test_prologue.mjs` — rewritten per above (14 checks).
+- `test/test_prologue.mjs` — rewritten per above (15 checks).
 - `tools/verify_prologue.mjs` — staged real-browser checks per above.

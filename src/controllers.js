@@ -299,7 +299,12 @@ export class AutoPilotController {
     // walk ... -> potion -> drink -> effect.
     if (state.prologue && !state.prologue.drunk) {
       const banners = state.prologue.banners || [];
-      const bannerUp = state.prologue.bannerIdx < banners.length &&
+      // SKIPPED (owner 2026-09-18: "No, potion exists for the skipped
+      // tutorial too"): a skipped phase has nothing left to hold for — the
+      // walk to the potion runs as normal (main.js's prologueBanner() reads
+      // the same skipped flag).
+      const bannerUp = !state.prologue.skipped &&
+        state.prologue.bannerIdx < banners.length &&
         (state.prologue.walkT || 0) >= C.PROLOGUE.BANNER_WALK_S;
       if (bannerUp) {
         this.act = 'PROLOGUE_HOLD';
