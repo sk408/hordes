@@ -921,8 +921,9 @@ export const CONFIG = {
     HP: '#ff9aa6', MP: '#9ec2ff', XP: '#ffe07a',   // label tints (bright)
     // WAVE-27: the canvas FOCUS/STANCE readout is gone (the overlay buttons'
     // badges and the cycle toast carry the doctrine). STANCE_COLORS survives
-    // because it tints the stance CYCLE toast (main.js cycleStanceWithFeedback)
-    // and the GREEDY HAUL payoff toast — risk-colored: green = safe, gold =
+    // because it tints the stance CYCLE toast (main.js cycleStanceWithFeedback).
+    // (2026-09-19: the GREEDY HAUL payoff toast was removed at the owner's
+    // request, so no longer a consumer.) Risk-colored: green = safe, gold =
     // balanced, orange = greedy.
     STANCE_COLORS: { SAFE: '#68e080', BALANCED: '#ffd75e', GREEDY: '#ff8848' },
   },

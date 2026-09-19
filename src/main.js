@@ -899,8 +899,7 @@ const state = {
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
   timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
   stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
-  moment: null,      // earned-moment flourish ({ kind, x, y, age, ttl } | null)
-  stanceLootAt: -99, // last GREEDY-payoff toast time (rate limiter)
+  moment: null,      // earned-moment flourish ({ kind, x, y, ttl } | null)
   // ---- RUN-STRUCTURE wave (the run is a bounded 30:00 ladder) ----
   runWon: false,     // true once RUN SURVIVED has fired (the victory ending)
   lastMinute: 0,     // last whole minute the clock toast fired for
@@ -3411,12 +3410,10 @@ function update(dt) {
   tickBossBanner(dt);   // WAVE-14 arrival overlay
 
   // Gem pickup.
-  let greedyScoop = 0;   // WAVE-26: gems only the GREEDY stretch could reach
   for (let i = state.gems.length - 1; i >= 0; i--) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
-      if (controller.stance === 'GREEDY' && d > basePickR) greedyScoop++;
       // G24 slice 1: the SECOND heat payout channel. heatXpMult tracks MANUAL
       // pushes only (the symmetry rule — built-in heat stays cost-only), read
       // here at the ONE kill-XP site alongside the Scholar/SUNNY/rampage
@@ -3446,23 +3443,17 @@ function update(dt) {
       }
     }
   }
-  // WAVE-26 moment-to-moment signal: the stance PAYING OFF — loot the base
-  // radius could never have taken. Rate-limited (once per 6s) so it reads as
-  // a signal and never becomes noise, and greed-gated so it fires only when
-  // GREEDY is the reason it happened.
-  // WORDING (owner-reported + measured): this used to read "N LOOT OUT OF
-  // REACH", which reads as a WARNING about loot left on the ground while the
-  // condition is a SUCCESS -- the gems counted here are the ones being collected
-  // THIS FRAME at a distance only the GREEDY stretch covers. So with a lone far
-  // gem the player was told "1 LOOT OUT OF REACH" about the very gem they had
-  // just picked up, and a gem genuinely left out of reach (3x the radius)
-  // produced no message at all: the claim was inverted from the event. The count
-  // and the rate limit are unchanged; only the claim is now true.
-  if (greedyScoop > 0 && state.time - state.stanceLootAt > 6) {
-    state.stanceLootAt = state.time;
-    toast('GREEDY HAUL - ' + greedyScoop + ' SNATCHED BEYOND REACH',
-      C.HUD.STANCE_COLORS.GREEDY);
-  }
+  // GREEDY PAYOFF TOAST — REMOVED (owner 2026-09-19, second and final ask).
+  // "GREEDY HAUL - N SNATCHED BEYOND REACH" is gone.
+  //
+  // The owner asked for this once before and that pass REWORDED it instead (it had
+  // read "N LOOT OUT OF REACH") and left it on screen — the wrong answer to
+  // "remove it". This note exists so nobody restores it a third time as a "fix".
+  //
+  // The MECHANIC is untouched: the GREEDY stance still stretches the pickup radius
+  // (see STANCES.GREEDY.PICKUP_MULT and the gem loop above), and the player still
+  // gets the gems. Only the announcement is deleted — it told the player nothing
+  // they could act on, and its most common shape was a lone "1".
 
   // Camera follows player (WAVE-27: one shared follow — see updateCamera).
   updateCamera(p, dt);
@@ -7481,7 +7472,9 @@ function startRun() {
   // starts at normal speed with no flare and no stale GREEDY rate-limit stamp.
   state.timeScale = 1;
   state.moment = null;
-  state.stanceLootAt = -99;
+  // stanceLootAt: REMOVED 2026-09-19 with the GREEDY payoff toast it rate-limited
+  // (the owner asked twice; the first pass only reworded the line). Nothing reads
+  // or writes it — the stance mechanic itself is untouched.
   // WAVE-28: the auto-drink gates restart with the run (a fresh run starts
   // with both kinds armed).
   state.autoDrinkCd = { hp: 0, mp: 0 };

@@ -126,63 +126,46 @@ S.check('GREEDY takes loot the base radius cannot reach; SAFE leaves it behind',
   state.gems.length = 0;
 });
 
-S.check('the payoff reports through the EXISTING feed, rate-limited', () => {
+// ---- (2) the GREEDY payoff toast is REMOVED ---------------------------------
+S.check('the GREEDY payoff toast is GONE — inverted, and the mechanic is not', () => {
+  // INVERTED, not deleted: the owner asked for this line twice and the first pass
+  // answered "remove it" by REWORDING it, so the assertions that used to describe
+  // the wording now assert its ABSENCE. The MECHANIC stays pinned underneath —
+  // the greedy stretch really does take loot the base radius cannot — so losing
+  // the announcement cannot quietly become losing the stance.
   const p = quietArena();
   const base = p.stats.pickup * (p.stats.pickupMult || 1);
-  state.toasts.length = 0;
+  const hauls = () => state.toasts.filter(t => /GREEDY HAUL|SNATCHED|OUT OF REACH/.test(t.msg));
+
+  // (1) A gem only the GREEDY stretch reaches is still COLLECTED — and silent.
+  state.toasts.length = 0; state.gems.length = 0;
   T.controller.stance = 'GREEDY';
   state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
   pump(1);
-  const hits = state.toasts.filter(t => /GREEDY HAUL/.test(t.msg));
-  assert.equal(hits.length, 1, 'one payoff line in the existing toast feed');
-  assert.equal(hits[0].tint, C.HUD.STANCE_COLORS.GREEDY, 'tinted with the stance colour');
-  // Rate limiter: another scoop immediately after must NOT spam.
-  state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
-  pump(1);
-  assert.equal(state.toasts.filter(t => /GREEDY HAUL/.test(t.msg)).length, 1,
-    'the second scoop inside the window is silent');
-  // It is a normal toast: it decays and then the signal can fire again.
-  for (const t of state.toasts) t.ttl = 0;
-  pump(1);
-  state.stanceLootAt = -99;
-  state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
-  pump(1);
-  assert.ok(state.toasts.some(t => /GREEDY HAUL/.test(t.msg)), 'a later payoff speaks again');
-  T.controller.stance = 'BALANCED';
-});
+  assert.equal(state.gems.length, 0, 'the stretched gem was collected (mechanic intact)');
+  assert.equal(hauls().length, 0, 'and NOTHING is announced for it any more');
 
-S.check('the payoff never claims collected loot was left out of reach (owner-reported)', () => {
-  const p = quietArena();
-  const base = p.stats.pickup * (p.stats.pickupMult || 1);
-  const greedy = base * (C.AUTOPILOT.STANCES.GREEDY.PICKUP_MULT || 1);
-  const hauls = () => state.toasts.filter(t => /GREEDY HAUL/.test(t.msg));
+  // (2) A multi-gem scoop: still silent, whatever the count.
+  for (let i = 0; i < 4; i++) state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
+  pump(1);
+  assert.equal(hauls().length, 0, 'no line for a multi-gem scoop either');
 
-  // (1) A gem the BASE radius could take is not a payoff, so it says nothing.
-  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
-  T.controller.stance = 'GREEDY';
+  // (3) A gem the BASE radius can take was never special.
+  state.toasts.length = 0; state.gems.length = 0;
   state.gems.push({ x: p.x + base * 0.5, y: p.y, xp: 0.01 });
   pump(1);
   assert.equal(state.gems.length, 0, 'the ordinary gem was collected');
-  assert.equal(hauls().length, 0, 'an ordinary pickup is not a GREEDY payoff');
+  assert.equal(hauls().length, 0, 'an ordinary pickup was never announced');
 
-  // (2) Loot beyond even the GREEDY radius stays on the floor and must NOT be
-  // announced as a payoff. The wording bug: "1 LOOT OUT OF REACH" fired exactly
-  // when the loot WAS taken, and never when loot was truly out of reach.
-  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
+  // (4) Loot beyond even the GREEDY radius stays on the floor.
+  const greedy = base * (C.AUTOPILOT.STANCES.GREEDY.PICKUP_MULT || 1);
   state.gems.push({ x: p.x + greedy * 3, y: p.y, xp: 0.01 });
   pump(1);
   assert.equal(state.gems.length, 1, 'loot beyond the GREEDY radius is left alone');
-  assert.equal(hauls().length, 0, 'unreachable loot is not a haul');
+  assert.equal(hauls().length, 0, 'and unreachable loot says nothing');
 
-  // (3) When it speaks, the words must match the event: the loot was collected.
-  state.toasts.length = 0; state.gems.length = 0; state.stanceLootAt = -99;
-  state.gems.push({ x: p.x + base * 1.2, y: p.y, xp: 0.01 });
-  pump(1);
-  assert.equal(state.gems.length, 0, 'the stretched gem was collected');
-  assert.equal(hauls().length, 1, 'a stretched pickup is the payoff');
-  assert.ok(!/OUT OF REACH/.test(hauls()[0].msg),
-    'a payoff must not call the loot it just collected "out of reach"');
   T.controller.stance = 'BALANCED';
+  state.gems.length = 0;
 });
 
 // ---- (2b) legibility through the real input path ----------------------------
