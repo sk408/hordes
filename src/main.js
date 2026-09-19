@@ -3307,13 +3307,28 @@ function update(dt) {
       // G8 step 3: the rule paid a better chest and the horde is the price.
       toast('HORDE BAIT - THE CHEST ANSWERED WITH A HORDE!');
     } else if (ev.kind === 'chestItem') {
-      // The 0.02% top chest band's reward (owner spec): a hand-authored
-      // LEGENDARY item. It lands on the ground where the chest opened and the
-      // ONE world-drop pickup path owns the equip decision, so a full belt
-      // still gets the normal swap-or-ignore rule rather than a second
-      // equip code path.
+      // A chest reward ITEM. EVERY band carries one (chests.js: the band IS the
+      // item's rarity — a common chest pays its own common item, the 0.02% top
+      // band pays a hand-authored LEGENDARY), and this event fires for all of
+      // them. It lands on the ground where the chest opened and the ONE world-drop
+      // pickup path owns the equip decision, so a full belt still gets the normal
+      // swap-or-ignore rule rather than a second equip code path.
       pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
-      toast('LEGENDARY: ' + ev.item.name.toUpperCase(), RARITY_TINTS.LEGENDARY);
+      // RARITY LABEL FIX (owner-reported 2026-09-19: "I'm constantly seeing items
+      // that say LEGENDARY: WORN COIN, LEGENDARY: WORN BOOT").
+      //
+      // This line HARDCODED both the word and the tint — 'LEGENDARY: ' + name and
+      // RARITY_TINTS.LEGENDARY — because the event was assumed to fire only for the
+      // top band's hand-authored legendary. It does not: applyContents raises it
+      // for ANY band that carries an item, and the bands ARE the rarities. So a
+      // common chest's own common item was announced as LEGENDARY, which is how a
+      // WORN COIN came to wear a LEGENDARY label.
+      //
+      // The prefix and the tint now come from the ITEM, so this label cannot lie
+      // about rarity again — whatever rarity the drop actually is, that is what it
+      // says. (The owner confirmed the "RARITY: NAME" format itself is fine.)
+      const ir = (ev.item && ev.item.rarity) || 'COMMON';
+      toast(ir + ': ' + ev.item.name.toUpperCase(), RARITY_TINTS[ir] || null);
       audio.playSfx('levelup');
     }
   }
