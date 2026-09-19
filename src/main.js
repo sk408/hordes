@@ -3778,6 +3778,12 @@ function draftFocusStep(d) {
   if (!n) return;
   draftFocus = (((draftFocus < 0 ? (d > 0 ? -1 : 0) : draftFocus) + d) % n + n) % n;
   const el = ovCards.children[draftFocus];
+  // MERGE (2026-09-19): the visible marker. The el.focus() below paints NOTHING —
+  // a card is a plain DIV, so it is not focusable, and no :focus rule existed
+  // either. The draft has the SAME invisible-cursor defect the menus had (it was
+  // never reported only because drafts are usually taken with the digit keys).
+  // setSelCard is the ONE marker every cursor in the game now shares.
+  setSelCard(el);
   if (el && typeof el.focus === 'function') el.focus();
 }
 
@@ -5466,6 +5472,31 @@ function menuFocusActivate() {
   if (!el) return;
   if (typeof el.click === 'function') el.click();
   else if (typeof el.onclick === 'function') el.onclick();
+}
+
+// THE SHARED NAV LADDER — every card screen routes its keys through this, so a
+// new screen costs ONE line instead of five. Returns true when the key was a
+// navigation key and has been consumed (the caller then does nothing else).
+//
+// Screens whose Enter already means something specific (intermission: Enter is
+// CONTINUE) handle that key BEFORE delegating here — see the intermission branch.
+function menuNavKey(k, ev) {
+  if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
+    if (ev.preventDefault) ev.preventDefault();
+    menuFocusStep(1);
+    return true;
+  }
+  if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
+    if (ev.preventDefault) ev.preventDefault();
+    menuFocusStep(-1);
+    return true;
+  }
+  if (k === 'enter' || k === ' ') {
+    if (ev.preventDefault) ev.preventDefault();
+    menuFocusActivate();
+    return true;
+  }
+  return false;
 }
 
 function openMenu(mode = 'menu') {
@@ -8874,9 +8905,11 @@ window.addEventListener('keydown', (ev) => {
       // path exactly: one activation takes the card, no confirm step.
       const card = ovCards.children[Number(ev.key) - 1];
       if (card && card._draftOffer) pick(card._draftOffer);
-    } else if (k === 'arrowleft' || k === 'arrowup') {
+    } else if (k === 'arrowleft' || k === 'arrowup' || (k === 'tab' && ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
       draftFocusStep(-1);
-    } else if (k === 'arrowright' || k === 'arrowdown') {
+    } else if (k === 'arrowright' || k === 'arrowdown' || (k === 'tab' && !ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
       draftFocusStep(1);
     } else if (k === 'enter' || k === ' ') {
       // Keyboard parity with the tap: Enter on the cursor card TAKES it in one
@@ -8888,9 +8921,15 @@ window.addEventListener('keydown', (ev) => {
     // ESC is deliberately NOT handled here: with no confirm step there is no
     // intermediate state to back out of, and the offer must not be dismissible
     // (skipping a draft is not a thing the game offers).
-  } else if (state.mode === 'evolve' && ['1', '2', '3', '4'].includes(ev.key)) {
-    const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
-    if (card) card.click();
+  } else if (state.mode === 'evolve') {
+    // EVOLVE overlay: the digit keys stay the quick-pick (parity with the [1..4]
+    // hints printed on the cards), and arrows/Tab now walk the SAME cursor every
+    // other card screen uses. It was digit-only, so a player who did not know the
+    // digits — or was on a device without them — could not move at all.
+    if (['1', '2', '3', '4'].includes(ev.key)) {
+      const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
+      if (card) card.click();
+    } else menuNavKey(k, ev);
   } else if (state.mode === 'dead') {
     // THE RUN-ENDED SCREEN (owner 2026-09-19: "the run ended screen doesnt let me
     // use keyboard controls"). THREE paths land here — a death, a deliberate END
@@ -8899,22 +8938,17 @@ window.addEventListener('keydown', (ev) => {
     // reached with arrows and the HOW TO PLAY card had no key at all.
     if (k === 'r') startRun();       // RETRY (parity with the death buttons)
     else if (k === 't') showTitle(); // TITLE
-    else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusStep(1);
-    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusStep(-1);
-    } else if (k === 'enter' || k === ' ') {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusActivate();
-    }
+    else menuNavKey(k, ev);          // arrows/Tab move, Enter/Space activate
   } else if (state.mode === 'intermission') {
-    if (k === 'c' || k === 'enter') continueRun();
+    // ENTER STAYS CONTINUE while no cursor is up. The CONTINUE card IS index 0,
+    // so menuFocusActivate() with no cursor would reach the same card and call the
+    // same function — but testing the cursor explicitly means the documented
+    // Enter==CONTINUE contract cannot be broken by a change in card ORDER.
+    if (k === 'c' || (k === 'enter' && menuFocusIndex() < 0)) continueRun();
     else if (['1', '2', '3', '4'].includes(ev.key)) {
       const card = ovCards.children[Number(ev.key) - 1];
       if (card) card.click();
-    }
+    } else menuNavKey(k, ev);
   } else if (state.mode === 'trophies') {
     // G9 TROPHY GALLERY: ESC backs out to the title (what the BACK card
     // promises) and the arrows walk the ring the PREV/NEXT cards step. The
@@ -8954,16 +8988,7 @@ window.addEventListener('keydown', (ev) => {
       // out to that screen, not to the title (return-to-origin discipline).
       if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
       showTitle();                     // every sub-menu (and the farewell) backs out to title
-    } else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();   // Tab must not also move browser focus
-      menuFocusStep(1);
-    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusStep(-1);
-    } else if (k === 'enter' || k === ' ') {
-      if (ev.preventDefault) ev.preventDefault();   // Space must not also scroll
-      menuFocusActivate();
-    }
+    } else menuNavKey(k, ev);          // arrows/Tab move, Enter/Space activate
   } else if (state.mode === 'chest') {
     // MILESTONE CHEST card: ESC / Enter / Space is GOT IT (the card's twin).
     if (k === 'escape' || k === 'enter' || k === ' ') closeChestCard();
@@ -8973,23 +8998,14 @@ window.addEventListener('keydown', (ev) => {
     // it gets the same cursor — a keyboard-only player can now reach END RUN /
     // zoom / BACK without the mouse.
     if (k === 'escape') closeSettings();
-    else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusStep(1);
-    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusStep(-1);
-    } else if (k === 'enter' || k === ' ') {
-      if (ev.preventDefault) ev.preventDefault();
-      menuFocusActivate();
-    }
+    else menuNavKey(k, ev);
   } else if (state.mode === 'stats') {
     // WAVE-12 FIELD REPORT: S/ESC/I (or any card) closes and resumes.
     if (k === 's' || k === 'escape' || k === 'i') closeStats();
     else if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
       const card = ovCards.children[Number(ev.key) - 1];
       if (card) card.click();
-    }
+    } else menuNavKey(k, ev);
   } else if (state.mode === 'playing' || state.mode === 'finale') {
     // PROLOGUE ADDENDUM: no in-run keys through the phase EXCEPT the staged
     // introductions — the revealed controls' key twins are live (MOVE: WASD/

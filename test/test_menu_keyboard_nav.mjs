@@ -263,4 +263,61 @@ S.check('r and t still work on the run-ended screen (they were its only keys)', 
   assert.equal(st.mode, 'title', 'T still returns to the title');
 });
 
+// ---- THE EXPANDED SURFACE (owner: "ok go ahead") ---------------------------
+// The evolve overlay was DIGIT-ONLY and the intermission had no arrows at all.
+// These four assert the ROUTING — that each mode branch reaches the shared nav
+// ladder — using whatever cards a title open leaves on screen; each screen's own
+// composition has its own tests. st.mode is set directly ONLY for routing, which
+// is the thing that can be wrong per screen.
+S.check('the EVOLVE overlay routes arrows/Tab to the cursor', () => {
+  title();
+  st.mode = 'evolve';                       // routing under test
+  assert.equal(selCount(), 0, 'no cursor to start');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+  key('tab');
+  assert.equal(T.menuFocus(), 1, 'Tab advances');
+});
+
+S.check('the INTERMISSION routes arrows/Tab to the cursor', () => {
+  title();
+  st.mode = 'intermission';
+  const n = cards().length;
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+  key('tab', { shiftKey: true });
+  assert.equal(T.menuFocus(), n - 1, 'Shift+Tab from the first wraps to the last');
+  // 'c' must still continue (its documented key) — asserted as still reachable,
+  // not pressed here, because a synthetic mode has no live run to continue.
+  assert.equal(selCount(), 1, 'exactly one card marked');
+});
+
+S.check('the FIELD REPORT routes arrows to the cursor', () => {
+  title();
+  st.mode = 'stats';
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+});
+
+S.check('the DRAFT offer row takes Tab, and its cursor is now VISIBLE', () => {
+  title();
+  st.pendingDrafts = 1;
+  T.openDraft();                            // the real seam
+  assert.equal(st.mode, 'draft', 'a draft is up');
+  const n = cards().length;
+  assert.ok(n >= 2, 'there are offers to move between (' + n + ')');
+  key('arrowdown');
+  assert.equal(T.draftFocus(), 0, 'the draft cursor is on the first offer');
+  assert.equal(selCount(), 1, 'and it is VISIBLY marked — it used to be invisible');
+  key('tab');
+  assert.equal(T.draftFocus(), 1, 'Tab advances the draft cursor');
+  assert.equal(selCount(), 1, 'still exactly one marked');
+  key('tab', { shiftKey: true });
+  assert.equal(T.draftFocus(), 0, 'Shift+Tab retreats');
+  assert.equal(selCount(), 1, 'and still exactly one marked');
+});
+
 S.done();
