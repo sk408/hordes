@@ -5378,7 +5378,27 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
 // and Tab move, Enter/Space activates. Left/Right stay with whatever already owns
 // them: the shop pager and the manual pager both sit EARLIER in the keydown chain
 // and return, so they keep arrow-paging and only Up/Down reach the cursor here.
-let menuFocus = -1;        // cursor over ovCards (-1: none)
+// THE CURSOR IS NOT AN INDEX VARIABLE. It is DERIVED from the DOM: the marked
+// card (the 'sel' class) IS the cursor.
+//
+// That makes a stale index impossible BY CONSTRUCTION. Nine separate sites in
+// this file rebuild ovCards, and composeEndScreen (the run-ended screen) does NOT
+// go through openMenu — so an index had to be reset at all nine, and one missed
+// site means Enter fires whatever card now sits at the old slot on a later
+// screen. Owner-reported exactly that class of gap: "the run ended screen doesnt
+// let me use keyboard controls". Deriving the cursor means every screen change
+// destroys the marked element with the list and the next keypress starts clean.
+function isSelCard(el) {
+  if (!el) return false;
+  if (el.classList && typeof el.classList.contains === 'function' && el.classList.contains('sel')) return true;
+  return typeof el.className === 'string' && /\bsel\b/.test(el.className);
+}
+
+function menuFocusIndex() {
+  const kids = ovCards.children || [];
+  for (let i = 0; i < kids.length; i++) if (isSelCard(kids[i])) return i;
+  return -1;
+}
 
 // DIM cards are disabled (a pager end, a locked row) — the cursor SKIPS them so
 // Enter can never fire a card the pointer would refuse.
@@ -5426,12 +5446,11 @@ function setSelCard(el) {
 function menuFocusStep(d) {
   const n = ovCards.children.length;
   if (!n) return;
-  let i = menuFocus;
+  let i = menuFocusIndex();                 // the marked card IS the cursor
   for (let guard = 0; guard < n; guard++) {
     i = (((i < 0 ? (d > 0 ? -1 : 0) : i) + d) % n + n) % n;
     const el = ovCards.children[i];
     if (isDimCard(el)) continue;
-    menuFocus = i;
     setSelCard(el);
     if (el && typeof el.focus === 'function') el.focus();
     return;
@@ -5442,7 +5461,8 @@ function menuFocusStep(d) {
 // help-mode intercept (an overlay card tap explains, it never presses) and the
 // button sfx — so Enter is the pointer path, never a second implementation.
 function menuFocusActivate() {
-  const el = ovCards.children[menuFocus >= 0 ? menuFocus : 0];
+  const i = menuFocusIndex();
+  const el = ovCards.children[i >= 0 ? i : 0];
   if (!el) return;
   if (typeof el.click === 'function') el.click();
   else if (typeof el.onclick === 'function') el.onclick();
@@ -5469,10 +5489,9 @@ function openMenu(mode = 'menu') {
   else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
-  // MENU KEYBOARD NAV: every menu open starts with NO cursor. Without this the
-  // index survives a screen change and Enter would fire whatever card now sits at
-  // the old slot — the same class of stale-index bug the shop pager resets for.
-  menuFocus = -1;
+  // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which
+  // card carries 'sel', and the ovCards.innerHTML = '' above destroys it with the
+  // list. See menuFocusIndex.
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
   // SHOP PAGING: the pager chrome + grid mode are shop-scoped — every menu
@@ -8873,8 +8892,23 @@ window.addEventListener('keydown', (ev) => {
     const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
     if (card) card.click();
   } else if (state.mode === 'dead') {
+    // THE RUN-ENDED SCREEN (owner 2026-09-19: "the run ended screen doesnt let me
+    // use keyboard controls"). THREE paths land here — a death, a deliberate END
+    // RUN, and the RUN SURVIVED win — all composing through composeEndScreen,
+    // which does NOT go through openMenu. It had only r/t: nothing could be
+    // reached with arrows and the HOW TO PLAY card had no key at all.
     if (k === 'r') startRun();       // RETRY (parity with the death buttons)
     else if (k === 't') showTitle(); // TITLE
+    else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusStep(1);
+    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusStep(-1);
+    } else if (k === 'enter' || k === ' ') {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusActivate();
+    }
   } else if (state.mode === 'intermission') {
     if (k === 'c' || k === 'enter') continueRun();
     else if (['1', '2', '3', '4'].includes(ev.key)) {
@@ -11379,7 +11413,7 @@ export const __TEST = {
   draftFocus: () => draftFocus,
   // MENU KEYBOARD NAV: the stub DOM's focus() is a no-op, so the cursor INDEX is
   // the observable — same reason draftFocus is exposed above.
-  menuFocus: () => menuFocus,
+  menuFocus: () => menuFocusIndex(),
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.

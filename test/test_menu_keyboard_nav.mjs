@@ -26,12 +26,14 @@
 // read from the test surface — the draftFocus precedent.
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
+import { makeTypedEnemy } from '../src/enemy_types.js';
 
 const S = suite('test_menu_keyboard_nav');
 
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
 const T = h.T;
+const pump = h.pump;
 
 const cards = () => (h.elements['ov-cards'] ? h.elements['ov-cards'].children : []);
 const has = (c, t) => (c && c.innerHTML || '').includes(t);
@@ -203,6 +205,62 @@ S.check('Escape still backs a sub-menu out to the title', () => {
   assert.equal(st.manualPage, 1, 'the reference is up');
   key('escape');
   assert.equal(st.mode, 'title', 'ESC lands back on the title');
+});
+
+// ---- THE RUN-ENDED SCREEN ------------------------------------------------
+// Owner: "the run ended screen doesnt let me use keyboard controls". Three paths
+// land on mode 'dead' (a death, a deliberate END RUN, the RUN SURVIVED win) and
+// all compose through composeEndScreen, which does NOT go through openMenu — so
+// the cursor reset that lived in openMenu never ran for this screen.
+//
+// Driven through the REAL frame loop: a typed enemy parked on the hero (the
+// test_death_screen recipe), so the end screen is the one a player actually gets.
+function toEndScreen() {
+  T.startRun();
+  pump(3);
+  const p = st.player;
+  p.hp = 1; p.invuln = 0; p.potions.hp = 0;
+  st.spawnTimer = 999;                       // no ambient spawns
+  st.wave.endsAt = st.time + 9999;
+  st.enemies.length = 0; st.gems.length = 0;
+  const killer = makeTypedEnemy('SPITTER', p.x, p.y, st.time);
+  killer.hp = killer.maxHp = 1e6;            // survives the hero's own volley
+  killer.speed = 0;                          // parked exactly on the hero
+  st.enemies.push(killer);
+  pump(30, () => { st.enemies.forEach(e => { e.speed = 0; e.x = p.x; e.y = p.y; }); });
+  if (st.mode === 'death-cine') key('x');    // any key skips the movie
+  assert.equal(st.mode, 'dead', 'the run-ended screen is up');
+}
+
+S.check('the RUN-ENDED screen takes keyboard navigation', () => {
+  toEndScreen();
+  assert.equal(T.menuFocus(), -1, 'it opens with no cursor');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 1, 'ArrowDown advances');
+  key('tab');
+  assert.equal(T.menuFocus(), 2, 'Tab advances too');
+  assert.equal(selCount(), 1, 'exactly one card marked throughout');
+  key('tab', { shiftKey: true });
+  assert.equal(T.menuFocus(), 1, 'Shift+Tab retreats');
+});
+
+S.check('Enter activates on the run-ended screen (the cursor used to do nothing)', () => {
+  toEndScreen();
+  const retry = indexOfCard('RETRY');
+  assert.ok(retry >= 0, 'there is a RETRY card');
+  for (let n = 0; n < retry + 1; n++) key('arrowdown');   // -1 -> 0 is one press
+  assert.equal(T.menuFocus(), retry, 'the cursor is on RETRY');
+  key('enter');
+  assert.equal(st.mode, 'playing', 'Enter started the next run');
+});
+
+S.check('r and t still work on the run-ended screen (they were its only keys)', () => {
+  toEndScreen();
+  key('t');
+  assert.equal(st.mode, 'title', 'T still returns to the title');
 });
 
 S.done();
