@@ -1087,6 +1087,31 @@ function persistProfile() {
 export function autosave(reason = 'exit') {
   return persistProfile();
 }
+// MUSIC ON A HIDDEN TAB (owner 2026-09-19: "can we also stop the music when the
+// tab is hidden?"). Browsers suspend rAF for a hidden document but NOT audio, so a
+// backgrounded tab kept playing the music bed for as long as it stayed hidden —
+// the game looked paused and was still audible. The loop already autosaves here;
+// it now also stops the music and REMEMBERS whether it was playing, so coming back
+// restores what the player had instead of leaving the run mute.
+//
+// Declared BEFORE the listener registration below (order matters in this file —
+// see the fjoyApi note: a `let` read before its declaration throws and kills the
+// module at load).
+let musicWasRunning = false;
+function onVisibilityChange() {
+  const hidden = !!(typeof document !== 'undefined' && document
+    && document.visibilityState === 'hidden');
+  if (hidden) {
+    autosave('hidden');
+    // Guard: repeated 'hidden' events must not overwrite the remembered intent
+    // with the state we just silenced.
+    if (!musicWasRunning) musicWasRunning = audio.isMusicRunning();
+    if (musicWasRunning) audio.stopMusic();
+  } else if (musicWasRunning) {
+    musicWasRunning = false;
+    audio.startMusic();       // honours musicEnabled internally: a muted player stays muted
+  }
+}
 try {
   const evWin = (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function')
     ? window : globalThis;
@@ -1096,9 +1121,7 @@ try {
   // visibilitychange covers the mobile case (iOS/Android often never fire
   // pagehide before suspending a backgrounded tab).
   if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') autosave('hidden');
-    });
+    document.addEventListener('visibilitychange', onVisibilityChange);
   }
 } catch { /* no window (headless) — the autosave seam still works */ }
 
@@ -11533,6 +11556,10 @@ export const __TEST = {
   // MENU KEYBOARD NAV: the stub DOM's focus() is a no-op, so the cursor INDEX is
   // the observable — same reason draftFocus is exposed above.
   menuFocus: () => menuFocusIndex(),
+  // VISIBILITY: the real handler the browser fires on visibilitychange. The
+  // harness's document stub registers listeners as no-ops, so a test drives the
+  // handler directly after setting document.visibilityState.
+  onVisibilityChange,
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.

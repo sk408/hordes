@@ -443,6 +443,13 @@ export function stopMusic() {
   return true; // already-scheduled notes (< LOOKAHEAD ahead) ring out naturally
 }
 
+// OWNER 2026-09-19 ("can we also stop the music when the tab is hidden?"): the
+// reader that makes stop/resume possible at all. There is no pause/resume pair in
+// this module — the music bed is a scheduler, not a track — so the caller has to
+// REMEMBER whether it was playing before it stopped it, or a player who hides the
+// tab mid-run comes back to a silent run. Pure read, no state change.
+export function isMusicRunning() { return musicRunning; }
+
 // ---------- Test-only seam (fakes inject here; NOT part of the frozen API) ----------
 export const AUDIO_TEST = {
   setDeps({ AudioContext: ac, storage: st } = {}) {
