@@ -398,10 +398,14 @@ export class Renderer {
     const x = Math.round((C.VIEW_W - w) / 2);
     const y = Math.round((C.VIEW_H - h) / 2);
     if (!this._titlePainted) {
-      if (w < C.VIEW_W || h < C.VIEW_H) {          // letterbox behind an odd fit
-        g.fillStyle = '#05050a';
-        g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
-      }
+      // OWNER 2026-09-18: "On the main menu, I can see the run screen bleeding
+      // through some of the intersections." The title card has transparent gaps
+      // between its cards, and the surface was only filled when the card FAILED
+      // to fit the viewport - so a stale frame (the intro, a finished run) showed
+      // through those gaps. Fill the whole surface unconditionally: at the title
+      // the canvas is the title's, and nothing else may read through it.
+      g.fillStyle = '#05050a';
+      g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
       drawTitle(this.drawGrid.bind(this), g, x, y);
       this._titlePainted = true;
     }

@@ -121,7 +121,19 @@ ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.p
 // The run stays LIVE (the frame loop must really run), but no XP may be earned:
 // a level-up would open the GAME's own draft mid-test and re-arm the countdown
 // being measured. Only the drafts THIS test opens explicitly may exist.
+// FLAKE HARDENING (docs/briefs/AUTO_DRAFT_PROLOGUE_HARDENING.md, defect 2):
+// xpMult = 0 alone NEVER stopped gem XP — the kill-XP site reads
+// (p.stats.xpMult || 1) (src/main.js:3396) and the falsy 0 falls through to
+// 1.0x, so the run kept earning toward xpNext = 30. Reproduced with an
+// instrumented copy (run 37/40): a level-2 levelUp opened the GAME's own
+// draft at frame 134 of section 5's tick(6) and armDraftAutoPick built a
+// FRESH countdown line (left 6 -> 2.25s at the assert) — the tap's own timer
+// was correctly gone; the line belonged to the stray draft. Pin the LEVEL-UP
+// gate itself: with xpNext beyond any earnable total the sweep at
+// src/main.js:3399 can never fire levelUp — the ONLY pendingDrafts++ source
+// (src/main.js:3473) — so no game draft can open regardless of XP flow.
 st.player.stats.xpMult = 0;
+st.player.xpNext = 1e18;
 
 // ---- 1. AUTO expiry: 5.9s no pick, 6.0s exactly one pick --------------------
 {

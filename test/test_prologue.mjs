@@ -750,7 +750,12 @@ S.check('EXIT 2, the bound: MAX_S escapes a never-acting player - a held banner 
     // completion rule) but can never drink — the BOUND is this arm's exit.
     st.prologue.potion.x = -3900; st.prologue.potion.y = st.player.y;
     const bound = C.PROLOGUE.MAX_S;
-    assert(bound === 60, 'the bound is stated: 60s (PROLOGUE.MAX_S)');
+    // Retargeted 60 -> 300 (owner 2026-09-18, verbatim in src/config.js: "we
+    // have to make the timer on the tutorial like 5 minutes, not whatever it
+    // is now. Someone complained they weren't able to get through it without
+    // being kicked out"). The pin follows the OWNER-ORDERED value; the loop
+    // below reads the bound symbolically.
+    assert(bound === 300, 'the bound is stated: 300s (PROLOGUE.MAX_S)');
     // DEFECT (c), INVERTED from the old contract: banner #1 comes up at
     // BANNER_WALK_S and NEVER receives its action — the WALKT cadence clock
     // freezes under the card (the walk -> banner rhythm), but the BOUND

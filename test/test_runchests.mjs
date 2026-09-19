@@ -348,8 +348,17 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
   if (!st.runChest) throw new Error('fixture: the 100 chest is up');
   // Let the REAL run play: the autopilot beelines for the chest and the
   // pickup fires through the ordinary drop loop (no seam calls).
+  // FIELD PIN (2026-09-18, brief SMOKE_RUNCHESTS_HARDENING defect 2): the leg's
+  // subject is the walk-in collect through the real drop loop — but unseeded
+  // wave-1 spawns near the beeline legitimately trigger FLEE, which outranks
+  // CHEST by design (its own check above), and 4 suite captures ended in NEVER.
+  // Pin the field empty for the window (the rss8 TICK-91 idiom; spawnTimer is
+  // the real spawn gate, src/main.js:1475-1476) so the leg measures the
+  // walk-in, not the kite. FLEE precedence keeps its dedicated check — no
+  // coverage lost.
   let collectedAt = -1;
   for (let i = 0; i < 60 * 20 && collectedAt < 0; i++) {
+    st.enemies.length = 0; st.spawnTimer = 1e9;
     frame();
     if (st.runChest === null) collectedAt = i;
   }

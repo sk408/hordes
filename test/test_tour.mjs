@@ -398,13 +398,25 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
 
   // REPLACEMENT 3: into a run — 35 live sim-seconds with NO coachmark and NO
   // pause. The old chain fired its first coach at t>1s and froze the sim
-  // under every step; with xpMult 0 there is no draft (the draft coach is a
-  // KEPT event coach, out of this leg) and a huge HP bar keeps the autopilot
-  // from dying into the KEPT death card mid-window.
+  // under every step; a huge HP bar keeps the autopilot from dying into the
+  // KEPT death card mid-window.
+  //
+  // NO-DRAFT GATE RETARGET (2026-09-18, brief TOUR_NEGATIVE_WINDOW_HARDENING;
+  // the systematic suite red at :415): the gate WAS `xpMult = 0`, but the gem
+  // path reads `p.stats.xpMult || 1` (src/main.js:3379) — `0 || 1` is 1, so
+  // the gate was VOID and a level-up draft (mode 'draft' + the KEPT draft
+  // coach) mounted inside the window in ~half of runs (probe-measured 6/12
+  // standalone: THE DRAFT coach at t=11.5..32.5s). Fix (a) as written — a
+  // pre-set draft flag — is INSUFFICIENT here: the draft MODAL still opens
+  // and parks the sim, moving the flake to the st.time >= 35 assert below.
+  // levelUp() (src/main.js:3440-3457) is the ONLY in-run draft source, so the
+  // honest gate is the level threshold itself: no levelUp, no pendingDrafts,
+  // no draft modal, no coach. The negative assertions below are byte-
+  // identical and now cover EVERY coach type, the draft coach included.
   cardTitled('START GAME').click();
   for (let i = 0; i < 200 && st.mode !== 'playing'; i++) frame();
   assert.equal(st.mode, 'playing', 'run live (no tour to walk first)');
-  st.player.stats.xpMult = 0;
+  st.player.xpNext = Infinity;    // the real no-draft gate (see above)
   st.player.stats.maxHp = 1e9;
   st.player.hp = 1e9;
   let sawTour = false;
@@ -414,6 +426,7 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   }
   assert.ok(!sawTour, 'no scheduled in-run coachmark mounted in 35 sim-seconds');
   assert.ok(st.time >= 35, `the sim never paused for a coach (t=${st.time.toFixed(1)}s)`);
+  assert.equal(st.player.level, 1, 'the no-draft gate held: zero level-ups inside the window');
 
   // REPLACEMENT 4: the KEPT draft card still fires on the first draft and
   // never again after its flag is set. MANUAL pilot suspends the auto-pick

@@ -12,6 +12,7 @@ import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js'
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
 import { TOUR_KEYS } from '../src/tour.js';     // WAVE-21: preseed tour flags
+import { initWeather } from '../src/weather.js'; // flake hardening: mercy-rule weather pin
 
 // ---- DOM stubs ----
 const noop = () => {};
@@ -2157,6 +2158,20 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     // the hero would live. That is the feature working, not this check's
     // subject; the assertions below are unchanged.
     st.player.potions.hp = 0;
+    // FLAKE HARDENING (docs/briefs/SMOKE_RUNCHESTS_HARDENING.md): this block
+    // asserts EXACT hp arithmetic, so any heal landing between the pinned
+    // frames breaks the strict-equality checks. Proven culprits (a force-set
+    // skills.regrowth=true in a scratch probe made the mercy assert fail with
+    // a +0.0117/frame delta): regrowth (perks.js:181, applied every frame in
+    // the FINALE loop, main.js:10461) and lifesteal (main.js:2593-2597, if a
+    // projectile lands while the maw is parked). Both are legitimate run
+    // state the pilot may hold by finale time — neutralize them for the
+    // pin's duration only. MOONLIGHT weather is mana-only (weather.js:67-77)
+    // and cannot heal hp, but CLEAR is pinned prophylactically per the brief.
+    // The assertions below are unchanged.
+    if (st.player.skills) st.player.skills.regrowth = false;
+    st.player.stats.lifesteal = 0;
+    st.weather = initWeather('CLEAR', 7);
     shot(77);
     now += dtMs; let cb = rafQueue.shift(); cb(now);
     assert(st.player.hp === full - third,

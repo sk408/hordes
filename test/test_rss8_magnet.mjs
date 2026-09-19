@@ -173,12 +173,19 @@ const waitCd = () => {
 // BEFORE the sweep's 0.45s is up, so the completion toast needs the extra
 // frames regardless. The field is kept enemy-free so AMBIENT kills cannot
 // add drops behind the sweep and blur the drained-floor assertions.
+// SPAWN PIN (2026-09-18, brief TOUR_NEGATIVE_WINDOW_HARDENING step 3): the
+// clear alone ran BEFORE frame(), so an enemy spawning AND dying inside the
+// same pumped frame still seeded a gem behind the assertions (suite capture
+// 20260918T220741Z: leg 5a red with the floor swept by a 25th ambient gem).
+// spawnTimer is the real spawn gate (src/main.js:1475-1476) — pinning it makes
+// the enemy-free claim above TRUE instead of probabilistic.
 const settle = (bound) => {
   for (let i = 0; i < bound &&
        ((st.gems.length || st.drops.length || st.itemDrops.length) ||
         (st.player && st.player.magnetSweep > 0)); i++) {
     if (st.mode === 'draft') { const c = cards(); if (c.length) c[0].click(); }
     st.enemies.length = 0;
+    st.spawnTimer = 1e9;
     st.player.hp = 1e9;
     frame();
   }
@@ -306,17 +313,19 @@ ok('(3) the run\'s potion cap is respected — over-cap potions stay on the floo
 // ---- 5. parity: auto policy + the no-card no-op -----------------------------
 // (a) AUTO: below the floor threshold -> never fires. The field is kept
 // enemy-free so ambient kills cannot seed drops and push the floor over the
-// threshold from under the check.
+// threshold from under the check — and the spawn pin makes that TRUE: the
+// clear alone ran before frame(), so a same-frame spawn+kill still seeded a
+// 25th gem (the suite capture's `:: 0`).
 waitCd();   // (c)'s cast re-armed the 30s — lapse it so AUTO starts from RDY
 grant();   // (still held from the draft; explicit for this section)
 st.gems = []; st.drops = []; st.itemDrops = [];
 for (let i = 0; i < C.MAGNET.AUTO_MIN - 1; i++) T.m3.pushGem({ x: st.player.x + 400, y: st.player.y, xp: 5 });
-for (let i = 0; i < 120; i++) { st.enemies.length = 0; st.player.hp = 1e9; frame(); }
+for (let i = 0; i < 120; i++) { st.enemies.length = 0; st.spawnTimer = 1e9; st.player.hp = 1e9; frame(); }
 ok('(5) AUTO does not fire below the floor-value threshold (' + (C.MAGNET.AUTO_MIN - 1) + ' drops)', st.gems.length === C.MAGNET.AUTO_MIN - 1,
   st.gems.length);
 // (b) AUTO: at/over the threshold -> fires on its own.
 for (let i = 0; i < 40; i++) T.m3.pushGem({ x: st.player.x + 400, y: st.player.y, xp: 5 });
-for (let i = 0; i < 10; i++) { st.enemies.length = 0; st.player.hp = 1e9; frame(); }
+for (let i = 0; i < 10; i++) { st.enemies.length = 0; st.spawnTimer = 1e9; st.player.hp = 1e9; frame(); }
 settle(300);    // then the normal pickup loop drains the floor
 ok('(5) AUTO fires the sweep on its own at/over the threshold (floor drained)', st.gems.length === 0, st.gems.length);
 // (c) WITHOUT the card the manual act is a no-op.

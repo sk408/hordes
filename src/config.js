@@ -630,7 +630,12 @@ export const CONFIG = {
     //   c. each step waits for the player to DO the thing, not to press OK.
     ENABLED: true,
     INVULN_S: 45,
-    MAX_S: 60,
+    // OWNER 2026-09-18 (priority): "we have to make the timer on the tutorial like
+    // 5 minutes, not whatever it is now. Someone complained they weren't able to
+    // get through it without being kicked out." 60 -> 300. NOTE the bound only
+    // freezes while a banner is up (see endPrologue's comment), so the walk, the
+    // draft and the potion approach all spend it - a reader needed real room.
+    MAX_S: 300,
     CLEAR_MARGIN: 120,
     POTION_DX: 115,
     POTION_DY: -20,

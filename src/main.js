@@ -862,6 +862,8 @@ const state = {
   shrine: null,      // VIEW on state.shrines: the first unused altar (the
                      // render + tour handoff; the set itself is static — S1)
   shrines: [],       // S1: world-seeded set of 4, chosen ONCE at run start
+  shrineRearm: false, // S1 double-sell latch: set by a successful debit, clears
+                     // once the player is >26px from EVERY unsold altar
   shrineRng: null,   // mulberry32(choiceSeed ^ 0x5eed) — separate stream so
                      // shrine draws never desync the intermission offers
   lastFlashAt: null, // FLASH DROP cooldown stamp (loot.js; ms, null = never)
@@ -3206,11 +3208,22 @@ function update(dt) {
   // beyond the purse debit (paid-chest precedent).
   // E1: the shrine debits the RUN PURSE (profile.runPurse), never the bank —
   // in-run gold buys in-run powers.
+  // RE-ARM LATCH (brief docs/briefs/S1_SHRINE_DOUBLE_SELL.md, 2026-09-18):
+  // seedShrines has no min-separation, so ~0.227% of seeds place two altars
+  // inside the SAME 26px radius — pre-latch this loop sold BOTH in one frame
+  // (one walk-up, two debits, a blessing the player never chose). Now a
+  // successful debit sets state.shrineRearm and no further sale may happen
+  // until the player has been more than 26px from EVERY unsold altar at least
+  // once. Set ONLY on a successful debit: the broke-toast and the
+  // pool-exhausted darkening never latch.
+  let nearUnsold = false;
   for (const sh of state.shrines) {
     if (sh.used) continue;
     const dx = p.x - sh.x, dy = p.y - sh.y;
     const len = Math.hypot(dx, dy) || 1;
     if (len < 26) {
+      nearUnsold = true;
+      if (state.shrineRearm) continue;   // one sale per approach — walk off to re-arm
       if (!sh.blessing) {
         // Roll + cache once per shrine (rng stream: shrineRng, seeded off the
         // run seed — never desyncs the intermission choice rolls).
@@ -3226,6 +3239,7 @@ function update(dt) {
         // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
         state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
         sh.used = true;
+        state.shrineRearm = true;        // the latch: ONLY a successful debit sets it
         toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
         audio.playSfx('levelup');
       } else if (!sh.brokeToast) {
@@ -3239,6 +3253,9 @@ function update(dt) {
       }
     }
   }
+  // The latch clears the first frame the player is outside EVERY unsold
+  // altar's radius — walking away and coming back re-arms the next sale.
+  if (state.shrineRearm && !nearUnsold) state.shrineRearm = false;
   for (const ev of chestEvents) {
     if (ev.kind === 'chestOpened') {
       toast('CHEST OPENED: ' + ev.rarity.toUpperCase(),
@@ -7314,6 +7331,7 @@ function startRun() {
   // here — uniform scatter over the whole arena, static for the whole run.
   state.shrines = seedShrines(state.shrineRng);
   state.shrine = state.shrines[0] || null;   // render/tour VIEW: first unused
+  state.shrineRearm = false;   // per-run double-sell latch (never serialised)
   // M1 (C4/C5): the per-run atlas — created fresh here next to groundSeed,
   // never serialised. The ONE landmark source wired this slice is S1's
   // world-seeded shrines: their positions are READ from the set above and
