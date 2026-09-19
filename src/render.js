@@ -1929,7 +1929,7 @@ export class Renderer {
     const p = state.player;
     if (!p || !p.stats) { this.hudChrome = null; return; }
     const t = state.time || 0;
-    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, challenge: null };
+    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, challenge: null, night: null };
     // PROLOGUE HUD CLEARANCE (2026-09-18): while the first-run prologue phase
     // is live (up to the drink) the banner card owns the top band — every
     // readout that CANNOT change during the phase AND overlaps the card band
@@ -2209,6 +2209,39 @@ export class Renderer {
       g.fillStyle = '#ffe9a8';
       g.fillText(name, bX + 3, bY + 2);
       chrome.challenge = { id: state.challenge, name };
+    }
+
+    // --- NIGHT MODE BADGE (owner 2026-09-19) --------------------------------
+    // "there should be an overlay on the screen with nightmode is on so the
+    // player knows." A night run changes what the run is WORTH (the gold pool
+    // pays NIGHT_PENALTY_PCT) and NOTHING on screen said so: this file had no
+    // reference to night at all — the only sign was the NIGHT RUN tag on the end
+    // card, i.e. after the run was already over.
+    //
+    // Same badge language as the challenge badge directly above, and the SAME
+    // invariant: a day run renders byte-identically to before — nothing painted,
+    // nothing shifted — so the badge exists only while a night run is live.
+    // Cool blue to the challenge badge's gold, because the two can be live at
+    // once and the right column must not read as one two-line badge.
+    if (state.nightRun) {
+      const nPx = 9;
+      const nName = 'NIGHT';
+      const nW = nName.length * Math.round(nPx * 0.62) + 6;
+      const nH = nPx + 4;
+      const nX = C.VIEW_W - 24 + 2 - nW;
+      // Stack UNDER the challenge badge when one is drawn (clock -> mode ->
+      // night); otherwise take that badge's own slot.
+      const challengeLive = !!(state.challenge && state.challenge !== 'STANDARD');
+      const nY = cbY + cbH + 8 + (challengeLive ? nH + 4 : 0);
+      g.fillStyle = '#8fb8ff';                       // cool border: night reads blue
+      g.fillRect(nX, nY, nW, nH);
+      g.fillStyle = 'rgba(10,9,6,0.90)';             // the same dark inset plate
+      g.fillRect(nX + 1, nY + 1, nW - 2, nH - 2);
+      g.font = 'bold ' + nPx + 'px monospace';
+      g.textBaseline = 'top';
+      g.fillStyle = '#dbe9ff';
+      g.fillText(nName, nX + 3, nY + 2);
+      chrome.night = { name: nName };
     }
 
     // --- WAVE-27: no doctrine text on the canvas ----------------------------
