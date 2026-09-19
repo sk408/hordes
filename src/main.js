@@ -5366,6 +5366,57 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   return el;
 }
 
+// MENU KEYBOARD NAV (owner 2026-09-19: "keyboard controls work through our menus
+// like the title menus and any menu. arrow keys, tab, enter.").
+//
+// This is not new machinery: it is the DRAFT's own roving cursor (draftFocusStep,
+// above) applied to the card menus that never had one. ovCards is the same
+// container menuCard appends to, and frameCard already repaints the focused card
+// as 'hot' — so a keyboard player sees exactly what a mouse hover shows.
+//
+// Vocabulary MATCHES tour.js and the draft; no new letters are invented. Arrows
+// and Tab move, Enter/Space activates. Left/Right stay with whatever already owns
+// them: the shop pager and the manual pager both sit EARLIER in the keydown chain
+// and return, so they keep arrow-paging and only Up/Down reach the cursor here.
+let menuFocus = -1;        // cursor over ovCards (-1: none)
+
+// DIM cards are disabled (a pager end, a locked row) — the cursor SKIPS them so
+// Enter can never fire a card the pointer would refuse.
+//
+// The className check is not belt-and-braces: the test stub DOM keeps classList
+// and className as SEPARATE stores, while menuCard writes className — so a
+// classList-only test would be silently dead in every headless run. Same
+// dual-path the whats-new sweep and openMenu's howto/end reset already use.
+function isDimCard(el) {
+  if (!el) return false;
+  if (el.classList && typeof el.classList.contains === 'function' && el.classList.contains('dim')) return true;
+  return typeof el.className === 'string' && /\bdim\b/.test(el.className);
+}
+
+function menuFocusStep(d) {
+  const n = ovCards.children.length;
+  if (!n) return;
+  let i = menuFocus;
+  for (let guard = 0; guard < n; guard++) {
+    i = (((i < 0 ? (d > 0 ? -1 : 0) : i) + d) % n + n) % n;
+    const el = ovCards.children[i];
+    if (isDimCard(el)) continue;
+    menuFocus = i;
+    if (el && typeof el.focus === 'function') el.focus();
+    return;
+  }
+}
+
+// The ONE activation seam: el.click() runs menuCard's own onclick, which owns the
+// help-mode intercept (an overlay card tap explains, it never presses) and the
+// button sfx — so Enter is the pointer path, never a second implementation.
+function menuFocusActivate() {
+  const el = ovCards.children[menuFocus >= 0 ? menuFocus : 0];
+  if (!el) return;
+  if (typeof el.click === 'function') el.click();
+  else if (typeof el.onclick === 'function') el.onclick();
+}
+
 function openMenu(mode = 'menu') {
   // Common frame for every meta screen; caller fills ovCards. WAVE-17: the
   // in-run SETTINGS screen passes its own pause mode ('settings') so the
@@ -5387,6 +5438,10 @@ function openMenu(mode = 'menu') {
   else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
+  // MENU KEYBOARD NAV: every menu open starts with NO cursor. Without this the
+  // index survives a screen change and Enter would fire whatever card now sits at
+  // the old slot — the same class of stale-index bug the shop pager resets for.
+  menuFocus = -1;
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
   // SHOP PAGING: the pager chrome + grid mode are shop-scoped — every menu
@@ -8818,18 +8873,51 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'escape') { closeApexGallery(); showApexShop(); }
     else if (k === 'arrowleft') apexStep(-1);
     else if (k === 'arrowright') apexStep(1);
-  } else if ((state.mode === 'menu' || state.mode === 'farewell' || state.mode === 'characters'
-      || state.mode === 'loadout') && k === 'escape') {
-    // IN-RUN REFERENCE ACCESS: the reference opened from an END screen backs
-    // out to that screen, not to the title (return-to-origin discipline).
-    if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
-    showTitle();                     // every sub-menu (and the farewell) backs out to title
+  } else if (state.mode === 'title' || state.mode === 'menu' || state.mode === 'farewell'
+      || state.mode === 'characters' || state.mode === 'loadout') {
+    // NOTE 'title' is a SEPARATE mode from 'menu' (showTitle calls
+    // openMenu('title'), main.js:6168) — omitting it would leave the title screen
+    // itself, the headline case in the owner's request, with no navigation at all.
+    // MENU KEYBOARD NAV (owner 2026-09-19). Tab/arrows walk the cursor over the
+    // cards, Enter/Space activates through menuCard's own onclick — the pointer
+    // path, so the help-mode intercept and the sfx stay in ONE implementation.
+    // Left/Right ARE accepted here because on these screens nothing else claims
+    // them: where a pager is live (the shop, the manual) those branches sit
+    // EARLIER in this chain and return, so paging keeps its arrows.
+    if (k === 'escape') {
+      // IN-RUN REFERENCE ACCESS: the reference opened from an END screen backs
+      // out to that screen, not to the title (return-to-origin discipline).
+      if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
+      showTitle();                     // every sub-menu (and the farewell) backs out to title
+    } else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();   // Tab must not also move browser focus
+      menuFocusStep(1);
+    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusStep(-1);
+    } else if (k === 'enter' || k === ' ') {
+      if (ev.preventDefault) ev.preventDefault();   // Space must not also scroll
+      menuFocusActivate();
+    }
   } else if (state.mode === 'chest') {
     // MILESTONE CHEST card: ESC / Enter / Space is GOT IT (the card's twin).
     if (k === 'escape' || k === 'enter' || k === ' ') closeChestCard();
   } else if (state.mode === 'settings') {
     // WAVE-17: ESC closes the in-run settings and resumes (BACK card too).
+    // MENU KEYBOARD NAV: the pause screen is card-based like any other menu, so
+    // it gets the same cursor — a keyboard-only player can now reach END RUN /
+    // zoom / BACK without the mouse.
     if (k === 'escape') closeSettings();
+    else if (k === 'arrowdown' || k === 'arrowright' || (k === 'tab' && !ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusStep(1);
+    } else if (k === 'arrowup' || k === 'arrowleft' || (k === 'tab' && ev.shiftKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusStep(-1);
+    } else if (k === 'enter' || k === ' ') {
+      if (ev.preventDefault) ev.preventDefault();
+      menuFocusActivate();
+    }
   } else if (state.mode === 'stats') {
     // WAVE-12 FIELD REPORT: S/ESC/I (or any card) closes and resumes.
     if (k === 's' || k === 'escape' || k === 'i') closeStats();
@@ -11258,6 +11346,9 @@ export const __TEST = {
   // (headless tests read this instead of poking module scope). The R2
   // inspect seam is gone with the inspect box — one activation takes the card.
   draftFocus: () => draftFocus,
+  // MENU KEYBOARD NAV: the stub DOM's focus() is a no-op, so the cursor INDEX is
+  // the observable — same reason draftFocus is exposed above.
+  menuFocus: () => menuFocus,
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.
