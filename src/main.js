@@ -5393,6 +5393,36 @@ function isDimCard(el) {
   return typeof el.className === 'string' && /\bdim\b/.test(el.className);
 }
 
+// THE VISIBLE CURSOR — and the fix for this feature's first, incomplete cut.
+//
+// el.focus() CANNOT paint the selection: the cards are plain DIVs (no tabindex)
+// so a DIV is not focusable and focus() does nothing in the browser, and the stub
+// DOM's focus() is a no-op besides. There was also no :focus rule. So the cursor
+// moved invisibly, which is exactly the defect the owner reported.
+//
+// The class is written to className — the attribute BOTH environments really have
+// — with a classList mirror for anything reading that instead. The stub keeps
+// classList and className as separate stores (see isDimCard), so writing only one
+// of them makes the selection invisible to half the system.
+function clearSelCards() {
+  for (const c of [...(ovCards.children || [])]) {
+    if (!c) continue;
+    if (typeof c.className === 'string') {
+      c.className = c.className.split(/\s+/).filter(x => x && x !== 'sel').join(' ');
+    }
+    if (c.classList && typeof c.classList.remove === 'function') c.classList.remove('sel');
+  }
+}
+
+function setSelCard(el) {
+  clearSelCards();
+  if (!el) return;
+  if (typeof el.className === 'string' && !/\bsel\b/.test(el.className)) {
+    el.className = (el.className + ' sel').trim();
+  }
+  if (el.classList && typeof el.classList.add === 'function') el.classList.add('sel');
+}
+
 function menuFocusStep(d) {
   const n = ovCards.children.length;
   if (!n) return;
@@ -5402,6 +5432,7 @@ function menuFocusStep(d) {
     const el = ovCards.children[i];
     if (isDimCard(el)) continue;
     menuFocus = i;
+    setSelCard(el);
     if (el && typeof el.focus === 'function') el.focus();
     return;
   }

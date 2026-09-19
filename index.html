@@ -141,6 +141,13 @@
     content: '\2023'; position: absolute; left: 8px; color: #c9a05a;
   }
   .card:hover .name::before { color: #ffd75e; }
+  /* MENU KEYBOARD NAV (2026-09-19): the keyboard cursor must LOOK like the hover
+     it stands in for, so the caret rule above is reused VERBATIM. The one
+     addition is the outline, because a keyboard player has no pointer sitting on
+     the card to disambiguate the selection. If the caret alone reads well enough,
+     delete the outline rule — nothing else depends on it. */
+  .card.sel .name::before { color: #ffd75e; }
+  .card.sel { outline: 2px solid #ffd75e; outline-offset: 3px; }
   /* body copy lifts OFF the grain with a hard 1px shadow (a visual read found
      the text sitting "in" the grain and reading muddy) */
   .card .desc { font-size: 12px; color: #d6c09a; text-shadow: 1px 1px 0 #0a0603; }

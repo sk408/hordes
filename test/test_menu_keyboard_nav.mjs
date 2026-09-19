@@ -92,6 +92,59 @@ S.check('Tab advances and Shift+Tab retreats', () => {
   assert.equal(T.menuFocus(), 0, 'Shift+Tab retreats');
 });
 
+// The owner's report: "none of the selections get highlighted to show me which
+// one I would be selecting". Moving the cursor is not the feature — SEEING it is.
+// The marker is a class on className (the cards are DIVs, so focus() paints
+// nothing at all — see setSelCard in main.js).
+const isSel = (c) => !!(c && typeof c.className === 'string' && /\bsel\b/.test(c.className));
+const selCount = () => cards().filter(isSel).length;
+
+S.check('the cursor card is VISIBLY marked', () => {
+  title();
+  assert.equal(selCount(), 0, 'nothing is marked before the first key');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'the cursor is on card 0');
+  assert.ok(isSel(cards()[0]), 'card 0 carries the selection marker');
+});
+
+S.check('the marker MOVES with the cursor — never two, never none', () => {
+  title();
+  key('arrowdown');
+  key('arrowdown');
+  assert.equal(selCount(), 1, 'exactly ONE card is marked');
+  assert.ok(isSel(cards()[T.menuFocus()]), 'and it is the cursor card');
+  assert.ok(!isSel(cards()[0]), 'the card left behind is unmarked');
+
+  const n = cards().length;
+  for (let i = 0; i < n + 2; i++) key('arrowdown');       // wrap right round
+  assert.equal(selCount(), 1, 'still exactly one marked after a full lap');
+  assert.ok(isSel(cards()[T.menuFocus()]), 'and it is still the cursor card');
+
+  key('arrowup');
+  assert.equal(selCount(), 1, 'stepping back keeps exactly one marked');
+  assert.ok(isSel(cards()[T.menuFocus()]), 'on the cursor card');
+});
+
+S.check('the marker skips dim cards too (it is the cursor, not a scan)', () => {
+  title();
+  cardWith('HOW TO PLAY').click();
+  const prev = indexOfCard('PREV');
+  assert.ok(isDim(cards()[prev]), 'PREV is dim on page 1');
+  for (let i = 0; i < cards().length + 2; i++) {
+    key('arrowdown');
+    assert.ok(!isSel(cards()[prev]), 'the dim PREV is never marked');
+    assert.equal(selCount(), 1, 'and exactly one card is marked at every step');
+  }
+});
+
+S.check('opening a menu clears the marker with the cursor', () => {
+  title();
+  key('arrowdown');
+  assert.equal(selCount(), 1, 'a card is marked on the title');
+  cardWith('HOW TO PLAY').click();                        // different screen
+  assert.equal(selCount(), 0, 'the fresh screen starts with nothing marked');
+});
+
 S.check('Enter activates the focused card (through menuCard onclick)', () => {
   title();
   const i = indexOfCard('HOW TO PLAY');
