@@ -1391,9 +1391,19 @@ export class Renderer {
       // global): OffscreenCanvas where it exists (every target browser), else
       // a scratch canvas borrowed from the MAIN canvas's own ownerDocument —
       // the headless-test path, which stubs it on the canvas it hands in.
+      //
+      // GRACEFUL SKIP (2026-09-19): a minimal test/tool canvas stub that defines
+      // NEITHER OffscreenCanvas nor ownerDocument used to THROW here. Nothing
+      // noticed because the radar defaulted OFF, so this line never ran — then the
+      // radar shipped ON by default and 19 headless tests crashed on it. In every
+      // browser one of the two exists, so this guard is unreachable in production;
+      // a stub that cannot lend a scratch canvas simply renders no radar, which is
+      // exactly what happened before. The WAVE-27 pin is kept: still no DOM global.
       const off = (typeof OffscreenCanvas === 'function')
         ? new OffscreenCanvas(2 * R + 1, 2 * R + 1)
-        : this.canvas.ownerDocument.createElement('canvas');
+        : (this.canvas && this.canvas.ownerDocument
+            ? this.canvas.ownerDocument.createElement('canvas') : null);
+      if (!off) { this.radar = null; return; }
       off.width = 2 * R + 1; off.height = 2 * R + 1;
       this._paintRadarPlate(off.getContext('2d'), R, R, R, focusR);
       this._radarPlate = off;

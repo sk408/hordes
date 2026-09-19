@@ -80,13 +80,21 @@ check('NEXT walks 2 -> 3 -> 4, then dims; the indicator tracks', () => {
   assert.ok((cardWith('NEXT').className || '').includes('dim'), 'NEXT is dim on the last page');
   assert.ok(!(cardWith('PREV').className || '').includes('dim'), 'PREV is live on page 4');
 });
-check('arrow keys navigate pages too (Left/Right parity with the cards)', () => {
-  kdown('ArrowLeft');   // PREV via the real keydown seam
-  assert.ok(/PAGE 3 \/ 4/.test(elements['ov-sub'].innerHTML), 'ArrowLeft -> page 3');
-  kdown('ArrowRight');
-  assert.ok(/PAGE 4 \/ 4/.test(elements['ov-sub'].innerHTML), 'ArrowRight -> page 4');
-  kdown('ArrowLeft'); kdown('ArrowLeft'); kdown('ArrowLeft');
-  assert.ok(/PAGE 1 \/ 4/.test(elements['ov-sub'].innerHTML), 'ArrowLeft walks back to page 1');
+check('PageUp/PageDown navigate pages too (parity with the PREV/NEXT cards)', () => {
+  // RETARGETED 2026-09-19 with a DELIBERATE control change, said out loud because
+  // it looks like moving the goalposts: this block used to pin ArrowLeft/ArrowRight
+  // paging. The owner found that wrong once the card cursor existed — "navigation
+  // through the shop and how to play by keyboard are a bit strange because it
+  // automatically flips the pages instead of moving across the screen. might be
+  // better to have it not flip the pages." Paging moved to PageUp/PageDown; the
+  // arrows now belong to the CURSOR (asserted in test_menu_keyboard_nav). The
+  // card-vs-key parity this block exists to prove is UNCHANGED — only the keys did.
+  kdown('PageUp');   // PREV via the real keydown seam
+  assert.ok(/PAGE 3 \/ 4/.test(elements['ov-sub'].innerHTML), 'PageUp -> page 3');
+  kdown('PageDown');
+  assert.ok(/PAGE 4 \/ 4/.test(elements['ov-sub'].innerHTML), 'PageDown -> page 4');
+  kdown('PageUp'); kdown('PageUp'); kdown('PageUp');
+  assert.ok(/PAGE 1 \/ 4/.test(elements['ov-sub'].innerHTML), 'PageUp walks back to page 1');
 });
 check('the CONTENTS row is GONE (settled shape 2026-09-18) — no index cards anywhere', () => {
   // HOW-TO-PLAY SETTLED SHAPE (owner: the index buttons are the worst part —

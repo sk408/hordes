@@ -320,4 +320,74 @@ S.check('the DRAFT offer row takes Tab, and its cursor is now VISIBLE', () => {
   assert.equal(selCount(), 1, 'and still exactly one marked');
 });
 
+// ---- OWNER ROUND 3: two-press cursor + the radar preference -----------------
+S.check('a two-press card KEEPS the cursor after the first press (END RUN)', () => {
+  T.startRun();
+  pump(2);
+  key('escape');                                  // ESC/P opens the in-run pause
+  assert.equal(st.mode, 'settings', 'the in-run settings pause is up');
+  const idx = indexOfCard('END RUN');
+  assert.ok(idx >= 0, 'there is an END RUN card');
+  for (let n = 0; n < idx + 1; n++) key('arrowdown');   // -1 -> 0 is one press
+  assert.equal(T.menuFocus(), idx, 'the cursor is on END RUN');
+  key('enter');                                   // press ONE: arms it
+  assert.equal(st.mode, 'settings', 'still on the same screen (armed, not fired)');
+  assert.ok(cardWith('CONFIRM END RUN?'), 'the card now reads CONFIRM END RUN?');
+  // THE FIX (owner): "they lose focus after the first press and have to be
+  // navigated to again. be better if it stayed selected to push twice easily."
+  assert.equal(T.menuFocus(), indexOfCard('CONFIRM END RUN?'), 'the cursor STAYED put');
+  assert.equal(selCount(), 1, 'and the marker is still visible');
+  key('enter');                                   // press TWO: fires
+  assert.notEqual(st.mode, 'settings', 'the second press ended the run');
+});
+
+S.check('the radar is ON by default', () => {
+  // Owner: "maybe we should make the radar on by default instead."
+  assert.equal(st.radarOn, true, 'radarOn defaults to true');
+});
+
+S.check('toggling the radar PERSISTS the choice', () => {
+  T.startRun();
+  pump(2);
+  assert.equal(st.radarOn, true, 'on when the run starts');
+  key('r');                                       // the real key path
+  assert.equal(st.radarOn, false, 'R turned it off');
+  assert.equal(h.storage.get('hordes_radar'), '0', 'and the choice was written down');
+  key('r');
+  assert.equal(st.radarOn, true, 'R turned it back on');
+  assert.equal(h.storage.get('hordes_radar'), '1', 'and that was written too');
+});
+
+// ---- OWNER ROUND 3: the shop footer ----------------------------------------
+S.check('the shop BACK button is on EVERY page, not just the last', () => {
+  title();
+  // The pager deliberately no-ops when the DOM reports no layout ("stub: markup is
+  // the contract"), so hand it the numbers a real layout would. Opening that guard
+  // is the only way to assert paging headlessly.
+  const ovc = h.elements['ov-cards'];
+  ovc.clientWidth = 640;
+  ovc.offsetTop = 0;
+  h.elements['overlay'].clientHeight = 300;
+  cardWith('SHOP').click();                          // the real door
+  for (const c of cards()) c.offsetHeight = 40;      // uniform rows
+  // The rAF queue is SHARED with the game's own frame loop (which re-registers
+  // every frame), so one pump can run the frame callback instead of the pager.
+  // Drain a few, bounded — the pager callback is sitting behind it.
+  for (let i = 0; i < 4; i++) pump(1);
+  const back = cardWith('BACK');
+  assert.ok(back, 'there is a BACK card');
+  assert.ok(/\bshop-footer\b/.test(back.className), 'BACK carries the footer tag');
+  const visible = () => cards().filter(c => c.style.display !== 'none');
+  assert.ok(visible().length < cards().length,
+    'the pager is live (some cards are paged out): ' + visible().length + '/' + cards().length);
+  assert.ok(visible().includes(back), 'BACK is visible on page 1');
+  // OWNER: "we still need the shop to have the back button underneath the list of
+  // buyables on each page instead of once at the end."
+  key('pagedown');                                   // paging key since arrows became the cursor's
+  assert.equal(back.style.display, '', 'BACK is STILL visible on page 2');
+  assert.ok(visible().includes(back), 'and still in the visible set on page 2');
+  key('pageup');
+  assert.equal(back.style.display, '', 'and back again on page 1');
+});
+
 S.done();

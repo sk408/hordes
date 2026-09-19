@@ -75,17 +75,31 @@ const frameRects = () => {
   return rec.rects.slice(n0).map(({ x, y, w, h: hh, d }) => ({ x, y, w, h: hh, d }));
 };
 
-// --- 1. off by default, nothing painted --------------------------------------
+// --- 1. ON by default --------------------------------------------------------
+// RETARGETED 2026-09-19 with a DELIBERATE default change (stated because it looks
+// like moving the goalposts): the owner asked for the radar to ship ON — "maybe we
+// should make the radar on by default instead" — and for the choice to PERSIST.
+// This block used to pin OFF and "nothing painted"; the pinned start state is now
+// ON. Coverage is not lost: the OFF path is still driven below (the toggle turns
+// it back off and asserts the seam goes null), so only the DEFAULT changes.
 pump(1);
-S.check('radar starts OFF: flag false, seam null', () => {
-  assert.equal(state.radarOn, false);
-  assert.equal(T.radar.on, false);
-  assert.equal(T.renderer.radar, null);
+S.check('radar starts ON by default (retargeted 2026-09-19)', () => {
+  assert.equal(state.radarOn, true);
+  assert.equal(T.radar.on, true);
 });
 
-// --- 2. the real key toggles it on -------------------------------------------
+// --- 2. the real key toggles it ----------------------------------------------
+// RETARGETED with the ON default (2026-09-19): because it is already ON at boot,
+// R now turns it OFF first and a second press turns it back ON — the same key
+// through the same handler, exercised in BOTH directions, which the old
+// one-direction version could not do.
 key('keydown', { key: 'r' });
-S.check('keydown r through the game handler turns the radar ON', () => {
+S.check('keydown r through the game handler turns the radar OFF', () => {
+  assert.equal(state.radarOn, false);
+  assert.equal(T.radar.on, false);
+});
+key('keydown', { key: 'r' });
+S.check('and a second press turns it back ON', () => {
   assert.equal(state.radarOn, true);
   assert.equal(T.radar.on, true);
 });

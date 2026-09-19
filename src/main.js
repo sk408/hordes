@@ -880,8 +880,14 @@ const state = {
   // Presentation only — render.js drawRadar reads this every frame and paints
   // the radar.js dot set while it is on; the sim never reads it. Toggled by
   // the R key / the RADAR touch button (toggleRadar), sticky across runs in
-  // the session like zoom. Not persisted.
-  radarOn: false,
+  // the session like zoom.
+  //
+  // OWNER 2026-09-19: "when the player selects the radar to be on, it should
+  // persist. maybe we should make the radar on by default instead." BOTH done:
+  // it DEFAULTS ON, and the choice PERSISTS (KEY_RADAR, the zoom pattern) — so a
+  // player who turns it off keeps it off, and everyone else never has to find the
+  // toggle. It stays presentational: startRun still never touches it.
+  radarOn: true,
   // M1 THE MAP SCREEN: canvas-drawn, OPAQUE over the field, and the sim KEEPS
   // RUNNING while it is open (C1 — a pausing map is a free dodge button).
   // CLOSED by default at boot and on every startRun (C6: nothing else opens
@@ -4954,6 +4960,21 @@ try {
   if (ZOOM_LADDER.includes(savedZoom)) state.zoom = savedZoom;
 } catch { /* shim */ }
 
+// ---------- A2 THE RADAR preference (owner 2026-09-19) -----------------------
+// "when the player selects the radar to be on, it should persist. maybe we should
+// make the radar on by default instead." Persisted EXACTLY like zoom, with one
+// difference that matters: the state flag already defaults ON, so this only
+// OVERRIDES it when the player has actually made a choice. An absent key (a
+// returning player who has never touched R) therefore keeps the new default
+// rather than being forced either way — which is why this reads '1'/'0'
+// explicitly instead of testing truthiness.
+const KEY_RADAR = 'hordes_radar';
+try {
+  const savedRadar = prefStorage.getItem(KEY_RADAR);
+  if (savedRadar === '1') state.radarOn = true;
+  else if (savedRadar === '0') state.radarOn = false;
+} catch { /* shim */ }
+
 // ---------- WAVE-19: first-run onboarding flag (same storage shim) ------------
 // HOW TO PLAY auto-pops ONCE on first boot (before the first run starts) and
 // never again; the title menu keeps a HOW TO PLAY button so it is always
@@ -5470,8 +5491,27 @@ function menuFocusActivate() {
   const i = menuFocusIndex();
   const el = ovCards.children[i >= 0 ? i : 0];
   if (!el) return;
+  const modeBefore = state.mode;
+  const countBefore = ovCards.children.length;
   if (typeof el.click === 'function') el.click();
   else if (typeof el.onclick === 'function') el.onclick();
+  // TWO-TAP CARDS (END RUN, RESET PROFILE) KEEP THE CURSOR. Owner 2026-09-19:
+  // "things that take a push but dont exit the menu itself like end run which
+  // takes two pushes, they lose focus after the first press and have to be
+  // navigated to again. be better if it stayed selected to push twice easily."
+  // The first press RE-COMPOSES the same screen (endArmed -> showSettings), and
+  // openMenu clears ovCards, so the marker dies with the old elements. If the
+  // screen is STILL the same one, re-mark the same slot.
+  //
+  // Deliberately conservative: re-mark ONLY when the mode is unchanged AND the
+  // card count is identical. If the press navigated (a submenu, the shop, a run
+  // restart) or rebuilt a different list, the new screen correctly opens with NO
+  // cursor — re-marking by index there is exactly the stale-index bug the derived
+  // cursor exists to prevent.
+  if (state.mode === modeBefore && i >= 0 && ovCards.children.length === countBefore) {
+    const again = ovCards.children[i];
+    if (again && !isDimCard(again)) setSelCard(again);
+  }
 }
 
 // THE SHARED NAV LADDER — every card screen routes its keys through this, so a
@@ -6427,7 +6467,17 @@ function finalizeShopPager() {
   if (state.mode !== 'menu' || !ovCards.children || !ovCards.children.length) return;
   if (typeof ovCards.clientWidth !== 'number' || !ovCards.clientWidth) return;   // stub: markup is the contract
   armShopSwipe();
-  const cards = [...ovCards.children];
+  // SHOP FOOTER (owner 2026-09-19): "we still need the shop to have the back
+  // button underneath the list of buyables on each page instead of once at the
+  // end." BACK is appended LAST by showShop, so the row-chunker swept it into the
+  // final row and it only ever appeared on the LAST page. Footer cards are pulled
+  // OUT of the paged rows here and re-shown on EVERY page by shopPageGoto, so BACK
+  // sits under the buyables wherever the player happens to be.
+  const all = [...ovCards.children];
+  const isFooter = (c) => !!c && typeof c.className === 'string' && /\bshop-footer\b/.test(c.className);
+  const footer = all.filter(isFooter);
+  const cards = all.filter(c => !isFooter(c));
+  if (!cards.length) return;    // nothing to page — the footer alone is the markup
   const plan = shopGridPlan(ovCards.clientWidth);
   // uniform card widths -> DOM order fills rows of exactly `cols` (the last
   // row may be short); a row's height is its tallest card (flex stretch).
@@ -6456,7 +6506,7 @@ function finalizeShopPager() {
   const availH = Math.max(60, overlay.clientHeight - (ovCards.offsetTop || 0)
     - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10);
   const pages = shopPageChunk(rows.map(r => r.h), availH);
-  shopPager = { pages, rows, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
+  shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
   shopPageGoto(shopPager.page);
 }
 
@@ -6467,6 +6517,9 @@ function shopPageGoto(p) {
   shopPageWanted = n;
   const show = new Set();
   for (const ri of shopPager.pages[n - 1]) for (const c of shopPager.rows[ri].cards) show.add(c);
+  // THE FOOTER IS ON EVERY PAGE (owner 2026-09-19): BACK belongs under the
+  // buyables wherever the player is, not once at the end of the last page.
+  for (const c of (shopPager.footer || [])) show.add(c);
   for (const c of ovCards.children) c.style.display = show.has(c) ? '' : 'none';
   shopChromeUpdate();
 }
@@ -6642,7 +6695,19 @@ function showShop() {
   // the global catalogue it sits on top of — the owner wants it FOUND. Same
   // menuCard door pattern as SHOP/APEX above.
   menuCard('CHARACTERS', 'per-pilot upgrades', () => showCharacterShop());
-  menuCard('BACK', 'to title [ESC]', () => showTitle());
+  // SHOP FOOTER (owner 2026-09-19: the BACK button belongs "underneath the list
+  // of buyables on each page"). Tagged so finalizeShopPager keeps it OUT of the
+  // paged rows and shopPageGoto re-shows it on every page — without the tag it is
+  // just the last card, which lands in the final row and only shows on the last
+  // page. className is written for both stores (the stub DOM splits classList
+  // from className), matching isDimCard/isSelCard.
+  const shopBack = menuCard('BACK', 'to title [ESC]', () => showTitle());
+  if (shopBack) {
+    if (typeof shopBack.className === 'string' && !/\bshop-footer\b/.test(shopBack.className)) {
+      shopBack.className = (shopBack.className + ' shop-footer').trim();
+    }
+    if (shopBack.classList && typeof shopBack.classList.add === 'function') shopBack.classList.add('shop-footer');
+  }
   for (const el of framed) frameCard(el, true);   // lazy: the observer paints after the browser's own layout pass
   // SHOP PAGING: pages are chunked after the browser's layout pass (the rAF
   // runs before the first paint — the un-paged list never flashes) and the
@@ -8876,18 +8941,30 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   // MANUAL v2: while the paginated reference is open (any door — title,
-  // first-run gate, in-run pause, end screen), the arrows turn pages. Key
+  // first-run gate, in-run pause, end screen), PageUp/PageDown turn pages. Key
   // parity with the PREV/NEXT cards; the ends are no-ops (the cards dim).
+  //
+  // OWNER 2026-09-19: the arrows USED to turn pages here, and he found it wrong
+  // once the cursor existed — "navigation through the shop and how to play by
+  // keyboard are a bit strange because it automatically flips the pages instead
+  // of moving across the screen. might be better to have it not flip the pages."
+  // Arrows now belong to the CURSOR (they fall through to the nav ladder below);
+  // paging moved to PageUp/PageDown. The PREV/NEXT cards, the swipe and the edge
+  // arrows are all untouched, so a pointer-free desktop can still page.
   if (state.manualPage !== null) {
-    if (k === 'arrowleft') { manualPrev(); return; }
-    if (k === 'arrowright') { manualNext(); return; }
+    if (k === 'pageup') { manualPrev(); return; }
+    if (k === 'pagedown') { manualNext(); return; }
   }
   // SHOP PAGING (desktop addendum: "DESKTOP HAS NO SWIPE: ... add keyboard
-  // arrow-key paging (left/right)"): while the paged shop is the live menu
-  // screen, the arrows turn pages — parity with the edge arrows and swipe.
+  // arrow-key paging (left/right)"): PageUp/PageDown now turn the pages. The
+  // arrows used to, but the owner found it strange once the cursor existed — "it
+  // automatically flips the pages instead of moving across the screen. might be
+  // better to have it not flip the pages." Arrows belong to the CURSOR now (they
+  // fall through to the nav ladder); the edge arrows, swipe and the page
+  // indicator are unchanged, so desktop still pages with no pointer.
   if (shopPagerActive()) {
-    if (k === 'arrowleft') { shopPageGoto(shopPager.page - 1); return; }
-    if (k === 'arrowright') { shopPageGoto(shopPager.page + 1); return; }
+    if (k === 'pageup') { shopPageGoto(shopPager.page - 1); return; }
+    if (k === 'pagedown') { shopPageGoto(shopPager.page + 1); return; }
   }
   if (state.mode === 'escape') {                        // V1: the mode's own keys
     // The escape owns its input surface (arrows/AD run, space/W/up jump,
@@ -9733,6 +9810,9 @@ syncChrome();
 // the discovery feedback, same pattern as the stance cycle.
 function toggleRadar() {
   state.radarOn = !state.radarOn;
+  // OWNER 2026-09-19: persist the choice (was session-only). Same storage shim as
+  // zoom so headless tests with no-op storage stay green.
+  try { prefStorage.setItem(KEY_RADAR, state.radarOn ? '1' : '0'); } catch { /* shim */ }
   toast('RADAR ' + (state.radarOn ? 'ON' : 'OFF') + ' (R)', '#b8e0ff');
   return state.radarOn;
 }
