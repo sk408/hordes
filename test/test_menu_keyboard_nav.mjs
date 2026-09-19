@@ -390,4 +390,49 @@ S.check('the shop BACK button is on EVERY page, not just the last', () => {
   assert.equal(back.style.display, '', 'and back again on page 1');
 });
 
+// ---- OWNER ROUND 4: the SETUP screen (and its sibling gap) -----------------
+S.check('the SETUP screen takes keyboard navigation', () => {
+  title();
+  cardWith('SETUP').click();
+  assert.equal(st.mode, 'setup', 'the setup screen is up');
+  assert.equal(T.menuFocus(), -1, 'it opens with no cursor');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+  key('tab');
+  assert.equal(T.menuFocus(), 1, 'Tab advances');
+  key('tab', { shiftKey: true });
+  assert.equal(T.menuFocus(), 0, 'Shift+Tab retreats');
+});
+
+S.check('cycling a SETUP row keeps the cursor (the screen re-composes itself)', () => {
+  // Every SETUP card calls showSetup() again, so this is the two-press retention
+  // case in its natural habitat. NIGHT MODE is used because its label changes
+  // deterministically (OFF -> ARMED/ON), which proves the row really re-composed.
+  title();
+  cardWith('SETUP').click();
+  const idx = indexOfCard('NIGHT MODE');
+  assert.ok(idx >= 0, 'there is a NIGHT MODE card');
+  for (let n = 0; n < idx + 1; n++) key('arrowdown');   // -1 -> 0 is one press
+  assert.equal(T.menuFocus(), idx, 'the cursor is on NIGHT MODE');
+  const before = cards()[idx].innerHTML;
+  key('enter');
+  assert.equal(st.mode, 'setup', 'still on the setup screen');
+  assert.notEqual(cards()[idx].innerHTML, before, 'the row re-composed (its label changed)');
+  assert.equal(T.menuFocus(), idx, 'and the cursor STAYED on that row');
+  assert.equal(selCount(), 1, 'visibly still selected');
+  key('enter');                                   // toggle back, leave no state behind
+  assert.equal(T.menuFocus(), idx, 'still there after the second press');
+});
+
+S.check('the PROGRESS screen takes keyboard navigation (same missing mode)', () => {
+  title();
+  cardWith('PROGRESS').click();
+  assert.equal(st.mode, 'progress', 'the progress screen is up');
+  assert.equal(T.menuFocus(), -1, 'it opens with no cursor');
+  key('arrowdown');
+  assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
+  assert.equal(selCount(), 1, 'and it is visibly marked');
+});
+
 S.done();

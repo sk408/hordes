@@ -5421,6 +5421,30 @@ function isSelCard(el) {
   return typeof el.className === 'string' && /\bsel\b/.test(el.className);
 }
 
+// EVERY CARD SCREEN'S MODE — this list IS the contract.
+//
+// Owner 2026-09-19, reported one screen at a time: the run-end screen ("the run
+// ended screen doesnt let me use keyboard controls") and then SETUP ("setup screen
+// doesnt have keyboard controls"). Both were modes missing from this list, so it
+// is now named, enumerated and auditable rather than spelled out inside an if.
+//
+// THE FULL MODE INVENTORY (from every openMenu('...') call + the modes set
+// directly). If you add a card screen, add it HERE:
+//   IN THIS SET : title, menu, setup, progress, farewell, characters, loadout
+//   own arrows  : trophies, bestiary, apex   (galleries — Left/Right ring-step)
+//   own keys    : chest (one card, GOT IT), stats (1-6), draft (1-4),
+//                 evolve (1-4), intermission (c + 1-4), dead (r/t + nav)
+//   not menus   : playing, finale, escape, intro, portal-cine, death-cine
+const CARD_MENU_MODES = new Set([
+  'title',        // openMenu('title') via showTitle — a SEPARATE mode from 'menu'
+  'menu',         // openMenu() default: the shop, the manual, the apex shop
+  'setup',        // openMenu('setup') — CHALLENGE / STAGE / NIGHT MODE / SETTINGS
+  'progress',     // openMenu('progress') — the TROPHIES / BESTIARY doors
+  'farewell',
+  'characters',
+  'loadout',
+]);
+
 function menuFocusIndex() {
   const kids = ovCards.children || [];
   for (let i = 0; i < kids.length; i++) if (isSelCard(kids[i])) return i;
@@ -9049,8 +9073,7 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'escape') { closeApexGallery(); showApexShop(); }
     else if (k === 'arrowleft') apexStep(-1);
     else if (k === 'arrowright') apexStep(1);
-  } else if (state.mode === 'title' || state.mode === 'menu' || state.mode === 'farewell'
-      || state.mode === 'characters' || state.mode === 'loadout') {
+  } else if (CARD_MENU_MODES.has(state.mode)) {
     // NOTE 'title' is a SEPARATE mode from 'menu' (showTitle calls
     // openMenu('title'), main.js:6168) — omitting it would leave the title screen
     // itself, the headline case in the owner's request, with no navigation at all.
