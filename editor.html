@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<!-- HORDES dev tooling — NOT linked from the game UI. Local tuning editor:
+     section ONE only (shop prices). Reads live values from the game's own
+     config modules (src/meta.js) and saves through tools/editor_server.py
+     (exact-string old/new pairs, localhost only). Never player-facing. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HORDES dev editor — shop prices</title>
+<style>
+  :root { --bg: #0b0b12; --panel: #12121c; --ink: #e8e8f0; --dim: #d6c09a;
+          --gold: #ffd75e; --gold-dim: #c9a05a; --line: #3a2f1d; }
+  body { background: var(--bg); color: var(--ink);
+         font-family: monospace; font-size: 14px; line-height: 1.5;
+         margin: 0; padding: 24px; }
+  h1 { color: var(--gold); font-size: 20px; letter-spacing: 2px; margin: 0 0 4px; }
+  h2 { color: var(--gold); font-size: 15px; letter-spacing: 2px;
+       border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-top: 28px; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 16px; }
+  .bar { background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+         padding: 10px 12px; margin-bottom: 16px; }
+  .bar label { color: var(--dim); font-size: 12px; margin-right: 8px; }
+  .bar input[type=text] { width: 220px; }
+  input { background: #0e0e16; color: var(--ink); border: 1px solid var(--line);
+          border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 13px; }
+  input.num { width: 90px; }
+  button { background: #2a2113; color: var(--gold); border: 1px solid var(--gold-dim);
+           border-radius: 3px; padding: 3px 10px; font: inherit; font-size: 13px;
+           cursor: pointer; }
+  button:hover { background: #3a2f1d; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  table { border-collapse: collapse; width: 100%; max-width: 980px; }
+  th { color: var(--gold); font-size: 12px; letter-spacing: 1px; text-align: left;
+       border-bottom: 1px solid var(--line); padding: 4px 8px; }
+  td { border-bottom: 1px solid #1d1d2a; padding: 4px 8px; vertical-align: middle; }
+  tr.dirty td { background: #1a1608; }
+  .id { color: var(--gold-dim); }
+  .derived { color: #6a6a8a; font-size: 12px; }
+  .msg { font-size: 12px; min-height: 18px; margin-top: 4px; }
+  .msg.ok { color: #9be28a; }
+  .msg.err { color: #ff8a8a; }
+  #status { margin-top: 20px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>DEV EDITOR — SHOP PRICES</h1>
+<div class="sub">dev tooling only. values read live from src/meta.js. saves go
+through the local saver (old/new exact-string pairs, timestamped backup).</div>
+
+<div class="bar">
+  <label for="saver">saver base url</label>
+  <input type="text" id="saver" value="http://127.0.0.1:8901">
+  <button id="health">check saver</button>
+  <span id="healthmsg" class="msg"></span>
+</div>
+
+<h2>1 · UPGRADE ROWS (baseCost / costGrowth)</h2>
+<div class="sub">literal rows in SHOP_UPGRADES. weapon/elite unlock rows are
+generated — their prices live in sections 2 and 3 below.</div>
+<table id="rows"><thead><tr>
+  <th>id</th><th>name</th><th>baseCost</th><th>costGrowth</th><th>L0 price</th><th></th>
+</tr></thead><tbody></tbody></table>
+<div id="rowsmsg" class="msg"></div>
+
+<h2>2 · WEAPON PRICES (WEAPON_PRICES)</h2>
+<table id="weapons"><thead><tr>
+  <th>weapon</th><th>price</th><th></th>
+</tr></thead><tbody></tbody></table>
+<div id="weaponsmsg" class="msg"></div>
+
+<h2>3 · ELITE MODIFIER COSTS (ELITE_MODIFIERS)</h2>
+<table id="elites"><thead><tr>
+  <th>elite</th><th>cost</th><th></th>
+</tr></thead><tbody></tbody></table>
+<div id="elitesmsg" class="msg"></div>
+
+<div id="status" class="msg"></div>
+
+<script type="module">
+import { SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS, SHOP_BY_ID, upgradeCost }
+  from './src/meta.js';
+
+const $ = (id) => document.getElementById(id);
+const saverBase = () => $('saver').value.replace(/\/+$/, '');
+
+function setMsg(el, ok, text) {
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+}
+
+// Raw source text of a whitelisted file, served read-only by the saver.
+// Served statically (nginx alias) the same relative fetch works.
+let sourceCache = {};
+async function sourceText(file) {
+  if (!sourceCache[file]) {
+    const res = await fetch(file);
+    if (!res.ok) throw new Error('cannot fetch ' + file + ' (http ' + res.status + ')');
+    sourceCache[file] = await res.text();
+  }
+  return sourceCache[file];
+}
+
+async function postSave(file, oldStr, newStr) {
+  const res = await fetch(saverBase() + '/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file, replacements: [{ old: oldStr, new: newStr }] }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || ('http ' + res.status));
+  return data; // { ok, file, backup, replacements }
+}
+
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Exact row-object literal for a SHOP_UPGRADES id, from live source text.
+function rowLiteral(text, id) {
+  const re = new RegExp('\\{[^{}]*id: ' + "'" + escRe(id) + "'" + '[^{}]*\\}', 'g');
+  return text.match(re) || [];
+}
+
+// Build the new row literal with edited baseCost/costGrowth.
+function withPrices(literal, baseCost, costGrowth) {
+  let out = literal;
+  const bc = out.match(/baseCost: [0-9.]+/);
+  const cg = out.match(/costGrowth: [0-9.]+/);
+  if (!bc || !cg) throw new Error('price fields not found in row literal');
+  out = out.replace(bc[0], 'baseCost: ' + baseCost);
+  out = out.replace(cg[0], 'costGrowth: ' + costGrowth);
+  return out;
+}
+
+// ---- section 1: literal upgrade rows ---------------------------------------
+function buildRows() {
+  const tb = document.querySelector('#rows tbody');
+  for (const def of SHOP_UPGRADES) {
+    const tr = document.createElement('tr');
+    if (def.kind) {
+      // Generated row: price lives in WEAPON_PRICES / ELITE_MODIFIERS.
+      const via = def.kind === 'weapon'
+        ? 'priced via WEAPON_PRICES.' + def.weaponId + ' (section 2)'
+        : 'priced via ELITE_MODIFIERS.' + def.eliteId + ' (section 3)';
+      tr.innerHTML = '<td class="id"></td><td></td><td class="derived"></td>' +
+        '<td class="derived"></td><td></td><td class="derived"></td>';
+      tr.children[0].textContent = def.id;
+      tr.children[1].textContent = def.name;
+      tr.children[2].textContent = def.baseCost;
+      tr.children[3].textContent = def.costGrowth;
+      tr.children[4].textContent = upgradeCost(def, 0) + 'g';
+      tr.children[5].textContent = via;
+    } else {
+      const bcId = 'bc_' + def.id, cgId = 'cg_' + def.id;
+      tr.innerHTML = '<td class="id"></td><td></td>' +
+        '<td><input class="num" inputmode="decimal"></td>' +
+        '<td><input class="num" inputmode="decimal"></td>' +
+        '<td></td><td><button>save</button></td>';
+      tr.children[0].textContent = def.id;
+      tr.children[1].textContent = def.name;
+      const bc = tr.querySelectorAll('input')[0], cg = tr.querySelectorAll('input')[1];
+      bc.id = bcId; cg.id = cgId;
+      bc.value = def.baseCost; cg.value = def.costGrowth;
+      tr.children[4].textContent = upgradeCost(def, 0) + 'g';
+      const btn = tr.querySelector('button');
+      const mark = () => tr.classList.toggle('dirty',
+        Number(bc.value) !== def.baseCost || Number(cg.value) !== def.costGrowth);
+      bc.addEventListener('input', mark); cg.addEventListener('input', mark);
+      btn.addEventListener('click', async () => {
+        const nbc = Number(bc.value), ncg = Number(cg.value);
+        if (!Number.isFinite(nbc) || nbc < 0 || !Number.isFinite(ncg) || ncg <= 0) {
+          setMsg($('rowsmsg'), false, def.id + ': need baseCost >= 0, costGrowth > 0');
+          return;
+        }
+        btn.disabled = true;
+        try {
+          const text = await sourceText('src/meta.js');
+          const hits = rowLiteral(text, def.id);
+          if (hits.length !== 1) throw new Error('row literal for ' + def.id +
+            ' found ' + hits.length + ' times; refusing to guess');
+          const data = await postSave('src/meta.js', hits[0],
+            withPrices(hits[0], nbc, ncg));
+          setMsg($('rowsmsg'), true, def.id + ' saved. backup: ' + data.backup +
+            ' — reload to see live values.');
+          tr.classList.remove('dirty');
+        } catch (e) {
+          setMsg($('rowsmsg'), false, def.id + ': ' + e.message);
+        }
+        btn.disabled = false;
+      });
+    }
+    tb.appendChild(tr);
+  }
+}
+
+// ---- section 2: WEAPON_PRICES ----------------------------------------------
+function buildWeapons() {
+  const tb = document.querySelector('#weapons tbody');
+  for (const [wid, price] of Object.entries(WEAPON_PRICES)) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="id"></td><td><input class="num" inputmode="numeric"></td>' +
+      '<td><button>save</button></td>';
+    tr.children[0].textContent = wid;
+    const inp = tr.querySelector('input');
+    inp.value = price;
+    inp.addEventListener('input', () =>
+      tr.classList.toggle('dirty', Number(inp.value) !== price));
+    tr.querySelector('button').addEventListener('click', async (ev) => {
+      const btn = ev.target, nval = Number(inp.value);
+      if (!Number.isFinite(nval) || nval < 0) {
+        setMsg($('weaponsmsg'), false, wid + ': need price >= 0');
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const text = await sourceText('src/meta.js');
+        const re = new RegExp('^([ \\t]*' + escRe(wid) + ': )' + escRe(String(price)) + '(,.*)$', 'm');
+        const m = text.match(re);
+        if (!m) throw new Error('source line for ' + wid + ' not found; refusing to guess');
+        if (text.match(new RegExp(escRe(m[0]), 'g')).length !== 1)
+          throw new Error('source line for ' + wid + ' is ambiguous; refusing to guess');
+        const data = await postSave('src/meta.js', m[0], m[1] + nval + m[2]);
+        setMsg($('weaponsmsg'), true, wid + ' saved. backup: ' + data.backup +
+          ' — reload to see live values.');
+        tr.classList.remove('dirty');
+      } catch (e) {
+        setMsg($('weaponsmsg'), false, wid + ': ' + e.message);
+      }
+      btn.disabled = false;
+    });
+    tb.appendChild(tr);
+  }
+}
+
+// ---- section 3: ELITE_MODIFIERS --------------------------------------------
+function buildElites() {
+  const tb = document.querySelector('#elites tbody');
+  for (const [eid, e] of Object.entries(ELITE_MODIFIERS)) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="id"></td><td><input class="num" inputmode="numeric"></td>' +
+      '<td><button>save</button></td>';
+    tr.children[0].textContent = eid;
+    const inp = tr.querySelector('input');
+    inp.value = e.cost;
+    inp.addEventListener('input', () =>
+      tr.classList.toggle('dirty', Number(inp.value) !== e.cost));
+    tr.querySelector('button').addEventListener('click', async (ev) => {
+      const btn = ev.target, nval = Number(inp.value);
+      if (!Number.isFinite(nval) || nval < 0) {
+        setMsg($('elitesmsg'), false, eid + ': need cost >= 0');
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const text = await sourceText('src/meta.js');
+        const re = new RegExp("^.*id: '" + escRe(eid) + "'.*cost: " +
+          escRe(String(e.cost)) + ',.*$', 'm');
+        const m = text.match(re);
+        if (!m) throw new Error('source line for ' + eid + ' not found; refusing to guess');
+        if (text.split(m[0]).length - 1 !== 1)
+          throw new Error('source line for ' + eid + ' is ambiguous; refusing to guess');
+        const newline = m[0].replace('cost: ' + e.cost, 'cost: ' + nval);
+        const data = await postSave('src/meta.js', m[0], newline);
+        setMsg($('elitesmsg'), true, eid + ' saved. backup: ' + data.backup +
+          ' — reload to see live values.');
+        tr.classList.remove('dirty');
+      } catch (e2) {
+        setMsg($('elitesmsg'), false, eid + ': ' + e2.message);
+      }
+      btn.disabled = false;
+    });
+    tb.appendChild(tr);
+  }
+}
+
+$('health').addEventListener('click', async () => {
+  try {
+    const res = await fetch(saverBase() + '/health');
+    const data = await res.json();
+    setMsg($('healthmsg'), !!(res.ok && data.ok),
+      res.ok && data.ok ? 'saver ok (' + data.whitelist.length + ' whitelisted files)'
+                        : 'saver error: ' + (data.error || res.status));
+  } catch (e) {
+    setMsg($('healthmsg'), false, 'no saver at ' + saverBase() + ' (' + e.message + ')');
+  }
+});
+
+buildRows();
+buildWeapons();
+buildElites();
+$('status').textContent = SHOP_UPGRADES.length + ' shop rows, ' +
+  Object.keys(WEAPON_PRICES).length + ' weapon prices, ' +
+  Object.keys(ELITE_MODIFIERS).length + ' elite costs — all live from src/meta.js.';
+</script>
+</body>
+</html>
