@@ -64,7 +64,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
 - FREE-BUILD MODE (dev runs only): any buyable — shop levels, characters,
   upgrades — purchasable with no gold deducted. Same `?dev=` gate as
   telemetry, never in the player build. This is what makes maxed-build
-  testing instant instead of a 20-minute grind per question.
+  testing instant instead of a 20-minute grind per question. ACCOUNTING:
+  free purchases deduct 0 from the purse but record FULL price into
+  gold-spent metrics — snapshots must reflect what the build would have
+  cost, or every free-build run corrupts the cost data silently.
 - SNAPSHOT SCHEMA (stable, append-only log, never overwritten):
   `{schema_v, game_rev (commit SHA + dirty flag), seed, upgrades, shrines,
   items, gold_earned, gold_spent (per accounting), damage, wave, test}`.
