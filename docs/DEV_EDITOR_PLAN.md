@@ -86,7 +86,15 @@ live-value templates with coordinated fixture updates)
   supported where the game code allows shaped curves. Descriptions follow
   the live-template rule from slice 5.
 
-## SLICE 7: live telemetry + snapshots (DESIGNED, not yet dispatched)
+## SLICE 7: live telemetry + snapshots (BUILT 2026-09-21, opencode/muse-spark)
+- Gold-sink inventory lives in `src/dev_telemetry.js` header (exhaustive:
+  six bank `profile.gold -=` sites all INVESTMENT, shrine purse spend
+  EXCLUDED, paid-chest gamble flagged AMBIGUOUS and counted pending owner
+  ruling — one-line switch in main.js devGoldSpent()).
+- Snapshot store (resolves the location/format open question): append-only
+  JSONL at `tools/.snapshots/runs.jsonl` (git-ignored), written through the
+  saver backend (POST /snapshot, schema-validated; GET /rev reads the live
+  SHA + dirty flag). Schema keys exact per the contract above.
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
   cumulative gold earned vs spent, damage dealt, best-gold reference line.
 - The editor links directly to a dev run (same gate URL) — one click from
@@ -115,5 +123,4 @@ live-value templates with coordinated fixture updates)
 
 ## OPEN QUESTIONS
 - Which editor section after shop (weapons? characters?) — owner picks.
-- Snapshot store location/format (one JSONL vs per-run files).
 - Whether saver whitelist needs extending as sections land (yes, expect it).

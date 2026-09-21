@@ -135,7 +135,7 @@ import {
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   // G19 slice 1: the per-character upgrade layer — the table, the buy path,
   // the pure applicator (run + preview seams), and the satchel's shared bonus.
-  CHARACTER_UPGRADES, buyCharacterUpgrade, applyCharacterUpgrades,
+  CHARACTER_UPGRADES, CHARACTER_UPGRADE_BY_ID, buyCharacterUpgrade, applyCharacterUpgrades,
   getCharacterUpgradeLevel, characterPotionBonus,
   // G19 slice 2: the family specialty — terms for the two damage chokes and
   // the derived STRONG/WEAK identity lines the screens render.
@@ -153,6 +153,8 @@ import {
   bannerSeen, markBannerSeen,
   downloadProfile, saveProfileToDisk, readSaveFile,
   readRecovery, downloadRecovery, STORAGE_KEY,
+  // SLICE 7: dev free-build arming + the shop afford/read seams below.
+  setDevFreeBuild, devFreeBuild,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -184,6 +186,13 @@ import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
   reliefLevelAt, reliefStep, reliefRampRoute,
 } from './relief.js';
+// SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
+// import cycle; every behaviour below is armed on ?dev=1 only, gate off =
+// byte-identical player game).
+import {
+  isDevGate, SNAPSHOT_SCHEMA_V, buildSnapshot,
+  devArm, devHit, drawSparkline, fetchGameRev, postSnapshot,
+} from './dev_telemetry.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -1725,6 +1734,264 @@ function resetRampage() {
 }
 
 // ---------- E1 THE RUN PURSE (owner directive 2026-09-14) ---------------------
+// ---------- SLICE 7: DEV TELEMETRY + SNAPSHOTS (?dev=1 ONLY) ----------------
+// Everything in this section arms on the `?dev=1` query param ONLY
+// (editor.html links to index.html?dev=1). Gate off: `dev` stays null, every
+// call site below is a single null-check, no DOM is created, no fetch fires,
+// and no state shape changes (dev counters live in this module var + the
+// dev_telemetry accumulator, never in `state`) — the player game is
+// byte-identical. No player-visible surface, no emojis.
+//   - 1 Hz overlay: cumulative gold earned vs gold spent (INVESTMENT
+//     accounting — devGoldSpent(): the paid-chest bucket counts, the shrine
+//     bucket is excluded per the plan rule; see the inventory in
+//     dev_telemetry.js), damage dealt (devHit scalar at every player-dealt
+//     damage site — one branch + one add per event, sampled at 1 Hz, never
+//     traced), best-gold reference line (achievements totals bestGold).
+//   - Free-build: in-run buyables (shrines via purseSpend, paid chests via
+//     buyPaidChest) grant for 0 deducted while recording FULL price into the
+//     dev sink buckets; meta buyables via meta.js DEV_FREE_BUILD (armed from
+//     the toggle below), whose assembled build the snapshot `upgrades` field
+//     prices exactly through catalogCost().
+//   - Test-run toggle stamps snapshots test:true/false; the kill-switch
+//     (snapshots off) blocks the server write (the explicit download-JSON
+//     card stays available — it is a user action, not an automatic write).
+//   - Post-run snapshot: exact schema keys via buildSnapshot(), auto-POSTed
+//     append-only to tools/.snapshots/runs.jsonl through the saver backend
+//     (POST <api>/snapshot; game_rev read live via GET <api>/rev).
+const DEV_GATE = isDevGate(globalThis);
+let dev = null;            // the live dev session (per run); null = gate off / no run
+let devPanel = null;       // overlay DOM, created lazily on the first dev run
+
+const DEV_LS_TEST = 'hordes_dev_test';
+const DEV_LS_FREE = 'hordes_dev_free';
+const DEV_LS_SNAPOFF = 'hordes_dev_snapoff';
+function devPref(key) {
+  try { return prefStorage.getItem(key) === '1'; } catch { return false; }
+}
+function devSetPref(key, on) {
+  try { prefStorage.setItem(key, on ? '1' : '0'); } catch { /* shim */ }
+}
+function devNewSession() {
+  return {
+    testRun: devPref(DEV_LS_TEST),
+    freeBuild: devPref(DEV_LS_FREE),
+    snapshotsOff: devPref(DEV_LS_SNAPOFF),
+    dmg: 0,                // cumulative damage DEALT (the devHit scalar)
+    spentChest: 0,         // COUNTED sink: paid-chest full prices (free or paid)
+    spentShrine: 0,        // EXCLUDED sink: shrine full prices (free or paid)
+    shrineBlessings: [],   // blessing ids bought at shrines this run
+    series: [],            // 1 Hz samples {t, earned, spent, dmg}; capped at 600
+    lastSampleMs: -1e12,
+    rev: null,             // resolved game_rev (null = not yet fetched)
+    snapshot: null,        // the built post-run snapshot (once per run)
+    postState: 'none',     // none|pending|saved|killed|failed:<reason>
+    lastDownload: null,    // last download-JSON payload (headless-readable)
+  };
+}
+// INVESTMENT-accounted gold spent this run: the counted bucket only. The
+// shrine bucket is excluded by the plan rule; paid chests are the flagged
+// ambiguous sink (counted — see dev_telemetry.js; a one-line move if the
+// owner rules them excluded).
+function devGoldSpent() { return dev ? dev.spentChest : 0; }
+function devRunFree() { return !!(dev && dev.freeBuild); }
+function devBestGold() {
+  try {
+    const t = profile && profile.achievements && profile.achievements.totals;
+    return Number((t && t.bestGold) || 0) || 0;
+  } catch { return 0; }
+}
+// The permanent build + the run's build, for the snapshot `upgrades` field —
+// the full priced record of what a free build would have cost (derive with
+// catalogCost()/upgradeCost()).
+function devUpgrades() {
+  const purchased = {};
+  try { Object.assign(purchased, profile.purchased || {}); } catch { /* keep empty */ }
+  const charLevels = {};
+  try {
+    for (const [uid, udef] of Object.entries(CHARACTER_UPGRADE_BY_ID || {})) {
+      const lvl = getCharacterUpgradeLevel(profile, udef.characterId, uid) || 0;
+      if (lvl > 0) {
+        if (!charLevels[udef.characterId]) charLevels[udef.characterId] = {};
+        charLevels[udef.characterId][uid] = lvl;
+      }
+    }
+  } catch { /* keep partial */ }
+  let runWeapons = [];
+  try {
+    runWeapons = (state.weapons || []).map(w => ({
+      id: w.type, level: w.level || 1, evolved: !!w.evolution }));
+  } catch { runWeapons = []; }
+  return {
+    purchased,
+    unlockedWeapons: [...(profile.unlockedWeapons || [])],
+    unlockedElites: [...(profile.unlockedElites || [])],
+    unlockedCharacters: [...(profile.unlockedCharacters || [])],
+    equippedCharacter: profile.equippedCharacter || null,
+    charLevels,
+    loadout: profile.loadout ? [...profile.loadout] : null,
+    runWeapons,
+  };
+}
+function devItems() {
+  try {
+    return (state.items || []).map(it => ({
+      id: it.id || it.name || 'unknown', rarity: it.rarity || 'unknown' }));
+  } catch { return []; }
+}
+// Live overlay panel (dev runs only): toggles + readouts + sparklines.
+// Created once per page load; hidden with the run (display toggled per run).
+function devEnsurePanel() {
+  if (devPanel || typeof document === 'undefined' || !document.createElement) return;
+  try {
+    const box = document.createElement('div');
+    box.id = 'dev-panel';
+    box.style.cssText = 'position:fixed;top:8px;right:8px;z-index:60;background:rgba(8,10,16,0.88);' +
+      'color:#cfd6e4;border:1px solid #3a4356;font:10px/1.5 monospace;padding:6px 8px;' +
+      'text-align:left;max-width:220px;';
+    const title = document.createElement('div');
+    title.textContent = 'DEV TELEMETRY (?dev=1)';
+    title.style.cssText = 'color:#7ad0ff;font-weight:bold;margin-bottom:4px;';
+    box.appendChild(title);
+    const mkBtn = (label, get, flip) => {
+      const b = document.createElement('button');
+      b.style.cssText = 'font:10px monospace;margin:0 4px 4px 0;padding:2px 6px;';
+      const paint = () => { b.textContent = label + ': ' + (get() ? 'ON' : 'OFF'); };
+      b.onclick = () => { flip(); paint(); };
+      b._paint = paint;
+      paint();
+      box.appendChild(b);
+      return b;
+    };
+    const btns = {};
+    btns.test = mkBtn('TEST', () => dev && dev.testRun, () => {
+      if (!dev) return; dev.testRun = !dev.testRun; devSetPref(DEV_LS_TEST, dev.testRun);
+    });
+    btns.free = mkBtn('FREE', () => dev && dev.freeBuild, () => {
+      if (!dev) return; dev.freeBuild = !dev.freeBuild; devSetPref(DEV_LS_FREE, dev.freeBuild);
+      setDevFreeBuild(dev.freeBuild);
+    });
+    btns.snap = mkBtn('SNAP', () => dev && !dev.snapshotsOff, () => {
+      if (!dev) return; dev.snapshotsOff = !dev.snapshotsOff; devSetPref(DEV_LS_SNAPOFF, dev.snapshotsOff);
+    });
+    const read = document.createElement('div');
+    read.id = 'dev-read';
+    read.textContent = '...';
+    box.appendChild(read);
+    const mkCv = () => {
+      const c = document.createElement('canvas');
+      c.width = 200; c.height = 30;
+      c.style.cssText = 'display:block;margin-top:4px;background:#10141c;';
+      box.appendChild(c);
+      return c;
+    };
+    const cvGold = mkCv(), cvDmg = mkCv();
+    document.body.appendChild(box);
+    devPanel = { box, btns, read, cvGold, cvDmg };
+  } catch { devPanel = null; /* overlay is best-effort; the run never depends on it */ }
+}
+function devPaintPanel() {
+  if (!dev || !devPanel) return;
+  try {
+    const n = dev.series.length;
+    const last = n ? dev.series[n - 1] : { earned: 0, spent: 0, dmg: 0 };
+    devPanel.read.textContent =
+      'EARN ' + last.earned + ' · SPENT ' + last.spent + ' (invest)' +
+      ' · SHRINE ' + dev.spentShrine + ' (excl)' +
+      ' · DMG ' + last.dmg +
+      ' · WAVE ' + (state.wave.num || 0) +
+      ' · BEST ' + devBestGold() +
+      (dev.testRun ? ' · TEST' : '') + (dev.freeBuild ? ' · FREE' : '') +
+      (dev.snapshotsOff ? ' · SNAP-OFF' : '');
+    drawSparkline(devPanel.cvGold, [
+      { data: dev.series.map(s => s.earned) },
+      { data: dev.series.map(s => s.spent) },
+    ], { ref: devBestGold(), span: 600 });
+    drawSparkline(devPanel.cvDmg, [{ data: dev.series.map(s => s.dmg) }], { span: 600 });
+  } catch { /* telemetry must never break the frame loop */ }
+}
+// 1 Hz sampler (called from frame() on the wall-clock slot; gate-checked by
+// the caller). Reads scalars into the ring buffer and repaints the panel.
+function devFrameTick(nowMs) {
+  if (!dev) return;
+  if (state.mode !== 'playing' && state.mode !== 'finale') return;
+  if (nowMs - dev.lastSampleMs < 1000) return;
+  dev.lastSampleMs = nowMs;
+  dev.series.push({
+    t: Math.floor(state.time || 0),
+    earned: state.runCounts.gold.earned | 0,
+    spent: devGoldSpent() | 0,
+    dmg: Math.round(dev.dmg),
+  });
+  if (dev.series.length > 600) dev.series.splice(0, dev.series.length - 600);
+  devPaintPanel();
+}
+function devSummaryText(snap) {
+  return 'SEED ' + snap.seed + ' · WAVE ' + snap.wave +
+    ' · EARNED ' + snap.gold_earned + ' · SPENT ' + snap.gold_spent + ' (invest)' +
+    ' · DMG ' + snap.damage + ' · TEST ' + (snap.test ? 'YES' : 'NO') +
+    ' · REV ' + snap.game_rev +
+    ' · POST ' + (dev ? dev.postState : 'none') +
+    ' — tap to download JSON';
+}
+// Explicit download-JSON (user action). Always stashes the payload text on
+// the session for headless verification; the anchor download is best-effort.
+function devDownload(snap) {
+  if (!snap) return null;
+  const text = JSON.stringify(snap, null, 2);
+  if (dev) dev.lastDownload = text;
+  try {
+    if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' &&
+        URL && typeof URL.createObjectURL === 'function') {
+      const blob = new Blob([text], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'hordes-snapshot-seed' + snap.seed + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  } catch { /* headless: lastDownload carries the payload */ }
+  return text;
+}
+// End-of-run snapshot: built ONCE per run (composeEndScreen also serves
+// reshowEndScreen — the guard makes recomposition a no-op), then auto-saved
+// unless the kill-switch is on.
+function devOnRunEnd() {
+  if (!dev || dev.snapshot) return;
+  let snap;
+  try {
+    snap = buildSnapshot({
+      schema_v: SNAPSHOT_SCHEMA_V,
+      game_rev: dev.rev || 'pending',
+      seed: (state.choiceSeed || 0) | 0,
+      upgrades: devUpgrades(),
+      shrines: { used: dev.shrineBlessings.length, blessings: [...dev.shrineBlessings] },
+      items: devItems(),
+      gold_earned: Math.floor(state.runCounts.gold.earned || 0),
+      gold_spent: Math.floor(devGoldSpent()),
+      damage: Math.round(dev.dmg),
+      wave: (state.wave && state.wave.num) | 0,
+      test: !!dev.testRun,
+    });
+  } catch (err) {
+    dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
+    return;
+  }
+  dev.snapshot = snap;
+  try {
+    menuCard('DEV SNAPSHOT', devSummaryText(snap), () => devDownload(snap));
+  } catch { /* the end screen stands without the dev card */ }
+  if (dev.snapshotsOff) { dev.postState = 'killed'; return; }
+  dev.postState = 'pending';
+  (async () => {
+    const rev = await fetchGameRev(globalThis);
+    snap.game_rev = (typeof rev === 'string' && rev.length > 0) ? rev : 'unavailable';
+    dev.rev = snap.game_rev;
+    const r = await postSnapshot(globalThis, snap);
+    dev.postState = r.ok ? 'saved' : ('failed:' + String(r.error || 'post').slice(0, 80));
+  })();
+}
+
 // The run's gold is an IN-RUN WALLET: profile.runPurse, persisted through the
 // ONE existing profile key (hordes_profile_v1). Three writers, and only three:
 //   purseCredit — per-kill, tier-weighted (meta.js GOLD_TIER), a per-kill
@@ -1769,11 +2036,22 @@ function purseCredit(e) {
 // Debit the purse if it covers `amount`. Returns true on payment. The spend
 // saves immediately (shrine / paid-chest precedent) so a reload never
 // resurrects gold that was already spent.
-function purseSpend(amount) {
+// SLICE 7: `sink` classifies the debit for investment accounting ('shrine' =
+// EXCLUDED per the plan rule, 'chest' = counted — see dev_telemetry.js). In
+// free-build the purse keeps its gold but the FULL price still lands in the
+// sink bucket (the accounting hard rule).
+function purseSpend(amount, sink = 'shrine') {
   amount = Math.max(0, Math.floor(Number(amount) || 0));
-  if (purseClamp(profile.runPurse) < amount) return false;
-  profile.runPurse = purseClamp(profile.runPurse - amount);
+  const free = devRunFree();
+  if (!free && purseClamp(profile.runPurse) < amount) return false;
+  if (!free) {
+    profile.runPurse = purseClamp(profile.runPurse - amount);
+  }
   state.runCounts.gold.spent += amount;
+  if (dev) {
+    if (sink === 'chest') dev.spentChest += amount;
+    else dev.spentShrine += amount;
+  }
   state.runPurse = profile.runPurse;
   persistProfile();
   return true;
@@ -1835,11 +2113,14 @@ function openIntermission(opts = {}) {
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
     const cost = chestCost(def);
+    // SLICE 7: free-build rows never dim (the buy path grants for 0).
+    const chestDim = !devRunFree() && purseClamp(profile.runPurse) < cost;
     const el = menuCard(tier + ' CHEST',
       `${cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)` +
-      (shopPriceMult() !== 1 ? ' · CURSED PRICES' : ''),
-      () => buyPaidChest(tier), purseClamp(profile.runPurse) < cost);
-    if (purseClamp(profile.runPurse) < cost) el.onclick = () => audio.playSfx('button');
+      (shopPriceMult() !== 1 ? ' · CURSED PRICES' : '') +
+      (devRunFree() ? ' · FREE-BUILD' : ''),
+      () => buyPaidChest(tier), chestDim);
+    if (chestDim) el.onclick = () => audio.playSfx('button');
   }
   // The wave's blessing/curse offers: rolled once per wave (re-renders after
   // a chest buy reuse the same pending set; taken ones drop off).
@@ -1936,15 +2217,24 @@ function buyPaidChest(tier) {
   // chests are in-run spending that exists today). loot.js's rollPaidChest
   // takes a { gold } wallet, so hand it a purse VIEW: loot.js stays untouched
   // and the bank is never in scope here.
-  if (purseClamp(profile.runPurse) < cost) return;
-  const wallet = { gold: purseClamp(profile.runPurse) };
+  // SLICE 7 free-build: the purse keeps its gold but the FULL price records
+  // into the counted spend bucket (dev.spentChest) + the shipped ledger.
+  const free = devRunFree();
+  if (!free && purseClamp(profile.runPurse) < cost) return;
+  // Free-build funds the wallet VIEW (loot.js still debits its base cost
+  // from the view and stays untouched); the real purse below is skipped, so
+  // the purse keeps its gold while the gamble resolves identically.
+  const wallet = { gold: free ? cost : purseClamp(profile.runPurse) };
   const res = rollPaidChest(wallet, tier);
   if (!res.ok) return;
   // rollPaidChest debits the BASE cost; the Merchant's Pact surcharge is
   // taken here so loot.js stays untouched. Both writes go through the N1
   // clamp so a purse near the cap cannot wrap on the surcharge subtraction.
-  profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
+  if (!free) {
+    profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
+  }
   state.runCounts.gold.spent += cost;
+  if (dev) dev.spentChest += cost;
   state.runPurse = profile.runPurse;
   persistProfile();
   if (res.gambled === 'item' && res.item) {
@@ -2250,7 +2540,7 @@ function detonateMineAt(mine) {
       if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
       // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
       // damage site (the rider below rides the same hit) — blasts never see it.
-      e.hp -= d * directHitMult(state, e); e.flash = 0.08;
+      e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
       // G21 rider: the mine's PRIMARY payload is a direct weapon hit wherever
       // the detonation is triggered from (weapons.js detonateMine rides via
       // hurt(); this mirror rides identically).
@@ -2281,8 +2571,8 @@ function synergyZapFork(zw) {
     // CHAIN ZAP REWORK (msg_01M2RENZ): the base fire now spends COUNT-1 hop
     // depths, so the supplemental fork's falloff continues past that depth
     // (the old (P.jumps || JUMPS)+1+k exponent read the retired ladder field).
-    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, WEAPONS.ZAP.COUNT + k) *
-      directHitMult(state, tgt);   // G21 GLACIER (direct hit)
+    tgt.hp -= devHit(baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, WEAPONS.ZAP.COUNT + k) *
+      directHitMult(state, tgt));   // G21 GLACIER (direct hit)
     tgt.flash = 0.08;
     onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
@@ -2349,7 +2639,7 @@ function synergyScytheZap() {
     const ey = fx.y + Math.sin(fx.dir) * fx.radius;
     const t = nearestFoe(ex, ey);
     if (!t) continue;
-    t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t);   // 50% falloff + G21 GLACIER
+    t.hp -= devHit(synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t));   // 50% falloff + G21 GLACIER
     t.flash = 0.08;
     onWeaponHit(state, t);   // G21 rider: the scythe-zap lash is a direct hit
     state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
@@ -2616,7 +2906,7 @@ function update(dt) {
           dmg *= evoCritMult;
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
-        e.hp -= dmg * directHitMult(state, e); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
+        e.hp -= devHit(dmg * directHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
           // G34/G36: heal = min(dmg * lifesteal, budget) — the RATE is capped
@@ -2631,7 +2921,7 @@ function update(dt) {
         if (novaRounds && e.hp <= 0) {
           for (const o of state.enemies) {
             if (o === e || o.hp <= 0) continue;
-            if (Math.hypot(o.x - pr.x, o.y - pr.y) <= 24) { o.hp -= dmg * 0.5; o.flash = 0.08; }
+            if (Math.hypot(o.x - pr.x, o.y - pr.y) <= 24) { o.hp -= devHit(dmg * 0.5); o.flash = 0.08; }
           }
           state.effects.push({ kind: 'nova_pulse', x: pr.x, y: pr.y, radius: 24, age: 0, ttl: 0.2 });
         }
@@ -2689,7 +2979,7 @@ function update(dt) {
     // death pass never detonates it (no chain-of-chains, the card's contract).
     if (e.burn > 0) {
       e.burn -= dt;
-      e.hp -= (e.burnDps || 0) * dt;
+      e.hp -= devHit((e.burnDps || 0) * dt);
       if (e.hp <= 0) e.burnLethal = true;
     }
     const spd = e.speed * (e.slow > 0 && !e.flying ? (e.slowMult || C.SKILLS.FROST_NOVA.SLOW_FACTOR) : 1) *
@@ -2910,7 +3200,7 @@ function update(dt) {
     if (th > 0) {
       for (const e of state.enemies) {
         if (e.hp > 0 && Math.hypot(p.x - e.x, p.y - e.y) < 13) {
-          e.hp -= th; e.flash = 0.08;
+          e.hp -= devHit(th); e.flash = 0.08;
         }
       }
     }
@@ -2958,7 +3248,7 @@ function update(dt) {
           for (const o of state.enemies) {
             if (o === e || o.hp <= 0) continue;
             if (Math.hypot(o.x - e.x, o.y - e.y) <= sw.radius) {
-              o.hp -= sw.damage;
+              o.hp -= devHit(sw.damage);
               o.flash = 0.08;
             }
           }
@@ -3260,9 +3550,10 @@ function update(dt) {
       }
       if (!sh.blessing) {
         sh.used = true;   // blessing pool exhausted — the altar goes dark
-      } else if (canAfford(purseClamp(profile.runPurse), sh.blessing.cost) && purseSpend(sh.blessing.cost)) {
+      } else if ((devRunFree() || canAfford(purseClamp(profile.runPurse), sh.blessing.cost)) && purseSpend(sh.blessing.cost, 'shrine')) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
+        if (dev) dev.shrineBlessings.push(sh.blessing.offer.id);
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
         // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
         state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
@@ -3383,7 +3674,7 @@ function update(dt) {
             for (const o of state.enemies) {
               if (o.hp <= 0) continue;
               if (Math.hypot(o.x - p.x, o.y - p.y) <= blast.radius) {
-                o.hp -= blast.damage;
+                o.hp -= devHit(blast.damage);
                 o.flash = 0.08;
               }
             }
@@ -3451,7 +3742,7 @@ function update(dt) {
         for (const o of state.enemies) {
           if (o.hp <= 0) continue;
           if (Math.hypot(o.x - p.x, o.y - p.y) <= S.RADIUS) {
-            o.hp -= chip;
+            o.hp -= devHit(chip);
             o.flash = 0.08;
           }
         }
@@ -4771,6 +5062,9 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
   // composes (showTitle/showHowToPlay paths reset the overlay class).
   if (overlay.classList) { overlay.classList.add('end'); }
   overlay.style.display = 'flex';
+  // SLICE 7: the dev post-run snapshot (once per run; recomposition via
+  // reshowEndScreen is a guarded no-op). Gate off = dev null = no-op.
+  devOnRunEnd();
 }
 function reshowEndScreen() {
   if (!state.endScreen) { showTitle(); return; }   // nothing to return to
@@ -6669,7 +6963,7 @@ function showShop() {
     const owned = def.kind ? shopRowOwned(profile, def) : false;
     const capped = def.kind ? owned : lvl >= def.maxLevel;
     const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
-    const afford = profile.gold >= cost;
+    const afford = devFreeBuild() || profile.gold >= cost;
     const sub = abbrev
       ? (def.kind
         ? (owned ? 'OWNED' : cost + 'g')
@@ -6818,7 +7112,7 @@ function showCharacterRows(characterId) {
     const lvl = getCharacterUpgradeLevel(profile, characterId, def.id);
     const capped = lvl >= def.maxLevel;
     const cost = upgradeCost(def, lvl);
-    const afford = profile.gold >= cost;
+    const afford = devFreeBuild() || profile.gold >= cost;
     const sub = !owned
       ? `LOCKED — buy ${ch.name} first (${ch.unlockCost} gold)`
       : `LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`;
@@ -6882,7 +7176,7 @@ function showApexShop() {
     menuCard('GALLERY', 'the apex emblems, full-screen [ESC to return]', () => showApexGallery());
     for (const def of APEX_UPGRADES) {
       const owned = apexOwned(profile, def.id);
-      const afford = profile.gold >= def.baseCost;
+      const afford = devFreeBuild() || profile.gold >= def.baseCost;
       const sub = owned ? 'OWNED' : `${def.baseCost} gold`;
       const el = menuCard(
         def.name,
@@ -7110,7 +7404,7 @@ function renderCharSelector() {
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const equipped = profile.equippedCharacter === ch.id;
-    const afford = profile.gold >= ch.unlockCost;
+    const afford = devFreeBuild() || profile.gold >= ch.unlockCost;
     const el = document.createElement('div');
     el.className = 'card char-card' + (equipped ? ' selected' : '')
       + (!owned && !afford ? ' dim' : '');
@@ -7537,6 +7831,12 @@ function startRun() {
     tokens: { kill: 0, chest: 0, drop: 0 },   // EVOLUTION TOKEN channel ledger
     gold: { earned: 0, spent: 0,              // E1 purse ledger (per-tier kills)
       kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } };
+  // SLICE 7: the dev session restarts with the run (gate off = stays null;
+  // the damage accumulator re-arms onto the fresh session).
+  dev = DEV_GATE ? devNewSession() : null;
+  devArm(dev);
+  setDevFreeBuild(devRunFree());
+  if (dev) devEnsurePanel();
   // E1: the purse is NOT reseeded from the bank — a fresh run after settlement
   // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
   // whatever profile.runPurse persisted (R4: nothing earned is confiscated).
@@ -10879,7 +11179,7 @@ function updateFinale(dt) {
       dmg *= evoCritMult2;
       state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
     }
-    b.hp = Math.max(0, b.hp - dmg);
+    b.hp = Math.max(0, b.hp - devHit(dmg));
     b.flash = 0.08;
     pr.hit.add(b);
     state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
@@ -11103,6 +11403,9 @@ function frame(now) {
   // NIGHT MODE: the intermission auto-CONTINUE + the end-card auto-RETRY,
   // same wall-clock slot (mode-gated no-ops in every other mode).
   tickNight(realDt);
+  // SLICE 7: the 1 Hz dev sampler rides the same wall-clock slot (a single
+  // gate branch when off; devFrameTick no-ops outside playing/finale).
+  if (DEV_GATE) devFrameTick(now);
   // RSS8: the magnet sweep ticks on the same wall-clock slot (see
   // tickMagnetSweep — it must keep running while a level-up draft parks the sim).
   tickMagnetSweep(realDt);
@@ -11503,6 +11806,18 @@ export const __TEST = {
     tierOf: purseTier,
     valueOf: purseValue,
     table: GOLD_TIER,
+  },
+  // ---- SLICE 7 dev seam (?dev=1 gate): the gate state, the live session,
+  // and the end-of-run entry — a headless proof drives the REAL run-end path
+  // (composeEndScreen -> devOnRunEnd -> snapshot build -> server POST), never
+  // a copy of it. buyChest is the REAL intermission buy (purse-seam
+  // precedent). Never read by the browser page.
+  dev: {
+    get gate() { return DEV_GATE; },
+    get session() { return dev; },
+    onRunEnd: () => devOnRunEnd(),
+    download: (s) => devDownload(s || (dev && dev.snapshot)),
+    buyChest: (tier) => buyPaidChest(tier),
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,

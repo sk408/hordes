@@ -72,6 +72,9 @@
 //     DIRECTLY. They advance no counter and fire no onWeaponHit. Storm Reaper
 //     detonates through the SAME applyBlast path every other blast uses.
 import { CONFIG as C } from './config.js';
+// SLICE 7: dev damage metric (dev_telemetry imports nothing — no cycle;
+// devHit is a no-op branch when disarmed).
+import { devHit } from './dev_telemetry.js';
 
 // G19 slice 2: the character specialty term. meta.js OWNS the table and the
 // terms, but a static import from here back into meta.js would close a module
@@ -469,7 +472,7 @@ export function applyBlast(state, x, y, blast) {
   for (const o of state.enemies) {
     if (o.hp <= 0) continue;
     if (Math.hypot(o.x - x, o.y - y) <= blast.radius) {
-      o.hp -= blast.damage;
+      o.hp -= devHit(blast.damage);
       o.flash = 0.08;
       hits++;
     }
@@ -550,7 +553,7 @@ export function onWeaponHit(state, enemy, opts) {
     // burn-lethal exactly like the burn tick does, so the death pass never
     // detonates it (R3 — no chain-of-chains).
     if (r.thermalshock && wasBurning && (enemy.slow || 0) > 0) {
-      enemy.hp -= THERMALSHOCK_BURST_MULT * enemy.burnDps;
+      enemy.hp -= devHit(THERMALSHOCK_BURST_MULT * enemy.burnDps);
       enemy.flash = 0.08;
       state.effects.push({ kind: 'nova_pulse', x: enemy.x, y: enemy.y,
         radius: 16, age: 0, ttl: 0.2 });
@@ -572,7 +575,7 @@ export function onWeaponHit(state, enemy, opts) {
       if (best && bestD <= LIVEWIRE_RANGE) {
         // Applied DIRECTLY (never through hurt/onWeaponHit): the zap cannot
         // retrigger the rider — no recursion, no chain-of-chains.
-        best.hp -= LIVEWIRE_DAMAGE_MULT * (p.stats.damage || 0);
+        best.hp -= devHit(LIVEWIRE_DAMAGE_MULT * (p.stats.damage || 0));
         best.flash = 0.08;
         state.effects.push({ kind: 'zap',
           points: [{ x: enemy.x, y: enemy.y }, { x: best.x, y: best.y }],
@@ -604,7 +607,7 @@ export function onWeaponHit(state, enemy, opts) {
       }
       inRange.sort((a, b) => a.d - b.d);
       for (const { o } of inRange.slice(0, OVERLOAD_TARGETS)) {
-        o.hp -= OVERLOAD_DAMAGE_MULT * (p.stats.damage || 0);
+        o.hp -= devHit(OVERLOAD_DAMAGE_MULT * (p.stats.damage || 0));
         o.flash = 0.08;
         state.effects.push({ kind: 'zap',
           points: [{ x: enemy.x, y: enemy.y }, { x: o.x, y: o.y }],

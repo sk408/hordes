@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HORDES dev-editor saver backend (slice 2) — stdlib only.
+"""HORDES dev-editor saver backend (slice 2 + slice 7) — stdlib only.
 
 Applies exact-string replacements (old/new pairs) to WHITELISTED tuning
 files only (the set in tools/tuning_map.md section 7). Everything else 403.
@@ -12,10 +12,18 @@ is restored and the request fails 500.
 
 Endpoints:
   GET  /health      -> {"ok": true, ...}
+  GET  /rev         -> {"ok": true, "rev": <full SHA>, "dirty": bool,
+                        "game_rev": "<sha>:clean|dirty"} (slice 7: read live
+                        from git at request time; 500 when git is unavailable)
   POST /save        -> {"ok": true, "file": ..., "backup": ..., "replacements": N}
+  POST /snapshot    -> {"ok": true, "lines": N} (slice 7: validates the dev
+                        snapshot schema — schema_v must be 1, all keys present
+                        with the documented types — then appends ONE JSON line
+                        to tools/.snapshots/runs.jsonl, append-only, never
+                        overwritten; the dir is git-ignored)
   GET  /editor.html -> the dev-editor page (static, read-only)
   GET  /src/<name>  -> raw source text of a WHITELISTED file (read-only; the
-                       editor fetches this to build exact old/new strings)
+                        editor fetches this to build exact old/new strings)
 
 Invoke (from the repo root):
   python3 tools/editor_server.py [port]
@@ -34,6 +42,9 @@ from urllib.parse import urlparse
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_DIR = os.path.join(REPO_ROOT, "tools", ".backups")
+# SLICE 7: append-only dev snapshot log (git-ignored; history never deleted).
+SNAPSHOT_DIR = os.path.join(REPO_ROOT, "tools", ".snapshots")
+SNAPSHOT_FILE = os.path.join(SNAPSHOT_DIR, "runs.jsonl")
 
 # Whitelist: the tuning files in tools/tuning_map.md section 7, repo-relative.
 WHITELIST = frozenset([
@@ -54,6 +65,64 @@ WHITELIST = frozenset([
 ])
 
 MAX_BODY = 512 * 1024  # 512 KiB is plenty for old/new pair payloads
+MAX_SNAPSHOT_BODY = 64 * 1024  # snapshots are small single-run records
+
+
+# ---------- SLICE 7: snapshot schema + live game_rev --------------------------
+# Mirrors src/dev_telemetry.js (the game validates client-side first; the
+# server re-validates so a corrupt or hand-made line can never enter the log).
+SNAPSHOT_SCHEMA_V = 1
+SNAPSHOT_KEYS = ("schema_v", "game_rev", "seed", "upgrades", "shrines",
+                 "items", "gold_earned", "gold_spent", "damage", "wave", "test")
+
+
+def validate_snapshot(obj):
+    """Return (ok, error). Refuses unknown schema_v; requires every key with
+    the documented type; ignores extra keys (same forward-compat rule as the
+    game reader)."""
+    if not isinstance(obj, dict):
+        return False, "snapshot is not an object"
+    if obj.get("schema_v") != SNAPSHOT_SCHEMA_V:
+        return False, "unknown schema_v: %r" % (obj.get("schema_v"),)
+    need = {"game_rev": str, "seed": (int, float), "upgrades": dict,
+            "shrines": dict, "items": list, "gold_earned": (int, float),
+            "gold_spent": (int, float), "damage": (int, float),
+            "wave": (int, float), "test": bool}
+    for key, types in need.items():
+        if key not in obj:
+            return False, "missing key: %s" % key
+        val = obj[key]
+        # bool is a subclass of int — a bool where a number belongs is a bug.
+        if types == bool:
+            if not isinstance(val, bool):
+                return False, "bad type for %s: %s" % (key, type(val).__name__)
+        else:
+            if isinstance(val, bool) or not isinstance(val, types):
+                return False, "bad type for %s: %s" % (key, type(val).__name__)
+    for key in ("seed", "gold_earned", "gold_spent", "damage", "wave"):
+        val = obj[key]
+        if isinstance(val, float) and (val != val or val in (float("inf"), float("-inf"))):
+            return False, "non-finite number for %s" % key
+    if not obj["game_rev"]:
+        return False, "empty game_rev"
+    return True, ""
+
+
+def read_game_rev():
+    """Live (sha, dirty) from git at request time. Raises on failure."""
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True,
+        text=True, timeout=10)
+    if sha.returncode != 0:
+        raise RuntimeError("git rev-parse failed: %s" % (sha.stderr or "").strip()[:200])
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True,
+        text=True, timeout=10)
+    if status.returncode != 0:
+        raise RuntimeError("git status failed: %s" % (status.stderr or "").strip()[:200])
+    clean_sha = sha.stdout.strip().lower()
+    dirty = len(status.stdout.strip()) > 0
+    return clean_sha, dirty
 
 
 def utc_stamp():
@@ -115,6 +184,16 @@ class Handler(BaseHTTPRequestHandler):
                                   "root": REPO_ROOT,
                                   "whitelist": sorted(WHITELIST)})
             return
+        if path == "/rev":
+            try:
+                sha, dirty = read_game_rev()
+            except Exception as exc:
+                self._send_json(500, {"ok": False,
+                                      "error": "cannot read game_rev: %s" % exc})
+                return
+            self._send_json(200, {"ok": True, "rev": sha, "dirty": dirty,
+                                  "game_rev": "%s:%s" % (sha, "dirty" if dirty else "clean")})
+            return
         if path in ("/editor.html", "/editor"):
             target = os.path.join(REPO_ROOT, "editor.html")
             if not os.path.isfile(target):
@@ -139,6 +218,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/snapshot":
+            self._handle_snapshot()
+            return
         if path != "/save":
             self._send_json(404, {"ok": False, "error": "unknown endpoint: %s" % path})
             return
@@ -232,6 +314,39 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "file": os.path.normpath(rel),
                               "backup": backup_name,
                               "replacements": len(reps)})
+
+    def _handle_snapshot(self):
+        """Append one validated dev snapshot line (slice 7). Append-only: the
+        log is never overwritten, rewritten or deleted by this endpoint."""
+        length = self.headers.get("Content-Length")
+        try:
+            nbytes = int(length or 0)
+        except ValueError:
+            nbytes = 0
+        if nbytes <= 0 or nbytes > MAX_SNAPSHOT_BODY:
+            self._send_json(400, {"ok": False, "error": "bad Content-Length"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(nbytes).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send_json(400, {"ok": False, "error": "body is not valid JSON"})
+            return
+        ok, err = validate_snapshot(payload)
+        if not ok:
+            self._send_json(400, {"ok": False, "error": "invalid snapshot: %s" % err})
+            return
+        try:
+            os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+            line = json.dumps(payload, sort_keys=True)
+            with open(SNAPSHOT_FILE, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as fh:
+                lines = sum(1 for _ in fh)
+        except OSError as exc:
+            self._send_json(500, {"ok": False,
+                                  "error": "cannot append snapshot: %s" % exc})
+            return
+        self._send_json(200, {"ok": True, "lines": lines})
 
 
 def main(argv):

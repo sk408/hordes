@@ -185,7 +185,12 @@ export async function boot(opts = {}) {
   const raf = [];
   globalThis.requestAnimationFrame = (cb) => { raf.push(cb); return raf.length; };
   globalThis.cancelAnimationFrame = noop;
-  globalThis.location = { reload: noop };
+  // SLICE 7: opts.locationSearch arms the ?dev=1 gate (e.g. '?dev=1') and
+  // opts.devApiBase points the dev snapshot POST at a proof server. Defaults
+  // preserve the shipped behaviour (gate off, same-origin api base).
+  globalThis.location = { reload: noop,
+    ...(opts.locationSearch ? { search: opts.locationSearch } : {}) };
+  if (opts.devApiBase) globalThis.__DEV_API_BASE = opts.devApiBase;
   globalThis.devicePixelRatio = 1;
 
   const store = new Map(opts.storage || []);

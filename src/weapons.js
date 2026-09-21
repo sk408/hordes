@@ -58,6 +58,10 @@ import { healFromBudget } from './heal.js';
 // readers ride the same edge.
 import { hasRewrite, onWeaponHit, wideOrbitRadiusMult, wideOrbitSpinMult,
   directHitMult } from './rewrites.js';
+// SLICE 7: dev damage metric — the single direct-hit apply, so one wrap here
+// covers every weapon (devHit is a no-op branch when disarmed; gate off =
+// byte-identical numbers).
+import { devHit } from './dev_telemetry.js';
 
 // ---------- Tuning constants (kept HERE, not in config.js — no collisions) ----------
 export const WEAPONS = {
@@ -284,7 +288,7 @@ export function nearestEnemy(state, x, y, exclude) {
 // echo, thorn or discharge can ever pick it up (R3). `opts.orbit` is passed
 // by updateOrbit alone.
 function hurt(state, e, dmg, opts) {
-  e.hp -= dmg * directHitMult(state, e, opts);
+  e.hp -= devHit(dmg * directHitMult(state, e, opts));
   e.flash = 0.08;
   onWeaponHit(state, e, opts);
 }

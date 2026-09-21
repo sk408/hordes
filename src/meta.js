@@ -762,6 +762,20 @@ export function canAfford(profile, cost) {
   return profile.gold >= cost;
 }
 
+// SLICE 7 FREE-BUILD (dev runs only; armed from main.js behind the ?dev=1
+// gate): when on, every buyer below skips the gold check AND the debit —
+// purchases grant for 0. Default OFF, so module-eval state is byte-identical
+// to the shipped game and the node suite (which never arms it) measures the
+// real economy. ACCOUNTING (hard rule): free purchases still record FULL
+// price — in-run freebies land in main.js's dev sink buckets at full cost,
+// and the permanent build free buys assemble is fully described by the
+// snapshot `upgrades` field, so catalogCost() derives exactly what the free
+// build would have cost. Level caps, ownership and unknown-id refusals still
+// apply — only the gold moves for free.
+let DEV_FREE_BUILD = false;
+export function setDevFreeBuild(b) { DEV_FREE_BUILD = !!b; }
+export function devFreeBuild() { return DEV_FREE_BUILD; }
+
 // Buy one level of an upgrade. Validates gold + level cap. Mutates profile
 // (gold -= cost, purchased[id]++). Returns true on success. WAVE-11: rows
 // tagged kind 'weapon'/'elite' dispatch to the unlock paths instead — they
@@ -783,8 +797,8 @@ export function buyUpgrade(profile, id) {
   const cost = upgradeCost(def, level);
   // M5 (audit 2026-09-16) -> F9 (round 3): the gate itself moved to the shared
   // canAfford helper (one home for the NaN-fails-closed rule, all buyers).
-  if (!canAfford(profile, cost)) return false;           // insufficient gold
-  profile.gold -= cost;
+  if (!DEV_FREE_BUILD && !canAfford(profile, cost)) return false;   // insufficient gold
+  if (!DEV_FREE_BUILD) profile.gold -= cost;
   profile.purchased[id] = level + 1;
   return true;
 }
@@ -799,8 +813,8 @@ export function weaponUnlocked(profile, weaponId) {
 export function unlockWeapon(profile, weaponId) {
   const price = WEAPON_PRICES[weaponId];
   if (price === undefined || weaponUnlocked(profile, weaponId)) return false;
-  if (!canAfford(profile, price)) return false;   // F9: shared NaN-safe gate
-  profile.gold -= price;
+  if (!DEV_FREE_BUILD && !canAfford(profile, price)) return false;   // F9: shared NaN-safe gate
+  if (!DEV_FREE_BUILD) profile.gold -= price;
   profile.unlockedWeapons.push(weaponId);
   return true;
 }
@@ -894,8 +908,8 @@ export function eliteUnlocked(profile, eliteId) {
 export function unlockElite(profile, eliteId) {
   const def = ELITE_MODIFIERS[eliteId];
   if (!def || eliteUnlocked(profile, eliteId)) return false;
-  if (!canAfford(profile, def.cost)) return false;   // F9: shared NaN-safe gate
-  profile.gold -= def.cost;
+  if (!DEV_FREE_BUILD && !canAfford(profile, def.cost)) return false;   // F9: shared NaN-safe gate
+  if (!DEV_FREE_BUILD) profile.gold -= def.cost;
   profile.unlockedElites.push(eliteId);
   return true;
 }
@@ -982,8 +996,8 @@ export function buyApex(profile, id) {
   if (!def || !profile) return false;
   if (!apexUnlocked(profile)) return false;            // gate closed
   if (apexOwned(profile, id)) return false;            // already owned
-  if (!canAfford(profile, def.baseCost)) return false; // F9: shared NaN-safe gate
-  profile.gold -= def.baseCost;
+  if (!DEV_FREE_BUILD && !canAfford(profile, def.baseCost)) return false; // F9: shared NaN-safe gate
+  if (!DEV_FREE_BUILD) profile.gold -= def.baseCost;
   profile.apex.owned.push(id);
   return true;
 }
@@ -1341,8 +1355,8 @@ export function buyCharacterUpgrade(profile, characterId, id) {
   const level = getCharacterUpgradeLevel(profile, characterId, id);
   if (level >= def.maxLevel) return false;                // level cap
   const cost = upgradeCost(def, level);
-  if (!canAfford(profile, cost)) return false;            // F9: shared NaN-safe gate
-  profile.gold -= cost;
+  if (!DEV_FREE_BUILD && !canAfford(profile, cost)) return false;            // F9: shared NaN-safe gate
+  if (!DEV_FREE_BUILD) profile.gold -= cost;
   addCharacterUpgrade(profile, characterId, id, 1);
   return true;
 }
@@ -1512,8 +1526,8 @@ export function applyCharacter(stats, characterId) {
 export function unlockCharacter(profile, id) {
   const ch = CHARACTERS[id];
   if (!ch || profile.unlockedCharacters.includes(id)) return false;
-  if (!canAfford(profile, ch.unlockCost)) return false;   // F9: shared NaN-safe gate
-  profile.gold -= ch.unlockCost;
+  if (!DEV_FREE_BUILD && !canAfford(profile, ch.unlockCost)) return false;   // F9: shared NaN-safe gate
+  if (!DEV_FREE_BUILD) profile.gold -= ch.unlockCost;
   profile.unlockedCharacters.push(id);
   return true;
 }

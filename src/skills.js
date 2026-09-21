@@ -15,6 +15,8 @@ import { nearestEnemy } from './weapons.js';
 // N1 slice 3: the Rogue's AFTERIMAGE phantoms detonate through the ONE blast
 // path (rewrites.js owns it — the same application loop the death pass uses).
 import { applyBlast } from './rewrites.js';
+// SLICE 7: dev damage metric (devHit is a no-op branch when disarmed).
+import { devHit } from './dev_telemetry.js';
 
 // Try to fire a skill ('FROST_NOVA' | 'OVERCHARGE' | 'CHAIN_REACTION' | one
 // of the N1 slice 3 ults). Returns true if fired.
@@ -51,7 +53,7 @@ export function useSkill(state, id) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.hypot(e.x - p.x, e.y - p.y) <= def.RADIUS) {
-        e.hp -= def.DAMAGE;
+        e.hp -= devHit(def.DAMAGE);
         e.flash = 0.08;
         e.slow = def.SLOW;
       }
@@ -83,7 +85,7 @@ export function useSkill(state, id) {
     for (let j = 0; head && j <= def.JUMPS; j++) {
       hitSet.add(head);
       points.push({ x: head.x, y: head.y });
-      head.hp -= perHit * Math.pow(def.FALLOFF, j);
+      head.hp -= devHit(perHit * Math.pow(def.FALLOFF, j));
       head.flash = 0.08;
       // FROST_NOVA's slow moved ONTO the chain: every enemy the chain
       // TOUCHES takes it (main.js's speed math reads the same constants).
@@ -169,7 +171,7 @@ function castUlt(state, id, def) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.hypot(e.x - p.x, e.y - p.y) <= def.RADIUS) {
-        e.hp -= dmg;
+        e.hp -= devHit(dmg);
         e.flash = 0.08;
       }
     }
@@ -259,7 +261,7 @@ export function updateUlts(state, dt) {
       for (const e of state.enemies) {
         if (e.hp <= 0) continue;
         if (Math.hypot(e.x - f.x, e.y - f.y) <= f.radius) {
-          e.hp -= tickDmg;
+          e.hp -= devHit(tickDmg);
           e.flash = 0.08;
         }
       }
