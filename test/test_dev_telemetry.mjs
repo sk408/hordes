@@ -147,4 +147,124 @@ function validFields() {
   assert.equal(T.dev.session, null, 'onRunEnd is a no-op with the gate off');
 }
 
+// ---- slice-9 optionals: pass-through, order, type gates -------------------------
+{
+  const withOpt = buildSnapshot({ ...validFields(), choices: { drafts: [] }, mode: 'standard', modifiers: [] });
+  assert.deepEqual(Object.keys(withOpt),
+    [...SNAPSHOT_KEYS, 'choices', 'mode', 'modifiers'], 'optionals append after the required keys');
+  assert.deepEqual(withOpt.choices, { drafts: [] }, 'choices passes through');
+  assert.equal(withOpt.mode, 'standard', 'mode passes through');
+  // Absent optionals = byte-identical to a slice-8 snapshot (the exact-keys
+  // contract above still holds).
+  assert.deepEqual(Object.keys(buildSnapshot(validFields())), SNAPSHOT_KEYS, 'no optionals, no extra keys');
+  assert.throws(() => buildSnapshot({ ...validFields(), choices: 7 }), /bad choices/, 'bad choices throws');
+  assert.throws(() => buildSnapshot({ ...validFields(), mode: '' }), /bad mode/, 'empty mode throws');
+  assert.throws(() => buildSnapshot({ ...validFields(), modifiers: 'x' }), /bad modifiers/, 'non-array modifiers throws');
+  assert.throws(() => buildSnapshot({ ...validFields(), modifiers: [1] }), /bad modifiers/, 'non-string modifier throws');
+  // Validation: absent optionals validate (old writers predate them); present
+  // optionals are type-checked.
+  assert.equal(validateSnapshot(buildSnapshot(validFields())).ok, true, 'no optionals still valid');
+  assert.equal(validateSnapshot(withOpt).ok, true, 'valid optionals validate');
+  assert.equal(validateSnapshot({ ...validFields(), choices: 7 }).ok, false, 'bad choices fails');
+  assert.equal(validateSnapshot({ ...validFields(), mode: 7 }).ok, false, 'bad mode fails');
+  assert.equal(validateSnapshot({ ...validFields(), modifiers: [1] }).ok, false, 'bad modifiers fails');
+}
+
+// ---- slice-9 choice audit + mode, headless ?dev=1 run -----------------------------
+{
+  const h = await boot({ locationSearch: '?dev=1', variant: 'slice9' });
+  const T = h.T;
+  assert.equal(T.dev.gate, true, 'the ?dev=1 boot arms the gate');
+  T.startRun();
+  h.pump(3);
+  assert.ok(T.dev.session, 'a dev session is live');
+  // DRAFT: open the real offer row, take the first card through the real pick.
+  T.openDraft();
+  const offers = T.dev.draftOffers;
+  assert.ok(offers.length >= 3, 'a draft offers 3+ cards');
+  const takeId = offers[0].id;
+  T.pickCard(offers[0]);
+  // SHRINE FIRST (the chest buy re-renders the intermission, which parks the
+  // sim — the walk-up sale needs mode 'playing'): teleport onto the first
+  // altar with a funded purse, pump until the sale fires through the real
+  // proximity path.
+  T.getProfile().runPurse = 50000;
+  {
+    const sh = h.state.shrines.find(s => !s.used);
+    assert.ok(sh, 'a shrine altar exists');
+    h.state.player.x = sh.x; h.state.player.y = sh.y;
+    let bought = false;
+    for (let i = 0; i < 30 && !bought; i++) {
+      h.pump(1);
+      bought = T.dev.session.shrineBuys.length > 0;
+    }
+    assert.ok(bought, 'the walk-up shrine sale fired');
+  }
+  // SHOP (paid chest): buy BRONZE through the real path (funded purse above).
+  T.dev.buyChest('BRONZE');
+  // INTERMISSION BLESSING: roll the real offers, take one through takeChoice.
+  {
+    const { rollChoices } = await import('../src/choices.js');
+    const bOffers = rollChoices(h.state.wave.num, Math.random, h.state.takenChoices);
+    assert.ok(bOffers.length > 0, 'blessing offers roll');
+    h.state.pendingChoiceOffers = bOffers;
+    T.dev.takeBlessing(bOffers[0]);
+  }
+  // MODE FIELDS: live reads — standard run, no penalty modifier.
+  {
+    const mf = T.dev.modeFields();
+    assert.equal(mf.mode, 'standard', 'non-night run reports standard mode');
+    assert.deepEqual(mf.modifiers, [], 'a plain run carries no modifiers');
+  }
+  T.dev.onRunEnd();
+  const snap = T.dev.session.snapshot;
+  assert.ok(snap, 'the end-of-run snapshot built');
+  assert.equal(validateSnapshot(snap).ok, true, 'the audited snapshot validates');
+  assert.equal(snap.choices.drafts.length >= 1, true, 'drafts recorded');
+  assert.deepEqual(snap.choices.drafts[0].taken, takeId, 'the draft taken id matches the pick');
+  assert.ok(snap.choices.drafts[0].offered.includes(takeId), 'taken is a member of offered');
+  assert.equal(snap.choices.chests.length, 1, 'the chest gamble recorded');
+  assert.equal(snap.choices.chests[0].tier, 'BRONZE', 'the chest tier recorded');
+  assert.ok(snap.choices.shrines.length >= 1, 'the shrine buy recorded');
+  assert.equal(snap.choices.blessings.length, 1, 'the blessing pick recorded');
+  assert.ok(snap.choices.blessings[0].taken, 'the blessing taken id set');
+  assert.equal(snap.mode, 'standard', 'mode stamped on the snapshot');
+  assert.deepEqual(snap.modifiers, [], 'modifiers stamped on the snapshot');
+  // NIGHT MODE: the stamp + the live penalty modifier (percent off the live
+  // RUN_GOLD constant, never a hardcoded string).
+  {
+    const { RUN_GOLD } = await import('../src/meta.js');
+    T.night.press(); T.night.press();   // two-press confirm: ARMED then ON
+    assert.equal(T.night.on, true, 'night session on');
+    T.startRun();
+    assert.equal(T.night.run, true, 'the run carries the night stamp');
+    const mf = T.dev.modeFields();
+    assert.equal(mf.mode, 'night', 'night run reports night mode');
+    assert.ok(mf.modifiers.includes('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT),
+      'the live banking-penalty modifier is stamped');
+  }
+}
+
+// ---- slice-9 overlay placement: docked clear + collapsible --------------------------
+{
+  const h = await boot({ locationSearch: '?dev=1', variant: 'slice9panel' });
+  const T = h.T;
+  T.startRun();
+  h.pump(1);
+  const panel = T.dev.panel;
+  assert.ok(panel && panel.box, 'the dev panel node exists');
+  const css = panel.box.style.cssText;
+  assert.match(css, /left:8px/, 'the panel docks LEFT (clear of the top-right cog row)');
+  assert.doesNotMatch(css, /right:8px/, 'the old top-right dock is gone');
+  assert.equal(panel.collapsed, false, 'default EXPANDED (telemetry reads at a glance)');
+  assert.equal(panel.read.style.display, '', 'readout visible by default');
+  panel.title.click();   // the header toggles collapse (the same path a tap drives)
+  assert.equal(panel.collapsed, true, 'header tap collapses');
+  assert.equal(panel.read.style.display, 'none', 'collapsed hides the readout');
+  assert.equal(panel.cvGold.style.display, 'none', 'collapsed hides the sparklines');
+  panel.title.click();
+  assert.equal(panel.collapsed, false, 'header tap re-expands');
+  assert.equal(panel.read.style.display, '', 'readout back after expand');
+}
+
 console.log('test_dev_telemetry: all checks passed');

@@ -1771,6 +1771,11 @@ const DEV_LS_TEST = 'hordes_dev_test';
 const DEV_LS_FREE = 'hordes_dev_free';
 const DEV_LS_SNAPOFF = 'hordes_dev_snapoff';
 const DEV_LS_SPEED = 'hordes_dev_speed';
+const DEV_LS_COLLAPSED = 'hordes_dev_collapsed';
+// SLICE 9: the overlay collapse pref (persisted bit, same shape as the other
+// dev prefs). Default EXPANDED — the panel's job is live telemetry — but
+// docked top-LEFT, clear of the top-right cog row (settings / "?" / radar /
+// map), which the old top-right dock covered (owner complaint).
 function devPref(key) {
   try { return prefStorage.getItem(key) === '1'; } catch { return false; }
 }
@@ -1801,6 +1806,21 @@ function devNewSession() {
     spentChest: 0,         // COUNTED sink: paid-chest full prices (free or paid)
     spentShrine: 0,        // EXCLUDED sink: shrine full prices (free or paid)
     shrineBlessings: [],   // blessing ids bought at shrines this run
+    // SLICE 9 choice audit: every player-choice point's TAKEN pick (and where
+    // cheap, the OFFERED set). Per-draft {level, wave, offered:[ids],
+    // taken:id|null}; per-wave blessings {wave, offered:[ids], taken:id|null,
+    // swaps}; shrine buys {id, cost, wave}; paid-chest gambles {tier, cost,
+    // result}; evolutions {offered:[weapon ids], taken:weapon id|'deferred'|null};
+    // stakes counts the manual RAISE THE STAKES pushes taken this run.
+    // Shop purchases, character select + upgrades and the loadout are the
+    // snapshot `upgrades` field (out-of-run build, taken); skill/rule/rewrite
+    // picks are draft cards, so they ride the drafts ledger, not a second one.
+    drafts: [],
+    blessings: [],
+    shrineBuys: [],
+    chests: [],
+    evolutions: [],
+    stakes: 0,
     series: [],            // 1 Hz samples {t, earned, spent, dmg}; capped at 600
     lastSampleMs: -1e12,
     rev: null,             // resolved game_rev (null = not yet fetched)
@@ -1861,18 +1881,41 @@ function devItems() {
 }
 // Live overlay panel (dev runs only): toggles + readouts + sparklines.
 // Created once per page load; hidden with the run (display toggled per run).
+// SLICE 9 placement: docked top-LEFT (clear of the top-right cog row —
+// settings / "?" / radar / map — which the old top-right dock covered), and
+// collapsible via the header (persisted pref; default EXPANDED so the live
+// telemetry still reads at a glance; collapsed it is a one-line chip that
+// covers nothing).
 function devEnsurePanel() {
   if (devPanel || typeof document === 'undefined' || !document.createElement) return;
   try {
     const box = document.createElement('div');
     box.id = 'dev-panel';
-    box.style.cssText = 'position:fixed;top:8px;right:8px;z-index:60;background:rgba(8,10,16,0.88);' +
+    box.style.cssText = 'position:fixed;top:8px;left:8px;z-index:60;background:rgba(8,10,16,0.88);' +
       'color:#cfd6e4;border:1px solid #3a4356;font:10px/1.5 monospace;padding:6px 8px;' +
       'text-align:left;max-width:220px;';
     const title = document.createElement('div');
     title.textContent = 'DEV TELEMETRY (?dev=1)';
-    title.style.cssText = 'color:#7ad0ff;font-weight:bold;margin-bottom:4px;';
+    title.style.cssText = 'color:#7ad0ff;font-weight:bold;margin-bottom:4px;cursor:pointer;';
+    title.title = 'tap to collapse/expand';
     box.appendChild(title);
+    const applyCollapsed = () => {
+      const collapsed = devPref(DEV_LS_COLLAPSED);
+      if (devPanel) {
+        devPanel.collapsed = collapsed;
+        if (devPanel.read) devPanel.read.style.display = collapsed ? 'none' : '';
+        if (devPanel.cvGold) devPanel.cvGold.style.display = collapsed ? 'none' : '';
+        if (devPanel.cvDmg) devPanel.cvDmg.style.display = collapsed ? 'none' : '';
+        for (const b of Object.values(devPanel.btns || {})) {
+          if (b && b.style) b.style.display = collapsed ? 'none' : '';
+        }
+      }
+      return collapsed;
+    };
+    title.onclick = () => {
+      devSetPref(DEV_LS_COLLAPSED, !devPref(DEV_LS_COLLAPSED));
+      applyCollapsed();
+    };
     const mkBtn = (label, get, flip) => {
       const b = document.createElement('button');
       b.style.cssText = 'font:10px monospace;margin:0 4px 4px 0;padding:2px 6px;';
@@ -1924,11 +1967,13 @@ function devEnsurePanel() {
     };
     const cvGold = mkCv(), cvDmg = mkCv();
     document.body.appendChild(box);
-    devPanel = { box, btns, read, cvGold, cvDmg };
+    devPanel = { box, title, btns, read, cvGold, cvDmg, collapsed: false, applyCollapsed };
+    applyCollapsed();
   } catch { devPanel = null; /* overlay is best-effort; the run never depends on it */ }
 }
 function devPaintPanel() {
   if (!dev || !devPanel) return;
+  if (devPanel.collapsed) return;   // SLICE 9: a collapsed chip paints nothing
   try {
     for (const b of Object.values(devPanel.btns)) {
       if (b && typeof b._paint === 'function') b._paint();
@@ -2048,6 +2093,50 @@ function devDownload(snap) {
   } catch { /* headless: lastDownload carries the payload */ }
   return text;
 }
+// SLICE 9: the run's mode + modifiers, read LIVE off the run flags and the
+// live tuning constants at snapshot time — no hardcoded mode strings, no
+// hardcoded penalty numbers. `mode` is the night-vs-standard stamp (the
+// run-scoped nightRun flag frozen at startRun); `modifiers` names every live
+// payout/build modifier so a penalty run can never silently poison balance
+// analysis: the night banking penalty (percent read off RUN_GOLD, the ONE
+// home for the number), the challenge stamp + its live gold bonus, the stage
+// stamp, the manual heat pushes taken, assisted/apex flags.
+function devModeFields() {
+  const night = !!(state && state.nightRun);
+  const mode = night ? 'night' : 'standard';
+  const modifiers = [];
+  if (night) modifiers.push('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT);
+  try {
+    if (!isStandard(state.challenge)) {
+      modifiers.push('challenge:' + state.challenge);
+      modifiers.push('challenge-bonus-' + challengeGoldBonusPct(state.challenge));
+    }
+  } catch { /* stamps are always present; defensive */ }
+  try {
+    if (!isDefaultStage(state.stage)) modifiers.push('stage:' + state.stage);
+  } catch { /* defensive */ }
+  try {
+    const pushes = manualPushes(state) | 0;
+    if (pushes > 0) modifiers.push('heat-manual-' + pushes);
+  } catch { /* defensive */ }
+  if (state && state.assistedRun) modifiers.push('assisted');
+  if (state && state.apexRun) modifiers.push('apex');
+  return { mode, modifiers };
+}
+// SLICE 9: the run's choice audit, assembled from the dev session ledgers
+// (recorded at each choice site during the run — see devNewSession). TAKEN
+// everywhere; OFFERED where cheap (drafts, blessings, evolutions).
+function devChoices() {
+  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], stakes: 0 };
+  return {
+    drafts: dev.drafts.map(d => ({ ...d, offered: [...d.offered] })),
+    blessings: dev.blessings.map(b => ({ ...b, offered: [...b.offered] })),
+    shrines: dev.shrineBuys.map(s => ({ ...s })),
+    chests: dev.chests.map(c => ({ ...c })),
+    evolutions: dev.evolutions.map(e => ({ ...e, offered: [...e.offered] })),
+    stakes: dev.stakes | 0,
+  };
+}
 // End-of-run snapshot: built ONCE per run (composeEndScreen also serves
 // reshowEndScreen — the guard makes recomposition a no-op), then auto-saved
 // unless the kill-switch is on.
@@ -2055,6 +2144,7 @@ function devOnRunEnd() {
   if (!dev || dev.snapshot) return;
   let snap;
   try {
+    const mf = devModeFields();
     snap = buildSnapshot({
       schema_v: SNAPSHOT_SCHEMA_V,
       game_rev: dev.rev || 'pending',
@@ -2068,6 +2158,9 @@ function devOnRunEnd() {
       wave: (state.wave && state.wave.num) | 0,
       test: !!dev.testRun,
       speed: devNormSpeed(dev.speed),
+      choices: devChoices(),
+      mode: mf.mode,
+      modifiers: mf.modifiers,
     });
   } catch (err) {
     dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
@@ -2246,6 +2339,9 @@ function openIntermission(opts = {}) {
       `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')} · run xp x${nextXp.toFixed(2).replace(/\.?0+$/, '')}`,
       () => {
         addHeat(state, 'MANUAL_PUSH');
+        // SLICE 9: the stakes push is a player choice (harder foes for paid
+        // gold+xp) — count it for the audit + the heat-manual modifier.
+        if (dev) dev.stakes++;
         interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}`;
         audio.playSfx('levelup');
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
@@ -2294,6 +2390,21 @@ function takeChoice(offer) {
   applyChoice(p, offer);
   if (!state.takenChoices.includes(offer.id)) state.takenChoices.push(offer.id);
   state.waveChoice = offer;
+  // SLICE 9: per-wave blessing audit (offered set once, taken updated on every
+  // re-pick — the final pick is what the run carries; swaps counts the changes).
+  if (dev) {
+    const wv = (state.wave && state.wave.num) | 0;
+    let rec = null;
+    for (let i = dev.blessings.length - 1; i >= 0; i--) {
+      if (dev.blessings[i].wave === wv) { rec = dev.blessings[i]; break; }
+    }
+    if (!rec) {
+      rec = { wave: wv, offered: (state.pendingChoiceOffers || []).map(o => o.id), taken: null, swaps: 0 };
+      dev.blessings.push(rec);
+    }
+    if (rec.taken != null && rec.taken !== offer.id) rec.swaps++;
+    rec.taken = offer.id;
+  }
   // Merchant's Pact: weaponSlotBonus widens the per-run slot cap (bounded by
   // the absolute CONFIG cap) — recomputed from the restored scope, so a swap
   // away from the Pact narrows it again.
@@ -2336,10 +2447,22 @@ function buyPaidChest(tier) {
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
     const msg = applyEquipDecision(it);
+    // SLICE 9: the gamble outcome — kept / swapped / left-behind (+ the item
+    // id either way; an empty gamble records 'empty'). The interMsg line below
+    // is untouched (player copy byte-identical).
+    if (dev) {
+      const itemId = it.id || it.name || 'unknown';
+      dev.chests.push({
+        tier, cost,
+        result: !msg ? ('left:' + itemId)
+          : (msg.msg.indexOf('SWAPPED') >= 0 ? ('swapped:' + itemId) : ('kept:' + itemId)),
+      });
+    }
     interMsg = msg
       ? `CHEST: ${msg} (${it.affixes.map(a => a.name).join(', ')})`
       : `CHEST: ${it.name} LEFT BEHIND — the belt is stronger`;
   } else {
+    if (dev) dev.chests.push({ tier, cost, result: 'empty' });
     interMsg = 'THE CHEST WAS EMPTY... ' + res.debited + ' gold gone';
   }
   audio.playSfx('chest');
@@ -3649,7 +3772,16 @@ function update(dt) {
       } else if ((devRunFree() || canAfford(purseClamp(profile.runPurse), sh.blessing.cost)) && purseSpend(sh.blessing.cost, 'shrine')) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
-        if (dev) dev.shrineBlessings.push(sh.blessing.offer.id);
+        if (dev) {
+          dev.shrineBlessings.push(sh.blessing.offer.id);
+          // SLICE 9: shrine buys carry cost + wave (the `shrines` snapshot
+          // field keeps its slice-7 shape; the audit rides `choices.shrines`).
+          dev.shrineBuys.push({
+            id: sh.blessing.offer.id,
+            cost: sh.blessing.cost | 0,
+            wave: (state.wave && state.wave.num) | 0,
+          });
+        }
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
         // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
         state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
@@ -4104,6 +4236,15 @@ function openDraft() {
     for (let i = 0; i < pool.length; i++) { if ((r -= pool[i].weight) < 0) { idx = i; break; } }
     choices.push(pool.splice(idx, 1)[0]);
   }
+  // SLICE 9: record the offer set (the taken id fills in at pick()).
+  if (dev) {
+    dev.drafts.push({
+      level: (state.player.level || 0) | 0,
+      wave: (state.wave && state.wave.num) | 0,
+      offered: choices.map(c => c.id),
+      taken: null,
+    });
+  }
   ovTitle.textContent = 'LEVEL ' + state.player.level;
   ovSub.textContent = 'choose your build';
   // PROLOGUE SCRIPTED DRAFT (owner addendum 2026-09-18: use the level-up to
@@ -4317,6 +4458,14 @@ function pick(u) {
     }
   }
   state.pendingDrafts--;
+  // SLICE 9: the taken pick lands on the latest still-open draft record (a
+  // chained re-draft opens its own record above, so each draft keeps its own
+  // offered-vs-taken pair).
+  if (dev) {
+    for (let i = dev.drafts.length - 1; i >= 0; i--) {
+      if (dev.drafts[i].taken == null) { dev.drafts[i].taken = u.id; break; }
+    }
+  }
   if (state.pendingDrafts > 0) { openDraft(); return; }
   draftFocus = -1;
   // DRAFT PICK CEREMONY: the PICK is unchanged and lands THIS call — mode
@@ -4733,6 +4882,12 @@ function maybeOpenEvolve() {
   // (3+ candidates can overflow it — then it stays mouse/click only).
   const notNow = menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
     for (const w of cands) w.evoDeclined = true;
+    // SLICE 9: deferring is a choice too — the offer set stays, taken='deferred'.
+    if (dev) {
+      for (let i = dev.evolutions.length - 1; i >= 0; i--) {
+        if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = 'deferred'; break; }
+      }
+    }
     closeEvolve();
   });
   if (cands.length + 1 <= 4) {
@@ -4747,6 +4902,9 @@ function maybeOpenEvolve() {
   // Same named-timer shape as CONTINUE/RETRY: the night takes the FIRST
   // candidate after NIGHT_EVOLVE_S (the draft policy's first-slot rule).
   if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
+  // SLICE 9: record the offer set (the taken weapon — or 'deferred' — fills
+  // in at doEvolve()/NOT NOW).
+  if (dev) dev.evolutions.push({ offered: cands.map(w => w.type), taken: null });
 }
 
 // The ONE evolve action — the card's own onclick path, shared verbatim with
@@ -4755,6 +4913,12 @@ function doEvolve(w) {
   const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
   if (res.ok) {
     state.evoTokens = res.tokens;
+    // SLICE 9: the taken evolution lands on the latest still-open offer record.
+    if (dev) {
+      for (let i = dev.evolutions.length - 1; i >= 0; i--) {
+        if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = w.type; break; }
+      }
+    }
     // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
     // double-fired tick can never double-charge).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
@@ -11934,6 +12098,21 @@ export const __TEST = {
     // null with the gate off). Never read by the browser page.
     speeds: DEV_SPEEDS,
     setSpeed: (n) => devSetSpeed(n),
+    // SLICE 9 choice-audit seams: the live offer sets plus the ONE take path
+    // per choice point (the same functions the cards drive — a headless proof
+    // takes scripted choices through the REAL transitions, never copies), and
+    // readers for the assembled audit + mode fields. Never read by the
+    // browser page.
+    get draftOffers() { return draftOffers; },
+    takeBlessing: (offer) => takeChoice(offer),
+    blessingOffers: () => [...(state.pendingChoiceOffers || [])],
+    evolveCandidates: () => evolutionCandidates(),
+    takeEvolution: (w) => doEvolve(w),
+    choices: () => devChoices(),
+    modeFields: () => devModeFields(),
+    // SLICE 9 placement seam: the live panel node (bounds/style assertions
+    // drive the REAL docked node, never a restated constant).
+    get panel() { return devPanel; },
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,

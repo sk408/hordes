@@ -16,12 +16,14 @@ Endpoints:
                         "game_rev": "<sha>:clean|dirty"} (slice 7: read live
                         from git at request time; 500 when git is unavailable)
   POST /save        -> {"ok": true, "file": ..., "backup": ..., "replacements": N}
-  POST /snapshot    -> {"ok": true, "lines": N} (slices 7-8: validates the
+  POST /snapshot    -> {"ok": true, "lines": N} (slices 7-9: validates the
                         dev snapshot schema — schema_v must be 2 (slice 8
-                        adds the `speed` field to the slice-7 keys), all keys
-                        present with the documented types — then appends ONE
-                        JSON line to tools/.snapshots/runs.jsonl, append-only,
-                        never overwritten; the dir is git-ignored)
+                        adds the `speed` field to the slice-7 keys; slice 9
+                        adds OPTIONAL choices/mode/modifiers, ignored when
+                        absent), all required keys present with the documented
+                        types — then appends ONE JSON line to
+                        tools/.snapshots/runs.jsonl, append-only, never
+                        overwritten; the dir is git-ignored)
   GET  /editor.html -> the dev-editor page (static, read-only)
   GET  /src/<name>  -> raw source text of a WHITELISTED file (read-only; the
                         editor fetches this to build exact old/new strings)
@@ -69,12 +71,16 @@ MAX_BODY = 512 * 1024  # 512 KiB is plenty for old/new pair payloads
 MAX_SNAPSHOT_BODY = 64 * 1024  # snapshots are small single-run records
 
 
-# ---------- SLICE 7-8: snapshot schema + live game_rev --------------------------
+# ---------- SLICE 7-9: snapshot schema + live game_rev --------------------------
 # Mirrors src/dev_telemetry.js (the game validates client-side first; the
 # server re-validates so a corrupt or hand-made line can never enter the log).
 # Slice 8 bumped schema_v to 2 for the `speed` field (dev-run speed control);
 # the server accepts ONLY the current version — history lives in the log file
-# itself, which is never re-validated.
+# itself, which is never re-validated. Slice 9 adds OPTIONAL top-level fields
+# (choices/mode/modifiers — the choice audit + live mode stamps) with NO
+# version bump: validate_snapshot requires the slice-8 keys and IGNORES extra
+# keys (same forward-compat rule as the game reader), so old and new writers
+# both append cleanly and the version gate still owns compat.
 SNAPSHOT_SCHEMA_V = 2
 SNAPSHOT_KEYS = ("schema_v", "game_rev", "seed", "upgrades", "shrines",
                  "items", "gold_earned", "gold_spent", "damage", "wave", "test",

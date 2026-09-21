@@ -97,6 +97,28 @@ export function formatGameRev(sha, dirty) {
 // The reader accepts schema_v 1 (legacy: no speed required — history is never
 // deleted, so old log lines must stay readable) and 2 (speed required); every
 // other version is refused.
+//
+// SLICE 9 (still schema_v 2 — ADDITIVE OPTIONAL FIELDS ONLY, no version bump;
+// nothing real logged yet except proof rows): the snapshot may carry three
+// OPTIONAL top-level fields, appended AFTER `speed` (old fields keep their
+// order and meaning):
+//   choices   — the run's choice audit: every player-choice point's TAKEN pick
+//               (and where cheap, the OFFERED set): drafts (offered vs taken
+//               per draft), intermission blessings (offered vs taken per wave),
+//               shrine buys (taken id + cost + wave), paid-chest gambles
+//               (tier + cost + keep/leave/empty outcome), evolutions
+//               (offered candidates vs taken/deferred), manual heat pushes
+//               (stakes count). Shop purchases, character select + upgrades and
+//               the loadout are the `upgrades` field (out-of-run build, taken);
+//               skill/rule/rewrite picks are draft cards, so they ride the
+//               drafts ledger, not a second ledger.
+//   mode      — the run's mode label, read LIVE off the run flags at snapshot
+//               time (night vs standard), never a hardcoded string.
+//   modifiers — live-derived payout/build modifiers for the run
+//               (e.g. the night banking-penalty percent read off the live
+//               RUN_GOLD constant, challenge/stage/heat/assisted/apex stamps).
+// Absent optionals validate fine (old writers predate them); present optionals
+// are type-checked. The version gate still owns compat, not key strictness.
 export const SNAPSHOT_SCHEMA_V = 2;
 export const SNAPSHOT_KEYS = ['schema_v', 'game_rev', 'seed', 'upgrades',
   'shrines', 'items', 'gold_earned', 'gold_spent', 'damage', 'wave', 'test',
@@ -104,13 +126,15 @@ export const SNAPSHOT_KEYS = ['schema_v', 'game_rev', 'seed', 'upgrades',
 
 // Build a snapshot with EXACTLY the schema keys (in order). Throws on any
 // missing (or undefined) key so a half-built snapshot can never be saved or
-// downloaded.
+// downloaded. Slice-9 optionals (choices/mode/modifiers) ride AFTER the
+// required keys when supplied — never required, type-checked when present, so
+// a snapshot built without them is byte-identical to a slice-8 one.
 export function buildSnapshot(fields) {
   const f = fields || {};
   for (const k of SNAPSHOT_KEYS) {
     if (!(k in f) || f[k] === undefined) throw new Error('dev snapshot: missing key ' + k);
   }
-  return {
+  const snap = {
     schema_v: f.schema_v,
     game_rev: f.game_rev,
     seed: f.seed,
@@ -124,6 +148,21 @@ export function buildSnapshot(fields) {
     test: f.test,
     speed: f.speed,
   };
+  if ('choices' in f && f.choices !== undefined) {
+    if (!f.choices || typeof f.choices !== 'object') throw new Error('dev snapshot: bad choices');
+    snap.choices = f.choices;
+  }
+  if ('mode' in f && f.mode !== undefined) {
+    if (typeof f.mode !== 'string' || f.mode.length === 0) throw new Error('dev snapshot: bad mode');
+    snap.mode = f.mode;
+  }
+  if ('modifiers' in f && f.modifiers !== undefined) {
+    if (!Array.isArray(f.modifiers) || f.modifiers.some(m => typeof m !== 'string')) {
+      throw new Error('dev snapshot: bad modifiers');
+    }
+    snap.modifiers = f.modifiers;
+  }
+  return snap;
 }
 
 // Reader-side validation. Refuses unknown schema_v (accepts the known ones:
@@ -162,6 +201,20 @@ export function validateSnapshot(obj) {
   }
   if (Array.isArray(obj.upgrades) || !Array.isArray(obj.items)) {
     errors.push('upgrades must be an object, items must be an array');
+  }
+  // Slice-9 optionals: absent = fine (old writers predate them); present =
+  // type-checked (same shapes buildSnapshot enforces).
+  if ('choices' in obj && obj.choices !== undefined &&
+      (!obj.choices || typeof obj.choices !== 'object')) {
+    errors.push('bad type for choices: ' + typeof obj.choices);
+  }
+  if ('mode' in obj && obj.mode !== undefined &&
+      (typeof obj.mode !== 'string' || obj.mode.length === 0)) {
+    errors.push('bad type for mode: ' + typeof obj.mode);
+  }
+  if ('modifiers' in obj && obj.modifiers !== undefined &&
+      (!Array.isArray(obj.modifiers) || obj.modifiers.some(m => typeof m !== 'string'))) {
+    errors.push('bad type for modifiers');
   }
   return { ok: errors.length === 0, errors };
 }
