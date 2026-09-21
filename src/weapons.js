@@ -139,7 +139,7 @@ export const WEAPONS = {
     NAME: 'Nova Pulse',
     COOLDOWN: 3.0,
     RADIUS: 70,
-    DAMAGE_MULT: 1.2,
+    DAMAGE_MULT: 1.4,
   },
   // ---- wave-2 archetypes (rich animation payloads) ----
   SCYTHE: {
@@ -147,7 +147,7 @@ export const WEAPONS = {
     COOLDOWN: 1.3,      // seconds between swings (before rate scaling)
     RANGE: 55,          // sweep radius from the player
     ARC: 1.0,           // full sweep width, radians (levels widen it)
-    DAMAGE_MULT: 1.3,
+    DAMAGE_MULT: 1.4,
     WINDUP: 0.18,       // brief telegraph before the arc lands
   },
   SEEKER: {
@@ -155,7 +155,7 @@ export const WEAPONS = {
     COOLDOWN: 1.8,
     SPEED: 150,         // missile px/s
     TURN: 3.2,          // rad/s homing turn rate (weak by design — dodgeable)
-    DAMAGE_MULT: 0.9,
+    DAMAGE_MULT: 1.2,
     HIT_R: 8,
     LIFE: 4,            // seconds before a lost missile fizzles
     TRAIL: 12,          // trail points kept per missile (render polyline)
@@ -837,7 +837,7 @@ export const WEAPON_TYPES = {
   ORBIT:      { id: 'ORBIT',      name: WEAPONS.ORBIT.NAME,      update: updateOrbit },
   BOOMERANG:  { id: 'BOOMERANG',  name: WEAPONS.BOOMERANG.NAME,  update: updateBoomerang },
   ZAP:        { id: 'ZAP',        name: WEAPONS.ZAP.NAME,        update: updateZap },
-  NOVA_PULSE: { id: 'NOVA_PULSE', name: WEAPONS.NOVA_PULSE.NAME, update: updateNovaPulse },
+  NOVA_PULSE: { DMG: 0.25, RADIUS: 7 },
   SCYTHE:     { id: 'SCYTHE',     name: WEAPONS.SCYTHE.NAME,     update: updateScythe },
   SEEKER:     { id: 'SEEKER',     name: WEAPONS.SEEKER.NAME,     update: updateSeeker },
   MINE:       { id: 'MINE',       name: WEAPONS.MINE.NAME,       update: updateMine },
@@ -906,13 +906,13 @@ function stepPct(v) {
 }
 
 export const WEAPON_STEPS = {
-  VOLLEY: { DMG: 0.2 },
-  ORBIT: { DMG: 0.15, RADIUS: 4 },
-  BOOMERANG: { DMG: 0.2, SPEED: 0.12 },
-  ZAP: { DMG: 0.15 },
+  VOLLEY: { DMG: 0.6 },
+  ORBIT: { DMG: 0.20, RADIUS: 4 },
+  BOOMERANG: { DMG: 0.2, SPEED: 0.15 },
+  ZAP: { DMG: 0.17 },
   NOVA_PULSE: { DMG: 0.15, RADIUS: 6 },
-  SCYTHE: { DMG: 0.15, ARC: 0.12 },
-  SEEKER: { TURN: 0.4 },
+  SCYTHE: { DMG: 0.18, ARC: 0.18 },
+  SEEKER: { TURN: 0.65 },
   MINE: { DMG: 0.2, BLAST: 4 },
   BEAM: { DMG: 0.15, WIDTH: 2 },
 };
@@ -1009,6 +1009,7 @@ export const WEAPON_LEVELS = Object.fromEntries(
 // (same caveat as shop cost overrides vs shop descs); the editor marks
 // overridden levels with diamonds on the graph.
 export const WEAPON_DMG_OVERRIDES = {
+  SEEKER: { 1: 1, 2: 1.2, 3: 1.4, 4: 1.6, 5: 1.8, 6: 2, 7: 2.2, 8: 2.4 },
 };
 
 // Rebuild one weapon's level table from the current WEAPON_STEPS (dev-editor
