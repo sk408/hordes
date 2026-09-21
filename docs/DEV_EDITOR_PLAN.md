@@ -78,6 +78,8 @@ live-value templates with coordinated fixture updates)
 ## SLICE 7: live telemetry + snapshots (DESIGNED, not yet dispatched)
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
   cumulative gold earned vs spent, damage dealt, best-gold reference line.
+- The editor links directly to a dev run (same gate URL) — one click from
+  tuning numbers to testing them, no URL to remember.
 - Post-run summary: full curves + measured totals + **download-JSON**.
 - GOLD ACCOUNTING (owner-stated, verbatim intent): counts = shop purchases,
   character unlocks/upgrades, other permanent-build spending. Excludes =
