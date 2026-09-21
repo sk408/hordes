@@ -75,7 +75,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   auto-pick). It is a SKILL-TESTER by design (owner): its value is not
   immediately clear, but experienced players instantly see that better
   weapon-upgrade odds across 3 drafts early is worth it. Never simplify
-  it into obviousness — the hidden depth is the point.
+  it into obviousness — the hidden depth is the point. Full lifecycle
+  (owner): early accelerator, late anchor — as the character grows it
+  blocks health/damage scaling through the run. The card's arc IS early
+  power traded for late ceiling; both halves intended.
 - QUEUED: granted-vs-earned accounting — the owner fast-forwards profiles
   by granting upgrades mid-testing (estimating affordability from run
   income, e.g. 200k/run). Legitimate methodology, but snapshots must
