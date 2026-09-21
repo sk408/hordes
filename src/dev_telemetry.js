@@ -112,6 +112,15 @@ export function formatGameRev(sha, dirty) {
 //               the loadout are the `upgrades` field (out-of-run build, taken);
 //               skill/rule/rewrite picks are draft cards, so they ride the
 //               drafts ledger, not a second ledger.
+//               SLICE 10 (still schema_v 2 — additive entry INSIDE the optional
+//               choices object, no version bump): `removals` — the dev-run shop
+//               buy-backs journaled since the last snapshot, one entry per
+//               removed level: {id, kind, characterId, level, refund}. kind is
+//               'shop' (classic rows; weapon/elite singletons carry their row
+//               kind), 'character' (with characterId), 'pilot' or 'apex'; level
+//               is the 1-based level removed (1 for singletons); refund is the
+//               exact gold credited back for that level (0 for free-built or
+//               unledgered levels — the removal still applies and is recorded).
 //   mode      — the run's mode label, read LIVE off the run flags at snapshot
 //               time (night vs standard), never a hardcoded string.
 //   modifiers — live-derived payout/build modifiers for the run

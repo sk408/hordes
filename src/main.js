@@ -130,7 +130,7 @@ import { RUN_CHESTS, nextRunChest, runChestGold } from './meta.js';
 import {
   loadProfileResult, saveProfile, makeProfile,
   GOLD_TIER, purseTier, purseValue, RUN_GOLD,
-  SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
+  SHOP_UPGRADES, SHOP_BY_ID, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   // G19 slice 1: the per-character upgrade layer — the table, the buy path,
@@ -155,6 +155,11 @@ import {
   readRecovery, downloadRecovery, STORAGE_KEY,
   // SLICE 7: dev free-build arming + the shop afford/read seams below.
   setDevFreeBuild, devFreeBuild,
+  // SLICE 10: dev-run shop buy-back — the sell paths (same dispatch as the
+  // buyers), the per-level spend ledger readers for pre-confirm labels, and
+  // the character ledger key shared with the buyer.
+  sellUpgrade, sellCharacterUpgrade, sellCharacterUnlock, sellApex,
+  topRefund, totalRefund, charLedgerKey, spendLedgerFor,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -2126,8 +2131,14 @@ function devModeFields() {
 // SLICE 9: the run's choice audit, assembled from the dev session ledgers
 // (recorded at each choice site during the run — see devNewSession). TAKEN
 // everywhere; OFFERED where cheap (drafts, blessings, evolutions).
+// SLICE 10: + removals — the dev-run shop buy-backs journaled since the last
+// snapshot (meta.js sell paths via devRecordRemoval): per removed level
+// {id, kind, characterId, level, refund}. The `upgrades` field carries the
+// post-sell build (taken); removals carry what left and what each level
+// refunded, same schema family (additive entry inside the optional choices
+// object — no version bump).
 function devChoices() {
-  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], stakes: 0 };
+  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], stakes: 0, removals: [] };
   return {
     drafts: dev.drafts.map(d => ({ ...d, offered: [...d.offered] })),
     blessings: dev.blessings.map(b => ({ ...b, offered: [...b.offered] })),
@@ -2135,6 +2146,7 @@ function devChoices() {
     chests: dev.chests.map(c => ({ ...c })),
     evolutions: dev.evolutions.map(e => ({ ...e, offered: [...e.offered] })),
     stakes: dev.stakes | 0,
+    removals: devShopRemovals.map(r => ({ ...r })),
   };
 }
 // End-of-run snapshot: built ONCE per run (composeEndScreen also serves
@@ -2166,6 +2178,10 @@ function devOnRunEnd() {
     dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
     return;
   }
+  // SLICE 10: the snapshot now carries the journaled removals (devChoices
+  // reads devShopRemovals live) — drain the journal so the next run-end
+  // carries only newer sells, exactly once each.
+  devShopRemovals.length = 0;
   dev.snapshot = snap;
   try {
     menuCard('DEV SNAPSHOT', devSummaryText(snap), () => devDownload(snap));
@@ -7194,6 +7210,157 @@ function armShopSwipe() {
   });
 }
 
+// ---------- SLICE 10: dev-run shop buy-back (levels are reversible) ---------
+// DEV power, ?dev=1 only (DEV_GATE): every sell control below renders solely
+// with the gate on — the player build never sees one. One click removes one
+// level (the top — LIFO, matching the ledger); row RESET removes every level.
+// The RESET label shows the total refund BEFORE the confirming second tap
+// (two-tap arm, no window.confirm — headless-safe). Controls ride INSIDE the
+// row card, so the shop pager (which chunks ovCards children) is unaffected.
+//
+// JOURNAL: every executed sell appends {id, kind, characterId, level, refund}
+// to devShopRemovals (module scope, NOT the per-run dev session — shop visits
+// happen between runs, and startRun restarts the session). devChoices() reads
+// it live; devOnRunEnd drains it into the snapshot's choices.removals, so the
+// next run-end after the sells carries them exactly once, same schema family
+// (additive optional entry inside the optional choices object — no version
+// bump). The mixed-case rule lives in meta.js (sell refunds the per-level
+// record, never the live free-build flag); the purse/bank, the ledger and the
+// snapshot stay consistent because every sell is exactly: level down, gold up
+// by the recorded amount, removal journaled.
+let devShopRemovals = [];
+// Rendered sell-control descriptors for the headless seam (reset per screen).
+let devSellControls = [];
+
+// Journal one removal (dev-gated callers only — the record is what the
+// snapshot's choices.removals carries: the row, the 1-based level removed,
+// and the refunded gold).
+function devRecordRemoval(rec) {
+  if (!rec || typeof rec.id !== 'string') return;
+  devShopRemovals.push({
+    id: rec.id,
+    kind: rec.kind || 'shop',
+    characterId: rec.characterId || null,
+    level: rec.level | 0,
+    refund: Math.max(0, Math.floor(Number(rec.refund) || 0)),
+  });
+}
+
+// The REAL sell paths (the UI buttons and the headless proof drive THESE, not
+// copies): meta sell + journal + persist. Each returns the meta result
+// ({ ok, level, refund }) so labels stay honest.
+function devSellShopRow(rowId) {
+  const r = sellUpgrade(profile, rowId);
+  if (r && r.ok) {
+    const def = SHOP_BY_ID[rowId];
+    devRecordRemoval({ id: rowId, kind: (def && def.kind) || 'shop', level: r.level, refund: r.refund });
+    persistProfile();
+  }
+  return r;
+}
+function devSellShopRowAll(rowId) {
+  let count = 0, refund = 0;
+  for (;;) {
+    const r = sellUpgrade(profile, rowId);
+    if (!r || !r.ok) break;
+    count++;
+    refund += r.refund;
+    const def = SHOP_BY_ID[rowId];
+    devRecordRemoval({ id: rowId, kind: (def && def.kind) || 'shop', level: r.level, refund: r.refund });
+  }
+  if (count > 0) persistProfile();
+  return { count, refund };
+}
+function devSellCharacterRow(characterId, upgradeId) {
+  const r = sellCharacterUpgrade(profile, characterId, upgradeId);
+  if (r && r.ok) {
+    devRecordRemoval({ id: upgradeId, kind: 'character', characterId, level: r.level, refund: r.refund });
+    persistProfile();
+  }
+  return r;
+}
+function devSellCharacterRowAll(characterId, upgradeId) {
+  let count = 0, refund = 0;
+  for (;;) {
+    const r = sellCharacterUpgrade(profile, characterId, upgradeId);
+    if (!r || !r.ok) break;
+    count++;
+    refund += r.refund;
+    devRecordRemoval({ id: upgradeId, kind: 'character', characterId, level: r.level, refund: r.refund });
+  }
+  if (count > 0) persistProfile();
+  return { count, refund };
+}
+function devSellPilot(characterId) {
+  const r = sellCharacterUnlock(profile, characterId);
+  if (r && r.ok) {
+    devRecordRemoval({ id: characterId, kind: 'pilot', level: r.level, refund: r.refund });
+    persistProfile();
+  }
+  return r;
+}
+function devSellApexItem(apexId) {
+  const r = sellApex(profile, apexId);
+  if (r && r.ok) {
+    devRecordRemoval({ id: apexId, kind: 'apex', level: r.level, refund: r.refund });
+    persistProfile();
+  }
+  return r;
+}
+
+// One sell control (SELL one level) + optional RESET (all levels, total shown
+// BEFORE the confirming tap) inside a row card. Descriptor recorded for the
+// headless seam. No-ops entirely with the gate off.
+function devAddSellControls(cardEl, desc) {
+  if (!DEV_GATE || !cardEl) return;
+  const entry = {
+    id: desc.id, kind: desc.kind || 'shop', characterId: desc.characterId || null,
+    level: desc.level | 0, refund: Math.max(0, Math.floor(Number(desc.refund) || 0)),
+    resetTotal: Math.max(0, Math.floor(Number(desc.resetTotal) || 0)),
+    resettable: !!desc.resettable,
+  };
+  devSellControls.push(entry);
+  const stop = (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); };
+  const mkBtn = (label) => {
+    const b = document.createElement('button');
+    b.className = 'dev-sell';
+    b.textContent = label;
+    if (b.style && typeof b.style.cssText === 'string') {
+      b.style.cssText = 'font:10px monospace;margin:2px 4px 2px 0;padding:2px 6px;';
+    }
+    return b;
+  };
+  if (entry.level > 0) {
+    const sell = mkBtn('SELL LV ' + entry.level + ' (-' + entry.refund + 'g)');
+    sell.onclick = (e) => {
+      stop(e);
+      const r = desc.onSell();
+      if (r && r.ok) desc.rerender();
+      else audio.playSfx('button');
+    };
+    if (cardEl.appendChild) cardEl.appendChild(sell);
+    else if (cardEl.children) cardEl.children.push(sell);
+    if (entry.resettable && entry.level > 1) {
+      const reset = mkBtn('RESET (refund ' + entry.resetTotal + 'g)');
+      reset.onclick = (e) => {
+        stop(e);
+        if (!reset._armed) {
+          reset._armed = true;
+          reset.textContent = 'TAP AGAIN TO CONFIRM RESET (-' + entry.resetTotal + 'g)';
+          audio.playSfx('button');
+          return;
+        }
+        reset._armed = false;
+        const r = desc.onReset();
+        if (r && r.count > 0) desc.rerender();
+        else audio.playSfx('button');
+      };
+      if (cardEl.appendChild) cardEl.appendChild(reset);
+      else if (cardEl.children) cardEl.children.push(reset);
+    }
+  }
+}
+
 function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
@@ -7291,6 +7458,32 @@ function showShop() {
     const icon = shopIcon(def.id);
     renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
     shopIconCanvases[def.id] = cv;
+    // SLICE 10 (?dev=1 only): every OWNED row carries its sell-back controls
+    // in the shop where it was bought — one click per level plus row RESET
+    // with the total refund shown before confirming.
+    if (def.kind) {
+      if (shopRowOwned(profile, def)) {
+        devAddSellControls(el, {
+          id: def.id, kind: def.kind, level: 1,
+          refund: topRefund(profile, def.id),
+          onSell: () => devSellShopRow(def.id),
+          rerender: showShop,
+        });
+      }
+    } else {
+      const ownedLv = profile.purchased[def.id] || 0;
+      if (ownedLv > 0) {
+        devAddSellControls(el, {
+          id: def.id, level: ownedLv,
+          refund: topRefund(profile, def.id),
+          resetTotal: totalRefund(profile, def.id),
+          resettable: true,
+          onSell: () => devSellShopRow(def.id),
+          onReset: () => devSellShopRowAll(def.id),
+          rerender: showShop,
+        });
+      }
+    }
   }
   // G25 slice 1: the APEX entry row exists ONLY when the gate is open — the
   // panel is absent (not greyed) until the normal catalogue is finished, so
@@ -7338,14 +7531,25 @@ function showCharacterShop() {
   // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
   ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const rows = CHARACTER_UPGRADES.filter(u => u.characterId === ch.id);
     const lvls = rows.reduce((s, u) => s + getCharacterUpgradeLevel(profile, ch.id, u.id), 0);
-    menuCard(ch.name,
+    const doorEl = menuCard(ch.name,
       `${owned ? 'owned' : 'locked — ' + ch.unlockCost + ' gold'}<br>` +
       `${rows.length} upgrades · ${lvls} level${lvls === 1 ? '' : 's'} bought`,
       () => showCharacterRows(ch.id));
+    // SLICE 10 (?dev=1 only): an owned pilot (never the default KNIGHT, never
+    // one carrying upgrade levels) sells back where it was bought.
+    if (owned && ch.id !== 'KNIGHT' && lvls === 0) {
+      devAddSellControls(doorEl, {
+        id: ch.id, kind: 'pilot', level: 1,
+        refund: topRefund(profile, 'cunlock:' + ch.id),
+        onSell: () => devSellPilot(ch.id),
+        rerender: showCharacterShop,
+      });
+    }
   }
   menuCard('BACK', 'to shop', () => showShop());
 }
@@ -7367,6 +7571,7 @@ function showCharacterRows(characterId) {
     (owned ? '' : ` · LOCKED — ${ch.name} not unlocked (${ch.unlockCost} gold)`) +
     `<br>${idLines.strong} · ${idLines.weak}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   const framed = [];
   for (const def of CHARACTER_UPGRADES.filter(u => u.characterId === characterId)) {
     const lvl = getCharacterUpgradeLevel(profile, characterId, def.id);
@@ -7402,6 +7607,20 @@ function showCharacterRows(characterId) {
     const icon = shopIcon(def.id);
     renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
     shopIconCanvases[def.id] = cv;
+    // SLICE 10 (?dev=1 only): owned per-character levels sell back one click
+    // per level, plus row RESET with the total shown before confirming.
+    if (owned && lvl > 0) {
+      devAddSellControls(el, {
+        id: def.id, kind: 'character', characterId,
+        level: lvl,
+        refund: topRefund(profile, charLedgerKey(characterId, def.id)),
+        resetTotal: totalRefund(profile, charLedgerKey(characterId, def.id)),
+        resettable: true,
+        onSell: () => devSellCharacterRow(characterId, def.id),
+        onReset: () => devSellCharacterRowAll(characterId, def.id),
+        rerender: () => showCharacterRows(characterId),
+      });
+    }
   }
   menuCard('BACK', 'to characters', () => showCharacterShop());
   for (const e of framed) frameCard(e, true);
@@ -7421,6 +7640,7 @@ function showApexShop() {
   ovSub.innerHTML = `BANK: ${profile.gold}` +
     (open ? '' : ` · COMPLETE THE CATALOGUE FIRST — ${missing} ROW${missing === 1 ? '' : 'S'} LEFT`);
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
+  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   if (open) {
     // The TOGGLE (one activation flips it, persisted immediately): apex must
     // always be switchable off — the Megabonk lesson. Apex ON marks every
@@ -7458,6 +7678,16 @@ function showApexShop() {
       const icon = shopIcon(def.id);
       renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
       shopIconCanvases[def.id] = cv;
+      // SLICE 10 (?dev=1 only): an owned apex item sells back where it was
+      // bought (one click — singletons carry no levels and no RESET).
+      if (owned) {
+        devAddSellControls(el, {
+          id: def.id, kind: 'apex', level: 1,
+          refund: topRefund(profile, 'apex:' + def.id),
+          onSell: () => devSellApexItem(def.id),
+          rerender: showApexShop,
+        });
+      }
     }
   }
   menuCard('BACK', 'to shop', () => showShop());
@@ -12110,6 +12340,18 @@ export const __TEST = {
     takeEvolution: (w) => doEvolve(w),
     choices: () => devChoices(),
     modeFields: () => devModeFields(),
+    // SLICE 10 buy-back seams: the REAL sell paths the shop buttons drive
+    // (meta sell + journal + persist — never copies), the journaled removals,
+    // and the last render's sell-control descriptors (gate-off renders none).
+    // Never read by the browser page.
+    sellShopRow: (id) => devSellShopRow(id),
+    sellShopRowAll: (id) => devSellShopRowAll(id),
+    sellCharacterRow: (cid, uid) => devSellCharacterRow(cid, uid),
+    sellCharacterRowAll: (cid, uid) => devSellCharacterRowAll(cid, uid),
+    sellPilot: (cid) => devSellPilot(cid),
+    sellApex: (id) => devSellApexItem(id),
+    removals: () => devShopRemovals.map(r => ({ ...r })),
+    sellControls: () => devSellControls.map(c => ({ ...c })),
     // SLICE 9 placement seam: the live panel node (bounds/style assertions
     // drive the REAL docked node, never a restated constant).
     get panel() { return devPanel; },

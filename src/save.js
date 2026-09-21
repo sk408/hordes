@@ -737,6 +737,37 @@ export function validateProfile(profile, cat) {
   }
   out.apex = apex;
 
+  // ---- spend ledger (dev-editor slice 10: dev-run shop buy-back) ----
+  // ADDITIVE field, no version bump: profile.spendLedger = { [key]: [paid per
+  // level, oldest first] } — the per-level spend record sell-back refunds
+  // from. Absent (pre-slice saves) defaults to {} silently — a legacy save is
+  // not damaged, its unledgered levels simply refund 0. Present entries
+  // sanitize to finite non-negative floored ints, capped in length at 32 (a
+  // generic backstop above every maxLevel — the buyers/sellers keep the array
+  // 1:1 with owned levels at runtime). Unknown keys are preserved when their
+  // arrays sanitize clean (the newer-build round-trip rule); anything else
+  // repairs to [] and names the field.
+  const SPEND_LEDGER_CAP = 32;
+  const spendLedger = {};
+  if (plainObject(p.spendLedger)) {
+    for (const [key, arr] of Object.entries(p.spendLedger)) {
+      if (UNSAFE_KEYS.has(key)) { repairs.push('spendLedger.' + key); continue; }
+      if (!Array.isArray(arr)) { repairs.push('spendLedger.' + key); continue; }
+      const clean = [];
+      let dirty = arr.length > SPEND_LEDGER_CAP;
+      for (const v of arr.slice(0, SPEND_LEDGER_CAP)) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) { dirty = true; continue; }
+        clean.push(Math.floor(n));
+      }
+      if (dirty || clean.length !== arr.length) repairs.push('spendLedger.' + key);
+      spendLedger[key] = clean;
+    }
+  } else if (p.spendLedger !== undefined) {
+    repairs.push('spendLedger');
+  }
+  out.spendLedger = spendLedger;
+
   // ---- lastPlayed / lastSeenUpdate (v9: the returning-player pair) ----
   // lastPlayed: a positive epoch-ms integer or null (absent is NOT a repair —
   // a migrated v8 save legitimately carries null). lastSeenUpdate: a non-empty

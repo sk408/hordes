@@ -787,11 +787,11 @@ export function buyUpgrade(profile, id) {
   const def = SHOP_BY_ID[id];
   if (!def) return false;
   if (def.kind === 'weapon') {
-    if (!unlockWeapon(profile, def.weaponId)) return false;
+    if (!unlockWeapon(profile, def.weaponId, def.id)) return false;
     equipBoughtWeapon(profile, def.weaponId);
     return true;
   }
-  if (def.kind === 'elite') return unlockElite(profile, def.eliteId);
+  if (def.kind === 'elite') return unlockElite(profile, def.eliteId, def.id);
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
   const cost = upgradeCost(def, level);
@@ -800,6 +800,9 @@ export function buyUpgrade(profile, id) {
   if (!DEV_FREE_BUILD && !canAfford(profile, cost)) return false;   // insufficient gold
   if (!DEV_FREE_BUILD) profile.gold -= cost;
   profile.purchased[id] = level + 1;
+  // SLICE 10: the per-level spend ledger — the exact paid amount (0 when free-
+  // built) lands under the row key, so sell-back refunds what THIS level cost.
+  pushSpend(profile, id, DEV_FREE_BUILD ? 0 : cost, level);
   return true;
 }
 
@@ -810,12 +813,15 @@ export function weaponUnlocked(profile, weaponId) {
 
 // Buy a locked archetype at its WEAPON_PRICES price. Starters/unknown ids
 // reject. Mutates profile on success. Returns true on success.
-export function unlockWeapon(profile, weaponId) {
+// SLICE 10: rowKey (the shop row id, passed by buyUpgrade's dispatch) owns the
+// spend-ledger entry; a direct call ledgers under the weapon id itself.
+export function unlockWeapon(profile, weaponId, rowKey) {
   const price = WEAPON_PRICES[weaponId];
   if (price === undefined || weaponUnlocked(profile, weaponId)) return false;
   if (!DEV_FREE_BUILD && !canAfford(profile, price)) return false;   // F9: shared NaN-safe gate
   if (!DEV_FREE_BUILD) profile.gold -= price;
   profile.unlockedWeapons.push(weaponId);
+  pushSpend(profile, rowKey || ('weapon:' + weaponId), DEV_FREE_BUILD ? 0 : price, 0);
   return true;
 }
 
@@ -905,12 +911,14 @@ export function eliteUnlocked(profile, eliteId) {
 }
 
 // Buy a locked elite modifier at its ELITE_MODIFIERS cost.
-export function unlockElite(profile, eliteId) {
+// SLICE 10: rowKey owns the spend-ledger entry (see unlockWeapon).
+export function unlockElite(profile, eliteId, rowKey) {
   const def = ELITE_MODIFIERS[eliteId];
   if (!def || eliteUnlocked(profile, eliteId)) return false;
   if (!DEV_FREE_BUILD && !canAfford(profile, def.cost)) return false;   // F9: shared NaN-safe gate
   if (!DEV_FREE_BUILD) profile.gold -= def.cost;
   profile.unlockedElites.push(eliteId);
+  pushSpend(profile, rowKey || ('elite:' + eliteId), DEV_FREE_BUILD ? 0 : def.cost, 0);
   return true;
 }
 
@@ -999,6 +1007,7 @@ export function buyApex(profile, id) {
   if (!DEV_FREE_BUILD && !canAfford(profile, def.baseCost)) return false; // F9: shared NaN-safe gate
   if (!DEV_FREE_BUILD) profile.gold -= def.baseCost;
   profile.apex.owned.push(id);
+  pushSpend(profile, 'apex:' + id, DEV_FREE_BUILD ? 0 : def.baseCost, 0);
   return true;
 }
 
@@ -1358,6 +1367,7 @@ export function buyCharacterUpgrade(profile, characterId, id) {
   if (!DEV_FREE_BUILD && !canAfford(profile, cost)) return false;            // F9: shared NaN-safe gate
   if (!DEV_FREE_BUILD) profile.gold -= cost;
   addCharacterUpgrade(profile, characterId, id, 1);
+  pushSpend(profile, charLedgerKey(characterId, id), DEV_FREE_BUILD ? 0 : cost, level);
   return true;
 }
 
@@ -1529,6 +1539,7 @@ export function unlockCharacter(profile, id) {
   if (!DEV_FREE_BUILD && !canAfford(profile, ch.unlockCost)) return false;   // F9: shared NaN-safe gate
   if (!DEV_FREE_BUILD) profile.gold -= ch.unlockCost;
   profile.unlockedCharacters.push(id);
+  pushSpend(profile, 'cunlock:' + id, DEV_FREE_BUILD ? 0 : ch.unlockCost, 0);
   return true;
 }
 
@@ -1537,4 +1548,222 @@ export function equipCharacter(profile, id) {
   if (!CHARACTERS[id] || !profile.unlockedCharacters.includes(id)) return false;
   profile.equippedCharacter = id;
   return true;
+}
+
+// ---------- SLICE 10: dev-run shop buy-back (levels are reversible) ----------
+// DEV power behind the ?dev=1 gate (the UI lives in main.js and renders only
+// with the gate on): every buyable level can be REMOVED where it was bought,
+// refunding EXACTLY what that level cost.
+//
+// THE LEDGER: profile.spendLedger = { [key]: [paid per level, oldest first] }.
+// Every buyer above pushes one entry per granted level — the live price at buy
+// time (upgradeCost, i.e. `overrides[level] ?? formula`, so an override-priced
+// level refunds its override price) or 0 when DEV_FREE_BUILD granted it for
+// nothing. Keyed by shop row id for classic rows, 'char:<characterId>:<id>'
+// for per-character rows, the shop row id for weapon/elite singleton rows
+// ('weapon:'/'elite:'-prefixed fallback for direct unlock calls), 'apex:<id>'
+// and 'cunlock:<id>' for the prestige tier and pilot unlocks.
+//
+// THE MIXED-CASE RULE (free mode toggled mid-run): the CURRENT free-build flag
+// is NEVER consulted on sell — only the per-level record. A level bought paid
+// refunds its paid amount even while free-build is on; a level granted free
+// refunds 0 even after free-build is off. Unledgered levels (achievement
+// grants, pre-slice saves) refund 0 — nothing was provably paid — but the
+// removal itself still applies and is still reported. Sells are LIFO: the most
+// recently bought level (the top) is the one removed, which is the only order
+// in which per-level prices stay matched to levels.
+//
+// EFFECTS: removal only lowers the stored level/ownership. Stats are DERIVED
+// (applyMetaBonuses / applyCharacterUpgrades read the live levels at startRun
+// and in the kit preview), so there is no cached bonus to go stale — the next
+// run, and the preview, simply see fewer levels.
+//
+// RETURN SHAPE: { ok:true, level, refund } on success — level is the 1-based
+// level removed (1 for singletons), refund the credited gold — or { ok:false }
+// on any refusal (unknown id, nothing owned, guarded singleton). Refusals
+// mutate NOTHING (no ledger touch, no gold move).
+const SPEND_LEDGER_CAP = 32;   // generic backstop above every maxLevel (split: 10)
+
+// The ledger container, created lazily so hand-built and pre-slice profiles
+// work without a migration (save.js validates it the same way).
+export function spendLedgerFor(profile) {
+  if (!profile || typeof profile !== 'object') return {};
+  if (!profile.spendLedger || typeof profile.spendLedger !== 'object' ||
+      Array.isArray(profile.spendLedger)) {
+    profile.spendLedger = {};
+  }
+  return profile.spendLedger;
+}
+
+function ledgerArray(profile, key) {
+  const book = spendLedgerFor(profile);
+  const cur = book[key];
+  if (Array.isArray(cur)) return cur;
+  const fresh = [];
+  book[key] = fresh;
+  return fresh;
+}
+
+// Per-character ledger key (single home — the buyer and the seller share it).
+export function charLedgerKey(characterId, upgradeId) {
+  return 'char:' + characterId + ':' + upgradeId;
+}
+
+// Record one granted level's paid price. levelsBelow is the level count BEFORE
+// this grant: missing entries below it (legacy saves, achievement grants) are
+// backfilled as 0-paid — unprovable payment refunds 0 — so the array stays
+// 1:1 with owned levels and LIFO pops always match. Never throws.
+export function pushSpend(profile, key, paid, levelsBelow) {
+  try {
+    if (typeof key !== 'string' || !key) return;
+    const arr = ledgerArray(profile, key);
+    const below = Math.max(0, Math.floor(Number(levelsBelow) || 0));
+    while (arr.length < below) arr.push(0);
+    const v = Number(paid);
+    arr.push(Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+    while (arr.length > SPEND_LEDGER_CAP) arr.shift();
+  } catch { /* the buy already succeeded; the ledger is best-effort */ }
+}
+
+// What the TOP level of a ledger key would refund (0 when unledgered).
+// Pure read — used for the SELL/RESET labels BEFORE confirming.
+export function topRefund(profile, key) {
+  try {
+    const book = profile && profile.spendLedger;
+    const arr = book && book[key];
+    if (!Array.isArray(arr) || arr.length === 0) return 0;
+    const v = Number(arr[arr.length - 1]);
+    return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+  } catch { return 0; }
+}
+
+// Total refund for removing every level under a ledger key. Pure read — the
+// RESET label shows this BEFORE the confirming tap.
+export function totalRefund(profile, key) {
+  try {
+    const book = profile && profile.spendLedger;
+    const arr = book && book[key];
+    if (!Array.isArray(arr)) return 0;
+    let sum = 0;
+    for (const v of arr) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) sum += Math.floor(n);
+    }
+    return sum;
+  } catch { return 0; }
+}
+
+// Credit gold in the save layer's currency domain (floored, non-negative,
+// capped at MAX_SAFE_INTEGER — the same domain validateProfile enforces).
+function creditGold(profile, amount) {
+  const v = Math.floor(Number(amount) || 0);
+  if (v <= 0) return 0;
+  const cur = Number.isFinite(Number(profile.gold)) ? Math.floor(Number(profile.gold)) : 0;
+  profile.gold = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, cur) + v);
+  return v;
+}
+
+// Pop one level's refund for a level being removed: trims corrupt excess,
+// backfills unledgered levels as 0 (the stated rule), pops the top. Returns
+// the refund. The caller owns lowering the level itself.
+function popRefund(profile, key, levelBefore) {
+  const arr = ledgerArray(profile, key);
+  while (arr.length > levelBefore) arr.shift();
+  while (arr.length < levelBefore) arr.push(0);
+  if (arr.length === 0) return 0;
+  const v = Number(arr.pop());
+  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+}
+
+// Sell one level of ANY shop row, dispatching exactly like buyUpgrade:
+// classic rows lose their top level, weapon/elite singletons lose ownership.
+// Returns { ok, level, refund } (see the header contract).
+export function sellUpgrade(profile, id) {
+  const def = SHOP_BY_ID[id];
+  if (!def || !profile) return { ok: false };
+  if (def.kind === 'weapon') return sellWeaponUnlock(profile, def.weaponId, def.id);
+  if (def.kind === 'elite') return sellEliteUnlock(profile, def.eliteId, def.id);
+  const level = Math.floor(Number((profile.purchased || {})[id]) || 0);
+  if (level < 1) return { ok: false };
+  const refund = popRefund(profile, id, level);
+  const next = level - 1;
+  if (next <= 0) delete profile.purchased[id];
+  else profile.purchased[id] = next;
+  creditGold(profile, refund);
+  return { ok: true, level, refund };
+}
+
+// Sell a weapon unlock back. Starter weapons and the base volley are NOT
+// sellable (runs assume them — the kit falls back to them when the loadout is
+// empty). A weapon riding the loadout is benched off it as part of the sale.
+export function sellWeaponUnlock(profile, weaponId, rowKey) {
+  if (!profile || WEAPON_PRICES[weaponId] === undefined) return { ok: false };
+  if (!weaponUnlocked(profile, weaponId)) return { ok: false };
+  if ((STARTER_WEAPONS || []).includes(weaponId)) return { ok: false };
+  if (weaponId === 'VOLLEY') return { ok: false };
+  const key = rowKey || ('weapon:' + weaponId);
+  const refund = popRefund(profile, key, 1);
+  profile.unlockedWeapons = (profile.unlockedWeapons || []).filter(w => w !== weaponId);
+  if (Array.isArray(profile.loadout)) {
+    const kept = profile.loadout.filter(w => w !== weaponId);
+    profile.loadout = kept.length ? kept : null;
+  }
+  creditGold(profile, refund);
+  return { ok: true, level: 1, refund };
+}
+
+// Sell an elite unlock back. Single ownership bit, same contract.
+export function sellEliteUnlock(profile, eliteId, rowKey) {
+  if (!profile || !ELITE_MODIFIERS[eliteId]) return { ok: false };
+  if (!eliteUnlocked(profile, eliteId)) return { ok: false };
+  const key = rowKey || ('elite:' + eliteId);
+  const refund = popRefund(profile, key, 1);
+  profile.unlockedElites = (profile.unlockedElites || []).filter(e => e !== eliteId);
+  creditGold(profile, refund);
+  return { ok: true, level: 1, refund };
+}
+
+// Sell one level of a per-character row. Mirrors buyCharacterUpgrade: same row
+// validation, same level source — only the direction flips.
+export function sellCharacterUpgrade(profile, characterId, id) {
+  const def = CHARACTER_UPGRADE_BY_ID[id];
+  if (!def || def.characterId !== characterId || !profile) return { ok: false };
+  const level = getCharacterUpgradeLevel(profile, characterId, id);
+  if (level < 1) return { ok: false };
+  const key = charLedgerKey(characterId, id);
+  const refund = popRefund(profile, key, level);
+  setCharacterUpgradeLevel(profile, characterId, id, level - 1);
+  creditGold(profile, refund);
+  return { ok: true, level, refund };
+}
+
+// Sell a pilot unlock back. Refuses the default pilot (validation re-adds it —
+// the sale could never stick), pilots with upgrade levels (no orphaned
+// levels), and the currently equipped pilot only by re-seating the default
+// first (the equipped selection must stay a member of the owned list).
+export function sellCharacterUnlock(profile, id) {
+  if (!profile || !CHARACTERS[id]) return { ok: false };
+  if (!(profile.unlockedCharacters || []).includes(id)) return { ok: false };
+  if (id === 'KNIGHT') return { ok: false };
+  const rows = CHARACTER_UPGRADES.filter(u => u.characterId === id);
+  for (const u of rows) {
+    if (getCharacterUpgradeLevel(profile, id, u.id) > 0) return { ok: false };
+  }
+  const refund = popRefund(profile, 'cunlock:' + id, 1);
+  profile.unlockedCharacters = profile.unlockedCharacters.filter(c => c !== id);
+  if (profile.equippedCharacter === id) profile.equippedCharacter = 'KNIGHT';
+  creditGold(profile, refund);
+  return { ok: true, level: 1, refund };
+}
+
+// Sell an apex item back. Ownership bit only; the ON/OFF toggle is independent
+// and untouched (an enabled-then-sold item simply stops applying, like any
+// unowned row).
+export function sellApex(profile, id) {
+  if (!profile || !APEX_BY_ID[id]) return { ok: false };
+  if (!apexOwned(profile, id)) return { ok: false };
+  const refund = popRefund(profile, 'apex:' + id, 1);
+  profile.apex.owned = (profile.apex.owned || []).filter(a => a !== id);
+  creditGold(profile, refund);
+  return { ok: true, level: 1, refund };
 }
