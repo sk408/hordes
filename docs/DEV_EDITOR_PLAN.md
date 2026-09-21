@@ -96,7 +96,11 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   8x sequencing fix (stuck draft menus kill unattended runs) — dispatch
   after it lands. Owner's standing judgment: real-loop autoplay is ground
   truth; analytic sims keep only cheap pre-screening duty, never the
-  verdict. TWO policies (owner-stated): SMART (priorities + 5-run save-up)
+  verdict. REASON (owner 2026-09-21): AI balancers swing trivial-or-grindy
+  because computer time is not lived time — ten tense minutes and ten
+  chore minutes measure identically but play nothing alike. Agents
+  optimize numbers; only played runs know pacing. Hence snapshots come
+  from real runs first, sims second. TWO policies (owner-stated): SMART (priorities + 5-run save-up)
   and IMPULSIVE (buy whatever is affordable now) — the impulsive buyer
   models real average-player behavior and is the baseline the smart policy
   must beat. Both snapshot identically for comparison.
