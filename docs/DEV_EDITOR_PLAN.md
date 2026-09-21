@@ -57,6 +57,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   the ledger never the live flag, removals journaled in snapshots, stats
   recomputed; proven to the gold with byte-identical restore; suite
   156/13 identical. Committed as `a00defc`.
+- Slice 10b (opencode/muse-spark): sell buttons were in the DOM but painted
+  UNDER the opaque shop card frame — joined `button.dev-sell` to the
+  z-index:1 content layer, proven by real-screenshot pixel sampling
+  (plank → button face). Committed as `a8f711c`.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
