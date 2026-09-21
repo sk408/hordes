@@ -69,7 +69,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   2026-09-21: auto-play keeps taking it and it harms long runs). DESIGN
   INTENT (owner, binding): the card exists to help early-to-mid game
   upgrade weapons faster — its late cost is the price, not a bug. Never
-  "fix" its curve; the ban list is the testing tool, not a verdict.
+  "fix" its curve; the ban list is the testing tool, not a verdict. It is
+  also an idle-catcher by design: a reason to stay and pick drafts rather
+  than go idle (idle pacing itself is deliberate — never propose instant
+  auto-pick).
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
