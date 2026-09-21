@@ -66,7 +66,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   Substeps blow through frame-paced sequencing; fix owns the ordering.
 - QUEUED: dev draft ban list — ONE OF EACH (and any card by id) excludable
   from offers via toggle, for autoplay/long-run testing (owner report
-  2026-09-21: auto-play keeps taking it and it harms long runs).
+  2026-09-21: auto-play keeps taking it and it harms long runs). DESIGN
+  INTENT (owner, binding): the card exists to help early-to-mid game
+  upgrade weapons faster — its late cost is the price, not a bug. Never
+  "fix" its curve; the ban list is the testing tool, not a verdict.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
