@@ -43,6 +43,15 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   evolved curve beside base, saver path extended to `src/evolutions.js`,
   proven 1.3→1.4→1.3 byte-identical; red-list identical (8 pre-existing).
   Committed as `97df1b7`.
+- Slice 7: see SLICE 7 section below (built, incl. store resolution).
+- Slice 8 (opencode/muse-spark): substepped dev-run speed control
+  (1x/2x/4x/8x, sim exact per step), speed stamped in snapshots
+  (schema_v 2). Landed with coordinator-side test alignment
+  (fixture → v2 + speed key) and the orphaned green speed test committed.
+- Slice 9 (opencode/muse-spark): snapshot choice audit (drafts
+  offered/taken, blessings, shrines, chests) + live mode/modifiers
+  (night + banking-penalty-50 read off run flags) + overlay docked left
+  and collapsible; suite identical 154/13. Committed as `3aba512`.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
