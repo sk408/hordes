@@ -2,7 +2,9 @@
 <!-- HORDES dev tooling — NOT linked from the game UI. Local tuning editor:
      shop prices (live from the game's own config modules in src/meta.js,
      saved through tools/editor_server.py as exact-string old/new pairs),
-     cost/damage graphs per shop item, and per-level cost overrides.
+     one unified cost/damage/damage-per-gold graph per shop item with an
+     inline per-level cost table (same saver path, live re-render, no reload),
+     and per-level cost overrides.
      Never player-facing. -->
 <html lang="en">
 <head>
@@ -53,6 +55,11 @@
   .measured { color: var(--dim); font-size: 12px; margin-top: 6px;
           border-top: 1px dashed var(--line); padding-top: 6px; }
   svg text { font-family: monospace; }
+  .legend { margin: 2px 0 8px; }
+  .legend button { margin-right: 8px; }
+  .legend button.off { opacity: 0.45; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px;
+          margin-right: 6px; }
   #status { margin-top: 20px; font-size: 12px; }
 </style>
 </head>
@@ -88,17 +95,24 @@ generated — their prices live in sections 2 and 3 below.</div>
 </tr></thead><tbody></tbody></table>
 <div id="elitesmsg" class="msg"></div>
 
-<h2>4 · COST / DAMAGE GRAPHS (per shop item)</h2>
-<div class="sub">each curve normalized to percent-of-own-max, sharing the level
-axis (level = owned levels for damage, current level = price of the next level
-for cost). damage is the live damage stat (damage x damageMult) from
+<h2>4 · UNIFIED COST / DAMAGE GRAPH + INLINE COST EDITING</h2>
+<div class="sub">one graph per shop item: normalized cost, normalized damage and
+damage-per-gold overlaid on a single shared level axis (level = owned levels
+for damage, current level = price of the next level for cost). each curve is
+percent-of-own-max. damage is the live damage stat (damage x damageMult) from
 applyMetaBonuses in src/meta.js — never copied numbers. a flat damage line
-means this item does not move the damage stat.</div>
+means this item does not move the damage stat. click legend entries to toggle
+series. the table beside the graph edits per-level costs through the saver;
+the graph re-renders from live values with no reload.</div>
 <div class="bar">
   <label for="gitem">shop item</label>
   <select id="gitem"></select>
 </div>
 <div id="graphs"></div>
+<table id="inline"><thead><tr>
+  <th>level</th><th>cost</th><th>override</th><th>damage</th><th>dmg/gold</th>
+</tr></thead><tbody></tbody></table>
+<div id="inlinemsg" class="msg"></div>
 
 <h2>5 · PER-LEVEL COST OVERRIDES</h2>
 <div class="sub">sparse table consulted as overrides[level] ?? formula. empty =
@@ -326,9 +340,10 @@ function norm100(arr) {
   return m > 0 ? arr.map((v) => v / m * 100) : arr.map(() => 0);
 }
 
-// Single SVG line chart over level axis 0..xMax. mark = Set of x levels drawn
-// as diamonds (override prices) instead of dots.
-function chartSVG(xs, pcts, color, xMax, mark) {
+// Multi-series SVG chart over the shared level axis 0..xMax. Every run is
+// already normalized to percent-of-own-max, so one axis serves all three.
+// Override prices on the cost run are drawn as diamonds (mark = Set of x).
+function chartSVGMulti(runs, xMax, mark) {
   const W = 620, H = 170, pL = 46, pR = 12, pT = 10, pB = 22;
   const X = (l) => pL + (xMax > 0 ? (l / xMax) * (W - pL - pR) : 0);
   const Y = (v) => H - pB - (v / 100) * (H - pT - pB);
@@ -343,19 +358,21 @@ function chartSVG(xs, pcts, color, xMax, mark) {
     s += '<text x="' + X(l) + '" y="' + (H - 6) +
       '" fill="#6a6a8a" font-size="10" text-anchor="middle">L' + l + '</text>';
   }
-  s += '<polyline points="' + xs.map((l, i) => X(l).toFixed(1) + ',' +
-    Y(pcts[i]).toFixed(1)).join(' ') + '" fill="none" stroke="' + color +
-    '" stroke-width="2"/>';
-  xs.forEach((l, i) => {
-    const cx = X(l), cy = Y(pcts[i]);
-    if (mark && mark.has(l)) {
-      s += '<rect x="' + (cx - 4.5) + '" y="' + (cy - 4.5) +
-        '" width="9" height="9" transform="rotate(45 ' + cx + ' ' + cy +
-        ')" fill="#ff9d5e" stroke="#0b0b12" stroke-width="1"/>';
-    } else {
-      s += '<circle cx="' + cx + '" cy="' + cy + '" r="3.5" fill="' + color + '"/>';
-    }
-  });
+  for (const run of runs) {
+    s += '<polyline points="' + run.xs.map((l, i) => X(l).toFixed(1) + ',' +
+      Y(run.pcts[i]).toFixed(1)).join(' ') + '" fill="none" stroke="' + run.color +
+      '" stroke-width="2"/>';
+    run.xs.forEach((l, i) => {
+      const cx = X(l), cy = Y(run.pcts[i]);
+      if (run.key === 'cost' && mark && mark.has(l)) {
+        s += '<rect x="' + (cx - 4.5) + '" y="' + (cy - 4.5) +
+          '" width="9" height="9" transform="rotate(45 ' + cx + ' ' + cy +
+          ')" fill="#ff9d5e" stroke="#0b0b12" stroke-width="1"/>';
+      } else {
+        s += '<circle cx="' + cx + '" cy="' + cy + '" r="3.5" fill="' + run.color + '"/>';
+      }
+    });
+  }
   return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H +
     '" style="max-width:100%;background:#0e0e16;border:1px solid var(--line);' +
     'border-radius:4px">' + s + '</svg>';
@@ -365,41 +382,149 @@ function fmtGold(v) {
   return (Math.round(v * 100) / 100) + 'g';
 }
 
-function renderGraphs() {
-  const def = SHOP_BY_ID[$('gitem').value];
-  const box = $('graphs');
-  if (!def) { box.innerHTML = ''; return; }
+// The three live curves for one shop item: cost (price of the next level at
+// current level L), damage (owned level l), damage-per-gold (owned level l,
+// cumulative spend; L0 spends nothing so the run starts at L1).
+function graphCurves(def) {
   const maxL = def.maxLevel;
   const cost = [];
   for (let L = 0; L < maxL; L++) cost.push(upgradeCost(def, L));
   const dmg = [];
   for (let l = 0; l <= maxL; l++) dmg.push(graphDamage(def.id, l));
-  // Damage-per-gold: cumulative spend to reach owned level l vs damage at l.
-  // L0 spends nothing, so the curve starts at L1.
   const dpgX = [], dpg = [];
   let cum = 0;
   for (let l = 1; l <= maxL; l++) { cum += cost[l - 1]; dpgX.push(l); dpg.push(dmg[l] / cum); }
+  return { cost, dmg, dpgX, dpg };
+}
+
+const SERIES_META = [
+  { key: 'cost', label: 'cost', color: '#ffd75e' },
+  { key: 'dmg', label: 'damage', color: '#9be28a' },
+  { key: 'dpg', label: 'damage-per-gold — DESCRIPTIVE ONLY', color: '#8ab4ff' },
+];
+const seriesVis = { cost: true, dmg: true, dpg: true };
+
+function renderGraphs() {
+  const def = SHOP_BY_ID[$('gitem').value];
+  const box = $('graphs');
+  if (!def) { box.innerHTML = ''; return; }
+  const maxL = def.maxLevel;
+  const { cost, dmg, dpgX, dpg } = graphCurves(def);
   const marks = new Set();
   cost.forEach((_, L) => { if (def.overrides && def.overrides[L] !== undefined) marks.add(L); });
   const costNote = marks.size
     ? 'diamond markers = per-level override prices'
     : 'pure formula curve (no overrides on this item)';
-  const panel = (title, warn, svg, raw) =>
-    '<div class="panel"><h3>' + title + (warn ? ' <span class="warn">' + warn + '</span>' : '') +
-    '</h3>' + svg + '<div class="raw">' + raw + '</div>' +
-    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>';
+  const all = {
+    cost: { key: 'cost', xs: cost.map((_, L) => L), pcts: norm100(cost), color: '#ffd75e' },
+    dmg: { key: 'dmg', xs: dmg.map((_, l) => l), pcts: norm100(dmg), color: '#9be28a' },
+    dpg: { key: 'dpg', xs: dpgX, pcts: norm100(dpg), color: '#8ab4ff' },
+  };
+  const runs = SERIES_META.filter((m) => seriesVis[m.key]).map((m) => all[m.key]);
+  const legend = SERIES_META.map((m) =>
+    '<button data-series="' + m.key + '" class="' + (seriesVis[m.key] ? '' : 'off') + '">' +
+    '<span class="sw" style="background:' + m.color + '"></span>' + m.label + '</button>'
+  ).join('');
   box.innerHTML =
-    panel('cost by level — % of own max (' + costNote + ')', '',
-      chartSVG(cost.map((_, L) => L), norm100(cost), '#ffd75e', maxL, marks),
-      'raw: ' + cost.map((c, L) => 'L' + L + ' ' + fmtGold(c)).join(', ')) +
-    panel('damage by level — % of own max', '',
-      chartSVG(dmg.map((_, l) => l), norm100(dmg), '#9be28a', maxL, null),
-      'raw: ' + dmg.map((d, l) => 'L' + l + ' ' + (Math.round(d * 100) / 100)).join(', ')) +
-    panel('damage-per-gold by level — % of own max', 'DESCRIPTIVE ONLY',
-      chartSVG(dpgX, norm100(dpg), '#8ab4ff', maxL, null),
-      'raw: ' + dpg.map((d, i) => 'L' + dpgX[i] + ' ' + d.toPrecision(4) + '/g').join(', ')) +
+    '<div class="panel"><h3>cost + damage + damage-per-gold — % of own max ' +
+    '<span class="warn">RATIO DESCRIPTIVE ONLY</span></h3>' +
+    '<div class="legend">' + legend + '</div>' +
+    chartSVGMulti(runs, maxL, marks) +
+    '<div class="raw">cost raw (' + costNote + '): ' +
+    cost.map((c, L) => 'L' + L + ' ' + fmtGold(c)).join(', ') + '<br>' +
+    'damage raw: ' + dmg.map((d, l) => 'L' + l + ' ' + (Math.round(d * 100) / 100)).join(', ') +
+    '<br>damage-per-gold raw: ' +
+    dpg.map((d, i) => 'L' + dpgX[i] + ' ' + d.toPrecision(4) + '/g').join(', ') + '</div>' +
+    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>' +
     '<div class="sub">damage-per-gold is descriptive only: it carries the ' +
-    'income feedback loop (income scales with build power), never a fairness verdict.</div>';
+    'income feedback loop (income scales with build power), never a fairness verdict. ' +
+    'cost is plotted at the level you pay from (price of the next level); ' +
+    'damage at the owned level.</div>';
+  box.querySelectorAll('.legend button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      seriesVis[btn.getAttribute('data-series')] = !seriesVis[btn.getAttribute('data-series')];
+      renderGraphs();
+    });
+  });
+}
+
+// Shared override saver for the inline table and section 5: exact-string
+// row-literal pair through POST /save (backup + syntax gate, no new
+// backend), then the live module object is updated in place and every
+// graph-adjacent surface re-renders — no page reload.
+async function saveOverridesTable(def, table) {
+  const text = await sourceText('src/meta.js');
+  const hits = rowLiteral(text, def.id);
+  if (hits.length !== 1) throw new Error('row literal for ' + def.id +
+    ' found ' + hits.length + ' times; refusing to guess');
+  const data = await postSave('src/meta.js', hits[0], withOverrides(hits[0], table));
+  delete sourceCache['src/meta.js'];
+  if (Object.keys(table).length) def.overrides = Object.assign({}, table);
+  else delete def.overrides;
+  renderGraphs();
+  renderInline();
+  renderOverrides();
+  return data;
+}
+
+// ---- section 4b: inline per-level cost editing --------------------------------
+// One row per buyable level: live cost plus an override input, damage and
+// damage-per-gold readouts. A filled input pins that level to the override
+// price through the shared saver; the graph re-renders from live values.
+function renderInline() {
+  const def = SHOP_BY_ID[$('gitem').value];
+  const tb = document.querySelector('#inline tbody');
+  tb.innerHTML = '';
+  if (!def) return;
+  if (def.kind) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="5" class="derived">generated row — its price lives ' +
+      'in section 2/3, so per-level editing does not apply.</td>';
+    tb.appendChild(tr);
+    return;
+  }
+  const { cost, dmg, dpg } = graphCurves(def);
+  for (let L = 0; L < def.maxLevel; L++) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="id">L' + L + '</td><td></td>' +
+      '<td><input class="num" inputmode="numeric" placeholder="formula"></td>' +
+      '<td class="derived"></td><td class="derived"></td>';
+    tr.children[1].textContent = fmtGold(cost[L]);
+    const inp = tr.querySelector('input');
+    if (def.overrides && def.overrides[L] !== undefined) inp.value = def.overrides[L];
+    tr.children[3].textContent = Math.round(dmg[L] * 100) / 100;
+    tr.children[4].textContent = L === 0 ? '--' : dpg[L - 1].toPrecision(4) + '/g';
+    tb.appendChild(tr);
+  }
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td colspan="5"><button>save costs</button> ' +
+    '<span class="derived">a filled input pins that level to the override price; ' +
+    'empty falls back to the formula. damage columns are readouts.</span></td>';
+  tr.querySelector('button').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    const inputs = Array.from(tb.querySelectorAll('input'));
+    const table = {};
+    for (let L = 0; L < inputs.length; L++) {
+      const raw = inputs[L].value.trim();
+      if (!raw) continue;
+      const nval = Number(raw);
+      if (!Number.isFinite(nval) || nval < 0) {
+        setMsg($('inlinemsg'), false, def.id + ' L' + L + ': need price >= 0 or empty');
+        return;
+      }
+      table[L] = nval;
+    }
+    btn.disabled = true;
+    try {
+      const data = await saveOverridesTable(def, table);
+      setMsg($('inlinemsg'), true, def.id + ' costs saved. backup: ' + data.backup +
+        ' — graph re-rendered live, no reload.');
+    } catch (e) {
+      setMsg($('inlinemsg'), false, def.id + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+  tb.appendChild(tr);
 }
 
 // ---- section 5: per-level cost overrides ------------------------------------
@@ -466,13 +591,9 @@ function renderOverrides() {
     }
     btn.disabled = true;
     try {
-      const text = await sourceText('src/meta.js');
-      const hits = rowLiteral(text, def.id);
-      if (hits.length !== 1) throw new Error('row literal for ' + def.id +
-        ' found ' + hits.length + ' times; refusing to guess');
-      const data = await postSave('src/meta.js', hits[0], withOverrides(hits[0], table));
+      const data = await saveOverridesTable(def, table);
       setMsg($('overridesmsg'), true, def.id + ' overrides saved. backup: ' + data.backup +
-        ' — reload to see live values.');
+        ' — graph re-rendered live, no reload.');
     } catch (e) {
       setMsg($('overridesmsg'), false, def.id + ': ' + e.message);
     }
@@ -490,8 +611,9 @@ function buildGraphSection() {
     sel.appendChild(opt);
   }
   sel.value = 'dmg';
-  sel.addEventListener('change', () => { renderGraphs(); renderOverrides(); });
+  sel.addEventListener('change', () => { renderGraphs(); renderInline(); renderOverrides(); });
   renderGraphs();
+  renderInline();
   renderOverrides();
 }
 
