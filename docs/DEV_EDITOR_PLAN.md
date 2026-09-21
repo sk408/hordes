@@ -48,6 +48,13 @@ feed sims and LLM balance analysis. Player build never sees any of it.
 - Income-aware questions ("can a real build afford level 7 when it
   matters?") are answered by measured cohorts in the real loop, never by
   the graph. The graph may link those numbers, not compute them.
+- PER-LEVEL COST OVERRIDES (owner decision 2026-09-21): the growth formula
+  stays the default, but any item may carry an override table consulted as
+  `overrides[level] ?? formula`. This buys shaped curves (cheap early hook,
+  prestige capstone) without turning every item into N numbers. The editor
+  graphs the formula curve with override points marked; items without
+  overrides behave exactly as today. Enables early- or late-game
+  accessibility tuning per item.
 
 ## SLICE 4: live telemetry + snapshots (DESIGNED, not yet dispatched)
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
