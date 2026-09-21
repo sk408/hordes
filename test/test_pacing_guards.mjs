@@ -68,14 +68,17 @@ S.check('(c) the idle cadence constants are the named 3.0s/3.0s', () => {
 });
 
 // ---- (d) NO DEAD TAIL -------------------------------------------------------
-S.check('(d) top: EVERY shop row full-buy <= 6.05 good tier-3 runs (max: BEAM 5.96)', () => {
+// OWNER EARLY-ACCESSIBILITY RETARGET: the owner cut BEAM 4.5M -> 450000g, so
+// bloodpact (4,433,000g = 5.87 tier-3 runs) is the new max. The 6.05 ceiling
+// still holds for EVERY row; only the top identity moved.
+S.check('(d) top: EVERY shop row full-buy <= 6.05 good tier-3 runs (max: bloodpact 5.87)', () => {
   let worst = { id: null, runs: 0 };
   for (const def of SHOP_UPGRADES) {
     const runs = catalogCost([def.id]) / T3;
     if (runs > worst.runs) worst = { id: def.id, runs };
   }
   assert.ok(worst.runs <= 6.05, `${worst.id} = ${worst.runs.toFixed(2)} tier-3 runs`);
-  assert.equal(worst.id, 'weapon_beam', 'BEAM is still the top of the ladder');
+  assert.equal(worst.id, 'bloodpact', 'bloodpact is the top of the ladder post-owner-retune (BEAM cut to 0.6 runs)');
 });
 S.check('(d) OPEN FAIL regression ceiling: ZAP <= 3,200 tier-2 runs (3,000 today)', () => {
   // The tier-2 dead tail (docs/PACING.md §2d, ledger OPEN item): the premium

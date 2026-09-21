@@ -448,14 +448,14 @@ export const MAX_WEAPON_SLOTS = 6;
 // (every archetype is priced here or is a STARTER_WEAPON).
 export const WEAPON_PRICES = {
   ORBIT: 200,          // reliable contact damage, cheapest real archetype (FIRST purchase: 2.9 tier-0 runs)
-  ZAP: 600000,         // chain zap: early AoE-ish clear (0.40h)
-  NOVA_PULSE: 1200000, // hands-free AoE ring (0.79h)
-  SCYTHE: 2000000,     // heavy melee sweep (1.32h)
-  SEEKER: 2800000,     // homing coverage (1.85h)
-  MINE: 4200000,       // area denial, best-in-class mid pick (2.78h)
+  ZAP: 60000,         // chain zap: early AoE-ish clear (0.40h)
+  NOVA_PULSE: 12000, // hands-free AoE ring (0.79h)
+  SCYTHE: 20000,     // heavy melee sweep (1.32h)
+  SEEKER: 280000,     // homing coverage (1.85h)
+  MINE: 420000,       // area denial, best-in-class mid pick (2.78h)
   // TOP TIER (G17 1b): "a few hours" at the measured rate = inside the 3h cap
   // (4,528,134g) and >= TOP_TIER_MIN_GOOD_RUNS (5) good runs = 5.96 runs.
-  BEAM: 4500000,
+  BEAM: 450000,
 };
 const VALID_UNLOCK_WEAPONS = new Set([...STARTER_WEAPONS, ...Object.keys(WEAPON_PRICES)]);
 
@@ -470,23 +470,45 @@ export const ELITE_MODIFIERS = {
   // (1.00h / 1.19h / 1.85h at 1,509,378g/h); the old 1800/3600/7200 ladder
   // totalled 0.009h of end-game income.
   SWIFT: {
-    id: 'SWIFT', name: 'Swift', cost: 1000000,
+    id: 'SWIFT', name: 'Swift', cost: 10000,
     desc: 'Unlock the SWIFT elite modifier: faster elites, richer kills.',
   },
   SPLITTING: {
-    id: 'SPLITTING', name: 'Splitting', cost: 1800000,
+    id: 'SPLITTING', name: 'Splitting', cost: 18000,
     desc: 'Unlock the SPLITTING elite modifier: elites may split on death.',
   },
   VAMPIRIC: {
-    id: 'VAMPIRIC', name: 'Vampiric', cost: 2800000,
+    id: 'VAMPIRIC', name: 'Vampiric', cost: 28000,
     desc: 'Unlock the VAMPIRIC elite modifier: elites that heal as they hit.',
   },
 };
 const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 
+// ---------- SLICE 5 (dev-editor): live description formatters ----------------
+// Every shop/character/item `desc` that quotes a tuning number is a getter
+// built from these, so editing the number moves the description everywhere it
+// renders (shop, editor, HUD) with no copy to keep in sync. Getter bodies use
+// string concatenation (never template literals): the dev-editor's row-literal
+// matcher allows one level of nested braces, and `${...}` would nest a second.
+// Percent inputs are FRACTIONS (perLevel 0.06 -> '6'); callers add '%'.
+// mana-per-kill rows keep two decimals via toFixed(2) at their own call site.
+export function fmtPct(v) {
+  return String(Math.round(Number(v) * 10000) / 100);
+}
+export function fmtNum(v) {
+  return String(Math.round(Number(v) * 10000) / 10000);
+}
+
 // ROW SHAPE (hb1 renders; WAVE-11 extension in bold):
 //   { id, name, desc, baseCost, costGrowth, maxLevel, perLevel }
 //       classic stat/slot line — level-tracked in profile.purchased.
+//   { ..., overrides: { level: price } }
+//       OPTIONAL sparse per-level cost table (slice 3, dev-editor graphs).
+//       upgradeCost() consults `overrides[currentLevel] ?? formula`, so a row
+//       can shape its curve (cheap early hook, prestige capstone) without
+//       turning every level into a number. Levels NOT listed fall back to the
+//       formula. Shipped owner-set tables: dmg + hp (early-accessibility
+//       retune) — every other row pays the formula.
 //   { ..., kind: 'weapon', weaponId }
 //       single-purchase WEAPON unlock row (costGrowth 1, maxLevel 1,
 //       perLevel 0). Ownership lives in profile.unlockedWeapons — NOT in
@@ -506,14 +528,17 @@ export const SHOP_UPGRADES = [
   // authoritative list. The flat rows stay additive and must: they are absolute
   // amounts (hp/regen/well/siphon/artifact) or values set FROM ZERO
   // (crit chance, dropBonus) where compounding is a silent no-op.
-  { id: 'dmg',     name: 'Forged Edge',    desc: '+200% weapon damage per level',
-    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 2.0 },
-  { id: 'hp',      name: 'Vitality',       desc: '+40 max HP per level',
-    baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 40 },
+  { id: 'dmg',     name: 'Forged Edge',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% weapon damage per level'; },
+    baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 2.0, overrides: {0: 125, 1: 250, 2: 325, 3: 650, 4: 1200} },
+  { id: 'hp',      name: 'Vitality',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
+    baseCost: 120, costGrowth: 1.4, maxLevel: 5, perLevel: 60, overrides: {0: 100, 1: 250, 2: 400, 3: 600, 4: 1000} },
   { id: 'potions', name: 'Travel Pack',    desc: '+2 starting potions (each kind) per level',
     baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 2 },
-  { id: 'regen',   name: 'Mana Spring',    desc: '+1 mana regen per second per level',
-    baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 1 },
+  { id: 'regen',   name: 'Mana Spring',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' mana regen per second per level'; },
+    baseCost: 200, costGrowth: 1.4, maxLevel: 4, perLevel: 2 },
   // ---- A1: THE PILOT'S ENGAGEMENT RADIUS (owner-ordered 2026-09-14) --------
   // Sk408: "the pilot targets enemies that are off the screen even ... have the
   // pilot have a certain distance that they can target enemies, and we can add
@@ -547,16 +572,20 @@ export const SHOP_UPGRADES = [
   { id: 'xp',      name: 'Scholar',        desc: '+20% XP gain per level',
     baseCost: 180, costGrowth: 1.6, maxLevel: 5, perLevel: 0.20 },
   // ---- EXPANSION lines (economy pass) ----
-  { id: 'crit',    name: 'Deadly Aim',     desc: '+6% crit chance per level',
-    baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.06 },
-  { id: 'critdmg', name: 'Deadeye',        desc: '+50% crit damage per level',
-    baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.50 },
-  { id: 'greed',   name: 'Greed',          desc: '+20% gold from runs per level',
-    baseCost: 350, costGrowth: 1.7, maxLevel: 5, perLevel: 0.20 },
+  { id: 'crit',    name: 'Deadly Aim',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit chance per level'; },
+    baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.12 },
+  { id: 'critdmg', name: 'Deadeye',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit damage per level'; },
+    baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.75 },
+  { id: 'greed',   name: 'Greed',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% gold from runs per level'; },
+    baseCost: 350, costGrowth: 1.4, maxLevel: 5, perLevel: 0.20 },
   { id: 'alchemy', name: 'Alchemy',        desc: '+50% potion healing/restore per level',
     baseCost: 280, costGrowth: 1.6, maxLevel: 4, perLevel: 0.50 },
-  { id: 'scav',    name: 'Scavenger',      desc: '+3% potion drop chance per level',
-    baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.03 },
+  { id: 'scav',    name: 'Scavenger',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% potion drop chance per level'; },
+    baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.06 },
   { id: 'artifact', name: 'Starting Artifact', desc: 'Start each run with +2 random weapon levels per level',
     baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 2 },
   // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
@@ -564,7 +593,7 @@ export const SHOP_UPGRADES = [
   // = baseCost x 31 (growth 2.0, 5 levels) = 4,340,000g = 2.87h — inside the
   // 3h cap, and it takes the 10-good-run share to the 36.4% target band.
   { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
-    baseCost: 140000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
+    baseCost: 14000, costGrowth: 2, maxLevel: 5, perLevel: 1 },
   // ---- G17 SLICE 2: THE BREADTH PASS (2026-09-15) ---------------------------
   // Slice 1 measured the catalogue at 19.6h of end-game income against the
   // owner's 60h+ target (shortfall 40.4h = +60,972,047g at the MEASURED
@@ -584,34 +613,41 @@ export const SHOP_UPGRADES = [
   { id: 'fleetfoot', name: 'Fleetfoot',    desc: '+8% move speed per level',
     baseCost: 65000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.08 },
   // TOP rungs (join TOP_TIER_IDS below; full-buy 3,980,000-4,433,000g each):
-  { id: 'briarmail', name: 'Briarmail',    desc: '+10 thorn damage per level, reflected into every touching enemy',
-    baseCost: 133000, costGrowth: 2.0, maxLevel: 5, perLevel: 10 },
+  { id: 'briarmail', name: 'Briarmail',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' thorn damage per level, reflected into every touching enemy'; },
+    baseCost: 13300, costGrowth: 2, maxLevel: 5, perLevel: 10 },
   { id: 'lodestone', name: 'Lodestone',    desc: '+25% pickup radius per level',
     baseCost: 134000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.25 },
   { id: 'hollowpoint', name: 'Hollowpoint', desc: '+1 pierce on volley and boomerang hits per level',
     baseCost: 136000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
   { id: 'ironheart', name: 'Iron Heart',   desc: '+120 max HP per level',
     baseCost: 137000, costGrowth: 2.0, maxLevel: 5, perLevel: 120 },
-  { id: 'hairtrigger', name: 'Hairtrigger', desc: '+12% attack rate per level',
-    baseCost: 139000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.12 },
-  { id: 'headsman', name: 'Headsman',      desc: '+15% all damage per level',
-    baseCost: 141000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.15 },
+  { id: 'hairtrigger', name: 'Hairtrigger',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% attack rate per level'; },
+    baseCost: 139000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.18 },
+  { id: 'headsman', name: 'Headsman',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% all damage per level'; },
+    baseCost: 141000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.33 },
   { id: 'bloodpact', name: 'Blood Pact',   desc: '+2% lifesteal per level',
     baseCost: 143000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.02 },
   { id: 'fanfire',  name: 'Fan Fire',      desc: '+1 volley projectile per level (the volley cap still applies)',
     baseCost: 410000, costGrowth: 2.6, maxLevel: 3, perLevel: 1 },
-  { id: 'deepread', name: 'Deep Read',     desc: '+1 draft offer per level',
-    baseCost: 1650000, costGrowth: 1.6, maxLevel: 2, perLevel: 1 },
-  { id: 'aethertap', name: 'Aether Tap',   desc: '+0.60 mana per kill',
-    baseCost: 3980000, costGrowth: 1, maxLevel: 1, perLevel: 0.60 },
+  { id: 'deepread', name: 'Deep Read',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' draft offer per level'; },
+    baseCost: 165000, costGrowth: 1.6, maxLevel: 2, perLevel: 1 },
+  { id: 'aethertap', name: 'Aether Tap',
+    get desc() { return '+' + this.perLevel.toFixed(2) + ' mana per kill'; },
+    baseCost: 398000, costGrowth: 1, maxLevel: 1, perLevel: 0.60 },
   { id: 'grandelixir', name: 'Grand Elixir', desc: 'Potions heal and restore twice as much',
-    baseCost: 4040000, costGrowth: 1, maxLevel: 1, perLevel: 1.0 },
-  { id: 'deepfont', name: 'Deep Font',     desc: '+3 mana regen per second',
-    baseCost: 4060000, costGrowth: 1, maxLevel: 1, perLevel: 3 },
-  { id: 'eagleeye', name: 'Eagle Eye',     desc: '+12% crit chance',
-    baseCost: 4120000, costGrowth: 1, maxLevel: 1, perLevel: 0.12 },
+    baseCost: 404000, costGrowth: 1, maxLevel: 1, perLevel: 1.0 },
+  { id: 'deepfont', name: 'Deep Font',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' mana regen per second'; },
+    baseCost: 406000, costGrowth: 1, maxLevel: 1, perLevel: 3 },
+  { id: 'eagleeye', name: 'Eagle Eye',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit chance'; },
+    baseCost: 412000, costGrowth: 1, maxLevel: 1, perLevel: 0.12 },
   { id: 'staticfield', name: 'Static Field', desc: 'XP pickups chip nearby enemies',
-    baseCost: 4180000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
+    baseCost: 418000, costGrowth: 1, maxLevel: 1, perLevel: 5 },
   { id: 'laststand', name: 'Last Stand',   desc: 'Revive once per run at 50% max HP',
     baseCost: 4320000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
   // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
@@ -640,14 +676,15 @@ export const SHOP_UPGRADES = [
   // for the (1+x) multiplier rows, not for counts).
   { id: 'split',   name: 'Split Shot',     desc: '+1 volley projectile cap per level',
     baseCost: 400, costGrowth: 1.35, maxLevel: 10, perLevel: 1 },
-  { id: 'slots',   name: 'Weapon Slot',    desc: '+1 weapon slot (start 3, max 6)',
-    baseCost: 5000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
+  { id: 'slots',   name: 'Weapon Slot',
+    get desc() { return '+1 weapon slot (start ' + WEAPON_SLOT_START + ', max ' + MAX_WEAPON_SLOTS + ')'; },
+    baseCost: 3000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
   // G17 slice 1b reprice: the TOP-tier flex at 4,200,000g = 2.78h at the
   // measured end-game rate (1,509,378g/h) = 5.6 good runs — inside the 3h
   // single-item cap and over TOP_TIER_MIN_GOOD_RUNS (5). The old 140,000g
   // was 0.09h.
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Golden HUD + arcade-run modifiers. The late-game flex.',
-    baseCost: 4200000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
+    baseCost: 42000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
   // ---- V1 ESCAPE: the PAID SKIP (owner directive 2026-09-14) ---------------
   // A one-time unlock: skipping the escape normally FORGOES the payout (the
   // "skip = forgo" rule); owning this row lets a veteran skip AND still
@@ -689,8 +726,12 @@ export function hasArcadePass(profile) {
   return (Number(profile.purchased.arcade) || 0) > 0;
 }
 
-// Cost of the NEXT (level+1) purchase. Level 0-based.
+// Cost of the NEXT (level+1) purchase. Level 0-based. A row may carry a
+// sparse `overrides` table ({ level: price }); a listed level pays its
+// override, every other level pays the growth formula.
 export function upgradeCost(def, currentLevel) {
+  const ov = def.overrides?.[currentLevel];
+  if (ov !== undefined) return ov;
   return Math.round(def.baseCost * Math.pow(def.costGrowth, currentLevel));
 }
 

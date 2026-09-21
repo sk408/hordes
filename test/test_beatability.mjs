@@ -115,8 +115,13 @@ console.log('BEATABILITY — developed side (RECORDED measurement, post-1b price
   const budget = Math.round(40 * goldPerHour('maxed'));
   ok(budget === 60375120,
      `hours:40 budget arithmetic: 40h x ${Math.round(goldPerHour('maxed'))}g/h = ${budget}g`);
-  ok(budget < L.total,
-     `G17 slice 2: the budget NO LONGER saturates — ${budget}g < the whole ${L.total}g catalogue (${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income), so the owner's 40h point is a REPRESENTABLE build, distinct from maxed`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the owner in-game cuts shrank the whole
+  // catalogue (95M -> 44,960,367g = 29.8h) BELOW the 40h budget, so the budget
+  // now SATURATES — the hours:40 point buys everything (early-accessibility by
+  // design), and is no longer a build distinct from maxed. The pin's JOB is
+  // unchanged (the budget-vs-catalogue relationship fails loudly on drift).
+  ok(budget >= L.total,
+     `owner retune: the budget now saturates — ${budget}g >= the whole ${L.total}g catalogue (${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income), so the owner's 40h point buys everything`);
   ok(RECORDED.hours40.n >= 1 && Number.isInteger(RECORDED.hours40.mawSlain),
      `recorded hours:40 run exists: n=${RECORDED.hours40.n} seed=${RECORDED.hours40.seed} MAW ${RECORDED.hours40.mawSlain}/${RECORDED.hours40.n} (cmd: ${RECORDED.hours40.cmd}; log: ${RECORDED.hours40.log})`);
   ok(RECORDED.hours40.mawSlain > 0,
@@ -135,8 +140,13 @@ console.log('BEATABILITY — flat-budget overstatement (quantified, item 4b; re-
   const phantom = flat - spent;
   ok(Math.round(phantom) === 1783498,
      `flat 40h budget ${flat}g vs what the shop can sell ${spent}g: ${phantom}g = ${(phantom / goldPerHour('maxed')).toFixed(1)} phantom hours (${(100 * phantom / flat).toFixed(1)}% of the budget is GREEDY remainder) — the pre-breadth 1c run measured 30,849,098g (51.1%) of phantom spend; slice 2 breadth bought those hours with rows`);
-  ok(L.total / goldPerHour('maxed') >= 60 && 40 < L.total / goldPerHour('maxed'),
-     `the catalogue now spans ${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income (> 60h, slice 2 goal), so the owner's 20-40h "lucky" band and 40-50h "regular" band are DISTINCT builds — the 40h point is representable`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the catalogue spans 29.8h now (owner
+  // cuts from 62.8h+), so the 20-40h "lucky" / 40-50h "regular" band distinction
+  // the breadth pass proved no longer applies at these prices — the 40h point
+  // saturates (pinned above). This line pins the LANDED span both ways, so any
+  // further drift fails here.
+  ok(L.total / goldPerHour('maxed') >= 29.5 && L.total / goldPerHour('maxed') <= 30.1,
+     `the catalogue now spans ${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income (band 29.5-30.1h post-owner-retune; the 40h budget saturates it)`);
 }
 
 console.log(failed === 0 ? 'ALL BEATABILITY TESTS PASSED' : `${failed} FAILURES`);

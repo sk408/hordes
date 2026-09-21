@@ -59,10 +59,13 @@ console.log('meta_rank (W7a slice 2): measured marginal value + dilution drift l
 }
 
 // ---- 2. costs reproduce nextCost's formula at level 0 and 1 -----------------
+// OWNER RETUNE: dmg carries overrides {0:125,...}, so level 0 pays the
+// override, not the formula. The invariant is override-then-formula:
+// listed levels pay their table price, unlisted levels pay baseCost*growth^L.
 {
   const dmg = SHOP_UPGRADES.find(d => d.id === 'dmg');
-  const lvl0 = Math.round(dmg.baseCost * Math.pow(dmg.costGrowth, 0));
-  const lvl1 = Math.round(dmg.baseCost * Math.pow(dmg.costGrowth, 1));
+  const lvl0 = dmg.overrides?.[0] ?? Math.round(dmg.baseCost * Math.pow(dmg.costGrowth, 0));
+  const lvl1 = dmg.overrides?.[1] ?? Math.round(dmg.baseCost * Math.pow(dmg.costGrowth, 1));
   console.log(`    dmg: nextCostOf(0)=${nextCostOf(dmg, 0)} formula=${lvl0} upgradeCost=${upgradeCost(dmg, 0)}`);
   console.log(`    dmg: nextCostOf(1)=${nextCostOf(dmg, 1)} formula=${lvl1} upgradeCost=${upgradeCost(dmg, 1)}`);
   assert.strictEqual(nextCostOf(dmg, 0), lvl0);
