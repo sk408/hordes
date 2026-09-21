@@ -90,9 +90,12 @@
     pointer-events: none; z-index: 0;
     image-rendering: pixelated; image-rendering: crisp-edges;
   }
-  /* every content layer sits above the painted frame */
+  /* every content layer sits above the painted frame (the dev sell-back
+     buttons are appended into the card by JS — without this they paint
+     under the opaque plaque and are invisible though in the DOM) */
   .card .name, .card .desc, .card .key, .card .syn,
-  .card canvas.portrait, .card canvas.shop-icon { position: relative; z-index: 1; }
+  .card canvas.portrait, .card canvas.shop-icon,
+  .card button.dev-sell { position: relative; z-index: 1; }
   .card:active { transform: translateY(1px); }
   .card.dim { opacity: 0.45; }
   .card.dim:hover { cursor: default; }
