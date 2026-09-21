@@ -9,7 +9,8 @@
      together), and a weapons section with the same treatment (weapon damage
      + per-level damage curves in an inline per-level table, unified
      normalized graph, per-level dmg overrides, live draft labels reading
-     the edited steps). Never player-facing. -->
+     the edited steps, evolution damageMult column with the evolved curve
+     beside the base curve). Never player-facing. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -135,7 +136,10 @@ damage-only ladder like ZAP plots a single series), overlaid on the shared
 level axis with the same toggleable legend. the table edits the archetype
 base (DAMAGE_MULT), the ladder steps (WEAPON_STEPS — the curve and the draft
 labels move together, no reload) and sparse per-level dmg overrides
-(WEAPON_DMG_OVERRIDES[level] ?? ladder, diamond-marked). everything reads
+(WEAPON_DMG_OVERRIDES[level] ?? ladder, diamond-marked). the evolution bar
+ edits the form's damageMult (src/evolutions.js, same saver path) and the
+graph carries the evolved curve (base x mult, gold series) beside the base
+curve. everything reads
 live from src/weapons.js + src/config.js + WEAPON_PRICES — never copied
 numbers. VOLLEY rides along (its base is CONFIG.WEAPON.DAMAGE, read-only
 here); starter weapons show no unlock price.</div>
@@ -146,6 +150,8 @@ here); starter weapons show no unlock price.</div>
 <div id="wgraphs"></div>
 <div class="bar" id="wbase"></div>
 <div id="wbasemsg" class="msg"></div>
+<div class="bar" id="wevo"></div>
+<div id="wevomsg" class="msg"></div>
 <table id="winline"><thead><tr>
   <th>level</th><th>dmgMult</th><th>dmg override</th><th>damage</th><th>draft label (live)</th>
 </tr></thead><tbody></tbody></table>
@@ -161,6 +167,7 @@ import { CONFIG as GAME_CONFIG } from './src/config.js';
 import { WEAPONS, WEAPON_LEVELS, WEAPON_MAX_LEVEL, WEAPON_NAMES, WEAPON_STEPS,
   WEAPON_DMG_OVERRIDES, weaponLevelParams, describeWeaponLevel, rebuildWeaponTable }
   from './src/weapons.js';
+import { EVOLUTION_DEFS } from './src/evolutions.js';
 
 const $ = (id) => document.getElementById(id);
 const saverBase = () => $('saver').value.replace(/\/+$/, '');
@@ -760,11 +767,18 @@ function wRenderGraphs() {
     wVisFor = wid;
     for (const k of Object.keys(wSeriesVis)) delete wSeriesVis[k];
     wSeriesVis.damage = true;
+    wSeriesVis.evolved = true;
     for (const k of weaponEffectKeys(wid)) wSeriesVis[k] = true;
   }
   const xs = [];
   for (let L = 1; L <= WEAPON_MAX_LEVEL; L++) xs.push(L);
   const dmg = xs.map((L) => weaponDamage(wid, L));
+  // Evolved damage = base per-hit curve x the evolution's one damageMult
+  // affix (src/evolutions.js; neutral x1 when the form carries none).
+  const evoDef = EVOLUTION_DEFS[wid];
+  const evoMult = evoDef && evoDef.affixes.damageMult !== undefined
+    ? evoDef.affixes.damageMult : 1;
+  const evoDmg = dmg.map((d) => d * evoMult);
   const keys = weaponEffectKeys(wid);
   const eff = {};
   for (const k of keys) eff[k] = xs.map((L) => weaponLevelParams(wid, L)[k]);
@@ -773,8 +787,10 @@ function wRenderGraphs() {
     if (WEAPON_DMG_OVERRIDES[wid] && WEAPON_DMG_OVERRIDES[wid][L] !== undefined) marks.add(L);
   }
   const meta = [{ key: 'damage', label: 'damage', color: '#9be28a' }];
+  if (evoDef) meta.push({ key: 'evolved', label: 'evolved x' + evoMult, color: '#ffd75e' });
   keys.forEach((k, i) => meta.push({ key: k, label: k, color: WEAPON_PALETTE[i % WEAPON_PALETTE.length] }));
   const all = { damage: { key: 'damage', xs, pcts: norm100(dmg), color: '#9be28a' } };
+  if (evoDef) all.evolved = { key: 'evolved', xs, pcts: norm100(evoDmg), color: '#ffd75e' };
   keys.forEach((k, i) => {
     all[k] = { key: k, xs, pcts: norm100(eff[k]), color: WEAPON_PALETTE[i % WEAPON_PALETTE.length] };
   });
@@ -796,6 +812,10 @@ function wRenderGraphs() {
     '<div class="raw">unlock: ' + price + '<br>' +
     'damage raw (' + dmgNote + '): ' +
     dmg.map((d, i) => 'L' + (i + 1) + ' ' + (Math.round(d * 100) / 100)).join(', ') +
+    (evoDef
+      ? '<br>evolved raw (' + evoDef.name + ' x' + evoMult + '): ' +
+        evoDmg.map((d, i) => 'L' + (i + 1) + ' ' + (Math.round(d * 100) / 100)).join(', ')
+      : '<br>no evolution defined for this weapon') +
     (keys.length
       ? '<br>' + keys.map((k) => k + ' raw: ' +
         eff[k].map((v, i) => 'L' + (i + 1) + ' ' + (Math.round(v * 10000) / 10000)).join(', ')).join('<br>')
@@ -954,6 +974,112 @@ function renderWBase() {
   });
 }
 
+// ---- section 6d: evolution damageMult ---------------------------------------
+// The evolution column: each evolved form carries one damageMult affix
+// (src/evolutions.js), multiplicative on the base weapon's final damage, so
+// evolved damage = base curve x one number. The bar edits it through the
+// EXISTING saver path (exact-string pair on src/evolutions.js — a tuning
+// file of the same class, backup + syntax gate); the live def object updates
+// in place and the graph (base + evolved series) re-renders — no reload.
+// Forms without a damageMult read neutral x1; saving one inserts it at the
+// front of the affixes, clearing removes it back to neutral. Behaviour flags
+// stay read-only (not this slice).
+function evoMultPair(text, wid, raw) {
+  const def = EVOLUTION_DEFS[wid];
+  if (!def) throw new Error('no evolution defined for ' + wid);
+  const re = new RegExp('(^  ' + escRe(wid) + ': \\{[\\s\\S]*?affixes: \\{ )([^}]*)(\\},)', 'm');
+  const m = text.match(re);
+  if (!m) throw new Error('affixes line for ' + wid + ' not found; refusing to guess');
+  if (text.split(m[0]).length - 1 !== 1)
+    throw new Error('affixes line for ' + wid + ' is ambiguous; refusing to guess');
+  const inner = m[2];
+  const has = /damageMult: [0-9.]+/.test(inner);
+  let newInner;
+  if (raw === null) {
+    if (!has) throw new Error('no damageMult to remove on ' + wid);
+    newInner = inner.replace(/damageMult: [0-9.]+,? ?/, '');
+  } else if (has) {
+    newInner = inner.replace(/damageMult: [0-9.]+/, 'damageMult: ' + raw);
+  } else {
+    newInner = 'damageMult: ' + raw + ', ' + inner;
+  }
+  return { old: m[0], new: m[1] + newInner + m[3] };
+}
+
+function renderWEvo() {
+  const wid = $('witem').value;
+  const bar = $('wevo');
+  bar.innerHTML = '';
+  setMsg($('wevomsg'), true, '');
+  if (!wid || !WEAPON_LEVELS[wid]) return;
+  const def = EVOLUTION_DEFS[wid];
+  if (!def) {
+    bar.innerHTML = '<span class="derived">no evolution defined for this weapon.</span>';
+    return;
+  }
+  const cur = def.affixes.damageMult;
+  bar.innerHTML = '<span class="id">' + def.name + '</span> ' +
+    '<span class="derived">evolved form of ' + wid + ' — flags: ' +
+    def.flags.join(', ') + ' (read-only)</span> ' +
+    '<label>damageMult</label> ' +
+    '<input class="num" id="wevomult" inputmode="decimal" placeholder="x1"> ' +
+    '<button id="wevosave">save</button> <button id="wevoclear">clear</button> ' +
+    '<span class="derived">evolved damage = base curve x damageMult' +
+    (cur === undefined ? '; none set (neutral x1).' : '.') + '</span>';
+  const inp = bar.querySelector('#wevomult');
+  if (cur !== undefined) inp.value = cur;
+  bar.querySelector('#wevosave').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    const raw = inp.value.trim();
+    const nval = Number(raw);
+    if (raw === '' || !Number.isFinite(nval) || nval <= 0) {
+      setMsg($('wevomsg'), false, wid + ': need damageMult > 0');
+      return;
+    }
+    if (nval === cur) {
+      setMsg($('wevomsg'), false, wid + ': nothing changed');
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const text = await sourceText('src/evolutions.js');
+      const pair = evoMultPair(text, wid, raw);
+      const data = await postSave('src/evolutions.js', pair.old, pair.new);
+      delete sourceCache['src/evolutions.js'];
+      def.affixes.damageMult = nval;
+      wRenderGraphs();
+      renderWEvo();
+      setMsg($('wevomsg'), true, wid + ' evolution damageMult saved (x' + raw +
+        '). backup: ' + data.backup + ' — graph re-rendered live, no reload.');
+    } catch (e) {
+      setMsg($('wevomsg'), false, wid + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+  bar.querySelector('#wevoclear').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    if (cur === undefined) {
+      setMsg($('wevomsg'), false, wid + ': no damageMult set (already neutral x1)');
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const text = await sourceText('src/evolutions.js');
+      const pair = evoMultPair(text, wid, null);
+      const data = await postSave('src/evolutions.js', pair.old, pair.new);
+      delete sourceCache['src/evolutions.js'];
+      delete def.affixes.damageMult;
+      wRenderGraphs();
+      renderWEvo();
+      setMsg($('wevomsg'), true, wid + ' evolution damageMult cleared (back to neutral x1). backup: ' +
+        data.backup + ' — graph re-rendered live, no reload.');
+    } catch (e) {
+      setMsg($('wevomsg'), false, wid + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+}
+
 // ---- section 6c: inline per-level dmg table ----------------------------------
 // One row per weapon level: the effective dmgMult, an override input pinning
 // that level through the shared saver, per-hit damage and the live draft
@@ -1026,9 +1152,10 @@ function buildWeaponSection() {
     sel.appendChild(opt);
   }
   sel.value = 'ZAP';
-  sel.addEventListener('change', () => { wRenderGraphs(); renderWBase(); renderWInline(); });
+  sel.addEventListener('change', () => { wRenderGraphs(); renderWBase(); renderWEvo(); renderWInline(); });
   wRenderGraphs();
   renderWBase();
+  renderWEvo();
   renderWInline();
 }
 
@@ -1067,7 +1194,9 @@ buildWeaponSection();
 $('status').textContent = SHOP_UPGRADES.length + ' shop rows, ' +
   Object.keys(WEAPON_PRICES).length + ' weapon prices, ' +
   Object.keys(ELITE_MODIFIERS).length + ' elite costs, ' +
-  Object.keys(WEAPON_LEVELS).length + ' weapon ladders — all live from src/meta.js + src/weapons.js + src/config.js.';
+  Object.keys(WEAPON_LEVELS).length + ' weapon ladders, ' +
+  Object.keys(EVOLUTION_DEFS).length +
+  ' evolutions — all live from src/meta.js + src/weapons.js + src/config.js + src/evolutions.js.';
 </script>
 </body>
 </html>
