@@ -64,6 +64,9 @@ feed sims and LLM balance analysis. Player build never sees any of it.
 - QUEUED: 8x boss-kill sequencing — draft menu sticks over the escape
   sequence and gem-suck-in is skipped at speed (owner report 2026-09-21).
   Substeps blow through frame-paced sequencing; fix owns the ordering.
+- QUEUED: dev draft ban list — ONE OF EACH (and any card by id) excludable
+  from offers via toggle, for autoplay/long-run testing (owner report
+  2026-09-21: auto-play keeps taking it and it harms long runs).
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
