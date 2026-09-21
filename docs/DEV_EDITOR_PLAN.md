@@ -73,6 +73,14 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   also an idle-catcher by design: a reason to stay and pick drafts rather
   than go idle (idle pacing itself is deliberate — never propose instant
   auto-pick).
+- QUEUED: granted-vs-earned accounting — the owner fast-forwards profiles
+  by granting upgrades mid-testing (estimating affordability from run
+  income, e.g. 200k/run). Legitimate methodology, but snapshots must
+  separate GRANTED power from EARNED power: free-build grants logged
+  distinctly (the slice-10 ledger already distinguishes paid vs free per
+  level — carry that into the snapshot as granted_total vs earned_total),
+  or analysis cannot tell a profile that earned 2M from one that was
+  given it.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
