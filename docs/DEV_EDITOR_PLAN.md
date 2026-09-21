@@ -90,7 +90,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   8x sequencing fix (stuck draft menus kill unattended runs) — dispatch
   after it lands. Owner's standing judgment: real-loop autoplay is ground
   truth; analytic sims keep only cheap pre-screening duty, never the
-  verdict.
+  verdict. TWO policies (owner-stated): SMART (priorities + 5-run save-up)
+  and IMPULSIVE (buy whatever is affordable now) — the impulsive buyer
+  models real average-player behavior and is the baseline the smart policy
+  must beat. Both snapshot identically for comparison.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
