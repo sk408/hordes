@@ -1,4 +1,6 @@
-// HORDES — SLICE 7: dev telemetry + run snapshots (gated on `?dev=1` ONLY).
+// HORDES — SLICES 7-8: dev telemetry + run snapshots (gated on `?dev=1` ONLY),
+// plus the dev-run speed control (slice 8: substepped Nx sim, speed-stamped
+// schema_v 2 snapshots).
 //
 // This module is PURE + inert: importing it changes nothing. Every behaviour
 // (overlay, sampling, snapshots, free-build accounting) is armed by main.js
@@ -88,9 +90,17 @@ export function formatGameRev(sha, dirty) {
 // ---------- snapshot schema ---------------------------------------------------
 // Stable, append-only. Readers refuse unknown schema_v; old fields are never
 // renamed (additive evolution only, behind a new schema_v).
-export const SNAPSHOT_SCHEMA_V = 1;
+//
+// SLICE 8 (schema_v 2): the dev-run speed control stamps the speed used as a
+// `speed` field, appended AFTER the slice-7 keys (old fields keep their order
+// and meaning). A fast run snapshots exactly like a 1x run plus this field.
+// The reader accepts schema_v 1 (legacy: no speed required — history is never
+// deleted, so old log lines must stay readable) and 2 (speed required); every
+// other version is refused.
+export const SNAPSHOT_SCHEMA_V = 2;
 export const SNAPSHOT_KEYS = ['schema_v', 'game_rev', 'seed', 'upgrades',
-  'shrines', 'items', 'gold_earned', 'gold_spent', 'damage', 'wave', 'test'];
+  'shrines', 'items', 'gold_earned', 'gold_spent', 'damage', 'wave', 'test',
+  'speed'];
 
 // Build a snapshot with EXACTLY the schema keys (in order). Throws on any
 // missing (or undefined) key so a half-built snapshot can never be saved or
@@ -112,17 +122,19 @@ export function buildSnapshot(fields) {
     damage: f.damage,
     wave: f.wave,
     test: f.test,
+    speed: f.speed,
   };
 }
 
-// Reader-side validation. Refuses unknown schema_v; requires every key with
-// the documented type; IGNORES extra keys (forward-compat: additive fields
-// under a future schema_v must not break this reader's accept path — the
-// version gate is the compatibility mechanism, not key strictness).
+// Reader-side validation. Refuses unknown schema_v (accepts the known ones:
+// 1 legacy, 2 current); requires every key with the documented type; IGNORES
+// extra keys (forward-compat: additive fields under a future schema_v must
+// not break this reader's accept path — the version gate is the compatibility
+// mechanism, not key strictness).
 export function validateSnapshot(obj) {
   const errors = [];
   if (!obj || typeof obj !== 'object') return { ok: false, errors: ['not an object'] };
-  if (obj.schema_v !== SNAPSHOT_SCHEMA_V) {
+  if (obj.schema_v !== 1 && obj.schema_v !== SNAPSHOT_SCHEMA_V) {
     return { ok: false, errors: ['unknown schema_v: ' + String(obj.schema_v)] };
   }
   const need = {
@@ -130,6 +142,10 @@ export function validateSnapshot(obj) {
     items: 'object', gold_earned: 'number', gold_spent: 'number',
     damage: 'number', wave: 'number', test: 'boolean',
   };
+  // The speed field is required at schema_v 2, absent at 1 (legacy lines
+  // predate the speed control). A v1 line carrying speed still validates —
+  // the version gate owns compat, not key strictness.
+  if (obj.schema_v === SNAPSHOT_SCHEMA_V) need.speed = 'number';
   for (const [k, t] of Object.entries(need)) {
     if (!(k in obj)) { errors.push('missing key: ' + k); continue; }
     const v = obj[k];
@@ -167,6 +183,27 @@ export function devArm(sink) { HIT_SINK = sink || null; }
 export function devHit(n) {
   if (HIT_SINK && n > 0 && Number.isFinite(n)) HIT_SINK.dmg += n;
   return n;
+}
+
+// ---------- dev-run speed control (SLICE 8) ------------------------------------
+// Offered multipliers, slowest first. The game runs N sim steps per rendered
+// frame at Nx — substeps with the frame's dt UNCHANGED, never dt*N (large dt
+// breaks the collision/tunneling assumptions the game is tuned around, and
+// 60Hz and 120Hz must both stay correct). Only multipliers that verify clean
+// in the determinism proof belong here; if a higher step diverges, it is cut
+// from this list (the cap is the proof's verdict, not a preference).
+export const DEV_SPEEDS = [1, 2, 4, 8];
+
+// Normalize any stored/arbitrary value to an offered speed (fail closed: 1x).
+export function devNormSpeed(n) {
+  const v = Math.floor(Number(n));
+  return DEV_SPEEDS.includes(v) ? v : 1;
+}
+
+// Cycle 1x -> 2x -> 4x -> 8x -> 1x (the overlay SPEED button drives this).
+export function devNextSpeed(n) {
+  const i = DEV_SPEEDS.indexOf(devNormSpeed(n));
+  return DEV_SPEEDS[(i + 1) % DEV_SPEEDS.length];
 }
 
 // ---------- sparkline painter -------------------------------------------------

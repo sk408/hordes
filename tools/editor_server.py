@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HORDES dev-editor saver backend (slice 2 + slice 7) — stdlib only.
+"""HORDES dev-editor saver backend (slice 2 + slices 7-8) — stdlib only.
 
 Applies exact-string replacements (old/new pairs) to WHITELISTED tuning
 files only (the set in tools/tuning_map.md section 7). Everything else 403.
@@ -16,11 +16,12 @@ Endpoints:
                         "game_rev": "<sha>:clean|dirty"} (slice 7: read live
                         from git at request time; 500 when git is unavailable)
   POST /save        -> {"ok": true, "file": ..., "backup": ..., "replacements": N}
-  POST /snapshot    -> {"ok": true, "lines": N} (slice 7: validates the dev
-                        snapshot schema — schema_v must be 1, all keys present
-                        with the documented types — then appends ONE JSON line
-                        to tools/.snapshots/runs.jsonl, append-only, never
-                        overwritten; the dir is git-ignored)
+  POST /snapshot    -> {"ok": true, "lines": N} (slices 7-8: validates the
+                        dev snapshot schema — schema_v must be 2 (slice 8
+                        adds the `speed` field to the slice-7 keys), all keys
+                        present with the documented types — then appends ONE
+                        JSON line to tools/.snapshots/runs.jsonl, append-only,
+                        never overwritten; the dir is git-ignored)
   GET  /editor.html -> the dev-editor page (static, read-only)
   GET  /src/<name>  -> raw source text of a WHITELISTED file (read-only; the
                         editor fetches this to build exact old/new strings)
@@ -68,12 +69,16 @@ MAX_BODY = 512 * 1024  # 512 KiB is plenty for old/new pair payloads
 MAX_SNAPSHOT_BODY = 64 * 1024  # snapshots are small single-run records
 
 
-# ---------- SLICE 7: snapshot schema + live game_rev --------------------------
+# ---------- SLICE 7-8: snapshot schema + live game_rev --------------------------
 # Mirrors src/dev_telemetry.js (the game validates client-side first; the
 # server re-validates so a corrupt or hand-made line can never enter the log).
-SNAPSHOT_SCHEMA_V = 1
+# Slice 8 bumped schema_v to 2 for the `speed` field (dev-run speed control);
+# the server accepts ONLY the current version — history lives in the log file
+# itself, which is never re-validated.
+SNAPSHOT_SCHEMA_V = 2
 SNAPSHOT_KEYS = ("schema_v", "game_rev", "seed", "upgrades", "shrines",
-                 "items", "gold_earned", "gold_spent", "damage", "wave", "test")
+                 "items", "gold_earned", "gold_spent", "damage", "wave", "test",
+                 "speed")
 
 
 def validate_snapshot(obj):
@@ -87,7 +92,7 @@ def validate_snapshot(obj):
     need = {"game_rev": str, "seed": (int, float), "upgrades": dict,
             "shrines": dict, "items": list, "gold_earned": (int, float),
             "gold_spent": (int, float), "damage": (int, float),
-            "wave": (int, float), "test": bool}
+            "wave": (int, float), "test": bool, "speed": (int, float)}
     for key, types in need.items():
         if key not in obj:
             return False, "missing key: %s" % key
@@ -99,7 +104,7 @@ def validate_snapshot(obj):
         else:
             if isinstance(val, bool) or not isinstance(val, types):
                 return False, "bad type for %s: %s" % (key, type(val).__name__)
-    for key in ("seed", "gold_earned", "gold_spent", "damage", "wave"):
+    for key in ("seed", "gold_earned", "gold_spent", "damage", "wave", "speed"):
         val = obj[key]
         if isinstance(val, float) and (val != val or val in (float("inf"), float("-inf"))):
             return False, "non-finite number for %s" % key

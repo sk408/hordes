@@ -188,10 +188,12 @@ import {
 } from './relief.js';
 // SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
 // import cycle; every behaviour below is armed on ?dev=1 only, gate off =
-// byte-identical player game).
+// byte-identical player game). SLICE 8 adds the substepped speed control
+// (devNormSpeed/devNextSpeed/DEV_SPEEDS) and the speed-stamped snapshot.
 import {
   isDevGate, SNAPSHOT_SCHEMA_V, buildSnapshot,
   devArm, devHit, drawSparkline, fetchGameRev, postSnapshot,
+  DEV_SPEEDS, devNormSpeed, devNextSpeed,
 } from './dev_telemetry.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -1755,6 +1757,9 @@ function resetRampage() {
 //   - Test-run toggle stamps snapshots test:true/false; the kill-switch
 //     (snapshots off) blocks the server write (the explicit download-JSON
 //     card stays available — it is a user action, not an automatic write).
+//   - SLICE 8 speed control: 1x/2x/4x/8x in the overlay (SPEED button,
+//     persisted pref) runs N sim substeps per frame with the frame's dt
+//     UNCHANGED — never dt*N. Snapshots stamp the speed used (schema_v 2).
 //   - Post-run snapshot: exact schema keys via buildSnapshot(), auto-POSTed
 //     append-only to tools/.snapshots/runs.jsonl through the saver backend
 //     (POST <api>/snapshot; game_rev read live via GET <api>/rev).
@@ -1765,17 +1770,33 @@ let devPanel = null;       // overlay DOM, created lazily on the first dev run
 const DEV_LS_TEST = 'hordes_dev_test';
 const DEV_LS_FREE = 'hordes_dev_free';
 const DEV_LS_SNAPOFF = 'hordes_dev_snapoff';
+const DEV_LS_SPEED = 'hordes_dev_speed';
 function devPref(key) {
   try { return prefStorage.getItem(key) === '1'; } catch { return false; }
 }
 function devSetPref(key, on) {
   try { prefStorage.setItem(key, on ? '1' : '0'); } catch { /* shim */ }
 }
+// SLICE 8: the speed pref is a small int string, not a bit — normalized
+// through devNormSpeed so a hand-edited value fails closed to 1x.
+function devPrefSpeed() {
+  try {
+    const raw = prefStorage.getItem(DEV_LS_SPEED);
+    if (raw == null) return 1;
+    return devNormSpeed(Number(raw));
+  } catch { return 1; }
+}
+function devSetSpeedPref(n) {
+  try { prefStorage.setItem(DEV_LS_SPEED, String(devNormSpeed(n))); } catch { /* shim */ }
+}
 function devNewSession() {
   return {
     testRun: devPref(DEV_LS_TEST),
     freeBuild: devPref(DEV_LS_FREE),
     snapshotsOff: devPref(DEV_LS_SNAPOFF),
+    speed: devPrefSpeed(), // SLICE 8: N sim substeps per rendered frame (1 = today)
+    steps: 0,              // SLICE 8: update()/updateFinale() calls this run (the proof seam)
+    stepDt: 0,             // SLICE 8: the dt every substep of the last frame used (never dt*N)
     dmg: 0,                // cumulative damage DEALT (the devHit scalar)
     spentChest: 0,         // COUNTED sink: paid-chest full prices (free or paid)
     spentShrine: 0,        // EXCLUDED sink: shrine full prices (free or paid)
@@ -1873,6 +1894,23 @@ function devEnsurePanel() {
     btns.snap = mkBtn('SNAP', () => dev && !dev.snapshotsOff, () => {
       if (!dev) return; dev.snapshotsOff = !dev.snapshotsOff; devSetPref(DEV_LS_SNAPOFF, dev.snapshotsOff);
     });
+    // SLICE 8: speed control — cycles 1x -> 2x -> 4x -> 8x -> 1x through
+    // devNextSpeed (the offered list lives in dev_telemetry.DEV_SPEEDS, so a
+    // multiplier that fails the determinism proof is cut in ONE place). The
+    // label carries the live value; _paint keeps it honest across runs (the
+    // session restarts per run, re-reading the persisted pref).
+    const spd = document.createElement('button');
+    spd.style.cssText = 'font:10px monospace;margin:0 4px 4px 0;padding:2px 6px;';
+    const paintSpd = () => { spd.textContent = 'SPEED: ' + (((dev && dev.speed) || 1)) + 'x'; };
+    spd.onclick = () => {
+      if (!dev) return;
+      devSetSpeed(devNextSpeed(dev.speed));
+      paintSpd();
+    };
+    spd._paint = paintSpd;
+    paintSpd();
+    box.appendChild(spd);
+    btns.speed = spd;
     const read = document.createElement('div');
     read.id = 'dev-read';
     read.textContent = '...';
@@ -1892,6 +1930,9 @@ function devEnsurePanel() {
 function devPaintPanel() {
   if (!dev || !devPanel) return;
   try {
+    for (const b of Object.values(devPanel.btns)) {
+      if (b && typeof b._paint === 'function') b._paint();
+    }
     const n = dev.series.length;
     const last = n ? dev.series[n - 1] : { earned: 0, spent: 0, dmg: 0 };
     devPanel.read.textContent =
@@ -1899,6 +1940,7 @@ function devPaintPanel() {
       ' · SHRINE ' + dev.spentShrine + ' (excl)' +
       ' · DMG ' + last.dmg +
       ' · WAVE ' + (state.wave.num || 0) +
+      ' · SPEED ' + (((dev && dev.speed) || 1)) + 'x' +
       ' · BEST ' + devBestGold() +
       (dev.testRun ? ' · TEST' : '') + (dev.freeBuild ? ' · FREE' : '') +
       (dev.snapshotsOff ? ' · SNAP-OFF' : '');
@@ -1908,6 +1950,58 @@ function devPaintPanel() {
     ], { ref: devBestGold(), span: 600 });
     drawSparkline(devPanel.cvDmg, [{ data: dev.series.map(s => s.dmg) }], { span: 600 });
   } catch { /* telemetry must never break the frame loop */ }
+}
+// SLICE 8: dev-run speed control — SUBSTEPS, never dt scaling. At Nx the
+// frame runs the sim step N times with the frame's dt UNCHANGED (the same
+// small dt the game is tuned for: no tunneling, and 60Hz/120Hz stay correct
+// because no branch assumes a frame rate). Rendering still runs once per
+// frame — the SIM is what must stay exact. Gate off (or 1x): exactly one
+// step, the historical behaviour (one extra call + one branch).
+//
+// The mode routes PER SUBSTEP, not per frame: a death, draft open,
+// intermission or finale transition mid-frame stops (or reroutes) the
+// remaining substeps exactly as the next frame would have — a fast run can
+// never simulate a dead/frozen mode the 1x run would not.
+function devSimStep(dt) {
+  if (state.mode === 'playing') {
+    if (coachActive() || state.bannerHold > 0 || state.helpMode) return false;
+    update(dt);
+    return true;
+  }
+  if (state.mode === 'finale') { updateFinale(dt); return true; }
+  return false;
+}
+function devSimSteps(dt) {
+  let n = 1;
+  if (DEV_GATE && dev) n = devNormSpeed(dev.speed);
+  let ran = 0;
+  for (let i = 0; i < n; i++) {
+    if (!devSimStep(dt)) break;
+    ran++;
+  }
+  if (dev) { dev.steps += ran; dev.stepDt = dt; }
+}
+// SLICE 8: the flash-drop cooldown clock. Wall-clock at 1x (the shipped 45s
+// guard, untouched); the run's OWN sim-clock at dev speed >1 — state.time,
+// not a parallel accumulator, so the window edges are bitwise identical at
+// every speed (a private float sum would drift by ulps and flip roll
+// evaluation order). devSetSpeed translates the live stamp across a mid-run
+// switch, so changing speed never grants or steals cooldown.
+function devCooldownNow() {
+  if (DEV_GATE && dev && dev.speed > 1) return state.time * 1000;
+  return performance.now();
+}
+function devSetSpeed(n) {
+  if (!dev) return null;
+  const next = devNormSpeed(n);
+  if (dev.speed !== next && state.lastFlashAt != null) {
+    const oldNow = dev.speed > 1 ? state.time * 1000 : performance.now();
+    const newNow = next > 1 ? state.time * 1000 : performance.now();
+    state.lastFlashAt = newNow - (oldNow - state.lastFlashAt);
+  }
+  dev.speed = next;
+  devSetSpeedPref(next);
+  return next;
 }
 // 1 Hz sampler (called from frame() on the wall-clock slot; gate-checked by
 // the caller). Reads scalars into the ring buffer and repaints the panel.
@@ -1928,7 +2022,8 @@ function devFrameTick(nowMs) {
 function devSummaryText(snap) {
   return 'SEED ' + snap.seed + ' · WAVE ' + snap.wave +
     ' · EARNED ' + snap.gold_earned + ' · SPENT ' + snap.gold_spent + ' (invest)' +
-    ' · DMG ' + snap.damage + ' · TEST ' + (snap.test ? 'YES' : 'NO') +
+    ' · DMG ' + snap.damage + ' · SPEED ' + snap.speed + 'x' +
+    ' · TEST ' + (snap.test ? 'YES' : 'NO') +
     ' · REV ' + snap.game_rev +
     ' · POST ' + (dev ? dev.postState : 'none') +
     ' — tap to download JSON';
@@ -1972,6 +2067,7 @@ function devOnRunEnd() {
       damage: Math.round(dev.dmg),
       wave: (state.wave && state.wave.num) | 0,
       test: !!dev.testRun,
+      speed: devNormSpeed(dev.speed),
     });
   } catch (err) {
     dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
@@ -3426,13 +3522,13 @@ function update(dt) {
       if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
       // WAVE-11 FLASH DROPS (loot.js): a rare eligible kill erases EVERY enemy
       // of the weakest trash tier present (elites/bosses/typed untouched).
-      if (shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)) {
+      if (shouldFlashDrop(e, p.stats.luck || 0, devCooldownNow(), state.lastFlashAt, Math.random)) {
         const victims = flashTargets(state.enemies);
         if (victims.length > 0) {
           for (const v of victims) v.hp = 0;   // reaped by the next death pass
           state.effects.push({ kind: 'flash', x: p.x, y: p.y, age: 0, ttl: 0.5 });
           toast(describeFlash(victims[0].typeId));
-          state.lastFlashAt = performance.now();
+          state.lastFlashAt = devCooldownNow();
         }
       }
     }
@@ -11280,17 +11376,19 @@ function mawWithdrew() {
 // 'draft' mode and FREEZES update() mid-sweep (a sweep frozen at 0.25s of 0.45
 // never printed its total; the freeze was the bug). Ticking here on realDt
 // also makes the streak immune to the earned-moment dilation by construction.
-function tickMagnetSweep(realDt) {
+function tickMagnetSweep(sweepDt) {
   const p = state.player;
   if (!p) return;
-  // BOSS-CLEAR SWEEP (msg_01M2R966): ticks on the SAME wall-clock slot and
+  // BOSS-CLEAR SWEEP (msg_01M2R966): ticks on the SAME frame slot and
   // the SAME pull shape as the magnet — the whole freeze-proof argument
   // above applies verbatim (a sweep collecting XP can fire openDraft()
-  // mid-sweep and freeze update(); ticking here on realDt is immune). The
+  // mid-sweep and freeze update(); ticking here every frame is immune). The
   // total is the boss-clear moment's own line, not the magnet's.
+  // SLICE 8: the caller passes paceDt, so at dev speed >1 the sweep covers
+  // the same sim-time as 1x (gate off / 1x: paceDt IS realDt, unchanged).
   if (p.bossSweep > 0) {
-    p.bossSweep -= realDt;
-    const bPull = Math.min(1, realDt * C.BOSS_SWEEP.PULL_RATE);
+    p.bossSweep -= sweepDt;
+    const bPull = Math.min(1, sweepDt * C.BOSS_SWEEP.PULL_RATE);
     for (const arr of [state.gems, state.drops, state.itemDrops]) {
       for (const g of arr) { g.x += (p.x - g.x) * bPull; g.y += (p.y - g.y) * bPull; }
     }
@@ -11309,8 +11407,8 @@ function tickMagnetSweep(realDt) {
     }
   }
   if (!(p.magnetSweep > 0)) return;
-  p.magnetSweep -= realDt;
-  const pull = Math.min(1, realDt * C.MAGNET.PULL_RATE);
+  p.magnetSweep -= sweepDt;
+  const pull = Math.min(1, sweepDt * C.MAGNET.PULL_RATE);
   for (const arr of [state.gems, state.drops, state.itemDrops]) {
     for (const g of arr) { g.x += (p.x - g.x) * pull; g.y += (p.y - g.y) * pull; }
   }
@@ -11338,7 +11436,17 @@ function frame(now) {
   // simulation is this real delta times the earned-moment time scale.
   const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
-  const timeScale = advanceDilation(realDt);
+  // SLICE 8: sim-clock pacing for sim-gating UI holds at dev speed >1. The
+  // draft auto-pick timeout, the token-banner hold and the dilation window
+  // are UX pacing in wall-seconds at 1x; at Nx they decay N× faster in wall
+  // time so they cover the SAME sim-time as a 1x run (a fast run snapshots
+  // like a 1x run). Gate off or 1x: paceDt IS realDt, the historical
+  // behaviour bit-for-bit. Purely presentational timers (flourish ages,
+  // toasts, the magnet sweep, the night watchdog) stay wall-clock
+  // deliberately — pacing the player sees must never depend on a dev pref.
+  const devPace = (DEV_GATE && dev && dev.speed > 1) ? devNormSpeed(dev.speed) : 1;
+  const paceDt = realDt * devPace;
+  const timeScale = advanceDilation(paceDt);
   const dt = realDt * timeScale;
   // The earned-moment flourish decays on WALL-CLOCK time too, so slow-mo
   // stretches the simulation but never the flare itself.
@@ -11369,9 +11477,10 @@ function frame(now) {
   // EVOLUTION TOKEN banner hold: the first token of a run holds the sim for
   // TOKEN_BANNER_SEC. The hold decays on WALL-CLOCK dt (the same rule as the
   // earned-moment flourish and the title reveal above). Frame-rate
-  // independent: 2.5s of real time at 60Hz and at 120Hz.
+  // independent: 2.5s of real time at 60Hz and at 120Hz. SLICE 8: at dev
+  // speed >1 it decays on paceDt (sim-clock — same sim coverage as 1x).
   if (state.bannerHold > 0) {
-    state.bannerHold = Math.max(0, state.bannerHold - realDt);
+    state.bannerHold = Math.max(0, state.bannerHold - paceDt);
   }
   // STUCK-OVERLAY GUARANTEE (owner 2026-09-18, tooltip-stuck addendum: "I
   // killed the boss with a tooltip on screen so now it's just sitting there
@@ -11395,8 +11504,9 @@ function frame(now) {
   }
   // G30 AUTO DRAFT AUTO-PICK: wall-clock countdown on the frame loop ('draft'
   // mode freezes the sim, so this cannot ride update()). Suspend-aware and
-  // AUTO-only; a no-op in every other mode.
-  tickDraftAutoPick(realDt);
+  // AUTO-only; a no-op in every other mode. SLICE 8: at dev speed >1 the
+  // countdown rides paceDt (sim-clock — same sim coverage as 1x).
+  tickDraftAutoPick(paceDt);
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
@@ -11406,9 +11516,10 @@ function frame(now) {
   // SLICE 7: the 1 Hz dev sampler rides the same wall-clock slot (a single
   // gate branch when off; devFrameTick no-ops outside playing/finale).
   if (DEV_GATE) devFrameTick(now);
-  // RSS8: the magnet sweep ticks on the same wall-clock slot (see
-  // tickMagnetSweep — it must keep running while a level-up draft parks the sim).
-  tickMagnetSweep(realDt);
+  // RSS8: the magnet sweep ticks on the same frame slot (see
+  // tickMagnetSweep — it must keep running while a level-up draft parks the
+  // sim). SLICE 8: paceDt at dev speed >1 (same sim coverage as 1x).
+  tickMagnetSweep(paceDt);
   // v10 milestone chest: the collection burst ages on this same wall-clock
   // slot (mode 'burst' freezes the sim — the shower would never age on dt).
   tickChestBurst(realDt);
@@ -11473,8 +11584,8 @@ function frame(now) {
     // update() here any more, and no transient DOM overlay exists in play.
     // HELP MODE: the pause is the player's own invitation (their "?" armed
     // it) — same freeze, and leaving resumes the clock without a trace.
-    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) update(dt);
-  } else if (state.mode === 'finale') updateFinale(dt);
+    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) devSimSteps(dt);
+  } else if (state.mode === 'finale') devSimSteps(dt);
   renderer.render(state, state.cam);
   drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
   drawHud();
@@ -11818,6 +11929,11 @@ export const __TEST = {
     onRunEnd: () => devOnRunEnd(),
     download: (s) => devDownload(s || (dev && dev.snapshot)),
     buyChest: (tier) => buyPaidChest(tier),
+    // SLICE 8: speed control seam — the offered list plus the ONE setter the
+    // overlay button drives (normalized, persisted, flash-clock translated;
+    // null with the gate off). Never read by the browser page.
+    speeds: DEV_SPEEDS,
+    setSpeed: (n) => devSetSpeed(n),
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,

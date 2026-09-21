@@ -14,7 +14,7 @@ import { boot } from './_harness.mjs';
 
 function validFields() {
   return {
-    schema_v: 1,
+    schema_v: 2,
     game_rev: 'abc123:dirty',
     seed: 42,
     upgrades: { purchased: { dmg: 1 } },
@@ -25,6 +25,7 @@ function validFields() {
     damage: 1000,
     wave: 3,
     test: false,
+    speed: 1,
   };
 }
 
@@ -63,7 +64,7 @@ function validFields() {
 // ---- snapshot validation: refuse unknown schema_v -------------------------------
 {
   assert.equal(validateSnapshot(buildSnapshot(validFields())).ok, true, 'valid snapshot validates');
-  const badVer = { ...validFields(), schema_v: 2 };
+  const badVer = { ...validFields(), schema_v: 999 };
   const rVer = validateSnapshot(badVer);
   assert.equal(rVer.ok, false, 'unknown schema_v refused');
   assert.match(rVer.errors.join(';'), /schema_v/, 'refusal names schema_v');
