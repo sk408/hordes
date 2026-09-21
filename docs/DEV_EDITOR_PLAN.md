@@ -52,6 +52,11 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   offered/taken, blessings, shrines, chests) + live mode/modifiers
   (night + banking-penalty-50 read off run flags) + overlay docked left
   and collapsible; suite identical 154/13. Committed as `3aba512`.
+- Slice 10 (opencode/muse-spark): dev-run shop buy-back — per-level
+  exact-refund ledger (override-aware, LIFO), free/paid mix rule read off
+  the ledger never the live flag, removals journaled in snapshots, stats
+  recomputed; proven to the gold with byte-identical restore; suite
+  156/13 identical. Committed as `a00defc`.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
