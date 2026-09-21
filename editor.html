@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <!-- HORDES dev tooling — NOT linked from the game UI. Local tuning editor:
-     section ONE only (shop prices). Reads live values from the game's own
-     config modules (src/meta.js) and saves through tools/editor_server.py
-     (exact-string old/new pairs, localhost only). Never player-facing. -->
+     shop prices (live from the game's own config modules in src/meta.js,
+     saved through tools/editor_server.py as exact-string old/new pairs),
+     cost/damage graphs per shop item, and per-level cost overrides.
+     Never player-facing. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -25,6 +26,8 @@
   input { background: #0e0e16; color: var(--ink); border: 1px solid var(--line);
           border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 13px; }
   input.num { width: 90px; }
+  select { background: #0e0e16; color: var(--ink); border: 1px solid var(--line);
+          border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 13px; }
   button { background: #2a2113; color: var(--gold); border: 1px solid var(--gold-dim);
            border-radius: 3px; padding: 3px 10px; font: inherit; font-size: 13px;
            cursor: pointer; }
@@ -40,6 +43,16 @@
   .msg { font-size: 12px; min-height: 18px; margin-top: 4px; }
   .msg.ok { color: #9be28a; }
   .msg.err { color: #ff8a8a; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 4px; padding: 10px 12px; margin-bottom: 16px;
+          max-width: 980px; }
+  .panel h3 { color: var(--ink); font-size: 13px; letter-spacing: 1px;
+          margin: 0 0 8px; font-weight: normal; }
+  .panel h3 .warn { color: #ff9d5e; }
+  .raw { color: #6a6a8a; font-size: 12px; margin-top: 6px; }
+  .measured { color: var(--dim); font-size: 12px; margin-top: 6px;
+          border-top: 1px dashed var(--line); padding-top: 6px; }
+  svg text { font-family: monospace; }
   #status { margin-top: 20px; font-size: 12px; }
 </style>
 </head>
@@ -75,10 +88,32 @@ generated — their prices live in sections 2 and 3 below.</div>
 </tr></thead><tbody></tbody></table>
 <div id="elitesmsg" class="msg"></div>
 
+<h2>4 · COST / DAMAGE GRAPHS (per shop item)</h2>
+<div class="sub">each curve normalized to percent-of-own-max, sharing the level
+axis (level = owned levels for damage, current level = price of the next level
+for cost). damage is the live damage stat (damage x damageMult) from
+applyMetaBonuses in src/meta.js — never copied numbers. a flat damage line
+means this item does not move the damage stat.</div>
+<div class="bar">
+  <label for="gitem">shop item</label>
+  <select id="gitem"></select>
+</div>
+<div id="graphs"></div>
+
+<h2>5 · PER-LEVEL COST OVERRIDES</h2>
+<div class="sub">sparse table consulted as overrides[level] ?? formula. empty =
+formula. saved as a literal overrides source fragment through the saver
+(exact-string pair, timestamped backup).</div>
+<table id="overrides"><thead><tr>
+  <th>level</th><th>formula price</th><th>override</th><th></th>
+</tr></thead><tbody></tbody></table>
+<div id="overridesmsg" class="msg"></div>
+
 <div id="status" class="msg"></div>
 
 <script type="module">
-import { SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS, SHOP_BY_ID, upgradeCost }
+import { SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS, SHOP_BY_ID, upgradeCost,
+  applyMetaBonuses }
   from './src/meta.js';
 
 const $ = (id) => document.getElementById(id);
@@ -115,8 +150,11 @@ async function postSave(file, oldStr, newStr) {
 function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 // Exact row-object literal for a SHOP_UPGRADES id, from live source text.
+// Allows one level of nested braces so a row carrying an `overrides: {...}`
+// table still matches as a single literal.
 function rowLiteral(text, id) {
-  const re = new RegExp('\\{[^{}]*id: ' + "'" + escRe(id) + "'" + '[^{}]*\\}', 'g');
+  const re = new RegExp("\\{[^{}]*id: '" + escRe(id) +
+    "'(?:[^{}]|\\{[^{}]*\\})*\\}", 'g');
   return text.match(re) || [];
 }
 
@@ -272,6 +310,191 @@ function buildElites() {
   }
 }
 
+// ---- section 4: cost/damage graphs ------------------------------------------
+// Damage comes from the item's perLevel effect evaluated per level through
+// the game's own applyMetaBonuses — never copy-pasted numbers. The seed only
+// carries fields the bonus pass reads off stats; every curve is normalized to
+// percent-of-own-max, so the seed values cancel out.
+const GRAPH_BASE_STATS = { damage: 10, maxHp: 100, maxMana: 100 };
+function graphDamage(id, level) {
+  const out = applyMetaBonuses(GRAPH_BASE_STATS, { [id]: level });
+  return out.damage * (out.damageMult || 1);
+}
+
+function norm100(arr) {
+  const m = Math.max.apply(null, arr.concat([0]));
+  return m > 0 ? arr.map((v) => v / m * 100) : arr.map(() => 0);
+}
+
+// Single SVG line chart over level axis 0..xMax. mark = Set of x levels drawn
+// as diamonds (override prices) instead of dots.
+function chartSVG(xs, pcts, color, xMax, mark) {
+  const W = 620, H = 170, pL = 46, pR = 12, pT = 10, pB = 22;
+  const X = (l) => pL + (xMax > 0 ? (l / xMax) * (W - pL - pR) : 0);
+  const Y = (v) => H - pB - (v / 100) * (H - pT - pB);
+  let s = '';
+  for (const g of [0, 50, 100]) {
+    s += '<line x1="' + pL + '" y1="' + Y(g) + '" x2="' + (W - pR) +
+      '" y2="' + Y(g) + '" stroke="#2a2a3a" stroke-width="1"/>';
+    s += '<text x="' + (pL - 5) + '" y="' + (Y(g) + 4) +
+      '" fill="#6a6a8a" font-size="10" text-anchor="end">' + g + '%</text>';
+  }
+  for (let l = 0; l <= xMax; l++) {
+    s += '<text x="' + X(l) + '" y="' + (H - 6) +
+      '" fill="#6a6a8a" font-size="10" text-anchor="middle">L' + l + '</text>';
+  }
+  s += '<polyline points="' + xs.map((l, i) => X(l).toFixed(1) + ',' +
+    Y(pcts[i]).toFixed(1)).join(' ') + '" fill="none" stroke="' + color +
+    '" stroke-width="2"/>';
+  xs.forEach((l, i) => {
+    const cx = X(l), cy = Y(pcts[i]);
+    if (mark && mark.has(l)) {
+      s += '<rect x="' + (cx - 4.5) + '" y="' + (cy - 4.5) +
+        '" width="9" height="9" transform="rotate(45 ' + cx + ' ' + cy +
+        ')" fill="#ff9d5e" stroke="#0b0b12" stroke-width="1"/>';
+    } else {
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="3.5" fill="' + color + '"/>';
+    }
+  });
+  return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H +
+    '" style="max-width:100%;background:#0e0e16;border:1px solid var(--line);' +
+    'border-radius:4px">' + s + '</svg>';
+}
+
+function fmtGold(v) {
+  return (Math.round(v * 100) / 100) + 'g';
+}
+
+function renderGraphs() {
+  const def = SHOP_BY_ID[$('gitem').value];
+  const box = $('graphs');
+  if (!def) { box.innerHTML = ''; return; }
+  const maxL = def.maxLevel;
+  const cost = [];
+  for (let L = 0; L < maxL; L++) cost.push(upgradeCost(def, L));
+  const dmg = [];
+  for (let l = 0; l <= maxL; l++) dmg.push(graphDamage(def.id, l));
+  // Damage-per-gold: cumulative spend to reach owned level l vs damage at l.
+  // L0 spends nothing, so the curve starts at L1.
+  const dpgX = [], dpg = [];
+  let cum = 0;
+  for (let l = 1; l <= maxL; l++) { cum += cost[l - 1]; dpgX.push(l); dpg.push(dmg[l] / cum); }
+  const marks = new Set();
+  cost.forEach((_, L) => { if (def.overrides && def.overrides[L] !== undefined) marks.add(L); });
+  const costNote = marks.size
+    ? 'diamond markers = per-level override prices'
+    : 'pure formula curve (no overrides on this item)';
+  const panel = (title, warn, svg, raw) =>
+    '<div class="panel"><h3>' + title + (warn ? ' <span class="warn">' + warn + '</span>' : '') +
+    '</h3>' + svg + '<div class="raw">' + raw + '</div>' +
+    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>';
+  box.innerHTML =
+    panel('cost by level — % of own max (' + costNote + ')', '',
+      chartSVG(cost.map((_, L) => L), norm100(cost), '#ffd75e', maxL, marks),
+      'raw: ' + cost.map((c, L) => 'L' + L + ' ' + fmtGold(c)).join(', ')) +
+    panel('damage by level — % of own max', '',
+      chartSVG(dmg.map((_, l) => l), norm100(dmg), '#9be28a', maxL, null),
+      'raw: ' + dmg.map((d, l) => 'L' + l + ' ' + (Math.round(d * 100) / 100)).join(', ')) +
+    panel('damage-per-gold by level — % of own max', 'DESCRIPTIVE ONLY',
+      chartSVG(dpgX, norm100(dpg), '#8ab4ff', maxL, null),
+      'raw: ' + dpg.map((d, i) => 'L' + dpgX[i] + ' ' + d.toPrecision(4) + '/g').join(', ')) +
+    '<div class="sub">damage-per-gold is descriptive only: it carries the ' +
+    'income feedback loop (income scales with build power), never a fairness verdict.</div>';
+}
+
+// ---- section 5: per-level cost overrides ------------------------------------
+function formulaPrice(def, L) {
+  return Math.round(def.baseCost * Math.pow(def.costGrowth, L));
+}
+
+// Build the new row literal carrying the given sparse table ({level: price}).
+// Empty table removes the overrides fragment; a row without one gains it.
+function withOverrides(literal, table) {
+  const keys = Object.keys(table).map(Number).sort((a, b) => a - b);
+  if (/overrides: \{[^}]*\}/.test(literal)) {
+    if (!keys.length) return literal.replace(/,?\s*overrides: \{[^}]*\}/, '');
+    return literal.replace(/overrides: \{[^}]*\}/,
+      'overrides: {' + keys.map((k) => k + ': ' + table[k]).join(', ') + '}');
+  }
+  if (!keys.length) throw new Error('no overrides to write and none present');
+  return literal.replace(/\s*\}$/,
+    ', overrides: {' + keys.map((k) => k + ': ' + table[k]).join(', ') + '} }');
+}
+
+function renderOverrides() {
+  const def = SHOP_BY_ID[$('gitem').value];
+  const tb = document.querySelector('#overrides tbody');
+  tb.innerHTML = '';
+  if (!def) return;
+  if (def.kind) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4" class="derived">generated row — its price lives ' +
+      'in section 2/3, so per-level overrides do not apply.</td>';
+    tb.appendChild(tr);
+    return;
+  }
+  for (let L = 0; L < def.maxLevel; L++) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="id">L' + L + '</td><td></td>' +
+      '<td><input class="num" inputmode="numeric" placeholder="formula"></td>' +
+      '<td class="derived"></td>';
+    tr.children[1].textContent = fmtGold(formulaPrice(def, L));
+    const inp = tr.querySelector('input');
+    if (def.overrides && def.overrides[L] !== undefined) {
+      inp.value = def.overrides[L];
+      tr.children[3].textContent = 'override';
+    }
+    tb.appendChild(tr);
+  }
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td colspan="4"><button>save overrides</button> ' +
+    '<span class="derived">empty inputs fall back to the formula; clearing every ' +
+    'input removes the table.</span></td>';
+  tr.querySelector('button').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    const inputs = Array.from(tb.querySelectorAll('input'));
+    const table = {};
+    for (let L = 0; L < inputs.length; L++) {
+      const raw = inputs[L].value.trim();
+      if (!raw) continue;
+      const nval = Number(raw);
+      if (!Number.isFinite(nval) || nval < 0) {
+        setMsg($('overridesmsg'), false, def.id + ' L' + L + ': need price >= 0 or empty');
+        return;
+      }
+      table[L] = nval;
+    }
+    btn.disabled = true;
+    try {
+      const text = await sourceText('src/meta.js');
+      const hits = rowLiteral(text, def.id);
+      if (hits.length !== 1) throw new Error('row literal for ' + def.id +
+        ' found ' + hits.length + ' times; refusing to guess');
+      const data = await postSave('src/meta.js', hits[0], withOverrides(hits[0], table));
+      setMsg($('overridesmsg'), true, def.id + ' overrides saved. backup: ' + data.backup +
+        ' — reload to see live values.');
+    } catch (e) {
+      setMsg($('overridesmsg'), false, def.id + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+  tb.appendChild(tr);
+}
+
+function buildGraphSection() {
+  const sel = $('gitem');
+  for (const def of SHOP_UPGRADES) {
+    const opt = document.createElement('option');
+    opt.value = def.id;
+    opt.textContent = def.id + ' — ' + def.name;
+    sel.appendChild(opt);
+  }
+  sel.value = 'dmg';
+  sel.addEventListener('change', () => { renderGraphs(); renderOverrides(); });
+  renderGraphs();
+  renderOverrides();
+}
+
 $('health').addEventListener('click', async () => {
   try {
     const res = await fetch(saverBase() + '/health');
@@ -287,6 +510,7 @@ $('health').addEventListener('click', async () => {
 buildRows();
 buildWeapons();
 buildElites();
+buildGraphSection();
 $('status').textContent = SHOP_UPGRADES.length + ' shop rows, ' +
   Object.keys(WEAPON_PRICES).length + ' weapon prices, ' +
   Object.keys(ELITE_MODIFIERS).length + ' elite costs — all live from src/meta.js.';

@@ -487,6 +487,13 @@ const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 // ROW SHAPE (hb1 renders; WAVE-11 extension in bold):
 //   { id, name, desc, baseCost, costGrowth, maxLevel, perLevel }
 //       classic stat/slot line — level-tracked in profile.purchased.
+//   { ..., overrides: { level: price } }
+//       OPTIONAL sparse per-level cost table (slice 3, dev-editor graphs).
+//       upgradeCost() consults `overrides[currentLevel] ?? formula`, so a row
+//       can shape its curve (cheap early hook, prestige capstone) without
+//       turning every level into a number. Levels NOT listed fall back to the
+//       formula. No row carries overrides yet — behaviour is byte-identical
+//       until one does.
 //   { ..., kind: 'weapon', weaponId }
 //       single-purchase WEAPON unlock row (costGrowth 1, maxLevel 1,
 //       perLevel 0). Ownership lives in profile.unlockedWeapons — NOT in
@@ -689,8 +696,12 @@ export function hasArcadePass(profile) {
   return (Number(profile.purchased.arcade) || 0) > 0;
 }
 
-// Cost of the NEXT (level+1) purchase. Level 0-based.
+// Cost of the NEXT (level+1) purchase. Level 0-based. A row may carry a
+// sparse `overrides` table ({ level: price }); a listed level pays its
+// override, every other level pays the growth formula.
 export function upgradeCost(def, currentLevel) {
+  const ov = def.overrides?.[currentLevel];
+  if (ov !== undefined) return ov;
   return Math.round(def.baseCost * Math.pow(def.costGrowth, currentLevel));
 }
 
