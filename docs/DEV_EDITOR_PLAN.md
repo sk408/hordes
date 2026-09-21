@@ -39,6 +39,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   curves, live labels, override support, proof both directions with
   byte-identical restore; red-list strictly shrank on its tree.
   Committed as `1fca882`.
+- Slice 6b (opencode/muse-spark): evolution `damageMult` column with
+  evolved curve beside base, saver path extended to `src/evolutions.js`,
+  proven 1.3→1.4→1.3 byte-identical; red-list identical (8 pre-existing).
+  Committed as `97df1b7`.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
