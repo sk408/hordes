@@ -640,7 +640,11 @@ function updateSeeker(state, weapon, dt) {
         x: p.x, y: p.y,
         ang: base + spread,
         target,                               // may die mid-flight -> retarget
-        damage: p.stats.damage * W.DAMAGE_MULT * dmgScale(state) * evoDmg(weapon),
+        // SLICE 6 (dev-editor): the ladder dmgMult rides the spawn damage
+        // like every other archetype, so per-level dmg overrides are real
+        // here too. The SEEKER ladder carries no dmgMult, so (P.dmgMult||1)
+        // is 1 and default behaviour is byte-identical.
+        damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
         age: 0, trail: [], gen: 0,
       });
     }
@@ -881,87 +885,153 @@ function buildLevels(count, step) {
   return rows;
 }
 
-export const WEAPON_LEVELS = {
+// ---------- SLICE 6 (dev-editor): per-level step constants ------------------
+// Every number the WEAPON_LEVELS ladders below step by lives HERE, and every
+// level label that quotes one of those numbers is built from the same
+// constant (slice-5 live-template rule: editing the step moves the damage
+// curve AND the draft card text together — verified by
+// test/test_weapon_overrides.mjs). Labels use string concatenation (never
+// template literals) so each step stays a single literal on its own line,
+// which is what the dev-editor's exact-line saver edits. Labels that describe
+// a structural rule rather than a scalar (+1 blade/missile/pierce grants,
+// +arc width, +turn rate, +radius) carry no numeric literal to duplicate, so
+// they stay literal — only their %/radius/width/blast companions are templated.
+// Percent steps are FRACTIONS (0.15 -> '15'); stepPct renders them.
+function stepPct(v) {
+  return String(Math.round(Number(v) * 100));
+}
+
+export const WEAPON_STEPS = {
+  VOLLEY: { DMG: 0.2 },
+  ORBIT: { DMG: 0.15, RADIUS: 4 },
+  BOOMERANG: { DMG: 0.2, SPEED: 0.12 },
+  ZAP: { DMG: 0.15 },
+  NOVA_PULSE: { DMG: 0.15, RADIUS: 6 },
+  SCYTHE: { DMG: 0.15, ARC: 0.12 },
+  SEEKER: { TURN: 0.4 },
+  MINE: { DMG: 0.2, BLAST: 4 },
+  BEAM: { DMG: 0.15, WIDTH: 2 },
+};
+
+// Per-weapon ladder builders, factored out of WEAPON_LEVELS so the dev-editor
+// can re-run one weapon's builder after a step edit (rebuildWeaponTable
+// below) — the game itself builds each table once at import. Behaviour is
+// byte-identical to the inline closures these replace.
+export const WEAPON_LADDERS = {
   // VOLLEY is leveled here but FIRED by main.js, which caps total projectiles
   // at CONFIG.WEAPON.MAX_PROJECTILES=3 and converts each "+1 projectile"
   // grant into +20% damage instead — so the Lv3/Lv6 labels say that. The
   // proj DATA is kept (+1 at Lv3/Lv6) because main.js reads it for the
   // damage conversion (1 + 0.2 * proj).
-  VOLLEY: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
+  VOLLEY: (L, c) => {
     if (L === 1) { c.dmgMult = 1; c.proj = 0; return 'Base volley'; }
-    if (L === 3 || L === 6) { c.proj += 1; return '+20% damage'; }
-    c.dmgMult += 0.2;
-    return '+20% damage';
-  }),
+    if (L === 3 || L === 6) { c.proj += 1; return '+' + stepPct(WEAPON_STEPS.VOLLEY.DMG) + '% damage'; }
+    c.dmgMult += WEAPON_STEPS.VOLLEY.DMG;
+    return '+' + stepPct(WEAPON_STEPS.VOLLEY.DMG) + '% damage';
+  },
   // +1 blade every even level, +radius and +15% damage every level past 1.
-  ORBIT: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
+  ORBIT: (L, c) => {
     c.blades = 1 + Math.floor(L / 2);
-    c.radius = WEAPONS.ORBIT.RADIUS + 4 * (L - 1);
-    c.dmgMult = 1 + 0.15 * (L - 1);
+    c.radius = WEAPONS.ORBIT.RADIUS + WEAPON_STEPS.ORBIT.RADIUS * (L - 1);
+    c.dmgMult = 1 + WEAPON_STEPS.ORBIT.DMG * (L - 1);
     if (L === 1) return 'Base orbit blade';
-    return L % 2 === 0 ? `+1 blade (total ${c.blades}), +radius, +15% damage`
-                       : '+radius, +15% damage';
-  }),
+    return L % 2 === 0 ? '+1 blade (total ' + c.blades + '), +radius, +' + stepPct(WEAPON_STEPS.ORBIT.DMG) + '% damage'
+                       : '+radius, +' + stepPct(WEAPON_STEPS.ORBIT.DMG) + '% damage';
+  },
   // +20% damage, +12% flight speed per level; +1 pierce at Lv3/Lv5/Lv7.
-  BOOMERANG: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.dmgMult = 1 + 0.2 * (L - 1);
-    c.speedMult = 1 + 0.12 * (L - 1);
+  BOOMERANG: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.BOOMERANG.DMG * (L - 1);
+    c.speedMult = 1 + WEAPON_STEPS.BOOMERANG.SPEED * (L - 1);
     c.pierceBonus = Math.floor((L - 1) / 2);
     if (L === 1) return 'Base boomerang';
-    return L % 2 === 1 ? '+20% damage, +12% speed, +1 pierce'
-                       : '+20% damage, +12% speed';
-  }),
+    return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed, +1 pierce'
+                       : '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed';
+  },
   // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the +1 chain jump per
   // even level is RETIRED — count growth is the 'zapchain' SHOP row's job
   // (meta.js Storm Conduit: uncapped count + hop range per level). The ladder
   // is damage-only now, so a level-8 zap still hits exactly COUNT=3 enemies
   // per fire unless the shop row is bought. This is a real nerf to the old
   // L8 ladder (8 enemies -> 3) and is reported as such, not compensated here.
-  ZAP: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.dmgMult = 1 + 0.15 * (L - 1);
+  ZAP: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.ZAP.DMG * (L - 1);
     if (L === 1) return 'Base chain zap';
-    return '+15% damage';
-  }),
+    return '+' + stepPct(WEAPON_STEPS.ZAP.DMG) + '% damage';
+  },
   // +6 radius and +15% damage per level past 1.
-  NOVA_PULSE: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.radius = WEAPONS.NOVA_PULSE.RADIUS + 6 * (L - 1);
-    c.dmgMult = 1 + 0.15 * (L - 1);
-    return L === 1 ? 'Base nova pulse' : '+6 radius, +15% damage';
-  }),
+  NOVA_PULSE: (L, c) => {
+    c.radius = WEAPONS.NOVA_PULSE.RADIUS + WEAPON_STEPS.NOVA_PULSE.RADIUS * (L - 1);
+    c.dmgMult = 1 + WEAPON_STEPS.NOVA_PULSE.DMG * (L - 1);
+    return L === 1 ? 'Base nova pulse' : '+' + WEAPON_STEPS.NOVA_PULSE.RADIUS + ' radius, +' + stepPct(WEAPON_STEPS.NOVA_PULSE.DMG) + '% damage';
+  },
   // +0.12 rad arc width and +15% damage per level past 1.
-  SCYTHE: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.arc = WEAPONS.SCYTHE.ARC + 0.12 * (L - 1);
-    c.dmgMult = 1 + 0.15 * (L - 1);
-    return L === 1 ? 'Base scythe' : '+arc width, +15% damage';
-  }),
+  SCYTHE: (L, c) => {
+    c.arc = WEAPONS.SCYTHE.ARC + WEAPON_STEPS.SCYTHE.ARC * (L - 1);
+    c.dmgMult = 1 + WEAPON_STEPS.SCYTHE.DMG * (L - 1);
+    return L === 1 ? 'Base scythe' : '+arc width, +' + stepPct(WEAPON_STEPS.SCYTHE.DMG) + '% damage';
+  },
   // +1 missile every even level, +0.4 rad/s turn per level.
-  SEEKER: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
+  SEEKER: (L, c) => {
     c.count = 1 + Math.floor(L / 2);
-    c.turn = WEAPONS.SEEKER.TURN + 0.4 * (L - 1);
+    c.turn = WEAPONS.SEEKER.TURN + WEAPON_STEPS.SEEKER.TURN * (L - 1);
     if (L === 1) return 'Base seeker missile';
-    return L % 2 === 0 ? `+1 missile (total ${c.count}), +turn rate` : '+turn rate';
-  }),
+    return L % 2 === 0 ? '+1 missile (total ' + c.count + '), +turn rate' : '+turn rate';
+  },
   // +20% damage and +4 blast radius per level past 1.
-  MINE: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.dmgMult = 1 + 0.2 * (L - 1);
-    c.blast = WEAPONS.MINE.BLAST + 4 * (L - 1);
-    return L === 1 ? 'Base mine layer' : '+20% damage, +4 blast radius';
-  }),
+  MINE: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.MINE.DMG * (L - 1);
+    c.blast = WEAPONS.MINE.BLAST + WEAPON_STEPS.MINE.BLAST * (L - 1);
+    return L === 1 ? 'Base mine layer' : '+' + stepPct(WEAPON_STEPS.MINE.DMG) + '% damage, +' + WEAPON_STEPS.MINE.BLAST + ' blast radius';
+  },
   // +2 beam width and +15% damage per level past 1.
-  BEAM: buildLevels(WEAPON_MAX_LEVEL, (L, c) => {
-    c.width = WEAPONS.BEAM.WIDTH + 2 * (L - 1);
-    c.dmgMult = 1 + 0.15 * (L - 1);
-    return L === 1 ? 'Base beam' : '+2 width, +15% damage';
-  }),
+  BEAM: (L, c) => {
+    c.width = WEAPONS.BEAM.WIDTH + WEAPON_STEPS.BEAM.WIDTH * (L - 1);
+    c.dmgMult = 1 + WEAPON_STEPS.BEAM.DMG * (L - 1);
+    return L === 1 ? 'Base beam' : '+' + WEAPON_STEPS.BEAM.WIDTH + ' width, +' + stepPct(WEAPON_STEPS.BEAM.DMG) + '% damage';
+  },
 };
 
+export const WEAPON_LEVELS = Object.fromEntries(
+  Object.entries(WEAPON_LADDERS).map(([id, step]) => [id, buildLevels(WEAPON_MAX_LEVEL, step)]));
+
+// ---------- SLICE 6 (dev-editor): sparse per-level DAMAGE overrides ---------
+// WEAPON_DMG_OVERRIDES maps weaponId -> { level: dmgMult } (levels 1-based,
+// like the draft cards). weaponLevelParams() consults
+// `WEAPON_DMG_OVERRIDES[weaponId]?.[level] ?? formula`, so a weapon can shape
+// its damage curve (cheap early hook, prestige capstone) without turning
+// every level into a number. Levels NOT listed fall back to the WEAPON_LEVELS
+// formula. Empty = byte-identical behaviour (pinned by
+// test/test_weapon_overrides.mjs). The draft labels do NOT reflect overrides
+// (same caveat as shop cost overrides vs shop descs); the editor marks
+// overridden levels with diamonds on the graph.
+export const WEAPON_DMG_OVERRIDES = {
+};
+
+// Rebuild one weapon's level table from the current WEAPON_STEPS (dev-editor
+// slice 6): a step edit lands in the steps table, then this re-runs the
+// game's OWN ladder builder, so WEAPON_LEVELS, weaponLevelParams and the
+// draft labels move together with no page reload and no duplicated math.
+// Gameplay never calls it (tables build once at import); the editor calls it
+// after a step save. Returns false for unknown ids.
+export function rebuildWeaponTable(weaponId) {
+  const step = WEAPON_LADDERS[weaponId];
+  if (!step) return false;
+  WEAPON_LEVELS[weaponId] = buildLevels(WEAPON_MAX_LEVEL, step);
+  return true;
+}
+
 // Cumulative parameters for (weaponId, level). Clamps level to 1..MAX.
-// Unknown ids get neutral params so callers can apply it blindly.
+// Unknown ids get neutral params so callers can apply it blindly. A level
+// listed in WEAPON_DMG_OVERRIDES pays its override dmgMult; every other
+// level pays the WEAPON_LEVELS formula (slice 6, dev-editor shaped curves).
 export function weaponLevelParams(weaponId, level) {
   const table = WEAPON_LEVELS[weaponId];
   if (!table) return { dmgMult: 1 };
   const lv = Math.max(1, Math.min(WEAPON_MAX_LEVEL, level || 1));
-  return { ...table[lv - 1].effects };
+  const params = { ...table[lv - 1].effects };
+  const ov = WEAPON_DMG_OVERRIDES[weaponId]?.[lv];
+  if (ov !== undefined) params.dmgMult = ov;
+  return params;
 }
 
 // Apply the next level to a weapon INSTANCE (draft card path). Returns the

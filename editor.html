@@ -4,9 +4,12 @@
      saved through tools/editor_server.py as exact-string old/new pairs),
      one unified cost/damage/damage-per-gold graph per shop item with an
      inline per-level cost+effect table (same saver path, live re-render,
-     no reload), per-level cost overrides, and live shop descriptions (desc
+     no reload), per-level cost overrides, live shop descriptions (desc
      getters read the edited numbers, so the graph and the shop text move
-     together). Never player-facing. -->
+     together), and a weapons section with the same treatment (weapon damage
+     + per-level damage curves in an inline per-level table, unified
+     normalized graph, per-level dmg overrides, live draft labels reading
+     the edited steps). Never player-facing. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -125,12 +128,39 @@ formula. saved as a literal overrides source fragment through the saver
 </tr></thead><tbody></tbody></table>
 <div id="overridesmsg" class="msg"></div>
 
+<h2>6 · WEAPONS (damage + per-level curves)</h2>
+<div class="sub">one graph per weapon: normalized per-hit damage plus every
+ladder effect that actually moves (discovered live from WEAPON_LEVELS — a
+damage-only ladder like ZAP plots a single series), overlaid on the shared
+level axis with the same toggleable legend. the table edits the archetype
+base (DAMAGE_MULT), the ladder steps (WEAPON_STEPS — the curve and the draft
+labels move together, no reload) and sparse per-level dmg overrides
+(WEAPON_DMG_OVERRIDES[level] ?? ladder, diamond-marked). everything reads
+live from src/weapons.js + src/config.js + WEAPON_PRICES — never copied
+numbers. VOLLEY rides along (its base is CONFIG.WEAPON.DAMAGE, read-only
+here); starter weapons show no unlock price.</div>
+<div class="bar">
+  <label for="witem">weapon</label>
+  <select id="witem"></select>
+</div>
+<div id="wgraphs"></div>
+<div class="bar" id="wbase"></div>
+<div id="wbasemsg" class="msg"></div>
+<table id="winline"><thead><tr>
+  <th>level</th><th>dmgMult</th><th>dmg override</th><th>damage</th><th>draft label (live)</th>
+</tr></thead><tbody></tbody></table>
+<div id="winlinemsg" class="msg"></div>
+
 <div id="status" class="msg"></div>
 
 <script type="module">
 import { SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS, SHOP_BY_ID, upgradeCost,
   applyMetaBonuses }
   from './src/meta.js';
+import { CONFIG as GAME_CONFIG } from './src/config.js';
+import { WEAPONS, WEAPON_LEVELS, WEAPON_MAX_LEVEL, WEAPON_NAMES, WEAPON_STEPS,
+  WEAPON_DMG_OVERRIDES, weaponLevelParams, describeWeaponLevel, rebuildWeaponTable }
+  from './src/weapons.js';
 
 const $ = (id) => document.getElementById(id);
 const saverBase = () => $('saver').value.replace(/\/+$/, '');
@@ -152,15 +182,19 @@ async function sourceText(file) {
   return sourceCache[file];
 }
 
-async function postSave(file, oldStr, newStr) {
+async function postSaveMulti(file, pairs) {
   const res = await fetch(saverBase() + '/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file, replacements: [{ old: oldStr, new: newStr }] }),
+    body: JSON.stringify({ file, replacements: pairs.map((p) => ({ old: p.old, new: p.new })) }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.error || ('http ' + res.status));
   return data; // { ok, file, backup, replacements }
+}
+
+async function postSave(file, oldStr, newStr) {
+  return postSaveMulti(file, [{ old: oldStr, new: newStr }]);
 }
 
 function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -344,8 +378,10 @@ function norm100(arr) {
 
 // Multi-series SVG chart over the shared level axis 0..xMax. Every run is
 // already normalized to percent-of-own-max, so one axis serves all three.
-// Override prices on the cost run are drawn as diamonds (mark = Set of x).
-function chartSVGMulti(runs, xMax, mark) {
+// Override prices on the cost run are drawn as diamonds (mark = Set of x,
+// markKey = which series carries them — 'cost' for the shop graph, 'damage'
+// for the weapons graph).
+function chartSVGMulti(runs, xMax, mark, markKey) {
   const W = 620, H = 170, pL = 46, pR = 12, pT = 10, pB = 22;
   const X = (l) => pL + (xMax > 0 ? (l / xMax) * (W - pL - pR) : 0);
   const Y = (v) => H - pB - (v / 100) * (H - pT - pB);
@@ -366,7 +402,7 @@ function chartSVGMulti(runs, xMax, mark) {
       '" stroke-width="2"/>';
     run.xs.forEach((l, i) => {
       const cx = X(l), cy = Y(run.pcts[i]);
-      if (run.key === 'cost' && mark && mark.has(l)) {
+      if (run.key === (markKey || 'cost') && mark && mark.has(l)) {
         s += '<rect x="' + (cx - 4.5) + '" y="' + (cy - 4.5) +
           '" width="9" height="9" transform="rotate(45 ' + cx + ' ' + cy +
           ')" fill="#ff9d5e" stroke="#0b0b12" stroke-width="1"/>';
@@ -679,6 +715,323 @@ function renderOverrides() {
   tb.appendChild(tr);
 }
 
+// ---- section 6: weapons -----------------------------------------------------
+// Weapon damage + per-level damage curves with the shop treatment: an inline
+// per-level table (base + steps + sparse dmg overrides through the same saver
+// path, live re-render, no reload) and one unified normalized graph per
+// weapon with the same overlay/legend pattern. Everything reads live from the
+// game's own modules (src/weapons.js, src/config.js, WEAPON_PRICES in
+// src/meta.js) — never copy-pasted numbers.
+//
+// Damage per level is PER-HIT damage (the number the update paths multiply):
+//   base x mult x ladder, where base = CONFIG.WEAPON.DAMAGE, mult =
+//   WEAPONS[wid].DAMAGE_MULT (VOLLEY has no archetype entry: mult 1), ladder
+//   = weaponLevelParams(wid, L) (formula + WEAPON_DMG_OVERRIDES). VOLLEY
+//   mirrors main.js's volley loop: its Lv3/Lv6 proj grants convert to +20%
+//   damage each (1 + VOLLEY.DMG * proj), read from the live step.
+function weaponDamage(wid, L) {
+  const P = weaponLevelParams(wid, L);
+  const mult = wid === 'VOLLEY' ? 1 : (WEAPONS[wid] ? WEAPONS[wid].DAMAGE_MULT : 1);
+  const proj = wid === 'VOLLEY' ? (P.proj || 0) * (WEAPON_STEPS.VOLLEY.DMG || 0) : 0;
+  return GAME_CONFIG.WEAPON.DAMAGE * mult * (P.dmgMult === undefined ? 1 : P.dmgMult) * (1 + proj);
+}
+
+// Numeric ladder params that actually move between L1 and L8 (dmgMult is the
+// damage series itself), discovered live from WEAPON_LEVELS — no hardcoded
+// per-weapon key map. A damage-only ladder (ZAP: count growth retired to the
+// shop) yields no keys and plots a single series.
+function weaponEffectKeys(wid) {
+  const t = WEAPON_LEVELS[wid];
+  if (!t) return [];
+  const a = t[0].effects, b = t[WEAPON_MAX_LEVEL - 1].effects;
+  return Object.keys(b).filter((k) => k !== 'dmgMult' &&
+    typeof b[k] === 'number' && typeof a[k] === 'number' && b[k] !== a[k]);
+}
+
+const WEAPON_PALETTE = ['#8ab4ff', '#ff9d5e', '#e28ad2', '#8ae2d2', '#d2e28a'];
+let wVisFor = null;
+const wSeriesVis = {};
+
+function wRenderGraphs() {
+  const wid = $('witem').value;
+  const box = $('wgraphs');
+  if (!wid || !WEAPON_LEVELS[wid]) { box.innerHTML = ''; return; }
+  if (wVisFor !== wid) {
+    wVisFor = wid;
+    for (const k of Object.keys(wSeriesVis)) delete wSeriesVis[k];
+    wSeriesVis.damage = true;
+    for (const k of weaponEffectKeys(wid)) wSeriesVis[k] = true;
+  }
+  const xs = [];
+  for (let L = 1; L <= WEAPON_MAX_LEVEL; L++) xs.push(L);
+  const dmg = xs.map((L) => weaponDamage(wid, L));
+  const keys = weaponEffectKeys(wid);
+  const eff = {};
+  for (const k of keys) eff[k] = xs.map((L) => weaponLevelParams(wid, L)[k]);
+  const marks = new Set();
+  for (const L of xs) {
+    if (WEAPON_DMG_OVERRIDES[wid] && WEAPON_DMG_OVERRIDES[wid][L] !== undefined) marks.add(L);
+  }
+  const meta = [{ key: 'damage', label: 'damage', color: '#9be28a' }];
+  keys.forEach((k, i) => meta.push({ key: k, label: k, color: WEAPON_PALETTE[i % WEAPON_PALETTE.length] }));
+  const all = { damage: { key: 'damage', xs, pcts: norm100(dmg), color: '#9be28a' } };
+  keys.forEach((k, i) => {
+    all[k] = { key: k, xs, pcts: norm100(eff[k]), color: WEAPON_PALETTE[i % WEAPON_PALETTE.length] };
+  });
+  const runs = meta.filter((m) => wSeriesVis[m.key]).map((m) => all[m.key]);
+  const legend = meta.map((m) =>
+    '<button data-series="' + m.key + '" class="' + (wSeriesVis[m.key] ? '' : 'off') + '">' +
+    '<span class="sw" style="background:' + m.color + '"></span>' + m.label + '</button>'
+  ).join('');
+  const price = WEAPON_PRICES[wid] !== undefined
+    ? WEAPON_PRICES[wid] + 'g unlock (section 2 edits it)'
+    : 'starter — free (no unlock price)';
+  const dmgNote = marks.size
+    ? 'diamond markers = per-level dmg override levels'
+    : 'pure ladder curve (no dmg overrides on this weapon)';
+  box.innerHTML =
+    '<div class="panel"><h3>damage + ladder effects — % of own max</h3>' +
+    '<div class="legend">' + legend + '</div>' +
+    chartSVGMulti(runs, WEAPON_MAX_LEVEL, marks, 'damage') +
+    '<div class="raw">unlock: ' + price + '<br>' +
+    'damage raw (' + dmgNote + '): ' +
+    dmg.map((d, i) => 'L' + (i + 1) + ' ' + (Math.round(d * 100) / 100)).join(', ') +
+    (keys.length
+      ? '<br>' + keys.map((k) => k + ' raw: ' +
+        eff[k].map((v, i) => 'L' + (i + 1) + ' ' + (Math.round(v * 10000) / 10000)).join(', ')).join('<br>')
+      : '<br>ladder is damage-only (no moving secondary — count growth lives in the shop zapchain row)') +
+    '</div>' +
+    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>' +
+    '<div class="sub">damage is per-hit (base x DAMAGE_MULT x ladder dmgMult). ' +
+    'there is no per-level gold curve here: weapons unlock once, so cost is a ' +
+    'single price, not a series.</div>';
+  box.querySelectorAll('.legend button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      wSeriesVis[btn.getAttribute('data-series')] = !wSeriesVis[btn.getAttribute('data-series')];
+      wRenderGraphs();
+    });
+  });
+}
+
+// Exact old/new pair for a weapon's DAMAGE_MULT line in src/weapons.js. The
+// archetype block is flat (no nested braces), so the match spans from the
+// unique `  WID: {` head to the first DAMAGE_MULT inside it; the saver still
+// refuses unless the span occurs exactly once.
+function dmgMultPair(text, wid, raw) {
+  const oldMult = WEAPONS[wid].DAMAGE_MULT;
+  const re = new RegExp('(^  ' + escRe(wid) + ': \\{[^}]*?DAMAGE_MULT: )' +
+    escRe(String(oldMult)) + '(,)', 'm');
+  const m = text.match(re);
+  if (!m) throw new Error('DAMAGE_MULT line for ' + wid + ' not found; refusing to guess');
+  if (text.split(m[0]).length - 1 !== 1)
+    throw new Error('DAMAGE_MULT line for ' + wid + ' is ambiguous; refusing to guess');
+  return { old: m[0], new: m[1] + raw + m[2] };
+}
+
+// Exact old/new pair for a weapon's WEAPON_STEPS line (`  WID: { DMG: .. },`).
+// `edits` maps step key -> { raw, num }; untouched keys keep their live
+// values. `raw` preserves the author's formatting; the live module object
+// takes the numeric value separately, so display style survives. The key
+// class excludes newlines on purpose: `  WID: {` also heads the WEAPONS
+// archetype block, and only the single-line STEPS entry may match.
+function stepsPair(text, wid, edits) {
+  const re = new RegExp('^  ' + escRe(wid) + ': \\{[^\\n}]*\\},?$', 'm');
+  const m = text.match(re);
+  if (!m) throw new Error('WEAPON_STEPS line for ' + wid + ' not found; refusing to guess');
+  if (text.split(m[0]).length - 1 !== 1)
+    throw new Error('WEAPON_STEPS line for ' + wid + ' is ambiguous; refusing to guess');
+  const parts = Object.keys(WEAPON_STEPS[wid]).map((k) =>
+    k + ': ' + (edits[k] ? edits[k].raw : String(WEAPON_STEPS[wid][k])));
+  return { old: m[0], new: '  ' + wid + ': { ' + parts.join(', ') + ' },' };
+}
+
+// Exact old/new pair for the WEAPON_DMG_OVERRIDES literal. Entries for every
+// weapon are rebuilt from the live objects (so a save for one weapon keeps
+// the others), with `table` ({level: price}) as this weapon's new entry;
+// an empty table drops the weapon's line, an empty literal matches the
+// shipped `{\n}` shape exactly.
+function weaponOverridesPair(text, wid, table) {
+  const re = /export const WEAPON_DMG_OVERRIDES = \{[\s\S]*?\n\};/;
+  const m = text.match(re);
+  if (!m) throw new Error('WEAPON_DMG_OVERRIDES literal not found; refusing to guess');
+  if (text.split(m[0]).length - 1 !== 1)
+    throw new Error('WEAPON_DMG_OVERRIDES literal is ambiguous; refusing to guess');
+  const current = (id) => {
+    if (id === wid) return table;
+    const o = WEAPON_DMG_OVERRIDES[id] || {};
+    const t = {};
+    for (const k of Object.keys(o)) t[k] = o[k];
+    return t;
+  };
+  const lines = [];
+  for (const id of Object.keys(WEAPON_LEVELS)) {
+    const t = current(id);
+    const ks = Object.keys(t).map(Number).sort((a, b) => a - b);
+    if (ks.length) lines.push('  ' + id + ': { ' + ks.map((k) => k + ': ' + t[k]).join(', ') + ' },');
+  }
+  return { old: m[0], new: 'export const WEAPON_DMG_OVERRIDES = {\n' + lines.join('\n') +
+    (lines.length ? '\n' : '') + '};' };
+}
+
+// ---- section 6b: weapon base (DAMAGE_MULT) + ladder steps --------------------
+// One POST carries every edited pair (same file, backup + syntax gate), then
+// the live module objects update in place, the ladder rebuilds through the
+// game's own builder, and every weapon surface re-renders — no reload.
+// VOLLEY has no archetype entry: its base is CONFIG.WEAPON.DAMAGE
+// (src/config.js), read-only here with its pointer note.
+function renderWBase() {
+  const wid = $('witem').value;
+  const bar = $('wbase');
+  bar.innerHTML = '';
+  setMsg($('wbasemsg'), true, '');
+  if (!wid || !WEAPON_LEVELS[wid]) return;
+  const hasArch = wid !== 'VOLLEY' && !!WEAPONS[wid];
+  let html = '';
+  if (hasArch) {
+    html += '<label>DAMAGE_MULT</label> <input class="num" id="wmult" inputmode="decimal"> ';
+  } else {
+    html += '<span class="derived">base volley = CONFIG.WEAPON.DAMAGE (' +
+      GAME_CONFIG.WEAPON.DAMAGE + ', src/config.js) — read-only here.</span> ';
+  }
+  for (const k of Object.keys(WEAPON_STEPS[wid] || {})) {
+    html += '<label>' + k + '</label> <input class="num" data-step="' + k + '" inputmode="decimal"> ';
+  }
+  html += '<button id="wsavebase">save base</button> <span class="derived">base + steps move ' +
+    'the curve and the draft labels together, no reload.</span>';
+  bar.innerHTML = html;
+  if (hasArch) bar.querySelector('#wmult').value = WEAPONS[wid].DAMAGE_MULT;
+  bar.querySelectorAll('input[data-step]').forEach((inp) => {
+    inp.value = WEAPON_STEPS[wid][inp.getAttribute('data-step')];
+  });
+  bar.querySelector('#wsavebase').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    btn.disabled = true;
+    try {
+      const reps = [];
+      let newMult = null;
+      const stepEdits = {};
+      let stepTouched = false;
+      if (hasArch) {
+        const raw = bar.querySelector('#wmult').value.trim();
+        const nval = Number(raw);
+        if (raw === '' || !Number.isFinite(nval) || nval < 0)
+          throw new Error('need DAMAGE_MULT >= 0');
+        if (nval !== WEAPONS[wid].DAMAGE_MULT) {
+          reps.push(dmgMultPair(await sourceText('src/weapons.js'), wid, raw));
+          newMult = nval;
+        }
+      }
+      const inputs = Array.from(bar.querySelectorAll('input[data-step]'));
+      for (const inp of inputs) {
+        const k = inp.getAttribute('data-step');
+        const raw = inp.value.trim();
+        const nval = Number(raw);
+        if (raw === '' || !Number.isFinite(nval) || nval < 0)
+          throw new Error('need step ' + k + ' >= 0');
+        if (nval !== WEAPON_STEPS[wid][k]) { stepEdits[k] = { raw, num: nval }; stepTouched = true; }
+      }
+      if (stepTouched) reps.push(stepsPair(await sourceText('src/weapons.js'), wid, stepEdits));
+      if (!reps.length) {
+        setMsg($('wbasemsg'), false, wid + ': nothing changed');
+        btn.disabled = false;
+        return;
+      }
+      const data = await postSaveMulti('src/weapons.js', reps);
+      delete sourceCache['src/weapons.js'];
+      if (newMult !== null) WEAPONS[wid].DAMAGE_MULT = newMult;
+      for (const k of Object.keys(stepEdits)) WEAPON_STEPS[wid][k] = stepEdits[k].num;
+      if (stepTouched) rebuildWeaponTable(wid);
+      wRenderGraphs();
+      renderWBase();
+      renderWInline();
+      setMsg($('wbasemsg'), true, wid + ' base saved (' +
+        describeWeaponLevel(wid, 2) + '). backup: ' + data.backup +
+        ' — graph + labels re-rendered live, no reload.');
+    } catch (e) {
+      setMsg($('wbasemsg'), false, wid + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+}
+
+// ---- section 6c: inline per-level dmg table ----------------------------------
+// One row per weapon level: the effective dmgMult, an override input pinning
+// that level through the shared saver, per-hit damage and the live draft
+// label. Mirrors the shop inline table; levels are 1-based (draft cards).
+function renderWInline() {
+  const wid = $('witem').value;
+  const tb = document.querySelector('#winline tbody');
+  tb.innerHTML = '';
+  if (!wid || !WEAPON_LEVELS[wid]) return;
+  for (let L = 1; L <= WEAPON_MAX_LEVEL; L++) {
+    const P = weaponLevelParams(wid, L);
+    const isOv = WEAPON_DMG_OVERRIDES[wid] && WEAPON_DMG_OVERRIDES[wid][L] !== undefined;
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="id">L' + L + '</td><td></td>' +
+      '<td><input class="num wov" inputmode="decimal" placeholder="ladder"></td>' +
+      '<td class="derived"></td><td class="derived"></td>';
+    tr.children[1].textContent = P.dmgMult === undefined
+      ? '-- (no dmgMult on this ladder)'
+      : (Math.round(P.dmgMult * 10000) / 10000) + (isOv ? ' (override)' : '');
+    const ov = tr.querySelector('input.wov');
+    if (isOv) ov.value = WEAPON_DMG_OVERRIDES[wid][L];
+    tr.children[3].textContent = Math.round(weaponDamage(wid, L) * 100) / 100;
+    tr.children[4].textContent = describeWeaponLevel(wid, L);
+    tb.appendChild(tr);
+  }
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td colspan="5"><button class="savewcosts">save overrides</button> ' +
+    '<span class="derived">a filled override input pins that level to the override dmgMult; ' +
+    'empty falls back to the ladder.</span></td>';
+  tr.querySelector('button.savewcosts').addEventListener('click', async (ev) => {
+    const btn = ev.target;
+    const inputs = Array.from(tb.querySelectorAll('input.wov'));
+    const table = {};
+    for (let i = 0; i < inputs.length; i++) {
+      const raw = inputs[i].value.trim();
+      if (!raw) continue;
+      const nval = Number(raw);
+      if (!Number.isFinite(nval) || nval < 0) {
+        setMsg($('winlinemsg'), false, wid + ' L' + (i + 1) + ': need dmgMult >= 0 or empty');
+        return;
+      }
+      table[i + 1] = nval;
+    }
+    btn.disabled = true;
+    try {
+      const text = await sourceText('src/weapons.js');
+      const data = await postSave('src/weapons.js', weaponOverridesPair(text, wid, table).old,
+        weaponOverridesPair(text, wid, table).new);
+      delete sourceCache['src/weapons.js'];
+      if (Object.keys(table).length) WEAPON_DMG_OVERRIDES[wid] = Object.assign({}, table);
+      else delete WEAPON_DMG_OVERRIDES[wid];
+      wRenderGraphs();
+      renderWInline();
+      setMsg($('winlinemsg'), true, wid + ' dmg overrides saved. backup: ' + data.backup +
+        ' — graph re-rendered live, no reload.');
+    } catch (e) {
+      setMsg($('winlinemsg'), false, wid + ': ' + e.message);
+    }
+    btn.disabled = false;
+  });
+  tb.appendChild(tr);
+}
+
+function buildWeaponSection() {
+  const sel = $('witem');
+  for (const id of Object.keys(WEAPON_LEVELS)) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id + ' — ' + (WEAPON_NAMES[id] || id);
+    sel.appendChild(opt);
+  }
+  sel.value = 'ZAP';
+  sel.addEventListener('change', () => { wRenderGraphs(); renderWBase(); renderWInline(); });
+  wRenderGraphs();
+  renderWBase();
+  renderWInline();
+}
+
 function buildGraphSection() {
   const sel = $('gitem');
   for (const def of SHOP_UPGRADES) {
@@ -710,9 +1063,11 @@ buildRows();
 buildWeapons();
 buildElites();
 buildGraphSection();
+buildWeaponSection();
 $('status').textContent = SHOP_UPGRADES.length + ' shop rows, ' +
   Object.keys(WEAPON_PRICES).length + ' weapon prices, ' +
-  Object.keys(ELITE_MODIFIERS).length + ' elite costs — all live from src/meta.js.';
+  Object.keys(ELITE_MODIFIERS).length + ' elite costs, ' +
+  Object.keys(WEAPON_LEVELS).length + ' weapon ladders — all live from src/meta.js + src/weapons.js + src/config.js.';
 </script>
 </body>
 </html>
