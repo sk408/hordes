@@ -81,6 +81,14 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   level — carry that into the snapshot as granted_total vs earned_total),
   or analysis cannot tell a profile that earned 2M from one that was
   given it.
+- QUEUED: dev autoplay policy runner — buys shop upgrades as they become
+  affordable (priority order configurable in the editor, sensible default
+  first), dev-night mode (nightmare rules WITHOUT the banking penalty),
+  composes with the draft ban list, runs unattended at 8x with snapshots
+  per run. DEPENDS ON the 8x sequencing fix (stuck draft menus kill
+  unattended runs) — dispatch after it lands. Owner's standing judgment:
+  real-loop autoplay is ground truth; analytic sims keep only cheap
+  pre-screening duty, never the verdict.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
