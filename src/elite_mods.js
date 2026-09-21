@@ -14,6 +14,9 @@
 //                                          hb1 Object.assigns the stamp)
 //   splitChildren(enemy)                -> [child, ...] | null (pure; hb1 marks
 //                                          enemy.splitSpent when it consumes)
+// SLICE 5 (dev-editor): each desc quotes its own numeric fields, so it is a
+// getter reading the live values — editing a field moves the card text.
+import { fmtPct } from './meta.js';
 
 // Chance a given elite spawn gets a modifier at all (the roll can "fail" and
 // leave a plain elite). Only rolled for NORMAL elite spawns — never for
@@ -32,14 +35,14 @@ export const ELITE_MOD_CHANCE = 0.5;
 export const ELITE_MODS = {
   SWIFT: {
     id: 'SWIFT', name: 'Swift',
-    desc: '+70% speed, 20% less hp. Blink and it is on you.',
+    get desc() { return '+' + fmtPct(this.speedMult - 1) + '% speed, ' + fmtPct(1 - this.hpMult) + '% less hp. Blink and it is on you.'; },
     speedMult: 1.7, hpMult: 0.8,
     onDeathSplit: null, lifesteal: 0,
     dropGuaranteed: true, visual: 'afterimage',
   },
   SPLITTING: {
     id: 'SPLITTING', name: 'Splitting',
-    desc: 'Dies into two smaller copies at 30% hp each. Once only — the copies are plain.',
+    get desc() { return 'Dies into ' + (this.onDeathSplit.count === 2 ? 'two' : this.onDeathSplit.count) + ' smaller copies at ' + fmtPct(this.onDeathSplit.hpFrac) + '% hp each. Once only — the copies are plain.'; },
     speedMult: 1.0, hpMult: 1.0,
     onDeathSplit: { count: 2, hpFrac: 0.3, sizeMult: 0.6 },
     lifesteal: 0,
@@ -52,7 +55,7 @@ export const ELITE_MODS = {
     // and sustained-capped at CONFIG.SURVIVAL.ELITE_VAMP_CAP_FRAC of ITS OWN
     // max HP per second (the G36 token-bucket pattern, per-elite). Below the
     // cap it is exactly half the contact damage it deals, as before.
-    desc: 'Heals itself for half the contact damage it deals (its own touch only, at a bounded rate). Kill it fast.',
+    get desc() { return 'Heals itself for ' + (this.lifesteal === 0.5 ? 'half' : fmtPct(this.lifesteal) + '% of') + ' the contact damage it deals (its own touch only, at a bounded rate). Kill it fast.'; },
     speedMult: 1.0, hpMult: 1.0,
     onDeathSplit: null, lifesteal: 0.5,
     dropGuaranteed: true, visual: 'leech',

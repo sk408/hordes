@@ -37,6 +37,10 @@
 // skillManaCost, skillCooldown, damageTakenMult) are the ONE source of truth
 // the game reads, so the HUD cannot lie about what a perk changed.
 import { CONFIG as C } from './config.js';
+// SLICE 5 (dev-editor): the three descs below quote the effect constants, so
+// they are getters reading the live values (fmtPct lives in meta.js; this
+// edge stays acyclic — meta.js never imports perks.js).
+import { fmtPct } from './meta.js';
 // G21 slice 1 (C2): the empty-rewrite-slot cooldown payment, read in exactly
 // ONE place (skillCooldown below). rewrites.js imports config only, so this
 // edge stays acyclic.
@@ -46,17 +50,17 @@ export const SKILL_PERKS = {
   regrowth: {
     id: 'regrowth',
     name: 'Regrowth',
-    desc: 'SKILL - heal 0.7 HP per second, always on',
+    get desc() { return 'SKILL - heal ' + REGROWTH_HP_PER_SEC + ' HP per second, always on'; },
   },
   focus: {
     id: 'focus',
     name: 'Focus',
-    desc: 'SKILL - skills cost 20% less mana and cool down 15% faster',
+    get desc() { return 'SKILL - skills cost ' + fmtPct(1 - FOCUS_MANA_MULT) + '% less mana and cool down ' + fmtPct(1 - FOCUS_COOLDOWN_MULT) + '% faster'; },
   },
   thick: {
     id: 'thick',
     name: 'Thick Skin',
-    desc: 'SKILL - incoming damage to you is 12% lower',
+    get desc() { return 'SKILL - incoming damage to you is ' + fmtPct(1 - THICK_TAKEN_MULT) + '% lower'; },
   },
 };
 export const SKILL_PERK_IDS = Object.keys(SKILL_PERKS);

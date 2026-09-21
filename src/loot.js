@@ -28,7 +28,7 @@
 // applyAffixes() FILLS any missing fields with these defaults and returns a
 // NEW stats object (PURE — never mutates the input).
 
-import { luckDropWeights, BASE_RARITY_WEIGHTS } from './meta.js';
+import { luckDropWeights, BASE_RARITY_WEIGHTS, fmtPct, fmtNum } from './meta.js';
 // Re-exported so hb2's luck seam is reachable through the loot import too.
 export { luckDropWeights };
 
@@ -45,27 +45,30 @@ export const RARITY_SCALE = { COMMON: 1, RARE: 1.5, EPIC: 2.2, LEGENDARY: 3 };
 const PREFIX = { COMMON: 'Worn', RARE: 'Fine', EPIC: 'Mythic', LEGENDARY: 'Godforged' };
 
 // ---------- Affix pool (10 entries; field names per the contract above) ----
+// SLICE 5 (dev-editor): each desc quotes its own `base`, so it is a getter
+// reading the live value — editing base moves the card text. Concatenation,
+// not template literals (see the fmtPct/fmtNum contract in meta.js).
 export const AFFIX_POOL = [
   { id: 'crit',       name: 'Keen Eye',        field: 'crit',       base: 0.04, noun: 'Eye',
-    desc: '+4% crit chance (scales with rarity)' },
+    get desc() { return '+' + fmtPct(this.base) + '% crit chance (scales with rarity)'; } },
   { id: 'critMult',   name: 'Executioner',     field: 'critMult',   base: 0.2,  noun: 'Axe',
-    desc: '+20% crit damage' },
+    get desc() { return '+' + fmtPct(this.base) + '% crit damage'; } },
   { id: 'rateMult',   name: 'Rapid Trigger',   field: 'rateMult',   base: 0.1,  noun: 'Trigger',
-    desc: '+10% attack rate' },
+    get desc() { return '+' + fmtPct(this.base) + '% attack rate'; } },
   { id: 'damageMult', name: 'Brutal Edge',     field: 'damageMult', base: 0.1,  noun: 'Edge',
-    desc: '+10% damage' },
+    get desc() { return '+' + fmtPct(this.base) + '% damage'; } },
   { id: 'xpMult',     name: "Scholar's Mind",  field: 'xpMult',     base: 0.1,  noun: 'Tome',
-    desc: '+10% XP gain' },
+    get desc() { return '+' + fmtPct(this.base) + '% XP gain'; } },
   { id: 'goldMult',   name: 'Midas Touch',     field: 'goldMult',   base: 0.15, noun: 'Coin',
-    desc: '+15% gold gain' },
+    get desc() { return '+' + fmtPct(this.base) + '% gold gain'; } },
   { id: 'speedMult',  name: 'Windwalker',      field: 'speedMult',  base: 0.08, noun: 'Boot',
-    desc: '+8% move speed' },
+    get desc() { return '+' + fmtPct(this.base) + '% move speed'; } },
   { id: 'pickupMult', name: 'Loot Vortex',     field: 'pickupMult', base: 0.25, noun: 'Hoard',
-    desc: '+25% pickup radius' },
+    get desc() { return '+' + fmtPct(this.base) + '% pickup radius'; } },
   { id: 'thorns',     name: 'Spiked Hide',     field: 'thorns',     base: 3,    noun: 'Hide',
-    desc: '+3 thorns damage on contact' },
+    get desc() { return '+' + fmtNum(this.base) + ' thorns damage on contact'; } },
   { id: 'lifesteal',  name: 'Vampiric',        field: 'lifesteal',  base: 0.02, noun: 'Fang',
-    desc: '+2% lifesteal' },
+    get desc() { return '+' + fmtPct(this.base) + '% lifesteal'; } },
 ];
 const AFFIX_BY_ID = Object.fromEntries(AFFIX_POOL.map(a => [a.id, a]));
 

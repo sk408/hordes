@@ -15,7 +15,7 @@
 //   //        potions start at startPotionCount(profile); grant the equipped
 //   //        character's startingWeapon via makeWeapon() into state.weapons.
 import { CONFIG as C, setEngagementRange, DRAFT_LADDER } from './config.js';
-import { WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows
+import { WEAPONS, WEAPON_NAMES } from './weapons.js';   // read-only: display names for shop rows + the live ZAP hop-range growth the Storm Conduit desc quotes
 import { ENCOUNTER_IDS } from './encounters.js';   // G10: derived bestiary catalog
 import { TIER_RANK } from './rarity.js';           // G10: tier ordering for bestTier
 import { enemyFamily } from './enemy_types.js';    // G19 slice 2: family map for the specialty terms
@@ -484,6 +484,21 @@ export const ELITE_MODIFIERS = {
 };
 const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
 
+// ---------- SLICE 5 (dev-editor): live description formatters ----------------
+// Every shop/character/item `desc` that quotes a tuning number is a getter
+// built from these, so editing the number moves the description everywhere it
+// renders (shop, editor, HUD) with no copy to keep in sync. Getter bodies use
+// string concatenation (never template literals): the dev-editor's row-literal
+// matcher allows one level of nested braces, and `${...}` would nest a second.
+// Percent inputs are FRACTIONS (perLevel 0.06 -> '6'); callers add '%'.
+// mana-per-kill rows keep two decimals via toFixed(2) at their own call site.
+export function fmtPct(v) {
+  return String(Math.round(Number(v) * 10000) / 100);
+}
+export function fmtNum(v) {
+  return String(Math.round(Number(v) * 10000) / 10000);
+}
+
 // ROW SHAPE (hb1 renders; WAVE-11 extension in bold):
 //   { id, name, desc, baseCost, costGrowth, maxLevel, perLevel }
 //       classic stat/slot line — level-tracked in profile.purchased.
@@ -513,13 +528,17 @@ export const SHOP_UPGRADES = [
   // authoritative list. The flat rows stay additive and must: they are absolute
   // amounts (hp/regen/well/siphon/artifact) or values set FROM ZERO
   // (crit chance, dropBonus) where compounding is a silent no-op.
-  { id: 'dmg',     name: 'Forged Edge',    desc: '+200% weapon damage per level',
+  { id: 'dmg',     name: 'Forged Edge',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% weapon damage per level'; },
     baseCost: 150, costGrowth: 1.6, maxLevel: 5, perLevel: 2.0 },
-  { id: 'hp',      name: 'Vitality',       desc: '+40 max HP per level',
+  { id: 'hp',      name: 'Vitality',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
     baseCost: 120, costGrowth: 1.6, maxLevel: 5, perLevel: 40 },
-  { id: 'potions', name: 'Travel Pack',    desc: '+2 starting potions (each kind) per level',
+  { id: 'potions', name: 'Travel Pack',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' starting potions (each kind) per level'; },
     baseCost: 250, costGrowth: 1.5, maxLevel: 3, perLevel: 2 },
-  { id: 'regen',   name: 'Mana Spring',    desc: '+1 mana regen per second per level',
+  { id: 'regen',   name: 'Mana Spring',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' mana regen per second per level'; },
     baseCost: 200, costGrowth: 1.6, maxLevel: 4, perLevel: 1 },
   // ---- A1: THE PILOT'S ENGAGEMENT RADIUS (owner-ordered 2026-09-14) --------
   // Sk408: "the pilot targets enemies that are off the screen even ... have the
@@ -537,7 +556,8 @@ export const SHOP_UPGRADES = [
   // RE-CHECK IT IN E1's ECONOMY PASS (E1 re-prices the whole ladder); measured
   // effect of the full L1..L5 line on the modeled ladder: full-buy cost
   // 162771g -> 165933g, the modeled crossing moves run 81 -> 83 (target 60-100).
-  { id: 'focus',   name: 'Rangefinder',    desc: '+50 pilot engagement range per level',
+  { id: 'focus',   name: 'Rangefinder',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' pilot engagement range per level'; },
     baseCost: 200, costGrowth: 1.6, maxLevel: 5, perLevel: 50 },
   // ---- N1b item 6: the three MANA buyables (the relief valve; mana itself
   // stays punishing at base — see goals N1b item 1). Priced against the
@@ -545,26 +565,36 @@ export const SHOP_UPGRADES = [
   // (Knight 0 -> Rogue 2500 -> Paladin 6000 -> Witch 9000): a NON-Witch
   // buying all three spends less than the Witch costs, which is the point —
   // she is the whole kit in one purchase, these are kit-at-a-time.
-  { id: 'thrifty', name: 'Thrifty Casting', desc: '-20% mana cost per level (max -80%)',
+  { id: 'thrifty', name: 'Thrifty Casting',
+    get desc() { return '-' + fmtPct(this.perLevel) + '% mana cost per level (max -' + fmtPct(this.perLevel * this.maxLevel) + '%)'; },
     baseCost: 350, costGrowth: 1.7, maxLevel: 4, perLevel: 0.20 },
-  { id: 'well',    name: 'Deep Well',       desc: '+50 max mana per level',
+  { id: 'well',    name: 'Deep Well',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max mana per level'; },
     baseCost: 250, costGrowth: 1.6, maxLevel: 4, perLevel: 50 },
-  { id: 'siphon',  name: 'Siphon',          desc: '+0.10 mana per kill per level',
+  { id: 'siphon',  name: 'Siphon',
+    get desc() { return '+' + this.perLevel.toFixed(2) + ' mana per kill per level'; },
     baseCost: 500, costGrowth: 1.7, maxLevel: 4, perLevel: 0.10 },
-  { id: 'xp',      name: 'Scholar',        desc: '+20% XP gain per level',
+  { id: 'xp',      name: 'Scholar',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% XP gain per level'; },
     baseCost: 180, costGrowth: 1.6, maxLevel: 5, perLevel: 0.20 },
   // ---- EXPANSION lines (economy pass) ----
-  { id: 'crit',    name: 'Deadly Aim',     desc: '+6% crit chance per level',
+  { id: 'crit',    name: 'Deadly Aim',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit chance per level'; },
     baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.06 },
-  { id: 'critdmg', name: 'Deadeye',        desc: '+50% crit damage per level',
+  { id: 'critdmg', name: 'Deadeye',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit damage per level'; },
     baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.50 },
-  { id: 'greed',   name: 'Greed',          desc: '+20% gold from runs per level',
+  { id: 'greed',   name: 'Greed',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% gold from runs per level'; },
     baseCost: 350, costGrowth: 1.7, maxLevel: 5, perLevel: 0.20 },
-  { id: 'alchemy', name: 'Alchemy',        desc: '+50% potion healing/restore per level',
+  { id: 'alchemy', name: 'Alchemy',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% potion healing/restore per level'; },
     baseCost: 280, costGrowth: 1.6, maxLevel: 4, perLevel: 0.50 },
-  { id: 'scav',    name: 'Scavenger',      desc: '+3% potion drop chance per level',
+  { id: 'scav',    name: 'Scavenger',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% potion drop chance per level'; },
     baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.03 },
-  { id: 'artifact', name: 'Starting Artifact', desc: 'Start each run with +2 random weapon levels per level',
+  { id: 'artifact', name: 'Starting Artifact',
+    get desc() { return 'Start each run with +' + fmtNum(this.perLevel) + ' random weapon levels per level'; },
     baseCost: 500, costGrowth: 1.8, maxLevel: 3, perLevel: 2 },
   // ---- WAVE-11: luck (multi-level; feeds luckDropWeights for loot.js) ----
   // G17 slice 1b reprice: luck is the TOP rung of the mid catalogue. Full-buy
@@ -588,38 +618,52 @@ export const SHOP_UPGRADES = [
   // 15.07 (band 12.5-16.7) - both asserted in test_meta/test_economy_reprice.
   // New catalogue: 94,696,233g across 48 items = 62.7h >= 60h.
   // MID rung (the one mid catalogue addition; join MID_TIER_IDS below):
-  { id: 'fleetfoot', name: 'Fleetfoot',    desc: '+8% move speed per level',
+  { id: 'fleetfoot', name: 'Fleetfoot',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% move speed per level'; },
     baseCost: 65000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.08 },
   // TOP rungs (join TOP_TIER_IDS below; full-buy 3,980,000-4,433,000g each):
-  { id: 'briarmail', name: 'Briarmail',    desc: '+10 thorn damage per level, reflected into every touching enemy',
+  { id: 'briarmail', name: 'Briarmail',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' thorn damage per level, reflected into every touching enemy'; },
     baseCost: 133000, costGrowth: 2.0, maxLevel: 5, perLevel: 10 },
-  { id: 'lodestone', name: 'Lodestone',    desc: '+25% pickup radius per level',
+  { id: 'lodestone', name: 'Lodestone',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% pickup radius per level'; },
     baseCost: 134000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.25 },
-  { id: 'hollowpoint', name: 'Hollowpoint', desc: '+1 pierce on volley and boomerang hits per level',
+  { id: 'hollowpoint', name: 'Hollowpoint',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' pierce on volley and boomerang hits per level'; },
     baseCost: 136000, costGrowth: 2.0, maxLevel: 5, perLevel: 1 },
-  { id: 'ironheart', name: 'Iron Heart',   desc: '+120 max HP per level',
+  { id: 'ironheart', name: 'Iron Heart',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
     baseCost: 137000, costGrowth: 2.0, maxLevel: 5, perLevel: 120 },
-  { id: 'hairtrigger', name: 'Hairtrigger', desc: '+12% attack rate per level',
+  { id: 'hairtrigger', name: 'Hairtrigger',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% attack rate per level'; },
     baseCost: 139000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.12 },
-  { id: 'headsman', name: 'Headsman',      desc: '+15% all damage per level',
+  { id: 'headsman', name: 'Headsman',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% all damage per level'; },
     baseCost: 141000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.15 },
-  { id: 'bloodpact', name: 'Blood Pact',   desc: '+2% lifesteal per level',
+  { id: 'bloodpact', name: 'Blood Pact',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% lifesteal per level'; },
     baseCost: 143000, costGrowth: 2.0, maxLevel: 5, perLevel: 0.02 },
-  { id: 'fanfire',  name: 'Fan Fire',      desc: '+1 volley projectile per level (the volley cap still applies)',
+  { id: 'fanfire',  name: 'Fan Fire',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' volley projectile per level (the volley cap still applies)'; },
     baseCost: 410000, costGrowth: 2.6, maxLevel: 3, perLevel: 1 },
-  { id: 'deepread', name: 'Deep Read',     desc: '+1 draft offer per level',
+  { id: 'deepread', name: 'Deep Read',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' draft offer per level'; },
     baseCost: 1650000, costGrowth: 1.6, maxLevel: 2, perLevel: 1 },
-  { id: 'aethertap', name: 'Aether Tap',   desc: '+0.60 mana per kill',
+  { id: 'aethertap', name: 'Aether Tap',
+    get desc() { return '+' + this.perLevel.toFixed(2) + ' mana per kill'; },
     baseCost: 3980000, costGrowth: 1, maxLevel: 1, perLevel: 0.60 },
   { id: 'grandelixir', name: 'Grand Elixir', desc: 'Potions heal and restore twice as much',
     baseCost: 4040000, costGrowth: 1, maxLevel: 1, perLevel: 1.0 },
-  { id: 'deepfont', name: 'Deep Font',     desc: '+3 mana regen per second',
+  { id: 'deepfont', name: 'Deep Font',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' mana regen per second'; },
     baseCost: 4060000, costGrowth: 1, maxLevel: 1, perLevel: 3 },
-  { id: 'eagleeye', name: 'Eagle Eye',     desc: '+12% crit chance',
+  { id: 'eagleeye', name: 'Eagle Eye',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit chance'; },
     baseCost: 4120000, costGrowth: 1, maxLevel: 1, perLevel: 0.12 },
   { id: 'staticfield', name: 'Static Field', desc: 'XP pickups chip nearby enemies',
     baseCost: 4180000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
-  { id: 'laststand', name: 'Last Stand',   desc: 'Revive once per run at 50% max HP',
+  { id: 'laststand', name: 'Last Stand',
+    get desc() { return 'Revive once per run at ' + fmtPct(DRAFT_LADDER.SECOND_WIND_HP_FRAC) + '% max HP'; },
     baseCost: 4320000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
   // ---- WAVE-11: weapon unlock rows (kind 'weapon'; starter set is free) ----
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
@@ -645,9 +689,11 @@ export const SHOP_UPGRADES = [
   // row RAISES that cap, +1 per level, so the card keeps granting projectiles:
   // L1..L10 -> cap 4..13. A flat count, so additive by nature (compounding is
   // for the (1+x) multiplier rows, not for counts).
-  { id: 'split',   name: 'Split Shot',     desc: '+1 volley projectile cap per level',
+  { id: 'split',   name: 'Split Shot',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' volley projectile cap per level'; },
     baseCost: 400, costGrowth: 1.35, maxLevel: 10, perLevel: 1 },
-  { id: 'slots',   name: 'Weapon Slot',    desc: '+1 weapon slot (start 3, max 6)',
+  { id: 'slots',   name: 'Weapon Slot',
+    get desc() { return '+1 weapon slot (start ' + WEAPON_SLOT_START + ', max ' + MAX_WEAPON_SLOTS + ')'; },
     baseCost: 5000, costGrowth: 2.9, maxLevel: 3, perLevel: 0 },
   // G17 slice 1b reprice: the TOP-tier flex at 4,200,000g = 2.78h at the
   // measured end-game rate (1,509,378g/h) = 5.6 good runs — inside the 3h
@@ -679,7 +725,7 @@ export const SHOP_UPGRADES = [
   // so; the row is a Witch-kit line, priced for a player who already owns
   // the gun (600,000g).
   { id: 'zapchain', name: 'Storm Conduit',
-    desc: 'Chain Zap: UNCAP the chain count (range-limited) and +20 hop range per level. Needs Chain Zap.',
+    get desc() { return 'Chain Zap: UNCAP the chain count (range-limited) and +' + WEAPONS.ZAP.RANGE_PER_LEVEL + ' hop range per level. Needs Chain Zap.'; },
     baseCost: 200000, costGrowth: 1.7, maxLevel: 5, perLevel: 0 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
@@ -1255,21 +1301,29 @@ export function startPotionCount(profile) {
 // row's FULL ladder exceeds 3200 x 1.5^3 = 10800 gold (asserted in the test).
 export const CHARACTER_UPGRADES = [
   { id: 'knight_vigor', characterId: 'KNIGHT', name: 'Iron Vigor',
-    desc: '+12 max HP per level', baseCost: 1200, costGrowth: 1.5, maxLevel: 4, perLevel: 12 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
+    baseCost: 1200, costGrowth: 1.5, maxLevel: 4, perLevel: 12 },
   { id: 'knight_force', characterId: 'KNIGHT', name: 'Heavy Guard',
-    desc: '+6% damage per level', baseCost: 1600, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
+    get desc() { return '+' + fmtPct(this.perLevel) + '% damage per level'; },
+    baseCost: 1600, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
   { id: 'witch_wellspring', characterId: 'WITCH', name: 'Wellspring',
-    desc: '+15 max mana per level', baseCost: 1000, costGrowth: 1.5, maxLevel: 4, perLevel: 15 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max mana per level'; },
+    baseCost: 1000, costGrowth: 1.5, maxLevel: 4, perLevel: 15 },
   { id: 'witch_focus', characterId: 'WITCH', name: 'Focused Mind',
-    desc: 'spells cost 6% less per level', baseCost: 1800, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
+    get desc() { return 'spells cost ' + fmtPct(this.perLevel) + '% less per level'; },
+    baseCost: 1800, costGrowth: 1.5, maxLevel: 3, perLevel: 0.06 },
   { id: 'rogue_fleet', characterId: 'ROGUE', name: 'Fleetfoot',
-    desc: '+6 move speed per level', baseCost: 1400, costGrowth: 1.5, maxLevel: 3, perLevel: 6 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' move speed per level'; },
+    baseCost: 1400, costGrowth: 1.5, maxLevel: 3, perLevel: 6 },
   { id: 'rogue_satchel', characterId: 'ROGUE', name: 'Deep Satchel',
-    desc: '+1 starting potion per level', baseCost: 900, costGrowth: 1.5, maxLevel: 3, perLevel: 1 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' starting potion per level'; },
+    baseCost: 900, costGrowth: 1.5, maxLevel: 3, perLevel: 1 },
   { id: 'paladin_bulwark', characterId: 'PALADIN', name: 'Bulwark',
-    desc: '+10 max HP per level', baseCost: 1100, costGrowth: 1.5, maxLevel: 4, perLevel: 10 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
+    baseCost: 1100, costGrowth: 1.5, maxLevel: 4, perLevel: 10 },
   { id: 'paladin_blessing', characterId: 'PALADIN', name: 'Blessed Chests',
-    desc: '+3 HP healed on chest per level', baseCost: 1500, costGrowth: 1.5, maxLevel: 3, perLevel: 3 },
+    get desc() { return '+' + fmtNum(this.perLevel) + ' HP healed on chest per level'; },
+    baseCost: 1500, costGrowth: 1.5, maxLevel: 3, perLevel: 3 },
 ];
 export const CHARACTER_UPGRADE_BY_ID = Object.fromEntries(
   CHARACTER_UPGRADES.map(u => [u.id, u]));
@@ -1401,14 +1455,14 @@ export function specialtyLines(characterId) {
 export const CHARACTERS = {
   KNIGHT: {
     id: 'KNIGHT', name: 'Knight', unlockCost: 0,
-    desc: 'Free. Base volley + Earthshatter. Sturdy: +30 max HP.',
+    get desc() { return 'Free. Base volley + Earthshatter. Sturdy: +' + fmtNum(this.mods.maxHp) + ' max HP.'; },
     startingWeapon: null, skill: 'EARTHSHATTER', startPotions: 1,   // N1 slice 3: his kill-charged ult (was FROST_NOVA)
     healOnChest: 0,
     mods: { maxHp: 30 },
   },
   WITCH: {
     id: 'WITCH', name: 'Witch', unlockCost: 9000,
-    desc: 'Chain Reaction Q + Chain Zap start. Deep mana pool (+50). Frail: -25 max HP.',
+    get desc() { return 'Chain Reaction Q + Chain Zap start. Deep mana pool (+' + fmtNum(this.mods.maxMana) + '). Frail: ' + fmtNum(this.mods.maxHp) + ' max HP.'; },
     startingWeapon: 'ZAP', skill: 'CHAIN_REACTION', startPotions: 1,
     healOnChest: 0,
     // N1a: she is the mana class — spells cost her half (weaponManaCost reads
@@ -1423,14 +1477,14 @@ export const CHARACTERS = {
   },
   ROGUE: {
     id: 'ROGUE', name: 'Rogue', unlockCost: 2500,
-    desc: 'Starts with Boomerang. Fast feet: +20% move speed.',
+    get desc() { return 'Starts with Boomerang. Fast feet: +' + fmtPct(this.mods.speedMult - 1) + '% move speed.'; },
     startingWeapon: 'BOOMERANG', skill: 'AFTERIMAGE', startPotions: 2,   // N1 slice 3: her kill-charged ult (was FROST_NOVA)
     healOnChest: 0,
     mods: { speedMult: 1.2 },
   },
   PALADIN: {
     id: 'PALADIN', name: 'Paladin', unlockCost: 6000,
-    desc: 'Starts with Orbit Blades. Blessed: heals 15 HP on chest open.',
+    get desc() { return 'Starts with Orbit Blades. Blessed: heals ' + fmtNum(this.healOnChest) + ' HP on chest open.'; },
     startingWeapon: 'ORBIT', skill: 'CONSECRATION', startPotions: 1,   // N1 slice 3: his kill-charged ult (was FROST_NOVA)
     healOnChest: 15,
     mods: { maxHp: 15 },

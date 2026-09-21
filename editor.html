@@ -3,9 +3,10 @@
      shop prices (live from the game's own config modules in src/meta.js,
      saved through tools/editor_server.py as exact-string old/new pairs),
      one unified cost/damage/damage-per-gold graph per shop item with an
-     inline per-level cost table (same saver path, live re-render, no reload),
-     and per-level cost overrides.
-     Never player-facing. -->
+     inline per-level cost+effect table (same saver path, live re-render,
+     no reload), per-level cost overrides, and live shop descriptions (desc
+     getters read the edited numbers, so the graph and the shop text move
+     together). Never player-facing. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -95,22 +96,23 @@ generated — their prices live in sections 2 and 3 below.</div>
 </tr></thead><tbody></tbody></table>
 <div id="elitesmsg" class="msg"></div>
 
-<h2>4 · UNIFIED COST / DAMAGE GRAPH + INLINE COST EDITING</h2>
+<h2>4 · UNIFIED COST / DAMAGE GRAPH + INLINE COST + EFFECT EDITING</h2>
 <div class="sub">one graph per shop item: normalized cost, normalized damage and
 damage-per-gold overlaid on a single shared level axis (level = owned levels
 for damage, current level = price of the next level for cost). each curve is
 percent-of-own-max. damage is the live damage stat (damage x damageMult) from
 applyMetaBonuses in src/meta.js — never copied numbers. a flat damage line
 means this item does not move the damage stat. click legend entries to toggle
-series. the table beside the graph edits per-level costs through the saver;
-the graph re-renders from live values with no reload.</div>
+series. the table beside the graph edits per-level costs AND the per-level
+effect (perLevel) through the saver; the graph and the live shop description
+(desc reads the edited number) re-render from live values with no reload.</div>
 <div class="bar">
   <label for="gitem">shop item</label>
   <select id="gitem"></select>
 </div>
 <div id="graphs"></div>
 <table id="inline"><thead><tr>
-  <th>level</th><th>cost</th><th>override</th><th>damage</th><th>dmg/gold</th>
+  <th>level</th><th>cost</th><th>override</th><th>effect/level</th><th>damage</th><th>dmg/gold</th>
 </tr></thead><tbody></tbody></table>
 <div id="inlinemsg" class="msg"></div>
 
@@ -430,7 +432,8 @@ function renderGraphs() {
     '<span class="warn">RATIO DESCRIPTIVE ONLY</span></h3>' +
     '<div class="legend">' + legend + '</div>' +
     chartSVGMulti(runs, maxL, marks) +
-    '<div class="raw">cost raw (' + costNote + '): ' +
+    '<div class="raw">shop desc (live): ' + def.desc + '<br>' +
+    'cost raw (' + costNote + '): ' +
     cost.map((c, L) => 'L' + L + ' ' + fmtGold(c)).join(', ') + '<br>' +
     'damage raw: ' + dmg.map((d, l) => 'L' + l + ' ' + (Math.round(d * 100) / 100)).join(', ') +
     '<br>damage-per-gold raw: ' +
@@ -467,10 +470,49 @@ async function saveOverridesTable(def, table) {
   return data;
 }
 
-// ---- section 4b: inline per-level cost editing --------------------------------
-// One row per buyable level: live cost plus an override input, damage and
-// damage-per-gold readouts. A filled input pins that level to the override
-// price through the shared saver; the graph re-renders from live values.
+// ---- section 4b: inline per-level cost + effect editing ----------------------
+// One row per buyable level: live cost plus an override input, the per-level
+// effect (perLevel) with an edit input, damage and damage-per-gold readouts.
+// A filled override input pins that level to the override price through the
+// shared saver; the effect inputs edit the item-wide perLevel through the
+// same saver (whole-row exact-string pair, backup + syntax gate); the graph
+// and the live shop description re-render from live values, no reload.
+// Rows whose perLevel nothing reads stay read-only with their note:
+// generated kind rows (priced in sections 2/3), plus the slots/arcade/
+// escapeskip/zapchain flag rows (applyMetaBonuses never reads their
+// perLevel — slots counts purchases, arcade/escapeskip read purchase flags,
+// zapchain publishes the LEVEL).
+const EFFECT_UNEDITABLE = { slots: 1, arcade: 1, escapeskip: 1, zapchain: 1 };
+function effectEditable(def) {
+  return !def.kind && !EFFECT_UNEDITABLE[def.id];
+}
+
+// Build the new row literal with an edited perLevel (mirrors withPrices).
+// `text` is the author's own formatting (e.g. '2.0' stays '2.0'); the live
+// module object takes the numeric value separately, so display style survives.
+function withEffect(literal, text) {
+  const m = literal.match(/perLevel: [0-9.]+/);
+  if (!m) throw new Error('perLevel field not found in row literal');
+  return literal.replace(m[0], 'perLevel: ' + text);
+}
+
+// Shared effect saver: exact-string row-literal pair through POST /save
+// (backup + syntax gate, no new backend), then the live module object is
+// updated in place and every graph-adjacent surface re-renders — no reload.
+async function saveEffectTable(def, text, value) {
+  const src = await sourceText('src/meta.js');
+  const hits = rowLiteral(src, def.id);
+  if (hits.length !== 1) throw new Error('row literal for ' + def.id +
+    ' found ' + hits.length + ' times; refusing to guess');
+  const data = await postSave('src/meta.js', hits[0], withEffect(hits[0], text));
+  delete sourceCache['src/meta.js'];
+  def.perLevel = value;
+  renderGraphs();
+  renderInline();
+  renderOverrides();
+  return data;
+}
+
 function renderInline() {
   const def = SHOP_BY_ID[$('gitem').value];
   const tb = document.querySelector('#inline tbody');
@@ -478,31 +520,40 @@ function renderInline() {
   if (!def) return;
   if (def.kind) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="5" class="derived">generated row — its price lives ' +
+    tr.innerHTML = '<td colspan="6" class="derived">generated row — its price lives ' +
       'in section 2/3, so per-level editing does not apply.</td>';
     tb.appendChild(tr);
     return;
   }
+  const editable = effectEditable(def);
   const { cost, dmg, dpg } = graphCurves(def);
   for (let L = 0; L < def.maxLevel; L++) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="id">L' + L + '</td><td></td>' +
-      '<td><input class="num" inputmode="numeric" placeholder="formula"></td>' +
+      '<td><input class="num costov" inputmode="numeric" placeholder="formula"></td>' +
+      (editable
+        ? '<td><input class="num effect" inputmode="decimal"></td>'
+        : '<td class="derived">perLevel unused — read-only</td>') +
       '<td class="derived"></td><td class="derived"></td>';
     tr.children[1].textContent = fmtGold(cost[L]);
-    const inp = tr.querySelector('input');
-    if (def.overrides && def.overrides[L] !== undefined) inp.value = def.overrides[L];
-    tr.children[3].textContent = Math.round(dmg[L] * 100) / 100;
-    tr.children[4].textContent = L === 0 ? '--' : dpg[L - 1].toPrecision(4) + '/g';
+    const ov = tr.querySelector('input.costov');
+    if (def.overrides && def.overrides[L] !== undefined) ov.value = def.overrides[L];
+    if (editable) tr.querySelector('input.effect').value = def.perLevel;
+    tr.children[4].textContent = Math.round(dmg[L] * 100) / 100;
+    tr.children[5].textContent = L === 0 ? '--' : dpg[L - 1].toPrecision(4) + '/g';
     tb.appendChild(tr);
   }
   const tr = document.createElement('tr');
-  tr.innerHTML = '<td colspan="5"><button>save costs</button> ' +
-    '<span class="derived">a filled input pins that level to the override price; ' +
-    'empty falls back to the formula. damage columns are readouts.</span></td>';
-  tr.querySelector('button').addEventListener('click', async (ev) => {
+  tr.innerHTML = '<td colspan="6"><button class="savecosts">save costs</button> ' +
+    (editable ? '<button class="saveeffect">save effect</button> ' : '') +
+    '<span class="derived">a filled override input pins that level to the override price; ' +
+    'empty falls back to the formula.' +
+    (editable ? ' effect edits the item-wide perLevel; the graph + shop desc re-render live.'
+      : ' effect is read-only here: this row carries no perLevel the game reads.') +
+    '</span></td>';
+  tr.querySelector('button.savecosts').addEventListener('click', async (ev) => {
     const btn = ev.target;
-    const inputs = Array.from(tb.querySelectorAll('input'));
+    const inputs = Array.from(tb.querySelectorAll('input.costov'));
     const table = {};
     for (let L = 0; L < inputs.length; L++) {
       const raw = inputs[L].value.trim();
@@ -524,6 +575,32 @@ function renderInline() {
     }
     btn.disabled = false;
   });
+  if (editable) {
+    // One model: every effect input mirrors the same item-wide number.
+    tb.querySelectorAll('input.effect').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        tb.querySelectorAll('input.effect').forEach((o) => { if (o !== inp) o.value = inp.value; });
+      });
+    });
+    tr.querySelector('button.saveeffect').addEventListener('click', async (ev) => {
+      const btn = ev.target;
+      const raw = (tb.querySelector('input.effect').value || '').trim();
+      const nval = Number(raw);
+      if (raw === '' || !Number.isFinite(nval) || nval < 0) {
+        setMsg($('inlinemsg'), false, def.id + ': need effect (perLevel) >= 0');
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const data = await saveEffectTable(def, raw, nval);
+        setMsg($('inlinemsg'), true, def.id + ' effect saved (' + def.desc +
+          '). backup: ' + data.backup + ' — graph + desc re-rendered live, no reload.');
+      } catch (e) {
+        setMsg($('inlinemsg'), false, def.id + ': ' + e.message);
+      }
+      btn.disabled = false;
+    });
+  }
   tb.appendChild(tr);
 }
 
