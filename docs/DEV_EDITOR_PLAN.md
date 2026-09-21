@@ -65,7 +65,11 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   overrides behave exactly as today. Enables early- or late-game
   accessibility tuning per item.
 
-## SLICE 5: live telemetry + snapshots (DESIGNED, not yet dispatched)
+## SLICE 5: editable effects + live descriptions (DISPATCHED 2026-09-21,
+building — effect columns in the inline table, `desc` strings converted to
+live-value templates with coordinated fixture updates)
+
+## SLICE 6: live telemetry + snapshots (DESIGNED, not yet dispatched)
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
   cumulative gold earned vs spent, damage dealt, best-gold reference line.
 - Post-run summary: full curves + measured totals + **download-JSON**.
