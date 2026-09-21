@@ -32,6 +32,13 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   + inline per-level cost table saving through the pipe with live
   re-render, proven 300→restore with byte-identical tree. Committed as
   `85fb241`.
+- Slice 5 (opencode/muse-spark): editable effect columns + live-value
+  `desc` templates with coordinated fixture updates, proven both
+  directions. Committed as `f531208`.
+- Slice 6 (opencode/muse-spark): weapons section — damage + per-level
+  curves, live labels, override support, proof both directions with
+  byte-identical restore; red-list strictly shrank on its tree.
+  Committed as `1fca882`.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
@@ -48,7 +55,7 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   in-tree (untracked helpers, deleted before commit).
 - No root from agents: nginx/process work is the coordinator's.
 
-## SLICE 3: static cost/damage graphs (DESIGNED, not yet dispatched)
+## SLICE 3: static cost/damage graphs (DONE as `230c3c8`; unified graph + inline table followed in slice 4)
 - Per-level cost and damage curves, overlaid, each normalized to
   percent-of-own-max (raw gold vs raw damage on one axis is meaningless).
 - Third curve: damage-per-gold — DESCRIPTIVE ONLY, clearly labeled. It
