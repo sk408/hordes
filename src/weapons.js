@@ -837,7 +837,7 @@ export const WEAPON_TYPES = {
   ORBIT:      { id: 'ORBIT',      name: WEAPONS.ORBIT.NAME,      update: updateOrbit },
   BOOMERANG:  { id: 'BOOMERANG',  name: WEAPONS.BOOMERANG.NAME,  update: updateBoomerang },
   ZAP:        { id: 'ZAP',        name: WEAPONS.ZAP.NAME,        update: updateZap },
-  NOVA_PULSE: { DMG: 0.25, RADIUS: 7 },
+  NOVA_PULSE: { id: 'NOVA_PULSE', name: WEAPONS.NOVA_PULSE.NAME, update: updateNovaPulse },
   SCYTHE:     { id: 'SCYTHE',     name: WEAPONS.SCYTHE.NAME,     update: updateScythe },
   SEEKER:     { id: 'SEEKER',     name: WEAPONS.SEEKER.NAME,     update: updateSeeker },
   MINE:       { id: 'MINE',       name: WEAPONS.MINE.NAME,       update: updateMine },
