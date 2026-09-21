@@ -61,6 +61,9 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   UNDER the opaque shop card frame — joined `button.dev-sell` to the
   z-index:1 content layer, proven by real-screenshot pixel sampling
   (plank → button face). Committed as `a8f711c`.
+- QUEUED: 8x boss-kill sequencing — draft menu sticks over the escape
+  sequence and gem-suck-in is skipped at speed (owner report 2026-09-21).
+  Substeps blow through frame-paced sequencing; fix owns the ordering.
 - Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
   HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
