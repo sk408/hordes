@@ -69,7 +69,13 @@ feed sims and LLM balance analysis. Player build never sees any of it.
 building — effect columns in the inline table, `desc` strings converted to
 live-value templates with coordinated fixture updates)
 
-## SLICE 6: live telemetry + snapshots (DESIGNED, not yet dispatched)
+## SLICE 6: weapons section (DESIGNED, not yet dispatched)
+- Same treatment as shop: weapon damage + per-level damage curves editable
+  in the inline table, unified graph with the same normalization, overrides
+  supported where the game code allows shaped curves. Descriptions follow
+  the live-template rule from slice 5.
+
+## SLICE 7: live telemetry + snapshots (DESIGNED, not yet dispatched)
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
   cumulative gold earned vs spent, damage dealt, best-gold reference line.
 - Post-run summary: full curves + measured totals + **download-JSON**.
