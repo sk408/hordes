@@ -24,7 +24,16 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   in `tools/.backups/`, node module-parse check + rollback on failure,
   guard rails 403/409 verified) + `editor.html` shop-prices section reading
   live config values. Committed as `7ec4a1a`.
-- Infra (Remy): systemd unit, nginx static + api proxy, HUP verified.
+- Slice 3 (opencode/muse-spark): per-level cost overrides in game code
+  (`overrides[level] ?? formula`, pinning test) + graphs section
+  (normalized cost/damage/ratio overlays, labeled ratio, override marks,
+  empty measured-runs slot). Committed as `230c3c8`.
+- Slice 4 (opencode/muse-spark): unified single graph (toggleable legend)
+  + inline per-level cost table saving through the pipe with live
+  re-render, proven 300→restore with byte-identical tree. Committed as
+  `85fb241`.
+- Infra (Remy): systemd unit (+ node PATH fix), nginx static + api proxy,
+  HUP verified; 150→151→150 roundtrip through the public proxy, tree clean.
 - Roundtrip proof: 150→151→150 on `dmg` baseCost through the PUBLIC proxy,
   diff confirmed both directions, tree left clean. (One unexplained 403 on
   a single early attempt; every request since — direct and proxied — behaves
@@ -56,7 +65,7 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   overrides behave exactly as today. Enables early- or late-game
   accessibility tuning per item.
 
-## SLICE 4: live telemetry + snapshots (DESIGNED, not yet dispatched)
+## SLICE 5: live telemetry + snapshots (DESIGNED, not yet dispatched)
 - Dev-gated overlay (`?dev=` param): 1 Hz sparklines during the run —
   cumulative gold earned vs spent, damage dealt, best-gold reference line.
 - Post-run summary: full curves + measured totals + **download-JSON**.
