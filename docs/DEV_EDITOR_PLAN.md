@@ -72,7 +72,10 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   "fix" its curve; the ban list is the testing tool, not a verdict. It is
   also an idle-catcher by design: a reason to stay and pick drafts rather
   than go idle (idle pacing itself is deliberate — never propose instant
-  auto-pick).
+  auto-pick). It is a SKILL-TESTER by design (owner): its value is not
+  immediately clear, but experienced players instantly see that better
+  weapon-upgrade odds across 3 drafts early is worth it. Never simplify
+  it into obviousness — the hidden depth is the point.
 - QUEUED: granted-vs-earned accounting — the owner fast-forwards profiles
   by granting upgrades mid-testing (estimating affordability from run
   income, e.g. 200k/run). Legitimate methodology, but snapshots must
