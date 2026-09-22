@@ -381,6 +381,102 @@ absent — nothing below is earned income).
 - Unverified / flagged: autoplay rows' killers (tool prints none);
   truncated-path taken-split (derived, cited); gold_earned in snapshots reads
   purse-only on deaths (0-29g; the AWARD floor is NOT in the snapshot field —
-  income must come from profile-delta cohorts, never this column); pre-screen
-  sims (`boss_sim` 20-run fresh cohort, `draft_sim` minute table) were run
-  once each as instrument checks only and carry NO verdict weight.
+   income must come from profile-delta cohorts, never this column); pre-screen
+   sims (`boss_sim` 20-run fresh cohort, `draft_sim` minute table) were run
+   once each as instrument checks only and carry NO verdict weight.
+
+### 4a — income battery re-run (2026-09-22, fixed instrument)
+
+- Reproduction (minimal probes, counted-not-capped functional lane, quotes):
+  battery path (`boot` -> `Object.assign(prof, makeProfile())` -> `startRun`):
+  harness-stamped `runs=1`, after-assign `runs=absent` (=0 by the sparse-totals
+  read), after-`startRun` `prologue=true`, after 600 frames
+  `prologue=true, t=0, kills=0, mode=playing` — the inert arm, exactly as
+  step 4 diagnosed. Real path (stamp intact): `prologue=false`, clock runs,
+  dies `t~=10.5s wave=1 kills=0 mode=death-cine` (step 4's probe saw 27s /
+  3 kills — seed/pilot variance; lethality intact either way, so the failure
+  is INSTRUMENT, not a survival shift). Fixed path (re-stamp after assign):
+  `prologue=false`, after 600 frames `t=10.0, kills=0, mode=playing`.
+- Citations VERIFIED against the code (not taken on trust): `startRun`
+  derives the phase from `achievements.totals.runs` at run start, absent
+  counting as 0 (`src/main.js:8610-8639`, read at `:8619-8620,8639`);
+  `C.PROLOGUE.ENABLED=true` (`src/config.js:631`, read); the harness stamps
+  `runs=1` for non-prologue boots (`test/_harness.mjs:230-237`, read); fresh
+  `makeProfile()` carries sparse totals so the whole-object assign wipes the
+  stamp (`src/save.js:528-540`, read). `buildProfile()` returns a whole fresh
+  profile per arm (`tools/measure_income_stages.mjs:53-91`), applied at
+  `:109`.
+- Fix location: `tools/measure_income_stages.mjs:110-117` — re-stamp
+  `achievements.totals.runs = 1` immediately after the `Object.assign`.
+  Why THERE: the `src/main.js` derivation is the correct player-facing
+  contract (a real fresh profile's run #1 SHOULD open prologue); the defect
+  is the battery replacing the whole profile object including the harness's
+  measurement stamp. A tools-side re-stamp is the least invasive repair
+  (`step4_cliff.mjs:108-110` precedent); `src/` untouched, player behavior
+  byte-identical (suite red list below identical to baseline).
+- Battery (`node tools/measure_income_stages.mjs`, default 4 arms, n=3,
+  machine-enforced 60s/arm cap as found — caps NOT raised): 9/12 runs
+  complete, maxed arm CENSORED (see below). Verbatim stdout [ARM]:
+  `fresh run=1/3 died t=9s wave=1 kills=0 level=1 purse=0 banked=+320`;
+  `fresh run=2/3 died t=16s wave=1 kills=0 level=1 purse=0 banked=+320`;
+  `fresh run=3/3 died t=8s wave=1 kills=0 level=1 purse=0 banked=+70`;
+  `SUMMARY arm=fresh survivedFullCap=0/3 medianT=9s medianGold=320g
+  medianGoldPerSec=20.00g/s`; `couple run=1/3 died t=22s wave=1 kills=9
+  level=2 purse=0 banked=+335`; `couple run=2/3 died t=32s wave=1 kills=22
+  level=1 purse=0 banked=+357`; `couple run=3/3 died t=7s wave=1 kills=1
+  level=1 purse=0 banked=+72`; `SUMMARY arm=couple survivedFullCap=0/3
+  medianT=22s medianGold=335g medianGoldPerSec=11.16g/s`;
+  `partial run=1/3 died t=30s wave=1 kills=19 level=1 purse=0 banked=+352`;
+  `partial run=2/3 died t=35s wave=1 kills=27 level=2 purse=0 banked=+362`;
+  `partial run=3/3 died t=50s wave=1 kills=38 level=1 purse=0 banked=+366`;
+  `SUMMARY arm=partial survivedFullCap=0/3 medianT=35s medianGold=362g
+  medianGoldPerSec=10.34g/s`; `maxed:run1` THREW at the machine cap (60.0s,
+  alive — the cap enforcement working as designed), process aborted: maxed
+  runs 2-3 never drove, no SIM line printed. Maxed reported CENSORED with
+  this reading; no faked rows.
+- Income table [ARM] (length, gold) pairs: fresh (9s, 320/320/70 —
+  runs 1-2 carry FIRST_CLEAR 250 + AWARD 70, run 3 steady 70);
+  couple (22s median, 335/357/72); partial (35s median, 352/362/366 —
+  each run set a new best time so each carries +250; implied purse
+  32/42/46 — derived arithmetic, flagged); maxed CENSORED at 60s cap
+  (alive). Decomposition rule derived from `src/meta.js:350-362`
+  (`computeRunGold`: BASE + kills/level/time terms + 250 iff firstClear):
+  banked − 320 on first-clear runs = purse (15/37/2 couple; 32/42/46
+  partial). Steady (non-first-clear) readings: fresh 70 [ARM], couple 72
+  [ARM] — the AWARD floor 70 re-measured, consistent with PACING §1's
+  (9s, 70g steady) band.
+- Stale-vs-current price table KEPT (step-4 [TABLE] values carried; spot
+  re-verified this run via grep — ZAP 60000 `:451`, NOVA_PULSE 12000 `:452`,
+  SCYTHE 20000 `:453`, BEAM 450000 `:458`, luck base 14000 `:604`, fleetfoot
+  base 65000 `:623` — all unchanged): ZAP 60000 (was 600000); luck base
+  14000 / full-buy 434000 (was 140000); fleetfoot base 65000 / full-buy
+  2015000 (UNCHANGED); hp L1 100 (was 120); dmg L1 125 (was 150); couple
+  build cost 225 (was 270); BEAM 450000 (was 4,500,000); NOVA_PULSE 12000,
+  SCYTHE 20000 (were 1.2M/2.0M); catalogue 44,960,367g over 50 rows (was
+  98.5M); INCOME_TIERS still 70/100/200/754689 (unchanged).
+- G1/G2/G7 income-side citations — updated ONLY where this battery
+  measures: G1 denominator tier-0 70 RE-MEASURED [ARM] (fresh steady 70,
+  couple steady 72 ~= 70 — the divisor stands; the 100/70 = 1.43 [TABLE]
+  ratio from step 4 is unaffected). G2 denominator tier-1 100 NOT
+  re-measured (no partial steady run — all three set new bests) — stays
+  [CITED]. G7 denominator tier-2 200 NOT re-measured (maxed censored,
+  partial steady unmeasured) — stays [CITED]. No guard edited.
+- SIM: no SIM line (cap-throw abort on maxed:run1); ~269s charged across 10
+  arms against 720s declared budget (derived from per-run t: 33 + 61 + 115
+  + 60 + pump overhead — flagged derived). Probes counted (functional
+  lane, no budget).
+- Suite + hygiene: `bash tools/run_all_dev.sh`:
+  greenfiles=161 redfiles=11 with the IDENTICAL red list (beatability,
+  economy_breadth, economy_reprice, evolution, meta, meta_rank,
+  pacing_guards, sgkv4_purchases, shop_overrides, weapon_overrides,
+  weapons) — matches the 4a baseline. `node --check` clean on the one
+  touched file (`tools/measure_income_stages.mjs`); `src/` untouched (no
+  balance surface, no gameplay change). No git/network/emojis; no
+  outside-worktree paths on any command line.
+- Unverified / censored / flagged: maxed arm CENSORED (1 run driven to the
+  60s cap alive; runs 2-3 never drove — late-tier income still has no [ARM]
+  row on this tree); partial steady income unmeasured (all three runs
+  first-clear); purse decomposition is derived arithmetic, not tool output;
+  GAPS update vs step 4: gap 1 income side PARTIALLY resolved (fresh/couple
+  steady floors + first-clear pairs measured; tier-1/tier-2 divisors and
+  maxed still [CITED]/censored).

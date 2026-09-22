@@ -107,6 +107,14 @@ async function main() {
     // overwrite the live profile with the arm's build (same fields makeProfile
     // owns; the harness booted with a default fresh save)
     Object.assign(prof, want);
+    // 4a instrument fix: buildProfile() returns a WHOLE fresh profile whose
+    // achievements.totals.runs is absent (=0), wiping the harness's runs=1
+    // prologue stamp — every arm then opened INERT (prologue, t frozen).
+    // Re-stamp so arms measure ordinary-run behaviour (step4_cliff.mjs:108-110
+    // precedent). src/ untouched: the player path is unchanged.
+    prof.achievements = prof.achievements || {};
+    prof.achievements.totals = prof.achievements.totals || {};
+    prof.achievements.totals.runs = 1;
     // PLAYER-REAL levers: AUTO_ALL pilot + SAFE stance through the REAL
     // persisted-pref seam (exactly what the settings card does).
     T.setPilotMode('AUTO_ALL');
