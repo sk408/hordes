@@ -102,11 +102,15 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   `runs.jsonl` (verified 76,470 bytes / 18 lines). Suite 160/11, red-list
   identical. NOTE: the endpoint only exists after a service restart —
   restart `hordes-editor.service` when landing saver/endpoint changes.
-- FLAGGED FOR OWNER RULING (from the accounting fix): (a) the COLOSSUS
-  death shockwave counts enemy friendly-fire as PLAYER damage — credit or
-  not?; (b) paid chests are currently counted as investment (shrine
-  spending stays excluded) — confirm; (c) dead corpses take one phantom
-  burn tick (src/main.js:3217, no hp guard) — tiny, unfixed.
+- OWNER RULED 2026-09-21 (from the accounting fix): (a) COLOSSUS
+  death shockwave enemy friendly-fire is NOT player damage/kill credit
+  — do not credit (briefed for implementation); (b) paid chests ARE
+  investment, confirmed as-is (shrine spending stays excluded);
+  (c) dead corpses take one phantom burn tick (src/main.js:3217, no hp
+  guard) — ruled FIX it (briefed alongside (a)).
+- GitHub push auth RESOLVED 2026-09-21: owner logged in via gh on the
+  VPS; `git push github main` verified working (6fa23b2 → c0ff734,
+  ls-remote confirmed). GitHub is no longer blocked.
 - QUEUED: dev autoplay policy runner — TOGGLE (not always-on). Dev-night
   mode = nightmare rules with NO 50% banking cut. Auto-buy policy
   (owner-stated): prefer weapons, split, weapon slots, damage increases;
