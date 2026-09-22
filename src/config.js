@@ -745,6 +745,16 @@ export const CONFIG = {
     // pacing change): 0.30 -> 0.45, so the coarse structures read a few per
     // screen. Painting only — no sim number rides this knob.
     LANDMARK_DENSITY: 0.45,
+    // PORT SLICE E (owner request 2026-09-22: buildings on the map — an
+    // APPROVED visual-density addition, not a pacing change): the rare
+    // building pass (render.js drawLandmarks) reads these two knobs.
+    // BUILDING_CELL is 3x LANDMARK_CELL (576px) so a 64..108px structure
+    // anchors with room to overhang its cell; BUILDING_DENSITY gates picked
+    // cells (~0.6 buildings per 480x300 screen, ON TOP of the landmark
+    // field — the slice-A/D prop subdivision is untouched). Painting only —
+    // no sim number rides these knobs.
+    BUILDING_CELL: 576,
+    BUILDING_DENSITY: 0.22,
     // WAVE-9B/2 per-wave AREA IDENTITY: the theme ladder cycles by WAVE number
     // (never by run — Sk408 beat the boss, entered wave 2 and the ground read
     // identical). Each theme = base ground tone + grid dots + decor palette

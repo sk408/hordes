@@ -21,6 +21,7 @@ import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
+import { buildingForStage, paintBuilding } from './stage_buildings.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -3004,6 +3005,71 @@ export class Renderer {
           g.fillRect(x + 14, y + 8, 4, 3);
         }
         out.push({ kind, x: wx, y: wy, rects });
+      }
+    }
+    // PORT SLICE E (buildings, owner request 2026-09-22: "see some of the
+    // buildings on the map too" — an APPROVED visual-density addition,
+    // painting only). A SECOND, rarer hash field on a coarser grid
+    // (BUILDING_CELL = 3x LANDMARK_CELL) paints one ORIGINAL stage-keyed
+    // structure per picked building-cell (src/stage_buildings.js — 64..108px
+    // wide, 17..21 fillRects, fixed authored palettes so a stage reads as a
+    // PLACE under any wave theme). Same contract as the field above:
+    // deterministic per (cell, seed, stage) — never the clock — footprint
+    // rim-clipped, reported through the same landmarks seam (kind = the
+    // building id, always COMPOSED). A separate pass, never a stolen tail
+    // branch, so the slice-A/D prop subdivision and its density pins do not
+    // move: buildings ADD landmarks (~0.6/screen), they replace no prop.
+    // The guarantee extends the slice-D promise: the stage's building also
+    // sits inside the initial camera view of the spawn (the prop cell is
+    // untouched, so the slice-D pins hold). The guaranteed building-cell is
+    // the nearest density-picked building-cell to the spawn whose footprint
+    // fits fully inside the initial view rect, falling back to cell (0,0)
+    // with its anchor clamped into that rect — a pure hash function of
+    // (seed, stage), forced at paint time only: no sim state read, none
+    // written.
+    const BC = C.GROUND.BUILDING_CELL, BDENS = C.GROUND.BUILDING_DENSITY;
+    const bSpec = buildingForStage(stage);
+    const bAnchorOf = (bx, by) => ({
+      x: bx * BC + 48 + Math.floor(cellRand(bx, by, seed, 22) * (BC - 96 - bSpec.w)),
+      y: by * BC + 48 + Math.floor(cellRand(bx, by, seed, 23) * (BC - 96 - bSpec.h)),
+    });
+    const bFitsView = (ax, ay) =>
+      ax >= 0 && ay >= 0 && ax + bSpec.w <= C.VIEW_W && ay + bSpec.h <= C.VIEW_H;
+    let bPick = null, bPickD = Infinity;
+    for (let by = Math.floor(0 / BC); by <= Math.floor(C.VIEW_H / BC); by++) {
+      for (let bx = Math.floor(0 / BC); bx <= Math.floor(C.VIEW_W / BC); bx++) {
+        const a = bAnchorOf(bx, by);
+        if (!bFitsView(a.x, a.y)) continue;
+        const dx = a.x + bSpec.w / 2 - SPAWN_X, dy = a.y + bSpec.h / 2 - SPAWN_Y;
+        const d = dx * dx + dy * dy;
+        if (cellRand(bx, by, seed, 21) < BDENS && d < bPickD) { bPick = { x: bx, y: by }; bPickD = d; }
+      }
+    }
+    const bCell = bPick || { x: 0, y: 0 };
+    const b0 = Math.floor(cam.x / BC), b1 = Math.floor((cam.x + C.VIEW_W) / BC);
+    const bR0 = Math.floor(cam.y / BC), bR1 = Math.floor((cam.y + C.VIEW_H) / BC);
+    for (let by = bR0; by <= bR1; by++) {
+      for (let bx = b0; bx <= b1; bx++) {
+        const forceB = bx === bCell.x && by === bCell.y;
+        // The guaranteed cell paints unconditionally (even the density-gate
+        // fallback); every other cell keeps the rare gate.
+        if (!forceB && cellRand(bx, by, seed, 21) >= BDENS) continue;
+        let wa = bAnchorOf(bx, by);
+        if (forceB && !bFitsView(wa.x, wa.y)) {
+          // Fallback clamp: the natural anchor missed the initial view, so
+          // pin the footprint just inside it — still a pure function of
+          // (cell, seed, stage), still rim-safe (the view sits deep inside
+          // the arena).
+          wa = {
+            x: Math.min(Math.max(wa.x, 8), C.VIEW_W - bSpec.w - 8),
+            y: Math.min(Math.max(wa.y, 8), C.VIEW_H - bSpec.h - 8),
+          };
+        }
+        // Footprint rim cull (structures overhang their cell by design).
+        if (wa.x < -RIM + 4 || wa.x + bSpec.w > RIM - 4) continue;
+        if (wa.y < -RIM + 4 || wa.y + bSpec.h > RIM - 4) continue;
+        const x = Math.round(wa.x - cam.x), y = Math.round(wa.y - cam.y);
+        out.push({ kind: bSpec.id, x: wa.x, y: wa.y, rects: paintBuilding(g, bSpec.id, x, y) });
       }
     }
     // THE HOLLOW'S AUTHORED LANDMARKS (STARTING ARENA IMPROVE 2026-09-17) —
