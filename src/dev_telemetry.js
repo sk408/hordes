@@ -333,6 +333,79 @@ export async function fetchGameRev(env) {
   }
 }
 
+// ---------- snapshot-log read (SLICE 11) ---------------------------------------
+// Pure parse/filter over the append-only runs.jsonl, served whole by the saver
+// backend (GET /snapshots -> {ok, mtime, count, raw}). No schema change: rows
+// validate through validateSnapshot (v1 legacy + v2 current). Unparseable or
+// invalid lines are KEPT as error rows ({index, error, raw}) — the log is
+// never silently shortened, and the viewer flags them instead of dropping
+// them. `index` is the 1-based non-blank line number (the run's log order).
+export function parseSnapshotLog(raw) {
+  const rows = [];
+  let skipped = 0;
+  if (typeof raw !== 'string' || raw.length === 0) return { rows, skipped };
+  let index = 0;
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') { skipped++; continue; }
+    index++;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      rows.push({ index, error: 'not JSON', raw: line.slice(0, 200) });
+      continue;
+    }
+    const v = validateSnapshot(obj);
+    if (!v.ok) rows.push({ index, error: v.errors.join('; '), raw: line.slice(0, 200) });
+    else rows.push({ index, snap: obj });
+  }
+  return { rows, skipped };
+}
+
+// Subset rows for the viewer filters. mode: 'all' or an exact mode label
+// (rows whose snapshot carries no mode — pre-slice-9 legacy — match 'all'
+// only, never a guessed label). test: 'all' | 'test' | 'nontest' off the
+// snapshot's boolean test flag. Error rows always pass (flagged, never
+// hidden by a filter).
+export function filterSnapshots(rows, opts = {}) {
+  const mode = (opts && opts.mode) || 'all';
+  const test = (opts && opts.test) || 'all';
+  return (rows || []).filter((row) => {
+    if (!row || !row.snap) return true;
+    if (mode !== 'all' && row.snap.mode !== mode) return false;
+    if (test === 'test' && row.snap.test !== true) return false;
+    if (test === 'nontest' && row.snap.test !== false) return false;
+    return true;
+  });
+}
+
+// The log file mtime (ISO UTC from GET /snapshots) as a YYYY-MM-DD date for
+// the viewer table. Snapshots carry no per-run clock (schema frozen), so the
+// viewer labels the column as the log mtime — never a per-run claim.
+export function snapshotLogDate(mtime) {
+  if (typeof mtime !== 'string' || mtime.length < 10) return 'n/a';
+  const d = mtime.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : 'n/a';
+}
+
+export async function fetchSnapshots(env) {
+  try {
+    const fetchFn = (env && env.fetch) || (typeof fetch === 'function' ? fetch : null);
+    if (!fetchFn) return { ok: false, error: 'no fetch' };
+    const res = await fetchFn(devApiBase(env) + '/snapshots');
+    if (!res || !res.ok) return { ok: false, error: 'http ' + ((res && res.status) || 'no response') };
+    const body = await res.json().catch(() => null);
+    if (!body || body.ok !== true || typeof body.raw !== 'string') {
+      return { ok: false, error: 'bad log payload' };
+    }
+    const { rows, skipped } = parseSnapshotLog(body.raw);
+    return { ok: true, mtime: body.mtime ?? null, count: body.count ?? rows.length,
+             raw: body.raw, rows, skipped };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err).slice(0, 200) };
+  }
+}
+
 export async function postSnapshot(env, snap) {
   const v = validateSnapshot(snap);
   if (!v.ok) return { ok: false, error: 'client refused invalid snapshot: ' + v.errors.join('; ') };

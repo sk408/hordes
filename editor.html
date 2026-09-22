@@ -158,6 +158,33 @@ here); starter weapons show no unlock price.</div>
 </tr></thead><tbody></tbody></table>
 <div id="winlinemsg" class="msg"></div>
 
+<h2>7 · SNAPSHOT LOG (runs.jsonl)</h2>
+<div class="sub">append-only dev run snapshots through the saver (GET /snapshots),
+newest last. the date column is the LOG FILE mtime — snapshots carry no
+per-run clock (schema frozen). bad lines are kept as flagged error rows,
+never dropped. "load into graphs" annotates the cost/damage graph sections
+with that run's measured numbers (read-only — the curves stay formula).</div>
+<div class="bar">
+  <button id="logload">load log</button>
+  <label for="logmode">mode</label>
+  <select id="logmode">
+    <option value="all">all</option>
+    <option value="standard">standard</option>
+    <option value="night">night</option>
+  </select>
+  <label for="logtest">test</label>
+  <select id="logtest">
+    <option value="all">all</option>
+    <option value="test">test only</option>
+    <option value="nontest">non-test only</option>
+  </select>
+  <span id="logmeta" class="derived"></span>
+</div>
+<table id="log"><thead><tr>
+  <th>#</th><th>seed</th><th>mode</th><th>wave</th><th>earned</th><th>spent</th><th>damage</th><th>test</th><th>date</th><th></th>
+</tr></thead><tbody id="logbody"></tbody></table>
+<div id="logmsg" class="msg"></div>
+
 <div id="status" class="msg"></div>
 
 <script type="module">
@@ -169,6 +196,7 @@ import { WEAPONS, WEAPON_LEVELS, WEAPON_MAX_LEVEL, WEAPON_NAMES, WEAPON_STEPS,
   WEAPON_DMG_OVERRIDES, weaponLevelParams, describeWeaponLevel, rebuildWeaponTable }
   from './src/weapons.js';
 import { EVOLUTION_DEFS } from './src/evolutions.js';
+import { parseSnapshotLog, filterSnapshots, snapshotLogDate } from './src/dev_telemetry.js';
 
 const $ = (id) => document.getElementById(id);
 const saverBase = () => $('saver').value.replace(/\/+$/, '');
@@ -482,7 +510,7 @@ function renderGraphs() {
     'damage raw: ' + dmg.map((d, l) => 'L' + l + ' ' + (Math.round(d * 100) / 100)).join(', ') +
     '<br>damage-per-gold raw: ' +
     dpg.map((d, i) => 'L' + dpgX[i] + ' ' + d.toPrecision(4) + '/g').join(', ') + '</div>' +
-    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>' +
+    '<div class="measured">' + measuredText() + '</div></div>' +
     '<div class="sub">damage-per-gold is descriptive only: it carries the ' +
     'income feedback loop (income scales with build power), never a fairness verdict. ' +
     'cost is plotted at the level you pay from (price of the next level); ' +
@@ -822,7 +850,7 @@ function wRenderGraphs() {
         eff[k].map((v, i) => 'L' + (i + 1) + ' ' + (Math.round(v * 10000) / 10000)).join(', ')).join('<br>')
       : '<br>ladder is damage-only (no moving secondary — count growth lives in the shop zapchain row)') +
     '</div>' +
-    '<div class="measured">measured runs: no data yet — the telemetry slice fills this slot.</div></div>' +
+    '<div class="measured">' + measuredText() + '</div></div>' +
     '<div class="sub">damage is per-hit (base x DAMAGE_MULT x ladder dmgMult). ' +
     'there is no per-level gold curve here: weapons unlock once, so cost is a ' +
     'single price, not a series.</div>';
@@ -1144,6 +1172,106 @@ function renderWInline() {
   tb.appendChild(tr);
 }
 
+// ---- section 7: snapshot log viewer + measured overlay ------------------------
+// The log loads through GET /snapshots (whole runs.jsonl + file mtime);
+// rows parse/validate/filter through the game's own dev_telemetry helpers —
+// never a second implementation. "Load into graphs" pins one run as a
+// READ-ONLY annotation on both graph sections (the curves stay formula;
+// renderGraphs/wRenderGraphs re-read measuredText on every re-render).
+let logRows = [];
+let logMtime = null;
+let logCount = 0;
+let measuredRun = null;   // { index, snap } or null
+
+function measuredText() {
+  if (!measuredRun) return 'measured runs: none loaded — load one from the snapshot log (section 7).';
+  const s = measuredRun.snap;
+  return 'measured run #' + measuredRun.index + ' (READ-ONLY overlay): seed ' + s.seed +
+    ' · mode ' + (s.mode || 'unknown') + ' · wave ' + s.wave +
+    ' · earned ' + s.gold_earned + ' · spent ' + s.gold_spent + ' (invest)' +
+    ' · dmg ' + s.damage + ' · test ' + (s.test ? 'YES' : 'NO') +
+    ' — the graphs still show formula curves.';
+}
+
+function renderLog() {
+  const tb = $('logbody');
+  tb.innerHTML = '';
+  const rows = filterSnapshots(logRows, { mode: $('logmode').value, test: $('logtest').value });
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    if (!row.snap) {
+      tr.innerHTML = '<td class="id">#' + row.index + '</td>' +
+        '<td colspan="8" class="derived"></td><td></td>';
+      tr.querySelector('td.derived').textContent =
+        'BAD LINE — ' + row.error + ' :: ' + row.raw;
+      tb.appendChild(tr);
+      continue;
+    }
+    const s = row.snap;
+    tr.innerHTML = '<td class="id">#' + row.index + '</td><td></td><td></td><td></td>' +
+      '<td></td><td></td><td></td><td></td><td class="derived"></td>' +
+      '<td><button class="expand">keys</button> <button class="load">load into graphs</button></td>';
+    const c = tr.children;
+    c[1].textContent = s.seed;
+    c[2].textContent = s.mode || 'unknown';
+    c[3].textContent = s.wave;
+    c[4].textContent = s.gold_earned;
+    c[5].textContent = s.gold_spent;
+    c[6].textContent = s.damage;
+    c[7].textContent = s.test ? 'YES' : 'no';
+    c[8].textContent = snapshotLogDate(logMtime);
+    const detail = document.createElement('tr');
+    detail.style.display = 'none';
+    const dcell = document.createElement('td');
+    dcell.colSpan = 10;
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;font-size:11px;color:#b8b8cc;';
+    pre.textContent = JSON.stringify(s, null, 2);
+    dcell.appendChild(pre);
+    detail.appendChild(dcell);
+    tr.querySelector('button.expand').addEventListener('click', (ev) => {
+      detail.style.display = detail.style.display === 'none' ? '' : 'none';
+      ev.target.textContent = detail.style.display === 'none' ? 'keys' : 'hide';
+    });
+    tr.querySelector('button.load').addEventListener('click', () => {
+      measuredRun = { index: row.index, snap: s };
+      renderGraphs();
+      wRenderGraphs();
+      setMsg($('logmsg'), true, 'run #' + row.index + ' loaded into graphs (read-only overlay).');
+    });
+    tb.appendChild(tr);
+    tb.appendChild(detail);
+  }
+  $('logmeta').textContent = logRows.length + ' runs · log date ' +
+    snapshotLogDate(logMtime) + ' · showing ' + rows.length;
+}
+
+async function loadLog() {
+  try {
+    const res = await fetch(saverBase() + '/snapshots');
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body || body.ok !== true || typeof body.raw !== 'string') {
+      throw new Error((body && body.error) || ('http ' + res.status));
+    }
+    const parsed = parseSnapshotLog(body.raw);
+    logRows = parsed.rows;
+    logMtime = body.mtime ?? null;
+    logCount = body.count ?? parsed.rows.length;
+    renderLog();
+    const bad = logRows.filter((r) => !r.snap).length;
+    setMsg($('logmsg'), true, 'log loaded: ' + logRows.length + ' runs' +
+      (bad ? ' (' + bad + ' bad lines flagged)' : '') + '.');
+  } catch (e) {
+    setMsg($('logmsg'), false, 'cannot load log at ' + saverBase() + '/snapshots (' + e.message + ')');
+  }
+}
+
+function buildLogSection() {
+  $('logload').addEventListener('click', loadLog);
+  $('logmode').addEventListener('change', renderLog);
+  $('logtest').addEventListener('change', renderLog);
+}
+
 function buildWeaponSection() {
   const sel = $('witem');
   for (const id of Object.keys(WEAPON_LEVELS)) {
@@ -1192,6 +1320,7 @@ buildWeapons();
 buildElites();
 buildGraphSection();
 buildWeaponSection();
+buildLogSection();
 $('status').textContent = SHOP_UPGRADES.length + ' shop rows, ' +
   Object.keys(WEAPON_PRICES).length + ' weapon prices, ' +
   Object.keys(ELITE_MODIFIERS).length + ' elite costs, ' +

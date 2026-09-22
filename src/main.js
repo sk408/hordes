@@ -201,6 +201,7 @@ import {
 import {
   isDevGate, SNAPSHOT_SCHEMA_V, buildSnapshot,
   devArm, devHit, drawSparkline, fetchGameRev, postSnapshot,
+  fetchSnapshots,
   DEV_SPEEDS, devNormSpeed, devNextSpeed,
 } from './dev_telemetry.js';
 
@@ -2110,6 +2111,36 @@ function devDownload(snap) {
   } catch { /* headless: lastDownload carries the payload */ }
   return text;
 }
+// SLICE 11: download-ALL (main menu, dev gate only). Fetches the whole
+// append-only log through GET /snapshots and downloads it as one runs.jsonl
+// (every run, not the current one). Never rejects: a failed fetch resolves
+// null (the card stays silent — same best-effort contract as devDownload).
+// Stashes the exact server bytes on the module (headless-readable) so the
+// proof can assert byte-equality with the log file. The end-screen
+// single-run DEV SNAPSHOT card is untouched.
+let devLogText = null;   // last download-all payload (exact /snapshots raw)
+async function devDownloadLog(env) {
+  try {
+    const res = await fetchSnapshots(env || globalThis);
+    if (!res || !res.ok) return null;
+    devLogText = res.raw;
+    try {
+      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' &&
+          URL && typeof URL.createObjectURL === 'function') {
+        const blob = new Blob([res.raw], { type: 'application/jsonl' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'hordes-runs.jsonl';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    } catch { /* headless: devLogText carries the payload */ }
+    return res.raw;
+  } catch {
+    return null;
+  }
+}
 // SLICE 9: the run's mode + modifiers, read LIVE off the run flags and the
 // live tuning constants at snapshot time — no hardcoded mode strings, no
 // hardcoded penalty numbers. `mode` is the night-vs-standard stamp (the
@@ -3936,7 +3967,7 @@ function update(dt) {
             for (const o of state.enemies) {
               if (o.hp <= 0) continue;
               if (Math.hypot(o.x - p.x, o.y - p.y) <= blast.radius) {
-                o.hp -= devHit(blast.damage);
+                o.hp -= blast.damage;
                 o.flash = 0.08;
               }
             }
@@ -6998,6 +7029,12 @@ function showTitle() {
   // SETUP onto the title — a confused player does not open SETUP to look for
   // help. SETUP keeps CHALLENGE / STAGE / SETTINGS.
   menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  // SLICE 11: download-all lives on the MAIN MENU (dev gate only), never the
+  // end screen — one button for the whole runs.jsonl (all runs, not the
+  // current one). The end-screen single-run DEV SNAPSHOT card stays as-is.
+  if (DEV_GATE) {
+    menuCard('DEV LOG', 'download every run snapshot (runs.jsonl)', () => { devDownloadLog(); });
+  }
   // N2 DO 1: the FIRST title entry per page load shows the art alone for a
   // beat, then fades the menu in over it; every return re-fades short. A
   // hold already in flight (out/hold) is never interrupted by a rebuild.
@@ -12344,6 +12381,12 @@ export const __TEST = {
     get session() { return dev; },
     onRunEnd: () => devOnRunEnd(),
     download: (s) => devDownload(s || (dev && dev.snapshot)),
+    // SLICE 11 download-all seams: the whole-log fetch+download the main-menu
+    // DEV LOG card drives (env-injectable for headless fetch stubs) and the
+    // last payload (exact /snapshots raw — the byte-equality seam). Never
+    // read by the browser page.
+    downloadLog: (env) => devDownloadLog(env || globalThis),
+    get lastLog() { return devLogText; },
     buyChest: (tier) => buyPaidChest(tier),
     // SLICE 8: speed control seam — the offered list plus the ONE setter the
     // overlay button drives (normalized, persisted, flash-clock translated;

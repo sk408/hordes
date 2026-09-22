@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HORDES dev-editor saver backend (slice 2 + slices 7-8) — stdlib only.
+"""HORDES dev-editor saver backend (slice 2 + slices 7-8 + slice 11) — stdlib only.
 
 Applies exact-string replacements (old/new pairs) to WHITELISTED tuning
 files only (the set in tools/tuning_map.md section 7). Everything else 403.
@@ -25,8 +25,13 @@ Endpoints:
                         tools/.snapshots/runs.jsonl, append-only, never
                         overwritten; the dir is git-ignored)
   GET  /editor.html -> the dev-editor page (static, read-only)
-  GET  /src/<name>  -> raw source text of a WHITELISTED file (read-only; the
-                        editor fetches this to build exact old/new strings)
+   GET  /src/<name>  -> raw source text of a WHITELISTED file (read-only; the
+                         editor fetches this to build exact old/new strings)
+   GET  /snapshots   -> {"ok": true, "mtime": <log ISO UTC or null>,
+                         "count": N, "raw": "<exact runs.jsonl bytes>"}
+                         (slice 11: read-only whole-log read for the main-menu
+                         download-all + the editor log viewer; missing log =
+                         empty; never writes)
 
 Invoke (from the repo root):
   python3 tools/editor_server.py [port]
@@ -69,6 +74,7 @@ WHITELIST = frozenset([
 
 MAX_BODY = 512 * 1024  # 512 KiB is plenty for old/new pair payloads
 MAX_SNAPSHOT_BODY = 64 * 1024  # snapshots are small single-run records
+MAX_LOG_READ = 8 * 1024 * 1024  # GET /snapshots refuses past 8 MiB (414)
 
 
 # ---------- SLICE 7-9: snapshot schema + live game_rev --------------------------
@@ -204,6 +210,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "rev": sha, "dirty": dirty,
                                   "game_rev": "%s:%s" % (sha, "dirty" if dirty else "clean")})
+            return
+        # SLICE 11: read-only whole-log read (fixed path — no file
+        # parameter, so there is nothing to whitelist-bypass; never writes,
+        # so no backup/syntax discipline applies, but the read is capped).
+        if path == "/snapshots":
+            try:
+                if not os.path.isfile(SNAPSHOT_FILE):
+                    self._send_json(200, {"ok": True, "mtime": None,
+                                          "count": 0, "raw": ""})
+                    return
+                if os.path.getsize(SNAPSHOT_FILE) > MAX_LOG_READ:
+                    self._send_json(413, {"ok": False,
+                                          "error": "snapshot log exceeds read cap"})
+                    return
+                with open(SNAPSHOT_FILE, "r", encoding="utf-8") as fh:
+                    raw = fh.read()
+                mtime = datetime.datetime.fromtimestamp(
+                    os.path.getmtime(SNAPSHOT_FILE),
+                    tz=datetime.timezone.utc).isoformat()
+                self._send_json(200, {"ok": True, "mtime": mtime,
+                                      "count": raw.count("\n"), "raw": raw})
+            except OSError as exc:
+                self._send_json(500, {"ok": False,
+                                      "error": "cannot read snapshot log: %s" % exc})
             return
         if path in ("/editor.html", "/editor"):
             target = os.path.join(REPO_ROOT, "editor.html")
