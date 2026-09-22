@@ -9,6 +9,7 @@ import {
 import {
   makeProfile, SHOP_BY_ID, buyUpgrade, unlockCharacter, unlockElite,
   ELITE_MODIFIERS, buyCharacterUpgrade, setDevFreeBuild, devFreeBuild,
+  ownedBuildCost, WEAPON_PRICES, upgradeCost, unlockWeapon,
 } from '../src/meta.js';
 import { boot } from './_harness.mjs';
 
@@ -130,6 +131,44 @@ function validFields() {
   const poor = makeProfile();
   poor.gold = 0;
   assert.equal(buyUpgrade(poor, 'dmg'), false, '0 gold buys nothing with the flag off');
+}
+
+// ---- ownedBuildCost: the gold_spent build seam (free records FULL price) ----
+{
+  const def = SHOP_BY_ID.dmg;
+  assert.equal(ownedBuildCost(makeProfile()), 0, 'an unowned build prices at 0 (the default kit is not spend)');
+  assert.equal(ownedBuildCost(null), 0, 'a null profile prices at 0 (never throws)');
+  assert.equal(ownedBuildCost({ purchased: { dmg: 'x', nope: 3 }, unlockedWeapons: [7] }),
+    0, 'corrupt ownership reads as 0 (never throws)');
+  const paid = makeProfile();
+  paid.gold = 1000000;
+  assert.equal(buyUpgrade(paid, 'dmg'), true, 'paid L0 grants');
+  const l0 = upgradeCost(def, 0);
+  assert.equal(ownedBuildCost(paid), l0, 'a paid buy prices at its live price');
+  const free = makeProfile();
+  free.gold = 0;
+  setDevFreeBuild(true);
+  try {
+    assert.equal(buyUpgrade(free, 'dmg'), true, 'free L0 grants with 0 gold');
+    assert.equal(buyUpgrade(free, 'dmg'), true, 'free L1 grants with 0 gold');
+  } finally {
+    setDevFreeBuild(false);
+  }
+  const l1 = upgradeCost(def, 1);
+  assert.equal(ownedBuildCost(free), l0 + l1, 'free buys record FULL price (the hard rule)');
+  const paid2 = makeProfile();
+  paid2.gold = 1000000;
+  assert.equal(buyUpgrade(paid2, 'dmg'), true, 'paid L0 grants (parity leg)');
+  assert.equal(buyUpgrade(paid2, 'dmg'), true, 'paid L1 grants (parity leg)');
+  assert.equal(ownedBuildCost(paid2), ownedBuildCost(free), 'paid and free builds price identically');
+  const wprof = makeProfile();
+  wprof.gold = 1000000;
+  assert.equal(unlockWeapon(wprof, 'ORBIT'), true, 'ORBIT unlock grants');
+  assert.equal(ownedBuildCost(wprof), WEAPON_PRICES.ORBIT, 'a weapon unlock prices at its live price');
+  const cprof = makeProfile();
+  cprof.gold = 1000000;
+  assert.equal(unlockCharacter(cprof, 'WITCH'), true, 'WITCH unlock grants');
+  assert.equal(ownedBuildCost(cprof), 9000, 'a character unlock prices at its live price');
 }
 
 // ---- gate OFF: the live game carries no dev state -------------------------------------
@@ -265,6 +304,58 @@ function validFields() {
   panel.title.click();
   assert.equal(panel.collapsed, false, 'header tap re-expands');
   assert.equal(panel.read.style.display, '', 'readout back after expand');
+}
+
+// ---- pickup retaliation is dealt but never counted (damage bugfix) -----------
+{
+  const h = await boot({ locationSearch: '?dev=1', variant: 'telemetry-pickup' });
+  const T = h.T;
+  const sess = () => T.dev.session;
+  const prof = T.getProfile();
+  prof.gold = 1000000;
+  const { buyUpgrade: buySF } = await import('../src/meta.js');
+  const { makeGem } = await import('../src/entities.js');
+  const { makeTypedEnemy } = await import('../src/enemy_types.js');
+  assert.equal(buySF(prof, 'staticfield'), true, 'Static Field bought (the owner shop state)');
+  T.startRun();
+  h.pump(3);
+  assert.ok(sess(), 'dev session live');
+  assert.equal(h.state.mode, 'playing', 'sim running');
+  assert.equal(!!h.state.player.stats.stormShards, true, 'Static Field arms the chip flag');
+  const p = h.state.player;
+  const hpSum = () => h.state.enemies.reduce((s, e) => s + (e.hp || 0), 0);
+  // Six REAL enemies (factory-built, all fields) parked inside the pickup
+  // retaliation radii; weapons/projectiles cleared and burn DoTs neutralized
+  // so only the pickup path can move damage or hp this frame.
+  const stage = () => {
+    h.state.projectiles.length = 0;
+    h.state.weapons.length = 0;
+    h.state.gems.length = 0;
+    h.state.drops.length = 0;
+    h.state.enemies.length = 0;
+    for (let i = 0; i < 6; i++) {
+      const e = makeTypedEnemy('CHASER', p.x + 10 + i * 2, p.y, h.state.time || 0);
+      e.burn = 0; e.burnDps = 0;
+      h.state.enemies.push(e);
+    }
+  };
+  // One xp gem: the Static Field chip still wounds the ring, but the damage
+  // accumulator holds (the owner's report, fixed).
+  stage();
+  const hp0 = hpSum(), d0 = sess().dmg;
+  h.state.gems.push(makeGem(p.x, p.y, 25));
+  h.pump(1);
+  assert.ok(hpSum() < hp0, 'the gem chip still deals damage (gameplay unchanged)');
+  assert.equal(sess().dmg, d0, 'the gem pickup does not move the damage metric');
+  // One hp potion with Blood Harvest held: the same contract.
+  p.rewrites = { ...(p.rewrites || {}), healthdamage: true };
+  stage();
+  p.potions.hp = 0;
+  T.m3.pushDrop({ x: p.x, y: p.y, kind: 'hp' });
+  const hp1 = hpSum(), d1 = sess().dmg;
+  h.pump(1);
+  assert.ok(hpSum() < hp1, 'the harvest blast still deals damage (gameplay unchanged)');
+  assert.equal(sess().dmg, d1, 'the potion pickup does not move the damage metric');
 }
 
 console.log('test_dev_telemetry: all checks passed');

@@ -259,7 +259,8 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
     { id: 'dmg', kind: 'shop', characterId: null, level: 2, refund: 0 },
   ], 'choices.removals: level + refunded amount per removed level');
   assert.equal(snap.upgrades.purchased.dmg, 1, 'snapshot build reflects the post-sell level');
-  assert.equal(snap.gold_spent, 0, 'gold_spent untouched (no chests this run)');
+  assert.equal(snap.gold_spent, 125, 'gold_spent prices the standing build at full price ' +
+    '(dmg L0 override 125 — the sold free middle and paid top are gone; chests add on top)');
   assert.deepEqual(T.dev.removals(), [], 'journal drains exactly once into the snapshot');
   console.log(`  run proof: bank ${prof.gold}, ledger [${prof.spendLedger.dmg}], ` +
     `removals ${JSON.stringify(snap.choices.removals)}, snapshot dmg ${snap.upgrades.purchased.dmg}, ` +

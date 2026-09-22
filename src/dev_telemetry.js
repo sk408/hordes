@@ -237,6 +237,14 @@ export function validateSnapshot(obj) {
 // Overkill counts as dealt (damage dealt, not damage effective); burn, thorns
 // and rider bursts are player-dealt and count; player-TAKEN damage never
 // reaches this function (no call site on any p.hp debit).
+// EXCLUDED BY OWNER RULING (dev-editor damage bugfix, 2026-09-22): the two
+// pickup-retaliation paths — Blood Harvest's hp-potion-pickup blast and Storm
+// Shards'/Static Field's xp-gem-pickup chip (main.js pickup loop) — DEAL their
+// damage (the hp debits are unchanged) but never COUNT it. A pickup fanning
+// out over the horde scales with loot ingestion and enemy density, not with
+// any player damage action, so counting it moves the metric "without doing
+// damage" and corrupts cost-vs-damage analysis. Same family, still counted:
+// thorns (combat contact) and every weapon/skill/burn/rider site.
 let HIT_SINK = null;
 export function devArm(sink) { HIT_SINK = sink || null; }
 // Returns n UNCHANGED so damage sites wrap as `e.hp -= devHit(amount)` — one

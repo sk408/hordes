@@ -155,6 +155,9 @@ import {
   readRecovery, downloadRecovery, STORAGE_KEY,
   // SLICE 7: dev free-build arming + the shop afford/read seams below.
   setDevFreeBuild, devFreeBuild,
+  // DEV-EDITOR BUGFIX (gold-spent): the permanent-build full-price derivation
+  // feeding devGoldSpent() — ownership-priced, free/paid-agnostic.
+  ownedBuildCost,
   // SLICE 10: dev-run shop buy-back — the sell paths (same dispatch as the
   // buyers), the per-level spend ledger readers for pre-confirm labels, and
   // the character ledger key shared with the buyer.
@@ -1749,16 +1752,18 @@ function resetRampage() {
 // dev_telemetry accumulator, never in `state`) — the player game is
 // byte-identical. No player-visible surface, no emojis.
 //   - 1 Hz overlay: cumulative gold earned vs gold spent (INVESTMENT
-//     accounting — devGoldSpent(): the paid-chest bucket counts, the shrine
-//     bucket is excluded per the plan rule; see the inventory in
-//     dev_telemetry.js), damage dealt (devHit scalar at every player-dealt
-//     damage site — one branch + one add per event, sampled at 1 Hz, never
+//     accounting — devGoldSpent(): the permanent build at full live price
+//     (meta.js ownedBuildCost) plus the paid-chest bucket; the shrine bucket
+//     is excluded per the plan rule; see the inventory in
+//     dev_telemetry.js), damage dealt (devHit scalar at combat-dealt damage
+//     sites — one branch + one add per event, sampled at 1 Hz, never
 //     traced), best-gold reference line (achievements totals bestGold).
 //   - Free-build: in-run buyables (shrines via purseSpend, paid chests via
 //     buyPaidChest) grant for 0 deducted while recording FULL price into the
 //     dev sink buckets; meta buyables via meta.js DEV_FREE_BUILD (armed from
-//     the toggle below), whose assembled build the snapshot `upgrades` field
-//     prices exactly through catalogCost().
+//     the toggle below) record FULL price through the ownership-priced build
+//     value (free/paid-agnostic — the snapshot `upgrades` field carries the
+//     same assembled build for per-line analysis).
 //   - Test-run toggle stamps snapshots test:true/false; the kill-switch
 //     (snapshots off) blocks the server write (the explicit download-JSON
 //     card stays available — it is a user action, not an automatic write).
@@ -1834,11 +1839,18 @@ function devNewSession() {
     lastDownload: null,    // last download-JSON payload (headless-readable)
   };
 }
-// INVESTMENT-accounted gold spent this run: the counted bucket only. The
-// shrine bucket is excluded by the plan rule; paid chests are the flagged
-// ambiguous sink (counted — see dev_telemetry.js; a one-line move if the
-// owner rules them excluded).
-function devGoldSpent() { return dev ? dev.spentChest : 0; }
+// INVESTMENT-accounted gold spent: the permanent build's full-price value
+// (meta.js ownedBuildCost — every shop level, weapon/elite/apex unlock and
+// character unlock/upgrade owned, priced live; free-built levels record FULL
+// price by construction, so the free-build hard rule holds in both modes)
+// PLUS the counted in-run bucket (paid chests at full price, free or paid).
+// The shrine bucket stays excluded by the plan rule; paid chests are the
+// flagged ambiguous sink (counted — see dev_telemetry.js; a one-line move if
+// the owner rules them excluded).
+function devGoldSpent() {
+  if (!dev) return 0;
+  return dev.spentChest + ownedBuildCost(profile);
+}
 function devRunFree() { return !!(dev && dev.freeBuild); }
 function devBestGold() {
   try {
@@ -3911,6 +3923,12 @@ function update(dt) {
         // G8 step 2 BLOOD HARVEST rewrite: the PICKUP retaliates. Hooked on
         // the collect path (NOT drinkPotion — the ask is "health pickups also
         // damage"); the blast is enemy-side only, centered on the player.
+        // DEV-EDITOR BUGFIX (damage): pickup retaliation is DEALT but never
+        // COUNTED — the dev damage metric covers combat-dealt damage, and a
+        // pickup-driven fan-out scales with loot ingestion and enemy density,
+        // not with any player damage action (owner: "damage going up without
+        // me doing damage"). Gameplay is unchanged (the hp debit is identical,
+        // kills/purse/tokens still credit through the one existing path).
         const blast = d.kind === 'hp' ? harvestBlast(state) : null;
         if (blast) {
           // E2 (R9): a ground blast — flyers take nothing (see flyingGuard).
@@ -3980,13 +3998,17 @@ function update(dt) {
       // (the BLOOD HARVEST blast precedent above), so kills, purse and tokens
       // credit through the one existing path. An EVENT, never frame-scaled:
       // 60Hz and 120Hz chip the same per gem.
+      // DEV-EDITOR BUGFIX (damage): like the harvest blast above, the chip is
+      // DEALT but never COUNTED — a gem pickup fanning out over the horde is
+      // loot ingestion, not a player damage action, and must not move the dev
+      // damage metric (same owner report). Gameplay unchanged.
       if (p.stats.stormShards) {
         const S = DRAFT_LADDER.STORM_SHARDS;
         const chip = Math.max(S.CHIP_MIN, p.stats.damage * S.CHIP_FRAC);
         for (const o of state.enemies) {
           if (o.hp <= 0) continue;
           if (Math.hypot(o.x - p.x, o.y - p.y) <= S.RADIUS) {
-            o.hp -= devHit(chip);
+            o.hp -= chip;
             o.flash = 0.08;
           }
         }

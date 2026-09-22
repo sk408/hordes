@@ -944,6 +944,63 @@ export function catalogCost(rowIds) {
   return sum;
 }
 
+// Full-price value of the CURRENT permanent build (the dev-telemetry
+// gold_spent seam: the plan's INVESTMENT accounting, never the sell-back
+// ledger). Sums the LIVE price of everything owned — classic shop rows level
+// by level through the same upgradeCost() (override-aware) the buyers charge,
+// weapon/elite/apex unlocks at their live prices, character unlocks and
+// per-character upgrades the same way. Free/paid-AGNOSTIC by construction
+// (ownership, never the per-level paid record): a free-built level records
+// its FULL price — the free-build hard rule — and a paid level records what
+// it cost, so toggling free-build mid-collection never moves the figure.
+// Achievement grants and the default kit price at their table values (the
+// snapshot `upgrades` field prices the same way through catalogCost): the
+// figure is "what the build would have cost", not a receipt of gold debited.
+// Sell-backs lower it automatically (removed levels are no longer owned).
+// Pure read: never mutates, never throws (unknown ids, unpriced starters and
+// non-finite levels read as 0).
+export function ownedBuildCost(profile) {
+  try {
+    if (!profile || typeof profile !== 'object') return 0;
+    let sum = 0;
+    const add = (v) => {
+      const n = Math.floor(Number(v) || 0);
+      if (Number.isFinite(n) && n > 0) sum += n;
+    };
+    const owned = (profile.purchased && typeof profile.purchased === 'object')
+      ? profile.purchased : {};
+    for (const [id, def] of Object.entries(SHOP_BY_ID)) {
+      if (!def || def.kind === 'weapon' || def.kind === 'elite') continue;
+      const lvl = Math.max(0, Math.min(def.maxLevel || 0, Math.floor(Number(owned[id]) || 0)));
+      for (let l = 0; l < lvl; l++) add(upgradeCost(def, l));
+    }
+    for (const id of profile.unlockedWeapons || []) {
+      if (typeof id !== 'string') continue;
+      add(WEAPON_PRICES[id]);   // starters carry no price: owned-but-unpriced reads 0
+    }
+    for (const id of profile.unlockedElites || []) {
+      const def = ELITE_MODIFIERS[id];
+      if (def) add(def.cost);
+    }
+    const apexOwned = (profile.apex && Array.isArray(profile.apex.owned)) ? profile.apex.owned : [];
+    for (const id of apexOwned) {
+      const def = APEX_BY_ID[id];
+      if (def) add(def.baseCost);
+    }
+    for (const id of profile.unlockedCharacters || []) {
+      const ch = CHARACTERS[id];
+      if (ch) add(ch.unlockCost);   // the default pilot costs 0: the free kit reads 0
+    }
+    for (const [uid, udef] of Object.entries(CHARACTER_UPGRADE_BY_ID)) {
+      if (!udef) continue;
+      const lvl = Math.max(0, Math.min(udef.maxLevel || 0,
+        Math.floor(Number(getCharacterUpgradeLevel(profile, udef.characterId, uid)) || 0)));
+      for (let l = 0; l < lvl; l++) add(upgradeCost(udef, l));
+    }
+    return sum;
+  } catch { return 0; }
+}
+
 // ---------- G25 slice 1: THE APEX TIER (post-completion prestige) ----------
 // Charter: docs/briefs/G25_APEX_TIER.md + the G25 goals entry. Deliberately
 // game-breaking prestige items ABOVE the finished catalogue. APEX rows live
