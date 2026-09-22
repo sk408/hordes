@@ -87,6 +87,26 @@ feed sims and LLM balance analysis. Player build never sees any of it.
   level — carry that into the snapshot as granted_total vs earned_total),
   or analysis cannot tell a profile that earned 2M from one that was
   given it.
+- DONE (opencode/muse-spark) accounting bugfix `eaf363a`: pickups were
+  feeding the damage accumulator (the "damage climbs with whatever I
+  picked up" report) — the counter is now player-dealt only; and
+  gold-spent read 0 on free-build purchases — it now prices the build at
+  FULL price while deducting nothing, identical in free and paid modes
+  (proof: 900-gold build reads 0->900 both ways). This is why all 18
+  pre-fix snapshots show spent=0. Suite 159/11, red-list identical.
+- DONE (opencode/muse-spark) Slice 11 `32b0724`: DEV LOG card on the main
+  menu downloads the WHOLE runs.jsonl (not the single run); editor gains a
+  run-log viewer (table + mode/test filters + per-run overlay onto the
+  cost graphs, filling the measured-runs slot slice 3 left empty);
+  `GET /snapshots` returns the log envelope with `raw` byte-identical to
+  `runs.jsonl` (verified 76,470 bytes / 18 lines). Suite 160/11, red-list
+  identical. NOTE: the endpoint only exists after a service restart —
+  restart `hordes-editor.service` when landing saver/endpoint changes.
+- FLAGGED FOR OWNER RULING (from the accounting fix): (a) the COLOSSUS
+  death shockwave counts enemy friendly-fire as PLAYER damage — credit or
+  not?; (b) paid chests are currently counted as investment (shrine
+  spending stays excluded) — confirm; (c) dead corpses take one phantom
+  burn tick (src/main.js:3217, no hp guard) — tiny, unfixed.
 - QUEUED: dev autoplay policy runner — TOGGLE (not always-on). Dev-night
   mode = nightmare rules with NO 50% banking cut. Auto-buy policy
   (owner-stated): prefer weapons, split, weapon slots, damage increases;
