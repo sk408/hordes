@@ -6,6 +6,7 @@ import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
 import { enemySpriteFor } from './enemy_sprites.js';   // PORT SLICE B: PILLAR + SHRIKE roster art
+import { characterSpriteFor } from './character_sprites.js';   // PORT SLICE C: per-pilot in-run looks
 import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
 } from './sprites.js';
@@ -1126,6 +1127,10 @@ export class Renderer {
     // frame B only while actually moving: motion is derived from the player's
     // position delta between renders (the same velocity the controller
     // produces), so no gameplay state was added. Stationary -> frame A.
+    // PORT SLICE C: the equipped pilot's own look (src/character_sprites.js,
+    // same 12x12 box as the generic pair, so geometry is untouched); unknown /
+    // unset character ids keep the generic PLAYER_SPRITE pair (the fallback,
+    // never a pilot's look).
     const pl = state.player;
     if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
       g.globalAlpha = 0.4;
@@ -1134,7 +1139,12 @@ export class Renderer {
       Math.abs(pl.x - this._lpx) + Math.abs(pl.y - this._lpy) > 0.25;
     this._lpx = pl.x; this._lpy = pl.y;
     const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
-    this.drawSprite(g, walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE,
+    const pilotSpr = characterSpriteFor(state.character && state.character.id);
+    const pilotGrid = pilotSpr
+      ? pilotSpr.frames[walkFrame ? 1 : 0]
+      : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
+    const pilotPalette = pilotSpr ? pilotSpr.palette : PALETTE;
+    this.drawGrid(g, pilotGrid, pilotPalette,
       Math.round(pl.x - cam.x - 6),
       Math.round(pl.y - cam.y - 6));
     g.globalAlpha = 1;
