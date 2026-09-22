@@ -11398,6 +11398,15 @@ function startPortalCine() {
   state.wave.cinePending = false;
   cineT0 = performance.now();
   lastCinePhase = null;
+  // 8X SEQUENCING (owner 2026-09-21: draft menu stuck over the escape
+  // sequence): portal entry can land inside a draft pick ceremony — mode is
+  // already 'playing' again while the resolved cards are still up over the
+  // live game. openIntermission routes here BEFORE openMenu, so no screen
+  // takes the overlay over; the movie must drop it, or the stale draft
+  // cards ride through the cine into the escape. The ceremony's own state
+  // still stands down on its own (tickDraftCeremony, mode-gated) without
+  // touching this screen.
+  overlay.style.display = 'none';
   state.mode = 'portal-cine';
   // NIGHT MODE: no one is watching the movie — hand straight to the end
   // handler (the same call isDone would make).
@@ -11457,6 +11466,10 @@ function endDeathCine() {
 // routes input to it while it is live, and takes the (always-soft) hand-back.
 function startEscape(opts = {}) {
   state.portal = null;
+  // Same sequencing guarantee as startPortalCine: the escape owns the full
+  // screen — no overlay from an earlier mode may ride into it (backstop;
+  // the portal-cine entry already drops it).
+  overlay.style.display = 'none';
   state.mode = 'escape';
   ESCAPE.begin({
     // The corridor seed is the run's identity, not a sim input; anything
@@ -11972,7 +11985,14 @@ function frame(now) {
   // RSS8: the magnet sweep ticks on the same frame slot (see
   // tickMagnetSweep — it must keep running while a level-up draft parks the
   // sim). SLICE 8: paceDt at dev speed >1 (same sim coverage as 1x).
-  tickMagnetSweep(paceDt);
+  // 8X SEQUENCING (owner 2026-09-21: gem-suck-in skipped at speed): the pull
+  // must advance in per-substep realDt increments, not one lumped paceDt —
+  // a lumped pull saturates (min(1, paceDt*PULL_RATE) hits 1 at 8x/60Hz) and
+  // teleports the whole field in a single frame instead of streaming it in
+  // over the sweep's sim-time. devPace sub-ticks of realDt cover the
+  // identical sim-time with the 1x motion; gate off / 1x is one tick of
+  // realDt (=== paceDt there), the historical behaviour bit-for-bit.
+  for (let i = 0; i < devPace; i++) tickMagnetSweep(realDt);
   // v10 milestone chest: the collection burst ages on this same wall-clock
   // slot (mode 'burst' freezes the sim — the shower would never age on dt).
   tickChestBurst(realDt);
