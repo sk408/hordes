@@ -82,8 +82,10 @@ async (p) => {
       for (let cy = -span; cy <= span; cy++) {
         for (let cx = -span; cx <= span; cx++) {
           if (cellRand(cx, cy, seed, 11) >= DENS) continue;
-          if (cellRand(cx, cy, seed, 14) < 0.86) continue;
-          if (cellRand(cx, cy, seed, 17) >= 0.55) continue;
+          // PORT SLICE D branch shape: the prop tail starts at pick 0.72
+          // (was 0.86) with the hash gate at 0.85 (was 0.55).
+          if (cellRand(cx, cy, seed, 14) < 0.72) continue;
+          if (cellRand(cx, cy, seed, 17) >= 0.85) continue;
           const wx = cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72));
           const wy = cy * FC + 24 + Math.floor(cellRand(cx, cy, seed, 13) * (FC - 72));
           if (wx < -RIM + 4 || wx > RIM - 76 || wy < -RIM + 4 || wy > RIM - 76) continue;

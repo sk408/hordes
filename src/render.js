@@ -2837,11 +2837,45 @@ export class Renderer {
       return 11;
     };
     const out = [];
+    // PORT SLICE D (prop density + spawn guarantee, owner-ruled 2026-09-22:
+    // "we can have more of them and guarantee one near spawn" — an APPROVED
+    // visual-density change, painting only). The guarantee: every fresh run
+    // shows at least one of its stage's props inside the initial camera view
+    // of the spawn. The spawn is fixed (startRun parks the pilot at
+    // VIEW_W/2, VIEW_H/2 with cam {0,0}), so the initial view is the world
+    // rect [0,VIEW_W]x[0,VIEW_H]. The guaranteed cell is the nearest
+    // density-picked landmark cell to the spawn whose anchor sits fully
+    // inside that rect — a pure cellRand hash field over (cell, seed), never
+    // the clock — falling back to the spawn's own cell (always in-view and
+    // rim-safe) when no picked cell qualifies, so the promise holds for
+    // every seed. Forced at paint time only: no sim state is read or
+    // written, and the forced cell still reports through the same landmarks
+    // seam (kind = the stage's prop id, COMPOSED rects).
+    const SPAWN_X = C.VIEW_W / 2, SPAWN_Y = C.VIEW_H / 2;
+    const anchorOf = (cx, cy) => ({
+      x: cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72)),
+      y: cy * FC + 24 + Math.floor(cellRand(cx, cy, seed, 13) * (FC - 72)),
+    });
+    let gPick = null, gPickD = Infinity, gAny = null, gAnyD = Infinity;
+    for (let gy = Math.floor(0 / FC); gy <= Math.floor(C.VIEW_H / FC); gy++) {
+      for (let gx = Math.floor(0 / FC); gx <= Math.floor(C.VIEW_W / FC); gx++) {
+        const a = anchorOf(gx, gy);
+        if (a.x < -RIM + 4 || a.x > RIM - 76 || a.y < -RIM + 4 || a.y > RIM - 76) continue;
+        if (a.x < 0 || a.y < 0 || a.x + 20 > C.VIEW_W || a.y + 20 > C.VIEW_H) continue;
+        const d = (a.x - SPAWN_X) * (a.x - SPAWN_X) + (a.y - SPAWN_Y) * (a.y - SPAWN_Y);
+        if (d < gAnyD) { gAny = { x: gx, y: gy }; gAnyD = d; }
+        if (cellRand(gx, gy, seed, 11) < DENS && d < gPickD) { gPick = { x: gx, y: gy }; gPickD = d; }
+      }
+    }
+    const gCell = gPick || gAny;
     const c0 = Math.floor(cam.x / FC), c1 = Math.floor((cam.x + C.VIEW_W) / FC);
     const r0 = Math.floor(cam.y / FC), r1 = Math.floor((cam.y + C.VIEW_H) / FC);
     for (let cy = r0; cy <= r1; cy++) {
       for (let cx = c0; cx <= c1; cx++) {
-        if (cellRand(cx, cy, seed, 11) >= DENS) continue;
+        const forceProp = gCell !== null && cx === gCell.x && cy === gCell.y;
+        // The guaranteed cell paints unconditionally (even the density-gate
+        // fallback); every other cell keeps the shipped density gate.
+        if (!forceProp && cellRand(cx, cy, seed, 11) >= DENS) continue;
         // Anchor inside the cell with a margin so a structure never clips its
         // neighbour, and never past the arena rim (structures are <= 72 wide).
         const wx = cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72));
@@ -2853,7 +2887,14 @@ export class Renderer {
         // asserts every landmark is COMPOSED, i.e. many rects, not a glyph).
         let rects = 6;
         let kind = 'RUBBLE';
-        if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
+        if (forceProp) {            // PORT SLICE D spawn guarantee (above):
+          const prop = propForStage(stage);   // the stage's prop, unconditionally
+          kind = prop.id;
+          const fr = propFrame(prop, cx, cy);
+          g.fillStyle = pal.crack;                                     // bed shadow
+          g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
+          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
+        } else if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
           kind = 'WALL';
           const n = 4 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 4..6
           const gap = Math.floor(cellRand(cx, cy, seed, 16) * n);        // breach
@@ -2879,7 +2920,7 @@ export class Renderer {
           g.fillStyle = pal.stoneTop;
           for (let i = 0; i < n; i++) g.fillRect(x + i * 8, y + i * 5, 12, 1);
           g.fillRect(x + n * 8, y + n * 5, 10, 1);
-        } else if (pick < 0.68) {     // CAIRN: stacked stones, tapering
+        } else if (pick < 0.62) {     // CAIRN: stacked stones, tapering
           kind = 'CAIRN';
           rects = 7;
           g.fillStyle = pal.crack;
@@ -2892,7 +2933,7 @@ export class Renderer {
           g.fillRect(x + 1, y + 8, 12, 1);
           g.fillRect(x + 3, y + 4, 8, 1);
           g.fillRect(x + 4, y + 1, 6, 1);
-        } else if (pick < 0.86) {     // CAMP RING: stones round a fire scar
+        } else if (pick < 0.72) {     // CAMP RING: stones round a fire scar
           kind = 'CAMP';
           rects = 9;
           const R = 9 + Math.floor(cellRand(cx, cy, seed, 15) * 5);
@@ -2904,14 +2945,22 @@ export class Renderer {
             g.fillRect(Math.round(x + 12 + Math.cos(a) * R),
                        Math.round(y + 10 + Math.sin(a) * R), 3, 2);
           }
-        } else if (cellRand(cx, cy, seed, 17) < 0.55) {
+        } else if (cellRand(cx, cy, seed, 17) < 0.85) {
           // PORT SLICE A (stage/prop objects): the stage's signature prop —
           // an ORIGINAL drawGrid pixel object (src/stage_props.js), one per
           // stage identity, painted through the same drawGrid every sprite
-          // uses. Density-neutral: this branch subdivides the old rubble /
-          // grove tail (one landmark per picked cell either way), hash-gated
-          // on a fresh salt so no existing structure moves, rim-clipped by
-          // the same anchor cull above (props are <= 16px on a 72px margin).
+          // uses.
+          // PORT SLICE D (owner-ruled 2026-09-22): the tail is now the DENSE
+          // branch — CAMP ends at 0.72 (was 0.86) and the prop hash gate is
+          // 0.85 (was 0.55), so ~24% of picked cells carry the stage's prop,
+          // a few per screen instead of about one. The
+          // subdivision stays one-landmark-per-picked-cell, hash-gated on
+          // the same fresh salt so no existing structure moves, rim-clipped
+          // by the same anchor cull above (props are <= 16px on a 72px
+          // margin). Arithmetic: the tail was 14% of picked cells at a 0.55
+          // gate (7.7% props per picked cell); it is now 28% at a 0.85 gate
+          // (23.8% per picked cell), and LANDMARK_DENSITY went 0.30 -> 0.45
+          // alongside, so props per landmark cell rise ~2.3% -> ~10.7%.
           // The hollow keeps its authored STUMP/GATE/GROVE (below + the
           // authored block); its tail simply grows lanterns among the groves.
           const prop = propForStage(stage);

@@ -24,6 +24,10 @@
 // landmark of a picked cell — one landmark per cell either way, so density
 // and rim rules are untouched. No balance/combat/economy number lives here
 // (visual-only slice).
+// PORT SLICE D (owner-ruled 2026-09-22): drawLandmarks turns the density
+// knobs (LANDMARK_DENSITY, the CAMP/CAIRN pick bounds, the prop hash gate)
+// and force-paints the stage's prop at one spawn-near cell per run — all in
+// render.js. This file is unchanged: same six props, same palettes.
 
 // ---- EMBER_BRAZIER (12x14, 2 frames) ---------------------------------------
 // Reference: section 6 rows BRAZIER / BRAZIER2 / GOTHIC_BRAZIER — the

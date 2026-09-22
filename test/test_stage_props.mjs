@@ -15,6 +15,13 @@
 //      arena, stays deterministic per seed, clips at the rim, keeps every
 //      landmark COMPOSED (>= 4 rects), and adds no STUMP/GATE/GROVE outside
 //      VERDANT_HOLLOW (the authored set stays hollow-only).
+//   5b. PORT SLICE D (owner-ruled 2026-09-22: "we can have more of them and
+//      guarantee one near spawn" — an APPROVED visual-density change, NOT a
+//      smuggled pacing change): the sweep pins the NEW owner-approved
+//      density (props ~4x the slice-A field — moving these goalposts is the
+//      owner order, said so explicitly), and every stage guarantees at least
+//      one of its props inside the initial camera view of the spawn, for
+//      every seed tried, deterministic per stage/seed.
 //   6. VISUAL-ONLY — the module carries no gameplay numbers (no hp/dmg/cost
 //      fields anywhere on a prop).
 import {
@@ -157,17 +164,24 @@ console.log('RENDER SEAM (drawLandmarks paints the props):');
     return kinds;
   };
   // Every stage's prop appears somewhere in the arena.
+  // PORT SLICE D (owner-ruled 2026-09-22): the density floor moves with the
+  // approved field — slice A read 63 prop cells per stage at seed 4242,
+  // slice D reads 273. The >= 150 floor FAILS on the old field (63) and
+  // passes on the new one (273) with margin: moving this goalpost is the
+  // owner order, stated explicitly.
   for (const s of STAGES) {
     const { R, ctx } = mk();
     const kinds = sweep(R, ctx, 4242, s.id);
     const want = propForStage(s.id).id;
     ok((kinds[want] || 0) > 0, 'stage ' + s.id + ': ' + want + ' paints (' + (kinds[want] || 0) + ' cells)');
+    ok((kinds[want] || 0) >= 150, 'stage ' + s.id + ': slice-D density holds (' + (kinds[want] || 0) + ' ' + want + ' cells, floor 150)');
   }
   // The unset-stage field paints lanterns too (the dev-run default view).
   {
     const { R, ctx } = mk();
     const kinds = sweep(R, ctx, 4242, undefined);
     ok((kinds.TRAIL_LANTERN || 0) > 0, 'unset stage: TRAIL_LANTERN paints (' + (kinds.TRAIL_LANTERN || 0) + ' cells)');
+    ok((kinds.TRAIL_LANTERN || 0) >= 150, 'unset stage: slice-D density holds (' + (kinds.TRAIL_LANTERN || 0) + ' cells, floor 150)');
   }
   // Determinism + rim clip + composed + hollow-only authored set.
   {
@@ -211,6 +225,59 @@ console.log('RENDER SEAM (drawLandmarks paints the props):');
     ok((hollowKinds.GROVE || 0) > 0, 'the hollow keeps GROVE stands (' + (hollowKinds.GROVE || 0) + ' cells)');
     ok((hollowKinds.TRAIL_LANTERN || 0) > 0,
       'the hollow grows TRAIL_LANTERN among the groves (' + (hollowKinds.TRAIL_LANTERN || 0) + ' cells)');
+  }
+}
+
+console.log('SPAWN GUARANTEE (slice D: one prop in the initial view, all 8 stages):');
+{
+  // startRun parks the pilot at (VIEW_W/2, VIEW_H/2) with cam {0,0}, so the
+  // initial camera view is the world rect [0,VIEW_W]x[0,VIEW_H]. The pin
+  // reads the same seam the renderer paints: the stage's prop kind with an
+  // anchor fully inside that rect — deterministic per stage/seed, never the
+  // clock (the same seed repaints the same cell).
+  const mk2 = () => {
+    const rec = { rects: [] };
+    const ctx = {
+      canvas: null, fillStyle: '#000', globalAlpha: 1, font: '10px monospace',
+      textAlign: 'left', textBaseline: 'top', imageSmoothingEnabled: true,
+      setTransform() {}, translate() {}, save() {}, restore() {}, clearRect() {},
+      beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, arc() {},
+      fillRect(x, y, w, h) { rec.rects.push({ x, y, w, h, style: String(this.fillStyle) }); },
+      fillText() {},
+    };
+    const canvas = { width: 0, height: 0, getContext: () => ctx,
+      getBoundingClientRect: () => ({ width: 0, height: 0 }) };
+    ctx.canvas = canvas;
+    return { R: new Renderer(canvas), rec, ctx };
+  };
+  const inView = (l) => l.x >= 0 && l.y >= 0 &&
+    l.x + 20 <= C.VIEW_W && l.y + 20 <= C.VIEW_H;
+  const snapSpawn = (R, ctx, seed, stage) => {
+    R.drawLandmarks(ctx, seed, { x: 0, y: 0 }, groundTheme(1), stage);
+    return R.landmarks.map(l => l.kind + '@' + l.x + ',' + l.y).join('|');
+  };
+  const seeds = [1, 7, 11, 12, 4242, 99999];
+  for (const s of STAGES) {
+    const want = propForStage(s.id).id;
+    for (const seed of seeds) {
+      const { R, ctx } = mk2();
+      R.drawLandmarks(ctx, seed, { x: 0, y: 0 }, groundTheme(1), s.id);
+      const hits = R.landmarks.filter(l => l.kind === want && inView(l));
+      ok(hits.length >= 1, 'stage ' + s.id + ' seed ' + seed + ': ' + want +
+        ' sits in the initial spawn view (' + hits.length + ' at ' +
+        hits.map(h => h.x + ',' + h.y).join(';') + ')');
+    }
+    const { R: Ra, ctx: cxa } = mk2();
+    const { R: Rb, ctx: cxb } = mk2();
+    ok(snapSpawn(Ra, cxa, 4242, s.id) === snapSpawn(Rb, cxb, 4242, s.id),
+      'stage ' + s.id + ': the spawn-view field is deterministic per seed');
+  }
+  // The unset-stage default view guarantees a lantern too.
+  {
+    const { R, ctx } = mk2();
+    R.drawLandmarks(ctx, 4242, { x: 0, y: 0 }, groundTheme(1), undefined);
+    ok(R.landmarks.some(l => l.kind === 'TRAIL_LANTERN' && inView(l)),
+      'unset stage: a TRAIL_LANTERN sits in the initial spawn view');
   }
 }
 
