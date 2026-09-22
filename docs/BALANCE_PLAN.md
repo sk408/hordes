@@ -208,3 +208,179 @@ dev-only; graphs exogenous; investment accounting classification
    classes; achievement-granted kits are out of scope.
 5. 8x sequencing fix is assumed to land before items 1/2/4/6/8 run; until then
    outputs are REPORTED LIMITATIONS per the budget rule.
+
+## STEP 4 READINGS (2026-09-22) — readings only, no retune
+
+Instrument: the landed 8x dev-night autoplay runner (`tools/autoplay_policy.mjs`,
+SMART/IMPULSIVE, paired seeds, `src/dev_autoplay.js` save-up rule) plus a thin
+sibling `tools/step4_cliff.mjs` that adds ONLY granted-profile starts
+(fresh/couple/partial/half, built through the REAL `buyUpgrade` path) and
+stdout reads the landed runner does not print (death wave + killer from
+`state.deathBy`, run length from `deathBy.time`, per-wave draft counts).
+`src/` untouched. All runs 8x dev-night (nightmare rules, NO banking cut),
+seeds paired as base+runIdx across policies AND profiles. Log rows appended
+via the REAL snapshot builder only (`tools/.snapshots/runs.jsonl` 23 -> 39
+rows, +16; 6 half-build runs censored with stdout readings only, no faked
+rows). Every granted-profile figure is labeled as such (item 7 split still
+absent — nothing below is earned income).
+
+### Item 1 — income battery: BLOCKED on this tree (0/12 arms complete)
+
+- Brief said n=3 with 600s cap; in-tree tool is n=3 with 60s cap AND a
+  machine-enforced 60s/arm ceiling (`test/_sim_budget.mjs:62`,
+  `tools/measure_income_stages.mjs:30,39`) — followed in-tree, per brief.
+- `node tools/measure_income_stages.mjs` (default 4 arms): `fresh:run1`
+  THREW at the machine cap (60.0s, no death). `... partial` alone: also threw
+  (`partial:run1`, 60.0s). Censoring: 2/2 arms driven, 100% instrument-censored.
+- Mechanism (verified, not hypothesized): `buildProfile()` returns a WHOLE
+  fresh profile for every arm (`tools/measure_income_stages.mjs:53-91`), and
+  `Object.assign(prof, want)` (`:105-109`) wipes the harness's `runs=1`
+  prologue stamp — so every arm opens INERT (no spawns, clock frozen;
+  `src/main.js:8610-8639`, `C.PROLOGUE.ENABLED=true` at
+  `src/config.js:631`). Probe [diagnostic, counted-not-capped]: battery
+  path (runs=0) holds `prologue=true, t=0, kills=0` over 600 frames.
+  Real-run probe (runs=1 stamped, AUTO_ALL): fresh dies t=27s wave 1,
+  kills=3 — lethality roughly intact, so the battery failure is INSTRUMENT,
+  not a survival shift. PACING §1 (length,gold) pairs stand as [CITED]; no
+  [ARM] re-measure exists on this tree until the tool re-stamps runs.
+- SIM: battery declared 720s budget, 0/12 arms completed (~120s charged into
+  2 cap-thrown arms); probes ~37s counted (no budget, functional lane).
+- Stale-price measured values now ([TABLE], live `src/meta.js` + ledger tool):
+  ZAP 60000 (`:451`, was PACING-era 600000); luck base 14000 (`:603-604`,
+  full-buy 434000, was 140000 — note PACING §5 ledger row still prints
+  "base 140,000", stale text); fleetfoot base 65000 (`:621-623`, full-buy
+  2015000, UNCHANGED); hp L1 100 (`:536` override 0:100, was 120); dmg L1 125
+  (`:533` override 0:125, was 150); couple build cost 225 (was 270); BEAM
+  450000 (`:458`, was 4,500,000 — `:457` comment "top of the ladder at ~3h"
+  and `:271` "BEAM 6.0 good runs" are stale text, value rules: 0.30h / 0.60
+  runs); NOVA_PULSE 12000, SCYTHE 20000 (`:452-453`, were 1.2M/2.0M);
+  catalogue 44,960,367g over 50 rows (ledger tool output, was 98.5M);
+  INCOME_TIERS still 70/100/200/754689 (`:256-267`, unchanged).
+- Guard bounds re-derived [TABLE]: G1 hp-L1/tier-0 = 100/70 = 1.43 in [1,3]
+  (guard text cites 1.71 — stale, guard still green); G2 dmg-L1/tier-1 =
+  125/100 = 1.25 in [1,3] (cites 1.50 — stale, green); G7 ZAP/tier-2 =
+  60000/200 = 300 <= 3200 (cites 3000 — stale, green by 10x more).
+  No guard edited; suite greens below confirm.
+
+### Item 2 — draft cadence: wave-1 readings; cliff wave BELOW CAP
+
+- 12 runs (cap): autoplay fresh-start chained both-policies x3 seeds (A) +
+  granted-half chained both-policies x3 seeds (B), paired seeds 5000-5002.
+  Drafts from snapshot `choices.drafts` (offered[3]/taken, wave-stamped);
+  per-min denominators from driver run lengths (`deathBy.time` exact; autoplay
+  rows carry no length — drafts/run only for arm A).
+- [ARM-A, log rows] fresh chained, 6 runs, all wave-1 deaths: drafts 0/0/0
+  (SMART) vs 0/0/2 (IMPULSIVE, seed 5002: `rewrite_glacier`, `rule_once`
+  taken). Policy effect on cadence: none visible (builds stay sub-cliff).
+- [ARM-B, driver stdout] half granted chained, 6 runs, ALL censored at the
+  1200-frame cap (~160 game-s, alive, wave still 1 = inside the wave-1 boss
+  fight): drafts 13/13/14 (SMART) + 14/15/14 (IMPULSIVE) = 83 drafts over
+  ~960 game-s = 5.2/min, ALL wave 1 (run never left wave 1, so every stamp
+  is wave 1 by construction). Taken-split on the truncated path not directly
+  read — taken~=offered under dev-night tier-first auto-pick
+  (`src/main.js:8451`, take path `:4591`), flagged derived.
+- [ARM-C/D/E + smoke, log rows + driver stdout] tier-pure SMART seeds
+  5000-5002: fresh 0/0/0 drafts in t=36/13/23s (+smoke seed 4242: 0 in 8s);
+  couple 2/0/0 in 36/9/19s (`rate`, `gold_pct` taken); partial 0/1/1 in
+  38/37/38s (`pickup`, `lvl_VOLLEY_1` taken). Per-min: fresh 0/min (80s),
+  couple 1.9/min (64s), partial 1.1/min (113s) — all wave 1, death-censored
+  (runs end), NOT XP-curve-censored.
+- Cliff wave where cadence < 1 draft/min: NOT identified — no run completed
+  past wave 1 with drafts, and half's wave-1 cadence is 5.2/min. BELOW CAP
+  (needs multi-wave completions; 160 game-s cap reaches only the wave-1
+  boss). Fresh builds die before level 2 (0 drafts in 4/4 pure runs) — the
+  wave-1 floor, distinct from the XP-curve cliff.
+
+### Item 4 — boss wall: sub-cliff dies to AMBIENT pre-herald; split BELOW CAP
+
+- 15 killer-attributed runs (deathBy, exact t) + 6 wave-1 unattributed
+  (autoplay rows carry no killer): fresh pure 3/3 wave-1 AMBIENT
+  (contact:CHASER x3, t=13-36s) + smoke 1/1 AMBIENT (8s); couple 3/3 wave-1
+  AMBIENT (SWARMER/CHASER/CHASER, t=9-36s); partial 3/3 wave-1 AMBIENT
+  (CHASER x3, t=37-38s); half 6/6 ALIVE at cap (in wave-1 boss fight, killer
+  N/A). All granted-profile. Autoplay 6/6 wave-1 deaths unattributed.
+- Against design (`src/config.js:1152-1153` BOSS 500+60/wave claims 5-8/10
+  per wave `:1147-1151`; HERALD 1-3/10 `:1108-1111`; herald spawns at 60s =
+  0.5 x WAVE_LENGTH 120s `:1099-1113`): the wall does NOT execute sub-cliff
+  builds — AMBIENT does, before the first herald checkpoint (all sub-cliff
+  deaths t<60s; herald/boss cannot be the killer by spawn construction).
+  The "executes fresh builds at wave 1" hypothesis is CONFIRMED with
+  attribution (ambient, not boss). COLOSSUS ruling respected: no death
+  binned player-side; raw causes printed per run (all contact:*).
+- Half: herald phase cleared 6/6 (alive past 60s every run), wave-1 boss
+  engaged but unslain at 160s in 6/6 — herald claimed 0/6 (design 1-3/10,
+  consistent at n=6, weak); boss claim rate UNSAMPLED (censored). The
+  quantitative 1-3/10 vs 5-8/10 split is BELOW CAP (no build both reaches
+  60s+ and dies within caps). Survival cliff re-pinned: between partial
+  (dies ~38s granted, dev-night) and half (survives 160s) — PACING's
+  ~2.2k..6.8M gap persists in kind (granted spends: partial 61325 =
+  375+750+60200 [TABLE]-consistent; couple 225; fresh 0).
+
+### Items 6 + 8 — cheap readings only
+
+- Item 6 (dead tail, from items 1-4 + ledger [TABLE], no new runs):
+  tier-2 divisor still 200 [CITED]. ZAP 60000/200 = 300 runs (was 3000 —
+  the rung repriced 10x, tail shrinks 10x, root cause untouched); NOVA
+  12000/200 = 60; SCYTHE 20000/200 = 100; luck L1 14000/200 = 70;
+  SEEKER 280000/200 = 1400; MINE 420000/200 = 2100. Mid figures stay floors
+  (item 4: sub-cliff banks purse-only 0-29g/run in dev-night snapshots;
+  award floor is standard-mode). Tail persists for SEEKER/MINE-class,
+  reachable for ZAP-class — lever choice still owner-open, no recommendation
+  (item 6 defers to item 4: done above).
+- Item 8 (WITCH concentration, [TABLE] only): WITCH 9000g
+  (`src/meta.js:1544-1558`) bundles starting ZAP (standalone 60000g,
+  `:451`) + maxMana 50 + manaCostMult 0.5 + CHAIN_REACTION Q for -25 maxHp
+  vs KNIGHT 0 / ROGUE 2500 / PALADIN 6000 (`:1537-1572`): weapon-value alone
+  is 6.7x the unlock price. Matched 8x cohort (time-to-first-boss-kill +
+  GPM at equal spend across kits) needs 9+ half-length WITCH/ROGUE/PALADIN
+  runs surviving to 120s+ boss kills — beyond cap. BELOW CAP, not measured.
+
+### GAPS update
+
+1. Income-tier staleness: PARTIALLY RESOLVED on the price side ([TABLE]
+   values above); PERSISTS on the income side (battery blocked — §1 pairs
+   stay [CITED]).
+2. Mid-band curve: PERSISTS (half censored at 160s in-boss-fight; mid
+   figures stay floors).
+3. Draft-cliff wave: PERSISTS (wave-1 readings only; cliff BELOW CAP).
+4. WITCH comparability: PERSISTS (cohort BELOW CAP; [TABLE] 6.7x stands).
+5. 8x sequencing: RESOLVED — the 8x dev-night instrument ran 21 runs clean
+   (this section); the remaining caps are budget caps, not sequencing.
+
+### Runs executed (21 + 2 probes + battery attempts)
+
+- Battery attempts: full `measure_income_stages.mjs` (threw fresh:run1) +
+  `... partial` (threw partial:run1). 0/12 complete.
+- Probes (counted, functional lane): INERT-path 600 frames (t=0/kills=0);
+  real-fresh to death (27s, wave 1, 3 kills).
+- A: `node tools/autoplay_policy.mjs --policy both --runs 3 --seed 5000`
+  (6 runs, +6 log rows). B: `step4_cliff --profile half --policy both
+  --runs 3 --seed 5000 --chain` (6 runs, 6/6 censored, +0 rows). C/D/E:
+  `step4_cliff --profile fresh|couple|partial --policy smart --runs 3
+  --seed 5000` pure (9 runs, +9 rows) + 1 smoke row (fresh/smart/seed 4242).
+  SIM budgets per process: autoplay declared 150s; step4 runs declared
+  150s (B) / 75s (C/D/E); every run its own arm, max charged 20s
+  (1200 frames), no cap breach.
+- NOT measured (and why): maxed-arm battery (predicted censored under both
+  hypotheses — skipped, sign clear); cliff wave (needs >160 game-s
+  completions — beyond machine caps); herald/boss split rates (no 60s+
+  deaths in caps); WITCH cohort (9+ long runs — beyond cap); granted-vs-
+  earned (no split exists — all grants labeled).
+
+### Suite + hygiene
+
+- `bash tools/run_all_dev.sh`: greenfiles=161 redfiles=11 (counts match the
+  bar; REDLIST verbatim: test_beatability, test_economy_breadth,
+  test_economy_reprice, test_evolution, test_meta, test_meta_rank,
+  test_pacing_guards [BEAM-top assertion vs the 450000 value],
+  test_sgkv4_purchases, test_shop_overrides, test_weapon_overrides,
+  test_weapons). No baseline list in-tree to diff identity against — flagged.
+- `src/` untouched (one `node --check` on the new tool, clean). New file:
+  `tools/step4_cliff.mjs` (instrument, no balance surface). Log +16 rows via
+  the REAL builder only. No git/network/emojis; no outside-worktree paths.
+- Unverified / flagged: autoplay rows' killers (tool prints none);
+  truncated-path taken-split (derived, cited); gold_earned in snapshots reads
+  purse-only on deaths (0-29g; the AWARD floor is NOT in the snapshot field —
+  income must come from profile-delta cohorts, never this column); pre-screen
+  sims (`boss_sim` 20-run fresh cohort, `draft_sim` minute table) were run
+  once each as instrument checks only and carry NO verdict weight.
