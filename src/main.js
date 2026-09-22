@@ -2725,7 +2725,11 @@ function update(dt) {
     // total). Burn damage is applied HERE — never through hurt/onWeaponHit, so
     // it never triggers riders; a burn-LETHAL tick stamps the corpse so the
     // death pass never detonates it (no chain-of-chains, the card's contract).
-    if (e.burn > 0) {
+    // Owner ruling 2026-09-21: a corpse that is already dead takes no further
+    // burn damage (hp guard). Without it the kill frame's own tick both dealt
+    // one phantom tick to the corpse AND stamped burnLethal on a corpse a
+    // weapon had already killed — wrongly suppressing its detonation.
+    if (e.burn > 0 && e.hp > 0) {
       e.burn -= dt;
       e.hp -= (e.burnDps || 0) * dt;
       if (e.hp <= 0) e.burnLethal = true;
@@ -2991,6 +2995,14 @@ function update(dt) {
         !!(ENEMY_TYPES[e.typeId] && ENEMY_TYPES[e.typeId].chaff);
       // COLOSSUS death shockwave: friendly-fire AoE vs nearby enemies
       // (victims earlier in the sweep get reaped next frame's death loop).
+      // Owner ruling 2026-09-21: the shockwave is NOT player credit — a
+      // victim it kills is stamped shockLethal so the death pass reaps the
+      // corpse (gems/drops/detonations/progression unchanged) without any
+      // player kill reward. The stamp is set only on the killing blow: a
+      // survivor keeps full credit when the player finishes it later, and
+      // no other path can damage an hp<=0 corpse before it is reaped (every
+      // damage site guards hp<=0; the burn tick's guard is beside the slow
+      // decay), so the stamp always means the shockwave killed it.
       const sw = deathShockwave(e);
       if (sw) {
         // E2 (R9): the shockwave is a ground blast — flyers take nothing.
@@ -3000,6 +3012,7 @@ function update(dt) {
             if (Math.hypot(o.x - e.x, o.y - e.y) <= sw.radius) {
               o.hp -= sw.damage;
               o.flash = 0.08;
+              if (o.hp <= 0) o.shockLethal = true;
             }
           }
         });
@@ -3044,6 +3057,14 @@ function update(dt) {
       // the same corpse already fired; stated in the report.
       const zapBoom = e.zapLethal ? stormReaperBlast(state) : null;
       if (zapBoom) flyingGuard('blast', () => applyBlast(state, e.x, e.y, zapBoom));
+      // Owner ruling 2026-09-21 (COLOSSUS credit): a corpse the death
+      // shockwave killed (shockLethal, stamped above) is reaped WITHOUT
+      // player credit — no kill count, no purse gold, no token/mana/rampage
+      // /consecration/flash reward, no boss-kill count, no weapon XP. The
+      // corpse itself is still fully reaped: gems, potion/item/chest drops,
+      // splits, detonations, wildfire, boss payout and wave progression all
+      // fire exactly as for any other kill.
+      const credit = !e.shockLethal;
       pushGem(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
@@ -3061,7 +3082,10 @@ function update(dt) {
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) pushDrop(drop);
-      if (e.boss) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
+      // Owner ruling 2026-09-21: a shockwave-killed boss is no player kill —
+      // the BOSS_SLAYER counter stays down (the payout/progression below is
+      // the wave's, not the player's, and still fires).
+      if (e.boss && !e.shockLethal) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
         // pendingClear — the wave's progression still belongs to the end-cast.
@@ -3069,7 +3093,7 @@ function update(dt) {
           maybeSpawnChest(state,
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
-        feedWeaponXp(15);
+        if (credit) feedWeaponXp(15);
         toast('HERALD DOWN');
         restoreBossStanceIfClear();   // BOSS_STANCE: the herald was the only boss up
       } else if (e.boss) {
@@ -3093,7 +3117,7 @@ function update(dt) {
         // opens the portal — existing wave-6 behavior is kept.
         if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
-        feedWeaponXp(30);   // boss kill = big weapon-XP payout
+        if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
         toast('BOSS DOWN');
         // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
         // per-wave HERALD (the midBoss branch above) is deliberately NOT
@@ -3145,18 +3169,18 @@ function update(dt) {
         }
       }
       state.enemies.splice(i, 1);
-      p.kills++;
+      if (credit) p.kills++;
       // E1 RUN PURSE: tier-weighted gold per kill (meta.js GOLD_TIER), an
       // EVENT like the token/mana grants below — flat and dt-free. Chaff pays
       // ~0, elites ~1 unit, heavies more, herald/boss heavily; the raw
       // p.kills above stays the body count for milestones/achievements.
-      purseCredit(e);
+      if (credit) purseCredit(e);
       // N1 slice 3 CONSECRATION: a kill inside the Paladin's live field banks
       // its heal (paid at the field's tick, capped there). The corpse is only
       // in hand HERE — after the splice it is gone — and every kill (weapons,
       // skills, blasts, the field's own ticks) funnels through this pass.
       { const cf = p.consecField;
-        if (cf && Math.hypot(e.x - cf.x, e.y - cf.y) <= cf.radius) {
+        if (credit && cf && Math.hypot(e.x - cf.x, e.y - cf.y) <= cf.radius) {
           cf.healAcc += C.SKILLS.CONSECRATION.HEAL_PER_KILL;
         }
       }
@@ -3164,19 +3188,21 @@ function update(dt) {
       // roll is dt-free and 60Hz/120Hz pay the same per corpse.
       // E2 (R6): plain chaff's token roll is near-zero from the horde wave on
       // (a second thinning roll — the token channel's own rng is untouched).
-      if (!e2Chaff || Math.random() < C.E2.CHAFF_DROP_MULT) maybeGrantToken('kill');
+      if (credit && (!e2Chaff || Math.random() < C.E2.CHAFF_DROP_MULT)) maybeGrantToken('kill');
       // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
       // field is safe unowned). A kill is an EVENT, never a frame: the grant
       // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
-      if (p.stats.manaOnKill) {
+      if (credit && p.stats.manaOnKill) {
         p.mana = Math.min(p.stats.maxMana, p.mana + p.stats.manaOnKill);
       }
       // WAVE-11 RAMPAGE METER: every kill extends the streak (mult caps at 1.5x).
-      state.rampage.streak++;
-      if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
+      if (credit) {
+        state.rampage.streak++;
+        if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
+      }
       // WAVE-11 FLASH DROPS (loot.js): a rare eligible kill erases EVERY enemy
       // of the weakest trash tier present (elites/bosses/typed untouched).
-      if (shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)) {
+      if (credit && shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)) {
         const victims = flashTargets(state.enemies);
         if (victims.length > 0) {
           for (const v of victims) v.hp = 0;   // reaped by the next death pass
