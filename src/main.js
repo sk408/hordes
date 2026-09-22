@@ -123,6 +123,14 @@ import {
   HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
   heatXpMult, heatOf, manualPushes, addHeat, initHeat,
 } from './heat.js';
+// PRESTIGE (owner-designed, player-facing): tier mults (1.5^P enemy, 2^P gold),
+// the gated speed ladder [1,3,5,7], and the 30:00 survival offer. Pure helpers
+// in src/prestige.js; every application seam is marked PRESTIGE below.
+import {
+  PRESTIGE, getPrestige, setPrestige, prestigeEnemyMult, prestigeGoldMult,
+  prestigeAllowedSpeeds, prestigeCanUseSpeed, prestigeNormSpeed,
+  prestigeNextSpeed, prestigeOfferForRun,
+} from './prestige.js';
 // RUN-COUNT MILESTONE CHESTS (owner 2026-09-17): the one table (milestones,
 // runs-worth, the measured gold band) + the two pure helpers (next chest due,
 // the chest's gold). No other number for the feature lives in this file.
@@ -763,6 +771,11 @@ const state = {
   bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
   time: 0,
   spawnTimer: 0,
+  // PRESTIGE speed: sim substeps per rendered frame (1 = normal). Gated by
+  // prestige tier ([1,3,5,7] at tiers 0/1/2/3 — prestige.js), reset to 1x by
+  // startRun, driven by runAction('speed') / the F key. frame() runs update()
+  // N times with the frame's dt UNCHANGED (never dt*N).
+  gameSpeed: 1,
   // 'intro' plays the wave-7/D movie before the menu; 'evolve' is the
   // EVOLUTION draft overlay (a maxed weapon + its item kind + a token).
   // G12: 'title' is the startup menu over the composed title card (the other
@@ -1458,6 +1471,15 @@ function stampStageStats(stateArg, e) {
   const mHp = sm.hpMult || 1, mSpd = sm.speedMult || 1;
   if (mHp !== 1) { e.hp *= mHp; e.maxHp = e.hp; }
   if (mSpd !== 1) e.speed *= mSpd;
+  // PRESTIGE HP (owner spec: enemy strength x1.5^P). Applied LAST, AFTER
+  // preStageMaxHp is recorded — so chests.js isEliteish reads the
+  // prestige-invariant body and the chest economy is identical at every tier
+  // (no chest file change). Every trunk / minion / ring / chest-horde spawn
+  // funnels through this stamp; the four hp-overwrite sites that bypass it
+  // (spawnBoss, spawnMidBoss, stampHeavy, startFinale) apply the same factor
+  // after their own overwrite — see each site.
+  const pHp = prestigeEnemyMult(getPrestige(profile));
+  if (pHp !== 1) { e.hp *= pHp; e.maxHp = e.hp; }
   return e;
 }
 
@@ -1470,8 +1492,12 @@ function stampStageStats(stateArg, e) {
 // HEAVY (a wave-1 TICK still pays CHAFF; only a real heavy body pays heavy).
 function stampHeavy(e) {
   const wTick = Math.floor(state.time / 30);
+  // PRESTIGE HP: the heavy overwrite bypasses stampStageStats, so it applies
+  // the tier factor itself (same 1.5^P as the stamp above). Chest eligibility
+  // still reads the heavy body (preStageMaxHp, recorded prestige-invariant by
+  // the stamp that follows at the call sites) — drops come from strong bodies.
   e.hp = e.maxHp = midBossHp(Math.max(1, state.wave.num - 1), wTick) *
-    heatMultipliers(heatOf(state)).hp;
+    heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));
   e.xp = C.ENEMY.BASE_XP * ladderXp(wTick) * C.E2.HEAVY_XP_KILLS;
   e.purseTier = 'HEAVY';
 }
@@ -1756,8 +1782,12 @@ function purseCredit(e) {
   // multiplier lives on the run's stats (1 = the shipped payout bit-for-bit,
   // CHAFF's 0 included), so the wallet keeps ONE writer and every consumer
   // (HUD, ledger, settle) reads the same number.
+  // PRESTIGE GOLD (owner spec: gold income x2^P, all sources, same seam).
+  // The tier factor rides this one per-kill writer — every tier-weighted drop
+  // scales, and settlement banks the remainder WITHOUT re-multiplying (it was
+  // already scaled here).
   const mult = (state.player && state.player.stats.purseKillMult) || 1;
-  const v = Math.round(purseValue(e) * mult);
+  const v = Math.round(purseValue(e) * mult * prestigeGoldMult(getPrestige(profile)));
   const tier = purseTier(e);
   profile.runPurse = purseClamp(profile.runPurse + v);
   const g = state.runCounts.gold;
@@ -2015,7 +2045,8 @@ function spawnBoss() {
     escalate(boss, state.time);
     const hp = C.ENEMY.BASE_HP * ladderHp(w) *
       (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
-      heatMultipliers(heatOf(state)).hp;   // WAVE-9: bosses take the heat too
+      heatMultipliers(heatOf(state)).hp *   // WAVE-9: bosses take the heat too
+      prestigeEnemyMult(getPrestige(profile));   // PRESTIGE HP: the boss overwrite bypasses stampStageStats
     boss.hp = hp;
     boss.maxHp = hp;
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
@@ -2098,7 +2129,7 @@ function spawnMidBoss() {
   // inline expression (desc.hpMult * heat on top), so the herald's number is
   // byte-identical.
   const hp = midBossHp(state.wave.num, w) * desc.hpMult *
-    heatMultipliers(heatOf(state)).hp;
+    heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));   // PRESTIGE HP: the herald overwrite bypasses stampStageStats
   boss.hp = hp;
   boss.maxHp = hp;
   boss.w = Math.round(boss.w * M.SIZE_MULT * desc.sizeMult);
@@ -2657,8 +2688,15 @@ function update(dt) {
   // OWNER enemy buff: damage SQUARED. The square is on C.ENEMY.BASE_CONTACT (see
   // config.js POWER), so this multiplier stays linear and heat's own damage
   // contract is unchanged.
+  // PRESTIGE DAMAGE (owner spec: enemy strength x1.5^P). The tier factor rides
+  // the ONE shared threat curve every enemy-damage path below already
+  // multiplies: projectiles / novas / fans scale linearly with it; contact
+  // responds sub-linearly through the SURVIVAL pow (the existing contract —
+  // the threat still climbs every tier, it cannot one-shot the pool). The
+  // maw's mercy-rule hits are excluded (exact thirds of player HP).
   const dmgMult = ladderDmg(Math.floor(state.time / 30)) *
-    heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1);
+    heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1) *
+    prestigeEnemyMult(getPrestige(profile));
   // ARENA RELIEF: the stage's terrain character, read ONCE for the whole
   // enemy pass. The grade term at the move seam below is the SAME pure
   // function the pilot's own movement reads — a chaser climbs the ridge at
@@ -2749,7 +2787,9 @@ function update(dt) {
       // rest still ride (and still have to be killed). See CONFIG.SURVIVAL.
       if (drainActive < C.SURVIVAL.MAX_DRAIN_TICKS) {
         drainActive++;
-        p.hp -= damageTakenFortified(state, act.drain * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel; N1 slice 3 FORTIFY-aware)
+        // PRESTIGE DAMAGE: the latch drain is flat (never rode dmgMult), so it
+        // takes the tier factor directly — same 1.5^P as every other foe hit.
+        p.hp -= damageTakenFortified(state, act.drain * prestigeEnemyMult(getPrestige(profile)) * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel; N1 slice 3 FORTIFY-aware)
         state.runCounts.waveTookDamage = true;   // G9: a hit landed this wave
         resetRampage();              // WAVE-11: ANY hp loss ends the streak
         if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
@@ -4653,10 +4693,15 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const nightPct = state.nightRun ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
   const pool = 1 - nightPct / 100 + challengePct / 100 + heatPct;
   const nightFactor = 1 - nightPct / 100;
+  // PRESTIGE GOLD (owner spec: x2^P, all sources). The AWARD (fixed end-of-run
+  // pay, FIRST_CLEAR included) and the winBonus (completion / maw milestone)
+  // scale with the tier; the purse remainder does NOT (purseCredit already
+  // scaled it at kill time — re-multiplying here would pay it twice).
+  const pGold = prestigeGoldMult(getPrestige(profile));
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
-  const award = Math.round(RUN_GOLD.AWARD * mult) + (firstClear ? RUN_GOLD.FIRST_CLEAR : 0);
+  const award = Math.round(RUN_GOLD.AWARD * mult * pGold) + (firstClear ? Math.round(RUN_GOLD.FIRST_CLEAR * pGold) : 0);
   const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
-  winBonus = Math.round(winBonus * nightFactor);
+  winBonus = Math.round(winBonus * nightFactor * pGold);
   const gold = award + purseBanked + winBonus;
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
@@ -4703,6 +4748,20 @@ function survivedBonus() {
   return C.RUN.SURVIVED_BONUS + C.RUN.DEPTH_BONUS * past;
 }
 
+// ---------- PRESTIGE ASCENT (owner spec: 30:00 survival offers P+1) --------
+// Survival-only by construction: the ONLY caller is the PRESTIGE card
+// composed in runSurvived(), and the guard below refuses a dead run —
+// die()/endRun() never compose the card, so death can never ascend.
+function prestigeAscend() {
+  if (!prestigeOfferForRun(state.runWon)) return false;
+  const nextP = setPrestige(profile, getPrestige(profile) + 1);
+  persistProfile();
+  toast('PRESTIGE ' + nextP + ' — THE HORDE GROWS STRONGER');
+  audio.playSfx('levelup');
+  startRun();
+  return true;
+}
+
 function runSurvived() {
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   const p = state.player;
@@ -4730,6 +4789,17 @@ function runSurvived() {
       parts: { award, purseBanked, winBonus: bonus, goldPool },
     }),
   });
+  // PRESTIGE OFFER (owner spec): surviving to 30:00 offers the reset at P+1.
+  // Offered ONLY here — die()/endRun() never compose this card, so the offer
+  // fires on survival and never on death (test_prestige.mjs drives both real
+  // paths). The ascent resets the run at the new tier via prestigeAscend().
+  if (prestigeOfferForRun(state.runWon)) {
+    const nextP = getPrestige(profile) + 1;
+    const unlock = nextP >= 3 ? '7x SPEED UNLOCKED' : nextP === 2 ? '5x SPEED UNLOCKED' : '3x SPEED UNLOCKED';
+    menuCard('PRESTIGE ' + nextP,
+      `reset the run at tier ${nextP} · foes x${prestigeEnemyMult(nextP)} · gold x${prestigeGoldMult(nextP)} · ${unlock} [P]`,
+      () => prestigeAscend());
+  }
   if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
 }
 
@@ -7499,6 +7569,9 @@ function startRun() {
   state.lastMinute = 0;
   state.finalCall = false;
   state.mawCleared = false;
+  // PRESTIGE: every run opens at 1x (speed is a run-scoped choice, gated by
+  // the persisted tier — never persisted itself).
+  state.gameSpeed = 1;
   // S1 (audit 2026-09-16): the run-once settle guard re-arms with the run.
   state.runSettled = null;
   // M1: a boss-stance save left over from a run that ended mid-boss (or at the
@@ -7838,7 +7911,10 @@ function startRun() {
 function collectRunChest() {
   if (!state.runChest) return;
   const milestone = state.runChest.milestone;
-  const reward = runChestGold(profile.achievements && profile.achievements.totals);
+  // PRESTIGE GOLD: the milestone bank is gold income like any other, so it
+  // rides the same 2^P (at P0 the factor is exactly 1 — byte-identical).
+  const reward = Math.round(runChestGold(profile.achievements && profile.achievements.totals) *
+    prestigeGoldMult(getPrestige(profile)));
   const bx = state.runChest.x, by = state.runChest.y;
   state.runChest = null;                    // first: off the field, once
   profile.gold = Math.min(Number.MAX_SAFE_INTEGER, profile.gold + reward);
@@ -8701,6 +8777,12 @@ function runAction(act) {
     if (state.mode === 'playing' || state.mode === 'finale') toggleMap();
     return;
   }
+  // PRESTIGE speed: cycles the gated ladder ([1,3,5,7] at tiers 0/1/2/3) —
+  // same mid-run-only gate as the pilot toggle (F key twin below).
+  if (act === 'speed') {
+    if (state.mode === 'playing' || state.mode === 'finale') cycleGameSpeed();
+    return;
+  }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
   if (act === 'focus') { controller.cycleFocus(); }
@@ -8721,6 +8803,24 @@ function runAction(act) {
   }
   else if (act === 'h') { drinkHealthPotion(state); }
   else if (act === 'n') { drinkManaPotion(state); }
+}
+
+// ---------- PRESTIGE SPEED (owner spec: P1 -> 3x, P2 -> 5x, P3+ -> 7x) -----
+// The sim runs N fixed-dt substeps per rendered frame (frame() below reuses
+// the frame's dt UNCHANGED, never dt*N — the dev slice-8 substep pattern,
+// with no dev gating on the player path). 60/120Hz correct by construction:
+// the step count scales, the step size never does.
+function setGameSpeed(n) {
+  const v = prestigeNormSpeed(getPrestige(profile), n);
+  state.gameSpeed = v;
+  return v;
+}
+function cycleGameSpeed() {
+  const v = prestigeNextSpeed(getPrestige(profile), state.gameSpeed);
+  state.gameSpeed = v;
+  toast('SPEED ' + v + 'x');
+  audio.playSfx('button');
+  return v;
 }
 
 // ---------- THE ONE POTION SEAM (WAVE-28) -----------------------------------
@@ -8915,6 +9015,7 @@ function autoCastSkills(state) {
 // dispatch, so a held ESC can no longer ping-pong a mode pair.
 const REPEAT_GUARDED = new Set([
   'tab', 'g',            // focus / stance cycle
+  'f',                   // PRESTIGE speed cycle
   'h', 'n',              // potions
   'escape', 'p',         // pause / resume
   'o',                   // pilot toggle (was M before M1 claimed M for the map)
@@ -9070,6 +9171,7 @@ window.addEventListener('keydown', (ev) => {
     // reached with arrows and the HOW TO PLAY card had no key at all.
     if (k === 'r') startRun();       // RETRY (parity with the death buttons)
     else if (k === 't') showTitle(); // TITLE
+    else if (k === 'p' && state.runWon) prestigeAscend();   // PRESTIGE (the survival offer card's key twin — dead-by-death runs have no card, so the guard refuses)
     else menuNavKey(k, ev);          // arrows/Tab move, Enter/Space activate
   } else if (state.mode === 'intermission') {
     // ENTER STAYS CONTINUE while no cursor is up. The CONTINUE card IS index 0,
@@ -9218,7 +9320,7 @@ window.addEventListener('keydown', (ev) => {
     // A stale `s` opener lived here and cost MANUAL-vs-AUTO confusion; do not
     // reintroduce it.)
     const keyMap = {
-      tab: 'focus', g: 'stance',
+      tab: 'focus', g: 'stance', f: 'speed',
       [C.SKILLS[classSkillId(state)].KEY]: 'q',
       [C.SKILLS.OVERCHARGE.KEY]: 'w',   // AUTO only in practice: in MANUAL, 'w' is held 'up'
       e: 'w',
@@ -10372,6 +10474,9 @@ function hudTextBlock(p) {
     (state.apexMark ? 'APEX MARK OF THE GRIND\n' : '') +
     (isStandard(state.challenge) ? '' : `MODE ${challengeOf(state.challenge).name}\n`) +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
+    // PRESTIGE speed readout (always present — 1x on a fresh profile, so the
+    // control reads discoverable; regex-safe append, no line moves).
+    `   SPD ${state.gameSpeed}x` +
     (state.toasts.length ? `\n! ${state.toasts[state.toasts.length - 1].msg}` : '');
 }
 
@@ -10699,7 +10804,10 @@ function startFinale() {
   // RUN-STRUCTURE: the real pool. MAW_HP === final_boss.js DISPLAY_HP, so the
   // HUD readout and every existing probe are unchanged; what changed is that
   // the bar can now reach zero.
-  b.hp = b.maxHp = C.RUN.MAW_HP;
+  // PRESTIGE HP: the milestone fight scales with the tier like every other
+  // foe (1.5^P) — its mercy-rule hits stay exact thirds of PLAYER maxHp by
+  // contract (finalBossDamage reads the player, never this pool).
+  b.hp = b.maxHp = C.RUN.MAW_HP * prestigeEnemyMult(getPrestige(profile));
   b.milestone = true;
   easeToBossStance();   // BOSS_STANCE: the maw is the run's biggest arrival
   state.mawDeadline = state.time + C.RUN.MAW_WINDOW;
@@ -11163,6 +11271,11 @@ function frame(now) {
     return;
   }
   // `dt` (real * earned-moment time scale) was computed at the top of frame().
+  // PRESTIGE SUBSTEPS: at Nx the sim runs N fixed-dt steps with the frame's
+  // dt UNCHANGED (never dt*N — large dt breaks the collision assumptions and
+  // splits 60/120Hz). The mode guard breaks the burst the moment a substep
+  // ends the live sim (death / draft / intermission / win): a parked mode
+  // must never consume substeps meant for play.
   if (state.mode === 'playing') {
     // WAVE-21: stage-2 coachmarks PAUSE the sim (a live fight running behind
     // a dimming overlay is confusing — the game plays itself otherwise).
@@ -11170,8 +11283,20 @@ function frame(now) {
     // update() here any more, and no transient DOM overlay exists in play.
     // HELP MODE: the pause is the player's own invitation (their "?" armed
     // it) — same freeze, and leaving resumes the clock without a trace.
-    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) update(dt);
-  } else if (state.mode === 'finale') updateFinale(dt);
+    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) {
+      const n = Math.max(1, state.gameSpeed | 0);
+      for (let s = 0; s < n; s++) {
+        update(dt);
+        if (state.mode !== 'playing') break;
+      }
+    }
+  } else if (state.mode === 'finale') {
+    const n = Math.max(1, state.gameSpeed | 0);
+    for (let s = 0; s < n; s++) {
+      updateFinale(dt);
+      if (state.mode !== 'finale') break;
+    }
+  }
   renderer.render(state, state.cam);
   drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
   drawHud();
@@ -11633,6 +11758,26 @@ export const __TEST = {
     // G9 FOLLOW-UP: the wave-completion seam, so the untouched-wave ledger can
     // be driven without a DOM click through the intermission card.
     nextWave: continueRun,
+  },
+  // ---- PRESTIGE seam (owner spec): the persisted tier, the gated speed
+  // control, and the survival-only ascent — so the suite drives the REAL paths
+  // (the same functions the cards/keys call), never a copy of the rules.
+  prestige: {
+    table: PRESTIGE,
+    get: () => getPrestige(profile),
+    set: (p) => setPrestige(profile, p),
+    ascend: prestigeAscend,
+    offer: () => prestigeOfferForRun(state.runWon),
+    enemyMult: prestigeEnemyMult,
+    goldMult: prestigeGoldMult,
+    allowed: prestigeAllowedSpeeds,
+    canUse: prestigeCanUseSpeed,
+    norm: prestigeNormSpeed,
+    next: prestigeNextSpeed,
+    get speed() { return state.gameSpeed; },
+    setSpeed: setGameSpeed,
+    cycleSpeed: cycleGameSpeed,
+    act: () => runAction('speed'),
   },
   // ---- W1 save-foundation seam (schema / migration / export / import) ----
   // `status` is the boot load result ('fresh' | 'current' | 'migrated' |
