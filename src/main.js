@@ -204,6 +204,12 @@ import {
   fetchSnapshots,
   DEV_SPEEDS, devNormSpeed, devNextSpeed,
 } from './dev_telemetry.js';
+// STEP 3: dev autoplay policy runner (TOGGLE, SMART vs IMPULSIVE + dev-night).
+// dev_autoplay imports meta.js only (no cycle); every behaviour below is
+// armed on ?dev=1 only, gate off = byte-identical player game.
+import {
+  DEV_LS_AUTO, DEV_LS_DEVNIGHT, AUTOPLAY_POLICIES,
+} from './dev_autoplay.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -933,6 +939,13 @@ const state = {
   night: false,
   nightRun: false,
   nightSummary: null,
+  // STEP 3 DEV-NIGHT (dev-only autoplay variant, ?dev=1 gate): the run-scoped
+  // stamp frozen at startRun off the dev session's devNight flag (the nightRun
+  // pattern). A dev-night run plays under nightmare rules (state.nightRun is
+  // set alongside) but settleRunGold EXEMPTS it from the 50% banking cut and
+  // snapshots stamp mode 'dev-night' with no banking-penalty modifier.
+  // Regular night mode never sets this and keeps the cut exactly as-is.
+  devNightRun: false,
   // OPT-IN GUIDED RUN (owner 2026-09-17: "The one off run for old players to
   // see the new tutorial would have to be opt-in"): `assistedRun` is the
   // run-scoped stamp (the nightRun pattern) frozen at startRun from the
@@ -1783,6 +1796,9 @@ const DEV_LS_FREE = 'hordes_dev_free';
 const DEV_LS_SNAPOFF = 'hordes_dev_snapoff';
 const DEV_LS_SPEED = 'hordes_dev_speed';
 const DEV_LS_COLLAPSED = 'hordes_dev_collapsed';
+// STEP 3: the autoplay-runner toggle + dev-night variant persist as the same
+// localStorage-bit shape (imported keys from dev_autoplay.js — ONE home).
+// Both default OFF (devPref fails closed on a missing key).
 // SLICE 9: the overlay collapse pref (persisted bit, same shape as the other
 // dev prefs). Default EXPANDED — the panel's job is live telemetry — but
 // docked top-LEFT, clear of the top-right cog row (settings / "?" / radar /
@@ -1811,6 +1827,16 @@ function devNewSession() {
     freeBuild: devPref(DEV_LS_FREE),
     snapshotsOff: devPref(DEV_LS_SNAPOFF),
     speed: devPrefSpeed(), // SLICE 8: N sim substeps per rendered frame (1 = today)
+    // STEP 3: the autoplay-runner TOGGLE (default OFF) + the dev-night
+    // variant flag, re-read per run like every other dev pref above, so a
+    // mid-session overlay flip takes effect on the NEXT run (the same
+    // run-scoped-freeze contract as the nightRun stamp in startRun).
+    autoplay: devPref(DEV_LS_AUTO),
+    devNight: devPref(DEV_LS_DEVNIGHT),
+    // STEP 3: the between-run policy driving this build ('smart' |
+    // 'impulsive' | null = hand-driven). Set by the headless runner through
+    // the dev seam; stamped into the snapshot when set.
+    autoplayPolicy: null,
     steps: 0,              // SLICE 8: update()/updateFinale() calls this run (the proof seam)
     stepDt: 0,             // SLICE 8: the dt every substep of the last frame used (never dt*N)
     dmg: 0,                // cumulative damage DEALT (the devHit scalar)
@@ -1955,6 +1981,17 @@ function devEnsurePanel() {
     btns.snap = mkBtn('SNAP', () => dev && !dev.snapshotsOff, () => {
       if (!dev) return; dev.snapshotsOff = !dev.snapshotsOff; devSetPref(DEV_LS_SNAPOFF, dev.snapshotsOff);
     });
+    // STEP 3: the autoplay-runner TOGGLE (default OFF) + the dev-night
+    // variant — same mkBtn shape + persisted-bit storage as TEST/FREE/SNAP
+    // above. AUTO arms the headless policy runner (it refuses while OFF);
+    // DNIGHT marks following runs dev-night (nightmare rules, no banking
+    // cut) via the run-scoped stamp in startRun.
+    btns.auto = mkBtn('AUTO', () => dev && dev.autoplay, () => {
+      if (!dev) return; dev.autoplay = !dev.autoplay; devSetPref(DEV_LS_AUTO, dev.autoplay);
+    });
+    btns.dnight = mkBtn('DNIGHT', () => dev && dev.devNight, () => {
+      if (!dev) return; dev.devNight = !dev.devNight; devSetPref(DEV_LS_DEVNIGHT, dev.devNight);
+    });
     // SLICE 8: speed control — cycles 1x -> 2x -> 4x -> 8x -> 1x through
     // devNextSpeed (the offered list lives in dev_telemetry.DEV_SPEEDS, so a
     // multiplier that fails the determinism proof is cut in ONE place). The
@@ -2006,7 +2043,9 @@ function devPaintPanel() {
       ' · SPEED ' + (((dev && dev.speed) || 1)) + 'x' +
       ' · BEST ' + devBestGold() +
       (dev.testRun ? ' · TEST' : '') + (dev.freeBuild ? ' · FREE' : '') +
-      (dev.snapshotsOff ? ' · SNAP-OFF' : '');
+      (dev.snapshotsOff ? ' · SNAP-OFF' : '') +
+      (dev.autoplay ? ' · AUTO' : '') + (dev.devNight ? ' · DNIGHT' : '') +
+      (dev.autoplayPolicy ? ' · ' + dev.autoplayPolicy.toUpperCase() : '');
     drawSparkline(devPanel.cvGold, [
       { data: dev.series.map(s => s.earned) },
       { data: dev.series.map(s => s.spent) },
@@ -2055,15 +2094,20 @@ function devCooldownNow() {
   return performance.now();
 }
 function devSetSpeed(n) {
-  if (!dev) return null;
+  // STEP 3: with the gate ON the pref persists even with no live session yet
+  // (the headless runner arms 8x before the first startRun; the overlay path
+  // is unchanged — with a session the speed applies live exactly as before).
+  // Gate off stays null (the shipped no-op).
+  if (!DEV_GATE) return null;
   const next = devNormSpeed(n);
+  devSetSpeedPref(next);
+  if (!dev) return next;
   if (dev.speed !== next && state.lastFlashAt != null) {
     const oldNow = dev.speed > 1 ? state.time * 1000 : performance.now();
     const newNow = next > 1 ? state.time * 1000 : performance.now();
     state.lastFlashAt = newNow - (oldNow - state.lastFlashAt);
   }
   dev.speed = next;
-  devSetSpeedPref(next);
   return next;
 }
 // 1 Hz sampler (called from frame() on the wall-clock slot; gate-checked by
@@ -2149,11 +2193,15 @@ async function devDownloadLog(env) {
 // analysis: the night banking penalty (percent read off RUN_GOLD, the ONE
 // home for the number), the challenge stamp + its live gold bonus, the stage
 // stamp, the manual heat pushes taken, assisted/apex flags.
+// STEP 3: a dev-night run stamps mode 'dev-night' and carries NO
+// banking-penalty modifier (the cut is exempt for the dev variant only —
+// regular night mode keeps stamping it exactly as before).
 function devModeFields() {
+  const devNight = !!(state && state.devNightRun);
   const night = !!(state && state.nightRun);
-  const mode = night ? 'night' : 'standard';
+  const mode = devNight ? 'dev-night' : (night ? 'night' : 'standard');
   const modifiers = [];
-  if (night) modifiers.push('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT);
+  if (night && !devNight) modifiers.push('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT);
   try {
     if (!isStandard(state.challenge)) {
       modifiers.push('challenge:' + state.challenge);
@@ -2195,28 +2243,37 @@ function devChoices() {
 // End-of-run snapshot: built ONCE per run (composeEndScreen also serves
 // reshowEndScreen — the guard makes recomposition a no-op), then auto-saved
 // unless the kill-switch is on.
+// STEP 3: the build itself is devBuildSnapshot() (pure read off live state +
+// the dev session) so the headless policy runner can rebuild the SAME row
+// AFTER its between-run buys — the posted row then carries the post-buy
+// build (upgrades + gold_spent at full price, per the investment rule).
+function devBuildSnapshot() {
+  const mf = devModeFields();
+  const fields = {
+    schema_v: SNAPSHOT_SCHEMA_V,
+    game_rev: (dev && dev.rev) || 'pending',
+    seed: (state.choiceSeed || 0) | 0,
+    upgrades: devUpgrades(),
+    shrines: { used: dev.shrineBlessings.length, blessings: [...dev.shrineBlessings] },
+    items: devItems(),
+    gold_earned: Math.floor(state.runCounts.gold.earned || 0),
+    gold_spent: Math.floor(devGoldSpent()),
+    damage: Math.round(dev.dmg),
+    wave: (state.wave && state.wave.num) | 0,
+    test: !!dev.testRun,
+    speed: devNormSpeed(dev.speed),
+    choices: devChoices(),
+    mode: mf.mode,
+    modifiers: mf.modifiers,
+  };
+  if (dev.autoplayPolicy) fields.policy = dev.autoplayPolicy;
+  return buildSnapshot(fields);
+}
 function devOnRunEnd() {
   if (!dev || dev.snapshot) return;
   let snap;
   try {
-    const mf = devModeFields();
-    snap = buildSnapshot({
-      schema_v: SNAPSHOT_SCHEMA_V,
-      game_rev: dev.rev || 'pending',
-      seed: (state.choiceSeed || 0) | 0,
-      upgrades: devUpgrades(),
-      shrines: { used: dev.shrineBlessings.length, blessings: [...dev.shrineBlessings] },
-      items: devItems(),
-      gold_earned: Math.floor(state.runCounts.gold.earned || 0),
-      gold_spent: Math.floor(devGoldSpent()),
-      damage: Math.round(dev.dmg),
-      wave: (state.wave && state.wave.num) | 0,
-      test: !!dev.testRun,
-      speed: devNormSpeed(dev.speed),
-      choices: devChoices(),
-      mode: mf.mode,
-      modifiers: mf.modifiers,
-    });
+    snap = devBuildSnapshot();
   } catch (err) {
     dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
     return;
@@ -5270,7 +5327,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // award the pool multiplies (the purse is the dominant income; halving
   // only the 70g award would be a ~0.01% cut). FIRST_CLEAR stays a separate
   // one-time record bonus, unhalved, like the challenge settle before it.
-  const nightPct = state.nightRun ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
+  // STEP 3 DEV-NIGHT: the dev-only variant is EXEMPT from the cut (nightPct
+  // 0) while playing under nightmare rules. Regular night mode (devNightRun
+  // false) pays exactly as before — this line is its only reader.
+  const nightPct = (state.nightRun && !state.devNightRun) ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
   const pool = 1 - nightPct / 100 + challengePct / 100 + heatPct;
   const nightFactor = 1 - nightPct / 100;
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
@@ -8385,6 +8445,13 @@ function startRun() {
   dev = DEV_GATE ? devNewSession() : null;
   devArm(dev);
   setDevFreeBuild(devRunFree());
+  // STEP 3 DEV-NIGHT: frozen here off the FRESH session (the pref
+  // devNewSession just read — session and stamp can never disagree). A
+  // dev-night run joins nightRun so every nightmare rule (auto-continue,
+  // auto-restart, tier-first draft picks, cine/escape skips, AUTO pilot
+  // below) applies; only the banking cut is exempt (settleRunGold).
+  state.devNightRun = DEV_GATE && !!(dev && dev.devNight);
+  if (state.devNightRun) state.nightRun = true;
   if (dev) devEnsurePanel();
   // E1: the purse is NOT reseeded from the bank — a fresh run after settlement
   // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
@@ -12360,6 +12427,8 @@ export const __TEST = {
   night: {
     get on() { return state.night; },
     get run() { return state.nightRun; },
+    // STEP 3: the dev-night run stamp (nightmare rules, no banking cut).
+    get devRun() { return state.devNightRun; },
     get armed() { return nightArmed; },
     press: toggleNight,
     get summary() { return state.nightSummary; },
@@ -12413,6 +12482,37 @@ export const __TEST = {
     // null with the gate off). Never read by the browser page.
     speeds: DEV_SPEEDS,
     setSpeed: (n) => devSetSpeed(n),
+    // STEP 3 autoplay-runner seams (dev gate only; the same setters the
+    // overlay AUTO/DNIGHT buttons drive — persisted pref + live session —
+    // so headless proofs arm the REAL toggle path, never a copy). setPolicy
+    // names the between-run policy stamped into snapshots ('smart' |
+    // 'impulsive' | null); rebuildSnapshot re-runs the REAL snapshot
+    // builder off live state (the runner calls it AFTER its between-run
+    // buys so the row carries the post-buy build). Never read by the
+    // browser page.
+    get autoplay() { return !!(dev && dev.autoplay); },
+    setAutoplay: (on) => {
+      devSetPref(DEV_LS_AUTO, !!on);
+      if (dev) dev.autoplay = !!on;
+      return !!(dev && dev.autoplay);
+    },
+    get devNight() { return !!(dev && dev.devNight); },
+    setDevNight: (on) => {
+      devSetPref(DEV_LS_DEVNIGHT, !!on);
+      if (dev) dev.devNight = !!on;
+      return !!(dev && dev.devNight);
+    },
+    setPolicy: (p) => {
+      const v = AUTOPLAY_POLICIES.includes(p) ? p : null;
+      if (dev) dev.autoplayPolicy = v;
+      return v;
+    },
+    rebuildSnapshot: () => {
+      if (!dev) return null;
+      const snap = devBuildSnapshot();
+      dev.snapshot = snap;
+      return snap;
+    },
     // SLICE 9 choice-audit seams: the live offer sets plus the ONE take path
     // per choice point (the same functions the cards drive — a headless proof
     // takes scripted choices through the REAL transitions, never copies), and

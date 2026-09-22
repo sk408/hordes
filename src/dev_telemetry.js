@@ -126,6 +126,11 @@ export function formatGameRev(sha, dirty) {
 //   modifiers — live-derived payout/build modifiers for the run
 //               (e.g. the night banking-penalty percent read off the live
 //               RUN_GOLD constant, challenge/stage/heat/assisted/apex stamps).
+//   policy    — STEP 3 (still schema_v 2 — ADDITIVE OPTIONAL FIELD ONLY, no
+//               version bump): the autoplay policy that drove the between-run
+//               buys for this snapshot's build ('smart' | 'impulsive').
+//               Unset (null/absent) for hand-driven runs. Present values are
+//               type-checked (non-empty string); absent validates fine.
 // Absent optionals validate fine (old writers predate them); present optionals
 // are type-checked. The version gate still owns compat, not key strictness.
 export const SNAPSHOT_SCHEMA_V = 2;
@@ -170,6 +175,10 @@ export function buildSnapshot(fields) {
       throw new Error('dev snapshot: bad modifiers');
     }
     snap.modifiers = f.modifiers;
+  }
+  if ('policy' in f && f.policy !== undefined && f.policy !== null) {
+    if (typeof f.policy !== 'string' || f.policy.length === 0) throw new Error('dev snapshot: bad policy');
+    snap.policy = f.policy;
   }
   return snap;
 }
@@ -224,6 +233,10 @@ export function validateSnapshot(obj) {
   if ('modifiers' in obj && obj.modifiers !== undefined &&
       (!Array.isArray(obj.modifiers) || obj.modifiers.some(m => typeof m !== 'string'))) {
     errors.push('bad type for modifiers');
+  }
+  if ('policy' in obj && obj.policy !== undefined && obj.policy !== null &&
+      (typeof obj.policy !== 'string' || obj.policy.length === 0)) {
+    errors.push('bad type for policy: ' + typeof obj.policy);
   }
   return { ok: errors.length === 0, errors };
 }
