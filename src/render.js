@@ -18,6 +18,7 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
+import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -2891,6 +2892,22 @@ export class Renderer {
             g.fillRect(Math.round(x + 12 + Math.cos(a) * R),
                        Math.round(y + 10 + Math.sin(a) * R), 3, 2);
           }
+        } else if (cellRand(cx, cy, seed, 17) < 0.55) {
+          // PORT SLICE A (stage/prop objects): the stage's signature prop —
+          // an ORIGINAL drawGrid pixel object (src/stage_props.js), one per
+          // stage identity, painted through the same drawGrid every sprite
+          // uses. Density-neutral: this branch subdivides the old rubble /
+          // grove tail (one landmark per picked cell either way), hash-gated
+          // on a fresh salt so no existing structure moves, rim-clipped by
+          // the same anchor cull above (props are <= 16px on a 72px margin).
+          // The hollow keeps its authored STUMP/GATE/GROVE (below + the
+          // authored block); its tail simply grows lanterns among the groves.
+          const prop = propForStage(stage);
+          kind = prop.id;
+          const fr = propFrame(prop, cx, cy);
+          g.fillStyle = pal.crack;                                     // bed shadow
+          g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
+          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
         } else if (hollow) {          // THE HOLLOW: the tail grows groves too
           kind = 'GROVE';
           rects = grove(x, y);

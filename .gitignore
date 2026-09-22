@@ -2,3 +2,4 @@
 *.log
 /tmp/
 .agentlock
+docs/vs_port_ref/
