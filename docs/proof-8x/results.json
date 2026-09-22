@@ -1,0 +1,500 @@
+{
+  "claims": {
+    "claim1_escape_8x": {
+      "verdict": "PASS",
+      "reason": "8x escape: no draft/menu overlay through the escape",
+      "info": {
+        "overlays": [
+          "none",
+          "none",
+          "none",
+          "none"
+        ],
+        "modes": [
+          "escape",
+          "escape",
+          "escape",
+          "escape"
+        ],
+        "cards": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "simT": [
+          0.02,
+          0.55,
+          0.97,
+          1.37
+        ],
+        "entered": true,
+        "afterPick": {
+          "mode": "playing",
+          "overlay": "flex",
+          "cards": 3,
+          "ceremony": true
+        },
+        "timeAdvancing": true,
+        "simAdvanced": true
+      }
+    },
+    "claim1_escape_1x": {
+      "verdict": "PASS",
+      "reason": "1x escape: no draft/menu overlay through the escape",
+      "info": {
+        "overlays": [
+          "none",
+          "none",
+          "none",
+          "none"
+        ],
+        "modes": [
+          "escape",
+          "escape",
+          "escape",
+          "escape"
+        ],
+        "cards": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "simT": [
+          0.02,
+          0.53,
+          0.93,
+          1.33
+        ],
+        "entered": true,
+        "afterPick": {
+          "mode": "playing",
+          "overlay": "flex",
+          "cards": 3,
+          "ceremony": true
+        },
+        "timeAdvancing": true,
+        "simAdvanced": true
+      }
+    },
+    "claim2_magnet_8x": {
+      "verdict": "PASS",
+      "reason": "8x magnet: multi-frame streaming decay",
+      "info": {
+        "seedMinD": 421.9,
+        "firstSampleMinD": 421.9,
+        "samplesToClear": 2,
+        "decreasing": [
+          421.9,
+          42.1
+        ],
+        "timeAdvanced": true,
+        "armed": {
+          "sweep": 0.45,
+          "cd": 30,
+          "gems": 6
+        },
+        "nSamples": 4
+      }
+    },
+    "claim2_magnet_1x": {
+      "verdict": "PASS",
+      "reason": "1x magnet: multi-frame streaming decay",
+      "info": {
+        "seedMinD": 421.9,
+        "firstSampleMinD": 322.3,
+        "samplesToClear": 9,
+        "decreasing": [
+          322.3,
+          246.4,
+          188.1,
+          142.9,
+          108.7,
+          82.3,
+          62,
+          34.7,
+          25.7
+        ],
+        "timeAdvanced": true,
+        "armed": {
+          "sweep": 0.4332999999999993,
+          "cd": 29.9833,
+          "gems": 6
+        },
+        "nSamples": 25
+      }
+    }
+  },
+  "notes": [
+    "TOUR_KEYS at measure time: legacy 20 seeded + dynamic Object.values read not needed; onboarded=1; DEV_GATE via ?dev=1.",
+    "No git commands run (brief constraint); tree writes limited to docs/proof-8x/ by construction."
+  ],
+  "boot": {
+    "t0": 1.1667000000000016,
+    "t1": 1.5666000000000015,
+    "advancing": true
+  },
+  "magnet8": {
+    "gate": {
+      "gate": true,
+      "speed": 8,
+      "ret": 8
+    },
+    "seeded": {
+      "n": 6,
+      "minD": 421.9004621945797,
+      "maxD": 451.77427992306065,
+      "px": 211.60597798502386,
+      "py": 188.00839965278573
+    },
+    "timeA": 1.5833000000000024,
+    "armed": {
+      "sweep": 0.45,
+      "cd": 30,
+      "gems": 6
+    },
+    "samples": [
+      {
+        "time": 1.583,
+        "sweep": 0.45,
+        "gems": 6,
+        "minD": 421.9,
+        "d0": 421.9
+      },
+      {
+        "time": 1.717,
+        "sweep": 0.3164,
+        "gems": 6,
+        "minD": 42.1,
+        "d0": 42.1
+      },
+      {
+        "time": 1.983,
+        "sweep": 0.05,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.117,
+        "sweep": -0.0001,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      }
+    ],
+    "timeB": 2.1168999999999936,
+    "timeAdvanced": true
+  },
+  "magnet1": {
+    "gate": {
+      "gate": true,
+      "speed": 1,
+      "ret": 1
+    },
+    "seeded": {
+      "n": 6,
+      "minD": 421.90046219457975,
+      "maxD": 451.7742799230607,
+      "px": 212.93297160413653,
+      "py": 197.45593962867156
+    },
+    "timeA": 2.1168999999999936,
+    "armed": {
+      "sweep": 0.4332999999999993,
+      "cd": 29.9833,
+      "gems": 6
+    },
+    "samples": [
+      {
+        "time": 2.134,
+        "sweep": 0.4333,
+        "gems": 6,
+        "minD": 322.3,
+        "d0": 322.3
+      },
+      {
+        "time": 2.15,
+        "sweep": 0.4167,
+        "gems": 6,
+        "minD": 246.4,
+        "d0": 246.4
+      },
+      {
+        "time": 2.167,
+        "sweep": 0.4001,
+        "gems": 6,
+        "minD": 188.1,
+        "d0": 188.1
+      },
+      {
+        "time": 2.184,
+        "sweep": 0.3833,
+        "gems": 6,
+        "minD": 142.9,
+        "d0": 142.9
+      },
+      {
+        "time": 2.2,
+        "sweep": 0.3667,
+        "gems": 6,
+        "minD": 108.7,
+        "d0": 108.7
+      },
+      {
+        "time": 2.217,
+        "sweep": 0.35,
+        "gems": 6,
+        "minD": 82.3,
+        "d0": 82.3
+      },
+      {
+        "time": 2.234,
+        "sweep": 0.3333,
+        "gems": 6,
+        "minD": 62,
+        "d0": 62
+      },
+      {
+        "time": 2.267,
+        "sweep": 0.3,
+        "gems": 6,
+        "minD": 34.7,
+        "d0": 34.7
+      },
+      {
+        "time": 2.283,
+        "sweep": 0.2834,
+        "gems": 6,
+        "minD": 25.7,
+        "d0": 25.7
+      },
+      {
+        "time": 2.3,
+        "sweep": 0.2667,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.317,
+        "sweep": 0.25,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.334,
+        "sweep": 0.2333,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.35,
+        "sweep": 0.2167,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.367,
+        "sweep": 0.2001,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.383,
+        "sweep": 0.1834,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.4,
+        "sweep": 0.1667,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.417,
+        "sweep": 0.1501,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.433,
+        "sweep": 0.1334,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.45,
+        "sweep": 0.1167,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.467,
+        "sweep": 0.1001,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.5,
+        "sweep": 0.0667,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.517,
+        "sweep": 0.05,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.534,
+        "sweep": 0.0333,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.55,
+        "sweep": 0.0167,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      },
+      {
+        "time": 2.567,
+        "sweep": 0,
+        "gems": 0,
+        "minD": 0,
+        "d0": 0
+      }
+    ],
+    "timeB": 2.5668999999999924,
+    "timeAdvanced": true
+  },
+  "escape8": {
+    "speed": 8,
+    "timeGuard": {
+      "tA": 2.583599999999993,
+      "tB": 4.982799999999998,
+      "advancing": true
+    },
+    "draftOpen": {
+      "mode": "draft",
+      "overlay": "flex",
+      "cards": 3
+    },
+    "afterPick": {
+      "mode": "playing",
+      "overlay": "flex",
+      "cards": 3,
+      "ceremony": true
+    },
+    "entered": true,
+    "timeline": [
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.02,
+        "time": 5.92
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.55,
+        "time": 5.92
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.97,
+        "time": 5.92
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 1.37,
+        "time": 5.92
+      }
+    ],
+    "simAdvanced": true
+  },
+  "escape1": {
+    "speed": 1,
+    "timeGuard": {
+      "tA": 9.2492,
+      "tB": 9.549199999999995,
+      "advancing": true
+    },
+    "draftOpen": {
+      "mode": "draft",
+      "overlay": "flex",
+      "cards": 3
+    },
+    "afterPick": {
+      "mode": "playing",
+      "overlay": "flex",
+      "cards": 3,
+      "ceremony": true
+    },
+    "entered": true,
+    "timeline": [
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.02,
+        "time": 9.67
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.53,
+        "time": 9.67
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 0.93,
+        "time": 9.67
+      },
+      {
+        "mode": "escape",
+        "overlay": "none",
+        "cards": 3,
+        "ceremony": false,
+        "simT": 1.33,
+        "time": 9.67
+      }
+    ],
+    "simAdvanced": true
+  },
+  "pageErrors": []
+}
