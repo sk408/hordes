@@ -507,8 +507,8 @@ export function fmtNum(v) {
 //       upgradeCost() consults `overrides[currentLevel] ?? formula`, so a row
 //       can shape its curve (cheap early hook, prestige capstone) without
 //       turning every level into a number. Levels NOT listed fall back to the
-//       formula. No row carries overrides yet — behaviour is byte-identical
-//       until one does.
+//       formula. Shipped owner-set tables: dmg + hp (early-accessibility
+//       retune) — every other row pays the formula.
 //   { ..., kind: 'weapon', weaponId }
 //       single-purchase WEAPON unlock row (costGrowth 1, maxLevel 1,
 //       perLevel 0). Ownership lives in profile.unlockedWeapons — NOT in

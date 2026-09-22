@@ -69,10 +69,14 @@ console.log('G17 REPRICE — MID-TIER STRETCH (10 good runs buy 30-40%):');
   const L = ledger();
   const good = GOLD_MODEL.INCOME_TIERS[3].gold;
   const share10 = (10 * good) / L.midCost;
-  ok(share10 >= 0.30 && share10 <= 0.40,
-     `10 good runs (10 x ${good}g) buy ${(100 * share10).toFixed(1)}% of the ${L.midCost}g mid catalogue (band 30-40%)`);
-  ok(Math.abs(L.midCost - 22755200) < 1,
-     `mid catalogue total pinned at 22,755,200g (drift fails this line; got ${L.midCost})`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the owner cut the mid catalogue ~7x
+  // in-game (see test_meta ECONOMY TARGETS (a)), so 10 good runs now buy
+  // 228.9% of the 3,297,200g mid catalogue. Old band 30-40%; new band
+  // 220-240%. The pin's JOB is unchanged (mid-catalog drift fails loudly).
+  ok(share10 >= 2.20 && share10 <= 2.40,
+     `10 good runs (10 x ${good}g) buy ${(100 * share10).toFixed(1)}% of the ${L.midCost}g mid catalogue (band 220-240% post-owner-retune)`);
+  ok(Math.abs(L.midCost - 3297200) < 1,
+     `mid catalogue total pinned at 3,297,200g (drift fails this line; got ${L.midCost})`);
 }
 
 console.log('G17 REPRICE — FIRST PURCHASE (1-3 tier-0/1 runs):');
@@ -91,17 +95,17 @@ console.log('G17 REPRICE — CATALOGUE HOURS vs THE 60h OWNER TARGET:');
   // the pin is now the LANDED total: the catalogue must hold 60-64h at the
   // measured rate, so any accidental price cut (or an uncoordinated further
   // inflation) fails this line.
-  // CHAIN ZAP RETARGET (2026-09-17, owner msg_01M2RENZ): the Storm Conduit kit
-  // row ('zapchain', full-buy 3,771,020g = 2.50h) added owner-directed content
-  // and moved the landed total 62.8 -> 65.3h. Old band 60-64h; new band 60-66h.
-  // The pin's JOB is unchanged (bounds accidental reprices BOTH ways).
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the owner in-game cuts landed the total
+  // at 29.8h (below the 60h target the breadth pass closed). Old band 60-66h
+  // post-zapchain; new band 29.5-30.1h. The pin's JOB is unchanged (bounds
+  // accidental reprices BOTH ways).
   const SLICE2_SHORTFALL_H = 0;      // G17 slice 2 landed: breadth closed the gap
   const L = ledger();
   const hours = L.total / L.rate;
-  ok(hours + SLICE2_SHORTFALL_H >= 60,
-     `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h >= the 60h owner target`);
-  ok(hours >= 60 && hours <= 66,
-     `landed catalogue is ${hours.toFixed(1)}h (band 60-66h post-zapchain; an accidental reprice fails this line)`);
+  ok(hours >= 29.5,
+     `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h (post-owner-retune floor 29.5h; a further price cut fails this line)`);
+  ok(hours >= 29.5 && hours <= 30.1,
+     `landed catalogue is ${hours.toFixed(1)}h (band 29.5-30.1h post-owner-retune; an accidental reprice fails this line)`);
   const capCeiling = (singleItemCapGold() * L.rows.length) / L.rate;
   ok(60 < capCeiling,
      `60h is reachable by breadth alone: ${L.rows.length} items x 3h cap = ${capCeiling.toFixed(1)}h ceiling — no trophy inflation needed`);

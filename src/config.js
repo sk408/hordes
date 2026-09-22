@@ -740,7 +740,11 @@ export const CONFIG = {
     // orient by instead of pure texture. LANDMARK_DENSITY = chance a cell
     // carries one.
     LANDMARK_CELL: 192,
-    LANDMARK_DENSITY: 0.30,
+    // PORT SLICE D (owner-ruled 2026-09-22: "we can have more of them and
+    // guarantee one near spawn" — an APPROVED visual-density change, not a
+    // pacing change): 0.30 -> 0.45, so the coarse structures read a few per
+    // screen. Painting only — no sim number rides this knob.
+    LANDMARK_DENSITY: 0.45,
     // WAVE-9B/2 per-wave AREA IDENTITY: the theme ladder cycles by WAVE number
     // (never by run — Sk408 beat the boss, entered wave 2 and the ground read
     // identical). Each theme = base ground tone + grid dots + decor palette

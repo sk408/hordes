@@ -155,20 +155,26 @@ console.log('PROGRESSION LADDER:');
   // row ('zapchain', full-buy 3,771,020g = 5.0 measured runs = 2.50h) moved
   // fullBuyCost 69,596,033 -> 73,367,053g, crossing 93 -> 98 runs (~49h). Old
   // band 92-94; new band 97-99. The invariant is unchanged.
-  ok(crossRun !== null && crossRun >= 97 && crossRun <= 99,
-     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 97-99 runs post-zapchain)`);
+  // OWNER EARLY-ACCESSIBILITY RETUNE (in-game editor cuts: weapons/elites ~10x,
+  // dmg+hp override curves, top-rung cuts): fullBuyCost 73,367,053 -> 43,620,167g,
+  // crossing 98 -> 58 runs (29.0h). Old band 97-99; new band 57-59. The
+  // invariant is unchanged (full buy crosses measured income; the catalogue
+  // got cheaper, so the crossing moved EARLIER).
+  ok(crossRun !== null && crossRun >= 57 && crossRun <= 59,
+     `full buy crosses measured income at run ${crossRun} x 754,689g = ${(crossRun * 0.5).toFixed(1)}h (target 57-59 runs post-owner-retune)`);
 
-  // ARCADE PASS sits beyond full-buy (G17 1b: 4,200,000g = 5.6 measured runs,
-  // and the pass alone costs less than the luck ladder it follows home).
+  // ARCADE PASS sits beyond full-buy (owner retune: 42,000g = 0.06 measured
+  // runs — no longer a multi-run push, but still the post-full-buy flex: the
+  // pin is now the EXACT owner price, so any drift fails this line).
   const arcadeCost = upgradeCost(SHOP_BY_ID.arcade, 0);
   let cum2 = 0, crossArcade = null;
   for (let n = 1; n <= 300; n++) {
     cum2 += GOLD_MODEL.INCOME_TIERS[3].gold;
     if (cum2 >= fullBuyCost + arcadeCost) { crossArcade = n; break; }
   }
-  ok(arcadeCost >= 50000, `arcade pass is a big-ticket sink (${arcadeCost}g)`);
-  ok(crossArcade !== null && crossArcade >= crossRun + 5,
-     `arcade pass pushes the crossing to run ${crossArcade} (+${crossArcade - crossRun} measured runs)`);
+  ok(arcadeCost === 42000, `arcade pass is the 42,000g post-full-buy flex (${arcadeCost}g; owner early-accessibility cut from 4.2M)`);
+  ok(crossArcade !== null && crossArcade === crossRun,
+     `arcade pass leaves the crossing at run ${crossArcade} (+${crossArcade - crossRun} measured runs at 754,689g/run — the 42,000g pass no longer moves it)`);
 
   // Early game cannot be skipped through: run-1 income buys no character.
   // Derive the floor from the catalog - naming one class as "the cheapest" is
@@ -177,10 +183,12 @@ console.log('PROGRESSION LADDER:');
     .map(c => c.unlockCost).filter(c => c > 0));   // KNIGHT is deliberately free
   ok(computeRunGold(GOLD_MODEL.RUN1) < cheapestUnlock,
      `a first run cannot afford even the cheapest character (${computeRunGold(GOLD_MODEL.RUN1)}g vs ${cheapestUnlock}g)`);
-  // Slot 6 stays a long-run trophy: it costs more than 25 mid-game runs.
+  // Slot 6 stays a long-run trophy: it costs more than 15 mid-game runs
+  // (owner retune cut the slots ladder 5000 -> 3000, so the old 25x no longer
+  // holds; 25230 / 1365 = 18.5x measured — the 15x bar keeps margin).
   const slot6 = upgradeCost(SHOP_BY_ID.slots, 2);
   const midRun = projectRunGold(20, {});
-  ok(slot6 > midRun * 25, `slot 6 (${slot6}g) is a long-run trophy vs run-20 income (${Math.round(midRun)}g)`);
+  ok(slot6 > midRun * 15, `slot 6 (${slot6}g) is a long-run trophy vs run-20 income (${Math.round(midRun)}g)`);
 }
 
 // ---------- Expansion shop lines ----------
@@ -219,10 +227,10 @@ console.log('EXPANSION LINES:');
      'crit buy path deducts and records');
   ok(buyUpgrade(p, 'crit') === false, 'crit cannot rebuy without gold');
 
-  // Arcade Pass: single purchase (G17 1b reprice: 4,200,000g), flagged via hasArcadePass.
+  // Arcade Pass: single purchase (owner retune: 42,000g), flagged via hasArcadePass.
   ok(hasArcadePass(makeProfile()) === false, 'fresh profile has no arcade pass');
   const ap = makeProfile();
-  ap.gold = 4200000;
+  ap.gold = 42000;
   ok(buyUpgrade(ap, 'arcade') === true && hasArcadePass(ap) === true,
      'arcade pass purchase flips hasArcadePass');
   ok(buyUpgrade(ap, 'arcade') === false, 'arcade pass is single-purchase (maxLevel 1)');
@@ -242,11 +250,13 @@ console.log('STATS CONTRACT:');
   const max = applyMetaBonuses(base,
     { crit: 5, critdmg: 5, greed: 5, alchemy: 4, scav: 4, artifact: 3, xp: 5, luck: 5 });
   // OWNER 2026-09-13: rates doubled, and the (1+x) multiplier rows COMPOUND.
-  ok(max.crit === 0.06 * 5, 'crit: +6%/level chance (0.30 max)');
-  ok(max.critMult === Math.pow(1.5, 5), 'critMult: compounds (1.50)^level (7.59 max)');
+  // OWNER EARLY-ACCESSIBILITY RETUNE: crit 0.06 -> 0.12, critdmg 0.50 -> 0.75,
+  // scav 0.03 -> 0.06 (shop descs render the live values, so the text moved).
+  ok(max.crit === 0.12 * 5, 'crit: +12%/level chance (0.60 max)');
+  ok(max.critMult === Math.pow(1.75, 5), 'critMult: compounds (1.75)^level (16.41 max)');
   ok(max.goldMult === Math.pow(1.2, 5), 'goldMult: compounds (1.20)^level (2.49 max)');
   ok(max.potionPower === Math.pow(1.5, 4), 'potionPower: compounds (1.50)^level (5.06 max)');
-  ok(max.dropBonus === 0.03 * 4, 'dropBonus: +3%/level (+12% max, additive: it is a chance)');
+  ok(max.dropBonus === 0.06 * 4, 'dropBonus: +6%/level (+24% max, additive: it is a chance)');
   ok(max.artifactLevels === 6, 'artifactLevels: +2 random weapon levels per level');
   ok(max.luck === 5, 'luck: Fortune level count flows through the stats contract (0..5)');
   ok(max.damage === 8 && max.maxHp === 100, 'base stats untouched by new lines');
@@ -258,12 +268,12 @@ console.log('WEAPON SLOTS:');
   const p = makeProfile();
   ok(startWeaponSlots(p) === WEAPON_SLOT_START && WEAPON_SLOT_START === 3,
      'fresh profile starts with 3 weapon slots');
-  ok(upgradeCost(SHOP_BY_ID.slots, 0) === 5000
-     && upgradeCost(SHOP_BY_ID.slots, 1) === 14500
-     && upgradeCost(SHOP_BY_ID.slots, 2) === 42050,
-     'slot ladder: 5000 / 14500 / 42050 (steep expansion pricing)');
+  ok(upgradeCost(SHOP_BY_ID.slots, 0) === 3000
+     && upgradeCost(SHOP_BY_ID.slots, 1) === 8700
+     && upgradeCost(SHOP_BY_ID.slots, 2) === 25230,
+     'slot ladder: 3000 / 8700 / 25230 (owner retune cut the base 5000 -> 3000)');
 
-  p.gold = 4200 - 1;
+  p.gold = 3000 - 1;
   ok(buyUpgrade(p, 'slots') === false && startWeaponSlots(p) === 3,
      'slot 4 gated on gold');
   p.gold = 100000;
@@ -286,7 +296,7 @@ console.log('SHOP:');
   const p = makeProfile();
   p.gold = 50;
   const cost0 = upgradeCost(SHOP_BY_ID.dmg, 0);
-  ok(cost0 === SHOP_BY_ID.dmg.baseCost, 'first purchase costs the base cost');
+  ok(cost0 === 125, 'first dmg purchase costs the owner table price (125, override of the 150 base)');
   ok(buyUpgrade(p, 'dmg') === false, 'insufficient gold rejected');
   ok(p.purchased.dmg === undefined && p.gold === 50, 'rejected buy mutates nothing');
 
@@ -321,7 +331,7 @@ console.log('BONUSES:');
 
   const out2 = applyMetaBonuses(base, { dmg: 2, hp: 3, regen: 1, xp: 2 });
   ok(out2.damage === 8 * Math.pow(3, 2), 'damage stacks MULTIPLICATIVELY: base x 3^level');
-  ok(out2.maxHp === 100 + 40 * 3, 'max HP bonus adds per level (+40)');
+  ok(out2.maxHp === 100 + 60 * 3, 'max HP bonus adds per level (+60, owner retune 40 -> 60)');
   ok(out2.manaRegen === C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * 1,
      'mana regen bonus adds per level (base + perLevel, both read from config)');
   ok(out2.xpMult === Math.pow(1.2, 2), 'XP bonus COMPOUNDS (1.20)^level');
@@ -377,7 +387,7 @@ console.log('CHARACTERS:');
   p.purchased.potions = 2;
   ok(startPotionCount(p) === 3, 'startPotionCount: Travel Pack levels add');
   const composed = applyCharacter(applyMetaBonuses(base, p.purchased), 'KNIGHT');
-  ok(composed.maxHp === (100 + 40) + 30, 'shop + character bonuses compose');
+  ok(composed.maxHp === (100 + 60) + 30, 'shop + character bonuses compose');
 }
 
 // ---------- Migration: old-economy saves load clean ----------
@@ -485,15 +495,21 @@ console.log('WEAPON UNLOCKS:');
   ok(Object.keys(WEAPON_PRICES).length + STARTER_WEAPONS.length === archetypes.length + 1,
      'price ladder covers exactly the non-starter catalog (+VOLLEY starter)');
 
-  // Stepped ladder: prices strictly ascend in listed order; BEAM is top tier.
+  // Stepped ladder: the owner retune pins EVERY rung exactly (drift fails this
+  // line). NOTE the listed order no longer strictly ascends: the owner's
+  // in-game editor cuts made chain-zap ZAP (60000) pricier than the pulse ring
+  // NOVA_PULSE (12000) — deliberate early-accessibility ordering, not drift.
+  // BEAM still tops the ladder.
   const prices = Object.values(WEAPON_PRICES);
-  ok(prices.every((p, i) => i === 0 || p > prices[i - 1]),
-     'price ladder strictly ascends (early cheap, strong expensive)');
+  ok(JSON.stringify(prices) === JSON.stringify([200, 60000, 12000, 20000, 280000, 420000, 450000]),
+     'weapon price ladder pins the owner retune (ORBIT 200 / ZAP 60000 / NOVA_PULSE 12000 / SCYTHE 20000 / SEEKER 280000 / MINE 420000 / BEAM 450000)');
   // G17 slice 1b RETARGET: the old `> MINE * 5` encoded the old prices
   // (110,000 vs 4,800 = 22.9x). Post-reprice the 3h single-item cap
   // (4,528,134g) bounds the ratio: BEAM 4.5M / MINE 4.2M = 1.07x is the
   // ceiling the cap allows; BEAM still tops the strictly-ascending ladder.
-  ok(WEAPON_PRICES.BEAM > WEAPON_PRICES.MINE,
+  // OWNER RETUNE: BEAM 450000 still tops (MINE 420000); the cap language above
+  // is the 1b record, kept for the trail.
+  ok(WEAPON_PRICES.BEAM === Math.max(...prices),
      'BEAM sits above the ladder (top tier; the 3h single-item cap bounds the gap post-reprice)');
 
   // Gating + buy path.
@@ -621,37 +637,50 @@ console.log('ECONOMY TARGETS:');
      && GOLD_MODEL.INCOME_TIERS[2].gold < GOLD_MODEL.INCOME_TIERS[3].gold,
      'income tiers strictly increase (floor -> partial -> mid -> maxed)');
 
-  // (a) G17 slice 1b RE-BASELINE: the new intent is "10 good runs buy 30-40%
-  // of the mid-tier catalog" (the measured share at the repriced tables is
-  // 36.4%). Derived half-catalog band: 10 / 0.40 / 2 = 12.5 runs at the fast
-  // end, 10 / 0.30 / 2 = 16.7 at the slow end; midpoint 10 / 0.35 / 2 = 14.3.
-  // The old [1.5, 2.5] band encoded the "fast" intent the owner rejected
-  // (half the mid catalog for ~2 good runs = 1 hour of end-game play).
+  // (a) OWNER EARLY-ACCESSIBILITY RETARGET: the owner cut the mid catalogue ~7x
+  // in-game (ZAP 600000 -> 60000, NOVA_PULSE/SCYTHE/SEEKER/MINE to
+  // 12000/20000/280000/420000, elites to 10000/18000/28000, luck + briarmail
+  // /10): midCost 22,755,200 -> 3,297,200g, so 10 good runs now buy 228.9% of
+  // it and half of it costs ~2.2 good runs. Old band 12.5-16.7 (the 30-40%
+  // intent); new band 2.0-2.4. The pin's JOB is unchanged (mid-catalog drift
+  // fails this line).
   const midCost = catalogCost(GOLD_MODEL.MID_TIER_IDS);
   const halfRuns = (midCost / 2) / good;
-  ok(halfRuns >= 12.5 && halfRuns <= 16.7,
-     `half the mid-tier catalog costs ~14 good runs (10 good runs buy 30-40% of it; got ${halfRuns.toFixed(1)}, was 1.9 under the old prices)`);
+  ok(halfRuns >= 2.0 && halfRuns <= 2.4,
+     `half the mid-tier catalog costs ~2.2 good runs (10 good runs buy 228.9% of it; got ${halfRuns.toFixed(1)})`);
   ok(midCost < good * 40,
      'the whole mid-tier catalog stays a mid-game project (< 40 good runs)');
 
-  // (b) every top-tier item costs 10+ good runs (was 30+; re-derived, shop
-  // NOT repriced: BEAM 10.0, ARCADE_PASS 12.7 maxed runs).
+  // (b) OWNER EARLY-ACCESSIBILITY RETARGET: the 9 cut rows below no longer cost
+  // 5+ good runs (they are 0.06-0.6 runs now) — they are pinned at their EXACT
+  // owner full-buy costs instead (stronger than the bar: any drift fails).
+  // The 5-run bar still guards every UNCUT top-tier row.
   ok(!GOLD_MODEL.MID_TIER_IDS.some(id => GOLD_MODEL.TOP_TIER_IDS.includes(id)),
      'mid-tier and top-tier catalogs are disjoint');
+  const OWNER_CUT_FULLBUY = {
+    weapon_beam: 450000, arcade: 42000, briarmail: 412300, deepread: 429000,
+    aethertap: 398000, grandelixir: 404000, deepfont: 406000, eagleeye: 412000,
+    staticfield: 418000,
+  };
   for (const id of GOLD_MODEL.TOP_TIER_IDS) {
     const cost = catalogCost([id]);
-    ok(cost >= good * GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
-       `${id} (${cost}g) costs ${GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS}+ good runs (${(cost / good).toFixed(1)})`);
+    if (Object.hasOwn(OWNER_CUT_FULLBUY, id)) {
+      ok(cost === OWNER_CUT_FULLBUY[id],
+         `${id} pins its owner-cut full buy (${cost}g = ${(cost / good).toFixed(2)} good runs; drift fails this line)`);
+    } else {
+      ok(cost >= good * GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS,
+         `${id} (${cost}g) costs ${GOLD_MODEL.TOP_TIER_MIN_GOOD_RUNS}+ good runs (${(cost / good).toFixed(1)})`);
+    }
   }
-  ok(catalogCost(['arcade']) === 4200000,
-     'ARCADE_PASS is the 4.2M top-tier flex (G17 1b reprice: 2.78h at the measured 1,509,378g/h, inside the 3h cap)');
+  ok(catalogCost(['arcade']) === 42000,
+     'ARCADE_PASS is the 42,000g post-full-buy flex (owner early-accessibility cut from 4.2M; drift fails this line)');
 
   // Ladder sanity against the measured income curve.
   ok(WEAPON_PRICES.ORBIT > GOLD_MODEL.INCOME_TIERS[0].gold
      && WEAPON_PRICES.ORBIT <= GOLD_MODEL.INCOME_TIERS[2].gold * 2,
      'cheapest weapon is past the first-run floor but ~2 mid-tier runs (early weapons cheap)');
-  ok(WEAPON_PRICES.BEAM > good,
-     'BEAM is not plausibly one-run money even late');
+  ok(catalogCost(['weapon_beam']) === 450000,
+     `BEAM pins its owner-cut full buy (450,000g = ${(450000 / good).toFixed(1)} good runs — one-run money now, deliberately; drift fails this line)`);
 }
 
 // ---------- Sim ↔ meta single source of truth (BALANCE SIM v2) --------------
@@ -759,8 +788,10 @@ console.log('APEX TIER (G25):');
   // 17 breadth rows partitioned (fleetfoot MID; the other 16 TOP). The pin's
   // JOB is unchanged — any apex row leaking into SHOP_UPGRADES or any
   // uncoordinated mid/top reprice fails this line.
-  ok(partition === 94545800,
-     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-G17-slice-2 94545800)`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: 40,966,100 = MID 3,297,200 + TOP
+  // 37,668,900 at the owner-cut tables. Same JOB.
+  ok(partition === 40966100,
+     `the mid+top catalog cost is UNCHANGED by the apex tier (got ${partition}, post-owner-retune 40966100)`);
   // RETARGETED 2026-09-15 (V1 escape): 45 -> 46 — the PAID SKIP row
   // ('escapeskip', owner directive 2026-09-14) joined SHOP_UPGRADES with the
   // escape slice. The pin's JOB is unchanged: apex rows must never leak into
@@ -810,7 +841,9 @@ console.log('APEX TIER (G25):');
   // untouched by 'zapchain' (it is not in MID/TOP tier ids), but the row rides
   // SHOP_UPGRADES so the apex-free crossing moved 93 -> 98 with its full-buy
   // (3,771,020g). Old band 92-94; new band 97-99. The pin's JOB is unchanged.
-  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 97 && crossRun3 <= 99,
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the owner cuts moved the apex-free
+  // crossing 98 -> 58 (29.0h). Old band 97-99; new band 57-59. Same JOB.
+  ok(crossRun3 !== null && crossRun3 === runsNeeded && crossRun3 >= 57 && crossRun3 <= 59,
      `the apex-free completion crossing is unmoved (${crossRun3} runs x 754,689g at the measured tier-3 income = ${(crossRun3 * 0.5).toFixed(1)}h)`);
 
   // -- pricing: G17 slice 1b RETARGET of the calibration frame --

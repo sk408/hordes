@@ -1,0 +1,90 @@
+// HORDES - PORT SLICE C capture: every pilot renders their own in-run look.
+// Run: HORDES_SHOT_DIR=docs/art/port-slice-c node tools/capture_slice_c.mjs
+// (SHOT_DIR is a relative in-tree path.)
+//
+// METHOD (the capture_slice_a.mjs / capture_slice_b.mjs pattern): real
+// browser, phone viewport, seed hordes_onboarded + all 19 tour keys so no
+// overlay covers the arena, REAL tap on START GAME, ASSERT state.time
+// advances (never grade a frozen game). Per pilot: unlock + equip through the
+// game's own meta.js paths (capture-only gold top-up — no code number
+// changes), a FRESH run via the game's own startRun (full hp), the field
+// cleared so the pilot stands alone at the center beside the MANUAL pilot
+// marker, ASSERT the live seam (state.character carries the id + the clock
+// advances), screenshot with the sim running.
+import { withPage } from './browser.mjs';
+import { mkdirSync } from 'node:fs';
+
+const ART = 'docs/art/port-slice-c';
+mkdirSync(ART, { recursive: true });
+const results = [];
+const check = (name, ok, detail) => {
+  results.push({ name, ok: !!ok, detail });
+  console.log((ok ? '  PASS ' : '  FAIL ') + name + (detail !== undefined ? ' :: ' + JSON.stringify(detail) : ''));
+};
+
+const TOUR19 = ['stage1', 'hud', 'pilot', 'focus', 'stance', 'move', 'skills', 'potions',
+  'stats', 'cog', 'draft', 'edge', 'chest', 'portal', 'arch', 'shrine',
+  'intermission', 'death', 'settings'];
+
+const TARGETS = [
+  { id: 'KNIGHT', shot: 'slice-c-knight' },
+  { id: 'WITCH', shot: 'slice-c-witch' },
+  { id: 'ROGUE', shot: 'slice-c-rogue' },
+  { id: 'PALADIN', shot: 'slice-c-paladin' },
+];
+
+await withPage({ w: 390, h: 844, dpr: 3,
+  startupScript: "try { localStorage.setItem('hordes_onboarded', '1'); } catch (e) {}\n" +
+    'for (const k of ' + JSON.stringify(TOUR19) + ") { try { localStorage.setItem('hordes_tour_' + k, '1'); } catch (e) {} }" },
+async (p) => {
+  await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000);
+  await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal; return !rv || rv.phase === 'settled'; })()", 8000);
+  const c = await p.evaluate(`(() => {
+    const el = [...document.getElementById('ov-cards').children]
+      .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
+  })()`);
+  if (!c) throw new Error('no START GAME card on the title');
+  await p.tap(c[0], c[1]);
+  const playing = await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()", 8000);
+  const advancing = await p.waitFor("(async () => { const st = (await import('./src/main.js')).__TEST.state; return st.mode === 'playing' && st.time > 1.0; })()", 10000, 200);
+  check('run started via a REAL tap and the sim clock ADVANCED past 1.0s (not a frozen game)',
+    playing && advancing, { playing, advancing });
+  if (!playing || !advancing) throw new Error('no live run to capture');
+
+  for (const t of TARGETS) {
+    const staged = await p.evaluate(`(async () => {
+      const T = (await import('./src/main.js')).__TEST;
+      const M = await import('./src/meta.js');
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const prof = T.getProfile();
+      // Capture-only purse top-up so the priced pilots can be bought through
+      // the game's own unlock path (no code number changes).
+      prof.gold = Math.max(prof.gold, 20000);
+      M.unlockCharacter(prof, ${JSON.stringify(t.id)});
+      M.equipCharacter(prof, ${JSON.stringify(t.id)});
+      T.startRun();
+      T.setPilotMode('MANUAL');
+      const st = T.state;
+      st.enemies.length = 0;
+      st.player.x = 0; st.player.y = 0;
+      st.player.hp = st.player.maxHp;
+      const t0 = st.time;
+      await sleep(700);
+      return { charId: st.character && st.character.id, mode: st.mode,
+        dt: st.time - t0, px: Math.round(st.player.x), py: Math.round(st.player.y) };
+    })()`, true);
+    check(t.shot + ': equipped ' + t.id + ' stands alone at the center',
+      staged.charId === t.id && staged.mode === 'playing',
+      { charId: staged.charId, mode: staged.mode, at: [staged.px, staged.py] });
+    check(t.shot + ': live game (clock advances around the shot)',
+      staged.dt > 0, { dt: staged.dt, player: [staged.px, staged.py] });
+    const file = await p.shot(t.shot);
+    console.log('  SHOT ' + t.shot + ' -> ' + file);
+  }
+  const red = results.filter(r => !r.ok);
+  console.log(red.length ? ('capture_slice_c: ' + red.length + ' FAILED check(s)') : 'capture_slice_c: all checks passed');
+  if (red.length) process.exitCode = 1;
+});

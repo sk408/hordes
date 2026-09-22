@@ -90,10 +90,16 @@ pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 settleReveal();
 
-// ---- 6. NO BALANCE CHANGE: the prices this test buys through are pinned -----
-ok('no balance change: the weapon prices are untouched (ORBIT 200 / ZAP 600000 / NOVA_PULSE 1200000)',
-  WEAPON_PRICES.ORBIT === 200 && WEAPON_PRICES.ZAP === 600000 && WEAPON_PRICES.NOVA_PULSE === 1200000,
-  { ORBIT: WEAPON_PRICES.ORBIT, ZAP: WEAPON_PRICES.ZAP, NOVA_PULSE: WEAPON_PRICES.NOVA_PULSE });
+// ---- 6. OWNER PRICES PINNED: the buys below go through at the owner retune -
+// (early-accessibility cuts via the in-game editor: ZAP 600000 -> 60000,
+// NOVA_PULSE 1200000 -> 12000, SCYTHE 2000000 -> 20000, SEEKER 2800000 ->
+// 280000, MINE 4200000 -> 420000, BEAM 4500000 -> 450000). Any drift in these
+// rungs fails here before the loadout assertions run.
+ok('owner prices pinned (ORBIT 200 / ZAP 60000 / NOVA_PULSE 12000 / SCYTHE 20000 / SEEKER 280000 / MINE 420000 / BEAM 450000)',
+  WEAPON_PRICES.ORBIT === 200 && WEAPON_PRICES.ZAP === 60000 && WEAPON_PRICES.NOVA_PULSE === 12000
+    && WEAPON_PRICES.SCYTHE === 20000 && WEAPON_PRICES.SEEKER === 280000
+    && WEAPON_PRICES.MINE === 420000 && WEAPON_PRICES.BEAM === 450000,
+  WEAPON_PRICES);
 
 const openShop = () => {
   // From wherever the last screen left us (a buy re-renders the shop in

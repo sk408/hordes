@@ -93,10 +93,11 @@ console.log('G17 SLICE 2 BREADTH — perLevel REACHABLE through applyMetaBonuses
   }
   ok(all, `all ${BREADTH_IDS.length} rows move their seam at max level (no dead rows)`);
   // Spot-check the compound shape on the multiplicative rungs: (1 + perLevel)^level.
-  ok(applyMetaBonuses(BASE_STATS, { headsman: 3 }).damageMult === Math.pow(1.15, 3),
-    'headsman compounds (1.15)^level');
-  ok(applyMetaBonuses(BASE_STATS, { hairtrigger: 2 }).rateMult === Math.pow(1.12, 2),
-    'hairtrigger compounds (1.12)^level');
+  // OWNER EARLY-ACCESSIBILITY RETUNE: headsman 0.15 -> 0.33, hairtrigger 0.12 -> 0.18.
+  ok(applyMetaBonuses(BASE_STATS, { headsman: 3 }).damageMult === Math.pow(1.33, 3),
+    'headsman compounds (1.33)^level');
+  ok(applyMetaBonuses(BASE_STATS, { hairtrigger: 2 }).rateMult === Math.pow(1.18, 2),
+    'hairtrigger compounds (1.18)^level');
   ok(applyMetaBonuses(BASE_STATS, { ironheart: 5 }).maxHp === 100 + 120 * 5,
     'ironheart adds its flat HP on top of the base');
   ok(applyMetaBonuses(BASE_STATS, { laststand: 1 }).secondWind === true
@@ -108,8 +109,12 @@ console.log('G17 SLICE 2 BREADTH — LANDED CATALOGUE HOURS (the 60h owner targe
 {
   const L = ledger();
   const hours = L.total / L.rate;
-  ok(hours >= 60,
-    `catalogue ${L.total}g across ${L.rows.length} items = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h >= 60h`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: the owner in-game cuts (~10x off the
+  // weapon/elite/top rungs) landed the catalogue at 29.8h, below the 60h slice-2
+  // goal. The pin's JOB is unchanged (drift fails this line) — the band now
+  // guards the LANDED total both ways instead of the 60h floor.
+  ok(hours >= 29.5 && hours <= 30.1,
+    `catalogue ${L.total}g across ${L.rows.length} items = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h (post-owner-retune 29.8h; drift fails this line)`);
   // Breadth, not trophy inflation: no single breadth row's FULL buy may exceed
   // the 3h cap, and the rows must be the ones carrying the hours (>= 60h holds
   // only WITH them; reprice's cap sweep already proves no row exceeds it).
@@ -120,8 +125,12 @@ console.log('G17 SLICE 2 BREADTH — LANDED CATALOGUE HOURS (the 60h owner targe
     `every breadth row's full buy sits inside the 3h cap (${cap}g; max is ${Math.max(...rows.map(r => r.gold))}g)`);
   const breadthGold = rows.reduce((s, r) => s + r.gold, 0);
   const breadthHours = breadthGold / L.rate;
-  ok(Math.abs(breadthHours - 43.1) < 1.5,
-    `the 16 rows contribute ${breadthHours.toFixed(1)}h (the measured 40.4h shortfall + margin, not a reprice)`);
+  // OWNER EARLY-ACCESSIBILITY RETARGET: briarmail 133000 -> 13300 and deepread /
+  // aethertap / grandelixir / deepfont / eagleeye / staticfield /10 moved the 16
+  // rows' contribution 43.1 -> 26.0h. Same JOB (breadth carried the hours, not a
+  // reprice — the per-row prices are the owner's, drift fails this line).
+  ok(Math.abs(breadthHours - 26.0) < 1.5,
+    `the 16 rows contribute ${breadthHours.toFixed(1)}h (post-owner-retune 26.0h, not a reprice)`);
   ok(goldPerHour('maxed') === 1509378, 'the divisor is the measured 1,509,378g/h (payouts stayed frozen)');
 }
 

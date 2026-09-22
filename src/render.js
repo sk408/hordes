@@ -5,6 +5,8 @@ import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
+import { enemySpriteFor } from './enemy_sprites.js';   // PORT SLICE B: PILLAR + SHRIKE roster art
+import { characterSpriteFor } from './character_sprites.js';   // PORT SLICE C: per-pilot in-run looks
 import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
 } from './sprites.js';
@@ -18,6 +20,7 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
+import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -721,9 +724,10 @@ export class Renderer {
       g.fillRect(x - 3, y - r, 6, r * 2);
     }
 
-    // Enemies: hand-authored pixel sprites (sprites.js) with 2-frame walk
-    // cycles (frame flips ~6/s off e.age); typed shapes stay as FALLBACK for
-    // unmapped types. Status tells preserved: flash/slow tint, elite gold
+    // Enemies: hand-authored pixel sprites (sprites.js + slice-b
+    // enemy_sprites.js) with 2-frame walk cycles (frame flips ~6/s off
+    // e.age); typed shapes stay as FALLBACK for unmapped types. Status
+    // tells preserved: flash/slow tint, elite gold
     // outline, WARLOCK telegraph blink. WAVE-7/B: named bosses carry their
     // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
     // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
@@ -745,7 +749,7 @@ export class Renderer {
         g.fillRect(x - Math.round(shw / 4), y + hh - 4, Math.max(1, Math.round(shw / 2)), 2);
         y -= Math.round(e.z || 0);
       }
-      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : SPRITES[e.typeId];
+      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
       if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
         const bw = spr.box.w, bh = spr.box.h;
@@ -1123,6 +1127,10 @@ export class Renderer {
     // frame B only while actually moving: motion is derived from the player's
     // position delta between renders (the same velocity the controller
     // produces), so no gameplay state was added. Stationary -> frame A.
+    // PORT SLICE C: the equipped pilot's own look (src/character_sprites.js,
+    // same 12x12 box as the generic pair, so geometry is untouched); unknown /
+    // unset character ids keep the generic PLAYER_SPRITE pair (the fallback,
+    // never a pilot's look).
     const pl = state.player;
     if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
       g.globalAlpha = 0.4;
@@ -1131,7 +1139,12 @@ export class Renderer {
       Math.abs(pl.x - this._lpx) + Math.abs(pl.y - this._lpy) > 0.25;
     this._lpx = pl.x; this._lpy = pl.y;
     const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
-    this.drawSprite(g, walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE,
+    const pilotSpr = characterSpriteFor(state.character && state.character.id);
+    const pilotGrid = pilotSpr
+      ? pilotSpr.frames[walkFrame ? 1 : 0]
+      : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
+    const pilotPalette = pilotSpr ? pilotSpr.palette : PALETTE;
+    this.drawGrid(g, pilotGrid, pilotPalette,
       Math.round(pl.x - cam.x - 6),
       Math.round(pl.y - cam.y - 6));
     g.globalAlpha = 1;
@@ -2824,11 +2837,45 @@ export class Renderer {
       return 11;
     };
     const out = [];
+    // PORT SLICE D (prop density + spawn guarantee, owner-ruled 2026-09-22:
+    // "we can have more of them and guarantee one near spawn" — an APPROVED
+    // visual-density change, painting only). The guarantee: every fresh run
+    // shows at least one of its stage's props inside the initial camera view
+    // of the spawn. The spawn is fixed (startRun parks the pilot at
+    // VIEW_W/2, VIEW_H/2 with cam {0,0}), so the initial view is the world
+    // rect [0,VIEW_W]x[0,VIEW_H]. The guaranteed cell is the nearest
+    // density-picked landmark cell to the spawn whose anchor sits fully
+    // inside that rect — a pure cellRand hash field over (cell, seed), never
+    // the clock — falling back to the spawn's own cell (always in-view and
+    // rim-safe) when no picked cell qualifies, so the promise holds for
+    // every seed. Forced at paint time only: no sim state is read or
+    // written, and the forced cell still reports through the same landmarks
+    // seam (kind = the stage's prop id, COMPOSED rects).
+    const SPAWN_X = C.VIEW_W / 2, SPAWN_Y = C.VIEW_H / 2;
+    const anchorOf = (cx, cy) => ({
+      x: cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72)),
+      y: cy * FC + 24 + Math.floor(cellRand(cx, cy, seed, 13) * (FC - 72)),
+    });
+    let gPick = null, gPickD = Infinity, gAny = null, gAnyD = Infinity;
+    for (let gy = Math.floor(0 / FC); gy <= Math.floor(C.VIEW_H / FC); gy++) {
+      for (let gx = Math.floor(0 / FC); gx <= Math.floor(C.VIEW_W / FC); gx++) {
+        const a = anchorOf(gx, gy);
+        if (a.x < -RIM + 4 || a.x > RIM - 76 || a.y < -RIM + 4 || a.y > RIM - 76) continue;
+        if (a.x < 0 || a.y < 0 || a.x + 20 > C.VIEW_W || a.y + 20 > C.VIEW_H) continue;
+        const d = (a.x - SPAWN_X) * (a.x - SPAWN_X) + (a.y - SPAWN_Y) * (a.y - SPAWN_Y);
+        if (d < gAnyD) { gAny = { x: gx, y: gy }; gAnyD = d; }
+        if (cellRand(gx, gy, seed, 11) < DENS && d < gPickD) { gPick = { x: gx, y: gy }; gPickD = d; }
+      }
+    }
+    const gCell = gPick || gAny;
     const c0 = Math.floor(cam.x / FC), c1 = Math.floor((cam.x + C.VIEW_W) / FC);
     const r0 = Math.floor(cam.y / FC), r1 = Math.floor((cam.y + C.VIEW_H) / FC);
     for (let cy = r0; cy <= r1; cy++) {
       for (let cx = c0; cx <= c1; cx++) {
-        if (cellRand(cx, cy, seed, 11) >= DENS) continue;
+        const forceProp = gCell !== null && cx === gCell.x && cy === gCell.y;
+        // The guaranteed cell paints unconditionally (even the density-gate
+        // fallback); every other cell keeps the shipped density gate.
+        if (!forceProp && cellRand(cx, cy, seed, 11) >= DENS) continue;
         // Anchor inside the cell with a margin so a structure never clips its
         // neighbour, and never past the arena rim (structures are <= 72 wide).
         const wx = cx * FC + 24 + Math.floor(cellRand(cx, cy, seed, 12) * (FC - 72));
@@ -2840,7 +2887,14 @@ export class Renderer {
         // asserts every landmark is COMPOSED, i.e. many rects, not a glyph).
         let rects = 6;
         let kind = 'RUBBLE';
-        if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
+        if (forceProp) {            // PORT SLICE D spawn guarantee (above):
+          const prop = propForStage(stage);   // the stage's prop, unconditionally
+          kind = prop.id;
+          const fr = propFrame(prop, cx, cy);
+          g.fillStyle = pal.crack;                                     // bed shadow
+          g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
+          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
+        } else if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
           kind = 'WALL';
           const n = 4 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 4..6
           const gap = Math.floor(cellRand(cx, cy, seed, 16) * n);        // breach
@@ -2866,7 +2920,7 @@ export class Renderer {
           g.fillStyle = pal.stoneTop;
           for (let i = 0; i < n; i++) g.fillRect(x + i * 8, y + i * 5, 12, 1);
           g.fillRect(x + n * 8, y + n * 5, 10, 1);
-        } else if (pick < 0.68) {     // CAIRN: stacked stones, tapering
+        } else if (pick < 0.62) {     // CAIRN: stacked stones, tapering
           kind = 'CAIRN';
           rects = 7;
           g.fillStyle = pal.crack;
@@ -2879,7 +2933,7 @@ export class Renderer {
           g.fillRect(x + 1, y + 8, 12, 1);
           g.fillRect(x + 3, y + 4, 8, 1);
           g.fillRect(x + 4, y + 1, 6, 1);
-        } else if (pick < 0.86) {     // CAMP RING: stones round a fire scar
+        } else if (pick < 0.72) {     // CAMP RING: stones round a fire scar
           kind = 'CAMP';
           rects = 9;
           const R = 9 + Math.floor(cellRand(cx, cy, seed, 15) * 5);
@@ -2891,6 +2945,30 @@ export class Renderer {
             g.fillRect(Math.round(x + 12 + Math.cos(a) * R),
                        Math.round(y + 10 + Math.sin(a) * R), 3, 2);
           }
+        } else if (cellRand(cx, cy, seed, 17) < 0.85) {
+          // PORT SLICE A (stage/prop objects): the stage's signature prop —
+          // an ORIGINAL drawGrid pixel object (src/stage_props.js), one per
+          // stage identity, painted through the same drawGrid every sprite
+          // uses.
+          // PORT SLICE D (owner-ruled 2026-09-22): the tail is now the DENSE
+          // branch — CAMP ends at 0.72 (was 0.86) and the prop hash gate is
+          // 0.85 (was 0.55), so ~24% of picked cells carry the stage's prop,
+          // a few per screen instead of about one. The
+          // subdivision stays one-landmark-per-picked-cell, hash-gated on
+          // the same fresh salt so no existing structure moves, rim-clipped
+          // by the same anchor cull above (props are <= 16px on a 72px
+          // margin). Arithmetic: the tail was 14% of picked cells at a 0.55
+          // gate (7.7% props per picked cell); it is now 28% at a 0.85 gate
+          // (23.8% per picked cell), and LANDMARK_DENSITY went 0.30 -> 0.45
+          // alongside, so props per landmark cell rise ~2.3% -> ~10.7%.
+          // The hollow keeps its authored STUMP/GATE/GROVE (below + the
+          // authored block); its tail simply grows lanterns among the groves.
+          const prop = propForStage(stage);
+          kind = prop.id;
+          const fr = propFrame(prop, cx, cy);
+          g.fillStyle = pal.crack;                                     // bed shadow
+          g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
+          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
         } else if (hollow) {          // THE HOLLOW: the tail grows groves too
           kind = 'GROVE';
           rects = grove(x, y);
