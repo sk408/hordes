@@ -5,6 +5,7 @@ import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
+import { enemySpriteFor } from './enemy_sprites.js';   // PORT SLICE B: PILLAR + SHRIKE roster art
 import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
 } from './sprites.js';
@@ -722,9 +723,10 @@ export class Renderer {
       g.fillRect(x - 3, y - r, 6, r * 2);
     }
 
-    // Enemies: hand-authored pixel sprites (sprites.js) with 2-frame walk
-    // cycles (frame flips ~6/s off e.age); typed shapes stay as FALLBACK for
-    // unmapped types. Status tells preserved: flash/slow tint, elite gold
+    // Enemies: hand-authored pixel sprites (sprites.js + slice-b
+    // enemy_sprites.js) with 2-frame walk cycles (frame flips ~6/s off
+    // e.age); typed shapes stay as FALLBACK for unmapped types. Status
+    // tells preserved: flash/slow tint, elite gold
     // outline, WARLOCK telegraph blink. WAVE-7/B: named bosses carry their
     // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
     // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
@@ -746,7 +748,7 @@ export class Renderer {
         g.fillRect(x - Math.round(shw / 4), y + hh - 4, Math.max(1, Math.round(shw / 2)), 2);
         y -= Math.round(e.z || 0);
       }
-      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : SPRITES[e.typeId];
+      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
       if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
         const bw = spr.box.w, bh = spr.box.h;
