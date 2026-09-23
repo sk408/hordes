@@ -313,6 +313,20 @@ S.check('the camera still holds the pilot on screen at the old floor, ramp and t
   T.startRun();
   h.pump(2);
   const p = st.player;
+  // DRAFT-FREEZE GUARD (2026-09-23): this probe holds the pilot for 3x180
+  // frames (~9s sim) across teleports. XP gained during those holds could fire
+  // levelUp() -> openDraft() -> mode='draft', which FREEZES the sim
+  // (main.js:4638/4863), so updateCamera() — called only from the playing-mode
+  // world update (main.js:4284) — never runs, and the camera stays parked while
+  // the pilot teleports: margin assert fails. Root-caused as a PRE-EXISTING
+  // flake: a 200-seed sweep fails on the identical 5 seeds (failK 61/64/98/159/
+  // 190) with the working-tree diff stashed as with it applied, 5/200 both ways
+  // — i.e. not caused by any lane's changes, and never allowlistable under the
+  // gate's in-run standalone-proof rule. Holding xpNext off removes the hazard
+  // (0/200 on those same seeds) rather than dodging it; the margin assertion
+  // itself is unchanged, and banner suppression above is this check's own
+  // existing isolation pattern.
+  p.xpNext = 1e12;
   const hold = (x, y, label) => {
     for (let i = 0; i < 180; i++) {
       p.x = x; p.y = y; p.invuln = 1e9;
