@@ -101,7 +101,12 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt } from './draft_card_art.js';
+import { paintOfferArt, OFFER_ART_SCALE } from './draft_card_art.js';
+import {
+  PARALLELS, PARALLEL_WEIGHTS, PARALLEL_IDS, CURSED_HP_COST,
+  rollParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
+  cursedHpDrawback, parallelCardArt,
+} from './parallels.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
 // G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
@@ -4428,6 +4433,15 @@ function maybeGrantToken(channel) {
 // module scope so an arm cannot flip mid-run.
 const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
 
+// TIER-2(d) PARALLEL toggle (the W7b measurement-seam pattern above, same
+// shape, same read-once doctrine): default ON — the game ships the sports-card
+// varieties. A measurement arm sets globalThis.HORDES_PARALLELS = false BEFORE
+// importing this module to run the pre-parallel offer path; with the toggle
+// off openDraft never rolls and never stamps, so every offered card is
+// byte-identical to the pre-parallel offer (test/test_tier2_parallels.mjs
+// pins that as THE regression gate).
+const PARALLELS_ON = globalThis.HORDES_PARALLELS !== false;
+
 function openDraft() {
   // A queued/new draft supersedes any live pick ceremony — the cards are
   // re-rendered below, so the ceremony must not tear down what it no longer
@@ -4532,6 +4546,20 @@ function openDraft() {
     for (let i = 0; i < drawPool.length; i++) { if ((r -= drawPool[i].weight) < 0) { idx = i; break; } }
     choices.push(drawPool.splice(idx, 1)[0]);
   }
+  // TIER-2(d) PARALLELS (owner: sports-card varieties): ONE seeded weighted
+  // stamp per offered card, riding the OFFER OBJECT (the pool row the draw
+  // already copied) — never the registry. The roll reads state.parallelRng
+  // (startRun), so the Math.random draw order above is untouched and an
+  // absent roll (or the OFF toggle) leaves the offer byte-identical to a
+  // pre-parallel offer. ROLLS FOR ANY CARD INCLUDING PROTECTED ONES (ONE OF
+  // EACH included: its four-front protection is about its ROLE, not its skin
+  // — the stamp never touches id/rule/apply/text).
+  if (PARALLELS_ON) {
+    if (!state.parallelRng) state.parallelRng = mulberry32(((state.choiceSeed || 0) ^ 0x9a11) >>> 0);
+    for (let i = 0; i < choices.length; i++) {
+      choices[i] = stampOfferParallel(choices[i], rollParallel(state.parallelRng));
+    }
+  }
   // SLICE 9: record the offer set (the taken id fills in at pick()).
   if (dev) {
     dev.drafts.push({
@@ -4567,7 +4595,18 @@ function openDraft() {
     const badge = u.tier
       ? `<div class="syn" style="color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
       : '';
-    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+    // TIER-2(d): the parallel stamp is ON the card (name + blurb, plain text).
+    // The card's name/desc strings stay the registry's byte-identical text; the
+    // stamp is additive only. Class "par", NOT "syn": the synergy-hint contract
+    // owns class="syn" (test_synergy_hint: every .syn line must name a real
+    // synergy) — the parallel badge is its own line kind, styled inline (the
+    // tier-badge + .card .syn typography mirrored, z-index included so it
+    // layers above the painted plaque like every other content layer).
+    const par = u.parallel && PARALLELS[u.parallel];
+    const parBadge = par
+      ? `<div class="par" style="color:${par.tell};margin-top:8px;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${par.name.toUpperCase()} - ${par.blurb}</div>`
+      : '';
+    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
       (hint ? `<div class="syn">${hint}</div>` : '') +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
@@ -4584,7 +4623,11 @@ function openDraft() {
     const artCv = document.createElement('canvas');
     artCv.className = 'card-art';
     if (artCv.setAttribute) artCv.setAttribute('data-card', u.id);
-    if (paintOfferArt(artCv, u.id)) {
+    if (par && artCv.setAttribute) artCv.setAttribute('data-parallel', u.parallel);
+    // TIER-2(d): a stamped offer paints its DERIVED variant art (foil/chroma/
+    // pulse treatment) through the same drawCard path — see paintOfferArt's
+    // parallel argument. Absent stamp = the byte-identical base call.
+    if (paintOfferArt(artCv, u.id, OFFER_ART_SCALE, u.parallel)) {
       if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
       else el.appendChild(artCv);
     }
@@ -4721,15 +4764,25 @@ function pick(u) {
     markStatTaken(state, u.id);
   }
   if (u.id === 'multi' && volleyAtProjCap()) {
-    p.stats.damage *= 1.2;
+    // TIER-2(d): the listed effect here is "+20% weapon damage" — the parallel
+    // multiplier scales the LISTED number (x1.5 -> +30%), mult 1 is the
+    // byte-identical 1.2 literal path (1 + 0.2 * 1 === 1.2, pinned).
+    p.stats.damage *= parallelEffectMult(u.parallel) === 1 ? 1.2 : 1 + 0.2 * parallelEffectMult(u.parallel);
   } else if (u.id === 'speed' || u.id === 'rate') {
     const n = (p.draftCounts = p.draftCounts || {});
     n[u.id] = (n[u.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(n[u.id] - 1, DRAFT_TAPER.length - 1)];
-    if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t;
-    else p.stats.cooldown *= 1 - 0.15 * t;
+    // TIER-2(d): the taper fraction is the listed effect — scaled by the
+    // parallel multiplier (x1.5 -> 1.5x the taper fraction). Mult 1 is the
+    // byte-identical expression (x * 1 is exact).
+    const pm = parallelEffectMult(u.parallel);
+    if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t * pm;
+    else p.stats.cooldown *= 1 - 0.15 * t * pm;
   } else {
-    u.apply(p);
+    // TIER-2(d): the ONE numbers seam — the card's apply with its numeric
+    // deltas scaled by the parallel multiplier (CURSED x1.5 / BLESSED x1.25 /
+    // absent+cosmetic x1, byte-identical to the raw apply).
+    applyScaledNumbers(u.apply, p, parallelEffectMult(u.parallel));
     // G8 step 2 RETUNE (the step-3 debt TICK NOTE 7 measured at 0.65x): under
     // ONE OF EACH the weapon tilt actually PAYS — a weapon level-up card
     // grants +1 BONUS level and a weapon grant lands at Lv2. The rule still
@@ -4744,6 +4797,9 @@ function pick(u) {
         // test reads the OFFER-time level from the card id: the generic
         // u.apply above has already run, so w.level would misfire on a card
         // offered at MAX-1 (leveled to MAX by that apply) and double-pay.
+        // TIER-2(d): this is the RULE's compensation, NOT the card's effect —
+        // deliberately UNSCALED by any parallel (ONE OF EACH behavior is
+        // identical with or without a stamp).
         const lvAtOffer = Number(u.id.split('_').pop());
         if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage *= 1.10;
         else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
@@ -4752,6 +4808,17 @@ function pick(u) {
         if (granted) levelUpWeapon(granted);
       }
     }
+  }
+  // TIER-2(d): the ONE shared CURSED drawback — flat HP loss on pick on the
+  // EXISTING p.hp surface (entities.js makePlayer). Exactly one drawback, every
+  // cursed card alike (no bespoke per-card curses); after the card's scaled
+  // effect so the net read is (scaled gain) - (the stated cost). Floors at 1 —
+  // a pick can never kill (cursedHpDrawback).
+  if (u.parallel === 'cursed') {
+    cursedHpDrawback(p);
+    toast('CURSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.cursed.blurb, PARALLELS.cursed.tell);
+  } else if (u.parallel === 'blessed') {
+    toast('BLESSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.blessed.blurb, PARALLELS.blessed.tell);
   }
   state.pendingDrafts--;
   // SLICE 9: the taken pick lands on the latest still-open draft record (a
@@ -8702,6 +8769,12 @@ function startRun() {
     }
   }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
+  // TIER-2(d): the parallel-stamp stream — seeded OFF the choice seed, the
+  // shrineRng pattern ("shrine draws never desync the intermission offers" —
+  // here: stamp rolls never desync the offer-weight Math.random draw order,
+  // ON or OFF). Existing seed streams only: no new persisted seed, no wall
+  // clock. Deterministic per run + draft call sequence.
+  state.parallelRng = mulberry32((state.choiceSeed ^ 0x9a11) >>> 0);
   // S1 (owner directive 2026-09-14): world-seed the fixed set of 4 altars ONCE
   // here — uniform scatter over the whole arena, static for the whole run.
   state.shrines = seedShrines(state.shrineRng);
@@ -12809,6 +12882,18 @@ export const __TEST = {
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,
+  // TIER-2(d) PARALLELS seam: the toggle, the pure roll/stamp/effect-math/
+  // drawback/art-derivation entry points (src/parallels.js re-exported for the
+  // suite — the stamp and the pick both route through these), and the tuned
+  // constants the tests quote. Never read by the browser page.
+  parallels: {
+    on: PARALLELS_ON,
+    def: PARALLELS, weights: PARALLEL_WEIGHTS, ids: PARALLEL_IDS,
+    roll: rollParallel, stamp: stampOfferParallel,
+    mult: parallelEffectMult, scaledApply: applyScaledNumbers,
+    cursedHp: cursedHpDrawback, cost: CURSED_HP_COST,
+    art: parallelCardArt,
+  },
   // W7b ladder seams: the ONE death function (Second Wind revive probes drive
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).

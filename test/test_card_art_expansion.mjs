@@ -70,11 +70,32 @@
 // The MYTHIC vocabulary (RSS8) needs no extension: Tempest/Killshot ride aces
 // like Magnet Collector, and the ace/joker class check below covers them by
 // construction.
+//
+// CONTRACT UPDATE — TIER-2(d) PARALLEL VARIANTS (2026-09-23): the deck is
+// FULL and stays frozen — the sports-card varieties (shiny / pulse / chroma /
+// cursed / blessed) are DERIVED ART STAMPS, never new rank+suit cards and
+// never 50 hand grids. src/parallels.js derives each variant from the base
+// motif programmatically (foil/chroma/pulse palette remap + a small stamped
+// mark), so this file gains a PARALLEL VARIANTS section that iterates EVERY
+// deck card x EVERY parallel (both lists DERIVED from the live registries —
+// no hardcoded id lists). The DERIVED-VARIANT ALLOWANCE, stated once here so
+// it cannot silently widen: a variant is allowed to differ from the base
+// FRAME/palette DISCIPLINE exactly where the derivation changes it (palette
+// hexes remapped onto the parallel's treatment; inked cells recoloured onto
+// existing keys) — and must still hold every structural rule the base holds:
+// same box, INTEGER cells 0..9, every inked cell keyed, hex palette values,
+// the BASE key set unchanged (a pure remap adds no key — art-lint palette
+// discipline by construction), transparent corner silhouette, the ink MAP
+// byte-identical to the base (variants RECLOUR ink; they never ink a
+// transparent cell and never drop ink, so the one-rect-per-inked-cell
+// renderer contract survives), and deriving a variant never mutates
+// CARD_ART (the registry is byte-frozen — pinned below by deep snapshot).
 import {
   CARD_ART, CARD_DECK, CARD_IDS, CARD_EXPANSION, EXPANSION_IDS, CARD_W, CARD_H, SUITS,
   SUIT_COLOUR, RANK_CLASS, cardArt,
 } from '../src/art/cards.js';
-import { drawCard } from '../src/render_cards.js';
+import { drawCard, drawCardArt } from '../src/render_cards.js';
+import { PARALLELS, PARALLEL_IDS, parallelCardArt } from '../src/parallels.js';
 import { deckIdForOffer, OFFER_TO_DECK, WEAPON_OFFER_TO_DECK } from '../src/draft_card_art.js';
 import { WEAPON_TYPES, WEAPON_NAMES, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
@@ -505,6 +526,81 @@ console.log('RENDERER (every card in the deck paints one rect per inked cell):')
     eq(rec.rects.length, ink, id + ' paints exactly one rect per inked cell');
     ok(rec.rects.every((r) => Object.values(a.palette).includes(r.style)),
        id + ' every painted rect uses a palette colour (no leftover fillStyle)');
+  }
+}
+
+console.log('PARALLEL VARIANTS (derived: every deck card x every parallel — no id lists):');
+{
+  // The header's DERIVED-VARIANT ALLOWANCE is what the checks below enforce.
+  // Both loops iterate LIVE registries (Object.keys(CARD_ART) / PARALLEL_IDS),
+  // so a new card or a new parallel is covered automatically.
+  const inkOf = (g) => g.reduce((s, row) => s + row.reduce((t, v) => t + (v ? 1 : 0), 0), 0);
+  const snapOf = (a) => JSON.stringify({ g: a.grid, p: a.palette });
+  const baseSnaps = {};
+  for (const id of Object.keys(CARD_ART)) baseSnaps[id] = snapOf(CARD_ART[id]);
+  ok(PARALLEL_IDS.length > 0, 'the parallel registry carries at least one variant');
+  for (const id of Object.keys(CARD_ART)) {
+    const base = CARD_ART[id];
+    const baseInk = inkOf(base.grid);
+    const seen = new Map();
+    for (const pid of PARALLEL_IDS) {
+      const v = parallelCardArt(id, pid);
+      ok(!!v, id + ':' + pid + ' derives variant art (card-art coverage)');
+      if (!v) continue;
+      eq(v.w, base.w, id + ':' + pid + ' backing width matches the base');
+      eq(v.h, base.h, id + ':' + pid + ' backing height matches the base');
+      let allInt = true, inRange = true, keyKnown = true, paletteHex = true;
+      for (const row of v.grid) {
+        for (const c of row) {
+          if (!Number.isInteger(c)) allInt = false;
+          if (c < 0 || c > 9) inRange = false;
+          if (c !== 0 && !(c in v.palette)) keyKnown = false;
+        }
+      }
+      for (const k of Object.keys(v.palette)) {
+        if (!HEX.test(v.palette[k])) paletteHex = false;
+      }
+      ok(allInt, id + ':' + pid + ' every cell is an INTEGER');
+      ok(inRange && keyKnown, id + ':' + pid + ' every inked cell has a palette key 1..9');
+      ok(paletteHex, id + ':' + pid + ' every palette value is a hex colour');
+      eqList(Object.keys(v.palette).map(Number).sort((a, b) => a - b),
+        Object.keys(base.palette).map(Number).sort((a, b) => a - b),
+        id + ':' + pid + ' keeps the BASE key set (derived remap adds no key)');
+      eqList(v.rows, v.grid.map((r) => r.join('')), id + ':' + pid + ' rows view === grid');
+      eq(v.grid[0][0] + v.grid[0][CARD_W - 1] + v.grid[CARD_H - 1][0] + v.grid[CARD_H - 1][CARD_W - 1],
+        0, id + ':' + pid + ' corner pixels stay transparent (silhouette)');
+      let inkMapSame = true;
+      for (let y = 0; y < CARD_H; y++) {
+        for (let x = 0; x < CARD_W; x++) {
+          if (!!v.grid[y][x] !== !!base.grid[y][x]) inkMapSame = false;
+        }
+      }
+      ok(inkMapSame, id + ':' + pid + ' ink MAP matches the base (variants recolour, never ink/unink)');
+      eq(inkOf(v.grid), baseInk, id + ':' + pid + ' ink count identical (one-rect-per-cell holds)');
+      ok(snapOf(v) !== baseSnaps[id], id + ':' + pid + ' visibly differs from the base');
+      if (seen.has(snapOf(v))) {
+        ok(false, id + ':' + pid + ' duplicates ' + seen.get(snapOf(v)) + ' (variants must be distinct)');
+      } else {
+        seen.set(snapOf(v), pid);
+      }
+      // The renderer contract, on the variant path (drawCardArt is the ONE
+      // painter drawCard delegates to — see src/render_cards.js).
+      let ink = inkOf(v.grid);
+      const rec = { rects: [], style: null };
+      const g = {
+        set fillStyle(s) { rec.style = s; },
+        get fillStyle() { return rec.style; },
+        fillRect(x, y, w, h) { rec.rects.push({ x, y, w, h, style: rec.style }); },
+      };
+      eq(drawCardArt(g, v, 0, 0, 4), true, 'drawCardArt paints ' + id + ':' + pid);
+      eq(rec.rects.length, ink, id + ':' + pid + ' paints exactly one rect per inked cell');
+      ok(rec.rects.every((r) => Object.values(v.palette).includes(r.style)),
+        id + ':' + pid + ' every painted rect uses a palette colour');
+    }
+    eqList([...seen.values()].sort(), [...PARALLEL_IDS].sort(),
+      id + ' every parallel produces its OWN distinct variant');
+    eq(snapOf(CARD_ART[id]), baseSnaps[id],
+      id + ' deriving every variant left the BASE art byte-untouched');
   }
 }
 

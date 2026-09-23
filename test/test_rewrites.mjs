@@ -1457,6 +1457,14 @@ ok('C7: a held-but-inert rewrite causes ZERO draft-stream drift (seeded, verbati
     const rng = seeded(4711);
     let draws = 0;
     Math.random = () => { draws++; return rng(); };
+    // TIER-2(d) PARALLELS: the offer-object parallel stamp rides its OWN run
+    // stream (state.parallelRng, mulberry32(choiceSeed ^ 0x9a11) at startRun —
+    // never Math.random, so the draw counts below still hold). A verbatim
+    // innerHTML compare across two arms must pin BOTH seeded streams the same
+    // way, or the badge text is undefined across arms — pinned here beside the
+    // Math.random pin, same seeded helper, so "zero draft-stream drift" now
+    // covers the offer's parallel skin too (a stronger pin than before).
+    st.parallelRng = seeded(0x9a11);
     const seq = [];
     try {
       for (let i = 0; i < 500; i++) {
@@ -1639,6 +1647,9 @@ ok('D6: combo predicates consume ZERO draws, and a CLOSED family is stream-stabl
     const rng = seeded(4711);
     let n = 0;
     Math.random = () => { n++; return rng(); };
+    // TIER-2(d) PARALLELS: pin the stamp stream beside Math.random (the C7
+    // note) — "stream-stable" now covers the offer's parallel skin too.
+    st.parallelRng = seeded(0x9a11);
     const seq = [];
     try {
       for (let i = 0; i < 500; i++) {

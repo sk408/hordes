@@ -21,7 +21,8 @@
 // on unknown ids, and an empty backing store would paint a blank rectangle
 // over the card.
 import { cardArt } from './art/cards.js';
-import { drawCard, cardBox } from './render_cards.js';
+import { drawCard, drawCardArt, cardBox } from './render_cards.js';
+import { parallelCardArt } from './parallels.js';
 
 export const OFFER_TO_DECK = {
   // COMMON (config.js UPGRADES — ids match the deck 1:1)
@@ -101,7 +102,11 @@ export const OFFER_ART_SCALE = 4;
 // paintTitleHeader; the pixels are the browser's. Backing store == CSS size
 // (1 backing px = 1 CSS px, an integer 3x on a dpr-3 phone), pixelated — the
 // same convention as the G13 portraits and the U1b frame.
-export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE) {
+// TIER-2(d): `parallel` (the offer object's parallel stamp) paints the DERIVED
+// variant through the same drawCardArt painter drawCard itself uses — the
+// foil/chroma/pulse treatment is art derivation, never a second renderer. A
+// null/absent parallel is the byte-identical base path (drawCard by id).
+export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE, parallel = null) {
   const deckId = deckIdForOffer(offerId);
   if (!deckId) return false;
   const { w, h } = cardBox(scale);
@@ -119,5 +124,7 @@ export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE) {
   if (typeof cv.getContext !== 'function') return true;
   const g = cv.getContext('2d');
   if (!g) return true;
+  const variant = parallel ? parallelCardArt(deckId, parallel) : null;
+  if (variant) return drawCardArt(g, variant, 0, 0, scale);
   return drawCard(g, deckId, 0, 0, scale);
 }

@@ -24,13 +24,20 @@ function paintGrid(g, grid, palette, x, y, scale = 1) {
   }
 }
 
-// Paint card `id` at (x, y). Returns false (paints nothing) for an unknown id,
-// so a draft offer the art track has not seen yet fails safe, never loud.
-export function drawCard(g, id, x, y, scale = 1, drawGridFn = null) {
-  const art = cardArt(id);
+// Paint an already-resolved art object ({grid, palette}) at (x, y) — the ONE
+// painter behind drawCard and the TIER-2(d) parallel variants (parallels.js
+// derives a {grid, palette} and paints it through THIS seam, so a variant is
+// provably the real drawCard path). Returns false for a missing art object.
+export function drawCardArt(g, art, x, y, scale = 1, drawGridFn = null) {
   if (!art) return false;
   (drawGridFn || paintGrid)(g, art.grid, art.palette, x, y, scale);
   return true;
+}
+
+// Paint card `id` at (x, y). Returns false (paints nothing) for an unknown id,
+// so a draft offer the art track has not seen yet fails safe, never loud.
+export function drawCard(g, id, x, y, scale = 1, drawGridFn = null) {
+  return drawCardArt(g, cardArt(id), x, y, scale, drawGridFn);
 }
 
 // Painted size of a card at a given integer scale — for sizing backing stores.
