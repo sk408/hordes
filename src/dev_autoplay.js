@@ -66,6 +66,35 @@ import {
 // SNAPOFF/SPEED): localStorage '1' = on, anything else (incl. absent) = OFF.
 export const DEV_LS_AUTO = 'hordes_dev_auto';
 export const DEV_LS_DEVNIGHT = 'hordes_dev_devnight';
+// K5 DEV DRAFT BAN LIST (owner report: autoplay "keeps taking" ONE OF EACH,
+// which harms long-run testing): a dev-only pair of prefs — the arm bit (same
+// '1'-bit shape as AUTO/DNIGHT, default OFF when absent) plus the banned draft
+// offer ids as a comma-joined string. Exclusion happens in main.js openDraft's
+// pool, gated on the autoplay dev context (session.autoplay === true, the same
+// condition requireAutoplay enforces) AND the arm bit — a player game, or even
+// a dev session with AUTO off, always draws the full pool.
+export const DEV_LS_BAN_ON = 'hordes_dev_ban_on';
+export const DEV_LS_BAN_IDS = 'hordes_dev_ban_ids';
+
+// The default preset when the ids pref is ABSENT: ONE OF EACH's draft offer
+// id. The rule id is 'once' (src/rules.js RULES); ruleCards() builds the pool
+// card id as 'rule_' + id, so the offer id is 'rule_once'. Extensible to any
+// offer id by persisting a comma list in DEV_LS_BAN_IDS.
+export const DEFAULT_DRAFT_BAN_IDS = ['rule_once'];
+
+// Parse the ids pref. Absent (null/undefined) = the default preset; a stored
+// string (even empty) is authoritative — comma-split, trimmed, empties and
+// duplicates dropped, sorted so the snapshot stamp is deterministic.
+export function parseDraftBanIds(raw) {
+  if (raw === null || raw === undefined) return [...DEFAULT_DRAFT_BAN_IDS];
+  const out = [];
+  for (const part of String(raw).split(',')) {
+    const id = part.trim();
+    if (id && !out.includes(id)) out.push(id);
+  }
+  out.sort();
+  return out;
+}
 
 export const AUTOPLAY_POLICIES = ['smart', 'impulsive'];
 

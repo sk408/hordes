@@ -103,8 +103,11 @@ async function runArm(policy) {
   requireAutoplay(h.T.dev.session);
   if (devFreeBuild()) throw new Error('autoplay_policy: free-build must stay OFF');
   const sess = h.T.dev.session;
+  // K5: the ban-list arm + ids ride the run's log line (and the snapshot row's
+  // additive draft_ban field) so a cohort proves which ids were excluded.
   console.log(`autoplay_policy: arm=${policy} autoplay=${sess.autoplay} ` +
-    `devNight=${sess.devNight} speed=${sess.speed}`);
+    `devNight=${sess.devNight} speed=${sess.speed} ` +
+    `draftBan=${sess.draftBan ? (sess.draftBanIds || []).join(',') || '(empty)' : 'off'}`);
   if (sess.speed !== 8) throw new Error('autoplay_policy: speed did not latch 8x');
 
   const history = [];

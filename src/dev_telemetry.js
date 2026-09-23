@@ -131,6 +131,11 @@ export function formatGameRev(sha, dirty) {
 //               buys for this snapshot's build ('smart' | 'impulsive').
 //               Unset (null/absent) for hand-driven runs. Present values are
 //               type-checked (non-empty string); absent validates fine.
+//   draft_ban — K5 (still schema_v 2 — ADDITIVE OPTIONAL FIELD ONLY, no
+//               version bump): the draft offer ids the dev ban list excluded
+//               from this run's offer pool (array of non-empty strings).
+//               Present ONLY when the autoplay gate AND the ban arm bit were
+//               on; absent validates fine (player/hand runs never carry it).
 // Absent optionals validate fine (old writers predate them); present optionals
 // are type-checked. The version gate still owns compat, not key strictness.
 export const SNAPSHOT_SCHEMA_V = 2;
@@ -179,6 +184,12 @@ export function buildSnapshot(fields) {
   if ('policy' in f && f.policy !== undefined && f.policy !== null) {
     if (typeof f.policy !== 'string' || f.policy.length === 0) throw new Error('dev snapshot: bad policy');
     snap.policy = f.policy;
+  }
+  if ('draft_ban' in f && f.draft_ban !== undefined && f.draft_ban !== null) {
+    if (!Array.isArray(f.draft_ban) || f.draft_ban.some(id => typeof id !== 'string' || id.length === 0)) {
+      throw new Error('dev snapshot: bad draft_ban');
+    }
+    snap.draft_ban = [...f.draft_ban];
   }
   return snap;
 }
@@ -237,6 +248,10 @@ export function validateSnapshot(obj) {
   if ('policy' in obj && obj.policy !== undefined && obj.policy !== null &&
       (typeof obj.policy !== 'string' || obj.policy.length === 0)) {
     errors.push('bad type for policy: ' + typeof obj.policy);
+  }
+  if ('draft_ban' in obj && obj.draft_ban !== undefined && obj.draft_ban !== null &&
+      (!Array.isArray(obj.draft_ban) || obj.draft_ban.some(id => typeof id !== 'string' || id.length === 0))) {
+    errors.push('bad type for draft_ban');
   }
   return { ok: errors.length === 0, errors };
 }
