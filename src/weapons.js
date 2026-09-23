@@ -178,6 +178,52 @@ export const WEAPONS = {
     DAMAGE_MULT: 2.0,
     SWEEP: 0.25,        // rad the visual sweep wiggles either side of dir
   },
+  // ---- tier-2(e) NEW WEAPONS (owner autopilot 2026-09-23) -------------------
+  // ORIGINAL instances of shipped behavior classes (docs/vs_ref SPEC-weapons
+  // "passes through enemies" / "boomerang effect" / "bounces around" /
+  // bombardment + docs/mb_ref projectile vocabulary used as CLASS sources
+  // only — no foreign names, no foreign pixels). Numbers TUNE-AFTER. Every
+  // effect rides an EXISTING stat surface (p.stats.damage / cooldown /
+  // projectiles / pierce / damageMult / rateMult / crit / critMult via
+  // rateScale :227, dmgScale :250, critRoll :259) and an EXISTING effect
+  // seam (hurt :290, state.projectiles kind-tag :41-43, state.effects
+  // {kind,x,y,age,ttl} :45-49, weaponLevelParams ladders :1032). No new stat
+  // surface, no new resource, no on-kill economy, no mid-flight homing.
+  JAVELIN: {
+    NAME: 'Sun Javelin',
+    COOLDOWN: 2.2,      // seconds between throws (before rate scaling)
+    SPEED: 320,         // px/s straight lane
+    RANGE: 220,         // travel distance before the spear fizzles
+    DAMAGE_MULT: 1.6,
+    HIT_R: 10,
+  },
+  EMBER: {
+    NAME: 'Ember Shot',
+    COOLDOWN: 1.1,
+    SPEED: 210,
+    LIFE: 2.4,          // seconds before a lost bolt fizzes
+    DAMAGE_MULT: 0.85,
+    HIT_R: 7,
+    BLAST: 28,          // burst-on-kill AoE radius (levels grow it)
+    KILL_BLAST_MULT: 0.7, // the burst pays LESS than the bolt (clear, not nuke)
+  },
+  RICOCHET: {
+    NAME: 'Ricochet',
+    COOLDOWN: 2.0,
+    SPEED: 260,
+    LIFE: 2.2,
+    DAMAGE_MULT: 1.1,
+    HIT_R: 8,
+    BOUNCES: 3,         // extra enemies after the first (levels grow it)
+    CHAIN_RANGE: 140,   // bounce search radius (the ZAP hop-range shape)
+  },
+  METEOR: {
+    NAME: 'Meteor',
+    COOLDOWN: 3.6,
+    WINDUP: 0.55,       // telegraph before the rock lands (scythe_windup shape)
+    BLAST: 55,          // land AoE radius (levels grow it)
+    DAMAGE_MULT: 2.2,
+  },
 };
 
 // ---------- Weapon instance ----------
@@ -832,14 +878,254 @@ function updateBeam(state, weapon, dt) {
   }
 }
 
+// ---------- tier-2(e) NEW WEAPONS: update paths ------------------------------
+// All four share the shipped seams above: hurt() is the ONE direct-hit apply
+// (:290), critRoll is the ONE rng site (:259), rateScale/dmgScale own the
+// stat mapping (:227/:250), weaponLevelParams owns per-level growth (:1032),
+// kind-tagged bodies live in state.projectiles and are skipped by the volley
+// loop (main.js:3331-3332). Fire-path allocation matches the boomerang/seeker
+// precedent (one body object per shot); flight mutates in place — no per-frame
+// allocation. EVOLUTION: NONE (stated) for all four — EVOLUTION_DEFS carries
+// no row, so evolveWeapon returns reason 'type' (evolutions.js:134).
+
+// JAVELIN — behavior class PIERCING (vs_ref "passes through enemies"; the
+// instance is original). A heavy spear flies one straight lane and strikes
+// every enemy on the path. The per-enemy RE-HIT budget is the boomerang leg's
+// pierce seam (:363, :390-391, :423): 1 + stats.pierce + ladder pierceBonus
+// hits per enemy per spear. Split Shot fans the throw (p.stats.projectiles,
+// :379).
+function updateJavelin(state, weapon, dt) {
+  const W = WEAPONS.JAVELIN;
+  const P = weaponLevelParams('JAVELIN', weapon.level);
+  const p = state.player;
+  weapon.cd -= dt;
+  if (weapon.cd <= 0) {
+    const target = nearestEnemy(state, p.x, p.y);
+    if (!target) { weapon.cd = 0; }
+    else {
+      weapon.cd = W.COOLDOWN * rateScale(state, weapon);
+      const a = Math.atan2(target.y - p.y, target.x - p.x);
+      const n = Math.max(1, p.stats.projectiles);
+      for (let i = 0; i < n; i++) {
+        const spread = (i - (n - 1) / 2) * 0.2;
+        state.projectiles.push({
+          kind: 'javelin',
+          x: p.x, y: p.y,
+          dx: Math.cos(a + spread), dy: Math.sin(a + spread),
+          dist: 0,
+          damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
+          pierce: (p.stats.pierce || 0) + (P.pierceBonus || 0),
+          hit: new Map(),
+          age: 0,
+        });
+      }
+    }
+  }
+  const range = (P.range || W.RANGE);
+  for (let i = state.projectiles.length - 1; i >= 0; i--) {
+    const pr = state.projectiles[i];
+    if (pr.kind !== 'javelin') continue;
+    pr.age += dt;
+    const step = W.SPEED * (P.speedMult || 1) * dt;
+    pr.x += pr.dx * step; pr.y += pr.dy * step; pr.dist += step;
+    if (pr.dist >= range) {
+      state.effects.push({ kind: 'mine_fizzle', x: pr.x, y: pr.y, age: 0, ttl: 0.1 });
+      state.projectiles.splice(i, 1);
+      continue;
+    }
+    const budget = pr.pierce >= PIERCE_ALL ? 1 : 1 + Math.max(0, pr.pierce || 0);
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      const spent = pr.hit.get(e) || 0;
+      if (spent >= budget) continue;
+      if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
+        hurt(state, e, pr.damage * critRoll(p, weapon));
+        pr.hit.set(e, spent + 1);
+        state.effects.push({ kind: 'beam_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+      }
+    }
+  }
+}
+
+// EMBER — behavior class BURST-ON-KILL (vs_ref "Explodes when bouncing" /
+// mb_ref detonation vocabulary; the instance is original). Incendiary bolts
+// fly at the nearest enemy; a bolt that KILLS detonates a small AoE at the
+// victim. Kill detect is the scythe's `e.hp <= 0` read (:590) and the burst
+// is detonateMine's AoE apply (:707-714) with ZERO economy attached — no
+// gold, no heal, no resource (on-kill economy is an OWNER-RULING and is not
+// touched here). The burst pays KILL_BLAST_MULT of the bolt so it is a clear
+// tool, not a nuke.
+function updateEmber(state, weapon, dt) {
+  const W = WEAPONS.EMBER;
+  const P = weaponLevelParams('EMBER', weapon.level);
+  const p = state.player;
+  weapon.cd -= dt;
+  if (weapon.cd <= 0) {
+    const target = nearestEnemy(state, p.x, p.y);
+    if (!target) { weapon.cd = 0; }
+    else {
+      weapon.cd = W.COOLDOWN * rateScale(state, weapon);
+      const a = Math.atan2(target.y - p.y, target.x - p.x);
+      const n = Math.max(1, p.stats.projectiles);
+      for (let i = 0; i < n; i++) {
+        const spread = (i - (n - 1) / 2) * 0.3;
+        state.projectiles.push({
+          kind: 'ember',
+          x: p.x, y: p.y,
+          dx: Math.cos(a + spread), dy: Math.sin(a + spread),
+          damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
+          blast: (P.blast || W.BLAST),
+          age: 0,
+        });
+      }
+    }
+  }
+  for (let i = state.projectiles.length - 1; i >= 0; i--) {
+    const pr = state.projectiles[i];
+    if (pr.kind !== 'ember') continue;
+    pr.age += dt;
+    if (pr.age >= W.LIFE) {
+      state.effects.push({ kind: 'mine_fizzle', x: pr.x, y: pr.y, age: 0, ttl: 0.1 });
+      state.projectiles.splice(i, 1);
+      continue;
+    }
+    pr.x += pr.dx * W.SPEED * dt;
+    pr.y += pr.dy * W.SPEED * dt;
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
+        hurt(state, e, pr.damage * critRoll(p, weapon));
+        if (e.hp <= 0) {
+          const blast = pr.blast;
+          for (const e2 of state.enemies) {
+            if (e2.hp <= 0) continue;
+            if (Math.hypot(e2.x - e.x, e2.y - e.y) <= blast) {
+              hurt(state, e2, pr.damage * W.KILL_BLAST_MULT * critRoll(p, weapon));
+              state.effects.push({ kind: 'mine_hit', x: e2.x, y: e2.y, age: 0, ttl: 0.1 });
+            }
+          }
+          state.effects.push({ kind: 'mine_blast', x: e.x, y: e.y, radius: blast, shrapnel: 4, age: 0, ttl: 0.3 });
+        } else {
+          state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+        }
+        state.projectiles.splice(i, 1);
+        break;
+      }
+    }
+  }
+}
+
+// RICOCHET — behavior class CHAIN with a body (vs_ref "bounces around" /
+// "Throws a bouncing projectile"; the instance is original). One shot flies
+// straight, and each IMPACT picks the nearest UNUSED enemy inside the hop
+// range and continues as a fresh straight segment. Retarget happens ON IMPACT
+// only — never mid-flight — so this is bouncing, not the homing-damage-class
+// rule (OWNER-RULING, untouched). Targeting is the module's own
+// nearestEnemy exclude-set walk (:271-279), the same rule ZAP's chain uses.
+function updateRicochet(state, weapon, dt) {
+  const W = WEAPONS.RICOCHET;
+  const P = weaponLevelParams('RICOCHET', weapon.level);
+  const p = state.player;
+  weapon.cd -= dt;
+  if (weapon.cd <= 0) {
+    const target = nearestEnemy(state, p.x, p.y);
+    if (!target) { weapon.cd = 0; }
+    else {
+      weapon.cd = W.COOLDOWN * rateScale(state, weapon);
+      const a = Math.atan2(target.y - p.y, target.x - p.x);
+      state.projectiles.push({
+        kind: 'ricochet',
+        x: p.x, y: p.y,
+        dx: Math.cos(a), dy: Math.sin(a),
+        damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
+        bounces: (P.bounces || W.BOUNCES),
+        hit: new Set(),
+        age: 0,
+      });
+    }
+  }
+  const hopRange = (P.chainRange || W.CHAIN_RANGE);
+  for (let i = state.projectiles.length - 1; i >= 0; i--) {
+    const pr = state.projectiles[i];
+    if (pr.kind !== 'ricochet') continue;
+    pr.age += dt;
+    if (pr.age >= W.LIFE) {
+      state.effects.push({ kind: 'mine_fizzle', x: pr.x, y: pr.y, age: 0, ttl: 0.1 });
+      state.projectiles.splice(i, 1);
+      continue;
+    }
+    pr.x += pr.dx * W.SPEED * dt;
+    pr.y += pr.dy * W.SPEED * dt;
+    for (const e of state.enemies) {
+      if (e.hp <= 0 || pr.hit.has(e)) continue;
+      if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
+        hurt(state, e, pr.damage * critRoll(p, weapon));
+        pr.hit.add(e);
+        state.effects.push({ kind: 'seeker_pop', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+        if (pr.bounces <= 0) { state.projectiles.splice(i, 1); break; }
+        const nxt = nearestEnemy(state, pr.x, pr.y, pr.hit);
+        if (!nxt || Math.hypot(nxt.x - pr.x, nxt.y - pr.y) > hopRange) {
+          state.projectiles.splice(i, 1);
+          break;
+        }
+        pr.bounces--;
+        const a = Math.atan2(nxt.y - pr.y, nxt.x - pr.x);
+        pr.dx = Math.cos(a); pr.dy = Math.sin(a);
+        break;
+      }
+    }
+  }
+}
+
+// METEOR — behavior class BOMBARDMENT (vs_ref "Bombards in a circling zone" /
+// "Strikes at random enemies"; the instance is original and targeted, not
+// random). A telegraph (the scythe windup shape, :570-577 / :614-618) marks
+// the NEAREST enemy's position; WINDUP later the rock lands as a
+// detonateMine-style AoE (:707-714) at that mark. The mark is stamped at
+// fire time (area denial on a point), never a follow — no new mechanic.
+function updateMeteor(state, weapon, dt) {
+  const W = WEAPONS.METEOR;
+  const P = weaponLevelParams('METEOR', weapon.level);
+  const p = state.player;
+  weapon.cd -= dt;
+  if (weapon.swing) {
+    weapon.swing.t -= dt;
+    if (weapon.swing.t > 0) return;
+    const x = weapon.swing.x, y = weapon.swing.y;
+    weapon.swing = null;
+    const blast = (P.blast || W.BLAST);
+    const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon);
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      if (Math.hypot(e.x - x, e.y - y) <= blast) {
+        hurt(state, e, dmg * critRoll(p, weapon));
+        state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+      }
+    }
+    state.effects.push({ kind: 'mine_blast', x, y, radius: blast, shrapnel: 8, age: 0, ttl: 0.35 });
+    return;
+  }
+  if (weapon.cd > 0) return;
+  const target = nearestEnemy(state, p.x, p.y);
+  if (!target) { weapon.cd = 0; return; }
+  weapon.cd = W.COOLDOWN * rateScale(state, weapon);
+  const blast = (P.blast || W.BLAST);
+  weapon.swing = { x: target.x, y: target.y, t: W.WINDUP };
+  state.effects.push({ kind: 'nova_pulse', x: target.x, y: target.y, radius: blast, age: 0, ttl: W.WINDUP });
+}
+
 // ---------- Registry ----------
 export const WEAPON_TYPES = {
   ORBIT:      { id: 'ORBIT',      name: WEAPONS.ORBIT.NAME,      update: updateOrbit },
   BOOMERANG:  { id: 'BOOMERANG',  name: WEAPONS.BOOMERANG.NAME,  update: updateBoomerang },
+  JAVELIN:    { id: 'JAVELIN',    name: WEAPONS.JAVELIN.NAME,    update: updateJavelin },
   ZAP:        { id: 'ZAP',        name: WEAPONS.ZAP.NAME,        update: updateZap },
   NOVA_PULSE: { id: 'NOVA_PULSE', name: WEAPONS.NOVA_PULSE.NAME, update: updateNovaPulse },
   SCYTHE:     { id: 'SCYTHE',     name: WEAPONS.SCYTHE.NAME,     update: updateScythe },
+  EMBER:      { id: 'EMBER',      name: WEAPONS.EMBER.NAME,      update: updateEmber },
+  RICOCHET:   { id: 'RICOCHET',   name: WEAPONS.RICOCHET.NAME,   update: updateRicochet },
   SEEKER:     { id: 'SEEKER',     name: WEAPONS.SEEKER.NAME,     update: updateSeeker },
+  METEOR:     { id: 'METEOR',     name: WEAPONS.METEOR.NAME,     update: updateMeteor },
   MINE:       { id: 'MINE',       name: WEAPONS.MINE.NAME,       update: updateMine },
   BEAM:       { id: 'BEAM',       name: WEAPONS.BEAM.NAME,       update: updateBeam },
 };
@@ -870,10 +1156,14 @@ export const WEAPON_NAMES = {
   VOLLEY: 'Volley',
   ORBIT: WEAPONS.ORBIT.NAME,
   BOOMERANG: WEAPONS.BOOMERANG.NAME,
+  JAVELIN: WEAPONS.JAVELIN.NAME,
   ZAP: WEAPONS.ZAP.NAME,
   NOVA_PULSE: WEAPONS.NOVA_PULSE.NAME,
   SCYTHE: WEAPONS.SCYTHE.NAME,
+  EMBER: WEAPONS.EMBER.NAME,
+  RICOCHET: WEAPONS.RICOCHET.NAME,
   SEEKER: WEAPONS.SEEKER.NAME,
+  METEOR: WEAPONS.METEOR.NAME,
   MINE: WEAPONS.MINE.NAME,
   BEAM: WEAPONS.BEAM.NAME,
 };
@@ -909,10 +1199,14 @@ export const WEAPON_STEPS = {
   VOLLEY: { DMG: 0.6 },
   ORBIT: { DMG: 0.20, RADIUS: 4 },
   BOOMERANG: { DMG: 0.2, SPEED: 0.15 },
+  JAVELIN: { DMG: 0.18, SPEED: 0.10 },
   ZAP: { DMG: 0.17 },
   NOVA_PULSE: { DMG: 0.15, RADIUS: 6 },
   SCYTHE: { DMG: 0.18, ARC: 0.18 },
+  EMBER: { DMG: 0.16, BLAST: 3 },
+  RICOCHET: { DMG: 0.15 },
   SEEKER: { TURN: 0.65 },
+  METEOR: { DMG: 0.20, BLAST: 4 },
   MINE: { DMG: 0.2, BLAST: 4 },
   BEAM: { DMG: 0.15, WIDTH: 2 },
 };
@@ -951,6 +1245,16 @@ export const WEAPON_LADDERS = {
     return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed, +1 pierce'
                        : '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed';
   },
+  // +18% damage and +10% flight speed per level past 1; +1 pierce at
+  // Lv3/Lv5/Lv7 (the boomerang pierce cadence — the same grant language).
+  JAVELIN: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.JAVELIN.DMG * (L - 1);
+    c.speedMult = 1 + WEAPON_STEPS.JAVELIN.SPEED * (L - 1);
+    c.pierceBonus = Math.floor((L - 1) / 2);
+    if (L === 1) return 'Base sun javelin';
+    return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.JAVELIN.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.JAVELIN.SPEED) + '% speed, +1 pierce'
+                       : '+' + stepPct(WEAPON_STEPS.JAVELIN.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.JAVELIN.SPEED) + '% speed';
+  },
   // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the +1 chain jump per
   // even level is RETIRED — count growth is the 'zapchain' SHOP row's job
   // (meta.js Storm Conduit: uncapped count + hop range per level). The ladder
@@ -974,12 +1278,35 @@ export const WEAPON_LADDERS = {
     c.dmgMult = 1 + WEAPON_STEPS.SCYTHE.DMG * (L - 1);
     return L === 1 ? 'Base scythe' : '+arc width, +' + stepPct(WEAPON_STEPS.SCYTHE.DMG) + '% damage';
   },
+  // +16% damage and +3 burst radius per level past 1.
+  EMBER: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.EMBER.DMG * (L - 1);
+    c.blast = WEAPONS.EMBER.BLAST + WEAPON_STEPS.EMBER.BLAST * (L - 1);
+    return L === 1 ? 'Base ember shot'
+      : '+' + stepPct(WEAPON_STEPS.EMBER.DMG) + '% damage, +' + WEAPON_STEPS.EMBER.BLAST + ' blast radius';
+  },
+  // +15% damage per level past 1; +1 bounce every even level.
+  RICOCHET: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.RICOCHET.DMG * (L - 1);
+    c.bounces = WEAPONS.RICOCHET.BOUNCES + Math.floor(L / 2) - 1;
+    if (L === 1) return 'Base ricochet';
+    return L % 2 === 0
+      ? '+1 bounce (total ' + (c.bounces + 1) + '), +' + stepPct(WEAPON_STEPS.RICOCHET.DMG) + '% damage'
+      : '+' + stepPct(WEAPON_STEPS.RICOCHET.DMG) + '% damage';
+  },
   // +1 missile every even level, +0.4 rad/s turn per level.
   SEEKER: (L, c) => {
     c.count = 1 + Math.floor(L / 2);
     c.turn = WEAPONS.SEEKER.TURN + WEAPON_STEPS.SEEKER.TURN * (L - 1);
     if (L === 1) return 'Base seeker missile';
     return L % 2 === 0 ? '+1 missile (total ' + c.count + '), +turn rate' : '+turn rate';
+  },
+  // +20% damage and +4 blast radius per level past 1.
+  METEOR: (L, c) => {
+    c.dmgMult = 1 + WEAPON_STEPS.METEOR.DMG * (L - 1);
+    c.blast = WEAPONS.METEOR.BLAST + WEAPON_STEPS.METEOR.BLAST * (L - 1);
+    return L === 1 ? 'Base meteor'
+      : '+' + stepPct(WEAPON_STEPS.METEOR.DMG) + '% damage, +' + WEAPON_STEPS.METEOR.BLAST + ' blast radius';
   },
   // +20% damage and +4 blast radius per level past 1.
   MINE: (L, c) => {

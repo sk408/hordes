@@ -336,6 +336,158 @@ export function drawChestBurst(g, state, cam) {
   return true;
 }
 
+// TIER-2(e) CAPTURE SEAM: the projectile body painter, factored out of the
+// frame loop so tools/capture_tier2_weapons.mjs can render a fired body
+// through the SAME code the game draws. Geometry, phase sources (position
+// hash / age / velocity / flight angle — never wall clock, never
+// Math.random) and the <= 11 rects per body bound are unchanged.
+export function paintProjectileBody(g, p, x, y, ph) {
+  if (p.kind === 'boomerang') {
+    // Crescent rang: steel arms on the spin axis, white leading edge,
+    // blue fuller core, one hash glint at a tip. Spin timing is the
+    // shipped alternation (age * 20, two phases) — <= 8 rects.
+    const spin = Math.floor(p.age * 20) % 2 === 0;
+    g.fillStyle = '#b8e0ff';
+    if (spin) {
+      g.fillRect(x - 4, y - 1, 9, 2);
+      g.fillRect(x - 3, y - 2, 2, 1); g.fillRect(x + 2, y + 2, 2, 1);
+    } else {
+      g.fillRect(x - 1, y - 4, 2, 9);
+      g.fillRect(x - 2, y - 3, 1, 2); g.fillRect(x + 2, y + 2, 1, 2);
+    }
+    g.fillStyle = '#ffffff';
+    if (spin) { g.fillRect(x - 4, y - 1, 2, 1); }
+    else { g.fillRect(x - 1, y - 4, 1, 2); }
+    g.fillStyle = '#5a9ad8';
+    g.fillRect(x - 1, y - 1, 2, 2);
+    g.fillStyle = '#e8f4ff';
+    const gx = spin ? ((ph & 1) === 0 ? 4 : -4) : 0;
+    const gy = spin ? 0 : ((ph & 1) === 0 ? 4 : -4);
+    g.fillRect(x + gx, y + gy, 1, 1);
+    return;
+  }
+  if (p.kind === 'seeker') {
+    // Hydra missile: white nose cone on the flight angle, gold body,
+    // ember tail fins perpendicular to flight, hot exhaust dot. The head
+    // lead (+2 along ang) is the shipped geometry — <= 9 rects.
+    const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+    const hx = Math.round(x + ca * 2), hy = Math.round(y + sa * 2);
+    const tx = Math.round(x - ca * 2), ty = Math.round(y - sa * 2);
+    const px = Math.round(-sa * 2), py = Math.round(ca * 2);
+    g.fillStyle = '#ffdd7a';
+    g.fillRect(x - 1, y - 1, 3, 3);
+    g.fillStyle = '#ffffff';
+    g.fillRect(hx - 1, hy - 1, 2, 2);
+    g.fillRect(Math.round(x + ca * 3), Math.round(y + sa * 3), 1, 1);
+    g.fillStyle = '#ff8848';
+    g.fillRect(tx + px - 1, ty + py - 1, 2, 2);
+    g.fillRect(tx - px - 1, ty - py - 1, 2, 2);
+    g.fillStyle = (ph & 2) === 0 ? '#ffd75e' : '#ffdd7a';
+    g.fillRect(tx, ty, 1, 1);
+    return;
+  }
+  if (p.kind === 'mine') {
+    // Armed mine: dark hull (shipped disc), steel rim ticks, brass studs,
+    // the shipped 1Hz arming lamp, one hash-phased glint. Blink timing is
+    // the shipped (age * 2) alternation — <= 10 rects.
+    g.fillStyle = '#3a3a46';
+    g.fillRect(x - 3, y - 2, 7, 5);
+    g.fillRect(x - 2, y - 3, 5, 7);
+    g.fillStyle = '#6a6a76';
+    g.fillRect(x - 3, y - 3, 2, 1); g.fillRect(x + 2, y - 3, 2, 1);
+    g.fillRect(x - 3, y + 3, 2, 1); g.fillRect(x + 2, y + 3, 2, 1);
+    g.fillStyle = '#c8a03a';
+    g.fillRect(x - 2, y - 1, 1, 1); g.fillRect(x + 2, y + 1, 1, 1);
+    g.fillStyle = Math.floor((p.age || 0) * 2) % 2 === 0 ? '#ff3040' : '#7a1018';
+    g.fillRect(x - 1, y - 1, 2, 2);
+    if ((ph & 3) === 0) {
+      g.fillStyle = '#e8e8f0';
+      g.fillRect(x + 1, y - 3, 1, 1);
+    }
+    return;
+  }
+  if (p.kind === 'javelin') {
+    // TIER-2(e) Sun Javelin: steel shaft along the flight vector, gold
+    // sun-disc head, white-hot tip, wood butt spike. Quantized to 8 ways. <= 8 rects.
+    const ja = (p.dx || p.dy) ? Math.atan2(p.dy || 0, p.dx || 0) : 0;
+    const joct = ((Math.round(ja / (Math.PI / 4)) % 8) + 8) % 8;
+    const JX = [1, 1, 0, -1, -1, -1, 0, 1], JY = [0, 1, 1, 1, 0, -1, -1, -1];
+    const jdx = JX[joct], jdy = JY[joct];
+    g.fillStyle = '#9aa4b8';
+    g.fillRect(x - jdx - 1, y - jdy - 1, 2, 2);
+    g.fillRect(x - 1, y - 1, 2, 2);
+    g.fillStyle = '#ffe07a';
+    g.fillRect(x + jdx * 2 - 1, y + jdy * 2 - 1, 2, 2);
+    g.fillStyle = '#ffffff';
+    g.fillRect(x + jdx * 3, y + jdy * 3, 1, 1);
+    g.fillStyle = '#8a5f2c';
+    g.fillRect(x - jdx * 2, y - jdy * 2, 1, 1);
+    if ((ph & 2) === 0) {
+      g.fillStyle = '#e8ecf4';
+      g.fillRect(x - jdx, y - jdy, 1, 1);
+    }
+    return;
+  }
+  if (p.kind === 'ember') {
+    // TIER-2(e) Ember Shot: hot core, orange body, gold cap, two hash sparks. <= 7 rects.
+    g.fillStyle = '#b03a1a';
+    g.fillRect(x - 2, y - 2, 5, 5);
+    g.fillStyle = '#e07828';
+    g.fillRect(x - 1, y - 1, 3, 3);
+    g.fillStyle = '#ffe07a';
+    g.fillRect(x, y, 1, 1);
+    if ((ph & 1) === 0) {
+      g.fillStyle = '#ffd75e';
+      g.fillRect(x + 2, y - 3, 1, 1);
+    }
+    if ((ph & 2) === 0) {
+      g.fillStyle = '#ff8848';
+      g.fillRect(x - 3, y + 2, 1, 1);
+    }
+    return;
+  }
+  if (p.kind === 'ricochet') {
+    // TIER-2(e) Ricochet: steel ball on the flight angle with a blue bounce
+    // chevron behind it. <= 8 rects.
+    const ra = (p.dx || p.dy) ? Math.atan2(p.dy || 0, p.dx || 0) : 0;
+    const roct = ((Math.round(ra / (Math.PI / 4)) % 8) + 8) % 8;
+    const RX = [1, 1, 0, -1, -1, -1, 0, 1], RY = [0, 1, 1, 1, 0, -1, -1, -1];
+    const rdx = RX[roct], rdy = RY[roct];
+    g.fillStyle = '#9ad0f4';
+    g.fillRect(x - 1, y - 1, 3, 3);
+    g.fillStyle = '#e8ecf4';
+    g.fillRect(x, y, 1, 1);
+    g.fillStyle = '#5a9ad8';
+    g.fillRect(x - rdx * 2, y - rdy * 2, 1, 1);
+    g.fillRect(x - rdx * 2 - rdy, y - rdy * 2 + rdx, 1, 1);
+    g.fillRect(x - rdx * 2 + rdy, y - rdy * 2 - rdx, 1, 1);
+    if ((ph & 3) === 0) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(x - rdx * 3, y - rdy * 3, 1, 1);
+    }
+    return;
+  }
+  // Volley arrow: shaft along the flight vector (vx/vy are sim state, so
+  // the orientation is deterministic), white-hot head, ember fletch
+  // perpendicular at the tail. Quantized to 8 ways on the integer grid.
+  // Generic fallback (no velocity — never happens in live runs, kept for
+  // planted-geometry tests) flies east. <= 7 rects.
+  const vv = (p.vx || p.vy) ? Math.atan2(p.vy || 0, p.vx || 0) : 0;
+  const oct = ((Math.round(vv / (Math.PI / 4)) % 8) + 8) % 8;
+  const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
+  const dx = DX[oct], dy = DY[oct];
+  const qx = -dy, qy = dx;   // perpendicular (fletch axis)
+  g.fillStyle = '#ffe9a8';
+  g.fillRect(x + dx - 1, y + dy - 1, 2, 2);
+  g.fillStyle = '#ff9a3c';
+  g.fillRect(x - dx * 2, y - dy * 2, 1, 1);
+  g.fillRect(x - dx * 2 + qx, y - dy * 2 + qy, 1, 1);
+  g.fillRect(x - dx * 2 - qx, y - dy * 2 - qy, 1, 1);
+  g.fillStyle = '#ffffff';
+  g.fillRect(x + dx * 2 - 1, y + dy * 2 - 1, 2, 2);
+  g.fillRect(x + dx * 3, y + dy * 3, 1, 1);
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -1003,89 +1155,7 @@ export class Renderer {
       if (cull(x, y, 8)) continue;
       // Static position stamp shared by the body painters (slice-h contract).
       const ph = ((Math.round(p.x) * 73856093) ^ (Math.round(p.y) * 19349663)) >>> 0;
-      if (p.kind === 'boomerang') {
-        // Crescent rang: steel arms on the spin axis, white leading edge,
-        // blue fuller core, one hash glint at a tip. Spin timing is the
-        // shipped alternation (age * 20, two phases) — <= 8 rects.
-        const spin = Math.floor(p.age * 20) % 2 === 0;
-        g.fillStyle = '#b8e0ff';
-        if (spin) {
-          g.fillRect(x - 4, y - 1, 9, 2);
-          g.fillRect(x - 3, y - 2, 2, 1); g.fillRect(x + 2, y + 2, 2, 1);
-        } else {
-          g.fillRect(x - 1, y - 4, 2, 9);
-          g.fillRect(x - 2, y - 3, 1, 2); g.fillRect(x + 2, y + 2, 1, 2);
-        }
-        g.fillStyle = '#ffffff';
-        if (spin) { g.fillRect(x - 4, y - 1, 2, 1); }
-        else { g.fillRect(x - 1, y - 4, 1, 2); }
-        g.fillStyle = '#5a9ad8';
-        g.fillRect(x - 1, y - 1, 2, 2);
-        g.fillStyle = '#e8f4ff';
-        const gx = spin ? ((ph & 1) === 0 ? 4 : -4) : 0;
-        const gy = spin ? 0 : ((ph & 1) === 0 ? 4 : -4);
-        g.fillRect(x + gx, y + gy, 1, 1);
-        continue;
-      }
-      if (p.kind === 'seeker') {
-        // Hydra missile: white nose cone on the flight angle, gold body,
-        // ember tail fins perpendicular to flight, hot exhaust dot. The head
-        // lead (+2 along ang) is the shipped geometry — <= 9 rects.
-        const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
-        const hx = Math.round(x + ca * 2), hy = Math.round(y + sa * 2);
-        const tx = Math.round(x - ca * 2), ty = Math.round(y - sa * 2);
-        const px = Math.round(-sa * 2), py = Math.round(ca * 2);
-        g.fillStyle = '#ffdd7a';
-        g.fillRect(x - 1, y - 1, 3, 3);
-        g.fillStyle = '#ffffff';
-        g.fillRect(hx - 1, hy - 1, 2, 2);
-        g.fillRect(Math.round(x + ca * 3) , Math.round(y + sa * 3), 1, 1);
-        g.fillStyle = '#ff8848';
-        g.fillRect(tx + px - 1, ty + py - 1, 2, 2);
-        g.fillRect(tx - px - 1, ty - py - 1, 2, 2);
-        g.fillStyle = (ph & 2) === 0 ? '#ffd75e' : '#ffdd7a';
-        g.fillRect(tx, ty, 1, 1);
-        continue;
-      }
-      if (p.kind === 'mine') {
-        // Armed mine: dark hull (shipped disc), steel rim ticks, brass studs,
-        // the shipped 1Hz arming lamp, one hash-phased glint. Blink timing is
-        // the shipped (age * 2) alternation — <= 10 rects.
-        g.fillStyle = '#3a3a46';
-        g.fillRect(x - 3, y - 2, 7, 5);
-        g.fillRect(x - 2, y - 3, 5, 7);
-        g.fillStyle = '#6a6a76';
-        g.fillRect(x - 3, y - 3, 2, 1); g.fillRect(x + 2, y - 3, 2, 1);
-        g.fillRect(x - 3, y + 3, 2, 1); g.fillRect(x + 2, y + 3, 2, 1);
-        g.fillStyle = '#c8a03a';
-        g.fillRect(x - 2, y - 1, 1, 1); g.fillRect(x + 2, y + 1, 1, 1);
-        g.fillStyle = Math.floor((p.age || 0) * 2) % 2 === 0 ? '#ff3040' : '#7a1018';
-        g.fillRect(x - 1, y - 1, 2, 2);
-        if ((ph & 3) === 0) {
-          g.fillStyle = '#e8e8f0';
-          g.fillRect(x + 1, y - 3, 1, 1);
-        }
-        continue;
-      }
-      // Volley arrow: shaft along the flight vector (vx/vy are sim state, so
-      // the orientation is deterministic), white-hot head, ember fletch
-      // perpendicular at the tail. Quantized to 8 ways on the integer grid.
-      // Generic fallback (no velocity — never happens in live runs, kept for
-      // planted-geometry tests) flies east. <= 7 rects.
-      const vv = (p.vx || p.vy) ? Math.atan2(p.vy || 0, p.vx || 0) : 0;
-      const oct = ((Math.round(vv / (Math.PI / 4)) % 8) + 8) % 8;
-      const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
-      const dx = DX[oct], dy = DY[oct];
-      const qx = -dy, qy = dx;   // perpendicular (fletch axis)
-      g.fillStyle = '#ffe9a8';
-      g.fillRect(x + dx - 1, y + dy - 1, 2, 2);
-      g.fillStyle = '#ff9a3c';
-      g.fillRect(x - dx * 2, y - dy * 2, 1, 1);
-      g.fillRect(x - dx * 2 + qx, y - dy * 2 + qy, 1, 1);
-      g.fillRect(x - dx * 2 - qx, y - dy * 2 - qy, 1, 1);
-      g.fillStyle = '#ffffff';
-      g.fillRect(x + dx * 2 - 1, y + dy * 2 - 1, 2, 2);
-      g.fillRect(x + dx * 3, y + dy * 3, 1, 1);
+      paintProjectileBody(g, p, x, y, ph);
     }
 
     // Skill/weapon effects (fillRect only).

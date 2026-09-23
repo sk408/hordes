@@ -448,10 +448,20 @@ export const MAX_WEAPON_SLOTS = 6;
 // (every archetype is priced here or is a STARTER_WEAPON).
 export const WEAPON_PRICES = {
   ORBIT: 200,          // reliable contact damage, cheapest real archetype (FIRST purchase: 2.9 tier-0 runs)
+  // TIER-2(e) NEW WEAPONS (owner autopilot 2026-09-23; numbers TUNE-AFTER).
+  // Archetype order = price order (this object's key sequence IS the ladder;
+  // test_meta.mjs pins the values). Each new rung sits strictly between its
+  // key-order neighbours on purpose; the PRE-EXISTING ZAP 60000 > NOVA_PULSE
+  // 12000 inversion is the owner's early-accessibility retune and is NOT
+  // touched (test_meta.mjs:500-508 documents it).
+  JAVELIN: 900,        // Sun Javelin: first aimed line-pierce, one step up from ORBIT (1.3 tier-2 runs)
   ZAP: 60000,         // chain zap: early AoE-ish clear (0.40h)
   NOVA_PULSE: 12000, // hands-free AoE ring (0.79h)
   SCYTHE: 20000,     // heavy melee sweep (1.32h)
+  EMBER: 75000,       // Ember Shot: burst-on-kill clear between SCYTHE and RICOCHET (0.05h)
+  RICOCHET: 165000,   // Ricochet: bouncing chain between EMBER and SEEKER (0.11h)
   SEEKER: 280000,     // homing coverage (1.85h)
+  METEOR: 340000,     // Meteor: targeted bombardment between SEEKER and MINE (0.23h)
   MINE: 420000,       // area denial, best-in-class mid pick (2.78h)
   // TOP TIER (G17 1b): "a few hours" at the measured rate = inside the 3h cap
   // (4,528,134g) and >= TOP_TIER_MIN_GOOD_RUNS (5) good runs = 5.96 runs.

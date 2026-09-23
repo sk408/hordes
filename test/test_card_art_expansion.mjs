@@ -78,6 +78,16 @@
 // motif programmatically (foil/chroma/pulse palette remap + a small stamped
 // mark), so this file gains a PARALLEL VARIANTS section that iterates EVERY
 // deck card x EVERY parallel (both lists DERIVED from the live registries —
+//
+// CONTRACT UPDATE — TIER-2(e) NEW WEAPONS (2026-09-23): the 2..9 number
+// space is full (32/32), so the four new weapon cards take a NEW allowance
+// ruling — rank '1' joins the NUMBER space as a legal COMMON rank (the poker
+// one that never sat beside A-as-ace as a number). Four pairs (1S / 1H / 1D
+// / 1C) carry wpn_javelin / wpn_ember / wpn_ricochet / wpn_meteor. After
+// this slice the 1..9 number space is full again (36/36); rank '10' remains
+// free for a future ruling. RANK_GLYPHS below gains the '1' glyph (3x5, the
+// shipped box) so a missing glyph still FAILS rather than silently passing.
+// Every other requirement is unchanged and still EXACT.
 // no hardcoded id lists). The DERIVED-VARIANT ALLOWANCE, stated once here so
 // it cannot silently widen: a variant is allowed to differ from the base
 // FRAME/palette DISCIPLINE exactly where the derivation changes it (palette
@@ -123,6 +133,9 @@ const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 // CONTRACT UPDATE note above) — a face rank with no glyph here must FAIL, not
 // silently pass.
 const RANK_GLYPHS = {
+  // TIER-2(e) (2026-09-23): rank '1' — the new COMMON number the four
+  // weapon cards ride. Same 3x5 box as every other number glyph.
+  '1': ['010', '110', '010', '010', '111'],
   '2': ['111', '001', '111', '100', '111'],
   '3': ['111', '001', '111', '001', '111'],
   '4': ['101', '101', '111', '001', '001'],

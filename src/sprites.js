@@ -564,6 +564,36 @@ export const WEAPON_ICONS = {
     [0,1,1,1,0],
     [0,0,1,0,0],
   ],
+  // ---- TIER-2(e) NEW WEAPONS (2026-09-23): 5x5 HUD icons, distinct
+  // silhouettes at a glance (the section's rule).
+  JAVELIN: [ // spear on the flight diagonal
+    [0,0,0,1,3],
+    [0,0,1,3,0],
+    [0,1,3,0,0],
+    [1,3,0,0,0],
+    [3,0,0,0,0],
+  ],
+  EMBER: [ // compact flame
+    [0,0,1,0,0],
+    [0,1,2,1,0],
+    [0,1,2,1,0],
+    [1,2,2,2,1],
+    [0,1,1,1,0],
+  ],
+  RICOCHET: [ // ball with a bounce chevron
+    [3,0,0,0,3],
+    [0,3,0,3,0],
+    [0,0,1,0,0],
+    [0,1,2,1,0],
+    [1,1,2,1,1],
+  ],
+  METEOR: [ // flaming rock, tail up-left
+    [1,0,0,0,0],
+    [0,1,0,0,1],
+    [0,0,1,1,1],
+    [0,0,1,2,1],
+    [0,0,1,1,1],
+  ],
 };
 export const WEAPON_ICON_PALETTE = { 1: '#c8e8ff', 2: '#ff9a3c', 3: '#ffd75e' };
 

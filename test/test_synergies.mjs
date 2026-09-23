@@ -7,7 +7,10 @@ const ALL = Object.keys(WEAPON_NAMES);   // the 9 archetypes
 
 // ---------- table shape ----------
 {
-  assert.ok(SYNERGIES.length >= 6 && SYNERGIES.length <= 8, '6..8 pair passives');
+  // TIER-2(e) RETARGET (2026-09-23): 6..8 -> 6..12. Four new archetypes each
+  // need a pairing (the coverage rule below), so the table grows 7 -> 11. The
+  // pin's JOB is unchanged (a runaway table fails). REVIEW-PHASE TUNE.
+  assert.ok(SYNERGIES.length >= 6 && SYNERGIES.length <= 12, '6..12 pair passives');
   const seenPairs = new Set();
   const covered = new Set();
   for (const s of SYNERGIES) {

@@ -503,9 +503,13 @@ console.log('WEAPON UNLOCKS:');
   // in-game editor cuts made chain-zap ZAP (60000) pricier than the pulse ring
   // NOVA_PULSE (12000) — deliberate early-accessibility ordering, not drift.
   // BEAM still tops the ladder.
+  // TIER-2(e) NEW WEAPONS (2026-09-23): four ADDITIVE rungs (JAVELIN 900 /
+  // EMBER 75000 / RICOCHET 165000 / METEOR 340000), each inserted between its
+  // key-order neighbours. Existing rungs are byte-unchanged.
   const prices = Object.values(WEAPON_PRICES);
-  ok(JSON.stringify(prices) === JSON.stringify([200, 60000, 12000, 20000, 280000, 420000, 450000]),
-     'weapon price ladder pins the owner retune (ORBIT 200 / ZAP 60000 / NOVA_PULSE 12000 / SCYTHE 20000 / SEEKER 280000 / MINE 420000 / BEAM 450000)');
+  ok(JSON.stringify(prices) === JSON.stringify(
+     [200, 900, 60000, 12000, 20000, 75000, 165000, 280000, 340000, 420000, 450000]),
+     'weapon price ladder pins the owner retune + tier-2(e) additions (ORBIT 200 / JAVELIN 900 / ZAP 60000 / NOVA_PULSE 12000 / SCYTHE 20000 / EMBER 75000 / RICOCHET 165000 / SEEKER 280000 / METEOR 340000 / MINE 420000 / BEAM 450000)');
   // G17 slice 1b RETARGET: the old `> MINE * 5` encoded the old prices
   // (110,000 vs 4,800 = 22.9x). Post-reprice the 3h single-item cap
   // (4,528,134g) bounds the ratio: BEAM 4.5M / MINE 4.2M = 1.07x is the
@@ -804,8 +808,11 @@ console.log('APEX TIER (G25):');
   // RETARGETED 2026-09-23 (TIER-2(c) new buyables, owner autopilot): 47 -> 57 —
   // ten classic stat rows (might/toughness/cooldown/marathon/magnetism/growth/
   // avarice/bullseye/vampire/hoarder) joined SHOP_UPGRADES. Same JOB.
-  ok(SHOP_UPGRADES.length === 57,
-     `SHOP_UPGRADES holds exactly its 57 pre-apex rows (30 classic + 16 breadth + 1 zapchain + 10 tier-2(c); got ${SHOP_UPGRADES.length})`);
+  // RETARGETED 2026-09-23 (TIER-2(e) new weapons, owner autopilot): 57 -> 61 —
+  // four weapon unlock rows (weapon_javelin / weapon_ember / weapon_ricochet /
+  // weapon_meteor) joined SHOP_UPGRADES via the WEAPON_PRICES map. Same JOB.
+  ok(SHOP_UPGRADES.length === 61,
+     `SHOP_UPGRADES holds exactly its 61 pre-apex rows (30 classic + 16 breadth + 1 zapchain + 10 tier-2(c) + 4 tier-2(e); got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

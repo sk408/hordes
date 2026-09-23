@@ -145,8 +145,11 @@ console.log('BEATABILITY — flat-budget overstatement (quantified, item 4b; re-
   // the breadth pass proved no longer applies at these prices — the 40h point
   // saturates (pinned above). This line pins the LANDED span both ways, so any
   // further drift fails here.
-  ok(L.total / goldPerHour('maxed') >= 29.5 && L.total / goldPerHour('maxed') <= 30.1,
-     `the catalogue now spans ${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income (band 29.5-30.1h post-owner-retune; the 40h budget saturates it)`);
+  // TIER-2(e) RETARGET (2026-09-23): four new weapon unlock rows (+580,900g)
+  // moved the span 29.8h -> 30.2h. Band widened 29.5-30.1h -> 29.5-30.5h.
+  // REVIEW-PHASE TUNE.
+  ok(L.total / goldPerHour('maxed') >= 29.5 && L.total / goldPerHour('maxed') <= 30.5,
+     `the catalogue now spans ${(L.total / goldPerHour('maxed')).toFixed(1)}h of end-game income (band 29.5-30.5h post-tier-2(e); the 40h budget saturates it)`);
 }
 
 console.log(failed === 0 ? 'ALL BEATABILITY TESTS PASSED' : `${failed} FAILURES`);

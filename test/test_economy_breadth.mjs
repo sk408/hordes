@@ -113,8 +113,11 @@ console.log('G17 SLICE 2 BREADTH — LANDED CATALOGUE HOURS (the 60h owner targe
   // weapon/elite/top rungs) landed the catalogue at 29.8h, below the 60h slice-2
   // goal. The pin's JOB is unchanged (drift fails this line) — the band now
   // guards the LANDED total both ways instead of the 60h floor.
-  ok(hours >= 29.5 && hours <= 30.1,
-    `catalogue ${L.total}g across ${L.rows.length} items = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h (post-owner-retune 29.8h; drift fails this line)`);
+  // TIER-2(e) RETARGET (2026-09-23, owner autopilot): four new weapon unlock
+  // rows (+580,900g) moved the landed catalogue 29.8h -> 30.2h. Band widened
+  // 29.5-30.1h -> 29.5-30.5h. REVIEW-PHASE TUNE.
+  ok(hours >= 29.5 && hours <= 30.5,
+    `catalogue ${L.total}g across ${L.rows.length} items = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h (post-tier-2(e) 30.2h; drift fails this line)`);
   // Breadth, not trophy inflation: no single breadth row's FULL buy may exceed
   // the 3h cap, and the rows must be the ones carrying the hours (>= 60h holds
   // only WITH them; reprice's cap sweep already proves no row exceeds it).

@@ -67,10 +67,11 @@ const EXPECTED_PORTRAITS = ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN'];
 // meta.js SHOP_UPGRADES ids at the time of authoring: 19 stat/slot rows
 // (dmg..arcade, incl. the three N1b mana buyables, the owner-ordered Split Shot
 // cap row and the A1 'focus' engagement-radius line) + 7 priced weapon unlock
-// rows + 3 elite unlock rows = 29 rows, PLUS the two STARTER_WEAPONS (VOLLEY,
-// BOOMERANG) which have no shop row but do have art (the draft pool / roster UI
-// uses the same icons), PLUS the two G25 APEX rows (their OWN catalogue,
-// APEX_UPGRADES — same icon convention), PLUS the generic fallback = 34 keys.
+// rows + 3 elite unlock rows + 4 tier-2(e) weapon unlock rows = 33 rows, PLUS
+// the two STARTER_WEAPONS (VOLLEY, BOOMERANG) which have no shop row but do
+// have art (the draft pool / roster UI uses the same icons), PLUS the two G25
+// APEX rows (their OWN catalogue, APEX_UPGRADES — same icon convention), PLUS
+// the generic fallback = 38 keys.
 const EXPECTED_SHOP = [
   'dmg', 'hp', 'potions', 'regen', 'focus', 'thrifty', 'well', 'siphon', 'xp', 'crit',
   'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'split', 'slots', 'arcade',
@@ -92,6 +93,9 @@ const EXPECTED_SHOP = [
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',
+  // TIER-2(e) NEW WEAPONS (owner autopilot 2026-09-23): 4 new weapon unlock
+  // rows, each with its own authored icon — never the fallback.
+  'weapon_javelin', 'weapon_ember', 'weapon_ricochet', 'weapon_meteor',
   'elite_swift', 'elite_splitting', 'elite_vampiric',
   'apex_mark', 'apex_endless_fire',
   '__fallback',

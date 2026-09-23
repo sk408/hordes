@@ -44,6 +44,11 @@ const G = (...rows) => rows.map((r) => [...r].map((ch) => ch.charCodeAt(0) - 48)
 // 3x5 glyphs. Number = COMMON, face = RARE, ace = MYTHIC, joker = the chase.
 export const RANK_CLASS = { number: 'COMMON', face: 'RARE', ace: 'MYTHIC', joker: 'CHASE' };
 const RANK_GLYPHS = {
+  // TIER-2(e) allowance ruling (2026-09-23): rank '1' joins the NUMBER space
+  // as a legal COMMON rank (the poker one that never sat beside A-as-ace as a
+  // number). Same 3x5 box as every other number glyph so the corner pips
+  // stamp at the shipped coordinates (composeCard's 3-wide BR offset).
+  '1': G('010', '110', '010', '010', '111'),
   '2': G('111', '001', '111', '100', '111'),
   '3': G('111', '001', '111', '001', '111'),
   '4': G('101', '101', '111', '001', '001'),
@@ -945,6 +950,80 @@ const MOTIFS = {
       '000666000',
     ),
   },
+
+  // ---- TIER-2(e) NEW WEAPONS (2026-09-23) -----------------------------------
+  // Four genuinely NEW grids — one per new archetype — same discipline as
+  // every motif above: integer grids via G(), palette keys 5..9, ink kept out
+  // of the pip corners. The interior-distinctness contract
+  // (test_card_art_expansion.mjs) measures these against every existing motif;
+  // each shape below shares no silhouette with its neighbours (the spear is
+  // not the scythe's curve or the headsman's block; the ember seed is not
+  // wildfire_spread's three-tongue fire; the ricochet chevrons are not
+  // three_arrows; the meteor rock is not overload_nova's radial burst).
+  // SUN JAVELIN — a spear with a sun-disc head and a gold butt spike.
+  javelin: {
+    palette: { 5: '#8a5f2c', 6: '#ffe07a', 7: '#e8ecf4' },
+    grid: G(
+      '000676000',
+      '000666000',
+      '000555000',
+      '000555000',
+      '000565000',
+      '000555000',
+      '000555000',
+      '000555000',
+      '000565000',
+      '000060000',
+    ),
+  },
+  // EMBER SEED — a compact flame with two rising sparks (not wildfire_spread's
+  // three-tongue spread, not flame's single taper).
+  ember_seed: {
+    palette: { 5: '#b03a1a', 6: '#e07828', 7: '#ffe07a' },
+    grid: G(
+      '000070000',
+      '000767000',
+      '007676700',
+      '007676700',
+      '076777670',
+      '076777670',
+      '005666500',
+      '000555000',
+    ),
+  },
+  // RICOCHET SHOT — a steel ball with two motion chevrons behind it (not
+  // three_arrows' fanned shafts): one body, the bounce marks are angles.
+  ricochet_shot: {
+    palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#5a9ad8' },
+    grid: G(
+      '000000560',
+      '000005660',
+      '000056650',
+      '000566500',
+      '005665000',
+      '056650000',
+      '566500000',
+      '665007700',
+      '650007700',
+      '000000700',
+    ),
+  },
+  // METEOR ROCK — a flaming stone: dark mass, gold-hot cap, tail streaks.
+  // NOT overload_nova (radial spokes) and NOT glacier_peak (ice mass): a
+  // falling rock with a burn tail.
+  meteor_rock: {
+    palette: { 5: '#4a3018', 6: '#e07828', 7: '#ffe07a', 8: '#9aa4b8' },
+    grid: G(
+      '007660000',
+      '006776000',
+      '066776600',
+      '665555660',
+      '655555560',
+      '055585550',
+      '005555500',
+      '000555000',
+    ),
+  },
 };
 
 // ---------------------------------------------------------------- deck ------
@@ -1105,6 +1184,22 @@ export const CARD_EXPANSION = [
   { id: 'rw_frostwire', name: 'Frost Wire', desc: 'rewrite card', rank: 'J', suit: 'spades', motif: 'rime_bolt', tier: 'RARE' },
   { id: 'tempest', name: 'Tempest', desc: 'mythic card', rank: 'A', suit: 'hearts', motif: 'storm_crown', tier: 'MYTHIC' },
   { id: 'killshot', name: 'Killshot', desc: 'mythic card', rank: 'A', suit: 'spades', motif: 'headsman_axe', tier: 'MYTHIC' },
+  // TIER-2(e) NEW WEAPONS (2026-09-23): four new weapon cards on the rank '1'
+  // allowance (CONTRACT UPDATE in test_card_art_expansion.mjs — the 2..9
+  // number space is full, so the four 1s carry these). Suit = family by what
+  // the weapon IS (the header's rule): JAVELIN and METEOR are pure damage —
+  // JAVELIN takes 1S and METEOR the one remaining damage-looking free slot is
+  // gone, so METEOR rides 1D by the G21-slice-1 space-constraint precedent
+  // (Live Wire 4D sits there for the same reason: this is a space constraint,
+  // NOT a claim bombardment is economy). EMBER's kill-burst is the Chain
+  // Reaction hearts rationale ("clears the bodies pressing you") — 1H.
+  // RICOCHET's bounce is guidance/utility beside Seeker/Mine — 1C.
+  // Names join by NAME to WEAPON_NAMES (weapons.js) — pinned in
+  // test/test_card_art_expansion.mjs.
+  { id: 'wpn_javelin',  name: 'Sun Javelin', desc: 'weapon card', rank: '1', suit: 'spades',   motif: 'javelin' },
+  { id: 'wpn_ember',    name: 'Ember Shot',  desc: 'weapon card', rank: '1', suit: 'hearts',   motif: 'ember_seed' },
+  { id: 'wpn_ricochet', name: 'Ricochet',    desc: 'weapon card', rank: '1', suit: 'clubs',    motif: 'ricochet_shot' },
+  { id: 'wpn_meteor',   name: 'Meteor',      desc: 'weapon card', rank: '1', suit: 'diamonds', motif: 'meteor_rock' },
 ];
 export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 

@@ -73,8 +73,10 @@ export const OFFER_TO_DECK = {
 // rides in every pool: the base volley is always owned).
 export const WEAPON_OFFER_TO_DECK = {
   VOLLEY: 'wpn_volley', ORBIT: 'wpn_orbit', BOOMERANG: 'wpn_boomerang',
+  JAVELIN: 'wpn_javelin',
   ZAP: 'wpn_zap', NOVA_PULSE: 'wpn_nova_pulse', SCYTHE: 'wpn_scythe',
-  SEEKER: 'wpn_seeker', MINE: 'wpn_mine', BEAM: 'wpn_beam',
+  EMBER: 'wpn_ember', RICOCHET: 'wpn_ricochet',
+  SEEKER: 'wpn_seeker', METEOR: 'wpn_meteor', MINE: 'wpn_mine', BEAM: 'wpn_beam',
 };
 
 // The deck id backing a draft offer, or null when the offer id is unknown.

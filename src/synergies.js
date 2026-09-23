@@ -76,6 +76,31 @@ export const SYNERGIES = [
     desc: 'The beam finds the triggers: sweeping a mine sets it off where it lies.',
     flags: { beamDetonatesMines: true },
   },
+  // ---- TIER-2(e) NEW WEAPONS (2026-09-23): four additive pair passives, one
+  // per new archetype (the coverage rule: every archetype appears in at least
+  // one pairing). Flags are plain data on the shipped unknown-flag seam (this
+  // file's header: hb1 must IGNORE unknown flags so the table can grow ahead
+  // of gameplay wiring — same convention as evolutions.js). Numbers TUNE-AFTER.
+  {
+    pair: ['JAVELIN', 'VOLLEY'], name: 'Sun Lane',
+    desc: 'The volley rides the javelin\'s lane: every shot punches one body deeper.',
+    flags: { volleyPierce: 1 },
+  },
+  {
+    pair: ['EMBER', 'SCYTHE'], name: 'Harvest Fire',
+    desc: 'Each sweep that reaps a soul plants an ember on the corpse.',
+    flags: { scytheEmberBurst: true },
+  },
+  {
+    pair: ['RICOCHET', 'ZAP'], name: 'Storm Bounce',
+    desc: 'Every ricochet impact grounds a spark into the nearest unused mark.',
+    flags: { ricochetZapFork: true },
+  },
+  {
+    pair: ['METEOR', 'MINE'], name: 'Crater Field',
+    desc: 'A landing meteor cooks off any mine caught inside its crater.',
+    flags: { meteorDetonatesMines: true },
+  },
 ];
 
 // ---------- detectSynergies ------------------------------------------------

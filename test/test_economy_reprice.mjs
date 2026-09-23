@@ -99,13 +99,18 @@ console.log('G17 REPRICE — CATALOGUE HOURS vs THE 60h OWNER TARGET:');
   // at 29.8h (below the 60h target the breadth pass closed). Old band 60-66h
   // post-zapchain; new band 29.5-30.1h. The pin's JOB is unchanged (bounds
   // accidental reprices BOTH ways).
+  // TIER-2(e) RETARGET (2026-09-23, owner autopilot): four new weapon unlock
+  // rows (WEAPON_PRICES JAVELIN 900 / EMBER 75000 / RICOCHET 165000 /
+  // METEOR 340000 = +580,900g) moved the landed catalogue 29.8h -> 30.2h.
+  // Band widened 29.5-30.1h -> 29.5-30.5h so the measured 30.2h clears while
+  // the pin still bounds an accidental reprice either way. REVIEW-PHASE TUNE.
   const SLICE2_SHORTFALL_H = 0;      // G17 slice 2 landed: breadth closed the gap
   const L = ledger();
   const hours = L.total / L.rate;
   ok(hours >= 29.5,
      `catalogue ${L.total}g = ${hours.toFixed(1)}h at ${Math.round(L.rate)}g/h (post-owner-retune floor 29.5h; a further price cut fails this line)`);
-  ok(hours >= 29.5 && hours <= 30.1,
-     `landed catalogue is ${hours.toFixed(1)}h (band 29.5-30.1h post-owner-retune; an accidental reprice fails this line)`);
+  ok(hours >= 29.5 && hours <= 30.5,
+     `landed catalogue is ${hours.toFixed(1)}h (band 29.5-30.5h post-tier-2(e); an accidental reprice fails this line)`);
   const capCeiling = (singleItemCapGold() * L.rows.length) / L.rate;
   ok(60 < capCeiling,
      `60h is reachable by breadth alone: ${L.rows.length} items x 3h cap = ${capCeiling.toFixed(1)}h ceiling — no trophy inflation needed`);

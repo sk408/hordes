@@ -98,7 +98,11 @@ const EST = 6;   // the windowless 9px-monospace advance the feed assumes
 // ============================================================================
 console.log('0.98 D1 — SYNERGY ANNOUNCE WRAPS INSIDE THE VIEW');
 {
-  ok(synergyMsgs.length === 7, 'all seven synergy announces are covered (' + synergyMsgs.length + ')');
+  // TIER-2(e) RETARGET (2026-09-23): 7 -> 11. Four new archetype pairings
+  // (Sun Lane / Harvest Fire / Storm Bounce / Crater Field) joined SYNERGIES,
+  // so the announce wrap sweep covers 11 messages now. Same JOB: every
+  // announce must wrap inside the view.
+  ok(synergyMsgs.length === 11, 'all eleven synergy announces are covered (' + synergyMsgs.length + ')');
   const { R, rec, ctx } = makeRenderer();
   const rows = [];
   for (const msg of synergyMsgs) {
