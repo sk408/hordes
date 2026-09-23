@@ -14,6 +14,10 @@ import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
 import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
+// PORT SLICE I — HUD chrome trim (original art, additive-only: every helper
+// paints 1px furniture strictly inside the footprint its caller already
+// painted — no caller moves, resizes, renames or re-times anything).
+import { trimBar, trimBadge, trimPlate, studCorners, radarTicks, fsKeyline, bannerTrim } from './art/hud_chrome.js';
 // A2 THE RADAR: the DATA layer (pure maths, no DOM — see src/radar.js's header)
 // is imported, never restated. This file owns only the painting of what it
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
@@ -1482,6 +1486,7 @@ export class Renderer {
       g.fillRect(vx, hy, t, arm);
     }
     if (f.active) g.fillRect(b.x + b.w / 2 - 1, b.y + b.h / 2 - 1, 3, 3);
+    fsKeyline(g, b);   // PORT SLICE I: inner keyline inside the button box
     // SEAM: the painted box this frame (view coords) — the tests' geometry
     // source, mirroring the radar/banner seams above.
     this.fsButton = b;
@@ -1601,6 +1606,7 @@ export class Renderer {
       this.radarPlateBuilds++;
     }
     g.drawImage(this._radarPlate, cx - R, cy - R);
+    radarTicks(g, cx, cy, R);   // PORT SLICE I: rim ticks on the steel band
 
     // Dots: size + colour by tier, centred on the integer radar-space offset
     // radarDots returned (screen = centre + offset; the mapping is 1:1).
@@ -1909,6 +1915,7 @@ export class Renderer {
     g.fillStyle = '#7a1028';
     g.fillRect(plateX, plateY, plateW, 1);
     g.fillRect(plateX, plateY + plateH - 1, plateW, 1);
+    bannerTrim(g, plateX, plateY, plateW, plateH);   // PORT SLICE I: plate keyline + studs
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     let cy = plateY + padY;
@@ -2164,6 +2171,7 @@ export class Renderer {
       g.fillRect(x - 2, y - 2, w, size + 5);
       g.fillStyle = col;
       g.fillText(txt, x, y);
+      trimPlate(g, x - 2, y - 2, w, size + 5);   // PORT SLICE I: plate corner studs
       return w;
     };
     const drawBar = (x, y, w, h, frac, flash, fillCol) => {
@@ -2195,6 +2203,7 @@ export class Renderer {
         g.fillStyle = '#ffffff';
         g.fillRect(fx, y, fwid, h);
       }
+      trimBar(g, x, y, w, h);   // PORT SLICE I: chamfered housing corners + studs
     };
     // WAVE-23 (#4/#6) gave every bar a text label to its left (the vision pass
     // called the unlabeled bars "placeholders"); WAVE-24 (#2) puts each label
@@ -2287,6 +2296,7 @@ export class Renderer {
       for (let sx = xb + 5; sx < xb + xfw; sx += 6) g.fillRect(sx, yb + 1, 1, hb - 1);
       g.fillStyle = '#ffd75e';                       // gold goal tick at the end
       g.fillRect(xb + wb - 1, yb, 1, hb);
+      trimBar(g, xb, yb, wb, hb);   // PORT SLICE I: chamfered housing corners + studs
       // WAVE-23 (#4) added the LV badge; WAVE-24 (#2) makes it a BADGE: 9 -> 11px
       // bold on a gold-bordered dark plate (the vision pass: "washed out, reads
       // like an unpolished placeholder"), vertically centered on the bar.
@@ -2298,6 +2308,7 @@ export class Renderer {
       g.textBaseline = 'top';
       g.fillStyle = '#fff3c4';
       g.fillText(lvTxt, lvX + 3, lvY + 2);
+      trimBadge(g, lvX, lvY, lvW, lvH);   // PORT SLICE I: badge studs
     }
     // 0.98 feedback (defect 3): the XP row keeps its LV badge, and the
     // progress numbers join it to the badge's right (the badge owns the bar's
@@ -2341,6 +2352,7 @@ export class Renderer {
     g.textBaseline = 'top';
     g.fillStyle = '#fff3c4';
     g.fillText(goldTxt, goldX + 3, goldY + 2);
+    trimBadge(g, goldX, goldY, goldW, goldH);   // PORT SLICE I: badge studs
     chrome.purse = { x: goldX, y: goldY, w: goldW, h: goldH, px: goldPx,
       value: purseVal, text: goldTxt, digitW: 5 * Math.round(goldPx * 0.62) };
 
@@ -2375,6 +2387,7 @@ export class Renderer {
     g.fillRect(cbX, cbY, Math.round(cbW * limitFrac), 1);
     g.fillStyle = '#ff2f5e';                       // the limit tick (30:00)
     g.fillRect(cbX + cbW - 1, cbY, 1, cbH);
+    trimBar(g, cbX, cbY, cbW, cbH);   // PORT SLICE I: chamfered housing corners + studs
     chrome.clock = { text: clockTxt, frac: limitFrac, finalCall };
 
     // --- G11 CHALLENGE MODE BADGE ------------------------------------------
@@ -2398,6 +2411,7 @@ export class Renderer {
       g.textBaseline = 'top';
       g.fillStyle = '#ffe9a8';
       g.fillText(name, bX + 3, bY + 2);
+      trimBadge(g, bX, bY, bW, bH);   // PORT SLICE I: badge studs
       chrome.challenge = { id: state.challenge, name };
     }
 
@@ -2431,6 +2445,7 @@ export class Renderer {
       g.textBaseline = 'top';
       g.fillStyle = '#dbe9ff';
       g.fillText(nName, nX + 3, nY + 2);
+      trimBadge(g, nX, nY, nW, nH);   // PORT SLICE I: badge studs
       chrome.night = { name: nName };
     }
 
@@ -2508,6 +2523,9 @@ export class Renderer {
       g.fillStyle = ft.tint || '#e4e4ee';
       for (let li = 0; li < lines.length; li++) g.fillText(lines[li], 7, fy + li * FEED_LINE_H);
       g.globalAlpha = 1;
+      // The studs sit 1px INSIDE the plate: test_feedback_098 identifies feed
+      // plates by their x===5 column, so no trim pixel may land on it.
+      studCorners(g, 6, fy - 1, fw - 2, lines.length * FEED_LINE_H - 1);   // PORT SLICE I
       chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha, lines: lines.slice() });
       fy += lines.length * FEED_LINE_H;
     }
@@ -2544,6 +2562,7 @@ export class Renderer {
       const grid = WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY;
       g.fillStyle = w.evolution ? '#ffd75e' : '#2a2a36';   // slot frame
       g.fillRect(wx - 1, wy - 1, 5 * Z + 2, 5 * Z + 2);
+      studCorners(g, wx - 1, wy - 1, 5 * Z + 2, 5 * Z + 2);   // PORT SLICE I: slot studs
       for (let ry = 0; ry < grid.length; ry++) {
         for (let rx = 0; rx < grid[ry].length; rx++) {
           const v = grid[ry][rx];
