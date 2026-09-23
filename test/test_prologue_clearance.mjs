@@ -26,6 +26,20 @@
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { prologueCardRect, prologueFeedY, prologueSkipRect } from '../src/render.js';
+import { mulberry32 } from '../src/weather.js';
+
+// DETERMINISM (gate flake pcp2, 2026-09-23): boot() -> startRun() rolls
+// state.groundSeed from Math.random (main.js:8798) and that seed lays the
+// run's building footprints (stage_buildings.js buildingFootprints). On ~1.3%
+// of seeds a footprint lands across the spawn -> potion line and the AUTO
+// pilot's straight-line PROLOGUE walk (controllers.js:346-352) deadlocks on
+// its face: the potion is never reached, the phase only ends at the 300s
+// MAX_S bound, and this file's 70s (4200-frame) budget for the drink expires
+// -> 'the potion sequence ran to its drink after the skip'. Pin the run RNG
+// (the sibling test_prologue.mjs seeds per check for the same reason);
+// 20260923 is the house constant (test/smoke.mjs, commit 970de53) and lands a
+// clear spawn -> potion line (drink at frame 106 = 1.8 sim s).
+Math.random = mulberry32(20260923);
 
 const S = suite('test_prologue_clearance');
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
