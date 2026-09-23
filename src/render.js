@@ -990,9 +990,16 @@ export class Renderer {
           fx.kind === 'mine_blast' || fx.kind === 'colossus_shock' ||
           fx.kind === 'rewrite_boom' || fx.kind === 'rewrite_harvest' ||
           fx.kind === 'magnet') {
-        // Expanding ring: 1px rects sampled along a circle. Color per kind.
+        // Expanding ring: outer glow ring + inner echo + hash-phased crackle
+        // + 4 cardinal ticks. PORT SLICE H: the old painter drew ONE flat
+        // 48-dot ring; the new dress keeps the same trigger/ttl/radius and
+        // adds an ORIGINAL two-ring + sparkle read (glow/crackle doctrine).
+        // Deterministic: phase derives from the effect origin hash (static
+        // stamp, never wall clock); animation is t = age/ttl only, so 60Hz
+        // and 120Hz paint identically at the same age. Bounded: 48 + 24 +
+        // 8 + 4 rects max per ring effect (pools unchanged).
         const r = fx.radius * t;
-        g.fillStyle = fx.kind === 'nova'
+        const ringCol = fx.kind === 'nova'
           ? (t < 0.5 ? '#a8e0ff' : '#5a9ad8')
           : fx.kind === 'boss_nova'
             ? (t < 0.5 ? '#ff7a9a' : '#a83a5a')
@@ -1009,11 +1016,46 @@ export class Renderer {
                     : fx.kind === 'magnet'
                       ? (t < 0.5 ? '#ffe98a' : '#c8a03a')
                       : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
+        const echoCol = fx.kind === 'boss_nova' ? '#ffd7e0'
+          : fx.kind === 'mine_blast' ? '#fff2c0'
+          : fx.kind === 'colossus_shock' ? '#ffffff'
+          : fx.kind === 'rewrite_boom' ? '#ffe0b8'
+          : fx.kind === 'rewrite_harvest' ? '#ffc0c8'
+          : fx.kind === 'magnet' ? '#fff8d0'
+          : fx.kind === 'nova' ? '#e8f4ff'
+          : '#efe0ff';
+        const hh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
+        const rot = ((hh % 360) / 360) * Math.PI * 2;
+        g.fillStyle = ringCol;
         const steps = 48;
         for (let i = 0; i < steps; i++) {
-          const a = (i / steps) * Math.PI * 2;
+          const a = rot + (i / steps) * Math.PI * 2;
           g.fillRect(Math.round(fx.x + Math.cos(a) * r - cam.x),
                      Math.round(fx.y + Math.sin(a) * r - cam.y), 2, 2);
+        }
+        // Inner echo ring (half radius, sparser, pale).
+        g.fillStyle = echoCol;
+        for (let i = 0; i < 24; i++) {
+          const a = rot * 0.5 + (i / 24) * Math.PI * 2;
+          g.fillRect(Math.round(fx.x + Math.cos(a) * r * 0.55 - cam.x),
+                     Math.round(fx.y + Math.sin(a) * r * 0.55 - cam.y), 1, 1);
+        }
+        // Crackle: 8 hash-phased sparks drifting inside the ring.
+        g.fillStyle = ringCol;
+        for (let i = 0; i < 8; i++) {
+          const a = rot + i * (Math.PI * 2 / 8) + t * 1.5 * ((i % 2 === 0) ? 1 : -1);
+          const rr = r * (0.2 + 0.6 * (((hh >> (i % 16)) & 3) / 3));
+          g.fillRect(Math.round(fx.x + Math.cos(a) * rr - cam.x),
+                     Math.round(fx.y + Math.sin(a) * rr - cam.y), i % 3 === 0 ? 2 : 1, i % 3 === 0 ? 2 : 1);
+        }
+        // Cardinal ticks: 4 longer marks on the outer ring, fading with t.
+        if (t < 0.85) {
+          g.fillStyle = echoCol;
+          for (let k = 0; k < 4; k++) {
+            const a = rot + k * (Math.PI / 2);
+            g.fillRect(Math.round(fx.x + Math.cos(a) * r - cam.x) - 1,
+                       Math.round(fx.y + Math.sin(a) * r - cam.y) - 1, 3, 3);
+          }
         }
       } else if (fx.kind === 'scythe_windup' || fx.kind === 'scythe_arc') {
         // Sweep telegraph (faint blink) / landed sweep (bright arc + inner
@@ -1033,6 +1075,15 @@ export class Renderer {
                          Math.round(fx.y + Math.sin(a) * rr * 0.55 - cam.y), 2, 2);
             }
           }
+          // PORT SLICE H: tip sparks at both wedge ends on the landed sweep.
+          if (bright && t < 0.7) {
+            g.fillStyle = '#ffffff';
+            for (const ea of [fx.dir - fx.arc / 2, fx.dir + fx.arc / 2]) {
+              const rr = fx.radius * (1 - t * 0.25);
+              g.fillRect(Math.round(fx.x + Math.cos(ea) * rr - cam.x) - 1,
+                         Math.round(fx.y + Math.sin(ea) * rr - cam.y) - 1, 3, 3);
+            }
+          }
         }
       } else if (fx.kind === 'seeker_trail') {
         // Fading exhaust trail: dots shrink + cool down along the polyline.
@@ -1045,11 +1096,14 @@ export class Renderer {
           g.fillRect(Math.round(pt.x - cam.x), Math.round(pt.y - cam.y), sz, sz);
         }
       } else if (fx.kind === 'mine_shrap') {
-        // Shrapnel dot flying outward: position = origin + dir * dist * t.
+        // Shrapnel ember flying outward + a 1px cooling trail behind it.
         const d = fx.dist * t;
+        const shx = Math.round(fx.x + Math.cos(fx.ang) * d - cam.x),
+              shy = Math.round(fx.y + Math.sin(fx.ang) * d - cam.y);
         g.fillStyle = t < 0.5 ? '#ffd75e' : '#ff8848';
-        g.fillRect(Math.round(fx.x + Math.cos(fx.ang) * d - cam.x) - 1,
-                   Math.round(fx.y + Math.sin(fx.ang) * d - cam.y) - 1, 2, 2);
+        g.fillRect(shx - 1, shy - 1, 2, 2);
+        g.fillStyle = '#7a3a1e';
+        g.fillRect(Math.round(shx - Math.cos(fx.ang) * 3), Math.round(shy - Math.sin(fx.ang) * 3), 1, 1);
       } else if (fx.kind === 'beam') {
         // Piercing laser: the visible beam sweeps from->to over its life,
         // thickness flickers via a deterministic per-fire phase.
@@ -1065,18 +1119,42 @@ export class Renderer {
           g.fillRect(x - Math.round(th / 2), y - Math.round(th / 2), th, th);
           g.fillStyle = '#ffffff';                       // hot core
           g.fillRect(x - 1, y - 1, 2, 2);
+          // PORT SLICE H: edge crackle ticks every 4th sample (same sweep).
+          if (i % 4 === 0 && t < 0.8) {
+            g.fillStyle = '#ff9e9e';
+            g.fillRect(x - Math.round(th / 2) - 1, y - Math.round(th / 2) - 1, 1, 1);
+          }
+        }
+        // PORT SLICE H: white end-cap flash at the beam tip, fading with t.
+        if (t < 0.6) {
+          const tx = Math.round(fx.x + cx * fx.len - cam.x), ty = Math.round(fx.y + cy * fx.len - cam.y);
+          g.fillStyle = '#ffffff';
+          g.fillRect(tx - 1, ty - 1, 3, 3);
+          g.fillStyle = '#ff9e9e';
+          g.fillRect(tx - 2, ty, 5, 1); g.fillRect(tx, ty - 2, 1, 5);
         }
       } else if (fx.kind === 'zap') {
-        // Chain lightning: 2px dots sampled along each polyline segment.
+        // Chain lightning: 2px dots sampled along each polyline segment +
+        // PORT SLICE H fork ticks every 3rd dot (perpendicular, hash-sided).
         g.fillStyle = t < 0.5 ? '#ffffff' : '#a8e0ff';
+        const zh = ((Math.round(fx.points[0].x) * 73856093) ^ (Math.round(fx.points[0].y) * 19349663)) >>> 0;
+        let zdi = 0;
         for (let s = 0; s < fx.points.length - 1; s++) {
           const a = fx.points[s], b = fx.points[s + 1];
           const len = Math.hypot(b.x - a.x, b.y - a.y);
           const steps = Math.max(2, Math.ceil(len / 5));
+          const inv = len > 0 ? 1 / len : 0;
+          const pxn = -(b.y - a.y) * inv, pyn = (b.x - a.x) * inv;
           for (let i = 0; i <= steps; i++) {
             const u = i / steps;
-            g.fillRect(Math.round(a.x + (b.x - a.x) * u - cam.x),
-                       Math.round(a.y + (b.y - a.y) * u - cam.y), 2, 2);
+            const dx = Math.round(a.x + (b.x - a.x) * u - cam.x),
+                  dy = Math.round(a.y + (b.y - a.y) * u - cam.y);
+            g.fillRect(dx, dy, 2, 2);
+            if (zdi % 3 === 2) {
+              const side = ((zh >> (zdi % 16)) & 1) === 0 ? 1 : -1;
+              g.fillRect(Math.round(dx + pxn * 3 * side), Math.round(dy + pyn * 3 * side), 1, 1);
+            }
+            zdi++;
           }
         }
       } else if (fx.kind === 'orbit') {
@@ -1086,26 +1164,121 @@ export class Renderer {
         g.fillStyle = '#5a9ad8';
         g.fillRect(Math.round(fx.x - cam.x) - 1, Math.round(fx.y - cam.y) - 1, 2, 2);
       } else if (fx.kind === 'orbit_hit') {
+        // PORT SLICE H: orbit-blade contact was a flat 6x6 white square.
+        // Now a ring-burst: white core + 8-tick pale ring + 4 diagonal flecks.
+        // Same trigger/ttl; hash-phased, t-driven, <= 14 rects.
+        const ox = Math.round(fx.x - cam.x), oy = Math.round(fx.y - cam.y);
+        const oh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
+        const orot = ((oh % 360) / 360) * Math.PI * 2;
+        const orr = 2 + 6 * t;
         g.fillStyle = '#ffffff';
-        g.fillRect(Math.round(fx.x - cam.x) - 3, Math.round(fx.y - cam.y) - 3, 6, 6);
+        const ocz = t < 0.4 ? 4 : 3;
+        g.fillRect(ox - Math.round(ocz / 2), oy - Math.round(ocz / 2), ocz, ocz);
+        g.fillStyle = '#c8e8ff';
+        for (let i = 0; i < 8; i++) {
+          const a = orot + (i / 8) * Math.PI * 2;
+          g.fillRect(Math.round(ox + Math.cos(a) * orr), Math.round(oy + Math.sin(a) * orr), 1, 1);
+        }
+        if (t < 0.7) {
+          g.fillStyle = '#5a9ad8';
+          const od = Math.round(3 + 4 * t);
+          const s0 = (oh >> 3) & 1;
+          g.fillRect(ox - od + s0, oy - od, 1, 1); g.fillRect(ox + od, oy - od + s0, 1, 1);
+          g.fillRect(ox - od, oy + od + s0, 1, 1); g.fillRect(ox + od + s0, oy + od, 1, 1);
+        }
       } else if (fx.kind === 'hit_spark' || fx.kind === 'muzzle' || fx.kind === 'scythe_hit' ||
                  fx.kind === 'seeker_pop' || fx.kind === 'mine_hit' || fx.kind === 'mine_fizzle' ||
                  fx.kind === 'beam_hit') {
-        // Generic spark dot: shrink + darken over life. Color per source.
-        g.fillStyle = fx.kind === 'hit_spark' ? (t < 0.5 ? '#ffffff' : '#ffd75e')
-          : fx.kind === 'muzzle' ? (t < 0.5 ? '#ffe9a8' : '#ff9a3c')
-          : fx.kind === 'scythe_hit' ? (t < 0.5 ? '#ffffff' : '#a8e0ff')
-          : fx.kind === 'seeker_pop' ? (t < 0.5 ? '#ffdd7a' : '#ff8848')
-          : fx.kind === 'mine_hit' ? (t < 0.5 ? '#ffd75e' : '#ff8848')
-          : fx.kind === 'beam_hit' ? (t < 0.5 ? '#ff9e9e' : '#ff5566')
-          : (t < 0.5 ? '#8a8a96' : '#5a5a66');   // mine_fizzle
-        const sz = t < 0.4 ? 4 : t < 0.75 ? 3 : 2;
-        const x = Math.round(fx.x - cam.x), y = Math.round(fx.y - cam.y);
-        g.fillRect(x - Math.round(sz / 2), y - Math.round(sz / 2), sz, sz);
-        // Tiny fly-out flecks on the biggest sparks.
-        if ((fx.kind === 'hit_spark' || fx.kind === 'mine_hit') && t < 0.6) {
-          g.fillRect(x - 3, y, 1, 1); g.fillRect(x + 3, y, 1, 1);
-          g.fillRect(x, y - 3, 1, 1); g.fillRect(x, y + 3, 1, 1);
+        // PORT SLICE H: per-source impact art. The old painter drew one
+        // shrinking square per kind (+ 4 fixed flecks on two kinds). Each kind
+        // below keeps its trigger/ttl/palette family and gains an ORIGINAL
+        // composition: hot core + cross arms + hash-phased diagonal crackle.
+        // Hash is a static stamp of the impact point (never wall clock);
+        // motion is t = age/ttl only. Bounded: <= 12 rects per spark.
+        const sh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
+        const sx = Math.round(fx.x - cam.x), sy = Math.round(fx.y - cam.y);
+        const srot = (sh % 4);   // diagonal phase 0..3
+        const sdiag = (dx, dy, col) => {
+          g.fillStyle = col;
+          const jx = (sh >> 5) & 1, jy = (sh >> 6) & 1;
+          g.fillRect(sx + dx + jx - (dx < 0 ? 1 : 0), sy + dy + jy - (dy < 0 ? 1 : 0), 1, 1);
+        };
+        if (fx.kind === 'hit_spark') {
+          // Volley impact star: white core, gold-to-ember cross, 4 crackle flecks.
+          const core = t < 0.5 ? '#ffffff' : '#ffd75e';
+          const arm = t < 0.5 ? '#ffd75e' : '#ff9a3c';
+          const alen = t < 0.4 ? 5 : t < 0.75 ? 4 : 3;
+          g.fillStyle = core;
+          const cs = t < 0.4 ? 3 : 2;
+          g.fillRect(sx - 1, sy - 1, cs, cs);
+          g.fillStyle = arm;
+          g.fillRect(sx - alen, sy, alen * 2, 1); g.fillRect(sx, sy - alen, 1, alen * 2);
+          if (t < 0.7) {
+            const dd = Math.round(3 + 4 * t) + srot % 2;
+            sdiag(-dd, -dd, '#fff2c0'); sdiag(dd, -dd, '#fff2c0');
+            sdiag(-dd, dd, '#fff2c0'); sdiag(dd, dd, '#fff2c0');
+          }
+        } else if (fx.kind === 'muzzle') {
+          // Muzzle chevron: hot core + two side ticks along the hash direction.
+          g.fillStyle = t < 0.5 ? '#ffe9a8' : '#ff9a3c';
+          g.fillRect(sx - 1, sy - 1, 3, 3);
+          g.fillStyle = '#ff9a3c';
+          const mo = srot % 2 === 0 ? 1 : -1;
+          g.fillRect(sx - 3, sy + mo * 2, 2, 1); g.fillRect(sx + 2, sy - mo * 2, 2, 1);
+        } else if (fx.kind === 'scythe_hit') {
+          // Reap tick: white core + two trailing ticks along a hash direction.
+          const sa = (srot / 4) * Math.PI * 2 + Math.PI / 4;
+          const cdx = Math.cos(sa), cdy = Math.sin(sa);
+          g.fillStyle = t < 0.5 ? '#ffffff' : '#a8e0ff';
+          g.fillRect(sx - 1, sy - 1, 3, 3);
+          g.fillStyle = '#a8e0ff';
+          g.fillRect(Math.round(sx - cdx * 3), Math.round(sy - cdy * 3), 2, 2);
+          g.fillStyle = '#5a9ad8';
+          g.fillRect(Math.round(sx - cdx * 5), Math.round(sy - cdy * 5), 1, 1);
+        } else if (fx.kind === 'seeker_pop') {
+          // Ember pop: gold core, ember halo, 4 outward sparks.
+          g.fillStyle = t < 0.5 ? '#ffdd7a' : '#ff8848';
+          g.fillRect(sx - 1, sy - 1, 3, 3);
+          if (t < 0.7) {
+            g.fillStyle = '#ff8848';
+            const pd = Math.round(3 + 3 * t);
+            g.fillRect(sx - pd, sy, 1, 1); g.fillRect(sx + pd, sy, 1, 1);
+            g.fillRect(sx, sy - pd, 1, 1); g.fillRect(sx, sy + pd, 1, 1);
+            const qd = pd - 1 + srot % 2;
+            sdiag(-qd, -qd, '#ffdd7a'); sdiag(qd, qd, '#ffdd7a');
+          }
+        } else if (fx.kind === 'mine_hit') {
+          // Amber contact star: gold core, ember cross, diagonal crackle.
+          g.fillStyle = t < 0.5 ? '#ffd75e' : '#ff8848';
+          g.fillRect(sx - 1, sy - 1, 3, 3);
+          g.fillStyle = '#ff8848';
+          const md = t < 0.5 ? 4 : 3;
+          g.fillRect(sx - md, sy, md * 2, 1); g.fillRect(sx, sy - md, 1, md * 2);
+          if (t < 0.6) {
+            const dd = md + 1 + srot % 2;
+            sdiag(-dd, -dd, '#ffd75e'); sdiag(dd, -dd, '#ffd75e');
+            sdiag(-dd, dd, '#ffd75e'); sdiag(dd, dd, '#ffd75e');
+          }
+        } else if (fx.kind === 'mine_fizzle') {
+          // Damp fizzle: three grey motes drifting apart and upward with t.
+          g.fillStyle = t < 0.5 ? '#8a8a96' : '#5a5a66';
+          const fo = Math.round(1 + 3 * t);
+          const fy = Math.round(2 * t);
+          g.fillRect(sx - fo, sy - fy, 1, 1);
+          g.fillRect(sx + fo - 1 + (srot % 2), sy - fy - 1, 2, 2);
+          g.fillRect(sx - 1 + (srot % 2), sy + fo - fy, 1, 1);
+        } else {  // beam_hit
+          // Magenta impact cross: white core, long cross, pale diagonals.
+          g.fillStyle = '#ffffff';
+          g.fillRect(sx - 1, sy - 1, 2, 2);
+          g.fillStyle = '#ff5566';
+          const bd = t < 0.5 ? 5 : 4;
+          g.fillRect(sx - bd, sy, bd * 2, 1); g.fillRect(sx, sy - bd, 1, bd * 2);
+          if (t < 0.7) {
+            const qd = bd - 1 + srot % 2;
+            sdiag(-qd, -qd, '#ff9e9e'); sdiag(qd, -qd, '#ff9e9e');
+            sdiag(-qd, qd, '#ff9e9e'); sdiag(qd, qd, '#ff9e9e');
+          }
         }
       } else if (fx.kind === 'flash') {
         // WAVE-11 FLASH DROP: full-screen white-out fading over the fx life —
