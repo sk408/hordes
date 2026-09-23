@@ -202,6 +202,14 @@ import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
   reliefLevelAt, reliefStep, reliefRampRoute,
 } from './relief.js';
+// PORT SLICE F (building collision, owner-ruled 2026-09-22): the building
+// footprints + the axis-separated slide. stage_buildings imports config.js
+// only — no cycle. The query is pure in (seed, stage); this file owns the
+// run-scoped cache below (same field all run: the seed + stage never move
+// mid-run) and applies the slide at the ONE pilot-motion seam.
+import {
+  buildingFootprints, slideMove, buildingSteer, pushOutOfRects, BUILDING_MOVER_R,
+} from './stage_buildings.js';
 // SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
 // import cycle; every behaviour below is armed on ?dev=1 only, gate off =
 // byte-identical player game). SLICE 8 adds the substepped speed control
@@ -1318,6 +1326,17 @@ function damageTakenFortified(state, amount) {
   return damageTaken(state, amount * mult);
 }
 
+// PORT SLICE F: the run-scoped building-collision cache. The footprint field
+// is pure in (groundSeed, stage) and both are frozen for the run, so one
+// keyed lookup serves every frame — no per-frame hash cost, no save impact
+// (rebuilt from the run stamp, never serialised).
+let bCollKey = null, bCollRects = [];
+function buildingRectsForRun(seed, stage) {
+  const key = seed + '|' + String(stage);
+  if (bCollKey !== key) { bCollKey = key; bCollRects = buildingFootprints(seed, stage); }
+  return bCollRects;
+}
+
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
   // PROLOGUE STAGED INTRODUCTION — the movement override, AFTER the
@@ -1362,7 +1381,19 @@ function runController(p, dt, am) {
   // multiplier shape (no dash, no teleport — movement stays the controller's).
   const spd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult *
     (p.buffs.afterimage > 0 ? C.SKILLS.AFTERIMAGE.SPEED_MULT : 1);
+  // PORT SLICE F (building collision, owner-ruled 2026-09-22): the run's
+  // footprint field (run-scoped cache: seed + stage never move mid-run).
+  const bRects = buildingRectsForRun(state.groundSeed || 0, state.stage);
   if (decision.moveX !== 0 || decision.moveY !== 0) {
+    // Corner-steer BEFORE the grade/step: a ray about to cross a footprint
+    // commits around its most intent-aligned corner (stateless, magnitude-
+    // preserving, open-field byte-identical) so a greedy re-aim can never
+    // patrol one face forever. The slide below stays behind it as backstop.
+    if (bRects.length > 0) {
+      const st2 = buildingSteer(p.x, p.y, decision.moveX, decision.moveY,
+        bRects, BUILDING_MOVER_R);
+      decision.moveX = st2[0]; decision.moveY = st2[1];
+    }
     // ARENA RELIEF — the grade term (uphill slower / downhill faster), read
     // HERE for the pilot and at the enemy move seam through the SAME pure
     // function off the SAME field: the anti-sanctuary symmetry. High ground
@@ -1376,7 +1407,17 @@ function runController(p, dt, am) {
       p.x + decision.moveX * spd * grade * dt,
       p.y + decision.moveY * spd * grade * dt,
       state.groundSeed || 0, stageRelief(state.stage));
-    p.x = stepped[0]; p.y = stepped[1];
+    let bnx = stepped[0], bny = stepped[1];
+    // PORT SLICE F (building collision, owner-ruled 2026-09-22): the pilot —
+    // EITHER controller, both funnel through this seam — slides along
+    // building footprints (redirect at full stride, so contact keeps moving
+    // and the no-stall invariant holds). The horde never reads this:
+    // it walks through buildings by design (no pacing change — see report).
+    if (bRects.length > 0 && (bnx !== p.x || bny !== p.y)) {
+      const sl = slideMove(p.x, p.y, bnx, bny, bRects, BUILDING_MOVER_R);
+      bnx = sl[0]; bny = sl[1];
+    }
+    p.x = bnx; p.y = bny;
   }
   // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
   // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
@@ -3175,6 +3216,13 @@ function update(dt) {
         const step = Math.min(C.PORTAL.APPROACH * dt, len - C.PORTAL.STANDOFF);
         po.x += (dx / len) * step;
         po.y += (dy / len) * step;
+        // PORT SLICE F: the drift chases the pilot anywhere, including
+        // through a wall — parking inside one would strand entry (same
+        // shape as the open-clamp above). Hold the drifted point outside
+        // the footprints; rim/reach behaviour is untouched.
+        const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
+          po.x, po.y, 4);
+        po.x = pr[0]; po.y = pr[1];
       }
     }
   }
@@ -3873,6 +3921,17 @@ function update(dt) {
     state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0,
       ttl: C.BOSS_SWEEP.SWEEP_S + 0.15, radius: C.BOSS_SWEEP.RING_RADIUS });
     state.portal = { x: state.wave.portalX || p.x, y: state.wave.portalY || p.y, age: 0 };
+    // PORT SLICE F: the portal must open where the pilot can reach it — a
+    // boss that dies overlapping a building would otherwise park the entry
+    // point inside a wall (entry needs dist < RADIUS of a pilot that can
+    // never stand inside). Nudge to the nearest footing outside the
+    // footprints (a few px; the drift moves it far more anyway). The fiction
+    // ("opens where the boss fell") survives the nudge.
+    {
+      const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
+        state.portal.x, state.portal.y, 4);
+      state.portal.x = pr[0]; state.portal.y = pr[1];
+    }
     toast('THE PORTAL OPENS - WALK THROUGH');
   }
 

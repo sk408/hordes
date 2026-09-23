@@ -9,6 +9,7 @@
 // from main.js key handling — the controller itself never touches input.
 import { CONFIG as C } from './config.js';
 import { isReachableLoot, lootLimit } from './entities.js';
+import { buildingFootprints } from './stage_buildings.js';
 import { stageRelief } from './stages.js';
 import { reliefRampRoute } from './relief.js';
 
@@ -225,12 +226,27 @@ export class AutoPilotController {
     // the visible "grinding into the wall" bug. Drops are spawned clamped now
     // (entities.clampLootToArena), so this is defence in depth: the pilot uses
     // the SAME predicate the clamp guarantees.
+    //
+    // PORT SLICE F (building collision, owner-ruled 2026-09-22): a gem deep
+    // inside a building footprint is the same shape — the pilot can press
+    // the wall forever without the pickup radius ever reaching it. The field
+    // is queried ONCE per frame (pure in seed/stage, a few boxes) and the
+    // interior test rides the same commit/drop shape as the rim test above.
+    const bRects = buildingFootprints(state.groundSeed || 0, state.stage);
+    const inBricks = (x, y) => {
+      for (const r of bRects) {
+        if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) return true;
+      }
+      return false;
+    };
     if (!state.gems.includes(this.gem)) this.gem = null;
     if (this.gem && !isReachableLoot(this.gem.x, this.gem.y)) this.gem = null;
+    if (this.gem && inBricks(this.gem.x, this.gem.y)) this.gem = null;
     if (!this.gem && state.gems.length > 0) {
       let gd = Infinity;
       for (const gm of state.gems) {
         if (!isReachableLoot(gm.x, gm.y)) continue;
+        if (inBricks(gm.x, gm.y)) continue;
         const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
         if (d < gd) { gd = d; this.gem = gm; }
       }

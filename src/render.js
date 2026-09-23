@@ -21,7 +21,7 @@ import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
-import { buildingForStage, paintBuilding } from './stage_buildings.js';
+import { buildingForStage, paintBuilding, clearFixedPoints } from './stage_buildings.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -3064,6 +3064,16 @@ export class Renderer {
             x: Math.min(Math.max(wa.x, 8), C.VIEW_W - bSpec.w - 8),
             y: Math.min(Math.max(wa.y, 8), C.VIEW_H - bSpec.h - 8),
           };
+        }
+        // PORT SLICE F (collision, owner-ruled 2026-09-22): cell (0,0) is
+        // the one cell whose anchor range can reach the run's fixed floor
+        // points, so it alone takes the fixed-point clearance shift (a pure
+        // function of the anchor — the field stays deterministic per seed,
+        // and the motion seam queries the same shift, so paint and blocking
+        // agree box for box).
+        if (bx === 0 && by === 0) {
+          const cl = clearFixedPoints(wa.x, wa.y, bSpec.w, bSpec.h);
+          wa = { x: cl.x, y: cl.y };
         }
         // Footprint rim cull (structures overhang their cell by design).
         if (wa.x < -RIM + 4 || wa.x + bSpec.w > RIM - 4) continue;
