@@ -2,11 +2,13 @@
 // + VS).
 //
 // The slice re-dresses ONLY the shrine painter (visual-only, original art in
-// src/art/shrines.js): one designed altar per shrine INDEX (ember / idol /
-// pylon). Triggers, costs, rolls, pools, the re-arm latch, purse debits and
-// darkening semantics are byte-identical — this file pins BOTH sides:
+// src/art/shrines.js): one designed altar per shrine INDEX (orb / coil /
+// hood — retheme 2026-09-23 off docs/gen_ref/shrine-altars/). Triggers,
+// costs, rolls, pools, the re-arm latch, purse debits and darkening
+// semantics are byte-identical — this file pins BOTH sides:
 //
-//   A. VARIANT MAP — exactly 3 index-deterministic designs; selection never
+//   A. VARIANT MAP — exactly 3 index-deterministic designs (orb / coil /
+//      hood); selection never
 //      reads the blessing (honest display: the blessing is rolled+cached
 //      pre-purchase but hidden, main.js:4036-4041 — per-blessing colors
 //      would LEAK the roll, parked under OWNER-RULING).
@@ -44,18 +46,18 @@ const S = suite('port slice K2: shrine presentation');
 
 // ---------- A. VARIANT MAP (index-deterministic, never blessing-read) ------
 {
-  S.check('exactly 3 index variants (ember, idol, pylon)', () => {
-    assert.deepStrictEqual(SHRINE_VARIANTS, ['ember', 'idol', 'pylon']);
+  S.check('exactly 3 index variants (orb, coil, hood)', () => {
+    assert.deepStrictEqual(SHRINE_VARIANTS, ['orb', 'coil', 'hood']);
     for (const v of SHRINE_VARIANTS) assert.ok(SHRINE_ART[v], v + ' lacks art');
   });
   S.check('index selects the variant (stable all run, S1 set never re-seeds)', () => {
-    assert.strictEqual(shrineArtFor(0), SHRINE_ART.ember, 'altar 0 is ember');
-    assert.strictEqual(shrineArtFor(1), SHRINE_ART.idol, 'altar 1 is idol');
-    assert.strictEqual(shrineArtFor(2), SHRINE_ART.pylon, 'altar 2 is pylon');
-    assert.strictEqual(shrineArtFor(3), SHRINE_ART.ember, 'wraps, never undefined');
-    assert.strictEqual(shrineArtFor(-1), SHRINE_ART.pylon, 'negative wraps');
-    assert.strictEqual(shrineArtFor(undefined), SHRINE_ART.ember, 'unknown falls back');
-    assert.strictEqual(shrineArtFor('idol'), SHRINE_ART.ember, 'non-index falls back');
+    assert.strictEqual(shrineArtFor(0), SHRINE_ART.orb, 'altar 0 is orb');
+    assert.strictEqual(shrineArtFor(1), SHRINE_ART.coil, 'altar 1 is coil');
+    assert.strictEqual(shrineArtFor(2), SHRINE_ART.hood, 'altar 2 is hood');
+    assert.strictEqual(shrineArtFor(3), SHRINE_ART.orb, 'wraps, never undefined');
+    assert.strictEqual(shrineArtFor(-1), SHRINE_ART.hood, 'negative wraps');
+    assert.strictEqual(shrineArtFor(undefined), SHRINE_ART.orb, 'unknown falls back');
+    assert.strictEqual(shrineArtFor('coil'), SHRINE_ART.orb, 'non-index falls back');
   });
   S.check('selection carries no blessing information (honest display)', () => {
     // The seam caches sh.blessing pre-purchase (main.js:4039) but hides it;
@@ -66,12 +68,12 @@ const S = suite('port slice K2: shrine presentation');
     assert.notStrictEqual(a.blessing.offer.id, undefined, 'fixture has a blessing');
     assert.strictEqual(shrineArtFor(0, a.blessing), shrineArtFor(0, b.blessing),
       'extra args never change the resolution');
-    assert.strictEqual(shrineArtFor(1), SHRINE_ART.idol, 'index 1 regardless of cache');
+    assert.strictEqual(shrineArtFor(1), SHRINE_ART.coil, 'index 1 regardless of cache');
   });
 }
 
 // ---------- B. FORMAT + COMPOSITION ----------------------------------------
-const HOUSE_TRIM = { ember: '#ff8c3e', idol: '#7de0a8', pylon: '#c46ad8' };
+const HOUSE_TRIM = { orb: '#30d8f0', coil: '#d08848', hood: '#7ae040' };
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function checkArt(label, art) {
   const { grid, palette, rows } = art;
@@ -92,9 +94,18 @@ function checkArt(label, art) {
     assert.ok(/^[1-8]$/.test(k), label + ': palette keys 1-8');
     assert.ok(HEX.test(palette[k]), label + ': palette values are hex');
   }
+  assert.deepStrictEqual(Object.keys(palette).sort(),
+    ['1', '2', '3', '4', '5', '6', '7', '8'],
+    label + ': palette carries all 8 documented keys');
   for (const v of used) assert.ok(palette[v], label + ': used index ' + v + ' defined');
   assert.strictEqual(palette[4], HOUSE_TRIM[art.variantKey],
     label + ': trim ink is the variant marker (' + palette[4] + ')');
+  assert.ok(Array.isArray(art.glint) && art.glint.length === 2,
+    label + ': ships the glint pair');
+  for (const [gx, gy] of art.glint) {
+    assert.ok(Number.isInteger(gx) && gx >= 0 && gx < art.w, label + ': glint x in range');
+    assert.ok(Number.isInteger(gy) && gy >= 0 && gy < art.h, label + ': glint y in range');
+  }
 }
 for (const v of SHRINE_VARIANTS) SHRINE_ART[v].variantKey = v;
 for (const v of SHRINE_VARIANTS) {

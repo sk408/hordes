@@ -718,7 +718,7 @@ export class Renderer {
     }
 
     // WAVE-11 RUN SHRINES (shrines.js): PORT SLICE K2 original altar art —
-    // one designed altar per shrine INDEX (ember/idol/pylon, art/shrines.js),
+    // one designed altar per shrine INDEX (orb/coil/hood, art/shrines.js),
     // never per-blessing (honest display: the blessing is rolled but hidden
     // until purchase, so the world sprite must not leak it — see the module
     // header). A soft aura pulse while unsold, a coin glyph on the face.

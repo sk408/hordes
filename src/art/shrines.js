@@ -1,24 +1,25 @@
-// HORDES — PORT SLICE K2: original shrine altar art (owner queue: megabonk
-// shrines + VS).
+// HORDES — PORT SLICE K2: original shrine altar art (owner queue: SHRINE ART
+// THEME UPDATE — altar/shrine retheme off docs/gen_ref/shrine-altars/).
 //
 // REFERENCE VOCABULARY ONLY (no foreign pixels — every grid below is
 // hand-composed in hordes' integer-grid style):
-//   brazier bowl + flame cleft (the EMBER altar)
-//     <- docs/mb_ref/art/shrines/FBX_ChallengeShrine_Color.png (challenge
-//        shrine: raised fire bowl on a plinth)
-//   broad idol head + brow band + eye glints (the IDOL altar)
-//     <- docs/mb_ref/art/shrines/FBX_BanditStatue_Color.png,
-//        FBX_CursedStatue_Color.png, FBX_SkeletonKingStatue_Color.png
-//        (statue triptych: plinth + robed body + heavy head)
-//   tall tapering crystal + facet line + collar (the PYLON altar)
-//     <- docs/mb_ref/art/shrines/B_Pylon_Color.png (+ _Emission.png:
-//        the emissive core reads as the altar's lit tell),
-//        FBX_EnergyAltar_Emission.png (altar glow),
-//        FBX_MagnetShrine_Color.png (compact shrine massing)
-//   plinth + figure + glow massing (all three)
-//     <- docs/vs_port_ref/ section 6 props (2D-native altar/shrine-adjacent
-//        props: stone base, vertical figure, readable silhouette). Section 6
-//        is concept-only (no thumbs extracted) — the SILHOUETTE is the anchor.
+//   floating cyan orb over a carved basin (the ORB altar)
+//     <- docs/gen_ref/shrine-altars/01-energy-altar.png (stone altar,
+//        offering basin, orb hovering in the gap above it)
+//   copper coil pillar under a hovering iron ring (the COIL altar)
+//     <- docs/gen_ref/shrine-altars/02-magnet-shrine.png (stacked coil
+//        ridges, flat metal disc hovering over the column with a see-through
+//        hole, spark flecks in the gap)
+//   hooded hunched statue + chest-glow core (the HOOD altar)
+//     <- docs/gen_ref/shrine-altars/04-cursed-statue.png (pointed hood,
+//        face void, sickly green chest cavity, stepped brick plinth)
+//   stepped plinth massing (all three, shared rows 9-11)
+//     <- the same reference set's stone bases + the K2 house massing
+//   DROPPED from the five: 03-challenge-brazier.png (reads as the retired
+//   ember brazier — least change from the current set; its bowl-on-base
+//   massing also collides with the orb altar at 14x12) and
+//   05-king-statue.png (figure-on-plinth silhouette collides with the hood
+//   statue at 14x12; gold trim also fights the coil's warm copper).
 //
 // HONEST DISPLAY (the chest-slice rule, applied here):
 //   A hordes run shrine is { x, y, used } (shrines.js seedShrines) — it
@@ -40,7 +41,7 @@
 // 1-8 with #rrggbb inks, rows = the derived digit-string view. The module is
 // NOT enumerated in ART_ASSETS (chest-slice precedent), so the art-lint
 // counts do not move; the slice-K2 test verifies this same format.
-export const SHRINE_VARIANTS = ['ember', 'idol', 'pylon'];
+export const SHRINE_VARIANTS = ['orb', 'coil', 'hood'];
 
 // Shared spent palette: the exhausted read — grey stone, no hue tells.
 export const SHRINE_SPENT = {
@@ -49,47 +50,47 @@ export const SHRINE_SPENT = {
 };
 
 // Authoring rows ('.' = transparent, digits = ink). All three share the
-// VS-anchored massing: stepped plinth (rows 9-11) + vertical figure.
+// stepped plinth massing (rows 9-11) + a vertical figure/object above.
 const ROWS = {
-  ember: [
-    '....111111....',
-    '..1114444111..',
-    '..1445555441..',
-    '...14455441...',
-    '.....1441.....',
-    '....111111....',
-    '.....1331.....',
-    '.....1331.....',
-    '.....1331.....',
+  orb: [
+    '.....44.......',
+    '....4554......',
+    '.....44.......',
+    '..............',
+    '..1111111111..',
+    '.166677666661.',
+    '.123333333321.',
+    '...18333381...',
+    '...13633631...',
     '....113311....',
     '..1113333111..',
     '.111333333111.',
   ],
-  idol: [
-    '......11......',
-    '.....1111.....',
-    '....111111....',
-    '....133331....',
-    '....144441....',
-    '....176671....',
-    '....133331....',
-    '...11333311...',
-    '...13344331...',
-    '....133331....',
+  coil: [
+    '12333333333321',
+    '1233......3321',
+    '.7........7...',
+    '...18444481...',
+    '...14554441...',
+    '...16666661...',
+    '...14444441...',
+    '...16666661...',
+    '...12444421...',
+    '....113311....',
     '..1113333111..',
     '.111333333111.',
   ],
-  pylon: [
+  hood: [
     '......11......',
-    '.....1441.....',
-    '.....1441.....',
-    '.....1741.....',
-    '.....1741.....',
-    '.....1741.....',
-    '....114411....',
-    '.....1331.....',
-    '.....1331.....',
-    '....113311....',
+    '.....1321.....',
+    '....133331....',
+    '....166661....',
+    '...18333381...',
+    '..1334444331..',
+    '..1347557431..',
+    '..1334444331..',
+    '...13366331...',
+    '....133331....',
     '..1113333111..',
     '.111333333111.',
   ],
@@ -99,18 +100,25 @@ const ROWS = {
 // variant's marker ink), 5 trim-hi (also the blink glint ink), 6 dark
 // detail, 7 bright tell, 8 shadow.
 const PALETTES = {
-  ember: {
-    1: '#1c1008', 2: '#4a2c14', 3: '#7a5230', 4: '#ff8c3e',
-    5: '#ffd75e', 6: '#3a2412', 7: '#ff5e3e', 8: '#0d0704',
+  orb: {
+    1: '#1c1610', 2: '#5c4e3c', 3: '#8c7a5e', 4: '#30d8f0',
+    5: '#d8ffff', 6: '#3a2e22', 7: '#7af0e8', 8: '#0e0a08',
   },
-  idol: {
-    1: '#0e1420', 2: '#2c3a4a', 3: '#5a6e84', 4: '#7de0a8',
-    5: '#d8ffe8', 6: '#223040', 7: '#4a8cff', 8: '#070b10',
+  coil: {
+    1: '#14100c', 2: '#4a4a54', 3: '#7a7a88', 4: '#d08848',
+    5: '#ffc888', 6: '#2a2a32', 7: '#9ad8ff', 8: '#0a0a0e',
   },
-  pylon: {
-    1: '#100a24', 2: '#3a2b5a', 3: '#6a4f94', 4: '#c46ad8',
-    5: '#f0c8ff', 6: '#2c1c44', 7: '#b9d2ff', 8: '#0a0614',
+  hood: {
+    1: '#101410', 2: '#3a4a3a', 3: '#5a6e5a', 4: '#7ae040',
+    5: '#c8ffa8', 6: '#243024', 7: '#8aff70', 8: '#0a0e0a',
   },
+};
+
+// Lit blink pixels ([dx, dy]) per variant, painted in ink 5 over the tell.
+const GLINTS = {
+  orb: [[5, 1], [6, 1]],
+  coil: [[5, 4], [6, 4]],
+  hood: [[6, 6], [7, 6]],
 };
 
 function buildGrid(rows) {
@@ -127,13 +135,13 @@ function finish(id, grid, palette, glint) {
 
 function entryFor(key) {
   const grid = buildGrid(ROWS[key]);
-  return finish('shrine_' + key, grid, PALETTES[key], [[6, 2], [7, 2]]);
+  return finish('shrine_' + key, grid, PALETTES[key], GLINTS[key]);
 }
 
 export const SHRINE_ART = {
-  ember: entryFor('ember'),
-  idol: entryFor('idol'),
-  pylon: entryFor('pylon'),
+  orb: entryFor('orb'),
+  coil: entryFor('coil'),
+  hood: entryFor('hood'),
 };
 
 // Resolve display art by shrine INDEX (position in state.shrines) — never by
