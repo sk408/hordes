@@ -21,6 +21,9 @@ import { trimBar, trimBadge, trimPlate, studCorners, radarTicks, fsKeyline, bann
 // PORT SLICE K — original chest art (sealed world chest, per-band open
 // remnants, burst dressing). Painters only; triggers/ttls/pools untouched.
 import { chestArtFor, paintChest, SEALED_KEY } from './art/chests.js';
+// PORT SLICE K2 — original shrine altar art (per-index designs, honest
+// display: never per-blessing). Painters only; economy/rolls/latch untouched.
+import { shrineArtFor, paintShrine } from './art/shrines.js';
 // A2 THE RADAR: the DATA layer (pure maths, no DOM — see src/radar.js's header)
 // is imported, never restated. This file owns only the painting of what it
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
@@ -711,9 +714,12 @@ export class Renderer {
       g.fillRect(x - 1, y - 17, 2, 2);            // keystone glint
     }
 
-    // WAVE-11 RUN SHRINES (shrines.js): pixel altar — stone slab + column +
-    // idol head, a soft aura pulse while unsold, a coin glyph on the face.
-    // Used shrines go dark (grey column, no aura) so the field reads spent.
+    // WAVE-11 RUN SHRINES (shrines.js): PORT SLICE K2 original altar art —
+    // one designed altar per shrine INDEX (ember/idol/pylon, art/shrines.js),
+    // never per-blessing (honest display: the blessing is rolled but hidden
+    // until purchase, so the world sprite must not leak it — see the module
+    // header). A soft aura pulse while unsold, a coin glyph on the face.
+    // Used shrines go dark (spent greys, no aura) so the field reads spent.
     if (state.shrine) {
       const sh = state.shrine;
       const x = Math.round(sh.x - cam.x), y = Math.round(sh.y - cam.y);
@@ -724,14 +730,11 @@ export class Renderer {
           g.fillStyle = 'rgba(255,215,94,' + (0.08 + 0.14 * glow).toFixed(2) + ')';
           g.fillRect(x - 10, y - 20, 20, 30);     // aura field
         }
-        g.fillStyle = '#3a3a46';                  // base slab
-        g.fillRect(x - 7, y + 4, 14, 4);
-        g.fillStyle = lit ? '#6a6a7a' : '#4a4a56'; // column
-        g.fillRect(x - 3, y - 8, 6, 12);
-        g.fillStyle = lit ? '#ffd75e' : '#8a8a96'; // idol head
-        g.fillRect(x - 4, y - 13, 8, 5);
-        g.fillStyle = lit ? '#fff6c8' : '#6a6a76';
-        g.fillRect(x - 1, y - 11, 2, 2);          // eye glint
+        // The altar body: 14x12 grid art, anchored like the chest painter
+        // (centred, footing 4px above the ground point). Variant = the
+        // shrine's index in the world-seeded set (stable all run, S1).
+        const sart = shrineArtFor((state.shrines || []).indexOf(sh));
+        paintShrine(g, sart, x - Math.floor(sart.w / 2), y - sart.h + 4, lit);
         if (lit) {                                // coin glyph, blinking
           g.fillStyle = Math.floor((state.time || 0) * 3) % 2 === 0 ? '#ffe9a8' : '#c8a03a';
           g.fillRect(x - 2, y - 4, 4, 4);
