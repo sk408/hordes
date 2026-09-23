@@ -85,6 +85,10 @@ const EXPECTED_SHOP = [
   // CHAIN ZAP REWORK (owner msg_01M2RENZ, 2026-09-17): the Storm Conduit row
   // gets its own authored icon — never the fallback.
   'zapchain',
+  // TIER-2(c) NEW BUYABLES (owner autopilot 2026-09-23): 10 classic stat rows,
+  // each with its own authored icon — never the fallback.
+  'might', 'toughness', 'cooldown', 'marathon', 'magnetism',
+  'growth', 'avarice', 'bullseye', 'vampire', 'hoarder',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam',

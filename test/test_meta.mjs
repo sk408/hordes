@@ -211,8 +211,11 @@ console.log('EXPANSION LINES:');
   // tracks the catalogue rather than being deleted or turned into a >= check.
   // RETARGETED 2026-09-17 (chain zap rework, owner msg_01M2RENZ): 34 -> 35 —
   // the Storm Conduit kit row ('zapchain') joins the flat stat lines.
-  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 35,
-     'thirty-five stat lines total (18 classic + 16 G17-slice-2 breadth + 1 chain-zap kit row)');
+  // RETARGETED 2026-09-23 (TIER-2(c) new buyables, owner autopilot): 35 -> 45 —
+  // ten classic stat rows (might/toughness/cooldown/marathon/magnetism/growth/
+  // avarice/bullseye/vampire/hoarder), each on a surface the shop already sells.
+  ok(SHOP_UPGRADES.filter(u => !u.kind && !['slots', 'arcade'].includes(u.id)).length === 45,
+     'forty-five stat lines total (18 classic + 16 G17-slice-2 breadth + 1 chain-zap kit row + 10 tier-2(c) buyables)');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
@@ -798,8 +801,11 @@ console.log('APEX TIER (G25):');
   // the normal catalogue, so the count tracks the pre-apex rows exactly.
   // RETARGETED 2026-09-17 (chain zap rework, owner msg_01M2RENZ): 46 -> 47 —
   // the Storm Conduit kit row ('zapchain') joined SHOP_UPGRADES. Same JOB.
-  ok(SHOP_UPGRADES.length === 47,
-     `SHOP_UPGRADES holds exactly its 47 pre-apex rows (30 classic + 16 breadth + 1 zapchain; got ${SHOP_UPGRADES.length})`);
+  // RETARGETED 2026-09-23 (TIER-2(c) new buyables, owner autopilot): 47 -> 57 —
+  // ten classic stat rows (might/toughness/cooldown/marathon/magnetism/growth/
+  // avarice/bullseye/vampire/hoarder) joined SHOP_UPGRADES. Same JOB.
+  ok(SHOP_UPGRADES.length === 57,
+     `SHOP_UPGRADES holds exactly its 57 pre-apex rows (30 classic + 16 breadth + 1 zapchain + 10 tier-2(c); got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

@@ -727,6 +727,53 @@ export const SHOP_UPGRADES = [
   { id: 'zapchain', name: 'Storm Conduit',
     get desc() { return 'Chain Zap: UNCAP the chain count (range-limited) and +' + WEAPONS.ZAP.RANGE_PER_LEVEL + ' hop range per level. Needs Chain Zap.'; },
     baseCost: 200000, costGrowth: 1.7, maxLevel: 5, perLevel: 0 },
+  // ---- TIER-2(c) NEW BUYABLES (owner autopilot 2026-09-23) -------------------
+  // Ten classic stat rows, one per surface the shop ALREADY sells (see the
+  // META STAT FIELD CONTRACT on applyMetaBonuses — every row below feeds a
+  // seam a shipped row proves, so no row is dead and no new surface is cut).
+  // Vocab sources (REFERENCE ONLY): VS POWERUP_DATA (docs/vs_ref) for the
+  // might/cooldown/marathon/magnetism/growth/avarice/toughness rates, MB
+  // passives (docs/mb_ref SPEC §12) for bullseye/vampire/hoarder. Priced in
+  // the CHEAP classic band (base 200-400, growth 1.5-1.7, max 4-5; full-buy
+  // ~2-8k each, ~44k for the batch) by analogy to the neighbour rows cited
+  // per row — premium-band pricing is review-phase tuning, and the OPEN
+  // tier-2 dead-tail item stays an owner decision. Every perLevel below the
+  // premium same-seam row's rate (headsman 0.33, hairtrigger 0.18, bloodpact
+  // 0.02, lodestone 0.25, critdmg 0.75), so no cheap row leapfrogs a top rung.
+  // Bucket: OTHER by default (not in MID_TIER_IDS/TOP_TIER_IDS) — the mid
+  // share and the sim tier lists are untouched. G1/G2 safe: cheapest new base
+  // (200) ties Orbit Blade, never undercuts hp L1 (120) / dmg L1 (150); every
+  // full-buy sits ~1000x under the G3 single-item cap.
+  { id: 'might',   name: 'Might',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% all damage per level'; },
+    baseCost: 300, costGrowth: 1.7, maxLevel: 5, perLevel: 0.05 },
+  { id: 'toughness', name: 'Toughness',
+    get desc() { return '+' + fmtNum(this.perLevel) + ' max HP per level'; },
+    baseCost: 220, costGrowth: 1.5, maxLevel: 5, perLevel: 40 },
+  { id: 'cooldown', name: 'Cooldown',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% attack rate per level'; },
+    baseCost: 320, costGrowth: 1.7, maxLevel: 5, perLevel: 0.05 },
+  { id: 'marathon', name: 'Marathon',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% move speed per level'; },
+    baseCost: 260, costGrowth: 1.6, maxLevel: 5, perLevel: 0.05 },
+  { id: 'magnetism', name: 'Magnetism',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% pickup radius per level'; },
+    baseCost: 280, costGrowth: 1.6, maxLevel: 5, perLevel: 0.15 },
+  { id: 'growth',  name: 'Growth',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% XP gain per level'; },
+    baseCost: 200, costGrowth: 1.6, maxLevel: 5, perLevel: 0.05 },
+  { id: 'avarice', name: 'Avarice',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% gold from runs per level'; },
+    baseCost: 350, costGrowth: 1.5, maxLevel: 5, perLevel: 0.10 },
+  { id: 'bullseye', name: 'Bullseye',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% crit damage per level'; },
+    baseCost: 260, costGrowth: 1.7, maxLevel: 5, perLevel: 0.25 },
+  { id: 'vampire', name: 'Vampire',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% lifesteal per level'; },
+    baseCost: 400, costGrowth: 1.7, maxLevel: 5, perLevel: 0.01 },
+  { id: 'hoarder', name: 'Hoarder',
+    get desc() { return '+' + fmtPct(this.perLevel) + '% potion drop chance per level'; },
+    baseCost: 240, costGrowth: 1.6, maxLevel: 4, perLevel: 0.03 },
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
@@ -1293,27 +1340,43 @@ export function applyMetaBonuses(stats, purchased) {
     // rows below stay additive and must: `crit` and `dropBonus` are values SET
     // from zero (0 x anything = 0, so compounding would silently disable the
     // row), and hp/regen/well/siphon/artifact are absolute amounts, not factors.
-    xpMult: Math.pow(1 + SHOP_BY_ID.xp.perLevel, lvl('xp')),
+    xpMult: Math.pow(1 + SHOP_BY_ID.xp.perLevel, lvl('xp'))
+      * Math.pow(1 + SHOP_BY_ID.growth.perLevel, lvl('growth')),
     crit: SHOP_BY_ID.crit.perLevel * lvl('crit') + SHOP_BY_ID.eagleeye.perLevel * lvl('eagleeye'),
-    critMult: Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg')),
-    goldMult: Math.pow(1 + SHOP_BY_ID.greed.perLevel, lvl('greed')),
+    critMult: Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg'))
+      * Math.pow(1 + SHOP_BY_ID.bullseye.perLevel, lvl('bullseye')),
+    goldMult: Math.pow(1 + SHOP_BY_ID.greed.perLevel, lvl('greed'))
+      * Math.pow(1 + SHOP_BY_ID.avarice.perLevel, lvl('avarice')),
     potionPower: Math.pow(1 + SHOP_BY_ID.alchemy.perLevel, lvl('alchemy'))
       * (1 + SHOP_BY_ID.grandelixir.perLevel * lvl('grandelixir')),
-    dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav'),
+    dropBonus: SHOP_BY_ID.scav.perLevel * lvl('scav')
+      + SHOP_BY_ID.hoarder.perLevel * lvl('hoarder'),
     artifactLevels: SHOP_BY_ID.artifact.perLevel * lvl('artifact'),
     luck: SHOP_BY_ID.luck.perLevel * lvl('luck'),
+    // ---- TIER-2(c) buyables (each feeds a consumed seam above, same rule) --
+    // might/cooldown/marathon/magnetism compound onto damageMult/rateMult/
+    // speedMult/pickupMult beside their premium same-seam rows; growth/
+    // bullseye/avarice compound onto xpMult/critMult/goldMult beside
+    // xp/critdmg/greed; toughness/vampire/hoarder add onto maxHp/lifesteal/
+    // dropBonus beside ironheart/bloodpact/scav. No new surface is cut.
     // ---- G17 slice 2 breadth rows (each feeds a consumed seam above) ----
     // Multiplier seams compound off whatever the base/affix pass carries in,
     // same owner rule as dmg/xp: (1 + perLevel)^level. Flat seams add.
     maxHp: stats.maxHp + SHOP_BY_ID.hp.perLevel * lvl('hp')
-      + SHOP_BY_ID.ironheart.perLevel * lvl('ironheart'),
+      + SHOP_BY_ID.ironheart.perLevel * lvl('ironheart')
+      + SHOP_BY_ID.toughness.perLevel * lvl('toughness'),
     pierce: (stats.pierce || 0) + SHOP_BY_ID.hollowpoint.perLevel * lvl('hollowpoint'),
     projectiles: (stats.projectiles || 1) + SHOP_BY_ID.fanfire.perLevel * lvl('fanfire'),
-    damageMult: (stats.damageMult || 1) * Math.pow(1 + SHOP_BY_ID.headsman.perLevel, lvl('headsman')),
-    rateMult: (stats.rateMult || 1) * Math.pow(1 + SHOP_BY_ID.hairtrigger.perLevel, lvl('hairtrigger')),
-    speedMult: (stats.speedMult || 1) * Math.pow(1 + SHOP_BY_ID.fleetfoot.perLevel, lvl('fleetfoot')),
-    pickupMult: (stats.pickupMult || 1) * Math.pow(1 + SHOP_BY_ID.lodestone.perLevel, lvl('lodestone')),
-    lifesteal: (stats.lifesteal || 0) + SHOP_BY_ID.bloodpact.perLevel * lvl('bloodpact'),
+    damageMult: (stats.damageMult || 1) * Math.pow(1 + SHOP_BY_ID.headsman.perLevel, lvl('headsman'))
+      * Math.pow(1 + SHOP_BY_ID.might.perLevel, lvl('might')),
+    rateMult: (stats.rateMult || 1) * Math.pow(1 + SHOP_BY_ID.hairtrigger.perLevel, lvl('hairtrigger'))
+      * Math.pow(1 + SHOP_BY_ID.cooldown.perLevel, lvl('cooldown')),
+    speedMult: (stats.speedMult || 1) * Math.pow(1 + SHOP_BY_ID.fleetfoot.perLevel, lvl('fleetfoot'))
+      * Math.pow(1 + SHOP_BY_ID.marathon.perLevel, lvl('marathon')),
+    pickupMult: (stats.pickupMult || 1) * Math.pow(1 + SHOP_BY_ID.lodestone.perLevel, lvl('lodestone'))
+      * Math.pow(1 + SHOP_BY_ID.magnetism.perLevel, lvl('magnetism')),
+    lifesteal: (stats.lifesteal || 0) + SHOP_BY_ID.bloodpact.perLevel * lvl('bloodpact')
+      + SHOP_BY_ID.vampire.perLevel * lvl('vampire'),
     thorns: (stats.thorns || 0) + SHOP_BY_ID.briarmail.perLevel * lvl('briarmail'),
     draftOffers: (stats.draftOffers || 0) + SHOP_BY_ID.deepread.perLevel * lvl('deepread'),
     secondWind: !!stats.secondWind || lvl('laststand') > 0,
