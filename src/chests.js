@@ -271,7 +271,10 @@ function applyContents(state, contents, chest) {
     // than applied here: main.js pushes it onto state.itemDrops so the ONE
     // world-drop pickup path (decideEquip / applyItemAffixes) owns the equip
     // decision, and a full 4/4 belt still gets the normal swap-or-ignore rule.
-    events.push({ kind: 'chestItem', item: contents.item, x: chest.x, y: chest.y });
+    // PORT SLICE K: the event carries the ROLLED band (the same band the
+    // chestOpened event announces) for the open-chest remnant painter — an
+    // inert display field; rolls, contents and draw order are untouched.
+    events.push({ kind: 'chestItem', rarity: contents.rarity, item: contents.item, x: chest.x, y: chest.y });
   }
 
   if (contents.rarity === 'gamble' && contents.gambleWin === false) {

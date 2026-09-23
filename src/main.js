@@ -775,6 +775,9 @@ const state = {
   gems: [],
   drops: [],         // potion drops on the ground ({ x, y, kind })
   itemDrops: [],     // rare item drops on the ground ({ x, y, item }) — loot.js
+                     // PORT SLICE K: a chest reward ALSO carries `chest` (the
+                     // ROLLED band, 'common'..'legendary' or 'gamble') — inert
+                     // display data for the open-chest remnant painter only.
   chests: [],        // chests.js-owned ({ id, x, y, age })
   items: [],         // equipped rare items (loot.js; cap MAX_EQUIPPED=4)
   heat: null,        // WAVE-9 heat ledger (heat.js; run-scoped, never persisted)
@@ -4076,7 +4079,9 @@ function update(dt) {
       // them. It lands on the ground where the chest opened and the ONE world-drop
       // pickup path owns the equip decision, so a full belt still gets the normal
       // swap-or-ignore rule rather than a second equip code path.
-      pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
+      pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0, chest: ev.rarity });
+      // PORT SLICE K: `chest` stamps the ROLLED band for the open-chest
+      // remnant painter (visual only — pickup/equip/caps read item alone).
       // RARITY LABEL FIX (owner-reported 2026-09-19: "I'm constantly seeing items
       // that say LEGENDARY: WORN COIN, LEGENDARY: WORN BOOT").
       //

@@ -18,6 +18,9 @@ import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 
 // paints 1px furniture strictly inside the footprint its caller already
 // painted — no caller moves, resizes, renames or re-times anything).
 import { trimBar, trimBadge, trimPlate, studCorners, radarTicks, fsKeyline, bannerTrim } from './art/hud_chrome.js';
+// PORT SLICE K — original chest art (sealed world chest, per-band open
+// remnants, burst dressing). Painters only; triggers/ttls/pools untouched.
+import { chestArtFor, paintChest, SEALED_KEY } from './art/chests.js';
 // A2 THE RADAR: the DATA layer (pure maths, no DOM — see src/radar.js's header)
 // is imported, never restated. This file owns only the painting of what it
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
@@ -283,13 +286,36 @@ export function drawChestBurst(g, state, cam) {
     ring(10, 'rgba(255,215,94,' + (0.8 * (1 - p)).toFixed(2) + ')');
     return true;
   }
-  // White core flash only in the first fifth of the window.
+  // PORT SLICE K dressing (painter only — trigger, ttl, aging untouched):
+  // white core cross (first fifth), expanding gold ring ticks, site-hashed
+  // diagonal crackle (deterministic per burst site, never the wall clock),
+  // the coin/spark shower (fixed angles, ease-out radius, slight lift —
+  // every third spark white-hot, the rest chest-gold), pale echo ring.
+  const hash = (((b.x | 0) * 73856093) ^ ((b.y | 0) * 19349663)) >>> 0;
+  const ph = hash % 8;
   if (p < 0.2) {
-    g.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - p / 0.2)).toFixed(2) + ')';
+    const ca = (0.85 * (1 - p / 0.2)).toFixed(2);
+    g.fillStyle = 'rgba(255,255,255,' + ca + ')';
     g.fillRect(x - 10, y - 10, 20, 20);
+    g.fillStyle = '#ffffff';
+    g.fillRect(x - 1, y - 13, 2, 26);
+    g.fillRect(x - 13, y - 1, 26, 2);
   }
   // The beacon's goodbye: an expanding ring of arc ticks, alpha fading.
   ring(6 + Math.round(p * 26), 'rgba(255,215,94,' + (0.9 * (1 - p)).toFixed(2) + ')');
+  const echoR = 3 + Math.round(p * 13);
+  g.fillStyle = 'rgba(255,233,168,' + (0.55 * (1 - p)).toFixed(2) + ')';
+  g.fillRect(x - echoR, y - 1, 2, 2); g.fillRect(x + echoR - 2, y - 1, 2, 2);
+  g.fillRect(x - 1, y - echoR, 2, 2); g.fillRect(x - 1, y + echoR - 2, 2, 2);
+  // Hash-phased crackle: 8 diagonal flecks one step beyond the shower.
+  const cdist = 10 + Math.round(p * 22);
+  for (let i = 0; i < 8; i++) {
+    const a = ((i * 2 + ph) / 16) * Math.PI * 2;
+    const cx = x + Math.round(Math.cos(a) * cdist);
+    const cy = y + Math.round(Math.sin(a) * cdist) - Math.round(p * 6);
+    g.fillStyle = '#fff2c0';
+    g.fillRect(cx - 1, cy - 1, 2, 2);
+  }
   // The coin/spark shower: fixed angles, ease-out radius, a slight lift —
   // every third spark white-hot, the rest chest-gold.
   const n = C.RUN_CHEST.BURST_SPARKS;
@@ -546,25 +572,32 @@ export class Renderer {
       g.fillRect(x - 1, y - 4, 2, 1);
     }
 
-    // Chests: gold boxes that pulse; slide toward the player (main.js).
+    // Chests: the SEALED chest (PORT SLICE K — original closed-chest art:
+    // timber body, arched lid, twin bands, lock plate; the lock glints on the
+    // same blink the old gold box pulsed on). Slide toward the player (main.js).
+    // A field chest carries NO rarity (chests.js rolls the band at OPEN time),
+    // so the world never claims one — `ch.band` is a capture/test-only display
+    // override the game never writes. Same loop, same cull, same positions.
     for (const ch of state.chests || []) {
       const x = Math.round(ch.x - cam.x), y = Math.round(ch.y - cam.y);
       if (cull(x, y, 12)) continue;
       const blink = Math.floor(ch.age * 3) % 2 === 0;
-      g.fillStyle = '#8a6a1e';
-      g.fillRect(x - 6, y - 4, 12, 9);
-      g.fillStyle = blink ? '#ffd75e' : '#c8a03a';
-      g.fillRect(x - 5, y - 3, 10, 4);
-      g.fillRect(x - 5, y + 1, 10, 3);
-      g.fillStyle = '#3a2a0a';
-      g.fillRect(x - 1, y - 1, 2, 2);
+      const cart = chestArtFor(ch.band || SEALED_KEY, 'closed');
+      paintChest(g, cart, x - Math.floor(cart.w / 2), y - cart.h + 4, blink);
     }
 
     // Rare item drops (loot.js): small glowing boxes colored by rarity;
-    // EPIC+ sparkle so they read as loot, not potions.
+    // EPIC+ sparkle so they read as loot, not potions. A drop that came from
+    // a chest (PORT SLICE K: main.js stamps the ROLLED band — the true band,
+    // never a claim) rests on its band's OPEN chest remnant; the glyph below
+    // keeps its exact record (coords/styles/order untouched).
     for (const d of state.itemDrops || []) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
-      if (cull(x, y, 5)) continue;
+      if (cull(x, y, d.chest ? 14 : 5)) continue;
+      if (d.chest) {
+        const oart = chestArtFor(d.chest, 'open');
+        paintChest(g, oart, x - Math.floor(oart.w / 2), y - Math.floor(oart.h / 2) + 3, true);
+      }
       const col = RARITY_COLORS[d.item.rarity] || RARITY_COLORS.COMMON;
       g.fillStyle = col;
       g.fillRect(x - 2, y - 2, 5, 5);
