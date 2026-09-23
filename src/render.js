@@ -22,6 +22,7 @@ import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingForStage, paintBuilding, clearFixedPoints } from './stage_buildings.js';
+import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -514,7 +515,9 @@ export class Renderer {
     this.drawTerrace(g, state, cam);
     // Ground decor: world-anchored seeded field, drawn under everything else
     // so the camera's player-lock reads as the PLAYER moving, not the world.
-    this.drawGround(g, state.groundSeed || 1, cam, theme);
+    // PORT SLICE G: the pass is stage-aware (state.stage sets the terrain
+    // character); the wave theme still sets every color (see drawGround).
+    this.drawGround(g, state.groundSeed || 1, cam, theme, state.stage);
     // WAVE-24 (#3): deliberate structures over the fine field (see
     // drawLandmarks) — the coarse layer that gives the floor a sense of place.
     this.drawLandmarks(g, state.groundSeed || 1, cam, theme, state.stage);
@@ -2716,13 +2719,18 @@ export class Renderer {
   // tuft CLUSTER, a slab PLATE with seams, an occasional boulder landmark)
   // so the floor reads as deliberate level art. Still subtle: decor sits
   // under entities and never competes with the play pieces.
-  drawGround(g, seed, cam, theme) {
+  drawGround(g, seed, cam, theme, stage) {
     const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY;
     // WAVE-24 (#3): decor clips at the arena RIM (600), not the old 660 bound
     // — pieces used to spill into the off-map gloom past the wall.
     const RIM = C.GROUND.RIM;
     // WAVE-9B/2: palette family rides the WAVE theme (groundSeed keeps
     // shaping WHICH cells carry a piece — the field itself stays per-run).
+    // PORT SLICE G: the STAGE sets the terrain character (the overlay pass
+    // at the end of this function), the WAVE keeps setting every COLOR —
+    // every motif below paints ONLY through pal.* so the recolor cadence
+    // survives: same stage at a later wave reads recolored, same wave at a
+    // different stage reads re-patterned.
     const pal = theme || groundTheme(1);
     const c0 = Math.floor(cam.x / CELL), c1 = Math.floor((cam.x + C.VIEW_W) / CELL);
     const r0 = Math.floor(cam.y / CELL), r1 = Math.floor((cam.y + C.VIEW_H) / CELL);
@@ -2780,6 +2788,131 @@ export class Renderer {
           g.fillRect(x - 1, y + 6, 12, 1);
           g.fillStyle = pal.stone;
           g.fillRect(x + 11, y + 4, 2, 2);
+        }
+      }
+    }
+    // PORT SLICE G — STAGE GROUND OVERLAY (owner autopilot 2026-09-23:
+    // "deeper stage identity in the ground itself" — an APPROVED
+    // visual-density change, painting only). A SECOND hash field on a
+    // coarser tile (STAGE_GROUND_TILE = 64, 2x the fine CELL) paints one
+    // ORIGINAL stage-keyed terrain motif per picked tile
+    // (src/stage_ground.js — 8 motifs, 3..8 fillRects each, wave-theme
+    // colors only so the recolor beat survives). Same contract as the fine
+    // field: deterministic per (cell, seed, stage) — never the clock —
+    // footprint rim-clipped, drawn UNDER entities (this whole function runs
+    // before every entity pass), quiet dark tones that never compete with
+    // the play pieces. Perf: tiles per view are bounded (~(480/64+2) x
+    // (300/64+2) ~= 70 cells, each gated at dens <= 0.30 and painting <= 9
+    // rects) — O(view), no cache, no stored arrays, camera moves cost
+    // nothing beyond the new cull window. The fine field above is
+    // byte-identical (same salts, same gates), so the wave ladder, the
+    // landmark/building subdivision and every existing pin hold; only
+    // ADDED rects carry stage identity.
+    // Rim treatment: a tile whose anchor sits within 64px of the arena rim
+    // grows one extra tick pointing at the rim (the edge reads finished
+    // per biome instead of stopping mid-pattern).
+    {
+      const spec = stageGroundSpec(stage);
+      const salt = stageSalt(spec.id);
+      const T = STAGE_GROUND_TILE;
+      const t0 = Math.floor(cam.x / T), t1 = Math.floor((cam.x + C.VIEW_W) / T);
+      const s0 = Math.floor(cam.y / T), s1 = Math.floor((cam.y + C.VIEW_H) / T);
+      for (let cy = s0; cy <= s1; cy++) {
+        for (let cx = t0; cx <= t1; cx++) {
+          if (cellRand(cx, cy, seed ^ salt, 30) >= spec.dens) continue;
+          const wx = cx * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 31) * (T - 28));
+          const wy = cy * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 32) * (T - 28));
+          if (wx < -RIM + 2 || wx > RIM - 22 || wy < -RIM + 2 || wy > RIM - 22) continue;
+          const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
+          const v = cellRand(cx, cy, seed ^ salt, 33);
+          const flip = v < 0.5;
+          switch (spec.motif) {
+            case 'EMBER_CRACK': {     // ash fissure + lit lip + ember speck
+              g.fillStyle = pal.crack;
+              g.fillRect(x, y + 3, 9, 1); g.fillRect(x + 6, y + 4, 7, 1);
+              g.fillRect(x + 10, y + 5, 5, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y + 2, 9, 1); g.fillRect(x + 6, y + 3, 4, 1);
+              g.fillRect(x + (flip ? 2 : 11), y, 2, 2);
+              break;
+            }
+            case 'DRIFT_STREAK': {    // three combed wind streaks
+              g.fillStyle = pal.stone;
+              g.fillRect(x, y + 5, 18, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + (flip ? 3 : 0), y + 2, 14, 1);
+              g.fillRect(x + (flip ? 0 : 4), y + 8, 12, 1);
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 2, y + 10, 14, 1);
+              break;
+            }
+            case 'RUST_VEIN': {       // branching vein + lit edge
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 6, y, 1, 10); g.fillRect(x + 2, y + 4, 9, 1);
+              g.fillRect(x + 9, y + 6, 5, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 7, y + 1, 1, 8);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 1 : 11), y + 3, 2, 2);
+              break;
+            }
+            case 'DUNE_RIPPLE': {     // three parallel dune ripples
+              g.fillStyle = pal.stone;
+              g.fillRect(x, y + 1, 16, 1); g.fillRect(x + 2, y + 5, 16, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y, 16, 1); g.fillRect(x + 2, y + 4, 16, 1);
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 15, 1);
+              break;
+            }
+            case 'VOID_RUNE': {       // small cross marks in theme stone
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + 5, y, 2, 12); g.fillRect(x, y + 5, 12, 2);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 5, y, 1, 4);
+              g.fillStyle = pal.tuft;
+              g.fillRect(x + (flip ? 13 : -3), y + 4, 2, 2);
+              break;
+            }
+            case 'SCORCH_PLATE': {    // dark plate split by a crack seam
+              g.fillStyle = pal.slab;
+              g.fillRect(x + 1, y, 12, 9); g.fillRect(x, y + 1, 14, 7);
+              g.fillStyle = pal.base;
+              g.fillRect(x, y, 1, 1); g.fillRect(x + 13, y, 1, 1);
+              g.fillRect(x, y + 8, 1, 1); g.fillRect(x + 13, y + 8, 1, 1);
+              g.fillStyle = pal.crack;
+              if (flip) g.fillRect(x + 2, y + 4, 10, 1);
+              else g.fillRect(x + 6, y + 1, 1, 7);
+              break;
+            }
+            case 'SNOW_PACK': {       // packed clumps + windlit crest + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x - 1, y + 9, 18, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x, y + 5, 8, 4); g.fillRect(x + 9, y + 4, 7, 5);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y + 4, 8, 1); g.fillRect(x + 9, y + 3, 7, 1);
+              break;
+            }
+            default: {                // MOSS: low blotch + tuft blades
+              g.fillStyle = pal.slab;
+              g.fillRect(x, y + 4, 12, 3);
+              g.fillStyle = pal.tuft;
+              g.fillRect(x + 1, y, 1, 5); g.fillRect(x + 6, y + 1, 1, 4);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + 3, y, 1, 5); g.fillRect(x + 9, y + 2, 1, 3);
+              g.fillStyle = pal.crack;
+              g.fillRect(x + (flip ? 0 : 8), y + 7, 3, 1);
+              break;
+            }
+          }
+          // Rim tick: the edge reads finished per biome.
+          const rimNear = RIM - Math.max(Math.abs(wx), Math.abs(wy));
+          if (rimNear < 64) {
+            g.fillStyle = pal.stoneTop;
+            if (Math.abs(wx) >= Math.abs(wy)) g.fillRect(x + (wx > 0 ? 15 : -3), y + 3, 3, 1);
+            else g.fillRect(x + 5, y + (wy > 0 ? 11 : -3), 1, 3);
+          }
         }
       }
     }
