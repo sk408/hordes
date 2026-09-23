@@ -69,6 +69,49 @@ export const AFFIX_POOL = [
     get desc() { return '+' + fmtNum(this.base) + ' thorns damage on contact'; } },
   { id: 'lifesteal',  name: 'Vampiric',        field: 'lifesteal',  base: 0.02, noun: 'Fang',
     get desc() { return '+' + fmtPct(this.base) + '% lifesteal'; } },
+  // ---------- TIER-2 CONTENT (a): 14 new finds, appended 2026-09-23 --------
+  // APPEND-ONLY by design: every entry below sits AFTER the original 10, so
+  // the uniform sample() draws that existing tests pin with 0.0 rng values
+  // (indices 0..2) still resolve to the original affixes — no rng-order,
+  // rarity-table, or LEGENDARIES change. Each new entry reuses an EXISTING
+  // field with that field's OWN base (damageMult 0.1, crit 0.04, critMult
+  // 0.2, rateMult 0.1, xpMult 0.1, goldMult 0.15, speedMult 0.08, pickupMult
+  // 0.25, thorns 3, lifesteal 0.02), so itemScore's base-normalized affix
+  // contribution is flavor-invariant and the strict-better REPLACE rule in
+  // decideEquip needs no retune. Names/nouns are ORIGINAL (ASCII, no emojis);
+  // the flavor debt is documented per entry: VS = docs/vs_ref/spec/
+  // SPEC-shop-items.md power-up vocabulary (Might/Greed/Growth/Magnet/Move
+  // Speed/Cooldown rows), MB = docs/mb_ref/tables/items.json + passives.json
+  // name vocabulary. Magnitudes follow the lane's tune-after stance: chosen
+  // by analogy to the existing same-field entry, owner tunes after the fact.
+  { id: 'ironbrand',  name: 'Ironbrand',       field: 'damageMult', base: 0.1,  noun: 'Brand',
+    get desc() { return '+' + fmtPct(this.base) + '% damage (the brand holds its heat)'; } },
+  { id: 'sunder',     name: 'Sunder',          field: 'damageMult', base: 0.1,  noun: 'Maul',
+    get desc() { return '+' + fmtPct(this.base) + '% damage (splits guard and bone)'; } },
+  { id: 'truesight',  name: 'True Sight',      field: 'crit',       base: 0.04, noun: 'Sight',
+    get desc() { return '+' + fmtPct(this.base) + '% crit chance (sees the soft seam)'; } },
+  { id: 'witchmark',  name: 'Witchmark',       field: 'crit',       base: 0.04, noun: 'Mark',
+    get desc() { return '+' + fmtPct(this.base) + '% crit chance (marked prey falls harder)'; } },
+  { id: 'heartseeker', name: 'Heartseeker',    field: 'critMult',   base: 0.2,  noun: 'Heart',
+    get desc() { return '+' + fmtPct(this.base) + '% crit damage (aims for the heart)'; } },
+  { id: 'allegro',    name: 'Allegro',         field: 'rateMult',   base: 0.1,  noun: 'Arrow',
+    get desc() { return '+' + fmtPct(this.base) + '% attack rate (every beat hurried)'; } },
+  { id: 'mintmark',   name: 'Mintmark',        field: 'goldMult',   base: 0.15, noun: 'Ingot',
+    get desc() { return '+' + fmtPct(this.base) + '% gold gain (fresh from the mint)'; } },
+  { id: 'blackledger', name: 'Black Ledger',   field: 'goldMult',   base: 0.15, noun: 'Ledger',
+    get desc() { return '+' + fmtPct(this.base) + '% gold gain (every coin accounted)'; } },
+  { id: 'archivist',  name: 'Archivist',       field: 'xpMult',     base: 0.1,  noun: 'Folio',
+    get desc() { return '+' + fmtPct(this.base) + '% XP gain (files every kill)'; } },
+  { id: 'strider',    name: 'Strider',         field: 'speedMult',  base: 0.08, noun: 'Tread',
+    get desc() { return '+' + fmtPct(this.base) + '% move speed (long strides)'; } },
+  { id: 'tailwind',   name: 'Tailwind',        field: 'speedMult',  base: 0.08, noun: 'Vane',
+    get desc() { return '+' + fmtPct(this.base) + '% move speed (runs before the wind)'; } },
+  { id: 'dragnet',    name: 'Dragnet',         field: 'pickupMult', base: 0.25, noun: 'Net',
+    get desc() { return '+' + fmtPct(this.base) + '% pickup radius (drags the field in)'; } },
+  { id: 'thistlecoat', name: 'Thistlecoat',    field: 'thorns',     base: 3,    noun: 'Burr',
+    get desc() { return '+' + fmtNum(this.base) + ' thorns damage on contact (a coat of burrs)'; } },
+  { id: 'redtithe',   name: 'Red Tithe',       field: 'lifesteal',  base: 0.02, noun: 'Leech',
+    get desc() { return '+' + fmtPct(this.base) + '% lifesteal (a tithe paid in red)'; } },
 ];
 const AFFIX_BY_ID = Object.fromEntries(AFFIX_POOL.map(a => [a.id, a]));
 

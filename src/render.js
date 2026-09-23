@@ -24,6 +24,9 @@ import { chestArtFor, paintChest, SEALED_KEY } from './art/chests.js';
 // PORT SLICE K2 — original shrine altar art (per-index designs, honest
 // display: never per-blessing). Painters only; economy/rolls/latch untouched.
 import { shrineArtFor, paintShrine } from './art/shrines.js';
+// TIER-2 NAMED FINDS (2026-09-23): per-affix item portraits. Painters only —
+// the belt record (chrome.itemIcons, rarity per item in order) is untouched.
+import { itemIconFor, paintItemIcon } from './art/item_icons.js';
 // A2 THE RADAR: the DATA layer (pure maths, no DOM — see src/radar.js's header)
 // is imported, never restated. This file owns only the painting of what it
 // returns; the classification (chaff/elite/boss) is classifyTier's alone.
@@ -2703,11 +2706,28 @@ export class Renderer {
     }
 
     // --- equipment icon row (above the weapon row, same bottom-left corner).
-    // 4x4 rarity-tinted gem per equipped rare item.
+    // 4x4 rarity-tinted gem per equipped rare item — OR the item's authored
+    // 8x8 portrait (TIER-2 named finds) in its own palette. A portrait keeps
+    // the rarity read on its 1px frame (the feed tint's own inks); items
+    // without art take the generic path byte-identically (same cells, same
+    // 8px step). chrome.itemIcons still records one { rarity } per item.
     let ix = 6;
     const iy = C.VIEW_H - 44;
     for (const it of state.items) {
       const col = RARITY_COLORS[it.rarity] || RARITY_COLORS.COMMON;
+      const portrait = itemIconFor(it);
+      if (portrait) {
+        g.fillStyle = 'rgba(0,0,0,0.5)';               // 1px shadow border
+        g.fillRect(ix - 1, iy - 5, 10, 1); g.fillRect(ix - 1, iy + 4, 10, 1);
+        g.fillRect(ix - 1, iy - 5, 1, 10); g.fillRect(ix + 8, iy - 5, 1, 10);
+        g.fillStyle = col;                             // rarity frame corners
+        g.fillRect(ix - 1, iy - 5, 1, 1); g.fillRect(ix + 8, iy - 5, 1, 1);
+        g.fillRect(ix - 1, iy + 4, 1, 1); g.fillRect(ix + 8, iy + 4, 1, 1);
+        paintItemIcon(this.drawGrid.bind(this), g, portrait, ix, iy - 4, 1);
+        chrome.itemIcons.push({ rarity: it.rarity });
+        ix += 12;
+        continue;
+      }
       for (let ry = 0; ry < ITEM_ICON_GRID.length; ry++) {
         for (let rx = 0; rx < ITEM_ICON_GRID[ry].length; rx++) {
           if (ITEM_ICON_GRID[ry][rx]) {

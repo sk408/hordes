@@ -50,6 +50,8 @@ import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
 import { createAtlas, atlasUpdate, atlasRegisterLandmark } from './atlas.js';
 import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
+// TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
+import { itemIconFor } from './art/item_icons.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
 import { maybeSpawnChest, tickChests, rollEvolutionToken } from './chests.js';
 // G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
@@ -9400,10 +9402,14 @@ function openStats() {
   menuCard('WEAPONS', wHtml || 'none yet', info);
 
   // ITEMS: name in its rarity color + affix effects (loot.js affix data).
+  // TIER-2: a named find shows its authored portrait ahead of the name
+  // (itemIconFor — first art-carrying affix); legacy items show text only.
   let iHtml = '';
   for (const it of state.items) {
     const col = RARITY_TINTS[it.rarity] || RARITY_TINTS.COMMON;
-    iHtml += '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
+    const portrait = itemIconFor(it);
+    const pIcon = portrait ? iconHtml(portrait.grid, portrait.palette, 2) : '';
+    iHtml += pIcon + '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
     for (const a of it.affixes || []) {
       const mag = a.magnitude < 1 ? '+' + Math.round(a.magnitude * 100) + '%' : '+' + a.magnitude;
       iHtml += '<span style="color:#a8a8c0">' + (a.name || a.id) + ' ' + mag + '</span><br>';
