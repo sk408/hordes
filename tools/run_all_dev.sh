@@ -15,7 +15,7 @@
 # NAME=<number> is treated as a secret by the output redactor and was replaced
 # with *** in every report that quoted it. These labels carry the same
 # information and survive redaction.
-REPO="${HORDES_REPO:-/home/claude/projects/hordes-par1}"
+REPO="${HORDES_REPO:-/home/claude/projects/hordes-dev}"
 if ! cd "$REPO" 2>/dev/null; then
   echo "FATAL: cannot cd to $REPO"
   exit 2
