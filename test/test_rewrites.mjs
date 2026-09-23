@@ -74,14 +74,18 @@ const stateWith = (rewrites = null) => ({ player: { ...makePlayer(), rewrites: r
 console.log('rewrites (G8 step 2): the mechanic-rewrite family, at its real seams');
 
 // ---- 1. the family contract --------------------------------------------------
-ok('the catalog is the fourteen rewrites with unique ids and player-facing labels', () => {
+ok('the catalog is the seventeen rewrites with unique ids and player-facing labels', () => {
   // G21 SLICE 2 RETARGET: the family grew 8 -> 14 (D1's three second-tag cards
   // + D2's three cross-tag combos). The assertion is still an exact id list.
+  // TIER-2(b) RETARGET: the family grows 14 -> 17 (three more cross-tag
+  // combos, SHATTER + CINDER + FROST WIRE — same predicate-offered, two-tag,
+  // half-weight contract).
   assert.deepEqual(REWRITE_IDS, ['pierceall', 'onkillboom', 'healthdamage',
     'rime', 'ignite', 'livewire', 'aftershock', 'wideorbit',
     'glacier', 'wildfire', 'overload',
-    'thermalshock', 'stormreaper', 'glacialorbit']);
-  assert.equal(new Set(REWRITE_IDS).size, 14);
+    'thermalshock', 'stormreaper', 'glacialorbit',
+    'shatter', 'cinder', 'frostwire']);
+  assert.equal(new Set(REWRITE_IDS).size, 17);
   for (const id of REWRITE_IDS) {
     assert.ok(REWRITES[id].name, id + ' has a name');
     assert.ok(!/rewrite/i.test(REWRITES[id].desc),
@@ -134,6 +138,8 @@ ok('cards exist once, at their family weight, and grant through apply(player)', 
   // slice-1 predicates (no blast source, no ORBIT equipped) plus all THREE
   // combos (neither constituent owned). The offered set is the NINE
   // always-offered cards, asserted as an exact list.
+  // TIER-2(b) RETARGET: EIGHT cards are absent on a bare state (the same two
+  // predicates plus all SIX combos) — the offered nine are unchanged.
   const BARE_OFFERED = ['pierceall', 'onkillboom', 'healthdamage', 'rime',
     'ignite', 'livewire', 'glacier', 'wildfire', 'overload'];
   assert.equal(cards.length, BARE_OFFERED.length);
@@ -186,10 +192,14 @@ ok('R1: a full run (REWRITE_SLOTS held) is offered ZERO rewrite cards; one short
   const st3 = stateWith(null);
   st3.weapons = [makeWeapon('ORBIT')];
   for (const id of ['rime', 'ignite', 'wideorbit']) grantRewrite(st3, id);
+  // TIER-2(b) RETARGET: ignite + wideorbit is CINDER's pair too, so THREE
+  // combos wake here (thermalshock + glacialorbit + cinder); shatter still
+  // needs onkillboom, frostwire still needs LIVE WIRE, stormreaper still
+  // needs LIVE WIRE.
   assert.deepEqual(rewriteCards(st3).map(c => c.rewrite).sort(),
-    ['glacialorbit', 'glacier', 'healthdamage', 'livewire', 'onkillboom',
+    ['cinder', 'glacialorbit', 'glacier', 'healthdamage', 'livewire', 'onkillboom',
       'overload', 'pierceall', 'thermalshock', 'wildfire'],
-    'the two woken combos join the untaken singles (aftershock still has no blast source, stormreaper still needs LIVE WIRE)');
+    'the three woken combos join the untaken singles (aftershock still has no blast source, shatter still needs CHAIN REACTION, stormreaper still needs LIVE WIRE)');
   grantRewrite(st2, 'ignite');          // taking one more closes the family
   assert.deepEqual(rewriteCards(st2), [], 'the fourth take closes the family');
   grantRewrite(st3, 'overload');        // the same on the combo-bearing state
@@ -1120,8 +1130,22 @@ ok('R4: a combo is offered ONLY while BOTH constituents are owned, and draws no 
     'both constituents owned: the combo is offered');
   assert.ok(ids(['wideorbit', 'rime'], orb).includes('glacialorbit'),
     'and owning them with the ORBIT still equipped offers it too');
+  // TIER-2(b): SHATTER wakes on RIME + CHAIN REACTION, CINDER on IGNITE +
+  // WIDE ORBIT — one constituent alone is never enough for either.
+  assert.ok(!ids([]).includes('shatter'), 'nothing held: SHATTER is absent');
+  assert.ok(!ids(['rime']).includes('shatter'), 'RIME alone is not enough');
+  assert.ok(!ids(['onkillboom']).includes('shatter'), 'CHAIN REACTION alone is not enough');
+  assert.ok(ids(['rime', 'onkillboom']).includes('shatter'), 'both: SHATTER is offered');
+  assert.ok(!ids([]).includes('cinder'), 'nothing held: CINDER ORBIT is absent');
+  assert.ok(!ids(['ignite']).includes('cinder'), 'IGNITE alone is not enough');
+  assert.ok(!ids(['wideorbit']).includes('cinder'), 'WIDE ORBIT alone is not enough');
+  assert.ok(ids(['ignite', 'wideorbit']).includes('cinder'), 'both: CINDER ORBIT is offered');
+  assert.ok(!ids([]).includes('frostwire'), 'nothing held: FROST WIRE is absent');
+  assert.ok(!ids(['rime']).includes('frostwire'), 'RIME alone is not enough');
+  assert.ok(!ids(['livewire']).includes('frostwire'), 'LIVE WIRE alone is not enough');
+  assert.ok(ids(['rime', 'livewire']).includes('frostwire'), 'both: FROST WIRE is offered');
   // R5: both tags, and the desc prefix reads TAG1+TAG2 - ...
-  for (const id of ['thermalshock', 'stormreaper', 'glacialorbit']) {
+  for (const id of ['thermalshock', 'stormreaper', 'glacialorbit', 'shatter', 'cinder', 'frostwire']) {
     assert.equal(isComboRewrite(id), true, id + ' is a two-tag combo');
     assert.equal(REWRITES[id].tags.length, 2, id + ' carries two tags');
     for (const t of REWRITES[id].tags) {
@@ -1148,18 +1172,22 @@ ok('R4: a combo is offered ONLY while BOTH constituents are owned, and draws no 
   } finally { Math.random = real; }
   assert.equal(draws, 0, 'the offered set (combo predicates included) consumes zero rng draws');
 });
-ok('R6: the fourteen-card family total stays inside the goal band [0.055, 0.070]', () => {
-  assert.equal(REWRITE_IDS.length, 14, 'the brief wants 12-20; slice 2 takes it to fourteen');
+ok('R6: the seventeen-card family total stays inside the goal band [0.055, 0.070]', () => {
+  // TIER-2(b) RETARGET: 14 -> 17 (SHATTER + CINDER + FROST WIRE, all combos
+  // at half weight): 11 x 0.005 + 6 x 0.0025 = 0.0700 — NO retune, exactly ON
+  // the band ceiling (float dust admitted by the 1e-12 epsilon below).
+  assert.equal(REWRITE_IDS.length, 17, 'the brief wants 12-20; tier-2(b) takes it to seventeen');
   let total = 0, singles = 0, combos = 0;
   for (const id of REWRITE_IDS) {
     if (isComboRewrite(id)) { combos++; total += REWRITE_CARD_WEIGHT * REWRITE_COMBO_WEIGHT_MULT; }
     else { singles++; total += REWRITE_CARD_WEIGHT; }
   }
   assert.equal(singles, 11, 'eleven single-tag/legacy cards');
-  assert.equal(combos, 3, 'three cross-tag combos');
+  assert.equal(combos, 6, 'six cross-tag combos');
   assert.equal(REWRITE_COMBO_WEIGHT_MULT, 0.5, 'combos carry half base weight');
   assert.equal(REWRITE_CARD_WEIGHT, 0.005, 'the base weight the D4 solve picked');
-  assert.ok(Math.abs(total - 0.0625) < 1e-12, `family total ${total} (12.5 x 0.005)`);
+  assert.ok(Math.abs(total - 0.07) < 1e-12, `family total ${total} (14 x 0.005)`);
+  assert.ok(total >= 0.055 - 1e-12 && total <= 0.070 + 1e-12, 'inside the goal band');
   assert.ok(total >= 0.055 && total <= 0.070, 'inside the goal band');
   // every tag on every card still comes from REWRITE_TAGS
   const tagSet = new Set(REWRITE_TAGS);
@@ -1526,7 +1554,10 @@ ok('one bad pick never loses a run: every rewrite AND the retuned once >= 0.8x',
 
 // ---- 6b. G21 slice 2: D5 per-card probes + D6 no-drift -------------------------
 console.log('G21 slice 2: D5 per-card one-bad-pick probes (30 runs/cell, seed 4242)');
-const S2_CARDS = ['glacier', 'wildfire', 'overload', 'thermalshock', 'stormreaper', 'glacialorbit'];
+const S2_CARDS = ['glacier', 'wildfire', 'overload', 'thermalshock', 'stormreaper', 'glacialorbit',
+  // TIER-2(b): the two new combos take the same D5/D6 probes as every slice-2
+  // card (same 0.8x bar, same save-payload and stream-stability clauses below).
+  'shatter', 'cinder', 'frostwire'];
 // A combo is probed WITH BOTH CONSTITUENTS: the honest comparable for a card
 // that can only ever be drafted after its pair is owned is (pair + card) vs
 // (pair alone), so BOTH ratios are printed and both must clear the 0.8x bar.
@@ -1535,6 +1566,9 @@ const S2_PREREQS = {
   thermalshock: ['rime', 'ignite'],
   stormreaper: ['livewire', 'onkillboom'],
   glacialorbit: ['wideorbit', 'rime'],
+  shatter: ['rime', 'onkillboom'],
+  cinder: ['ignite', 'wideorbit'],
+  frostwire: ['rime', 'livewire'],
 };
 ok('D5: every slice-2 card reads >= 0.8x, alone and against its constituents', () => {
   const baseMean = mean(good);

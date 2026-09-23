@@ -30,10 +30,18 @@ export const OFFER_TO_DECK = {
   rate: 'quick_hands',
   // W7b RARE ladder
   hp_pct: 'hp_pct', xp_pct: 'scholars_stone', gold_pct: 'gilded_palm', edge: 'crimson_edge',
+  // W7b RARE ladder addition (TIER-2(b)): the new percent/scaling chase card
+  // joins its own expansion RARE-face card BY NAME (pinned in
+  // test_card_art_expansion.mjs).
+  thorns: 'thornmail',
   // W7b MYTHIC chase (RSS8: magnet_collector rides the expansion deck's own
   // MYTHIC ace — same join, same art pipeline)
   full_hand: 'full_hand', second_wind: 'second_wind', storm_shards: 'storm_shards',
   magnet_collector: 'magnet_collector',
+  // TIER-2(b) mythic additions: the two new build-definers ride expansion
+  // MYTHIC aces of their own (offer id == deck id, the magnet_collector
+  // precedent — same join, same art pipeline).
+  tempest: 'tempest', killshot: 'killshot',
   // G8 run rules (rules.js ruleCards: 'rule_' + id)
   rule_hordebait: 'rule_hordebait', rule_once: 'rule_once',
   // G8 perks (perks.js skillCards: 'skill_' + id) + the N1 Pocket Frost card
@@ -52,6 +60,9 @@ export const OFFER_TO_DECK = {
   // join, the same art pipeline; only the rank/suit differ.
   rewrite_thermalshock: 'rw_thermalshock', rewrite_stormreaper: 'rw_stormreaper',
   rewrite_glacialorbit: 'rw_glacialorbit',
+  // TIER-2(b) combo additions (same contract: predicate-offered, RARE-face).
+  rewrite_shatter: 'rw_shatter', rewrite_cinder: 'rw_cinder',
+  rewrite_frostwire: 'rw_frostwire',
 };
 
 // Weapon grant (wpn_<TYPE>) and level-up (lvl_<TYPE>_<lv>) offers share the

@@ -191,6 +191,35 @@ export const REWRITES = {
     offered: comboOffered('wideorbit', 'rime'),
     desc: 'orbit hits chill longer and bite chilled enemies harder',
   },
+  // ---- TIER-2(b) NEW DRAFT CARDS (2026-09-23): two more CROSS-TAG COMBOS --
+  // Same contract as slice 2's three (predicate-offered on both constituents,
+  // both tags, half weight, art RARE-face): the family grows 14 -> 16 with NO
+  // weight retune — 11 x 0.005 + 5 x 0.0025 = 0.0675, still inside the goal's
+  // [0.055, 0.070] band (pinned in test_rewrites.mjs R6). Both mechanics are
+  // applied DIRECTLY through the two existing applied-value readers below
+  // (applyBlast / directHitMult) — no new rider path, no counter, no status
+  // system (the slice-2 R3 rule holds for this slice too).
+  shatter: {
+    id: 'shatter',
+    name: 'Shatter',
+    tags: ['FROST', 'CHAIN'],
+    offered: comboOffered('rime', 'onkillboom'),
+    desc: 'detonations shatter chilled enemies for +50% damage',
+  },
+  cinder: {
+    id: 'cinder',
+    name: 'Cinder Orbit',
+    tags: ['BURN', 'ORBIT'],
+    offered: comboOffered('ignite', 'wideorbit'),
+    desc: 'orbit blades burn through burning enemies for +25% damage',
+  },
+  frostwire: {
+    id: 'frostwire',
+    name: 'Frost Wire',
+    tags: ['FROST', 'CONDUCT'],
+    offered: comboOffered('rime', 'livewire'),
+    desc: 'your zaps chill enemies briefly',
+  },
 };
 export const REWRITE_IDS = Object.keys(REWRITES);
 /** A card is a CROSS-TAG COMBO when it carries two reserved tags. */
@@ -331,6 +360,33 @@ export const STORMREAPER_BLAST_MULT = 0.5;
 export const GLACIALORBIT_CHILL_DURATION = 2.5;
 export const GLACIALORBIT_DAMAGE_MULT = 1.10;
 
+// ---- TIER-2(b): the two new combos' numbers (same block as slices 1-2) -----
+// SHATTER (FROST+CHAIN): a detonation landing on a CHILLED body (slow > 0,
+// the RIME write) deals MULT x its damage to THAT body. Per-victim inside
+// applyBlast — the echo it schedules still carries the BASE blast (an echo
+// of the detonation, not of the bonus). +50% sits above GLACIER's +20%: it
+// prices a two-card, predicate-gated combo against a single always-offered
+// card, and it rides blasts only (never direct hits), so the two never stack
+// on the same number.
+export const SHATTER_BLAST_MULT = 1.5;
+// CINDER (BURN+ORBIT): an ORBIT blade hit against a body already carrying the
+// IGNITE burn (burn > 0 and burnDps > 0) deals MULT x damage. Read in
+// directHitMult on the orbit path only (opts.orbit) — beside GLACIAL ORBIT's
+// chilled branch, and the two multiply when a body burns AND chills (a
+// three-card stack paying three slots, priced accordingly). +25% sits above
+// GLACIER's +20% for the same gated-combo reason, on a narrower gate (orbit
+// hits only, not every direct hit).
+export const CINDER_BURN_MULT = 1.25;
+// FROSTWIRE (FROST+CONDUCT): a LIVE WIRE zap or an OVERLOAD discharge CHILLS
+// its victims for DURATION seconds at the RIME grip (FACTOR). Written inside
+// the ONE on-weapon-hit writer below, beside the zap/discharge applications —
+// never a new rider path, never a counter. Shorter than RIME's 1.5s: a ranged
+// chill that feeds GLACIER (+20% on chilled) and SHATTER (x1.5 blasts on
+// chilled) is a two-combo engine piece, priced in duration. Never truncates a
+// longer slow already gripping (the RIME max() discipline).
+export const FROSTWIRE_SLOW_DURATION = 1.0;
+export const FROSTWIRE_SLOW_FACTOR = 0.75;
+
 // ---------- readers --------------------------------------------------------
 export function rewritesOf(state) {
   const p = state && state.player;
@@ -469,10 +525,16 @@ export function harvestBlast(state) {
  */
 export function applyBlast(state, x, y, blast) {
   let hits = 0;
+  // TIER-2(b) SHATTER: a detonation landing on a CHILLED body deals
+  // SHATTER_BLAST_MULT x to that body. Per-victim, DIRECT (no counter, no
+  // rider), read off the same `slow` field RIME writes — a burn tick, echo or
+  // thorn never passes through here with a slow read of its own.
+  const shatter = hasRewrite(state, 'shatter');
   for (const o of state.enemies) {
     if (o.hp <= 0) continue;
     if (Math.hypot(o.x - x, o.y - y) <= blast.radius) {
-      o.hp -= devHit(blast.damage);
+      const dmg = (shatter && (o.slow || 0) > 0) ? blast.damage * SHATTER_BLAST_MULT : blast.damage;
+      o.hp -= devHit(dmg);
       o.flash = 0.08;
       hits++;
     }
@@ -577,6 +639,13 @@ export function onWeaponHit(state, enemy, opts) {
         // retrigger the rider — no recursion, no chain-of-chains.
         best.hp -= devHit(LIVEWIRE_DAMAGE_MULT * (p.stats.damage || 0));
         best.flash = 0.08;
+        // TIER-2(b) FROSTWIRE: the zap CHILLS (the RIME write, shorter). A
+        // zap-chilled body feeds GLACIER and SHATTER through the shared slow
+        // field — the combos compose with no new system.
+        if (r.frostwire) {
+          best.slow = Math.max(best.slow || 0, FROSTWIRE_SLOW_DURATION);
+          best.slowMult = FROSTWIRE_SLOW_FACTOR;
+        }
         state.effects.push({ kind: 'zap',
           points: [{ x: enemy.x, y: enemy.y }, { x: best.x, y: best.y }],
           age: 0, ttl: 0.15 });
@@ -609,6 +678,11 @@ export function onWeaponHit(state, enemy, opts) {
       for (const { o } of inRange.slice(0, OVERLOAD_TARGETS)) {
         o.hp -= devHit(OVERLOAD_DAMAGE_MULT * (p.stats.damage || 0));
         o.flash = 0.08;
+        // TIER-2(b) FROSTWIRE: the discharge chills like the zap above.
+        if (r.frostwire) {
+          o.slow = Math.max(o.slow || 0, FROSTWIRE_SLOW_DURATION);
+          o.slowMult = FROSTWIRE_SLOW_FACTOR;
+        }
         state.effects.push({ kind: 'zap',
           points: [{ x: enemy.x, y: enemy.y }, { x: o.x, y: o.y }],
           age: 0, ttl: 0.15 });
@@ -625,6 +699,9 @@ export function onWeaponHit(state, enemy, opts) {
  * burn tick, echo, thorn or discharge can never see it (R3).
  *   GLACIER       x1.20 on any direct hit against a SLOWED (chilled) body.
  *   GLACIAL ORBIT x1.10 on an ORBIT blade hit against a chilled body.
+ *   CINDER        x1.25 on an ORBIT blade hit against a BURNING body
+ *                 (TIER-2(b): the BURN+ORBIT combo's branch, beside GLACIAL
+ *                 ORBIT's — the two multiply when a body burns AND chills).
  * G19 slice 2 adds the character specialty FIRST, before the slow guard, so it
  * rides every direct hit (not just chilled bodies): x1.15/x0.92 against the
  * equipped character's strong/weak enemy family, x1 otherwise.
@@ -646,6 +723,13 @@ export function directHitMult(state, enemy, opts) {
     if (hasRewrite(state, 'glacier')) m *= GLACIER_DAMAGE_MULT;
     if (opts && opts.orbit && hasRewrite(state, 'glacialorbit')) m *= GLACIALORBIT_DAMAGE_MULT;
   }
+  // TIER-2(b) CINDER: the burn mirror of the branch above, on the ORBIT path
+  // only. A genuinely burning body (ticks left AND dps — a spent burn is not
+  // a burn) takes CINDER_BURN_MULT on an orbit-blade hit. Blasts, burn ticks,
+  // echoes, thorns and discharges never call this (R3), so the bonus cannot
+  // leak onto them.
+  if (opts && opts.orbit && (enemy.burn || 0) > 0 && (enemy.burnDps || 0) > 0
+    && hasRewrite(state, 'cinder')) m *= CINDER_BURN_MULT;
   return m;
 }
 /**

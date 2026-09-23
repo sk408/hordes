@@ -54,6 +54,22 @@
 //      they share the motif NAME (an aliased grid under a new name is a
 //      failure, not a reuse);
 //   5. drawCard paints every card in the deck one rect per inked cell.
+//
+// CONTRACT UPDATE — TIER-2(b) NEW DRAFT CARDS (2026-09-23): the expansion
+// holds FOUR more RARE-face cards beyond the slice-2 combos (Thornmail from
+// DRAFT_RARE_UPGRADES; Shatter / Cinder Orbit / Frost Wire are combos) plus
+// TWO MYTHIC aces (Tempest / Killshot from DRAFT_MYTHIC_UPGRADES) — the deck
+// lands at 50 cards with the number space still exactly full (32/32) and now
+// the face space full too (12/12) and all four aces spoken for. The RARE-tier
+// allowance below is therefore EXTENDED, still DERIVED (never a frozen id
+// list): the rare-tier expansion cards are EXACTLY the live cross-tag combos
+// (`isComboRewrite`) PLUS the live RARE-ladder members whose deck card is an
+// expansion card (read through the LIVE OFFER_TO_DECK join). Any further card
+// in any family has NO free rank+suit pair left and needs a new allowance
+// ruling — the deck is FULL, and the no-duplicate check below enforces it.
+// The MYTHIC vocabulary (RSS8) needs no extension: Tempest/Killshot ride aces
+// like Magnet Collector, and the ace/joker class check below covers them by
+// construction.
 import {
   CARD_ART, CARD_DECK, CARD_IDS, CARD_EXPANSION, EXPANSION_IDS, CARD_W, CARD_H, SUITS,
   SUIT_COLOUR, RANK_CLASS, cardArt,
@@ -432,11 +448,26 @@ console.log('FULL POOL COVERAGE (every offer id the pool can produce is enumerat
     eq(classForOffer(id), wantClass,
       id + ' is a ' + (combo ? 'RARE face' : 'COMMON number') + ' card');
   }
-  // The rare tier is EXACTLY the combo set, and each combo really is RARE-tier
-  // (the card art derives the tier from the rank, so this pins the declaration
-  // AND the face rank together).
-  eqList(EXPANSION_IDS.filter((id) => (DEF_BY_ID[id].tier || 'COMMON') === 'RARE'), COMBO_DECK_IDS,
-    'the rare-tier expansion cards are exactly the live cross-tag combos');
+  // The rare tier is EXACTLY the combo set PLUS the live RARE-ladder members
+  // whose deck card is an expansion card — all DERIVED from the live
+  // registries through the live join (never a frozen id list), and the card
+  // art derives the tier from the rank, so this pins each declaration AND its
+  // face rank together. (TIER-2(b): Thornmail joins here; the four W7b-ladder
+  // RARE members that ride CORE-deck faces — hp_pct and friends — are not
+  // expansion cards and never enter this set.)
+  const LADDER_RARE_DECK_IDS = DRAFT_RARE_UPGRADES.map((u) => OFFER_TO_DECK[u.id])
+    .filter((deckId) => deckId && DEF_BY_ID[deckId]
+      && (DEF_BY_ID[deckId].tier || 'COMMON') === 'RARE');
+  eqList(EXPANSION_IDS.filter((id) => (DEF_BY_ID[id].tier || 'COMMON') === 'RARE').sort(),
+    [...COMBO_DECK_IDS, ...LADDER_RARE_DECK_IDS].sort(),
+    'the rare-tier expansion cards are exactly the live combos + the live RARE ladder');
+  for (const u of DRAFT_RARE_UPGRADES) {
+    const deckId = OFFER_TO_DECK[u.id];
+    if (deckId && DEF_BY_ID[deckId]) {
+      eq(cardArt(deckId).name, u.name,
+        u.id + ' -> ' + deckId + ' joins the live RARE ladder by NAME');
+    }
+  }
   for (const offerId of COMBO_OFFER_IDS) {
     eq(classForOffer(offerId), 'face', offerId + ' (combo) is a RARE face card');
     const art = artForOffer(offerId);

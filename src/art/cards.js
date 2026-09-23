@@ -820,6 +820,131 @@ const MOTIFS = {
       '60000000006',
     ),
   },
+
+  // ---- TIER-2(b) NEW DRAFT CARDS (2026-09-23) --------------------------------
+  // Six genuinely NEW grids — one per new pool id — same discipline as every
+  // motif above: integer grids via G(), palette keys 5..9, ink kept out of the
+  // pip corners (TL x<=6,y<=12 and the rotated BR) so the pips read. All six
+  // are 9 wide (stamped at mx=7, clear of the TL pip zone) and vertically
+  // centred. The interior-distinctness contract (test_card_art_expansion.mjs)
+  // measures these against every existing motif; each shape below is built to
+  // share no silhouette with its neighbours (the rime bolt wears frost the
+  // clean bolt lacks; the burr is not the sprout; the cracked shard is not
+  // RIME's frost_shard spike; the ember blade is not the whetstone; the tine
+  // crown carries no heart; the axe head is a block, not the scythe's curve).
+  // RIME BOLT (Frost Wire) — the chill riding the spark: a gold zap spine
+  // with frost-blue barbs. NOT `bolt` (Chain Zap's clean zigzag, no frost)
+  // and NOT `spark_arc` (the clamped conductor gap): a bolt wearing ice.
+  rime_bolt: {
+    palette: { 5: '#9ad0f4', 6: '#ffe07a', 7: '#f4f4f8' },
+    grid: G(
+      '000065000',
+      '000065000',
+      '006065000',
+      '006065000',
+      '060065000',
+      '066665000',
+      '000065000',
+      '000065000',
+      '006065600',
+      '006065600',
+      '060065000',
+      '000065000',
+    ),
+  },
+  // THORN BURR (Thornmail) — the retaliation made visible: a green burr ball,
+  // spikes out in every direction. NOT `sprout` (a stem with leaves over soil):
+  // radial spikes, no stem, no ground.
+  thorn_burr: {
+    palette: { 5: '#2a6a3a', 6: '#6ad86a', 7: '#4a3018' },
+    grid: G(
+      '000050000',
+      '005050500',
+      '000555000',
+      '055555550',
+      '055665550',
+      '505666605',
+      '055665550',
+      '055555550',
+      '000555000',
+      '005050500',
+      '000050000',
+    ),
+  },
+  // CRACKED ICE (Shatter) — the chill about to break: a frost shard split by
+  // a dark crack zigzag. NOT `frost_shard` (RIME's clean spike with frost
+  // barbs): the crack down the middle is the motif.
+  cracked_ice: {
+    palette: { 5: '#5a90c8', 6: '#9ad0f4', 7: '#2e3550' },
+    grid: G(
+      '000060000',
+      '000660000',
+      '006670000',
+      '056607000',
+      '056670000',
+      '006676000',
+      '056670000',
+      '056607000',
+      '006670000',
+      '000660000',
+      '000060000',
+    ),
+  },
+  // EMBER BLADE (Cinder Orbit) — the burning edge: a steel blade with ember
+  // motes rising off both sides and a gold-hot fuller. NOT `whetstone` (the
+  // diagonal sharpening stone) and NOT `red_blade` (Crimson Edge's upright
+  // sword): a centred blade with fire beside it.
+  ember_blade: {
+    palette: { 5: '#e07828', 6: '#9aa4b8', 7: '#ffe07a' },
+    grid: G(
+      '006000600',
+      '006000600',
+      '056006500',
+      '056006500',
+      '006606600',
+      '006666600',
+      '006666600',
+      '000666000',
+      '007660700',
+      '000060000',
+    ),
+  },
+  // STORM CROWN (Tempest) — the chain's coronet: a gold three-tine crown with
+  // a white gem course. NOT `crowned_heart` (a crown OVER a red heart): tines
+  // and band only, no heart anywhere in the grid.
+  storm_crown: {
+    palette: { 5: '#c89a2a', 6: '#8a5f2c', 7: '#f4f4f8' },
+    grid: G(
+      '500050005',
+      '550050055',
+      '550050055',
+      '550555055',
+      '055757550',
+      '005757500',
+      '005757500',
+      '005555500',
+      '005555500',
+    ),
+  },
+  // HEADSMAN'S AXE (Killshot) — the execution: a blocky steel head on a
+  // straight haft with red binding. NOT `scythe` (the curved blade sweeping
+  // off its haft): a straight block head, centred haft.
+  headsman_axe: {
+    palette: { 5: '#9aa4b8', 6: '#e8ecf4', 7: '#8a5f2c', 8: '#c03a3a' },
+    grid: G(
+      '005555500',
+      '055666550',
+      '055660550',
+      '000660000',
+      '000660000',
+      '008660000',
+      '000660000',
+      '000660000',
+      '000660000',
+      '008666800',
+      '000666000',
+    ),
+  },
 };
 
 // ---------------------------------------------------------------- deck ------
@@ -955,6 +1080,31 @@ export const CARD_EXPANSION = [
   // the one free ace beside full_hand's A of clubs — no rank+suit duplicate
   // anywhere in the full deck.
   { id: 'magnet_collector', name: 'Magnet Collector', desc: 'SKILL [X]: sweep every drop · 30s cooldown', rank: 'A', suit: 'diamonds', motif: 'horseshoe', tier: 'MYTHIC' },
+  // TIER-2(b) NEW DRAFT CARDS (2026-09-23): six new pool ids, six new deck
+  // cards. Rank=rarity grammar (rank IS the rarity): the COMMON number space
+  // is exactly full (32/32 — 2..9 x 4 suits all spoken for), so every card
+  // here is RARE-face or MYTHIC-ace on the last free pairs (measured: JS / QC
+  // / KD / KC face, AH / AS ace — after this slice the deck is FULL: 12/12
+  // faces, 4/4 aces, 2 jokers, 32/32 numbers. Any further card needs a new
+  // allowance ruling; see the CONTRACT UPDATE in test_card_art_expansion.mjs).
+  // Suit = family by what the card does (the header's rule): Killshot is pure
+  // damage (spades — the AS free ace); Thornmail is retaliation damage on the
+  // body, the deployed-trap read beside Mine Layer (clubs); Shatter rides
+  // detonations with the frost read but every heart face is spoken for, so it
+  // takes diamonds by the G21-slice-1 space-constraint precedent (Live Wire
+  // 4D sits there for the same reason); Cinder Orbit is an orbit-blade rider
+  // in the weapon-utility read (clubs, beside Seeker/Mine); Frost Wire's zap
+  // is damage (spades, the JS free face); Tempest clears the bodies pressing
+  // you — the Chain Reaction hearts rationale — on the AH free ace.
+  // Names join by NAME to the source of truth (DRAFT_RARE_UPGRADES /
+  // DRAFT_MYTHIC_UPGRADES / REWRITES) — pinned in
+  // test/test_card_art_expansion.mjs so a rename on either side goes red.
+  { id: 'thornmail', name: 'Thornmail', desc: 'rare card', rank: 'K', suit: 'clubs', motif: 'thorn_burr', tier: 'RARE' },
+  { id: 'rw_shatter', name: 'Shatter', desc: 'rewrite card', rank: 'K', suit: 'diamonds', motif: 'cracked_ice', tier: 'RARE' },
+  { id: 'rw_cinder', name: 'Cinder Orbit', desc: 'rewrite card', rank: 'Q', suit: 'clubs', motif: 'ember_blade', tier: 'RARE' },
+  { id: 'rw_frostwire', name: 'Frost Wire', desc: 'rewrite card', rank: 'J', suit: 'spades', motif: 'rime_bolt', tier: 'RARE' },
+  { id: 'tempest', name: 'Tempest', desc: 'mythic card', rank: 'A', suit: 'hearts', motif: 'storm_crown', tier: 'MYTHIC' },
+  { id: 'killshot', name: 'Killshot', desc: 'mythic card', rank: 'A', suit: 'spades', motif: 'headsman_axe', tier: 'MYTHIC' },
 ];
 export const EXPANSION_IDS = CARD_EXPANSION.map((c) => c.id);
 

@@ -1343,6 +1343,25 @@ export const DRAFT_RARE_UPGRADES = [
   // Build-commitment: scales with damage output — a greedy damage build wants
   // it, a defensive build wastes it.
   { id: 'edge',     name: 'Crimson Edge',    desc: '+3% lifesteal',              apply: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.03; } },
+  // TIER-2(b) NEW DRAFT CARDS (2026-09-23): ONE more percent/scaling chase
+  // card in the same shape — repeatable, timing-gated, luck-shifted through
+  // draftLadderWeight at RARE_WEIGHT like the four above (no pool change: the
+  // openDraft RARE branch maps over this whole array). Exactly ONE, by
+  // measurement: a second RARE at 0.12 shifts the G6 coherence fixture's
+  // scatter arm off stat:COMMON entirely (test_g6_coherence_policies, 400
+  // seeded drafts: 5 COMMON picks with one addition, 0 with two) — the rest
+  // of this slice's batch rides the predicate-gated rewrite combos (half
+  // weight) and the run-gated mythics (absent from that fixture) instead.
+  //
+  // THORNMAIL (thorns) — the flat-contact leg: reflected damage per toucher,
+  // read at the ONE contact seam (main.js Spiked Hide reflect). Strong on wave
+  // 1, dust by the late ladder — the same timing gate as Scholar/Gilded (good
+  // early, dead late). +6 sits at 2x the world-drop base (loot.js base 3,
+  // legendary 9) and below the shop rung (meta.js Briarmail +10/level).
+  // Source rows: vs_ref ARMOR (flat mitigation, max -3) as the flat-contact
+  // family shape — hordes' answer on this axis is thorns, not armor, so the
+  // card grants the seam the game actually reads.
+  { id: 'thorns',   name: 'Thornmail',       desc: '+6 thorns damage on contact', apply: (p) => { p.stats.thorns = (p.stats.thorns || 0) + 6; } },
 ];
 
 // MYTHIC ladder cards (build-definers, run-gated by the two-stage chase gate — see
@@ -1366,6 +1385,36 @@ export const DRAFT_MYTHIC_UPGRADES = [
   { id: 'magnet_collector', name: 'Magnet Collector',
     desc: 'SKILL [X]: every gem, potion and item on the field sweeps to you · 30s cooldown',
     apply: (p) => { if (!p.skills) p.skills = {}; p.skills.magnet = true; } },
+  // TIER-2(b) NEW DRAFT CARDS (2026-09-23): two more build-definers behind the
+  // SAME two-stage chase gate (no gate constant moves — startRun draws from
+  // this whole array, so each new card rides automatically). POOL DILUTION,
+  // disclosed like RSS8's: with SIX cards in the chase draw each specific
+  // mythic's per-run rate moves from 0.1 x 1.55/4 = 3.88% to 0.1 x 1.55/6 =
+  // 2.58% of runs (test_w7b_draft_ladder's per-card ~0.0517 bar still clears:
+  // |0.0258 - 0.0517| < 0.03 — verified by running it, not by arithmetic).
+  //
+  // TEMPEST — +1 Chain Zap level (stats.zapChain, the Storm Conduit publish;
+  // updateZap in weapons.js is the one consumer, untouched). Dead without the
+  // ZAP gun, arming past the shop's own maxLevel 5 (range keeps growing under
+  // MAX_HOPS) — the state-dependent shape a mythic must have. Magnitude IS one
+  // shop level (meta.js Storm Conduit: +RANGE_PER_LEVEL hop range per level +
+  // the uncapped-count arm), so the card never invents a second zap economy.
+  // Source rows: vs_ref LIGHTNING amount/power per-level deltas as the
+  // chain-gun ladder shape; mb_ref Zap passive as the family word.
+  { id: 'tempest', name: 'Tempest',
+    desc: 'Chain Zap +1 chain level and hop range (needs Chain Zap)',
+    apply: (p) => { p.stats.zapChain = (p.stats.zapChain || 0) + 1; } },
+  // KILLSHOT — +0.5 crit damage, ADDITIVE on the house read (every consumer
+  // prices (stats.critMult || 1.5) + weapon bonus: evolutions.js, main.js:2980,
+  // the HUD). Dead without crit chance (the shop's Deadly Aim, loot affixes,
+  // the choices.js trade) — the pool's crit sources enable the MYTHIC, which
+  // is the chase working as designed. +0.5 sits between the loot scale's base (+0.2) and
+  // legendary (+0.6) Executioner (loot.js), far below the shop Deadeye's
+  // (1.75)^level compounding. Source rows: vs_ref SPEC-drafts critMul column;
+  // mb_ref stat 19 (CritDamage).
+  { id: 'killshot', name: 'Killshot',
+    desc: '+50% crit damage',
+    apply: (p) => { p.stats.critMult = (p.stats.critMult || 1.5) + 0.5; } },
 ];
 
 // ============================================================================

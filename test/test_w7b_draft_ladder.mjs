@@ -63,39 +63,54 @@ s.check('this process booted with the ladder ON (the A/B BEFORE arm sets it fals
 // The owner's TWO-STAGE gate (2026-09-14): a 10% EVENT roll ("this run has a
 // joker"), then 60/25/15 on the count, then a uniform which-draw. So the EVENT
 // rate is ~0.1, the conditional count is 60/25/15, and each SPECIFIC mythic is
-// ~0.0517 of runs (0.1 x [0.6/3 + 0.25x2/3 + 0.15]) — rarer than the event, by
-// design (per-card independent rolls had stacked to ~27% any-mythic). The gate
-// rides the run's Math.random stream, so seeding per run IS the run-seed.
+// 0.1 x E[count] / N of runs — rarer than the event, by design (per-card
+// independent rolls had stacked to ~27% any-mythic). The gate rides the run's
+// Math.random stream, so seeding per run IS the run-seed.
+//
+// TIER-2(b) RETARGET: the measurement used to count the event over the three
+// ORIGINAL mythics only (second_wind / storm_shards / full_hand) — a gated
+// run drawing only newer mythics read as "no event", which understated the
+// gate more with every addition (RSS8's magnet first, now Tempest/Killshot:
+// the old-3-only event measured 0.0575). The event and the count below are
+// now derived from the LIVE DRAFT_MYTHIC_UPGRADES array, so the gate math is
+// measured, not the family size; the per-card expectation is derived the same
+// way (0.1 x 1.55 / N — ~0.0258 at six cards, disclosed in config.js).
 const RUNS = 1200;
 {
-  let event = 0, one = 0, two = 0, three = 0, wind = 0, storm = 0, hand = 0;
+  const IDS = DRAFT_MYTHIC_UPGRADES.map((m) => m.id);
+  const counts = Object.fromEntries(IDS.map((id) => [id, 0]));
+  let event = 0, one = 0, two = 0, three = 0;
   const real = Math.random;
   try {
     for (let i = 0; i < RUNS; i++) {
       Math.random = mulberry32(20260914 + i);
       T.startRun();
       const g = state.chasePool || {};
-      const n = (g.second_wind ? 1 : 0) + (g.storm_shards ? 1 : 0) + (g.full_hand ? 1 : 0);
+      const n = IDS.filter((id) => g[id]).length;
       if (n > 0) event++;
       if (n === 1) one++; else if (n === 2) two++; else if (n === 3) three++;
-      if (g.second_wind) wind++;
-      if (g.storm_shards) storm++;
-      if (g.full_hand) hand++;
+      for (const id of IDS) if (g[id]) counts[id]++;
     }
   } finally { Math.random = real; }
   const pEvent = event / RUNS;
   const pOne = one / Math.max(1, event), pTwo = two / Math.max(1, event), pThree = three / Math.max(1, event);
-  const pWind = wind / RUNS, pStorm = storm / RUNS, pHand = hand / RUNS;
+  const w = DRAFT_LADDER.CHASE_COUNT_WEIGHTS;
+  const perCard = DRAFT_LADDER.CHASE_GATE_CHANCE * (w[0] * 1 + w[1] * 2 + w[2] * 3) / IDS.length;
+  const rates = Object.fromEntries(IDS.map((id) => [id, counts[id] / RUNS]));
   // Event sigma at p=0.1, N=1200 is ~0.0087; count-share sigma over ~120 joker-runs is ~0.045.
   assert.ok(Math.abs(pEvent - 0.1) < 0.03, `the chase EVENT rate ${pEvent} ~ 0.1 (the two-stage gate)`);
   assert.ok(Math.abs(pOne - 0.60) < 0.14, `count=1 share ${pOne} ~ 0.60 of joker-runs`);
   assert.ok(Math.abs(pTwo - 0.25) < 0.14, `count=2 share ${pTwo} ~ 0.25 of joker-runs`);
   assert.ok(Math.abs(pThree - 0.15) < 0.14, `count=3 share ${pThree} ~ 0.15 of joker-runs`);
-  assert.ok(Math.abs(pWind - 0.0517) < 0.03, `per-card rate ${pWind} ~ 0.0517 (each mythic is rarer than the 0.1 event)`);
-  assert.ok(pStorm < 0.1 && pHand < 0.1, `no mythic reaches the old per-card 0.1 (storm ${pStorm}, hand ${pHand})`);
+  for (const id of IDS) {
+    assert.ok(Math.abs(rates[id] - perCard) < 0.03,
+      `per-card rate ${id} ${rates[id]} ~ ${perCard.toFixed(4)} (each mythic is rarer than the 0.1 event)`);
+    assert.ok(rates[id] < 0.1, `${id} never reaches the old per-card 0.1 (${rates[id]})`);
+  }
   console.log(`  MEASURED two-stage chase gate over ${RUNS} seeded runs: event ${pEvent.toFixed(4)}, ` +
     `count 1/2/3 = ${pOne.toFixed(3)}/${pTwo.toFixed(3)}/${pThree.toFixed(3)} of joker-runs, ` +
-    `per-card wind ${pWind.toFixed(4)}, storm ${pStorm.toFixed(4)}, hand ${pHand.toFixed(4)}`);
+    `per-card expectation ${perCard.toFixed(4)}: ` +
+    IDS.map((id) => `${id.split('_')[0]} ${rates[id].toFixed(4)}`).join(', '));
 }
 console.log('  ok - the two-stage chase gate (10% event, 60/25/15 count) is measured through the REAL startRun');
 
