@@ -985,41 +985,104 @@ export class Renderer {
 
     // Projectiles: volley shots + kind-tagged weapon bodies (boomerang spin,
     // seeker missiles, dropped mines).
+    //
+    // PORT SLICE J2: every traveling body paints ORIGINAL multi-part sprite
+    // art in the integer-grid fillRect style, derived from the reference
+    // vocabulary (DESIGN_REFERENCE_VS.md section 12 / A.7: knives-orbs-beams-
+    // axes — volley arrows, orbit blades, boomerang crescent, seeker missile,
+    // armed mine). Triggers, ttls, flight paths, speeds, hit boxes and pool
+    // bounds are untouched — painters only. Phase sources are sim state
+    // (position hash, age, velocity, flight angle), never wall clock and
+    // never Math.random, so 60Hz and 120Hz paint identically at the same age.
+    // Bounded: <= 11 rects per projectile body (stated per kind below).
     for (const p of state.projectiles) {
       const x = Math.round(p.x - cam.x), y = Math.round(p.y - cam.y);
       if (cull(x, y, 8)) continue;
+      // Static position stamp shared by the body painters (slice-h contract).
+      const ph = ((Math.round(p.x) * 73856093) ^ (Math.round(p.y) * 19349663)) >>> 0;
       if (p.kind === 'boomerang') {
-        // Spin: alternate between horizontal and vertical bars.
+        // Crescent rang: steel arms on the spin axis, white leading edge,
+        // blue fuller core, one hash glint at a tip. Spin timing is the
+        // shipped alternation (age * 20, two phases) — <= 8 rects.
         const spin = Math.floor(p.age * 20) % 2 === 0;
         g.fillStyle = '#b8e0ff';
-        if (spin) { g.fillRect(x - 4, y - 1, 9, 2); }
-        else { g.fillRect(x - 1, y - 4, 2, 9); }
+        if (spin) {
+          g.fillRect(x - 4, y - 1, 9, 2);
+          g.fillRect(x - 3, y - 2, 2, 1); g.fillRect(x + 2, y + 2, 2, 1);
+        } else {
+          g.fillRect(x - 1, y - 4, 2, 9);
+          g.fillRect(x - 2, y - 3, 1, 2); g.fillRect(x + 2, y + 2, 1, 2);
+        }
+        g.fillStyle = '#ffffff';
+        if (spin) { g.fillRect(x - 4, y - 1, 2, 1); }
+        else { g.fillRect(x - 1, y - 4, 1, 2); }
         g.fillStyle = '#5a9ad8';
         g.fillRect(x - 1, y - 1, 2, 2);
+        g.fillStyle = '#e8f4ff';
+        const gx = spin ? ((ph & 1) === 0 ? 4 : -4) : 0;
+        const gy = spin ? 0 : ((ph & 1) === 0 ? 4 : -4);
+        g.fillRect(x + gx, y + gy, 1, 1);
         continue;
       }
       if (p.kind === 'seeker') {
-        // Missile: bright head in flight direction + cyan tail fins.
-        const hx = Math.round(x + Math.cos(p.ang) * 2), hy = Math.round(y + Math.sin(p.ang) * 2);
+        // Hydra missile: white nose cone on the flight angle, gold body,
+        // ember tail fins perpendicular to flight, hot exhaust dot. The head
+        // lead (+2 along ang) is the shipped geometry — <= 9 rects.
+        const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+        const hx = Math.round(x + ca * 2), hy = Math.round(y + sa * 2);
+        const tx = Math.round(x - ca * 2), ty = Math.round(y - sa * 2);
+        const px = Math.round(-sa * 2), py = Math.round(ca * 2);
         g.fillStyle = '#ffdd7a';
-        g.fillRect(hx - 1, hy - 1, 3, 3);
+        g.fillRect(x - 1, y - 1, 3, 3);
+        g.fillStyle = '#ffffff';
+        g.fillRect(hx - 1, hy - 1, 2, 2);
+        g.fillRect(Math.round(x + ca * 3) , Math.round(y + sa * 3), 1, 1);
         g.fillStyle = '#ff8848';
-        g.fillRect(Math.round(x - Math.cos(p.ang) * 2) - 1, Math.round(y - Math.sin(p.ang) * 2) - 1, 2, 2);
+        g.fillRect(tx + px - 1, ty + py - 1, 2, 2);
+        g.fillRect(tx - px - 1, ty - py - 1, 2, 2);
+        g.fillStyle = (ph & 2) === 0 ? '#ffd75e' : '#ffdd7a';
+        g.fillRect(tx, ty, 1, 1);
         continue;
       }
       if (p.kind === 'mine') {
-        // Dark disc + blinking red light (1Hz blink on age).
+        // Armed mine: dark hull (shipped disc), steel rim ticks, brass studs,
+        // the shipped 1Hz arming lamp, one hash-phased glint. Blink timing is
+        // the shipped (age * 2) alternation — <= 10 rects.
         g.fillStyle = '#3a3a46';
         g.fillRect(x - 3, y - 2, 7, 5);
         g.fillRect(x - 2, y - 3, 5, 7);
+        g.fillStyle = '#6a6a76';
+        g.fillRect(x - 3, y - 3, 2, 1); g.fillRect(x + 2, y - 3, 2, 1);
+        g.fillRect(x - 3, y + 3, 2, 1); g.fillRect(x + 2, y + 3, 2, 1);
+        g.fillStyle = '#c8a03a';
+        g.fillRect(x - 2, y - 1, 1, 1); g.fillRect(x + 2, y + 1, 1, 1);
         g.fillStyle = Math.floor((p.age || 0) * 2) % 2 === 0 ? '#ff3040' : '#7a1018';
         g.fillRect(x - 1, y - 1, 2, 2);
+        if ((ph & 3) === 0) {
+          g.fillStyle = '#e8e8f0';
+          g.fillRect(x + 1, y - 3, 1, 1);
+        }
         continue;
       }
+      // Volley arrow: shaft along the flight vector (vx/vy are sim state, so
+      // the orientation is deterministic), white-hot head, ember fletch
+      // perpendicular at the tail. Quantized to 8 ways on the integer grid.
+      // Generic fallback (no velocity — never happens in live runs, kept for
+      // planted-geometry tests) flies east. <= 7 rects.
+      const vv = (p.vx || p.vy) ? Math.atan2(p.vy || 0, p.vx || 0) : 0;
+      const oct = ((Math.round(vv / (Math.PI / 4)) % 8) + 8) % 8;
+      const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
+      const dx = DX[oct], dy = DY[oct];
+      const qx = -dy, qy = dx;   // perpendicular (fletch axis)
       g.fillStyle = '#ffe9a8';
-      g.fillRect(x - 2, y - 2, 4, 4);
+      g.fillRect(x + dx - 1, y + dy - 1, 2, 2);
       g.fillStyle = '#ff9a3c';
-      g.fillRect(x - 1, y - 1, 2, 2);
+      g.fillRect(x - dx * 2, y - dy * 2, 1, 1);
+      g.fillRect(x - dx * 2 + qx, y - dy * 2 + qy, 1, 1);
+      g.fillRect(x - dx * 2 - qx, y - dy * 2 - qy, 1, 1);
+      g.fillStyle = '#ffffff';
+      g.fillRect(x + dx * 2 - 1, y + dy * 2 - 1, 2, 2);
+      g.fillRect(x + dx * 3, y + dy * 3, 1, 1);
     }
 
     // Skill/weapon effects (fillRect only).
@@ -1097,6 +1160,18 @@ export class Renderer {
                        Math.round(fx.y + Math.sin(a) * r - cam.y) - 1, 3, 3);
           }
         }
+        // PORT SLICE J2 — NOVA ring body: four pale motes riding inside the
+        // pulse at hash-phased stations (reference: Zodiac/moon luminaire
+        // orbs). NOVA_PULSE only — every other ring kind paints
+        // byte-identically to slice-h. +4 rects.
+        if (fx.kind === 'nova_pulse') {
+          g.fillStyle = '#efe0ff';
+          for (let k = 0; k < 4; k++) {
+            const a = rot + k * (Math.PI / 2) + ((hh >> (k * 2)) & 3) * 0.2;
+            g.fillRect(Math.round(fx.x + Math.cos(a) * r * 0.8 - cam.x),
+                       Math.round(fx.y + Math.sin(a) * r * 0.8 - cam.y), 1, 1);
+          }
+        }
       } else if (fx.kind === 'scythe_windup' || fx.kind === 'scythe_arc') {
         // Sweep telegraph (faint blink) / landed sweep (bright arc + inner
         // echo) — dots sampled along the wedge's outer arc.
@@ -1123,6 +1198,22 @@ export class Renderer {
               g.fillRect(Math.round(fx.x + Math.cos(ea) * rr - cam.x) - 1,
                          Math.round(fx.y + Math.sin(ea) * rr - cam.y) - 1, 3, 3);
             }
+          }
+          // PORT SLICE J2 — SCYTHE blade body: a reaping crescent riding the
+          // sweep's mid-angle at full reach (reference: SpearShape/SpearTip
+          // ice lance + ReportSlash strokes): white tip + two pale trailers
+          // stepping inward. Landed sweep only; windup untouched. +3 rects.
+          if (bright && t < 0.8) {
+            const bcx = Math.cos(fx.dir), bcy = Math.sin(fx.dir);
+            const brr = fx.radius * (1 - t * 0.25);
+            g.fillStyle = '#ffffff';
+            g.fillRect(Math.round(fx.x + bcx * brr - cam.x) - 1,
+                       Math.round(fx.y + bcy * brr - cam.y) - 1, 3, 3);
+            g.fillStyle = '#a8e0ff';
+            g.fillRect(Math.round(fx.x + bcx * (brr - 4) - cam.x),
+                       Math.round(fx.y + bcy * (brr - 4) - cam.y), 2, 2);
+            g.fillRect(Math.round(fx.x + bcx * (brr - 7) - cam.x),
+                       Math.round(fx.y + bcy * (brr - 7) - cam.y), 1, 1);
           }
         }
       } else if (fx.kind === 'seeker_trail') {
@@ -1173,6 +1264,17 @@ export class Renderer {
           g.fillStyle = '#ff9e9e';
           g.fillRect(tx - 2, ty, 5, 1); g.fillRect(tx, ty - 2, 1, 5);
         }
+        // PORT SLICE J2 — BEAM pulse body: one bright packet riding down the
+        // beam at d = t * len (reference: CrystalBig gem-projectile frames):
+        // white heart + pale cross ticks. t-driven, never wall clock. +3 rects.
+        {
+          const pd = t * fx.len;
+          const qx = Math.round(fx.x + cx * pd - cam.x), qy = Math.round(fx.y + cy * pd - cam.y);
+          g.fillStyle = '#ffffff';
+          g.fillRect(qx - 1, qy - 1, 3, 3);
+          g.fillStyle = '#ff9e9e';
+          g.fillRect(qx - 3, qy, 7, 1); g.fillRect(qx, qy - 3, 1, 7);
+        }
       } else if (fx.kind === 'zap') {
         // Chain lightning: 2px dots sampled along each polyline segment +
         // PORT SLICE H fork ticks every 3rd dot (perpendicular, hash-sided).
@@ -1197,12 +1299,46 @@ export class Renderer {
             zdi++;
           }
         }
+        // PORT SLICE J2 — ZAP bolt head: a hot diamond on the primary strike
+        // point (reference: doi01-doi09 weapon-fx + SpearTip ice lance):
+        // white heart + four gold ticks. Position-derived, never wall clock,
+        // and the polyline above paints byte-identically to slice-h. +5 rects.
+        if (fx.points.length > 1) {
+          const hp0 = fx.points[1];
+          const zx = Math.round(hp0.x - cam.x), zy = Math.round(hp0.y - cam.y);
+          g.fillStyle = '#ffffff';
+          g.fillRect(zx - 1, zy - 1, 3, 3);
+          g.fillStyle = '#ffd75e';
+          g.fillRect(zx - 3, zy, 1, 1); g.fillRect(zx + 3, zy, 1, 1);
+          g.fillRect(zx, zy - 3, 1, 1); g.fillRect(zx, zy + 3, 1, 1);
+        }
       } else if (fx.kind === 'orbit') {
-        // Orbit blade: bright dot (blades emit these every frame).
+        // PORT SLICE J2 — orbit blade body: the shipped painter drew one flat
+        // 4x4 dot per blade. Now a steel petal-blade (reference: fl00-fl88
+        // flower/leaf frames + inner/outer pentagram rings): pale bar on the
+        // spin axis, white cutting edge, blue fuller core, one hash glint at
+        // a tip. Phase is a static position-hash bit (never wall clock), so
+        // the two phases read as the blade's spin as it orbits. <= 9 rects.
+        const ox = Math.round(fx.x - cam.x), oy = Math.round(fx.y - cam.y);
+        const oh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
+        const horiz = ((oh >> 4) & 1) === 0;
         g.fillStyle = '#c8e8ff';
-        g.fillRect(Math.round(fx.x - cam.x) - 2, Math.round(fx.y - cam.y) - 2, 4, 4);
+        if (horiz) {
+          g.fillRect(ox - 4, oy - 1, 9, 2);
+          g.fillRect(ox - 2, oy - 2, 5, 1);
+        } else {
+          g.fillRect(ox - 1, oy - 4, 2, 9);
+          g.fillRect(ox - 2, oy - 2, 1, 5);
+        }
+        g.fillStyle = '#ffffff';
+        if (horiz) { g.fillRect(ox - 4, oy - 1, 9, 1); }
+        else { g.fillRect(ox - 1, oy - 4, 1, 9); }
         g.fillStyle = '#5a9ad8';
-        g.fillRect(Math.round(fx.x - cam.x) - 1, Math.round(fx.y - cam.y) - 1, 2, 2);
+        if (horiz) { g.fillRect(ox - 1, oy, 3, 1); }
+        else { g.fillRect(ox, oy - 1, 1, 3); }
+        g.fillStyle = '#e8f4ff';
+        if (horiz) { g.fillRect(ox + ((oh & 1) === 0 ? 4 : -4), oy - 2, 1, 1); }
+        else { g.fillRect(ox - 2, oy + ((oh & 1) === 0 ? 4 : -4), 1, 1); }
       } else if (fx.kind === 'orbit_hit') {
         // PORT SLICE H: orbit-blade contact was a flat 6x6 white square.
         // Now a ring-burst: white core + 8-tick pale ring + 4 diagonal flecks.
