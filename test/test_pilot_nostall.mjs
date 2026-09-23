@@ -29,6 +29,7 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { reliefLevelAt, reliefStep, reliefRampRoute } from '../src/relief.js';
 import { stageRelief } from '../src/stages.js';
+import { buildingFootprints, pushOutOfRects, BUILDING_MOVER_R } from '../src/stage_buildings.js';
 
 const S = suite('test_pilot_nostall');
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
@@ -94,6 +95,18 @@ S.check('FLAT LIVE: no stall window at the rim — gem beyond, corner flee, rim 
   for (const sc of scenarios) {
     quietField();
     p.x = sc.at[0]; p.y = sc.at[1];
+    // PORT SLICE J (2026-09-23): the composed field carries ~60 footprints,
+    // so a blind teleport can park the pilot INSIDE a wall — an unphysical
+    // state the live game never produces (spawn footing is cleared, motion
+    // never penetrates) in which the slide correctly holds footing. The
+    // invariant under test is STEERING from legal footing, so physicalize
+    // the start with the same "opens where it fell" nudge the portal seam
+    // uses (a few px, never a teleport). Assertion unchanged.
+    {
+      const pr = pushOutOfRects(buildingFootprints(st.groundSeed || 0, st.stage),
+        p.x, p.y, BUILDING_MOVER_R + 1);
+      p.x = pr[0]; p.y = pr[1];
+    }
     if (sc.run) sc.run();
     let worst = 0, cur = 0, lx = p.x, ly = p.y, playedTicks = 0;
     for (let i = 0; i < 60 * 12; i++) {              // 12 simulated seconds

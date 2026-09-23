@@ -25,7 +25,7 @@ import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
-import { buildingForStage, paintBuilding, clearFixedPoints } from './stage_buildings.js';
+import { buildingPlacements, paintBuilding } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
@@ -3334,78 +3334,32 @@ export class Renderer {
     }
     // PORT SLICE E (buildings, owner request 2026-09-22: "see some of the
     // buildings on the map too" — an APPROVED visual-density addition,
-    // painting only). A SECOND, rarer hash field on a coarser grid
-    // (BUILDING_CELL = 3x LANDMARK_CELL) paints one ORIGINAL stage-keyed
-    // structure per picked building-cell (src/stage_buildings.js — 64..108px
-    // wide, 17..21 fillRects, fixed authored palettes so a stage reads as a
-    // PLACE under any wave theme). Same contract as the field above:
-    // deterministic per (cell, seed, stage) — never the clock — footprint
-    // rim-clipped, reported through the same landmarks seam (kind = the
-    // building id, always COMPOSED). A separate pass, never a stolen tail
-    // branch, so the slice-A/D prop subdivision and its density pins do not
-    // move: buildings ADD landmarks (~0.6/screen), they replace no prop.
-    // The guarantee extends the slice-D promise: the stage's building also
-    // sits inside the initial camera view of the spawn (the prop cell is
-    // untouched, so the slice-D pins hold). The guaranteed building-cell is
-    // the nearest density-picked building-cell to the spawn whose footprint
-    // fits fully inside the initial view rect, falling back to cell (0,0)
-    // with its anchor clamped into that rect — a pure hash function of
-    // (seed, stage), forced at paint time only: no sim state read, none
-    // written.
-    const BC = C.GROUND.BUILDING_CELL, BDENS = C.GROUND.BUILDING_DENSITY;
-    const bSpec = buildingForStage(stage);
-    const bAnchorOf = (bx, by) => ({
-      x: bx * BC + 48 + Math.floor(cellRand(bx, by, seed, 22) * (BC - 96 - bSpec.w)),
-      y: by * BC + 48 + Math.floor(cellRand(bx, by, seed, 23) * (BC - 96 - bSpec.h)),
-    });
-    const bFitsView = (ax, ay) =>
-      ax >= 0 && ay >= 0 && ax + bSpec.w <= C.VIEW_W && ay + bSpec.h <= C.VIEW_H;
-    let bPick = null, bPickD = Infinity;
-    for (let by = Math.floor(0 / BC); by <= Math.floor(C.VIEW_H / BC); by++) {
-      for (let bx = Math.floor(0 / BC); bx <= Math.floor(C.VIEW_W / BC); bx++) {
-        const a = bAnchorOf(bx, by);
-        if (!bFitsView(a.x, a.y)) continue;
-        const dx = a.x + bSpec.w / 2 - SPAWN_X, dy = a.y + bSpec.h / 2 - SPAWN_Y;
-        const d = dx * dx + dy * dy;
-        if (cellRand(bx, by, seed, 21) < BDENS && d < bPickD) { bPick = { x: bx, y: by }; bPickD = d; }
-      }
-    }
-    const bCell = bPick || { x: 0, y: 0 };
-    const b0 = Math.floor(cam.x / BC), b1 = Math.floor((cam.x + C.VIEW_W) / BC);
-    const bR0 = Math.floor(cam.y / BC), bR1 = Math.floor((cam.y + C.VIEW_H) / BC);
-    for (let by = bR0; by <= bR1; by++) {
-      for (let bx = b0; bx <= b1; bx++) {
-        const forceB = bx === bCell.x && by === bCell.y;
-        // The guaranteed cell paints unconditionally (even the density-gate
-        // fallback); every other cell keeps the rare gate.
-        if (!forceB && cellRand(bx, by, seed, 21) >= BDENS) continue;
-        let wa = bAnchorOf(bx, by);
-        if (forceB && !bFitsView(wa.x, wa.y)) {
-          // Fallback clamp: the natural anchor missed the initial view, so
-          // pin the footprint just inside it — still a pure function of
-          // (cell, seed, stage), still rim-safe (the view sits deep inside
-          // the arena).
-          wa = {
-            x: Math.min(Math.max(wa.x, 8), C.VIEW_W - bSpec.w - 8),
-            y: Math.min(Math.max(wa.y, 8), C.VIEW_H - bSpec.h - 8),
-          };
-        }
-        // PORT SLICE F (collision, owner-ruled 2026-09-22): cell (0,0) is
-        // the one cell whose anchor range can reach the run's fixed floor
-        // points, so it alone takes the fixed-point clearance shift (a pure
-        // function of the anchor — the field stays deterministic per seed,
-        // and the motion seam queries the same shift, so paint and blocking
-        // agree box for box).
-        if (bx === 0 && by === 0) {
-          const cl = clearFixedPoints(wa.x, wa.y, bSpec.w, bSpec.h);
-          wa = { x: cl.x, y: cl.y };
-        }
-        // Footprint rim cull (structures overhang their cell by design).
-        if (wa.x < -RIM + 4 || wa.x + bSpec.w > RIM - 4) continue;
-        if (wa.y < -RIM + 4 || wa.y + bSpec.h > RIM - 4) continue;
-        const x = Math.round(wa.x - cam.x), y = Math.round(wa.y - cam.y);
-        out.push({ kind: bSpec.id, x: wa.x, y: wa.y, rects: paintBuilding(g, bSpec.id, x, y) });
-      }
+    // painting only) + PORT SLICE J (owner directives 2026-09-23: whole-map
+    // composition study + uncapped variety — hamlets/compounds, not
+    // one-per-cell sprinkles). The field is SINGLE-SOURCED from
+    // src/stage_buildings.js buildingPlacements(seed, stage): every
+    // building-cell composes 1 anchor + up to 3 satellites from the biome's
+    // 8-design kit (no density gate — the slice-E 0.22 rare-gate is REMOVED;
+    // spacing rhythm is the 576px cell pitch plus the pilot-fit separation
+    // floor, geometry bounds the per-view cost at O(view)). This pass only
+    // view-culls that field and paints it through paintBuilding (fixed
+    // authored palettes so a stage reads as a PLACE under any wave theme).
+    // Same contract as the field above: deterministic per (seed, stage) —
+    // never the clock — reported through the same landmarks seam (kind = the
+    // design id, always COMPOSED). Buildings ADD landmarks; the slice-A/D
+    // prop subdivision and its density pins do not move. The spawn cluster
+    // (anchor + >= 1 satellite whole in the initial view, fixed floor points
+    // cleared) generalizes the slice-E/D in-view promise: the initial view
+    // shows the biome's composition. Collision reads the same field through
+    // buildingFootprints (slice F): paint and blocking agree box for box by
+    // construction — there is no second field math here to drift.
+    const bField = buildingPlacements(seed, stage);
+    for (const b of bField) {
+      // View cull (structures overhang their cell by design).
+      if (b.x + b.w < cam.x || b.x > cam.x + C.VIEW_W) continue;
+      if (b.y + b.h < cam.y || b.y > cam.y + C.VIEW_H) continue;
+      const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+      out.push({ kind: b.id, x: b.x, y: b.y, rects: paintBuilding(g, b.id, x, y) });
     }
     // THE HOLLOW'S AUTHORED LANDMARKS (STARTING ARENA IMPROVE 2026-09-17) —
     // not hash-gated: the OLD STUMP stands at the exact arena heart (the

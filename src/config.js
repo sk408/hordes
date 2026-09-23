@@ -746,15 +746,21 @@ export const CONFIG = {
     // screen. Painting only — no sim number rides this knob.
     LANDMARK_DENSITY: 0.45,
     // PORT SLICE E (owner request 2026-09-22: buildings on the map — an
-    // APPROVED visual-density addition, not a pacing change): the rare
-    // building pass (render.js drawLandmarks) reads these two knobs.
-    // BUILDING_CELL is 3x LANDMARK_CELL (576px) so a 64..108px structure
-    // anchors with room to overhang its cell; BUILDING_DENSITY gates picked
-    // cells (~0.6 buildings per 480x300 screen, ON TOP of the landmark
-    // field — the slice-A/D prop subdivision is untouched). Painting only —
-    // no sim number rides these knobs.
-    BUILDING_CELL: 576,
-    BUILDING_DENSITY: 0.22,
+    // APPROVED visual-density addition, not a pacing change) + PORT SLICE J
+    // (owner directive 2026-09-23: "no limit on any number of structures" —
+    // the slice-E BUILDING_DENSITY rare-gate is REMOVED, not retuned: no
+    // preset count cap lives here or anywhere; and the composition study
+    // moves the pitch 576 -> 384 = 2x LANDMARK_CELL, so hamlets punctuate
+    // most views instead of sprinkling one-per-screen). The building pass
+    // (render.js drawLandmarks, single-sourced from src/stage_buildings.js
+    // buildingPlacements) reads ONE knob: BUILDING_CELL, the composition
+    // pitch an anchor plus its outbuildings sit inside, with lanes between
+    // clusters. Spacing otherwise comes from the pilot-fit separation floor
+    // in code (every pair of kept boxes stands >= 16px apart — the pilot is
+    // ~14px), and cost is bounded by geometry (O(view): off-screen cells are
+    // never visited) plus the measured per-view rect budget pinned in
+    // test_port_slice_j.mjs. Painting only — no sim number rides this knob.
+    BUILDING_CELL: 384,
     // WAVE-9B/2 per-wave AREA IDENTITY: the theme ladder cycles by WAVE number
     // (never by run — Sk408 beat the boss, entered wave 2 and the ground read
     // identical). Each theme = base ground tone + grid dots + decor palette

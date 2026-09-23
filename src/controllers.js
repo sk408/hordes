@@ -230,7 +230,7 @@ export class AutoPilotController {
     // PORT SLICE F (building collision, owner-ruled 2026-09-22): a gem deep
     // inside a building footprint is the same shape — the pilot can press
     // the wall forever without the pickup radius ever reaching it. The field
-    // is queried ONCE per frame (pure in seed/stage, a few boxes) and the
+    // is queried ONCE per frame (pure in seed/stage, a couple dozen boxes) and the
     // interior test rides the same commit/drop shape as the rim test above.
     const bRects = buildingFootprints(state.groundSeed || 0, state.stage);
     const inBricks = (x, y) => {

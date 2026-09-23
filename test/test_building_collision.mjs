@@ -1,4 +1,6 @@
-// HORDES — PORT SLICE F: building-collision tests (owner-ruled 2026-09-22).
+// HORDES — PORT SLICE F: building-collision tests (owner-ruled 2026-09-22),
+// extended PORT SLICE J (2026-09-23) for the composed field: ~60 boxes/arena
+// (was ~3), anchor+satellite clusters, 16px separation floor.
 //
 // WHAT THIS PINS (through the REAL loop wherever motion is involved):
 //   1. UNIT slide — a head-on walk stops at the footprint edge (position
@@ -6,11 +8,18 @@
 //      free motion is untouched; the nose-on redirect moves a full stride.
 //   2. UNIT steer — open-field intent is byte-identical; a blocked ray
 //      commits to the most intent-aligned corner (the anti-cycle fix).
-//   3. AGREEMENT — every painted building footprint equals a queried one
-//      and back (paint and blocking agree box for box), 8 stages.
+//   2b. UNIT dense pocket — a greedy walk across a tight anchor+satellite
+//      pocket (16px lanes, the separation floor) arrives, never stalls,
+//      never penetrates.
+//   2c. SWEEP no-strand at density — greedy walks across the REAL composed
+//      field (8 stages x seeds) never stall past the named bound and never
+//      penetrate (the rerun/extended no-strand proof at slice-J density).
+//   3. AGREEMENT — every painted footprint equals a queried one
+//      and back (paint and blocking agree box for box), 8 stages x kits.
 //   4. SPAWN — the run's fixed floor points ( footing, first-run draught,
 //      milestone chest slot) sit outside every footprint with room for the
-//      mover ring, 8 stages x seeds; the slice-E in-view promise still holds.
+//      mover ring, 8 stages x seeds; the slice-J in-view cluster promise
+//      (anchor + >= 1 satellite) still holds.
 //   5. REAL manual — a held direction across a footprint never penetrates,
 //      keeps moving (no strand), and reaches the far side (around, not
 //      through).
@@ -31,9 +40,10 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { STAGES } from '../src/stages.js';
 import {
-  STAGE_BUILDINGS, buildingForStage,
-  buildingFootprints, buildingFixedPoints, slideMove, buildingSteer, pushOutOfRects,
-  BUILDING_MOVER_R, BUILDING_STEER_LOOK,
+  STAGE_BUILDINGS, buildingForStage, designsForStage,
+  buildingFootprints, buildingPlacements, buildingFixedPoints,
+  slideMove, buildingSteer, pushOutOfRects,
+  BUILDING_MOVER_R, BUILDING_STEER_LOOK, BUILDING_SEPARATION,
 } from '../src/stage_buildings.js';
 import { Renderer, groundTheme } from '../src/render.js';
 
@@ -135,10 +145,88 @@ S.check('UNIT pushOut: interior points leave by the nearest face; exterior is un
   }
 });
 
+S.check('UNIT dense pocket: a greedy walk across a 16px-lane cluster arrives, never stalls', () => {
+  // The slice-J separation floor, worst case: an anchor with three
+  // satellites at exactly BUILDING_SEPARATION gaps, pocket opening south —
+  // the tightest legal composition. A fixed goal across it must still route
+  // around (steer commits past each tip) with zero stall and zero entry.
+  const R = [
+    { x: 200, y: 100, w: 96, h: 92 },
+    { x: 200 + 96 + BUILDING_SEPARATION, y: 120, w: 56, h: 44 },
+    { x: 200 - BUILDING_SEPARATION - 60, y: 130, w: 60, h: 36 },
+    { x: 220, y: 100 - BUILDING_SEPARATION - 40, w: 52, h: 40 },
+  ];
+  let x = 100, y = 350, worst = 0, cur = 0, arrived = -1, pen = 0;
+  for (let i = 0; i < 6000; i++) {
+    const dx = 400 - x, dy = 50 - y, l = Math.hypot(dx, dy) || 1;
+    if (l < 8) { arrived = i; break; }
+    const s = buildingSteer(x, y, dx / l, dy / l, R, BUILDING_MOVER_R);
+    const t = slideMove(x, y, x + s[0] * 2, y + s[1] * 2, R, BUILDING_MOVER_R);
+    const moved = Math.hypot(t[0] - x, t[1] - y);
+    x = t[0]; y = t[1];
+    for (const r of R) {
+      const cx = Math.max(r.x, Math.min(x, r.x + r.w));
+      const cy = Math.max(r.y, Math.min(y, r.y + r.h));
+      if (Math.hypot(x - cx, y - cy) < BUILDING_MOVER_R - 1e-9) pen++;
+    }
+    cur = moved > 0.1 ? 0 : cur + 1;
+    worst = Math.max(worst, cur);
+  }
+  assert(arrived >= 0, 'the pocket walk routes around and arrives (never cycles the faces)');
+  assert(worst <= MAX_STALL_TICKS, 'no stall window past the bound (worst ' + worst + ')');
+  assert(pen === 0, 'the pocket walk never enters a footprint (pen frames ' + pen + ')');
+});
+
+S.check('SWEEP no-strand at density: greedy walks never stall or penetrate on the real field', () => {
+  // The rerun/extended no-strand proof at slice-J density: fixed
+  // start/goal pairs across the REAL composed field of every stage. The
+  // binding properties are the named no-stall bound (<= 30 consecutive
+  // still frames — the invariant live play assumes) and zero penetration;
+  // both hold at ~60 boxes/arena exactly as at ~3. (Fixed-goal-forever
+  // arrival is not pinned: concave clusters admit rare limit cycles under
+  // a goal that never moves — live marks always move; REAL checks below
+  // pin the arrivals the game needs.)
+  let hseed = 987654321;
+  const rnd = () => (hseed = (Math.imul(hseed, 1103515245) + 12345) >>> 0) / 4294967296;
+  let worst = 0, pen = 0, walks = 0;
+  for (const s of STAGES) {
+    for (const seed of [3, 4242, 777]) {
+      const rects = buildingFootprints(seed, s.id);
+      for (let w = 0; w < 4; w++) {
+        let x = -800 + rnd() * 1600, y = -800 + rnd() * 1600;
+        const gx = -800 + rnd() * 1600, gy = -800 + rnd() * 1600;
+        const out = (px, py) => !rects.some(r => px > r.x - 8 && px < r.x + r.w + 8 &&
+          py > r.y - 8 && py < r.y + r.h + 8);
+        if (!out(x, y) || !out(gx, gy)) continue;
+        walks++;
+        let cur = 0;
+        for (let i = 0; i < 2000; i++) {
+          const dx = gx - x, dy = gy - y, l = Math.hypot(dx, dy) || 1;
+          if (l < 10) break;
+          const sv = buildingSteer(x, y, dx / l, dy / l, rects, BUILDING_MOVER_R);
+          const t = slideMove(x, y, x + sv[0] * 2, y + sv[1] * 2, rects, BUILDING_MOVER_R);
+          const moved = Math.hypot(t[0] - x, t[1] - y);
+          x = t[0]; y = t[1];
+          for (const r of rects) {
+            const cx = Math.max(r.x, Math.min(x, r.x + r.w));
+            const cy = Math.max(r.y, Math.min(y, r.y + r.h));
+            if (Math.hypot(x - cx, y - cy) < BUILDING_MOVER_R - 1e-9) pen++;
+          }
+          cur = moved > 0.1 ? 0 : cur + 1;
+          worst = Math.max(worst, cur);
+        }
+      }
+    }
+  }
+  assert(walks >= 60, 'the sweep actually walked (' + walks + ' walks)');
+  assert(worst <= MAX_STALL_TICKS, 'no walk stalls past the named bound at density (worst ' + worst + ')');
+  assert(pen === 0, 'no walk penetrates a footprint at density (pen frames ' + pen + ')');
+});
+
 // ---------------------------------------------------------------------------
-// 3. AGREEMENT paint == query.
+// 3. AGREEMENT paint == query (single-sourced, slice J).
 // ---------------------------------------------------------------------------
-S.check('AGREEMENT: every painted footprint equals a queried one and back (8 stages)', () => {
+S.check('AGREEMENT: every painted footprint equals a queried one and back (8 stages x kits)', () => {
   const mk = () => {
     const ctx = {
       canvas: null, fillStyle: '#000', globalAlpha: 1, font: '10px monospace',
@@ -153,15 +241,15 @@ S.check('AGREEMENT: every painted footprint equals a queried one and back (8 sta
     return { R: new Renderer(canvas), ctx };
   };
   for (const s of STAGES) {
-    const want = buildingForStage(s.id).id;
-    const queried = buildingFootprints(4242, s.id).map(r => r.x + ',' + r.y);
+    const kit = new Set(designsForStage(s.id).map(b => b.id));
+    const queried = buildingPlacements(4242, s.id).map(r => r.id + '@' + r.x + ',' + r.y);
     const painted = new Set();
     for (let cx = -900; cx <= 900; cx += 96) {
       for (let cy = -900; cy <= 900; cy += 96) {
         const { R, ctx } = mk();
         R.drawLandmarks(ctx, 4242, { x: cx, y: cy }, groundTheme(1), s.id);
         for (const l of R.landmarks) {
-          if (l.kind === want) painted.add(l.x + ',' + l.y);
+          if (kit.has(l.kind)) painted.add(l.kind + '@' + l.x + ',' + l.y);
         }
       }
     }
@@ -197,6 +285,15 @@ S.check('SPAWN: fixed floor points sit outside every footprint (8 stages x seeds
         r.x + r.w <= C.VIEW_W && r.y + r.h <= C.VIEW_H);
       assert(inView.length >= 1, 'stage ' + s.id + ' seed ' + seed +
         ': the slice-E in-view promise holds under the clearance shift (' + b.id + ')');
+      // Slice-J cluster promise through the query seam: a spawn-flagged
+      // anchor AND a spawn-flagged satellite sit whole in the initial view.
+      const pl = buildingPlacements(seed, s.id);
+      const cluster = pl.filter(p => p.spawn && p.x >= 0 && p.y >= 0 &&
+        p.x + p.w <= C.VIEW_W && p.y + p.h <= C.VIEW_H);
+      assert(cluster.some(p => STAGE_BUILDINGS[p.id].role !== 'satellite'),
+        'stage ' + s.id + ' seed ' + seed + ': a cluster anchor sits whole in view');
+      assert(cluster.some(p => STAGE_BUILDINGS[p.id].role === 'satellite'),
+        'stage ' + s.id + ' seed ' + seed + ': a cluster satellite sits whole beside it');
     }
   }
 });
@@ -257,7 +354,7 @@ function penetration(trace, rects) {
 }
 
 function pickFieldBox() {
-  // The field is sparse by design (~3 boxes/arena): scan a fixed seed list
+  // The field is dense by design (~60 boxes/arena): scan a fixed seed list
   // for a mid-arena box with room for a western approach. Deterministic.
   for (const seed of [4242, 7, 11, 99, 1337, 5, 21]) {
     st.groundSeed = seed;

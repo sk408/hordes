@@ -10,6 +10,7 @@
 import { Renderer, groundTheme } from '../src/render.js';
 import { CONFIG as C } from '../src/config.js';
 import { makePlayer } from '../src/entities.js';
+import { STAGE_BUILDINGS } from '../src/stage_buildings.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -260,12 +261,18 @@ console.log('WAVE-24 / #3 — GROUND DECOR: LANDMARKS + RIM CLIP');
   ok(snap(11) !== snap(12), 'different seeds paint different fields');
 
   // Quiet by contract: landmarks must establish place without carpeting the
-  // floor (they sit under the play pieces).
+  // floor (they sit under the play pieces). PORT SLICE J (2026-09-23,
+  // owner "more is better"): the seam now carries a SECOND composed layer
+  // (building kits — hamlets, pinned by their own perf budget in
+  // test_port_slice_j.mjs: 14 structures/view at 1100 rects), so this guard
+  // counts the 192-cell LANDMARK layer it was written for, not the building
+  // layer the owner ordered denser. Fixture retarget ON PURPOSE by owner
+  // order; the assertion shape (0.5..6) is unchanged.
   const per = [];
   for (let cx = -600; cx <= 600; cx += 96) {
     for (let cy = -600; cy <= 600; cy += 96) {
       R.drawLandmarks(ctx, 4242, { x: cx, y: cy }, groundTheme(1));
-      per.push(R.landmarks.length);
+      per.push(R.landmarks.filter(l => !STAGE_BUILDINGS[l.kind]).length);
     }
   }
   const avg = per.reduce((a, b) => a + b, 0) / per.length;

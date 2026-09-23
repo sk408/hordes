@@ -2,8 +2,11 @@
 import { CONFIG as C } from './config.js';
 //
 // WHAT THIS FILE IS
-// Eight ORIGINAL hand-authored landmark-scale structures, one per stage
-// identity. They are CONCEPT ports only: the reference
+// Sixty-four ORIGINAL hand-authored landmark-scale structures in eight
+// per-stage kits (slice E shipped one anchor per stage identity; slice J
+// grows each biome to 3 anchors + 5 satellite outbuildings — no cap on
+// counts, the bound is measured perf + the pilot-fit separation floor).
+// They are CONCEPT ports only: the reference
 // (docs/vs_port_ref/DESIGN_REFERENCE_VS.md, section 5 + 13, see per-building
 // rows below) names the ROLES — castle-courtyard walls, clock-tower stubs,
 // chapel fronts, library halls, gallo-tower stacks, machine houses,
@@ -29,13 +32,13 @@ import { CONFIG as C } from './config.js';
 //   * Bed shadow is rect #1 inside the declared box (all rects fit
 //     [0,w)x[0,h) — the rim cull in render.js trusts the footprint).
 //
-// WIRING: render.js drawLandmarks runs the rare building pass (BUILDING_CELL
-// grid, BUILDING_DENSITY gate, fresh hash salts) AFTER the landmark-cell
-// field and BEFORE the hollow's authored block — one building per picked
-// building-cell at most, rim-clipped by footprint, reported through the
-// same landmarks seam (kind = the building id, COMPOSED rects). No
-// balance/combat/economy number lives here (visual slice + a pure motion
-// query, see PORT SLICE F below).
+// WIRING: render.js drawLandmarks runs the building pass (BUILDING_CELL
+// grid, fresh hash salts, single-sourced from buildingPlacements below)
+// AFTER the landmark-cell field and BEFORE the hollow's authored block —
+// every building-cell composes an anchor + satellites (slice J: no density
+// gate), view-culled, reported through the same landmarks seam (kind = the
+// design id, COMPOSED rects). No balance/combat/economy number lives here
+// (visual slice + a pure motion query, see PORT SLICE F below).
 // PORT SLICE F (owner-ruled 2026-09-22: "collision sounds fine to me. we
 // need to get some objects in the map sooner or later." — collision on the
 // slice-(e) buildings is APPROVED as gameplay): this module grows a PURE
@@ -210,8 +213,554 @@ const CLOCKWAY_STUB_RECTS = [
 ];
 const CLOCKWAY_STUB_PALETTE = { 1: '#1a2029', 2: '#5f6b78', 3: '#9fb0c0', 4: '#e8eef4', 5: '#10141a', 6: '#ffd54a' };
 
-function makeBuilding(id, name, blurb, w, h, rects, palette) {
-  return { id, name, blurb, w, h, rects, palette, rectCount: rects.length };
+// ---- PORT SLICE J shared biome palettes ------------------------------------
+// One palette per biome (the section-13 palette-swap discipline from the map
+// study: variety comes from RECOMBINING a small kit, re-skinned per biome).
+// Values match the slice-E anchors above so old and new sit in one place.
+const PAL_HOLLOW = { 1: '#2e2114', 2: '#7c603c', 3: '#a8906a', 4: '#4c9455', 5: '#6cc47c', 6: '#ffd54a' };
+const PAL_ASHEN = { 1: '#141216', 2: '#2c2c34', 3: '#4a4a56', 4: '#e8481e', 5: '#ffd54a', 6: '#6a7382' };
+const PAL_SNOW = { 1: '#39424c', 2: '#5f6b78', 3: '#8a97a5', 4: '#dfe7ee', 5: '#1c222b', 6: '#ffd54a' };
+const PAL_RUST = { 1: '#0c0604', 2: '#6a3226', 3: '#a8583c', 4: '#ffd54a', 5: '#1c0e0a', 6: '#38221a' };
+const PAL_BONE = { 1: '#0e0a04', 2: '#a87f4a', 3: '#c8b088', 4: '#6b4a2a', 5: '#e8d8c0', 6: '#443826' };
+const PAL_VOID = { 1: '#080614', 2: '#2c2650', 3: '#4a3f7a', 4: '#9e7fff', 5: '#ffd54a', 6: '#1c1834' };
+const PAL_CINDER = { 1: '#0a0a0e', 2: '#2c2c34', 3: '#565664', 4: '#e8481e', 5: '#ffd54a', 6: '#6a7382' };
+const PAL_WHITE = { 1: '#1a2029', 2: '#5f6b78', 3: '#9fb0c0', 4: '#e8eef4', 5: '#10141a', 6: '#ffd54a' };
+
+// ---- VERDANT_HOLLOW satellites + anchors (timber hamlet) --------------------
+// Reference: section 5 row FOREST + row EX_WESTWOODS (path-lit wood), same
+// rows as HOLLOW_LODGE above. Grammar G8: lodge + sheds/palisades/log piles.
+const GROVE_HALL_RECTS = [
+  [2, 64, 100, 2, 1],
+  [10, 54, 6, 10, 1], [88, 54, 6, 10, 1],
+  [8, 52, 88, 3, 2],
+  [12, 28, 80, 24, 2],
+  [12, 36, 80, 1, 1], [12, 44, 80, 1, 1],
+  [12, 28, 80, 3, 3],
+  [46, 36, 12, 16, 1], [48, 40, 8, 6, 6],
+  [20, 34, 10, 8, 1], [22, 36, 6, 4, 6],
+  [74, 34, 10, 8, 1],
+  [4, 18, 52, 6, 1], [48, 18, 52, 6, 1],
+  [6, 12, 92, 6, 2], [6, 12, 92, 2, 3],
+  [12, 14, 14, 2, 4], [64, 16, 16, 2, 4], [40, 20, 10, 2, 5],
+  [94, 46, 6, 2, 2], [94, 48, 6, 2, 1], [94, 50, 6, 2, 2],
+];
+const LOOKOUT_RECTS = [
+  [2, 100, 60, 2, 1],
+  [12, 72, 6, 28, 1], [46, 72, 6, 28, 1],
+  [12, 84, 40, 2, 2], [12, 92, 40, 2, 2],
+  [8, 64, 48, 6, 2], [8, 64, 48, 2, 3],
+  [14, 40, 36, 24, 2], [14, 40, 36, 2, 3],
+  [14, 48, 36, 1, 1], [14, 56, 36, 1, 1],
+  [24, 46, 16, 10, 1], [26, 48, 12, 6, 6],
+  [10, 32, 44, 6, 1], [12, 26, 40, 6, 2], [12, 26, 40, 2, 3],
+  [16, 28, 10, 2, 4], [38, 30, 10, 2, 5],
+  [28, 10, 4, 16, 1], [32, 10, 12, 6, 6], [32, 10, 12, 2, 4],
+  [6, 94, 12, 6, 2], [46, 94, 12, 6, 2],
+];
+const WOODSHED_RECTS = [
+  [2, 40, 52, 2, 1],
+  [8, 16, 40, 24, 2], [8, 16, 40, 2, 3],
+  [8, 24, 40, 1, 1], [8, 32, 40, 1, 1],
+  [4, 10, 48, 6, 1], [6, 6, 44, 4, 2],
+  [10, 6, 10, 2, 4], [34, 8, 10, 2, 5],
+  [24, 24, 8, 16, 1],
+  [48, 28, 6, 2, 2], [48, 30, 6, 2, 1], [48, 32, 6, 2, 2],
+];
+const PALISADE_RECTS = [
+  [2, 32, 64, 2, 1],
+  [6, 10, 6, 22, 2], [16, 10, 6, 22, 2], [26, 10, 6, 22, 2],
+  [36, 10, 6, 22, 2], [46, 10, 6, 22, 2], [56, 10, 6, 22, 2],
+  [6, 8, 6, 2, 3], [16, 8, 6, 2, 3], [26, 8, 6, 2, 3],
+  [36, 8, 6, 2, 3], [46, 8, 6, 2, 3], [56, 8, 6, 2, 3],
+  [4, 14, 60, 2, 1], [4, 24, 60, 2, 1],
+  [10, 18, 12, 2, 5], [40, 20, 14, 2, 4],
+];
+const LOGPILE_RECTS = [
+  [2, 32, 48, 2, 1],
+  [6, 20, 8, 8, 3], [16, 20, 8, 8, 2], [26, 20, 8, 8, 3], [36, 20, 8, 8, 2],
+  [8, 22, 4, 4, 1], [18, 22, 4, 4, 1], [28, 22, 4, 4, 1], [38, 22, 4, 4, 1],
+  [11, 10, 8, 8, 2], [21, 10, 8, 8, 3], [31, 10, 8, 8, 2],
+  [13, 12, 4, 4, 1], [23, 12, 4, 4, 1], [33, 12, 4, 4, 1],
+  [18, 4, 12, 4, 2], [20, 4, 8, 2, 4],
+];
+const HERB_RACK_RECTS = [
+  [2, 40, 44, 2, 1],
+  [8, 10, 4, 30, 1], [36, 10, 4, 30, 1],
+  [8, 10, 32, 3, 2],
+  [12, 14, 6, 10, 4], [21, 14, 6, 10, 5], [30, 14, 4, 10, 4],
+  [14, 13, 2, 2, 3], [23, 13, 2, 2, 3],
+  [6, 36, 36, 2, 2],
+  [12, 30, 6, 6, 2], [30, 30, 6, 6, 2],
+];
+const STUMP_SHRINE_RECTS = [
+  [2, 48, 40, 2, 1],
+  [10, 18, 24, 30, 2], [10, 18, 24, 3, 3],
+  [13, 21, 18, 2, 3], [16, 27, 12, 2, 1], [18, 33, 8, 2, 3],
+  [16, 38, 4, 4, 1], [24, 38, 4, 4, 1], [18, 44, 8, 2, 1],
+  [8, 14, 28, 4, 4], [12, 14, 8, 2, 5],
+  [30, 40, 8, 4, 2], [32, 40, 4, 2, 6],
+  [6, 44, 6, 4, 1], [32, 44, 6, 4, 1],
+];
+
+// ---- ASHEN_WASTE satellites + anchors (basalt ruin-field) -------------------
+// Reference: section 5 row BONEZONE + section 13 row
+// TP_Tileset_Refactor_1_Castle, same rows as EMBER_HALL above.
+const CINDER_GATE_RECTS = [
+  [2, 72, 104, 2, 1],
+  [8, 16, 24, 56, 2], [8, 16, 24, 2, 3],
+  [76, 16, 24, 56, 2], [76, 16, 24, 2, 3],
+  [6, 10, 28, 6, 2], [74, 10, 28, 6, 2], [6, 10, 28, 2, 3], [74, 10, 28, 2, 3],
+  [8, 22, 92, 10, 2], [8, 22, 92, 2, 3],
+  [42, 40, 24, 32, 1], [44, 44, 20, 6, 4],
+  [14, 30, 4, 10, 4], [86, 30, 4, 10, 4], [16, 52, 2, 8, 5],
+  [44, 64, 16, 6, 2], [62, 66, 12, 4, 1], [46, 58, 12, 4, 2],
+  [0, 70, 40, 2, 6], [70, 70, 38, 2, 6],
+];
+const BASALT_SPIRE_RECTS = [
+  [2, 100, 64, 2, 1],
+  [10, 88, 48, 12, 2], [10, 88, 48, 2, 3],
+  [16, 80, 36, 8, 2],
+  [20, 20, 28, 60, 2], [20, 20, 28, 2, 3], [20, 20, 4, 60, 1],
+  [28, 34, 3, 12, 4], [36, 52, 3, 10, 4], [30, 66, 2, 8, 5],
+  [16, 12, 36, 8, 2], [16, 12, 36, 2, 3],
+  [30, 2, 8, 10, 2], [32, 4, 4, 4, 4],
+  [52, 40, 8, 2, 3], [58, 38, 2, 6, 6],
+  [4, 92, 10, 6, 1], [54, 92, 10, 6, 2],
+];
+const EMBER_CAIRN_RECTS = [
+  [2, 40, 44, 2, 1],
+  [10, 32, 28, 8, 2], [10, 32, 28, 1, 3],
+  [14, 24, 20, 8, 2], [14, 24, 20, 1, 3],
+  [19, 16, 10, 8, 2],
+  [16, 32, 8, 1, 4], [20, 24, 6, 1, 4], [22, 18, 4, 1, 5],
+  [4, 34, 6, 6, 1], [38, 34, 6, 6, 2],
+  [0, 38, 10, 2, 6], [38, 38, 10, 2, 6],
+];
+const BROKEN_PIER_RECTS = [
+  [2, 60, 36, 2, 1],
+  [6, 52, 28, 8, 2], [6, 52, 28, 1, 3],
+  [10, 14, 20, 38, 2], [10, 14, 20, 1, 3], [10, 14, 3, 38, 1],
+  [10, 10, 20, 4, 2], [16, 6, 8, 4, 2],
+  [18, 26, 3, 12, 4], [20, 44, 2, 6, 5],
+  [2, 44, 8, 6, 2], [30, 46, 8, 6, 1],
+];
+const SLAG_HEAP_RECTS = [
+  [2, 32, 52, 2, 1],
+  [8, 18, 40, 14, 2], [14, 12, 28, 6, 2],
+  [14, 12, 28, 2, 3], [8, 18, 40, 1, 3],
+  [4, 24, 8, 8, 1], [44, 24, 8, 8, 1], [24, 22, 10, 6, 1],
+  [18, 20, 3, 3, 4], [34, 24, 3, 3, 4], [28, 14, 2, 2, 5],
+];
+const SCORCH_WALL_RECTS = [
+  [2, 36, 64, 2, 1],
+  [6, 14, 12, 22, 2], [20, 14, 12, 22, 2], [44, 14, 12, 22, 2], [56, 14, 6, 22, 2],
+  [6, 14, 12, 2, 3], [20, 14, 12, 2, 3], [44, 14, 12, 2, 3], [56, 14, 6, 2, 3],
+  [6, 34, 12, 2, 4], [44, 34, 12, 2, 4],
+  [30, 28, 10, 6, 2], [32, 22, 8, 4, 1],
+  [0, 34, 6, 2, 6], [62, 34, 6, 2, 6],
+];
+const FIRE_BOWL_RECTS = [
+  [2, 44, 40, 2, 1],
+  [14, 20, 16, 24, 2], [14, 20, 16, 2, 3],
+  [12, 40, 4, 4, 1], [28, 40, 4, 4, 1],
+  [8, 12, 28, 8, 6], [8, 12, 28, 2, 3],
+  [16, 2, 12, 10, 4], [19, 4, 6, 6, 5],
+  [12, 22, 20, 2, 4],
+  [4, 36, 6, 6, 1], [34, 36, 6, 6, 2],
+];
+
+// ---- SNOWFIELD satellites + anchors (chapel close) --------------------------
+// Reference: section 5 row CHAPEL + section 13 row TP_Tileset_Refactor_2_Chapel.
+const BELFRY_RECTS = [
+  [2, 104, 60, 2, 1],
+  [14, 24, 36, 80, 2], [14, 24, 36, 2, 3], [14, 24, 4, 80, 1],
+  [22, 32, 20, 20, 5], [24, 36, 16, 6, 6],
+  [22, 44, 20, 2, 2],
+  [14, 60, 36, 3, 1],
+  [24, 80, 16, 24, 5], [30, 84, 4, 16, 6],
+  [10, 20, 44, 6, 4], [8, 56, 48, 4, 4], [10, 98, 44, 4, 4],
+  [50, 60, 8, 44, 2], [50, 60, 8, 2, 3], [50, 56, 8, 4, 4],
+  [0, 100, 16, 6, 4], [48, 100, 16, 6, 4],
+];
+const PILGRIM_HALL_RECTS = [
+  [2, 64, 104, 2, 1],
+  [10, 22, 88, 42, 2], [10, 22, 88, 2, 3],
+  [4, 30, 6, 34, 2], [98, 30, 6, 34, 2],
+  [6, 14, 96, 8, 2], [2, 8, 104, 6, 4], [2, 12, 104, 2, 1],
+  [48, 40, 14, 24, 5], [54, 44, 2, 16, 6],
+  [20, 32, 10, 10, 5], [22, 34, 6, 4, 6], [78, 32, 10, 10, 5], [80, 34, 6, 4, 6],
+  [10, 58, 88, 4, 4],
+  [0, 60, 10, 6, 4], [98, 60, 10, 6, 4],
+];
+const SNOW_WALL_RECTS = [
+  [2, 32, 64, 2, 1],
+  [6, 12, 14, 20, 2], [22, 12, 14, 20, 2], [46, 12, 14, 20, 2],
+  [6, 12, 14, 2, 3], [22, 12, 14, 2, 3], [46, 12, 14, 2, 3],
+  [4, 6, 60, 6, 4], [4, 10, 60, 2, 1],
+  [36, 22, 10, 8, 2], [38, 16, 8, 4, 4],
+  [0, 30, 8, 4, 4], [60, 30, 8, 4, 4],
+];
+const ICE_CAIRN_RECTS = [
+  [2, 40, 40, 2, 1],
+  [10, 30, 24, 10, 2], [10, 30, 24, 1, 4],
+  [14, 21, 16, 9, 3], [14, 21, 16, 1, 4],
+  [19, 12, 8, 9, 2], [19, 12, 8, 1, 4],
+  [12, 32, 4, 2, 4], [26, 23, 4, 2, 4],
+  [6, 38, 32, 2, 4],
+  [2, 32, 6, 6, 2], [36, 32, 6, 6, 2],
+];
+const SHRINE_POST_RECTS = [
+  [2, 52, 32, 2, 1],
+  [14, 14, 8, 38, 2], [14, 14, 8, 2, 3], [14, 14, 2, 38, 1],
+  [8, 6, 20, 10, 5], [10, 8, 16, 4, 6],
+  [6, 2, 24, 4, 4],
+  [10, 48, 16, 4, 2], [8, 44, 20, 4, 4],
+  [14, 24, 8, 2, 3], [14, 34, 8, 2, 3],
+];
+const WAYMARK_RECTS = [
+  [2, 32, 56, 2, 1],
+  [8, 8, 5, 24, 2], [47, 8, 5, 24, 2],
+  [8, 8, 44, 4, 2], [8, 8, 44, 1, 3],
+  [20, 14, 20, 8, 5], [22, 16, 16, 2, 6], [22, 19, 10, 1, 3],
+  [0, 28, 12, 4, 4], [48, 28, 12, 4, 4],
+  [6, 4, 9, 4, 4], [45, 4, 9, 4, 4],
+];
+const FROST_STEP_RECTS = [
+  [2, 36, 48, 2, 1],
+  [6, 28, 40, 8, 2], [12, 20, 28, 8, 2], [18, 12, 16, 8, 2],
+  [6, 28, 40, 1, 4], [12, 20, 28, 1, 4], [18, 12, 16, 1, 4],
+  [24, 22, 6, 4, 5], [26, 22, 2, 4, 6],
+  [0, 32, 6, 4, 4], [46, 32, 6, 4, 4],
+];
+
+// ---- BLOOD_RUST satellites + anchors (keep compound) ------------------------
+// Reference: section 5 row CHAPEL + Appendix A.3 row atlas_TP_Stage3_ProfaneChapel
+// + section 6 rows EX_TOHILSTATUE / KUJATASTATUE (mass that watches).
+const PROFANE_GATE_RECTS = [
+  [2, 76, 104, 2, 1],
+  [8, 14, 26, 62, 2], [8, 14, 26, 2, 3], [74, 14, 26, 62, 2], [74, 14, 26, 2, 3],
+  [8, 6, 12, 8, 2], [24, 6, 10, 8, 2], [74, 6, 12, 8, 2], [88, 6, 12, 8, 2],
+  [8, 6, 12, 2, 3], [24, 6, 10, 2, 3], [74, 6, 12, 2, 3], [88, 6, 12, 2, 3],
+  [8, 20, 92, 8, 2], [8, 20, 92, 2, 3],
+  [42, 36, 24, 40, 5], [40, 34, 28, 3, 3],
+  [50, 44, 8, 4, 4],
+  [34, 40, 8, 36, 6], [66, 40, 8, 36, 6],
+  [14, 68, 12, 6, 2], [82, 68, 12, 6, 2],
+];
+const IDOL_TOWER_RECTS = [
+  [2, 100, 64, 2, 1],
+  [18, 18, 32, 82, 2], [18, 18, 32, 3, 3], [18, 18, 4, 82, 1],
+  [24, 30, 20, 30, 5], [22, 28, 24, 3, 3],
+  [28, 36, 12, 20, 2], [30, 38, 8, 4, 4],
+  [30, 40, 2, 2, 4], [36, 40, 2, 2, 4], [28, 46, 12, 2, 3],
+  [30, 66, 8, 4, 4],
+  [18, 62, 32, 3, 1], [18, 84, 32, 3, 1],
+  [14, 10, 40, 8, 2], [14, 10, 40, 2, 3],
+  [12, 92, 44, 8, 6], [12, 92, 44, 2, 3],
+  [2, 90, 8, 8, 2], [58, 90, 8, 8, 2],
+];
+const RUST_WALL_RECTS = [
+  [2, 36, 64, 2, 1],
+  [6, 14, 14, 22, 2], [22, 14, 14, 22, 2], [38, 14, 14, 22, 2], [54, 14, 8, 22, 2],
+  [6, 14, 14, 2, 3], [22, 14, 14, 2, 3], [38, 14, 14, 2, 3], [54, 14, 8, 2, 3],
+  [6, 8, 12, 6, 2], [30, 8, 12, 6, 2], [50, 8, 12, 6, 2],
+  [12, 20, 2, 10, 4], [42, 22, 2, 8, 4],
+  [6, 32, 56, 2, 1],
+];
+const SMALL_IDOL_RECTS = [
+  [2, 52, 36, 2, 1],
+  [10, 40, 20, 12, 6], [10, 40, 20, 2, 3],
+  [13, 18, 14, 22, 2], [13, 18, 14, 2, 3],
+  [15, 10, 10, 8, 2],
+  [17, 12, 2, 2, 4], [21, 12, 2, 2, 4],
+  [9, 22, 4, 12, 2], [27, 22, 4, 12, 2],
+  [8, 48, 24, 2, 1],
+];
+const SPIKE_RACK_RECTS = [
+  [2, 32, 52, 2, 1],
+  [6, 26, 44, 6, 2], [6, 26, 44, 1, 3],
+  [8, 10, 5, 16, 2], [16, 14, 5, 12, 2], [24, 8, 5, 18, 2], [32, 14, 5, 12, 2], [40, 10, 5, 16, 2],
+  [8, 10, 5, 2, 3], [16, 14, 5, 2, 3], [24, 8, 5, 2, 3], [32, 14, 5, 2, 3], [40, 10, 5, 2, 3],
+  [6, 30, 44, 2, 1],
+];
+const RUIN_STAIR_RECTS = [
+  [2, 40, 48, 2, 1],
+  [6, 32, 34, 8, 2], [12, 24, 28, 8, 2], [18, 16, 22, 8, 2], [24, 8, 16, 8, 2],
+  [6, 32, 34, 1, 3], [12, 24, 28, 1, 3], [18, 16, 22, 1, 3], [24, 8, 16, 1, 3],
+  [40, 10, 4, 30, 2], [40, 10, 4, 2, 3],
+  [44, 32, 6, 6, 1],
+];
+const OFFERING_SLAB_RECTS = [
+  [2, 32, 44, 2, 1],
+  [8, 20, 32, 10, 6], [8, 20, 32, 2, 3],
+  [10, 30, 6, 4, 2], [32, 30, 6, 4, 2],
+  [20, 12, 8, 8, 2], [22, 10, 4, 2, 4],
+  [14, 24, 20, 2, 5],
+  [2, 26, 6, 6, 1], [40, 26, 6, 6, 2],
+];
+
+// ---- BONE_DESERT satellites + anchors (ossuary field) -----------------------
+// Reference: section 5 row BONEZONE + section 6 row CART + section 13 st2u_*.
+const SAND_TOWER_RECTS = [
+  [2, 100, 68, 2, 1],
+  [18, 20, 36, 80, 2], [18, 20, 36, 2, 3],
+  [18, 36, 36, 2, 1], [18, 52, 36, 2, 1], [18, 68, 36, 2, 1],
+  [18, 12, 10, 8, 2], [32, 12, 8, 8, 2], [44, 12, 10, 8, 2],
+  [18, 12, 10, 2, 3], [32, 12, 8, 2, 3], [44, 12, 10, 2, 3],
+  [30, 80, 12, 20, 5], [28, 76, 16, 4, 6],
+  [54, 88, 16, 8, 3], [0, 94, 18, 6, 3],
+  [6, 64, 4, 20, 4], [62, 62, 4, 18, 4],
+];
+const RIB_VAULT_RECTS = [
+  [2, 64, 104, 2, 1],
+  [8, 18, 92, 8, 5], [8, 24, 92, 4, 6],
+  [16, 26, 8, 38, 5], [44, 26, 8, 38, 5], [72, 26, 8, 38, 5],
+  [16, 26, 2, 38, 6], [44, 26, 2, 38, 6], [72, 26, 2, 38, 6],
+  [88, 30, 14, 34, 2], [88, 30, 14, 2, 3],
+  [30, 58, 24, 4, 5], [56, 60, 10, 3, 4], [20, 60, 8, 3, 4],
+  [0, 62, 30, 2, 3], [78, 62, 30, 2, 3],
+];
+const RIB_SPIKE_RECTS = [
+  [2, 56, 32, 2, 1],
+  [12, 6, 10, 50, 5], [12, 6, 3, 50, 6],
+  [6, 50, 24, 6, 2], [6, 50, 24, 1, 3],
+  [24, 28, 3, 22, 4],
+  [4, 52, 4, 4, 4], [28, 52, 4, 4, 2],
+];
+const DUNE_WALL_RECTS = [
+  [2, 32, 64, 2, 1],
+  [6, 14, 52, 16, 2], [30, 14, 2, 16, 1],
+  [4, 10, 56, 4, 6], [4, 10, 56, 1, 3],
+  [6, 14, 52, 2, 3],
+  [0, 28, 16, 4, 3], [44, 30, 24, 4, 3],
+  [20, 6, 8, 4, 5], [40, 8, 6, 3, 5],
+];
+const BONE_CAIRN_RECTS = [
+  [2, 40, 40, 2, 1],
+  [10, 30, 24, 10, 2], [10, 30, 24, 1, 3],
+  [14, 21, 16, 9, 5], [14, 21, 16, 1, 6],
+  [19, 12, 8, 9, 5],
+  [8, 24, 4, 10, 5], [32, 22, 4, 12, 5],
+  [6, 38, 32, 2, 3],
+];
+const FALLEN_RIB_RECTS = [
+  [2, 28, 56, 2, 1],
+  [8, 12, 44, 5, 5], [8, 12, 44, 1, 6],
+  [8, 12, 6, 10, 5], [46, 12, 6, 10, 5],
+  [14, 20, 8, 4, 4], [30, 20, 6, 4, 4], [42, 22, 8, 4, 2],
+  [0, 26, 20, 2, 3], [36, 26, 24, 2, 3],
+];
+const SANDSTEP_RECTS = [
+  [2, 36, 48, 2, 1],
+  [6, 28, 40, 8, 2], [12, 20, 28, 8, 2], [18, 12, 16, 8, 2],
+  [6, 28, 40, 1, 3], [12, 20, 28, 1, 3], [18, 12, 16, 1, 3],
+  [2, 24, 6, 12, 2], [44, 24, 6, 12, 2],
+  [0, 34, 12, 2, 3], [40, 34, 12, 2, 3],
+];
+
+// ---- VOID_REACH satellites + anchors (library court) ------------------------
+// Reference: section 5 row LIBRARY + row ASTRALSTAIR + Appendix A.3 row
+// atlas_LibraryTexturePacked.
+const STACK_HALL_RECTS = [
+  [2, 68, 104, 2, 1],
+  [10, 16, 88, 52, 2], [10, 16, 88, 2, 3],
+  [16, 24, 28, 4, 6], [16, 32, 28, 4, 6], [16, 40, 28, 4, 6],
+  [60, 24, 28, 4, 6], [60, 32, 28, 4, 6], [60, 40, 28, 4, 6],
+  [18, 24, 4, 4, 4], [28, 32, 4, 4, 5], [38, 40, 4, 4, 4],
+  [62, 24, 4, 4, 5], [72, 32, 4, 4, 4], [82, 40, 4, 4, 5],
+  [6, 8, 96, 8, 6], [6, 8, 96, 2, 3],
+  [34, 60, 40, 4, 6], [30, 64, 48, 4, 2],
+  [0, 30, 8, 38, 6], [0, 30, 8, 2, 3],
+];
+const ASTRAL_STAIR_RECTS = [
+  [2, 100, 72, 2, 1],
+  [10, 20, 24, 80, 2], [10, 20, 24, 2, 3],
+  [34, 40, 32, 60, 2],
+  [34, 44, 32, 2, 4], [34, 52, 32, 2, 4], [34, 60, 32, 2, 4],
+  [34, 68, 32, 2, 4], [34, 76, 32, 2, 4],
+  [38, 24, 24, 16, 6], [42, 28, 16, 8, 4],
+  [64, 60, 8, 40, 6], [64, 60, 8, 2, 3],
+  [6, 96, 64, 4, 2],
+  [52, 88, 10, 6, 2], [52, 88, 10, 2, 5],
+];
+const BROKEN_COLUMN_RECTS = [
+  [2, 56, 36, 2, 1],
+  [8, 48, 24, 8, 2], [8, 48, 24, 1, 3],
+  [13, 16, 14, 32, 2], [13, 16, 14, 1, 3],
+  [10, 10, 20, 6, 6], [10, 10, 20, 1, 3],
+  [18, 26, 3, 10, 4],
+  [26, 50, 10, 4, 2], [28, 44, 8, 4, 6],
+  [15, 32, 6, 4, 4],
+];
+const RUNE_SLAB_RECTS = [
+  [2, 36, 44, 2, 1],
+  [10, 14, 28, 20, 6], [10, 14, 28, 2, 3],
+  [14, 18, 6, 2, 4], [24, 18, 6, 2, 4], [14, 24, 8, 2, 4], [26, 24, 6, 2, 5], [18, 29, 12, 2, 4],
+  [8, 34, 32, 3, 2],
+  [2, 28, 6, 8, 2], [40, 28, 6, 8, 2],
+];
+const TOME_PILE_RECTS = [
+  [2, 32, 48, 2, 1],
+  [8, 22, 16, 8, 2], [26, 22, 18, 8, 6], [12, 14, 16, 8, 6], [28, 14, 14, 8, 2],
+  [8, 22, 16, 1, 4], [26, 22, 18, 1, 4], [12, 14, 16, 1, 4], [28, 14, 14, 1, 4],
+  [14, 22, 2, 8, 5], [32, 14, 2, 8, 5],
+  [22, 6, 8, 4, 4],
+];
+const VOID_BRAZIER_RECTS = [
+  [2, 48, 36, 2, 1],
+  [14, 22, 12, 26, 2], [14, 22, 12, 2, 3],
+  [10, 44, 20, 3, 6],
+  [8, 14, 24, 8, 6], [8, 14, 24, 2, 3],
+  [15, 4, 10, 10, 4], [17, 6, 6, 6, 5],
+  [12, 24, 16, 2, 4],
+];
+const ARCH_FRAG_RECTS = [
+  [2, 40, 52, 2, 1],
+  [8, 18, 10, 22, 2], [8, 18, 10, 2, 3],
+  [38, 18, 10, 22, 2], [38, 18, 10, 2, 3],
+  [14, 34, 28, 5, 6], [14, 34, 28, 1, 3],
+  [10, 10, 8, 4, 2], [38, 10, 8, 4, 2],
+  [10, 24, 3, 8, 4], [42, 24, 3, 8, 4],
+];
+
+// ---- CINDER_MAW satellites + anchors (kiln yard) ----------------------------
+// Reference: section 5 row TOWER + row TOWERBRIDGE + Appendix A.3 row
+// atlas_TowerTexturePacked + section 6 row BRAZIER2.
+const MACHINE_HOUSE_RECTS = [
+  [2, 72, 100, 2, 1],
+  [10, 24, 62, 48, 2], [10, 24, 62, 2, 3],
+  [6, 16, 70, 8, 2], [6, 16, 70, 2, 3],
+  [18, 34, 12, 10, 1], [20, 36, 8, 4, 4], [46, 34, 12, 10, 1], [48, 36, 8, 4, 5],
+  [30, 52, 12, 20, 1], [32, 56, 8, 8, 4],
+  [72, 36, 24, 36, 2], [72, 36, 24, 2, 3],
+  [78, 52, 12, 20, 1], [80, 58, 8, 6, 4],
+  [72, 28, 24, 4, 6], [90, 32, 3, 8, 2],
+  [0, 66, 10, 6, 6], [94, 66, 10, 6, 2],
+];
+const EMBER_STACK_RECTS = [
+  [2, 104, 64, 2, 1],
+  [10, 84, 48, 20, 2], [10, 84, 48, 2, 3],
+  [28, 90, 12, 14, 1], [30, 94, 8, 6, 4],
+  [24, 12, 20, 72, 2], [24, 12, 20, 2, 3], [24, 12, 4, 72, 1],
+  [24, 28, 20, 2, 1], [24, 48, 20, 2, 1], [24, 68, 20, 2, 1],
+  [22, 6, 24, 6, 1], [26, 2, 16, 4, 4],
+  [46, 40, 8, 44, 2], [46, 40, 8, 2, 3],
+  [48, 56, 4, 3, 5],
+  [4, 96, 10, 6, 6], [54, 96, 10, 6, 2],
+];
+const SLAG_BLOCK_RECTS = [
+  [2, 36, 44, 2, 1],
+  [10, 12, 28, 24, 2], [10, 12, 28, 2, 3],
+  [16, 18, 3, 12, 4], [26, 22, 3, 10, 4], [20, 28, 12, 2, 1],
+  [12, 8, 24, 4, 2],
+  [2, 28, 8, 8, 1], [38, 28, 8, 8, 2],
+  [30, 14, 3, 3, 5],
+];
+const PIPE_RUN_RECTS = [
+  [2, 28, 60, 2, 1],
+  [6, 12, 52, 4, 2], [6, 20, 52, 4, 6],
+  [14, 10, 4, 16, 3], [34, 10, 4, 16, 3], [50, 10, 4, 16, 3],
+  [10, 24, 6, 4, 1], [40, 24, 6, 4, 1],
+  [24, 6, 6, 6, 2], [25, 7, 4, 2, 4],
+];
+const COAL_HEAP_RECTS = [
+  [2, 32, 48, 2, 1],
+  [8, 18, 36, 14, 6], [14, 12, 24, 6, 6],
+  [14, 12, 24, 2, 3],
+  [6, 24, 8, 8, 1], [38, 24, 8, 8, 1], [22, 20, 10, 8, 1],
+  [18, 20, 2, 2, 4], [32, 22, 2, 2, 4], [26, 14, 2, 2, 5],
+];
+const FURNACE_DOOR_RECTS = [
+  [2, 40, 40, 2, 1],
+  [10, 12, 24, 28, 2], [10, 12, 24, 2, 3],
+  [8, 8, 28, 4, 2],
+  [16, 22, 12, 18, 1], [18, 28, 8, 8, 4], [20, 30, 4, 4, 5],
+  [14, 18, 16, 4, 6],
+  [34, 24, 8, 16, 2], [34, 24, 8, 2, 3],
+  [2, 36, 8, 4, 6],
+];
+const GEAR_RACK_RECTS = [
+  [2, 36, 48, 2, 1],
+  [8, 8, 36, 4, 2], [8, 28, 36, 4, 2], [8, 8, 4, 24, 2], [40, 8, 4, 24, 2],
+  [14, 14, 10, 10, 3], [28, 14, 10, 10, 3],
+  [17, 17, 4, 4, 1], [31, 17, 4, 4, 1],
+  [14, 12, 10, 2, 6], [28, 24, 10, 2, 6],
+  [12, 18, 28, 2, 4],
+];
+
+// ---- WHITEOUT satellites + anchors (clock compound) -------------------------
+// Reference: section 5 TOWER rows + Appendix A.3 row atlas_TP_Stage5_ClockTower
+// + section 6 row WEATHERNODE.
+const GEAR_HALL_RECTS = [
+  [2, 68, 100, 2, 1],
+  [10, 20, 84, 48, 2], [10, 20, 84, 2, 3],
+  [38, 28, 28, 28, 5], [40, 30, 24, 24, 2],
+  [44, 26, 4, 4, 3], [58, 26, 4, 4, 3], [44, 54, 4, 4, 3], [58, 54, 4, 4, 3],
+  [36, 38, 4, 4, 3], [64, 38, 4, 4, 3],
+  [50, 38, 4, 8, 6], [46, 42, 12, 2, 6],
+  [16, 44, 12, 24, 5], [22, 48, 2, 16, 6],
+  [6, 14, 92, 6, 4], [6, 18, 92, 2, 1],
+  [76, 32, 10, 10, 5], [78, 34, 6, 4, 6],
+  [0, 64, 12, 6, 4], [92, 64, 12, 6, 4],
+];
+const WHITE_TOWER_RECTS = [
+  [2, 100, 64, 2, 1],
+  [20, 20, 28, 80, 2], [20, 20, 28, 2, 3], [20, 20, 4, 80, 1],
+  [30, 32, 8, 3, 5], [30, 48, 8, 3, 5], [30, 64, 8, 3, 5],
+  [20, 40, 28, 3, 4], [20, 72, 28, 3, 4],
+  [16, 12, 36, 8, 4], [14, 84, 40, 6, 4],
+  [24, 4, 20, 8, 4], [24, 4, 20, 2, 3],
+  [26, 88, 16, 12, 5],
+  [14, 96, 40, 4, 2],
+  [0, 96, 14, 6, 4], [54, 96, 14, 6, 4],
+];
+const SNOW_RAMPART_RECTS = [
+  [2, 32, 64, 2, 1],
+  [6, 14, 56, 18, 2], [6, 14, 56, 2, 3],
+  [6, 8, 10, 6, 2], [22, 8, 10, 6, 2], [38, 8, 10, 6, 2], [54, 8, 8, 6, 2],
+  [4, 4, 60, 4, 4],
+  [6, 28, 56, 2, 4],
+  [32, 14, 2, 18, 1],
+  [0, 30, 10, 4, 4], [58, 30, 10, 4, 4],
+];
+const VANE_POST_RECTS = [
+  [2, 52, 32, 2, 1],
+  [15, 14, 6, 38, 2], [15, 14, 6, 2, 3],
+  [6, 20, 24, 3, 2], [10, 30, 16, 2, 3],
+  [28, 19, 6, 5, 3],
+  [6, 19, 4, 5, 4],
+  [13, 8, 10, 6, 4],
+  [13, 36, 10, 8, 5], [15, 38, 6, 4, 6],
+  [11, 48, 14, 4, 2],
+];
+const CLOCK_FRAG_RECTS = [
+  [2, 36, 48, 2, 1],
+  [12, 6, 28, 28, 4], [14, 8, 24, 24, 5],
+  [12, 6, 28, 2, 3], [12, 32, 28, 2, 3], [12, 6, 2, 28, 3], [38, 6, 2, 28, 3],
+  [25, 10, 2, 12, 6], [25, 20, 10, 2, 6],
+  [24, 19, 4, 4, 3],
+  [6, 34, 40, 3, 4],
+  [2, 28, 8, 6, 2], [42, 28, 8, 6, 2],
+];
+const FROST_CAIRN_RECTS = [
+  [2, 40, 40, 2, 1],
+  [10, 30, 24, 10, 2], [10, 30, 24, 1, 4],
+  [14, 21, 16, 9, 3], [14, 21, 16, 1, 4],
+  [19, 12, 8, 9, 4], [17, 10, 12, 2, 4],
+  [26, 23, 4, 2, 3],
+  [6, 38, 32, 2, 4],
+];
+const LAMP_ROW_RECTS = [
+  [2, 36, 56, 2, 1],
+  [8, 26, 44, 3, 2],
+  [12, 10, 4, 16, 2], [8, 4, 12, 8, 5], [10, 6, 8, 4, 6], [8, 2, 12, 2, 4],
+  [44, 10, 4, 16, 2], [40, 4, 12, 8, 5], [42, 6, 8, 4, 6], [40, 2, 12, 2, 4],
+  [10, 30, 8, 4, 2], [42, 30, 8, 4, 2],
+];
+
+function makeBuilding(id, name, blurb, w, h, rects, palette, role) {
+  return { id, name, blurb, w, h, rects, palette, rectCount: rects.length,
+    role: role || 'anchor' };
 }
 
 export const STAGE_BUILDINGS = {
@@ -231,25 +780,167 @@ export const STAGE_BUILDINGS = {
     'a kiln dome breathing through its stack', 88, 76, CINDER_KILN_RECTS, CINDER_KILN_PALETTE),
   CLOCKWAY_STUB: makeBuilding('CLOCKWAY_STUB', 'clockway stub',
     'a clock-tower waymark keeping dead time', 64, 100, CLOCKWAY_STUB_RECTS, CLOCKWAY_STUB_PALETTE),
+  // PORT SLICE J: the per-biome kits (grammar G1/G8 — 3 anchors + 5
+  // satellites each; the slice-E eight above stay first = biome anchors).
+  // VERDANT_HOLLOW (timber hamlet).
+  GROVE_HALL: makeBuilding('GROVE_HALL', 'grove hall',
+    'a long timber hall among the groves', 104, 68, GROVE_HALL_RECTS, PAL_HOLLOW),
+  LOOKOUT: makeBuilding('LOOKOUT', 'lookout',
+    'a timber watch tower over the groves', 64, 104, LOOKOUT_RECTS, PAL_HOLLOW),
+  WOODSHED: makeBuilding('WOODSHED', 'woodshed',
+    'a lean-to shed stacked with cut wood', 56, 44, WOODSHED_RECTS, PAL_HOLLOW, 'satellite'),
+  PALISADE: makeBuilding('PALISADE', 'palisade',
+    'a staked fence run marking the clearing', 68, 36, PALISADE_RECTS, PAL_HOLLOW, 'satellite'),
+  LOGPILE: makeBuilding('LOGPILE', 'log pile',
+    'winter cordwood stacked to season', 52, 36, LOGPILE_RECTS, PAL_HOLLOW, 'satellite'),
+  HERB_RACK: makeBuilding('HERB_RACK', 'herb rack',
+    'a drying rack hung with cut herbs', 48, 44, HERB_RACK_RECTS, PAL_HOLLOW, 'satellite'),
+  STUMP_SHRINE: makeBuilding('STUMP_SHRINE', 'stump shrine',
+    'a carved stump keeping a small offering', 44, 52, STUMP_SHRINE_RECTS, PAL_HOLLOW, 'satellite'),
+  // ASHEN_WASTE (basalt ruin-field).
+  CINDER_GATE: makeBuilding('CINDER_GATE', 'cinder gate',
+    'a breached gate of scorched basalt', 108, 76, CINDER_GATE_RECTS, PAL_ASHEN),
+  BASALT_SPIRE: makeBuilding('BASALT_SPIRE', 'basalt spire',
+    'a heat-cracked spire over the ash', 68, 104, BASALT_SPIRE_RECTS, PAL_ASHEN),
+  EMBER_CAIRN: makeBuilding('EMBER_CAIRN', 'ember cairn',
+    'scorched stones stacked over live coals', 48, 44, EMBER_CAIRN_RECTS, PAL_ASHEN, 'satellite'),
+  BROKEN_PIER: makeBuilding('BROKEN_PIER', 'broken pier',
+    'a snapped column still carrying heat', 40, 64, BROKEN_PIER_RECTS, PAL_ASHEN, 'satellite'),
+  SLAG_HEAP: makeBuilding('SLAG_HEAP', 'slag heap',
+    'a cooled mound of furnace waste', 56, 36, SLAG_HEAP_RECTS, PAL_ASHEN, 'satellite'),
+  SCORCH_WALL: makeBuilding('SCORCH_WALL', 'scorch wall',
+    'a breached wall stub with an ember lip', 68, 40, SCORCH_WALL_RECTS, PAL_ASHEN, 'satellite'),
+  FIRE_BOWL: makeBuilding('FIRE_BOWL', 'fire bowl',
+    'a stone stand holding a watch flame', 44, 48, FIRE_BOWL_RECTS, PAL_ASHEN, 'satellite'),
+  // SNOWFIELD (chapel close).
+  BELFRY: makeBuilding('BELFRY', 'belfry',
+    'a snow-capped bell tower over the close', 64, 108, BELFRY_RECTS, PAL_SNOW),
+  PILGRIM_HALL: makeBuilding('PILGRIM_HALL', 'pilgrim hall',
+    'a long hall for snowbound travellers', 108, 68, PILGRIM_HALL_RECTS, PAL_SNOW),
+  SNOW_WALL: makeBuilding('SNOW_WALL', 'snow wall',
+    'a breached close wall under its snowcap', 68, 36, SNOW_WALL_RECTS, PAL_SNOW, 'satellite'),
+  ICE_CAIRN: makeBuilding('ICE_CAIRN', 'ice cairn',
+    'ice-set stones marking the path', 44, 44, ICE_CAIRN_RECTS, PAL_SNOW, 'satellite'),
+  SHRINE_POST: makeBuilding('SHRINE_POST', 'shrine post',
+    'a lantern post keeping the path lit', 36, 56, SHRINE_POST_RECTS, PAL_SNOW, 'satellite'),
+  WAYMARK: makeBuilding('WAYMARK', 'waymark',
+    'a beamed waymark with its hanging sign', 60, 36, WAYMARK_RECTS, PAL_SNOW, 'satellite'),
+  FROST_STEP: makeBuilding('FROST_STEP', 'frost step',
+    'a stepped platform worn by pilgrims', 52, 40, FROST_STEP_RECTS, PAL_SNOW, 'satellite'),
+  // BLOOD_RUST (keep compound).
+  PROFANE_GATE: makeBuilding('PROFANE_GATE', 'profane gate',
+    'a twin-pylon gate with a dark mouth', 108, 80, PROFANE_GATE_RECTS, PAL_RUST),
+  IDOL_TOWER: makeBuilding('IDOL_TOWER', 'idol tower',
+    'a tower keeping an idol in its niche', 68, 104, IDOL_TOWER_RECTS, PAL_RUST),
+  RUST_WALL: makeBuilding('RUST_WALL', 'rust wall',
+    'a merloned wall run veined with rust', 68, 40, RUST_WALL_RECTS, PAL_RUST, 'satellite'),
+  SMALL_IDOL: makeBuilding('SMALL_IDOL', 'small idol',
+    'a rust-lit idol on its pedestal', 40, 56, SMALL_IDOL_RECTS, PAL_RUST, 'satellite'),
+  SPIKE_RACK: makeBuilding('SPIKE_RACK', 'spike rack',
+    'a rack of iron spikes facing outward', 56, 36, SPIKE_RACK_RECTS, PAL_RUST, 'satellite'),
+  RUIN_STAIR: makeBuilding('RUIN_STAIR', 'ruin stair',
+    'a broken stair climbing to nothing', 52, 44, RUIN_STAIR_RECTS, PAL_RUST, 'satellite'),
+  OFFERING_SLAB: makeBuilding('OFFERING_SLAB', 'offering slab',
+    'a stained slab holding a dark bowl', 48, 36, OFFERING_SLAB_RECTS, PAL_RUST, 'satellite'),
+  // BONE_DESERT (ossuary field).
+  SAND_TOWER: makeBuilding('SAND_TOWER', 'sand tower',
+    'a sand-scoured stub tower over the dunes', 72, 104, SAND_TOWER_RECTS, PAL_BONE),
+  RIB_VAULT: makeBuilding('RIB_VAULT', 'rib vault',
+    'a long vault roofed with great ribs', 108, 68, RIB_VAULT_RECTS, PAL_BONE),
+  RIB_SPIKE: makeBuilding('RIB_SPIKE', 'rib spike',
+    'a single great rib standing in the sand', 36, 60, RIB_SPIKE_RECTS, PAL_BONE, 'satellite'),
+  DUNE_WALL: makeBuilding('DUNE_WALL', 'dune wall',
+    'a sandstone run half-buried in the dune', 68, 36, DUNE_WALL_RECTS, PAL_BONE, 'satellite'),
+  BONE_CAIRN: makeBuilding('BONE_CAIRN', 'bone cairn',
+    'picked bones stacked over stones', 44, 44, BONE_CAIRN_RECTS, PAL_BONE, 'satellite'),
+  FALLEN_RIB: makeBuilding('FALLEN_RIB', 'fallen rib',
+    'a great rib down among its fragments', 60, 32, FALLEN_RIB_RECTS, PAL_BONE, 'satellite'),
+  SANDSTEP: makeBuilding('SANDSTEP', 'sandstep',
+    'a half-buried stair to a lost floor', 52, 40, SANDSTEP_RECTS, PAL_BONE, 'satellite'),
+  // VOID_REACH (library court).
+  STACK_HALL: makeBuilding('STACK_HALL', 'stack hall',
+    'a hall of shelves lit from nowhere', 108, 72, STACK_HALL_RECTS, PAL_VOID),
+  ASTRAL_STAIR: makeBuilding('ASTRAL_STAIR', 'astral stair',
+    'a stair tower climbing out of the dark', 76, 104, ASTRAL_STAIR_RECTS, PAL_VOID),
+  BROKEN_COLUMN: makeBuilding('BROKEN_COLUMN', 'broken column',
+    'a snapped column keeping one lit block', 40, 60, BROKEN_COLUMN_RECTS, PAL_VOID, 'satellite'),
+  RUNE_SLAB: makeBuilding('RUNE_SLAB', 'rune slab',
+    'a fallen slab still spelling light', 48, 40, RUNE_SLAB_RECTS, PAL_VOID, 'satellite'),
+  TOME_PILE: makeBuilding('TOME_PILE', 'tome pile',
+    'great books stacked where they fell', 52, 36, TOME_PILE_RECTS, PAL_VOID, 'satellite'),
+  VOID_BRAZIER: makeBuilding('VOID_BRAZIER', 'void brazier',
+    'a stand holding a violet flame', 40, 52, VOID_BRAZIER_RECTS, PAL_VOID, 'satellite'),
+  ARCH_FRAG: makeBuilding('ARCH_FRAG', 'arch fragment',
+    'two stubs and the lintel between them', 56, 44, ARCH_FRAG_RECTS, PAL_VOID, 'satellite'),
+  // CINDER_MAW (kiln yard).
+  MACHINE_HOUSE: makeBuilding('MACHINE_HOUSE', 'machine house',
+    'a soot-black house with its annex', 104, 76, MACHINE_HOUSE_RECTS, PAL_CINDER),
+  EMBER_STACK: makeBuilding('EMBER_STACK', 'ember stack',
+    'a tapered stack breathing heat', 68, 108, EMBER_STACK_RECTS, PAL_CINDER),
+  SLAG_BLOCK: makeBuilding('SLAG_BLOCK', 'slag block',
+    'one great cooled block, split by heat', 48, 40, SLAG_BLOCK_RECTS, PAL_CINDER, 'satellite'),
+  PIPE_RUN: makeBuilding('PIPE_RUN', 'pipe run',
+    'low pressure pipes on jointed stands', 64, 32, PIPE_RUN_RECTS, PAL_CINDER, 'satellite'),
+  COAL_HEAP: makeBuilding('COAL_HEAP', 'coal heap',
+    'a heaped mound of furnace coal', 52, 36, COAL_HEAP_RECTS, PAL_CINDER, 'satellite'),
+  FURNACE_DOOR: makeBuilding('FURNACE_DOOR', 'furnace door',
+    'a small annex with its ember mouth', 44, 44, FURNACE_DOOR_RECTS, PAL_CINDER, 'satellite'),
+  GEAR_RACK: makeBuilding('GEAR_RACK', 'gear rack',
+    'a frame of seized gears and one axle', 52, 40, GEAR_RACK_RECTS, PAL_CINDER, 'satellite'),
+  // WHITEOUT (clock compound).
+  GEAR_HALL: makeBuilding('GEAR_HALL', 'gear hall',
+    'a snow-capped hall keeping one great gear', 104, 72, GEAR_HALL_RECTS, PAL_WHITE),
+  WHITE_TOWER: makeBuilding('WHITE_TOWER', 'white tower',
+    'a snow-banded tower over the white', 68, 104, WHITE_TOWER_RECTS, PAL_WHITE),
+  SNOW_RAMPART: makeBuilding('SNOW_RAMPART', 'snow rampart',
+    'a crenelled rampart under deep snow', 68, 36, SNOW_RAMPART_RECTS, PAL_WHITE, 'satellite'),
+  VANE_POST: makeBuilding('VANE_POST', 'vane post',
+    'a weather vane post with its lamp', 36, 56, VANE_POST_RECTS, PAL_WHITE, 'satellite'),
+  CLOCK_FRAG: makeBuilding('CLOCK_FRAG', 'clock fragment',
+    'a fallen clock face keeping dead time', 52, 40, CLOCK_FRAG_RECTS, PAL_WHITE, 'satellite'),
+  FROST_CAIRN: makeBuilding('FROST_CAIRN', 'frost cairn',
+    'frost-set stones under their snowcap', 44, 44, FROST_CAIRN_RECTS, PAL_WHITE, 'satellite'),
+  LAMP_ROW: makeBuilding('LAMP_ROW', 'lamp row',
+    'twin storm lamps on a railed stand', 60, 40, LAMP_ROW_RECTS, PAL_WHITE, 'satellite'),
 };
 
 export const STAGE_BUILDING_IDS = Object.keys(STAGE_BUILDINGS);
 
 // Stage identity each building serves (src/stages.js ids). Unlisted / unset
 // stages read the hollow lodge — every arena keeps one roof in sight.
+// PORT SLICE J: each stage owns a KIT — 3 anchors (the slice-E building
+// first) + 5 satellite outbuildings (grammar G1/G8). No cap on counts: the
+// kit is recombined per cell by hash, and the bounds are measured perf (G7)
+// and the pilot-fit separation floor (G5), never a preset number.
 const BUILDING_BY_STAGE = {
-  VERDANT_HOLLOW: 'HOLLOW_LODGE',
-  ASHEN_WASTE: 'EMBER_HALL',
-  SNOWFIELD: 'DRIFT_CHAPEL',
-  BLOOD_RUST: 'RUST_KEEP',
-  BONE_DESERT: 'OSSUARY_ARCH',
-  VOID_REACH: 'VOID_ANNEX',
-  CINDER_MAW: 'CINDER_KILN',
-  WHITEOUT: 'CLOCKWAY_STUB',
+  VERDANT_HOLLOW: ['HOLLOW_LODGE', 'GROVE_HALL', 'LOOKOUT',
+    'WOODSHED', 'PALISADE', 'LOGPILE', 'HERB_RACK', 'STUMP_SHRINE'],
+  ASHEN_WASTE: ['EMBER_HALL', 'CINDER_GATE', 'BASALT_SPIRE',
+    'EMBER_CAIRN', 'BROKEN_PIER', 'SLAG_HEAP', 'SCORCH_WALL', 'FIRE_BOWL'],
+  SNOWFIELD: ['DRIFT_CHAPEL', 'BELFRY', 'PILGRIM_HALL',
+    'SNOW_WALL', 'ICE_CAIRN', 'SHRINE_POST', 'WAYMARK', 'FROST_STEP'],
+  BLOOD_RUST: ['RUST_KEEP', 'PROFANE_GATE', 'IDOL_TOWER',
+    'RUST_WALL', 'SMALL_IDOL', 'SPIKE_RACK', 'RUIN_STAIR', 'OFFERING_SLAB'],
+  BONE_DESERT: ['OSSUARY_ARCH', 'SAND_TOWER', 'RIB_VAULT',
+    'RIB_SPIKE', 'DUNE_WALL', 'BONE_CAIRN', 'FALLEN_RIB', 'SANDSTEP'],
+  VOID_REACH: ['VOID_ANNEX', 'STACK_HALL', 'ASTRAL_STAIR',
+    'BROKEN_COLUMN', 'RUNE_SLAB', 'TOME_PILE', 'VOID_BRAZIER', 'ARCH_FRAG'],
+  CINDER_MAW: ['CINDER_KILN', 'MACHINE_HOUSE', 'EMBER_STACK',
+    'SLAG_BLOCK', 'PIPE_RUN', 'COAL_HEAP', 'FURNACE_DOOR', 'GEAR_RACK'],
+  WHITEOUT: ['CLOCKWAY_STUB', 'GEAR_HALL', 'WHITE_TOWER',
+    'SNOW_RAMPART', 'VANE_POST', 'CLOCK_FRAG', 'FROST_CAIRN', 'LAMP_ROW'],
 };
 
 export function buildingForStage(stageId) {
-  return STAGE_BUILDINGS[BUILDING_BY_STAGE[stageId] || 'HOLLOW_LODGE'];
+  const kit = BUILDING_BY_STAGE[stageId] || BUILDING_BY_STAGE.VERDANT_HOLLOW;
+  return STAGE_BUILDINGS[kit[0]];
+}
+
+// Every design of the stage's kit (anchor first). The composition grammar
+// (G2) reads this: one anchor + up to three satellites per building-cell.
+export function designsForStage(stageId) {
+  const kit = BUILDING_BY_STAGE[stageId] || BUILDING_BY_STAGE.VERDANT_HOLLOW;
+  return kit.map(id => STAGE_BUILDINGS[id]);
 }
 
 // Paint one building through plain fillRects (the landmark primitives are
@@ -268,17 +959,17 @@ export function paintBuilding(g, id, x, y) {
 
 // ---- PORT SLICE F: the pure collision query --------------------------------
 // Collision shapes = the EXISTING rect-list footprints (whole [w,h] boxes,
-// never the inner rects): one box per building, no new art, no new numbers.
-// Everything here is pure in (seed, stageId, coords): no clock, no DOM, no
-// run objects, nothing written. The motion seam (main.js runController)
-// applies it; the paint path never calls it.
+// never the inner rects): one box per placed structure, no new art, no new
+// numbers. Everything here is pure in (seed, stageId, coords): no clock, no
+// DOM, no run objects, nothing written. The motion seam (main.js
+// runController) applies it; the paint path never calls it.
 //
-// MIRROR WARNING: bHash + the field math below replicate render.js
-// drawLandmarks' building pass (cellRand + the BUILDING_CELL anchors, the
-// density gate, the rim cull, the forced (0,0) cell) line for line. If the
-// paint pass changes, this query MUST change with it — the agreement test
-// (test_building_collision.mjs: every painted footprint equals a queried one
-// and back) fails loudly on any drift between the two.
+// SINGLE SOURCE (slice J): the field math lives in buildingPlacements (one
+// pure function of (seed, stage)); this query projects it to boxes, and the
+// render.js paint pass reads the same array. The old MIRROR WARNING retires
+// with the render.js inline math — paint and blocking agree box for box by
+// construction, and the agreement test (test_building_collision.mjs) still
+// fails loudly if they ever drift.
 
 // The pilot body radius (pilot reads ~14px across — the STUMP comment in
 // render.js; collision keeps a 7px ring around the centre point).
@@ -303,8 +994,8 @@ export function buildingFixedPoints() {
 }
 
 // The building-cell hash — the same integer-mix render.js cellRand runs,
-// with the building pass's own salts (21/22/23), so the query hashes the
-// same field the paint pass paints.
+// with the building pass's own salts, so the field hashes deterministically
+// per (cell, seed) without touching the clock or the DOM.
 function bHash(cx, cy, seed, salt) {
   let h = (seed ^ salt) >>> 0;
   h = Math.imul(h ^ cx, 0x27d4eb2d);
@@ -332,44 +1023,325 @@ export function clearFixedPoints(ax, ay, w, h) {
   return { x, y: ay };
 }
 
-// Every building footprint on the arena, in world coords ({ x, y, w, h }):
-// each picked building-cell's anchor (density gate salt 21, anchor salts
-// 22/23), rim-culled by footprint, plus the forced (0,0) cell (painted
-// unconditionally — the slice-E in-view promise) with the fallback clamp
-// and the fixed-point clearance. Deterministic per (seed, stageId).
-export function buildingFootprints(seed, stageId) {
-  const BC = C.GROUND.BUILDING_CELL, BDENS = C.GROUND.BUILDING_DENSITY;
+// ---- PORT SLICE J: the composition grammar, single-sourced ----------------
+// Grammar G2/G3/G5: EVERY building-cell composes 1 anchor + up to
+// MAX_SATELLITES satellites (a hamlet/compound/cluster, never a singleton) —
+// the slice-E rare-gate is REMOVED (owner directive: no artificial count
+// cap). Spacing rhythm comes from the retained 576px cell pitch plus the
+// pilot-fit separation floor below, never from a density number.
+//
+// SINGLE SOURCE (grammar G6): this section is the ONLY place that decides
+// where structures stand. buildingPlacements(seed, stageId) emits every
+// placed box ({ id, x, y, w, h }, deterministic per (seed, stage)); the
+// render.js paint pass, buildingFootprints (collision), the loot filter, the
+// portal and the chest clamps all read it — paint == query by construction,
+// no mirror to drift (the slice-F MIRROR WARNING retires with the inline
+// field math it warned about).
+//
+// Lanes, not counts (grammar G5): kept boxes hold >= BUILDING_SEPARATION px
+// of edge gap to every previously kept box (the pilot reads ~14px across,
+// ring 7px — a 16px lane always fits the body). Enforcement is geometric and
+// deterministic (fixed order, violators dropped), never a count cap.
+
+// The pilot-fit separation floor: every pair of kept boxes stands this far
+// apart edge-to-edge, arena-wide. Justified by the mover body (14px): a lane
+// narrower than this could wedge the pilot; at this floor every lane walks.
+export const BUILDING_SEPARATION = 16;
+// Satellites per cluster: each cell composes 1 anchor + 2..MAX_SATELLITES
+// satellites (owner directive: more is better — the max is set by the
+// measured perf bound, grammar G7; the min of 2 keeps the never-a-singleton
+// promise per cell, spawn cell: anchor + >= 1 in view).
+export const MAX_SATELLITES = 4;
+
+// Edge gap between two boxes (0 when they touch or overlap).
+function edgeGap(a, b) {
+  const ox = Math.max(a.x, b.x) < Math.min(a.x + a.w, b.x + b.w);
+  const oy = Math.max(a.y, b.y) < Math.min(a.y + a.h, b.y + b.h);
+  if (ox && oy) return 0;
+  const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
+  const dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+  if (ox) return dy;
+  if (oy) return dx;
+  return Math.hypot(dx, dy);
+}
+
+// The anchor design + anchor position for one building-cell: the design is a
+// hash pick among the kit's anchors (salt 24), the position the slice-E
+// anchor math (salts 22/23 — unchanged ranges, so old anchors stand where
+// the slice-E/F pins left them when the same design draws).
+function clusterAnchor(bx, by, seed, anchors) {
+  const BC = C.GROUND.BUILDING_CELL;
+  const ad = anchors[Math.floor(bHash(bx, by, seed, 24) * anchors.length) % anchors.length];
+  return {
+    id: ad.id, w: ad.w, h: ad.h,
+    x: bx * BC + 48 + Math.floor(bHash(bx, by, seed, 22) * (BC - 96 - ad.w)),
+    y: by * BC + 48 + Math.floor(bHash(bx, by, seed, 23) * (BC - 96 - ad.h)),
+  };
+}
+
+// One satellite candidate at compass slot s (0=E,1=S,2=W,3=N) around the
+// anchor: hash design (distinct within the cluster), hash jitter along the
+// slot axis, fixed gap for the spawn cell (the spawn-fit proof in
+// buildingPlacements needs gap 16 there) and 20..64px elsewhere.
+function satelliteAt(slot, seed, bx, by, anchor, sats, chosen, spawn) {
+  let di = Math.floor(bHash(bx, by, seed, 40 + slot) * sats.length) % sats.length;
+  for (let k = 0; k < sats.length; k++) {
+    if (!chosen.includes(sats[(di + k) % sats.length].id)) { di = (di + k) % sats.length; break; }
+  }
+  const sd = sats[di];
+  const gap = spawn ? 16 : 20 + Math.floor(bHash(bx, by, seed, 61 + slot) * 45);
+  const j = bHash(bx, by, seed, 60 + slot);
+  let x = anchor.x, y = anchor.y;
+  if (slot === 0) {
+    x = anchor.x + anchor.w + gap;
+    y = anchor.h >= sd.h ? anchor.y + Math.floor(j * (anchor.h - sd.h + 1))
+      : anchor.y - Math.floor(j * (sd.h - anchor.h + 1));
+  } else if (slot === 1) {
+    y = anchor.y + anchor.h + gap;
+    x = anchor.w >= sd.w ? anchor.x + Math.floor(j * (anchor.w - sd.w + 1))
+      : anchor.x - Math.floor(j * (sd.w - anchor.w + 1));
+  } else if (slot === 2) {
+    x = anchor.x - gap - sd.w;
+    y = anchor.h >= sd.h ? anchor.y + Math.floor(j * (anchor.h - sd.h + 1))
+      : anchor.y - Math.floor(j * (sd.h - anchor.h + 1));
+  } else {
+    y = anchor.y - gap - sd.h;
+    x = anchor.w >= sd.w ? anchor.x + Math.floor(j * (anchor.w - sd.w + 1))
+      : anchor.x - Math.floor(j * (sd.w - anchor.w + 1));
+  }
+  return { id: sd.id, x, y, w: sd.w, h: sd.h };
+}
+
+function rimInside(b) {
   const RIM = C.GROUND.RIM;
-  const bSpec = buildingForStage(stageId);
-  const anchorOf = (bx, by) => ({
-    x: bx * BC + 48 + Math.floor(bHash(bx, by, seed, 22) * (BC - 96 - bSpec.w)),
-    y: by * BC + 48 + Math.floor(bHash(bx, by, seed, 23) * (BC - 96 - bSpec.h)),
-  });
-  const out = [];
+  return b.x >= -RIM + 4 && b.x + b.w <= RIM - 4 &&
+    b.y >= -RIM + 4 && b.y + b.h <= RIM - 4;
+}
+
+// Every placed structure on the arena, in world coords
+// ({ id, x, y, w, h }): each building-cell's anchor (rim-culled; the spawn
+// anchor clamped whole into the initial view and cleared off the run's floor
+// points) plus its satellites (rim-culled, separation-kept, view-kept and
+// point-clear for the spawn cell). Deterministic per (seed, stageId).
+// No density gate: every cell composes.
+export function buildingPlacements(seed, stageId) {
+  const BC = C.GROUND.BUILDING_CELL;
+  const RIM = C.GROUND.RIM;
+  const kit = designsForStage(stageId);
+  const anchors = kit.filter(b => b.role !== 'satellite');
+  const sats = kit.filter(b => b.role === 'satellite');
   const lo = Math.floor(-RIM / BC), hi = Math.floor(RIM / BC);
+  const kept = [];
+  const anchorByCell = new Map();
+  // Pass 1 — anchors. The spawn anchor (cell 0,0) places FIRST: rigid-clamped
+  // whole into the initial camera view, then the fixed-point clearance shift
+  // (grammar G4: the spawn view shows the composition, never an empty field,
+  // and the run's floor points stand clear). Every other anchor is kept iff
+  // rim-inside AND separation-kept against all previously kept anchors (the
+  // spawn clamp can push the spawn anchor toward its neighbours, so anchors
+  // check each other — fixed row-major order after the spawn cell, violators
+  // deterministically dropped, never shifted). Nothing moves after this, so
+  // every gap set below holds by construction.
+  const spawnNatural = clusterAnchor(0, 0, seed, anchors);
+  spawnNatural.x = Math.min(Math.max(spawnNatural.x, 8), C.VIEW_W - spawnNatural.w - 8);
+  spawnNatural.y = Math.min(Math.max(spawnNatural.y, 8), C.VIEW_H - spawnNatural.h - 8);
+  {
+    const cl = clearFixedPoints(spawnNatural.x, spawnNatural.y, spawnNatural.w, spawnNatural.h);
+    spawnNatural.x = cl.x; spawnNatural.y = cl.y;
+  }
+  if (rimInside(spawnNatural)) {
+    spawnNatural.spawn = true;
+    kept.push(spawnNatural);
+    anchorByCell.set('0,0', spawnNatural);
+  }
   for (let by = lo; by <= hi; by++) {
     for (let bx = lo; bx <= hi; bx++) {
-      const forceB = bx === 0 && by === 0;
-      if (!forceB && bHash(bx, by, seed, 21) >= BDENS) continue;
-      let wa = anchorOf(bx, by);
-      if (forceB) {
-        const fits = wa.x >= 0 && wa.y >= 0 &&
-          wa.x + bSpec.w <= C.VIEW_W && wa.y + bSpec.h <= C.VIEW_H;
-        if (!fits) {
-          wa = {
-            x: Math.min(Math.max(wa.x, 8), C.VIEW_W - bSpec.w - 8),
-            y: Math.min(Math.max(wa.y, 8), C.VIEW_H - bSpec.h - 8),
-          };
-        }
-        const cl = clearFixedPoints(wa.x, wa.y, bSpec.w, bSpec.h);
-        wa = { x: cl.x, y: cl.y };
+      if (bx === 0 && by === 0) continue;
+      const a = clusterAnchor(bx, by, seed, anchors);
+      if (!rimInside(a)) continue;
+      let ok = true;
+      for (const q of kept) {
+        if (edgeGap(a, q) < BUILDING_SEPARATION) { ok = false; break; }
       }
-      if (wa.x < -RIM + 4 || wa.x + bSpec.w > RIM - 4) continue;
-      if (wa.y < -RIM + 4 || wa.y + bSpec.h > RIM - 4) continue;
-      out.push({ x: wa.x, y: wa.y, w: bSpec.w, h: bSpec.h });
+      if (!ok) continue;
+      kept.push(a);
+      anchorByCell.set(bx + ',' + by, a);
     }
   }
-  return out;
+  const spawnAnchor = anchorByCell.get('0,0') || null;
+  // Pass 2 — spawn-cluster satellites: all four slots tried in hash-rotated
+  // order, cross-axis clamped into the view. The primary-axis fit proof (gap
+  // 16: with the anchor clamped to 8px margins, an E-or-W slot and an N-or-S
+  // slot ALWAYS fit — w + 2*satW <= 252 < 433 and 2*satH <= 144 < 153 for
+  // every kit size) means at least one slot fits whatever the clamp did.
+  // Kept iff fully in view + separation-kept + standing clear of the run's
+  // fixed floor points (the mover ring + 1, the binding no-stand-inside
+  // rule). Furthest-first, so the least-placed satellite would drop first —
+  // the spawn view keeps anchor + >= 1 satellite for every (seed, stage).
+  if (spawnAnchor) {
+    const rot = Math.floor(bHash(0, 0, seed, 29) * 4) % 4;
+    const order = [0, 1, 2, 3].map(i => (i + rot) % 4);
+    const pts = buildingFixedPoints();
+    const cands = [];
+    const chosen = [];
+    for (const s of order) {
+      const b = satelliteAt(s, seed, 0, 0, spawnAnchor, sats, chosen, true);
+      chosen.push(b.id);
+      if (s === 0 || s === 2) b.y = Math.min(Math.max(b.y, 8), C.VIEW_H - 8 - b.h);
+      else b.x = Math.min(Math.max(b.x, 8), C.VIEW_W - 8 - b.w);
+      if (!(b.x >= 0 && b.y >= 0 && b.x + b.w <= C.VIEW_W && b.y + b.h <= C.VIEW_H)) continue;
+      let ok = edgeGap(b, spawnAnchor) >= BUILDING_SEPARATION;
+      for (const q of cands) ok = ok && edgeGap(b, q) >= BUILDING_SEPARATION;
+      // At the slice-J pitch a neighbouring cell's anchor can stand inside
+      // the spawn view, so spawn satellites keep separation against every
+      // kept anchor too (kept == all anchors at this point).
+      for (const q of kept) {
+        if (q === spawnAnchor) continue;
+        if (edgeGap(b, q) < BUILDING_SEPARATION) { ok = false; break; }
+      }
+      for (const [px, py] of pts) {
+        const cx = Math.max(b.x, Math.min(px, b.x + b.w));
+        const cy = Math.max(b.y, Math.min(py, b.y + b.h));
+        if (Math.hypot(px - cx, py - cy) < BUILDING_MOVER_R + 1) { ok = false; break; }
+      }
+      if (!ok) continue;
+      let dp = Infinity;
+      for (const [px, py] of pts) {
+        const cx = Math.max(b.x, Math.min(px, b.x + b.w));
+        const cy = Math.max(b.y, Math.min(py, b.y + b.h));
+        dp = Math.min(dp, Math.hypot(px - cx, py - cy));
+      }
+      b._dp = dp;
+      cands.push(b);
+    }
+    cands.sort((p, q) => q._dp - p._dp);
+    const keptSpawnSats = cands.slice(0, MAX_SATELLITES);
+    for (const b of keptSpawnSats) {
+      delete b._dp;
+      b.spawn = true;
+      kept.push(b);
+    }
+    // Fallback (rare: ~1 field in 400): the keep rules refused every slot —
+    // the anchor stands where no outbuilding fits (crowded view corner,
+    // neighbour anchors on two sides, floor points on the third). Nudge the
+    // spawn anchor origin deterministically until a composition fits: fixed
+    // offset order, each origin re-cleared and re-kept under the FULL rules
+    // (view, separation vs every kept anchor, floor points). First origin
+    // with >= 1 satellite wins; other anchors are re-verified against the
+    // moved spawn anchor (new violators deterministically dropped — the pass
+    // below places every other satellite after, so nothing else can drift).
+    if (keptSpawnSats.length === 0) {
+      const natural = clusterAnchor(0, 0, seed, anchors);
+      const ORDER = [[-64, 0], [0, -64], [64, 0], [0, 64],
+        [-64, -64], [64, -64], [-64, 64], [64, 64], [-128, 0], [0, -128]];
+      for (const [ox, oy] of ORDER) {
+        const nx = natural.x + ox, ny = natural.y + oy;
+        const cx0 = Math.min(Math.max(nx, 8), C.VIEW_W - spawnAnchor.w - 8);
+        const cy0 = Math.min(Math.max(ny, 8), C.VIEW_H - spawnAnchor.h - 8);
+        if (cx0 !== nx || cy0 !== ny) continue;
+        const cl = clearFixedPoints(cx0, cy0, spawnAnchor.w, spawnAnchor.h);
+        const ax = cl.x, ay = cl.y;
+        if (!(ax >= 8 && ay >= 8 && ax + spawnAnchor.w <= C.VIEW_W - 8 &&
+            ay + spawnAnchor.h <= C.VIEW_H - 8)) continue;
+        const probe = { id: spawnAnchor.id, x: ax, y: ay, w: spawnAnchor.w, h: spawnAnchor.h };
+        // Recompute satellites under the full keep rules at this origin.
+        const rot2 = Math.floor(bHash(0, 0, seed, 29) * 4) % 4;
+        const order2 = [0, 1, 2, 3].map(i => (i + rot2) % 4);
+        const pts2 = buildingFixedPoints();
+        const c2 = [];
+        const ch2 = [];
+        for (const s of order2) {
+          const b = satelliteAt(s, seed, 0, 0, probe, sats, ch2, true);
+          ch2.push(b.id);
+          if (s === 0 || s === 2) b.y = Math.min(Math.max(b.y, 8), C.VIEW_H - 8 - b.h);
+          else b.x = Math.min(Math.max(b.x, 8), C.VIEW_W - 8 - b.w);
+          if (!(b.x >= 0 && b.y >= 0 && b.x + b.w <= C.VIEW_W && b.y + b.h <= C.VIEW_H)) continue;
+          let ok = edgeGap(b, probe) >= BUILDING_SEPARATION;
+          for (const q of c2) ok = ok && edgeGap(b, q) >= BUILDING_SEPARATION;
+          for (const q of kept) {
+            if (q === spawnAnchor) continue;
+            if (edgeGap(b, q) < BUILDING_SEPARATION) { ok = false; break; }
+          }
+          for (const [px, py] of pts2) {
+            const cx = Math.max(b.x, Math.min(px, b.x + b.w));
+            const cy = Math.max(b.y, Math.min(py, b.y + b.h));
+            if (Math.hypot(px - cx, py - cy) < BUILDING_MOVER_R + 1) { ok = false; break; }
+          }
+          if (ok) c2.push(b);
+          if (c2.length >= MAX_SATELLITES) break;
+        }
+        if (c2.length === 0) continue;
+        // Adopt: move the spawn anchor, re-verify the other anchors against
+        // it (kept holds anchors only at this point — every other satellite
+        // places after — so deterministic drops here cost no composition).
+        spawnAnchor.x = ax; spawnAnchor.y = ay;
+        for (let i = kept.length - 1; i >= 0; i--) {
+          const q = kept[i];
+          if (q === spawnAnchor || q.spawn) continue;
+          if (edgeGap(q, spawnAnchor) < BUILDING_SEPARATION) {
+            kept.splice(i, 1);
+            for (const [k, v] of anchorByCell) if (v === q) anchorByCell.delete(k);
+          }
+        }
+        for (const b of c2.slice(0, MAX_SATELLITES)) {
+          delete b._dp;
+          b.spawn = true;
+          kept.push(b);
+          keptSpawnSats.push(b);
+        }
+        break;
+      }
+    }
+  }
+  // Pass 3 — every other cell's satellites, row-major, slots in hash-rotated
+  // order: kept iff rim-inside + separation-kept against ALL kept boxes
+  // (anchors first, then earlier satellites — fixed order, deterministic) +
+  // standing clear of the run's fixed floor points (at the tighter slice-J
+  // pitch a neighbour cell's outbuilding can reach into the spawn area, so
+  // placement yields ALONG the run's floor — grammar G5 — while the count
+  // stays uncapped).
+  const floorPts = buildingFixedPoints();
+  for (let by = lo; by <= hi; by++) {
+    for (let bx = lo; bx <= hi; bx++) {
+      if (bx === 0 && by === 0) continue;
+      const a = anchorByCell.get(bx + ',' + by);
+      if (!a) continue;
+      const rot = Math.floor(bHash(bx, by, seed, 29) * 4) % 4;
+      const order = [0, 1, 2, 3].map(i => (i + rot) % 4);
+      const chosen = [];
+      let nSat = 2 + Math.floor(bHash(bx, by, seed, 25) * (MAX_SATELLITES - 1));
+      nSat = Math.max(2, Math.min(MAX_SATELLITES, nSat));
+      for (const s of order) {
+        if (nSat <= 0) break;
+        const b = satelliteAt(s, seed, bx, by, a, sats, chosen, false);
+        chosen.push(b.id);
+        if (!rimInside(b)) continue;
+        let ok = edgeGap(b, a) >= BUILDING_SEPARATION;
+        for (const q of kept) {
+          if (edgeGap(b, q) < BUILDING_SEPARATION) { ok = false; break; }
+        }
+        for (const [px, py] of floorPts) {
+          const cx = Math.max(b.x, Math.min(px, b.x + b.w));
+          const cy = Math.max(b.y, Math.min(py, b.y + b.h));
+          if (Math.hypot(px - cx, py - cy) < BUILDING_MOVER_R + 1) { ok = false; break; }
+        }
+        if (!ok) continue;
+        kept.push(b);
+        nSat--;
+      }
+    }
+  }
+  return kept.map(({ id, x, y, w, h, spawn }) => ({ id, x, y, w, h, spawn: !!spawn }));
+}
+
+// Every building footprint on the arena, in world coords ({ x, y, w, h }):
+// the single-sourced placement field above, projected to boxes. The motion
+// seam (main.js runController, cached per run), the loot filter
+// (controllers.js), the portal and the chest clamps all read this —
+// collision shapes scale WITH the painted seam by construction: more
+// buildings = more boxes here, same query, same proof.
+export function buildingFootprints(seed, stageId) {
+  return buildingPlacements(seed, stageId).map(({ x, y, w, h }) => ({ x, y, w, h }));
 }
 
 // True when (x, y) sits inside any footprint (expanded by margin).
@@ -477,9 +1449,9 @@ export function buildingSteer(px, py, mx, my, rects, r) {
 }
 
 // Nearest point outside every footprint (expanded by margin): while inside
-// one, leave along its smallest-penetration axis. Footprints never overlap
-// (neighbouring cells stand >= 96px apart and boxes are <= 108 wide, so one
-// push cannot land inside another), and each push travels at most half a
+// one, leave along its smallest-penetration axis. Kept footprints never
+// overlap (the slice-J separation floor: every pair stands >= 16px apart, so
+// one push cannot land inside another), and each push travels at most half a
 // side plus the margin — the fiction ("opens where it fell") survives a
 // nudge. Pure: returns [x, y].
 export function pushOutOfRects(rects, x, y, margin) {
@@ -515,10 +1487,11 @@ export function pushOutOfRects(rects, x, y, margin) {
 //   3. wall-follow: a full-stride step along the blocking face toward its
 //      nearer edge (nose-on intents have no tangential part to keep);
 //   4. hold footing — reachable only wedged in a full pocket (no such
-//      pocket exists: neighbouring footprints stand >= 96px apart, proven
-//      by the cell-anchor ranges, and the mover ring is 7px).
+//      pocket exists: kept footprints stand >= 16px apart edge-to-edge, the
+//      slice-J separation floor, and the mover ring is 7px — every lane
+//      between boxes walks).
 // Every candidate is verified against the discs, so no layer can penetrate
-// or tunnel (a stride is px per frame; the smallest box side is 64px).
+// or tunnel (a stride is px per frame; the smallest box side is 20px).
 // Pure: returns [x, y].
 export function slideMove(fx, fy, tx, ty, rects, r) {
   if (!buildingTouchesDisc(rects, tx, ty, r)) return [tx, ty];

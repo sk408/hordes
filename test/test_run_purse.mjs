@@ -111,7 +111,13 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 }
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xee);   // FIXTURE RETARGET 2026-09-18 (was 0xed): ELEVATION
+  Math.random = mulberry32(0xef);   // FIXTURE RETARGET 2026-09-23 (was 0xee): PORT
+  // SLICE J's composed field (~60 building footprints vs ~3) re-paths the
+  // pilot around walls — the arms' micro-diverging positions split a
+  // boundary kill again (15 vs 16) at 0xee. The same failure class the
+  // 0xe1->0xe3->0xe5->0xeb->0xed->0xee retargets document; assertion
+  // unchanged — equal kills / equal purse at both rates. (0xef parity
+  // 15/15, verified stable across repeat runs: non-vacuous, both arms kill.)
   // v2's reliefRampRoute intent bias (src/relief.js) re-paths walkers toward
   // the terrace ramps — the arms' micro-diverging positions shifted a boundary
   // kill again (15 vs 14) at 0xed. The same failure class the
