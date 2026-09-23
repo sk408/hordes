@@ -32,7 +32,7 @@ import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingPlacements, paintBuilding } from './stage_buildings.js';
-import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE } from './stage_ground.js';
+import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -3021,21 +3021,27 @@ export class Renderer {
     }
     // PORT SLICE G — STAGE GROUND OVERLAY (owner autopilot 2026-09-23:
     // "deeper stage identity in the ground itself" — an APPROVED
+    // visual-density change, painting only) + PORT SLICE K3 (owner feedback
+    // 2026-09-23: "floor tiles could use a bit more variety" — an APPROVED
     // visual-density change, painting only). A SECOND hash field on a
     // coarser tile (STAGE_GROUND_TILE = 64, 2x the fine CELL) paints one
-    // ORIGINAL stage-keyed terrain motif per picked tile
-    // (src/stage_ground.js — 8 motifs, 3..8 fillRects each, wave-theme
-    // colors only so the recolor beat survives). Same contract as the fine
-    // field: deterministic per (cell, seed, stage) — never the clock —
-    // footprint rim-clipped, drawn UNDER entities (this whole function runs
-    // before every entity pass), quiet dark tones that never compete with
-    // the play pieces. Perf: tiles per view are bounded (~(480/64+2) x
-    // (300/64+2) ~= 70 cells, each gated at dens <= 0.30 and painting <= 9
-    // rects) — O(view), no cache, no stored arrays, camera moves cost
-    // nothing beyond the new cull window. The fine field above is
-    // byte-identical (same salts, same gates), so the wave ladder, the
-    // landmark/building subdivision and every existing pin hold; only
-    // ADDED rects carry stage identity.
+    // stage-keyed terrain motif per picked tile, and K3 gives every stage
+    // THREE motifs (src/stage_ground.js — 24 motifs, 4..7 fillRects each,
+    // wave-theme colors only so the recolor beat survives), mixed per cell
+    // via groundMotifFor (pure fn of cell + seed + stage, salt 34 — never
+    // the wave, never the clock). Same contract as the fine field:
+    // deterministic per (cell, seed, stage) — never the clock — footprint
+    // rim-clipped, drawn UNDER entities (this whole function runs before
+    // every entity pass), quiet dark tones that never compete with the play
+    // pieces. Perf: tiles per view are bounded (~(480/64+2) x (300/64+2)
+    // ~= 70 cells, each gated at dens <= 0.30 and painting <= 10 rects incl.
+    // the rim tick) — O(view), no cache, no stored arrays, camera moves cost
+    // nothing beyond the new cull window. K3 bound: one view paints < 1600
+    // rects (measured ~470..540 — same ~3x headroom shape as slice-G's 1500
+    // bound, rebased for 24 motifs). The fine field above is byte-identical
+    // (same salts, same gates), so the wave ladder, the landmark/building
+    // subdivision and every existing pin hold; only ADDED rects carry stage
+    // identity.
     // Rim treatment: a tile whose anchor sits within 64px of the arena rim
     // grows one extra tick pointing at the rim (the edge reads finished
     // per biome instead of stopping mid-pattern).
@@ -3045,16 +3051,19 @@ export class Renderer {
       const T = STAGE_GROUND_TILE;
       const t0 = Math.floor(cam.x / T), t1 = Math.floor((cam.x + C.VIEW_W) / T);
       const s0 = Math.floor(cam.y / T), s1 = Math.floor((cam.y + C.VIEW_H) / T);
+      const painted = [];   // K3 smoke seam: motifs painted this view (one per picked tile)
       for (let cy = s0; cy <= s1; cy++) {
         for (let cx = t0; cx <= t1; cx++) {
-          if (cellRand(cx, cy, seed ^ salt, 30) >= spec.dens) continue;
+          if (!groundCellPicked(cx, cy, seed, spec.id)) continue;
           const wx = cx * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 31) * (T - 28));
           const wy = cy * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 32) * (T - 28));
           if (wx < -RIM + 2 || wx > RIM - 22 || wy < -RIM + 2 || wy > RIM - 22) continue;
           const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
           const v = cellRand(cx, cy, seed ^ salt, 33);
           const flip = v < 0.5;
-          switch (spec.motif) {
+          const motif = groundMotifFor(cx, cy, seed, spec.id);
+          painted.push(motif);
+          switch (motif) {
             case 'EMBER_CRACK': {     // ash fissure + lit lip + ember speck
               g.fillStyle = pal.crack;
               g.fillRect(x, y + 3, 9, 1); g.fillRect(x + 6, y + 4, 7, 1);
@@ -3062,6 +3071,24 @@ export class Renderer {
               g.fillStyle = pal.stoneTop;
               g.fillRect(x, y + 2, 9, 1); g.fillRect(x + 6, y + 3, 4, 1);
               g.fillRect(x + (flip ? 2 : 11), y, 2, 2);
+              break;
+            }
+            case 'ASH_PILE': {        // soft ash mound + crest + contact shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x, y + 8, 14, 1);
+              g.fillStyle = pal.slab;
+              g.fillRect(x + 1, y + 4, 12, 4); g.fillRect(x + 3, y + 3, 8, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 3, y + 3, 8, 1); g.fillRect(x + (flip ? 2 : 9), y + 5, 3, 1);
+              break;
+            }
+            case 'CINDER_SPECK': {    // scattered cinder dots + dark speckle
+              g.fillStyle = pal.crack;
+              g.fillRect(x, y + 7, 4, 1); g.fillRect(x + 10, y + 3, 4, 1);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 3 : 9), y + 1, 2, 2);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + (flip ? 9 : 3), y + 5, 2, 2); g.fillRect(x + 6, y + 8, 2, 1);
               break;
             }
             case 'DRIFT_STREAK': {    // three combed wind streaks
@@ -3074,6 +3101,25 @@ export class Renderer {
               g.fillRect(x + 2, y + 10, 14, 1);
               break;
             }
+            case 'ICE_CHIP': {        // shard cluster + glints + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 13, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 2, y + 4, 5, 5); g.fillRect(x + 9, y + 5, 4, 4);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 2, y + 4, 5, 1); g.fillRect(x + 9, y + 5, 4, 1);
+              g.fillRect(x + (flip ? 0 : 14), y + 2, 2, 2);
+              break;
+            }
+            case 'FROST_PELLET': {    // dotted pellet arc + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 2, y + 9, 12, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x, y + 5, 3, 2); g.fillRect(x + 6, y + 4, 3, 2); g.fillRect(x + 12, y + 5, 3, 2);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y + 4, 3, 1); g.fillRect(x + 6, y + 3, 3, 1); g.fillRect(x + 12, y + 4, 3, 1);
+              break;
+            }
             case 'RUST_VEIN': {       // branching vein + lit edge
               g.fillStyle = pal.crack;
               g.fillRect(x + 6, y, 1, 10); g.fillRect(x + 2, y + 4, 9, 1);
@@ -3082,6 +3128,26 @@ export class Renderer {
               g.fillRect(x + 7, y + 1, 1, 8);
               g.fillStyle = pal.tuft2;
               g.fillRect(x + (flip ? 1 : 11), y + 3, 2, 2);
+              break;
+            }
+            case 'RUST_POOL': {       // dark rust pool + lit rim + inner pit
+              g.fillStyle = pal.slab;
+              g.fillRect(x + 1, y + 3, 12, 5); g.fillRect(x + 3, y + 2, 8, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 3, y + 2, 8, 1); g.fillRect(x + 1, y + 3, 2, 1);
+              g.fillStyle = pal.crack;
+              g.fillRect(x + (flip ? 4 : 7), y + 5, 4, 2);
+              break;
+            }
+            case 'SPLINTER': {        // pale splinter shards + speck
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 12, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 2, y + 4, 7, 1); g.fillRect(x + 5, y + 5, 7, 1);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 2, y + 3, 7, 1);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 12 : 0), y + 6, 2, 2);
               break;
             }
             case 'DUNE_RIPPLE': {     // three parallel dune ripples
@@ -3093,6 +3159,25 @@ export class Renderer {
               g.fillRect(x + 1, y + 9, 15, 1);
               break;
             }
+            case 'BONE_FRAG': {       // pale bone L-frags + shadow + speck
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 12, 1); g.fillRect(x + 12, y + 2, 3, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 2, y + 5, 5, 3);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 2, y + 4, 6, 2); g.fillRect(x + (flip ? 9 : 11), y + 4, 4, 2);
+              break;
+            }
+            case 'SAND_PIT': {        // shallow pit ring + lit lip + inner shade
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 3, y + 3, 9, 1); g.fillRect(x + 3, y + 8, 9, 1);
+              g.fillRect(x + 2, y + 4, 1, 4); g.fillRect(x + 12, y + 4, 1, 4);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 3, y + 2, 9, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + (flip ? 5 : 8), y + 5, 3, 2);
+              break;
+            }
             case 'VOID_RUNE': {       // small cross marks in theme stone
               g.fillStyle = pal.tuft2;
               g.fillRect(x + 5, y, 2, 12); g.fillRect(x, y + 5, 12, 2);
@@ -3100,6 +3185,27 @@ export class Renderer {
               g.fillRect(x + 5, y, 1, 4);
               g.fillStyle = pal.tuft;
               g.fillRect(x + (flip ? 13 : -3), y + 4, 2, 2);
+              break;
+            }
+            case 'VOID_CRACK': {      // thin star fissure + lip + mote
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 5, 13, 1); g.fillRect(x + 7, y + 1, 1, 9);
+              g.fillRect(x + 4, y + 3, 1, 5);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 1, y + 4, 13, 1);
+              g.fillStyle = pal.tuft;
+              g.fillRect(x + (flip ? 0 : 13), y + 7, 2, 2);
+              break;
+            }
+            case 'VOID_PEBBLE': {     // violet pebble pair + lit tops
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 13, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 1, y + 5, 6, 4); g.fillRect(x + 9, y + 4, 5, 5);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 1, y + 4, 6, 1); g.fillRect(x + 9, y + 3, 5, 1);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 8 : 0), y + 1, 2, 2);
               break;
             }
             case 'SCORCH_PLATE': {    // dark plate split by a crack seam
@@ -3113,6 +3219,29 @@ export class Renderer {
               else g.fillRect(x + 6, y + 1, 1, 7);
               break;
             }
+            case 'CINDER_VENT': {     // vent hole + heat rim + hot speck
+              g.fillStyle = pal.slab;
+              g.fillRect(x, y + 3, 14, 5);
+              g.fillStyle = pal.crack;
+              g.fillRect(x + (flip ? 4 : 7), y + 4, 4, 3);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y + 2, 14, 1);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 11 : 1), y + 6, 2, 2);
+              break;
+            }
+            case 'SLAG_LINE': {       // slag bar + seam + lit edge
+              g.fillStyle = pal.slab;
+              g.fillRect(x, y + 3, 16, 4);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x, y + 2, 16, 1);
+              g.fillStyle = pal.crack;
+              if (flip) g.fillRect(x + 2, y + 4, 12, 1);
+              else g.fillRect(x + 7, y + 3, 1, 4);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 13 : 1), y, 2, 2);
+              break;
+            }
             case 'SNOW_PACK': {       // packed clumps + windlit crest + shadow
               g.fillStyle = pal.crack;
               g.fillRect(x - 1, y + 9, 18, 1);
@@ -3120,6 +3249,47 @@ export class Renderer {
               g.fillRect(x, y + 5, 8, 4); g.fillRect(x + 9, y + 4, 7, 5);
               g.fillStyle = pal.stoneTop;
               g.fillRect(x, y + 4, 8, 1); g.fillRect(x + 9, y + 3, 7, 1);
+              break;
+            }
+            case 'FROST_FEATHER': {   // feathered frost + midrib + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 14, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 7, y + 1, 1, 8);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + (flip ? 2 : 4), y + 3, 5, 1);
+              g.fillRect(x + (flip ? 9 : 7), y + 5, 5, 1);
+              g.fillRect(x + (flip ? 2 : 4), y + 7, 5, 1);
+              break;
+            }
+            case 'ICE_PEBBLE': {      // ice pebble cluster + crests + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 13, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 1, y + 5, 5, 4); g.fillRect(x + 8, y + 6, 6, 3);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 1, y + 4, 5, 1); g.fillRect(x + 8, y + 5, 6, 1);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + (flip ? 12 : 0), y + 2, 2, 2);
+              break;
+            }
+            case 'FERN_CURL': {       // curled fern stem + fronds + shadow
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 11, 1);
+              g.fillStyle = pal.tuft;
+              g.fillRect(x + 6, y + 1, 1, 8);
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + 2, y + 3, 4, 1); g.fillRect(x + 7, y + 5, 4, 1);
+              g.fillRect(x + (flip ? 3 : 9), y + 1, 2, 2);
+              break;
+            }
+            case 'PEBBLE_NEST': {     // pebble trio + lit tops + specks
+              g.fillStyle = pal.crack;
+              g.fillRect(x + 1, y + 9, 13, 1); g.fillRect(x + 12, y + 2, 3, 1);
+              g.fillStyle = pal.stone;
+              g.fillRect(x + 1, y + 5, 5, 4); g.fillRect(x + 8, y + 6, 5, 3);
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + 1, y + 4, 5, 1); g.fillRect(x + 8, y + 5, 5, 1);
               break;
             }
             default: {                // MOSS: low blotch + tuft blades
@@ -3143,6 +3313,7 @@ export class Renderer {
           }
         }
       }
+      this.groundMotifs = painted;
     }
   }
 
