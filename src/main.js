@@ -225,6 +225,7 @@ import {
 // armed on ?dev=1 only, gate off = byte-identical player game.
 import {
   DEV_LS_AUTO, DEV_LS_DEVNIGHT, AUTOPLAY_POLICIES,
+  DEV_LS_BAN_ON, DEV_LS_BAN_IDS, parseDraftBanIds,
 } from './dev_autoplay.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
@@ -1891,6 +1892,13 @@ function devPrefSpeed() {
 function devSetSpeedPref(n) {
   try { prefStorage.setItem(DEV_LS_SPEED, String(devNormSpeed(n))); } catch { /* shim */ }
 }
+// K5 DEV DRAFT BAN LIST: the banned-ids pref is a comma string, not a bit —
+// absent = the default preset (parseDraftBanIds owns that), a hand-edited
+// value fails closed to exactly the ids it names.
+function devDraftBanIds() {
+  try { return parseDraftBanIds(prefStorage.getItem(DEV_LS_BAN_IDS)); }
+  catch { return parseDraftBanIds(null); }
+}
 function devNewSession() {
   return {
     testRun: devPref(DEV_LS_TEST),
@@ -1903,6 +1911,11 @@ function devNewSession() {
     // run-scoped-freeze contract as the nightRun stamp in startRun).
     autoplay: devPref(DEV_LS_AUTO),
     devNight: devPref(DEV_LS_DEVNIGHT),
+    // K5 DEV DRAFT BAN LIST: the arm bit (default OFF) + the banned offer ids
+    // (absent pref = the default preset), re-read per run like every other dev
+    // pref above. Consumed by openDraft ONLY under the autoplay gate.
+    draftBan: devPref(DEV_LS_BAN_ON),
+    draftBanIds: devDraftBanIds(),
     // STEP 3: the between-run policy driving this build ('smart' |
     // 'impulsive' | null = hand-driven). Set by the headless runner through
     // the dev seam; stamped into the snapshot when set.
@@ -2061,6 +2074,12 @@ function devEnsurePanel() {
     });
     btns.dnight = mkBtn('DNIGHT', () => dev && dev.devNight, () => {
       if (!dev) return; dev.devNight = !dev.devNight; devSetPref(DEV_LS_DEVNIGHT, dev.devNight);
+    });
+    // K5 DEV DRAFT BAN LIST: arms the offer-pool exclusion for autoplay runs.
+    // Same mkBtn + persisted-bit shape; the id list rides its own pref
+    // (default preset when absent — see dev_autoplay.js DEFAULT_DRAFT_BAN_IDS).
+    btns.ban = mkBtn('BAN', () => dev && dev.draftBan, () => {
+      if (!dev) return; dev.draftBan = !dev.draftBan; devSetPref(DEV_LS_BAN_ON, dev.draftBan);
     });
     // SLICE 8: speed control — cycles 1x -> 2x -> 4x -> 8x -> 1x through
     // devNextSpeed (the offered list lives in dev_telemetry.DEV_SPEEDS, so a
@@ -2340,6 +2359,12 @@ function devBuildSnapshot() {
     modifiers: mf.modifiers,
   };
   if (dev.autoplayPolicy) fields.policy = dev.autoplayPolicy;
+  // K5: when the ban list drove this run's drafts (autoplay gate + arm bit),
+  // stamp the banned ids so a cohort row proves which ids were excluded
+  // (additive optional field — the schema-v2-optional precedent, no bump).
+  if (dev.autoplay === true && dev.draftBan && dev.draftBanIds.length) {
+    fields.draft_ban = [...dev.draftBanIds];
+  }
   return buildSnapshot(fields);
 }
 function devOnRunEnd() {
@@ -4478,6 +4503,16 @@ function openDraft() {
     // carries the per-card weight, so the pool needs no special case.
     ...rewriteCards(state),
   ];
+  // K5 DEV DRAFT BAN LIST (dev-autoplay cohorts only): banned offer ids leave
+  // the pool BEFORE the weighted draw below. Belt and braces: the exclusion
+  // requires the dev session (gate on), the AUTOPLAY toggle (the runner's
+  // requireAutoplay gate), AND the BAN arm bit — a player game (dev === null)
+  // or a dev session with AUTO off draws the byte-identical full pool even if
+  // the ban prefs somehow persisted. The cards' own logic (ONE OF EACH's rule
+  // behaviour included) is untouched; this only narrows the OFFER POOL.
+  const drawPool = (dev && dev.autoplay === true && dev.draftBan && dev.draftBanIds.length)
+    ? pool.filter(c => !dev.draftBanIds.includes(c.id))
+    : pool;
   // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a
   // dead pick (a fake choice) — relabel it to what it actually does.
   if (volleyAtProjCap()) {
@@ -4489,11 +4524,11 @@ function openDraft() {
   // already covers 1-4). No duplicate cards per draft.
   const offerN = 3 + (state.player.stats.draftOffers || 0);
   const choices = [];
-  while (choices.length < offerN && pool.length > 0) {
-    let r = Math.random() * pool.reduce((s, c) => s + c.weight, 0);
-    let idx = pool.length - 1;
-    for (let i = 0; i < pool.length; i++) { if ((r -= pool[i].weight) < 0) { idx = i; break; } }
-    choices.push(pool.splice(idx, 1)[0]);
+  while (choices.length < offerN && drawPool.length > 0) {
+    let r = Math.random() * drawPool.reduce((s, c) => s + c.weight, 0);
+    let idx = drawPool.length - 1;
+    for (let i = 0; i < drawPool.length; i++) { if ((r -= drawPool[i].weight) < 0) { idx = i; break; } }
+    choices.push(drawPool.splice(idx, 1)[0]);
   }
   // SLICE 9: record the offer set (the taken id fills in at pick()).
   if (dev) {
@@ -12707,6 +12742,25 @@ export const __TEST = {
       devSetPref(DEV_LS_DEVNIGHT, !!on);
       if (dev) dev.devNight = !!on;
       return !!(dev && dev.devNight);
+    },
+    // K5 draft ban list seams (dev gate only): the same setters the overlay
+    // BAN button drives — persisted pref + live session — so headless proofs
+    // arm the REAL toggle path, never a copy. setDraftBanIds persists the
+    // comma list (null clears the pref, back to the default preset) and
+    // re-reads the live session through the REAL parse.
+    get draftBan() { return !!(dev && dev.draftBan); },
+    setDraftBan: (on) => {
+      devSetPref(DEV_LS_BAN_ON, !!on);
+      if (dev) dev.draftBan = !!on;
+      return !!(dev && dev.draftBan);
+    },
+    setDraftBanIds: (ids) => {
+      try {
+        if (ids === null || ids === undefined) prefStorage.removeItem(DEV_LS_BAN_IDS);
+        else prefStorage.setItem(DEV_LS_BAN_IDS, Array.isArray(ids) ? ids.join(',') : String(ids));
+      } catch { /* shim */ }
+      if (dev) dev.draftBanIds = devDraftBanIds();
+      return dev ? [...dev.draftBanIds] : null;
     },
     setPolicy: (p) => {
       const v = AUTOPLAY_POLICIES.includes(p) ? p : null;
