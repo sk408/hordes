@@ -12,7 +12,19 @@ import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js'
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
 import { TOUR_KEYS } from '../src/tour.js';     // WAVE-21: preseed tour flags
-import { initWeather } from '../src/weather.js'; // flake hardening: mercy-rule weather pin
+import { initWeather, mulberry32 } from '../src/weather.js'; // flake hardening: mercy-rule weather pin
+
+// DETERMINISM PIN (2026-09-23): this test drives a synthetic clock (rAF stubbed
+// to a synchronous push, now += dtMs), so every run SHOULD be identical — but
+// Math.random was never seeded, and startRun draws state.choiceSeed from it
+// (main.js:8649), which then seeds choiceRng/shrineRng/parallelRng. That one
+// unseeded draw made the run state fed to the 30-frame movement probes vary
+// per run against fixed thresholds, i.e. the recurring suite-red/standalone-red
+// flake on :1411 / :1438 / :1455 (movement dx observed 6.6 / 9.7 / 14.8 / 27.5).
+// Seeding here is the SAME pattern test_beatability.mjs:87 and
+// test_audit_fixes.mjs:24 already use. Root cause + evidence is recorded in
+// vampire-re/slice_merge_gate.sh beside smoke's flake allowlist entry.
+Math.random = mulberry32(20260923);
 
 // ---- DOM stubs ----
 const noop = () => {};
