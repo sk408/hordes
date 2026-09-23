@@ -32,7 +32,7 @@ import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingPlacements, paintBuilding } from './stage_buildings.js';
-import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked } from './stage_ground.js';
+import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -550,7 +550,7 @@ export class Renderer {
     // so the camera's player-lock reads as the PLAYER moving, not the world.
     // PORT SLICE G: the pass is stage-aware (state.stage sets the terrain
     // character); the wave theme still sets every color (see drawGround).
-    this.drawGround(g, state.groundSeed || 1, cam, theme, state.stage);
+    this.drawGround(g, state.groundSeed || 1, cam, theme, state.stage, state.weather);
     // WAVE-24 (#3): deliberate structures over the fine field (see
     // drawLandmarks) — the coarse layer that gives the floor a sense of place.
     this.drawLandmarks(g, state.groundSeed || 1, cam, theme, state.stage);
@@ -2947,7 +2947,7 @@ export class Renderer {
   // tuft CLUSTER, a slab PLATE with seams, an occasional boulder landmark)
   // so the floor reads as deliberate level art. Still subtle: decor sits
   // under entities and never competes with the play pieces.
-  drawGround(g, seed, cam, theme, stage) {
+  drawGround(g, seed, cam, theme, stage, weather) {
     const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY;
     // WAVE-24 (#3): decor clips at the arena RIM (600), not the old 660 bound
     // — pieces used to spill into the off-map gloom past the wall.
@@ -3048,6 +3048,10 @@ export class Renderer {
     {
       const spec = stageGroundSpec(stage);
       const salt = stageSalt(spec.id);
+      // K4: the run's weather id (string or weather.js instance; garbage ->
+      // CLEAR = no reaction). Geometry of the pass never reads the wave or
+      // the clock — only (cell, seed, stage, weather id).
+      const wxId = normGroundWeather(weather);
       const T = STAGE_GROUND_TILE;
       const t0 = Math.floor(cam.x / T), t1 = Math.floor((cam.x + C.VIEW_W) / T);
       const s0 = Math.floor(cam.y / T), s1 = Math.floor((cam.y + C.VIEW_H) / T);
@@ -3302,6 +3306,51 @@ export class Renderer {
               g.fillStyle = pal.crack;
               g.fillRect(x + (flip ? 0 : 8), y + 7, 3, 1);
               break;
+            }
+          }
+          // PORT SLICE K4 — WEATHER-REACTIVE TILES (owner feedback
+          // 2026-09-23: "maybe have different tiles impacted by the weather
+          // also in a subtle way"). At most TWO 1-4px additive rects per
+          // picked motif tile (never a new tile, never a redrawn motif),
+          // every rect through pal.* so the wave recolor beat survives and
+          // the palette budget holds (ZERO new colors). Gated by
+          // groundWxFor (pure fn of cell + seed + stage + weather id, salt
+          // 35 — never the clock, never weather.time), positioned by two
+          // fresh cellRand lanes (36/37) off the same (seed ^ salt) field.
+          // Offsets stay inside [0,15]x[0,10] of an anchor the cull keeps
+          // >= 22px inside the rim, so the rim clip holds. CLEAR (or an
+          // absent/unknown weather) paints nothing — the floor byte-returns.
+          // Perf: <= 2 rects per picked tile (~17 per view) on top of the K3
+          // ~470..540 — the < 1600 bound holds with the same ~3x headroom.
+          const nwx = groundWxFor(cx, cy, seed, spec.id, wxId);
+          if (nwx > 0) {
+            const ox = Math.floor(cellRand(cx, cy, seed ^ salt, 36) * 12);
+            const oy = 1 + Math.floor(cellRand(cx, cy, seed ^ salt, 37) * 7);
+            const ox2 = (ox + 7) % 12;
+            if (wxId === 'RAIN') {            // wet speckle: dark damp dots
+              g.fillStyle = pal.crack;
+              g.fillRect(x + ox, y + oy + 3, 2, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + 1, 2, 1);
+            } else if (wxId === 'SNOW') {     // dusting: pale cap + crack settle
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + ox, y, 3, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + 8, 2, 1);
+            } else if (wxId === 'WIND') {     // blown grit: thin shifted streak
+              g.fillStyle = pal.stone;
+              g.fillRect(x + ox, y + oy, 4, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + oy + 2, 3, 1);
+            } else if (wxId === 'CLOUDY') {   // passing shadow: sparse dapple
+              g.fillStyle = pal.crack;
+              g.fillRect(x + ox, y + oy + 2, 3, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + oy, 2, 1);
+            } else if (wxId === 'SUNNY') {    // sun glint: small lit catch
+              g.fillStyle = pal.stoneTop;
+              g.fillRect(x + ox, y + oy, 2, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + oy + 3, 2, 1);
+            } else {                          // MOONLIGHT mote: faint pale speck
+              g.fillStyle = pal.tuft2;
+              g.fillRect(x + ox, y + oy, 2, 1);
+              if (nwx > 1) g.fillRect(x + ox2, y + oy + 4, 2, 1);
             }
           }
           // Rim tick: the edge reads finished per biome.

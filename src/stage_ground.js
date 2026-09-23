@@ -137,3 +137,70 @@ export function groundMotifFor(cx, cy, seed, stageId) {
 // Overlay tile pitch in world px (2x the fine decor CELL): coarse enough to
 // read as terrain character, fine enough to land several per screen.
 export const STAGE_GROUND_TILE = 64;
+
+// PORT SLICE K4 — WEATHER-REACTIVE TILES (owner feedback 2026-09-23: "maybe
+// have different tiles impacted by the weather also in a subtle way").
+// The ground answers the run's weather the way the reference's tile sets
+// answer their stage (section 13 TILES: shared filler reused across stages
+// via palette swap — here the filler is reused across WEATHERS via the same
+// wave-theme palette keys, never a fixed color). Per-weather reactions:
+//   RAIN      wet speckle — dark damp dots (pal.crack) on the motif
+//   SNOW      dusting — a pale cap (pal.stoneTop) + settle in the cracks
+//   WIND      blown grit — a thin shifted streak (pal.stone)
+//   CLOUDY    passing shadow — sparse dark dapple (pal.crack)
+//   SUNNY     sun glint — a small lit catch (pal.stoneTop)
+//   MOONLIGHT moon mote — a faint pale speck (pal.tuft2)
+// CLEAR (and anything unknown) paints NOTHING extra, so clearing the weather
+// byte-restores the K3 floor. Subtle by contract: at most TWO 1-4px rects
+// per picked overlay tile, only on tiles that already carry a motif (no new
+// tiles, no redrawn motifs), every rect through pal.* so the wave recolor
+// beat survives. Deterministic per (cell, seed, stage, weather id) — never
+// the clock, never weather.time (a storm that has blown for ten minutes
+// grounds identically to a fresh one) — and reversible (CLEAR = zero).
+// Reference rows: section 13 TILES (four tileset roles, 8-16 variants per
+// motif, bulk transitions/edges), section 1 palette budget (tiles median 31
+// colors — the pass adds ZERO new colors), section 11 VFX (16px class,
+// additive, few colors — the speckle/dusting vocabulary).
+
+// The ACTUAL weather states hordes has (src/weather.js WEATHER_TYPES keys —
+// this list must match exactly; the K4 test pins the equality). CLEAR is the
+// rest state: no ground reaction.
+export const GROUND_WEATHER_IDS = ['CLEAR', 'RAIN', 'SNOW', 'WIND', 'CLOUDY', 'SUNNY', 'MOONLIGHT'];
+
+// normGroundWeather(w) -> weather id. Accepts an id string, a weather.js
+// instance ({ id } / { def: { id } }), or garbage (null, undefined, unknown
+// strings all normalize to CLEAR — weather clears, the floor byte-returns).
+export function normGroundWeather(w) {
+  const id = typeof w === 'string' ? w : (w && (w.id || (w.def && w.def.id)));
+  return GROUND_WEATHER_IDS.includes(id) ? id : 'CLEAR';
+}
+
+// Small integer salt per weather id (pure char hash — deterministic, never
+// the clock), mixed into the overlay hash so each weather speckles a
+// DIFFERENT subset of tiles.
+function wxSalt(id) {
+  const s = String(id || 'CLEAR');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return h | 0;
+}
+
+// K4 wx gate: HOW MANY extra weather rects a motif tile carries (0, 1 or 2).
+// Pure function of (cell, seed, stage, weather id) — salt 35, the overlay's
+// free lane (30 = dens gate, 31/32 = anchor, 33 = flip, 34 = motif pick).
+// CLEAR always 0 (the rest state paints nothing). ~55% of picked tiles carry
+// an extra (r < 0.18 two rects, r < 0.55 one), so every weather measurably
+// answers inside one view while staying texture-quiet. render.js calls this
+// (single source of truth — the test asserts the painted diff through it).
+export function groundWxFor(cx, cy, seed, stageId, weather) {
+  const id = normGroundWeather(weather);
+  if (id === 'CLEAR') return 0;
+  const spec = stageGroundSpec(stageId);
+  const salt = stageSalt(spec.id);
+  let h = ((seed ^ salt ^ wxSalt(id)) ^ 35) >>> 0;
+  h = Math.imul(h ^ cx, 0x27d4eb2d);
+  h = Math.imul(h ^ cy, 0x165667b1);
+  h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13;
+  const r = (h >>> 0) / 4294967296;
+  return r < 0.18 ? 2 : r < 0.55 ? 1 : 0;
+}
