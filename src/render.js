@@ -24,6 +24,7 @@ import { chestArtFor, paintChest, SEALED_KEY } from './art/chests.js';
 // PORT SLICE K2 — original shrine altar art (per-index designs, honest
 // display: never per-blessing). Painters only; economy/rolls/latch untouched.
 import { shrineArtFor, paintShrine } from './art/shrines.js';
+import { archArtFor, paintArch } from './art/arches.js';
 // TIER-2 NAMED FINDS (2026-09-23): per-affix item portraits. Painters only —
 // the belt record (chrome.itemIcons, rarity per item in order) is untouched.
 import { itemIconFor, paintItemIcon } from './art/item_icons.js';
@@ -851,22 +852,30 @@ export class Renderer {
     // RUN-COUNT MILESTONE CHEST — the collection BURST, same world slot.
     drawChestBurst(g, state, cam);
 
-    // Arches (arches.js): pixel gates — twin pillars, lintel + stepped cap,
-    // shimmering field in the arch type's color (pulse while untriggered).
+    // Arches (arches.js): PORT SLICE ARCH ART original gate art — one
+    // designed arch per TYPE (twin_fury / magnet / aegis / berserker /
+    // zephyr, art/arches.js), type ink = ARCH_COLORS. The shimmer field
+    // pulses while UNTRIGGERED (the "not yet" tell). Walk-under CONSUMES
+    // the arch (arches.js reverse splice removes it from state.arches), so
+    // a spent gate never lingers on the field; `a.used` is a paint-only
+    // latch (chest `band` precedent) for the inactive read in captures/tests.
     for (const a of state.arches || []) {
       const x = Math.round(a.x - cam.x), y = Math.round(a.y - cam.y);
       if (cull(x, y, 30)) continue;
       const col = ARCH_COLORS[a.type] || '#a8e0ff';
+      const aart = archArtFor(a.type);
+      const active = a.used !== true;
       const glow = 0.5 + 0.5 * Math.sin((state.time || 0) * 3);
-      g.fillStyle = 'rgba(255,255,255,' + (0.10 + 0.16 * glow).toFixed(2) + ')';
-      g.fillRect(x - 8, y - 16, 16, 32);          // shimmer field under the gate
-      g.fillStyle = col;
-      g.fillRect(x - 12, y - 14, 4, 28);          // pillars
-      g.fillRect(x + 8, y - 14, 4, 28);
-      g.fillRect(x - 12, y - 18, 24, 4);          // lintel
-      g.fillRect(x - 9, y - 21, 18, 3);           // stepped cap
-      g.fillStyle = Math.floor((state.time || 0) * 5) % 2 === 0 ? '#ffffff' : col;
-      g.fillRect(x - 1, y - 17, 2, 2);            // keystone glint
+      if (active) {
+        g.fillStyle = 'rgba(255,255,255,' + (0.10 + 0.16 * glow).toFixed(2) + ')';
+        g.fillRect(x - 8, y - 16, 16, 32);        // shimmer field under the gate
+      }
+      // 24x35 grid art; ground point (x, y) = grid cell (12, 21).
+      paintArch(g, aart, x - 12, y - 21, active);
+      if (active && aart.glint) {                  // keystone glint, blinking
+        g.fillStyle = Math.floor((state.time || 0) * 5) % 2 === 0 ? '#ffffff' : col;
+        for (const [dx, dy] of aart.glint) g.fillRect(x - 12 + dx, y - 21 + dy, 1, 1);
+      }
     }
 
     // WAVE-11 RUN SHRINES (shrines.js): PORT SLICE K2 original altar art —
