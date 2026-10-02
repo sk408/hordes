@@ -141,9 +141,6 @@ for (const vp of VIEWPORTS) {
         await page.evaluate(`(() => { T.state.bannerHold = 0; T.state.player.hp = T.state.player.stats.maxHp; })()`);
         await page.sleep(2500);
         await shot('run-evolved');
-        await page.evaluate(key('i')); await page.sleep(400);   // the STATS overlay lists the weapons
-        await shot('stats-evolved');
-        await page.evaluate(key('i')); await page.sleep(300);
       }
       if (!vp.hudOnly && want('end')) {
         // Resolve the draft, play on a little, then die for real.

@@ -1,5 +1,9 @@
 # Balance model — Milestone 1 (the progression curve)
 
+> Superseded in part by `docs/WEAPONS_AND_EVOLUTIONS.md` (the in-run draft: weapon ladders, partner-card
+> evolutions, the smaller stat cards, base enemy HP 100 and the HP ladder QUAD 0.05). The career tables
+> below are the M1 measurement; the re-measured careers are in that document.
+
 Everything here is on branch `claude/overhaul`. The measured tables come from `tools/progression_sim.mjs`
 (see `docs/PROGRESSION_SIM.md`). Its AUTO pilot plays worse than a person, so survival, income and pace
 figures are a floor, and play-hours figures are a ceiling.
