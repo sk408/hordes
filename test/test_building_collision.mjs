@@ -39,6 +39,7 @@ import { readFileSync } from 'node:fs';
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { STAGES } from '../src/stages.js';
+import { isReachableLoot } from '../src/entities.js';
 import {
   STAGE_BUILDINGS, buildingForStage, designsForStage,
   buildingFootprints, buildingPlacements, buildingFixedPoints,
@@ -310,10 +311,16 @@ function quietField() {
   st.wave.bosses = []; st.wave.boss = null; st.portal = null; st.runChest = null;
 }
 
+// A limit cycle is a stall too: while a goal exists, the pilot's positions
+// over the last CYCLE_TICKS must span at least CYCLE_SPAN_PX.
+const CYCLE_TICKS = 240, CYCLE_SPAN_PX = 6;
+
 // Pump frames, clicking through any overlay card (draft/burst), counting
-// only live play. Returns the trace and the worst stall window.
-function drive(frames, per) {
+// only live play. Returns the trace and the worst stall window. `goal`
+// (optional) says whether the pilot has somewhere to be this frame.
+function drive(frames, per, goal) {
   const trace = [];
+  let goalRun = 0;
   let worst = 0, cur = 0, lx = st.player.x, ly = st.player.y, played = 0;
   for (let i = 0; i < frames; i++) {
     h.pump(1);
@@ -328,6 +335,16 @@ function drive(frames, per) {
     played++;
     if (per) per(i);
     trace.push([+st.player.x.toFixed(2), +st.player.y.toFixed(2)]);
+    goalRun = goal && goal() ? goalRun + 1 : 0;
+    if (goalRun >= CYCLE_TICKS) {
+      const win = trace.slice(-CYCLE_TICKS);
+      const xs = win.map(t => t[0]), ys = win.map(t => t[1]);
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      if (span < CYCLE_SPAN_PX) {
+        throw new Error('AssertionError: limit cycle — span ' + span.toFixed(2) + 'px over ' +
+          CYCLE_TICKS + ' ticks at (' + st.player.x.toFixed(0) + ',' + st.player.y.toFixed(0) + ')');
+      }
+    }
     const moved = Math.hypot(st.player.x - lx, st.player.y - ly);
     lx = st.player.x; ly = st.player.y;
     cur = moved > 0.1 ? 0 : cur + 1;
@@ -411,10 +428,44 @@ S.check('REAL AUTO: the symmetric trap collects the mark, never stalls', () => {
     let collected = false;
     const { trace, worst } = drive(1800, () => {
       if (st.gems.length < before) collected = true;
-    });
+    }, () => st.gems.length > 0);
     assert(collected, stage + ': the pilot banks the mark across the box');
     assert(penetration(trace, rects) <= 1e-6, stage + ': ...without entering it');
     assert(worst <= MAX_STALL_TICKS, stage + ': ...and without stalling (worst ' + worst + ')');
+  }
+});
+
+// The reviewed strand: seed 7919, pilot at (-4,11), mark at (738,386) used to
+// end in a sub-pixel jitter at (367,160) that the per-tick stall bound missed.
+S.check('REAL AUTO: far marks across the field are banked — no limit cycle (seed 7919 repro)', () => {
+  const cases = [
+    [7919, -4, 11, 738, 386], [7919, -400, -300, 380, 420],
+    [15838, 500, 480, -207, -183], [4242, -300, 350, 420, -380],
+  ];
+  for (const [seed, sx, sy, mx, my] of cases) {
+    T.stages.select('VERDANT_HOLLOW');
+    T.startRun();
+    h.pump(2);
+    quietField();
+    st.groundSeed = seed;
+    if (T.setPilotMode) T.setPilotMode('AUTO_ALL');
+    const rects = buildingFootprints(seed, st.stage);
+    const at = pushOutOfRects(rects, sx, sy, BUILDING_MOVER_R + 1);
+    st.player.x = at[0]; st.player.y = at[1];
+    assert(isReachableLoot(mx, my), 'the mark is reachable loot');
+    st.gems.push({ x: mx, y: my, xp: 1 });
+    let doneAt = -1;
+    const { trace } = drive(60 * 60, (i) => {
+      if (doneAt < 0 && st.gems.length === 0) doneAt = i;
+    }, () => st.gems.length > 0);
+    assert(doneAt >= 0, 'seed ' + seed + ' (' + sx + ',' + sy + ')->(' + mx + ',' + my +
+      '): mark never banked; pilot ended at (' + st.player.x.toFixed(1) + ',' + st.player.y.toFixed(1) + ')');
+    assert(penetration(trace, rects) <= 1e-6, 'seed ' + seed + ': the walk never enters a footprint');
+    // Walking pace: a routed walk should not take more than ~2.5x the
+    // straight-line time (speed is at least the base 60px/s).
+    const straightS = Math.hypot(mx - at[0], my - at[1]) / C.PLAYER.SPEED;
+    assert(doneAt / 60 <= straightS * 2.5 + 3,
+      'seed ' + seed + ': banked in ' + (doneAt / 60).toFixed(1) + 's vs straight ' + straightS.toFixed(1) + 's');
   }
 });
 

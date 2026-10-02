@@ -28,7 +28,7 @@
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { reliefLevelAt, reliefStep, reliefRampRoute } from '../src/relief.js';
-import { stageRelief } from '../src/stages.js';
+import { stageRelief, STAGE_IDS } from '../src/stages.js';
 import { buildingFootprints, pushOutOfRects, BUILDING_MOVER_R } from '../src/stage_buildings.js';
 
 const S = suite('test_pilot_nostall');
@@ -219,6 +219,95 @@ S.check('TERRACE MECHANIC: full-circle sweep — the funnel never stalls, any az
   // the rollback contract, re-asserted beside the mechanic it inverts).
   assert(!AUTHORED.TERRACE || flat.LEVELS === 1 && !flat.TERRACE,
     'the SHIPPED field is flat (LEVELS ' + flat.LEVELS + ', no TERRACE) — the live game has no cliff to stall on');
+});
+
+// ---------------------------------------------------------------------------
+// PART C — THE BUILDING FIELD. A limit cycle is a stall: the per-tick bound
+// above is satisfied by a pilot that jitters a fraction of a pixel forever.
+// While a goal exists the positions of the last CYCLE_TICKS must span at
+// least CYCLE_SPAN_PX, and the goal must be reached inside a walking budget.
+// ---------------------------------------------------------------------------
+const CYCLE_TICKS = 240, CYCLE_SPAN_PX = 6;
+function driveToGoal(seconds, hasGoal) {
+  const p = st.player;
+  const hist = [];
+  let run = 0;
+  for (let i = 0; i < 60 * seconds; i++) {
+    h.pump(1);
+    st.bannerHold = 0; p.invuln = 1e9; st.enemies.length = 0; st.spawnTimer = 99999;
+    if (st.mode !== 'playing') {
+      const c0 = h.elements['ov-cards'].children[0];
+      if (c0) c0.click();
+      run = 0; hist.length = 0;
+      continue;
+    }
+    if (!hasGoal()) return i;
+    hist.push([p.x, p.y]);
+    if (++run >= CYCLE_TICKS) {
+      const win = hist.slice(-CYCLE_TICKS);
+      const xs = win.map(t => t[0]), ys = win.map(t => t[1]);
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      assert(span >= CYCLE_SPAN_PX, 'limit cycle: span ' + span.toFixed(2) + 'px over ' + CYCLE_TICKS +
+        ' ticks at (' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')');
+    }
+  }
+  return -1;
+}
+
+S.check('BUILDING FIELD: far marks are banked on every stage — no limit cycle (seed 7919 repro first)', () => {
+  T.banners.suppressAll();
+  const lim = C.GROUND.RIM - C.GROUND.WALL - C.PLAYER.XP_PICKUP_RADIUS - 4;
+  const cases = [['VERDANT_HOLLOW', 7919, -4, 11, 738, 386]];
+  let n = 1;
+  for (const stage of STAGE_IDS) {
+    const seed = 7919 * ++n;
+    cases.push([stage, seed, -lim * 0.7, lim * 0.6, lim * 0.8, -lim * 0.75]);
+    cases.push([stage, seed, lim * 0.5, lim * 0.8, -lim * 0.85, -lim * 0.4]);
+  }
+  for (const [stage, seed, sx, sy, mx0, my0] of cases) {
+    T.stages.select(stage);
+    T.startRun();
+    h.pump(2);
+    quietField();
+    st.groundSeed = seed;
+    if (T.setPilotMode) T.setPilotMode('AUTO_ALL');
+    const rects = buildingFootprints(seed, st.stage);
+    const at = pushOutOfRects(rects, sx, sy, BUILDING_MOVER_R + 1);
+    const mk = pushOutOfRects(rects, mx0, my0, 2);
+    st.player.x = at[0]; st.player.y = at[1];
+    st.gems.push({ x: mk[0], y: mk[1], xp: 1 });
+    const budget = Math.hypot(mk[0] - at[0], mk[1] - at[1]) / C.PLAYER.SPEED * 2.5 + 5;
+    const doneAt = driveToGoal(budget, () => st.gems.length > 0);
+    assert(doneAt >= 0, stage + ' seed ' + seed + ': mark (' + mk[0].toFixed(0) + ',' + mk[1].toFixed(0) +
+      ') not banked in ' + budget.toFixed(0) + 's; pilot at (' + st.player.x.toFixed(1) + ',' + st.player.y.toFixed(1) + ')');
+  }
+});
+
+S.check('BUILDING FIELD: patrol keeps travelling around boxes (no pacing in place)', () => {
+  for (const [stage, seed] of [['VERDANT_HOLLOW', 7919], ['BLOOD_RUST', 4242], ['VOID_REACH', 15838]]) {
+    T.stages.select(stage);
+    T.startRun();
+    h.pump(2);
+    quietField();
+    st.groundSeed = seed;
+    if (T.setPilotMode) T.setPilotMode('AUTO_ALL');
+    const p = st.player;
+    let travelled = 0, lx = p.x, ly = p.y, minX = p.x, maxX = p.x, minY = p.y, maxY = p.y, live = 0;
+    for (let i = 0; i < 60 * 40; i++) {
+      h.pump(1);
+      st.bannerHold = 0; p.invuln = 1e9; st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 99999;
+      if (st.mode !== 'playing') { const c0 = h.elements['ov-cards'].children[0]; if (c0) c0.click(); continue; }
+      live++;
+      travelled += Math.hypot(p.x - lx, p.y - ly); lx = p.x; ly = p.y;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    // Patrol walks at half speed: 40s is ~1200px of path on an orbit of at
+    // least 80px radius, so the trace must cover real ground.
+    assert(live > 60 * 30, stage + ': the patrol window played');
+    assert(travelled > 0.4 * C.PLAYER.SPEED * (live / 60) * 0.9, stage + ': patrol kept walking (' + travelled.toFixed(0) + 'px)');
+    assert(Math.max(maxX - minX, maxY - minY) > 120,
+      stage + ': patrol covered ground (span ' + Math.max(maxX - minX, maxY - minY).toFixed(0) + 'px)');
+  }
 });
 
 S.done();

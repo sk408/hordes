@@ -35,7 +35,7 @@ import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
-import { buildingPlacements, paintBuilding } from './stage_buildings.js';
+import { buildingField, paintBuilding } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 
@@ -3844,7 +3844,7 @@ export class Renderer {
     // shows the biome's composition. Collision reads the same field through
     // buildingFootprints (slice F): paint and blocking agree box for box by
     // construction — there is no second field math here to drift.
-    const bField = buildingPlacements(seed, stage);
+    const bField = buildingField(seed, stage);
     for (const b of bField) {
       // View cull (structures overhang their cell by design).
       if (b.x + b.w < cam.x || b.x > cam.x + C.VIEW_W) continue;

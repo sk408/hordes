@@ -1380,6 +1380,7 @@ function runController(p, dt, am) {
     // walk (controllers.js holds by the same rule).
     const upCard = prologueBanner();
     const holdsWalk = !!upCard && upCard.action !== 'drink';
+    decision.routed = false;   // the phase owns the walk, not a building route
     if (m) {
       decision.moveX = m.x; decision.moveY = m.y;
     } else if (!holdsWalk && state.pilotMode === 'MANUAL') {
@@ -1406,9 +1407,10 @@ function runController(p, dt, am) {
   if (decision.moveX !== 0 || decision.moveY !== 0) {
     // Corner-steer BEFORE the grade/step: a ray about to cross a footprint
     // commits around its most intent-aligned corner (stateless, magnitude-
-    // preserving, open-field byte-identical) so a greedy re-aim can never
-    // patrol one face forever. The slide below stays behind it as backstop.
-    if (bRects.length > 0) {
+    // preserving, open-field byte-identical). A move the AutoPilot already
+    // routed around buildings (decision.routed) is left as planned. The
+    // slide below stays behind both as backstop.
+    if (bRects.length > 0 && !decision.routed) {
       const st2 = buildingSteer(p.x, p.y, decision.moveX, decision.moveY,
         bRects, BUILDING_MOVER_R);
       decision.moveX = st2[0]; decision.moveY = st2[1];
@@ -1422,9 +1424,15 @@ function runController(p, dt, am) {
     // BLOCKING ELEVATION (msg_01M2RK5B): the cliff rule + tangent slide, the
     // SAME reliefStep the enemy move seam reads — one geometry function, both
     // sides, no wall-hacks for either (pinned in test_blocking_elevation.mjs).
+    // A routed move never steps past the waypoint it is walking at.
+    let stride = spd * grade * dt;
+    if (decision.routed) {
+      const ml = Math.hypot(decision.moveX, decision.moveY);
+      if (ml * stride > decision.stepCap) stride = decision.stepCap / ml;
+    }
     const stepped = reliefStep(p.x, p.y,
-      p.x + decision.moveX * spd * grade * dt,
-      p.y + decision.moveY * spd * grade * dt,
+      p.x + decision.moveX * stride,
+      p.y + decision.moveY * stride,
       state.groundSeed || 0, stageRelief(state.stage));
     let bnx = stepped[0], bny = stepped[1];
     // PORT SLICE F (building collision, owner-ruled 2026-09-22): the pilot —

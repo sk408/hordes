@@ -9,7 +9,8 @@
 // from main.js key handling — the controller itself never touches input.
 import { CONFIG as C } from './config.js';
 import { isReachableLoot, lootLimit } from './entities.js';
-import { buildingFootprints } from './stage_buildings.js';
+import { buildingRects, clearOfBuildings, BUILDING_MOVER_R } from './stage_buildings.js';
+import { makeNav, navDirection, navRemaining, straightClear, NAV_PAD } from './pilot_nav.js';
 import { stageRelief } from './stages.js';
 import { reliefRampRoute } from './relief.js';
 
@@ -25,6 +26,17 @@ export const SWARM_EXACT_MAX = 256;
 // playtest — the volleys ignored spitters/warlocks while they chipped the
 // player down from off-screen).
 export const RANGED_TYPES = new Set(['SPITTER', 'WARLOCK']);
+
+// Stall detection while the pilot walks at a goal (gem / chest / portal), in
+// decide() frames. A goal is stalled when the pilot's net displacement over
+// one period stays under STALL_SPAN_PX, or when the distance left has not
+// improved by STALL_GAIN_PX for STALL_NO_GAIN_FRAMES.
+export const STALL_PERIOD_FRAMES = 180;
+export const STALL_SPAN_PX = 6;
+export const STALL_NO_GAIN_FRAMES = 900;
+export const STALL_GAIN_PX = 8;
+// Patrol looks this far ahead for a building before routing around it.
+const PATROL_LOOK = 24;
 
 // Nearest live enemy scan (shared by both controllers — pickTarget wants it
 // as its NEAREST-doctrine fallback). hp<=0 means "already dead, not yet
@@ -74,6 +86,13 @@ export class AutoPilotController {
     // controller per page load is reset enough — no reset hooks.
     this.fleeing = false;
     this.gem = null;
+    // Building navigation: the current route, the goal-progress tracker, and
+    // the goals given up on as unreachable.
+    this.nav = makeNav();
+    this.prog = { key: null, tick: -1 };
+    this.tick = 0;
+    this.skipGems = new WeakSet();
+    this.skipChest = null;
     // WAVE-26 ("stance that bites"): the LIVE activity of the pilot this frame,
     // published by main.js as state.stanceAct and printed in the canvas HUD
     // next to the stance name. It is observation only — it never feeds back
@@ -202,9 +221,31 @@ export class AutoPilotController {
     return best ?? near;
   }
 
+  // Progress watchdog for the goal `key` (an object identity). `left` is the
+  // walking distance remaining. Returns true when the goal has stalled.
+  stalled(key, p, left) {
+    const g = this.prog;
+    if (g.key !== key || g.tick !== this.tick - 1) {
+      this.prog = { key, tick: this.tick, ax: p.x, ay: p.y, n: 0, best: left, since: 0 };
+      return false;
+    }
+    g.tick = this.tick;
+    if (left < g.best - STALL_GAIN_PX) { g.best = left; g.since = 0; }
+    else if (++g.since >= STALL_NO_GAIN_FRAMES) { g.key = null; return true; }
+    if (++g.n >= STALL_PERIOD_FRAMES) {
+      const span = Math.hypot(p.x - g.ax, p.y - g.ay);
+      g.n = 0; g.ax = p.x; g.ay = p.y;
+      if (span < STALL_SPAN_PX) { g.key = null; return true; }
+    }
+    return false;
+  }
+
   // Returns { moveX, moveY, target } — moveX/moveY normalized direction,
-  // target = enemy to fire at (or null to hold fire).
+  // target = enemy to fire at (or null to hold fire). A move that follows a
+  // building route also carries routed: true and stepCap (px to the waypoint
+  // being walked at; the motion seam must not step past it).
   decide(p, state, cfg) {
+    this.tick++;
     const nearest = nearestEnemy(p, state);
     const nd = nearest
       ? (nearest.x - p.x) ** 2 + (nearest.y - p.y) ** 2
@@ -232,7 +273,7 @@ export class AutoPilotController {
     // the wall forever without the pickup radius ever reaching it. The field
     // is queried ONCE per frame (pure in seed/stage, a couple dozen boxes) and the
     // interior test rides the same commit/drop shape as the rim test above.
-    const bRects = buildingFootprints(state.groundSeed || 0, state.stage);
+    const bRects = buildingRects(state.groundSeed || 0, state.stage);
     const inBricks = (x, y) => {
       for (const r of bRects) {
         if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) return true;
@@ -247,12 +288,14 @@ export class AutoPilotController {
       for (const gm of state.gems) {
         if (!isReachableLoot(gm.x, gm.y)) continue;
         if (inBricks(gm.x, gm.y)) continue;
+        if (this.skipGems.has(gm)) continue;
         const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
         if (d < gd) { gd = d; this.gem = gm; }
       }
     }
     const g = this.gem;
     let gx = 0, gy = 0;
+    let gemRamp = false;   // the gem vector is a relief ramp route
     if (g) {
       // ELEVATION v2 (reliefRampRoute): a gem on the upper path is reached
       // through the RAMPS, not the cliff face — the same route bias the
@@ -264,6 +307,7 @@ export class AutoPilotController {
         state.groundSeed || 0, stageRelief(state.stage));
       if (route) {
         gx = route[0]; gy = route[1];
+        gemRamp = true;
       } else {
         const gd = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
         const len = Math.sqrt(gd) || 1;
@@ -298,6 +342,23 @@ export class AutoPilotController {
       moveY: (p.y >= edge && my > 0) || (p.y <= -edge && my < 0) ? 0 : my,
       target,
     });
+    // Building route toward (tx, ty): null while the straight walk is clear
+    // (the caller keeps its own vector) or when no route is known; otherwise
+    // the move along the route at `mag`. The route ends at the nearest
+    // standable point to the goal. `left` is the walking distance remaining.
+    let left = 0;
+    const routeTo = (tx, ty, mag) => {
+      left = Math.hypot(tx - p.x, ty - p.y);
+      if (straightClear(bRects, p.x, p.y, tx, ty)) { this.nav.path = null; return null; }
+      const s = clearOfBuildings(bRects, tx, ty, BUILDING_MOVER_R + NAV_PAD, C.GROUND.RIM);
+      const d = navDirection(this.nav, bRects, p.x, p.y, s[0], s[1]);
+      if (!d) return null;
+      left = navRemaining(this.nav, p.x, p.y, s[0], s[1]);
+      const m = put(d[0] * mag, d[1] * mag, C.GROUND.RIM);
+      m.routed = true;
+      m.stepCap = d[2];
+      return m;
+    };
 
     // FIRST-RUN PROLOGUE (owner 2026-09-18): the auto pilot's FIRST ACT is
     // the walk — straight to the prologue potion. It outranks everything
@@ -429,13 +490,18 @@ export class AutoPilotController {
     // while the reward waits would stall the moment. The chest is clamped
     // INSIDE the loot edge at spawn (main.js), so the default put() edge is
     // the right boundary and the direct line always converges.
-    if (state.runChest) {
+    if (state.runChest && state.runChest !== this.skipChest) {
       const cdx = state.runChest.x - p.x;
       const cdy = state.runChest.y - p.y;
       const clen = Math.hypot(cdx, cdy);
       if (clen > 1) {
-        this.act = 'CHEST';
-        return put(cdx / clen, cdy / clen);
+        const routed = routeTo(state.runChest.x, state.runChest.y, 1);
+        if (this.stalled(state.runChest, p, left)) {
+          this.skipChest = state.runChest;   // unreachable: stop walking at it
+        } else {
+          this.act = 'CHEST';
+          return routed || put(cdx / clen, cdy / clen);
+        }
       }
     }
 
@@ -493,11 +559,25 @@ export class AutoPilotController {
       const route = reliefRampRoute(p.x, p.y, state.portal.x, state.portal.y,
         state.groundSeed || 0, stageRelief(state.stage));
       if (route) return put(route[0], route[1], rim);
-      return put(pdx / plen, pdy / plen, rim);
+      const routed = routeTo(state.portal.x, state.portal.y, 1);
+      if (this.stalled(state.portal, p, left)) this.nav.path = null;   // re-plan
+      return routed || put(pdx / plen, pdy / plen, rim);
     }
 
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {
+      const routed = gemRamp ? null : routeTo(g.x, g.y, st.XP_SPEED);
+      if (this.stalled(g, p, left)) {
+        // No progress toward this gem: give it up and take another next frame.
+        this.skipGems.add(g);
+        this.gem = null;
+        this.nav.path = null;
+      } else if (routed) {
+        this.act = 'LOOT';
+        return routed;
+      }
+    }
+    if (this.gem) {
       // Same wall-steer as the flee path: a gem at/outside the rim would
       // park the player against the ±600 clamp chasing it (idle-player
       // regression — smoke caught a 3.1s stall at x=561).
@@ -526,6 +606,16 @@ export class AutoPilotController {
       const mx = (-dy / len - (dx / len) * inward) * 0.5;
       const my = (dx / len - (dy / len) * inward) * 0.5;
       this.act = 'PATROL';
+      // A building in the way: route to a point further round the orbit
+      // instead of pressing its face.
+      const ml = Math.hypot(mx, my);
+      if (ml > 0 && !straightClear(bRects, p.x, p.y,
+        p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK)) {
+        const r = Math.min(400, Math.max(80, len));
+        const a = Math.atan2(dy, dx) + 0.6;
+        const routed = routeTo(Math.cos(a) * r, Math.sin(a) * r, ml);
+        if (routed) return routed;
+      }
       return put(mx, my);
     }
   }

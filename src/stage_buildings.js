@@ -1354,6 +1354,14 @@ export function buildingRects(seed, stageId) {
   return rectsVal;
 }
 
+// buildingPlacements behind the same kind of cache, for the per-frame paint.
+let fieldKey = null, fieldVal = [];
+export function buildingField(seed, stageId) {
+  const key = seed + '|' + String(stageId);
+  if (fieldKey !== key) { fieldVal = buildingPlacements(seed, stageId); fieldKey = key; }
+  return fieldVal;
+}
+
 // True when (x, y) sits inside any footprint (expanded by margin).
 // The pilot treats an interior loot mark the way it treats one beyond the
 // rim: not a candidate (controllers.js — the WAVE-27 wall-grind precedent).
