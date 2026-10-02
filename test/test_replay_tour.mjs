@@ -112,7 +112,10 @@ s.check('the replayed run is flagged ASSISTED (the opt-in seam)', () => {
   // the run clock accrue a couple of seconds, then die through the real
   // ending. A NON-assisted run of t>0 would raise bestTime; the assisted
   // fold must not.
-  T.tut.skip(performance.now()); T.tut.skip(performance.now());   // SKIP, two presses
+  // Two SKIP presses. The panel refuses presses within its 400 ms guard, so
+  // stamp them well after it appeared rather than racing the wall clock.
+  const skipAt = performance.now() + 5000;
+  T.tut.skip(skipAt); T.tut.skip(skipAt + 50);
   const step = (n) => {
     for (let i = 0; i < n; i++) {
       pump(1);
