@@ -4583,7 +4583,8 @@ function openDraft() {
   });
   const statCard = (u) => {
     const ws = partnerOf(u.id);
-    if (!ws.length || owned[u.id]) return { ...u, evoText: '', evoReady: false, partnerBoost: 1 };
+    const stackText = statStackTimes(u, state.player) > 1 ? 'STACKED: counts double' : '';
+    if (!ws.length || owned[u.id]) return { ...u, evoText: '', evoReady: false, partnerBoost: 1, stackText };
     const ready = ws.some(w => (w.level || 1) >= WEAPON_MAX_LEVEL);
     // The first copy also levels the weapons it is the partner of (pick()).
     const rising = ws.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
@@ -4591,7 +4592,7 @@ function openDraft() {
       ? 'EVOLVES NOW: ' + ws.filter(w => (w.level || 1) >= WEAPON_MAX_LEVEL).map(w => EVOLUTION_DEFS[w.type].name).join(', ')
       : 'evolves ' + ws.map(w => WEAPON_NAMES[w.type]).join(', ')) +
       (rising.length ? ' · +' + DRAFT_PLAN.PARTNER_LEVELS + ' level: ' + rising.map(w => WEAPON_NAMES[w.type]).join(', ') : '');
-    return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT };
+    return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT, stackText };
   };
   const pool = [
     // Level-up cards weigh 1 each; the NEW cards share REFILL_WEIGHT between them.
@@ -4735,7 +4736,10 @@ function openDraft() {
     const leadLine = u.leadText
       ? `<div class="evo lead" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.leadText}</div>`
       : '';
-    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + leadLine + evoLine + fuseLine +
+    const stackLine = u.stackText
+      ? `<div class="evo stack" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.stackText}</div>`
+      : '';
+    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + leadLine + stackLine + evoLine + fuseLine +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
@@ -4988,6 +4992,15 @@ function leadWeapon() {
   return best;
 }
 
+// Common stat cards (config.js UPGRADES) stack: how many times this pick of
+// `u` counts, given the copies the run already holds.
+const COMMON_STAT_IDS = new Set(UPGRADES.map(c => c.id));
+function statStackTimes(u, p) {
+  if (!u || !COMMON_STAT_IDS.has(u.id)) return 1;
+  const held = ((p && p.statCopies) || {})[u.id] || 0;
+  return held + 1 >= DRAFT_PLAN.STACK_FROM ? DRAFT_PLAN.STACK_MULT : 1;
+}
+
 function pick(u) {
   const p = state.player;
   // The first copy of a stat card levels every weapon it is the partner of.
@@ -5033,6 +5046,14 @@ function pick(u) {
   } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
     markStatTaken(state, u.id);
   }
+  // A committed stat plan pays: from its STACK_FROM-th copy on, a common stat
+  // card counts STACK_MULT times.
+  const stackTimes = statStackTimes(u, p);
+  if (COMMON_STAT_IDS.has(u.id)) {
+    p.statCopies = p.statCopies || {};
+    p.statCopies[u.id] = (p.statCopies[u.id] || 0) + 1;
+  }
+  for (let stackN = 0; stackN < stackTimes; stackN++) {
   if (u.id === 'multi' && volleyAtProjCap()) {
     // TIER-2(d): the listed effect here is "+20% weapon damage" — the parallel
     // multiplier scales the LISTED number (x1.5 -> +30%), mult 1 is the
@@ -5078,6 +5099,7 @@ function pick(u) {
         if (granted) levelUpWeapon(granted);
       }
     }
+  }
   }
   // TIER-2(d): the ONE shared CURSED drawback — flat HP loss on pick on the
   // EXISTING p.hp surface (entities.js makePlayer). Exactly one drawback, every

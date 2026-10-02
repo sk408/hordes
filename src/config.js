@@ -1128,7 +1128,10 @@ export const CONFIG = {
   LADDER: {
     WAVE_SECONDS: 120,   // == ESCALATION.WAVE_LENGTH (the tests assert this)
     WAVES: 15,           // 15 x 120s = 1800s = RUN.LIMIT
-    HP:  { LINEAR: 0.1,  QUAD: 0.05, COMPOUND: 1 },
+    // LATE_FROM / LATE_LIN: past tick LATE_FROM (3:00) the curve is also
+    // multiplied by 1 + LATE_LIN * (w - LATE_FROM), so the first minutes are
+    // untouched and the later ladder closes long runs.
+    HP:  { LINEAR: 0.1,  QUAD: 0.05, COMPOUND: 1,     LATE_FROM: 6, LATE_LIN: 0.12 },
     DMG: { LINEAR: 0.15, QUAD: 0,    COMPOUND: 1.004 },
     XP:  { LINEAR: 0,    QUAD: 0,    COMPOUND: 1 },
     GROUPS_FROM: 150,    // density holds at one group until here
@@ -1186,9 +1189,14 @@ export const EVOLUTION_HP_FRAC = 0.15;
 //                        the kit whose evolution it is the partner of
 //   EVOLUTION_KIT_DMG    an evolution raises the whole kit's damage by this
 //   FUSION_KIT_DMG       share of the run's starting damage; a fusion by this
+//   STACK_FROM / _MULT   from its STACK_FROM-th copy on, a common stat card
+//                        counts STACK_MULT times: a stat plan pays, a scatter
+//                        of single copies does not
 export const DRAFT_PLAN = {
   LEAD_LEVELS: 2,
   PARTNER_LEVELS: 1,
+  STACK_FROM: 2,
+  STACK_MULT: 2,
   EVOLUTION_KIT_DMG: 0.2,
   FUSION_KIT_DMG: 0.3,
 };
@@ -1357,7 +1365,11 @@ export const DRAFT_MYTHIC_UPGRADES = [
 // These live in config.js, next to the numbers they read, so the ladder can be
 // exercised with no DOM harness: the run-structure tests import them directly.
 //
-const _curve = (c, w) => (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w);
+const _curve = (c, w) => {
+  const late = Math.max(0, w - (c.LATE_FROM || 0));
+  return (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w) *
+    (1 + (c.LATE_LIN || 0) * late);
+};
 
 /** Enemy hp multiplier at escalation tick w (0..LIMIT/30). */
 export function ladderHp(w) { return _curve(CONFIG.LADDER.HP, Math.max(0, w)); }

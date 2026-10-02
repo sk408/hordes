@@ -2286,6 +2286,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   const volleyW = st.weapons.find(w => w.type === 'VOLLEY');
   if (volleyW) volleyW.level = 1;
   p.stats.projectiles = 1;
+  // A first copy again: a repeat copy of a stat card counts double (DRAFT_PLAN.STACK_FROM).
+  p.statCopies = {};
   const d1 = p.stats.damage;
   T.pickCard(multi);
   // Name the numbers: this assertion failed once intermittently and the bare
@@ -2304,6 +2306,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // splitCap is set exactly as applyMetaBonuses emits it: 2 levels bought => 5.
   p.stats.splitCap = 2;
   p.stats.projectiles = CFG.WEAPON.MAX_PROJECTILES;    // 3 = the OLD dead point
+  p.statCopies = {};
   const d2 = p.stats.damage;
   T.pickCard(multi);
   assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES + 1,
@@ -2312,6 +2315,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'a granted projectile must not also pay the damage conversion');
   // And at the RAISED cap it converts, exactly as it did at the base cap.
   p.stats.projectiles = CFG.WEAPON.MAX_PROJECTILES + 2;
+  p.statCopies = {};
   const d3 = p.stats.damage;
   T.pickCard(multi);
   assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES + 2,

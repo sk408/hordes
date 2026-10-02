@@ -81,8 +81,17 @@ S.check('per-minute escalation is REAL: every minute is harder than the last', (
     `the full-run hp curve is a real climb (x${(ladderHp(MAX_TICK) / ladderHp(0)).toFixed(1)})`);
 });
 
-S.check('every ladder curve IS (1 + LINEAR*w + QUAD*w^2) * COMPOUND^w, from tick 0, no knee', () => {
-  const curve = (c, w) => (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w);
+S.check('every ladder curve IS (1 + LINEAR*w + QUAD*w^2) * COMPOUND^w, times the late term past LATE_FROM', () => {
+  const early = (c, w) => (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w);
+  const curve = (c, w) => early(c, w) * (1 + (c.LATE_LIN || 0) * Math.max(0, w - (c.LATE_FROM || 0)));
+  // The late term leaves the first three minutes alone and has no step where it starts.
+  assert.deepEqual([L.HP.LATE_FROM, L.HP.LATE_LIN, L.DMG.LATE_FROM, L.DMG.LATE_LIN], [6, 0.12, undefined, undefined]);
+  for (let w = 0; w <= 6; w += 0.5) {
+    assert.equal(ladderHp(w), early(L.HP, w), `hp at tick ${w} is the early curve`);
+  }
+  for (let w = 0; w <= MAX_TICK; w++) assert.equal(ladderDmg(w), early(L.DMG, w), `dmg at tick ${w} has no late term`);
+  assert.ok(ladderHp(6.01) / early(L.HP, 6.01) < 1.002, 'no step at LATE_FROM');
+  assert.ok(Math.abs(ladderHp(40) / early(L.HP, 40) - 5.08) < 1e-9, 'hp x5.08 over the early curve at 20:00');
   const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b));
   for (const [name, fn, c] of [['hp', ladderHp, L.HP], ['dmg', ladderDmg, L.DMG], ['xp', ladderXp, L.XP]]) {
     for (const k of ['LINEAR', 'QUAD', 'COMPOUND']) {

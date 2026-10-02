@@ -14,7 +14,7 @@ import { WEAPON_MAX_LEVEL, makeWeapon } from '../src/weapons.js';
 const s = suite('test_draft_plan');
 
 s.check('the plan rules are pinned', () => {
-  assert.deepEqual(DRAFT_PLAN, { LEAD_LEVELS: 2, PARTNER_LEVELS: 1, EVOLUTION_KIT_DMG: 0.2, FUSION_KIT_DMG: 0.3 });
+  assert.deepEqual(DRAFT_PLAN, { LEAD_LEVELS: 2, PARTNER_LEVELS: 1, STACK_FROM: 2, STACK_MULT: 2, EVOLUTION_KIT_DMG: 0.2, FUSION_KIT_DMG: 0.3 });
 });
 
 const h = await boot();
@@ -151,5 +151,30 @@ s.check('a fusion raises the kit\'s damage by more than an evolution', () => {
   assert.ok(Math.abs(p.stats.damage - (dmg0 + DRAFT_PLAN.FUSION_KIT_DMG * runBase(p).damage)) < 1e-9);
   assert.ok(DRAFT_PLAN.FUSION_KIT_DMG > DRAFT_PLAN.EVOLUTION_KIT_DMG);
   assert.ok(fusionDef('THRESHING_STORM'));
+});
+s.check('a repeat copy of a common stat card counts double; single copies of different cards do not', () => {
+  const p = kit({ VOLLEY: 2 });
+  const base = runBase(p).damage;
+  let d = p.stats.damage;
+  const first = offer('dmg');
+  assert.equal(first._draftOffer.stackText, '', 'a first copy is an ordinary card');
+  first.click();
+  assert.ok(Math.abs(p.stats.damage - (d + 0.15 * base)) < 1e-9, 'first Whetstone: +15%');
+  d = p.stats.damage;
+  const second = offer('dmg');
+  assert.equal(second._draftOffer.stackText, 'STACKED: counts double');
+  assert.ok(second.innerHTML.includes('STACKED: counts double'), 'the card says so');
+  second.click();
+  assert.ok(Math.abs(p.stats.damage - (d + 0.30 * base)) < 1e-9, 'second Whetstone: +30%');
+  assert.equal(p.statCopies.dmg, 2);
+  // A different card is a first copy again.
+  const hp0 = p.stats.maxHp;
+  const heart = offer('hp');
+  assert.equal(heart._draftOffer.stackText, '');
+  heart.click();
+  assert.equal(p.stats.maxHp, hp0 + 25);
+  // Weapon cards never stack this way.
+  const lv = offer('lvl_VOLLEY_' + weapon('VOLLEY').level);
+  assert.equal(lv._draftOffer.stackText, undefined);
 });
 s.done();
