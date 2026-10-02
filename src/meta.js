@@ -586,11 +586,23 @@ export function unlockWeapon(profile, weaponId, rowKey) {
 // ---------- Loadout -----------------------------------------------------------
 // profile.loadout is the player's stored choice, or null for "no choice". With
 // no choice a run brings every owned weapon that fits its slots: the
-// character's starting weapon first, then the rest, priciest first.
+// character's starting weapon first, then the rest, priciest first. A weapon
+// that costs mana ranks last until the profile's mana regen covers at least
+// half of what firing it on cooldown drains: a Knight with no Mana Spring gets
+// a Chain Zap off about one cooldown in six, which is a wasted slot.
+function manaStarved(profile, ch, w) {
+  const def = WEAPONS[w];
+  if (!def || !def.MANA) return false;
+  const lvl = id => (profile.purchased && profile.purchased[id]) || 0;
+  const regen = C.MANA.REGEN + SHOP_BY_ID.regen.perLevel * lvl('regen');
+  const cost = def.MANA * Math.max(0.2, 1 - SHOP_BY_ID.thrifty.perLevel * lvl('thrifty'))
+    * ((ch.mods && ch.mods.manaCostMult) || 1);
+  return regen < 0.5 * cost / def.COOLDOWN;
+}
 export function defaultLoadout(profile, cap) {
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   const owned = (profile.unlockedWeapons || []).filter(w => w !== 'VOLLEY' && WEAPONS[w]);
-  const price = w => WEAPON_RANK[w] || 0;
+  const price = w => (manaStarved(profile, ch, w) ? -1 : WEAPON_RANK[w] || 0);
   const rest = owned.filter(w => w !== ch.startingWeapon)
     .map((w, i) => ({ w, i })).sort((a, b) => price(b.w) - price(a.w) || a.i - b.i).map(x => x.w);
   const list = owned.includes(ch.startingWeapon) ? [ch.startingWeapon, ...rest] : rest;
@@ -621,9 +633,14 @@ export function equipBoughtWeapon(profile, weaponId) {
   const cur = effectiveLoadout(profile, cap);
   if (cur.includes(weaponId)) return { benched: null };
   let benched = null;
-  // A stored choice loses its longest-standing pick; the default list is
-  // strongest-first, so it loses its weakest.
-  if (cur.length >= cap) benched = profile.loadout ? cur.shift() : cur.pop();
+  // A full kit loses its weakest weapon (lowest rank; the later one on a tie),
+  // never the character's starting weapon while another can go.
+  if (cur.length >= cap) {
+    const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
+    const pool = cur.some(w => w !== ch.startingWeapon) ? cur.filter(w => w !== ch.startingWeapon) : cur;
+    benched = pool.reduce((a, w) => ((WEAPON_RANK[w] || 0) <= (WEAPON_RANK[a] || 0) ? w : a));
+    cur.splice(cur.lastIndexOf(benched), 1);
+  }
   cur.push(weaponId);
   profile.loadout = cur;
   return { benched };

@@ -194,6 +194,7 @@ ok('the flag prevents a second coach (re-entering the title)', tourRoots().lengt
 
 // (e) a seen flag suppresses the coach on a NEW growth too.
 prof.unlockedWeapons.push('ZAP');
+prof.purchased.regen = 4;   // Mana Spring feeds Chain Zap, so it takes its price rank in the auto kit
 T.showTitle();
 settleReveal();
 pump(2);

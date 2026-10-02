@@ -18,13 +18,13 @@ S.check('a fresh profile brings the starter Boomerang without choosing anything'
 
 S.check('the default fills the slots, strongest first, and never exceeds them', () => {
   const p = makeProfile();
-  own(p, 'ORBIT', 'SEEKER', 'ZAP');
+  own(p, 'ORBIT', 'SEEKER', 'JAVELIN');
   const cap = startWeaponSlots(p) - 1;
   const kit = defaultLoadout(p);
   assert.equal(kit.length, cap);
-  assert.deepEqual(kit, ['SEEKER', 'ZAP'], 'priciest (strongest) first');
-  assert.deepEqual(defaultLoadout(p, 4), ['SEEKER', 'ZAP', 'BOOMERANG', 'ORBIT'], 'Boomerang ranks above Orbit');
-  assert.ok(WEAPON_PRICES.SEEKER > WEAPON_PRICES.ZAP);
+  assert.deepEqual(kit, ['SEEKER', 'JAVELIN'], 'priciest (strongest) first');
+  assert.deepEqual(defaultLoadout(p, 4), ['SEEKER', 'JAVELIN', 'BOOMERANG', 'ORBIT'], 'Boomerang ranks above Orbit');
+  assert.ok(WEAPON_PRICES.SEEKER > WEAPON_PRICES.JAVELIN);
 });
 
 S.check("a character's starting weapon leads its default kit", () => {
@@ -55,7 +55,7 @@ S.check('a bought weapon weaker than the full default kit still gets in: the wea
   assert.deepEqual(p.loadout, ['SEEKER', 'ORBIT']);
 });
 
-S.check('a stored choice is honoured, and a full one benches its longest-standing pick', () => {
+S.check('a stored choice is honoured, and a full one benches its weakest weapon', () => {
   const p = makeProfile();
   own(p, 'ORBIT', 'SEEKER', 'ZAP');
   p.loadout = ['ORBIT'];
@@ -79,6 +79,38 @@ S.check('a bought slot fills: a stored loadout takes the best owned weapon it la
   assert.ok(buyUpgrade(q, 'slots'));
   assert.equal(q.loadout, null);
   assert.deepEqual(effectiveLoadout(q), ['SEEKER', 'BOOMERANG', 'ORBIT']);
+});
+
+S.check('a run of purchases never benches the strongest weapon in the kit', () => {
+  const p = makeProfile();
+  own(p, 'MINE', 'NOVA_PULSE');                 // e.g. achievement grants
+  assert.deepEqual(effectiveLoadout(p), ['MINE', 'NOVA_PULSE']);
+  p.gold = 1e6;
+  for (const id of ['weapon_orbit', 'weapon_ember', 'weapon_beam', 'weapon_ricochet']) {
+    assert.ok(buyUpgrade(p, id));
+    assert.ok(effectiveLoadout(p).includes('MINE'), 'MINE survives buying ' + id);
+    assert.equal(effectiveLoadout(p).length, 2);
+  }
+  assert.deepEqual(effectiveLoadout(p), ['MINE', 'RICOCHET'], 'the newest purchase rides beside the strongest');
+});
+
+S.check('a mana weapon the profile cannot feed ranks last in the default kit', () => {
+  const p = makeProfile();
+  own(p, 'ZAP', 'ORBIT');                       // ZAP granted, never chosen
+  assert.deepEqual(effectiveLoadout(p), ['BOOMERANG', 'ORBIT'], 'a Knight with base mana regen leaves Chain Zap on the bench');
+  p.purchased.slots = 1;
+  assert.deepEqual(effectiveLoadout(p), ['BOOMERANG', 'ORBIT', 'ZAP'], 'it still fills a slot nothing else wants');
+  p.purchased.slots = 0;
+  p.purchased.regen = SHOP_BY_ID.regen.maxLevel;
+  assert.deepEqual(effectiveLoadout(p), ['ZAP', 'BOOMERANG'], 'with Mana Spring it takes its price rank');
+  const w = makeProfile();
+  own(w, 'ZAP', 'SEEKER', 'MINE');
+  w.unlockedCharacters.push('WITCH'); w.equippedCharacter = 'WITCH';
+  assert.equal(effectiveLoadout(w)[0], 'ZAP', "the Witch's starting weapon always leads her kit");
+  const k = makeProfile();
+  k.gold = 1e6;
+  assert.ok(buyUpgrade(k, 'weapon_zap'));
+  assert.ok(effectiveLoadout(k).includes('ZAP'), 'a weapon the player BUYS is equipped regardless');
 });
 
 // ---- through the real run --------------------------------------------------
