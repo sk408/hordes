@@ -167,9 +167,9 @@ export const RUN_GOLD = {
   NEW_BEST: 100,      // any later run that sets a new best survival time
   AWARD: 70,          // the floor every run banks
   SURVIVAL_EVERY: 30, // seconds per survival tick
-  SURVIVAL_BASE: 20,
-  SURVIVAL_STEP: 4,
-  KILL_SOFTCAP: 300,  // kills at which an ordinary kill pays half
+  SURVIVAL_BASE: 30,
+  SURVIVAL_STEP: 0.5,
+  KILL_SOFTCAP: 200,  // kills at which an ordinary kill pays half
   // Challenge runs add this many percentage points to the AWARD pool; the
   // pool is additive: 100% + challenge + heat - night.
   CHALLENGE_BONUS_PCT: 200,

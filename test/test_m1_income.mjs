@@ -63,6 +63,26 @@ S.check('Greed multiplies purse income, not just the award', () => {
   assert.equal(T.purse.get() - p0, Math.floor(GOLD_TIER.BOSS * 1.4));
 });
 
+S.check('Gilded Palm scales kill gold only; Greed scales the survival bonus too', () => {
+  fresh();
+  st.player.kills = 0; st.runCounts.gold.carry = 0;
+  st.player.stats.goldMult = 1; st.player.stats.purseKillMult = 2;
+  const tick1 = RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP;
+  const total = () => st.runCounts.gold.earned + (st.runCounts.gold.carry || 0);
+  let a = total();
+  st.time = 31; T.run.check();
+  assert.ok(Math.abs(total() - a - tick1) < 1e-9, 'the card does not touch the survival bonus');
+  a = total();
+  T.purse.credit({ boss: true });
+  assert.ok(Math.abs(total() - a - 2 * GOLD_TIER.BOSS) < 1e-9, 'the card doubles kill gold');
+  fresh();
+  st.runCounts.gold.carry = 0;
+  st.player.stats.goldMult = 1.5; st.player.stats.purseKillMult = 1;
+  a = total();
+  st.time = 31; T.run.check();
+  assert.ok(Math.abs(total() - a - 1.5 * tick1) < 1e-9, 'Greed multiplies the survival bonus');
+});
+
 S.check('the first run ever pays FIRST_CLEAR; a later record pays NEW_BEST; no record pays neither', () => {
   prof.bestTime = 0;
   fresh(); st.time = 10;

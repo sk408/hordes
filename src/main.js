@@ -2454,11 +2454,12 @@ function purseAdd(amount) {
   state.runPurse = profile.runPurse;
   return v;
 }
-// Everything that scales run income: Greed (stats.goldMult), Gilded Palm
-// (stats.purseKillMult) and the prestige tier.
-function purseIncomeMult() {
+// What scales run income: Greed (stats.goldMult) and the prestige tier scale
+// all of it; Gilded Palm (stats.purseKillMult) scales kill gold only, as its
+// card says.
+function purseIncomeMult(kill = true) {
   const st = (state.player && state.player.stats) || {};
-  return (st.goldMult || 1) * (st.purseKillMult || 1) * prestigeGoldMult(getPrestige(profile));
+  return (st.goldMult || 1) * (kill ? (st.purseKillMult || 1) : 1) * prestigeGoldMult(getPrestige(profile));
 }
 // One kill's gold. Ordinary kills pay less as the run's kill count climbs
 // (RUN_GOLD.KILL_SOFTCAP); bosses and heralds always pay in full.
@@ -2476,7 +2477,7 @@ function purseSurvivalTicks() {
   const due = Math.floor(state.time / RUN_GOLD.SURVIVAL_EVERY);
   while ((state.survivalTicks || 0) < due) {
     state.survivalTicks = (state.survivalTicks || 0) + 1;
-    const v = purseAdd((RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP * state.survivalTicks) * purseIncomeMult());
+    const v = purseAdd((RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP * state.survivalTicks) * purseIncomeMult(false));
     state.runCounts.gold.survival = (state.runCounts.gold.survival || 0) + v;
   }
 }

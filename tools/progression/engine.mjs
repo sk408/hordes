@@ -151,6 +151,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         const pl = st.player;
         trace.push({ t: Math.round(st.time), level: pl.level, drafts, kills: pl.kills, hp: Math.round(pl.hp), maxHp: Math.round(pl.stats.maxHp),
           dmg: Math.round(pl.stats.damage), enemies: st.enemies.length, purse: T.purse.get(), wave: st.wave.num,
+          tiers: { ...st.runCounts.gold.kills }, survival: st.runCounts.gold.survival || 0,
           near: st.enemies.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 40).map((e) => (e.boss ? (e.midBoss ? 'HERALD' : 'BOSS') : e.typeId)).sort().join(',') });
       }
       if (st.mode === 'dead') { end = 'died'; break; }
