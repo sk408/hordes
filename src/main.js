@@ -170,7 +170,7 @@ import {
   // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
   // the derived gate, the buy path, and the sanctioned toggle pair.
   APEX_UPGRADES, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
-  latchApexUnlock, apexCatalogueComplete,
+  latchApexUnlock,
   luckDropWeights,
   draftCardWeight,
   draftLadderWeight,
