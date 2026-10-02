@@ -141,7 +141,10 @@ st.player.xpNext = 1e18;
   st.pendingDrafts = 1;
   T.openDraft();
   ok('draft presented in AUTO', st.mode === 'draft', st.mode);
-  const expectedId = cards()[0]._draftOffer.id;
+  // rng 0 takes the first offer the auto-pick may take: never a Cursed card
+  // while another is on offer.
+  const offered = cards().map(c => c._draftOffer);
+  const expectedId = (offered.find(u => u.parallel !== 'cursed') || offered[0]).id;
   const c0 = T.draftAuto.count;
   tick(0.2);
   const line = countdownLine();

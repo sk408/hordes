@@ -265,8 +265,14 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
   // the popup should write a save" — the same prove-it-moved discipline the
   // timestamp gets, or a player who closes the tab sees it again).
+  // (Fake clock, as in the DECLINE check below: the reference dismiss above
+  // already persisted this release id, and a second persist inside the same
+  // millisecond writes byte-identical saves.)
   const rawBefore = ls.get('hordes_profile_v1');
-  noteUp.click();
+  const realNowR = Date.now; const laterNow = realNowR() + 5000; Date.now = () => laterNow;
+  try {
+    noteUp.click();
+  } finally { Date.now = realNowR; }
   ok('the dismiss removed the note and PERSISTED lastSeenUpdate (shown once)',
     !noteEl() && stored().lastSeenUpdate === W.release.id,
     { seen: stored().lastSeenUpdate });

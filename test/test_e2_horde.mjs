@@ -233,6 +233,9 @@ s.check('R6: chaff potion/chest rolls collapse at the horde wave', () => {
   // near-zero roll 0.001 -> 0.0001. The CHEST rolls are untouched (0.35).
   const reap = (num, rngVal, eliteish) => {
     st.wave.num = num; st.enemies.length = 0; st.drops.length = 0; st.chests.length = 0;
+    // The adaptive drop factor (loot.js) scales the potion chance down while
+    // the rolling kill rate is high; this probe prices the un-scaled channel.
+    st.killRateEwma = 0; st.killsAtRateTick = p.kills;
     const e = makeTypedEnemy('CHASER', p.x + 400, p.y, st.time);
     e.hp = 0; e.preStageMaxHp = eliteish ? 5000 : 10;
     st.enemies.push(e);
