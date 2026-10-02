@@ -785,7 +785,7 @@ fitCanvas();
 // pager guards every non-shop screen.
 function onViewportResize() {
   fitCanvas();
-  if (state.mode === 'title') placeTitleMenu();
+  if (state.mode === 'title' || state.mode === 'setup') placeTitleMenu();
   if (shopPager) finalizeShopPager();
 }
 window.addEventListener('resize', onViewportResize);
@@ -7118,9 +7118,15 @@ function loadoutSummary() {
 }
 function showPreRun() {
   openMenu('setup');
+  // The title art stays behind this screen and its wordmark is the heading,
+  // so the DOM h1 hides (its text stays for stub-DOM readers) and the cards
+  // sit under the wordmark exactly as on the title.
   ovTitle.textContent = 'NEXT RUN';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = 'press START, or change the run first';
+  if (ovTitle.style) ovTitle.style.display = 'none';
+  overlay.style.background = 'transparent';
+  if (overlay.classList) overlay.classList.add('title');
+  ovSub.innerHTML = 'NEXT RUN: press START, or change the run first';
   menuCard('START', 'begin the run [ENTER]', () => startRun());
   const locked = lockedStageLines(stageUnlocked);
   const stageCount = STAGE_IDS.filter(stageUnlocked).length;
@@ -7134,6 +7140,7 @@ function showPreRun() {
   menuCard('LOADOUT', loadoutSummary() + (ownsExtraWeapon() ? '<br>press to change' : '<br>buy more weapons in the SHOP'),
     () => showLoadout('prerun'), !ownsExtraWeapon());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
+  placeTitleMenu();
 }
 
 // U1 HEADER (owner 2026-09-14: "remove purse text from the main menu or add gold
@@ -7557,8 +7564,11 @@ function finalizeShopPager() {
   }
   // the low band (44px arrows + indicator, both at bottom:8) is taller than
   // the indicator strip alone — the last row must clear the real chrome.
+  // The footer row (BACK) sits under every page, so its height is not
+  // available to the paged rows.
+  const footH = footer.length ? Math.max(...footer.map(c => c.offsetHeight || 0)) + SHOP_GAP : 0;
   const availH = Math.max(60, overlay.clientHeight - (ovCards.offsetTop || 0)
-    - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10);
+    - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10 - footH);
   const pages = shopPageChunk(rows.map(r => r.h), availH);
   shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
   shopPageGoto(shopPager.page);
@@ -7601,9 +7611,13 @@ function shopChromeUpdate() {
   }
   let ind = document.getElementById('shop-ind');
   if (one) { if (ind && ind.remove) ind.remove(); return; }
-  if (!ind) { ind = document.createElement('div'); ind.id = 'shop-ind'; overlay.appendChild(ind); }
-  ind.textContent = shopPager.page + ' / ' + shopPager.pages.length +
-    ' \u00b7 ' + shopPager.cols + '\u00d7' + shopPager.pages[shopPager.page - 1].length;
+  if (!ind) {
+    ind = document.createElement('div');
+    ind.id = 'shop-ind';
+    ind.className = 'shop-ind';   // the stylesheet's rule is the class
+    overlay.appendChild(ind);
+  }
+  ind.textContent = 'page ' + shopPager.page + ' of ' + shopPager.pages.length;
 }
 
 // Swipe (the phone's first-class input — carousel convention: finger left =
@@ -8586,8 +8600,7 @@ function showAdvancedSettings(inRun = false) {
     controller.cycleFocus();
     again();
   });
-  const sd = C.AUTOPILOT.STANCES[controller.stance] || {};
-  menuCard('STANCE', controller.stance + ': ' + (sd.TAG || '') + '. Press to change (G)', () => {
+  menuCard('STANCE', controller.stance + ': ' + (STANCE_PLAIN[controller.stance] || '') + '. Press to change (G)', () => {
     cycleStanceWithFeedback();
     again();
   });
