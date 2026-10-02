@@ -194,6 +194,8 @@ s.check('plain play with every old hint trigger live mounts NO hint strip (8s)',
 
 // DEATH -> death screen -> RETURN TO TITLE.
 {
+  // The boss above paid a joker offer; a Second Wind taken there would revive.
+  st.secondWindUsed = true;
   T.die();
   step(5);
   if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });
