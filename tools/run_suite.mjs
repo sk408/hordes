@@ -8,13 +8,7 @@ import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 // Files allowed to be red. Keep this list short and explain each entry.
-const KNOWN_RED = [
-  // Its run-level cohorts come from tools/draft_sim.mjs, a coarse model of the
-  // game whose weapon formulas predate the VS-style ladders; on the new tuning
-  // the model's greedy policy dies to the herald at ~66s. The real-game
-  // measuring stick is tools/progression_sim.mjs. Open item: refit the model.
-  'test_draft_luck.mjs',
-];
+const KNOWN_RED = [];
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);

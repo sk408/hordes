@@ -122,8 +122,13 @@ plans (open item below).
 
 Run 1 on a fresh profile: 11 s [10–20], 323 gold [323–335] (before 20 s [18–40], 338 gold). The
 first 60 s run comes at run 2–4, the first 120 s run at run 5–6, wave 2 at run 7–9: the same shape as
-before, a little later. The 40-run stats-first career is in the report that accompanies this change
-(`career40` in the final report); before, it reached wave 5 at run 17 [16–17].
+before, a little later.
+
+40-run stats-first career (3 seeds): first 60 s run 2 [2–4] (before 4), first 120 s run 5 [4–6] (5),
+wave 2 run 9 [7–9] (8), wave 5 run 16 [14–17] (17 [16–17]); survival runs 11–15 438 [271–638] (293),
+runs 21–30 1,091 [833–1,331] (1,018), runs 31–40 1,173 [847–1,642] (1,281); gold runs 31–40 7,907
+(8,699); longest flat stretch 7 runs (4). The career is not materially faster; the wave-5 target of
+run 20–30 is still missed by about four runs (open item).
 
 ## Tests
 
@@ -136,8 +141,9 @@ before, a little later. The 40-run stats-first career is in the report that acco
   `test_chain_zap` updated to the new ladders; token tests removed (`test_chests`, `test_e2_horde`,
   `test_shockwave_credit`, `test_trophy_hooks`, `smoke`, `test_desktop_ui`, `test_night_mode`,
   `test_draft_ceremony`, `test_heal_budget`); stat-card pins in `test_tier2_parallels`.
-- `tools/run_suite.mjs` KNOWN_RED: `test_draft_luck.mjs` only (its run-level cohorts come from the
-  coarse `tools/draft_sim.mjs` model, whose weapon formulas predate these ladders).
+- `test/test_escape_duration.mjs` (M3 check): AUTO finishes the escape corridor in 26–29 s and the HUD
+  states the payout and what a skip passes up.
+- `tools/run_suite.mjs` KNOWN_RED is empty: 206 files green.
 
 ## Open items
 
@@ -146,6 +152,8 @@ before, a little later. The 40-run stats-first career is in the report that acco
   the plan the draft text steers toward.
 - `random` is on par with the deliberate plans at 5,000 and 20,000 rather than below them: the uniform
   pick mixes rares, skills and rewrites that the deliberate policies refuse.
-- `tools/draft_sim.mjs` (the coarse model behind `test_draft_luck`) needs refitting to the new ladders.
+- `tools/draft_sim.mjs` (the coarse model behind `test_draft_luck`) still prices Whetstone and Quick
+  Hands at the new values but models the weapon ladders coarsely; refit it before trusting it.
+- Wave 5 on a stats-first career comes at run 16, not run 20–30.
 - The 40-run career and the phone-landscape draft layout (cards sit low on an 844x390 viewport, a
   pre-existing M3 layout) are reported, not fixed.
