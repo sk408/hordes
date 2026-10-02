@@ -1380,9 +1380,8 @@ function runController(p, dt, am) {
     // walk (controllers.js holds by the same rule).
     const upCard = prologueBanner();
     const holdsWalk = !!upCard && upCard.action !== 'drink';
-    decision.routed = false;   // the phase owns the walk, not a building route
     if (m) {
-      decision.moveX = m.x; decision.moveY = m.y;
+      decision.moveX = m.x; decision.moveY = m.y; decision.routed = false;
     } else if (!holdsWalk && state.pilotMode === 'MANUAL') {
       const dx = state.prologue.potion.x - p.x;
       const dy = state.prologue.potion.y - p.y;
@@ -1392,7 +1391,7 @@ function runController(p, dt, am) {
       // AUTO's own walk (controllers.js PROLOGUE branch) lands here too;
       // zeroed only under an EXPLAINING card.
     } else {
-      decision.moveX = 0; decision.moveY = 0;
+      decision.moveX = 0; decision.moveY = 0; decision.routed = false;
     }
   }
   // Movement. Loot speedMult (Windwalker boots) + SWIFT/BERSERK arch mods

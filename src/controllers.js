@@ -409,7 +409,9 @@ export class AutoPilotController {
       const len = Math.hypot(dx, dy);
       if (len > 1) {
         this.act = 'PROLOGUE';
-        return put(dx / len, dy / len);
+        // A footprint can stand across the spawn -> potion line: walk round it.
+        return routeTo(state.prologue.potion.x, state.prologue.potion.y, 1) ||
+          put(dx / len, dy / len);
       }
     }
 
