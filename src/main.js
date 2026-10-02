@@ -4620,10 +4620,6 @@ function openDraft() {
   }
   ovTitle.textContent = 'LEVEL ' + state.player.level;
   ovSub.textContent = 'pick 1 of ' + choices.length;
-  // The tutorial's free level-up: its card's sentence rides the draft screen.
-  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
-    ovSub.textContent = (PROLOGUE_BANNERS.find(b => b.action === 'draft') || {}).body || ovSub.textContent;
-  }
   draftFocus = -1;
   ovCards.innerHTML = '';
   const lay = setDraftOverlay(true, choices.length);
@@ -4921,13 +4917,6 @@ function pick(u) {
     ? state.weapons.filter(w => !w.evolutionId && EVOLUTION_DEFS[w.type] &&
         EVOLUTION_DEFS[w.type].partner === u.id && (w.level || 1) < WEAPON_MAX_LEVEL)
     : [];
-  // PROLOGUE (owner addendum 2026-09-18): THE DRAFT banner's action is the
-  // pick itself — the card taken feeds the action ledger, so the banner
-  // advances the moment the draft resolves (the auto-pick's card counts the
-  // same as a tapped one: it IS a pick).
-  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
-    prologueActionDone('draft');
-  }
   // G8 step 3: a RUN RULE card grants a persistent condition instead of a
   // number; every other card records itself in the `once` ledger (stat cards
   // only — weapon grant/level cards are the weapon economy, not the stats).
@@ -9452,7 +9441,8 @@ function tutHintScan() {
     else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', []);
     tut.focus = controller.focus; tut.stance = controller.stance;
   } else if (m === 'evolve') {
-    tutHint('evoready', ['cards']);
+    // The same overlay carries evolutions and fusions; name the one on offer.
+    tutHint(fusionOffers().length ? 'fusion' : 'evoready', ['cards']);
   } else if (m === 'draft') {
     const ch = state.draftCharges;
     if (ch && (ch.reroll > 0 || ch.skip > 0 || ch.banish > 0)) tutHint('draftacts', []);
