@@ -248,6 +248,9 @@ import {
   DEV_LS_BAN_ON, DEV_LS_BAN_IDS, parseDraftBanIds,
 } from './dev_autoplay.js';
 
+// M2 game feel: the per-step observer (damage numbers, puffs, shake).
+import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled } from './fx/feel.js';
+
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
 // audio module lands. Persistence is audio.js's job; settings only call
@@ -263,6 +266,7 @@ try {
   if (mod && mod.init) audio = mod;
 } catch { /* audio.js not built yet — shim stays in place */ }
 try { audio.init(); } catch { /* audio init must never block the game */ }
+setFeelAudio(audio);   // hit / kill / hurt / pickup sounds ride the feel observer
 // S2 (audit 2026-09-16): the init above runs at MODULE LOAD, before any user
 // gesture — on a gesture-gated browser (iOS Safari) the context is created
 // suspended and stays that way: a permanently silent game. init() is
@@ -2180,9 +2184,10 @@ function devSimStep(dt) {
   if (state.mode === 'playing') {
     if (coachActive() || state.bannerHold > 0 || state.helpMode) return false;
     update(dt);
+    feelStep(state, dt);
     return true;
   }
-  if (state.mode === 'finale') { updateFinale(dt); return true; }
+  if (state.mode === 'finale') { updateFinale(dt); feelStep(state, dt); return true; }
   return false;
 }
 function devSimSteps(dt) {
@@ -2998,7 +3003,7 @@ function detonateMineAt(mine) {
     if (e.hp <= 0) continue;
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
-      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
+      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) { d *= (p.stats.critMult || 1.5); markCrit(state, e); }
       // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
       // damage site (the rider below rides the same hit) — blasts never see it.
       e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
@@ -3426,6 +3431,7 @@ function update(dt) {
         let dmg = pr.damage;
         if (evoCrit > 0 && Math.random() < evoCrit) {
           dmg *= evoCritMult;
+          markCrit(state, e);
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
         e.hp -= devHit(dmg * directHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
@@ -6768,7 +6774,9 @@ function startCoach(steps, key) {
 // as state.zoomScale every frame (syncChrome) so render.js can read it instead
 // of re-deriving it, and the coachmark can never silently drift off the world.
 function zoomScale(z) {
-  return Math.max(1, Math.round(z || 1));
+  // The user's integer zoom times the renderer's base world scale (M2: the
+  // world draws about a third larger than the HUD where pixels allow).
+  return Math.max(1, Math.round(z || 1)) * (renderer.worldScale || 1);
 }
 function worldRegion(wx, wy, r = 16) {
   const Z = zoomScale(state.zoom);

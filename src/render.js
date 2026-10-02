@@ -1,5 +1,6 @@
-// HORDES — pixel rendering. Sprites are pixel grids drawn with fillRect:
-// no image assets, no drawImage — pure structured data.
+// HORDES — pixel rendering. Sprites are pixel grids (structured data, no
+// image assets). Each grid is rasterised once by sprite_cache.js and drawn
+// with drawImage; without a real canvas the same grids paint with fillRect.
 import { CONFIG as C, runClock } from './config.js';
 import { resolveLook, ELITE_LOOK } from './enemy_types.js';
 import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
@@ -38,6 +39,9 @@ import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingField, paintBuilding } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
+import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM } from './sprite_cache.js';
+import { shakeOffset } from './fx/feel.js';
+import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
 // Owner 2026-09-17 (msg_01M2RVD9HHZZDSR7FKNTRRSSY5 + addendum): while ANY
@@ -489,6 +493,114 @@ export function paintProjectileBody(g, p, x, y, ph) {
   g.fillRect(x + dx * 3, y + dy * 3, 1, 1);
 }
 
+// ---- cached pickup / shot painters ------------------------------------------
+// Each painter draws at an origin; sprite_cache rasterises it once per key
+// (outline baked) and falls back to calling it directly when headless.
+const GEM_BOX = { x: -3, y: -4, w: 7, h: 9 };
+const GEM_TIERS = [
+  ['#3ef0c0', '#b8fff0', '#17a888'],   // small: teal
+  ['#5ab0ff', '#d8f0ff', '#2a6ad8'],   // mid: blue
+  ['#d07aff', '#f4dcff', '#8a3ad8'],   // large: violet
+];
+const GEM_PAINT = [];
+for (const [body, hi, lo] of GEM_TIERS) {
+  for (const lit of [0, 1]) {
+    GEM_PAINT.push((g, x, y) => {
+      g.fillStyle = body;
+      g.fillRect(x - 1, y - 3, 3, 7);
+      g.fillRect(x - 2, y - 2, 5, 5);
+      g.fillStyle = lo;
+      g.fillRect(x + 1, y + 1, 1, 2);
+      g.fillStyle = lit ? '#ffffff' : hi;
+      g.fillRect(x - 1, y - 2, lit ? 2 : 1, 2);
+    });
+  }
+}
+const POTION_BOX = { x: -3, y: -6, w: 7, h: 11 };
+function potionPainter(body, hi) {
+  return (g, x, y) => {
+    g.fillStyle = body;
+    g.fillRect(x - 2, y - 2, 5, 6);
+    g.fillRect(x - 1, y - 4, 3, 2);
+    g.fillStyle = hi;
+    g.fillRect(x - 1, y - 1, 1, 3);
+    g.fillStyle = '#e8e8f0';
+    g.fillRect(x - 1, y - 5, 3, 1);
+  };
+}
+const paintPotionHp = potionPainter('#ff4a5e', '#ffb0b8');
+const paintPotionMp = potionPainter('#4a8cff', '#b8d8ff');
+
+function blitChest(g, art, x, y, lit) {
+  if (!cacheEnabled()) { paintChest(g, art, x, y, lit); return; }
+  blitGrid(g, art.grid, art.palette, x, y, STYLE_ITEM);
+  if (lit && art.glint) {
+    g.fillStyle = art.palette[5];
+    for (const [dx, dy] of art.glint) g.fillRect(x + dx, y + dy, 1, 1);
+  }
+}
+
+// Enemy shots: a bright ring instead of the dark one, so a shot reads as
+// danger against any ground.
+const STYLE_SHOT = spriteStyle({ outline: '#fff0f4' });
+const SHOT_BOX = { x: -4, y: -5, w: 9, h: 10 };
+const SHOT_PAINT = {
+  bolt(g, x, y) {
+    g.fillStyle = '#c46ad8'; g.fillRect(x - 3, y - 3, 7, 7);
+    g.fillStyle = '#52203d'; g.fillRect(x - 1, y - 1, 3, 3);
+    g.fillStyle = '#ff9ed8'; g.fillRect(x - 1, y - 4, 1, 1);
+  },
+  nova(g, x, y) {
+    g.fillStyle = '#ff7a9a'; g.fillRect(x - 2, y - 2, 5, 5);
+    g.fillStyle = '#a83a5a'; g.fillRect(x - 1, y - 1, 2, 2);
+  },
+  maw(g, x, y) {
+    g.fillStyle = '#ff2f5e'; g.fillRect(x - 2, y - 2, 5, 5);
+    g.fillStyle = '#ffd0da'; g.fillRect(x - 1, y - 1, 2, 2);
+  },
+  spit(g, x, y) {
+    g.fillStyle = '#68e080'; g.fillRect(x - 2, y - 2, 5, 5);
+    g.fillStyle = '#1f6a2a'; g.fillRect(x - 1, y - 1, 2, 2);
+  },
+};
+
+// Player projectiles through the cache: the body painter's discrete inputs
+// (kind, 8-way heading, spin / blink phase, glint bit) form the key, and a
+// stand-in projectile carrying exactly those inputs is what gets rasterised.
+const PROJ_BOX = { x: -7, y: -7, w: 15, h: 15 };
+const OCT_X = [1, 1, 0, -1, -1, -1, 0, 1], OCT_Y = [0, 1, 1, 1, 0, -1, -1, -1];
+const octOf = (dx, dy) => (dx || dy)
+  ? ((Math.round(Math.atan2(dy || 0, dx || 0) / (Math.PI / 4)) % 8) + 8) % 8 : 0;
+function blitProjectile(g, p, x, y, ph) {
+  let key, proxy, bits;
+  if (p.kind === 'boomerang') {
+    const spin = Math.floor(p.age * 20) % 2 === 0;
+    bits = ph & 1; key = 'pj:boom:' + (spin ? 1 : 0) + bits;
+    proxy = { kind: p.kind, age: spin ? 0 : 0.05 };
+  } else if (p.kind === 'seeker') {
+    const q = ((Math.round((p.ang || 0) / (Math.PI / 12)) % 24) + 24) % 24;
+    bits = ph & 2; key = 'pj:seek:' + q + ':' + bits;
+    proxy = { kind: p.kind, ang: q * (Math.PI / 12) };
+  } else if (p.kind === 'mine') {
+    const blink = Math.floor((p.age || 0) * 2) % 2 === 0;
+    bits = (ph & 3) === 0 ? 0 : 1; key = 'pj:mine:' + (blink ? 1 : 0) + bits;
+    proxy = { kind: p.kind, age: blink ? 0 : 0.5 };
+  } else if (p.kind === 'javelin' || p.kind === 'ricochet') {
+    const o = octOf(p.dx, p.dy);
+    bits = p.kind === 'javelin' ? (ph & 2) : ((ph & 3) === 0 ? 0 : 1);
+    key = 'pj:' + p.kind + ':' + o + ':' + bits;
+    proxy = { kind: p.kind, dx: OCT_X[o], dy: OCT_Y[o] };
+  } else if (p.kind === 'ember') {
+    bits = ph & 3; key = 'pj:ember:' + bits;
+    proxy = { kind: p.kind };
+  } else {
+    const o = octOf(p.vx, p.vy);
+    bits = 0; key = 'pj:volley:' + o;
+    proxy = { vx: OCT_X[o], vy: OCT_Y[o] };
+  }
+  blitPainted(g, key, PROJ_BOX, (c, ox, oy) => paintProjectileBody(c, proxy, ox, oy, bits), x, y, STYLE_ITEM);
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -508,6 +620,10 @@ export class Renderer {
     this.radarPlateBuilds = 0;
     this._bannerFit = null;
     this.bossBannerFits = 0;
+    // World scale: how much larger than the HUD the world layer draws (see
+    // resize). 1 until a real layout says there are pixels to spare.
+    this.worldScale = 1;
+    setCacheHost(canvas);
     this.resize();
   }
 
@@ -539,13 +655,89 @@ export class Renderer {
     this.viewScale = { sx: this.canvas.width / C.VIEW_W, sy: this.canvas.height / C.VIEW_H };
     this.ctx.setTransform(this.viewScale.sx, 0, 0, this.viewScale.sy, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
+    this.worldScale = Renderer.worldScaleFor(this.viewScale.sx);
     // G12: assigning canvas.width cleared the canvas — the title card must be
     // recomposed on the next title frame.
     this._titlePainted = false;
   }
 
+  // WORLD SCALE: the world layer draws about a third larger than the HUD so
+  // actors read on a phone, while the HUD keeps its 480x300 layout. The
+  // factor is snapped so one world pixel covers a whole number of device
+  // pixels (crisp art): for `vs` device px per view px, pick the integer n
+  // nearest vs * 1.36 and scale by n / vs, accepted only inside 1.2..1.6.
+  // A display with no pixels to spare (vs near 1, and the headless harness)
+  // stays at 1. The user's integer zoom multiplies on top.
+  static worldScaleFor(vs) {
+    if (!(vs > 0)) return 1;
+    const n = Math.round(vs * 1.36);
+    for (const k of [n, n + 1]) {
+      const sc = k / vs;
+      if (sc >= 1.2 && sc <= 1.6) return sc;
+    }
+    return 1;
+  }
+
   drawSprite(g, grid, x, y) {
     this.drawGrid(g, grid, PALETTE, x, y);
+  }
+
+  // One live enemy through the sprite cache: tells under the body, then a
+  // single blit whose baked variant carries outline, rim light, contact
+  // shadow, hit flash, chill tint and the elite / rarity / telegraph ring.
+  drawActor(g, e, spr, x, y, state) {
+    const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
+    const bw = spr.box.w, bh = spr.box.h;
+    const t = state.time || 0;
+    const frame = spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
+    const feet = y + bh - spr.anchor.y - 1;
+    const tier = e.rarity ? RARITY[e.rarity] : null;
+    const tell = tier && tier.tell ? tier.tell : null;
+    const tele = !!e.telegraph;
+    const blink = Math.floor(t * 12) % 2 === 0;
+    // Pools of light on the ground: red and growing under a wind-up, violet
+    // under a boss, gold under an elite, the tier colour under a rare.
+    if (tele) {
+      const grow = 0.5 + 0.5 * Math.abs(Math.sin(t * 9));
+      blitGlow(g, '#ff2f5e', Math.round(bw * (e.boss ? 1.1 : 1.3)) + 4, x, feet, 0.5 + 0.5 * grow);
+    } else if (e.boss) {
+      blitGlow(g, '#c46ad8', bw + 2, x, feet, 0.75);
+    } else if (e.elite) {
+      blitGlow(g, '#ffd75e', bw + 3, x, feet, 0.6 + 0.4 * Math.abs(Math.sin(t * 4 + e.x)));
+    } else if (tell) {
+      blitGlow(g, tell.outline, bw + 1, x, feet, 0.75);
+    }
+    let ring = null;
+    if (tele && blink) ring = '#ffffff';
+    else if (tele) ring = '#ff2f5e';
+    else if (e.elite) ring = '#ffd75e';
+    else if (tell) ring = (tell.pulseHz && Math.floor(t * tell.pulseHz * 2) % 2 === 0) ? '#efd9ff' : tell.outline;
+    else if (e.boss) ring = '#ff9ed8';
+    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying));
+    if (e.typeId === 'COLOSSUS') {
+      const fi = Math.floor(t * 10) % FLAME.small.length;
+      const hh = Math.round((e.h || C.ENEMY.H) / 2);
+      blitGrid(g, FLAME.small[fi], FLAME.palette, x - 7, y - hh - 3);
+      blitGrid(g, FLAME.small[fi], FLAME.palette, x + 3, y - hh - 3);
+    }
+    // Elite crown pips / wind-up warning mark over the head.
+    if (tele) {
+      g.fillStyle = blink ? '#ffffff' : '#ff2f5e';
+      g.fillRect(x - 1, sy - 11, 2, 5);
+      g.fillRect(x - 1, sy - 5, 2, 2);
+    } else if (e.elite && !e.boss) {
+      g.fillStyle = '#ffd75e';
+      g.fillRect(x - 3, sy - 5, 1, 2); g.fillRect(x, sy - 6, 1, 3); g.fillRect(x + 3, sy - 5, 1, 2);
+      g.fillRect(x - 3, sy - 3, 7, 1);
+    }
+    if (e.hp < e.maxHp) {
+      const th = (e.elite || e.boss) ? 2 : 1;
+      const by = sy - (tele || (e.elite && !e.boss) ? 14 : 4) - th;
+      g.fillStyle = '#0b0912';
+      g.fillRect(sx - 1, by - 1, bw + 2, th + 2);
+      g.fillStyle = e.elite ? '#ffd75e' : '#ff4a5e';
+      g.fillRect(sx, by, Math.max(1, Math.ceil(bw * e.hp / e.maxHp)), th);
+    }
   }
 
   // Generic pixel-grid painter (sprites.js enemies/boss/flames carry their own
@@ -647,8 +839,8 @@ export class Renderer {
     // with the identical clamp so a state without zoomScale still renders.
     const zs = state.zoomScale;
     const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1)
-      ? Math.round(zs)
-      : Math.max(1, Math.round(state.zoom || 1));
+      ? zs
+      : Math.max(1, Math.round(state.zoom || 1)) * this.worldScale;
     this._zoom = Z;
     const vw = C.VIEW_W / Z, vh = C.VIEW_H / Z;
     this.worldView = {
@@ -674,15 +866,19 @@ export class Renderer {
     }
 
     // ---- WORLD LAYER (zoomed) ------------------------------------------------
+    // Screen shake rides the same transform, in whole world pixels.
+    const shake = shakeOffset(state, prefersReducedMotion());
+    this.shake = shake;
     g.save();
     g.translate(C.VIEW_W / 2, C.VIEW_H / 2);
     g.scale(Z, Z);
-    g.translate(-C.VIEW_W / 2, -C.VIEW_H / 2);
+    g.translate(-C.VIEW_W / 2 + shake.x, -C.VIEW_H / 2 + shake.y);
 
     // Ground base + grid dots are world objects too: they zoom with the layer
     // (fillRect 0..VIEW_W inside the transform covers exactly the zoomed
     // window — at 1x that is the whole screen, i.e. identical to before).
     g.fillStyle = theme.base;
+    if (shake.x || shake.y) g.fillRect(-8, -8, C.VIEW_W + 16, C.VIEW_H + 16);   // no bare edge mid-shake
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
     g.fillStyle = theme.grid;
     // WAVE-24 (#3): the dot lattice is aligned to the decor CELL and drawn at
@@ -713,22 +909,24 @@ export class Renderer {
     this.drawArenaWall(g, cam, theme);   // WAVE-18 (#7): the rim made visible
 
     // Gems.
+    // Faceted lozenge, outlined; the tier colour follows the xp it carries
+    // and each gem twinkles on its own position-hashed beat.
+    const twinkle = Math.floor((state.time || 0) * 3);
     for (const gem of state.gems) {
-      const x = gem.x - cam.x, y = gem.y - cam.y;
+      const x = Math.round(gem.x - cam.x), y = Math.round(gem.y - cam.y);
       if (cull(x, y, 5)) continue;
-      g.fillStyle = '#3ef0c0';
-      g.fillRect(x - 1, y - 2, 3, 4);
-      g.fillRect(x - 2, y - 1, 5, 2);
+      const tier = gem.xp >= 25 ? 2 : gem.xp >= 6 ? 1 : 0;
+      const lit = ((Math.round(gem.x) * 7 + Math.round(gem.y) * 13 + twinkle) % 5) === 0 ? 1 : 0;
+      blitPainted(g, 'gem:' + tier + lit, GEM_BOX, GEM_PAINT[tier * 2 + lit], x, y, STYLE_ITEM);
     }
 
     // Potion drops: tiny bottles (red = health, blue = mana).
     for (const d of state.drops || []) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (cull(x, y, 5)) continue;
-      g.fillStyle = d.kind === 'hp' ? '#ff5566' : '#4a8cff';
-      g.fillRect(x - 2, y - 3, 4, 6);
-      g.fillStyle = '#e8e8f0';
-      g.fillRect(x - 1, y - 4, 2, 1);
+      const hp = d.kind === 'hp';
+      blitGlow(g, hp ? '#ff5566' : '#4a8cff', 7, x, y + 3, 0.75);
+      blitPainted(g, hp ? 'potion:hp' : 'potion:mp', POTION_BOX, hp ? paintPotionHp : paintPotionMp, x, y, STYLE_ITEM);
     }
 
     // Chests: the SEALED chest (PORT SLICE K — original closed-chest art:
@@ -742,7 +940,8 @@ export class Renderer {
       if (cull(x, y, 12)) continue;
       const blink = Math.floor(ch.age * 3) % 2 === 0;
       const cart = chestArtFor(ch.band || SEALED_KEY, 'closed');
-      paintChest(g, cart, x - Math.floor(cart.w / 2), y - cart.h + 4, blink);
+      blitGlow(g, '#ffd75e', 11, x, y + 3, blink ? 1 : 0.6);
+      blitChest(g, cart, x - Math.floor(cart.w / 2), y - cart.h + 4, blink);
     }
 
     // Rare item drops (loot.js): small glowing boxes colored by rarity;
@@ -755,9 +954,10 @@ export class Renderer {
       if (cull(x, y, d.chest ? 14 : 5)) continue;
       if (d.chest) {
         const oart = chestArtFor(d.chest, 'open');
-        paintChest(g, oart, x - Math.floor(oart.w / 2), y - Math.floor(oart.h / 2) + 3, true);
+        blitChest(g, oart, x - Math.floor(oart.w / 2), y - Math.floor(oart.h / 2) + 3, true);
       }
       const col = RARITY_COLORS[d.item.rarity] || RARITY_COLORS.COMMON;
+      blitGlow(g, col, 8, x, y + 2, 0.75);
       g.fillStyle = col;
       g.fillRect(x - 2, y - 2, 5, 5);
       g.fillStyle = Math.floor((state.time || 0) * 4) % 2 === 0 ? '#ffffff' : col;
@@ -922,7 +1122,7 @@ export class Renderer {
         const ang = (i / n) * Math.PI * 2 + t * spin;
         const fx = Math.round(x + Math.cos(ang) * R), fy = Math.round(y + Math.sin(ang) * R);
         const fi = Math.floor(t * 10 + i * 1.3) % FLAME.frames.length;
-        this.drawGrid(g, FLAME.frames[fi], FLAME.palette,
+        blitGrid(g, FLAME.frames[fi], FLAME.palette,
           fx - FLAME.anchor.x, fy - FLAME.anchor.y - 4);
       }
       const pulse = po.entering ? 1 : 0.5 + 0.5 * Math.sin(t * 6);
@@ -939,6 +1139,7 @@ export class Renderer {
     // outline, WARLOCK telegraph blink. WAVE-7/B: named bosses carry their
     // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
     // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
+    const cached = cacheEnabled();
     for (const e of state.enemies) {
       if (e.finalBoss) continue;   // WAVE-10: the maw has its own draw below
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
@@ -950,7 +1151,15 @@ export class Renderer {
       // truth (contact/targeting read that point) — then the whole body
       // (sprite or fallback shape, tells and hp bar included) lifts by its
       // altitude z. Integer px throughout (house rule).
-      if (e.flying) {
+      if (e.flying && cached) {
+        blitPainted(g, 'shadow:' + w, { x: -w, y: -3, w: w * 2, h: 6 }, (c, ox, oy) => {
+          const shw = Math.max(4, Math.round(w * 0.8));
+          c.fillStyle = 'rgba(0,0,0,0.38)';
+          c.fillRect(ox - Math.round(shw / 2), oy - 1, shw, 3);
+          c.fillRect(ox - Math.round(shw / 2) + 2, oy - 2, Math.max(1, shw - 4), 5);
+        }, x, y + hh);
+        y -= Math.round(e.z || 0);
+      } else if (e.flying) {
         const shw = Math.max(2, Math.round(w * 0.7));
         g.fillStyle = 'rgba(0,0,0,0.35)';
         g.fillRect(x - Math.round(shw / 2), y + hh - 2, shw, 2);
@@ -958,7 +1167,9 @@ export class Renderer {
         y -= Math.round(e.z || 0);
       }
       const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
-      if (spr) {
+      if (spr && cached) {
+        this.drawActor(g, e, spr, x, y, state);
+      } else if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
         const bw = spr.box.w, bh = spr.box.h;
         const frame = spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
@@ -1096,21 +1307,32 @@ export class Renderer {
       const x = Math.round(fb.x - cam.x), y = Math.round(fb.y - cam.y);
       const frame = spr.frames[Math.floor((fb.age || 0) * 6) % spr.frames.length];
       const sx = x - spr.anchor.x * Z, sy = y - spr.anchor.y * Z;
-      for (let ry = 0; ry < frame.length; ry++) {
-        const row = frame[ry];
-        for (let rx = 0; rx < row.length; rx++) {
-          const v = row[rx];
-          if (v) { g.fillStyle = spr.palette[v]; g.fillRect(sx + rx * Z, sy + ry * Z, Z, Z); }
+      const mawTele = fb.telegraph && Math.floor((state.time || 0) * 12) % 2 === 0;
+      if (cached) {
+        // One blit: the 4x block raster with its outline, flash and
+        // telegraph ring baked; a pool of light underneath lifts it off the ground.
+        blitGlow(g, fb.telegraph ? '#ff2f5e' : '#c46ad8', 62, x, y + spr.box.h * 2 - 6, fb.telegraph ? 1 : 0.6);
+        blitGrid(g, frame, spr.palette, sx, sy,
+          actorStyle(fb.flash > 0, fb.slow > 0, mawTele ? '#ff2f5e' : null), Z);
+      } else {
+        for (let ry = 0; ry < frame.length; ry++) {
+          const row = frame[ry];
+          for (let rx = 0; rx < row.length; rx++) {
+            const v = row[rx];
+            if (v) { g.fillStyle = spr.palette[v]; g.fillRect(sx + rx * Z, sy + ry * Z, Z, Z); }
+          }
         }
       }
-      if (fb.flash > 0) {
+      if (cached) {
+        // flash / chill / telegraph are in the baked variant
+      } else if (fb.flash > 0) {
         g.fillStyle = 'rgba(255,255,255,0.85)';
         g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
       } else if (fb.slow > 0) {
         g.fillStyle = 'rgba(106,168,216,0.4)';
         g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
       }
-      if (fb.telegraph && Math.floor((state.time || 0) * 12) % 2 === 0) {
+      if (!cached && mawTele) {
         g.fillStyle = 'rgba(255,47,94,0.45)';
         g.fillRect(sx, sy, spr.box.w * Z, spr.box.h * Z);
       }
@@ -1121,6 +1343,11 @@ export class Renderer {
     for (const s of state.enemyShots || []) {
       const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
       if (cull(x, y, 5)) continue;
+      if (cached) {
+        const sk = SHOT_PAINT[s.kind] ? s.kind : 'spit';
+        blitPainted(g, 'shot:' + sk, SHOT_BOX, SHOT_PAINT[sk], x, y, STYLE_SHOT);
+        continue;
+      }
       if (s.kind === 'bolt') {
         g.fillStyle = '#c46ad8';
         g.fillRect(x - 3, y - 3, 7, 7);
@@ -1164,7 +1391,8 @@ export class Renderer {
       if (cull(x, y, 8)) continue;
       // Static position stamp shared by the body painters (slice-h contract).
       const ph = ((Math.round(p.x) * 73856093) ^ (Math.round(p.y) * 19349663)) >>> 0;
-      paintProjectileBody(g, p, x, y, ph);
+      if (cached) blitProjectile(g, p, x, y, ph);
+      else paintProjectileBody(g, p, x, y, ph);
     }
 
     // Skill/weapon effects (fillRect only).
@@ -1558,6 +1786,9 @@ export class Renderer {
       }
     }
 
+    // Death puffs, sparks, level-up and pickup bursts (src/fx/feel.js pools).
+    drawFeelEffects(g, state, cam);
+
     // Player. Walk cycle (2 frames @ ~6fps, same clock as the enemies) —
     // frame B only while actually moving: motion is derived from the player's
     // position delta between renders (the same velocity the controller
@@ -1579,9 +1810,18 @@ export class Renderer {
       ? pilotSpr.frames[walkFrame ? 1 : 0]
       : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
     const pilotPalette = pilotSpr ? pilotSpr.palette : PALETTE;
-    this.drawGrid(g, pilotGrid, pilotPalette,
-      Math.round(pl.x - cam.x - 6),
-      Math.round(pl.y - cam.y - 6));
+    if (cached) {
+      // The hero: a pale pool underfoot so the eye finds them in a crowd,
+      // outline + rim + shadow baked, white silhouette for a beat when hurt.
+      const hurt = state.feel && state.feel.hurtT > 0;
+      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 11, Math.round(pl.x - cam.x), Math.round(pl.y - cam.y) + 6, 0.75);
+      blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - 6), Math.round(pl.y - cam.y - 6),
+        actorStyle(hurt, false, '#f4f8ff'));
+    } else {
+      this.drawGrid(g, pilotGrid, pilotPalette,
+        Math.round(pl.x - cam.x - 6),
+        Math.round(pl.y - cam.y - 6));
+    }
     g.globalAlpha = 1;
     // FIRST-RUN PROLOGUE — the shield's rainbow pulse: six slowly-spinning
     // ticks, each on its own hue (i*30 around the wheel) in a gentle shared
@@ -1605,6 +1845,8 @@ export class Renderer {
     // distant sky layers (cloud bands, sun, scene tint) stay NATIVE 1x and
     // paint after the restore below.
     this.drawWeatherParticles(g, state.weather, cam);
+    // Damage numbers last: they describe everything under them.
+    drawFeelNumbers(g, state, cam);
 
     // ---- end of the zoomed world layer --------------------------------------
     g.restore();

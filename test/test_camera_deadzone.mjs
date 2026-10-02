@@ -211,11 +211,12 @@ S.check('worldRegion agrees with the pixel the world layer actually draws', () =
     rec.rects.length = 0;
     pump(1);
     rec.on = false;
-    // The gem pass paints fillRect(x-1, y-2, 3, 4) at depth 1 with x = gem.x -
-    // cam.x (unrounded), inside the zoom transform.
-    const r = rec.rects.find(q => q.d === 1 && q.w === 3 && q.h === 4);
+    // The gem pass paints fillRect(x-1, y-3, 3, 7) at depth 1 with x =
+    // round(gem.x - cam.x) (M2: snapped to whole world pixels), inside the
+    // zoom transform.
+    const r = rec.rects.find(q => q.d === 1 && q.w === 3 && q.h === 7);
     assert.ok(r, 'the gem was painted through the real frame path at zoom ' + z);
-    const drawX = r.x + 1, drawY = r.y + 2;      // pre-transform view coords
+    const drawX = r.x + 1, drawY = r.y + 3;      // pre-transform view coords
     const Z = T.renderer.worldView.zoom;
     assert.equal(Z, z, 'the renderer zoom factor is the published one');
     // Device position of the drawn point under render.js's transform.
@@ -223,7 +224,9 @@ S.check('worldRegion agrees with the pixel the world layer actually draws', () =
     const devY = VH / 2 + (drawY - VH / 2) * Z;
     // The coachmark projection for the SAME world point.
     const box = T.camera.region(gx, gy, 0).getBoundingClientRect();
-    assert.ok(Math.abs(box.left - devX) < 0.001 && Math.abs(box.top - devY) < 0.001,
+    // The snap moves the drawn pixel by at most half a world pixel.
+    const snap = 0.5 * Z + 0.001;
+    assert.ok(Math.abs(box.left - devX) < snap && Math.abs(box.top - devY) < snap,
       `zoom ${z}: coachmark projection (${box.left.toFixed(2)},${box.top.toFixed(2)}) ` +
       `must land on the drawn pixel (${devX.toFixed(2)},${devY.toFixed(2)})`);
     // And the drawn pixel must be where the camera puts the world point.
