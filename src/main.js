@@ -5114,7 +5114,9 @@ function updateDraftCountdownLine() {
       overlay.appendChild(draftCountdownEl);
     }
   }
-  draftCountdownEl.textContent = 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
+  // The guided tutorial holds the auto-pick, so its draft shows no countdown.
+  draftCountdownEl.textContent = tutGuidedLive() ? ''
+    : 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
 }
 
 function tickDraftAutoPick(dt) {
