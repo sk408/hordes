@@ -186,8 +186,8 @@ const CHOIR_MOTHER_FRAMES = [
   ),
 ];
 const CHOIR_MOTHER_PALETTE = {
-  1: '#4a7f8f',  // teal robe
-  2: '#2a4a54',  // robe shadow
+  1: '#5aa0b4',  // teal robe
+  2: '#2f5a68',  // robe shadow
   3: '#ffe8b0',  // halo
   4: '#e8f4f8',  // pale face
   5: '#c23b7f',  // mouths / eyes
@@ -324,11 +324,11 @@ const HERALD_FRAMES = [
   ),
 ];
 const HERALD_PALETTE = {
-  1: '#23262e',  // armor body
-  2: '#3f2a52',  // cloak
+  1: '#8088a8',  // armor body
+  2: '#7a4aa8',  // cloak
   3: '#cfc7a8',  // bone cowl / hem trim
   4: '#ff5a3c',  // ember eye-slit
-  5: '#8a6f4a',  // lance shaft
+  5: '#a8875a',  // lance shaft
 };
 
 export const BOSS_SPRITES = {

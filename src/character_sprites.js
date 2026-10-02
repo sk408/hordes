@@ -124,9 +124,9 @@ const WITCH_B = [
 ];
 const WITCH_PALETTE = {
   1: '#e8c8e0',  // pale caster skin
-  2: '#4a2a72',  // violet robe
-  3: '#7a4fc0',  // robe light (sleeves, hem)
-  4: '#241433',  // shadow (hair, eyes, hem)
+  2: '#a070f0',  // violet robe
+  3: '#d0b0ff',  // robe light (sleeves, hem)
+  4: '#3a2452',  // shadow (hair, eyes, hem)
   5: '#ffb63c',  // amber clasp
 };
 
@@ -161,9 +161,9 @@ const ROGUE_B = [
 ];
 const ROGUE_PALETTE = {
   1: '#e8c890',  // skin (the bust's face tone)
-  2: '#2f7a3f',  // hood green
-  3: '#6fd07f',  // hood light
-  4: '#173d22',  // dark leathers (shadow, boots)
+  2: '#2fa85a',  // hood green
+  3: '#8ff0a0',  // hood light
+  4: '#6a9a4a',  // olive leathers (shadow, boots)
   5: '#d8b060',  // sand scarf + buckle
 };
 

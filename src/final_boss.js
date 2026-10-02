@@ -163,8 +163,8 @@ const MAW_FRAMES = [
   ]),
 ];
 const MAW_PALETTE = {
-  1: '#141018',  // void-black hide (darker than anything in the cast)
-  2: '#241c2e',  // deep violet shading
+  1: '#a868f0',  // void-violet hide
+  2: '#5a2e9a',  // deep violet shading
   3: '#c8b890',  // bone teeth
   4: '#ff2f5e',  // eye glow
   5: '#ff6a3c',  // burning core
