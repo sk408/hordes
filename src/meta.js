@@ -325,6 +325,33 @@ export const WEAPON_PRICES = {
 const WEAPON_RANK = { ...WEAPON_PRICES, BOOMERANG: 1000 };
 const VALID_UNLOCK_WEAPONS = new Set([...STARTER_WEAPONS, ...Object.keys(WEAPON_PRICES)]);
 
+// ---------- Mastery ------------------------------------------------------------
+// Mastery rank = weapons bought beyond the two starters + weapon slots bought.
+// Each rank adds HP_PER_RANK max HP to every run, and every RANKS_PER_LEVEL
+// ranks start all of a run's weapons one level higher (up to MAX_START_LEVELS).
+// So a weapon or slot purchase is an immediate power step, not only a new
+// attack to level from scratch (docs/BALANCE_M1.md, "Mastery").
+export const MASTERY = { HP_PER_RANK: 20, RANKS_PER_LEVEL: 2, MAX_START_LEVELS: 4 };
+export function masteryRank(profile) {
+  const weapons = (profile.unlockedWeapons || [])
+    .filter(w => !STARTER_WEAPONS.includes(w) && WEAPON_PRICES[w] !== undefined).length;
+  const slots = Math.max(0, Math.min(MAX_WEAPON_SLOTS - WEAPON_SLOT_START,
+    Number(profile.purchased && profile.purchased.slots) || 0));
+  return weapons + slots;
+}
+export function masteryHp(profile) { return masteryRank(profile) * MASTERY.HP_PER_RANK; }
+export function masteryStartLevels(profile) {
+  return Math.min(MASTERY.MAX_START_LEVELS, Math.floor(masteryRank(profile) / MASTERY.RANKS_PER_LEVEL));
+}
+export function applyMastery(stats, profile) {
+  return { ...stats, maxHp: stats.maxHp + masteryHp(profile) };
+}
+// One line for shop rows and the loadout screen.
+export function masteryLine(profile) {
+  const r = masteryRank(profile);
+  return 'Mastery ' + r + ': +' + masteryHp(profile) + ' max HP, weapons start at Lv ' + (1 + masteryStartLevels(profile));
+}
+
 // ---------- ELITE MODIFIER UNLOCKS (locked by default) ---------------------
 // profile.unlockedElites gates which elite modifiers a run may roll.
 export const ELITE_MODIFIERS = {
@@ -445,7 +472,7 @@ export const SHOP_UPGRADES = [
   { id: 'luck',    name: 'Fortune',        desc: 'Luck: world-drop rarity and the level-up draft both shift toward the rarer cards, per level',
     baseCost: 1500, costGrowth: 2, maxLevel: 5, perLevel: 1 },
   { id: 'slots',   name: 'Weapon Slot',
-    get desc() { return '+1 weapon slot (start ' + WEAPON_SLOT_START + ', max ' + MAX_WEAPON_SLOTS + ')'; },
+    get desc() { return 'Bring 1 more weapon into every run (max ' + MAX_WEAPON_SLOTS + '). Mastery +1: +' + MASTERY.HP_PER_RANK + ' max HP'; },
     baseCost: 400, costGrowth: 5, maxLevel: 3, perLevel: 0 },
   // Storm Conduit: level 1 uncaps the Chain Zap chain count (range-limited);
   // every level widens the hop range. Published as stats.zapChain.
@@ -471,7 +498,7 @@ export const SHOP_UPGRADES = [
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
     id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
     name: WEAPON_NAMES[wid] || wid,
-    desc: `Unlock the ${WEAPON_NAMES[wid] || wid} archetype — equipped into your LOADOUT on buy.`,
+    desc: `New weapon, equipped when you buy it. Mastery +1: +${MASTERY.HP_PER_RANK} max HP`,
     baseCost: price, costGrowth: 1, maxLevel: 1, perLevel: 0,
   })),
   // ---- elite modifier unlocks ----------------------------------------------

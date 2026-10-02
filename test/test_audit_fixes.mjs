@@ -212,8 +212,9 @@ S.check('M2: a stamped killer never leaks into the NEXT run', () => {
   while (!(st.enemies || []).length && guard++ < 600) h.pump(1);
   assert.ok(st.enemies.length > 0, 'an enemy is on the field');
   st.enemies[0].x = st.player.x; st.enemies[0].y = st.player.y;
-  st.player.invuln = 0; st.player.hp = 1;
-  h.pump(2);
+  st.enemies[0].hp = st.enemies[0].maxHp = 1e9;   // it must live to land the touch
+  // Held at 1 HP until the touch lands (a heal on hit must not save the hero).
+  for (let i = 0; i < 4 && st.mode === 'playing'; i++) { st.player.invuln = 0; st.player.hp = 1; h.pump(1); }
   assert.ok(st.mode === 'death-cine' || st.mode === 'dead', `the contact killed the hero (mode=${st.mode})`);
   assert.equal(st.deathBy.cause, 'contact', 'the killer was stamped this run');
   // The next run has taken no damage: an immediate death must read UNKNOWN,

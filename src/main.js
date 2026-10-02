@@ -160,7 +160,7 @@ import {
   SHOP_UPGRADES, SHOP_BY_ID, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
   defaultLoadout, effectiveLoadout,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
-  applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
+  applyMetaBonuses, applyMastery, masteryRank, masteryStartLevels, masteryLine, MASTERY, applyCharacter, startPotionCount, hasArcadePass,
   // G19 slice 1: the per-character upgrade layer — the table, the buy path,
   // the pure applicator (run + preview seams), and the satchel's shared bonus.
   CHARACTER_UPGRADES, CHARACTER_UPGRADE_BY_ID, buyCharacterUpgrade, applyCharacterUpgrades,
@@ -7979,8 +7979,10 @@ function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
-  // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
-  ovSub.textContent = `BANK: ${profile.gold}`;
+  // The bank, and the mastery rule every weapon and slot row feeds.
+  ovSub.innerHTML = `BANK: ${profile.gold}<br>${masteryLine(profile)}` +
+    ` &middot; each weapon or slot you buy adds +${MASTERY.HP_PER_RANK} max HP;` +
+    ` every ${MASTERY.RANKS_PER_LEVEL === 2 ? '2nd' : MASTERY.RANKS_PER_LEVEL + 'th'} one starts all weapons a level higher`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
   // SHOP PAGING: the grid class + cols var go on BEFORE the rows are built
   // (first layout sizes the cards; the pager then measures true heights).
@@ -8447,7 +8449,7 @@ function pilotKit(id) {
   // G19: the preview runs the RUN'S OWN chain (meta bonuses -> character ->
   // that character's upgrade levels), so it cannot drift from startRun.
   const st = applyCharacterUpgrades(
-    applyCharacter(applyMetaBonuses({ ...base }, profile.purchased), ch.id),
+    applyCharacter(applyMastery(applyMetaBonuses({ ...base }, profile.purchased), profile), ch.id),
     profile, ch.id);
   const owned = profile.unlockedCharacters.includes(ch.id);
   return {
@@ -8872,7 +8874,7 @@ function startRun() {
   // thorns/lifesteal) so every consumer can read them unguarded.
   p.stats = applyAffixes(
     applyCharacterUpgrades(
-      applyCharacter(applyMetaBonuses(p.stats, profile.purchased), profile.equippedCharacter),
+      applyCharacter(applyMastery(applyMetaBonuses(p.stats, profile.purchased), profile), profile.equippedCharacter),
       profile, profile.equippedCharacter), []);
   // SURVIVAL-GAP: the pool this run levels up FROM (CONFIG.SURVIVAL.HP_PER_LEVEL
   // is linear in it), stamped before any in-run change.
@@ -9075,6 +9077,8 @@ function startRun() {
   state.weapons.push(makeWeapon('VOLLEY'));
   // The kit: the stored loadout choice, or every owned weapon that fits.
   for (const t of chosenLoadout() || []) state.weapons.push(makeWeapon(t));
+  // Mastery: every weapon starts above level 1 by the profile's mastery.
+  for (const w of state.weapons) w.level = Math.min(WEAPON_MAX_LEVEL, 1 + masteryStartLevels(profile));
   // Starting Artifact shop line: free random weapon levels at run start.
   for (let i = 0; i < (p.stats.artifactLevels || 0); i++) {
     const cands = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
