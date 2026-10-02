@@ -2263,9 +2263,16 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'every theme must have a distinct ground tone');
   // SNOWFIELD is Sk408's example: clearly the LIGHTEST area, but muted
   // grey (v2: the white version washed out the sprites).
-  const lum = (hex) => parseInt(hex.slice(1, 3), 16);   // red channel is enough
-  assert(lum(t3.base) > 70 && lum(t3.base) < 130 && lum(t1.base) < 40,
-    'the snow theme base must be light grey vs the dark verdant base (not white)');
+  // M2 contrast pass: every base is mid-dark (relative luminance 0.02-0.05,
+  // so actor bodies clear 3:1); the snowfield is still the lightest of them
+  // and reads as snow through its pale decor.
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const lum = (h) => 0.2126 * lin(parseInt(h.slice(1, 3), 16)) + 0.7152 * lin(parseInt(h.slice(3, 5), 16)) +
+    0.0722 * lin(parseInt(h.slice(5, 7), 16));
+  const bases = [1, 2, 3, 4, 5, 6].map(w => lum(groundTheme(w).base));
+  assert(bases.every(l => l >= 0.02 && l <= 0.05), 'every ground base is mid-dark: ' + bases.map(l => l.toFixed(3)));
+  assert(bases.every(l => l <= lum(t3.base)) && lum(t3.tuft2) > 0.4,
+    'the snow theme is the lightest base and carries pale snow decor');
   console.log('ground themes: ' + [1, 2, 3, 4, 5, 6].map(w => groundTheme(w).name).join(' | '));
 }
 

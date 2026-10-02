@@ -252,7 +252,12 @@ S.check('guard: every state.* referenced in src/ is factory-initialized, startRu
   //                     (supported/visible/active; a syncChrome mirror like
   //                     focus/stance, session-scoped, never run-reset — the
   //                     0.5s window must survive a run boundary)
-  const ALLOWLIST = new Set(['focus', 'stance', 'zoomScale', 'fsOverlay']);
+  //   feel            — the game-feel observer's pools (src/fx/feel.js makes
+  //                     it lazily and replaces it whenever a new run's player
+  //                     object appears, so it is run-scoped by construction)
+  //   radarInset      — view px the radar steps left to clear the desktop
+  //                     pad column (a syncChrome layout mirror)
+  const ALLOWLIST = new Set(['focus', 'stance', 'zoomScale', 'fsOverlay', 'feel', 'radarInset']);
 
   // The census over every module in src/.
   const missing = [];

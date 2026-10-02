@@ -197,12 +197,12 @@ check('MENU CONDENSE: settings is SIX cards in both contexts; the merged rows si
     'title settings is exactly the six condense cards, in order');
   // DISPLAY (M1): preset row + the FULL ladders one tap deeper (E2).
   cardWith('DISPLAY').click();
-  assert.deepEqual(names(), ['DISPLAY PRESET', 'ZOOM', 'RESOLUTION', 'TEXT HUD', 'BACK'],
-    'DISPLAY carries the preset plus the full zoom/resolution/hud ladders');
+  assert.deepEqual(names(), ['DISPLAY PRESET', 'ZOOM', 'RESOLUTION', 'TEXT HUD', 'SCREEN SHAKE', 'BACK'],
+    'DISPLAY carries the preset, the full zoom/resolution/hud ladders and the shake toggle');
   cardWith('BACK').click();
   // AUDIO (M2).
   cardWith('AUDIO').click();
-  assert.deepEqual(names(), ['MUSIC', 'SFX', 'BACK'], 'AUDIO carries MUSIC + SFX');
+  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'BACK'], 'AUDIO carries the MUSIC + SFX volume sliders');
   cardWith('BACK').click();
   // SAVE DATA (M3): export/import/(recovery)/reset — RESET still two-tap.
   cardWith('SAVE DATA').click();

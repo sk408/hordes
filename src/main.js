@@ -249,6 +249,9 @@ import {
   DEV_LS_BAN_ON, DEV_LS_BAN_IDS, parseDraftBanIds,
 } from './dev_autoplay.js';
 
+// M2 game feel: the per-step observer (damage numbers, puffs, shake).
+import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled } from './fx/feel.js';
+
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
 // audio module lands. Persistence is audio.js's job; settings only call
@@ -258,12 +261,15 @@ let audio = {
   setSfxEnabled() {}, getSfxEnabled() { return false; },
   playSfx() {}, startMusic() {}, stopMusic() {},
   playIntroCue() {}, playPortalCue() {},   // WAVE-8/B cinematic stingers
+  setMusicVolume() {}, getMusicVolume() { return 0; },
+  setSfxVolume() {}, getSfxVolume() { return 0; }, setMusicMode() {},
 };
 try {
   const mod = await import('./audio.js');
   if (mod && mod.init) audio = mod;
 } catch { /* audio.js not built yet — shim stays in place */ }
 try { audio.init(); } catch { /* audio init must never block the game */ }
+setFeelAudio(audio);   // hit / kill / hurt / pickup sounds ride the feel observer
 // S2 (audit 2026-09-16): the init above runs at MODULE LOAD, before any user
 // gesture — on a gesture-gated browser (iOS Safari) the context is created
 // suspended and stays that way: a permanently silent game. init() is
@@ -1506,7 +1512,7 @@ function runController(p, dt, am) {
         age: 0, ttl: 0.08,
       });
     }
-    audio.playSfx('shoot');
+    audio.playSfx('fire_bolt');
   }
 }
 
@@ -2178,9 +2184,10 @@ function devSimStep(dt) {
   if (state.mode === 'playing') {
     if (coachActive() || state.bannerHold > 0 || state.helpMode) return false;
     update(dt);
+    feelStep(state, dt);
     return true;
   }
-  if (state.mode === 'finale') { updateFinale(dt); return true; }
+  if (state.mode === 'finale') { updateFinale(dt); feelStep(state, dt); return true; }
   return false;
 }
 function devSimSteps(dt) {
@@ -2568,7 +2575,7 @@ function openIntermission(opts = {}) {
       (shopPriceMult() !== 1 ? ' · CURSED PRICES' : '') +
       (devRunFree() ? ' · FREE-BUILD' : ''),
       () => buyPaidChest(tier), chestDim);
-    if (chestDim) el.onclick = () => audio.playSfx('button');
+    if (chestDim) el.onclick = () => audio.playSfx('uiDeny');
   }
   // The wave's blessing/curse offers: rolled once per wave (re-renders after
   // a chest buy reuse the same pending set; taken ones drop off).
@@ -2602,7 +2609,7 @@ function openIntermission(opts = {}) {
         // gold+xp) — count it for the audit + the heat-manual modifier.
         if (dev) dev.stakes++;
         interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}`;
-        audio.playSfx('levelup');
+        audio.playSfx('draftPick');
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
       });
   }
@@ -2671,7 +2678,7 @@ function takeChoice(offer) {
   // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
   state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
   interMsg = `BLESSING: ${offer.title} — ${offer.desc} · tap another offer to change it`;
-  audio.playSfx('levelup');
+  audio.playSfx('draftPick');
   openIntermission();   // re-render: offers + gold line refresh
 }
 
@@ -2917,7 +2924,7 @@ function refreshSynergies() {
     if (!prev.has(s.name)) {
       const d = describeSynergy(s);
       toast('SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc);
-      audio.playSfx('levelup');
+      audio.playSfx('powerup');
     }
   }
 }
@@ -3016,7 +3023,7 @@ function detonateMineAt(mine) {
     if (e.hp <= 0) continue;
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
-      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
+      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) { d *= (p.stats.critMult || 1.5); markCrit(state, e); }
       // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
       // damage site (the rider below rides the same hit) — blasts never see it.
       e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
@@ -3296,7 +3303,7 @@ function update(dt) {
     if (ev.kind === 'archGranted') {
       toast(ev.name.toUpperCase() + '! ' + ev.duration + 's');
       if (ev.shieldHits) state.shieldAbsorbs = ev.shieldHits;
-      audio.playSfx('levelup');
+      audio.playSfx('powerup');
     } else if (ev.kind === 'archRefreshed') {
       toast('ARCH REFRESHED');
       if (ev.type === 'SHIELD') state.shieldAbsorbs = ARCH_TYPES.SHIELD.shieldHits;
@@ -3451,6 +3458,7 @@ function update(dt) {
         let dmg = pr.damage;
         if (evoCrit > 0 && Math.random() < evoCrit) {
           dmg *= evoCritMult;
+          markCrit(state, e);
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
         e.hp -= devHit(dmg * directHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
@@ -4162,7 +4170,7 @@ function update(dt) {
         sh.used = true;
         state.shrineRearm = true;        // the latch: ONLY a successful debit sets it
         toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
-        audio.playSfx('levelup');
+        audio.playSfx('powerup');
       } else if (!sh.brokeToast) {
         sh.brokeToast = true;   // once per shrine: don't nag a broke pilot
         toast('THE SHRINE REQUIRES ' + sh.blessing.cost + ' GOLD');
@@ -4224,7 +4232,7 @@ function update(dt) {
       // says. (The owner confirmed the "RARITY: NAME" format itself is fine.)
       const ir = (ev.item && ev.item.rarity) || 'COMMON';
       toast(ir + ': ' + ev.item.name.toUpperCase(), RARITY_TINTS[ir] || null);
-      audio.playSfx('levelup');
+      audio.playSfx('item');
     }
   }
 
@@ -4484,7 +4492,7 @@ function grantEvolutionToken(channel) {
     toast('EVOLUTION TOKEN! ' + state.evoTokens +
       ' HELD - EVOLVES A MAX-LEVEL WEAPON', RARITY_TINTS.LEGENDARY);
   }
-  audio.playSfx('levelup');
+  audio.playSfx('powerup');
 }
 
 // ---------- (g) FIRST-EVER TOP-TIER PICKUP ---------------------------------
@@ -5316,15 +5324,15 @@ function toggleNight() {
       };
       nightSession = null;
     }
-    audio.playSfx('button');
+    audio.playSfx('uiMove');
     return;
   }
-  if (!nightArmed) { nightArmed = true; audio.playSfx('button'); return; }
+  if (!nightArmed) { nightArmed = true; audio.playSfx('uiMove'); return; }
   nightArmed = false;
   state.night = true;
   state.nightSummary = null;   // a new night replaces the old line
   nightSession = { t0: Date.now(), gold0: profile.gold };
-  audio.playSfx('levelup');
+  audio.playSfx('uiConfirm');
 }
 
 // ---------- DRAFT PICK CEREMONY (owner 2026-09-16) -----------------------------
@@ -5502,7 +5510,7 @@ function doEvolve(w) {
     // double-fired tick can never double-charge).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
     toast(res.name.toUpperCase() + ' UNLEASHED');
-    audio.playSfx('levelup');
+    audio.playSfx('evolve');
     // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
     // moments — brief dilation + the crackle flare, back to normal after.
     triggerEarnedMoment('evolution', state.player.x, state.player.y);
@@ -5846,7 +5854,7 @@ function prestigeAscend() {
   const nextP = setPrestige(profile, getPrestige(profile) + 1);
   persistProfile();
   toast('PRESTIGE ' + nextP + ' — THE HORDE GROWS STRONGER');
-  audio.playSfx('levelup');
+  audio.playSfx('evolve');
   startRun();
   return true;
 }
@@ -5858,7 +5866,7 @@ function runSurvived() {
   state.runWon = true;
   state.deathBy = null;       // nobody killed you; do not print a cause line
   audio.stopMusic();
-  audio.playSfx('levelup');
+  audio.playSfx('victory');
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
@@ -5964,7 +5972,7 @@ function checkRunLimit() {
   if (!state.finalCall && state.time >= C.RUN.FINAL_CALL_AT) {
     state.finalCall = true;
     toast('ONE MINUTE LEFT');
-    audio.playSfx('levelup');
+    audio.playSfx('warning');
   }
   if (state.time >= C.RUN.LIMIT) { runSurvived(); return true; }
   return false;
@@ -5981,7 +5989,7 @@ function endRun() {
   const p = state.player;
   state.mode = 'dead';
   audio.stopMusic();
-  audio.playSfx('button');
+  audio.playSfx('uiDeny');
   const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
   composeEndScreen({
     titleText: 'RUN ENDED',
@@ -6027,7 +6035,7 @@ function die(finale) {
     p.hp = Math.max(1, p.stats.maxHp * DRAFT_LADDER.SECOND_WIND_HP_FRAC);
     p.invuln = Math.max(p.invuln || 0, DRAFT_LADDER.SECOND_WIND_INVULN);
     toast('SECOND WIND - BACK AT ' + Math.round(p.hp) + ' HP', RARITY.MYTHIC.tell.outline);
-    audio.playSfx('levelup');
+    audio.playSfx('powerup');
     return;
   }
   state.mode = 'death-cine';   // G15: the death movie owns the beat between
@@ -6078,6 +6086,14 @@ function hudTextEnabled() { return textHudOn; }
 function setHudTextEnabled(b) {
   textHudOn = !!b;
   try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
+}
+
+// ---------- M2: screen-shake toggle (persisted with the other prefs) ---------
+const KEY_SHAKE = 'hordes_shake';
+try { if (prefStorage.getItem(KEY_SHAKE) === '0') setShakeEnabled(false); } catch { /* shim */ }
+function setShakePref(b) {
+  setShakeEnabled(b);
+  try { prefStorage.setItem(KEY_SHAKE, b ? '1' : '0'); } catch { /* shim */ }
 }
 
 // ---------- G11: the pending challenge mode (SESSION-scoped, never persisted) ----
@@ -6576,7 +6592,7 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   el.onclick = () => {
     // HELP MODE: an overlay-card tap explains the card, never presses it.
     if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || ''), el); return; }
-    audio.playSfx('button'); onclick();
+    audio.playSfx(dim ? 'uiDeny' : state.mode === 'draft' ? 'draftPick' : 'uiConfirm'); onclick();
   };
   ovCards.appendChild(el);
   // SHOP-LATENCY: big screens pass deferFrame and frame the whole list AFTER
@@ -6897,7 +6913,9 @@ function startCoach(steps, key) {
 // as state.zoomScale every frame (syncChrome) so render.js can read it instead
 // of re-deriving it, and the coachmark can never silently drift off the world.
 function zoomScale(z) {
-  return Math.max(1, Math.round(z || 1));
+  // The user's integer zoom times the renderer's base world scale (M2: the
+  // world draws about a third larger than the HUD where pixels allow).
+  return Math.max(1, Math.round(z || 1)) * (renderer.worldScale || 1);
 }
 function worldRegion(wx, wy, r = 16) {
   const Z = zoomScale(state.zoom);
@@ -7479,7 +7497,7 @@ function addWhatsNewCard() {
   el.onclick = () => {
     // HELP MODE parity with menuCard: a tap explains, never presses.
     if (state.helpMode) { showHelpTip('<b>' + WHATS_NEW.title + '</b> — release notes for returning players', el); return; }
-    audio.playSfx('button');
+    audio.playSfx('uiConfirm');
     dismissWhatsNew(el);
   };
   const offer = el.querySelector ? el.querySelector('.offer') : null;
@@ -7487,7 +7505,7 @@ function addWhatsNewCard() {
     // The accept must not also ride the note's dismiss handler up the tree.
     if (ev && ev.stopPropagation) ev.stopPropagation();
     if (state.helpMode) { showHelpTip('<b>SHOW ME</b> — start the guided tutorial run now', offer); return; }
-    audio.playSfx('button');
+    audio.playSfx('uiConfirm');
     acceptWhatsNew(el);
   };
   overlay.appendChild(el);
@@ -7756,7 +7774,7 @@ function shopChromeUpdate() {
       el.id = id;
       el.className = 'shop-arr ' + (dir < 0 ? 'prev' : 'next');
       el.textContent = glyph;
-      el.onclick = () => { audio.playSfx('button'); shopPageGoto(shopPager.page + dir); };
+      el.onclick = () => { audio.playSfx('uiMove'); shopPageGoto(shopPager.page + dir); };
       overlay.appendChild(el);
     }
     const dim = (dir < 0 && shopPager.page <= 1) || (dir > 0 && shopPager.page >= shopPager.pages.length);
@@ -7932,7 +7950,7 @@ function devAddSellControls(cardEl, desc) {
       stop(e);
       const r = desc.onSell();
       if (r && r.ok) desc.rerender();
-      else audio.playSfx('button');
+      else audio.playSfx('uiDeny');
     };
     if (cardEl.appendChild) cardEl.appendChild(sell);
     else if (cardEl.children) cardEl.children.push(sell);
@@ -7943,13 +7961,13 @@ function devAddSellControls(cardEl, desc) {
         if (!reset._armed) {
           reset._armed = true;
           reset.textContent = 'TAP AGAIN TO CONFIRM RESET (-' + entry.resetTotal + 'g)';
-          audio.playSfx('button');
+          audio.playSfx('uiMove');
           return;
         }
         reset._armed = false;
         const r = desc.onReset();
         if (r && r.count > 0) desc.rerender();
-        else audio.playSfx('button');
+        else audio.playSfx('uiDeny');
       };
       if (cardEl.appendChild) cardEl.appendChild(reset);
       else if (cardEl.children) cardEl.children.push(reset);
@@ -8038,7 +8056,7 @@ function showShop() {
       true,   // deferFrame: batched with `framed` below
     );
     framed.push(el);
-    if (capped) el.onclick = () => audio.playSfx('button');
+    if (capped) el.onclick = () => audio.playSfx('uiDeny');
     // G14: every row carries its authored 16x16 icon (src/art/shop_icons.js)
     // as a live canvas painted through the renderer's own drawGrid — same
     // convention as the G13 portraits: 16x16 backing store, INTEGER 2x CSS
@@ -8191,7 +8209,7 @@ function showCharacterRows(characterId) {
       true,   // deferFrame: batched with `framed` below, like showShop's rows
     );
     framed.push(el);
-    if (!owned || capped) el.onclick = () => audio.playSfx('button');
+    if (!owned || capped) el.onclick = () => audio.playSfx('uiDeny');
     // The icon path is the shop's own (src/art/shop_icons.js): authored grid
     // per id, authored __fallback otherwise — the SAME fallback every
     // un-arted global row gets, no second icon system (disclosed in the G19
@@ -8263,7 +8281,7 @@ function showApexShop() {
         },
         owned || !afford,
       );
-      if (owned) el.onclick = () => audio.playSfx('button');
+      if (owned) el.onclick = () => audio.playSfx('uiDeny');
       // Same G14 icon convention as every shop row (authored 16x16 grid,
       // integer CSS scale, unknown ids fall back to the rune — never a
       // blank box).
@@ -8510,7 +8528,7 @@ function renderCharSelector() {
     let cv = el.querySelector ? el.querySelector('canvas') : null;
     if (!cv) { cv = document.createElement('canvas'); el.appendChild(cv); }
     el.onclick = () => {
-      audio.playSfx('button');
+      audio.playSfx('uiMove');
       // Selection ALWAYS moves — previewing a locked pilot's kit is free (the
       // oversight complaint was exactly that the kit was invisible).
       charSelected = ch.id;
@@ -8625,7 +8643,7 @@ function showSettings(disarm = true, inRun = false) {
   ovTitle.className = '';
   ovSub.textContent = 'display, audio & save data' + (saveNotice ? ' · ' + saveNotice : '');
   menuCard('AUDIO',
-    'music ' + (audio.getMusicEnabled() ? 'ON' : 'OFF') + ' &middot; sfx ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'),
+    'music ' + audio.getMusicVolume() + ' &middot; sfx ' + audio.getSfxVolume(),
     () => showAudioSettings(inRun));
   menuCard('DISPLAY',
     state.zoom + 'x &middot; ' + resMode().toLowerCase() + ' &middot; hud ' + (hudTextEnabled() ? 'ON' : 'OFF'),
@@ -8701,15 +8719,46 @@ function showAudioSettings(inRun = false) {
   ovTitle.textContent = 'AUDIO';
   ovTitle.className = '';
   ovSub.textContent = 'music & sound effects';
-  menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
-    audio.setMusicEnabled(!audio.getMusicEnabled());
-    showAudioSettings(inRun);
+  volumeCard('MUSIC', audio.getMusicVolume, (v) => {
+    audio.setMusicVolume(v);
+    // Raising the slider from 0 mid-run brings the music back at once.
+    if (v > 0 && inRun) audio.startMusic();
   });
-  menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
-    audio.setSfxEnabled(!audio.getSfxEnabled());
-    showAudioSettings(inRun);
-  });
+  volumeCard('SFX', audio.getSfxVolume, (v) => { audio.setSfxVolume(v); audio.playSfx('uiConfirm'); });
   menuCard('BACK', 'to settings', () => showSettings(false, inRun));
+}
+
+// A 0-100 volume slider as a menu card. Dragging the slider sets the level;
+// pressing the card itself (mouse, touch, or Enter from keyboard navigation)
+// steps it up by 10 and wraps 100 -> 0, so it works without a pointer.
+function volumeCard(name, get, set) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  const label = () => (get() > 0 ? get() + '%' : 'OFF') + ' &middot; drag, or press to step';
+  el.innerHTML = `<div class="name">${name} VOLUME</div><div class="desc">${label()}</div>`;
+  const slider = document.createElement('input');
+  slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '5';
+  slider.value = String(get());
+  slider.className = 'vol';
+  slider.style.cssText = 'display:block;width:100%;margin-top:8px;accent-color:#ffd75e;';
+  const sync = () => {
+    slider.value = String(get());
+    const d = el.querySelector && el.querySelector('.desc');
+    if (d) d.innerHTML = label();
+  };
+  slider.addEventListener('input', () => { set(Number(slider.value)); sync(); });
+  slider.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
+  el.onclick = () => {
+    if (state.helpMode) { showHelpTip('<b>' + name + ' VOLUME</b> — 0 to 100', el); return; }
+    const v = get();
+    set(v >= 100 ? 0 : Math.min(100, v + 10));
+    sync();
+  };
+  el.appendChild(slider);
+  el.volume = { get, set: (v) => { set(v); sync(); }, slider };   // test seam
+  ovCards.appendChild(el);
+  frameCard(el);
+  return el;
 }
 
 // The four one-press display presets (E2's fast path): resolution + zoom
@@ -8757,6 +8806,11 @@ function showDisplaySettings(inRun = false) {
   // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
   menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
     setHudTextEnabled(!hudTextEnabled());
+    showDisplaySettings(inRun);
+  });
+  // M2: screen shake (also off whenever the OS asks for reduced motion).
+  menuCard('SCREEN SHAKE', 'currently ' + (getShakeEnabled() ? 'ON' : 'OFF'), () => {
+    setShakePref(!getShakeEnabled());
     showDisplaySettings(inRun);
   });
   menuCard('BACK', 'to settings', () => showSettings(false, inRun));
@@ -9668,7 +9722,7 @@ function openStats() {
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
   const p = state.player;
-  const info = () => audio.playSfx('button');
+  const info = () => audio.playSfx('uiMove');
 
   // WEAPONS: icon + name (+ evolution) + level + one-line effect.
   let wHtml = '';
@@ -10151,7 +10205,7 @@ function cycleGameSpeed() {
   const v = prestigeNextSpeed(getPrestige(profile), state.gameSpeed);
   state.gameSpeed = v;
   toast('SPEED ' + v + 'x');
-  audio.playSfx('button');
+  audio.playSfx('uiMove');
   return v;
 }
 
@@ -11541,6 +11595,20 @@ function chromeOn() {
   // not a run screen (verified in test_death_cine + the phone verifier).
   return state.mode === 'playing' || state.mode === 'finale';
 }
+// View px of canvas hidden under the right-hand pad column (0 when the pads
+// sit beside the canvas, as on a phone, or are not shown).
+function radarPadInset() {
+  try {
+    const pad = document.querySelector && document.querySelector('#touch .pad.right');
+    if (!pad) return 0;
+    const pr = pad.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+    if (!pr.width || !cr.width) return 0;
+    // Only a pad standing in the canvas's right half, reaching its bottom rows.
+    if (pr.left < cr.left + cr.width / 2 || pr.bottom < cr.bottom - cr.height * 0.3) return 0;
+    const overlap = cr.right - pr.left;
+    return overlap > 0 ? Math.ceil(overlap * C.VIEW_W / cr.width) + 3 : 0;
+  } catch { return 0; }
+}
 function syncChrome() {
   // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
   // factor as first-class state, BEFORE anything reads them this frame.
@@ -11561,6 +11629,10 @@ function syncChrome() {
   // state.*, never the profile).
   state.runPurse = purseClamp(profile.runPurse);
   state.zoomScale = zoomScale(state.zoom);
+  // M2: where the right pad column overlays the canvas (desktop), the radar
+  // steps left of it. Re-measured twice a second, not per frame.
+  radarPadInset.tick = (radarPadInset.tick || 0) + 1;
+  if (radarPadInset.tick % 30 === 1) state.radarInset = radarPadInset();
   // FULLSCREEN toggle state for the renderer, published once per frame: the
   // button paints only where the API exists, the 0.5s window is live and the
   // pad screens are up (fsVisible = the chromeOn gate — same screens as the
@@ -12175,7 +12247,7 @@ function startFinale() {
     ttl: 2.5,
   };
   audio.playPortalCue('BOSS_YELL');
-  audio.playSfx('death');
+  audio.playSfx('bossArrive');
   audio.startMusic();
 }
 
@@ -12249,7 +12321,7 @@ function updateFinale(dt) {
     }
     state.effects.push({ kind: 'boss_nova', x: b.x, y: b.y, radius: 60, age: 0, ttl: 0.5 });
     toast('THE MAW OPENS');
-    audio.playSfx('death');
+    audio.playSfx('slam');
   }
 
   // Barrage projectiles: the FIRST touch of a volleyId costs an exact third
@@ -12374,7 +12446,7 @@ function mawDefeated() {
   // back, exactly as mawWithdrew does. Without this the saved pre-boss stance
   // stayed pending and leaked into the NEXT run (startRun did not clear it).
   restoreBossStance();
-  audio.playSfx('levelup');
+  audio.playSfx('victory');
   // The biggest earned moment in the game — same flourish the finale used.
   triggerEarnedMoment('finale', state.player.x, state.player.y);
   // The unlock: a persistent milestone flag on the profile (src/save.js keeps

@@ -91,8 +91,8 @@ const PILLAR_B = [
   [0,5,5,5,5,5,5,5,5,5,5,0],
 ];
 const PILLAR_PALETTE = {
-  1: '#7f7461',  // weathered stone (PILLAR LOOK body)
-  2: '#4a4236',  // stone shadow (PILLAR LOOK trim)
+  1: '#a89a80',  // weathered stone (PILLAR LOOK body)
+  2: '#6a5e4a',  // stone shadow (PILLAR LOOK trim)
   3: '#ff5a3c',  // ember rune (PILLAR LOOK accent)
   4: '#ffd75e',  // hot eye (elite-gold heat, turret only)
   5: '#241c18',  // socket shadow
@@ -124,10 +124,10 @@ const SHRIKE_B = [
   [0,0,0,0,0,4,0,0,4,0,0,0,0,0],
 ];
 const SHRIKE_PALETTE = {
-  1: '#3f4a9e',  // storm body (SHRIKE LOOK body)
-  2: '#1f2552',  // deep trim (SHRIKE LOOK trim)
-  3: '#9ec9ff',  // pale eye slits (SHRIKE LOOK accent)
-  4: '#6a7ac8',  // wing glints
+  1: '#7888ff',  // storm body (SHRIKE LOOK body)
+  2: '#34409a',  // deep trim (SHRIKE LOOK trim)
+  3: '#d8ecff',  // pale eye slits (SHRIKE LOOK accent)
+  4: '#a8b4ff',  // wing glints
 };
 
 function makeEnemySprite(id, name, blurb, frames, palette) {

@@ -66,7 +66,7 @@ const SKELETON_FRAMES = [
     [0,0,0,1,0,0,1,0,0,0],
   ],
 ];
-const SKELETON_PALETTE = { 1: '#e8e8e8', 2: '#16161e', 3: '#a8a8b0' };
+const SKELETON_PALETTE = { 1: '#f4f4f4', 2: '#16161e', 3: '#b0b0c0' };
 
 // ---- DEMON (COLOSSUS) — 14x14 ----------------------------------------------
 const DEMON_FRAMES = [
@@ -103,7 +103,7 @@ const DEMON_FRAMES = [
     [0,0,1,1,0,0,0,0,0,1,1,0,0,0],
   ],
 ];
-const DEMON_PALETTE = { 1: '#c23b3b', 2: '#7a1f1f', 3: '#e8d8a8', 4: '#ffd54a' };
+const DEMON_PALETTE = { 1: '#ff5548', 2: '#a8281f', 3: '#f4e4b0', 4: '#ffe04a' };
 
 // ---- BAT (SWARMER + TICK recolor) — 12x8 ------------------------------------
 const BAT_FRAMES = [
@@ -128,9 +128,9 @@ const BAT_FRAMES = [
     [0,0,0,0,1,0,0,1,0,0,0,0],
   ],
 ];
-const BAT_PALETTE = { 1: '#5a3f7a', 2: '#8a6ab8', 3: '#ffd54a', 4: '#f0f0f0' };
+const BAT_PALETTE = { 1: '#ff5ea8', 2: '#ff9ccb', 3: '#fff3b0', 4: '#ffffff' };
 // TICK = same grids, blood-bug recolor (green body, sickly membrane).
-const TICK_PALETTE = { 1: '#7f9e3f', 2: '#46521f', 3: '#ff5566', 4: '#f0f0f0' };
+const TICK_PALETTE = { 1: '#a8e03c', 2: '#5c8a1e', 3: '#ff5566', 4: '#f0f0f0' };
 
 // ---- MAGE (SPITTER) — 12x14 -------------------------------------------------
 const MAGE_FRAMES = [
@@ -167,7 +167,7 @@ const MAGE_FRAMES = [
     [0,0,0,0,1,1,1,1,1,0,0,0],
   ],
 ];
-const MAGE_PALETTE = { 1: '#3f9e4f', 2: '#1f5c2b', 3: '#e8b04a', 4: '#a6ff9e', 5: '#8a5f2c', 6: '#9effe0' };
+const MAGE_PALETTE = { 1: '#3fd06a', 2: '#1f8a48', 3: '#e8b04a', 4: '#c8ffbe', 5: '#8a5f2c', 6: '#9effe0' };
 
 // ---- WIZARD (WARLOCK) — 12x16, taller robe ----------------------------------
 const WIZARD_FRAMES = [
@@ -208,7 +208,7 @@ const WIZARD_FRAMES = [
     [0,0,0,1,1,0,0,1,1,0,0,0],
   ],
 ];
-const WIZARD_PALETTE = { 1: '#5c3f8f', 2: '#332052', 3: '#e8d8c0', 4: '#c49eff', 5: '#6b4a2a', 6: '#ff9ed8' };
+const WIZARD_PALETTE = { 1: '#a57aff', 2: '#5a3aa8', 3: '#f0e0c8', 4: '#e0c8ff', 5: '#6b4a2a', 6: '#ff9ed8' };
 
 // ---- EVIL_KNIGHT (BRUTE) — 14x14 --------------------------------------------
 const EVIL_KNIGHT_FRAMES = [
@@ -245,7 +245,7 @@ const EVIL_KNIGHT_FRAMES = [
     [0,0,0,2,2,0,0,0,0,2,2,0,0,0],
   ],
 ];
-const EVIL_KNIGHT_PALETTE = { 1: '#4a4f66', 2: '#2e3136', 3: '#c23b3b', 4: '#ffd54a', 5: '#6d5a3f', 6: '#ffd54a' };
+const EVIL_KNIGHT_PALETTE = { 1: '#7fa0d8', 2: '#3d4f7a', 3: '#ff5548', 4: '#ffd54a', 5: '#8a7450', 6: '#ffd54a' };
 
 // ---- STICK_FIGURE (CHASER) — 10x14 ------------------------------------------
 const STICK_FIGURE_FRAMES = [
@@ -282,7 +282,7 @@ const STICK_FIGURE_FRAMES = [
     [0,0,0,1,0,1,0,0,0,0],
   ],
 ];
-const STICK_FIGURE_PALETTE = { 1: '#2a2a34', 2: '#ff5566' };
+const STICK_FIGURE_PALETTE = { 1: '#ff9838', 2: '#5a0a16' };
 
 // ===========================================================================
 // FLAMES — classic teardrop: dark orange rim (1), orange body (2), yellow
@@ -444,7 +444,7 @@ export const BOSS_SPRITE = {
       [0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0],
     ],
   ],
-  palette: { 1: '#3d2a52', 2: '#261a38', 3: '#ffd54a', 4: '#ff3b6b', 5: '#8f1f2f' },
+  palette: { 1: '#a878e0', 2: '#5c3a8a', 3: '#ffd54a', 4: '#ff3b6b', 5: '#c22f42' },
   anchor: { x: 12, y: 12 },
   box: { w: 24, h: 24 },
 };

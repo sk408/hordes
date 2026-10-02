@@ -4,6 +4,10 @@
 // unit tests run against fakes. Public API (FROZEN for hb1 integration):
 //   init(), setMusicEnabled(b), getMusicEnabled(),
 //   setSfxEnabled(b), getSfxEnabled(), playSfx(name), startMusic(), stopMusic()
+// M2 additions: setMusicVolume(0..100) / getMusicVolume(), setSfxVolume /
+// getSfxVolume (persisted beside the on/off flags; a volume of 0 is "off"),
+// playSfx(name, arg) for the pitched families (arg = gem combo step), and
+// setMusicMode('run' | 'boss') — the boss-fight section of the in-run music.
 // WAVE-8/B cinematic stingers (SFX-class: gated by the sfx toggle ONLY, never
 // the music toggle; fire once per phase transition — hb1 polls phaseAt()):
 //   playIntroCue(phase):  OVERTAKE|HORDE, TITLE_SLAM|TITLE, FADE
@@ -30,6 +34,14 @@ function detectStorage() {
 
 const KEY_MUSIC = 'hordes_audio_music';
 const KEY_SFX = 'hordes_audio_sfx';
+const KEY_MUSIC_VOL = 'hordes_audio_music_vol';
+const KEY_SFX_VOL = 'hordes_audio_sfx_vol';
+// Slider defaults; at the default the bus gain equals the level the game
+// shipped with (music 0.5, sfx 0.7), so an untouched profile sounds the same.
+const DEFAULT_MUSIC_VOL = 70;
+const DEFAULT_SFX_VOL = 80;
+const MUSIC_BUS_GAIN = 0.5;
+const SFX_BUS_GAIN = 0.7;
 
 let AudioCtxCtor = detectAudioContext();
 let storage = detectStorage();
@@ -42,6 +54,10 @@ let musicBus = null;
 let noiseBuf = null;       // cached white-noise buffer per context
 let musicEnabled = true;   // hydrated from storage
 let sfxEnabled = true;
+let musicVol = DEFAULT_MUSIC_VOL;   // 0..100, hydrated from storage
+let sfxVol = DEFAULT_SFX_VOL;
+let musicMode = 'run';     // 'run' | 'boss' — which arrangement the sequencer plays
+let bossStep = 0;
 
 // Music sequencer state.
 let musicRunning = false;
@@ -50,7 +66,16 @@ let step = 0;
 let nextNoteTime = 0;
 
 // Per-sfx rate limiting (seconds between allowed plays; kills buzz).
-const SFX_LIMITS = { shoot: 0.08, hit: 0.05, button: 0.05, levelup: 0.1, chest: 0.1, death: 0.5 };
+const SFX_LIMITS = {
+  shoot: 0.08, hit: 0.05, button: 0.05, levelup: 0.1, chest: 0.1, death: 0.5,
+  fire_bolt: 0.09, fire_arc: 0.14, fire_blast: 0.16, fire_zap: 0.12, fire_seek: 0.14,
+  kill: 0.06, eliteDeath: 0.25, bossDeath: 1, hurt: 0.18, gem: 0.045, potion: 0.15,
+  item: 0.12, powerup: 0.2, draftPick: 0.1, evolve: 0.5, bossArrive: 1.5, slam: 0.2,
+  warning: 0.5, victory: 1, uiMove: 0.03, uiConfirm: 0.05, uiDeny: 0.08,
+};
+// Weapon-fire families share one extra gate, so five weapons firing on the
+// same frame make one sound, not a chord of five.
+const FIRE_GATE = 0.05;
 const lastPlayed = Object.create(null);
 
 // ---------- Music pattern (16 steps @ 132bpm 16th-notes) ----------
@@ -161,6 +186,28 @@ const BAR_TABLE = SECTIONS.map((sec, sectionIndex) => {
   }
   return rows;
 }).flat();
+// THE BOSS SECTION: a second arrangement the sequencer switches to while a
+// boss lives (setMusicMode). Same tempo and voices as the song, but a
+// driving octave bass, a low Phrygian riff (the Bb over A is the menace) and
+// a kick on every beat. 16 bars, looped for as long as the fight lasts.
+const BOSS_PROG = ['Am', 'Am', 'F', 'E', 'Am', 'Am', 'Dm', 'E'];
+const BOSS_RIFFS = [
+  [220, 0, 220, 233.08, 0, 220, 0, 329.63, 220, 0, 220, 233.08, 0, 293.66, 261.63, 0],
+  [440, 0, 0, 415.3, 440, 0, 523.25, 0, 466.16, 0, 440, 0, 415.3, 0, 329.63, 0],
+];
+const BOSS_TABLE = [];
+for (let b = 0; b < 16; b++) {
+  const ch = CHORDS[BOSS_PROG[b % BOSS_PROG.length]];
+  const st = BASS_STYLES[b % 4 === 3 ? 'drive' : 'drive2'];
+  BOSS_TABLE.push({
+    section: 'boss', sectionIndex: SECTIONS.length, barInSection: b, chord: ch[0],
+    bass: st.deg.map(d => d < 0 ? 0 : ch[1 + d] * (d === 3 ? 2 : 1)),
+    lead: BOSS_RIFFS[(b >> 2) % 2].map(f => f ? f * (ch[1] / 110) : 0),
+    hats: [0, 2, 4, 6, 8, 10, 12, 14], kicks: [0, 4, 8, 12], bassDur: 0.9,
+  });
+}
+const BOSS_STEPS = BOSS_TABLE.length * STEPS;
+
 const TOTAL_BARS = BAR_TABLE.length;
 const TOTAL_STEPS = TOTAL_BARS * STEPS;
 const CYCLE_SECONDS = TOTAL_STEPS * STEP_DUR;
@@ -179,6 +226,7 @@ export const MUSIC = {
   BPM, STEPS, BASS, LEAD, HAT_STEPS,
   SONG: { sections: SECTIONS, totalBars: TOTAL_BARS, totalSteps: TOTAL_STEPS,
     cycleSeconds: CYCLE_SECONDS, bars: BAR_TABLE },
+  BOSS: { bars: BOSS_TABLE, totalSteps: BOSS_STEPS, cycleSeconds: BOSS_STEPS * STEP_DUR },
   mapStep,
 };
 
@@ -243,8 +291,8 @@ export function init() {
   master = ctx.createGain();
   master.gain.value = 0.15;                 // pleasant-low master volume
   master.connect(ctx.destination);
-  sfxBus = ctx.createGain();  sfxBus.gain.value = 0.7;  sfxBus.connect(master);
-  musicBus = ctx.createGain(); musicBus.gain.value = 0.5; musicBus.connect(master);
+  sfxBus = ctx.createGain();  sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);  sfxBus.connect(master);
+  musicBus = ctx.createGain(); musicBus.gain.value = busGain(MUSIC_BUS_GAIN, musicVol, DEFAULT_MUSIC_VOL); musicBus.connect(master);
   noiseBuf = null;
   if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
     try { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); } catch { /* ignore */ }
@@ -252,23 +300,68 @@ export function init() {
   return ctx;
 }
 
+// Slider value -> bus gain: a square-law taper (even steps sound even),
+// scaled so the default slider position lands exactly on `base`.
+function busGain(base, vol, dflt) {
+  const r = Math.max(0, Math.min(100, vol)) / dflt;
+  return base * r * r;
+}
+function clampVol(v, dflt) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : dflt;
+}
+
 function hydrateFlags() {
   try {
     const m = storage.getItem(KEY_MUSIC); if (m !== null) musicEnabled = m === '1';
     const s = storage.getItem(KEY_SFX);   if (s !== null) sfxEnabled = s === '1';
+    const mv = storage.getItem(KEY_MUSIC_VOL); if (mv !== null) musicVol = clampVol(mv, DEFAULT_MUSIC_VOL);
+    const sv = storage.getItem(KEY_SFX_VOL);   if (sv !== null) sfxVol = clampVol(sv, DEFAULT_SFX_VOL);
   } catch { /* keep defaults */ }
 }
 hydrateFlags();
 
+// Volume sliders (0..100). 0 switches the channel off (the same flag the old
+// toggle wrote, so a profile muted before the sliders existed stays muted);
+// any other value switches it on.
+export function setMusicVolume(v) {
+  musicVol = clampVol(v, DEFAULT_MUSIC_VOL);
+  try { storage.setItem(KEY_MUSIC_VOL, String(musicVol)); } catch { /* ignore */ }
+  if (musicBus) musicBus.gain.value = busGain(MUSIC_BUS_GAIN, musicVol, DEFAULT_MUSIC_VOL);
+  setMusicEnabled(musicVol > 0);
+  return musicVol;
+}
+export function getMusicVolume() { return musicEnabled ? musicVol : 0; }
+export function setSfxVolume(v) {
+  sfxVol = clampVol(v, DEFAULT_SFX_VOL);
+  try { storage.setItem(KEY_SFX_VOL, String(sfxVol)); } catch { /* ignore */ }
+  if (sfxBus) sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);
+  setSfxEnabled(sfxVol > 0);
+  return sfxVol;
+}
+export function getSfxVolume() { return sfxEnabled ? sfxVol : 0; }
+
 export function setMusicEnabled(v) {
   musicEnabled = !!v;
+  if (musicEnabled && musicVol <= 0) setMusicVolumeQuiet(DEFAULT_MUSIC_VOL);
   try { storage.setItem(KEY_MUSIC, musicEnabled ? '1' : '0'); } catch { /* ignore */ }
   if (!musicEnabled) stopMusic();          // cutting the switch silences now
 }
 export function getMusicEnabled() { return musicEnabled; }
 
+// Switching a channel back on from a zero slider restores the default level.
+function setMusicVolumeQuiet(v) {
+  musicVol = v;
+  try { storage.setItem(KEY_MUSIC_VOL, String(v)); } catch { /* ignore */ }
+  if (musicBus) musicBus.gain.value = busGain(MUSIC_BUS_GAIN, v, DEFAULT_MUSIC_VOL);
+}
 export function setSfxEnabled(v) {
   sfxEnabled = !!v;
+  if (sfxEnabled && sfxVol <= 0) {
+    sfxVol = DEFAULT_SFX_VOL;
+    try { storage.setItem(KEY_SFX_VOL, String(sfxVol)); } catch { /* ignore */ }
+    if (sfxBus) sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);
+  }
   try { storage.setItem(KEY_SFX, sfxEnabled ? '1' : '0'); } catch { /* ignore */ }
 }
 export function getSfxEnabled() { return sfxEnabled; }
@@ -282,17 +375,101 @@ const SFX = {
   // Arpeggios are sequences of tones scheduled back-to-back.
   levelup: { voice: 'arp', type: 'triangle', notes: [523.25, 659.25, 783.99, 1046.5], noteDur: 0.09, gain: 0.12 },
   chest:   { voice: 'arp', type: 'triangle', notes: [1318.5, 1760, 2217.5],          noteDur: 0.07, gain: 0.1 },
+
+  // ---- M2 families. 'seq' = layered voices, each { v: 'tone' | 'noise',
+  // at: seconds after the trigger, ...voice params }. ----
+  // Weapon fire, one family per archetype group.
+  fire_bolt:  { voice: 'seq', fire: true, layers: [   // volley, javelin, ricochet: a tight pluck
+    { v: 'tone', type: 'square', freq: 1040, to: 360, dur: 0.07, gain: 0.09 },
+    { v: 'noise', dur: 0.02, gain: 0.05 }] },
+  fire_arc:   { voice: 'seq', fire: true, layers: [   // scythe, boomerang, orbit: a swish
+    { v: 'noise', dur: 0.12, gain: 0.1 },
+    { v: 'tone', type: 'triangle', freq: 300, to: 760, dur: 0.11, gain: 0.07 }] },
+  fire_blast: { voice: 'seq', fire: true, layers: [   // nova, mine, meteor, ember: a thump
+    { v: 'tone', type: 'sine', freq: 170, to: 46, dur: 0.2, gain: 0.26 },
+    { v: 'noise', dur: 0.09, gain: 0.12 }] },
+  fire_zap:   { voice: 'seq', fire: true, layers: [   // chain, beam: a crackle
+    { v: 'tone', type: 'sawtooth', freq: 1900, to: 240, dur: 0.09, gain: 0.07 },
+    { v: 'tone', type: 'square', freq: 2500, to: 900, dur: 0.05, gain: 0.04, at: 0.02 }] },
+  fire_seek:  { voice: 'seq', fire: true, layers: [   // seeker: a rising chirp
+    { v: 'tone', type: 'triangle', freq: 420, to: 1250, dur: 0.12, gain: 0.08 }] },
+  // Enemies.
+  kill:       { voice: 'seq', layers: [
+    { v: 'tone', type: 'triangle', freq: 330, to: 90, dur: 0.09, gain: 0.13 },
+    { v: 'noise', dur: 0.04, gain: 0.08 }] },
+  eliteDeath: { voice: 'seq', layers: [
+    { v: 'tone', type: 'sawtooth', freq: 280, to: 50, dur: 0.3, gain: 0.16 },
+    { v: 'noise', dur: 0.16, gain: 0.14 },
+    { v: 'tone', type: 'triangle', freq: 880, to: 1320, dur: 0.14, gain: 0.08, at: 0.08 }] },
+  bossDeath:  { voice: 'seq', layers: [
+    { v: 'tone', type: 'sawtooth', freq: 220, to: 30, dur: 0.9, gain: 0.26 },
+    { v: 'tone', type: 'square', freq: 110, to: 28, dur: 0.9, gain: 0.16 },
+    { v: 'noise', dur: 0.35, gain: 0.22 },
+    { v: 'tone', type: 'triangle', freq: 523.25, dur: 0.16, gain: 0.1, at: 0.45 },
+    { v: 'tone', type: 'triangle', freq: 783.99, dur: 0.16, gain: 0.1, at: 0.6 },
+    { v: 'tone', type: 'triangle', freq: 1046.5, dur: 0.3, gain: 0.1, at: 0.75 }] },
+  bossArrive: { voice: 'seq', layers: [
+    { v: 'tone', type: 'sawtooth', freq: 73.4, to: 69, dur: 0.9, gain: 0.26 },
+    { v: 'tone', type: 'sawtooth', freq: 110, to: 104, dur: 0.9, gain: 0.2 },
+    { v: 'tone', type: 'sine', freq: 120, to: 36, dur: 0.4, gain: 0.3 },
+    { v: 'noise', dur: 0.18, gain: 0.16 }] },
+  slam:       { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 140, to: 34, dur: 0.28, gain: 0.3 },
+    { v: 'noise', dur: 0.12, gain: 0.16 }] },
+  // The player.
+  hurt:       { voice: 'seq', layers: [
+    { v: 'tone', type: 'square', freq: 200, to: 70, dur: 0.16, gain: 0.2 },
+    { v: 'noise', dur: 0.07, gain: 0.16 }] },
+  gem:        { voice: 'seq', pitched: true, layers: [
+    { v: 'tone', type: 'triangle', freq: 880, dur: 0.06, gain: 0.08 },
+    { v: 'tone', type: 'sine', freq: 1320, dur: 0.07, gain: 0.05, at: 0.03 }] },
+  potion:     { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 300, to: 620, dur: 0.1, gain: 0.14 },
+    { v: 'tone', type: 'sine', freq: 420, to: 900, dur: 0.12, gain: 0.12, at: 0.09 }] },
+  item:       { voice: 'arp', type: 'triangle', notes: [783.99, 1174.7], noteDur: 0.07, gain: 0.11 },
+  powerup:    { voice: 'arp', type: 'square', notes: [392, 523.25, 659.25, 783.99], noteDur: 0.06, gain: 0.08 },
+  draftPick:  { voice: 'seq', layers: [
+    { v: 'tone', type: 'triangle', freq: 659.25, dur: 0.1, gain: 0.12 },
+    { v: 'tone', type: 'triangle', freq: 987.77, dur: 0.16, gain: 0.12, at: 0.07 },
+    { v: 'tone', type: 'sine', freq: 1975.5, dur: 0.12, gain: 0.05, at: 0.07 }] },
+  evolve:     { voice: 'arp', type: 'sawtooth', notes: [261.63, 329.63, 392, 523.25, 659.25, 783.99, 1046.5, 1318.5], noteDur: 0.07, gain: 0.09 },
+  warning:    { voice: 'arp', type: 'square', notes: [880, 660, 880, 660], noteDur: 0.11, gain: 0.09 },
+  victory:    { voice: 'arp', type: 'triangle', notes: [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5, 1318.5], noteDur: 0.12, gain: 0.13 },
+  // Menus.
+  uiMove:     { voice: 'tone', type: 'square',   freq: 520, to: 520, dur: 0.025, gain: 0.05 },
+  uiConfirm:  { voice: 'seq', layers: [
+    { v: 'tone', type: 'square', freq: 660, dur: 0.04, gain: 0.07 },
+    { v: 'tone', type: 'square', freq: 990, dur: 0.05, gain: 0.07, at: 0.04 }] },
+  uiDeny:     { voice: 'seq', layers: [
+    { v: 'tone', type: 'square', freq: 196, dur: 0.07, gain: 0.09 },
+    { v: 'tone', type: 'square', freq: 147, dur: 0.1, gain: 0.09, at: 0.07 }] },
 };
 export { SFX };
 
-export function playSfx(name) {
+// arg: for the pitched families (gem), the combo step — each step raises the
+// pitch a whole tone, so a stream of pickups climbs.
+export function playSfx(name, arg) {
   const def = SFX[name];
   if (!def || !sfxEnabled || !ctx) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   const now = ctx.currentTime;
   const limit = SFX_LIMITS[name] ?? 0.02;
   if (lastPlayed[name] !== undefined && now - lastPlayed[name] < limit) return false;
+  if (def.fire) {
+    if (lastPlayed['fire:*'] !== undefined && now - lastPlayed['fire:*'] < FIRE_GATE) return false;
+    lastPlayed['fire:*'] = now;
+  }
   lastPlayed[name] = now;
+
+  if (def.voice === 'seq') {
+    const mul = def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1;
+    for (const l of def.layers) {
+      const when = now + (l.at || 0);
+      if (l.v === 'noise') noise(ctx, sfxBus, { dur: l.dur, gain: l.gain, when });
+      else tone(ctx, sfxBus, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain, when });
+    }
+    return true;
+  }
 
   if (def.voice === 'tone') {
     tone(ctx, sfxBus, { ...def, when: now });
@@ -416,20 +593,51 @@ function scheduleStep(s, when) {
   if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.08, when });
 }
 
+// One step of the boss section: square bass, sawtooth riff, hats, kick.
+function scheduleBossStep(s, when) {
+  const g = ((s % BOSS_STEPS) + BOSS_STEPS) % BOSS_STEPS;
+  const bar = BOSS_TABLE[(g / STEPS) | 0];
+  const i = g % STEPS;
+  const bass = bar.bass[i];
+  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.36, when });
+  const lead = bar.lead[i];
+  if (lead) tone(ctx, musicBus, { type: 'sawtooth', freq: lead, dur: STEP_DUR * 0.9, gain: 0.2, when });
+  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.09, when });
+  if (bar.kicks.includes(i)) tone(ctx, musicBus, { type: 'sine', freq: 150, to: 45, dur: 0.12, gain: 0.4, when });
+}
+
 function scheduleAhead() {
   if (!musicRunning || !ctx) return;
   while (nextNoteTime < ctx.currentTime + LOOKAHEAD) {
-    scheduleStep(step, nextNoteTime);
+    if (musicMode === 'boss') {
+      scheduleBossStep(bossStep, nextNoteTime);
+      bossStep = (bossStep + 1) % BOSS_STEPS;
+    } else {
+      scheduleStep(step, nextNoteTime);
+      step = (step + 1) % TOTAL_STEPS;   // the whole SONG cycles, not one bar
+    }
     nextNoteTime += STEP_DUR;
-    step = (step + 1) % TOTAL_STEPS;   // the whole SONG cycles, not one bar
   }
 }
+
+// Which arrangement plays: 'run' (the song) or 'boss' (the fight section).
+// Entering 'boss' starts its section from bar 1; leaving resumes the song at
+// the step it stopped on. Safe to call every frame.
+export function setMusicMode(mode) {
+  const m = mode === 'boss' ? 'boss' : 'run';
+  if (m === musicMode) return false;
+  musicMode = m;
+  if (m === 'boss') bossStep = 0;
+  return true;
+}
+export function getMusicMode() { return musicMode; }
 
 export function startMusic() {
   if (!musicEnabled || !ctx || musicRunning) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   musicRunning = true;
   step = 0;
+  bossStep = 0;
   nextNoteTime = ctx.currentTime + 0.05;
   scheduleAhead();
   musicTimer = setInterval(scheduleAhead, TICK_MS);
@@ -460,11 +668,14 @@ export const AUDIO_TEST = {
     stopMusic();
     ctx = null; master = null; sfxBus = null; musicBus = null; noiseBuf = null;
     musicEnabled = true; sfxEnabled = true;
+    musicVol = DEFAULT_MUSIC_VOL; sfxVol = DEFAULT_SFX_VOL;
+    musicMode = 'run'; bossStep = 0;
     step = 0; nextNoteTime = 0;
     for (const k of Object.keys(lastPlayed)) delete lastPlayed[k];
     hydrateFlags();
   },
   scheduleAhead,                    // manual scheduler pass (fake clock)
   scheduleStep,                     // real per-step synthesis (offline render drives this)
+  scheduleBossStep,
   state: () => ({ ctx, musicRunning, master, musicBus, sfxBus }),
 };
