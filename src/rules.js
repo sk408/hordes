@@ -103,6 +103,8 @@ export function grantRule(state, id) {
   state.player.rules[id] = true;
   return true;
 }
+// The game offers the two rules as jokers (jokers.js); this builder is only
+// read by tools/draft_sim.mjs and the tests of this module.
 /** The draft cards for every rule the run does not already hold. */
 export function ruleCards(state) {
   const out = [];

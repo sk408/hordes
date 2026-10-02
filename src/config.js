@@ -489,11 +489,8 @@ export const CONFIG = {
   // state.weaponSlots, set by startRun.
   WEAPON_SLOTS: 6,
 
-  // G21 slice 1: the rule-REWRITE family's finite build slots (rewrites.js).
-  // A run holding REWRITE_SLOTS rewrites is offered NO rewrite cards — with 8
-  // cards in the family, every pick excludes at least 4 others, so the slot
-  // pressure is structural, not cosmetic. Empty slots PAY through
-  // emptySlotCooldownMult (-5% skill/ult cooldown each, floored at x0.80).
+  // The old rewrite family's slot count. The game's slots are the joker row's
+  // (jokers.js JOKER_SLOTS); this is read only by rewrites.js rewriteCards.
   REWRITE_SLOTS: 4,
 
   // Wave-6 loot (loot.js): rare equippables drop from kills. Bosses always
@@ -1232,11 +1229,8 @@ export const UPGRADES = [
 //            chase card is strictly better in all states — each one's value is
 //            state-dependent (compounds early, dead late; scales with a
 //            commitment the run may not have made).
-//   MYTHIC — build-definers, RUN-GATED: at startRun a TWO-STAGE chase gate
-//            decides which (if any) mythics enter the run's draft pool — a 10%
-//            event roll ("this run has a joker"), then a 60/25/15 count roll,
-//            then a uniform draw of which mythics (owner 2026-09-14). Each then
-//            rides the pool at MYTHIC_WEIGHT. Taken once per run.
+//   JOKER  — rule cards with their own row and slots (jokers.js). They took
+//            the place of the run-gated MYTHIC tier.
 // FIXED = common, PERCENT = rare, and the two COEXIST — never a conversion.
 //
 // Whetstone note (brief deviation, stated out loud): the brief's rare table
@@ -1306,8 +1300,10 @@ export const DRAFT_RARE_UPGRADES = [
   { id: 'thorns',   name: 'Thornmail',       desc: '+6 thorns damage on contact', apply: (p) => { p.stats.thorns = (p.stats.thorns || 0) + 6; } },
 ];
 
-// MYTHIC ladder cards (build-definers, run-gated by the two-stage chase gate — see
-// startRun). Taken once per run (the takenStats ledger, rule or no rule).
+// The mythic chase cards. The game no longer offers these: Second Wind, Storm
+// Shards, Full Hand and Magnet Collector are jokers (jokers.js) and Tempest and
+// Killshot were cut. The table and the CHASE_* / MYTHIC_WEIGHT numbers above
+// are still read by tools/draft_sim.mjs (the coarse draft model) and its tests.
 export const DRAFT_MYTHIC_UPGRADES = [
   { id: 'second_wind', name: 'Second Wind',  desc: 'Revive once at 50% max HP',  apply: (p) => { p.stats.secondWind = true; } },
   { id: 'storm_shards', name: 'Storm Shards', desc: 'XP pickups chip nearby enemies', apply: (p) => { p.stats.stormShards = true; } },

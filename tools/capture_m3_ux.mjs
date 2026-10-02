@@ -251,6 +251,69 @@ for (const vp of VIEWPORTS) {
     });
   }
 
+  // ---- hands and jokers: the HUD, a "makes:" draft, a full-row replace, the pause screen, the shelf
+  if (!vp.fitOnly && !vp.hudOnly && want('hands')) {
+    await withPage({ ...vp, skipPrologue: false, startupScript: PLAYED, timeoutMs: 60000 }, async (page) => {
+      const shot = shotOf(page);
+      await toTitle(page);
+      await page.evaluate(`T.startRun()`);
+      await page.sleep(2500);
+      // A pair of twos, three spades (one card short of a flush), and a full joker row.
+      await page.evaluate(`(() => {
+        try { localStorage.setItem('hordes_tour_draft', '1'); } catch (e) {}
+        const st = T.state; const p = st.player;
+        p.stats.maxHp = 4000; p.hp = 4000;
+        T.jokers.draftWeight = 0;
+        for (const id of ['hp', 'lvl_VOLLEY_1', 'pierce', 'multi']) T.pickCard({ id, name: id, apply: () => {} });
+        T.jokers.take('rime'); T.jokers.take('second_wind');
+        st.pendingDrafts = 0; st.mode = 'playing'; st.draftKind = null;
+      })()`);
+      await page.sleep(350);
+      await shot('hand-countup');
+      await page.sleep(2200);
+      await page.evaluate(`(() => { T.state.player.hp = T.state.player.stats.maxHp; })()`);
+      await shot('hand-hud');
+      console.log(vp.name, 'hand HUD:', JSON.stringify(await page.evaluate(`({ hand: T.renderer.hudChrome.hand, jokers: T.renderer.hudChrome.jokers, slots: T.renderer.hudChrome.jokerSlots })`)));
+      // A draft where a card completes the flush.
+      await page.evaluate(`(() => {
+        const st = T.state;
+        for (let i = 0; i < 300; i++) {
+          st.mode = 'playing'; st.pendingDrafts = 1; st.draftKind = null; T.openDraft();
+          const offers = [...document.querySelectorAll('#ov-cards .card')].map((c) => c._draftOffer);
+          if (offers.some((o) => /FLUSH/.test(o.handText || '')) && offers.some((o) => !o.handText)) break;
+        }
+      })()`);
+      await page.sleep(400);
+      await shot('draft-makes');
+      console.log(vp.name, 'makes draft fit:', JSON.stringify(await page.evaluate(DRAFT_FIT)),
+        JSON.stringify(await page.evaluate(`[...document.querySelectorAll('#ov-cards .card')].map((c) => c._draftOffer.handText)`)));
+      await page.evaluate(`(() => { const c = [...document.querySelectorAll('#ov-cards .card')].find((c) => /FLUSH/.test(c._draftOffer.handText || '')); if (c) c.click(); T.state.player.hp = T.state.player.stats.maxHp; })()`);
+      await page.sleep(500);
+      await shot('hand-flush-countup');
+      // A boss's joker offer with the row full, then the replace choice.
+      await page.evaluate(`(() => { T.jokers.queueOffer(); T.jokers.openOffer(); })()`);
+      await page.waitFor(`T.state.mode === 'draft'`, 4000, 30);
+      await page.sleep(400);
+      await shot('joker-offer');
+      console.log(vp.name, 'joker offer fit:', JSON.stringify(await page.evaluate(DRAFT_FIT)));
+      await page.evaluate(`(() => { const c = document.querySelector('#ov-cards .card'); if (c) c.click(); })()`);
+      await page.sleep(400);
+      await shot('joker-replace');
+      console.log(vp.name, 'joker replace fit:', JSON.stringify(await page.evaluate(DRAFT_FIT)));
+      await page.evaluate(`(() => { const c = [...document.querySelectorAll('#ov-cards .card')][1]; if (c) c.click(); T.state.player.hp = T.state.player.stats.maxHp; })()`);
+      await page.sleep(900);
+      await page.evaluate(`T.openStats()`); await page.sleep(400);
+      await shot('stats-hand');
+      await page.evaluate(`T.closeStats()`);
+      await page.evaluate(`(() => { T.state.player.invuln = 0; T.state.player.stats.secondWind = false; T.die(); })()`);
+      await page.evaluate(key('x'));
+      await page.waitFor(`T.state.mode === 'dead'`, 4000, 30);
+      await page.evaluate(`T.jokers.show()`); await page.sleep(500);
+      await shot('joker-shelf');
+      if (page.errors.length) console.log(vp.name, 'hands page errors:', page.errors.slice(0, 5));
+    });
+  }
+
   // ---- the first-run tutorial on an empty profile --------------------------
   if (!vp.hudOnly && want('tutorial')) {
     await withPage({ ...vp, skipPrologue: false, skipTour: false, timeoutMs: 60000 }, async (page) => {

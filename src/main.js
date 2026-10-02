@@ -5005,7 +5005,7 @@ function openJokerReplace(u) {
       name: 'REPLACE: ' + JOKERS[id].name, desc: 'you lose: ' + JOKERS[id].desc, apply: () => {},
     });
   }
-  presentDraft(choices, 'JOKER ROW FULL', inc.name.toUpperCase() + ': ' + inc.desc, { swap: true });
+  presentDraft(choices, 'JOKER ROW FULL', 'your joker row is full. ' + inc.name.toUpperCase() + ': ' + inc.desc, { swap: true });
 }
 function resolveJokerSwap(u) {
   if (u.keep) {

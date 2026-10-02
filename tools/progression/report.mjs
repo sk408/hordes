@@ -223,6 +223,14 @@ export function careerReport(records, { detailAll = false } = {}) {
   return out.join('\n').trimEnd();
 }
 
+// The most common hand a run ended with, and the share of runs that ended with it.
+function handCell(rs) {
+  const n = new Map();
+  for (const r of rs) n.set(r.hand || 'none', (n.get(r.hand || 'none') || 0) + 1);
+  const [id, k] = [...n.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0];
+  return id + ' ' + Math.round(100 * k / rs.length) + '%';
+}
+
 export function fixedReport(records) {
   const g = new Map();
   for (const r of records) {
@@ -242,7 +250,8 @@ export function fixedReport(records) {
       band(t), band(gold), band(rs.map((r) => r.wave)), band(rs.map((r) => r.level)),
       pct((r) => r.t >= 60), pct((r) => r.t >= 120),
       evo.length ? band(evo) + ' ' + pct((r) => r.firstEvo != null) : '-',
-      fus.length ? band(fus) + ' ' + pct((r) => r.firstFuse != null) : '-']);
+      fus.length ? band(fus) + ' ' + pct((r) => r.firstFuse != null) : '-',
+      handCell(rs), band(rs.map((r) => r.jokers || 0))]);
     if (prev && prev.policy === rs[0].policy && median(prev.t) > 0) {
       cliffs.push({ policy: rs[0].policy, from: prev.budget, to: rs[0].budget, ratio: median(t) / median(prev.t), a: prev.t, b: t });
     }
@@ -250,7 +259,7 @@ export function fixedReport(records) {
   }
   const out = [
     'FIXED BUILD — K independent runs per build; cells = median [min-max] over n runs (no FIRST_CLEAR bonus: steady-state income)',
-    table(['policy', 'budget', 'spent', 'catalogue %', 'n', 'survival s', 'gold/run', 'wave', 'level', '>=60s', '>=120s', 'first evolution s', 'first fusion s'], rows),
+    table(['policy', 'budget', 'spent', 'catalogue %', 'n', 'survival s', 'gold/run', 'wave', 'level', '>=60s', '>=120s', 'first evolution s', 'first fusion s', 'end hand (most common, share of runs)', 'jokers'], rows),
   ];
   if (cliffs.length) {
     const c = cliffs.sort((a, b) => b.ratio - a.ratio)[0];

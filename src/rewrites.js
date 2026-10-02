@@ -435,6 +435,9 @@ function orbitEquipped(state) {
 function comboOffered(a, b) {
   return (state) => hasRewrite(state, a) && hasRewrite(state, b);
 }
+// The game offers eight of the rewrites as jokers (jokers.js); the cross-tag
+// combos, Glacier, Wildfire and Wide Orbit are no longer offered. This builder
+// is only read by tools/draft_sim.mjs and the tests of this module.
 /** The draft cards for every rewrite the run can still be offered. */
 export function rewriteCards(state) {
   // C1: FOUR finite slots — a full run is offered NO rewrite cards. The

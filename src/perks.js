@@ -102,6 +102,9 @@ export function skillsHeld(state) {
   const s = perksOf(state) || {};
   return SKILL_PERK_IDS.filter(id => s[id]);
 }
+// The game offers Regrowth as a joker (jokers.js; Focus and Thick Skin were
+// cut from the draft); this builder is only read by tools/draft_sim.mjs and
+// the tests of this module.
 /** The draft cards for every perk the run does not already hold. */
 export function skillCards(state) {
   const out = [];

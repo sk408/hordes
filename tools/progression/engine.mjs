@@ -23,7 +23,13 @@ const EVOLUTION_DEFS = (await import(treeUrl('src/evolutions.js'))).EVOLUTION_DE
 // Fusion pairs (absent in a tree older than the fusion rework: no fusion awareness there).
 const FUSION_DEFS = await import(treeUrl('src/fusions.js')).then((m) => m.FUSION_DEFS || [], () => []);
 
-export const DRAFT_POLICIES = ['random', 'weapons-first', 'evolution-first', 'stats-first'];
+// Hands and jokers (absent in a tree older than that rework: no awareness there).
+const HANDS = await import(treeUrl('src/hands.js')).catch(() => null);
+const JOKERS = await import(treeUrl('src/jokers.js')).catch(() => null);
+// The two jokers that are a trade, not a plain gain: only --once take picks them.
+const TRADE_JOKERS = ['once', 'hordebait'];
+
+export const DRAFT_POLICIES = ['random', 'weapons-first', 'evolution-first', 'stats-first', 'hand-first'];
 export const ONCE_MODES = ['asis', 'take', 'never'];
 export const LOADOUT_POLICIES = ['default', 'all-owned'];
 // stats-first draft priority (base stat-card ids). Cards not listed are taken
@@ -119,7 +125,8 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     let firstFuse = null, fused = 0;    // the same for fusions
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
     const trace = []; let nextTrace = traceEvery;
-    const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_');
+    const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_') || TRADE_JOKERS.includes(o.joker);
+    const rowFull = () => JOKERS ? JOKERS.jokerRowFull(st) : true;
     const isWeapon = (o) => /^(lvl|wpn)_/.test(String(o.id));
     while (true) {
       if (st.mode === 'playing' || st.mode === 'finale') st.gameSpeed = speed;
@@ -128,15 +135,28 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         const offs = cards0.map((c) => c._draftOffer);
         let pick = null;
         const onceIdx = offs.findIndex((o) => o.id === onceId);
+        const keepIdx = offs.findIndex((o) => o.jokerSwap && o.keep);
         if (pol.once === 'take' && onceIdx >= 0) pick = onceIdx;
+        // A full joker row: the deliberate policies keep it (random picks at random).
+        else if (keepIdx >= 0 && pol.draft !== 'random') pick = keepIdx;
+        else if (keepIdx >= 0) pick = Math.floor(prng() * offs.length);
         else {
           let cand = offs.map((_o, i) => i);
           if (pol.once === 'never') cand = cand.filter((i) => offs[i].id !== onceId);
           if (pol.draft !== 'random') cand = cand.filter((i) => !isRule(offs[i]));
+          // The deliberate policies take a joker while the row has room, and
+          // never pick one into a full row.
+          if (pol.draft !== 'random') {
+            const jk = cand.filter((i) => offs[i].joker);
+            if (jk.length && !rowFull()) pick = jk[0];
+            else if (jk.length < cand.length) cand = cand.filter((i) => !offs[i].joker);
+          }
           if (!cand.length) cand = offs.map((_o, i) => i);
-          if (pol.draft === 'weapons-first') { const w = cand.find((i) => isWeapon(offs[i])); if (w !== undefined) pick = w; }
-          if (pol.draft === 'evolution-first') pick = evolutionFirstPick(st, offs, cand, statPriority);
-          if (pol.draft === 'stats-first') {
+          if (pick !== null) { /* a joker was taken */ }
+          else if (pol.draft === 'hand-first') pick = handFirstPick(st, offs, cand, statPriority);
+          if (pick === null && pol.draft === 'weapons-first') { const w = cand.find((i) => isWeapon(offs[i])); if (w !== undefined) pick = w; }
+          if (pick === null && pol.draft === 'evolution-first') pick = evolutionFirstPick(st, offs, cand, statPriority);
+          if (pick === null && pol.draft === 'stats-first') {
             let best = null, bestR = Infinity;
             for (const i of cand) { const r = statPriority.indexOf(offs[i].id); if (r >= 0 && r < bestR) { best = i; bestR = r; } }
             if (best === null) { const o = cand.find((i) => !isWeapon(offs[i]) && !isRule(offs[i])); if (o !== undefined) best = o; }
@@ -194,7 +214,8 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
-      weapons, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused, ...(traceEvery ? { trace } : {}),
+      weapons, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused,
+      hand: (st.player.hand && st.player.hand.id) || null, jokers: (st.player.jokers || []).length, ...(traceEvery ? { trace } : {}),
     };
   } finally {
     Math.random = realRandom;
@@ -238,13 +259,28 @@ function evolutionFirstPick(st, offs, cand, statPriority) {
   return stat === undefined ? null : stat;
 }
 
+// hand-first: the card that makes the best new hand when one is on offer
+// (hands.js handHint); otherwise the evolution-first pick.
+function handFirstPick(st, offs, cand, statPriority) {
+  if (HANDS && JOKERS) {
+    const opts = JOKERS.handOpts(st);
+    let best = null, bestOrder = 0;
+    for (const i of cand) {
+      const hint = HANDS.handHint(st.player, String(offs[i].id), opts);
+      if (hint && hint.hand.order > bestOrder) { best = i; bestOrder = hint.hand.order; }
+    }
+    if (best !== null) return best;
+  }
+  return evolutionFirstPick(st, offs, cand, statPriority);
+}
+
 const tag = (pol) => [pol.shop, pol.loadout, pol.draft, pol.once, pol.stance, pol.character].join('/');
 export const policyKey = tag;
 
 async function setup(job) {
   const cat = await loadCatalogue();
   await validatePolicy(job.policy, cat);
-  const onceId = 'rule_' + (job.policy.onceRule || 'once');
+  const onceId = (JOKERS ? 'joker_' : 'rule_') + (job.policy.onceRule || 'once');
   const h = await bootGame();
   const prof = h.T.getProfile();
   applyCharacter(prof, cat, job.policy.character);
