@@ -85,7 +85,7 @@ export const CONFIG = {
   ENEMY: {
     W: 10, H: 10,
     BASE_SPEED: 56,
-    BASE_HP: 80,
+    BASE_HP: 100,
     BASE_XP: 5,
     SPAWN_INTERVAL: 1.1,  // seconds between spawn ticks at t=0
     SPAWN_INTERVAL_DECAY: 0.002, // seconds shaved off the interval per second of run
@@ -1128,8 +1128,8 @@ export const CONFIG = {
   LADDER: {
     WAVE_SECONDS: 120,   // == ESCALATION.WAVE_LENGTH (the tests assert this)
     WAVES: 15,           // 15 x 120s = 1800s = RUN.LIMIT
-    HP:  { LINEAR: 0.1,  QUAD: 0.045, COMPOUND: 1 },
-    DMG: { LINEAR: 0.10, QUAD: 0,    COMPOUND: 1.004 },
+    HP:  { LINEAR: 0.1,  QUAD: 0.05, COMPOUND: 1 },
+    DMG: { LINEAR: 0.15, QUAD: 0,    COMPOUND: 1.004 },
     XP:  { LINEAR: 0,    QUAD: 0,    COMPOUND: 1 },
     GROUPS_FROM: 150,    // density holds at one group until here
     GROUPS_PER: 150,     // +1 spawn group per spawn tick every N seconds

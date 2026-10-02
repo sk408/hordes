@@ -16,6 +16,7 @@
 // Run: node test/test_takeover.mjs
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
+import { buildingRects } from '../src/stage_buildings.js';
 import { CONTROLS, controlById } from '../src/controls_ref.js';
 
 const S = suite('test_takeover');
@@ -40,8 +41,19 @@ h.pump(1);
 assert.equal(st.mode, 'playing', 'fixture: a live run');
 assert.equal(st.pilotMode, 'AUTO_ALL', 'fixture: AUTO');
 
+// Stand the hero somewhere with no building to the right: the pilot-motion
+// seam slides along building walls, which would read as a y drift here.
+function clearStart() {
+  const rects = buildingRects(st.groundSeed || 0, st.stage);
+  const near = (x, y) => rects.some((r) => x + 160 > r.x - 40 && x - 40 < r.x + r.w + 40 && y + 60 > r.y - 40 && y - 60 < r.y + r.h + 40);
+  for (let y = -300; y <= 300; y += 60) for (let x = -400; x <= 300; x += 60) {
+    if (!near(x, y)) { st.player.x = x; st.player.y = y; return; }
+  }
+}
+
 S.check('a HELD move key steers on AUTO: the hero goes where it points, the mode stays AUTO', () => {
   quiet();
+  clearStart();
   const x0 = st.player.x, y0 = st.player.y;
   kdown('d');
   assert.equal(st.pilotMode, 'AUTO_ALL', 'the key does not change the pilot mode');

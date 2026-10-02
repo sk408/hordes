@@ -118,6 +118,33 @@ for (const vp of VIEWPORTS) {
         await page.sleep(350);
         await shot('draft');
       }
+      if (!vp.hudOnly && want('evolve')) {
+        // A draft whose Volley card completes the evolution (Lv7 + Split Shot
+        // owned): redraw until that card is offered, then the evolved weapon
+        // in play after taking it.
+        await page.evaluate(`(() => {
+          const st = T.state; const v = st.weapons.find((w) => w.type === 'VOLLEY');
+          v.level = 7; st.player.takenStats = { multi: 1 }; st.player.hp = st.player.stats.maxHp;
+          for (let i = 0; i < 60; i++) {
+            st.mode = 'playing'; st.pendingDrafts = 1; T.openDraft();
+            if ([...document.querySelectorAll('#ov-cards .card')].some((c) => c._draftOffer && c._draftOffer.evoReady)) break;
+          }
+        })()`);
+        await page.sleep(400);
+        await shot('draft-evolve-ready');
+        await page.evaluate(`(() => { const c = [...document.querySelectorAll('#ov-cards .card')].find((c) => c._draftOffer && c._draftOffer.evoReady); if (c) c.click(); })()`);
+        await page.waitFor(`T.state.mode === 'evolve'`, 4000, 30);
+        await page.sleep(400);
+        await shot('evolve-offer');
+        await page.evaluate(`(() => { const c = document.querySelector('#ov-cards .card'); if (c) c.click(); })()`);
+        await page.waitFor(`T.state.mode === 'playing'`, 4000, 30);
+        await page.evaluate(`(() => { T.state.bannerHold = 0; T.state.player.hp = T.state.player.stats.maxHp; })()`);
+        await page.sleep(2500);
+        await shot('run-evolved');
+        await page.evaluate(key('i')); await page.sleep(400);   // the STATS overlay lists the weapons
+        await shot('stats-evolved');
+        await page.evaluate(key('i')); await page.sleep(300);
+      }
       if (!vp.hudOnly && want('end')) {
         // Resolve the draft, play on a little, then die for real.
         await page.evaluate(`(() => { const c = document.querySelector('#ov-cards .card'); if (c) c.click(); })()`);

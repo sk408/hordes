@@ -5518,7 +5518,7 @@ function doEvolve(w) {
       };
       state.bannerHold = TOKEN_BANNER_SEC;
     }
-    toast(res.name.toUpperCase() + ' UNLEASHED - ' + w.evolution.desc.toUpperCase());
+    toast(res.name.toUpperCase() + ' UNLEASHED');
     audio.playSfx('evolve');
     // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
     // moments — brief dilation + the crackle flare, back to normal after.
