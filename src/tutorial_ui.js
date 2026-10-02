@@ -106,7 +106,10 @@ export class TutorialUI {
   // `rects` are the target rects, `geo` = { bounds, view, avoid, menu }.
   render(model, rects, geo) {
     if (!model) { this.hide(); return; }
-    if (!this.root) this._build();
+    if (!this.root) {
+      if (!(this.doc.body || this.doc.documentElement)) return;   // nowhere to mount
+      this._build();
+    }
     this.model = model;
     const key = [model.id, model.text, model.button || '', model.skip || ''].join('|');
     const stepKey = model.id + '|' + (geo.view.right - geo.view.left) + 'x' + (geo.view.bottom - geo.view.top);

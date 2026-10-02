@@ -270,9 +270,11 @@ check('a target that disappears mid-step (zero rect) ends gracefully', () => {
 // flag can never quietly re-arm a deleted coach.
 check('flag family is EXACTLY the four kept coaches; tourDone/clear compose', () => {
   const st = fakeStorage();
-  assert.deepEqual(Object.keys(TOUR_KEYS).sort(), ['death', 'draft', 'loadout', 'settings'],
-    'the family is exactly draft/death/settings/loadout, nothing else');
-  for (const k of Object.values(TOUR_KEYS)) assert.ok(k.startsWith('hordes_tour_'), 'key shape: ' + k);
+  // + hintsOff: the Settings HINTS switch rides the family so a harness that
+  // marks every flag seen also runs without hint pauses (src/tour.js).
+  assert.deepEqual(Object.keys(TOUR_KEYS).sort(), ['death', 'draft', 'hintsOff', 'loadout', 'settings'],
+    'the family is exactly draft/death/settings/loadout + the hints switch, nothing else');
+  for (const [n, k] of Object.entries(TOUR_KEYS)) assert.ok(n === 'hintsOff' || k.startsWith('hordes_tour_'), 'key shape: ' + k);
   assert.ok(!tourDone(st), 'fresh save: coaches armed');
   const keys = Object.values(TOUR_KEYS);
   for (const k of keys.slice(0, 2)) setTourFlag(k, true, st);
@@ -331,7 +333,7 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
   globalThis.location = { reload: noop };
   // Onboarded (skip the auto-HOW TO PLAY) but NO tour flags.
-  const ls = new Map([['hordes_onboarded', '1']]);
+  const ls = new Map([['hordes_onboarded', '1'], ['hordes_hints_off', '1']]);   // first-time hints pause by design (test_tutorial_guided.mjs)
   globalThis.localStorage = {
     getItem: k => (ls.has(k) ? ls.get(k) : null),
     setItem: (k, v) => ls.set(k, String(v)),

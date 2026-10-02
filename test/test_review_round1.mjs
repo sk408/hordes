@@ -70,7 +70,7 @@ globalThis.location = { reload: noop };
 // Fresh profile: onboarded, but NO tour flags (the draft coach must fire).
 // ONBOARDING RETIREMENT 2026-09-18: the "hint flags" half of this comment is
 // gone with the layer — there are no hint flags anymore.
-const ls = new Map([['hordes_onboarded', '1']]);
+const ls = new Map([['hordes_onboarded', '1'], ['hordes_hints_off', '1']]);   // first-time hints hold the sim; not this file's subject
 globalThis.localStorage = {
   getItem: k => (ls.has(k) ? ls.get(k) : null),
   setItem: (k, v) => ls.set(k, String(v)),
@@ -121,9 +121,13 @@ const sweepOverlays = () => {
       if (c) { c.click(); tick(0.1); swept = true; continue; }
       tick(0.2); continue;   // cards mount asynchronously under load — give the renderer frames
     }
-    if (st.prologue && !st.prologue.drunk && !st.prologue.skipped) {
-      keyHandler({ key: 'escape', preventDefault: noop }); tick(0.1);   // tap 1: arm
-      keyHandler({ key: 'escape', preventDefault: noop }); tick(0.1);   // tap 2: confirm
+    if (T.tut.hints.active) {   // a first-time hint (e.g. the second-run line) holds the sim
+      tick(0.5); keyHandler({ key: 'Enter', preventDefault: noop }); tick(0.1);
+      swept = true; continue;
+    }
+    if (T.tut.live) {
+      keyHandler({ key: 'Escape', preventDefault: noop }); tick(0.1);   // tap 1: arm
+      keyHandler({ key: 'Escape', preventDefault: noop }); tick(0.1);   // tap 2: confirm
       swept = true; continue;
     }
     break;
@@ -220,7 +224,7 @@ const ensureSimLive = (tag) => {
   const htpRun = [...ovCards1.children].find(c => (c._html || '').includes('>HOW TO PLAY<'));
   ok('1: the in-run settings offers HOW TO PLAY', !!htpRun);
   htpRun.click();
-  const replayInRun = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
+  const replayInRun = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TUTORIAL<'));
   ok('1: the REPLAY TOUR card exists in the manual (non-gate context)', !!replayInRun);
   replayInRun.click();
   // BOUNDARY GUARD: the arm must leave live play live (nothing modal may be
@@ -229,8 +233,8 @@ const ensureSimLive = (tag) => {
   ok('1: REPLAY TOUR from a live run ARMS THE NEXT RUN and says so',
     (st.toasts || []).some(t => /tutorial starts with your next run/.test(t.msg)),
     (st.toasts || []).map(t => t.msg));
-  ok('1: ...and the live run was NOT yanked (still playing, no prologue)',
-    st.mode === 'playing' && !st.prologue, st.mode);
+  ok('1: ...and the live run was NOT yanked (still playing, no guided part)',
+    st.mode === 'playing' && !T.tut.live, st.mode);
 
   // End the run through the real path (END RUN -> CONFIRM -> TITLE).
   // NOTE: this file's boot seeds NO tour flags, so the first settings open
@@ -262,23 +266,23 @@ const ensureSimLive = (tag) => {
   const htpTitle = [...ovCards1.children].find(c => (c._html || '').includes('>HOW TO PLAY<'));
   ok('1: SETTINGS offers HOW TO PLAY', !!htpTitle);
   htpTitle.click();
-  const replayTitle = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
+  const replayTitle = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TUTORIAL<'));
   ok('1: the REPLAY TOUR card is on the manual from the title too', !!replayTitle);
   replayTitle.click();
   tick(0.2);
-  ok('1: REPLAY TOUR from the title STARTS the special run immediately (prologue live)',
-    st.mode === 'playing' && !!st.prologue, { mode: st.mode, prologue: !!st.prologue });
+  ok('1: REPLAY TUTORIAL from the title STARTS the guided run immediately',
+    st.mode === 'playing' && T.tut.live, { mode: st.mode, live: T.tut.live });
   ok('1: the replayed run is flagged ASSISTED', st.assistedRun === true);
-  ok('1: the special level stages its potion', !!(st.prologue && st.prologue.potion));
+  ok('1: the guided run shows its first step', !!T.tut.model);
   {
     let maxEnemies = 0;
     for (let i = 0; i < 60 * 4; i++) {
       frame();
       maxEnemies = Math.max(maxEnemies, st.enemies.length);
     }
-    ok('1: the special level is INERT — no enemies spawn while the prologue lives',
-      maxEnemies === 0 && !!st.prologue, { maxEnemies, t: st.time });
-    ok('1: the run clock is frozen while the prologue lives', st.time === 0, st.time);
+    ok('1: the guided run fields only a few harmless trainers',
+      maxEnemies <= T.tut.TUT.TRAINERS && T.tut.live, { maxEnemies, t: st.time });
+    ok('1: the run clock is held at 0 while the guided part lives', st.time === 0, st.time);
   }
   // Reset into an ordinary run for ITEM 2 (the opt-in is CONSUMED by the arm).
   T.startRun();
@@ -287,8 +291,8 @@ const ensureSimLive = (tag) => {
   // behind (a stale banner/coach here freezes every ITEM 2 leg downstream).
   ensureSimLive('1: ordinary-run reset');
   ok('1: the next run is ordinary again (opt-in consumed, gate still OFF)',
-    !st.prologue && st.assistedRun === false && st.mode === 'playing',
-    { prologue: !!st.prologue, assisted: st.assistedRun, mode: st.mode });
+    !T.tut.live && st.assistedRun === false && st.mode === 'playing',
+    { live: T.tut.live, assisted: st.assistedRun, mode: st.mode });
 }
 
 console.log('test_review_round1: item 1 ' + passed + ' checks');

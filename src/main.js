@@ -91,7 +91,7 @@ import { evolveWeapon, describeEvolution, evolutionProgress, EVOLUTION_DEFS, wea
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
 import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
-import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.js';
+import { Tour, TOUR_KEYS, tourFlag, setTourFlag } from './tour.js';
 import { TUT, LEDGER, GUIDED_STEPS, HINTS, Guided, HintBook, menuStepFor, guidedWordStats, manualSections } from './tutorial.js';
 import { TutorialUI } from './tutorial_ui.js';
 // ONBOARDING REWORK (owner-approved 2026-09-16): the engine for the
@@ -6222,11 +6222,11 @@ function manualGoto(page) {
     else el.className = (el.className ? el.className + ' ' : '') + c;
   };
   if (p === 1) {
-    addCls(menuCard('THE BASICS', manualSections(isTouchPath())
-      .map(([h, t]) => '<b>' + h + '</b>: ' + t).join('<br>'), () => {}), 'ref');
+    // The basics first: one short line per tutorial step (src/tutorial.js).
+    const basics = manualSections(isTouchPath())
+      .map(([h, t]) => h + ': ' + t).join('<br>') + '<br><br>';
     const waveS = C.ESCALATION.WAVE_LENGTH;
-    const c = menuCard('HOW A RUN WORKS',
-      'LEVEL UP: gems fill the XP bar. Each level, pick 1 of 3 cards.<br><br>' +
+    const c = menuCard('HOW A RUN WORKS', basics +
       'WAVES: after ' + waveS + ' seconds a BOSS arrives (a smaller one comes at half time).<br>' +
       'Kill the boss and a PORTAL opens: walk in for a break between waves.<br><br>' +
       'BETWEEN WAVES: buy a chest, take a blessing, or RAISE THE STAKES<br>' +
@@ -8982,9 +8982,8 @@ function closeChestCard() {
 //   - the first-time hints, which hold the sim until GOT IT.
 // Progress lives in the profile's one-time-banner ledger (LEDGER ids and
 // 'hint:<id>'), so each thing shows once per profile.
-const KEY_HINTS = 'hordes_hints';   // Settings: "HINTS on/off" ('0' = off)
-function hintsEnabled() { try { return prefStorage.getItem(KEY_HINTS) !== '0'; } catch { return true; } }
-function setHintsEnabled(on) { try { prefStorage.setItem(KEY_HINTS, on ? '1' : '0'); } catch { /* shim */ } }
+function hintsEnabled() { return !tourFlag(TOUR_KEYS.hintsOff); }   // Settings: HINTS on/off
+function setHintsEnabled(on) { setTourFlag(TOUR_KEYS.hintsOff, !on); }
 const tutSeen = (id) => bannerSeen(profile, id);
 const tutMark = (id) => { if (markBannerSeen(profile, id)) persistProfile(); };
 const tut = {
@@ -9026,7 +9025,7 @@ function tutArmRun(arm, runsPlayed) {
   }
   if (!arm) return;
   tutMark(LEDGER.cohort);
-  for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);   // the old coach card stays down
+  setTourFlag(TOUR_KEYS.draft, true);   // the old draft coach card stays down
   tut.guided = new Guided({ touch: isTouchPath(), names: { skill: tutSkillName() } });
   tut.gems = 0; tut.casts = 0; tut.drinks = 0; tut.spawnT = 0;
   tut.xpMark = p.xp; tut.manaMark = p.mana; tut.potionMark = p.potions.hp;
@@ -9314,7 +9313,8 @@ function tutFrame(realDt, nowMs) {
       onPrimary: tutPrimary, onSkip: tutSkip });
   }
   if (!model) { tut.ui.hide(); return; }
-  const cr = canvas.getBoundingClientRect();
+  const cr = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect()
+    : { left: 0, top: 0, right: C.VIEW_W, bottom: C.VIEW_H, width: C.VIEW_W, height: C.VIEW_H };
   const vw = window.innerWidth || cr.right, vh = window.innerHeight || cr.bottom;
   const view = { left: 0, top: 0, right: vw, bottom: vh, width: vw, height: vh };
   const menu = state.mode !== 'playing';

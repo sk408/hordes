@@ -57,6 +57,10 @@ export const TOUR_KEYS = {
   // kit, never from the title walk, once only; pinned by
   // test/test_g26_loadout.mjs.
   loadout: 'hordes_tour_loadout',
+  // Settings "HINTS": set = the first-time hints (src/tutorial.js) are off.
+  // It lives with the tour flags so a harness that marks every tour flag
+  // seen also runs without hint pauses.
+  hintsOff: 'hordes_hints_off',
 };
 
 function detectStorage() {

@@ -196,8 +196,8 @@ check('PROGRESS carries TROPHIES + BESTIARY; PLAY opens the ONE pre-run screen; 
 check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   cardWith('SETTINGS').click();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
-    'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'ADVANCED', 'BACK'],
-    'title settings is exactly these ten cards, in order');
+    'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'BACK'],
+    'title settings is exactly these twelve cards, in order');
   cardWith('ADVANCED').click();
   const adv = names();
   assert.deepEqual(adv.slice(0, 6), ['ZOOM', 'RESOLUTION', 'TEXT HUD', 'PILOT', 'FOCUS', 'STANCE'],

@@ -209,9 +209,9 @@ export async function boot(opts = {}) {
     for (const k of Object.values(TOUR_KEYS)) store.set(k, '1');
   } catch { /* tour module always present, defensive */ }
   // First-time hints hold the sim until GOT IT, which would change what every
-  // gameplay test measures. They are off (the Settings switch) unless a test
-  // asks for them with { hints: true } or seeds the key itself.
-  if (!opts.hints && !store.has('hordes_hints')) store.set('hordes_hints', '0');
+  // gameplay test measures. The preseed above turned them off (TOUR_KEYS.hintsOff);
+  // a test that is about them boots with { hints: true }.
+  if (opts.hints) store.delete('hordes_hints_off');
 
   // opts.variant busts the ESM cache so ONE test file can boot the game twice
   // (e.g. a desktop arm and a touch-device arm) — each boot re-evaluates

@@ -44,8 +44,8 @@ s.check('C.PROLOGUE.ENABLED ships true (re-enabled at 56e1a93, defects fixed)', 
 });
 s.check('the arm expression: assistedRun OR (ENABLED && fresh profile) — opt-in bypasses the park', () => {
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.ok(/state\.prologue = \(state\.assistedRun \|\| \(C\.PROLOGUE\.ENABLED && prologueRunsPlayed === 0\)\)/
-    .test(main), 'the startRun arm expression changed');
+  assert.ok(main.includes('tutArmRun(state.assistedRun || (C.PROLOGUE.ENABLED && runsPlayed === 0 &&'),
+    'the startRun arm expression changed');
   assert.ok(/if \(state\.assistedRun\) tags\.push\('ASSISTED'\)/.test(main),
     'the end screen must tag ASSISTED runs');
   const ach = readFileSync(new URL('../src/achievements.js', import.meta.url), 'utf8');
@@ -67,48 +67,42 @@ s.check('boot: a RETURNING profile on the title (runs >= 1)', () => {
   assert.equal(elements['ov-title'].textContent, 'HORDES');
   assert.ok((T.getProfile().achievements.totals.runs || 0) >= 1, 'the harness stamped the returning profile');
 });
-s.check('SETTINGS offers HOW TO PLAY and the manual carries the REPLAY TOUR card', () => {
+s.check('SETTINGS offers HOW TO PLAY, HINTS and REPLAY TUTORIAL; the manual carries REPLAY TUTORIAL too', () => {
   byTitle('SETTINGS').click();
+  assert.ok(byTitle('REPLAY TUTORIAL'), 'no REPLAY TUTORIAL card under SETTINGS');
+  assert.ok(byTitle('HINTS'), 'no HINTS card under SETTINGS');
   const htp = byTitle('HOW TO PLAY');
   assert.ok(htp, 'no HOW TO PLAY card under SETTINGS');
   htp.click();
   assert.equal(elements['ov-title'].textContent, 'HOW TO PLAY');
-  assert.ok(byTitle('REPLAY TOUR'), 'no REPLAY TOUR card in the manual (non-gate context)');
+  assert.ok(byTitle('REPLAY TUTORIAL'), 'no REPLAY TUTORIAL card in the manual');
 });
 
-byTitle('REPLAY TOUR').click();
+byTitle('REPLAY TUTORIAL').click();
 pump(2);
-s.check('REPLAY TOUR from the title starts the special run IMMEDIATELY', () => {
+s.check('REPLAY TUTORIAL from the title starts the guided run IMMEDIATELY', () => {
   assert.equal(st.mode, 'playing', st.mode);
-  assert.ok(st.prologue, 'state.prologue is null — the special level did not arm');
-  assert.ok(T.prologue.active, 'the prologue phase is live');
+  assert.ok(T.tut.live, 'the guided part did not arm');
 });
 s.check('the replayed run is flagged ASSISTED (the opt-in seam)', () => {
   assert.equal(st.assistedRun, true);
 });
-s.check('the special level stages its potion (state.prologue.potion, on screen)', () => {
-  const po = T.prologue.potion;
-  assert.ok(po, 'no potion');
-  assert.ok(po.x >= 0 && po.x <= C.VIEW_W && po.y >= 0 && po.y <= C.VIEW_H,
-    'the potion is on screen: ' + JSON.stringify(po));
-});
 {
-  // REPLAY TOUR clearTourFlags()s — re-seal the coach flags so the level's
-  // first draft (post-drink) cannot fire the draft coach mid-probe (this
-  // file is not about the coaches; test_tour owns them).
-  for (const k of Object.values(TOUR_KEYS)) globalThis.localStorage.setItem(k, '1');
-  let maxEnemies = 0, clockMoved = false;
+  let clockMoved = false, maxEnemies = 0, hp0 = st.player.hp, hurt = false;
   for (let i = 0; i < 60 * 4; i++) {
     pump(1);
     maxEnemies = Math.max(maxEnemies, st.enemies.length);
     if (st.time !== 0) clockMoved = true;
+    if (st.player.hp < hp0) hurt = true;
   }
-  s.check('the special level is INERT: no enemy spawns while the prologue is live', () => {
-    assert.equal(maxEnemies, 0, maxEnemies + ' enemies spawned');
-    assert.ok(T.prologue.active, 'the phase must still be live for the inertness to mean anything');
+  s.check('the guided part: its first step is up, a few trainers on the field, the hero unhurt', () => {
+    assert.ok(T.tut.live, 'the guided part must still be live');
+    assert.ok(T.tut.model && T.tut.model.id, 'a step is on screen');
+    assert.ok(maxEnemies > 0 && maxEnemies <= T.tut.TUT.TRAINERS, maxEnemies + ' enemies');
+    assert.ok(!hurt, 'the hero took damage during the guided part');
   });
-  s.check('... and the run clock is frozen at 0 for the whole phase', () => {
-    assert.ok(!clockMoved, 'state.time moved during the prologue');
+  s.check('... and the run clock is held at 0 for the whole guided part', () => {
+    assert.ok(!clockMoved, 'state.time moved during the guided part');
   });
 }
 
@@ -118,7 +112,7 @@ s.check('the special level stages its potion (state.prologue.potion, on screen)'
   // the run clock accrue a couple of seconds, then die through the real
   // ending. A NON-assisted run of t>0 would raise bestTime; the assisted
   // fold must not.
-  T.prologue.drink();
+  T.tut.skip(performance.now()); T.tut.skip(performance.now());   // SKIP, two presses
   const step = (n) => {
     for (let i = 0; i < n; i++) {
       pump(1);
@@ -129,8 +123,8 @@ s.check('the special level stages its potion (state.prologue.potion, on screen)'
     }
   };
   step(60 * 3);
-  s.check('the phase ended at the drink and the clock runs', () => {
-    assert.ok(!T.prologue.active, 'prologue still active after the drink');
+  s.check('the guided part ended at the confirmed skip and the clock runs', () => {
+    assert.ok(!T.tut.live, 'guided part still live after the skip');
     assert.ok(st.time > 1.5, 'the run clock accrued (t=' + st.time.toFixed(2) + ')');
   });
   const totals = T.getProfile().achievements.totals;
@@ -163,7 +157,7 @@ s.check('the special level stages its potion (state.prologue.potion, on screen)'
   h2.pump(2);
   s.check('the plain start path arms NO prologue for a RETURNING profile (the automatic arm is fresh-profile-only)', () => {
     assert.equal(st2.prologue, null, 'a prologue armed without an opt-in');
-    assert.equal(T2.prologue.active, false);
+    assert.equal(T2.tut.live, false);
     assert.equal(st2.assistedRun, false, 'no assisted stamp without the opt-in');
     assert.equal(st2.mode, 'playing', st2.mode);
   });
