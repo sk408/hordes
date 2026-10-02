@@ -95,7 +95,8 @@ for (const vp of VIEWPORTS) {
     await page.evaluate(`[...document.querySelectorAll('#ov-cards .card')].find((c) => /SHOP/.test(c.textContent)).click()`);
     await waitStep('menu:shop_buy'); await page.sleep(500); await shot('shop-buy');
     await page.evaluate(`[...document.querySelectorAll('#ov-cards .card')].find((c) => /Vitality/i.test(c.textContent)).click()`);
-    await waitStep('menu:shop_back'); await page.sleep(500); await shot('shop-back');
+    if (!(await waitStep('menu:shop_back', 6000))) console.log(vp.name, 'DEBUG', JSON.stringify(await page.evaluate(`({ model: T.tut.model && T.tut.model.id, screen: T.tut.screen(), title: document.getElementById('ov-title').textContent, buy: T.tut.seen('tut:shop_buy'), play: T.tut.seen('tut:play'), gold: T.getProfile().gold, cards: [...document.querySelectorAll('#ov-cards .card')].slice(0, 4).map((c) => c.textContent.slice(0, 30)) })`)));
+    await page.sleep(500); await shot('shop-back');
     await page.evaluate(`[...document.querySelectorAll('#ov-cards .card')].find((c) => /BACK/.test(c.textContent)).click()`);
     await waitStep('menu:play'); await page.sleep(500); await shot('play');
 
@@ -106,7 +107,7 @@ for (const vp of VIEWPORTS) {
     await waitStep('hint:run2'); await shot('run2');
     await page.evaluate(`T.tut.hints.press(performance.now())`);
     await page.sleep(300);
-    await page.evaluate(`(() => { const p = T.state.player; T.tut.hint('chest', [T.worldRegion(p.x + 60, p.y - 30, 20)]); })()`);
+    await page.evaluate(`(() => { const p = T.state.player; T.tut.hints.active = null; T.getProfile().banners['hint:chest'] = 0; T.tut.hint('chest', [T.camera.region(p.x + 60, p.y - 30, 20)]); })()`);
     await waitStep('hint:chest'); await shot('hint-chest');
     if (page.errors && page.errors.length) console.log(vp.name, 'PAGE ERRORS', JSON.stringify(page.errors.slice(0, 5)));
   });

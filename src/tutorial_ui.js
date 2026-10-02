@@ -32,14 +32,23 @@ export function placePanel(bounds, view, size, targets = [], avoid = [], menu = 
   const left = Math.max(view.left + GAP, Math.min(view.right - size.w - GAP, cx - size.w / 2));
   const at = (top, slot) => ({ left, top: Math.round(top), slot });
   const upper = at(bounds.top + bounds.height * (menu ? 0.02 : 0.16), 'upper');
-  const lower = at(bounds.top + bounds.height * (menu ? 0.98 : 0.80) - size.h, 'lower');
+  const lower = at(bounds.top + bounds.height * (menu ? 0.98 : 0.93) - size.h, 'lower');
   const below = at(bounds.bottom + GAP, 'below');
   const tcy = targets.length
     ? targets.reduce((s, r) => s + (r.top + r.bottom) / 2, 0) / targets.length
     : bounds.top;
   const targetHigh = tcy < bounds.top + bounds.height / 2;
   const order = targetHigh ? [lower, upper] : [upper, lower];
-  if (below.top + size.h + GAP <= view.bottom) order.splice(targetHigh ? 0 : 1, 0, below);
+  // A menu has more room: a second band a little in from each edge.
+  if (menu) {
+    const lower2 = at(bounds.top + bounds.height * 0.88 - size.h, 'lower2');
+    const upper2 = at(bounds.top + bounds.height * 0.12, 'upper2');
+    order.splice(1, 0, targetHigh ? lower2 : upper2);
+    order.push(targetHigh ? upper2 : lower2);
+  }
+  // A viewport taller than the play area (a phone held upright): the strip
+  // under the field is the first choice, it covers nothing at all.
+  if (!menu && below.top + size.h + GAP <= view.bottom) order.unshift(below);
   const box = (c) => ({ left: c.left, top: c.top, right: c.left + size.w, bottom: c.top + size.h });
   const clear = (c, rects) => rects.every(r => !hit(box(c), grow(r, GAP)));
   const inView = (c) => c.top >= view.top && c.top + size.h <= view.bottom;
@@ -112,7 +121,8 @@ export class TutorialUI {
     }
     this.model = model;
     const key = [model.id, model.text, model.button || '', model.skip || ''].join('|');
-    const stepKey = model.id + '|' + (geo.view.right - geo.view.left) + 'x' + (geo.view.bottom - geo.view.top);
+    const stepKey = model.id + '|' + (geo.view.right - geo.view.left) + 'x' + (geo.view.bottom - geo.view.top) +
+      '|' + geo.avoid.length;
     if (key !== this.key) {
       this.key = key;
       this.textEl.textContent = model.text;
@@ -123,8 +133,9 @@ export class TutorialUI {
       this.rowEl.style.display = (model.button || model.skip) ? '' : 'none';
     }
     this.root.style.display = '';
-    // The panel is placed once per step (and again if the viewport changes),
-    // so it forms in place and never chases a moving target.
+    // The panel is placed once per step (and again if the viewport or the set
+    // of on-screen controls changes), so it forms in place and never chases
+    // a moving target.
     if (stepKey !== this.stepKey || !this.pos) {
       this.stepKey = stepKey;
       const vw = geo.view.right - geo.view.left;

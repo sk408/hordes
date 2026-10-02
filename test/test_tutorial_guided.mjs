@@ -238,6 +238,7 @@ const stepId = (h) => (h.T.tut.model ? h.T.tut.model.id : null);
     const prof = T.getProfile();
     const goal = T.menus.bestNextPurchase();
     assert.ok(goal && prof.gold >= goal.cost, 'something affordable');
+    prof.gold = goal.cost;   // the purchase leaves nothing else affordable: the step must still complete
     const before = prof.gold;
     card(goal.name).click(); h.pump(6);   // the shop re-render queues its own frames
     assert.ok(prof.gold < before, 'the purchase was made');

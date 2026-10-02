@@ -9187,14 +9187,17 @@ function tutRects(targets) {
   }
   return out;
 }
-// The on-screen controls the panel must not sit on.
+// The on-screen controls the panel must not sit on: the pads and key bar,
+// and the shop's pager.
 function tutAvoid() {
   if (!touchLayer || typeof touchLayer.querySelectorAll !== 'function') return [];
   const out = [];
-  for (const b of touchLayer.querySelectorAll('button')) {
-    const r = b.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) out.push(r);
-  }
+  const add = (el) => {
+    const r = el && el.getBoundingClientRect();
+    if (r && r.width > 0 && r.height > 0) out.push(r);
+  };
+  for (const b of touchLayer.querySelectorAll('button')) add(b);
+  if (state.mode === 'menu') for (const id of ['shop-prev', 'shop-next', 'shop-ind']) add(document.getElementById(id));
   return out;
 }
 
@@ -9290,6 +9293,9 @@ function tutHintScan() {
 // The menu steps: what belongs on this screen, and has it been done?
 function tutMenuModel(realDt, nowMs) {
   const screen = tutScreen();
+  // The shop step is done when the bank went down: something was bought.
+  // (Checked first: the purchase may leave nothing else affordable.)
+  if (tut.menuId === 'shop_buy' && screen === 'shop' && profile.gold < tut.shopGold) tutMark(LEDGER.shopBuy);
   const step = menuStepFor(screen, tutSeen, { canBuy: !!tutShopGoal() });
   if (!step) { tut.menuId = null; return null; }
   if (tut.menuId !== step.id) {
@@ -9297,8 +9303,6 @@ function tutMenuModel(realDt, nowMs) {
     tut.shopGold = profile.gold;
   }
   if (tut.menuSkipArmT > 0) tut.menuSkipArmT = Math.max(0, tut.menuSkipArmT - realDt);
-  // The shop step is done when the bank went down: something was bought.
-  if (step.id === 'shop_buy' && profile.gold < tut.shopGold) { tutMark(LEDGER.shopBuy); return null; }
   return { id: 'menu:' + step.id, text: step.text(), targets: step.targets, button: null,
     skip: tut.menuSkipArmT > 0 ? 'TAP AGAIN TO SKIP' : 'SKIP TUTORIAL', shownMs: tut.menuShownMs };
 }
