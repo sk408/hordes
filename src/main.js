@@ -1,11 +1,11 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
-  CONFIG as C, UPGRADES,
+  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS,
   DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
-  volleyProjectileCap, midBossHp,
+  volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
 } from './config.js';
-import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
 
 // ---------- M3 (audit 2026-09-16): ground-item overflow caps ----------
 // The three ground arrays were unbounded (10k corpses -> 10k gems, three
@@ -42,7 +42,7 @@ function pushItemDrop(d) {
 }
 import { Renderer, prologueSkipRect } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
-import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
+import { useSkill, usePotion, potionHeal, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
   rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
   decideEquip, flashTargets, shouldFlashDrop, describeFlash,
@@ -158,6 +158,7 @@ import {
   loadProfileResult, saveProfile, makeProfile,
   GOLD_TIER, purseTier, purseValue, RUN_GOLD,
   SHOP_UPGRADES, SHOP_BY_ID, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
+  defaultLoadout, effectiveLoadout,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
   applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   // G19 slice 1: the per-character upgrade layer — the table, the buy path,
@@ -1069,6 +1070,13 @@ const bootResult = loadProfileResult();
 let profile = bootResult.profile;
 let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'future-version')
   ? bootResult.notice : null;
+// One-time notice (banner ledger): the v11 shop rebuild refunded this
+// profile's upgrades. Shown on the title until the session ends.
+if (!saveNotice && profile.shopRefund && profile.shopRefund.gold > 0 &&
+    markBannerSeen(profile, 'shop_refund_v11')) {
+  saveNotice = 'THE SHOP WAS REBUILT — every upgrade you owned was refunded: +' +
+    profile.shopRefund.gold + ' GOLD. Weapons and characters are still yours.';
+}
 
 // ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
 // "Have we timestamped last played for our auto saves yet? ... so we can
@@ -1489,7 +1497,7 @@ function runController(p, dt, am) {
       // Sun Lane synergy (JAVELIN+VOLLEY): every shot pierces one more body.
       else if (syn('volleyPierce')) pr.pierce = (pr.pierce || 0) + syn('volleyPierce');
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
-      if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
+      if (syn('orbitVolley')) { pr.orbit = { t: 0, dur: 0.2, ang: a }; pr.pierce = (pr.pierce || 0) + 1; }
       state.projectiles.push(pr);
       // Muzzle particle dot at the barrel (animation pass).
       state.effects.push({
@@ -1540,20 +1548,9 @@ function pickSpawnType(wave) {
 // duplicated here and in chests.js with a "both must move" comment; both
 // delegate to entities.applyEscalation now (signature: (state, enemy, t)).
 //
-// RUN-STRUCTURE: the LADDER is the run's escalation authority. entities.
-// applyEscalation applies the SHIPPED curves (exact through LADDER.KNEE_TICK,
-// i.e. through 4:00 — which is where every early-death measurement lives — and
-// explosive after: ~1e9x hp by 30:00). This wrapper re-bases its result onto
-// the ladder. Inside the knee both ratios are exactly 1, so nothing the early
-// game sees moves at all.
+// The ladder curves are applied inside entities.applyEscalation.
 function escalate(e, t = state.time) {
-  applyEscalation(state, e, t);
-  const w = Math.floor(t / 30);
-  const hr = ladderHp(w) / hpScale(w);
-  const xr = ladderXp(w) / xpScale(w);
-  if (hr !== 1) { e.hp *= hr; e.maxHp = e.hp; }
-  if (xr !== 1) e.xp *= xr;
-  return e;
+  return applyEscalation(state, e, t);
 }
 
 // G20C: the ONE implementation of the stage stamp. Stage stat mods stamp LAST,
@@ -1597,7 +1594,7 @@ function stampHeavy(e) {
   // the tier factor itself (same 1.5^P as the stamp above). Chest eligibility
   // still reads the heavy body (preStageMaxHp, recorded prestige-invariant by
   // the stamp that follows at the call sites) — drops come from strong bodies.
-  e.hp = e.maxHp = midBossHp(Math.max(1, state.wave.num - 1), wTick) *
+  e.hp = e.maxHp = C.ENEMY.BASE_HP * ladderHp(wTick) * C.E2.HEAVY_HP_MULT *
     heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));
   e.xp = C.ENEMY.BASE_XP * ladderXp(wTick) * C.E2.HEAVY_XP_KILLS;
   e.purseTier = 'HEAVY';
@@ -1635,15 +1632,15 @@ function spawnWave(dt) {
   // G20a: a stage spawnMult < 1 slows the same clock (guarded — the default
   // stage divides by exactly 1.0, byte-identical to today).
   const sm = stageMods(state.stage);
-  const interval = Math.max(0.25,
-    (C.ENEMY.SPAWN_INTERVAL - state.time * 0.008) /
+  const interval = Math.max(0.25, spawnInterval(state.time) /
     (heatMultipliers(heatOf(state)).spawnRate * (sm.spawnMult || 1)));
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
   // RUN-STRUCTURE: ladderGroups is the shipped formula through 4:00 and a
   // bounded ramp after (the shipped formula reached 37 groups/tick at 30:00).
-  const groups = ladderGroups(state.time);
+  const gf = ladderGroups(state.time);
+  const groups = Math.floor(gf) + (Math.random() < gf % 1 ? 1 : 0);
   // ELITE SURGE beat (ladderBeats): on a surge wave the spawn-time elite
   // chance gets the ladder's ceiling for that wave, so a long run keeps
   // producing events instead of only more bodies.
@@ -2444,24 +2441,43 @@ function purseClamp(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(PURSE_MAX, Math.max(0, Math.floor(n))) : 0;
 }
-function purseCredit(e) {
-  // W7b RARE Gilded Palm: +30% purse gold per kill per pick, compounding. The
-  // multiplier lives on the run's stats (1 = the shipped payout bit-for-bit,
-  // CHAFF's 0 included), so the wallet keeps ONE writer and every consumer
-  // (HUD, ledger, settle) reads the same number.
-  // PRESTIGE GOLD (owner spec: gold income x2^P, all sources, same seam).
-  // The tier factor rides this one per-kill writer — every tier-weighted drop
-  // scales, and settlement banks the remainder WITHOUT re-multiplying (it was
-  // already scaled here).
-  const mult = (state.player && state.player.stats.purseKillMult) || 1;
-  const v = Math.round(purseValue(e) * mult * prestigeGoldMult(getPrestige(profile)));
-  const tier = purseTier(e);
-  profile.runPurse = purseClamp(profile.runPurse + v);
+// Add run income to the purse. Fractions carry over, so small payouts add up.
+function purseAdd(amount) {
   const g = state.runCounts.gold;
+  g.carry = (g.carry || 0) + amount;
+  const v = Math.floor(g.carry);
+  if (v <= 0) return 0;
+  g.carry -= v;
+  profile.runPurse = purseClamp(profile.runPurse + v);
   g.earned += v;
-  g.kills[tier] = (g.kills[tier] || 0) + 1;
   state.runPurse = profile.runPurse;
   return v;
+}
+// Everything that scales run income: Greed (stats.goldMult), Gilded Palm
+// (stats.purseKillMult) and the prestige tier.
+function purseIncomeMult() {
+  const st = (state.player && state.player.stats) || {};
+  return (st.goldMult || 1) * (st.purseKillMult || 1) * prestigeGoldMult(getPrestige(profile));
+}
+// One kill's gold. Ordinary kills pay less as the run's kill count climbs
+// (RUN_GOLD.KILL_SOFTCAP); bosses and heralds always pay in full.
+function purseCredit(e) {
+  const tier = purseTier(e);
+  const soft = e.boss ? 1 : 1 / (1 + ((state.player && state.player.kills) || 0) / RUN_GOLD.KILL_SOFTCAP);
+  const g = state.runCounts.gold;
+  g.kills[tier] = (g.kills[tier] || 0) + 1;
+  return purseAdd(purseValue(e) * soft * purseIncomeMult());
+}
+// The survival bonus: every SURVIVAL_EVERY seconds survived pays
+// SURVIVAL_BASE + SURVIVAL_STEP x (the tick's number), so longer runs pay more
+// per tick.
+function purseSurvivalTicks() {
+  const due = Math.floor(state.time / RUN_GOLD.SURVIVAL_EVERY);
+  while ((state.survivalTicks || 0) < due) {
+    state.survivalTicks = (state.survivalTicks || 0) + 1;
+    const v = purseAdd((RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP * state.survivalTicks) * purseIncomeMult());
+    state.runCounts.gold.survival = (state.runCounts.gold.survival || 0) + v;
+  }
 }
 // Debit the purse if it covers `amount`. Returns true on payment. The spend
 // saves immediately (shrine / paid-chest precedent) so a reload never
@@ -2772,7 +2788,7 @@ function spawnBoss() {
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
     boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
     boss.speed *= B.SPEED_MULT * desc.speedMult;
-    boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
+    boss.contactDamageMult = B.CONTACT_MULT * (desc.contactDamageMult || 1);
     boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
     boss.bossId = desc.id;          // decideBossAction dispatch key
@@ -3410,8 +3426,15 @@ function update(dt) {
       pr.x = pc.x + Math.cos(ang) * 26;
       pr.y = pc.y + Math.sin(ang) * 26;
       if (pr.orbit.t >= pr.orbit.dur) {
-        pr.x = pc.x + Math.cos(pr.orbit.ang) * 26;   // release along the aim
-        pr.y = pc.y + Math.sin(pr.orbit.ang) * 26;
+        // Release from the orbit, re-aimed at whatever is nearest NOW: the
+        // loop must not cost the shot its target.
+        let ra = pr.orbit.ang;
+        const tgt = nearestFoe(pc.x, pc.y);
+        if (tgt) ra = Math.atan2(tgt.y - pc.y, tgt.x - pc.x);
+        const sp = Math.hypot(pr.vx, pr.vy);
+        pr.vx = Math.cos(ra) * sp; pr.vy = Math.sin(ra) * sp;
+        pr.x = pc.x + Math.cos(ra) * 26;
+        pr.y = pc.y + Math.sin(ra) * 26;
         pr.orbit = null;
       }
     } else {
@@ -4310,7 +4333,7 @@ function update(dt) {
       // here at the ONE kill-XP site alongside the Scholar/SUNNY/rampage
       // multipliers. At manual 0 it is exactly 1, so a non-heat run's income
       // is byte-identical to before.
-      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
+      p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       while (p.xp >= p.xpNext) { levelUp(); }
@@ -4373,7 +4396,7 @@ function levelUp() {
   const p = state.player;
   p.xp -= p.xpNext;
   p.level++;
-  p.xpNext = Math.floor(p.xpNext * C.XP_LEVEL_GROWTH);
+  p.xpNext = xpForLevel(p.level);
   // SURVIVAL-GAP: the run's EHP axis. Enemy contact threat climbs all run
   // (sub-linearly now, see CONFIG.SURVIVAL) and the shop's pool grows only
   // additively, so the player's bar had no way to answer the late ladder. Max
@@ -4596,9 +4619,12 @@ function openDraft() {
   // or a dev session with AUTO off draws the byte-identical full pool even if
   // the ban prefs somehow persisted. The cards' own logic (ONE OF EACH's rule
   // behaviour included) is untouched; this only narrows the OFFER POOL.
-  const drawPool = (dev && dev.autoplay === true && dev.draftBan && dev.draftBanIds.length)
-    ? pool.filter(c => !dev.draftBanIds.includes(c.id))
+  const unbanished = (state.draftBanned && state.draftBanned.size)
+    ? pool.filter(c => !state.draftBanned.has(draftBanKey(c)))
     : pool;
+  const drawPool = (dev && dev.autoplay === true && dev.draftBan && dev.draftBanIds.length)
+    ? unbanished.filter(c => !dev.draftBanIds.includes(c.id))
+    : unbanished;
   // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a
   // dead pick (a fake choice) — relabel it to what it actually does.
   if (volleyAtProjCap()) {
@@ -4685,6 +4711,7 @@ function openDraft() {
     // HELP MODE: a tap on a draft card explains it and picks NOTHING.
     el.onclick = () => {
       if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || ''), el); return; }
+      if (draftBanishArmed) { draftBanish(u); return; }
       activateDraftCard(u);
     };
     ovCards.appendChild(el);
@@ -4722,9 +4749,129 @@ function openDraft() {
       text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
+  renderDraftActions();
   // G30: every presented draft re-arms the AUTO countdown (the coach above
   // suspends it until dismissed — tickDraftAutoPick).
   armDraftAutoPick(choices);
+}
+
+// ---------- DRAFT ACTIONS: REROLL / SKIP / BANISH -----------------------------
+// Three extra moves on the level-up draft, each spending a per-run charge
+// bought in the shop (rows reroll / skip / banish):
+//   REROLL [R]  draw a fresh set of cards for this draft.
+//   SKIP   [S]  take no card; heal DRAFT_ACTIONS.SKIP_HEAL_FRAC of max HP.
+//   BANISH [B]  arm, then choose a card: it leaves this run's drafts for good
+//               and the offer is redrawn. A weapon's level-up cards are
+//               banished as one line. B again (or ESC) disarms.
+// The buttons sit under the cards and only appear when the run has, or the
+// profile owns, at least one charge. The AUTO auto-pick never spends a charge.
+let draftActionsEl = null;
+let draftBanishArmed = false;
+
+function draftBanKey(u) {
+  const id = String(u && u.id);
+  return id.startsWith('lvl_') ? id.replace(/_\d+$/, '') : id;
+}
+
+function clearDraftActions() {
+  draftBanishArmed = false;
+  if (draftActionsEl) {
+    if (draftActionsEl.remove) draftActionsEl.remove();
+    else if (draftActionsEl.parentNode) draftActionsEl.parentNode.removeChild(draftActionsEl);
+    draftActionsEl = null;
+  }
+}
+
+function renderDraftActions() {
+  const armed = draftBanishArmed;
+  clearDraftActions();
+  draftBanishArmed = armed;
+  const ch = state.draftCharges || { reroll: 0, skip: 0, banish: 0 };
+  const st = state.player.stats;
+  const owned = (st.draftRerolls || 0) + (st.draftSkips || 0) + (st.draftBanishes || 0);
+  if (state.mode !== 'draft' || (owned + ch.reroll + ch.skip + ch.banish) <= 0) { draftBanishArmed = false; return; }
+  draftActionsEl = document.createElement('div');
+  draftActionsEl.id = 'draft-actions';
+  const btn = (kind, label, key, n, on, fn, tip) => {
+    const b = document.createElement('div');
+    b.className = 'dact' + (n > 0 ? '' : ' dim') + (on ? ' armed' : '');
+    b._draftAction = kind;
+    b.textContent = label + ' [' + key + '] x' + n;
+    b.onclick = () => {
+      if (state.helpMode) { showHelpTip(tip, b); return; }
+      fn();
+    };
+    draftActionsEl.appendChild(b);
+  };
+  btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — draw a fresh set of cards for this draft.');
+  btn('skip', 'SKIP', 'S', ch.skip, false, draftSkip,
+    '<b>SKIP</b> — take no card and heal ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '% of max HP.');
+  btn('banish', draftBanishArmed ? 'BANISH: PICK A CARD' : 'BANISH', 'B', ch.banish, draftBanishArmed, draftBanishToggle,
+    '<b>BANISH</b> — then choose a card: it never appears again this run.');
+  overlay.appendChild(draftActionsEl);
+}
+
+function draftReroll() {
+  const ch = state.draftCharges;
+  if (state.mode !== 'draft' || !ch || ch.reroll <= 0) return false;
+  ch.reroll--;
+  draftBanishArmed = false;
+  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'reroll';
+  audio.playSfx('button');
+  openDraft();
+  return true;
+}
+
+function draftSkip() {
+  const ch = state.draftCharges;
+  if (state.mode !== 'draft' || !ch || ch.skip <= 0) return false;
+  ch.skip--;
+  const p = state.player;
+  p.hp = Math.min(p.stats.maxHp, p.hp + DRAFT_ACTIONS.SKIP_HEAL_FRAC * p.stats.maxHp);
+  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'skip';
+  audio.playSfx('button');
+  toast('DRAFT SKIPPED - HEALED ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '%');
+  closeDraft(null);
+  return true;
+}
+
+function draftBanishToggle() {
+  const ch = state.draftCharges;
+  if (state.mode !== 'draft' || !ch || ch.banish <= 0) return false;
+  draftBanishArmed = !draftBanishArmed;
+  renderDraftActions();
+  return true;
+}
+
+function draftBanish(u) {
+  const ch = state.draftCharges;
+  if (state.mode !== 'draft' || !u || !ch || ch.banish <= 0) return false;
+  ch.banish--;
+  draftBanishArmed = false;
+  state.draftBanned.add(draftBanKey(u));
+  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'banish:' + u.id;
+  audio.playSfx('button');
+  toast('BANISHED - ' + String(u.name).toUpperCase());
+  openDraft();
+  return true;
+}
+
+// The draft is resolved (a card was taken, or it was skipped with u = null):
+// open the next queued draft, or hand the screen back to the run.
+function closeDraft(u) {
+  state.pendingDrafts--;
+  clearDraftActions();
+  if (state.pendingDrafts > 0) { openDraft(); return; }
+  draftFocus = -1;
+  // The pick ceremony is presentation only: the resolved cards stay up over
+  // the live game for DRAFT_CEREMONY_S, then the frame loop drops the overlay.
+  if (u && draftCeremonyEnabled()) {
+    startDraftCeremony(u);
+  } else {
+    overlay.style.display = 'none';
+  }
+  state.mode = 'playing';
+  clearDraftAutoPick();
 }
 
 // ---------- DRAFT CARD ACTIVATION: ONE ACTIVATION TAKES THE CARD ------------
@@ -4764,6 +4911,7 @@ function draftFocusStep(d) {
 // offer. There is no first-activation branch to make — see the directive above.
 function activateDraftCard(u) {
   if (!u) return;
+  if (draftBanishArmed && state.mode === 'draft') { draftBanish(u); return; }
   // CEREMONY GUARD: after pick() resolves a draft the overlay can stay up
   // briefly for the ceremony while the sim already runs underneath. The
   // still-visible cards keep their onclick, so a second tap in that window
@@ -4838,7 +4986,7 @@ function pick(u) {
     // TIER-2(d): the listed effect here is "+20% weapon damage" — the parallel
     // multiplier scales the LISTED number (x1.5 -> +30%), mult 1 is the
     // byte-identical 1.2 literal path (1 + 0.2 * 1 === 1.2, pinned).
-    p.stats.damage *= parallelEffectMult(u.parallel) === 1 ? 1.2 : 1 + 0.2 * parallelEffectMult(u.parallel);
+    p.stats.damage += 0.2 * parallelEffectMult(u.parallel) * runBase(p).damage;
   } else if (u.id === 'speed' || u.id === 'rate') {
     const n = (p.draftCounts = p.draftCounts || {});
     n[u.id] = (n[u.id] || 0) + 1;
@@ -4872,7 +5020,7 @@ function pick(u) {
         // deliberately UNSCALED by any parallel (ONE OF EACH behavior is
         // identical with or without a stamp).
         const lvAtOffer = Number(u.id.split('_').pop());
-        if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage *= 1.10;
+        if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage += 0.10 * runBase(p).damage;
         else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
       } else if (u.id.startsWith('wpn_')) {
         const granted = state.weapons[state.weapons.length - 1];
@@ -4891,31 +5039,13 @@ function pick(u) {
   } else if (u.parallel === 'blessed') {
     toast('BLESSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.blessed.blurb, PARALLELS.blessed.tell);
   }
-  state.pendingDrafts--;
-  // SLICE 9: the taken pick lands on the latest still-open draft record (a
-  // chained re-draft opens its own record above, so each draft keeps its own
-  // offered-vs-taken pair).
+  // SLICE 9: the taken pick lands on the latest still-open draft record.
   if (dev) {
     for (let i = dev.drafts.length - 1; i >= 0; i--) {
       if (dev.drafts[i].taken == null) { dev.drafts[i].taken = u.id; break; }
     }
   }
-  if (state.pendingDrafts > 0) { openDraft(); return; }
-  draftFocus = -1;
-  // DRAFT PICK CEREMONY: the PICK is unchanged and lands THIS call — mode
-  // flips now, so a MANUAL tap resumes with zero added latency and the
-  // G30 auto-pick timing/count contracts are untouched. The ceremony is pure
-  // presentation: the resolved cards stay up over the LIVE game for
-  // DRAFT_CEREMONY_S (the chosen card lifts, the others disintegrate), then
-  // the frame loop tears the overlay down. Reduced motion: no ceremony at
-  // all — the overlay drops exactly as it did before the feature.
-  if (draftCeremonyEnabled()) {
-    startDraftCeremony(u);
-  } else {
-    overlay.style.display = 'none';
-  }
-  state.mode = 'playing';
-  clearDraftAutoPick();   // G30: the draft resolved — no timer may outlive it
+  closeDraft(u);
 }
 
 // ---------- G30 AUTO DRAFT AUTO-PICK (owner 2026-09-16) -----------------------
@@ -5611,14 +5741,9 @@ function recordRunAchievements(gold) {
 }
 
 function settleRunGold({ winBonus = 0 } = {}) {
-  // S1 (audit 2026-09-16): settlement is RUN-ONCE. The maw milestone settles
-  // mid-run and the run CONTINUES — every later ending (runSurvived / die /
-  // endRun) used to settle AGAIN, paying RUN_GOLD.AWARD twice, re-paying
-  // FIRST_CLEAR, and folding the FULL run summary into lifetime totals a
-  // second time (achievements.js recordRun bumps are read-then-add). A second
-  // call now returns the first settlement's numbers unchanged. (The purse
-  // zeroing below guards a DIFFERENT trap — the double-BANK of the remainder —
-  // and stays.) Cleared in startRun.
+  // Settlement is run-once: the first run end banks everything the run earned
+  // (award, purse, win and milestone bonuses); a second call returns the same
+  // numbers. Cleared in startRun.
   if (state.runSettled) return state.runSettled;
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
@@ -5660,9 +5785,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // scaled it at kill time — re-multiplying here would pay it twice).
   const pGold = prestigeGoldMult(getPrestige(profile));
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
-  const award = Math.round(RUN_GOLD.AWARD * mult * pGold) + (firstClear ? Math.round(RUN_GOLD.FIRST_CLEAR * pGold) : 0);
+  const recordBonus = !firstClear ? 0 : (profile.bestTime || 0) > 0 ? RUN_GOLD.NEW_BEST : RUN_GOLD.FIRST_CLEAR;
+  const award = Math.round(RUN_GOLD.AWARD * mult * pGold) + Math.round(recordBonus * pGold);
   const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
-  winBonus = Math.round(winBonus * nightFactor * pGold);
+  winBonus = Math.round((winBonus + (state.milestoneBonus || 0)) * nightFactor * pGold);
   const gold = award + purseBanked + winBonus;
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
@@ -5827,6 +5953,7 @@ function checkRunLimit() {
     lastPurseFlush = state.time;
     persistProfile();
   }
+  purseSurvivalTicks();
   const mins = Math.floor(state.time / 60);
   if (mins > state.lastMinute) {
     state.lastMinute = mins;
@@ -6118,7 +6245,7 @@ function manualRowsControls() {
     // IN-RUN REFERENCE ACCESS + POTION ICONS (owner 2026-09-16: the rows must
     // use the word "potion" and say what each one restores — one row each, the
     // key named, so both name sets stay one-glyph-one-meaning) ...
-    refRow('health potion — restores a carried charge: +' + C.POTIONS.HP_HEAL + ' HP', 'H') +
+    refRow('health potion — restores a carried charge: +' + Math.round(C.POTIONS.HP_HEAL_FRAC * 100) + '% of max HP', 'H') +
     refRow('mana potion — restores a carried charge: +' + C.POTIONS.MP_RESTORE + ' MP', 'N') +
     // ... and every authored cog-row button is named here, so the canonical
     // list (test_ref_access, harvested from the touch layer's own buttons)
@@ -6222,9 +6349,9 @@ function manualGoto(page) {
       ' rarer in dense swarms) — picked up automatically in pickup range,' +
       ' LEFT ON THE GROUND at your cap (' + C.POTIONS.MAX_CARRIED + ' of each).' +
       '<br>a run starts with ' + C.POTIONS.START + ' of each; Travel Pack (shop) adds more.' +
-      '<br>HEALTH potion: +' + C.POTIONS.HP_HEAL + ' HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
+      '<br>HEALTH potion: +' + Math.round(C.POTIONS.HP_HEAL_FRAC * 100) + '% of max HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
       ' &middot; never spent at full.' +
-      '<br>AUTO pilot drinks for you: HP under a potion\'s heal (' + C.POTIONS.HP_HEAL + ' + bonuses)' +
+      '<br>AUTO pilot drinks for you: HP at ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) + '% of max or less' +
       ', MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
       '<br>boss curse: while the wave boss lives, health potions heal HALF.' +
       // STARTING ARENA IMPROVE (2026-09-17): the arena itself explained —
@@ -7237,14 +7364,14 @@ function loadoutSlotCap() {
 
 function toggleLoadoutWeapon(id) {
   if (!loadoutChoices().includes(id)) return;
-  const cur = new Set(profile.loadout || []);
+  const cur = new Set(effectiveLoadout(profile, loadoutSlotCap()));
   if (cur.has(id)) cur.delete(id);
   else {
     if (cur.size >= loadoutSlotCap()) return;   // slot cap: the card reads DIM
     cur.add(id);
   }
-  // An empty selection is "no choice" (the default kit), never a zero-weapon
-  // run — the save layer stores the same null either way.
+  // An empty selection is "no choice" (every owned weapon that fits), never a
+  // zero-weapon run — the save layer stores the same null either way.
   profile.loadout = cur.size ? [...cur] : null;
   persistProfile();
   showLoadout();
@@ -7254,9 +7381,9 @@ function showLoadout() {
   openMenu('loadout');
   ovTitle.textContent = 'LOADOUT';
   ovTitle.className = '';
-  const sel = new Set(profile.loadout || []);
   const cap = loadoutSlotCap();
-  ovSub.textContent = (profile.loadout ? sel.size + '/' + cap + ' chosen' : 'default kit')
+  const sel = new Set(effectiveLoadout(profile, cap));
+  ovSub.textContent = (profile.loadout ? sel.size + '/' + cap + ' chosen' : 'auto: every owned weapon that fits')
     + ' · the weapons the next run brings';
   for (const id of loadoutChoices()) {
     const on = sel.has(id);
@@ -7284,7 +7411,7 @@ function showLoadout() {
       else el.appendChild(artCv);
     }
   }
-  menuCard('DEFAULT KIT', 'clear the choice — runs use the character kit', () => {
+  menuCard('AUTO', 'clear the choice — runs bring every owned weapon that fits', () => {
     profile.loadout = null;
     persistProfile();
     showLoadout();
@@ -7292,17 +7419,14 @@ function showLoadout() {
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
-// The run's kit from the stored choice, validated against the LIVE unlock set
-// and the run's slot count (never the menu's own bookkeeping): this is what
-// startRun arms. null = no choice was made (the zero-penalty default).
+// The run's kit, validated against the LIVE unlock set and the run's slot
+// count: the stored choice, or (no choice) every owned weapon that fits.
+// null = nothing owned to bring.
 function chosenLoadout() {
   // state.weaponSlots is stamped by startRun just before this runs; the
-  // startWeaponSlots fallback makes a PRE-run call (the __TEST seam) agree
-  // with the standard-slot run it describes.
-  const cap = ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1;
-  const list = (profile.loadout || [])
-    .filter(t => WEAPON_TYPES[t] && weaponUnlocked(profile, t))
-    .slice(0, Math.max(0, cap));
+  // startWeaponSlots fallback covers a pre-run call.
+  const cap = Math.max(0, ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1);
+  const list = effectiveLoadout(profile, cap).filter(t => WEAPON_TYPES[t]);
   return list.length ? list : null;
 }
 
@@ -7887,14 +8011,14 @@ function showShop() {
         // buy (buyUpgrade -> equipBoughtWeapon), and the displacement (if the
         // loadout was full) is diffed from these two reads so the line the
         // player sees can NAME both halves. A swap must never be silent.
-        const kitBefore = profile.loadout ? [...profile.loadout] : null;
+        const kitBefore = effectiveLoadout(profile, loadoutSlotCap());
         if (buyUpgrade(profile, def.id)) {
           persistProfile();
           showShop();
           if (def.kind === 'weapon') {
-            const now = profile.loadout || [];
-            const added = now.find(w => !kitBefore || !kitBefore.includes(w));
-            const benched = kitBefore ? kitBefore.find(w => !now.includes(w)) : null;
+            const now = effectiveLoadout(profile, loadoutSlotCap());
+            const added = now.find(w => !kitBefore.includes(w));
+            const benched = kitBefore.find(w => !now.includes(w));
             if (added != null) {
               toast(benched != null
                 ? 'EQUIPPED ' + WEAPON_NAMES[added] + ' / BENCHED ' + WEAPON_NAMES[benched] + ' — see LOADOUT'
@@ -8695,6 +8819,7 @@ function startRun() {
   // SURVIVAL-GAP: the pool this run levels up FROM (CONFIG.SURVIVAL.HP_PER_LEVEL
   // is linear in it), stamped before any in-run change.
   state.baseMaxHp = p.stats.maxHp;
+  p.base = { damage: p.stats.damage, maxHp: p.stats.maxHp };
   p.hp = p.stats.maxHp;                          // mods changed maxHp
   // G11 CHALLENGE MODES — THE ONE APPLICATION SEAM. The session's pending mode
   // is stamped onto the run, its rules become the two run-scoped ceilings, and
@@ -8751,6 +8876,8 @@ function startRun() {
   // RUN-STRUCTURE run-scoped reset: the run clock, the win flag, and the maw
   // milestone all restart with the run.
   state.runWon = false;
+  state.survivalTicks = 0;
+  state.milestoneBonus = 0;
   state.lastMinute = 0;
   state.finalCall = false;
   state.mawCleared = false;
@@ -8888,21 +9015,8 @@ function startRun() {
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
   state.weapons.push(makeWeapon('VOLLEY'));
-  // G26 PRE-RUN LOADOUT: a stored choice (chosenLoadout — validated against
-  // the LIVE unlock set and this run's slot count, never the menu's own
-  // bookkeeping) IS the kit. With NO choice the run arms exactly the starting
-  // kit a fresh account has today (the zero-penalty contract): the character's
-  // starting weapon when unlocked, nothing else. openDraft offers no wpn_*
-  // grants, so what starts here is what the whole run carries.
-  const loadout = chosenLoadout();
-  if (loadout) {
-    for (const t of loadout) state.weapons.push(makeWeapon(t));
-  } else if (ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)) {
-    // WAVE-11: character starting weapons ride the SAME unlock gate as the
-    // loadout (meta.js retroactively reset old saves to the starter set, so
-    // a WITCH save that never bought ZAP must not spawn with it).
-    state.weapons.push(makeWeapon(ch.startingWeapon));
-  }
+  // The kit: the stored loadout choice, or every owned weapon that fits.
+  for (const t of chosenLoadout() || []) state.weapons.push(makeWeapon(t));
   // Starting Artifact shop line: free random weapon levels at run start.
   for (let i = 0; i < (p.stats.artifactLevels || 0); i++) {
     const cands = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
@@ -8951,6 +9065,9 @@ function startRun() {
   // seeds per run — so the gate is run-seeded by construction. Run-scoped:
   // rerolled every startRun, and the revive spend resets with the run.
   state.chasePool = {};
+  // Draft actions: this run's charges and the cards banished from its drafts.
+  state.draftCharges = { reroll: p.stats.draftRerolls || 0, skip: p.stats.draftSkips || 0, banish: p.stats.draftBanishes || 0 };
+  state.draftBanned = new Set();
   if (DRAFT_LADDER_ON) {
     // W7b TWO-STAGE chase gate (owner 2026-09-14): one 10% EVENT roll ("this run
     // has a joker"), then a 60/25/15 count roll, then a uniform draw of WHICH
@@ -10045,10 +10162,10 @@ function drinkHealthPotion(state) {
   const p2 = state.player;
   const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
   const before = p2.hp;
-  if (!usePotion(state, 'hp')) return false;    // base C.POTIONS.HP_HEAL
+  if (!usePotion(state, 'hp')) return false;    // heals potionHeal(p)
   let healed = p2.hp - before;
   if (healed > 0) {
-    const bonus = Math.min(C.POTIONS.HP_HEAL * (healMult - 1),
+    const bonus = Math.min(potionHeal(p2) * (healMult - 1),
       p2.stats.maxHp - p2.hp);
     if (bonus > 0) p2.hp += bonus;
     healed = p2.hp - before;
@@ -10082,16 +10199,9 @@ function drinkManaPotion(state) {
 // Contract (CONFIG.AUTOPILOT.AUTO_DRINK — the knobs, with the reasoning):
 //   * AUTO only. A MANUAL player keeps 100% of the decision: nothing here can
 //     drink a manual player's charge.
-//   * strictly BELOW the line, never at or above it, and never with an empty
-//     count — no charge is burned at the boundary. The HP line is THE POTION'S
-//     HEAL VALUE (owner 2026-09-17, msg_01M2RE1V: "If HP drops below what a
-//     potion would heal, it should be used" — "In auto mode that is"):
-//     C.POTIONS.HP_HEAL x the SAME healMult drinkHealthPotion applies (Alchemy
-//     potionPower + choice potionHealMult), so the trigger and the drink can
-//     never disagree on what a potion is worth. The old 0.35-of-max gate sat
-//     far above any lethal dip on a big pool, so the pilot hoarded its whole
-//     stack and died rich. The MP line stays max * MP_FRACTION (+ a starved
-//     skill) — mana restores a COOLDOWN economy, not a heal.
+//   * HP: drink at or below AUTO_DRINK.HP_FRACTION of max HP (never with an
+//     empty count). Half the bar leaves room for the heal to land in full.
+//     The MP line is max * MP_FRACTION (+ a starved skill).
 //   * mana is only worth a charge when a skill is genuinely WAITING on it: off
 //     cooldown AND short of its cost (skillManaCost carries the perks). Low
 //     mana with everything on cooldown is not a reason to spend.
@@ -10110,13 +10220,7 @@ function autoDrinkPotions(state, dt) {
   const d = C.AUTOPILOT.AUTO_DRINK;
   if (!d || !d.ENABLED) return;
   const p = state.player;
-  // POTION TUNE 2026-09-17: the HP trigger is the potion's heal value — the
-  // SAME healMult the drink itself applies (Alchemy + choices), computed here
-  // from the same expression drinkHealthPotion uses, so the threshold tracks
-  // every potion-heal modifier the drink does. Nominal heal (pre boss-curse):
-  // the curse taxes the heal, not the trigger.
-  const healMult = ((p.choices && p.choices.potionHealMult) || 1) * (p.stats.potionPower || 1);
-  if (ad.hp === 0 && p.potions.hp > 0 && p.hp < C.POTIONS.HP_HEAL * healMult) {
+  if (ad.hp === 0 && p.potions.hp > 0 && p.hp <= p.stats.maxHp * d.HP_FRACTION) {
     if (drinkHealthPotion(state)) ad.hp = d.COOLDOWN;
   }
   if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {
@@ -10341,14 +10445,20 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (state.mode === 'draft') {
-    if (['1', '2', '3', '4'].includes(ev.key)) {
-      // 1-4: the W7b Full Hand mythic adds a fourth offer, and its card carries
-      // a [4] key hint — the routing must cover what the markup promises. These
-      // are the ONE-PRESS quick-pick (test_w7b_draft_ladder pins a single [4]
-      // press taking the offer), and since 2026-09-15 they match the pointer
-      // path exactly: one activation takes the card, no confirm step.
+    if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
+      // The digit keys are the one-press quick-pick, one per offered card
+      // (3 base; Deep Read and Full Hand add more). With BANISH armed the
+      // digit banishes that card instead (activateDraftCard routes it).
       const card = ovCards.children[Number(ev.key) - 1];
-      if (card && card._draftOffer) pick(card._draftOffer);
+      if (card && card._draftOffer) activateDraftCard(card._draftOffer);
+    } else if (k === 'r') {
+      draftReroll();
+    } else if (k === 's') {
+      draftSkip();
+    } else if (k === 'b') {
+      draftBanishToggle();
+    } else if (k === 'escape' && draftBanishArmed) {
+      draftBanishToggle();
     } else if (k === 'arrowleft' || k === 'arrowup' || (k === 'tab' && ev.shiftKey)) {
       if (ev.preventDefault) ev.preventDefault();
       draftFocusStep(-1);
@@ -12269,16 +12379,18 @@ function mawDefeated() {
   profile.milestones = { ...(profile.milestones || {}), mawSlain: true };
   toast('THE MAW IS SLAIN — ' + C.RUN.MAW_UNLOCK + ' UNLOCKED');
   toast(first ? 'A NEW DIFFICULTY TIER IS YOURS' : 'THE MAW FALLS AGAIN');
-  // The milestone pays on top of the run's ordinary account.
+  // The milestone bonus joins the run's account and is banked, with the
+  // purse, when the run ends (settleRunGold). The unlock itself saves now.
   const bonus = C.RUN.MAW_CLEAR_BONUS || 0;
-  const { gold } = settleRunGold({ winBonus: bonus });
+  state.milestoneBonus = (state.milestoneBonus || 0) + bonus;
+  persistProfile();
   // Hand the milestone headline to the intermission (it renders the follow-on
   // cards: CONTINUE, chests, blessings) — a milestone beat should read as one.
   ovCards.innerHTML = '';
   openIntermission({
     title: 'THE MAW IS SLAIN',
     lead: `<span class="earn">MILESTONE: ${C.RUN.MAW_UNLOCK} TIER UNLOCKED` +
-      `${bonus ? ` · +${bonus} BONUS` : ''} · gold +${gold}</span>`,
+      `${bonus ? ` · +${bonus} GOLD AT RUN END` : ''}</span>`,
   });
 }
 
@@ -13048,6 +13160,14 @@ export const __TEST = {
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.
+  draftActions: {
+    reroll: draftReroll, skip: draftSkip, banish: draftBanish, toggleBanish: draftBanishToggle,
+    banKey: draftBanKey,
+    get charges() { return state.draftCharges; },
+    get banned() { return state.draftBanned; },
+    get armed() { return draftBanishArmed; },
+    get el() { return draftActionsEl; },
+  },
   draftAuto: {
     set rng(fn) { draftAutoRng = fn; },
     get count() { return draftAutoCount; },

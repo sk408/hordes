@@ -39,8 +39,8 @@
 // and the substep loop reuses the frame's own dt unchanged.
 
 export const PRESTIGE = {
-  ENEMY_BASE: 1.5,   // enemy hp AND damage scale as ENEMY_BASE^P
-  GOLD_BASE: 2,      // gold income scales as GOLD_BASE^P
+  ENEMY_BASE: 1.25,   // enemy hp AND damage scale as ENEMY_BASE^P
+  GOLD_BASE: 1.5,     // gold income scales as GOLD_BASE^P
   // The offered speed ladder (multipliers of sim speed). 1x is always live;
   // 3x/5x/7x unlock at tiers 1/2/3 (SPEED_MIN_TIER). No 2x/4x/8x rung: the
   // owner spec names exactly 3x, 5x, 7x.

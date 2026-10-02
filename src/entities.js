@@ -1,5 +1,5 @@
 // HORDES — entities: player, enemies, projectiles, gems
-import { CONFIG as C } from './config.js';
+import { CONFIG as C, ladderHp, ladderXp, ladderDmg, xpForLevel } from './config.js';
 import { heatOf, heatMultipliers } from './heat.js';
 
 export function makePlayer() {
@@ -9,7 +9,7 @@ export function makePlayer() {
     invuln: 0,
     level: 1,
     xp: 0,
-    xpNext: C.XP_LEVEL_BASE,
+    xpNext: xpForLevel(1),
     kills: 0,
     stats: {
       damage: C.WEAPON.DAMAGE,
@@ -61,32 +61,16 @@ export function makeEnemy(x, y, t) {
   };
 }
 
-// ---------- ESCALATION curves (see CONFIG.ESCALATION docs in config.js) ----
-export function hpScale(w) {
-  const E = C.ESCALATION.HP;
-  return (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
-}
-export function xpScale(w) {
-  const E = C.ESCALATION.XP;
-  return (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
-}
-export function dmgScale(w) {
-  const E = C.ESCALATION.DMG;
-  return (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
-}
+// ---------- Escalation curves: the wave ladder (config.js LADDER) -----------
+export const hpScale = ladderHp;
+export const xpScale = ladderXp;
+export const dmgScale = ladderDmg;
 
-// ---------- CONTACT DAMAGE (SURVIVAL-GAP wave) ------------------------------
-// ONE source of truth for what touching an enemy costs the player. main.js
-// calls this for every touching enemy (it takes the MAX hit of the frame, as it
-// always has, then applies the invuln window); the balance sims call the same
-// function, so the model can never be tuned against a stale copy of the combat
-// rules — see CONFIG.SURVIVAL for why the shape is what it is:
-//   raw = BASE_CONTACT * dmgMult^CONTACT_POW * typeMult * chargeMult
+// ---------- CONTACT DAMAGE ---------------------------------------------------
+// What touching an enemy costs the player (see CONFIG.SURVIVAL):
+//   raw = base * dmgMult^CONTACT_POW * typeMult * chargeMult
 //   hit = min(raw, maxHp * HIT_CAP_FRAC)
-// dmgMult is the ladder's damage curve (x9.32 by 30:00). The pow keeps the
-// threat climbing all run without letting it outrun the pool; the cap keeps any
-// single hit a FRACTION of the bar, so the wall is repeated catches again.
-// PURE: no state, no side effects.
+// dmgMult is the ladder's damage curve. PURE.
 export function contactHitDamage(base, dmgMult, typeMult, chargeMult, maxHp) {
   const S = C.SURVIVAL;
   const scaled = Math.pow(Math.max(0.05, dmgMult || 1), S.CONTACT_POW);
@@ -96,23 +80,15 @@ export function contactHitDamage(base, dmgMult, typeMult, chargeMult, maxHp) {
 }
 
 // ---------- applyEscalation (single source of truth) -----------------------
-// Re-scale a freshly-made typed enemy onto the ESCALATION curves: back out
+// Re-scale a freshly-made typed enemy onto the ladder: back out
 // enemy_types.js's linear preview multipliers (1+0.35w hp / 1+0.25w xp) and
-// apply the steeper CONFIG.ESCALATION curves instead. HEAT stacks
-// multiplicatively AFTER the wave escalation (hp only — xp/gold are never
-// heat-inflated).
-//
-// WAVE-26: this algebra used to be duplicated (main.js + chests.js) with a
-// comment on both sides saying they had to move together. It lives HERE now;
-// both callers delegate, so a curve change can never desync the two paths.
-// `t` defaults to state.time (main.js historically passed it explicitly).
+// apply the ladder curves instead. HEAT multiplies hp on top (never xp).
+// Shared by main.js and chests.js. `t` defaults to state.time.
 export function applyEscalation(state, e, t) {
   const time = (t === undefined ? (state && state.time) : t) || 0;
   const w = Math.floor(time / 30);
   const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
   const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  // OWNER enemy buff: the square is on C.ENEMY.BASE_HP (see config.js POWER), not
-  // here, so the ladder/heat multipliers keep their own linear contracts.
   const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
   e.hp = hp;
   e.maxHp = hp;

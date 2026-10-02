@@ -278,6 +278,11 @@ export function updateUlts(state, dt) {
 // kind and `undefined <= 0` is false, so the old count guard fell straight
 // through into the else (MANA) branch and silently spent a mana potion,
 // reporting success. Unknown kinds now return false with zero mutation.
+// What one health potion heals before run modifiers: a share of max HP.
+export function potionHeal(p) {
+  return C.POTIONS.HP_HEAL_FRAC * p.stats.maxHp;
+}
+
 export function usePotion(state, kind) {
   const p = state.player;
   if (kind !== 'hp' && kind !== 'mp') return false;
@@ -285,7 +290,7 @@ export function usePotion(state, kind) {
   if (kind === 'hp') {
     if (p.hp >= p.stats.maxHp) return false; // never waste a health potion at full HP
     p.potions.hp--;
-    p.hp = Math.min(p.stats.maxHp, p.hp + C.POTIONS.HP_HEAL);
+    p.hp = Math.min(p.stats.maxHp, p.hp + potionHeal(p));
   } else {
     if (p.mana >= p.stats.maxMana) return false;
     p.potions.mp--;

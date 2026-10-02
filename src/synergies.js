@@ -49,7 +49,7 @@ import { WEAPON_NAMES } from './weapons.js';
 export const SYNERGIES = [
   {
     pair: ['VOLLEY', 'ORBIT'], name: 'Orbital Volley',
-    desc: 'Shots loop one full orbit around you before screaming off down their lane.',
+    desc: 'Shots loop once around you, then scream off at the nearest foe and pierce one more body.',
     flags: { orbitVolley: true },
   },
   {

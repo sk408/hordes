@@ -30,11 +30,13 @@
 //      module stays importable under node.
 //
 // CATALOG-INJECTED BY DESIGN: this file imports nothing from the rest of the
-// game. The caller (src/meta.js) passes a catalog of the live tables
+// game except the frozen v10 price table the v11 migration refunds against. The caller (src/meta.js) passes a catalog of the live tables
 // (characters, shop rows, weapon/elite id sets), so the schema layer stays
 // testable in isolation and cannot drift from the data it validates against.
 // Node-safe: no DOM access at import time; browser APIs are touched only
 // inside the IO helpers, behind typeof guards.
+
+import { LEGACY_SHOP_V10, refundLegacyShop } from './legacy_shop_v10.js';
 
 // ---------- Schema identity ----------
 
@@ -47,7 +49,7 @@
 // run-count milestone (meta.js RUN_CHESTS) whose chest the player has
 // COLLECTED. One monotonic integer (0 = none), never a set, so once-only is
 // arithmetic. See the v10 history + migration entries.
-export const PROFILE_VERSION = 10;
+export const PROFILE_VERSION = 11;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -154,6 +156,16 @@ export const VERSION_HISTORY = [
       'moves when the pilot touches the chest (claim-at-collection, so an ' +
       'uncollected chest can never be lost). Nothing else is touched, so the ' +
       'step is lossless for every v9 save.',
+  },
+  {
+    version: 11,
+    note: 'M1 catalogue rebuild: every stat shop row was repriced, merged or ' +
+      'removed. Each owned level is refunded at its v10 price ' +
+      '(src/legacy_shop_v10.js) and the row resets to level 0; the spend ' +
+      'ledger entries of those rows are dropped. Weapon, elite and character ' +
+      'unlocks, character upgrades and the apex tier are untouched. A save that ' +
+      'was refunded carries profile.shopRefund = { version, gold, rows } so the ' +
+      'game can tell the player once.',
   },
 ];
 
@@ -310,6 +322,27 @@ const MIGRATIONS = {
   9: (p) => {
     const next = { ...p };
     if (next.milestoneChest === undefined) next.milestoneChest = 0;
+    return next;
+  },
+  // v10 -> v11: the M1 catalogue rebuild. Refund every owned stat-row level at
+  // its v10 price, reset those rows, and drop their spend-ledger entries (the
+  // refund already paid them out). Unlocks are ownership, not levels, and stay.
+  10: (p) => {
+    const next = { ...p };
+    const res = refundLegacyShop(plainObject(next.purchased) ? next.purchased : {});
+    next.purchased = res.purchased;
+    if (res.gold > 0) {
+      const g = Number(next.gold);
+      next.gold = Math.min(Number.MAX_SAFE_INTEGER, (Number.isFinite(g) ? Math.max(0, Math.floor(g)) : 0) + res.gold);
+      next.shopRefund = { version: 11, gold: res.gold, rows: res.rows };
+    }
+    if (plainObject(next.spendLedger)) {
+      const ledger = {};
+      for (const [key, arr] of Object.entries(next.spendLedger)) {
+        if (!Object.prototype.hasOwnProperty.call(LEGACY_SHOP_V10, key)) ledger[key] = arr;
+      }
+      next.spendLedger = ledger;
+    }
     return next;
   },
 };

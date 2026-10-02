@@ -49,7 +49,7 @@ export const ENEMY_TYPES = {
     chaff: true,   // E2: the wave-2 horde triples THIS swarm, not the heavies
     hpMult: 0.4, speedMult: 1.7, xpMult: 0.5, sizeMult: 0.75,
     contactDamageMult: 0.7,
-    packSize: 5,          // spawner hint: spawn this many per pop
+    packSize: 4,          // spawner hint: spawn this many per pop
     decide: chaseDecide,
     LOOK: { body: '#d9a03c', trim: '#8a5f1c', accent: '#ffe08a', shape: 'diamond', sizeMult: 0.75 },
   },
@@ -59,7 +59,7 @@ export const ENEMY_TYPES = {
     id: 'BRUTE',
     heavy: true,   // E2 (R1): mid-boss-equivalent hp from the horde wave on
     hpMult: 3.5, speedMult: 0.6, xpMult: 3.0, sizeMult: 1.8,
-    contactDamageMult: 2.5,
+    contactDamageMult: 1.8,
     decide: chaseDecide,
     LOOK: { body: '#6d4f8f', trim: '#3d2a52', accent: '#c9a6ff', shape: 'wide', sizeMult: 1.8 },
   },
@@ -141,8 +141,8 @@ export const ENEMY_TYPES = {
   COLOSSUS: {
     id: 'COLOSSUS',
     hpMult: 14.0, speedMult: 0.45, xpMult: 8.0, sizeMult: 2.6,
-    contactDamageMult: 3.0,
-    minWave: 5,                     // spawner gate
+    contactDamageMult: 1.6,
+    minWave: 10,                     // spawner gate
     shockRadius: 90,                // death AoE radius
     shockBaseDamage: 25,
     shockMaxHpFrac: 0.25,           // + 25% of colossus maxHp

@@ -30,7 +30,7 @@ export const FINAL_BOSS_WAVE = 5;
 // false. Sk408 flips BEATABLE later; the floor (and death gating) follows it.
 export const BEATABLE = false;
 export const HP_FLOOR = BEATABLE ? 0 : 1;
-export const DISPLAY_HP = 2_500_000;
+export const DISPLAY_HP = 250_000;
 
 // Attack choreography (seconds). GRACE = entrance pause before cycle 1.
 export const FINAL_BOSS_PHASES = {

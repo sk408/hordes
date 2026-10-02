@@ -69,8 +69,8 @@ export const WEAPONS = {
     NAME: 'Orbit Blade',
     SPIN: 3.2,          // rad/s blade angular speed
     RADIUS: 40,         // orbit radius around the player
-    DAMAGE_MULT: 0.8,   // scaled by p.stats.damage
-    TICK: 0.5,          // per-enemy contact damage tick cooldown (s)
+    DAMAGE_MULT: 1.2,   // scaled by p.stats.damage
+    TICK: 0.4,          // per-enemy contact damage tick cooldown (s)
     HIT_R: 9,           // blade-vs-enemy contact box (px, like main's 7 + blade 4)
   },
   BOOMERANG: {

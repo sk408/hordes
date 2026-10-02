@@ -23,51 +23,24 @@ export const CONFIG = {
   PLAYER: {
     W: 12, H: 12,
     SPEED: 60,          // px/s
-    MAX_HP: 100,
+    MAX_HP: 60,
     KITE_DIST: 55,      // preferred distance from nearest enemy (auto-mover)
     XP_PICKUP_RADIUS: 22,
   },
 
-  // ---- SURVIVAL (SURVIVAL-GAP wave) ----------------------------------------
-  // The run is 30:00 long now, and nothing could reach it: the wave-29
-  // diagnostic narrowed the wall to CONTACT DAMAGE (boss contact x0.25 let 3/3
-  // maxed runs pass 10:00; boss hp x0.25 changed nothing). The function that was
-  // wrong is this one: a hit's damage was `BASE * dmgMult * typeMult *
-  // chargeMult`, drawn straight off the ladder's damage curve, which reaches
-  // x9.32 by 30:00 — against a player pool that only grows a little (Vitality
-  // +20/level, Iron Heart +25 flat, both ADDITIVE). A wave-1 GRAVELMAW charge
-  // was 14 * 2.6 * 2.2 * 1.5 = 120 against a 100-230 HP bar, and by wave 15 the
-  // same charge was 430: one arithmetic one-shot, at every tier, no matter how
-  // many hours of shop were behind the build. That is not difficulty, it is an
-  // unwinnable curve, and it is why a maxed save died at 1:52-2:13.
-  //
-  // Two changes, both FUNCTIONAL rather than a flattened magic number:
-  //   * the ladder's damage curve is the THREAT SIGNAL, and contact damage now
-  //     responds to it SUB-LINEARLY (pow). The threat still climbs all run —
-  //     from x1.61 to x3.05 of base contact — but it can no longer outrun the
-  //     pool by construction.
-  //   * a single hit is additionally capped at HIT_CAP_FRAC of the player's
-  //     max HP, which is the design intent the wave-20 comments always stated
-  //     ("a catch costs ~half a health bar, not the whole run"): the wall is
-  //     meant to be death by repeated catches, and now it can be.
-  //   * MAX HP grows with LEVEL (HP_PER_LEVEL, linear in the run's START pool)
-  //     — the run's missing EHP axis. A fresh save levels ~20-30 times and gains
-  //     ~+30-45%; a maxed build that survives to level 40-45 gains ~+60-70%,
-  //     which is what lets a developed build answer the late ladder at all. It
-  //     is deliberately LINEAR, not compounding: levels come fast in this game
-  //     (the autopilot hits level 40+ inside 9 minutes) and a compounding rule
-  //     made even a FRESH save unkillable (measured: 1018 HP at 8:45).
-  // Early-game effect is measured, not assumed: the fresh cohort must stay in
-  // the 3-6 minute band (it was dying at 1:52).
+  // ---- SURVIVAL -------------------------------------------------------------
+  // Contact damage is a flat number against the pool:
+  //   hit = min(BASE_CONTACT * ladderDmg(tick)^CONTACT_POW * typeMult * chargeMult,
+  //             maxHp * HIT_CAP_FRAC)
+  // A fresh Knight (90 HP) dies to the third chaser hit at t=0, and every
+  // +25 HP Vitality level is about three quarters of a hit more. The cap only binds for the
+  // heaviest bodies against small pools and late in the run.
+  // Max HP also grows with level: +HP_PER_LEVEL x the run's starting pool.
   SURVIVAL: {
-    BASE_CONTACT: 196,    // 14 squared (owner enemy buff; see POWER)
-    CONTACT_POW: 0.65,    // contact damage ~ ladderDmg^0.65: the threat climbs
-                          // all run (x1.87 -> x4.02 of base contact by 30:00)
-                          // without outrunning the pool (see the measured lever
-                          // ranking: pow 1.0 leaves the fresh band at ~1:35,
-                          // pow < 0.5 makes a fresh save survive 8+ minutes)
-    HIT_CAP_FRAC: 0.5,    // a single hit never eats more than this x max HP
-    HP_PER_LEVEL: 0.015,  // level-up adds this x the run's START max HP
+    BASE_CONTACT: 32,
+    CONTACT_POW: 1,
+    HIT_CAP_FRAC: 0.6,    // a single hit never eats more than this x max HP
+    HP_PER_LEVEL: 0.01,   // level-up adds this x the run's START max HP
     MAX_DRAIN_TICKS: 2,   // TICK latches: only this many bleed at once
     // F1 (audit 2026-09-16): the ENEMY-side twin of HEAL_BUDGET — the VAMPIRIC
     // elite mod's contact heal is a throughput heal with the same two defects
@@ -111,47 +84,27 @@ export const CONFIG = {
 
   ENEMY: {
     W: 10, H: 10,
-    // OWNER (2026-09-13): "I want to buff the enemies. Square their hp, damage,
-    // and double their speed."
-    //
-    // SQUARED AT THE BASE, not on the composite value. Squaring the composite
-    // (what the player finally meets) ALSO squares every multiplier inside it,
-    // which silently rewrites OTHER systems' documented contracts: heat x2.2
-    // would become x4.84 foe hp, and the wave ladder would compound with itself
-    // (measured: the heat contract check failed with "x2.2 ... hot 696.96" =
-    // 144 * 2.2^2). Anchoring the square on the BASE constants gives every foe
-    // the square -- 12 -> 144 hp, 14 -> 196 contact -- while heat, ladder, stage
-    // and type multipliers all stay linear, exactly as their own tests pin.
-    POWER: {
-      HP_SQUARED: true,
-      DAMAGE_SQUARED: true,
-    },
-    // Doubled from 28 by the same owner change. ONE constant: both enemy
-    // constructors (makeEnemy, makeTypedEnemy) and every boss SPEED_MULT are
-    // relative to it, so this is the whole "double their speed".
     BASE_SPEED: 56,
-                         // grinders in the sim (half the cohort died to plain
-                         // chasers at ~40-60s, before any boss event spawned —
-                         // the boss ladder, not the ambience, must be the wall)
-    BASE_HP: 144,          // 12 squared (owner enemy buff; see POWER)
+    BASE_HP: 80,
     BASE_XP: 5,
-    SPAWN_INTERVAL: 1.35, // seconds between spawn waves at t=0 (scales down;
-                          // WAVE-20 tuning: 1.05 had half the cohort dead to
-                          // ambient swarm before the 60s herald — pressure
-                          // must come from DAMAGE (kept) + the boss ladder,
-                          // not from body count)
+    SPAWN_INTERVAL: 1.1,  // seconds between spawn ticks at t=0
+    SPAWN_INTERVAL_DECAY: 0.002, // seconds shaved off the interval per second of run
+    SPAWN_INTERVAL_MIN: 0.5,     // floor (reached at 5:00)
     SPAWN_DIST: 280,     // spawn ring radius around player
   },
 
   GEM: { SIZE: 4 },
 
-  XP_LEVEL_BASE: 30,    // xp needed for level 2
-  // WAVE-20: 1.35 -> 1.28 — draft-stakes sim (tools/draft_sim.mjs): the
-  // number of drafts per run collapsed mid-run exactly as escalation
-  // compounded, so the draft (the game's only real decision layer) stopped
-  // deciding anything — good vs bad drafts diverged by just x1.11. 1.28
-  // keeps drafts arriving; divergence projected/verified x1.4+.
-  XP_LEVEL_GROWTH: 1.28,
+  // XP needed to go from level L to L+1 (xpForLevel below):
+  //   min(XP_LEVEL_CAP, XP_LEVEL_BASE + XP_LEVEL_LINEAR*(L-1) + XP_LEVEL_QUAD*(L-1)^2)
+  // and every gem is worth xp / sqrt(1 + kills / XP_KILL_SOFT) (xpGainMult),
+  // so a run that is mowing down thousands levels at a steady rate instead of
+  // running away, and drafts keep arriving all run.
+  XP_LEVEL_BASE: 20,
+  XP_LEVEL_LINEAR: 25,
+  XP_LEVEL_QUAD: 2,
+  XP_LEVEL_CAP: 2200,
+  XP_KILL_SOFT: 300,
 
   // Mana pool (SKILLS cost mana). FINITE BY DESIGN (Sk408: "make mana a finite
   // resource ... spells and skills use it up enough to actually exhaust it at
@@ -322,15 +275,8 @@ export const CONFIG = {
   // halved AGAIN (the "boss curse", applied in main.js's runAction seam since
   // usePotion lives in skills.js) — no face-tanking the boss on potions.
   POTIONS: {
-    HP_HEAL: 35,
+    HP_HEAL_FRAC: 0.3,   // a health potion heals this share of max HP
     MP_RESTORE: 40,
-    // POTION TUNE (owner 2026-09-17, msg_01M2R9CX: "I noticed during my runs
-    // that there were a lot of potions on the ground. Cut their drop by about
-    // 1/5th and steepen the trail off" — clarified: "cut it TO 1/5th not BY
-    // 1/5th"). DROP_CHANCE 0.03 -> 0.006 (exactly one fifth); the trail-off is
-    // squared (see ADAPTIVE below). The cut is the PER-KILL GROUND channel
-    // only: chest contents, starting inventory and the hordebait rule bump are
-    // untouched.
     DROP_CHANCE: 0.006,  // per enemy kill (was 0.03 until 2026-09-17; 0.05 before G32)
     MAX_CARRIED: 3,      // per kind
     START: 1,            // per kind at run start
@@ -435,38 +381,16 @@ export const CONFIG = {
     // this stance and returns to the player's own pick the moment the wave's
     // cast is down. A deliberate mid-fight change by the player always wins.
     BOSS_STANCE: 'SAFE',
-    // AUTO_DRINK (playtest: "maybe a way to auto use potions in autopilot?").
-    // Potions were manual-only (main.js runAction 'h'/'n'), so an AUTO player
-    // watched the pilot eat a lethal horde with a full inventory — the pilot
-    // fights for you, so the consumables it would have spent must be spent for
-    // you too. Scope is deliberately narrow:
-    //   * AUTO ONLY. The manual pilot's potions stay 100% the player's call;
-    //     nothing here can ever drink a MANUAL player's charge.
-    //   * HP THRESHOLD (the potion's heal, not a config fraction) — drink a
-    //     health potion once HP is STRICTLY BELOW what the potion would heal
-    //     (C.POTIONS.HP_HEAL x the same healMult the drink applies: Alchemy +
-    //     choice potionHealMult; owner 2026-09-17, msg_01M2RE1V: "If HP drops
-    //     below what a potion would heal, it should be used. It feels unfair as
-    //     the player" — clarified: "In auto mode that is"). At or above the
-    //     line nothing is drunk: no wasted charge. RETIRED 2026-09-17: the old
-    //     HP_FRACTION 0.35-of-max gate — at maxed stats 35% of a big pool sat
-    //     far above any lethal dip, so the pilot NEVER drank and died rich;
-    //     the heal-value line tracks the potion, not the pool.
-    //   * MP_FRACTION — drink a mana potion only when mana is below this
-    //     fraction AND a skill is actually BLOCKED ON MANA (off cooldown and
-    //     short of its cost). Low mana with everything on cooldown is not a
-    //     reason to spend a charge.
-    //   * COOLDOWN — one auto-drink per kind per this many seconds. Without it
-    //     a single deep dip chugs the whole stack in three frames (35 heal on a
-    //     200 pool cannot climb back over the line in one gulp).
-    // This block touches potions ONLY: it never reads or writes the stance, so
-    // it cannot fight BOSS_STANCE or the pilot's kite/retreat logic — a potion
-    // drunk during the arrival banner leaves the eased stance exactly as it was.
+    // AUTO_DRINK: the AUTO pilot drinks potions for the player (a MANUAL
+    // player's charges are never touched).
+    //   * HP_FRACTION: drink a health potion at or below this share of max HP.
+    //   * MP_FRACTION: drink a mana potion only below this share of max mana
+    //     AND when a skill is blocked on mana.
+    //   * COOLDOWN: one auto-drink per kind per this many seconds.
+    // It touches potions only, never the stance.
     AUTO_DRINK: {
       ENABLED: true,
-      // HP gate lives in main.js autoDrinkPotions: strictly below the potion's
-      // heal value (C.POTIONS.HP_HEAL x healMult). No HP_FRACTION knob since
-      // the 2026-09-17 potion tune — a fraction of max is the wrong line.
+      HP_FRACTION: 0.5,    // drink a health potion at or below this share of max HP
       MP_FRACTION: 0.30,   // strictly below this share of max mana (+ a starved skill)
       COOLDOWN: 1.5,       // seconds between auto-drinks of the same kind
     },
@@ -1067,12 +991,12 @@ export const CONFIG = {
     TICK_WEIGHT: 1.5,      // from wave 2 (latching packs — main.js pops packs)
     COLOSSUS_WEIGHT: 0.35, // from wave 5 (rare mini-boss tier)
     SWARMER_WAVE: 1,
-    BRUTE_WAVE: 2,
-    DASHER_WAVE: 2,
-    SPITTER_WAVE: 3,
-    WARLOCK_WAVE: 3,
-    TICK_WAVE: 2,
-    COLOSSUS_WAVE: 5,      // mirrors ENEMY_TYPES.COLOSSUS.minWave
+    BRUTE_WAVE: 3,
+    DASHER_WAVE: 3,
+    SPITTER_WAVE: 5,
+    WARLOCK_WAVE: 6,
+    TICK_WAVE: 4,
+    COLOSSUS_WAVE: 10,     // mirrors ENEMY_TYPES.COLOSSUS.minWave
     TICK_PACK: 3,          // ticks spawn in latches of 3 (packSize lives in hb4's module)
     ELITE_CHANCE: 0.05,    // per spawned enemy, after ELITE_TIME
     ELITE_TIME: 60,        // seconds
@@ -1088,34 +1012,18 @@ export const CONFIG = {
   E2: {
     WAVE: 2,               // the 120s wave the horde lands on
     HEAVY_WEIGHT_MULT: 0.5,  // R3: heavy pool weights thin out vs chaff
-    CHAFF_DENSITY_MULT: 3,   // R5: ONE knob — chaff pack pop x3
+    CHAFF_DENSITY_MULT: 1.25,  // chaff pack population multiplier
+    HEAVY_HP_MULT: 2,       // a heavy body's hp, x a chaser's at the same tick
     CHAFF_DROP_MULT: 0.05,   // R6: plain-chaff potion/chest/token rolls x0.05
-    CHAFF_XP_MULT: 0.25,     // R6: plain-chaff xp at spawn (heavies pay instead)
-    HEAVY_XP_KILLS: 3,       // R8: a heavy corpse pays ~this many base kills
-    SHRIKE_WEIGHT: 0.8,      // R9: the flying heavy's pool weight (debut wave)
+    CHAFF_XP_MULT: 0.5,      // plain-chaff xp at spawn (heavies pay instead)
+    HEAVY_XP_KILLS: 2,       // R8: a heavy corpse pays ~this many base kills
+    SHRIKE_WEIGHT: 0.4,      // R9: the flying heavy's pool weight (debut wave)
   },
 
-  // ---- ESCALATION (Sk408 playtest: maxed builds became unkillable) --------
-  // Curves by minion-wave w (= floor(t/30)); applied as a post-pass over the
-  // enemy_types.js base scaling in main.js:
-  //   hpScale(w)  = (1 + 0.9w) * 1.35^max(0, w-4)
-  //       w: 0->1.0x  1->1.9x  2->2.8x  3->3.7x  4->4.6x  6->8.4x  9->20.7x
-  //       (old linear 1+0.35w gave only 3.1x at w6 — far too flat)
-  //   xpScale(w)  = (1 + 0.6w) * 1.25^max(0, w-4)   (keeps drafts flowing)
-  //   dmgScale(w) = (1 + 0.2w) * 1.15^max(0, w-6)   (w6 ~1.9x contact dmg)
-  // WAVE-5 retune: fresh profiles now start with 3 weapon slots (hb2's
-  // economy), so mid-run DPS is ~half the 6-slot builds these curves were
-  // tuned against — compounding now starts one wave later on hp/dmg to keep
-  // early runs alive past the first boss; late-wave pressure is unchanged.
-  // Wave timer: WAVE_LENGTH seconds per wave, then ONE boss; the timer is
-  // paused while the boss lives; the next wave starts when it dies.
+  // ---- ESCALATION: wave timing and the boss/herald beats --------------------
+  // Enemy hp / damage / xp growth lives in LADDER below. A wave is WAVE_LENGTH
+  // seconds, then ONE boss; the timer pauses while the boss lives.
   ESCALATION: {
-    HP:  { LINEAR: 0.9, COMPOUND_FROM: 4, COMPOUND: 1.35 },
-    XP:  { LINEAR: 0.6, COMPOUND_FROM: 4, COMPOUND: 1.25 },
-    // WAVE-20 (Sk408: weapon-only builds shrugged the horde off) — contact
-    // + projectile damage now climbs twice as fast with the minion waves;
-    // shop upgrades (hp/defense/speed) are the later mitigation.
-    DMG: { LINEAR: 0.4, COMPOUND_FROM: 6, COMPOUND: 1.15 },
     WAVE_LENGTH: 120,        // seconds before the boss spawns
     // WAVE-10: the wave whose boss death triggers the FINALE (the maw) once
     // its portal cinematic ends. Tunable — Sk408 moves it later when the
@@ -1131,12 +1039,9 @@ export const CONFIG = {
     // escalating checkpoints — progress is felt, not a wall.
     MIDBOSS: {
       AT_FRACTION: 0.5,        // spawns at this fraction of WAVE_LENGTH
-      // hp = BASE_HP * hpScale(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
-      // WAVE-20 tuning: 22 -> 17 — the duel is the threat, not the hp bar;
-      // shorter fight = less pack-exposure time inside the ring (the sim had
-      // HERALD+ambient jointly eating half the cohort before the 120s boss).
-      HP_MULT_BASE: 17,
-      HP_MULT_PER_WAVE: 14,
+      // hp = BASE_HP * ladderHp(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
+      HP_MULT_BASE: 8,
+      HP_MULT_PER_WAVE: 3,
       SIZE_MULT: 1.7,          // over the chaser chassis (imposing, not huge)
       SPEED_MULT: 1.8,         // x BASE_SPEED*(1+0.05w) ~= 1.12x player speed
                                 // (retuned after WAVE-20 BASE_SPEED 28 -> 34)
@@ -1161,16 +1066,10 @@ export const CONFIG = {
       CHESTS: 1,               // guaranteed chest on the herald kill
     },
     BOSS: {
-      // hp = BASE_HP * hpScale(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
-      // HARDENED (Sk408: bosses still melted): 35/18 -> 60/30, nova +50%,
-      // plus a periodic summon so the fight can't be face-tanked.
-      // WAVE-20: 60/30 -> 85/40 -> 260/75 -> 500/60 — the wave boss should be
-      // the wall the run breaks on (5-8 of 10 runs die there per wave). Probe
-      // data: wave-1 pilots hit t=120 with 2000-8000 dps (draft luck) and
-      // 250-480 hp; at 260 the fight ran 5-20s and strong drafts face-melted
-      // the boss mid-first-cycle. 500 buys the pattern room to land.
-      HP_MULT_BASE: 500,
-      HP_MULT_PER_WAVE: 60,
+      // hp = BASE_HP * ladderHp(w) * (HP_MULT_BASE + HP_MULT_PER_WAVE * waveNum)
+      HP_MULT_BASE: 0,
+      HP_MULT_PER_WAVE: 12,
+      CONTACT_MULT: 0.8,     // x the cast member's own contactDamageMult
       SIZE_MULT: 2.2,        // over the brute-elite body
       // WAVE-20: 0.55 -> 0.95 — the cast's chase/charge speeds must threaten
       // a fleeing pilot (player 60px/s; GRAVELMAW's 3.4x charge now lands).
@@ -1210,31 +1109,25 @@ export const CONFIG = {
     FINAL_CALL_AT: 1740,   // 29:00 — the "one minute left" callout
     SURVIVED_BONUS: 1500,  // flat payout for reaching the limit (VS shape)
     DEPTH_BONUS: 150,      // + per wave reached BEYOND the maw milestone
-    MAW_HP: 2_500_000,     // the maw is a REAL fight now (== final_boss DISPLAY_HP)
+    MAW_HP: 250_000,       // == final_boss DISPLAY_HP
     MAW_WINDOW: 90,        // seconds the maw encounter lasts before it withdraws
     MAW_CLEAR_BONUS: 1200, // payout for slaying the maw (on top of the run's gold)
     MAW_UNLOCK: 'HYPER',   // difficulty tier the milestone unlocks (profile.milestones)
   },
 
   // ---- THE WAVE LADDER ---------------------------------------------------
-  // `w` is the ESCALATION tick, floor(t / 30) — 60 ticks across a full run.
-  // Ticks 0..KNEE_TICK (0:00-4:00) reproduce the shipped curves EXACTLY, so the
-  // early deaths the whole game is tuned around cannot move. Past the knee each
-  // curve is re-based onto a bounded compound: the shipped compound (1.35/tick
-  // hp, 1.15/tick dmg) reaches ~1e9x by 30:00 — that is not a ladder, it is a
-  // wall, and the wall is the bug this wave fixes. See ladderHp/ladderDmg/
-  // ladderXp/ladderGroups/ladderEliteChance/ladderBeats below for the shape.
+  // `w` is the escalation tick, floor(t / 30): 60 ticks across a full run.
+  // Each curve is (1 + LINEAR*w + QUAD*w^2) * COMPOUND^w: smooth from the first
+  // tick, no knee. At 30:00: hp x115, contact damage x12.7, xp x1.
   LADDER: {
     WAVE_SECONDS: 120,   // == ESCALATION.WAVE_LENGTH (the tests assert this)
     WAVES: 15,           // 15 x 120s = 1800s = RUN.LIMIT
-    KNEE_TICK: 8,        // 4:00 — the shipped curve holds through here
-    HP_LATE: 1.055,      // x/tick after the knee -> 440.8x base at 30:00
-    DMG_LATE: 1.010,     // x/tick after the knee -> 9.32x base at 30:00
-    XP_LATE: 1.030,      // x/tick after the knee -> 65.9x base at 30:00
-    GROUPS_KNEE: 240,    // density matches the shipped formula through 4:00
-    GROUPS_BASE: 5,      // shipped groups at GROUPS_KNEE (ceil((1+9)/2))
-    GROUPS_PER: 180,     // +1 spawn group every N seconds after the knee
-    GROUPS_MAX: 14,      // absolute ceiling (measured: 13 at 30:00, vs 37 shipped)
+    HP:  { LINEAR: 0.1,  QUAD: 0.03, COMPOUND: 1 },
+    DMG: { LINEAR: 0.15, QUAD: 0,    COMPOUND: 1.004 },
+    XP:  { LINEAR: 0,    QUAD: 0,    COMPOUND: 1 },
+    GROUPS_FROM: 150,    // density holds at one group until here
+    GROUPS_PER: 150,     // +1 spawn group per spawn tick every N seconds
+    GROUPS_MAX: 8,
     ELITE_FROM: 600,     // 10:00 — the elite surge begins
     ELITE_MAX: 0.12,     // ceiling on per-spawn elite chance (base 0.05)
     SURGE_EVERY: 3,      // every Nth wave past the milestone is an ELITE SURGE
@@ -1268,9 +1161,21 @@ export function liveEngagementRange() {
   return liveRange === null ? CONFIG.AUTOPILOT.FOCUS_RANGE : liveRange;
 }
 
+// The level-up draft's three extra actions. Charges are per run and come from
+// the shop rows reroll / skip / banish (meta.js).
+export const DRAFT_ACTIONS = {
+  SKIP_HEAL_FRAC: 0.25,   // a skipped draft heals this share of max HP
+};
+
+// The stats a run started with (stamped on the player by startRun). Percent
+// draft cards add a share of these, so repeat picks stack instead of compounding.
+export function runBase(p) {
+  return (p && p.base) || { damage: CONFIG.WEAPON.DAMAGE, maxHp: CONFIG.PLAYER.MAX_HP };
+}
+
 // Upgrade pool for the 1-of-3 draft.
 export const UPGRADES = [
-  { id: 'dmg',     name: 'Whetstone',       desc: '+25% weapon damage',            apply: (p) => { p.stats.damage *= 1.25; } },
+  { id: 'dmg',     name: 'Whetstone',       desc: '+25% weapon damage',            apply: (p) => { p.stats.damage += 0.25 * runBase(p).damage; } },
   { id: 'rate',    name: 'Quick Hands',     desc: '-15% attack cooldown',          apply: (p) => { p.stats.cooldown *= 0.85; } },
   { id: 'speed',   name: 'Light Boots',     desc: '+15% move speed',               apply: (p) => { p.stats.speed *= 1.15; } },
   { id: 'pickup',  name: 'Gem Magnet',      desc: '+30% pickup radius',            apply: (p) => { p.stats.pickup *= 1.3; } },
@@ -1335,11 +1240,11 @@ export const DRAFT_LADDER = {
 export const DRAFT_RARE_UPGRADES = [
   // The anchor. Coexists with the flat +25 Iron Heart — percent wins with a
   // developed pool, the flat wins wave 1: the drafter split is the point.
-  { id: 'hp_pct',   name: 'Iron Heart',      desc: '+25% max HP and heal 25%',   apply: (p) => { p.stats.maxHp *= 1.25; p.hp = Math.min(p.hp + 0.25 * p.stats.maxHp, p.stats.maxHp); } },
+  { id: 'hp_pct',   name: 'Iron Heart',      desc: '+25% max HP and heal 25%',   apply: (p) => { const g = 0.25 * runBase(p).maxHp; p.stats.maxHp += g; p.hp = Math.min(p.hp + g, p.stats.maxHp); } },
   // Good early (compounds into more drafts -> more cards); dead at minute 25.
-  { id: 'xp_pct',   name: "Scholar's Stone", desc: '+20% XP',                    apply: (p) => { p.stats.xpMult = (p.stats.xpMult || 1) * 1.2; } },
+  { id: 'xp_pct',   name: "Scholar's Stone", desc: '+20% XP',                    apply: (p) => { p.stats.xpMult = (p.stats.xpMult || 1) + 0.2; } },
   // Good early (compounds into the E1 purse); dead late.
-  { id: 'gold_pct', name: 'Gilded Palm',     desc: '+30% purse gold per kill',   apply: (p) => { p.stats.purseKillMult = (p.stats.purseKillMult || 1) * 1.3; } },
+  { id: 'gold_pct', name: 'Gilded Palm',     desc: '+30% purse gold per kill',   apply: (p) => { p.stats.purseKillMult = (p.stats.purseKillMult || 1) + 0.3; } },
   // Build-commitment: scales with damage output — a greedy damage build wants
   // it, a defensive build wastes it.
   { id: 'edge',     name: 'Crimson Edge',    desc: '+3% lifesteal',              apply: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.03; } },
@@ -1423,35 +1328,33 @@ export const DRAFT_MYTHIC_UPGRADES = [
 // These live in config.js, next to the numbers they read, so the ladder can be
 // exercised with no DOM harness: the run-structure tests import them directly.
 //
-// The one invariant that matters: for every tick INSIDE the knee the ladder
-// returns EXACTLY the shipped curve, so nothing the early game (and therefore
-// every existing early-death measurement) sees can change. Past the knee the
-// curve is re-based onto a bounded compound.
-const _tickCurve = (E, w) =>
-  (1 + E.LINEAR * w) * Math.pow(E.COMPOUND, Math.max(0, w - E.COMPOUND_FROM));
+const _curve = (c, w) => (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w);
 
 /** Enemy hp multiplier at escalation tick w (0..LIMIT/30). */
-export function ladderHp(w) {
-  const K = CONFIG.LADDER.KNEE_TICK;
-  const k = Math.min(w, K);
-  return _tickCurve(CONFIG.ESCALATION.HP, k) *
-    Math.pow(CONFIG.LADDER.HP_LATE, Math.max(0, w - K));
-}
+export function ladderHp(w) { return _curve(CONFIG.LADDER.HP, Math.max(0, w)); }
 
 /** Enemy damage multiplier at escalation tick w. */
-export function ladderDmg(w) {
-  const K = CONFIG.LADDER.KNEE_TICK;
-  const k = Math.min(w, K);
-  return _tickCurve(CONFIG.ESCALATION.DMG, k) *
-    Math.pow(CONFIG.LADDER.DMG_LATE, Math.max(0, w - K));
+export function ladderDmg(w) { return _curve(CONFIG.LADDER.DMG, Math.max(0, w)); }
+
+/** Enemy xp multiplier at escalation tick w. */
+export function ladderXp(w) { return _curve(CONFIG.LADDER.XP, Math.max(0, w)); }
+
+/** XP needed to go from `level` to level + 1. */
+export function xpForLevel(level) {
+  const n = Math.max(0, (level || 1) - 1);
+  return Math.floor(Math.min(CONFIG.XP_LEVEL_CAP,
+    CONFIG.XP_LEVEL_BASE + CONFIG.XP_LEVEL_LINEAR * n + CONFIG.XP_LEVEL_QUAD * n * n));
 }
 
-/** Enemy xp multiplier at escalation tick w (keeps drafts flowing late). */
-export function ladderXp(w) {
-  const K = CONFIG.LADDER.KNEE_TICK;
-  const k = Math.min(w, K);
-  return _tickCurve(CONFIG.ESCALATION.XP, k) *
-    Math.pow(CONFIG.LADDER.XP_LATE, Math.max(0, w - K));
+/** What a gem's xp is worth after `kills` kills this run (see XP_KILL_SOFT). */
+export function xpGainMult(kills) {
+  return 1 / Math.sqrt(1 + Math.max(0, kills || 0) / CONFIG.XP_KILL_SOFT);
+}
+
+/** Seconds between spawn ticks at play time t (before heat/stage multipliers). */
+export function spawnInterval(t) {
+  const E = CONFIG.ENEMY;
+  return Math.max(E.SPAWN_INTERVAL_MIN, E.SPAWN_INTERVAL - t * E.SPAWN_INTERVAL_DECAY);
 }
 
 /**
@@ -1468,22 +1371,14 @@ export function midBossHp(waveNum, wTick) {
     (M.HP_MULT_BASE + M.HP_MULT_PER_WAVE * waveNum);
 }
 
-/** The shipped per-spawn-tick group count — the density curve before the knee. */
-export function shippedGroups(t) {
-  return Math.max(1, Math.ceil((1 + Math.floor(t / 25)) / 2));
-}
-
 /**
- * Spawn groups per tick at play time t. Identical to the shipped formula
- * through GROUPS_KNEE (4:00), then a linear ramp to GROUPS_MAX: the shipped
- * formula reached 37 groups/tick at 30:00, which is not a ladder either.
+ * Spawn groups per spawn tick at play time t: 1 until GROUPS_FROM, then +1
+ * per GROUPS_PER seconds, as a FRACTION. The spawner spawns the whole part and
+ * rolls the remainder, so density rises smoothly instead of in steps.
  */
 export function ladderGroups(t) {
   const L = CONFIG.LADDER;
-  const shipped = shippedGroups(t);
-  if (t <= L.GROUPS_KNEE) return shipped;
-  const ramp = L.GROUPS_BASE + Math.floor((t - L.GROUPS_KNEE) / L.GROUPS_PER);
-  return Math.min(shipped, L.GROUPS_MAX, ramp);
+  return Math.min(L.GROUPS_MAX, 1 + Math.max(0, t - L.GROUPS_FROM) / L.GROUPS_PER);
 }
 
 /**

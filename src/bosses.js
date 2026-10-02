@@ -364,7 +364,7 @@ export const BOSSES = {
     // hp 1.15 -> 1.6, contact 1.8 -> 2.2, charge 1.1 -> 1.35s: wave-1 strong
     // drafts (4-8k dps) were still melting it mid-second-cycle. (2.0 was
     // indistinguishable from 1.6 inside 40-run cohort noise.)
-    hpMult: 1.6, speedMult: 3.35, sizeMult: 1.0, contactDamageMult: 2.2,
+    hpMult: 1.6, speedMult: 3.35, sizeMult: 1.0, contactDamageMult: 1.0,
     decide: gravelmawDecide,
     // pattern params (seconds / move-intent multipliers)
     // WAVE-20: contact 1.0 -> 1.4, telegraph 0.7 -> 0.5, stalk 1.4 -> 1.1 —

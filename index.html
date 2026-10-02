@@ -96,6 +96,15 @@
   .card .name, .card .desc, .card .key, .card .syn,
   .card canvas.portrait, .card canvas.shop-icon,
   .card button.dev-sell { position: relative; z-index: 1; }
+  /* level-up draft: REROLL / SKIP / BANISH buttons under the cards */
+  #draft-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  #draft-actions .dact {
+    padding: 8px 12px; border: 2px solid #7a6a4a; background: #241c14; color: #f0dfc0;
+    font-size: 12px; letter-spacing: 1px; cursor: pointer;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  #draft-actions .dact.dim { opacity: 0.4; cursor: default; }
+  #draft-actions .dact.armed { border-color: #ff5a3c; color: #ffb0a0; }
   .card:active { transform: translateY(1px); }
   .card.dim { opacity: 0.45; }
   .card.dim:hover { cursor: default; }
