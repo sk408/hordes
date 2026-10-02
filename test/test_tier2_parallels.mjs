@@ -191,11 +191,12 @@ s.check('stampOfferParallel is additive and an absent roll is IDENTITY (pre-chan
 const player = () => ({
   hp: 80, mana: 50,
   stats: { damage: 10, cooldown: 1, speed: 1, pickup: 1, projectiles: 1, pierce: 0, maxHp: 100, maxMana: 100 },
+  base: { damage: 10, maxHp: 100 },   // the run's starting stats: percent cards add a share of these
 });
 
 s.check('EFFECT MATH: Whetstone +25% at Cursed x1.5 lands x1.375 (the listed 25% scaled to 37.5%)', () => {
   const p = player();
-  applyScaledNumbers(UPGRADES[0].apply, p, PARALLELS.cursed.mult);   // dmg: *= 1.25
+  applyScaledNumbers(UPGRADES[0].apply, p, PARALLELS.cursed.mult);   // dmg: + 25% of starting damage
   assert.equal(p.stats.damage, 10 * 1.375, '10 -> 13.75 exactly');
 });
 s.check('EFFECT MATH: Whetstone at Blessed x1.25 lands x1.3125 (25% -> 31.25%)', () => {
@@ -542,7 +543,7 @@ s.check('CURSED PICK: x1.5 on the listed effect + exactly ONE drawback on p.hp (
   const p = state.player;
   p.hp = 80;
   p.stats.maxHp = 100;
-  p.stats.damage = 10;
+  p.stats.damage = 10; p.base = { ...p.base, damage: 10 };
   const purseBefore = state.runPurse;
   const before = JSON.parse(JSON.stringify({ hp: p.hp, mana: p.mana, stats: p.stats }));
   const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, 'cursed');
@@ -563,7 +564,7 @@ s.check('BLESSED PICK: x1.25, NO drawback at all (hp byte-unchanged)', () => {
   const p = state.player;
   p.hp = 80;
   p.stats.maxHp = 100;
-  p.stats.damage = 10;
+  p.stats.damage = 10; p.base = { ...p.base, damage: 10 };
   const hpBefore = p.hp;
   const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, 'blessed');
   state.pendingDrafts = 1;
@@ -578,7 +579,7 @@ s.check('COSMETIC PICK: base effect byte-unchanged + no drawback (shiny/pulse/ch
     const p = state.player;
     p.hp = 80;
     p.stats.maxHp = 100;
-    p.stats.damage = 10;
+    p.stats.damage = 10; p.base = { ...p.base, damage: 10 };
     const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, pid);
     state.pendingDrafts = 1;
     T.pickCard(card);
@@ -600,7 +601,7 @@ s.check('CURSED taper + overflow branches scale the LISTED numbers (Light Boots 
   T.startRun();
   const q = state.player;
   q.hp = 80;
-  q.stats.damage = 10;
+  q.stats.damage = 10; q.base = { ...q.base, damage: 10 };
   q.stats.projectiles = C.WEAPON.MAX_PROJECTILES;
   state.pendingDrafts = 1;
   T.pickCard(stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'multi'), weight: 0.3 }, 'cursed'));
@@ -616,7 +617,7 @@ s.check('ONE OF EACH: behavior identical with/without a parallel (ledger, pool, 
   p.rules = p.rules || {};
   p.rules.once = true;
   p.hp = 80;
-  p.stats.damage = 10;
+  p.stats.damage = 10; p.base = { ...p.base, damage: 10 };
   const dmgCard = () => ({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 });
   state.pendingDrafts = 1;
   T.pickCard(stampOfferParallel(dmgCard(), 'cursed'));
@@ -641,7 +642,7 @@ s.check('ONE OF EACH: behavior identical with/without a parallel (ledger, pool, 
     const q = state.player;
     q.rules = q.rules || {};
     q.rules.once = true;
-    q.stats.damage = 10;
+    q.stats.damage = 10; q.base = { ...q.base, damage: 10 };
     q.hp = 80;
     state.weapons.forEach((w) => { w.level = WEAPON_MAX_LEVEL; });
     const lvCard = {
@@ -702,7 +703,7 @@ s.check('AUTO-PICK safety: a stamped offer picked through the ONE activation sea
   T.startRun();
   const p = state.player;
   p.hp = 80;
-  p.stats.damage = 10;
+  p.stats.damage = 10; p.base = { ...p.base, damage: 10 };
   const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, 'blessed');
   state.pendingDrafts = 1;
   // activateDraftCard is pick's ONE-argument seam — auto-pick routes through

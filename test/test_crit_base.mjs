@@ -1,4 +1,4 @@
-// A crit with no crit-damage rows owned does x1.5; Deadeye/Bullseye add on top.
+// A crit with no crit-damage row owned does x1.5; Deadeye adds on top.
 // Run: node test/test_crit_base.mjs
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
@@ -8,14 +8,13 @@ import { WEAPON_TYPES, WEAPONS, makeWeapon } from '../src/weapons.js';
 
 const s = suite('test_crit_base');
 
-s.check('applyMetaBonuses: 1.5 with nothing owned; rows add their compounded bonus', () => {
+s.check('applyMetaBonuses: 1.5 with nothing owned; Deadeye adds perLevel per level', () => {
   const base = makePlayer().stats;
   assert.equal(BASE_CRIT_MULT, 1.5);
   assert.equal(applyMetaBonuses(base, {}).critMult, 1.5);
-  const d = SHOP_BY_ID.critdmg.perLevel, b = SHOP_BY_ID.bullseye.perLevel;
+  const d = SHOP_BY_ID.critdmg.perLevel;
   assert.equal(applyMetaBonuses(base, { critdmg: 1 }).critMult, 1.5 + d);
-  assert.equal(applyMetaBonuses(base, { critdmg: 2, bullseye: 1 }).critMult,
-    1.5 + Math.pow(1 + d, 2) * (1 + b) - 1);
+  assert.equal(applyMetaBonuses(base, { critdmg: 3 }).critMult, 1.5 + 3 * d);
 });
 
 const h = await boot();

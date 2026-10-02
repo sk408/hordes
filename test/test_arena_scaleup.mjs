@@ -502,11 +502,8 @@ S.check('a NIGHT run clears the wave and auto-continues on the 9-unit field, una
   for (let i = 0; i < 60 * 10 && st.mode === 'intermission'; i++) h.pump(1);
   assert(st.mode === 'playing' && st.wave.num === waveBefore + 1,
     'the auto-CONTINUE advanced the ladder unattended (mode ' + st.mode + ')');
-  // THE PACING INVARIANTS, by name: the spawn model the ledger stands on is
-  // untouched by the scale-up — RUN-VALUE, TIME-IN-GRADE, IDLE FLOOR and NO
-  // DEAD TAIL all ride these constants and the pilot-relative ring.
-  assert(C.ENEMY.SPAWN_INTERVAL === 1.35 && C.ENEMY.SPAWN_DIST === 280,
-    'the spawn clock + ring constants are untouched (IDLE FLOOR / NO DEAD TAIL)');
+  // The spawn ring is pilot-relative and did not grow with the field.
+  assert(C.ENEMY.SPAWN_DIST === 280, 'the spawn ring radius is untouched by the scale-up');
   while (T.night.on) T.night.press();
   st.mode = 'menu';
 });

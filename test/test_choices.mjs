@@ -17,6 +17,7 @@ const near = (a, b, eps = 1e-9, msg = '') =>
 // 2026-09-18, owner: "starting damage 200% more so the pilot can kill a few
 // enemies"). These bars pin the blessing/curse RATIOS, never the dial itself.
 const BASE_DMG = CONFIG.WEAPON.DAMAGE;
+const BASE_HP = makePlayer().stats.maxHp;
 
 // Apply one pool entry at a rarity to a fresh makePlayer.
 function applyAt(id, rarity) {
@@ -99,7 +100,7 @@ for (let seed = 0; seed < 300; seed++) {
 // COMMON (scale 1) — exact numbers.
 {
   let p = applyAt('blood_pact', 'COMMON').p;
-  near(p.stats.damage, BASE_DMG * 1.25); near(p.stats.maxHp, 85); near(p.hp, 85, 1e-9, 'hp clamped after maxHp loss');
+  near(p.stats.damage, BASE_DMG * 1.25); near(p.stats.maxHp, BASE_HP * 0.85); near(p.hp, BASE_HP * 0.85, 1e-9, 'hp clamped after maxHp loss');
   p = applyAt('zephyr_stride', 'COMMON').p;
   near(p.stats.speed, 72); near(p.stats.pickup, 19.8);
   p = applyAt('scholars_pact', 'COMMON').p;
@@ -109,13 +110,13 @@ for (let seed = 0; seed < 300; seed++) {
   p = applyAt('alchemists_blessing', 'COMMON').p;
   near(p.choices.potionHealMult, 2); near(p.choices.dropChanceMult, 0.5);
   p = applyAt('stone_skin', 'COMMON').p;
-  near(p.stats.maxHp, 125); near(p.stats.damage, BASE_DMG * 0.9);
+  near(p.stats.maxHp, BASE_HP + 25); near(p.stats.damage, BASE_DMG * 0.9);
   p = applyAt('hair_trigger', 'COMMON').p;
   near(p.stats.cooldown, 0.44); near(p.stats.maxMana, 80);
   p = applyAt('vampires_kiss', 'COMMON').p;
   near(p.stats.lifesteal, 0.05); near(p.choices.potionHealMult, 1 / 1.5);
   p = applyAt('giants_heart', 'COMMON').p;
-  near(p.stats.maxHp, 150); near(p.hp, 150, 1e-9, 'giants heart heals what it grants');
+  near(p.stats.maxHp, BASE_HP + 50); near(p.hp, BASE_HP + 50, 1e-9, 'giants heart heals what it grants');
   near(p.stats.speed, 51);
   p = applyAt('keen_edge', 'COMMON').p;
   near(p.stats.crit, 0.10); near(p.stats.damage, BASE_DMG * 0.85);
@@ -131,7 +132,7 @@ for (let seed = 0; seed < 300; seed++) {
 // EPIC (scale 2.2) — buffs AND curses both scale.
 {
   let p = applyAt('blood_pact', 'EPIC').p;
-  near(p.stats.damage, BASE_DMG * (1 + 0.25 * 2.2)); near(p.stats.maxHp, 100 * (1 - 0.15 * 2.2));
+  near(p.stats.damage, BASE_DMG * (1 + 0.25 * 2.2)); near(p.stats.maxHp, BASE_HP * (1 - 0.15 * 2.2));
   p = applyAt('hair_trigger', 'EPIC').p;
   near(p.stats.cooldown, 0.55 * (1 - 0.44)); near(p.stats.maxMana, 100 * (1 - 0.44));
   p = applyAt('alchemists_blessing', 'EPIC').p;
@@ -143,7 +144,7 @@ for (let seed = 0; seed < 300; seed++) {
   p = applyAt('glass_cannon', 'EPIC').p;
   near(p.stats.damage, BASE_DMG * (1 + 0.88)); near(p.choices.damageTakenMult, 1 + 0.66);
   p = applyAt('giants_heart', 'EPIC').p;
-  near(p.stats.maxHp, 100 + 110); near(p.stats.speed, 60 * (1 - 0.33));
+  near(p.stats.maxHp, BASE_HP + 110); near(p.stats.speed, 60 * (1 - 0.33));
 }
 // Curse DIRECTION holds for every entry at every rarity: each apply must move
 // at least one stat strictly below fresh-player baseline (or a choices field

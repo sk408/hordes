@@ -24,7 +24,7 @@ check('descriptor: ominous name + flavor, wave target, huge display hp', () => {
   assert.equal(FINAL_BOSS.name, 'THE MAW OF THE HORDE');
   assert.ok(FINAL_BOSS.flavor.length > 3, 'flavor line for the announce');
   assert.equal(FINAL_BOSS_WAVE, 5, 'wave-5 target (tunable)');
-  assert.equal(DISPLAY_HP, 2_500_000, 'huge display hp');
+  assert.equal(DISPLAY_HP, 250_000, 'huge display hp');
   assert.ok(typeof FINAL_BOSS.decide === 'function');
 });
 
@@ -161,7 +161,7 @@ check('floor blocks death while the bar visibly drains', () => {
   let prev = boss.hp;
   let hits = 0;
   while (boss.hp > HP_FLOOR && hits < 50) {   // drain phase: bar visibly drops
-    const r = applyFinalBossDamage(boss, 1_000_000);
+    const r = applyFinalBossDamage(boss, DISPLAY_HP * 0.4);
     hits++;
     assert.ok(r.hp < prev, `hit ${hits} drains the bar`);
     assert.equal(r.died, false, 'death blocked this build phase');

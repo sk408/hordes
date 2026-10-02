@@ -2122,7 +2122,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.finalBoss === st.enemies[0], 'state.finalBoss must alias the enemies entry');
   assert(!st.portal, 'no portal once the finale starts');
   assert(st.chests.length === 0 && st.arches.length === 0, 'chests/arches must be swept');
-  assert(/THE MAW OF THE HORDE 2\.50M/.test(hudText()),
+  assert(hudText().includes('THE MAW OF THE HORDE ' + (CFG.RUN.MAW_HP / 1e6).toFixed(2) + 'M'),
     'HUD must announce the maw with an M-formatted hp: ' + hudText());
 
   // (2) The spawner stays silent; the hero's volley drains the display hp
@@ -2286,8 +2286,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   T.pickCard(multi);
   assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES,
     'overflow Split Shot must not push projectiles past the cap');
-  assert(p.stats.damage === d0 * 1.2,
-    `overflow Split Shot must convert to +20% damage (got ${p.stats.damage} vs ${d0 * 1.2})`);
+  assert(Math.abs(p.stats.damage - (d0 + 0.2 * p.base.damage)) < 1e-9,
+    `overflow Split Shot must convert to +20% of the run's starting damage (got ${p.stats.damage} from ${d0})`);
   // Below cap: still a real projectile. The premise is stated rather than
   // assumed: this check is about the CARD's grant, so the volley must be at its
   // base level (proj 0) or the at-cap predicate fires on the weapon's own Lv3/Lv6
@@ -2328,8 +2328,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   T.pickCard(multi);
   assert(p.stats.projectiles === CFG.WEAPON.MAX_PROJECTILES + 2,
     'at the raised cap the projectile count must not exceed it');
-  assert(p.stats.damage === d3 * 1.2,
-    `at the raised cap it must convert to +20% damage (got ${p.stats.damage} vs ${d3 * 1.2})`);
+  assert(Math.abs(p.stats.damage - (d3 + 0.2 * p.base.damage)) < 1e-9,
+    `at the raised cap it must convert to +20% of starting damage (got ${p.stats.damage} from ${d3})`);
   p.stats.splitCap = 0;
   console.log('split-shot cap row: card pays to the raised cap, then converts');
 }

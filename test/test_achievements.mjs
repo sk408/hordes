@@ -377,7 +377,7 @@ s.check('a hand-edited namespace is repaired, never emptied', () => {
   }
 });
 
-s.check('a v3 save migrates to v4 without inventing or losing anything', () => {
+s.check('a v3 save migrates forward: trophies are not invented, unlocks are kept, old shop levels are refunded', () => {
   const legacy = {
     version: 3,
     gold: 4321,
@@ -393,7 +393,9 @@ s.check('a v3 save migrates to v4 without inventing or losing anything', () => {
   if (res.profile.version !== PROFILE_VERSION) throw new Error('did not reach the current version');
   const { profile, repairs } = validateProfile(res.profile);
   if (repairs.length) throw new Error('migrated save needed repairs: ' + repairs.join(','));
-  if (profile.gold !== 4321) throw new Error('gold changed in migration');
+  // The v11 step refunds the two old Forged Edge levels at their v10 prices.
+  if (profile.gold !== 4321 + 125 + 250) throw new Error('gold after migration: ' + profile.gold);
+  if (profile.purchased.dmg !== undefined) throw new Error('the refunded row was not reset');
   if (profile.unlockedWeapons.join(',') !== 'VOLLEY,ORBIT') throw new Error('weapons changed in migration');
   if (ensureAchievements(profile).earned && Object.keys(ensureAchievements(profile).earned).length !== 0) {
     throw new Error('a legacy save must not be handed free trophies');

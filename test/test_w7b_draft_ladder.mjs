@@ -24,7 +24,7 @@
 import assert from 'node:assert';
 import { boot, suite } from './_harness.mjs';
 import { DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES, CONFIG as C } from '../src/config.js';
-import { draftLadderWeight, LUCK_MAX_LEVEL } from '../src/meta.js';
+import { draftLadderWeight, LUCK_MAX_LEVEL, GOLD_TIER } from '../src/meta.js';
 import { mulberry32 } from '../src/weather.js';
 import { makeTypedEnemy } from '../src/enemy_types.js';
 
@@ -272,37 +272,46 @@ s.check('no Storm Shards card -> a gem pickup chips nothing', () => {
 });
 
 // ---- 5. the rare tier works ---------------------------------------------------
-s.check('Iron Heart +25%: percent max HP + heal 25%, coexisting with the flat +25', () => {
+s.check('Iron Heart +25%: a quarter of the starting max HP, healed too, coexisting with the flat +25', () => {
   T.startRun();
   const p = state.player;
+  const start = p.base.maxHp;
+  assert.equal(start, p.stats.maxHp, 'the run stamps its starting max HP');
   p.stats.maxHp = 100; p.hp = 10;
   T.pickCard(rareCard('hp_pct'));
-  assert.equal(p.stats.maxHp, 125, 'max HP scales by 25%');
-  assert.equal(p.hp, Math.min(10 + 0.25 * 125, 125), 'heals 25% of the new max');
+  assert.equal(p.stats.maxHp, 100 + 0.25 * start, 'max HP gains 25% of the starting pool');
+  assert.equal(p.hp, 10 + 0.25 * start, 'and heals the same amount');
+  p.stats.maxHp = 125;
   // The flat common is untouched and still stacks beside it.
   const flat = { id: 'hp', name: 'Iron Heart', desc: '', apply: (pp) => { pp.stats.maxHp += 25; pp.hp = Math.min(pp.hp + 25, pp.stats.maxHp); } };
   T.pickCard(flat);
   assert.equal(p.stats.maxHp, 150, 'fixed = common, percent = rare — the two coexist');
 });
 
-s.check("Scholar's Stone: +20% XP, compounding per pick", () => {
+s.check("Scholar's Stone: +20% XP per pick, additive", () => {
   T.startRun();
   const p = state.player;
   p.stats.xpMult = 1;
   T.pickCard(rareCard('xp_pct'));
   assert.ok(Math.abs(p.stats.xpMult - 1.2) < 1e-12, `xpMult ${p.stats.xpMult}`);
   T.pickCard(rareCard('xp_pct'));
-  assert.ok(Math.abs(p.stats.xpMult - 1.44) < 1e-12, 'a repeat pick compounds');
+  assert.ok(Math.abs(p.stats.xpMult - 1.4) < 1e-12, 'a repeat pick adds another 20%');
 });
 
 s.check('Gilded Palm: +30% purse gold per kill through the REAL purseCredit', () => {
   T.startRun();
   const p = state.player;
   const before = T.purse.get();
-  assert.equal(T.purse.credit({ typeId: 'BRUTE' }), 8, 'the shipped payout without the card');
+  // Whole gold lands in the wallet and the fraction waits in the carry, so
+  // measure what a credit adds to both.
+  const g = state.runCounts.gold;
+  const paid = (corpse) => { const a = g.earned + (g.carry || 0); T.purse.credit(corpse); return g.earned + (g.carry || 0) - a; };
+  p.kills = 0;
+  const plain = paid({ typeId: 'BRUTE' });
+  assert.ok(Math.abs(plain - GOLD_TIER.HEAVY) < 1e-9, 'the plain payout without the card (got ' + plain + ')');
   T.pickCard(rareCard('gold_pct'));
-  assert.equal(T.purse.credit({ typeId: 'BRUTE' }), Math.round(8 * 1.3), 'the card pays +30%');
-  assert.equal(T.purse.credit({ typeId: 'SWARMER' }), 0, 'CHAFF still pays 0 by design');
+  assert.ok(Math.abs(paid({ typeId: 'BRUTE' }) - GOLD_TIER.HEAVY * 1.3) < 1e-9, 'the card pays +30%');
+  assert.ok(Math.abs(paid({ typeId: 'SWARMER' }) - GOLD_TIER.CHAFF * 1.3) < 1e-9, 'chaff is paid through the same multiplier');
   assert.ok(T.purse.get() > before, 'the wallet credited through the one writer');
 });
 

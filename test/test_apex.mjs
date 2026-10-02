@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
 import { WEAPON_TYPES, WEAPONS } from '../src/weapons.js';
 import { CONFIG as C } from '../src/config.js';
-import { setApexEnabled } from '../src/meta.js';
+import { setApexEnabled, APEX_BY_ID } from '../src/meta.js';
 
 const S = suite('G25 apex tier');
 const { T, state, elements, key } = await boot({
@@ -309,7 +309,7 @@ await acheck('the gallery opens ONLY from the panel side of the gate: mode, titl
   assert.equal(state.trophyView.locked, true, 'unowned item is locked');
   assert.equal(state.trophyView.art.id, 'LOCKED', 'unowned art IS the shared LOCKED mask');
   const sub = String(elements['ov-sub']._html || '');
-  assert.ok(sub.includes('LOCKED — 550000 gold'), 'the locked caption states the price');
+  assert.ok(sub.includes('LOCKED — ' + APEX_BY_ID.apex_mark.baseCost + ' gold'), 'the locked caption states the price');
   assert.ok(sub.includes('REMOVES:'), 'the one-line effect names the catalogue removes text');
 });
 

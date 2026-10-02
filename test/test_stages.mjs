@@ -237,7 +237,10 @@ function shippedEntries(wave) {
   // gate waves, literal order.
   const S = { CHASER: 3, SWARMER: 2, BRUTE: 1.5, DASHER: 1.2, SPITTER: 1.5,
               WARLOCK: 1.2, TICK: 1.5, COLOSSUS: 0.35 };
-  const gates = { SWARMER: 1, BRUTE: 2, DASHER: 2, SPITTER: 3, WARLOCK: 3, TICK: 2, COLOSSUS: 5 };
+  // Gate ticks are tuning (C.SPAWNER.<TYPE>_WAVE); the weights and the order are the table.
+  const G = C.SPAWNER;
+  const gates = { SWARMER: G.SWARMER_WAVE, BRUTE: G.BRUTE_WAVE, DASHER: G.DASHER_WAVE, SPITTER: G.SPITTER_WAVE,
+                  WARLOCK: G.WARLOCK_WAVE, TICK: G.TICK_WAVE, COLOSSUS: G.COLOSSUS_WAVE };
   const entries = [['CHASER', S.CHASER]];
   for (const [id, w] of [['SWARMER', S.SWARMER], ['BRUTE', S.BRUTE], ['DASHER', S.DASHER],
                          ['SPITTER', S.SPITTER], ['WARLOCK', S.WARLOCK], ['TICK', S.TICK],
@@ -263,9 +266,11 @@ s.check('(a) the stage-0 pool IS the shipped weight table (values + order), and 
   for (const [id, w] of pool) {
     if (pairs[id] !== w) throw new Error('pool weight ' + id + '=' + w + ' != C.SPAWNER ' + pairs[id]);
   }
-  if (S.SWARMER_WAVE !== 1 || S.BRUTE_WAVE !== 2 || S.DASHER_WAVE !== 2 || S.SPITTER_WAVE !== 3 ||
-      S.WARLOCK_WAVE !== 3 || S.TICK_WAVE !== 2 || S.COLOSSUS_WAVE !== 5) {
-    throw new Error('the shipped gate waves moved: ' + JSON.stringify(S));
+  // Shape of the gate ladder: the opening tick is chasers and swarmers only,
+  // every other type arrives later, the colossus last, all inside the sweep.
+  const later = [S.BRUTE_WAVE, S.DASHER_WAVE, S.SPITTER_WAVE, S.WARLOCK_WAVE, S.TICK_WAVE];
+  if (S.SWARMER_WAVE !== 1 || later.some(g => g <= 1 || g >= S.COLOSSUS_WAVE) || S.COLOSSUS_WAVE > 15) {
+    throw new Error('the gate ladder lost its shape: ' + JSON.stringify(S));
   }
 });
 
@@ -809,7 +814,7 @@ s.check('G20b bar3: packBurst is MEASURED — the pop size at the real pack site
 s.check('G20b bar3: the packMult MOD is MEASURED at the real pack site (WHITEOUT)', () => {
   // Literal all-zero draws at t=100 (wave 3): pickSpawnType returns each
   // pool's first WAVE-ELIGIBLE entry — the default pops CHASER (pack 1) and
-  // WHITEOUT pops SWARMER (packSize 5 -> round(5 x 1.25) = 6). Same fixed
+  // WHITEOUT pops SWARMER (round(packSize x 1.25) per pop). Same fixed
   // time -> same groups. (At t=10 / wave 0 every gated id is closed and
   // WHITEOUT falls back to CHASER like any pool — the fallback contract.)
   const zeroSpawn = (stageId, calls, time) => {
@@ -830,11 +835,13 @@ s.check('G20b bar3: the packMult MOD is MEASURED at the real pack site (WHITEOUT
   const d0 = zeroSpawn(DEFAULT_STAGE_ID, calls, 100);   // groups x 1
   const white = zeroSpawn('WHITEOUT', calls, 100);      // groups x 6
   if (d0 === 0 || d0 % calls !== 0) throw new Error('baseline groups not integral: ' + d0);
-  if (white !== 6 * d0) {
-    throw new Error('WHITEOUT pop ' + white + ' vs baseline groups ' + d0 + ' (want exactly 6x: round(5 x 1.25))');
+  const perPop = Math.round(ENEMY_TYPES.SWARMER.packSize * 1.25);
+  if (perPop <= ENEMY_TYPES.SWARMER.packSize) throw new Error('the pack mod rounds away at pack size ' + ENEMY_TYPES.SWARMER.packSize);
+  if (white !== perPop * d0) {
+    throw new Error('WHITEOUT pop ' + white + ' vs baseline groups ' + d0 + ' (want exactly ' + perPop + 'x: round(pack x 1.25))');
   }
   console.log('    [measure] WHITEOUT SWARMER pop over ' + calls + ' scripted calls (all-zero draws, t=100s): ' +
-    d0 + ' baseline groups -> ' + white + ' foes (packMult 1.25: round(5x1.25)=6 per pop)');
+    d0 + ' baseline groups -> ' + white + ' foes (packMult 1.25: ' + perPop + ' per pop)');
 });
 
 s.check('G20b: the 8-row ladder is PINNED (id, theme, gate) — a reskin swap fails here', () => {

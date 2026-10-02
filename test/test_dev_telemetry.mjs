@@ -311,17 +311,16 @@ function validFields() {
   const h = await boot({ locationSearch: '?dev=1', variant: 'telemetry-pickup' });
   const T = h.T;
   const sess = () => T.dev.session;
-  const prof = T.getProfile();
-  prof.gold = 1000000;
-  const { buyUpgrade: buySF } = await import('../src/meta.js');
+  const { DRAFT_MYTHIC_UPGRADES } = await import('../src/config.js');
   const { makeGem } = await import('../src/entities.js');
   const { makeTypedEnemy } = await import('../src/enemy_types.js');
-  assert.equal(buySF(prof, 'staticfield'), true, 'Static Field bought (the owner shop state)');
   T.startRun();
   h.pump(3);
   assert.ok(sess(), 'dev session live');
   assert.equal(h.state.mode, 'playing', 'sim running');
-  assert.equal(!!h.state.player.stats.stormShards, true, 'Static Field arms the chip flag');
+  // The chip comes from the Storm Shards draft card (the shop row is gone).
+  DRAFT_MYTHIC_UPGRADES.find(u => u.id === 'storm_shards').apply(h.state.player);
+  assert.equal(!!h.state.player.stats.stormShards, true, 'Storm Shards arms the chip flag');
   const p = h.state.player;
   const hpSum = () => h.state.enemies.reduce((s, e) => s + (e.hp || 0), 0);
   // Six REAL enemies (factory-built, all fields) parked inside the pickup
@@ -343,7 +342,7 @@ function validFields() {
   // accumulator holds (the owner's report, fixed).
   stage();
   const hp0 = hpSum(), d0 = sess().dmg;
-  h.state.gems.push(makeGem(p.x, p.y, 25));
+  h.state.gems.push(makeGem(p.x, p.y, 5));   // small enough not to level up and open a draft
   h.pump(1);
   assert.ok(hpSum() < hp0, 'the gem chip still deals damage (gameplay unchanged)');
   assert.equal(sess().dmg, d0, 'the gem pickup does not move the damage metric');

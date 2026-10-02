@@ -38,15 +38,27 @@ function mulberry32(a) {
 }
 
 // ---------------------------------------------------------------- tier table
-S.check('GOLD_TIER is one data table with the owner ordering', () => {
-  assert(GOLD_TIER.CHAFF === 0, 'chaff pays ~nothing (0)');
-  assert(GOLD_TIER.GRUNT > 0 && GOLD_TIER.GRUNT <= 1, 'grunt is near zero');
-  assert(GOLD_TIER.ELITE > GOLD_TIER.MID && GOLD_TIER.HEAVY > GOLD_TIER.MID,
-    'elites and heavies out-pay the ordinary field');
-  assert(GOLD_TIER.MID_BOSS >= 60, 'a herald reads as a nice drop (>= 60)');
+S.check('GOLD_TIER is one data table, ordered by how dangerous the kill is', () => {
+  assert(GOLD_TIER.CHAFF > 0 && GOLD_TIER.CHAFF < GOLD_TIER.GRUNT, 'chaff pays a little, less than a grunt');
+  assert(GOLD_TIER.GRUNT < GOLD_TIER.MID && GOLD_TIER.MID < GOLD_TIER.HEAVY && GOLD_TIER.HEAVY < GOLD_TIER.ELITE,
+    'grunt < mid < heavy < elite');
+  assert(GOLD_TIER.MID_BOSS > GOLD_TIER.ELITE, 'a herald reads as a nice drop');
   assert(GOLD_TIER.BOSS > GOLD_TIER.MID_BOSS, 'the wave boss pays heaviest');
 });
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
+// What the purse gains from a list of kills, in kill order: an ordinary kill
+// pays tier / (1 + kills / KILL_SOFTCAP) (kills counted including itself), a
+// boss or herald pays in full, Greed (stats.goldMult) multiplies all of it, and
+// only whole gold leaves the carry.
+function expectCredit(tiers, killsBefore, carryBefore, mult = 1) {
+  let total = carryBefore, k = killsBefore;
+  for (const t of tiers) {
+    k++;
+    const boss = t === 'BOSS' || t === 'MID_BOSS';
+    total += GOLD_TIER[t] * mult * (boss ? 1 : 1 / (1 + k / RUN_GOLD.KILL_SOFTCAP));
+  }
+  return Math.floor(total + 1e-9);
+}
 
 // --------------------------------- per-kill credit at the REAL death funnel
 T.startRun();
@@ -62,16 +74,17 @@ st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
 st.wave.bosses = []; st.wave.boss = null; st.portal = null;
 const purse0 = T.purse.get();
 const kills0 = st.player.kills;
+const carry0 = st.runCounts.gold.carry || 0;
 {
   const px = st.player.x, py = st.player.y - 120;
   const corpses = [
-    { typeId: 'SWARMER' },                       // CHAFF  -> 0
-    { typeId: 'CHASER' },                        // GRUNT  -> 1
-    { typeId: 'SPITTER' },                       // MID    -> 3
-    { typeId: 'BRUTE' },                         // HEAVY  -> 8
-    { typeId: 'CHASER', elite: true },           // ELITE  -> 15
-    { typeId: 'BOSS', boss: true, midBoss: true },   // MID_BOSS -> 60
-    { typeId: 'BOSS', boss: true },              // BOSS   -> 150
+    { typeId: 'SWARMER' },                       // CHAFF
+    { typeId: 'CHASER' },                        // GRUNT
+    { typeId: 'SPITTER' },                       // MID
+    { typeId: 'BRUTE' },                         // HEAVY
+    { typeId: 'CHASER', elite: true },           // ELITE
+    { typeId: 'BOSS', boss: true, midBoss: true },   // MID_BOSS
+    { typeId: 'BOSS', boss: true },              // BOSS
   ];
   for (const c of corpses) {
     st.enemies.push({ typeId: c.typeId, x: px, y: py, hp: 0, maxHp: 1, w: 8, h: 8,
@@ -81,9 +94,10 @@ const kills0 = st.player.kills;
 }
 const credited = T.purse.get() - purse0;
 S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () => {
-  const want = GOLD_TIER.CHAFF + GOLD_TIER.GRUNT + GOLD_TIER.MID + GOLD_TIER.HEAVY
-    + GOLD_TIER.ELITE + GOLD_TIER.MID_BOSS + GOLD_TIER.BOSS;
+  // The death pass walks the field backwards, so the boss is reaped first.
+  const want = expectCredit(['BOSS', 'MID_BOSS', 'ELITE', 'HEAVY', 'MID', 'GRUNT', 'CHAFF'], kills0, carry0);
   assert(credited === want, `7 corpses credit exactly ${want} (got ${credited})`);
+  assert(want >= GOLD_TIER.BOSS + GOLD_TIER.MID_BOSS + 10, 'the fixture is not vacuous');
   const g = st.runCounts.gold;
   assert(g.earned === credited, 'the ledger earned total matches the credited gold');
   assert(g.kills.CHAFF === 1 && g.kills.GRUNT === 1 && g.kills.MID === 1 &&
@@ -263,6 +277,7 @@ S.check('a zero run settles the flat award, not the retired formula', () => {
   h.pump(5);
   const prof = T.getProfile();
   prof.runPurse = 0;
+  var reloadKills0 = st.player.kills, reloadCarry0 = st.runCounts.gold.carry || 0;
   // Real kills through the funnel, then the REAL exit flush.
   const px = st.player.x, py = st.player.y - 100;
   for (let i = 0; i < 3; i++) {
@@ -280,8 +295,10 @@ S.check('a zero run settles the flat award, not the retired formula', () => {
   var reloaded = loadProfileResult(shim);
 }
 S.check('the purse survives a mid-run reload through hordes_profile_v1', () => {
-  assert(earnedBeforeReload === 3 * GOLD_TIER.HEAVY,
-    `three heavies earned ${3 * GOLD_TIER.HEAVY} before the reload (got ${earnedBeforeReload})`);
+  // This profile owns the whole shop (the parity arm bought it), Greed included.
+  const want = expectCredit(['HEAVY', 'HEAVY', 'HEAVY'], reloadKills0, reloadCarry0, st.player.stats.goldMult);
+  assert(earnedBeforeReload === want && want > 0,
+    `three heavies earned ${want} before the reload (got ${earnedBeforeReload})`);
   assert(reloaded.status === 'current', 'the reload is a clean current-version load');
   assert(reloaded.profile.runPurse === earnedBeforeReload,
     `the persisted purse is byte-identical (${reloaded.profile.runPurse})`);

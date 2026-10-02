@@ -1,7 +1,7 @@
 // HORDES — PRESTIGE system (owner-designed, player-facing).
 //
 // Owner spec: surviving to 30:00 offers PRESTIGE (run resets at P+1, P from
-// 0); enemy strength x1.5^P (hp AND damage); gold income x2^P (all sources,
+// 0); enemy strength x1.25^P (hp AND damage); gold income x1.5^P (all sources,
 // same seam); speed unlocks P1->3x, P2->5x, P3+->7x on fixed-substep sim
 // (N fixed-dt steps per frame, never scaled dt); tier persists in the
 // profile; gold outpaces difficulty by design (do not "correct").
@@ -31,14 +31,17 @@ function mulberry32(a) {
 }
 const realRandom = Math.random;
 
-// ---- 1. pure mults: 1 / 1.5 / 2.25 enemy, 1 / 2 / 4 gold --------------------
+// ---- 1. pure mults: 1 / 1.25 / 1.5625 enemy, 1 / 1.5 / 2.25 gold -----------
 {
-  assert.deepEqual([0, 1, 2].map(prestigeEnemyMult), [1, 1.5, 2.25],
-    'enemy strength x1.5^P at P0/P1/P2');
-  assert.deepEqual([0, 1, 2].map(prestigeGoldMult), [1, 2, 4],
-    'gold income x2^P at P0/P1/P2');
-  assert.equal(prestigeEnemyMult(3), 3.375, 'P3 enemy is 3.375x');
-  assert.equal(prestigeGoldMult(3), 8, 'P3 gold is 8x');
+  assert.deepEqual([0, 1, 2].map(prestigeEnemyMult), [1, 1.25, 1.5625],
+    'enemy strength x1.25^P at P0/P1/P2');
+  assert.deepEqual([0, 1, 2].map(prestigeGoldMult), [1, 1.5, 2.25],
+    'gold income x1.5^P at P0/P1/P2');
+  assert.equal(prestigeEnemyMult(3), 1.953125, 'P3 enemy is 1.25^3');
+  assert.equal(prestigeGoldMult(3), 3.375, 'P3 gold is 1.5^3');
+  for (let t = 1; t <= 5; t++) {
+    assert.ok(prestigeGoldMult(t) > prestigeEnemyMult(t), 'gold outgrows enemy strength at P' + t);
+  }
   // Normalisation fails closed: garbage tiers read as P0, never NaN.
   for (const bad of [undefined, null, NaN, -1, -99, 'x', {}]) {
     assert.equal(normalizePrestige(bad), 0, 'bad tier fails closed to 0: ' + String(bad));
@@ -107,8 +110,8 @@ async function spawnedHpAt(tier, variant) {
   const p2 = await spawnedHpAt(2, 'pr_hp2');
   assert.equal(p1.n, p0.n, 'same seed spawns the same bodies');
   const r1 = p1.hp / p0.hp, r2 = p2.hp / p0.hp;
-  assert.ok(Math.abs(r1 - 1.5) < 1e-9, 'P1 foe hp is 1.5x P0 (got ' + r1 + ')');
-  assert.ok(Math.abs(r2 - 2.25) < 1e-9, 'P2 foe hp is 2.25x P0 (got ' + r2 + ')');
+  assert.ok(Math.abs(r1 - prestigeEnemyMult(1)) < 1e-9, 'P1 foe hp is the tier mult x P0 (got ' + r1 + ')');
+  assert.ok(Math.abs(r2 - prestigeEnemyMult(2)) < 1e-9, 'P2 foe hp is the tier mult x P0 (got ' + r2 + ')');
   assert.equal(p1.pre, p0.pre, 'chest eligibility reads the prestige-invariant body');
   console.log('  info - foe hp P0=' + p0.hp + ' P1=' + p1.hp + ' P2=' + p2.hp);
 }
@@ -142,8 +145,8 @@ async function spitterShotAt(tier, variant) {
   const d1 = await spitterShotAt(1, 'pr_dmg1');
   const d2 = await spitterShotAt(2, 'pr_dmg2');
   assert.equal(d0, 10, 'P0 spit is the base 10 (got ' + d0 + ')');
-  assert.equal(d1, 15, 'P1 spit is 1.5x (got ' + d1 + ')');
-  assert.equal(d2, 22.5, 'P2 spit is 2.25x (got ' + d2 + ')');
+  assert.equal(d1, 10 * prestigeEnemyMult(1), 'P1 spit carries the tier mult (got ' + d1 + ')');
+  assert.equal(d2, 10 * prestigeEnemyMult(2), 'P2 spit carries the tier mult (got ' + d2 + ')');
 }
 
 // ---- 5. gold income mult applies end-to-end (per-kill purse, same seam) -----
@@ -165,7 +168,9 @@ async function purseForKillAt(tier, variant) {
       speed: 0, xp: 0, contactDamageMult: 1,
     });
     h.pump(1);
-    return { purse: s.runPurse, earned: s.runCounts.gold.earned };
+    // Whole gold lands in the purse; the fraction waits in the carry.
+    const g = s.runCounts.gold;
+    return { purse: s.runPurse, earned: g.earned, credited: g.earned + (g.carry || 0) };
   } finally {
     Math.random = realRandom;
   }
@@ -174,10 +179,11 @@ async function purseForKillAt(tier, variant) {
   const g0 = await purseForKillAt(0, 'pr_gold0');
   const g1 = await purseForKillAt(1, 'pr_gold1');
   const g2 = await purseForKillAt(2, 'pr_gold2');
-  assert.equal(g0.purse, 1, 'P0 chaser pays 1g (got ' + g0.purse + ')');
-  assert.equal(g1.purse, 2, 'P1 chaser pays 2g (got ' + g1.purse + ')');
-  assert.equal(g2.purse, 4, 'P2 chaser pays 4g (got ' + g2.purse + ')');
-  assert.equal(g1.earned, 2, 'the ledger matches the wallet');
+  assert.ok(g0.credited > 0.9 && g0.credited <= 1, 'P0 chaser pays about 1g (got ' + g0.credited + ')');
+  assert.ok(Math.abs(g1.credited / g0.credited - prestigeGoldMult(1)) < 1e-9, 'P1 chaser pays the tier mult (got ' + g1.credited + ')');
+  assert.ok(Math.abs(g2.credited / g0.credited - prestigeGoldMult(2)) < 1e-9, 'P2 chaser pays the tier mult (got ' + g2.credited + ')');
+  assert.equal(g2.purse, Math.floor(g2.credited), 'the wallet holds the whole gold');
+  assert.equal(g2.earned, g2.purse, 'the ledger matches the wallet');
 }
 
 // ---- 6. speed gate enforced on the live seam ---------------------------------

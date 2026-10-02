@@ -3,7 +3,7 @@
 // Owner spec (implement exactly this):
 //   * Surviving to 30:00 offers PRESTIGE: the run resets at tier P+1 (P starts
 //     at 0).
-//   * Enemy strength x1.5^P (hp AND damage — WHERE each is applied is stated
+//   * Enemy strength x1.25^P (hp AND damage — WHERE each is applied is stated
 //     at the call sites in main.js, summarised here):
 //       - HP: main.js stampStageStats (the last stamp on every trunk / minion
 //         / ring / chest-horde spawn — applied AFTER preStageMaxHp is recorded
@@ -15,7 +15,7 @@
 //         existing contract — while projectiles / novas / fans ride it
 //         linearly), plus the flat TICK drain at its own site. The maw's
 //         mercy-rule hits are EXCLUDED by contract (exact thirds of player HP).
-//   * Gold income x2^P (all sources, same seam family): purseCredit (per-kill
+//   * Gold income x1.5^P (all sources, same seam family): purseCredit (per-kill
 //     tier gold), settleRunGold (AWARD incl. FIRST_CLEAR, plus winBonus), and
 //     collectRunChest (milestone bank). The purse remainder is never
 //     re-multiplied at settlement (it was already scaled at credit time).
@@ -28,7 +28,7 @@
 //     sessions. Stored as a plain integer field: save.js preserves unknown
 //     top-level fields verbatim (the mawSlain precedent), so no schema bump
 //     is needed and every version-pinned test keeps passing.
-//   * Stated intent (do not "correct"): gold (2x) outpaces difficulty (1.5x)
+//   * Stated intent (do not "correct"): gold (1.5x) outpaces difficulty (1.25x)
 //     per tier — deliberate power fantasy; difficulty comes from density and
 //     chaos at speed.
 //
@@ -75,7 +75,7 @@ export function setPrestige(profile, p) {
   return v;
 }
 
-// Enemy strength multiplier at tier P: 1 / 1.5 / 2.25 / ... PURE.
+// Enemy strength multiplier at tier P: 1 / 1.25 / 1.5625 / ... PURE.
 export function prestigeEnemyMult(p) {
   return Math.pow(PRESTIGE.ENEMY_BASE, normalizePrestige(p));
 }

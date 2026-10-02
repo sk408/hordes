@@ -23,7 +23,7 @@ import {
   normalizeAchievements, ensureAchievements, goalText, recordRun,
   ACHIEVEMENTS, ACHIEVEMENT_BY_ID,
 } from '../src/achievements.js';
-import { makeProfile } from '../src/meta.js';
+import { makeProfile, GOLD_TIER } from '../src/meta.js';
 
 const s = suite('test_nits_fixes');
 
@@ -53,10 +53,12 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
   });
   s.check('N1: a normal purse still credits/spends/settles exactly', () => {
     T.getProfile().runPurse = 40;
-    T.purse.credit({ typeId: 'BRUTE' });                // +8 (GOLD_TIER.HEAVY)
-    assert.equal(T.purse.get(), 48, 'credit is no longer exact');
+    st.player.kills = 0;                                // no kill soft cap yet
+    st.runCounts.gold.carry = 0;
+    T.purse.credit({ typeId: 'BRUTE' });                // + GOLD_TIER.HEAVY
+    assert.equal(T.purse.get(), 40 + GOLD_TIER.HEAVY, 'credit is no longer exact');
     assert.equal(T.purse.spend(20), true);
-    assert.equal(T.purse.get(), 28, 'spend is no longer exact');
+    assert.equal(T.purse.get(), 20 + GOLD_TIER.HEAVY, 'spend is no longer exact');
     T.purse.settle();
     assert.equal(T.purse.get(), 0, 'settle did not zero the purse');
   });
