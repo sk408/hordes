@@ -124,11 +124,18 @@ T.startRun();
 ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.pilotMode === 'AUTO_ALL', [st.mode, st.pilotMode]);
 st.player.stats.xpMult = 0;   // no XP may be earned mid-test
 T.draftAuto.rng = () => 0;
+// Nothing else may take the overlay while a ceremony is measured. The lead
+// weapon gains two levels a card, so a few picks here reach Lv 8 with its
+// partner card and the evolve screen opens: every draft starts from a Lv 1
+// kit. The hero cannot die either (no spawns, a long invulnerability).
+const freshKit = () => { for (const w of st.weapons) w.level = 1; };
+const openDraft = () => { freshKit(); T.openDraft(); };
+st.player.invuln = 1e6; st.enemies.length = 0; st.spawnTimer = 1e6;
 
 // ---- 1. AUTO: pick timing/count/latch IDENTICAL, ceremony rides on top ------
 {
   st.pendingDrafts = 1;
-  T.openDraft();
+  openDraft();
   const c0 = T.draftAuto.count;
   tick(TIMEOUT - 0.1);
   ok('AUTO: ' + (TIMEOUT - 0.1) + 's is still not enough (timing unchanged)',
@@ -153,7 +160,7 @@ T.draftAuto.rng = () => 0;
 {
   T.setPilotMode('MANUAL');
   st.pendingDrafts = 1;
-  T.openDraft();
+  openDraft();
   const c0 = T.draftAuto.count;
   const pickedEl = cards()[0];
   const burnEls = [...cards()].slice(1);
@@ -203,7 +210,7 @@ T.draftAuto.rng = () => 0;
 {
   for (let n = 0; n < 5; n++) {
     st.pendingDrafts = 1;
-    T.openDraft();
+    openDraft();
     ok('cycle ' + n + ': the draft re-presents fresh cards', cards().length >= 3, cards().length);
     cards()[n % cards().length].click();
     ok('cycle ' + n + ': resolved instantly', st.mode === 'playing', st.mode);
@@ -218,7 +225,7 @@ T.draftAuto.rng = () => 0;
 {
   REDUCE = true;
   st.pendingDrafts = 1;
-  T.openDraft();
+  openDraft();
   cards()[0].click();
   // BYTE-IDENTICAL pre-ceremony behaviour: the overlay drops at the pick (the
   // hidden cards themselves linger until the next presenter wipes them — that
@@ -239,7 +246,7 @@ T.draftAuto.rng = () => 0;
 // ---- 5. a QUEUED draft re-presents immediately (no ceremony between) --------
 {
   st.pendingDrafts = 2;
-  T.openDraft();
+  openDraft();
   cards()[0].click();
   ok('a queued draft re-presents the next screen at once (mode back to draft)',
     st.mode === 'draft' && st.pendingDrafts === 1, [st.mode, st.pendingDrafts]);
@@ -249,22 +256,15 @@ T.draftAuto.rng = () => 0;
     cards().every(el => !String(el.className).includes(CER.classes.chosen) &&
                         !String(el.className).includes(CER.classes.others)),
     cards().map(el => el.className));
+  freshKit();
   cards()[0].click();
   ok('the final pick of the queue resolves and rides the ceremony',
     st.mode === 'playing' && CER.active, [st.mode, CER.active]);
-  // FLAKE FIX (2026-09-18): the ceremony runs over the LIVE game, and any
-  // screen that takes the overlay over SUPERSEDES it (endDraftCeremony(false)
-  // — by contract the superseding screen owns the cards, so they stay until
-  // it renders; main.js: "a queued draft, the field report, death, the
-  // title"). Two random paths did that here, ~1-in-20 unseeded: a pick that
-  // LEVELS the pilot re-queues a draft, and a death in the 0.55s window
-  // flips mode to 'death-cine'. Neither is a leak. Park the death risk
-  // (invuln + no enemies) and click through any re-queued drafts; the
-  // teardown assert then holds deterministically.
-  st.player.invuln = 5; st.enemies.length = 0; st.spawnTimer = 999;
+  // A screen that takes the overlay supersedes the ceremony and owns the
+  // cards (not a leak), so click through any re-queued draft first.
   tick(CER.S + 0.1);
   let requeues = 0;
-  while (st.mode === 'draft' && requeues < 6) { cards()[0].click(); requeues++; }
+  while (st.mode === 'draft' && requeues < 6) { freshKit(); cards()[0].click(); requeues++; }
   tick(CER.S + 0.1);
   ok('queue drain teardown is clean', overlayClean() && !CER.active && cards().length === 0,
     { kids: cards().length, active: CER.active, mode: st.mode, pending: st.pendingDrafts });

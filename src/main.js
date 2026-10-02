@@ -9346,6 +9346,9 @@ const tutFx = {
     p.potions.hp = Math.max(p.potions.hp, tut.potions0);
     p.xp = 0;
     resetRampage();   // the trainers' kill streak does not carry into the real run
+    // The trainers leave with the protection: one standing on the hero would
+    // land three touches before the player could react.
+    state.enemies = state.enemies.filter((e) => !e.tutTrainer);
     state.spawnTimer = 0;
     toast(why === 'skip' ? 'TUTORIAL SKIPPED' : 'Here they come');
   },
