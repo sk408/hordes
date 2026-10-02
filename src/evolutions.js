@@ -5,10 +5,10 @@
 //
 // REQUIREMENTS to evolve a weapon (all three, checked in this order):
 //   1. weapon at max level (weapons.js WEAPON_MAX_LEVEL = Lv8)
-//   2. one equipped rare item of the evolution's ITEM KIND equipped.
-//      "Kind" = an AFFIX_POOL id from loot.js (e.g. 'crit' = any item whose
-//      affixes include Keen Eye). Loose pairing by design; the full mapping
-//      is documented per-def below and summarized in EVOLUTION_DEFS.
+//   2. one equipped item of the evolution's ITEM KIND.
+//      "Kind" = the STAT FIELD an affix grants (e.g. 'crit' = any item with a
+//      crit-chance affix: Keen Eye, True Sight, Witchmark...). See
+//      itemKindsOf below; the mapping is listed per-def in EVOLUTION_DEFS.
 //   3. 1 EVOLUTION TOKEN (chests.js legendary chests already offer these via
 //      EVOLUTION_TOKENS / the tokenOffer event — hb1 tracks the count).
 //
@@ -109,13 +109,21 @@ export const EVOLUTION_DEFS = {
 };
 
 const AFFIX_SEAM = ['damageMult', 'rateMult', 'crit', 'critMult'];
-const KINDS = new Set(AFFIX_POOL.map(a => a.id));
+
+// The set of kinds (stat fields) granted by a list of equipped items.
+export function itemKindsOf(items) {
+  const kinds = new Set();
+  for (const it of items || []) {
+    for (const a of (it && it.affixes) || []) kinds.add(a.field || a.id);
+  }
+  return kinds;
+}
 
 // ---------- evolveWeapon ---------------------------------------------------
 // evolveWeapon(weapon, equippedItemKinds, tokenCount)
 //   weapon            weapon instance ({ type, level }) from weapons.js
-//   equippedItemKinds array OR Set of AFFIX_POOL ids the player has equipped
-//                     (hb1 derives it: inventory.flatMap(it => it.affixes.map(a => a.id)))
+//   equippedItemKinds array OR Set of affix stat fields the player has
+//                     equipped (itemKindsOf(state.items))
 //   tokenCount        number of evolution tokens the player holds
 //
 // Returns (rollPaidChest-style result object; NEVER throws on bad input):

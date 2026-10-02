@@ -75,7 +75,7 @@ import {
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
-import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
+import { evolveWeapon, describeEvolution, EVOLUTION_DEFS, itemKindsOf } from './evolutions.js';
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
 import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
@@ -5196,7 +5196,7 @@ function tickDraftCeremony(dt) {
 // and spends the token. Declines are suppressed until a new token or item
 // lands (otherwise the check would re-open every frame).
 function equippedItemKinds() {
-  return new Set(state.items.flatMap(it => (it.affixes || []).map(a => a.id)));
+  return itemKindsOf(state.items);
 }
 
 function evolutionCandidates() {
