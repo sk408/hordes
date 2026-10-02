@@ -59,6 +59,8 @@ OUTPUT
   --detail             matrix: also print the per-window table for every policy
   --quiet              no progress lines on stderr
   --verbose            one stderr line per finished run (with its wall time)
+  --trace-every N      add a trace array to every JSONL record: one sample per N sim seconds
+                       (level, drafts, kills, hp, maxHp, damage, enemies alive, purse, wave)
 
 ADVANCED
   --tree DIR           simulate another checkout of the game (default: this repo)
@@ -213,7 +215,7 @@ async function main() {
   const overheadSeconds = int(o, 'overhead-seconds', 20, 0), k = int(o, 'k', 6);
   const concurrency = int(o, 'concurrency', Math.max(1, os.availableParallelism() - 1));
   const quiet = !!o.quiet;
-  const common = { tree, speed, maxRunSeconds, overheadSeconds, verbose: !!o.verbose };
+  const common = { tree, speed, maxRunSeconds, overheadSeconds, verbose: !!o.verbose, traceEvery: int(o, 'trace-every', 0, 0) };
   const key = (p) => [p.shop, p.loadout, p.draft, p.once, p.stance, p.character].join('/');
 
   const jobs = [];

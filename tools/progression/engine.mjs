@@ -97,7 +97,7 @@ function causeOf(d) {
 }
 
 // Play ONE run to death / win / cap through the real loop.
-export function playRun(h, pol, { seed, capS, speed, onceId, statPriority }) {
+export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, traceEvery = 0 }) {
   const T = h.T, st = T.state, prof = T.getProfile();
   Math.random = mulberry32(seed);
   const prng = mulberry32(seed ^ 0x51ed);
@@ -113,6 +113,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority }) {
     const weapons = st.weapons.map((w) => w.type).join('+');
     let drafts = 0, end = null, maxWave = 1, escFrames = 0, stuck = 0, lastT = -1, tookOnce = null;
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
+    const trace = []; let nextTrace = traceEvery;
     const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_');
     const isWeapon = (o) => /^(lvl|wpn)_/.test(String(o.id));
     while (true) {
@@ -145,6 +146,13 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority }) {
       }
       h.pump(1); frames++;
       maxWave = Math.max(maxWave, st.wave.num);
+      if (traceEvery && st.time >= nextTrace) {
+        nextTrace += traceEvery;
+        const pl = st.player;
+        trace.push({ t: Math.round(st.time), level: pl.level, drafts, kills: pl.kills, hp: Math.round(pl.hp), maxHp: Math.round(pl.stats.maxHp),
+          dmg: Math.round(pl.stats.damage), enemies: st.enemies.length, purse: T.purse.get(), wave: st.wave.num,
+          near: st.enemies.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 40).map((e) => (e.boss ? (e.midBoss ? 'HERALD' : 'BOSS') : e.typeId)).sort().join(',') });
+      }
       if (st.mode === 'dead') { end = 'died'; break; }
       if (st.runWon) { end = 'won'; break; }
       if (st.time >= capS) { end = 'capped'; break; }
@@ -172,7 +180,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority }) {
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
-      weapons, picks, tookOnce, frames,
+      weapons, picks, tookOnce, frames, ...(traceEvery ? { trace } : {}),
     };
   } finally {
     Math.random = realRandom;
@@ -190,7 +198,7 @@ async function setup(job) {
   const h = await bootGame();
   const prof = h.T.getProfile();
   applyCharacter(prof, cat, job.policy.character);
-  const runOpts = (seed) => ({ seed, capS: job.maxRunSeconds, speed: job.speed, onceId,
+  const runOpts = (seed) => ({ seed, capS: job.maxRunSeconds, speed: job.speed, onceId, traceEvery: job.traceEvery || 0,
     statPriority: job.policy.statPriority || DEFAULT_STAT_PRIORITY });
   return { cat, h, prof, runOpts };
 }
