@@ -20,6 +20,8 @@ globalThis.__HORDES_SIM_REGISTRY = { totalS: 0, arms, get budgetS() { return nul
 const H = await import(treeUrl('test/_harness.mjs'));
 const CFG = (await import(treeUrl('src/config.js'))).CONFIG;
 const EVOLUTION_DEFS = (await import(treeUrl('src/evolutions.js'))).EVOLUTION_DEFS || {};
+// Fusion pairs (absent in a tree older than the fusion rework: no fusion awareness there).
+const FUSION_DEFS = await import(treeUrl('src/fusions.js')).then((m) => m.FUSION_DEFS || [], () => []);
 
 export const DRAFT_POLICIES = ['random', 'weapons-first', 'evolution-first', 'stats-first'];
 export const ONCE_MODES = ['asis', 'take', 'never'];
@@ -114,6 +116,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     const weapons = st.weapons.map((w) => w.type).join('+');
     let drafts = 0, end = null, maxWave = 1, escFrames = 0, stuck = 0, lastT = -1, tookOnce = null;
     let firstEvo = null, evolved = 0;   // sim seconds of the first evolution; evolutions in the run
+    let firstFuse = null, fused = 0;    // the same for fusions
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
     const trace = []; let nextTrace = traceEvery;
     const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_');
@@ -150,8 +153,11 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       h.pump(1); frames++;
       maxWave = Math.max(maxWave, st.wave.num);
       if (st.weapons.length && st.weapons.some((w) => w.evolutionId)) {
-        const n = st.weapons.filter((w) => w.evolutionId).length;
+        // A fused weapon carries its other (evolved) half off the list.
+        const n = st.weapons.filter((w) => w.evolutionId).length + st.weapons.filter((w) => w.fused).length;
         if (n > evolved) { evolved = n; if (firstEvo === null) firstEvo = Math.round(st.time); }
+        const f = st.weapons.filter((w) => w.fusionId).length;
+        if (f > fused) { fused = f; if (firstFuse === null) firstFuse = Math.round(st.time); }
       }
       if (traceEvery && st.time >= nextTrace) {
         nextTrace += traceEvery;
@@ -188,7 +194,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
-      weapons, picks, tookOnce, frames, firstEvo, evolved, ...(traceEvery ? { trace } : {}),
+      weapons, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused, ...(traceEvery ? { trace } : {}),
     };
   } finally {
     Math.random = realRandom;
@@ -196,15 +202,22 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
   }
 }
 
-// evolution-first: level the un-evolved weapon closest to its evolution (the
-// highest-level one; ties by kit order), take its partner card once it is on
-// the way, then any other weapon card, then a stat card (in --stat-priority
-// order, then any other non-rule card).
+// evolution-first: level one un-evolved weapon at a time, take its partner
+// card once it is on the way, then any other weapon card, then a stat card (in
+// --stat-priority order, then any other non-rule card). The weapon it works on
+// is, in order: one whose fusion partner in the kit is already evolved (the
+// evolution completes a fusion pair), then one that has a fusion partner in
+// the kit at all, then the highest-level one (ties by kit order). A NEW weapon
+// card that fuses with a weapon in the kit is taken ahead of other weapon cards.
 function evolutionFirstPick(st, offs, cand, statPriority) {
   const idOf = (o) => String(o.id);
   const taken = (st.player && st.player.takenStats) || {};
-  const kit = (st.weapons || []).filter((w) => !w.evolutionId && EVOLUTION_DEFS[w.type])
-    .sort((a, b) => (b.level || 1) - (a.level || 1));
+  const top = st.weapons || [];
+  const partnersOf = (type) => FUSION_DEFS.filter((d) => d.pair.includes(type))
+    .map((d) => top.find((w) => w.type === (d.pair[0] === type ? d.pair[1] : d.pair[0]) && !w.fusionId)).filter(Boolean);
+  const fuseRank = (w) => { const ps = partnersOf(w.type); return ps.some((x) => x.evolutionId) ? 2 : ps.length ? 1 : 0; };
+  const kit = top.filter((w) => !w.evolutionId && EVOLUTION_DEFS[w.type])
+    .sort((a, b) => (fuseRank(b) - fuseRank(a)) || ((b.level || 1) - (a.level || 1)));
   for (const w of kit) {
     const lv = cand.find((i) => idOf(offs[i]).startsWith('lvl_' + w.type + '_'));
     if (lv !== undefined) return lv;
@@ -214,6 +227,8 @@ function evolutionFirstPick(st, offs, cand, statPriority) {
       if (pc !== undefined) return pc;
     }
   }
+  const newFuse = cand.find((i) => idOf(offs[i]).startsWith('wpn_') && partnersOf(idOf(offs[i]).slice(4)).length);
+  if (newFuse !== undefined) return newFuse;
   const anyW = cand.find((i) => /^(lvl|wpn)_/.test(idOf(offs[i])));
   if (anyW !== undefined) return anyW;
   let best = null, bestR = Infinity;
