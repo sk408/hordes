@@ -255,8 +255,8 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     JSON.stringify(cardsWithNoteUp) === JSON.stringify(refCards) &&
     cardsWithNoteUp.length === refCards.length && cardsWithNoteUp.length > 0,
     { ref: refCards.length, up: cardsWithNoteUp.length });
-  ok('the title is still fully playable under it (START GAME card present)',
-    cards().some(el => /START GAME/.test(el.innerHTML || '')));
+  ok('the title is still fully playable under it (PLAY card present)',
+    cards().some(el => />PLAY</.test(el.innerHTML || '')));
   ok('the note carries the release copy, an OBVIOUS dismiss button, and the close hint',
     /WHAT'S NEW/.test(noteUp.innerHTML) && /CLOSE/.test(noteUp.innerHTML) &&
     /tap anywhere on the note to close/i.test(noteUp.innerHTML));
@@ -282,7 +282,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('the dismiss WROTE THE SAVE immediately (the persisted bytes changed on the tap)',
     ls.get('hordes_profile_v1') !== rawBefore && JSON.parse(ls.get('hordes_profile_v1')).lastSeenUpdate === W.release.id);
   ok('after the dismiss the title is unchanged and playable',
-    st.mode === 'title' && cards().some(el => /START GAME/.test(el.innerHTML || '')));
+    st.mode === 'title' && cards().some(el => />PLAY</.test(el.innerHTML || '')));
   // A later title return never re-adds it (launch-only + seen).
   T.showTitle();
   ok('a second title entry does not re-add the note', !noteEl());

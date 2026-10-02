@@ -299,7 +299,7 @@ S.check('ESC backs out of the gallery to the title', () => {
   key('escape');
   assert.equal(st.mode, 'title', 'ESC lands on the title');
   assert.equal(st.trophyView, null, 'the gallery payload is gone');
-  assert.ok(cardWith('START GAME'), 'the title cards are rebuilt');
+  assert.ok(cardWith('>PLAY<'), 'the title cards are rebuilt');
 });
 
 S.check('the gallery paints NO play HUD (the canvas half of the chrome gate)', () => {

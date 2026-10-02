@@ -26,13 +26,15 @@ const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const { T, elements, pump } = await boot({});
 let cards = () => [...elements['ov-cards'].children];
 for (let i = 0; i < 60 * 12 && cards().length === 0; i++) pump(1);
-s.check('the title HOW TO PLAY card opens the reference screen', () => {
+s.check('SETTINGS > HOW TO PLAY opens the reference screen', () => {
   if (elements['ov-title'].textContent !== 'HORDES') {
     throw new Error('ov-title is ' + elements['ov-title'].textContent);
   }
-  const howTo = cards().find(k => (k.innerHTML || '').includes('>HOW TO PLAY<'));
-  if (!howTo) throw new Error('no HOW TO PLAY card on the title');
-  howTo.click();
+  const find = (name) => cards().find(k => (k.innerHTML || '').includes('>' + name + '<'));
+  if (!find('SETTINGS')) throw new Error('no SETTINGS card on the title');
+  find('SETTINGS').click();
+  if (!find('HOW TO PLAY')) throw new Error('no HOW TO PLAY card under SETTINGS');
+  find('HOW TO PLAY').click();
   if (elements['ov-title'].textContent !== 'HOW TO PLAY') {
     throw new Error('ov-title is ' + elements['ov-title'].textContent);
   }
@@ -66,10 +68,8 @@ s.check('the GOT IT control is the .gotit footer card', () => {
 s.check('the modifier leaves with the screen (GOT IT -> title, no howto)', () => {
   cardHtml('GOT IT').el.click();
   if (overlay.classList.contains('howto')) throw new Error('howto survived into the title');
-  // Re-open from the title card: same screen, same structure.
-  const howTo = cards().find(k => (k.innerHTML || '').includes('>HOW TO PLAY<'));
-  if (!howTo) throw new Error('no HOW TO PLAY card on the title');
-  howTo.click();
+  // Re-open through SETTINGS: same screen, same structure.
+  T.menus.showHowToPlay();
   if (!overlay.classList.contains('howto')) throw new Error('re-open lost the modifier');
 });
 

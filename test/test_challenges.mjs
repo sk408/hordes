@@ -229,27 +229,29 @@ s.check('no leakage across two consecutive runs: the mode is per-run state', () 
 // ---------------------------------------------------------------------------
 // 4. Presentation: title card, HUD badge, end screen.
 // ---------------------------------------------------------------------------
-s.check('the title screen offers a CHALLENGE card naming the selection; a press cycles', () => {
+s.check('the pre-run screen offers a MODIFIER card naming the selection and its pay; a press cycles', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   // Reach the title the real way: leave the run, then ESC re-renders it.
   st.mode = 'menu';
   T.challenge.select('STANDARD');
   key('escape');
-  // U1: the CHALLENGE card lives behind the SETUP door now, so walk to it.
-  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
-  if (!door) throw new Error('no SETUP door on the title (U1)');
+  // The modifier card lives on the pre-run screen behind PLAY.
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>PLAY<'));
+  if (!door) throw new Error('no PLAY card on the title');
   door.click();
   const cards = cardsNow();
-  const card = cards.find(t => t.includes('>CHALLENGE<'));
-  if (!card) throw new Error('no CHALLENGE card: ' + JSON.stringify(cards.map(c => c.slice(0, 40))));
+  const card = cards.find(t => t.includes('>MODIFIER: '));
+  if (!card) throw new Error('no MODIFIER card: ' + JSON.stringify(cards.map(c => c.slice(0, 40))));
   if (!card.includes('STANDARD RUN')) throw new Error('the card does not name the selection: ' + card);
+  if (!/Pays normal gold/.test(card)) throw new Error('the standard card does not say what it pays: ' + card);
   // Click it: the selection cycles and the card re-renders with the new one.
-  const el = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>CHALLENGE<'));
+  const el = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>MODIFIER: '));
   el.click();
   if (T.challenge.pending !== 'ONE_WEAPON') throw new Error('press did not cycle: ' + T.challenge.pending);
-  const card2 = cardsNow().find(t => t.includes('>CHALLENGE<'));
+  const card2 = cardsNow().find(t => t.includes('>MODIFIER: '));
   if (!card2 || !card2.includes('ONE WEAPON')) throw new Error('the card did not re-render the new selection');
+  if (!/Pays \+\d+% run award \(\d+ to \d+ gold\)/.test(card2)) throw new Error('a modifier must say what it pays: ' + card2);
 });
 
 s.check('the in-run HUD badge exists only for a non-standard mode', () => {
@@ -304,13 +306,14 @@ s.check('HOW TO PLAY documents the challenge selection', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   key('escape');                                       // title
-  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again (the
-  // reference must be one tap from the menu, not two).
-  const howTo = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>HOW TO PLAY<'));
-  if (!howTo) throw new Error('no HOW TO PLAY card on the title');
-  howTo.click();
-  const field = cardsNow().find(t => t.includes('CHALLENGE'));
-  if (!field || !field.includes('ONE WEAPON')) throw new Error('THE FIELD card does not document CHALLENGE');
+  // HOW TO PLAY lives under SETTINGS.
+  const find = (name) => [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>' + name + '<'));
+  if (!find('SETTINGS')) throw new Error('no SETTINGS card on the title');
+  find('SETTINGS').click();
+  if (!find('HOW TO PLAY')) throw new Error('no HOW TO PLAY card under SETTINGS');
+  find('HOW TO PLAY').click();
+  const field = cardsNow().find(t => t.includes('MODIFIERS'));
+  if (!field || !field.includes('ONE WEAPON')) throw new Error('the manual does not document the modifiers');
 });
 
 s.done();

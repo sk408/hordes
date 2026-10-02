@@ -117,21 +117,18 @@ const overlaps = (a, r) => a.left < r.right && a.left + a.w > r.left &&
     assert.equal(fj.armed(), false, 'release brakes (dead stop)');
     assert.equal(T.pilotInput.mag, 0, 'no coast');
   });
-  S.check('the zone honours every guard: help mode declines, AUTO modes TAKE THE WHEEL', () => {
+  S.check('the zone honours every guard: help mode declines; on AUTO the drag steers without changing the mode', () => {
     st.helpMode = true;
     zdown(40, 200);
     assert.equal(fj.armed(), false, 'help mode owns the tap');
     st.helpMode = false;
-    // RETARGET 2026-09-18 (THE WHEEL IS YOURS, owner directive; the takeover
-    // lane's main.js work + test_takeover.mjs): a field/zone drag while the
-    // pilot flies on AUTO is the deliberate hand-over — the stick arms AND
-    // the mode switches to MANUAL. The old "AUTO_ALL declines" contract was
-    // replaced by the owner, not weakened away.
+    // M3: a zone drag on AUTO arms the stick and steers while held; the mode
+    // stays AUTO (MANUAL is only chosen by the pilot button / O).
     T.setPilotMode('AUTO_ALL');
     h.pump(1);
     zdown(40, 200);
-    assert.equal(fj.armed(), true, 'a zone press in AUTO_ALL arms the stick (the takeover)');
-    assert.equal(st.pilotMode, 'MANUAL', 'the takeover switches the mode to MANUAL');
+    assert.equal(fj.armed(), true, 'a zone press in AUTO_ALL arms the stick');
+    assert.equal(st.pilotMode, 'AUTO_ALL', 'the drag does not change the pilot mode');
     h.handlers['pointerup']({ pointerId: 21 });
     T.setPilotMode('MANUAL');
     h.pump(1);

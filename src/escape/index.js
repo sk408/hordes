@@ -115,6 +115,8 @@ function finish(result) {
   endedPayload = {
     result,
     payout,
+    // What a skip without the writ passed up (shown on the hand-back line).
+    forgone: result === 'skip' && !paidSkipOwned() && !testEntry ? payoutFor(bestGoldOf(profile || {})) : 0,
     test: testEntry,
     paidSkipUsed: result === 'skip' && paidSkipOwned(),
     bestGold: profile ? bestGoldOf(profile) : 0,
@@ -168,8 +170,8 @@ export function pointerUp(pid) {
 // of pointer()): explain the touch target under the point — never activate
 // it. The strings are the escape's own (this directory owns its copy).
 export function explain(px, py) {
-  if (R.skipHit(px, py)) return 'SKIP — end the escape now; the payout is forgone without the paid writ';
-  if (R.modeHit(px, py)) return 'MODE — switch between the AUTO pilot and MANUAL play (same setting as the run)';
+  if (R.skipHit(px, py)) return 'SKIP: end the escape now. You lose its gold unless you own the Escape Writ';
+  if (R.modeHit(px, py)) return 'MODE: switch between AUTO and MANUAL (the same setting as the run)';
   if (R.leftHit(px, py)) return 'RUN LEFT — hold to run, lift to brake (hold STILL to time the boss arms)';
   if (R.rightHit(px, py)) return 'RUN RIGHT — hold to run, lift to brake (the brake is how you time the boss arms)';
   if (R.jumpHit(px, py)) return 'JUMP — manual pad: leap the gaps (same jump as the auto pilot)';
@@ -216,15 +218,17 @@ export function frame(c, dt) {
   }
   if (c) {
     const pay = paidSkipOwned();
+    const worth = testEntry ? 0 : payoutFor(bestGoldOf(profile || {}));
     R.draw(c, sim, {
       paidSkip: pay,
+      payout: worth,
       manual: !autoNow,
       outcomeSub: testEntry
         ? 'TEST RUN — NO PAYOUT'
         : sim.outcome === 'complete'
-          ? '+ ' + payoutFor(bestGoldOf(profile || {})) + ' gold to the bank'
+          ? '+' + worth + ' gold banked'
           : sim.outcome === 'skip'
-            ? (pay ? 'paid skip: payout collected' : 'skipped: payout forgone')
+            ? (pay ? 'Escape Writ: +' + worth + ' gold banked' : worth + ' gold passed up')
             : '',
     });
   }

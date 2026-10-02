@@ -1,11 +1,10 @@
-// G12 TITLE SCREEN tests — the startup-menu contract through the REAL
-// src/main.js (shared harness): the composed title card owns the canvas in
-// mode 'title' (renderer seam geometry, null outside it), the menu is the
-// SEVEN condense cards with HOW TO PLAY last (EXIT GAME removed D3, fresh
-// LOAD FROM DISK folded into SAVE DATA M5), exitGame keeps its three-step
-// contract through the __TEST seam (autosave -> window.close -> farewell),
-// the import offer lives behind SETUP -> SETTINGS -> SAVE DATA, and the
-// chrome gate is OFF in the title.
+// TITLE SCREEN tests — the startup-menu contract through the REAL src/main.js
+// (shared harness): the composed title card owns the canvas in mode 'title'
+// (renderer seam geometry, null in a run), the menu is the five M3 cards
+// (PLAY / SHOP / CHARACTERS / PROGRESS / SETTINGS, plus LOADOUT once a weapon
+// beyond the starters is owned), PLAY opens the one pre-run screen, SETTINGS is
+// one screen plus ADVANCED, exitGame keeps its three-step contract through the
+// __TEST seam, and the chrome gate is OFF in the title.
 //
 // Run: node test/test_title_screen.mjs   (exit 0 = pass)
 import assert from 'node:assert/strict';
@@ -107,11 +106,12 @@ check('the card is painted ONCE (extra title frames do not repaint it)', () => {
 });
 
 check('the seam is NULL outside the title; a return visit repaints', () => {
-  cardWith('START GAME').click();
-  // N2: the press fades the menu out and holds the art ~1s BEFORE the run —
-  // pump the hold at the loop's own dt until startRun lands.
-  for (let i = 0; i < 150 && st.mode !== 'playing'; i++) h.pump(1);
-  assert.equal(st.mode, 'playing', 'run live after the art hold');
+  cardWith('PLAY').click();
+  assert.equal(st.mode, 'setup', 'PLAY opens the pre-run screen');
+  h.pump(2);
+  assert.ok(T.renderer.titleScreen, 'the pre-run screen keeps the title art behind it');
+  cardWith('START').click();
+  assert.equal(st.mode, 'playing', 'START begins the run at once');
   h.pump(2);
   assert.equal(T.renderer.titleScreen, null, 'no title seam in a run');
   // Leaving the mode invalidated the once-paint: back on the title the seam
@@ -132,9 +132,7 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
   assert.equal(h.elements['ov-title'].style.display, 'none',
     'the art wordmark replaces the DOM h1 (which stays for stub-DOM readers)');
   assert.equal(h.elements['ov-title'].textContent, 'HORDES', 'the h1 text is unchanged');
-  // Every other screen restores the sheet + the h1 (openMenu reset). U1: the
-  // options live behind the SETUP door now, so route through it.
-  cardWith('SETUP').click();
+  // Every other screen restores the sheet + the h1 (openMenu reset).
   cardWith('SETTINGS').click();
   assert.equal(ov.style.background, '', 'openMenu restored the sheet background');
   assert.notEqual(h.elements['ov-title'].style.display, 'none', 'the h1 is visible again');
@@ -142,98 +140,100 @@ check('the DOM sheet is transparent over the art; the DOM h1 hides but keeps its
   assert.equal(st.mode, 'title', 'back on the title');
 });
 
-// ---- 2. the startup menu (DO 2) ----------------------------------------------
-check('the menu is SEVEN cards, HOW TO PLAY last, EXIT GAME gone (condense D3/D4)', () => {
+// ---- 2. the startup menu ------------------------------------------------------
+check('the menu is FIVE cards: PLAY, SHOP, CHARACTERS, PROGRESS, SETTINGS', () => {
   const n = names();
-  // MENU CONDENSE (2026-09-17, owner rulings VJBFV): D3 removed EXIT GAME
-  // (autosave already fires; closing the tab is save & quit), M5 folded the
-  // fresh LOAD FROM DISK offer into SAVE DATA, and D4 KEPT CHARACTERS (owner
-  // override — the count is 7, not the proposed 6). Retargeted, not weakened:
-  // the exact seven-card ORDER is asserted, and the removed cards are asserted
-  // ABSENT at every level they used to occupy.
-  assert.deepEqual(n,
-    ['START GAME', 'SHOP', 'CHARACTERS', 'LOADOUT', 'PROGRESS', 'SETUP', 'HOW TO PLAY'],
-    'the title is exactly the seven surviving cards, in order');
-  assert.ok(!n.includes('PLAY'), 'the old PLAY name is gone');
-  // The pile that made the menu eleven cards is gone from the top level.
-  for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'SETTINGS']) {
-    assert.ok(!n.includes(moved), 'moved behind a submenu, not on the title: ' + moved);
+  assert.deepEqual(n, ['PLAY', 'SHOP', 'CHARACTERS', 'PROGRESS', 'SETTINGS'],
+    'the title is exactly the five cards, in order (starting kit only: no LOADOUT)');
+  for (const moved of ['TROPHIES', 'BESTIARY', 'CHALLENGE', 'STAGE', 'HOW TO PLAY', 'SETUP', 'START GAME']) {
+    assert.ok(!n.includes(moved), 'not on the title: ' + moved);
   }
-  // ...and the condense removals are gone from the title entirely.
   for (const gone of ['EXIT GAME', 'LOAD FROM DISK']) {
-    assert.ok(!n.includes(gone), 'removed from the title by the condense: ' + gone);
+    assert.ok(!n.includes(gone), 'removed from the title: ' + gone);
   }
-  assert.ok(!(cardWith('START GAME').innerHTML || '').includes('LOAD FROM DISK'),
-    'START GAME no longer names the folded-away offer');
 });
 
-check('U1 submenus: PROGRESS carries TROPHIES + BESTIARY, SETUP carries the run options, both return', () => {
+check('LOADOUT joins the title once a weapon beyond the starting kit is owned', () => {
+  const prof = T.getProfile();
+  prof.unlockedWeapons.push('ORBIT');
+  T.showTitle();
+  assert.deepEqual(names(), ['PLAY', 'SHOP', 'CHARACTERS', 'LOADOUT', 'PROGRESS', 'SETTINGS'],
+    'six cards with a second weapon owned');
+  prof.unlockedWeapons.splice(prof.unlockedWeapons.indexOf('ORBIT'), 1);
+  T.showTitle();
+  assert.equal(names().length, 5, 'and five again without it');
+});
+
+check('PROGRESS carries TROPHIES + BESTIARY; PLAY opens the ONE pre-run screen; both return', () => {
   cardWith('PROGRESS').click();
   assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'BACK'],
     'PROGRESS holds the gallery and the guide, plus BACK');
   cardWith('BACK').click();
-  assert.ok(names().includes('START GAME'), 'BACK returns to the title');
+  assert.ok(names().includes('PLAY'), 'BACK returns to the title');
 
-  cardWith('SETUP').click();
+  cardWith('PLAY').click();
   const s = names();
-  for (const want of ['CHALLENGE', 'STAGE', 'SETTINGS', 'BACK']) {
-    assert.ok(s.includes(want), 'SETUP holds: ' + want);
-  }
-  assert.equal(s[s.length - 1], 'BACK', 'BACK is the LAST card in SETUP');
-  // A cycling selector must re-render its OWN screen, not bounce to the title.
-  cardWith('CHALLENGE').click();
-  assert.ok(names().includes('CHALLENGE'), 'cycling the challenge stays in SETUP');
+  assert.equal(s.length, 5, 'the pre-run screen is five cards');
+  assert.equal(s[0], 'START', 'START is first (Enter goes straight through)');
+  assert.ok(/^STAGE: /.test(s[1]) && /^MODIFIER: /.test(s[2]) && s[3] === 'LOADOUT' && s[4] === 'BACK',
+    'then STAGE, MODIFIER, LOADOUT, BACK: ' + s.join(' | '));
+  // Each choice card says what it changes and what it pays.
+  const html = (i) => cards()[i].innerHTML || '';
+  assert.ok(/Pays normal gold/.test(html(1)), 'the stage card says what it pays: ' + html(1));
+  assert.ok(/No extra rules\. Pays normal gold/.test(html(2)), 'the modifier card says what it pays: ' + html(2));
+  assert.ok(/Volley \+ Boomerang/.test(html(3)) && /start at Lv 1/.test(html(3)), 'the loadout card names the kit: ' + html(3));
+  // The defaults: the first stage, no modifier.
+  assert.ok(/VERDANT HOLLOW/.test(s[1]) && /STANDARD RUN/.test(s[2]), 'default selection: ' + s.join(' | '));
+  // A cycling selector re-renders its OWN screen, not the title.
+  cards()[2].click();
+  assert.ok(/^MODIFIER: ONE WEAPON/.test(names()[2]), 'cycling the modifier stays on the pre-run screen');
+  assert.ok(/Pays \+\d+% run award \(\d+ to \d+ gold\)/.test(cards()[2].innerHTML), 'a modifier states its pay');
+  while (T.menus.pendingChallenge !== 'STANDARD') cards()[2].click();
   cardWith('BACK').click();
-  assert.ok(names().includes('START GAME'), 'BACK returns to the title from SETUP');
+  assert.ok(names().includes('PLAY'), 'BACK returns to the title from the pre-run screen');
 });
 
-check('MENU CONDENSE: settings is SIX cards in both contexts; the merged rows sit one tap deeper', () => {
-  // Title context: AUDIO / DISPLAY / PILOT / HOW TO PLAY / SAVE DATA / BACK —
-  // exactly, in order. The old wall (MUSIC, SFX, TEXT HUD, ZOOM, RESOLUTION,
-  // REPLAY TOUR, EXPORT, IMPORT, RECOVERY, RESET) is behind the three doors.
-  cardWith('SETUP').click();
+check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   cardWith('SETTINGS').click();
-  assert.deepEqual(names(), ['AUDIO', 'DISPLAY', 'PILOT', 'HOW TO PLAY', 'SAVE DATA', 'BACK'],
-    'title settings is exactly the six condense cards, in order');
-  // DISPLAY (M1): preset row + the FULL ladders one tap deeper (E2).
-  cardWith('DISPLAY').click();
-  assert.deepEqual(names(), ['DISPLAY PRESET', 'ZOOM', 'RESOLUTION', 'TEXT HUD', 'SCREEN SHAKE', 'BACK'],
-    'DISPLAY carries the preset, the full zoom/resolution/hud ladders and the shake toggle');
-  cardWith('BACK').click();
-  // AUDIO (M2).
-  cardWith('AUDIO').click();
-  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'BACK'], 'AUDIO carries the MUSIC + SFX volume sliders');
-  cardWith('BACK').click();
-  // SAVE DATA (M3): export/import/(recovery)/reset — RESET still two-tap.
-  cardWith('SAVE DATA').click();
-  const sd = names();
-  assert.deepEqual(sd.slice(0, 2), ['EXPORT SAVE', 'IMPORT SAVE'], 'SAVE DATA leads with export/import');
-  if (sd.includes('RECOVERY FILE')) assert.ok(sd.indexOf('RECOVERY FILE') === 2, 'recovery rides after import');
-  const resetIdx = sd.indexOf('RESET PROFILE');
-  assert.ok(resetIdx === sd.length - 2, 'RESET PROFILE sits just before BACK');
+  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
+    'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'ADVANCED', 'BACK'],
+    'title settings is exactly these ten cards, in order');
+  cardWith('ADVANCED').click();
+  const adv = names();
+  assert.deepEqual(adv.slice(0, 6), ['ZOOM', 'RESOLUTION', 'TEXT HUD', 'PILOT', 'FOCUS', 'STANCE'],
+    'ADVANCED carries zoom, resolution, text hud, pilot, focus and stance');
+  assert.ok(adv.some(x => /^NIGHT MODE/.test(x)), 'and night mode');
+  assert.equal(adv[adv.length - 2], 'RESET PROFILE', 'RESET PROFILE sits just before BACK');
   cardWith('RESET PROFILE').click();
-  assert.ok(names().includes('CONFIRM RESET?'), 'the arm still arms inside SAVE DATA');
+  assert.ok(names().includes('CONFIRM RESET?'), 'the reset arms on the first press');
+  cardWith('BACK').click();
+  cardWith('RESET PROFILE');
+  assert.ok(names().includes('MUSIC VOLUME'), 'BACK returns to SETTINGS');
+  cardWith('ADVANCED').click();
+  assert.ok(names().includes('RESET PROFILE') && !names().includes('CONFIRM RESET?'), 'leaving ADVANCED disarms the reset');
   cardWith('BACK').click();
   cardWith('BACK').click();
-  assert.ok(names().includes('START GAME'), 'BACK chains home: SAVE DATA -> settings -> title');
+  assert.ok(names().includes('PLAY'), 'BACK chains home: ADVANCED -> settings -> title');
 
-  // In-run context: the same six, with END RUN instead of SAVE DATA (E1) and
-  // NO debug card unless the flag is set (D1).
-  cardWith('START GAME').click();
-  for (let i = 0; i < 200 && st.mode !== 'playing'; i++) h.pump(1);
+  // In-run context: the same screen without the save cards, with END RUN.
+  T.startRun();
+  h.pump(2);
   assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
   T.openSettings();
-  assert.deepEqual(names(), ['AUDIO', 'DISPLAY', 'PILOT', 'HOW TO PLAY', 'END RUN', 'BACK'],
-    'in-run settings is the same six with END RUN (no SAVE DATA, no TEST: ESCAPE)');
+  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
+    'HOW TO PLAY', 'ADVANCED', 'END RUN', 'BACK'],
+    'in-run settings: no save cards, END RUN added (no TEST: ESCAPE)');
+  cardWith('ADVANCED').click();
+  assert.ok(!names().some(x => /^NIGHT MODE|RESET PROFILE|RECOVERY FILE/.test(x)), 'in-run ADVANCED has no night mode / reset / recovery');
+  cardWith('BACK').click();
   cardWith('BACK').click();
   assert.equal(st.mode, 'playing', 'BACK resumes the run');
   // Leave the run cleanly for the checks below.
   T.openSettings();
   cardWith('END RUN').click();
   cardWith('CONFIRM END RUN?').click();
-  assert.ok(st.mode === 'dead' || st.mode === 'end' || st.mode === 'title',
-    'END RUN leaves the run (' + st.mode + ')');
-  if (st.mode !== 'title') { key('t'); h.pump(2); }
+  assert.ok(st.mode === 'dead', 'END RUN leaves the run (' + st.mode + ')');
+  key('t'); h.pump(2);
   assert.equal(st.mode, 'title', 'back on the title');
 });
 
@@ -270,37 +270,23 @@ check('the farewell backs out to the title (BACK card + ESC)', () => {
   assert.equal(st.mode, 'title', 'ESC also returns to the title');
 });
 
-// ---- 4. load-from-disk: FOLDED into SAVE DATA (condense M5) --------------------
-check('a FRESH browser has NO title load offer; the offer lives in SAVE DATA', () => {
-  // MENU CONDENSE M5: the fresh-browser LOAD FROM DISK title card is folded
-  // into SETTINGS -> SAVE DATA (same validated pickImportFile path), so the
-  // title is the same seven cards fresh or not.
-  assert.ok(cardWith('START GAME'), 'START GAME present');
-  // Wipe it the way a fresh browser looks, re-render the title: STILL seven.
+// ---- 4. the save file cards live on SETTINGS ------------------------------------
+check('a FRESH browser has NO title load offer; IMPORT SAVE lives on SETTINGS', () => {
+  assert.ok(cardWith('PLAY'), 'PLAY present');
+  // Wipe it the way a fresh browser looks, re-render the title: still five.
   h.storage.delete('hordes_profile_v1');
   T.showTitle();
-  assert.equal(cardWith('LOAD FROM DISK'), undefined,
-    'no fresh-browser load offer on the title (folded into SAVE DATA)');
-  assert.equal(names().length, 7, 'fresh title is the same seven cards');
-  // The permanent home: SETUP -> SETTINGS -> SAVE DATA offers IMPORT SAVE,
-  // fresh or not (a save exists again by the end of this check's tail).
-  cardWith('SETUP').click();
+  assert.equal(cardWith('LOAD FROM DISK'), undefined, 'no fresh-browser load offer on the title');
+  assert.equal(names().length, 5, 'fresh title is the same five cards');
   cardWith('SETTINGS').click();
-  assert.ok(cardWith('SAVE DATA'), 'settings offers the SAVE DATA door');
-  cardWith('SAVE DATA').click();
-  assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')),
-    'SAVE DATA offers IMPORT SAVE');
-  cardWith('BACK').click();
-  cardWith('BACK').click();
+  assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')), 'SETTINGS offers IMPORT SAVE');
   key('escape');
   assert.equal(st.mode, 'title', 'back to the title');
   T.save.autosave();
 });
 
 check('IMPORT SAVE is wired to the file picker; the import path round-trips', () => {
-  cardWith('SETUP').click();
   cardWith('SETTINGS').click();
-  cardWith('SAVE DATA').click();
   const bodyKids = () => [...(globalThis.document.body.children || [])];
   const before = bodyKids().length;
   cardWith('IMPORT SAVE').click();
@@ -333,54 +319,23 @@ check('chrome is OFF in the title (pad layer, help strip) — the wave-23 contra
   assert.equal(tourRoot, undefined, 'no tour renders over the title (flags done)');
 });
 
-check('START GAME starts a run with no extra friction', () => {
-  cardWith('START GAME').click();
-  for (let i = 0; i < 150 && st.mode !== 'playing'; i++) h.pump(1);
-  assert.equal(st.mode, 'playing', 'one press, one run (after the N2 art hold)');
-});
-
-// ---- 6. N2: the hold + the leak + the 120Hz contract (same boot, replay seam) ----
-check('START GAME: a double activation in one tick holds ONCE, never an early run', () => {
-  T.showTitle();
-  let s = 0;
-  for (; s < 30 && !(st.titleReveal && st.titleReveal.phase === 'settled'); s++) h.pump(1);
-  assert.equal(st.titleReveal.phase, 'settled', 'settled before the press (return re-fade done)');
-  const before = T.title.runStarts;
-  cardWith('START GAME').click();
-  cardWith('START GAME').click();   // the same tick, again: idempotent
-  const rv = st.titleReveal;
-  assert.ok(rv && (rv.phase === 'out' || rv.phase === 'hold'), 'the hold is in flight once');
-  assert.equal(st.mode, 'title', 'the run does NOT start on the press tick');
-  assert.equal(T.title.runStarts, before, 'startRun has not been called yet');
-  assert.ok(T.renderer.titleScreen, 'the art seam stays live through the hold');
-});
-
-check('START GAME: the run starts EXACTLY once, only after the full hold', () => {
-  const dt = (1000 / 60) / 1000;
-  const before = T.title.runStarts;
-  let frames = 0;
-  for (; frames < 400; frames++) {
-    h.pump(1);
-    if (st.mode === 'playing') break;
-  }
-  assert.equal(st.mode, 'playing', 'the run started (frames=' + frames + ')');
-  assert.equal(T.title.runStarts, before + 1, 'startRun ran EXACTLY once through the hold');
-  assert.equal(st.titleReveal, null, 'the reveal seam is null once the run is live');
-  assert.equal(T.renderer.titleScreen, null, 'the art seam is null in the run');
-  const heldAt = frames * dt, want = T.title.timings.out + T.title.timings.hold;
-  assert.ok(heldAt >= want - 2 * dt && heldAt <= want + 4 * dt,
-    `run started ${heldAt.toFixed(3)}s after the press, want ~${want}s (within 2 frames)`);
+check('PLAY then START starts a run: two presses, no wait', () => {
+  cardWith('PLAY').click();
+  cardWith('START').click();
+  assert.equal(st.mode, 'playing', 'the run is live on the START press');
   assert.equal(ov.style.display, 'none', 'the overlay hid with the run');
+  h.pump(1);
+  assert.equal(st.titleReveal, null, 'no reveal seam survives into the run');
 });
 
+// ---- 6. the reveal: no leak, 120Hz, and no dependence on rAF ---------------------
 check('leaving the title mid-fade leaks NO partial opacity into the next screen', () => {
   T.showTitle();                    // a return entry: the short (<=150ms) re-fade
   assert.equal(st.titleReveal.phase, 'return', 'the return re-fade is running');
   assert.ok(st.titleReveal.dur <= 0.15, 'the return fade is short (<=150ms)');
   h.pump(1);                         // mid-fade now
   assert.ok(parseFloat(ov.style.opacity) < 1, 'mid-fade, opacity below 1');
-  cardWith('SETUP').click();         // U1: leave the title mid-fade (through the door)
-  cardWith('SETTINGS').click();
+  cardWith('SETTINGS').click();      // leave the title mid-fade
   assert.notEqual(st.mode, 'title', 'on the settings screen');
   assert.equal(ov.style.opacity, '', 'openMenu restored FULL opacity for the next screen');
   assert.equal(ov.style.pointerEvents, '', 'and full interactivity');
@@ -410,18 +365,45 @@ check('the SAME reveal contract at a 120Hz frame step (no fixed-dt assumption)',
   const settledAt = frames * dt, want = tm.beat + tm.fade;
   assert.ok(Math.abs(settledAt - want) <= 3 * dt,
     `120Hz settled at ${settledAt.toFixed(3)}s, want ~${want}s (within 3 frames)`);
-  // And the HOLD at 120Hz lands on the same wall-clock second.
-  const beforeHold = T.title.runStarts;
-  cardWith('START GAME').click();
-  let held = 0;
-  for (; held < 800; held++) {
-    h.pump(1);
-    if (st.mode === 'playing') break;
-  }
-  assert.equal(T.title.runStarts, beforeHold + 1, 'exactly one more run through the 120Hz hold');
-  const heldAt = held * dt, wantHold = tm.out + tm.hold;
-  assert.ok(heldAt >= wantHold - 2 * dt && heldAt <= wantHold + 4 * dt,
-    `120Hz run started ${heldAt.toFixed(3)}s after the press, want ~${wantHold}s (within 2 frames)`);
 });
+
+// The reveal must not depend on requestAnimationFrame: with NO frames pumped,
+// its own timer (driven by the wall clock) fades the menu in and hands the
+// clicks back. The harness clock is advanced by hand; the timer is real.
+await (async () => {
+  h.setFrameMs(1000 / 60);
+  T.title.replay();
+  const tm = T.title.timings;
+  assert.equal(st.titleReveal.phase, 'art');
+  assert.equal(ov.style.pointerEvents, 'none', 'not clickable while hidden');
+  assert.ok(T.titleTimer.armed, 'the reveal armed its own timer');
+  const ticks0 = T.titleTimer.ticks;
+  // Advance the wall clock past the whole reveal WITHOUT running a frame, then
+  // let real timers fire.
+  h.advanceClock((tm.beat + tm.fade + 0.1) * 1000);
+  await new Promise((r) => setTimeout(r, T.titleTimer.stepMs * 4));
+  check('with rAF stalled, the timer alone settles the reveal and re-enables clicks', () => {
+    assert.ok(T.titleTimer.ticks > ticks0, 'the timer ticked (' + (T.titleTimer.ticks - ticks0) + ')');
+    assert.equal(st.titleReveal.phase, 'settled', 'settled with zero frames pumped');
+    assert.equal(ov.style.opacity, '', 'full opacity');
+    assert.equal(ov.style.pointerEvents, '', 'clickable');
+    assert.equal(T.titleTimer.armed, false, 'and the timer stood down');
+  });
+  // Mid-way: partly through the fade the menu is still not clickable.
+  T.title.replay();
+  h.advanceClock((tm.beat + tm.fade * 0.5) * 1000);
+  await new Promise((r) => setTimeout(r, T.titleTimer.stepMs * 3));
+  check('mid-fade (timer-driven) the cards are visible but NOT yet clickable', () => {
+    assert.equal(st.titleReveal.phase, 'fade');
+    assert.ok(st.titleReveal.opacity > 0 && st.titleReveal.opacity < 1, 'partly shown: ' + st.titleReveal.opacity);
+    assert.equal(ov.style.pointerEvents, 'none', 'no clicks until fully shown');
+  });
+  h.advanceClock(tm.fade * 1000);
+  await new Promise((r) => setTimeout(r, T.titleTimer.stepMs * 3));
+  check('and it becomes clickable promptly once fully shown', () => {
+    assert.equal(st.titleReveal.phase, 'settled');
+    assert.equal(ov.style.pointerEvents, '');
+  });
+})();
 
 console.log(`\n${passed} assertion groups passed — test_title_screen OK`);

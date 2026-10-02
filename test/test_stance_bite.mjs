@@ -179,7 +179,7 @@ S.check('cycling the dial through the real key path announces the meaning', () =
   assert.ok(line, 'a stance toast was pushed (' + state.toasts.map(t => t.msg).join(' | ') + ')');
   const tag = C.AUTOPILOT.STANCES[T.controller.stance].TAG;
   assert.ok(line.includes(tag), 'the toast names the new meaning (' + line + ')');
-  assert.ok(/loot x/.test(line) && /flee x/.test(line), 'and the two real consequences');
+  assert.ok(/loot|away|middle/.test(line) && !/ x\d/.test(line), 'and what it means in plain words, no multipliers');
 });
 
 S.check('the published HUD state carries the stance and its live activity', () => {

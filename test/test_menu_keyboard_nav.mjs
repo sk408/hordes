@@ -129,7 +129,7 @@ S.check('the marker MOVES with the cursor — never two, never none', () => {
 
 S.check('the marker skips dim cards too (it is the cursor, not a scan)', () => {
   title();
-  cardWith('HOW TO PLAY').click();
+  T.menus.showHowToPlay();
   const prev = indexOfCard('PREV');
   assert.ok(isDim(cards()[prev]), 'PREV is dim on page 1');
   for (let i = 0; i < cards().length + 2; i++) {
@@ -143,40 +143,51 @@ S.check('opening a menu clears the marker with the cursor', () => {
   title();
   key('arrowdown');
   assert.equal(selCount(), 1, 'a card is marked on the title');
-  cardWith('HOW TO PLAY').click();                        // different screen
+  T.menus.showHowToPlay();                        // different screen
   assert.equal(selCount(), 0, 'the fresh screen starts with nothing marked');
 });
 
 S.check('Enter activates the focused card (through menuCard onclick)', () => {
   title();
-  const i = indexOfCard('HOW TO PLAY');
-  assert.ok(i >= 0, 'the title has a HOW TO PLAY card');
+  const i = indexOfCard('>SETTINGS<');
+  assert.ok(i >= 0, 'the title has a SETTINGS card');
   for (let n = 0; n <= i; n++) key('arrowdown');      // -1 -> 0 is one press
-  assert.equal(T.menuFocus(), i, 'the cursor sits on HOW TO PLAY');
+  assert.equal(T.menuFocus(), i, 'the cursor sits on SETTINGS');
   key('enter');
-  // HOW TO PLAY opens the paginated reference: that it opened AT ALL is the
-  // assertion — the cursor fired the card the pointer would have.
-  assert.equal(st.manualPage, 1, 'Enter opened the reference (page 1)');
+  // That the screen opened AT ALL is the assertion: the cursor fired the card
+  // the pointer would have.
+  assert.equal(h.elements['ov-title'].textContent, 'SETTINGS', 'Enter opened SETTINGS');
 });
 
 S.check('Space activates too (the second documented key)', () => {
   title();
-  const i = indexOfCard('HOW TO PLAY');
+  const i = indexOfCard('>SETTINGS<');
   for (let n = 0; n <= i; n++) key('arrowdown');
   key(' ');
-  assert.equal(st.manualPage, 1, 'Space activated the focused card');
+  assert.equal(h.elements['ov-title'].textContent, 'SETTINGS', 'Space activated the focused card');
+});
+
+S.check('Enter with NO cursor takes the first card: PLAY, then START (straight through)', () => {
+  title();
+  key('enter');
+  assert.equal(st.mode, 'setup', 'Enter on a fresh title opens the pre-run screen');
+  assert.equal(T.menuFocus(), -1, 'which opens with no cursor');
+  key('enter');
+  assert.equal(st.mode, 'playing', 'Enter again starts the run');
+  T.die(); pump(1);
+  if (st.mode === 'death-cine') key('x');
 });
 
 S.check('DIM cards are unreachable — the cursor skips them', () => {
   title();
-  cardWith('HOW TO PLAY').click();
+  T.menus.showHowToPlay();
   assert.equal(st.manualPage, 1, 'the reference is on page 1');
   const prev = indexOfCard('PREV');
   assert.ok(prev >= 0, 'there is a PREV card');
   assert.ok(isDim(cards()[prev]), 'PREV is dim on page 1 (nothing to go back to)');
   // Walk the whole ring from nothing; the dim PREV must never be selected.
   title();                                            // back to the title first
-  cardWith('HOW TO PLAY').click();                     // fresh open, cursor reset
+  T.menus.showHowToPlay();                     // fresh open, cursor reset
   const seen = [];
   for (let n = 0; n < cards().length + 2; n++) { key('arrowdown'); seen.push(T.menuFocus()); }
   assert.ok(!seen.includes(prev), 'the cursor never lands on the dim PREV card');
@@ -187,7 +198,7 @@ S.check('the cursor RESETS when a menu opens (no stale index)', () => {
   key('arrowdown');
   key('arrowdown');
   assert.ok(T.menuFocus() >= 0, 'a cursor exists on the title');
-  cardWith('HOW TO PLAY').click();                    // open a different screen
+  T.menus.showHowToPlay();                    // open a different screen
   assert.equal(T.menuFocus(), -1, 'opening a menu clears the cursor');
 });
 
@@ -201,7 +212,7 @@ S.check('the cursor RESETS on a fresh title open too', () => {
 
 S.check('Escape still backs a sub-menu out to the title', () => {
   title();
-  cardWith('HOW TO PLAY').click();
+  T.menus.showHowToPlay();
   assert.equal(st.manualPage, 1, 'the reference is up');
   key('escape');
   assert.equal(st.mode, 'title', 'ESC lands back on the title');
@@ -328,7 +339,7 @@ S.check('a two-press card KEEPS the cursor after the first press (END RUN)', () 
   assert.equal(st.mode, 'settings', 'the in-run settings pause is up');
   const idx = indexOfCard('END RUN');
   assert.ok(idx >= 0, 'there is an END RUN card');
-  for (let n = 0; n < idx + 1; n++) key('arrowdown');   // -1 -> 0 is one press
+  for (let n = 0; n < 40 && T.menuFocus() !== idx; n++) key('arrowdown');   // dim cards are skipped
   assert.equal(T.menuFocus(), idx, 'the cursor is on END RUN');
   key('enter');                                   // press ONE: arms it
   assert.equal(st.mode, 'settings', 'still on the same screen (armed, not fired)');
@@ -390,39 +401,37 @@ S.check('the shop BACK button is on EVERY page, not just the last', () => {
   assert.equal(back.style.display, '', 'and back again on page 1');
 });
 
-// ---- OWNER ROUND 4: the SETUP screen (and its sibling gap) -----------------
-S.check('the SETUP screen takes keyboard navigation', () => {
+// ---- the pre-run screen (mode 'setup') --------------------------------------
+S.check('the pre-run screen takes keyboard navigation', () => {
   title();
-  cardWith('SETUP').click();
-  assert.equal(st.mode, 'setup', 'the setup screen is up');
+  cardWith('>PLAY<').click();
+  assert.equal(st.mode, 'setup', 'the pre-run screen is up');
   assert.equal(T.menuFocus(), -1, 'it opens with no cursor');
   key('arrowdown');
   assert.equal(T.menuFocus(), 0, 'ArrowDown selects the first card');
   assert.equal(selCount(), 1, 'and it is visibly marked');
   key('tab');
-  assert.equal(T.menuFocus(), 1, 'Tab advances');
+  assert.ok(T.menuFocus() > 0, 'Tab advances (past a dim STAGE card when only one stage is unlocked)');
   key('tab', { shiftKey: true });
   assert.equal(T.menuFocus(), 0, 'Shift+Tab retreats');
 });
 
-S.check('cycling a SETUP row keeps the cursor (the screen re-composes itself)', () => {
-  // Every SETUP card calls showSetup() again, so this is the two-press retention
-  // case in its natural habitat. NIGHT MODE is used because its label changes
-  // deterministically (OFF -> ARMED/ON), which proves the row really re-composed.
+S.check('cycling a pre-run row keeps the cursor (the screen re-composes itself)', () => {
+  // The MODIFIER card re-renders the screen on every press, so this is the
+  // two-press retention case in its natural habitat.
   title();
-  cardWith('SETUP').click();
-  const idx = indexOfCard('NIGHT MODE');
-  assert.ok(idx >= 0, 'there is a NIGHT MODE card');
-  for (let n = 0; n < idx + 1; n++) key('arrowdown');   // -1 -> 0 is one press
-  assert.equal(T.menuFocus(), idx, 'the cursor is on NIGHT MODE');
+  cardWith('>PLAY<').click();
+  const idx = indexOfCard('>MODIFIER: ');
+  assert.ok(idx >= 0, 'there is a MODIFIER card');
+  while (T.menuFocus() !== idx) key('arrowdown');
   const before = cards()[idx].innerHTML;
   key('enter');
-  assert.equal(st.mode, 'setup', 'still on the setup screen');
+  assert.equal(st.mode, 'setup', 'still on the pre-run screen');
   assert.notEqual(cards()[idx].innerHTML, before, 'the row re-composed (its label changed)');
   assert.equal(T.menuFocus(), idx, 'and the cursor STAYED on that row');
   assert.equal(selCount(), 1, 'visibly still selected');
-  key('enter');                                   // toggle back, leave no state behind
-  assert.equal(T.menuFocus(), idx, 'still there after the second press');
+  while (T.menus.pendingChallenge !== 'STANDARD') key('enter');   // leave no state behind
+  assert.equal(T.menuFocus(), idx, 'still there after the later presses');
 });
 
 S.check('the PROGRESS screen takes keyboard navigation (same missing mode)', () => {

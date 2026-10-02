@@ -57,11 +57,12 @@ const T = h.T;
     assert.equal(pb('SOMEDAY', null, true), 'SOMEDAY', 'no silent renames of unknown modes');
   });
   S.check('full wording wherever the fit did not buy compact pads', () => {
-    assert.equal(pb('AUTO_ALL', null, false), 'AUTO_ALL');
+    assert.equal(pb('AUTO_ALL', null, false), 'AUTO');
+    assert.equal(pb('AUTO_MOVE', null, false), 'AUTO MOVE');
     assert.equal(pb('MANUAL', null, false), 'MANUAL');
   });
-  S.check('the act suffix rides along in both forms (AUTO_ALL · FLEE, A1 · FLEE)', () => {
-    assert.equal(pb('AUTO_ALL', 'FLEE', false), 'AUTO_ALL · FLEE');
+  S.check('the act suffix rides along in both forms (AUTO · FLEE, A1 · FLEE)', () => {
+    assert.equal(pb('AUTO_ALL', 'FLEE', false), 'AUTO · FLEE');
     assert.equal(pb('AUTO_ALL', 'FLEE', true), 'A1 · FLEE');
     assert.equal(pb('AUTO_ALL', 'AUTO_ALL', true), 'A1', 'act == mode: no suffix');
   });

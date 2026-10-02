@@ -54,7 +54,7 @@ import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
 //   'dead'      the end-of-run summary (the shipped defect this fixes)
 //   'trophies'  G9 gallery showcase
 //   'bestiary'  G10 bestiary guide
-export const HUD_SUPPRESSED_MODES = new Set(['dead', 'trophies', 'bestiary']);
+export const HUD_SUPPRESSED_MODES = new Set(['dead', 'trophies', 'bestiary', 'menu', 'progress', 'loadout', 'characters', 'farewell']);
 export function hudSuppressed(state) {
   return HUD_SUPPRESSED_MODES.has(state.mode);
 }
@@ -232,9 +232,9 @@ function rarityRing(g, e, state, x, y, w, h) {
 // the banner card (card x 90..390 at W=300; this x 392..472) and of the
 // centred HUD clock.
 export function prologueSkipRect() {
-  return { x: C.VIEW_W - 88, y: 24, w: 80, h: 16 };
+  return { x: C.VIEW_W - 88, y: 40, w: 80, h: 16 };   // under the run clock
 }
-const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 92;
+const PROLOGUE_CARD_Y = 24, PROLOGUE_CARD_H = 64;   // title, two body lines, the cue
 // PROLOGUE HUD CLEARANCE (brief docs/briefs/PROLOGUE_BANNER_CLEARANCE.md,
 // owner tutorial priority 2026-09-18; the overlap was disclosed in
 // docs/art/prologue-2026-09-18/REPORT.md): the banner card band (x 90..390,
@@ -827,14 +827,11 @@ export class Renderer {
 
   render(state, cam) {
     const g = this.ctx;
-    // G12 TITLE SCREEN: in mode 'title' the composed title card owns the canvas
-    // (main.js keeps the DOM menu on top of it). The world is NOT rendered under
-    // it — the owner asked for the title graphic "not on the map", so the map
-    // simply never paints here. The play-readout seams are cleared (same gate
-    // as the trophy/bestiary showcases in drawPlayHud) so no stale bars or
-    // banners read as live behind the menu.
+    // The title art owns the canvas on the title and on the pre-run screen
+    // ('setup'); main.js keeps the DOM menu on top. The world is not rendered
+    // under it and the play-readout seams are cleared.
     this.titleScreen = null;
-    if (state.mode === 'title') {
+    if (state.mode === 'title' || state.mode === 'setup') {
       this.hudChrome = null;
       this.bossBanner = null;
       this.moment = null;
@@ -1968,11 +1965,35 @@ export class Renderer {
     this.drawBossBanner(g, state);
     this.drawPrologueBanner(g, state);
     this.drawPrologueSkip(g, state);
+    this.drawWheelCue(g, state);
     this.drawFsButton(g, state);
     // SEAM (end-summary HUD suppression, 2026-09-17): one flag the browser
     // tests read — TRUE iff the play HUD (bars, feed, radar, banner) actually
     // painted this frame. The end-of-run summary asserts it FALSE in 'dead'.
     this.hudDrawn = true;
+  }
+
+  // ---- The wheel cue: who is steering while the pilot mode is AUTO ----------
+  // state.wheelCue is main.js's text ('YOU STEER', 'AUTO in 1.2s', or ''). A
+  // small plate at the bottom centre of the view, clear of the weapon row
+  // (left) and the radar (right).
+  drawWheelCue(g, state) {
+    this.wheelCue = null;
+    const txt = state.wheelCue;
+    if (!txt) return;
+    const px = 9;
+    const w = txt.length * Math.round(px * 0.62) + 8, h = px + 6;
+    const x = Math.round((C.VIEW_W - w) / 2), y = C.VIEW_H - h - 8;
+    g.fillStyle = C.HUD.PLATE;
+    g.fillRect(x, y, w, h);
+    g.fillStyle = '#ffd75e';
+    g.fillRect(x, y + h - 1, w, 1);
+    g.font = 'bold ' + px + 'px monospace';
+    g.textBaseline = 'top';
+    g.textAlign = 'left';
+    g.fillStyle = '#fff3c4';
+    g.fillText(txt, x + 4, y + 3);
+    this.wheelCue = { x, y, w, h, text: txt };
   }
 
   // ---- FULLSCREEN — the transient canvas toggle (owner 2026-09-17) --------
@@ -2473,6 +2494,7 @@ export class Renderer {
   drawPrologueBanner(g, state) {
     this.prologueBanner = null;
     if (!state.prologue || state.prologue.drunk) return;
+    if (state.mode === 'draft') return;   // the draft screen carries the sentence itself
     const idx = state.prologue.bannerIdx || 0;
     const B = state.prologue.banners ? state.prologue.banners[idx] : null;
     if (!B) return;
@@ -2518,7 +2540,7 @@ export class Renderer {
       if (cand.length * adv <= maxW) { line = cand; } else { lines.push(line); line = word; }
     }
     if (line) lines.push(line);
-    lines = lines.slice(0, 3);
+    lines = lines.slice(0, 2);
     for (let i = 0; i < lines.length; i++) g.fillText(lines[i], x0 + pad, y0 + 24 + i * 11);
     // DEFECT (c) FIX: the card no longer carries an OK button — the CUE line
     // states the ACTION that advances it (main.js prologueActionDone feeds
@@ -2527,7 +2549,7 @@ export class Renderer {
     g.textAlign = 'center';
     g.font = 'bold 9px monospace';
     g.fillStyle = '#7dffd0';
-    g.fillText(B.cue || '', x0 + W / 2, y0 + PROLOGUE_CARD_H - 20);
+    g.fillText(B.cue || '', x0 + W / 2, y0 + PROLOGUE_CARD_H - 15);
     g.textAlign = 'left';
     this.prologueBanner = { title: B.title, body: B.body, idx,
       total: state.prologue.banners.length };
@@ -2898,8 +2920,11 @@ export class Renderer {
     const cw = clockTxt.length * Math.round(clockPx * 0.62) + 4;
     const cx = C.VIEW_W - 24 + 2 - cw;
     const finalCall = t >= C.RUN.FINAL_CALL_AT;
-    label(clockTxt, cx, 13, finalCall ? '#ff9c6a' : '#cfe8ff', clockPx);
-    const cbX = cx - 2, cbY = 13 + clockPx + 4, cbW = cw, cbH = 4;
+    // state.clockInset: view px the clock steps down so it clears the DOM
+    // button row where that row overlays the canvas (0 when it does not).
+    const clockY = 13 + Math.max(0, Math.min(C.VIEW_H / 3, Math.round(state.clockInset || 0)));
+    label(clockTxt, cx, clockY, finalCall ? '#ff9c6a' : '#cfe8ff', clockPx);
+    const cbX = cx - 2, cbY = clockY + clockPx + 4, cbW = cw, cbH = 4;
     const limitFrac = Math.max(0, Math.min(1, t / C.RUN.LIMIT));
     g.fillStyle = H.FRAME;                         // steel container frame
     g.fillRect(cbX - 2, cbY - 2, cbW + 4, cbH + 4);
@@ -2914,7 +2939,7 @@ export class Renderer {
     g.fillStyle = '#ff2f5e';                       // the limit tick (30:00)
     g.fillRect(cbX + cbW - 1, cbY, 1, cbH);
     trimBar(g, cbX, cbY, cbW, cbH);   // PORT SLICE I: chamfered housing corners + studs
-    chrome.clock = { text: clockTxt, frac: limitFrac, finalCall };
+    chrome.clock = { text: clockTxt, frac: limitFrac, finalCall, x: cx - 2, y: clockY, w: cw + 2, h: clockPx + 10 };
 
     // --- G11 CHALLENGE MODE BADGE ------------------------------------------
     // Only when a NON-standard mode is live (a STANDARD run renders

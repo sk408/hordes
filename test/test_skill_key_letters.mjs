@@ -142,7 +142,7 @@ S.check('the hint lines and the text HUD name the SAME two letters', () => {
   assert.match(hints, /O pilot \(MANUAL\)/, 'the MANUAL line names its own mode');
   assert.match(hints, /M map/, 'every hint set teaches the M map key (M1)');
   assert.match(hints, /Q \/ E/, 'the AUTO hint line must teach Q / E');
-  assert.match(hints, /\(W too\)/, 'the AUTO hint line still discloses W');
+  assert.doesNotMatch(hints, /\(W too\)/, 'W is a move key in every mode now: the AUTO line no longer offers it as a skill key');
   assert.match(hints, /Q frost &middot; E overcharge/,
     'the MANUAL hint line must teach Q frost / E overcharge');
 });

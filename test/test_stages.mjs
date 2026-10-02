@@ -586,26 +586,27 @@ s.check('(d) the LIVE selector skips locked stages on the real profile and cycle
 // ---------------------------------------------------------------------------
 const cardsNow = () => [...h.elements['ov-cards'].children].map(c => c.innerHTML || '');
 
-s.check('the title menu carries a STAGE card naming the live stage; a press cycles', () => {
+s.check('the pre-run screen carries a STAGE card naming the live stage and its pay; a press cycles', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   T.stages.select(DEFAULT_STAGE_ID);
   h.key('keydown', { key: 'Escape', preventDefault() {} });
-  // U1: the STAGE card lives behind the SETUP door now, so walk to it.
-  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
-  if (!door) throw new Error('no SETUP door on the title (U1)');
+  // The STAGE card lives on the pre-run screen behind PLAY.
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>PLAY<'));
+  if (!door) throw new Error('no PLAY card on the title');
   door.click();
-  const card = cardsNow().find(t => t.includes('>STAGE<'));
+  const card = cardsNow().find(t => t.includes('>STAGE: '));
   if (!card) throw new Error('no STAGE card: ' + JSON.stringify(cardsNow().map(c => c.slice(0, 30))));
   if (!card.includes('VERDANT HOLLOW')) throw new Error('the card does not name the stage: ' + card);
-  const el = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>STAGE<'));
+  if (!/Pays normal gold/.test(card)) throw new Error('the card does not say what the stage pays: ' + card);
+  const el = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>STAGE: '));
   el.click();
   // Fresh harness profile may hold tour flags but no trophies: on a fully
   // locked profile the press re-lands on the default (still a named card).
   if (T.stages.pending !== DEFAULT_STAGE_ID && !T.stages.unlocked(T.stages.pending)) {
     throw new Error('press selected a locked stage');
   }
-  const card2 = cardsNow().find(t => t.includes('>STAGE<'));
+  const card2 = cardsNow().find(t => t.includes('>STAGE: '));
   if (!card2 || !T.stages.unlocked(T.stages.pending) || !card2.includes(describeStage(T.stages.pending).split(' — ')[0])) {
     throw new Error('the card did not re-render the new selection: ' + card2);
   }
@@ -1051,23 +1052,28 @@ s.check('stageFactsLine: plain words, hazard words, the hollow named', () => {
   if (stageFactsLine('CINDER_MAW').includes('hollow')) throw new Error('only the hollow says hollow');
 });
 
-s.check('the STAGE card carries the measured line (the live surface)', () => {
+s.check('the STAGE card says in one plain line what the stage changes and what it pays', () => {
   st.mode = 'menu';
   h.elements['ov-cards'].innerHTML = '';
   T.stages.select(DEFAULT_STAGE_ID);
   h.key('keydown', { key: 'Escape', preventDefault() {} });
-  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>SETUP<'));
-  if (!door) throw new Error('no SETUP door');
+  const door = [...h.elements['ov-cards'].children].find(c => (c.innerHTML || '').includes('>PLAY<'));
+  if (!door) throw new Error('no PLAY card');
   door.click();
-  const card = cardsNow().find(t => t.includes('>STAGE<'));
+  const card = cardsNow().find(t => t.includes('>STAGE: '));
   if (!card) throw new Error('no STAGE card');
-  const want = stageFactsLine(DEFAULT_STAGE_ID);
-  if (!card.includes(want)) throw new Error('the card does not carry the facts line "' + want + '": ' + card);
-  if (!card.includes('ranged 22%') || !card.includes('foe hp x1')) {
-    throw new Error('the numbers are not on the card: ' + card);
+  // The name leads the card; the line is words, not the measured table.
+  if (!/class="name">STAGE: VERDANT HOLLOW</.test(card)) throw new Error('the name no longer leads: ' + card);
+  if (!card.includes(T.menus.stageLine(DEFAULT_STAGE_ID))) throw new Error('the card does not carry the plain line: ' + card);
+  if (/ranged \d+%|spawn x/.test(card)) throw new Error('the measured table leaked onto the card: ' + card);
+  // Every stage's line names its change and its pay; a stage with tougher
+  // foes says how much tougher.
+  for (const s2 of STAGES) {
+    const line = T.menus.stageLine(s2.id);
+    if (!/\. Pays normal gold\.$/.test(line)) throw new Error(s2.id + ': no pay clause: ' + line);
+    const f = stageFacts(s2.id);
+    if (f.hp !== 1 && !line.includes('health')) throw new Error(s2.id + ': tougher foes not stated: ' + line);
   }
-  // The name still leads the card (setupCard's split(' · ')[0] reads it).
-  if (!/class="desc">VERDANT HOLLOW/.test(card)) throw new Error('the name no longer leads: ' + card);
 });
 
 s.check('the BASIN is the hollow: a flat heart, an untouched rim, every level still exists', () => {

@@ -1,23 +1,18 @@
-// THE WHEEL IS YOURS (owner 2026-09-18: "'It's a good idea though to let the
-// user break auto by using a movement key. But the instruction says drag the
-// field so the desktop user will try it and it doesn't work.'"). The game has
-// exactly two pilot states — a move key (desktop) or a field drag (touch)
-// pressed while the pilot flies on AUTO IS the takeover: the mode SWITCHES TO
-// MANUAL (no third 'borrowed' state), the announcement toast + the PILOT
-// badge read state.pilotMode so both reflect it the same frame, and O / the
-// PILOT button cycle back up the ladder (MANUAL -> AUTO ALL -> AUTO MOVE).
-// The copy names only the input the player's platform has (the desktop never
-// sees 'drag the field'). Pinned here, through the REAL seams:
-//   1. KEY TAKEOVER: a move keydown in each AUTO mode switches to MANUAL,
-//      sets the held direction, and the toast announces it; non-move keys
-//      never take the wheel; keyup clears; the ladder climbs back.
-//   2. COPY: banner 1's body is a platform getter — keys on a desktop path,
-//      the drag on a touch path, 'The pilot flies for you' in both, and
-//      neither variant mentions the other platform's input.
-//   3. THE REFERENCE: the pilot row + the manual's move rows carry the
-//      takeover in the same words on both paths.
-// Real-browser evidence (desktop keypress, touch drag, exact copy on both,
-// shots) lives in tools/verify_takeover.mjs.
+// TAKING THE WHEEL (M3). On AUTO, a move key (desktop) or a field drag (touch)
+// steers only while it is held; the pilot takes back WHEEL_HANDBACK_S after
+// the release, with an on-screen cue counting down. The pilot MODE never
+// changes this way: MANUAL is chosen only by the pilot button / O key (or the
+// Advanced settings row), and only that choice is stored. One stray move key
+// can no longer leave every later run on MANUAL.
+// Pinned here, through the REAL seams:
+//   1. HELD TO STEER: a held move key on AUTO moves the hero where it points,
+//      the mode stays AUTO, nothing is stored.
+//   2. THE HANDBACK: after the release the hero holds still, the cue reads
+//      'AUTO in N.Ns', and after WHEEL_HANDBACK_S the pilot drives again.
+//   3. MANUAL IS EXPLICIT: O toggles AUTO <-> MANUAL and persists; the old
+//      storage key (which a stray key could flip) is ignored.
+//   4. COPY: the tutorial's first card and the reference name the platform's
+//      own input and say the steering lasts while held.
 // Run: node test/test_takeover.mjs
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
@@ -25,125 +20,163 @@ import { CONTROLS, controlById } from '../src/controls_ref.js';
 
 const S = suite('test_takeover');
 
-// ---- 1. KEY TAKEOVER (desktop boot: no touch layer) --------------------------
-const h = await boot({ storage: [["hordes_onboarded", "1"]] });
-const mainMod = h.mod;
+const h = await boot({ storage: [['hordes_onboarded', '1'], ['hordes_pilot', 'MANUAL']] });
 const T = h.T, st = T.state;
 const kdown = (k) => h.key('keydown', { key: k, preventDefault() {} });
 const kup = (k) => h.key('keyup', { key: k });
+const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
+const FPS = 60;
 
-// straight into a run through the real seam
-T.startRun();
-st.enemies.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
-T.setPilotMode('AUTO_ALL');
-h.pump(1);
-assert.equal(st.mode, 'playing', 'fixture: a live run in AUTO_ALL');
-
-S.check('a MOVE KEY takes the wheel from AUTO_ALL — mode becomes MANUAL, direction held', () => {
-  kdown('a');
-  assert.equal(st.pilotMode, 'MANUAL', 'the takeover IS the mode switch (got ' + st.pilotMode + ')');
-  assert.equal(T.pilotInput.left, true, 'the key holds its direction');
-  kup('a');
-  assert.equal(T.pilotInput.left, false, 'keyup clears it');
-});
-S.check('AUTO_MOVE too — every AUTO rung is breakable', () => {
-  T.setPilotMode('AUTO_MOVE');
-  h.pump(1);
-  kdown('ArrowUp');
-  assert.equal(st.pilotMode, 'MANUAL', 'AUTO_MOVE: the move key takes the wheel');
-  kup('ArrowUp');
-});
-S.check('the takeover is ANNOUNCED (the toast names MANUAL)', () => {
-  T.setPilotMode('AUTO_ALL');
-  h.pump(1);
-  st.toasts.length = 0;
-  kdown('d'); kup('d');
-  const t = st.toasts[st.toasts.length - 1];
-  assert.ok(t && /MANUAL/.test(t.msg), 'toast: ' + (t && t.msg));
-});
-S.check('non-move keys never take the wheel', () => {
-  T.setPilotMode('AUTO_ALL');
-  h.pump(1);
-  for (const k of ['o', 'i', 'm', 'r', 'q', 'e', 'h', 'n', 'g']) {
-    kdown(k); kup(k);
-    if (k !== 'o') assert.equal(st.pilotMode, 'AUTO_ALL', k + ' must not take the wheel');
-    // (o legitimately climbs the ladder — reset between keys)
-    T.setPilotMode('AUTO_ALL');
-  }
-  h.key('keydown', { key: 'Tab', preventDefault() {} });
-  assert.equal(st.pilotMode, 'AUTO_ALL', 'Tab is a toggle, not a move key');
-  // (the loop's 'i' opened the field report and 'm' the map — close both so
-  // the next check's keydowns reach the playing branch again)
-  if (st.mode === 'stats') mainMod.__TEST.closeStats();
-  st.mapOpen = false;
-  h.pump(1);
-});
-S.check('the way back: O / PILOT cycles the ladder (MANUAL -> AUTO ALL -> AUTO MOVE)', () => {
-  T.setPilotMode('AUTO_ALL');
-  kdown('a'); kup('a');
-  assert.equal(st.pilotMode, 'MANUAL', 'fixture: taken over');
-  // (each kdown/kup pair is ONE honest press — the stub carries no repeat
-  // flag, and 'o' is REPEAT_GUARDED in the real browser besides)
-  kdown('o'); kup('o');
-  assert.equal(st.pilotMode, 'AUTO_ALL', 'one O press back to AUTO ALL');
-  kdown('o'); kup('o');
-  assert.equal(st.pilotMode, 'AUTO_MOVE', 'the ladder keeps its middle rung');
-  T.setPilotMode('AUTO_ALL');
-});
-S.check('the takeover persists as the pilot pref (the next run starts MANUAL)', () => {
-  T.setPilotMode('AUTO_ALL');
-  kdown('s'); kup('s');
-  assert.equal(st.pilotMode, 'MANUAL', 'fixture: taken over');
+S.check('the old pilot key is ignored: a profile trapped on MANUAL starts on AUTO', () => {
+  assert.notEqual(T.pilotPrefs.KEY_PILOT, 'hordes_pilot', 'the stored key was renamed');
   T.startRun();
-  assert.equal(st.pilotMode, 'MANUAL', 'G31 persistence reads the takeover (got ' + st.pilotMode + ')');
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'the stale MANUAL under the old key is not read (got ' + st.pilotMode + ')');
+});
+
+T.startRun();
+quiet();
+st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
+h.pump(1);
+assert.equal(st.mode, 'playing', 'fixture: a live run');
+assert.equal(st.pilotMode, 'AUTO_ALL', 'fixture: AUTO');
+
+S.check('a HELD move key steers on AUTO: the hero goes where it points, the mode stays AUTO', () => {
+  quiet();
+  const x0 = st.player.x, y0 = st.player.y;
+  kdown('d');
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'the key does not change the pilot mode');
+  assert.equal(T.pilotInput.right, true, 'the key holds its direction');
+  h.pump(30, quiet);
+  assert.ok(st.player.x > x0 + 10, 'half a second of D moved the hero right (' + (st.player.x - x0).toFixed(1) + ')');
+  assert.ok(Math.abs(st.player.y - y0) < 1, 'and only right');
+  assert.equal(T.wheel.t, T.wheel.handbackS, 'the hand-back timer is held full while the key is down');
+  assert.equal(T.wheel.cue(), 'YOU STEER', 'the cue says who is steering');
+  assert.equal(st.wheelCue, 'YOU STEER', 'and the renderer is handed the same text');
+  assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), null, 'nothing was stored');
+});
+
+S.check('after the release the hero holds still, the cue counts down, then AUTO drives again', () => {
+  kup('d');
+  assert.equal(T.pilotInput.right, false, 'keyup clears the direction');
+  const x1 = st.player.x, y1 = st.player.y;
+  h.pump(Math.round(FPS * 0.5), quiet);
+  assert.ok(T.wheel.t > 0 && T.wheel.t < T.wheel.handbackS, 'the hand-back is counting down (' + T.wheel.t.toFixed(2) + ')');
+  assert.match(T.wheel.cue(), /^AUTO in \d\.\ds$/, 'the cue reads AUTO in N.Ns: ' + T.wheel.cue());
+  assert.equal(st.wheelCue, T.wheel.cue(), 'on screen');
+  assert.ok(Math.abs(st.player.x - x1) < 0.01 && Math.abs(st.player.y - y1) < 0.01, 'the hero waits where the player left it');
+  // The rest of the window, plus a frame.
+  h.pump(Math.round(FPS * (T.wheel.handbackS - 0.5)) + 2, quiet);
+  assert.equal(T.wheel.t, 0, 'the wheel is back with the pilot after ' + T.wheel.handbackS + 's');
+  assert.equal(T.wheel.cue(), '', 'the cue is gone');
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'and the mode never changed');
+  // The pilot drives again: put a gem to one side and it walks for it.
+  st.gems.push({ x: st.player.x - 60, y: st.player.y, xp: 1, age: 0 });
+  const x2 = st.player.x;
+  h.pump(60, () => { st.enemies.length = 0; st.spawnTimer = 999; });
+  assert.ok(Math.abs(st.player.x - x2) > 1 || st.gems.length === 0, 'the pilot is moving the hero again');
+});
+
+S.check('a new key press inside the window takes the wheel straight back', () => {
+  quiet();
+  kdown('a'); h.pump(5, quiet); kup('a');
+  h.pump(20, quiet);
+  assert.ok(T.wheel.t > 0, 'counting down');
+  const x0 = st.player.x;
+  kdown('a'); h.pump(10, quiet);
+  assert.equal(T.wheel.t, T.wheel.handbackS, 'held again: the timer is full again');
+  assert.ok(st.player.x < x0 - 1, 'and the hero moves');
+  kup('a');
+  h.pump(Math.round(FPS * T.wheel.handbackS) + 3, quiet);
+  assert.equal(T.wheel.t, 0);
+});
+
+S.check('AUTO MOVE steers the same way', () => {
+  T.setPilotMode('AUTO_MOVE');
+  h.pump(1, quiet);
+  const y0 = st.player.y;
+  kdown('ArrowUp'); h.pump(20, quiet);
+  assert.equal(st.pilotMode, 'AUTO_MOVE', 'the mode stays AUTO MOVE');
+  assert.ok(st.player.y < y0 - 5, 'the hero moved up');
+  kup('ArrowUp');
+  h.pump(Math.round(FPS * T.wheel.handbackS) + 3, quiet);
   T.setPilotMode('AUTO_ALL');
 });
 
-// ---- 2. COPY: banner 1 is a platform getter ----------------------------------
+S.check('non-move keys never take the wheel', () => {
+  for (const k of ['i', 'm', 'r', 'q', 'e', 'h', 'n', 'g']) {
+    kdown(k); kup(k);
+    if (st.mode === 'stats') T.closeStats();
+    st.mapOpen = false;
+    assert.equal(T.wheel.t, 0, k + ' must not take the wheel');
+    assert.equal(st.pilotMode, 'AUTO_ALL', k + ' must not change the mode');
+  }
+  h.pump(1, quiet);
+});
+
+S.check('one stray move key does NOT make the next run MANUAL (the trap is gone)', () => {
+  kdown('s'); h.pump(2, quiet); kup('s');
+  T.startRun();
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'the next run starts on AUTO (got ' + st.pilotMode + ')');
+  assert.equal(T.wheel.t, 0, 'and a new run starts with the pilot driving');
+  quiet();
+});
+
+S.check('MANUAL is an explicit choice: O toggles AUTO <-> MANUAL and it persists', () => {
+  st.toasts.length = 0;
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'MANUAL', 'O chooses MANUAL');
+  assert.ok(/MANUAL/.test(st.toasts[st.toasts.length - 1].msg), 'and says so');
+  assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), 'MANUAL', 'the choice is stored');
+  assert.equal(T.wheel.cue(), '', 'no hand-back cue on MANUAL');
+  T.startRun(); quiet();
+  assert.equal(st.pilotMode, 'MANUAL', 'the next run starts on MANUAL');
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'O again returns to AUTO: two visible options');
+  assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), 'AUTO_ALL');
+});
+
+S.check('AUTO MOVE is the Advanced auto flavour: O returns to it, never cycles through it', () => {
+  T.wheel.setAutoFlavor('AUTO_MOVE');
+  assert.equal(st.pilotMode, 'AUTO_MOVE');
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'MANUAL');
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'AUTO_MOVE', 'O returns to the chosen auto flavour');
+  T.wheel.setAutoFlavor('AUTO_ALL');
+  assert.equal(st.pilotMode, 'AUTO_ALL');
+});
+
+// ---- COPY ----------------------------------------------------------------------
 const B = T.prologue.banners;
 const touchEl = h.elements['touch'];
-S.check('desktop copy: keys take the wheel — the DRAG line is never shown', () => {
+S.check('desktop copy: hold a move key. The drag line is never shown', () => {
   touchEl.classList.remove('on');
   const body = B[0].body;
-  assert.ok(/pilot flies for you/i.test(body), body);
-  assert.ok(/move key/i.test(body), 'the key instruction: ' + body);
+  assert.ok(/pilot fights for you/i.test(body), body);
+  assert.ok(/hold a move key/i.test(body), 'the key instruction: ' + body);
   assert.ok(!/drag/i.test(body), 'a desktop user must not be told to drag: ' + body);
-  assert.ok(body.length <= 100, 'house rule: ' + body.length + ' chars');
 });
-S.check('touch copy: the drag takes the wheel — no key instruction', () => {
+S.check('touch copy: drag. No key instruction', () => {
   touchEl.classList.add('on');
   const body = B[0].body;
-  assert.ok(/pilot flies for you/i.test(body), body);
-  assert.ok(/drag the field/i.test(body), 'the drag instruction: ' + body);
-  assert.ok(!/key/i.test(body), 'a touch player is never told to press a key: ' + body);
-  assert.ok(body.length <= 100, 'house rule: ' + body.length + ' chars');
+  assert.ok(/pilot fights for you/i.test(body), body);
+  assert.ok(/drag anywhere/i.test(body), 'the drag instruction: ' + body);
+  assert.ok(!/key/i.test(body + B[0].cue), 'a touch player is never told to press a key: ' + body + ' / ' + B[0].cue);
   touchEl.classList.remove('on');
 });
-
-// ---- 3. THE REFERENCE carries the takeover on both paths ---------------------
-S.check('the PILOT row names the takeover and the way back', () => {
+S.check('the PILOT row and the manual say the steering lasts while held', () => {
   const row = controlById('pilot');
-  assert.ok(/takes the wheel/i.test(row.purpose), row.purpose);
-  assert.ok(/AUTO \/ MANUAL/i.test(row.purpose), row.purpose);
+  assert.ok(/AUTO \/ MANUAL/i.test(row.purpose) && /hold a move key or drag/i.test(row.purpose), row.purpose);
   assert.equal(CONTROLS.filter(c => c.id === 'pilot').length, 1, 'one row, one source');
-});
-S.check('the manual move rows teach the takeover per path', () => {
-  // the manual's own page seam (manualGoto rebuilds the cards — the same
-  // builder the title's HOW TO PLAY card lands on; the card navigation is
-  // pinned by smoke.mjs). Page 3 is YOUR CONTROLS.
-  mainMod.__TEST.manual.goto(3);
+  T.manual.goto(3);
   const html = h.elements['ov-cards'].children.map(c => c.innerHTML || '').join('\n');
-  assert.ok(/move \(a move key also takes the wheel from AUTO\)/.test(html),
-    'the keyboard move row names the key takeover');
-  assert.ok(/move \(a drag also takes the wheel from AUTO\)/.test(html),
-    'the touch move row names the drag takeover');
-  assert.ok(/joystick/.test(html) && /arrows \/ WASD/.test(html),
-    'both input paths stay documented');
-  // page 2 (OPTIONS AND MODES): the PILOT row states the takeover too
-  mainMod.__TEST.manual.goto(2);
+  assert.ok(/move \(on AUTO: steer while held\)/.test(html), 'the keyboard move row');
+  assert.ok(/move \(on AUTO: steer while you drag\)/.test(html), 'the touch move row');
+  T.manual.goto(2);
   const html2 = h.elements['ov-cards'].children.map(c => c.innerHTML || '').join('\n');
-  assert.ok(/a move key or drag takes the wheel/.test(html2),
-    'the OPTIONS page carries the same rule: ' + html2.slice(0, 0) + '(checked)');
+  assert.ok(/takes over again \d(\.\d)?s after you let go/.test(html2), 'page 2 states the hand-back');
+  assert.ok(/Only the PILOT button or O chooses it/.test(html2), 'and that MANUAL is an explicit choice');
 });
 
 if (S.done() > 0) process.exit(1);
+process.exit(0);

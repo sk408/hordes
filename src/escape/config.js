@@ -41,9 +41,9 @@ export const PHYS = {
 // now, so the escape takes LONGER by construction (the task says report the
 // duration/gold-per-second change, never retune it away).
 export const MAP = {
-  UNITS_X: 3,   // was 2 — one more unit to the side
+  UNITS_X: 2,   // two units of UNIT_W: a 25-30 s corridor at NOMINAL_SPEED
   UNITS_Y: 3,   // was 2 — one more unit up (the elevated paths' budget)
-  UNIT_W: 3000,
+  UNIT_W: 2500,
   UNIT_H: 66,
 };
 
@@ -76,8 +76,8 @@ export const PACING = {
     { name: 'THE FINAL SPRINT', from: 0.66, tier: 3 },  // simplest terrain, max pressure
   ],
   NOMINAL_SPEED: 200,   // px/s the duration estimate divides by (see generator)
-  MIN_SECONDS: 30,      // corridor length bounds derived from the ~33s target
-  MAX_SECONDS: 36,
+  MIN_SECONDS: 25,      // corridor length bounds: 25-30 s at NOMINAL_SPEED
+  MAX_SECONDS: 30,
 };
 
 // ---- the horde wall (the real timer — visible, never an invisible clock) ----
@@ -90,7 +90,7 @@ export const PACING = {
 // UNBEATABLE: it runs down a full-dash runner mid-corridor (caught at ~55s
 // across every seed).
 export const WALL = {
-  START_GAP: 300,      // px behind the player at t=0
+  START_GAP: 380,      // px behind the player at t=0 (the short corridor gives the wall less time to fall back)
   V0: 190,             // px/s at act 0
   V3: 212,             // px/s at the final sprint (max pressure)
   WIDTH: 46,           // the rendered wall body's leading edge thickness

@@ -67,9 +67,10 @@ s.check('boot: a RETURNING profile on the title (runs >= 1)', () => {
   assert.equal(elements['ov-title'].textContent, 'HORDES');
   assert.ok((T.getProfile().achievements.totals.runs || 0) >= 1, 'the harness stamped the returning profile');
 });
-s.check('the title offers HOW TO PLAY and the manual carries the REPLAY TOUR card', () => {
+s.check('SETTINGS offers HOW TO PLAY and the manual carries the REPLAY TOUR card', () => {
+  byTitle('SETTINGS').click();
   const htp = byTitle('HOW TO PLAY');
-  assert.ok(htp, 'no HOW TO PLAY card on the title');
+  assert.ok(htp, 'no HOW TO PLAY card under SETTINGS');
   htp.click();
   assert.equal(elements['ov-title'].textContent, 'HOW TO PLAY');
   assert.ok(byTitle('REPLAY TOUR'), 'no REPLAY TOUR card in the manual (non-gate context)');

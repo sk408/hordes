@@ -1,29 +1,15 @@
-// UP-FRONT CONTROLS (owner 2026-09-16): "Wouldn't the buttons need to be
-// explained right away? Otherwise we're back to throwing in with no context
-// in a different way which is why the tutorial was built in the first
-// place..people complained about not understanding".
-//
-// WHY THE RETIRED CARDS FAILED (and the fix must not repeat it): the 25-card
-// tour INTERRUPTED the run — paused the sim mid-fight on a fixed timer.
-// Explaining up front was never the objection; hijacking play was. So the
-// gate explains BEFORE the run: on a fresh profile the FIRST START GAME
-// shows the reference screen once, GOT IT starts the run. Never mid-run,
-// never uninvited again.
+// THE FIRST MINUTE (M3): no manual stands between a new player and run 1.
+// PLAY opens the pre-run screen, START begins the run, and the run itself
+// teaches with three short cards (test_prologue.mjs). The manual stays
+// available under SETTINGS, on the title and in the pause menu.
 //
 // This file pins:
-//   1. FIRST-RUN GATE: fresh boot -> TITLE (the WAVE-19 auto-pop moved to
-//      the gate); START GAME -> the reference screen (TOUCH / KEYBOARD /
-//      THE FIELD, one source of truth) with GOT IT; GOT IT sets the flag
-//      and starts the run; the run clock advances; the gate never re-shows
-//      unprompted; the title card keeps it re-openable.
-//   2. THE GATE NEVER HIJACKS PLAY: it is a menu screen (the sim is not
-//      live), no hint strip mounts under it, and dismissal is its own
-//      control (GOT IT / ESC) — never a gameplay input.
-//   3. SELF-EXPLAINING CONTROLS: every cog-row button carries a readable
-//      NAME (SETTINGS / HELP / RADAR / MAP), not a bare glyph; HP / MP /
-//      FROST / OVER keep their labels; ASCII only.
-// The live-browser geometry of the named row (labels fit, nothing pushed
-// off-screen) is measured by tools/verify_upfront.mjs.
+//   1. NO GATE: on an empty profile, PLAY -> START reaches a live run without
+//      the manual ever opening; Enter, Enter does the same from the keyboard.
+//   2. THE MANUAL IS STILL THERE: title -> SETTINGS -> HOW TO PLAY opens the
+//      four-page reference; GOT IT returns to the title.
+//   3. SELF-EXPLAINING CONTROLS: every top-row button carries a readable NAME
+//      (SETTINGS / HELP / RADAR / MAP); the desktop key bar names each key.
 // Run: node test/test_upfront.mjs
 import { readFileSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
@@ -32,87 +18,80 @@ import { CONTROLS } from '../src/controls_ref.js';
 const s = suite('test_upfront');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
-// ---- 1. the first-run gate ------------------------------------------------------
-const { T, state: st, elements, pump, key } = await boot({});   // FRESH profile
+const { T, state: st, elements, pump, key } = await boot({ prologue: true });   // an EMPTY profile, kept empty
 const cards = () => [...elements['ov-cards'].children];
 const byTitle = (t) => cards().find(c => (c.innerHTML || '').includes('>' + t + '<'));
-const stripEls = () => (globalThis.document.body.children || []).filter(c => c.id === 'hint-strip');
+const titleText = () => elements['ov-title'].textContent;
+const kdown = (k) => key('keydown', { key: k, preventDefault() {} });
+const toTitle = () => {
+  T.die();
+  for (let i = 0; i < 10 && st.mode !== 'dead' && st.mode !== 'death-cine'; i++) pump(1);
+  if (st.mode === 'death-cine') kdown('x');
+  for (let i = 0; i < 5; i++) pump(1);
+  kdown('t');
+  for (let i = 0; i < 5; i++) pump(1);
+  if (st.mode !== 'title') throw new Error('not on the title (mode ' + st.mode + ')');
+};
 
 for (let i = 0; i < 60 * 12 && cards().length === 0; i++) pump(1);
-s.check('fresh boot lands on the TITLE (the WAVE-19 auto-pop moved to the gate)', () => {
-  if (elements['ov-title'].textContent !== 'HORDES') {
-    throw new Error('ov-title is ' + elements['ov-title'].textContent);
-  }
+s.check('an empty profile boots to the TITLE', () => {
+  if (titleText() !== 'HORDES') throw new Error('ov-title is ' + titleText());
 });
 
-s.check('START GAME on a fresh profile shows the reference gate BEFORE the run', () => {
-  byTitle('START GAME').click();
-  if (elements['ov-title'].textContent !== 'HOW TO PLAY') {
-    throw new Error('ov-title is ' + elements['ov-title'].textContent);
-  }
-  if (st.mode === 'playing') throw new Error('the gate must precede the run, not interrupt one');
+let manualSeen = false;
+const watch = () => { if (titleText() === 'HOW TO PLAY' || st.manualPage) manualSeen = true; };
+s.check('PLAY -> START on an empty profile reaches a live run with NO manual in between', () => {
+  byTitle('PLAY').click(); watch();
+  if (st.mode !== 'setup' || titleText() !== 'NEXT RUN') throw new Error('PLAY must open the pre-run screen (' + st.mode + ', ' + titleText() + ')');
+  byTitle('START').click(); watch();
+  for (let i = 0; i < 30 && st.mode !== 'playing'; i++) { pump(1); watch(); }
+  if (st.mode !== 'playing') throw new Error('START never started the run (mode ' + st.mode + ')');
+  if (manualSeen) throw new Error('the manual opened before run 1');
+  if (elements['overlay'].style.display !== 'none') throw new Error('an overlay is still up over run 1');
 });
-s.check('the gate is the real reference (the manual pages + GOT IT, one source)', () => {
-  // MANUAL v2 (2026-09-16): the reference is paginated — the check walks all
-  // four pages and collects the whole manual. The retired TOUCH / KEYBOARD
-  // cards live on as the merged CONTROLS page's subheads.
+s.check('run 1 is the tutorial run: its first card comes up, three cards in all', () => {
+  if (!T.prologue.active) throw new Error('run 1 of an empty profile must open the tutorial');
+  if (T.prologue.banners.length !== 3) throw new Error('the tutorial is ' + T.prologue.banners.length + ' cards, not 3');
+  for (let i = 0; i < 60 && !T.prologue.paused; i++) pump(1);
+  if (!T.prologue.paused || T.prologue.banner().action !== 'move') throw new Error('the MOVE card is not up');
+});
+s.check('the keyboard goes straight through: Enter (PLAY), Enter (START)', () => {
+  toTitle();
+  for (let i = 0; i < 60; i++) pump(1);   // the short return fade
+  kdown('Enter');
+  if (st.mode !== 'setup') throw new Error('Enter on the title must open the pre-run screen (mode ' + st.mode + ')');
+  kdown('Enter');
+  if (st.mode !== 'playing') throw new Error('Enter on the pre-run screen must start the run (mode ' + st.mode + ')');
+  if (titleText() === 'HOW TO PLAY') throw new Error('the manual opened');
+});
+
+// ---- 2. the manual is still there ---------------------------------------------------
+s.check('title -> SETTINGS -> HOW TO PLAY opens the reference; GOT IT returns to the title', () => {
+  toTitle();
+  if (byTitle('HOW TO PLAY')) throw new Error('HOW TO PLAY is not a title card any more');
+  byTitle('SETTINGS').click();
+  if (!byTitle('HOW TO PLAY')) throw new Error('SETTINGS lost HOW TO PLAY');
+  byTitle('HOW TO PLAY').click();
+  if (titleText() !== 'HOW TO PLAY') throw new Error('the reference did not open');
   let h = '';
   for (let p = 1; p <= 4; p++) { T.manual.goto(p); h += cards().map(c => c.innerHTML || '').join(''); }
   for (const t of ['>KEYBOARD CONTROLS<', '>TOUCH CONTROLS<', '>THE FIELD<', '>GOT IT<']) {
-    if (!h.includes(t)) throw new Error('gate lost ' + t);
+    if (!h.includes(t)) throw new Error('the manual lost ' + t);
   }
-  // parity: every canonical row is on the gate manual (no forked copy).
-  const onComposite = new Set(['potion-hp', 'potion-mp', 'stats']);
+  // parity: every canonical row is in the manual (no forked copy).
+  // (skill-q: a hero with an ULT gets its own Q line, built from the config.)
+  const onComposite = new Set(['potion-hp', 'potion-mp', 'stats', 'skill-q']);
   for (const c of CONTROLS) {
     if (onComposite.has(c.id)) continue;
-    if (!h.includes(c.purpose)) throw new Error('gate lost the purpose of ' + c.id);
+    if (!h.includes(c.purpose)) throw new Error('the manual lost the purpose of ' + c.id);
   }
-});
-s.check('the gate never hijacks play: no hint strip mounts under it', () => {
-  pump(30);   // half a second of frames with the gate up
-  if (stripEls().some(e => e.parentNode)) throw new Error('a hint mounted under the gate');
-});
-s.check('GOT IT on the gate sets the once-flag and STARTS THE RUN (clock advances)', () => {
-  byTitle('GOT IT').click();
-  if (globalThis.localStorage.getItem('hordes_onboarded') !== '1') {
-    throw new Error('gate GOT IT did not set hordes_onboarded');
-  }
-  for (let i = 0; i < 60 * 8 && st.mode !== 'playing'; i++) pump(1);
-  if (st.mode !== 'playing') throw new Error('gate GOT IT never started the run (mode ' + st.mode + ')');
-  const t0 = st.time;
-  pump(30);
-  if (!(st.time > t0 + 0.4)) throw new Error('run clock frozen after the gate');
-});
-
-// ---- 2. never again uninvited ----------------------------------------------------
-s.check('the gate never re-shows: death -> RETURN TO TITLE -> START GAME runs clean', () => {
-  T.die();
-  for (let i = 0; i < 10 && st.mode !== 'dead' && st.mode !== 'death-cine'; i++) pump(1);
-  if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });
-  for (let i = 0; i < 5; i++) pump(1);
-  key('keydown', { key: 't', preventDefault() {} });   // RETURN TO TITLE
-  for (let i = 0; i < 5; i++) pump(1);
-  if (st.mode !== 'title') throw new Error('not on the title (mode ' + st.mode + ')');
-  byTitle('START GAME').click();
-  if (elements['ov-title'].textContent === 'HOW TO PLAY') throw new Error('the gate re-showed uninvited');
-  for (let i = 0; i < 60 * 8 && st.mode !== 'playing'; i++) pump(1);
-  if (st.mode !== 'playing') throw new Error('second START GAME never ran (mode ' + st.mode + ')');
-});
-s.check('the title card keeps the reference re-openable (no way back: never one-shot)', () => {
-  T.die();
-  for (let i = 0; i < 10 && st.mode !== 'dead' && st.mode !== 'death-cine'; i++) pump(1);
-  if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });
-  key('keydown', { key: 't', preventDefault() {} });
-  for (let i = 0; i < 5; i++) pump(1);
-  byTitle('HOW TO PLAY').click();
-  if (elements['ov-title'].textContent !== 'HOW TO PLAY') throw new Error('title card did not re-open the reference');
   byTitle('GOT IT').click();
   for (let i = 0; i < 5; i++) pump(1);
-  if (st.mode !== 'title') throw new Error('title-reference GOT IT must return to the title (mode ' + st.mode + ')');
+  if (st.mode !== 'title') throw new Error('GOT IT must return to the title (mode ' + st.mode + ')');
 });
 
 // ---- 3. self-explaining controls -------------------------------------------------
-s.check('every cog-row button carries a readable NAME (SETTINGS / HELP / RADAR / MAP)', () => {
+s.check('every top-row button carries a readable NAME (SETTINGS / HELP / RADAR / MAP)', () => {
   const want = { 'tc-cog': 'SETTINGS', 'tc-help': 'HELP', 'tc-radar': 'RADAR', 'tc-map': 'MAP' };
   for (const [id, name] of Object.entries(want)) {
     const m = new RegExp('id="' + id + '"[^>]*>([^<]*(?:<span[^>]*></span>)?[^<]*)</button>').exec(html);
@@ -120,18 +99,22 @@ s.check('every cog-row button carries a readable NAME (SETTINGS / HELP / RADAR /
     const label = m[1].replace(/<[^>]*>/g, '').trim();
     if (label !== name) throw new Error(id + ' reads "' + label + '" not "' + name + '"');
   }
-  // the pixel gear stays (the smoke pins it); the NAME rides with it.
   if (!/cog-gear/.test(html)) throw new Error('the settings gear glyph was lost');
 });
-s.check('HP / MP / FROST / OVER keep their labels (unchanged by this work)', () => {
+s.check('HP / MP / FROST / OVER keep their labels', () => {
   for (const tok of ['>HP<', '>MP<', 'FROST', 'OVER']) {
     if (!html.includes(tok)) throw new Error('lost ' + tok);
   }
 });
-s.check('control-row names are ASCII, no emojis', () => {
-  for (const name of ['SETTINGS', 'HELP', 'RADAR', 'MAP']) {
-    if (!/^[\x20-\x7E]+$/.test(name)) throw new Error(name + ' is not ASCII');
+s.check('the desktop key bar names a key for every action it carries', () => {
+  const bar = /<div class="keybar" id="keybar">([\s\S]*?)<\/div>/.exec(html);
+  if (!bar) throw new Error('no key bar in index.html');
+  const acts = [...bar[1].matchAll(/<button data-act="([a-z]+)"[^>]*><b>([^<]+)<\/b>/g)].map(m => m[1] + ':' + m[2]);
+  for (const need of ['pilot:O', 'q:Q', 'w:E', 'h:H', 'n:N', 'map:M', 'stats:I', 'settings:ESC', 'help:?']) {
+    if (!acts.includes(need)) throw new Error('the key bar lost ' + need + ' (has ' + acts.join(', ') + ')');
   }
+  if (!/<b>WASD<\/b>steer/.test(bar[1])) throw new Error('the key bar does not name the move keys');
 });
 
 s.done();
+process.exit(0);

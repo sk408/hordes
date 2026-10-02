@@ -572,6 +572,9 @@ export const CONFIG = {
     // 1.4s < 1.95s — all four banners (incl. "the potion ahead is free") show
     // BEFORE the drink, with ~0.55s of approach walk left after the last OK.
     BANNER_WALK_S: 0.35,
+    // A card that asks for an action clears itself after this long, so a player
+    // who never touches the game is not held at it.
+    CARD_WAIT_S: 12,
     // TWO-TAP SKIP (owner 2026-09-18: "it was a bit too easy to skip without
     // meaning to"): the opt-out must be DELIBERATE. The first press on the
     // corner SKIP (or Escape) ARMS it for this many seconds — the button's

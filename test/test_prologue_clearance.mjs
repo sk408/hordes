@@ -49,8 +49,8 @@ function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg
 // ---------------------------------------------------------------------------
 S.check('the card rect clears the feed band, the clock and SKIP, and stays in view', () => {
   const card = prologueCardRect();
-  assert(card.x === 90 && card.y === 24 && card.w === 300 && card.h === 92,
-    'the card geometry is the measured one (x90 y24 300x92), got ' + JSON.stringify(card));
+  assert(card.x === 90 && card.y === 24 && card.w === 300 && card.h === 64,
+    'the card geometry is the measured one (x90 y24 300x64), got ' + JSON.stringify(card));
   // Fully inside the 480x300 view at every viewport (the view never changes).
   assert(card.x >= 0 && card.y >= 0 && card.x + card.w <= C.VIEW_W && card.y + card.h <= C.VIEW_H,
     'the card is fully inside the view');

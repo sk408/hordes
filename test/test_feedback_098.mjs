@@ -229,11 +229,11 @@ console.log('0.98 D2 — AN OWNED PILOT KEEPS ITS ABILITY DESCRIPTION (DOM)');
 
   // ---- copy truthfulness (0.98: I is the ONE stats key; S is movement) ----
   // The controls page is what a player reads before their first run.
-  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again — one
-  // tap from the menu, not two. MANUAL v2: the reference is paginated, so the
-  // copy sweep collects ALL FOUR pages through the real page seam.
+  // HOW TO PLAY lives under SETTINGS. The manual is paginated, so the copy
+  // sweep collects all four pages through the real page seam.
+  clickCard('SETTINGS');
   clickCard('HOW TO PLAY');
-  ok(/SURVIVE THE WAVES/.test(elements['ov-sub'].innerHTML || ''),
+  ok(/Survive as long as you can/.test(elements['ov-sub'].innerHTML || ''),
     'the HOW TO PLAY screen is the real one (point line present)');
   let refHtml = '';
   for (let p = 1; p <= 4; p++) { T.manual.goto(p); refHtml += html() + '\n'; }

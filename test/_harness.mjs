@@ -273,6 +273,8 @@ export async function boot(opts = {}) {
     // (null in the no-API arm — iPhone iOS Safari).
     fsCalls,
     setFrameMs: (ms) => { opts.frameMs = ms; },
+    // Move the fake wall clock without running a frame (rAF-stalled cases).
+    advanceClock: (ms) => { now += ms; },
     // SIM BUDGET: open a new arm segment (multi-run measurement tools call
     // this between runs so the 60s arm cap prices ONE run, not the boot).
     markArm: markArmSeg,

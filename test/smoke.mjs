@@ -142,9 +142,7 @@ const dtMs = 1000 / 60;
     const cb = rafQueue.shift();
     if (!cb) break;
     cb(now);
-    // UP-FRONT CONTROLS (2026-09-16): the WAVE-19 first-boot auto-pop moved
-    // to the FIRST-RUN GATE — a fresh boot lands on the TITLE; the FIRST
-    // START GAME shows HOW TO PLAY once, GOT IT starts the run.
+    // A fresh boot lands on the title.
     if (elements['ov-title'] && elements['ov-title'].textContent === 'HORDES' &&
         elements['ov-cards'] && elements['ov-cards'].children.length >= 3) break;
   }
@@ -156,42 +154,36 @@ const dtMs = 1000 / 60;
   assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
-  // The title keeps a re-openable HOW TO PLAY button; ESC dismisses it.
-  // Onboarding rework (2026-09-16): HOW TO PLAY is a TITLE card again — one
-  // tap from the menu, not two.
+  // HOW TO PLAY lives under SETTINGS; ESC backs out to the title.
+  byTitle0('SETTINGS').click();
   byTitle0('HOW TO PLAY').click();
-  assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'title HOW TO PLAY re-opens it');
-  keyHandler({ key: 'Escape' });
-  assert(elements['ov-title'].textContent === 'HORDES', 'ESC dismisses HOW TO PLAY');
-  // THE FIRST-RUN GATE: on a fresh profile START GAME shows the reference
-  // BEFORE the run (owner 2026-09-16: the buttons are explained right away).
-  byTitle0('START GAME').click();
-  assert(elements['ov-title'].textContent === 'HOW TO PLAY',
-    'fresh START GAME must show HOW TO PLAY before the run');
+  assert(elements['ov-title'].textContent === 'HOW TO PLAY', 'SETTINGS > HOW TO PLAY opens the manual');
   // The point of the game (ovSub lead line) + both control schemes (cards).
-  // MANUAL v2 (2026-09-16): the reference is paginated — collect the whole
-  // manual through the real page seam before asserting on its content.
+  // The manual is paginated: collect it through the real page seam.
   const htSub = elements['ov-sub'].innerHTML;
   let htHtml = '';
   for (let p = 1; p <= 4; p++) {
     mainMod.__TEST.manual.goto(p);
     htHtml += Array.from(cards0.children).map(c => c.innerHTML || '').join('');
   }
-  assert(/auto-fights/.test(htSub) && /draft weapons/.test(htSub),
+  assert(/pilot fights/.test(htSub) && /upgrades/.test(htSub),
     'the one-line point of the game must lead the overlay');
-  assert(/joystick/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&
-         /cog/.test(htHtml), 'touch callouts: joystick/FOCUS/STANCE/cog');
+  assert(/drag/.test(htHtml) && /FOCUS/.test(htHtml) && /STANCE/.test(htHtml) &&
+         /cog/.test(htHtml), 'touch callouts: drag/FOCUS/STANCE/cog');
   assert(/KEYBOARD/.test(htHtml) && /WASD/.test(htHtml) && /GOT IT/.test(htHtml),
     'keyboard callouts + GOT IT present');
-  // GOT IT dismisses + sets the one-time flag, STARTS THE RUN.
-  byTitle0('GOT IT').click();
-  assert(globalThis.localStorage.getItem('hordes_onboarded') === '1',
-    "GOT IT must set hordes_onboarded='1'");
+  keyHandler({ key: 'Escape' });
+  assert(elements['ov-title'].textContent === 'HORDES', 'ESC dismisses HOW TO PLAY');
+  // NO MANUAL BEFORE RUN 1: PLAY opens the pre-run screen and START begins the
+  // run, on a fresh profile too.
+  byTitle0('PLAY').click();
+  assert(elements['ov-title'].textContent === 'NEXT RUN', 'PLAY opens the pre-run screen');
+  byTitle0('START').click();
   for (let i = 0; i < 60 * 8 && mainMod.__TEST.state.mode !== 'playing'; i++) {
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
   }
   assert(mainMod.__TEST.state.mode === 'playing',
-    'gate GOT IT must start the run (mode ' + mainMod.__TEST.state.mode + ')');
+    'START must begin the run with no manual in between (mode ' + mainMod.__TEST.state.mode + ')');
   // Back to the title for the sections that follow: die, skip the movie,
   // RETURN TO TITLE (the real paths).
   mainMod.__TEST.die();
@@ -204,8 +196,7 @@ const dtMs = 1000 / 60;
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(elements['ov-title'].textContent === 'HORDES',
     'the death screen TITLE return lands on the HORDES title');
-  console.log(`intro: played ${introFrames} frames, then title -> first-run gate ` +
-    '(START GAME -> HOW TO PLAY -> GOT IT starts the run)');
+  console.log(`intro: played ${introFrames} frames, then title -> PLAY -> START begins the run`);
 }
 
 // Sk408 bug regression: RESET PROFILE must actually wipe. The arm flag used
@@ -217,11 +208,10 @@ const dtMs = 1000 / 60;
     const cards = elements['ov-cards'];
     const byTitle = (t) => Array.from(cards.children)
       .find(c => (c.innerHTML || '').includes(t));
-    byTitle('SETUP').click();   // U1: behind the SETUP door
     byTitle('SETTINGS').click();
-    byTitle('SAVE DATA').click();   // M3: reset lives behind SAVE DATA now
+    byTitle('ADVANCED').click();   // the reset lives on the ADVANCED page
     const r1 = byTitle('RESET PROFILE');
-    assert(r1, 'SAVE DATA should show a RESET PROFILE card');
+    assert(r1, 'ADVANCED should show a RESET PROFILE card');
     r1.click();
     const confirm = byTitle('CONFIRM RESET?');
     assert(confirm, 'first reset click should ARM the CONFIRM RESET? card');
@@ -231,7 +221,7 @@ const dtMs = 1000 / 60;
     // The wipe also reset the prologue-neutralization stamp (runs back to 0)
     // — re-apply so the runs this file starts later stay ordinary.
     stampNotFresh();
-    byTitle('BACK').click();   // SAVE DATA -> settings
+    byTitle('BACK').click();   // ADVANCED -> settings
     byTitle('BACK').click();   // settings -> title
   }
 }
@@ -245,11 +235,10 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
-  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
-  byTitle('DISPLAY').click();   // M1: the hud toggle lives behind DISPLAY now
+  byTitle('ADVANCED').click();   // the hud toggle lives on the ADVANCED page
   const hudCard = byTitle('TEXT HUD');
-  assert(hudCard, 'DISPLAY must offer a TEXT HUD card');
+  assert(hudCard, 'ADVANCED must offer a TEXT HUD card');
   assert(/OFF/.test(hudCard.innerHTML), 'TEXT HUD card reads OFF by default');
   hudCard.click();   // ON
   for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
@@ -258,7 +247,7 @@ const dtMs = 1000 / 60;
   byTitle('TEXT HUD').click();   // back OFF
   for (let i = 0; i < 2; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(elements['hud'].style.display === 'none', 'TEXT HUD OFF must hide it again');
-  byTitle('BACK').click();   // DISPLAY -> settings
+  byTitle('BACK').click();   // ADVANCED -> settings
   byTitle('BACK').click();   // settings -> title
   console.log('text HUD: hidden by default, settings toggle round-trips');
 }
@@ -273,11 +262,10 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
-  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
-  byTitle('DISPLAY').click();   // M1: the zoom ladder lives behind DISPLAY now
+  byTitle('ADVANCED').click();   // the zoom ladder lives on the ADVANCED page
   const z = byTitle('ZOOM');
-  assert(z && /currently 6x/.test(z.innerHTML),
+  assert(z && /6x\./.test(z.innerHTML),
     'settings must offer the ZOOM row (got ' + (z && z.innerHTML) + ')');
   z.click();   // 6 -> 8 (each click re-renders the settings screen)
   assert(st.zoom === 8 && globalThis.localStorage.getItem('hordes_zoom') === '8',
@@ -285,7 +273,7 @@ const dtMs = 1000 / 60;
   byTitle('ZOOM').click();   // 8 -> wraps to 1
   assert(st.zoom === 1 && globalThis.localStorage.getItem('hordes_zoom') === '1',
     'the ladder must wrap 8x -> 1x and persist');
-  byTitle('BACK').click();   // DISPLAY -> settings
+  byTitle('BACK').click();   // ADVANCED -> settings
   byTitle('BACK').click();   // settings -> title
   console.log('zoom setting: hydrated 6x at boot, ZOOM row cycles + persists, 8x wraps to 1x');
 }
@@ -302,18 +290,17 @@ const dtMs = 1000 / 60;
   const cards = elements['ov-cards'];
   const byTitle = (t) => Array.from(cards.children)
     .find(c => (c.innerHTML || '').includes(t));
-  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
-  byTitle('DISPLAY').click();   // M1: resolution lives behind DISPLAY now
+  byTitle('ADVANCED').click();   // resolution lives on the ADVANCED page
   const cv = elements['game'];
   const size = () => cv.style.width + 'x' + cv.style.height;
   const r0 = byTitle('RESOLUTION');
-  assert(r0 && /currently AUTO \(fit window\)/.test(r0.innerHTML),
+  assert(r0 && /AUTO: fits the window/.test(r0.innerHTML),
     'settings must offer the RESOLUTION row, AUTO by default (got ' + (r0 && r0.innerHTML) + ')');
   assert(size() === '1152pxx720px', 'AUTO fits the window: 1152x720 (got ' + size() + ')');
   byTitle('RESOLUTION').click();   // -> PIXEL-PERFECT
   assert(globalThis.localStorage.getItem('hordes_resolution') === 'PIXEL-PERFECT' &&
-    /currently PIXEL-PERFECT \(uniform pixels\)/.test(byTitle('RESOLUTION').innerHTML),
+    /PIXEL-PERFECT: even pixels/.test(byTitle('RESOLUTION').innerHTML),
     'PIXEL-PERFECT persists + re-renders');
   assert(size() === '960pxx600px', 'PIXEL-PERFECT floors 2.4 -> 2: 960x600 (got ' + size() + ')');
   byTitle('RESOLUTION').click();   // -> '2' (fits: same 960x600, mode persisted)
@@ -363,26 +350,17 @@ const dtMs = 1000 / 60;
   console.log('renderer backing store: CSS x dpr sizing + view transform + headless 1:1 fallback');
 }
 
-// Title-mode boot: click START GAME to start the run (menu buttons are
-// overlay cards, same as draft picks). N2: the press fades the menu out and
-// HOLDS the title art ~1s before the run — the retargeted contract.
+// Title-mode boot: PLAY opens the pre-run screen, START begins the run (menu
+// buttons are overlay cards, same as draft picks).
 {
   const cards = elements['ov-cards'];
   const ov = elements['overlay'];
-  cards.children[0].click();   // START GAME -> the N2 art hold, then startRun()
-  assert(st.mode === 'title' && st.titleReveal &&
-    (st.titleReveal.phase === 'out' || st.titleReveal.phase === 'hold'),
-    'the press holds the art first (N2): the run does not start on the press tick');
-  let held = 0;
-  for (; held < 90; held++) {
-    now += dtMs;
-    const cb = rafQueue.shift();
-    if (!cb) break;
-    cb(now);
-    if (ov.style.display === 'none') break;
-  }
-  assert(ov && ov.style.display === 'none',
-    'START GAME starts the run after the art hold (hide overlay)');
+  cards.children[0].click();   // PLAY -> the pre-run screen
+  assert(st.mode === 'setup' && elements['ov-title'].textContent === 'NEXT RUN',
+    'PLAY opens the pre-run screen (mode ' + st.mode + ')');
+  cards.children[0].click();   // START -> startRun()
+  assert(ov && ov.style.display === 'none' && st.mode === 'playing',
+    'START begins the run (hide overlay)');
 }
 
 // FIXTURE BUFF (owner-approved: "the test character might need a buff, just for
@@ -1321,12 +1299,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 's' });
   assert(st.mode === 'playing',
     'S must NOT open the FIELD REPORT in any mode (mode=' + st.mode + ')');
-  // THE WHEEL IS YOURS (owner 2026-09-18: "let the user break auto by using
-  // a movement key"): S is a MOVE KEY — pressed while the pilot flies on
-  // AUTO it TAKES THE WHEEL (the mode switches to MANUAL). It still never
-  // opens the report.
-  assert(st.pilotMode === 'MANUAL',
-    'a move key must take the wheel from AUTO (got ' + st.pilotMode + ')');
+  // S is a MOVE KEY: on AUTO it steers while held and the mode does not
+  // change. It still never opens the report.
+  assert(st.pilotMode === 'AUTO_ALL',
+    'a move key must not change the pilot mode (got ' + st.pilotMode + ')');
+  keyUpHandler({ key: 's' });
   keyHandler({ key: 'i' });
   assert(st.mode === 'stats', 'I must open the FIELD REPORT (mode=' + st.mode + ')');
   assert(elements['overlay'].style.display === 'flex', 'stats overlay must show');
@@ -1397,14 +1374,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 'Tab', preventDefault: () => {} });   // NEAREST -> TOUGHEST
   keyHandler({ key: 'g' });                               // BALANCED -> GREEDY
   pump(2);
-  // (h) O now CYCLES the three-rung ladder AUTO ALL -> AUTO MOVE -> MANUAL, so
-  // MANUAL is two presses away. The middle rung is pinned rather than skipped:
-  // a 3-mode selector whose intermediate state was never asserted would pass
-  // with AUTO MOVE wired to the wrong controller.
-  // (M1 retarget: the pilot ladder moved M -> O when the map claimed M.)
-  keyHandler({ key: 'o' });                               // AUTO ALL -> AUTO MOVE
+  // O toggles AUTO <-> MANUAL. AUTO MOVE is an Advanced setting (the auto
+  // flavour), pinned here so the three-mode seam stays wired.
+  T.wheel.setAutoFlavor('AUTO_MOVE');
   pump(2);
-  assert(st.pilotMode === 'AUTO_MOVE', 'the first O press lands on AUTO MOVE (got ' + st.pilotMode + ')');
+  assert(st.pilotMode === 'AUTO_MOVE', 'the Advanced flavour selects AUTO MOVE (got ' + st.pilotMode + ')');
   assert(/Pilot:AUTO_MOVE/.test(hudText()), 'HUD readout names AUTO MOVE');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'focus/stance decorations survive the AUTO ALL -> AUTO MOVE swap');
@@ -1414,6 +1388,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(/Pilot:MANUAL/.test(hudText()), 'HUD readout flips to MANUAL');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'focus/stance decorations survive the AUTO MOVE -> MANUAL swap');
+  keyHandler({ key: 'o' });                               // MANUAL -> the auto flavour
+  assert(st.pilotMode === 'AUTO_MOVE', 'O from MANUAL returns to the chosen auto flavour');
+  T.wheel.setAutoFlavor('AUTO_ALL');
+  keyHandler({ key: 'o' });
+  assert(st.pilotMode === 'MANUAL', 'O toggles AUTO -> MANUAL in one press');
 
   // Held ArrowRight crosses a real distance; keyup STOPS the pilot dead.
   // Pinned building field + the spawn footing: seed 1 leaves the lanes right
@@ -1908,7 +1887,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   const hpBefore = st.player.potions.hp, manaBefore = st.player.mana;
   fireProbe('h'); fireProbe('q');
   assert(/: drink a health potion/.test(tipEl.innerHTML) ||
-    /: cast your class skill/.test(tipEl.innerHTML),
+    /: use your hero skill/.test(tipEl.innerHTML),
     'a tap explains the control (' + tipEl.innerHTML + ')');
   pump(3);
   assert(st.player.potions.hp === hpBefore && st.player.mana === manaBefore,
@@ -2053,7 +2032,6 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'gold is banked with the same payout accounting (+' + (purseAfter - purseBefore) + ')');
   assert(byTitle('RETRY') && byTitle('TITLE'), 'the end card offers RETRY/TITLE');
   byTitle('TITLE').click();           // back at the title settings: no END RUN there
-  byTitle('SETUP').click();   // U1: behind the SETUP door
   byTitle('SETTINGS').click();
   assert(!byTitle('END RUN'), 'the TITLE settings screen must NOT offer END RUN');
   console.log('wave-18: xp bar exact/reset + weapon underlines, dpr 1-3 clamped backing store, ' +

@@ -61,7 +61,7 @@ function rgba(hex, a) {
 const CAM_LEAD = 150;
 
 // The skip affordance: a real hit-testable rect, visible from frame one.
-export const SKIP_RECT = { x: VIEW_W - 92, y: 8, w: 84, h: 26 };
+export const SKIP_RECT = { x: VIEW_W - 116, y: 8, w: 108, h: 26 };
 export function skipHit(px, py) {
   return px >= SKIP_RECT.x && px <= SKIP_RECT.x + SKIP_RECT.w &&
          py >= SKIP_RECT.y && py <= SKIP_RECT.y + SKIP_RECT.h;
@@ -762,8 +762,20 @@ export function draw(ctx, sim, opts = {}) {
   ctx.fillRect(SKIP_RECT.x, SKIP_RECT.y, SKIP_RECT.w, SKIP_RECT.h);
   ctx.strokeStyle = '#4a4a66';
   ctx.strokeRect(SKIP_RECT.x + 0.5, SKIP_RECT.y + 0.5, SKIP_RECT.w - 1, SKIP_RECT.h - 1);
+  // The skip states its price: the gold it passes up, or keeps with the writ.
   ctx.fillStyle = opts.paidSkip ? '#80d0a0' : C_TEXT;
-  ctx.fillText(opts.paidSkip ? 'SKIP +PAY' : 'SKIP', SKIP_RECT.x + 22, SKIP_RECT.y + 8);
+  const worth = opts.payout | 0;
+  const skipTxt = !worth ? 'SKIP' : opts.paidSkip ? 'SKIP: keep ' + worth + 'g' : 'SKIP: lose ' + worth + 'g';
+  ctx.fillText(skipTxt, SKIP_RECT.x + Math.max(3, Math.round((SKIP_RECT.w - skipTxt.length * 6) / 2)), SKIP_RECT.y + 8);
+  // The payout, up front: what finishing the escape banks.
+  if (worth > 0 && !sim.outcome) {
+    const payTxt = 'ESCAPE: +' + worth + ' gold';
+    const pw = payTxt.length * 6 + 10, px = Math.round((VIEW_W - pw) / 2);
+    ctx.fillStyle = 'rgba(14,14,22,0.78)';
+    ctx.fillRect(px, 6, pw, 16);
+    ctx.fillStyle = '#ffd75e';
+    ctx.fillText(payTxt, px + 5, 9);
+  }
 
   // ---- the outcome card (the soft-fail story: no death screen) -------------
   if (sim.outcome) {
@@ -772,8 +784,8 @@ export function draw(ctx, sim, opts = {}) {
     ctx.fillStyle = C_TEXT;
     ctx.font = '16px monospace';
     const line = sim.outcome === 'complete' ? 'ESCAPED'
-      : sim.outcome === 'caught' ? 'CAUGHT — no payout, run continues'
-        : sim.outcome === 'fell' ? 'FELL — no payout, run continues'
+      : sim.outcome === 'caught' ? 'CAUGHT: no gold, the run goes on'
+        : sim.outcome === 'fell' ? 'FELL: no gold, the run goes on'
           : 'SKIPPED';
     ctx.fillText(line, Math.round((VIEW_W - line.length * 9) / 2), 132);
     ctx.font = '10px monospace';

@@ -38,16 +38,16 @@ function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg
 // (shipped guaranteed-minimum 6000px = 2 units) and UNIT_H 66 (the shipped
 // 132px authored band [MIN_TOP..FLOOR_Y] = 2 units). 9 units total.
 // ---------------------------------------------------------------------------
-S.check('the unit is pinned and the vertical band grew by exactly one unit', () => {
-  assert(MAP.UNITS_X === 3 && MAP.UNITS_Y === 3, 'the map is 3x3 units (got ' + MAP.UNITS_X + 'x' + MAP.UNITS_Y + ')');
-  assert(MAP.UNIT_W === 3000, 'UNIT_W is half the shipped corridor axis (' + MAP.UNIT_W + ')');
+S.check('the unit is pinned: a 2 x 2500px corridor (25-30 s, M3) under a 3-unit vertical band', () => {
+  assert(MAP.UNITS_X === 2 && MAP.UNITS_Y === 3, 'the map is 2x3 units (got ' + MAP.UNITS_X + 'x' + MAP.UNITS_Y + ')');
+  assert(MAP.UNIT_W === 2500, 'UNIT_W is 2500 (' + MAP.UNIT_W + ')');
   assert(MAP.UNIT_H === 66, 'UNIT_H is half the shipped vertical band (' + MAP.UNIT_H + ')');
   assert(BAND.MIN_TOP === 252 - 3 * 66 && BAND.MIN_TOP === 54,
-    'MIN_TOP grew 120 -> ' + BAND.MIN_TOP + ' (exactly one more 66px unit up)');
-  assert(PACING.MIN_SECONDS === 30 && PACING.NOMINAL_SPEED === 200,
-    'PACING is untouched (the duration consequence is reported, never retuned)');
+    'MIN_TOP is ' + BAND.MIN_TOP + ' (three 66px units up)');
+  assert(PACING.MIN_SECONDS === 25 && PACING.MAX_SECONDS === 30 && PACING.NOMINAL_SPEED === 200,
+    'PACING names the 25-30 s target');
 });
-S.check('the extent is units-based: nominal lengths land in the 3-unit bound', () => {
+S.check('the extent is units-based: nominal lengths land in the 25-30 s bound', () => {
   const lo = MAP.UNITS_X * MAP.UNIT_W / PACING.NOMINAL_SPEED;
   const hi = lo * (1 + (PACING.MAX_SECONDS - PACING.MIN_SECONDS) / PACING.MIN_SECONDS) + 4;
   for (let seed = 1; seed <= 20; seed++) {
@@ -58,26 +58,25 @@ S.check('the extent is units-based: nominal lengths land in the 3-unit bound', (
   console.log('  MEASURED extent: corridor length ' +
     Math.round(Math.min(...[1, 2, 3, 4, 5].map(s => generateCorridor(s).length))) + '-' +
     Math.round(Math.max(...[1, 2, 3, 4, 5].map(s => generateCorridor(s).length))) +
-    'px = 3 units x 3000px (+20% authored variance)');
+    'px = 2 units x 2500px (+20% authored variance)');
 });
-S.check('COUNTER-CASE: UNITS_X back to 2 shrinks the corridor to the shipped extent (nothing is hardcoded)', () => {
+S.check('COUNTER-CASE: UNITS_X = 3 grows the corridor by one unit (nothing is hardcoded)', () => {
   // config.js exports live objects, so the counter-case flips the ONE extent
-  // constant and restores it after — the 2-unit map must fall straight out of
-  // the same generator, proving the 9-unit build is not propped up by any
-  // hardcoded length anywhere.
+  // constant and restores it after: the 3-unit map falls straight out of the
+  // same generator.
   const keep = MAP.UNITS_X;
   try {
-    MAP.UNITS_X = 2;
-    const lo = 6000 / PACING.NOMINAL_SPEED, hi = lo * 1.2 + 4;
+    MAP.UNITS_X = 3;
+    const lo = 7500 / PACING.NOMINAL_SPEED, hi = lo * 1.2 + 4;
     for (let seed = 1; seed <= 12; seed++) {
       const c = generateCorridor(seed);
-      assert(c.length >= 6000 && c.length <= 7300,
-        'seed ' + seed + ': 2-unit length ' + c.length + ' outside the shipped extent');
+      assert(c.length >= 7500 && c.length <= 9300,
+        'seed ' + seed + ': 3-unit length ' + c.length + ' outside the 3-unit extent');
       assert(c.length / PACING.NOMINAL_SPEED <= hi,
-        'seed ' + seed + ': 2-unit nominal ' + (c.length / PACING.NOMINAL_SPEED).toFixed(1) + 's');
+        'seed ' + seed + ': 3-unit nominal ' + (c.length / PACING.NOMINAL_SPEED).toFixed(1) + 's');
     }
-    console.log('  MEASURED counter-case: UNITS_X=2 -> ' +
-      generateCorridor(1).length + 'px (the shipped 2-unit corridor, same generator)');
+    console.log('  MEASURED counter-case: UNITS_X=3 -> ' +
+      generateCorridor(1).length + 'px (same generator)');
   } finally {
     MAP.UNITS_X = keep;
   }
@@ -352,7 +351,7 @@ S.check('UNATTENDED: the real hand-over, zero input, pumps to a COMPLETED escape
   assert(st.mode !== 'escape', 'the escape never ended (' + (n / 60).toFixed(0) + 's cap hit)');
   assert(st.mode === 'intermission', 'handed back to ' + st.mode + ' (must be the soft intermission)');
   const sub = h.elements['ov-sub'].innerHTML || '';
-  assert(/ESCAPE COMPLETE/.test(sub), 'the intermission lead names the completion: ' + sub.slice(0, 90));
+  assert(/ESCAPED: \+\d+ gold banked/.test(sub), 'the intermission lead names the completion: ' + sub.slice(0, 90));
   assert(prof.gold === bankBefore + payoutFor(best),
     'the bank credit landed exactly once (' + (prof.gold - bankBefore) + ' vs ' + payoutFor(best) + ')');
   assert(prof.runPurse === purseBefore, 'the purse never saw the escape income');

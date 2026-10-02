@@ -227,7 +227,7 @@ const ensureSimLive = (tag) => {
   // holding the sim when the 'not yanked' check reads the mode).
   ensureSimLive('1: post-REPLAY-arm boundary');
   ok('1: REPLAY TOUR from a live run ARMS THE NEXT RUN and says so',
-    (st.toasts || []).some(t => /GUIDED WALKTHROUGH ARMS AT NEXT RUN/.test(t.msg)),
+    (st.toasts || []).some(t => /tutorial starts with your next run/.test(t.msg)),
     (st.toasts || []).map(t => t.msg));
   ok('1: ...and the live run was NOT yanked (still playing, no prologue)',
     st.mode === 'playing' && !st.prologue, st.mode);
@@ -256,8 +256,11 @@ const ensureSimLive = (tag) => {
 
   // (c) REPLAY TOUR from the TITLE: arms + STARTS the special prologue run
   // immediately (the opt-in bypasses C.PROLOGUE.ENABLED, which is OFF here).
+  const settingsTitle = [...ovCards1.children].find(c => (c._html || '').includes('>SETTINGS<'));
+  ok('1: the title offers SETTINGS', !!settingsTitle);
+  settingsTitle.click();
   const htpTitle = [...ovCards1.children].find(c => (c._html || '').includes('>HOW TO PLAY<'));
-  ok('1: the title offers HOW TO PLAY', !!htpTitle);
+  ok('1: SETTINGS offers HOW TO PLAY', !!htpTitle);
   htpTitle.click();
   const replayTitle = [...ovCards1.children].find(c => (c._html || '').includes('>REPLAY TOUR<'));
   ok('1: the REPLAY TOUR card is on the manual from the title too', !!replayTitle);
@@ -387,8 +390,8 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   const endSub = globalThis.document.getElementById('ov-sub');
   const endHtml = (endSub && endSub._html) || '';
   ok('2: the result screen shows the GOLD POOL multiplier clause',
-    /GOLD POOL x3\.60/.test(endHtml) && endHtml.includes('CHALLENGE +200%') &&
-    endHtml.includes('HEAT +60%'), endHtml.slice(0, 300));
+    /run award x3\.60/.test(endHtml) && endHtml.includes('modifier +200%') &&
+    endHtml.includes('raised stakes +60%'), endHtml.slice(0, 400));
 
   // The SELECTION surface shows the reward (the title CHALLENGE card renders
   // describeChallenge verbatim — sub text is the card's desc line).
@@ -408,16 +411,16 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   ok('2: the dead screen reaches the title (nothing swallowed the transition)',
     st.mode === 'title' || st.mode === 'menu', st.mode);
   tick(1);
-  // The selection surface: the title SETUP card opens the page whose CHALLENGE
-  // row renders describeChallenge verbatim (menuCard: name + desc).
-  const setupCard = [...ovCards.children].find(c => (c._html || '').includes('SETUP'));
-  ok('2: the title SETUP card is up', !!setupCard);
-  setupCard && setupCard.click();
+  // The selection surface: PLAY opens the pre-run screen, whose MODIFIER card
+  // says what the selection changes and what it pays.
+  const playCard = [...ovCards.children].find(c => (c._html || '').includes('>PLAY<'));
+  ok('2: the title PLAY card is up', !!playCard);
+  playCard && playCard.click();
   tick(0.5);
-  const chCard = [...ovCards.children].find(c => (c._html || '').includes('CHALLENGE'));
-  ok('2: the CHALLENGE selection card is up', !!chCard);
+  const chCard = [...ovCards.children].find(c => (c._html || '').includes('>MODIFIER: '));
+  ok('2: the MODIFIER selection card is up', !!chCard);
   ok('2: the selection card itself carries the reward line (NO_POTIONS, +200%)',
-    chCard && chCard._html.includes('REWARD: +200% END-OF-RUN GOLD'), chCard && chCard._html);
+    chCard && /Pays \+200% run award \(\d+ to \d+ gold\)/.test(chCard._html), chCard && chCard._html);
 
   // SINGLE-CONSTANT proof: the bonus lives in ONE place (RUN_GOLD.CHALLENGE_BONUS_PCT
   // in meta.js) and is never re-literalled in the challenge/selection code.

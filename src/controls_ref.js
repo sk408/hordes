@@ -20,29 +20,29 @@ export const CONTROLS = [
   { id: 'skill-q', keys: ['Q'], touch: 'SKILL',
     // the LIVE key and touch name are class-dependent and are supplied by
     // main.js as overrides (C.SKILLS[classSkillId].KEY / .NAME)
-    purpose: 'cast your class skill (mana + cooldown)' },
+    purpose: 'use your hero skill (costs mana, then recharges)' },
   { id: 'skill-w', keys: ['E'], touch: 'OVER',
-    purpose: 'overdrive every weapon for a burst (mana + cooldown)' },
+    purpose: 'all weapons fire faster for a few seconds (costs mana, then recharges)' },
   // RSS8 MAGNET COLLECTOR: a CARD-granted skill, so unlike the rows above it
   // exists only in runs that drafted the mythic — the touch button is hidden
   // without the card and the key is a no-op without it. Stated in the purpose
   // so the reference never promises a control a run does not hold.
   { id: 'skill-magnet', keys: ['X'], touch: 'MAG',
-    purpose: 'sweep every ground drop to you (the Magnet Collector card skill, 30s cooldown)' },
+    purpose: 'pull every drop on the ground to you (needs the Magnet Collector card; 30s recharge)' },
   { id: 'focus', keys: ['TAB'], touch: 'FOCUS',
-    purpose: 'choose what the auto-attack targets' },
+    purpose: 'choose which enemies get shot first' },
   { id: 'stance', keys: ['G'], touch: 'STANCE',
-    purpose: 'tune the run: SAFE keeps clear, GREEDY banks loot faster' },
+    purpose: 'how bold the pilot is: SAFE keeps away, GREEDY chases loot' },
   { id: 'pilot', keys: ['O'], touch: 'PILOT',
     // THE WHEEL IS YOURS (owner 2026-09-18): a move key (desktop) or a field
     // drag (touch) takes the wheel FROM AUTO — this row names the way back.
-    purpose: 'switch pilot AUTO / MANUAL (a move key or drag takes the wheel from AUTO)' },
+    purpose: 'switch AUTO / MANUAL. On AUTO, hold a move key or drag to steer for a moment' },
   { id: 'radar', keys: ['R'], touch: 'RADAR',
-    purpose: 'edge blips mark enemies outside the screen' },
+    purpose: 'show or hide the radar of nearby enemies' },
   { id: 'map', keys: ['M'], touch: 'MAP',
     purpose: 'open the world map (the fight keeps running)' },
   { id: 'stats', keys: ['I'], touch: 'STATS',
-    purpose: 'open the field report for this run' },
+    purpose: 'open your stats for this run (pauses)' },
   // '?' SUPPLEMENT (2026-09-16) -> HELP MODE (same day, retirement brief):
   // the "?" IS a control — same glyph, same meaning on both input paths,
   // and it now arms the tap-to-learn inspect mode. The reference screen's

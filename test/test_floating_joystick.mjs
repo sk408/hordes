@@ -146,22 +146,24 @@ const S = suite('test_floating_joystick');
     st.mode = 'playing';
   });
 
-  // THE WHEEL IS YOURS (owner 2026-09-18: "a drag on the field while AUTO
-  // hands over control, matching the key behaviour"): a canvas drag while the
-  // pilot flies on AUTO IS the takeover — no third state, the mode switches
-  // to MANUAL and the stick arms under it.
-  S.check('a drag while AUTO takes the wheel (AUTO_MOVE and AUTO_ALL alike)', () => {
+  // M3: a canvas drag on AUTO arms the stick and steers while it is held.
+  // The pilot mode does not change; the pilot takes back after the release.
+  S.check('a drag on AUTO steers without changing the mode (AUTO_MOVE and AUTO_ALL alike)', () => {
     T.setPilotMode('AUTO_MOVE');
     h.pump(1);
     down(200, 150); move(260, 150);
-    assert.equal(st.pilotMode, 'MANUAL', 'AUTO_MOVE: the drag IS the takeover');
-    assert.equal(fj.armed(), true, 'AUTO_MOVE: the stick arms under the takeover');
+    assert.equal(st.pilotMode, 'AUTO_MOVE', 'AUTO_MOVE: the drag does not change the mode');
+    assert.equal(fj.armed(), true, 'AUTO_MOVE: the stick arms');
     lift('pointerup');
     T.setPilotMode('AUTO_ALL');
     h.pump(1);
     down(200, 150); move(260, 150);
-    assert.equal(st.pilotMode, 'MANUAL', 'AUTO_ALL: equally a takeover');
+    assert.equal(st.pilotMode, 'AUTO_ALL', 'AUTO_ALL: equally unchanged');
     assert.ok(T.pilotInput.mag > 0, 'the drag steers the moment it lands');
+    const x0 = st.player.x;
+    h.pump(10);
+    assert.ok(st.player.x > x0 + 1, 'the held drag moves the hero right on AUTO');
+    assert.ok(st.wheel > 0, 'the wheel is taken while held');
     lift('pointerup');
     T.setPilotMode('MANUAL');
     h.pump(1);

@@ -221,7 +221,7 @@ S.check('the win fires at the limit and not one frame early', () => {
   assert.equal(h.elements['ov-title'].textContent, 'RUN SURVIVED', 'the win has its own end card');
   const goldAfter = T.getProfile().gold;
   assert.ok(goldAfter > goldBefore, `the win pays out (+${goldAfter - goldBefore})`);
-  assert.ok(/COMPLETION BONUS: \+\d+/.test(h.elements['ov-sub'].innerHTML),
+  assert.ok(/Bonus \+\d+ gold/.test(h.elements['ov-sub'].innerHTML) && /bonuses \d+/.test(h.elements['ov-sub'].innerHTML),
     'the completion bonus is itemised on the card');
   assert.equal(st.runWon, true, 'and the flag stays set');
 });

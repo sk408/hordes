@@ -201,20 +201,17 @@ const { T, state: st, pump, storage } = await boot({ variant: 'nits' });
     const mk = (raw) => JSON.stringify({ at: '2026-09-16T00:00:00.000Z', reason: 'corrupt', raw });
     storage.set(RECOVERY_KEY, mk('{latest'));
     storage.set(RECOVERY_KEY + '.prev', mk('{prior'));
-    // The recovery offer is TITLE-only, behind SAVE DATA now (condense M3) —
-    // open it the real way: title -> SETUP -> SETTINGS -> SAVE DATA.
+    // The recovery offer is title-only, on the ADVANCED settings page: open it
+    // the real way, title -> SETTINGS -> ADVANCED.
     const openSaveData = () => {
       T.showTitle();
       const cards = () => [... (globalThis.document.getElementById('ov-cards') || { children: [] }).children];
-      const setup = cards().find(k => (k.innerHTML || '').includes('>SETUP<'));
-      assert.ok(setup, 'no SETUP card on the title');
-      setup.click();
       const settings = cards().find(k => (k.innerHTML || '').includes('>SETTINGS<'));
-      assert.ok(settings, 'no SETTINGS card in SETUP');
+      assert.ok(settings, 'no SETTINGS card on the title');
       settings.click();
-      const saveData = cards().find(k => (k.innerHTML || '').includes('>SAVE DATA<'));
-      assert.ok(saveData, 'no SAVE DATA card in settings');
-      saveData.click();
+      const adv = cards().find(k => (k.innerHTML || '').includes('>ADVANCED<'));
+      assert.ok(adv, 'no ADVANCED card in settings');
+      adv.click();
     };
     openSaveData();
     const cards = [... (globalThis.document.getElementById('ov-cards') || { children: [] }).children]

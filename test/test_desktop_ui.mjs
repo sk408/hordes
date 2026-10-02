@@ -178,7 +178,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   assert(elements['tc-stance'].textContent === st.stance,
     'the STANCE badge must read the published state.stance (got ' +
     elements['tc-stance'].textContent + ' vs ' + st.stance + ')');
-  assert(elements['tc-pilot'].textContent.includes(st.pilotMode) &&
+  assert(elements['tc-pilot'].textContent.includes(T.pilotBadgeText(st.pilotMode, null, false)) &&
          (st.stanceAct === st.pilotMode ||
           elements['tc-pilot'].textContent.includes(st.stanceAct)),
     'the PILOT badge must read pilotMode + the live activity (got ' +
@@ -424,7 +424,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   const src = read('src/main.js');
   assert(!/1 – 6 — pick cards/.test(src), 'HOW TO PLAY must not claim 1-6 picks cards');
   assert(/1 – 3 — draft cards/.test(src), 'HOW TO PLAY must scope the draft keys');
-  assert(/ESC or P — pause in a run/.test(src), 'HOW TO PLAY must document the pause key');
+  assert(/ESC or P — pause/.test(src), 'HOW TO PLAY must document the pause key');
   console.log('copy: footer + HOW TO PLAY number-key claims scoped, pause key documented');
 }
 

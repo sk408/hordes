@@ -374,6 +374,19 @@
     image-rendering: pixelated; image-rendering: crisp-edges;
   }
   #overlay .sub .gold { color: #ffd75e; font-weight: bold; letter-spacing: 1px; }
+  /* Title screen: the cards start under the painted wordmark (main.js
+     placeTitleMenu) and the gold + hero line sits below them, on a dark plate
+     so it reads over the art. */
+  #overlay.title { justify-content: flex-start; }
+  #overlay.title #ov-sub { order: 3; padding: 4px 12px; background: rgba(5,5,10,0.72);
+    border-radius: 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  #overlay.title #ov-sub canvas.bust { margin: 0; width: 32px; height: 32px; }
+  /* A landscape phone fits the title's five or six cards in one or two short rows. */
+  @media (pointer: coarse) and (orientation: landscape) {
+    #overlay.title .card { width: min(17.5vw, 172px); padding: 8px 6px; }
+    #overlay.title .card .name { margin-bottom: 4px; }
+    #overlay.title .card .desc { font-size: 11px; }
+  }
   #overlay .sub .pass { color: #7ad0ff; font-size: 11px; letter-spacing: 1px; }
   #overlay .sub canvas.bust {
     display: block; margin: 6px auto 4px; width: 64px; height: 64px;
@@ -454,28 +467,30 @@
   }
   #touch.on { display: block; }
   @media (pointer: coarse) { #touch { display: block; } }
-  /* WAVE-22b DESKTOP MENU BUTTON (Sk408): the cog is the in-run menu —
-     without the touch layer, desktop had NO on-screen way to reach settings
-     (zoom, END RUN, replay tour). WAVE-23 (#6): non-touch devices get the
-     full layer (main.js adds .cog-only) — the pads are real mouse-clickable
-     buttons (parity with touch), NOT zero-sized ghosts. The joystick is
-     pointer-captured, so it mouse-drags too when MANUAL is bound (WASD
-     remains the keyboard path). */
+  /* Desktop (no touch seen yet, main.js marks the layer .cog-only): the thumb
+     pads, the top button row and the on-screen stick stay hidden. A slim key
+     bar along the bottom carries the same actions as small clickable chips
+     with their keys; fitCanvas keeps the canvas above it. The first touch
+     event swaps the layer to .on and the pads appear. */
   #touch.cog-only { display: block; }
-  #touch.cog-only button { cursor: pointer; }
-  #touch.cog-only #joy { cursor: grab; }
-  /* WAVE-23 desktop refinement (post-audit): a mouse user does not need
-     thumb-sized 56px targets, and at 0.85 opacity the pads sat on top of the
-     arena's bottom corners. On the fine-pointer desktop they dim to 0.55,
-     snapping back to full opacity while the cursor is over them. Touch /
-     hybrid (#touch.on) keeps the full-size layer untouched — this block is
-     cog-only devices. H1: the old 44px click-target shrink is gone — the
-     no-reflow contract (#touch .pad button below: fixed 64px height holding
-     the badge's reserved two-line box) applies to this variant too, so its
-     min-width/min-height knobs were dead declarations and are removed. */
-  #touch.cog-only .pad button { font-size: 12px; }
-  #touch.cog-only .pad { opacity: 0.55; }
-  #touch.cog-only .pad:hover { opacity: 1; }
+  #touch.cog-only .pad, #touch.cog-only button.cog, #touch.cog-only #joy { display: none !important; }
+  #touch .keybar { display: none; }
+  #touch.cog-only .keybar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    box-sizing: border-box; padding: 0 8px; overflow: hidden;
+    background: #0b0b12; border-top: 1px solid #23233a;
+    font-size: 11px; color: #8a8aa8; white-space: nowrap; pointer-events: auto;
+  }
+  #touch .keybar button {
+    min-width: 0; min-height: 0; height: 20px; padding: 0 7px;
+    font-size: 11px; line-height: 18px; color: #b8b8cc; cursor: pointer;
+    background: transparent; border: 1px solid #33334a; border-radius: 4px;
+  }
+  #touch .keybar button:hover { border-color: #ffd75e; color: #ffffff; }
+  #touch .keybar b { color: #ffd75e; margin-right: 4px; }
+  #touch .keybar .v { color: #ffd75e; margin-left: 3px; }
+  @media (max-width: 900px) { #touch .keybar .opt { display: none; } }
   /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
      2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
      canvas button enters immersive mode instead. The wrap grows to the
@@ -788,51 +803,12 @@
   }
   #help-hud { bottom: 118px; font-size: 12px; border-color: #5a5a7a; }
   #help-tip { bottom: 150px; }
-  /* ---- PROLOGUE ADDENDUM (owner 2026-09-18): "if we hide the controls, then
-     we would need to introduce the buttons one at a time with the tooltip
-     explaining what they do" — the hidden-vs-greyed question is answered:
-     HIDDEN, with a STAGED INTRODUCTION. Through the first-run phase every
-     touch button is INVISIBLE and inert (visibility keeps the pad frame
-     stable, so a revealed control APPEARS in place — one at a time, each with
-     its tooltip); the logic gates live in main.js's runAction/keydown
-     funnels. A staged button carries .pr-on from its reveal until the phase
-     ends. The body class is set ONLY at prologue arm time and cleared ONLY at
-     phase end (endPrologue) — so the flip to the full control set at the end
-     is one obvious moment, every button appearing at once. The canvas
-     fullscreen glyph is HIDDEN too (never staged). The banner's OK is a
-     canvas hit-region — unaffected; SKIP (the proposed second exception)
-     lives on the same card. */
+  /* The first-run tutorial hides every touch button until it ends (main.js
+     prologueLockButtons). */
   body.prologue-locked #touch button {
     visibility: hidden;
     pointer-events: none;
   }
-  body.prologue-locked #touch button.pr-on {
-    visibility: visible;
-    pointer-events: auto;
-  }
-  /* ---- PROLOGUE STAGED INTRODUCTION: the tooltip that appears WITH its
-     control and disappears when the control is USED (learn by doing — not an
-     OK press; main.js owns the lifecycle). Fixed-anchored per stage: the MOVE
-     tip floats over the steering field (the floating stick's home band is
-     centred-low), the PILOT / STATS tips sit above the LEFT pad, which is
-     where those two buttons live. Pointer-inert: it explains, it never eats a
-     gesture. Plain ASCII, 320px-safe. */
-  #prologue-tip {
-    position: fixed; z-index: 60; pointer-events: none;
-    max-width: 250px; padding: 6px 9px; text-align: center;
-    background: rgba(8,8,15,0.92); border: 1px solid #7dffd0;
-    color: #e8e8f0; font: 10px/1.4 monospace; white-space: normal;
-  }
-  #prologue-tip[hidden] { display: none; }
-  #prologue-tip.tip-move {
-    left: 50%; transform: translateX(-50%);
-    bottom: max(170px, calc(env(safe-area-inset-bottom, 0px) + 170px));
-  }
-  #prologue-tip.tip-pilot, #prologue-tip.tip-stats {
-    left: max(10px, env(safe-area-inset-left, 10px)); transform: none;
-    bottom: max(300px, calc(env(safe-area-inset-bottom, 0px) + 300px));
-  }
-
   /* Bigger tap targets for draft cards on small/touch screens. */
   @media (pointer: coarse), (max-width: 700px) {
     /* A centred flex container whose content is taller than it squeezes its rows
@@ -941,14 +917,23 @@
     <button class="cog help" id="tc-help" data-act="help" aria-label="controls">HELP</button>
     <button class="cog radar" id="tc-radar" data-act="radar" aria-label="radar">RADAR</button>
     <button class="cog map" id="tc-map" data-act="map" aria-label="map">MAP</button>
+    <!-- The desktop key bar: the same actions as the pads, as small chips. -->
+    <div class="keybar" id="keybar">
+      <span class="opt"><b>WASD</b>steer</span>
+      <button data-act="pilot"><b>O</b>PILOT<span class="v" id="kb-pilot">AUTO</span></button>
+      <button data-act="q"><b>Q</b><span id="kb-qname">SKILL</span><span class="v" id="kb-q">RDY</span></button>
+      <button data-act="w"><b>E</b>OVER<span class="v" id="kb-w">RDY</span></button>
+      <button data-act="h"><b>H</b>HP potion<span class="v" id="kb-h">1</span></button>
+      <button data-act="n"><b>N</b>MP potion<span class="v" id="kb-n">1</span></button>
+      <button data-act="map" class="opt"><b>M</b>MAP</button>
+      <button data-act="stats"><b>I</b>STATS</button>
+      <button data-act="settings"><b>ESC</b>PAUSE</button>
+      <button data-act="help" class="opt"><b>?</b>HELP</button>
+    </div>
   </div>
   <!-- HELP MODE: the retired #hints key-list panel's slot. "?" arms the
        inspect mode; these are its strip + single-entry explainer. -->
   <div id="help-hud"></div>
-  <!-- PROLOGUE STAGED INTRODUCTION: the tooltip that appears with each
-       revealed control (see the CSS block above; main.js owns text + the
-       used-means-learned lifecycle). -->
-  <div id="prologue-tip" hidden></div>
   <div id="help-tip"></div>
   <div id="overlay">
     <h1 id="ov-title">HORDES</h1>

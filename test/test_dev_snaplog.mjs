@@ -178,7 +178,7 @@ if (!PYTHON) {
   h.T.showTitle();
   const on = cardsOf(h);
   assert.ok(on.some((x) => x.includes('DEV LOG')), 'the dev-gated title carries the DEV LOG card');
-  assert.ok(on.some((x) => x.includes('HOW TO PLAY')), 'the player cards still render beside it');
+  assert.ok(on.some((x) => x.includes('>PLAY<')) && on.some((x) => x.includes('>SETTINGS<')), 'the player cards still render beside it');
 
   const g = await boot({ variant: 'slice11menuoff' });
   g.T.showTitle();

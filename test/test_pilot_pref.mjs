@@ -200,18 +200,20 @@ ok('the doctrine key cycles the stance', after !== before && prefs.loadStance() 
   [before, after, ls.get(prefs.KEY_STANCE)]);
 ok('the stance key was WRITTEN by the cycle', ls.get(prefs.KEY_STANCE) === after);
 
-// ---- 10. the SETTINGS screen carries a PILOT row that cycles + persists -------
+// ---- 10. the ADVANCED settings page carries a PILOT row that cycles + persists ---
 T.startRun();
 st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
 T.openSettings();
 ok('the in-run SETTINGS screen opens', st.mode === 'settings', st.mode);
+ok('the main SETTINGS screen has no PILOT row (it lives on ADVANCED)', !cardNamed('PILOT'));
+cardNamed('ADVANCED').click();
 const pilotCard = cardNamed('PILOT');
-ok('the SETTINGS screen has a PILOT row', !!pilotCard, cardsOf().map(c => (c._html || '').slice(0, 30)));
-ok('the PILOT row names the live mode', /AUTO ALL/.test(pilotCard._html), pilotCard._html);
+ok('the ADVANCED page has a PILOT row', !!pilotCard, cardsOf().map(c => (c._html || '').slice(0, 30)));
+ok('the PILOT row names the live mode in plain words', /AUTO: moves, casts skills, drinks potions/.test(pilotCard._html), pilotCard._html);
 const modeBefore = st.pilotMode;
 pilotCard.click();                  // cycles and re-renders the screen
-ok('the PILOT row cycles the mode through togglePilotMode',
-  st.pilotMode !== modeBefore && prefs.loadPilot() === st.pilotMode,
+ok('the PILOT row cycles the mode (AUTO ALL -> AUTO MOVE: the only door to AUTO MOVE)',
+  st.pilotMode === 'AUTO_MOVE' && st.pilotMode !== modeBefore && prefs.loadPilot() === st.pilotMode,
   [modeBefore, st.pilotMode, ls.get(prefs.KEY_PILOT)]);
 ok('the cycled choice was PERSISTED', ls.get(prefs.KEY_PILOT) === st.pilotMode);
 T.closeSettings();

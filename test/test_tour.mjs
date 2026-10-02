@@ -378,13 +378,12 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   assert.equal(tourRoots().length, 0,
     'REPLACEMENT 1: no tour-root mounts on a fresh boot (the title walk is retired; the title is self-labelling)');
 
-  // REPLACEMENT 2: HOW TO PLAY is a real title card, opens the reference
-  // screen, and returns to the title through its own GOT IT.
-  // MANUAL v2 (2026-09-16): the reference is paginated — page 3 is ONE merged
-  // YOUR CONTROLS card teaching BOTH input schemes as subheads (the separate
-  // TOUCH / KEYBOARD cards are retired).
+  // REPLACEMENT 2: HOW TO PLAY is reachable from the title (under SETTINGS),
+  // opens the reference screen, and GOT IT returns to SETTINGS. Page 3 is ONE
+  // merged YOUR CONTROLS card teaching both input schemes as subheads.
+  cardTitled('SETTINGS').click();
   const htp = cardTitled('HOW TO PLAY');
-  assert.ok(htp, 'HOW TO PLAY card present on the title');
+  assert.ok(htp, 'HOW TO PLAY card present under SETTINGS');
   htp.click();
   T.manual.goto(3);
   const ctlCard = cardTitled('YOUR CONTROLS');
@@ -413,7 +412,8 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   // honest gate is the level threshold itself: no levelUp, no pendingDrafts,
   // no draft modal, no coach. The negative assertions below are byte-
   // identical and now cover EVERY coach type, the draft coach included.
-  cardTitled('START GAME').click();
+  cardTitled('PLAY').click();
+  cardTitled('START').click();
   for (let i = 0; i < 200 && st.mode !== 'playing'; i++) frame();
   assert.equal(st.mode, 'playing', 'run live (no tour to walk first)');
   st.player.xpNext = Infinity;    // the real no-draft gate (see above)

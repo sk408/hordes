@@ -88,14 +88,14 @@ S.check('endScreenBody carries progress + cause + earnings + the next unlock', (
   assert.ok(/survived 151s/.test(html), 'time survived');
   assert.ok(/KILLED BY SPITTER at range/.test(html), 'the legible cause');
   assert.ok(/GOLD EARNED: \+184/.test(html), 'gold earned');
-  assert.ok(/NEXT UNLOCK: /.test(html), 'what is now within reach');
-  // Still a 4-line read, not a wall.
-  assert.ok(html.split('<br>').length <= 4, 'at most four lines (3-second read)');
+  assert.ok(/BUY NEXT: /.test(html), 'the next purchase');
+  // Still a short read, not a wall: lead, cause, gold, next.
+  assert.ok(html.split('<br>').length <= 4, 'at most four lines without a breakdown');
 });
 S.check('a deliberate exit omits the killer line but keeps the payoff', () => {
   const html = T.endScreenBody({ lead: 'you called it at wave 2', cause: null, gold: 12, firstClear: false });
   assert.ok(!/KILLED BY/.test(html), 'no cause on a deliberate exit');
-  assert.ok(/GOLD EARNED: \+12/.test(html) && /NEXT UNLOCK: /.test(html), 'payoff intact');
+  assert.ok(/GOLD EARNED: \+12/.test(html) && /BUY NEXT: /.test(html), 'payoff intact');
 });
 
 // ---- integration: a REAL death through the real loop -------------------------
@@ -139,22 +139,16 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   const html = ovSub();
   assert.ok(/KILLED BY SPITTER in melee/.test(html), 'cause on screen (' + html + ')');
   assert.ok(/GOLD EARNED: \+\d+/.test(html), 'earnings on screen');
-  assert.ok(/NEXT UNLOCK: /.test(html), 'the next purchase on screen');
-  assert.ok(/WAVE \d+/.test(html) && /survived \d+s/.test(html), 'progress on screen');
+  assert.ok(/BUY NEXT: /.test(html), 'the next purchase on screen');
+  assert.ok(/WAVE \d+/.test(html) && /TIME \d\d:\d\d/.test(html) && /LEVEL \d+/.test(html) && /\d+ KILLS/.test(html), 'progress on screen');
+  assert.ok(/run award \d+ · survival \d+ · kills \d+/.test(html), 'the gold breakdown on screen');
   assert.ok(/\u00b7/.test(html) || /·/.test(html), 'single-line scannable layout');
-  // RETRY stays the primary action and R still retries.
-  // RETARGETED 2026-09-16 (IN-RUN REFERENCE ACCESS supplement): the death
-  // screen now deliberately carries a third card — the HOW TO PLAY door (the
-  // owner directive: the end screens are when a player realises what they
-  // did not understand). The retry loop stays fast the same way it always
-  // was: RETRY first, TITLE second, and NOTHING beyond the sanctioned set.
+  // RETRY is the first card (the default action); SHOP and TITLE follow.
   const cards = elements['ov-cards'].children;
   assert.ok((cards[0].innerHTML || '').includes('RETRY'), 'RETRY is the FIRST card');
-  assert.ok((cards[1].innerHTML || '').includes('TITLE'), 'TITLE second');
-  assert.ok(cards.length === 3 && (cards[2].innerHTML || '').includes('HOW TO PLAY'),
-    'exactly one sanctioned third card: the HOW TO PLAY door (' + cards.length + ' cards)');
-  assert.ok(!(cards[2].innerHTML || '').includes('CONFIRM'),
-    'the third card is a door, never an armed confirm that slows RETRY');
+  assert.ok((cards[1].innerHTML || '').includes('SHOP'), 'SHOP second');
+  assert.ok(cards.length === 3 && (cards[2].innerHTML || '').includes('TITLE'), 'TITLE third, and nothing else (' + cards.length + ' cards)');
+  assert.ok(![...cards].some(c => (c.innerHTML || '').includes('CONFIRM')), 'no armed confirm slows RETRY');
 });
 
 S.check('R retries straight from the death screen', () => {

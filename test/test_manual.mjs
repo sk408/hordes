@@ -55,8 +55,9 @@ const kdown = (k) => key('keydown', { key: k, preventDefault() {} });
 
 for (let i = 0; i < 60 * 12 && cards().length === 0; i++) pump(1);
 assert.equal(elements['ov-title'].textContent, 'HORDES', 'must boot to the title');
+T.menus.showSettings();
 const howTo = cards().find(c => (c.innerHTML || '').includes('>HOW TO PLAY<'));
-assert.ok(howTo, 'title HOW TO PLAY card present');
+assert.ok(howTo, 'SETTINGS HOW TO PLAY card present');
 howTo.click();
 
 let passed = 0;
@@ -167,8 +168,8 @@ check('the CONTROLS page documents the retired hints’ radar and map subjects',
 check('page 1 is HOW A RUN WORKS: waves, intermission, the choices, both endings, with numbers', () => {
   T.manual.goto(1);
   const html = cards().map(c => c.innerHTML || '').join('\n');
-  for (const tok of ['120s', 'BOSS', 'PORTAL', 'INTERMISSION', 'DRAFT', 'SHRINE',
-    'ARCH', 'CHEST', 'CHALLENGE', 'DEATH', 'VICTORY', '40/25/10', '+30%', 'Lv 8']) {
+  for (const tok of ['120 seconds', 'BOSS', 'PORTAL', 'BETWEEN WAVES', 'LEVEL UP', 'SHRINES',
+    'ARCHES', 'CHESTS', 'MODIFIERS', 'ONE WEAPON', 'GOLD', 'RAISE THE STAKES', 'Lv 8', '30:00', 'THE MAW']) {
     assert.ok(html.includes(tok), 'HOW A RUN WORKS lost ' + tok);
   }
 });
@@ -184,7 +185,7 @@ check('page 2 is OPTIONS AND MODES: one line each + LIVE callouts read at open t
   // LIVE callouts: the player's CURRENT levers are named from state at open
   // time (never bitmaps, never stale defaults).
   const ctl = T.controller;
-  assert.ok(html.includes(String(st.pilotMode)), 'the live pilot mode is named (page lacks ' + st.pilotMode + ')');
+  assert.ok(/yours right now/.test(html) && />AUTO &middot; /.test(html), 'the live pilot mode is named in plain words');
   assert.ok(html.includes(ctl.focus), 'the live focus policy is named (' + ctl.focus + ')');
   assert.ok(html.includes(ctl.stance), 'the live stance is named (' + ctl.stance + ')');
 });

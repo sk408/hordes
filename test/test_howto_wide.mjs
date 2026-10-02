@@ -80,9 +80,8 @@ const cards = () => [...elements['ov-cards'].children];
 const kdown = (k) => key('keydown', { key: k, preventDefault() {} });
 
 for (let i = 0; i < 60 * 12 && cards().length === 0; i++) pump(1);
-const howTo = cards().find(c => (c.innerHTML || '').includes('>HOW TO PLAY<'));
-assert.ok(howTo, 'must boot to the title with a HOW TO PLAY card');
-howTo.click();
+assert.equal(elements['ov-title'].textContent, 'HORDES', 'must boot to the title');
+T.menus.showHowToPlay();   // SETTINGS > HOW TO PLAY
 
 s.check('page 1: the .howto-page marker sits BETWEEN the panel and PREV, and is not a card', () => {
   const kids = cards();
@@ -108,15 +107,10 @@ s.check('the subtitle carries the SAME indicator in a .pgline span (the phone re
   const sub = elements['ov-sub'].innerHTML;
   assert.ok(/<span class="pgline">PAGE 2 \/ 4 — OPTIONS AND MODES<\/span>/.test(sub), sub);
 });
-s.check('REPLAY TOUR is classed for the wide row; the gate context still omits it', () => {
+s.check('REPLAY TOUR is classed for the wide row', () => {
   const rep = cards().find(c => (c.innerHTML || '').includes('>REPLAY TOUR<'));
   assert.ok(rep && rep.classList && rep.classList.contains('replay'),
     'REPLAY TOUR must carry the .replay class (stub: read via classList)');
-  // helpFrom 'gate' (the fresh-profile door) never offers the replay.
-  st.helpFrom = 'gate';
-  T.manual.goto(1);
-  assert.ok(!cards().some(c => (c.innerHTML || '').includes('>REPLAY TOUR<')),
-    'the gate context must not offer REPLAY TOUR');
 });
 
 if (s.done() > 0) process.exit(1);

@@ -104,7 +104,7 @@ T.showTitle();
 
 S.check('ov-cards children are STILL the clickable cards, each with a frame canvas', () => {
   const cards = h.elements['ov-cards'].children;
-  assert.ok(cards.length >= 6, 'the title menu built (cards=' + cards.length + ')');
+  assert.ok(cards.length >= 5, 'the title menu built (cards=' + cards.length + ')');
   for (const c of cards) {
     const frames = c.children.filter(k => k && k.className === 'frame');
     assert.equal(frames.length, 1, 'exactly one canvas.frame child per card');
@@ -113,20 +113,18 @@ S.check('ov-cards children are STILL the clickable cards, each with a frame canv
   }
 });
 
-S.check('START GAME is children[0] and HOW TO PLAY last, frame canvases included', () => {
+S.check('PLAY is children[0] and SETTINGS last, frame canvases included', () => {
   const cards = h.elements['ov-cards'].children;
-  assert.ok((cards[0].innerHTML || '').includes('>START GAME<'), 'children[0] is START GAME');
+  assert.ok((cards[0].innerHTML || '').includes('>PLAY<'), 'children[0] is PLAY');
   const last = cards[cards.length - 1];
-  // MENU CONDENSE D3: EXIT GAME is gone; HOW TO PLAY is the last card.
-  assert.ok((last.innerHTML || '').includes('>HOW TO PLAY<'), 'HOW TO PLAY stays last');
+  assert.ok((last.innerHTML || '').includes('>SETTINGS<'), 'SETTINGS is last');
   assert.ok(![...cards].some(c => (c.innerHTML || '').includes('>EXIT GAME<')),
     'EXIT GAME is gone from the title');
-  // Clicking children[0] still drives the title hold (not a wrapper).
-  const before = T.title.runStarts;
+  // Clicking children[0] reaches the card itself (not a wrapper): PLAY opens
+  // the pre-run screen.
   cards[0].click();
-  assert.ok(st.titleReveal && st.titleReveal.phase === 'out',
-    'the click reached the card (the N2 hold began)');
-  assert.equal(T.title.runStarts, before, 'the hold, not an instant start');
+  assert.equal(st.mode, 'setup', 'the click reached the card (the pre-run screen opened)');
+  T.showTitle();
 });
 
 S.check('a state swap is a palette swap on the SAME grid (silhouette cannot jump)', () => {

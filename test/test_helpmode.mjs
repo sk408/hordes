@@ -109,7 +109,7 @@ S.check('tapping a skill explains it and fires nothing; the sim stays invited-pa
 });
 S.check('tapping SETTINGS explains the cog instead of pausing into the menu', () => {
   probe('settings');
-  assert.ok(/SETTINGS/i.test(tip()) && /zoom/.test(tip()), 'the cog explained (' + tip() + ')');
+  assert.ok(/SETTINGS/i.test(tip()) && /END RUN/.test(tip()), 'the cog explained (' + tip() + ')');
   assert.notEqual(st.mode, 'settings', 'settings did not open');
 });
 S.check('tapping a DRAFT CARD explains it and picks nothing', () => {
@@ -153,9 +153,10 @@ S.check('a canvas tap picks the WORLD OBJECT under it (chest); empty ground expl
 });
 S.check('the object explainers come from THE FIELD reference rows (parity)', () => {
   T.showTitle(); pump(2);
-  // open the reference the real way: the title's own HOW TO PLAY card
+  // open the reference the real way: SETTINGS > HOW TO PLAY
   const byTitle = (t) => [...elements['ov-cards'].children]
     .find(c => (c.innerHTML || '').includes(t));
+  byTitle('SETTINGS').click(); pump(1);
   byTitle('HOW TO PLAY').click(); pump(2);
   // MANUAL v2 (2026-09-16): the reference is paginated — THE FIELD rows live
   // on page 4, so the parity sweep collects ALL pages through the page seam.

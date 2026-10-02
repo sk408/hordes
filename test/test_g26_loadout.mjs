@@ -146,16 +146,24 @@ settleReveal();
     tourRoots().length === 0, tourRoots().length);
 }
 
-// ---- 3. the coachmark event (the DISCOVERY_EXEMPT payment) -------------------
-// (a) NOTHING before the unlocked set grows: the title has been up and settled
-// with the LOADOUT door present, and no coachmark is mounted.
-ok('no loadout coach before the unlocked set grows (starters only, title settled)',
-  tourRoots().length === 0 && ls.get(TOUR_KEYS.loadout) !== '1', tourRoots().length);
+// ---- 3. the door (M3) ---------------------------------------------------------
+// With the starting kit only there is nothing to choose, so the title carries
+// no WEAPONS card: the pre-run screen shows the kit instead. The card joins the
+// title once a weapon beyond the starters is owned. No coachmark is ever shown.
+ok('starters only: no LOADOUT card on the title', !cardTitled('LOADOUT'));
+cardTitled('PLAY').click();
+ok('the pre-run screen names the starting kit', /Volley \+ Boomerang/.test((cardTitled('LOADOUT') || {})._html || ''),
+  (cardTitled('LOADOUT') || {})._html);
+T.showTitle();
+settleReveal();
 
-// (b) the door is reachable by taps (the click contract) with the coach never
-// fired — the exact reachability the exemption promises.
+prof.unlockedWeapons.push('ORBIT');
+T.showTitle();
+settleReveal();
+pump(2);
+ok('no coachmark on the first growth (pop-ups retired)', tourRoots().length === 0, tourRoots().length);
 const door = cardTitled('LOADOUT');
-ok('the LOADOUT door is a real title card', !!door);
+ok('the LOADOUT door is a real title card once a second weapon is owned', !!door);
 door.click();
 ok('tapping the door opens the loadout screen (mode loadout)', st.mode === 'loadout', st.mode);
 ok('the screen lists the unlocked slot weapons + AUTO + BACK',
@@ -164,44 +172,11 @@ cardTitled('BACK').click();
 ok('BACK returns to the title', st.mode === 'title', st.mode);
 settleReveal();
 
-// (c) EXACTLY ONE coachmark on the first growth: unlock ORBIT beyond the
-// starter kit and return to the title (the title call site is the shop
-// coach's sibling — and the achievement-grant path's first legal moment,
-// since the coach must not fire during a run).
-prof.unlockedWeapons.push('ORBIT');
-T.showTitle();
-settleReveal();
-pump(2);
-const roots = tourRoots();
-ok('exactly ONE loadout coach on the first growth', roots.length === 1, roots.length);
-const coachTip = roots[0] && roots[0].children.find(c => c.id === 'tour-tip');
-ok('the coach tip names the LOADOUT door', !!(coachTip && coachTip._html.includes('LOADOUT')), coachTip && coachTip._html);
-ok('the flag is set the moment it fires (once only, tour flag store)',
-  ls.get(TOUR_KEYS.loadout) === '1', ls.get(TOUR_KEYS.loadout));
-
-// (d) the flag persists and prevents a repeat.
-// TUTORIAL_OVERLAY: dismiss through the coach's own primary (GOT IT — a
-// single-step coach); a root pointerdown is an inert shade tap now.
-{
-  const tip = roots[0].children.find(c => c.id === 'tour-tip');
-  const btn = tip && tip.querySelector('.tour-next');
-  if (btn) btn.fire('pointerdown', { stopPropagation() {}, preventDefault() {} });
-}
-T.showTitle();
-settleReveal();
-pump(2);
-ok('the flag prevents a second coach (re-entering the title)', tourRoots().length === 0, tourRoots().length);
-
-// (e) a seen flag suppresses the coach on a NEW growth too.
 prof.unlockedWeapons.push('ZAP');
 prof.purchased.regen = 4;   // Mana Spring feeds Chain Zap, so it takes its price rank in the auto kit
 T.showTitle();
 settleReveal();
 pump(2);
-ok('a seen flag suppresses the coach on a NEW growth', tourRoots().length === 0, tourRoots().length);
-
-// No more tour pauses for the rest of the file.
-for (const k of Object.values(TOUR_KEYS)) ls.set(k, '1');
 
 // ---- 4. the screen: selection, slot cap, AUTO ---------------------------------
 T.loadout.open();

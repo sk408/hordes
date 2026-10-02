@@ -187,10 +187,10 @@ S.check('AUTO still completes on the ground route (the shape change retuned noth
 // ---------------------------------------------------------------------------
 S.check('no payout, duration, wall or reward constant changed (the owner-freeze pins)', () => {
   assert(PAYOUT_K === 1 / 15, 'PAYOUT_K is ' + PAYOUT_K + ' (the 2026-09-17 value is 1/15)');
-  assert(PACING.MIN_SECONDS === 30 && PACING.MAX_SECONDS === 36, 'the duration bounds moved');
+  assert(PACING.MIN_SECONDS === 25 && PACING.MAX_SECONDS === 30, 'the duration bounds moved (M3: 25-30 s)');
   assert(PACING.NOMINAL_SPEED === 200, 'NOMINAL_SPEED moved');
-  assert(WALL.V0 === 190 && WALL.V3 === 212 && WALL.START_GAP === 300 && WALL.WIDTH === 46, 'the wall moved');
-  assert(MAP.UNITS_X === 3 && MAP.UNITS_Y === 3 && MAP.UNIT_W === 3000, 'the map extent moved');
+  assert(WALL.V0 === 190 && WALL.V3 === 212 && WALL.START_GAP === 380 && WALL.WIDTH === 46, 'the wall moved (M3: START_GAP 380 for the short corridor)');
+  assert(MAP.UNITS_X === 2 && MAP.UNITS_Y === 3 && MAP.UNIT_W === 2500, 'the map extent moved (M3: 2 x 2500)');
   assert(BAND.FLOOR_Y === 252 && BAND.KILL_Y === 400, 'the band moved');
   assert(PAID_SKIP.PRICE === 100000 && PAID_SKIP.SHOP_ID === 'escapeskip', 'the paid skip moved');
   assert(THREATS.GRAB_EVERY === 2.4 && THREATS.ARMS.length === 3 &&

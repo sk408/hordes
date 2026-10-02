@@ -126,57 +126,13 @@ const toDeadScreen = () => {
   while (st.mode === 'death-cine' && guard++ < 900) pump(1);
   assert(st.mode === 'dead', 'the probe needs the death screen (mode ' + st.mode + ')');
 };
-s.check('death screen: HOW TO PLAY card opens the reference, GOT IT returns HERE', () => {
+s.check('the end screens carry RETRY / SHOP / TITLE and no manual door (M3)', () => {
   T.startRun(); pump(5);
   quietField();
   toDeadScreen();
-  const deadTitle = title();
-  assert(/THE HORDE WINS|THE HORDE CLAIMS ALL/.test(deadTitle),
-    'death card up (got ' + deadTitle + ')');
-  const endRef = byTitle('HOW TO PLAY');
-  assert(endRef, 'the death screen must offer HOW TO PLAY');
-  endRef.click();
-  T.manual.goto(4);
-  assert(title() === 'HOW TO PLAY' && byTitle('THE FIELD'),
-    'same reference, opened from the death screen');
-  byTitle('GOT IT').click();
-  assert(st.mode === 'dead' && title() === deadTitle,
-    'GOT IT returns to the SAME death screen (mode ' + st.mode + ', ' + title() + ')');
-  assert(byTitle('RETRY') && byTitle('TITLE'),
-    'the death screen cards are back (no re-settle, no restart)');
-  // The run was NOT restarted by the round trip.
-  assert(st.player.hp <= 0 || st.time > 0, 'the dead run is still the dead run');
-});
-
-s.check('victory screen: HOW TO PLAY card returns to RUN SURVIVED', () => {
-  T.startRun(); pump(5);
-  quietField();
-  T.run.runSurvived();
-  assert(st.mode === 'dead' && title() === 'RUN SURVIVED', 'victory card up');
-  const endRef = byTitle('HOW TO PLAY');
-  assert(endRef, 'the victory screen must offer HOW TO PLAY');
-  endRef.click();
-  assert(title() === 'HOW TO PLAY', 'same reference, opened from victory');
-  byTitle('GOT IT').click();
-  assert(st.mode === 'dead' && title() === 'RUN SURVIVED' && byTitle('RETRY'),
-    'GOT IT returns to the victory screen with its cards');
-});
-
-s.check('END RUN screen: the same door (RUN ENDED)', () => {
-  T.startRun(); pump(5);
-  quietField();
-  T.openSettings();
-  const end = byTitle('END RUN');
-  assert(end, 'END RUN card present');
-  end.click();
-  byTitle('CONFIRM END RUN?').click();
-  assert(st.mode === 'dead' && title() === 'RUN ENDED', 'the deliberate end card up');
-  const endRef = byTitle('HOW TO PLAY');
-  assert(endRef, 'the END RUN screen must offer HOW TO PLAY too');
-  endRef.click();
-  byTitle('GOT IT').click();
-  assert(title() === 'RUN ENDED' && byTitle('RETRY'),
-    'GOT IT returns to the END RUN screen');
+  assert(/THE HORDE WINS|THE HORDE CLAIMS ALL/.test(title()), 'death card up (got ' + title() + ')');
+  assert(byTitle('RETRY') && byTitle('>SHOP<') && byTitle('TITLE'), 'the three end cards');
+  assert(!byTitle('HOW TO PLAY'), 'the manual lives under SETTINGS, not on the end screen');
 });
 
 s.check('the title settings door also opens it (and returns to the title)', () => {
@@ -185,7 +141,6 @@ s.check('the title settings door also opens it (and returns to the title)', () =
   let guard = 0;
   while (st.mode !== 'title' && guard++ < 30) pump(1);
   assert(st.mode === 'title' && title() === 'HORDES', 'title up');
-  byTitle('SETUP').click();
   byTitle('SETTINGS').click();
   const entry = byTitle('HOW TO PLAY');
   assert(entry, 'title SETTINGS offers the same entry');
@@ -198,6 +153,7 @@ s.check('the title settings door also opens it (and returns to the title)', () =
 // ---- 6+7. THE CANONICAL LIST + OBJECT MEANINGS ----------------------------------
 // Open the reference once (title door) and harvest its rendered text.
 s.check('the canonical control list: every authored control is NAMED in the reference', () => {
+  byTitle('SETTINGS').click();
   byTitle('HOW TO PLAY').click();
   assert(title() === 'HOW TO PLAY', 'reference open for the canonical sweep');
   // MANUAL v2: the sweep collects ALL FOUR pages through the real page seam.

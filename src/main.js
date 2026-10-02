@@ -214,6 +214,7 @@ import {
 import {
   DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
   nextStageId, describeStage, lockedStageLines, stageRelief, stageFactsLine,
+  STAGE_IDS, stageFacts,
 } from './stages.js';
 // ARENA ELEVATED PATHS (scale-up 2026-09-17): the deterministic height field
 // and its three reads — the grade term (player + enemies, the same pure
@@ -348,6 +349,14 @@ const BAND_MARGIN = 6;
 // The viewport-limited fit always satisfies it, so the documented chrome
 // shrink (pad buttons 64 -> 56/48) never needs to fire.
 const CANVAS_FLOOR_FRACTION = 0.55;
+// Desktop key bar: a KEYBAR_H strip along the bottom of the window (index.html
+// .keybar), present while the touch layer is in its desktop class.
+const KEYBAR_H = 26;
+function keybarLive() {
+  if (typeof getComputedStyle !== 'function') return false;
+  const touch = document.getElementById('touch');
+  return !!(touch && touch.isConnected && touch.classList && touch.classList.contains('cog-only'));
+}
 function touchLayerLive() {
   // Only the REAL touch layer ('.on' — coarse pointers / touch devices, where
   // the pads are opaque thumb controls) gets chrome-aware placement.
@@ -629,10 +638,11 @@ function fitCanvas() {
   lastFitFellBack = false;
   // The viewport the game actually GOT (visualViewport-first, see viewSize).
   const { vw, vh } = viewSize();
-  // ROUND 4 base: the scale is the VIEWPORT-limited letterbox only — chrome
-  // NEVER shrinks the field (that is how round 2 collapsed landscape to
-  // 41x26 / 0x0). ROUND 5 narrows it ON TOUCH LAYOUTS ONLY, below.
-  const fit = Math.min(vw / C.VIEW_W, vh / C.VIEW_H);
+  // Desktop: the key bar's strip along the bottom is kept clear of the canvas.
+  const kb = keybarLive() ? KEYBAR_H : 0;
+  // The scale is the viewport-limited letterbox (less the key bar strip);
+  // touch layouts narrow it further below, into the bands the pads leave.
+  const fit = Math.min(vw / C.VIEW_W, (vh - kb) / C.VIEW_H);
   let scale = displayScale(fit);
   // A forced resolution mode (PIXEL-PERFECT / 2 / 3 / 4) can round the scale
   // ABOVE the viewport-limited fit on a phone (floor(0.81) -> max(1, 0) = 1
@@ -731,7 +741,11 @@ function fitCanvas() {
   }
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  if (!placed) {
+  if (!placed && kb) {
+    canvas.style.position = 'absolute';
+    canvas.style.top = Math.round((vh - kb - h) / 2) + 'px';
+    canvas.style.left = Math.round((vw - w) / 2) + 'px';
+  } else if (!placed) {
     canvas.style.position = '';
     canvas.style.top = '';
     canvas.style.left = '';
@@ -771,6 +785,7 @@ fitCanvas();
 // pager guards every non-shop screen.
 function onViewportResize() {
   fitCanvas();
+  if (state.mode === 'title') placeTitleMenu();
   if (shopPager) finalizeShopPager();
 }
 window.addEventListener('resize', onViewportResize);
@@ -952,6 +967,9 @@ const state = {
   //   AUTO_MOVE - the pilot moves; skills and potions are the player's
   //   MANUAL    - the player moves; skills and potions are the player's too
   pilotMode: 'AUTO_ALL',
+  wheel: 0,          // seconds of player steering left on AUTO (see heldMoveVec)
+  wheelCue: '',      // the on-screen cue's text
+  clockInset: 0,     // view px the run clock steps down to clear DOM buttons
   zoom: 1,           // WAVE-16 world zoom (ladder 1/2/3/4/6/8; render.js reads
                      // it every frame — live mid-run, presentation only)
   // A2 THE RADAR (owner-suggested 2026-09-14): the circular enemy minimap.
@@ -1135,7 +1153,7 @@ const WHATS_NEW = {
   // run — advertising what cannot be taken is a broken promise.
   guidedLines: [
     'New: a short guided run with a free shielding potion.',
-    'Controls appear one at a time, each with a tip, as you need them.',
+    'It teaches three things by doing: moving, level-ups and the potion.',
     'Skipping the explaining keeps the free potion and shield.',
   ],
 };
@@ -1233,7 +1251,6 @@ const manualController = new PlayerController(pilotInput);
 let controller = autoController;
 
 // Held-direction key map (lowercased key -> direction). WASD + arrows.
-// Live only while pilotMode === 'MANUAL' (the keydown handler checks).
 const KEY_DIRS = {
   arrowup: 'up', w: 'up',
   arrowdown: 'down', s: 'down',
@@ -1241,14 +1258,11 @@ const KEY_DIRS = {
   arrowright: 'right', d: 'right',
 };
 
-// Last pilot choice per browser (hudText settings pattern). G31 (owner
-// 2026-09-16, verbatim: "The players want the selections they made for auto
-// and manual to persist between runs."): the pref is now READ back — at boot
-// and at run start — replacing the OLD build directive ("EVERY run starts in
-// AUTO regardless") that the owner has reversed. Absent / unreadable /
-// unrecognised -> AUTO_ALL (the fresh-player default); the legacy persisted
-// name 'AUTO' maps to AUTO_ALL via normalizePilotMode.
-const KEY_PILOT = 'hordes_pilot';
+// The pilot choice persists per browser and is read at boot and at run start.
+// MANUAL is only ever stored by an explicit choice (the PILOT button, O, or
+// the pause menu). The earlier key 'hordes_pilot' could be flipped to MANUAL by
+// one stray move key, so it is no longer read: everyone starts on AUTO once.
+const KEY_PILOT = 'hordes_pilot2';
 function savePilotPref(mode) {
   try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
@@ -1256,11 +1270,21 @@ function loadPilotPref() {
   try { return normalizePilotMode(prefStorage.getItem(KEY_PILOT)); }
   catch { return 'AUTO_ALL'; }
 }
-// G31: the doctrine STANCE persists on the same prefStorage seam. The pilot
-// mode is a screen-level preference; the stance rides the same contract
-// (write on cycle, read at boot + run start, validate, BALANCED fallback).
-// state.focus is deliberately NOT persisted — it is tactical, moment-to-
-// moment targeting, not a preference.
+// Which AUTO the pilot button returns to: AUTO_ALL (the pilot also casts skills
+// and drinks potions) or AUTO_MOVE (it only moves). Set on the Advanced page.
+const KEY_PILOT_AUTO = 'hordes_pilot_auto';
+function autoFlavor() {
+  try { return prefStorage.getItem(KEY_PILOT_AUTO) === 'AUTO_MOVE' ? 'AUTO_MOVE' : 'AUTO_ALL'; }
+  catch { return 'AUTO_ALL'; }
+}
+function setAutoFlavor(mode) {
+  const m = mode === 'AUTO_MOVE' ? 'AUTO_MOVE' : 'AUTO_ALL';
+  try { prefStorage.setItem(KEY_PILOT_AUTO, m); } catch { /* shim */ }
+  if (!pilotMovesYou()) swapPilotMode(m);
+  return m;
+}
+// The stance persists the same way. Focus is not persisted: it is a
+// moment-to-moment choice.
 const KEY_STANCE = 'hordes_stance';
 function saveStancePref(s) {
   try { prefStorage.setItem(KEY_STANCE, s); } catch { /* shim */ }
@@ -1280,27 +1304,12 @@ function applyStancePref() {
   manualController.stance = s;
   return s;
 }
-// AUTO-PICK PREFERENCE — RETIRED (owner 2026-09-16, verbatim): "I didn't want
-// the card choice to be instant because I wanted to slow progress for someone
-// playing too idle so they dont miss the whole game and then complain they are
-// too powerful when they didn't witness the growth." An earlier brief asked
-// for an INSTANT/6S/MANUAL settings row riding a 'hordes_autopick' key; that
-// brief was CANCELLED and the preference surface is removed whole — the draft
-// delay is a PACING MECHANIC, not an inconvenience. The shipped behaviour is
-// the pre-brief one: a FIXED C.AUTOPILOT.DRAFT_TIMEOUT countdown for AUTO
-// players, suspended (not reset) in MANUAL, and MANUAL pilots never
-// auto-pick. Nothing may read or write 'hordes_autopick' in any form
-// (setting, debug toggle, hidden key). test/test_autopick_pref.mjs pins this.
+// The level-up draft's auto-pick delay is fixed (C.AUTOPILOT.DRAFT_TIMEOUT) and
+// has no setting: nothing may read or write 'hordes_autopick'
+// (test/test_autopick_pref.mjs).
 
-// Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
-// Also snaps the knob visual back to center. FLOATING JOYSTICK (2026-09-18):
-// a hard release of the floating drag too — no id filter (this is the
-// "everything stands down" path: blur, mode swap, run start).
-// FLOATING JOYSTICK API (moved up 2026-09-18). This is declared HERE, before any
-// reader, because the boot path (swapPilotMode -> clearPilotInput) reaches it
-// during module init: a `let` read before its declaration throws
-// "Cannot access 'fjoyApi' before initialization" and kills the whole game at
-// load. Keep the declaration above every use.
+// The floating joystick's api. Declared before clearPilotInput because the
+// boot path (swapPilotMode -> clearPilotInput) reads it during module init.
 let fjoyApi = null;
 
 function clearPilotInput() {
@@ -1310,22 +1319,19 @@ function clearPilotInput() {
   if (fjoyApi) fjoyApi.release();
 }
 
-// WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry// across BOTH directions (the incoming controller inherits the outgoing one's
-// levers — TAB/G keep working through a round trip). Switching to AUTO clears
-// held input so a stale direction can't ghost-move the autopilot; keyup
-// handlers clear keys regardless of mode (no stuck keys across overlays).
-// (h) THE ONE PLACE each assistance question is answered, so no call site
-// re-derives a mode from a string compare. `pilotMovesYou` is the movement
-// seam (which controller is bound); `pilotAssistsYou` is the auto-cast /
-// auto-drink seam that used to read `pilotMode !== 'AUTO'`.
+// The pilot modes. AUTO_ALL: the pilot moves, casts and drinks. AUTO_MOVE: it
+// only moves. MANUAL: the player moves. `pilotMovesYou` and `pilotAssistsYou`
+// are the only two places a mode is compared.
 export const PILOT_MODES = ['AUTO_ALL', 'AUTO_MOVE', 'MANUAL'];
 export function normalizePilotMode(m) {
-  if (m === 'AUTO') return 'AUTO_ALL';        // the pre-(h) persisted name
+  if (m === 'AUTO') return 'AUTO_ALL';        // an old stored name
   return PILOT_MODES.includes(m) ? m : 'AUTO_ALL';
 }
 function pilotMovesYou() { return normalizePilotMode(state.pilotMode) === 'MANUAL'; }
 function pilotAssistsYou() { return normalizePilotMode(state.pilotMode) === 'AUTO_ALL'; }
 
+// Bind the controller for `mode`, carry focus and stance across, store the
+// choice. Leaving MANUAL drops held input so a stale key cannot steer.
 function swapPilotMode(mode) {
   mode = normalizePilotMode(mode);
   if (mode === state.pilotMode) return;
@@ -1335,24 +1341,49 @@ function swapPilotMode(mode) {
   to.stance = from.stance;
   controller = to;
   state.pilotMode = mode;
+  state.wheel = 0;
   if (mode !== 'MANUAL') {
     clearPilotInput();
   }
   savePilotPref(mode);
-  // (WAVE-23's mode-dependent hints re-render retired with the panel — the
-  // compact list lives in the reference's KEYBOARD page now, built live at
-  // open time from HINT_LINES, so a pilot swap can never teach a stale mode.)
-  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick'
-    : mode === 'AUTO_MOVE' ? 'AUTO MOVE — pilot drives, skills + potions are yours'
-    : 'AUTOPILOT ENGAGED — move, skills and potions');
+  toast(mode === 'MANUAL' ? 'MANUAL: you steer. WASD, arrows or drag'
+    : mode === 'AUTO_MOVE' ? 'AUTO: the pilot steers. Skills and potions are yours'
+    : 'AUTO: the pilot fights for you');
 }
 function pilotPrefLabel() {
-  return { AUTO_ALL: 'AUTO ALL', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO ALL';
+  return { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO (moves only)', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO';
 }
+// The pilot button and the O key: AUTO <-> MANUAL.
 function togglePilotMode() {
-  // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
-  const i = PILOT_MODES.indexOf(normalizePilotMode(state.pilotMode));
-  swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
+  swapPilotMode(pilotMovesYou() ? autoFlavor() : 'MANUAL');
+}
+
+// ---------- Taking the wheel --------------------------------------------------
+// On AUTO, a held move key or stick drag steers for as long as it is held. The
+// pilot takes back WHEEL_HANDBACK_S after the release; state.wheel is the time
+// left. Nothing is stored: only the pilot button, O or the pause menu choose
+// MANUAL.
+const WHEEL_HANDBACK_S = 1.5;
+// The held input as a movement vector, or null when nothing is held.
+function heldMoveVec() {
+  const i = pilotInput;
+  let mx = 0, my = 0;
+  const mag = Math.min(1, Math.max(0, i.mag || 0));
+  if (mag > 0.15) {   // the stick's dead zone (controllers.js JOY_DEAD_ZONE)
+    const len = Math.hypot(i.x || 0, i.y || 0) || 1;
+    mx = ((i.x || 0) / len) * mag;
+    my = ((i.y || 0) / len) * mag;
+  } else {
+    mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
+    my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
+    if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
+  }
+  return (mx === 0 && my === 0) ? null : { x: mx, y: my };
+}
+// What the on-screen cue says: '' while the pilot drives or MANUAL is chosen.
+function wheelCueText() {
+  if (pilotMovesYou() || state.prologue || !(state.wheel > 0)) return '';
+  return heldMoveVec() ? 'YOU STEER' : 'AUTO in ' + state.wheel.toFixed(1) + 's';
 }
 
 // N1 slice 3 FORTIFY (EARTHSHATTER's defensive rider): while p.fortify lives,
@@ -1406,6 +1437,18 @@ function runController(p, dt, am) {
       // AUTO's own walk (controllers.js PROLOGUE branch) lands here too;
       // zeroed only under an EXPLAINING card.
     } else {
+      decision.moveX = 0; decision.moveY = 0; decision.routed = false;
+    }
+  }
+  // Taking the wheel: on AUTO a held move input steers, and the pilot takes
+  // back WHEEL_HANDBACK_S after the release. Targeting stays the pilot's.
+  if (!state.prologue && !pilotMovesYou()) {
+    const v = heldMoveVec();
+    if (v) {
+      state.wheel = WHEEL_HANDBACK_S;
+      decision.moveX = v.x; decision.moveY = v.y; decision.routed = false;
+    } else if (state.wheel > 0) {
+      state.wheel = Math.max(0, state.wheel - dt);
       decision.moveX = 0; decision.moveY = 0; decision.routed = false;
     }
   }
@@ -3225,36 +3268,19 @@ function wireSynergies(dt, preFire) {
 // ---------- Update ----------
 function update(dt) {
   const p = state.player;
-  // FIRST-RUN PROLOGUE: the run clock starts at phase END — freezing
-  // state.time here EXCLUDES the prologue from run duration, gold/second and
-  // every pacing figure by construction (they all read state.time). The
-  // phase tick below is the bound: drunk OR t >= MAX_S, never neither.
-  // ADDENDUM (owner 2026-09-18): the pilot PAUSES while a banner is up.
-  // DEFECT (c) FIX (2026-09-18): the bound is no longer frozen by a banner —
-  // see the tick below.
+  // The tutorial phase: the run clock does not start until it ends, so run
+  // length and every pacing figure exclude it. The phase clock always runs
+  // (MAX_S ends an idle phase); the walk clock stops while a card is up.
   if (state.prologue) {
-    // DEFECT (c) FIX (owner 2026-09-18): the bound now counts the WHOLE
-    // phase — a player who never does the action is still escaped by
-    // MAX_S (the old both-clocks-freeze let an idle player sit on a
-    // waiting banner forever). Only the WALKT cadence clock stays frozen
-    // while a card is up (the walk -> banner rhythm is unchanged).
     state.prologue.t += dt;
     if (!prologueBanner()) state.prologue.walkT += dt;
-    // TWO-TAP SKIP: the arm window decays on the same phase clock (a held
-    // banner does not extend it — the second press must be deliberate and
-    // prompt, never banked).
     if (state.prologue.skipArmT > 0) {
       state.prologue.skipArmT = Math.max(0, state.prologue.skipArmT - dt);
     }
+    prologueCardWait(dt);
     prologueAdvanceIfEarned();
     prologueReveal();
-    // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger
-    // a level up and tell the player about the card selections"): when THE
-    // DRAFT banner has walked into view, the phase grants ONE free level-up
-    // — scripted, not earned (no enemies, the clock still frozen) — and the
-    // REAL draft screen opens with the explanation riding its subtitle. The
-    // draft's auto-pick pacing is UNTOUCHED: DRAFT_TIMEOUT keeps the owner's
-    // deliberate slowdown, unshortened.
+    // The LEVEL UP card grants one free level-up and opens the real draft.
     if (state.prologue && !state.prologue.draftFired && !state.prologue.skipped &&
         state.mode === 'playing') {
       const db = PROLOGUE_BANNERS[state.prologue.bannerIdx];
@@ -4203,7 +4229,7 @@ function update(dt) {
       // meant (and the token no longer rides the chest rarity table at all).
       maybeGrantToken('chest');
     } else if (ev.kind === 'gambleHorde') {
-      toast('THE GAMBLE BETRAYS YOU - MINI HORDE!');
+      toast('EMPTY CHEST: it was a trap. A small horde attacks');
     } else if (ev.kind === 'hordeBait') {
       // G8 step 3: the rule paid a better chest and the horde is the price.
       toast('HORDE BAIT - THE CHEST ANSWERED WITH A HORDE!');
@@ -4677,12 +4703,10 @@ function openDraft() {
     });
   }
   ovTitle.textContent = 'LEVEL ' + state.player.level;
-  ovSub.textContent = 'choose your build';
-  // PROLOGUE SCRIPTED DRAFT (owner addendum 2026-09-18: use the level-up to
-  // "tell the player about the card selections"): the explanation rides the
-  // REAL draft screen — what the choice is, and that the pick changes the run.
+  ovSub.textContent = 'pick 1 of ' + choices.length;
+  // The tutorial's free level-up: its card's sentence rides the draft screen.
   if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
-    ovSub.textContent = 'pick 1 of the 3 cards - the one you take changes the run';
+    ovSub.textContent = (PROLOGUE_BANNERS.find(b => b.action === 'draft') || {}).body || ovSub.textContent;
   }
   draftFocus = -1;
   ovCards.innerHTML = '';
@@ -4742,21 +4766,12 @@ function openDraft() {
     frameCard(el);
   });
   overlay.style.display = 'flex';
-  // WAVE-21: the draft IS the game — coachmark it the first time it appears.
-  // ('draft' mode already freezes the sim; the coach rides on top of the
-  // real cards and dismisses on the same click-to-advance contract.)
-  // PROLOGUE ABSORB (owner 2026-09-18): the scripted draft inside the
-  // first-run phase is its OWN lesson — banner 6 explains the selection and
-  // the explanation rides the draft's subtitle — so the coach must not
-  // stack on top of it. Stacking was not just redundant: the coach's shade
-  // swallows the first card click BY DESIGN (tour.js — a pass-through would
-  // dismiss-and-pick in one tap), turning the one-click pick into two and
-  // freezing the sim under the shade after it (coachActive gates update),
-  // which stalled the phase itself. endPrologue marks every TOUR_KEYS flag
-  // seen, so the coach is ABSORBED by the phase, never skipped.
+  // The one coach card left: a first level-up with no tutorial behind it (a
+  // returning profile, or after REPLAY TOUR cleared the flags) gets one line.
+  // The first-run tutorial teaches the draft itself and marks this seen.
   if (!state.prologue && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
-      text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
+      text: 'THE DRAFT: every level, pick 1 card. Click one or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
   renderDraftActions();
@@ -4807,13 +4822,14 @@ function renderDraftActions() {
     b.className = 'dact' + (n > 0 ? '' : ' dim') + (on ? ' armed' : '');
     b._draftAction = kind;
     b.textContent = label + ' [' + key + '] x' + n;
+    b.title = String(tip).replace(/<[^>]+>/g, '');   // hover says what it does
     b.onclick = () => {
       if (state.helpMode) { showHelpTip(tip, b); return; }
       fn();
     };
     draftActionsEl.appendChild(b);
   };
-  btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — draw a fresh set of cards for this draft.');
+  btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — swap these cards for new ones.');
   btn('skip', 'SKIP', 'S', ch.skip, false, draftSkip,
     '<b>SKIP</b> — take no card and heal ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '% of max HP.');
   btn('banish', draftBanishArmed ? 'BANISH: PICK A CARD' : 'BANISH', 'B', ch.banish, draftBanishArmed, draftBanishToggle,
@@ -5604,48 +5620,55 @@ function deathCauseLabel(d) {
   return who + (how ? ' ' + how : '');
 }
 
-// The single shop row this run came CLOSEST to affording — real meta data
-// (SHOP_UPGRADES + upgradeCost), never an invented number. Skips anything
-// already owned/maxed; ties resolve to the cheaper row.
-function nextUnlockWithinReach(prof) {
-  let best = null;
-  for (const def of SHOP_UPGRADES) {
-    if (shopRowOwned(prof, def)) continue;
+// The purchase to point the player at next. Survival is what a new player
+// lacks, so the core is the next Vitality level, the next Forged Edge level and
+// the cheapest locked weapon: the cheapest of those they can afford, else the
+// cheapest of them. With the core finished, the cheapest row left.
+function bestNextPurchase(prof) {
+  const offer = (def) => {
+    if (!def || shopRowOwned(prof, def)) return null;
     const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
-    const cost = def.kind ? def.baseCost : upgradeCost(def, level);
-    if (!best || cost < best.cost) best = { id: def.id, name: def.name, cost };
-  }
-  return best;
+    if (!def.kind && level >= def.maxLevel) return null;
+    return { id: def.id, name: def.name, cost: def.kind ? def.baseCost : upgradeCost(def, level) };
+  };
+  const byCost = (a, b) => a.cost - b.cost;
+  const weapon = SHOP_UPGRADES.filter(d => d.kind === 'weapon').map(offer).filter(Boolean).sort(byCost)[0];
+  const core = [offer(SHOP_BY_ID.hp), offer(SHOP_BY_ID.dmg), weapon].filter(Boolean).sort(byCost);
+  const pool = core.length ? core : SHOP_UPGRADES.map(offer).filter(Boolean).sort(byCost);
+  return pool.find(o => prof.gold >= o.cost) || pool[0] || null;
+}
+function nextUnlockWithinReach(prof) { return bestNextPurchase(prof); }
+
+// A tip for the end screen, once ever and never on a first run: a death to an
+// enemy shot is the moment FOCUS matters.
+const KEY_TIP_FOCUS = 'hordes_tip_focus';
+const KEY_TIP_STANCE = 'hordes_tip_stance';
+function tipSeen(key) { try { return prefStorage.getItem(key) === '1'; } catch { return true; } }
+function markTip(key) { try { prefStorage.setItem(key, '1'); } catch { /* shim */ } }
+function runsFinished() {
+  return Number(profile.achievements && profile.achievements.totals && profile.achievements.totals.runs) || 0;
+}
+function focusTipLine() {
+  if (!state.deathBy || state.deathBy.cause !== 'shot') return '';
+  if (runsFinished() < 2 || tipSeen(KEY_TIP_FOCUS)) return '';
+  markTip(KEY_TIP_FOCUS);
+  return 'TIP: shot from range. FOCUS (' + (isTouchPath() ? 'the FOCUS button' : 'TAB') + ') set to RANGED kills the shooters first.';
+}
+// The first boss after run 1 is the moment STANCE matters: one toast, once.
+function maybeStanceTip() {
+  if (state.prologueRan || runsFinished() < 1 || tipSeen(KEY_TIP_STANCE)) return;
+  markTip(KEY_TIP_STANCE);
+  toast('TIP: STANCE (' + (isTouchPath() ? 'the STANCE button' : 'G') + '). SAFE keeps away from the boss, GREEDY chases loot');
 }
 
-// Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
-// `cause` the cause line, `gold` this run's payout, `parts` settleRunGold's
-// breakdown (only the GOLD POOL multiplier clause reads it now).
-//
-// END-SUMMARY CONTENT PASS (owner 2026-09-17, msg_01M2RVD9HHZZDSR7FKNTRRSSY5
-// + addendum: "no more than five lines above the buttons; one gold line with
-// at most two numbers, earned and banked; the freed space is NOT for more
-// text"). The shape, top to bottom:
-//   1. the LEAD line, carrying the run's identity clauses (NIGHT / APEX /
-//      challenge / stage — G25/G11/G20a's clean-clear protection, FOLDED into
-//      the one line instead of stacked) and the run's numbers.
-//   2. KILLED BY (death only) — its own label, structurally incapable of
-//      sitting over data (its own line, DOM-composed, HUD suppressed).
-//   3. THE ONE GOLD LINE — GOLD EARNED +N · BANK N, exactly two numbers. The
-//      E1 award/purse breakdown line and the G24 STAKES PAID line are RETIRED
-//      from the card (every number they carried is inside GOLD EARNED; the
-//      per-run breakdown lives in the settle/ledger seam, not the player's
-//      3-second read). Disclosed supersession: E1 (2026-09-14) wanted the two
-//      payout parts named separately; this pass's one-gold-line rule wins.
-//   4. GOLD POOL multiplier — only when the pool is non-neutral (the
-//      challenge-gold directive stands: the bigger number is EXPLAINED, not
-//      mysterious; a standard stakes-free run renders no clause).
-//   5. NEXT UNLOCK — omitted entirely when every row is owned (no filler).
+// The end-of-run summary under the title. Top to bottom: what kind of run it
+// was (only when not a plain one), time / wave / level / kills, the killer,
+// the gold earned with its breakdown, the next purchase, and at most one tip.
 function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
-  const goal = nextUnlockWithinReach(profile);
+  const goal = bestNextPurchase(profile);
   const tags = [];
   if (state.nightRun) tags.push('NIGHT RUN');
-  if (state.assistedRun) tags.push('ASSISTED');   // B6 option (b): the flag rides the end card
+  if (state.assistedRun) tags.push('ASSISTED');
   if (state.apexRun) tags.push('APEX RUN');
   if (!isDefaultStage(state.stage)) tags.push(stageOf(state.stage).name);
   if (!isStandard(state.challenge)) tags.push(challengeOf(state.challenge).name + ' RUN');
@@ -5654,20 +5677,33 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
+  const bd = parts && parts.breakdown;
+  if (bd) {
+    html += `<br><span class="pool">run award ${bd.award} · survival ${bd.survival} · kills ${bd.kills}` +
+      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + '</span>';
+  }
   const gp = parts && parts.goldPool;
   if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
-    const bits = ['100%'];
-    if (gp.night > 0) bits.push(`NIGHT -${Math.round(gp.night * 100)}%`);
-    if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
-    if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
-    html += `<br><span class="pool">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
+    const bits = [];
+    if (gp.night > 0) bits.push(`night mode -${Math.round(gp.night * 100)}%`);
+    if (gp.challenge > 0) bits.push(`modifier +${Math.round(gp.challenge * 100)}%`);
+    if (gp.heat > 0) bits.push(`raised stakes +${Math.round(gp.heat * 100)}%`);
+    html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (${bits.join(', ')})</span>`;
   }
   if (goal) {
     const gap = goal.cost - profile.gold;
-    html += `<br><span class="next">NEXT UNLOCK: ${goal.name} ${goal.cost}g · ` +
-      (gap > 0 ? `${gap}g TO GO` : 'READY NOW') + '</span>';
+    html += `<br><span class="next">BUY NEXT: ${goal.name}, ${goal.cost} gold · ` +
+      (gap > 0 ? `${gap} more to go` : 'you can afford it') + '</span>';
   }
+  const tip = focusTipLine();
+  if (tip) html += `<br><span class="next">${tip}</span>`;
   return html;
+}
+// The lead line every end screen shares.
+function endLead(prefix) {
+  const p = state.player;
+  return (prefix ? prefix + '<br>' : '') +
+    `TIME ${runClock(state.time)} · WAVE ${state.wave.num} · LEVEL ${p.level} · ${p.kills} KILLS`;
 }
 
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
@@ -5796,10 +5832,19 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const pGold = prestigeGoldMult(getPrestige(profile));
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
   const recordBonus = !firstClear ? 0 : (profile.bestTime || 0) > 0 ? RUN_GOLD.NEW_BEST : RUN_GOLD.FIRST_CLEAR;
-  const award = Math.round(RUN_GOLD.AWARD * mult * pGold) + Math.round(recordBonus * pGold);
+  const baseAward = Math.round(RUN_GOLD.AWARD * mult * pGold);
+  const recordGold = Math.round(recordBonus * pGold);
+  const award = baseAward + recordGold;
   const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
   winBonus = Math.round((winBonus + (state.milestoneBonus || 0)) * nightFactor * pGold);
   const gold = award + purseBanked + winBonus;
+  // The end screen's four parts, which always sum to `gold`. The purse is
+  // survival pay plus kill pay less anything spent in the run; spending comes
+  // out of the kills part.
+  const survival = Math.min(purseBanked,
+    Math.round(((state.runCounts.gold && state.runCounts.gold.survival) || 0) * nightFactor));
+  const breakdown = { award: baseAward, survival, kills: purseBanked - survival,
+    bonuses: recordGold + winBonus };
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
   // (bestTime write, banking, the achievements fold, the save), runSettled
@@ -5809,7 +5854,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // neither re-open settlement nor kill the caller — it is reported and the
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
-  state.runSettled = { gold, award, purseBanked, winBonus, firstClear,
+  state.runSettled = { gold, award, purseBanked, winBonus, firstClear, breakdown,
     goldPool: { base: 1, night: nightPct / 100, challenge: challengePct / 100,
       heat: heatPct, total: pool } };
   try {
@@ -5870,20 +5915,16 @@ function runSurvived() {
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
-  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold({ winBonus: bonus });
+  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold({ winBonus: bonus });
   composeEndScreen({
     titleText: 'RUN SURVIVED',
     titleCls: 'logo',
     subHtml: endScreenBody({
-      // The completion bonus rides the LEAD line (the content pass's one-
-      // gold-line rule): it is already inside GOLD EARNED, named here so the
-      // bigger number stays explained, and MAW SLAIN stays its own clause.
-      lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
-        ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
-        ` · COMPLETION BONUS: +${bonus}${state.mawCleared ? ' · MAW SLAIN' : ''}`,
-      cause: null,                // you did not die — you won
+      lead: endLead('You lasted the full ' + runClock(C.RUN.LIMIT) +
+        (state.mawCleared ? ' and killed the Maw' : '') + '. Bonus +' + bonus + ' gold'),
+      cause: null,
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: bonus, goldPool },
+      parts: { award, purseBanked, winBonus: bonus, goldPool, breakdown },
     }),
   });
   // PRESTIGE OFFER (owner spec): surviving to 30:00 offers the reset at P+1.
@@ -5892,60 +5933,39 @@ function runSurvived() {
   // paths). The ascent resets the run at the new tier via prestigeAscend().
   if (prestigeOfferForRun(state.runWon)) {
     const nextP = getPrestige(profile) + 1;
-    const unlock = nextP >= 3 ? '7x SPEED UNLOCKED' : nextP === 2 ? '5x SPEED UNLOCKED' : '3x SPEED UNLOCKED';
+    const unlock = nextP >= 3 ? 'unlocks 7x speed' : nextP === 2 ? 'unlocks 5x speed' : 'unlocks 3x speed';
     menuCard('PRESTIGE ' + nextP,
-      `reset the run at tier ${nextP} · foes x${prestigeEnemyMult(nextP)} · gold x${prestigeGoldMult(nextP)} · ${unlock} [P]`,
+      `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
       () => prestigeAscend());
   }
   if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
 }
 
-// IN-RUN REFERENCE ACCESS supplement: every end screen (death, victory,
-// deliberate END RUN) is composed HERE, and every one carries the HOW TO
-// PLAY door — the two moments a player actually realises what they did not
-// understand. The composed payload is stored on state so leaving (and
-// returning) through the reference can recompose the IDENTICAL screen:
-// reshowEndScreen re-renders the cards fresh and NEVER re-settles gold
-// (settleRunGold ran exactly once, when the ending fired).
+// Every end screen (death, the 30:00 win, END RUN) is composed here. RETRY is
+// the first card, so Enter with no cursor retries. The composed payload is
+// kept on state so a return from another screen redraws the same summary
+// without settling gold again.
 function composeEndScreen({ titleText, titleCls, subHtml }) {
   state.mode = 'dead';
   state.helpFrom = null;
   state.endScreen = { titleText, titleCls, subHtml };
-  // MODAL SUPPRESSION (owner 2026-09-17, msg_01M2RVD9): the summary is the
-  // ONLY text on screen. The whole canvas HUD — bars, feed, radar, banner —
-  // is gated by the shared hudSuppressed('dead') predicate (render.js
-  // HUD_SUPPRESSED_MODES), so nothing in the queue can PAINT behind the
-  // summary. The queue itself is NOT purged here: the win funnel's trophy /
-  // unlock announcements (settleRunGold) are the payload the test suite reads
-  // and they harmlessly expire unpainted. The DEATH path purges for real at
-  // the cine reveal (endDeathCine) — that is where a toast queued DURING the
-  // movie (ttl frozen outside update()) could otherwise pop through.
+  // The summary is the only text on screen: the canvas HUD is suppressed in
+  // 'dead' mode (render.js HUD_SUPPRESSED_MODES).
   ovTitle.textContent = titleText;
   ovTitle.className = titleCls || '';
-  // The G12 title screen HIDES the DOM h1 (the canvas title card owns it,
-  // main.js showTitle) and only openMenu restores it — every run launched
-  // from the title flow composed its summary with an invisible 'THE HORDE
-  // WINS' header (caught on the 2026-09-17 summary screenshots). Same
-  // restore idiom as openMenu.
-  if (ovTitle.style) ovTitle.style.display = '';
+  if (ovTitle.style) ovTitle.style.display = '';   // the title screen hides the h1
   ovSub.innerHTML = subHtml;
   ovCards.innerHTML = '';
-  menuCard('RETRY', 'straight back in [R]', () => startRun());
-  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
-  menuCard('HOW TO PLAY', 'what every control &amp; object does', () => showHowToPlay({ fromEnd: true }));
-  // 'end': the summary's own panel styling (index.html) — spacing, hierarchy
-  // and the dim scrim over the frozen arena. Removed everywhere else a menu
-  // composes (showTitle/showHowToPlay paths reset the overlay class).
+  menuCard('RETRY', 'play again [R]', () => startRun());
+  menuCard('SHOP', 'spend your gold', () => showShop());
+  menuCard('TITLE', 'back to the menu [T]', () => showTitle());
   if (overlay.classList) { overlay.classList.add('end'); }
   overlay.style.display = 'flex';
-  // SLICE 7: the dev post-run snapshot (once per run; recomposition via
-  // reshowEndScreen is a guarded no-op). Gate off = dev null = no-op.
-  devOnRunEnd();
+  devOnRunEnd();   // dev snapshot, once per run (no-op without ?dev=1)
 }
 function reshowEndScreen() {
   if (!state.endScreen) { showTitle(); return; }   // nothing to return to
   composeEndScreen(state.endScreen);
-  maybeDeathCoach();      // idempotent (once-ever flag) — parity with the direct paths
 }
 
 // Per simulated frame, AFTER state.time advances and BEFORE any damage is
@@ -5990,30 +6010,17 @@ function endRun() {
   state.mode = 'dead';
   audio.stopMusic();
   audio.playSfx('uiDeny');
-  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
+  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold();
   composeEndScreen({
     titleText: 'RUN ENDED',
     titleCls: '',
     subHtml: endScreenBody({
-      lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
+      lead: endLead(''),
       cause: null,          // a deliberate exit has no killer
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0, goldPool },
+      parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
     }),
   });
-  maybeDeathCoach();
-}
-
-// WAVE-22 (rev-4 item 4): the first death is the moment the player most
-// needs to know the loop continues — one coach, once ever, on the end
-// screen ('dead' mode already freezes everything; the Tour engine is
-// event-driven so it runs without the frame loop).
-function maybeDeathCoach() {
-  if (tourFlag(TOUR_KEYS.death)) return;
-  startCoach({ id: 'death',
-    text: 'Death banks its gold — RETRY (R) straight back in, TITLE (T) to spend it. Every death funds the next run.',
-    target: () => cardByTitle('RETRY') }, TOUR_KEYS.death);
 }
 
 // WAVE-20 death-cause tracking: the damage paths stamp the source here right
@@ -6048,19 +6055,16 @@ function die(finale) {
   };
   audio.stopMusic();
   audio.playSfx('death');
-  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
+  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold();
 
-  // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   composeEndScreen({
     titleText: finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS',
     titleCls: finale ? 'logo' : '',
     subHtml: endScreenBody({
-      lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
-        `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
-        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
+      lead: endLead(finale ? 'The Maw swallowed you' : ''),
       cause: deathCauseLabel(state.deathBy),
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0, goldPool },
+      parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
     }),
   });
   // NIGHT MODE: the auto-RETRY (a deliberate END RUN never arms it — a human
@@ -6183,19 +6187,6 @@ try {
   else if (savedRadar === '0') state.radarOn = false;
 } catch { /* shim */ }
 
-// ---------- WAVE-19: first-run onboarding flag (same storage shim) ------------
-// HOW TO PLAY auto-pops ONCE on first boot (before the first run starts) and
-// never again; the title menu keeps a HOW TO PLAY button so it is always
-// re-openable. The shim keeps headless tests green (no-op storage = the flag
-// simply never persists, and the smoke drives both paths explicitly).
-const KEY_ONBOARD = 'hordes_onboarded';
-function onboardingDone() {
-  try { return prefStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
-}
-function completeOnboarding() {
-  try { prefStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
-}
-
 // ---------- THE MANUAL v2 (owner 2026-09-16, msg_01M2P2714VDKY07BBWWCX3G7CC) ----
 // The single-screen reference is PAGINATED: four pages (HOW A RUN WORKS /
 // OPTIONS AND MODES / CONTROLS / THE FIELD), a page indicator, PREV/NEXT
@@ -6237,12 +6228,12 @@ function manualRowsControls() {
       .filter(c => !['potion-hp', 'potion-mp', 'stats'].includes(c.id))
       .map(c => refRow(c.id === 'skill-q' && qPurpose ? qPurpose : c.purpose, c.keys.join(' / ')))
       .join('') +
-    refRow('move (a move key also takes the wheel from AUTO)', 'arrows / WASD') +
+    refRow('move (on AUTO: steer while held)', 'arrows / WASD') +
     refRow('H / N — potions &middot; I — field report (the ONE stats key)') +
     refRow('1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs') +
     refRow('C — continue &middot; R / T — retry / title') +
-    refRow('+ / - — zoom &middot; mouse — the cog (top-right) opens settings') +
-    refRow('ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus') +
+    refRow('+ / - — zoom') +
+    refRow('ESC or P — pause in a run &middot; ESC — close menus') +
     // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
     // drift from the hint that names the glyph.
     refRow('? — ' + controlById('help').purpose) +
@@ -6251,11 +6242,11 @@ function manualRowsControls() {
     // the list; it stops being the whole of "?".
     compactKeyLines().map(l => refRow(l)).join('');
   const tchRows =
-    refRow('move (a drag also takes the wheel from AUTO)', 'joystick') +
-    refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
-    refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
+    refRow('move (on AUTO: steer while you drag)', 'joystick') +
+    refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
+    refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE') +
     refRow('auto &harr; manual', 'PILOT') +
-    refRow('your build &amp; gear', 'STATS') +
+    refRow('your stats and items', 'STATS') +
     refRow('skills', 'FROST / OVER') +
     // RSS8: the card-granted sweep, named so the touch layer's MAG button can
     // never outrun the reference (the button only exists with the card).
@@ -6271,7 +6262,7 @@ function manualRowsControls() {
     refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
-    refRow('settings: zoom, END RUN', 'SETTINGS (cog)') +
+    refRow('pause: settings, END RUN', 'SETTINGS (cog)') +
     // P2B99: THE ESCAPE's manual pads, named (the how-to card must carry the
     // controls a manual player presses — the pads mirror the auto-pilot's
     // whole action set: hold LEFT/RIGHT to run, LIFT to brake, plus the verbs).
@@ -6301,50 +6292,43 @@ function manualGoto(page) {
   else if (overlay.className) overlay.className = (overlay.className ? overlay.className + ' ' : '') + 'howto';
   ovTitle.textContent = 'HOW TO PLAY';
   ovTitle.className = '';
-  ovSub.innerHTML = p === 1
-    // The one-line point of the game leads the FIRST page (the first-run
-    // gate opens here), with the replay-tour pointer (complaint 3: the
-    // replay path existed but nobody found it). The PAGE n / N line rides a
-    // .pgline span: on a WIDE viewport index.html hides it up here and the
-    // .howto-page marker below the panel carries it instead (the widescreen
-    // task: the indicator belongs with the controls) — on a phone the span
-    // is plain inline and renders byte-identically.
-    ? 'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
-      'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
-      '<br>Missed the guided tour? The REPLAY TOUR card at the bottom runs it again.' +
-      '<br><span class="pgline">PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0] + '</span>'
-    : '<span class="pgline">PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1] + '</span>';
+  // Page 1 leads with the point of the game. The PAGE n / N line rides a
+  // .pgline span: wide viewports hide it here and show the .howto-page marker
+  // under the panel instead (index.html).
+  ovSub.innerHTML = (p === 1
+    ? 'Survive as long as you can. The pilot fights; you pick the upgrades.<br>' : '') +
+    '<span class="pgline">PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1] + '</span>';
   const addCls = (el, c) => {
     if (el.classList) el.classList.add(c);
     else el.className = (el.className ? el.className + ' ' : '') + c;
   };
   if (p === 1) {
-    // HOW A RUN WORKS: waves and what ends one, the intermission, what the
-    // choices do, both endings — dense, numbers where they exist.
+    const waveS = C.ESCALATION.WAVE_LENGTH;
     const c = menuCard('HOW A RUN WORKS',
-      'every wave: 120s of horde (a mid-boss rings you at half-time),<br>' +
-      'then the wave BOSS spawns — slay it and the PORTAL opens; walk in.<br><br>' +
-      'INTERMISSION (between waves): paid chests (40/25/10% nothing),<br>' +
-      'blessings, RAISE THE STAKES (+1 heat = +30% run gold per push, capped)<br>' +
-      '&middot; evolve tokens turn weapons maxed at Lv 8 into something new.<br><br>' +
-      'the field, mid-wave: DRAFT / upgrade picks on level-up &middot; SHRINE<br>' +
-      'altars sell blessings for run gold &middot; ARCH gates grant a timed buff &middot;<br>' +
-      'CHEST boxes gamble items (walk in, take the roll).<br><br>' +
-      'CHALLENGE (title-screen card): rule-constrained runs (ONE WEAPON /<br>' +
-      'NO POTIONS); the HUD names the live mode.<br><br>' +
-      'a run ends two ways: DEATH — the horde claims all, gold banked —<br>' +
-      'or VICTORY: outlast all five waves and slay THE MAW OF THE HORDE.');
+      'LEVEL UP: gems fill the XP bar. Each level, pick 1 of 3 cards.<br><br>' +
+      'WAVES: after ' + waveS + ' seconds a BOSS arrives (a smaller one comes at half time).<br>' +
+      'Kill the boss and a PORTAL opens: walk in for a break between waves.<br><br>' +
+      'BETWEEN WAVES: buy a chest, take a blessing, or RAISE THE STAKES<br>' +
+      '(harder enemies, more gold). A token turns a weapon at Lv ' + WEAPON_MAX_LEVEL + ' into a stronger one.<br><br>' +
+      'ON THE FIELD: SHRINES sell blessings for run gold, ARCHES give a short<br>' +
+      'buff, CHESTS hold an item, upgrades, or an ambush.<br><br>' +
+      'MODIFIERS (chosen before a run): ONE WEAPON or NO POTIONS, for a<br>' +
+      'run award ' + (1 + RUN_GOLD.CHALLENGE_BONUS_PCT / 100) + ' times as big.<br><br>' +
+      'GOLD: you keep everything a run earns, even when you die.<br>' +
+      'Spend it in the SHOP on upgrades that last.<br><br>' +
+      'THE END: you die, or you last the full ' + runClock(C.RUN.LIMIT) + ' and win.<br>' +
+      'After wave ' + C.ESCALATION.END_WAVE + ' comes THE MAW OF THE HORDE: kill it for a big bonus.');
     addCls(c, 'ref');
   } else if (p === 2) {
-    // OPTIONS AND MODES: one plain line each + the LIVE callout row read
-    // from state at OPEN time (never bitmaps, never stale defaults).
+    // The three levers, one plain line each, and what they are set to now.
     const c = menuCard('OPTIONS AND MODES',
-      refRow('AUTO: the pilot plays &middot; MANUAL: the stick / keys are yours &middot; a move key or drag takes the wheel', 'PILOT (O)') +
-      refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
-      refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
-      refRow('yours right now', state.pilotMode + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
-      '<div class="rl">every lever is on the touch pads too — and in help mode (?),<br>' +
-      'a tap on any control explains it.</div>');
+      refRow('AUTO: the pilot fights for you. Hold a move key or drag to steer; it takes over again ' +
+        WHEEL_HANDBACK_S + 's after you let go', 'PILOT (O)') +
+      refRow('MANUAL: you steer all the time. Only the PILOT button or O chooses it', 'PILOT (O)') +
+      refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
+      refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
+      refRow('yours right now', pilotPrefLabel() + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
+      '<div class="rl">In help mode (?), tap any button to see what it does.</div>');
     addCls(c, 'ref');
   } else if (p === 3) {
     // ONE CARD, NOT TWO: the merged controls page (see manualRowsControls).
@@ -6402,70 +6386,30 @@ function manualGoto(page) {
   addCls(cPrev, 'nav');
   const cNext = menuCard('NEXT', 'page ' + Math.min(MANUAL_PAGES, p + 1), () => manualGoto(p + 1), p >= MANUAL_PAGES);
   addCls(cNext, 'nav');
-  // M4: REPLAY TOUR (WAVE-21, docs/FIRST_RUN_TOUR doc #7) lives HERE now — a
-  // footer card on every manual page EXCEPT the first-run gate (a fresh
-  // player has not seen the tour yet; replaying it from the gate would be a
-  // trap).
-  // REPLAY-TOUR REWIRE (owner 2026-09-18: "replay tutorial doesn't restart
-  // the special starting level"): the replay now restarts THE SPECIAL LEVEL
-  // itself — the inert prologue run (the potion walk, the banners, the
-  // shield) — not just the coach flags. THE GATE-VERSUS-REPLAY DISTINCTION:
-  // the AUTOMATIC fresh-profile prologue stays parked behind
-  // C.PROLOGUE.ENABLED (the owner's kill switch; startRun reads it for the
-  // runs===0 arm ONLY), while a player who DELIBERATELY asks here bypasses
-  // the park — the assistedRun arm is an opt-in, exactly like the what's-new
-  // offer's accept button, and opt-ins are what the kill switch protects
-  // nobody FROM. The replayed run is ASSISTED (B6: full gold, flagged on the
-  // end screen, excluded from best-run records) via the existing
-  // veteranTutorialPending -> state.assistedRun seam — no new mechanism.
-  // Contexts: from the TITLE and from an END screen the replay starts the
-  // guided run immediately (the what's-new accept precedent); from a LIVE
-  // run's settings it arms the NEXT run instead (yanking the player out of a
-  // live fight would surprise — the prior design's call, kept).
-  if (state.helpFrom !== 'gate') {
-    const cRep = menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
-      clearTourFlags();   // the kept modal cards (draft/death/settings/loadout) re-arm
-      const back = state.helpFrom;
-      state.manualPage = null;
-      state.helpFrom = null;
-      if (back === 'run') {
-        closeSettings();
-        armVeteranTutorial();
-        toast('GUIDED WALKTHROUGH ARMS AT NEXT RUN');
-      } else {
-        // 'title' or 'end': the player asked for the special level — give
-        // them THAT run, right now (the acceptWhatsNew precedent).
-        armVeteranTutorial();
-        startRun();
-      }
-    });
-    // WIDESCREEN: the wide query pulls this card INTO the controls row (its
-    // own tall column beside the panel was the layout the owner rejected).
-    addCls(cRep, 'replay');
-  }
-  // GOT IT: a FLOW footer card at the end of the stack — in the layout,
-  // never sticky over the scrolling body.
-  const gotSub = state.helpFrom === 'gate' ? 'into the horde (shows once)'
-    : state.helpFrom === 'run' ? 'back to the fight'
-    : state.helpFrom === 'end' ? 'back to this screen'
-    : 'back to the title';
-  const cGot = menuCard('GOT IT', gotSub, () => {
-    completeOnboarding();
+  // REPLAY TOUR: the first-run tutorial again, as an assisted run (full
+  // gold, left out of best-run records). From a live run it arms the next run.
+  const cRep = menuCard('REPLAY TOUR', 'play the first-run tutorial again', () => {
+    clearTourFlags();
+    const back = state.helpFrom;
     state.manualPage = null;
-    // UP-FRONT CONTROLS: opened as the FIRST-RUN GATE (fresh START GAME),
-    // GOT IT starts the run (no title-art hold here — the hold belongs to
-    // the title screen, and the gate's job is to get the briefed player
-    // into the horde).
-    // IN-RUN REFERENCE ACCESS: every door returns to where it was opened —
-    // the in-run door resumes the FIGHT (closeSettings: the same close/
-    // return discipline as BACK), the end screens recompose the SAME end
-    // card (reshowEndScreen: never re-settles gold, never restarts), the
-    // title door returns there.
+    state.helpFrom = null;
+    armVeteranTutorial();
+    if (back === 'run') {
+      closeSettings();
+      toast('The tutorial starts with your next run');
+    } else {
+      startRun();
+    }
+  });
+  addCls(cRep, 'replay');
+  // GOT IT leaves the manual: back to the fight from a paused run, else to
+  // the title.
+  const gotSub = state.helpFrom === 'run' ? 'back to the fight' : 'back to the title';
+  const cGot = menuCard('GOT IT', gotSub, () => {
+    state.manualPage = null;
     const back = state.helpFrom;
     state.helpFrom = null;
-    if (back === 'gate') startRun();
-    else if (back === 'run') closeSettings();
-    else if (back === 'end') reshowEndScreen();
+    if (back === 'run') closeSettings();
     else showTitle();
   });
   addCls(cGot, 'gotit');
@@ -6473,13 +6417,9 @@ function manualGoto(page) {
 function manualPrev() { if (state.manualPage && state.manualPage > 1) manualGoto(state.manualPage - 1); }
 function manualNext() { if (state.manualPage && state.manualPage < MANUAL_PAGES) manualGoto(state.manualPage + 1); }
 
-function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {}) {
-  // IN-RUN REFERENCE ACCESS (owner 2026-09-16): the reference is reachable
-  // mid-run (the in-run SETTINGS door, under the 'settings' pause mode so
-  // ESC and GOT IT resume the fight through closeSettings) and from the end
-  // screens (fromEnd — GOT IT recomposes the SAME end card, never re-settling
-  // gold). state.helpFrom remembers the door GOT IT walks back out of.
-  state.helpFrom = intoRun ? 'gate' : inRun ? 'run' : fromEnd ? 'end' : 'title';
+// The manual opens from SETTINGS, on the title or in the pause menu.
+function showHowToPlay({ inRun = false } = {}) {
+  state.helpFrom = inRun ? 'run' : 'title';
   openMenu(inRun ? 'settings' : 'menu');
   manualGoto(1);
 }
@@ -6788,8 +6728,8 @@ function openMenu(mode = 'menu') {
   // (class-list-less DOM stubs keep a plain className string — same state.)
   // 'end' (the end-of-run summary's panel styling) gets the same reset — no
   // menu may inherit the summary's spacing/scrim.
-  if (overlay.classList) overlay.classList.remove('howto', 'end');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end').join(' ');
+  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end' && c !== 'title').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which
@@ -6816,6 +6756,7 @@ function openMenu(mode = 'menu') {
   // show the frozen world through its cards. '' returns both to the stylesheet.
   overlay.style.background = '';
   overlay.style.justifyContent = '';
+  overlay.style.paddingTop = '';
   // G12: same reset for the title's hidden DOM <h1> (the title card's own
   // wordmark replaces it there; every other screen wants it back).
   if (ovTitle.style) ovTitle.style.display = '';
@@ -6825,17 +6766,6 @@ function openMenu(mode = 'menu') {
   overlay.style.opacity = '';
   overlay.style.pointerEvents = '';
 }
-
-// ---------- FIRST-RUN TOUR — the KEPT cards (onboarding rework 2026-09-16) --
-// The staged walkthrough lost its stage 1 (title cards) and its in-run
-// schedule to the owner-approved onboarding rework: every labelled button and
-// every timer-scheduled card was "information without context". What remains
-// are the four KEPT cards — draft (level-up), death, loadout, first-cog END
-// RUN — each on a screen that already freezes the sim by MODE. The
-// non-pausing hint layer they used to sit beside is RETIRED too
-// (2026-09-18 — see the ONBOARDING note above isTouchPath): a tutorial
-// belongs BEFORE gameplay, and the manual + the prologue carry it now.
-const cardByTitle = (t) => [...ovCards.children].find(c => (c.innerHTML || '').includes(`>${t}<`));
 
 // Canvas-region pseudo-target: a rect in the 480x300 native space projected
 // through the canvas's on-screen rect, so HUD-region spotlights land at any
@@ -6857,39 +6787,17 @@ function canvasRegion(x, y, w, h) {
 let coach = null;
 function coachActive() { return !!(coach && coach.active()); }
 
-// ---------- ONBOARDING: THE IN-RUN HINT LAYER IS RETIRED (owner 2026-09-18) ----
-// The non-pausing hint strip (src/onboarding.js's HintStrip, the maybeHint /
-// pumpHints scheduler, the teach-until-demonstrated store) is DELETED, not
-// flagged off — the owner's tutorial principle: "a tutorial should happen
-// mostly prior to full gameplay", and the layer's own mechanics made that
-// impossible: hints were CONDITION-GATED (a tip fired the first time its
-// trigger became true — minutes into a run, e.g. the RADAR tip at 02:58 on
-// an established LV31 profile) and drip-paced by HINT_SPACING_S ("wayyy too
-// spread out"), and because updateOnboarding ticked only in 'playing' a
-// live strip FROZE on screen at the boss kill / intermission / run end (the
-// stuck-tooltip report). The material lives in the pre-gameplay surfaces
-// now: the HOW TO PLAY manual (the fresh profile's gate; its controls page
-// reads the SAME src/controls_ref.js rows the hints were built from) and
-// the first-run PROLOGUE's action-gated banners. The four KEPT coach cards
-// (draft / death / settings / loadout — each on a screen that already
-// freezes the sim by mode) are untouched. Pinned by test_onboarding.mjs,
-// which now asserts the layer's absence the way test_notags.mjs pins the
-// object-tags removal. GIVE-UP counters, `hordes_hint_*` storage keys and
-// the REPLAY-TOUR hint re-arm are gone with it (old keys are simply never
-// read again — the retired tour flags precedent).
-//
-// The touch path names the TOUCH control — a phone player is never told to
-// press a key they do not have. Read live off the touch layer's own class
-// (set at boot from hasTouch), so tests can flip it through the DOM.
-// (Kept: the prologue's staged tooltips still name their control through
-// this — prologueTipText below.)
+// Is the touch layout live? Copy that names a control uses this to name the
+// touch control on a phone and the key on a desktop. Read off the touch
+// layer's own class, so tests can flip it through the DOM. (There is no in-run
+// hint strip: teaching happens in the first-run tutorial and the manual.
+// test_onboarding.mjs pins its absence.)
 function isTouchPath() {
   return !!(touchLayer && touchLayer.classList && touchLayer.classList.contains('on'));
 }
 
-// Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
-// dismissed. `steps` is a step object or an array (multi-step = spotlight
-// BOTH targets of a pair, e.g. the two skill buttons — rev-4 partial fix).
+// A coach card: a one-step Tour that pauses the sim until dismissed. Only the
+// first level-up of a profile that never saw the tutorial uses it.
 function startCoach(steps, key) {
   if (coachActive()) return;
   setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
@@ -7049,23 +6957,40 @@ function hasLocalSave() {
   } catch { return false; }
 }
 
-// ---------- N2 TITLE ART REVEAL: menu fade-in + the START GAME art hold -----
-// Owner 2026-09-13: "The menu needs to fade in so players can see this! And
-// then when they select a run, it should remain for 1 second. Maybe even
-// animate it for that second." Every duration below is SECONDS advanced by
-// the frame loop's own measured realDt (the WAVE-26 top-of-frame delta), so
-// 60Hz and 120Hz land on the same wall-clock timings — nothing counts frames.
+// ---------- Title reveal: the menu fades in over the art -------------------------
+// First title entry per page load: the art alone for a beat, then the menu
+// fades in. Later returns fade quickly. The overlay takes no clicks until it
+// is fully shown. The reveal keeps its own wall clock and is advanced by a
+// timer as well as by the frame loop, so it finishes on time when
+// requestAnimationFrame is throttled (a background or embedded page).
 const TITLE_ART_BEAT_S = 0.35;   // art alone before the menu fades in
-const TITLE_FADE_S = 0.5;        // the menu fade-in (brief: ~400-600ms)
-const TITLE_RETURN_FADE_S = 0.12;// a return to the title re-fades SHORT (<=150ms), never the full show
-const TITLE_OUT_FADE_S = 0.3;    // menu down after START GAME
-const TITLE_HOLD_S = 1.0;        // the art holds alone before the run starts
-const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S,
-  out: TITLE_OUT_FADE_S, hold: TITLE_HOLD_S };
-let titleRevealPlayed = false;   // the full reveal runs ONCE per page load
-let tourPendingAfterReveal = false;   // the G26 loadout coach waits for the settle
-let holdSnap = null;             // the wordmark region snapshot for the hold shimmer
-let titleRunStarts = 0;          // startRun calls issued by the hold path (assertable)
+const TITLE_FADE_S = 0.5;        // the menu fade-in
+const TITLE_RETURN_FADE_S = 0.12;// the fade on a return to the title
+const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S };
+const TITLE_TIMER_MS = 40;       // the timer's step while a reveal is running
+let titleRevealPlayed = false;   // the full reveal runs once per page load
+let titleRevealAt = 0;           // performance.now() of the last reveal advance
+let titleRevealTimer = null;
+let titleTimerTicks = 0;         // timer-driven advances (assertable)
+
+// Start (or keep) the timer that advances a running reveal without rAF.
+function armTitleRevealTimer() {
+  titleRevealAt = performance.now();
+  if (titleRevealTimer !== null || typeof setTimeout !== 'function') return;
+  const tick = () => {
+    titleRevealTimer = null;
+    const rv = state.titleReveal;
+    if (!rv || rv.phase === 'settled' || state.mode !== 'title') return;
+    titleTimerTicks++;
+    advanceTitleReveal();
+    if (state.titleReveal && state.titleReveal.phase !== 'settled') {
+      titleRevealTimer = setTimeout(tick, TITLE_TIMER_MS);
+      if (titleRevealTimer && titleRevealTimer.unref) titleRevealTimer.unref();
+    }
+  };
+  titleRevealTimer = setTimeout(tick, TITLE_TIMER_MS);
+  if (titleRevealTimer && titleRevealTimer.unref) titleRevealTimer.unref();
+}
 
 function revealSettled() {
   return !state.titleReveal || state.titleReveal.phase === 'settled';
@@ -7078,9 +7003,8 @@ function applyRevealStyles() {
   const rv = state.titleReveal;
   if (!rv || !overlay.style) return;
   let o = 1;
-  if (rv.phase === 'art' || rv.phase === 'hold') o = 0;
+  if (rv.phase === 'art') o = 0;
   else if (rv.phase === 'fade' || rv.phase === 'return') o = Math.min(1, rv.t / rv.dur);
-  else if (rv.phase === 'out') o = Math.max(0, 1 - rv.t / rv.dur);
   rv.opacity = o;
   const inline = o >= 1 ? '' : String(Math.round(o * 1000) / 1000);
   if (overlay.style.opacity !== inline) overlay.style.opacity = inline;
@@ -7088,54 +7012,12 @@ function applyRevealStyles() {
   if (overlay.style.pointerEvents !== pe) overlay.style.pointerEvents = pe;
 }
 
-// Snapshot the wordmark region of the painted card so the hold shimmer can
-// repaint it 1:1 every frame (integer coords, no resampling, no smoothing —
-// the paint-once card itself is never touched).
-function snapshotWordmark() {
-  try {
-    const ts = renderer.titleScreen;
-    if (!ts) return null;
-    const c = renderer.canvas;
-    const k = c.width / C.VIEW_W;
-    const s = ts.scale;
-    const x = Math.round((ts.x + 154 * s) * k), y = Math.round((ts.y + 88 * s) * k);
-    const w = Math.round(180 * s * k), h = Math.round(37 * s * k);
-    if (!(w > 0 && h > 0)) return null;
-    const off = document.createElement('canvas');
-    off.width = w; off.height = h;
-    const og = off.getContext('2d');
-    og.drawImage(c, x, y, w, h, 0, 0, w, h);
-    return { off, x, y, w, h };
-  } catch { return null; }   // headless stubs / exotic states: no shimmer, no crash
-}
-
-// N2 DO 3 (the owner's "maybe"): a gentle gold shimmer on the wordmark during
-// the hold — two decaying pulses over the second, drawn on top of the
-// restored 1:1 snapshot. fillRect + integer coords only; no transforms.
-function drawTitleFlourish(g) {
-  const rv = state.titleReveal;
-  if (!rv || rv.phase !== 'hold' || !holdSnap || !g) return;
-  try {
-    // The snapshot/restore is 1:1 in BACKING pixels, so it must run under the
-    // IDENTITY transform — the renderer's view transform is still active
-    // after render() and would move/rescale (resample!) the restore.
-    g.save();
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.drawImage(holdSnap.off, holdSnap.x, holdSnap.y);
-    const decay = Math.max(0, 1 - rv.t / TITLE_HOLD_S);
-    const pulse = 0.30 * decay * (0.55 + 0.45 * Math.sin(rv.t * Math.PI * 4));
-    if (pulse > 0.004) {
-      g.fillStyle = 'rgba(255,213,74,' + pulse.toFixed(3) + ')';
-      g.fillRect(holdSnap.x, holdSnap.y, holdSnap.w, holdSnap.h);
-    }
-    g.restore();
-  } catch { /* stub contexts: the shimmer is sugar, never a crash */ }
-}
-
-// Wall-clock advance, called from frame() with the top-of-frame realDt every
-// mode (the reveal must not freeze under an early-return mode — same rule the
-// earned-moment decay follows).
-function advanceTitleReveal(dt) {
+// Advance the reveal by the wall time since the last advance. Called from
+// frame() and from the reveal's own timer; either one alone completes it.
+function advanceTitleReveal() {
+  const now = performance.now();
+  const dt = Math.max(0, (now - titleRevealAt) / 1000);
+  titleRevealAt = now;
   const rv = state.titleReveal;
   if (!rv) return;
   if (state.mode !== 'title') {
@@ -7148,53 +7030,19 @@ function advanceTitleReveal(dt) {
   try {
     rv.t += dt;
     if (rv.phase === 'art') {
-      if (rv.t >= TITLE_ART_BEAT_S) { rv.phase = 'fade'; rv.t = 0; }
+      if (rv.t >= TITLE_ART_BEAT_S) { rv.phase = 'fade'; rv.t -= TITLE_ART_BEAT_S; }
     } else if (rv.phase === 'fade' || rv.phase === 'return') {
       if (rv.t >= rv.dur) {
         rv.phase = 'settled'; rv.t = rv.dur; rv.opacity = 1;
         applyRevealStyles();
-        // N2 DO 4: the first-run tour fires only once the reveal has settled
-        // (a coachmark popping mid-fade reads as a glitch). G26: the loadout
-        // door coach rides the same settle gate (achievement grants land at
-        // run settle, so the next title visit is the first legal moment).
-        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeCoachLoadoutDoor(); }
         return;
       }
-    } else if (rv.phase === 'out') {
-      if (rv.t >= rv.dur) { rv.phase = 'hold'; rv.t = 0; holdSnap = snapshotWordmark(); }
-    } else if (rv.phase === 'hold') {
-      if (rv.t >= TITLE_HOLD_S) { finishTitleHold(); return; }
     }
     applyRevealStyles();
   } catch (err) {
     // FAIL SAFE: a broken reveal must never strand a blank/unreachable sheet.
     state.titleReveal = { phase: 'settled', t: 0, dur: 0, opacity: 1 };
     applyRevealStyles();
-    throw err;
-  }
-}
-
-// START GAME's new tail (N2 DO 2): fade the menu out, hold the art ~1s in
-// mode 'title' (so the canvas keeps showing the card), THEN startRun().
-function beginTitleHold() {
-  const rv = state.titleReveal;
-  if (rv && (rv.phase === 'out' || rv.phase === 'hold')) return;   // already leaving: idempotent
-  state.titleReveal = { phase: 'out', t: 0, dur: TITLE_OUT_FADE_S, opacity: 1 };
-  applyRevealStyles();
-  uiGuard.arm();   // swallow this gesture's tail (double-tap / key-repeat)
-}
-
-function finishTitleHold() {
-  holdSnap = null;
-  state.titleReveal = null;
-  if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
-  titleRunStarts++;
-  try {
-    startRun();
-  } catch (err) {
-    // FAIL SAFE: a failed start must land the player somewhere reachable.
-    if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
-    showTitle();
     throw err;
   }
 }
@@ -7228,54 +7076,63 @@ function showFarewell() {
   menuCard('BACK', 'return to the title', () => showTitle());
 }
 
-// U1 SUBMENUS (owner 2026-09-14: "there should be more submenus to contain
-// some"). Both are the showHowToPlay()/showSettings() shape: openMenu + cards +
-// a BACK card. The moved cards keep their EXACT numbers and cycling behaviour —
-// only their parent screen changed. CHALLENGE/STAGE re-render THIS screen when
-// they cycle (was showTitle()), so the selection updates without bouncing the
-// player back out to the title.
 function showProgress() {
   openMenu('progress');
   ovTitle.textContent = 'PROGRESS';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = 'emblems earned &middot; enemies met';
-  // G9: the count is the honest one (earnedCount counts KNOWN trophy ids only,
-  // so a save from a newer build cannot inflate it).
-  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
+  ovSub.innerHTML = 'trophies earned &middot; enemies met';
+  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned`,
     () => showTrophies());
-  // G10: the discovery log for rare tiers — a player who never opens it never
-  // learns the ??? silhouettes are a chase.
   menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
     () => showBestiary());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
-function showSetup() {
+// ---------- The pre-run screen ---------------------------------------------------
+// PLAY opens this one screen: START first (so Enter goes straight through),
+// then the stage, the modifier and the weapons the run brings. Each card says
+// in one line what it changes and what it pays. Stage and modifier are
+// session choices: nothing here is saved except the loadout.
+function ownsExtraWeapon() {
+  return (profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w));
+}
+function stagePlainLine(id) {
+  const st = stageOf(id), f = stageFacts(id);
+  const bits = [];
+  if (f.hp !== 1) bits.push('foes x' + Math.round(f.hp * 100) / 100 + ' health');
+  if (f.dmg !== 1) bits.push('x' + Math.round(f.dmg * 100) / 100 + ' damage');
+  const what = isDefaultStage(id) ? 'The first arena: a mixed horde'
+    : st.blurb.charAt(0).toUpperCase() + st.blurb.slice(1) + (bits.length ? ' (' + bits.join(', ') + ')' : '');
+  return what + '. Pays normal gold.';
+}
+function challengePlainLine(id) {
+  const c = challengeOf(id);
+  if (isStandard(id)) return 'No extra rules. Pays normal gold.';
+  const pct = challengeGoldBonusPct(id);
+  return c.blurb.charAt(0).toUpperCase() + c.blurb.slice(1) + '. Pays +' + pct + '% run award (' +
+    RUN_GOLD.AWARD + ' to ' + Math.round(RUN_GOLD.AWARD * (1 + pct / 100)) + ' gold).';
+}
+function loadoutSummary() {
+  const kit = ['VOLLEY', ...effectiveLoadout(profile, loadoutSlotCap())];
+  return kit.map(w => WEAPON_NAMES[w] || w).join(' + ') + '. Weapons start at Lv ' + (1 + masteryStartLevels(profile)) + '.';
+}
+function showPreRun() {
   openMenu('setup');
-  ovTitle.textContent = 'SETUP';
+  ovTitle.textContent = 'NEXT RUN';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = 'what the next run is &middot; how it plays &middot; how it sounds';
-  // G11: session-scoped selector — the press cycles the mode and re-renders so
-  // the card always names the CURRENT selection before the player commits.
-  menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
-    () => { cyclePendingChallenge(); showSetup(); });
-  // G20a: same cycling-card pattern through UNLOCKED stage rows only.
-  menuCard('STAGE', stageCardSub(),
-    () => { cyclePendingStage(); showSetup(); });
-  // NIGHT MODE (owner-authorized 2026-09-17): opt-in full auto at 50% gold.
-  // SETUP is its ONLY surface (never a run key, never persisted — a reload
-  // ends the night), OFF by default, and turning ON needs a SECOND
-  // confirming press so the toggle cannot be tripped by accident.
-  menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
-    state.night
-      ? 'runs play themselves at 50% gold · press to turn OFF'
-      : nightArmed
-        ? 'press again to CONFIRM: runs full-auto at HALF gold'
-        : 'overnight full-auto · 50% gold · two presses to turn ON (OFF by default)',
-    () => { toggleNight(); showSetup(); });
-  menuCard('SETTINGS', 'display, audio & save data', () => showSettings());
-  // ONBOARDING REWORK: HOW TO PLAY now lives on the TITLE screen; SETUP keeps
-  // CHALLENGE / STAGE / SETTINGS only.
+  ovSub.innerHTML = 'press START, or change the run first';
+  menuCard('START', 'begin the run [ENTER]', () => startRun());
+  const locked = lockedStageLines(stageUnlocked);
+  const stageCount = STAGE_IDS.filter(stageUnlocked).length;
+  menuCard('STAGE: ' + stageOf(pendingStage).name,
+    stagePlainLine(pendingStage) +
+    (stageCount > 1 ? '<br>press to change' : locked.length ? '<br>next stage: ' + locked[0] : ''),
+    () => { cyclePendingStage(); showPreRun(); }, stageCount <= 1);
+  menuCard('MODIFIER: ' + challengeOf(pendingChallenge).name,
+    challengePlainLine(pendingChallenge) + '<br>press to change',
+    () => { cyclePendingChallenge(); showPreRun(); });
+  menuCard('LOADOUT', loadoutSummary() + (ownsExtraWeapon() ? '<br>press to change' : '<br>buy more weapons in the SHOP'),
+    () => showLoadout('prerun'), !ownsExtraWeapon());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
@@ -7397,14 +7254,17 @@ function toggleLoadoutWeapon(id) {
   showLoadout();
 }
 
-function showLoadout() {
+// `from` is where BACK returns: 'prerun' (the pre-run screen) or the title.
+let loadoutFrom = null;
+function showLoadout(from) {
+  if (from !== undefined) loadoutFrom = from;
   openMenu('loadout');
   ovTitle.textContent = 'LOADOUT';
   ovTitle.className = '';
   const cap = loadoutSlotCap();
   const sel = new Set(effectiveLoadout(profile, cap));
-  ovSub.textContent = (profile.loadout ? sel.size + '/' + cap + ' chosen' : 'auto: every owned weapon that fits')
-    + ' · the weapons the next run brings';
+  ovSub.textContent = (profile.loadout ? sel.size + ' of ' + cap + ' slots chosen' : 'auto: your best weapons fill the slots')
+    + ' · ' + masteryLine(profile);
   for (const id of loadoutChoices()) {
     const on = sel.has(id);
     const full = !on && sel.size >= cap;
@@ -7431,12 +7291,13 @@ function showLoadout() {
       else el.appendChild(artCv);
     }
   }
-  menuCard('AUTO', 'clear the choice — runs bring every owned weapon that fits', () => {
+  menuCard('AUTO', 'let the game pick: your best weapons fill the slots', () => {
     profile.loadout = null;
     persistProfile();
     showLoadout();
   });
-  menuCard('BACK', 'to title [ESC]', () => showTitle());
+  menuCard('BACK', loadoutFrom === 'prerun' ? 'to the run setup' : 'to title [ESC]',
+    () => (loadoutFrom === 'prerun' ? showPreRun() : showTitle()));
 }
 
 // The run's kit, validated against the LIVE unlock set and the run's slot
@@ -7448,25 +7309,6 @@ function chosenLoadout() {
   const cap = Math.max(0, ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1);
   const list = effectiveLoadout(profile, cap).filter(t => WEAPON_TYPES[t]);
   return list.length ? list : null;
-}
-
-// G26 just-in-time door coach (owner: "can it present the coaching after the
-// first weapon buyable is bought?"). Fires the FIRST time the unlocked-weapon
-// set grows beyond the starter kit — a weapon purchase on the shop path or an
-// achievement grant — ONCE, in the tour flag store. Never during a run (both
-// call sites are title/shop screens), never over a live tour, dismisses like
-// every other coachmark. The dedicated event test in test/test_g26_loadout.mjs
-// pins: nothing before the growth, exactly one after, the flag prevents a
-// repeat, and the door stays reachable by taps without the coach ever firing.
-function maybeCoachLoadoutDoor() {
-  if (tourFlag(TOUR_KEYS.loadout)) return;
-  if (!(profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w))) return;
-  if (coachActive()) return;
-  startCoach({
-    id: 'loadout',
-    text: 'NEW WEAPON UNLOCKED — the next run only brings what you pick. Choose your LOADOUT from the title screen.',
-    target: () => (state.mode === 'title' && cardByTitle('LOADOUT')) || ovCards,
-  }, TOUR_KEYS.loadout);
 }
 
 // The note itself: a PARCHMENT card on the game's real card skeleton
@@ -7527,6 +7369,16 @@ function acceptWhatsNew(el) {
   startRun();
 }
 
+// Start the title's cards just under the painted wordmark, so the menu never
+// covers it. The wordmark's foot is at ~46% of the canvas height.
+function placeTitleMenu() {
+  if (!overlay.style || typeof canvas.getBoundingClientRect !== 'function') return;
+  const r = canvas.getBoundingClientRect();
+  const or = typeof overlay.getBoundingClientRect === 'function' ? overlay.getBoundingClientRect() : null;
+  if (!r || !r.height || !or || !or.height) return;
+  overlay.style.paddingTop = Math.max(8, Math.round((r.top - or.top + r.height * 0.47) / uiScaleNow)) + 'px';
+}
+
 function showTitle() {
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
@@ -7538,6 +7390,7 @@ function showTitle() {
   ovTitle.className = 'logo';
   if (ovTitle.style) ovTitle.style.display = 'none';
   overlay.style.background = 'transparent';
+  if (overlay.classList) overlay.classList.add('title');
   const fresh = !hasLocalSave();
   paintTitleHeader();
   // v9 WHAT'S NEW: the note is a LAUNCH artifact — attempted on the FIRST
@@ -7548,66 +7401,30 @@ function showTitle() {
     whatsNewTried = true;
     if (whatsNewDueFor(profile, WHATS_NEW, bootResult.status === 'fresh')) addWhatsNewCard();
   }
-  menuCard('START GAME', 'start a run',
-    // UP-FRONT CONTROLS: a fresh profile meets the reference FIRST (the
-    // gate), GOT IT starts the run; everyone else goes straight in.
-    () => (onboardingDone() ? beginTitleHold() : showHowToPlay({ intoRun: true })));   // N2: fade out + hold the art ~1s, then startRun()
-  // MENU CONDENSE M5: the fresh-browser LOAD FROM DISK card is folded into
-  // SAVE DATA (SETUP -> SETTINGS -> SAVE DATA -> IMPORT SAVE) — the same
-  // validated pickImportFile -> importSaveText -> importProfileText path.
-  // The `fresh` flag stays live for paintTitleHeader's fresh copy.
+  // Five cards. LOADOUT joins once there is a weapon beyond the starting kit
+  // to choose; before that the pre-run screen shows the kit.
+  menuCard('PLAY', 'start a run', () => showPreRun());
   menuCard('SHOP', 'permanent upgrades', () => showShop());
-  menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
-  // G26: the LOADOUT door. A destination the player FINDS (owner: "the player
-  // should have to go find the weapon selection in a menu") — never a forced
-  // stop, never a gate: the sub-line names the live state so the card carries
-  // its own information, and START GAME keeps starting immediately.
-  menuCard('LOADOUT',
-    profile.loadout
-      ? profile.loadout.length + '/' + (startWeaponSlots(profile) - 1) + ' weapons chosen'
-      : 'pick this run\'s weapons', () => showLoadout());
-  // U1 (owner 2026-09-14): the menu was eleven cards. TROPHIES/BESTIARY and
-  // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, and the
-  // doors' sub-lines carry the live numbers the moved cards used to show,
-  // so nothing is hidden that a player needs before pressing.
-  // MENU CONDENSE (2026-09-17, owner rulings VJBFV): D3 EXIT GAME is removed
-  // (closing the tab saves & quits — autosave already fires); M5 folded the
-  // fresh LOAD FROM DISK card into SAVE DATA; D4 CHARACTERS is KEPT (owner
-  // wants the card; the duplicate SHOP door is not a removal reason) — so
-  // the title is SEVEN cards, HOW TO PLAY last. exitGame()/showFarewell and
-  // the `game: exitGame` __TEST seam survive unreached by cards.
-  menuCard('PROGRESS', `${earnedCount(profile)} / ${totalAchievements()} emblems · ` +
-    `${seenCount(profile)} / ${totalEncounters()} met`, () => showProgress());
-  menuCard('SETUP', stageCardSub().split(' · ')[0] + ' · challenge, stage, options',
-    () => showSetup());
-  // ONBOARDING REWORK (owner-approved 2026-09-16): HOW TO PLAY moves OUT of
-  // SETUP onto the title — a confused player does not open SETUP to look for
-  // help. SETUP keeps CHALLENGE / STAGE / SETTINGS.
-  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
-  // SLICE 11: download-all lives on the MAIN MENU (dev gate only), never the
-  // end screen — one button for the whole runs.jsonl (all runs, not the
-  // current one). The end-screen single-run DEV SNAPSHOT card stays as-is.
+  menuCard('CHARACTERS', 'pick your hero', () => showCharacters());
+  if (ownsExtraWeapon()) {
+    menuCard('LOADOUT', 'choose your weapons', () => showLoadout('title'));
+  }
+  menuCard('PROGRESS', `${earnedCount(profile)} of ${totalAchievements()} trophies`, () => showProgress());
+  menuCard('SETTINGS', 'sound, display, help', () => showSettings());
   if (DEV_GATE) {
     menuCard('DEV LOG', 'download every run snapshot (runs.jsonl)', () => { devDownloadLog(); });
   }
-  // N2 DO 1: the FIRST title entry per page load shows the art alone for a
-  // beat, then fades the menu in over it; every return re-fades short. A
-  // hold already in flight (out/hold) is never interrupted by a rebuild.
-  const inHold = state.titleReveal &&
-    (state.titleReveal.phase === 'out' || state.titleReveal.phase === 'hold');
-  if (!inHold) {
-    if (!titleRevealPlayed) {
-      titleRevealPlayed = true;
-      state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
-    } else {
-      state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
-    }
+  placeTitleMenu();
+  // The first title entry per page load shows the art alone for a beat, then
+  // fades the menu in over it; every return fades quickly.
+  if (!titleRevealPlayed) {
+    titleRevealPlayed = true;
+    state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
+  } else {
+    state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
   }
   applyRevealStyles();
-  // N2 DO 4 (onboarding rework): only the G26 loadout door coach waits for
-  // the reveal settle now — the title-card tour is retired.
-  if (revealSettled()) { maybeCoachLoadoutDoor(); }
-  else tourPendingAfterReveal = true;
+  armTitleRevealTimer();
 }
 
 // G14: the live registry of shop-row icon canvases, rebuilt by showShop() so
@@ -8047,11 +7864,6 @@ function showShop() {
                 : 'EQUIPPED ' + WEAPON_NAMES[added] + ' — in your LOADOUT');
             }
           }
-          // G26: a successful WEAPON purchase is the just-in-time moment the
-          // owner picked ("after the first weapon buyable is bought") — the
-          // unlocked set just grew, so the loadout door coach checks now, on
-          // the re-rendered shop. Stat/mana/slot rows never fire it.
-          if (def.kind === 'weapon') maybeCoachLoadoutDoor();
         }
       },
       capped || !afford,
@@ -8624,110 +8436,78 @@ function importSaveText(text) {
 }
 
 let resetArmed = false;
-let endArmed = false;   // WAVE-18 (#6): END RUN two-tap arm (same pattern as RESET)
-// MENU CONDENSE (2026-09-17, owner rulings on the VJBFV prune proposal): the
-// 12/14-card settings wall is now SIX cards in both contexts — AUDIO,
-// DISPLAY, PILOT, HOW TO PLAY, SAVE DATA (title) / END RUN (in-run), BACK —
-// with the full ladders one tap deeper in the three sub-screens below.
-// Merges: M1 zoom+resolution+text hud -> DISPLAY; M2 music+sfx -> AUDIO;
-// M3 export+import+recovery+reset -> SAVE DATA. Removals: D1 TEST: ESCAPE
-// SEQUENCE (debug-gated below), D2 RECOVERY FILE (PREVIOUS) (one rescue
-// slot), REPLAY TOUR moved into HOW TO PLAY (M4). E1/E2 follow: RESET keeps
-// its two-tap arm, and the FULL zoom/resolution ladders stay reachable one
-// tap deeper inside DISPLAY.
+let endArmed = false;   // END RUN takes two presses, like RESET
+
+// ---------- SETTINGS: one screen, plus ADVANCED -------------------------------
+// The same screen serves the title and the in-run pause (inRun: BACK resumes
+// the fight and END RUN is offered instead of the save file cards). Everything
+// most players never touch is on the ADVANCED page.
 function showSettings(disarm = true, inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
-  // Sk408 bug: the arm click re-rendered through here, which cleared the
-  // arm flag the same frame it was set — RESET could never confirm. Only
-  // disarm when settings is opened fresh (title menu or the in-run cog).
+  // Re-rendering after the first END RUN press must not clear its own arm.
   if (disarm) { resetArmed = false; endArmed = false; }
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
-  ovSub.textContent = 'display, audio & save data' + (saveNotice ? ' · ' + saveNotice : '');
-  menuCard('AUDIO',
-    'music ' + audio.getMusicVolume() + ' &middot; sfx ' + audio.getSfxVolume(),
-    () => showAudioSettings(inRun));
-  menuCard('DISPLAY',
-    state.zoom + 'x &middot; ' + resMode().toLowerCase() + ' &middot; hud ' + (hudTextEnabled() ? 'ON' : 'OFF'),
-    () => showDisplaySettings(inRun));
-  // G31: the pilot cycle, selectable PRE-RUN as well as in-run (the O key /
-  // touch PILOT button were mid-run only, so the persisted choice could not
-  // be set before the first run). Same togglePilotMode seam as the key.
-  menuCard('PILOT', 'currently ' + pilotPrefLabel() +
-    ' (auto all / auto move / manual) — persists between runs', () => {
-      togglePilotMode();
-      showSettings(true, inRun);
-    });
-  // IN-RUN REFERENCE ACCESS (owner 2026-09-16: "the users want to know what
-  // each control does..."): the reference is ONE screen, reachable from every
-  // door. In-run it opens under this same pause mode, so GOT IT (and ESC)
-  // resume the fight through closeSettings — the BACK discipline.
-  menuCard('HOW TO PLAY', 'every control + the field objects', () => showHowToPlay({ inRun }));
-  // M3: export/import/recovery/reset live behind ONE door, title-only (the
-  // in-run screen deliberately carries END RUN instead — E1).
-  if (!inRun) {
-    menuCard('SAVE DATA', 'export, import & reset', () => showSaveData());
-  }
-  // WAVE-18 (#6): END RUN — the early exit the playtest demanded, only on
-  // the in-run settings screen (never the title's). Same two-tap arm/
-  // confirm pattern as RESET PROFILE.
-  if (inRun) {
-    menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
-      endArmed ? 'banks your gold and ends the run' : 'twice to confirm',
-      () => {
-        if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
-        endArmed = false;
-        endRun();
-      });
-  }
-  // V1 play-test affordance (owner ask): the escape's real trigger is beating
-  // the wave-1 boss and entering the portal, unreachable while play-testing —
-  // so the paused run offers the entry here. It goes through the REAL
-  // startEscape seam flagged as a test entry (no payout, no intermission:
-  // every exit returns to this screen with the run still live).
-  // MENU CONDENSE D1: off the player surface — offered ONLY when the debug
-  // flag is set (localStorage 'hordes_debug' = '1'; the dev runbook flips
-  // it from the console). Card order still ahead of BACK when present.
-  if (inRun && (() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
-    menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
-      closeSettings();
-      startEscape({ test: true });
-    });
-  }
-  // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
-  // instead of bailing to the title (which would abandon it).
-  if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
-  else menuCard('BACK', 'to title [ESC]', () => showTitle());
-  // WAVE-22 (rev-4): END RUN was PARTIAL (named by the cog coachmark, card
-  // never shown) — first in-run settings visit spotlights the real card
-  // ('settings' mode already freezes the sim; re-renders stay silent via
-  // the flag).
-  if (inRun && !tourFlag(TOUR_KEYS.settings)) {
-    startCoach({ id: 'settings',
-      text: 'END RUN banks your gold and ends the run early — confirm twice.',
-      target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
-  }
-}
-
-// ---------- MENU CONDENSE sub-screens (M1/M2/M3) -------------------------------
-// Each is a plain menu: the merged rows, verbatim mechanics, plus a BACK that
-// returns to SETTINGS in the SAME context (title or in-run pause). The arms
-// (RESET two-tap) disarm only via showSettings's fresh-open rule, so walking
-// back out of a sub-screen disarms honestly — the Sk408 arm bug stays fixed.
-
-// M2: MUSIC + SFX behind one AUDIO door.
-function showAudioSettings(inRun = false) {
-  openMenu(inRun ? 'settings' : 'menu');
-  ovTitle.textContent = 'AUDIO';
-  ovTitle.className = '';
-  ovSub.textContent = 'music & sound effects';
+  ovSub.textContent = saveNotice || (inRun ? 'the run is paused' : 'sound, display and your save file');
   volumeCard('MUSIC', audio.getMusicVolume, (v) => {
     audio.setMusicVolume(v);
     // Raising the slider from 0 mid-run brings the music back at once.
     if (v > 0 && inRun) audio.startMusic();
   });
   volumeCard('SFX', audio.getSfxVolume, (v) => { audio.setSfxVolume(v); audio.playSfx('uiConfirm'); });
-  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
+  menuCard('SCREEN SHAKE', getShakeEnabled() ? 'ON. Press to turn off' : 'OFF. Press to turn on', () => {
+    setShakePref(!getShakeEnabled());
+    showSettings(false, inRun);
+  });
+  const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
+  menuCard('DISPLAY SIZE', (cur ? cur.name + ': ' + cur.blurb : 'CUSTOM') + '. Press to change', () => {
+    const pr = DISPLAY_PRESETS[cur ? (DISPLAY_PRESETS.indexOf(cur) + 1) % DISPLAY_PRESETS.length : 0];
+    prefStorage.setItem(KEY_RESOLUTION, pr.res);
+    setZoom(pr.zoom);
+    fitCanvas();
+    showSettings(false, inRun);
+  });
+  const fsOk = fsMode() !== 'none';
+  const fsOn = fsMode() === 'native' ? !!FS_ELEMENT() : immersiveOn;
+  menuCard('FULLSCREEN', !fsOk ? 'not available in this browser' : fsOn ? 'ON. Press to leave' : 'OFF. Press to fill the screen', () => {
+    if (!fsOk) return;
+    toggleFullscreen();
+    showSettings(false, inRun);
+  }, !fsOk);
+  if (!inRun) {
+    menuCard('EXPORT SAVE', 'download a backup file of your progress', () => {
+      const done = (r) => {
+        if (r && r.aborted) return;   // the save dialog was cancelled
+        saveNotice = r && r.ok ? 'Save exported.' : 'Export failed. Try again.';
+        showSettings(false);
+      };
+      const res = saveProfileToDisk(profile);
+      if (res && typeof res.then === 'function') res.then(done, () => done(null));
+      else done(res);
+    });
+    menuCard('IMPORT SAVE', 'load a backup file (replaces this progress)', () => pickImportFile());
+  }
+  menuCard('HOW TO PLAY', 'the rules and every control', () => showHowToPlay({ inRun }));
+  menuCard('ADVANCED', 'zoom, pilot, focus, stance and more', () => showAdvancedSettings(inRun));
+  if (inRun) {
+    menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
+      endArmed ? 'press again: the run ends and you keep its gold' : 'stop now and keep the gold',
+      () => {
+        if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
+        endArmed = false;
+        endRun();
+      });
+    // Play-test entry for the escape, only with localStorage hordes_debug = 1.
+    if ((() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
+      menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
+        closeSettings();
+        startEscape({ test: true });
+      });
+    }
+    menuCard('BACK', 'back to the fight [ESC]', () => closeSettings());
+  } else {
+    menuCard('BACK', 'to title [ESC]', () => showTitle());
+  }
 }
 
 // A 0-100 volume slider as a menu card. Dragging the slider sets the level;
@@ -8763,105 +8543,87 @@ function volumeCard(name, get, set) {
   return el;
 }
 
-// The four one-press display presets (E2's fast path): resolution + zoom
-// applied together, so the common destinations are one press and the exact
-// ladders stay one tap deeper for everything else.
+// One-press display sizes: resolution and zoom set together. The exact
+// ladders are on the ADVANCED page.
 const DISPLAY_PRESETS = [
-  { name: 'AUTO',    res: 'AUTO',          zoom: 1 },
-  { name: 'CRISP',   res: 'PIXEL-PERFECT', zoom: 1 },
-  { name: 'BIGGER',  res: 'AUTO',          zoom: 2 },
-  { name: 'BIGGEST', res: 'AUTO',          zoom: 4 },
+  { name: 'AUTO',    res: 'AUTO',          zoom: 1, blurb: 'fits the window' },
+  { name: 'CRISP',   res: 'PIXEL-PERFECT', zoom: 1, blurb: 'sharp pixels, may be smaller' },
+  { name: 'BIGGER',  res: 'AUTO',          zoom: 2, blurb: 'the world drawn 2x larger' },
+  { name: 'BIGGEST', res: 'AUTO',          zoom: 4, blurb: 'the world drawn 4x larger' },
 ];
 
-// M1: ZOOM + RESOLUTION + TEXT HUD behind one DISPLAY door.
-function showDisplaySettings(inRun = false) {
+// ADVANCED: the fine controls. Title and in-run share it; night mode, the
+// recovery file and the profile reset are title-only.
+function showAdvancedSettings(inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
-  ovTitle.textContent = 'DISPLAY';
+  ovTitle.textContent = 'ADVANCED';
   ovTitle.className = '';
-  ovSub.textContent = 'zoom, resolution & hud';
-  const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
-  menuCard('DISPLAY PRESET', 'currently ' + (cur ? cur.name : 'CUSTOM') +
-    ' (auto / crisp / bigger / biggest)', () => {
-    const i = cur ? (DISPLAY_PRESETS.indexOf(cur) + 1) % DISPLAY_PRESETS.length : 0;
-    const pr = DISPLAY_PRESETS[i];
-    prefStorage.setItem(KEY_RESOLUTION, pr.res);
-    setZoom(pr.zoom);
-    fitCanvas();
-    showDisplaySettings(inRun);
-  });
-  // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
-  menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
-    cycleZoom(1);
-    showDisplaySettings(inRun);
-  });
-  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
-  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
-  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
-  menuCard('RESOLUTION', 'currently ' + resMode() +
-    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
-    ' — crisper text everywhere', () => {
+  ovSub.textContent = saveNotice || 'fine controls: most players never need these';
+  const again = () => showAdvancedSettings(inRun);
+  menuCard('ZOOM', state.zoom + 'x. Press to change (keys + and -)', () => { cycleZoom(1); again(); });
+  menuCard('RESOLUTION', resMode() +
+    (resMode() === 'AUTO' ? ': fits the window' : resMode() === 'PIXEL-PERFECT' ? ': even pixels' : 'x: fixed pixel size') +
+    '. Press to change', () => {
     const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
     prefStorage.setItem(KEY_RESOLUTION, next);
     fitCanvas();
-    showDisplaySettings(inRun);
+    again();
   });
-  // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
-  menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
+  menuCard('TEXT HUD', (hudTextEnabled() ? 'ON' : 'OFF') + '. A plain-text readout of the run', () => {
     setHudTextEnabled(!hudTextEnabled());
-    showDisplaySettings(inRun);
+    again();
   });
-  // M2: screen shake (also off whenever the OS asks for reduced motion).
-  menuCard('SCREEN SHAKE', 'currently ' + (getShakeEnabled() ? 'ON' : 'OFF'), () => {
-    setShakePref(!getShakeEnabled());
-    showDisplaySettings(inRun);
+  const mode = normalizePilotMode(state.pilotMode);
+  menuCard('PILOT', (mode === 'AUTO_ALL' ? 'AUTO: moves, casts skills, drinks potions'
+    : mode === 'AUTO_MOVE' ? 'AUTO, MOVES ONLY: skills and potions are yours'
+    : 'MANUAL: you steer') + '. Press to change', () => {
+    const next = PILOT_MODES[(PILOT_MODES.indexOf(mode) + 1) % PILOT_MODES.length];
+    if (next !== 'MANUAL') setAutoFlavor(next);
+    swapPilotMode(next);
+    again();
   });
-  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
-}
-
-// M3: EXPORT + IMPORT + RECOVERY + RESET behind one SAVE DATA door (title
-// only). D2: ONE rescue slot is offered — RECOVERY FILE (PREVIOUS) is gone;
-// the two-slot STORAGE write logic is untouched, only the older slot's card
-// was removed.
-function showSaveData() {
-  openMenu('menu');
-  ovTitle.textContent = 'SAVE DATA';
-  ovTitle.className = '';
-  ovSub.textContent = 'export, import & reset' + (saveNotice ? ' · ' + saveNotice : '');
-  menuCard('EXPORT SAVE', 'download a .json backup of everything', () => {
-    const done = (r) => {
-      if (r && r.aborted) return;   // player cancelled the save dialog — say nothing
-      saveNotice = r && r.ok ? 'SAVE EXPORTED.' : 'EXPORT FAILED — try again.';
-      showSaveData();
-    };
-    const res = saveProfileToDisk(profile);
-    if (res && typeof res.then === 'function') res.then(done, () => done(null));
-    else done(res);
+  menuCard('FOCUS', controller.focus + ': which enemies the pilot shoots first. Press to change (TAB)', () => {
+    controller.cycleFocus();
+    again();
   });
-  menuCard('IMPORT SAVE', 'load a .json backup (validated + migrated)', () => pickImportFile());
-  if (readRecovery()) {
-    menuCard('RECOVERY FILE', 'download the preserved damaged save', () => {
-      const r = downloadRecovery();
-      saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
-      showSaveData();
-    });
+  const sd = C.AUTOPILOT.STANCES[controller.stance] || {};
+  menuCard('STANCE', controller.stance + ': ' + (sd.TAG || '') + '. Press to change (G)', () => {
+    cycleStanceWithFeedback();
+    again();
+  });
+  if (!inRun) {
+    // Night mode: runs play and restart by themselves at half gold. Never
+    // saved, off by default, and two presses to turn on.
+    menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
+      state.night ? 'Runs play and restart by themselves for half gold. Press to turn off'
+        : nightArmed ? 'Press again: runs play by themselves and pay half gold'
+          : 'Leave the game running: it plays and restarts by itself. Pays half gold',
+      () => { toggleNight(); again(); });
+    if (readRecovery()) {
+      menuCard('RECOVERY FILE', 'download the damaged save the game set aside', () => {
+        const r = downloadRecovery();
+        saveNotice = r && r.ok ? 'Recovered data exported.' : 'Export failed. Try again.';
+        again();
+      });
+    }
+    menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
+      resetArmed ? 'press again: erases all gold, upgrades and unlocks' : 'start over from nothing',
+      () => {
+        if (!resetArmed) { resetArmed = true; again(); return; }
+        profile = makeProfile();
+        persistProfile();
+        resetArmed = false;
+        again();
+      });
   }
-  menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
-    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
-    () => {
-      if (!resetArmed) { resetArmed = true; showSaveData(); return; }
-      profile = makeProfile();
-      persistProfile();
-      resetArmed = false;
-      showSaveData();
-    });
-  menuCard('BACK', 'to settings', () => showSettings(false));
+  menuCard('BACK', 'to settings', () => showSettings(true, inRun));
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
 function startRun() {
-  // DRAFT PICK CEREMONY: a fresh run drops any live ceremony (RETRY while a
-  // ceremony rides, etc.) — the run setup below owns the screen from here.
+  // A fresh run drops any live draft ceremony and the shop's paging chrome.
   if (draftCeremony) endDraftCeremony(false);
+  clearShopPager();
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   state.character = ch;
   state.player = makePlayer();
@@ -9018,6 +8780,7 @@ function startRun() {
   nightRestartLeft = null;
   nightEvolveLeft = null;
   clearPilotInput();
+  state.wheel = 0;
   // G31: the stance pref rides along (the boot apply already covers a
   // reload; this re-reads so storage edited between runs is honoured).
   applyStancePref();
@@ -9038,6 +8801,8 @@ function startRun() {
       const qDef = C.SKILLS[classSkillId(state)] || {};
       const nm = qDef.LABEL || (qDef.NAME || '').split(' ')[0].toUpperCase();
       if (nm && qLbl.textContent !== nm) qLbl.textContent = nm;
+      const kbQ = document.getElementById('kb-qname');
+      if (nm && kbQ && kbQ.textContent !== nm) kbQ.textContent = nm;
     }
   }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
@@ -9181,31 +8946,12 @@ function startRun() {
   // for every player who never asks.
   state.prologue = (state.assistedRun || (C.PROLOGUE.ENABLED && prologueRunsPlayed === 0))
     ? { t: 0, drunk: false, walkT: 0,
-        // DEFECT (c) LEDGER: which staged actions the player has DONE this
-        // phase (move/pilot/stats). A banner advances the moment its action
-        // lands here — see prologueActionDone / prologueAdvanceIfEarned.
-        done: { move: false, pilot: false, stats: false },
-        // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
-        // at a time with the tooltip explaining what they do"): each staged
-        // control is hidden until its banner's OK, revealed with a tooltip,
-        // and live from that moment (see PROLOGUE_STAGES below).
-        revealed: { move: false, pilot: false, focus: false, stance: false, stats: false }, tip: null,
-        // SCRIPTED LEVEL-UP (owner addendum 2026-09-18): fired once when THE
-        // DRAFT banner walks into view — see the prologue tick in update().
-        draftFired: false,
-        // SKIPPED (owner 2026-09-18: "No, potion exists for the skipped
-        // tutorial too"): a skip is "stop explaining", NOT "start the run
-        // instantly" — the phase STAYS ARMED in skipped mode (banners and
-        // tooltips gone, the FULL control set live, the potion sequence
-        // running as normal) until the drink or the bound ends it.
-        skipped: false,
-        // TWO-TAP SKIP (owner 2026-09-18: "a bit too easy to skip without
-        // meaning to"): seconds left on the ARM window opened by the first
-        // SKIP/Escape press; only a second press inside the window skips.
-        skipArmT: 0,
-        // Side placement (up-RIGHT, clamped on-screen): the straight-up
-        // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
-        // see the POTION_DX comment in config.js.
+        done: { move: false, draft: false },   // card actions the player has done
+        revealed: { move: false },             // controls live during the phase
+        draftFired: false,                     // the free level-up has been granted
+        skipped: false,                        // SKIP pressed twice: no more cards
+        skipArmT: 0,                           // seconds left to press SKIP again
+        // Up-right of the spawn, clear of the card plate, clamped on screen.
         potion: {
           x: Math.min(C.VIEW_W - 30, Math.max(30, p.x + C.PROLOGUE.POTION_DX)),
           y: Math.min(C.VIEW_H - 40, Math.max(40, p.y + C.PROLOGUE.POTION_DY)),
@@ -9219,19 +8965,6 @@ function startRun() {
   // events); the logic half is the runAction/keydown gates. Run #2+ never
   // arms it — and an explicit OFF here clears any stale class.
   prologueLockButtons(!!state.prologue);
-  if (state.prologue) {
-    // A re-armed phase starts STAGE-CLEAN: no leftover .pr-on marks, no
-    // leftover tooltip (endPrologue sweeps both, but a re-arm within one
-    // session — the test harness's back-to-back arms — must not inherit
-    // the previous arm's staging state either).
-    prologueTipHide();
-    for (const s of PROLOGUE_STAGES) {
-      for (const id of s.btns) {
-        const el = typeof document !== 'undefined' && document.getElementById(id);
-        if (el && el.classList) el.classList.remove('pr-on');
-      }
-    }
-  }
   // RUN-COUNT MILESTONE CHEST (owner 2026-09-17: "We have run 50 start with a
   // big chest on the screen that pilot collects"): the counting rule is A RUN
   // COUNTS WHEN IT STARTS — this run is runsStarted = settled runs + 1, so
@@ -9334,8 +9067,8 @@ function openChestCard(milestone, reward) {
   openMenu('chest');
   ovTitle.textContent = 'RUN ' + milestone + '!';
   menuCard('MILESTONE CHEST',
-    'The pilot hauls a chest from the vault: <b>+' + reward + ' gold</b>, banked for good.<br>' +
-    RUN_CHESTS.RUNS_WORTH + ' runs\' worth, by your own average income.', closeChestCard);
+    'A reward for run ' + milestone + ': <b>+' + reward + ' gold</b>, already in your bank.<br>' +
+    'That is about ' + RUN_CHESTS.RUNS_WORTH + ' of your average runs.', closeChestCard);
 }
 
 function closeChestCard() {
@@ -9344,79 +9077,37 @@ function closeChestCard() {
   overlay.style.display = 'none';
 }
 
-// ---------- FIRST-RUN PROLOGUE (owner 2026-09-18) -----------------------------
-// "It should be a potion seen on screen and the pilot walks towards it. It
-// could be a controlled sequence where no enemies spawn and the timer hasn't
-// started. We can even use this time to have dismissible (with an ok button)
-// banners explaining some of the basics of the game."
-//
-// The banners: at most four, one at a time, each short and plain. They are
-// CANVAS-drawn; the phase's live controls are the ACTION each banner asks
-// for plus the ALWAYS-VISIBLE SKIP (see prologueSkipRect — the owner's
-// defect (a) fix, 2026-09-18: an opt-out that is on screen for the WHOLE
-// phase, not only while a card is up). ADDENDUM (owner 2026-09-18: the
-// pilot PAUSES for banners): a banner goes up only after
-// C.PROLOGUE.BANNER_WALK_S of walking since the last advance, and while one
-// is up the pilot holds position (the player's own steering still moves
-// them — the lesson's action is doable with the card up).
-// DEFECT (c) FIX (owner 2026-09-18: "it doesn't wait for you to do an
-// action before presenting the next action so it's not effective"): each
-// banner names the ACTION that advances it (`action` + the `cue` line the
-// card paints). There is NO OK button any more — doing the thing IS the
-// continue. MAX_S still escapes a player who never does, and SKIP is the
-// second escape.
-// DEFECT (b) FIX (owner 2026-09-18: "it assumes you want to do manual so it
-// starts with steering" while AUTO flies): the LESSON now states the truth
-// of the MODE — banner 1 opens with "the pilot flies for you", and taking
-// the wheel is the ACTION (the phase's manual override makes the steering
-// lesson true in ANY pilot mode). Steering is never taught as the default;
-// it is taught as the opt-in it is.
-// Copy rule (the player review's ask): state what the thing IS or what you GET.
-// No emojis (house rule). Numbers ride the named constant so the copy can never lie.
+// ---------- First-run tutorial --------------------------------------------------
+// Run 1 of a fresh profile opens with no enemies and the clock stopped. Three
+// short cards, each cleared by doing the thing it names: move, pick a card from
+// a free level-up, walk into the potion. Each card is one sentence. The cards
+// are canvas-drawn; SKIP (top corner, two presses, or Escape twice) stops the
+// explaining and leaves the potion walk. C.PROLOGUE.MAX_S ends the phase for a
+// player who does nothing. Focus and Stance are not taught here: each gets a
+// one-line tip the first time it matters (maybeStanceTip, focusTipLine).
 const PROLOGUE_BANNERS = [
-  { title: 'WHO FLIES?', action: 'move',
-    // THE TAKEOVER PROMISE (owner 2026-09-18: "But the instruction says drag
-    // the field so the desktop user will try it and it doesn't work"): the
-    // copy names the input the player's OWN platform has — keys on desktop,
-    // the drag on touch (isTouchPath(), the touch layer's own boot class)
-    // and both halves are TRUE now: either input IS the mode switch to
-    // MANUAL (the keydown + floating-stick arms), never a pretend borrow.
-    // A GETTER, not a string: the touch class is written at boot, after
-    // this table's module-init evaluation, so the body must resolve late.
+  { title: 'MOVE', action: 'move',
+    // A getter: the touch class is written at boot, after this table is built.
     get body() {
       return isTouchPath()
-        ? 'The pilot flies for you. Drag the field to take the wheel whenever you want.'
-        : 'The pilot flies for you. Press a move key to take the wheel whenever you want.';
+        ? 'The pilot fights for you: drag anywhere to take the wheel.'
+        : 'The pilot fights for you: hold a move key to take the wheel.';
     },
-    cue: 'STEER NOW TO CONTINUE' },
-  { title: 'THE PILOT BUTTON', action: 'pilot',
-    body: 'PILOT hands the flying back and forth between you and the autopilot.',
-    cue: 'PRESS PILOT (OR O) TO CONTINUE' },
-  // FOCUS + STANCE (owner addendum 2026-09-18: "it should give a message
-  // about focus and stance also"): same shape as the others — action-gated,
-  // the press IS the continue. What the thing IS and what you GET, no emoji.
-  { title: 'FOCUS', action: 'focus',
-    body: 'FOCUS aims the auto-attack: NEAREST, TOUGHEST, SWARM or RANGED. The pilot picks targets for you.',
-    cue: 'PRESS FOCUS (OR TAB) TO CONTINUE' },
-  { title: 'STANCE', action: 'stance',
-    body: 'STANCE is the risk dial: SAFE, BALANCED, GREEDY. GREEDY earns more; SAFE keeps you alive.',
-    cue: 'PRESS STANCE (OR G) TO CONTINUE' },
-  { title: 'LEVEL UP', action: 'stats',
-    body: 'Gems fill the bar at the top. Each level offers a draft: pick 1 of 3. STATS tracks your numbers.',
-    cue: 'OPEN STATS (OR I) TO CONTINUE' },
-  // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger a
-  // level up and tell the player about the card selections"): when this
-  // banner walks into view the phase grants ONE free level-up (scripted, not
-  // earned — the opening stays inert) and the real draft screen opens with
-  // the explanation riding its subtitle. The pick is the banner's action.
-  { title: 'THE DRAFT', action: 'draft',
-    body: 'A free level-up, right now. Pick 1 of the 3 cards: the one you take changes the run.',
-    cue: 'PICK A CARD TO CONTINUE' },
-  { title: 'THE POTION', action: 'drink',
-    body: 'The potion ahead is free. Walk into it for ' +
-      C.PROLOGUE.INVULN_S + 's of shielding and a clear field. More in HOW TO PLAY.',
+    get cue() { return isTouchPath() ? 'DRAG TO CONTINUE' : 'PRESS W A S D TO CONTINUE'; } },
+  // When this card comes up the phase grants one free level-up and the real
+  // draft screen opens; the pick clears the card.
+  { title: 'LEVEL UP', action: 'draft',
+    body: 'A free level-up: pick 1 of 3 cards.',
+    cue: 'PICK A CARD' },
+  { title: 'POTION', action: 'drink',
+    body: 'Walk into the potion for a ' + C.PROLOGUE.INVULN_S + 's shield.',
     cue: 'WALK INTO THE POTION' },
 ];
+// Words a player reads across the whole tutorial (titles, bodies and cues).
+function prologueWordCount() {
+  return PROLOGUE_BANNERS.reduce((n, b) =>
+    n + (b.title + ' ' + b.body + ' ' + b.cue).trim().split(/\s+/).length, 0);
+}
 
 function prologueBanner() {
   if (!state.prologue || state.prologue.drunk) return null;
@@ -9429,13 +9120,10 @@ function prologueBanner() {
     ? PROLOGUE_BANNERS[state.prologue.bannerIdx] : null;
 }
 
-// DEFECT (c): the action ledger + the advance. prologueActionDone(kind) is
-// called from EVERY live seam of a staged action (the steering override,
-// runAction's pilot/stats, the 'O' key twin) — the banner whose action it
-// is advances the MOMENT the player does the thing (the update loop checks
-// the ledger against the up-banner each frame, so an action done before the
-// card appears still advances it the frame it comes up). The drink needs no
-// ledger entry: it ENDS the phase.
+// A card clears the moment its action is done. prologueActionDone is called
+// from the action's own seam (steering, the draft pick); the update loop
+// checks it against the card that is up. The drink needs no entry: it ends the
+// phase.
 function prologueActionDone(kind) {
   const pr = state.prologue;
   if (!pr || pr.drunk || pr.skipped) return;
@@ -9450,6 +9138,17 @@ function prologueAdvanceIfEarned() {
     pr.bannerIdx++;
     pr.walkT = 0;
   }
+}
+
+// A card nobody answers clears itself after C.PROLOGUE.CARD_WAIT_S, so an idle
+// player is never held at the first card.
+function prologueCardWait(dt) {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  const b = prologueBanner();
+  if (!b || b.action === 'drink' || b.action === 'draft') { pr.cardT = 0; return; }
+  pr.cardT = (pr.cardT || 0) + dt;
+  if (pr.cardT >= C.PROLOGUE.CARD_WAIT_S) { pr.cardT = 0; pr.done[b.action] = true; }
 }
 
 // The drink. Invincibility (named constant), the on-screen clear THROUGH the
@@ -9472,41 +9171,21 @@ function prologueDrink(p) {
   endPrologue('drunk');
 }
 
-// THE BOUND: the phase ends when the potion is drunk OR at MAX_S of UNPAUSED
-// time (addendum 2026-09-18: a held banner freezes the bound's clock, so the
-// lesson is never rushed — the OK button is the only way past a banner, like
-// any menu). ONBOARDING ABSORB: the prologue taught the entry basics, so
-// the stage-2 coachmark flags are marked seen HERE (run #1 never stacks a
-// second onboarding path); REPLAY TOUR re-arms them deliberately. (The
-// non-modal HintStrip this used to hand the moment back to is RETIRED.)
+// The phase ends at the drink or at C.PROLOGUE.MAX_S. The tutorial covered the
+// basics, so the coach cards are marked seen (REPLAY TOUR re-arms them).
 function endPrologue(why) {
   if (!state.prologue) return;
   state.prologueRan = true;
   state.prologue = null;
   prologueLockButtons(false);
-  // STAGED INTRODUCTION close-out — THE GUARD THAT MATTERS MOST: at phase
-  // end the control set is EXACTLY a normal run's. The body class lift
-  // restores every hidden button; this sweep drops the staged .pr-on marks
-  // and the tooltip, so nothing of the staging survives into the run. A
-  // control that never came back would be this feature's worst failure.
-  prologueTipHide();
-  for (const s of PROLOGUE_STAGES) {
-    for (const id of s.btns) {
-      const el = typeof document !== 'undefined' && document.getElementById(id);
-      if (el && el.classList) el.classList.remove('pr-on');
-    }
-  }
   for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);
-  toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S'
-    : why === 'skip' ? 'TUTORIAL SKIPPED - THE RUN BEGINS'
-    : 'THE RUN BEGINS');
+  toast(why === 'drunk' ? 'SHIELD UP FOR ' + C.PROLOGUE.INVULN_S + 's. Here they come'
+    : why === 'skip' ? 'TUTORIAL SKIPPED'
+    : 'Here they come');
 }
 
-// The DOM half of the all-buttons-disabled lock (owner 2026-09-18): body class
-// `prologue-locked` — index.html greys the whole touch layer out (opacity 0.35)
-// and pulls its pointer events, an OBVIOUS disabled read that flips to full
-// opacity the moment the phase ends. Nothing else re-enables early: the class
-// is set ONLY at prologue arm time and cleared ONLY here.
+// While the tutorial runs the pad buttons are hidden and inert
+// (body.prologue-locked, index.html). Set at the phase start, cleared here.
 function prologueLockButtons(on) {
   const body = typeof document !== 'undefined' && document.body;
   if (body && body.classList) {
@@ -9515,151 +9194,42 @@ function prologueLockButtons(on) {
   }
 }
 
-// ---------- PROLOGUE STAGED INTRODUCTION (owner 2026-09-18) --------------------
-// "If we hide the controls, then we would need to introduce the buttons one
-// at a time with the tooltip explaining what they do." The set and the order
-// answer ONE question — what does a player need in the first 60 seconds?
-//   1. MOVE (banner 1): without steering nothing else matters; the control is
-//      the FLOATING STICK / WASD (the joystick task's settled outcome — the
-//      floating stick with the home band IS the shipped movement control, so
-//      nothing revealed here is about to be replaced). No DOM button: the
-//      field itself; the tooltip floats over the stick's home band.
-//   2. PILOT (banner 2): the fresh default is AUTO_ALL — the highest-value
-//      fact the pads carry in the first minute is that the player can take
-//      the controls over.
-//   3. STATS (banner 3, beside LEVEL UP): the field report is where the
-//      level-up's numbers live; it opens read-only and pauses nothing that
-//      matters in an inert phase.
-// Banner 4 (THE POTION) reveals nothing — the potion is the finale. The cog
-// row / skills / potions are NEVER staged: in the first 60 seconds they are
-// either empty (no skills drafted, full HP), replaced by banners, or
-// settings-shaped — the hint layer introduces them post-run at their own
-// first-matter moments.
+// Movement is the only control the tutorial hands over while its cards are up:
+// it goes live with the first card. Every pad button stays hidden until the
+// phase ends (body.prologue-locked).
 const PROLOGUE_STAGES = [
   { kind: 'move', afterBanner: 1, btns: [] },
-  { kind: 'pilot', afterBanner: 2, btns: ['tc-pilotbtn'] },
-  { kind: 'focus', afterBanner: 3, btns: ['tc-focusbtn'] },
-  { kind: 'stance', afterBanner: 4, btns: ['tc-stancebtn'] },
-  { kind: 'stats', afterBanner: 5, btns: ['tc-stats'] },
 ];
 
-// The reveal: called every phase frame from update() — stage N's control
-// appears WHEN ITS BANNER IS UP (bannerIdx + 1 >= afterBanner), so the
-// action the card asks for is doable the moment the card asks (defect (c):
-// the control can no longer arrive only after an OK press that no longer
-// exists). The logic gates (runAction / keydown / movement) read
-// `revealed`, so the control is live the same instant it becomes visible.
+// Called every phase frame: a stage's control goes live when its card is up.
 function prologueReveal() {
   const pr = state.prologue;
   if (!pr) return;
   for (const s of PROLOGUE_STAGES) {
-    if (pr.bannerIdx + 1 >= s.afterBanner && !pr.revealed[s.kind]) {
-      pr.revealed[s.kind] = true;
-      for (const id of s.btns) {
-        const el = typeof document !== 'undefined' && document.getElementById(id);
-        if (el && el.classList) el.classList.add('pr-on');
-      }
-      prologueTipShow(s.kind);
-    }
+    if (pr.bannerIdx + 1 >= s.afterBanner && !pr.revealed[s.kind]) pr.revealed[s.kind] = true;
   }
 }
 
-// The tooltip: appears WITH its control, points at it, and DISAPPEARS WHEN
-// THE CONTROL IS USED (learn by doing — never an OK press). Texts come from
-// controls_ref's own rows where a control exists (no forked strings); MOVE
-// is prologue-only copy because it introduces the field, not a button.
-function prologueTipText(kind) {
-  const touch = isTouchPath();
-  if (kind === 'move') return touch
-    ? 'DRAG ANYWHERE TO STEER - try it now'
-    : 'WASD OR ARROWS TO STEER - try it now';
-  if (kind === 'pilot') return introLine('pilot', touch);
-  if (kind === 'focus') return introLine('focus', touch);
-  if (kind === 'stance') return introLine('stance', touch);
-  if (kind === 'stats') return introLine('stats', touch);
-  return '';
-}
-function prologueTipShow(kind) {
-  if (state.prologue) state.prologue.tip = kind;
-  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
-  if (el) {
-    el.className = 'tip-' + kind;
-    el.textContent = prologueTipText(kind);
-    el.hidden = false;
-  }
-}
-// Used = learned. Called from every live seam of a staged control (the
-// movement override, runAction's allow path, the keydown twins).
-function prologueTipUsed(kind) {
-  const pr = state.prologue;
-  if (!pr || pr.tip !== kind) return;
-  pr.tip = null;
-  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
-  if (el) el.hidden = true;
-}
-function prologueTipHide() {
-  const pr = state.prologue;
-  if (pr) pr.tip = null;
-  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
-  if (el) el.hidden = true;
+// During the phase no button action passes runAction; a skipped phase is fully
+// live.
+function prologueActAllowed() {
+  return !state.prologue || state.prologue.skipped;
 }
 
-// The staged-act gate: through the phase ONLY the revealed controls' actions
-// pass runAction (everything else stays inert — the owner's all-buttons-
-// disabled rule, now with the staged exceptions). A SKIPPED phase is fully
-// live: the skip restores the whole control set at the press.
-function prologueActAllowed(act) {
-  if (!state.prologue || state.prologue.skipped) return true;
-  const rv = state.prologue.revealed || {};
-  if (act === 'pilot' && rv.pilot) return true;
-  if (act === 'stats' && rv.stats) return true;
-  if (act === 'focus' && rv.focus) return true;
-  if (act === 'stance' && rv.stance) return true;
-  return false;
-}
-
-// The manual steering vector during the phase (the MOVE stage): the revealed
-// input wins over the choreography's walk for as long as it is held — in ANY
-// pilot mode (the drag/keys ARE the lesson). The moment it goes non-zero the
-// MOVE tooltip is done: used means learned.
+// The held steering input during the phase. It wins over the scripted walk in
+// any pilot mode, and holding it clears the MOVE card.
 function prologueManualVec() {
   const pr = state.prologue;
   if (!pr || pr.drunk || !pr.revealed || !pr.revealed.move) return null;
-  const i = pilotInput || {};
-  let mx = 0, my = 0;
-  const mag = Math.min(1, Math.max(0, i.mag || 0));
-  if (mag > 0.15) {   // the stick's dead zone (controllers.js JOY_DEAD_ZONE)
-    const len = Math.hypot(i.x || 0, i.y || 0) || 1;
-    mx = ((i.x || 0) / len) * mag;
-    my = ((i.y || 0) / len) * mag;
-  } else {
-    mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
-    my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
-    if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
-  }
-  if (mx === 0 && my === 0) return null;
-  prologueActionDone('move');
-  prologueTipUsed('move');
-  return { x: mx, y: my };
+  const v = heldMoveVec();
+  if (v) prologueActionDone('move');
+  return v;
 }
 
-// SKIP ALL — APPROVED by the owner 2026-09-18 as the second enabled
-// exception alongside OK (during the prologue exactly two controls are live:
-// the banner's OK and this). CLARIFIED 2026-09-18 ("No, potion exists for
-// the skipped tutorial too"): the skip removes the EXPLANATIONS, not the
-// SEQUENCE — "stop explaining", NOT "start the run instantly". It sets the
-// skipped mode: no banner and no tooltip will ever appear again, the FULL
-// control set is live from the press, and the POTION SEQUENCE RUNS AS
-// NORMAL (the AUTO pilot walks to the visible potion, drinks it, gets the
-// 45s invuln + the clearing pulse — or the MANUAL fallback walk carries an
-// idle pilot; the un-walked potion still answers to MAX_S). endPrologue at
-// the drink is the phase's end, unchanged.
-// TWO-TAP CONFIRM (owner 2026-09-18: "it was a bit too easy to skip without
-// meaning to"): the gesture must be DELIBERATE. The first press ARMS the
-// corner button (the label flips to TAP AGAIN, render.js drawPrologueSkip)
-// for C.PROLOGUE.SKIP_CONFIRM_S; only a second press inside the window
-// actually skips. A normal play press cannot trip it: field taps steer, and
-// even a tap ON the corner only arms — the arm expires on its own.
+// SKIP stops the explaining, not the sequence: no more cards, every control
+// live, and the potion walk still runs to the drink. It takes two presses: the
+// first arms the corner button for C.PROLOGUE.SKIP_CONFIRM_S, so a stray tap
+// cannot skip.
 function prologueSkip() {
   const pr = state.prologue;
   if (!pr || pr.drunk || pr.skipped) return;
@@ -9670,16 +9240,8 @@ function prologueSkip() {
   }
   pr.skipArmT = 0;
   pr.skipped = true;
-  // Nothing left to introduce: every control is already live.
-  pr.revealed.move = pr.revealed.pilot = pr.revealed.focus = pr.revealed.stance = pr.revealed.stats = true;
+  pr.revealed.move = true;
   prologueLockButtons(false);
-  prologueTipHide();
-  for (const s of PROLOGUE_STAGES) {
-    for (const id of s.btns) {
-      const el = typeof document !== 'undefined' && document.getElementById(id);
-      if (el && el.classList) el.classList.remove('pr-on');
-    }
-  }
   toast('TUTORIAL SKIPPED');
 }
 
@@ -10053,13 +9615,14 @@ function closeBestiary() {
 // cast is down. A mid-fight change by the player always wins (the restore only
 // fires when the stance is still the one we eased into).
 function easeToBossStance() {
+  maybeStanceTip();
   const want = C.AUTOPILOT.BOSS_STANCE;
   if (!want || state.preBossStance != null) return;
   state.preBossStance = controller.stance;
   if (controller.stance === want) return;          // already there: restore is a no-op
   controller.stance = want;
   const d = C.AUTOPILOT.STANCES[want] || {};
-  toast('BOSS INCOMING - STANCE ' + want + ' (' + (d.TAG || '') + ')',
+  toast('BOSS COMING: the pilot plays ' + want + ' until it is dead (' + (d.TAG || '').toLowerCase() + ')',
     C.HUD.STANCE_COLORS[want] || null);
 }
 function restoreBossStance() {
@@ -10089,12 +9652,16 @@ function restoreBossStanceIfClear() {
 // (WAVE-27 removed the canvas readout, so this toast must be complete on its
 // own — it names the stance, its CONFIG tag, and both real consequences),
 // tinted with the stance's risk color.
+const STANCE_PLAIN = {
+  SAFE: 'keeps well away from enemies, picks up less',
+  BALANCED: 'the middle setting',
+  GREEDY: 'goes after gems and loot, takes more hits',
+};
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
   saveStancePref(s);   // G31: the stance choice persists between runs
   const d = C.AUTOPILOT.STANCES[s] || {};
-  toast('STANCE ' + s + ' - ' + (d.TAG || '') +
-    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
+  toast('STANCE ' + s + ' (' + (d.TAG || '') + '): ' + (STANCE_PLAIN[s] || ''),
     C.HUD.STANCE_COLORS[s] || null);
   return s;
 }
@@ -10125,11 +9692,7 @@ function runAction(act) {
   // learned) AND feeds the action ledger (defect (c): the press IS the
   // banner's continue). The always-visible SKIP lives on the canvas pointer
   // path, not this seam.
-  if (state.prologue && !prologueActAllowed(act)) return;
-  if (state.prologue && (act === 'pilot' || act === 'stats' || act === 'focus' || act === 'stance')) {
-    prologueActionDone(act);
-    prologueTipUsed(act);
-  }
+  if (!prologueActAllowed()) return;
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
   if (act === 'stats') {
@@ -10632,19 +10195,9 @@ window.addEventListener('keydown', (ev) => {
     // SKIP button). runAction carries the same staging gate; the SKIP
     // button is the canvas-path control.
     if (state.prologue && !state.prologue.skipped) {
-      const rv = state.prologue.revealed || {};
       if (k === 'escape') { prologueSkip(); return; }
-      if (rv.move) {
-        const dir = KEY_DIRS[k];
-        if (dir) { pilotInput[dir] = true; return; }
-      }
-      if (rv.pilot && k === 'o') { prologueActionDone('pilot'); togglePilotMode(); return; }
-      // ADDENDUM 3 (2026-09-18): the FOCUS/STANCE key twins, live at their
-      // stages — routed through runAction so the ledger + tooltip lifecycles
-      // are the same seam the touch buttons use.
-      if (rv.focus && k === 'tab') { runAction('focus'); return; }
-      if (rv.stance && k === 'g') { runAction('stance'); return; }
-      if (rv.stats && k === 'i') { runAction('stats'); return; }
+      const dir = KEY_DIRS[k];
+      if (dir && state.prologue.revealed.move) pilotInput[dir] = true;
       return;
     }
     // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
@@ -10681,21 +10234,12 @@ window.addEventListener('keydown', (ev) => {
     // every frame).
     if (k === '+' || k === '=') { cycleZoom(1); return; }
     if (k === '-' || k === '_') { cycleZoom(-1); return; }
-    // Held movement — checked BEFORE any screen opener, so a movement key
-    // can never be swallowed by a menu.
-    // THE WHEEL IS YOURS (owner 2026-09-18: "It's a good idea though to let
-    // the user break auto by using a movement key... It's either manual or
-    // auto. You can't take over without changing that"): a MOVE KEY pressed
-    // while the pilot flies on AUTO IS the takeover. There is no third
-    // 'borrowed' state — the mode SWITCHES TO MANUAL (the announcement
-    // toast + the touch PILOT badge read state.pilotMode, so both reflect
-    // it on the same frame); O / the PILOT button cycle back up the ladder
-    // (MANUAL -> AUTO ALL -> AUTO MOVE), exactly as before. (W note: in
-    // AUTO, W used to fire Overcharge — E is Overcharge's permanent home in
-    // EVERY mode, so nothing is lost when W becomes a move key here.)
+    // Held movement, checked before any screen opener so a move key is never
+    // swallowed by a menu. On AUTO the held key takes the wheel (runController)
+    // and the mode itself does not change. (E is Overcharge in every mode; W
+    // is only ever a move key.)
     const dir = KEY_DIRS[k];
     if (dir) {
-      if (normalizePilotMode(state.pilotMode) !== 'MANUAL') swapPilotMode('MANUAL');
       pilotInput[dir] = true;
       return;
     }
@@ -10741,22 +10285,26 @@ for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', '
   touchEls[id] = document.getElementById(id);
 }
 
-// Reveal the layer on touch devices (CSS @media (pointer: coarse) covers
-// most; this catches the rest, e.g. hybrid laptops). WAVE-22b: non-touch
-// devices get COG-ONLY — the settings cog is the in-run menu button and
-// desktop must reach it with a mouse too.
-// DEVICE (2026-09-16): a coarse pointer with NO touch events used to fall
-// through to 'cog-only' here while the CSS coarse media still revealed the
-// on-screen pads — those users saw touch controls and were taught key
-// names. The class write now honours the SAME signal the CSS reads, so
-// isTouchPath() is true whenever the touch layer is actually visible.
+// The touch layer's class decides what is on screen in a run. A device whose
+// main pointer is coarse (a phone or tablet) gets the thumb pads ('.on') from
+// the start. Everything else starts as desktop ('.cog-only': the key bar, no
+// pads) and switches to the pads the first time a touch event is seen, so a
+// mouse player never has pads over the field and a touch-screen laptop gets
+// them when it is actually touched.
 const coarsePointer = !!(typeof window !== 'undefined' && window.matchMedia &&
   window.matchMedia('(pointer: coarse)').matches);
-const hasTouch = ('ontouchstart' in window) ||
-  ((typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) || 0) > 0 ||
-  coarsePointer;
+const hasTouch = coarsePointer;
 if (touchLayer && touchLayer.classList) {
   touchLayer.classList.add(hasTouch ? 'on' : 'cog-only');
+}
+function onFirstTouch() {
+  if (!touchLayer || !touchLayer.classList || !touchLayer.classList.contains('cog-only')) return;
+  touchLayer.classList.remove('cog-only');
+  touchLayer.classList.add('on');
+  fitCanvas();
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('touchstart', onFirstTouch, { passive: true });
 }
 
 // ---------- HELP MODE (owner 2026-09-16, two briefs, one behaviour) ----------
@@ -10777,9 +10325,9 @@ const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft',
 // (joystick / SETTINGS (cog)) so the wording cannot fork.
 const HELP_EXTRAS = {
   move: { keys: 'arrows / WASD', touch: 'joystick',
-    purpose: 'move your hero (manual pilot) - weapons fire on their own' },
-  settings: { keys: 'the cog (top-right)', touch: 'SETTINGS (cog)',
-    purpose: 'settings: zoom, END RUN' },
+    purpose: 'move your hero. Weapons fire on their own' },
+  settings: { keys: 'ESC or P', touch: 'SETTINGS (cog)',
+    purpose: 'pause: settings, END RUN' },
 };
 // THE FIELD object meanings: ONE table for two consumers — the reference's
 // THE FIELD card renders the `field` lines verbatim, the help-mode object
@@ -10818,14 +10366,14 @@ const helpObject = (id) => OBJECT_HELP.find(o => o.id === id) || null;
 // mode name is now keyed off PILOT_MODES and the fallback cannot mislabel.
 const HINT_LINES = {
   AUTO_ALL: [
-    'O pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
-    'Q / E (W too) skills &middot; H / N potions',
+    'O pilot (AUTO ALL) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
+    'Q / E skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   AUTO_MOVE: [
-    'O pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
-    'Q / E (W too) skills &middot; H / N potions',
+    'O pilot (AUTO MOVE) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
+    'Q / E skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
@@ -11459,18 +11007,10 @@ if (touchLayer && touchLayer.addEventListener) {
     if (fjoy.pointerId !== null) return false;                  // one stick
     if (state.mode !== 'playing') return false;                  // runs only
     if (state.helpMode) return false;                            // "?" owns taps
-    if (normalizePilotMode(state.pilotMode) !== 'MANUAL') {
-      // PROLOGUE STAGED INTRODUCTION: until MOVE is revealed the field
-      // stays inert — the phase's own lock owns the early drag.
-      if (state.prologue && !(state.prologue.revealed && state.prologue.revealed.move)) {
-        return false;
-      }
-      // THE WHEEL IS YOURS (owner 2026-09-18): a DRAG on the field while
-      // the pilot flies on AUTO is the takeover — the same hand-over a
-      // move key performs on desktop (see the keydown arm). No third
-      // state: the mode switches to MANUAL (badge + toast announce it on
-      // this frame); O / the PILOT button cycle back to AUTO.
-      swapPilotMode('MANUAL');
+    // Any pilot mode: on AUTO the drag takes the wheel while it is held. Until
+    // the tutorial has shown MOVE the field stays inert.
+    if (state.prologue && !(state.prologue.revealed && state.prologue.revealed.move)) {
+      return false;
     }
     fjoy.pointerId = ev.pointerId ?? 0;
     fjoy.ox = ev.clientX ?? 0; fjoy.oy = ev.clientY ?? 0;
@@ -11613,6 +11153,26 @@ function radarPadInset() {
     return overlap > 0 ? Math.ceil(overlap * C.VIEW_W / cr.width) + 3 : 0;
   } catch { return 0; }
 }
+// View px the run clock must step down to clear a DOM top-row button that
+// overlays the canvas's top-right corner (the transient row on a landscape
+// phone). 0 when nothing covers the clock.
+function clockTopInset() {
+  try {
+    if (!touchLayer || !touchLayer.querySelectorAll) return 0;
+    const cr = canvas.getBoundingClientRect();
+    if (!cr.width) return 0;
+    const clockLeft = cr.left + cr.width * 0.74;   // the clock's column
+    let bottom = 0;
+    for (const el of touchLayer.querySelectorAll('button.cog')) {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.05) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || r.right < clockLeft || r.left > cr.right) continue;
+      if (r.bottom > cr.top && r.top < cr.top + cr.height * 0.2) bottom = Math.max(bottom, r.bottom);
+    }
+    return bottom > cr.top ? Math.ceil((bottom - cr.top) * C.VIEW_H / cr.height) + 2 : 0;
+  } catch { return 0; }
+}
 function syncChrome() {
   // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
   // factor as first-class state, BEFORE anything reads them this frame.
@@ -11637,6 +11197,8 @@ function syncChrome() {
   // steps left of it. Re-measured twice a second, not per frame.
   radarPadInset.tick = (radarPadInset.tick || 0) + 1;
   if (radarPadInset.tick % 30 === 1) state.radarInset = radarPadInset();
+  if (radarPadInset.tick % 6 === 1) state.clockInset = clockTopInset();
+  state.wheelCue = chromeOn() ? wheelCueText() : '';
   // FULLSCREEN toggle state for the renderer, published once per frame: the
   // button paints only where the API exists, the 0.5s window is live and the
   // pad screens are up (fsVisible = the chromeOn gate — same screens as the
@@ -11665,7 +11227,7 @@ function syncChrome() {
   // one-line flip back); desktop/cog-only keeps the fixed base for mouse-drag
   // (WAVE-23 parity). The [data-joy] handler above stays live either way.
   if (joyEl && joyEl.style) {
-    const wantJoy = (on && state.pilotMode === 'MANUAL' &&
+    const wantJoy = (on && (state.pilotMode === 'MANUAL' || state.wheel > 0) &&
       !(C.JOY.FLOAT && isTouchPath())) ? 'block' : 'none';
     if (joyEl.style.display !== wantJoy) { joyEl.style.display = wantJoy; chromeLayoutChanged = true; }
   }
@@ -11681,21 +11243,33 @@ function syncChrome() {
   syncHelpHud();
   if (chromeLayoutChanged) fitCanvas();
 }
-// LADDER STEP 2 text (owner 2026-09-17: "2nd would be reduced text in the
-// control buttons. A1/A2/M, that kind of thing"): in compact mode the pilot
-// rungs abbreviate to the owner's own short forms. Pure — exposed via __TEST
-// (pilotBadgeText) so the node suite pins the mapping. The full wording stays
-// reachable off the button: the SETTINGS PILOT card (pilotPrefLabel) and the
-// help-mode explainer carry it.
+// The PILOT badge: the mode in plain words (compact pads abbreviate), then
+// what the pilot is doing. While the player holds the wheel it reads YOU.
 function pilotBadgeText(mode, act, compact) {
+  const FULL = { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' };
   const ABBR = { AUTO_ALL: 'A1', AUTO_MOVE: 'A2', MANUAL: 'M' };
-  const m = compact ? (ABBR[mode] || mode) : mode;
-  return act && act !== mode ? m + ' \u00b7 ' + act : m;
+  const m = (compact ? ABBR[mode] : FULL[mode]) || mode;
+  return act && act !== mode && act !== m ? m + ' \u00b7 ' + act : m;
+}
+const KEYBAR_TWIN = { 'tc-q': 'kb-q', 'tc-w': 'kb-w', 'tc-h': 'kb-h', 'tc-n': 'kb-n' };
+const keybarEls = {};
+for (const id of ['kb-pilot', 'kb-q', 'kb-w', 'kb-h', 'kb-n', 'kb-qname']) {
+  keybarEls[id] = document.getElementById(id);
 }
 function updateTouchHud() {
   syncChrome();
   const p = state.player;
-  const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
+  const set = (id, v) => {
+    const el = touchEls[id];
+    if (el) el.textContent = v;
+    const twin = KEYBAR_TWIN[id];
+    if (twin) kb(twin, v);
+  };
+  // The desktop key bar mirrors the pad badges (written only on change).
+  const kb = (id, v) => {
+    const el = keybarEls[id];
+    if (el && el.textContent !== v) el.textContent = v;
+  };
   // WAVE-27: the badges are the doctrine's ONLY on-screen home now, and they
   // read the PUBLISHED state (state.focus / state.stance / state.stanceAct,
   // set by syncChrome just above) rather than scraping the controller — so
@@ -11709,7 +11283,9 @@ function updateTouchHud() {
   const act = state.stanceAct;
   set('tc-focus', state.focus);
   set('tc-stance', state.stance);
-  set('tc-pilot', pilotBadgeText(state.pilotMode, act, padsCompact));
+  const wheelOn = !pilotMovesYou() && state.wheel > 0;
+  set('tc-pilot', pilotBadgeText(state.pilotMode, wheelOn ? 'YOU' : act, padsCompact));
+  kb('kb-pilot', wheelOn ? 'YOU' : pilotMovesYou() ? 'MANUAL' : 'AUTO');
   const skill = (id, defId) => {
     // N1 slice 3 + 2026-09-17 mana price: an ult badge reads charge AND the
     // pool — cooling (`12.0s`) while the floor runs, LOW when charged but
@@ -12115,7 +11691,6 @@ function endDeathCine() {
   state.toasts.length = 0;
   state.bossBanner = null;
   overlay.style.display = 'flex';
-  maybeDeathCoach();
 }
 
 // ---------- V1: THE ESCAPE SEQUENCE (src/escape/) ----------------------------
@@ -12142,7 +11717,7 @@ function startEscape(opts = {}) {
     // swapPilotMode (persisted pref + toast — no second pilot anywhere).
     auto: !pilotMovesYou(),
     getAuto: () => !pilotMovesYou(),
-    onToggleMode: () => swapPilotMode(pilotMovesYou() ? 'AUTO_ALL' : 'MANUAL'),
+    onToggleMode: () => togglePilotMode(),
     onEnd: opts.test ? endEscapeTest : endEscape,
     // The in-run settings TEST button: a play-test entry that PAYS NOTHING
     // (the payout is repeatable currency — a paying test button would be a
@@ -12168,12 +11743,13 @@ function endEscape(r) {
   // cleared, CONTINUE into wave 2. The lead line carries the escape's story
   // (and its payout, when it paid one) onto the intermission screen.
   const lead = r.result === 'complete'
-    ? `ESCAPE COMPLETE +${r.payout}g (bank) in ${Math.floor(r.seconds)}s`
+    ? `ESCAPED: +${r.payout} gold banked`
     : r.result === 'skip'
-      ? (r.paidSkipUsed ? `ESCAPE SKIPPED (writ) +${r.payout}g (bank)` : 'ESCAPE SKIPPED — payout forgone')
+      ? (r.paidSkipUsed ? `ESCAPE SKIPPED: +${r.payout} gold banked (Escape Writ)`
+        : `ESCAPE SKIPPED: ${r.forgone} gold passed up`)
       : r.result === 'caught'
-        ? 'ESCAPE FAILED: caught by the horde — the run continues'
-        : 'ESCAPE FAILED: fell — the run continues';
+        ? 'ESCAPE FAILED: the horde caught you. No gold, the run goes on'
+        : 'ESCAPE FAILED: you fell. No gold, the run goes on';
   openIntermission({ lead });
 }
 
@@ -12597,7 +12173,7 @@ function frame(now) {
   syncChrome();
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
-  advanceTitleReveal(realDt);
+  advanceTitleReveal();
   // G13: the character selector's idle busts advance on the same wall-clock
   // dt (dt-parity: 60Hz and 120Hz step the same frame over the same time).
   // No-ops in every other mode, so no repaint or timer survives BACK.
@@ -12727,7 +12303,6 @@ function frame(now) {
     if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) devSimSteps(dt);
   } else if (state.mode === 'finale') devSimSteps(dt);
   renderer.render(state, state.cam);
-  drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
   drawHud();
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
   // gallery's emblem and its display case sit on top of the (frozen) world and
@@ -12895,9 +12470,7 @@ export const __TEST = {
   // the hold path's call count, its timings (for rate-independent asserts),
   // and the activation itself.
   title: {
-    get runStarts() { return titleRunStarts; },
     timings: TITLE_TIMINGS,
-    beginHold: beginTitleHold,
     // Re-arm the once-per-page-load guard and re-run the FULL reveal (the
     // rate-independence tests replay it under a different frame step).
     replay() { titleRevealPlayed = false; showTitle(); },
@@ -12995,12 +12568,9 @@ export const __TEST = {
     skipRect: prologueSkipRect,
     drink: () => prologueDrink(state.player),
     end: endPrologue,
-    // STAGED INTRODUCTION: the reveal state, the live tooltip kind, the
-    // stage table and the tip texts — tests drive the REAL reveal paths.
     get revealed() { return state.prologue ? { ...state.prologue.revealed } : null; },
-    get tip() { return state.prologue ? state.prologue.tip : null; },
     stages: PROLOGUE_STAGES,
-    tipText: prologueTipText,
+    wordCount: prologueWordCount,
     get shieldT() { return state.prologueShieldT; },
     // The all-buttons-disabled lock (addendum 2026-09-18): the live DOM state.
     get buttonsLocked() {
@@ -13010,6 +12580,30 @@ export const __TEST = {
     },
   },
   setPilotMode: swapPilotMode, pilotInput,
+  // M3 seams: the menus, the wheel hand-back and the title reveal's timer.
+  menus: {
+    showTitle, showPreRun, showSettings, showAdvanced: showAdvancedSettings, showShop,
+    showLoadout, showHowToPlay,
+    stageLine: stagePlainLine, challengeLine: challengePlainLine, loadoutSummary,
+    bestNextPurchase: () => bestNextPurchase(profile),
+    get pendingStage() { return pendingStage; },
+    get pendingChallenge() { return pendingChallenge; },
+  },
+  wheel: {
+    handbackS: WHEEL_HANDBACK_S,
+    get t() { return state.wheel; },
+    cue: wheelCueText,
+    held: heldMoveVec,
+    togglePilot: togglePilotMode,
+    autoFlavor, setAutoFlavor,
+  },
+  titleTimer: {
+    stepMs: TITLE_TIMER_MS,
+    get ticks() { return titleTimerTicks; },
+    get armed() { return titleRevealTimer !== null; },
+    advance: advanceTitleReveal,
+  },
+  tips: { focusLine: focusTipLine, stance: maybeStanceTip, KEY_TIP_FOCUS, KEY_TIP_STANCE },
   // G31: the persistence seam — the real storage object plus the real
   // load/apply helpers (tests mutate storage and re-run startRun, exactly
   // what a reload does).
@@ -13179,6 +12773,8 @@ export const __TEST = {
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).
   die, ladderOn: DRAFT_LADDER_ON,
+  // Stamp the last damage source (what die() records as the killer).
+  hurtBy: (src) => { lastDamageSource = src; },
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
