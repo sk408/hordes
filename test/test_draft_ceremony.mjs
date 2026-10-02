@@ -274,9 +274,7 @@ T.draftAuto.rng = () => 0;
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   ok('the evolve probe has a VOLLEY', !!volley);
   if (volley) volley.level = 8;   // maxed
-  st.items.push({ id: 'probe_crit', name: 'Probe Eye', rarity: 'RARE',
-    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }] });
-  st.evoTokens = 1;
+  st.player.takenStats = { multi: 1 };   // the partner card
   let evolved = false;
   for (let i = 0; i < 30 && !evolved; i++) {
     frame();
@@ -293,7 +291,7 @@ T.draftAuto.rng = () => 0;
     }
   }
   ok('the evolve overlay must open for the scope probe', evolved);
-  ok('evolving actually spent the token (the real path ran)', st.evoTokens === 0, st.evoTokens);
+  ok('evolving actually ran the real path', !!(volley && volley.evolutionId), volley && volley.evolutionId);
   // teardown hygiene for the rest of the file
   tick(CER.S);
 }

@@ -48,7 +48,7 @@ s.check('control: plain planted corpses are credited as player kills', () => {
 s.check('ruling 1: shockwave victims die but pay no player credit', () => {
   st.enemies.length = 0; st.gems.length = 0;
   const k0 = p.kills, e0 = st.runCounts.gold.earned;
-  const t0 = st.runCounts.tokens.kill, r0 = state_rampage();
+  const r0 = state_rampage();
   const g0 = st.gems.length;
   const col = foe('COLOSSUS', 0, 0);          // dies this frame: shockwave fires
   const v1 = foe('CHASER', 20, 10);           // inside the 90px blast: shockwave kills
@@ -56,7 +56,7 @@ s.check('ruling 1: shockwave victims die but pay no player credit', () => {
   const v3 = foe('CHASER', 40, 10);
   const sv = foe('CHASER', -45, 1e6);         // survives the blast: stays creditable
   const old = Math.random;
-  Math.random = () => 0;                      // every credited kill pays a kill token
+  Math.random = () => 0;
   h.pump(1);
   Math.random = old;
   // The blast went off: the frail victims are dead and stamped, the survivor
@@ -72,11 +72,10 @@ s.check('ruling 1: shockwave victims die but pay no player credit', () => {
     throw new Error('shockwave victims were not reaped');
   }
   // ...as enemy kills, not player kills: exactly one credited kill (the
-  // colossus itself) and its purse value, one kill token, one rampage step.
+  // colossus itself) and its purse value, one rampage step.
   if (p.kills - k0 !== 1) throw new Error('kills delta ' + (p.kills - k0) + ' != 1 (victims credited)');
   const pay = st.runCounts.gold.earned - e0;
   if (pay !== purseValue(col)) throw new Error('purse paid ' + pay + ' != colossus value ' + purseValue(col));
-  if (st.runCounts.tokens.kill - t0 !== 1) throw new Error('kill-token channel paid shockwave victims');
   if (state_rampage() - r0 !== 1) throw new Error('rampage ate shockwave kills');
   // The corpses were still reaped as corpses: every dead body dropped gold-free
   // xp into the world (the survivor is still standing, so 4 gems, not 5).

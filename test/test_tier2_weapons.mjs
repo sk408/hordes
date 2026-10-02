@@ -28,8 +28,7 @@
 //      meta.js:675, so no getter is required there).
 //   5. UNLOCK CLASSIFICATION: every new id is shop-unlockable (WEAPON_PRICES
 //      -> VALID_UNLOCK_WEAPONS -> a kind:'weapon' shop row).
-//   6. EVOLUTION: NONE stated for all four (EVOLUTION_DEFS carries no row;
-//      evolveWeapon returns reason 'type', evolutions.js:134).
+//   6. EVOLUTION: all four evolve (max level + partner card).
 //   7. FIRE PATH: each archetype actually fires through updateWeapons and
 //      produces its kind-tagged body / effect payload.
 //   8. ODDS: per-weapon P(new-weapon) + pool dilution, computed in-test.
@@ -181,15 +180,16 @@ S.check('unlock: every new id is a priced, shop-unlockable archetype', () => {
   }
 });
 
-// ---- 6. evolution seam: NONE stated -----------------------------------------
-S.check('evolution: all four state NONE (EVOLUTION_DEFS carries no row)', () => {
+// ---- 6. evolution seam: all four evolve ---------------------------------------
+S.check('evolution: all four evolve at max level with their partner card', () => {
   for (const id of NEW_IDS) {
-    assert.equal(EVOLUTION_DEFS[id], undefined, `${id} has NO evolution (stated)`);
+    assert.ok(EVOLUTION_DEFS[id], `${id} has an evolution`);
     const w = makeWeapon(id);
     w.level = WEAPON_MAX_LEVEL;
-    const r = evolveWeapon(w, ['crit', 'damageMult', 'rateMult', 'critMult'], 5);
-    assert.equal(r.ok, false);
-    assert.equal(r.reason, 'type', `${id} evolve path reports reason 'type' (evolutions.js:134)`);
+    assert.equal(evolveWeapon(w, {}).reason, 'partner', `${id} needs its partner card`);
+    const r = evolveWeapon(w, { [EVOLUTION_DEFS[id].partner]: 1 });
+    assert.equal(r.ok, true, `${id} evolves`);
+    assert.equal(w.evolutionId, EVOLUTION_DEFS[id].id);
   }
 });
 
@@ -226,7 +226,7 @@ S.check('JAVELIN: one hit per enemy per throw at any frame rate or pierce', () =
       p.stats.pierce = pierce; p.stats.crit = 0; p.stats.projectiles = 1;
       const e = { x: 100, y: 0, hp: 1e9, flash: 0 };
       state.enemies = [e];
-      w.level = 7;
+      w.level = 3;   // one spear (Lv4 adds a second, which would hit too)
       updateWeapons(state, [w], 1 / hz);
       const perHit = state.projectiles.find(pr => pr.kind === 'javelin').damage;
       w.cd = 999;
@@ -242,6 +242,8 @@ S.check('JAVELIN ladder: Lv3/5/7 grant range (label and effect agree)', () => {
   assert.ok(describeWeaponLevel('JAVELIN', 3).includes('+' + WEAPON_STEPS.JAVELIN.RANGE + ' range'));
   assert.ok(!describeWeaponLevel('JAVELIN', 3).includes('pierce'));
   assert.ok(!describeWeaponLevel('JAVELIN', 4).includes('range'));
+  assert.ok(describeWeaponLevel('JAVELIN', 4).includes('+1 spear (total 2)'));
+  assert.equal(weaponLevelParams('JAVELIN', 8).count, 3);
 });
 S.check('fire path: EMBER fires a bolt and bursts AoE ONLY on a kill (no economy)', () => {
   const { state, w, e1 } = fireState('EMBER');

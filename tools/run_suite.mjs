@@ -8,10 +8,7 @@ import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 // Files allowed to be red. Keep this list short and explain each entry.
-const KNOWN_RED = [
-  // JAVELIN, EMBER, RICOCHET and METEOR have no evolution yet.
-  'test_evolution.mjs',
-];
+const KNOWN_RED = [];
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);

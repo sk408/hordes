@@ -603,9 +603,9 @@ function cardImpact(card, player, weapons, counts, P, held) {
   }
   switch (card.id) {
     // Whetstone is additive on the run's starting damage (config.js runBase).
-    case 'dmg': return { dps: 0.25 * runBase(player).damage / player.stats.damage, ehp: 0 };
+    case 'dmg': return { dps: 0.15 * runBase(player).damage / player.stats.damage, ehp: 0 };
     case 'rate': {
-      const r = 0.15 * taper('rate');
+      const r = 0.10 * taper('rate');
       return { dps: r / Math.max(0.05, 1 - r), ehp: 0 };
     }
     case 'speed': return { dps: 0, ehp: 0.8 * 0.15 * taper('speed') }; // kite value
@@ -764,7 +764,7 @@ function applyCard(card, player, weapons, counts, patch, held, heldState) {
     counts[card.id] = (counts[card.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(counts[card.id] - 1, DRAFT_TAPER.length - 1)];
     if (card.id === 'speed') player.stats.speed *= 1 + 0.15 * t;
-    else player.stats.cooldown *= 1 - 0.15 * t;
+    else player.stats.cooldown *= 1 - 0.10 * t;
   } else if (card.id === 'multi' && player.stats.projectiles >= patch.maxProj) {
     // The live overflow (main.js pick(), volleyAtProjCap): +20% of the run's
     // starting damage instead of a projectile past the cap.

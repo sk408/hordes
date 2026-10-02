@@ -236,9 +236,11 @@ export function fixedReport(records) {
   for (const rs of g.values()) {
     const t = rs.map((r) => r.t), gold = rs.map((r) => r.gold);
     const pct = (f) => Math.round(100 * rs.filter(f).length / rs.length) + '%';
+    const evo = rs.filter((r) => r.firstEvo != null).map((r) => r.firstEvo);
     rows.push([rs[0].policy, rs[0].budget, band(rs.map((r) => r.spent)), band(rs.map((r) => r.catPct), 2), rs.length,
       band(t), band(gold), band(rs.map((r) => r.wave)), band(rs.map((r) => r.level)),
-      pct((r) => r.t >= 60), pct((r) => r.t >= 120)]);
+      pct((r) => r.t >= 60), pct((r) => r.t >= 120),
+      evo.length ? band(evo) + ' ' + pct((r) => r.firstEvo != null) : '-']);
     if (prev && prev.policy === rs[0].policy && median(prev.t) > 0) {
       cliffs.push({ policy: rs[0].policy, from: prev.budget, to: rs[0].budget, ratio: median(t) / median(prev.t), a: prev.t, b: t });
     }
@@ -246,7 +248,7 @@ export function fixedReport(records) {
   }
   const out = [
     'FIXED BUILD — K independent runs per build; cells = median [min-max] over n runs (no FIRST_CLEAR bonus: steady-state income)',
-    table(['policy', 'budget', 'spent', 'catalogue %', 'n', 'survival s', 'gold/run', 'wave', 'level', '>=60s', '>=120s'], rows),
+    table(['policy', 'budget', 'spent', 'catalogue %', 'n', 'survival s', 'gold/run', 'wave', 'level', '>=60s', '>=120s', 'first evolution s'], rows),
   ];
   if (cliffs.length) {
     const c = cliffs.sort((a, b) => b.ratio - a.ratio)[0];

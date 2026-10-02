@@ -295,15 +295,14 @@ S.check('watchdog: the LIVE modes and human surfaces are never "unstuck"', () =>
 // parked there forever. It now has BOTH covers: a named timer that takes the
 // FIRST candidate (the draft policy's first-slot rule) and a watchdog branch.
 // Forced through the REAL surface: max a weapon that HAS an evolution def,
-// bank a token, equip the def's item kind — then update() itself opens the
+// take its partner card — then update() itself opens the
 // overlay (maybeOpenEvolve), no direct mode writes for the open.
 S.check('the EVOLUTION overlay auto-picks the first candidate after NIGHT_EVOLVE_S', () => {
   assert.equal(st.mode, 'playing');
   const w = st.weapons.find(x => EVOLUTION_DEFS[x.type]);
   assert.ok(w, 'the kit carries an evolvable weapon');
   w.level = WEAPON_MAX_LEVEL;
-  st.evoTokens = 1;
-  st.items.push({ affixes: [{ id: EVOLUTION_DEFS[w.type].itemKind }] });
+  st.player.takenStats = { [EVOLUTION_DEFS[w.type].partner]: 1 };
   step();   // update() -> maybeOpenEvolve() opens the real overlay
   assert.equal(st.mode, 'evolve', 'the overlay opened through the real path');
   assert.ok(T.night.evolveLeft > 0 && T.night.evolveLeft <= 3.0,

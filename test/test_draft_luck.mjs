@@ -317,7 +317,7 @@ function offerRate(luck, label, draws = 4000) {
       T.openDraft();
       const cards = Array.from(elements['ov-cards'].children);
       rendered += cards.length;
-      if (cards.some(c => (c.innerHTML || '').includes(label))) hits++;
+      if (cards.some(c => c._draftOffer && c._draftOffer.name === label)) hits++;
     }
   } finally { Math.random = real; state.player.stats.luck = 0; }
   assert.equal(rendered, draws * 3, 'every openDraft() rendered exactly 3 cards');

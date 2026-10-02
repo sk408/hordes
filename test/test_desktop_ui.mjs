@@ -270,9 +270,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
 {
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   volley.level = 8;
-  st.items.push({ id: 'probe_crit', name: 'Probe Eye', rarity: 'RARE',
-    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }] });
-  st.evoTokens = 1;
+  st.player.takenStats = { multi: 1 };   // the partner card
   let opened = false;
   for (let i = 0; i < 40 && !opened; i++) { pump(1); if (st.mode === 'evolve') opened = true; }
   assert(opened, 'the EVOLVE overlay must open');
@@ -284,7 +282,7 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   // the number key must resolve to the card carrying that label
   key('2');
   assert(st.mode === 'playing', 'key 2 must fire the NOT NOW card (mode=' + st.mode + ')');
-  assert(st.evoTokens === 1, 'NOT NOW must keep the token');
+  assert(!volley.evolutionId, 'NOT NOW must leave the weapon un-evolved');
   console.log('evolve: cards carry their own index ([1] candidate, [2] NOT NOW) and 1-4 routing agrees');
 }
 

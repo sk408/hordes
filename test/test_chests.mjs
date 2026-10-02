@@ -15,9 +15,9 @@
 // draw in the module makes the stub throw rather than silently shift an
 // assertion.
 import assert from 'node:assert';
-import { CHESTS, EVOLUTION_TOKENS, EVOLUTION_TOKEN, pickRarity, isEliteish,
+import { CHESTS, pickRarity, isEliteish,
          maybeSpawnChest, rollContents, tickChests,
-         tokenChance, rollEvolutionToken } from '../src/chests.js';
+         } from '../src/chests.js';
 import { makePlayer, makeEnemy } from '../src/entities.js';
 import { CONFIG as C } from '../src/config.js';
 import { LEGENDARIES, AFFIX_COUNT } from '../src/loot.js';
@@ -249,58 +249,5 @@ const makeState = () => ({
   console.log('ok: top band drops a hand-authored LEGENDARY item through the pickup path');
 }
 
-// ---- EVOLUTION TOKEN: decoupled, three channels, one home each ----
-{
-  assert.deepStrictEqual(EVOLUTION_TOKEN, { PER_KILL: 1200, PER_CHEST: 200, PER_DROP: 500 },
-    'the three channel denominators are declared together');
-  // Per-channel chances, from the declared denominators (never re-typed here).
-  assert.strictEqual(tokenChance('kill'), 1 / EVOLUTION_TOKEN.PER_KILL);
-  assert.strictEqual(tokenChance('chest'), 1 / EVOLUTION_TOKEN.PER_CHEST);
-  assert.strictEqual(tokenChance('drop'), 1 / EVOLUTION_TOKEN.PER_DROP);
-  // An unknown channel can never pay, and draws NOTHING (a dead channel must not
-  // shift the caller's rng stream).
-  assert.strictEqual(tokenChance('nonsense'), 0);
-  assert.strictEqual(rollEvolutionToken(seq([]), 'nonsense'), false, 'unknown channel: zero draws');
-  assert.strictEqual(rollEvolutionToken(seq([]), undefined), false, 'missing channel: zero draws');
-
-  // The boundary, both sides, per channel.
-  for (const ch of ['kill', 'chest', 'drop']) {
-    const p = tokenChance(ch);
-    assert.strictEqual(rollEvolutionToken(seq([p - 1e-12]), ch), true, `${ch}: just under the rate pays`);
-    assert.strictEqual(rollEvolutionToken(seq([p]), ch), false, `${ch}: exactly the rate does not`);
-    assert.strictEqual(rollEvolutionToken(seq([0.9999999]), ch), false, `${ch}: a near-1 roll misses`);
-  }
-
-  // WHAT THE RECIPIENT ACTUALLY GETS: the rates converted to per-run counts at
-  // the measured volumes. This is the number the owner tunes, not the per-roll
-  // probability — 1/1200 reads rare, and rides the kill count.
-  const runs = [
-    { label: 'short run (834 kills, 53 chests, 280 drops)', kills: 834, chests: 53, drops: 280 },
-    { label: 'long run (6232 kills, 53 chests, 297 drops)', kills: 6232, chests: 53, drops: 297 },
-  ];
-  const perRun = runs.map((r) => ({
-    ...r,
-    total: r.kills / EVOLUTION_TOKEN.PER_KILL +
-           r.chests / EVOLUTION_TOKEN.PER_CHEST +
-           r.drops / EVOLUTION_TOKEN.PER_DROP,
-  }));
-  assert.ok(perRun[0].total > 1 && perRun[0].total < 2,
-    `a short run pays "one, with a chance of a second" (got ${perRun[0].total.toFixed(2)})`);
-  assert.ok(perRun[1].total > 5,
-    `a long run pays a handful (got ${perRun[1].total.toFixed(2)}) — tracked, not a defect`);
-  // And the volume trap this decoupling exists to avoid: the SAME 1/500 reads
-  // ~0.56/run on drops and ~12/run if it rode kills. Named so it cannot be
-  // re-introduced by moving a rate to the high-volume stream.
-  assert.ok(6232 / 500 > 10, 'the same 1/500 rides two orders of magnitude in per-run outcome');
-  for (const r of perRun) {
-    console.log(`    token channels ${r.label} => ${(r.kills / EVOLUTION_TOKEN.PER_KILL).toFixed(2)} kill + ` +
-      `${(r.chests / EVOLUTION_TOKEN.PER_CHEST).toFixed(2)} chest + ` +
-      `${(r.drops / EVOLUTION_TOKEN.PER_DROP).toFixed(2)} drop = ${r.total.toFixed(2)} per run`);
-  }
-  // The flavour list stays exported for the banner/evolve UI, but it is NO
-  // LONGER what a chest offers.
-  assert.strictEqual(EVOLUTION_TOKENS.length, 3, 'the token flavour list is still exported as data');
-  console.log('ok: evolution token is its own three-channel drop, decoupled from the chest ladder');
-}
 
 console.log('CHESTS TESTS PASSED');

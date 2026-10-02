@@ -822,18 +822,13 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log(`boss probe: ${named} (intent frames: ${intents})`);
 }
 
-// (2) EVOLUTION: Lv8 VOLLEY + crit item + token via the real evolve overlay.
+// (2) EVOLUTION: Lv8 VOLLEY + its partner card (Split Shot) via the real evolve overlay.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   volley.level = 8;   // maxed
-  // Equip an item whose affix id is the NOVA_SHOT item kind ('crit').
-  st.items.push({
-    id: 'probe_crit', name: 'Probe Eye', rarity: 'RARE',
-    affixes: [{ id: 'crit', name: 'Keen Eye', field: 'crit', magnitude: 0.08 }],
-  });
-  st.evoTokens = 1;
+  st.player.takenStats = { multi: 1 };   // the partner card, as pick() records it
   let evolved = false;
   for (let i = 0; i < 30 && !evolved; i++) {
     now += dtMs;
@@ -849,22 +844,21 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
       evolved = true;
     }
   }
-  assert(evolved, 'the EVOLVE overlay must open (Lv8 + crit item + token)');
+  assert(evolved, 'the EVOLVE overlay must open (Lv8 + partner card)');
   assert(volley.evolutionId === 'NOVA_SHOT', 'volley must be NOVA_SHOT after evolving');
-  assert(st.evoTokens === 0, 'evolution must spend the token');
   // WAVE-9: a weapon EVOLUTION charges +2 heat, and the HUD carries the line.
   assert(heatOf(st) === 2, 'an evolution must charge +2 heat (got ' + heatOf(st) + ')');
   assert(manualPushes(st) === 0, 'built-in heat must NOT touch the manual gold dial');
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(/Nova Shot/.test(hudText()), 'HUD must show the evolved weapon name');
   assert(/HEAT 2 /.test(hudText()), 'HUD must carry the HEAT line near WEATHER');
-  console.log('evolution probe: VOLLEY -> Nova Shot (token spent, +2 heat, HUD updated)');
+  console.log('evolution probe: VOLLEY -> Nova Shot (+2 heat, HUD updated)');
 }
 
 // (3) RUN-SCOPE RESET: a fresh run must drop every WAVE-7 run-scoped field.
 {
   mainMod.__TEST.startRun();
-  assert(st.evoTokens === 0, 'run reset must clear evoTokens');
+  assert(Object.keys(st.player.takenStats || {}).length === 0, 'run reset must clear the taken-card ledger');
   assert(!st.player.choices, 'run reset must drop player.choices');
   assert(st.takenChoices.length === 0, 'run reset must clear takenChoices');
   assert(st.pendingChoiceOffers === null, 'run reset must clear pendingChoiceOffers');
@@ -875,7 +869,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.lastFlashAt === null, 'run reset must clear lastFlashAt');
   assert(st.rampage.streak === 0 && st.rampage.best === 0, 'run reset must clear the rampage meter');
   assert(st.shrineRng && st.shrine !== undefined, 'run must seed the shrine rng stream');
-  console.log('run-scope reset: choices/tokens/evolutions/heat/rampage/flash/shrine all cleared');
+  console.log('run-scope reset: choices/evolutions/heat/rampage/flash/shrine all cleared');
 }
 
 // ---- WAVE-8/A portal-entry cinematic ----

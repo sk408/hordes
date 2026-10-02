@@ -218,7 +218,7 @@ function draftOffer(label, setup, draws = 3000) {
       T.openDraft();
       const els = Array.from(elements['ov-cards'].children);
       cards += els.length;
-      if (els.some(el => (el.innerHTML || '').includes(label))) hits++;
+      if (els.some(el => el._draftOffer && el._draftOffer.name === label)) hits++;
     }
   } finally { Math.random = real; state.player.rules = {}; state.player.takenStats = {}; }
   assert.equal(cards, draws * 3, 'every openDraft() rendered exactly 3 cards');

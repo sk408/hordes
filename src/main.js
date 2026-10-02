@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
-  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS,
+  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC,
   DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
@@ -65,7 +65,7 @@ import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 s
 // TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
 import { itemIconFor } from './art/item_icons.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
-import { maybeSpawnChest, tickChests, rollEvolutionToken } from './chests.js';
+import { maybeSpawnChest, tickChests } from './chests.js';
 // G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
 import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
 // G8 step 4: the general skill items (Regrowth / Focus / Thick Skin) — the
@@ -87,7 +87,7 @@ import {
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
-import { evolveWeapon, describeEvolution, EVOLUTION_DEFS, itemKindsOf } from './evolutions.js';
+import { evolveWeapon, describeEvolution, evolutionProgress, EVOLUTION_DEFS, weaponsOpenedBy } from './evolutions.js';
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
 import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
@@ -846,8 +846,6 @@ const state = {
   prologue: null,
   prologueRan: false,
   prologueShieldT: 0,
-  // EVOLUTION TOKEN banner: seconds the sim is HELD while the first token of a
-  // run owns the screen (frame() decays it on wall-clock dt and gates update()).
   bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
   time: 0,
   spawnTimer: 0,
@@ -910,7 +908,6 @@ const state = {
   // fresh in startRun next to groundSeed; never serialised (C4: no save
   // schema change); consumes ZERO rng draws (R2).
   atlas: null,
-  evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
   // G9 FOLLOW-UP: the three run counters the trophy summary was missing. They
   // live in ONE run-scoped object (reset in startRun) so the summary can read
   // them without five separate guards. bossKills = bosses/heralds killed,
@@ -918,10 +915,6 @@ const state = {
   // waveTookDamage/untouchedWave = whether any wave was finished without a hit
   // landing on the hero.
   runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
-    // EVOLUTION TOKENS: which channel paid each token this run (chests.js
-    // EVOLUTION_TOKEN — kill / chest / drop). A ledger, not a rule: the rates
-    // are the knock's, and nothing reads this to decide anything.
-    tokens: { kill: 0, chest: 0, drop: 0 },
     // E1 RUN PURSE ledger: per-TIER kill counts + the gold earned / spent
     // through the purse this run, so the tier weighting (meta.js GOLD_TIER)
     // can be re-derived and reported honestly. The RAW p.kills count stays
@@ -1517,16 +1510,12 @@ function runController(p, dt, am) {
     // controller; this only accelerates the fire rate the controller chose.
     // Loot rateMult + DOUBLE_FIRE arch mod divide the cooldown.
     const rate = p.buffs.overcharge > 0 ? C.SKILLS.OVERCHARGE.RATE_MULT : 1;
-    p.attackTimer = p.stats.cooldown * rate / ((p.stats.rateMult || 1) * am.rateMult);
-    const baseAng = Math.atan2(target.y - p.y, target.x - p.x);
-    // VOLLEY weapon level (megabonk ladder) + SPLIT SHOT NERF (Sk408):
-    //  - total volley projectiles capped at C.WEAPON.MAX_PROJECTILES (base 1
-    //    +2 from ALL sources: Split Shot cards AND VOLLEY level grants);
-    //  - VOLLEY's Lv3/Lv6 grants add +1 projectile (under the cap) AND a
-    //    PROJ_DMG damage multiplier each (the card label says both);
-    //  - extra projectiles spread wider (0.18 -> C.WEAPON.SPREAD).
+    // VOLLEY weapon level: Lv3/Lv6 add a projectile (under the volley cap) and
+    // a PROJ_DMG multiplier each, Lv4/Lv8 add pierce, Lv7 attack rate.
     const volleyW = state.weapons.find(w => w.type === 'VOLLEY');
     const P = weaponLevelParams('VOLLEY', volleyW ? volleyW.level : 1);
+    p.attackTimer = p.stats.cooldown * rate / ((p.stats.rateMult || 1) * am.rateMult * (P.rateMult || 1));
+    const baseAng = Math.atan2(target.y - p.y, target.x - p.x);
     // NOVA_SHOT evolution (evolutions.js): per-weapon affixes multiply damage
     // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
     const volleyEvo = volleyW && volleyW.evolution;
@@ -1544,8 +1533,11 @@ function runController(p, dt, am) {
       // (both duplicated update loops honor `pierce` already, so one line here
       // covers the in-run and finale/boss loops alike).
       if (volleyPierceAll || hasRewrite(state, 'pierceall')) pr.pierce = PIERCE_ALL;
-      // Sun Lane synergy (JAVELIN+VOLLEY): every shot pierces one more body.
-      else if (syn('volleyPierce')) pr.pierce = (pr.pierce || 0) + syn('volleyPierce');
+      else {
+        pr.pierce = (pr.pierce || 0) + (P.pierceBonus || 0);
+        // Sun Lane synergy (JAVELIN+VOLLEY): every shot pierces one more body.
+        if (syn('volleyPierce')) pr.pierce += syn('volleyPierce');
+      }
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
       if (syn('orbitVolley')) { pr.orbit = { t: 0, dur: 0.2, ang: a }; pr.pierce = (pr.pierce || 0) + 1; }
       state.projectiles.push(pr);
@@ -2606,7 +2598,6 @@ function openIntermission(opts = {}) {
     `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s` +
     ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
-    `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
     `<br>GOLD ${purseClamp(profile.runPurse)} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
@@ -3948,7 +3939,6 @@ function update(dt) {
         const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
         pushItemDrop({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
-        maybeGrantToken('drop');   // EVOLUTION TOKEN, world-drop channel (1 in 500)
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
@@ -3978,9 +3968,6 @@ function update(dt) {
             x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
-          // EVOLUTION TOKEN, world-drop channel (1 in 500) — per DROP, not per
-          // kill, so it rides the same volume the item itself does.
-          maybeGrantToken('drop');
         }
         if (e.guaranteesChest) {
           maybeSpawnChest(state, e, () => 0);
@@ -4024,11 +4011,6 @@ function update(dt) {
           cf.healAcc += C.SKILLS.CONSECRATION.HEAL_PER_KILL;
         }
       }
-      // EVOLUTION TOKEN, kill channel (1 in 1200). A kill is an EVENT, so the
-      // roll is dt-free and 60Hz/120Hz pay the same per corpse.
-      // E2 (R6): plain chaff's token roll is near-zero from the horde wave on
-      // (a second thinning roll — the token channel's own rng is untouched).
-      if (credit && (!e2Chaff || Math.random() < C.E2.CHAFF_DROP_MULT)) maybeGrantToken('kill');
       // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
       // field is safe unowned). A kill is an EVENT, never a frame: the grant
       // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
@@ -4223,11 +4205,6 @@ function update(dt) {
       const heal = p.stats.healOnChest != null ? p.stats.healOnChest
         : (state.character ? (state.character.healOnChest || 0) : 0);
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
-      // EVOLUTION TOKEN, chest channel (1 in 200). Rolled HERE rather than
-      // inside rollContents so the chest module's documented rng draw order is
-      // untouched: every pinned chest sequence in the suite still means what it
-      // meant (and the token no longer rides the chest rarity table at all).
-      maybeGrantToken('chest');
     } else if (ev.kind === 'gambleHorde') {
       toast('EMPTY CHEST: it was a trap. A small horde attacks');
     } else if (ev.kind === 'hordeBait') {
@@ -4412,7 +4389,7 @@ function update(dt) {
   // Camera follows player (WAVE-27: one shared follow — see updateCamera).
   updateCamera(p, dt);
 
-  // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
+  // EVOLVE overlay check: level-ups and partner cards
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
 
@@ -4472,54 +4449,18 @@ function tickBossBanner(dt) {
   if (state.bossBanner.ttl <= 0) state.bossBanner = null;
 }
 
-// ---------- EVOLUTION TOKENS (chests.js EVOLUTION_TOKEN) ---------------------
-// The token is its own drop with three independently tuned channels, so all
-// three land HERE — one grant path, one counter, one banner rule. The rates
-// live in chests.js (EVOLUTION_TOKEN); this side owns what the player sees.
+// ---------- ONE-TIME BANNERS -----------------------------------------------
+// A first-ever moment (an evolution, a top-tier item) owns the screen: the
+// WAVE-14 cinematic banner (render.js drawBossBanner) plus a real pause —
+// state.bannerHold holds update() for the banner's own duration (frame()).
+// Later repeats get a toast only.
 const TOKEN_BANNER_SEC = 2.5;   // == render.js drawBossBanner's DUR
-
-// The FIRST token of a run owns the screen: the full WAVE-14 cinematic banner
-// (render.js drawBossBanner — the letterbox + fitted two-line block already
-// exists, so no new render path) PLUS a real pause. The pause is what makes it
-// a moment rather than a toast: state.bannerHold holds update() for the
-// banner's own duration (see frame()). It explains what a token is FOR and that
-// it evolves a weapon ONCE IT IS AT MAX LEVEL, so the first one teaches the
-// mechanic instead of being an inventory number. Every later token is a
-// standout status line only — no pause, no repeated lecture.
 // Test seam: one-time banners OFF for this process. A long end-to-end probe
-// (smoke) runs a 90s simulation that acquires EPIC/LEGENDARY gear and tokens by
-// the dozen, and each first-ever banner holds the sim for TOKEN_BANNER_SEC --
-// which a frame-counting probe (an idle check, a fade fade) reads as a stall
-// rather than as the designed pause. The banners' own behaviour is asserted with
-// this switch on. Never touched by the browser page.
+// (smoke) runs a 90s simulation that acquires EPIC/LEGENDARY gear by the
+// dozen, and each first-ever banner holds the sim for TOKEN_BANNER_SEC --
+// which a frame-counting probe reads as a stall rather than as the designed
+// pause. Never touched by the browser page.
 let oneTimeBanners = true;
-
-function grantEvolutionToken(channel) {
-  state.evoTokens++;
-  if (state.runCounts && state.runCounts.tokens) state.runCounts.tokens[channel] =
-    (state.runCounts.tokens[channel] || 0) + 1;
-  // A token may re-open a previously declined EVOLVE offer.
-  for (const w of state.weapons) w.evoDeclined = false;
-  // FIRST-EVER, PERSISTED (schema v6 ledger): the full banner + its pause
-  // teaches the mechanic once per PLAYER. It used to be run-scoped, which meant
-  // the explainer -- and a 2.5s hold on the sim -- fired on the first token of
-  // EVERY run; with ~1.5 tokens a run that is a lecture the player gets forever.
-  if (oneTimeBanners && markBannerSeen(profile, 'TOKEN')) {
-    state.bossBanner = {
-      names: ['EVOLUTION TOKEN'],
-      verb: 'ACQUIRED',
-      title: 'EVOLUTION TOKEN ACQUIRED',
-      sub: 'EVOLVES A WEAPON ONCE IT HAS REACHED MAX LEVEL',
-      ttl: TOKEN_BANNER_SEC,
-    };
-    state.bannerHold = TOKEN_BANNER_SEC;
-    audio.playPortalCue('BOSS_YELL');   // the reusable cinematic sting
-  } else {
-    toast('EVOLUTION TOKEN! ' + state.evoTokens +
-      ' HELD - EVOLVES A MAX-LEVEL WEAPON', RARITY_TINTS.LEGENDARY);
-  }
-  audio.playSfx('powerup');
-}
 
 // ---------- (g) FIRST-EVER TOP-TIER PICKUP ---------------------------------
 // Owner spec: "It should be a really cool thing when the player receives a top
@@ -4548,19 +4489,16 @@ function maybeTopTierBanner(it) {
   return true;
 }
 
-// One token roll on one channel ('kill' | 'chest' | 'drop'), via the module's
-// own helper so the denominator has exactly one home. Unknown channels draw
-// nothing and can never grant.
-function maybeGrantToken(channel) {
-  if (rollEvolutionToken(Math.random, channel)) grantEvolutionToken(channel);
-}
-
 // W7b measurement seam (never shipped off): tools/w7b_draft_ab.mjs sets
 // globalThis.HORDES_DRAFT_LADDER = false BEFORE importing this module to run
 // the BEFORE arm (the HEAD pool, no ladder families, no chase rolls) of the
 // paired-seed A/B. Default ON; the game itself never sets it. Read once at
 // module scope so an arm cannot flip mid-run.
 const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
+
+// A stat card that would open an evolution for a weapon in the kit is offered
+// this many times more often until it is taken.
+const PARTNER_WEIGHT_MULT = 2;
 
 // TIER-2(d) PARALLEL toggle (the W7b measurement-seam pattern above, same
 // shape, same read-once doctrine): default ON — the game ships the sports-card
@@ -4593,6 +4531,23 @@ function openDraft() {
   // never ends — an at-cap level-up card STAYS offered and converts to +10%
   // weapon damage in pick() (the multi/volleyAtProjCap precedent: no dead
   // cards, no fake choices).
+  // Every weapon card says what the level grants and where the weapon stands
+  // on the road to its evolution; the card that completes an evolution (the
+  // last level with the partner owned, or the partner with the weapon maxed)
+  // is marked EVOLVES NOW and highlighted.
+  const owned = ownedCards();
+  const evoLine = (w, afterLevel) => {
+    const pr = evolutionProgress(w, owned);
+    if (!pr || pr.evolved) return '';
+    const lvOk = afterLevel >= pr.levelReq;
+    if (lvOk && pr.partnerOwned) return 'EVOLVES NOW: ' + pr.def.name;
+    return 'evolves with ' + pr.partnerName + (pr.partnerOwned ? ' (owned)' : '') +
+      (lvOk ? '' : ' at Lv ' + pr.levelReq);
+  };
+  const evoReady = (w, afterLevel) => {
+    const pr = evolutionProgress(w, owned);
+    return !!(pr && !pr.evolved && pr.partnerOwned && afterLevel >= pr.levelReq);
+  };
   for (const w of state.weapons) {
     const lv = w.level || 1;
     if (lv >= WEAPON_MAX_LEVEL && !hasRule(state, 'once')) continue;
@@ -4602,9 +4557,26 @@ function openDraft() {
       desc: lv >= WEAPON_MAX_LEVEL
         ? '+10% weapon damage · MAXED'
         : (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
+      evoText: evoLine(w, lv + 1),
+      evoReady: evoReady(w, lv + 1),
       apply: () => { levelUpWeapon(w); },
     });
   }
+  // A stat card that is the partner of a weapon in the kit says so, and is
+  // offered more often (PARTNER_WEIGHT_MULT) while that evolution is open.
+  const partnerOf = (id) => state.weapons.filter(w => {
+    const d = EVOLUTION_DEFS[w.type];
+    return d && d.partner === id && !w.evolutionId;
+  });
+  const statCard = (u) => {
+    const ws = partnerOf(u.id);
+    if (!ws.length || owned[u.id]) return { ...u, evoText: '', evoReady: false, partnerBoost: 1 };
+    const ready = ws.some(w => (w.level || 1) >= WEAPON_MAX_LEVEL);
+    const evoText = ready
+      ? 'EVOLVES NOW: ' + ws.filter(w => (w.level || 1) >= WEAPON_MAX_LEVEL).map(w => EVOLUTION_DEFS[w.type].name).join(', ')
+      : 'evolves ' + ws.map(w => WEAPON_NAMES[w.type]).join(', ');
+    return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT };
+  };
   const pool = [
     ...weaponCards.map(c => ({ ...c, weight: 1 })),
     // G8 step 1: the stat family carries its rarity weight (meta.js
@@ -4615,7 +4587,8 @@ function openDraft() {
     // at RULE_CARD_WEIGHT. With no rules held the first line is byte-identical
     // to the shipped pool (every stat card exactly its draft weight).
     ...UPGRADES.filter(u => statCardOffered(u.id, state))
-      .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) })),
+      .map(statCard)
+      .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) * (u.partnerBoost || 1) })),
     // W7b RARE ladder tier: the percent/scaling chase cards. LOW-WEIGHT (never
     // a pool flood — the weapon cards keep weight 1 and full access), luck-
     // shifted through draftLadderWeight (the Fortune extension reaches the
@@ -4725,7 +4698,8 @@ function openDraft() {
     // file.
     const badge = u.tier
       ? `<div class="syn" style="color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
-      : '';
+      : u.evoReady ? `<div class="syn evo-ready" style="color:#ffd75e">EVOLUTION READY</div>` : '';
+    if (u.evoReady) el.className += ' evo-ready';
     // TIER-2(d): the parallel stamp is ON the card (name + blurb, plain text).
     // The card's name/desc strings stay the registry's byte-identical text; the
     // stamp is additive only. Class "par", NOT "syn": the synergy-hint contract
@@ -4737,7 +4711,11 @@ function openDraft() {
     const parBadge = par
       ? `<div class="par" style="color:${par.tell};margin-top:8px;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${par.name.toUpperCase()} - ${par.blurb}</div>`
       : '';
-    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+    // The road to the evolution rides its own line under the effect text.
+    const evoLine = u.evoText
+      ? `<div class="evo" style="color:${u.evoReady ? '#ffd75e' : '#c0b48a'};font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.evoText}</div>`
+      : '';
+    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + evoLine +
       (hint ? `<div class="syn">${hint}</div>` : '') +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
@@ -4953,7 +4931,7 @@ function activateDraftCard(u) {
 //   pick:   1     2     3     4     5     6     7+
 //   taper:  1.0   0.75  0.55  0.4   0.3   0.22  0.15
 // 'speed' Light Boots (+15% move speed): gains +15.0/+11.3/+8.3/+6.0/+4.5/+3.3/+2.25%...
-// 'rate'  Quick Hands (-15% cooldown):  same fractions of 15% off.
+// 'rate'  Quick Hands (-10% cooldown):  the same fractions of 10% off.
 // Counts live on the run player (fresh makePlayer resets them every run).
 const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 
@@ -5022,7 +5000,7 @@ function pick(u) {
     // byte-identical expression (x * 1 is exact).
     const pm = parallelEffectMult(u.parallel);
     if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t * pm;
-    else p.stats.cooldown *= 1 - 0.15 * t * pm;
+    else p.stats.cooldown *= 1 - 0.10 * t * pm;
   } else {
     // TIER-2(d): the ONE numbers seam — the card's apply with its numeric
     // deltas scaled by the parallel multiplier (CURSED x1.5 / BLESSED x1.25 /
@@ -5071,6 +5049,9 @@ function pick(u) {
       if (dev.drafts[i].taken == null) { dev.drafts[i].taken = u.id; break; }
     }
   }
+  // A level-up or a partner card may have completed an evolution: a declined
+  // offer is re-opened by the next pick.
+  for (const w of state.weapons) w.evoDeclined = false;
   closeDraft(u);
 }
 
@@ -5255,7 +5236,7 @@ function tickNight(realDt) {
       startRun();   // same build, same arena: RETRY's contract
     }
   }
-  if (state.nightRun && nightEvolveLeft !== null && state.mode === 'evolve') {
+  if (nightEvolveLeft !== null && state.mode === 'evolve') {
     nightEvolveLeft -= realDt;
     if (nightEvolveLeft <= 0) {
       nightEvolveLeft = null;
@@ -5435,18 +5416,17 @@ function tickDraftCeremony(dt) {
 // evolveWeapon mutates the SAME weapon instance (levelUpWeapon precedent)
 // and spends the token. Declines are suppressed until a new token or item
 // lands (otherwise the check would re-open every frame).
-function equippedItemKinds() {
-  return itemKindsOf(state.items);
+function ownedCards() {
+  return (state.player && state.player.takenStats) || {};
 }
 
 function evolutionCandidates() {
-  const kinds = equippedItemKinds();
-  return state.weapons.filter(w =>
-    !w.evolutionId && !w.evoDeclined &&
-    EVOLUTION_DEFS[w.type] &&
-    (w.level || 1) >= WEAPON_MAX_LEVEL &&
-    kinds.has(EVOLUTION_DEFS[w.type].itemKind) &&
-    state.evoTokens > 0);
+  const owned = ownedCards();
+  return state.weapons.filter(w => {
+    if (w.evoDeclined) return false;
+    const pr = evolutionProgress(w, owned);
+    return !!(pr && pr.ready);
+  });
 }
 
 function maybeOpenEvolve() {
@@ -5463,7 +5443,7 @@ function maybeOpenEvolve() {
   overlay.style.display = 'flex';
   ovTitle.textContent = 'EVOLUTION';
   ovTitle.className = 'logo';
-  ovSub.textContent = 'a maxed weapon + its item kind + a token';
+  ovSub.textContent = 'a maxed weapon and its partner card';
   ovCards.innerHTML = '';
   // WAVE-23 FIX (desktop audit #5): every card was labelled `[1]` while the
   // keydown handler routes 1-4 to ovCards.children[n-1] — so pressing [2]
@@ -5475,7 +5455,7 @@ function maybeOpenEvolve() {
     el.className = 'card';
     el.innerHTML =
       `<div class="name">EVOLVE: ${card.name}</div>` +
-      `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
+      `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}</div>` +
       `<div class="key">[${i + 1}]</div>`;
     el.onclick = () => doEvolve(w);
     ovCards.appendChild(el);
@@ -5483,7 +5463,7 @@ function maybeOpenEvolve() {
   });
   // NOT NOW takes the next number key when it fits the 1-4 routing window
   // (3+ candidates can overflow it — then it stays mouse/click only).
-  const notNow = menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
+  const notNow = menuCard('NOT NOW', 'offered again after your next level-up card', () => {
     for (const w of cands) w.evoDeclined = true;
     // SLICE 9: deferring is a choice too — the offer set stays, taken='deferred'.
     if (dev) {
@@ -5500,11 +5480,11 @@ function maybeOpenEvolve() {
     // mutation (the stub DOM keeps the child and this is a no-op repaint).
     frameCard(notNow);
   }
-  // NIGHT MODE (gap found 2026-09-18): this overlay was human-click-only —
-  // an unattended run with a token over a maxed weapon parked here forever.
-  // Same named-timer shape as CONTINUE/RETRY: the night takes the FIRST
-  // candidate after NIGHT_EVOLVE_S (the draft policy's first-slot rule).
+  // An unattended run must not park here: a night run takes the FIRST
+  // candidate after NIGHT_EVOLVE_S, and an AUTO run after the draft timeout
+  // (same named-timer shape as CONTINUE/RETRY).
   if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
+  else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') nightEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
   // SLICE 9: record the offer set (the taken weapon — or 'deferred' — fills
   // in at doEvolve()/NOT NOW).
   if (dev) dev.evolutions.push({ offered: cands.map(w => w.type), taken: null });
@@ -5513,9 +5493,8 @@ function maybeOpenEvolve() {
 // The ONE evolve action — the card's own onclick path, shared verbatim with
 // the night auto-pick (never a second implementation of the same transition).
 function doEvolve(w) {
-  const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
+  const res = evolveWeapon(w, ownedCards());
   if (res.ok) {
-    state.evoTokens = res.tokens;
     // SLICE 9: the taken evolution lands on the latest still-open offer record.
     if (dev) {
       for (let i = dev.evolutions.length - 1; i >= 0; i--) {
@@ -5525,7 +5504,21 @@ function doEvolve(w) {
     // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
     // double-fired tick can never double-charge).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
-    toast(res.name.toUpperCase() + ' UNLEASHED');
+    // The forge restores the hero: full health and a share of the starting pool.
+    const p = state.player;
+    p.stats.maxHp += EVOLUTION_HP_FRAC * runBase(p).maxHp;
+    p.hp = p.stats.maxHp;
+    if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
+      // The first evolution ever: the cinematic banner and its pause.
+      state.bossBanner = {
+        names: [res.name.toUpperCase()], verb: 'EVOLVED',
+        title: res.name.toUpperCase(),
+        sub: (WEAPON_NAMES[w.type] || w.type).toUpperCase() + ' EVOLVED - ' + w.evolution.desc.toUpperCase(),
+        ttl: TOKEN_BANNER_SEC,
+      };
+      state.bannerHold = TOKEN_BANNER_SEC;
+    }
+    toast(res.name.toUpperCase() + ' UNLEASHED - ' + w.evolution.desc.toUpperCase());
     audio.playSfx('evolve');
     // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
     // moments — brief dilation + the crackle flare, back to normal after.
@@ -8687,7 +8680,6 @@ function startRun() {
   state.weaponSlots = state.baseWeaponSlots;
   // WAVE-7 run-scoped systems reset here (fresh makePlayer already dropped
   // player.choices — these are the state-side companions):
-  state.evoTokens = 0;
   // WAVE-10: finale fields are run-scoped too.
   state.finalBoss = null;
   state.volleyMask = null;
@@ -8754,7 +8746,6 @@ function startRun() {
   lastPurseFlush = 0;   // E1: the periodic purse flush restarts with the run
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
   state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
-    tokens: { kill: 0, chest: 0, drop: 0 },   // EVOLUTION TOKEN channel ledger
     gold: { earned: 0, spent: 0,              // E1 purse ledger (per-tier kills)
       kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } };
   // SLICE 7: the dev session restarts with the run (gate off = stays null;
@@ -8895,8 +8886,7 @@ function startRun() {
   state.synergyNames = null;
   refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
-  // EVOLUTION TOKEN banner is run-scoped: a fresh run gets its own first-token
-  // moment, and no stale hold can freeze the new run's opening frames.
+  // No stale banner hold can freeze the new run's opening frames.
   state.bannerHold = 0;
   state.deathBy = null;      // WAVE-20: no death recorded yet
   // W7b MYTHIC chase gate: each run rolls whether each mythic build-definer is
@@ -9311,8 +9301,13 @@ function openStats() {
     const evoTag = w.evolution
       ? ' <span style="color:#ffd75e">(' + (WEAPON_NAMES[w.type] || w.type) + ' evolved)</span>'
       : '';
+    const pr = evolutionProgress(w, ownedCards());
+    const evoLine = pr && !pr.evolved
+      ? '<br><span style="color:#ffd75e">evolves into ' + pr.def.name + ' at Lv ' + pr.levelReq +
+        ' with ' + pr.partnerName + (pr.partnerOwned ? ' (owned)' : '') + '</span>'
+      : '';
     wHtml += icon + '<b>' + nm + '</b>' + evoTag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
-      '<br><span style="color:#a8a8c0">' + (WEAPON_BLURBS[w.type] || '') + '</span><br>';
+      '<br><span style="color:#a8a8c0">' + (WEAPON_BLURBS[w.type] || '') + '</span>' + evoLine + '<br>';
   }
   menuCard('WEAPONS', wHtml || 'none yet', info);
 
@@ -11450,7 +11445,7 @@ function hudTextBlock(p) {
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
-    (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
+    '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
     `   ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}` +
@@ -12191,7 +12186,7 @@ function frame(now) {
   // dt (dt-parity: 60Hz and 120Hz step the same frame over the same time).
   // No-ops in every other mode, so no repaint or timer survives BACK.
   advanceCharIdle(realDt);
-  // EVOLUTION TOKEN banner hold: the first token of a run holds the sim for
+  // One-time banner hold: a first-ever moment holds the sim for
   // TOKEN_BANNER_SEC. The hold decays on WALL-CLOCK dt (the same rule as the
   // earned-moment flourish and the title reveal above). Frame-rate
   // independent: 2.5s of real time at 60Hz and at 120Hz. SLICE 8: at dev

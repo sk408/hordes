@@ -60,8 +60,8 @@ const s = suite('test_tier2_parallels');
 // quote here is the rows' identity + copy + the shared weight constants.
 // ===========================================================================
 const QUOTED_UPGRADES = [
-  { id: 'dmg', name: 'Whetstone', desc: '+25% weapon damage' },
-  { id: 'rate', name: 'Quick Hands', desc: '-15% attack cooldown' },
+  { id: 'dmg', name: 'Whetstone', desc: '+15% weapon damage' },
+  { id: 'rate', name: 'Quick Hands', desc: '-10% attack cooldown' },
   { id: 'speed', name: 'Light Boots', desc: '+15% move speed' },
   { id: 'pickup', name: 'Gem Magnet', desc: '+30% pickup radius' },
   { id: 'multi', name: 'Split Shot', desc: '+1 projectile per volley' },
@@ -172,7 +172,7 @@ s.check('rollParallel: seeded frequency — blessed strictly rarer than cursed, 
   console.log('  MEASURED per-' + N + ' rolls: ' + JSON.stringify(counts));
 });
 s.check('stampOfferParallel is additive and an absent roll is IDENTITY (pre-change object)', () => {
-  const card = { id: 'dmg', name: 'Whetstone', desc: '+25% weapon damage', apply: () => {} };
+  const card = { id: 'dmg', name: 'Whetstone', desc: '+15% weapon damage', apply: () => {} };
   const none = stampOfferParallel(card, rollParallel(() => 0.5));
   assert.equal(none, card, 'absent roll returns the SAME object (identity, no copy, no field)');
   assert.equal('parallel' in none, false);
@@ -194,15 +194,15 @@ const player = () => ({
   base: { damage: 10, maxHp: 100 },   // the run's starting stats: percent cards add a share of these
 });
 
-s.check('EFFECT MATH: Whetstone +25% at Cursed x1.5 lands x1.375 (the listed 25% scaled to 37.5%)', () => {
+s.check('EFFECT MATH: Whetstone +15% at Cursed x1.5 lands x1.225 (the listed 15% scaled to 22.5%)', () => {
   const p = player();
-  applyScaledNumbers(UPGRADES[0].apply, p, PARALLELS.cursed.mult);   // dmg: + 25% of starting damage
-  assert.equal(p.stats.damage, 10 * 1.375, '10 -> 13.75 exactly');
+  applyScaledNumbers(UPGRADES[0].apply, p, PARALLELS.cursed.mult);   // dmg: + 15% of starting damage
+  assert.ok(Math.abs(p.stats.damage - 10 * 1.225) < 1e-9, '10 -> 12.25');
 });
-s.check('EFFECT MATH: Whetstone at Blessed x1.25 lands x1.3125 (25% -> 31.25%)', () => {
+s.check('EFFECT MATH: Whetstone at Blessed x1.25 lands x1.1875 (15% -> 18.75%)', () => {
   const p = player();
   applyScaledNumbers(UPGRADES[0].apply, p, PARALLELS.blessed.mult);
-  assert.equal(p.stats.damage, 10 * 1.3125, '10 -> 13.125 exactly');
+  assert.ok(Math.abs(p.stats.damage - 10 * 1.1875) < 1e-9, '10 -> 11.875');
 });
 s.check('EFFECT MATH: cosmetic/absent x1 is byte-identical to the raw apply', () => {
   for (const mult of [1, parallelEffectMult('shiny'), parallelEffectMult('pulse'), parallelEffectMult('chroma')]) {
@@ -271,8 +271,8 @@ s.check('PULSE phase is a pure hash of the card id (no clock, no accumulation)',
 // scope beside DRAFT_LADDER_ON. Quoted PRE-CHANGE key sets per offer family —
 // an extra field of ANY kind fails the deep-equal below.
 const KEYS = {
-  weapon: ['apply', 'desc', 'id', 'name', 'weight'],
-  stat: ['apply', 'desc', 'id', 'name', 'weight'],
+  weapon: ['apply', 'desc', 'evoReady', 'evoText', 'id', 'name', 'weight'],
+  stat: ['apply', 'desc', 'evoReady', 'evoText', 'id', 'name', 'partnerBoost', 'weight'],
   rare: ['apply', 'desc', 'id', 'name', 'tier', 'weight'],
   mythic: ['apply', 'desc', 'id', 'name', 'tier', 'weight'],
   rule: ['apply', 'desc', 'id', 'name', 'rule', 'weight'],
@@ -549,7 +549,7 @@ s.check('CURSED PICK: x1.5 on the listed effect + exactly ONE drawback on p.hp (
   const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, 'cursed');
   state.pendingDrafts = 1;
   T.pickCard(card);
-  assert.equal(p.stats.damage, 10 * 1.375, 'Whetstone +25% listed -> +37.5% at Cursed x1.5');
+  assert.ok(Math.abs(p.stats.damage - 10 * 1.225) < 1e-9, 'Whetstone +15% listed -> +22.5% at Cursed x1.5');
   assert.equal(p.hp, 65, 'the ONE drawback: -15 HP on p.hp (entities.js makePlayer)');
   assert.equal(p.stats.maxHp, 100, 'no second drawback surface (maxHp)');
   assert.equal(p.mana, before.mana, 'no second drawback surface (mana)');
@@ -569,7 +569,7 @@ s.check('BLESSED PICK: x1.25, NO drawback at all (hp byte-unchanged)', () => {
   const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, 'blessed');
   state.pendingDrafts = 1;
   T.pickCard(card);
-  assert.equal(p.stats.damage, 10 * 1.3125, 'Whetstone +25% listed -> +31.25% at Blessed x1.25');
+  assert.ok(Math.abs(p.stats.damage - 10 * 1.1875) < 1e-9, 'Whetstone +15% listed -> +18.75% at Blessed x1.25');
   assert.equal(p.hp, hpBefore, 'Blessed carries NO drawback');
 });
 
@@ -583,7 +583,7 @@ s.check('COSMETIC PICK: base effect byte-unchanged + no drawback (shiny/pulse/ch
     const card = stampOfferParallel({ ...UPGRADES.find((u) => u.id === 'dmg'), weight: 0.3 }, pid);
     state.pendingDrafts = 1;
     T.pickCard(card);
-    assert.equal(p.stats.damage, 12.5, pid + ': +25% is still exactly +25% (byte-unchanged effect)');
+    assert.ok(Math.abs(p.stats.damage - 11.5) < 1e-9, pid + ': +15% is still exactly +15% (byte-unchanged effect)');
     assert.equal(p.hp, 80, pid + ': no drawback');
   }
 });
@@ -709,7 +709,7 @@ s.check('AUTO-PICK safety: a stamped offer picked through the ONE activation sea
   // activateDraftCard is pick's ONE-argument seam — auto-pick routes through
   // it (main.js tickDraftAutoPick), so this is the auto-pick path by identity.
   T.pickCard(card);
-  assert.equal(p.stats.damage, 13.125, 'the auto-pick path lands the same scaled effect');
+  assert.ok(Math.abs(p.stats.damage - 11.875) < 1e-9, 'the auto-pick path lands the same scaled effect');
 });
 
 s.done();

@@ -65,15 +65,15 @@ const lastZap = (st) => [...st.effects].reverse().find(f => f.kind === 'zap');
   });
 }
 {
-  // The ladder's +1-jump growth is RETIRED (disclosed): weapon L8 still hits 3.
+  // Weapon levels add a chain target at Lv3/5/7: L8 hits 6.
   const { st, p, put } = await zapField(0, 8);
   for (let gy = -8; gy <= 8; gy++) for (let gx = -8; gx <= 8; gx++) {
     if (gx || gy) put(gx * 40, gy * 40);
   }
   p.mana = p.stats.maxMana;
   fire(st, { type: 'ZAP', level: 8, cd: 0, evolution: null });
-  s.check('weapon level does NOT grow the count (L8 still 3 — ladder growth retired)', () => {
-    if (damaged(st).length !== 3) throw new Error('hit ' + damaged(st).length + ' at L8, expected 3');
+  s.check('weapon level grows the count: L8 hits 6 (3 base + Lv3/5/7)', () => {
+    if (damaged(st).length !== 6) throw new Error('hit ' + damaged(st).length + ' at L8, expected 6');
   });
 }
 

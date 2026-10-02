@@ -111,7 +111,7 @@ P.stats.lifesteal = 0;            // isolate harvest: the lifesteal site stays O
 const scythe = makeWeapon('SCYTHE');
 while (scythe.level < WEAPON_MAX_LEVEL) levelUpWeapon(scythe);
 ok('GRAVE_HARVEST evolution staged (the same evolveWeapon path the game uses)',
-  evolveWeapon(scythe, new Set(['lifesteal']), 1).ok === true);
+  evolveWeapon(scythe, new Set(['hp'])).ok === true);
 
 // Drive the REAL weapon module directly (the sweep, its kills and its heal are
 // exactly the shipped code; the main-loop volley cannot interfere here).

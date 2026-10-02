@@ -418,6 +418,19 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const joct = ((Math.round(ja / (Math.PI / 4)) % 8) + 8) % 8;
     const JX = [1, 1, 0, -1, -1, -1, 0, 1], JY = [0, 1, 1, 1, 0, -1, -1, -1];
     const jdx = JX[joct], jdy = JY[joct];
+    if (p.evo) {
+      // SOLAR LANCE: a longer gold shaft, white-hot head, four corona ticks.
+      g.fillStyle = '#ffb14a';
+      g.fillRect(x - jdx * 2 - 1, y - jdy * 2 - 1, 3, 3);
+      g.fillRect(x - 1, y - 1, 3, 3);
+      g.fillStyle = '#ffffff';
+      g.fillRect(x + jdx * 3 - 1, y + jdy * 3 - 1, 3, 3);
+      g.fillRect(x + jdx * 5, y + jdy * 5, 1, 1);
+      g.fillStyle = '#ffe07a';
+      g.fillRect(x - jdy * 3, y + jdx * 3, 1, 1); g.fillRect(x + jdy * 3, y - jdx * 3, 1, 1);
+      g.fillRect(x - jdx * 4, y - jdy * 4, 1, 1);
+      return;
+    }
     g.fillStyle = '#9aa4b8';
     g.fillRect(x - jdx - 1, y - jdy - 1, 2, 2);
     g.fillRect(x - 1, y - 1, 2, 2);
@@ -434,12 +447,14 @@ export function paintProjectileBody(g, p, x, y, ph) {
     return;
   }
   if (p.kind === 'ember') {
-    // TIER-2(e) Ember Shot: hot core, orange body, gold cap, two hash sparks. <= 7 rects.
-    g.fillStyle = '#b03a1a';
+    // Ember Shot: hot core, orange body, gold cap, two hash sparks. <= 7 rects.
+    // INFERNO: a wider flame with a white-blue heart.
+    g.fillStyle = p.evo ? '#e05a1a' : '#b03a1a';
     g.fillRect(x - 2, y - 2, 5, 5);
-    g.fillStyle = '#e07828';
+    if (p.evo) { g.fillRect(x - 3, y - 1, 7, 3); g.fillRect(x - 1, y - 3, 3, 7); }
+    g.fillStyle = p.evo ? '#ffd080' : '#e07828';
     g.fillRect(x - 1, y - 1, 3, 3);
-    g.fillStyle = '#ffe07a';
+    g.fillStyle = p.evo ? '#d8f4ff' : '#ffe07a';
     g.fillRect(x, y, 1, 1);
     if ((ph & 1) === 0) {
       g.fillStyle = '#ffd75e';
@@ -458,11 +473,15 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const roct = ((Math.round(ra / (Math.PI / 4)) % 8) + 8) % 8;
     const RX = [1, 1, 0, -1, -1, -1, 0, 1], RY = [0, 1, 1, 1, 0, -1, -1, -1];
     const rdx = RX[roct], rdy = RY[roct];
-    g.fillStyle = '#9ad0f4';
+    // PRISM SHOT: the ball cycles through prism colours by position hash and
+    // trails a second chevron.
+    const PRISM = ['#ff6a8a', '#ffd75e', '#6af0a0', '#8ab8ff'];
+    g.fillStyle = p.evo ? PRISM[ph & 3] : '#9ad0f4';
     g.fillRect(x - 1, y - 1, 3, 3);
+    if (p.evo) { g.fillStyle = PRISM[(ph + 2) & 3]; g.fillRect(x - rdx * 4, y - rdy * 4, 2, 2); }
     g.fillStyle = '#e8ecf4';
     g.fillRect(x, y, 1, 1);
-    g.fillStyle = '#5a9ad8';
+    g.fillStyle = p.evo ? '#ffffff' : '#5a9ad8';
     g.fillRect(x - rdx * 2, y - rdy * 2, 1, 1);
     g.fillRect(x - rdx * 2 - rdy, y - rdy * 2 + rdx, 1, 1);
     g.fillRect(x - rdx * 2 + rdy, y - rdy * 2 - rdx, 1, 1);
@@ -470,6 +489,25 @@ export function paintProjectileBody(g, p, x, y, ph) {
       g.fillStyle = '#ffffff';
       g.fillRect(x - rdx * 3, y - rdy * 3, 1, 1);
     }
+    return;
+  }
+  if (p.kind === 'firepatch') {
+    // Burning ground: a ring of embers that flickers with age and fades over
+    // its life; meteor craters burn violet, inferno kills burn gold. <= 20 rects.
+    const life = Math.max(0, 1 - (p.age || 0) / 2);
+    const flick = Math.floor((p.age || 0) * 12) % 2;
+    const r = p.radius || 20;
+    const hot = p.tint === 'meteor' ? '#d0a8ff' : '#ffd75e';
+    const cool = p.tint === 'meteor' ? '#8a5ad8' : '#ff8848';
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + (ph % 7) * 0.13;
+      const rr = r * (0.55 + 0.45 * (((ph >> i) & 1) ^ flick));
+      g.fillStyle = (i + flick) % 2 === 0 ? hot : cool;
+      const sz = life > 0.5 ? 2 : 1;
+      g.fillRect(Math.round(x + Math.cos(a) * rr), Math.round(y + Math.sin(a) * rr), sz, sz);
+    }
+    g.fillStyle = flick ? hot : '#ffffff';
+    g.fillRect(x - 1, y - 1, 2, 2);
     return;
   }
   // Volley arrow: shaft along the flight vector (vx/vy are sim state, so
@@ -600,6 +638,7 @@ const octOf = (dx, dy) => (dx || dy)
   ? ((Math.round(Math.atan2(dy || 0, dx || 0) / (Math.PI / 4)) % 8) + 8) % 8 : 0;
 function blitProjectile(g, p, x, y, ph) {
   let key, proxy, bits;
+  if (p.kind === 'firepatch') { paintProjectileBody(g, p, x, y, ph); return; }
   if (p.kind === 'boomerang') {
     const spin = Math.floor(p.age * 20) % 2 === 0;
     bits = ph & 1; key = 'pj:boom:' + (spin ? 1 : 0) + bits;
@@ -614,12 +653,12 @@ function blitProjectile(g, p, x, y, ph) {
     proxy = { kind: p.kind, age: blink ? 0 : 0.5 };
   } else if (p.kind === 'javelin' || p.kind === 'ricochet') {
     const o = octOf(p.dx, p.dy);
-    bits = p.kind === 'javelin' ? (ph & 2) : ((ph & 3) === 0 ? 0 : 1);
-    key = 'pj:' + p.kind + ':' + o + ':' + bits;
-    proxy = { kind: p.kind, dx: OCT_X[o], dy: OCT_Y[o] };
+    bits = p.kind === 'javelin' ? (ph & 2) : (p.evo ? (ph & 3) : ((ph & 3) === 0 ? 0 : 1));
+    key = 'pj:' + p.kind + (p.evo ? 'E' : '') + ':' + o + ':' + bits;
+    proxy = { kind: p.kind, dx: OCT_X[o], dy: OCT_Y[o], evo: !!p.evo };
   } else if (p.kind === 'ember') {
-    bits = ph & 3; key = 'pj:ember:' + bits;
-    proxy = { kind: p.kind };
+    bits = ph & 3; key = 'pj:ember' + (p.evo ? 'E' : '') + ':' + bits;
+    proxy = { kind: p.kind, evo: !!p.evo };
   } else {
     const o = octOf(p.vx, p.vy);
     bits = 0; key = 'pj:volley:' + o;
@@ -1436,7 +1475,10 @@ export class Renderer {
         // and 120Hz paint identically at the same age. Bounded: 48 + 24 +
         // 8 + 4 rects max per ring effect (pools unchanged).
         const r = fx.radius * t;
-        const ringCol = fx.kind === 'nova'
+        const ringCol = fx.evo === 'sun' ? (t < 0.5 ? '#ffffff' : '#ffb14a')
+          : fx.evo === 'fire' ? (t < 0.5 ? '#fff2c0' : '#ff6a2a')
+          : fx.evo === 'meteor' ? (t < 0.5 ? '#efe0ff' : '#8a5ad8')
+          : fx.kind === 'nova'
           ? (t < 0.5 ? '#a8e0ff' : '#5a9ad8')
           : fx.kind === 'boss_nova'
             ? (t < 0.5 ? '#ff7a9a' : '#a83a5a')
@@ -1453,7 +1495,8 @@ export class Renderer {
                     : fx.kind === 'magnet'
                       ? (t < 0.5 ? '#ffe98a' : '#c8a03a')
                       : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
-        const echoCol = fx.kind === 'boss_nova' ? '#ffd7e0'
+        const echoCol = fx.evo ? '#ffffff'
+          : fx.kind === 'boss_nova' ? '#ffd7e0'
           : fx.kind === 'mine_blast' ? '#fff2c0'
           : fx.kind === 'colossus_shock' ? '#ffffff'
           : fx.kind === 'rewrite_boom' ? '#ffe0b8'

@@ -22,7 +22,7 @@ import { SHOP_POLICIES, makeShopper, SAVE_UP_RUNS } from './progression/policies
 import { careerReport, fixedReport } from './progression/report.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
-const DRAFTS = ['random', 'weapons-first', 'stats-first'];
+const DRAFTS = ['random', 'weapons-first', 'evolution-first', 'stats-first'];
 const ONCE = ['asis', 'take', 'never'];
 const LOADOUTS = ['default', 'all-owned'];
 const AXES = ['shop', 'loadout', 'draft', 'once', 'stance', 'character'];

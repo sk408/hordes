@@ -1,7 +1,7 @@
 // HORDES — BOOMERANG PIERCE (agent F, wave-25).
 //
 // Defect: the thrown boomerang body carried a `pierce` field (stats.pierce +
-// the per-level pierceBonus the Lv3/5/7 draft label advertises as '+1 pierce')
+// the per-level pierceBonus the Lv2/4/6 draft label advertises as '+1 pierce')
 // and NOTHING read it — the only hit guard was a Set, so every enemy was hit
 // exactly once per leg no matter the pierce value.
 //
@@ -79,7 +79,7 @@ console.log('PIERCE BUDGET PER LEG:');
 
 console.log('LEVEL TABLE + LABEL BACKING:');
 {
-  // The Lv3/5/7 draft label promises '+1 pierce' — the level table must keep
+  // The Lv2/4/6 draft label promises '+1 pierce' — the level table must keep
   // granting it and the throw must carry it.
   const { w, st } = makeState(0);
   w.level = 5;
@@ -88,8 +88,9 @@ console.log('LEVEL TABLE + LABEL BACKING:');
   ok(body && body.pierce === 2, `Lv5 body carries +2 pierce (got ${body && body.pierce})`);
   ok(legs(0, []).outbound === 1 && legs(2).outbound === 3,
     'the advertised pierce is what the leg budget actually consumes');
-  ok([3, 5, 7].every(L => WEAPON_LEVELS.BOOMERANG[L - 1].label.includes('+1 pierce')),
-    'Lv3/Lv5/Lv7 labels still advertise the (now real) +1 pierce');
+  ok([2, 4, 6].every(L => WEAPON_LEVELS.BOOMERANG[L - 1].label.includes('+1 pierce')) &&
+     ![3, 5, 7, 8].some(L => WEAPON_LEVELS.BOOMERANG[L - 1].label.includes('+1 pierce')),
+    'Lv2/Lv4/Lv6 labels advertise the (real) +1 pierce');
 }
 
 console.log('PIERCE_ALL (VOID_RANG) STAYS ONE HIT PER ENEMY PER LEG:');

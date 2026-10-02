@@ -12,7 +12,7 @@
 //         decideBossAction (boss + midBoss + bossId HERALD);
 //   R5    chaff packs grow by ONE knob (C.E2.CHAFF_DENSITY_MULT, measured in
 //         a live window: a pop is round(packSize x the knob));
-//   R6    plain-chaff potion/chest/token/xp pay near-zero from the horde
+//   R6    plain-chaff potion/chest/xp pay near-zero from the horde
 //         wave on (an elite is an EVENT, never chaff);
 //   R7    the purse follows the BODY: the heavy stamp pays HEAVY, a
 //         wave-1 TICK still pays CHAFF, and the live ledger is exactly one
@@ -229,7 +229,7 @@ s.check('R3: heavies are the rare tier; the SHRIKE flies with the horde', () => 
 });
 
 // ---------------------------------------------------------------------------
-// 7. R6: plain-chaff potion/chest/token/xp near-zero at the horde wave —
+// 7. R6: plain-chaff potion/chest/xp near-zero at the horde wave —
 //    through the REAL kill funnel (planted corpses, hp = 0, reaped live).
 // ---------------------------------------------------------------------------
 s.check('R6: chaff potion/chest rolls collapse at the horde wave', () => {
@@ -273,26 +273,6 @@ s.check('R6: chaff potion/chest rolls collapse at the horde wave', () => {
   if (reap(C.E2.WAVE, 0.01, true).chests !== 1) {
     throw new Error('the scaled chaff chest roll is ZERO, not near-zero (0.01 must pay)');
   }
-});
-
-s.check('R6: the chaff token gate — near-zero at the horde wave, open below it', () => {
-  const tokKill = (num, rng) => {
-    st.wave.num = num; st.enemies.length = 0; st.drops.length = 0;
-    const e = makeTypedEnemy('CHASER', p.x + 400, p.y, st.time);
-    e.hp = 0; e.preStageMaxHp = 10;   // NOT elite-ish: keep the chest roll out
-    st.enemies.push(e);
-    const t0 = st.evoTokens, old = Math.random;
-    Math.random = rng;
-    h.pump(1);
-    Math.random = old;
-    return st.evoTokens - t0;
-  };
-  const granted = tokKill(C.E2.WAVE, () => 0.0001);  // passes the 0.05 gate AND the 1/1200 roll
-  if (granted < 1) throw new Error('the gate blocked a sub-0.05 roll (near-zero, not zero)');
-  const blocked = tokKill(C.E2.WAVE, () => 0.5);     // 0.5 >= 0.05: the gate eats the roll
-  if (blocked !== 0) throw new Error('chaff paid a kill token through the gate');
-  const control = tokKill(1, () => 0.0001);          // below the horde wave: ungated
-  if (control < 1) throw new Error('the wave-1 chaff token channel regressed');
 });
 
 s.check('R6/R8: chaff xp is the cut one; the heavy xp is the paying one', () => {

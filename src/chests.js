@@ -59,47 +59,6 @@ export const CHESTS = {
   GAMBLE_HORDE_RADIUS: 90,  // spawned on a ring around the player
 };
 
-// ---------- EVOLUTION TOKENS: their own drop, decoupled (owner spec) --------
-// The token used to ride the legendary chest band (53 chests x 5% = ~2.7
-// tokens/run), which made its rate a hostage of the chest rarity table: any
-// retune of the ladder silently retuned the token too. It is now a SEPARATE
-// drop with three independently tunable channels, so 1/500 has exactly one
-// home and the chest ladder can move without moving it.
-//
-// THE DENOMINATOR IS THE WHOLE RATE (owner decision 2026-09-13), measured per
-// FRESH RUN on the shipped build (834 kills, 53 chests, 280 world drops on a
-// short run; 6232 kills on a long one):
-//   per kill  1/1200 -> 0.69 on a short run, 5.19 on a long one
-//   per chest 1/200  -> 0.27
-//   per drop  1/500  -> 0.56
-// => ~1.5 tokens on a typical short run, ~6 on a long one. That is the owner's
-// intent: "should be something a new player can get... not right away, but
-// shouldn't take multiple runs to have a chance at a single one."
-// FLAGGED, not a defect: the per-kill channel rides run length, so a
-// snowballing run pulls 5+ from kills alone. If the rate should stay flat it
-// needs a per-run cap or a normalisation; that is a tuning choice for the owner.
-export const EVOLUTION_TOKEN = {
-  PER_KILL: 1200,
-  PER_CHEST: 200,
-  PER_DROP: 500,
-};
-// channel -> the knob that owns its denominator. 'kill' = an enemy death,
-// 'chest' = a chest opened, 'drop' = a world item drop created.
-const TOKEN_DENOM = { kill: 'PER_KILL', chest: 'PER_CHEST', drop: 'PER_DROP' };
-
-/** Chance per event for a token channel. Unknown channel => 0 (never rolls).
- *  PURE — and consumes NO rng when it returns 0. */
-export function tokenChance(channel) {
-  const key = TOKEN_DENOM[channel];
-  return key ? 1 / EVOLUTION_TOKEN[key] : 0;
-}
-
-/** Roll one token channel. Unknown channel draws nothing and returns false. */
-export function rollEvolutionToken(rng = Math.random, channel) {
-  const c = tokenChance(channel);
-  return c > 0 && rng() < c;   // short-circuit: no draw for a dead channel
-}
-
 // ---------- Typed horde spawn (main.js spawnWave parity) -------------------
 // Wave-25 (agent F): the gamble punishment horde used to spawn through
 // entities.makeEnemy(), so its enemies had no typeId / variant / w / h / age,
@@ -125,14 +84,6 @@ export function rollEvolutionToken(rng = Math.random, channel) {
 // If the owner wants the old "scare, not a threat" feel at high waves, dial
 // CHESTS.GAMBLE_HORDE_COUNT (or add a multiplier here) — do not revert the
 // typed path, which is what made the horde a real citizen.
-
-// Placeholder evolution tokens (legendary offers a 1-of-N choice; the actual
-// evolution system lands later — these are the offer payloads).
-export const EVOLUTION_TOKENS = [
-  { id: 'void',   name: 'Void Core',    desc: 'evolution token: whispers of the void' },
-  { id: 'ember',  name: 'Ember Heart',  desc: 'evolution token: burns within' },
-  { id: 'storm',  name: 'Storm Sigil',  desc: 'evolution token: crackling potential' },
-];
 
 let nextId = 1;
 
@@ -239,7 +190,7 @@ export function rollContents(state, rng = Math.random) {
 }
 
 // Apply rolled contents to the player; returns events describing what the
-// integration layer should surface (toasts, token-choice UI, horde warning).
+// integration layer should surface (toasts, horde warning).
 // The mini horde, extracted so HORDE BAIT can fire it on EVERY chest through
 // the same code the lost gamble used. Unchanged in behaviour: typed CHASER
 // chassis, a ring around the player, the shared escalation, and NO rng draw.

@@ -1128,8 +1128,8 @@ export const CONFIG = {
   LADDER: {
     WAVE_SECONDS: 120,   // == ESCALATION.WAVE_LENGTH (the tests assert this)
     WAVES: 15,           // 15 x 120s = 1800s = RUN.LIMIT
-    HP:  { LINEAR: 0.1,  QUAD: 0.03, COMPOUND: 1 },
-    DMG: { LINEAR: 0.15, QUAD: 0,    COMPOUND: 1.004 },
+    HP:  { LINEAR: 0.1,  QUAD: 0.045, COMPOUND: 1 },
+    DMG: { LINEAR: 0.10, QUAD: 0,    COMPOUND: 1.004 },
     XP:  { LINEAR: 0,    QUAD: 0,    COMPOUND: 1 },
     GROUPS_FROM: 150,    // density holds at one group until here
     GROUPS_PER: 150,     // +1 spawn group per spawn tick every N seconds
@@ -1173,16 +1173,24 @@ export const DRAFT_ACTIONS = {
   SKIP_HEAL_FRAC: 0.25,   // a skipped draft heals this share of max HP
 };
 
+// An evolution is a power spike on both sides: the weapon changes form, and
+// the player is restored to full health and gains this share of the run's
+// starting max HP.
+export const EVOLUTION_HP_FRAC = 0.15;
+
 // The stats a run started with (stamped on the player by startRun). Percent
 // draft cards add a share of these, so repeat picks stack instead of compounding.
 export function runBase(p) {
   return (p && p.base) || { damage: CONFIG.WEAPON.DAMAGE, maxHp: CONFIG.PLAYER.MAX_HP };
 }
 
-// Upgrade pool for the 1-of-3 draft.
+// Upgrade pool for the 1-of-3 draft: the common stat cards. Small, safe and
+// global; the big steps are the weapon level-up cards and their evolutions,
+// and each of these cards is the partner of one or two of those evolutions
+// (evolutions.js EVOLUTION_DEFS.partner).
 export const UPGRADES = [
-  { id: 'dmg',     name: 'Whetstone',       desc: '+25% weapon damage',            apply: (p) => { p.stats.damage += 0.25 * runBase(p).damage; } },
-  { id: 'rate',    name: 'Quick Hands',     desc: '-15% attack cooldown',          apply: (p) => { p.stats.cooldown *= 0.85; } },
+  { id: 'dmg',     name: 'Whetstone',       desc: '+15% weapon damage',            apply: (p) => { p.stats.damage += 0.15 * runBase(p).damage; } },
+  { id: 'rate',    name: 'Quick Hands',     desc: '-10% attack cooldown',          apply: (p) => { p.stats.cooldown *= 0.90; } },
   { id: 'speed',   name: 'Light Boots',     desc: '+15% move speed',               apply: (p) => { p.stats.speed *= 1.15; } },
   { id: 'pickup',  name: 'Gem Magnet',      desc: '+30% pickup radius',            apply: (p) => { p.stats.pickup *= 1.3; } },
   { id: 'multi',   name: 'Split Shot',      desc: '+1 projectile per volley',      apply: (p) => { p.stats.projectiles += 1; } },

@@ -24,7 +24,7 @@ console.log('WEAPON OVERRIDES:');
 
   // Formula default: unlisted levels pay the WEAPON_LEVELS ladder.
   const zapAt = (L) => 1 + WEAPON_STEPS.ZAP.DMG * (L - 1);
-  ok(WEAPON_STEPS.ZAP.DMG === 0.17 && weaponLevelParams('ZAP', 8).dmgMult === zapAt(8),
+  ok(WEAPON_STEPS.ZAP.DMG === 0.35 && weaponLevelParams('ZAP', 8).dmgMult === zapAt(8),
     'formula default at L8 (ZAP ladder untouched)');
   ok(weaponLevelParams('NOVA_PULSE', 3).radius === WEAPONS.NOVA_PULSE.RADIUS + 6 * 2,
     'non-damage params never consult the dmg table');
@@ -32,7 +32,7 @@ console.log('WEAPON OVERRIDES:');
   // Override hit: a listed level pays the table dmgMult, nothing else moves.
   WEAPON_DMG_OVERRIDES.ZAP = { 8: 9.99 };
   const hit = weaponLevelParams('ZAP', 8);
-  ok(hit.dmgMult === 9.99, 'override hit at L8 pays table dmgMult (formula would be 2.19)');
+  ok(hit.dmgMult === 9.99, 'override hit at L8 pays table dmgMult (formula would be 3.45)');
   // Override miss: unlisted levels fall back to the formula.
   ok(weaponLevelParams('ZAP', 7).dmgMult === zapAt(7),
     'override miss at L7 falls back to formula');

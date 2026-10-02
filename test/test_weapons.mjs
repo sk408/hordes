@@ -172,36 +172,40 @@ console.log('LEVELS:');
   const v1 = weaponLevelParams('VOLLEY', 1), v2 = weaponLevelParams('VOLLEY', 2),
         v3 = weaponLevelParams('VOLLEY', 3), v6 = weaponLevelParams('VOLLEY', 6),
         v8 = weaponLevelParams('VOLLEY', 8);
-  ok(v1.proj === 0 && v3.proj === 1 && v6.proj === 2,
-     'volley: +1 projectile at Lv3 and Lv6');
+  ok(v1.proj === 0 && v2.proj === 1 && v3.proj === 1 && v6.proj === 2,
+     'volley: +1 projectile at Lv2 and Lv6');
   const near = (a, b) => Math.abs(a - b) < 1e-9;
-  ok(near(v2.dmgMult, 1.6) && near(v3.dmgMult, v2.dmgMult),
+  ok(near(v2.dmgMult, 1) && near(v3.dmgMult, 1.6),
      'volley: proj level adds no dmgMult, others add +60%');
-  ok(near(v6.dmgMult, 2.8) && near(v8.dmgMult, 4.0),
-     'volley: 5 damage levels by Lv8 = +300%');
+  ok(near(v6.dmgMult, 2.2) && near(v8.dmgMult, 2.8),
+     'volley: 3 damage levels by Lv8 = +180%');
+  ok(v8.pierceBonus === 2 && weaponLevelParams('VOLLEY', 7).pierceBonus === 1 && v6.pierceBonus === 0,
+     'volley: +1 pierce at Lv7 and Lv8');
+  ok(near(weaponLevelParams('VOLLEY', 4).rateMult, 1.25) && near(v3.rateMult, 1),
+     'volley: +25% attack rate at Lv4');
 
   // ORBIT: blades + radius per level.
   const o1 = weaponLevelParams('ORBIT', 1), o8 = weaponLevelParams('ORBIT', 8);
   ok(o1.blades === 1 && o8.blades === 5, 'orbit: blades 1 -> 5 by Lv8 (+1 per even level)');
   ok(o8.radius > o1.radius && o8.radius === WEAPONS.ORBIT.RADIUS + 4 * 7,
      'orbit: radius +4 per level');
-  ok(near(o8.dmgMult, 1 + 0.20 * 7), 'orbit: +20% damage per level');
+  ok(near(o8.dmgMult, 1 + 0.40 * 7), 'orbit: +40% damage per level');
 
   // BOOMERANG: pierce/speed/damage.
   const b1 = weaponLevelParams('BOOMERANG', 1), b5 = weaponLevelParams('BOOMERANG', 5);
-  ok(b5.pierceBonus > b1.pierceBonus && b5.pierceBonus === 2, 'boomerang: Lv5 pierce (+2) > Lv1');
+  ok(b5.pierceBonus > b1.pierceBonus && b5.pierceBonus === 2 && weaponLevelParams('BOOMERANG', 8).pierceBonus === 3,
+     'boomerang: +1 pierce at Lv2/4/6 (Lv5 carries 2)');
   ok(near(b5.speedMult, 1 + 0.15 * 4), 'boomerang: +15% flight speed per level');
-  ok(b5.dmgMult === 1 + 0.2 * 4, 'boomerang: +20% damage per level');
+  ok(near(b5.dmgMult, 1 + 0.4 * 4), 'boomerang: +40% damage per level');
+  ok(weaponLevelParams('BOOMERANG', 3).count === 1 && weaponLevelParams('BOOMERANG', 4).count === 2 &&
+     weaponLevelParams('BOOMERANG', 8).count === 3, 'boomerang: a second rang at Lv4, a third at Lv8');
 
-  // ZAP: chains. CHAIN ZAP REWORK (msg_01M2RENZ, 2026-09-17): the ladder's
-  // +1-jump-per-even-level growth is RETIRED — count growth moved to the
-  // 'zapchain' shop row (pinned in test_chain_zap.mjs: base 3 at EVERY weapon
-  // level). The ladder is damage-only now; this pin states the new contract,
-  // it does not silently drop the old one.
-  ok(weaponLevelParams('ZAP', 1).jumps === undefined &&
-     weaponLevelParams('ZAP', 8).jumps === undefined &&
-     near(weaponLevelParams('ZAP', 8).dmgMult, 1 + 0.17 * 7),
-     'zap: ladder is damage-only (count growth retired to the shop)');
+  // ZAP: +1 chain target at Lv3/5/7, damage every level, attack rate at Lv8.
+  ok(weaponLevelParams('ZAP', 1).jumps === 0 && weaponLevelParams('ZAP', 3).jumps === 1 &&
+     weaponLevelParams('ZAP', 8).jumps === 3 &&
+     near(weaponLevelParams('ZAP', 8).dmgMult, 1 + 0.35 * 7) &&
+     near(weaponLevelParams('ZAP', 8).rateMult, 1.25) && weaponLevelParams('ZAP', 7).rateMult === 1,
+     'zap: +1 chain target at Lv3/5/7, +35% damage per level, +25% rate at Lv8');
 
   // NOVA: radius.
   ok(weaponLevelParams('NOVA_PULSE', 3).radius === WEAPONS.NOVA_PULSE.RADIUS + 12,
@@ -217,8 +221,10 @@ console.log('LEVELS:');
 
   // describeWeaponLevel: card text for the draft UI. CHAIN ZAP REWORK
   // (msg_01M2RENZ): the ladder is damage-only — no '+1 chain' line anymore.
-  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +17% damage`,
+  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +35% damage`,
      'describeWeaponLevel returns card text');
+  ok(describeWeaponLevel('ZAP', 3) === `${WEAPON_NAMES.ZAP} Lv3 — +35% damage, +1 chain target (total 4)`,
+     'describeWeaponLevel states the chain target');
   ok(describeWeaponLevel('NOPE', 2) === null, 'describeWeaponLevel: unknown id -> null');
   ok(describeWeaponLevel('ZAP', 99).includes('MAX'), 'describeWeaponLevel: past cap -> MAX');
 
@@ -285,8 +291,8 @@ console.log('LEVEL EFFECTS:');
   const wb = makeWeapon('BOOMERANG');
   wb.level = 5;
   WEAPON_TYPES.BOOMERANG.update(stB, wb, 0.016);
-  ok(stB.projectiles[0].pierce === 2 && stB.projectiles[0].damage === 10 * 1.8,
-     'boomerang Lv5 body carries +2 pierce and +80% damage');
+  ok(stB.projectiles[0].pierce === 2 && Math.abs(stB.projectiles[0].damage - 10 * 2.6) < 1e-9,
+     'boomerang Lv5 body carries +2 pierce and +160% damage');
 }
 
 // ---------- Weapon XP ----------
@@ -450,11 +456,15 @@ console.log('LEVELS (wave-2):');
      'seeker: +0.65 turn rate per level');
   // MINE: blast + damage.
   ok(weaponLevelParams('MINE', 3).blast === WEAPONS.MINE.BLAST + 8 &&
-     near(weaponLevelParams('MINE', 3).dmgMult, 1.4), 'mine: +4 blast radius, +20% damage per level');
+     near(weaponLevelParams('MINE', 3).dmgMult, 1.8), 'mine: +4 blast radius, +40% damage per level');
+  ok(weaponLevelParams('MINE', 4).extraMines === 2 && weaponLevelParams('MINE', 8).extraMines === 4 &&
+     near(weaponLevelParams('MINE', 8).rateMult, 1.33 * 1.33), 'mine: +2 mines and +33% rate at Lv4 and Lv8');
   // BEAM: width + damage.
   ok(weaponLevelParams('BEAM', 3).width === WEAPONS.BEAM.WIDTH + 4 &&
-     near(weaponLevelParams('BEAM', 8).dmgMult, 1 + 0.15 * 7),
-     'beam: +2 width, +15% damage per level');
+     near(weaponLevelParams('BEAM', 8).dmgMult, 1 + 0.35 * 7),
+     'beam: +2 width, +35% damage per level');
+  ok(weaponLevelParams('BEAM', 5).length === WEAPONS.BEAM.LENGTH &&
+     weaponLevelParams('BEAM', 6).length === WEAPONS.BEAM.LENGTH + 60, 'beam: +60 length at Lv6');
 
   ok(describeWeaponLevel('SEEKER', 2) === `${WEAPON_NAMES.SEEKER} Lv2 — +1 missile (total 2), +turn rate`,
      'describeWeaponLevel covers the new archetypes');
@@ -567,14 +577,14 @@ console.log('AFFIX WIRING:');
 
   // VOLLEY Lv3/Lv6: the level grants +1 projectile and a 20% damage
   // multiplier (main.js fire loop), and the card says exactly that.
-  for (const L of [3, 6]) {
+  for (const L of [2, 6]) {
     const a = weaponLevelParams('VOLLEY', L - 1), b = weaponLevelParams('VOLLEY', L);
     ok(b.proj === a.proj + 1 && b.dmgMult === a.dmgMult,
        `VOLLEY Lv${L} grants +1 projectile and no ladder dmgMult`);
     ok(WEAPON_LEVELS.VOLLEY[L - 1].label === '+1 projectile, +20% damage',
        `VOLLEY Lv${L} label states the projectile and its +20% (got "${WEAPON_LEVELS.VOLLEY[L - 1].label}")`);
   }
-  ok(WEAPON_STEPS.VOLLEY.PROJ_DMG === 0.2 && WEAPON_LEVELS.VOLLEY[1].label === '+60% damage',
+  ok(WEAPON_STEPS.VOLLEY.PROJ_DMG === 0.2 && WEAPON_LEVELS.VOLLEY[2].label === '+60% damage',
      'VOLLEY damage levels still read +60%');
 }
 

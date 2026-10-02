@@ -1,181 +1,178 @@
-// HORDES — WEAPON EVOLUTIONS (megabonk-style super-forms; Sk408-approved).
-// Self-contained: this module owns requirement checks + data ONLY. hb1 wires
-// the gameplay flags and the UI. Nothing here touches the DOM, rng, or other
-// modules' state — pure logic, deterministic, headless-testable.
+// HORDES — WEAPON EVOLUTIONS.
+// Pure data + requirement checks; main.js wires the overlay and the gameplay
+// flags, weapons.js reads the flags and affixes. No DOM, no rng, no state.
 //
-// REQUIREMENTS to evolve a weapon (all three, checked in this order):
-//   1. weapon at max level (weapons.js WEAPON_MAX_LEVEL = Lv8)
-//   2. one equipped item of the evolution's ITEM KIND.
-//      "Kind" = the STAT FIELD an affix grants (e.g. 'crit' = any item with a
-//      crit-chance affix: Keen Eye, True Sight, Witchmark...). See
-//      itemKindsOf below; the mapping is listed per-def in EVOLUTION_DEFS.
-//   3. 1 EVOLUTION TOKEN (chests.js legendary chests already offer these via
-//      EVOLUTION_TOKENS / the tokenOffer event — hb1 tracks the count).
+// A weapon evolves when BOTH hold:
+//   1. it is at max level (weapons.js WEAPON_MAX_LEVEL)
+//   2. the run has taken its PARTNER card — one of the common stat cards in
+//      config.js UPGRADES (the draft shows "evolves with <partner>" on every
+//      weapon level-up card, and the partner card says which weapons it opens).
+// No token, no item roll: a run that drafts toward an evolution gets it.
 //
-// AFFIX SEAM: evolved forms reuse the same four fields loot.js puts on
-// player.stats, but applied PER-WEAPON by hb1 (multiply into the weapon's
-// damage/cooldown math exactly like dmgScale()/rateScale() do in weapons.js):
-//   damageMult — multiplicative on the weapon's final damage
-//   rateMult   — multiplicative on attack rate (cooldowns DIVIDE by it)
-//   crit       — ADDITIVE crit chance for this weapon's hits (0..1)
-//   critMult   — ADDITIVE bonus to the crit damage multiplier (e.g. 0.5 = +50%
-//                crit damage; final = (player.critMult || 1.5) + this)
-// Missing fields are neutral (absent => no change) — same convention as
-// weapons.js loot wiring.
-//
-// BEHAVIOR FLAGS: at most 2 new pure-data flags per form (hb1 wires them into
-// the update functions; unknown flags must be ignored so this file can ship
-// ahead of the gameplay wiring).
+// AFFIXES are applied per weapon by weapons.js with the loot-stat convention:
+//   damageMult  multiplies the weapon's damage
+//   rateMult    multiplies its attack rate (cooldowns divide by it)
+//   crit        additive crit chance for this weapon's hits
+//   critMult    additive bonus to the crit damage multiplier
+// FLAGS are the behaviour changes (two per form), read by the update paths.
 
 import { WEAPON_MAX_LEVEL, WEAPON_NAMES } from './weapons.js';
-import { AFFIX_POOL } from './loot.js';
-
-// Item-kind pairing (loot.js AFFIX_POOL ids — one DISTINCT kind per weapon):
-//   VOLLEY     -> crit       (Keen Eye:         the aimed kill shot)
-//   ORBIT      -> rateMult   (Rapid Trigger:    blades spin faster)
-//   BOOMERANG  -> damageMult (Brutal Edge:      a heavier edge returns harder)
-//   ZAP        -> critMult   (Executioner:      voltage that executes)
-//   NOVA_PULSE -> pickupMult (Loot Vortex:      the pull before the burst)
-//   SCYTHE     -> lifesteal  (Vampiric:         the reaper's harvest)
-//   SEEKER     -> speedMult  (Windwalker:       faster pursuit)
-//   MINE       -> thorns     (Spiked Hide:      trap armor)
-//   BEAM       -> xpMult     (Scholar's Mind:   focused study, focused light)
-export const EVOLUTION_TOKEN_COST = 1;
+import { UPGRADES } from './config.js';
 
 export const EVOLUTION_DEFS = {
   VOLLEY: {
-    id: 'NOVA_SHOT', weapon: 'VOLLEY', name: 'Nova Shot',
-    desc: 'Split Shot maxed: every volley round pierces the whole lane and detonates a micro-nova on a kill.',
-    itemKind: 'crit',
+    id: 'NOVA_SHOT', weapon: 'VOLLEY', name: 'Nova Shot', partner: 'multi',
+    desc: 'Every round pierces the whole lane and bursts into a nova on a kill.',
     affixes: { damageMult: 2, crit: 0.15 },
     flags: ['pierceAll', 'novaRounds'],
   },
   ORBIT: {
-    id: 'TWIN_ORBIT', weapon: 'ORBIT', name: 'Twin Orbit',
-    desc: 'A second counter-rotating blade ring; contact ticks come twice as often and twice as hard.',
-    itemKind: 'rateMult',
-    affixes: { damageMult: 1.8, rateMult: 1.25 },
+    id: 'TWIN_ORBIT', weapon: 'ORBIT', name: 'Twin Orbit', partner: 'rate',
+    desc: 'A second counter-rotating blade ring; contact ticks come twice as often.',
+    affixes: { damageMult: 1.5, rateMult: 1.25 },
     flags: ['twinOrbit', 'bladeStorm'],
   },
   BOOMERANG: {
-    id: 'VOID_RANG', weapon: 'BOOMERANG', name: 'Void Rang',
-    desc: 'The return leg phases through the void: full pierce both ways, and it drags enemies toward the thrower.',
-    itemKind: 'damageMult',
-    affixes: { damageMult: 1.8 },
+    id: 'VOID_RANG', weapon: 'BOOMERANG', name: 'Void Rang', partner: 'dmg',
+    desc: 'Thrown faster, both legs pass through everything, and every hit drags the victim toward you.',
+    affixes: { damageMult: 2.0, rateMult: 1.5 },
     flags: ['pierceAll', 'voidPull'],
   },
+  JAVELIN: {
+    id: 'SOLAR_LANCE', weapon: 'JAVELIN', name: 'Solar Lance', partner: 'speed',
+    desc: 'The spear flies 2.5x as far, and every enemy it passes bursts into a small sun.',
+    affixes: { damageMult: 1.6, crit: 0.1 },
+    flags: ['longLane', 'sunBurst'],
+  },
   ZAP: {
-    id: 'TESLA_TEMPEST', weapon: 'ZAP', name: 'Tesla Tempest',
-    desc: 'Chains fork at every jump and crits execute — the storm decides who is finished.',
-    itemKind: 'critMult',
-    affixes: { damageMult: 1.6, critMult: 1.0 },
+    id: 'TESLA_TEMPEST', weapon: 'ZAP', name: 'Tesla Tempest', partner: 'pierce',
+    desc: 'Chains fork at every jump, and a second bolt strikes the next-nearest enemy.',
+    affixes: { damageMult: 1.8, critMult: 1.0 },
     flags: ['chainZap', 'forkBolt'],
   },
   NOVA_PULSE: {
-    id: 'SUPERNOVA', weapon: 'NOVA_PULSE', name: 'Supernova',
-    desc: 'Each pulse sucks the horde inward before the blast; pulses chain back-to-back.',
-    itemKind: 'pickupMult',
-    affixes: { damageMult: 1.8, rateMult: 1.2 },
+    id: 'SUPERNOVA', weapon: 'NOVA_PULSE', name: 'Supernova', partner: 'pickup',
+    desc: 'Pulses reach 1.5x as far and come twice as often.',
+    affixes: { damageMult: 1.5 },
     flags: ['bigBoom', 'novaChain'],
   },
   SCYTHE: {
-    id: 'GRAVE_HARVEST', weapon: 'SCYTHE', name: 'Grave Harvest',
-    desc: 'The sweep becomes a full circle and every kill harvests a sliver of life.',
-    itemKind: 'lifesteal',
+    id: 'GRAVE_HARVEST', weapon: 'SCYTHE', name: 'Grave Harvest', partner: 'hp',
+    desc: 'The sweep becomes a full circle, and every kill in it heals you.',
     affixes: { damageMult: 1.5, crit: 0.20 },
     flags: ['wideReap', 'harvestSouls'],
   },
+  EMBER: {
+    id: 'INFERNO', weapon: 'EMBER', name: 'Inferno', partner: 'rate',
+    desc: 'Fires faster; kill bursts pay full damage over 1.5x the radius and leave burning ground.',
+    affixes: { damageMult: 1.7, rateMult: 1.3, crit: 0.1 },
+    flags: ['bigBurst', 'burnGround'],
+  },
+  RICOCHET: {
+    id: 'PRISM_SHOT', weapon: 'RICOCHET', name: 'Prism Shot', partner: 'multi',
+    desc: 'Twice the bounces over 1.5x the range, and every impact throws a shard at the next enemy.',
+    affixes: { damageMult: 1.4 },
+    flags: ['splitBounce', 'endlessBounce'],
+  },
   SEEKER: {
-    id: 'HYDRA_SWARM', weapon: 'SEEKER', name: 'Hydra Swarm',
-    desc: 'Cut one missile down and two more hatch — the hunt does not end while a target lives.',
-    itemKind: 'speedMult',
+    id: 'HYDRA_SWARM', weapon: 'SEEKER', name: 'Hydra Swarm', partner: 'speed',
+    desc: 'Every hit hatches two more missiles, and lost missiles hunt three times as long.',
     affixes: { damageMult: 2, rateMult: 1.3, critMult: 0.5 },
     flags: ['hydraSplit', 'eternalHunt'],
   },
+  METEOR: {
+    id: 'METEOR_STORM', weapon: 'METEOR', name: 'Meteor Storm', partner: 'dmg',
+    desc: 'Twice the rocks fall faster, and every crater burns the ground.',
+    affixes: { damageMult: 1.3 },
+    flags: ['storm', 'crater'],
+  },
   MINE: {
-    id: 'VOLCANIC_FIELD', weapon: 'MINE', name: 'Volcanic Field',
-    desc: 'Blasts crater-wide, and each detonation sets off its neighbors in a rolling chain.',
-    itemKind: 'thorns',
+    id: 'VOLCANIC_FIELD', weapon: 'MINE', name: 'Volcanic Field', partner: 'hp',
+    desc: 'Blasts reach 1.5x as far, and each detonation sets off its neighbours in a rolling chain.',
     affixes: { damageMult: 1.7 },
     flags: ['bigBoom', 'chainMine'],
   },
   BEAM: {
-    id: 'GODLANCE', weapon: 'BEAM', name: 'Godlance',
-    desc: 'The beam splits through a prism of the first sunrise; everything in every lane burns.',
-    itemKind: 'xpMult',
-    affixes: { damageMult: 2.0, crit: 0.25 },
+    id: 'GODLANCE', weapon: 'BEAM', name: 'Godlance', partner: 'pierce',
+    desc: 'The beam splits into three lanes, each 30% wider.',
+    affixes: { damageMult: 1.6, crit: 0.25 },
     flags: ['prismSplit', 'solarFlare'],
   },
 };
 
-const AFFIX_SEAM = ['damageMult', 'rateMult', 'crit', 'critMult'];
+/** The partner card's display name (config.js UPGRADES), or the id. */
+export function partnerName(cardId) {
+  const u = UPGRADES.find(x => x.id === cardId);
+  return u ? u.name : cardId;
+}
 
-// The set of kinds (stat fields) granted by a list of equipped items.
-export function itemKindsOf(items) {
-  const kinds = new Set();
-  for (const it of items || []) {
-    for (const a of (it && it.affixes) || []) kinds.add(a.field || a.id);
-  }
-  return kinds;
+/** Weapon ids whose evolution a stat card opens (for the card's own text). */
+export function weaponsOpenedBy(cardId) {
+  return Object.values(EVOLUTION_DEFS).filter(d => d.partner === cardId).map(d => d.weapon);
+}
+
+// ownedCards: the run's takenStats ledger ({ id: 1 }), a Set, or an array.
+function hasCard(ownedCards, id) {
+  if (!ownedCards) return false;
+  if (ownedCards instanceof Set) return ownedCards.has(id);
+  if (Array.isArray(ownedCards)) return ownedCards.includes(id);
+  return !!ownedCards[id];
+}
+
+// ---------- evolutionProgress ---------------------------------------------
+// What a weapon still needs. Null for a weapon with no evolution.
+//   { def, level, levelReq, partner, partnerName, partnerOwned, levelsLeft, ready, evolved }
+export function evolutionProgress(weapon, ownedCards) {
+  const def = weapon && EVOLUTION_DEFS[weapon.type];
+  if (!def) return null;
+  const level = weapon.level || 1;
+  const partnerOwned = hasCard(ownedCards, def.partner);
+  const evolved = !!weapon.evolutionId;
+  return {
+    def, level, levelReq: WEAPON_MAX_LEVEL,
+    partner: def.partner, partnerName: partnerName(def.partner), partnerOwned,
+    levelsLeft: Math.max(0, WEAPON_MAX_LEVEL - level),
+    ready: !evolved && level >= WEAPON_MAX_LEVEL && partnerOwned,
+    evolved,
+  };
 }
 
 // ---------- evolveWeapon ---------------------------------------------------
-// evolveWeapon(weapon, equippedItemKinds, tokenCount)
-//   weapon            weapon instance ({ type, level }) from weapons.js
-//   equippedItemKinds array OR Set of affix stat fields the player has
-//                     equipped (itemKindsOf(state.items))
-//   tokenCount        number of evolution tokens the player holds
-//
-// Returns (rollPaidChest-style result object; NEVER throws on bad input):
-//   { ok: true,  weapon, name, tokens }  — success: weapon is the SAME instance,
-//                                          mutated in place with evolutionId +
-//                                          evolution (a def copy); tokens is the
-//                                          count AFTER spending (tokenCount - cost).
-//   { ok: false, reason, weapon }        — failure; weapon is UNTOUCHED.
-//     reason: 'type'     unknown weapon id / no evolution defined
-//             'evolved' already evolved (idempotent no-op; no token spent)
-//             'level'    below WEAPON_MAX_LEVEL
-//             'item'     required item kind not equipped
-//             'token'    not enough tokens
-export function evolveWeapon(weapon, equippedItemKinds, tokenCount) {
+// evolveWeapon(weapon, ownedCards). Never throws on bad input.
+//   { ok: true,  weapon, name }   the SAME instance, mutated in place with
+//                                 evolutionId + evolution (a def copy)
+//   { ok: false, reason, weapon } weapon untouched; reason:
+//       'type'     unknown weapon / no evolution defined
+//       'evolved'  already evolved (idempotent no-op)
+//       'level'    below WEAPON_MAX_LEVEL
+//       'partner'  the partner card has not been taken this run
+export function evolveWeapon(weapon, ownedCards) {
   const def = weapon && EVOLUTION_DEFS[weapon.type];
   if (!def) return { ok: false, reason: 'type', weapon: weapon || null };
   if (weapon.evolutionId) return { ok: false, reason: 'evolved', weapon };
-
   if ((weapon.level || 1) < WEAPON_MAX_LEVEL) return { ok: false, reason: 'level', weapon };
-
-  const kinds = equippedItemKinds instanceof Set ? equippedItemKinds : (equippedItemKinds || []);
-  const hasKind = typeof kinds.has === 'function' ? kinds.has(def.itemKind) : kinds.includes(def.itemKind);
-  if (!hasKind) return { ok: false, reason: 'item', weapon };
-
-  const cost = EVOLUTION_TOKEN_COST;
-  if ((tokenCount || 0) < cost) return { ok: false, reason: 'token', weapon };
-
-  // Success: mutate the instance (levelUpWeapon precedent) + spend the token.
+  if (!hasCard(ownedCards, def.partner)) return { ok: false, reason: 'partner', weapon };
   weapon.evolutionId = def.id;
   weapon.evolution = { ...def, affixes: { ...def.affixes }, flags: [...def.flags] };
-  return { ok: true, weapon, name: def.name, tokens: (tokenCount || 0) - cost };
+  return { ok: true, weapon, name: def.name };
 }
 
 // ---------- describeEvolution ----------------------------------------------
-// UI card for the evolution screen. Accepts a weapon instance OR a weapon id
-// string. Pre-evolved weapons come back with evolved: true so the card can
-// render as "ACHIEVED". Returns null for unknown ids (render nothing).
+// UI card for the evolve screen and the weapon list. Accepts a weapon instance
+// or a weapon id string; null for unknown ids.
 export function describeEvolution(weaponOrId) {
   const id = typeof weaponOrId === 'string' ? weaponOrId : (weaponOrId && weaponOrId.type);
   const def = EVOLUTION_DEFS[id];
   if (!def) return null;
-  const kind = AFFIX_POOL.find(a => a.id === def.itemKind);
   return {
     id: def.id,
     weaponId: def.weapon,
     weaponName: WEAPON_NAMES[def.weapon] || def.weapon,
     name: def.name,
     desc: def.desc,
-    itemKind: def.itemKind,
-    itemKindName: kind ? kind.name : def.itemKind,
+    partner: def.partner,
+    partnerName: partnerName(def.partner),
     levelReq: WEAPON_MAX_LEVEL,
-    tokenCost: EVOLUTION_TOKEN_COST,
     affixes: { ...def.affixes },
     flags: [...def.flags],
     evolved: typeof weaponOrId === 'object' ? Boolean(weaponOrId.evolutionId === def.id) : false,

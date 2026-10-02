@@ -19,8 +19,9 @@ globalThis.__HORDES_SIM_REGISTRY = { totalS: 0, arms, get budgetS() { return nul
 
 const H = await import(treeUrl('test/_harness.mjs'));
 const CFG = (await import(treeUrl('src/config.js'))).CONFIG;
+const EVOLUTION_DEFS = (await import(treeUrl('src/evolutions.js'))).EVOLUTION_DEFS || {};
 
-export const DRAFT_POLICIES = ['random', 'weapons-first', 'stats-first'];
+export const DRAFT_POLICIES = ['random', 'weapons-first', 'evolution-first', 'stats-first'];
 export const ONCE_MODES = ['asis', 'take', 'never'];
 export const LOADOUT_POLICIES = ['default', 'all-owned'];
 // stats-first draft priority (base stat-card ids). Cards not listed are taken
@@ -112,6 +113,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     if (T.setPilotMode) T.setPilotMode('AUTO_ALL');
     const weapons = st.weapons.map((w) => w.type).join('+');
     let drafts = 0, end = null, maxWave = 1, escFrames = 0, stuck = 0, lastT = -1, tookOnce = null;
+    let firstEvo = null, evolved = 0;   // sim seconds of the first evolution; evolutions in the run
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
     const trace = []; let nextTrace = traceEvery;
     const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_');
@@ -130,6 +132,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
           if (pol.draft !== 'random') cand = cand.filter((i) => !isRule(offs[i]));
           if (!cand.length) cand = offs.map((_o, i) => i);
           if (pol.draft === 'weapons-first') { const w = cand.find((i) => isWeapon(offs[i])); if (w !== undefined) pick = w; }
+          if (pol.draft === 'evolution-first') pick = evolutionFirstPick(st, offs, cand, statPriority);
           if (pol.draft === 'stats-first') {
             let best = null, bestR = Infinity;
             for (const i of cand) { const r = statPriority.indexOf(offs[i].id); if (r >= 0 && r < bestR) { best = i; bestR = r; } }
@@ -146,6 +149,10 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       }
       h.pump(1); frames++;
       maxWave = Math.max(maxWave, st.wave.num);
+      if (st.weapons.length && st.weapons.some((w) => w.evolutionId)) {
+        const n = st.weapons.filter((w) => w.evolutionId).length;
+        if (n > evolved) { evolved = n; if (firstEvo === null) firstEvo = Math.round(st.time); }
+      }
       if (traceEvery && st.time >= nextTrace) {
         nextTrace += traceEvery;
         const pl = st.player;
@@ -181,12 +188,39 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
-      weapons, picks, tookOnce, frames, ...(traceEvery ? { trace } : {}),
+      weapons, picks, tookOnce, frames, firstEvo, evolved, ...(traceEvery ? { trace } : {}),
     };
   } finally {
     Math.random = realRandom;
     Date.now = realDateNow;
   }
+}
+
+// evolution-first: level the un-evolved weapon closest to its evolution (the
+// highest-level one; ties by kit order), take its partner card once it is on
+// the way, then any other weapon card, then a stat card (in --stat-priority
+// order, then any other non-rule card).
+function evolutionFirstPick(st, offs, cand, statPriority) {
+  const idOf = (o) => String(o.id);
+  const taken = (st.player && st.player.takenStats) || {};
+  const kit = (st.weapons || []).filter((w) => !w.evolutionId && EVOLUTION_DEFS[w.type])
+    .sort((a, b) => (b.level || 1) - (a.level || 1));
+  for (const w of kit) {
+    const lv = cand.find((i) => idOf(offs[i]).startsWith('lvl_' + w.type + '_'));
+    if (lv !== undefined) return lv;
+    const partner = EVOLUTION_DEFS[w.type].partner;
+    if (partner && !taken[partner]) {
+      const pc = cand.find((i) => idOf(offs[i]) === partner);
+      if (pc !== undefined) return pc;
+    }
+  }
+  const anyW = cand.find((i) => /^(lvl|wpn)_/.test(idOf(offs[i])));
+  if (anyW !== undefined) return anyW;
+  let best = null, bestR = Infinity;
+  for (const i of cand) { const r = statPriority.indexOf(idOf(offs[i])); if (r >= 0 && r < bestR) { best = i; bestR = r; } }
+  if (best !== null) return best;
+  const stat = cand.find((i) => !/^(lvl|wpn|rule)_/.test(idOf(offs[i])) && !offs[i].rule);
+  return stat === undefined ? null : stat;
 }
 
 const tag = (pol) => [pol.shop, pol.loadout, pol.draft, pol.once, pol.stance, pol.character].join('/');
