@@ -1190,7 +1190,7 @@ function stepPct(v) {
 }
 
 export const WEAPON_STEPS = {
-  VOLLEY: { DMG: 0.6 },
+  VOLLEY: { DMG: 0.6, PROJ_DMG: 0.2 },
   ORBIT: { DMG: 0.20, RADIUS: 4 },
   BOOMERANG: { DMG: 0.2, SPEED: 0.15 },
   JAVELIN: { DMG: 0.18, SPEED: 0.10, RANGE: 25 },
@@ -1210,14 +1210,12 @@ export const WEAPON_STEPS = {
 // below) — the game itself builds each table once at import. Behaviour is
 // byte-identical to the inline closures these replace.
 export const WEAPON_LADDERS = {
-  // VOLLEY is leveled here but FIRED by main.js, which caps total projectiles
-  // at CONFIG.WEAPON.MAX_PROJECTILES=3 and converts each "+1 projectile"
-  // grant into +20% damage instead — so the Lv3/Lv6 labels say that. The
-  // proj DATA is kept (+1 at Lv3/Lv6) because main.js reads it for the
-  // damage conversion (1 + 0.2 * proj).
+  // VOLLEY is leveled here but FIRED by main.js. Lv3/Lv6 each grant +1
+  // projectile (up to the volley projectile cap) and a PROJ_DMG damage
+  // multiplier (1 + PROJ_DMG * proj); every other level adds DMG.
   VOLLEY: (L, c) => {
     if (L === 1) { c.dmgMult = 1; c.proj = 0; return 'Base volley'; }
-    if (L === 3 || L === 6) { c.proj += 1; return '+' + stepPct(WEAPON_STEPS.VOLLEY.DMG) + '% damage'; }
+    if (L === 3 || L === 6) { c.proj += 1; return '+1 projectile, +' + stepPct(WEAPON_STEPS.VOLLEY.PROJ_DMG) + '% damage'; }
     c.dmgMult += WEAPON_STEPS.VOLLEY.DMG;
     return '+' + stepPct(WEAPON_STEPS.VOLLEY.DMG) + '% damage';
   },

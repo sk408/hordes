@@ -4,6 +4,7 @@ import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons,
   WEAPON_MAX_LEVEL, WEAPON_LEVELS, WEAPON_NAMES, weaponLevelParams,
   levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponXpNeeded, WEAPON_XP_BASE,
+  WEAPON_STEPS,
 } from '../src/weapons.js';
 
 let failed = 0;
@@ -564,14 +565,17 @@ console.log('AFFIX WIRING:');
        'crit 1.0 + critMult 2.0 doubles the boomerang hit');
   }
 
-  // VOLLEY Lv3/Lv6 labels: main.js caps projectiles and converts the grants
-  // to +20% damage each, so the card text must not promise a projectile.
-  ok(!describeWeaponLevel('VOLLEY', 3).includes('projectile') &&
-     !describeWeaponLevel('VOLLEY', 6).includes('projectile'),
-     'VOLLEY Lv3/Lv6 labels no longer say "+1 projectile"');
-  ok(WEAPON_LEVELS.VOLLEY[2].label.includes('damage') &&
-     WEAPON_LEVELS.VOLLEY[5].label.includes('damage'),
-     'VOLLEY Lv3/Lv6 labels grant damage instead');
+  // VOLLEY Lv3/Lv6: the level grants +1 projectile and a 20% damage
+  // multiplier (main.js fire loop), and the card says exactly that.
+  for (const L of [3, 6]) {
+    const a = weaponLevelParams('VOLLEY', L - 1), b = weaponLevelParams('VOLLEY', L);
+    ok(b.proj === a.proj + 1 && b.dmgMult === a.dmgMult,
+       `VOLLEY Lv${L} grants +1 projectile and no ladder dmgMult`);
+    ok(WEAPON_LEVELS.VOLLEY[L - 1].label === '+1 projectile, +20% damage',
+       `VOLLEY Lv${L} label states the projectile and its +20% (got "${WEAPON_LEVELS.VOLLEY[L - 1].label}")`);
+  }
+  ok(WEAPON_STEPS.VOLLEY.PROJ_DMG === 0.2 && WEAPON_LEVELS.VOLLEY[1].label === '+60% damage',
+     'VOLLEY damage levels still read +60%');
 }
 
 // ---------- Summary ----------

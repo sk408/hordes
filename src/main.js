@@ -42,6 +42,7 @@ import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
   levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams, PIERCE_ALL,
+  WEAPON_STEPS,
 } from './weapons.js';
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
@@ -1451,9 +1452,8 @@ function runController(p, dt, am) {
     // VOLLEY weapon level (megabonk ladder) + SPLIT SHOT NERF (Sk408):
     //  - total volley projectiles capped at C.WEAPON.MAX_PROJECTILES (base 1
     //    +2 from ALL sources: Split Shot cards AND VOLLEY level grants);
-    //  - VOLLEY's Lv3/Lv6 "+1 projectile" grants are re-read here as +20%
-    //    damage each instead (the cap made them dead weight; weapons.js's
-    //    table text still says "+1 projectile" — noted for hb3 to relabel);
+    //  - VOLLEY's Lv3/Lv6 grants add +1 projectile (under the cap) AND a
+    //    PROJ_DMG damage multiplier each (the card label says both);
     //  - extra projectiles spread wider (0.18 -> C.WEAPON.SPREAD).
     const volleyW = state.weapons.find(w => w.type === 'VOLLEY');
     const P = weaponLevelParams('VOLLEY', volleyW ? volleyW.level : 1);
@@ -1461,7 +1461,7 @@ function runController(p, dt, am) {
     // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
     const volleyEvo = volleyW && volleyW.evolution;
     const n = Math.min(p.stats.projectiles + (P.proj || 0), volleyProjectileCap(p.stats));
-    const volleyDmgMult = (P.dmgMult || 1) * (1 + 0.2 * (P.proj || 0)) *
+    const volleyDmgMult = (P.dmgMult || 1) * (1 + WEAPON_STEPS.VOLLEY.PROJ_DMG * (P.proj || 0)) *
       (p.stats.damageMult || 1) * am.damageMult *   // loot Brutal Edge + BERSERK arch
       (volleyEvo && volleyEvo.affixes.damageMult || 1);
     const volleyPierceAll = !!(volleyEvo && volleyEvo.flags.includes('pierceAll'));
