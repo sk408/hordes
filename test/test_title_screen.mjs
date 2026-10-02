@@ -221,7 +221,7 @@ check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
   T.openSettings();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
-    'HOW TO PLAY', 'ADVANCED', 'END RUN', 'BACK'],
+    'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
     'in-run settings: no save cards, END RUN added (no TEST: ESCAPE)');
   cardWith('ADVANCED').click();
   assert.ok(!names().some(x => /^NIGHT MODE|RESET PROFILE|RECOVERY FILE/.test(x)), 'in-run ADVANCED has no night mode / reset / recovery');

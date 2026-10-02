@@ -4274,7 +4274,8 @@ function update(dt) {
       p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
-      while (p.xp >= p.xpNext) { levelUp(); }
+      // The guided part of run 1 grants its one level-up itself (the draft step).
+      while (p.xp >= p.xpNext && !tutGuidedLive()) { levelUp(); }
       // W7b MYTHIC Storm Shards: picking up XP chips every enemy in a radius
       // (one proc per gem — it scales with XP farming by construction, and
       // with the run's damage investment through CHIP_FRAC). Enemy-side only,
@@ -8994,8 +8995,9 @@ const tut = {
   inited: false,
   hintMode: null,      // the mode a hint went up in; it closes when the mode changes
   run2Due: false,      // the second-run line is owed at the start of this run
+  hintsMuted: false,   // the run that carries the guided part shows no hints (skip included)
   menuId: null, menuShownMs: NaN, menuSkipArmT: 0, shopGold: 0,
-  gems: 0, casts: 0, drinks: 0, xpMark: 0, manaMark: 0, potionMark: 0,
+  gems: 0, casts: 0, drinks: 0, xpMark: 0,
   potions0: 0, spawnT: 0, lastGuidedS: null,
   focus: null, stance: null,
 };
@@ -9011,6 +9013,7 @@ function tutArmRun(arm, runsPlayed) {
   tut.guided = null;
   tut.hints.active = null;
   tut.run2Due = false;
+  tut.hintsMuted = !!arm;
   tut.focus = null; tut.stance = null;
   if (arm && state.assistedRun && profile.banners) {
     // Asked for again: forget the old progress so every step shows.
@@ -9028,24 +9031,20 @@ function tutArmRun(arm, runsPlayed) {
   setTourFlag(TOUR_KEYS.draft, true);   // the old draft coach card stays down
   tut.guided = new Guided({ touch: isTouchPath(), names: { skill: tutSkillName() } });
   tut.gems = 0; tut.casts = 0; tut.drinks = 0; tut.spawnT = 0;
-  tut.xpMark = p.xp; tut.manaMark = p.mana; tut.potionMark = p.potions.hp;
+  tut.xpMark = p.xp;
   tut.potions0 = p.potions.hp;
 }
 
 // One sim step of the guided part (update() calls this instead of advancing
-// the run clock). It counts what the steps wait for, keeps the XP bar short of
+// the run clock). It counts the gems the steps wait for, keeps the XP bar short of
 // a level (the draft step grants the one level-up), holds the purse at 0 until
 // the gold step so run 1 pays what it always paid, and tops the trainers up.
 function tutSim(dt) {
   const p = state.player;
   if (p.xp > tut.xpMark) tut.gems++;
-  p.xp = Math.min(p.xp, p.xpNext * 0.5);
+  p.xp = Math.min(p.xp, p.xpNext * 0.5);   // gems only count here; see the level-up gate at the gem pickup
   if (tut.guided.i < TUT_GOLD_STEP) state.runPurse = 0;
   tut.xpMark = p.xp;
-  if (p.mana < tut.manaMark - 1) tut.casts++;
-  tut.manaMark = p.mana;
-  if (p.potions.hp < tut.potionMark) tut.drinks++;
-  tut.potionMark = p.potions.hp;
   tut.spawnT -= dt;
   if (tut.spawnT <= 0) {
     let alive = 0;
@@ -9066,6 +9065,20 @@ function tutFacts() {
     casts: tut.casts, drinks: tut.drinks, purse: state.runPurse | 0, steering: !!heldMoveVec() };
 }
 
+// The skill step needs the Q skill castable: full mana and, for a
+// kill-charged ult, a full charge (this run's first cast comes free).
+function tutReadySkill() {
+  const p = state.player;
+  const id = classSkillId(state);
+  const def = C.SKILLS[id];
+  p.mana = p.stats.maxMana;
+  if (p.skillCd) p.skillCd[id] = 0;
+  if (def && def.KILLS != null) {
+    p.ultSpent = p.ultSpent || {};
+    p.ultSpent[id] = Math.min(p.ultSpent[id] || 0, (p.kills || 0) - def.KILLS);
+  }
+}
+
 // What the guided steps ask the game to do.
 const tutFx = {
   enter(kind) {
@@ -9077,20 +9090,18 @@ const tutFx = {
         levelUp();
       }
     } else if (kind === 'mana') {
-      p.mana = p.stats.maxMana;
-      tut.manaMark = p.mana;
+      tutReadySkill();
     } else if (kind === 'hurt') {
       // A scripted hit, so the potion has something to heal.
       p.hp = Math.min(p.hp, p.stats.maxHp * TUT.HURT_FRAC);
       p.potions.hp = Math.max(1, p.potions.hp);
-      tut.potionMark = p.potions.hp;
       audio.playSfx('hurt');
     }
   },
   // THE IDLE RULE: the pilot does the step's action for a hands-off player.
   perform(kind) {
     const p = state.player;
-    if (kind === 'skill') { p.mana = p.stats.maxMana; tut.manaMark = p.mana; runAction('q'); }
+    if (kind === 'skill') { tutReadySkill(); runAction('q'); }
     else if (kind === 'potion') runAction('h');
     else if (kind === 'draft' && state.mode === 'draft' && ovCards.children[0]) ovCards.children[0].click();
   },
@@ -9230,6 +9241,7 @@ function tutKeydown(ev) {
 function tutHint(id, targets) {
   if (id === 'run2' && !(tutSeen(LEDGER.cohort) && !tutSeen(LEDGER.skipped))) return false;
   if (state.nightRun || (dev && dev.autoplay)) return false;
+  if (tut.hintsMuted && state.mode !== 'setup') return false;
   if (!tut.hints.offer(id, targets || [], performance.now())) return false;
   tut.hintMode = state.mode;
   return true;
@@ -9829,7 +9841,8 @@ function runAction(act) {
     // Witch's chain beam is a DIRECT hit — its damage lands, only the
     // frost-slow rider is refused ('beam').
     const qid = classSkillId(state);
-    flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
+    const cast = flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
+    if (cast && tutGuidedLive()) tut.casts++;   // the tutorial's skill step
   }
   else if (act === 'w') { useSkill(state, 'OVERCHARGE'); }
   // RSS8 MAGNET COLLECTOR: the card-granted skill's MANUAL act (X key / the
@@ -9872,6 +9885,7 @@ function drinkHealthPotion(state) {
   const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
   const before = p2.hp;
   if (!usePotion(state, 'hp')) return false;    // heals potionHeal(p)
+  if (tutGuidedLive()) tut.drinks++;            // the tutorial's potion step
   let healed = p2.hp - before;
   if (healed > 0) {
     const bonus = Math.min(potionHeal(p2) * (healMult - 1),
