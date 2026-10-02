@@ -1344,12 +1344,22 @@ export function buildingFootprints(seed, stageId) {
   return buildingPlacements(seed, stageId).map(({ x, y, w, h }) => ({ x, y, w, h }));
 }
 
+// buildingFootprints behind a one-entry cache: the field is pure in
+// (seed, stage) and both are fixed for a run, so per-frame callers (motion,
+// pilot, render, drop placement) share one array. Treat it as read-only.
+let rectsKey = null, rectsVal = [];
+export function buildingRects(seed, stageId) {
+  const key = seed + '|' + String(stageId);
+  if (rectsKey !== key) { rectsVal = buildingFootprints(seed, stageId); rectsKey = key; }
+  return rectsVal;
+}
+
 // True when (x, y) sits inside any footprint (expanded by margin).
 // The pilot treats an interior loot mark the way it treats one beyond the
 // rim: not a candidate (controllers.js — the WAVE-27 wall-grind precedent).
 export function buildingCoversPoint(seed, stageId, x, y, margin) {
   const m = margin || 0;
-  for (const r of buildingFootprints(seed, stageId)) {
+  for (const r of buildingRects(seed, stageId)) {
     if (x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.h + m) return true;
   }
   return false;
@@ -1472,6 +1482,30 @@ export function pushOutOfRects(rects, x, y, margin) {
       }
     }
     if (!moved) break;
+  }
+  return [px, py];
+}
+
+// Nearest point for a world pickup (chest, shrine, arch, drop) that the pilot
+// can reach: outside every footprint expanded by margin, and within +-limit
+// on both axes when a limit is given. Unlike pushOutOfRects it never picks
+// an exit beyond the limit or inside a neighbouring footprint when another
+// exit is legal. Pure: returns [x, y].
+export function clearOfBuildings(rects, x, y, margin, limit) {
+  const m = margin || 0;
+  const lim = limit > 0 ? limit : Infinity;
+  const holder = (px, py) => rects.find(q =>
+    px > q.x - m && px < q.x + q.w + m && py > q.y - m && py < q.y + q.h + m);
+  let px = Math.max(-lim, Math.min(lim, x)), py = Math.max(-lim, Math.min(lim, y));
+  for (let pass = 0; pass < 6; pass++) {
+    const q = holder(px, py);
+    if (!q) break;
+    const exits = [[q.x - m, py], [q.x + q.w + m, py], [px, q.y - m], [px, q.y + q.h + m]]
+      .filter(([ex, ey]) => Math.abs(ex) <= lim && Math.abs(ey) <= lim)
+      .map(([ex, ey]) => ({ ex, ey, d: Math.abs(ex - px) + Math.abs(ey - py), free: !holder(ex, ey) }))
+      .sort((a, b) => (b.free - a.free) || (a.d - b.d));
+    if (exits.length === 0) break;
+    px = exits[0].ex; py = exits[0].ey;
   }
   return [px, py];
 }

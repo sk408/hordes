@@ -17,15 +17,26 @@ import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation,
 //   pushItemDrop — the DISCLOSED FALLBACK: rare equippables are unique, a
 //     merge would destroy one, so the OLDEST drop gives way at ITEM_CAP.
 // No magnetism, no auto-collect — reachability and pickup rules unchanged.
+// Move a world pickup to the nearest reachable point: outside every building
+// footprint (+margin) and inside the loot clamp. Mutates and returns it.
+function placeReachable(o, margin) {
+  const at = clearOfBuildings(buildingRects(state.groundSeed || 0, state.stage),
+    o.x, o.y, margin, lootLimit());
+  o.x = at[0]; o.y = at[1];
+  return o;
+}
+const SHRINE_BUILDING_MARGIN = 10, ARCH_BUILDING_MARGIN = 14;
 function pushGem(gm) {
   return pushGroundCapped(state.gems, gm, C.GROUND_ITEMS.GEM_CAP,
     () => 'gem', (s, n) => { s.xp += n.xp; });
 }
 function pushDrop(d) {
+  placeReachable(d, 2);
   return pushGroundCapped(state.drops, d, C.GROUND_ITEMS.DROP_CAP,
     x => x.kind, (s, n) => { s.count = (s.count || 1) + (n.count || 1); });
 }
 function pushItemDrop(d) {
+  placeReachable(d, 2);
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
 }
@@ -217,7 +228,7 @@ import {
 // run-scoped cache below (same field all run: the seed + stage never move
 // mid-run) and applies the slide at the ONE pilot-motion seam.
 import {
-  buildingFootprints, slideMove, buildingSteer, pushOutOfRects, BUILDING_MOVER_R,
+  buildingRects, clearOfBuildings, slideMove, buildingSteer, pushOutOfRects, BUILDING_MOVER_R,
 } from './stage_buildings.js';
 // SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
 // import cycle; every behaviour below is armed on ?dev=1 only, gate off =
@@ -1340,15 +1351,9 @@ function damageTakenFortified(state, amount) {
   return damageTaken(state, amount * mult);
 }
 
-// PORT SLICE F: the run-scoped building-collision cache. The footprint field
-// is pure in (groundSeed, stage) and both are frozen for the run, so one
-// keyed lookup serves every frame — no per-frame hash cost, no save impact
-// (rebuilt from the run stamp, never serialised).
-let bCollKey = null, bCollRects = [];
+// Building footprints for the run (cached in stage_buildings.js).
 function buildingRectsForRun(seed, stage) {
-  const key = seed + '|' + String(stage);
-  if (bCollKey !== key) { bCollKey = key; bCollRects = buildingFootprints(seed, stage); }
-  return bCollRects;
+  return buildingRects(seed, stage);
 }
 
 function runController(p, dt, am) {
@@ -2480,8 +2485,8 @@ function spawnWaveArches() {
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2;
     const d = 120 + Math.random() * 260;
-    state.arches.push(spawnArch(Math.random,
-      p.x + Math.cos(a) * d, p.y + Math.sin(a) * d));
+    state.arches.push(placeReachable(spawnArch(Math.random,
+      p.x + Math.cos(a) * d, p.y + Math.sin(a) * d), ARCH_BUILDING_MARGIN));
   }
 }
 
@@ -8789,9 +8794,6 @@ function startRun() {
   // registered ONCE (no re-roll, no mirrored placement constants, no
   // per-frame registration).
   state.atlas = createAtlas(C.GROUND.RIM, C.ATLAS.MAP_CELL);
-  for (const sh of state.shrines) {
-    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
-  }
   state.mapOpen = false;                     // C6: every run boots map-CLOSED
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
@@ -8799,6 +8801,12 @@ function startRun() {
   state.waveChoiceSnap = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
   state.groundSeed = (Math.random() * 1e9) | 0;   // world-space decor field
+  // The buildings exist now: stand each altar clear of them, then put the
+  // final positions on the map.
+  for (const sh of state.shrines) {
+    placeReachable(sh, SHRINE_BUILDING_MARGIN);
+    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
+  }
   state.weapons = [];
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.

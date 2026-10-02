@@ -14,7 +14,8 @@
 // consumes those events later.
 import { CONFIG as C } from './config.js';
 import { makeTypedEnemy } from './enemy_types.js';
-import { applyEscalation, clampLootToArena } from './entities.js';
+import { applyEscalation, clampLootToArena, lootLimit } from './entities.js';
+import { buildingRects, clearOfBuildings } from './stage_buildings.js';
 // G8 step 3: the CONDITION-shape run rules. Pure helpers only (no rng, no
 // mutation), so the chest keeps its documented rng draw order either way.
 import { ruledChestRarity, hasRule } from './rules.js';
@@ -30,6 +31,7 @@ export const CHESTS = {
   ELITE_HP_MULT: 1.5,       // elite-ish: maxHp >= BASE_HP * this (or .elite flag)
   MAX_ACTIVE: 3,            // chests on the field at once
   PICKUP_RADIUS: 14,        // player must come this close to open one
+  BUILDING_MARGIN: 4,       // a chest is nudged this far clear of a building face
   LIFETIME: 30,             // seconds before an unopened chest despawns
 
   // Contents rarity bands — the OWNER'S LADDER (2026-09-13), the SAME numbers
@@ -181,11 +183,12 @@ export function maybeSpawnChest(state, killedEnemy, rng = Math.random, chanceMul
   if (rng() >= CHESTS.DROP_CHANCE * chanceMult) return null;
   if (!Array.isArray(state.chests)) state.chests = [];
   if (state.chests.length >= CHESTS.MAX_ACTIVE) return null;
-  // WAVE-27: a chest dropped by a kill outside the wall is unreachable — clamp
-  // it into the playable face (entities.clampLootToArena: rim minus the wall
-  // band minus the pickup radius). Same clamp every other drop uses.
+  // Keep the chest reachable: inside the playable face
+  // (entities.clampLootToArena) and outside every building footprint.
   const at = clampLootToArena(killedEnemy.x, killedEnemy.y);
-  const chest = { id: nextId++, x: at.x, y: at.y, age: 0 };
+  const [cx, cy] = clearOfBuildings(buildingRects(state.groundSeed || 0, state.stage),
+    at.x, at.y, CHESTS.BUILDING_MARGIN, lootLimit());
+  const chest = { id: nextId++, x: cx, y: cy, age: 0 };
   state.chests.push(chest);
   return chest;
 }
