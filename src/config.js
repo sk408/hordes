@@ -1178,6 +1178,21 @@ export const DRAFT_ACTIONS = {
 // starting max HP.
 export const EVOLUTION_HP_FRAC = 0.15;
 
+// The draft rules that make a weapon plan pay:
+//   LEAD_LEVELS          a level-up card for the LEAD weapon (the highest-level
+//                        weapon still on the road to its evolution; ties go to
+//                        kit order) grants this many levels
+//   PARTNER_LEVELS       the first copy of a stat card levels every weapon in
+//                        the kit whose evolution it is the partner of
+//   EVOLUTION_KIT_DMG    an evolution raises the whole kit's damage by this
+//   FUSION_KIT_DMG       share of the run's starting damage; a fusion by this
+export const DRAFT_PLAN = {
+  LEAD_LEVELS: 2,
+  PARTNER_LEVELS: 1,
+  EVOLUTION_KIT_DMG: 0.2,
+  FUSION_KIT_DMG: 0.3,
+};
+
 // The stats a run started with (stamped on the player by startRun). Percent
 // draft cards add a share of these, so repeat picks stack instead of compounding.
 export function runBase(p) {

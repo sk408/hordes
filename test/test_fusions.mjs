@@ -249,7 +249,7 @@ const MARKERS = {
       let spear = null;
       for (let i = 0; i < 20 && !spear; i++) { step(); spear = st.projectiles.find(pr => pr.kind === 'javelin'); }
       assert.ok(spear, 'the salvo threw a spear while the Javelin itself was parked');
-      const full = 10 * WEAPONS.JAVELIN.DAMAGE_MULT * weaponLevelParams('JAVELIN', WEAPON_MAX_LEVEL).dmgMult *
+      const full = p.stats.damage * WEAPONS.JAVELIN.DAMAGE_MULT * weaponLevelParams('JAVELIN', WEAPON_MAX_LEVEL).dmgMult *
         EVOLUTION_DEFS.JAVELIN.affixes.damageMult * FUSION_MULT;
       assert.ok(Math.abs(spear.damage / full - 0.5) < 1e-9, 'half a fused spear: ' + spear.damage + ' vs ' + full);
       // the other direction: a real spear throw is flanked by two rounds
@@ -384,11 +384,11 @@ s.check('real loop: both halves of a fused weapon hit harder than the same two e
     const e = foe(p.x + 20, p.y, 1e9);
     st.enemies.push(e);
     for (let i = 0; i < 10 && e.hp === 1e9; i++) { step(); e.x = p.x + 20; e.y = p.y; }
-    return 1e9 - e.hp;
+    return (1e9 - e.hp) / p.stats.damage;   // per point of kit damage (a fusion also raises the kit's)
   };
   const plain = dmgOf(false), fused = dmgOf(true);
   assert.ok(plain > 0, 'the plain pulse landed');
-  assert.ok(Math.abs(fused / plain - FUSION_MULT) < 1e-6, 'x' + FUSION_MULT + ' on the pulse (' + fused + ' vs ' + plain + ')');
+  assert.ok(Math.abs(fused / plain - FUSION_MULT) < 1e-6, 'x' + FUSION_MULT + ' on the pulse, on top of the kit-wide gain (' + fused + ' vs ' + plain + ')');
 });
 
 s.check('real loop: NOT NOW defers the offer until the next draft pick', () => {

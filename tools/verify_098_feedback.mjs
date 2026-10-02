@@ -18,7 +18,7 @@ const PAGE = `
 (async () => {
   const cfg = await import('/src/config.js');
   const C = cfg.CONFIG;
-  const syn = await import('/src/synergies.js');
+  const fu = await import('/src/fusions.js');
   const main = await import('/src/main.js');     // SAME module instance as the page
   const T = main.__TEST;
   T.startRun();
@@ -69,11 +69,8 @@ const PAGE = `
   const FEED_FONT = C.HUD.FEED_PX + 'px monospace';
   const measure = (real, s, font) => { real.font = font; return +real.measureText(s).width.toFixed(2); };
 
-  // ---- the seven announces, built exactly as main.js refreshSynergies does ----
-  const msgs = syn.SYNERGIES.map((s) => {
-    const d = syn.describeSynergy(s);
-    return { name: d.name, msg: 'SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc };
-  });
+  // ---- the fusion announces, built exactly as main.js doFuse does ----
+  const msgs = fu.FUSION_DEFS.map((d) => ({ name: d.name, msg: 'FUSION: ' + d.name.toUpperCase() + ' — ' + d.desc }));
 
   // ---- D1: OLD painter (one unwrapped line), for the before-number ----
   function paintOld(msg) {

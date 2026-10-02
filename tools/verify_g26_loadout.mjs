@@ -132,8 +132,8 @@ const out = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
     // same ground colour), so the "gameplay pixels present" evidence is a GRID
     // SCAN of the canvas region (ground decor + sprites + HUD bars cannot all
     // quantise to one colour) plus the letterbox band for contrast. The STATE
-    // readback rides the live run: state.synergies names the ORBITAL VOLLEY
-    // pair the chosen kit switched on.
+    // readback rides the live run: the chosen kit holds the ORBITAL VOLLEY
+    // fusion pair, so the Volley's fusion road names the Orbit Blade.
     const shot = await p.shot('g26-loadout-390x844');
     const px = await p.readShot(shot, { ground: [60, 120], topEdge: [195, 30] });
     const b64 = (await import('node:fs')).readFileSync(shot).toString('base64');
@@ -153,7 +153,8 @@ const out = await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: fal
       return { distinct: colours.size, canvas: { x: Math.round(cv.x), y: Math.round(cv.y),
         w: Math.round(cv.width), h: Math.round(cv.height) } };
     })()`);
-    const syn = await p.evaluate(`(async () => (await import('./src/main.js')).__TEST.state.synergies.map(s => s.name))()`);
+    const syn = await p.evaluate(`(async () => { const st = (await import('./src/main.js')).__TEST.state; const F = await import('./src/fusions.js');
+      return st.weapons.map(w => F.fusionRoadText(w, st.weapons)); })()`);
     return { detoured, arm1, expectDefault, screenRows, stored, live, arm2, shot, px, scan, syn, errors: p.errors };
   });
 
@@ -177,8 +178,8 @@ check('PNG pixel readback: gameplay pixels on the field (13x9 grid scan across t
   out.scan.distinct >= 3, out.scan);
 check('PNG pixel readback: the letterbox band reads the page background, not the ground',
   JSON.stringify(out.px.px.topEdge) !== JSON.stringify(out.px.px.ground), out.px.px);
-check('STATE readback: the live run names the Orbital Volley synergy the chosen kit switched on',
-  out.syn.some(n => /orbital volley/i.test(n)), out.syn);
+check('STATE readback: the chosen kit holds the Orbital Volley fusion pair (the Volley fuses with the Orbit Blade)',
+  out.syn.some(n => /fuses with .*Orbit Blade/i.test(n)), out.syn);
 check('no console errors in any arm', out.errors.length === 0, out.errors);
 
 copyFileSync(out.shot, ART + '/g26-loadout-390x844.png');

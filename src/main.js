@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
-  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC,
+  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC, DRAFT_PLAN,
   DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
@@ -4522,19 +4522,25 @@ function openDraft() {
     const pr = evolutionProgress(w, owned);
     return !!(pr && !pr.evolved && pr.partnerOwned && afterLevel >= pr.levelReq);
   };
+  // The LEAD weapon's card grants LEAD_LEVELS levels: a run that commits to
+  // one weapon at a time reaches its evolution in half the picks. (ONE OF EACH
+  // pays its own bonus level instead.)
+  const lead = hasRule(state, 'once') ? null : leadWeapon();
   for (const w of state.weapons) {
     const lv = w.level || 1;
     if (lv >= WEAPON_MAX_LEVEL && !hasRule(state, 'once')) continue;
+    const gain = w === lead ? Math.min(DRAFT_PLAN.LEAD_LEVELS, WEAPON_MAX_LEVEL - lv) : 1;
     weaponCards.push({
       id: 'lvl_' + w.type + '_' + lv,
       name: WEAPON_NAMES[w.type] + ' UP',
       desc: lv >= WEAPON_MAX_LEVEL
         ? '+10% weapon damage · MAXED'
         : (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
-      evoText: evoLine(w, lv + 1),
-      evoReady: evoReady(w, lv + 1),
+      leadText: gain > 1 ? 'LEAD WEAPON: +' + gain + ' levels' : '',
+      evoText: evoLine(w, lv + gain),
+      evoReady: evoReady(w, lv + gain),
       fuseText: fusionRoadText(w, state.weapons),
-      apply: () => { levelUpWeapon(w); },
+      apply: () => { for (let i = 0; i < gain; i++) levelUpWeapon(w); },
     });
   }
   // A slot freed by a fusion is refilled from the draft: one NEW card per
@@ -4555,6 +4561,7 @@ function openDraft() {
         id: 'wpn_' + t,
         name: 'NEW: ' + WEAPON_NAMES[t],
         desc: (WEAPON_BLURBS[t] || '') + ' · takes the free slot at Lv ' + joinLv,
+        leadText: '',
         evoText: evoLine(preview, joinLv),
         evoReady: false,
         fuseText: fusionRoadText(preview, [...state.weapons, preview]),
@@ -4578,9 +4585,12 @@ function openDraft() {
     const ws = partnerOf(u.id);
     if (!ws.length || owned[u.id]) return { ...u, evoText: '', evoReady: false, partnerBoost: 1 };
     const ready = ws.some(w => (w.level || 1) >= WEAPON_MAX_LEVEL);
-    const evoText = ready
+    // The first copy also levels the weapons it is the partner of (pick()).
+    const rising = ws.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
+    const evoText = (ready
       ? 'EVOLVES NOW: ' + ws.filter(w => (w.level || 1) >= WEAPON_MAX_LEVEL).map(w => EVOLUTION_DEFS[w.type].name).join(', ')
-      : 'evolves ' + ws.map(w => WEAPON_NAMES[w.type]).join(', ');
+      : 'evolves ' + ws.map(w => WEAPON_NAMES[w.type]).join(', ')) +
+      (rising.length ? ' · +' + DRAFT_PLAN.PARTNER_LEVELS + ' level: ' + rising.map(w => WEAPON_NAMES[w.type]).join(', ') : '');
     return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT };
   };
   const pool = [
@@ -4722,7 +4732,10 @@ function openDraft() {
     const fuseLine = u.fuseText
       ? `<div class="evo fuse" style="color:#7ad0ff;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.fuseText}</div>`
       : '';
-    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + evoLine + fuseLine +
+    const leadLine = u.leadText
+      ? `<div class="evo lead" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.leadText}</div>`
+      : '';
+    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + leadLine + evoLine + fuseLine +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
@@ -4964,8 +4977,24 @@ function volleyAtProjCap() {
   return (state.player.stats.projectiles || 0) + proj >= volleyProjectileCap(state.player.stats);
 }
 
+// The kit's LEAD weapon: the highest-level weapon still on the road to its
+// evolution (ties go to kit order). Null when every weapon is maxed or evolved.
+function leadWeapon() {
+  let best = null;
+  for (const w of state.weapons) {
+    if (w.evolutionId || !EVOLUTION_DEFS[w.type] || (w.level || 1) >= WEAPON_MAX_LEVEL) continue;
+    if (!best || (w.level || 1) > (best.level || 1)) best = w;
+  }
+  return best;
+}
+
 function pick(u) {
   const p = state.player;
+  // The first copy of a stat card levels every weapon it is the partner of.
+  const attune = (!u.rule && !u.skill && !u.rewrite && !u.tier && !(p.takenStats || {})[u.id])
+    ? state.weapons.filter(w => !w.evolutionId && EVOLUTION_DEFS[w.type] &&
+        EVOLUTION_DEFS[w.type].partner === u.id && (w.level || 1) < WEAPON_MAX_LEVEL)
+    : [];
   // PROLOGUE (owner addendum 2026-09-18): THE DRAFT banner's action is the
   // pick itself — the card taken feeds the action ledger, so the banner
   // advances the moment the draft resolves (the auto-pick's card counts the
@@ -5055,6 +5084,10 @@ function pick(u) {
   // cursed card alike (no bespoke per-card curses); after the card's scaled
   // effect so the net read is (scaled gain) - (the stated cost). Floors at 1 —
   // a pick can never kill (cursedHpDrawback).
+  for (const w of attune) {
+    for (let i = 0; i < DRAFT_PLAN.PARTNER_LEVELS; i++) levelUpWeapon(w);
+    toast(WEAPON_NAMES[w.type].toUpperCase() + ' Lv ' + w.level + ' - ITS PARTNER CARD IS IN HAND');
+  }
   if (u.parallel === 'cursed') {
     cursedHpDrawback(p);
     toast('CURSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.cursed.blurb, PARALLELS.cursed.tell);
@@ -5524,13 +5557,15 @@ function maybeOpenEvolve() {
       el.innerHTML =
         `<div class="name">FUSE: ${card.name}</div>` +
         `<div class="desc">${card.desc}<br>${weaponDisplayName(o.w)} + ${weaponDisplayName(o.partner)}` +
-        ` &middot; both x${card.mult} damage &middot; frees a weapon slot</div>` +
+        ` &middot; both x${card.mult} damage &middot; whole kit +${Math.round(DRAFT_PLAN.FUSION_KIT_DMG * 100)}% damage` +
+        ` &middot; frees a weapon slot</div>` +
         `<div class="key">[${i + 1}]</div>`;
     } else {
       const card = describeEvolution(o.w);
       el.innerHTML =
         `<div class="name">EVOLVE: ${card.name}</div>` +
-        `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}</div>` +
+        `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}` +
+        ` &middot; whole kit +${Math.round(DRAFT_PLAN.EVOLUTION_KIT_DMG * 100)}% damage</div>` +
         `<div class="key">[${i + 1}]</div>`;
     }
     el.onclick = () => takeForgeOffer(o);
@@ -5574,11 +5609,13 @@ function recordForgeTaken(what) {
   }
 }
 
-// The forge restores the hero: full health and a share of the starting pool.
-function forgeHeal() {
+// The forge restores the hero (full health and a share of the starting pool)
+// and raises the whole kit's damage by `kitDmg` of the run's starting damage.
+function forgeHeal(kitDmg) {
   const p = state.player;
   p.stats.maxHp += EVOLUTION_HP_FRAC * runBase(p).maxHp;
   p.hp = p.stats.maxHp;
+  p.stats.damage += kitDmg * runBase(p).damage;
 }
 
 // The ONE evolve action — the card's own onclick path, shared with the
@@ -5589,7 +5626,7 @@ function doEvolve(w) {
     recordForgeTaken(w.type);
     // An evolution charges +2 heat (event-id deduped).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
-    forgeHeal();
+    forgeHeal(DRAFT_PLAN.EVOLUTION_KIT_DMG);
     if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
       // The first evolution ever: the cinematic banner and its pause.
       state.bossBanner = {
@@ -5616,7 +5653,7 @@ function doFuse(def) {
   if (res.ok) {
     state.fusionsMade = (state.fusionsMade || 0) + 1;
     recordForgeTaken('fuse:' + res.weapon.fusionId);
-    forgeHeal();
+    forgeHeal(DRAFT_PLAN.FUSION_KIT_DMG);
     const first = markBannerSeen(profile, FUSION_SHELF_KEY + res.weapon.fusionId);
     if (oneTimeBanners && first) {
       // A fusion discovered for the first time: the cinematic banner and its pause.

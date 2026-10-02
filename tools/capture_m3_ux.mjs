@@ -203,6 +203,54 @@ for (const vp of VIEWPORTS) {
     if (page.errors.length) console.log(vp.name, 'page errors:', page.errors.slice(0, 5));
   });
 
+  // ---- weapon fusion: the offer, the fused weapon in play, the field report, the shelf
+  if (!vp.fitOnly && want('fusion')) {
+    await withPage({ ...vp, skipPrologue: false, startupScript: PLAYED, timeoutMs: 60000 }, async (page) => {
+      const shot = shotOf(page);
+      await toTitle(page);
+      await page.evaluate(`T.startRun()`);
+      await page.sleep(2500);
+      // An evolved kit holding two fusion pairs: Volley + Orbit Blade, Scythe + Chain Zap.
+      await page.evaluate(`(async () => {
+        try { localStorage.setItem('hordes_tour_draft', '1'); } catch (e) {}
+        const W = await import('/src/weapons.js'); const E = await import('/src/evolutions.js');
+        const st = T.state; st.weapons.length = 0; st.weaponSlots = 5;
+        for (const t of ['VOLLEY', 'ORBIT', 'SCYTHE', 'ZAP']) {
+          const w = W.makeWeapon(t); w.level = 8; E.evolveWeapon(w, { [E.EVOLUTION_DEFS[t].partner]: 1 }); st.weapons.push(w);
+        }
+        st.player.stats.maxHp = 4000; st.player.hp = 4000; st.player.mana = st.player.stats.maxMana;
+      })()`, true);
+      await page.waitFor(`T.state.mode === 'evolve'`, 4000, 30);
+      await page.sleep(400);
+      await shot('fusion-offer');
+      console.log(vp.name, 'fusion offer fit:', JSON.stringify(await page.evaluate(DRAFT_FIT)));
+      // Take both fusions (the second is offered as soon as the first resolves).
+      for (let i = 0; i < 2; i++) {
+        await page.waitFor(`T.state.mode === 'evolve'`, 6000, 30);
+        await page.evaluate(`(() => { const c = [...document.querySelectorAll('#ov-cards .card')].find((c) => c._fusionOffer); if (c) c.click(); T.state.bannerHold = 0; })()`);
+        await page.sleep(300);
+      }
+      await page.evaluate(`(() => { T.state.bannerHold = 0; T.state.bossBanner = null; T.state.player.hp = T.state.player.stats.maxHp; })()`);
+      await page.sleep(3500);
+      await page.evaluate(`(() => { T.state.player.hp = T.state.player.stats.maxHp; })()`);
+      await shot('run-fused');
+      console.log(vp.name, 'fused kit:', JSON.stringify(await page.evaluate(`T.state.weapons.map((w) => w.type + (w.fused ? '+' + w.fused.type + '=' + w.fusionId : ''))`)));
+      if (await page.evaluate(`T.state.mode === 'draft'`)) {
+        await page.evaluate(`(() => { const c = document.querySelector('#ov-cards .card'); if (c) c.click(); })()`);
+        await page.sleep(700);
+      }
+      await page.evaluate(`T.openStats()`); await page.sleep(400);
+      await shot('stats-fused');
+      await page.evaluate(`T.closeStats()`);
+      await page.evaluate(`(() => { T.state.player.invuln = 0; T.die(); })()`);
+      await page.evaluate(key('x'));
+      await page.waitFor(`T.state.mode === 'dead'`, 4000, 30);
+      await page.evaluate(`T.fusion.shelf()`); await page.sleep(500);
+      await shot('fusion-shelf');
+      if (page.errors.length) console.log(vp.name, 'fusion page errors:', page.errors.slice(0, 5));
+    });
+  }
+
   // ---- the first-run tutorial on an empty profile --------------------------
   if (!vp.hudOnly && want('tutorial')) {
     await withPage({ ...vp, skipPrologue: false, skipTour: false, timeoutMs: 60000 }, async (page) => {

@@ -5,12 +5,10 @@
 //   (a) the CHOICE proof on live state: the same save with loadout
 //       ['ORBIT','ZAP'] arms VOLLEY+ORBIT+ZAP, with ['BOOMERANG'] arms a
 //       different kit, and null arms exactly today's default kit;
-//   (b) the RIDER proof: the chosen kit's synergy actually RUNS - the
-//       Orbital Volley pair (VOLLEY+ORBIT) is detected on live state, which
-//       is the re-evaluation contract (synergies.js) doing its job on the
-//       pre-armed kit;
+//   (b) the RIDER proof: the chosen kit holds a fusion pair - the Volley's
+//       fusion road (fusions.js) names the Orbit Blade on live state;
 //   (c) TWO SINGLE seeded fresh runs (~12s sim each, one per kit), each with
-//       its SEED printed, reporting survival / kills / level / synergy on
+//       its SEED printed, reporting survival / kills / level / fusions on
 //       LIVE state. A single short run cannot resolve a reward delta - that
 //       is the struck measurement's job - so a NULL functional finding here
 //       is an acceptable, stated outcome; what these runs prove is that the
@@ -62,8 +60,9 @@ h.startRun();
 const goodKit = st.weapons.map(w => w.type);
 check('CHOICE: loadout [ORBIT,ZAP] arms VOLLEY+ORBIT+ZAP on LIVE state',
   JSON.stringify(goodKit) === JSON.stringify(['VOLLEY', 'ORBIT', 'ZAP']), goodKit);
-check('RIDER: the Orbital Volley synergy is detected on the live run (the re-evaluation contract holds for a pre-armed kit)',
-  st.synergies.map(s => s.name).includes('Orbital Volley'), st.synergies.map(s => s.name));
+const { fusionRoadText } = await import('../src/fusions.js');
+check('RIDER: the pre-armed kit holds the Orbital Volley fusion pair (the Volley fuses with the Orbit Blade)',
+  /Orbit Blade/.test(fusionRoadText(st.weapons[0], st.weapons)), fusionRoadText(st.weapons[0], st.weapons));
 
 prof.loadout = ['BOOMERANG'];
 h.startRun();
@@ -109,7 +108,7 @@ const singleRun = (label, seed, loadout) => {
       label, seed, kit: st.weapons.map(w => w.type),
       time: +st.time.toFixed(1), mode: st.mode,
       kills: st.player.kills, level: st.player.level, maxProjectiles,
-      synergies: st.synergies.map(s => s.name),
+      fusions: st.weapons.filter(w => w.fusionId).map(w => w.fusion.name),
     };
     console.log('RUN ' + JSON.stringify(rec));
     return rec;
