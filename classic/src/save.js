@@ -30,13 +30,11 @@
 //      module stays importable under node.
 //
 // CATALOG-INJECTED BY DESIGN: this file imports nothing from the rest of the
-// game except the frozen v10 price table the v11 migration refunds against. The caller (src/meta.js) passes a catalog of the live tables
+// game. The caller (src/meta.js) passes a catalog of the live tables
 // (characters, shop rows, weapon/elite id sets), so the schema layer stays
 // testable in isolation and cannot drift from the data it validates against.
 // Node-safe: no DOM access at import time; browser APIs are touched only
 // inside the IO helpers, behind typeof guards.
-
-import { LEGACY_SHOP_V10, refundLegacyShop } from './legacy_shop_v10.js';
 
 // ---------- Schema identity ----------
 
@@ -49,27 +47,20 @@ import { LEGACY_SHOP_V10, refundLegacyShop } from './legacy_shop_v10.js';
 // run-count milestone (meta.js RUN_CHESTS) whose chest the player has
 // COLLECTED. One monotonic integer (0 = none), never a set, so once-only is
 // arithmetic. See the v10 history + migration entries.
-export const PROFILE_VERSION = 11;
+export const PROFILE_VERSION = 10;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
 // keep loading. Versioning lives inside the payload, not in the key.
-export const STORAGE_KEY = 'hordes_profile_v1';
+export const STORAGE_KEY = 'hordes_classic_profile';
 
 // Where an unreadable or future-version payload is preserved so it can be
 // recovered (never silently dropped).
-export const RECOVERY_KEY = 'hordes_profile_recovery';
+export const RECOVERY_KEY = 'hordes_classic_recovery';
 // N5 (audit 2026-09-16): the recovery slots — the LATEST incident lives at
 // RECOVERY_KEY (unchanged), the one BEFORE it at RECOVERY_KEY + '.prev'. Two
 // slots, never more: a third incident rotates the oldest out.
 export const RECOVERY_PREV_KEY = RECOVERY_KEY + '.prev';
-
-// The October 2026 update reprices the shop and refunds old purchases. The
-// first time a save from before it (schema < PRE_UPDATE_BELOW) is loaded, its
-// raw text is kept here, untouched and never overwritten, so the player can
-// download it or carry on in the classic build.
-export const PRE_UPDATE_KEY = 'hordes_profile_pre_update';
-export const PRE_UPDATE_BELOW = 11;
 
 // Export envelope marker. Lets an import tell a HORDES export from any other
 // JSON file the player might pick.
@@ -163,16 +154,6 @@ export const VERSION_HISTORY = [
       'moves when the pilot touches the chest (claim-at-collection, so an ' +
       'uncollected chest can never be lost). Nothing else is touched, so the ' +
       'step is lossless for every v9 save.',
-  },
-  {
-    version: 11,
-    note: 'M1 catalogue rebuild: every stat shop row was repriced, merged or ' +
-      'removed. Each owned level is refunded at its v10 price ' +
-      '(src/legacy_shop_v10.js) and the row resets to level 0; the spend ' +
-      'ledger entries of those rows are dropped. Weapon, elite and character ' +
-      'unlocks, character upgrades and the apex tier are untouched. A save that ' +
-      'was refunded carries profile.shopRefund = { version, gold, rows } so the ' +
-      'game can tell the player once.',
   },
 ];
 
@@ -329,30 +310,6 @@ const MIGRATIONS = {
   9: (p) => {
     const next = { ...p };
     if (next.milestoneChest === undefined) next.milestoneChest = 0;
-    return next;
-  },
-  // v10 -> v11: the M1 catalogue rebuild. Refund every owned stat-row level at
-  // its v10 price, reset those rows, and drop their spend-ledger entries (the
-  // refund already paid them out). Unlocks are ownership, not levels, and stay.
-  10: (p) => {
-    const next = { ...p };
-    // A save that already carries the refund marker has been through this
-    // step (a v11 save whose version field was lost): never refund it twice.
-    if (plainObject(next.shopRefund) && next.shopRefund.version === 11) return next;
-    const res = refundLegacyShop(plainObject(next.purchased) ? next.purchased : {});
-    next.purchased = res.purchased;
-    if (res.gold > 0) {
-      const g = Number(next.gold);
-      next.gold = Math.min(Number.MAX_SAFE_INTEGER, (Number.isFinite(g) ? Math.max(0, Math.floor(g)) : 0) + res.gold);
-      next.shopRefund = { version: 11, gold: res.gold, rows: res.rows };
-    }
-    if (plainObject(next.spendLedger)) {
-      const ledger = {};
-      for (const [key, arr] of Object.entries(next.spendLedger)) {
-        if (!Object.prototype.hasOwnProperty.call(LEGACY_SHOP_V10, key)) ledger[key] = arr;
-      }
-      next.spendLedger = ledger;
-    }
     return next;
   },
 };
@@ -775,44 +732,10 @@ export function validateProfile(profile, cat) {
     } else if (p.apex.enabled !== undefined) {
       repairs.push('apex.enabled');
     }
-    // Latched gate (meta.js latchApexUnlock): only ever stored as true.
-    if (p.apex.unlocked === true) apex.unlocked = true;
-    else if (p.apex.unlocked !== undefined && p.apex.unlocked !== false) repairs.push('apex.unlocked');
   } else if (p.apex !== undefined) {
     repairs.push('apex');
   }
   out.apex = apex;
-
-  // ---- spend ledger (dev-editor slice 10: dev-run shop buy-back) ----
-  // ADDITIVE field, no version bump: profile.spendLedger = { [key]: [paid per
-  // level, oldest first] } — the per-level spend record sell-back refunds
-  // from. Absent (pre-slice saves) defaults to {} silently — a legacy save is
-  // not damaged, its unledgered levels simply refund 0. Present entries
-  // sanitize to finite non-negative floored ints, capped in length at 32 (a
-  // generic backstop above every maxLevel — the buyers/sellers keep the array
-  // 1:1 with owned levels at runtime). Unknown keys are preserved when their
-  // arrays sanitize clean (the newer-build round-trip rule); anything else
-  // repairs to [] and names the field.
-  const SPEND_LEDGER_CAP = 32;
-  const spendLedger = {};
-  if (plainObject(p.spendLedger)) {
-    for (const [key, arr] of Object.entries(p.spendLedger)) {
-      if (UNSAFE_KEYS.has(key)) { repairs.push('spendLedger.' + key); continue; }
-      if (!Array.isArray(arr)) { repairs.push('spendLedger.' + key); continue; }
-      const clean = [];
-      let dirty = arr.length > SPEND_LEDGER_CAP;
-      for (const v of arr.slice(0, SPEND_LEDGER_CAP)) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n < 0) { dirty = true; continue; }
-        clean.push(Math.floor(n));
-      }
-      if (dirty || clean.length !== arr.length) repairs.push('spendLedger.' + key);
-      spendLedger[key] = clean;
-    }
-  } else if (p.spendLedger !== undefined) {
-    repairs.push('spendLedger');
-  }
-  out.spendLedger = spendLedger;
 
   // ---- lastPlayed / lastSeenUpdate (v9: the returning-player pair) ----
   // lastPlayed: a positive epoch-ms integer or null (absent is NOT a repair —
@@ -1093,9 +1016,6 @@ export function loadProfileFrom(storage, cat, opts = {}) {
     };
   }
 
-  if (Number(mig.from) < PRE_UPDATE_BELOW) {
-    try { if (s.getItem(PRE_UPDATE_KEY) == null) s.setItem(PRE_UPDATE_KEY, raw); } catch { /* storage full: carry on */ }
-  }
   const { profile, repairs } = validateProfile(mig.profile, cat);
   let status = mig.status;
   if (repairs.length) status = 'repaired';
@@ -1330,19 +1250,5 @@ export function downloadRecovery(storage, env = globalThis, opts = {}) {
   if (text === null) return { ok: false, reason: 'nothing-preserved' };
   const filename = opts.filename || 'hordes-recovered-save.json';
   const res = downloadText(text, filename, env);
-  return res.ok ? { ...res, via: 'download' } : res;
-}
-
-/** The raw text of the save as it was before the October 2026 update, or null. */
-export function preUpdateText(storage) {
-  try { const t = resolveStorage(storage).getItem(PRE_UPDATE_KEY); return typeof t === 'string' && t ? t : null; }
-  catch { return null; }
-}
-
-/** Download the pre-update save as a file. */
-export function downloadPreUpdate(storage, env = globalThis, opts = {}) {
-  const text = preUpdateText(storage);
-  if (text === null) return { ok: false, reason: 'nothing-kept' };
-  const res = downloadText(text, opts.filename || 'hordes-save-before-update.json', env);
   return res.ok ? { ...res, via: 'download' } : res;
 }

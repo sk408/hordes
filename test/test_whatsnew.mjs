@@ -260,10 +260,10 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('the note carries the release copy, an OBVIOUS dismiss button, and the close hint',
     /WHAT'S NEW/.test(noteUp.innerHTML) && /CLOSE/.test(noteUp.innerHTML) &&
     /tap anywhere on the note to close/i.test(noteUp.innerHTML));
-  ok('the release copy tells returning players about the HOW TO PLAY fix (the entry IS the point)',
-    W.release.lines.some(l => /HOW TO PLAY/i.test(l)) &&
-    W.release.lines.some(l => /index buttons are gone/i.test(l)) &&
-    W.release.lines.some(l => /prev and next/i.test(l) && /under the text/i.test(l)));
+  ok('the release copy tells returning players about the refund, the new systems and the kept save',
+    W.release.lines.some(l => /refunded/i.test(l)) &&
+    W.release.lines.some(l => /EVOLVE/.test(l) && /FUSE/.test(l)) &&
+    W.release.lines.some(l => /old save is kept/i.test(l) && /classic/i.test(l)));
   // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
   // the popup should write a save" — the same prove-it-moved discipline the
@@ -377,8 +377,8 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   const note = noteEl();
   ok('fixture: the note is up with the offer copy in it',
     !!note && /SHOW ME/.test(note.innerHTML) && /tap anywhere on the note to close/i.test(note.innerHTML));
-  ok('the note copy names the guided run and the potion (what the player GETS)',
-    rel.guidedLines.some(l => /guided run/i.test(l)) && rel.guidedLines.some(l => /potion/i.test(l)));
+  ok('the note copy names the guided run and says it can be replayed',
+    rel.guidedLines.some(l => /guided first run/i.test(l)) && rel.guidedLines.some(l => /replay/i.test(l)));
 
   // DECLINE through the real card tap: marks the release seen, normal play.
   // (Advance a fake clock first: the earlier gated-note dismiss already

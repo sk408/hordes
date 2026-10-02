@@ -1,11 +1,11 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
-  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC, DRAFT_PLAN,
-  DRAFT_LADDER, DRAFT_RARE_UPGRADES,
+  CONFIG as C, UPGRADES,
+  DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
-  volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
+  volleyProjectileCap, midBossHp,
 } from './config.js';
-import { makePlayer, makeProjectile, makeGem, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, hpScale, xpScale, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
 
 // ---------- M3 (audit 2026-09-16): ground-item overflow caps ----------
 // The three ground arrays were unbounded (10k corpses -> 10k gems, three
@@ -17,32 +17,21 @@ import { makePlayer, makeProjectile, makeGem, applyEscalation, clampLootToArena,
 //   pushItemDrop — the DISCLOSED FALLBACK: rare equippables are unique, a
 //     merge would destroy one, so the OLDEST drop gives way at ITEM_CAP.
 // No magnetism, no auto-collect — reachability and pickup rules unchanged.
-// Move a world pickup to the nearest reachable point: outside every building
-// footprint (+margin) and inside the loot clamp. Mutates and returns it.
-function placeReachable(o, margin) {
-  const at = clearOfBuildings(buildingRects(state.groundSeed || 0, state.stage),
-    o.x, o.y, margin, lootLimit());
-  o.x = at[0]; o.y = at[1];
-  return o;
-}
-const SHRINE_BUILDING_MARGIN = 10, ARCH_BUILDING_MARGIN = 14;
 function pushGem(gm) {
   return pushGroundCapped(state.gems, gm, C.GROUND_ITEMS.GEM_CAP,
     () => 'gem', (s, n) => { s.xp += n.xp; });
 }
 function pushDrop(d) {
-  placeReachable(d, 2);
   return pushGroundCapped(state.drops, d, C.GROUND_ITEMS.DROP_CAP,
     x => x.kind, (s, n) => { s.count = (s.count || 1) + (n.count || 1); });
 }
 function pushItemDrop(d) {
-  placeReachable(d, 2);
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
 }
-import { Renderer } from './render.js';
+import { Renderer, prologueSkipRect } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
-import { useSkill, usePotion, potionHeal, updateResources, updateUlts, ultCharge } from './skills.js';
+import { useSkill, usePotion, updateResources, updateUlts, ultCharge } from './skills.js';
 import {
   rollItem, applyAffixes, STAT_DEFAULTS, MAX_EQUIPPED, PAID_CHESTS, rollPaidChest,
   decideEquip, flashTargets, shouldFlashDrop, describeFlash,
@@ -53,45 +42,42 @@ import { spawnArch, tickArches, activeArchMods, ARCH_TYPES } from './arches.js';
 import {
   WEAPON_TYPES, WEAPONS, makeWeapon, updateWeapons, WEAPON_NAMES, WEAPON_MAX_LEVEL,
   levelUpWeapon, describeWeaponLevel, collectWeaponXp, weaponLevelParams, PIERCE_ALL,
-  WEAPON_STEPS,
 } from './weapons.js';
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
 import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
 import { createAtlas, atlasUpdate, atlasRegisterLandmark } from './atlas.js';
-import {
-  FUSION_DEFS, fusionCandidates, fuseWeapons, describeFusion, fusionRoadText,
-  kitWeapons, findKitWeapon,
-} from './fusions.js';
+import { detectSynergies, describeSynergy } from './synergies.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
-// TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
-import { itemIconFor } from './art/item_icons.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
-import { maybeSpawnChest, tickChests } from './chests.js';
-// The joker row (jokers.js) and the modules that hold each joker's effect:
-// run rules, perks, the Frost Nova card and the rewrites.
+import { maybeSpawnChest, tickChests, rollEvolutionToken } from './chests.js';
+// G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
+import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
+// G8 step 4: the general skill items (Regrowth / Focus / Thick Skin) — the
+// perk card family, its applied-value helpers (one source of truth for the
+// HUD and the damage funnel) and the ONE per-frame regen step.
 import {
-  JOKERS, JOKER_IDS, JOKER_SLOTS, JOKER_CARD_WEIGHT, ENCORE_EVERY, jokerCards, rollJokerOffer, jokersHeld, hasJoker,
-  jokerSlots, jokerRowFull, takeJoker, replaceJoker, handOpts,
-} from './jokers.js';
-import { statCardOffered, markStatTaken, hasRule } from './rules.js';
-import { applyRegrowth, damageTaken, skillManaCost } from './perks.js';
-import { frostCardTick, hasFrost } from './frostcard.js';
+  skillCards, applyRegrowth, damageTaken, skillManaCost, SKILL_PERKS,
+} from './perks.js';
+// N1 slice 2: the draftable FROST_NOVA card ("Pocket Frost") — a run-owned,
+// AUTO-FIRED nova through the existing useSkill seam (src/frostcard.js).
+import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcard.js';
+// G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
+// Blood Harvest) — mechanic rewrites, granted through the same card contract.
+// G21 slice 1: + the ONE on-weapon-hit rider writer and AFTERSHOCK's echo tick.
 import {
-  hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast,
+  rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast, REWRITES,
   onWeaponHit, tickRewriteEchoes, directHitMult, wildfireTransfer, stormReaperBlast,
 } from './rewrites.js';
 import {
   rollWeather, initWeather, update as updateWeather, mods as weatherMods, windDrift, mulberry32,
 } from './weather.js';
-import { evolveWeapon, describeEvolution, evolutionProgress, EVOLUTION_DEFS, weaponsOpenedBy } from './evolutions.js';
+import { evolveWeapon, describeEvolution, EVOLUTION_DEFS } from './evolutions.js';
 import { pickBossForWave, decideBossAction, MIDBOSS } from './bosses.js';
 import { recordEncounter, seenCount, totalEncounters, bestiaryModel } from './encounters.js';
 import { rollRarity, applyRarity, effectiveTierId, RARITY } from './rarity.js';
-import { Tour, TOUR_KEYS, tourFlag, setTourFlag } from './tour.js';
-import { TUT, LEDGER, GUIDED_STEPS, HINTS, Guided, HintBook, menuStepFor, guidedWordStats, manualSections } from './tutorial.js';
-import { TutorialUI } from './tutorial_ui.js';
+import { Tour, TOUR_KEYS, tourFlag, setTourFlag, clearTourFlags } from './tour.js';
 // ONBOARDING REWORK (owner-approved 2026-09-16): the engine for the
 // non-pausing, non-capturing hint strip + object tags (see its header for
 // the six invariants).
@@ -113,11 +99,7 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt, OFFER_ART_SCALE, draftLayout, jokerFaceArt } from './draft_card_art.js';
-import {
-  handHint, addHandCard, refreshHand, handCards, describeHandBonus, handBonus, HANDS, FLUSH_BOONS,
-  SUIT_GLYPHS, handName,
-} from './hands.js';
+import { paintOfferArt } from './draft_card_art.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
 // G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
@@ -156,13 +138,12 @@ import { RUN_CHESTS, nextRunChest, runChestGold } from './meta.js';
 import {
   loadProfileResult, saveProfile, makeProfile,
   GOLD_TIER, purseTier, purseValue, RUN_GOLD,
-  SHOP_UPGRADES, SHOP_BY_ID, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
-  defaultLoadout, effectiveLoadout,
+  SHOP_UPGRADES, upgradeCost, buyUpgrade, startWeaponSlots, STARTER_WEAPONS,
   CHARACTERS, unlockCharacter, equipCharacter, weaponUnlocked, shopRowOwned,
-  applyMetaBonuses, applyMastery, masteryRank, masteryStartLevels, masteryLine, MASTERY, applyCharacter, startPotionCount, hasArcadePass,
+  applyMetaBonuses, applyCharacter, startPotionCount, hasArcadePass,
   // G19 slice 1: the per-character upgrade layer — the table, the buy path,
   // the pure applicator (run + preview seams), and the satchel's shared bonus.
-  CHARACTER_UPGRADES, CHARACTER_UPGRADE_BY_ID, buyCharacterUpgrade, applyCharacterUpgrades,
+  CHARACTER_UPGRADES, buyCharacterUpgrade, applyCharacterUpgrades,
   getCharacterUpgradeLevel, characterPotionBonus,
   // G19 slice 2: the family specialty — terms for the two damage chokes and
   // the derived STRONG/WEAK identity lines the screens render.
@@ -170,7 +151,6 @@ import {
   // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
   // the derived gate, the buy path, and the sanctioned toggle pair.
   APEX_UPGRADES, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
-  latchApexUnlock,
   luckDropWeights,
   draftCardWeight,
   draftLadderWeight,
@@ -181,17 +161,6 @@ import {
   bannerSeen, markBannerSeen,
   downloadProfile, saveProfileToDisk, readSaveFile,
   readRecovery, downloadRecovery, STORAGE_KEY,
-  preUpdateText, downloadPreUpdate,
-  // SLICE 7: dev free-build arming + the shop afford/read seams below.
-  setDevFreeBuild, devFreeBuild,
-  // DEV-EDITOR BUGFIX (gold-spent): the permanent-build full-price derivation
-  // feeding devGoldSpent() — ownership-priced, free/paid-agnostic.
-  ownedBuildCost,
-  // SLICE 10: dev-run shop buy-back — the sell paths (same dispatch as the
-  // buyers), the per-level spend ledger readers for pre-confirm labels, and
-  // the character ledger key shared with the buyer.
-  sellUpgrade, sellCharacterUpgrade, sellCharacterUnlock, sellApex,
-  topRefund, totalRefund, charLedgerKey, spendLedgerFor,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -214,7 +183,6 @@ import {
 import {
   DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
   nextStageId, describeStage, lockedStageLines, stageRelief, stageFactsLine,
-  STAGE_IDS, stageFacts,
 } from './stages.js';
 // ARENA ELEVATED PATHS (scale-up 2026-09-17): the deterministic height field
 // and its three reads — the grade term (player + enemies, the same pure
@@ -224,34 +192,6 @@ import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
   reliefLevelAt, reliefStep, reliefRampRoute,
 } from './relief.js';
-// PORT SLICE F (building collision, owner-ruled 2026-09-22): the building
-// footprints + the axis-separated slide. stage_buildings imports config.js
-// only — no cycle. The query is pure in (seed, stage); this file owns the
-// run-scoped cache below (same field all run: the seed + stage never move
-// mid-run) and applies the slide at the ONE pilot-motion seam.
-import {
-  buildingRects, clearOfBuildings, slideMove, buildingSteer, pushOutOfRects, BUILDING_MOVER_R,
-} from './stage_buildings.js';
-// SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
-// import cycle; every behaviour below is armed on ?dev=1 only, gate off =
-// byte-identical player game). SLICE 8 adds the substepped speed control
-// (devNormSpeed/devNextSpeed/DEV_SPEEDS) and the speed-stamped snapshot.
-import {
-  isDevGate, SNAPSHOT_SCHEMA_V, buildSnapshot,
-  devArm, devHit, drawSparkline, fetchGameRev, postSnapshot,
-  fetchSnapshots,
-  DEV_SPEEDS, devNormSpeed, devNextSpeed,
-} from './dev_telemetry.js';
-// STEP 3: dev autoplay policy runner (TOGGLE, SMART vs IMPULSIVE + dev-night).
-// dev_autoplay imports meta.js only (no cycle); every behaviour below is
-// armed on ?dev=1 only, gate off = byte-identical player game.
-import {
-  DEV_LS_AUTO, DEV_LS_DEVNIGHT, AUTOPLAY_POLICIES,
-  DEV_LS_BAN_ON, DEV_LS_BAN_IDS, parseDraftBanIds,
-} from './dev_autoplay.js';
-
-// M2 game feel: the per-step observer (damage numbers, puffs, shake).
-import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled } from './fx/feel.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -262,15 +202,12 @@ let audio = {
   setSfxEnabled() {}, getSfxEnabled() { return false; },
   playSfx() {}, startMusic() {}, stopMusic() {},
   playIntroCue() {}, playPortalCue() {},   // WAVE-8/B cinematic stingers
-  setMusicVolume() {}, getMusicVolume() { return 0; },
-  setSfxVolume() {}, getSfxVolume() { return 0; }, setMusicMode() {},
 };
 try {
   const mod = await import('./audio.js');
   if (mod && mod.init) audio = mod;
 } catch { /* audio.js not built yet — shim stays in place */ }
 try { audio.init(); } catch { /* audio init must never block the game */ }
-setFeelAudio(audio);   // hit / kill / hurt / pickup sounds ride the feel observer
 // S2 (audit 2026-09-16): the init above runs at MODULE LOAD, before any user
 // gesture — on a gesture-gated browser (iOS Safari) the context is created
 // suspended and stays that way: a permanently silent game. init() is
@@ -349,14 +286,6 @@ const BAND_MARGIN = 6;
 // The viewport-limited fit always satisfies it, so the documented chrome
 // shrink (pad buttons 64 -> 56/48) never needs to fire.
 const CANVAS_FLOOR_FRACTION = 0.55;
-// Desktop key bar: a KEYBAR_H strip along the bottom of the window (index.html
-// .keybar), present while the touch layer is in its desktop class.
-const KEYBAR_H = 26;
-function keybarLive() {
-  if (typeof getComputedStyle !== 'function') return false;
-  const touch = document.getElementById('touch');
-  return !!(touch && touch.isConnected && touch.classList && touch.classList.contains('cog-only'));
-}
 function touchLayerLive() {
   // Only the REAL touch layer ('.on' — coarse pointers / touch devices, where
   // the pads are opaque thumb controls) gets chrome-aware placement.
@@ -638,11 +567,10 @@ function fitCanvas() {
   lastFitFellBack = false;
   // The viewport the game actually GOT (visualViewport-first, see viewSize).
   const { vw, vh } = viewSize();
-  // Desktop: the key bar's strip along the bottom is kept clear of the canvas.
-  const kb = keybarLive() ? KEYBAR_H : 0;
-  // The scale is the viewport-limited letterbox (less the key bar strip);
-  // touch layouts narrow it further below, into the bands the pads leave.
-  const fit = Math.min(vw / C.VIEW_W, (vh - kb) / C.VIEW_H);
+  // ROUND 4 base: the scale is the VIEWPORT-limited letterbox only — chrome
+  // NEVER shrinks the field (that is how round 2 collapsed landscape to
+  // 41x26 / 0x0). ROUND 5 narrows it ON TOUCH LAYOUTS ONLY, below.
+  const fit = Math.min(vw / C.VIEW_W, vh / C.VIEW_H);
   let scale = displayScale(fit);
   // A forced resolution mode (PIXEL-PERFECT / 2 / 3 / 4) can round the scale
   // ABOVE the viewport-limited fit on a phone (floor(0.81) -> max(1, 0) = 1
@@ -741,11 +669,7 @@ function fitCanvas() {
   }
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  if (!placed && kb) {
-    canvas.style.position = 'absolute';
-    canvas.style.top = Math.round((vh - kb - h) / 2) + 'px';
-    canvas.style.left = Math.round((vw - w) / 2) + 'px';
-  } else if (!placed) {
+  if (!placed) {
     canvas.style.position = '';
     canvas.style.top = '';
     canvas.style.left = '';
@@ -785,7 +709,6 @@ fitCanvas();
 // pager guards every non-shop screen.
 function onViewportResize() {
   fitCanvas();
-  if (state.mode === 'title' || state.mode === 'setup') placeTitleMenu();
   if (shopPager) finalizeShopPager();
 }
 window.addEventListener('resize', onViewportResize);
@@ -818,9 +741,6 @@ const state = {
   gems: [],
   drops: [],         // potion drops on the ground ({ x, y, kind })
   itemDrops: [],     // rare item drops on the ground ({ x, y, item }) — loot.js
-                     // PORT SLICE K: a chest reward ALSO carries `chest` (the
-                     // ROLLED band, 'common'..'legendary' or 'gamble') — inert
-                     // display data for the open-chest remnant painter only.
   chests: [],        // chests.js-owned ({ id, x, y, age })
   items: [],         // equipped rare items (loot.js; cap MAX_EQUIPPED=4)
   heat: null,        // WAVE-9 heat ledger (heat.js; run-scoped, never persisted)
@@ -837,11 +757,17 @@ const state = {
   bossBanner: null,  // WAVE-14: boss-arrival overlay
                      // ({ names, verb, title, sub, ttl } | null) — names/verb
                      // drive the two-line fit, title stays the flat legacy form
-  // Retired with the old first-run phase; kept null because the renderer, the
-  // pilot and two guards in openDraft/pick still read it. The tutorial that
-  // replaced it lives in `tut` (see "New-player tutorial" below).
+  // FIRST-RUN PROLOGUE (owner 2026-09-18): while `prologue` is non-null the
+  // run is INERT — no enemy spawns, the run clock frozen, a tinted potion on
+  // screen ({ t, drunk, potion: { x, y }, bannerIdx }). `prologueRan` marks
+  // the whole run that OPENED with a prologue (the coach-absorb marker);
+  // `prologueShieldT` is the rainbow ring's own lifetime, parallel to
+  // p.invuln so a later portal refresh can never restart the pulse.
   prologue: null,
+  prologueRan: false,
   prologueShieldT: 0,
+  // EVOLUTION TOKEN banner: seconds the sim is HELD while the first token of a
+  // run owns the screen (frame() decays it on wall-clock dt and gates update()).
   bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
   time: 0,
   spawnTimer: 0,
@@ -873,9 +799,7 @@ const state = {
   pendingDrafts: 0,
   // W7b ladder run state (rerolled/reset in startRun): the run's MYTHIC chase
   // gate ({ cardId: bool }) and the Second Wind spend.
-  jokerSlots: 2,     // per-run joker slots (startRun)
-  jokerOffers: 0,    // boss joker offers waiting to open
-  draftKind: null,   // 'level' | 'joker' while a draft is up
+  chasePool: {},
   secondWindUsed: false,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
@@ -906,6 +830,7 @@ const state = {
   // fresh in startRun next to groundSeed; never serialised (C4: no save
   // schema change); consumes ZERO rng draws (R2).
   atlas: null,
+  evoTokens: 0,      // evolution tokens (chests.js legendary tokenOffer grants)
   // G9 FOLLOW-UP: the three run counters the trophy summary was missing. They
   // live in ONE run-scoped object (reset in startRun) so the summary can read
   // them without five separate guards. bossKills = bosses/heralds killed,
@@ -913,6 +838,10 @@ const state = {
   // waveTookDamage/untouchedWave = whether any wave was finished without a hit
   // landing on the hero.
   runCounts: { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
+    // EVOLUTION TOKENS: which channel paid each token this run (chests.js
+    // EVOLUTION_TOKEN — kill / chest / drop). A ledger, not a rule: the rates
+    // are the knock's, and nothing reads this to decide anything.
+    tokens: { kill: 0, chest: 0, drop: 0 },
     // E1 RUN PURSE ledger: per-TIER kill counts + the gold earned / spent
     // through the purse this run, so the tier weighting (meta.js GOLD_TIER)
     // can be re-derived and reported honestly. The RAW p.kills count stays
@@ -958,9 +887,6 @@ const state = {
   //   AUTO_MOVE - the pilot moves; skills and potions are the player's
   //   MANUAL    - the player moves; skills and potions are the player's too
   pilotMode: 'AUTO_ALL',
-  wheel: 0,          // seconds of player steering left on AUTO (see heldMoveVec)
-  wheelCue: '',      // the on-screen cue's text
-  clockInset: 0,     // view px the run clock steps down to clear DOM buttons
   zoom: 1,           // WAVE-16 world zoom (ladder 1/2/3/4/6/8; render.js reads
                      // it every frame — live mid-run, presentation only)
   // A2 THE RADAR (owner-suggested 2026-09-14): the circular enemy minimap.
@@ -981,9 +907,8 @@ const state = {
   // it). Toggled by the M key / the MAP touch button (toggleMap). Not
   // persisted, not sticky across runs.
   mapOpen: false,
-  fuseDeclined: new Set(),  // fusion ids deferred with NOT NOW (cleared by the next draft pick)
-  fusionsMade: 0,    // fusions taken this run
-  fusionRefills: 0,  // freed slots already refilled with a new weapon
+  synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
+  synergyNames: null, // toast-dedup set of already-announced synergy names
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
   timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
   stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
@@ -1001,13 +926,6 @@ const state = {
   night: false,
   nightRun: false,
   nightSummary: null,
-  // STEP 3 DEV-NIGHT (dev-only autoplay variant, ?dev=1 gate): the run-scoped
-  // stamp frozen at startRun off the dev session's devNight flag (the nightRun
-  // pattern). A dev-night run plays under nightmare rules (state.nightRun is
-  // set alongside) but settleRunGold EXEMPTS it from the 50% banking cut and
-  // snapshots stamp mode 'dev-night' with no banking-penalty modifier.
-  // Regular night mode never sets this and keeps the cut exactly as-is.
-  devNightRun: false,
   // OPT-IN GUIDED RUN (owner 2026-09-17: "The one off run for old players to
   // see the new tutorial would have to be opt-in"): `assistedRun` is the
   // run-scoped stamp (the nightRun pattern) frozen at startRun from the
@@ -1086,14 +1004,6 @@ const bootResult = loadProfileResult();
 let profile = bootResult.profile;
 let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'future-version')
   ? bootResult.notice : null;
-// One-time notice (banner ledger): the v11 shop rebuild refunded this
-// profile's upgrades. Shown on the title until the session ends.
-function shopRefundNotice(p) {
-  if (!(p.shopRefund && p.shopRefund.gold > 0 && markBannerSeen(p, 'shop_refund_v11'))) return null;
-  return 'THE SHOP WAS REBUILT — every upgrade you owned was refunded: +' +
-    p.shopRefund.gold + ' GOLD. Weapons and characters are still yours.';
-}
-if (!saveNotice) saveNotice = shopRefundNotice(profile);
 
 // ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
 // "Have we timestamped last played for our auto saves yet? ... so we can
@@ -1127,21 +1037,26 @@ if (!saveNotice) saveNotice = shopRefundNotice(profile);
 //   no lastPlayed + no save at all  -> fresh profile -> prologue, no note;
 //   lastPlayed present              -> normal rules (lastSeenUpdate decides).
 const WHATS_NEW = {
-  id: '2026-10-02',                    // RELEASE_ID — one per marked release
-  dateMs: Date.UTC(2026, 9, 2),        // the ship date (2026-10-02)
+  id: '2026-09-18',                    // RELEASE_ID — one per marked release
+  dateMs: Date.UTC(2026, 8, 18),       // the ship date (2026-09-18)
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
+  // THE ENTRY (owner 2026-09-18: "We can use the last played update to tell
+  // the player about the fix to how to play"): the manual rework is the
+  // release's news — index buttons gone, prev/next under the text, the text
+  // owns the screen. Plain short sentences, what the player GETS, no emojis.
   lines: [
-    'A big update. Your old shop upgrades were refunded in gold: spend it in the new shop.',
-    'Weapons now EVOLVE at level 8 with a partner card, and two evolved weapons can FUSE.',
-    'The cards you draft form a HAND, and JOKERS change the rules of a run.',
-    'Reroll, skip and banish in the draft. Clearer enemies, damage numbers, new sounds.',
-    'Your old save is kept: download it in Settings, or keep playing the old game at /classic/.',
+    'HOW TO PLAY is reworked: the index buttons are gone.',
+    'Prev and next sit under the text, so more of the screen is the manual.',
+    'The shop pages with arrows and fits three cards across.',
   ],
-  // Shown only with the offer of the guided run.
+  // The guided-run lines ride the SAME gate as the offer (below): while
+  // C.PROLOGUE.ENABLED is off, the note neither offers nor advertises the
+  // run — advertising what cannot be taken is a broken promise.
   guidedLines: [
-    'New: a short guided first run that teaches by doing.',
-    'You can replay it any time from Settings.',
+    'New: a short guided run with a free shielding potion.',
+    'Controls appear one at a time, each with a tip, as you need them.',
+    'Skipping the explaining keeps the free potion and shield.',
   ],
 };
 // Pure: is the note due for THIS profile/release/boot state? Exported via
@@ -1179,7 +1094,6 @@ let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry
 // marked release shipped. ONE choke point, so no save path can forget it.
 function persistProfile() {
   profile.lastPlayed = Date.now();
-  latchApexUnlock(profile);
   return saveProfile(profile);
 }
 export function autosave(reason = 'exit') {
@@ -1238,6 +1152,7 @@ const manualController = new PlayerController(pilotInput);
 let controller = autoController;
 
 // Held-direction key map (lowercased key -> direction). WASD + arrows.
+// Live only while pilotMode === 'MANUAL' (the keydown handler checks).
 const KEY_DIRS = {
   arrowup: 'up', w: 'up',
   arrowdown: 'down', s: 'down',
@@ -1245,11 +1160,14 @@ const KEY_DIRS = {
   arrowright: 'right', d: 'right',
 };
 
-// The pilot choice persists per browser and is read at boot and at run start.
-// MANUAL is only ever stored by an explicit choice (the PILOT button, O, or
-// the pause menu). The earlier key 'hordes_pilot' could be flipped to MANUAL by
-// one stray move key, so it is no longer read: everyone starts on AUTO once.
-const KEY_PILOT = 'hordes_pilot2';
+// Last pilot choice per browser (hudText settings pattern). G31 (owner
+// 2026-09-16, verbatim: "The players want the selections they made for auto
+// and manual to persist between runs."): the pref is now READ back — at boot
+// and at run start — replacing the OLD build directive ("EVERY run starts in
+// AUTO regardless") that the owner has reversed. Absent / unreadable /
+// unrecognised -> AUTO_ALL (the fresh-player default); the legacy persisted
+// name 'AUTO' maps to AUTO_ALL via normalizePilotMode.
+const KEY_PILOT = 'hordes_pilot';
 function savePilotPref(mode) {
   try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
@@ -1257,21 +1175,11 @@ function loadPilotPref() {
   try { return normalizePilotMode(prefStorage.getItem(KEY_PILOT)); }
   catch { return 'AUTO_ALL'; }
 }
-// Which AUTO the pilot button returns to: AUTO_ALL (the pilot also casts skills
-// and drinks potions) or AUTO_MOVE (it only moves). Set on the Advanced page.
-const KEY_PILOT_AUTO = 'hordes_pilot_auto';
-function autoFlavor() {
-  try { return prefStorage.getItem(KEY_PILOT_AUTO) === 'AUTO_MOVE' ? 'AUTO_MOVE' : 'AUTO_ALL'; }
-  catch { return 'AUTO_ALL'; }
-}
-function setAutoFlavor(mode) {
-  const m = mode === 'AUTO_MOVE' ? 'AUTO_MOVE' : 'AUTO_ALL';
-  try { prefStorage.setItem(KEY_PILOT_AUTO, m); } catch { /* shim */ }
-  if (!pilotMovesYou()) swapPilotMode(m);
-  return m;
-}
-// The stance persists the same way. Focus is not persisted: it is a
-// moment-to-moment choice.
+// G31: the doctrine STANCE persists on the same prefStorage seam. The pilot
+// mode is a screen-level preference; the stance rides the same contract
+// (write on cycle, read at boot + run start, validate, BALANCED fallback).
+// state.focus is deliberately NOT persisted — it is tactical, moment-to-
+// moment targeting, not a preference.
 const KEY_STANCE = 'hordes_stance';
 function saveStancePref(s) {
   try { prefStorage.setItem(KEY_STANCE, s); } catch { /* shim */ }
@@ -1291,12 +1199,27 @@ function applyStancePref() {
   manualController.stance = s;
   return s;
 }
-// The level-up draft's auto-pick delay is fixed (C.AUTOPILOT.DRAFT_TIMEOUT) and
-// has no setting: nothing may read or write 'hordes_autopick'
-// (test/test_autopick_pref.mjs).
+// AUTO-PICK PREFERENCE — RETIRED (owner 2026-09-16, verbatim): "I didn't want
+// the card choice to be instant because I wanted to slow progress for someone
+// playing too idle so they dont miss the whole game and then complain they are
+// too powerful when they didn't witness the growth." An earlier brief asked
+// for an INSTANT/6S/MANUAL settings row riding a 'hordes_autopick' key; that
+// brief was CANCELLED and the preference surface is removed whole — the draft
+// delay is a PACING MECHANIC, not an inconvenience. The shipped behaviour is
+// the pre-brief one: a FIXED C.AUTOPILOT.DRAFT_TIMEOUT countdown for AUTO
+// players, suspended (not reset) in MANUAL, and MANUAL pilots never
+// auto-pick. Nothing may read or write 'hordes_autopick' in any form
+// (setting, debug toggle, hidden key). test/test_autopick_pref.mjs pins this.
 
-// The floating joystick's api. Declared before clearPilotInput because the
-// boot path (swapPilotMode -> clearPilotInput) reads it during module init.
+// Drop every held input (keys + stick). Used on AUTO toggle, run start, blur.
+// Also snaps the knob visual back to center. FLOATING JOYSTICK (2026-09-18):
+// a hard release of the floating drag too — no id filter (this is the
+// "everything stands down" path: blur, mode swap, run start).
+// FLOATING JOYSTICK API (moved up 2026-09-18). This is declared HERE, before any
+// reader, because the boot path (swapPilotMode -> clearPilotInput) reaches it
+// during module init: a `let` read before its declaration throws
+// "Cannot access 'fjoyApi' before initialization" and kills the whole game at
+// load. Keep the declaration above every use.
 let fjoyApi = null;
 
 function clearPilotInput() {
@@ -1306,19 +1229,22 @@ function clearPilotInput() {
   if (fjoyApi) fjoyApi.release();
 }
 
-// The pilot modes. AUTO_ALL: the pilot moves, casts and drinks. AUTO_MOVE: it
-// only moves. MANUAL: the player moves. `pilotMovesYou` and `pilotAssistsYou`
-// are the only two places a mode is compared.
+// WAVE-13 toggle: rebinds the controller seam. Focus/stance decorations carry// across BOTH directions (the incoming controller inherits the outgoing one's
+// levers — TAB/G keep working through a round trip). Switching to AUTO clears
+// held input so a stale direction can't ghost-move the autopilot; keyup
+// handlers clear keys regardless of mode (no stuck keys across overlays).
+// (h) THE ONE PLACE each assistance question is answered, so no call site
+// re-derives a mode from a string compare. `pilotMovesYou` is the movement
+// seam (which controller is bound); `pilotAssistsYou` is the auto-cast /
+// auto-drink seam that used to read `pilotMode !== 'AUTO'`.
 export const PILOT_MODES = ['AUTO_ALL', 'AUTO_MOVE', 'MANUAL'];
 export function normalizePilotMode(m) {
-  if (m === 'AUTO') return 'AUTO_ALL';        // an old stored name
+  if (m === 'AUTO') return 'AUTO_ALL';        // the pre-(h) persisted name
   return PILOT_MODES.includes(m) ? m : 'AUTO_ALL';
 }
 function pilotMovesYou() { return normalizePilotMode(state.pilotMode) === 'MANUAL'; }
 function pilotAssistsYou() { return normalizePilotMode(state.pilotMode) === 'AUTO_ALL'; }
 
-// Bind the controller for `mode`, carry focus and stance across, store the
-// choice. Leaving MANUAL drops held input so a stale key cannot steer.
 function swapPilotMode(mode) {
   mode = normalizePilotMode(mode);
   if (mode === state.pilotMode) return;
@@ -1328,49 +1254,24 @@ function swapPilotMode(mode) {
   to.stance = from.stance;
   controller = to;
   state.pilotMode = mode;
-  state.wheel = 0;
   if (mode !== 'MANUAL') {
     clearPilotInput();
   }
   savePilotPref(mode);
-  toast(mode === 'MANUAL' ? 'MANUAL: you steer. WASD, arrows or drag'
-    : mode === 'AUTO_MOVE' ? 'AUTO: the pilot steers. Skills and potions are yours'
-    : 'AUTO: the pilot fights for you');
+  // (WAVE-23's mode-dependent hints re-render retired with the panel — the
+  // compact list lives in the reference's KEYBOARD page now, built live at
+  // open time from HINT_LINES, so a pilot swap can never teach a stale mode.)
+  toast(mode === 'MANUAL' ? 'MANUAL PILOT — WASD / arrows or the joystick'
+    : mode === 'AUTO_MOVE' ? 'AUTO MOVE — pilot drives, skills + potions are yours'
+    : 'AUTOPILOT ENGAGED — move, skills and potions');
 }
 function pilotPrefLabel() {
-  return { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO (moves only)', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO';
+  return { AUTO_ALL: 'AUTO ALL', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO ALL';
 }
-// The pilot button and the O key: AUTO <-> MANUAL.
 function togglePilotMode() {
-  swapPilotMode(pilotMovesYou() ? autoFlavor() : 'MANUAL');
-}
-
-// ---------- Taking the wheel --------------------------------------------------
-// On AUTO, a held move key or stick drag steers for as long as it is held. The
-// pilot takes back WHEEL_HANDBACK_S after the release; state.wheel is the time
-// left. Nothing is stored: only the pilot button, O or the pause menu choose
-// MANUAL.
-const WHEEL_HANDBACK_S = 1.5;
-// The held input as a movement vector, or null when nothing is held.
-function heldMoveVec() {
-  const i = pilotInput;
-  let mx = 0, my = 0;
-  const mag = Math.min(1, Math.max(0, i.mag || 0));
-  if (mag > 0.15) {   // the stick's dead zone (controllers.js JOY_DEAD_ZONE)
-    const len = Math.hypot(i.x || 0, i.y || 0) || 1;
-    mx = ((i.x || 0) / len) * mag;
-    my = ((i.y || 0) / len) * mag;
-  } else {
-    mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
-    my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
-    if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
-  }
-  return (mx === 0 && my === 0) ? null : { x: mx, y: my };
-}
-// What the on-screen cue says: '' while the pilot drives or MANUAL is chosen.
-function wheelCueText() {
-  if (pilotMovesYou() || !(state.wheel > 0)) return '';
-  return heldMoveVec() ? 'YOU STEER' : 'AUTO in ' + state.wheel.toFixed(1) + 's';
+  // Cycle the ladder: AUTO ALL -> AUTO MOVE -> MANUAL -> AUTO ALL.
+  const i = PILOT_MODES.indexOf(normalizePilotMode(state.pilotMode));
+  swapPilotMode(PILOT_MODES[(i + 1) % PILOT_MODES.length]);
 }
 
 // N1 slice 3 FORTIFY (EARTHSHATTER's defensive rider): while p.fortify lives,
@@ -1384,23 +1285,42 @@ function damageTakenFortified(state, amount) {
   return damageTaken(state, amount * mult);
 }
 
-// Building footprints for the run (cached in stage_buildings.js).
-function buildingRectsForRun(seed, stage) {
-  return buildingRects(seed, stage);
-}
-
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
-  // Taking the wheel: on AUTO a held move input steers, and the pilot takes
-  // back WHEEL_HANDBACK_S after the release. Targeting stays the pilot's.
-  if (!pilotMovesYou()) {
-    const v = heldMoveVec();
-    if (v) {
-      state.wheel = WHEEL_HANDBACK_S;
-      decision.moveX = v.x; decision.moveY = v.y; decision.routed = false;
-    } else if (state.wheel > 0) {
-      state.wheel = Math.max(0, state.wheel - dt);
-      decision.moveX = 0; decision.moveY = 0; decision.routed = false;
+  // PROLOGUE STAGED INTRODUCTION — the movement override, AFTER the
+  // controller's own decide: (a) a banner up owns the pilot (the pause), so
+  // movement is zeroed whatever the controller said; (b) once MOVE is
+  // revealed, the player's held drag/keys steer the phase in ANY pilot mode
+  // (the choreography's walk yields for as long as the input is held — the
+  // lesson IS the walk); (c) a pilot who TOGGLED to MANUAL and then went
+  // idle still gets the phase's fallback walk to the potion, so practising
+  // the PILOT toggle can never strand the choreography (the bound rescues,
+  // but the run should not need it). AUTO already walks (controllers.js).
+  if (state.prologue && !state.prologue.drunk) {
+    // DEFECT (b)/(c) FIX (owner 2026-09-18): the player's steering works
+    // WHILE a banner is up — banner 1's action IS steering, so the card
+    // must never make its own lesson impossible. The pilot's choreography
+    // walk still holds for a banner (the owner's pause directive); only the
+    // human's input outranks it.
+    const m = prologueManualVec();
+    // DEFECT (c) completeness: the POTION banner's action is the walk-in
+    // itself — a card that freezes the choreography would make its own ask
+    // impossible for an idle pilot. Only the EXPLAINING banners hold the
+    // walk (controllers.js holds by the same rule).
+    const upCard = prologueBanner();
+    const holdsWalk = !!upCard && upCard.action !== 'drink';
+    if (m) {
+      decision.moveX = m.x; decision.moveY = m.y;
+    } else if (!holdsWalk && state.pilotMode === 'MANUAL') {
+      const dx = state.prologue.potion.x - p.x;
+      const dy = state.prologue.potion.y - p.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) { decision.moveX = dx / len; decision.moveY = dy / len; }
+    } else if (!holdsWalk) {
+      // AUTO's own walk (controllers.js PROLOGUE branch) lands here too;
+      // zeroed only under an EXPLAINING card.
+    } else {
+      decision.moveX = 0; decision.moveY = 0;
     }
   }
   // Movement. Loot speedMult (Windwalker boots) + SWIFT/BERSERK arch mods
@@ -1409,20 +1329,7 @@ function runController(p, dt, am) {
   // multiplier shape (no dash, no teleport — movement stays the controller's).
   const spd = p.stats.speed * (p.stats.speedMult || 1) * am.speedMult *
     (p.buffs.afterimage > 0 ? C.SKILLS.AFTERIMAGE.SPEED_MULT : 1);
-  // PORT SLICE F (building collision, owner-ruled 2026-09-22): the run's
-  // footprint field (run-scoped cache: seed + stage never move mid-run).
-  const bRects = buildingRectsForRun(state.groundSeed || 0, state.stage);
   if (decision.moveX !== 0 || decision.moveY !== 0) {
-    // Corner-steer BEFORE the grade/step: a ray about to cross a footprint
-    // commits around its most intent-aligned corner (stateless, magnitude-
-    // preserving, open-field byte-identical). A move the AutoPilot already
-    // routed around buildings (decision.routed) is left as planned. The
-    // slide below stays behind both as backstop.
-    if (bRects.length > 0 && !decision.routed) {
-      const st2 = buildingSteer(p.x, p.y, decision.moveX, decision.moveY,
-        bRects, BUILDING_MOVER_R);
-      decision.moveX = st2[0]; decision.moveY = st2[1];
-    }
     // ARENA RELIEF — the grade term (uphill slower / downhill faster), read
     // HERE for the pilot and at the enemy move seam through the SAME pure
     // function off the SAME field: the anti-sanctuary symmetry. High ground
@@ -1432,27 +1339,11 @@ function runController(p, dt, am) {
     // BLOCKING ELEVATION (msg_01M2RK5B): the cliff rule + tangent slide, the
     // SAME reliefStep the enemy move seam reads — one geometry function, both
     // sides, no wall-hacks for either (pinned in test_blocking_elevation.mjs).
-    // A routed move never steps past the waypoint it is walking at.
-    let stride = spd * grade * dt;
-    if (decision.routed) {
-      const ml = Math.hypot(decision.moveX, decision.moveY);
-      if (ml * stride > decision.stepCap) stride = decision.stepCap / ml;
-    }
     const stepped = reliefStep(p.x, p.y,
-      p.x + decision.moveX * stride,
-      p.y + decision.moveY * stride,
+      p.x + decision.moveX * spd * grade * dt,
+      p.y + decision.moveY * spd * grade * dt,
       state.groundSeed || 0, stageRelief(state.stage));
-    let bnx = stepped[0], bny = stepped[1];
-    // PORT SLICE F (building collision, owner-ruled 2026-09-22): the pilot —
-    // EITHER controller, both funnel through this seam — slides along
-    // building footprints (redirect at full stride, so contact keeps moving
-    // and the no-stall invariant holds). The horde never reads this:
-    // it walks through buildings by design (no pacing change — see report).
-    if (bRects.length > 0 && (bnx !== p.x || bny !== p.y)) {
-      const sl = slideMove(p.x, p.y, bnx, bny, bRects, BUILDING_MOVER_R);
-      bnx = sl[0]; bny = sl[1];
-    }
-    p.x = bnx; p.y = bny;
+    p.x = stepped[0]; p.y = stepped[1];
   }
   // Keep the player roughly on the field. WAVE-25 (audit 2.4): the arena edge
   // is CONFIG.GROUND.RIM — render.js draws the wall from the same knob, so the
@@ -1468,17 +1359,24 @@ function runController(p, dt, am) {
     // controller; this only accelerates the fire rate the controller chose.
     // Loot rateMult + DOUBLE_FIRE arch mod divide the cooldown.
     const rate = p.buffs.overcharge > 0 ? C.SKILLS.OVERCHARGE.RATE_MULT : 1;
-    // VOLLEY weapon level: Lv3/Lv6 add a projectile (under the volley cap) and
-    // a PROJ_DMG multiplier each, Lv4/Lv8 add pierce, Lv7 attack rate.
+    p.attackTimer = p.stats.cooldown * rate / ((p.stats.rateMult || 1) * am.rateMult);
+    const baseAng = Math.atan2(target.y - p.y, target.x - p.x);
+    // VOLLEY weapon level (megabonk ladder) + SPLIT SHOT NERF (Sk408):
+    //  - total volley projectiles capped at C.WEAPON.MAX_PROJECTILES (base 1
+    //    +2 from ALL sources: Split Shot cards AND VOLLEY level grants);
+    //  - VOLLEY's Lv3/Lv6 "+1 projectile" grants are re-read here as +20%
+    //    damage each instead (the cap made them dead weight; weapons.js's
+    //    table text still says "+1 projectile" — noted for hb3 to relabel);
+    //  - extra projectiles spread wider (0.18 -> C.WEAPON.SPREAD).
     const volleyW = state.weapons.find(w => w.type === 'VOLLEY');
     const P = weaponLevelParams('VOLLEY', volleyW ? volleyW.level : 1);
-    p.attackTimer = p.stats.cooldown * rate / ((p.stats.rateMult || 1) * am.rateMult * (P.rateMult || 1));
-    const baseAng = Math.atan2(target.y - p.y, target.x - p.x);
     // NOVA_SHOT evolution (evolutions.js): per-weapon affixes multiply damage
     // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
     const volleyEvo = volleyW && volleyW.evolution;
     const n = Math.min(p.stats.projectiles + (P.proj || 0), volleyProjectileCap(p.stats));
-    const volleyDmgMult = volleyDamageMult();
+    const volleyDmgMult = (P.dmgMult || 1) * (1 + 0.2 * (P.proj || 0)) *
+      (p.stats.damageMult || 1) * am.damageMult *   // loot Brutal Edge + BERSERK arch
+      (volleyEvo && volleyEvo.affixes.damageMult || 1);
     const volleyPierceAll = !!(volleyEvo && volleyEvo.flags.includes('pierceAll'));
     for (let i = 0; i < n; i++) {
       const spread = (i - (n - 1) / 2) * C.WEAPON.SPREAD;
@@ -1489,11 +1387,8 @@ function runController(p, dt, am) {
       // (both duplicated update loops honor `pierce` already, so one line here
       // covers the in-run and finale/boss loops alike).
       if (volleyPierceAll || hasRewrite(state, 'pierceall')) pr.pierce = PIERCE_ALL;
-      else {
-        pr.pierce = (pr.pierce || 0) + (P.pierceBonus || 0);
-      }
-      // Orbital Volley fusion: the update loop flies the one-turn orbit.
-      if (fus('orbitVolley')) { pr.orbit = { t: 0, dur: 0.2, ang: a }; pr.pierce = (pr.pierce || 0) + 1; }
+      // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
+      if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
       // Muzzle particle dot at the barrel (animation pass).
       state.effects.push({
@@ -1501,15 +1396,7 @@ function runController(p, dt, am) {
         age: 0, ttl: 0.08,
       });
     }
-    // Sun Lane fusion: the salvo also throws a spear down the aim lane.
-    if (fus('volleySpear')) {
-      state.projectiles.push({
-        kind: 'javelin', x: p.x, y: p.y, dx: Math.cos(baseAng), dy: Math.sin(baseAng), dist: 0,
-        damage: fusWeaponDmg('JAVELIN', WEAPONS.JAVELIN.DAMAGE_MULT) * fus('volleySpear'),
-        hit: new Set(), age: 0, evo: true,
-      });
-    }
-    audio.playSfx('fire_bolt');
+    audio.playSfx('shoot');
   }
 }
 
@@ -1552,9 +1439,20 @@ function pickSpawnType(wave) {
 // duplicated here and in chests.js with a "both must move" comment; both
 // delegate to entities.applyEscalation now (signature: (state, enemy, t)).
 //
-// The ladder curves are applied inside entities.applyEscalation.
+// RUN-STRUCTURE: the LADDER is the run's escalation authority. entities.
+// applyEscalation applies the SHIPPED curves (exact through LADDER.KNEE_TICK,
+// i.e. through 4:00 — which is where every early-death measurement lives — and
+// explosive after: ~1e9x hp by 30:00). This wrapper re-bases its result onto
+// the ladder. Inside the knee both ratios are exactly 1, so nothing the early
+// game sees moves at all.
 function escalate(e, t = state.time) {
-  return applyEscalation(state, e, t);
+  applyEscalation(state, e, t);
+  const w = Math.floor(t / 30);
+  const hr = ladderHp(w) / hpScale(w);
+  const xr = ladderXp(w) / xpScale(w);
+  if (hr !== 1) { e.hp *= hr; e.maxHp = e.hp; }
+  if (xr !== 1) e.xp *= xr;
+  return e;
 }
 
 // G20C: the ONE implementation of the stage stamp. Stage stat mods stamp LAST,
@@ -1598,7 +1496,7 @@ function stampHeavy(e) {
   // the tier factor itself (same 1.5^P as the stamp above). Chest eligibility
   // still reads the heavy body (preStageMaxHp, recorded prestige-invariant by
   // the stamp that follows at the call sites) — drops come from strong bodies.
-  e.hp = e.maxHp = C.ENEMY.BASE_HP * ladderHp(wTick) * C.E2.HEAVY_HP_MULT *
+  e.hp = e.maxHp = midBossHp(Math.max(1, state.wave.num - 1), wTick) *
     heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));
   e.xp = C.ENEMY.BASE_XP * ladderXp(wTick) * C.E2.HEAVY_XP_KILLS;
   e.purseTier = 'HEAVY';
@@ -1628,22 +1526,23 @@ function flyingGuard(mode, fn) {
 
 function spawnWave(dt) {
   if (state.portal) return;   // breather while the portal is open (no spawns)
-  if (tutGuidedLive()) return;   // the guided part runs its own trainers
+  if (state.prologue) return; // FIRST-RUN PROLOGUE: the world is inert until
+                              // the potion is drunk (or the phase bound)
   state.spawnTimer -= dt;
   if (state.spawnTimer > 0) return;
   // WAVE-9: heat speeds the spawn clock (interval / spawnRate).
   // G20a: a stage spawnMult < 1 slows the same clock (guarded — the default
   // stage divides by exactly 1.0, byte-identical to today).
   const sm = stageMods(state.stage);
-  const interval = Math.max(0.25, spawnInterval(state.time) /
+  const interval = Math.max(0.25,
+    (C.ENEMY.SPAWN_INTERVAL - state.time * 0.008) /
     (heatMultipliers(heatOf(state)).spawnRate * (sm.spawnMult || 1)));
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
   // RUN-STRUCTURE: ladderGroups is the shipped formula through 4:00 and a
   // bounded ramp after (the shipped formula reached 37 groups/tick at 30:00).
-  const gf = ladderGroups(state.time);
-  const groups = Math.floor(gf) + (Math.random() < gf % 1 ? 1 : 0);
+  const groups = ladderGroups(state.time);
   // ELITE SURGE beat (ladderBeats): on a surge wave the spawn-time elite
   // chance gets the ladder's ceiling for that wave, so a long run keeps
   // producing events instead of only more bodies.
@@ -1811,7 +1710,7 @@ function applyEquipDecision(it) {
     state.items.push(it);
     addHeat(state, 'NEW_ITEM_SLOT');
     applyItemAffixes(p, it);
-    reopenForgeOffers();
+    for (const w of state.weapons) w.evoDeclined = false;
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return { msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + ']', tint };
   }
@@ -1821,7 +1720,7 @@ function applyEquipDecision(it) {
     state.items[res.slot] = it;   // in-place swap (not append)
     addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
     applyItemAffixes(p, it);
-    reopenForgeOffers();
+    for (const w of state.weapons) w.evoDeclined = false;
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return {
       msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + '] (SWAPPED OUT ' +
@@ -1852,573 +1751,6 @@ function resetRampage() {
 }
 
 // ---------- E1 THE RUN PURSE (owner directive 2026-09-14) ---------------------
-// ---------- SLICE 7: DEV TELEMETRY + SNAPSHOTS (?dev=1 ONLY) ----------------
-// Everything in this section arms on the `?dev=1` query param ONLY
-// (editor.html links to index.html?dev=1). Gate off: `dev` stays null, every
-// call site below is a single null-check, no DOM is created, no fetch fires,
-// and no state shape changes (dev counters live in this module var + the
-// dev_telemetry accumulator, never in `state`) — the player game is
-// byte-identical. No player-visible surface, no emojis.
-//   - 1 Hz overlay: cumulative gold earned vs gold spent (INVESTMENT
-//     accounting — devGoldSpent(): the permanent build at full live price
-//     (meta.js ownedBuildCost) plus the paid-chest bucket; the shrine bucket
-//     is excluded per the plan rule; see the inventory in
-//     dev_telemetry.js), damage dealt (devHit scalar at combat-dealt damage
-//     sites — one branch + one add per event, sampled at 1 Hz, never
-//     traced), best-gold reference line (achievements totals bestGold).
-//   - Free-build: in-run buyables (shrines via purseSpend, paid chests via
-//     buyPaidChest) grant for 0 deducted while recording FULL price into the
-//     dev sink buckets; meta buyables via meta.js DEV_FREE_BUILD (armed from
-//     the toggle below) record FULL price through the ownership-priced build
-//     value (free/paid-agnostic — the snapshot `upgrades` field carries the
-//     same assembled build for per-line analysis).
-//   - Test-run toggle stamps snapshots test:true/false; the kill-switch
-//     (snapshots off) blocks the server write (the explicit download-JSON
-//     card stays available — it is a user action, not an automatic write).
-//   - SLICE 8 speed control: 1x/2x/4x/8x in the overlay (SPEED button,
-//     persisted pref) runs N sim substeps per frame with the frame's dt
-//     UNCHANGED — never dt*N. Snapshots stamp the speed used (schema_v 2).
-//   - Post-run snapshot: exact schema keys via buildSnapshot(), auto-POSTed
-//     append-only to tools/.snapshots/runs.jsonl through the saver backend
-//     (POST <api>/snapshot; game_rev read live via GET <api>/rev).
-const DEV_GATE = isDevGate(globalThis);
-let dev = null;            // the live dev session (per run); null = gate off / no run
-let devPanel = null;       // overlay DOM, created lazily on the first dev run
-
-const DEV_LS_TEST = 'hordes_dev_test';
-const DEV_LS_FREE = 'hordes_dev_free';
-const DEV_LS_SNAPOFF = 'hordes_dev_snapoff';
-const DEV_LS_SPEED = 'hordes_dev_speed';
-const DEV_LS_COLLAPSED = 'hordes_dev_collapsed';
-// STEP 3: the autoplay-runner toggle + dev-night variant persist as the same
-// localStorage-bit shape (imported keys from dev_autoplay.js — ONE home).
-// Both default OFF (devPref fails closed on a missing key).
-// SLICE 9: the overlay collapse pref (persisted bit, same shape as the other
-// dev prefs). Default EXPANDED — the panel's job is live telemetry — but
-// docked top-LEFT, clear of the top-right cog row (settings / "?" / radar /
-// map), which the old top-right dock covered (owner complaint).
-function devPref(key) {
-  try { return prefStorage.getItem(key) === '1'; } catch { return false; }
-}
-function devSetPref(key, on) {
-  try { prefStorage.setItem(key, on ? '1' : '0'); } catch { /* shim */ }
-}
-// SLICE 8: the speed pref is a small int string, not a bit — normalized
-// through devNormSpeed so a hand-edited value fails closed to 1x.
-function devPrefSpeed() {
-  try {
-    const raw = prefStorage.getItem(DEV_LS_SPEED);
-    if (raw == null) return 1;
-    return devNormSpeed(Number(raw));
-  } catch { return 1; }
-}
-function devSetSpeedPref(n) {
-  try { prefStorage.setItem(DEV_LS_SPEED, String(devNormSpeed(n))); } catch { /* shim */ }
-}
-// K5 DEV DRAFT BAN LIST: the banned-ids pref is a comma string, not a bit —
-// absent = the default preset (parseDraftBanIds owns that), a hand-edited
-// value fails closed to exactly the ids it names.
-function devDraftBanIds() {
-  try { return parseDraftBanIds(prefStorage.getItem(DEV_LS_BAN_IDS)); }
-  catch { return parseDraftBanIds(null); }
-}
-function devNewSession() {
-  return {
-    testRun: devPref(DEV_LS_TEST),
-    freeBuild: devPref(DEV_LS_FREE),
-    snapshotsOff: devPref(DEV_LS_SNAPOFF),
-    speed: devPrefSpeed(), // SLICE 8: N sim substeps per rendered frame (1 = today)
-    // STEP 3: the autoplay-runner TOGGLE (default OFF) + the dev-night
-    // variant flag, re-read per run like every other dev pref above, so a
-    // mid-session overlay flip takes effect on the NEXT run (the same
-    // run-scoped-freeze contract as the nightRun stamp in startRun).
-    autoplay: devPref(DEV_LS_AUTO),
-    devNight: devPref(DEV_LS_DEVNIGHT),
-    // K5 DEV DRAFT BAN LIST: the arm bit (default OFF) + the banned offer ids
-    // (absent pref = the default preset), re-read per run like every other dev
-    // pref above. Consumed by openDraft ONLY under the autoplay gate.
-    draftBan: devPref(DEV_LS_BAN_ON),
-    draftBanIds: devDraftBanIds(),
-    // STEP 3: the between-run policy driving this build ('smart' |
-    // 'impulsive' | null = hand-driven). Set by the headless runner through
-    // the dev seam; stamped into the snapshot when set.
-    autoplayPolicy: null,
-    steps: 0,              // SLICE 8: update()/updateFinale() calls this run (the proof seam)
-    stepDt: 0,             // SLICE 8: the dt every substep of the last frame used (never dt*N)
-    dmg: 0,                // cumulative damage DEALT (the devHit scalar)
-    spentChest: 0,         // COUNTED sink: paid-chest full prices (free or paid)
-    spentShrine: 0,        // EXCLUDED sink: shrine full prices (free or paid)
-    shrineBlessings: [],   // blessing ids bought at shrines this run
-    // SLICE 9 choice audit: every player-choice point's TAKEN pick (and where
-    // cheap, the OFFERED set). Per-draft {level, wave, offered:[ids],
-    // taken:id|null}; per-wave blessings {wave, offered:[ids], taken:id|null,
-    // swaps}; shrine buys {id, cost, wave}; paid-chest gambles {tier, cost,
-    // result}; evolutions {offered:[weapon ids], taken:weapon id|'deferred'|null};
-    // stakes counts the manual RAISE THE STAKES pushes taken this run.
-    // Shop purchases, character select + upgrades and the loadout are the
-    // snapshot `upgrades` field (out-of-run build, taken); skill/rule/rewrite
-    // picks are draft cards, so they ride the drafts ledger, not a second one.
-    drafts: [],
-    blessings: [],
-    shrineBuys: [],
-    chests: [],
-    evolutions: [],
-    stakes: 0,
-    series: [],            // 1 Hz samples {t, earned, spent, dmg}; capped at 600
-    lastSampleMs: -1e12,
-    rev: null,             // resolved game_rev (null = not yet fetched)
-    snapshot: null,        // the built post-run snapshot (once per run)
-    postState: 'none',     // none|pending|saved|killed|failed:<reason>
-    lastDownload: null,    // last download-JSON payload (headless-readable)
-  };
-}
-// INVESTMENT-accounted gold spent: the permanent build's full-price value
-// (meta.js ownedBuildCost — every shop level, weapon/elite/apex unlock and
-// character unlock/upgrade owned, priced live; free-built levels record FULL
-// price by construction, so the free-build hard rule holds in both modes)
-// PLUS the counted in-run bucket (paid chests at full price, free or paid).
-// The shrine bucket stays excluded by the plan rule; paid chests are the
-// flagged ambiguous sink (counted — see dev_telemetry.js; a one-line move if
-// the owner rules them excluded).
-function devGoldSpent() {
-  if (!dev) return 0;
-  return dev.spentChest + ownedBuildCost(profile);
-}
-function devRunFree() { return !!(dev && dev.freeBuild); }
-function devBestGold() {
-  try {
-    const t = profile && profile.achievements && profile.achievements.totals;
-    return Number((t && t.bestGold) || 0) || 0;
-  } catch { return 0; }
-}
-// The permanent build + the run's build, for the snapshot `upgrades` field —
-// the full priced record of what a free build would have cost (derive with
-// catalogCost()/upgradeCost()).
-function devUpgrades() {
-  const purchased = {};
-  try { Object.assign(purchased, profile.purchased || {}); } catch { /* keep empty */ }
-  const charLevels = {};
-  try {
-    for (const [uid, udef] of Object.entries(CHARACTER_UPGRADE_BY_ID || {})) {
-      const lvl = getCharacterUpgradeLevel(profile, udef.characterId, uid) || 0;
-      if (lvl > 0) {
-        if (!charLevels[udef.characterId]) charLevels[udef.characterId] = {};
-        charLevels[udef.characterId][uid] = lvl;
-      }
-    }
-  } catch { /* keep partial */ }
-  let runWeapons = [];
-  try {
-    runWeapons = (state.weapons || []).map(w => ({
-      id: w.type, level: w.level || 1, evolved: !!w.evolution }));
-  } catch { runWeapons = []; }
-  return {
-    purchased,
-    unlockedWeapons: [...(profile.unlockedWeapons || [])],
-    unlockedElites: [...(profile.unlockedElites || [])],
-    unlockedCharacters: [...(profile.unlockedCharacters || [])],
-    equippedCharacter: profile.equippedCharacter || null,
-    charLevels,
-    loadout: profile.loadout ? [...profile.loadout] : null,
-    runWeapons,
-  };
-}
-function devItems() {
-  try {
-    return (state.items || []).map(it => ({
-      id: it.id || it.name || 'unknown', rarity: it.rarity || 'unknown' }));
-  } catch { return []; }
-}
-// Live overlay panel (dev runs only): toggles + readouts + sparklines.
-// Created once per page load; hidden with the run (display toggled per run).
-// SLICE 9 placement: docked top-LEFT (clear of the top-right cog row —
-// settings / "?" / radar / map — which the old top-right dock covered), and
-// collapsible via the header (persisted pref; default EXPANDED so the live
-// telemetry still reads at a glance; collapsed it is a one-line chip that
-// covers nothing).
-function devEnsurePanel() {
-  if (devPanel || typeof document === 'undefined' || !document.createElement) return;
-  try {
-    const box = document.createElement('div');
-    box.id = 'dev-panel';
-    box.style.cssText = 'position:fixed;top:8px;left:8px;z-index:60;background:rgba(8,10,16,0.88);' +
-      'color:#cfd6e4;border:1px solid #3a4356;font:10px/1.5 monospace;padding:6px 8px;' +
-      'text-align:left;max-width:220px;';
-    const title = document.createElement('div');
-    title.textContent = 'DEV TELEMETRY (?dev=1)';
-    title.style.cssText = 'color:#7ad0ff;font-weight:bold;margin-bottom:4px;cursor:pointer;';
-    title.title = 'tap to collapse/expand';
-    box.appendChild(title);
-    const applyCollapsed = () => {
-      const collapsed = devPref(DEV_LS_COLLAPSED);
-      if (devPanel) {
-        devPanel.collapsed = collapsed;
-        if (devPanel.read) devPanel.read.style.display = collapsed ? 'none' : '';
-        if (devPanel.cvGold) devPanel.cvGold.style.display = collapsed ? 'none' : '';
-        if (devPanel.cvDmg) devPanel.cvDmg.style.display = collapsed ? 'none' : '';
-        for (const b of Object.values(devPanel.btns || {})) {
-          if (b && b.style) b.style.display = collapsed ? 'none' : '';
-        }
-      }
-      return collapsed;
-    };
-    title.onclick = () => {
-      devSetPref(DEV_LS_COLLAPSED, !devPref(DEV_LS_COLLAPSED));
-      applyCollapsed();
-    };
-    const mkBtn = (label, get, flip) => {
-      const b = document.createElement('button');
-      b.style.cssText = 'font:10px monospace;margin:0 4px 4px 0;padding:2px 6px;';
-      const paint = () => { b.textContent = label + ': ' + (get() ? 'ON' : 'OFF'); };
-      b.onclick = () => { flip(); paint(); };
-      b._paint = paint;
-      paint();
-      box.appendChild(b);
-      return b;
-    };
-    const btns = {};
-    btns.test = mkBtn('TEST', () => dev && dev.testRun, () => {
-      if (!dev) return; dev.testRun = !dev.testRun; devSetPref(DEV_LS_TEST, dev.testRun);
-    });
-    btns.free = mkBtn('FREE', () => dev && dev.freeBuild, () => {
-      if (!dev) return; dev.freeBuild = !dev.freeBuild; devSetPref(DEV_LS_FREE, dev.freeBuild);
-      setDevFreeBuild(dev.freeBuild);
-    });
-    btns.snap = mkBtn('SNAP', () => dev && !dev.snapshotsOff, () => {
-      if (!dev) return; dev.snapshotsOff = !dev.snapshotsOff; devSetPref(DEV_LS_SNAPOFF, dev.snapshotsOff);
-    });
-    // STEP 3: the autoplay-runner TOGGLE (default OFF) + the dev-night
-    // variant — same mkBtn shape + persisted-bit storage as TEST/FREE/SNAP
-    // above. AUTO arms the headless policy runner (it refuses while OFF);
-    // DNIGHT marks following runs dev-night (nightmare rules, no banking
-    // cut) via the run-scoped stamp in startRun.
-    btns.auto = mkBtn('AUTO', () => dev && dev.autoplay, () => {
-      if (!dev) return; dev.autoplay = !dev.autoplay; devSetPref(DEV_LS_AUTO, dev.autoplay);
-    });
-    btns.dnight = mkBtn('DNIGHT', () => dev && dev.devNight, () => {
-      if (!dev) return; dev.devNight = !dev.devNight; devSetPref(DEV_LS_DEVNIGHT, dev.devNight);
-    });
-    // K5 DEV DRAFT BAN LIST: arms the offer-pool exclusion for autoplay runs.
-    // Same mkBtn + persisted-bit shape; the id list rides its own pref
-    // (default preset when absent — see dev_autoplay.js DEFAULT_DRAFT_BAN_IDS).
-    btns.ban = mkBtn('BAN', () => dev && dev.draftBan, () => {
-      if (!dev) return; dev.draftBan = !dev.draftBan; devSetPref(DEV_LS_BAN_ON, dev.draftBan);
-    });
-    // SLICE 8: speed control — cycles 1x -> 2x -> 4x -> 8x -> 1x through
-    // devNextSpeed (the offered list lives in dev_telemetry.DEV_SPEEDS, so a
-    // multiplier that fails the determinism proof is cut in ONE place). The
-    // label carries the live value; _paint keeps it honest across runs (the
-    // session restarts per run, re-reading the persisted pref).
-    const spd = document.createElement('button');
-    spd.style.cssText = 'font:10px monospace;margin:0 4px 4px 0;padding:2px 6px;';
-    const paintSpd = () => { spd.textContent = 'SPEED: ' + (((dev && dev.speed) || 1)) + 'x'; };
-    spd.onclick = () => {
-      if (!dev) return;
-      devSetSpeed(devNextSpeed(dev.speed));
-      paintSpd();
-    };
-    spd._paint = paintSpd;
-    paintSpd();
-    box.appendChild(spd);
-    btns.speed = spd;
-    const read = document.createElement('div');
-    read.id = 'dev-read';
-    read.textContent = '...';
-    box.appendChild(read);
-    const mkCv = () => {
-      const c = document.createElement('canvas');
-      c.width = 200; c.height = 30;
-      c.style.cssText = 'display:block;margin-top:4px;background:#10141c;';
-      box.appendChild(c);
-      return c;
-    };
-    const cvGold = mkCv(), cvDmg = mkCv();
-    document.body.appendChild(box);
-    devPanel = { box, title, btns, read, cvGold, cvDmg, collapsed: false, applyCollapsed };
-    applyCollapsed();
-  } catch { devPanel = null; /* overlay is best-effort; the run never depends on it */ }
-}
-function devPaintPanel() {
-  if (!dev || !devPanel) return;
-  if (devPanel.collapsed) return;   // SLICE 9: a collapsed chip paints nothing
-  try {
-    for (const b of Object.values(devPanel.btns)) {
-      if (b && typeof b._paint === 'function') b._paint();
-    }
-    const n = dev.series.length;
-    const last = n ? dev.series[n - 1] : { earned: 0, spent: 0, dmg: 0 };
-    devPanel.read.textContent =
-      'EARN ' + last.earned + ' · SPENT ' + last.spent + ' (invest)' +
-      ' · SHRINE ' + dev.spentShrine + ' (excl)' +
-      ' · DMG ' + last.dmg +
-      ' · WAVE ' + (state.wave.num || 0) +
-      ' · SPEED ' + (((dev && dev.speed) || 1)) + 'x' +
-      ' · BEST ' + devBestGold() +
-      (dev.testRun ? ' · TEST' : '') + (dev.freeBuild ? ' · FREE' : '') +
-      (dev.snapshotsOff ? ' · SNAP-OFF' : '') +
-      (dev.autoplay ? ' · AUTO' : '') + (dev.devNight ? ' · DNIGHT' : '') +
-      (dev.autoplayPolicy ? ' · ' + dev.autoplayPolicy.toUpperCase() : '');
-    drawSparkline(devPanel.cvGold, [
-      { data: dev.series.map(s => s.earned) },
-      { data: dev.series.map(s => s.spent) },
-    ], { ref: devBestGold(), span: 600 });
-    drawSparkline(devPanel.cvDmg, [{ data: dev.series.map(s => s.dmg) }], { span: 600 });
-  } catch { /* telemetry must never break the frame loop */ }
-}
-// SLICE 8: dev-run speed control — SUBSTEPS, never dt scaling. At Nx the
-// frame runs the sim step N times with the frame's dt UNCHANGED (the same
-// small dt the game is tuned for: no tunneling, and 60Hz/120Hz stay correct
-// because no branch assumes a frame rate). Rendering still runs once per
-// frame — the SIM is what must stay exact. Gate off (or 1x): exactly one
-// step, the historical behaviour (one extra call + one branch).
-//
-// The mode routes PER SUBSTEP, not per frame: a death, draft open,
-// intermission or finale transition mid-frame stops (or reroutes) the
-// remaining substeps exactly as the next frame would have — a fast run can
-// never simulate a dead/frozen mode the 1x run would not.
-function devSimStep(dt) {
-  if (state.mode === 'playing') {
-    if (coachActive() || state.bannerHold > 0 || state.helpMode) return false;
-    update(dt);
-    feelStep(state, dt);
-    return true;
-  }
-  if (state.mode === 'finale') { updateFinale(dt); feelStep(state, dt); return true; }
-  return false;
-}
-function devSimSteps(dt) {
-  // MERGE (prestige x dev-speed): dev speed >1 overrides as the
-  // instrument requires (runner=8x); otherwise prestige's gated run
-  // speeds drive the substeps (gate-off = shipped prestige behaviour).
-  let n = Math.max(1, state.gameSpeed | 0);
-  if (DEV_GATE && dev && dev.speed > 1) n = devNormSpeed(dev.speed);
-  let ran = 0;
-  for (let i = 0; i < n; i++) {
-    if (!devSimStep(dt)) break;
-    ran++;
-  }
-  if (dev) { dev.steps += ran; dev.stepDt = dt; }
-}
-// SLICE 8: the flash-drop cooldown clock. Wall-clock at 1x (the shipped 45s
-// guard, untouched); the run's OWN sim-clock at dev speed >1 — state.time,
-// not a parallel accumulator, so the window edges are bitwise identical at
-// every speed (a private float sum would drift by ulps and flip roll
-// evaluation order). devSetSpeed translates the live stamp across a mid-run
-// switch, so changing speed never grants or steals cooldown.
-function devCooldownNow() {
-  if (DEV_GATE && dev && dev.speed > 1) return state.time * 1000;
-  return performance.now();
-}
-function devSetSpeed(n) {
-  // STEP 3: with the gate ON the pref persists even with no live session yet
-  // (the headless runner arms 8x before the first startRun; the overlay path
-  // is unchanged — with a session the speed applies live exactly as before).
-  // Gate off stays null (the shipped no-op).
-  if (!DEV_GATE) return null;
-  const next = devNormSpeed(n);
-  devSetSpeedPref(next);
-  if (!dev) return next;
-  if (dev.speed !== next && state.lastFlashAt != null) {
-    const oldNow = dev.speed > 1 ? state.time * 1000 : performance.now();
-    const newNow = next > 1 ? state.time * 1000 : performance.now();
-    state.lastFlashAt = newNow - (oldNow - state.lastFlashAt);
-  }
-  dev.speed = next;
-  return next;
-}
-// 1 Hz sampler (called from frame() on the wall-clock slot; gate-checked by
-// the caller). Reads scalars into the ring buffer and repaints the panel.
-function devFrameTick(nowMs) {
-  if (!dev) return;
-  if (state.mode !== 'playing' && state.mode !== 'finale') return;
-  if (nowMs - dev.lastSampleMs < 1000) return;
-  dev.lastSampleMs = nowMs;
-  dev.series.push({
-    t: Math.floor(state.time || 0),
-    earned: state.runCounts.gold.earned | 0,
-    spent: devGoldSpent() | 0,
-    dmg: Math.round(dev.dmg),
-  });
-  if (dev.series.length > 600) dev.series.splice(0, dev.series.length - 600);
-  devPaintPanel();
-}
-function devSummaryText(snap) {
-  return 'SEED ' + snap.seed + ' · WAVE ' + snap.wave +
-    ' · EARNED ' + snap.gold_earned + ' · SPENT ' + snap.gold_spent + ' (invest)' +
-    ' · DMG ' + snap.damage + ' · SPEED ' + snap.speed + 'x' +
-    ' · TEST ' + (snap.test ? 'YES' : 'NO') +
-    ' · REV ' + snap.game_rev +
-    ' · POST ' + (dev ? dev.postState : 'none') +
-    ' — tap to download JSON';
-}
-// Explicit download-JSON (user action). Always stashes the payload text on
-// the session for headless verification; the anchor download is best-effort.
-function devDownload(snap) {
-  if (!snap) return null;
-  const text = JSON.stringify(snap, null, 2);
-  if (dev) dev.lastDownload = text;
-  try {
-    if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' &&
-        URL && typeof URL.createObjectURL === 'function') {
-      const blob = new Blob([text], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'hordes-snapshot-seed' + snap.seed + '.json';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
-  } catch { /* headless: lastDownload carries the payload */ }
-  return text;
-}
-// SLICE 11: download-ALL (main menu, dev gate only). Fetches the whole
-// append-only log through GET /snapshots and downloads it as one runs.jsonl
-// (every run, not the current one). Never rejects: a failed fetch resolves
-// null (the card stays silent — same best-effort contract as devDownload).
-// Stashes the exact server bytes on the module (headless-readable) so the
-// proof can assert byte-equality with the log file. The end-screen
-// single-run DEV SNAPSHOT card is untouched.
-let devLogText = null;   // last download-all payload (exact /snapshots raw)
-async function devDownloadLog(env) {
-  try {
-    const res = await fetchSnapshots(env || globalThis);
-    if (!res || !res.ok) return null;
-    devLogText = res.raw;
-    try {
-      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' &&
-          URL && typeof URL.createObjectURL === 'function') {
-        const blob = new Blob([res.raw], { type: 'application/jsonl' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'hordes-runs.jsonl';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
-    } catch { /* headless: devLogText carries the payload */ }
-    return res.raw;
-  } catch {
-    return null;
-  }
-}
-// SLICE 9: the run's mode + modifiers, read LIVE off the run flags and the
-// live tuning constants at snapshot time — no hardcoded mode strings, no
-// hardcoded penalty numbers. `mode` is the night-vs-standard stamp (the
-// run-scoped nightRun flag frozen at startRun); `modifiers` names every live
-// payout/build modifier so a penalty run can never silently poison balance
-// analysis: the night banking penalty (percent read off RUN_GOLD, the ONE
-// home for the number), the challenge stamp + its live gold bonus, the stage
-// stamp, the manual heat pushes taken, assisted/apex flags.
-// STEP 3: a dev-night run stamps mode 'dev-night' and carries NO
-// banking-penalty modifier (the cut is exempt for the dev variant only —
-// regular night mode keeps stamping it exactly as before).
-function devModeFields() {
-  const devNight = !!(state && state.devNightRun);
-  const night = !!(state && state.nightRun);
-  const mode = devNight ? 'dev-night' : (night ? 'night' : 'standard');
-  const modifiers = [];
-  if (night && !devNight) modifiers.push('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT);
-  try {
-    if (!isStandard(state.challenge)) {
-      modifiers.push('challenge:' + state.challenge);
-      modifiers.push('challenge-bonus-' + challengeGoldBonusPct(state.challenge));
-    }
-  } catch { /* stamps are always present; defensive */ }
-  try {
-    if (!isDefaultStage(state.stage)) modifiers.push('stage:' + state.stage);
-  } catch { /* defensive */ }
-  try {
-    const pushes = manualPushes(state) | 0;
-    if (pushes > 0) modifiers.push('heat-manual-' + pushes);
-  } catch { /* defensive */ }
-  if (state && state.assistedRun) modifiers.push('assisted');
-  if (state && state.apexRun) modifiers.push('apex');
-  return { mode, modifiers };
-}
-// SLICE 9: the run's choice audit, assembled from the dev session ledgers
-// (recorded at each choice site during the run — see devNewSession). TAKEN
-// everywhere; OFFERED where cheap (drafts, blessings, evolutions).
-// SLICE 10: + removals — the dev-run shop buy-backs journaled since the last
-// snapshot (meta.js sell paths via devRecordRemoval): per removed level
-// {id, kind, characterId, level, refund}. The `upgrades` field carries the
-// post-sell build (taken); removals carry what left and what each level
-// refunded, same schema family (additive entry inside the optional choices
-// object — no version bump).
-function devChoices() {
-  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], stakes: 0, removals: [] };
-  return {
-    drafts: dev.drafts.map(d => ({ ...d, offered: [...d.offered] })),
-    blessings: dev.blessings.map(b => ({ ...b, offered: [...b.offered] })),
-    shrines: dev.shrineBuys.map(s => ({ ...s })),
-    chests: dev.chests.map(c => ({ ...c })),
-    evolutions: dev.evolutions.map(e => ({ ...e, offered: [...e.offered] })),
-    stakes: dev.stakes | 0,
-    removals: devShopRemovals.map(r => ({ ...r })),
-  };
-}
-// End-of-run snapshot: built ONCE per run (composeEndScreen also serves
-// reshowEndScreen — the guard makes recomposition a no-op), then auto-saved
-// unless the kill-switch is on.
-// STEP 3: the build itself is devBuildSnapshot() (pure read off live state +
-// the dev session) so the headless policy runner can rebuild the SAME row
-// AFTER its between-run buys — the posted row then carries the post-buy
-// build (upgrades + gold_spent at full price, per the investment rule).
-function devBuildSnapshot() {
-  const mf = devModeFields();
-  const fields = {
-    schema_v: SNAPSHOT_SCHEMA_V,
-    game_rev: (dev && dev.rev) || 'pending',
-    seed: (state.choiceSeed || 0) | 0,
-    upgrades: devUpgrades(),
-    shrines: { used: dev.shrineBlessings.length, blessings: [...dev.shrineBlessings] },
-    items: devItems(),
-    gold_earned: Math.floor(state.runCounts.gold.earned || 0),
-    gold_spent: Math.floor(devGoldSpent()),
-    damage: Math.round(dev.dmg),
-    wave: (state.wave && state.wave.num) | 0,
-    test: !!dev.testRun,
-    speed: devNormSpeed(dev.speed),
-    choices: devChoices(),
-    mode: mf.mode,
-    modifiers: mf.modifiers,
-  };
-  if (dev.autoplayPolicy) fields.policy = dev.autoplayPolicy;
-  // K5: when the ban list drove this run's drafts (autoplay gate + arm bit),
-  // stamp the banned ids so a cohort row proves which ids were excluded
-  // (additive optional field — the schema-v2-optional precedent, no bump).
-  if (dev.autoplay === true && dev.draftBan && dev.draftBanIds.length) {
-    fields.draft_ban = [...dev.draftBanIds];
-  }
-  return buildSnapshot(fields);
-}
-function devOnRunEnd() {
-  if (!dev || dev.snapshot) return;
-  let snap;
-  try {
-    snap = devBuildSnapshot();
-  } catch (err) {
-    dev.postState = 'failed:build ' + String((err && err.message) || err).slice(0, 60);
-    return;
-  }
-  // SLICE 10: the snapshot now carries the journaled removals (devChoices
-  // reads devShopRemovals live) — drain the journal so the next run-end
-  // carries only newer sells, exactly once each.
-  devShopRemovals.length = 0;
-  dev.snapshot = snap;
-  try {
-    menuCard('DEV SNAPSHOT', devSummaryText(snap), () => devDownload(snap));
-  } catch { /* the end screen stands without the dev card */ }
-  if (dev.snapshotsOff) { dev.postState = 'killed'; return; }
-  dev.postState = 'pending';
-  (async () => {
-    const rev = await fetchGameRev(globalThis);
-    snap.game_rev = (typeof rev === 'string' && rev.length > 0) ? rev : 'unavailable';
-    dev.rev = snap.game_rev;
-    const r = await postSnapshot(globalThis, snap);
-    dev.postState = r.ok ? 'saved' : ('failed:' + String(r.error || 'post').slice(0, 80));
-  })();
-}
-
 // The run's gold is an IN-RUN WALLET: profile.runPurse, persisted through the
 // ONE existing profile key (hordes_profile_v1). Three writers, and only three:
 //   purseCredit — per-kill, tier-weighted (meta.js GOLD_TIER), a per-kill
@@ -2445,64 +1777,33 @@ function purseClamp(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(PURSE_MAX, Math.max(0, Math.floor(n))) : 0;
 }
-// Add run income to the purse. Fractions carry over, so small payouts add up.
-function purseAdd(amount) {
-  const g = state.runCounts.gold;
-  g.carry = (g.carry || 0) + amount;
-  const v = Math.floor(g.carry);
-  if (v <= 0) return 0;
-  g.carry -= v;
+function purseCredit(e) {
+  // W7b RARE Gilded Palm: +30% purse gold per kill per pick, compounding. The
+  // multiplier lives on the run's stats (1 = the shipped payout bit-for-bit,
+  // CHAFF's 0 included), so the wallet keeps ONE writer and every consumer
+  // (HUD, ledger, settle) reads the same number.
+  // PRESTIGE GOLD (owner spec: gold income x2^P, all sources, same seam).
+  // The tier factor rides this one per-kill writer — every tier-weighted drop
+  // scales, and settlement banks the remainder WITHOUT re-multiplying (it was
+  // already scaled here).
+  const mult = (state.player && state.player.stats.purseKillMult) || 1;
+  const v = Math.round(purseValue(e) * mult * prestigeGoldMult(getPrestige(profile)));
+  const tier = purseTier(e);
   profile.runPurse = purseClamp(profile.runPurse + v);
+  const g = state.runCounts.gold;
   g.earned += v;
+  g.kills[tier] = (g.kills[tier] || 0) + 1;
   state.runPurse = profile.runPurse;
   return v;
-}
-// What scales run income: Greed (stats.goldMult) and the prestige tier scale
-// all of it; Gilded Palm (stats.purseKillMult) scales kill gold only, as its
-// card says.
-function purseIncomeMult(kill = true) {
-  const st = (state.player && state.player.stats) || {};
-  return (st.goldMult || 1) * (kill ? (st.purseKillMult || 1) : 1) * prestigeGoldMult(getPrestige(profile));
-}
-// One kill's gold. Ordinary kills pay less as the run's kill count climbs
-// (RUN_GOLD.KILL_SOFTCAP); bosses and heralds always pay in full.
-function purseCredit(e) {
-  const tier = purseTier(e);
-  const soft = e.boss ? 1 : 1 / (1 + ((state.player && state.player.kills) || 0) / RUN_GOLD.KILL_SOFTCAP);
-  const g = state.runCounts.gold;
-  g.kills[tier] = (g.kills[tier] || 0) + 1;
-  return purseAdd(purseValue(e) * soft * purseIncomeMult());
-}
-// The survival bonus: every SURVIVAL_EVERY seconds survived pays
-// SURVIVAL_BASE + SURVIVAL_STEP x (the tick's number), so longer runs pay more
-// per tick.
-function purseSurvivalTicks() {
-  const due = Math.floor(state.time / RUN_GOLD.SURVIVAL_EVERY);
-  while ((state.survivalTicks || 0) < due) {
-    state.survivalTicks = (state.survivalTicks || 0) + 1;
-    const v = purseAdd((RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP * state.survivalTicks) * purseIncomeMult(false));
-    state.runCounts.gold.survival = (state.runCounts.gold.survival || 0) + v;
-  }
 }
 // Debit the purse if it covers `amount`. Returns true on payment. The spend
 // saves immediately (shrine / paid-chest precedent) so a reload never
 // resurrects gold that was already spent.
-// SLICE 7: `sink` classifies the debit for investment accounting ('shrine' =
-// EXCLUDED per the plan rule, 'chest' = counted — see dev_telemetry.js). In
-// free-build the purse keeps its gold but the FULL price still lands in the
-// sink bucket (the accounting hard rule).
-function purseSpend(amount, sink = 'shrine') {
+function purseSpend(amount) {
   amount = Math.max(0, Math.floor(Number(amount) || 0));
-  const free = devRunFree();
-  if (!free && purseClamp(profile.runPurse) < amount) return false;
-  if (!free) {
-    profile.runPurse = purseClamp(profile.runPurse - amount);
-  }
+  if (purseClamp(profile.runPurse) < amount) return false;
+  profile.runPurse = purseClamp(profile.runPurse - amount);
   state.runCounts.gold.spent += amount;
-  if (dev) {
-    if (sink === 'chest') dev.spentChest += amount;
-    else dev.spentShrine += amount;
-  }
   state.runPurse = profile.runPurse;
   persistProfile();
   return true;
@@ -2515,8 +1816,8 @@ function spawnWaveArches() {
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2;
     const d = 120 + Math.random() * 260;
-    state.arches.push(placeReachable(spawnArch(Math.random,
-      p.x + Math.cos(a) * d, p.y + Math.sin(a) * d), ARCH_BUILDING_MARGIN));
+    state.arches.push(spawnArch(Math.random,
+      p.x + Math.cos(a) * d, p.y + Math.sin(a) * d));
   }
 }
 
@@ -2559,18 +1860,16 @@ function openIntermission(opts = {}) {
     `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s` +
     ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
+    `${state.evoTokens > 0 ? ` · TOKENS ${state.evoTokens}` : ''}` +
     `<br>GOLD ${purseClamp(profile.runPurse)} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
   menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
     const cost = chestCost(def);
-    // SLICE 7: free-build rows never dim (the buy path grants for 0).
-    const chestDim = !devRunFree() && purseClamp(profile.runPurse) < cost;
     const el = menuCard(tier + ' CHEST',
       `${cost} gold · gamble an item (${Math.round(def.nothingChance * 100)}% nothing)` +
-      (shopPriceMult() !== 1 ? ' · CURSED PRICES' : '') +
-      (devRunFree() ? ' · FREE-BUILD' : ''),
-      () => buyPaidChest(tier), chestDim);
-    if (chestDim) el.onclick = () => audio.playSfx('uiDeny');
+      (shopPriceMult() !== 1 ? ' · CURSED PRICES' : ''),
+      () => buyPaidChest(tier), purseClamp(profile.runPurse) < cost);
+    if (purseClamp(profile.runPurse) < cost) el.onclick = () => audio.playSfx('button');
   }
   // The wave's blessing/curse offers: rolled once per wave (re-renders after
   // a chest buy reuse the same pending set; taken ones drop off).
@@ -2600,11 +1899,8 @@ function openIntermission(opts = {}) {
       `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')} · run xp x${nextXp.toFixed(2).replace(/\.?0+$/, '')}`,
       () => {
         addHeat(state, 'MANUAL_PUSH');
-        // SLICE 9: the stakes push is a player choice (harder foes for paid
-        // gold+xp) — count it for the audit + the heat-manual modifier.
-        if (dev) dev.stakes++;
         interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}`;
-        audio.playSfx('draftPick');
+        audio.playSfx('levelup');
         openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
       });
   }
@@ -2651,21 +1947,6 @@ function takeChoice(offer) {
   applyChoice(p, offer);
   if (!state.takenChoices.includes(offer.id)) state.takenChoices.push(offer.id);
   state.waveChoice = offer;
-  // SLICE 9: per-wave blessing audit (offered set once, taken updated on every
-  // re-pick — the final pick is what the run carries; swaps counts the changes).
-  if (dev) {
-    const wv = (state.wave && state.wave.num) | 0;
-    let rec = null;
-    for (let i = dev.blessings.length - 1; i >= 0; i--) {
-      if (dev.blessings[i].wave === wv) { rec = dev.blessings[i]; break; }
-    }
-    if (!rec) {
-      rec = { wave: wv, offered: (state.pendingChoiceOffers || []).map(o => o.id), taken: null, swaps: 0 };
-      dev.blessings.push(rec);
-    }
-    if (rec.taken != null && rec.taken !== offer.id) rec.swaps++;
-    rec.taken = offer.id;
-  }
   // Merchant's Pact: weaponSlotBonus widens the per-run slot cap (bounded by
   // the absolute CONFIG cap) — recomputed from the restored scope, so a swap
   // away from the Pact narrows it again.
@@ -2673,7 +1954,7 @@ function takeChoice(offer) {
   // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
   state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
   interMsg = `BLESSING: ${offer.title} — ${offer.desc} · tap another offer to change it`;
-  audio.playSfx('draftPick');
+  audio.playSfx('levelup');
   openIntermission();   // re-render: offers + gold line refresh
 }
 
@@ -2685,45 +1966,24 @@ function buyPaidChest(tier) {
   // chests are in-run spending that exists today). loot.js's rollPaidChest
   // takes a { gold } wallet, so hand it a purse VIEW: loot.js stays untouched
   // and the bank is never in scope here.
-  // SLICE 7 free-build: the purse keeps its gold but the FULL price records
-  // into the counted spend bucket (dev.spentChest) + the shipped ledger.
-  const free = devRunFree();
-  if (!free && purseClamp(profile.runPurse) < cost) return;
-  // Free-build funds the wallet VIEW (loot.js still debits its base cost
-  // from the view and stays untouched); the real purse below is skipped, so
-  // the purse keeps its gold while the gamble resolves identically.
-  const wallet = { gold: free ? cost : purseClamp(profile.runPurse) };
+  if (purseClamp(profile.runPurse) < cost) return;
+  const wallet = { gold: purseClamp(profile.runPurse) };
   const res = rollPaidChest(wallet, tier);
   if (!res.ok) return;
   // rollPaidChest debits the BASE cost; the Merchant's Pact surcharge is
   // taken here so loot.js stays untouched. Both writes go through the N1
   // clamp so a purse near the cap cannot wrap on the surcharge subtraction.
-  if (!free) {
-    profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
-  }
+  profile.runPurse = purseClamp(wallet.gold - (cost - def.cost));
   state.runCounts.gold.spent += cost;
-  if (dev) dev.spentChest += cost;
   state.runPurse = profile.runPurse;
   persistProfile();
   if (res.gambled === 'item' && res.item) {
     const it = res.item;
     const msg = applyEquipDecision(it);
-    // SLICE 9: the gamble outcome — kept / swapped / left-behind (+ the item
-    // id either way; an empty gamble records 'empty'). The interMsg line below
-    // is untouched (player copy byte-identical).
-    if (dev) {
-      const itemId = it.id || it.name || 'unknown';
-      dev.chests.push({
-        tier, cost,
-        result: !msg ? ('left:' + itemId)
-          : (msg.msg.indexOf('SWAPPED') >= 0 ? ('swapped:' + itemId) : ('kept:' + itemId)),
-      });
-    }
     interMsg = msg
       ? `CHEST: ${msg} (${it.affixes.map(a => a.name).join(', ')})`
       : `CHEST: ${it.name} LEFT BEHIND — the belt is stronger`;
   } else {
-    if (dev) dev.chests.push({ tier, cost, result: 'empty' });
     interMsg = 'THE CHEST WAS EMPTY... ' + res.debited + ' gold gone';
   }
   audio.playSfx('chest');
@@ -2792,7 +2052,7 @@ function spawnBoss() {
     boss.w = Math.round(boss.w * B.SIZE_MULT * desc.sizeMult);
     boss.h = Math.round(boss.h * B.SIZE_MULT * desc.sizeMult);
     boss.speed *= B.SPEED_MULT * desc.speedMult;
-    boss.contactDamageMult = B.CONTACT_MULT * (desc.contactDamageMult || 1);
+    boss.contactDamageMult = (boss.contactDamageMult || 1) * (desc.contactDamageMult || 1);
     boss.xp = C.ENEMY.BASE_XP * ladderXp(w) * B.XP_KILLS;  // worth ~10 kills
     boss.boss = true;
     boss.bossId = desc.id;          // decideBossAction dispatch key
@@ -2909,23 +2169,75 @@ function spawnMidBoss() {
   easeToBossStance();       // BOSS_STANCE: same ease for the mid-wave herald
 }
 
-// ---------- WEAPON FUSIONS (fusions.js) --------------------------------------
-// A fused weapon runs both halves (weapons.js updateWeapons); the link
-// behaviours below are what make the pair act as one weapon. Every one is
-// keyed on a fusion flag carried by the fused weapon itself.
+// ---------- WAVE-11 SYNERGIES (synergies.js; weapons.js stays untouched) -----
+// Derived state: re-evaluated on every weapon change (grant/evolve/run start).
+function refreshSynergies() {
+  const prev = state.synergyNames || new Set();
+  state.synergies = detectSynergies(state.weapons);
+  state.synergyNames = new Set(state.synergies.map(s => s.name));
+  for (const s of state.synergies) {
+    if (!prev.has(s.name)) {
+      const d = describeSynergy(s);
+      toast('SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc);
+      audio.playSfx('levelup');
+    }
+  }
+}
 
-// The fused weapon carrying `flag`, or null.
-function fusOwner(flag) {
-  for (const w of state.weapons) {
-    const f = w.fusion && w.fusion.flags;
-    if (f && flag in f) return w;
+// ===========================================================================
+// WAVE-26 FEATURE 2 — DRAFT SYNERGY HINTS
+// The draft IS the game in an auto-battler, so it is the main knowledge
+// surface. A draft card earns a hint ONLY when the pick would create a pair
+// the RUN ACTUALLY IMPLEMENTS — detectSynergies is the single source of truth
+// (the same call refreshSynergies makes), and every flag in the table is
+// wired in the weapon loop. No real synergy -> no hint at all: no filler, and
+// never a promise of an effect the code does not deliver.
+//
+//   - a NEW WEAPON card hints when one of its partners is already equipped
+//     ("PAIRS WITH BEAM · SUPERCONDUCTOR");
+//   - a LEVEL-UP card hints only while its weapon is part of a LIVE pair
+//     ("THRESHING STORM LIVE · ZAP") — otherwise silence.
+// ===========================================================================
+function synergyHintForCard(card) {
+  const id = (card && card.id) || '';
+  // Card ids are 'wpn_<TYPE>' for a grant and 'lvl_<TYPE>_<level>' for a
+  // level-up. The level suffix is stripped explicitly (a greedy [A-Z_]+ match
+  // would swallow the trailing '_' and miss multi-word types like NOVA_PULSE).
+  let kind = null, type = null;
+  let m = /^wpn_(.+)$/.exec(id);
+  if (m) { kind = 'wpn'; type = m[1]; }
+  else {
+    m = /^lvl_(.+)_\d+$/.exec(id);
+    if (m) { kind = 'lvl'; type = m[1]; }
+  }
+  if (!kind || !WEAPON_NAMES[type]) return null;    // not a real archetype card
+  const owned = state.weapons.map(w => w.type);
+  if (kind === 'wpn') {
+    if (owned.includes(type)) return null;
+    const live = new Set((state.synergies || detectSynergies(owned)).map(s => s.name));
+    for (const s of detectSynergies([...owned, type])) {
+      if (live.has(s.name) || !s.pair.includes(type)) continue;
+      const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+      return 'PAIRS WITH ' + (WEAPON_NAMES[partner] || partner) + ' · ' + s.name.toUpperCase();
+    }
+    return null;
+  }
+  // Level-up card: only meaningful while the weapon is in a live synergy.
+  const live = state.synergies || detectSynergies(owned);
+  for (const s of live) {
+    if (!s.pair.includes(type)) continue;
+    const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
+    return s.name.toUpperCase() + ' LIVE · ' + (WEAPON_NAMES[partner] || partner);
   }
   return null;
 }
-// The value of a fusion flag in this kit, else null.
-function fus(flag) {
-  const w = fusOwner(flag);
-  return w ? w.fusion.flags[flag] : null;
+
+// Active flag probe: the value of `flag` from any live synergy, else null.
+function syn(flag) {
+  for (const s of state.synergies || []) {
+    if (flag in s.flags) return s.flags[flag];
+  }
+  return null;
 }
 
 function nearestFoe(x, y, exclude) {
@@ -2938,102 +2250,112 @@ function nearestFoe(x, y, exclude) {
   return best;
 }
 
-// weapons.js damage convention for the link bolts and blasts below: damage *
-// archetype MULT * level dmgMult * loot damageMult * arch (BERSERK) * the
-// evolution's and the fusion's multipliers.
-function fusWeaponDmg(weaponId, mult) {
-  const w = findKitWeapon(state.weapons, weaponId);
+// weapons.js damage convention for the supplemental bolts/blasts below:
+// damage * archetype MULT * level dmgMult * loot damageMult * arch (BERSERK)
+// * evolution mult. The arch term MUST match weapons.js dmgScale: without it,
+// every synergy bolt (zap fork, scythe zap, nova/mine/beam detonations) missed
+// BERSERK while the base weapons got it.
+function synWeaponDmg(weaponId, mult) {
+  const w = state.weapons.find(k => k.type === weaponId);
   const P = weaponLevelParams(weaponId, (w && w.level) || 1);
   const evo = w && w.evolution && w.evolution.affixes;
   return state.player.stats.damage * mult * (P.dmgMult || 1) *
     (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
-    ((evo && evo.damageMult) || 1) * ((w && w.fusion && w.fusion.mult) || 1);
+    ((evo && evo.damageMult) || 1);
 }
 
-// Mine detonation from outside weapons.js: mirrors weapons.js detonateMine
-// (damage, blast radius, blast payload), minus its evolution chain rule.
-function detonateMineAt(mine, fusionId) {
+// Mine detonation from OUTSIDE weapons.js (Chain Reaction / Fire Focus):
+// mirrors weapons.js detonateMine (damage, blast radius, blast + shrapnel
+// payloads), minus its evolution chain rule.
+function detonateMineAt(mine) {
   const p = state.player;
-  const w = findKitWeapon(state.weapons, 'MINE');
+  const w = state.weapons.find(k => k.type === 'MINE');
   const P = weaponLevelParams('MINE', (w && w.level) || 1);
   const blast = (P.blast || WEAPONS.MINE.BLAST) *
     (((w && w.evolution && w.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
-  const dmg = fusWeaponDmg('MINE', WEAPONS.MINE.DAMAGE_MULT);
+  const dmg = synWeaponDmg('MINE', WEAPONS.MINE.DAMAGE_MULT);
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
-      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) { d *= (p.stats.critMult || 1.5); markCrit(state, e); }
-      e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
-      onWeaponHit(state, e);   // a mine's payload is a direct weapon hit
+      if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) d *= (p.stats.critMult || 1.5);
+      // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
+      // damage site (the rider below rides the same hit) — blasts never see it.
+      e.hp -= d * directHitMult(state, e); e.flash = 0.08;
+      // G21 rider: the mine's PRIMARY payload is a direct weapon hit wherever
+      // the detonation is triggered from (weapons.js detonateMine rides via
+      // hurt(); this mirror rides identically).
+      onWeaponHit(state, e);
       state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 });
     }
   }
   state.effects.push({ kind: 'mine_blast', x: mine.x, y: mine.y, radius: blast,
-    shrapnel: WEAPONS.MINE.SHRAPNEL, age: 0, ttl: 0.35, fus: fusionId });
+    shrapnel: WEAPONS.MINE.SHRAPNEL, age: 0, ttl: 0.35 });
   const i = state.projectiles.indexOf(mine);
   if (i >= 0) state.projectiles.splice(i, 1);
 }
 
-// A lightning chain from a point: up to `hops` nearest-first jumps inside the
-// zap hop range, each at `frac` of the fused Chain Zap's damage with its
-// falloff. Returns the number of enemies struck.
-function fusionZapChain(x, y, hops, frac, exclude, fusionId) {
-  const base = fusWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * frac;
-  const points = [{ x, y }];
-  const hit = new Set(exclude || []);
-  let from = { x, y };
-  for (let k = 0; k < hops; k++) {
+// Superconductor (ZAP+BEAM): each fired chain zap throws an EXTRA fork chain
+// of zapExtraForks hops — a supplemental bolt walking nearest-first from the
+// player, damage continuing the falloff curve past the base fire's depth.
+function synergyZapFork(zw) {
+  const extra = syn('zapExtraForks') || 0;
+  const p = state.player;
+  const baseDmg = synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT);
+  const points = [{ x: p.x, y: p.y }];
+  const hit = new Set();
+  let from = p;
+  for (let k = 0; k < extra; k++) {
     const tgt = nearestFoe(from.x, from.y, hit);
     if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
     hit.add(tgt);
-    tgt.hp -= devHit(base * Math.pow(WEAPONS.ZAP.FALLOFF, k) * directHitMult(state, tgt));
+    // CHAIN ZAP REWORK (msg_01M2RENZ): the base fire now spends COUNT-1 hop
+    // depths, so the supplemental fork's falloff continues past that depth
+    // (the old (P.jumps || JUMPS)+1+k exponent read the retired ladder field).
+    tgt.hp -= baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, WEAPONS.ZAP.COUNT + k) *
+      directHitMult(state, tgt);   // G21 GLACIER (direct hit)
     tgt.flash = 0.08;
-    onWeaponHit(state, tgt);   // a link bolt is a direct hit
+    onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
     from = tgt;
   }
-  if (points.length > 1) state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15, fus: fusionId });
-  return points.length - 1;
+  if (points.length > 1) state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15 });
 }
 
-// Gravity Well (NOVA+ORBIT) and Chain Reaction (NOVA+MINE), on each nova fire.
-function fusionOnNova(nw) {
+// Gravity Well (NOVA+ORBIT) + Chain Reaction (NOVA+MINE), on each nova fire.
+function synergyOnNova(nw) {
   const p = state.player;
   const P = weaponLevelParams('NOVA_PULSE', nw.level);
   const radius = (P.radius || WEAPONS.NOVA_PULSE.RADIUS) *
     (((nw.evolution && nw.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
-  const pull = fus('novaPull');
+  const pull = syn('novaPull');
   if (pull) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) {
-        e.x += (p.x - e.x) * pull;   // drag inward onto the blades
-        e.y += (p.y - e.y) * pull;
+        e.x += (p.x - e.x) * pull;   // drag inward by the flag fraction —
+        e.y += (p.y - e.y) * pull;   // feeds the orbit blades
       }
     }
   }
-  if (fus('novaDetonatesMines')) {
+  if (syn('novaDetonatesMines')) {
     const mines = state.projectiles.filter(m => m.kind === 'mine' &&
       Math.hypot(m.x - p.x, m.y - p.y) <= radius);
-    for (const m of mines) detonateMineAt(m, nw.fusionId);   // copy — detonateMineAt splices
+    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
   }
 }
 
-// Superconductor (ZAP+BEAM) and Fire Focus (MINE+BEAM), on each beam fire.
-// The aim is recomputed: weapons.js picks the same nearest target.
-function fusionOnBeam(bw) {
+// Fire Focus (MINE+BEAM): a fired beam cooks off every mine inside its lane
+// (aim recomputed — weapons.js picks the same deterministic nearest target).
+function synergyBeamDetonate(bw) {
   const p = state.player;
   const t = nearestFoe(p.x, p.y);
   if (!t) return;
-  const hops = fus('beamZapChain');
-  if (hops) fusionZapChain(t.x, t.y, hops + 1, 0.6, null, bw.fusionId);
-  if (!fus('beamDetonatesMines')) return;
   const P = weaponLevelParams('BEAM', bw.level);
-  const evoFlags = (bw.evolution && bw.evolution.flags) || [];
-  const width = (P.width || WEAPONS.BEAM.WIDTH) * (evoFlags.includes('solarFlare') ? 1.3 : 1);
-  const length = P.length || WEAPONS.BEAM.LENGTH;
-  const lanes = evoFlags.includes('prismSplit') ? [-0.35, 0, 0.35] : [0];
+  const width = (P.width || WEAPONS.BEAM.WIDTH) *
+    (((bw.evolution && bw.evolution.flags) || []).includes('solarFlare') ? 1.3 : 1);
+  const lanes = ((bw.evolution && bw.evolution.flags) || []).includes('prismSplit')
+    ? [-0.35, 0, 0.35] : [0];
   const base = Math.atan2(t.y - p.y, t.x - p.x);
   for (const off of lanes) {
     const cx = Math.cos(base + off), cy = Math.sin(base + off);
@@ -3041,51 +2363,34 @@ function fusionOnBeam(bw) {
       if (m.kind !== 'mine') return false;
       const rx = m.x - p.x, ry = m.y - p.y;
       const along = rx * cx + ry * cy;
-      return along >= 0 && along <= length && Math.abs(rx * cy - ry * cx) <= width / 2 + 4;
+      return along >= 0 && along <= WEAPONS.BEAM.LENGTH &&
+        Math.abs(rx * cy - ry * cx) <= width / 2 + 4;
     });
-    for (const m of mines) detonateMineAt(m, bw.fusionId);   // copy — detonateMineAt splices
-  }
-  // The beam leaves one mine where it struck, at most a beam's length away.
-  if (fus('beamSeedsMine')) {
-    const d = Math.min(length, Math.hypot(t.x - p.x, t.y - p.y));
-    state.projectiles.push({ kind: 'mine', x: p.x + Math.cos(base) * d, y: p.y + Math.sin(base) * d, age: 0 });
+    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
   }
 }
 
-// Sun Lane (VOLLEY+JAVELIN): every spear throw is flanked by extra volley
-// rounds down its lane.
-function fusionJavelinEscort(n) {
-  const p = state.player;
-  const t = nearestFoe(p.x, p.y);
-  if (!t) return;
-  const base = Math.atan2(t.y - p.y, t.x - p.x);
-  const mult = volleyDamageMult();
-  for (let i = 0; i < n; i++) {
-    const a = base + (i - (n - 1) / 2) * 0.24;
-    const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
-    pr.damage *= mult;
-    pr.pierce = PIERCE_ALL;   // the fused Volley is Nova Shot: its rounds pierce the lane
-    state.projectiles.push(pr);
-  }
-}
-
-// Threshing Storm (SCYTHE+ZAP): each landed sweep (a fresh scythe_arc effect)
-// throws a lightning chain from the arc's edge.
-function fusionScytheZap(hops) {
-  const id = fusOwner('scytheArcZap').fusionId;
+// Threshing Storm (SCYTHE+ZAP): each LANDED sweep (a fresh scythe_arc effect)
+// lashes the nearest foe from the arc's edge at 50% zap falloff.
+function synergyScytheZap() {
   for (const fx of state.effects) {
     if (fx.kind !== 'scythe_arc' || fx.zapped) continue;
     fx.zapped = true;
     const ex = fx.x + Math.cos(fx.dir) * fx.radius;
     const ey = fx.y + Math.sin(fx.dir) * fx.radius;
-    fusionZapChain(ex, ey, hops, 0.5, null, id);
+    const t = nearestFoe(ex, ey);
+    if (!t) continue;
+    t.hp -= synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t);   // 50% falloff + G21 GLACIER
+    t.flash = 0.08;
+    onWeaponHit(state, t);   // G21 rider: the scythe-zap lash is a direct hit
+    state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
+      age: 0, ttl: 0.15 });
   }
 }
 
 // Bloodhound Rang (BOOMERANG+SEEKER): the return leg steers toward the
-// nearest enemy at half the Seeker's turn rate (the catch missile is fired by
-// weapons.js at the catch itself).
-function fusionBoomerangHoming(dt) {
+// nearest survivor at SEEKER turn rate * 0.5 (weak homing, post-tick step).
+function synergyBoomerangHoming(dt) {
   const p = state.player;
   const turn = WEAPONS.SEEKER.TURN * 0.5 * dt;
   for (const pr of state.projectiles) {
@@ -3101,95 +2406,80 @@ function fusionBoomerangHoming(dt) {
   }
 }
 
-// Harvest Fire (SCYTHE+EMBER): every enemy a landed sweep killed bursts like
-// an ember kill at the corpse and leaves burning ground there.
-function fusionScytheEmber() {
-  const id = fusOwner('scytheEmberBurst').fusionId;
-  for (const fx of state.effects) {
-    if (fx.kind !== 'scythe_arc' || fx.embered || !fx.reaped) continue;
-    fx.embered = true;
-    if (fx.reaped.length === 0) continue;
-    const ew = findKitWeapon(state.weapons, 'EMBER');
-    const blast = weaponLevelParams('EMBER', (ew && ew.level) || 1).blast || WEAPONS.EMBER.BLAST;
-    const dmg = fusWeaponDmg('EMBER', WEAPONS.EMBER.DAMAGE_MULT * WEAPONS.EMBER.KILL_BLAST_MULT);
-    for (const c of fx.reaped) {
-      for (const e of state.enemies) {
-        if (e.hp <= 0 || Math.hypot(e.x - c.x, e.y - c.y) > blast) continue;
-        e.hp -= devHit(dmg * directHitMult(state, e));
-        e.flash = 0.08;
-        onWeaponHit(state, e);
-        state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
-      }
-      state.effects.push({ kind: 'mine_blast', x: c.x, y: c.y, radius: blast, shrapnel: 4, age: 0, ttl: 0.3, fus: id });
-      state.projectiles.push({ kind: 'firepatch', x: c.x, y: c.y, radius: blast, damage: dmg, tint: 'fire', age: 0, tick: 0 });
-    }
-  }
-}
-
-// Storm Bounce (RICOCHET+ZAP): each ricochet impact zaps the nearest enemy
-// that body has not hit yet, within zap hop range, at half zap damage.
-function fusionRicochetSpark() {
-  const id = fusOwner('ricochetZapFork').fusionId;
-  for (const fx of state.effects) {
-    if (!fx.ricochetHit || fx.sparked) continue;
-    fx.sparked = true;
-    fusionZapChain(fx.x, fx.y, 1, 0.5, fx.ricochetHit, id);
-  }
-}
-
-// Crater Field (METEOR+MINE): a landing meteor detonates every mine inside
-// its blast, then leaves a fresh mine in the crater.
-function fusionMeteorMines() {
-  const id = fusOwner('meteorDetonatesMines').fusionId;
-  for (const fx of state.effects) {
-    if (!fx.meteor || fx.cooked) continue;
-    fx.cooked = true;
-    const mines = state.projectiles.filter(m => m.kind === 'mine' &&
-      Math.hypot(m.x - fx.x, m.y - fx.y) <= fx.radius);
-    for (const m of mines) detonateMineAt(m, id);   // copy — detonateMineAt splices
-    if (fus('craterMine')) state.projectiles.push({ kind: 'mine', x: fx.x, y: fx.y, age: 0 });
-  }
-}
-
-// Fire state of every weapon in the kit (fused halves included), taken before
-// the weapons tick so wireFusions can tell which ones fired.
-function snapshotFire() {
-  const preFire = new Map();
-  for (const w of kitWeapons(state.weapons)) preFire.set(w, { cd: w.cd, fires: w.fires || 0 });
-  return preFire;
-}
-
 // Post-tick pass: fire-event hooks (a cd/fires reset means the weapon fired)
-// and the continuous link behaviours.
-function wireFusions(dt, preFire) {
-  if (!state.weapons.some(w => w.fusion)) return;
-  for (const w of kitWeapons(state.weapons)) {
+// + the continuous flags.
+function wireSynergies(dt, preFire) {
+  if (!state.synergies || state.synergies.length === 0) return;
+  for (const w of state.weapons) {
     const before = preFire && preFire.get(w);
-    if (!before || !w.fusion) continue;
+    if (!before) continue;
     const fired = (w.fires || 0) > before.fires || w.cd > before.cd;
     if (!fired) continue;
-    if (w.type === 'NOVA_PULSE') fusionOnNova(w);
-    if (w.type === 'BEAM') fusionOnBeam(w);
-    if (w.type === 'JAVELIN' && fus('javelinEscort')) fusionJavelinEscort(fus('javelinEscort'));
+    if (w.type === 'ZAP' && syn('zapExtraForks')) synergyZapFork(w);
+    if (w.type === 'NOVA_PULSE' && (syn('novaPull') || syn('novaDetonatesMines'))) synergyOnNova(w);
+    if (w.type === 'BEAM' && syn('beamDetonatesMines')) synergyBeamDetonate(w);
   }
-  if (fus('scytheArcZap')) fusionScytheZap(fus('scytheArcZap'));
-  if (fus('boomerangHoming')) fusionBoomerangHoming(dt);
-  if (fus('scytheEmberBurst')) fusionScytheEmber();
-  if (fus('ricochetZapFork')) fusionRicochetSpark();
-  if (fus('meteorDetonatesMines')) fusionMeteorMines();
+  if (syn('scytheArcZap')) synergyScytheZap();
+  if (syn('boomerangHoming')) synergyBoomerangHoming(dt);
 }
 
 // ---------- Update ----------
 function update(dt) {
   const p = state.player;
-  // The guided part of run 1: the run clock does not start until it ends, so
-  // run length and every pacing figure exclude it.
-  if (tutGuidedLive()) tutSim(dt);
-  else state.time += dt;
+  // FIRST-RUN PROLOGUE: the run clock starts at phase END — freezing
+  // state.time here EXCLUDES the prologue from run duration, gold/second and
+  // every pacing figure by construction (they all read state.time). The
+  // phase tick below is the bound: drunk OR t >= MAX_S, never neither.
+  // ADDENDUM (owner 2026-09-18): the pilot PAUSES while a banner is up.
+  // DEFECT (c) FIX (2026-09-18): the bound is no longer frozen by a banner —
+  // see the tick below.
+  if (state.prologue) {
+    // DEFECT (c) FIX (owner 2026-09-18): the bound now counts the WHOLE
+    // phase — a player who never does the action is still escaped by
+    // MAX_S (the old both-clocks-freeze let an idle player sit on a
+    // waiting banner forever). Only the WALKT cadence clock stays frozen
+    // while a card is up (the walk -> banner rhythm is unchanged).
+    state.prologue.t += dt;
+    if (!prologueBanner()) state.prologue.walkT += dt;
+    // TWO-TAP SKIP: the arm window decays on the same phase clock (a held
+    // banner does not extend it — the second press must be deliberate and
+    // prompt, never banked).
+    if (state.prologue.skipArmT > 0) {
+      state.prologue.skipArmT = Math.max(0, state.prologue.skipArmT - dt);
+    }
+    prologueAdvanceIfEarned();
+    prologueReveal();
+    // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger
+    // a level up and tell the player about the card selections"): when THE
+    // DRAFT banner has walked into view, the phase grants ONE free level-up
+    // — scripted, not earned (no enemies, the clock still frozen) — and the
+    // REAL draft screen opens with the explanation riding its subtitle. The
+    // draft's auto-pick pacing is UNTOUCHED: DRAFT_TIMEOUT keeps the owner's
+    // deliberate slowdown, unshortened.
+    if (state.prologue && !state.prologue.draftFired && !state.prologue.skipped &&
+        state.mode === 'playing') {
+      const db = PROLOGUE_BANNERS[state.prologue.bannerIdx];
+      if (db && db.action === 'draft' && prologueBanner()) {
+        state.prologue.draftFired = true;
+        // top the XP bar up first so levelUp's xp -= xpNext lands the bar at
+        // 0, not negative (scripted, not earned — nothing was killed for it)
+        state.player.xp = Math.max(state.player.xp, state.player.xpNext);
+        levelUp();   // mode is 'playing' here, so the draft opens right now
+      }
+    }
+    if (!state.prologue.drunk && state.prologue.t >= C.PROLOGUE.MAX_S) {
+      endPrologue('bound');
+    }
+  } else {
+    state.time += dt;
+  }
   // RUN-STRUCTURE: the clock + the RUN SURVIVED win, checked before any damage
   // this frame can resolve. Reaching the limit is a victory, not a death.
   if (checkRunLimit()) return;
   if (p.invuln > 0) p.invuln -= dt;
+  // PROLOGUE rainbow ring lifetime — parallel to p.invuln (it must survive on
+  // its own so a later portal invuln refresh cannot restart the pulse).
+  if (state.prologueShieldT > 0) state.prologueShieldT -= dt;
   // G33: rolling kill rate — one dt-driven EWMA step from the p.kills delta
   // (loot.js). No per-kill work in the death pass, no wall clock anywhere.
   state.killRateEwma = ewmaKillRate(state.killRateEwma,
@@ -3214,7 +2504,7 @@ function update(dt) {
     if (ev.kind === 'archGranted') {
       toast(ev.name.toUpperCase() + '! ' + ev.duration + 's');
       if (ev.shieldHits) state.shieldAbsorbs = ev.shieldHits;
-      audio.playSfx('powerup');
+      audio.playSfx('levelup');
     } else if (ev.kind === 'archRefreshed') {
       toast('ARCH REFRESHED');
       if (ev.type === 'SHIELD') state.shieldAbsorbs = ARCH_TYPES.SHIELD.shieldHits;
@@ -3257,13 +2547,6 @@ function update(dt) {
         const step = Math.min(C.PORTAL.APPROACH * dt, len - C.PORTAL.STANDOFF);
         po.x += (dx / len) * step;
         po.y += (dy / len) * step;
-        // PORT SLICE F: the drift chases the pilot anywhere, including
-        // through a wall — parking inside one would strand entry (same
-        // shape as the open-clamp above). Hold the drifted point outside
-        // the footprints; rim/reach behaviour is untouched.
-        const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
-          po.x, po.y, 4);
-        po.x = pr[0]; po.y = pr[1];
       }
     }
   }
@@ -3316,10 +2599,12 @@ function update(dt) {
   // CONSECRATION field ticks) tick here beside the cast hand.
   // E2 (R9): phantom blasts and the consecration field are ground AoE too.
   flyingGuard('blast', () => updateUlts(state, dt));
-  // Tick the weapons, then run the fusion link behaviours on whatever fired.
-  const preFire = snapshotFire();
+  // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
+  // then hook the active flags onto whatever just fired.
+  const preFire = new Map();
+  for (const w of state.weapons) preFire.set(w, { cd: w.cd, fires: w.fires || 0 });
   updateWeapons(state, state.weapons, dt);
-  wireFusions(dt, preFire);
+  wireSynergies(dt, preFire);
 
   // WIND drift pushes every projectile mid-flight (both sides — fairness).
   const wd = windDrift(state.weather);
@@ -3335,8 +2620,8 @@ function update(dt) {
   for (const pr of state.projectiles) {
     if (pr.kind) continue;
     pr.age += dt;
-    // Orbital Volley fusion: the shot loops one full orbit around the player
-    // before flying off down its aim lane.
+    // Orbital Volley (VOLLEY+ORBIT synergy): the shot loops one full orbit
+    // around the player before screaming off down its aim lane.
     if (pr.orbit) {
       const pc = state.player;
       pr.orbit.t += dt;
@@ -3344,15 +2629,8 @@ function update(dt) {
       pr.x = pc.x + Math.cos(ang) * 26;
       pr.y = pc.y + Math.sin(ang) * 26;
       if (pr.orbit.t >= pr.orbit.dur) {
-        // Release from the orbit, re-aimed at whatever is nearest NOW: the
-        // loop must not cost the shot its target.
-        let ra = pr.orbit.ang;
-        const tgt = nearestFoe(pc.x, pc.y);
-        if (tgt) ra = Math.atan2(tgt.y - pc.y, tgt.x - pc.x);
-        const sp = Math.hypot(pr.vx, pr.vy);
-        pr.vx = Math.cos(ra) * sp; pr.vy = Math.sin(ra) * sp;
-        pr.x = pc.x + Math.cos(ra) * 26;
-        pr.y = pc.y + Math.sin(ra) * 26;
+        pr.x = pc.x + Math.cos(pr.orbit.ang) * 26;   // release along the aim
+        pr.y = pc.y + Math.sin(pr.orbit.ang) * 26;
         pr.orbit = null;
       }
     } else {
@@ -3367,10 +2645,9 @@ function update(dt) {
         let dmg = pr.damage;
         if (evoCrit > 0 && Math.random() < evoCrit) {
           dmg *= evoCritMult;
-          markCrit(state, e);
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
-        e.hp -= devHit(dmg * directHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
+        e.hp -= dmg * directHitMult(state, e); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
           // G34/G36: heal = min(dmg * lifesteal, budget) — the RATE is capped
@@ -3385,7 +2662,7 @@ function update(dt) {
         if (novaRounds && e.hp <= 0) {
           for (const o of state.enemies) {
             if (o === e || o.hp <= 0) continue;
-            if (Math.hypot(o.x - pr.x, o.y - pr.y) <= 24) { o.hp -= devHit(dmg * 0.5); o.flash = 0.08; }
+            if (Math.hypot(o.x - pr.x, o.y - pr.y) <= 24) { o.hp -= dmg * 0.5; o.flash = 0.08; }
           }
           state.effects.push({ kind: 'nova_pulse', x: pr.x, y: pr.y, radius: 24, age: 0, ttl: 0.2 });
         }
@@ -3448,13 +2725,9 @@ function update(dt) {
     // total). Burn damage is applied HERE — never through hurt/onWeaponHit, so
     // it never triggers riders; a burn-LETHAL tick stamps the corpse so the
     // death pass never detonates it (no chain-of-chains, the card's contract).
-    // Owner ruling 2026-09-21: a corpse that is already dead takes no further
-    // burn damage (hp guard). Without it the kill frame's own tick both dealt
-    // one phantom tick to the corpse AND stamped burnLethal on a corpse a
-    // weapon had already killed — wrongly suppressing its detonation.
-    if (e.burn > 0 && e.hp > 0) {
+    if (e.burn > 0) {
       e.burn -= dt;
-      e.hp -= devHit((e.burnDps || 0) * dt);
+      e.hp -= (e.burnDps || 0) * dt;
       if (e.hp <= 0) e.burnLethal = true;
     }
     const spd = e.speed * (e.slow > 0 && !e.flying ? (e.slowMult || C.SKILLS.FROST_NOVA.SLOW_FACTOR) : 1) *
@@ -3631,7 +2904,7 @@ function update(dt) {
   // Glass Cannon curse (choices.js damageTakenMult) scales every hit taken.
   const takenMult = (p.choices && p.choices.damageTakenMult) || 1;
   touchDmg *= takenMult;
-  if (touchDmg > 0 && p.invuln <= 0 && !tutGuidedLive()) {
+  if (touchDmg > 0 && p.invuln <= 0) {
     // AEGIS arch: absorb the hit instead of taking it.
     if (state.shieldAbsorbs > 0) {
       state.shieldAbsorbs--;
@@ -3677,7 +2950,7 @@ function update(dt) {
     if (th > 0) {
       for (const e of state.enemies) {
         if (e.hp > 0 && Math.hypot(p.x - e.x, p.y - e.y) < 13) {
-          e.hp -= devHit(th); e.flash = 0.08;
+          e.hp -= th; e.flash = 0.08;
         }
       }
     }
@@ -3688,7 +2961,7 @@ function update(dt) {
   // damageTakenMult scales these too.
   for (const s of state.enemyShots) {
     s.x += s.vx * dt + wd.x * dt; s.y += s.vy * dt; s.age += dt;
-    if (p.invuln <= 0 && !tutGuidedLive() && Math.hypot(s.x - p.x, s.y - p.y) < 8) {
+    if (p.invuln <= 0 && Math.hypot(s.x - p.x, s.y - p.y) < 8) {
       if (state.shieldAbsorbs > 0) {   // AEGIS absorbs projectiles too
         state.shieldAbsorbs--;
         p.invuln = 0.5;
@@ -3718,14 +2991,6 @@ function update(dt) {
         !!(ENEMY_TYPES[e.typeId] && ENEMY_TYPES[e.typeId].chaff);
       // COLOSSUS death shockwave: friendly-fire AoE vs nearby enemies
       // (victims earlier in the sweep get reaped next frame's death loop).
-      // Owner ruling 2026-09-21: the shockwave is NOT player credit — a
-      // victim it kills is stamped shockLethal so the death pass reaps the
-      // corpse (gems/drops/detonations/progression unchanged) without any
-      // player kill reward. The stamp is set only on the killing blow: a
-      // survivor keeps full credit when the player finishes it later, and
-      // no other path can damage an hp<=0 corpse before it is reaped (every
-      // damage site guards hp<=0; the burn tick's guard is beside the slow
-      // decay), so the stamp always means the shockwave killed it.
       const sw = deathShockwave(e);
       if (sw) {
         // E2 (R9): the shockwave is a ground blast — flyers take nothing.
@@ -3733,9 +2998,8 @@ function update(dt) {
           for (const o of state.enemies) {
             if (o === e || o.hp <= 0) continue;
             if (Math.hypot(o.x - e.x, o.y - e.y) <= sw.radius) {
-              o.hp -= devHit(sw.damage);
+              o.hp -= sw.damage;
               o.flash = 0.08;
-              if (o.hp <= 0) o.shockLethal = true;
             }
           }
         });
@@ -3780,14 +3044,6 @@ function update(dt) {
       // the same corpse already fired; stated in the report.
       const zapBoom = e.zapLethal ? stormReaperBlast(state) : null;
       if (zapBoom) flyingGuard('blast', () => applyBlast(state, e.x, e.y, zapBoom));
-      // Owner ruling 2026-09-21 (COLOSSUS credit): a corpse the death
-      // shockwave killed (shockLethal, stamped above) is reaped WITHOUT
-      // player credit — no kill count, no purse gold, no token/mana/rampage
-      // /consecration/flash reward, no boss-kill count, no weapon XP. The
-      // corpse itself is still fully reaped: gems, potion/item/chest drops,
-      // splits, detonations, wildfire, boss payout and wave progression all
-      // fire exactly as for any other kill.
-      const credit = !e.shockLethal;
       pushGem(makeGem(e.x, e.y, e.xp));
       // Potion drop roll (Scavenger dropBonus widens the base chance; the
       // roll lives here because skills.js's rollDrop is base-config only).
@@ -3805,10 +3061,7 @@ function update(dt) {
       const drop = Math.random() < dropChance
         ? { ...clampLootToArena(e.x, e.y), kind: Math.random() < 0.5 ? 'hp' : 'mp' } : null;
       if (drop) pushDrop(drop);
-      // Owner ruling 2026-09-21: a shockwave-killed boss is no player kill —
-      // the BOSS_SLAYER counter stays down (the payout/progression below is
-      // the wave's, not the player's, and still fires).
-      if (e.boss && !e.shockLethal) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
+      if (e.boss) state.runCounts.bossKills++;   // G9: BOSS/HERALD counter (FIRST_BOSS, BOSS_SLAYER_5)
       if (e.boss && e.midBoss) {
         // WAVE-20 herald payout: a chest + a weapon-XP bite. NO portal, NO
         // pendingClear — the wave's progression still belongs to the end-cast.
@@ -3816,7 +3069,7 @@ function update(dt) {
           maybeSpawnChest(state,
             { x: e.x + (c ? 14 : -14), y: e.y + (c ? 8 : -8), elite: true }, () => 0);
         }
-        if (credit) feedWeaponXp(15);
+        feedWeaponXp(15);
         toast('HERALD DOWN');
         restoreBossStanceIfClear();   // BOSS_STANCE: the herald was the only boss up
       } else if (e.boss) {
@@ -3831,6 +3084,7 @@ function update(dt) {
         const bossLoot = clampLootToArena(e.x, e.y);   // WAVE-27: reachable drop
         pushItemDrop({ x: bossLoot.x, y: bossLoot.y,
           item: rollItem(Math.random, C.ITEMS.BOSS_TIER_BIAS, luckWeights()), age: 0 });
+        maybeGrantToken('drop');   // EVOLUTION TOKEN, world-drop channel (1 in 500)
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
@@ -3839,9 +3093,8 @@ function update(dt) {
         // opens the portal — existing wave-6 behavior is kept.
         if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
-        if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
+        feedWeaponXp(30);   // boss kill = big weapon-XP payout
         toast('BOSS DOWN');
-        if (credit) queueJokerOffer();
         // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
         // per-wave HERALD (the midBoss branch above) is deliberately NOT
         // dilated — it fires every wave, and Sk408's law is that slow-mo
@@ -3861,6 +3114,9 @@ function update(dt) {
             x: at.x, y: at.y,
             item: rollItem(Math.random, e.elite ? 0.75 : 0, luckWeights()), age: 0,
           });
+          // EVOLUTION TOKEN, world-drop channel (1 in 500) — per DROP, not per
+          // kill, so it rides the same volume the item itself does.
+          maybeGrantToken('drop');
         }
         if (e.guaranteesChest) {
           maybeSpawnChest(state, e, () => 0);
@@ -3889,41 +3145,44 @@ function update(dt) {
         }
       }
       state.enemies.splice(i, 1);
-      if (credit) p.kills++;
+      p.kills++;
       // E1 RUN PURSE: tier-weighted gold per kill (meta.js GOLD_TIER), an
       // EVENT like the token/mana grants below — flat and dt-free. Chaff pays
       // ~0, elites ~1 unit, heavies more, herald/boss heavily; the raw
       // p.kills above stays the body count for milestones/achievements.
-      if (credit) purseCredit(e);
+      purseCredit(e);
       // N1 slice 3 CONSECRATION: a kill inside the Paladin's live field banks
       // its heal (paid at the field's tick, capped there). The corpse is only
       // in hand HERE — after the splice it is gone — and every kill (weapons,
       // skills, blasts, the field's own ticks) funnels through this pass.
       { const cf = p.consecField;
-        if (credit && cf && Math.hypot(e.x - cf.x, e.y - cf.y) <= cf.radius) {
+        if (cf && Math.hypot(e.x - cf.x, e.y - cf.y) <= cf.radius) {
           cf.healAcc += C.SKILLS.CONSECRATION.HEAL_PER_KILL;
         }
       }
+      // EVOLUTION TOKEN, kill channel (1 in 1200). A kill is an EVENT, so the
+      // roll is dt-free and 60Hz/120Hz pay the same per corpse.
+      // E2 (R6): plain chaff's token roll is near-zero from the horde wave on
+      // (a second thinning roll — the token channel's own rng is untouched).
+      if (!e2Chaff || Math.random() < C.E2.CHAFF_DROP_MULT) maybeGrantToken('kill');
       // N1b item 6 SIPHON: mana on kill (stats.manaOnKill, default 0 — the
       // field is safe unowned). A kill is an EVENT, never a frame: the grant
       // is flat and dt-free, so 60Hz and 120Hz pay the same per corpse.
-      if (credit && p.stats.manaOnKill) {
+      if (p.stats.manaOnKill) {
         p.mana = Math.min(p.stats.maxMana, p.mana + p.stats.manaOnKill);
       }
       // WAVE-11 RAMPAGE METER: every kill extends the streak (mult caps at 1.5x).
-      if (credit) {
-        state.rampage.streak++;
-        if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
-      }
+      state.rampage.streak++;
+      if (state.rampage.streak > state.rampage.best) state.rampage.best = state.rampage.streak;
       // WAVE-11 FLASH DROPS (loot.js): a rare eligible kill erases EVERY enemy
       // of the weakest trash tier present (elites/bosses/typed untouched).
-      if (credit && shouldFlashDrop(e, p.stats.luck || 0, devCooldownNow(), state.lastFlashAt, Math.random)) {
+      if (shouldFlashDrop(e, p.stats.luck || 0, performance.now(), state.lastFlashAt, Math.random)) {
         const victims = flashTargets(state.enemies);
         if (victims.length > 0) {
           for (const v of victims) v.hp = 0;   // reaped by the next death pass
           state.effects.push({ kind: 'flash', x: p.x, y: p.y, age: 0, ttl: 0.5 });
           toast(describeFlash(victims[0].typeId));
-          state.lastFlashAt = devCooldownNow();
+          state.lastFlashAt = performance.now();
         }
       }
     }
@@ -3960,17 +3219,6 @@ function update(dt) {
     state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0,
       ttl: C.BOSS_SWEEP.SWEEP_S + 0.15, radius: C.BOSS_SWEEP.RING_RADIUS });
     state.portal = { x: state.wave.portalX || p.x, y: state.wave.portalY || p.y, age: 0 };
-    // PORT SLICE F: the portal must open where the pilot can reach it — a
-    // boss that dies overlapping a building would otherwise park the entry
-    // point inside a wall (entry needs dist < RADIUS of a pilot that can
-    // never stand inside). Nudge to the nearest footing outside the
-    // footprints (a few px; the drift moves it far more anyway). The fiction
-    // ("opens where the boss fell") survives the nudge.
-    {
-      const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
-        state.portal.x, state.portal.y, 4);
-      state.portal.x = pr[0]; state.portal.y = pr[1];
-    }
     toast('THE PORTAL OPENS - WALK THROUGH');
   }
 
@@ -4052,26 +3300,16 @@ function update(dt) {
       }
       if (!sh.blessing) {
         sh.used = true;   // blessing pool exhausted — the altar goes dark
-      } else if ((devRunFree() || canAfford(purseClamp(profile.runPurse), sh.blessing.cost)) && purseSpend(sh.blessing.cost, 'shrine')) {
+      } else if (canAfford(purseClamp(profile.runPurse), sh.blessing.cost) && purseSpend(sh.blessing.cost)) {
         applyChoice(state.player, sh.blessing.offer);
         state.takenChoices.push(sh.blessing.offer.id);
-        if (dev) {
-          dev.shrineBlessings.push(sh.blessing.offer.id);
-          // SLICE 9: shrine buys carry cost + wave (the `shrines` snapshot
-          // field keeps its slice-7 shape; the audit rides `choices.shrines`).
-          dev.shrineBuys.push({
-            id: sh.blessing.offer.id,
-            cost: sh.blessing.cost | 0,
-            wave: (state.wave && state.wave.num) | 0,
-          });
-        }
         const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
         // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
         state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
         sh.used = true;
         state.shrineRearm = true;        // the latch: ONLY a successful debit sets it
         toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
-        audio.playSfx('powerup');
+        audio.playSfx('levelup');
       } else if (!sh.brokeToast) {
         sh.brokeToast = true;   // once per shrine: don't nag a broke pilot
         toast('THE SHRINE REQUIRES ' + sh.blessing.cost + ' GOLD');
@@ -4098,8 +3336,13 @@ function update(dt) {
       const heal = p.stats.healOnChest != null ? p.stats.healOnChest
         : (state.character ? (state.character.healOnChest || 0) : 0);
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
+      // EVOLUTION TOKEN, chest channel (1 in 200). Rolled HERE rather than
+      // inside rollContents so the chest module's documented rng draw order is
+      // untouched: every pinned chest sequence in the suite still means what it
+      // meant (and the token no longer rides the chest rarity table at all).
+      maybeGrantToken('chest');
     } else if (ev.kind === 'gambleHorde') {
-      toast('EMPTY CHEST: it was a trap. A small horde attacks');
+      toast('THE GAMBLE BETRAYS YOU - MINI HORDE!');
     } else if (ev.kind === 'hordeBait') {
       // G8 step 3: the rule paid a better chest and the horde is the price.
       toast('HORDE BAIT - THE CHEST ANSWERED WITH A HORDE!');
@@ -4110,9 +3353,7 @@ function update(dt) {
       // them. It lands on the ground where the chest opened and the ONE world-drop
       // pickup path owns the equip decision, so a full belt still gets the normal
       // swap-or-ignore rule rather than a second equip code path.
-      pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0, chest: ev.rarity });
-      // PORT SLICE K: `chest` stamps the ROLLED band for the open-chest
-      // remnant painter (visual only — pickup/equip/caps read item alone).
+      pushItemDrop({ x: ev.x, y: ev.y, item: ev.item, age: 0 });
       // RARITY LABEL FIX (owner-reported 2026-09-19: "I'm constantly seeing items
       // that say LEGENDARY: WORN COIN, LEGENDARY: WORN BOOT").
       //
@@ -4128,7 +3369,7 @@ function update(dt) {
       // says. (The owner confirmed the "RARITY: NAME" format itself is fine.)
       const ir = (ev.item && ev.item.rarity) || 'COMMON';
       toast(ir + ': ' + ev.item.name.toUpperCase(), RARITY_TINTS[ir] || null);
-      audio.playSfx('item');
+      audio.playSfx('levelup');
     }
   }
 
@@ -4145,7 +3386,14 @@ function update(dt) {
   // Potion drops: auto-pickup within gem radius, but only if not at cap —
   // a full inventory leaves the potion on the ground for later.
   // WAVE-14: pickups announce in the event feed (Sk408 request).
-  // RUN-COUNT MILESTONE CHEST: the SAME pickup semantics as a potion
+  // FIRST-RUN PROLOGUE: the prologue potion uses the SAME pickup semantics
+  // (the same radius, the same loop position) — it is just not an inventory
+  // potion; drinking it runs the prologue payoff instead.
+  if (state.prologue && !state.prologue.drunk) {
+    const po = state.prologue.potion;
+    if (Math.hypot(po.x - p.x, po.y - p.y) < pickR) prologueDrink(p);
+  }
+  // RUN-COUNT MILESTONE CHEST: the SAME pickup semantics as the prologue
   // potion (the same radius, the same loop position) — the pilot collects it
   // by walking into it, manual or AUTO.
   if (state.runChest) {
@@ -4168,12 +3416,6 @@ function update(dt) {
         // G8 step 2 BLOOD HARVEST rewrite: the PICKUP retaliates. Hooked on
         // the collect path (NOT drinkPotion — the ask is "health pickups also
         // damage"); the blast is enemy-side only, centered on the player.
-        // DEV-EDITOR BUGFIX (damage): pickup retaliation is DEALT but never
-        // COUNTED — the dev damage metric covers combat-dealt damage, and a
-        // pickup-driven fan-out scales with loot ingestion and enemy density,
-        // not with any player damage action (owner: "damage going up without
-        // me doing damage"). Gameplay is unchanged (the hp debit is identical,
-        // kills/purse/tokens still credit through the one existing path).
         const blast = d.kind === 'hp' ? harvestBlast(state) : null;
         if (blast) {
           // E2 (R9): a ground blast — flyers take nothing (see flyingGuard).
@@ -4232,11 +3474,10 @@ function update(dt) {
       // here at the ONE kill-XP site alongside the Scholar/SUNNY/rampage
       // multipliers. At manual 0 it is exactly 1, so a non-heat run's income
       // is byte-identical to before.
-      p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
+      p.xp += gm.xp * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
-      // The guided part of run 1 grants its one level-up itself (the draft step).
-      while (p.xp >= p.xpNext && !tutGuidedLive()) { levelUp(); }
+      while (p.xp >= p.xpNext) { levelUp(); }
       // W7b MYTHIC Storm Shards: picking up XP chips every enemy in a radius
       // (one proc per gem — it scales with XP farming by construction, and
       // with the run's damage investment through CHIP_FRAC). Enemy-side only,
@@ -4244,10 +3485,6 @@ function update(dt) {
       // (the BLOOD HARVEST blast precedent above), so kills, purse and tokens
       // credit through the one existing path. An EVENT, never frame-scaled:
       // 60Hz and 120Hz chip the same per gem.
-      // DEV-EDITOR BUGFIX (damage): like the harvest blast above, the chip is
-      // DEALT but never COUNTED — a gem pickup fanning out over the horde is
-      // loot ingestion, not a player damage action, and must not move the dev
-      // damage metric (same owner report). Gameplay unchanged.
       if (p.stats.stormShards) {
         const S = DRAFT_LADDER.STORM_SHARDS;
         const chip = Math.max(S.CHIP_MIN, p.stats.damage * S.CHIP_FRAC);
@@ -4276,10 +3513,9 @@ function update(dt) {
   // Camera follows player (WAVE-27: one shared follow — see updateCamera).
   updateCamera(p, dt);
 
-  // EVOLVE overlay check: level-ups and partner cards
+  // EVOLVE overlay check: level-ups (gems/boss XP), item equips and tokens
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
-  maybeOpenJokerOffer();
 
   // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
   // auto-start here on the first playing tick after the final boss died —
@@ -4297,7 +3533,7 @@ function levelUp() {
   const p = state.player;
   p.xp -= p.xpNext;
   p.level++;
-  p.xpNext = xpForLevel(p.level);
+  p.xpNext = Math.floor(p.xpNext * C.XP_LEVEL_GROWTH);
   // SURVIVAL-GAP: the run's EHP axis. Enemy contact threat climbs all run
   // (sub-linearly now, see CONFIG.SURVIVAL) and the shop's pool grows only
   // additively, so the player's bar had no way to answer the late ladder. Max
@@ -4337,18 +3573,54 @@ function tickBossBanner(dt) {
   if (state.bossBanner.ttl <= 0) state.bossBanner = null;
 }
 
-// ---------- ONE-TIME BANNERS -----------------------------------------------
-// A first-ever moment (an evolution, a top-tier item) owns the screen: the
-// WAVE-14 cinematic banner (render.js drawBossBanner) plus a real pause —
-// state.bannerHold holds update() for the banner's own duration (frame()).
-// Later repeats get a toast only.
+// ---------- EVOLUTION TOKENS (chests.js EVOLUTION_TOKEN) ---------------------
+// The token is its own drop with three independently tuned channels, so all
+// three land HERE — one grant path, one counter, one banner rule. The rates
+// live in chests.js (EVOLUTION_TOKEN); this side owns what the player sees.
 const TOKEN_BANNER_SEC = 2.5;   // == render.js drawBossBanner's DUR
+
+// The FIRST token of a run owns the screen: the full WAVE-14 cinematic banner
+// (render.js drawBossBanner — the letterbox + fitted two-line block already
+// exists, so no new render path) PLUS a real pause. The pause is what makes it
+// a moment rather than a toast: state.bannerHold holds update() for the
+// banner's own duration (see frame()). It explains what a token is FOR and that
+// it evolves a weapon ONCE IT IS AT MAX LEVEL, so the first one teaches the
+// mechanic instead of being an inventory number. Every later token is a
+// standout status line only — no pause, no repeated lecture.
 // Test seam: one-time banners OFF for this process. A long end-to-end probe
-// (smoke) runs a 90s simulation that acquires EPIC/LEGENDARY gear by the
-// dozen, and each first-ever banner holds the sim for TOKEN_BANNER_SEC --
-// which a frame-counting probe reads as a stall rather than as the designed
-// pause. Never touched by the browser page.
+// (smoke) runs a 90s simulation that acquires EPIC/LEGENDARY gear and tokens by
+// the dozen, and each first-ever banner holds the sim for TOKEN_BANNER_SEC --
+// which a frame-counting probe (an idle check, a fade fade) reads as a stall
+// rather than as the designed pause. The banners' own behaviour is asserted with
+// this switch on. Never touched by the browser page.
 let oneTimeBanners = true;
+
+function grantEvolutionToken(channel) {
+  state.evoTokens++;
+  if (state.runCounts && state.runCounts.tokens) state.runCounts.tokens[channel] =
+    (state.runCounts.tokens[channel] || 0) + 1;
+  // A token may re-open a previously declined EVOLVE offer.
+  for (const w of state.weapons) w.evoDeclined = false;
+  // FIRST-EVER, PERSISTED (schema v6 ledger): the full banner + its pause
+  // teaches the mechanic once per PLAYER. It used to be run-scoped, which meant
+  // the explainer -- and a 2.5s hold on the sim -- fired on the first token of
+  // EVERY run; with ~1.5 tokens a run that is a lecture the player gets forever.
+  if (oneTimeBanners && markBannerSeen(profile, 'TOKEN')) {
+    state.bossBanner = {
+      names: ['EVOLUTION TOKEN'],
+      verb: 'ACQUIRED',
+      title: 'EVOLUTION TOKEN ACQUIRED',
+      sub: 'EVOLVES A WEAPON ONCE IT HAS REACHED MAX LEVEL',
+      ttl: TOKEN_BANNER_SEC,
+    };
+    state.bannerHold = TOKEN_BANNER_SEC;
+    audio.playPortalCue('BOSS_YELL');   // the reusable cinematic sting
+  } else {
+    toast('EVOLUTION TOKEN! ' + state.evoTokens +
+      ' HELD - EVOLVES A MAX-LEVEL WEAPON', RARITY_TINTS.LEGENDARY);
+  }
+  audio.playSfx('levelup');
+}
 
 // ---------- (g) FIRST-EVER TOP-TIER PICKUP ---------------------------------
 // Owner spec: "It should be a really cool thing when the player receives a top
@@ -4377,22 +3649,19 @@ function maybeTopTierBanner(it) {
   return true;
 }
 
+// One token roll on one channel ('kill' | 'chest' | 'drop'), via the module's
+// own helper so the denominator has exactly one home. Unknown channels draw
+// nothing and can never grant.
+function maybeGrantToken(channel) {
+  if (rollEvolutionToken(Math.random, channel)) grantEvolutionToken(channel);
+}
+
 // W7b measurement seam (never shipped off): tools/w7b_draft_ab.mjs sets
 // globalThis.HORDES_DRAFT_LADDER = false BEFORE importing this module to run
 // the BEFORE arm (the HEAD pool, no ladder families, no chase rolls) of the
 // paired-seed A/B. Default ON; the game itself never sets it. Read once at
 // module scope so an arm cannot flip mid-run.
 const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
-
-// A stat card that would open an evolution for a weapon in the kit is offered
-// this many times more often until it is taken.
-const PARTNER_WEIGHT_MULT = 2;
-
-// A weapon drafted into a slot freed by a fusion joins at this level (or the
-// profile's mastery start level, when that is higher); all NEW cards together
-// carry this much draft weight.
-const FUSION_REFILL_LEVEL = 4;
-const REFILL_WEIGHT = 3;
 
 function openDraft() {
   // A queued/new draft supersedes any live pick ceremony — the cards are
@@ -4401,25 +3670,6 @@ function openDraft() {
   if (draftCeremony) endDraftCeremony(false);
   state.mode = 'draft';
   ovTitle.className = '';
-  // A boss kill queues a joker offer; it opens ahead of any level-up draft.
-  if (!state.draftKind) state.draftKind = state.jokerOffers > 0 ? 'joker' : 'level';
-  if (state.draftKind === 'joker') {
-    // Banished cards and the dev ban list stay out of a boss offer too.
-    const devBan = (dev && dev.autoplay === true && dev.draftBan) ? dev.draftBanIds : [];
-    const offer = rollJokerOffer(state).filter(c =>
-      !(state.draftBanned && state.draftBanned.has(draftBanKey(c))) && !devBan.includes(c.id));
-    if (offer.length) {
-      presentDraft(offer, 'JOKER', jokerRowFull(state)
-        ? 'the boss is down: take 1 joker, and choose which one it replaces'
-        : 'the boss is down: take 1 joker');
-      return;
-    }
-    // Every joker is held: nothing to offer.
-    state.jokerOffers--;
-    state.draftKind = null;
-    if (--state.pendingDrafts <= 0) { state.pendingDrafts = 0; state.mode = 'playing'; return; }
-    state.draftKind = 'level';
-  }
   // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
   // "Player chosen weapons in a menu, not during run... Replaces in run
   // cards"): there are NO wpn_* grant offers any more — the run never hands
@@ -4435,98 +3685,20 @@ function openDraft() {
   // never ends — an at-cap level-up card STAYS offered and converts to +10%
   // weapon damage in pick() (the multi/volleyAtProjCap precedent: no dead
   // cards, no fake choices).
-  // Every weapon card says what the level grants and where the weapon stands
-  // on the road to its evolution; the card that completes an evolution (the
-  // last level with the partner owned, or the partner with the weapon maxed)
-  // is marked EVOLVES NOW and highlighted.
-  const owned = ownedCards();
-  const evoLine = (w, afterLevel) => {
-    const pr = evolutionProgress(w, owned);
-    if (!pr || pr.evolved) return '';
-    const lvOk = afterLevel >= pr.levelReq;
-    if (lvOk && pr.partnerOwned) return 'EVOLVES NOW: ' + pr.def.name;
-    return 'evolves with ' + pr.partnerName + (pr.partnerOwned ? ' (owned)' : '') +
-      (lvOk ? '' : ' at Lv ' + pr.levelReq);
-  };
-  const evoReady = (w, afterLevel) => {
-    const pr = evolutionProgress(w, owned);
-    return !!(pr && !pr.evolved && pr.partnerOwned && afterLevel >= pr.levelReq);
-  };
-  // The LEAD weapon's card grants LEAD_LEVELS levels: a run that commits to
-  // one weapon at a time reaches its evolution in half the picks. (ONE OF EACH
-  // pays its own bonus level instead.)
-  const lead = hasRule(state, 'once') ? null : leadWeapon();
   for (const w of state.weapons) {
     const lv = w.level || 1;
     if (lv >= WEAPON_MAX_LEVEL && !hasRule(state, 'once')) continue;
-    const gain = w === lead ? Math.min(DRAFT_PLAN.LEAD_LEVELS, WEAPON_MAX_LEVEL - lv) : 1;
     weaponCards.push({
       id: 'lvl_' + w.type + '_' + lv,
       name: WEAPON_NAMES[w.type] + ' UP',
       desc: lv >= WEAPON_MAX_LEVEL
         ? '+10% weapon damage · MAXED'
         : (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
-      leadText: gain > 1 ? 'LEAD WEAPON: +' + gain + ' levels' : '',
-      evoText: evoLine(w, lv + gain),
-      evoReady: evoReady(w, lv + gain),
-      fuseText: fusionRoadText(w, state.weapons),
-      apply: () => { for (let i = 0; i < gain; i++) levelUpWeapon(w); },
+      apply: () => { levelUpWeapon(w); },
     });
   }
-  // A slot freed by a fusion is refilled from the draft: one NEW card per
-  // weapon the profile owns that the kit does not hold (any weapon when it
-  // owns no spare). The new weapon joins part-levelled.
-  const refillsLeft = (state.fusionsMade || 0) - (state.fusionRefills || 0);
-  const openSlots = (state.weaponSlots || C.WEAPON_SLOTS) - 1 -
-    state.weapons.filter(w => w.type !== 'VOLLEY').length;
-  if (refillsLeft > 0 && openSlots > 0) {
-    const have = new Set(kitWeapons(state.weapons).map(w => w.type));
-    const spare = Object.keys(WEAPON_TYPES).filter(t => !have.has(t));
-    const ownedSpare = spare.filter(t => weaponUnlocked(profile, t));
-    const list = ownedSpare.length ? ownedSpare : spare;
-    const joinLv = Math.min(WEAPON_MAX_LEVEL, Math.max(FUSION_REFILL_LEVEL, 1 + masteryStartLevels(profile)));
-    for (const t of list) {
-      const preview = { type: t, level: joinLv };
-      weaponCards.push({
-        id: 'wpn_' + t,
-        name: 'NEW: ' + WEAPON_NAMES[t],
-        desc: (WEAPON_BLURBS[t] || '') + ' · takes the free slot at Lv ' + joinLv,
-        leadText: '',
-        evoText: evoLine(preview, joinLv),
-        evoReady: false,
-        fuseText: fusionRoadText(preview, [...state.weapons, preview]),
-        refill: true,
-        apply: () => {
-          const w = makeWeapon(t);
-          w.level = joinLv;
-          state.weapons.push(w);
-          state.fusionRefills = (state.fusionRefills || 0) + 1;
-        },
-      });
-    }
-  }
-  // A stat card that is the partner of a weapon in the kit says so, and is
-  // offered more often (PARTNER_WEIGHT_MULT) while that evolution is open.
-  const partnerOf = (id) => state.weapons.filter(w => {
-    const d = EVOLUTION_DEFS[w.type];
-    return d && d.partner === id && !w.evolutionId;
-  });
-  const statCard = (u) => {
-    const ws = partnerOf(u.id);
-    const stackText = statStackTimes(u, state.player) > 1 ? 'STACKED: counts double' : '';
-    if (!ws.length || owned[u.id]) return { ...u, evoText: '', evoReady: false, partnerBoost: 1, stackText };
-    const ready = ws.some(w => (w.level || 1) >= WEAPON_MAX_LEVEL);
-    // The first copy also levels the weapons it is the partner of (pick()).
-    const rising = ws.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
-    const evoText = (ready
-      ? 'EVOLVES NOW: ' + ws.filter(w => (w.level || 1) >= WEAPON_MAX_LEVEL).map(w => EVOLUTION_DEFS[w.type].name).join(', ')
-      : 'evolves ' + ws.map(w => WEAPON_NAMES[w.type]).join(', ')) +
-      (rising.length ? ' · +' + DRAFT_PLAN.PARTNER_LEVELS + ' level: ' + rising.map(w => WEAPON_NAMES[w.type]).join(', ') : '');
-    return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT, stackText };
-  };
   const pool = [
-    // Level-up cards weigh 1 each; the NEW cards share REFILL_WEIGHT between them.
-    ...weaponCards.map(c => ({ ...c, weight: c.refill ? REFILL_WEIGHT / weaponCards.filter(x => x.refill).length : 1 })),
+    ...weaponCards.map(c => ({ ...c, weight: 1 })),
     // G8 step 1: the stat family carries its rarity weight (meta.js
     // draftCardWeight) so Fortune shifts the DRAFT, not just world drops.
     // At luck 0 every one of these is exactly 0.3 — the shipped pool.
@@ -4535,8 +3707,7 @@ function openDraft() {
     // at RULE_CARD_WEIGHT. With no rules held the first line is byte-identical
     // to the shipped pool (every stat card exactly its draft weight).
     ...UPGRADES.filter(u => statCardOffered(u.id, state))
-      .map(statCard)
-      .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) * (u.partnerBoost || 1) })),
+      .map(u => ({ ...u, weight: draftCardWeight(u.id, 'stat', state.player.stats.luck || 0) })),
     // W7b RARE ladder tier: the percent/scaling chase cards. LOW-WEIGHT (never
     // a pool flood — the weapon cards keep weight 1 and full access), luck-
     // shifted through draftLadderWeight (the Fortune extension reaches the
@@ -4545,22 +3716,30 @@ function openDraft() {
     // (statCardOffered), the same contract the common family rides.
     ...(DRAFT_LADDER_ON ? DRAFT_RARE_UPGRADES.filter(u => statCardOffered(u.id, state))
       .map(u => ({ ...u, tier: 'RARE', weight: draftLadderWeight(u.id, 'RARE', state.player.stats.luck || 0) })) : []),
-    // Jokers ride the pool at a low weight, one card per joker on offer.
-    ...(jokerDraftWeight > 0 ? jokerCards(state, jokerDraftWeight) : []),
+    // W7b MYTHIC ladder tier: the run-gated chase cards. A card is in the pool
+    // AT ALL only if startRun rolled it into state.chasePool (~1/10 of runs,
+    // owner spec), and leaves the pool for the run once taken (the takenStats
+    // ledger read directly — once per run with or without a run rule).
+    ...(DRAFT_LADDER_ON ? DRAFT_MYTHIC_UPGRADES.filter(u =>
+        (state.chasePool || {})[u.id] && !((state.player.takenStats || {})[u.id]))
+      .map(u => ({ ...u, tier: 'MYTHIC', weight: draftLadderWeight(u.id, 'MYTHIC', state.player.stats.luck || 0) })) : []),
+    ...ruleCards(state),
+    // G8 step 4: the perk family rides the same pool at SKILL_CARD_WEIGHT,
+    // one card per perk the run does not already hold (taken once, like a rule).
+    ...skillCards(state),
+    // N1 slice 2: the run-owned auto FROST_NOVA card rides the same pool at
+    // FROST_CARD_WEIGHT, offered exactly when the class Q is not already
+    // FROST_NOVA and the run does not hold it (taken once, like the perks).
+    ...(frostCardOffered(state) ? [frostCard()] : []),
+    // G8 step 2: the rewrite family rides the same pool at
+    // REWRITE_CARD_WEIGHT, one card per rewrite not already held. G21 slice 2:
+    // FOURTEEN cards now, and the family share is held by WEIGHT CLASS rather
+    // than one flat number — eleven single-tag/legacy cards at
+    // REWRITE_CARD_WEIGHT, three cross-tag combos at half weight (12.5 x
+    // 0.005 = 0.0625, inside the goal's [0.055, 0.070] band); rewriteCards
+    // carries the per-card weight, so the pool needs no special case.
+    ...rewriteCards(state),
   ];
-  // K5 DEV DRAFT BAN LIST (dev-autoplay cohorts only): banned offer ids leave
-  // the pool BEFORE the weighted draw below. Belt and braces: the exclusion
-  // requires the dev session (gate on), the AUTOPLAY toggle (the runner's
-  // requireAutoplay gate), AND the BAN arm bit — a player game (dev === null)
-  // or a dev session with AUTO off draws the byte-identical full pool even if
-  // the ban prefs somehow persisted. The cards' own logic (ONE OF EACH's rule
-  // behaviour included) is untouched; this only narrows the OFFER POOL.
-  const unbanished = (state.draftBanned && state.draftBanned.size)
-    ? pool.filter(c => !state.draftBanned.has(draftBanKey(c)))
-    : pool;
-  const drawPool = (dev && dev.autoplay === true && dev.draftBan && dev.draftBanIds.length)
-    ? unbanished.filter(c => !dev.draftBanIds.includes(c.id))
-    : unbanished;
   // WAVE-18: with the volley at MAX_PROJECTILES the Split Shot card would be a
   // dead pick (a fake choice) — relabel it to what it actually does.
   if (volleyAtProjCap()) {
@@ -4572,79 +3751,46 @@ function openDraft() {
   // already covers 1-4). No duplicate cards per draft.
   const offerN = 3 + (state.player.stats.draftOffers || 0);
   const choices = [];
-  while (choices.length < offerN && drawPool.length > 0) {
-    let r = Math.random() * drawPool.reduce((s, c) => s + c.weight, 0);
-    let idx = drawPool.length - 1;
-    for (let i = 0; i < drawPool.length; i++) { if ((r -= drawPool[i].weight) < 0) { idx = i; break; } }
-    choices.push(drawPool.splice(idx, 1)[0]);
+  while (choices.length < offerN && pool.length > 0) {
+    let r = Math.random() * pool.reduce((s, c) => s + c.weight, 0);
+    let idx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) { if ((r -= pool[i].weight) < 0) { idx = i; break; } }
+    choices.push(pool.splice(idx, 1)[0]);
   }
-  // A card that would make a new or better hand says so (hands.js).
-  for (const c of choices) {
-    const hint = handHint(state.player, c.id, runHandOpts());
-    c.handText = hint ? hint.text : '';
+  ovTitle.textContent = 'LEVEL ' + state.player.level;
+  ovSub.textContent = 'choose your build';
+  // PROLOGUE SCRIPTED DRAFT (owner addendum 2026-09-18: use the level-up to
+  // "tell the player about the card selections"): the explanation rides the
+  // REAL draft screen — what the choice is, and that the pick changes the run.
+  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
+    ovSub.textContent = 'pick 1 of the 3 cards - the one you take changes the run';
   }
-  presentDraft(choices, 'LEVEL ' + state.player.level, 'pick 1 of ' + choices.length);
-}
-
-// Put a set of offer cards on the draft overlay: level-up cards, a boss's
-// joker offer, or the replace choice of a full joker row.
-let lastDraft = null;   // the offer a replace choice can go back to
-function presentDraft(choices, title, sub, opts = {}) {
-  if (!opts.swap) lastDraft = { choices, title, sub };
-  // SLICE 9: record the offer set (the taken id fills in at pick()).
-  if (dev && !opts.swap) {
-    dev.drafts.push({
-      level: (state.player.level || 0) | 0,
-      wave: (state.wave && state.wave.num) | 0,
-      offered: choices.map(c => c.id),
-      taken: null,
-    });
-  }
-  ovTitle.textContent = title;
-  ovSub.textContent = sub;
   draftFocus = -1;
   ovCards.innerHTML = '';
-  const lay = setDraftOverlay(true, choices.length);
   choices.forEach((u, i) => {
     const el = document.createElement('div');
     el.className = 'card';
-    if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
     el._draftOffer = u;        // the keydown routing + the inspect flow read this
     el.tabIndex = 0;           // the arrows+Enter cursor focuses (frameCard hot tone)
+    // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
+    // actually implements (see synergyHintForCard). Silent otherwise.
+    const hint = synergyHintForCard(u);
     // W7b: the ladder tier is ON the card — the chase has to read as a chase.
     // Tints are the rarity.js encounter tells (RARE cyan / MYTHIC violet), so
     // the draft and the field speak one rarity language. Inline style: the
     // draft overlay is DOM, and index.html's stylesheet is another track's
     // file.
     const badge = u.tier
-      ? `<div class="syn" style="color:${u.tier === 'JOKER' ? JOKER_TINT : RARITY.RARE.tell.outline}">${u.tier}</div>`
-      : u.evoReady ? `<div class="syn evo-ready" style="color:#ffd75e">EVOLUTION READY</div>` : '';
-    if (u.evoReady) el.className += ' evo-ready';
-    const handLine = u.handText
-      ? `<div class="evo hand" style="color:#8fe0a0;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.handText}</div>`
+      ? `<div class="syn" style="color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
       : '';
-    // The road to the evolution rides its own line under the effect text.
-    const evoLine = u.evoText
-      ? `<div class="evo" style="color:${u.evoReady ? '#ffd75e' : '#c0b48a'};font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.evoText}</div>`
-      : '';
-    // The road to a fusion rides the line under that (weapon cards only).
-    const fuseLine = u.fuseText
-      ? `<div class="evo fuse" style="color:#7ad0ff;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.fuseText}</div>`
-      : '';
-    const leadLine = u.leadText
-      ? `<div class="evo lead" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.leadText}</div>`
-      : '';
-    const stackLine = u.stackText
-      ? `<div class="evo stack" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.stackText}</div>`
-      : '';
-    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + handLine + leadLine + stackLine + evoLine + fuseLine +
+    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` +
+      (hint ? `<div class="syn">${hint}</div>` : '') +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
     // HELP MODE: a tap on a draft card explains it and picks NOTHING.
     el.onclick = () => {
       if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || ''), el); return; }
-      if (draftBanishArmed) { draftBanish(u); return; }
       activateDraftCard(u);
     };
     ovCards.appendChild(el);
@@ -4654,148 +3800,33 @@ function presentDraft(choices, title, sub, opts = {}) {
     const artCv = document.createElement('canvas');
     artCv.className = 'card-art';
     if (artCv.setAttribute) artCv.setAttribute('data-card', u.id);
-    if (paintOfferArt(artCv, u.artId || u.id, lay.artScale)) {
+    if (paintOfferArt(artCv, u.id)) {
       if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
       else el.appendChild(artCv);
     }
     frameCard(el);
   });
   overlay.style.display = 'flex';
-  // The one coach card left: a first level-up with no tutorial behind it (a
-  // returning profile, or after REPLAY TOUR cleared the flags) gets one line.
-  // The first-run tutorial teaches the draft itself and marks this seen.
-  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !tourFlag(TOUR_KEYS.draft)) {
+  // WAVE-21: the draft IS the game — coachmark it the first time it appears.
+  // ('draft' mode already freezes the sim; the coach rides on top of the
+  // real cards and dismisses on the same click-to-advance contract.)
+  // PROLOGUE ABSORB (owner 2026-09-18): the scripted draft inside the
+  // first-run phase is its OWN lesson — banner 6 explains the selection and
+  // the explanation rides the draft's subtitle — so the coach must not
+  // stack on top of it. Stacking was not just redundant: the coach's shade
+  // swallows the first card click BY DESIGN (tour.js — a pass-through would
+  // dismiss-and-pick in one tap), turning the one-click pick into two and
+  // freezing the sim under the shade after it (coachActive gates update),
+  // which stalled the phase itself. endPrologue marks every TOUR_KEYS flag
+  // seen, so the coach is ABSORBED by the phase, never skipped.
+  if (!state.prologue && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
-      text: 'THE DRAFT: every level, pick 1 card. Click one or press 1 / 2 / 3.',
+      text: 'THE DRAFT — your build\'s only real decisions. Pick a card or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
-  if (opts.swap) clearDraftActions(); else renderDraftActions();
   // G30: every presented draft re-arms the AUTO countdown (the coach above
   // suspends it until dismissed — tickDraftAutoPick).
   armDraftAutoPick(choices);
-}
-
-// ---------- DRAFT ACTIONS: REROLL / SKIP / BANISH -----------------------------
-// Three extra moves on the level-up draft, each spending a per-run charge
-// bought in the shop (rows reroll / skip / banish):
-//   REROLL [R]  draw a fresh set of cards for this draft.
-//   SKIP   [S]  take no card; heal DRAFT_ACTIONS.SKIP_HEAL_FRAC of max HP.
-//   BANISH [B]  arm, then choose a card: it leaves this run's drafts for good
-//               and the offer is redrawn. A weapon's level-up cards are
-//               banished as one line. B again (or ESC) disarms.
-// The buttons sit under the cards and only appear when the run has, or the
-// profile owns, at least one charge. The AUTO auto-pick never spends a charge.
-let draftActionsEl = null;
-let draftBanishArmed = false;
-
-function draftBanKey(u) {
-  const id = String(u && u.id);
-  return id.startsWith('lvl_') ? id.replace(/_\d+$/, '') : id;
-}
-
-function clearDraftActions() {
-  draftBanishArmed = false;
-  if (draftActionsEl) {
-    if (draftActionsEl.remove) draftActionsEl.remove();
-    else if (draftActionsEl.parentNode) draftActionsEl.parentNode.removeChild(draftActionsEl);
-    draftActionsEl = null;
-  }
-}
-
-function renderDraftActions() {
-  const armed = draftBanishArmed;
-  clearDraftActions();
-  draftBanishArmed = armed;
-  const ch = state.draftCharges || { reroll: 0, skip: 0, banish: 0 };
-  const st = state.player.stats;
-  const owned = (st.draftRerolls || 0) + (st.draftSkips || 0) + (st.draftBanishes || 0);
-  if (state.mode !== 'draft' || (owned + ch.reroll + ch.skip + ch.banish) <= 0) { draftBanishArmed = false; return; }
-  draftActionsEl = document.createElement('div');
-  draftActionsEl.id = 'draft-actions';
-  const btn = (kind, label, key, n, on, fn, tip) => {
-    const b = document.createElement('div');
-    b.className = 'dact' + (n > 0 ? '' : ' dim') + (on ? ' armed' : '');
-    b._draftAction = kind;
-    b.textContent = label + ' [' + key + '] x' + n;
-    b.title = String(tip).replace(/<[^>]+>/g, '');   // hover says what it does
-    b.onclick = () => {
-      if (state.helpMode) { showHelpTip(tip, b); return; }
-      fn();
-    };
-    draftActionsEl.appendChild(b);
-  };
-  btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — swap these cards for new ones.');
-  btn('skip', 'SKIP', 'S', ch.skip, false, draftSkip,
-    '<b>SKIP</b> — take no card and heal ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '% of max HP.');
-  btn('banish', draftBanishArmed ? 'BANISH: PICK A CARD' : 'BANISH', 'B', ch.banish, draftBanishArmed, draftBanishToggle,
-    '<b>BANISH</b> — then choose a card: it never appears again this run.');
-  overlay.appendChild(draftActionsEl);
-}
-
-function draftReroll() {
-  const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !ch || ch.reroll <= 0) return false;
-  ch.reroll--;
-  draftBanishArmed = false;
-  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'reroll';
-  audio.playSfx('button');
-  openDraft();
-  return true;
-}
-
-function draftSkip() {
-  const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !ch || ch.skip <= 0) return false;
-  ch.skip--;
-  const p = state.player;
-  p.hp = Math.min(p.stats.maxHp, p.hp + DRAFT_ACTIONS.SKIP_HEAL_FRAC * p.stats.maxHp);
-  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'skip';
-  audio.playSfx('button');
-  toast('DRAFT SKIPPED - HEALED ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '%');
-  closeDraft(null);
-  return true;
-}
-
-function draftBanishToggle() {
-  const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !ch || ch.banish <= 0) return false;
-  draftBanishArmed = !draftBanishArmed;
-  renderDraftActions();
-  return true;
-}
-
-function draftBanish(u) {
-  const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !u || !ch || ch.banish <= 0) return false;
-  ch.banish--;
-  draftBanishArmed = false;
-  state.draftBanned.add(draftBanKey(u));
-  if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'banish:' + u.id;
-  audio.playSfx('button');
-  toast('BANISHED - ' + String(u.name).toUpperCase());
-  openDraft();
-  return true;
-}
-
-// The draft is resolved (a card was taken, or it was skipped with u = null):
-// open the next queued draft, or hand the screen back to the run.
-function closeDraft(u) {
-  state.pendingDrafts--;
-  if (state.draftKind === 'joker') state.jokerOffers = Math.max(0, (state.jokerOffers || 0) - 1);
-  state.draftKind = null;
-  clearDraftActions();
-  if (state.pendingDrafts > 0) { openDraft(); return; }
-  draftFocus = -1;
-  // The pick ceremony is presentation only: the resolved cards stay up over
-  // the live game for DRAFT_CEREMONY_S, then the frame loop drops the overlay.
-  if (u && draftCeremonyEnabled()) {
-    startDraftCeremony(u);
-  } else {
-    overlay.style.display = 'none';
-    setDraftOverlay(false);
-  }
-  state.mode = 'playing';
-  clearDraftAutoPick();
 }
 
 // ---------- DRAFT CARD ACTIVATION: ONE ACTIVATION TAKES THE CARD ------------
@@ -4805,7 +3836,7 @@ function closeDraft(u) {
 // The reason it existed is gone: the card ITSELF now carries the art, the name,
 // the tier badge, its own COMPUTED effect text (built at offer time by the real
 // pool code — Second Wind's revive fraction, Iron Heart's percent, a weapon
-// level's actual deltas out of describeWeaponLevel), the evolution and fusion roads and the
+// level's actual deltas out of describeWeaponLevel), the synergy hint and the
 // [N] key hint, so there is nothing left for a second screen to reveal. One
 // activation picks; tap/click, and arrows + Enter on the keyboard, are the same
 // single confirmation. The 1-4 number keys stay the one-press quick-pick they
@@ -4835,7 +3866,6 @@ function draftFocusStep(d) {
 // offer. There is no first-activation branch to make — see the directive above.
 function activateDraftCard(u) {
   if (!u) return;
-  if (draftBanishArmed && state.mode === 'draft') { draftBanish(u); return; }
   // CEREMONY GUARD: after pick() resolves a draft the overlay can stay up
   // briefly for the ceremony while the sim already runs underneath. The
   // still-visible cards keep their onclick, so a second tap in that window
@@ -4851,7 +3881,7 @@ function activateDraftCard(u) {
 //   pick:   1     2     3     4     5     6     7+
 //   taper:  1.0   0.75  0.55  0.4   0.3   0.22  0.15
 // 'speed' Light Boots (+15% move speed): gains +15.0/+11.3/+8.3/+6.0/+4.5/+3.3/+2.25%...
-// 'rate'  Quick Hands (-10% cooldown):  the same fractions of 10% off.
+// 'rate'  Quick Hands (-15% cooldown):  same fractions of 15% off.
 // Counts live on the run player (fresh makePlayer resets them every run).
 const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 
@@ -4860,206 +3890,60 @@ const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 // Split Shot card past the cap did NOTHING — a fake choice. Overflow picks now
 // convert to +20% weapon damage, exactly like the VOLLEY Lv3/6 proj conversion
 // in weapons.js.
-// The Volley's damage multiplier on a round: its level, its projectile count,
-// loot and arch multipliers, its evolution and its fusion.
-function volleyDamageMult() {
-  const w = state.weapons.find(x => x.type === 'VOLLEY');
-  const P = weaponLevelParams('VOLLEY', w ? w.level : 1);
-  const evo = w && w.evolution;
-  return (P.dmgMult || 1) * (1 + WEAPON_STEPS.VOLLEY.PROJ_DMG * (P.proj || 0)) *
-    (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
-    ((evo && evo.affixes.damageMult) || 1) * ((w && w.fusion && w.fusion.mult) || 1);
-}
-
 function volleyAtProjCap() {
   const w = state.weapons.find(x => x.type === 'VOLLEY');
   const proj = weaponLevelParams('VOLLEY', w ? w.level : 1).proj || 0;
   return (state.player.stats.projectiles || 0) + proj >= volleyProjectileCap(state.player.stats);
 }
 
-// The kit's LEAD weapon: the highest-level weapon still on the road to its
-// evolution (ties go to kit order). Null when every weapon is maxed or evolved.
-function leadWeapon() {
-  let best = null;
-  for (const w of state.weapons) {
-    if (w.evolutionId || !EVOLUTION_DEFS[w.type] || (w.level || 1) >= WEAPON_MAX_LEVEL) continue;
-    if (!best || (w.level || 1) > (best.level || 1)) best = w;
-  }
-  return best;
-}
-
-// ---------- JOKERS (jokers.js) -------------------------------------------------
-const JOKER_TINT = '#b08aff';
-// The weight of one joker card in the level-up pool (a test seam can change it).
-let jokerDraftWeight = JOKER_CARD_WEIGHT;
-const JOKER_SHELF_KEY = 'joker:';
-
-// A joker joins the row: the profile remembers it, the feed says what it does,
-// and the hand is re-read (three jokers change how hands are made or paid).
-function announceJoker(id, verb) {
-  const j = JOKERS[id];
-  markBannerSeen(profile, JOKER_SHELF_KEY + id);
-  toast(verb + ' - ' + j.name.toUpperCase() + ': ' + j.desc, JOKER_TINT);
-  audio.playSfx('powerup');
-  updateRunHand(true);
-}
-function gainJoker(id) {
-  if (takeJoker(state, id)) announceJoker(id, 'JOKER');
-}
-
-// The row is full: one card per held joker (taking it swaps that joker out)
-// and one card that keeps the row as it is.
-function openJokerReplace(u) {
-  const inc = JOKERS[u.joker];
-  // KEEP comes first: an unattended night run takes the first card.
-  const choices = [{
-    id: 'swap_keep', artId: u.id, jokerSwap: true, keep: true, in: u.joker, from: u,
-    name: 'KEEP MY JOKERS', desc: 'pass on ' + inc.name +
-      (state.draftKind === 'level' ? ' and go back to the cards' : ''), apply: () => {},
-  }];
-  for (const id of jokersHeld(state)) {
-    choices.push({
-      id: 'swap_' + id, artId: 'joker_' + id, jokerSwap: true, out: id, in: u.joker, from: u,
-      name: 'REPLACE: ' + JOKERS[id].name, desc: 'you lose: ' + JOKERS[id].desc, apply: () => {},
-    });
-  }
-  presentDraft(choices, 'JOKER ROW FULL', 'your joker row is full. ' + inc.name.toUpperCase() + ': ' + inc.desc, { swap: true });
-}
-function resolveJokerSwap(u) {
-  if (u.keep) {
-    // Passing on a level-up joker goes back to the same cards without it; a
-    // boss offer just closes.
-    const back = lastDraft && state.draftKind === 'level' ? lastDraft.choices.filter(c => c !== u.from) : [];
-    if (back.length) { presentDraft(back, lastDraft.title, lastDraft.sub); return; }
-    closeDraft(null);
-    return;
-  }
-  if (replaceJoker(state, u.out, u.in)) announceJoker(u.in, 'JOKER SWAP');
-  closeDraft(u.from);
-}
-
-// A wave boss pays a joker offer: it opens as soon as the run is back in play.
-function queueJokerOffer() {
-  state.jokerOffers = (state.jokerOffers || 0) + 1;
-  state.pendingDrafts++;
-}
-function maybeOpenJokerOffer() {
-  if (state.mode === 'playing' && state.jokerOffers > 0 && !state.draftKind) openDraft();
-}
-
-// ---------- The joker shelf (PROGRESS) -----------------------------------------
-// Every joker as a card: the ones this profile has held show their face, name
-// and rule; the rest are dark silhouettes.
-function jokersDiscovered() {
-  return JOKER_IDS.filter(id => bannerSeen(profile, JOKER_SHELF_KEY + id)).length;
-}
-function jokerFaceHtml(id, known, px) {
-  const face = jokerFaceArt(JOKERS[id].art);
-  if (!face) return '';
-  const dark = {};
-  for (const k of Object.keys(face.palette)) dark[k] = k === '1' ? '#2a2a36' : '#1c1c26';
-  return iconHtml(face.grid, known ? face.palette : dark, px);
-}
-function showJokers() {
-  openMenu('progress');
-  ovTitle.textContent = 'JOKERS';
-  ovTitle.className = 'logo';
-  ovSub.innerHTML = jokersDiscovered() + ' / ' + JOKER_IDS.length +
-    ' discovered &middot; rule cards: a run holds ' + JOKER_SLOTS.BASE + ' to ' + JOKER_SLOTS.MAX;
-  for (const id of JOKER_IDS) {
-    const known = bannerSeen(profile, JOKER_SHELF_KEY + id);
-    const el = menuCard(
-      jokerFaceHtml(id, known, 2) + (known ? JOKERS[id].name : '? ? ?'),
-      known ? '<span style="color:#a8a8c0">' + JOKERS[id].desc + '</span>' : 'not discovered yet',
-      () => {}, !known);
-    el._jokerShelf = { id, known };
-  }
-  menuCard('BACK', 'to progress [ESC]', () => showProgress());
-}
-
-// ---------- HANDS (hands.js) ---------------------------------------------------
-// What the hand evaluation reads from the rest of the run.
-function runHandOpts() { return handOpts(state); }
-
-// The HUD's count-up when a new hand is made, in wall-clock seconds.
-const HAND_COUNT_S = 0.9;
-
-// Make the hand's bonus match the cards held. A new or better hand gets its
-// moment: a feed line, a sound, and the HUD plate counting up to the new bonus.
-function updateRunHand(announce) {
-  const p = state.player;
-  const from = p.hand ? handBonus(p.hand, p.hand.scale).dmg : 0;
-  const res = refreshHand(p, runHandOpts());
-  if (res.changed && res.hand && announce && res.upgraded) {
-    state.handFx = { t: 0, dur: HAND_COUNT_S, from, to: handBonus(res.hand, res.hand.scale).dmg };
-    toast('HAND: ' + res.hand.name.toUpperCase() + ' - ' + describeHandBonus(res.hand, res.hand.scale), '#8fe0a0');
-    audio.playSfx('powerup');
-  }
-  return res;
-}
-
-// Advance the count-up; a soft tick marks each step of the number.
-function tickHandFx(dt) {
-  const fx = state.handFx;
-  if (!fx) return;
-  const step = (t) => Math.floor(Math.min(1, t / fx.dur) * 5);
-  const before = step(fx.t);
-  fx.t += dt;
-  if (step(fx.t) > before && fx.t < fx.dur) audio.playSfx('uiMove');
-  if (fx.t >= fx.dur + 0.6) state.handFx = null;
-}
-
-// Common stat cards (config.js UPGRADES) stack: how many times this pick of
-// `u` counts, given the copies the run already holds.
-const COMMON_STAT_IDS = new Set(UPGRADES.map(c => c.id));
-function statStackTimes(u, p) {
-  if (!u || !COMMON_STAT_IDS.has(u.id)) return 1;
-  const held = ((p && p.statCopies) || {})[u.id] || 0;
-  return held + 1 >= DRAFT_PLAN.STACK_FROM ? DRAFT_PLAN.STACK_MULT : 1;
-}
-
 function pick(u) {
   const p = state.player;
-  // The first copy of a stat card levels every weapon it is the partner of.
-  // The replace choice of a full joker row resolves a joker pick made earlier.
-  if (u.jokerSwap) { resolveJokerSwap(u); return; }
-  // A joker picked with a full row: choose which one it replaces first.
-  if (u.joker && jokerRowFull(state)) { openJokerReplace(u); return; }
-  const attune = (!u.joker && !u.tier && !(p.takenStats || {})[u.id])
-    ? state.weapons.filter(w => !w.evolutionId && EVOLUTION_DEFS[w.type] &&
-        EVOLUTION_DEFS[w.type].partner === u.id && (w.level || 1) < WEAPON_MAX_LEVEL)
-    : [];
-  // A joker goes on the row; every other card that is not a weapon card
-  // records itself in the stat ledger (read by ONE OF EACH).
-  if (u.joker) {
-    gainJoker(u.joker);
+  // PROLOGUE (owner addendum 2026-09-18): THE DRAFT banner's action is the
+  // pick itself — the card taken feeds the action ledger, so the banner
+  // advances the moment the draft resolves (the auto-pick's card counts the
+  // same as a tapped one: it IS a pick).
+  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
+    prologueActionDone('draft');
+  }
+  // G8 step 3: a RUN RULE card grants a persistent condition instead of a
+  // number; every other card records itself in the `once` ledger (stat cards
+  // only — weapon grant/level cards are the weapon economy, not the stats).
+  if (u.rule) {
+    p.rules = p.rules || {};
+    p.rules[u.rule] = true;
+    toast('RUN RULE - ' + RULES[u.rule].name.toUpperCase() + ': ' + RULES[u.rule].desc.replace('RUN RULE - ', ''));
+  } else if (u.skill) {
+    // G8 step 4: a SKILL card grants its always-on perk through the card's own
+    // apply(player) in the chain below, and NEVER enters the `once` stat
+    // ledger — skill ids must not pollute it (same shape as the rule branch).
+    // N1 slice 2: the Pocket Frost card is NOT in SKILL_PERKS (perks.js stays
+    // read-only for that slice) and carries its own name/desc — fall back to
+    // the card itself so the toast cannot throw on an unknown skill id.
+    const skillCardMeta = SKILL_PERKS[u.skill] || u;
+    toast('SKILL - ' + skillCardMeta.name.toUpperCase() + ': ' + skillCardMeta.desc.replace('SKILL - ', ''));
+  } else if (u.rewrite) {
+    // G8 step 2: a REWRITE card grants its mechanic through apply(player) in
+    // the chain below, and NEVER enters the `once` stat ledger.
+    // Player-facing copy only: the internal family label must never reach the
+    // feed - it read as a placeholder ("rewrite this description before using").
+    toast(REWRITES[u.rewrite].name.toUpperCase() + ' - ' + REWRITES[u.rewrite].desc);
+  } else if (u.tier === 'MYTHIC') {
+    // W7b: a MYTHIC chase card leaves the pool for the rest of the run once
+    // taken (openDraft reads the takenStats ledger directly for this family —
+    // once per run with or without a run rule), and the catch is announced.
+    markStatTaken(state, u.id);
+    toast('MYTHIC - ' + u.name.toUpperCase() + ': ' + u.desc, RARITY.MYTHIC.tell.outline);
   } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
     markStatTaken(state, u.id);
   }
-  // A committed stat plan pays: from its STACK_FROM-th copy on, a common stat
-  // card counts STACK_MULT times.
-  let stackTimes = statStackTimes(u, p);
-  // Encore: every ENCORE_EVERY-th card drafted counts twice.
-  if (!u.joker) {
-    p.draftPicks = (p.draftPicks || 0) + 1;
-    if (hasJoker(state, 'encore') && p.draftPicks % ENCORE_EVERY === 0) {
-      stackTimes *= 2;
-      toast('ENCORE - ' + u.name.toUpperCase() + ' COUNTS TWICE', JOKER_TINT);
-    }
-  }
-  if (COMMON_STAT_IDS.has(u.id)) {
-    p.statCopies = p.statCopies || {};
-    p.statCopies[u.id] = (p.statCopies[u.id] || 0) + 1;
-  }
-  for (let stackN = 0; stackN < stackTimes; stackN++) {
   if (u.id === 'multi' && volleyAtProjCap()) {
-    p.stats.damage += 0.2 * runBase(p).damage;
+    p.stats.damage *= 1.2;
   } else if (u.id === 'speed' || u.id === 'rate') {
     const n = (p.draftCounts = p.draftCounts || {});
     n[u.id] = (n[u.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(n[u.id] - 1, DRAFT_TAPER.length - 1)];
     if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t;
-    else p.stats.cooldown *= 1 - 0.10 * t;
+    else p.stats.cooldown *= 1 - 0.15 * t;
   } else {
     u.apply(p);
     // G8 step 2 RETUNE (the step-3 debt TICK NOTE 7 measured at 0.65x): under
@@ -5077,7 +3961,7 @@ function pick(u) {
         // u.apply above has already run, so w.level would misfire on a card
         // offered at MAX-1 (leveled to MAX by that apply) and double-pay.
         const lvAtOffer = Number(u.id.split('_').pop());
-        if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage += 0.10 * runBase(p).damage;
+        if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage *= 1.10;
         else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
       } else if (u.id.startsWith('wpn_')) {
         const granted = state.weapons[state.weapons.length - 1];
@@ -5085,23 +3969,23 @@ function pick(u) {
       }
     }
   }
+  state.pendingDrafts--;
+  if (state.pendingDrafts > 0) { openDraft(); return; }
+  draftFocus = -1;
+  // DRAFT PICK CEREMONY: the PICK is unchanged and lands THIS call — mode
+  // flips now, so a MANUAL tap resumes with zero added latency and the
+  // G30 auto-pick timing/count contracts are untouched. The ceremony is pure
+  // presentation: the resolved cards stay up over the LIVE game for
+  // DRAFT_CEREMONY_S (the chosen card lifts, the others disintegrate), then
+  // the frame loop tears the overlay down. Reduced motion: no ceremony at
+  // all — the overlay drops exactly as it did before the feature.
+  if (draftCeremonyEnabled()) {
+    startDraftCeremony(u);
+  } else {
+    overlay.style.display = 'none';
   }
-  for (const w of attune) {
-    for (let i = 0; i < DRAFT_PLAN.PARTNER_LEVELS; i++) levelUpWeapon(w);
-    toast(WEAPON_NAMES[w.type].toUpperCase() + ' Lv ' + w.level + ' - ITS PARTNER CARD IS IN HAND');
-  }
-  // The card joins the run's hand; a new or better hand pays at once.
-  if (addHandCard(p, u.id)) updateRunHand(true);
-  // SLICE 9: the taken pick lands on the latest still-open draft record.
-  if (dev) {
-    for (let i = dev.drafts.length - 1; i >= 0; i--) {
-      if (dev.drafts[i].taken == null) { dev.drafts[i].taken = u.id; break; }
-    }
-  }
-  // A level-up or a partner card may have completed an evolution: a declined
-  // offer is re-opened by the next pick.
-  reopenForgeOffers();
-  closeDraft(u);
+  state.mode = 'playing';
+  clearDraftAutoPick();   // G30: the draft resolved — no timer may outlive it
 }
 
 // ---------- G30 AUTO DRAFT AUTO-PICK (owner 2026-09-16) -----------------------
@@ -5143,7 +4027,6 @@ function draftObstructed() {
   // NIGHT MODE: a coach must not park an unattended run — the countdown runs
   // through it (the coach's own DOM is untouched).
   if (coachActive() && !state.nightRun) return true;
-  if (tutGuidedLive()) return true;   // the tutorial's idle rule picks instead
   try { return !!(typeof document !== 'undefined' && document && document.hidden); }
   catch { return false; }
 }
@@ -5197,9 +4080,7 @@ function updateDraftCountdownLine() {
       overlay.appendChild(draftCountdownEl);
     }
   }
-  // The guided tutorial holds the auto-pick, so its draft shows no countdown.
-  draftCountdownEl.textContent = tutGuidedLive() ? ''
-    : 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
+  draftCountdownEl.textContent = 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
 }
 
 function tickDraftAutoPick(dt) {
@@ -5210,10 +4091,9 @@ function tickDraftAutoPick(dt) {
       // Uniformly at random across the offered cards (captured at
       // presentation), through the ONE activation seam (activateDraftCard) —
       // byte-identical to a tap.
-      const pool = draftOffers;
       const u = state.nightRun
         ? draftOffers[nightDraftPickIndex(draftOffers)]   // NIGHT: highest tier, first slot on tie
-        : pool[Math.min(pool.length - 1, Math.floor(draftAutoRng() * pool.length))];
+        : draftOffers[Math.min(draftOffers.length - 1, Math.floor(draftAutoRng() * draftOffers.length))];
       draftAutoCount++;
       draftAutoLastId = u.id;
       activateDraftCard(u);
@@ -5255,13 +4135,10 @@ let nightEvolveLeft = null;      // s left on the EVOLUTION overlay auto-pick
 let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
 export function nightDraftPickIndex(offers) {
-  // A joker is the top pick while the row has room; with a full row it is the last.
-  const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.tier === 'RARE') ? 1 : 0;
-  let best = -1;
-  for (let i = 0; i < offers.length; i++) {
-    if (best < 0 || rank(offers[i]) > rank(offers[best])) best = i;
-  }
-  return Math.max(0, best);   // strict > keeps the FIRST eligible slot on a tie
+  const rank = (u) => (u && u.tier === 'MYTHIC') ? 2 : (u && u.tier === 'RARE') ? 1 : 0;
+  let best = 0;
+  for (let i = 1; i < offers.length; i++) if (rank(offers[i]) > rank(offers[best])) best = i;
+  return best;   // strict > keeps the FIRST slot on a tie
 }
 
 function tickNight(realDt) {
@@ -5279,14 +4156,14 @@ function tickNight(realDt) {
       startRun();   // same build, same arena: RETRY's contract
     }
   }
-  if (nightEvolveLeft !== null && state.mode === 'evolve') {
+  if (state.nightRun && nightEvolveLeft !== null && state.mode === 'evolve') {
     nightEvolveLeft -= realDt;
     if (nightEvolveLeft <= 0) {
       nightEvolveLeft = null;
       if (state.mode === 'evolve') {
-        const offers = forgeOffers();
-        if (offers.length) takeForgeOffer(offers[0]);   // the first offer
-        else closeEvolve();                              // offers vanished under us: just leave the overlay
+        const cands = evolutionCandidates();
+        if (cands.length) doEvolve(cands[0]);   // first candidate: the draft policy's first-slot rule
+        else closeEvolve();                      // candidates vanished under us: just leave the overlay
       }
     }
   }
@@ -5339,9 +4216,10 @@ function nightUnstick(m) {
         activateDraftCard(u);
       }
     } else if (m === 'evolve') {
-      // the same action the named timer makes: the first offer
-      const offers = forgeOffers();
-      if (offers.length) takeForgeOffer(offers[0]);
+      // the same action the named timer makes (main.js doEvolve) — first
+      // candidate, the draft policy's first-slot rule
+      const cands = evolutionCandidates();
+      if (cands.length) doEvolve(cands[0]);
       else closeEvolve();
     } else if (m === 'portal-cine') endPortalCine();
     else if (m === 'death-cine') endDeathCine();
@@ -5363,15 +4241,15 @@ function toggleNight() {
       };
       nightSession = null;
     }
-    audio.playSfx('uiMove');
+    audio.playSfx('button');
     return;
   }
-  if (!nightArmed) { nightArmed = true; audio.playSfx('uiMove'); return; }
+  if (!nightArmed) { nightArmed = true; audio.playSfx('button'); return; }
   nightArmed = false;
   state.night = true;
   state.nightSummary = null;   // a new night replaces the old line
   nightSession = { t0: Date.now(), gold0: profile.gold };
-  audio.playSfx('uiConfirm');
+  audio.playSfx('levelup');
 }
 
 // ---------- DRAFT PICK CEREMONY (owner 2026-09-16) -----------------------------
@@ -5405,36 +4283,15 @@ function draftCeremonyEnabled() {
   } catch { return true; }
 }
 
-// Adds or removes one class on the overlay (classList in a browser, the plain
-// className string in a stub DOM).
-function setOverlayFlag(cls, on) {
+function setDraftCeremonyFlag(on) {
   if (overlay.classList && typeof overlay.classList.add === 'function') {
-    if (on) overlay.classList.add(cls);
-    else overlay.classList.remove(cls);
+    if (on) overlay.classList.add(CEREMONY_FLAG_CLS);
+    else overlay.classList.remove(CEREMONY_FLAG_CLS);
     return;
   }
-  const cur = String(overlay.className || '').split(' ').filter(c => c && c !== cls);
-  if (on) cur.push(cls);
+  const cur = String(overlay.className || '').split(' ').filter(c => c && c !== CEREMONY_FLAG_CLS);
+  if (on) cur.push(CEREMONY_FLAG_CLS);
   overlay.className = cur.join(' ');
-}
-function setDraftCeremonyFlag(on) { setOverlayFlag(CEREMONY_FLAG_CLS, on); }
-
-// The draft / evolve / fusion offers share one overlay look: a dark scrim
-// (index.html #overlay.draft) and, on a short viewport, the compact card
-// (draft_card_art.js draftLayout). Returns the layout the cards are built to.
-function setDraftOverlay(on, offers = 3) {
-  setOverlayFlag('draft', on);
-  if (!on) { setOverlayFlag('compact', false); return null; }
-  let vw = 1280, vh = 720;
-  try { if (typeof window !== 'undefined' && window.innerWidth) ({ vw, vh } = viewSize()); } catch { /* stub DOM */ }
-  const lay = draftLayout(vw, vh, offers);
-  setOverlayFlag('compact', lay.compact);
-  // The title / pre-run screen's top-aligned, transparent overlay must not leak in.
-  for (const c of ['title', 'end', 'howto']) setOverlayFlag(c, false);
-  overlay.style.background = '';
-  overlay.style.justifyContent = '';
-  overlay.style.paddingTop = '';
-  return lay;
 }
 
 function startDraftCeremony(u) {
@@ -5463,7 +4320,6 @@ function endDraftCeremony(ownOverlay) {
   if (ownOverlay) {
     ovCards.innerHTML = '';
     overlay.style.display = 'none';
-    setDraftOverlay(false);
   }
 }
 
@@ -5474,192 +4330,91 @@ function tickDraftCeremony(dt) {
   if (draftCeremony.left <= 0) endDraftCeremony(true);
 }
 
-// ---------- THE FORGE: evolution and fusion offers ---------------------------
-// The overlay opens the moment a weapon can evolve (max level + its partner
-// card, evolutions.js) or two evolved weapons can fuse (fusions.js). NOT NOW
-// defers the offers until the next draft pick. An unattended run takes the
-// first offer after a timeout.
-function ownedCards() {
-  return (state.player && state.player.takenStats) || {};
+// ---------- EVOLUTION draft (wave-7/A, evolutions.js) -----------------------
+// Surfaced the moment a weapon hits Lv8 AND its required item kind is
+// equipped AND a token is banked. The card is built from describeEvolution;
+// evolveWeapon mutates the SAME weapon instance (levelUpWeapon precedent)
+// and spends the token. Declines are suppressed until a new token or item
+// lands (otherwise the check would re-open every frame).
+function equippedItemKinds() {
+  return new Set(state.items.flatMap(it => (it.affixes || []).map(a => a.id)));
 }
 
 function evolutionCandidates() {
-  const owned = ownedCards();
-  return state.weapons.filter(w => {
-    if (w.evoDeclined) return false;
-    const pr = evolutionProgress(w, owned);
-    return !!(pr && pr.ready);
-  });
-}
-
-// Fusions the kit can make now, minus the ones deferred with NOT NOW.
-function fusionOffers() {
-  return fusionCandidates(state.weapons, state.fuseDeclined);
-}
-
-// Everything the overlay can offer right now: evolutions first, then fusions.
-function forgeOffers() {
-  return [
-    ...evolutionCandidates().map(w => ({ kind: 'evolve', w })),
-    ...fusionOffers().map(c => ({ kind: 'fuse', def: c.def, w: c.host, partner: c.partner })),
-  ];
-}
-
-function takeForgeOffer(o) {
-  if (o.kind === 'fuse') doFuse(o.def);
-  else doEvolve(o.w);
-}
-
-// A draft pick (or a level gained another way) re-opens every deferred offer.
-function reopenForgeOffers() {
-  for (const w of state.weapons) w.evoDeclined = false;
-  if (state.fuseDeclined) state.fuseDeclined.clear();
-}
-
-// A weapon's name as the player knows it: its fusion, its evolution, its type.
-function weaponDisplayName(w) {
-  return w.fusion ? w.fusion.name : w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+  const kinds = equippedItemKinds();
+  return state.weapons.filter(w =>
+    !w.evolutionId && !w.evoDeclined &&
+    EVOLUTION_DEFS[w.type] &&
+    (w.level || 1) >= WEAPON_MAX_LEVEL &&
+    kinds.has(EVOLUTION_DEFS[w.type].itemKind) &&
+    state.evoTokens > 0);
 }
 
 function maybeOpenEvolve() {
   if (state.mode !== 'playing') return;
-  const offers = forgeOffers();
-  if (offers.length === 0) return;
-  // The overlay bypasses openMenu — supersede a live pick ceremony here too
-  // (its pointer-events gate would block the offer cards for a frame).
+  const cands = evolutionCandidates();
+  if (cands.length === 0) return;
+  // The evolve overlay bypasses openMenu — supersede a live pick ceremony
+  // here too (it would otherwise block the evolve cards' clicks for a frame
+  // with its pointer-events gate). Placed AFTER the candidates gate: this
+  // function runs every update(), and only an ACTUAL evolve screen takes the
+  // overlay over.
   if (draftCeremony) endDraftCeremony(false);
   state.mode = 'evolve';
   overlay.style.display = 'flex';
-  const lay = setDraftOverlay(true, offers.length + 1);
-  const fusing = offers.every(o => o.kind === 'fuse');
-  ovTitle.textContent = fusing ? 'FUSION' : 'EVOLUTION';
+  ovTitle.textContent = 'EVOLUTION';
   ovTitle.className = 'logo';
-  ovSub.textContent = fusing ? 'two evolved weapons become one, and a weapon slot comes free'
-    : 'a maxed weapon and its partner card';
+  ovSub.textContent = 'a maxed weapon + its item kind + a token';
   ovCards.innerHTML = '';
-  // Each card is labelled with its own position: the number keys route 1-4 to
-  // ovCards.children[n-1].
-  offers.forEach((o, i) => {
+  // WAVE-23 FIX (desktop audit #5): every card was labelled `[1]` while the
+  // keydown handler routes 1-4 to ovCards.children[n-1] — so pressing [2]
+  // picked the second card the label called "[1]". Label each card with its
+  // own position (the same index the number key resolves to).
+  cands.forEach((w, i) => {
+    const card = describeEvolution(w);
     const el = document.createElement('div');
     el.className = 'card';
-    if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
-    if (o.kind === 'fuse') {
-      const card = describeFusion(o.def);
-      el._fusionOffer = card.id;
-      el.innerHTML =
-        `<div class="name">FUSE: ${card.name}</div>` +
-        `<div class="desc">${card.desc}<br>${weaponDisplayName(o.w)} + ${weaponDisplayName(o.partner)}` +
-        ` &middot; both x${card.mult} damage &middot; whole kit +${Math.round(DRAFT_PLAN.FUSION_KIT_DMG * 100)}% damage` +
-        ` &middot; frees a weapon slot</div>` +
-        `<div class="key">[${i + 1}]</div>`;
-    } else {
-      const card = describeEvolution(o.w);
-      el.innerHTML =
-        `<div class="name">EVOLVE: ${card.name}</div>` +
-        `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}` +
-        ` &middot; whole kit +${Math.round(DRAFT_PLAN.EVOLUTION_KIT_DMG * 100)}% damage</div>` +
-        `<div class="key">[${i + 1}]</div>`;
-    }
-    el.onclick = () => takeForgeOffer(o);
+    el.innerHTML =
+      `<div class="name">EVOLVE: ${card.name}</div>` +
+      `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.itemKindName} + ${card.tokenCost} token</div>` +
+      `<div class="key">[${i + 1}]</div>`;
+    el.onclick = () => doEvolve(w);
     ovCards.appendChild(el);
     frameCard(el);
   });
   // NOT NOW takes the next number key when it fits the 1-4 routing window
-  // (more offers can overflow it — then it stays mouse/click only).
-  const notNow = menuCard('NOT NOW', 'offered again after your next level-up card', () => {
-    for (const o of offers) {
-      if (o.kind === 'fuse') state.fuseDeclined.add(o.def.id);
-      else o.w.evoDeclined = true;
-    }
-    // Deferring is a choice too: the offer set stays, taken = 'deferred'.
-    if (dev) {
-      for (let i = dev.evolutions.length - 1; i >= 0; i--) {
-        if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = 'deferred'; break; }
-      }
-    }
+  // (3+ candidates can overflow it — then it stays mouse/click only).
+  const notNow = menuCard('NOT NOW', 'keep the token - re-offered on the next token or item', () => {
+    for (const w of cands) w.evoDeclined = true;
     closeEvolve();
   });
-  if (offers.length + 1 <= 4) {
-    notNow.innerHTML += `<div class="key">[${offers.length + 1}]</div>`;
+  if (cands.length + 1 <= 4) {
+    notNow.innerHTML += `<div class="key">[${cands.length + 1}]</div>`;
     // A real browser re-serializes innerHTML on += and drops the painted
     // frame canvas with it; frameCard is idempotent, so re-frame after the
     // mutation (the stub DOM keeps the child and this is a no-op repaint).
     frameCard(notNow);
   }
-  // An unattended run must not park here: a night run takes the FIRST offer
-  // after NIGHT_EVOLVE_S, and an AUTO run after the draft timeout.
+  // NIGHT MODE (gap found 2026-09-18): this overlay was human-click-only —
+  // an unattended run with a token over a maxed weapon parked here forever.
+  // Same named-timer shape as CONTINUE/RETRY: the night takes the FIRST
+  // candidate after NIGHT_EVOLVE_S (the draft policy's first-slot rule).
   if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
-  else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') nightEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
-  // The offer set (the taken entry — or 'deferred' — fills in when it resolves).
-  if (dev) dev.evolutions.push({ offered: offers.map(o => (o.kind === 'fuse' ? 'fuse:' + o.def.id : o.w.type)), taken: null });
 }
 
-function recordForgeTaken(what) {
-  if (!dev) return;
-  for (let i = dev.evolutions.length - 1; i >= 0; i--) {
-    if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = what; break; }
-  }
-}
-
-// The forge restores the hero (full health and a share of the starting pool)
-// and raises the whole kit's damage by `kitDmg` of the run's starting damage.
-function forgeHeal(kitDmg) {
-  const p = state.player;
-  p.stats.maxHp += EVOLUTION_HP_FRAC * runBase(p).maxHp;
-  p.hp = p.stats.maxHp;
-  p.stats.damage += kitDmg * runBase(p).damage;
-}
-
-// The ONE evolve action — the card's own onclick path, shared with the
-// unattended auto-pick.
+// The ONE evolve action — the card's own onclick path, shared verbatim with
+// the night auto-pick (never a second implementation of the same transition).
 function doEvolve(w) {
-  const res = evolveWeapon(w, ownedCards());
+  const res = evolveWeapon(w, equippedItemKinds(), state.evoTokens);
   if (res.ok) {
-    recordForgeTaken(w.type);
-    // An evolution charges +2 heat (event-id deduped).
+    state.evoTokens = res.tokens;
+    // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
+    // double-fired tick can never double-charge).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
-    forgeHeal(DRAFT_PLAN.EVOLUTION_KIT_DMG);
-    if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
-      // The first evolution ever: the cinematic banner and its pause.
-      state.bossBanner = {
-        names: [res.name.toUpperCase()], verb: 'EVOLVED',
-        title: res.name.toUpperCase(),
-        sub: (WEAPON_NAMES[w.type] || w.type).toUpperCase() + ' EVOLVED - ' + w.evolution.desc.toUpperCase(),
-        ttl: TOKEN_BANNER_SEC,
-      };
-      state.bannerHold = TOKEN_BANNER_SEC;
-    }
     toast(res.name.toUpperCase() + ' UNLEASHED');
-    audio.playSfx('evolve');
-    // An evolution is one of the EARNED slow-mo moments.
-    triggerEarnedMoment('evolution', state.player.x, state.player.y);
-  }
-  closeEvolve();
-}
-
-// The ONE fuse action. The two halves become one weapon (fusions.js), the
-// freed slot is refilled from the next drafts, and the fusion is recorded on
-// the profile's collection shelf (the banner ledger, key 'fusion:<ID>').
-function doFuse(def) {
-  const res = fuseWeapons(state.weapons, def);
-  if (res.ok) {
-    state.fusionsMade = (state.fusionsMade || 0) + 1;
-    recordForgeTaken('fuse:' + res.weapon.fusionId);
-    forgeHeal(DRAFT_PLAN.FUSION_KIT_DMG);
-    const first = markBannerSeen(profile, FUSION_SHELF_KEY + res.weapon.fusionId);
-    if (oneTimeBanners && first) {
-      // A fusion discovered for the first time: the cinematic banner and its pause.
-      state.bossBanner = {
-        names: [res.name.toUpperCase()], verb: 'FUSED',
-        title: res.name.toUpperCase(),
-        sub: 'NEW FUSION - ' + res.weapon.fusion.desc.toUpperCase(),
-        ttl: TOKEN_BANNER_SEC,
-      };
-      state.bannerHold = TOKEN_BANNER_SEC;
-    }
-    // The feed says what the new weapon does: an AUTO run took it unread.
-    toast('FUSION: ' + res.name.toUpperCase() + ' — ' + res.weapon.fusion.desc);
-    audio.playSfx('evolve');
+    audio.playSfx('levelup');
+    // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
+    // moments — brief dilation + the crackle flare, back to normal after.
     triggerEarnedMoment('evolution', state.player.x, state.player.y);
   }
   closeEvolve();
@@ -5667,39 +4422,7 @@ function doFuse(def) {
 
 function closeEvolve() {
   overlay.style.display = 'none';
-  setDraftOverlay(false);
   state.mode = 'playing';
-}
-
-// ---------- The fusion shelf (PROGRESS) --------------------------------------
-// Every fusion as a card: discovered ones show their emblem, name, pair and
-// effect; the rest are dark silhouettes.
-const FUSION_SHELF_KEY = 'fusion:';
-function fusionsDiscovered() {
-  return FUSION_DEFS.filter(d => bannerSeen(profile, FUSION_SHELF_KEY + d.id)).length;
-}
-function fusionMarkHtml(def, known, px) {
-  const grid = def.mark.map(row => [...row].map(c => (c === 'a' ? 1 : c === 'b' ? 2 : 0)));
-  const pal = known ? { 1: def.tint[0], 2: def.tint[1] } : { 1: '#2a2a36', 2: '#1c1c26' };
-  return iconHtml(grid, pal, px);
-}
-function showFusions() {
-  openMenu('progress');
-  ovTitle.textContent = 'FUSIONS';
-  ovTitle.className = 'logo';
-  ovSub.innerHTML = fusionsDiscovered() + ' / ' + FUSION_DEFS.length +
-    ' discovered &middot; two evolved weapons that pair up fuse into one';
-  for (const def of FUSION_DEFS) {
-    const known = bannerSeen(profile, FUSION_SHELF_KEY + def.id);
-    const d = describeFusion(def);
-    const el = menuCard(
-      fusionMarkHtml(def, known, 4) + (known ? d.name : '? ? ?'),
-      known ? d.pairNames.join(' + ') + '<br><span style="color:#a8a8c0">' + d.desc + '</span>'
-        : 'not discovered yet',
-      () => {}, !known);
-    el._fusionShelf = { id: def.id, known };
-  }
-  menuCard('BACK', 'to progress [ESC]', () => showProgress());
 }
 
 // ===========================================================================
@@ -5783,55 +4506,48 @@ function deathCauseLabel(d) {
   return who + (how ? ' ' + how : '');
 }
 
-// The purchase to point the player at next. Survival is what a new player
-// lacks, so the core is the next Vitality level, the next Forged Edge level and
-// the cheapest locked weapon: the cheapest of those they can afford, else the
-// cheapest of them. With the core finished, the cheapest row left.
-function bestNextPurchase(prof) {
-  const offer = (def) => {
-    if (!def || shopRowOwned(prof, def)) return null;
+// The single shop row this run came CLOSEST to affording — real meta data
+// (SHOP_UPGRADES + upgradeCost), never an invented number. Skips anything
+// already owned/maxed; ties resolve to the cheaper row.
+function nextUnlockWithinReach(prof) {
+  let best = null;
+  for (const def of SHOP_UPGRADES) {
+    if (shopRowOwned(prof, def)) continue;
     const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
-    if (!def.kind && level >= def.maxLevel) return null;
-    return { id: def.id, name: def.name, cost: def.kind ? def.baseCost : upgradeCost(def, level) };
-  };
-  const byCost = (a, b) => a.cost - b.cost;
-  const weapon = SHOP_UPGRADES.filter(d => d.kind === 'weapon').map(offer).filter(Boolean).sort(byCost)[0];
-  const core = [offer(SHOP_BY_ID.hp), offer(SHOP_BY_ID.dmg), weapon].filter(Boolean).sort(byCost);
-  const pool = core.length ? core : SHOP_UPGRADES.map(offer).filter(Boolean).sort(byCost);
-  return pool.find(o => prof.gold >= o.cost) || pool[0] || null;
-}
-function nextUnlockWithinReach(prof) { return bestNextPurchase(prof); }
-
-// A tip for the end screen, once ever and never on a first run: a death to an
-// enemy shot is the moment FOCUS matters.
-const KEY_TIP_FOCUS = 'hordes_tip_focus';
-const KEY_TIP_STANCE = 'hordes_tip_stance';
-function tipSeen(key) { try { return prefStorage.getItem(key) === '1'; } catch { return true; } }
-function markTip(key) { try { prefStorage.setItem(key, '1'); } catch { /* shim */ } }
-function runsFinished() {
-  return Number(profile.achievements && profile.achievements.totals && profile.achievements.totals.runs) || 0;
-}
-function focusTipLine() {
-  if (!state.deathBy || state.deathBy.cause !== 'shot') return '';
-  if (runsFinished() < 2 || tipSeen(KEY_TIP_FOCUS)) return '';
-  markTip(KEY_TIP_FOCUS);
-  return 'TIP: shot from range. FOCUS (' + (isTouchPath() ? 'the FOCUS button' : 'TAB') + ') set to RANGED kills the shooters first.';
-}
-// The first boss after run 1 is the moment STANCE matters: one toast, once.
-function maybeStanceTip() {
-  if (runsFinished() < 1 || tipSeen(KEY_TIP_STANCE)) return;
-  markTip(KEY_TIP_STANCE);
-  toast('TIP: STANCE (' + (isTouchPath() ? 'the STANCE button' : 'G') + '). SAFE keeps away from the boss, GREEDY chases loot');
+    const cost = def.kind ? def.baseCost : upgradeCost(def, level);
+    if (!best || cost < best.cost) best = { id: def.id, name: def.name, cost };
+  }
+  return best;
 }
 
-// The end-of-run summary under the title. Top to bottom: what kind of run it
-// was (only when not a plain one), time / wave / level / kills, the killer,
-// the gold earned with its breakdown, the next purchase, and at most one tip.
+// Compact end-screen body. `lead` is the run's shape (wave/time/level/kills),
+// `cause` the cause line, `gold` this run's payout, `parts` settleRunGold's
+// breakdown (only the GOLD POOL multiplier clause reads it now).
+//
+// END-SUMMARY CONTENT PASS (owner 2026-09-17, msg_01M2RVD9HHZZDSR7FKNTRRSSY5
+// + addendum: "no more than five lines above the buttons; one gold line with
+// at most two numbers, earned and banked; the freed space is NOT for more
+// text"). The shape, top to bottom:
+//   1. the LEAD line, carrying the run's identity clauses (NIGHT / APEX /
+//      challenge / stage — G25/G11/G20a's clean-clear protection, FOLDED into
+//      the one line instead of stacked) and the run's numbers.
+//   2. KILLED BY (death only) — its own label, structurally incapable of
+//      sitting over data (its own line, DOM-composed, HUD suppressed).
+//   3. THE ONE GOLD LINE — GOLD EARNED +N · BANK N, exactly two numbers. The
+//      E1 award/purse breakdown line and the G24 STAKES PAID line are RETIRED
+//      from the card (every number they carried is inside GOLD EARNED; the
+//      per-run breakdown lives in the settle/ledger seam, not the player's
+//      3-second read). Disclosed supersession: E1 (2026-09-14) wanted the two
+//      payout parts named separately; this pass's one-gold-line rule wins.
+//   4. GOLD POOL multiplier — only when the pool is non-neutral (the
+//      challenge-gold directive stands: the bigger number is EXPLAINED, not
+//      mysterious; a standard stakes-free run renders no clause).
+//   5. NEXT UNLOCK — omitted entirely when every row is owned (no filler).
 function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
-  const goal = bestNextPurchase(profile);
+  const goal = nextUnlockWithinReach(profile);
   const tags = [];
   if (state.nightRun) tags.push('NIGHT RUN');
-  if (state.assistedRun) tags.push('ASSISTED');
+  if (state.assistedRun) tags.push('ASSISTED');   // B6 option (b): the flag rides the end card
   if (state.apexRun) tags.push('APEX RUN');
   if (!isDefaultStage(state.stage)) tags.push(stageOf(state.stage).name);
   if (!isStandard(state.challenge)) tags.push(challengeOf(state.challenge).name + ' RUN');
@@ -5840,33 +4556,20 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
   html += `<br><span class="earn">GOLD EARNED: +${gold}` +
     `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
-  const bd = parts && parts.breakdown;
-  if (bd) {
-    html += `<br><span class="pool">run award ${bd.award} · survival ${bd.survival} · kills ${bd.kills}` +
-      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + '</span>';
-  }
   const gp = parts && parts.goldPool;
   if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
-    const bits = [];
-    if (gp.night > 0) bits.push(`night mode -${Math.round(gp.night * 100)}%`);
-    if (gp.challenge > 0) bits.push(`modifier +${Math.round(gp.challenge * 100)}%`);
-    if (gp.heat > 0) bits.push(`raised stakes +${Math.round(gp.heat * 100)}%`);
-    html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (${bits.join(', ')})</span>`;
+    const bits = ['100%'];
+    if (gp.night > 0) bits.push(`NIGHT -${Math.round(gp.night * 100)}%`);
+    if (gp.challenge > 0) bits.push(`CHALLENGE +${Math.round(gp.challenge * 100)}%`);
+    if (gp.heat > 0) bits.push(`HEAT +${Math.round(gp.heat * 100)}%`);
+    html += `<br><span class="pool">GOLD POOL x${(+gp.total).toFixed(2)} (${bits.join(' + ')})</span>`;
   }
   if (goal) {
     const gap = goal.cost - profile.gold;
-    html += `<br><span class="next">BUY NEXT: ${goal.name}, ${goal.cost} gold · ` +
-      (gap > 0 ? `${gap} more to go` : 'you can afford it') + '</span>';
+    html += `<br><span class="next">NEXT UNLOCK: ${goal.name} ${goal.cost}g · ` +
+      (gap > 0 ? `${gap}g TO GO` : 'READY NOW') + '</span>';
   }
-  const tip = focusTipLine();
-  if (tip) html += `<br><span class="next">${tip}</span>`;
   return html;
-}
-// The lead line every end screen shares.
-function endLead(prefix) {
-  const p = state.player;
-  return (prefix ? prefix + '<br>' : '') +
-    `TIME ${runClock(state.time)} · WAVE ${state.wave.num} · LEVEL ${p.level} · ${p.kills} KILLS`;
 }
 
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
@@ -5915,7 +4618,7 @@ function recordRunAchievements(gold) {
     wave: state.wave.num,
     time: state.time,
     weaponLevel: bestWeaponLevel,
-    evolutions: kitWeapons(state.weapons).filter(w => !!w.evolution).length,
+    evolutions: state.weapons.filter(w => !!w.evolution).length,
     legendaries: state.items.filter(it => it.rarity === 'LEGENDARY').length,
     // G9 FOLLOW-UP: the counters wired out of live state — FIRST_BOSS,
     // BOSS_SLAYER_5, CHESTS_25 and UNTOUCHED_WAVE were unearnable before this.
@@ -5950,9 +4653,14 @@ function recordRunAchievements(gold) {
 }
 
 function settleRunGold({ winBonus = 0 } = {}) {
-  // Settlement is run-once: the first run end banks everything the run earned
-  // (award, purse, win and milestone bonuses); a second call returns the same
-  // numbers. Cleared in startRun.
+  // S1 (audit 2026-09-16): settlement is RUN-ONCE. The maw milestone settles
+  // mid-run and the run CONTINUES — every later ending (runSurvived / die /
+  // endRun) used to settle AGAIN, paying RUN_GOLD.AWARD twice, re-paying
+  // FIRST_CLEAR, and folding the FULL run summary into lifetime totals a
+  // second time (achievements.js recordRun bumps are read-then-add). A second
+  // call now returns the first settlement's numbers unchanged. (The purse
+  // zeroing below guards a DIFFERENT trap — the double-BANK of the remainder —
+  // and stays.) Cleared in startRun.
   if (state.runSettled) return state.runSettled;
   const p = state.player;
   const firstClear = state.time > (profile.bestTime || 0);
@@ -5982,10 +4690,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // award the pool multiplies (the purse is the dominant income; halving
   // only the 70g award would be a ~0.01% cut). FIRST_CLEAR stays a separate
   // one-time record bonus, unhalved, like the challenge settle before it.
-  // STEP 3 DEV-NIGHT: the dev-only variant is EXEMPT from the cut (nightPct
-  // 0) while playing under nightmare rules. Regular night mode (devNightRun
-  // false) pays exactly as before — this line is its only reader.
-  const nightPct = (state.nightRun && !state.devNightRun) ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
+  const nightPct = state.nightRun ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
   const pool = 1 - nightPct / 100 + challengePct / 100 + heatPct;
   const nightFactor = 1 - nightPct / 100;
   // PRESTIGE GOLD (owner spec: x2^P, all sources). The AWARD (fixed end-of-run
@@ -5994,20 +4699,10 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // scaled it at kill time — re-multiplying here would pay it twice).
   const pGold = prestigeGoldMult(getPrestige(profile));
   const mult = (p.stats.goldMult || 1) * rampageGoldMult() * pool;
-  const recordBonus = !firstClear ? 0 : (profile.bestTime || 0) > 0 ? RUN_GOLD.NEW_BEST : RUN_GOLD.FIRST_CLEAR;
-  const baseAward = Math.round(RUN_GOLD.AWARD * mult * pGold);
-  const recordGold = Math.round(recordBonus * pGold);
-  const award = baseAward + recordGold;
+  const award = Math.round(RUN_GOLD.AWARD * mult * pGold) + (firstClear ? Math.round(RUN_GOLD.FIRST_CLEAR * pGold) : 0);
   const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
-  winBonus = Math.round((winBonus + (state.milestoneBonus || 0)) * nightFactor * pGold);
+  winBonus = Math.round(winBonus * nightFactor * pGold);
   const gold = award + purseBanked + winBonus;
-  // The end screen's four parts, which always sum to `gold`. The purse is
-  // survival pay plus kill pay less anything spent in the run; spending comes
-  // out of the kills part.
-  const survival = Math.min(purseBanked,
-    Math.round(((state.runCounts.gold && state.runCounts.gold.survival) || 0) * nightFactor));
-  const breakdown = { award: baseAward, survival, kills: purseBanked - survival,
-    bonuses: recordGold + winBonus };
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
   // (bestTime write, banking, the achievements fold, the save), runSettled
@@ -6017,7 +4712,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // neither re-open settlement nor kill the caller — it is reported and the
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
-  state.runSettled = { gold, award, purseBanked, winBonus, firstClear, breakdown,
+  state.runSettled = { gold, award, purseBanked, winBonus, firstClear,
     goldPool: { base: 1, night: nightPct / 100, challenge: challengePct / 100,
       heat: heatPct, total: pool } };
   try {
@@ -6062,7 +4757,7 @@ function prestigeAscend() {
   const nextP = setPrestige(profile, getPrestige(profile) + 1);
   persistProfile();
   toast('PRESTIGE ' + nextP + ' — THE HORDE GROWS STRONGER');
-  audio.playSfx('evolve');
+  audio.playSfx('levelup');
   startRun();
   return true;
 }
@@ -6074,20 +4769,24 @@ function runSurvived() {
   state.runWon = true;
   state.deathBy = null;       // nobody killed you; do not print a cause line
   audio.stopMusic();
-  audio.playSfx('victory');
+  audio.playSfx('levelup');
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
-  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold({ winBonus: bonus });
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold({ winBonus: bonus });
   composeEndScreen({
     titleText: 'RUN SURVIVED',
     titleCls: 'logo',
     subHtml: endScreenBody({
-      lead: endLead('You lasted the full ' + runClock(C.RUN.LIMIT) +
-        (state.mawCleared ? ' and killed the Maw' : '') + '. Bonus +' + bonus + ' gold'),
-      cause: null,
+      // The completion bonus rides the LEAD line (the content pass's one-
+      // gold-line rule): it is already inside GOLD EARNED, named here so the
+      // bigger number stays explained, and MAW SLAIN stays its own clause.
+      lead: `the horde could not break you · lasted the full ${runClock(C.RUN.LIMIT)}` +
+        ` · wave ${state.wave.num} · level ${p.level} · ${p.kills} kills` +
+        ` · COMPLETION BONUS: +${bonus}${state.mawCleared ? ' · MAW SLAIN' : ''}`,
+      cause: null,                // you did not die — you won
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: bonus, goldPool, breakdown },
+      parts: { award, purseBanked, winBonus: bonus, goldPool },
     }),
   });
   // PRESTIGE OFFER (owner spec): surviving to 30:00 offers the reset at P+1.
@@ -6096,39 +4795,57 @@ function runSurvived() {
   // paths). The ascent resets the run at the new tier via prestigeAscend().
   if (prestigeOfferForRun(state.runWon)) {
     const nextP = getPrestige(profile) + 1;
-    const unlock = nextP >= 3 ? 'unlocks 7x speed' : nextP === 2 ? 'unlocks 5x speed' : 'unlocks 3x speed';
+    const unlock = nextP >= 3 ? '7x SPEED UNLOCKED' : nextP === 2 ? '5x SPEED UNLOCKED' : '3x SPEED UNLOCKED';
     menuCard('PRESTIGE ' + nextP,
-      `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
+      `reset the run at tier ${nextP} · foes x${prestigeEnemyMult(nextP)} · gold x${prestigeGoldMult(nextP)} · ${unlock} [P]`,
       () => prestigeAscend());
   }
   if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
 }
 
-// Every end screen (death, the 30:00 win, END RUN) is composed here. RETRY is
-// the first card, so Enter with no cursor retries. The composed payload is
-// kept on state so a return from another screen redraws the same summary
-// without settling gold again.
+// IN-RUN REFERENCE ACCESS supplement: every end screen (death, victory,
+// deliberate END RUN) is composed HERE, and every one carries the HOW TO
+// PLAY door — the two moments a player actually realises what they did not
+// understand. The composed payload is stored on state so leaving (and
+// returning) through the reference can recompose the IDENTICAL screen:
+// reshowEndScreen re-renders the cards fresh and NEVER re-settles gold
+// (settleRunGold ran exactly once, when the ending fired).
 function composeEndScreen({ titleText, titleCls, subHtml }) {
   state.mode = 'dead';
   state.helpFrom = null;
   state.endScreen = { titleText, titleCls, subHtml };
-  // The summary is the only text on screen: the canvas HUD is suppressed in
-  // 'dead' mode (render.js HUD_SUPPRESSED_MODES).
+  // MODAL SUPPRESSION (owner 2026-09-17, msg_01M2RVD9): the summary is the
+  // ONLY text on screen. The whole canvas HUD — bars, feed, radar, banner —
+  // is gated by the shared hudSuppressed('dead') predicate (render.js
+  // HUD_SUPPRESSED_MODES), so nothing in the queue can PAINT behind the
+  // summary. The queue itself is NOT purged here: the win funnel's trophy /
+  // unlock announcements (settleRunGold) are the payload the test suite reads
+  // and they harmlessly expire unpainted. The DEATH path purges for real at
+  // the cine reveal (endDeathCine) — that is where a toast queued DURING the
+  // movie (ttl frozen outside update()) could otherwise pop through.
   ovTitle.textContent = titleText;
   ovTitle.className = titleCls || '';
-  if (ovTitle.style) ovTitle.style.display = '';   // the title screen hides the h1
+  // The G12 title screen HIDES the DOM h1 (the canvas title card owns it,
+  // main.js showTitle) and only openMenu restores it — every run launched
+  // from the title flow composed its summary with an invisible 'THE HORDE
+  // WINS' header (caught on the 2026-09-17 summary screenshots). Same
+  // restore idiom as openMenu.
+  if (ovTitle.style) ovTitle.style.display = '';
   ovSub.innerHTML = subHtml;
   ovCards.innerHTML = '';
-  menuCard('RETRY', 'play again [R]', () => startRun());
-  menuCard('SHOP', 'spend your gold', () => showShop());
-  menuCard('TITLE', 'back to the menu [T]', () => showTitle());
+  menuCard('RETRY', 'straight back in [R]', () => startRun());
+  menuCard('TITLE', 'spend your gold [T]', () => showTitle());
+  menuCard('HOW TO PLAY', 'what every control &amp; object does', () => showHowToPlay({ fromEnd: true }));
+  // 'end': the summary's own panel styling (index.html) — spacing, hierarchy
+  // and the dim scrim over the frozen arena. Removed everywhere else a menu
+  // composes (showTitle/showHowToPlay paths reset the overlay class).
   if (overlay.classList) { overlay.classList.add('end'); }
   overlay.style.display = 'flex';
-  devOnRunEnd();   // dev snapshot, once per run (no-op without ?dev=1)
 }
 function reshowEndScreen() {
   if (!state.endScreen) { showTitle(); return; }   // nothing to return to
   composeEndScreen(state.endScreen);
+  maybeDeathCoach();      // idempotent (once-ever flag) — parity with the direct paths
 }
 
 // Per simulated frame, AFTER state.time advances and BEFORE any damage is
@@ -6146,7 +4863,6 @@ function checkRunLimit() {
     lastPurseFlush = state.time;
     persistProfile();
   }
-  purseSurvivalTicks();
   const mins = Math.floor(state.time / 60);
   if (mins > state.lastMinute) {
     state.lastMinute = mins;
@@ -6155,7 +4871,7 @@ function checkRunLimit() {
   if (!state.finalCall && state.time >= C.RUN.FINAL_CALL_AT) {
     state.finalCall = true;
     toast('ONE MINUTE LEFT');
-    audio.playSfx('warning');
+    audio.playSfx('levelup');
   }
   if (state.time >= C.RUN.LIMIT) { runSurvived(); return true; }
   return false;
@@ -6172,18 +4888,31 @@ function endRun() {
   const p = state.player;
   state.mode = 'dead';
   audio.stopMusic();
-  audio.playSfx('uiDeny');
-  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold();
+  audio.playSfx('button');
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
   composeEndScreen({
     titleText: 'RUN ENDED',
     titleCls: '',
     subHtml: endScreenBody({
-      lead: endLead(''),
+      lead: `you called it at wave ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
       cause: null,          // a deliberate exit has no killer
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
+      parts: { award, purseBanked, winBonus: 0, goldPool },
     }),
   });
+  maybeDeathCoach();
+}
+
+// WAVE-22 (rev-4 item 4): the first death is the moment the player most
+// needs to know the loop continues — one coach, once ever, on the end
+// screen ('dead' mode already freezes everything; the Tour engine is
+// event-driven so it runs without the frame loop).
+function maybeDeathCoach() {
+  if (tourFlag(TOUR_KEYS.death)) return;
+  startCoach({ id: 'death',
+    text: 'Death banks its gold — RETRY (R) straight back in, TITLE (T) to spend it. Every death funds the next run.',
+    target: () => cardByTitle('RETRY') }, TOUR_KEYS.death);
 }
 
 // WAVE-20 death-cause tracking: the damage paths stamp the source here right
@@ -6205,7 +4934,7 @@ function die(finale) {
     p.hp = Math.max(1, p.stats.maxHp * DRAFT_LADDER.SECOND_WIND_HP_FRAC);
     p.invuln = Math.max(p.invuln || 0, DRAFT_LADDER.SECOND_WIND_INVULN);
     toast('SECOND WIND - BACK AT ' + Math.round(p.hp) + ' HP', RARITY.MYTHIC.tell.outline);
-    audio.playSfx('powerup');
+    audio.playSfx('levelup');
     return;
   }
   state.mode = 'death-cine';   // G15: the death movie owns the beat between
@@ -6218,16 +4947,19 @@ function die(finale) {
   };
   audio.stopMusic();
   audio.playSfx('death');
-  const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold();
+  const { gold, firstClear, award, purseBanked, goldPool } = settleRunGold();
 
+  // WAVE-10: dying to the maw gets its own dramatic card (same payout).
   composeEndScreen({
     titleText: finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS',
     titleCls: finale ? 'logo' : '',
     subHtml: endScreenBody({
-      lead: endLead(finale ? 'The Maw swallowed you' : ''),
+      lead: (finale ? 'the maw swallowed the last hero<br>' : '') +
+        `WAVE ${state.wave.num} · survived ${Math.floor(state.time)}s` +
+        ` (${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}) · level ${p.level} · ${p.kills} kills`,
       cause: deathCauseLabel(state.deathBy),
       gold, firstClear,
-      parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
+      parts: { award, purseBanked, winBonus: 0, goldPool },
     }),
   });
   // NIGHT MODE: the auto-RETRY (a deliberate END RUN never arms it — a human
@@ -6253,14 +4985,6 @@ function hudTextEnabled() { return textHudOn; }
 function setHudTextEnabled(b) {
   textHudOn = !!b;
   try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
-}
-
-// ---------- M2: screen-shake toggle (persisted with the other prefs) ---------
-const KEY_SHAKE = 'hordes_shake';
-try { if (prefStorage.getItem(KEY_SHAKE) === '0') setShakeEnabled(false); } catch { /* shim */ }
-function setShakePref(b) {
-  setShakeEnabled(b);
-  try { prefStorage.setItem(KEY_SHAKE, b ? '1' : '0'); } catch { /* shim */ }
 }
 
 // ---------- G11: the pending challenge mode (SESSION-scoped, never persisted) ----
@@ -6350,6 +5074,19 @@ try {
   else if (savedRadar === '0') state.radarOn = false;
 } catch { /* shim */ }
 
+// ---------- WAVE-19: first-run onboarding flag (same storage shim) ------------
+// HOW TO PLAY auto-pops ONCE on first boot (before the first run starts) and
+// never again; the title menu keeps a HOW TO PLAY button so it is always
+// re-openable. The shim keeps headless tests green (no-op storage = the flag
+// simply never persists, and the smoke drives both paths explicitly).
+const KEY_ONBOARD = 'hordes_onboarded';
+function onboardingDone() {
+  try { return prefStorage.getItem(KEY_ONBOARD) === '1'; } catch { return false; }
+}
+function completeOnboarding() {
+  try { prefStorage.setItem(KEY_ONBOARD, '1'); } catch { /* shim */ }
+}
+
 // ---------- THE MANUAL v2 (owner 2026-09-16, msg_01M2P2714VDKY07BBWWCX3G7CC) ----
 // The single-screen reference is PAGINATED: four pages (HOW A RUN WORKS /
 // OPTIONS AND MODES / CONTROLS / THE FIELD), a page indicator, PREV/NEXT
@@ -6391,12 +5128,12 @@ function manualRowsControls() {
       .filter(c => !['potion-hp', 'potion-mp', 'stats'].includes(c.id))
       .map(c => refRow(c.id === 'skill-q' && qPurpose ? qPurpose : c.purpose, c.keys.join(' / ')))
       .join('') +
-    refRow('move (on AUTO: steer while held)', 'arrows / WASD') +
+    refRow('move (a move key also takes the wheel from AUTO)', 'arrows / WASD') +
     refRow('H / N — potions &middot; I — field report (the ONE stats key)') +
     refRow('1 – 3 — draft cards (1 – 4 in evolve / intermission) &middot; 1 – 6 — stat tabs') +
     refRow('C — continue &middot; R / T — retry / title') +
-    refRow('+ / - — zoom') +
-    refRow('ESC or P — pause in a run &middot; ESC — close menus') +
+    refRow('+ / - — zoom &middot; mouse — the cog (top-right) opens settings') +
+    refRow('ESC or P — pause in a run (the same screen as the cog) &middot; ESC — close menus') +
     // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
     // drift from the hint that names the glyph.
     refRow('? — ' + controlById('help').purpose) +
@@ -6405,11 +5142,11 @@ function manualRowsControls() {
     // the list; it stops being the whole of "?".
     compactKeyLines().map(l => refRow(l)).join('');
   const tchRows =
-    refRow('move (on AUTO: steer while you drag)', 'joystick') +
-    refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
-    refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE') +
+    refRow('move (a drag also takes the wheel from AUTO)', 'joystick') +
+    refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
+    refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE') +
     refRow('auto &harr; manual', 'PILOT') +
-    refRow('your stats and items', 'STATS') +
+    refRow('your build &amp; gear', 'STATS') +
     refRow('skills', 'FROST / OVER') +
     // RSS8: the card-granted sweep, named so the touch layer's MAG button can
     // never outrun the reference (the button only exists with the card).
@@ -6417,7 +5154,7 @@ function manualRowsControls() {
     // IN-RUN REFERENCE ACCESS + POTION ICONS (owner 2026-09-16: the rows must
     // use the word "potion" and say what each one restores — one row each, the
     // key named, so both name sets stay one-glyph-one-meaning) ...
-    refRow('health potion — restores a carried charge: +' + Math.round(C.POTIONS.HP_HEAL_FRAC * 100) + '% of max HP', 'H') +
+    refRow('health potion — restores a carried charge: +' + C.POTIONS.HP_HEAL + ' HP', 'H') +
     refRow('mana potion — restores a carried charge: +' + C.POTIONS.MP_RESTORE + ' MP', 'N') +
     // ... and every authored cog-row button is named here, so the canonical
     // list (test_ref_access, harvested from the touch layer's own buttons)
@@ -6425,7 +5162,7 @@ function manualRowsControls() {
     refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
-    refRow('pause: settings, END RUN', 'SETTINGS (cog)') +
+    refRow('settings: zoom, END RUN', 'SETTINGS (cog)') +
     // P2B99: THE ESCAPE's manual pads, named (the how-to card must carry the
     // controls a manual player presses — the pads mirror the auto-pilot's
     // whole action set: hold LEFT/RIGHT to run, LIFT to brake, plus the verbs).
@@ -6455,45 +5192,50 @@ function manualGoto(page) {
   else if (overlay.className) overlay.className = (overlay.className ? overlay.className + ' ' : '') + 'howto';
   ovTitle.textContent = 'HOW TO PLAY';
   ovTitle.className = '';
-  // Page 1 leads with the point of the game. The PAGE n / N line rides a
-  // .pgline span: wide viewports hide it here and show the .howto-page marker
-  // under the panel instead (index.html).
-  ovSub.innerHTML = (p === 1
-    ? 'Survive as long as you can. The pilot fights; you pick the upgrades.<br>' : '') +
-    '<span class="pgline">PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1] + '</span>';
+  ovSub.innerHTML = p === 1
+    // The one-line point of the game leads the FIRST page (the first-run
+    // gate opens here), with the replay-tour pointer (complaint 3: the
+    // replay path existed but nobody found it). The PAGE n / N line rides a
+    // .pgline span: on a WIDE viewport index.html hides it up here and the
+    // .howto-page marker below the panel carries it instead (the widescreen
+    // task: the indicator belongs with the controls) — on a phone the span
+    // is plain inline and renders byte-identically.
+    ? 'SURVIVE THE WAVES. your pilot auto-fights —<br>' +
+      'you steer the BUILD: draft weapons, bank gold, outlast the finale.' +
+      '<br>Missed the guided tour? The REPLAY TOUR card at the bottom runs it again.' +
+      '<br><span class="pgline">PAGE 1 / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[0] + '</span>'
+    : '<span class="pgline">PAGE ' + p + ' / ' + MANUAL_PAGES + ' — ' + MANUAL_TITLES[p - 1] + '</span>';
   const addCls = (el, c) => {
     if (el.classList) el.classList.add(c);
     else el.className = (el.className ? el.className + ' ' : '') + c;
   };
   if (p === 1) {
-    // The basics first: one short line per tutorial step (src/tutorial.js).
-    const basics = manualSections(isTouchPath())
-      .map(([h, t]) => h + ': ' + t).join('<br>') + '<br><br>';
-    const waveS = C.ESCALATION.WAVE_LENGTH;
-    const c = menuCard('HOW A RUN WORKS', basics +
-      'WAVES: after ' + waveS + ' seconds a BOSS arrives (a smaller one comes at half time).<br>' +
-      'Kill the boss and a PORTAL opens: walk in for a break between waves.<br><br>' +
-      'BETWEEN WAVES: buy a chest, take a blessing, or RAISE THE STAKES<br>' +
-      '(harder enemies, more gold). A token turns a weapon at Lv ' + WEAPON_MAX_LEVEL + ' into a stronger one.<br><br>' +
-      'ON THE FIELD: SHRINES sell blessings for run gold, ARCHES give a short<br>' +
-      'buff, CHESTS hold an item, upgrades, or an ambush.<br><br>' +
-      'MODIFIERS (chosen before a run): ONE WEAPON or NO POTIONS, for a<br>' +
-      'run award ' + (1 + RUN_GOLD.CHALLENGE_BONUS_PCT / 100) + ' times as big.<br><br>' +
-      'GOLD: you keep everything a run earns, even when you die.<br>' +
-      'Spend it in the SHOP on upgrades that last.<br><br>' +
-      'THE END: you die, or you last the full ' + runClock(C.RUN.LIMIT) + ' and win.<br>' +
-      'After wave ' + C.ESCALATION.END_WAVE + ' comes THE MAW OF THE HORDE: kill it for a big bonus.');
+    // HOW A RUN WORKS: waves and what ends one, the intermission, what the
+    // choices do, both endings — dense, numbers where they exist.
+    const c = menuCard('HOW A RUN WORKS',
+      'every wave: 120s of horde (a mid-boss rings you at half-time),<br>' +
+      'then the wave BOSS spawns — slay it and the PORTAL opens; walk in.<br><br>' +
+      'INTERMISSION (between waves): paid chests (40/25/10% nothing),<br>' +
+      'blessings, RAISE THE STAKES (+1 heat = +30% run gold per push, capped)<br>' +
+      '&middot; evolve tokens turn weapons maxed at Lv 8 into something new.<br><br>' +
+      'the field, mid-wave: DRAFT / upgrade picks on level-up &middot; SHRINE<br>' +
+      'altars sell blessings for run gold &middot; ARCH gates grant a timed buff &middot;<br>' +
+      'CHEST boxes gamble items (walk in, take the roll).<br><br>' +
+      'CHALLENGE (title-screen card): rule-constrained runs (ONE WEAPON /<br>' +
+      'NO POTIONS); the HUD names the live mode.<br><br>' +
+      'a run ends two ways: DEATH — the horde claims all, gold banked —<br>' +
+      'or VICTORY: outlast all five waves and slay THE MAW OF THE HORDE.');
     addCls(c, 'ref');
   } else if (p === 2) {
-    // The three levers, one plain line each, and what they are set to now.
+    // OPTIONS AND MODES: one plain line each + the LIVE callout row read
+    // from state at OPEN time (never bitmaps, never stale defaults).
     const c = menuCard('OPTIONS AND MODES',
-      refRow('AUTO: the pilot fights for you. Hold a move key or drag to steer; it takes over again ' +
-        WHEEL_HANDBACK_S + 's after you let go', 'PILOT (O)') +
-      refRow('MANUAL: you steer all the time. Only the PILOT button or O chooses it', 'PILOT (O)') +
-      refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
-      refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
-      refRow('yours right now', pilotPrefLabel() + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
-      '<div class="rl">In help mode (?), tap any button to see what it does.</div>');
+      refRow('AUTO: the pilot plays &middot; MANUAL: the stick / keys are yours &middot; a move key or drag takes the wheel', 'PILOT (O)') +
+      refRow('volley target: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
+      refRow('risk dial: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
+      refRow('yours right now', state.pilotMode + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
+      '<div class="rl">every lever is on the touch pads too — and in help mode (?),<br>' +
+      'a tap on any control explains it.</div>');
     addCls(c, 'ref');
   } else if (p === 3) {
     // ONE CARD, NOT TWO: the merged controls page (see manualRowsControls).
@@ -6516,9 +5258,9 @@ function manualGoto(page) {
       ' rarer in dense swarms) — picked up automatically in pickup range,' +
       ' LEFT ON THE GROUND at your cap (' + C.POTIONS.MAX_CARRIED + ' of each).' +
       '<br>a run starts with ' + C.POTIONS.START + ' of each; Travel Pack (shop) adds more.' +
-      '<br>HEALTH potion: +' + Math.round(C.POTIONS.HP_HEAL_FRAC * 100) + '% of max HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
+      '<br>HEALTH potion: +' + C.POTIONS.HP_HEAL + ' HP &middot; MANA potion: +' + C.POTIONS.MP_RESTORE + ' MP' +
       ' &middot; never spent at full.' +
-      '<br>AUTO pilot drinks for you: HP at ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) + '% of max or less' +
+      '<br>AUTO pilot drinks for you: HP under a potion\'s heal (' + C.POTIONS.HP_HEAL + ' + bonuses)' +
       ', MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
       '<br>boss curse: while the wave boss lives, health potions heal HALF.' +
       // STARTING ARENA IMPROVE (2026-09-17): the arena itself explained —
@@ -6551,23 +5293,70 @@ function manualGoto(page) {
   addCls(cPrev, 'nav');
   const cNext = menuCard('NEXT', 'page ' + Math.min(MANUAL_PAGES, p + 1), () => manualGoto(p + 1), p >= MANUAL_PAGES);
   addCls(cNext, 'nav');
-  // REPLAY TUTORIAL: the guided first run again, as an assisted run (full
-  // gold, left out of best-run records). From a live run it arms the next run.
-  const cRep = menuCard('REPLAY TUTORIAL', 'play the guided first run again', () => {
-    const back = state.helpFrom;
-    state.manualPage = null;
-    state.helpFrom = null;
-    tutReplay(back === 'run');
-  });
-  addCls(cRep, 'replay');
-  // GOT IT leaves the manual: back to the fight from a paused run, else to
-  // the title.
-  const gotSub = state.helpFrom === 'run' ? 'back to the fight' : 'back to the title';
+  // M4: REPLAY TOUR (WAVE-21, docs/FIRST_RUN_TOUR doc #7) lives HERE now — a
+  // footer card on every manual page EXCEPT the first-run gate (a fresh
+  // player has not seen the tour yet; replaying it from the gate would be a
+  // trap).
+  // REPLAY-TOUR REWIRE (owner 2026-09-18: "replay tutorial doesn't restart
+  // the special starting level"): the replay now restarts THE SPECIAL LEVEL
+  // itself — the inert prologue run (the potion walk, the banners, the
+  // shield) — not just the coach flags. THE GATE-VERSUS-REPLAY DISTINCTION:
+  // the AUTOMATIC fresh-profile prologue stays parked behind
+  // C.PROLOGUE.ENABLED (the owner's kill switch; startRun reads it for the
+  // runs===0 arm ONLY), while a player who DELIBERATELY asks here bypasses
+  // the park — the assistedRun arm is an opt-in, exactly like the what's-new
+  // offer's accept button, and opt-ins are what the kill switch protects
+  // nobody FROM. The replayed run is ASSISTED (B6: full gold, flagged on the
+  // end screen, excluded from best-run records) via the existing
+  // veteranTutorialPending -> state.assistedRun seam — no new mechanism.
+  // Contexts: from the TITLE and from an END screen the replay starts the
+  // guided run immediately (the what's-new accept precedent); from a LIVE
+  // run's settings it arms the NEXT run instead (yanking the player out of a
+  // live fight would surprise — the prior design's call, kept).
+  if (state.helpFrom !== 'gate') {
+    const cRep = menuCard('REPLAY TOUR', 'run the guided walkthrough again', () => {
+      clearTourFlags();   // the kept modal cards (draft/death/settings/loadout) re-arm
+      const back = state.helpFrom;
+      state.manualPage = null;
+      state.helpFrom = null;
+      if (back === 'run') {
+        closeSettings();
+        armVeteranTutorial();
+        toast('GUIDED WALKTHROUGH ARMS AT NEXT RUN');
+      } else {
+        // 'title' or 'end': the player asked for the special level — give
+        // them THAT run, right now (the acceptWhatsNew precedent).
+        armVeteranTutorial();
+        startRun();
+      }
+    });
+    // WIDESCREEN: the wide query pulls this card INTO the controls row (its
+    // own tall column beside the panel was the layout the owner rejected).
+    addCls(cRep, 'replay');
+  }
+  // GOT IT: a FLOW footer card at the end of the stack — in the layout,
+  // never sticky over the scrolling body.
+  const gotSub = state.helpFrom === 'gate' ? 'into the horde (shows once)'
+    : state.helpFrom === 'run' ? 'back to the fight'
+    : state.helpFrom === 'end' ? 'back to this screen'
+    : 'back to the title';
   const cGot = menuCard('GOT IT', gotSub, () => {
+    completeOnboarding();
     state.manualPage = null;
+    // UP-FRONT CONTROLS: opened as the FIRST-RUN GATE (fresh START GAME),
+    // GOT IT starts the run (no title-art hold here — the hold belongs to
+    // the title screen, and the gate's job is to get the briefed player
+    // into the horde).
+    // IN-RUN REFERENCE ACCESS: every door returns to where it was opened —
+    // the in-run door resumes the FIGHT (closeSettings: the same close/
+    // return discipline as BACK), the end screens recompose the SAME end
+    // card (reshowEndScreen: never re-settles gold, never restarts), the
+    // title door returns there.
     const back = state.helpFrom;
     state.helpFrom = null;
-    if (back === 'run') closeSettings();
+    if (back === 'gate') startRun();
+    else if (back === 'run') closeSettings();
+    else if (back === 'end') reshowEndScreen();
     else showTitle();
   });
   addCls(cGot, 'gotit');
@@ -6575,9 +5364,13 @@ function manualGoto(page) {
 function manualPrev() { if (state.manualPage && state.manualPage > 1) manualGoto(state.manualPage - 1); }
 function manualNext() { if (state.manualPage && state.manualPage < MANUAL_PAGES) manualGoto(state.manualPage + 1); }
 
-// The manual opens from SETTINGS, on the title or in the pause menu.
-function showHowToPlay({ inRun = false } = {}) {
-  state.helpFrom = inRun ? 'run' : 'title';
+function showHowToPlay({ intoRun = false, inRun = false, fromEnd = false } = {}) {
+  // IN-RUN REFERENCE ACCESS (owner 2026-09-16): the reference is reachable
+  // mid-run (the in-run SETTINGS door, under the 'settings' pause mode so
+  // ESC and GOT IT resume the fight through closeSettings) and from the end
+  // screens (fromEnd — GOT IT recomposes the SAME end card, never re-settling
+  // gold). state.helpFrom remembers the door GOT IT walks back out of.
+  state.helpFrom = intoRun ? 'gate' : inRun ? 'run' : fromEnd ? 'end' : 'title';
   openMenu(inRun ? 'settings' : 'menu');
   manualGoto(1);
 }
@@ -6690,7 +5483,7 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   el.onclick = () => {
     // HELP MODE: an overlay-card tap explains the card, never presses it.
     if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || ''), el); return; }
-    audio.playSfx(dim ? 'uiDeny' : state.mode === 'draft' ? 'draftPick' : 'uiConfirm'); onclick();
+    audio.playSfx('button'); onclick();
   };
   ovCards.appendChild(el);
   // SHOP-LATENCY: big screens pass deferFrame and frame the whole list AFTER
@@ -6886,8 +5679,8 @@ function openMenu(mode = 'menu') {
   // (class-list-less DOM stubs keep a plain className string — same state.)
   // 'end' (the end-of-run summary's panel styling) gets the same reset — no
   // menu may inherit the summary's spacing/scrim.
-  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact'].includes(c)).join(' ');
+  if (overlay.classList) overlay.classList.remove('howto', 'end');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end').join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which
@@ -6914,7 +5707,6 @@ function openMenu(mode = 'menu') {
   // show the frozen world through its cards. '' returns both to the stylesheet.
   overlay.style.background = '';
   overlay.style.justifyContent = '';
-  overlay.style.paddingTop = '';
   // G12: same reset for the title's hidden DOM <h1> (the title card's own
   // wordmark replaces it there; every other screen wants it back).
   if (ovTitle.style) ovTitle.style.display = '';
@@ -6924,6 +5716,17 @@ function openMenu(mode = 'menu') {
   overlay.style.opacity = '';
   overlay.style.pointerEvents = '';
 }
+
+// ---------- FIRST-RUN TOUR — the KEPT cards (onboarding rework 2026-09-16) --
+// The staged walkthrough lost its stage 1 (title cards) and its in-run
+// schedule to the owner-approved onboarding rework: every labelled button and
+// every timer-scheduled card was "information without context". What remains
+// are the four KEPT cards — draft (level-up), death, loadout, first-cog END
+// RUN — each on a screen that already freezes the sim by MODE. The
+// non-pausing hint layer they used to sit beside is RETIRED too
+// (2026-09-18 — see the ONBOARDING note above isTouchPath): a tutorial
+// belongs BEFORE gameplay, and the manual + the prologue carry it now.
+const cardByTitle = (t) => [...ovCards.children].find(c => (c.innerHTML || '').includes(`>${t}<`));
 
 // Canvas-region pseudo-target: a rect in the 480x300 native space projected
 // through the canvas's on-screen rect, so HUD-region spotlights land at any
@@ -6945,17 +5748,39 @@ function canvasRegion(x, y, w, h) {
 let coach = null;
 function coachActive() { return !!(coach && coach.active()); }
 
-// Is the touch layout live? Copy that names a control uses this to name the
-// touch control on a phone and the key on a desktop. Read off the touch
-// layer's own class, so tests can flip it through the DOM. (There is no in-run
-// hint strip: teaching happens in the first-run tutorial and the manual.
-// test_onboarding.mjs pins its absence.)
+// ---------- ONBOARDING: THE IN-RUN HINT LAYER IS RETIRED (owner 2026-09-18) ----
+// The non-pausing hint strip (src/onboarding.js's HintStrip, the maybeHint /
+// pumpHints scheduler, the teach-until-demonstrated store) is DELETED, not
+// flagged off — the owner's tutorial principle: "a tutorial should happen
+// mostly prior to full gameplay", and the layer's own mechanics made that
+// impossible: hints were CONDITION-GATED (a tip fired the first time its
+// trigger became true — minutes into a run, e.g. the RADAR tip at 02:58 on
+// an established LV31 profile) and drip-paced by HINT_SPACING_S ("wayyy too
+// spread out"), and because updateOnboarding ticked only in 'playing' a
+// live strip FROZE on screen at the boss kill / intermission / run end (the
+// stuck-tooltip report). The material lives in the pre-gameplay surfaces
+// now: the HOW TO PLAY manual (the fresh profile's gate; its controls page
+// reads the SAME src/controls_ref.js rows the hints were built from) and
+// the first-run PROLOGUE's action-gated banners. The four KEPT coach cards
+// (draft / death / settings / loadout — each on a screen that already
+// freezes the sim by mode) are untouched. Pinned by test_onboarding.mjs,
+// which now asserts the layer's absence the way test_notags.mjs pins the
+// object-tags removal. GIVE-UP counters, `hordes_hint_*` storage keys and
+// the REPLAY-TOUR hint re-arm are gone with it (old keys are simply never
+// read again — the retired tour flags precedent).
+//
+// The touch path names the TOUCH control — a phone player is never told to
+// press a key they do not have. Read live off the touch layer's own class
+// (set at boot from hasTouch), so tests can flip it through the DOM.
+// (Kept: the prologue's staged tooltips still name their control through
+// this — prologueTipText below.)
 function isTouchPath() {
   return !!(touchLayer && touchLayer.classList && touchLayer.classList.contains('on'));
 }
 
-// A coach card: a one-step Tour that pauses the sim until dismissed. Only the
-// first level-up of a profile that never saw the tutorial uses it.
+// Stage-2 coachmarks: one-or-more-step Tours that PAUSE the sim until
+// dismissed. `steps` is a step object or an array (multi-step = spotlight
+// BOTH targets of a pair, e.g. the two skill buttons — rev-4 partial fix).
 function startCoach(steps, key) {
   if (coachActive()) return;
   setTourFlag(key, true);   // seen — even if a target is missing (skip rule)
@@ -6979,9 +5804,7 @@ function startCoach(steps, key) {
 // as state.zoomScale every frame (syncChrome) so render.js can read it instead
 // of re-deriving it, and the coachmark can never silently drift off the world.
 function zoomScale(z) {
-  // The user's integer zoom times the renderer's base world scale (M2: the
-  // world draws about a third larger than the HUD where pixels allow).
-  return Math.max(1, Math.round(z || 1)) * (renderer.worldScale || 1);
+  return Math.max(1, Math.round(z || 1));
 }
 function worldRegion(wx, wy, r = 16) {
   const Z = zoomScale(state.zoom);
@@ -7115,40 +5938,23 @@ function hasLocalSave() {
   } catch { return false; }
 }
 
-// ---------- Title reveal: the menu fades in over the art -------------------------
-// First title entry per page load: the art alone for a beat, then the menu
-// fades in. Later returns fade quickly. The overlay takes no clicks until it
-// is fully shown. The reveal keeps its own wall clock and is advanced by a
-// timer as well as by the frame loop, so it finishes on time when
-// requestAnimationFrame is throttled (a background or embedded page).
+// ---------- N2 TITLE ART REVEAL: menu fade-in + the START GAME art hold -----
+// Owner 2026-09-13: "The menu needs to fade in so players can see this! And
+// then when they select a run, it should remain for 1 second. Maybe even
+// animate it for that second." Every duration below is SECONDS advanced by
+// the frame loop's own measured realDt (the WAVE-26 top-of-frame delta), so
+// 60Hz and 120Hz land on the same wall-clock timings — nothing counts frames.
 const TITLE_ART_BEAT_S = 0.35;   // art alone before the menu fades in
-const TITLE_FADE_S = 0.5;        // the menu fade-in
-const TITLE_RETURN_FADE_S = 0.12;// the fade on a return to the title
-const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S };
-const TITLE_TIMER_MS = 40;       // the timer's step while a reveal is running
-let titleRevealPlayed = false;   // the full reveal runs once per page load
-let titleRevealAt = 0;           // performance.now() of the last reveal advance
-let titleRevealTimer = null;
-let titleTimerTicks = 0;         // timer-driven advances (assertable)
-
-// Start (or keep) the timer that advances a running reveal without rAF.
-function armTitleRevealTimer() {
-  titleRevealAt = performance.now();
-  if (titleRevealTimer !== null || typeof setTimeout !== 'function') return;
-  const tick = () => {
-    titleRevealTimer = null;
-    const rv = state.titleReveal;
-    if (!rv || rv.phase === 'settled' || state.mode !== 'title') return;
-    titleTimerTicks++;
-    advanceTitleReveal();
-    if (state.titleReveal && state.titleReveal.phase !== 'settled') {
-      titleRevealTimer = setTimeout(tick, TITLE_TIMER_MS);
-      if (titleRevealTimer && titleRevealTimer.unref) titleRevealTimer.unref();
-    }
-  };
-  titleRevealTimer = setTimeout(tick, TITLE_TIMER_MS);
-  if (titleRevealTimer && titleRevealTimer.unref) titleRevealTimer.unref();
-}
+const TITLE_FADE_S = 0.5;        // the menu fade-in (brief: ~400-600ms)
+const TITLE_RETURN_FADE_S = 0.12;// a return to the title re-fades SHORT (<=150ms), never the full show
+const TITLE_OUT_FADE_S = 0.3;    // menu down after START GAME
+const TITLE_HOLD_S = 1.0;        // the art holds alone before the run starts
+const TITLE_TIMINGS = { beat: TITLE_ART_BEAT_S, fade: TITLE_FADE_S, ret: TITLE_RETURN_FADE_S,
+  out: TITLE_OUT_FADE_S, hold: TITLE_HOLD_S };
+let titleRevealPlayed = false;   // the full reveal runs ONCE per page load
+let tourPendingAfterReveal = false;   // the G26 loadout coach waits for the settle
+let holdSnap = null;             // the wordmark region snapshot for the hold shimmer
+let titleRunStarts = 0;          // startRun calls issued by the hold path (assertable)
 
 function revealSettled() {
   return !state.titleReveal || state.titleReveal.phase === 'settled';
@@ -7161,8 +5967,9 @@ function applyRevealStyles() {
   const rv = state.titleReveal;
   if (!rv || !overlay.style) return;
   let o = 1;
-  if (rv.phase === 'art') o = 0;
+  if (rv.phase === 'art' || rv.phase === 'hold') o = 0;
   else if (rv.phase === 'fade' || rv.phase === 'return') o = Math.min(1, rv.t / rv.dur);
+  else if (rv.phase === 'out') o = Math.max(0, 1 - rv.t / rv.dur);
   rv.opacity = o;
   const inline = o >= 1 ? '' : String(Math.round(o * 1000) / 1000);
   if (overlay.style.opacity !== inline) overlay.style.opacity = inline;
@@ -7170,12 +5977,54 @@ function applyRevealStyles() {
   if (overlay.style.pointerEvents !== pe) overlay.style.pointerEvents = pe;
 }
 
-// Advance the reveal by the wall time since the last advance. Called from
-// frame() and from the reveal's own timer; either one alone completes it.
-function advanceTitleReveal() {
-  const now = performance.now();
-  const dt = Math.max(0, (now - titleRevealAt) / 1000);
-  titleRevealAt = now;
+// Snapshot the wordmark region of the painted card so the hold shimmer can
+// repaint it 1:1 every frame (integer coords, no resampling, no smoothing —
+// the paint-once card itself is never touched).
+function snapshotWordmark() {
+  try {
+    const ts = renderer.titleScreen;
+    if (!ts) return null;
+    const c = renderer.canvas;
+    const k = c.width / C.VIEW_W;
+    const s = ts.scale;
+    const x = Math.round((ts.x + 154 * s) * k), y = Math.round((ts.y + 88 * s) * k);
+    const w = Math.round(180 * s * k), h = Math.round(37 * s * k);
+    if (!(w > 0 && h > 0)) return null;
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const og = off.getContext('2d');
+    og.drawImage(c, x, y, w, h, 0, 0, w, h);
+    return { off, x, y, w, h };
+  } catch { return null; }   // headless stubs / exotic states: no shimmer, no crash
+}
+
+// N2 DO 3 (the owner's "maybe"): a gentle gold shimmer on the wordmark during
+// the hold — two decaying pulses over the second, drawn on top of the
+// restored 1:1 snapshot. fillRect + integer coords only; no transforms.
+function drawTitleFlourish(g) {
+  const rv = state.titleReveal;
+  if (!rv || rv.phase !== 'hold' || !holdSnap || !g) return;
+  try {
+    // The snapshot/restore is 1:1 in BACKING pixels, so it must run under the
+    // IDENTITY transform — the renderer's view transform is still active
+    // after render() and would move/rescale (resample!) the restore.
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.drawImage(holdSnap.off, holdSnap.x, holdSnap.y);
+    const decay = Math.max(0, 1 - rv.t / TITLE_HOLD_S);
+    const pulse = 0.30 * decay * (0.55 + 0.45 * Math.sin(rv.t * Math.PI * 4));
+    if (pulse > 0.004) {
+      g.fillStyle = 'rgba(255,213,74,' + pulse.toFixed(3) + ')';
+      g.fillRect(holdSnap.x, holdSnap.y, holdSnap.w, holdSnap.h);
+    }
+    g.restore();
+  } catch { /* stub contexts: the shimmer is sugar, never a crash */ }
+}
+
+// Wall-clock advance, called from frame() with the top-of-frame realDt every
+// mode (the reveal must not freeze under an early-return mode — same rule the
+// earned-moment decay follows).
+function advanceTitleReveal(dt) {
   const rv = state.titleReveal;
   if (!rv) return;
   if (state.mode !== 'title') {
@@ -7188,19 +6037,53 @@ function advanceTitleReveal() {
   try {
     rv.t += dt;
     if (rv.phase === 'art') {
-      if (rv.t >= TITLE_ART_BEAT_S) { rv.phase = 'fade'; rv.t -= TITLE_ART_BEAT_S; }
+      if (rv.t >= TITLE_ART_BEAT_S) { rv.phase = 'fade'; rv.t = 0; }
     } else if (rv.phase === 'fade' || rv.phase === 'return') {
       if (rv.t >= rv.dur) {
         rv.phase = 'settled'; rv.t = rv.dur; rv.opacity = 1;
         applyRevealStyles();
+        // N2 DO 4: the first-run tour fires only once the reveal has settled
+        // (a coachmark popping mid-fade reads as a glitch). G26: the loadout
+        // door coach rides the same settle gate (achievement grants land at
+        // run settle, so the next title visit is the first legal moment).
+        if (tourPendingAfterReveal) { tourPendingAfterReveal = false; maybeCoachLoadoutDoor(); }
         return;
       }
+    } else if (rv.phase === 'out') {
+      if (rv.t >= rv.dur) { rv.phase = 'hold'; rv.t = 0; holdSnap = snapshotWordmark(); }
+    } else if (rv.phase === 'hold') {
+      if (rv.t >= TITLE_HOLD_S) { finishTitleHold(); return; }
     }
     applyRevealStyles();
   } catch (err) {
     // FAIL SAFE: a broken reveal must never strand a blank/unreachable sheet.
     state.titleReveal = { phase: 'settled', t: 0, dur: 0, opacity: 1 };
     applyRevealStyles();
+    throw err;
+  }
+}
+
+// START GAME's new tail (N2 DO 2): fade the menu out, hold the art ~1s in
+// mode 'title' (so the canvas keeps showing the card), THEN startRun().
+function beginTitleHold() {
+  const rv = state.titleReveal;
+  if (rv && (rv.phase === 'out' || rv.phase === 'hold')) return;   // already leaving: idempotent
+  state.titleReveal = { phase: 'out', t: 0, dur: TITLE_OUT_FADE_S, opacity: 1 };
+  applyRevealStyles();
+  uiGuard.arm();   // swallow this gesture's tail (double-tap / key-repeat)
+}
+
+function finishTitleHold() {
+  holdSnap = null;
+  state.titleReveal = null;
+  if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
+  titleRunStarts++;
+  try {
+    startRun();
+  } catch (err) {
+    // FAIL SAFE: a failed start must land the player somewhere reachable.
+    if (overlay.style) { overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
+    showTitle();
     throw err;
   }
 }
@@ -7234,75 +6117,55 @@ function showFarewell() {
   menuCard('BACK', 'return to the title', () => showTitle());
 }
 
+// U1 SUBMENUS (owner 2026-09-14: "there should be more submenus to contain
+// some"). Both are the showHowToPlay()/showSettings() shape: openMenu + cards +
+// a BACK card. The moved cards keep their EXACT numbers and cycling behaviour —
+// only their parent screen changed. CHALLENGE/STAGE re-render THIS screen when
+// they cycle (was showTitle()), so the selection updates without bouncing the
+// player back out to the title.
 function showProgress() {
   openMenu('progress');
   ovTitle.textContent = 'PROGRESS';
   ovTitle.className = 'logo';
-  ovSub.innerHTML = 'trophies earned &middot; enemies met';
-  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned`,
+  ovSub.innerHTML = 'emblems earned &middot; enemies met';
+  // G9: the count is the honest one (earnedCount counts KNOWN trophy ids only,
+  // so a save from a newer build cannot inflate it).
+  menuCard('TROPHIES', `${earnedCount(profile)} / ${totalAchievements()} earned · full-screen emblems`,
     () => showTrophies());
+  // G10: the discovery log for rare tiers — a player who never opens it never
+  // learns the ??? silhouettes are a chase.
   menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
     () => showBestiary());
-  menuCard('JOKERS', `${jokersDiscovered()} / ${JOKER_IDS.length} discovered · rule cards`,
-    () => showJokers());
-  menuCard('FUSIONS', `${fusionsDiscovered()} / ${FUSION_DEFS.length} discovered · weapon pairs`,
-    () => showFusions());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
-// ---------- The pre-run screen ---------------------------------------------------
-// PLAY opens this one screen: START first (so Enter goes straight through),
-// then the stage, the modifier and the weapons the run brings. Each card says
-// in one line what it changes and what it pays. Stage and modifier are
-// session choices: nothing here is saved except the loadout.
-function ownsExtraWeapon() {
-  return (profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w));
-}
-function stagePlainLine(id) {
-  const st = stageOf(id), f = stageFacts(id);
-  const bits = [];
-  if (f.hp !== 1) bits.push('foes x' + Math.round(f.hp * 100) / 100 + ' health');
-  if (f.dmg !== 1) bits.push('x' + Math.round(f.dmg * 100) / 100 + ' damage');
-  const what = isDefaultStage(id) ? 'The first arena: a mixed horde'
-    : st.blurb.charAt(0).toUpperCase() + st.blurb.slice(1) + (bits.length ? ' (' + bits.join(', ') + ')' : '');
-  return what + '. Pays normal gold.';
-}
-function challengePlainLine(id) {
-  const c = challengeOf(id);
-  if (isStandard(id)) return 'No extra rules. Pays normal gold.';
-  const pct = challengeGoldBonusPct(id);
-  return c.blurb.charAt(0).toUpperCase() + c.blurb.slice(1) + '. Pays +' + pct + '% run award (' +
-    RUN_GOLD.AWARD + ' to ' + Math.round(RUN_GOLD.AWARD * (1 + pct / 100)) + ' gold).';
-}
-function loadoutSummary() {
-  const kit = ['VOLLEY', ...effectiveLoadout(profile, loadoutSlotCap())];
-  return kit.map(w => WEAPON_NAMES[w] || w).join(' + ') + '. Weapons start at Lv ' + (1 + masteryStartLevels(profile)) + '.';
-}
-function showPreRun() {
+function showSetup() {
   openMenu('setup');
-  // The title art stays behind this screen and its wordmark is the heading,
-  // so the DOM h1 hides (its text stays for stub-DOM readers) and the cards
-  // sit under the wordmark exactly as on the title.
-  ovTitle.textContent = 'NEXT RUN';
+  ovTitle.textContent = 'SETUP';
   ovTitle.className = 'logo';
-  if (ovTitle.style) ovTitle.style.display = 'none';
-  overlay.style.background = 'transparent';
-  if (overlay.classList) overlay.classList.add('title');
-  ovSub.innerHTML = 'NEXT RUN: press START, or change the run first';
-  menuCard('START', 'begin the run [ENTER]', () => startRun());
-  const locked = lockedStageLines(stageUnlocked);
-  const stageCount = STAGE_IDS.filter(stageUnlocked).length;
-  menuCard('STAGE: ' + stageOf(pendingStage).name,
-    stagePlainLine(pendingStage) +
-    (stageCount > 1 ? '<br>press to change' : locked.length ? '<br>next stage: ' + locked[0] : ''),
-    () => { cyclePendingStage(); showPreRun(); }, stageCount <= 1);
-  menuCard('MODIFIER: ' + challengeOf(pendingChallenge).name,
-    challengePlainLine(pendingChallenge) + '<br>press to change',
-    () => { cyclePendingChallenge(); showPreRun(); });
-  menuCard('LOADOUT', loadoutSummary() + (ownsExtraWeapon() ? '<br>press to change' : '<br>buy more weapons in the SHOP'),
-    () => showLoadout('prerun'), !ownsExtraWeapon());
+  ovSub.innerHTML = 'what the next run is &middot; how it plays &middot; how it sounds';
+  // G11: session-scoped selector — the press cycles the mode and re-renders so
+  // the card always names the CURRENT selection before the player commits.
+  menuCard('CHALLENGE', describeChallenge(pendingChallenge) + ' · press to change',
+    () => { cyclePendingChallenge(); showSetup(); });
+  // G20a: same cycling-card pattern through UNLOCKED stage rows only.
+  menuCard('STAGE', stageCardSub(),
+    () => { cyclePendingStage(); showSetup(); });
+  // NIGHT MODE (owner-authorized 2026-09-17): opt-in full auto at 50% gold.
+  // SETUP is its ONLY surface (never a run key, never persisted — a reload
+  // ends the night), OFF by default, and turning ON needs a SECOND
+  // confirming press so the toggle cannot be tripped by accident.
+  menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
+    state.night
+      ? 'runs play themselves at 50% gold · press to turn OFF'
+      : nightArmed
+        ? 'press again to CONFIRM: runs full-auto at HALF gold'
+        : 'overnight full-auto · 50% gold · two presses to turn ON (OFF by default)',
+    () => { toggleNight(); showSetup(); });
+  menuCard('SETTINGS', 'display, audio & save data', () => showSettings());
+  // ONBOARDING REWORK: HOW TO PLAY now lives on the TITLE screen; SETUP keeps
+  // CHALLENGE / STAGE / SETTINGS only.
   menuCard('BACK', 'to title [ESC]', () => showTitle());
-  placeTitleMenu();
 }
 
 // U1 HEADER (owner 2026-09-14: "remove purse text from the main menu or add gold
@@ -7410,30 +6273,27 @@ function loadoutSlotCap() {
 
 function toggleLoadoutWeapon(id) {
   if (!loadoutChoices().includes(id)) return;
-  const cur = new Set(effectiveLoadout(profile, loadoutSlotCap()));
+  const cur = new Set(profile.loadout || []);
   if (cur.has(id)) cur.delete(id);
   else {
     if (cur.size >= loadoutSlotCap()) return;   // slot cap: the card reads DIM
     cur.add(id);
   }
-  // An empty selection is "no choice" (every owned weapon that fits), never a
-  // zero-weapon run — the save layer stores the same null either way.
+  // An empty selection is "no choice" (the default kit), never a zero-weapon
+  // run — the save layer stores the same null either way.
   profile.loadout = cur.size ? [...cur] : null;
   persistProfile();
   showLoadout();
 }
 
-// `from` is where BACK returns: 'prerun' (the pre-run screen) or the title.
-let loadoutFrom = null;
-function showLoadout(from) {
-  if (from !== undefined) loadoutFrom = from;
+function showLoadout() {
   openMenu('loadout');
   ovTitle.textContent = 'LOADOUT';
   ovTitle.className = '';
+  const sel = new Set(profile.loadout || []);
   const cap = loadoutSlotCap();
-  const sel = new Set(effectiveLoadout(profile, cap));
-  ovSub.textContent = (profile.loadout ? sel.size + ' of ' + cap + ' slots chosen' : 'auto: your best weapons fill the slots')
-    + ' · ' + masteryLine(profile);
+  ovSub.textContent = (profile.loadout ? sel.size + '/' + cap + ' chosen' : 'default kit')
+    + ' · the weapons the next run brings';
   for (const id of loadoutChoices()) {
     const on = sel.has(id);
     const full = !on && sel.size >= cap;
@@ -7460,24 +6320,45 @@ function showLoadout(from) {
       else el.appendChild(artCv);
     }
   }
-  menuCard('AUTO', 'let the game pick: your best weapons fill the slots', () => {
+  menuCard('DEFAULT KIT', 'clear the choice — runs use the character kit', () => {
     profile.loadout = null;
     persistProfile();
     showLoadout();
   });
-  menuCard('BACK', loadoutFrom === 'prerun' ? 'to the run setup' : 'to title [ESC]',
-    () => (loadoutFrom === 'prerun' ? showPreRun() : showTitle()));
+  menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
-// The run's kit, validated against the LIVE unlock set and the run's slot
-// count: the stored choice, or (no choice) every owned weapon that fits.
-// null = nothing owned to bring.
+// The run's kit from the stored choice, validated against the LIVE unlock set
+// and the run's slot count (never the menu's own bookkeeping): this is what
+// startRun arms. null = no choice was made (the zero-penalty default).
 function chosenLoadout() {
   // state.weaponSlots is stamped by startRun just before this runs; the
-  // startWeaponSlots fallback covers a pre-run call.
-  const cap = Math.max(0, ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1);
-  const list = effectiveLoadout(profile, cap).filter(t => WEAPON_TYPES[t]);
+  // startWeaponSlots fallback makes a PRE-run call (the __TEST seam) agree
+  // with the standard-slot run it describes.
+  const cap = ((state.weaponSlots || 0) || startWeaponSlots(profile)) - 1;
+  const list = (profile.loadout || [])
+    .filter(t => WEAPON_TYPES[t] && weaponUnlocked(profile, t))
+    .slice(0, Math.max(0, cap));
   return list.length ? list : null;
+}
+
+// G26 just-in-time door coach (owner: "can it present the coaching after the
+// first weapon buyable is bought?"). Fires the FIRST time the unlocked-weapon
+// set grows beyond the starter kit — a weapon purchase on the shop path or an
+// achievement grant — ONCE, in the tour flag store. Never during a run (both
+// call sites are title/shop screens), never over a live tour, dismisses like
+// every other coachmark. The dedicated event test in test/test_g26_loadout.mjs
+// pins: nothing before the growth, exactly one after, the flag prevents a
+// repeat, and the door stays reachable by taps without the coach ever firing.
+function maybeCoachLoadoutDoor() {
+  if (tourFlag(TOUR_KEYS.loadout)) return;
+  if (!(profile.unlockedWeapons || []).some(w => !STARTER_WEAPONS.includes(w))) return;
+  if (coachActive()) return;
+  startCoach({
+    id: 'loadout',
+    text: 'NEW WEAPON UNLOCKED — the next run only brings what you pick. Choose your LOADOUT from the title screen.',
+    target: () => (state.mode === 'title' && cardByTitle('LOADOUT')) || ovCards,
+  }, TOUR_KEYS.loadout);
 }
 
 // The note itself: a PARCHMENT card on the game's real card skeleton
@@ -7508,7 +6389,7 @@ function addWhatsNewCard() {
   el.onclick = () => {
     // HELP MODE parity with menuCard: a tap explains, never presses.
     if (state.helpMode) { showHelpTip('<b>' + WHATS_NEW.title + '</b> — release notes for returning players', el); return; }
-    audio.playSfx('uiConfirm');
+    audio.playSfx('button');
     dismissWhatsNew(el);
   };
   const offer = el.querySelector ? el.querySelector('.offer') : null;
@@ -7516,7 +6397,7 @@ function addWhatsNewCard() {
     // The accept must not also ride the note's dismiss handler up the tree.
     if (ev && ev.stopPropagation) ev.stopPropagation();
     if (state.helpMode) { showHelpTip('<b>SHOW ME</b> — start the guided tutorial run now', offer); return; }
-    audio.playSfx('uiConfirm');
+    audio.playSfx('button');
     acceptWhatsNew(el);
   };
   overlay.appendChild(el);
@@ -7538,16 +6419,6 @@ function acceptWhatsNew(el) {
   startRun();
 }
 
-// Start the title's cards just under the painted wordmark, so the menu never
-// covers it. The wordmark's foot is at ~46% of the canvas height.
-function placeTitleMenu() {
-  if (!overlay.style || typeof canvas.getBoundingClientRect !== 'function') return;
-  const r = canvas.getBoundingClientRect();
-  const or = typeof overlay.getBoundingClientRect === 'function' ? overlay.getBoundingClientRect() : null;
-  if (!r || !r.height || !or || !or.height) return;
-  overlay.style.paddingTop = Math.max(8, Math.round((r.top - or.top + r.height * 0.47) / uiScaleNow)) + 'px';
-}
-
 function showTitle() {
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
@@ -7559,7 +6430,6 @@ function showTitle() {
   ovTitle.className = 'logo';
   if (ovTitle.style) ovTitle.style.display = 'none';
   overlay.style.background = 'transparent';
-  if (overlay.classList) overlay.classList.add('title');
   const fresh = !hasLocalSave();
   paintTitleHeader();
   // v9 WHAT'S NEW: the note is a LAUNCH artifact — attempted on the FIRST
@@ -7570,30 +6440,60 @@ function showTitle() {
     whatsNewTried = true;
     if (whatsNewDueFor(profile, WHATS_NEW, bootResult.status === 'fresh')) addWhatsNewCard();
   }
-  // Five cards. LOADOUT joins once there is a weapon beyond the starting kit
-  // to choose; before that the pre-run screen shows the kit.
-  menuCard('PLAY', 'start a run', () => showPreRun());
+  menuCard('START GAME', 'start a run',
+    // UP-FRONT CONTROLS: a fresh profile meets the reference FIRST (the
+    // gate), GOT IT starts the run; everyone else goes straight in.
+    () => (onboardingDone() ? beginTitleHold() : showHowToPlay({ intoRun: true })));   // N2: fade out + hold the art ~1s, then startRun()
+  // MENU CONDENSE M5: the fresh-browser LOAD FROM DISK card is folded into
+  // SAVE DATA (SETUP -> SETTINGS -> SAVE DATA -> IMPORT SAVE) — the same
+  // validated pickImportFile -> importSaveText -> importProfileText path.
+  // The `fresh` flag stays live for paintTitleHeader's fresh copy.
   menuCard('SHOP', 'permanent upgrades', () => showShop());
-  menuCard('CHARACTERS', 'pick your hero', () => showCharacters());
-  if (ownsExtraWeapon()) {
-    menuCard('LOADOUT', 'choose your weapons', () => showLoadout('title'));
-  }
-  menuCard('PROGRESS', `${earnedCount(profile)} of ${totalAchievements()} trophies`, () => showProgress());
-  menuCard('SETTINGS', 'sound, display, help', () => showSettings());
-  if (DEV_GATE) {
-    menuCard('DEV LOG', 'download every run snapshot (runs.jsonl)', () => { devDownloadLog(); });
-  }
-  placeTitleMenu();
-  // The first title entry per page load shows the art alone for a beat, then
-  // fades the menu in over it; every return fades quickly.
-  if (!titleRevealPlayed) {
-    titleRevealPlayed = true;
-    state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
-  } else {
-    state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
+  menuCard('CHARACTERS', 'unlock & equip', () => showCharacters());
+  // G26: the LOADOUT door. A destination the player FINDS (owner: "the player
+  // should have to go find the weapon selection in a menu") — never a forced
+  // stop, never a gate: the sub-line names the live state so the card carries
+  // its own information, and START GAME keeps starting immediately.
+  menuCard('LOADOUT',
+    profile.loadout
+      ? profile.loadout.length + '/' + (startWeaponSlots(profile) - 1) + ' weapons chosen'
+      : 'pick this run\'s weapons', () => showLoadout());
+  // U1 (owner 2026-09-14): the menu was eleven cards. TROPHIES/BESTIARY and
+  // CHALLENGE/STAGE/SETTINGS/HOW TO PLAY now live behind two doors, and the
+  // doors' sub-lines carry the live numbers the moved cards used to show,
+  // so nothing is hidden that a player needs before pressing.
+  // MENU CONDENSE (2026-09-17, owner rulings VJBFV): D3 EXIT GAME is removed
+  // (closing the tab saves & quits — autosave already fires); M5 folded the
+  // fresh LOAD FROM DISK card into SAVE DATA; D4 CHARACTERS is KEPT (owner
+  // wants the card; the duplicate SHOP door is not a removal reason) — so
+  // the title is SEVEN cards, HOW TO PLAY last. exitGame()/showFarewell and
+  // the `game: exitGame` __TEST seam survive unreached by cards.
+  menuCard('PROGRESS', `${earnedCount(profile)} / ${totalAchievements()} emblems · ` +
+    `${seenCount(profile)} / ${totalEncounters()} met`, () => showProgress());
+  menuCard('SETUP', stageCardSub().split(' · ')[0] + ' · challenge, stage, options',
+    () => showSetup());
+  // ONBOARDING REWORK (owner-approved 2026-09-16): HOW TO PLAY moves OUT of
+  // SETUP onto the title — a confused player does not open SETUP to look for
+  // help. SETUP keeps CHALLENGE / STAGE / SETTINGS.
+  menuCard('HOW TO PLAY', 'the point + every button', () => showHowToPlay());
+  // N2 DO 1: the FIRST title entry per page load shows the art alone for a
+  // beat, then fades the menu in over it; every return re-fades short. A
+  // hold already in flight (out/hold) is never interrupted by a rebuild.
+  const inHold = state.titleReveal &&
+    (state.titleReveal.phase === 'out' || state.titleReveal.phase === 'hold');
+  if (!inHold) {
+    if (!titleRevealPlayed) {
+      titleRevealPlayed = true;
+      state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
+    } else {
+      state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
+    }
   }
   applyRevealStyles();
-  armTitleRevealTimer();
+  // N2 DO 4 (onboarding rework): only the G26 loadout door coach waits for
+  // the reveal settle now — the title-card tour is retired.
+  if (revealSettled()) { maybeCoachLoadoutDoor(); }
+  else tourPendingAfterReveal = true;
 }
 
 // G14: the live registry of shop-row icon canvases, rebuilt by showShop() so
@@ -7726,11 +6626,8 @@ function finalizeShopPager() {
   }
   // the low band (44px arrows + indicator, both at bottom:8) is taller than
   // the indicator strip alone — the last row must clear the real chrome.
-  // The footer row (BACK) sits under every page, so its height is not
-  // available to the paged rows.
-  const footH = footer.length ? Math.max(...footer.map(c => c.offsetHeight || 0)) + SHOP_GAP : 0;
   const availH = Math.max(60, overlay.clientHeight - (ovCards.offsetTop || 0)
-    - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10 - footH);
+    - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10);
   const pages = shopPageChunk(rows.map(r => r.h), availH);
   shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
   shopPageGoto(shopPager.page);
@@ -7763,7 +6660,7 @@ function shopChromeUpdate() {
       el.id = id;
       el.className = 'shop-arr ' + (dir < 0 ? 'prev' : 'next');
       el.textContent = glyph;
-      el.onclick = () => { audio.playSfx('uiMove'); shopPageGoto(shopPager.page + dir); };
+      el.onclick = () => { audio.playSfx('button'); shopPageGoto(shopPager.page + dir); };
       overlay.appendChild(el);
     }
     const dim = (dir < 0 && shopPager.page <= 1) || (dir > 0 && shopPager.page >= shopPager.pages.length);
@@ -7773,13 +6670,9 @@ function shopChromeUpdate() {
   }
   let ind = document.getElementById('shop-ind');
   if (one) { if (ind && ind.remove) ind.remove(); return; }
-  if (!ind) {
-    ind = document.createElement('div');
-    ind.id = 'shop-ind';
-    ind.className = 'shop-ind';   // the stylesheet's rule is the class
-    overlay.appendChild(ind);
-  }
-  ind.textContent = 'page ' + shopPager.page + ' of ' + shopPager.pages.length;
+  if (!ind) { ind = document.createElement('div'); ind.id = 'shop-ind'; overlay.appendChild(ind); }
+  ind.textContent = shopPager.page + ' / ' + shopPager.pages.length +
+    ' \u00b7 ' + shopPager.cols + '\u00d7' + shopPager.pages[shopPager.page - 1].length;
 }
 
 // Swipe (the phone's first-class input — carousel convention: finger left =
@@ -7817,165 +6710,12 @@ function armShopSwipe() {
   });
 }
 
-// ---------- SLICE 10: dev-run shop buy-back (levels are reversible) ---------
-// DEV power, ?dev=1 only (DEV_GATE): every sell control below renders solely
-// with the gate on — the player build never sees one. One click removes one
-// level (the top — LIFO, matching the ledger); row RESET removes every level.
-// The RESET label shows the total refund BEFORE the confirming second tap
-// (two-tap arm, no window.confirm — headless-safe). Controls ride INSIDE the
-// row card, so the shop pager (which chunks ovCards children) is unaffected.
-//
-// JOURNAL: every executed sell appends {id, kind, characterId, level, refund}
-// to devShopRemovals (module scope, NOT the per-run dev session — shop visits
-// happen between runs, and startRun restarts the session). devChoices() reads
-// it live; devOnRunEnd drains it into the snapshot's choices.removals, so the
-// next run-end after the sells carries them exactly once, same schema family
-// (additive optional entry inside the optional choices object — no version
-// bump). The mixed-case rule lives in meta.js (sell refunds the per-level
-// record, never the live free-build flag); the purse/bank, the ledger and the
-// snapshot stay consistent because every sell is exactly: level down, gold up
-// by the recorded amount, removal journaled.
-let devShopRemovals = [];
-// Rendered sell-control descriptors for the headless seam (reset per screen).
-let devSellControls = [];
-
-// Journal one removal (dev-gated callers only — the record is what the
-// snapshot's choices.removals carries: the row, the 1-based level removed,
-// and the refunded gold).
-function devRecordRemoval(rec) {
-  if (!rec || typeof rec.id !== 'string') return;
-  devShopRemovals.push({
-    id: rec.id,
-    kind: rec.kind || 'shop',
-    characterId: rec.characterId || null,
-    level: rec.level | 0,
-    refund: Math.max(0, Math.floor(Number(rec.refund) || 0)),
-  });
-}
-
-// The REAL sell paths (the UI buttons and the headless proof drive THESE, not
-// copies): meta sell + journal + persist. Each returns the meta result
-// ({ ok, level, refund }) so labels stay honest.
-function devSellShopRow(rowId) {
-  const r = sellUpgrade(profile, rowId);
-  if (r && r.ok) {
-    const def = SHOP_BY_ID[rowId];
-    devRecordRemoval({ id: rowId, kind: (def && def.kind) || 'shop', level: r.level, refund: r.refund });
-    persistProfile();
-  }
-  return r;
-}
-function devSellShopRowAll(rowId) {
-  let count = 0, refund = 0;
-  for (;;) {
-    const r = sellUpgrade(profile, rowId);
-    if (!r || !r.ok) break;
-    count++;
-    refund += r.refund;
-    const def = SHOP_BY_ID[rowId];
-    devRecordRemoval({ id: rowId, kind: (def && def.kind) || 'shop', level: r.level, refund: r.refund });
-  }
-  if (count > 0) persistProfile();
-  return { count, refund };
-}
-function devSellCharacterRow(characterId, upgradeId) {
-  const r = sellCharacterUpgrade(profile, characterId, upgradeId);
-  if (r && r.ok) {
-    devRecordRemoval({ id: upgradeId, kind: 'character', characterId, level: r.level, refund: r.refund });
-    persistProfile();
-  }
-  return r;
-}
-function devSellCharacterRowAll(characterId, upgradeId) {
-  let count = 0, refund = 0;
-  for (;;) {
-    const r = sellCharacterUpgrade(profile, characterId, upgradeId);
-    if (!r || !r.ok) break;
-    count++;
-    refund += r.refund;
-    devRecordRemoval({ id: upgradeId, kind: 'character', characterId, level: r.level, refund: r.refund });
-  }
-  if (count > 0) persistProfile();
-  return { count, refund };
-}
-function devSellPilot(characterId) {
-  const r = sellCharacterUnlock(profile, characterId);
-  if (r && r.ok) {
-    devRecordRemoval({ id: characterId, kind: 'pilot', level: r.level, refund: r.refund });
-    persistProfile();
-  }
-  return r;
-}
-function devSellApexItem(apexId) {
-  const r = sellApex(profile, apexId);
-  if (r && r.ok) {
-    devRecordRemoval({ id: apexId, kind: 'apex', level: r.level, refund: r.refund });
-    persistProfile();
-  }
-  return r;
-}
-
-// One sell control (SELL one level) + optional RESET (all levels, total shown
-// BEFORE the confirming tap) inside a row card. Descriptor recorded for the
-// headless seam. No-ops entirely with the gate off.
-function devAddSellControls(cardEl, desc) {
-  if (!DEV_GATE || !cardEl) return;
-  const entry = {
-    id: desc.id, kind: desc.kind || 'shop', characterId: desc.characterId || null,
-    level: desc.level | 0, refund: Math.max(0, Math.floor(Number(desc.refund) || 0)),
-    resetTotal: Math.max(0, Math.floor(Number(desc.resetTotal) || 0)),
-    resettable: !!desc.resettable,
-  };
-  devSellControls.push(entry);
-  const stop = (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); };
-  const mkBtn = (label) => {
-    const b = document.createElement('button');
-    b.className = 'dev-sell';
-    b.textContent = label;
-    if (b.style && typeof b.style.cssText === 'string') {
-      b.style.cssText = 'font:10px monospace;margin:2px 4px 2px 0;padding:2px 6px;';
-    }
-    return b;
-  };
-  if (entry.level > 0) {
-    const sell = mkBtn('SELL LV ' + entry.level + ' (-' + entry.refund + 'g)');
-    sell.onclick = (e) => {
-      stop(e);
-      const r = desc.onSell();
-      if (r && r.ok) desc.rerender();
-      else audio.playSfx('uiDeny');
-    };
-    if (cardEl.appendChild) cardEl.appendChild(sell);
-    else if (cardEl.children) cardEl.children.push(sell);
-    if (entry.resettable && entry.level > 1) {
-      const reset = mkBtn('RESET (refund ' + entry.resetTotal + 'g)');
-      reset.onclick = (e) => {
-        stop(e);
-        if (!reset._armed) {
-          reset._armed = true;
-          reset.textContent = 'TAP AGAIN TO CONFIRM RESET (-' + entry.resetTotal + 'g)';
-          audio.playSfx('uiMove');
-          return;
-        }
-        reset._armed = false;
-        const r = desc.onReset();
-        if (r && r.count > 0) desc.rerender();
-        else audio.playSfx('uiDeny');
-      };
-      if (cardEl.appendChild) cardEl.appendChild(reset);
-      else if (cardEl.children) cardEl.children.push(reset);
-    }
-  }
-}
-
 function showShop() {
   openMenu();
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
-  // The bank, and the mastery rule every weapon and slot row feeds.
-  ovSub.innerHTML = `BANK: ${profile.gold}<br>${masteryLine(profile)}` +
-    ` &middot; each weapon or slot you buy adds +${MASTERY.HP_PER_RANK} max HP;` +
-    ` every ${MASTERY.RANKS_PER_LEVEL === 2 ? '2nd' : MASTERY.RANKS_PER_LEVEL + 'th'} one starts all weapons a level higher`;
+  // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
+  ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
   // SHOP PAGING: the grid class + cols var go on BEFORE the rows are built
   // (first layout sizes the cards; the pager then measures true heights).
@@ -7999,7 +6739,7 @@ function showShop() {
     const owned = def.kind ? shopRowOwned(profile, def) : false;
     const capped = def.kind ? owned : lvl >= def.maxLevel;
     const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
-    const afford = devFreeBuild() || profile.gold >= cost;
+    const afford = profile.gold >= cost;
     const sub = abbrev
       ? (def.kind
         ? (owned ? 'OWNED' : cost + 'g')
@@ -8026,27 +6766,32 @@ function showShop() {
         // buy (buyUpgrade -> equipBoughtWeapon), and the displacement (if the
         // loadout was full) is diffed from these two reads so the line the
         // player sees can NAME both halves. A swap must never be silent.
-        const kitBefore = effectiveLoadout(profile, loadoutSlotCap());
+        const kitBefore = profile.loadout ? [...profile.loadout] : null;
         if (buyUpgrade(profile, def.id)) {
           persistProfile();
           showShop();
           if (def.kind === 'weapon') {
-            const now = effectiveLoadout(profile, loadoutSlotCap());
-            const added = now.find(w => !kitBefore.includes(w));
-            const benched = kitBefore.find(w => !now.includes(w));
+            const now = profile.loadout || [];
+            const added = now.find(w => !kitBefore || !kitBefore.includes(w));
+            const benched = kitBefore ? kitBefore.find(w => !now.includes(w)) : null;
             if (added != null) {
               toast(benched != null
                 ? 'EQUIPPED ' + WEAPON_NAMES[added] + ' / BENCHED ' + WEAPON_NAMES[benched] + ' — see LOADOUT'
                 : 'EQUIPPED ' + WEAPON_NAMES[added] + ' — in your LOADOUT');
             }
           }
+          // G26: a successful WEAPON purchase is the just-in-time moment the
+          // owner picked ("after the first weapon buyable is bought") — the
+          // unlocked set just grew, so the loadout door coach checks now, on
+          // the re-rendered shop. Stat/mana/slot rows never fire it.
+          if (def.kind === 'weapon') maybeCoachLoadoutDoor();
         }
       },
       capped || !afford,
       true,   // deferFrame: batched with `framed` below
     );
     framed.push(el);
-    if (capped) el.onclick = () => audio.playSfx('uiDeny');
+    if (capped) el.onclick = () => audio.playSfx('button');
     // G14: every row carries its authored 16x16 icon (src/art/shop_icons.js)
     // as a live canvas painted through the renderer's own drawGrid — same
     // convention as the G13 portraits: 16x16 backing store, INTEGER 2x CSS
@@ -8062,37 +6807,10 @@ function showShop() {
     const icon = shopIcon(def.id);
     renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
     shopIconCanvases[def.id] = cv;
-    // SLICE 10 (?dev=1 only): every OWNED row carries its sell-back controls
-    // in the shop where it was bought — one click per level plus row RESET
-    // with the total refund shown before confirming.
-    if (def.kind) {
-      if (shopRowOwned(profile, def)) {
-        devAddSellControls(el, {
-          id: def.id, kind: def.kind, level: 1,
-          refund: topRefund(profile, def.id),
-          onSell: () => devSellShopRow(def.id),
-          rerender: showShop,
-        });
-      }
-    } else {
-      const ownedLv = profile.purchased[def.id] || 0;
-      if (ownedLv > 0) {
-        devAddSellControls(el, {
-          id: def.id, level: ownedLv,
-          refund: topRefund(profile, def.id),
-          resetTotal: totalRefund(profile, def.id),
-          resettable: true,
-          onSell: () => devSellShopRow(def.id),
-          onReset: () => devSellShopRowAll(def.id),
-          rerender: showShop,
-        });
-      }
-    }
   }
   // G25 slice 1: the APEX entry row exists ONLY when the gate is open — the
   // panel is absent (not greyed) until the normal catalogue is finished, so
   // an in-progress shopper never sees the tier at all.
-  latchApexUnlock(profile);
   if (apexUnlocked(profile)) {
     menuCard('APEX', 'the post-completion tier — rule-breakers, priced for the grind', () => showApexShop());
   }
@@ -8136,25 +6854,14 @@ function showCharacterShop() {
   // E1: the banked meta balance reads BANK — GOLD is the in-run purse now.
   ovSub.textContent = `BANK: ${profile.gold}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
-  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const rows = CHARACTER_UPGRADES.filter(u => u.characterId === ch.id);
     const lvls = rows.reduce((s, u) => s + getCharacterUpgradeLevel(profile, ch.id, u.id), 0);
-    const doorEl = menuCard(ch.name,
+    menuCard(ch.name,
       `${owned ? 'owned' : 'locked — ' + ch.unlockCost + ' gold'}<br>` +
       `${rows.length} upgrades · ${lvls} level${lvls === 1 ? '' : 's'} bought`,
       () => showCharacterRows(ch.id));
-    // SLICE 10 (?dev=1 only): an owned pilot (never the default KNIGHT, never
-    // one carrying upgrade levels) sells back where it was bought.
-    if (owned && ch.id !== 'KNIGHT' && lvls === 0) {
-      devAddSellControls(doorEl, {
-        id: ch.id, kind: 'pilot', level: 1,
-        refund: topRefund(profile, 'cunlock:' + ch.id),
-        onSell: () => devSellPilot(ch.id),
-        rerender: showCharacterShop,
-      });
-    }
   }
   menuCard('BACK', 'to shop', () => showShop());
 }
@@ -8176,13 +6883,12 @@ function showCharacterRows(characterId) {
     (owned ? '' : ` · LOCKED — ${ch.name} not unlocked (${ch.unlockCost} gold)`) +
     `<br>${idLines.strong} · ${idLines.weak}`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
-  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   const framed = [];
   for (const def of CHARACTER_UPGRADES.filter(u => u.characterId === characterId)) {
     const lvl = getCharacterUpgradeLevel(profile, characterId, def.id);
     const capped = lvl >= def.maxLevel;
     const cost = upgradeCost(def, lvl);
-    const afford = devFreeBuild() || profile.gold >= cost;
+    const afford = profile.gold >= cost;
     const sub = !owned
       ? `LOCKED — buy ${ch.name} first (${ch.unlockCost} gold)`
       : `LV ${lvl}/${def.maxLevel} · ${capped ? 'MAXED' : cost + ' gold'}`;
@@ -8199,7 +6905,7 @@ function showCharacterRows(characterId) {
       true,   // deferFrame: batched with `framed` below, like showShop's rows
     );
     framed.push(el);
-    if (!owned || capped) el.onclick = () => audio.playSfx('uiDeny');
+    if (!owned || capped) el.onclick = () => audio.playSfx('button');
     // The icon path is the shop's own (src/art/shop_icons.js): authored grid
     // per id, authored __fallback otherwise — the SAME fallback every
     // un-arted global row gets, no second icon system (disclosed in the G19
@@ -8212,20 +6918,6 @@ function showCharacterRows(characterId) {
     const icon = shopIcon(def.id);
     renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
     shopIconCanvases[def.id] = cv;
-    // SLICE 10 (?dev=1 only): owned per-character levels sell back one click
-    // per level, plus row RESET with the total shown before confirming.
-    if (owned && lvl > 0) {
-      devAddSellControls(el, {
-        id: def.id, kind: 'character', characterId,
-        level: lvl,
-        refund: topRefund(profile, charLedgerKey(characterId, def.id)),
-        resetTotal: totalRefund(profile, charLedgerKey(characterId, def.id)),
-        resettable: true,
-        onSell: () => devSellCharacterRow(characterId, def.id),
-        onReset: () => devSellCharacterRowAll(characterId, def.id),
-        rerender: () => showCharacterRows(characterId),
-      });
-    }
   }
   menuCard('BACK', 'to characters', () => showCharacterShop());
   for (const e of framed) frameCard(e, true);
@@ -8245,7 +6937,6 @@ function showApexShop() {
   ovSub.innerHTML = `BANK: ${profile.gold}` +
     (open ? '' : ` · COMPLETE THE CATALOGUE FIRST — ${missing} ROW${missing === 1 ? '' : 'S'} LEFT`);
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
-  devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   if (open) {
     // The TOGGLE (one activation flips it, persisted immediately): apex must
     // always be switchable off — the Megabonk lesson. Apex ON marks every
@@ -8261,7 +6952,7 @@ function showApexShop() {
     menuCard('GALLERY', 'the apex emblems, full-screen [ESC to return]', () => showApexGallery());
     for (const def of APEX_UPGRADES) {
       const owned = apexOwned(profile, def.id);
-      const afford = devFreeBuild() || profile.gold >= def.baseCost;
+      const afford = profile.gold >= def.baseCost;
       const sub = owned ? 'OWNED' : `${def.baseCost} gold`;
       const el = menuCard(
         def.name,
@@ -8271,7 +6962,7 @@ function showApexShop() {
         },
         owned || !afford,
       );
-      if (owned) el.onclick = () => audio.playSfx('uiDeny');
+      if (owned) el.onclick = () => audio.playSfx('button');
       // Same G14 icon convention as every shop row (authored 16x16 grid,
       // integer CSS scale, unknown ids fall back to the rune — never a
       // blank box).
@@ -8283,16 +6974,6 @@ function showApexShop() {
       const icon = shopIcon(def.id);
       renderer.drawGrid(cv.getContext('2d'), icon.grid, icon.palette, 0, 0);
       shopIconCanvases[def.id] = cv;
-      // SLICE 10 (?dev=1 only): an owned apex item sells back where it was
-      // bought (one click — singletons carry no levels and no RESET).
-      if (owned) {
-        devAddSellControls(el, {
-          id: def.id, kind: 'apex', level: 1,
-          refund: topRefund(profile, 'apex:' + def.id),
-          onSell: () => devSellApexItem(def.id),
-          rerender: showApexShop,
-        });
-      }
     }
   }
   menuCard('BACK', 'to shop', () => showShop());
@@ -8437,7 +7118,7 @@ function pilotKit(id) {
   // G19: the preview runs the RUN'S OWN chain (meta bonuses -> character ->
   // that character's upgrade levels), so it cannot drift from startRun.
   const st = applyCharacterUpgrades(
-    applyCharacter(applyMastery(applyMetaBonuses({ ...base }, profile.purchased), profile), ch.id),
+    applyCharacter(applyMetaBonuses({ ...base }, profile.purchased), ch.id),
     profile, ch.id);
   const owned = profile.unlockedCharacters.includes(ch.id);
   return {
@@ -8499,7 +7180,7 @@ function renderCharSelector() {
   for (const ch of Object.values(CHARACTERS)) {
     const owned = profile.unlockedCharacters.includes(ch.id);
     const equipped = profile.equippedCharacter === ch.id;
-    const afford = devFreeBuild() || profile.gold >= ch.unlockCost;
+    const afford = profile.gold >= ch.unlockCost;
     const el = document.createElement('div');
     el.className = 'card char-card' + (equipped ? ' selected' : '')
       + (!owned && !afford ? ' dim' : '');
@@ -8518,7 +7199,7 @@ function renderCharSelector() {
     let cv = el.querySelector ? el.querySelector('canvas') : null;
     if (!cv) { cv = document.createElement('canvas'); el.appendChild(cv); }
     el.onclick = () => {
-      audio.playSfx('uiMove');
+      audio.playSfx('button');
       // Selection ALWAYS moves — previewing a locked pilot's kit is free (the
       // oversight complaint was exactly that the kit was invisible).
       charSelected = ch.id;
@@ -8602,217 +7283,216 @@ function importSaveText(text) {
     return res;
   }
   profile = res.profile;
-  const refundNote = shopRefundNotice(profile);   // an old save file is refunded on import too
   persistProfile();
-  saveNotice = refundNote ? 'SAVE IMPORTED — ' + refundNote
-    : res.status === 'imported-migrated'
-      ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
-      : 'SAVE IMPORTED.';
+  saveNotice = res.status === 'imported-migrated'
+    ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
+    : 'SAVE IMPORTED.';
   return res;
 }
 
 let resetArmed = false;
-let endArmed = false;   // END RUN takes two presses, like RESET
-
-// ---------- SETTINGS: one screen, plus ADVANCED -------------------------------
-// The same screen serves the title and the in-run pause (inRun: BACK resumes
-// the fight and END RUN is offered instead of the save file cards). Everything
-// most players never touch is on the ADVANCED page.
+let endArmed = false;   // WAVE-18 (#6): END RUN two-tap arm (same pattern as RESET)
+// MENU CONDENSE (2026-09-17, owner rulings on the VJBFV prune proposal): the
+// 12/14-card settings wall is now SIX cards in both contexts — AUDIO,
+// DISPLAY, PILOT, HOW TO PLAY, SAVE DATA (title) / END RUN (in-run), BACK —
+// with the full ladders one tap deeper in the three sub-screens below.
+// Merges: M1 zoom+resolution+text hud -> DISPLAY; M2 music+sfx -> AUDIO;
+// M3 export+import+recovery+reset -> SAVE DATA. Removals: D1 TEST: ESCAPE
+// SEQUENCE (debug-gated below), D2 RECOVERY FILE (PREVIOUS) (one rescue
+// slot), REPLAY TOUR moved into HOW TO PLAY (M4). E1/E2 follow: RESET keeps
+// its two-tap arm, and the FULL zoom/resolution ladders stay reachable one
+// tap deeper inside DISPLAY.
 function showSettings(disarm = true, inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
-  // Re-rendering after the first END RUN press must not clear its own arm.
+  // Sk408 bug: the arm click re-rendered through here, which cleared the
+  // arm flag the same frame it was set — RESET could never confirm. Only
+  // disarm when settings is opened fresh (title menu or the in-run cog).
   if (disarm) { resetArmed = false; endArmed = false; }
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
-  ovSub.textContent = saveNotice || (inRun ? 'the run is paused' : 'sound, display and your save file');
-  volumeCard('MUSIC', audio.getMusicVolume, (v) => {
-    audio.setMusicVolume(v);
-    // Raising the slider from 0 mid-run brings the music back at once.
-    if (v > 0 && inRun) audio.startMusic();
-  });
-  volumeCard('SFX', audio.getSfxVolume, (v) => { audio.setSfxVolume(v); audio.playSfx('uiConfirm'); });
-  menuCard('SCREEN SHAKE', getShakeEnabled() ? 'ON. Press to turn off' : 'OFF. Press to turn on', () => {
-    setShakePref(!getShakeEnabled());
-    showSettings(false, inRun);
-  });
-  const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
-  menuCard('DISPLAY SIZE', (cur ? cur.name + ': ' + cur.blurb : 'CUSTOM') + '. Press to change', () => {
-    const pr = DISPLAY_PRESETS[cur ? (DISPLAY_PRESETS.indexOf(cur) + 1) % DISPLAY_PRESETS.length : 0];
-    prefStorage.setItem(KEY_RESOLUTION, pr.res);
-    setZoom(pr.zoom);
-    fitCanvas();
-    showSettings(false, inRun);
-  });
-  const fsOk = fsMode() !== 'none';
-  const fsOn = fsMode() === 'native' ? !!FS_ELEMENT() : immersiveOn;
-  menuCard('FULLSCREEN', !fsOk ? 'not available in this browser' : fsOn ? 'ON. Press to leave' : 'OFF. Press to fill the screen', () => {
-    if (!fsOk) return;
-    toggleFullscreen();
-    showSettings(false, inRun);
-  }, !fsOk);
-  if (!inRun) {
-    menuCard('EXPORT SAVE', 'download a backup file of your progress', () => {
-      const done = (r) => {
-        if (r && r.aborted) return;   // the save dialog was cancelled
-        saveNotice = r && r.ok ? 'Save exported.' : 'Export failed. Try again.';
-        showSettings(false);
-      };
-      const res = saveProfileToDisk(profile);
-      if (res && typeof res.then === 'function') res.then(done, () => done(null));
-      else done(res);
+  ovSub.textContent = 'display, audio & save data' + (saveNotice ? ' · ' + saveNotice : '');
+  menuCard('AUDIO',
+    'music ' + (audio.getMusicEnabled() ? 'ON' : 'OFF') + ' &middot; sfx ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'),
+    () => showAudioSettings(inRun));
+  menuCard('DISPLAY',
+    state.zoom + 'x &middot; ' + resMode().toLowerCase() + ' &middot; hud ' + (hudTextEnabled() ? 'ON' : 'OFF'),
+    () => showDisplaySettings(inRun));
+  // G31: the pilot cycle, selectable PRE-RUN as well as in-run (the O key /
+  // touch PILOT button were mid-run only, so the persisted choice could not
+  // be set before the first run). Same togglePilotMode seam as the key.
+  menuCard('PILOT', 'currently ' + pilotPrefLabel() +
+    ' (auto all / auto move / manual) — persists between runs', () => {
+      togglePilotMode();
+      showSettings(true, inRun);
     });
-    menuCard('IMPORT SAVE', 'load a backup file (replaces this progress)', () => pickImportFile());
+  // IN-RUN REFERENCE ACCESS (owner 2026-09-16: "the users want to know what
+  // each control does..."): the reference is ONE screen, reachable from every
+  // door. In-run it opens under this same pause mode, so GOT IT (and ESC)
+  // resume the fight through closeSettings — the BACK discipline.
+  menuCard('HOW TO PLAY', 'every control + the field objects', () => showHowToPlay({ inRun }));
+  // M3: export/import/recovery/reset live behind ONE door, title-only (the
+  // in-run screen deliberately carries END RUN instead — E1).
+  if (!inRun) {
+    menuCard('SAVE DATA', 'export, import & reset', () => showSaveData());
   }
-  menuCard('HOW TO PLAY', 'the reference: short sections, every control', () => showHowToPlay({ inRun }));
-  menuCard('HINTS', hintsEnabled() ? 'ON: one line the first time something appears. Press to turn off'
-    : 'OFF. Press to turn on', () => {
-    setHintsEnabled(!hintsEnabled());
-    showSettings(false, inRun);
-  });
-  menuCard('REPLAY TUTORIAL', inRun ? 'the guided first run again, on your next run'
-    : 'play the guided first run again', () => tutReplay(inRun));
-  menuCard('ADVANCED', 'zoom, pilot, focus, stance and more', () => showAdvancedSettings(inRun));
+  // WAVE-18 (#6): END RUN — the early exit the playtest demanded, only on
+  // the in-run settings screen (never the title's). Same two-tap arm/
+  // confirm pattern as RESET PROFILE.
   if (inRun) {
     menuCard(endArmed ? 'CONFIRM END RUN?' : 'END RUN',
-      endArmed ? 'press again: the run ends and you keep its gold' : 'stop now and keep the gold',
+      endArmed ? 'banks your gold and ends the run' : 'twice to confirm',
       () => {
         if (!endArmed) { endArmed = true; showSettings(false, inRun); return; }
         endArmed = false;
         endRun();
       });
-    // Play-test entry for the escape, only with localStorage hordes_debug = 1.
-    if ((() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
-      menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
-        closeSettings();
-        startEscape({ test: true });
-      });
-    }
-    menuCard('BACK', 'back to the fight [ESC]', () => closeSettings());
-  } else {
-    menuCard('BACK', 'to title [ESC]', () => showTitle());
+  }
+  // V1 play-test affordance (owner ask): the escape's real trigger is beating
+  // the wave-1 boss and entering the portal, unreachable while play-testing —
+  // so the paused run offers the entry here. It goes through the REAL
+  // startEscape seam flagged as a test entry (no payout, no intermission:
+  // every exit returns to this screen with the run still live).
+  // MENU CONDENSE D1: off the player surface — offered ONLY when the debug
+  // flag is set (localStorage 'hordes_debug' = '1'; the dev runbook flips
+  // it from the console). Card order still ahead of BACK when present.
+  if (inRun && (() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
+    menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
+      closeSettings();
+      startEscape({ test: true });
+    });
+  }
+  // WAVE-17: opened via the touch cog mid-run, BACK resumes the paused run
+  // instead of bailing to the title (which would abandon it).
+  if (inRun) menuCard('BACK', 'back to the fight', () => closeSettings());
+  else menuCard('BACK', 'to title [ESC]', () => showTitle());
+  // WAVE-22 (rev-4): END RUN was PARTIAL (named by the cog coachmark, card
+  // never shown) — first in-run settings visit spotlights the real card
+  // ('settings' mode already freezes the sim; re-renders stay silent via
+  // the flag).
+  if (inRun && !tourFlag(TOUR_KEYS.settings)) {
+    startCoach({ id: 'settings',
+      text: 'END RUN banks your gold and ends the run early — confirm twice.',
+      target: () => cardByTitle('END RUN') || cardByTitle('CONFIRM END RUN?') }, TOUR_KEYS.settings);
   }
 }
 
-// A 0-100 volume slider as a menu card. Dragging the slider sets the level;
-// pressing the card itself (mouse, touch, or Enter from keyboard navigation)
-// steps it up by 10 and wraps 100 -> 0, so it works without a pointer.
-function volumeCard(name, get, set) {
-  const el = document.createElement('div');
-  el.className = 'card';
-  const label = () => (get() > 0 ? get() + '%' : 'OFF') + ' &middot; drag, or press to step';
-  el.innerHTML = `<div class="name">${name} VOLUME</div><div class="desc">${label()}</div>`;
-  const slider = document.createElement('input');
-  slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '5';
-  slider.value = String(get());
-  slider.className = 'vol';
-  slider.style.cssText = 'display:block;width:100%;margin-top:8px;accent-color:#ffd75e;';
-  const sync = () => {
-    slider.value = String(get());
-    const d = el.querySelector && el.querySelector('.desc');
-    if (d) d.innerHTML = label();
-  };
-  slider.addEventListener('input', () => { set(Number(slider.value)); sync(); });
-  slider.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
-  el.onclick = () => {
-    if (state.helpMode) { showHelpTip('<b>' + name + ' VOLUME</b> — 0 to 100', el); return; }
-    const v = get();
-    set(v >= 100 ? 0 : Math.min(100, v + 10));
-    sync();
-  };
-  el.appendChild(slider);
-  el.volume = { get, set: (v) => { set(v); sync(); }, slider };   // test seam
-  ovCards.appendChild(el);
-  frameCard(el);
-  return el;
+// ---------- MENU CONDENSE sub-screens (M1/M2/M3) -------------------------------
+// Each is a plain menu: the merged rows, verbatim mechanics, plus a BACK that
+// returns to SETTINGS in the SAME context (title or in-run pause). The arms
+// (RESET two-tap) disarm only via showSettings's fresh-open rule, so walking
+// back out of a sub-screen disarms honestly — the Sk408 arm bug stays fixed.
+
+// M2: MUSIC + SFX behind one AUDIO door.
+function showAudioSettings(inRun = false) {
+  openMenu(inRun ? 'settings' : 'menu');
+  ovTitle.textContent = 'AUDIO';
+  ovTitle.className = '';
+  ovSub.textContent = 'music & sound effects';
+  menuCard('MUSIC', 'currently ' + (audio.getMusicEnabled() ? 'ON' : 'OFF'), () => {
+    audio.setMusicEnabled(!audio.getMusicEnabled());
+    showAudioSettings(inRun);
+  });
+  menuCard('SFX', 'currently ' + (audio.getSfxEnabled() ? 'ON' : 'OFF'), () => {
+    audio.setSfxEnabled(!audio.getSfxEnabled());
+    showAudioSettings(inRun);
+  });
+  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
 }
 
-// One-press display sizes: resolution and zoom set together. The exact
-// ladders are on the ADVANCED page.
+// The four one-press display presets (E2's fast path): resolution + zoom
+// applied together, so the common destinations are one press and the exact
+// ladders stay one tap deeper for everything else.
 const DISPLAY_PRESETS = [
-  { name: 'AUTO',    res: 'AUTO',          zoom: 1, blurb: 'fits the window' },
-  { name: 'CRISP',   res: 'PIXEL-PERFECT', zoom: 1, blurb: 'sharp pixels, may be smaller' },
-  { name: 'BIGGER',  res: 'AUTO',          zoom: 2, blurb: 'the world drawn 2x larger' },
-  { name: 'BIGGEST', res: 'AUTO',          zoom: 4, blurb: 'the world drawn 4x larger' },
+  { name: 'AUTO',    res: 'AUTO',          zoom: 1 },
+  { name: 'CRISP',   res: 'PIXEL-PERFECT', zoom: 1 },
+  { name: 'BIGGER',  res: 'AUTO',          zoom: 2 },
+  { name: 'BIGGEST', res: 'AUTO',          zoom: 4 },
 ];
 
-// ADVANCED: the fine controls. Title and in-run share it; night mode, the
-// recovery file and the profile reset are title-only.
-function showAdvancedSettings(inRun = false) {
+// M1: ZOOM + RESOLUTION + TEXT HUD behind one DISPLAY door.
+function showDisplaySettings(inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
-  ovTitle.textContent = 'ADVANCED';
+  ovTitle.textContent = 'DISPLAY';
   ovTitle.className = '';
-  ovSub.textContent = saveNotice || 'fine controls: most players never need these';
-  const again = () => showAdvancedSettings(inRun);
-  menuCard('ZOOM', state.zoom + 'x. Press to change (keys + and -)', () => { cycleZoom(1); again(); });
-  menuCard('RESOLUTION', resMode() +
-    (resMode() === 'AUTO' ? ': fits the window' : resMode() === 'PIXEL-PERFECT' ? ': even pixels' : 'x: fixed pixel size') +
-    '. Press to change', () => {
+  ovSub.textContent = 'zoom, resolution & hud';
+  const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
+  menuCard('DISPLAY PRESET', 'currently ' + (cur ? cur.name : 'CUSTOM') +
+    ' (auto / crisp / bigger / biggest)', () => {
+    const i = cur ? (DISPLAY_PRESETS.indexOf(cur) + 1) % DISPLAY_PRESETS.length : 0;
+    const pr = DISPLAY_PRESETS[i];
+    prefStorage.setItem(KEY_RESOLUTION, pr.res);
+    setZoom(pr.zoom);
+    fitCanvas();
+    showDisplaySettings(inRun);
+  });
+  // WAVE-16: world zoom (1/2/3/4/6/8 ladder; +/- keys cycle it live in-run).
+  menuCard('ZOOM', 'currently ' + state.zoom + 'x (1/2/3/4/6/8)', () => {
+    cycleZoom(1);
+    showDisplaySettings(inRun);
+  });
+  // WAVE-23: resolution / pixel-scale (Sk408's "increase the number of
+  // pixels"). AUTO fits the window; PIXEL-PERFECT snaps to uniform NxN art
+  // pixels; 2x-4x force an integer scale (more pixels, more GPU).
+  menuCard('RESOLUTION', 'currently ' + resMode() +
+    (resMode() === 'AUTO' ? ' (fit window)' : resMode() === 'PIXEL-PERFECT' ? ' (uniform pixels)' : ' (integer scale, pricier)') +
+    ' — crisper text everywhere', () => {
     const next = RES_MODES[(RES_MODES.indexOf(resMode()) + 1) % RES_MODES.length];
     prefStorage.setItem(KEY_RESOLUTION, next);
     fitCanvas();
-    again();
+    showDisplaySettings(inRun);
   });
-  menuCard('TEXT HUD', (hudTextEnabled() ? 'ON' : 'OFF') + '. A plain-text readout of the run', () => {
+  // WAVE-12: the text HUD is opt-in (canvas chrome is the default readout).
+  menuCard('TEXT HUD', 'currently ' + (hudTextEnabled() ? 'ON' : 'OFF'), () => {
     setHudTextEnabled(!hudTextEnabled());
-    again();
+    showDisplaySettings(inRun);
   });
-  const mode = normalizePilotMode(state.pilotMode);
-  menuCard('PILOT', (mode === 'AUTO_ALL' ? 'AUTO: moves, casts skills, drinks potions'
-    : mode === 'AUTO_MOVE' ? 'AUTO, MOVES ONLY: skills and potions are yours'
-    : 'MANUAL: you steer') + '. Press to change', () => {
-    const next = PILOT_MODES[(PILOT_MODES.indexOf(mode) + 1) % PILOT_MODES.length];
-    if (next !== 'MANUAL') setAutoFlavor(next);
-    swapPilotMode(next);
-    again();
+  menuCard('BACK', 'to settings', () => showSettings(false, inRun));
+}
+
+// M3: EXPORT + IMPORT + RECOVERY + RESET behind one SAVE DATA door (title
+// only). D2: ONE rescue slot is offered — RECOVERY FILE (PREVIOUS) is gone;
+// the two-slot STORAGE write logic is untouched, only the older slot's card
+// was removed.
+function showSaveData() {
+  openMenu('menu');
+  ovTitle.textContent = 'SAVE DATA';
+  ovTitle.className = '';
+  ovSub.textContent = 'export, import & reset' + (saveNotice ? ' · ' + saveNotice : '');
+  menuCard('EXPORT SAVE', 'download a .json backup of everything', () => {
+    const done = (r) => {
+      if (r && r.aborted) return;   // player cancelled the save dialog — say nothing
+      saveNotice = r && r.ok ? 'SAVE EXPORTED.' : 'EXPORT FAILED — try again.';
+      showSaveData();
+    };
+    const res = saveProfileToDisk(profile);
+    if (res && typeof res.then === 'function') res.then(done, () => done(null));
+    else done(res);
   });
-  menuCard('FOCUS', controller.focus + ': which enemies the pilot shoots first. Press to change (TAB)', () => {
-    controller.cycleFocus();
-    again();
-  });
-  menuCard('STANCE', controller.stance + ': ' + (STANCE_PLAIN[controller.stance] || '') + '. Press to change (G)', () => {
-    cycleStanceWithFeedback();
-    again();
-  });
-  if (!inRun) {
-    // Night mode: runs play and restart by themselves at half gold. Never
-    // saved, off by default, and two presses to turn on.
-    menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
-      state.night ? 'Runs play and restart by themselves for half gold. Press to turn off'
-        : nightArmed ? 'Press again: runs play by themselves and pay half gold'
-          : 'Leave the game running: it plays and restarts by itself. Pays half gold',
-      () => { toggleNight(); again(); });
-    if (readRecovery()) {
-      menuCard('RECOVERY FILE', 'download the damaged save the game set aside', () => {
-        const r = downloadRecovery();
-        saveNotice = r && r.ok ? 'Recovered data exported.' : 'Export failed. Try again.';
-        again();
-      });
-    }
-    if (preUpdateText()) {
-      menuCard('OLD SAVE', 'download your save from before the big update · also playable at /classic/', () => {
-        const r = downloadPreUpdate();
-        saveNotice = r && r.ok ? 'Old save downloaded.' : 'Download failed. Try again.';
-        again();
-      });
-    }
-    menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
-      resetArmed ? 'press again: erases all gold, upgrades and unlocks' : 'start over from nothing',
-      () => {
-        if (!resetArmed) { resetArmed = true; again(); return; }
-        profile = makeProfile();
-        persistProfile();
-        resetArmed = false;
-        again();
-      });
+  menuCard('IMPORT SAVE', 'load a .json backup (validated + migrated)', () => pickImportFile());
+  if (readRecovery()) {
+    menuCard('RECOVERY FILE', 'download the preserved damaged save', () => {
+      const r = downloadRecovery();
+      saveNotice = r && r.ok ? 'RECOVERED DATA EXPORTED.' : 'EXPORT FAILED — try again.';
+      showSaveData();
+    });
   }
-  menuCard('BACK', 'to settings', () => showSettings(true, inRun));
+  menuCard(resetArmed ? 'CONFIRM RESET?' : 'RESET PROFILE',
+    resetArmed ? 'wipes gold, upgrades & unlocks' : 'twice to confirm',
+    () => {
+      if (!resetArmed) { resetArmed = true; showSaveData(); return; }
+      profile = makeProfile();
+      persistProfile();
+      resetArmed = false;
+      showSaveData();
+    });
+  menuCard('BACK', 'to settings', () => showSettings(false));
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
 function startRun() {
-  // A fresh run drops any live draft ceremony and the shop's paging chrome.
+  // DRAFT PICK CEREMONY: a fresh run drops any live ceremony (RETRY while a
+  // ceremony rides, etc.) — the run setup below owns the screen from here.
   if (draftCeremony) endDraftCeremony(false);
-  clearShopPager();
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   state.character = ch;
   state.player = makePlayer();
@@ -8825,12 +7505,11 @@ function startRun() {
   // thorns/lifesteal) so every consumer can read them unguarded.
   p.stats = applyAffixes(
     applyCharacterUpgrades(
-      applyCharacter(applyMastery(applyMetaBonuses(p.stats, profile.purchased), profile), profile.equippedCharacter),
+      applyCharacter(applyMetaBonuses(p.stats, profile.purchased), profile.equippedCharacter),
       profile, profile.equippedCharacter), []);
   // SURVIVAL-GAP: the pool this run levels up FROM (CONFIG.SURVIVAL.HP_PER_LEVEL
   // is linear in it), stamped before any in-run change.
   state.baseMaxHp = p.stats.maxHp;
-  p.base = { damage: p.stats.damage, maxHp: p.stats.maxHp };
   p.hp = p.stats.maxHp;                          // mods changed maxHp
   // G11 CHALLENGE MODES — THE ONE APPLICATION SEAM. The session's pending mode
   // is stamped onto the run, its rules become the two run-scoped ceilings, and
@@ -8863,6 +7542,7 @@ function startRun() {
   state.weaponSlots = state.baseWeaponSlots;
   // WAVE-7 run-scoped systems reset here (fresh makePlayer already dropped
   // player.choices — these are the state-side companions):
+  state.evoTokens = 0;
   // WAVE-10: finale fields are run-scoped too.
   state.finalBoss = null;
   state.volleyMask = null;
@@ -8886,8 +7566,6 @@ function startRun() {
   // RUN-STRUCTURE run-scoped reset: the run clock, the win flag, and the maw
   // milestone all restart with the run.
   state.runWon = false;
-  state.survivalTicks = 0;
-  state.milestoneBonus = 0;
   state.lastMinute = 0;
   state.finalCall = false;
   state.mawCleared = false;
@@ -8929,21 +7607,9 @@ function startRun() {
   lastPurseFlush = 0;   // E1: the periodic purse flush restarts with the run
   // G9 FOLLOW-UP: run-scoped trophy counters restart with the run.
   state.runCounts = { bossKills: 0, chests: 0, waveTookDamage: false, untouchedWave: false,
+    tokens: { kill: 0, chest: 0, drop: 0 },   // EVOLUTION TOKEN channel ledger
     gold: { earned: 0, spent: 0,              // E1 purse ledger (per-tier kills)
       kills: { CHAFF: 0, GRUNT: 0, MID: 0, HEAVY: 0, ELITE: 0, MID_BOSS: 0, BOSS: 0 } } };
-  // SLICE 7: the dev session restarts with the run (gate off = stays null;
-  // the damage accumulator re-arms onto the fresh session).
-  dev = DEV_GATE ? devNewSession() : null;
-  devArm(dev);
-  setDevFreeBuild(devRunFree());
-  // STEP 3 DEV-NIGHT: frozen here off the FRESH session (the pref
-  // devNewSession just read — session and stamp can never disagree). A
-  // dev-night run joins nightRun so every nightmare rule (auto-continue,
-  // auto-restart, tier-first draft picks, cine/escape skips, AUTO pilot
-  // below) applies; only the banking cut is exempt (settleRunGold).
-  state.devNightRun = DEV_GATE && !!(dev && dev.devNight);
-  if (state.devNightRun) state.nightRun = true;
-  if (dev) devEnsurePanel();
   // E1: the purse is NOT reseeded from the bank — a fresh run after settlement
   // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
   // whatever profile.runPurse persisted (R4: nothing earned is confiscated).
@@ -8967,7 +7633,6 @@ function startRun() {
   nightRestartLeft = null;
   nightEvolveLeft = null;
   clearPilotInput();
-  state.wheel = 0;
   // G31: the stance pref rides along (the boot apply already covers a
   // reload; this re-reads so storage edited between runs is honoured).
   applyStancePref();
@@ -8988,8 +7653,6 @@ function startRun() {
       const qDef = C.SKILLS[classSkillId(state)] || {};
       const nm = qDef.LABEL || (qDef.NAME || '').split(' ')[0].toUpperCase();
       if (nm && qLbl.textContent !== nm) qLbl.textContent = nm;
-      const kbQ = document.getElementById('kb-qname');
-      if (nm && kbQ && kbQ.textContent !== nm) kbQ.textContent = nm;
     }
   }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
@@ -9004,6 +7667,9 @@ function startRun() {
   // registered ONCE (no re-roll, no mirrored placement constants, no
   // per-frame registration).
   state.atlas = createAtlas(C.GROUND.RIM, C.ATLAS.MAP_CELL);
+  for (const sh of state.shrines) {
+    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
+  }
   state.mapOpen = false;                     // C6: every run boots map-CLOSED
   state.takenChoices = [];
   state.pendingChoiceOffers = null;
@@ -9011,20 +7677,25 @@ function startRun() {
   state.waveChoiceSnap = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
   state.groundSeed = (Math.random() * 1e9) | 0;   // world-space decor field
-  // The buildings exist now: stand each altar clear of them, then put the
-  // final positions on the map.
-  for (const sh of state.shrines) {
-    placeReachable(sh, SHRINE_BUILDING_MARGIN);
-    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
-  }
   state.weapons = [];
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
   state.weapons.push(makeWeapon('VOLLEY'));
-  // The kit: the stored loadout choice, or every owned weapon that fits.
-  for (const t of chosenLoadout() || []) state.weapons.push(makeWeapon(t));
-  // Mastery: every weapon starts above level 1 by the profile's mastery.
-  for (const w of state.weapons) w.level = Math.min(WEAPON_MAX_LEVEL, 1 + masteryStartLevels(profile));
+  // G26 PRE-RUN LOADOUT: a stored choice (chosenLoadout — validated against
+  // the LIVE unlock set and this run's slot count, never the menu's own
+  // bookkeeping) IS the kit. With NO choice the run arms exactly the starting
+  // kit a fresh account has today (the zero-penalty contract): the character's
+  // starting weapon when unlocked, nothing else. openDraft offers no wpn_*
+  // grants, so what starts here is what the whole run carries.
+  const loadout = chosenLoadout();
+  if (loadout) {
+    for (const t of loadout) state.weapons.push(makeWeapon(t));
+  } else if (ch.startingWeapon && weaponUnlocked(profile, ch.startingWeapon)) {
+    // WAVE-11: character starting weapons ride the SAME unlock gate as the
+    // loadout (meta.js retroactively reset old saves to the starter set, so
+    // a WITCH save that never bought ZAP must not spawn with it).
+    state.weapons.push(makeWeapon(ch.startingWeapon));
+  }
   // Starting Artifact shop line: free random weapon levels at run start.
   for (let i = 0; i < (p.stats.artifactLevels || 0); i++) {
     const cands = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
@@ -9054,11 +7725,17 @@ function startRun() {
   interMsg = '';
   state.effects = [];
   state.toasts = [];
-  state.fuseDeclined = new Set();
-  state.fusionsMade = 0;
-  state.fusionRefills = 0;
+  // WAVE-25 FIX (audit 2.3): a synergy already live at t=0 (the ORBIT-starting
+  // PALADIN's VOLLEY+ORBIT) must be announced on EVERY run. Two bugs hid it:
+  // synergyNames (the toast-dedup set) was never reset between runs, so run 2+
+  // treated the pair as already seen; and this call used to sit BEFORE the
+  // toasts clear above, which wiped the announcement it had just queued. Both
+  // are fixed here — reset the set, then detect AFTER the toast list is empty.
+  state.synergyNames = null;
+  refreshSynergies();   // WAVE-11: pairs may already be live at run start
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
-  // No stale banner hold can freeze the new run's opening frames.
+  // EVOLUTION TOKEN banner is run-scoped: a fresh run gets its own first-token
+  // moment, and no stale hold can freeze the new run's opening frames.
   state.bannerHold = 0;
   state.deathBy = null;      // WAVE-20: no death recorded yet
   // W7b MYTHIC chase gate: each run rolls whether each mythic build-definer is
@@ -9066,31 +7743,109 @@ function startRun() {
   // roll rides the run's Math.random stream, which the paired-seed harness
   // seeds per run — so the gate is run-seeded by construction. Run-scoped:
   // rerolled every startRun, and the revive spend resets with the run.
-  // Draft actions: this run's charges and the cards banished from its drafts.
-  state.draftCharges = { reroll: p.stats.draftRerolls || 0, skip: p.stats.draftSkips || 0, banish: p.stats.draftBanishes || 0 };
-  state.draftBanned = new Set();
-  // The joker row: the slots this profile has bought, and no offer queued.
-  state.jokerSlots = Math.min(JOKER_SLOTS.MAX, p.stats.jokerSlots || JOKER_SLOTS.BASE);
-  state.jokerOffers = 0;
-  state.draftKind = null;
-  state.handFx = null;
+  state.chasePool = {};
+  if (DRAFT_LADDER_ON) {
+    // W7b TWO-STAGE chase gate (owner 2026-09-14): one 10% EVENT roll ("this run
+    // has a joker"), then a 60/25/15 count roll, then a uniform draw of WHICH
+    // mythics. Replaces per-card independent rolls, which stacked to ~27%
+    // any-mythic; the gate caps the event at 10% and the count keeps multiples fun.
+    if (Math.random() < DRAFT_LADDER.CHASE_GATE_CHANCE) {
+      const w = DRAFT_LADDER.CHASE_COUNT_WEIGHTS;           // [0.60, 0.25, 0.15]
+      const r = Math.random();
+      const count = r < w[0] ? 1 : (r < w[0] + w[1] ? 2 : 3);
+      const ids = DRAFT_MYTHIC_UPGRADES.map((m) => m.id);
+      for (let i = ids.length - 1; i > 0; i--) {             // Fisher-Yates, take N
+        const j = (Math.random() * (i + 1)) | 0;
+        const t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+      }
+      for (const id of ids.slice(0, count)) state.chasePool[id] = true;
+    }
+  }
   state.secondWindUsed = false;
   state.time = 0;
   state.spawnTimer = 0;
-  // THE TUTORIAL ARM. Run 1 of a fresh profile (achievements.totals.runs is 0
-  // until the first run settles) opens with the guided part, unless it was
-  // already finished or skipped. A returning player gets it only by asking
-  // (the what's-new offer or REPLAY TUTORIAL): that sets the in-memory opt-in,
-  // consumed here, and the run is stamped ASSISTED (full gold, no best-run
-  // record). C.PROLOGUE.ENABLED switches the automatic arm off; asking for
-  // the tutorial always works.
-  const runsPlayed = runsFinished();
+  // FIRST-RUN PROLOGUE (owner 2026-09-18, walking version): run #1 of a
+  // FRESH profile — derived from the existing counter
+  // (achievements.totals.runs at startRun; recordRun bumps it at run END, so
+  // it reads 0/absent through run #1) — opens INERT: no spawns, the clock
+  // frozen, a shimmering potion on screen 100wu above the spawn. NO new
+  // saved field. Absent counts as 0: the sanitized save keeps totals SPARSE
+  // ({} on a fresh profile), and a player who has settled even one run
+  // carries runs >= 1 — so absent really does mean "never finished a run".
+  state.prologueShieldT = 0;
+  const prologueRunsPlayed = Number(profile.achievements && profile.achievements.totals &&
+    profile.achievements.totals.runs) || 0;
+  // OPT-IN GUIDED RUN (owner 2026-09-17): the veteran's guided run arms ONLY
+  // on the in-memory opt-in (veteranTutorialPending — the what's-new offer's
+  // accept button, or REPLAY TOUR for a player who declined). Nothing
+  // automatic ever happens to a returning player: no pending opt-in, no
+  // prologue (the fresh profile's runs === 0 arm above is the only automatic
+  // path, and it stays). The opt-in is CONSUMED by the arm — the run that
+  // opens with the tutorial is the offer — and the run is stamped ASSISTED
+  // (B6: full gold, flagged, excluded from best-run records).
   state.assistedRun = veteranTutorialPending;
   veteranTutorialPending = false;
-  state.prologue = null;
-  state.prologueShieldT = 0;
-  tutArmRun(state.assistedRun || (C.PROLOGUE.ENABLED && runsPlayed === 0 &&
-    !tutSeen(LEDGER.guided) && !tutSeen(LEDGER.skipped)), runsPlayed);
+  // KILL SWITCH, GATE-VERSUS-REPLAY (owner 2026-09-18, REPLAY TOUR brief
+  // item 3): C.PROLOGUE.ENABLED (default false) gates ONLY the AUTOMATIC
+  // fresh-profile arm — the owner's park of the unsolicited tutorial. A
+  // DELIBERATE opt-in (the what's-new offer's accept button, or the
+  // manual's REPLAY TOUR card) is the player asking for the special level,
+  // and the kill switch protects nobody from that: the assistedRun arm
+  // bypasses it. OFF therefore still restores the exact pre-prologue run #1
+  // for every player who never asks.
+  state.prologue = (state.assistedRun || (C.PROLOGUE.ENABLED && prologueRunsPlayed === 0))
+    ? { t: 0, drunk: false, walkT: 0,
+        // DEFECT (c) LEDGER: which staged actions the player has DONE this
+        // phase (move/pilot/stats). A banner advances the moment its action
+        // lands here — see prologueActionDone / prologueAdvanceIfEarned.
+        done: { move: false, pilot: false, stats: false },
+        // STAGED INTRODUCTION (owner 2026-09-18: "introduce the buttons one
+        // at a time with the tooltip explaining what they do"): each staged
+        // control is hidden until its banner's OK, revealed with a tooltip,
+        // and live from that moment (see PROLOGUE_STAGES below).
+        revealed: { move: false, pilot: false, focus: false, stance: false, stats: false }, tip: null,
+        // SCRIPTED LEVEL-UP (owner addendum 2026-09-18): fired once when THE
+        // DRAFT banner walks into view — see the prologue tick in update().
+        draftFired: false,
+        // SKIPPED (owner 2026-09-18: "No, potion exists for the skipped
+        // tutorial too"): a skip is "stop explaining", NOT "start the run
+        // instantly" — the phase STAYS ARMED in skipped mode (banners and
+        // tooltips gone, the FULL control set live, the potion sequence
+        // running as normal) until the drink or the bound ends it.
+        skipped: false,
+        // TWO-TAP SKIP (owner 2026-09-18: "a bit too easy to skip without
+        // meaning to"): seconds left on the ARM window opened by the first
+        // SKIP/Escape press; only a second press inside the window skips.
+        skipArmT: 0,
+        // Side placement (up-RIGHT, clamped on-screen): the straight-up
+        // potion hid BEHIND banner #1's card plate (x 90..390, y 24..116) —
+        // see the POTION_DX comment in config.js.
+        potion: {
+          x: Math.min(C.VIEW_W - 30, Math.max(30, p.x + C.PROLOGUE.POTION_DX)),
+          y: Math.min(C.VIEW_H - 40, Math.max(40, p.y + C.PROLOGUE.POTION_DY)),
+        },
+        bannerIdx: 0, banners: PROLOGUE_BANNERS }
+    : null;
+  state.prologueRan = !!state.prologue;
+  // PROLOGUE ADDENDUM (owner 2026-09-18: "all buttons should be disabled
+  // during this initial period"): the body class is the DOM half of the lock
+  // (index.html greys the whole #touch layer out and pulls its pointer
+  // events); the logic half is the runAction/keydown gates. Run #2+ never
+  // arms it — and an explicit OFF here clears any stale class.
+  prologueLockButtons(!!state.prologue);
+  if (state.prologue) {
+    // A re-armed phase starts STAGE-CLEAN: no leftover .pr-on marks, no
+    // leftover tooltip (endPrologue sweeps both, but a re-arm within one
+    // session — the test harness's back-to-back arms — must not inherit
+    // the previous arm's staging state either).
+    prologueTipHide();
+    for (const s of PROLOGUE_STAGES) {
+      for (const id of s.btns) {
+        const el = typeof document !== 'undefined' && document.getElementById(id);
+        if (el && el.classList) el.classList.remove('pr-on');
+      }
+    }
+  }
   // RUN-COUNT MILESTONE CHEST (owner 2026-09-17: "We have run 50 start with a
   // big chest on the screen that pilot collects"): the counting rule is A RUN
   // COUNTS WHEN IT STARTS — this run is runsStarted = settled runs + 1, so
@@ -9193,8 +7948,8 @@ function openChestCard(milestone, reward) {
   openMenu('chest');
   ovTitle.textContent = 'RUN ' + milestone + '!';
   menuCard('MILESTONE CHEST',
-    'A reward for run ' + milestone + ': <b>+' + reward + ' gold</b>, already in your bank.<br>' +
-    'That is about ' + RUN_CHESTS.RUNS_WORTH + ' of your average runs.', closeChestCard);
+    'The pilot hauls a chest from the vault: <b>+' + reward + ' gold</b>, banked for good.<br>' +
+    RUN_CHESTS.RUNS_WORTH + ' runs\' worth, by your own average income.', closeChestCard);
 }
 
 function closeChestCard() {
@@ -9203,380 +7958,343 @@ function closeChestCard() {
   overlay.style.display = 'none';
 }
 
-// ---------- New-player tutorial ---------------------------------------------------
-// The glue between the game and the tutorial: src/tutorial.js holds the steps
-// and the rules, src/tutorial_ui.js the panel. docs/TUTORIAL.md has the step
-// and hint tables. Three parts share one panel:
-//   - the guided part of run 1 (tut.guided): live field, clock held at 0, the
-//     hero cannot be hurt, a few trainers stand in for the horde;
-//   - the menu steps after the first death (end screen, shop, back to PLAY);
-//   - the first-time hints, which hold the sim until GOT IT.
-// Progress lives in the profile's one-time-banner ledger (LEDGER ids and
-// 'hint:<id>'), so each thing shows once per profile.
-function hintsEnabled() { return !tourFlag(TOUR_KEYS.hintsOff); }   // Settings: HINTS on/off
-function setHintsEnabled(on) { setTourFlag(TOUR_KEYS.hintsOff, !on); }
-const tutSeen = (id) => bannerSeen(profile, id);
-const tutMark = (id) => { if (markBannerSeen(profile, id)) persistProfile(); };
-const tut = {
-  guided: null,        // the Guided instance for this run (over once handed over)
-  hints: new HintBook({ seen: tutSeen, mark: tutMark, enabled: hintsEnabled }),
-  ui: null,            // the DOM panel, built on first use
-  model: null,         // what the panel shows this frame
-  inited: false,
-  hintMode: null,      // the mode a hint went up in; it closes when the mode changes
-  run2Due: false,      // the second-run line is owed at the start of this run
-  hintsMuted: false,   // the run that carries the guided part shows no hints (skip included)
-  menuId: null, menuShownMs: NaN, menuSkipArmT: 0, shopGold: 0,
-  gems: 0, casts: 0, drinks: 0, xpMark: 0,
-  potions0: 0, spawnT: 0, lastGuidedS: null,
-  focus: null, stance: null,
-};
-const TUT_GOLD_STEP = GUIDED_STEPS.findIndex(s => s.id === 'gold');
+// ---------- FIRST-RUN PROLOGUE (owner 2026-09-18) -----------------------------
+// "It should be a potion seen on screen and the pilot walks towards it. It
+// could be a controlled sequence where no enemies spawn and the timer hasn't
+// started. We can even use this time to have dismissible (with an ok button)
+// banners explaining some of the basics of the game."
+//
+// The banners: at most four, one at a time, each short and plain. They are
+// CANVAS-drawn; the phase's live controls are the ACTION each banner asks
+// for plus the ALWAYS-VISIBLE SKIP (see prologueSkipRect — the owner's
+// defect (a) fix, 2026-09-18: an opt-out that is on screen for the WHOLE
+// phase, not only while a card is up). ADDENDUM (owner 2026-09-18: the
+// pilot PAUSES for banners): a banner goes up only after
+// C.PROLOGUE.BANNER_WALK_S of walking since the last advance, and while one
+// is up the pilot holds position (the player's own steering still moves
+// them — the lesson's action is doable with the card up).
+// DEFECT (c) FIX (owner 2026-09-18: "it doesn't wait for you to do an
+// action before presenting the next action so it's not effective"): each
+// banner names the ACTION that advances it (`action` + the `cue` line the
+// card paints). There is NO OK button any more — doing the thing IS the
+// continue. MAX_S still escapes a player who never does, and SKIP is the
+// second escape.
+// DEFECT (b) FIX (owner 2026-09-18: "it assumes you want to do manual so it
+// starts with steering" while AUTO flies): the LESSON now states the truth
+// of the MODE — banner 1 opens with "the pilot flies for you", and taking
+// the wheel is the ACTION (the phase's manual override makes the steering
+// lesson true in ANY pilot mode). Steering is never taught as the default;
+// it is taught as the opt-in it is.
+// Copy rule (the player review's ask): state what the thing IS or what you GET.
+// No emojis (house rule). Numbers ride the named constant so the copy can never lie.
+const PROLOGUE_BANNERS = [
+  { title: 'WHO FLIES?', action: 'move',
+    // THE TAKEOVER PROMISE (owner 2026-09-18: "But the instruction says drag
+    // the field so the desktop user will try it and it doesn't work"): the
+    // copy names the input the player's OWN platform has — keys on desktop,
+    // the drag on touch (isTouchPath(), the touch layer's own boot class)
+    // and both halves are TRUE now: either input IS the mode switch to
+    // MANUAL (the keydown + floating-stick arms), never a pretend borrow.
+    // A GETTER, not a string: the touch class is written at boot, after
+    // this table's module-init evaluation, so the body must resolve late.
+    get body() {
+      return isTouchPath()
+        ? 'The pilot flies for you. Drag the field to take the wheel whenever you want.'
+        : 'The pilot flies for you. Press a move key to take the wheel whenever you want.';
+    },
+    cue: 'STEER NOW TO CONTINUE' },
+  { title: 'THE PILOT BUTTON', action: 'pilot',
+    body: 'PILOT hands the flying back and forth between you and the autopilot.',
+    cue: 'PRESS PILOT (OR O) TO CONTINUE' },
+  // FOCUS + STANCE (owner addendum 2026-09-18: "it should give a message
+  // about focus and stance also"): same shape as the others — action-gated,
+  // the press IS the continue. What the thing IS and what you GET, no emoji.
+  { title: 'FOCUS', action: 'focus',
+    body: 'FOCUS aims the auto-attack: NEAREST, TOUGHEST, SWARM or RANGED. The pilot picks targets for you.',
+    cue: 'PRESS FOCUS (OR TAB) TO CONTINUE' },
+  { title: 'STANCE', action: 'stance',
+    body: 'STANCE is the risk dial: SAFE, BALANCED, GREEDY. GREEDY earns more; SAFE keeps you alive.',
+    cue: 'PRESS STANCE (OR G) TO CONTINUE' },
+  { title: 'LEVEL UP', action: 'stats',
+    body: 'Gems fill the bar at the top. Each level offers a draft: pick 1 of 3. STATS tracks your numbers.',
+    cue: 'OPEN STATS (OR I) TO CONTINUE' },
+  // THE SCRIPTED LEVEL-UP (owner addendum 2026-09-18: "maybe even trigger a
+  // level up and tell the player about the card selections"): when this
+  // banner walks into view the phase grants ONE free level-up (scripted, not
+  // earned — the opening stays inert) and the real draft screen opens with
+  // the explanation riding its subtitle. The pick is the banner's action.
+  { title: 'THE DRAFT', action: 'draft',
+    body: 'A free level-up, right now. Pick 1 of the 3 cards: the one you take changes the run.',
+    cue: 'PICK A CARD TO CONTINUE' },
+  { title: 'THE POTION', action: 'drink',
+    body: 'The potion ahead is free. Walk into it for ' +
+      C.PROLOGUE.INVULN_S + 's of shielding and a clear field. More in HOW TO PLAY.',
+    cue: 'WALK INTO THE POTION' },
+];
 
-function tutGuidedLive() { return !!(tut.guided && !tut.guided.over); }
-// A hint holds the sim so nothing happens to the hero while it is read.
-function tutPausesSim() { return !!tut.hints.active; }
-
-// Called from startRun. `arm` starts the guided part for this run.
-function tutArmRun(arm, runsPlayed) {
-  const p = state.player;
-  tut.guided = null;
-  tut.hints.active = null;
-  tut.run2Due = false;
-  tut.hintsMuted = !!arm;
-  tut.focus = null; tut.stance = null;
-  if (arm && state.assistedRun && profile.banners) {
-    // Asked for again: forget the old progress so every step shows.
-    for (const id of Object.values(LEDGER)) if (id !== LEDGER.hintsInit) delete profile.banners[id];
-    delete profile.banners['hint:run2'];
-  }
-  if (tutSeen(LEDGER.cohort) && !tutSeen(LEDGER.skipped) && !arm) {
-    // Starting another run ends the menu steps: once the shop step is done,
-    // or after two runs for a player who never bought anything.
-    if (tutSeen(LEDGER.shopBuy) || runsPlayed >= 2) tutMark(LEDGER.play);
-    tut.run2Due = runsPlayed >= 1;
-  }
-  if (!arm) return;
-  tutMark(LEDGER.cohort);
-  setTourFlag(TOUR_KEYS.draft, true);   // the old draft coach card stays down
-  tut.guided = new Guided({ touch: isTouchPath(), names: { skill: tutSkillName() } });
-  tut.gems = 0; tut.casts = 0; tut.drinks = 0; tut.spawnT = 0;
-  tut.xpMark = p.xp;
-  tut.potions0 = p.potions.hp;
+function prologueBanner() {
+  if (!state.prologue || state.prologue.drunk) return null;
+  if (state.prologue.skipped) return null;   // a skip stops the explaining
+  if (state.prologue.bannerIdx >= PROLOGUE_BANNERS.length) return null;
+  // The cadence gate: up only after BANNER_WALK_S of walking since the last
+  // advance (walk -> banner -> DO THE THING -> walk ... -> potion). While
+  // below it there is no banner on screen and the pilot is free to walk.
+  return state.prologue.walkT >= C.PROLOGUE.BANNER_WALK_S
+    ? PROLOGUE_BANNERS[state.prologue.bannerIdx] : null;
 }
 
-// One sim step of the guided part (update() calls this instead of advancing
-// the run clock). It counts the gems the steps wait for, keeps the XP bar short of
-// a level (the draft step grants the one level-up), holds the purse at 0 until
-// the gold step so run 1 pays what it always paid, and tops the trainers up.
-function tutSim(dt) {
-  const p = state.player;
-  if (p.xp > tut.xpMark) tut.gems++;
-  p.xp = Math.min(p.xp, p.xpNext * 0.5);   // gems only count here; see the level-up gate at the gem pickup
-  if (tut.guided.i < TUT_GOLD_STEP) state.runPurse = 0;
-  tut.xpMark = p.xp;
-  tut.spawnT -= dt;
-  if (tut.spawnT <= 0) {
-    let alive = 0;
-    for (const e of state.enemies) if (e.hp > 0) alive++;
-    if (alive < TUT.TRAINERS) {
-      const a = Math.random() * Math.PI * 2;
-      const e = makeTypedEnemy('CHASER', p.x + Math.cos(a) * 130, p.y + Math.sin(a) * 130, 0);
-      e.tutTrainer = true;
-      state.enemies.push(e);
-      tut.spawnT = 0.7;
+// DEFECT (c): the action ledger + the advance. prologueActionDone(kind) is
+// called from EVERY live seam of a staged action (the steering override,
+// runAction's pilot/stats, the 'O' key twin) — the banner whose action it
+// is advances the MOMENT the player does the thing (the update loop checks
+// the ledger against the up-banner each frame, so an action done before the
+// card appears still advances it the frame it comes up). The drink needs no
+// ledger entry: it ENDS the phase.
+function prologueActionDone(kind) {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  if (pr.done) pr.done[kind] = true;
+}
+function prologueAdvanceIfEarned() {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  const b = PROLOGUE_BANNERS[pr.bannerIdx];
+  if (!b || !b.action || b.action === 'drink') return;
+  if (pr.done && pr.done[b.action] && prologueBanner()) {
+    pr.bannerIdx++;
+    pr.walkT = 0;
+  }
+}
+
+// The drink. Invincibility (named constant), the on-screen clear THROUGH the
+// normal death pass (normal drops, normal credit — hp=0, the enemies loop at
+// the bottom of update() reaps), then the phase ends. The clear fires AT the
+// drink, i.e. BEFORE the shield ends, trivially. On-screen = the visible
+// field at the current zoom plus CLEAR_MARGIN world units — NOT the arena.
+function prologueDrink(p) {
+  if (!state.prologue || state.prologue.drunk) return;
+  state.prologue.drunk = true;
+  p.invuln = Math.max(p.invuln, C.PROLOGUE.INVULN_S);
+  state.prologueShieldT = C.PROLOGUE.INVULN_S;
+  const Z = zoomScale(state.zoom);
+  const m = C.PROLOGUE.CLEAR_MARGIN;
+  const x0 = state.cam.x - m, x1 = state.cam.x + C.VIEW_W / Z + m;
+  const y0 = state.cam.y - m, y1 = state.cam.y + C.VIEW_H / Z + m;
+  for (const e of state.enemies) {
+    if (e.hp > 0 && e.x >= x0 && e.x <= x1 && e.y >= y0 && e.y <= y1) e.hp = 0;
+  }
+  endPrologue('drunk');
+}
+
+// THE BOUND: the phase ends when the potion is drunk OR at MAX_S of UNPAUSED
+// time (addendum 2026-09-18: a held banner freezes the bound's clock, so the
+// lesson is never rushed — the OK button is the only way past a banner, like
+// any menu). ONBOARDING ABSORB: the prologue taught the entry basics, so
+// the stage-2 coachmark flags are marked seen HERE (run #1 never stacks a
+// second onboarding path); REPLAY TOUR re-arms them deliberately. (The
+// non-modal HintStrip this used to hand the moment back to is RETIRED.)
+function endPrologue(why) {
+  if (!state.prologue) return;
+  state.prologueRan = true;
+  state.prologue = null;
+  prologueLockButtons(false);
+  // STAGED INTRODUCTION close-out — THE GUARD THAT MATTERS MOST: at phase
+  // end the control set is EXACTLY a normal run's. The body class lift
+  // restores every hidden button; this sweep drops the staged .pr-on marks
+  // and the tooltip, so nothing of the staging survives into the run. A
+  // control that never came back would be this feature's worst failure.
+  prologueTipHide();
+  for (const s of PROLOGUE_STAGES) {
+    for (const id of s.btns) {
+      const el = typeof document !== 'undefined' && document.getElementById(id);
+      if (el && el.classList) el.classList.remove('pr-on');
     }
   }
+  for (const k of Object.values(TOUR_KEYS)) setTourFlag(k, true);
+  toast(why === 'drunk' ? 'SHIELDED ' + C.PROLOGUE.INVULN_S + 'S'
+    : why === 'skip' ? 'TUTORIAL SKIPPED - THE RUN BEGINS'
+    : 'THE RUN BEGINS');
 }
 
-function tutFacts() {
-  const p = state.player;
-  return { kills: p.kills, level: p.level, xp: tut.gems, draft: state.mode === 'draft',
-    casts: tut.casts, drinks: tut.drinks, purse: state.runPurse | 0, steering: !!heldMoveVec() };
-}
-
-// The skill step needs the Q skill castable: full mana and, for a
-// kill-charged ult, a full charge (this run's first cast comes free).
-function tutReadySkill() {
-  const p = state.player;
-  const id = classSkillId(state);
-  const def = C.SKILLS[id];
-  p.mana = p.stats.maxMana;
-  if (p.skillCd) p.skillCd[id] = 0;
-  if (def && def.KILLS != null) {
-    p.ultSpent = p.ultSpent || {};
-    p.ultSpent[id] = Math.min(p.ultSpent[id] || 0, (p.kills || 0) - def.KILLS);
+// The DOM half of the all-buttons-disabled lock (owner 2026-09-18): body class
+// `prologue-locked` — index.html greys the whole touch layer out (opacity 0.35)
+// and pulls its pointer events, an OBVIOUS disabled read that flips to full
+// opacity the moment the phase ends. Nothing else re-enables early: the class
+// is set ONLY at prologue arm time and cleared ONLY here.
+function prologueLockButtons(on) {
+  const body = typeof document !== 'undefined' && document.body;
+  if (body && body.classList) {
+    if (on) body.classList.add('prologue-locked');
+    else body.classList.remove('prologue-locked');
   }
 }
 
-// What the guided steps ask the game to do.
-const tutFx = {
-  enter(kind) {
-    const p = state.player;
-    if (kind === 'levelup') {
-      // The free level-up: the real draft, opened through the real path.
-      if (state.mode === 'playing' && !tut.guided.sawDraft) {
-        p.xp = Math.max(p.xp, p.xpNext);
-        levelUp();
+// ---------- PROLOGUE STAGED INTRODUCTION (owner 2026-09-18) --------------------
+// "If we hide the controls, then we would need to introduce the buttons one
+// at a time with the tooltip explaining what they do." The set and the order
+// answer ONE question — what does a player need in the first 60 seconds?
+//   1. MOVE (banner 1): without steering nothing else matters; the control is
+//      the FLOATING STICK / WASD (the joystick task's settled outcome — the
+//      floating stick with the home band IS the shipped movement control, so
+//      nothing revealed here is about to be replaced). No DOM button: the
+//      field itself; the tooltip floats over the stick's home band.
+//   2. PILOT (banner 2): the fresh default is AUTO_ALL — the highest-value
+//      fact the pads carry in the first minute is that the player can take
+//      the controls over.
+//   3. STATS (banner 3, beside LEVEL UP): the field report is where the
+//      level-up's numbers live; it opens read-only and pauses nothing that
+//      matters in an inert phase.
+// Banner 4 (THE POTION) reveals nothing — the potion is the finale. The cog
+// row / skills / potions are NEVER staged: in the first 60 seconds they are
+// either empty (no skills drafted, full HP), replaced by banners, or
+// settings-shaped — the hint layer introduces them post-run at their own
+// first-matter moments.
+const PROLOGUE_STAGES = [
+  { kind: 'move', afterBanner: 1, btns: [] },
+  { kind: 'pilot', afterBanner: 2, btns: ['tc-pilotbtn'] },
+  { kind: 'focus', afterBanner: 3, btns: ['tc-focusbtn'] },
+  { kind: 'stance', afterBanner: 4, btns: ['tc-stancebtn'] },
+  { kind: 'stats', afterBanner: 5, btns: ['tc-stats'] },
+];
+
+// The reveal: called every phase frame from update() — stage N's control
+// appears WHEN ITS BANNER IS UP (bannerIdx + 1 >= afterBanner), so the
+// action the card asks for is doable the moment the card asks (defect (c):
+// the control can no longer arrive only after an OK press that no longer
+// exists). The logic gates (runAction / keydown / movement) read
+// `revealed`, so the control is live the same instant it becomes visible.
+function prologueReveal() {
+  const pr = state.prologue;
+  if (!pr) return;
+  for (const s of PROLOGUE_STAGES) {
+    if (pr.bannerIdx + 1 >= s.afterBanner && !pr.revealed[s.kind]) {
+      pr.revealed[s.kind] = true;
+      for (const id of s.btns) {
+        const el = typeof document !== 'undefined' && document.getElementById(id);
+        if (el && el.classList) el.classList.add('pr-on');
       }
-    } else if (kind === 'mana') {
-      tutReadySkill();
-    } else if (kind === 'hurt') {
-      // A scripted hit, so the potion has something to heal.
-      p.hp = Math.min(p.hp, p.stats.maxHp * TUT.HURT_FRAC);
-      p.potions.hp = Math.max(1, p.potions.hp);
-      audio.playSfx('hurt');
+      prologueTipShow(s.kind);
     }
-  },
-  // THE IDLE RULE: the pilot does the step's action for a hands-off player.
-  perform(kind) {
-    const p = state.player;
-    if (kind === 'skill') { tutReadySkill(); runAction('q'); }
-    else if (kind === 'potion') runAction('h');
-    else if (kind === 'draft' && state.mode === 'draft' && ovCards.children[0]) ovCards.children[0].click();
-  },
-  // The handover (or a confirmed skip): protection ends and the run that
-  // follows is an ordinary run 1 with full bars, the potion back, clock at 0.
-  end(why) {
-    const p = state.player;
-    tut.lastGuidedS = tut.guided.elapsed;
-    tutMark(why === 'skip' ? LEDGER.skipped : LEDGER.guided);
-    p.hp = p.stats.maxHp;
-    p.mana = p.stats.maxMana;
-    p.potions.hp = Math.max(p.potions.hp, tut.potions0);
-    p.xp = 0;
-    resetRampage();   // the trainers' kill streak does not carry into the real run
-    state.spawnTimer = 0;
-    toast(why === 'skip' ? 'TUTORIAL SKIPPED' : 'Here they come');
-  },
-};
-
-// Which screen is up, in the tutorial's words.
-function tutScreen() {
-  const m = state.mode;
-  if (m === 'dead') return 'end';
-  if (m === 'setup') return 'prerun';
-  if (m === 'menu' && ovTitle.textContent === 'SHOP') return 'shop';
-  return m;
-}
-function tutCardNamed(name) {
-  for (const c of ovCards.children) {
-    if ((c.innerHTML || '').includes('class="name">' + name + '<')) return c;
   }
-  return null;
-}
-function tutSkillName() {
-  const el = document.getElementById('q-skill');
-  return (el && el.textContent) || 'FROST';
-}
-function tutShopGoal() {
-  const goal = bestNextPurchase(profile);
-  return goal && profile.gold >= goal.cost ? goal : null;
 }
 
-// A named target -> something with getBoundingClientRect, or null.
-function tutTarget(name) {
-  const p = state.player;
-  const padOrKey = (padId, keyId) => {
-    const el = document.getElementById(isTouchPath() ? padId : keyId);
-    return el && el.parentNode ? el.parentNode : null;
-  };
-  switch (name) {
-    case 'hero': return worldRegion(p.x, p.y, 18);
-    case 'hp': return canvasRegion(4, 13, 172, 11);
-    case 'mana': return canvasRegion(4, 23, 172, 11);
-    case 'xp': return canvasRegion(4, 33, 182, 13);
-    case 'gold': {
-      const g = renderer.hudChrome && renderer.hudChrome.purse;
-      return g ? canvasRegion(g.x, g.y, g.w, g.h) : canvasRegion(6, 52, 66, 14);
-    }
-    case 'skillbtn': return padOrKey('tc-q', 'kb-q');
-    case 'potionbtn': return padOrKey('tc-h', 'kb-h');
-    case 'cards': return ovCards;
-    case 'earn': return (ovSub.querySelector && ovSub.querySelector('.earn')) || ovSub;
-    case 'shopcard': return tutCardNamed('SHOP');
-    case 'backcard': return tutCardNamed('BACK');
-    case 'playcard': return tutCardNamed('PLAY');
-    case 'startcard': return tutCardNamed('START');
-    case 'loadoutcard': return tutCardNamed('LOADOUT');
-    case 'buycard': {
-      const goal = tutShopGoal();
-      const cv = goal && shopIconCanvases[goal.id];
-      return cv && cv.parentNode ? cv.parentNode : null;
-    }
-    default: return null;
+// The tooltip: appears WITH its control, points at it, and DISAPPEARS WHEN
+// THE CONTROL IS USED (learn by doing — never an OK press). Texts come from
+// controls_ref's own rows where a control exists (no forked strings); MOVE
+// is prologue-only copy because it introduces the field, not a button.
+function prologueTipText(kind) {
+  const touch = isTouchPath();
+  if (kind === 'move') return touch
+    ? 'DRAG ANYWHERE TO STEER - try it now'
+    : 'WASD OR ARROWS TO STEER - try it now';
+  if (kind === 'pilot') return introLine('pilot', touch);
+  if (kind === 'focus') return introLine('focus', touch);
+  if (kind === 'stance') return introLine('stance', touch);
+  if (kind === 'stats') return introLine('stats', touch);
+  return '';
+}
+function prologueTipShow(kind) {
+  if (state.prologue) state.prologue.tip = kind;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) {
+    el.className = 'tip-' + kind;
+    el.textContent = prologueTipText(kind);
+    el.hidden = false;
   }
 }
-function tutRects(targets) {
-  const out = [];
-  for (const t of targets || []) {
-    const el = typeof t === 'string' ? tutTarget(t) : t;
-    if (!el || typeof el.getBoundingClientRect !== 'function') continue;
-    const r = el.getBoundingClientRect();
-    if (r && (r.width > 0 || r.height > 0)) out.push(r);
-  }
-  return out;
+// Used = learned. Called from every live seam of a staged control (the
+// movement override, runAction's allow path, the keydown twins).
+function prologueTipUsed(kind) {
+  const pr = state.prologue;
+  if (!pr || pr.tip !== kind) return;
+  pr.tip = null;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) el.hidden = true;
 }
-// The on-screen controls the panel must not sit on: the pads and key bar,
-// and the shop's pager.
-function tutAvoid() {
-  if (!touchLayer || typeof touchLayer.querySelectorAll !== 'function') return [];
-  const out = [];
-  const add = (el) => {
-    const r = el && el.getBoundingClientRect();
-    if (r && r.width > 0 && r.height > 0) out.push(r);
-  };
-  for (const b of touchLayer.querySelectorAll('button')) add(b);
-  if (state.mode === 'menu') for (const id of ['shop-prev', 'shop-next', 'shop-ind']) add(document.getElementById(id));
-  return out;
+function prologueTipHide() {
+  const pr = state.prologue;
+  if (pr) pr.tip = null;
+  const el = typeof document !== 'undefined' && document.getElementById('prologue-tip');
+  if (el) el.hidden = true;
 }
 
-// The panel's own button and its SKIP link. `downMs` is when the press went
-// down; the logic refuses one that began before the panel was readable.
-function tutPrimary(downMs) {
-  if (tut.hints.active) return tut.hints.press(downMs);
-  if (tutGuidedLive()) return tut.guided.press(downMs, tutFx);
-  return false;
-}
-function tutSkip(downMs) {
-  if (tutGuidedLive()) {
-    const r = tut.guided.skipPress(downMs, tutFx);
-    if (r === 'armed') toast('PRESS SKIP AGAIN TO CONFIRM');
-    return r;
-  }
-  // A menu step: the same two presses end the menu steps for good.
-  if (!tut.menuId || !(downMs - tut.menuShownMs >= TUT.GUARD_MS)) return null;
-  if (!(tut.menuSkipArmT > 0)) { tut.menuSkipArmT = TUT.SKIP_CONFIRM_S; return 'armed'; }
-  tut.menuSkipArmT = 0;
-  tutMark(LEDGER.skipped);
-  return 'skipped';
-}
-
-// Keys while a panel is up. Returns true when the key was the tutorial's.
-function tutKeydown(ev) {
-  if (!tut.model) return false;
-  const primary = ev.key === 'Enter' || ev.key === ' ';
-  const fresh = !ev.repeat;   // a key held since before the panel never counts
-  if (tut.hints.active) {
-    // The sim is held: no game key may land under the hint.
-    if (fresh && (primary || ev.key === 'Escape')) tut.hints.press(performance.now());
-    if (ev.preventDefault) ev.preventDefault();
-    return true;
-  }
-  if (!tutGuidedLive()) return false;
-  if (ev.key === 'Escape') { if (fresh) tutSkip(performance.now()); return true; }
-  if (primary && tut.model.button) { if (fresh) tutPrimary(performance.now()); return true; }
+// The staged-act gate: through the phase ONLY the revealed controls' actions
+// pass runAction (everything else stays inert — the owner's all-buttons-
+// disabled rule, now with the staged exceptions). A SKIPPED phase is fully
+// live: the skip restores the whole control set at the press.
+function prologueActAllowed(act) {
+  if (!state.prologue || state.prologue.skipped) return true;
+  const rv = state.prologue.revealed || {};
+  if (act === 'pilot' && rv.pilot) return true;
+  if (act === 'stats' && rv.stats) return true;
+  if (act === 'focus' && rv.focus) return true;
+  if (act === 'stance' && rv.stance) return true;
   return false;
 }
 
-// Show first-time hint `id` (once per profile). The hook for things the frame
-// scan cannot see, e.g. the fusion overlay: tutHint('fusion', [element]).
-function tutHint(id, targets) {
-  if (id === 'run2' && !(tutSeen(LEDGER.cohort) && !tutSeen(LEDGER.skipped))) return false;
-  if (state.nightRun || (dev && dev.autoplay)) return false;
-  if (tut.hintsMuted && state.mode !== 'setup') return false;
-  if (!tut.hints.offer(id, targets || [], performance.now())) return false;
-  tut.hintMode = state.mode;
-  return true;
-}
-
-// Look for something that is on screen for the first time.
-function tutHintScan() {
-  const H = tut.hints;
-  if (H.active) return;
-  const m = state.mode;
-  if (m === 'playing') {
-    if (tut.run2Due) { tut.run2Due = false; if (tutHint('run2', [])) return; }
-    const onScreen = (o) => {
-      if (!o) return false;
-      const Z = zoomScale(state.zoom);
-      const sx = C.VIEW_W / 2 + (o.x - state.cam.x - C.VIEW_W / 2) * Z;
-      const sy = C.VIEW_H / 2 + (o.y - state.cam.y - C.VIEW_H / 2) * Z;
-      return sx > 24 && sx < C.VIEW_W - 24 && sy > 24 && sy < C.VIEW_H - 24;
-    };
-    const world = (id, o, r = 20) => !!o && H.wants(id) && onScreen(o) && tutHint(id, [worldRegion(o.x, o.y, r)]);
-    if (world('chest', (state.chests || []).find(onScreen))) return;
-    if (world('shrine', (state.shrines || []).find(s => !s.used && onScreen(s)), 26)) return;
-    if (world('arch', (state.arches || []).find(onScreen), 26)) return;
-    if (world('portal', state.portal, 26)) return;
-    if (world('boss', state.wave.boss && !state.wave.boss.midBoss ? state.wave.boss : null, 30)) return;
-    if (world('midboss', (state.wave.midBosses || []).find(b => b.hp > 0 && onScreen(b)), 30)) return;
-    if (H.wants('elite') && world('elite', state.enemies.find(e => e.elite && e.hp > 0 && onScreen(e)))) return;
-    // Focus and stance: the first time the player changes one.
-    if (tut.focus !== null && controller.focus !== tut.focus) tutHint('focus', []);
-    else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', []);
-    tut.focus = controller.focus; tut.stance = controller.stance;
-  } else if (m === 'evolve') {
-    // The same overlay carries evolutions and fusions; name the one on offer.
-    tutHint(fusionOffers().length ? 'fusion' : 'evoready', ['cards']);
-  } else if (m === 'draft') {
-    const ch = state.draftCharges;
-    if (ch && (ch.reroll > 0 || ch.skip > 0 || ch.banish > 0)) tutHint('draftacts', []);
-  } else if (m === 'setup') {
-    if (!tutHint('prerun', ['startcard']) && ownsExtraWeapon()) tutHint('loadout', ['loadoutcard']);
-  } else if (m === 'escape') {
-    tutHint('escape', []);
-  } else if (m === 'dead' && prestigeOfferForRun(state.runWon)) {
-    tutHint('prestige', []);
-  }
-}
-
-// The menu steps: what belongs on this screen, and has it been done?
-function tutMenuModel(realDt, nowMs) {
-  const screen = tutScreen();
-  // The shop step is done when the bank went down: something was bought.
-  // (Checked first: the purchase may leave nothing else affordable.)
-  if (tut.menuId === 'shop_buy' && screen === 'shop' && profile.gold < tut.shopGold) tutMark(LEDGER.shopBuy);
-  const step = menuStepFor(screen, tutSeen, { canBuy: !!tutShopGoal() });
-  if (!step) { tut.menuId = null; return null; }
-  if (tut.menuId !== step.id) {
-    tut.menuId = step.id; tut.menuShownMs = nowMs; tut.menuSkipArmT = 0;
-    tut.shopGold = profile.gold;
-  }
-  if (tut.menuSkipArmT > 0) tut.menuSkipArmT = Math.max(0, tut.menuSkipArmT - realDt);
-  return { id: 'menu:' + step.id, text: step.text(), targets: step.targets, button: null,
-    skip: tut.menuSkipArmT > 0 ? 'TAP AGAIN TO SKIP' : 'SKIP TUTORIAL', shownMs: tut.menuShownMs };
-}
-
-// Every frame, any mode (frame() calls this on the wall clock).
-function tutFrame(realDt, nowMs) {
-  if (!tut.inited) { tut.inited = true; tut.hints.init(runsFinished() >= 3); }
-  let model = null;
-  const inRun = state.mode === 'playing' || state.mode === 'draft';
-  if (tutGuidedLive()) {
-    if (inRun && !state.helpMode) tut.guided.tick(realDt, tutFacts(), nowMs, tutFx);
-    model = inRun && tutGuidedLive() ? tut.guided.panel() : null;
+// The manual steering vector during the phase (the MOVE stage): the revealed
+// input wins over the choreography's walk for as long as it is held — in ANY
+// pilot mode (the drag/keys ARE the lesson). The moment it goes non-zero the
+// MOVE tooltip is done: used means learned.
+function prologueManualVec() {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || !pr.revealed || !pr.revealed.move) return null;
+  const i = pilotInput || {};
+  let mx = 0, my = 0;
+  const mag = Math.min(1, Math.max(0, i.mag || 0));
+  if (mag > 0.15) {   // the stick's dead zone (controllers.js JOY_DEAD_ZONE)
+    const len = Math.hypot(i.x || 0, i.y || 0) || 1;
+    mx = ((i.x || 0) / len) * mag;
+    my = ((i.y || 0) / len) * mag;
   } else {
-    const H = tut.hints;
-    if (H.active && tut.hintMode !== state.mode) H.active = null;   // its screen is gone
-    tutHintScan();
-    H.tick(realDt, !!heldMoveVec());
-    model = H.panel() || tutMenuModel(realDt, nowMs);
+    mx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
+    my = (i.down ? 1 : 0) - (i.up ? 1 : 0);
+    if (mx !== 0 && my !== 0) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
   }
-  tut.model = model;
-  if (!model && !tut.ui) return;
-  if (!tut.ui) {
-    tut.ui = new TutorialUI({ doc: document, now: () => performance.now(),
-      onPrimary: tutPrimary, onSkip: tutSkip });
-  }
-  if (!model) { tut.ui.hide(); return; }
-  const cr = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect()
-    : { left: 0, top: 0, right: C.VIEW_W, bottom: C.VIEW_H, width: C.VIEW_W, height: C.VIEW_H };
-  const vw = window.innerWidth || cr.right, vh = window.innerHeight || cr.bottom;
-  const view = { left: 0, top: 0, right: vw, bottom: vh, width: vw, height: vh };
-  const menu = state.mode !== 'playing';
-  tut.ui.render(model, tutRects(model.targets), { bounds: menu ? view : cr, view, avoid: tutAvoid(), menu });
+  if (mx === 0 && my === 0) return null;
+  prologueActionDone('move');
+  prologueTipUsed('move');
+  return { x: mx, y: my };
 }
 
-// REPLAY TUTORIAL (Settings and the manual): the guided run again.
-function tutReplay(nextRun) {
-  armVeteranTutorial();
-  if (nextRun) {
-    closeSettings();
-    toast('The tutorial starts with your next run');
-  } else {
-    startRun();
+// SKIP ALL — APPROVED by the owner 2026-09-18 as the second enabled
+// exception alongside OK (during the prologue exactly two controls are live:
+// the banner's OK and this). CLARIFIED 2026-09-18 ("No, potion exists for
+// the skipped tutorial too"): the skip removes the EXPLANATIONS, not the
+// SEQUENCE — "stop explaining", NOT "start the run instantly". It sets the
+// skipped mode: no banner and no tooltip will ever appear again, the FULL
+// control set is live from the press, and the POTION SEQUENCE RUNS AS
+// NORMAL (the AUTO pilot walks to the visible potion, drinks it, gets the
+// 45s invuln + the clearing pulse — or the MANUAL fallback walk carries an
+// idle pilot; the un-walked potion still answers to MAX_S). endPrologue at
+// the drink is the phase's end, unchanged.
+// TWO-TAP CONFIRM (owner 2026-09-18: "it was a bit too easy to skip without
+// meaning to"): the gesture must be DELIBERATE. The first press ARMS the
+// corner button (the label flips to TAP AGAIN, render.js drawPrologueSkip)
+// for C.PROLOGUE.SKIP_CONFIRM_S; only a second press inside the window
+// actually skips. A normal play press cannot trip it: field taps steer, and
+// even a tap ON the corner only arms — the arm expires on its own.
+function prologueSkip() {
+  const pr = state.prologue;
+  if (!pr || pr.drunk || pr.skipped) return;
+  if (!(pr.skipArmT > 0)) {
+    pr.skipArmT = C.PROLOGUE.SKIP_CONFIRM_S;
+    toast('TAP SKIP AGAIN TO CONFIRM');
+    return;
   }
+  pr.skipArmT = 0;
+  pr.skipped = true;
+  // Nothing left to introduce: every control is already live.
+  pr.revealed.move = pr.revealed.pilot = pr.revealed.focus = pr.revealed.stance = pr.revealed.stats = true;
+  prologueLockButtons(false);
+  prologueTipHide();
+  for (const s of PROLOGUE_STAGES) {
+    for (const id of s.btns) {
+      const el = typeof document !== 'undefined' && document.getElementById(id);
+      if (el && el.classList) el.classList.remove('pr-on');
+    }
+  }
+  toast('TUTORIAL SKIPPED');
 }
 
 // ---------- WAVE-12: FIELD REPORT (in-run stats overlay) ----------------------
@@ -9622,70 +8340,40 @@ function openStats() {
   ovCards.style.flexWrap = 'wrap';
   ovCards.style.justifyContent = 'center';
   const p = state.player;
-  const info = () => audio.playSfx('uiMove');
+  const info = () => audio.playSfx('button');
 
-  // WEAPONS: icon + name (+ evolution or fusion) + level + one-line effect,
-  // then the weapon's road: what it evolves into and what it fuses with.
+  // WEAPONS: icon + name (+ evolution) + level + one-line effect.
   let wHtml = '';
   for (const w of state.weapons) {
     const icon = iconHtml(WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY, WEAPON_ICON_PALETTE, 5);
-    const base = WEAPON_NAMES[w.type] || w.type;
-    const tag = w.fusion
-      ? ' <span style="color:#7ad0ff">(' + base + ' + ' + (WEAPON_NAMES[w.fused.type] || w.fused.type) + ' fused)</span>'
-      : w.evolution ? ' <span style="color:#ffd75e">(' + base + ' evolved)</span>' : '';
-    const pr = evolutionProgress(w, ownedCards());
-    const evoLine = pr && !pr.evolved
-      ? '<br><span style="color:#ffd75e">evolves into ' + pr.def.name + ' at Lv ' + pr.levelReq +
-        ' with ' + pr.partnerName + (pr.partnerOwned ? ' (owned)' : '') + '</span>'
+    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+    const evoTag = w.evolution
+      ? ' <span style="color:#ffd75e">(' + (WEAPON_NAMES[w.type] || w.type) + ' evolved)</span>'
       : '';
-    const road = fusionRoadText(w, state.weapons, true);
-    const fuseLine = road ? '<br><span style="color:#7ad0ff">' + road + '</span>' : '';
-    wHtml += icon + '<b>' + weaponDisplayName(w) + '</b>' + tag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
-      '<br><span style="color:#a8a8c0">' + (w.fusion ? w.fusion.desc : (WEAPON_BLURBS[w.type] || '')) + '</span>' +
-      evoLine + fuseLine + '<br>';
+    wHtml += icon + '<b>' + nm + '</b>' + evoTag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
+      '<br><span style="color:#a8a8c0">' + (WEAPON_BLURBS[w.type] || '') + '</span><br>';
   }
   menuCard('WEAPONS', wHtml || 'none yet', info);
 
-  // HAND: the best hand and what it pays, then every card held.
-  const hand = p.hand;
-  const suitTint = (c) => (c.suit === 'hearts' || c.suit === 'diamonds') ? '#e06a6a' : '#b8c4e0';
-  const inHand = new Set((hand && hand.cards) || []);
-  const cardsHtml = handCards(p).map(c =>
-    '<span style="color:' + suitTint(c) + (inHand.has(c.key) ? ';font-weight:bold' : ';opacity:0.7') + '">' +
-    c.rank + SUIT_GLYPHS[c.suit] + ' ' + c.name + '</span>').join(' &middot; ');
-  const handCard = menuCard('HAND',
-    (hand
-      ? '<b style="color:#8fe0a0">' + hand.name + '</b> &middot; ' + describeHandBonus(hand, hand.scale)
-      : 'no hand yet &middot; a pair is two cards of one rank') +
-    '<br><span style="color:#a8a8c0">' + (cardsHtml || 'draft cards to build a hand') + '</span>', info);
-  handCard._handReport = { id: hand ? hand.id : null };
-
-  // JOKERS: the row, slot by slot.
-  const held = jokersHeld(state);
-  let jHtml = '';
-  for (let i = 0; i < jokerSlots(state); i++) {
-    const j = JOKERS[held[i]];
-    jHtml += j
-      ? '<b style="color:' + JOKER_TINT + '">' + j.name + '</b> <span style="color:#a8a8c0">' + j.desc + '</span><br>'
-      : '<span style="color:#6a6a8a">empty slot</span><br>';
-  }
-  menuCard('JOKERS ' + held.length + '/' + jokerSlots(state), jHtml, info)._jokerReport = { held: held.slice() };
-
   // ITEMS: name in its rarity color + affix effects (loot.js affix data).
-  // TIER-2: a named find shows its authored portrait ahead of the name
-  // (itemIconFor — first art-carrying affix); legacy items show text only.
   let iHtml = '';
   for (const it of state.items) {
     const col = RARITY_TINTS[it.rarity] || RARITY_TINTS.COMMON;
-    const portrait = itemIconFor(it);
-    const pIcon = portrait ? iconHtml(portrait.grid, portrait.palette, 2) : '';
-    iHtml += pIcon + '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
+    iHtml += '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
     for (const a of it.affixes || []) {
       const mag = a.magnitude < 1 ? '+' + Math.round(a.magnitude * 100) + '%' : '+' + a.magnitude;
       iHtml += '<span style="color:#a8a8c0">' + (a.name || a.id) + ' ' + mag + '</span><br>';
     }
   }
   menuCard('ITEMS', iHtml || 'nothing equipped', info);
+
+  // SYNERGIES: describeSynergy (synergies.js).
+  let sHtml = '';
+  for (const s of state.synergies) {
+    const d = describeSynergy(s);
+    sHtml += '<b>' + d.name + '</b><br><span style="color:#a8a8c0">' + d.desc + '</span><br>';
+  }
+  menuCard('SYNERGIES', sHtml || 'none active', info);
 
   // RAMPAGE + core stats.
   const pct = (v) => Math.round(v * 100) + '%';
@@ -9975,14 +8663,13 @@ function closeBestiary() {
 // cast is down. A mid-fight change by the player always wins (the restore only
 // fires when the stance is still the one we eased into).
 function easeToBossStance() {
-  maybeStanceTip();
   const want = C.AUTOPILOT.BOSS_STANCE;
   if (!want || state.preBossStance != null) return;
   state.preBossStance = controller.stance;
   if (controller.stance === want) return;          // already there: restore is a no-op
   controller.stance = want;
   const d = C.AUTOPILOT.STANCES[want] || {};
-  toast('BOSS COMING: the pilot plays ' + want + ' until it is dead (' + (d.TAG || '').toLowerCase() + ')',
+  toast('BOSS INCOMING - STANCE ' + want + ' (' + (d.TAG || '') + ')',
     C.HUD.STANCE_COLORS[want] || null);
 }
 function restoreBossStance() {
@@ -10012,16 +8699,12 @@ function restoreBossStanceIfClear() {
 // (WAVE-27 removed the canvas readout, so this toast must be complete on its
 // own — it names the stance, its CONFIG tag, and both real consequences),
 // tinted with the stance's risk color.
-const STANCE_PLAIN = {
-  SAFE: 'keeps well away from enemies, picks up less',
-  BALANCED: 'the middle setting',
-  GREEDY: 'goes after gems and loot, takes more hits',
-};
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
   saveStancePref(s);   // G31: the stance choice persists between runs
   const d = C.AUTOPILOT.STANCES[s] || {};
-  toast('STANCE ' + s + ' (' + (d.TAG || '') + '): ' + (STANCE_PLAIN[s] || ''),
+  toast('STANCE ' + s + ' - ' + (d.TAG || '') +
+    ' (flee x' + (d.KITE_MULT || 1) + ', loot x' + (d.PICKUP_MULT || 1) + ')',
     C.HUD.STANCE_COLORS[s] || null);
   return s;
 }
@@ -10045,6 +8728,18 @@ function magnetHeld(st) {
 }
 
 function runAction(act) {
+  // PROLOGUE ADDENDUM (owner 2026-09-18): through the first-run phase every
+  // button is inert EXCEPT the staged introductions — the controls revealed
+  // while their banner is up (prologueActAllowed: PILOT on banner 2, STATS
+  // on banner 3). Using a staged control retires its tooltip (used means
+  // learned) AND feeds the action ledger (defect (c): the press IS the
+  // banner's continue). The always-visible SKIP lives on the canvas pointer
+  // path, not this seam.
+  if (state.prologue && !prologueActAllowed(act)) return;
+  if (state.prologue && (act === 'pilot' || act === 'stats' || act === 'focus' || act === 'stance')) {
+    prologueActionDone(act);
+    prologueTipUsed(act);
+  }
   // WAVE-12: the FIELD REPORT opens from play and closes from itself, so it
   // routes BEFORE the playing/finale gate below.
   if (act === 'stats') {
@@ -10097,8 +8792,7 @@ function runAction(act) {
     // Witch's chain beam is a DIRECT hit — its damage lands, only the
     // frost-slow rider is refused ('beam').
     const qid = classSkillId(state);
-    const cast = flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
-    if (cast && tutGuidedLive()) tut.casts++;   // the tutorial's skill step
+    flyingGuard(qid === 'CHAIN_REACTION' ? 'beam' : 'blast', () => useSkill(state, qid));
   }
   else if (act === 'w') { useSkill(state, 'OVERCHARGE'); }
   // RSS8 MAGNET COLLECTOR: the card-granted skill's MANUAL act (X key / the
@@ -10125,7 +8819,7 @@ function cycleGameSpeed() {
   const v = prestigeNextSpeed(getPrestige(profile), state.gameSpeed);
   state.gameSpeed = v;
   toast('SPEED ' + v + 'x');
-  audio.playSfx('uiMove');
+  audio.playSfx('button');
   return v;
 }
 
@@ -10140,11 +8834,10 @@ function drinkHealthPotion(state) {
   const p2 = state.player;
   const healMult = ((p2.choices && p2.choices.potionHealMult) || 1) * (p2.stats.potionPower || 1);
   const before = p2.hp;
-  if (!usePotion(state, 'hp')) return false;    // heals potionHeal(p)
-  if (tutGuidedLive()) tut.drinks++;            // the tutorial's potion step
+  if (!usePotion(state, 'hp')) return false;    // base C.POTIONS.HP_HEAL
   let healed = p2.hp - before;
   if (healed > 0) {
-    const bonus = Math.min(potionHeal(p2) * (healMult - 1),
+    const bonus = Math.min(C.POTIONS.HP_HEAL * (healMult - 1),
       p2.stats.maxHp - p2.hp);
     if (bonus > 0) p2.hp += bonus;
     healed = p2.hp - before;
@@ -10178,9 +8871,16 @@ function drinkManaPotion(state) {
 // Contract (CONFIG.AUTOPILOT.AUTO_DRINK — the knobs, with the reasoning):
 //   * AUTO only. A MANUAL player keeps 100% of the decision: nothing here can
 //     drink a manual player's charge.
-//   * HP: drink at or below AUTO_DRINK.HP_FRACTION of max HP (never with an
-//     empty count). Half the bar leaves room for the heal to land in full.
-//     The MP line is max * MP_FRACTION (+ a starved skill).
+//   * strictly BELOW the line, never at or above it, and never with an empty
+//     count — no charge is burned at the boundary. The HP line is THE POTION'S
+//     HEAL VALUE (owner 2026-09-17, msg_01M2RE1V: "If HP drops below what a
+//     potion would heal, it should be used" — "In auto mode that is"):
+//     C.POTIONS.HP_HEAL x the SAME healMult drinkHealthPotion applies (Alchemy
+//     potionPower + choice potionHealMult), so the trigger and the drink can
+//     never disagree on what a potion is worth. The old 0.35-of-max gate sat
+//     far above any lethal dip on a big pool, so the pilot hoarded its whole
+//     stack and died rich. The MP line stays max * MP_FRACTION (+ a starved
+//     skill) — mana restores a COOLDOWN economy, not a heal.
 //   * mana is only worth a charge when a skill is genuinely WAITING on it: off
 //     cooldown AND short of its cost (skillManaCost carries the perks). Low
 //     mana with everything on cooldown is not a reason to spend.
@@ -10195,11 +8895,17 @@ function autoDrinkPotions(state, dt) {
   // strand a stale lockout (and MANUAL never reaches the drink block below).
   ad.hp = Math.max(0, ad.hp - dt);
   ad.mp = Math.max(0, ad.mp - dt);
-  if (!pilotAssistsYou() || tutGuidedLive()) return;
+  if (!pilotAssistsYou()) return;
   const d = C.AUTOPILOT.AUTO_DRINK;
   if (!d || !d.ENABLED) return;
   const p = state.player;
-  if (ad.hp === 0 && p.potions.hp > 0 && p.hp <= p.stats.maxHp * d.HP_FRACTION) {
+  // POTION TUNE 2026-09-17: the HP trigger is the potion's heal value — the
+  // SAME healMult the drink itself applies (Alchemy + choices), computed here
+  // from the same expression drinkHealthPotion uses, so the threshold tracks
+  // every potion-heal modifier the drink does. Nominal heal (pre boss-curse):
+  // the curse taxes the heal, not the trigger.
+  const healMult = ((p.choices && p.choices.potionHealMult) || 1) * (p.stats.potionPower || 1);
+  if (ad.hp === 0 && p.potions.hp > 0 && p.hp < C.POTIONS.HP_HEAL * healMult) {
     if (drinkHealthPotion(state)) ad.hp = d.COOLDOWN;
   }
   if (ad.mp === 0 && p.potions.mp > 0 && p.mana < p.stats.maxMana * d.MP_FRACTION) {
@@ -10248,7 +8954,7 @@ function autoDrinkPotions(state, dt) {
 //     and ZAP's hard gate holds at cd 0 if a cast drained it, so the next
 //     funded tick fires the bolt).
 function autoCastSkills(state) {
-  if (!pilotAssistsYou() || tutGuidedLive()) return;
+  if (!pilotAssistsYou()) return;
   const ac = C.AUTOPILOT.AUTO_CAST;
   if (!ac || !ac.ENABLED) return;
   const p = state.player;
@@ -10339,7 +9045,6 @@ window.addEventListener('keydown', (ev) => {
   // same press firing a skill or toggling the pilot under a paused coachmark
   // is exactly the "goes away too easily / without context" complaint.
   if (coachActive()) return;
-  if (tutKeydown(ev)) return;
   const k = ev.key.toLowerCase();
   if (ev.repeat && REPEAT_GUARDED.has(k)) return;
   // FULLSCREEN (addendum guard): Escape always leaves immersive mode — an
@@ -10379,7 +9084,7 @@ window.addEventListener('keydown', (ev) => {
   // key is INERT (a key must never fire what the player is trying to read
   // about) except ESC, which also leaves. This gate sits before the mode
   // dispatch so no mode branch can bypass it.
-  if ((ev.key === '?' || k === 'f1') && !tutGuidedLive()) {
+  if ((ev.key === '?' || k === 'f1') && !(state.prologue && !state.prologue.skipped)) {
     if (ev.preventDefault) ev.preventDefault();
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
     return;
@@ -10425,20 +9130,14 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (state.mode === 'draft') {
-    if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
-      // The digit keys are the one-press quick-pick, one per offered card
-      // (3 base; Deep Read and Full Hand add more). With BANISH armed the
-      // digit banishes that card instead (activateDraftCard routes it).
+    if (['1', '2', '3', '4'].includes(ev.key)) {
+      // 1-4: the W7b Full Hand mythic adds a fourth offer, and its card carries
+      // a [4] key hint — the routing must cover what the markup promises. These
+      // are the ONE-PRESS quick-pick (test_w7b_draft_ladder pins a single [4]
+      // press taking the offer), and since 2026-09-15 they match the pointer
+      // path exactly: one activation takes the card, no confirm step.
       const card = ovCards.children[Number(ev.key) - 1];
-      if (card && card._draftOffer) activateDraftCard(card._draftOffer);
-    } else if (k === 'r') {
-      draftReroll();
-    } else if (k === 's') {
-      draftSkip();
-    } else if (k === 'b') {
-      draftBanishToggle();
-    } else if (k === 'escape' && draftBanishArmed) {
-      draftBanishToggle();
+      if (card && card._draftOffer) pick(card._draftOffer);
     } else if (k === 'arrowleft' || k === 'arrowup' || (k === 'tab' && ev.shiftKey)) {
       if (ev.preventDefault) ev.preventDefault();
       draftFocusStep(-1);
@@ -10541,6 +9240,30 @@ window.addEventListener('keydown', (ev) => {
       if (card) card.click();
     } else menuNavKey(k, ev);
   } else if (state.mode === 'playing' || state.mode === 'finale') {
+    // PROLOGUE ADDENDUM: no in-run keys through the phase EXCEPT the staged
+    // introductions — the revealed controls' key twins are live (MOVE: WASD/
+    // arrows steer the phase in any pilot mode; PILOT: O; STATS: I — each
+    // use feeds the action ledger and retires its tooltip), and ESC is SKIP
+    // for the WHOLE phase (defect (a): the opt-out is always reachable, not
+    // only while a card is up — the same always-visible rule as the canvas
+    // SKIP button). runAction carries the same staging gate; the SKIP
+    // button is the canvas-path control.
+    if (state.prologue && !state.prologue.skipped) {
+      const rv = state.prologue.revealed || {};
+      if (k === 'escape') { prologueSkip(); return; }
+      if (rv.move) {
+        const dir = KEY_DIRS[k];
+        if (dir) { pilotInput[dir] = true; return; }
+      }
+      if (rv.pilot && k === 'o') { prologueActionDone('pilot'); togglePilotMode(); return; }
+      // ADDENDUM 3 (2026-09-18): the FOCUS/STANCE key twins, live at their
+      // stages — routed through runAction so the ledger + tooltip lifecycles
+      // are the same seam the touch buttons use.
+      if (rv.focus && k === 'tab') { runAction('focus'); return; }
+      if (rv.stance && k === 'g') { runAction('stance'); return; }
+      if (rv.stats && k === 'i') { runAction('stats'); return; }
+      return;
+    }
     // WAVE-23 FIX (desktop audit #2): a keyboard-only player had NO pause.
     // ESC was routed only in menu/settings/stats, and the in-run settings
     // screen (the game's only pause) opened solely from the mouse-only cog.
@@ -10575,12 +9298,21 @@ window.addEventListener('keydown', (ev) => {
     // every frame).
     if (k === '+' || k === '=') { cycleZoom(1); return; }
     if (k === '-' || k === '_') { cycleZoom(-1); return; }
-    // Held movement, checked before any screen opener so a move key is never
-    // swallowed by a menu. On AUTO the held key takes the wheel (runController)
-    // and the mode itself does not change. (E is Overcharge in every mode; W
-    // is only ever a move key.)
+    // Held movement — checked BEFORE any screen opener, so a movement key
+    // can never be swallowed by a menu.
+    // THE WHEEL IS YOURS (owner 2026-09-18: "It's a good idea though to let
+    // the user break auto by using a movement key... It's either manual or
+    // auto. You can't take over without changing that"): a MOVE KEY pressed
+    // while the pilot flies on AUTO IS the takeover. There is no third
+    // 'borrowed' state — the mode SWITCHES TO MANUAL (the announcement
+    // toast + the touch PILOT badge read state.pilotMode, so both reflect
+    // it on the same frame); O / the PILOT button cycle back up the ladder
+    // (MANUAL -> AUTO ALL -> AUTO MOVE), exactly as before. (W note: in
+    // AUTO, W used to fire Overcharge — E is Overcharge's permanent home in
+    // EVERY mode, so nothing is lost when W becomes a move key here.)
     const dir = KEY_DIRS[k];
     if (dir) {
+      if (normalizePilotMode(state.pilotMode) !== 'MANUAL') swapPilotMode('MANUAL');
       pilotInput[dir] = true;
       return;
     }
@@ -10626,26 +9358,22 @@ for (const id of ['tc-focus', 'tc-stance', 'tc-pilot', 'tc-q', 'tc-w', 'tc-h', '
   touchEls[id] = document.getElementById(id);
 }
 
-// The touch layer's class decides what is on screen in a run. A device whose
-// main pointer is coarse (a phone or tablet) gets the thumb pads ('.on') from
-// the start. Everything else starts as desktop ('.cog-only': the key bar, no
-// pads) and switches to the pads the first time a touch event is seen, so a
-// mouse player never has pads over the field and a touch-screen laptop gets
-// them when it is actually touched.
+// Reveal the layer on touch devices (CSS @media (pointer: coarse) covers
+// most; this catches the rest, e.g. hybrid laptops). WAVE-22b: non-touch
+// devices get COG-ONLY — the settings cog is the in-run menu button and
+// desktop must reach it with a mouse too.
+// DEVICE (2026-09-16): a coarse pointer with NO touch events used to fall
+// through to 'cog-only' here while the CSS coarse media still revealed the
+// on-screen pads — those users saw touch controls and were taught key
+// names. The class write now honours the SAME signal the CSS reads, so
+// isTouchPath() is true whenever the touch layer is actually visible.
 const coarsePointer = !!(typeof window !== 'undefined' && window.matchMedia &&
   window.matchMedia('(pointer: coarse)').matches);
-const hasTouch = coarsePointer;
+const hasTouch = ('ontouchstart' in window) ||
+  ((typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0) || 0) > 0 ||
+  coarsePointer;
 if (touchLayer && touchLayer.classList) {
   touchLayer.classList.add(hasTouch ? 'on' : 'cog-only');
-}
-function onFirstTouch() {
-  if (!touchLayer || !touchLayer.classList || !touchLayer.classList.contains('cog-only')) return;
-  touchLayer.classList.remove('cog-only');
-  touchLayer.classList.add('on');
-  fitCanvas();
-}
-if (typeof window !== 'undefined' && window.addEventListener) {
-  window.addEventListener('touchstart', onFirstTouch, { passive: true });
 }
 
 // ---------- HELP MODE (owner 2026-09-16, two briefs, one behaviour) ----------
@@ -10666,9 +9394,9 @@ const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft',
 // (joystick / SETTINGS (cog)) so the wording cannot fork.
 const HELP_EXTRAS = {
   move: { keys: 'arrows / WASD', touch: 'joystick',
-    purpose: 'move your hero. Weapons fire on their own' },
-  settings: { keys: 'ESC or P', touch: 'SETTINGS (cog)',
-    purpose: 'pause: settings, END RUN' },
+    purpose: 'move your hero (manual pilot) - weapons fire on their own' },
+  settings: { keys: 'the cog (top-right)', touch: 'SETTINGS (cog)',
+    purpose: 'settings: zoom, END RUN' },
 };
 // THE FIELD object meanings: ONE table for two consumers — the reference's
 // THE FIELD card renders the `field` lines verbatim, the help-mode object
@@ -10707,14 +9435,14 @@ const helpObject = (id) => OBJECT_HELP.find(o => o.id === id) || null;
 // mode name is now keyed off PILOT_MODES and the fallback cannot mislabel.
 const HINT_LINES = {
   AUTO_ALL: [
-    'O pilot (AUTO ALL) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
-    'Q / E skills &middot; H / N potions',
+    'O pilot (AUTO ALL) &middot; TAB focus &middot; G stance',
+    'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   AUTO_MOVE: [
-    'O pilot (AUTO MOVE) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
-    'Q / E skills &middot; H / N potions',
+    'O pilot (AUTO MOVE) &middot; TAB focus &middot; G stance',
+    'Q / E (W too) skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
@@ -11153,7 +9881,14 @@ function fsVisible() {
   // The 1e-9 epsilon makes the hide land at EXACTLY C.FULLSCREEN.HIDE_S of
   // frames (30 at 60Hz) — the decay arithmetic leaves ~1e-17 residue
   // otherwise and the button would linger one frame past its named window.
-  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn();
+  // PROLOGUE ADDENDUM (owner 2026-09-18): the fullscreen button stands DOWN
+  // through the whole first-run phase ("all buttons should be disabled") —
+  // HIDDEN rather than greyed because a canvas glyph cannot carry a disabled
+  // affordance legibly at 22x18 view px (disclosed in the report). fsVisible
+  // gates fsHit, so the enlarged target is inert too — it can never eat the
+  // banner-OK tap.
+  return fsMode() !== 'none' && fsOverlay.t > 1e-9 && chromeOn() &&
+    !(state.prologue && !state.prologue.skipped);
 }
 // The button box in VIEW coordinates — the ONE geometry source the renderer
 // paints, the hit-test reads and the tests assert (canvasRegion projects it
@@ -11341,7 +10076,19 @@ if (touchLayer && touchLayer.addEventListener) {
     if (fjoy.pointerId !== null) return false;                  // one stick
     if (state.mode !== 'playing') return false;                  // runs only
     if (state.helpMode) return false;                            // "?" owns taps
-    // Any pilot mode: on AUTO the drag takes the wheel while it is held.
+    if (normalizePilotMode(state.pilotMode) !== 'MANUAL') {
+      // PROLOGUE STAGED INTRODUCTION: until MOVE is revealed the field
+      // stays inert — the phase's own lock owns the early drag.
+      if (state.prologue && !(state.prologue.revealed && state.prologue.revealed.move)) {
+        return false;
+      }
+      // THE WHEEL IS YOURS (owner 2026-09-18): a DRAG on the field while
+      // the pilot flies on AUTO is the takeover — the same hand-over a
+      // move key performs on desktop (see the keydown arm). No third
+      // state: the mode switches to MANUAL (badge + toast announce it on
+      // this frame); O / the PILOT button cycle back to AUTO.
+      swapPilotMode('MANUAL');
+    }
     fjoy.pointerId = ev.pointerId ?? 0;
     fjoy.ox = ev.clientX ?? 0; fjoy.oy = ev.clientY ?? 0;
     // POINTER CAPTURE: keep THIS finger's moves/lifts arriving even if the
@@ -11469,40 +10216,6 @@ function chromeOn() {
   // not a run screen (verified in test_death_cine + the phone verifier).
   return state.mode === 'playing' || state.mode === 'finale';
 }
-// View px of canvas hidden under the right-hand pad column (0 when the pads
-// sit beside the canvas, as on a phone, or are not shown).
-function radarPadInset() {
-  try {
-    const pad = document.querySelector && document.querySelector('#touch .pad.right');
-    if (!pad) return 0;
-    const pr = pad.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
-    if (!pr.width || !cr.width) return 0;
-    // Only a pad standing in the canvas's right half, reaching its bottom rows.
-    if (pr.left < cr.left + cr.width / 2 || pr.bottom < cr.bottom - cr.height * 0.3) return 0;
-    const overlap = cr.right - pr.left;
-    return overlap > 0 ? Math.ceil(overlap * C.VIEW_W / cr.width) + 3 : 0;
-  } catch { return 0; }
-}
-// View px the run clock must step down to clear a DOM top-row button that
-// overlays the canvas's top-right corner (the transient row on a landscape
-// phone). 0 when nothing covers the clock.
-function clockTopInset() {
-  try {
-    if (!touchLayer || !touchLayer.querySelectorAll) return 0;
-    const cr = canvas.getBoundingClientRect();
-    if (!cr.width) return 0;
-    const clockLeft = cr.left + cr.width * 0.74;   // the clock's column
-    let bottom = 0;
-    for (const el of touchLayer.querySelectorAll('button.cog')) {
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.05) continue;
-      const r = el.getBoundingClientRect();
-      if (!r.width || r.right < clockLeft || r.left > cr.right) continue;
-      if (r.bottom > cr.top && r.top < cr.top + cr.height * 0.2) bottom = Math.max(bottom, r.bottom);
-    }
-    return bottom > cr.top ? Math.ceil((bottom - cr.top) * C.VIEW_H / cr.height) + 2 : 0;
-  } catch { return 0; }
-}
 function syncChrome() {
   // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
   // factor as first-class state, BEFORE anything reads them this frame.
@@ -11523,12 +10236,6 @@ function syncChrome() {
   // state.*, never the profile).
   state.runPurse = purseClamp(profile.runPurse);
   state.zoomScale = zoomScale(state.zoom);
-  // M2: where the right pad column overlays the canvas (desktop), the radar
-  // steps left of it. Re-measured twice a second, not per frame.
-  radarPadInset.tick = (radarPadInset.tick || 0) + 1;
-  if (radarPadInset.tick % 30 === 1) state.radarInset = radarPadInset();
-  if (radarPadInset.tick % 6 === 1) state.clockInset = clockTopInset();
-  state.wheelCue = chromeOn() ? wheelCueText() : '';
   // FULLSCREEN toggle state for the renderer, published once per frame: the
   // button paints only where the API exists, the 0.5s window is live and the
   // pad screens are up (fsVisible = the chromeOn gate — same screens as the
@@ -11557,7 +10264,7 @@ function syncChrome() {
   // one-line flip back); desktop/cog-only keeps the fixed base for mouse-drag
   // (WAVE-23 parity). The [data-joy] handler above stays live either way.
   if (joyEl && joyEl.style) {
-    const wantJoy = (on && (state.pilotMode === 'MANUAL' || state.wheel > 0) &&
+    const wantJoy = (on && state.pilotMode === 'MANUAL' &&
       !(C.JOY.FLOAT && isTouchPath())) ? 'block' : 'none';
     if (joyEl.style.display !== wantJoy) { joyEl.style.display = wantJoy; chromeLayoutChanged = true; }
   }
@@ -11573,33 +10280,21 @@ function syncChrome() {
   syncHelpHud();
   if (chromeLayoutChanged) fitCanvas();
 }
-// The PILOT badge: the mode in plain words (compact pads abbreviate), then
-// what the pilot is doing. While the player holds the wheel it reads YOU.
+// LADDER STEP 2 text (owner 2026-09-17: "2nd would be reduced text in the
+// control buttons. A1/A2/M, that kind of thing"): in compact mode the pilot
+// rungs abbreviate to the owner's own short forms. Pure — exposed via __TEST
+// (pilotBadgeText) so the node suite pins the mapping. The full wording stays
+// reachable off the button: the SETTINGS PILOT card (pilotPrefLabel) and the
+// help-mode explainer carry it.
 function pilotBadgeText(mode, act, compact) {
-  const FULL = { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' };
   const ABBR = { AUTO_ALL: 'A1', AUTO_MOVE: 'A2', MANUAL: 'M' };
-  const m = (compact ? ABBR[mode] : FULL[mode]) || mode;
-  return act && act !== mode && act !== m ? m + ' \u00b7 ' + act : m;
-}
-const KEYBAR_TWIN = { 'tc-q': 'kb-q', 'tc-w': 'kb-w', 'tc-h': 'kb-h', 'tc-n': 'kb-n' };
-const keybarEls = {};
-for (const id of ['kb-pilot', 'kb-q', 'kb-w', 'kb-h', 'kb-n', 'kb-qname']) {
-  keybarEls[id] = document.getElementById(id);
+  const m = compact ? (ABBR[mode] || mode) : mode;
+  return act && act !== mode ? m + ' \u00b7 ' + act : m;
 }
 function updateTouchHud() {
   syncChrome();
   const p = state.player;
-  const set = (id, v) => {
-    const el = touchEls[id];
-    if (el) el.textContent = v;
-    const twin = KEYBAR_TWIN[id];
-    if (twin) kb(twin, v);
-  };
-  // The desktop key bar mirrors the pad badges (written only on change).
-  const kb = (id, v) => {
-    const el = keybarEls[id];
-    if (el && el.textContent !== v) el.textContent = v;
-  };
+  const set = (id, v) => { const el = touchEls[id]; if (el) el.textContent = v; };
   // WAVE-27: the badges are the doctrine's ONLY on-screen home now, and they
   // read the PUBLISHED state (state.focus / state.stance / state.stanceAct,
   // set by syncChrome just above) rather than scraping the controller — so
@@ -11613,9 +10308,7 @@ function updateTouchHud() {
   const act = state.stanceAct;
   set('tc-focus', state.focus);
   set('tc-stance', state.stance);
-  const wheelOn = !pilotMovesYou() && state.wheel > 0;
-  set('tc-pilot', pilotBadgeText(state.pilotMode, wheelOn ? 'YOU' : act, padsCompact));
-  kb('kb-pilot', wheelOn ? 'YOU' : pilotMovesYou() ? 'MANUAL' : 'AUTO');
+  set('tc-pilot', pilotBadgeText(state.pilotMode, act, padsCompact));
   const skill = (id, defId) => {
     // N1 slice 3 + 2026-09-17 mana price: an ult badge reads charge AND the
     // pool — cooling (`12.0s`) while the floor runs, LOW when charged but
@@ -11736,7 +10429,8 @@ function hudTextBlock(p) {
   const slotCap = state.weaponSlots || C.WEAPON_SLOTS;
   const nonVolley = state.weapons.filter(w => w.type !== 'VOLLEY').length;
   const wpnNames = state.weapons.map(w => {
-    return weaponDisplayName(w) + ((w.level || 1) > 1 ? '\u00b7' + w.level : '');
+    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+    return nm + ((w.level || 1) > 1 ? '\u00b7' + w.level : '');
   }).join(',');
   // Equipped rare items (loot.js): last word of the name keeps the line short.
   const itemNames = state.items.map(it => it.name.split(' ').pop()).join(',');
@@ -11766,7 +10460,7 @@ function hudTextBlock(p) {
     `POTIONS  H:${p.potions.hp}  N:${p.potions.mp}   TAB Focus:${state.focus} G:${state.stance} Pilot:${state.pilotMode}\n` +
     `WPN ${1 + nonVolley}/${slotCap} ${wpnNames}\n` +
     `ITM ${state.items.length}/${MAX_EQUIPPED} ${itemNames}` +
-    '\n' +
+    (state.evoTokens > 0 ? ` \u2666${state.evoTokens}` : '') + '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
     `   ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}` +
@@ -11874,6 +10568,24 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
+  // FIRST-RUN PROLOGUE: the ALWAYS-VISIBLE SKIP button — hit-test BEFORE
+  // the joystick arms, and NOT gated on a banner being up (defect (a): the
+  // opt-out is reachable at every moment of the phase, walk included). Only
+  // the button itself consumes the gesture; every other press during the
+  // prologue is an ordinary steering press (the banners are non-modal).
+  if (state.prologue && !state.prologue.skipped) {
+    const r0 = canvas.getBoundingClientRect();
+    if (r0.width && r0.height) {
+      const vx0 = (ev.clientX - r0.left) / r0.width * C.VIEW_W;
+      const vy0 = (ev.clientY - r0.top) / r0.height * C.VIEW_H;
+      const skR = prologueSkipRect();
+      if (vx0 >= skR.x && vx0 <= skR.x + skR.w && vy0 >= skR.y && vy0 <= skR.y + skR.h) {
+        if (ev.preventDefault) ev.preventDefault();
+        prologueSkip();
+        return;
+      }
+    }
+  }
   // FLOATING JOYSTICK (owner 2026-09-18): a canvas press in MANUAL play arms
   // the stick AT the touch point. AFTER fsHit above (the fullscreen button's
   // own tap toggles, never steers); the hook itself declines help-mode,
@@ -11942,15 +10654,6 @@ function startPortalCine() {
   state.wave.cinePending = false;
   cineT0 = performance.now();
   lastCinePhase = null;
-  // 8X SEQUENCING (owner 2026-09-21: draft menu stuck over the escape
-  // sequence): portal entry can land inside a draft pick ceremony — mode is
-  // already 'playing' again while the resolved cards are still up over the
-  // live game. openIntermission routes here BEFORE openMenu, so no screen
-  // takes the overlay over; the movie must drop it, or the stale draft
-  // cards ride through the cine into the escape. The ceremony's own state
-  // still stands down on its own (tickDraftCeremony, mode-gated) without
-  // touching this screen.
-  overlay.style.display = 'none';
   state.mode = 'portal-cine';
   // NIGHT MODE: no one is watching the movie — hand straight to the end
   // handler (the same call isDone would make).
@@ -12002,6 +10705,7 @@ function endDeathCine() {
   state.toasts.length = 0;
   state.bossBanner = null;
   overlay.style.display = 'flex';
+  maybeDeathCoach();
 }
 
 // ---------- V1: THE ESCAPE SEQUENCE (src/escape/) ----------------------------
@@ -12009,10 +10713,6 @@ function endDeathCine() {
 // routes input to it while it is live, and takes the (always-soft) hand-back.
 function startEscape(opts = {}) {
   state.portal = null;
-  // Same sequencing guarantee as startPortalCine: the escape owns the full
-  // screen — no overlay from an earlier mode may ride into it (backstop;
-  // the portal-cine entry already drops it).
-  overlay.style.display = 'none';
   state.mode = 'escape';
   ESCAPE.begin({
     // The corridor seed is the run's identity, not a sim input; anything
@@ -12028,7 +10728,7 @@ function startEscape(opts = {}) {
     // swapPilotMode (persisted pref + toast — no second pilot anywhere).
     auto: !pilotMovesYou(),
     getAuto: () => !pilotMovesYou(),
-    onToggleMode: () => togglePilotMode(),
+    onToggleMode: () => swapPilotMode(pilotMovesYou() ? 'AUTO_ALL' : 'MANUAL'),
     onEnd: opts.test ? endEscapeTest : endEscape,
     // The in-run settings TEST button: a play-test entry that PAYS NOTHING
     // (the payout is repeatable currency — a paying test button would be a
@@ -12054,13 +10754,12 @@ function endEscape(r) {
   // cleared, CONTINUE into wave 2. The lead line carries the escape's story
   // (and its payout, when it paid one) onto the intermission screen.
   const lead = r.result === 'complete'
-    ? `ESCAPED: +${r.payout} gold banked`
+    ? `ESCAPE COMPLETE +${r.payout}g (bank) in ${Math.floor(r.seconds)}s`
     : r.result === 'skip'
-      ? (r.paidSkipUsed ? `ESCAPE SKIPPED: +${r.payout} gold banked (Escape Writ)`
-        : `ESCAPE SKIPPED: ${r.forgone} gold passed up`)
+      ? (r.paidSkipUsed ? `ESCAPE SKIPPED (writ) +${r.payout}g (bank)` : 'ESCAPE SKIPPED — payout forgone')
       : r.result === 'caught'
-        ? 'ESCAPE FAILED: the horde caught you. No gold, the run goes on'
-        : 'ESCAPE FAILED: you fell. No gold, the run goes on';
+        ? 'ESCAPE FAILED: caught by the horde — the run continues'
+        : 'ESCAPE FAILED: fell — the run continues';
   openIntermission({ lead });
 }
 
@@ -12138,7 +10837,7 @@ function startFinale() {
     ttl: 2.5,
   };
   audio.playPortalCue('BOSS_YELL');
-  audio.playSfx('bossArrive');
+  audio.playSfx('death');
   audio.startMusic();
 }
 
@@ -12212,7 +10911,7 @@ function updateFinale(dt) {
     }
     state.effects.push({ kind: 'boss_nova', x: b.x, y: b.y, radius: 60, age: 0, ttl: 0.5 });
     toast('THE MAW OPENS');
-    audio.playSfx('slam');
+    audio.playSfx('death');
   }
 
   // Barrage projectiles: the FIRST touch of a volleyId costs an exact third
@@ -12288,7 +10987,7 @@ function updateFinale(dt) {
       dmg *= evoCritMult2;
       state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
     }
-    b.hp = Math.max(0, b.hp - devHit(dmg));
+    b.hp = Math.max(0, b.hp - dmg);
     b.flash = 0.08;
     pr.hit.add(b);
     state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y, age: 0, ttl: 0.12 });
@@ -12337,7 +11036,7 @@ function mawDefeated() {
   // back, exactly as mawWithdrew does. Without this the saved pre-boss stance
   // stayed pending and leaked into the NEXT run (startRun did not clear it).
   restoreBossStance();
-  audio.playSfx('victory');
+  audio.playSfx('levelup');
   // The biggest earned moment in the game — same flourish the finale used.
   triggerEarnedMoment('finale', state.player.x, state.player.y);
   // The unlock: a persistent milestone flag on the profile (src/save.js keeps
@@ -12346,18 +11045,16 @@ function mawDefeated() {
   profile.milestones = { ...(profile.milestones || {}), mawSlain: true };
   toast('THE MAW IS SLAIN — ' + C.RUN.MAW_UNLOCK + ' UNLOCKED');
   toast(first ? 'A NEW DIFFICULTY TIER IS YOURS' : 'THE MAW FALLS AGAIN');
-  // The milestone bonus joins the run's account and is banked, with the
-  // purse, when the run ends (settleRunGold). The unlock itself saves now.
+  // The milestone pays on top of the run's ordinary account.
   const bonus = C.RUN.MAW_CLEAR_BONUS || 0;
-  state.milestoneBonus = (state.milestoneBonus || 0) + bonus;
-  persistProfile();
+  const { gold } = settleRunGold({ winBonus: bonus });
   // Hand the milestone headline to the intermission (it renders the follow-on
   // cards: CONTINUE, chests, blessings) — a milestone beat should read as one.
   ovCards.innerHTML = '';
   openIntermission({
     title: 'THE MAW IS SLAIN',
     lead: `<span class="earn">MILESTONE: ${C.RUN.MAW_UNLOCK} TIER UNLOCKED` +
-      `${bonus ? ` · +${bonus} GOLD AT RUN END` : ''}</span>`,
+      `${bonus ? ` · +${bonus} BONUS` : ''} · gold +${gold}</span>`,
   });
 }
 
@@ -12391,19 +11088,17 @@ function mawWithdrew() {
 // 'draft' mode and FREEZES update() mid-sweep (a sweep frozen at 0.25s of 0.45
 // never printed its total; the freeze was the bug). Ticking here on realDt
 // also makes the streak immune to the earned-moment dilation by construction.
-function tickMagnetSweep(sweepDt) {
+function tickMagnetSweep(realDt) {
   const p = state.player;
   if (!p) return;
-  // BOSS-CLEAR SWEEP (msg_01M2R966): ticks on the SAME frame slot and
+  // BOSS-CLEAR SWEEP (msg_01M2R966): ticks on the SAME wall-clock slot and
   // the SAME pull shape as the magnet — the whole freeze-proof argument
   // above applies verbatim (a sweep collecting XP can fire openDraft()
-  // mid-sweep and freeze update(); ticking here every frame is immune). The
+  // mid-sweep and freeze update(); ticking here on realDt is immune). The
   // total is the boss-clear moment's own line, not the magnet's.
-  // SLICE 8: the caller passes paceDt, so at dev speed >1 the sweep covers
-  // the same sim-time as 1x (gate off / 1x: paceDt IS realDt, unchanged).
   if (p.bossSweep > 0) {
-    p.bossSweep -= sweepDt;
-    const bPull = Math.min(1, sweepDt * C.BOSS_SWEEP.PULL_RATE);
+    p.bossSweep -= realDt;
+    const bPull = Math.min(1, realDt * C.BOSS_SWEEP.PULL_RATE);
     for (const arr of [state.gems, state.drops, state.itemDrops]) {
       for (const g of arr) { g.x += (p.x - g.x) * bPull; g.y += (p.y - g.y) * bPull; }
     }
@@ -12422,8 +11117,8 @@ function tickMagnetSweep(sweepDt) {
     }
   }
   if (!(p.magnetSweep > 0)) return;
-  p.magnetSweep -= sweepDt;
-  const pull = Math.min(1, sweepDt * C.MAGNET.PULL_RATE);
+  p.magnetSweep -= realDt;
+  const pull = Math.min(1, realDt * C.MAGNET.PULL_RATE);
   for (const arr of [state.gems, state.drops, state.itemDrops]) {
     for (const g of arr) { g.x += (p.x - g.x) * pull; g.y += (p.y - g.y) * pull; }
   }
@@ -12451,17 +11146,7 @@ function frame(now) {
   // simulation is this real delta times the earned-moment time scale.
   const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
-  // SLICE 8: sim-clock pacing for sim-gating UI holds at dev speed >1. The
-  // draft auto-pick timeout, the token-banner hold and the dilation window
-  // are UX pacing in wall-seconds at 1x; at Nx they decay N× faster in wall
-  // time so they cover the SAME sim-time as a 1x run (a fast run snapshots
-  // like a 1x run). Gate off or 1x: paceDt IS realDt, the historical
-  // behaviour bit-for-bit. Purely presentational timers (flourish ages,
-  // toasts, the magnet sweep, the night watchdog) stay wall-clock
-  // deliberately — pacing the player sees must never depend on a dev pref.
-  const devPace = (DEV_GATE && dev && dev.speed > 1) ? devNormSpeed(dev.speed) : 1;
-  const paceDt = realDt * devPace;
-  const timeScale = advanceDilation(paceDt);
+  const timeScale = advanceDilation(realDt);
   const dt = realDt * timeScale;
   // The earned-moment flourish decays on WALL-CLOCK time too, so slow-mo
   // stretches the simulation but never the flare itself.
@@ -12484,18 +11169,17 @@ function frame(now) {
   syncChrome();
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
-  advanceTitleReveal();
+  advanceTitleReveal(realDt);
   // G13: the character selector's idle busts advance on the same wall-clock
   // dt (dt-parity: 60Hz and 120Hz step the same frame over the same time).
   // No-ops in every other mode, so no repaint or timer survives BACK.
   advanceCharIdle(realDt);
-  // One-time banner hold: a first-ever moment holds the sim for
+  // EVOLUTION TOKEN banner hold: the first token of a run holds the sim for
   // TOKEN_BANNER_SEC. The hold decays on WALL-CLOCK dt (the same rule as the
   // earned-moment flourish and the title reveal above). Frame-rate
-  // independent: 2.5s of real time at 60Hz and at 120Hz. SLICE 8: at dev
-  // speed >1 it decays on paceDt (sim-clock — same sim coverage as 1x).
+  // independent: 2.5s of real time at 60Hz and at 120Hz.
   if (state.bannerHold > 0) {
-    state.bannerHold = Math.max(0, state.bannerHold - paceDt);
+    state.bannerHold = Math.max(0, state.bannerHold - realDt);
   }
   // STUCK-OVERLAY GUARANTEE (owner 2026-09-18, tooltip-stuck addendum: "I
   // killed the boss with a tooltip on screen so now it's just sitting there
@@ -12519,34 +11203,20 @@ function frame(now) {
   }
   // G30 AUTO DRAFT AUTO-PICK: wall-clock countdown on the frame loop ('draft'
   // mode freezes the sim, so this cannot ride update()). Suspend-aware and
-  // AUTO-only; a no-op in every other mode. SLICE 8: at dev speed >1 the
-  // countdown rides paceDt (sim-clock — same sim coverage as 1x).
-  tickDraftAutoPick(paceDt);
-  tickHandFx(paceDt);
+  // AUTO-only; a no-op in every other mode.
+  tickDraftAutoPick(realDt);
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
   // NIGHT MODE: the intermission auto-CONTINUE + the end-card auto-RETRY,
   // same wall-clock slot (mode-gated no-ops in every other mode).
   tickNight(realDt);
-  // SLICE 7: the 1 Hz dev sampler rides the same wall-clock slot (a single
-  // gate branch when off; devFrameTick no-ops outside playing/finale).
-  if (DEV_GATE) devFrameTick(now);
-  // RSS8: the magnet sweep ticks on the same frame slot (see
-  // tickMagnetSweep — it must keep running while a level-up draft parks the
-  // sim). SLICE 8: paceDt at dev speed >1 (same sim coverage as 1x).
-  // 8X SEQUENCING (owner 2026-09-21: gem-suck-in skipped at speed): the pull
-  // must advance in per-substep realDt increments, not one lumped paceDt —
-  // a lumped pull saturates (min(1, paceDt*PULL_RATE) hits 1 at 8x/60Hz) and
-  // teleports the whole field in a single frame instead of streaming it in
-  // over the sweep's sim-time. devPace sub-ticks of realDt cover the
-  // identical sim-time with the 1x motion; gate off / 1x is one tick of
-  // realDt (=== paceDt there), the historical behaviour bit-for-bit.
-  for (let i = 0; i < devPace; i++) tickMagnetSweep(realDt);
+  // RSS8: the magnet sweep ticks on the same wall-clock slot (see
+  // tickMagnetSweep — it must keep running while a level-up draft parks the sim).
+  tickMagnetSweep(realDt);
   // v10 milestone chest: the collection burst ages on this same wall-clock
   // slot (mode 'burst' freezes the sim — the shower would never age on dt).
   tickChestBurst(realDt);
-  tutFrame(realDt, now);
   if (state.mode === 'intro') {
     const t = now - introT0;
     INTRO.render(renderer.ctx, t);
@@ -12596,7 +11266,7 @@ function frame(now) {
     // HELP MODE (VK9P4): the pause is the player's own invitation — same
     // freeze the playing branch grants, so reading the reference mid-escape
     // never costs wall-clock distance (the horde is the timer).
-    ESCAPE.frame(renderer.ctx, (state.helpMode || tut.hints.active) ? 0 : realDt);
+    ESCAPE.frame(renderer.ctx, state.helpMode ? 0 : realDt);
     requestAnimationFrame(frame);
     return;
   }
@@ -12613,9 +11283,22 @@ function frame(now) {
     // update() here any more, and no transient DOM overlay exists in play.
     // HELP MODE: the pause is the player's own invitation (their "?" armed
     // it) — same freeze, and leaving resumes the clock without a trace.
-    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode && !tutPausesSim()) devSimSteps(dt);
-  } else if (state.mode === 'finale') devSimSteps(dt);
+    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode) {
+      const n = Math.max(1, state.gameSpeed | 0);
+      for (let s = 0; s < n; s++) {
+        update(dt);
+        if (state.mode !== 'playing') break;
+      }
+    }
+  } else if (state.mode === 'finale') {
+    const n = Math.max(1, state.gameSpeed | 0);
+    for (let s = 0; s < n; s++) {
+      updateFinale(dt);
+      if (state.mode !== 'finale') break;
+    }
+  }
   renderer.render(state, state.cam);
+  drawTitleFlourish(renderer.ctx);   // N2: the art-hold shimmer, on top of the painted card
   drawHud();
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
   // gallery's emblem and its display case sit on top of the (frozen) world and
@@ -12638,12 +11321,7 @@ requestAnimationFrame(frame);
 // toggle + the shared held-direction input object (the d-pad seam).
 export const __TEST = {
   state, get controller() { return controller; }, startRun,
-  getProfile: () => profile,
-  // Fusion seams: the live offers, the one fuse action, the link pass and the shelf.
-  fusion: {
-    offers: () => fusionOffers(), take: (def) => doFuse(def), wire: wireFusions, snapshot: snapshotFire,
-    forgeOffers, shelf: showFusions, discovered: fusionsDiscovered,
-  },
+  getProfile: () => profile, refreshSynergies,
   // MANUAL v2 seam: page turns through the real renderer (goto re-draws the
   // whole stack — indicator, nav, contents, footer).
   manual: { next: manualNext, prev: manualPrev, goto: manualGoto },
@@ -12788,7 +11466,9 @@ export const __TEST = {
   // the hold path's call count, its timings (for rate-independent asserts),
   // and the activation itself.
   title: {
+    get runStarts() { return titleRunStarts; },
     timings: TITLE_TIMINGS,
+    beginHold: beginTitleHold,
     // Re-arm the once-per-page-load guard and re-run the FULL reveal (the
     // rate-independence tests replay it under a different frame step).
     replay() { titleRevealPlayed = false; showTitle(); },
@@ -12868,50 +11548,39 @@ export const __TEST = {
     suppressAll: () => { oneTimeBanners = false; },
     enabled: () => oneTimeBanners,
   },
-  // Tutorial seam: the live guided run, the hint book, the panel on screen
-  // and the same press paths the DOM buttons use.
-  tut: {
-    get guided() { return tut.guided; },
-    get live() { return tutGuidedLive(); },
-    get hints() { return tut.hints; },
-    get model() { return tut.model; },
-    get ui() { return tut.ui; },
-    get lastGuidedS() { return tut.lastGuidedS; },
-    get pausesSim() { return tutPausesSim(); },
-    press: (downMs) => tutPrimary(downMs),
-    skip: (downMs) => tutSkip(downMs),
-    hint: (id, targets) => tutHint(id, targets),
-    seen: tutSeen, mark: tutMark, replay: tutReplay,
-    hintsEnabled, setHintsEnabled,
-    wordStats: guidedWordStats,
-    screen: tutScreen,
-    TUT, LEDGER, GUIDED_STEPS, HINTS,
+  // FIRST-RUN PROLOGUE seam: the live phase, the banner copy/engine, the OK
+  // act (the same function the canvas hit-region calls), the drink payoff,
+  // and the layout the hit-test reads — tests drive the REAL paths.
+  prologue: {
+    get active() { return !!state.prologue; },
+    get ran() { return state.prologueRan; },
+    get potion() { return state.prologue ? { ...state.prologue.potion } : null; },
+    get t() { return state.prologue ? state.prologue.t : null; },
+    get walkT() { return state.prologue ? state.prologue.walkT : null; },
+    get bannerIdx() { return state.prologue ? state.prologue.bannerIdx : null; },
+    get paused() { return !!prologueBanner(); },
+    banners: PROLOGUE_BANNERS,
+    banner: prologueBanner,
+    act: prologueActionDone,
+    skip: prologueSkip,
+    skipRect: prologueSkipRect,
+    drink: () => prologueDrink(state.player),
+    end: endPrologue,
+    // STAGED INTRODUCTION: the reveal state, the live tooltip kind, the
+    // stage table and the tip texts — tests drive the REAL reveal paths.
+    get revealed() { return state.prologue ? { ...state.prologue.revealed } : null; },
+    get tip() { return state.prologue ? state.prologue.tip : null; },
+    stages: PROLOGUE_STAGES,
+    tipText: prologueTipText,
+    get shieldT() { return state.prologueShieldT; },
+    // The all-buttons-disabled lock (addendum 2026-09-18): the live DOM state.
+    get buttonsLocked() {
+      const body = typeof document !== 'undefined' && document.body;
+      return !!(body && body.classList && body.classList.contains &&
+        body.classList.contains('prologue-locked'));
+    },
   },
   setPilotMode: swapPilotMode, pilotInput,
-  // M3 seams: the menus, the wheel hand-back and the title reveal's timer.
-  menus: {
-    showTitle, showPreRun, showSettings, showAdvanced: showAdvancedSettings, showShop,
-    showLoadout, showHowToPlay,
-    stageLine: stagePlainLine, challengeLine: challengePlainLine, loadoutSummary,
-    bestNextPurchase: () => bestNextPurchase(profile),
-    get pendingStage() { return pendingStage; },
-    get pendingChallenge() { return pendingChallenge; },
-  },
-  wheel: {
-    handbackS: WHEEL_HANDBACK_S,
-    get t() { return state.wheel; },
-    cue: wheelCueText,
-    held: heldMoveVec,
-    togglePilot: togglePilotMode,
-    autoFlavor, setAutoFlavor,
-  },
-  titleTimer: {
-    stepMs: TITLE_TIMER_MS,
-    get ticks() { return titleTimerTicks; },
-    get armed() { return titleRevealTimer !== null; },
-    advance: advanceTitleReveal,
-  },
-  tips: { focusLine: focusTipLine, stance: maybeStanceTip, KEY_TIP_FOCUS, KEY_TIP_STANCE },
   // G31: the persistence seam — the real storage object plus the real
   // load/apply helpers (tests mutate storage and re-run startRun, exactly
   // what a reload does).
@@ -12929,8 +11598,6 @@ export const __TEST = {
   night: {
     get on() { return state.night; },
     get run() { return state.nightRun; },
-    // STEP 3: the dev-night run stamp (nightmare rules, no banking cut).
-    get devRun() { return state.devNightRun; },
     get armed() { return nightArmed; },
     press: toggleNight,
     get summary() { return state.nightSummary; },
@@ -12962,123 +11629,12 @@ export const __TEST = {
     valueOf: purseValue,
     table: GOLD_TIER,
   },
-  // ---- SLICE 7 dev seam (?dev=1 gate): the gate state, the live session,
-  // and the end-of-run entry — a headless proof drives the REAL run-end path
-  // (composeEndScreen -> devOnRunEnd -> snapshot build -> server POST), never
-  // a copy of it. buyChest is the REAL intermission buy (purse-seam
-  // precedent). Never read by the browser page.
-  dev: {
-    get gate() { return DEV_GATE; },
-    get session() { return dev; },
-    onRunEnd: () => devOnRunEnd(),
-    download: (s) => devDownload(s || (dev && dev.snapshot)),
-    // SLICE 11 download-all seams: the whole-log fetch+download the main-menu
-    // DEV LOG card drives (env-injectable for headless fetch stubs) and the
-    // last payload (exact /snapshots raw — the byte-equality seam). Never
-    // read by the browser page.
-    downloadLog: (env) => devDownloadLog(env || globalThis),
-    get lastLog() { return devLogText; },
-    buyChest: (tier) => buyPaidChest(tier),
-    // SLICE 8: speed control seam — the offered list plus the ONE setter the
-    // overlay button drives (normalized, persisted, flash-clock translated;
-    // null with the gate off). Never read by the browser page.
-    speeds: DEV_SPEEDS,
-    setSpeed: (n) => devSetSpeed(n),
-    // STEP 3 autoplay-runner seams (dev gate only; the same setters the
-    // overlay AUTO/DNIGHT buttons drive — persisted pref + live session —
-    // so headless proofs arm the REAL toggle path, never a copy). setPolicy
-    // names the between-run policy stamped into snapshots ('smart' |
-    // 'impulsive' | null); rebuildSnapshot re-runs the REAL snapshot
-    // builder off live state (the runner calls it AFTER its between-run
-    // buys so the row carries the post-buy build). Never read by the
-    // browser page.
-    get autoplay() { return !!(dev && dev.autoplay); },
-    setAutoplay: (on) => {
-      devSetPref(DEV_LS_AUTO, !!on);
-      if (dev) dev.autoplay = !!on;
-      return !!(dev && dev.autoplay);
-    },
-    get devNight() { return !!(dev && dev.devNight); },
-    setDevNight: (on) => {
-      devSetPref(DEV_LS_DEVNIGHT, !!on);
-      if (dev) dev.devNight = !!on;
-      return !!(dev && dev.devNight);
-    },
-    // K5 draft ban list seams (dev gate only): the same setters the overlay
-    // BAN button drives — persisted pref + live session — so headless proofs
-    // arm the REAL toggle path, never a copy. setDraftBanIds persists the
-    // comma list (null clears the pref, back to the default preset) and
-    // re-reads the live session through the REAL parse.
-    get draftBan() { return !!(dev && dev.draftBan); },
-    setDraftBan: (on) => {
-      devSetPref(DEV_LS_BAN_ON, !!on);
-      if (dev) dev.draftBan = !!on;
-      return !!(dev && dev.draftBan);
-    },
-    setDraftBanIds: (ids) => {
-      try {
-        if (ids === null || ids === undefined) prefStorage.removeItem(DEV_LS_BAN_IDS);
-        else prefStorage.setItem(DEV_LS_BAN_IDS, Array.isArray(ids) ? ids.join(',') : String(ids));
-      } catch { /* shim */ }
-      if (dev) dev.draftBanIds = devDraftBanIds();
-      return dev ? [...dev.draftBanIds] : null;
-    },
-    setPolicy: (p) => {
-      const v = AUTOPLAY_POLICIES.includes(p) ? p : null;
-      if (dev) dev.autoplayPolicy = v;
-      return v;
-    },
-    rebuildSnapshot: () => {
-      if (!dev) return null;
-      const snap = devBuildSnapshot();
-      dev.snapshot = snap;
-      return snap;
-    },
-    // SLICE 9 choice-audit seams: the live offer sets plus the ONE take path
-    // per choice point (the same functions the cards drive — a headless proof
-    // takes scripted choices through the REAL transitions, never copies), and
-    // readers for the assembled audit + mode fields. Never read by the
-    // browser page.
-    get draftOffers() { return draftOffers; },
-    takeBlessing: (offer) => takeChoice(offer),
-    blessingOffers: () => [...(state.pendingChoiceOffers || [])],
-    evolveCandidates: () => evolutionCandidates(),
-    takeEvolution: (w) => doEvolve(w),
-    choices: () => devChoices(),
-    modeFields: () => devModeFields(),
-    // SLICE 10 buy-back seams: the REAL sell paths the shop buttons drive
-    // (meta sell + journal + persist — never copies), the journaled removals,
-    // and the last render's sell-control descriptors (gate-off renders none).
-    // Never read by the browser page.
-    sellShopRow: (id) => devSellShopRow(id),
-    sellShopRowAll: (id) => devSellShopRowAll(id),
-    sellCharacterRow: (cid, uid) => devSellCharacterRow(cid, uid),
-    sellCharacterRowAll: (cid, uid) => devSellCharacterRowAll(cid, uid),
-    sellPilot: (cid) => devSellPilot(cid),
-    sellApex: (id) => devSellApexItem(id),
-    removals: () => devShopRemovals.map(r => ({ ...r })),
-    sellControls: () => devSellControls.map(c => ({ ...c })),
-    // SLICE 9 placement seam: the live panel node (bounds/style assertions
-    // drive the REAL docked node, never a restated constant).
-    get panel() { return devPanel; },
-  },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,
-  // The joker row and the hand: the real writers, the boss offer queue, the
-  // shelf, and the level-up pool weight (0 keeps jokers out of level drafts).
-  jokers: {
-    take: gainJoker, queueOffer: queueJokerOffer, openOffer: maybeOpenJokerOffer,
-    discovered: jokersDiscovered, show: showJokers,
-    get draftWeight() { return jokerDraftWeight; },
-    set draftWeight(w) { jokerDraftWeight = w; },
-  },
-  hand: { update: updateRunHand, tick: tickHandFx, COUNT_S: HAND_COUNT_S },
   // W7b ladder seams: the ONE death function (Second Wind revive probes drive
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).
   die, ladderOn: DRAFT_LADDER_ON,
-  // Stamp the last damage source (what die() records as the killer).
-  hurtBy: (src) => { lastDamageSource = src; },
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().
   get joyVec() { return joyVec; },
   get joyRelease() { return joyRelease; },
@@ -13124,6 +11680,7 @@ export const __TEST = {
   // the APEX MARK flourish is assertable by STRING equality — a run with the
   // mark off must be byte-identical to the pre-apex output.
   hudTextBlock,
+  synergyHintForCard,
   openDraft,
   // Arrow-cursor seam: where the keyboard cursor sits on the offer row
   // (headless tests read this instead of poking module scope). The R2
@@ -13139,14 +11696,6 @@ export const __TEST = {
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.
-  draftActions: {
-    reroll: draftReroll, skip: draftSkip, banish: draftBanish, toggleBanish: draftBanishToggle,
-    banKey: draftBanKey,
-    get charges() { return state.draftCharges; },
-    get banned() { return state.draftBanned; },
-    get armed() { return draftBanishArmed; },
-    get el() { return draftActionsEl; },
-  },
   draftAuto: {
     set rng(fn) { draftAutoRng = fn; },
     get count() { return draftAutoCount; },
@@ -13164,7 +11713,7 @@ export const __TEST = {
     get active() { return !!draftCeremony; },
     get left() { return draftCeremony ? draftCeremony.left : null; },
   },
-  fusWeaponDmg,
+  synWeaponDmg,
   stanceOf: () => controller.stance,
   // ---- WAVE-28 AUTO-DRINK seam: the pure decision step, so a headless probe
   // can drive the pilot's potion hand with a controlled dt rather than depending
@@ -13205,7 +11754,6 @@ export const __TEST = {
     eliteChance: ladderEliteChance,
     get won() { return state.runWon; },
     get mawCleared() { return state.mawCleared; },
-    mawDefeated,
     get mawDeadline() { return state.mawDeadline; },
     // G9 FOLLOW-UP: the wave-completion seam, so the untouched-wave ledger can
     // be driven without a DOM click through the intermission card.
