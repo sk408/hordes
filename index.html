@@ -105,6 +105,35 @@
   }
   #draft-actions .dact.dim { opacity: 0.4; cursor: default; }
   #draft-actions .dact.armed { border-color: #ff5a3c; color: #ffb0a0; }
+  /* level-up draft, evolve and fusion offers: a darker scrim than the menus,
+     so card text reads over the live field */
+  #overlay.draft { background: rgba(5,5,10,0.88); }
+  #overlay.draft #draft-actions, #overlay.draft #draft-autopick { align-self: center; }
+  /* the COMPACT draft card (draft_card_art.js draftLayout: viewports up to
+     500px tall). Half-size art beside tighter text, one row, no scrolling;
+     main.js sets the card width and paints the art at the compact scale. */
+  #overlay.draft.compact { gap: 4px; padding: 6px 8px; justify-content: safe center; }
+  #overlay.draft.compact h1 { font-size: 16px; margin: 0; letter-spacing: 2px; }
+  #overlay.draft.compact h1.logo { font-size: 20px; text-shadow: 2px 2px 0 #7a1f33; }
+  #overlay.draft.compact .sub { font-size: 11px; }
+  #overlay.draft.compact .cards { gap: 8px; flex-wrap: nowrap; align-items: stretch; width: auto; align-self: center; }
+  #overlay.draft.compact .card {
+    display: flow-root; box-sizing: border-box; padding: 8px; margin: 0;
+    text-align: left; min-height: 0;
+  }
+  #overlay.draft.compact .card canvas.card-art { float: left; margin: 0 8px 2px 0 !important; }
+  #overlay.draft.compact .card > div { overflow: hidden; }   /* text keeps its own column beside the art */
+  #overlay.draft.compact .card .name { font-size: 12px; margin-bottom: 3px; letter-spacing: 0; }
+  #overlay.draft.compact .card .name::before { content: none; }
+  #overlay.draft.compact .card .desc { font-size: 11px; line-height: 1.25; }
+  #overlay.draft.compact .card .syn, #overlay.draft.compact .card .evo,
+  #overlay.draft.compact .card .par {
+    margin-top: 2px !important; font-size: 10px !important; letter-spacing: 0 !important;
+  }
+  #overlay.draft.compact .card .key { display: none; }
+  #overlay.draft.compact #draft-actions { margin-top: 2px; gap: 8px; }
+  #overlay.draft.compact #draft-actions .dact { padding: 5px 10px; font-size: 11px; }
+  #overlay.draft.compact #draft-autopick { margin: 0 auto !important; }
   .card:active { transform: translateY(1px); }
   .card.dim { opacity: 0.45; }
   .card.dim:hover { cursor: default; }

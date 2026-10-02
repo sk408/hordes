@@ -108,6 +108,31 @@ export const OFFER_ART_SCALE = 4;
 // variant through the same drawCardArt painter drawCard itself uses — the
 // foil/chroma/pulse treatment is art derivation, never a second renderer. A
 // null/absent parallel is the byte-identical base path (drawCard by id).
+// The draft overlay's layout rule. A short viewport (a phone held sideways)
+// gets the COMPACT card: half-size art beside tighter text, all offers on one
+// row, so the cards and the reroll/skip/banish buttons fit without scrolling.
+// A narrow tall viewport keeps the stacked card and shrinks only the art to
+// the card's inner width. Pure: main.js openDraft applies the result.
+export const DRAFT_COMPACT_MAX_H = 500;
+export const DRAFT_COMPACT = { ART_SCALE: 2, GAP: 8, PAD: 16, CARD_MAX: 250, CARD_PAD: 8 };
+export function draftLayout(vw, vh, offers = 3) {
+  const n = Math.max(1, offers | 0);
+  if (vh <= DRAFT_COMPACT_MAX_H) {
+    const K = DRAFT_COMPACT;
+    const cardW = Math.floor(Math.min(K.CARD_MAX, (vw - K.PAD - K.GAP * (n - 1)) / n));
+    return { compact: true, artScale: K.ART_SCALE, cardW };
+  }
+  // Stacked card on a narrow tall viewport: one row of border-box cards, and
+  // the art takes the largest whole scale that fits the card's inner width.
+  if (vw <= 700) {
+    const cardW = Math.floor(Math.min(192, (vw - 16 - 10 * (n - 1)) / n));
+    let artScale = OFFER_ART_SCALE;
+    while (artScale > 2 && cardBox(artScale).w > cardW - 20) artScale--;
+    return { compact: false, artScale, cardW };
+  }
+  return { compact: false, artScale: OFFER_ART_SCALE, cardW: null };
+}
+
 export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE, parallel = null) {
   const deckId = deckIdForOffer(offerId);
   if (!deckId) return false;

@@ -113,7 +113,7 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt, OFFER_ART_SCALE } from './draft_card_art.js';
+import { paintOfferArt, OFFER_ART_SCALE, draftLayout } from './draft_card_art.js';
 import {
   PARALLELS, PARALLEL_WEIGHTS, PARALLEL_IDS, CURSED_HP_COST,
   rollParallel, rollOfferParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
@@ -4683,9 +4683,11 @@ function openDraft() {
   }
   draftFocus = -1;
   ovCards.innerHTML = '';
+  const lay = setDraftOverlay(true, choices.length);
   choices.forEach((u, i) => {
     const el = document.createElement('div');
     el.className = 'card';
+    if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
     el._draftOffer = u;        // the keydown routing + the inspect flow read this
     el.tabIndex = 0;           // the arrows+Enter cursor focuses (frameCard hot tone)
     // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
@@ -4737,7 +4739,7 @@ function openDraft() {
     // TIER-2(d): a stamped offer paints its DERIVED variant art (foil/chroma/
     // pulse treatment) through the same drawCard path — see paintOfferArt's
     // parallel argument. Absent stamp = the byte-identical base call.
-    if (paintOfferArt(artCv, u.id, OFFER_ART_SCALE, u.parallel)) {
+    if (paintOfferArt(artCv, u.id, lay.artScale, u.parallel)) {
       if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
       else el.appendChild(artCv);
     }
@@ -4873,6 +4875,7 @@ function closeDraft(u) {
     startDraftCeremony(u);
   } else {
     overlay.style.display = 'none';
+    setDraftOverlay(false);
   }
   state.mode = 'playing';
   clearDraftAutoPick();
@@ -5363,15 +5366,36 @@ function draftCeremonyEnabled() {
   } catch { return true; }
 }
 
-function setDraftCeremonyFlag(on) {
+// Adds or removes one class on the overlay (classList in a browser, the plain
+// className string in a stub DOM).
+function setOverlayFlag(cls, on) {
   if (overlay.classList && typeof overlay.classList.add === 'function') {
-    if (on) overlay.classList.add(CEREMONY_FLAG_CLS);
-    else overlay.classList.remove(CEREMONY_FLAG_CLS);
+    if (on) overlay.classList.add(cls);
+    else overlay.classList.remove(cls);
     return;
   }
-  const cur = String(overlay.className || '').split(' ').filter(c => c && c !== CEREMONY_FLAG_CLS);
-  if (on) cur.push(CEREMONY_FLAG_CLS);
+  const cur = String(overlay.className || '').split(' ').filter(c => c && c !== cls);
+  if (on) cur.push(cls);
   overlay.className = cur.join(' ');
+}
+function setDraftCeremonyFlag(on) { setOverlayFlag(CEREMONY_FLAG_CLS, on); }
+
+// The draft / evolve / fusion offers share one overlay look: a dark scrim
+// (index.html #overlay.draft) and, on a short viewport, the compact card
+// (draft_card_art.js draftLayout). Returns the layout the cards are built to.
+function setDraftOverlay(on, offers = 3) {
+  setOverlayFlag('draft', on);
+  if (!on) { setOverlayFlag('compact', false); return null; }
+  let vw = 1280, vh = 720;
+  try { if (typeof window !== 'undefined' && window.innerWidth) ({ vw, vh } = viewSize()); } catch { /* stub DOM */ }
+  const lay = draftLayout(vw, vh, offers);
+  setOverlayFlag('compact', lay.compact);
+  // The title / pre-run screen's top-aligned, transparent overlay must not leak in.
+  for (const c of ['title', 'end', 'howto']) setOverlayFlag(c, false);
+  overlay.style.background = '';
+  overlay.style.justifyContent = '';
+  overlay.style.paddingTop = '';
+  return lay;
 }
 
 function startDraftCeremony(u) {
@@ -5400,6 +5424,7 @@ function endDraftCeremony(ownOverlay) {
   if (ownOverlay) {
     ovCards.innerHTML = '';
     overlay.style.display = 'none';
+    setDraftOverlay(false);
   }
 }
 
@@ -6721,8 +6746,8 @@ function openMenu(mode = 'menu') {
   // (class-list-less DOM stubs keep a plain className string — same state.)
   // 'end' (the end-of-run summary's panel styling) gets the same reset — no
   // menu may inherit the summary's spacing/scrim.
-  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => c !== 'howto' && c !== 'end' && c !== 'title').join(' ');
+  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact'].includes(c)).join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which

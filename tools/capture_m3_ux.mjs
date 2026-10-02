@@ -26,6 +26,7 @@ const VIEWPORTS = [
   { name: 'phone', w: 844, h: 390, dpr: 2, mobile: true },
   { name: 'desktop1080', w: 1920, h: 1080, dpr: 1, mobile: false, hudOnly: true },
   { name: 'portrait', w: 390, h: 844, dpr: 2, mobile: true, hudOnly: true },
+  { name: 'phone667', w: 667, h: 375, dpr: 2, mobile: true, hudOnly: true, fitOnly: true },
 ].filter((v) => !vpOnly || vpOnly.includes(v.name));
 const want = (s) => !only || only.includes(s);
 
@@ -66,6 +67,32 @@ const OVERLAPS = `(() => {
     clockInset: T.state.clockInset, layer: document.getElementById('touch').className };
 })()`;
 
+// Draft fit report: every card, the title, the countdown line and the action
+// buttons lie inside the viewport, nothing overlaps, and the overlay does not
+// scroll. Also the scrim's alpha and whether the compact card is in use.
+const DRAFT_FIT = `(() => {
+  const ov = document.getElementById('overlay');
+  const box = (el, name) => { const r = el.getBoundingClientRect(); return { name, l: r.left, t: r.top, r: r.right, b: r.bottom }; };
+  const items = [box(document.getElementById('ov-title'), 'title'), box(document.getElementById('ov-sub'), 'sub')];
+  [...document.querySelectorAll('#ov-cards .card')].forEach((c, i) => {
+    items.push(box(c, 'card' + (i + 1)));
+    for (const ch of c.children) if (ch.className !== 'frame' && ch.getBoundingClientRect().height > 0) {
+      const b = box(ch, 'card' + (i + 1) + '.' + (ch.className || ch.tagName)); const cb = c.getBoundingClientRect();
+      if (b.t < cb.top - 0.5 || b.b > cb.bottom + 0.5 || b.l < cb.left - 0.5 || b.r > cb.right + 0.5) items.push({ ...b, name: b.name + ' SPILLS' });
+    }
+  });
+  for (const el of document.querySelectorAll('#draft-actions .dact, #draft-autopick')) items.push(box(el, el.id || el.textContent.trim().slice(0, 8)));
+  const out = items.filter((it) => it.name.endsWith('SPILLS') || it.l < -0.5 || it.t < -0.5 || it.r > innerWidth + 0.5 || it.b > innerHeight + 0.5).map((it) => it.name);
+  const tops = items.filter((it) => !it.name.includes('.'));
+  const hit = (a, b) => a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5;
+  const overlaps = [];
+  for (let i = 0; i < tops.length; i++) for (let j = i + 1; j < tops.length; j++) if (hit(tops[i], tops[j])) overlaps.push(tops[i].name + ' x ' + tops[j].name);
+  const cards = tops.filter((it) => it.name.startsWith('card'));
+  return { view: [innerWidth, innerHeight], cls: ov.className, scrim: getComputedStyle(ov).backgroundColor,
+    scrolls: ov.scrollHeight > ov.clientHeight + 1, cards: cards.length, actions: document.querySelectorAll('#draft-actions .dact').length,
+    cardBox: cards.map((c) => [Math.round(c.l), Math.round(c.t), Math.round(c.r), Math.round(c.b)]), outside: out, overlaps };
+})()`;
+
 async function toTitle(page) {
   await page.sleep(300);
   await page.evaluate(BOOT, true);
@@ -93,11 +120,31 @@ for (const vp of VIEWPORTS) {
       }
       if (want('shop')) { await page.evaluate(`T.menus.showShop()`); await page.sleep(700); await shot('shop'); }
     }
-    if (want('run') || want('draft') || want('end')) {
+    if (want('run') || want('draft') || want('end') || want('draftfit')) {
       await page.evaluate(`T.startRun()`);
-      await page.sleep(5000);
+      await page.sleep(vp.fitOnly ? 1500 : 5000);
       await page.evaluate(`T.state.player.hp = T.state.player.stats.maxHp`);
-      if (want('run')) {
+      if (want('draftfit')) {
+        // The fullest draft a card row can show: an EVOLUTION READY weapon
+        // card with its road line, and all three action buttons.
+        await page.evaluate(`(() => {
+          try { localStorage.setItem('hordes_tour_draft', '1'); } catch (e) {}   // no coach card over the row
+          const st = T.state; const v = st.weapons.find((w) => w.type === 'VOLLEY');
+          const lv = v.level; const taken = st.player.takenStats;
+          v.level = 7; st.player.takenStats = { multi: 1 }; st.player.hp = st.player.stats.maxHp;
+          for (let i = 0; i < 80; i++) {
+            st.mode = 'playing'; st.pendingDrafts = 1; T.openDraft();
+            if ([...document.querySelectorAll('#ov-cards .card')].some((c) => c._draftOffer && c._draftOffer.evoReady)) break;
+          }
+          window.__fitRestore = () => { v.level = lv; st.player.takenStats = taken; };
+        })()`);
+        await page.sleep(400);
+        await shot('draftfit');
+        console.log(vp.name, 'draft fit:', JSON.stringify(await page.evaluate(DRAFT_FIT)));
+        await page.evaluate(`(() => { window.__fitRestore(); const c = [...document.querySelectorAll('#ov-cards .card')].find((c) => c._draftOffer && !c._draftOffer.evoReady); if (c) c.click(); T.state.player.hp = T.state.player.stats.maxHp; })()`);
+        await page.sleep(700);
+      }
+      if (want('run') && !vp.fitOnly) {
         await shot('run');
         console.log(vp.name, 'run HUD:', JSON.stringify(await page.evaluate(OVERLAPS)));
         // Take the wheel: hold D for a moment, then release and catch the cue.
