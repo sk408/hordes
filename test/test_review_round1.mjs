@@ -320,6 +320,9 @@ console.log('test_review_round1: item 1 ' + passed + ' checks');
   const killAndSettle = () => {
     st.player.stats.goldMult = 1;                 // zero the persistent chain drift
     st.player.stats.maxHp = 1; st.player.hp = 1;
+    // Disarm the pilot: a kill landing on the death frame would bump the
+    // rampage gold mult after the per-frame reset below and skew the award.
+    st.weapons.length = 0; st.projectiles.length = 0;
     // BOUNDARY GUARD (the 21:43 red: 7200 frames, no death — a re-armed coach
     // had frozen the sim). Clear anything modal at entry, then sweep EVERY
     // frame of the wait: a level-up draft or a coach mounting mid-wait pauses
