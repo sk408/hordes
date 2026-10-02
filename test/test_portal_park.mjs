@@ -26,6 +26,12 @@
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { AutoPilotController } from '../src/controllers.js';
+import { mulberry32 } from '../src/weather.js';
+
+// Pin the run RNG: startRun rolls the building field and the wave arches from
+// Math.random, and some rolls put a wall or a speed buff on the scripted paths
+// below (the unseeded-entropy flake class).
+Math.random = mulberry32(20260923);
 
 const s = suite('test_portal_park');
 

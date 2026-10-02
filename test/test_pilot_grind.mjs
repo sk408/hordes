@@ -20,10 +20,25 @@ import { CONFIG as C } from '../src/config.js';
 import { AutoPilotController, PlayerController } from '../src/controllers.js';
 import { lootLimit, isReachableLoot } from '../src/entities.js';
 import { boot, suite } from './_harness.mjs';
+import { buildingRects } from '../src/stage_buildings.js';
+import { segmentClear } from '../src/pilot_nav.js';
 
 const S = suite('pilot wall grind (item 3)');
 const { T, state, pump } = await boot({ storage: [['hordes_onboarded', '1']] });
 const CFG = { KITE_DIST: C.PLAYER.KITE_DIST };
+// startRun rolls a random building field. The real-loop checks below script
+// positions on the y = 0 lane near the +x rim, so they run on a fixed field
+// whose lane is free of buildings (a wall there is a different test).
+function startRunClearLane() {
+  T.startRun();
+  for (let seed = 1; seed < 500; seed++) {
+    if (segmentClear(buildingRects(seed, state.stage), lootLimit() - 340, 0, C.GROUND.RIM, 0, 30)) {
+      state.groundSeed = seed;
+      return;
+    }
+  }
+  throw new Error('no building field with a clear lane');
+}
 const foe = (x, y, typeId = 'CHASER') => ({ x, y, typeId, hp: 10, maxHp: 10 });
 const mkState = (enemies = [], gems = []) => ({ enemies, gems });
 
@@ -108,7 +123,7 @@ S.check('manual movement is untouched by the hold (the human owns movement)', ()
 
 // ---- integration: the real loop -------------------------------------------
 S.check('holding the boundary with loot beyond the rim (6s sim, no grind)', () => {
-  T.startRun();
+  startRunClearLane();
   pump(3);
   state.spawnTimer = 99999;
   state.wave.endsAt = state.time + 99999;
@@ -133,7 +148,7 @@ S.check('holding the boundary with loot beyond the rim (6s sim, no grind)', () =
 });
 
 S.check('an enemy still outside the rim does not grind the pilot either', () => {
-  T.startRun();
+  startRunClearLane();
   pump(3);
   state.spawnTimer = 99999;
   state.wave.endsAt = state.time + 99999;
@@ -158,7 +173,7 @@ S.check('an enemy still outside the rim does not grind the pilot either', () => 
 });
 
 S.check('the pilot picks the reachable gem and RESOLVES (real loop)', () => {
-  T.startRun();
+  startRunClearLane();
   pump(3);
   state.spawnTimer = 99999;
   state.wave.endsAt = state.time + 99999;
@@ -186,7 +201,7 @@ S.check('the pilot picks the reachable gem and RESOLVES (real loop)', () => {
 });
 
 S.check('the pilot RESUMES normally when the target comes inside', () => {
-  T.startRun();
+  startRunClearLane();
   pump(3);
   state.spawnTimer = 99999;
   state.wave.endsAt = state.time + 99999;

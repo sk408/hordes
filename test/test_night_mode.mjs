@@ -9,6 +9,12 @@ import { readFileSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 import { EVOLUTION_DEFS } from '../src/evolutions.js';
 import { WEAPON_MAX_LEVEL } from '../src/weapons.js';
+import { mulberry32 } from '../src/weather.js';
+
+// Pin the run RNG: startRun rolls the building field and the wave arches from
+// Math.random, and some rolls put a wall or a speed buff on the scripted paths
+// below (the unseeded-entropy flake class).
+Math.random = mulberry32(20260923);
 
 const h = await boot();
 const T = h.T;
