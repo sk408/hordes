@@ -174,22 +174,22 @@ console.log('LEVELS:');
   ok(v1.proj === 0 && v3.proj === 1 && v6.proj === 2,
      'volley: +1 projectile at Lv3 and Lv6');
   const near = (a, b) => Math.abs(a - b) < 1e-9;
-  ok(near(v2.dmgMult, 1.2) && near(v3.dmgMult, v2.dmgMult),
-     'volley: proj level adds no damage, others add +20%');
-  ok(near(v6.dmgMult, 1.6) && near(v8.dmgMult, 2.0),
-     'volley: 5 damage levels by Lv8 = +100%');
+  ok(near(v2.dmgMult, 1.6) && near(v3.dmgMult, v2.dmgMult),
+     'volley: proj level adds no dmgMult, others add +60%');
+  ok(near(v6.dmgMult, 2.8) && near(v8.dmgMult, 4.0),
+     'volley: 5 damage levels by Lv8 = +300%');
 
   // ORBIT: blades + radius per level.
   const o1 = weaponLevelParams('ORBIT', 1), o8 = weaponLevelParams('ORBIT', 8);
   ok(o1.blades === 1 && o8.blades === 5, 'orbit: blades 1 -> 5 by Lv8 (+1 per even level)');
   ok(o8.radius > o1.radius && o8.radius === WEAPONS.ORBIT.RADIUS + 4 * 7,
      'orbit: radius +4 per level');
-  ok(o8.dmgMult === 1 + 0.15 * 7, 'orbit: +15% damage per level');
+  ok(near(o8.dmgMult, 1 + 0.20 * 7), 'orbit: +20% damage per level');
 
   // BOOMERANG: pierce/speed/damage.
   const b1 = weaponLevelParams('BOOMERANG', 1), b5 = weaponLevelParams('BOOMERANG', 5);
   ok(b5.pierceBonus > b1.pierceBonus && b5.pierceBonus === 2, 'boomerang: Lv5 pierce (+2) > Lv1');
-  ok(b5.speedMult === 1 + 0.12 * 4, 'boomerang: +12% flight speed per level');
+  ok(near(b5.speedMult, 1 + 0.15 * 4), 'boomerang: +15% flight speed per level');
   ok(b5.dmgMult === 1 + 0.2 * 4, 'boomerang: +20% damage per level');
 
   // ZAP: chains. CHAIN ZAP REWORK (msg_01M2RENZ, 2026-09-17): the ladder's
@@ -199,7 +199,7 @@ console.log('LEVELS:');
   // it does not silently drop the old one.
   ok(weaponLevelParams('ZAP', 1).jumps === undefined &&
      weaponLevelParams('ZAP', 8).jumps === undefined &&
-     weaponLevelParams('ZAP', 8).dmgMult === 1 + 0.15 * 7,
+     near(weaponLevelParams('ZAP', 8).dmgMult, 1 + 0.17 * 7),
      'zap: ladder is damage-only (count growth retired to the shop)');
 
   // NOVA: radius.
@@ -216,7 +216,7 @@ console.log('LEVELS:');
 
   // describeWeaponLevel: card text for the draft UI. CHAIN ZAP REWORK
   // (msg_01M2RENZ): the ladder is damage-only — no '+1 chain' line anymore.
-  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +15% damage`,
+  ok(describeWeaponLevel('ZAP', 2) === `${WEAPON_NAMES.ZAP} Lv2 — +17% damage`,
      'describeWeaponLevel returns card text');
   ok(describeWeaponLevel('NOPE', 2) === null, 'describeWeaponLevel: unknown id -> null');
   ok(describeWeaponLevel('ZAP', 99).includes('MAX'), 'describeWeaponLevel: past cap -> MAX');
@@ -440,13 +440,13 @@ console.log('LEVELS (wave-2):');
   const near = (a, b) => Math.abs(a - b) < 1e-9;
   // SCYTHE: arc width + damage per level.
   ok(near(weaponLevelParams('SCYTHE', 1).arc, WEAPONS.SCYTHE.ARC) &&
-     near(weaponLevelParams('SCYTHE', 8).arc, WEAPONS.SCYTHE.ARC + 0.12 * 7),
-     'scythe: +0.12 arc width per level');
+     near(weaponLevelParams('SCYTHE', 8).arc, WEAPONS.SCYTHE.ARC + 0.18 * 7),
+     'scythe: +0.18 arc width per level');
   // SEEKER: +1 missile every even level, +turn per level.
   ok(weaponLevelParams('SEEKER', 1).count === 1 && weaponLevelParams('SEEKER', 2).count === 2
      && weaponLevelParams('SEEKER', 8).count === 5, 'seeker: +1 missile every even level (1 -> 5)');
-  ok(near(weaponLevelParams('SEEKER', 5).turn, WEAPONS.SEEKER.TURN + 0.4 * 4),
-     'seeker: +0.4 turn rate per level');
+  ok(near(weaponLevelParams('SEEKER', 5).turn, WEAPONS.SEEKER.TURN + 0.65 * 4),
+     'seeker: +0.65 turn rate per level');
   // MINE: blast + damage.
   ok(weaponLevelParams('MINE', 3).blast === WEAPONS.MINE.BLAST + 8 &&
      near(weaponLevelParams('MINE', 3).dmgMult, 1.4), 'mine: +4 blast radius, +20% damage per level');
@@ -460,7 +460,7 @@ console.log('LEVELS (wave-2):');
 
   // Level parity: every table (old + new) has MAX rows with effects objects.
   const ids = Object.keys(WEAPON_LEVELS);
-  ok(ids.length === 9, `level tables cover all 9 weapon ids incl. VOLLEY (got ${ids.length})`);
+  ok(ids.length === 13, `level tables cover all 13 weapon ids incl. VOLLEY (got ${ids.length})`);
   for (const id of ids) {
     ok(WEAPON_LEVELS[id].length === WEAPON_MAX_LEVEL &&
        WEAPON_LEVELS[id].every(r => r.effects && typeof r.effects === 'object'),

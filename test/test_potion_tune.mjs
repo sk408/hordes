@@ -23,6 +23,7 @@
 // Run: node test/test_potion_tune.mjs
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { adaptiveDropFactor } from '../src/loot.js';
 import { CONFIG as C } from '../src/config.js';
 import { bootReal } from '../tools/real_loop.mjs';
@@ -154,7 +155,7 @@ ok('with maxHp >= 2*heal the trigger cannot overheal (34.9 -> 69.9 exactly)',
 
 console.log('AUDIT TABLE:');
 {
-  const path = new URL('../docs/RESOURCE_SPEND_AUDIT_2026-09-17.md', import.meta.url).pathname;
+  const path = fileURLToPath(new URL('../docs/RESOURCE_SPEND_AUDIT_2026-09-17.md', import.meta.url));
   ok('docs/RESOURCE_SPEND_AUDIT_2026-09-17.md exists', existsSync(path));
   if (existsSync(path)) {
     const txt = readFileSync(path, 'utf8');

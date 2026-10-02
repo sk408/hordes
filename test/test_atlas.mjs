@@ -256,7 +256,8 @@ s.check('R7: the sim KEEPS RUNNING while the map is open (no pause)', () => {
 // p.invuln = 1e9 pin (stretches the stream; both arms identical).
 {
   const { execFileSync } = await import('node:child_process');
-  const probe = new URL('./_atlas_det_probe.mjs', import.meta.url).pathname;
+  const { fileURLToPath } = await import('node:url');
+  const probe = fileURLToPath(new URL('./_atlas_det_probe.mjs', import.meta.url));
   const on = execFileSync(process.execPath, [probe, 'on'], { encoding: 'utf8' }).trim();
   const off = execFileSync(process.execPath, [probe, 'off'], { encoding: 'utf8' }).trim();
   s.check('R2: ZERO RNG DRAWS — the seeded run is IDENTICAL with the atlas on and off', () => {

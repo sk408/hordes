@@ -224,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(413, {"ok": False,
                                           "error": "snapshot log exceeds read cap"})
                     return
-                with open(SNAPSHOT_FILE, "r", encoding="utf-8") as fh:
+                with open(SNAPSHOT_FILE, "r", encoding="utf-8", newline="") as fh:
                     raw = fh.read()
                 mtime = datetime.datetime.fromtimestamp(
                     os.path.getmtime(SNAPSHOT_FILE),
@@ -379,9 +379,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             os.makedirs(SNAPSHOT_DIR, exist_ok=True)
             line = json.dumps(payload, sort_keys=True)
-            with open(SNAPSHOT_FILE, "a", encoding="utf-8") as fh:
+            with open(SNAPSHOT_FILE, "a", encoding="utf-8", newline="") as fh:
                 fh.write(line + "\n")
-            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as fh:
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8", newline="") as fh:
                 lines = sum(1 for _ in fh)
         except OSError as exc:
             self._send_json(500, {"ok": False,

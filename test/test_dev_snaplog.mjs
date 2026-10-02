@@ -12,7 +12,7 @@
 //      gate-off boot carries no such card) and the untouched end-screen
 //      single-run DEV SNAPSHOT card.
 import assert from 'node:assert';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,11 +106,16 @@ function scripted() {
 }
 
 // ---- B. real saver roundtrip (spawned server, log restored after) ------------
-{
+const PYTHON = ['python3', 'python'].find((c) => {
+  try { return spawnSync(c, ['--version']).status === 0; } catch { return false; }
+});
+if (!PYTHON) {
+  console.log('SKIP B (saver roundtrip): no python3/python on PATH');
+} else {
   const PORT = 8931;
   const BASE = 'http://127.0.0.1:' + PORT;
   const original = fs.existsSync(SNAP_FILE) ? fs.readFileSync(SNAP_FILE) : Buffer.alloc(0);
-  const proc = spawn('python3', ['tools/editor_server.py', String(PORT)],
+  const proc = spawn(PYTHON, ['tools/editor_server.py', String(PORT)],
     { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
   const kill = () => { try { proc.kill(); } catch { /* already gone */ } };
   try {

@@ -17,11 +17,14 @@ function ok(cond, msg) {
 console.log('WEAPON OVERRIDES:');
 {
   // No shipped weapon carries overrides (byte-identical behaviour).
-  ok(Object.keys(WEAPON_DMG_OVERRIDES).length === 0,
-    'no shipped weapon carries dmg overrides (byte-identical behaviour)');
+  const SEEKER_LADDER = { 1: 1, 2: 1.2, 3: 1.4, 4: 1.6, 5: 1.8, 6: 2, 7: 2.2, 8: 2.4 };
+  const shipped = () => JSON.stringify(WEAPON_DMG_OVERRIDES) === JSON.stringify({ SEEKER: SEEKER_LADDER });
+  ok(shipped(), 'the only shipped dmg override is the SEEKER ladder (+20%/level)');
+  ok(weaponLevelParams('SEEKER', 5).dmgMult === 1.8, 'SEEKER L5 pays its override');
 
   // Formula default: unlisted levels pay the WEAPON_LEVELS ladder.
-  ok(weaponLevelParams('ZAP', 8).dmgMult === 1 + 0.15 * 7,
+  const zapAt = (L) => 1 + WEAPON_STEPS.ZAP.DMG * (L - 1);
+  ok(WEAPON_STEPS.ZAP.DMG === 0.17 && weaponLevelParams('ZAP', 8).dmgMult === zapAt(8),
     'formula default at L8 (ZAP ladder untouched)');
   ok(weaponLevelParams('NOVA_PULSE', 3).radius === WEAPONS.NOVA_PULSE.RADIUS + 6 * 2,
     'non-damage params never consult the dmg table');
@@ -29,17 +32,16 @@ console.log('WEAPON OVERRIDES:');
   // Override hit: a listed level pays the table dmgMult, nothing else moves.
   WEAPON_DMG_OVERRIDES.ZAP = { 8: 9.99 };
   const hit = weaponLevelParams('ZAP', 8);
-  ok(hit.dmgMult === 9.99, 'override hit at L8 pays table dmgMult (formula would be 2.05)');
+  ok(hit.dmgMult === 9.99, 'override hit at L8 pays table dmgMult (formula would be 2.19)');
   // Override miss: unlisted levels fall back to the formula.
-  ok(weaponLevelParams('ZAP', 7).dmgMult === 1 + 0.15 * 6,
+  ok(weaponLevelParams('ZAP', 7).dmgMult === zapAt(7),
     'override miss at L7 falls back to formula');
-  ok(weaponLevelParams('ORBIT', 8).dmgMult === 1 + 0.15 * 7,
+  ok(weaponLevelParams('ORBIT', 8).dmgMult === 1 + WEAPON_STEPS.ORBIT.DMG * 7,
     'override on one weapon never leaks into another');
   delete WEAPON_DMG_OVERRIDES.ZAP;
 
   // Restored: empty again, formula back.
-  ok(Object.keys(WEAPON_DMG_OVERRIDES).length === 0 &&
-     weaponLevelParams('ZAP', 8).dmgMult === 1 + 0.15 * 7,
+  ok(shipped() && weaponLevelParams('ZAP', 8).dmgMult === zapAt(8),
     'override table removed cleanly (formula restored)');
 
   // Unknown ids stay neutral.

@@ -156,7 +156,7 @@ export function shieldAbsorbsPerWave(grantsPerRunShield) {
 export function recomputeFromLogs(files) {
   const agg = {};
   for (const f of files) {
-    const stage = f.split('/').pop().split('_')[0];
+    const stage = f.split(/[\\/]/).pop().split('_')[0];
     for (const line of readFileSync(f, 'utf8').split('\n')) {
       if (!line.startsWith('REC ')) continue;
       const r = JSON.parse(line.slice(4));

@@ -26,6 +26,7 @@
 // Run: node test/test_onboarding.mjs
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { boot, suite } from './_harness.mjs';
 import { TOUR_KEYS } from '../src/tour.js';
 
@@ -46,7 +47,7 @@ s.check('no src module imports the retired engine', () => {
       else if (e.name.endsWith('.js')) yield p;
     }
   };
-  for (const f of walk(SRC.pathname)) {
+  for (const f of walk(fileURLToPath(SRC))) {
     const src = readFileSync(f, 'utf8');
     assert.ok(!/\bfrom\s+['"][^'"]*\bonboarding\.js['"]/.test(src),
       f + ' still imports onboarding.js');
