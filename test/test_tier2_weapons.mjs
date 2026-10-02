@@ -235,10 +235,34 @@ S.check('fire path: JAVELIN throws a piercing body through updateWeapons', () =>
   const body = state.projectiles.find(pr => pr.kind === 'javelin');
   assert.ok(body, 'a javelin body spawned');
   assert.ok(Number.isFinite(body.damage) && body.damage > 0, 'body carries finite damage');
-  // Drive it through the first enemy and prove the pierce seam re-hits.
   for (let i = 0; i < 40; i++) updateWeapons(state, [w], 0.016);
   const hit = state.enemies.some(e => e.hp < 50);
   assert.ok(hit, 'the spear damaged an enemy on its lane');
+});
+S.check('JAVELIN: one hit per enemy per throw at any frame rate or pierce', () => {
+  for (const hz of [30, 60, 144]) {
+    for (const pierce of [0, 3, 8]) {
+      const { state, w } = fireState('JAVELIN');
+      const p = state.player;
+      p.stats.pierce = pierce; p.stats.crit = 0; p.stats.projectiles = 1;
+      const e = { x: 100, y: 0, hp: 1e9, flash: 0 };
+      state.enemies = [e];
+      w.level = 7;
+      updateWeapons(state, [w], 1 / hz);
+      const perHit = state.projectiles.find(pr => pr.kind === 'javelin').damage;
+      w.cd = 999;
+      for (let i = 0; i < hz * 2; i++) updateWeapons(state, [w], 1 / hz);
+      assert.ok(Math.abs((1e9 - e.hp) - perHit) < 1e-6,
+        `hz ${hz} pierce ${pierce}: dealt ${1e9 - e.hp}, one hit is ${perHit}`);
+    }
+  }
+});
+S.check('JAVELIN ladder: Lv3/5/7 grant range (label and effect agree)', () => {
+  assert.equal(weaponLevelParams('JAVELIN', 1).range, WEAPONS.JAVELIN.RANGE);
+  assert.equal(weaponLevelParams('JAVELIN', 7).range, WEAPONS.JAVELIN.RANGE + 3 * WEAPON_STEPS.JAVELIN.RANGE);
+  assert.ok(describeWeaponLevel('JAVELIN', 3).includes('+' + WEAPON_STEPS.JAVELIN.RANGE + ' range'));
+  assert.ok(!describeWeaponLevel('JAVELIN', 3).includes('pierce'));
+  assert.ok(!describeWeaponLevel('JAVELIN', 4).includes('range'));
 });
 S.check('fire path: EMBER fires a bolt and bursts AoE ONLY on a kill (no economy)', () => {
   const { state, w, e1 } = fireState('EMBER');

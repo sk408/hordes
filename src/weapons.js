@@ -890,10 +890,8 @@ function updateBeam(state, weapon, dt) {
 
 // JAVELIN — behavior class PIERCING (vs_ref "passes through enemies"; the
 // instance is original). A heavy spear flies one straight lane and strikes
-// every enemy on the path. The per-enemy RE-HIT budget is the boomerang leg's
-// pierce seam (:363, :390-391, :423): 1 + stats.pierce + ladder pierceBonus
-// hits per enemy per spear. Split Shot fans the throw (p.stats.projectiles,
-// :379).
+// every enemy on the path exactly ONCE per throw (a visited set, so damage
+// does not depend on frame rate). Split Shot fans the throw.
 function updateJavelin(state, weapon, dt) {
   const W = WEAPONS.JAVELIN;
   const P = weaponLevelParams('JAVELIN', weapon.level);
@@ -914,8 +912,7 @@ function updateJavelin(state, weapon, dt) {
           dx: Math.cos(a + spread), dy: Math.sin(a + spread),
           dist: 0,
           damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon),
-          pierce: (p.stats.pierce || 0) + (P.pierceBonus || 0),
-          hit: new Map(),
+          hit: new Set(),
           age: 0,
         });
       }
@@ -933,14 +930,11 @@ function updateJavelin(state, weapon, dt) {
       state.projectiles.splice(i, 1);
       continue;
     }
-    const budget = pr.pierce >= PIERCE_ALL ? 1 : 1 + Math.max(0, pr.pierce || 0);
     for (const e of state.enemies) {
-      if (e.hp <= 0) continue;
-      const spent = pr.hit.get(e) || 0;
-      if (spent >= budget) continue;
+      if (e.hp <= 0 || pr.hit.has(e)) continue;
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
         hurt(state, e, pr.damage * critRoll(p, weapon));
-        pr.hit.set(e, spent + 1);
+        pr.hit.add(e);
         state.effects.push({ kind: 'beam_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
       }
     }
@@ -1199,7 +1193,7 @@ export const WEAPON_STEPS = {
   VOLLEY: { DMG: 0.6 },
   ORBIT: { DMG: 0.20, RADIUS: 4 },
   BOOMERANG: { DMG: 0.2, SPEED: 0.15 },
-  JAVELIN: { DMG: 0.18, SPEED: 0.10 },
+  JAVELIN: { DMG: 0.18, SPEED: 0.10, RANGE: 25 },
   ZAP: { DMG: 0.17 },
   NOVA_PULSE: { DMG: 0.15, RADIUS: 6 },
   SCYTHE: { DMG: 0.18, ARC: 0.18 },
@@ -1245,14 +1239,14 @@ export const WEAPON_LADDERS = {
     return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed, +1 pierce'
                        : '+' + stepPct(WEAPON_STEPS.BOOMERANG.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.BOOMERANG.SPEED) + '% speed';
   },
-  // +18% damage and +10% flight speed per level past 1; +1 pierce at
-  // Lv3/Lv5/Lv7 (the boomerang pierce cadence — the same grant language).
+  // +18% damage and +10% flight speed per level past 1; +range at Lv3/Lv5/Lv7
+  // (the spear already passes through every enemy, so pierce means nothing).
   JAVELIN: (L, c) => {
     c.dmgMult = 1 + WEAPON_STEPS.JAVELIN.DMG * (L - 1);
     c.speedMult = 1 + WEAPON_STEPS.JAVELIN.SPEED * (L - 1);
-    c.pierceBonus = Math.floor((L - 1) / 2);
+    c.range = WEAPONS.JAVELIN.RANGE + WEAPON_STEPS.JAVELIN.RANGE * Math.floor((L - 1) / 2);
     if (L === 1) return 'Base sun javelin';
-    return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.JAVELIN.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.JAVELIN.SPEED) + '% speed, +1 pierce'
+    return L % 2 === 1 ? '+' + stepPct(WEAPON_STEPS.JAVELIN.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.JAVELIN.SPEED) + '% speed, +' + WEAPON_STEPS.JAVELIN.RANGE + ' range'
                        : '+' + stepPct(WEAPON_STEPS.JAVELIN.DMG) + '% damage, +' + stepPct(WEAPON_STEPS.JAVELIN.SPEED) + '% speed';
   },
   // CHAIN ZAP REWORK (msg_01M2RENZXZR6MRT4Y5F2RQFRJ7): the +1 chain jump per
