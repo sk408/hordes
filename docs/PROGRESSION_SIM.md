@@ -44,8 +44,13 @@ Each axis is independent. A policy is written `shop/loadout/draft/once/stance/ch
   auto-equipped) or `all-owned` (before every run, fill every slot with owned
   weapons, priciest first).
 - `--draft`: `random` (the game's uniform auto-pick), `weapons-first` (a weapon
-  level-up card when offered), `stats-first` (stat cards in `--stat-priority`
-  order). The last two never take a run-rule card unless `--once take`.
+  level-up card when offered), `evolution-first` (one weapon at a time and its
+  partner card; it works first on a weapon whose fusion partner in the kit is
+  already evolved, then on one with a fusion partner in the kit, then on the
+  highest-level one), `stats-first` (stat cards in `--stat-priority` order).
+  The last three never take a run-rule card unless `--once take`. The
+  fixed-build table reports the first evolution and the first fusion (sim
+  seconds, and the share of runs that got there).
 - `--once`: the ONE OF EACH card. `take` whenever offered, `never`, or `asis`
   (no special handling).
 - `--stance`: AUTO_ALL pilot doctrine, `SAFE`, `BALANCED` or `GREEDY`.

@@ -27,8 +27,16 @@ so every figure is a floor.
   badge. A stat card that is a partner of a weapon in the kit says `evolves <weapon>` and is offered
   twice as often (`PARTNER_WEIGHT_MULT`) until taken. The STATS screen lists each weapon's road.
 - **An evolution is a spike on both sides.** The weapon changes form (table below, x1.3–x2 damage plus
-  two behaviour changes), the hero is restored to full health and gains 15% of the run's starting max HP
-  (`EVOLUTION_HP_FRAC`), and the first evolution ever gets the cinematic banner.
+  two behaviour changes), the whole kit's damage rises by 20% of the run's starting damage
+  (`DRAFT_PLAN.EVOLUTION_KIT_DMG`), the hero is restored to full health and gains 15% of the run's
+  starting max HP (`EVOLUTION_HP_FRAC`), and the first evolution ever gets the cinematic banner.
+- **Committing pays (`config.js DRAFT_PLAN`).** The LEAD weapon is the highest-level weapon still on the
+  road to its evolution (ties go to kit order); its level-up card grants two levels and says
+  `LEAD WEAPON: +2 levels`. The first copy of a stat card also levels every weapon in the kit it is the
+  partner of (`evolves Boomerang · +1 level: Boomerang`). A run that works one weapon at a time and takes
+  its partner card evolves it in about half the picks; a run that scatters its picks gets neither bonus
+  often. Under ONE OF EACH the rule's own +1 bonus level replaces the lead bonus.
+- **Two evolved weapons that pair up fuse** (next section): a bigger spike again, and a weapon slot back.
 - Weapons also gain XP from gems (1 a gem, `WEAPON_XP_BASE` 20 x level), so a weapon nobody drafts still
   climbs; a card jumps ahead. ONE OF EACH still pays +1 bonus level on weapon picks.
 
@@ -81,7 +89,102 @@ higher on a standing crowd because its craters keep burning).
 Base enemy HP 80 → 100; HP ladder `QUAD` 0.03 → 0.05 (x1.2 at 2:00, x1.4 at 5:00, x2.4 at 10:00 over the
 old curve); contact damage unchanged.
 
-## Measured
+## Fusions (`fusions.js FUSION_DEFS`) — they replace the 11 synergy pairs
+
+Two EVOLVED weapons that form a listed pair fuse into ONE weapon. The offer opens in the evolve overlay
+(`FUSION`, same cards, NOT NOW, AUTO takes the first offer after the draft timeout). The host (the first
+weapon of the pair; the Volley when it is in the pair, since it holds no slot) keeps its place and
+carries the other half: both halves keep attacking, each at x1.5 damage (`FUSION_MULT`), plus a link
+behaviour that makes them act as one weapon. The whole kit gains 30% of the run's starting damage
+(`DRAFT_PLAN.FUSION_KIT_DMG`) and the hero is restored as for an evolution. The other weapon's slot is
+free: the next drafts offer `NEW: <weapon>` cards (a weapon the profile owns and the kit lacks, any weapon
+when it owns no spare), which join at Lv 4 (`FUSION_REFILL_LEVEL`, or the mastery start level if higher).
+
+Weapon cards and the STATS screen show the road (`fuses with Chain Zap once both are evolved`; STATS also
+lists partners the kit lacks). Every fused body wears its fusion's corona (two tints, `render.js
+paintFusionCorona`, cached through the sprite cache), its rings, bolts, sweeps and beams take the
+fusion's colours, and the HUD slot shows the fusion's 5x5 emblem. A fusion taken for the first time gets
+the cinematic banner and is recorded in the profile (banner ledger key `fusion:<ID>`); PROGRESS → FUSIONS
+is the shelf, undiscovered entries as dark silhouettes. The synergy module, its toasts, draft hints, the
+SYNERGIES panel and their tests are gone.
+
+| Pair | Fusion | What it does (on top of both halves at x1.5) |
+|---|---|---|
+| Volley + Orbit Blade | Orbital Volley | Every round loops once around you with the blades, then flies at the nearest enemy and pierces one more body. |
+| Volley + Sun Javelin | Sun Lane | Every Volley salvo throws a half-strength spear down its lane, and every spear throw is flanked by two extra rounds. |
+| Chain Zap + Beam | Superconductor | Every beam throws a free lightning chain from the beam's target through four more enemies. |
+| Boomerang + Seeker | Bloodhound Rang | The return leg steers at the nearest enemy, and each catch launches a missile. |
+| Nova Pulse + Mine Layer | Chain Reaction | Every pulse sets off all mines inside its ring. |
+| Scythe + Ember Shot | Harvest Fire | Every enemy the sweep kills bursts like an ember kill and leaves burning ground. |
+| Ricochet + Chain Zap | Storm Bounce | Every ricochet impact throws a spark at the nearest enemy the shot has not touched. |
+| Meteor + Mine Layer | Crater Field | A landing meteor sets off every mine in its crater and seeds a fresh mine. |
+| Nova Pulse + Orbit Blade | Gravity Well | Every pulse drags the enemies in its ring a quarter of the way onto the blades. |
+| Scythe + Chain Zap | Threshing Storm | Every sweep throws lightning from the arc's edge that chains through three enemies. |
+| Mine Layer + Beam | Fire Focus | The beam sets off every mine it sweeps and leaves a mine where it strikes. |
+
+Every weapon is in at least one pair; a weapon fuses once, so Chain Zap, Mine Layer, Nova Pulse, Orbit
+Blade, Scythe, Beam and the Volley each choose between two partners.
+
+## Measured: fusions and the plan rules
+
+Fixed builds, `--fixed-build 5000,20000 --k 12 --shop cheapest --draft <policy> --speed 8`, seeds
+1001–1012, n = 12 per cell, median [min–max]. Three trees: **evolution route** = the figures of the
+previous section (tree `8587a26`); **fusion only** = synergies replaced by fusions, no plan rules (tree
+`1f90038`); **after** = fusions plus the plan rules (this tree). The sim's `evolution-first` policy now
+works first on a weapon whose fusion partner in the kit is already evolved, then on one with a partner in
+the kit, then on the highest-level one, and takes a `NEW:` card that fuses with the kit ahead of other
+weapon cards.
+
+| budget | policy | evolution route: survival s | fusion only: survival s | after: survival s | after: level | after: first evolution | after: first fusion |
+|---|---|---|---|---|---|---|---|
+| 5,000 | random | 248 [110–315] | 176 [95–278] | 277 [129–549] | 13 | 195 s, 50% | 259 s, 25% |
+| 5,000 | weapons-first | 207 [125–251] | 132 [68–382] | 158 [110–390] | 10 | 131 s, 17% | 265 s, 8% |
+| 5,000 | evolution-first | 231 [128–333] | 197 [129–552] | **325 [208–651]** | 17 | 96 s, 92% | 172 s, 92% |
+| 5,000 | stats-first | 251 [133–409] | 151 [126–333] | 202 [129–542] | 11 | 308 s, 25% | 325 s, 17% |
+| 20,000 | random | 513 [223–736] | 615 [247–758] | 706 [255–960] | 32 | 217 s, 83% | 269 s, 58% |
+| 20,000 | weapons-first | 455 [228–547] | 485 [260–645] | 579 [269–823] | 29 | 218 s, 92% | 421 s, 50% |
+| 20,000 | evolution-first | 412 [240–535] | 496 [245–762] | **837 [428–1,025]** | 33 | 114 s, 100% | 212 s, 100% |
+| 20,000 | stats-first | 533 [259–782] | 781 [242–1,066] | 840 [270–936] | 33 | 301 s, 92% | 344 s, 92% |
+
+Against the targets:
+
+- evolution-first ≥ stats-first at 5,000: met (325 vs 202, +61%); and above random at both budgets (+17%
+  at 5,000, +19% at 20,000).
+- evolution-first within ~10% of stats-first at 20,000: met (837 vs 840).
+- stats-first > random at 5,000: **not met** (202 vs 277; the bands overlap widely). Random drafting
+  picks the lead card and partner cards often enough to collect much of the plan bonus; stats-first
+  never takes a weapon card, so it only gets the partner levels. Open item.
+- Removing the synergies alone cost the small kits a lot (fusion only, 5,000: every policy 15–40% down):
+  Orbital Volley was live from the first second for every Volley + Orbit kit. The plan rules more than
+  give it back to the plans that commit.
+
+### Career check (40 runs, 3 seeds, stats-first shop, default loadout, random drafts, speed 8)
+
+`node tools/progression_sim.mjs --runs 40 --seeds 3 --shop stats-first --speed 8`; median [min–max].
+
+| | before (tree `8587a26`) | after |
+|---|---|---|
+| run 1 survival / gold | 11 s [10–20] / 323 [323–335] | 11 s [10–20] / 323 [323–335] |
+| first 60 s run | run 2 [2–4] | run 2 [2–4] |
+| first 120 s run | run 5 [4–6] | run 5 [3–5] |
+| wave 2 | run 9 [7–9] | run 9 [8–12] |
+| wave 5 | run 16 [14–17] | run 15 [13–17] |
+| survival, runs 11–15 | 438 s [271–638] | 249 s [126–891] |
+| survival, runs 21–30 | 1,091 s [833–1,331] | 1,291 s [1,010–1,800] |
+| survival, runs 31–40 | 1,173 s [847–1,642] | 1,638 s [1,277–1,800] |
+| gold banked, runs 31–40 | 7,907 | 11.0k [7,775–22.7k] |
+| longest flat stretch | 7 runs | 5 runs |
+
+Run 1 on a fresh profile is unchanged (no draft, no evolution in reach). The early career is the same
+shape and a little slower through runs 11–15 (the small kits lost their always-on synergy). From run 16
+the career is **faster** than before (+18% survival in runs 21–30, +40% in runs 31–40, some runs reach
+the 1,800 s cap) because the random auto-draft collects lead-weapon levels, evolutions and fusions. Wave 5
+comes at run 15, not the run 18–25 aimed for. The enemy ladder and income were not retuned in this pass
+(open item).
+
+## Measured (evolution route, tree `8587a26`)
+
+## Measured (evolution route, tree `8587a26`)
 
 Fixed builds: `--fixed-build 1000,5000,20000 --k 12 --shop cheapest --draft <policy> --speed 8`,
 seeds 1001–1012, median [min–max]. "first evolution" is the sim time of the run's first evolution and
@@ -143,17 +246,37 @@ run 20–30 is still missed by about four runs (open item).
   `test_draft_ceremony`, `test_heal_budget`); stat-card pins in `test_tier2_parallels`.
 - `test/test_escape_duration.mjs` (M3 check): AUTO finishes the escape corridor in 26–29 s and the HUD
   states the payout and what a skip passes up.
-- `tools/run_suite.mjs` KNOWN_RED is empty: 206 files green.
+- `test/test_fusions.mjs` (new): the fusion table (8-12 entries, every weapon covered, own colours and
+  emblem), every flag read by the game, the synergy module gone; per fusion: both halves needed, both
+  evolved, one place freed, both halves kept, fused once; road and card text; and in the real loop per
+  fusion: the offer card, the freed slot, the announce, and the behaviour that marks it (halves parked
+  so only the link can produce it); x1.5 on a fused half; NOT NOW; the `NEW:` refill card; the shelf.
+- `test/test_draft_plan.mjs` (new): the lead weapon card (+2 levels, ties, cap, hand-over, ONE OF EACH),
+  the partner card's level, the kit-wide damage of an evolution and a fusion, and the card text for each.
+- `test/test_draft_card_art.mjs`: the compact draft layout rule (844x390, 667x375, 932x430, the 500 px
+  boundary, 390x844 one row, desktop unchanged), the stylesheet's compact rules and scrim, and that
+  `openDraft` flags the overlay and sizes the cards by the rule.
+- Converted from the synergy rules: `smoke` (Orbital Volley is offered, fused, announced, shots orbit),
+  `test_desktop_ui` (no fusion state at run start), `test_feedback_098` (fusion announces wrap in the
+  feed), `test_wave26_crossfile` (`fusWeaponDmg`). Removed: `test_synergies`, `test_synergy_hint`,
+  `test_synergy_wiring`. Pins moved: `test_tier2_parallels` (weapon offer keys gain `fuseText`,
+  `leadText`), `test_title_screen` (PROGRESS has FUSIONS).
+- `tools/run_suite.mjs` KNOWN_RED is empty: 205 files green.
 
 ## Open items
 
-- `weapons-first` (a weapon card whenever offered, spread over the kit) is below `stats-first` at 5,000
-  (207 vs 251, n = 12, bands overlap); `evolution-first` (one weapon at a time) is on par. Focusing is
-  the plan the draft text steers toward.
-- `random` is on par with the deliberate plans at 5,000 and 20,000 rather than below them: the uniform
-  pick mixes rares, skills and rewrites that the deliberate policies refuse.
-- `tools/draft_sim.mjs` (the coarse model behind `test_draft_luck`) still prices Whetstone and Quick
-  Hands at the new values but models the weapon ladders coarsely; refit it before trusting it.
-- Wave 5 on a stats-first career comes at run 16, not run 20–30.
-- The 40-run career and the phone-landscape draft layout (cards sit low on an 844x390 viewport, a
-  pre-existing M3 layout) are reported, not fixed.
+- `stats-first` is below `random` at 5,000 (202 vs 277, n = 12, bands overlap): the target
+  "evolution-first >= stats-first > random" holds for evolution-first only. A rule that pays a stat
+  plan and not a scatter (for example a stat card's third copy counting double) is the next thing to try.
+- The 40-run stats-first career reaches wave 5 at run 15 [13-17] (aim: run 18-25) and is 18-40% longer
+  per run from run 21 on, with runs at the 1,800 s cap. The enemy HP ladder (`config.js` HP ladder `QUAD` 0.05) or
+  the late income needs a trim, measured with the same career command; not done in this pass.
+- `weapons-first` (a weapon card whenever offered, spread over the kit) stays the weakest plan (158 at
+  5,000, 579 at 20,000): spreading levels gets the lead bonus only by accident. Focusing is the plan the
+  draft text steers toward.
+- Fusion link behaviours run in the main loop only; the maw fight (`updateFinale`) ticks both halves of
+  a fused weapon but not the links.
+- The fixed-build cells are n = 12 with wide bands; the fusion numbers (x1.5, +30% kit damage, Lv 4
+  refill) were set once and not tuned per fusion.
+- `tools/draft_sim.mjs` (the coarse model behind `test_draft_luck`) models neither the lead rule nor
+  fusions; refit it before trusting it.
