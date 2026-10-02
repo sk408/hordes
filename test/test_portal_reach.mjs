@@ -26,6 +26,7 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { lootLimit } from '../src/entities.js';
 import { AutoPilotController } from '../src/controllers.js';
+import { buildingRects, pushOutOfRects, BUILDING_MOVER_R } from '../src/stage_buildings.js';
 
 const s = suite('test_portal_reach');
 
@@ -122,6 +123,12 @@ const openPortalAt = (x, y) => {
 function measureEntry(name, px, py, ox, oy, budgetS) {
   const p = freshRun();
   p.x = px; p.y = py;
+  // The run's building field is random: a scripted footing can land inside a
+  // wall, where no pilot can ever stand. Nudge it to the nearest legal footing.
+  {
+    const at = pushOutOfRects(buildingRects(st.groundSeed || 0, st.stage), p.x, p.y, BUILDING_MOVER_R + 1);
+    p.x = at[0]; p.y = at[1];
+  }
   const po = openPortalAt(ox, oy);
   const tOpen = st.time;
   let enteredAt = null, minD = Infinity, sawPortalAct = false;

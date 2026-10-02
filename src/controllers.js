@@ -343,13 +343,22 @@ export class AutoPilotController {
       target,
     });
     // Building route toward (tx, ty): null while the straight walk is clear
-    // (the caller keeps its own vector) or when no route is known; otherwise
-    // the move along the route at `mag`. The route ends at the nearest
-    // standable point to the goal. `left` is the walking distance remaining.
+    // (the caller keeps its own vector and passes it through direct()) or
+    // when no route is known; otherwise the move along the route at `mag`.
+    // The route ends at the nearest standable point to the goal. `left` is
+    // the walking distance remaining.
     let left = 0;
+    let lineClear = false;
+    // A straight move the planner found clear is final too: flag it routed so
+    // the motion seam's stateless corner-steer cannot second-guess it.
+    const direct = (m) => {
+      if (lineClear) { m.routed = true; m.stepCap = Infinity; }
+      return m;
+    };
     const routeTo = (tx, ty, mag) => {
       left = Math.hypot(tx - p.x, ty - p.y);
-      if (straightClear(bRects, p.x, p.y, tx, ty)) { this.nav.path = null; return null; }
+      lineClear = straightClear(bRects, p.x, p.y, tx, ty);
+      if (lineClear) { this.nav.path = null; return null; }
       const s = clearOfBuildings(bRects, tx, ty, BUILDING_MOVER_R + NAV_PAD, C.GROUND.RIM);
       const d = navDirection(this.nav, bRects, p.x, p.y, s[0], s[1]);
       if (!d) return null;
@@ -411,7 +420,7 @@ export class AutoPilotController {
         this.act = 'PROLOGUE';
         // A footprint can stand across the spawn -> potion line: walk round it.
         return routeTo(state.prologue.potion.x, state.prologue.potion.y, 1) ||
-          put(dx / len, dy / len);
+          direct(put(dx / len, dy / len));
       }
     }
 
@@ -502,7 +511,7 @@ export class AutoPilotController {
           this.skipChest = state.runChest;   // unreachable: stop walking at it
         } else {
           this.act = 'CHEST';
-          return routed || put(cdx / clen, cdy / clen);
+          return routed || direct(put(cdx / clen, cdy / clen));
         }
       }
     }
@@ -563,11 +572,12 @@ export class AutoPilotController {
       if (route) return put(route[0], route[1], rim);
       const routed = routeTo(state.portal.x, state.portal.y, 1);
       if (this.stalled(state.portal, p, left)) this.nav.path = null;   // re-plan
-      return routed || put(pdx / plen, pdy / plen, rim);
+      return routed || direct(put(pdx / plen, pdy / plen, rim));
     }
 
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {
+      lineClear = false;
       const routed = gemRamp ? null : routeTo(g.x, g.y, st.XP_SPEED);
       if (this.stalled(g, p, left)) {
         // No progress toward this gem: give it up and take another next frame.
@@ -593,7 +603,7 @@ export class AutoPilotController {
       // (smoke caught 3.0s at x=560.1). Below a real vector, patrol instead.
       if (Math.hypot(gx, gy) >= 0.25) {
         this.act = 'LOOT';
-        return put(gx * st.XP_SPEED, gy * st.XP_SPEED);
+        return direct(put(gx * st.XP_SPEED, gy * st.XP_SPEED));
       }
       // Gem dead-ahead (or a crawl) outside the rim — fall through to patrol.
     }
@@ -611,14 +621,20 @@ export class AutoPilotController {
       // A building in the way: route to a point further round the orbit
       // instead of pressing its face.
       const ml = Math.hypot(mx, my);
-      if (ml > 0 && !straightClear(bRects, p.x, p.y,
-        p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK)) {
+      lineClear = ml > 0 && straightClear(bRects, p.x, p.y,
+        p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK);
+      if (ml > 0 && !lineClear) {
         const r = Math.min(400, Math.max(80, len));
         const a = Math.atan2(dy, dx) + 0.6;
-        const routed = routeTo(Math.cos(a) * r, Math.sin(a) * r, ml);
+        const tx = Math.cos(a) * r, ty = Math.sin(a) * r;
+        const routed = routeTo(tx, ty, ml);
         if (routed) return routed;
+        if (lineClear) {   // the orbit point is in plain sight: walk at it
+          const tl = Math.hypot(tx - p.x, ty - p.y) || 1;
+          return direct(put(((tx - p.x) / tl) * ml, ((ty - p.y) / tl) * ml));
+        }
       }
-      return put(mx, my);
+      return direct(put(mx, my));
     }
   }
 }

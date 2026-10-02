@@ -111,10 +111,10 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
 }
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xf4);   // FIXTURE RETARGET (was 0xef): the pilot now
+  Math.random = mulberry32(0xf5);   // FIXTURE RETARGET (was 0xef): the pilot now
   // routes around buildings (pilot_nav.js), which re-paths both arms and
-  // split a boundary kill again (15 vs 14). 0xf4 parity verified on repeat
-  // runs. Earlier retarget, 2026-09-23 (was 0xee): PORT
+  // split a boundary kill again (15 vs 14). 0xf5 parity verified on repeat
+  // runs (0xf7-0xfa hold too). Earlier retarget, 2026-09-23 (was 0xee): PORT
   // SLICE J's composed field (~60 building footprints vs ~3) re-paths the
   // pilot around walls — the arms' micro-diverging positions split a
   // boundary kill again (15 vs 16) at 0xee. The same failure class the

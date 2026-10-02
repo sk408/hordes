@@ -1416,6 +1416,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'focus/stance decorations survive the AUTO MOVE -> MANUAL swap');
 
   // Held ArrowRight crosses a real distance; keyup STOPS the pilot dead.
+  // Pinned building field + the spawn footing: seed 1 leaves the lanes right
+  // and up-right of the spawn clear (a random field can put a wall there).
+  st.stage = 'VERDANT_HOLLOW';
+  st.groundSeed = 1;
+  st.player.x = 240; st.player.y = 150;
   const x0 = st.player.x;
   keyHandler({ key: 'ArrowRight' });
   pump(30);
@@ -1434,10 +1439,9 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // Diagonal: w+d keys normalize to equal displacement on both axes.
   T.startRun();
   quietField();
-  // Pinned building field: seed 1 leaves the up-right lane off the spawn
-  // clear (a random field can put a wall there and the slide skews the axes).
-  st.stage = 'VERDANT_HOLLOW';
+  st.stage = 'VERDANT_HOLLOW';   // the same pinned field as the ArrowRight probe
   st.groundSeed = 1;
+  st.player.x = 240; st.player.y = 150;
   // (h) ASK for the manual pilot: with G31 the run starts in the PERSISTED
   // mode, so pin it here rather than counting on the old forced AUTO_ALL
   // (setPilotMode is idempotent — an already-MANUAL run is a no-op).

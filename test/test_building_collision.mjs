@@ -317,8 +317,9 @@ const CYCLE_TICKS = 240, CYCLE_SPAN_PX = 6;
 
 // Pump frames, clicking through any overlay card (draft/burst), counting
 // only live play. Returns the trace and the worst stall window. `goal`
-// (optional) says whether the pilot has somewhere to be this frame.
-function drive(frames, per, goal) {
+// (optional) says whether the pilot has somewhere to be this frame; `until`
+// (optional) ends the drive early once it returns true.
+function drive(frames, per, goal, until) {
   const trace = [];
   let goalRun = 0;
   let worst = 0, cur = 0, lx = st.player.x, ly = st.player.y, played = 0;
@@ -353,6 +354,7 @@ function drive(frames, per, goal) {
       throw new Error('AssertionError: stalled ' + worst + ' ticks at (' +
         st.player.x.toFixed(0) + ',' + st.player.y.toFixed(0) + ')');
     }
+    if (until && until()) break;
   }
   return { trace, worst, played };
 }
@@ -395,7 +397,9 @@ S.check('REAL manual: held direction never penetrates, keeps moving, reaches the
   st.player.x = box.x - 140; st.player.y = midY;
   T.setPilotMode('MANUAL');
   T.pilotInput.right = true;
-  const { trace, worst } = drive(900);
+  // Stop once well past the box: a walk that runs on into the arena rim
+  // (a speed arch on the way makes it reach) would read as a stall there.
+  const { trace, worst } = drive(900, null, null, () => st.player.x > box.x + box.w + 60);
   T.pilotInput.right = false;
   assert(penetration(trace, rects) <= 1e-6, 'the trace never enters a footprint');
   assert(worst <= MAX_STALL_TICKS, 'manual contact never stalls (worst ' + worst + ')');
@@ -456,8 +460,9 @@ S.check('REAL AUTO: far marks across the field are banked — no limit cycle (se
     st.gems.push({ x: mx, y: my, xp: 1 });
     let doneAt = -1;
     const { trace } = drive(60 * 60, (i) => {
+      st.enemies.length = 0; st.spawnTimer = 99999;   // nothing may shove the pilot
       if (doneAt < 0 && st.gems.length === 0) doneAt = i;
-    }, () => st.gems.length > 0);
+    }, () => st.gems.length > 0, () => st.gems.length === 0);
     assert(doneAt >= 0, 'seed ' + seed + ' (' + sx + ',' + sy + ')->(' + mx + ',' + my +
       '): mark never banked; pilot ended at (' + st.player.x.toFixed(1) + ',' + st.player.y.toFixed(1) + ')');
     assert(penetration(trace, rects) <= 1e-6, 'seed ' + seed + ': the walk never enters a footprint');

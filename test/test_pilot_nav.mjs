@@ -123,9 +123,9 @@ s.check('controller: a routed move is flagged, capped at its waypoint, and banks
   const ctl = new AutoPilotController();
   let routedFrames = 0;
   const frames = pilotWalk(ctl, state, 60 * 40, (f, d) => {
-    if (d.routed) {
+    if (d.routed && Number.isFinite(d.stepCap)) {
       routedFrames++;
-      assert.ok(d.stepCap > 0 && Number.isFinite(d.stepCap), 'stepCap is a real distance');
+      assert.ok(d.stepCap > 0, 'stepCap is a distance');
     }
     return Math.hypot(gem.x - state.player.x, gem.y - state.player.y) > C.PLAYER.XP_PICKUP_RADIUS;
   });
@@ -133,13 +133,14 @@ s.check('controller: a routed move is flagged, capped at its waypoint, and banks
   assert.ok(routedFrames > 0, 'the walk used building routes');
 });
 
-s.check('controller: open field keeps the plain vector (no routed flag)', () => {
+s.check('controller: open field keeps the plain vector', () => {
   const state = mkState(7919, 0, 0, [{ x: 30, y: 0, xp: 1 }]);
   state.stage = 'VERDANT_HOLLOW';
   const rects = buildingRects(7919, 'VERDANT_HOLLOW');
   assert.ok(straightClear(rects, 0, 0, 30, 0), 'fixture: the lane is clear');
   const d = new AutoPilotController().decide(state.player, state, C.PLAYER);
-  assert.equal(d.routed, undefined);
+  assert.equal(d.routed, true, 'a clear straight move is final (no corner-steer)');
+  assert.equal(d.stepCap, Infinity);
   assert.deepEqual([d.moveX, d.moveY], [1, 0]);
 });
 
