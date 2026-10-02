@@ -107,7 +107,8 @@ const HORDE = (n) => `(async () => {
 
 const THEME = (w) => `(() => { const S = window.T.state; S.wave.num = ${w}; return S.wave.num; })()`;
 
-// Median wall-clock cost of one frame() over n frames (sim + render).
+// Median wall-clock cost of one frame() over n frames (sim + render), and of
+// the render call alone.
 const FRAME_MS = (n) => `(() => {
   const T = window.T; const real = Performance.prototype.now.bind(performance);
   const ts = [];
@@ -116,7 +117,13 @@ const FRAME_MS = (n) => `(() => {
     const t0 = real(); window.__pump(1); ts.push(real() - t0);
   }
   ts.sort((a, b) => a - b);
-  return { med: ts[ts.length >> 1], p95: ts[Math.floor(ts.length * 0.95)], n: T.state.enemies.length };
+  // Render alone: the same frame painted again and again (no sim).
+  const rs = [];
+  for (let i = 0; i < ${n}; i++) { const t0 = real(); T.renderer.render(T.state, T.state.cam); rs.push(real() - t0); }
+  rs.sort((a, b) => a - b);
+  return { med: ts[ts.length >> 1], p95: ts[Math.floor(ts.length * 0.95)],
+    renderMed: rs[rs.length >> 1], renderP95: rs[Math.floor(rs.length * 0.95)],
+    renderMean: rs.reduce((a, b) => a + b, 0) / rs.length, n: T.state.enemies.length };
 })()`;
 
 const VIEWPORTS = [
@@ -155,5 +162,5 @@ for (const vp of VIEWPORTS) {
     if (page.errors.length) console.log(vp.name, 'page errors:', page.errors.slice(0, 5));
   });
 }
-console.log('frame ms (sim + render):', JSON.stringify(perf, null, 1));
+console.log('frame ms:', JSON.stringify(perf));
 fs.writeFileSync(path.join(outDir, `${tag}-frame-ms.json`), JSON.stringify(perf, null, 1));
