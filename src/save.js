@@ -732,6 +732,9 @@ export function validateProfile(profile, cat) {
     } else if (p.apex.enabled !== undefined) {
       repairs.push('apex.enabled');
     }
+    // Latched gate (meta.js latchApexUnlock): only ever stored as true.
+    if (p.apex.unlocked === true) apex.unlocked = true;
+    else if (p.apex.unlocked !== undefined && p.apex.unlocked !== false) repairs.push('apex.unlocked');
   } else if (p.apex !== undefined) {
     repairs.push('apex');
   }

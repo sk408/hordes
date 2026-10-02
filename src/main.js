@@ -158,6 +158,7 @@ import {
   // G25 slice 1: the apex tier — its OWN array (never inside SHOP_UPGRADES),
   // the derived gate, the buy path, and the sanctioned toggle pair.
   APEX_UPGRADES, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
+  latchApexUnlock, apexCatalogueComplete,
   luckDropWeights,
   draftCardWeight,
   draftLadderWeight,
@@ -1146,6 +1147,7 @@ let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry
 // marked release shipped. ONE choke point, so no save path can forget it.
 function persistProfile() {
   profile.lastPlayed = Date.now();
+  latchApexUnlock(profile);
   return saveProfile(profile);
 }
 export function autosave(reason = 'exit') {
@@ -7874,6 +7876,7 @@ function showShop() {
   // G25 slice 1: the APEX entry row exists ONLY when the gate is open — the
   // panel is absent (not greyed) until the normal catalogue is finished, so
   // an in-progress shopper never sees the tier at all.
+  latchApexUnlock(profile);
   if (apexUnlocked(profile)) {
     menuCard('APEX', 'the post-completion tier — rule-breakers, priced for the grind', () => showApexShop());
   }

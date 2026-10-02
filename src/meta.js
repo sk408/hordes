@@ -1104,11 +1104,29 @@ export function apexOwned(profile, id) {
     profile.apex.owned.includes(id));
 }
 
-// THE GATE — DERIVED from real ownership, never a hand-kept flag: every
-// non-apex row of the normal catalogue owned/maxed. Until this is true the
-// apex panel is not rendered at all (not greyed: absent) and buyApex refuses.
-export function apexUnlocked(profile) {
+// THE GATE: every row of the normal catalogue owned/maxed opens it, and it
+// stays open afterwards (the latched profile.apex.unlocked flag, or any owned
+// apex item), so rows added to the catalogue later never lock a finished
+// player out of the panel or its ON/OFF toggle. Until it is open the apex
+// panel is not rendered at all (not greyed: absent) and buyApex refuses.
+export function apexCatalogueComplete(profile) {
   return SHOP_UPGRADES.every(def => shopRowOwned(profile, def));
+}
+
+export function apexUnlocked(profile) {
+  if (!profile) return false;
+  const a = profile.apex;
+  if (a && (a.unlocked === true || (Array.isArray(a.owned) && a.owned.some(id => APEX_BY_ID[id])))) return true;
+  return apexCatalogueComplete(profile);
+}
+
+// Record the unlock on the profile. Returns true when it newly latched (the
+// caller persists).
+export function latchApexUnlock(profile) {
+  if (!profile || !profile.apex || typeof profile.apex !== 'object') return false;
+  if (profile.apex.unlocked === true || !apexUnlocked(profile)) return false;
+  profile.apex.unlocked = true;
+  return true;
 }
 
 // Buy one apex item. Refuses when the gate is closed, the id is unknown, the
