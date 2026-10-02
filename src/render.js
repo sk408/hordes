@@ -36,10 +36,10 @@ import { radarDots, RADAR_RADIUS } from './radar.js';
 import { atlasCell } from './atlas.js';
 import { stageRelief } from './stages.js';
 import { propForStage, propFrame, paintStageProp } from './stage_props.js';
-import { buildingField, paintBuilding } from './stage_buildings.js';
+import { buildingField, paintBuilding, STAGE_BUILDINGS } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
-import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM } from './sprite_cache.js';
+import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN } from './sprite_cache.js';
 import { shakeOffset } from './fx/feel.js';
 import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
 
@@ -538,6 +538,33 @@ function blitChest(g, art, x, y, lit) {
     g.fillStyle = art.palette[5];
     for (const [dx, dy] of art.glint) g.fillRect(x + dx, y + dy, 1, 1);
   }
+}
+
+// drawGrid-shaped blit for the painters that take a grid painter (props,
+// item portraits): cached raster, or the per-pixel fallback.
+function blitPlain(g, grid, palette, x, y, scale = 1) {
+  blitGrid(g, grid, palette, x, y, STYLE_PLAIN, scale);
+}
+
+// A building is a fixed rect list: one cached raster per design. Returns the
+// design's rect count either way (the landmarks seam reports it).
+const buildingBoxes = new Map();
+function blitBuilding(g, id, x, y) {
+  const b = STAGE_BUILDINGS[id];
+  if (!b) return 0;
+  if (!cacheEnabled()) return paintBuilding(g, id, x, y);
+  let box = buildingBoxes.get(id);
+  if (!box) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [dx, dy, w, h] of b.rects) {
+      x0 = Math.min(x0, dx); y0 = Math.min(y0, dy);
+      x1 = Math.max(x1, dx + w); y1 = Math.max(y1, dy + h);
+    }
+    box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    buildingBoxes.set(id, box);
+  }
+  blitPainted(g, 'bld:' + id, box, (c, ox, oy) => paintBuilding(c, id, ox, oy), x, y);
+  return b.rects.length;
 }
 
 // Enemy shots: a bright ring instead of the dark one, so a shot reads as
@@ -2050,7 +2077,10 @@ export class Renderer {
     const p = state.player;
     if (!state.radarOn || !p || !p.stats) { this.radar = null; return; }
     const R = RADAR_DISPLAY_R;
-    const cx = C.VIEW_W - RADAR_CORNER_INSET - R;
+    // state.radarInset: view px the disc steps left so it clears the DOM pad
+    // column where that column overlays the canvas (desktop); 0 elsewhere.
+    const inset = Math.max(0, Math.min(C.VIEW_W / 2, Math.round(state.radarInset || 0)));
+    const cx = C.VIEW_W - RADAR_CORNER_INSET - R - inset;
     const cy = C.VIEW_H - RADAR_CORNER_INSET - R;
     // ARENA RELIEF — VISION (the reward half of high ground): the radar's
     // WORLD reach widens while the drawn disc stays the same fixed-geometry
@@ -3044,7 +3074,7 @@ export class Renderer {
         g.fillStyle = col;                             // rarity frame corners
         g.fillRect(ix - 1, iy - 5, 1, 1); g.fillRect(ix + 8, iy - 5, 1, 1);
         g.fillRect(ix - 1, iy + 4, 1, 1); g.fillRect(ix + 8, iy + 4, 1, 1);
-        paintItemIcon(this.drawGrid.bind(this), g, portrait, ix, iy - 4, 1);
+        paintItemIcon(blitPlain, g, portrait, ix, iy - 4, 1);
         chrome.itemIcons.push({ rarity: it.rarity });
         ix += 12;
         continue;
@@ -3952,7 +3982,7 @@ export class Renderer {
           const fr = propFrame(prop, cx, cy);
           g.fillStyle = pal.crack;                                     // bed shadow
           g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
-          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
+          rects = 1 + paintStageProp(g, blitPlain, prop.id, fr, x, y);
         } else if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
           kind = 'WALL';
           const n = 4 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 4..6
@@ -4027,7 +4057,7 @@ export class Renderer {
           const fr = propFrame(prop, cx, cy);
           g.fillStyle = pal.crack;                                     // bed shadow
           g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
-          rects = 1 + paintStageProp(g, this.drawGrid.bind(this), prop.id, fr, x, y);
+          rects = 1 + paintStageProp(g, blitPlain, prop.id, fr, x, y);
         } else if (hollow) {          // THE HOLLOW: the tail grows groves too
           kind = 'GROVE';
           rects = grove(x, y);
@@ -4092,7 +4122,7 @@ export class Renderer {
       if (b.x + b.w < cam.x || b.x > cam.x + C.VIEW_W) continue;
       if (b.y + b.h < cam.y || b.y > cam.y + C.VIEW_H) continue;
       const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
-      out.push({ kind: b.id, x: b.x, y: b.y, rects: paintBuilding(g, b.id, x, y) });
+      out.push({ kind: b.id, x: b.x, y: b.y, rects: blitBuilding(g, b.id, x, y) });
     }
     // THE HOLLOW'S AUTHORED LANDMARKS (STARTING ARENA IMPROVE 2026-09-17) —
     // not hash-gated: the OLD STUMP stands at the exact arena heart (the

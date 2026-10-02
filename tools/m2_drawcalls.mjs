@@ -7,6 +7,9 @@ import { boot } from '../test/_harness.mjs';
 
 const useCache = process.argv.includes('--cache');
 const breakdown = process.argv.includes('--breakdown');
+// A fixed roll sequence, so the scene (ground seed, weather) repeats run to run.
+let seed = 20261002;
+Math.random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
 const h = await boot({ measurement: false });
 const { T, state, rec } = h;
 if (useCache) {

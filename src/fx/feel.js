@@ -168,6 +168,16 @@ function agePool(arr, dt) {
 
 const kinds = new WeakMap();   // ground item -> 'chest' | 'item'
 const SLAM_KINDS = { boss_nova: 2.5, colossus_shock: 2, mine_blast: 1, flash: 3 };
+// Weapon-fire sound family by what a weapon puts on the field: an effect
+// kind or a projectile kind (the volley's own shot is sounded at its site).
+const FIRE_BY_FX = {
+  scythe_arc: 'fire_arc', beam: 'fire_zap', zap: 'fire_zap',
+  nova: 'fire_blast', nova_pulse: 'fire_blast', mine_blast: 'fire_blast', rewrite_boom: 'fire_blast',
+};
+const FIRE_BY_PROJ = {
+  boomerang: 'fire_arc', seeker: 'fire_seek', javelin: 'fire_bolt', ricochet: 'fire_bolt',
+  ember: 'fire_blast', mine: 'fire_seek',
+};
 const PICK_R = 46;   // a ground item that vanishes this close to the player was picked up
 
 // ---- the per-step observer ---------------------------------------------------
@@ -196,10 +206,15 @@ export function feelStep(state, dt) {
 
   // -- enemies: hits (numbers + knockback) and removals (puffs) --
   const cur = f.cur; cur.length = 0;
-  let hitThisStep = false;
+  let hitThisStep = false, bossAlive = false;
   const scan = (e) => {
     let r = f.track.get(e);
-    if (!r) { r = { hp: e.hp, pass: 0, kvx: 0, kvy: 0, kcd: 0 }; f.track.set(e, r); }
+    if (!r) {
+      r = { hp: e.hp, pass: 0, kvx: 0, kvy: 0, kcd: 0 };
+      f.track.set(e, r);
+      if (e.boss || e.finalBoss) { sfx('bossArrive'); addShake(f, 3); }
+    }
+    if ((e.boss || e.finalBoss) && e.hp > 0) bossAlive = true;
     r.pass = f.pass;
     cur.push(e);
     const dmg = r.hp - e.hp;
@@ -237,6 +252,7 @@ export function feelStep(state, dt) {
     else if (e.elite) bigDeath = Math.max(bigDeath, 1);
   }
   { const old = f.prev; f.prev = cur; f.cur = old; }
+  if (sounds && sounds.setMusicMode) sounds.setMusicMode(bossAlive ? 'boss' : 'run');
   if (hitThisStep) sfx('hit');
   if (deaths > 0) sfx(bigDeath === 2 ? 'bossDeath' : bigDeath === 1 ? 'eliteDeath' : 'kill');
   if (bigDeath === 2) addShake(f, 5); else if (bigDeath === 1) addShake(f, 2.5);
@@ -290,12 +306,21 @@ export function feelStep(state, dt) {
 
   // -- heavy effects that just appeared: a slam shakes the screen --
   for (const fx of state.effects || []) {
-    const amt = SLAM_KINDS[fx.kind];
-    if (!amt || f.seenFx.has(fx)) continue;
+    const amt = SLAM_KINDS[fx.kind], fire = FIRE_BY_FX[fx.kind];
+    if ((!amt && !fire) || f.seenFx.has(fx)) continue;
     f.seenFx.add(fx);
-    if (Math.hypot(fx.x - p.x, fx.y - p.y) < 260) {
+    if (fire) sfx(fire);
+    if (amt && Math.hypot(fx.x - p.x, fx.y - p.y) < 260) {
       addShake(f, amt);
       if (fx.kind === 'boss_nova' || fx.kind === 'colossus_shock') sfx('slam');
     }
+  }
+
+  // -- weapon bodies that just left the hero: their fire sound --
+  for (const pr of state.projectiles || []) {
+    const fire = pr.kind && FIRE_BY_PROJ[pr.kind];
+    if (!fire || f.seenFx.has(pr)) continue;
+    f.seenFx.add(pr);
+    sfx(fire);
   }
 }
