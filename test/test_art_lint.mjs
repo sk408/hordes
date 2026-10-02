@@ -64,38 +64,19 @@ const EXPECTED_TROPHIES = [
   'GOLD_600_UNDER_6MIN', 'LOCKED',
 ];
 const EXPECTED_PORTRAITS = ['KNIGHT', 'WITCH', 'ROGUE', 'PALADIN'];
-// meta.js SHOP_UPGRADES ids at the time of authoring: 19 stat/slot rows
-// (dmg..arcade, incl. the three N1b mana buyables, the owner-ordered Split Shot
-// cap row and the A1 'focus' engagement-radius line) + 7 priced weapon unlock
-// rows + 3 elite unlock rows + 4 tier-2(e) weapon unlock rows = 33 rows, PLUS
-// the two STARTER_WEAPONS (VOLLEY, BOOMERANG) which have no shop row but do
-// have art (the draft pool / roster UI uses the same icons), PLUS the two G25
-// APEX rows (their OWN catalogue, APEX_UPGRADES — same icon convention), PLUS
-// the generic fallback = 38 keys.
+// One icon per meta.js SHOP_UPGRADES row (stat rows, weapon unlocks, elite
+// unlocks), plus the two STARTER_WEAPONS (no shop row, but the draft pool and
+// roster use the same icons), the two APEX rows and the generic fallback. The
+// cross-check at the end of this file compares this art against the live tables.
 const EXPECTED_SHOP = [
-  'dmg', 'hp', 'potions', 'regen', 'focus', 'thrifty', 'well', 'siphon', 'xp', 'crit',
-  'critdmg', 'greed', 'alchemy', 'scav', 'artifact', 'luck', 'split', 'slots', 'arcade',
-  // G17 slice 2 breadth: 16 new stat rows (fleetfoot .. laststand), each with
-  // its own authored icon — never the fallback.
-  'fleetfoot', 'briarmail', 'lodestone', 'hollowpoint', 'ironheart', 'hairtrigger',
-  'headsman', 'bloodpact', 'fanfire', 'deepread', 'aethertap', 'grandelixir',
-  'deepfont', 'eagleeye', 'staticfield', 'laststand',
-  // V1 ESCAPE (owner directive 2026-09-14): the paid-skip shop row rides the
-  // same slice as the mode itself — RETARGET, not weaken (one icon per row).
-  'escapeskip',
-  // CHAIN ZAP REWORK (owner msg_01M2RENZ, 2026-09-17): the Storm Conduit row
-  // gets its own authored icon — never the fallback.
-  'zapchain',
-  // TIER-2(c) NEW BUYABLES (owner autopilot 2026-09-23): 10 classic stat rows,
-  // each with its own authored icon — never the fallback.
-  'might', 'toughness', 'cooldown', 'marathon', 'magnetism',
-  'growth', 'avarice', 'bullseye', 'vampire', 'hoarder',
+  'dmg', 'hp', 'focus', 'lodestone', 'potions', 'fleetfoot', 'xp',
+  'hairtrigger', 'crit', 'critdmg', 'greed', 'alchemy', 'regen', 'well', 'thrifty', 'briarmail',
+  'reroll', 'skip', 'banish',
+  'split', 'hollowpoint', 'bloodpact', 'artifact', 'luck', 'slots', 'zapchain',
+  'fanfire', 'deepread', 'laststand', 'escapeskip', 'arcade',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
-  'weapon_beam',
-  // TIER-2(e) NEW WEAPONS (owner autopilot 2026-09-23): 4 new weapon unlock
-  // rows, each with its own authored icon — never the fallback.
-  'weapon_javelin', 'weapon_ember', 'weapon_ricochet', 'weapon_meteor',
+  'weapon_beam', 'weapon_javelin', 'weapon_ember', 'weapon_ricochet', 'weapon_meteor',
   'elite_swift', 'elite_splitting', 'elite_vampiric',
   'apex_mark', 'apex_endless_fire',
   '__fallback',
