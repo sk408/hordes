@@ -91,6 +91,9 @@ globalThis.localStorage = {
 const mainMod = await import('../src/main.js');
 const T = mainMod.__TEST;
 const st = T.state;
+// Not about the tutorial: a settled profile, so run 1's guided part (which
+// holds the auto-pick for its own draft step) does not arm.
+T.getProfile().achievements.totals.runs = 1;
 const frame = () => {
   now += 1000 / 60;
   const cb = rafQueue.shift();

@@ -49,11 +49,10 @@ s.check('PLAY -> START on an empty profile reaches a live run with NO manual in 
   if (manualSeen) throw new Error('the manual opened before run 1');
   if (elements['overlay'].style.display !== 'none') throw new Error('an overlay is still up over run 1');
 });
-s.check('run 1 is the tutorial run: its first card comes up, three cards in all', () => {
-  if (!T.prologue.active) throw new Error('run 1 of an empty profile must open the tutorial');
-  if (T.prologue.banners.length !== 3) throw new Error('the tutorial is ' + T.prologue.banners.length + ' cards, not 3');
-  for (let i = 0; i < 60 && !T.prologue.paused; i++) pump(1);
-  if (!T.prologue.paused || T.prologue.banner().action !== 'move') throw new Error('the MOVE card is not up');
+s.check('run 1 is the guided run: its first step comes up', () => {
+  if (!T.tut.live) throw new Error('run 1 of an empty profile must open the guided run');
+  for (let i = 0; i < 60 && !T.tut.model; i++) pump(1);
+  if (!T.tut.model || T.tut.model.id !== 'hero') throw new Error('the first step is not up');
 });
 s.check('the keyboard goes straight through: Enter (PLAY), Enter (START)', () => {
   toTitle();
