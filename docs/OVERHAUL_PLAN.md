@@ -82,6 +82,23 @@ Change four things:
 - **Items:** a relic tier that changes rules, not stats.
 - **Autopilot:** flees the sum of threats, dodges projectiles, collects chests and shrines when safe.
 
+### M5a — The fun layer (added 2026-10-02)
+
+Steve's brief: the things that make Balatro, Vampire Survivors, Megabonk and Ball x Pit fun, in a game that can be played idle.
+Each piece replaces an existing system, so the game gets deeper without getting wider.
+
+| From | What makes it fun | In HORDES | Replaces |
+|---|---|---|---|
+| Vampire Survivors | Evolutions as the mid-run goal; chest ceremonies; a collection shelf | Weapon levels that change behaviour; a visible evolution recipe on every weapon card; first evolution around minute 4–8 | The token-gated evolution rules |
+| Balatro | The build is a hand; jokers rewrite rules; the score multiplies in front of you | **Hands:** the cards you draft already have rank and suit. Pairs, flushes and straights among them pay a run-long multiplier, shown and counted up on screen. **Jokers:** a small row of rule-changing cards with limited slots | Synergy toasts, rewrites, mythics and rule cards, folded into one joker row |
+| Balatro | Boss blinds that change the rules for one fight | Each wave boss arrives with a named rule for that wave ("no potions", "weapons fire slower, hits pay double") and a reward for beating it | Heat and challenge modes |
+| Ball x Pit | Fusing two weapons into one new one | Two maxed weapons with a matching pair fuse into a single slot, freeing a slot | The 11 synergy pairs |
+| Ball x Pit | A base that grows between runs | A camp on the title screen: a few buildings bought with gold that produce while you are away (gold, a free reroll, a starting level) | Part of the stat shop; this is the idle hook |
+| Megabonk | Shrines and choices out on the map; stages chained into tiers | Shrines, chests and arches become things the pilot paths to on purpose; clearing a stage's boss offers the next stage tier in the same run | The blind-pilot shrine rules |
+| Idle | It keeps going without you | Background ticking in a hidden tab, offline camp production, Auto that plays the plan you set (which evolution to chase, which hand to build) | Night mode's special cases |
+
+Order: evolutions (in progress) → fusion → hands and jokers → boss rules → camp and idle → map shrines and stage tiers.
+
 ### M6 — Release candidate
 - Real-browser performance check on phone-class hardware.
 - Release notes; plain-language "what changed" card in game.
