@@ -50,8 +50,8 @@
 // Every game number is imported; the knobs in SIM_TUNING are the model's
 // assumptions and are listed here:
 //   SPAWNING (expected value, no rng): the live formulas from main.js spawnWave
-//     interval(t) = max(0.25, 1.35 - 0.008t); groups(t) = ladderGroups(t)
-//     (== the shipped formula through 4:00, capped after); type mix = the live
+//     interval(t) = spawnInterval(t); groups(t) = ladderGroups(t) (a
+//     fraction, capped); type mix = the live
 //     SPAWNER weights/gates per minion-wave w = floor(t/30); pack size = the
 //     live per-type packSize; elites = ladderEliteChance(t) folded into hp/xp.
 //     Field soft-capped at FIELD_CAP.
@@ -67,8 +67,8 @@
 //     against the LIVE ladder damage curve and the player's LIVE max HP — so
 //     the sim moves with CONFIG.SURVIVAL and can never price a hit the game
 //     would not. The herald/boss add their own contact while alive.
-//   XP / DRAFTS: live curve xpNext = 30 * XP_LEVEL_GROWTH^level; gem xp =
-//     BASE_XP * ladderXp(w) * mix. Level-ups grow max HP by
+//   XP / DRAFTS: live curve xpNext = xpForLevel(level); gem xp =
+//     BASE_XP * ladderXp(w) * mix * xpGainMult(kills). Level-ups grow max HP by
 //     CONFIG.SURVIVAL.HP_PER_LEVEL x the run's start pool (the live rule,
 //     mirrored from main.js levelUp). Draft rolls mirror main.js openDraft
 //     (weapon cards weight 1, the 7 stat cards weight 0.3, take 3).
@@ -85,9 +85,10 @@
 //   E1 RUN PURSE: computeRunGold is RETIRED as the payout authority
 //     (main.js settleRunGold). Banked income is now purse + AWARD: per-kill
 //     tier gold (meta.js purseValue, folded into the mix in expectation),
-//     MID_BOSS per herald, BOSS per wave boss, plus RUN_GOLD.AWARD x goldMult
-//     at settlement (the live chain multiplies the AWARD only — the purse
-//     banks unmultiplied). Chests pay NO gold post-E1 (incomeChest = 0).
+//     MID_BOSS per herald, BOSS per wave boss, the survival ticks, plus
+//     RUN_GOLD.AWARD at settlement. Ordinary kills are divided by
+//     1 + kills / KILL_SOFTCAP and Greed (goldMult) multiplies all of it.
+//     Chests pay NO gold post-E1 (incomeChest = 0).
 //   WEAPON UNLOCKS AS +1 OPTION + POOL DILUTION: the live game does NOT start
 //     purchased weapons in the kit — an unlock adds a GRANT CARD to the draft
 //     pool (main.js openDraft gates grants on profile.unlockedWeapons). The
@@ -120,7 +121,8 @@
 
 import { pathToFileURL } from 'node:url';
 import { CONFIG as C, UPGRADES, ladderHp, ladderXp, ladderDmg, ladderGroups,
-  ladderEliteChance, ladderBeats, runClock } from '../src/config.js';
+  ladderEliteChance, ladderBeats, runClock, runBase, xpForLevel, xpGainMult,
+  spawnInterval } from '../src/config.js';
 import { makePlayer, contactHitDamage } from '../src/entities.js';
 import {
   WEAPONS, WEAPON_MAX_LEVEL, makeWeapon, levelUpWeapon, weaponLevelParams,
@@ -221,7 +223,6 @@ export const LIVE = {
   statWeight: 0.3,      // main.js:1418 (stat cards vs weapon weight 1)
   luckLevel: 0,         // G8 step 1: Fortune level feeding the stat weights
   maxProj: C.WEAPON.MAX_PROJECTILES,   // config.js WEAPON.MAX_PROJECTILES (3)
-  xpGrowth: C.XP_LEVEL_GROWTH,         // config.js XP_LEVEL_GROWTH (1.28)
   hpCardPct: false,     // UPGRADES hp card: live = +25 flat
   // G8 steps 3+4: the run-rule + skill-perk card families ride the draft pool,
   // exactly like src/main.js openDraft (ruleCards + skillCards). Set to false
@@ -438,7 +439,7 @@ function cardImpact(card, player, weapons, counts, P, held) {
     // +10% player damage (applyCard does the conversion; main.js pick() does
     // the same). Player damage feeds EVERY weapon's dps, so the marginal
     // value is exactly +0.1 relative — priced exactly, not coarse.
-    if (bonus && cur >= WEAPON_MAX_LEVEL) return { dps: 0.1, ehp: 0 };
+    if (bonus && cur >= WEAPON_MAX_LEVEL) return { dps: 0.1 * runBase(player).damage / player.stats.damage, ehp: 0 };
     // W7a: every archetype prices through its OWN weaponDps curve (the old
     // code priced every non-VOLLEY level-up as a boomerang).
     const a = weaponDps(card.w.type, cur, player, P);
@@ -601,7 +602,8 @@ function cardImpact(card, player, weapons, counts, P, held) {
     return { dps: 0.04, ehp: 0 };
   }
   switch (card.id) {
-    case 'dmg': return { dps: 0.25, ehp: 0 };
+    // Whetstone is additive on the run's starting damage (config.js runBase).
+    case 'dmg': return { dps: 0.25 * runBase(player).damage / player.stats.damage, ehp: 0 };
     case 'rate': {
       const r = 0.15 * taper('rate');
       return { dps: r / Math.max(0.05, 1 - r), ehp: 0 };
@@ -612,9 +614,10 @@ function cardImpact(card, player, weapons, counts, P, held) {
       const n = Math.min(player.stats.projectiles, P.maxProj);
       return n < P.maxProj
         ? { dps: SIM_TUNING.SPREAD_EFF / (1 + SIM_TUNING.SPREAD_EFF * (n - 1)), ehp: 0 }
-        : { dps: 0.01, ehp: 0 };   // DEAD past the live projectile cap — honest
+        // Past the cap the live pick() converts to +20% of the starting damage.
+        : { dps: 0.2 * runBase(player).damage / player.stats.damage, ehp: 0 };
     }
-    case 'hp': return P.hpCardPct ? { dps: 0, ehp: 0.25 } : { dps: 0, ehp: 25 / player.stats.maxHp };
+    case 'hp': return { dps: 0, ehp: (P.hpCardPct ? 0.25 * runBase(player).maxHp : 25) / player.stats.maxHp };
     case 'pierce': return { dps: SIM_TUNING.PIERCE_VAL / (1 + SIM_TUNING.PIERCE_VAL * player.stats.pierce), ehp: 0 };
     default: return { dps: 0, ehp: 0 };
   }
@@ -746,7 +749,7 @@ function applyCard(card, player, weapons, counts, patch, held, heldState) {
     return;
   }
   if (card.kind === 'wlevel') {
-    if (once && (card.w.level || 1) >= WEAPON_MAX_LEVEL) { player.stats.damage *= 1.10; return; }
+    if (once && (card.w.level || 1) >= WEAPON_MAX_LEVEL) { player.stats.damage += 0.10 * runBase(player).damage; return; }
     levelUpWeapon(card.w);
     if (once) levelUpWeapon(card.w);
     return;
@@ -762,8 +765,12 @@ function applyCard(card, player, weapons, counts, patch, held, heldState) {
     const t = DRAFT_TAPER[Math.min(counts[card.id] - 1, DRAFT_TAPER.length - 1)];
     if (card.id === 'speed') player.stats.speed *= 1 + 0.15 * t;
     else player.stats.cooldown *= 1 - 0.15 * t;
+  } else if (card.id === 'multi' && player.stats.projectiles >= patch.maxProj) {
+    // The live overflow (main.js pick(), volleyAtProjCap): +20% of the run's
+    // starting damage instead of a projectile past the cap.
+    player.stats.damage += 0.2 * runBase(player).damage;
   } else if (card.id === 'hp' && patch.hpCardPct) {
-    const add = Math.round(player.stats.maxHp * 0.25);
+    const add = 0.25 * runBase(player).maxHp;
     player.stats.maxHp += add;
     player.hp = Math.min(player.hp + add, player.stats.maxHp);
   } else {
@@ -837,7 +844,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   const critFactor = 1 + (player.stats.crit || 0) * ((player.stats.critMult || 1) - 1);
   const xpM = player.stats.xpMult || 1;               // Scholar, on gem pickup
   const dropChance = C.POTIONS.DROP_CHANCE + (player.stats.dropBonus || 0);  // Scavenger
-  const potionHeal = C.POTIONS.HP_HEAL * (player.stats.potionPower || 1);    // Alchemy
+  const potionPower = player.stats.potionPower || 1;                         // Alchemy
   // W7a (G5): the arch layer's expected mods for this run (identity when off).
   const arch = archExpectedMods(P);
   // G8 steps 3+4: the run's held cards, driven through the REAL helpers
@@ -874,6 +881,10 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     levelUpWeapon(cands[0]);
   }
   const startMaxHp = player.stats.maxHp;    // the pool HP_PER_LEVEL is linear in
+  // The run's starting stats, stamped like startRun: percent cards add a share
+  // of these (config.js runBase).
+  player.base = { damage: player.stats.damage, maxHp: player.stats.maxHp };
+  const goldM = player.stats.goldMult || 1;  // Greed: on all run income
   const counts = {};
   const picks = {};
   let deadMulti = 0;
@@ -881,10 +892,10 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   let N = 0, kills = 0, dmgTaken = 0;
   // E1: the in-run wallet (profile.runPurse's sim mirror), credited per kill
   // through the mix's purse fold, per herald/boss through GOLD_TIER.
-  let purse = 0;
+  let purse = 0, survivalTicks = 0;
   // Travel Pack / character start: the live starting potion count rides the
   // startPotionCount seam (KNIGHT = the sim's classless pilot). The auto-drink
-  // funnel below is the AUTO pilot's own rule (drink at <50%).
+  // funnel below is the AUTO pilot's own rule (AUTOPILOT.AUTO_DRINK.HP_FRACTION).
   let healBank = startPotionCount({ equippedCharacter: 'KNIGHT', purchased: purchases });
   let t = 0;
   // The ladder: wave n is armed at waveEnd; the timer PAUSES while the boss
@@ -925,7 +936,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     const mix = spawnMix(w, t, P.rarity);
 
     // Spawning (expected value, live formulas + the LIVE ladder density).
-    const interval = Math.max(0.25, C.ENEMY.SPAWN_INTERVAL - t * 0.008);
+    const interval = spawnInterval(t);
     const groups = ladderGroups(t);
     N = Math.min(SIM_TUNING.FIELD_CAP, N + (groups / interval) * mix.pack * DT);
 
@@ -976,7 +987,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
         // E1: the wave boss pays GOLD_TIER.BOSS per boss BODY at the kill
         // funnel (double-boss waves credit twice — the live purseCredit runs
         // per corpse).
-        purse += GOLD_TIER.BOSS * bossCount;
+        purse += GOLD_TIER.BOSS * bossCount * goldM;
         // HORDE BAIT, run-level: the wave's chest answers with a horde (the
         // price — GAMBLE_HORDE_COUNT escalated CHASERs in the live game) and
         // rolls one band better (the payout — enumerated: potions/chest 0.35
@@ -998,7 +1009,7 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
       if (heraldHp <= 0) {
         heraldHp = 0;
         xp += C.ENEMY.BASE_XP * ladderXp(w) * C.ESCALATION.MIDBOSS.XP_KILLS * xpM;
-        purse += GOLD_TIER.MID_BOSS;   // E1: "a nice drop", per the live tier
+        purse += GOLD_TIER.MID_BOSS * goldM;
       }
     }
     const avgHp = C.ENEMY.BASE_HP * ladderHp(w) * mix.hp;
@@ -1054,16 +1065,20 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
         killN * dropChance * SIM_TUNING.HARVEST_FRESH * blast.damage / avgHp);
       killN += harvestKills;
     }
+    // The per-kill purse credit, in expectation over the mix: ordinary kills
+    // are divided by 1 + kills / KILL_SOFTCAP (main.js purseCredit).
+    purse += killN * mix.purse * goldM / (1 + kills / RUN_GOLD.KILL_SOFTCAP);
+    // XP -> drafts. Every gem is scaled by xpGainMult(kills).
+    xp += killN * C.ENEMY.BASE_XP * ladderXp(w) * mix.xp * xpM * xpGainMult(kills);
     kills += killN; N -= killN;
-    // E1: the per-kill purse credit, in expectation over the mix (the live
-    // kill funnel runs purseValue per corpse).
-    purse += killN * mix.purse;
-
-    // XP -> drafts.
-    xp += killN * C.ENEMY.BASE_XP * ladderXp(w) * mix.xp * xpM;
+    // The survival bonus (main.js purseSurvivalTicks).
+    while (survivalTicks < Math.floor(t / RUN_GOLD.SURVIVAL_EVERY)) {
+      survivalTicks++;
+      purse += (RUN_GOLD.SURVIVAL_BASE + RUN_GOLD.SURVIVAL_STEP * survivalTicks) * goldM;
+    }
     while (xp >= xpNext) {
       xp -= xpNext; level++;
-      xpNext = Math.floor(xpNext * P.xpGrowth);
+      xpNext = xpForLevel(level);
       // The live HP_PER_LEVEL rule (linear in the run's start pool).
       const gain = startMaxHp * C.SURVIVAL.HP_PER_LEVEL;
       player.stats.maxHp += gain;
@@ -1125,8 +1140,9 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
     // at the wave's ambient hit and subtracted at the expected grant rate.
     const hurt = Math.max(0, hurtRaw - arch.shieldPerSec * ambient * DT);
     if (hurt > 0) {
-      if (player.hp < 0.5 * player.stats.maxHp && healBank >= 1) {
-        player.hp = Math.min(player.stats.maxHp, player.hp + potionHeal);
+      if (player.hp <= C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * player.stats.maxHp && healBank >= 1) {
+        player.hp = Math.min(player.stats.maxHp,
+          player.hp + C.POTIONS.HP_HEAL_FRAC * player.stats.maxHp * potionPower);
         healBank--;
       }
       player.hp -= hurt; dmgTaken += hurt;
@@ -1155,12 +1171,11 @@ export function simulateRun(seed, policyName = 'GREED_DAMAGE', patch = {}) {
   if (!dead && t >= LIMIT) reachedLimit = true;
   for (const mark of [120, 300, 600]) if (!checkpoints[mark]) snap(mark);
 
-  // E1 settlement (the live settleRunGold shape): banked = the purse
-  // remainder + the fixed AWARD x goldMult. The live goldMult chain
-  // (GREED x manual stakes x rampage best) multiplies the AWARD ONLY — the
-  // purse banks unmultiplied, and the stakes/rampage legs are 1 in a plain
-  // run (not modelled). computeRunGold is RETIRED as the payout authority.
-  const award = Math.round(RUN_GOLD.AWARD * (player.stats.goldMult || 1));
+  // Settlement (the live settleRunGold shape): banked = the purse + the fixed
+  // AWARD x goldMult. Greed multiplies both (the purse at credit time). The
+  // record bonuses (FIRST_CLEAR / NEW_BEST), stakes and rampage are profile
+  // state and not modelled.
+  const award = Math.round(RUN_GOLD.AWARD * goldM);
   const incomePurse = Math.round(purse);
   return {
     policy: policyName,
@@ -1418,18 +1433,10 @@ export const LEVERS = [
   {
     id: 'L3', name: 'projectile cap / dead multi card',
     file: 'src/config.js WEAPON.MAX_PROJECTILES; src/main.js volley',
-    current: 'cap 3; a 3rd Split Shot card does NOTHING (dead card in the draft)',
-    proposed: 'cap 3 -> 4 (or convert overflow picks to +20% damage)',
+    current: 'cap 3; a Split Shot past the cap converts to +20% starting damage',
+    proposed: 'cap 3 -> 4',
     patch: { maxProj: 4 },
     why: 'a draft card that can be picked while doing nothing is the purest form of a fake choice — it also poisons the ADVERSARIAL-BAD score',
-  },
-  {
-    id: 'L4', name: 'xp curve / draft frequency',
-    file: 'src/config.js XP_LEVEL_GROWTH',
-    current: 'xpNext x' + C.XP_LEVEL_GROWTH + ' per level',
-    proposed: 'x1.28 -> x1.22 (more drafts across a 30:00 run)',
-    patch: { xpGrowth: 1.22 },
-    why: 'the number of drafts (decisions) per run collapses as the run stretches — the game takes the steering wheel away late',
   },
 ];
 

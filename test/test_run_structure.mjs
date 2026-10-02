@@ -3,8 +3,8 @@
 // Two halves, matching the standard of evidence this project runs on:
 //   PART A — the ladder is pure data, so it is asserted against the LIVE
 //            config curves directly (no DOM, no harness): monotonic, spanning
-//            the full run limit, and BIT-IDENTICAL to the shipped curves for
-//            every tick inside the knee (so the early game cannot have moved).
+//            the full run limit, and equal to the one documented polynomial
+//            (1 + LINEAR*w + QUAD*w^2) * COMPOUND^w per stat.
 //   PART B — the win state and the maw milestone are drived through the REAL
 //            frame loop (test/_harness.mjs), because "the win fires exactly at
 //            the limit and not before" is a claim about the loop, not about a
@@ -13,7 +13,7 @@
 // Run: node test/test_run_structure.mjs
 import assert from 'node:assert/strict';
 import { CONFIG as C, ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance,
-  ladderBeats, shippedGroups, runClock } from '../src/config.js';
+  ladderBeats, spawnInterval, runClock } from '../src/config.js';
 import { hpScale, xpScale, dmgScale } from '../src/entities.js';
 import { boot, suite } from './_harness.mjs';
 import { mulberry32 } from '../src/weather.js';
@@ -81,47 +81,55 @@ S.check('per-minute escalation is REAL: every minute is harder than the last', (
     `the full-run hp curve is a real climb (x${(ladderHp(MAX_TICK) / ladderHp(0)).toFixed(1)})`);
 });
 
-S.check('inside the knee the ladder IS the shipped curve (early game cannot move)', () => {
-  // This is the constraint that protects every existing early-death
-  // measurement: through 4:00 the ladder is the shipped curve, bit for bit.
-  for (let w = 0; w <= L.KNEE_TICK; w++) {
-    assert.equal(ladderHp(w), hpScale(w), `hp at tick ${w} is the shipped value`);
-    assert.equal(ladderDmg(w), dmgScale(w), `dmg at tick ${w} is the shipped value`);
-    assert.equal(ladderXp(w), xpScale(w), `xp at tick ${w} is the shipped value`);
+S.check('every ladder curve IS (1 + LINEAR*w + QUAD*w^2) * COMPOUND^w, from tick 0, no knee', () => {
+  const curve = (c, w) => (1 + c.LINEAR * w + c.QUAD * w * w) * Math.pow(c.COMPOUND, w);
+  const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b));
+  for (const [name, fn, c] of [['hp', ladderHp, L.HP], ['dmg', ladderDmg, L.DMG], ['xp', ladderXp, L.XP]]) {
+    for (const k of ['LINEAR', 'QUAD', 'COMPOUND']) {
+      assert.ok(Number.isFinite(c[k]), `LADDER.${name.toUpperCase()}.${k} is a number`);
+    }
+    assert.equal(fn(0), 1, `${name} starts at x1`);
+    for (let w = 0; w <= MAX_TICK; w++) {
+      assert.ok(near(fn(w), curve(c, w)), `${name} at tick ${w}: ${fn(w)} vs ${curve(c, w)}`);
+    }
   }
-  for (let t = 0; t <= L.GROUPS_KNEE; t += 5) {
-    assert.equal(ladderGroups(t), shippedGroups(t), `groups at ${t}s are the shipped value`);
+  // The entity-side scales are the same functions, not a second curve.
+  for (let w = 0; w <= MAX_TICK; w++) {
+    assert.equal(hpScale(w), ladderHp(w), `hpScale(${w}) is the ladder`);
+    assert.equal(dmgScale(w), ladderDmg(w), `dmgScale(${w}) is the ladder`);
+    assert.equal(xpScale(w), ladderXp(w), `xpScale(${w}) is the ladder`);
   }
-  // Just past the knee the curves must still agree AT the knee (continuity):
-  // no cliff between "shipped" and "ladder".
-  assert.equal(ladderHp(L.KNEE_TICK + 1) / ladderHp(L.KNEE_TICK), L.HP_LATE,
-    'the hp curve compounds at HP_LATE from the knee tick');
 });
 
-S.check('the ladder CAPS the shipped explosion (a wall is not a ladder)', () => {
-  const shippedTop = hpScale(MAX_TICK);
-  const ladderTop = ladderHp(MAX_TICK);
-  assert.ok(Number.isFinite(ladderTop) && Number.isFinite(ladderDmg(MAX_TICK)),
+S.check('spawn density is FRACTIONAL and capped (no steps, no explosion)', () => {
+  const want = (t) => Math.min(L.GROUPS_MAX, 1 + Math.max(0, t - L.GROUPS_FROM) / L.GROUPS_PER);
+  for (let t = 0; t <= RUN.LIMIT; t += 5) {
+    assert.ok(Math.abs(ladderGroups(t) - want(t)) < 1e-12, `groups at ${t}s: ${ladderGroups(t)} vs ${want(t)}`);
+    assert.ok(ladderGroups(t) <= L.GROUPS_MAX, `groups at ${t}s are capped at ${L.GROUPS_MAX}`);
+  }
+  assert.equal(ladderGroups(0), 1, 'one group per spawn tick at the start');
+  assert.equal(ladderGroups(L.GROUPS_FROM), 1, 'density holds at one group until GROUPS_FROM');
+  const mid = L.GROUPS_FROM + L.GROUPS_PER / 2;
+  assert.ok(!Number.isInteger(ladderGroups(mid)) && ladderGroups(mid) > 1 && ladderGroups(mid) < 2,
+    `half a step past GROUPS_FROM is a fraction (${ladderGroups(mid)})`);
+  assert.equal(ladderGroups(L.GROUPS_FROM + L.GROUPS_PER * L.GROUPS_MAX), L.GROUPS_MAX, 'the cap is reached and held');
+  // The spawn clock: a linear decay from SPAWN_INTERVAL to its floor.
+  const E = C.ENEMY;
+  assert.equal(spawnInterval(0), E.SPAWN_INTERVAL, 'the interval starts at SPAWN_INTERVAL');
+  for (let t = 5; t <= RUN.LIMIT; t += 5) {
+    assert.ok(spawnInterval(t) <= spawnInterval(t - 5), `the interval never grows (${t}s)`);
+    assert.ok(Math.abs(spawnInterval(t) - Math.max(E.SPAWN_INTERVAL_MIN, E.SPAWN_INTERVAL - t * E.SPAWN_INTERVAL_DECAY)) < 1e-12,
+      `the interval at ${t}s is max(MIN, BASE - DECAY*t)`);
+  }
+  assert.equal(spawnInterval(RUN.LIMIT), E.SPAWN_INTERVAL_MIN, 'and it floors at SPAWN_INTERVAL_MIN');
+});
+
+S.check('the full-run curve stays finite and playable', () => {
+  assert.ok(Number.isFinite(ladderHp(MAX_TICK)) && Number.isFinite(ladderDmg(MAX_TICK)),
     'the full-run curve is finite');
-  assert.ok(shippedTop / ladderTop > 1e5,
-    `the shipped curve at 30:00 is >1e5x the ladder (${(shippedTop / ladderTop).toExponential(2)})`);
   assert.ok(ladderDmg(MAX_TICK) < 20,
     `contact damage stays playable to the limit (x${ladderDmg(MAX_TICK).toFixed(2)} base)`);
-  assert.ok(ladderGroups(RUN.LIMIT) <= L.GROUPS_MAX,
-    `density is capped (${ladderGroups(RUN.LIMIT)} <= ${L.GROUPS_MAX} groups/tick)`);
-});
-
-S.check('the ladder ceilings the CONFIG comments document are the live values', () => {
-  // The comments in CONFIG.LADDER quote numbers (441x / 9.3x / 66x / 13 groups).
-  // Pin them, so a later retune cannot leave the documented shape lying.
-  const near = (a, b, tol) => Math.abs(a - b) <= tol;
-  assert.ok(near(ladderHp(MAX_TICK), 440.8, 0.5), `hp ceiling ${ladderHp(MAX_TICK).toFixed(1)} vs 440.8`);
-  assert.ok(near(ladderDmg(MAX_TICK), 9.32, 0.01), `dmg ceiling ${ladderDmg(MAX_TICK).toFixed(2)} vs 9.32`);
-  assert.ok(near(ladderXp(MAX_TICK), 65.9, 0.2), `xp ceiling ${ladderXp(MAX_TICK).toFixed(1)} vs 65.9`);
-  assert.equal(ladderGroups(RUN.LIMIT), 13, 'groups per tick at the limit is 13 (cap 14)');
   assert.equal(ladderEliteChance(RUN.LIMIT), L.ELITE_MAX, 'elite chance reaches its ceiling exactly');
-  assert.ok(hpScale(MAX_TICK) > 1e8,
-    `the curve it replaced: shipped hp at 30:00 is ${hpScale(MAX_TICK).toExponential(2)}`);
 });
 
 S.check('cadence: a boss beat on every wave, herald beat preserved through the milestone', () => {

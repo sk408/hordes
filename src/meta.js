@@ -606,8 +606,8 @@ export function effectiveLoadout(profile, cap) {
 }
 
 // Buying a weapon equips it. With a free slot it is simply added; with a full
-// loadout the longest-standing pick (index 0) is benched to make room, and the
-// caller names the swap on screen. Returns { benched } (the displaced weapon
+// loadout one weapon is benched to make room, and the caller names the swap
+// on screen. Returns { benched } (the displaced weapon
 // id or null), or null when there is nothing to equip. Achievement grants do
 // not route here.
 export function equipBoughtWeapon(profile, weaponId) {
@@ -621,7 +621,9 @@ export function equipBoughtWeapon(profile, weaponId) {
   const cur = effectiveLoadout(profile, cap);
   if (cur.includes(weaponId)) return { benched: null };
   let benched = null;
-  if (cur.length >= cap) benched = cur.shift();
+  // A stored choice loses its longest-standing pick; the default list is
+  // strongest-first, so it loses its weakest.
+  if (cur.length >= cap) benched = profile.loadout ? cur.shift() : cur.pop();
   cur.push(weaponId);
   profile.loadout = cur;
   return { benched };

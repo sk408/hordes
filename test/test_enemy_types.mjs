@@ -23,7 +23,8 @@ check('swarmer faster than base chaser', () => {
   const swarm = makeTypedEnemy('SWARMER', 0, 0, 0);
   assert.ok(swarm.speed > base.speed * 1.5, `speed ${swarm.speed} vs ${base.speed}`);
   assert.ok(swarm.hp < base.hp, 'swarmer should be weaker');
-  assert.equal(swarm.packSize, 5);
+  assert.ok(Number.isInteger(swarm.packSize) && swarm.packSize > 1, 'swarmers come in packs');
+  assert.equal(swarm.packSize, ENEMY_TYPES.SWARMER.packSize);
 });
 
 // --- spitter: retreats < 100px, holds ~120px --------------------------------
@@ -70,7 +71,7 @@ check('brute slower and tankier than base', () => {
   const brute = makeTypedEnemy('BRUTE', 0, 0, 0);
   assert.ok(brute.speed < base.speed, 'brute should be slower');
   assert.ok(brute.hp > base.hp * 3, `hp ${brute.hp} vs ${base.hp}`);
-  assert.ok(brute.contactDamageMult > 2, 'big contact damage');
+  assert.ok(brute.contactDamageMult > 1.5 * base.contactDamageMult, 'big contact damage');
   assert.ok(brute.w > base.w * 1.5, 'brute is big');
 });
 
@@ -189,7 +190,8 @@ check('colossus is massive, slow, wave-gated', () => {
   assert.ok(colo.hp > brute.hp * 3, `massive hp ${colo.hp}`);
   assert.ok(colo.speed < base.speed * 0.5, 'very slow');
   assert.ok(colo.w > brute.w, 'huge body');
-  assert.equal(colo.minWave, 5, 'spawner gate: wave 5+');
+  assert.equal(colo.minWave, C.SPAWNER.COLOSSUS_WAVE, 'spawner gate: the COLOSSUS_WAVE tick');
+  assert.ok(colo.minWave > C.SPAWNER.BRUTE_WAVE, 'the mini-boss tier arrives after the brute');
 });
 
 check('colossus death shockwave scales with maxHp, friendly-fire only', () => {

@@ -129,8 +129,10 @@ S.check('M1: startRun clears a carried preBossStance (no cross-run stance leak)'
 });
 
 // ---------- ITEMS 1 + 3b (S1, M1): the maw victory run ----------------------
-S.check('S1+M1: maw VICTORY restores the stance and settles the run ONCE', () => {
+S.check('S1+M1: maw VICTORY restores the stance; the run settles ONCE, at its end', () => {
   T.startRun(); h.pump(2);
+  const goldStart = T.getProfile().gold;
+  const runsStart = T.getProfile().achievements.totals.runs;
   const stanceBefore = T.stanceOf();
   driveToFinale();
   assert.notEqual(st.preBossStance, null, 'the maw arrival saved the stance');
@@ -144,12 +146,12 @@ S.check('S1+M1: maw VICTORY restores the stance and settles the run ONCE', () =>
   // M1: VICTORY hands the doctrine back (withdrawal already did).
   assert.equal(st.preBossStance, null, 'maw VICTORY restores the stance');
   assert.equal(T.stanceOf(), stanceBefore, 'the pre-boss stance is live again');
-  // S1: the milestone settle was the run's ONE settle. Continue, then die:
-  // the later settle must pay NOTHING and fold NOTHING.
-  const prof = T.getProfile();
-  const gold0 = prof.gold;
-  const kills0 = prof.achievements.totals.kills;
-  const runs0 = prof.achievements.totals.runs;
+  // S1: the maw kill settles NOTHING — its bonus joins the run's account and
+  // is banked, with everything else, by the run's ONE settle at its end.
+  assert.equal(st.runSettled, null, 'the maw kill does not settle the run');
+  assert.equal(T.getProfile().gold, goldStart, 'no gold is banked at the milestone');
+  assert.equal(T.getProfile().achievements.totals.runs, runsStart, 'no run fold at the milestone');
+  assert.equal(st.milestoneBonus, C.RUN.MAW_CLEAR_BONUS, 'the milestone bonus is on the run account');
   let cont = null;
   for (const c of h.elements['ov-cards'].children) {
     if ((c.innerHTML || '').includes('CONTINUE')) cont = c;
@@ -158,10 +160,17 @@ S.check('S1+M1: maw VICTORY restores the stance and settles the run ONCE', () =>
   cont.click();
   freezeSpawns();
   T.die();                                     // the run's real ending
-  const prof2 = T.getProfile();
-  assert.equal(prof2.gold, gold0, 'the later death settles NOTHING more (award paid once)');
-  assert.equal(prof2.achievements.totals.runs, runs0, 'the lifetime run fold happens exactly once');
-  assert.equal(prof2.achievements.totals.kills, kills0, 'the lifetime kill fold happens exactly once');
+  const prof = T.getProfile();
+  const settled = st.runSettled;
+  assert.ok(settled, 'the death settles the run');
+  assert.equal(settled.winBonus, C.RUN.MAW_CLEAR_BONUS, 'the settle carries the maw bonus, once');
+  assert.equal(prof.gold, goldStart + settled.gold, 'the run banks exactly its one settle');
+  assert.equal(prof.achievements.totals.runs, runsStart + 1, 'the lifetime run fold happens exactly once');
+  const kills1 = prof.achievements.totals.kills;
+  T.purse.settle();                            // a stray second settle
+  assert.equal(T.getProfile().gold, goldStart + settled.gold, 'a second settle pays NOTHING more');
+  assert.equal(T.getProfile().achievements.totals.runs, runsStart + 1, 'and folds no second run');
+  assert.equal(T.getProfile().achievements.totals.kills, kills1, 'and folds no second kill count');
 });
 
 // ---------- ITEM 1b (S1): a plain death settles exactly once ----------------

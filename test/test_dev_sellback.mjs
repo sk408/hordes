@@ -13,41 +13,50 @@ import {
   unlockCharacter, sellCharacterUnlock,
   buyCharacterUpgrade, sellCharacterUpgrade, getCharacterUpgradeLevel,
   buyApex, sellApex, pushSpend, topRefund, totalRefund, charLedgerKey,
-  applyMetaBonuses, setDevFreeBuild, devFreeBuild,
+  applyMetaBonuses, setDevFreeBuild, devFreeBuild, effectiveLoadout,
 } from '../src/meta.js';
 import { validateSnapshot } from '../src/dev_telemetry.js';
 import { makePlayer } from '../src/entities.js';
 import { boot } from './_harness.mjs';
 
 const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own base
+// Live prices: the cost of buying level `l` -> `l + 1` of a stat row.
+const price = (id, l) => upgradeCost(SHOP_BY_ID[id], l);
+const D0 = price('dmg', 0), D2 = price('dmg', 2);
+const X0 = price('xp', 0), X1 = price('xp', 1);
 
 // ---- ledger + exact refund, overrides-aware (pure meta) ---------------------
 {
   assert.equal(devFreeBuild(), false, 'free-build defaults OFF');
   const p = makeProfile();
   p.gold = 100000;
-  // dmg carries overrides {0:125, 1:250, 2:325, ...} — the formula would pay
-  // 150/240/384. The ledger must record the OVERRIDE price, and the refund
-  // must be that price, not the formula price.
-  assert.equal(upgradeCost(SHOP_BY_ID.dmg, 0), 125, 'dmg L0 prices its override (not formula 150)');
-  assert.equal(upgradeCost(SHOP_BY_ID.dmg, 2), 325, 'dmg L2 prices its override (not formula 384)');
-  assert.equal(buyUpgrade(p, 'dmg'), true, 'paid buy L0');
-  assert.equal(p.gold, 100000 - 125, 'bank debited the override price');
-  assert.deepEqual(p.spendLedger.dmg, [125], 'ledger records the exact paid level price');
-  assert.equal(topRefund(p, 'dmg'), 125, 'pre-confirm label reads the top entry');
-  assert.equal(totalRefund(p, 'dmg'), 125, 'reset total reads the ledger sum');
+  // A row with an `overrides` table must ledger and refund the OVERRIDE price,
+  // not the formula price. No shipped row carries one, so stage it on dmg.
+  const OV = D0 + 17;
+  SHOP_BY_ID.dmg.overrides = { 0: OV };
+  try {
+    assert.equal(price('dmg', 0), OV, 'dmg L0 prices its override (not the formula)');
+    assert.equal(buyUpgrade(p, 'dmg'), true, 'paid buy L0');
+    assert.equal(p.gold, 100000 - OV, 'bank debited the override price');
+    assert.deepEqual(p.spendLedger.dmg, [OV], 'ledger records the exact paid level price');
+    assert.equal(topRefund(p, 'dmg'), OV, 'pre-confirm label reads the top entry');
+    assert.equal(totalRefund(p, 'dmg'), OV, 'reset total reads the ledger sum');
+  } finally {
+    delete SHOP_BY_ID.dmg.overrides;
+  }
+  // The refund is the RECORD, even with the table gone.
   const s = sellUpgrade(p, 'dmg');
-  assert.deepEqual(s, { ok: true, level: 1, refund: 125 }, 'sell refunds EXACTLY the override price');
+  assert.deepEqual(s, { ok: true, level: 1, refund: OV }, 'sell refunds EXACTLY the override price');
   assert.equal(p.gold, 100000, 'bank restored to the gold');
   assert.equal(p.purchased.dmg || 0, 0, 'level removed');
   assert.deepEqual(p.spendLedger.dmg, [], 'ledger popped');
-  // Formula rows behave the same (xp: 180 x 1.6^lvl, no overrides).
+  // Formula rows behave the same.
   assert.equal(buyUpgrade(p, 'xp'), true, 'paid buy xp L0');
   assert.equal(buyUpgrade(p, 'xp'), true, 'paid buy xp L1');
-  assert.deepEqual(p.spendLedger.xp, [180, 288], 'formula prices ledgered per level');
-  assert.equal(totalRefund(p, 'xp'), 468, 'reset total is the ledger sum');
+  assert.deepEqual(p.spendLedger.xp, [X0, X1], 'formula prices ledgered per level');
+  assert.equal(totalRefund(p, 'xp'), X0 + X1, 'reset total is the ledger sum');
   const s2 = sellUpgrade(p, 'xp');
-  assert.deepEqual(s2, { ok: true, level: 2, refund: 288 }, 'LIFO: the top level refunds first');
+  assert.deepEqual(s2, { ok: true, level: 2, refund: X1 }, 'LIFO: the top level refunds first');
   assert.equal(p.purchased.xp, 1, 'one level stands');
   // Refusals mutate nothing.
   const goldBefore = p.gold, ledgerBefore = JSON.stringify(p.spendLedger);
@@ -72,19 +81,18 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   } finally {
     setDevFreeBuild(false);
   }
-  // MIXED: paid L0, toggle free for L1, toggle back for paid L2 (override
-  // ladder 125 / free / 325) — then sell twice. The live flag at SELL time is
+  // MIXED: paid L0, toggle free for L1, toggle back for paid L2 — then sell twice. The live flag at SELL time is
   // irrelevant: each refund equals its own level's record.
-  assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: paid L0 (125)');
+  assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: paid L0');
   setDevFreeBuild(true);
   try {
-    assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: free L1 (0)');
+    assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: free L1');
   } finally {
     setDevFreeBuild(false);
   }
-  assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: paid L2 (325)');
-  assert.equal(p.gold, 5000 - 450, 'bank holds exactly the two paid levels');
-  assert.deepEqual(p.spendLedger.dmg, [125, 0, 325], 'mixed ledger: paid/free/paid per level');
+  assert.equal(buyUpgrade(p, 'dmg'), true, 'mixed: paid L2');
+  assert.equal(p.gold, 5000 - D0 - D2, 'bank holds exactly the two paid levels');
+  assert.deepEqual(p.spendLedger.dmg, [D0, 0, D2], 'mixed ledger: paid/free/paid per level');
   setDevFreeBuild(true);   // sell the paid top WHILE free mode is on
   let r1;
   try {
@@ -92,14 +100,14 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   } finally {
     setDevFreeBuild(false);
   }
-  assert.deepEqual(r1, { ok: true, level: 3, refund: 325 }, 'paid level refunds paid gold even while free mode is on');
-  assert.equal(p.gold, 5000 - 125, 'bank: only L0 still paid for');
+  assert.deepEqual(r1, { ok: true, level: 3, refund: D2 }, 'paid level refunds paid gold even while free mode is on');
+  assert.equal(p.gold, 5000 - D0, 'bank: only L0 still paid for');
   const r2 = sellUpgrade(p, 'dmg');   // sell the free middle while paid mode is on
   assert.deepEqual(r2, { ok: true, level: 2, refund: 0 }, 'free level refunds 0 even while free mode is off');
-  assert.equal(p.gold, 5000 - 125, 'bank unchanged by the free-level removal');
+  assert.equal(p.gold, 5000 - D0, 'bank unchanged by the free-level removal');
   assert.equal(p.purchased.dmg, 1, 'L0 stands');
-  assert.deepEqual(p.spendLedger.dmg, [125], 'ledger matches the standing level');
-  console.log(`  mixed-case proof: bank ${p.gold} (started 5000, paid 125+325, refunded 325+0) ledger [125]`);
+  assert.deepEqual(p.spendLedger.dmg, [D0], 'ledger matches the standing level');
+  console.log(`  mixed-case proof: bank ${p.gold} (started 5000, paid ${D0}+${D2}, refunded ${D2}+0) ledger [${D0}]`);
 }
 
 // ---- unledgered levels (grants, pre-slice saves) refund 0, still remove ----
@@ -131,10 +139,11 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   buyUpgrade(p, 'dmg'); buyUpgrade(p, 'dmg'); buyUpgrade(p, 'dmg');
   const at3 = applyMetaBonuses(baseStats(), p.purchased).damage;
   const base = applyMetaBonuses(baseStats(), {}).damage;
-  assert.equal(at3, base * Math.pow(3, 3), 'L3 compounds (1+2)^3');
+  const step = 1 + SHOP_BY_ID.dmg.perLevel;
+  assert.equal(at3, base * Math.pow(step, 3), 'L3 compounds (1 + perLevel)^3');
   sellUpgrade(p, 'dmg');
   const at2 = applyMetaBonuses(baseStats(), p.purchased).damage;
-  assert.equal(at2, base * Math.pow(3, 2), 'after one sell the effect is exactly L2');
+  assert.equal(at2, base * Math.pow(step, 2), 'after one sell the effect is exactly L2');
   sellUpgrade(p, 'dmg'); sellUpgrade(p, 'dmg');
   const at0 = applyMetaBonuses(baseStats(), p.purchased).damage;
   assert.equal(at0, base, 'after the full reset the bonus is gone entirely');
@@ -168,17 +177,17 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
 {
   const p = makeProfile();
   p.gold = 100000;
-  // Weapon singleton via its shop row (ORBIT 200, non-starter).
+  // Weapon singleton via its shop row (ORBIT, non-starter).
   assert.equal(buyUpgrade(p, 'weapon_orbit'), true, 'weapon row buys');
-  assert.ok((p.loadout || []).includes('ORBIT'), 'bought weapon equips (opt-out)');
+  assert.ok(effectiveLoadout(p).includes('ORBIT'), 'bought weapon equips (opt-out)');
   const sw = sellUpgrade(p, 'weapon_orbit');
-  assert.deepEqual(sw, { ok: true, level: 1, refund: 200 }, 'weapon sells for its exact price');
+  assert.deepEqual(sw, { ok: true, level: 1, refund: WEAPON_PRICES.ORBIT }, 'weapon sells for its exact price');
   assert.ok(!(p.unlockedWeapons || []).includes('ORBIT'), 'ownership removed');
-  assert.ok(!(p.loadout || []).includes('ORBIT'), 'sold weapon benched off the loadout');
+  assert.ok(!effectiveLoadout(p).includes('ORBIT'), 'sold weapon benched off the loadout');
   assert.deepEqual(sellUpgrade(p, 'weapon_boomerang'), { ok: false }, 'starter weapon not sellable');
-  // Elite singleton (SWIFT 10000).
+  // Elite singleton.
   assert.equal(buyUpgrade(p, 'elite_swift'), true, 'elite row buys');
-  assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: true, level: 1, refund: 10000 }, 'elite refunds exact cost');
+  assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: true, level: 1, refund: ELITE_MODIFIERS.SWIFT.cost }, 'elite refunds exact cost');
   assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: false }, 'second sell refused (nothing owned)');
   // Pilot unlock (ROGUE 2500).
   assert.equal(unlockCharacter(p, 'ROGUE'), true, 'pilot unlock buys');
@@ -212,7 +221,7 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   setDevFreeBuild(true);
   try { buyUpgrade(p, 'dmg'); } finally { setDevFreeBuild(false); }
   const { profile: rt, repairs } = validateProfile(JSON.parse(JSON.stringify(p)));
-  assert.deepEqual(rt.spendLedger.dmg, [125, 0], 'ledger survives a save round-trip');
+  assert.deepEqual(rt.spendLedger.dmg, [D0, 0], 'ledger survives a save round-trip');
   assert.ok(!repairs.some(r => String(r).startsWith('spendLedger')), 'clean ledger names no repairs');
   const bad = validateProfile({ ...JSON.parse(JSON.stringify(p)), spendLedger: { dmg: [10, -5, 'x', NaN], __proto__: [1] } });
   assert.deepEqual(bad.profile.spendLedger.dmg, [10], 'ledger sanitizes to finite non-negative ints');
@@ -231,21 +240,21 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   assert.equal(prof.purchased.dmg || 0, 0, 'proof starts at dmg 0');
   const { buyUpgrade: metaBuy, setDevFreeBuild: setFree } = await import('../src/meta.js');
   setFree(false);
-  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: paid L0 (override 125)');
+  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: paid L0');
   setFree(true);
-  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: free L1 (0)');
+  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: free L1');
   setFree(false);
-  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: paid L2 (override 325)');
-  assert.equal(prof.gold, 9550, 'bank after mixed buys: 10000 - 125 - 325');
+  assert.equal(metaBuy(prof, 'dmg'), true, 'run proof: paid L2');
+  assert.equal(prof.gold, 10000 - D0 - D2, 'bank after mixed buys');
   const r1 = T.dev.sellShopRow('dmg');
   assert.deepEqual({ ok: r1.ok, level: r1.level, refund: r1.refund },
-    { ok: true, level: 3, refund: 325 }, 'seam sell 1: paid top refunds 325');
+    { ok: true, level: 3, refund: D2 }, 'seam sell 1: paid top refunds its price');
   const r2 = T.dev.sellShopRow('dmg');
   assert.deepEqual({ ok: r2.ok, level: r2.level, refund: r2.refund },
     { ok: true, level: 2, refund: 0 }, 'seam sell 2: free middle refunds 0');
-  assert.equal(prof.gold, 9875, 'bank after sells: 9550 + 325 + 0');
+  assert.equal(prof.gold, 10000 - D0, 'bank after sells: only L0 still paid for');
   assert.equal(prof.purchased.dmg, 1, 'one level stands');
-  assert.deepEqual(prof.spendLedger.dmg, [125], 'ledger matches the standing level');
+  assert.deepEqual(prof.spendLedger.dmg, [D0], 'ledger matches the standing level');
   assert.equal(T.dev.removals().length, 2, 'journal holds both removals pre-run');
   T.startRun();
   h.pump(3);
@@ -255,12 +264,12 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   assert.ok(snap, 'the end-of-run snapshot built');
   assert.equal(validateSnapshot(snap).ok, true, 'the removal-carrying snapshot validates (same schema family)');
   assert.deepEqual(snap.choices.removals, [
-    { id: 'dmg', kind: 'shop', characterId: null, level: 3, refund: 325 },
+    { id: 'dmg', kind: 'shop', characterId: null, level: 3, refund: D2 },
     { id: 'dmg', kind: 'shop', characterId: null, level: 2, refund: 0 },
   ], 'choices.removals: level + refunded amount per removed level');
   assert.equal(snap.upgrades.purchased.dmg, 1, 'snapshot build reflects the post-sell level');
-  assert.equal(snap.gold_spent, 125, 'gold_spent prices the standing build at full price ' +
-    '(dmg L0 override 125 — the sold free middle and paid top are gone; chests add on top)');
+  assert.equal(snap.gold_spent, D0, 'gold_spent prices the standing build at full price ' +
+    '(dmg L0 — the sold free middle and paid top are gone; chests add on top)');
   assert.deepEqual(T.dev.removals(), [], 'journal drains exactly once into the snapshot');
   console.log(`  run proof: bank ${prof.gold}, ledger [${prof.spendLedger.dmg}], ` +
     `removals ${JSON.stringify(snap.choices.removals)}, snapshot dmg ${snap.upgrades.purchased.dmg}, ` +
@@ -280,14 +289,14 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   const on = await boot({ locationSearch: '?dev=1', variant: 'sellback-ui' });
   const pon = on.T.getProfile();
   pon.gold = 50000;
-  assert.equal(metaBuy2(pon, 'dmg'), true, 'gate-on profile owns a level (paid 125)');
+  assert.equal(metaBuy2(pon, 'dmg'), true, 'gate-on profile owns a level');
   assert.equal(metaBuy2(pon, 'xp'), true, 'gate-on profile owns a second row');
   on.T.shop.open();
   const ctrls = on.T.dev.sellControls();
   const dmg = ctrls.find(c => c.id === 'dmg');
   assert.ok(dmg, 'gate ON: the owned row carries a sell control');
   assert.equal(dmg.level, 1, 'control names the owned level');
-  assert.equal(dmg.refund, 125, 'control shows the exact top refund BEFORE any click');
+  assert.equal(dmg.refund, D0, 'control shows the exact top refund BEFORE any click');
   assert.ok(ctrls.some(c => c.id === 'xp'), 'every owned row carries one');
 }
 
@@ -299,11 +308,11 @@ const baseStats = () => ({ ...makePlayer().stats });   // the run seam's own bas
   prof.gold = 20000;
   const { buyUpgrade: metaBuy3, setDevFreeBuild: setFree3 } = await import('../src/meta.js');
   setFree3(false);
-  metaBuy3(prof, 'xp'); metaBuy3(prof, 'xp');   // 180 + 288 paid
+  metaBuy3(prof, 'xp'); metaBuy3(prof, 'xp');   // two paid levels
   const all = T.dev.sellShopRowAll('xp');
-  assert.deepEqual(all, { count: 2, refund: 468 }, 'row reset refunds the ledger sum');
+  assert.deepEqual(all, { count: 2, refund: X0 + X1 }, 'row reset refunds the ledger sum');
   assert.equal(prof.purchased.xp || 0, 0, 'row fully cleared');
-  assert.equal(prof.gold, 20000, 'bank whole: 20000 - 468 + 468');
+  assert.equal(prof.gold, 20000, 'bank whole: paid and refunded the same sum');
   assert.equal(T.dev.removals().length, 2, 'reset journals one removal per level');
   setFree3(false);
 }

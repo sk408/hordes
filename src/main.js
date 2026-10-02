@@ -13226,6 +13226,7 @@ export const __TEST = {
     eliteChance: ladderEliteChance,
     get won() { return state.runWon; },
     get mawCleared() { return state.mawCleared; },
+    mawDefeated,
     get mawDeadline() { return state.mawDeadline; },
     // G9 FOLLOW-UP: the wave-completion seam, so the untouched-wave ledger can
     // be driven without a DOM click through the intermission card.

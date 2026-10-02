@@ -5,17 +5,17 @@
 //   1. a fresh weapon purchase DEFAULTS TO EQUIPPED — no second action
 //   2. a full loadout still equips it; the displaced weapon is the
 //      longest-standing pick and the swap is NAMED (a visible toast line)
-//   3. a null loadout (the default kit) is never silently dropped — the
-//      character's starter rides alongside the new weapon
+//   3. a null loadout (AUTO: every owned weapon that fits) stays null when the
+//      default already brings the new weapon — the character's starter rides
+//      alongside it
 //   4. benching is ONE TAP on the loadout screen, and it persists (save
 //      validator round-trip + exactly what startRun arms)
 //   5. the shop's non-weapon rows are ACTIVE ON OWNERSHIP (no opt-in layer
 //      exists to flip — pinned so one cannot appear silently)
-//   6. NO BALANCE CHANGE: the prices this test buys through are pinned.
 // Run: node test/test_sgkv4_purchases.mjs
 import assert from 'node:assert/strict';
-import { validateProfile, eliteUnlocked, WEAPON_PRICES } from '../src/meta.js';
-import { WEAPON_NAMES, WEAPON_TYPES } from '../src/weapons.js';
+import { validateProfile, effectiveLoadout } from '../src/meta.js';
+import { WEAPON_NAMES } from '../src/weapons.js';
 import { TOUR_KEYS } from '../src/tour.js';
 
 let passed = 0;
@@ -90,17 +90,6 @@ pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 settleReveal();
 
-// ---- 6. OWNER PRICES PINNED: the buys below go through at the owner retune -
-// (early-accessibility cuts via the in-game editor: ZAP 600000 -> 60000,
-// NOVA_PULSE 1200000 -> 12000, SCYTHE 2000000 -> 20000, SEEKER 2800000 ->
-// 280000, MINE 4200000 -> 420000, BEAM 4500000 -> 450000). Any drift in these
-// rungs fails here before the loadout assertions run.
-ok('owner prices pinned (ORBIT 200 / ZAP 60000 / NOVA_PULSE 12000 / SCYTHE 20000 / SEEKER 280000 / MINE 420000 / BEAM 450000)',
-  WEAPON_PRICES.ORBIT === 200 && WEAPON_PRICES.ZAP === 60000 && WEAPON_PRICES.NOVA_PULSE === 12000
-    && WEAPON_PRICES.SCYTHE === 20000 && WEAPON_PRICES.SEEKER === 280000
-    && WEAPON_PRICES.MINE === 420000 && WEAPON_PRICES.BEAM === 450000,
-  WEAPON_PRICES);
-
 const openShop = () => {
   // From wherever the last screen left us (a buy re-renders the shop in
   // place; a startRun leaves run mode) — walk to the title through the REAL
@@ -115,15 +104,19 @@ const buyRow = (wid) => { cardTitled(WEAPON_NAMES[wid]).click(); pump(1); };
 prof.gold = 10000000;
 openShop();
 buyRow('ORBIT');
-ok('(e/a) buying ORBIT equips it with NO further action (loadout ' + JSON.stringify(prof.loadout) + ')',
-  JSON.stringify(prof.loadout) === '["ORBIT"]', prof.loadout);
+// A fresh profile has no stored choice: the default already brings ORBIT, so
+// the loadout stays null and the run's kit gains the weapon.
+ok('(e/a) buying ORBIT equips it with NO further action (kit ' + JSON.stringify(effectiveLoadout(prof)) + ')',
+  prof.loadout === null && JSON.stringify(effectiveLoadout(prof)) === '["BOOMERANG","ORBIT"]',
+  { loadout: prof.loadout, kit: effectiveLoadout(prof) });
 ok('the buy says so on screen (a visible line names the equipped weapon)',
   toasts().includes('EQUIPPED') && toasts().toUpperCase().includes(WEAPON_NAMES.ORBIT.toUpperCase()),
   toasts());
 
 // ---- 2. FULL LOADOUT: still equipped, the displaced weapon is NAMED ---------
-// Fill the second slot (3 slots: volley + 2 picks) with a real purchase, then
-// buy a THIRD.
+// A STORED one-weapon choice (3 slots: volley + 2 picks): a real purchase
+// fills the free slot, then a THIRD displaces the longest-standing pick.
+prof.loadout = ['ORBIT'];
 openShop();
 buyRow('ZAP');
 ok('the second slot filled (2/2)', JSON.stringify(prof.loadout) === '["ORBIT","ZAP"]', prof.loadout);
@@ -158,16 +151,20 @@ T.startRun();
 ok('(c) the next run arms exactly the stored choice (the bench held into the run)',
   JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP"]', st.weapons.map(w => w.type));
 
-// ---- 3. the DEFAULT KIT is never silently dropped ----------------------------
-// A null loadout means "the character kit". Buying into it must keep the
-// character's starter alongside the new weapon — not replace it silently.
+// ---- 3. a null loadout stays null when the default brings the purchase -------
+// The WITCH's starter (ZAP) leads the default; a purchase that outranks the
+// rest of the owned set rides alongside it and nothing is stored.
 prof.loadout = null;
 prof.equippedCharacter = 'WITCH';
 if (!prof.unlockedWeapons.includes('ZAP')) prof.unlockedWeapons.push('ZAP');
 openShop();
-buyRow('SCYTHE');   // a weapon NOT already owned (ORBIT was bought in check 1)
-ok('(3) a null loadout keeps the character starter: WITCH buys SCYTHE -> [ZAP, SCYTHE] (kit preserved, nothing benched)',
-  JSON.stringify(prof.loadout) === '["ZAP","SCYTHE"]', prof.loadout);
+buyRow('METEOR');   // pricier than everything owned so far
+ok('(3) a null loadout stays null: WITCH buys METEOR -> the kit is [ZAP, METEOR]',
+  prof.loadout === null && JSON.stringify(effectiveLoadout(prof)) === '["ZAP","METEOR"]',
+  { loadout: prof.loadout, kit: effectiveLoadout(prof) });
+T.startRun();
+ok('(3) and the run arms the starter beside the new weapon',
+  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP","METEOR"]', st.weapons.map(w => w.type));
 
 // ---- 5. items: non-weapon rows are ACTIVE ON OWNERSHIP ----------------------
 // The shop's other unlock rows (elites, writ, pass) have NO equip layer: the

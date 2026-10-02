@@ -105,9 +105,11 @@ console.log('VISUAL-ONLY (no gameplay numbers):');
     const leak = fields.filter(f => BANNED.includes(f.toLowerCase()));
     ok(leak.length === 0, 'sprite/' + id + ': carries no gameplay fields (' + fields.join(',') + ')');
   }
-  // The stat tables this slice must not touch still read their documented values.
-  ok(ENEMY_TYPES.BRUTE.hpMult === 3.5 && ENEMY_TYPES.BRUTE.contactDamageMult === 2.5,
-    'BRUTE stat mults untouched (hpMult 3.5, contact 2.5)');
+  // The stat table still carries the roles the sprites are drawn for.
+  ok(ENEMY_TYPES.BRUTE.hpMult > ENEMY_TYPES.CHASER.hpMult &&
+     ENEMY_TYPES.BRUTE.contactDamageMult > ENEMY_TYPES.CHASER.contactDamageMult,
+    'BRUTE is still the tanky heavy hitter (hpMult ' + ENEMY_TYPES.BRUTE.hpMult +
+    ', contact ' + ENEMY_TYPES.BRUTE.contactDamageMult + ')');
   ok(ENEMY_TYPES.PILLAR.speedMult === 0 && ENEMY_TYPES.SHRIKE.flying === true,
     'PILLAR still stationary (speedMult 0), SHRIKE still the flyer');
 }

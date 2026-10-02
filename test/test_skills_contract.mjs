@@ -16,7 +16,7 @@
 //
 // Run: node test/test_skills_contract.mjs   (exit 0 = pass)
 import * as skills from '../src/skills.js';
-import { useSkill, usePotion, updateResources } from '../src/skills.js';
+import { useSkill, usePotion, potionHeal, updateResources } from '../src/skills.js';
 import { CONFIG as C } from '../src/config.js';
 
 let failed = 0;
@@ -72,7 +72,7 @@ console.log('UNKNOWN POTION KIND fails cleanly:');
 console.log('KNOWN ids still behave:');
 {
   const st = stubState();
-  ok(usePotion(st, 'hp') === true && st.player.hp === 40 + C.POTIONS.HP_HEAL && st.player.potions.hp === 1,
+  ok(usePotion(st, 'hp') === true && st.player.hp === 40 + potionHeal(st.player) && st.player.potions.hp === 1,
     'hp potion heals + decrements');
   ok(usePotion(st, 'mp') === true && st.player.mana === 10 + C.POTIONS.MP_RESTORE && st.player.potions.mp === 1,
     'mp potion restores + decrements');

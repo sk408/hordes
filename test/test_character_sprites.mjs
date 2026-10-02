@@ -113,9 +113,11 @@ console.log('VISUAL-ONLY (no gameplay numbers):');
   ok(CHARACTERS.KNIGHT.unlockCost === 0 && CHARACTERS.WITCH.unlockCost === 9000 &&
      CHARACTERS.ROGUE.unlockCost === 2500 && CHARACTERS.PALADIN.unlockCost === 6000,
     'character prices untouched (0 / 9000 / 2500 / 6000)');
-  ok(CHARACTERS.KNIGHT.mods.maxHp === 30 && CHARACTERS.WITCH.mods.maxHp === -25 &&
-     CHARACTERS.ROGUE.mods.speedMult === 1.2 && CHARACTERS.PALADIN.mods.maxHp === 15,
-    'character stat mods untouched (KNIGHT +30, WITCH -25, ROGUE x1.2, PALADIN +15)');
+  ok(CHARACTERS.KNIGHT.mods.maxHp > CHARACTERS.PALADIN.mods.maxHp && CHARACTERS.PALADIN.mods.maxHp > 0 &&
+     CHARACTERS.WITCH.mods.maxHp < 0 && CHARACTERS.ROGUE.mods.speedMult > 1,
+    'character stat roles hold (KNIGHT sturdiest ' + CHARACTERS.KNIGHT.mods.maxHp + ', PALADIN +' +
+    CHARACTERS.PALADIN.mods.maxHp + ', WITCH frail ' + CHARACTERS.WITCH.mods.maxHp + ', ROGUE x' +
+    CHARACTERS.ROGUE.mods.speedMult + ' speed)');
   ok(CHARACTERS.KNIGHT.startingWeapon === null && CHARACTERS.WITCH.startingWeapon === 'ZAP' &&
      CHARACTERS.ROGUE.startingWeapon === 'BOOMERANG' && CHARACTERS.PALADIN.startingWeapon === 'ORBIT',
     'starting kits untouched (VOLLEY / ZAP / BOOMERANG / ORBIT)');

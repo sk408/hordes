@@ -8,6 +8,7 @@
 // pages, buy-keeps-page) live in tools/verify_shop_pager.mjs, which drives
 // the real browser at 390x844 / 320x568 / 1280x800 / 1920x1080.
 import { suite, boot } from './_harness.mjs';
+import { SHOP_UPGRADES } from '../src/meta.js';
 
 const S = suite('test_shop_paging');
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
@@ -85,7 +86,7 @@ S.check('showShop builds all rows through the real screen; the buy line stays te
   T.getProfile().gold = 999999;
   shop.open();
   const cards = h.elements['ov-cards'].children;
-  assert(cards.length >= 49, 'the catalogue rendered (' + cards.length + ' cards)');
+  assert(cards.length >= SHOP_UPGRADES.length, 'the catalogue rendered (' + cards.length + ' cards)');
   const desc = (cards[0].innerHTML || '');
   assert(/LV \d+\/\d+/.test(desc), 'the sub-line is textual and stateful: ' + desc.slice(0, 80));
   // the stub's viewSize is 480 -> plan(464) = 3 cols x 146px: ABOVE the
@@ -113,7 +114,7 @@ S.check('a real purchase still lands through the paged screen (nothing about a r
   cards[0].click();
   // the cheapest stat row bought a level (or the re-render happened either way)
   const after = h.elements['ov-cards'].children;
-  assert(after.length >= 49, 'the screen re-rendered after the buy (' + after.length + ')');
+  assert(after.length >= SHOP_UPGRADES.length, 'the screen re-rendered after the buy (' + after.length + ')');
   assert(T.getProfile().gold < 999999 || id >= 0, 'the buy path ran (bank ' + T.getProfile().gold + ')');
 });
 S.check('every other menu opens clean: the pager chrome never leaks', () => {

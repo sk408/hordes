@@ -457,8 +457,9 @@ console.log('test_review_round1: items 1-2 ' + passed + ' checks');
   ok('3: cap behaviour explained — full inventory leaves them on the ground',
     /ON THE GROUND/.test(F) && F.includes(String(P.MAX_CARRIED)), F.slice(0, 300));
   // Effect: exact amounts, straight from config.
-  ok('3: health potion effect stated and matches code (+' + P.HP_HEAL + ' HP)',
-    F.includes('+' + P.HP_HEAL + ' HP'), F);
+  const healPct = Math.round(P.HP_HEAL_FRAC * 100) + '% of max HP';
+  ok('3: health potion effect stated and matches code (+' + healPct + ')',
+    F.includes('+' + healPct), F);
   ok('3: mana potion effect stated and matches code (+' + P.MP_RESTORE + ' MP)',
     F.includes('+' + P.MP_RESTORE + ' MP'), F);
   ok('3: no spend at full is stated (charges are never wasted)', /never spent at full|not at full/.test(F), F);
@@ -469,10 +470,10 @@ console.log('test_review_round1: items 1-2 ' + passed + ' checks');
     F.includes((P.DROP_CHANCE * 100).toFixed(1) + '% per kill'), F);
   ok('3: dense swarms drop fewer (adaptive scarcity is named)', /swarm/.test(F), F);
   ok('3: run start count stated (' + P.START + ' of each)', F.includes('starts with ' + P.START + ' of each'), F);
-  // AUTO pilot: the HP line is the potion's heal (msg_01M2RE1V, 2026-09-17 —
-  // the HP_FRACTION knob is retired); MP stays a fraction from config.
+  // AUTO pilot: both lines are fractions of max, read from config.
   ok('3: AUTO auto-drink thresholds stated and match code',
-    F.includes("a potion's heal") && F.includes(Math.round(AD.MP_FRACTION * 100) + '%'), F);
+    F.includes('HP at ' + Math.round(AD.HP_FRACTION * 100) + '% of max or less') &&
+    F.includes('MP under ' + Math.round(AD.MP_FRACTION * 100) + '% of max'), F);
   // The boss curse: a live boss halves the heal (main.js drinkHealthPotion).
   ok('3: the boss curse is stated (boss live = health potions heal half)',
     /boss curse/i.test(F) && /half/i.test(F), F);
@@ -485,7 +486,7 @@ console.log('test_review_round1: items 1-2 ' + passed + ' checks');
   ok('3: the manual CONTROLS page is up', !!ctlCard);
   const K = (ctlCard && ctlCard._html) || '';
   ok('3: the health-potion control row reads as a consumable with its amount',
-    /health potion/.test(K) && K.includes('+' + P.HP_HEAL + ' HP'), K.slice(0, 400));
+    /health potion/.test(K) && K.includes('+' + healPct), K.slice(0, 400));
   ok('3: the mana-potion control row reads as a consumable with its amount',
     /mana potion/.test(K) && K.includes('+' + P.MP_RESTORE + ' MP'), K.slice(0, 400));
 }

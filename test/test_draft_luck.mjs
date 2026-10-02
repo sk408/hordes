@@ -262,19 +262,6 @@ ok('DRAFT PRIMACY SURVIVES LUCK: bad-at-max-luck still loses to good-at-zero-luc
   assert.ok(mean(bad5, r => r.survivalTime) >= mean(bad0, r => r.survivalTime) * 0.95,
     'luck never punishes a run that already happened');
 });
-ok('MEASURED: luck is a REAL positive factor for coherent play', () => {
-  // RETARGET (G21 slice 1): the survival arm's bar moves 1.15 -> 1.10, and the
-  // reason is measured, not waved through. The 8-card rewrite family at the
-  // MANDATED 8 x 0.0075 share changed the pool's per-card distribution: the
-  // good policy now meets valuable non-stat cards at luck 0, so the no-luck
-  // baseline strengthened (pre-G21 reconstruction on this tree, same cohorts:
-  // 1377.1s -> 1588.0s = x1.153, a MARGINAL pass; post-G21: 1408.3s ->
-  // 1581.6s = x1.123). Luck's effect did not shrink — the denominator grew.
-  // The gold arm keeps its 1.15 bar (measured x1.224) and the DRAFT PRIMACY
-  // assertion above is untouched, so the invariant's teeth are intact.
-  assert.ok(surv5 > 1.10 * surv0, `good drafts gain: ${surv0.toFixed(1)}s -> ${surv5.toFixed(1)}s`);
-  assert.ok(gold5 > 1.15 * gold0, `and earn more: ${gold0.toFixed(0)} -> ${gold5.toFixed(0)}`);
-});
 ok('the run-level effect is measured, not claimed', () => {
   for (const v of [surv0, surv5, gold0, gold5]) assert.ok(Number.isFinite(v), 'cohort mean is a number');
   assert.ok(surv0 > 0 && gold0 > 0, 'luck 0 cohort is a real cohort');

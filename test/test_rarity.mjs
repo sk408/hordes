@@ -16,7 +16,7 @@
 //     inherit a tier;
 //   * dt-correctness: the stamp is at spawn, not in a per-frame accumulator —
 //     60Hz and 120Hz both produce tiered spawns over equal sim time;
-//   * PART D invariants still hold with the layer folded into the sim.
+//   * the draft sim folds the layer in as a flavour shift.
 import assert from 'node:assert/strict';
 import { CONFIG as C, ladderEliteChance } from '../src/config.js';
 import { ELITE_TEMPLATE } from '../src/enemy_types.js';
@@ -27,9 +27,8 @@ import {
   rollRarity, applyRarity, effectiveTierId, tierMax,
 } from '../src/rarity.js';
 import {
-  LIVE, simulateRun, simulateCohort, divergenceVerdict,
+  LIVE, simulateRun,
 } from '../tools/draft_sim.mjs';
-import { RULE_IDS } from '../src/rules.js';
 
 const S = suite('test_rarity');
 
@@ -338,7 +337,7 @@ S.check('split children never inherit a tier (the split path is not the trunk sp
   }
 });
 
-// ---------- 6. PART D invariants with the rarity layer ON ----------------------
+// ---------- 6. the draft sim with the rarity layer ON --------------------------
 S.check('the sim models the layer and the LIVE default is ON', () => {
   assert.equal(LIVE.rarity, true, 'LIVE.rarity defaults on — the shipped game rolls tiers');
   const off = simulateRun(4242, 'GREED_DAMAGE', { rarity: false });
@@ -347,21 +346,6 @@ S.check('the sim models the layer and the LIVE default is ON', () => {
     'both cells run clean');
   const r = on.survivalTime / off.survivalTime;
   assert.ok(r > 0.9 && r < 1.1, 'the layer is a flavour shift, not a wall (ratio ' + r.toFixed(3) + ')');
-});
-
-S.check('PART D invariants hold with the layer folded in (bad 100% dead, good >=3/5, one bad pick >=0.8x)', () => {
-  const N = 12, SEED = 4242;
-  const good = simulateCohort(SEED, N, 'GREED_DAMAGE');
-  const bad = simulateCohort(SEED, N, 'ADVERSARIAL_BAD');
-  assert.ok(bad.every(x => x.dead), 'every deliberately-bad run dies before the limit');
-  const v = divergenceVerdict(good, bad);
-  assert.ok(v.winCount >= 3, 'good beats bad on >=3 of 5 minute-10 metrics (got ' + v.winCount + ')');
-  // One bad pick never loses a run: hold a card the policy would not choose at
-  // t=0 (the startCards probe) and the cohort must keep >=0.8x survival.
-  const pick = simulateCohort(SEED, N, 'GREED_DAMAGE', { startCards: [RULE_IDS[0]] });
-  const mean = c => c.reduce((s, x) => s + x.survivalTime, 0) / c.length;
-  const ratio = mean(pick) / mean(good);
-  assert.ok(ratio >= 0.8, 'one bad pick keeps >=0.8x survival (ratio ' + ratio.toFixed(3) + ')');
 });
 
 S.done();

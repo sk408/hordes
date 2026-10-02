@@ -1,23 +1,18 @@
-// HORDES — SURVIVAL-GAP wave tests: the contact-damage FUNCTION and the
-// player's in-run pool axis.
-//
-// These are the assertions behind the wave's central claim, made checkable
-// instead of narrated:
-//   1. the ONE contact-damage function (entities.contactHitDamage) is what the
-//      game calls, and its shape is the documented one (sub-linear in the
-//      ladder's damage curve, capped at a fraction of the bar);
-//   2. a wave-1 GRAVELMAW CHARGE no longer one-shots the tiers the run has to
-//      support (the measured wall: 120 damage vs a 130-230 HP pool killed every
-//      build at wave 1);
-//   3. the cap can never be the whole bar, at ANY run time — the ladder's
-//      damage curve is applied at run limit too, and the player still has at
-//      least two catches in them;
-//   4. the in-run pool axis (HP_PER_LEVEL) is a real, dt-free growth rule, and
-//      the TICK latch bleed is bounded.
+// HORDES — contact damage and the player's pool.
+//   1. the ONE contact-damage function (entities.contactHitDamage) is
+//      min(BASE_CONTACT * ladderDmg^CONTACT_POW * typeMult * chargeMult,
+//          HIT_CAP_FRAC * maxHp);
+//   2. hits-to-die is a real axis: a fresh Knight dies to a small whole number
+//      of chaser hits and every Vitality level buys a real fraction of a hit;
+//   3. the cap can never be the whole bar, at ANY run time;
+//   4. the in-run pool axis (HP_PER_LEVEL) is a dt-free growth rule, and the
+//      TICK latch bleed is bounded.
 // Run: node test/test_survival_gap.mjs
 import assert from 'node:assert/strict';
 import { CONFIG as C, ladderDmg } from '../src/config.js';
 import { makePlayer, contactHitDamage } from '../src/entities.js';
+import { ENEMY_TYPES } from '../src/enemy_types.js';
+import { CHARACTERS, SHOP_BY_ID } from '../src/meta.js';
 
 let passed = 0;
 function ok(name, fn) {
@@ -28,14 +23,17 @@ function ok(name, fn) {
 
 const S = C.SURVIVAL;
 const MAX_TICK = Math.ceil(C.RUN.LIMIT / 30);
+const KNIGHT_HP = C.PLAYER.MAX_HP + CHARACTERS.KNIGHT.mods.maxHp;
+const VIT = SHOP_BY_ID.hp;
+const raw = (w, type = 1, charge = 1) =>
+  S.BASE_CONTACT * Math.pow(ladderDmg(w), S.CONTACT_POW) * type * charge;
 
 console.log('survival-gap: the contact-damage function');
 
 ok('the constants exist and are the documented shape', () => {
-  // OWNER enemy buff 2026-09-13: the base was squared, 14 -> 196.
-  assert.equal(S.BASE_CONTACT, 196, 'the touch base is the shipped 196 (14 squared)');
-  assert.ok(S.CONTACT_POW > 0 && S.CONTACT_POW < 1,
-    `contact responds SUB-linearly to the ladder (pow ${S.CONTACT_POW})`);
+  assert.ok(S.BASE_CONTACT > 0, 'there is a touch base');
+  assert.ok(S.CONTACT_POW > 0 && S.CONTACT_POW <= 1,
+    `contact never outruns the ladder (pow ${S.CONTACT_POW})`);
   assert.ok(S.HIT_CAP_FRAC > 0 && S.HIT_CAP_FRAC < 1,
     `a single hit is a FRACTION of the bar (${S.HIT_CAP_FRAC})`);
   assert.ok(S.HP_PER_LEVEL > 0, 'the run has an in-run pool axis');
@@ -43,18 +41,29 @@ ok('the constants exist and are the documented shape', () => {
     'the TICK latch bleed is bounded');
 });
 
-ok('damage rises with the ladder curve but never linearly', () => {
+ok('contactHitDamage = min(raw, cap)', () => {
+  for (const pool of [45, KNIGHT_HP, 340, 2000]) {
+    for (const w of [0, 4, 12, 30, MAX_TICK]) {
+      for (const [type, charge] of [[1, 1], [0.7, 1], [1.8, 1], [1, 1.5]]) {
+        const want = Math.min(raw(w, type, charge), pool * S.HIT_CAP_FRAC);
+        const got = contactHitDamage(S.BASE_CONTACT, ladderDmg(w), type, charge, pool);
+        assert.ok(Math.abs(got - want) < 1e-9,
+          `pool ${pool} tick ${w} x${type} x${charge}: ${got} vs ${want}`);
+      }
+    }
+  }
+});
+
+ok('damage rises with the ladder curve', () => {
   const pool = 1e9;                       // cap out of the way
   const at = (w) => contactHitDamage(S.BASE_CONTACT, ladderDmg(w), 1, 1, pool);
-  assert.ok(at(30) > at(4), 'the threat climbs across the run');
-  const linear = (w) => S.BASE_CONTACT * ladderDmg(w);
-  assert.ok(at(MAX_TICK) < 0.5 * linear(MAX_TICK),
-    `the applied damage is far below the raw curve at the limit ` +
-    `(${at(MAX_TICK).toFixed(1)} vs ${linear(MAX_TICK).toFixed(1)})`);
+  for (let w = 1; w <= MAX_TICK; w++) {
+    assert.ok(at(w) > at(w - 1), `tick ${w} hits harder than tick ${w - 1}`);
+  }
 });
 
 ok('a single hit can never be more than HIT_CAP_FRAC of the bar', () => {
-  for (const pool of [100, 130, 230, 600, 2000]) {
+  for (const pool of [45, 60, 90, 340, 600, 2000]) {
     for (const w of [0, 4, 12, 30, MAX_TICK]) {
       const hit = contactHitDamage(S.BASE_CONTACT, ladderDmg(w), 3.0, 1.5, pool);
       assert.ok(hit <= pool * S.HIT_CAP_FRAC + 1e-9,
@@ -63,37 +72,50 @@ ok('a single hit can never be more than HIT_CAP_FRAC of the bar', () => {
   }
 });
 
-console.log('survival-gap: the wave-1 wall (the measured bug)');
+console.log('survival-gap: hits to die');
 
-ok('a wave-1 GRAVELMAW charge no longer one-shots the supported tiers', () => {
-  // GRAVELMAW: contactDamageMult 2.2, charging window x1.5, at the wave-1 tick.
-  const w1 = Math.round(C.ESCALATION.WAVE_LENGTH / 30);
-  const charge = (pool) => contactHitDamage(S.BASE_CONTACT, ladderDmg(w1), 2.2, 1.5, pool);
-  for (const pool of [130, 230]) {              // fresh KNIGHT / maxed tank
-    assert.ok(charge(pool) < pool,
-      `a ${pool} HP build survives one wave-1 charge (${charge(pool).toFixed(0)} damage)`);
-    assert.ok(pool / charge(pool) >= 2,
-      `... and survives at least two (${(pool / charge(pool)).toFixed(2)} catches)`);
+ok('a fresh Knight dies to ceil(maxHp / hit) chaser hits, and the cap is not what decides it', () => {
+  const type = ENEMY_TYPES.CHASER.contactDamageMult;
+  const hit = contactHitDamage(S.BASE_CONTACT, ladderDmg(0), type, 1, KNIGHT_HP);
+  assert.equal(hit, raw(0, type), 'an opening chaser hit is the raw number, under the cap');
+  const hits = Math.ceil(KNIGHT_HP / hit);
+  assert.ok(hits >= 2 && hits <= 6, `a fresh Knight dies to hit ${hits} (not 1, not 20)`);
+  // Walk the bar down the way the game does.
+  let hp = KNIGHT_HP, n = 0;
+  while (hp > 0) { hp -= contactHitDamage(S.BASE_CONTACT, ladderDmg(0), type, 1, KNIGHT_HP); n++; }
+  assert.equal(n, hits);
+});
+
+ok('every Vitality level changes hits-to-die by a real fraction of a hit', () => {
+  const type = ENEMY_TYPES.CHASER.contactDamageMult;
+  const hitsToDie = (lvl) => {
+    const pool = KNIGHT_HP + VIT.perLevel * lvl;
+    return pool / contactHitDamage(S.BASE_CONTACT, ladderDmg(0), type, 1, pool);
+  };
+  for (let lvl = 1; lvl <= VIT.maxLevel; lvl++) {
+    const step = hitsToDie(lvl) - hitsToDie(lvl - 1);
+    assert.ok(step >= 0.25, `Vitality ${lvl} buys ${step.toFixed(2)} of a chaser hit`);
   }
-  // The shipped formula it replaced: 14 * 2.6 * 2.2 * 1.5 = 120, which killed
-  // every 100-130 HP fresh save and two-shot a 230 HP maxed one.
-  assert.ok(charge(130) < 100, 'a fresh save is no longer one-shot by the charger');
+  assert.ok(Math.ceil(hitsToDie(VIT.maxLevel)) > Math.ceil(hitsToDie(0)),
+    'a maxed Vitality row survives more whole hits than a fresh save');
 });
 
-ok('the wall is still a wall: repeated catches in one wave still kill', () => {
+ok('a wave-1 boss charge does not one-shot a fresh Knight, and repeated catches still kill', () => {
   const w1 = Math.round(C.ESCALATION.WAVE_LENGTH / 30);
-  const charge = contactHitDamage(S.BASE_CONTACT, ladderDmg(w1), 2.2, 1.5, 130);
-  const catches = Math.ceil(130 / charge);
-  assert.ok(catches >= 2 && catches <= 6,
-    `a fresh save dies to ${catches} catches in a wave (not 1, not 20)`);
+  const charge = contactHitDamage(S.BASE_CONTACT, ladderDmg(w1),
+    C.ESCALATION.BOSS.CONTACT_MULT, 1.5, KNIGHT_HP);
+  assert.ok(charge < KNIGHT_HP, `a fresh Knight survives one charge (${charge.toFixed(0)} damage)`);
+  const catches = Math.ceil(KNIGHT_HP / charge);
+  assert.ok(catches >= 2 && catches <= 6, `... and dies to ${catches} catches (not 1, not 20)`);
 });
 
-ok('by the run limit a maxed pool still needs at least two hits', () => {
-  // The maxed KNIGHT pool (100 + 5x20 Vitality + 30 character) grown by the
-  // in-run axis: 230 x (1 + 0.015 * 45 levels) ~= 385.
-  const pool = 230 * (1 + S.HP_PER_LEVEL * 45);
-  const hit = contactHitDamage(S.BASE_CONTACT, ladderDmg(MAX_TICK), 3.0, 1.5, pool);
-  assert.ok(pool / hit >= 2, `run limit: ${(pool / hit).toFixed(2)} hits to die`);
+ok('by the run limit any pool still needs at least two hits', () => {
+  const heaviest = Math.max(...Object.values(ENEMY_TYPES).map(t => t.contactDamageMult || 0));
+  for (const base of [C.PLAYER.MAX_HP, KNIGHT_HP, KNIGHT_HP + VIT.perLevel * VIT.maxLevel]) {
+    const pool = base * (1 + S.HP_PER_LEVEL * 45);
+    const hit = contactHitDamage(S.BASE_CONTACT, ladderDmg(MAX_TICK), heaviest, 1.5, pool);
+    assert.ok(Math.ceil(pool / hit) >= 2, `run limit, pool ${pool.toFixed(0)}: ${(pool / hit).toFixed(2)} hits to die`);
+  }
 });
 
 ok('the function is PURE and dt-free (frame-rate independence)', () => {
@@ -109,10 +131,9 @@ ok('level-ups grow the pool, and the growth is a per-level constant', () => {
   const base = makePlayer().stats.maxHp;
   const gain = base * S.HP_PER_LEVEL;
   assert.ok(gain > 0 && gain < base * 0.1, `a level is worth ${gain.toFixed(2)} HP on a ${base} pool`);
-  // 45 levels (a developed run) roughly +2/3 of the start pool: enough to
-  // answer the late ladder, not enough to make a fresh save unkillable.
+  // 45 levels (a developed run) is exactly 45 x that constant on top.
   const grown = base * (1 + S.HP_PER_LEVEL * 45);
-  assert.ok(grown > 1.5 * base && grown < 3 * base,
+  assert.ok(Math.abs(grown - (base + 45 * gain)) < 1e-9 && grown > base && grown < 3 * base,
     `45 levels takes a ${base} pool to ${grown.toFixed(0)} HP`);
 });
 

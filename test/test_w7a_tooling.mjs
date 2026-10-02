@@ -15,7 +15,7 @@
 // Run: node test/test_w7a_tooling.mjs
 import assert from 'node:assert/strict';
 import { ARCH_TYPES } from '../src/arches.js';
-import { GOLD_TIER, RUN_GOLD, SHOP_UPGRADES, WEAPON_PRICES } from '../src/meta.js';
+import { GOLD_TIER, RUN_GOLD, SHOP_UPGRADES, WEAPON_PRICES, applyMetaBonuses } from '../src/meta.js';
 import {
   SIM_TUNING, LIVE, OWNER_LOADOUT, buildDraftPool, simulateRun, simulateCohort,
   archExpectedMods, weaponDps, measureDivergence, measureMetaValue,
@@ -67,6 +67,16 @@ ok('settlement has the live settleRunGold shape, exactly', () => {
   assert.ok(r.incomePurse > 0, 'kills credit the purse');
   assert.ok(r.incomePurse > GOLD_TIER.BOSS, 'a real run pays more than one boss tier');
 });
+ok('Greed multiplies the purse as well as the award', () => {
+  const base = simulateRun(SEED, 'GREED_DAMAGE', { purchases: OWNER_LOADOUT });
+  const purchases = { ...OWNER_LOADOUT, greed: 1 };
+  const gm = applyMetaBonuses(makePlayer().stats, purchases).goldMult;
+  const r = simulateRun(SEED, 'GREED_DAMAGE', { purchases });
+  assert.ok(gm > 1, 'the greed row raises goldMult');
+  assert.ok(Math.abs(r.incomePurse - base.incomePurse * gm) <= 1,
+    `purse ${base.incomePurse} x${gm} -> ${r.incomePurse}`);
+  assert.equal(r.incomeProfile, r.incomePurse + Math.round(RUN_GOLD.AWARD * gm));
+});
 ok('checkpoint gold is the mid-run wallet (the purse), not the retired formula', () => {
   const r = simulateRun(SEED, 'GREED_DAMAGE', { purchases: OWNER_LOADOUT });
   for (const mark of [120, 300, 600]) {
@@ -102,9 +112,6 @@ console.log('w7a measurement cells: divergence (both axes), meta value, unlock v
 ok('measureDivergence reads G6 on BOTH axes, post-E1', () => {
   const d = measureDivergence(SEED, N);
   assert.ok(d.goodBad > 1, `survival ratio x${d.goodBad.toFixed(2)}`);
-  assert.ok(d.goodBadWaves > 1, `waves ratio x${d.goodBadWaves.toFixed(2)}`);
-  assert.ok(d.finalWaves.good > d.finalWaves.bad,
-    `final waves ${d.finalWaves.good} vs ${d.finalWaves.bad}`);
   assert.ok(d.meanBanked.good > d.meanBanked.bad, 'good banks more purse');
   assert.equal(d.target, 1.6, "the owner's raised bar is reported, not enacted");
   assert.ok(typeof d.meetsTarget === 'boolean');

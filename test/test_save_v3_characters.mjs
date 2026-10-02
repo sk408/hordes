@@ -23,6 +23,7 @@ import {
   CHARACTERS,
 } from '../src/meta.js';
 import * as SAVE from '../src/save.js';
+import { LEGACY_SHOP_V10 as OLD } from '../src/legacy_shop_v10.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -70,10 +71,9 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA v3 + NAMESPACE SHAPE:');
 {
-  // Pinned deliberately (v6 = the one-time-banner ledger) — update WITH the
-  // schema bump (v9 = the returning-player lastPlayed/lastSeenUpdate pair).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 10,
-    `schema version is 9 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
+  // Pinned deliberately — update WITH the schema bump (v11 = the shop refund).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 11,
+    `schema version is 11 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
   ok(VERSION_HISTORY.some(v => v.version === 3 && /per-character/i.test(v.note)),
     'VERSION_HISTORY documents the v3 per-character namespace');
   ok(STORAGE_KEY === 'hordes_profile_v1',
@@ -124,11 +124,14 @@ console.log('v2 -> v3 MIGRATION (preserve everything, populate nothing):');
   const res = loadProfileResult(s);
   ok(res.status === 'migrated' && res.from === 2 && res.profile.version === SCHEMA_VERSION,
     `a v2 save migrates to v3 (status=${res.status}, from=${res.from})`);
-  deepEq(res.migrations, [2, 3, 4, 5, 6, 7, 8, 9], 'a v2 save applies exactly the v2->v3 through v9->v10 steps');
+  deepEq(res.migrations, [2, 3, 4, 5, 6, 7, 8, 9, 10], 'a v2 save applies exactly the v2->v3 through v10->v11 steps');
   deepEq(res.profile.characters, {}, 'the migration populates NO character with upgrades');
-  ok(res.profile.gold === 4321 && res.profile.purchased.dmg === 2 &&
+  // The v10 -> v11 step refunds the old stat rows (dmg 2, hp 1) at their old
+  // prices; a row it does not know is kept as it is.
+  ok(res.profile.gold === 4321 + OLD.dmg[0] + OLD.dmg[1] + OLD.hp[0] &&
+     res.profile.purchased.dmg === undefined && res.profile.purchased.hp === undefined &&
      res.profile.purchased.futureThing === 3,
-    'currency + every purchased level (known and unknown) survive the v2 -> v3 step');
+    'currency survives the chain (plus the v11 stat-row refund) and an unknown purchased row is kept');
   ok(res.profile.unlockedCharacters.join(',') === 'KNIGHT,WITCH' &&
      res.profile.equippedCharacter === 'WITCH',
     'character unlocks + equipment survive the v2 -> v3 step');
@@ -174,7 +177,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v1 = loadProfileResult(seededJson({ version: 1, gold: 12.9, unlockedCharacters: ['KNIGHT'] }));
   ok(v1.status === 'migrated' && v1.from === 1 && v1.profile.version === SCHEMA_VERSION,
     `a v1 save migrates ALL the way to v${SCHEMA_VERSION} (from=${v1.from})`);
-  deepEq(v1.migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9], 'the v1 save runs the 1->2 through 9->v10 steps in order');
+  deepEq(v1.migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'the v1 save runs the 1->2 through 10->11 steps in order');
   ok(v1.profile.gold === 12, 'the chained migration still clamps currency (1 -> 2 step)');
   deepEq(v1.profile.characters, {}, 'the chained migration adds an empty v3 namespace');
 
@@ -189,10 +192,11 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v0 = loadProfileResult(seededJson(legacy));
   ok(v0.status === 'migrated' && v0.from === 0 && v0.profile.version === SCHEMA_VERSION,
     `a v0 (unversioned) save migrates to v${SCHEMA_VERSION} (from=${v0.from})`);
-  deepEq(v0.migrations, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 'the whole chain 0 -> 1 -> ... -> 9 -> 10 runs');
-  ok(v0.profile.bestTime === 187.5 && v0.profile.purchased.dmg === 1 &&
-     v0.profile.equippedCharacter === 'WITCH',
-    'the v0 -> v3 chain preserves the legacy fields');
+  deepEq(v0.migrations, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'the whole chain 0 -> 1 -> ... -> 10 -> 11 runs');
+  ok(v0.profile.bestTime === 187.5 && v0.profile.equippedCharacter === 'WITCH' &&
+     v0.profile.gold === legacy.gold + OLD.dmg[0] + OLD.hp[0] + OLD.hp[1] &&
+     v0.profile.purchased.dmg === undefined,
+    'the v0 chain preserves the legacy fields (stat rows refunded into gold by the v11 step)');
   deepEq(v0.profile.characters, {}, 'the v0 -> v3 chain adds an empty namespace');
 }
 

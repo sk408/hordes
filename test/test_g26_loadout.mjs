@@ -11,7 +11,7 @@
 //
 // It also pins the slice's other contracts through the REAL seams:
 //   - persistence: profile.loadout round-trips the save validator;
-//   - the screen: rows for the unlock set, slot cap, DEFAULT KIT clears;
+//   - the screen: rows for the unlock set, slot cap, AUTO clears;
 //   - the choice proof: startRun arms the chosen kit, read off LIVE run state;
 //   - the pool proof: ZERO wpn_* grants across a draft sweep, lvl_* offers
 //     for exactly the brought kit.
@@ -158,8 +158,8 @@ const door = cardTitled('LOADOUT');
 ok('the LOADOUT door is a real title card', !!door);
 door.click();
 ok('tapping the door opens the loadout screen (mode loadout)', st.mode === 'loadout', st.mode);
-ok('the screen lists the unlocked slot weapons + DEFAULT KIT + BACK',
-  !!weaponCard('BOOMERANG') && !!cardTitled('DEFAULT KIT') && !!cardTitled('BACK'), cards().length);
+ok('the screen lists the unlocked slot weapons + AUTO + BACK',
+  !!weaponCard('BOOMERANG') && !!cardTitled('AUTO') && !!cardTitled('BACK'), cards().length);
 cardTitled('BACK').click();
 ok('BACK returns to the title', st.mode === 'title', st.mode);
 settleReveal();
@@ -202,7 +202,7 @@ ok('a seen flag suppresses the coach on a NEW growth', tourRoots().length === 0,
 // No more tour pauses for the rest of the file.
 for (const k of Object.values(TOUR_KEYS)) ls.set(k, '1');
 
-// ---- 4. the screen: selection, slot cap, DEFAULT KIT -------------------------
+// ---- 4. the screen: selection, slot cap, AUTO ---------------------------------
 T.loadout.open();
 const expectOrder = Object.keys(WEAPON_TYPES).filter(id => prof.unlockedWeapons.includes(id));
 ok('the screen enumerates the unlock set in registry order',
@@ -211,20 +211,26 @@ ok('the screen enumerates the unlock set in registry order',
     .map(c => expectOrder.find(id => (c._html || '').includes('>' + WEAPON_NAMES[id] + '<'))).join(',')
     === expectOrder.join(','),
   expectOrder.join(','));
+// No stored choice: the screen shows the auto kit (the strongest owned weapons
+// that fit) as EQUIPPED.
+ok('with no stored choice the auto kit reads EQUIPPED (BOOMERANG + ZAP, ORBIT benched)',
+  prof.loadout === null && weaponCard('BOOMERANG')._html.includes('EQUIPPED') &&
+  weaponCard('ZAP')._html.includes('EQUIPPED') && !weaponCard('ORBIT')._html.includes('EQUIPPED'),
+  prof.loadout);
 weaponCard('ORBIT').click();
-ok('a tap selects (stored immediately, persisted shape)',
-  JSON.stringify(prof.loadout) === '["ORBIT"]', prof.loadout);
-weaponCard('ZAP').click();
-ok('a second tap fills the second slot (3 slots: volley + 2 picks)',
-  JSON.stringify(prof.loadout) === '["ORBIT","ZAP"]', prof.loadout);
-weaponCard('BOOMERANG').click();
 ok('the slot cap refuses a third pick (the menu never exceeds the run cap)',
-  JSON.stringify(prof.loadout) === '["ORBIT","ZAP"]', prof.loadout);
-weaponCard('ZAP').click();
-ok('a tap on a SELECTED weapon deselects it',
-  JSON.stringify(prof.loadout) === '["ORBIT"]', prof.loadout);
-cardTitled('DEFAULT KIT').click();
-ok('DEFAULT KIT clears the choice to null (the zero-penalty default)',
+  prof.loadout === null, prof.loadout);
+weaponCard('BOOMERANG').click();
+ok('a tap on an EQUIPPED weapon benches it and stores the choice',
+  JSON.stringify(prof.loadout) === '["ZAP"]', prof.loadout);
+weaponCard('ORBIT').click();
+ok('a tap fills the free slot (3 slots: volley + 2 picks)',
+  JSON.stringify(prof.loadout) === '["ZAP","ORBIT"]', prof.loadout);
+weaponCard('BOOMERANG').click();
+ok('a full stored choice refuses a third pick too',
+  JSON.stringify(prof.loadout) === '["ZAP","ORBIT"]', prof.loadout);
+cardTitled('AUTO').click();
+ok('AUTO clears the choice to null',
   prof.loadout === null, prof.loadout);
 
 // ---- 5. the choice proof: the run carries what was chosen (LIVE state) -------
@@ -238,16 +244,13 @@ T.startRun();
 const poorKit = st.weapons.map(w => w.type);
 ok('poor kit: a different choice arms a different kit', JSON.stringify(goodKit) !== JSON.stringify(poorKit),
   { goodKit, poorKit });
-// Zero penalty for never visiting: no stored choice -> exactly today's kit
-// (VOLLEY + the character's starting weapon when unlocked, nothing else).
+// No stored choice -> every owned weapon that fits, strongest first (the
+// Knight has no starting weapon of his own to lead the list).
 prof.loadout = null;
 T.startRun();
-const ch = st.character;
-const expectDefault = ['VOLLEY'].concat(
-  ch.startingWeapon && prof.unlockedWeapons.includes(ch.startingWeapon) ? [ch.startingWeapon] : []);
-ok('no stored choice -> the same starting kit a fresh account has today',
-  JSON.stringify(st.weapons.map(w => w.type)) === JSON.stringify(expectDefault),
-  { got: st.weapons.map(w => w.type), expectDefault });
+ok('no stored choice -> VOLLEY + the two strongest owned weapons (ZAP, BOOMERANG; ORBIT sits out)',
+  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP","BOOMERANG"]',
+  st.weapons.map(w => w.type));
 // A loadout naming a weapon the save does NOT own never arms it (import rule).
 prof.unlockedWeapons = prof.unlockedWeapons.filter(w => w !== 'ZAP');
 prof.loadout = ['ORBIT', 'ZAP'];

@@ -17,6 +17,7 @@
 import {
   loadProfile, saveProfile, makeProfile, CHARACTERS,
 } from '../src/meta.js';
+import { LEGACY_SHOP_V10 } from '../src/legacy_shop_v10.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -79,9 +80,11 @@ console.log('UNLOCK LIST is validated + never locks KNIGHT out:');
     'a non-array unlock field degrades to [KNIGHT]');
 
   // KNIGHT-only saves from before the character economy keep working.
+  // The v10 -> v11 migration refunds the old stat row at its old price.
   const knightOnly = load({ gold: 55, purchased: { dmg: 1 }, unlockedCharacters: ['KNIGHT'], equippedCharacter: 'KNIGHT' });
-  ok(knightOnly.gold === 55 && knightOnly.purchased.dmg === 1 && knightOnly.equippedCharacter === 'KNIGHT',
-    'a clean old-shape save loads with gold + purchases intact');
+  ok(knightOnly.gold === 55 + LEGACY_SHOP_V10.dmg[0] && knightOnly.purchased.dmg === undefined &&
+     knightOnly.equippedCharacter === 'KNIGHT',
+    'a clean old-shape save loads with its stat row refunded into gold');
 }
 
 console.log('ROUND TRIP + fresh default unaffected:');

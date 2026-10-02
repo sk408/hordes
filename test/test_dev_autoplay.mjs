@@ -36,8 +36,8 @@ import {
 }
 
 // ---- SMART vs IMPULSIVE on the REAL catalogue --------------------------------
-// Fresh profile, ORBIT owned (so the first preferred line is the split
-// ladder, read live — no restated prices): split cost C, cheapest filler F.
+// Fresh profile, ORBIT owned: the first preferred line is the next weapon
+// rung, read live (no restated prices) at cost C; cheapest filler F.
 {
   const prof = makeProfile();
   prof.unlockedWeapons.push('ORBIT');
@@ -67,8 +67,12 @@ import {
   const firstPrefNow = (p) => preferredTargets(p).find((o) => p.gold >= o.cost).id;
 
   // Save-up: gap exactly 5 estimated runs -> hold (null) despite filler gold.
-  const est = 50;                                   // horizon = 250
-  const G = C - SAVE_UP_RUNS * est;                 // gap exactly 250 = 5.0 runs
+  // The estimate is kept small so no OTHER preferred line sits inside the
+  // window once the target leaves it (SMART would rightly save for that one).
+  const est = 10;
+  const G = C - SAVE_UP_RUNS * est;                 // gap exactly 5.0 runs
+  assert.ok(prefs.every((p) => p.id === T0.id || p.cost <= G - 1 || p.cost - G > SAVE_UP_RUNS * est),
+    'test setup: no other preferred line is inside the save-up window');
   assert.ok(G >= F.cost + 1, 'test setup: filler affordable while saving (gap ' +
     (C - G) + ', filler ' + F.id + '@' + F.cost + ')');
   prof.gold = G;

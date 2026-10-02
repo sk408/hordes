@@ -25,7 +25,7 @@ import { CONFIG as C } from '../src/config.js';
 import { bootReal } from '../tools/real_loop.mjs';
 import { makeWeapon, levelUpWeapon, WEAPON_MAX_LEVEL, updateWeapons } from '../src/weapons.js';
 import { evolveWeapon } from '../src/evolutions.js';
-import { usePotion } from '../src/skills.js';
+import { usePotion, potionHeal } from '../src/skills.js';
 import { grantSkill, applyRegrowth, hpRegenPerSec } from '../src/perks.js';
 
 let passed = 0;
@@ -182,12 +182,12 @@ const B = CAP * P.stats.maxHp;    // maxHp 100 on fresh => B = 25
 
 // ---- 4. the BOUNDARY: non-throughput heals are UNAFFECTED by an empty budget ---
 st.healBudget = 0;
-{ // Potions stay a burst escape: full 35 with the budget at zero.
+{ // Potions stay a burst escape: the full heal with the budget at zero.
   P.hp = 1;
   P.potions.hp = 1;
   const used = usePotion(st, 'hp');
-  ok('potion unaffected by an empty budget: consumed and heals exactly HP_HEAL',
-    used === true && P.hp === 1 + C.POTIONS.HP_HEAL, P.hp);
+  ok('potion unaffected by an empty budget: consumed and heals exactly potionHeal',
+    used === true && P.hp === Math.min(P.stats.maxHp, 1 + potionHeal(P)), P.hp);
 }
 { // Regrowth stays a flat trickle: 0.7 HP/s with the budget at zero.
   grantSkill(st, 'regrowth');

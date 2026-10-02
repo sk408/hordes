@@ -12,8 +12,8 @@
 //             means never again (a single monotonic number, no set).
 //   GOLD      the reward is NUMERIC against the documented basis: 10x the
 //             player's stored lifetime average (totals.gold / totals.runs),
-//             floored at RUN_GOLD.AWARD (70 — PACING §1's fresh-run floor)
-//             and capped at 754,689/run (PACING §1's tier-3 measured max).
+//             floored at RUN_GOLD.AWARD (70, the fresh-run floor)
+//             and capped at RUN_CHESTS.GOLD_PER_RUN_CAP per run.
 //   MIGRATE   a v9 save migrates to v10 with milestoneChest 0, lossless;
 //             garbage repairs to 0 and NAMES the field; a valid claim passes.
 //   SPAWN     the REAL startRun spawns the chest on the crossing run,
@@ -109,6 +109,9 @@ globalThis.localStorage = {
   removeItem: k => ls.delete(k),
 };
 const stored = () => JSON.parse(ls.get('hordes_profile_v1'));
+// The v10 -> v11 step refunds the old dmg levels into gold on the way in.
+const { LEGACY_SHOP_V10 } = await import('../src/legacy_shop_v10.js');
+const LOADED_GOLD = OLD_SAVE.gold + LEGACY_SHOP_V10.dmg[0] + LEGACY_SHOP_V10.dmg[1];
 
 const mainMod = await import('../src/main.js');
 const T = mainMod.__TEST;
@@ -153,8 +156,8 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
     CH.gold({}) === 700 && CH.gold({ runs: 3, gold: 30 }) === 700);
   ok('a partial build pays its own average (1000/10 = 100 -> 1000)',
     CH.gold({ runs: 10, gold: 1000 }) === 1000);
-  ok('the CAP: no chest exceeds 10 x the measured maxed-run income (754,689)',
-    CH.gold({ runs: 200, gold: 1e11 }) === 754689 * 10);
+  ok('the CAP: no chest exceeds RUNS_WORTH x GOLD_PER_RUN_CAP',
+    CH.gold({ runs: 200, gold: 1e11 }) === CH.table.GOLD_PER_RUN_CAP * CH.table.RUNS_WORTH);
 }
 
 // ---- 4. THE MIGRATION: v9 -> v10 lossless + repair ---------------------------
@@ -169,8 +172,8 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
     { status: res.status, migrations: res.migrations });
   ok('milestoneChest migrates to 0 (NO chest is pre-claimed for an older save)',
     res.profile.milestoneChest === 0, res.profile.milestoneChest);
-  ok('the migration is LOSSLESS: gold, purchases, unlocks, runs, lifetime gold survive',
-    res.profile.gold === 512 && res.profile.purchased.dmg === 2 &&
+  ok('the migration is LOSSLESS: gold (plus the v11 stat-row refund), unlocks, runs, lifetime gold survive',
+    res.profile.gold === LOADED_GOLD && res.profile.purchased.dmg === undefined &&
     res.profile.unlockedWeapons.includes('BOOMERANG') &&
     res.profile.achievements.totals.runs === 49 &&
     res.profile.achievements.totals.gold === 3430,
@@ -181,7 +184,7 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
   const neg = meta.loadProfileResult(fakeStorage({ ...OLD_SAVE, milestoneChest: -5 }));
   ok('a negative claim clamps UP to 0 (the safe direction is re-offer, never skip)',
     neg.profile.milestoneChest === 0 && neg.repairs.includes('milestoneChest'));
-  const good = meta.loadProfileResult(fakeStorage({ ...OLD_SAVE, version: 10, milestoneChest: 200 }));
+  const good = meta.loadProfileResult(fakeStorage({ ...OLD_SAVE, version: meta.PROFILE_VERSION, milestoneChest: 200 }));
   ok('a valid claim passes through untouched (no repair, status current)',
     good.status === 'current' && good.profile.milestoneChest === 200);
 }
@@ -215,11 +218,11 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
   const goldBefore = prof.gold;
   const rawBefore = ls.get('hordes_profile_v1');
   CH.collect();
-  ok('the payoff BANKS the gold directly (512 + 700 = 1212, NOT the purse)',
-    prof.gold === 1212 && prof.runPurse === 0, { gold: prof.gold, purse: prof.runPurse });
+  ok('the payoff BANKS the gold directly (+700, NOT the purse)',
+    prof.gold === LOADED_GOLD + 700 && prof.runPurse === 0, { gold: prof.gold, purse: prof.runPurse });
   ok('the claim + the bank ride ONE save (the persisted bytes changed on the collect)',
     ls.get('hordes_profile_v1') !== rawBefore &&
-    stored().milestoneChest === 50 && stored().gold === 1212,
+    stored().milestoneChest === 50 && stored().gold === LOADED_GOLD + 700,
     { stored: stored().milestoneChest, gold: stored().gold });
   ok('the chest is off the field (collect clears it)', st.runChest === null);
   const chestCard = () => elements['ov-cards'].children.find(el => /MILESTONE CHEST/.test(el.innerHTML || ''));

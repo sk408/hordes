@@ -107,6 +107,9 @@ const OLD_SAVE = { version: 8, gold: 512, purchased: { dmg: 2 },
   unlockedWeapons: ['VOLLEY', 'BOOMERANG'], unlockedElites: [],
   runPurse: 0, apex: {},
   achievements: { totals: { runs: 7 } } };
+// The v10 -> v11 step refunds the old dmg levels into gold on the way in.
+const { LEGACY_SHOP_V10 } = await import('../src/legacy_shop_v10.js');
+const LOADED_GOLD = OLD_SAVE.gold + LEGACY_SHOP_V10.dmg[0] + LEGACY_SHOP_V10.dmg[1];
 const ls = new Map([['hordes_onboarded', '1'],
   ...Object.values(TOUR_KEYS).map(k => [k, '1']),
   ['hordes_profile_v1', JSON.stringify(OLD_SAVE)]]);
@@ -129,7 +132,7 @@ const noteEl = () => (elements['overlay'] ? elements['overlay'].children : [])
 const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now); };
 
 ok('the boot migrated the v8 save (a returning player, not fresh)',
-  T.getProfile().gold === 512 && (T.getProfile().achievements.totals.runs || 0) === 7,
+  T.getProfile().gold === LOADED_GOLD && (T.getProfile().achievements.totals.runs || 0) === 7,
   { gold: T.getProfile().gold });
 
 // ---- 1. THE STAMP: every save carries lastPlayed, and it MOVES --------------
@@ -142,14 +145,14 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     const s1 = stored();
     ok('the first save stamps lastPlayed (a real epoch-ms integer)',
       typeof s1.lastPlayed === 'number' && s1.lastPlayed > 0 && Number.isInteger(s1.lastPlayed), s1.lastPlayed);
-    ok('the save stamps the v10 schema version', s1.version === 10, s1.version);
+    ok('the save stamps the v11 schema version', s1.version === 11, s1.version);
     fake += 60000;                       // a minute passes
     mainMod.autosave('exit');
     const s2 = stored();
     ok('the timestamp MOVES between saves (the silent-failure trap)',
       s2.lastPlayed > s1.lastPlayed, { first: s1.lastPlayed, second: s2.lastPlayed });
-    ok('nothing else was demoted by the saves (gold + purchase survive)',
-      s2.gold === 512 && s2.purchased.dmg === 2, { gold: s2.gold, dmg: s2.purchased.dmg });
+    ok('nothing else was demoted by the saves (gold + unlocks survive)',
+      s2.gold === LOADED_GOLD && s2.unlockedWeapons.includes('BOOMERANG'), { gold: s2.gold });
   } finally { Date.now = realNow; }
 }
 
@@ -166,8 +169,8 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     res.profile.lastPlayed === null, res.profile.lastPlayed);
   ok('lastSeenUpdate migrates to null (nothing marked seen)',
     res.profile.lastSeenUpdate === null, res.profile.lastSeenUpdate);
-  ok('the migration is LOSSLESS: gold, purchases, unlocks, runs all survive',
-    res.profile.gold === 512 && res.profile.purchased.dmg === 2 &&
+  ok('the migration is LOSSLESS: gold (plus the v11 stat-row refund), unlocks, runs all survive',
+    res.profile.gold === LOADED_GOLD && res.profile.purchased.dmg === undefined &&
     res.profile.unlockedWeapons.includes('BOOMERANG') &&
     (res.profile.achievements.totals.runs || 0) === 7,
     { gold: res.profile.gold, dmg: res.profile.purchased.dmg, runs: res.profile.achievements.totals.runs });
@@ -181,7 +184,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     rb.status === 'repaired' && rb.repairs.includes('lastPlayed') && rb.repairs.includes('lastSeenUpdate') &&
     rb.profile.lastPlayed === null && rb.profile.lastSeenUpdate === null,
     { status: rb.status, repairs: rb.repairs });
-  const good = { ...OLD_SAVE, version: 10, lastPlayed: 1893456000000, lastSeenUpdate: 'x', milestoneChest: 0 };
+  const good = { ...OLD_SAVE, version: meta.PROFILE_VERSION, lastPlayed: 1893456000000, lastSeenUpdate: 'x', milestoneChest: 0 };
   const goodStore = { _m: new Map([['hordes_profile_v1', JSON.stringify(good)]]),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); }, removeItem(k) { this._m.delete(k); } };

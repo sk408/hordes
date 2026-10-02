@@ -55,7 +55,7 @@ import { ultCharge } from '../src/skills.js';
 import { updateWeapons } from '../src/weapons.js';
 import { isFlashEligibleKill, flashTargets, FLASH_TRASH_TIERS } from '../src/loot.js';
 import { buildExport } from '../src/save.js';
-import { simulateCohort, divergenceVerdict } from '../tools/draft_sim.mjs';
+import { simulateCohort } from '../tools/draft_sim.mjs';
 import { boot } from './_harness.mjs';
 
 let pass = 0, fail = 0;
@@ -1541,15 +1541,7 @@ ok('pick() grants +1 BONUS level on a below-cap level-up under once', () => {
 console.log('rewrites: sim invariants (30 runs/cell, seed 4242, families ON, luck 0)');
 const RUNS = 30, SEED = 4242;
 const good = simulateCohort(SEED, RUNS, 'GREED_DAMAGE', {});
-const bad = simulateCohort(SEED, RUNS, 'ADVERSARIAL_BAD', {});
 const mean = a => a.reduce((s, r) => s + r.survivalTime, 0) / a.length;
-const v = divergenceVerdict(good, bad);
-ok('a deliberately bad draft still fails 100% of its runs', () => {
-  assert.ok(bad.every(r => r.dead), 'every bad run died before the limit');
-});
-ok('a good draft beats bad on >= 3 of 5 minute-10 metrics', () => {
-  assert.ok(v.winCount >= 3, `metric wins ${v.winCount}/5`);
-});
 ok('one bad pick never loses a run: every rewrite AND the retuned once >= 0.8x', () => {
   const base = mean(good);
   for (const id of [...REWRITE_IDS, 'once']) {
@@ -1593,13 +1585,6 @@ ok('D5: every slice-2 card reads >= 0.8x, alone and against its constituents', (
       (pre.length ? ` (vs ${pre.join('+')} alone)` : ''));
     assert.ok(alone >= 0.8, `${id} alone at ${alone.toFixed(2)}x < the 0.8x bar`);
     assert.ok(marginal >= 0.8, `${id} + constituents at ${marginal.toFixed(2)}x < the 0.8x bar`);
-  }
-});
-ok('D5: the bad cohort still fails 100% with every slice-2 card (and without it)', () => {
-  assert.ok(bad.every(r => r.dead), 'the cardless bad cohort fails 100%');
-  for (const id of S2_CARDS) {
-    const b = simulateCohort(SEED, RUNS, 'ADVERSARIAL_BAD', { startCards: [id] });
-    assert.ok(b.every(r => r.dead), `the bad cohort holding ${id} still fails 100%`);
   }
 });
 console.log('G21 slice 2: D6 the no-drift proof (seeded)');

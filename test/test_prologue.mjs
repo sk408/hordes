@@ -806,8 +806,9 @@ S.check('the shield boundary: contact damage is blocked at 44.9s and lands at 45
     const p = st.player;
     const maxHp = p.hp;
     // A chaser pressed against the pilot for the whole window (speed 0 — it
-    // is parked ON the contact radius; the clock is the only variable).
-    st.enemies.push({ typeId: 'CHASER', x: p.x + 6, y: p.y, w: 10, hp: 1000, maxHp: 1000,
+    // is parked ON the contact radius; the clock is the only variable). Its
+    // pool outlasts the base volley, which still fires for the whole window.
+    st.enemies.push({ typeId: 'CHASER', x: p.x + 6, y: p.y, w: 10, hp: 1e9, maxHp: 1e9,
       speed: 0, mx: 0, my: 0, age: 0, elite: false });
     // THE BOUNDARY, measured from the drink (the PICKUP anchor): the walk
     // window already burned (720 - tDrink) frames of the shield; top up to

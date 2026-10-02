@@ -15,6 +15,7 @@ import {
   STARTER_WEAPONS, SHOP_BY_ID,
 } from '../src/meta.js';
 import * as SAVE from '../src/save.js';
+import { LEGACY_SHOP_V10 as OLD } from '../src/legacy_shop_v10.js';
 import assert from 'node:assert';
 
 let failed = 0;
@@ -70,11 +71,10 @@ const CAT = {
 console.log('SCHEMA VERSION:');
 {
   // Pinned deliberately: bumping the schema is a conscious act, and this line
-  // must be updated with it (v9 = the returning-player lastPlayed/lastSeenUpdate
-  // pair; v10 = the milestoneChest claim; the pin to the literal is
-  // intentional — never relax to >=).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 10,
-    `schema version constant is 10 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  // must be updated with it (v10 = the milestoneChest claim; v11 = the M1 shop
+  // refund; the pin to the literal is intentional — never relax to >=).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 11,
+    `schema version constant is 11 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 
@@ -116,8 +116,13 @@ console.log('OLD-FORMAT SAVE (migration):');
   ok(res.status === 'migrated' && res.from === 0,
     `an unversioned save is treated as v0 and migrated (status=${res.status}, from=${res.from})`);
   ok(res.profile.version === SCHEMA_VERSION, 'the migrated profile carries the current version');
-  ok(res.profile.gold === 2636 && res.profile.purchased.dmg === 1 && res.profile.purchased.hp === 2,
-    'gold + purchased levels survive migration');
+  // The v10 -> v11 step refunds the old stat rows at their old prices.
+  ok(res.profile.gold === 2636 + OLD.dmg[0] + OLD.hp[0] + OLD.hp[1] &&
+     res.profile.purchased.dmg === undefined && res.profile.purchased.hp === undefined,
+    'gold survives migration and the old stat levels are refunded into it');
+  ok(res.profile.shopRefund && res.profile.shopRefund.version === 11 &&
+     res.profile.shopRefund.gold === OLD.dmg[0] + OLD.hp[0] + OLD.hp[1] && res.profile.shopRefund.rows === 2,
+    'the refund is recorded as shopRefund { version, gold, rows }');
   ok(res.profile.unlockedCharacters.includes('WITCH') && res.profile.equippedCharacter === 'WITCH',
     'character unlocks + equipment survive migration');
   ok(res.profile.bestTime === 187.5, 'unknown fields survive migration verbatim');
@@ -279,14 +284,14 @@ console.log('VALIDATION OF EVERY PERSISTED COLLECTION:');
   ok(Object.keys(v({ purchased: [1, 2] }).purchased).length === 0, 'an array purchased map becomes {}');
 
   // Prototype pollution via a hand-edited save.
-  const raw = '{"version":2,"gold":0,"purchased":{"__proto__":{"polluted":1},"constructor":2,"prototype":3,"dmg":1}}';
+  const raw = '{"version":2,"gold":0,"purchased":{"__proto__":{"polluted":1},"constructor":2,"prototype":3,"reroll":1}}';
   const pol = loadProfileResult(seeded(raw));
   ok(!({}).polluted && !('polluted' in {}), 'no prototype pollution through the purchased map');
   ok(!Object.prototype.hasOwnProperty.call(pol.profile.purchased, '__proto__') &&
      !Object.prototype.hasOwnProperty.call(pol.profile.purchased, 'constructor') &&
      !Object.prototype.hasOwnProperty.call(pol.profile.purchased, 'prototype'),
     'unsafe keys are dropped from the validated map');
-  ok(pol.profile.purchased.dmg === 1, 'the safe entries in the same map still load');
+  ok(pol.profile.purchased.reroll === 1, 'the safe entries in the same map still load');
 
   // ---- unlocked characters + equipped selection ----
   const chars = v({ unlockedCharacters: ['WITCH', 'WITCH', 'NOPE', 42, null, {}, 'KNIGHT'] });
@@ -428,7 +433,7 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
   const legacyText = JSON.stringify({ gold: 42, purchased: { dmg: 1 }, unlockedCharacters: ['KNIGHT'], equippedCharacter: 'KNIGHT' });
   const legacyRes = importProfileText(legacyText);
   ok(legacyRes.ok === true && legacyRes.status === 'imported-migrated' &&
-     legacyRes.profile.gold === 42 && legacyRes.profile.version === SCHEMA_VERSION,
+     legacyRes.profile.gold === 42 + OLD.dmg[0] && legacyRes.profile.version === SCHEMA_VERSION,
     'a raw legacy save file imports and migrates on the way in');
 
   // Refusals: a bad file can never damage the current profile (pure function).
@@ -456,8 +461,8 @@ console.log('LOSS-LESS EXPORT / IMPORT:');
   ok(JSON.stringify(rich) === before, 'import does not mutate the exported profile');
 
   // The currency in an imported profile is validated, not trusted.
-  const dirty = importProfileText(JSON.stringify({ version: 2, gold: -9, purchased: { dmg: 99 } }));
-  ok(dirty.ok && dirty.profile.gold === 0 && dirty.profile.purchased.dmg === SHOP_BY_ID.dmg.maxLevel,
+  const dirty = importProfileText(JSON.stringify({ version: 2, gold: -9, purchased: { reroll: 99 } }));
+  ok(dirty.ok && dirty.profile.gold === 0 && dirty.profile.purchased.reroll === SHOP_BY_ID.reroll.maxLevel,
     'an imported save is validated/reparied on the way in');
   ok(dirty.repairs.length > 0, 'import reports what it repaired');
 }
@@ -469,8 +474,8 @@ console.log('APEX NAMESPACE (G25, v8):');
   // with the apex defaults filled in — locked, off, nothing owned — and with
   // an EMPTY repairs list: an absent subfield is a legacy fill-in, not damage.
   const v7 = loadProfileResult(seededJson({ version: 7, gold: 120, runPurse: 0 }));
-  ok(v7.status === 'migrated' && v7.from === 7 && v7.profile.version === 10,
-    'a v7 (pre-apex) save migrates to the current schema (v10 since the milestoneChest bump)');
+  ok(v7.status === 'migrated' && v7.from === 7 && v7.profile.version === SCHEMA_VERSION,
+    'a v7 (pre-apex) save migrates to the current schema');
   ok(v7.profile.apex && Array.isArray(v7.profile.apex.owned) && v7.profile.apex.owned.length === 0
      && v7.profile.apex.enabled === false,
     'a pre-slice save loads apex LOCKED and OFF, nothing owned');
@@ -491,7 +496,7 @@ console.log('APEX NAMESPACE (G25, v8):');
   // Damaged contents: non-string owned entries dropped, duplicates collapsed,
   // a non-boolean toggle repaired — each flagged by name.
   const dmg = validateProfile({
-    version: 10, gold: 1, runPurse: 0, lastPlayed: null, lastSeenUpdate: null,
+    version: SCHEMA_VERSION, gold: 1, runPurse: 0, lastPlayed: null, lastSeenUpdate: null,
     milestoneChest: 0,
     apex: { owned: [42, 'apex_mark', 'apex_mark', ''], enabled: 'x' },
   });
@@ -502,7 +507,7 @@ console.log('APEX NAMESPACE (G25, v8):');
     'every damaged apex subfield is flagged (got: ' + dmg.repairs.join(', ') + ')');
 
   // An unknown owned id is PRESERVED (the newer-build round-trip rule).
-  const newer = validateProfile({ version: 10, gold: 3, runPurse: 0,
+  const newer = validateProfile({ version: SCHEMA_VERSION, gold: 3, runPurse: 0,
     lastPlayed: null, lastSeenUpdate: null, milestoneChest: 0,
     apex: { owned: ['apex_future_thing'], enabled: true } });
   ok(newer.profile.apex.owned[0] === 'apex_future_thing' && newer.profile.apex.enabled === true,
@@ -519,9 +524,9 @@ console.log('APEX NAMESPACE (G25, v8):');
   p.apex = { owned: ['apex_endless_fire'], enabled: true };
   saveProfile(p, s);
   const stored = JSON.parse(s.getItem(STORAGE_KEY));
-  ok(stored.version === 10 && stored.apex.owned[0] === 'apex_endless_fire'
+  ok(stored.version === SCHEMA_VERSION && stored.apex.owned[0] === 'apex_endless_fire'
      && stored.apex.enabled === true,
-    'saveProfile persists the apex namespace under the current version stamp (v10)');
+    'saveProfile persists the apex namespace under the current version stamp');
   // (The lossless export/import round trip for apex is pinned by the `rich`
   // fixture above, which carries apex through deepEq.)
 }

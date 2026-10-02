@@ -2,21 +2,21 @@
 //
 // The contract under test, driving the REAL seams (no copies):
 //   R1/R2 the heavy tier (BRUTE/DASHER/TICK + the flying SHRIKE) carries
-//         MID-BOSS hp from state.wave.num >= C.E2.WAVE on — config.js's ONE
-//         midBossHp definition read at waveNum-1, heat-stamped like the
-//         herald; the herald itself reads the same function byte-identically;
+//         C.E2.HEAVY_HP_MULT x a chaser's hp at the same ladder tick from
+//         state.wave.num >= C.E2.WAVE on, heat-stamped like the herald; the
+//         herald reads config.js's ONE midBossHp definition;
 //   R3    heavies spawn RARER than chaff (one weight dial) + a guaranteed
 //         one-of-each debut ring on the horde wave's first spawn tick;
 //   R4    the mid-boss stays distinct by BEHAVIOUR: heavies route through
 //         decideEnemyAction (no boss stamps), the herald through
 //         decideBossAction (boss + midBoss + bossId HERALD);
-//   R5    chaff density TRIPLES via ONE knob (measured live window, pops of
-//         5 -> 15 and 1 -> 3);
+//   R5    chaff packs grow by ONE knob (C.E2.CHAFF_DENSITY_MULT, measured in
+//         a live window: a pop is round(packSize x the knob));
 //   R6    plain-chaff potion/chest/token/xp pay near-zero from the horde
 //         wave on (an elite is an EVENT, never chaff);
-//   R7    the purse follows the BODY: the heavy stamp pays HEAVY (8), a
-//         wave-1 TICK still pays CHAFF (0), and the live ledger is exactly
-//         tier x kills (no double-payment);
+//   R7    the purse follows the BODY: the heavy stamp pays HEAVY, a
+//         wave-1 TICK still pays CHAFF, and the live ledger is exactly one
+//         soft-capped tier payment per kill (no double-payment);
 //   R8    heavies pay HEAVY_XP_KILLS base kills of xp (drafts must not
 //         collapse — measured in the AFTER probe, the stamp pinned here);
 //   R9    the SHRIKE flies: z drawn (age-pure, 60Hz == 120Hz) with a ground
@@ -27,7 +27,7 @@
 import { suite, boot } from './_harness.mjs';
 import { CONFIG as C, midBossHp, ladderHp, ladderXp } from '../src/config.js';
 import { ENEMY_TYPES, decideEnemyAction, flyingZ, makeTypedEnemy } from '../src/enemy_types.js';
-import { GOLD_TIER, purseTier, purseValue } from '../src/meta.js';
+import { GOLD_TIER, RUN_GOLD, purseTier, purseValue } from '../src/meta.js';
 import { heatMultipliers, heatOf } from '../src/heat.js';
 import { mulberry32 } from '../src/weather.js';
 
@@ -38,7 +38,8 @@ const s = suite('test_e2_horde');
 // ---------------------------------------------------------------------------
 s.check('C.E2: ONE horde knob block, gated on the 120s wave', () => {
   if (C.E2.WAVE !== 2) throw new Error('E2.WAVE = ' + C.E2.WAVE);
-  if (C.E2.CHAFF_DENSITY_MULT !== 3) throw new Error('CHAFF_DENSITY_MULT = ' + C.E2.CHAFF_DENSITY_MULT + ' (R5: TRIPLE)');
+  if (!(C.E2.CHAFF_DENSITY_MULT > 1)) throw new Error('CHAFF_DENSITY_MULT = ' + C.E2.CHAFF_DENSITY_MULT + ' (R5: the horde is DENSER)');
+  if (!(C.E2.HEAVY_HP_MULT > 1)) throw new Error('HEAVY_HP_MULT = ' + C.E2.HEAVY_HP_MULT + ' (R1: a heavy out-bodies a chaser)');
   if (C.E2.HEAVY_WEIGHT_MULT >= 1) throw new Error('heavies must thin out, not fatten (R3)');
   if (C.E2.CHAFF_DROP_MULT > 0.1) throw new Error('CHAFF_DROP_MULT = ' + C.E2.CHAFF_DROP_MULT + ' (R6: near-zero)');
   if (C.E2.CHAFF_XP_MULT > 0.5) throw new Error('CHAFF_XP_MULT = ' + C.E2.CHAFF_XP_MULT + ' (R6: near-zero)');
@@ -150,20 +151,22 @@ s.check('R2: the herald spawns at midBossHp(waveNum, tick) x heat exactly', () =
 });
 
 // ---------------------------------------------------------------------------
-// 5. R2/R3/R4: the guaranteed debut stamps mid-boss bodies on all 4 heavies.
+// 5. R2/R3/R4: the guaranteed debut stamps the heavy body on all 4 heavies.
 // ---------------------------------------------------------------------------
-s.check('R2/R3: the horde wave debuts ONE of each heavy at mid-boss hp', () => {
+s.check('R2/R3: the horde wave debuts ONE of each heavy at HEAVY_HP_MULT x a chaser', () => {
   st.time = 121; st.wave.num = C.E2.WAVE; st.wave.endsAt = 1e9;
   st.wave.midBossDone = true; st.enemies.length = 0; st.spawnTimer = 0;
   h.pump(2);
   if (!st.wave.e2HeavyDebut) throw new Error('the guaranteed debut never fired');
   const heat = heatMultipliers(heatOf(st)).hp;
-  const want = midBossHp(1, 4) * heat;   // t in [120,150) -> w = 4, waveNum-1 = 1
+  // t in [120,150) -> w = 4. A plain chaser at that tick is BASE_HP x ladderHp.
+  const chaserHp = C.ENEMY.BASE_HP * ladderHp(4) * ENEMY_TYPES.CHASER.hpMult * heat;
+  const want = chaserHp * C.E2.HEAVY_HP_MULT;
   for (const id of ['BRUTE', 'DASHER', 'TICK', 'SHRIKE']) {
     const e = st.enemies.find(x => x.typeId === id);
     if (!e) throw new Error(id + ' missing from the debut ring');
     if (Math.abs(e.maxHp - want) > 1e-9 * want) {
-      throw new Error(id + ' maxHp ' + e.maxHp + ' != midBossHp(1,4)xheat = ' + want);
+      throw new Error(id + ' maxHp ' + e.maxHp + ' != BASE_HP x ladderHp(4) x HEAVY_HP_MULT x heat = ' + want);
     }
     if (e.purseTier !== 'HEAVY') throw new Error(id + ' purseTier = ' + e.purseTier + ' (R7)');
     // R4: a heavy is NOT a boss — it routes through its TYPE behaviour.
@@ -172,21 +175,22 @@ s.check('R2/R3: the horde wave debuts ONE of each heavy at mid-boss hp', () => {
     const hxp = C.ENEMY.BASE_XP * ladderXp(4) * C.E2.HEAVY_XP_KILLS;
     if (Math.abs(e.xp - hxp) > 1e-9 * hxp) throw new Error(id + ' xp ' + e.xp + ' != ' + hxp);
   }
-  // R2's ordering: the wave-2 heavy is strictly past the wave-1 herald
-  // (same formula, later ladder tick).
-  if (!(want > midBossHp(1, 2) * heat)) throw new Error('heavy is not past the wave-1 herald');
+  // The tier ordering: every heavy has the same body, heavier than a chaser
+  // and lighter than the herald it shares the wave with.
+  if (!(want > chaserHp)) throw new Error('a heavy is not heavier than a chaser');
+  if (!(want < midBossHp(C.E2.WAVE, 4) * heat)) throw new Error('a heavy out-bodies the herald');
   const shrike = st.enemies.find(x => x.typeId === 'SHRIKE');
   if (!shrike.flying) throw new Error('the debut SHRIKE is not flagged flying');
 });
 
 // ---------------------------------------------------------------------------
-// 6. R5 + R3: chaff density triples; heavies stay the rare tier. (Live windows,
-//    same run, drafts suppressed so the loop never pauses.)
+// 6. R5 + R3: chaff packs grow by the knob; heavies stay the rare tier. (Live
+//    windows, same run, drafts suppressed so the loop never pauses.)
 // ---------------------------------------------------------------------------
 p.xpNext = 1e12;
 p.stats.maxHp = 1e6; p.hp = 1e6;   // the windows measure SPAWNS, not survival
 let mixW1 = null, mixW2 = null;
-s.check('R5: ONE knob triples the chaff pop (live window measure)', () => {
+s.check('R5: ONE knob grows the chaff pop (live window measure)', () => {
   st.time = 121; st.enemies.length = 0;
   mixW1 = spawnWindow(1, 30);
   st.enemies.length = 0;
@@ -194,18 +198,26 @@ s.check('R5: ONE knob triples the chaff pop (live window measure)', () => {
   const sw1 = mixW1.SWARMER || 0, ch1 = mixW1.CHASER || 0;
   const sw2 = mixW2.SWARMER || 0, ch2 = mixW2.CHASER || 0;
   if (sw1 === 0 || ch1 === 0) throw new Error('the wave-1 control window produced no chaff');
-  // Pop shape: swarmers arrive in pops of 5 below the horde, 15 at it;
-  // chasers 1 vs 3 (a gamble-horde adds 6 — still 0 mod 3).
-  if (sw1 % 5 !== 0) throw new Error('wave-1 swarmer arrivals not in pops of 5: ' + sw1);
-  if (sw2 % 15 !== 0) throw new Error('wave-2 swarmer arrivals not in pops of 15: ' + sw2);
-  if (ch2 % 3 !== 0) throw new Error('wave-2 chaser arrivals not in pops of 3: ' + ch2);
-  // The measured triple (later ticks add groups too, so 3x is the FLOOR —
-  // hold a conservative 2.5x against rng).
-  if (sw2 < sw1 * 2.5) throw new Error('swarmer arrivals ' + sw1 + ' -> ' + sw2 + ' (< 2.5x)');
-  if (ch2 < ch1 * 2.5) throw new Error('chaser arrivals ' + ch1 + ' -> ' + ch2 + ' (< 2.5x)');
+  if (sw2 === 0 || ch2 === 0) throw new Error('the horde window produced no chaff');
+  // Pop shape: a pack is max(1, round(packSize x the knob)) at the horde wave,
+  // packSize below it.
+  const pop = (id, mult) => Math.max(1, Math.round((ENEMY_TYPES[id].packSize || 1) * mult));
+  const swPop1 = pop('SWARMER', 1), swPop2 = pop('SWARMER', C.E2.CHAFF_DENSITY_MULT);
+  if (!(swPop2 > swPop1)) throw new Error('the knob does not grow a swarmer pack: ' + swPop1 + ' -> ' + swPop2);
+  if (sw1 % swPop1 !== 0) throw new Error('wave-1 swarmer arrivals not in pops of ' + swPop1 + ': ' + sw1);
+  if (sw2 % swPop2 !== 0) throw new Error('wave-2 swarmer arrivals not in pops of ' + swPop2 + ': ' + sw2);
+  if (ch2 % pop('CHASER', C.E2.CHAFF_DENSITY_MULT) !== 0) {
+    throw new Error('wave-2 chaser arrivals not in pops of ' + pop('CHASER', C.E2.CHAFF_DENSITY_MULT) + ': ' + ch2);
+  }
 });
 
 s.check('R3: heavies are the rare tier; the SHRIKE flies with the horde', () => {
+  // The SHRIKE is a thin slice of the pool (SHRIKE_WEIGHT) and one 30s window
+  // can miss it on the draw: keep the horde spawning until one arrives.
+  for (let i = 0; i < 8 && !(mixW2.SHRIKE > 0); i++) {
+    st.enemies.length = 0;
+    for (const [id, n] of Object.entries(spawnWindow(C.E2.WAVE, 30))) mixW2[id] = (mixW2[id] || 0) + n;
+  }
   const heavy = (mixW2.BRUTE || 0) + (mixW2.DASHER || 0) + (mixW2.TICK || 0) + (mixW2.SHRIKE || 0);
   const chaff = (mixW2.CHASER || 0) + (mixW2.SWARMER || 0);
   if (heavy === 0) throw new Error('no heavies in the wave-2 mix');
@@ -290,8 +302,9 @@ s.check('R6/R8: chaff xp is the cut one; the heavy xp is the paying one', () => 
   const chaser = makeTypedEnemy('CHASER', 0, 0, 121);
   const uncut = chaser.xp;   // factory value, pre-escalation re-base
   if (!(uncut > 0)) throw new Error('the chaser factory xp moved');
-  if (!(C.E2.CHAFF_XP_MULT * 12 <= C.E2.HEAVY_XP_KILLS)) {
-    throw new Error('a heavy must out-pay a chaff corpse by an order of magnitude');
+  if (!(C.E2.CHAFF_XP_MULT < 1)) throw new Error('chaff xp is not cut at the horde wave');
+  if (!(C.E2.HEAVY_XP_KILLS >= 2 * C.E2.CHAFF_XP_MULT * ENEMY_TYPES.CHASER.xpMult)) {
+    throw new Error('a heavy must out-pay a cut chaff corpse at least twice over');
   }
 });
 
@@ -312,9 +325,12 @@ s.check('R7: purse tiers — SHRIKE lands HEAVY, wave-1 TICK still CHAFF', () =>
   }
 });
 
-s.check('R7: no double-payment — live purse = exactly tier x kills', () => {
+s.check('R7: no double-payment — live purse = exactly one soft-capped tier payment per kill', () => {
   st.wave.num = C.E2.WAVE; st.enemies.length = 0; st.drops.length = 0; st.chests.length = 0;
   const g0 = st.runCounts.gold.earned, k0 = { ...st.runCounts.gold.kills };
+  const carry0 = st.runCounts.gold.carry || 0, surv0 = st.runCounts.gold.survival || 0;
+  const kills0 = p.kills;
+  const income = (p.stats.goldMult || 1) * (p.stats.purseKillMult || 1);   // prestige 0
   const n = 60;
   for (let i = 0; i < n; i++) {
     const e = makeTypedEnemy('CHASER', p.x + 400, p.y + (i % 5 - 2) * 20, st.time);
@@ -328,23 +344,37 @@ s.check('R7: no double-payment — live purse = exactly tier x kills', () => {
   }
   h.pump(2);
   const g = st.runCounts.gold;
-  const de = g.earned - g0;
-  let ledger = 0;
-  for (const [t, v] of Object.entries(GOLD_TIER)) ledger += v * ((g.kills[t] || 0) - (k0[t] || 0));
-  if (de !== ledger) throw new Error('purse earned ' + de + ' != tier-ledger sum ' + ledger);
+  const de = g.earned - g0 - ((g.survival || 0) - surv0);
   const heavyKills = (g.kills.HEAVY || 0) - (k0.HEAVY || 0);
   const gruntKills = (g.kills.GRUNT || 0) - (k0.GRUNT || 0);
   if (heavyKills !== 5 || gruntKills !== n) {
     throw new Error('tier routing: HEAVY +' + heavyKills + ' GRUNT +' + gruntKills);
   }
-  if (de !== 5 * GOLD_TIER.HEAVY + n * GOLD_TIER.GRUNT) {
-    throw new Error('double-payment: ' + de + ' for 60 chaff + 5 heavies');
+  // The reap walks the list from the back (heavies first); the k-th kill of
+  // the run pays tier / (1 + k / KILL_SOFTCAP), fractions carried.
+  let owed = 0, k = kills0;
+  for (let i = 0; i < 5; i++) owed += GOLD_TIER.HEAVY / (1 + (++k) / RUN_GOLD.KILL_SOFTCAP);
+  for (let i = 0; i < n; i++) owed += GOLD_TIER.GRUNT / (1 + (++k) / RUN_GOLD.KILL_SOFTCAP);
+  owed *= income;
+  const paid = de + (g.carry || 0) - carry0;   // banked whole gold + the fraction still carried
+  if (Math.abs(paid - owed) > 1e-6) {
+    throw new Error('double-payment: paid ' + paid + ' for 60 chaff + 5 heavies, owed ' + owed);
+  }
+  if (!(paid <= (5 * GOLD_TIER.HEAVY + n * GOLD_TIER.GRUNT) * income)) {
+    throw new Error('the soft cap RAISED a kill payment: ' + paid);
   }
 });
 
 // ---------------------------------------------------------------------------
 // 9. R9 — the flying trait, BOTH halves, through the REAL seams.
 // ---------------------------------------------------------------------------
+// The ground-AoE checks read the flyer's hp across two frames: keep the kit's
+// own DIRECT fire (which rightly hurts a flyer) out of that read.
+function holdFire() {
+  st.projectiles.length = 0;
+  for (const w of st.weapons) w.cd = 5;
+}
+
 s.check('R9a: a real FROST_NOVA cast cannot touch a flyer — damage OR slow', () => {
   st.wave.num = C.E2.WAVE; st.enemies.length = 0;
   const shrike = makeTypedEnemy('SHRIKE', p.x + 30, p.y, st.time);
@@ -353,6 +383,7 @@ s.check('R9a: a real FROST_NOVA cast cannot touch a flyer — damage OR slow', (
   const savedChar = st.character;
   st.character = { ...(savedChar || {}), skill: 'FROST_NOVA' };
   p.mana = 999; p.stats.maxMana = 999; p.skillCd = {};
+  holdFire();
   const s0 = shrike.hp, c0 = chaser.hp;
   h.key('keydown', { key: 'q', preventDefault() {} });
   h.pump(2);
@@ -390,6 +421,7 @@ s.check('R9a3: the colossus shockwave (a ground blast) cannot touch a flyer', ()
   const col = makeTypedEnemy('COLOSSUS', p.x + 45, p.y + 5, st.time);
   col.hp = 0;   // dies this frame -> the death shockwave fires through the real pass
   st.enemies.push(shrike, chaser, col);
+  holdFire();
   const s0 = shrike.hp, c0 = chaser.hp;
   h.pump(2);
   if (shrike.hp !== s0) throw new Error('the shockwave hurt the flyer: ' + s0 + ' -> ' + shrike.hp);
