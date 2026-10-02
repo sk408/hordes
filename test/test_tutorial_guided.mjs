@@ -284,6 +284,21 @@ const stepId = (h) => (h.T.tut.model ? h.T.tut.model.id : null);
     assert.equal(T.tut.hint('chest'), false);
     st.chests.length = 0;
   });
+  S.check('HINTS: every hint id shows exactly once per profile', () => {
+    for (let i = 0; i < 10 && stepId(h); i++) { h.pump(30); T.tut.press(performance.now()); h.pump(1); }
+    const banners = T.getProfile().banners;
+    for (const id of Object.keys(HINTS)) {
+      if (id === 'fusion') continue;                 // its own check below
+      delete banners['hint:' + id];                  // whatever this run already met
+      assert.equal(T.tut.hint(id), true, id + ' shows the first time');
+      h.pump(1);
+      assert.equal(stepId(h), 'hint:' + id);
+      assert.equal(T.tut.model.button, 'GOT IT');
+      assert.ok(T.tut.model.text.split(/s+/).length <= 14, id + ' is one short sentence');
+      h.pump(30); assert.equal(T.tut.press(performance.now()), true); h.pump(1);
+      assert.equal(T.tut.hint(id), false, id + ' never shows again');
+    }
+  });
   S.check('HINTS: the fusion hook point has its hint; Settings "HINTS: off" stops new ones', () => {
     for (let i = 0; i < 10 && stepId(h); i++) { h.pump(30); T.tut.press(performance.now()); h.pump(1); }
     T.tut.setHintsEnabled(false);
