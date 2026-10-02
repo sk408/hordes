@@ -182,7 +182,135 @@ the 1,800 s cap) because the random auto-draft collects lead-weapon levels, evol
 comes at run 15, not the run 18–25 aimed for. The enemy ladder and income were not retuned in this pass
 (open item).
 
-## Measured (evolution route, tree `8587a26`)
+## Pacing trim, hands and jokers (2026-10-02)
+
+Three changes on top of the fusion pass, each measured with `tools/progression_sim.mjs`. The AUTO pilot
+plays worse than a person, so every figure is a floor; the game's own AUTO draft still picks at random.
+
+### The rules in plain words
+
+- **Late ladder (`config.js LADDER.HP`).** Past 3:00 enemy HP is also multiplied by
+  `1 + 0.12 x (ticks past 3:00)` (`LATE_FROM: 6`, `LATE_LIN: 0.12`; a tick is 30 s): x1.5 at 5:00, x2.7
+  at 10:00, x5.1 at 20:00 over the old curve. The first three minutes and contact damage are unchanged.
+- **Stat cards stack (`DRAFT_PLAN.STACK_FROM: 2`, `STACK_MULT: 2`).** A repeat copy of a common stat
+  card counts double, and the card says `STACKED: counts double`. A scatter of single copies gets nothing.
+- **Hands (`src/hands.js`).** The different cards a run drafts form a hand. The best poker combination
+  among them pays a run-long bonus; a better hand replaces the bonus, it does not stack. Rank and suit
+  are the ones painted on the card (rank = rarity, suit = family). A second copy of a card adds
+  nothing to the hand, and a weapon's level-up cards are one card. The HUD always shows the hand and
+  its bonus and counts the damage share up when a new hand is made (a feed line, a sound, a gold
+  plate); a draft card that would make a new or better hand says `makes: SPADE FLUSH`.
+- **Jokers (`src/jokers.js`).** One row of rule cards: 2 slots, 5 with the Joker Slot shop row
+  (1,500 / 4,500 / 13,500 gold). A joker rides the level-up pool at weight 0.02 (a weapon card is 1) and
+  every wave boss offers three. With a full row the player chooses which joker the new one replaces,
+  or keeps the row (a level-up then goes back to its other cards). The row is on the HUD, on the pause
+  screen and, for jokers ever held, under PROGRESS -> JOKERS; the rest are silhouettes.
+
+### The hand table (`hands.js HANDS`, `FLUSH_BOONS`)
+
+Shares are of the run's starting damage and max HP. Straights and flushes need four cards.
+
+| Hand | Needs | Pays |
+|---|---|---|
+| Pair | two cards of one rank | +10% damage |
+| Two Pair | two pairs | +20% damage |
+| Three of a Kind | three cards of one rank | +30% damage |
+| Straight | 4 ranks in a row (1-9, J, Q, K) | +30% damage, weapons fire 10% faster |
+| Flush | 4 cards of one suit | +25% damage, and the suit's boon: spades +25% more damage; hearts +40% max HP; diamonds +50% gold from kills and +25% XP; clubs weapons fire 20% faster |
+| Full House | three of a kind and a pair | +50% damage, +25% max HP |
+| Four of a Kind | four cards of one rank | +60% damage, +30% max HP |
+
+Card data: every stat card, rare card and weapon card has a rank and a suit, and no two share both.
+Three cards moved so every suit can flush and four queens exist: Scholar's Stone J of diamonds,
+Crimson Edge Q of hearts, Thornmail Q of clubs (three retired combo faces took their old pips).
+Hearts need Nova Pulse or Ember Shot in the kit, diamonds need Meteor.
+
+### The joker list (`jokers.js`)
+
+| Joker | Rule | Came from |
+|---|---|---|
+| Pierce All | every shot pierces: nothing stops at the first body | rewrite |
+| Chain Reaction | every kill blows up and hurts enemies nearby (costs mana) | rewrite |
+| Blood Harvest | a health potion you pick up also blasts enemies nearby | rewrite |
+| Rime | your weapon hits chill: enemies crawl for a moment | rewrite |
+| Ignite | your weapon hits set enemies burning for 3s | rewrite |
+| Live Wire | every 5th weapon hit zaps a nearby enemy | rewrite |
+| Aftershock | every blast echoes once, half size and half damage (offered only with a blast source) | rewrite |
+| Overload | every 20th weapon hit bursts into three zaps | rewrite |
+| Second Wind | revive once at half health | mythic chase card |
+| Storm Shards | gems you pick up also chip nearby enemies | mythic chase card |
+| Full Hand | +1 card in every draft | mythic chase card |
+| Magnet Collector | skill [X]: every gem, potion and item flies to you, 30s cooldown | mythic chase card |
+| Horde Bait | every chest is a horde, and every chest rolls one rarity higher | run rule |
+| One of Each | no stat card twice; weapon cards give +1 level; maxed weapon cards give +10% damage (unchanged) | run rule |
+| Regrowth | you heal 0.7 HP every second | skill perk |
+| Frost Nova | a frost nova bursts from you whenever it is ready | skill perk card |
+| Shortcut | straights and flushes need one card fewer | new |
+| Wild Card | your hand counts one extra card of any rank and suit | new |
+| Double Down | your hand pays half again as much | new |
+| Encore | every 5th card you draft counts twice | new |
+| Travel Light | each empty weapon slot cools your skills 10% faster | new (was the hidden empty-rewrite-slot rule) |
+
+Cut: Tempest, Killshot, Focus, Thick Skin, Glacier, Wide Orbit (flat stats); Wildfire and the five
+cross-tag combos (they needed two or three slots of a two-slot row); the mythic chase gate; the four
+rewrite slots and their always-on cooldown payment; the card parallels (Shiny / Pulse / Chroma /
+Cursed / Blessed) with their module, test and capture tool.
+
+### Measured
+
+Career: `--runs 40 --seeds 3 --shop stats-first --speed 8` (random drafts), median [min-max].
+
+| | before (tree `8e49570`) | ladder + stacking, no hands or jokers | this tree |
+|---|---|---|---|
+| run 1 survival / gold (3 seeds) | 11 s [10-20] / 323 [323-335] | 11 s [10-20] / 323 [323-335] | 24 s [21-29] / 345 [336-350] |
+| run 1 survival / gold (24 seeds) | 23 s [10-82] / 340 [323-539] | | 24 s [8-44] / 339 [321-400] |
+| run 2 survival (24 seeds) | 42 s [30-121] | | 49 s [22-114] |
+| survival, runs 4-5 / 6-10 | not recorded | 115 s [53-133] / 125 s [45-386] | 92 s [75-128] / 129 s [60-380] |
+| first 120 s run | run 5 [3-5] | run 5 [3-5] | run 3 [3-5] |
+| wave 2 | run 9 [8-12] | run 11 [8-12] | run 10 [7-11] |
+| wave 5 | run 15 [13-17] | run 18 [15-19] | run 15 [13-18] |
+| survival, runs 11-15 | 249 s [126-891] | 216 s [122-649] | 381 s [198-760] |
+| survival, runs 21-30 | 1,291 s [1,010-1,800] | 852 s [512-1,053] | 983 s [738-1,225] |
+| survival, runs 31-40 | 1,638 s [1,277-1,800] | 931 s [651-1,506] | 1,136 s [890-1,348] |
+| gold banked, runs 31-40 | 11.0k | 7,203 [3,096-9,158] | 7,906 [5,523-10.9k] |
+| longest flat stretch | 5 runs | | 7 runs |
+
+Run 1 moved between the 3-seed columns only because removing the chase gate's roll at run start
+shifted the random stream; over 24 seeds it is the same run (23 s / 340 gold before, 24 s / 339 gold now).
+Runs 31-40 are inside the 1,000-1,300 s aim and no run reaches the 1,800 s cap. Wave 5 is at run
+15 [13-18] against an aim of run 18-25: the ladder alone put it at run 18, and hands and jokers took
+that back (open item).
+
+Fixed builds: `--fixed-build 5000,20000 --k N --shop cheapest --draft <policy> --speed 8`, median
+[min-max]. Two seed sets are shown because the 12-seed set alone ranked the policies differently at
+20,000; "end hand" is the most common hand a run ended with. `hand-first` takes the card that makes the
+best new hand when one is offered and plays evolution-first otherwise; the three deliberate policies take
+a joker while the row has room and keep a full row.
+
+| budget | policy | seeds 1001-1012 (n = 12) | seeds 2001-2024 (n = 24) | level (n = 24) | first evolution (n = 24) | end hand (n = 24) |
+|---|---|---|---|---|---|---|
+| 5,000 | random | 239 [132-422] | 168 [109-519] | 11 | 195 s, 25% | flush 54% |
+| 5,000 | evolution-first | 277 [127-431] | 254 [121-514] | 13 | 130 s, 71% | flush 67% |
+| 5,000 | stats-first | 339 [130-468] | 195 [128-529] | 11 | 297 s, 29% | none 38% |
+| 5,000 | hand-first | 265 [133-497] | **347 [116-502]** | 17 | 145 s, 67% | flush 42% |
+| 20,000 | random | 615 [363-702] | 531 [308-841] | 25 | 224 s, 100% | flush 54% |
+| 20,000 | evolution-first | 484 [306-659] | 636 [365-775] | 28 | 95 s, 100% | flush 67% |
+| 20,000 | stats-first | 525 [240-674] | 597 [256-842] | 27 | 281 s, 83% | flush 58% |
+| 20,000 | hand-first | 487 [306-825] | **641 [370-775]** | 28 | 127 s, 100% | full house 63% |
+
+Before this pass (tree `8e49570`, seeds 1001-1012): 5,000 random 277, evolution-first 325, stats-first
+202; 20,000 random 706, evolution-first 837, stats-first 840.
+
+Reading it:
+
+- At 5,000 every deliberate plan is above random in both seed sets (+11% to +42% on the 12 seeds, +16%
+  to +107% on the 24). `stats-first > random` now holds (339 vs 239, 195 vs 168); the bands overlap.
+- At 20,000 the 24-seed set has every deliberate plan above random (+12% to +21%); the 12-seed set has
+  random on top (615 vs 484-525). The bands overlap in both, so the ranking at 20,000 is not settled.
+- Stacking alone did not lift stats-first at 5,000 (202 -> 205 with the third copy doubling, 229 with
+  the second: two rounds, then stopped); the lift in the table arrived with the hands and jokers.
+- Every policy ends most runs holding a flush or better. A spade flush is the common one: the Volley,
+  the Boomerang, Whetstone, Sharpened Tips and Split Shot are all spades.
 
 ## Measured (evolution route, tree `8587a26`)
 
@@ -261,22 +389,50 @@ run 20–30 is still missed by about four runs (open item).
   feed), `test_wave26_crossfile` (`fusWeaponDmg`). Removed: `test_synergies`, `test_synergy_hint`,
   `test_synergy_wiring`. Pins moved: `test_tier2_parallels` (weapon offer keys gain `fuseText`,
   `leadText`), `test_title_screen` (PROGRESS has FUSIONS).
-- `tools/run_suite.mjs` KNOWN_RED is empty: 205 files green.
+- `tools/run_suite.mjs` KNOWN_RED is empty: 206 files green.
+- `test/test_hands.mjs` (new): every draftable hand card has a rank and a suit and no two share both;
+  every hand type; duplicates, near misses, the order of the best hand, Shortcut and Wild Card; the bonus
+  table; the bonus applied once, replaced and removed exactly; hints; and through the real `pick()`: the
+  hand, its payment, the count-up, the HUD plate and the pause screen.
+- `test/test_jokers.mjs` (new): the registry (21 jokers, one sentence each, a face each, what was cut);
+  the pip-less joker face; slots 2 to 5 through the shop row; take / drop / replace; a marker for every
+  joker's effect, on and off; offers and dead cards; the level-up joker, the replace choice (REPLACE and
+  KEEP), the boss offer; Shortcut, Double Down, Encore and Full Hand in the live game; the HUD row, the
+  pause screen and the shelf; a version-10 profile and a current profile loading.
+- Pins moved to the new values: `test_run_structure` (the late HP term), `test_draft_plan` (stacking),
+  `smoke` (Split Shot premise: a first copy), `test_meta` (46 rows), `test_art_lint` (Joker Slot icon),
+  `test_card_art` and `test_card_art_expansion` (the three re-suited cards; the parallel section went
+  with the module), `test_title_screen` (PROGRESS has JOKERS), `test_night_mode` (JOKER is the top night
+  pick, last with a full row), `test_dev_draft_ban` (`joker_once`), `test_draft_card_art`,
+  `test_draft_ceremony`. `test_perks`, `test_run_rules`, `test_rewrites`, `test_rss8_magnet`,
+  `test_w7b_draft_ladder` and `test_tier2_draftcards` now reach their effects through the joker row and
+  pin that the cut cards are never offered. Removed: `test_tier2_parallels`.
 
 ## Open items
 
-- `stats-first` is below `random` at 5,000 (202 vs 277, n = 12, bands overlap): the target
-  "evolution-first >= stats-first > random" holds for evolution-first only. A rule that pays a stat
-  plan and not a scatter (for example a stat card's third copy counting double) is the next thing to try.
-- The 40-run stats-first career reaches wave 5 at run 15 [13-17] (aim: run 18-25) and is 18-40% longer
-  per run from run 21 on, with runs at the 1,800 s cap. The enemy HP ladder (`config.js` HP ladder `QUAD` 0.05) or
-  the late income needs a trim, measured with the same career command; not done in this pass.
-- `weapons-first` (a weapon card whenever offered, spread over the kit) stays the weakest plan (158 at
-  5,000, 579 at 20,000): spreading levels gets the lead bonus only by accident. Focusing is the plan the
-  draft text steers toward.
+- Wave 5 in the 40-run stats-first career is at run 15 [13-18] (aim: run 18-25). The late HP term alone
+  measured run 18 [15-19]; hands and jokers brought it back. Runs 31-40 are on target (1,136 s), so the
+  next trim belongs between 5:00 and 10:00, or in the hand bonuses, not in the late ladder.
+- The policy ranking at 20,000 differs between the two seed sets (random first on 12 seeds, last on 24).
+  It needs one run at n >= 36 on one seed set before any tuning is read off it.
+- Hands favour breadth: a random drafter holds a flush in about half its runs by the end. The spread
+  between careful and careless drafting comes from reaching the hand sooner, not from the end hand. A
+  five-card flush would sharpen it, but diamonds have four cards and hearts five, so it needs more cards
+  in those suits first.
+- The old card builders (`rules.js ruleCards`, `perks.js skillCards`, `rewrites.js rewriteCards`,
+  `frostcard.js frostCard`, `config.js DRAFT_MYTHIC_UPGRADES` and the chase numbers, `REWRITE_SLOTS`) are
+  no longer called by the game. They stay because `tools/draft_sim.mjs` (the coarse model behind
+  `test_draft_luck`) and those modules' own tests still build cards with them. The effect code of the
+  cut rewrites (Glacier, Wildfire, Wide Orbit, the five combos) is likewise unreachable. Both want a
+  cleanup pass together with a refit of `draft_sim.mjs`, which models neither hands, jokers, the lead
+  rule nor fusions.
+- The five new jokers borrow the card faces of cut cards (Shortcut: Wide Orbit, Wild Card: Glacier,
+  Double Down: Killshot, Encore: Tempest, Travel Light: Focus). They need faces of their own.
+- The HUD's joker cell shows the middle of the card face at 16 px; there is no tooltip. The pause screen
+  and the shelf carry the names and rules.
+- The Joker Slot row is classed as a combat row by the simulator (it changes a run stat), so the
+  stats-first shop buys it in turn; its price (1,500 / 4,500 / 13,500) was set once and not tuned.
+- `weapons-first` (a weapon card whenever offered, spread over the kit) was not re-measured in this pass.
 - Fusion link behaviours run in the main loop only; the maw fight (`updateFinale`) ticks both halves of
   a fused weapon but not the links.
-- The fixed-build cells are n = 12 with wide bands; the fusion numbers (x1.5, +30% kit damage, Lv 4
-  refill) were set once and not tuned per fusion.
-- `tools/draft_sim.mjs` (the coarse model behind `test_draft_luck`) models neither the lead rule nor
-  fusions; refit it before trusting it.
+- The fusion numbers (x1.5, +30% kit damage, Lv 4 refill) were set once and not tuned per fusion.

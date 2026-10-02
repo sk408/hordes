@@ -97,7 +97,7 @@ Each piece replaces an existing system, so the game gets deeper without getting 
 | Megabonk | Shrines and choices out on the map; stages chained into tiers | Shrines, chests and arches become things the pilot paths to on purpose; clearing a stage's boss offers the next stage tier in the same run | The blind-pilot shrine rules |
 | Idle | It keeps going without you | Background ticking in a hidden tab, offline camp production, Auto that plays the plan you set (which evolution to chase, which hand to build) | Night mode's special cases |
 
-Order: evolutions (done) → fusion (done: `docs/WEAPONS_AND_EVOLUTIONS.md`) → hands and jokers → boss rules → camp and idle → map shrines and stage tiers.
+Order: evolutions (done) → fusion (done) → hands and jokers (done; all three in `docs/WEAPONS_AND_EVOLUTIONS.md`) → boss rules → camp and idle → map shrines and stage tiers.
 
 ### M6 — Release candidate
 - Real-browser performance check on phone-class hardware.

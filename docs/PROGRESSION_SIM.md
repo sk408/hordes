@@ -15,6 +15,7 @@ node tools/progression_sim.mjs --runs 40 --seeds 3 --shop stats-first
 node tools/progression_sim.mjs --matrix --runs 15 --seeds 2
 node tools/progression_sim.mjs --matrix oat --runs 20 --seeds 3
 node tools/progression_sim.mjs --fixed-build 2500,10000,20000,30000 --k 6
+node tools/progression_sim.mjs --fixed-build 5000,20000 --k 24 --shop cheapest --draft hand-first
 node tools/progression_sim.mjs --list
 ```
 
@@ -47,11 +48,15 @@ Each axis is independent. A policy is written `shop/loadout/draft/once/stance/ch
   level-up card when offered), `evolution-first` (one weapon at a time and its
   partner card; it works first on a weapon whose fusion partner in the kit is
   already evolved, then on one with a fusion partner in the kit, then on the
-  highest-level one), `stats-first` (stat cards in `--stat-priority` order).
-  The last three never take a run-rule card unless `--once take`. The
-  fixed-build table reports the first evolution and the first fusion (sim
-  seconds, and the share of runs that got there).
-- `--once`: the ONE OF EACH card. `take` whenever offered, `never`, or `asis`
+  highest-level one), `stats-first` (stat cards in `--stat-priority` order),
+  `hand-first` (the card that makes the best new hand when one is offered,
+  otherwise the evolution-first pick).
+  Every policy but `random` takes a joker while the row has room, keeps a
+  full row, and never takes ONE OF EACH or Horde Bait unless `--once take`.
+  The fixed-build table reports the first evolution and the first fusion (sim
+  seconds, and the share of runs that got there), the most common hand a run
+  ended with, and the jokers held.
+- `--once`: the ONE OF EACH joker. `take` whenever offered, `never`, or `asis`
   (no special handling).
 - `--stance`: AUTO_ALL pilot doctrine, `SAFE`, `BALANCED` or `GREEDY`.
 - `--character`: any key of `CHARACTERS`. It is granted free at career start,
@@ -105,7 +110,7 @@ Every figure is `median [min-max]` with its n. A lone number is never printed.
   `--overhead-seconds` per run, at 1x game speed.
 
 Per-run JSONL fields: `policy, seed, run, end, t, wave, level, drafts, kills,
-gold, award, purse, winBonus, firstClear, cause, weapons, picks, tookOnce,
+gold, award, purse, winBonus, firstClear, cause, weapons, picks, tookOnce, hand, jokers,
 bank, bought[{id,cost}], spent, cumSpent, cumGold, left, catPct, itemsPct,
 playHours`.
 
