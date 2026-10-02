@@ -210,6 +210,7 @@ const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
 if (st.mode === 'intro') h.key('keydown', { key: 'x', preventDefault() {} });
 st.player.skills = {};
+h.T.banners.suppressAll();   // a one-time banner holds the sim 2.5 s: a probe frame inside it reads 0 damage
 h.T.startRun();
 h.pump(2);
 assert.equal(st.mode, 'playing', 'run live');

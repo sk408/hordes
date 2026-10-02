@@ -906,13 +906,20 @@ s.check('G20C: the stamp is universal — EVERY CHASER a SNOWFIELD cohort ever s
   }
 });
 
-s.check('G20C: chests are an ELITE reward — a default 900-frame cohort opens 0; SNOWFIELD plain foes are NOT chest-eligible', () => {
-  const base = collectSpawned(DEFAULT_STAGE_ID, 900);
-  if (st.runCounts.chests !== 0) {
-    throw new Error('default cohort opened ' + st.runCounts.chests + ' chests in 15s — the elite gate leaked');
-  }
-  const snow = collectSpawned('SNOWFIELD', 900);
+s.check('G20C: chests are an ELITE reward — plain foes are NOT chest-eligible, default stage or SNOWFIELD', () => {
   const bar = C.ENEMY.BASE_HP * CHESTS.ELITE_HP_MULT;
+  // The default cohort: no plain foe (unflagged, spawn hp below the bar) may
+  // read elite-ish. (A fresh Knight can now kill a rare variant inside the
+  // window, so "the cohort opened no chest" is no longer the measure.)
+  const base = collectSpawned(DEFAULT_STAGE_ID, 900);
+  let plain = 0;
+  for (const e of Object.values(base).flat()) {
+    if (e.elite || e.boss || e.preStageMaxHp >= bar) continue;
+    plain++;
+    if (isEliteish(e)) throw new Error('plain default ' + e.typeId + ' (' + e.maxHp + ' hp) reads elite-ish');
+  }
+  if (plain < 3) throw new Error('the default cohort held only ' + plain + ' plain foes');
+  const snow = collectSpawned('SNOWFIELD', 900);
   for (const e of snow.CHASER || []) {
     // plain = not flagged elite AND below the bar BEFORE the stage stamp. The
     // measured leak: SNOWFIELD hpMult 1.5 made every plain CHASER read 18 hp

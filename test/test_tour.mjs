@@ -417,6 +417,10 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   for (let i = 0; i < 200 && st.mode !== 'playing'; i++) frame();
   assert.equal(st.mode, 'playing', 'run live (no tour to walk first)');
   st.player.xpNext = Infinity;    // the real no-draft gate (see above)
+  // One-time banners (first rare foe, first chest, ...) hold the sim 2.5 s and
+  // are not coachmarks; an invulnerable pilot now triggers one inside the
+  // window in about one run in fifteen, which is what the clock check trips on.
+  T.banners.suppressAll();
   st.player.stats.maxHp = 1e9;
   st.player.hp = 1e9;
   let sawTour = false;
@@ -425,7 +429,7 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
     if (tourRoots().length) { sawTour = true; break; }
   }
   assert.ok(!sawTour, 'no scheduled in-run coachmark mounted in 35 sim-seconds');
-  assert.ok(st.time >= 35, `the sim never paused for a coach (t=${st.time.toFixed(1)}s)`);
+  assert.ok(st.time >= 35, `the sim never paused for a coach (t=${st.time.toFixed(1)}s, mode ${st.mode})`);
   assert.equal(st.player.level, 1, 'the no-draft gate held: zero level-ups inside the window');
 
   // REPLACEMENT 4: the KEPT draft card still fires on the first draft and
