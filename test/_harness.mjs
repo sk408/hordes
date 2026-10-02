@@ -208,6 +208,10 @@ export async function boot(opts = {}) {
     const { TOUR_KEYS } = await import('../src/tour.js');
     for (const k of Object.values(TOUR_KEYS)) store.set(k, '1');
   } catch { /* tour module always present, defensive */ }
+  // First-time hints hold the sim until GOT IT, which would change what every
+  // gameplay test measures. The preseed above turned them off (TOUR_KEYS.hintsOff);
+  // a test that is about them boots with { hints: true }.
+  if (opts.hints) store.delete('hordes_hints_off');
 
   // opts.variant busts the ESM cache so ONE test file can boot the game twice
   // (e.g. a desktop arm and a touch-device arm) — each boot re-evaluates
@@ -224,10 +228,10 @@ export async function boot(opts = {}) {
   // KILL SWITCH (owner 2026-09-18): the feature is gated by C.PROLOGUE.ENABLED
   // (default OFF). { prologue: true } also flips the flag ON — those tests
   // test the FEATURE BEHIND the gate, never the shipped default.
-  if (opts.prologue) {
+  if (opts.prologue || opts.tutorial) {
     configMod.PROLOGUE.ENABLED = true;
   }
-  if (!opts.prologue) {
+  if (!opts.prologue && !opts.tutorial) {
     try {
       const pr = mainMod.__TEST.getProfile();
       if (pr && pr.achievements && pr.achievements.totals) {

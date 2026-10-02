@@ -129,6 +129,8 @@ export async function withPage(opts, fn) {
     // Flags the page must see BEFORE its own scripts run: the first-run tour covers the
     // screen (z-index 50) and would ruin every screenshot, so mark every stage as seen.
     const pre = [];
+    // A settled-profile verifier is not about the first-time hints, which hold the sim.
+    if (skipPrologue) pre.push("try { localStorage.setItem('hordes_hints_off', '1'); } catch (e) {}");
     if (skipTour) pre.push("for (const k of ['stage1','hud','pilot','focus','stance','move','skills']) { try { localStorage.setItem('hordes_tour_' + k, '1'); } catch (e) {} }");
     // v9: the seeded settle-stamp also carries lastPlayed = now, so the harness
     // profile reads as an ACTIVE player — the What's-New launch note (gated on

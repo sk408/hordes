@@ -60,7 +60,7 @@ Change four things:
 - Audio pass: distinct sounds per weapon family, pickup, hurt, boss and level-up; a boss track; volume sliders.
 
 ### M3 — First minutes and menus
-- No manual before run 1. Tutorial cut to three beats: move, draft, potion. Focus and Stance are taught later, when they first matter.
+- No manual before run 1. Run 1 opens with a guided part taught by doing (nine one-sentence steps), then menu steps after the first death and first-time hints later: see docs/TUTORIAL.md.
 - Desktop: touch pads hidden until a touch is seen; radar moved clear of the potion buttons.
 - Settings reduced to one screen plus an Advanced page; stage and challenge chosen in one step after START.
 - A move key takes the wheel only while held, then hands back to Auto; MANUAL is an explicit choice.

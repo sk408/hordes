@@ -159,22 +159,20 @@ S.check('AUTO MOVE is the Advanced auto flavour: O returns to it, never cycles t
 });
 
 // ---- COPY ----------------------------------------------------------------------
-const B = T.prologue.banners;
+// The tutorial's MOVE step (src/tutorial.js) names the control for the device.
+const moveStep = T.tut.GUIDED_STEPS.find((st0) => st0.id === 'move');
 const touchEl = h.elements['touch'];
-S.check('desktop copy: hold a move key. The drag line is never shown', () => {
-  touchEl.classList.remove('on');
-  const body = B[0].body;
-  assert.ok(/pilot fights for you/i.test(body), body);
-  assert.ok(/hold a move key/i.test(body), 'the key instruction: ' + body);
+S.check('desktop copy: hold the move keys; let go and the pilot takes over. The drag line is never shown', () => {
+  const body = moveStep.text(false);
+  assert.ok(/pilot takes over/i.test(body), body);
+  assert.ok(/hold W A S D/i.test(body), 'the key instruction: ' + body);
   assert.ok(!/drag/i.test(body), 'a desktop user must not be told to drag: ' + body);
 });
 S.check('touch copy: drag. No key instruction', () => {
-  touchEl.classList.add('on');
-  const body = B[0].body;
-  assert.ok(/pilot fights for you/i.test(body), body);
+  const body = moveStep.text(true);
+  assert.ok(/pilot takes over/i.test(body), body);
   assert.ok(/drag anywhere/i.test(body), 'the drag instruction: ' + body);
-  assert.ok(!/key/i.test(body + B[0].cue), 'a touch player is never told to press a key: ' + body + ' / ' + B[0].cue);
-  touchEl.classList.remove('on');
+  assert.ok(!/key|W A S D/i.test(body + moveStep.watch), 'a touch player is never told to press a key: ' + body);
 });
 S.check('the PILOT row and the manual say the steering lasts while held', () => {
   const row = controlById('pilot');

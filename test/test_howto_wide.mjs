@@ -108,7 +108,7 @@ s.check('the subtitle carries the SAME indicator in a .pgline span (the phone re
   assert.ok(/<span class="pgline">PAGE 2 \/ 4 — OPTIONS AND MODES<\/span>/.test(sub), sub);
 });
 s.check('REPLAY TOUR is classed for the wide row', () => {
-  const rep = cards().find(c => (c.innerHTML || '').includes('>REPLAY TOUR<'));
+  const rep = cards().find(c => (c.innerHTML || '').includes('>REPLAY TUTORIAL<'));
   assert.ok(rep && rep.classList && rep.classList.contains('replay'),
     'REPLAY TOUR must carry the .replay class (stub: read via classList)');
 });

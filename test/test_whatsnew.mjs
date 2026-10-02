@@ -333,8 +333,8 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   prof.lastPlayed = null; prof.lastSeenUpdate = null;
   T.startRun();
   ok('DECLINED/undismissed: startRun opens a NORMAL run (no prologue, nothing automatic)',
-    T.prologue.active === false && st.prologue === null && st.mode === 'playing',
-    { prologue: st.prologue, mode: st.mode });
+    T.tut.live === false && st.mode === 'playing',
+    { live: T.tut.live, mode: st.mode });
   ok('no run is flagged ASSISTED without the opt-in', st.assistedRun === false);
   // (end that run's state: back to title for the offer leg)
   T.showTitle();
@@ -393,7 +393,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     !noteEl() && stored().lastSeenUpdate === rel.id && ls.get('hordes_profile_v1') !== rawBefore);
   T.startRun();
   ok('DECLINE leads to normal play: the next run has NO prologue and NO assist flag',
-    T.prologue.active === false && st.assistedRun === false && st.mode === 'playing');
+    T.tut.live === false && st.assistedRun === false && st.mode === 'playing');
   T.showTitle();
 
   // ACCEPT: starts the guided run NOW, flagged ASSISTED. (The shipped default
@@ -406,7 +406,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('fixture: the note is up for the accept', !!noteEl());
   W.accept(noteEl());
   ok('ACCEPT starts the guided run immediately: prologue armed, potion on screen, run live',
-    T.prologue.active === true && !!T.prologue.potion && st.mode === 'playing');
+    T.tut.live === true && !!T.tut.guided && st.mode === 'playing');
   ok('the accepted run is flagged ASSISTED (B6: the run-scoped stamp)',
     st.assistedRun === true);
   ok('ACCEPT marks the release seen + writes the save (the ask happened ONCE)',
@@ -416,18 +416,15 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   // THE APPROVED SKIP, from THIS entry point: stop explaining, keep the
   // potion. (The skip is now a TWO-PRESS gesture — arm, then confirm — since
   // the 2026-09-18 rework; drive both presses.)
-  T.prologue.skip();
-  ok('the first skip press only ARMS (two-press confirm rework)',
-    st.prologue && st.prologue.skipArmT > 0 && st.prologue.skipped !== true,
-    { skipArmT: st.prologue && st.prologue.skipArmT });
-  T.prologue.skip();
-  ok('skip from the accepted run: explaining stops, the phase STAYS armed (skipped mode)',
-    T.prologue.active === true && st.prologue.skipped === true &&
-    st.prologue.revealed.move === true && T.prologue.buttonsLocked === false);
-  T.prologue.drink();
-  ok('the post-skip drink pays the shield and ends the phase (skip keeps the potion)',
-    T.prologue.active === false && T.prologue.shieldT > 0 && st.mode === 'playing',
-    { active: T.prologue.active, shieldT: T.prologue.shieldT, mode: st.mode });
+  for (let i = 0; i < 40; i++) frame();          // the first step is up and past its guard time
+  T.tut.skip(performance.now());
+  ok('the first skip press only ARMS (two-press confirm)',
+    T.tut.live === true && T.tut.guided.skipArmT > 0 && T.tut.guided.skipped !== true,
+    { skipArmT: T.tut.guided.skipArmT });
+  T.tut.skip(performance.now());
+  ok('the second press ends every guided step; the run carries on as an ordinary run',
+    T.tut.live === false && T.tut.guided.skipped === true && st.mode === 'playing',
+    { live: T.tut.live, mode: st.mode });
 
   // The offer is asked once per marked release: a later launch never re-offers.
   W.tried = false;
@@ -438,16 +435,17 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   // ONCE: the opt-in is consumed by the arm — the next run is normal.
   T.startRun();
   ok('the guided run happens once per opt-in: the next startRun is a normal run',
-    T.prologue.active === false && st.assistedRun === false);
+    T.tut.live === false && st.assistedRun === false);
   T.showTitle();
 
   // THE DECLINED OFFER IS NOT LOST: REPLAY TOUR re-arms the same opt-in.
   W.arm();
   T.startRun();
   ok('REPLAY TOUR (the seam it calls) re-arms the guided run for the next START GAME',
-    T.prologue.active === true && st.assistedRun === true);
-  T.prologue.drink();                            // end the phase; leave state tidy
-  ok('cleanup: the phase ended and the run is live', T.prologue.active === false && st.mode === 'playing');
+    T.tut.live === true && st.assistedRun === true);
+  for (let i = 0; i < 40; i++) frame();
+  T.tut.skip(performance.now()); T.tut.skip(performance.now());   // end the guided part; leave state tidy
+  ok('cleanup: the guided part ended and the run is live', T.tut.live === false && st.mode === 'playing');
 
   // B6 OPTION (b): an ASSISTED summary keeps FULL gold + counters but writes
   // NO best-run record — and the end screen carries the flag.

@@ -82,7 +82,7 @@ globalThis.location = { reload: noop };
 // Preseed: onboarded + every first-run tour flag, so the stage-2 coachmarks
 // stay out of the way (they pause the sim and swallow keys). (The retired
 // hordes_hints pref went with the panel: "?" is help mode now.)
-const lsBack = new Map([['hordes_onboarded', '1']]);
+const lsBack = new Map([['hordes_onboarded', '1'], ['hordes_hints_off', '1']]);
 for (const k of ['stage1', 'hud', 'pilot', 'focus', 'stance', 'move', 'skills', 'potions',
   'stats', 'cog', 'draft', 'edge', 'chest', 'portal', 'arch', 'shrine', 'intermission',
   'death', 'settings']) lsBack.set('hordes_tour_' + k, '1');
