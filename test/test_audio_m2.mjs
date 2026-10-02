@@ -117,7 +117,7 @@ check('every sound name used in src/ is a defined sound', () => {
       // Direct literals, the fire-family tables, and names picked by a ?: chain
       // inside a playSfx( ... ) call.
       for (const m of t.matchAll(/(?:playSfx|[^A-Za-z]sfx)[(]([^;]*?)[)]/g)) {
-        for (const q of m[1].matchAll(/'([A-Za-z_]+)'/g)) used.add(q[1]);
+        for (const q of m[1].matchAll(/(?<!=== )'([A-Za-z_]+)'/g)) used.add(q[1]);   // not a compared value
       }
       for (const m of t.matchAll(/:\s*'(fire_[a-z]+)'/g)) used.add(m[1]);
     }
