@@ -142,9 +142,11 @@ console.log('TIER-2(c) BUYABLES — SEAM REACHABILITY (no dead rows):');
     if (shape === 'mult') {
       const want = (base[seam] === 0 ? 1 : base[seam]) * Math.pow(1 + per, max);
       // mult seams ride on a 1-or-carried base (damageMult/rateMult/speedMult/
-      // pickupMult default 1; xpMult/critMult/goldMult are pure powers of 1).
+      // pickupMult default 1; xpMult/goldMult are pure powers of 1; critMult
+      // is the 1.5 base plus the compounded bonus).
       const got = bought[seam];
-      const ref = seam === 'xpMult' || seam === 'critMult' || seam === 'goldMult'
+      const ref = seam === 'critMult' ? 1.5 + Math.pow(1 + per, max) - 1
+        : seam === 'xpMult' || seam === 'goldMult'
         ? Math.pow(1 + per, max)
         : (BASE_STATS[seam] || 1) * Math.pow(1 + per, max);
       if (Math.abs(got - ref) > 1e-9 && Math.abs(got - want) > 1e-9) {

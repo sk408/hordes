@@ -51,7 +51,7 @@ import {
   SHATTER_BLAST_MULT, CINDER_BURN_MULT, FROSTWIRE_SLOW_DURATION, FROSTWIRE_SLOW_FACTOR,
   grantRewrite, hasRewrite, rewriteCards, applyBlast, directHitMult, onWeaponHit,
 } from '../src/rewrites.js';
-import { draftLadderWeight } from '../src/meta.js';
+import { draftLadderWeight, applyMetaBonuses } from '../src/meta.js';
 import { cardArt } from '../src/art/cards.js';
 import { deckIdForOffer, OFFER_ART_SCALE } from '../src/draft_card_art.js';
 import { cardBox } from '../src/render_cards.js';
@@ -121,9 +121,9 @@ s.check('Killshot: +0.5 crit damage on the house read ((critMult || 1.5) + bonus
   delete p.stats.critMult;
   def.apply(p);
   assert.equal(p.stats.critMult, 2.0, 'absent prices 1.5, the card makes it 2.0');
-  const q = pOf({ stats: { ...makePlayer().stats, critMult: 1 } }); // a shop-L0 run
+  const q = pOf({ stats: applyMetaBonuses(makePlayer().stats, {}) }); // a shop-L0 run
   def.apply(q);
-  assert.equal(q.stats.critMult, 1.5, 'stacks on whatever the run prices now');
+  assert.equal(q.stats.critMult, 2.0, 'a run with no crit rows prices 1.5 too');
 });
 
 s.check('Shatter: a detonation deals x1.5 to a chilled body, x1.0 otherwise', () => {

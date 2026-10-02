@@ -245,10 +245,10 @@ console.log('STATS CONTRACT:');
   const base = { damage: 8, cooldown: 0.55, speed: 60, pickup: 22, projectiles: 1,
                  pierce: 0, maxHp: 100, maxMana: 100 };
   const def = applyMetaBonuses(base, {});
-  ok(def.crit === 0 && def.critMult === 1 && def.goldMult === 1
+  ok(def.crit === 0 && def.critMult === 1.5 && def.goldMult === 1
      && def.potionPower === 1 && def.dropBonus === 0 && def.artifactLevels === 0
      && def.xpMult === 1 && def.luck === 0,
-     'unpurchased: all contract fields present with safe defaults (0/1)');
+     'unpurchased: all contract fields present with safe defaults (0/1; crit damage x1.5)');
 
   const max = applyMetaBonuses(base,
     { crit: 5, critdmg: 5, greed: 5, alchemy: 4, scav: 4, artifact: 3, xp: 5, luck: 5 });
@@ -256,7 +256,8 @@ console.log('STATS CONTRACT:');
   // OWNER EARLY-ACCESSIBILITY RETUNE: crit 0.06 -> 0.12, critdmg 0.50 -> 0.75,
   // scav 0.03 -> 0.06 (shop descs render the live values, so the text moved).
   ok(max.crit === 0.12 * 5, 'crit: +12%/level chance (0.60 max)');
-  ok(max.critMult === Math.pow(1.75, 5), 'critMult: compounds (1.75)^level (16.41 max)');
+  ok(max.critMult === 1.5 + Math.pow(1.75, 5) - 1,
+     'critMult: the x1.5 base plus the compounded (1.75)^level bonus (16.91 max)');
   ok(max.goldMult === Math.pow(1.2, 5), 'goldMult: compounds (1.20)^level (2.49 max)');
   ok(max.potionPower === Math.pow(1.5, 4), 'potionPower: compounds (1.50)^level (5.06 max)');
   ok(max.dropBonus === 0.06 * 4, 'dropBonus: +6%/level (+24% max, additive: it is a chance)');

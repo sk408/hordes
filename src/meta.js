@@ -1299,8 +1299,9 @@ export function draftLadderWeight(cardId, tier, luck) {
 //   crit          (0)             Deadly Aim: crit CHANCE, +0.06/level (0.30 at
 //                                 L5). Roll per weapon hit. NOT compoundable: it
 //                                 is set FROM ZERO, and 0 x anything is 0.
-//   critMult      (1)             Deadeye: crit damage multiplier, COMPOUNDS
-//                                 (1.50)^level (L5 = 7.59x) — dmg*critMult.
+//   critMult      (BASE_CRIT_MULT) crit damage multiplier: the 1.5 base plus
+//                                 the Deadeye/Bullseye bonus, which compounds
+//                                 ((1 + perLevel)^level - 1) — dmg*critMult.
 //   goldMult      (1)             Greed: run payout multiplier, COMPOUNDS
 //                                 (1.20)^level (L5 = 2.49x) — pass as
 //                                 runStats.goldMult to computeRunGold.
@@ -1347,6 +1348,9 @@ export function draftLadderWeight(cardId, tier, luck) {
 //                                 is published to config so the config-side
 //                                 reader (AUTOPILOT.AUTO_CAST.ELITE_RANGE)
 //                                 cannot drift from the volleys. ADDITIVE.
+// A crit with no shop rows owned. Deadeye/Bullseye add on top of it.
+export const BASE_CRIT_MULT = 1.5;
+
 export function applyMetaBonuses(stats, purchased) {
   const lvl = id => purchased[id] || 0;
   // A1: the ONE place the engagement radius is computed. Publish it to config
@@ -1371,8 +1375,8 @@ export function applyMetaBonuses(stats, purchased) {
     xpMult: Math.pow(1 + SHOP_BY_ID.xp.perLevel, lvl('xp'))
       * Math.pow(1 + SHOP_BY_ID.growth.perLevel, lvl('growth')),
     crit: SHOP_BY_ID.crit.perLevel * lvl('crit') + SHOP_BY_ID.eagleeye.perLevel * lvl('eagleeye'),
-    critMult: Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg'))
-      * Math.pow(1 + SHOP_BY_ID.bullseye.perLevel, lvl('bullseye')),
+    critMult: BASE_CRIT_MULT + Math.pow(1 + SHOP_BY_ID.critdmg.perLevel, lvl('critdmg'))
+      * Math.pow(1 + SHOP_BY_ID.bullseye.perLevel, lvl('bullseye')) - 1,
     goldMult: Math.pow(1 + SHOP_BY_ID.greed.perLevel, lvl('greed'))
       * Math.pow(1 + SHOP_BY_ID.avarice.perLevel, lvl('avarice')),
     potionPower: Math.pow(1 + SHOP_BY_ID.alchemy.perLevel, lvl('alchemy'))
