@@ -97,7 +97,7 @@ export async function withPage(opts, fn) {
   if (!fs.existsSync(CHROME)) throw new Error('no chrome binary at ' + CHROME);
   fs.mkdirSync(SHOT_DIR, { recursive: true });
   const srv = await serveRoot(ROOT, opts.extra || {});
-  const dir = fs.mkdtempSync('/tmp/hordes-chrome-');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hordes-chrome-'));
   const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',
     '--user-data-dir=' + dir, '--remote-debugging-port=0', 'about:blank'];
