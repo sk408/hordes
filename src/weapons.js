@@ -248,9 +248,17 @@ export function makeWeapon(type) {
 function evoAffixes(weapon) {
   return (weapon && weapon.evolution && weapon.evolution.affixes) || null;
 }
+// The weapon's own form multiplier: its evolution's damageMult, times the
+// fusion's `mult` when it is half of a fused weapon (fusions.js).
 function evoDmg(weapon) {
   const a = evoAffixes(weapon);
-  return a && a.damageMult ? a.damageMult : 1;
+  const fus = weapon && weapon.fusion ? (weapon.fusion.mult || 1) : 1;
+  return (a && a.damageMult ? a.damageMult : 1) * fus;
+}
+// Fusion flag probe (pure data from fusions.js; unknown flags ignored).
+function fusFlag(weapon, flag) {
+  const f = weapon && weapon.fusion && weapon.fusion.flags;
+  return f ? f[flag] : undefined;
 }
 function evoRate(weapon) {
   const a = evoAffixes(weapon);
@@ -468,7 +476,11 @@ function updateBoomerang(state, weapon, dt) {
       const len = Math.hypot(dx, dy) || 1;
       const step = speed * dt;
       pr.x += (dx / len) * step; pr.y += (dy / len) * step;
-      if (len < 12) pr.age = 99;   // caught: remove
+      if (len < 12) {
+        pr.age = 99;   // caught: remove
+        // Bloodhound Rang: each catch launches one missile from the fused Seeker.
+        if (fusFlag(weapon, 'catchMissile') && weapon.fused) launchSeeker(state, weapon.fused, pr.dx, pr.dy);
+      }
     }
     // Per-leg hit budget. PIERCE_ALL keeps the pre-pierce behaviour: unlimited
     // DISTINCT enemies, one hit each. A finite pierce is the documented extra
@@ -634,7 +646,7 @@ function updateScythe(state, weapon, dt) {
     // Land the sweep: everything inside the wedge eats damage.
     const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon);
     let souls = 0;
-    const reaped = [];   // where this sweep killed (Harvest Fire synergy reads it)
+    const reaped = [];   // where this sweep killed (the Harvest Fire fusion reads it)
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       const d = Math.hypot(e.x - p.x, e.y - p.y);
@@ -678,6 +690,20 @@ function updateScythe(state, weapon, dt) {
 // hatchlings at the impact point (half damage, one generation deep —
 // hatchlings don't split again); `eternalHunt` = 3x missile life so the
 // hunt outlives a lost mark.
+// One missile from a Seeker weapon, off its own fire clock (the Bloodhound
+// Rang fusion calls this on every boomerang catch).
+function launchSeeker(state, seeker, dx, dy) {
+  const W = WEAPONS.SEEKER;
+  const P = weaponLevelParams('SEEKER', seeker.level);
+  const p = state.player;
+  state.projectiles.push({
+    kind: 'seeker', x: p.x, y: p.y, ang: Math.atan2(-dy, -dx),
+    target: nearestEnemy(state, p.x, p.y),
+    damage: p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(seeker),
+    age: 0, trail: [], gen: 1,   // gen 1: a catch missile does not hatch a hydra pair
+  });
+}
+
 function updateSeeker(state, weapon, dt) {
   const W = WEAPONS.SEEKER;
   const P = weaponLevelParams('SEEKER', weapon.level);
@@ -1108,7 +1134,7 @@ function updateRicochet(state, weapon, dt) {
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
         hurt(state, e, pr.damage * critRoll(p, weapon));
         pr.hit.add(e);
-        // ricochetHit: the enemies this body has used (Storm Bounce synergy).
+        // ricochetHit: the enemies this body has used (the Storm Bounce fusion reads it).
         state.effects.push({ kind: 'seeker_pop', x: e.x, y: e.y, age: 0, ttl: 0.1, ricochetHit: pr.hit });
         if (pr.bounces <= 0) { state.projectiles.splice(i, 1); break; }
         const nxt = nearestEnemy(state, pr.x, pr.y, pr.hit);
@@ -1166,7 +1192,7 @@ function updateMeteor(state, weapon, dt) {
           }
         }
         state.effects.push({ kind: 'mine_blast', x: m.x, y: m.y, radius: blast, shrapnel: 8, age: 0, ttl: 0.35,
-          meteor: true, evo: weapon.evolution ? 'meteor' : undefined });   // Crater Field synergy reads the landing
+          meteor: true, evo: weapon.evolution ? 'meteor' : undefined });   // the Crater Field fusion reads the landing
         if (crater) pushFirePatch(state, m.x, m.y, blast * 0.5, dmg, 'meteor');
       }
     }
@@ -1209,11 +1235,15 @@ export const WEAPON_TYPES = {
   BEAM:       { id: 'BEAM',       name: WEAPONS.BEAM.NAME,       update: updateBeam },
 };
 
-// Convenience: update every weapon in a list (integration entry point).
+// Update every weapon in a list (integration entry point). A fused weapon
+// (fusions.js) runs both halves from its one place in the list; the Volley has
+// no update here (main.js fires it) but may carry a fused half.
 export function updateWeapons(state, weapons, dt) {
   for (const w of weapons) {
     const def = WEAPON_TYPES[w.type];
     if (def) def.update(state, w, dt);
+    const half = w.fused && WEAPON_TYPES[w.fused.type];
+    if (half) half.update(state, w.fused, dt);
   }
 }
 

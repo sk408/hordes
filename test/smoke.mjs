@@ -1156,30 +1156,39 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   console.log('elite mods: gating strict, split into 2 plain children @30% hp, guaranteed drop');
 }
 
-// (c) SYNERGIES: refreshSynergies detects the pair, announces it, and the
-// orbital flag tags real volley projectiles in flight.
+// (c) FUSIONS: an evolved Volley and an evolved Orbit Blade fuse into Orbital
+// Volley, the fusion is announced, and real volley projectiles fly the orbit.
 {
+  const { evolveWeapon, EVOLUTION_DEFS } = await import('../src/evolutions.js');
+  const { fusionDef } = await import('../src/fusions.js');
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  st.weapons.push(makeWeapon('ORBIT'));
-  mainMod.__TEST.refreshSynergies();
-  const orb = st.synergies.find(s => 'orbitVolley' in (s.flags || {}));
-  assert(orb, 'VOLLEY+ORBIT must detect the Orbital Volley synergy');
-  assert(st.toasts.some(t => /SYNERGY:/.test(t.msg)),
-    'a newly detected synergy must toast its announce');
+  st.weapons.length = 0;
+  for (const t of ['VOLLEY', 'ORBIT']) {
+    const w = makeWeapon(t); w.level = 8;
+    assert(evolveWeapon(w, { [EVOLUTION_DEFS[t].partner]: 1 }).ok, t + ' must evolve');
+    st.weapons.push(w);
+  }
+  assert(mainMod.__TEST.fusion.offers().some(o => o.def.id === 'ORBITAL_VOLLEY'),
+    'two evolved halves must be offered their fusion');
+  mainMod.__TEST.fusion.take(fusionDef('ORBITAL_VOLLEY'));
+  assert(st.weapons.length === 1 && st.weapons[0].fused && st.weapons[0].fused.type === 'ORBIT',
+    'the fusion leaves ONE weapon carrying the other half');
+  assert(st.toasts.some(t => /FUSION: ORBITAL VOLLEY/.test(t.msg)),
+    'a fusion must toast its announce');
   // A target in range makes the controller fire volley shots — they must now
   // carry the orbit flight state for their first ~0.55s.
   st.enemies.push({ typeId: 'CHASER', x: st.player.x + 40, y: st.player.y,
     hp: 500, maxHp: 500, w: 10, h: 10, speed: 0, xp: 1, age: 0 });
   let tagged = false;
-  // The volley cooldown (~0.5s) means the first post-synergy shot can take
-  // ~30 frames — pump well past it (a stray pre-synergy shot may persist).
+  // The volley cooldown (~0.5s) means the first shot after the fusion can
+  // take ~30 frames — pump well past it (an earlier shot may persist).
   for (let i = 0; i < 75 && !tagged; i++) {
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
     tagged = st.projectiles.some(pr => pr.orbit);
   }
-  assert(tagged, 'fired volley shots must be orbit-tagged while Orbital Volley is live');
-  console.log('synergies: Orbital Volley detected + announced + volley shots orbit-tagged');
+  assert(tagged, 'fired volley shots must be orbit-tagged once Orbital Volley is fused');
+  console.log('fusions: Orbital Volley offered + fused + announced + volley shots orbit-tagged');
 }
 
 // (d) RAMPAGE METER: kills extend the streak; ANY hp loss resets it.
@@ -1308,7 +1317,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(/twin darts/.test(html), 'stats weapons carry a one-line effect');
   assert(/Probe Eye/.test(html) && /Keen Eye \+8%/.test(html),
     'stats items show name + affix effect');
-  assert(/SYNERGIES/.test(html) && /ITEMS/.test(html), 'stats carries items + synergies sections');
+  assert(/ITEMS/.test(html) && !/SYNERGIES/.test(html), 'stats carries the items section and no synergy panel');
   assert(/RAMPAGE/.test(html) && /CRIT/.test(html) && /DMG/.test(html),
     'stats lists rampage + core stats');
   // Paused: state.time frozen while the report is open.

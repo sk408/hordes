@@ -164,10 +164,10 @@ check('LOADOUT joins the title once a weapon beyond the starting kit is owned', 
   assert.equal(names().length, 5, 'and five again without it');
 });
 
-check('PROGRESS carries TROPHIES + BESTIARY; PLAY opens the ONE pre-run screen; both return', () => {
+check('PROGRESS carries TROPHIES + BESTIARY + FUSIONS; PLAY opens the ONE pre-run screen; both return', () => {
   cardWith('PROGRESS').click();
-  assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'BACK'],
-    'PROGRESS holds the gallery and the guide, plus BACK');
+  assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'FUSIONS', 'BACK'],
+    'PROGRESS holds the gallery, the guide and the fusion shelf, plus BACK');
   cardWith('BACK').click();
   assert.ok(names().includes('PLAY'), 'BACK returns to the title');
 

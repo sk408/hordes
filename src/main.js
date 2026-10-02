@@ -60,7 +60,10 @@ import {
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
 import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
 import { createAtlas, atlasUpdate, atlasRegisterLandmark } from './atlas.js';
-import { detectSynergies, describeSynergy } from './synergies.js';
+import {
+  FUSION_DEFS, fusionCandidates, fuseWeapons, describeFusion, fusionRoadText,
+  kitWeapons, findKitWeapon,
+} from './fusions.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 // TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
 import { itemIconFor } from './art/item_icons.js';
@@ -983,8 +986,9 @@ const state = {
   // it). Toggled by the M key / the MAP touch button (toggleMap). Not
   // persisted, not sticky across runs.
   mapOpen: false,
-  synergies: [],     // active SYNERGIES entries (synergies.js detectSynergies)
-  synergyNames: null, // toast-dedup set of already-announced synergy names
+  fuseDeclined: new Set(),  // fusion ids deferred with NOT NOW (cleared by the next draft pick)
+  fusionsMade: 0,    // fusions taken this run
+  fusionRefills: 0,  // freed slots already refilled with a new weapon
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
   timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
   stanceAct: 'PATROL', // live pilot activity for the STANCE HUD readout
@@ -1520,9 +1524,7 @@ function runController(p, dt, am) {
     // exactly like the loot damageMult; `pierceAll` removes the pierce cap.
     const volleyEvo = volleyW && volleyW.evolution;
     const n = Math.min(p.stats.projectiles + (P.proj || 0), volleyProjectileCap(p.stats));
-    const volleyDmgMult = (P.dmgMult || 1) * (1 + WEAPON_STEPS.VOLLEY.PROJ_DMG * (P.proj || 0)) *
-      (p.stats.damageMult || 1) * am.damageMult *   // loot Brutal Edge + BERSERK arch
-      (volleyEvo && volleyEvo.affixes.damageMult || 1);
+    const volleyDmgMult = volleyDamageMult();
     const volleyPierceAll = !!(volleyEvo && volleyEvo.flags.includes('pierceAll'));
     for (let i = 0; i < n; i++) {
       const spread = (i - (n - 1) / 2) * C.WEAPON.SPREAD;
@@ -1535,16 +1537,22 @@ function runController(p, dt, am) {
       if (volleyPierceAll || hasRewrite(state, 'pierceall')) pr.pierce = PIERCE_ALL;
       else {
         pr.pierce = (pr.pierce || 0) + (P.pierceBonus || 0);
-        // Sun Lane synergy (JAVELIN+VOLLEY): every shot pierces one more body.
-        if (syn('volleyPierce')) pr.pierce += syn('volleyPierce');
       }
-      // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
-      if (syn('orbitVolley')) { pr.orbit = { t: 0, dur: 0.2, ang: a }; pr.pierce = (pr.pierce || 0) + 1; }
+      // Orbital Volley fusion: the update loop flies the one-turn orbit.
+      if (fus('orbitVolley')) { pr.orbit = { t: 0, dur: 0.2, ang: a }; pr.pierce = (pr.pierce || 0) + 1; }
       state.projectiles.push(pr);
       // Muzzle particle dot at the barrel (animation pass).
       state.effects.push({
         kind: 'muzzle', x: p.x + Math.cos(a) * 8, y: p.y + Math.sin(a) * 8,
         age: 0, ttl: 0.08,
+      });
+    }
+    // Sun Lane fusion: the salvo also throws a spear down the aim lane.
+    if (fus('volleySpear')) {
+      state.projectiles.push({
+        kind: 'javelin', x: p.x, y: p.y, dx: Math.cos(baseAng), dy: Math.sin(baseAng), dist: 0,
+        damage: fusWeaponDmg('JAVELIN', WEAPONS.JAVELIN.DAMAGE_MULT) * fus('volleySpear'),
+        hit: new Set(), age: 0, evo: true,
       });
     }
     audio.playSfx('fire_bolt');
@@ -1850,7 +1858,7 @@ function applyEquipDecision(it) {
     state.items.push(it);
     addHeat(state, 'NEW_ITEM_SLOT');
     applyItemAffixes(p, it);
-    for (const w of state.weapons) w.evoDeclined = false;
+    reopenForgeOffers();
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return { msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + ']', tint };
   }
@@ -1860,7 +1868,7 @@ function applyEquipDecision(it) {
     state.items[res.slot] = it;   // in-place swap (not append)
     addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
     applyItemAffixes(p, it);
-    for (const w of state.weapons) w.evoDeclined = false;
+    reopenForgeOffers();
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
     return {
       msg: 'FOUND: ' + it.name.toUpperCase() + ' [' + it.rarity + '] (SWAPPED OUT ' +
@@ -2948,75 +2956,23 @@ function spawnMidBoss() {
   easeToBossStance();       // BOSS_STANCE: same ease for the mid-wave herald
 }
 
-// ---------- WAVE-11 SYNERGIES (synergies.js; weapons.js stays untouched) -----
-// Derived state: re-evaluated on every weapon change (grant/evolve/run start).
-function refreshSynergies() {
-  const prev = state.synergyNames || new Set();
-  state.synergies = detectSynergies(state.weapons);
-  state.synergyNames = new Set(state.synergies.map(s => s.name));
-  for (const s of state.synergies) {
-    if (!prev.has(s.name)) {
-      const d = describeSynergy(s);
-      toast('SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc);
-      audio.playSfx('powerup');
-    }
-  }
-}
+// ---------- WEAPON FUSIONS (fusions.js) --------------------------------------
+// A fused weapon runs both halves (weapons.js updateWeapons); the link
+// behaviours below are what make the pair act as one weapon. Every one is
+// keyed on a fusion flag carried by the fused weapon itself.
 
-// ===========================================================================
-// WAVE-26 FEATURE 2 — DRAFT SYNERGY HINTS
-// The draft IS the game in an auto-battler, so it is the main knowledge
-// surface. A draft card earns a hint ONLY when the pick would create a pair
-// the RUN ACTUALLY IMPLEMENTS — detectSynergies is the single source of truth
-// (the same call refreshSynergies makes), and every flag in the table is
-// wired in the weapon loop. No real synergy -> no hint at all: no filler, and
-// never a promise of an effect the code does not deliver.
-//
-//   - a NEW WEAPON card hints when one of its partners is already equipped
-//     ("PAIRS WITH BEAM · SUPERCONDUCTOR");
-//   - a LEVEL-UP card hints only while its weapon is part of a LIVE pair
-//     ("THRESHING STORM LIVE · ZAP") — otherwise silence.
-// ===========================================================================
-function synergyHintForCard(card) {
-  const id = (card && card.id) || '';
-  // Card ids are 'wpn_<TYPE>' for a grant and 'lvl_<TYPE>_<level>' for a
-  // level-up. The level suffix is stripped explicitly (a greedy [A-Z_]+ match
-  // would swallow the trailing '_' and miss multi-word types like NOVA_PULSE).
-  let kind = null, type = null;
-  let m = /^wpn_(.+)$/.exec(id);
-  if (m) { kind = 'wpn'; type = m[1]; }
-  else {
-    m = /^lvl_(.+)_\d+$/.exec(id);
-    if (m) { kind = 'lvl'; type = m[1]; }
-  }
-  if (!kind || !WEAPON_NAMES[type]) return null;    // not a real archetype card
-  const owned = state.weapons.map(w => w.type);
-  if (kind === 'wpn') {
-    if (owned.includes(type)) return null;
-    const live = new Set((state.synergies || detectSynergies(owned)).map(s => s.name));
-    for (const s of detectSynergies([...owned, type])) {
-      if (live.has(s.name) || !s.pair.includes(type)) continue;
-      const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
-      return 'PAIRS WITH ' + (WEAPON_NAMES[partner] || partner) + ' · ' + s.name.toUpperCase();
-    }
-    return null;
-  }
-  // Level-up card: only meaningful while the weapon is in a live synergy.
-  const live = state.synergies || detectSynergies(owned);
-  for (const s of live) {
-    if (!s.pair.includes(type)) continue;
-    const partner = s.pair[0] === type ? s.pair[1] : s.pair[0];
-    return s.name.toUpperCase() + ' LIVE · ' + (WEAPON_NAMES[partner] || partner);
+// The fused weapon carrying `flag`, or null.
+function fusOwner(flag) {
+  for (const w of state.weapons) {
+    const f = w.fusion && w.fusion.flags;
+    if (f && flag in f) return w;
   }
   return null;
 }
-
-// Active flag probe: the value of `flag` from any live synergy, else null.
-function syn(flag) {
-  for (const s of state.synergies || []) {
-    if (flag in s.flags) return s.flags[flag];
-  }
-  return null;
+// The value of a fusion flag in this kit, else null.
+function fus(flag) {
+  const w = fusOwner(flag);
+  return w ? w.fusion.flags[flag] : null;
 }
 
 function nearestFoe(x, y, exclude) {
@@ -3029,112 +2985,102 @@ function nearestFoe(x, y, exclude) {
   return best;
 }
 
-// weapons.js damage convention for the supplemental bolts/blasts below:
-// damage * archetype MULT * level dmgMult * loot damageMult * arch (BERSERK)
-// * evolution mult. The arch term MUST match weapons.js dmgScale: without it,
-// every synergy bolt (zap fork, scythe zap, nova/mine/beam detonations) missed
-// BERSERK while the base weapons got it.
-function synWeaponDmg(weaponId, mult) {
-  const w = state.weapons.find(k => k.type === weaponId);
+// weapons.js damage convention for the link bolts and blasts below: damage *
+// archetype MULT * level dmgMult * loot damageMult * arch (BERSERK) * the
+// evolution's and the fusion's multipliers.
+function fusWeaponDmg(weaponId, mult) {
+  const w = findKitWeapon(state.weapons, weaponId);
   const P = weaponLevelParams(weaponId, (w && w.level) || 1);
   const evo = w && w.evolution && w.evolution.affixes;
   return state.player.stats.damage * mult * (P.dmgMult || 1) *
     (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
-    ((evo && evo.damageMult) || 1);
+    ((evo && evo.damageMult) || 1) * ((w && w.fusion && w.fusion.mult) || 1);
 }
 
-// Mine detonation from OUTSIDE weapons.js (Chain Reaction / Fire Focus):
-// mirrors weapons.js detonateMine (damage, blast radius, blast + shrapnel
-// payloads), minus its evolution chain rule.
-function detonateMineAt(mine) {
+// Mine detonation from outside weapons.js: mirrors weapons.js detonateMine
+// (damage, blast radius, blast payload), minus its evolution chain rule.
+function detonateMineAt(mine, fusionId) {
   const p = state.player;
-  const w = state.weapons.find(k => k.type === 'MINE');
+  const w = findKitWeapon(state.weapons, 'MINE');
   const P = weaponLevelParams('MINE', (w && w.level) || 1);
   const blast = (P.blast || WEAPONS.MINE.BLAST) *
     (((w && w.evolution && w.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
-  const dmg = synWeaponDmg('MINE', WEAPONS.MINE.DAMAGE_MULT);
+  const dmg = fusWeaponDmg('MINE', WEAPONS.MINE.DAMAGE_MULT);
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
       if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) { d *= (p.stats.critMult || 1.5); markCrit(state, e); }
-      // G21 slice 2 GLACIER: the direct-hit damage multiplier, read at THIS
-      // damage site (the rider below rides the same hit) — blasts never see it.
       e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
-      // G21 rider: the mine's PRIMARY payload is a direct weapon hit wherever
-      // the detonation is triggered from (weapons.js detonateMine rides via
-      // hurt(); this mirror rides identically).
-      onWeaponHit(state, e);
+      onWeaponHit(state, e);   // a mine's payload is a direct weapon hit
       state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 });
     }
   }
   state.effects.push({ kind: 'mine_blast', x: mine.x, y: mine.y, radius: blast,
-    shrapnel: WEAPONS.MINE.SHRAPNEL, age: 0, ttl: 0.35 });
+    shrapnel: WEAPONS.MINE.SHRAPNEL, age: 0, ttl: 0.35, fus: fusionId });
   const i = state.projectiles.indexOf(mine);
   if (i >= 0) state.projectiles.splice(i, 1);
 }
 
-// Superconductor (ZAP+BEAM): each fired chain zap throws an EXTRA fork chain
-// of zapExtraForks hops — a supplemental bolt walking nearest-first from the
-// player, damage continuing the falloff curve past the base fire's depth.
-function synergyZapFork(zw) {
-  const extra = syn('zapExtraForks') || 0;
-  const p = state.player;
-  const baseDmg = synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT);
-  const points = [{ x: p.x, y: p.y }];
-  const hit = new Set();
-  let from = p;
-  for (let k = 0; k < extra; k++) {
+// A lightning chain from a point: up to `hops` nearest-first jumps inside the
+// zap hop range, each at `frac` of the fused Chain Zap's damage with its
+// falloff. Returns the number of enemies struck.
+function fusionZapChain(x, y, hops, frac, exclude, fusionId) {
+  const base = fusWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * frac;
+  const points = [{ x, y }];
+  const hit = new Set(exclude || []);
+  let from = { x, y };
+  for (let k = 0; k < hops; k++) {
     const tgt = nearestFoe(from.x, from.y, hit);
     if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
     hit.add(tgt);
-    // CHAIN ZAP REWORK (msg_01M2RENZ): the base fire now spends COUNT-1 hop
-    // depths, so the supplemental fork's falloff continues past that depth
-    // (the old (P.jumps || JUMPS)+1+k exponent read the retired ladder field).
-    tgt.hp -= devHit(baseDmg * Math.pow(WEAPONS.ZAP.FALLOFF, WEAPONS.ZAP.COUNT + k) *
-      directHitMult(state, tgt));   // G21 GLACIER (direct hit)
+    tgt.hp -= devHit(base * Math.pow(WEAPONS.ZAP.FALLOFF, k) * directHitMult(state, tgt));
     tgt.flash = 0.08;
-    onWeaponHit(state, tgt);   // G21 rider: zap-fork damage is a direct hit
+    onWeaponHit(state, tgt);   // a link bolt is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
     from = tgt;
   }
-  if (points.length > 1) state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15 });
+  if (points.length > 1) state.effects.push({ kind: 'zap', points, age: 0, ttl: 0.15, fus: fusionId });
+  return points.length - 1;
 }
 
-// Gravity Well (NOVA+ORBIT) + Chain Reaction (NOVA+MINE), on each nova fire.
-function synergyOnNova(nw) {
+// Gravity Well (NOVA+ORBIT) and Chain Reaction (NOVA+MINE), on each nova fire.
+function fusionOnNova(nw) {
   const p = state.player;
   const P = weaponLevelParams('NOVA_PULSE', nw.level);
   const radius = (P.radius || WEAPONS.NOVA_PULSE.RADIUS) *
     (((nw.evolution && nw.evolution.flags) || []).includes('bigBoom') ? 1.5 : 1);
-  const pull = syn('novaPull');
+  const pull = fus('novaPull');
   if (pull) {
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       if (Math.hypot(e.x - p.x, e.y - p.y) <= radius) {
-        e.x += (p.x - e.x) * pull;   // drag inward by the flag fraction —
-        e.y += (p.y - e.y) * pull;   // feeds the orbit blades
+        e.x += (p.x - e.x) * pull;   // drag inward onto the blades
+        e.y += (p.y - e.y) * pull;
       }
     }
   }
-  if (syn('novaDetonatesMines')) {
+  if (fus('novaDetonatesMines')) {
     const mines = state.projectiles.filter(m => m.kind === 'mine' &&
       Math.hypot(m.x - p.x, m.y - p.y) <= radius);
-    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+    for (const m of mines) detonateMineAt(m, nw.fusionId);   // copy — detonateMineAt splices
   }
 }
 
-// Fire Focus (MINE+BEAM): a fired beam cooks off every mine inside its lane
-// (aim recomputed — weapons.js picks the same deterministic nearest target).
-function synergyBeamDetonate(bw) {
+// Superconductor (ZAP+BEAM) and Fire Focus (MINE+BEAM), on each beam fire.
+// The aim is recomputed: weapons.js picks the same nearest target.
+function fusionOnBeam(bw) {
   const p = state.player;
   const t = nearestFoe(p.x, p.y);
   if (!t) return;
+  const hops = fus('beamZapChain');
+  if (hops) fusionZapChain(t.x, t.y, hops + 1, 0.6, null, bw.fusionId);
+  if (!fus('beamDetonatesMines')) return;
   const P = weaponLevelParams('BEAM', bw.level);
-  const width = (P.width || WEAPONS.BEAM.WIDTH) *
-    (((bw.evolution && bw.evolution.flags) || []).includes('solarFlare') ? 1.3 : 1);
-  const lanes = ((bw.evolution && bw.evolution.flags) || []).includes('prismSplit')
-    ? [-0.35, 0, 0.35] : [0];
+  const evoFlags = (bw.evolution && bw.evolution.flags) || [];
+  const width = (P.width || WEAPONS.BEAM.WIDTH) * (evoFlags.includes('solarFlare') ? 1.3 : 1);
+  const length = P.length || WEAPONS.BEAM.LENGTH;
+  const lanes = evoFlags.includes('prismSplit') ? [-0.35, 0, 0.35] : [0];
   const base = Math.atan2(t.y - p.y, t.x - p.x);
   for (const off of lanes) {
     const cx = Math.cos(base + off), cy = Math.sin(base + off);
@@ -3142,34 +3088,51 @@ function synergyBeamDetonate(bw) {
       if (m.kind !== 'mine') return false;
       const rx = m.x - p.x, ry = m.y - p.y;
       const along = rx * cx + ry * cy;
-      return along >= 0 && along <= WEAPONS.BEAM.LENGTH &&
-        Math.abs(rx * cy - ry * cx) <= width / 2 + 4;
+      return along >= 0 && along <= length && Math.abs(rx * cy - ry * cx) <= width / 2 + 4;
     });
-    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+    for (const m of mines) detonateMineAt(m, bw.fusionId);   // copy — detonateMineAt splices
+  }
+  // The beam leaves one mine where it struck, at most a beam's length away.
+  if (fus('beamSeedsMine')) {
+    const d = Math.min(length, Math.hypot(t.x - p.x, t.y - p.y));
+    state.projectiles.push({ kind: 'mine', x: p.x + Math.cos(base) * d, y: p.y + Math.sin(base) * d, age: 0 });
   }
 }
 
-// Threshing Storm (SCYTHE+ZAP): each LANDED sweep (a fresh scythe_arc effect)
-// lashes the nearest foe from the arc's edge at 50% zap falloff.
-function synergyScytheZap() {
+// Sun Lane (VOLLEY+JAVELIN): every spear throw is flanked by extra volley
+// rounds down its lane.
+function fusionJavelinEscort(n) {
+  const p = state.player;
+  const t = nearestFoe(p.x, p.y);
+  if (!t) return;
+  const base = Math.atan2(t.y - p.y, t.x - p.x);
+  const mult = volleyDamageMult();
+  for (let i = 0; i < n; i++) {
+    const a = base + (i - (n - 1) / 2) * 0.24;
+    const pr = makeProjectile(p.x, p.y, Math.cos(a), Math.sin(a), p.stats);
+    pr.damage *= mult;
+    pr.pierce = PIERCE_ALL;   // the fused Volley is Nova Shot: its rounds pierce the lane
+    state.projectiles.push(pr);
+  }
+}
+
+// Threshing Storm (SCYTHE+ZAP): each landed sweep (a fresh scythe_arc effect)
+// throws a lightning chain from the arc's edge.
+function fusionScytheZap(hops) {
+  const id = fusOwner('scytheArcZap').fusionId;
   for (const fx of state.effects) {
     if (fx.kind !== 'scythe_arc' || fx.zapped) continue;
     fx.zapped = true;
     const ex = fx.x + Math.cos(fx.dir) * fx.radius;
     const ey = fx.y + Math.sin(fx.dir) * fx.radius;
-    const t = nearestFoe(ex, ey);
-    if (!t) continue;
-    t.hp -= devHit(synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t));   // 50% falloff + G21 GLACIER
-    t.flash = 0.08;
-    onWeaponHit(state, t);   // G21 rider: the scythe-zap lash is a direct hit
-    state.effects.push({ kind: 'zap', points: [{ x: ex, y: ey }, { x: t.x, y: t.y }],
-      age: 0, ttl: 0.15 });
+    fusionZapChain(ex, ey, hops, 0.5, null, id);
   }
 }
 
 // Bloodhound Rang (BOOMERANG+SEEKER): the return leg steers toward the
-// nearest survivor at SEEKER turn rate * 0.5 (weak homing, post-tick step).
-function synergyBoomerangHoming(dt) {
+// nearest enemy at half the Seeker's turn rate (the catch missile is fired by
+// weapons.js at the catch itself).
+function fusionBoomerangHoming(dt) {
   const p = state.player;
   const turn = WEAPONS.SEEKER.TURN * 0.5 * dt;
   for (const pr of state.projectiles) {
@@ -3185,16 +3148,17 @@ function synergyBoomerangHoming(dt) {
   }
 }
 
-// Harvest Fire (EMBER+SCYTHE): every enemy a landed sweep killed bursts like
-// an ember kill — the ember's blast radius and burst damage, at the corpse.
-function synergyScytheEmber() {
+// Harvest Fire (SCYTHE+EMBER): every enemy a landed sweep killed bursts like
+// an ember kill at the corpse and leaves burning ground there.
+function fusionScytheEmber() {
+  const id = fusOwner('scytheEmberBurst').fusionId;
   for (const fx of state.effects) {
     if (fx.kind !== 'scythe_arc' || fx.embered || !fx.reaped) continue;
     fx.embered = true;
     if (fx.reaped.length === 0) continue;
-    const ew = state.weapons.find(k => k.type === 'EMBER');
+    const ew = findKitWeapon(state.weapons, 'EMBER');
     const blast = weaponLevelParams('EMBER', (ew && ew.level) || 1).blast || WEAPONS.EMBER.BLAST;
-    const dmg = synWeaponDmg('EMBER', WEAPONS.EMBER.DAMAGE_MULT * WEAPONS.EMBER.KILL_BLAST_MULT);
+    const dmg = fusWeaponDmg('EMBER', WEAPONS.EMBER.DAMAGE_MULT * WEAPONS.EMBER.KILL_BLAST_MULT);
     for (const c of fx.reaped) {
       for (const e of state.enemies) {
         if (e.hp <= 0 || Math.hypot(e.x - c.x, e.y - c.y) > blast) continue;
@@ -3203,57 +3167,63 @@ function synergyScytheEmber() {
         onWeaponHit(state, e);
         state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
       }
-      state.effects.push({ kind: 'mine_blast', x: c.x, y: c.y, radius: blast, shrapnel: 4, age: 0, ttl: 0.3 });
+      state.effects.push({ kind: 'mine_blast', x: c.x, y: c.y, radius: blast, shrapnel: 4, age: 0, ttl: 0.3, fus: id });
+      state.projectiles.push({ kind: 'firepatch', x: c.x, y: c.y, radius: blast, damage: dmg, tint: 'fire', age: 0, tick: 0 });
     }
   }
 }
 
 // Storm Bounce (RICOCHET+ZAP): each ricochet impact zaps the nearest enemy
-// that body has not hit yet, within zap hop range, at 50% zap damage.
-function synergyRicochetSpark() {
+// that body has not hit yet, within zap hop range, at half zap damage.
+function fusionRicochetSpark() {
+  const id = fusOwner('ricochetZapFork').fusionId;
   for (const fx of state.effects) {
     if (!fx.ricochetHit || fx.sparked) continue;
     fx.sparked = true;
-    const t = nearestFoe(fx.x, fx.y, fx.ricochetHit);
-    if (!t || Math.hypot(t.x - fx.x, t.y - fx.y) > WEAPONS.ZAP.CHAIN_RANGE) continue;
-    t.hp -= devHit(synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t));
-    t.flash = 0.08;
-    onWeaponHit(state, t);
-    state.effects.push({ kind: 'zap', points: [{ x: fx.x, y: fx.y }, { x: t.x, y: t.y }],
-      age: 0, ttl: 0.15 });
+    fusionZapChain(fx.x, fx.y, 1, 0.5, fx.ricochetHit, id);
   }
 }
 
 // Crater Field (METEOR+MINE): a landing meteor detonates every mine inside
-// its blast.
-function synergyMeteorMines() {
+// its blast, then leaves a fresh mine in the crater.
+function fusionMeteorMines() {
+  const id = fusOwner('meteorDetonatesMines').fusionId;
   for (const fx of state.effects) {
     if (!fx.meteor || fx.cooked) continue;
     fx.cooked = true;
     const mines = state.projectiles.filter(m => m.kind === 'mine' &&
       Math.hypot(m.x - fx.x, m.y - fx.y) <= fx.radius);
-    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+    for (const m of mines) detonateMineAt(m, id);   // copy — detonateMineAt splices
+    if (fus('craterMine')) state.projectiles.push({ kind: 'mine', x: fx.x, y: fx.y, age: 0 });
   }
 }
 
+// Fire state of every weapon in the kit (fused halves included), taken before
+// the weapons tick so wireFusions can tell which ones fired.
+function snapshotFire() {
+  const preFire = new Map();
+  for (const w of kitWeapons(state.weapons)) preFire.set(w, { cd: w.cd, fires: w.fires || 0 });
+  return preFire;
+}
+
 // Post-tick pass: fire-event hooks (a cd/fires reset means the weapon fired)
-// + the continuous flags.
-function wireSynergies(dt, preFire) {
-  if (!state.synergies || state.synergies.length === 0) return;
-  for (const w of state.weapons) {
+// and the continuous link behaviours.
+function wireFusions(dt, preFire) {
+  if (!state.weapons.some(w => w.fusion)) return;
+  for (const w of kitWeapons(state.weapons)) {
     const before = preFire && preFire.get(w);
-    if (!before) continue;
+    if (!before || !w.fusion) continue;
     const fired = (w.fires || 0) > before.fires || w.cd > before.cd;
     if (!fired) continue;
-    if (w.type === 'ZAP' && syn('zapExtraForks')) synergyZapFork(w);
-    if (w.type === 'NOVA_PULSE' && (syn('novaPull') || syn('novaDetonatesMines'))) synergyOnNova(w);
-    if (w.type === 'BEAM' && syn('beamDetonatesMines')) synergyBeamDetonate(w);
+    if (w.type === 'NOVA_PULSE') fusionOnNova(w);
+    if (w.type === 'BEAM') fusionOnBeam(w);
+    if (w.type === 'JAVELIN' && fus('javelinEscort')) fusionJavelinEscort(fus('javelinEscort'));
   }
-  if (syn('scytheArcZap')) synergyScytheZap();
-  if (syn('boomerangHoming')) synergyBoomerangHoming(dt);
-  if (syn('scytheEmberBurst')) synergyScytheEmber();
-  if (syn('ricochetZapFork')) synergyRicochetSpark();
-  if (syn('meteorDetonatesMines')) synergyMeteorMines();
+  if (fus('scytheArcZap')) fusionScytheZap(fus('scytheArcZap'));
+  if (fus('boomerangHoming')) fusionBoomerangHoming(dt);
+  if (fus('scytheEmberBurst')) fusionScytheEmber();
+  if (fus('ricochetZapFork')) fusionRicochetSpark();
+  if (fus('meteorDetonatesMines')) fusionMeteorMines();
 }
 
 // ---------- Update ----------
@@ -3422,12 +3392,10 @@ function update(dt) {
   // CONSECRATION field ticks) tick here beside the cast hand.
   // E2 (R9): phantom blasts and the consecration field are ground AoE too.
   flyingGuard('blast', () => updateUlts(state, dt));
-  // WAVE-11 SYNERGIES: snapshot each weapon's fire state, tick the weapons,
-  // then hook the active flags onto whatever just fired.
-  const preFire = new Map();
-  for (const w of state.weapons) preFire.set(w, { cd: w.cd, fires: w.fires || 0 });
+  // Tick the weapons, then run the fusion link behaviours on whatever fired.
+  const preFire = snapshotFire();
   updateWeapons(state, state.weapons, dt);
-  wireSynergies(dt, preFire);
+  wireFusions(dt, preFire);
 
   // WIND drift pushes every projectile mid-flight (both sides — fairness).
   const wd = windDrift(state.weather);
@@ -3443,8 +3411,8 @@ function update(dt) {
   for (const pr of state.projectiles) {
     if (pr.kind) continue;
     pr.age += dt;
-    // Orbital Volley (VOLLEY+ORBIT synergy): the shot loops one full orbit
-    // around the player before screaming off down its aim lane.
+    // Orbital Volley fusion: the shot loops one full orbit around the player
+    // before flying off down its aim lane.
     if (pr.orbit) {
       const pc = state.player;
       pr.orbit.t += dt;
@@ -4500,6 +4468,12 @@ const DRAFT_LADDER_ON = globalThis.HORDES_DRAFT_LADDER !== false;
 // this many times more often until it is taken.
 const PARTNER_WEIGHT_MULT = 2;
 
+// A weapon drafted into a slot freed by a fusion joins at this level (or the
+// profile's mastery start level, when that is higher); all NEW cards together
+// carry this much draft weight.
+const FUSION_REFILL_LEVEL = 4;
+const REFILL_WEIGHT = 3;
+
 // TIER-2(d) PARALLEL toggle (the W7b measurement-seam pattern above, same
 // shape, same read-once doctrine): default ON — the game ships the sports-card
 // varieties. A measurement arm sets globalThis.HORDES_PARALLELS = false BEFORE
@@ -4559,8 +4533,40 @@ function openDraft() {
         : (describeWeaponLevel(w.type, lv + 1) || '') + ' · Lv ' + lv + '/' + WEAPON_MAX_LEVEL,
       evoText: evoLine(w, lv + 1),
       evoReady: evoReady(w, lv + 1),
+      fuseText: fusionRoadText(w, state.weapons),
       apply: () => { levelUpWeapon(w); },
     });
+  }
+  // A slot freed by a fusion is refilled from the draft: one NEW card per
+  // weapon the profile owns that the kit does not hold (any weapon when it
+  // owns no spare). The new weapon joins part-levelled.
+  const refillsLeft = (state.fusionsMade || 0) - (state.fusionRefills || 0);
+  const openSlots = (state.weaponSlots || C.WEAPON_SLOTS) - 1 -
+    state.weapons.filter(w => w.type !== 'VOLLEY').length;
+  if (refillsLeft > 0 && openSlots > 0) {
+    const have = new Set(kitWeapons(state.weapons).map(w => w.type));
+    const spare = Object.keys(WEAPON_TYPES).filter(t => !have.has(t));
+    const ownedSpare = spare.filter(t => weaponUnlocked(profile, t));
+    const list = ownedSpare.length ? ownedSpare : spare;
+    const joinLv = Math.min(WEAPON_MAX_LEVEL, Math.max(FUSION_REFILL_LEVEL, 1 + masteryStartLevels(profile)));
+    for (const t of list) {
+      const preview = { type: t, level: joinLv };
+      weaponCards.push({
+        id: 'wpn_' + t,
+        name: 'NEW: ' + WEAPON_NAMES[t],
+        desc: (WEAPON_BLURBS[t] || '') + ' · takes the free slot at Lv ' + joinLv,
+        evoText: evoLine(preview, joinLv),
+        evoReady: false,
+        fuseText: fusionRoadText(preview, [...state.weapons, preview]),
+        refill: true,
+        apply: () => {
+          const w = makeWeapon(t);
+          w.level = joinLv;
+          state.weapons.push(w);
+          state.fusionRefills = (state.fusionRefills || 0) + 1;
+        },
+      });
+    }
   }
   // A stat card that is the partner of a weapon in the kit says so, and is
   // offered more often (PARTNER_WEIGHT_MULT) while that evolution is open.
@@ -4578,7 +4584,8 @@ function openDraft() {
     return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT };
   };
   const pool = [
-    ...weaponCards.map(c => ({ ...c, weight: 1 })),
+    // Level-up cards weigh 1 each; the NEW cards share REFILL_WEIGHT between them.
+    ...weaponCards.map(c => ({ ...c, weight: c.refill ? REFILL_WEIGHT / weaponCards.filter(x => x.refill).length : 1 })),
     // G8 step 1: the stat family carries its rarity weight (meta.js
     // draftCardWeight) so Fortune shifts the DRAFT, not just world drops.
     // At luck 0 every one of these is exactly 0.3 — the shipped pool.
@@ -4690,9 +4697,6 @@ function openDraft() {
     if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
     el._draftOffer = u;        // the keydown routing + the inspect flow read this
     el.tabIndex = 0;           // the arrows+Enter cursor focuses (frameCard hot tone)
-    // WAVE-26: synergy hint line ONLY when the pick relates to a pair the run
-    // actually implements (see synergyHintForCard). Silent otherwise.
-    const hint = synergyHintForCard(u);
     // W7b: the ladder tier is ON the card — the chase has to read as a chase.
     // Tints are the rarity.js encounter tells (RARE cyan / MYTHIC violet), so
     // the draft and the field speak one rarity language. Inline style: the
@@ -4704,11 +4708,8 @@ function openDraft() {
     if (u.evoReady) el.className += ' evo-ready';
     // TIER-2(d): the parallel stamp is ON the card (name + blurb, plain text).
     // The card's name/desc strings stay the registry's byte-identical text; the
-    // stamp is additive only. Class "par", NOT "syn": the synergy-hint contract
-    // owns class="syn" (test_synergy_hint: every .syn line must name a real
-    // synergy) — the parallel badge is its own line kind, styled inline (the
-    // tier-badge + .card .syn typography mirrored, z-index included so it
-    // layers above the painted plaque like every other content layer).
+    // stamp is additive only. Its own line kind (class "par"), styled inline
+    // with the tier badge's typography, above the painted plaque.
     const par = u.parallel && PARALLELS[u.parallel];
     const parBadge = par
       ? `<div class="par" style="color:${par.tell};margin-top:8px;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${par.name.toUpperCase()} - ${par.blurb}</div>`
@@ -4717,8 +4718,11 @@ function openDraft() {
     const evoLine = u.evoText
       ? `<div class="evo" style="color:${u.evoReady ? '#ffd75e' : '#c0b48a'};font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.evoText}</div>`
       : '';
-    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + evoLine +
-      (hint ? `<div class="syn">${hint}</div>` : '') +
+    // The road to a fusion rides the line under that (weapon cards only).
+    const fuseLine = u.fuseText
+      ? `<div class="evo fuse" style="color:#7ad0ff;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.fuseText}</div>`
+      : '';
+    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + evoLine + fuseLine +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
@@ -4888,7 +4892,7 @@ function closeDraft(u) {
 // The reason it existed is gone: the card ITSELF now carries the art, the name,
 // the tier badge, its own COMPUTED effect text (built at offer time by the real
 // pool code — Second Wind's revive fraction, Iron Heart's percent, a weapon
-// level's actual deltas out of describeWeaponLevel), the synergy hint and the
+// level's actual deltas out of describeWeaponLevel), the evolution and fusion roads and the
 // [N] key hint, so there is nothing left for a second screen to reveal. One
 // activation picks; tap/click, and arrows + Enter on the keyboard, are the same
 // single confirmation. The 1-4 number keys stay the one-press quick-pick they
@@ -4943,6 +4947,17 @@ const DRAFT_TAPER = [1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15];
 // Split Shot card past the cap did NOTHING — a fake choice. Overflow picks now
 // convert to +20% weapon damage, exactly like the VOLLEY Lv3/6 proj conversion
 // in weapons.js.
+// The Volley's damage multiplier on a round: its level, its projectile count,
+// loot and arch multipliers, its evolution and its fusion.
+function volleyDamageMult() {
+  const w = state.weapons.find(x => x.type === 'VOLLEY');
+  const P = weaponLevelParams('VOLLEY', w ? w.level : 1);
+  const evo = w && w.evolution;
+  return (P.dmgMult || 1) * (1 + WEAPON_STEPS.VOLLEY.PROJ_DMG * (P.proj || 0)) *
+    (state.player.stats.damageMult || 1) * (activeArchMods(state).damageMult || 1) *
+    ((evo && evo.affixes.damageMult) || 1) * ((w && w.fusion && w.fusion.mult) || 1);
+}
+
 function volleyAtProjCap() {
   const w = state.weapons.find(x => x.type === 'VOLLEY');
   const proj = weaponLevelParams('VOLLEY', w ? w.level : 1).proj || 0;
@@ -5054,7 +5069,7 @@ function pick(u) {
   }
   // A level-up or a partner card may have completed an evolution: a declined
   // offer is re-opened by the next pick.
-  for (const w of state.weapons) w.evoDeclined = false;
+  reopenForgeOffers();
   closeDraft(u);
 }
 
@@ -5244,9 +5259,9 @@ function tickNight(realDt) {
     if (nightEvolveLeft <= 0) {
       nightEvolveLeft = null;
       if (state.mode === 'evolve') {
-        const cands = evolutionCandidates();
-        if (cands.length) doEvolve(cands[0]);   // first candidate: the draft policy's first-slot rule
-        else closeEvolve();                      // candidates vanished under us: just leave the overlay
+        const offers = forgeOffers();
+        if (offers.length) takeForgeOffer(offers[0]);   // the first offer
+        else closeEvolve();                              // offers vanished under us: just leave the overlay
       }
     }
   }
@@ -5299,10 +5314,9 @@ function nightUnstick(m) {
         activateDraftCard(u);
       }
     } else if (m === 'evolve') {
-      // the same action the named timer makes (main.js doEvolve) — first
-      // candidate, the draft policy's first-slot rule
-      const cands = evolutionCandidates();
-      if (cands.length) doEvolve(cands[0]);
+      // the same action the named timer makes: the first offer
+      const offers = forgeOffers();
+      if (offers.length) takeForgeOffer(offers[0]);
       else closeEvolve();
     } else if (m === 'portal-cine') endPortalCine();
     else if (m === 'death-cine') endDeathCine();
@@ -5435,12 +5449,11 @@ function tickDraftCeremony(dt) {
   if (draftCeremony.left <= 0) endDraftCeremony(true);
 }
 
-// ---------- EVOLUTION draft (wave-7/A, evolutions.js) -----------------------
-// Surfaced the moment a weapon hits Lv8 AND its required item kind is
-// equipped AND a token is banked. The card is built from describeEvolution;
-// evolveWeapon mutates the SAME weapon instance (levelUpWeapon precedent)
-// and spends the token. Declines are suppressed until a new token or item
-// lands (otherwise the check would re-open every frame).
+// ---------- THE FORGE: evolution and fusion offers ---------------------------
+// The overlay opens the moment a weapon can evolve (max level + its partner
+// card, evolutions.js) or two evolved weapons can fuse (fusions.js). NOT NOW
+// defers the offers until the next draft pick. An unattended run takes the
+// first offer after a timeout.
 function ownedCards() {
   return (state.player && state.player.takenStats) || {};
 }
@@ -5454,43 +5467,84 @@ function evolutionCandidates() {
   });
 }
 
+// Fusions the kit can make now, minus the ones deferred with NOT NOW.
+function fusionOffers() {
+  return fusionCandidates(state.weapons, state.fuseDeclined);
+}
+
+// Everything the overlay can offer right now: evolutions first, then fusions.
+function forgeOffers() {
+  return [
+    ...evolutionCandidates().map(w => ({ kind: 'evolve', w })),
+    ...fusionOffers().map(c => ({ kind: 'fuse', def: c.def, w: c.host, partner: c.partner })),
+  ];
+}
+
+function takeForgeOffer(o) {
+  if (o.kind === 'fuse') doFuse(o.def);
+  else doEvolve(o.w);
+}
+
+// A draft pick (or a level gained another way) re-opens every deferred offer.
+function reopenForgeOffers() {
+  for (const w of state.weapons) w.evoDeclined = false;
+  if (state.fuseDeclined) state.fuseDeclined.clear();
+}
+
+// A weapon's name as the player knows it: its fusion, its evolution, its type.
+function weaponDisplayName(w) {
+  return w.fusion ? w.fusion.name : w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
+}
+
 function maybeOpenEvolve() {
   if (state.mode !== 'playing') return;
-  const cands = evolutionCandidates();
-  if (cands.length === 0) return;
-  // The evolve overlay bypasses openMenu — supersede a live pick ceremony
-  // here too (it would otherwise block the evolve cards' clicks for a frame
-  // with its pointer-events gate). Placed AFTER the candidates gate: this
-  // function runs every update(), and only an ACTUAL evolve screen takes the
-  // overlay over.
+  const offers = forgeOffers();
+  if (offers.length === 0) return;
+  // The overlay bypasses openMenu — supersede a live pick ceremony here too
+  // (its pointer-events gate would block the offer cards for a frame).
   if (draftCeremony) endDraftCeremony(false);
   state.mode = 'evolve';
   overlay.style.display = 'flex';
-  ovTitle.textContent = 'EVOLUTION';
+  const lay = setDraftOverlay(true, offers.length + 1);
+  const fusing = offers.every(o => o.kind === 'fuse');
+  ovTitle.textContent = fusing ? 'FUSION' : 'EVOLUTION';
   ovTitle.className = 'logo';
-  ovSub.textContent = 'a maxed weapon and its partner card';
+  ovSub.textContent = fusing ? 'two evolved weapons become one, and a weapon slot comes free'
+    : 'a maxed weapon and its partner card';
   ovCards.innerHTML = '';
-  // WAVE-23 FIX (desktop audit #5): every card was labelled `[1]` while the
-  // keydown handler routes 1-4 to ovCards.children[n-1] — so pressing [2]
-  // picked the second card the label called "[1]". Label each card with its
-  // own position (the same index the number key resolves to).
-  cands.forEach((w, i) => {
-    const card = describeEvolution(w);
+  // Each card is labelled with its own position: the number keys route 1-4 to
+  // ovCards.children[n-1].
+  offers.forEach((o, i) => {
     const el = document.createElement('div');
     el.className = 'card';
-    el.innerHTML =
-      `<div class="name">EVOLVE: ${card.name}</div>` +
-      `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}</div>` +
-      `<div class="key">[${i + 1}]</div>`;
-    el.onclick = () => doEvolve(w);
+    if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
+    if (o.kind === 'fuse') {
+      const card = describeFusion(o.def);
+      el._fusionOffer = card.id;
+      el.innerHTML =
+        `<div class="name">FUSE: ${card.name}</div>` +
+        `<div class="desc">${card.desc}<br>${weaponDisplayName(o.w)} + ${weaponDisplayName(o.partner)}` +
+        ` &middot; both x${card.mult} damage &middot; frees a weapon slot</div>` +
+        `<div class="key">[${i + 1}]</div>`;
+    } else {
+      const card = describeEvolution(o.w);
+      el.innerHTML =
+        `<div class="name">EVOLVE: ${card.name}</div>` +
+        `<div class="desc">${card.desc}<br>${card.weaponName} Lv${card.levelReq} + ${card.partnerName}</div>` +
+        `<div class="key">[${i + 1}]</div>`;
+    }
+    el.onclick = () => takeForgeOffer(o);
     ovCards.appendChild(el);
     frameCard(el);
   });
   // NOT NOW takes the next number key when it fits the 1-4 routing window
-  // (3+ candidates can overflow it — then it stays mouse/click only).
+  // (more offers can overflow it — then it stays mouse/click only).
   const notNow = menuCard('NOT NOW', 'offered again after your next level-up card', () => {
-    for (const w of cands) w.evoDeclined = true;
-    // SLICE 9: deferring is a choice too — the offer set stays, taken='deferred'.
+    for (const o of offers) {
+      if (o.kind === 'fuse') state.fuseDeclined.add(o.def.id);
+      else o.w.evoDeclined = true;
+    }
+    // Deferring is a choice too: the offer set stays, taken = 'deferred'.
     if (dev) {
       for (let i = dev.evolutions.length - 1; i >= 0; i--) {
         if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = 'deferred'; break; }
@@ -5498,41 +5552,44 @@ function maybeOpenEvolve() {
     }
     closeEvolve();
   });
-  if (cands.length + 1 <= 4) {
-    notNow.innerHTML += `<div class="key">[${cands.length + 1}]</div>`;
+  if (offers.length + 1 <= 4) {
+    notNow.innerHTML += `<div class="key">[${offers.length + 1}]</div>`;
     // A real browser re-serializes innerHTML on += and drops the painted
     // frame canvas with it; frameCard is idempotent, so re-frame after the
     // mutation (the stub DOM keeps the child and this is a no-op repaint).
     frameCard(notNow);
   }
-  // An unattended run must not park here: a night run takes the FIRST
-  // candidate after NIGHT_EVOLVE_S, and an AUTO run after the draft timeout
-  // (same named-timer shape as CONTINUE/RETRY).
+  // An unattended run must not park here: a night run takes the FIRST offer
+  // after NIGHT_EVOLVE_S, and an AUTO run after the draft timeout.
   if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
   else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') nightEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
-  // SLICE 9: record the offer set (the taken weapon — or 'deferred' — fills
-  // in at doEvolve()/NOT NOW).
-  if (dev) dev.evolutions.push({ offered: cands.map(w => w.type), taken: null });
+  // The offer set (the taken entry — or 'deferred' — fills in when it resolves).
+  if (dev) dev.evolutions.push({ offered: offers.map(o => (o.kind === 'fuse' ? 'fuse:' + o.def.id : o.w.type)), taken: null });
 }
 
-// The ONE evolve action — the card's own onclick path, shared verbatim with
-// the night auto-pick (never a second implementation of the same transition).
+function recordForgeTaken(what) {
+  if (!dev) return;
+  for (let i = dev.evolutions.length - 1; i >= 0; i--) {
+    if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = what; break; }
+  }
+}
+
+// The forge restores the hero: full health and a share of the starting pool.
+function forgeHeal() {
+  const p = state.player;
+  p.stats.maxHp += EVOLUTION_HP_FRAC * runBase(p).maxHp;
+  p.hp = p.stats.maxHp;
+}
+
+// The ONE evolve action — the card's own onclick path, shared with the
+// unattended auto-pick.
 function doEvolve(w) {
   const res = evolveWeapon(w, ownedCards());
   if (res.ok) {
-    // SLICE 9: the taken evolution lands on the latest still-open offer record.
-    if (dev) {
-      for (let i = dev.evolutions.length - 1; i >= 0; i--) {
-        if (dev.evolutions[i].taken == null) { dev.evolutions[i].taken = w.type; break; }
-      }
-    }
-    // WAVE-9: a weapon EVOLUTION charges +2 heat (event-id deduped, so a
-    // double-fired tick can never double-charge).
+    recordForgeTaken(w.type);
+    // An evolution charges +2 heat (event-id deduped).
     addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
-    // The forge restores the hero: full health and a share of the starting pool.
-    const p = state.player;
-    p.stats.maxHp += EVOLUTION_HP_FRAC * runBase(p).maxHp;
-    p.hp = p.stats.maxHp;
+    forgeHeal();
     if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
       // The first evolution ever: the cinematic banner and its pause.
       state.bossBanner = {
@@ -5545,8 +5602,35 @@ function doEvolve(w) {
     }
     toast(res.name.toUpperCase() + ' UNLEASHED');
     audio.playSfx('evolve');
-    // WAVE-26 FEATURE 4: an evolution is one of the two EARNED slow-mo
-    // moments — brief dilation + the crackle flare, back to normal after.
+    // An evolution is one of the EARNED slow-mo moments.
+    triggerEarnedMoment('evolution', state.player.x, state.player.y);
+  }
+  closeEvolve();
+}
+
+// The ONE fuse action. The two halves become one weapon (fusions.js), the
+// freed slot is refilled from the next drafts, and the fusion is recorded on
+// the profile's collection shelf (the banner ledger, key 'fusion:<ID>').
+function doFuse(def) {
+  const res = fuseWeapons(state.weapons, def);
+  if (res.ok) {
+    state.fusionsMade = (state.fusionsMade || 0) + 1;
+    recordForgeTaken('fuse:' + res.weapon.fusionId);
+    forgeHeal();
+    const first = markBannerSeen(profile, FUSION_SHELF_KEY + res.weapon.fusionId);
+    if (oneTimeBanners && first) {
+      // A fusion discovered for the first time: the cinematic banner and its pause.
+      state.bossBanner = {
+        names: [res.name.toUpperCase()], verb: 'FUSED',
+        title: res.name.toUpperCase(),
+        sub: 'NEW FUSION - ' + res.weapon.fusion.desc.toUpperCase(),
+        ttl: TOKEN_BANNER_SEC,
+      };
+      state.bannerHold = TOKEN_BANNER_SEC;
+    }
+    // The feed says what the new weapon does: an AUTO run took it unread.
+    toast('FUSION: ' + res.name.toUpperCase() + ' — ' + res.weapon.fusion.desc);
+    audio.playSfx('evolve');
     triggerEarnedMoment('evolution', state.player.x, state.player.y);
   }
   closeEvolve();
@@ -5554,7 +5638,39 @@ function doEvolve(w) {
 
 function closeEvolve() {
   overlay.style.display = 'none';
+  setDraftOverlay(false);
   state.mode = 'playing';
+}
+
+// ---------- The fusion shelf (PROGRESS) --------------------------------------
+// Every fusion as a card: discovered ones show their emblem, name, pair and
+// effect; the rest are dark silhouettes.
+const FUSION_SHELF_KEY = 'fusion:';
+function fusionsDiscovered() {
+  return FUSION_DEFS.filter(d => bannerSeen(profile, FUSION_SHELF_KEY + d.id)).length;
+}
+function fusionMarkHtml(def, known, px) {
+  const grid = def.mark.map(row => [...row].map(c => (c === 'a' ? 1 : c === 'b' ? 2 : 0)));
+  const pal = known ? { 1: def.tint[0], 2: def.tint[1] } : { 1: '#2a2a36', 2: '#1c1c26' };
+  return iconHtml(grid, pal, px);
+}
+function showFusions() {
+  openMenu('progress');
+  ovTitle.textContent = 'FUSIONS';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = fusionsDiscovered() + ' / ' + FUSION_DEFS.length +
+    ' discovered &middot; two evolved weapons that pair up fuse into one';
+  for (const def of FUSION_DEFS) {
+    const known = bannerSeen(profile, FUSION_SHELF_KEY + def.id);
+    const d = describeFusion(def);
+    const el = menuCard(
+      fusionMarkHtml(def, known, 4) + (known ? d.name : '? ? ?'),
+      known ? d.pairNames.join(' + ') + '<br><span style="color:#a8a8c0">' + d.desc + '</span>'
+        : 'not discovered yet',
+      () => {}, !known);
+    el._fusionShelf = { id: def.id, known };
+  }
+  menuCard('BACK', 'to progress [ESC]', () => showProgress());
 }
 
 // ===========================================================================
@@ -5770,7 +5886,7 @@ function recordRunAchievements(gold) {
     wave: state.wave.num,
     time: state.time,
     weaponLevel: bestWeaponLevel,
-    evolutions: state.weapons.filter(w => !!w.evolution).length,
+    evolutions: kitWeapons(state.weapons).filter(w => !!w.evolution).length,
     legendaries: state.items.filter(it => it.rarity === 'LEGENDARY').length,
     // G9 FOLLOW-UP: the counters wired out of live state — FIRST_BOSS,
     // BOSS_SLAYER_5, CHESTS_25 and UNTOUCHED_WAVE were unearnable before this.
@@ -7103,6 +7219,8 @@ function showProgress() {
     () => showTrophies());
   menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
     () => showBestiary());
+  menuCard('FUSIONS', `${fusionsDiscovered()} / ${FUSION_DEFS.length} discovered · weapon pairs`,
+    () => showFusions());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
 }
 
@@ -8902,14 +9020,9 @@ function startRun() {
   interMsg = '';
   state.effects = [];
   state.toasts = [];
-  // WAVE-25 FIX (audit 2.3): a synergy already live at t=0 (the ORBIT-starting
-  // PALADIN's VOLLEY+ORBIT) must be announced on EVERY run. Two bugs hid it:
-  // synergyNames (the toast-dedup set) was never reset between runs, so run 2+
-  // treated the pair as already seen; and this call used to sit BEFORE the
-  // toasts clear above, which wiped the announcement it had just queued. Both
-  // are fixed here — reset the set, then detect AFTER the toast list is empty.
-  state.synergyNames = null;
-  refreshSynergies();   // WAVE-11: pairs may already be live at run start
+  state.fuseDeclined = new Set();
+  state.fusionsMade = 0;
+  state.fusionRefills = 0;
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   // No stale banner hold can freeze the new run's opening frames.
   state.bannerHold = 0;
@@ -9318,21 +9431,25 @@ function openStats() {
   const p = state.player;
   const info = () => audio.playSfx('uiMove');
 
-  // WEAPONS: icon + name (+ evolution) + level + one-line effect.
+  // WEAPONS: icon + name (+ evolution or fusion) + level + one-line effect,
+  // then the weapon's road: what it evolves into and what it fuses with.
   let wHtml = '';
   for (const w of state.weapons) {
     const icon = iconHtml(WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY, WEAPON_ICON_PALETTE, 5);
-    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
-    const evoTag = w.evolution
-      ? ' <span style="color:#ffd75e">(' + (WEAPON_NAMES[w.type] || w.type) + ' evolved)</span>'
-      : '';
+    const base = WEAPON_NAMES[w.type] || w.type;
+    const tag = w.fusion
+      ? ' <span style="color:#7ad0ff">(' + base + ' + ' + (WEAPON_NAMES[w.fused.type] || w.fused.type) + ' fused)</span>'
+      : w.evolution ? ' <span style="color:#ffd75e">(' + base + ' evolved)</span>' : '';
     const pr = evolutionProgress(w, ownedCards());
     const evoLine = pr && !pr.evolved
       ? '<br><span style="color:#ffd75e">evolves into ' + pr.def.name + ' at Lv ' + pr.levelReq +
         ' with ' + pr.partnerName + (pr.partnerOwned ? ' (owned)' : '') + '</span>'
       : '';
-    wHtml += icon + '<b>' + nm + '</b>' + evoTag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
-      '<br><span style="color:#a8a8c0">' + (WEAPON_BLURBS[w.type] || '') + '</span>' + evoLine + '<br>';
+    const road = fusionRoadText(w, state.weapons, true);
+    const fuseLine = road ? '<br><span style="color:#7ad0ff">' + road + '</span>' : '';
+    wHtml += icon + '<b>' + weaponDisplayName(w) + '</b>' + tag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
+      '<br><span style="color:#a8a8c0">' + (w.fusion ? w.fusion.desc : (WEAPON_BLURBS[w.type] || '')) + '</span>' +
+      evoLine + fuseLine + '<br>';
   }
   menuCard('WEAPONS', wHtml || 'none yet', info);
 
@@ -9351,14 +9468,6 @@ function openStats() {
     }
   }
   menuCard('ITEMS', iHtml || 'nothing equipped', info);
-
-  // SYNERGIES: describeSynergy (synergies.js).
-  let sHtml = '';
-  for (const s of state.synergies) {
-    const d = describeSynergy(s);
-    sHtml += '<b>' + d.name + '</b><br><span style="color:#a8a8c0">' + d.desc + '</span><br>';
-  }
-  menuCard('SYNERGIES', sHtml || 'none active', info);
 
   // RAMPAGE + core stats.
   const pct = (v) => Math.round(v * 100) + '%';
@@ -11439,8 +11548,7 @@ function hudTextBlock(p) {
   const slotCap = state.weaponSlots || C.WEAPON_SLOTS;
   const nonVolley = state.weapons.filter(w => w.type !== 'VOLLEY').length;
   const wpnNames = state.weapons.map(w => {
-    const nm = w.evolution ? w.evolution.name : (WEAPON_NAMES[w.type] || w.type);
-    return nm + ((w.level || 1) > 1 ? '\u00b7' + w.level : '');
+    return weaponDisplayName(w) + ((w.level || 1) > 1 ? '\u00b7' + w.level : '');
   }).join(',');
   // Equipped rare items (loot.js): last word of the name keeps the line short.
   const itemNames = state.items.map(it => it.name.split(' ').pop()).join(',');
@@ -12358,7 +12466,12 @@ requestAnimationFrame(frame);
 // toggle + the shared held-direction input object (the d-pad seam).
 export const __TEST = {
   state, get controller() { return controller; }, startRun,
-  getProfile: () => profile, refreshSynergies,
+  getProfile: () => profile,
+  // Fusion seams: the live offers, the one fuse action, the link pass and the shelf.
+  fusion: {
+    offers: () => fusionOffers(), take: (def) => doFuse(def), wire: wireFusions, snapshot: snapshotFire,
+    forgeOffers, shelf: showFusions, discovered: fusionsDiscovered,
+  },
   // MANUAL v2 seam: page turns through the real renderer (goto re-draws the
   // whole stack — indicator, nav, contents, footer).
   manual: { next: manualNext, prev: manualPrev, goto: manualGoto },
@@ -12853,7 +12966,6 @@ export const __TEST = {
   // the APEX MARK flourish is assertable by STRING equality — a run with the
   // mark off must be byte-identical to the pre-apex output.
   hudTextBlock,
-  synergyHintForCard,
   openDraft,
   // Arrow-cursor seam: where the keyboard cursor sits on the offer row
   // (headless tests read this instead of poking module scope). The R2
@@ -12894,7 +13006,7 @@ export const __TEST = {
     get active() { return !!draftCeremony; },
     get left() { return draftCeremony ? draftCeremony.left : null; },
   },
-  synWeaponDmg,
+  fusWeaponDmg,
   stanceOf: () => controller.stance,
   // ---- WAVE-28 AUTO-DRINK seam: the pure decision step, so a headless probe
   // can drive the pilot's potion hand with a controlled dt rather than depending

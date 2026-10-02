@@ -13,6 +13,7 @@ import {
 } from './sprites.js';
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
+import { fusionByBodyKind, fusionDef } from './fusions.js';   // fused weapons' tints and emblems
 import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
 import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
 // PORT SLICE I — HUD chrome trim (original art, additive-only: every helper
@@ -665,6 +666,36 @@ function blitProjectile(g, p, x, y, ph) {
     proxy = { vx: OCT_X[o], vy: OCT_Y[o] };
   }
   blitPainted(g, key, PROJ_BOX, (c, ox, oy) => paintProjectileBody(c, proxy, ox, oy, bits), x, y, STYLE_ITEM);
+}
+
+// ---------- Fused weapons (fusions.js) ----------
+// Every body a fused weapon throws wears the fusion's CORONA: four corner
+// sparks in its first tint and two edge sparks in its second, the edge pair
+// turning with the body's position hash. <= 6 rects, cached per fusion.
+export function paintFusionCorona(g, def, x, y, bits) {
+  g.fillStyle = def.tint[0];
+  g.fillRect(x - 4, y - 4, 1, 1); g.fillRect(x + 4, y - 4, 1, 1);
+  g.fillRect(x - 4, y + 4, 1, 1); g.fillRect(x + 4, y + 4, 1, 1);
+  g.fillStyle = def.tint[1];
+  if (bits) { g.fillRect(x - 6, y, 2, 1); g.fillRect(x + 5, y, 2, 1); }
+  else { g.fillRect(x, y - 6, 1, 2); g.fillRect(x, y + 5, 1, 2); }
+}
+function blitFusionCorona(g, def, x, y, ph, cached) {
+  const bits = (ph >> 3) & 1;
+  if (cached) blitPainted(g, 'pj:fus:' + def.id + ':' + bits, PROJ_BOX, (c, ox, oy) => paintFusionCorona(c, def, ox, oy, bits), x, y, STYLE_PLAIN);
+  else paintFusionCorona(g, def, x, y, bits);
+}
+// The fusion's 5x5 emblem ('a' = first tint, 'b' = second) at z pixels a cell:
+// the HUD weapon slot of a fused weapon.
+export function paintFusionMark(g, def, x, y, z) {
+  for (let ry = 0; ry < def.mark.length; ry++) {
+    const row = def.mark[ry];
+    for (let rx = 0; rx < row.length; rx++) {
+      if (row[rx] === '.') continue;
+      g.fillStyle = row[rx] === 'a' ? def.tint[0] : def.tint[1];
+      g.fillRect(x + rx * z, y + ry * z, z, z);
+    }
+  }
 }
 
 export class Renderer {
@@ -1449,6 +1480,8 @@ export class Renderer {
     // (position hash, age, velocity, flight angle), never wall clock and
     // never Math.random, so 60Hz and 120Hz paint identically at the same age.
     // Bounded: <= 11 rects per projectile body (stated per kind below).
+    // Fused weapons: body kind -> fusion def (null when the kit has none).
+    const fusOf = fusionByBodyKind(state.weapons);
     for (const p of state.projectiles) {
       const x = Math.round(p.x - cam.x), y = Math.round(p.y - cam.y);
       if (cull(x, y, 8)) continue;
@@ -1456,6 +1489,8 @@ export class Renderer {
       const ph = ((Math.round(p.x) * 73856093) ^ (Math.round(p.y) * 19349663)) >>> 0;
       if (cached) blitProjectile(g, p, x, y, ph);
       else paintProjectileBody(g, p, x, y, ph);
+      const fd = fusOf && p.kind !== 'firepatch' && fusOf[p.kind || 'volley'];
+      if (fd) blitFusionCorona(g, fd, x, y, ph, cached);
     }
 
     // Skill/weapon effects (fillRect only).
@@ -1475,7 +1510,10 @@ export class Renderer {
         // and 120Hz paint identically at the same age. Bounded: 48 + 24 +
         // 8 + 4 rects max per ring effect (pools unchanged).
         const r = fx.radius * t;
-        const ringCol = fx.evo === 'sun' ? (t < 0.5 ? '#ffffff' : '#ffb14a')
+        const ringFus = (fx.fus && fusionDef(fx.fus)) ||
+          (fusOf && fx.kind === 'nova_pulse' && !fx.evo ? fusOf.nova_pulse : null);
+        const ringCol = ringFus ? (t < 0.5 ? ringFus.tint[0] : ringFus.tint[1])
+          : fx.evo === 'sun' ? (t < 0.5 ? '#ffffff' : '#ffb14a')
           : fx.evo === 'fire' ? (t < 0.5 ? '#fff2c0' : '#ff6a2a')
           : fx.evo === 'meteor' ? (t < 0.5 ? '#efe0ff' : '#8a5ad8')
           : fx.kind === 'nova'
@@ -1555,7 +1593,8 @@ export class Renderer {
         const bright = fx.kind === 'scythe_arc';
         const blink = Math.floor((fx.age || 0) * 24) % 2 === 0;
         if (bright || blink) {
-          g.fillStyle = bright ? (t < 0.4 ? '#ffffff' : '#a8e0ff') : '#c8d8e8';
+          const sf = fusOf && fusOf.scythe_arc;   // a fused Scythe sweeps in its fusion's colours
+          g.fillStyle = bright ? (t < 0.4 ? (sf ? sf.tint[0] : '#ffffff') : (sf ? sf.tint[1] : '#a8e0ff')) : '#c8d8e8';
           const steps = 16;
           for (let i = 0; i <= steps; i++) {
             const a = fx.dir - fx.arc / 2 + (i / steps) * fx.arc;
@@ -1623,7 +1662,7 @@ export class Renderer {
         for (let i = 0; i <= steps; i++) {
           const d = (i / steps) * fx.len;
           const x = Math.round(fx.x + cx * d - cam.x), y = Math.round(fx.y + cy * d - cam.y);
-          g.fillStyle = '#ff5566';                       // outer glow
+          g.fillStyle = (fusOf && fusOf.beam) ? fusOf.beam.tint[1] : '#ff5566';   // outer glow (a fused Beam: its fusion's colour)
           g.fillRect(x - Math.round(th / 2), y - Math.round(th / 2), th, th);
           g.fillStyle = '#ffffff';                       // hot core
           g.fillRect(x - 1, y - 1, 2, 2);
@@ -1655,7 +1694,9 @@ export class Renderer {
       } else if (fx.kind === 'zap') {
         // Chain lightning: 2px dots sampled along each polyline segment +
         // PORT SLICE H fork ticks every 3rd dot (perpendicular, hash-sided).
-        g.fillStyle = t < 0.5 ? '#ffffff' : '#a8e0ff';
+        // A fusion's link bolt (fx.fus) or a fused Chain Zap strikes in the fusion's colours.
+        const zf = (fx.fus && fusionDef(fx.fus)) || (fusOf && fusOf.zap);
+        g.fillStyle = zf ? (t < 0.5 ? zf.tint[0] : zf.tint[1]) : (t < 0.5 ? '#ffffff' : '#a8e0ff');
         const zh = ((Math.round(fx.points[0].x) * 73856093) ^ (Math.round(fx.points[0].y) * 19349663)) >>> 0;
         let zdi = 0;
         for (let s = 0; s < fx.points.length - 1; s++) {
@@ -1716,6 +1757,7 @@ export class Renderer {
         g.fillStyle = '#e8f4ff';
         if (horiz) { g.fillRect(ox + ((oh & 1) === 0 ? 4 : -4), oy - 2, 1, 1); }
         else { g.fillRect(ox - 2, oy + ((oh & 1) === 0 ? 4 : -4), 1, 1); }
+        if (fusOf && fusOf.orbit) blitFusionCorona(g, fusOf.orbit, ox, oy, oh, cached);
       } else if (fx.kind === 'orbit_hit') {
         // PORT SLICE H: orbit-blade contact was a flat 6x6 white square.
         // Now a ring-burst: white core + 8-tick pale ring + 4 diagonal flecks.
@@ -3171,10 +3213,17 @@ export class Renderer {
     g.textBaseline = 'top';
     for (const w of state.weapons) {
       const grid = WEAPON_ICONS[w.type] || WEAPON_ICONS.VOLLEY;
-      g.fillStyle = w.evolution ? '#ffd75e' : '#2a2a36';   // slot frame
+      const wfus = w.fusionId ? fusionDef(w.fusionId) : null;
+      g.fillStyle = wfus ? wfus.tint[1] : w.evolution ? '#ffd75e' : '#2a2a36';   // slot frame
       g.fillRect(wx - 1, wy - 1, 5 * Z + 2, 5 * Z + 2);
       studCorners(g, wx - 1, wy - 1, 5 * Z + 2, 5 * Z + 2);   // PORT SLICE I: slot studs
-      for (let ry = 0; ry < grid.length; ry++) {
+      if (wfus) {
+        // A fused weapon shows its fusion's emblem on a dark plate.
+        g.fillStyle = '#14141c';
+        g.fillRect(wx, wy, 5 * Z, 5 * Z);
+        paintFusionMark(g, wfus, wx, wy, Z);
+      }
+      for (let ry = 0; !wfus && ry < grid.length; ry++) {
         for (let rx = 0; rx < grid[ry].length; rx++) {
           const v = grid[ry][rx];
           if (v) {

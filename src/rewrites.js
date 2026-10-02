@@ -142,7 +142,7 @@ export const REWRITES = {
     name: 'Wide Orbit',
     tags: ['ORBIT'],
     // PREDICATE-offered: only while an ORBIT weapon is equipped (the same
-    // equipped-weapon read detectSynergies consumes).
+    // kit read the fusion checks use).
     offered: orbitEquipped,
     desc: 'ORBIT blades fly 30% wider and spin 20% faster',
   },
@@ -423,9 +423,9 @@ function hasBlastSource(state) {
   const q = state && state.character && state.character.skill;
   return q === 'CHAIN_REACTION' || q === 'AFTERIMAGE';
 }
-/** WIDE ORBIT: an ORBIT weapon is equipped (the read detectSynergies consumes). */
+/** WIDE ORBIT: an ORBIT weapon is equipped (in a slot or as half of a fusion). */
 function orbitEquipped(state) {
-  return !!(state && state.weapons && state.weapons.some(w => w && w.type === 'ORBIT'));
+  return !!(state && state.weapons && state.weapons.some(w => w && (w.type === 'ORBIT' || (w.fused && w.fused.type === 'ORBIT'))));
 }
 /**
  * G21 slice 2 D2: a CROSS-TAG COMBO is offered only while the run owns BOTH
@@ -577,8 +577,8 @@ export function tickRewriteEchoes(state, dt) {
 /**
  * onWeaponHit(state, enemy, opts) — called from DIRECT-weapon-hit damage sites
  * ONLY (weapons.js hurt() — orbit/boomerang/zap/nova-pulse/scythe/seeker/mine/
- * beam — plus main.js's volley projectile, the synergy zap forks and the
- * synergy mine detonation), and from NOWHERE else: never from blasts
+ * beam — plus main.js's volley projectile, the fusion link bolts and the
+ * fusion mine detonation), and from NOWHERE else: never from blasts
  * (applyBlast), burn ticks, echoes, thorns, or enemy damage. Feeds RIME,
  * IGNITE, LIVE WIRE and (slice 2) OVERLOAD.
  * `opts.orbit` marks an ORBIT blade contact, which is the ONLY hit class

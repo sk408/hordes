@@ -95,8 +95,8 @@ S.check('main.js uses PIERCE_ALL instead of a hardcoded 999', () => {
   assert.equal(PIERCE_ALL, 999, 'and the sentinel value itself is unchanged');
 });
 
-// ---- 5. synergy bolts receive the arch (BERSERK) damage -----------------------
-S.check('synWeaponDmg includes activeArchMods().damageMult', () => {
+// ---- 5. fusion link bolts receive the arch (BERSERK) damage -------------------
+S.check('fusWeaponDmg includes activeArchMods().damageMult', () => {
   T.startRun();
   pump(1);
   state.weapons = [makeWeapon('VOLLEY'), makeWeapon('ZAP')];
@@ -104,15 +104,15 @@ S.check('synWeaponDmg includes activeArchMods().damageMult', () => {
   p.stats.damage = 10;
   p.stats.damageMult = 2;
   state.archBuffs = [];
-  const plain = T.synWeaponDmg('ZAP', 3);
+  const plain = T.fusWeaponDmg('ZAP', 3);
   // The documented convention: damage * mult * level dmgMult * loot damageMult
-  // * arch damageMult * evolution damageMult.
+  // * arch damageMult * evolution damageMult * fusion mult.
   const P = weaponLevelParams('ZAP', 1);
   assert.equal(plain, 10 * 3 * (P.dmgMult || 1) * 2, 'no arch -> the base convention');
   state.archBuffs = [{ type: 'BERSERK', until: 999 }];
-  const berserk = T.synWeaponDmg('ZAP', 3);
+  const berserk = T.fusWeaponDmg('ZAP', 3);
   assert.equal(berserk, plain * 1.5,
-    'BERSERK (+50%) now applies to synergy bolts too, got ' + berserk + ' vs ' + plain);
+    'BERSERK (+50%) applies to fusion link bolts too, got ' + berserk + ' vs ' + plain);
   state.archBuffs = [];
 });
 

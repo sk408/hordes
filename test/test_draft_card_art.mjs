@@ -39,7 +39,7 @@ import { CARD_DECK, cardArt } from '../src/art/cards.js';
 import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
 import { describeWeaponLevel } from '../src/weapons.js';
 import {
-  OFFER_TO_DECK, deckIdForOffer, paintOfferArt, OFFER_ART_SCALE,
+  OFFER_TO_DECK, deckIdForOffer, paintOfferArt, OFFER_ART_SCALE, draftLayout, DRAFT_COMPACT_MAX_H,
 } from '../src/draft_card_art.js';
 import { cardBox } from '../src/render_cards.js';
 
@@ -117,11 +117,72 @@ s.check('openDraft wires .card-art into art-backed offers only', () => {
     assert.equal(!!artChild(el), hasArt,
       `${offerOf(el).id}: canvas present iff the offer has deck art`);
     if (hasArt) {
-      const { w, h } = cardBox(OFFER_ART_SCALE);
+      // The art is painted at the scale the layout rule gives the viewport
+      // (the stub window is 480x300: a short viewport, so the compact card).
+      const lay = draftLayout(window.innerWidth, window.innerHeight, kids.length);
+      assert.equal(lay.compact, true);
+      const { w, h } = cardBox(lay.artScale);
       assert.equal(artChild(el).width, w);
       assert.equal(artChild(el).height, h);
     }
   }
+});
+
+// ---- 3b. the compact draft layout rule ----------------------------------------
+s.check('layout rule: short viewports get the compact card, sized to fit one row', () => {
+  // Phone landscape (844x390, 667x375): compact, half-size art, three cards
+  // plus two gaps plus the overlay padding fit the width.
+  for (const [vw, vh] of [[844, 390], [667, 375], [932, 430], [480, 300]]) {
+    for (const n of [3, 4]) {
+      const lay = draftLayout(vw, vh, n);
+      assert.equal(lay.compact, true, vw + 'x' + vh);
+      assert.equal(lay.artScale, 2);
+      assert.ok(lay.cardW * n + 8 * (n - 1) + 16 <= vw, vw + 'x' + vh + ' x' + n + ': the row fits (' + lay.cardW + ')');
+      assert.ok(lay.cardW <= 250, 'cards do not stretch past 250px');
+      // room beside the half-size art for the text column
+      assert.ok(lay.cardW - 16 - cardBox(2).w - 8 >= 30, 'a text column beside the art (' + lay.cardW + ')');
+    }
+  }
+  assert.equal(draftLayout(844, 390, 3).cardW, 250);
+  assert.equal(draftLayout(667, 375, 3).cardW, 211);
+  // The boundary: 500px tall is compact, 501 is not.
+  assert.equal(DRAFT_COMPACT_MAX_H, 500);
+  assert.equal(draftLayout(1000, 500, 3).compact, true);
+  assert.equal(draftLayout(1000, 501, 3).compact, false);
+});
+s.check('layout rule: a narrow tall viewport keeps the stacked card on ONE row with art that fits', () => {
+  const lay = draftLayout(390, 844, 3);
+  assert.equal(lay.compact, false);
+  assert.equal(lay.cardW, 118);
+  assert.ok(lay.cardW * 3 + 10 * 2 + 16 <= 390, 'three cards fit 390px without wrapping');
+  assert.ok(cardBox(lay.artScale).w <= lay.cardW - 20, 'the art fits inside the card padding');
+  const small = draftLayout(320, 700, 3);
+  assert.ok(cardBox(small.artScale).w <= small.cardW - 20, 'and the art shrinks when the full size would not fit');
+  // Desktop: the stylesheet's own card, full-size art.
+  assert.deepEqual(draftLayout(1280, 720, 3), { compact: false, artScale: OFFER_ART_SCALE, cardW: null });
+});
+s.check('layout rule: the stylesheet carries the compact card and the darker draft scrim', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const scrim = /#overlay\.draft \{ background: rgba\(5,5,10,(0\.\d+)\); \}/.exec(html);
+  assert.ok(scrim && Number(scrim[1]) >= 0.85, 'the draft scrim is at least 85% opaque');
+  const menu = /#overlay \{[^}]*background: rgba\(5,5,10,(0\.\d+)\)/.exec(html);
+  assert.ok(menu && Number(scrim[1]) > Number(menu[1]), 'darker than the plain menu scrim');
+  for (const rule of ['#overlay.draft.compact .card canvas.card-art { float: left;',
+    '#overlay.draft.compact .cards { gap: 8px; flex-wrap: nowrap;',
+    '#overlay.draft.compact .card .desc { font-size: 11px;']) {
+    assert.ok(html.includes(rule), 'index.html carries: ' + rule);
+  }
+});
+s.check('openDraft applies the rule: the overlay is flagged draft + compact and the cards take the rule width', () => {
+  const kids = openDraftUntil(ks => ks.length > 0);
+  const has = (c) => elements.overlay.classList.contains(c);
+  assert.ok(has('draft') && has('compact'), 'the overlay is flagged draft and compact');
+  assert.ok(!has('title'), 'the title screen layout does not leak into the draft');
+  const lay = draftLayout(window.innerWidth, window.innerHeight, kids.length);
+  for (const el of kids) assert.equal(el.style.width, lay.cardW + 'px');
+  kids[0].click();
+  pump(40);
+  assert.ok(!has('draft') && !has('compact'), 'the flags leave with the draft');
 });
 
 // ---- 4. ONE activation takes the card (no confirm step) ----------------------

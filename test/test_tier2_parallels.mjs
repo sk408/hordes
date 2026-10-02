@@ -271,7 +271,7 @@ s.check('PULSE phase is a pure hash of the card id (no clock, no accumulation)',
 // scope beside DRAFT_LADDER_ON. Quoted PRE-CHANGE key sets per offer family —
 // an extra field of ANY kind fails the deep-equal below.
 const KEYS = {
-  weapon: ['apply', 'desc', 'evoReady', 'evoText', 'id', 'name', 'weight'],
+  weapon: ['apply', 'desc', 'evoReady', 'evoText', 'fuseText', 'id', 'name', 'weight'],
   stat: ['apply', 'desc', 'evoReady', 'evoText', 'id', 'name', 'partnerBoost', 'weight'],
   rare: ['apply', 'desc', 'id', 'name', 'tier', 'weight'],
   mythic: ['apply', 'desc', 'id', 'name', 'tier', 'weight'],

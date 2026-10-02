@@ -12,7 +12,7 @@
 //   2. ESC/P pause, mode-aware hints, per-card EVOLVE labels.
 //   3. KEY-REPEAT GUARD (WAVE-25, audit 2.2) — every edge-triggered key is
 //      edge-triggered; a held ESC can no longer ping-pong the pause.
-//   4. Run-start SYNERGY announcement (WAVE-25, audit 2.3).
+//   4. Run start carries no fusion over from the last run.
 //   5. ARENA RIM reads CONFIG.GROUND.RIM (WAVE-25, audit 2.4).
 //   6. Scoped footer / HOW TO PLAY copy, input-aware tour phrasing.
 import assert from 'node:assert';
@@ -376,23 +376,26 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   console.log('repeat guard: ESC / P / M / I / S / ? / +/- are edge-triggered too');
 }
 
-// ---- 5. RUN-START SYNERGY ANNOUNCEMENT (audit 2.3) ----------------------
+// ---- 5. RUN START CARRIES NO FUSION STATE ---------------------------------
+// Owning a fusion pair is not enough (both halves must evolve in the run), and
+// a fusion made in one run leaves nothing behind in the next.
 {
   const prof = T.getProfile();
   if (!prof.unlockedCharacters.includes('PALADIN')) prof.unlockedCharacters.push('PALADIN');
   if (!prof.unlockedWeapons.includes('ORBIT')) prof.unlockedWeapons.push('ORBIT');
-  prof.equippedCharacter = 'PALADIN';   // starts with ORBIT -> VOLLEY+ORBIT at t=0
+  prof.equippedCharacter = 'PALADIN';   // starts with ORBIT -> the VOLLEY+ORBIT pair at t=0
   T.startRun();
-  assert(st.synergies.length > 0, 'the ORBIT pilot must have a synergy live at t=0');
-  const firstRun = st.toasts.some(t => /SYNERGY:/.test(t.msg));
-  assert(firstRun, 'a synergy live at run start must be announced on run 1');
-  // The dedup set is per-run: run 2 must announce the same pair again.
+  assert(st.weapons.some(w => w.type === 'ORBIT'), 'the ORBIT pilot brings the pair');
+  assert(T.fusion.offers().length === 0 && !st.weapons.some(w => w.fusionId),
+    'an un-evolved pair is not fused and not offered at run start');
+  assert(!st.toasts.some(t => /SYNERGY:|FUSION:/.test(t.msg)), 'nothing is announced at t=0');
+  st.fusionsMade = 2; st.fusionRefills = 1; st.fuseDeclined.add('ORBITAL_VOLLEY');
   T.startRun();
-  assert(st.toasts.some(t => /SYNERGY:/.test(t.msg)),
-    'the SAME synergy must be announced again on run 2+ (stale synergyNames)');
+  assert(st.fusionsMade === 0 && st.fusionRefills === 0 && st.fuseDeclined.size === 0,
+    'the fusion counters and deferred offers reset per run');
   prof.equippedCharacter = 'KNIGHT';
   T.startRun();
-  console.log('synergies: run-start pair announced on run 1 AND run 2 (dedup set reset per run)');
+  console.log('fusions: no fusion state at run start, counters reset per run');
 }
 
 // ---- 6. ARENA RIM READS CONFIG ------------------------------------------

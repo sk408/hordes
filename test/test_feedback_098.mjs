@@ -16,7 +16,7 @@
 import { Renderer } from '../src/render.js';
 import { CONFIG as C } from '../src/config.js';
 import { makePlayer } from '../src/entities.js';
-import { SYNERGIES, describeSynergy } from '../src/synergies.js';
+import { FUSION_DEFS } from '../src/fusions.js';
 import { CHARACTERS } from '../src/meta.js';
 import { readFileSync } from 'node:fs';
 import { boot } from './_harness.mjs';
@@ -87,25 +87,20 @@ function hudState(over) {
   return Object.assign(st, over || {});
 }
 
-// The EXACT message main.js's refreshSynergies() pushes (same construction),
-// so this pins the real player-facing string, not a paraphrase.
-const synergyMsgs = SYNERGIES.map((s) => {
-  const d = describeSynergy(s);
-  return 'SYNERGY: ' + d.name.toUpperCase() + ' — ' + d.desc;
-});
+// The EXACT message main.js's doFuse() pushes (same construction), so this
+// pins the real player-facing string, not a paraphrase.
+const fusionMsgs = FUSION_DEFS.map((d) => 'FUSION: ' + d.name.toUpperCase() + ' — ' + d.desc);
 const EST = 6;   // the windowless 9px-monospace advance the feed assumes
 
 // ============================================================================
-console.log('0.98 D1 — SYNERGY ANNOUNCE WRAPS INSIDE THE VIEW');
+console.log('0.98 D1 — FUSION ANNOUNCE WRAPS INSIDE THE VIEW');
 {
-  // TIER-2(e) RETARGET (2026-09-23): 7 -> 11. Four new archetype pairings
-  // (Sun Lane / Harvest Fire / Storm Bounce / Crater Field) joined SYNERGIES,
-  // so the announce wrap sweep covers 11 messages now. Same JOB: every
-  // announce must wrap inside the view.
-  ok(synergyMsgs.length === 11, 'all eleven synergy announces are covered (' + synergyMsgs.length + ')');
+  // Every fusion announce (the longest lines the feed carries) must wrap
+  // inside the view.
+  ok(fusionMsgs.length === FUSION_DEFS.length && fusionMsgs.length >= 8, 'every fusion announce is covered (' + fusionMsgs.length + ')');
   const { R, rec, ctx } = makeRenderer();
   const rows = [];
-  for (const msg of synergyMsgs) {
+  for (const msg of fusionMsgs) {
     // (a) the audit's before-number: the OLD painter sized one line at
     // msg.length*6+3 and clipped everything past C.VIEW_W.
     const oldPlate = msg.length * EST + 3;
@@ -135,7 +130,7 @@ console.log('0.98 D1 — SYNERGY ANNOUNCE WRAPS INSIDE THE VIEW');
       'the plate is sized from the lines and stays inside the view (w=' + (plate && plate.w) + ')');
     const plateRight = plate ? plate.x + plate.w : 0;
     ok(plateRight >= paintedRight, 'the plate covers every wrapped line (' + plateRight + ' >= ' + paintedRight + ')');
-    rows.push({ name: msg.slice(9).split(' — ')[0], old: oldPlate, lines: lines ? lines.length : 0, right: paintedRight, plate: plate ? plate.w : 0 });
+    rows.push({ name: msg.slice(8).split(' — ')[0], old: oldPlate, lines: lines ? lines.length : 0, right: paintedRight, plate: plate ? plate.w : 0 });
   }
 
   // (f) tasteful: a SHORT message is still exactly one line, on a plate that
@@ -153,8 +148,8 @@ console.log('0.98 D1 — SYNERGY ANNOUNCE WRAPS INSIDE THE VIEW');
   // first one's LAST line.
   rec.rects.length = 0; rec.texts.length = 0;
   R.drawHudChrome(ctx, hudState({ toasts: [
-    { msg: synergyMsgs[0], ttl: 3, tint: null },
-    { msg: synergyMsgs[1], ttl: 3, tint: null }] }));
+    { msg: fusionMsgs[0], ttl: 3, tint: null },
+    { msg: fusionMsgs[1], ttl: 3, tint: null }] }));
   const f = R.hudChrome.feed;
   const firstBottom = 86 - 2 + (f[0].lines || []).length * 10 + 1;
   const secondTop = rec.rects.filter(q => q.x === 5)[1];
