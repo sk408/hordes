@@ -17,6 +17,8 @@
 //     CHROMA — rarity-family colored card background (the rarity.js encounter
 //              tells are the family hues)
 //   GAMEPLAY (polarity pair; effect scaling = tune-after defaults):
+//     Cursed/Blessed are only stamped on cards whose whole effect is numeric
+//     stat changes (offerScales); count stats (COUNT_STATS) never scale.
 //     CURSED — card effect x1.5 + ONE shared drawback: flat HP loss on pick,
 //              riding the EXISTING p.hp surface (src/entities.js makePlayer
 //              player.hp / the one HP bar every heal and hit already uses).
@@ -70,24 +72,24 @@ export const CURSED_HP_COST = 15;
 export const PARALLELS = {
   shiny: {
     id: 'shiny', kind: 'COSMETIC', name: 'Shiny', weight: PARALLEL_WEIGHTS.shiny,
-    mult: 1, tell: '#d4af37', blurb: 'gold-foil parallel',
+    mult: 1, tell: '#d4af37', blurb: 'cosmetic foil',
   },
   pulse: {
     id: 'pulse', kind: 'COSMETIC', name: 'Pulse', weight: PARALLEL_WEIGHTS.pulse,
-    mult: 1, tell: '#c8c8ff', blurb: 'shimmer parallel (hash phase)',
+    mult: 1, tell: '#c8c8ff', blurb: 'cosmetic shimmer',
   },
   chroma: {
     id: 'chroma', kind: 'COSMETIC', name: 'Chroma', weight: PARALLEL_WEIGHTS.chroma,
-    mult: 1, tell: '#6fd8ff', blurb: 'chroma parallel',
+    mult: 1, tell: '#6fd8ff', blurb: 'cosmetic colour',
   },
   cursed: {
     id: 'cursed', kind: 'GAMEPLAY', name: 'Cursed', weight: PARALLEL_WEIGHTS.cursed,
     mult: 1.5, tell: '#c89aff',
-    blurb: 'effects x1.5 - ' + CURSED_HP_COST + ' HP on pick',
+    blurb: 'effect x1.5, costs ' + CURSED_HP_COST + ' HP',
   },
   blessed: {
     id: 'blessed', kind: 'GAMEPLAY', name: 'Blessed', weight: PARALLEL_WEIGHTS.blessed,
-    mult: 1.25, tell: '#ffe066', blurb: 'effects x1.25',
+    mult: 1.25, tell: '#ffe066', blurb: 'effect x1.25',
   },
 };
 export const PARALLEL_IDS = Object.keys(PARALLELS);
@@ -105,6 +107,47 @@ export function rollParallel(rng) {
     if ((r -= PARALLEL_WEIGHTS[id]) < 0) return id === 'none' ? null : id;
   }
   return null;
+}
+
+// Stats that are whole counts (loop bounds, budgets). A parallel never scales
+// them: a Blessed Split Shot is still +1 projectile.
+export const COUNT_STATS = new Set(['projectiles', 'pierce', 'draftOffers', 'zapChain', 'splitCap']);
+
+// True when the offer's WHOLE effect is numeric player-stat changes a
+// multiplier can scale: hp / mana / non-count numeric stats, and nothing
+// else. Rules, skills, rewrites and weapon cards never qualify; neither does
+// a card that sets a flag or changes a count. Probed on a clone of the
+// player, so nothing is applied.
+export function offerScales(offer, player) {
+  if (!offer || typeof offer.apply !== 'function' || !player) return false;
+  if (offer.rule || offer.skill || offer.rewrite) return false;
+  if (/^(wpn|lvl)_/.test(String(offer.id))) return false;
+  let probe;
+  try { probe = structuredClone(player); } catch { return false; }
+  const rest = (q) => JSON.stringify({ ...q, hp: 0, mana: 0, stats: 0 });
+  const before = rest(probe);
+  const s0 = { ...(probe.stats || {}) };
+  try { offer.apply(probe); } catch { return false; }
+  if (rest(probe) !== before) return false;
+  let scales = probe.hp !== player.hp || probe.mana !== player.mana;
+  for (const k of new Set([...Object.keys(s0), ...Object.keys(probe.stats || {})])) {
+    const a = s0[k], b = probe.stats[k];
+    if (a === b) continue;
+    if (typeof b !== 'number' || (a !== undefined && typeof a !== 'number')) return false;
+    if (COUNT_STATS.has(k)) return false;
+    scales = true;
+  }
+  return scales;
+}
+
+// The stamp for one offered card: one rng draw (always exactly one, so the
+// stream never depends on the card), and a Cursed/Blessed roll only sticks
+// on a card whose effect can actually scale (offerScales) — otherwise the
+// card is offered plain.
+export function rollOfferParallel(offer, player, rng) {
+  const id = rollParallel(rng);
+  if (id && PARALLELS[id].kind === 'GAMEPLAY' && !offerScales(offer, player)) return null;
+  return id;
 }
 
 // The additive stamp: a NEW offer object carrying one extra field. An absent
@@ -133,10 +176,7 @@ export function parallelEffectMult(parallelId) {
 // land at face value (OWNER-RULING parked in the report — no per-card
 // special-casing). A numeric field the apply INTRODUCES (thorns: undefined ->
 // 6) scales from 0. A scaled heal is clamped to the scaled max HP.
-// TUNE-AFTER: integer-count stats (pierce, projectiles, draftOffers) may land
-// fractional under x1.5/x1.25 — every consumer reads them as a bound (loop
-// count, 1+pierce budget), so a 1.5 reads as the next whole step; an integer
-// policy is a review-phase knob, not a silent rounding here.
+// Count stats (COUNT_STATS) are never scaled: they land at face value.
 export function applyScaledNumbers(applyFn, p, mult) {
   if (typeof applyFn !== 'function' || !p) return;
   if (mult === 1) { applyFn(p); return; }
@@ -151,7 +191,7 @@ export function applyScaledNumbers(applyFn, p, mult) {
   }
   for (const k of Object.keys(p.stats || {})) {
     const b = p.stats[k];
-    if (typeof b !== 'number') continue;
+    if (typeof b !== 'number' || COUNT_STATS.has(k)) continue;
     const a = s0[k];
     const base = typeof a === 'number' ? a : 0;
     p.stats[k] = base + (b - base) * mult;

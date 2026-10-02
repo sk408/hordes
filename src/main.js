@@ -116,7 +116,7 @@ import { rollChoices, applyChoice } from './choices.js';
 import { paintOfferArt, OFFER_ART_SCALE } from './draft_card_art.js';
 import {
   PARALLELS, PARALLEL_WEIGHTS, PARALLEL_IDS, CURSED_HP_COST,
-  rollParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
+  rollParallel, rollOfferParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
   cursedHpDrawback, parallelCardArt,
 } from './parallels.js';
 import * as INTRO from './intro.js';
@@ -4628,7 +4628,8 @@ function openDraft() {
   if (PARALLELS_ON) {
     if (!state.parallelRng) state.parallelRng = mulberry32(((state.choiceSeed || 0) ^ 0x9a11) >>> 0);
     for (let i = 0; i < choices.length; i++) {
-      choices[i] = stampOfferParallel(choices[i], rollParallel(state.parallelRng));
+      choices[i] = stampOfferParallel(choices[i],
+        rollOfferParallel(choices[i], state.player, state.parallelRng));
     }
   }
   // SLICE 9: record the offer set (the taken id fills in at pick()).
@@ -5021,9 +5022,11 @@ function tickDraftAutoPick(dt) {
       // Uniformly at random across the offered cards (captured at
       // presentation), through the ONE activation seam (activateDraftCard) —
       // byte-identical to a tap.
+      // Never a Cursed card while another is on offer (autoPickable).
+      const pool = autoPickable(draftOffers);
       const u = state.nightRun
         ? draftOffers[nightDraftPickIndex(draftOffers)]   // NIGHT: highest tier, first slot on tie
-        : draftOffers[Math.min(draftOffers.length - 1, Math.floor(draftAutoRng() * draftOffers.length))];
+        : pool[Math.min(pool.length - 1, Math.floor(draftAutoRng() * pool.length))];
       draftAutoCount++;
       draftAutoLastId = u.id;
       activateDraftCard(u);
@@ -5064,11 +5067,22 @@ let nightRestartLeft = null;     // s left on the end-card auto-RETRY
 let nightEvolveLeft = null;      // s left on the EVOLUTION overlay auto-pick
 let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
+// The offers an unattended pick may take: a Cursed card costs HP, so it is
+// only taken when every offer is Cursed.
+export function autoPickable(offers) {
+  const safe = offers.filter(u => !(u && u.parallel === 'cursed'));
+  return safe.length ? safe : offers;
+}
+
 export function nightDraftPickIndex(offers) {
   const rank = (u) => (u && u.tier === 'MYTHIC') ? 2 : (u && u.tier === 'RARE') ? 1 : 0;
-  let best = 0;
-  for (let i = 1; i < offers.length; i++) if (rank(offers[i]) > rank(offers[best])) best = i;
-  return best;   // strict > keeps the FIRST slot on a tie
+  const ok = autoPickable(offers);
+  let best = -1;
+  for (let i = 0; i < offers.length; i++) {
+    if (!ok.includes(offers[i])) continue;
+    if (best < 0 || rank(offers[i]) > rank(offers[best])) best = i;
+  }
+  return Math.max(0, best);   // strict > keeps the FIRST eligible slot on a tie
 }
 
 function tickNight(realDt) {
@@ -12828,6 +12842,7 @@ export const __TEST = {
     press: toggleNight,
     get summary() { return state.nightSummary; },
     pickIndex: nightDraftPickIndex,
+    autoPickable,
     get continueLeft() { return nightContinueLeft; },
     get restartLeft() { return nightRestartLeft; },
     get evolveLeft() { return nightEvolveLeft; },

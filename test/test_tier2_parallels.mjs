@@ -49,6 +49,7 @@ import {
   PARALLELS, PARALLEL_WEIGHTS, PARALLEL_ORDER, PARALLEL_IDS, CURSED_HP_COST,
   rollParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
   cursedHpDrawback, parallelCardArt, pulsePhase,
+  offerScales, rollOfferParallel, COUNT_STATS,
 } from '../src/parallels.js';
 
 const s = suite('test_tier2_parallels');
@@ -426,13 +427,114 @@ s.check('OFFER INTEGRATION: the stamp rides the offer object + a badge, never th
   } finally { Math.random = real; }
   const kids = Array.from(elements['ov-cards'].children);
   assert.ok(kids.length >= 3);
+  // A Cursed roll only sticks on a card whose whole effect scales.
   for (const el of kids) {
     const u = el._draftOffer;
-    assert.equal(u.parallel, 'cursed', 'the rigged stream stamps every offer');
     const html = el.innerHTML || '';
-    assert.ok(html.includes('CURSED'), u.id + ' shows the parallel badge text');
+    if (offerScales(u, state.player)) {
+      assert.equal(u.parallel, 'cursed', u.id + ': a scalable card takes the rigged stamp');
+      assert.ok(html.includes('CURSED - effect x1.5, costs 15 HP'), u.id + ' shows the plain badge text');
+    } else {
+      assert.equal(u.parallel, undefined, u.id + ': a card that cannot scale is offered plain');
+      assert.ok(!html.includes('CURSED'), u.id + ' shows no badge');
+    }
     assert.ok(html.includes(u.name), 'the base name/desc strings are untouched by the stamp');
   }
+  // Rigged cosmetic stream: every offer takes it, whatever the card.
+  Math.random = mulberry32(777);
+  try {
+    state.parallelRng = () => 0.81;   // every roll: shiny
+    state.mode = 'playing';
+    state.pendingDrafts = 1;
+    T.openDraft();
+  } finally { Math.random = real; }
+  for (const el of Array.from(elements['ov-cards'].children)) {
+    assert.equal(el._draftOffer.parallel, 'shiny');
+    assert.ok((el.innerHTML || '').includes('SHINY - cosmetic foil'));
+  }
+});
+
+s.check('ELIGIBILITY: Cursed/Blessed only stamp cards whose whole effect is scalable numbers', () => {
+  T.startRun();
+  const p = state.player;
+  const by = (id) => [...UPGRADES, ...DRAFT_RARE_UPGRADES, ...DRAFT_MYTHIC_UPGRADES].find((u) => u.id === id);
+  for (const id of ['dmg', 'rate', 'speed', 'pickup', 'hp', 'hp_pct', 'xp_pct', 'gold_pct', 'edge', 'thorns', 'killshot']) {
+    assert.equal(offerScales(by(id), p), true, id + ' scales');
+  }
+  for (const id of ['multi', 'pierce', 'full_hand', 'second_wind', 'storm_shards', 'magnet_collector', 'tempest']) {
+    assert.equal(offerScales(by(id), p), false, id + ' does not scale (count / flag / skill)');
+  }
+  assert.equal(offerScales({ id: 'wpn_ORBIT', apply: () => { throw new Error('must not run'); } }, p), false);
+  assert.equal(offerScales({ id: 'lvl_VOLLEY_2', apply: () => { throw new Error('must not run'); } }, p), false);
+  assert.equal(offerScales(ruleCards(state)[0], p), false, 'a run rule never scales');
+  // The probe applies nothing to the real player.
+  const snap = JSON.stringify({ hp: p.hp, mana: p.mana, stats: p.stats });
+  offerScales(by('hp'), p);
+  assert.equal(JSON.stringify({ hp: p.hp, mana: p.mana, stats: p.stats }), snap);
+  // rollOfferParallel: one draw either way; gameplay stamps gated.
+  for (const [r, id] of [[0.97, 'cursed'], [0.999, 'blessed']]) {
+    assert.equal(rollOfferParallel(by('dmg'), p, () => r), id);
+    assert.equal(rollOfferParallel(by('multi'), p, () => r), null);
+    let draws = 0;
+    rollOfferParallel(by('multi'), p, () => { draws++; return r; });
+    assert.equal(draws, 1, 'exactly one rng draw per offer');
+  }
+  assert.equal(rollOfferParallel(by('multi'), p, () => 0.81), 'shiny', 'cosmetics stamp any card');
+});
+
+s.check('COUNT STATS never scale: a Blessed/Cursed Split Shot or Sharpened Tips is still +1', () => {
+  for (const mult of [1.25, 1.5]) {
+    const p = player();
+    applyScaledNumbers(UPGRADES.find((u) => u.id === 'multi').apply, p, mult);
+    assert.equal(p.stats.projectiles, 2, 'projectiles 1 -> 2 at x' + mult);
+    applyScaledNumbers(UPGRADES.find((u) => u.id === 'pierce').apply, p, mult);
+    assert.equal(p.stats.pierce, 1, 'pierce 0 -> 1 at x' + mult);
+    applyScaledNumbers(DRAFT_MYTHIC_UPGRADES.find((u) => u.id === 'full_hand').apply, p, mult);
+    assert.equal(p.stats.draftOffers, 1, 'draft offers +1 at x' + mult);
+  }
+  assert.ok(COUNT_STATS.has('projectiles') && COUNT_STATS.has('pierce') && COUNT_STATS.has('draftOffers'));
+});
+
+s.check('BADGE TEXT is plain: no internal jargon on any parallel', () => {
+  for (const d of Object.values(PARALLELS)) {
+    assert.ok(!/parallel|hash|phase/i.test(d.blurb), d.id + ': "' + d.blurb + '"');
+    assert.ok(d.blurb.length <= 28, d.id + ' blurb is short');
+  }
+  assert.equal(PARALLELS.pulse.blurb, 'cosmetic shimmer');
+});
+
+s.check('AUTO-PICK never takes a Cursed card while another is on offer', () => {
+  const plain = (id) => ({ id, name: id });
+  const cursed = (id, tier) => ({ id, name: id, tier, parallel: 'cursed' });
+  const offers = [cursed('a', 'MYTHIC'), plain('b'), cursed('c')];
+  assert.deepEqual(T.night.autoPickable(offers).map((u) => u.id), ['b']);
+  assert.equal(T.night.pickIndex(offers), 1, 'night: skips the cursed MYTHIC for the plain card');
+  assert.equal(T.night.pickIndex([cursed('a'), { id: 'r', tier: 'RARE' }, { id: 'm', tier: 'MYTHIC' }]), 2);
+  assert.equal(T.night.pickIndex([cursed('a'), cursed('b', 'RARE')]), 1, 'all cursed: highest tier still wins');
+  assert.equal(T.night.pickIndex([plain('a'), plain('b')]), 0, 'no stamps: first slot, as before');
+  // The live AUTO countdown, across the rng range: never the cursed cards.
+  for (const r of [0, 0.34, 0.5, 0.67, 0.999]) {
+    T.startRun();
+    T.setPilotMode('AUTO_ALL');
+    const real = Math.random;
+    Math.random = mulberry32(4242);
+    try {
+      state.parallelRng = () => 0.5;   // no stamps from the roll
+      state.mode = 'playing';
+      state.pendingDrafts = 1;
+      T.openDraft();
+    } finally { Math.random = real; }
+    const els = Array.from(elements['ov-cards'].children);
+    // Curse every offer but one, in place (the captured offer objects).
+    const keep = els[1]._draftOffer;
+    for (const el of els) if (el._draftOffer !== keep) el._draftOffer.parallel = 'cursed';
+    T.draftAuto.rng = () => r;
+    const c0 = T.draftAuto.count;
+    for (let i = 0; i < 60 * 8 && T.draftAuto.count === c0; i++) onBoot.pump(1);
+    assert.equal(T.draftAuto.count, c0 + 1, 'the countdown picked');
+    assert.equal(T.draftAuto.lastId, keep.id, 'rng ' + r + ': took the one non-cursed card');
+  }
+  T.draftAuto.rng = Math.random;
 });
 
 s.check('CURSED PICK: x1.5 on the listed effect + exactly ONE drawback on p.hp (cited surface)', () => {
@@ -563,8 +665,9 @@ s.check('ONE OF EACH: behavior identical with/without a parallel (ledger, pool, 
 });
 
 s.check('PROTECTED ONE OF EACH may parallelize (its role is protected, not its skin)', () => {
-  // The real openDraft, every roll forced to Cursed: the rule card appears with
-  // the stamp ON and its four-front behavior unchanged when taken.
+  // The real openDraft, every roll forced to Shiny: the rule card appears with
+  // the cosmetic stamp ON and its four-front behavior unchanged when taken. A
+  // Cursed/Blessed roll never sticks on a rule card (nothing on it scales).
   const real = Math.random;
   let found = null;
   Math.random = mulberry32(20260923);
@@ -575,20 +678,21 @@ s.check('PROTECTED ONE OF EACH may parallelize (its role is protected, not its s
     for (let i = 0; i < 600 && !found; i++) {
       state.mode = 'playing';
       state.pendingDrafts = 1;
-      state.parallelRng = () => 0.97;   // every roll lands Cursed
+      state.parallelRng = () => 0.81;   // every roll lands Shiny
       T.openDraft();
       found = Array.from(elements['ov-cards'].children).map((el) => el._draftOffer)
         .find((u) => u.rule === 'once') || null;
     }
   } finally { Math.random = real; }
   assert.ok(found, 'the ONE OF EACH card was offered within the cap');
-  assert.equal(found.parallel, 'cursed', 'and it carried the parallel stamp');
+  assert.equal(found.parallel, 'shiny', 'and it carried the parallel stamp');
+  assert.equal(rollOfferParallel(found, state.player, () => 0.97), null, 'a Cursed roll leaves it plain');
   assert.equal(found.desc, RULES.once.desc, 'its rule text is byte-identical');
   state.pendingDrafts = 1;
   state.player.hp = 50;
   T.pickCard(found);
   assert.ok(hasRule(state, 'once'), 'the rule lands exactly as it always did');
-  assert.equal(state.player.hp, 50 - CURSED_HP_COST, 'the shared cursed cost is the only behavioral delta');
+  assert.equal(state.player.hp, 50, 'a cosmetic stamp changes nothing');
   assert.equal(RULES.once.desc,
     'RUN RULE - no stat card twice; weapon picks +1 bonus level; maxed picks +10% damage',
     'the rule TEXT is frozen (four-front protection)');
