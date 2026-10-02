@@ -1039,9 +1039,9 @@ export const CARD_DECK = [
   { id: 'multi',          name: 'Split Shot',        desc: '+1 projectile per volley',          rank: '8', suit: 'spades',   motif: 'three_arrows' },
   { id: 'hp_pct',         name: 'Iron Heart +25%',   desc: '+25% max HP and heal 25%',          rank: 'K', suit: 'hearts',   motif: 'crowned_heart' },
   { id: 'dmg',            name: 'Whetstone',         desc: '+15% weapon damage',                rank: 'Q', suit: 'spades',   motif: 'whetstone' },
-  { id: 'scholars_stone', name: "Scholar's Stone",   desc: '+20% XP gain',                      rank: 'J', suit: 'clubs',    motif: 'tome' },
+  { id: 'scholars_stone', name: "Scholar's Stone",   desc: '+20% XP gain',                      rank: 'J', suit: 'diamonds',   motif: 'tome' },
   { id: 'gilded_palm',    name: 'Gilded Palm',       desc: '+30% purse gold per kill',          rank: 'Q', suit: 'diamonds', motif: 'coin_palm' },
-  { id: 'crimson_edge',   name: 'Crimson Edge',      desc: '+3% lifesteal',                     rank: 'K', suit: 'spades',   motif: 'red_blade' },
+  { id: 'crimson_edge',   name: 'Crimson Edge',      desc: '+3% lifesteal',                     rank: 'Q', suit: 'hearts',   motif: 'red_blade' },
   { id: 'full_hand',      name: 'Full Hand',         desc: '+1 draft offer for the run',        rank: 'A', suit: 'clubs',    motif: 'card_fan' },
   { id: 'second_wind',    name: 'Second Wind',       desc: 'Revive once at 50% max HP',         rank: 'JOKER', suit: null,   motif: 'winged_heart', joker: 'red' },
   { id: 'storm_shards',   name: 'Storm Shards',      desc: 'XP pickup deals chip damage',       rank: 'JOKER', suit: null,   motif: 'storm_shard',  joker: 'black' },
@@ -1149,8 +1149,8 @@ export const CARD_EXPANSION = [
   { id: 'rw_wildfire',     name: 'Wildfire',     desc: 'rewrite card',        rank: '8', suit: 'diamonds', motif: 'wildfire_spread' },
   { id: 'rw_overload',     name: 'Overload',     desc: 'rewrite card',        rank: '9', suit: 'diamonds', motif: 'overload_nova' },
   { id: 'rw_thermalshock', name: 'Thermal Shock', desc: 'rewrite card',      rank: 'J', suit: 'hearts',   motif: 'thermal_crack',  tier: 'RARE' },
-  { id: 'rw_stormreaper',  name: 'Storm Reaper',  desc: 'rewrite card',      rank: 'J', suit: 'diamonds', motif: 'thunder_blast',  tier: 'RARE' },
-  { id: 'rw_glacialorbit', name: 'Glacial Orbit', desc: 'rewrite card',      rank: 'Q', suit: 'hearts',   motif: 'glacier_ring',   tier: 'RARE' },
+  { id: 'rw_stormreaper',  name: 'Storm Reaper',  desc: 'rewrite card',      rank: 'J', suit: 'clubs', motif: 'thunder_blast',  tier: 'RARE' },
+  { id: 'rw_glacialorbit', name: 'Glacial Orbit', desc: 'rewrite card',      rank: 'K', suit: 'spades',   motif: 'glacier_ring',   tier: 'RARE' },
   // RSS8 MAGNET COLLECTOR (owner 2026-09-17): the 4th MYTHIC chase card, so
   // the expansion tier vocabulary grows a third entry — `tier: 'MYTHIC'` on
   // an ACE rank (the tier is still DERIVED from the rank: ace = MYTHIC, the
@@ -1178,9 +1178,9 @@ export const CARD_EXPANSION = [
   // Names join by NAME to the source of truth (DRAFT_RARE_UPGRADES /
   // DRAFT_MYTHIC_UPGRADES / REWRITES) — pinned in
   // test/test_card_art_expansion.mjs so a rename on either side goes red.
-  { id: 'thornmail', name: 'Thornmail', desc: 'rare card', rank: 'K', suit: 'clubs', motif: 'thorn_burr', tier: 'RARE' },
+  { id: 'thornmail', name: 'Thornmail', desc: 'rare card', rank: 'Q', suit: 'clubs', motif: 'thorn_burr', tier: 'RARE' },
   { id: 'rw_shatter', name: 'Shatter', desc: 'rewrite card', rank: 'K', suit: 'diamonds', motif: 'cracked_ice', tier: 'RARE' },
-  { id: 'rw_cinder', name: 'Cinder Orbit', desc: 'rewrite card', rank: 'Q', suit: 'clubs', motif: 'ember_blade', tier: 'RARE' },
+  { id: 'rw_cinder', name: 'Cinder Orbit', desc: 'rewrite card', rank: 'K', suit: 'clubs', motif: 'ember_blade', tier: 'RARE' },
   { id: 'rw_frostwire', name: 'Frost Wire', desc: 'rewrite card', rank: 'J', suit: 'spades', motif: 'rime_bolt', tier: 'RARE' },
   { id: 'tempest', name: 'Tempest', desc: 'mythic card', rank: 'A', suit: 'hearts', motif: 'storm_crown', tier: 'MYTHIC' },
   { id: 'killshot', name: 'Killshot', desc: 'mythic card', rank: 'A', suit: 'spades', motif: 'headsman_axe', tier: 'MYTHIC' },

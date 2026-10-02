@@ -69,16 +69,23 @@ S.check('the toggle lives on the title SETUP card only (never a run key, never p
 });
 
 // ---- 2. THE DRAFT POLICY: highest tier, first slot on tie --------------------
-S.check('nightDraftPickIndex: MYTHIC > RARE > plain, FIRST slot on a tie', () => {
+S.check('nightDraftPickIndex: JOKER > RARE > plain, FIRST slot on a tie; a joker is last with a full row', () => {
   const pick = T.night.pickIndex;
+  T.state.player.jokers = [];
+  T.state.jokerSlots = 2;
   assert.equal(pick([]), 0);
   assert.equal(pick([{ id: 'a' }, { id: 'b' }]), 0);                    // tie -> first
   assert.equal(pick([{ id: 'a' }, { id: 'b', tier: 'RARE' }]), 1);
-  assert.equal(pick([{ id: 'a', tier: 'MYTHIC' }, { id: 'b', tier: 'RARE' }]), 0);
-  assert.equal(pick([{ id: 'a' }, { id: 'b', tier: 'MYTHIC' }, { id: 'c', tier: 'RARE' }]), 1);
+  assert.equal(pick([{ id: 'a', tier: 'JOKER' }, { id: 'b', tier: 'RARE' }]), 0);
+  assert.equal(pick([{ id: 'a' }, { id: 'b', tier: 'JOKER' }, { id: 'c', tier: 'RARE' }]), 1);
   // Deterministic by construction: same offers, same answer, twice.
   const offers = [{ id: 'a' }, { id: 'b', tier: 'RARE' }, { id: 'c', tier: 'RARE' }];
   assert.equal(pick(offers), pick(offers));
+  // A full row: taking a joker would only open the replace choice.
+  T.state.player.jokers = ['rime', 'ignite'];
+  assert.equal(pick([{ id: 'a', tier: 'JOKER' }, { id: 'b' }]), 1);
+  assert.equal(pick([{ id: 'a', tier: 'JOKER' }, { id: 'b', tier: 'JOKER' }]), 0);
+  T.state.player.jokers = [];
 });
 S.check('the auto-pick routes through the policy when the run is a night run', () => {
   assert.ok(/state\.nightRun\s*\?\s*draftOffers\[nightDraftPickIndex\(draftOffers\)\]/.test(src));

@@ -1,7 +1,7 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
   CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC, DRAFT_PLAN,
-  DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES,
+  DRAFT_LADDER, DRAFT_RARE_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
 } from './config.js';
@@ -69,22 +69,17 @@ import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 s
 import { itemIconFor } from './art/item_icons.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
 import { maybeSpawnChest, tickChests } from './chests.js';
-// G8 step 3: the CONDITION-shape run-altering cards (Horde Bait / One of Each).
-import { ruleCards, statCardOffered, markStatTaken, hasRule, RULES } from './rules.js';
-// G8 step 4: the general skill items (Regrowth / Focus / Thick Skin) — the
-// perk card family, its applied-value helpers (one source of truth for the
-// HUD and the damage funnel) and the ONE per-frame regen step.
+// The joker row (jokers.js) and the modules that hold each joker's effect:
+// run rules, perks, the Frost Nova card and the rewrites.
 import {
-  skillCards, applyRegrowth, damageTaken, skillManaCost, SKILL_PERKS,
-} from './perks.js';
-// N1 slice 2: the draftable FROST_NOVA card ("Pocket Frost") — a run-owned,
-// AUTO-FIRED nova through the existing useSkill seam (src/frostcard.js).
-import { frostCard, frostCardOffered, frostCardTick, hasFrost } from './frostcard.js';
-// G8 step 2: the rule-REWRITE card family (Pierce All / Chain Reaction /
-// Blood Harvest) — mechanic rewrites, granted through the same card contract.
-// G21 slice 1: + the ONE on-weapon-hit rider writer and AFTERSHOCK's echo tick.
+  JOKERS, JOKER_IDS, JOKER_SLOTS, JOKER_CARD_WEIGHT, ENCORE_EVERY, jokerCards, rollJokerOffer, jokersHeld, hasJoker,
+  jokerSlots, jokerRowFull, takeJoker, replaceJoker, handOpts,
+} from './jokers.js';
+import { statCardOffered, markStatTaken, hasRule } from './rules.js';
+import { applyRegrowth, damageTaken, skillManaCost } from './perks.js';
+import { frostCardTick, hasFrost } from './frostcard.js';
 import {
-  rewriteCards, hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast, REWRITES,
+  hasRewrite, rewriteBoom, boomBlast, harvestBlast, applyBlast,
   onWeaponHit, tickRewriteEchoes, directHitMult, wildfireTransfer, stormReaperBlast,
 } from './rewrites.js';
 import {
@@ -116,12 +111,11 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt, OFFER_ART_SCALE, draftLayout } from './draft_card_art.js';
+import { paintOfferArt, OFFER_ART_SCALE, draftLayout, jokerFaceArt } from './draft_card_art.js';
 import {
-  PARALLELS, PARALLEL_WEIGHTS, PARALLEL_IDS, CURSED_HP_COST,
-  rollParallel, rollOfferParallel, stampOfferParallel, parallelEffectMult, applyScaledNumbers,
-  cursedHpDrawback, parallelCardArt,
-} from './parallels.js';
+  handHint, addHandCard, refreshHand, handCards, describeHandBonus, handBonus, HANDS, FLUSH_BOONS,
+  SUIT_GLYPHS, handName,
+} from './hands.js';
 import * as INTRO from './intro.js';
 import * as CINE from './portal_cine.js';
 // G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
@@ -880,7 +874,9 @@ const state = {
   pendingDrafts: 0,
   // W7b ladder run state (rerolled/reset in startRun): the run's MYTHIC chase
   // gate ({ cardId: bool }) and the Second Wind spend.
-  chasePool: {},
+  jokerSlots: 2,     // per-run joker slots (startRun)
+  jokerOffers: 0,    // boss joker offers waiting to open
+  draftKind: null,   // 'level' | 'joker' while a draft is up
   secondWindUsed: false,
   cam: { x: 0, y: 0 },
   // WAVE-27 camera: the smoothed lead (world px, direction of travel), the
@@ -3917,6 +3913,7 @@ function update(dt) {
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
         if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
         toast('BOSS DOWN');
+        if (credit) queueJokerOffer();
         // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
         // per-wave HERALD (the midBoss branch above) is deliberately NOT
         // dilated — it fires every wave, and Sk408's law is that slow-mo
@@ -4360,6 +4357,7 @@ function update(dt) {
   // EVOLVE overlay check: level-ups and partner cards
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
+  maybeOpenJokerOffer();
 
   // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
   // auto-start here on the first playing tick after the final boss died —
@@ -4474,15 +4472,6 @@ const PARTNER_WEIGHT_MULT = 2;
 const FUSION_REFILL_LEVEL = 4;
 const REFILL_WEIGHT = 3;
 
-// TIER-2(d) PARALLEL toggle (the W7b measurement-seam pattern above, same
-// shape, same read-once doctrine): default ON — the game ships the sports-card
-// varieties. A measurement arm sets globalThis.HORDES_PARALLELS = false BEFORE
-// importing this module to run the pre-parallel offer path; with the toggle
-// off openDraft never rolls and never stamps, so every offered card is
-// byte-identical to the pre-parallel offer (test/test_tier2_parallels.mjs
-// pins that as THE regression gate).
-const PARALLELS_ON = globalThis.HORDES_PARALLELS !== false;
-
 function openDraft() {
   // A queued/new draft supersedes any live pick ceremony — the cards are
   // re-rendered below, so the ceremony must not tear down what it no longer
@@ -4490,6 +4479,25 @@ function openDraft() {
   if (draftCeremony) endDraftCeremony(false);
   state.mode = 'draft';
   ovTitle.className = '';
+  // A boss kill queues a joker offer; it opens ahead of any level-up draft.
+  if (!state.draftKind) state.draftKind = state.jokerOffers > 0 ? 'joker' : 'level';
+  if (state.draftKind === 'joker') {
+    // Banished cards and the dev ban list stay out of a boss offer too.
+    const devBan = (dev && dev.autoplay === true && dev.draftBan) ? dev.draftBanIds : [];
+    const offer = rollJokerOffer(state).filter(c =>
+      !(state.draftBanned && state.draftBanned.has(draftBanKey(c))) && !devBan.includes(c.id));
+    if (offer.length) {
+      presentDraft(offer, 'JOKER', jokerRowFull(state)
+        ? 'the boss is down: take 1 joker, and choose which one it replaces'
+        : 'the boss is down: take 1 joker');
+      return;
+    }
+    // Every joker is held: nothing to offer.
+    state.jokerOffers--;
+    state.draftKind = null;
+    if (--state.pendingDrafts <= 0) { state.pendingDrafts = 0; state.mode = 'playing'; return; }
+    state.draftKind = 'level';
+  }
   // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
   // "Player chosen weapons in a menu, not during run... Replaces in run
   // cards"): there are NO wpn_* grant offers any more — the run never hands
@@ -4615,29 +4623,8 @@ function openDraft() {
     // (statCardOffered), the same contract the common family rides.
     ...(DRAFT_LADDER_ON ? DRAFT_RARE_UPGRADES.filter(u => statCardOffered(u.id, state))
       .map(u => ({ ...u, tier: 'RARE', weight: draftLadderWeight(u.id, 'RARE', state.player.stats.luck || 0) })) : []),
-    // W7b MYTHIC ladder tier: the run-gated chase cards. A card is in the pool
-    // AT ALL only if startRun rolled it into state.chasePool (~1/10 of runs,
-    // owner spec), and leaves the pool for the run once taken (the takenStats
-    // ledger read directly — once per run with or without a run rule).
-    ...(DRAFT_LADDER_ON ? DRAFT_MYTHIC_UPGRADES.filter(u =>
-        (state.chasePool || {})[u.id] && !((state.player.takenStats || {})[u.id]))
-      .map(u => ({ ...u, tier: 'MYTHIC', weight: draftLadderWeight(u.id, 'MYTHIC', state.player.stats.luck || 0) })) : []),
-    ...ruleCards(state),
-    // G8 step 4: the perk family rides the same pool at SKILL_CARD_WEIGHT,
-    // one card per perk the run does not already hold (taken once, like a rule).
-    ...skillCards(state),
-    // N1 slice 2: the run-owned auto FROST_NOVA card rides the same pool at
-    // FROST_CARD_WEIGHT, offered exactly when the class Q is not already
-    // FROST_NOVA and the run does not hold it (taken once, like the perks).
-    ...(frostCardOffered(state) ? [frostCard()] : []),
-    // G8 step 2: the rewrite family rides the same pool at
-    // REWRITE_CARD_WEIGHT, one card per rewrite not already held. G21 slice 2:
-    // FOURTEEN cards now, and the family share is held by WEIGHT CLASS rather
-    // than one flat number — eleven single-tag/legacy cards at
-    // REWRITE_CARD_WEIGHT, three cross-tag combos at half weight (12.5 x
-    // 0.005 = 0.0625, inside the goal's [0.055, 0.070] band); rewriteCards
-    // carries the per-card weight, so the pool needs no special case.
-    ...rewriteCards(state),
+    // Jokers ride the pool at a low weight, one card per joker on offer.
+    ...(jokerDraftWeight > 0 ? jokerCards(state, jokerDraftWeight) : []),
   ];
   // K5 DEV DRAFT BAN LIST (dev-autoplay cohorts only): banned offer ids leave
   // the pool BEFORE the weighted draw below. Belt and braces: the exclusion
@@ -4669,23 +4656,21 @@ function openDraft() {
     for (let i = 0; i < drawPool.length; i++) { if ((r -= drawPool[i].weight) < 0) { idx = i; break; } }
     choices.push(drawPool.splice(idx, 1)[0]);
   }
-  // TIER-2(d) PARALLELS (owner: sports-card varieties): ONE seeded weighted
-  // stamp per offered card, riding the OFFER OBJECT (the pool row the draw
-  // already copied) — never the registry. The roll reads state.parallelRng
-  // (startRun), so the Math.random draw order above is untouched and an
-  // absent roll (or the OFF toggle) leaves the offer byte-identical to a
-  // pre-parallel offer. ROLLS FOR ANY CARD INCLUDING PROTECTED ONES (ONE OF
-  // EACH included: its four-front protection is about its ROLE, not its skin
-  // — the stamp never touches id/rule/apply/text).
-  if (PARALLELS_ON) {
-    if (!state.parallelRng) state.parallelRng = mulberry32(((state.choiceSeed || 0) ^ 0x9a11) >>> 0);
-    for (let i = 0; i < choices.length; i++) {
-      choices[i] = stampOfferParallel(choices[i],
-        rollOfferParallel(choices[i], state.player, state.parallelRng));
-    }
+  // A card that would make a new or better hand says so (hands.js).
+  for (const c of choices) {
+    const hint = handHint(state.player, c.id, runHandOpts());
+    c.handText = hint ? hint.text : '';
   }
+  presentDraft(choices, 'LEVEL ' + state.player.level, 'pick 1 of ' + choices.length);
+}
+
+// Put a set of offer cards on the draft overlay: level-up cards, a boss's
+// joker offer, or the replace choice of a full joker row.
+let lastDraft = null;   // the offer a replace choice can go back to
+function presentDraft(choices, title, sub, opts = {}) {
+  if (!opts.swap) lastDraft = { choices, title, sub };
   // SLICE 9: record the offer set (the taken id fills in at pick()).
-  if (dev) {
+  if (dev && !opts.swap) {
     dev.drafts.push({
       level: (state.player.level || 0) | 0,
       wave: (state.wave && state.wave.num) | 0,
@@ -4693,10 +4678,10 @@ function openDraft() {
       taken: null,
     });
   }
-  ovTitle.textContent = 'LEVEL ' + state.player.level;
-  ovSub.textContent = 'pick 1 of ' + choices.length;
+  ovTitle.textContent = title;
+  ovSub.textContent = sub;
   // The tutorial's free level-up: its card's sentence rides the draft screen.
-  if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
+  if (state.draftKind === 'level' && !opts.swap && state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
     ovSub.textContent = (PROLOGUE_BANNERS.find(b => b.action === 'draft') || {}).body || ovSub.textContent;
   }
   draftFocus = -1;
@@ -4714,16 +4699,11 @@ function openDraft() {
     // draft overlay is DOM, and index.html's stylesheet is another track's
     // file.
     const badge = u.tier
-      ? `<div class="syn" style="color:${u.tier === 'MYTHIC' ? RARITY.MYTHIC.tell.outline : RARITY.RARE.tell.outline}">${u.tier}</div>`
+      ? `<div class="syn" style="color:${u.tier === 'JOKER' ? JOKER_TINT : RARITY.RARE.tell.outline}">${u.tier}</div>`
       : u.evoReady ? `<div class="syn evo-ready" style="color:#ffd75e">EVOLUTION READY</div>` : '';
     if (u.evoReady) el.className += ' evo-ready';
-    // TIER-2(d): the parallel stamp is ON the card (name + blurb, plain text).
-    // The card's name/desc strings stay the registry's byte-identical text; the
-    // stamp is additive only. Its own line kind (class "par"), styled inline
-    // with the tier badge's typography, above the painted plaque.
-    const par = u.parallel && PARALLELS[u.parallel];
-    const parBadge = par
-      ? `<div class="par" style="color:${par.tell};margin-top:8px;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${par.name.toUpperCase()} - ${par.blurb}</div>`
+    const handLine = u.handText
+      ? `<div class="evo hand" style="color:#8fe0a0;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.handText}</div>`
       : '';
     // The road to the evolution rides its own line under the effect text.
     const evoLine = u.evoText
@@ -4739,7 +4719,7 @@ function openDraft() {
     const stackLine = u.stackText
       ? `<div class="evo stack" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.stackText}</div>`
       : '';
-    el.innerHTML = badge + parBadge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + leadLine + stackLine + evoLine + fuseLine +
+    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + handLine + leadLine + stackLine + evoLine + fuseLine +
       `<div class="key">[${i + 1}]</div>`;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
@@ -4756,11 +4736,7 @@ function openDraft() {
     const artCv = document.createElement('canvas');
     artCv.className = 'card-art';
     if (artCv.setAttribute) artCv.setAttribute('data-card', u.id);
-    if (par && artCv.setAttribute) artCv.setAttribute('data-parallel', u.parallel);
-    // TIER-2(d): a stamped offer paints its DERIVED variant art (foil/chroma/
-    // pulse treatment) through the same drawCard path — see paintOfferArt's
-    // parallel argument. Absent stamp = the byte-identical base call.
-    if (paintOfferArt(artCv, u.id, lay.artScale, u.parallel)) {
+    if (paintOfferArt(artCv, u.artId || u.id, lay.artScale)) {
       if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
       else el.appendChild(artCv);
     }
@@ -4770,12 +4746,12 @@ function openDraft() {
   // The one coach card left: a first level-up with no tutorial behind it (a
   // returning profile, or after REPLAY TOUR cleared the flags) gets one line.
   // The first-run tutorial teaches the draft itself and marks this seen.
-  if (!state.prologue && !tourFlag(TOUR_KEYS.draft)) {
+  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
       text: 'THE DRAFT: every level, pick 1 card. Click one or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
   }
-  renderDraftActions();
+  if (opts.swap) clearDraftActions(); else renderDraftActions();
   // G30: every presented draft re-arms the AUTO countdown (the coach above
   // suspends it until dismissed — tickDraftAutoPick).
   armDraftAutoPick(choices);
@@ -4887,6 +4863,8 @@ function draftBanish(u) {
 // open the next queued draft, or hand the screen back to the run.
 function closeDraft(u) {
   state.pendingDrafts--;
+  if (state.draftKind === 'joker') state.jokerOffers = Math.max(0, (state.jokerOffers || 0) - 1);
+  state.draftKind = null;
   clearDraftActions();
   if (state.pendingDrafts > 0) { openDraft(); return; }
   draftFocus = -1;
@@ -4992,6 +4970,127 @@ function leadWeapon() {
   return best;
 }
 
+// ---------- JOKERS (jokers.js) -------------------------------------------------
+const JOKER_TINT = '#b08aff';
+// The weight of one joker card in the level-up pool (a test seam can change it).
+let jokerDraftWeight = JOKER_CARD_WEIGHT;
+const JOKER_SHELF_KEY = 'joker:';
+
+// A joker joins the row: the profile remembers it, the feed says what it does,
+// and the hand is re-read (three jokers change how hands are made or paid).
+function announceJoker(id, verb) {
+  const j = JOKERS[id];
+  markBannerSeen(profile, JOKER_SHELF_KEY + id);
+  toast(verb + ' - ' + j.name.toUpperCase() + ': ' + j.desc, JOKER_TINT);
+  audio.playSfx('powerup');
+  updateRunHand(true);
+}
+function gainJoker(id) {
+  if (takeJoker(state, id)) announceJoker(id, 'JOKER');
+}
+
+// The row is full: one card per held joker (taking it swaps that joker out)
+// and one card that keeps the row as it is.
+function openJokerReplace(u) {
+  const inc = JOKERS[u.joker];
+  // KEEP comes first: an unattended night run takes the first card.
+  const choices = [{
+    id: 'swap_keep', artId: u.id, jokerSwap: true, keep: true, in: u.joker, from: u,
+    name: 'KEEP MY JOKERS', desc: 'pass on ' + inc.name +
+      (state.draftKind === 'level' ? ' and go back to the cards' : ''), apply: () => {},
+  }];
+  for (const id of jokersHeld(state)) {
+    choices.push({
+      id: 'swap_' + id, artId: 'joker_' + id, jokerSwap: true, out: id, in: u.joker, from: u,
+      name: 'REPLACE: ' + JOKERS[id].name, desc: 'you lose: ' + JOKERS[id].desc, apply: () => {},
+    });
+  }
+  presentDraft(choices, 'JOKER ROW FULL', inc.name.toUpperCase() + ': ' + inc.desc, { swap: true });
+}
+function resolveJokerSwap(u) {
+  if (u.keep) {
+    // Passing on a level-up joker goes back to the same cards without it; a
+    // boss offer just closes.
+    const back = lastDraft && state.draftKind === 'level' ? lastDraft.choices.filter(c => c !== u.from) : [];
+    if (back.length) { presentDraft(back, lastDraft.title, lastDraft.sub); return; }
+    closeDraft(null);
+    return;
+  }
+  if (replaceJoker(state, u.out, u.in)) announceJoker(u.in, 'JOKER SWAP');
+  closeDraft(u.from);
+}
+
+// A wave boss pays a joker offer: it opens as soon as the run is back in play.
+function queueJokerOffer() {
+  state.jokerOffers = (state.jokerOffers || 0) + 1;
+  state.pendingDrafts++;
+}
+function maybeOpenJokerOffer() {
+  if (state.mode === 'playing' && state.jokerOffers > 0 && !state.draftKind) openDraft();
+}
+
+// ---------- The joker shelf (PROGRESS) -----------------------------------------
+// Every joker as a card: the ones this profile has held show their face, name
+// and rule; the rest are dark silhouettes.
+function jokersDiscovered() {
+  return JOKER_IDS.filter(id => bannerSeen(profile, JOKER_SHELF_KEY + id)).length;
+}
+function jokerFaceHtml(id, known, px) {
+  const face = jokerFaceArt(JOKERS[id].art);
+  if (!face) return '';
+  const dark = {};
+  for (const k of Object.keys(face.palette)) dark[k] = k === '1' ? '#2a2a36' : '#1c1c26';
+  return iconHtml(face.grid, known ? face.palette : dark, px);
+}
+function showJokers() {
+  openMenu('progress');
+  ovTitle.textContent = 'JOKERS';
+  ovTitle.className = 'logo';
+  ovSub.innerHTML = jokersDiscovered() + ' / ' + JOKER_IDS.length +
+    ' discovered &middot; rule cards: a run holds ' + JOKER_SLOTS.BASE + ' to ' + JOKER_SLOTS.MAX;
+  for (const id of JOKER_IDS) {
+    const known = bannerSeen(profile, JOKER_SHELF_KEY + id);
+    const el = menuCard(
+      jokerFaceHtml(id, known, 2) + (known ? JOKERS[id].name : '? ? ?'),
+      known ? '<span style="color:#a8a8c0">' + JOKERS[id].desc + '</span>' : 'not discovered yet',
+      () => {}, !known);
+    el._jokerShelf = { id, known };
+  }
+  menuCard('BACK', 'to progress [ESC]', () => showProgress());
+}
+
+// ---------- HANDS (hands.js) ---------------------------------------------------
+// What the hand evaluation reads from the rest of the run.
+function runHandOpts() { return handOpts(state); }
+
+// The HUD's count-up when a new hand is made, in wall-clock seconds.
+const HAND_COUNT_S = 0.9;
+
+// Make the hand's bonus match the cards held. A new or better hand gets its
+// moment: a feed line, a sound, and the HUD plate counting up to the new bonus.
+function updateRunHand(announce) {
+  const p = state.player;
+  const from = p.hand ? handBonus(p.hand, p.hand.scale).dmg : 0;
+  const res = refreshHand(p, runHandOpts());
+  if (res.changed && res.hand && announce && res.upgraded) {
+    state.handFx = { t: 0, dur: HAND_COUNT_S, from, to: handBonus(res.hand, res.hand.scale).dmg };
+    toast('HAND: ' + res.hand.name.toUpperCase() + ' - ' + describeHandBonus(res.hand, res.hand.scale), '#8fe0a0');
+    audio.playSfx('powerup');
+  }
+  return res;
+}
+
+// Advance the count-up; a soft tick marks each step of the number.
+function tickHandFx(dt) {
+  const fx = state.handFx;
+  if (!fx) return;
+  const step = (t) => Math.floor(Math.min(1, t / fx.dur) * 5);
+  const before = step(fx.t);
+  fx.t += dt;
+  if (step(fx.t) > before && fx.t < fx.dur) audio.playSfx('uiMove');
+  if (fx.t >= fx.dur + 0.6) state.handFx = null;
+}
+
 // Common stat cards (config.js UPGRADES) stack: how many times this pick of
 // `u` counts, given the copies the run already holds.
 const COMMON_STAT_IDS = new Set(UPGRADES.map(c => c.id));
@@ -5004,7 +5103,11 @@ function statStackTimes(u, p) {
 function pick(u) {
   const p = state.player;
   // The first copy of a stat card levels every weapon it is the partner of.
-  const attune = (!u.rule && !u.skill && !u.rewrite && !u.tier && !(p.takenStats || {})[u.id])
+  // The replace choice of a full joker row resolves a joker pick made earlier.
+  if (u.jokerSwap) { resolveJokerSwap(u); return; }
+  // A joker picked with a full row: choose which one it replaces first.
+  if (u.joker && jokerRowFull(state)) { openJokerReplace(u); return; }
+  const attune = (!u.joker && !u.tier && !(p.takenStats || {})[u.id])
     ? state.weapons.filter(w => !w.evolutionId && EVOLUTION_DEFS[w.type] &&
         EVOLUTION_DEFS[w.type].partner === u.id && (w.level || 1) < WEAPON_MAX_LEVEL)
     : [];
@@ -5015,65 +5118,39 @@ function pick(u) {
   if (state.prologue && !state.prologue.drunk && !state.prologue.skipped) {
     prologueActionDone('draft');
   }
-  // G8 step 3: a RUN RULE card grants a persistent condition instead of a
-  // number; every other card records itself in the `once` ledger (stat cards
-  // only — weapon grant/level cards are the weapon economy, not the stats).
-  if (u.rule) {
-    p.rules = p.rules || {};
-    p.rules[u.rule] = true;
-    toast('RUN RULE - ' + RULES[u.rule].name.toUpperCase() + ': ' + RULES[u.rule].desc.replace('RUN RULE - ', ''));
-  } else if (u.skill) {
-    // G8 step 4: a SKILL card grants its always-on perk through the card's own
-    // apply(player) in the chain below, and NEVER enters the `once` stat
-    // ledger — skill ids must not pollute it (same shape as the rule branch).
-    // N1 slice 2: the Pocket Frost card is NOT in SKILL_PERKS (perks.js stays
-    // read-only for that slice) and carries its own name/desc — fall back to
-    // the card itself so the toast cannot throw on an unknown skill id.
-    const skillCardMeta = SKILL_PERKS[u.skill] || u;
-    toast('SKILL - ' + skillCardMeta.name.toUpperCase() + ': ' + skillCardMeta.desc.replace('SKILL - ', ''));
-  } else if (u.rewrite) {
-    // G8 step 2: a REWRITE card grants its mechanic through apply(player) in
-    // the chain below, and NEVER enters the `once` stat ledger.
-    // Player-facing copy only: the internal family label must never reach the
-    // feed - it read as a placeholder ("rewrite this description before using").
-    toast(REWRITES[u.rewrite].name.toUpperCase() + ' - ' + REWRITES[u.rewrite].desc);
-  } else if (u.tier === 'MYTHIC') {
-    // W7b: a MYTHIC chase card leaves the pool for the rest of the run once
-    // taken (openDraft reads the takenStats ledger directly for this family —
-    // once per run with or without a run rule), and the catch is announced.
-    markStatTaken(state, u.id);
-    toast('MYTHIC - ' + u.name.toUpperCase() + ': ' + u.desc, RARITY.MYTHIC.tell.outline);
+  // A joker goes on the row; every other card that is not a weapon card
+  // records itself in the stat ledger (read by ONE OF EACH).
+  if (u.joker) {
+    gainJoker(u.joker);
   } else if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_'))) {
     markStatTaken(state, u.id);
   }
   // A committed stat plan pays: from its STACK_FROM-th copy on, a common stat
   // card counts STACK_MULT times.
-  const stackTimes = statStackTimes(u, p);
+  let stackTimes = statStackTimes(u, p);
+  // Encore: every ENCORE_EVERY-th card drafted counts twice.
+  if (!u.joker) {
+    p.draftPicks = (p.draftPicks || 0) + 1;
+    if (hasJoker(state, 'encore') && p.draftPicks % ENCORE_EVERY === 0) {
+      stackTimes *= 2;
+      toast('ENCORE - ' + u.name.toUpperCase() + ' COUNTS TWICE', JOKER_TINT);
+    }
+  }
   if (COMMON_STAT_IDS.has(u.id)) {
     p.statCopies = p.statCopies || {};
     p.statCopies[u.id] = (p.statCopies[u.id] || 0) + 1;
   }
   for (let stackN = 0; stackN < stackTimes; stackN++) {
   if (u.id === 'multi' && volleyAtProjCap()) {
-    // TIER-2(d): the listed effect here is "+20% weapon damage" — the parallel
-    // multiplier scales the LISTED number (x1.5 -> +30%), mult 1 is the
-    // byte-identical 1.2 literal path (1 + 0.2 * 1 === 1.2, pinned).
-    p.stats.damage += 0.2 * parallelEffectMult(u.parallel) * runBase(p).damage;
+    p.stats.damage += 0.2 * runBase(p).damage;
   } else if (u.id === 'speed' || u.id === 'rate') {
     const n = (p.draftCounts = p.draftCounts || {});
     n[u.id] = (n[u.id] || 0) + 1;
     const t = DRAFT_TAPER[Math.min(n[u.id] - 1, DRAFT_TAPER.length - 1)];
-    // TIER-2(d): the taper fraction is the listed effect — scaled by the
-    // parallel multiplier (x1.5 -> 1.5x the taper fraction). Mult 1 is the
-    // byte-identical expression (x * 1 is exact).
-    const pm = parallelEffectMult(u.parallel);
-    if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t * pm;
-    else p.stats.cooldown *= 1 - 0.10 * t * pm;
+    if (u.id === 'speed') p.stats.speed *= 1 + 0.15 * t;
+    else p.stats.cooldown *= 1 - 0.10 * t;
   } else {
-    // TIER-2(d): the ONE numbers seam — the card's apply with its numeric
-    // deltas scaled by the parallel multiplier (CURSED x1.5 / BLESSED x1.25 /
-    // absent+cosmetic x1, byte-identical to the raw apply).
-    applyScaledNumbers(u.apply, p, parallelEffectMult(u.parallel));
+    u.apply(p);
     // G8 step 2 RETUNE (the step-3 debt TICK NOTE 7 measured at 0.65x): under
     // ONE OF EACH the weapon tilt actually PAYS — a weapon level-up card
     // grants +1 BONUS level and a weapon grant lands at Lv2. The rule still
@@ -5088,9 +5165,6 @@ function pick(u) {
         // test reads the OFFER-time level from the card id: the generic
         // u.apply above has already run, so w.level would misfire on a card
         // offered at MAX-1 (leveled to MAX by that apply) and double-pay.
-        // TIER-2(d): this is the RULE's compensation, NOT the card's effect —
-        // deliberately UNSCALED by any parallel (ONE OF EACH behavior is
-        // identical with or without a stamp).
         const lvAtOffer = Number(u.id.split('_').pop());
         if (lvAtOffer >= WEAPON_MAX_LEVEL) p.stats.damage += 0.10 * runBase(p).damage;
         else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
@@ -5101,21 +5175,12 @@ function pick(u) {
     }
   }
   }
-  // TIER-2(d): the ONE shared CURSED drawback — flat HP loss on pick on the
-  // EXISTING p.hp surface (entities.js makePlayer). Exactly one drawback, every
-  // cursed card alike (no bespoke per-card curses); after the card's scaled
-  // effect so the net read is (scaled gain) - (the stated cost). Floors at 1 —
-  // a pick can never kill (cursedHpDrawback).
   for (const w of attune) {
     for (let i = 0; i < DRAFT_PLAN.PARTNER_LEVELS; i++) levelUpWeapon(w);
     toast(WEAPON_NAMES[w.type].toUpperCase() + ' Lv ' + w.level + ' - ITS PARTNER CARD IS IN HAND');
   }
-  if (u.parallel === 'cursed') {
-    cursedHpDrawback(p);
-    toast('CURSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.cursed.blurb, PARALLELS.cursed.tell);
-  } else if (u.parallel === 'blessed') {
-    toast('BLESSED - ' + u.name.toUpperCase() + ': ' + PARALLELS.blessed.blurb, PARALLELS.blessed.tell);
-  }
+  // The card joins the run's hand; a new or better hand pays at once.
+  if (addHandCard(p, u.id)) updateRunHand(true);
   // SLICE 9: the taken pick lands on the latest still-open draft record.
   if (dev) {
     for (let i = dev.drafts.length - 1; i >= 0; i--) {
@@ -5231,8 +5296,7 @@ function tickDraftAutoPick(dt) {
       // Uniformly at random across the offered cards (captured at
       // presentation), through the ONE activation seam (activateDraftCard) —
       // byte-identical to a tap.
-      // Never a Cursed card while another is on offer (autoPickable).
-      const pool = autoPickable(draftOffers);
+      const pool = draftOffers;
       const u = state.nightRun
         ? draftOffers[nightDraftPickIndex(draftOffers)]   // NIGHT: highest tier, first slot on tie
         : pool[Math.min(pool.length - 1, Math.floor(draftAutoRng() * pool.length))];
@@ -5276,19 +5340,11 @@ let nightRestartLeft = null;     // s left on the end-card auto-RETRY
 let nightEvolveLeft = null;      // s left on the EVOLUTION overlay auto-pick
 let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
-// The offers an unattended pick may take: a Cursed card costs HP, so it is
-// only taken when every offer is Cursed.
-export function autoPickable(offers) {
-  const safe = offers.filter(u => !(u && u.parallel === 'cursed'));
-  return safe.length ? safe : offers;
-}
-
 export function nightDraftPickIndex(offers) {
-  const rank = (u) => (u && u.tier === 'MYTHIC') ? 2 : (u && u.tier === 'RARE') ? 1 : 0;
-  const ok = autoPickable(offers);
+  // A joker is the top pick while the row has room; with a full row it is the last.
+  const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.tier === 'RARE') ? 1 : 0;
   let best = -1;
   for (let i = 0; i < offers.length; i++) {
-    if (!ok.includes(offers[i])) continue;
     if (best < 0 || rank(offers[i]) > rank(offers[best])) best = i;
   }
   return Math.max(0, best);   // strict > keeps the FIRST eligible slot on a tie
@@ -7278,6 +7334,8 @@ function showProgress() {
     () => showTrophies());
   menuCard('BESTIARY', `${seenCount(profile)} / ${totalEncounters()} discovered · enemy guide`,
     () => showBestiary());
+  menuCard('JOKERS', `${jokersDiscovered()} / ${JOKER_IDS.length} discovered · rule cards`,
+    () => showJokers());
   menuCard('FUSIONS', `${fusionsDiscovered()} / ${FUSION_DEFS.length} discovered · weapon pairs`,
     () => showFusions());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
@@ -9012,12 +9070,6 @@ function startRun() {
     }
   }
   state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
-  // TIER-2(d): the parallel-stamp stream — seeded OFF the choice seed, the
-  // shrineRng pattern ("shrine draws never desync the intermission offers" —
-  // here: stamp rolls never desync the offer-weight Math.random draw order,
-  // ON or OFF). Existing seed streams only: no new persisted seed, no wall
-  // clock. Deterministic per run + draft call sequence.
-  state.parallelRng = mulberry32((state.choiceSeed ^ 0x9a11) >>> 0);
   // S1 (owner directive 2026-09-14): world-seed the fixed set of 4 altars ONCE
   // here — uniform scatter over the whole arena, static for the whole run.
   state.shrines = seedShrines(state.shrineRng);
@@ -9091,27 +9143,14 @@ function startRun() {
   // roll rides the run's Math.random stream, which the paired-seed harness
   // seeds per run — so the gate is run-seeded by construction. Run-scoped:
   // rerolled every startRun, and the revive spend resets with the run.
-  state.chasePool = {};
   // Draft actions: this run's charges and the cards banished from its drafts.
   state.draftCharges = { reroll: p.stats.draftRerolls || 0, skip: p.stats.draftSkips || 0, banish: p.stats.draftBanishes || 0 };
   state.draftBanned = new Set();
-  if (DRAFT_LADDER_ON) {
-    // W7b TWO-STAGE chase gate (owner 2026-09-14): one 10% EVENT roll ("this run
-    // has a joker"), then a 60/25/15 count roll, then a uniform draw of WHICH
-    // mythics. Replaces per-card independent rolls, which stacked to ~27%
-    // any-mythic; the gate caps the event at 10% and the count keeps multiples fun.
-    if (Math.random() < DRAFT_LADDER.CHASE_GATE_CHANCE) {
-      const w = DRAFT_LADDER.CHASE_COUNT_WEIGHTS;           // [0.60, 0.25, 0.15]
-      const r = Math.random();
-      const count = r < w[0] ? 1 : (r < w[0] + w[1] ? 2 : 3);
-      const ids = DRAFT_MYTHIC_UPGRADES.map((m) => m.id);
-      for (let i = ids.length - 1; i > 0; i--) {             // Fisher-Yates, take N
-        const j = (Math.random() * (i + 1)) | 0;
-        const t = ids[i]; ids[i] = ids[j]; ids[j] = t;
-      }
-      for (const id of ids.slice(0, count)) state.chasePool[id] = true;
-    }
-  }
+  // The joker row: the slots this profile has bought, and no offer queued.
+  state.jokerSlots = Math.min(JOKER_SLOTS.MAX, p.stats.jokerSlots || JOKER_SLOTS.BASE);
+  state.jokerOffers = 0;
+  state.draftKind = null;
+  state.handFx = null;
   state.secondWindUsed = false;
   state.time = 0;
   state.spawnTimer = 0;
@@ -9511,6 +9550,31 @@ function openStats() {
       evoLine + fuseLine + '<br>';
   }
   menuCard('WEAPONS', wHtml || 'none yet', info);
+
+  // HAND: the best hand and what it pays, then every card held.
+  const hand = p.hand;
+  const suitTint = (c) => (c.suit === 'hearts' || c.suit === 'diamonds') ? '#e06a6a' : '#b8c4e0';
+  const inHand = new Set((hand && hand.cards) || []);
+  const cardsHtml = handCards(p).map(c =>
+    '<span style="color:' + suitTint(c) + (inHand.has(c.key) ? ';font-weight:bold' : ';opacity:0.7') + '">' +
+    c.rank + SUIT_GLYPHS[c.suit] + ' ' + c.name + '</span>').join(' &middot; ');
+  const handCard = menuCard('HAND',
+    (hand
+      ? '<b style="color:#8fe0a0">' + hand.name + '</b> &middot; ' + describeHandBonus(hand, hand.scale)
+      : 'no hand yet &middot; a pair is two cards of one rank') +
+    '<br><span style="color:#a8a8c0">' + (cardsHtml || 'draft cards to build a hand') + '</span>', info);
+  handCard._handReport = { id: hand ? hand.id : null };
+
+  // JOKERS: the row, slot by slot.
+  const held = jokersHeld(state);
+  let jHtml = '';
+  for (let i = 0; i < jokerSlots(state); i++) {
+    const j = JOKERS[held[i]];
+    jHtml += j
+      ? '<b style="color:' + JOKER_TINT + '">' + j.name + '</b> <span style="color:#a8a8c0">' + j.desc + '</span><br>'
+      : '<span style="color:#6a6a8a">empty slot</span><br>';
+  }
+  menuCard('JOKERS ' + held.length + '/' + jokerSlots(state), jHtml, info)._jokerReport = { held: held.slice() };
 
   // ITEMS: name in its rarity color + affix effects (loot.js affix data).
   // TIER-2: a named find shows its authored portrait ahead of the name
@@ -12411,6 +12475,7 @@ function frame(now) {
   // AUTO-only; a no-op in every other mode. SLICE 8: at dev speed >1 the
   // countdown rides paceDt (sim-clock — same sim coverage as 1x).
   tickDraftAutoPick(paceDt);
+  tickHandFx(paceDt);
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
@@ -12832,7 +12897,6 @@ export const __TEST = {
     press: toggleNight,
     get summary() { return state.nightSummary; },
     pickIndex: nightDraftPickIndex,
-    autoPickable,
     get continueLeft() { return nightContinueLeft; },
     get restartLeft() { return nightRestartLeft; },
     get evolveLeft() { return nightEvolveLeft; },
@@ -12962,18 +13026,15 @@ export const __TEST = {
   },
   // WAVE-18 draft seam: pick a card object directly (L3 overflow probe).
   pickCard: pick,
-  // TIER-2(d) PARALLELS seam: the toggle, the pure roll/stamp/effect-math/
-  // drawback/art-derivation entry points (src/parallels.js re-exported for the
-  // suite — the stamp and the pick both route through these), and the tuned
-  // constants the tests quote. Never read by the browser page.
-  parallels: {
-    on: PARALLELS_ON,
-    def: PARALLELS, weights: PARALLEL_WEIGHTS, ids: PARALLEL_IDS,
-    roll: rollParallel, stamp: stampOfferParallel,
-    mult: parallelEffectMult, scaledApply: applyScaledNumbers,
-    cursedHp: cursedHpDrawback, cost: CURSED_HP_COST,
-    art: parallelCardArt,
+  // The joker row and the hand: the real writers, the boss offer queue, the
+  // shelf, and the level-up pool weight (0 keeps jokers out of level drafts).
+  jokers: {
+    take: gainJoker, queueOffer: queueJokerOffer, openOffer: maybeOpenJokerOffer,
+    discovered: jokersDiscovered, show: showJokers,
+    get draftWeight() { return jokerDraftWeight; },
+    set draftWeight(w) { jokerDraftWeight = w; },
   },
+  hand: { update: updateRunHand, tick: tickHandFx, COUNT_S: HAND_COUNT_S },
   // W7b ladder seams: the ONE death function (Second Wind revive probes drive
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).

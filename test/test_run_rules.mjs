@@ -26,6 +26,7 @@
 //      through the real pick contract (a draft card's apply(player)).
 //
 // Run: node test/test_run_rules.mjs
+import { takeJoker } from '../src/jokers.js';
 import assert from 'node:assert/strict';
 import { CONFIG as C, UPGRADES } from '../src/config.js';
 import { CHESTS, rollContents, tickChests } from '../src/chests.js';
@@ -208,7 +209,7 @@ ok('both rule cards exist once, at RULE_CARD_WEIGHT, and grant through apply(pla
 const { T, state, elements } = await boot({ storage: [['hordes_onboarded', '1']] });
 function draftOffer(label, setup, draws = 3000) {
   state.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
-  state.player.rules = {}; state.player.takenStats = {};
+  state.player.rules = {}; state.player.takenStats = {}; state.player.jokers = [];
   setup(state);
   const real = Math.random;
   Math.random = seeded(31337);
@@ -220,14 +221,14 @@ function draftOffer(label, setup, draws = 3000) {
       cards += els.length;
       if (els.some(el => el._draftOffer && el._draftOffer.name === label)) hits++;
     }
-  } finally { Math.random = real; state.player.rules = {}; state.player.takenStats = {}; }
+  } finally { Math.random = real; state.player.rules = {}; state.player.takenStats = {}; state.player.jokers = []; }
   assert.equal(cards, draws * 3, 'every openDraft() rendered exactly 3 cards');
   return hits / draws;
 }
 const whetFree = draftOffer('Whetstone', () => {});
 const whetOnce = draftOffer('Whetstone', (s) => { s.player.rules.once = true; s.player.takenStats.dmg = 1; });
 const baitFree = draftOffer('Horde Bait', () => {});
-const baitHeld = draftOffer('Horde Bait', (s) => { s.player.rules.hordebait = true; });
+const baitHeld = draftOffer('Horde Bait', (s) => { takeJoker(s, 'hordebait'); });
 console.log('run rules: the REAL game seam (src/main.js openDraft), measured');
 console.log(`    Whetstone offered   no rules ${whetFree.toFixed(4)}   ONE OF EACH + dmg taken ${whetOnce.toFixed(4)}`);
 console.log(`    Horde Bait offered  not held ${baitFree.toFixed(4)}   already held ${baitHeld.toFixed(4)}`);
@@ -235,9 +236,10 @@ ok('openDraft() stops offering a stat the run already took under ONE OF EACH', (
   assert.ok(whetFree > 0, `the control is live (${whetFree.toFixed(4)})`);
   assert.equal(whetOnce, 0, 'Whetstone is gone from the pool, not merely rarer');
 });
-ok('openDraft() offers a rule card until the run takes it', () => {
-  assert.ok(baitFree > 0, `a rule card reaches the real draft (${baitFree.toFixed(4)})`);
-  assert.equal(baitHeld, 0, 'a held rule is never re-offered');
+ok('openDraft() offers a run rule as a joker until the run holds it', () => {
+  assert.ok(baitFree > 0, `the Horde Bait joker reaches the real draft (${baitFree.toFixed(4)})`);
+  assert.equal(baitHeld, 0, 'a held joker is never re-offered');
+  assert.equal(hasRule({ player: { jokers: [], rules: {} } }, 'hordebait'), false);
 });
 
 console.log(`run rules: PASS=${pass} FAIL=${fail}`);

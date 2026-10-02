@@ -42,6 +42,9 @@ import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCe
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN } from './sprite_cache.js';
 import { shakeOffset } from './fx/feel.js';
+import { describeHandBonus } from './hands.js';   // the HUD hand plate
+import { JOKERS, jokerSlots, jokersHeld } from './jokers.js';   // the HUD joker row
+import { cardArt } from './art/cards.js';
 import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
@@ -3253,6 +3256,64 @@ export class Renderer {
       }
       chrome.weaponIcons.push({ type: w.type, level: w.level || 1, evolved: !!w.evolution, xpFrac: wxpFrac, maxed });
       wx += 5 * Z + 10;
+    }
+
+    // --- the hand plate, above the item row: the best hand among the cards
+    // drafted this run and what it pays. While a new hand counts up
+    // (state.handFx) the damage share climbs and the line is gold.
+    const pl = state.player;
+    const hand = pl && pl.hand;
+    const hy = C.VIEW_H - 58;
+    chrome.hand = null;
+    if (hand || (pl && pl.handCards && Object.keys(pl.handCards).length)) {
+      const fx = hand ? state.handFx : null;
+      const k = fx ? Math.min(1, fx.t / fx.dur) : 1;
+      const counting = !!fx && k < 1;
+      const line = hand
+        ? hand.name.toUpperCase() + '  ' + describeHandBonus(hand, hand.scale, fx ? fx.from + (fx.to - fx.from) * k : null)
+        : 'NO HAND YET';
+      g.font = (fx ? 10 : 9) + 'px monospace';
+      g.textBaseline = 'top';
+      const tw = Math.ceil(feedTextW(line));
+      g.fillStyle = H.PLATE;
+      g.fillRect(5, hy - 2, tw + 4, 12);
+      g.fillStyle = !hand ? '#6a6a8a' : fx ? '#ffd75e' : '#8fe0a0';
+      g.fillText(line, 7, hy);
+      chrome.hand = { id: hand ? hand.id : null, text: line, counting };
+    }
+
+    // --- the joker row, above the hand plate: one framed cell per slot, the
+    // joker's card motif inside a filled one.
+    chrome.jokers = [];
+    chrome.jokerSlots = 0;
+    if (pl && state.jokerSlots) {
+      const JC = 16, jy = hy - JC - 6;
+      const held = jokersHeld(state);
+      chrome.jokerSlots = jokerSlots(state);
+      for (let i = 0; i < chrome.jokerSlots; i++) {
+        const jx = 6 + i * (JC + 3);
+        const j = JOKERS[held[i]];
+        g.fillStyle = j ? '#b08aff' : '#2a2a36';
+        g.fillRect(jx - 1, jy - 1, JC + 2, JC + 2);
+        g.fillStyle = '#14141c';
+        g.fillRect(jx, jy, JC, JC);
+        if (!j) continue;
+        // The middle of the card face; the parchment body is left out.
+        const art = cardArt(j.art);
+        if (art) {
+          const ox = Math.floor((art.grid[0].length - JC) / 2), oy = Math.floor((art.grid.length - JC) / 2);
+          for (let ry = 0; ry < JC; ry++) {
+            for (let rx = 0; rx < JC; rx++) {
+              const v = art.grid[oy + ry][ox + rx];
+              if (v > 4 || (v && art.fullArt && v !== 5)) {
+                g.fillStyle = art.palette[v] || '#c8c8d8';
+                g.fillRect(jx + rx, jy + ry, 1, 1);
+              }
+            }
+          }
+        }
+        chrome.jokers.push({ id: j.id });
+      }
     }
 
     // --- weather glyph, top-right (below the boss/maw bar zone) ---

@@ -20,9 +20,9 @@
 // 1:1 below. Only a genuinely unknown id gets NO canvas: drawCard fails safe
 // on unknown ids, and an empty backing store would paint a blank rectangle
 // over the card.
-import { cardArt } from './art/cards.js';
+import { cardArt, CARD_W, CARD_H } from './art/cards.js';
 import { drawCard, drawCardArt, cardBox } from './render_cards.js';
-import { parallelCardArt } from './parallels.js';
+import { JOKERS, JOKER_OFFER_PREFIX } from './jokers.js';
 
 export const OFFER_TO_DECK = {
   // COMMON (config.js UPGRADES — ids match the deck 1:1)
@@ -35,33 +35,21 @@ export const OFFER_TO_DECK = {
   // joins its own expansion RARE-face card BY NAME (pinned in
   // test_card_art_expansion.mjs).
   thorns: 'thornmail',
-  // W7b MYTHIC chase (RSS8: magnet_collector rides the expansion deck's own
-  // MYTHIC ace — same join, same art pipeline)
+  // The ids below belong to the card families the joker row replaced. The game
+  // no longer offers them; tools/draft_sim.mjs and the family modules' own
+  // tests still build those cards, so their art join stays.
   full_hand: 'full_hand', second_wind: 'second_wind', storm_shards: 'storm_shards',
-  magnet_collector: 'magnet_collector',
-  // TIER-2(b) mythic additions: the two new build-definers ride expansion
-  // MYTHIC aces of their own (offer id == deck id, the magnet_collector
-  // precedent — same join, same art pipeline).
-  tempest: 'tempest', killshot: 'killshot',
-  // G8 run rules (rules.js ruleCards: 'rule_' + id)
+  magnet_collector: 'magnet_collector', tempest: 'tempest', killshot: 'killshot',
   rule_hordebait: 'rule_hordebait', rule_once: 'rule_once',
-  // G8 perks (perks.js skillCards: 'skill_' + id) + the N1 Pocket Frost card
   skill_regrowth: 'skill_regrowth', skill_focus: 'skill_focus', skill_thick: 'skill_thick',
   skill_frost: 'skill_frost',
-  // G8 rewrites (rewrites.js rewriteCards: 'rewrite_' + id)
   rewrite_pierceall: 'rw_pierceall', rewrite_onkillboom: 'rw_onkillboom',
   rewrite_healthdamage: 'rw_healthdamage',
-  // G21 slice 1 keyword rewrites (one per REWRITE_TAGS family)
   rewrite_rime: 'rw_rime', rewrite_ignite: 'rw_ignite', rewrite_livewire: 'rw_livewire',
   rewrite_aftershock: 'rw_aftershock', rewrite_wideorbit: 'rw_wideorbit',
-  // G21 slice 2 second-per-tag singles (always offered until taken/full)
   rewrite_glacier: 'rw_glacier', rewrite_wildfire: 'rw_wildfire', rewrite_overload: 'rw_overload',
-  // G21 slice 2 cross-tag combos (predicate-offered: both constituents owned).
-  // RARE-tier cards (face rank) since the owner decision 2026-09-15 — the same
-  // join, the same art pipeline; only the rank/suit differ.
   rewrite_thermalshock: 'rw_thermalshock', rewrite_stormreaper: 'rw_stormreaper',
   rewrite_glacialorbit: 'rw_glacialorbit',
-  // TIER-2(b) combo additions (same contract: predicate-offered, RARE-face).
   rewrite_shatter: 'rw_shatter', rewrite_cinder: 'rw_cinder',
   rewrite_frostwire: 'rw_frostwire',
 };
@@ -82,6 +70,11 @@ export const WEAPON_OFFER_TO_DECK = {
 // The deck id backing a draft offer, or null when the offer id is unknown.
 export function deckIdForOffer(offerId) {
   let deckId = OFFER_TO_DECK[offerId] || null;
+  // A joker offer ('joker_<id>') shows the face named by its joker (jokers.js).
+  if (!deckId && typeof offerId === 'string' && offerId.startsWith(JOKER_OFFER_PREFIX)) {
+    const j = JOKERS[offerId.slice(JOKER_OFFER_PREFIX.length)];
+    deckId = (j && j.art) || null;
+  }
   if (!deckId && typeof offerId === 'string') {
     const type = offerId.startsWith('wpn_') ? offerId.slice(4)
       : offerId.startsWith('lvl_') ? offerId.slice(4).replace(/_\d+$/, '')
@@ -104,10 +97,8 @@ export const OFFER_ART_SCALE = 4;
 // paintTitleHeader; the pixels are the browser's. Backing store == CSS size
 // (1 backing px = 1 CSS px, an integer 3x on a dpr-3 phone), pixelated — the
 // same convention as the G13 portraits and the U1b frame.
-// TIER-2(d): `parallel` (the offer object's parallel stamp) paints the DERIVED
-// variant through the same drawCardArt painter drawCard itself uses — the
-// foil/chroma/pulse treatment is art derivation, never a second renderer. A
-// null/absent parallel is the byte-identical base path (drawCard by id).
+// A joker offer (id 'joker_<id>') paints its card face without the rank and
+// suit pips, inside a violet keyline: a joker is not a hand card.
 // The draft overlay's layout rule. A short viewport (a phone held sideways)
 // gets the COMPACT card: half-size art beside tighter text, all offers on one
 // row, so the cards and the reroll/skip/banish buttons fit without scrolling.
@@ -133,7 +124,31 @@ export function draftLayout(vw, vh, offers = 3) {
   return { compact: false, artScale: OFFER_ART_SCALE, cardW: null };
 }
 
-export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE, parallel = null) {
+// The joker face of a deck card: the pips blanked to parchment and the
+// keyline recoloured. Full-art cards (the two joker faces) are left as drawn.
+export const JOKER_KEYLINE = '#7a4ad8';
+const jokerFaces = new Map();
+export function jokerFaceArt(deckId) {
+  if (jokerFaces.has(deckId)) return jokerFaces.get(deckId);
+  const art = cardArt(deckId);
+  let face = null;
+  if (art) {
+    const grid = art.grid.map(row => row.slice());
+    if (!art.fullArt) {
+      // The two pip columns: top-left and (rotated) bottom-right.
+      for (let y = 2; y <= 12; y++) for (let x = 2; x <= 6; x++) {
+        if (grid[y][x] === 4) grid[y][x] = 2;
+        const by = CARD_H - 1 - y, bx = CARD_W - 1 - x;
+        if (grid[by][bx] === 4) grid[by][bx] = 2;
+      }
+    }
+    face = { grid, palette: { ...art.palette, 1: JOKER_KEYLINE } };
+  }
+  jokerFaces.set(deckId, face);
+  return face;
+}
+
+export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE) {
   const deckId = deckIdForOffer(offerId);
   if (!deckId) return false;
   const { w, h } = cardBox(scale);
@@ -151,7 +166,6 @@ export function paintOfferArt(cv, offerId, scale = OFFER_ART_SCALE, parallel = n
   if (typeof cv.getContext !== 'function') return true;
   const g = cv.getContext('2d');
   if (!g) return true;
-  const variant = parallel ? parallelCardArt(deckId, parallel) : null;
-  if (variant) return drawCardArt(g, variant, 0, 0, scale);
+  if (String(offerId).startsWith('joker_')) return drawCardArt(g, jokerFaceArt(deckId), 0, 0, scale);
   return drawCard(g, deckId, 0, 0, scale);
 }

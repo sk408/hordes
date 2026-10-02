@@ -216,7 +216,7 @@ s.check('ONE click TAKES the card (no confirm step): draft closes, pick lands', 
   // test/test_draft_ceremony.mjs.
   pump(Math.ceil(T.ceremony.S * 60) + 5);
   assert.equal(elements.overlay.style.display, 'none', 'the overlay is hidden (at the pick, or when the ceremony ends)');
-  if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_')) && !u.rule && !u.skill && !u.rewrite) {
+  if (!(u.id.startsWith('wpn_') || u.id.startsWith('lvl_')) && !u.joker) {
     assert.ok((state.player.takenStats || {})[u.id], 'the stat ledger recorded the take');
   }
 });
@@ -231,7 +231,9 @@ s.check('clicking a DIFFERENT card takes THAT card (there is no selection to mov
   // The ledger/takenStats write proves WHICH offer was applied, not just that
   // some offer was. (Weapon/level cards level a weapon instead — check the id
   // family before reading a ledger row.)
-  if (!(second.id.startsWith('wpn_') || second.id.startsWith('lvl_')) && !second.rule && !second.skill && !second.rewrite) {
+  if (second.joker) {
+    assert.ok((state.player.jokers || []).includes(second.joker), 'the SECOND card (a joker) is what landed');
+  } else if (!(second.id.startsWith('wpn_') || second.id.startsWith('lvl_'))) {
     assert.ok((state.player.takenStats || {})[second.id], 'the SECOND card is what landed');
   }
 });

@@ -21,6 +21,7 @@
 // L3 (the dead third Split Shot) is NOT re-pinned here: it landed in WAVE-18
 // (main.js volleyAtProjCap, overflow -> +20% damage) and is pinned by
 // test/smoke.mjs's "L3 overflow multi" block, which this suite runs.
+import { JOKERS, JOKER_CARD_WEIGHT, jokerCard } from '../src/jokers.js';
 import assert from 'node:assert';
 import { boot, suite } from './_harness.mjs';
 import { DRAFT_LADDER, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES, CONFIG as C } from '../src/config.js';
@@ -59,65 +60,21 @@ s.check('this process booted with the ladder ON (the A/B BEFORE arm sets it fals
   assert.equal(T.ladderOn, true);
 });
 
-// ---- 2. the chase gate, measured across a seeded run sample ------------------
-// The owner's TWO-STAGE gate (2026-09-14): a 10% EVENT roll ("this run has a
-// joker"), then 60/25/15 on the count, then a uniform which-draw. So the EVENT
-// rate is ~0.1, the conditional count is 60/25/15, and each SPECIFIC mythic is
-// 0.1 x E[count] / N of runs — rarer than the event, by design (per-card
-// independent rolls had stacked to ~27% any-mythic). The gate rides the run's
-// Math.random stream, so seeding per run IS the run-seed.
-//
-// TIER-2(b) RETARGET: the measurement used to count the event over the three
-// ORIGINAL mythics only (second_wind / storm_shards / full_hand) — a gated
-// run drawing only newer mythics read as "no event", which understated the
-// gate more with every addition (RSS8's magnet first, now Tempest/Killshot:
-// the old-3-only event measured 0.0575). The event and the count below are
-// now derived from the LIVE DRAFT_MYTHIC_UPGRADES array, so the gate math is
-// measured, not the family size; the per-card expectation is derived the same
-// way (0.1 x 1.55 / N — ~0.0258 at six cards, disclosed in config.js).
-const RUNS = 1200;
-{
-  const IDS = DRAFT_MYTHIC_UPGRADES.map((m) => m.id);
-  const counts = Object.fromEntries(IDS.map((id) => [id, 0]));
-  let event = 0, one = 0, two = 0, three = 0;
-  const real = Math.random;
-  try {
-    for (let i = 0; i < RUNS; i++) {
-      Math.random = mulberry32(20260914 + i);
-      T.startRun();
-      const g = state.chasePool || {};
-      const n = IDS.filter((id) => g[id]).length;
-      if (n > 0) event++;
-      if (n === 1) one++; else if (n === 2) two++; else if (n === 3) three++;
-      for (const id of IDS) if (g[id]) counts[id]++;
-    }
-  } finally { Math.random = real; }
-  const pEvent = event / RUNS;
-  const pOne = one / Math.max(1, event), pTwo = two / Math.max(1, event), pThree = three / Math.max(1, event);
-  const w = DRAFT_LADDER.CHASE_COUNT_WEIGHTS;
-  const perCard = DRAFT_LADDER.CHASE_GATE_CHANCE * (w[0] * 1 + w[1] * 2 + w[2] * 3) / IDS.length;
-  const rates = Object.fromEntries(IDS.map((id) => [id, counts[id] / RUNS]));
-  // Event sigma at p=0.1, N=1200 is ~0.0087; count-share sigma over ~120 joker-runs is ~0.045.
-  assert.ok(Math.abs(pEvent - 0.1) < 0.03, `the chase EVENT rate ${pEvent} ~ 0.1 (the two-stage gate)`);
-  assert.ok(Math.abs(pOne - 0.60) < 0.14, `count=1 share ${pOne} ~ 0.60 of joker-runs`);
-  assert.ok(Math.abs(pTwo - 0.25) < 0.14, `count=2 share ${pTwo} ~ 0.25 of joker-runs`);
-  assert.ok(Math.abs(pThree - 0.15) < 0.14, `count=3 share ${pThree} ~ 0.15 of joker-runs`);
-  for (const id of IDS) {
-    assert.ok(Math.abs(rates[id] - perCard) < 0.03,
-      `per-card rate ${id} ${rates[id]} ~ ${perCard.toFixed(4)} (each mythic is rarer than the 0.1 event)`);
-    assert.ok(rates[id] < 0.1, `${id} never reaches the old per-card 0.1 (${rates[id]})`);
+// ---- 2. the chase gate is gone: the mythic chase cards are jokers now ----------
+s.check('a run starts with an empty joker row and no chase gate', () => {
+  T.startRun();
+  assert.equal(state.chasePool, undefined, 'no chase pool on the run');
+  assert.deepEqual(state.player.jokers || [], []);
+  assert.equal(state.jokerSlots, 2);
+  for (const id of ['second_wind', 'storm_shards', 'full_hand', 'magnet_collector']) {
+    assert.equal(JOKERS[id].from, 'mythic', id + ' is a joker out of the mythic family');
   }
-  console.log(`  MEASURED two-stage chase gate over ${RUNS} seeded runs: event ${pEvent.toFixed(4)}, ` +
-    `count 1/2/3 = ${pOne.toFixed(3)}/${pTwo.toFixed(3)}/${pThree.toFixed(3)} of joker-runs, ` +
-    `per-card expectation ${perCard.toFixed(4)}: ` +
-    IDS.map((id) => `${id.split('_')[0]} ${rates[id].toFixed(4)}`).join(', '));
-}
-console.log('  ok - the two-stage chase gate (10% event, 60/25/15 count) is measured through the REAL startRun');
+});
 
 // ---- 3. pool composition through the REAL openDraft --------------------------
-function draftOfferRates(draws, gate) {
+function draftOfferRates(draws, jokerWeight) {
   T.startRun();
-  state.chasePool = gate;   // startRun rerolls the gate; force it AFTER
+  T.jokers.draftWeight = jokerWeight;
   state.weapons = state.weapons.filter(w => w.type === 'VOLLEY');   // a stable, small weapon side
   const real = Math.random;
   Math.random = mulberry32(9876);
@@ -127,36 +84,35 @@ function draftOfferRates(draws, gate) {
       T.openDraft();
       const cards = Array.from(elements['ov-cards'].children).map(c => c.innerHTML || '');
       if (cards.some(h => h.includes('>RARE<'))) seen.rare++;
-      if (cards.some(h => h.includes('>MYTHIC<'))) seen.mythic++;
+      if (cards.some(h => h.includes('>JOKER<'))) seen.mythic++;
       if (cards.some(h => h.includes("Scholar's Stone"))) seen.scholar++;
       if (cards.some(h => h.includes('Light Boots'))) seen.boots++;
       if (cards.some(h => h.includes('Second Wind'))) seen.wind++;
       state.mode = 'playing';   // openDraft sets 'draft'; reopen without picking
     }
-  } finally { Math.random = real; }
+  } finally { Math.random = real; T.jokers.draftWeight = JOKER_CARD_WEIGHT; }
   return seen;
 }
 
 {
   const DRAWS = 3000;
-  const on = draftOfferRates(DRAWS, { second_wind: true, storm_shards: true, full_hand: true });
+  const on = draftOfferRates(DRAWS, JOKER_CARD_WEIGHT);
   assert.ok(on.rare > 0, 'a RARE-tier card is offered at all');
-  assert.ok(on.mythic > 0, 'a gated MYTHIC is offered at all');
+  assert.ok(on.mythic > 0, 'a JOKER is offered at all');
+  assert.ok(on.mythic < on.rare, `jokers are rarer than the RARE tier (${on.mythic} vs ${on.rare})`);
   assert.ok(on.scholar > 0 && on.scholar < on.boots,
     `each rare is individually rarer than a common (Scholar ${on.scholar} vs Boots ${on.boots} in ${DRAWS})`);
-  assert.ok(on.wind > 0, 'Second Wind offers when gated');
-  console.log(`  MEASURED per-${DRAWS}-drafts (all mythics gated): RARE badge ${(on.rare / DRAWS).toFixed(3)}, ` +
-    `MYTHIC badge ${(on.mythic / DRAWS).toFixed(3)}, Scholar ${(on.scholar / DRAWS).toFixed(4)} vs Boots ${(on.boots / DRAWS).toFixed(4)}`);
+  assert.ok(on.wind > 0, 'Second Wind is offered as a joker');
+  console.log(`  MEASURED per-${DRAWS}-drafts (jokers at their pool weight): RARE badge ${(on.rare / DRAWS).toFixed(3)}, ` +
+    `JOKER badge ${(on.mythic / DRAWS).toFixed(3)}, Scholar ${(on.scholar / DRAWS).toFixed(4)} vs Boots ${(on.boots / DRAWS).toFixed(4)}`);
 
-  state.chasePool = {};
-  const off = draftOfferRates(DRAWS, {});
-  assert.equal(off.mythic, 0, 'an ungated mythic is NEVER offered');
-  assert.equal(off.wind, 0, 'Second Wind absent without the gate roll');
-  console.log('  ok - pool: rares low-weight, mythics only behind the run gate');
+  const off = draftOfferRates(DRAWS, 0);
+  assert.equal(off.mythic, 0, 'at weight 0 no joker is offered');
+  assert.equal(off.wind, 0, 'Second Wind absent at weight 0');
+  console.log('  ok - pool: rares low-weight, jokers rarer still');
 }
 
 s.check('the tier badge is ON the card with the rarity.js tell colours', () => {
-  state.chasePool = { second_wind: true, storm_shards: true, full_hand: true };
   T.openDraft();
   const html = Array.from(elements['ov-cards'].children).map(c => c.innerHTML || '').join('\n');
   state.mode = 'playing';
@@ -166,24 +122,21 @@ s.check('the tier badge is ON the card with the rarity.js tell colours', () => {
   Math.random = mulberry32(4242);
   let rareSeen = false, mythicSeen = false;
   try {
-    for (let i = 0; i < 400 && !(rareSeen && mythicSeen); i++) {
+    for (let i = 0; i < 2000 && !(rareSeen && mythicSeen); i++) {
       T.openDraft();
       for (const c of Array.from(elements['ov-cards'].children)) {
         const h = c.innerHTML || '';
         if (h.includes('>RARE<')) { rareSeen = true; assert.ok(h.includes('#6fd8ff'), 'RARE badge is the cyan tell'); }
-        if (h.includes('>MYTHIC<')) { mythicSeen = true; assert.ok(h.includes('#c89aff'), 'MYTHIC badge is the violet tell'); }
+        if (h.includes('>JOKER<')) { mythicSeen = true; assert.ok(h.includes('#b08aff'), 'JOKER badge is violet'); }
       }
       state.mode = 'playing';
     }
   } finally { Math.random = real; }
-  assert.ok(rareSeen && mythicSeen, `both badges rendered (rare ${rareSeen}, mythic ${mythicSeen}) ${html.slice(0, 80)}`);
+  assert.ok(rareSeen && mythicSeen, `both badges rendered (rare ${rareSeen}, joker ${mythicSeen}) ${html.slice(0, 80)}`);
 });
 
 // ---- 4. the two chasers work -------------------------------------------------
-const mythicCard = (id) => ({
-  ...DRAFT_MYTHIC_UPGRADES.find(u => u.id === id), tier: 'MYTHIC',
-  weight: draftLadderWeight(id, 'MYTHIC', 0),
-});
+const mythicCard = (id) => jokerCard(id);
 const rareCard = (id) => ({
   ...DRAFT_RARE_UPGRADES.find(u => u.id === id), tier: 'RARE',
   weight: draftLadderWeight(id, 'RARE', 0),
@@ -224,9 +177,9 @@ s.check('without the card, the same hit kills outright (no free revive)', () => 
   assert.equal(state.mode, 'dead');
 });
 
-s.check('a taken mythic leaves the pool for the rest of the run', () => {
+s.check('a held joker leaves the offers for the rest of the run', () => {
   T.startRun();
-  state.chasePool = { second_wind: true, storm_shards: false, full_hand: false };
+  T.jokers.draftWeight = 0.5;
   T.pickCard(mythicCard('second_wind'));
   const real = Math.random;
   Math.random = mulberry32(777);
@@ -238,6 +191,7 @@ s.check('a taken mythic leaves the pool for the rest of the run', () => {
       state.mode = 'playing';
     }
   } finally { Math.random = real; }
+  T.jokers.draftWeight = JOKER_CARD_WEIGHT;
   assert.equal(offered, 0, 'Second Wind never re-offers after the pick');
 });
 

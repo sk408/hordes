@@ -119,6 +119,7 @@ ok('the ceremony timing constant is <= 0.5s (spec cap)', CER.S <= 0.5, CER.S);
 // Straight into a live run (AUTO_ALL is the default pilot mode).
 keyHandler({ key: 'x', preventDefault() {} });
 tick(1);
+T.jokers.draftWeight = 0;   // plain level-up drafts: a joker with a full row opens a second choice
 T.startRun();
 ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.pilotMode === 'AUTO_ALL', [st.mode, st.pilotMode]);
 st.player.stats.xpMult = 0;   // no XP may be earned mid-test

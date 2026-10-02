@@ -22,6 +22,7 @@
 //   6. NO BALANCE CHANGE: the skill's own constants are pinned here, and the
 //      existing skills' constants are untouched.
 // Run: node test/test_rss8_magnet.mjs
+import { JOKERS } from '../src/jokers.js';
 import assert from 'node:assert/strict';
 import { CONFIG as C, DRAFT_LADDER, DRAFT_MYTHIC_UPGRADES } from '../src/config.js';
 import { draftLadderWeight } from '../src/meta.js';
@@ -201,14 +202,11 @@ keyHandler({ key: 'x', preventDefault() {} });
 pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 
-// ---- 1. GROUND: "very rare" maps onto the MYTHIC tier ----------------------
-const magnetDef = DRAFT_MYTHIC_UPGRADES.find(u => u.id === 'magnet_collector');
-ok('(1) the card exists in the MYTHIC ladder (the top draft tier — no new tier invented)',
-  !!magnetDef && DRAFT_MYTHIC_UPGRADES.some(u => u.id === 'second_wind'),
-  DRAFT_MYTHIC_UPGRADES.map(u => u.id));
-ok('(1) it rides the SHARED mythic weight knob (same rate as its family, never more often)',
-  draftLadderWeight('magnet_collector', 'MYTHIC', 0) === DRAFT_LADDER.MYTHIC_WEIGHT &&
-  draftLadderWeight('magnet_collector', 'MYTHIC', 0) === 0.10);
+// ---- 1. GROUND: the card is a joker (it came out of the mythic chase cards) --
+ok('(1) Magnet Collector is a joker, and its text states the key and the cooldown',
+  !!JOKERS.magnet_collector && JOKERS.magnet_collector.from === 'mythic' &&
+  JOKERS.magnet_collector.desc.includes('[X]') && JOKERS.magnet_collector.desc.includes('30s'),
+  JOKERS.magnet_collector);
 ok('(6) its own constants are pinned (cooldown EXACTLY 30s, no mana price — the cooldown is the cost)',
   C.SKILLS.MAGNET_PULL.COOLDOWN === 30 && C.SKILLS.MAGNET_PULL.MANA === 0,
   C.SKILLS.MAGNET_PULL);
@@ -220,8 +218,8 @@ ok('(6) NO BALANCE CHANGE: the existing skills are untouched (FROST_NOVA 8s/30m,
 T.startRun();
 pump(10);
 assert.equal(st.mode, 'playing', 'run live');
-// (a) NO chase gate -> never offered, ever.
-st.chasePool = {};
+// (a) Jokers kept out of the level-up pool -> never offered.
+T.jokers.draftWeight = 0;
 let offeredNoGate = 0;
 for (let i = 0; i < 300; i++) {
   T.openDraft();
@@ -229,30 +227,35 @@ for (let i = 0; i < 300; i++) {
   cards()[0].click(); run(2);
   if (st.mode !== 'playing') st.mode = 'playing';
 }
-ok('(2) without the chase-gate roll the card is NEVER offered (0/300 drafts)', offeredNoGate === 0, offeredNoGate);
+ok('(2) with jokers out of the level-up pool the card is NEVER offered (0/300 drafts)', offeredNoGate === 0, offeredNoGate);
 
-// (b) WITH the gate: offered, taken through the real click, once per run.
-st.chasePool = { magnet_collector: true };
+// (b) In the pool: offered, taken through the real click, once per run. The
+// row is emptied before every draft so the take never meets a full row.
+T.jokers.draftWeight = 0.5;
+st.jokerSlots = 5;
 let takeAt = -1, appearances = 0;
 for (let i = 0; i < 1000 && takeAt < 0; i++) {
+  st.player.jokers = [];
   T.openDraft();
   if (magnetCard()) { appearances++; takeAt = i; magnetCard().click(); run(2); }
   else { cards()[0].click(); run(2); }
   if (st.mode !== 'playing') st.mode = 'playing';
 }
-ok('(2) with the chase roll the draft offers it (appeared at draft ' + takeAt + ' of the loop)', takeAt >= 0);
-ok('(2) taking it GRANTS the skill (p.skills.magnet) and records the once-per-run ledger',
-  held() && (st.player.takenStats || {}).magnet_collector === 1,
-  { held: held(), taken: st.player.takenStats });
-ok('(2) the pick announces MYTHIC on screen', toasts().includes('MYTHIC') && toasts().toUpperCase().includes('MAGNET COLLECTOR'), toasts());
+ok('(2) the draft offers it (appeared at draft ' + takeAt + ' of the loop)', takeAt >= 0);
+ok('(2) taking it GRANTS the skill (p.skills.magnet) and puts the joker on the row',
+  held() && st.player.jokers.includes('magnet_collector'),
+  { held: held(), jokers: st.player.jokers });
+ok('(2) the pick announces the JOKER on screen', toasts().includes('JOKER') && toasts().toUpperCase().includes('MAGNET COLLECTOR'), toasts());
 let reoffers = 0;
 for (let i = 0; i < 100; i++) {
+  st.player.jokers = ['magnet_collector'];
   T.openDraft();
   if (magnetCard()) reoffers++;
   cards()[0].click(); run(2);
   if (st.mode !== 'playing') st.mode = 'playing';
 }
-ok('(2) taken once, it leaves the pool for the rest of the run (0 re-offers in 100 drafts)', reoffers === 0, reoffers);
+ok('(2) held, it leaves the offers for the rest of the run (0 re-offers in 100 drafts)', reoffers === 0, reoffers);
+T.jokers.draftWeight = 0;
 
 // ---- 3+4. the skill through the REAL key act + pickup loop ------------------
 // A FRESH run for the skill battery (the draft loops above aged this one —

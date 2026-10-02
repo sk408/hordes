@@ -474,6 +474,10 @@ export const SHOP_UPGRADES = [
   { id: 'slots',   name: 'Weapon Slot',
     get desc() { return 'Bring 1 more weapon into every run (max ' + MAX_WEAPON_SLOTS + '). Mastery +1: +' + MASTERY.HP_PER_RANK + ' max HP'; },
     baseCost: 400, costGrowth: 5, maxLevel: 3, perLevel: 0 },
+  // Joker Slot: a run holds 2 jokers; each level adds a slot, up to 5 (jokers.js).
+  { id: 'jokerslots', name: 'Joker Slot',
+    desc: 'Hold 1 more joker in every run (max 5). Jokers are rule cards from drafts and bosses',
+    baseCost: 1500, costGrowth: 3, maxLevel: 3, perLevel: 1 },
   // Storm Conduit: level 1 uncaps the Chain Zap chain count (range-limited);
   // every level widens the hop range. Published as stats.zapChain.
   { id: 'zapchain', name: 'Storm Conduit',
@@ -511,6 +515,10 @@ export const SHOP_UPGRADES = [
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
 // Weapon slots owned by a profile: 3 + purchased 'slots' levels (max 6).
+// A run holds this many jokers before the Joker Slot row (jokers.js reads the
+// run's count from stats.jokerSlots).
+export const JOKER_SLOTS_BASE = 2;
+
 export function startWeaponSlots(profile) {
   const bought = Math.max(0, Number(profile.purchased.slots) || 0);
   return Math.min(MAX_WEAPON_SLOTS, WEAPON_SLOT_START + bought);
@@ -1097,6 +1105,7 @@ export function applyMetaBonuses(stats, purchased) {
     draftRerolls: per('reroll'),
     draftSkips: per('skip'),
     draftBanishes: per('banish'),
+    jokerSlots: JOKER_SLOTS_BASE + per('jokerslots'),
     secondWind: !!stats.secondWind || lvl('laststand') > 0,
     stormShards: !!stats.stormShards,
     zapChain: lvl('zapchain'),

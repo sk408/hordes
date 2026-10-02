@@ -320,11 +320,9 @@ export const AFTERSHOCK_DAMAGE_MULT = 0.5;
 // updateOrbit reads, weapons.js — the ONLY weapons.js touch beside the rider).
 export const WIDEORBIT_RADIUS_MULT = 1.3;
 export const WIDEORBIT_SPIN_MULT = 1.2;
-// The empty-slot opportunity-cost payment (C2): each EMPTY rewrite slot is
-// worth -5% skill/ult cooldown, multiplicative via skillCooldown (perks.js).
-// Floored at x0.80 so raising REWRITE_SLOTS can never deepen the payment.
-export const EMPTY_SLOT_COOLDOWN_STEP = 0.05;
-export const EMPTY_SLOT_COOLDOWN_FLOOR = 0.80;
+// Travel Light: skill cooldown taken off per empty weapon slot, and the floor.
+export const EMPTY_SLOT_COOLDOWN_STEP = 0.10;
+export const EMPTY_SLOT_COOLDOWN_FLOOR = 0.60;
 
 // ---- G21 slice 2: the six new cards' numbers (same block as slice 1) -------
 // GLACIER (FROST): a DIRECT weapon hit against a body already carrying the
@@ -406,15 +404,16 @@ export function rewriteCount(state) {
   return r ? Object.keys(r).filter(k => r[k]).length : 0;
 }
 /**
- * C2 - EMPTY SLOTS PAY: x0.80 at zero rewrites taken, +0.05 per slot spent,
- * x1.00 at a full house. Floored at EMPTY_SLOT_COOLDOWN_FLOOR so a raised
- * REWRITE_SLOTS can never deepen the payment. Read in exactly ONE place
- * (skillCooldown, perks.js) — the COOLDOWN part only, so a kill-charged
- * ult's KILL count is untouched and its floor still applies after the mult.
+ * Travel Light (jokers.js): each empty weapon slot cools skills by
+ * EMPTY_SLOT_COOLDOWN_STEP, down to EMPTY_SLOT_COOLDOWN_FLOOR; 1 without the
+ * joker. Read in one place (skillCooldown, perks.js).
  */
 export function emptySlotCooldownMult(state) {
-  const empty = Math.max(0, C.REWRITE_SLOTS - rewriteCount(state));
-  return Math.max(EMPTY_SLOT_COOLDOWN_FLOOR, 1 - EMPTY_SLOT_COOLDOWN_STEP * empty);
+  const p = state && state.player;
+  if (!p || !p.jokerFlags || !p.jokerFlags.travellight) return 1;
+  const cap = Math.max(0, (Number(state.weaponSlots) || C.WEAPON_SLOTS) - 1);
+  const used = (state.weapons || []).filter(w => w && w.type !== 'VOLLEY').length;
+  return Math.max(EMPTY_SLOT_COOLDOWN_FLOOR, 1 - EMPTY_SLOT_COOLDOWN_STEP * Math.max(0, cap - used));
 }
 // ---- the two offering predicates (C4) ---------------------------------------
 /** AFTERSHOCK: the run has a detonation source for the echo to ride. */

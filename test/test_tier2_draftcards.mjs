@@ -320,49 +320,21 @@ s.check('the RARE card offers through the REAL openDraft and lands through the R
   state.mode = 'playing';
 });
 
-s.check('the MYTHIC pair offers only behind the chase gate, once per run', () => {
+// The joker row replaced the mythic chase cards and the rewrite cards. Tempest
+// and Killshot (flat stats) and the cross-tag combos were cut: the game never
+// offers them, whatever the run holds.
+s.check('the cut cards are never offered: Tempest, Killshot and the combo trio', () => {
   T.startRun();
-  state.chasePool = { tempest: true, killshot: true };
-  for (const id of MYTHIC_NEW) {
-    assert.ok(draftUntil((ids) => ids.includes(id)), id + ' offered while gated');
-  }
-  const beforeZap = state.player.stats.zapChain || 0;
-  T.pickCard({ ...DRAFT_MYTHIC_UPGRADES.find((u) => u.id === 'tempest'), tier: 'MYTHIC' });
-  assert.equal(state.player.stats.zapChain, beforeZap + 1, 'the Tempest pick wrote +1 zap level');
-  assert.ok((state.player.takenStats || {}).tempest, 'the mythic ledger recorded it');
-  let reoffered = false;
-  for (let i = 0; i < 300 && !reoffered; i++) {
+  state.player.rewrites = { rime: true, onkillboom: true, ignite: true, wideorbit: true, livewire: true };
+  const cut = [...MYTHIC_NEW, 'rewrite_shatter', 'rewrite_cinder', 'rewrite_frostwire',
+    'joker_tempest', 'joker_killshot', 'joker_shatter', 'joker_cinder', 'joker_frostwire'];
+  let seen = null;
+  for (let i = 0; i < 400 && !seen; i++) {
     state.mode = 'playing'; state.pendingDrafts = 1; T.openDraft();
-    reoffered = offerIds().includes('tempest');
+    seen = offerIds().find((id) => cut.includes(id)) || null;
   }
   state.mode = 'playing';
-  assert.equal(reoffered, false, 'a taken mythic never re-offers');
-  T.startRun();
-  state.chasePool = {};
-  let ungated = false;
-  for (let i = 0; i < 300 && !ungated; i++) {
-    state.mode = 'playing'; state.pendingDrafts = 1; T.openDraft();
-    ungated = offerIds().some((id) => MYTHIC_NEW.includes(id));
-  }
-  state.mode = 'playing';
-  assert.equal(ungated, false, 'an ungated mythic is NEVER offered');
-});
-
-s.check('the COMBO trio offers behind its constituents and lands through the REAL pick()', () => {
-  for (const [held, offer] of [
-    [{ rime: true, onkillboom: true }, 'rewrite_shatter'],
-    [{ ignite: true, wideorbit: true }, 'rewrite_cinder'],
-    [{ rime: true, livewire: true }, 'rewrite_frostwire'],
-  ]) {
-    T.startRun();
-    state.player.rewrites = held;
-    assert.ok(draftUntil((ids) => ids.includes(offer)), offer + ' offered with its constituents');
-  }
-  T.startRun();
-  T.pickCard(rewriteCards(stOf({ rime: true, onkillboom: true })).find((c) => c.rewrite === 'shatter'));
-  assert.ok((state.player.rewrites || {}).shatter, 'the Shatter pick landed');
-  assert.ok(!((state.player.takenStats || {}).rewrite_shatter), 'a rewrite never pollutes the once ledger');
-  state.mode = 'playing';
+  assert.equal(seen, null, 'a cut card was offered');
 });
 
 s.done();

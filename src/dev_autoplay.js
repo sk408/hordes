@@ -76,11 +76,10 @@ export const DEV_LS_DEVNIGHT = 'hordes_dev_devnight';
 export const DEV_LS_BAN_ON = 'hordes_dev_ban_on';
 export const DEV_LS_BAN_IDS = 'hordes_dev_ban_ids';
 
-// The default preset when the ids pref is ABSENT: ONE OF EACH's draft offer
-// id. The rule id is 'once' (src/rules.js RULES); ruleCards() builds the pool
-// card id as 'rule_' + id, so the offer id is 'rule_once'. Extensible to any
-// offer id by persisting a comma list in DEV_LS_BAN_IDS.
-export const DEFAULT_DRAFT_BAN_IDS = ['rule_once'];
+// The default preset when the ids pref is absent: ONE OF EACH's draft offer
+// id. It is a joker (src/jokers.js), so its offer id is 'joker_once'. Any
+// offer id can be banned by persisting a comma list in DEV_LS_BAN_IDS.
+export const DEFAULT_DRAFT_BAN_IDS = ['joker_once'];
 
 // Parse the ids pref. Absent (null/undefined) = the default preset; a stored
 // string (even empty) is authoritative — comma-split, trimmed, empties and

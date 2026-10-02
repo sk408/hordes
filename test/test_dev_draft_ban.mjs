@@ -8,14 +8,14 @@
 //
 // What is pinned here (at the REAL seams, never copies):
 //   1. parseDraftBanIds: absent pref = the default preset; a stored string is
-//      authoritative; the preset's 'rule_once' is ONE OF EACH's real offer id
-//      (src/rules.js ruleCards builds 'rule_' + 'once').
+//      authoritative; the preset's 'joker_once' is ONE OF EACH's real offer id
+//      (src/jokers.js jokerCards builds 'joker_' + 'once').
 //   2. The toggle defaults OFF and the ids pref defaults absent.
 //   3. BYTE-IDENTICAL POOL WHEN OFF: a gate-off boot, a dev boot with the ban
 //      prefs set but AUTOPLAY off, and a dev boot with AUTOPLAY on but the BAN
 //      toggle off produce the EXACT same offered-id sequences under the same
 //      seeded rng (deep-equal, per draft).
-//   4. ON + preset: 'rule_once' never appears in the offered sets across N
+//   4. ON + preset: 'joker_once' never appears in the offered sets across N
 //      seeded drafts (read off the dev session's drafts ledger), while the
 //      same-seed control with the ban off DOES offer it.
 //   5. ARBITRARY ID: banning 'multi' (Split Shot) removes exactly that card.
@@ -27,7 +27,7 @@
 import assert from 'node:assert/strict';
 import { boot } from './_harness.mjs';
 import { makeWeapon } from '../src/weapons.js';
-import { ruleCards } from '../src/rules.js';
+import { jokerCards } from '../src/jokers.js';
 import {
   DEV_LS_AUTO, DEV_LS_BAN_ON, DEV_LS_BAN_IDS,
   DEFAULT_DRAFT_BAN_IDS, parseDraftBanIds, requireAutoplay,
@@ -52,14 +52,14 @@ ok('parseDraftBanIds: absent = default preset, stored string authoritative', () 
   assert.deepEqual(parseDraftBanIds(null), DEFAULT_DRAFT_BAN_IDS);
   assert.deepEqual(parseDraftBanIds(undefined), DEFAULT_DRAFT_BAN_IDS);
   assert.deepEqual(parseDraftBanIds(''), [], 'an empty stored list bans nothing');
-  assert.deepEqual(parseDraftBanIds('multi, rule_once ,multi,,'), ['multi', 'rule_once'],
+  assert.deepEqual(parseDraftBanIds('multi, joker_once ,multi,,'), ['joker_once', 'multi'],
     'trimmed, deduped, sorted');
 });
-ok("the default preset is exactly ONE OF EACH's offer id (rule_once)", () => {
-  assert.deepEqual(DEFAULT_DRAFT_BAN_IDS, ['rule_once']);
-  const cards = ruleCards({ player: { rules: {} } });
-  assert.ok(cards.some(c => c.id === 'rule_once' && c.rule === 'once'),
-    "ruleCards really offers 'rule_once' for the 'once' rule");
+ok("the default preset is exactly ONE OF EACH's offer id (joker_once)", () => {
+  assert.deepEqual(DEFAULT_DRAFT_BAN_IDS, ['joker_once']);
+  const cards = jokerCards({ player: { rules: {}, jokers: [], stats: {} } });
+  assert.ok(cards.some(c => c.id === 'joker_once' && c.joker === 'once'),
+    "jokerCards really offers 'joker_once' for the ONE OF EACH joker");
 });
 
 // ---- 2. toggle defaults OFF --------------------------------------------------
@@ -69,7 +69,7 @@ ok("the default preset is exactly ONE OF EACH's offer id (rule_once)", () => {
   const sess = h.T.dev.session;
   ok('BAN toggle defaults OFF, ids default to the preset, nothing persisted', () => {
     assert.equal(sess.draftBan, false, 'draftBan defaults OFF');
-    assert.deepEqual(sess.draftBanIds, ['rule_once'], 'absent ids pref = the preset');
+    assert.deepEqual(sess.draftBanIds, ['joker_once'], 'absent ids pref = the preset');
     assert.equal(h.storage.get(DEV_LS_BAN_ON) ?? null, null, 'no arm bit stored');
     assert.equal(h.storage.get(DEV_LS_BAN_IDS) ?? null, null, 'no ids pref stored');
     assert.equal(h.T.dev.draftBan, false, 'the seam reads OFF');
@@ -107,14 +107,14 @@ function draftSequences(h) {
   const seqA = draftSequences(a);
 
   const b = await boot({ locationSearch: '?dev=1', variant: 'banNoAutoplay',
-    storage: [[DEV_LS_BAN_ON, '1'], [DEV_LS_BAN_IDS, 'rule_once,multi']] });
+    storage: [[DEV_LS_BAN_ON, '1'], [DEV_LS_BAN_IDS, 'joker_once,multi']] });
   b.T.startRun();
   assert.equal(b.T.dev.session.draftBan, true, 'boot B armed the ban bit');
   assert.equal(b.T.dev.session.autoplay, false, 'boot B is NOT an autoplay context');
   const seqB = draftSequences(b);
 
   const c = await boot({ locationSearch: '?dev=1', variant: 'banToggleOff',
-    storage: [[DEV_LS_AUTO, '1'], [DEV_LS_BAN_IDS, 'rule_once,multi']] });
+    storage: [[DEV_LS_AUTO, '1'], [DEV_LS_BAN_IDS, 'joker_once,multi']] });
   c.T.startRun();
   assert.equal(c.T.dev.session.autoplay, true, 'boot C is an autoplay context');
   assert.equal(c.T.dev.session.draftBan, false, 'boot C left the ban toggle OFF');
@@ -127,7 +127,7 @@ function draftSequences(h) {
     assert.deepEqual(seqC, seqA, 'autoplay without the BAN arm bit draws the full pool');
   });
   ok('the pinned sequence still offers the bannable ids (controls live)', () => {
-    assert.ok(seqA.some(s => s.includes('rule_once')), 'rule_once offered in the control');
+    assert.ok(seqA.some(s => s.includes('joker_once')), 'joker_once offered in the control');
     assert.ok(seqA.some(s => s.includes('multi')), 'multi offered in the control');
   });
 }
@@ -140,7 +140,7 @@ function draftSequences(h) {
   const sess = h.T.dev.session;
   requireAutoplay(sess);   // the runner gate accepts this session
   assert.equal(sess.draftBan, true);
-  assert.deepEqual(sess.draftBanIds, ['rule_once'], 'the preset rides the session');
+  assert.deepEqual(sess.draftBanIds, ['joker_once'], 'the preset rides the session');
 
   const st = h.T.state;
   st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
@@ -156,16 +156,16 @@ function draftSequences(h) {
   };
 
   const banned = runDrafts(777, 600);
-  ok('ON + preset: rule_once is in NO offered set across 600 seeded drafts', () => {
+  ok('ON + preset: joker_once is in NO offered set across 600 seeded drafts', () => {
     assert.equal(banned.length, 600, 'the drafts ledger recorded every offer set');
-    assert.ok(banned.every(ids => !ids.includes('rule_once')),
+    assert.ok(banned.every(ids => !ids.includes('joker_once')),
       'ONE OF EACH excluded from the offer pool');
     assert.ok(banned.flat().length > 0, 'drafts still offered cards');
   });
   h.T.dev.setDraftBan(false);
   const control = runDrafts(777, 600);
-  ok('same seed, ban off: rule_once IS offered (the card itself is untouched)', () => {
-    assert.ok(control.some(ids => ids.includes('rule_once')),
+  ok('same seed, ban off: joker_once IS offered (the card itself is untouched)', () => {
+    assert.ok(control.some(ids => ids.includes('joker_once')),
       'the control proves the card is still in the pool');
   });
 }
@@ -194,7 +194,7 @@ function draftSequences(h) {
   } finally { Math.random = real; }
   ok("an arbitrary id ('multi') never appears while banned", () => {
     assert.ok(!offered.includes('multi'), 'Split Shot excluded');
-    assert.ok(offered.includes('rule_once'), 'unbanned ids still offered (rule_once present)');
+    assert.ok(offered.includes('joker_once'), 'unbanned ids still offered (joker_once present)');
   });
 }
 
@@ -206,8 +206,8 @@ ok('buildSnapshot carries draft_ban when armed, omits it when not, validates bot
     items: [], gold_earned: 100, gold_spent: 10, damage: 5, wave: 1,
     test: false, speed: 8,
   };
-  const armed = buildSnapshot({ ...base, draft_ban: ['rule_once'] });
-  assert.deepEqual(armed.draft_ban, ['rule_once'], 'banned ids ride the snapshot');
+  const armed = buildSnapshot({ ...base, draft_ban: ['joker_once'] });
+  assert.deepEqual(armed.draft_ban, ['joker_once'], 'banned ids ride the snapshot');
   assert.equal(armed.schema_v, 2, 'no schema bump');
   assert.equal(validateSnapshot(armed).ok, true, 'armed row validates');
   const unarmed = buildSnapshot({ ...base });
@@ -215,7 +215,7 @@ ok('buildSnapshot carries draft_ban when armed, omits it when not, validates bot
   assert.equal(validateSnapshot(unarmed).ok, true, 'unarmed row still validates');
   assert.throws(() => buildSnapshot({ ...base, draft_ban: [''] }), /bad draft_ban/,
     'empty ids refused at build');
-  assert.throws(() => buildSnapshot({ ...base, draft_ban: 'rule_once' }), /bad draft_ban/,
+  assert.throws(() => buildSnapshot({ ...base, draft_ban: 'joker_once' }), /bad draft_ban/,
     'a non-array refused at build');
 });
 {
@@ -227,7 +227,7 @@ ok('buildSnapshot carries draft_ban when armed, omits it when not, validates bot
   h.T.dev.setDraftBan(true);
   const snap = h.T.dev.rebuildSnapshot();
   ok('the LIVE snapshot builder stamps the banned ids for an armed autoplay run', () => {
-    assert.deepEqual(snap.draft_ban, ['rule_once'], 'the preset is on the row');
+    assert.deepEqual(snap.draft_ban, ['joker_once'], 'the preset is on the row');
     assert.equal(validateSnapshot(snap).ok, true, 'the row validates');
   });
   h.T.dev.setDraftBan(false);

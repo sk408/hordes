@@ -72,7 +72,7 @@ const EXPECTED_SHOP = [
   'dmg', 'hp', 'focus', 'lodestone', 'potions', 'fleetfoot', 'xp',
   'hairtrigger', 'crit', 'critdmg', 'greed', 'alchemy', 'regen', 'well', 'thrifty', 'briarmail',
   'reroll', 'skip', 'banish',
-  'split', 'hollowpoint', 'bloodpact', 'artifact', 'luck', 'slots', 'zapchain',
+  'split', 'hollowpoint', 'bloodpact', 'artifact', 'luck', 'slots', 'jokerslots', 'zapchain',
   'fanfire', 'deepread', 'laststand', 'escapeskip', 'arcade',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',

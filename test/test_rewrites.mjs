@@ -25,6 +25,7 @@
 //      rewrite card AND the retuned once.
 //
 // Run: node test/test_rewrites.mjs
+import { jokerCard, jokerOffered, takeJoker, dropJoker } from '../src/jokers.js';
 import assert from 'node:assert/strict';
 import { CONFIG as C, UPGRADES } from '../src/config.js';
 import { makePlayer } from '../src/entities.js';
@@ -46,7 +47,7 @@ import {
   STORMREAPER_BLAST_MULT, GLACIALORBIT_CHILL_DURATION, GLACIALORBIT_DAMAGE_MULT,
   rewritesOf, hasRewrite, rewriteCardOffered, rewriteCards, grantRewrite,
   rewriteBoom, harvestBlast, applyBlast, tickRewriteEchoes,
-  rewriteCount, emptySlotCooldownMult, onWeaponHit,
+  rewriteCount, emptySlotCooldownMult, onWeaponHit, EMPTY_SLOT_COOLDOWN_STEP, EMPTY_SLOT_COOLDOWN_FLOOR,
   wideOrbitRadiusMult, wideOrbitSpinMult,
   directHitMult, wildfireTransfer, stormReaperBlast,
 } from '../src/rewrites.js';
@@ -205,38 +206,39 @@ ok('R1: a full run (REWRITE_SLOTS held) is offered ZERO rewrite cards; one short
   grantRewrite(st3, 'overload');        // the same on the combo-bearing state
   assert.deepEqual(rewriteCards(st3), [], 'and the fourth take closes it there too');
 });
-ok('R2: empty slots pay x0.80..x1.00 through skillCooldown; the ult KILL count never moves', () => {
+ok('R2: Travel Light pays 10% skill cooldown per empty WEAPON slot (floor x0.60), and nothing without the joker', () => {
   const st = stateWith(null);
-  const want = [0.80, 0.85, 0.90, 0.95, 1.00];
-  const ids = ['pierceall', 'onkillboom', 'healthdamage', 'rime'];
-  for (let taken = 0; taken <= 4; taken++) {
-    assert.ok(Math.abs(emptySlotCooldownMult(st) - want[taken]) < 1e-9,
-      `x${want[taken]} at ${taken} taken (got ${emptySlotCooldownMult(st)})`);
-    if (taken < 4) grantRewrite(st, ids[taken]);
+  st.weaponSlots = 4;                                    // the Volley's slot + three more
+  st.weapons = [makeWeapon('VOLLEY')];
+  assert.equal(emptySlotCooldownMult(st), 1, 'no joker: no payment');
+  assert.equal(skillCooldown('FROST_NOVA', st), C.SKILLS.FROST_NOVA.COOLDOWN);
+  takeJoker(st, 'travellight');
+  const want = [0.70, 0.80, 0.90, 1.00];
+  const types = ['BOOMERANG', 'ORBIT', 'ZAP'];
+  for (let held = 0; held <= 3; held++) {
+    assert.ok(Math.abs(emptySlotCooldownMult(st) - want[held]) < 1e-9,
+      `x${want[held]} with ${held} weapons in 3 slots (got ${emptySlotCooldownMult(st)})`);
+    if (held < 3) st.weapons.push(makeWeapon(types[held]));
   }
-  // The floor: even if REWRITE_SLOTS were raised the mult never dips below 0.80.
-  const saved = C.REWRITE_SLOTS;
-  C.REWRITE_SLOTS = 9;
+  // The floor.
   const bare = stateWith(null);
-  assert.equal(emptySlotCooldownMult(bare), 0.80, 'x0.80 floor at a raised slot count');
-  C.REWRITE_SLOTS = saved;
-  // skillCooldown REFLECTS the payment (the one applied-value read)...
-  const cd0 = skillCooldown('FROST_NOVA', stateWith(null));
-  assert.ok(Math.abs(cd0 - C.SKILLS.FROST_NOVA.COOLDOWN * 0.80) < 1e-9,
-    'zero rewrites: cooldown at x0.80');
-  const full = stateWith(null);
-  for (const id of ids) grantRewrite(full, id);
-  assert.equal(skillCooldown('FROST_NOVA', full), C.SKILLS.FROST_NOVA.COOLDOWN,
-    'a full house: cooldown back at x1.00');
-  // ...and it multiplies the cooldown part ONLY: a kill-charged ult's KILL
-  // count is identical with zero and with four rewrites held, while its
-  // cooldown floor still reads through the mult.
-  const q0 = ultCharge(stateWith(null), 'EARTHSHATTER');
-  const q4 = ultCharge(full, 'EARTHSHATTER');
-  assert.equal(q0.charge, q4.charge, 'the ult charge is a KILL count, never a cooldown');
-  assert.equal(q0.need, q4.need);
-  assert.ok(Math.abs(skillCooldown('EARTHSHATTER', stateWith(null)) -
-    C.SKILLS.EARTHSHATTER.COOLDOWN * 0.80) < 1e-9, 'the ult floor rolls on after the mult');
+  bare.weaponSlots = 9; bare.weapons = [makeWeapon('VOLLEY')];
+  takeJoker(bare, 'travellight');
+  assert.equal(emptySlotCooldownMult(bare), EMPTY_SLOT_COOLDOWN_FLOOR, 'x0.60 floor');
+  assert.deepEqual([EMPTY_SLOT_COOLDOWN_STEP, EMPTY_SLOT_COOLDOWN_FLOOR], [0.10, 0.60]);
+  // skillCooldown reflects the payment, and a kill-charged ult's KILL count never moves.
+  const empty = stateWith(null);
+  empty.weaponSlots = 3; empty.weapons = [makeWeapon('VOLLEY')];
+  const q0 = ultCharge(empty, 'EARTHSHATTER');
+  takeJoker(empty, 'travellight');
+  assert.ok(Math.abs(skillCooldown('FROST_NOVA', empty) - C.SKILLS.FROST_NOVA.COOLDOWN * 0.80) < 1e-9, 'two empty slots: x0.80');
+  const q1 = ultCharge(empty, 'EARTHSHATTER');
+  assert.equal(q0.charge, q1.charge, 'the ult charge is a KILL count, never a cooldown');
+  assert.equal(q0.need, q1.need);
+  assert.ok(Math.abs(skillCooldown('EARTHSHATTER', empty) - C.SKILLS.EARTHSHATTER.COOLDOWN * 0.80) < 1e-9,
+    'the ult floor rolls on after the mult');
+  dropJoker(empty, 'travellight');
+  assert.equal(emptySlotCooldownMult(empty), 1, 'dropping the joker ends the payment');
 });
 ok('R6: the predicate cards hide while dead, appear when live, and consume ZERO rng draws', () => {
   const st = stateWith(null);
@@ -1207,13 +1209,6 @@ ok('R7: a full house is still offered ZERO rewrite cards, combos included', () =
   for (const id of ['rime', 'ignite', 'wideorbit', 'livewire']) grantRewrite(st, id);
   assert.equal(rewriteCount(st), 4);
   assert.deepEqual(rewriteCards(st), [], 'the full house closes the family, combos and all');
-  // the empty-slot incentive is byte-equivalent: x0.80 at zero taken, x1.00 full
-  assert.equal(emptySlotCooldownMult(stateWith(null)), 0.80, 'x0.80 at zero taken');
-  assert.equal(emptySlotCooldownMult(st), 1.00, 'x1.00 at a full house');
-  const three = stateWith(null);
-  for (const id of ['rime', 'ignite', 'wideorbit']) grantRewrite(three, id);
-  assert.ok(Math.abs(emptySlotCooldownMult(three) - 0.95) < 1e-9,
-    'x0.95 at three taken (one empty slot)');
 });
 
 // ---- 3d. G21 slice 2: the LIVE loop (the real seams) --------------------------
@@ -1401,7 +1396,7 @@ ok('R1 OVERLOAD live: direct hits through the volley advance the SEPARATE counte
 // ---- 4. THE REAL DRAFT SEAM: src/main.js openDraft ----------------------------
 function draftOffer(label, setup, draws = 3000) {
   st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
-  st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {};
+  st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {}; st.player.jokers = [];
   setup(st);
   const real = Math.random;
   Math.random = seeded(4711);
@@ -1415,30 +1410,34 @@ function draftOffer(label, setup, draws = 3000) {
     }
   } finally {
     Math.random = real;
-    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {};
+    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.rewrites = {}; st.player.jokers = [];
   }
   assert.equal(cards, draws * 3, 'every openDraft() rendered exactly 3 cards');
   return hits / draws;
 }
 const pierceFree = draftOffer('Pierce All', () => {});
-const pierceHeld = draftOffer('Pierce All', (s) => { s.player.rewrites.pierceall = true; });
+const pierceHeld = draftOffer('Pierce All', (s) => { takeJoker(s, 'pierceall'); });
+const wideFree = draftOffer('Wide Orbit', (s) => { s.weapons.push(makeWeapon('ORBIT')); });
 const boomFree = draftOffer('Chain Reaction', () => {});
 console.log('rewrites: the REAL game seam (src/main.js openDraft), measured');
 console.log(`    Pierce All offered     not held ${pierceFree.toFixed(4)}   already held ${pierceHeld.toFixed(4)}`);
 console.log(`    Chain Reaction offered not held ${boomFree.toFixed(4)}`);
-ok('openDraft() offers a rewrite card until the run takes it', () => {
-  assert.ok(pierceFree > 0, `a rewrite card reaches the real draft (${pierceFree.toFixed(4)})`);
-  assert.equal(pierceHeld, 0, 'a held rewrite is never re-offered');
-  assert.ok(boomFree > 0, `a second rewrite reaches it too (${boomFree.toFixed(4)})`);
+ok('openDraft() offers a kept rewrite as a joker until the run holds it; a cut rewrite is never offered', () => {
+  assert.ok(pierceFree > 0, `the Pierce All joker reaches the real draft (${pierceFree.toFixed(4)})`);
+  assert.equal(pierceHeld, 0, 'a held joker is never re-offered');
+  assert.ok(boomFree > 0, `a second one reaches it too (${boomFree.toFixed(4)})`);
+  assert.equal(wideFree, 0, 'Wide Orbit was cut: never offered, even with an Orbit Blade in the kit');
 });
-ok('pick() grants the rewrite through the real draft contract, no stat-ledger pollution', () => {
-  st.player.rewrites = {}; st.player.takenStats = {};
-  const card = rewriteCards({ player: st.player })[0];
+ok('pick() puts a rewrite joker on the row and switches the rewrite on, no stat-ledger pollution', () => {
+  st.player.rewrites = {}; st.player.takenStats = {}; st.player.jokers = [];
   const before = { ...st.player.takenStats };
-  h.T.pickCard(card);
-  assert.ok(st.player.rewrites[card.rewrite], card.rewrite + ' granted by the real pick()');
-  assert.deepEqual(st.player.takenStats, before, 'a rewrite pick never writes the once ledger');
-  assert.equal(rewriteCardOffered(card.rewrite, st), false, 'and it left the pool');
+  h.T.pickCard(jokerCard('pierceall'));
+  assert.deepEqual(st.player.jokers, ['pierceall']);
+  assert.ok(hasRewrite(st, 'pierceall'), 'pierceall switched on by the real pick()');
+  assert.deepEqual(st.player.takenStats, before, 'a joker pick never writes the once ledger');
+  assert.equal(jokerOffered('pierceall', st), false, 'and it left the offers');
+  dropJoker(st, 'pierceall');
+  assert.equal(hasRewrite(st, 'pierceall'), false, 'dropping the joker switches it off');
 });
 
 // ---- 4b. C7: SEEDED NO-DRIFT at the real seam ----------------------------------

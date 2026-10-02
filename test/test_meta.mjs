@@ -155,8 +155,8 @@ console.log('EXPANSION LINES:');
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
   // One row per stat line, nothing silently added or dropped (docs/BALANCE_M1.md).
-  ok(SHOP_UPGRADES.filter(u => !u.kind).length === 31,
-     `31 stat rows (got ${SHOP_UPGRADES.filter(u => !u.kind).length})`);
+  ok(SHOP_UPGRADES.filter(u => !u.kind).length === 32,
+     `32 stat rows (got ${SHOP_UPGRADES.filter(u => !u.kind).length})`);
   ok(new Set(SHOP_UPGRADES.map(u => u.id)).size === SHOP_UPGRADES.length, 'row ids are unique');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
@@ -580,8 +580,8 @@ console.log('LUCK:');
 console.log('APEX TIER (G25):');
 {
   // -- partition: apex is invisible to the shop economy --
-  ok(SHOP_UPGRADES.length === 45,
-     `SHOP_UPGRADES holds exactly its 45 rows (31 stat + 11 weapon + 3 elite; got ${SHOP_UPGRADES.length})`);
+  ok(SHOP_UPGRADES.length === 46,
+     `SHOP_UPGRADES holds exactly its 46 rows (32 stat + 11 weapon + 3 elite; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

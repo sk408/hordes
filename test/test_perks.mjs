@@ -21,6 +21,7 @@
 //      `once` stat ledger (test_run_rules.mjs pattern).
 //
 // Run: node test/test_perks.mjs
+import { JOKERS, jokerCard, jokerOffered, takeJoker } from '../src/jokers.js';
 import assert from 'node:assert/strict';
 import { CONFIG as C, UPGRADES } from '../src/config.js';
 import { makePlayer } from '../src/entities.js';
@@ -340,7 +341,7 @@ ok('THICK SKIN funnels the TICK DRAIN path (live loop, ratio exact)', () => {
 // ---- 5. THE REAL DRAFT SEAM: src/main.js openDraft ----------------------------
 function draftOffer(label, setup, draws = 3000) {
   st.weapons = ['VOLLEY', 'BOOMERANG'].map(makeWeapon);
-  st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {};
+  st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.jokers = [];
   setup(st);
   const real = Math.random;
   Math.random = seeded(4711);
@@ -354,30 +355,33 @@ function draftOffer(label, setup, draws = 3000) {
     }
   } finally {
     Math.random = real;
-    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {};
+    st.player.rules = {}; st.player.takenStats = {}; st.player.skills = {}; st.player.jokers = [];
   }
   assert.equal(cards, draws * 3, 'every openDraft() rendered exactly 3 cards');
   return hits / draws;
 }
 const regrowthFree = draftOffer('Regrowth', () => {});
-const regrowthHeld = draftOffer('Regrowth', (s) => { s.player.skills.regrowth = true; });
+const regrowthHeld = draftOffer('Regrowth', (s) => { takeJoker(s, 'regrowth'); });
 const thickFree = draftOffer('Thick Skin', () => {});
 console.log('perks: the REAL game seam (src/main.js openDraft), measured');
 console.log(`    Regrowth offered  not held ${regrowthFree.toFixed(4)}   already held ${regrowthHeld.toFixed(4)}`);
 console.log(`    Thick Skin offered not held ${thickFree.toFixed(4)}`);
-ok('openDraft() offers a skill card until the run takes it', () => {
-  assert.ok(regrowthFree > 0, `a skill card reaches the real draft (${regrowthFree.toFixed(4)})`);
-  assert.equal(regrowthHeld, 0, 'a held perk is never re-offered');
-  assert.ok(thickFree > 0, `a second perk reaches it too (${thickFree.toFixed(4)})`);
+ok('openDraft() offers Regrowth as a joker until the run holds it; Thick Skin was cut', () => {
+  assert.ok(regrowthFree > 0, `the Regrowth joker reaches the real draft (${regrowthFree.toFixed(4)})`);
+  assert.equal(regrowthHeld, 0, 'a held joker is never re-offered');
+  assert.equal(thickFree, 0, 'Thick Skin (a flat stat) is not a joker and is never offered');
 });
-ok('pick() grants the perk through the real draft contract, no stat-ledger pollution', () => {
-  st.player.skills = {}; st.player.takenStats = {};
-  const card = skillCards({ player: st.player })[0];
+ok('pick() puts the Regrowth joker on the row and switches the perk on, no stat-ledger pollution', () => {
+  st.player.skills = {}; st.player.takenStats = {}; st.player.jokers = [];
+  const card = jokerCard('regrowth');
   const before = { ...st.player.takenStats };
   h.T.pickCard(card);
-  assert.ok(st.player.skills[card.skill], card.skill + ' granted by the real pick()');
-  assert.deepEqual(st.player.takenStats, before, 'a skill pick never writes the once ledger');
-  assert.equal(skillCardOffered(card.skill, st), false, 'and it left the pool');
+  assert.deepEqual(st.player.jokers, ['regrowth']);
+  assert.ok(st.player.skills.regrowth, 'regrowth switched on by the real pick()');
+  assert.equal(hpRegenPerSec(st), REGROWTH_HP_PER_SEC, 'the perk reader sees it');
+  assert.ok(JOKERS.regrowth.desc.includes(String(REGROWTH_HP_PER_SEC)), 'the joker states the live number');
+  assert.deepEqual(st.player.takenStats, before, 'a joker pick never writes the once ledger');
+  assert.equal(jokerOffered('regrowth', st), false, 'and it left the offers');
 });
 
 console.log(`perks: PASS=${pass} FAIL=${fail}`);
