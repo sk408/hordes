@@ -1487,6 +1487,8 @@ function runController(p, dt, am) {
       // (both duplicated update loops honor `pierce` already, so one line here
       // covers the in-run and finale/boss loops alike).
       if (volleyPierceAll || hasRewrite(state, 'pierceall')) pr.pierce = PIERCE_ALL;
+      // Sun Lane synergy (JAVELIN+VOLLEY): every shot pierces one more body.
+      else if (syn('volleyPierce')) pr.pierce = (pr.pierce || 0) + syn('volleyPierce');
       // Orbital Volley synergy flag: the update loop flies the ~1-rev orbit.
       if (syn('orbitVolley')) pr.orbit = { t: 0, dur: 0.55, ang: a };
       state.projectiles.push(pr);
@@ -3125,6 +3127,57 @@ function synergyBoomerangHoming(dt) {
   }
 }
 
+// Harvest Fire (EMBER+SCYTHE): every enemy a landed sweep killed bursts like
+// an ember kill — the ember's blast radius and burst damage, at the corpse.
+function synergyScytheEmber() {
+  for (const fx of state.effects) {
+    if (fx.kind !== 'scythe_arc' || fx.embered || !fx.reaped) continue;
+    fx.embered = true;
+    if (fx.reaped.length === 0) continue;
+    const ew = state.weapons.find(k => k.type === 'EMBER');
+    const blast = weaponLevelParams('EMBER', (ew && ew.level) || 1).blast || WEAPONS.EMBER.BLAST;
+    const dmg = synWeaponDmg('EMBER', WEAPONS.EMBER.DAMAGE_MULT * WEAPONS.EMBER.KILL_BLAST_MULT);
+    for (const c of fx.reaped) {
+      for (const e of state.enemies) {
+        if (e.hp <= 0 || Math.hypot(e.x - c.x, e.y - c.y) > blast) continue;
+        e.hp -= devHit(dmg * directHitMult(state, e));
+        e.flash = 0.08;
+        onWeaponHit(state, e);
+        state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+      }
+      state.effects.push({ kind: 'mine_blast', x: c.x, y: c.y, radius: blast, shrapnel: 4, age: 0, ttl: 0.3 });
+    }
+  }
+}
+
+// Storm Bounce (RICOCHET+ZAP): each ricochet impact zaps the nearest enemy
+// that body has not hit yet, within zap hop range, at 50% zap damage.
+function synergyRicochetSpark() {
+  for (const fx of state.effects) {
+    if (!fx.ricochetHit || fx.sparked) continue;
+    fx.sparked = true;
+    const t = nearestFoe(fx.x, fx.y, fx.ricochetHit);
+    if (!t || Math.hypot(t.x - fx.x, t.y - fx.y) > WEAPONS.ZAP.CHAIN_RANGE) continue;
+    t.hp -= devHit(synWeaponDmg('ZAP', WEAPONS.ZAP.DAMAGE_MULT) * 0.5 * directHitMult(state, t));
+    t.flash = 0.08;
+    onWeaponHit(state, t);
+    state.effects.push({ kind: 'zap', points: [{ x: fx.x, y: fx.y }, { x: t.x, y: t.y }],
+      age: 0, ttl: 0.15 });
+  }
+}
+
+// Crater Field (METEOR+MINE): a landing meteor detonates every mine inside
+// its blast.
+function synergyMeteorMines() {
+  for (const fx of state.effects) {
+    if (!fx.meteor || fx.cooked) continue;
+    fx.cooked = true;
+    const mines = state.projectiles.filter(m => m.kind === 'mine' &&
+      Math.hypot(m.x - fx.x, m.y - fx.y) <= fx.radius);
+    for (const m of mines) detonateMineAt(m);   // copy — detonateMineAt splices
+  }
+}
+
 // Post-tick pass: fire-event hooks (a cd/fires reset means the weapon fired)
 // + the continuous flags.
 function wireSynergies(dt, preFire) {
@@ -3140,6 +3193,9 @@ function wireSynergies(dt, preFire) {
   }
   if (syn('scytheArcZap')) synergyScytheZap();
   if (syn('boomerangHoming')) synergyBoomerangHoming(dt);
+  if (syn('scytheEmberBurst')) synergyScytheEmber();
+  if (syn('ricochetZapFork')) synergyRicochetSpark();
+  if (syn('meteorDetonatesMines')) synergyMeteorMines();
 }
 
 // ---------- Update ----------

@@ -627,13 +627,14 @@ function updateScythe(state, weapon, dt) {
     // Land the sweep: everything inside the wedge eats damage.
     const dmg = p.stats.damage * W.DAMAGE_MULT * (P.dmgMult || 1) * dmgScale(state) * evoDmg(weapon);
     let souls = 0;
+    const reaped = [];   // where this sweep killed (Harvest Fire synergy reads it)
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
       const d = Math.hypot(e.x - p.x, e.y - p.y);
       if (d > W.RANGE) continue;
       if (Math.abs(angleDiff(Math.atan2(e.y - p.y, e.x - p.x), dir)) > arc / 2) continue;
       hurt(state, e, dmg * critRoll(p, weapon));
-      if (e.hp <= 0) souls++;
+      if (e.hp <= 0) { souls++; reaped.push({ x: e.x, y: e.y }); }
       state.effects.push({ kind: 'scythe_hit', x: e.x, y: e.y, age: 0, ttl: 0.15 }); // spark dot
     }
     if (souls > 0 && evoHas(weapon, 'harvestSouls')) {
@@ -648,6 +649,7 @@ function updateScythe(state, weapon, dt) {
     }
     state.effects.push({
       kind: 'scythe_arc', x: p.x, y: p.y, dir, radius: W.RANGE, arc, age: 0, ttl: 0.25,
+      reaped,
     });
     return;
   }
@@ -1055,7 +1057,8 @@ function updateRicochet(state, weapon, dt) {
       if (Math.abs(pr.x - e.x) < W.HIT_R && Math.abs(pr.y - e.y) < W.HIT_R) {
         hurt(state, e, pr.damage * critRoll(p, weapon));
         pr.hit.add(e);
-        state.effects.push({ kind: 'seeker_pop', x: e.x, y: e.y, age: 0, ttl: 0.1 });
+        // ricochetHit: the enemies this body has used (Storm Bounce synergy).
+        state.effects.push({ kind: 'seeker_pop', x: e.x, y: e.y, age: 0, ttl: 0.1, ricochetHit: pr.hit });
         if (pr.bounces <= 0) { state.projectiles.splice(i, 1); break; }
         const nxt = nearestEnemy(state, pr.x, pr.y, pr.hit);
         if (!nxt || Math.hypot(nxt.x - pr.x, nxt.y - pr.y) > hopRange) {
@@ -1096,7 +1099,8 @@ function updateMeteor(state, weapon, dt) {
         state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
       }
     }
-    state.effects.push({ kind: 'mine_blast', x, y, radius: blast, shrapnel: 8, age: 0, ttl: 0.35 });
+    state.effects.push({ kind: 'mine_blast', x, y, radius: blast, shrapnel: 8, age: 0, ttl: 0.35,
+      meteor: true });   // Crater Field synergy reads the landing
     return;
   }
   if (weapon.cd > 0) return;

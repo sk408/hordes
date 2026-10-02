@@ -40,6 +40,12 @@ import { WEAPON_NAMES } from './weapons.js';
 //   novaPull           nova pulse drags enemies inward by this fraction of their
 //                      distance before the blast lands (feeds orbit blades)
 //   beamDetonatesMines beam hits detonate any mine within the beam's width
+//   volleyPierce       +N pierce on every volley projectile
+//   scytheEmberBurst   every enemy a scythe sweep kills bursts like an ember
+//                      kill (ember blast radius, ember burst damage)
+//   ricochetZapFork    each ricochet impact zaps the nearest enemy that body
+//                      has not hit yet (zap damage at 50%, zap hop range)
+//   meteorDetonatesMines a landing meteor detonates every mine in its blast
 export const SYNERGIES = [
   {
     pair: ['VOLLEY', 'ORBIT'], name: 'Orbital Volley',
@@ -76,11 +82,8 @@ export const SYNERGIES = [
     desc: 'The beam finds the triggers: sweeping a mine sets it off where it lies.',
     flags: { beamDetonatesMines: true },
   },
-  // ---- TIER-2(e) NEW WEAPONS (2026-09-23): four additive pair passives, one
-  // per new archetype (the coverage rule: every archetype appears in at least
-  // one pairing). Flags are plain data on the shipped unknown-flag seam (this
-  // file's header: hb1 must IGNORE unknown flags so the table can grow ahead
-  // of gameplay wiring — same convention as evolutions.js). Numbers TUNE-AFTER.
+  // One pairing per newer archetype (every archetype appears in at least one
+  // pair). Wired in main.js wireSynergies / the volley fire loop.
   {
     pair: ['JAVELIN', 'VOLLEY'], name: 'Sun Lane',
     desc: 'The volley rides the javelin\'s lane: every shot punches one body deeper.',
