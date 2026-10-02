@@ -329,6 +329,9 @@ const MIGRATIONS = {
   // refund already paid them out). Unlocks are ownership, not levels, and stay.
   10: (p) => {
     const next = { ...p };
+    // A save that already carries the refund marker has been through this
+    // step (a v11 save whose version field was lost): never refund it twice.
+    if (plainObject(next.shopRefund) && next.shopRefund.version === 11) return next;
     const res = refundLegacyShop(plainObject(next.purchased) ? next.purchased : {});
     next.purchased = res.purchased;
     if (res.gold > 0) {

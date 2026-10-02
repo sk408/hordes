@@ -1072,11 +1072,12 @@ let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'futu
   ? bootResult.notice : null;
 // One-time notice (banner ledger): the v11 shop rebuild refunded this
 // profile's upgrades. Shown on the title until the session ends.
-if (!saveNotice && profile.shopRefund && profile.shopRefund.gold > 0 &&
-    markBannerSeen(profile, 'shop_refund_v11')) {
-  saveNotice = 'THE SHOP WAS REBUILT — every upgrade you owned was refunded: +' +
-    profile.shopRefund.gold + ' GOLD. Weapons and characters are still yours.';
+function shopRefundNotice(p) {
+  if (!(p.shopRefund && p.shopRefund.gold > 0 && markBannerSeen(p, 'shop_refund_v11'))) return null;
+  return 'THE SHOP WAS REBUILT — every upgrade you owned was refunded: +' +
+    p.shopRefund.gold + ' GOLD. Weapons and characters are still yours.';
 }
+if (!saveNotice) saveNotice = shopRefundNotice(profile);
 
 // ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
 // "Have we timestamped last played for our auto saves yet? ... so we can
@@ -8592,10 +8593,12 @@ function importSaveText(text) {
     return res;
   }
   profile = res.profile;
+  const refundNote = shopRefundNotice(profile);   // an old save file is refunded on import too
   persistProfile();
-  saveNotice = res.status === 'imported-migrated'
-    ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
-    : 'SAVE IMPORTED.';
+  saveNotice = refundNote ? 'SAVE IMPORTED — ' + refundNote
+    : res.status === 'imported-migrated'
+      ? `SAVE IMPORTED — upgraded to the current format (v${SCHEMA_VERSION}).`
+      : 'SAVE IMPORTED.';
   return res;
 }
 

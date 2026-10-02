@@ -9,6 +9,7 @@ import {
   bannerSeen, buyUpgrade, upgradeCost, makeProfile,
 } from '../src/meta.js';
 import { LEGACY_SHOP_V10, refundLegacyShop } from '../src/legacy_shop_v10.js';
+import { readFileSync } from 'node:fs';
 
 const S = suite('test_m1_migration');
 
@@ -149,6 +150,57 @@ S.check('older saves (no version) run the whole chain and are refunded too', () 
   assert.deepEqual(r.profile.purchased, {});
 });
 
+// ---- a save file written by the v10 build itself ---------------------------
+// test/fixtures/profile_v10_written_by_v10_build.json is the raw storage
+// payload the pre-M1 code (6cd4629^) saved after these purchases with its own
+// buyUpgrade: dmg x3, hp x2, crit, might x2, slots, potions x2, split x3, luck,
+// vampire, three weapons, one elite, the Rogue and one Knight upgrade.
+S.check('a real v10 save file: gold + refund add up by hand, and it is refunded once', () => {
+  const raw = readFileSync(new URL('./fixtures/profile_v10_written_by_v10_build.json', import.meta.url), 'utf8');
+  const before = JSON.parse(raw);
+  assert.equal(before.version, 10);
+  assert.equal(before.gold, 1951346);
+  const paid = (125 + 250 + 325) + (100 + 250) + 300 + (300 + 510) + 3000 + (250 + 375)
+    + (400 + 540 + 729) + 14000 + 400;
+  assert.equal(paid, 21854);
+  assert.equal(paid, sum(Object.entries(before.spendLedger)
+    .filter(([k]) => LEGACY_SHOP_V10[k]).map(([, a]) => sum(a))), 'the refund equals what the v10 ledger says was paid');
+  const store = { m: new Map([[STORAGE_KEY, raw]]), getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }, setItem(k, v) { this.m.set(k, String(v)); }, removeItem(k) { this.m.delete(k); } };
+  const r = loadProfileResult(store);
+  assert.equal(r.status, 'migrated');
+  assert.deepEqual(r.repairs, [], 'nothing needed repair');
+  assert.equal(r.profile.gold, 1951346 + 21854);
+  assert.deepEqual(r.profile.shopRefund, { version: 11, gold: 21854, rows: 9 });
+  assert.deepEqual(r.profile.purchased, {});
+  assert.deepEqual(r.profile.unlockedWeapons, before.unlockedWeapons);
+  assert.deepEqual(r.profile.unlockedElites, ['SWIFT']);
+  assert.deepEqual(r.profile.unlockedCharacters, ['KNIGHT', 'ROGUE']);
+  assert.equal(r.profile.characters.KNIGHT.upgrades.knight_vigor, 1);
+  assert.equal(r.profile.bestTime, 412);
+  assert.deepEqual(Object.keys(r.profile.spendLedger).sort(),
+    ['char:KNIGHT:knight_vigor', 'cunlock:ROGUE', 'elite_swift', 'weapon_javelin', 'weapon_nova_pulse', 'weapon_orbit']);
+  // Loading the untouched v10 payload again gives the same gold (not more).
+  assert.equal(loadProfileResult(store).profile.gold, 1951346 + 21854);
+  // Saved as v11 and reloaded, twice: no further refund.
+  saveProfile(r.profile, store);
+  const again = loadProfileResult(store);
+  assert.equal(again.status, 'current');
+  assert.equal(again.profile.gold, 1951346 + 21854);
+  saveProfile(again.profile, store);
+  assert.equal(loadProfileResult(store).profile.gold, 1951346 + 21854);
+});
+
+S.check('a refunded save that lost its version field is not refunded again', () => {
+  const first = loadProfileResult(mem(MID_V10)).profile;
+  assert.ok(buyUpgrade(first, 'dmg') && buyUpgrade(first, 'hp'));
+  const gold = first.gold;
+  const stripped = JSON.parse(JSON.stringify(first));
+  delete stripped.version;
+  const r = loadProfileResult(mem(stripped));
+  assert.equal(r.profile.gold, gold, 'the refund marker blocks a second refund');
+  assert.equal(r.profile.purchased.dmg, 1, 'levels bought on v11 are kept');
+});
+
 // ---- the one-time notice, through the real boot --------------------------
 const h = await boot({ storage: [[STORAGE_KEY, JSON.stringify(MID_V10)]], variant: 'mig-mid' });
 S.check('the game tells a refunded player once (banner ledger)', () => {
@@ -168,6 +220,18 @@ S.check('a second boot of the migrated save shows no notice', () => {
 const h3 = await boot({ storage: [[STORAGE_KEY, JSON.stringify(FRESH_V10)]], variant: 'mig-fresh' });
 S.check('a profile with nothing to refund gets no notice', () => {
   assert.equal(h3.T.save.notice, null);
+});
+
+const h4 = await boot({ variant: 'mig-import' });
+S.check('importing an old save file in the game announces the refund too, once', () => {
+  const res = h4.T.save.importText(JSON.stringify(MID_V10));
+  assert.equal(res.ok, true);
+  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND);
+  assert.ok(/refunded/.test(h4.T.save.notice) && h4.T.save.notice.includes(String(MID_REFUND)), h4.T.save.notice);
+  const again = h4.T.save.importText(exportProfileText(h4.T.getProfile()));
+  assert.equal(again.ok, true);
+  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND, 're-importing the refunded save adds nothing');
+  assert.ok(!/refunded/.test(h4.T.save.notice), h4.T.save.notice);
 });
 
 S.done();
