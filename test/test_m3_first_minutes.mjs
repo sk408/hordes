@@ -269,7 +269,8 @@ S.check('the payout is stated up front, and a skip banks all of it', () => {
   assert.ok(r.texts.includes('ESCAPE') && r.texts.includes('+' + worth + ' gold'), 'the first frame names the payout: ' + r.texts.join(' | '));
   assert.ok(r.texts.includes('SKIP'), 'the skip is on screen: ' + r.texts.join(' | '));
   for (let i = 0; i < 30; i++) ESC.frame(null, 1 / 60);
-  assert.equal(ESC.press(), true);
+  assert.equal(ESC.press(true), false, 'the first press asks');
+  assert.equal(ESC.press(true), true);
   assert.ok(ended && ended.result === 'skip', 'the skip ends the escape');
   assert.equal(ended.payout, worth, 'paid in full');
   assert.equal(prof.gold, worth, 'banked');

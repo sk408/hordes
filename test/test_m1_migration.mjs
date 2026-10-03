@@ -44,6 +44,10 @@ const MAXED_V10 = v10({
   apex: { owned: ['apex_mark'], enabled: true, unlocked: true },
   bestTime: 1800,
 });
+// MID_V10 owns SWIFT with no ledger entry and without the 100-kill trophy: it
+// was bought before the ledger existed. The elite rows have left the shop, so
+// the game (not the migration) refunds it at the row's last price, once.
+const ELITE_REFUND = 3000;
 const MID_REFUND = 125 + 250 + 325   // dmg 3
   + 100 + 250                        // hp 2
   + 300                              // crit 1
@@ -207,15 +211,20 @@ S.check('the game tells a refunded player once (banner ledger)', () => {
   assert.equal(h.T.save.status, 'migrated');
   assert.ok(/refunded/.test(h.T.save.notice) && h.T.save.notice.includes(String(MID_REFUND)), h.T.save.notice);
   assert.ok(bannerSeen(h.T.getProfile(), 'shop_refund_v11'));
+  // The retired elite row is refunded in the same boot and said in the same line.
+  assert.ok(h.T.save.notice.includes('THE ELITE UPGRADES LEFT THE SHOP. Refunded: +' + ELITE_REFUND + ' GOLD'), h.T.save.notice);
+  assert.equal(h.T.getProfile().gold, 500 + MID_REFUND + ELITE_REFUND);
+  assert.deepEqual(h.T.getProfile().unlockedElites, ['SWIFT'], 'the elite stays unlocked');
+  assert.ok(bannerSeen(h.T.getProfile(), 'elite_rows_retired'));
   h.T.showTitle();
   assert.ok((h.elements['ov-sub'].innerHTML || '').includes("refunded"), "the title shows the notice");
 });
 h.T.save.autosave();
 const h2 = await boot({ storage: [...h.storage], variant: 'mig-mid-2' });
-S.check('a second boot of the migrated save shows no notice', () => {
+S.check('a second boot of the migrated save shows no notice and refunds nothing more', () => {
   assert.equal(h2.T.save.status, 'current');
   assert.equal(h2.T.save.notice, null);
-  assert.equal(h2.T.getProfile().gold, 500 + MID_REFUND);
+  assert.equal(h2.T.getProfile().gold, 500 + MID_REFUND + ELITE_REFUND);
 });
 const h3 = await boot({ storage: [[STORAGE_KEY, JSON.stringify(FRESH_V10)]], variant: 'mig-fresh' });
 S.check('a profile with nothing to refund gets no notice', () => {
@@ -226,12 +235,13 @@ const h4 = await boot({ variant: 'mig-import' });
 S.check('importing an old save file in the game announces the refund too, once', () => {
   const res = h4.T.save.importText(JSON.stringify(MID_V10));
   assert.equal(res.ok, true);
-  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND);
+  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND + ELITE_REFUND);
   assert.ok(/refunded/.test(h4.T.save.notice) && h4.T.save.notice.includes(String(MID_REFUND)), h4.T.save.notice);
+  assert.ok(h4.T.save.notice.includes('Refunded: +' + ELITE_REFUND + ' GOLD'), h4.T.save.notice);
   const again = h4.T.save.importText(exportProfileText(h4.T.getProfile()));
   assert.equal(again.ok, true);
-  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND, 're-importing the refunded save adds nothing');
-  assert.ok(!/refunded/.test(h4.T.save.notice), h4.T.save.notice);
+  assert.equal(h4.T.getProfile().gold, 500 + MID_REFUND + ELITE_REFUND, 're-importing the refunded save adds nothing');
+  assert.ok(!/refunded/i.test(h4.T.save.notice), h4.T.save.notice);
 });
 
 S.done();

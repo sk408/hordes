@@ -81,7 +81,7 @@ damage about 47,000×.
 | 3, the long game | Split Shot (4), Hollowpoint (3), Blood Pact (5), Starting Artifact (4), Fortune (5), Weapon Slot (3), Storm Conduit (5) | 400–2,000 | 8,518–24,000 | 12,400–46,500 |
 | 4, capstones | Fan Fire (2), Deep Read (2), Escape Writ, Last Stand, Arcade Pass | 4,000–40,000 | 12,000–40,000 | 15,000–40,000 |
 | weapon unlocks | Orbit 150, Scythe 500, Ember 800, Beam 1,500, Ricochet 2,500, Zap 4,000, Javelin 6,000, Nova Pulse 9,000, Meteor 13,000, Mine 20,000, Seeker 30,000 | | | 87,450 |
-| elite unlocks | Swift 3,000, Splitting 6,000, Vampiric 10,000 | | | 19,000 |
+| elite unlocks (left the shop 2026-10-03: the kill trophies bring them; paid gold is refunded) | Swift 3,000, Splitting 6,000, Vampiric 10,000 | | | 19,000 |
 
 Sorted by price, no step costs more than 1.33× the one before it. Removed or folded rows: might, headsman,
 toughness, ironheart, cooldown, eagleeye, bullseye, growth, avarice, marathon, magnetism, vampire, hoarder,

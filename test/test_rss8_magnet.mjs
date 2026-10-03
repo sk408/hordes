@@ -104,7 +104,13 @@ const mainMod = await import('../src/main.js');
 const T = mainMod.__TEST;
 const st = T.state;
 const dtMs = 1000 / 60;
-const frame = () => { now += dtMs; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now); };
+// No world sites in this file. A stray shot broke a brazier about one run in
+// thirty, and what it dropped vacuumed the floor (24 gems -> 0) or added a
+// fourth potion under a check that counts what is on the ground.
+const frame = () => {
+  if (st.sites && st.sites.length) st.sites.length = 0;
+  now += dtMs; const cb = rafQueue.shift(); if (!cb) throw new Error('raf died'); cb(now);
+};
 const pump = (n) => { for (let i = 0; i < n; i++) frame(); };
 const cards = () => elements['ov-cards'] ? elements['ov-cards'].children : [];
 const toasts = () => st.toasts.map(t => t.msg).join(' | ');

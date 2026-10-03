@@ -3,9 +3,13 @@
 // to fail: the escape's gold is banked once, when the movie ends or is
 // skipped. This file owns the cast, the clock, the skip and the payout;
 // src/escape_cine_art.js owns the timeline and paints it.
+//
+// The skip takes two presses. The chase begins the moment a boss fight ends,
+// when a player is still steering and firing: with "any key skips" one stray
+// key ended it 0.4 s in (Steve, 2026-10-03: "it just skipped really fast").
 import { escapeWorth, bestGoldOf, hasWrit, bankEscape } from './escape_payout.js';
 import {
-  BEATS, DURATION, LUNGES, BOSS_T, STOMPS, FLASH_T, drawScene, drawCard,
+  BEATS, DURATION, LUNGES, BOSS_T, STOMPS, FLASH_T, SKIP_HIT, drawScene, drawCard,
 } from './escape_cine_art.js';
 import { stageOf } from './stages.js';
 import { enemySpriteFor } from './enemy_sprites.js';
@@ -15,6 +19,7 @@ import { mulberry32 } from './weather.js';
 
 export { BEATS, DURATION };
 export const SKIP_GUARD_S = 0.4;   // a press this soon after the start is ignored
+export const SKIP_ASK_S = 2.5;     // how long the skip prompt stays up after a press
 export const STILL_S = 1.5;        // how long the still card holds (reduced motion)
 export const HORDE_SIZE = 30;      // enemies in the wave, at most
 
@@ -105,6 +110,7 @@ export function begin(opts = {}) {
     profile, onEnd: opts.onEnd || null, onCue: opts.onCue || null,
     reduced: !!opts.reduced,
     t: 0, cue: 0, held: false, ended: false, payload: null,
+    ask: 0, askTap: false,   // the skip prompt: seconds left, raised by a pointer
   };
   return cine;
 }
@@ -132,7 +138,9 @@ export function frame(g, dt) {
   const c = cine;
   if (!c || c.ended) return;
   const t0 = c.t;
-  if (!c.held) c.t += Math.min(0.1, Math.max(0, Number(dt) || 0));
+  const step = Math.min(0.1, Math.max(0, Number(dt) || 0));
+  if (!c.held) c.t += step;
+  if (c.ask > 0) c.ask = Math.max(0, c.ask - step);
   if (c.onCue && !c.reduced) {
     while (c.cue < CUES.length && CUES[c.cue][0] <= c.t) {
       const q = CUES[c.cue++];
@@ -141,23 +149,33 @@ export function frame(g, dt) {
   }
   if (g) {
     if (c.reduced) drawCard(g, c.scene, 1);
-    else drawScene(g, c.scene, Math.min(c.t, DURATION));
+    else drawScene(g, c.scene, Math.min(c.t, DURATION), { on: c.ask > 0, tap: c.askTap });
   }
   if (c.t >= length()) finish('complete');
 }
 
-// A key, tap or click: skips once the guard time has passed. Returns true
-// when it ended the cinematic.
-export function press() {
+// A key, tap or click, once the guard time has passed. The first press (any
+// key, a tap anywhere) only raises the skip prompt for SKIP_ASK_S. A press
+// that means it while the prompt is up ends the movie: `confirm` is a skip
+// key (ESC, ENTER, SPACE) or a tap on the SKIP button. `tap`: the press came
+// from a pointer, so the prompt says where to tap. Returns true when it ended
+// the cinematic.
+export function press(confirm = false, tap = false) {
   const c = cine;
   if (!c || c.ended || c.t < SKIP_GUARD_S) return false;
+  if (!(confirm && c.ask > 0)) { c.ask = SKIP_ASK_S; c.askTap = !!tap; return false; }
   if (c.onCue && c.scene.payout > 0) c.onCue('GOLD', 0);
   finish('skip');
   return true;
 }
+// Is (vx, vy), in view pixels, on the SKIP button?
+export function skipHit(vx, vy) {
+  const r = SKIP_HIT;
+  return vx >= r.x && vx < r.x + r.w && vy >= r.y && vy < r.y + r.h;
+}
 
 // End now, paid in full: `skip` for a skip from code, `finishNow` for a tab
-// nobody is watching or an unattended run.
+// nobody is watching or a run nobody is at.
 export function skip() { if (cine && !cine.ended) finish('skip'); }
 export function finishNow() { if (cine && !cine.ended) finish('complete'); }
 

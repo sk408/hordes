@@ -1,6 +1,6 @@
 // AUDIT FIXES ROUND 3 (2026-09-16) — one failing-first test per item.
 //   ITEM 1 (F9): the remaining NaN-unsafe purchase gates fail CLOSED through
-//     ONE shared helper (meta.js canAfford) — unlockElite, buyApex,
+//     ONE shared helper (meta.js canAfford) — buyApex,
 //     buyCharacterUpgrade, plus unlockCharacter (a fourth sibling the dispatch
 //     did not cite; same class, disclosed) and the two M5-era gates.
 //   ITEM 2 (F10): settleRunGold claims state.runSettled BEFORE the side
@@ -9,7 +9,7 @@
 // Every check FAILS on the pre-fix tree (verified red before landing fixes).
 // Run: node test/test_audit_round3.mjs
 import assert from 'node:assert/strict';
-import { makeProfile, buyUpgrade, unlockWeapon, unlockElite, buyApex, apexUnlocked,
+import { makeProfile, buyUpgrade, unlockWeapon, buyApex, apexUnlocked,
   buyCharacterUpgrade, unlockCharacter, SHOP_UPGRADES, RUN_GOLD } from '../src/meta.js';
 import { boot, suite } from './_harness.mjs';
 
@@ -19,16 +19,8 @@ const S = suite('AUDIT ROUND 3');
 // A poisoned wallet is NaN, undefined, or a negative number. For EVERY buyer:
 // the purchase must refuse, grant nothing, and leave profile.gold UNMUTATED
 // (a "repair to 0" happening here would be the silent bank wipe).
-S.check('F9: unlockElite rejects NaN/undefined/negative gold, no mutation', () => {
-  for (const bad of [NaN, undefined, -50]) {
-    const prof = makeProfile();
-    prof.gold = bad;
-    assert.equal(unlockElite(prof, 'SWIFT'), false, `unlockElite must reject gold=${bad}`);
-    assert.equal((prof.unlockedElites || []).includes('SWIFT'), false, 'no elite granted');
-    assert.ok(Object.is(prof.gold, bad), `gold unmutated (got ${prof.gold}, wanted ${bad})`);
-  }
-});
-
+// (unlockElite, the first buyer this item covered, is gone: the elite
+// modifiers are not for sale since 2026-10-03.)
 S.check('F9: buyCharacterUpgrade rejects NaN/undefined/negative gold, no mutation', () => {
   for (const bad of [NaN, undefined, -50]) {
     const prof = makeProfile();   // KNIGHT is unlocked by default
@@ -47,7 +39,6 @@ S.check('F9: buyApex rejects NaN/undefined/negative gold, no mutation', () => {
   const armed = makeProfile();
   for (const def of SHOP_UPGRADES) {
     if (def.kind === 'weapon') armed.unlockedWeapons.push(def.weaponId);
-    else if (def.kind === 'elite') armed.unlockedElites.push(def.eliteId);
     else armed.purchased[def.id] = def.maxLevel;
   }
   armed.apex = { owned: [], enabled: false };

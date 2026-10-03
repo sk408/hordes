@@ -65,8 +65,8 @@ const fakeEl = () => {
   // WAVE-22c: classList (hints panel / touch-layer mode classes)
   const cls = new Set();
   el.classList = {
-    add: (c) => cls.add(c),
-    remove: (c) => cls.delete(c),
+    add: (...c) => { for (const x of c) cls.add(x); },
+    remove: (...c) => { for (const x of c) cls.delete(x); },   // any number of classes, like the DOM
     contains: (c) => cls.has(c),
     toggle: (c, on) => { const want = on === undefined ? !cls.has(c) : !!on; want ? cls.add(c) : cls.delete(c); },
   };
@@ -932,12 +932,14 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   keyHandler({ key: 'Escape' });   // inside the escape's guard time: ignored
   assert(st.mode === 'escape', 'a press on the escape\'s first frame must not skip it (mode=' + st.mode + ')');
   pumpUntil(() => false, 30, () => {});
-  keyHandler({ key: 'Escape' });   // any key skips the escape after its guard
+  keyHandler({ key: 'Escape' });   // after the guard the first press asks...
+  assert(st.mode === 'escape', 'one press must not skip the escape (mode=' + st.mode + ')');
+  keyHandler({ key: 'Escape' });   // ...and a skip key while the prompt is up skips
   assert(st.mode === 'intermission', 'escape skip must hand back to the intermission (mode=' + st.mode + ')');
   assert(st.player.hp > 0, 'the escape skip must never kill (hp=' + st.player.hp + ')');
   assert(elements['ov-title'].textContent.includes('CLEARED'),
     'intermission title after the cine (got ' + elements['ov-title'].textContent + ')');
-  console.log(`portal cine: ${cineFrames} frames then key-skip -> escape -> ESC skip -> intermission`);
+  console.log(`portal cine: ${cineFrames} frames then key-skip -> escape -> ESC twice -> intermission`);
 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
   keyHandler({ key: 'c' });   // CONTINUE into the next wave

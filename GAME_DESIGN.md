@@ -497,8 +497,9 @@ one:
   - ECONOMY (`src/meta.js` hb2, retuned by hb7): WEAPON_PRICES ladder —
     weapons are BOUGHT in the shop (profile.unlockedWeapons starts as the
     starter set: VOLLEY + one cheap pick; old profiles migrate retroactively,
-    Sk408-approved). Elite-modifier unlocks (SWIFT / SPLITTING / VAMPIRIC)
-    are shop rows, locked by default (profile.unlockedElites). LUCK skill,
+    Sk408-approved). Elite modifiers (SWIFT / SPLITTING / VAMPIRIC) are
+    locked by default (profile.unlockedElites) and brought by the kill
+    trophies; they were also shop rows until 2026-10-03. LUCK skill,
     5 levels, shifts loot rarity via luckDropWeights (base 60/25/12/3,
     common-heavy). GOLD_MODEL + `tools/balance_sim.mjs` (hb7, 200-career
     Monte-Carlo with compounding): TARGET (a) 10 good runs -> 63.3% of the

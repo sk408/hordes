@@ -52,7 +52,7 @@ import { CONFIG as C, UPGRADES, ladderHp, ladderDmg, ladderXp, ladderGroups, run
 import {
   makeProfile, buyUpgrade, computeRunGold, catalogCost,
   SHOP_UPGRADES, SHOP_BY_ID, STARTER_WEAPONS, WEAPON_PRICES,
-  ELITE_MODIFIERS, GOLD_MODEL, applyMetaBonuses, applyCharacter,
+  GOLD_MODEL, applyMetaBonuses, applyCharacter,
 } from '../src/meta.js';
 import { makePlayer, contactHitDamage } from '../src/entities.js';
 // G10 (rarity tiers): the live tier table, through the same seam the game
@@ -450,8 +450,6 @@ export const GREEDY_PRIORITY = [
   'dmg', 'hp', 'crit', 'critdmg', 'greed', 'xp',
   ...SHOP_UPGRADES.filter(u => u.kind === 'weapon' && u.id !== 'weapon_beam')
     .sort((a, b) => a.baseCost - b.baseCost).map(u => u.id),
-  ...SHOP_UPGRADES.filter(u => u.kind === 'elite')
-    .sort((a, b) => a.baseCost - b.baseCost).map(u => u.id),
   'luck', 'slots',
   // G17 slice 2 breadth: the new premium stat rungs join the order AFTER the
   // classic ladder (they are late-catalogue rungs at 65k-4.3M base), sorted
@@ -479,12 +477,10 @@ function greedyShop(profile) {
 }
 function shopRowDone(profile, def) {
   if (def.kind === 'weapon') return profile.unlockedWeapons.includes(def.weaponId);
-  if (def.kind === 'elite') return profile.unlockedElites.includes(def.eliteId);
   return (profile.purchased[def.id] || 0) >= def.maxLevel;
 }
 function nextCost(profile, def) {
   if (def.kind === 'weapon') return WEAPON_PRICES[def.weaponId];
-  if (def.kind === 'elite') return ELITE_MODIFIERS[def.eliteId].cost;
   return Math.round(def.baseCost * Math.pow(def.costGrowth, profile.purchased[def.id] || 0));
 }
 function midTierOwnedFrac(profile) {

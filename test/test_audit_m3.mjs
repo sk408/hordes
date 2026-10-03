@@ -58,6 +58,13 @@ const CAPS = CONFIG.GROUND_ITEMS;
   const st = h.state, T = h.T;
   T.startRun(); h.pump(2);
   st.pilotMode = 'MANUAL';                  // no pilot scooping: value stays on the ground
+  // ...and nothing within arm's reach either. Drops scatter at random, and a
+  // gem that landed inside the pickup radius was banked through the XP
+  // multipliers and a level-up, so "ground + player.xp" came up short of the
+  // total about one run in twelve (45,449 of 50,000). The cap is the subject
+  // here, not the pickup (its reach comes back for the pickup checks below).
+  const reach = st.player.stats.pickup;
+  st.player.stats.pickup = 0;
   st.enemies.length = 0;                    // no ambient spawns in the accounting
   st.spawnTimer = 1e9;
   st.player.stats.damage = 1e9;             // one nova tick reaps everything
@@ -77,6 +84,7 @@ const CAPS = CONFIG.GROUND_ITEMS;
   const groundXp = st.gems.reduce((s, g) => s + g.xp, 0);
   assert.equal(groundXp + (st.player.xp - 0), N * XP,
     `total value unchanged: ground ${groundXp} + banked ${st.player.xp} == ${N * XP}`);
+  st.player.stats.pickup = reach;
   assert.ok(st.drops.length <= CAPS.DROP_CAP, `potion litter ${st.drops.length} <= ${CAPS.DROP_CAP}`);
   assert.ok(st.itemDrops.length <= CAPS.ITEM_CAP, `item belt ${st.itemDrops.length} <= ${CAPS.ITEM_CAP}`);
 
@@ -89,7 +97,9 @@ const CAPS = CONFIG.GROUND_ITEMS;
   const live = () => { const t0 = st.time; h.pump(1); return st.time > t0; };
   let settled = false;
   for (let f = 0; f < 900 && !settled; f++) {
-    if (st.mode === 'draft') {
+    // A draft, or the evolve offer the token can open (it parked the run for
+    // good here about one run in twelve): take the first card.
+    if (st.mode === 'draft' || st.mode === 'evolve') {
       const cards = h.elements['ov-cards'];
       const c0 = cards && cards.children[0];
       if (c0) c0.click();

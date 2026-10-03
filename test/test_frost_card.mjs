@@ -90,10 +90,13 @@ h.pump(2);
 const p = st.player;
 
 // Keep the 120s window in 'playing': no spawns, no bosses, no portal, no
-// deaths, no drafts (no kills -> no XP), and the wave never ends.
+// deaths, no drafts (no kills -> no XP), and the wave never ends. No sites
+// either: the patrol walked onto a charged shrine in about one run in eight
+// and its blessing draft ended the window ("left playing ... mode=draft").
 const pinFrame = (mana) => {
   st.spawnTimer = 999;
   st.enemies.length = 0;
+  st.sites.length = 0;
   st.portal = null;
   st.wave.midAt = st.time + 1e9;
   st.wave.endsAt = st.time + 1e9;

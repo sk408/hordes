@@ -22,7 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 import {
-  SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS, WEAPON_SLOT_START,
+  SHOP_UPGRADES, WEAPON_PRICES, WEAPON_SLOT_START,
   MAX_WEAPON_SLOTS, upgradeCost,
 } from '../src/meta.js';
 import { GREEDY_PRIORITY } from '../tools/balance_sim.mjs';
@@ -73,12 +73,10 @@ console.log('meta_rank (W7a slice 2): measured marginal value + dilution drift l
   assert.strictEqual(nextCostOf(dmg, 0), upgradeCost(dmg, 0));
   assert.strictEqual(nextCostOf(dmg, 1), upgradeCost(dmg, 1));
   const wRow = SHOP_UPGRADES.find(d => d.id === 'weapon_orbit');
-  const eRow = SHOP_UPGRADES.find(d => d.id === 'elite_swift');
-  console.log(`    weapon_orbit=${nextCostOf(wRow, 0)} (WEAPON_PRICES.ORBIT=${WEAPON_PRICES.ORBIT}) ` +
-    `elite_swift=${nextCostOf(eRow, 0)} (ELITE_MODIFIERS.SWIFT.cost=${ELITE_MODIFIERS.SWIFT.cost})`);
+  console.log(`    weapon_orbit=${nextCostOf(wRow, 0)} (WEAPON_PRICES.ORBIT=${WEAPON_PRICES.ORBIT})`);
   assert.strictEqual(nextCostOf(wRow, 0), WEAPON_PRICES.ORBIT);
-  assert.strictEqual(nextCostOf(eRow, 0), ELITE_MODIFIERS.SWIFT.cost);
-  ok('costs reproduce nextCost/upgradeCost at level 0 and 1, weapon+elite rows included');
+  assert.ok(!SHOP_UPGRADES.some(d => d.kind === 'elite'), 'the elite rows left the shop');
+  ok('costs reproduce nextCost/upgradeCost at level 0 and 1, weapon rows included');
 }
 
 // ---- 3. slot counts are READ, not hardcoded ---------------------------------

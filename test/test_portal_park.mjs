@@ -308,7 +308,8 @@ s.check('R4 dwell: 0.35-0.5s on contact, identical wall-clock at 60Hz and 120Hz'
     h.pump(2);
     if (st.mode !== 'escape') throw new Error('the skip did not hand the run to the escape: ' + st.mode);
     h.pump(30);   // past the escape's skip guard
-    h.key('keydown', { key: 'Escape', preventDefault() {} });
+    h.key('keydown', { key: 'Escape', preventDefault() {} });   // asks
+    h.key('keydown', { key: 'Escape', preventDefault() {} });   // skips
     let back = 0;
     while (st.mode === 'escape' && back < 400) { h.pump(1); back++; }
     if (st.mode !== 'intermission') throw new Error('the escape skip did not hand back to the intermission: ' + st.mode);

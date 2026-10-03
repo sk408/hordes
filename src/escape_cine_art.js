@@ -665,8 +665,11 @@ function textW(g, s, per) {
   return (m && m.width > 0) ? m.width : s.length * per;
 }
 
-// The skip label's box, top right (any key or tap skips; this says so).
+// The SKIP button, top right, and the wider box a tap on it may land in.
+// Skipping takes two presses (escape_cine.js press): the first raises the
+// prompt, a skip key or a tap in SKIP_HIT while it is up ends the movie.
 export const SKIP_RECT = { x: W - 50, y: 2, w: 44, h: BAR - 4 };
+export const SKIP_HIT = { x: W - 112, y: 0, w: 112, h: 46 };
 
 const BAR_COL = '#06060b';
 function drawBars(g) {
@@ -674,7 +677,8 @@ function drawBars(g) {
   g.fillRect(0, 0, W, BAR);
   g.fillRect(0, H - BAR, W, BAR);
 }
-function drawHud(g, scene, t) {
+// ask: null, or { on, tap } while the skip prompt is up (tap: a pointer raised it).
+function drawHud(g, scene, t, ask = null) {
   g.font = 'bold 9px monospace';
   g.textBaseline = 'middle';
   g.textAlign = 'left';
@@ -686,24 +690,29 @@ function drawHud(g, scene, t) {
     g.fillText(lead, 8 + textW(g, 'ESCAPE', 5.4) + 8, BAR / 2 + 0.5);
   }
   const r = SKIP_RECT;
-  g.fillStyle = '#3a3a4c';
-  g.fillRect(r.x, r.y, r.w, 1); g.fillRect(r.x, r.y + r.h - 1, r.w, 1);
-  g.fillRect(r.x, r.y, 1, r.h); g.fillRect(r.x + r.w - 1, r.y, 1, r.h);
+  const asking = !!(ask && ask.on);
+  if (asking) {
+    g.fillStyle = GOLD;
+    g.fillRect(r.x, r.y, r.w, r.h);
+  } else {
+    g.fillStyle = '#3a3a4c';
+    g.fillRect(r.x, r.y, r.w, 1); g.fillRect(r.x, r.y + r.h - 1, r.w, 1);
+    g.fillRect(r.x, r.y, 1, r.h); g.fillRect(r.x + r.w - 1, r.y, 1, r.h);
+  }
   g.textAlign = 'center';
-  g.fillStyle = '#b8b8cc';
+  g.fillStyle = asking ? BAR_COL : '#b8b8cc';
   g.fillText('SKIP', r.x + r.w / 2, BAR / 2 + 0.5);
-  if (t < 2.6) {
-    g.globalAlpha = 1 - span(t, 2.0, 2.6);
-    g.fillStyle = '#8a8aa0';
+  // The prompt: only after a press, and it says what the second one must be.
+  if (asking) {
+    g.fillStyle = '#e8e8f0';
     g.font = 'bold 8px monospace';
-    g.fillText('any key or tap skips', CX, H - BAR / 2 + 0.5);
-    g.globalAlpha = 1;
+    g.fillText(ask.tap ? 'tap SKIP to skip' : 'ESC or ENTER to skip', CX, H - BAR / 2 + 0.5);
   }
   g.textAlign = 'left';
 }
 
-// The whole frame at time t.
-export function drawScene(g, scene, t) {
+// The whole frame at time t. ask: the skip prompt (see drawHud).
+export function drawScene(g, scene, t, ask = null) {
   if (t >= BEATS.CARD[0]) {
     drawCard(g, scene, t - BEATS.CARD[0], 1 - span(t, BEATS.CARD[0], BEATS.CARD[0] + 0.25));
     return;
@@ -732,7 +741,7 @@ export function drawScene(g, scene, t) {
   // The top bar and its text stay whole whatever comes at the camera.
   g.fillStyle = BAR_COL;
   g.fillRect(0, 0, W, BAR);
-  drawHud(g, scene, t);
+  drawHud(g, scene, t, ask);
   const white = span(t, FLASH_T, FLASH_T + 0.18);
   if (white > 0) { g.globalAlpha = white; g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
 }

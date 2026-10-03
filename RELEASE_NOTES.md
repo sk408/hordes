@@ -4,6 +4,7 @@
 
 ## Your save
 - Nothing is reset. The Starting Artifact shop row is gone (the camp replaces it); what you paid for it is refunded in gold.
+- The three elite upgrades left the shop (see Removed). If you paid gold for one, it is refunded, and the elites you unlocked stay.
 - A tab left open on an older version can no longer save over a newer save. If that happened to you, the newer save is put back the next time the game loads, unless you have since played more runs on the older one.
 
 ## New
@@ -16,11 +17,12 @@
 - **Boss rules:** from wave 2 each wave boss brings one named rule for its fight (potions do nothing, enemies move faster, the boss has more health...) and a reward for beating it. The rule is named when the wave starts. A new joker, Rulebreaker, ignores the rules and keeps the rewards.
 - **The camp:** buildings bought with gold that make gold and charges while you are away.
 - **Idle play:** a run keeps going while the tab is hidden. AUTO-CONTINUE (Settings) starts the next run for you, for less gold. A summary shows what happened while you were away.
-- **The escape is a short film now:** after the first boss your hero runs for the portal with the horde and the boss behind him. Nothing to play and nothing to fail: it always banks the escape gold, watched or skipped. The Escape Writ now triples it.
+- **The escape is a short film now:** after the first boss your hero runs for the portal with the horde and the boss behind him. Nothing to play and nothing to fail: it always banks the escape gold, watched or skipped. The Escape Writ now triples it. To skip it, press any key and then ESC or ENTER (on a phone: tap, then tap SKIP); the keys you fight with can no longer skip it by accident. With AUTO-CONTINUE on it still plays while you are there.
 
 ## Removed
 - **RAISE THE STAKES** and the **run modifiers** (ONE WEAPON, NO POTIONS). Boss rules take their place. Neither was part of a save, so nothing is lost.
 - **MIMIC FEAST**, the modifier for finding all eight glyphs, is now a joker that joins the offers once you have them.
+- **Swift, Splitting and Vampiric Elites** are no longer shop upgrades. The kill trophies (100, 1,000 and 10,000 kills) bring them, as they always did, which is why the shop showed them as owned with nothing bought. The end of the run now says so as a new threat.
 
 ## Changed
 - New floors, buildings and props on every stage.
@@ -28,6 +30,10 @@
 - The first shrine of every run stands close to the start.
 - The shop on a phone shows two or three rows a page instead of one (12 cards sideways, 15 upright on a typical phone).
 - Quests that can no longer be finished show as closed. Quest gold now grows with Greed.
+- On desktop the key bar shows FOCUS (TAB) and STANCE (G) with their current setting; click them or use the keys.
+- The end of a run names the trophies it earned and what they gave you. A weapon a trophy gave reads "OWNED · trophy reward" in the shop.
+- The end screen after a quick first death has its dark backdrop and fits a phone (the summary used to run off the bottom).
+- The banner for a first fusion or evolution wraps its description instead of running off both sides of the screen.
 - Many fixes from a full review of the first October release.
 
 # HORDES — October 2 update

@@ -2673,6 +2673,18 @@ export class Renderer {
       while (px > lo && widthOf(txt, px, bold) > maxTextW) px--;
       return px;
     };
+    // `txt` broken at word boundaries into lines no wider than the box.
+    const wrapWords = (txt, px, bold) => {
+      const out = [];
+      let line = '';
+      for (const word of String(txt).split(' ')) {
+        const cand = line ? line + ' ' + word : word;
+        if (line && widthOf(cand, px, bold) > maxTextW) { out.push(line); line = word; }
+        else line = cand;
+      }
+      if (line) out.push(line);
+      return out;
+    };
 
     // Line 1..N: the boss names (one per line; see CONFIG for why not shared).
     const names = (b.names && b.names.length) ? b.names.slice() : (b.title ? [b.title] : []);
@@ -2695,11 +2707,18 @@ export class Renderer {
       const verbPx = verb ? fitPx(verb, HUD.BANNER_VERB_MIN_PX, verbMax, true) : 0;
       // Flavor sub-line: the old 11px small print (never below 10 — the panel's
       // floor), fitted so a two-boss flavor pair cannot overrun either.
+      // A sub that does not fit even at the floor WRAPS there. A first fusion's
+      // or evolution's banner carries the weapon's whole description (up to
+      // 129 characters, 709px at 10px in a 480px view) and it painted as one
+      // line off both edges of the screen (Steve, 2026-10-03: "the fuse weapon
+      // message is larger than the screen").
       const subPx = b.sub ? fitPx(b.sub, 10, HUD.BANNER_SUB_PX, false) : 0;
+      const subLines = !b.sub ? []
+        : widthOf(b.sub, subPx, false) <= maxTextW ? [b.sub] : wrapWords(b.sub, subPx, false);
       const lines = [];
       for (const s of names) lines.push({ txt: s, px: namePx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
       if (verb) lines.push({ txt: verb, px: verbPx, bold: true, ink: '#ffd75e', shade: '#3a2408' });
-      if (b.sub) lines.push({ txt: b.sub, px: subPx, bold: false, ink: '#e4e4ee', shade: null });
+      for (const s of subLines) lines.push({ txt: s, px: subPx, bold: false, ink: '#e4e4ee', shade: null, sub: true });
       for (const l of lines) l.h = Math.round(l.px * 1.16) + gap;   // line box
       // The plate is built from the MEASURED widest line, then clamped inside
       // the view edge — the two-boss case can no longer be underestimated.

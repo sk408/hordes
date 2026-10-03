@@ -195,7 +195,7 @@ export const GOLD_MODEL = {
   TOP_TIER_MIN_GOOD_RUNS: 1,
   MID_TIER_IDS: [
     'weapon_orbit', 'weapon_scythe', 'weapon_ember', 'weapon_beam', 'weapon_ricochet',
-    'weapon_zap', 'elite_swift', 'elite_splitting', 'elite_vampiric', 'luck', 'fleetfoot',
+    'weapon_zap', 'luck', 'fleetfoot',
   ],
   TOP_TIER_IDS: [
     'weapon_nova_pulse', 'weapon_meteor', 'weapon_mine', 'weapon_seeker', 'arcade',
@@ -351,23 +351,25 @@ export function masteryLine(profile) {
   return 'Mastery ' + r + ': +' + masteryHp(profile) + ' max HP, weapons start at Lv ' + (1 + masteryStartLevels(profile));
 }
 
-// ---------- ELITE MODIFIER UNLOCKS (locked by default) ---------------------
-// profile.unlockedElites gates which elite modifiers a run may roll.
+// ---------- ELITE MODIFIERS (locked by default) -----------------------------
+// profile.unlockedElites gates which elite modifiers a run may roll. They are
+// not for sale: the kill trophies bring them (achievements.js, unlock kind
+// 'elite'), as a new threat.
+//
+// Until 2026-10-03 they were also shop rows, at 3000 / 6000 / 10000 gold,
+// while the 100-kill trophy handed the first one out in a player's first run
+// or two: the rows read OWNED with nothing bought, and nobody pays gold for a
+// harder elite that pays no more (Steve: "it makes no sense to be in the
+// shop"). refundRetiredRows (below) gives back what was paid for one.
 export const ELITE_MODIFIERS = {
-  SWIFT: {
-    id: 'SWIFT', name: 'Swift', cost: 3000,
-    desc: 'Elites can be SWIFT: much faster, less health. Adds variety, not gold',
-  },
-  SPLITTING: {
-    id: 'SPLITTING', name: 'Splitting', cost: 6000,
-    desc: 'Elites can be SPLITTING: killed, they break into two small ones. Adds variety, not gold',
-  },
-  VAMPIRIC: {
-    id: 'VAMPIRIC', name: 'Vampiric', cost: 10000,
-    desc: 'Elites can be VAMPIRIC: they heal when they hit you. Adds variety, not gold',
-  },
+  SWIFT: { id: 'SWIFT', name: 'Swift', desc: 'Elites can be SWIFT: much faster, less health' },
+  SPLITTING: { id: 'SPLITTING', name: 'Splitting', desc: 'Elites can be SPLITTING: killed, they break into two small ones' },
+  VAMPIRIC: { id: 'VAMPIRIC', name: 'Vampiric', desc: 'Elites can be VAMPIRIC: they heal when they hit you' },
 };
 const VALID_ELITE_IDS = new Set(Object.keys(ELITE_MODIFIERS));
+// What each cost when its row left the shop (the refund for a purchase older
+// than the spend ledger).
+export const RETIRED_ELITE_PRICES = { SWIFT: 3000, SPLITTING: 6000, VAMPIRIC: 10000 };
 
 // ---------- Live description formatters --------------------------------------
 // Every `desc` that quotes a tuning number is a getter built from these, so
@@ -388,8 +390,6 @@ export function fmtNum(v) {
 //       lists it.
 //   { ..., kind: 'weapon', weaponId }   single-purchase weapon unlock;
 //       ownership lives in profile.unlockedWeapons.
-//   { ..., kind: 'elite', eliteId }     single-purchase elite modifier unlock;
-//       ownership lives in profile.unlockedElites.
 // buyUpgrade() dispatches on kind. What each stat row does is in
 // applyMetaBonuses below.
 export const SHOP_UPGRADES = [
@@ -501,12 +501,6 @@ export const SHOP_UPGRADES = [
     desc: `New weapon, equipped when you buy it. Mastery +1: +${MASTERY.HP_PER_RANK} max HP`,
     baseCost: price, costGrowth: 1, maxLevel: 1, perLevel: 0,
   })),
-  // ---- elite modifier unlocks ----------------------------------------------
-  ...Object.values(ELITE_MODIFIERS).map(e => ({
-    id: `elite_${e.id.toLowerCase()}`, kind: 'elite', eliteId: e.id,
-    name: `${e.name} Elites`, desc: e.desc,
-    baseCost: e.cost, costGrowth: 1, maxLevel: 1, perLevel: 0,
-  })),
 ];
 export const SHOP_BY_ID = Object.fromEntries(SHOP_UPGRADES.map(u => [u.id, u]));
 
@@ -561,8 +555,8 @@ export function devFreeBuild() { return DEV_FREE_BUILD; }
 
 // Buy one level of an upgrade. Validates gold + level cap. Mutates profile
 // (gold -= cost, purchased[id]++). Returns true on success. WAVE-11: rows
-// tagged kind 'weapon'/'elite' dispatch to the unlock paths instead — they
-// record ownership in profile.unlockedWeapons/unlockedElites, never in
+// tagged kind 'weapon' dispatch to the unlock path instead — they record
+// ownership in profile.unlockedWeapons, never in
 // profile.purchased (single source of truth per row kind). SGKV4: a WEAPON
 // buy also EQUIPS into the loadout (equipBoughtWeapon — bought means active;
 // the caller names any displacement), so no buy path can skip the equip.
@@ -574,7 +568,6 @@ export function buyUpgrade(profile, id) {
     equipBoughtWeapon(profile, def.weaponId);
     return true;
   }
-  if (def.kind === 'elite') return unlockElite(profile, def.eliteId, def.id);
   const level = profile.purchased[id] || 0;
   if (level >= def.maxLevel) return false;               // level cap
   const cost = upgradeCost(def, level);
@@ -595,7 +588,7 @@ export function buyUpgrade(profile, id) {
   return true;
 }
 
-// ---------- Weapon / elite unlock paths (WAVE-11) --------------------------
+// ---------- Weapon unlock path (WAVE-11) -----------------------------------
 export function weaponUnlocked(profile, weaponId) {
   return (profile.unlockedWeapons || []).includes(weaponId);
 }
@@ -680,7 +673,7 @@ export function equipBoughtWeapon(profile, weaponId) {
 // ---------- Achievement grant paths (G9) ----------------------------------
 // Gold-FREE grants. The achievement IS the price, so these skip the currency
 // check that the unlock* buyers above enforce. They write the SAME ownership
-// fields (unlockedWeapons / unlockedElites / purchased), so the shop, the run
+// fields (unlockedWeapons / purchased), so the shop, the run
 // and the gallery can never disagree about what the player owns — there is one
 // notion of "owned", and this is a second way to reach it.
 //
@@ -694,6 +687,7 @@ export function grantWeapon(profile, weaponId) {
   return true;
 }
 
+// An elite modifier: the kill trophies' own unlock kind (never a shop row).
 export function grantElite(profile, eliteId) {
   if (!ELITE_MODIFIERS[eliteId]) return false;
   if (eliteUnlocked(profile, eliteId)) return true;
@@ -709,7 +703,6 @@ export function grantShopRow(profile, rowId) {
   const def = SHOP_BY_ID[rowId];
   if (!def) return false;
   if (def.kind === 'weapon') return grantWeapon(profile, def.weaponId);
-  if (def.kind === 'elite') return grantElite(profile, def.eliteId);
   if (shopRowOwned(profile, def)) return true;
   profile.purchased[rowId] = def.maxLevel;
   return true;
@@ -726,24 +719,42 @@ export function eliteUnlocked(profile, eliteId) {
   return (profile.unlockedElites || []).includes(eliteId);
 }
 
-// Buy a locked elite modifier at its ELITE_MODIFIERS cost.
-// SLICE 10: rowKey owns the spend-ledger entry (see unlockWeapon).
-export function unlockElite(profile, eliteId, rowKey) {
-  const def = ELITE_MODIFIERS[eliteId];
-  if (!def || eliteUnlocked(profile, eliteId)) return false;
-  if (!DEV_FREE_BUILD && !canAfford(profile, def.cost)) return false;   // F9: shared NaN-safe gate
-  if (!DEV_FREE_BUILD) profile.gold -= def.cost;
-  profile.unlockedElites.push(eliteId);
-  pushSpend(profile, rowKey || ('elite:' + eliteId), DEV_FREE_BUILD ? 0 : def.cost, 0);
-  return true;
+// The elite rows are retired. What the spend ledger says a profile paid for
+// one comes back as gold, and the entry goes with it, so this is safe to call
+// on every load. An elite owned with no ledger entry and without the trophy
+// that brings it was bought before the ledger existed (purchase and trophy
+// are the only two ways to own one): with opts.unledgered that refunds the
+// row's last price. The caller passes unledgered once per profile (it leaves
+// no entry behind to make it idempotent) and trophyEarned(eliteId). The
+// modifiers themselves stay unlocked. Returns the gold credited.
+export function refundRetiredRows(profile, opts = {}) {
+  try {
+    if (!profile || typeof profile !== 'object') return 0;
+    const book = (profile.spendLedger && typeof profile.spendLedger === 'object' &&
+      !Array.isArray(profile.spendLedger)) ? profile.spendLedger : null;
+    let sum = 0;
+    for (const id of Object.keys(RETIRED_ELITE_PRICES)) {
+      let ledgered = false;
+      for (const key of ['elite_' + id.toLowerCase(), 'elite:' + id]) {
+        if (!book || !Object.prototype.hasOwnProperty.call(book, key)) continue;
+        ledgered = true;
+        sum += totalRefund(profile, key);
+        delete book[key];
+      }
+      if (!ledgered && opts.unledgered && eliteUnlocked(profile, id) &&
+          !(typeof opts.trophyEarned === 'function' && opts.trophyEarned(id))) {
+        sum += RETIRED_ELITE_PRICES[id];
+      }
+    }
+    return sum > 0 ? creditGold(profile, sum) : 0;
+  } catch { return 0; }
 }
 
-// Fully-bought check for ANY shop row (hb1 render helper): weapon/elite rows
+// Fully-bought check for ANY shop row (hb1 render helper): weapon rows
 // are owned-or-not (single purchase); classic rows are "maxed". For classic
 // rows the current LEVEL still comes from profile.purchased[id] as before.
 export function shopRowOwned(profile, def) {
   if (def.kind === 'weapon') return weaponUnlocked(profile, def.weaponId);
-  if (def.kind === 'elite') return eliteUnlocked(profile, def.eliteId);
   return (profile.purchased[def.id] || 0) >= def.maxLevel;
 }
 
@@ -764,7 +775,7 @@ export function catalogCost(rowIds) {
 // gold_spent seam: the plan's INVESTMENT accounting, never the sell-back
 // ledger). Sums the LIVE price of everything owned — classic shop rows level
 // by level through the same upgradeCost() (override-aware) the buyers charge,
-// weapon/elite/apex unlocks at their live prices, character unlocks and
+// weapon/apex unlocks at their live prices, character unlocks and
 // per-character upgrades the same way. Free/paid-AGNOSTIC by construction
 // (ownership, never the per-level paid record): a free-built level records
 // its FULL price — the free-build hard rule — and a paid level records what
@@ -786,17 +797,13 @@ export function ownedBuildCost(profile) {
     const owned = (profile.purchased && typeof profile.purchased === 'object')
       ? profile.purchased : {};
     for (const [id, def] of Object.entries(SHOP_BY_ID)) {
-      if (!def || def.kind === 'weapon' || def.kind === 'elite') continue;
+      if (!def || def.kind === 'weapon') continue;
       const lvl = Math.max(0, Math.min(def.maxLevel || 0, Math.floor(Number(owned[id]) || 0)));
       for (let l = 0; l < lvl; l++) add(upgradeCost(def, l));
     }
     for (const id of profile.unlockedWeapons || []) {
       if (typeof id !== 'string') continue;
       add(WEAPON_PRICES[id]);   // starters carry no price: owned-but-unpriced reads 0
-    }
-    for (const id of profile.unlockedElites || []) {
-      const def = ELITE_MODIFIERS[id];
-      if (def) add(def.cost);
     }
     const apexOwned = (profile.apex && Array.isArray(profile.apex.owned)) ? profile.apex.owned : [];
     for (const id of apexOwned) {
@@ -1382,8 +1389,8 @@ export function equipCharacter(profile, id) {
 // time (upgradeCost, i.e. `overrides[level] ?? formula`, so an override-priced
 // level refunds its override price) or 0 when DEV_FREE_BUILD granted it for
 // nothing. Keyed by shop row id for classic rows, 'char:<characterId>:<id>'
-// for per-character rows, the shop row id for weapon/elite singleton rows
-// ('weapon:'/'elite:'-prefixed fallback for direct unlock calls), 'apex:<id>'
+// for per-character rows, the shop row id for weapon singleton rows
+// ('weapon:'-prefixed fallback for direct unlock calls), 'apex:<id>'
 // and 'cunlock:<id>' for the prestige tier and pilot unlocks.
 //
 // THE MIXED-CASE RULE (free mode toggled mid-run): the CURRENT free-build flag
@@ -1498,13 +1505,12 @@ function popRefund(profile, key, levelBefore) {
 }
 
 // Sell one level of ANY shop row, dispatching exactly like buyUpgrade:
-// classic rows lose their top level, weapon/elite singletons lose ownership.
+// classic rows lose their top level, weapon singletons lose ownership.
 // Returns { ok, level, refund } (see the header contract).
 export function sellUpgrade(profile, id) {
   const def = SHOP_BY_ID[id];
   if (!def || !profile) return { ok: false };
   if (def.kind === 'weapon') return sellWeaponUnlock(profile, def.weaponId, def.id);
-  if (def.kind === 'elite') return sellEliteUnlock(profile, def.eliteId, def.id);
   const level = Math.floor(Number((profile.purchased || {})[id]) || 0);
   if (level < 1) return { ok: false };
   const refund = popRefund(profile, id, level);
@@ -1530,17 +1536,6 @@ export function sellWeaponUnlock(profile, weaponId, rowKey) {
     const kept = profile.loadout.filter(w => w !== weaponId);
     profile.loadout = kept.length ? kept : null;
   }
-  creditGold(profile, refund);
-  return { ok: true, level: 1, refund };
-}
-
-// Sell an elite unlock back. Single ownership bit, same contract.
-export function sellEliteUnlock(profile, eliteId, rowKey) {
-  if (!profile || !ELITE_MODIFIERS[eliteId]) return { ok: false };
-  if (!eliteUnlocked(profile, eliteId)) return { ok: false };
-  const key = rowKey || ('elite:' + eliteId);
-  const refund = popRefund(profile, key, 1);
-  profile.unlockedElites = (profile.unlockedElites || []).filter(e => e !== eliteId);
   creditGold(profile, refund);
   return { ok: true, level: 1, refund };
 }

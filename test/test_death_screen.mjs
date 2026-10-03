@@ -69,7 +69,6 @@ S.check('a fully-owned catalogue yields NO goal line (no filler)', () => {
   for (const def of SHOP_UPGRADES) {
     profile.purchased[def.id] = def.maxLevel;
     if (def.kind === 'weapon' && !profile.unlockedWeapons.includes(def.weaponId)) profile.unlockedWeapons.push(def.weaponId);
-    if (def.kind === 'elite' && !profile.unlockedElites.includes(def.eliteId)) profile.unlockedElites.push(def.eliteId);
   }
   assert.equal(T.nextUnlockWithinReach(profile), null, 'nothing left to point at');
   profile.purchased = snapshot;
@@ -156,6 +155,32 @@ S.check('R retries straight from the death screen', () => {
   pump(2);
   assert.equal(state.mode, 'playing', 'straight back in');
   assert.ok(state.wave.num >= 1, 'a fresh run');
+});
+
+// A quick first death: the run starts from the title or the pre-run screen
+// (both leave the 'title' class, a transparent background and a top padding
+// on the overlay) and ends before a draft or any other menu reset them. The
+// end card then had no scrim and its summary sat under the buttons, off the
+// bottom of a phone (measured in Chrome 2026-10-03: 72-150 px cut).
+S.check('a run that ends before any other menu opened: the end card does not keep the title layout', () => {
+  const ov = elements['overlay'];
+  T.showTitle();
+  assert.ok(ov.classList.contains('title'), 'fixture: the title layout is on');
+  assert.equal(ov.style.background, 'transparent', 'fixture: the title is see-through');
+  ov.style.paddingTop = '140px';        // what placeTitleMenu writes in a browser
+  ov.style.justifyContent = 'flex-end'; // and what the gallery screens write
+  T.startRun();
+  pump(3);
+  assert.ok(ov.classList.contains('title'), 'nothing reset it during the run');
+  T.die();
+  for (let i = 0; i < 8 && state.mode !== 'dead'; i++) { h.key('keydown', { key: 'x', preventDefault() {} }); pump(2); }
+  assert.equal(state.mode, 'dead');
+  assert.ok(ov.classList.contains('end'), 'the summary layout');
+  for (const c of ['title', 'howto', 'draft', 'compact']) assert.ok(!ov.classList.contains(c), 'no ' + c + ' layout rides in');
+  assert.equal(ov.style.background, '', 'the scrim is back');
+  assert.equal(ov.style.paddingTop, '', 'no menu padding');
+  assert.equal(ov.style.justifyContent, '', 'no menu alignment');
+  assert.equal(ov.style.display, 'flex');
 });
 
 S.done();

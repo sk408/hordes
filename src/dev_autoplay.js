@@ -57,7 +57,7 @@
 // Unseeded spawn/combat Math.random streams stay unseeded (the sim's limit,
 // not a policy choice).
 import {
-  RUN_GOLD, SHOP_UPGRADES, SHOP_BY_ID, WEAPON_PRICES, ELITE_MODIFIERS,
+  RUN_GOLD, SHOP_UPGRADES, SHOP_BY_ID, WEAPON_PRICES,
   upgradeCost, canAfford, weaponUnlocked,
 } from './meta.js';
 
@@ -116,10 +116,6 @@ export function estimateRunIncome(history) {
 }
 
 // ---------- offer resolution (live catalogue, never restated prices) ---------
-function eliteUnlocked(profile, eliteId) {
-  return (profile.unlockedElites || []).includes(eliteId);
-}
-
 // Every CURRENTLY buyable shop offer: { id, cost }. Maxed/owned/unknown rows
 // are absent (there is nothing to buy), so policies can never pick them.
 export function offersFor(profile) {
@@ -130,13 +126,6 @@ export function offersFor(profile) {
     if (def.kind === 'weapon') {
       if (weaponUnlocked(profile, def.weaponId)) continue;
       const price = WEAPON_PRICES[def.weaponId];
-      if (price === undefined) continue;
-      out.push({ id: def.id, cost: price });
-      continue;
-    }
-    if (def.kind === 'elite') {
-      if (eliteUnlocked(profile, def.eliteId)) continue;
-      const price = ELITE_MODIFIERS[def.eliteId] && ELITE_MODIFIERS[def.eliteId].cost;
       if (price === undefined) continue;
       out.push({ id: def.id, cost: price });
       continue;

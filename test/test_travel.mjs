@@ -132,8 +132,13 @@ s.check('CONTINUE travels: a new stage and field, the hero at the centre, the ru
   assert.ok(st.bossRule && !st.bossRule.live, 'wave 3 has its rule');
   assert.deepEqual([p.level, st.weapons.length, st.time], [before.level, before.weapons, before.time]);
   assert.equal(st.sitesBefore.brazier, 1, 'what the first field gave is kept');
-  assert.ok(st.toasts.some(t => t.msg === 'THE PORTAL LEADS ON: ' + stageOf(dest).name), JSON.stringify(st.toasts.map(t => t.msg)));
-  assert.ok(st.toasts.some(t => t.msg === 'WAVE 3 - ' + stageOf(dest).name));
+  // The feed holds three lines. When the run's board has "reach wave 3", that
+  // quest finishes on arrival and its line pushes the oldest (the portal's)
+  // out; the wave line names the stage either way. (This check failed about
+  // one run in eight on the board roll before it allowed for that.)
+  const msgs = st.toasts.map(t => t.msg);
+  assert.ok(msgs.includes('THE PORTAL LEADS ON: ' + stageOf(dest).name) || msgs.some(m => /^QUEST DONE/.test(m)), JSON.stringify(msgs));
+  assert.ok(msgs.includes('WAVE 3 - ' + stageOf(dest).name), JSON.stringify(msgs));
   // The new field belongs to the new stage: its buildings and its enemy pool.
   assert.ok(buildingRects(st.groundSeed, st.stage).length > 0);
   for (let i = 0; i < 30; i++) h.pump(1, () => { p.hp = p.stats.maxHp; });

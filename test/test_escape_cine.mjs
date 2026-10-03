@@ -73,20 +73,70 @@ S.check('the beats: establish 1.5 s, horde 3 s, boss 2.5 s, dive 1 s, card 1 s, 
 });
 
 // ---- the skip and the payout -------------------------------------------------------
-S.check('a press inside the guard does nothing; after it the movie ends and pays in full', () => {
+S.check('a press inside the guard does nothing; after it one press asks and a second that means it skips, paid in full', () => {
   const prof = profileWith(1500);
   let ended = null;
   E.begin({ profile: prof, onEnd: (r) => { ended = r; } });
-  assert.equal(E.press(), false, 'frame 0');
+  assert.equal(E.press(true), false, 'frame 0');
   for (let i = 0; i < 23; i++) E.frame(null, 1 / 60);   // 0.38 s
-  assert.equal(E.press(), false, 'still inside the guard');
+  assert.equal(E.press(true), false, 'still inside the guard');
+  assert.equal(E.current().ask, 0, 'and the guard raises no prompt');
   assert.equal(ended, null); assert.equal(prof.gold, 0);
   for (let i = 0; i < 2; i++) E.frame(null, 1 / 60);    // 0.42 s
-  assert.equal(E.press(), true);
+  assert.equal(E.press(true), false, 'the first press only asks');
+  assert.equal(E.current().ask, E.SKIP_ASK_S);
+  assert.equal(ended, null); assert.equal(prof.gold, 0);
+  assert.equal(E.press(true), true, 'the second one skips');
   assert.equal(ended.result, 'skip');
   assert.equal(ended.payout, payoutFor(1500)); assert.equal(prof.gold, payoutFor(1500));
   assert.ok(ended.seconds < 0.5);
-  assert.equal(E.SKIP_GUARD_S, 0.4);
+  assert.equal(E.SKIP_GUARD_S, 0.4); assert.equal(E.SKIP_ASK_S, 2.5);
+});
+
+// The chase begins as a boss fight ends, with the player still steering and
+// firing: "any key skips" ended it 0.4 s in for Steve (2026-10-03).
+S.check('a press that does not mean it never skips, however often; the prompt runs out', () => {
+  const prof = profileWith(1500);
+  let ended = null;
+  E.begin({ profile: prof, onEnd: (r) => { ended = r; } });
+  for (let i = 0; i < 30; i++) E.frame(null, 1 / 60);
+  for (let i = 0; i < 200; i++) { assert.equal(E.press(false, i % 2 === 0), false); E.frame(null, 1 / 240); }
+  assert.equal(ended, null, 'two hundred stray keys and taps');
+  assert.equal(prof.gold, 0);
+  assert.equal(E.current().askTap, false, 'the prompt remembers what raised it (a key, last)');
+  E.press(false, true);
+  assert.equal(E.current().askTap, true, 'or a tap');
+  for (let i = 0; i < Math.ceil(E.SKIP_ASK_S * 60) + 1; i++) E.frame(null, 1 / 60);
+  assert.equal(E.current().ask, 0, 'it is down again after ' + E.SKIP_ASK_S + ' s');
+  assert.equal(E.press(true), false, 'too late: a skip key now asks again');
+  assert.equal(E.press(true), true);
+  assert.equal(ended.result, 'skip');
+  assert.equal(prof.gold, payoutFor(1500));
+});
+
+S.check('the SKIP button: a box in the top right corner a thumb can hit, away from where the pads were', () => {
+  const b = A.SKIP_RECT, hit = A.SKIP_HIT;
+  assert.ok(b.x >= hit.x && b.y >= hit.y && b.x + b.w <= hit.x + hit.w && b.y + b.h <= hit.y + hit.h, 'the label sits inside its hit box');
+  assert.ok(hit.w >= 100 && hit.h >= 44, 'at least 100 x 44 view pixels');
+  assert.equal(hit.x + hit.w, 480); assert.equal(hit.y, 0);
+  assert.equal(E.skipHit(b.x + b.w / 2, b.y + b.h / 2), true, 'the label');
+  assert.equal(E.skipHit(479, 0), true); assert.equal(E.skipHit(hit.x, hit.h - 1), true);
+  for (const [x, y] of [[240, 150], [40, 260], [440, 260], [240, 8], [hit.x - 1, 8], [470, hit.h]]) {
+    assert.equal(E.skipHit(x, y), false, x + ',' + y + ' is not the button');
+  }
+});
+
+S.check('the prompt is drawn only while it is up, and it says what the second press must be', () => {
+  const texts = (ask) => {
+    const r = recCtx();
+    A.drawScene(r.ctx, E.buildScene({ seed: 7, payout: 100 }), 3.0, ask);
+    return r.texts.map(t => t.s);
+  };
+  assert.ok(texts(null).includes('SKIP'), 'the button is always there');
+  assert.ok(!texts(null).some(t => /to skip|skips/.test(t)), 'no instruction until a press: ' + texts(null).join(' | '));
+  assert.ok(texts({ on: false, tap: false }).every(t => !/to skip/.test(t)));
+  assert.ok(texts({ on: true, tap: false }).includes('ESC or ENTER to skip'));
+  assert.ok(texts({ on: true, tap: true }).includes('tap SKIP to skip'));
 });
 
 S.check('the payout is credited exactly once: the end, a skip, an instant finish, a double skip', () => {
@@ -102,7 +152,8 @@ S.check('the payout is credited exactly once: the end, a skip, an instant finish
   prof = profileWith(12000);
   E.begin({ profile: prof, onEnd: () => { n++; } });
   for (let i = 0; i < 40; i++) E.frame(null, 1 / 60);
-  assert.equal(E.press(), true); assert.equal(E.press(), false, 'the second press finds nothing to skip');
+  E.press(true);
+  assert.equal(E.press(true), true); assert.equal(E.press(true), false, 'the next press finds nothing to skip');
   E.skip(); E.finishNow();
   for (let i = 0; i < 600; i++) E.frame(null, 1 / 60);
   assert.equal(prof.gold, worth, 'a double skip pays once'); assert.equal(n, 1, 'one hand-back');
@@ -334,7 +385,9 @@ S.check('a skip plays the gold and nothing after; an instant finish is silent', 
   E.begin({ profile: profileWith(900), onCue: (id) => cues.push(id) });
   for (let i = 0; i < 60; i++) E.frame(null, 1 / 60);
   const before = cues.length;
-  E.press();
+  E.press(true);
+  assert.deepEqual(cues.slice(before), [], 'asking is silent');
+  E.press(true);
   assert.deepEqual(cues.slice(before), ['GOLD']);
   for (let i = 0; i < 600; i++) E.frame(null, 1 / 60);
   assert.equal(cues.length, before + 1);
@@ -357,7 +410,9 @@ T.banners.suppressAll();
 const prof = T.getProfile();
 const sub = () => el['ov-sub'].innerHTML || '';
 const kdown = (k, extra = {}) => h.key('keydown', { key: k, preventDefault() {}, ...extra });
-const tap = () => el['game']._ev.pointerdown({ clientX: 200, clientY: 150, pointerId: 1, preventDefault() {} });
+const tap = (x = 200, y = 150) => el['game']._ev.pointerdown({ clientX: x, clientY: y, pointerId: 1, preventDefault() {} });
+const SKIP_AT = [A.SKIP_RECT.x + A.SKIP_RECT.w / 2, A.SKIP_RECT.y + A.SKIP_RECT.h / 2];
+const drawnTexts = () => { h.rec.on = true; h.rec.texts.length = 0; h.pump(1); h.rec.on = false; return h.rec.texts.map(x => x.txt); };
 const freeze = () => { st.spawnTimer = 1e9; st.wave.endsAt = st.time + 1e9; st.wave.midAt = st.time + 1e9; };
 const startRun = () => { T.startRun(); h.pump(2); freeze(); st.player.invuln = 1e6; };
 h.pump(3);
@@ -409,7 +464,7 @@ S.check('no state leaks: CONTINUE starts wave 2, and the wave-2 portal goes stra
   assert.ok(!/ESCAPED/.test(sub()));
 });
 
-S.check('a key skips after the guard, pays once, and the same press does not continue the next screen', () => {
+S.check('a skip key pressed twice skips after the guard, pays once, and the same press does not continue the next screen', () => {
   startRun();
   const gold0 = prof.gold;
   T.escape.start();
@@ -418,7 +473,11 @@ S.check('a key skips after the guard, pays once, and the same press does not con
   assert.equal(st.mode, 'escape', 'a press on the first frame is ignored');
   h.pump(30);
   kdown('Enter', { repeat: true });
-  assert.equal(st.mode, 'escape', 'a held key is not a press');
+  assert.equal(T.escape.cine.ask, 0, 'a held key is not a press');
+  assert.ok(!drawnTexts().some(t => /to skip/.test(t)), 'no prompt yet');
+  kdown('Enter');
+  assert.equal(st.mode, 'escape', 'the first press asks');
+  assert.ok(drawnTexts().includes('ESC or ENTER to skip'), 'and the movie says how');
   kdown('Enter');
   assert.equal(st.mode, 'intermission');
   assert.equal(prof.gold - gold0, PAY);
@@ -429,18 +488,59 @@ S.check('a key skips after the guard, pays once, and the same press does not con
   assert.equal(st.mode, 'intermission');
 });
 
-S.check('a tap on the canvas skips the same way', () => {
+S.check('the keys a player steers and fights with never skip the movie; ESC or SPACE after them does', () => {
+  for (const skipKey of ['Escape', ' ']) {
+    startRun();
+    const gold0 = prof.gold;
+    T.escape.start();
+    h.pump(30);
+    for (const key of ['w', 'a', 's', 'd', 'ArrowUp', 'ArrowLeft', 'q', 'e', 'h', 'n', 'Tab', 'g', 'o', 'r', 'x']) {
+      kdown(key); kdown(key); h.pump(2);
+    }
+    assert.equal(st.mode, 'escape', 'thirty presses later the chase is still on');
+    assert.equal(prof.gold, gold0, 'and nothing is banked yet');
+    assert.ok(T.escape.cine.ask > 0, 'they raise the prompt');
+    kdown(skipKey);
+    assert.equal(st.mode, 'intermission', JSON.stringify(skipKey) + ' while the prompt is up skips');
+    assert.equal(prof.gold - gold0, PAY);
+  }
+});
+
+S.check('a tap raises the prompt; only a tap on SKIP while it is up skips', () => {
   startRun();
   const gold0 = prof.gold;
   T.escape.start();
-  tap();
+  tap(...SKIP_AT);
   assert.equal(st.mode, 'escape', 'inside the guard');
+  assert.equal(T.escape.cine.ask, 0);
   h.pump(30);
-  tap();
+  // Thumbs where the pads were a moment ago, and the middle of the field.
+  for (let i = 0; i < 14; i++) { tap(30 + 30 * i, i % 2 ? 150 : 262); h.pump(1); }
+  assert.equal(st.mode, 'escape', 'taps on the field never skip');
+  assert.ok(drawnTexts().includes('tap SKIP to skip'));
+  tap(...SKIP_AT);
   assert.equal(st.mode, 'intermission');
   assert.equal(prof.gold - gold0, PAY);
-  tap(); h.pump(2);
+  tap(); tap(...SKIP_AT); h.pump(2);
   assert.equal(prof.gold - gold0, PAY);
+  // SKIP itself, twice, with nothing before it.
+  startRun();
+  T.escape.start();
+  h.pump(30);
+  tap(...SKIP_AT);
+  assert.equal(st.mode, 'escape', 'the first tap on SKIP asks');
+  tap(...SKIP_AT);
+  assert.equal(st.mode, 'intermission', 'the second skips');
+  // The prompt runs out: SKIP asks again.
+  startRun();
+  T.escape.start();
+  h.pump(30);
+  tap();
+  h.pump(Math.ceil(60 * E.SKIP_ASK_S) + 2);
+  tap(...SKIP_AT);
+  assert.equal(st.mode, 'escape', 'a late tap on SKIP asks again');
+  T.escape.skip();
+  assert.equal(st.mode, 'intermission');
 });
 
 S.check('the cast is read from the run: the types it met, its stage and pilot', () => {
@@ -468,10 +568,35 @@ S.check('the cast is read from the run: the types it met, its stage and pilot', 
   h.pump(2); freeze();
 });
 
-S.check('an unattended run passes through with no input: paid in full, counted in the away summary', () => {
+// AUTO-CONTINUE on is not "nobody is there": the movie used to be cut for
+// every run with the setting on, watched or not.
+S.check('auto-continue: a run the player started still shows the chase, then goes on by itself', () => {
   T.auto.on = true;
+  T.auto.input();                 // the press that started it
   startRun();
   assert.equal(st.unattended, true);
+  assert.equal(T.escape.unwatched, false, 'the player is there');
+  const gold0 = prof.gold;
+  st.wave.cinePending = true; st.portal = null;
+  h.pump(3);
+  assert.equal(st.mode, 'escape', 'the chase plays: ' + st.mode);
+  h.pump(Math.round(60 * T.escape.duration) + 2);
+  assert.equal(st.mode, 'intermission');
+  assert.equal(prof.gold - gold0, PAY);
+  assert.equal(T.escape.payload.result, 'complete');
+  assert.ok(T.escape.payload.seconds >= T.escape.duration - 0.05, 'all of it: ' + T.escape.payload.seconds.toFixed(2) + ' s');
+  h.pump(Math.round(60 * 3.2));
+  assert.equal(st.mode, 'playing', 'auto-continue goes on into wave 2 with no input');
+  assert.equal(st.wave.num, 2);
+  T.auto.on = false;
+});
+
+S.check('auto-continue: a run it started itself, with no input since, passes straight through: paid in full, in the away summary', () => {
+  T.auto.on = true;
+  T.auto.runsInRow = 1;           // auto-continue started this one; nobody has pressed anything
+  startRun();
+  assert.equal(st.unattended, true);
+  assert.equal(T.escape.unwatched, true);
   const gold0 = prof.gold, away0 = T.auto.away.gold;
   st.wave.cinePending = true; st.portal = null;
   h.pump(3);
@@ -484,6 +609,10 @@ S.check('an unattended run passes through with no input: paid in full, counted i
   assert.equal(st.mode, 'playing', 'auto-continue goes on into wave 2');
   assert.equal(st.wave.num, 2);
   assert.equal(prof.gold - gold0, PAY);
+  // Any key or tap means somebody is back: the next chase would play.
+  T.auto.input();
+  assert.equal(T.auto.runsInRow, 0);
+  assert.equal(T.escape.unwatched, false);
   T.auto.on = false;
 });
 
@@ -551,6 +680,8 @@ S.check('the TEST card previews it, pays nothing and returns to Settings', () =>
   assert.equal(st.mode, 'escape');
   assert.equal(T.escape.cine.scene.test, true);
   h.pump(40); kdown('x');
+  assert.equal(st.mode, 'escape', 'the preview asks before it skips too');
+  kdown('Escape');
   assert.equal(st.mode, 'settings');
   assert.equal(prof.gold, gold0);
 });
@@ -598,6 +729,9 @@ S.check('the first-time hint holds the movie on its first frame; a press answers
     assert.equal(prof.gold, gold0);
     h.pump(30);
     assert.ok(T.escape.cine.t > t0 + 0.4, 'the movie plays on');
+    assert.equal(T.escape.cine.ask, 0, 'answering the hint raised no skip prompt');
+    kdown('Enter');
+    assert.equal(st.mode, 'escape', 'the first press after it asks');
     kdown('Enter');
     assert.equal(st.mode, 'intermission');
     assert.equal(prof.gold - gold0, PAY);

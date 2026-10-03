@@ -584,7 +584,12 @@
   #touch .keybar button:hover { border-color: #ffd75e; color: #ffffff; }
   #touch .keybar b { color: #ffd75e; margin-right: 4px; }
   #touch .keybar .v { color: #ffd75e; margin-left: 3px; }
-  @media (max-width: 900px) { #touch .keybar .opt { display: none; } }
+  /* The bar sheds words as the window narrows so no chip is ever clipped:
+     first the move hint and the word "potion", then MAP and HELP (their keys
+     still work), then the words FOCUS and STANCE (key and value stay). */
+  @media (max-width: 1099px) { #touch .keybar .opt1 { display: none; } }
+  @media (max-width: 930px) { #touch .keybar .opt { display: none; } }
+  @media (max-width: 825px) { #touch .keybar .opt3 { display: none; } }
   @media (min-width: 1600px) { #touch.cog-only .keybar, #touch .keybar button { font-size: 13px; } }
   /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
      2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
@@ -1051,12 +1056,14 @@
     <button class="cog map" id="tc-map" data-act="map" aria-label="map">MAP</button>
     <!-- The desktop key bar: the same actions as the pads, as small chips. -->
     <div class="keybar" id="keybar">
-      <span class="opt"><b>WASD</b>steer</span>
+      <span class="opt1"><b>WASD</b>steer</span>
       <button data-act="pilot"><b>O</b>PILOT<span class="v" id="kb-pilot">AUTO</span></button>
+      <button data-act="focus"><b>TAB</b><span class="opt3">FOCUS</span><span class="v" id="kb-focus">NEAREST</span></button>
+      <button data-act="stance"><b>G</b><span class="opt3">STANCE</span><span class="v" id="kb-stance">BALANCED</span></button>
       <button data-act="q"><b>Q</b><span id="kb-qname">SKILL</span><span class="v" id="kb-q">RDY</span></button>
       <button data-act="w"><b>E</b>OVER<span class="v" id="kb-w">RDY</span></button>
-      <button data-act="h"><b>H</b>HP potion<span class="v" id="kb-h">1</span></button>
-      <button data-act="n"><b>N</b>MP potion<span class="v" id="kb-n">1</span></button>
+      <button data-act="h"><b>H</b>HP<span class="opt1"> potion</span><span class="v" id="kb-h">1</span></button>
+      <button data-act="n"><b>N</b>MP<span class="opt1"> potion</span><span class="v" id="kb-n">1</span></button>
       <button data-act="map" class="opt"><b>M</b>MAP</button>
       <button data-act="stats"><b>I</b>STATS</button>
       <button data-act="settings"><b>ESC</b>PAUSE</button>

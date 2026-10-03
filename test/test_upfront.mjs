@@ -109,10 +109,34 @@ s.check('the desktop key bar names a key for every action it carries', () => {
   const bar = /<div class="keybar" id="keybar">([\s\S]*?)<\/div>/.exec(html);
   if (!bar) throw new Error('no key bar in index.html');
   const acts = [...bar[1].matchAll(/<button data-act="([a-z]+)"[^>]*><b>([^<]+)<\/b>/g)].map(m => m[1] + ':' + m[2]);
-  for (const need of ['pilot:O', 'q:Q', 'w:E', 'h:H', 'n:N', 'map:M', 'stats:I', 'settings:ESC', 'help:?']) {
+  for (const need of ['pilot:O', 'focus:TAB', 'stance:G', 'q:Q', 'w:E', 'h:H', 'n:N', 'map:M', 'stats:I', 'settings:ESC', 'help:?']) {
     if (!acts.includes(need)) throw new Error('the key bar lost ' + need + ' (has ' + acts.join(', ') + ')');
   }
   if (!/<b>WASD<\/b>steer/.test(bar[1])) throw new Error('the key bar does not name the move keys');
+});
+s.check('the key bar shows the focus and the stance, and sheds words before it sheds them', () => {
+  const bar = /<div class="keybar" id="keybar">([\s\S]*?)<\/div>/.exec(html)[1];
+  // Each chip: the key, the word (first to go on a narrow window), the live value.
+  for (const [act, k, word, id] of [['focus', 'TAB', 'FOCUS', 'kb-focus'], ['stance', 'G', 'STANCE', 'kb-stance']]) {
+    const re = new RegExp('<button data-act="' + act + '"><b>' + k + '</b><span class="opt3">' + word +
+      '</span><span class="v" id="' + id + '">[A-Z]+</span></button>');
+    if (!re.test(bar)) throw new Error('the ' + word + ' chip is not key + word + value');
+  }
+  // Neither chip is one of the optional ones (.opt hides the whole chip).
+  if (/<button data-act="(focus|stance)"[^>]*class="opt/.test(bar)) throw new Error('focus/stance must never be hidden whole');
+  // The tiers, widest first: the move hint and "potion", then MAP and HELP, then the two words.
+  const w = (cls) => {
+    const m = new RegExp('@media \\(max-width: (\\d+)px\\) \\{ #touch \\.keybar \\.' + cls + ' \\{ display: none; \\} \\}').exec(html);
+    if (!m) throw new Error('no width tier for .' + cls);
+    return Number(m[1]);
+  };
+  const t1 = w('opt1'), t2 = w('opt'), t3 = w('opt3');
+  if (!(t1 > t2 && t2 > t3)) throw new Error('tiers out of order: ' + [t1, t2, t3]);
+  if (!/<span class="opt1"><b>WASD<\/b>steer<\/span>/.test(bar) || (bar.match(/<span class="opt1"> potion<\/span>/g) || []).length !== 2) {
+    throw new Error('the first tier is the move hint and the word potion (twice)');
+  }
+  const whole = [...bar.matchAll(/<button data-act="([a-z]+)" class="opt">/g)].map(m => m[1]).join();
+  if (whole !== 'map,help') throw new Error('the second tier is MAP and HELP, got ' + whole);
 });
 
 s.done();

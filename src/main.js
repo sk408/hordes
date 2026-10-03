@@ -196,6 +196,9 @@ import {
   // the character ledger key shared with the buyer.
   sellUpgrade, sellCharacterUpgrade, sellCharacterUnlock, sellApex,
   topRefund, totalRefund, charLedgerKey, spendLedgerFor,
+  // The elite modifiers (brought by the kill trophies) and the refund for
+  // their retired shop rows.
+  ELITE_MODIFIERS, refundRetiredRows,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -204,7 +207,7 @@ import {
 // name, so the emblem, its caption and its condition cannot drift apart.
 import {
   recordRun, gallerySummary, ownsUnlock, ACHIEVEMENT_BY_ID, ACHIEVEMENTS,
-  earnedCount, totalAchievements, isEarned,
+  earnedCount, totalAchievements, isEarned, achievementForUnlock,
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } from './art/index.js';
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
@@ -235,6 +238,7 @@ import {
 // mid-run) and applies the slide at the ONE pilot-motion seam.
 import {
   buildingRects, clearOfBuildings, slideMove, buildingSteer, pushOutOfRects, BUILDING_MOVER_R,
+  buildingTouchesDisc,
 } from './stage_buildings.js';
 // SLICE 7: dev telemetry + snapshots (dev_telemetry imports nothing — no
 // import cycle; every behaviour below is armed on ?dev=1 only, gate off =
@@ -1035,6 +1039,9 @@ const state = {
   // it banks less gold).
   autoContinue: false,
   unattended: false,
+  // The trophies the finished run earned and what they gave for nothing
+  // ({ earned: [name], granted: [row or pilot name] }), for the end card.
+  runTrophies: null,
   autoStarted: false,
   // STEP 3 DEV-NIGHT (dev-only autoplay variant, ?dev=1 gate): the run-scoped
   // stamp frozen at startRun off the dev session's devNight flag (the unattended
@@ -1134,8 +1141,32 @@ function campRefundNotice(p) {
   if (!(p.campRefund && p.campRefund.gold > 0 && markBannerSeen(p, 'camp_refund_v12'))) return null;
   return 'STARTING ARTIFACT is now the camp FORGE. Refunded: +' + p.campRefund.gold + ' GOLD.';
 }
+// The elite rows left the shop (2026-10-03): what a profile paid for one comes
+// back. The ledger part runs on every load (it removes the entries it pays
+// out); the part for purchases older than the ledger runs once per profile.
+// "Its trophy brought it" is read off the kill total as well as the earned
+// mark, so a trophy about to be earned is never taken for a purchase.
+function eliteRefundNotice(p) {
+  const gold = refundRetiredRows(p, {
+    unledgered: markBannerSeen(p, 'elite_rows_retired'),
+    trophyEarned: (eliteId) => {
+      const ach = achievementForUnlock('elite', eliteId);
+      if (!ach) return false;
+      const totals = (p.achievements && p.achievements.totals) || {};
+      return isEarned(p, ach.id) || (Number(totals[ach.goal.stat]) || 0) >= ach.goal.n;
+    },
+  });
+  return gold > 0
+    ? 'THE ELITE UPGRADES LEFT THE SHOP. Refunded: +' + gold + ' GOLD. The elites you unlocked stay.'
+    : null;
+}
 if (!saveNotice) saveNotice = shopRefundNotice(profile);
 if (!saveNotice) saveNotice = campRefundNotice(profile);
+{
+  // Said beside whatever else the title has to say: the gold is back either way.
+  const note = eliteRefundNotice(profile);
+  if (note) saveNotice = saveNotice ? saveNotice + ' ' + note : note;
+}
 
 // ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
 // "Have we timestamped last played for our auto saves yet? ... so we can
@@ -1639,8 +1670,9 @@ function runController(p, dt, am) {
     let bnx = stepped[0], bny = stepped[1];
     // M5b LANDSCAPE: cliff faces block, ramps and drop edges pass (terrain.js).
     const TERp = terrainFor(state.groundSeed || 0, state.stage);
+    const tz0 = p.tz || 0;
     if (TERp) {
-      const ts = terrainStep(TERp, p.x, p.y, p.tz || 0, bnx, bny);
+      const ts = terrainStep(TERp, p.x, p.y, tz0, bnx, bny);
       bnx = ts[0]; bny = ts[1]; p.tz = ts[2];
     }
     // PORT SLICE F (building collision, owner-ruled 2026-09-22): the pilot —
@@ -1649,8 +1681,23 @@ function runController(p, dt, am) {
     // and the no-stall invariant holds). The horde walks through buildings by
     // design; only the walled yard's walls stop walkers (the enemy move).
     if (bRects.length > 0 && (bnx !== p.x || bny !== p.y)) {
-      const sl = slideMove(p.x, p.y, bnx, bny, bRects, BUILDING_MOVER_R);
-      bnx = sl[0]; bny = sl[1];
+      if (buildingTouchesDisc(bRects, p.x, p.y, BUILDING_MOVER_R)) {
+        // slideMove takes the footing as clear. A hero standing INSIDE a
+        // footprint's ring (put there by something other than a walk) could
+        // never leave under the pilot: every stride still touched, so the
+        // slide held its footing for good. Found 2026-10-03 on BONE_DESERT
+        // seed 636434304: 1.3px inside a corner, a portal 24px away, 45 s
+        // without a step. Walking cannot produce that footing, so this never
+        // runs in ordinary play. Step out to the nearest clear spot, unless a
+        // cliff face is in the way (then the frame holds, as it did).
+        const out = clearOfBuildings(bRects, p.x, p.y, BUILDING_MOVER_R, C.GROUND.RIM);
+        const ts = TERp ? terrainStep(TERp, p.x, p.y, tz0, out[0], out[1]) : null;
+        if (!ts || (ts[0] === out[0] && ts[1] === out[1])) { bnx = out[0]; bny = out[1]; if (ts) p.tz = ts[2]; }
+        else { bnx = p.x; bny = p.y; p.tz = tz0; }
+      } else {
+        const sl = slideMove(p.x, p.y, bnx, bny, bRects, BUILDING_MOVER_R);
+        bnx = sl[0]; bny = sl[1];
+      }
     }
     p.x = bnx; p.y = bny;
   }
@@ -6388,6 +6435,16 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   if (gp && gp.auto > 0) {
     html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (auto-continue -${Math.round(gp.auto * 100)}%)</span>`;
   }
+  // The trophies this run earned and what they gave for nothing. The toasts
+  // that say so are wiped as this screen comes up, so a free shop row used to
+  // look as if it had bought itself (Steve, 2026-10-03, of the elite rows).
+  const tr = state.runTrophies;
+  if (tr && tr.earned.length) {
+    html += `<br><span class="earn">TROPHY: ${tr.earned.join(' · ')}</span>`;
+    if (tr.granted.length) html += `<br><span class="next">TROPHY REWARD, FREE: ${tr.granted.join(' · ')}</span>`;
+    // A kill trophy brings an elite modifier: said as what it is.
+    for (const line of tr.threats) html += `<br><span class="cause">NEW THREAT: ${line}</span>`;
+  }
   if (goal) {
     const gap = goal.cost - profile.gold;
     html += `<br><span class="next">BUY NEXT: ${goal.name}, ${goal.cost} gold · ` +
@@ -6465,7 +6522,8 @@ function recordRunAchievements(gold) {
   // AT MOST TWO toasts, ever: a run can earn several trophies at once and the
   // event feed only shows three lines, so each category gets ONE line naming
   // them. Two lines keep the earn moment readable instead of burying it under
-  // its own feedback.
+  // its own feedback. (What the trophies bring shares the second line: the
+  // rewards, then any elite modifier as NEW THREAT.)
   //   * the trophy name comes from the ART (TROPHY_ART) with ACHIEVEMENT_BY_ID
   //     as the gate — a future/unknown id can never reach the player as a
   //     blank line;
@@ -6479,7 +6537,19 @@ function recordRunAchievements(gold) {
     if (granted.some(x => x.kind === u.kind && x.id === u.id)) continue;
     granted.push(u);
   }
-  if (granted.length) toast('UNLOCKED: ' + granted.map(unlockLabel).join(' · '), '#7ad0ff');
+  const rewards = granted.filter(u => u.kind !== 'elite'), threats = granted.filter(u => u.kind === 'elite');
+  if (granted.length) {
+    const parts = [];
+    if (rewards.length) parts.push('UNLOCKED: ' + rewards.map(unlockLabel).join(' · '));
+    if (threats.length) parts.push('NEW THREAT: ' + threats.map(unlockLabel).join(' · '));
+    toast(parts.join(' · '), rewards.length ? '#7ad0ff' : '#ff7a6a');
+  }
+  // The end card says the same (endScreenBody): the toasts do not outlive it.
+  state.runTrophies = {
+    earned: res.earned.map(trophyName),
+    granted: rewards.map(unlockLabel),
+    threats: threats.map(u => (ELITE_MODIFIERS[u.id] || {}).desc || unlockLabel(u)),
+  };
   return res;
 }
 
@@ -6642,7 +6712,14 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
   menuCard('RETRY', 'play again [R]', () => startRun());
   menuCard('SHOP', 'spend your gold', () => showShop());
   menuCard('TITLE', 'back to the menu [T]', () => showTitle());
-  if (overlay.classList) { overlay.classList.add('end'); }
+  // The summary owns the overlay: nothing of the screen the run started from
+  // may ride in. A run that ended before any other menu opened (a quick first
+  // death) kept the title's layout: no scrim, the menu's top padding, and the
+  // summary pushed under the cards and off the bottom of a phone.
+  if (overlay.classList) { overlay.classList.remove('howto', 'title', 'draft', 'compact'); overlay.classList.add('end'); }
+  overlay.style.background = '';
+  overlay.style.justifyContent = '';
+  overlay.style.paddingTop = '';
   overlay.style.display = 'flex';
   devOnRunEnd();   // dev snapshot, once per run (no-op without ?dev=1)
 }
@@ -8663,20 +8740,24 @@ function showShop() {
   // is 0.6em), clamped to [9,12] — still textual, still stateful, never
   // clipped. First pass computes every sub, second pass renders.
   const rows0 = SHOP_UPGRADES.map(def => {
-    // WAVE-11: weapon/elite rows are SINGLE-PURCHASE unlocks — ownership
-    // lives in profile.unlockedWeapons/unlockedElites (meta.js shopRowOwned),
+    // WAVE-11: weapon rows are SINGLE-PURCHASE unlocks — ownership
+    // lives in profile.unlockedWeapons (meta.js shopRowOwned),
     // not profile.purchased. buyUpgrade dispatches on kind either way.
     const lvl = profile.purchased[def.id] || 0;
     const owned = def.kind ? shopRowOwned(profile, def) : false;
     const capped = def.kind ? owned : lvl >= def.maxLevel;
     const cost = def.kind ? def.baseCost : upgradeCost(def, lvl);
     const afford = devFreeBuild() || profile.gold >= cost;
+    // A row a trophy gives for nothing says so once that trophy is earned:
+    // it is OWNED without a purchase, and plain "OWNED" read as a shop that
+    // buys things by itself.
+    const won = owned && shopRowFromTrophy(def.id);
     const sub = abbrev
       ? (def.kind
-        ? (owned ? 'OWNED' : cost + 'g')
+        ? (owned ? (won ? 'OWNED\u00b7TROPHY' : 'OWNED') : cost + 'g')
         : `LV ${lvl}/${def.maxLevel}\u00b7${capped ? 'MAX' : cost + 'g'}`)
       : (def.kind
-        ? (owned ? 'OWNED' : cost + ' gold')
+        ? (owned ? (won ? 'OWNED \u00b7 trophy reward' : 'OWNED') : cost + ' gold')
         : `LV ${lvl}/${def.maxLevel} \u00b7 ${capped ? 'MAXED' : cost + ' gold'}`);
     return { def, sub, capped, afford };
   });
@@ -9274,7 +9355,9 @@ function importSaveText(text) {
     return res;
   }
   profile = res.profile;
-  const refundNote = shopRefundNotice(profile) || campRefundNotice(profile);   // an old save file is refunded on import too
+  const eliteNote = eliteRefundNotice(profile);
+  const refundNote = [shopRefundNotice(profile) || campRefundNotice(profile), eliteNote]
+    .filter(Boolean).join(' ') || null;   // an old save file is refunded on import too
   persistProfile();
   saveNotice = refundNote ? 'SAVE IMPORTED — ' + refundNote
     : res.status === 'imported-migrated'
@@ -9573,6 +9656,7 @@ function startRun() {
   state.gameSpeed = 1;
   // S1 (audit 2026-09-16): the run-once settle guard re-arms with the run.
   state.runSettled = null;
+  state.runTrophies = null;
   // M1: a boss-stance save left over from a run that ended mid-boss (or at the
   // maw victory) must not leak into this run's first boss approach.
   state.preBossStance = null;
@@ -10065,6 +10149,8 @@ function tutTarget(name) {
     }
     case 'skillbtn': return padOrKey('tc-q', 'kb-q');
     case 'potionbtn': return padOrKey('tc-h', 'kb-h');
+    case 'focusbtn': return padOrKey('tc-focus', 'kb-focus');
+    case 'stancebtn': return padOrKey('tc-stance', 'kb-stance');
     case 'cards': return ovCards;
     case 'earn': return (ovSub.querySelector && ovSub.querySelector('.earn')) || ovSub;
     case 'shopcard': return tutCardNamed('SHOP');
@@ -10201,8 +10287,8 @@ function tutHintScan() {
     if (world('midboss', (state.wave.midBosses || []).find(b => b.hp > 0 && onScreen(b)), 30)) return;
     if (H.wants('elite') && world('elite', state.enemies.find(e => e.elite && e.hp > 0 && onScreen(e)))) return;
     // Focus and stance: the first time the player changes one.
-    if (tut.focus !== null && controller.focus !== tut.focus) tutHint('focus', []);
-    else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', []);
+    if (tut.focus !== null && controller.focus !== tut.focus) tutHint('focus', ['focusbtn']);
+    else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', ['stancebtn']);
     tut.focus = controller.focus; tut.stance = controller.stance;
     // M5b: the EXPLORE pilot and the map waypoint, the first time each is met.
     if (H.wants('explore') && normalizePilotMode(state.pilotMode) === 'EXPLORE' && tutHint('explore', [])) return;
@@ -10445,6 +10531,12 @@ function trophiesModel() {
   return gallerySummary(profile).model;
 }
 
+// Is this shop row one an EARNED trophy gives for nothing?
+function shopRowFromTrophy(rowId) {
+  const ach = achievementForUnlock('shopRow', rowId);
+  return !!ach && isEarned(profile, ach.id);
+}
+
 // The unlock's display name, read from the LIVE catalogs by id — never a second
 // table here. A shop row is named by its SHOP_UPGRADES row; a pilot by its
 // CHARACTERS entry (the same objects the shop and the character screen show).
@@ -10455,6 +10547,7 @@ function unlockLabel(u) {
     return row ? row.name : u.id;
   }
   if (u.kind === 'character') return (CHARACTERS[u.id] || {}).name || u.id;
+  if (u.kind === 'elite') return ((ELITE_MODIFIERS[u.id] || {}).name || u.id) + ' Elites';
   return u.id;
 }
 
@@ -10495,9 +10588,11 @@ function refreshTrophyView() {
     lines.push(ach && ach.goal.kind === 'state' ? e.goal : `${e.goal}: ${e.progress} / ${e.target}`);
   }
   if (e.unlock) {
-    lines.push(ownsUnlock(profile, e.unlock)
-      ? `unlock: ${unlockLabel(e.unlock)} (already owned)`
-      : `unlocks: ${unlockLabel(e.unlock)}`);
+    const own = ownsUnlock(profile, e.unlock);
+    // An elite modifier is a threat the trophy brings, not a prize.
+    lines.push(e.unlock.kind === 'elite'
+      ? (own ? `new threat: ${unlockLabel(e.unlock)} (already out there)` : `brings a new threat: ${unlockLabel(e.unlock)}`)
+      : (own ? `unlock: ${unlockLabel(e.unlock)} (already owned)` : `unlocks: ${unlockLabel(e.unlock)}`));
   }
   if (e.earned && e.at) lines.push('earned ' + new Date(e.at).toLocaleDateString());
   ovSub.innerHTML = lines.filter(Boolean).join('<br>');
@@ -11119,10 +11214,12 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'pageup') { shopPageGoto(shopPager.page - 1); return; }
     if (k === 'pagedown') { shopPageGoto(shopPager.page + 1); return; }
   }
-  if (state.mode === 'escape') {                        // any key skips the escape
-    // A key held since before the movie began is not a new press.
+  if (state.mode === 'escape') {                        // the escape: a skip key, twice
+    // A key held since before the movie began is not a new press. Any key
+    // raises the SKIP prompt; ESC, ENTER or SPACE while it is up skips. The
+    // keys a player steers and fights with can never end the movie.
     if (ev.preventDefault) ev.preventDefault();
-    if (!ev.repeat) escapePress();
+    if (!ev.repeat) escapePress(k === 'escape' || k === 'enter' || k === ' ');
     return;
   }
   if (state.mode === 'draft') {
@@ -12835,11 +12932,14 @@ function pilotBadgeText(mode, act, compact) {
   const m = (compact ? ABBR[mode] : FULL[mode]) || mode;
   return act && act !== mode && act !== m ? m + ' \u00b7 ' + act : m;
 }
-const KEYBAR_TWIN = { 'tc-q': 'kb-q', 'tc-w': 'kb-w', 'tc-h': 'kb-h', 'tc-n': 'kb-n' };
+const KEYBAR_TWIN = { 'tc-focus': 'kb-focus', 'tc-stance': 'kb-stance',
+  'tc-q': 'kb-q', 'tc-w': 'kb-w', 'tc-h': 'kb-h', 'tc-n': 'kb-n' };
 const keybarEls = {};
-for (const id of ['kb-pilot', 'kb-q', 'kb-w', 'kb-h', 'kb-n', 'kb-qname']) {
+for (const id of ['kb-pilot', 'kb-focus', 'kb-stance', 'kb-q', 'kb-w', 'kb-h', 'kb-n', 'kb-qname']) {
   keybarEls[id] = document.getElementById(id);
 }
+// The stance the key bar chip is tinted for (written on change only).
+let kbStanceTint = null;
 function updateTouchHud() {
   syncChrome();
   const p = state.player;
@@ -12854,7 +12954,8 @@ function updateTouchHud() {
     const el = keybarEls[id];
     if (el && el.textContent !== v) el.textContent = v;
   };
-  // WAVE-27: the badges are the doctrine's ONLY on-screen home now, and they
+  // WAVE-27: the badges are the doctrine's ONLY on-screen home now (on
+  // desktop their twins are the FOCUS and STANCE chips of the key bar), and they
   // read the PUBLISHED state (state.focus / state.stance / state.stanceAct,
   // set by syncChrome just above) rather than scraping the controller — so
   // there is exactly one source for the values. The PILOT badge also carries
@@ -12867,6 +12968,13 @@ function updateTouchHud() {
   const act = state.stanceAct;
   set('tc-focus', state.focus);
   set('tc-stance', state.stance);
+  // The key bar's STANCE value wears the stance's risk colour (the cycle
+  // toast's): green safe, gold balanced, orange greedy.
+  if (state.stance !== kbStanceTint) {
+    kbStanceTint = state.stance;
+    const el = keybarEls['kb-stance'];
+    if (el && el.style) el.style.color = C.HUD.STANCE_COLORS[state.stance] || '';
+  }
   const wheelOn = !pilotMovesYou() && state.wheel > 0;
   set('tc-pilot', pilotBadgeText(state.pilotMode, wheelOn ? 'YOU' : act, padsCompact));
   kb('kb-pilot', wheelOn ? 'YOU' : pilotMovesYou() ? 'MANUAL'
@@ -13114,7 +13222,8 @@ if (overlay && overlay.addEventListener) {
 
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
 // WAVE-8/A: the same gesture skips the portal cinematic.
-// The same gesture skips the escape cinematic (after its guard time).
+// The escape cinematic asks for more: a tap raises its SKIP prompt, a tap on
+// the SKIP button while it is up skips.
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   noteInput();
   audioUnlockGesture();     // S2: a tap IS a user gesture — unlock audio
@@ -13155,7 +13264,7 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     if (ev.preventDefault) ev.preventDefault();
     return;
   }
-  if (state.mode === 'escape') { escapePress(); return; }
+  if (state.mode === 'escape') { escapePress(escapeSkipHit(ev), true); return; }
   // Armed ONLY when this gesture actually ended a cinematic — never during play.
   const skipping = state.mode === 'intro' ||
     (state.mode === 'portal-cine' && C.CINE.SKIPPABLE) ||
@@ -13274,16 +13383,33 @@ function startEscape(opts = {}) {
     // to the paused settings screen.
     test: !!opts.test,
   });
-  // Nobody is watching an unattended run: straight to the hand-back, paid.
-  if (state.unattended && !opts.test) ESCAPE.finishNow();
+  // Nobody is watching: straight to the hand-back, paid.
+  if (escapeUnwatched() && !opts.test) ESCAPE.finishNow();
 }
-// A key or a tap during the cinematic: skips it once its guard time has
-// passed. The guard on the next screen keeps the same press off its cards.
-function escapePress() {
+// AUTO-CONTINUE alone does not mean nobody is there: a player who started the
+// run, or pressed anything since it began (noteInput zeroes the count), sees
+// the chase. A run auto-continue started with no input since is nobody's to
+// watch, and neither is a dev night run. (A hidden tab ends it in the frame.)
+function escapeUnwatched() {
+  return state.unattended && (!!state.devNightRun || autoRunsInRow > 0);
+}
+// A key or a tap during the cinematic (escape_cine.js press): the first one
+// raises the SKIP prompt, a confirming one while it is up skips. The guard on
+// the next screen keeps the same press off its cards.
+function escapePress(confirm = false, tap = false) {
   if (tut.hints.active) return false;   // the first-time hint holds the movie
-  if (!ESCAPE.press()) return false;
+  if (!ESCAPE.press(confirm, tap)) return false;
   uiGuard.arm();
   return true;
+}
+// Did this pointer land on the movie's SKIP button (view pixels)?
+function escapeSkipHit(ev) {
+  try {
+    const mr = canvas.getBoundingClientRect();
+    if (!mr.width || !mr.height) return false;
+    return ESCAPE.skipHit((ev.clientX - mr.left) / mr.width * C.VIEW_W,
+      (ev.clientY - mr.top) / mr.height * C.VIEW_H);
+  } catch { return false; }
 }
 // The test entry's hand-back: the run is still live underneath — reopen the
 // paused settings screen the card came from.
@@ -14651,6 +14777,7 @@ export const __TEST = {
     get mode() { return state.mode; },
     get cine() { return ESCAPE.current(); },
     press: escapePress,
+    get unwatched() { return escapeUnwatched(); },
     skip: ESCAPE.skip,
     finishNow: ESCAPE.finishNow,
     hold: ESCAPE.hold,

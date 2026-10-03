@@ -7,7 +7,7 @@ import {
   startPotionCount, CHARACTERS, applyCharacter, unlockCharacter, equipCharacter,
   startWeaponSlots, WEAPON_SLOT_START, MAX_WEAPON_SLOTS, hasArcadePass,
   STARTER_WEAPONS, WEAPON_PRICES, weaponUnlocked, unlockWeapon,
-  ELITE_MODIFIERS, eliteUnlocked, unlockElite,
+  ELITE_MODIFIERS, eliteUnlocked, grantElite, refundRetiredRows, RETIRED_ELITE_PRICES,
   LUCK_MAX_LEVEL, BASE_RARITY_WEIGHTS, luckDropWeights,
   shopRowOwned, catalogCost,
   APEX_UPGRADES, APEX_BY_ID, apexOwned, apexUnlocked, buyApex, apexEnabled, setApexEnabled,
@@ -161,9 +161,8 @@ console.log('EXPANSION LINES:');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
      'every priced archetype has a weapon shop row');
-  ok(SHOP_UPGRADES.filter(u => u.kind === 'elite').length
-     === Object.keys(ELITE_MODIFIERS).length,
-     'every elite modifier has a shop row');
+  ok(SHOP_UPGRADES.filter(u => u.kind === 'elite' || /^elite_/.test(u.id)).length === 0,
+     'no elite modifier is a shop row (they left the shop 2026-10-03)');
 
   // Purchase path works like any other line.
   const p = makeProfile();
@@ -488,29 +487,79 @@ console.log('WEAPON UNLOCKS:');
 console.log('ELITE MODIFIERS:');
 {
   ok(Object.keys(ELITE_MODIFIERS).length === 3
-     && ['SWIFT', 'SPLITTING', 'VAMPIRIC'].every(k => ELITE_MODIFIERS[k].cost > 0),
-     'SWIFT / SPLITTING / VAMPIRIC defined with costs');
+     && ['SWIFT', 'SPLITTING', 'VAMPIRIC'].every(k => ELITE_MODIFIERS[k].desc && !('cost' in ELITE_MODIFIERS[k])),
+     'SWIFT / SPLITTING / VAMPIRIC defined, with a description and no price');
+  ok(Object.values(ELITE_MODIFIERS).every(e => !/gold|shop|buy/i.test(e.desc)),
+     'the descriptions say what the elite does, with no shop talk');
 
   const p = makeProfile();
   ok(!eliteUnlocked(p, 'SWIFT') && !eliteUnlocked(p, 'SPLITTING')
      && !eliteUnlocked(p, 'VAMPIRIC'),
      'all elite modifiers locked by default');
-  p.gold = ELITE_MODIFIERS.SWIFT.cost - 1;
-  ok(unlockElite(p, 'SWIFT') === false, 'elite buy gated on gold');
   p.gold = 2000000;
-  ok(unlockElite(p, 'SWIFT') === true && eliteUnlocked(p, 'SWIFT')
-     && p.gold === 2000000 - ELITE_MODIFIERS.SWIFT.cost,
-     'elite buy deducts gold and records ownership');
-  ok(unlockElite(p, 'SWIFT') === false, 'double elite buy rejected');
-  ok(unlockElite(p, 'NOPE') === false, 'unknown elite id rejected');
+  ok(buyUpgrade(p, 'elite_swift') === false && buyUpgrade(p, 'elite_vampiric') === false
+     && p.gold === 2000000 && !eliteUnlocked(p, 'SWIFT'),
+     'no gold buys one: the rows are gone');
+  ok(SHOP_BY_ID.elite_swift === undefined && SHOP_BY_ID.elite_splitting === undefined
+     && SHOP_BY_ID.elite_vampiric === undefined, 'no elite id resolves to a shop row');
+  ok(grantElite(p, 'SWIFT') === true && eliteUnlocked(p, 'SWIFT') && p.gold === 2000000,
+     'the trophy path grants one for nothing');
+  ok(grantElite(p, 'SWIFT') === true && p.unlockedElites.filter(e => e === 'SWIFT').length === 1,
+     'a second grant is harmless');
+  ok(grantElite(p, 'NOPE') === false, 'unknown elite id rejected');
+}
 
-  const q = makeProfile();
-  q.gold = ELITE_MODIFIERS.VAMPIRIC.cost;
-  ok(buyUpgrade(q, 'elite_vampiric') === true && eliteUnlocked(q, 'VAMPIRIC')
-     && q.purchased.elite_vampiric === undefined && q.gold === 0,
-     'buyUpgrade on an elite row unlocks via unlockedElites (not purchased)');
-  ok(shopRowOwned(q, SHOP_BY_ID.elite_vampiric) === true,
-     'shopRowOwned reflects elite rows');
+// ---------- The retired elite rows: what was paid comes back -----------------
+console.log('RETIRED ELITE ROWS (refund):');
+{
+  ok(RETIRED_ELITE_PRICES.SWIFT === 3000 && RETIRED_ELITE_PRICES.SPLITTING === 6000
+     && RETIRED_ELITE_PRICES.VAMPIRIC === 10000, 'the last shop prices are on record');
+
+  // A ledgered purchase: the exact amount, once; the modifier stays.
+  const a = makeProfile();
+  a.gold = 50; a.unlockedElites = ['SWIFT', 'VAMPIRIC'];
+  a.spendLedger = { elite_swift: [3000], 'elite:VAMPIRIC': [9500], dmg: [125] };
+  ok(refundRetiredRows(a) === 12500 && a.gold === 12550, `ledgered amounts come back exactly (gold ${a.gold})`);
+  ok(a.unlockedElites.join() === 'SWIFT,VAMPIRIC', 'the modifiers stay unlocked');
+  ok(!('elite_swift' in a.spendLedger) && !('elite:VAMPIRIC' in a.spendLedger) && a.spendLedger.dmg[0] === 125,
+     'their ledger entries go; every other entry stays');
+
+  // Idempotent on the ledger: a second sweep pays nothing.
+  const b = makeProfile();
+  b.gold = 0; b.unlockedElites = ['SPLITTING'];
+  b.spendLedger = { elite_splitting: [6000] };
+  ok(refundRetiredRows(b) === 6000 && refundRetiredRows(b) === 0 && refundRetiredRows(b) === 0 && b.gold === 6000,
+     'a second and a third sweep pay nothing');
+
+  // A free-built (dev) grant was ledgered at 0: nothing comes back.
+  const c = makeProfile();
+  c.gold = 7; c.unlockedElites = ['SWIFT'];
+  c.spendLedger = { elite_swift: [0] };
+  ok(refundRetiredRows(c, { unledgered: true, trophyEarned: () => false }) === 0 && c.gold === 7
+     && !('elite_swift' in c.spendLedger), 'a 0-paid entry refunds 0 and is cleared');
+
+  // Older than the ledger: owned, no entry, and the trophy that brings it not
+  // earned. It was bought. Refunded at the row's last price, when asked to.
+  const d = makeProfile();
+  d.gold = 100; d.unlockedElites = ['SWIFT', 'SPLITTING', 'VAMPIRIC'];
+  ok(refundRetiredRows(d) === 0 && d.gold === 100, 'not without the caller asking (unledgered)');
+  const earned = new Set(['SWIFT']);   // the 100-kill trophy is earned: no proof SWIFT was bought
+  ok(refundRetiredRows(d, { unledgered: true, trophyEarned: (id) => earned.has(id) }) === 16000 && d.gold === 16100,
+     `SPLITTING + VAMPIRIC come back, SWIFT (its trophy earned) does not (gold ${d.gold})`);
+  ok(d.unlockedElites.length === 3, 'and all three stay unlocked');
+
+  // Not owned: nothing, whatever the flags.
+  const e = makeProfile();
+  e.gold = 9;
+  ok(refundRetiredRows(e, { unledgered: true, trophyEarned: () => false }) === 0 && e.gold === 9, 'nothing owned, nothing paid');
+
+  // Never throws, never invents gold.
+  ok(refundRetiredRows(null) === 0 && refundRetiredRows({}) === 0
+     && refundRetiredRows({ spendLedger: [] }) === 0 && refundRetiredRows({ spendLedger: 'x', unlockedElites: 7 }) === 0,
+     'junk profiles refund 0');
+  const f = makeProfile();
+  f.gold = NaN; f.unlockedElites = ['SWIFT']; f.spendLedger = { elite_swift: ['x', -5, 3000.9] };
+  ok(refundRetiredRows(f) === 3000 && f.gold === 3000, `junk ledger values count as 0, a poisoned wallet restarts from 0 (gold ${f.gold})`);
 }
 
 // ---------- Luck skill (WAVE-11) ----------
@@ -579,8 +628,8 @@ console.log('LUCK:');
 console.log('APEX TIER (G25):');
 {
   // -- partition: apex is invisible to the shop economy --
-  ok(SHOP_UPGRADES.length === 45,
-     `SHOP_UPGRADES holds exactly its 45 rows (31 stat + 11 weapon + 3 elite; got ${SHOP_UPGRADES.length})`);
+  ok(SHOP_UPGRADES.length === 42,
+     `SHOP_UPGRADES holds exactly its 42 rows (31 stat + 11 weapon; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

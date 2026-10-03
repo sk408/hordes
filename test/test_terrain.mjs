@@ -18,7 +18,7 @@ import {
   spawnReach, flatSpot, nodeOf, CLEAR_X, CLEAR_Y, CLEAR_R, RIM_KEEP, tierIn,
 } from '../src/terrain.js';
 import { placeSites } from '../src/sites.js';
-import { buildingRects, buildingFixedPoints } from '../src/stage_buildings.js';
+import { buildingRects, buildingFixedPoints, buildingTouchesDisc, BUILDING_MOVER_R } from '../src/stage_buildings.js';
 import { STAGE_IDS } from '../src/stages.js';
 import { makeTypedEnemy } from '../src/enemy_types.js';
 import { STALL_PERIOD_FRAMES, STALL_SPAN_PX } from '../src/controllers.js';
@@ -322,6 +322,33 @@ s.check('live: a portal across a cliff corner is entered (regression: WHITEOUT s
     gone = !st.portal || st.portal.entering;
   }
   assert.ok(gone, 'the pilot reached the portal');
+  st.mode = 'menu';
+});
+
+// The world the check below failed on about one run in twenty-four: the hero
+// is put 30px off the cliff, which here is 1.3px inside a hut's collision
+// ring (its corner is 5.7px away, the ring is 7), with the cliff on the other
+// side. From inside a ring every stride still touched, so the slide held its
+// footing: 45 s without a step, a portal 24px away. The motion seam steps out
+// of a ring now.
+s.check('live: a hero placed inside a building\'s ring steps out and takes the portal (BONE_DESERT seed 636434304)', () => {
+  fresh('BONE_DESERT');
+  st.groundSeed = 636434304;
+  T.sites.seed(true);
+  T.setPilotMode('AUTO_ALL');
+  const rects = buildingRects(st.groundSeed, st.stage);
+  st.player.x = -630; st.player.y = -648; st.player.tz = 0;
+  assert.ok(buildingTouchesDisc(rects, st.player.x, st.player.y, BUILDING_MOVER_R), 'fixture: the start is inside a ring');
+  st.portal = { x: -598, y: -648, age: 0 };
+  let gone = false, frames = 0;
+  for (; frames < 60 * 10 && !gone; frames++) {
+    st.enemies.length = 0; st.spawnTimer = 999; godHero();
+    h.pump(1);
+    if (frames === 0) assert.ok(!buildingTouchesDisc(rects, st.player.x, st.player.y, BUILDING_MOVER_R), 'one frame later it stands clear');
+    gone = !st.portal || st.portal.entering;
+  }
+  assert.ok(gone, 'the pilot reached the portal (at ' + Math.round(st.player.x) + ',' + Math.round(st.player.y) + ')');
+  assert.ok(frames < 60 * 3, 'within three seconds (took ' + (frames / 60).toFixed(1) + ' s)');
   st.mode = 'menu';
 });
 

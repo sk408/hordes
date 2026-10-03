@@ -214,6 +214,47 @@ console.log('WAVE-24 / #2 — CANVAS TEXT CONTRAST + SIZE');
     ok(!!bPlate, 'a HELD banner keeps the centered dark plate');
     const subPx = title ? parseInt(/\d+px/.exec((textOf(rec3, 'THE WAVE BREAKS HERE') || {}).font || '0px')[0], 10) : 0;
     ok(subPx >= 10, 'held banner sub-line is >= 10px (got ' + subPx + ')');
+    ok(rec3.texts.filter(t => t.txt === 'THE WAVE BREAKS HERE').length === 1, 'a short sub stays ONE line');
+  }
+  // A first fusion's or evolution's banner carries the weapon's whole
+  // description. It painted as one line, 709px wide at the 10px floor in a
+  // 480px view: off both edges (Steve, 2026-10-03: "the fuse weapon message
+  // is larger than the screen"). It wraps at word boundaries now.
+  {
+    const SUBS = [
+      'NEW FUSION - EVERY VOLLEY SALVO THROWS A HALF-STRENGTH SPEAR DOWN ITS LANE, AND EVERY SPEAR THROW IS FLANKED BY TWO EXTRA ROUNDS.',
+      'NEW FUSION - THE RANG HUNTS ON ITS WAY HOME: THE RETURN LEG STEERS AT THE NEAREST ENEMY, AND EACH CATCH LAUNCHES A MISSILE.',
+      'CHAIN ZAP EVOLVED - ' + 'EVERY THIRD BOLT FORKS TWICE AND EACH FORK STUNS WHAT IT TOUCHES FOR A MOMENT, THEN LEAPS ON.',
+    ];
+    const H = C.HUD;
+    const maxTextW = C.VIEW_W - 2 * H.BANNER_EDGE_MARGIN - 2 * H.BANNER_PLATE_PAD_X;
+    for (const sub of SUBS) {
+      const { R: R4, rec: rec4, ctx: ctx4 } = makeRenderer();
+      R4.drawBossBanner(ctx4, hudState({
+        bannerHold: 2.0,
+        bossBanner: { names: ['SUN LANE'], verb: 'FUSED', title: 'SUN LANE', sub, ttl: 2.0 },
+      }));
+      const words = sub.split(' ');
+      // The sub's own lines: the non-bold text the banner painted, in order.
+      const lines = rec4.texts.filter(t => !/bold/.test(t.font) && words.includes(t.txt.split(' ')[0]) && sub.includes(t.txt));
+      ok(lines.length >= 2 && lines.length <= 4, 'a long sub wraps into 2-4 lines (got ' + lines.length + ')');
+      ok(lines.map(t => t.txt).join(' ') === sub, 'every word is kept, in order');
+      const px = lines.length ? parseInt(/(\d+)px/.exec(lines[0].font)[1], 10) : 0;
+      ok(px >= 10, 'at the 10px floor or above (got ' + px + ')');
+      // The stub context has no font metrics: the renderer falls back to its
+      // measured monospace advance, the same number used here.
+      const widest = Math.max(...lines.map(t => t.txt.length * px * 0.6021));
+      ok(widest <= maxTextW + 1e-6, 'no line is wider than the text box of the plate (' + widest.toFixed(0) + ' <= ' + maxTextW + ')');
+      const ys = lines.map(t => t.y);
+      ok(ys.every((y, i) => i === 0 || y > ys[i - 1]), 'the lines stack downward');
+      ok(lines.every(t => Math.abs(t.x - C.VIEW_W / 2) < 1e-6), 'each centred on the view');
+      const plate = rec4.rects.find(q => isDarkPlate(q.style) && q.h >= 40 && Math.abs((q.x + q.w / 2) - C.VIEW_W / 2) <= 2);
+      ok(!!plate && plate.x >= H.BANNER_EDGE_MARGIN - 1 && plate.x + plate.w <= C.VIEW_W - H.BANNER_EDGE_MARGIN + 1,
+        'the plate stays inside the view edges');
+      ok(!!plate && plate.y >= 34 && plate.y + plate.h <= C.VIEW_H - 34, 'and between the letterbox bands (' + (plate && plate.y) + '..' + (plate && plate.y + plate.h) + ')');
+      ok(lines.every(t => plate && t.y > plate.y && t.y < plate.y + plate.h), 'every line is on the plate');
+      ok(R4.bossBanner && R4.bossBanner.sub === sub, 'the seam still carries the whole sub');
+    }
   }
 }
 

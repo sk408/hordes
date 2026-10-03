@@ -39,7 +39,7 @@ import { TROPHY_IDS, TROPHY_ART, TROPHY_FALLBACK_ID } from './art/index.js';
 import {
   CHARACTERS, SHOP_UPGRADES, SHOP_BY_ID, WEAPON_PRICES,
   MAX_WEAPON_SLOTS, shopRowOwned, hasArcadePass,
-  grantShopRow, grantCharacter,
+  grantShopRow, grantCharacter, grantElite, eliteUnlocked, ELITE_MODIFIERS,
 } from './meta.js';
 
 export const ACH_NAMESPACE_VERSION = 2;
@@ -61,9 +61,11 @@ export const MAX_WEAPON_LEVEL = 8;
 // ---------------------------------------------------------------------------
 export const ACHIEVEMENTS = [
   { id: 'FIRST_BLOOD', goal: { kind: 'total', stat: 'kills', n: 1 }, unlock: null },
-  { id: 'KILLS_100', goal: { kind: 'total', stat: 'kills', n: 100 }, unlock: { kind: 'shopRow', id: 'elite_swift' } },
-  { id: 'KILLS_1000', goal: { kind: 'total', stat: 'kills', n: 1000 }, unlock: { kind: 'shopRow', id: 'elite_splitting' } },
-  { id: 'KILLS_10000', goal: { kind: 'total', stat: 'kills', n: 10000 }, unlock: { kind: 'shopRow', id: 'elite_vampiric' } },
+  // The kill trophies bring the elite modifiers: a new threat, not a shop row
+  // (unlock kind 'elite', meta.js ELITE_MODIFIERS).
+  { id: 'KILLS_100', goal: { kind: 'total', stat: 'kills', n: 100 }, unlock: { kind: 'elite', id: 'SWIFT' } },
+  { id: 'KILLS_1000', goal: { kind: 'total', stat: 'kills', n: 1000 }, unlock: { kind: 'elite', id: 'SPLITTING' } },
+  { id: 'KILLS_10000', goal: { kind: 'total', stat: 'kills', n: 10000 }, unlock: { kind: 'elite', id: 'VAMPIRIC' } },
   { id: 'FIRST_BOSS', goal: { kind: 'total', stat: 'bossKills', n: 1 }, unlock: { kind: 'shopRow', id: 'weapon_orbit' } },
   { id: 'BOSS_SLAYER_5', goal: { kind: 'total', stat: 'bossKills', n: 5 }, unlock: { kind: 'shopRow', id: 'weapon_zap' } },
   { id: 'WAVE_5', goal: { kind: 'best', stat: 'wave', n: 5 }, unlock: { kind: 'shopRow', id: 'weapon_nova_pulse' } },
@@ -438,6 +440,7 @@ export function applyUnlocks(profile, ids) {
     let ok = false;
     if (u.kind === 'shopRow') ok = grantShopRow(profile, u.id);
     else if (u.kind === 'character') ok = grantCharacter(profile, u.id);
+    else if (u.kind === 'elite') ok = grantElite(profile, u.id);
     out.push({ achievement: id, kind: u.kind, id: u.id, ok });
   }
   return out;
@@ -480,7 +483,8 @@ export function auditUnlockTargets() {
     const { kind, id } = ach.unlock;
     if (kind === 'shopRow' && !SHOP_BY_ID[id]) bad.push(ach.id + ' -> shopRow ' + id);
     else if (kind === 'character' && !CHARACTERS[id]) bad.push(ach.id + ' -> character ' + id);
-    else if (kind !== 'shopRow' && kind !== 'character') bad.push(ach.id + ' -> unknown kind ' + kind);
+    else if (kind === 'elite' && !ELITE_MODIFIERS[id]) bad.push(ach.id + ' -> elite ' + id);
+    else if (kind !== 'shopRow' && kind !== 'character' && kind !== 'elite') bad.push(ach.id + ' -> unknown kind ' + kind);
   }
   return bad;
 }
@@ -491,6 +495,7 @@ export function ownsUnlock(profile, unlock) {
   if (!unlock) return false;
   if (unlock.kind === 'shopRow') return shopRowOwned(profile, SHOP_BY_ID[unlock.id]);
   if (unlock.kind === 'character') return (profile.unlockedCharacters || []).includes(unlock.id);
+  if (unlock.kind === 'elite') return eliteUnlocked(profile, unlock.id);
   return false;
 }
 

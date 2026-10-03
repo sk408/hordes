@@ -401,7 +401,9 @@ S.check('an EARNED entry shows the real art, name and description', () => {
   assert.equal(h.elements['ov-title'].textContent, art.name, 'the art name is the caption');
   const body = h.elements['ov-sub'].innerHTML;
   assert.ok(body.includes(art.desc), 'the art description is shown');
-  assert.ok(body.includes('already owned'), 'the unlock line reports ownership, not a promise');
+  // A kill trophy brings an elite modifier: named as a threat, not a prize.
+  assert.ok(body.includes('new threat: Swift Elites (already out there)'), 'the line says what the trophy brought: ' + body);
+  assert.ok(!/unlock/.test(body), 'and never calls it an unlock');
   assert.ok(/earned /.test(body), 'and the earned date is printed');
   // A trophy still unearned in the same profile is still masked.
   st.trophyIdx = ACHIEVEMENT_DISPLAY_IDS.indexOf('KILLS_10000');

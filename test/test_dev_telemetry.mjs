@@ -7,8 +7,8 @@ import {
   buildSnapshot, validateSnapshot, devArm, devHit, drawSparkline,
 } from '../src/dev_telemetry.js';
 import {
-  makeProfile, SHOP_BY_ID, buyUpgrade, unlockCharacter, unlockElite,
-  ELITE_MODIFIERS, buyCharacterUpgrade, setDevFreeBuild, devFreeBuild,
+  makeProfile, SHOP_BY_ID, buyUpgrade, unlockCharacter,
+  buyCharacterUpgrade, setDevFreeBuild, devFreeBuild,
   ownedBuildCost, WEAPON_PRICES, upgradeCost, unlockWeapon,
 } from '../src/meta.js';
 import { boot } from './_harness.mjs';
@@ -117,9 +117,6 @@ function validFields() {
     assert.ok(prof.unlockedCharacters.includes('WITCH'), 'ownership recorded');
     assert.equal(buyCharacterUpgrade(prof, 'WITCH', 'witch_wellspring'), true, 'free character upgrade grants');
     assert.equal(prof.gold, 0, 'purse untouched by free character upgrade');
-    const eliteId = Object.keys(ELITE_MODIFIERS)[0];
-    assert.equal(unlockElite(prof, eliteId), true, 'free elite unlock grants');
-    assert.equal(prof.gold, 0, 'purse untouched by free elite buy');
     assert.equal(buyUpgrade(prof, 'nope'), false, 'unknown ids still refused when free');
     const def = SHOP_BY_ID.dmg;
     prof.purchased.dmg = def.maxLevel;

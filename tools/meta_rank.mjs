@@ -14,8 +14,8 @@
 //
 // ============================ HONESTY BLOCK ==================================
 // READ FROM THE GAME (never redeclared here):
-//   - the ENTIRE purchasable universe: src/meta.js SHOP_UPGRADES (46 rows:
-//     36 stat + 7 weapon + 3 elite), WEAPON_PRICES, ELITE_MODIFIERS,
+//   - the ENTIRE purchasable universe: src/meta.js SHOP_UPGRADES (stat rows
+//     and weapon rows; the elite rows left it 2026-10-03), WEAPON_PRICES,
 //     STARTER_WEAPONS, WEAPON_SLOT_START (3) / MAX_WEAPON_SLOTS (6),
 //     applyMetaBonuses, upgradeCost.
 //   - the draft pool at the game's own weights: tools/draft_sim.mjs
@@ -63,7 +63,7 @@
 
 import { pathToFileURL } from 'node:url';
 import {
-  SHOP_UPGRADES, WEAPON_PRICES, ELITE_MODIFIERS,
+  SHOP_UPGRADES, WEAPON_PRICES,
   WEAPON_SLOT_START, MAX_WEAPON_SLOTS, applyMetaBonuses, upgradeCost,
 } from '../src/meta.js';
 import { makePlayer } from '../src/entities.js';
@@ -101,7 +101,6 @@ const cohortWith = (policy, seed, runs, patch) => {
 // the greedy shop; the test asserts the two agree). level = levels owned.
 export function nextCostOf(def, level) {
   if (def.kind === 'weapon') return WEAPON_PRICES[def.weaponId];
-  if (def.kind === 'elite') return ELITE_MODIFIERS[def.eliteId].cost;
   return upgradeCost(def, level);
 }
 
@@ -149,17 +148,6 @@ export function buildRankTable({ seed = RANK_SEED_DEFAULT, runs = 8, baselineKey
       });
       continue;
     }
-    // elite: NO layer in the model — probe the real seams, never fake a 0.
-    const p0 = applyMetaBonuses(makePlayer().stats, { ...base });
-    const p1 = applyMetaBonuses(makePlayer().stats, { ...base, [def.id]: 1 });
-    const reads = JSON.stringify(p0) !== JSON.stringify(p1);
-    rows.push({
-      id: def.id, kind: 'elite', cost: nextCostOf(def, 0),
-      dSurv: 0, dGold: 0, survPer1k: 0, goldPer1k: 0,
-      note: reads
-        ? 'reads into stats but no elite layer in the model; measured 0 by construction'
-        : 'OUTSIDE THIS MODEL (unlockedElites has no sim layer; honest 0, unmeasured)',
-    });
   }
   rows.sort((a, b) => b.survPer1k - a.survPer1k || a.cost - b.cost);
   return { baselineKey, seed, runs: n, baseSurv: mv.baseSurv, baseGold: mv.baseGold, bSurv, bGold, rows };
@@ -300,8 +288,7 @@ async function main() {
   console.log(`slot counts READ from meta.js: WEAPON_SLOT_START=${WEAPON_SLOT_START} ` +
     `MAX_WEAPON_SLOTS=${MAX_WEAPON_SLOTS}; universe = SHOP_UPGRADES ` +
     `(${SHOP_UPGRADES.length} rows: ${SHOP_UPGRADES.filter(d => !d.kind).length} stat / ` +
-    `${SHOP_UPGRADES.filter(d => d.kind === 'weapon').length} weapon / ` +
-    `${SHOP_UPGRADES.filter(d => d.kind === 'elite').length} elite)`);
+    `${SHOP_UPGRADES.filter(d => d.kind === 'weapon').length} weapon)`);
   console.log('');
 
   // ---- PART A: ranked tables + greedy deltas, per declared baseline --------

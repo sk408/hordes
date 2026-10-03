@@ -185,10 +185,10 @@ const X0 = price('xp', 0), X1 = price('xp', 1);
   assert.ok(!(p.unlockedWeapons || []).includes('ORBIT'), 'ownership removed');
   assert.ok(!effectiveLoadout(p).includes('ORBIT'), 'sold weapon benched off the loadout');
   assert.deepEqual(sellUpgrade(p, 'weapon_boomerang'), { ok: false }, 'starter weapon not sellable');
-  // Elite singleton.
-  assert.equal(buyUpgrade(p, 'elite_swift'), true, 'elite row buys');
-  assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: true, level: 1, refund: ELITE_MODIFIERS.SWIFT.cost }, 'elite refunds exact cost');
-  assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: false }, 'second sell refused (nothing owned)');
+  // The elite rows left the shop (2026-10-03): nothing to buy or sell there.
+  assert.equal(buyUpgrade(p, 'elite_swift'), false, 'no elite row to buy');
+  assert.deepEqual(sellUpgrade(p, 'elite_swift'), { ok: false }, 'and none to sell');
+  assert.ok(Object.keys(ELITE_MODIFIERS).length === 3 && !('cost' in ELITE_MODIFIERS.SWIFT), 'the modifiers carry no price');
   // Pilot unlock (ROGUE 2500).
   assert.equal(unlockCharacter(p, 'ROGUE'), true, 'pilot unlock buys');
   assert.deepEqual(sellCharacterUnlock(p, 'ROGUE'), { ok: true, level: 1, refund: 2500 }, 'pilot refunds exact cost');

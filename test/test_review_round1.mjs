@@ -394,7 +394,8 @@ console.log('test_review_round1: items 1-3 ' + passed + ' checks');
   let end = null;
   ESCAPE.begin({ profile: prof, onEnd: (e) => { end = e; } });
   for (let i = 0; i < 30; i++) ESCAPE.frame(null, 1 / 60);
-  ESCAPE.press();
+  ESCAPE.press(true);   // the first press raises the SKIP prompt
+  ESCAPE.press(true);   // a skip key while it is up skips
   ok('4: a skip ends the escape at once', end && end.result === 'skip' && end.seconds < 1, end);
   ok('4: a skip pays in full (it used to pay nothing without the writ)',
     end && end.payout === 800 && prof.gold === 800, end);

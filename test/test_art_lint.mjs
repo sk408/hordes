@@ -69,7 +69,6 @@ const EXPECTED_SHOP = [
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
   'weapon_beam', 'weapon_javelin', 'weapon_ember', 'weapon_ricochet', 'weapon_meteor',
-  'elite_swift', 'elite_splitting', 'elite_vampiric',
   'apex_mark', 'apex_endless_fire',
   '__fallback',
 ];

@@ -128,7 +128,7 @@ function printLedger() {
   console.log('HORDES ECONOMY LEDGER (G17) — read from the LIVE tables via upgradeCost/catalogCost');
   console.log(`catalogue total: ${L.total}g across ${L.counts.ALL} items ` +
     `(MID ${L.counts.MID} / TOP ${L.counts.TOP} / OTHER ${L.counts.ALL - L.counts.MID - L.counts.TOP})`);
-  console.log(`partition: MID ${L.sums.MID}g (GOLD_MODEL.MID_TIER_IDS: weapon+elite unlocks, luck ladder) · ` +
+  console.log(`partition: MID ${L.sums.MID}g (GOLD_MODEL.MID_TIER_IDS: weapon unlocks, luck ladder) · ` +
     `TOP ${L.sums.TOP}g (${GOLD_MODEL.TOP_TIER_IDS.join(', ')}) · ` +
     `OTHER ${L.sums.OTHER}g (stat lines, slots, split-cap row, character unlocks)`);
   const m = MEASURED.maxed;

@@ -81,8 +81,11 @@ export async function boot(opts = {}) {
       setAttribute() {}, focus() {},
     };
     const cls = new Set();
+    // add/remove take any number of classes, like the DOM. (A one-class
+    // remove left 'title' on the overlay after openMenu's five-class reset,
+    // so the stub disagreed with every browser about which layout was on.)
     e.classList = {
-      add: (c) => cls.add(c), remove: (c) => cls.delete(c),
+      add: (...c) => { for (const x of c) cls.add(x); }, remove: (...c) => { for (const x of c) cls.delete(x); },
       contains: (c) => cls.has(c),
       toggle: (c, on) => { const want = on === undefined ? !cls.has(c) : !!on; want ? cls.add(c) : cls.delete(c); },
     };

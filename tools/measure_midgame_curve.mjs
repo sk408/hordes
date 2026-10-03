@@ -27,7 +27,6 @@ function incomeAt(spend) {
 // next-step a progressing player faces).
 const steps = [];
 for (const row of SHOP_UPGRADES) {
-  if (row.kind === 'elite') continue;   // opt-in challenge rows, not the curve
   for (let lv = 0; lv < row.maxLevel; lv++) steps.push({
     id: row.id, name: row.name, lv: lv + 1, price: upgradeCost(row, lv),
   });

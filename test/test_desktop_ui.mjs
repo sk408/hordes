@@ -49,7 +49,7 @@ const fakeEl = () => {
   };
   const cls = new Set();
   el.classList = {
-    add: (c) => cls.add(c), remove: (c) => cls.delete(c),
+    add: (...c) => { for (const x of c) cls.add(x); }, remove: (...c) => { for (const x of c) cls.delete(x); },
     contains: (c) => cls.has(c),
     toggle: (c, on) => { const want = on === undefined ? !cls.has(c) : !!on; want ? cls.add(c) : cls.delete(c); },
   };
@@ -188,8 +188,31 @@ const chromeHidden = () => touchLayer.style.display === 'none';
   pump(1);
   assert(st.focus !== f2 && elements['tc-focus'].textContent === st.focus,
     'a lever change must reach the badge through the published field in-frame');
+  // The desktop key bar has no pads: its FOCUS and STANCE chips are the
+  // doctrine's on-screen home there (2026-10-03: the bar had neither, so a
+  // desktop player could not see the stance or that G changes it).
+  assert(elements['kb-focus'].textContent === st.focus,
+    'the key bar FOCUS chip reads the published focus (got ' + elements['kb-focus'].textContent + ')');
   key('Tab'); key('Tab'); key('Tab');   // 4 modes -> back to the default
   pump(1);
+  assert(elements['kb-stance'].textContent === st.stance,
+    'the key bar STANCE chip reads the published stance (got ' + elements['kb-stance'].textContent + ')');
+  assert(elements['kb-stance'].style.color === C.HUD.STANCE_COLORS[st.stance],
+    'the STANCE chip wears the stance\'s risk colour (got ' + elements['kb-stance'].style.color + ')');
+  const seenStances = [st.stance];
+  for (let i = 0; i < 2; i++) {
+    key('g');
+    pump(1);
+    assert(!seenStances.includes(st.stance), 'G moves to a new stance (' + st.stance + ')');
+    seenStances.push(st.stance);
+    assert(elements['kb-stance'].textContent === st.stance && elements['tc-stance'].textContent === st.stance,
+      'chip and badge follow G in-frame (' + elements['kb-stance'].textContent + ' vs ' + st.stance + ')');
+    assert(elements['kb-stance'].style.color === C.HUD.STANCE_COLORS[st.stance], 'and so does the colour');
+  }
+  assert(seenStances.slice().sort().join() === 'BALANCED,GREEDY,SAFE', 'the three stances: ' + seenStances.join());
+  key('g');   // 3 stances -> back to the first
+  pump(1);
+  assert(st.stance === seenStances[0], 'the cycle returns to ' + seenStances[0]);
   console.log('doctrine: state.* published every frame, the BUTTON BADGES are the readout (WAVE-27)');
 }
 

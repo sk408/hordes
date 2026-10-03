@@ -29,7 +29,7 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C } from '../src/config.js';
 import { reliefLevelAt, reliefStep, reliefRampRoute } from '../src/relief.js';
 import { stageRelief, STAGE_IDS } from '../src/stages.js';
-import { buildingFootprints, pushOutOfRects, BUILDING_MOVER_R } from '../src/stage_buildings.js';
+import { buildingFootprints, pushOutOfRects, setExtraRects, BUILDING_MOVER_R } from '../src/stage_buildings.js';
 
 const S = suite('test_pilot_nostall');
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
@@ -47,6 +47,14 @@ function quietField() {
   st.enemies.length = 0; st.gems.length = 0; st.itemDrops.length = 0;
   st.spawnTimer = 99999; st.wave.endsAt = st.time + 99999;
   st.wave.bosses = []; st.wave.boss = null; st.portal = null; st.runChest = null;
+  // The run placed its sites, vault and walled yard for the seed it rolled,
+  // and the checks below swap the field (st.groundSeed) under it. They go:
+  // the yard's box stayed where the old field had it, and a mark that landed
+  // inside it was refused by the pilot (rightly: shut, there is no way in),
+  // so the far-mark checks failed about one run in twelve, at random.
+  setExtraRects(st.groundSeed, st.stage, null);
+  st.sites.length = 0;
+  if (st.poi) st.poi.yard = null;
 }
 
 // ---------------------------------------------------------------------------

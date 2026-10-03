@@ -215,9 +215,33 @@ s.check('a character unlock lands in unlockedCharacters', () => {
 });
 
 s.check('achievementForUnlock resolves the reverse lookup', () => {
-  const a = achievementForUnlock('shopRow', 'elite_swift');
-  if (!a || a.id !== 'KILLS_100') throw new Error('reverse lookup failed');
+  const a = achievementForUnlock('shopRow', 'weapon_orbit');
+  if (!a || a.id !== 'FIRST_BOSS') throw new Error('reverse lookup failed');
   if (achievementForUnlock('shopRow', 'not_a_row')) throw new Error('unknown row resolved');
+});
+
+// The elite modifiers are not shop rows (they were until 2026-10-03, at 3000 to
+// 10000 gold, while these trophies handed them out for nothing).
+s.check('the kill trophies bring the elite modifiers as their own unlock kind, not as shop rows', () => {
+  const want = { KILLS_100: 'SWIFT', KILLS_1000: 'SPLITTING', KILLS_10000: 'VAMPIRIC' };
+  for (const [achId, eliteId] of Object.entries(want)) {
+    const a = achievementForUnlock('elite', eliteId);
+    if (!a || a.id !== achId) throw new Error(eliteId + ' is not brought by ' + achId);
+    if (achievementForUnlock('shopRow', 'elite_' + eliteId.toLowerCase())) throw new Error('still a shop row unlock: ' + eliteId);
+  }
+  if (SHOP_UPGRADES.some(r => r.kind === 'elite' || /^elite_/.test(r.id))) throw new Error('an elite row is still in the shop');
+  const p = makeProfile();
+  recordRun(p, { kills: 99 });
+  if (p.unlockedElites.length) throw new Error('granted below the goal: ' + p.unlockedElites.join());
+  if (ownsUnlock(p, { kind: 'elite', id: 'SWIFT' })) throw new Error('ownsUnlock true before the grant');
+  const r = recordRun(p, { kills: 1 });
+  if (!p.unlockedElites.includes('SWIFT')) throw new Error('KILLS_100 did not bring SWIFT');
+  if (!r.unlocks.some(u => u.kind === 'elite' && u.id === 'SWIFT' && u.ok)) throw new Error('the grant is not reported: ' + JSON.stringify(r.unlocks));
+  if (!ownsUnlock(p, { kind: 'elite', id: 'SWIFT' })) throw new Error('ownsUnlock false after the grant');
+  if (p.gold !== makeProfile().gold) throw new Error('a trophy moved gold');
+  recordRun(p, { kills: 900 });
+  if (p.unlockedElites.join() !== 'SWIFT,SPLITTING') throw new Error('KILLS_1000: ' + p.unlockedElites.join());
+  if (auditUnlockTargets().length) throw new Error('audit: ' + auditUnlockTargets().join('; '));
 });
 
 // ---------------------------------------------------------------------------
@@ -248,7 +272,6 @@ s.check('SHOP_MASTER needs every row owned', () => {
   const rows = SHOP_UPGRADES.filter(r => r.id !== 'arcade');
   for (const def of rows) {
     if (def.kind === 'weapon') p.unlockedWeapons.push(def.weaponId);
-    else if (def.kind === 'elite') p.unlockedElites.push(def.eliteId);
     else p.purchased[def.id] = def.maxLevel;
   }
   recordRun(p, {});

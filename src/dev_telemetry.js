@@ -19,9 +19,10 @@
 // BANK gold (profile.gold, out-of-run) — ALL INVESTMENT (permanent build):
 //   1. buyUpgrade (meta.js) — every SHOP_UPGRADES row level: stat lines, the
 //      'slots' ladder, 'arcade', 'escapeskip', 'zapchain'. INVESTMENT.
-//      kind:'weapon'/kind:'elite' rows dispatch into (2)/(3) — same class.
+//      kind:'weapon' rows dispatch into (2) — same class.
 //   2. unlockWeapon (meta.js) — weapon archetype unlocks. INVESTMENT.
-//   3. unlockElite (meta.js) — elite modifier unlocks. INVESTMENT.
+//   3. (retired 2026-10-03: elite modifiers are no longer bought; the kill
+//      trophies bring them.)
 //   4. buyApex (meta.js) — apex prestige items (post-completion). INVESTMENT.
 //   5. buyCharacterUpgrade (meta.js) — per-character rows. INVESTMENT
 //      (character upgrades are named in the rule).
