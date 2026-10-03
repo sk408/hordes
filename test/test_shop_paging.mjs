@@ -79,6 +79,39 @@ S.check('pages fit the height, never split a row, cover every row exactly once',
 });
 
 // ---------------------------------------------------------------------------
+// The phone layout (pure rule + the same planners with its gap).
+// ---------------------------------------------------------------------------
+S.check('a short or narrow viewport is a phone: the shop goes compact there and nowhere else', () => {
+  const yes = [[844, 390], [667, 375], [932, 430], [390, 844], [360, 740], [320, 568], [520, 900], [1200, 500]];
+  const no = [[1280, 720], [1024, 768], [768, 1024], [1920, 1080], [521, 501]];
+  for (const [w, hh] of yes) assert(shop.compact(w, hh) === true, w + 'x' + hh + ' should be compact');
+  for (const [w, hh] of no) assert(shop.compact(w, hh) === false, w + 'x' + hh + ' should not be compact');
+  assert(shop.caps.compactGap < shop.caps.gap, 'the compact gap is the smaller one');
+});
+S.check('the grid rule holds with the compact gap: 3 across at least, never past the cap', () => {
+  const g = shop.caps.compactGap;
+  for (let w = 200; w <= 1000; w += 13) {
+    const p = shop.plan(w, g);
+    assert(p.cols >= shop.caps.minCols && p.cols <= shop.caps.maxCols, 'width ' + w + ': cols ' + p.cols);
+    assert(p.cardW <= shop.caps.cardCap, 'width ' + w + ': card past the cap');
+    assert(p.cardW === Math.max(1, Math.min(Math.floor((w - (p.cols - 1) * g) / p.cols), shop.caps.cardCap)), 'width ' + w + ': the sizing identity');
+  }
+  // The phones measured in real Chrome (tools/capture_shop.mjs): container = viewport - 16.
+  assert(shop.plan(651, g).cols === 3 && shop.plan(828, g).cols === 4 && shop.plan(374, g).cols === 3, 'phone columns');
+});
+S.check('pages hold more rows with the compact gap and short cards: a sideways phone fits three', () => {
+  // 844x390 and 667x375 measured: the grid starts at 38, the band takes 52 + 10.
+  const avail390 = 390 - 38 - 52 - 10, avail375 = 375 - 38 - 52 - 10;
+  const rows = new Array(12).fill(80);
+  assert(shop.chunk(rows, avail390, shop.caps.compactGap)[0].length === 3, 'three rows of 80 in ' + avail390);
+  assert(shop.chunk(rows, avail375, shop.caps.compactGap)[0].length === 3, 'three rows of 80 in ' + avail375);
+  // The full-size page it replaces: grid at 120, a BACK row of 62 + 12, cards of 147: one row.
+  assert(shop.chunk(new Array(12).fill(147), 390 - 120 - 52 - 10 - 74)[0].length === 1, 'the old page held one row');
+  // The gap is honoured: the same rows need more height with the wide gap.
+  assert(shop.chunk([100, 100, 100], 316, 8).length === 1 && shop.chunk([100, 100, 100], 316).length === 2, 'the gap decides the fit');
+});
+
+// ---------------------------------------------------------------------------
 // The stub integration: the screen builds, the sub-lines stay textual, the
 // pager stands down without layout (markup is the contract), the menu resets.
 // ---------------------------------------------------------------------------
@@ -116,6 +149,14 @@ S.check('a real purchase still lands through the paged screen (nothing about a r
   const after = h.elements['ov-cards'].children;
   assert(after.length >= SHOP_UPGRADES.length, 'the screen re-rendered after the buy (' + after.length + ')');
   assert(T.getProfile().gold < 999999 || id >= 0, 'the buy path ran (bank ' + T.getProfile().gold + ')');
+});
+S.check('the heading line carries the parts the phone layout shows and hides', () => {
+  shop.open();
+  const sub = h.elements['ov-sub'].innerHTML;
+  assert(/^<span class="shop-title">SHOP &middot; <\/span>BANK: \d+/.test(sub), 'the title word, then the bank: ' + sub.slice(0, 80));
+  assert(sub.includes('<span class="shop-brk"><br></span>') && sub.includes('<span class="shop-sep"> &middot; </span>'), 'the break and its one-line twin');
+  assert(/<span class="shop-long"> &middot; each weapon or slot you buy adds \+\d+ max HP;[^<]*<\/span>$/.test(sub), 'the long sentence can hide: ' + sub.slice(-120));
+  assert(h.elements['ov-title'].textContent === 'SHOP', 'the heading keeps its text');
 });
 S.check('every other menu opens clean: the pager chrome never leaks', () => {
   shop.open();

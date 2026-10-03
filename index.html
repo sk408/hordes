@@ -980,6 +980,43 @@
     background: rgba(20,20,31,0.82); border: 1px solid #4a4a5e; border-radius: 8px;
     pointer-events: none; white-space: nowrap;
   }
+  /* ---- THE SHOP ON A PHONE (main.js puts .shop-compact on the overlay when
+     the viewport is short or narrow). The full-size page held one or two
+     rows there. Compact: a one-line heading, the long mastery sentence
+     hidden, tighter cards with a smaller gap, and BACK in the bottom band
+     beside the arrows, so a page holds two or three rows. The grid rule is
+     the same (3 across at least, no card wider than the cap). */
+  #overlay .sub .shop-sep, #overlay .sub .shop-title { display: none; }
+  #overlay.shop-compact { padding-top: 6px; }
+  #overlay.shop-compact > h1 { font-size: 18px; margin: 0 0 2px; letter-spacing: 3px; }
+  #overlay.shop-compact .sub { font-size: 12px; margin-bottom: 6px; }
+  #overlay.shop-compact .sub .shop-brk, #overlay.shop-compact .sub .shop-long { display: none; }
+  #overlay.shop-compact .sub .shop-sep { display: inline; }
+  #overlay.shop-compact .cards.shopgrid > .card { padding: 6px 7px 5px; margin-bottom: 0; }
+  #overlay.shop-compact .cards.shopgrid > .card .name { font-size: 12px; letter-spacing: 0; margin-bottom: 2px; }
+  #overlay.shop-compact .cards.shopgrid > .card .desc { font-size: 11px; line-height: 1.2; }
+  #overlay.shop-compact .cards.shopgrid > .card canvas.shop-icon { margin: 0 auto 4px; }
+  /* Held sideways there is width to spare and no height: the icon sits to
+     the left of the text instead of above it, and the heading's word moves
+     into the bank line (the h1 keeps its text for the code that reads it). */
+  @media (orientation: landscape) {
+    #overlay.shop-compact > h1 { display: none; }
+    #overlay.shop-compact .sub .shop-title { display: inline; color: #e8e8f0; font-weight: bold; letter-spacing: 2px; }
+    #overlay.shop-compact .cards.shopgrid > .card { text-align: left; }
+    #overlay.shop-compact .cards.shopgrid > .card canvas.shop-icon { float: left; margin: 1px 7px 2px 0; }
+    #overlay.shop-compact .cards.shopgrid > .card .name::before { content: none; }
+  }
+  /* BACK in the bottom band: a 44px button beside the previous-page arrow.
+     The page indicator moves beside the next-page arrow to make room. */
+  #overlay.shop-compact.shop-low .cards.shopgrid > .card.shop-footer {
+    position: absolute; left: 60px; bottom: 8px; z-index: 5;
+    width: auto; min-width: 84px; max-width: none; height: 44px; padding: 0 14px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+  }
+  #overlay.shop-compact.shop-low .card.shop-footer .desc { display: none; }
+  #overlay.shop-compact.shop-low .card.shop-footer .name { margin: 0; font-size: 13px; }
+  #overlay.shop-compact.shop-low .card.shop-footer .name::before { content: none; }
+  #overlay.shop-compact.shop-low .shop-ind { left: auto; right: 60px; transform: none; bottom: 16px; }
 </style>
 </head>
 <body>

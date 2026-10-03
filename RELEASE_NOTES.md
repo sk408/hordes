@@ -26,6 +26,7 @@
 - New floors, buildings and props on every stage.
 - The hero is easier to find in a crowd: an arrow shows over the head when it is hurt or surrounded.
 - The first shrine of every run stands close to the start.
+- The shop on a phone shows two or three rows a page instead of one (12 cards sideways, 15 upright on a typical phone).
 - Quests that can no longer be finished show as closed. Quest gold now grows with Greed.
 - Many fixes from a full review of the first October release.
 

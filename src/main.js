@@ -786,11 +786,12 @@ fitCanvas();
 // the node harness routes a single handler per type): a viewport change
 // (rotate, desktop window resize, the mobile toolbar collapse) re-chunks the
 // pages — the wanted page is kept, clamped to the new page count. The null
-// pager guards every non-shop screen.
+// pager guards every non-shop screen. The phone layout is decided again
+// first: a rotate keeps it, a window dragged past the limits changes it.
 function onViewportResize() {
   fitCanvas();
   if (state.mode === 'title' || state.mode === 'setup') placeTitleMenu();
-  if (shopPager) finalizeShopPager();
+  if (shopPager) { applyShopGrid(); finalizeShopPager(); }
 }
 window.addEventListener('resize', onViewportResize);
 window.addEventListener('orientationchange', onViewportResize);
@@ -8262,29 +8263,40 @@ const SHOP_IND_H = 26;        // the indicator strip pages must clear
 const SHOP_ARR_W = 46;        // the arrow target's box (44px floor + border), edge-mounted
 const SHOP_ARR_H = 64;        // mid-height arrow (desktop)
 const SHOP_ARR_LOW_H = 44;    // the bottom-band arrow sits at exactly the 44px touch floor
+// THE PHONE LAYOUT. A phone held sideways is short and a phone held upright
+// is narrow; either way the full-size page held one or two rows (three to
+// six cards, 16 pages on a 667-wide screen). On such a viewport the shop goes
+// compact (index.html .shop-compact): a one-line heading, tighter cards with
+// a smaller gap, and BACK in the bottom band beside the arrows instead of on
+// a row of its own. The grid rule is unchanged: at least 3 across, never
+// wider than the cap.
+const SHOP_COMPACT_H = 500;   // a viewport this short ...
+const SHOP_COMPACT_W = 520;   // ... or this narrow is a phone
+const SHOP_COMPACT_GAP = 8;
+function shopCompact(vw, vh) { return vh <= SHOP_COMPACT_H || vw <= SHOP_COMPACT_W; }
 
 // Pure: the column plan for a container availW CSS px wide. Cards size
 // DYNAMICALLY as (availW - (cols-1)*gap)/cols, floored at 3 columns and
 // capped at the current card box — a wide window gains COLUMNS (never bigger
 // cards) and the container's own max-width stops the count at 5, the surplus
 // becoming centred margin; a narrow one shrinks the card to hold 3. Int px.
-function shopGridPlan(availW) {
+function shopGridPlan(availW, gap = SHOP_GAP) {
   const cols = Math.max(SHOP_MIN_COLS,
-    Math.min(SHOP_MAX_COLS, Math.floor((availW + SHOP_GAP) / (SHOP_CARD_CAP + SHOP_GAP))));
-  const w = Math.min(Math.floor((availW - (cols - 1) * SHOP_GAP) / cols), SHOP_CARD_CAP);
+    Math.min(SHOP_MAX_COLS, Math.floor((availW + gap) / (SHOP_CARD_CAP + gap))));
+  const w = Math.min(Math.floor((availW - (cols - 1) * gap) / cols), SHOP_CARD_CAP);
   return { cols, cardW: Math.max(w, 1) };
 }
 
 // Pure: chunk rows (each its tallest card's height, CSS px) into pages that
 // fit availH. A row never splits; every page takes at least one row (a row
 // taller than the viewport pages alone — content is never crushed to fit).
-function shopPageChunk(rowHs, availH) {
+function shopPageChunk(rowHs, availH, gap = SHOP_GAP) {
   const pages = []; let cur = [], used = 0;
   for (let i = 0; i < rowHs.length; i++) {
     const h = rowHs[i];
-    if (cur.length && used + SHOP_GAP + h > availH) { pages.push(cur); cur = []; used = 0; }
+    if (cur.length && used + gap + h > availH) { pages.push(cur); cur = []; used = 0; }
     cur.push(i);
-    used += (cur.length > 1 ? SHOP_GAP : 0) + h;
+    used += (cur.length > 1 ? gap : 0) + h;
   }
   if (cur.length) pages.push(cur);
   return pages;
@@ -8304,10 +8316,10 @@ function clearShopPager() {
   else if (ovCards.className && typeof ovCards.className === 'string') {
     ovCards.className = ovCards.className.replace(/\bshopgrid\b/g, '').trim();
   }
-  // the low-band top-align is shop-scoped with the rest of the chrome
-  if (overlay.classList) overlay.classList.remove('shop-low');
+  // the low-band top-align and the phone layout are shop-scoped with the rest of the chrome
+  if (overlay.classList) overlay.classList.remove('shop-low', 'shop-compact');
   else if (typeof overlay.className === 'string') {
-    overlay.className = overlay.className.replace(/\bshop-low\b/g, '').trim();
+    overlay.className = overlay.className.replace(/\bshop-(low|compact)\b/g, '').trim();
   }
 }
 
@@ -8316,14 +8328,20 @@ function clearShopPager() {
 // DOMs (no clientWidth) fall back to viewSize() — the abbreviation decision
 // stays deterministic in the node suite.
 function applyShopGrid() {
+  const view = viewSize();
   const w = (typeof ovCards.clientWidth === 'number' && ovCards.clientWidth > 0)
-    ? ovCards.clientWidth : Math.max(0, viewSize().vw - 16);
-  const plan = shopGridPlan(w);
+    ? ovCards.clientWidth : Math.max(0, view.vw - 16);
+  // The phone layout goes on with the grid class, before the rows are built.
+  const compact = shopCompact(view.vw, view.vh);
+  const gap = compact ? SHOP_COMPACT_GAP : SHOP_GAP;
+  if (overlay.classList) overlay.classList.toggle('shop-compact', compact);
+  const plan = shopGridPlan(w, gap);
   if (ovCards.classList) ovCards.classList.add('shopgrid');
   if (ovCards.style && typeof ovCards.style.setProperty === 'function') {
     ovCards.style.setProperty('--shop-cols', String(plan.cols));
+    ovCards.style.setProperty('--shop-gap', gap + 'px');
   }
-  return plan;
+  return { ...plan, compact, gap };
 }
 
 // After the browser's layout pass (rAF — it runs before the first paint, so
@@ -8344,7 +8362,9 @@ function finalizeShopPager() {
   const footer = all.filter(isFooter);
   const cards = all.filter(c => !isFooter(c));
   if (!cards.length) return;    // nothing to page — the footer alone is the markup
-  const plan = shopGridPlan(ovCards.clientWidth);
+  const compact = !!(overlay.classList && overlay.classList.contains('shop-compact'));
+  const gap = compact ? SHOP_COMPACT_GAP : SHOP_GAP;
+  const plan = shopGridPlan(ovCards.clientWidth, gap);
   // uniform card widths -> DOM order fills rows of exactly `cols` (the last
   // row may be short); a row's height is its tallest card (flex stretch).
   const rows = [];
@@ -8360,7 +8380,8 @@ function finalizeShopPager() {
   // mid-height arrows (the capped container centres with margin, no overlap).
   const firstRect = (typeof cards[0].getBoundingClientRect === 'function')
     ? cards[0].getBoundingClientRect() : null;
-  const low = firstRect ? firstRect.left < SHOP_ARR_W + 8 : false;
+  // The phone layout always uses the bottom band (BACK lives there).
+  const low = compact || (firstRect ? firstRect.left < SHOP_ARR_W + 8 : false);
   // top-align with the bottom band (the safe-centre rule would push the last
   // row back down under the arrows the page math already cleared).
   if (overlay.classList) overlay.classList.toggle('shop-low', low);
@@ -8371,11 +8392,15 @@ function finalizeShopPager() {
   // the indicator strip alone — the last row must clear the real chrome.
   // The footer row (BACK) sits under every page, so its height is not
   // available to the paged rows.
-  const footH = footer.length ? Math.max(...footer.map(c => c.offsetHeight || 0)) + SHOP_GAP : 0;
+  // In the phone layout BACK sits IN the bottom band beside the arrows
+  // (index.html .shop-compact.shop-low .shop-footer), so it takes no height
+  // from the pages.
+  const footInBand = compact && low;
+  const footH = footer.length && !footInBand ? Math.max(...footer.map(c => c.offsetHeight || 0)) + gap : 0;
   const availH = Math.max(60, overlay.clientHeight - (ovCards.offsetTop || 0)
     - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10 - footH);
-  const pages = shopPageChunk(rows.map(r => r.h), availH);
-  shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low };
+  const pages = shopPageChunk(rows.map(r => r.h), availH, gap);
+  shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low, compact };
   shopPageGoto(shopPager.page);
 }
 
@@ -8616,9 +8641,12 @@ function showShop() {
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
   // The bank, and the mastery rule every weapon and slot row feeds.
-  ovSub.innerHTML = `BANK: ${profile.gold}<br>${masteryLine(profile)}` +
-    ` &middot; each weapon or slot you buy adds +${MASTERY.HP_PER_RANK} max HP;` +
-    ` every ${MASTERY.RANKS_PER_LEVEL === 2 ? '2nd' : MASTERY.RANKS_PER_LEVEL + 'th'} one starts all weapons a level higher`;
+  // The phone layout shows the bank and the mastery line on one row and
+  // hides the long sentence (.shop-brk / .shop-sep / .shop-long, index.html);
+  // held sideways the heading's word joins that row too (.shop-title).
+  ovSub.innerHTML = `<span class="shop-title">SHOP &middot; </span>BANK: ${profile.gold}<span class="shop-brk"><br></span><span class="shop-sep"> &middot; </span>${masteryLine(profile)}` +
+    `<span class="shop-long"> &middot; each weapon or slot you buy adds +${MASTERY.HP_PER_RANK} max HP;` +
+    ` every ${MASTERY.RANKS_PER_LEVEL === 2 ? '2nd' : MASTERY.RANKS_PER_LEVEL + 'th'} one starts all weapons a level higher</span>`;
   for (const key of Object.keys(shopIconCanvases)) delete shopIconCanvases[key];
   // SHOP PAGING: the grid class + cols var go on BEFORE the rows are built
   // (first layout sizes the cards; the pager then measures true heights).
@@ -14091,7 +14119,10 @@ export const __TEST = {
     plan: shopGridPlan,
     chunk: shopPageChunk,
     caps: { gap: SHOP_GAP, cardCap: SHOP_CARD_CAP, minCols: SHOP_MIN_COLS,
-            maxCols: SHOP_MAX_COLS, indH: SHOP_IND_H },
+            maxCols: SHOP_MAX_COLS, indH: SHOP_IND_H, compactGap: SHOP_COMPACT_GAP,
+            compactH: SHOP_COMPACT_H, compactW: SHOP_COMPACT_W },
+    compact: shopCompact,
+    isCompact: () => !!(shopPager && shopPager.compact),
     active: () => !!shopPager,
     page: () => (shopPager ? shopPager.page : null),
     pages: () => (shopPager ? shopPager.pages.length : null),

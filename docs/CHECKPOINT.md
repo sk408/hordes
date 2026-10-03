@@ -1,58 +1,47 @@
-# HORDES overhaul — checkpoint (2026-10-03, end of the night session)
+# HORDES overhaul — checkpoint (2026-10-03, after the world update shipped)
 
 ## Where everything is
 | What | Where | State |
 |---|---|---|
-| Live game (players, galaxy.click) | GitHub `sk408/hordes` `main` = `df10edc` | October 2 release + pilot redraw + portal fix + save guard. **Nothing was pushed tonight.** Previous live tagged `pre-overhaul-2026-10`; old game at `/classic/`. |
-| Release branch | `D:\hordes-release`, branch `release/overhaul-1` | Same as `main`. Hotfixes only; then `git push github HEAD:refs/heads/main`. |
-| Working branch | `D:\hordes-claude`, branch `claude/overhaul` = `823dabd` plus checkpoint commits (docs only), tree clean | All unreleased work. |
-| Test build | https://claude.stevesinfo.com:8443/hordes-claude/ (same commit as the working branch) | Follows the working branch; the update steps are in the local checkpoint. |
-| Plan | `docs/OVERHAUL_PLAN.md` on the working branch | Done: M0–M3, M2b, M3b (escape cinematic), M5a (boss rules, travel), M5b. Left: M4 engine, M5 content, M6 release candidate. |
+| Live game (players, galaxy.click) | GitHub `sk408/hordes` `main` = `349e83b` "The world update (2026-10-03)" | Shipped 2026-10-03 about 14:10 UTC with Steve's OK. Checked on the live site in headless Chrome: a fresh profile plays; a v11 save migrates, keeps its reserve and shows the note; no console errors. |
+| Rollback points | tags `pre-world-update-2026-10` (= `df10edc`, the October 2 release) and `pre-overhaul-2026-10` | Both pushed to GitHub. The old pre-overhaul game is still at `/classic/`. |
+| Release branch | `D:\hordes-release`, branch `release/overhaul-1` = `349e83b` | One squashed commit on top of `df10edc` with the working branch's exact tree. Hotfixes: commit here, `git push github HEAD:refs/heads/main`, and carry the fix to `claude/overhaul`. |
+| Working branch | `D:\hordes-claude`, branch `claude/overhaul` | Same content as `main` plus checkpoint commits (docs only). Its history is not on GitHub (it holds server details in old checkpoint commits): release by squashing, never by pushing this branch. |
+| Test build | https://claude.stevesinfo.com:8443/hordes-claude/ | Follows `claude/overhaul`; the update steps are in the local checkpoint. |
+| Plan | `docs/OVERHAUL_PLAN.md` | Done: M0–M3, M2b, M3b, M5a, M5b. Left: M4 engine, M5 content, M6. |
 
-## What is on `claude/overhaul` and not live
-- Idle layer: background play, auto-continue, away summary, the camp (save v12).
-- World: sites, fog and waypoints, EXPLORE pilot (default), elevated terrain, vault, yard, secrets, quests and chains (save v13); world art makeover.
-- All 41 review findings fixed, plus tonight's work below.
+## What shipped in the world update
+- The world: sites, fog and waypoints, EXPLORE pilot (default), high ground, vault, yard, secrets, quests and chains; world art.
+- Idle: background play, auto-continue, away summary, the camp.
+- The escape cinematic (replaces the minigame). Escape Writ triples the escape gold.
+- Boss rules (six rules from wave 2, Rulebreaker joker). Travel (after waves 2 and 4 the portal leads to another stage).
+- Removed: the heat dial (RAISE THE STAKES) and the run modifiers (ONE WEAPON, NO POTIONS). MIMIC FEAST is a joker for the eight glyphs. Neither system was stored in a save.
+- Kept from heat, renamed **wrath** (`src/wrath.js`): enemies toughen as the run fills item slots and evolves weapons. Same numbers. A 16-seed sim with it off ran five times as long by runs 11–15, so it cannot go without a full re-tune.
+- Quest gold takes the shop's Greed. Hero arrow and solid ring in a crowd. Closed quests. First shrine near the start.
+- Saves: v10, v11 and v12 saves migrate to v13 (checked in real Chrome and on the live site). The first load of an older save keeps its raw text under `hordes_profile_before_v13` (rollback insurance; nothing reads it). The what's-new note is `2026-10-03`; a save an older build wrote gets it even when played after the ship date.
 
-## Tonight (2026-10-03)
-Verification and fixes
-- Camp clock fix re-verified by probe; `d6d14f9` a built building whose stamp was lost starts counting.
-- EXPLORE had lost its early blessing after the release fixes (median of runs 11–15: 466 → 235 s; bisected to `3c8043f`). `5c6ee27`: the first shrine of every run stands 200–300 px from the start.
-- Real Chrome: a v11 and a v10 save both load cleanly on the working branch (refund paid once, backup intact, no errors).
-- `f3c8895` save restore keeps the save with more runs played; quest tracker hidden during the guided tutorial; the away summary's hint removed (it covered the heading on a phone).
-- `c404d5b` quests that can no longer be finished show CLOSED.
-- `a3692a2` the hero stays findable: only the body blinks after a hit, the white hit flash is solid, a cyan arrow shows over the head when hurt or surrounded.
-- What's-new note and `RELEASE_NOTES.md` written for the next release ("the world update").
+## Checks at ship time
+- Suite: 216 files, 216 green at `--par 4`.
+- Same-seed career sim before and after the removal: identical, seed for seed.
+- Real Chrome: a whole run (escape cinematic, rules, two travels, the maw, wave 6) on desktop and phone size, no console errors (`tools/soak_run.mjs`).
+- Layouts checked: pre-run screen (five cards) on two phone sizes and desktop; what's-new note on desktop and phone.
 
-New
-- **Escape cinematic** (plan M3b, merge `ed589ab`): a 9 s pseudo-3D chase replaces the escape minigame. The run's pilot runs at the camera, the enemy types met in the run close in, the wave boss rises over the horizon and lunges as he dives through the portal. Skippable after 0.4 s; always pays; instant in a hidden tab or an unattended run; still card under reduced motion. Escape Writ (same shop row) now adds 50%. Auto-continued runs bank it at their 50% cut. `src/escape_cine.js`, `src/escape_cine_art.js`, `src/escape_payout.js`, `test/test_escape_cine.mjs` (32 checks), frames in `docs/art/escape/`.
-- **Boss rules** (plan M5a, `docs/BOSS_RULES.md`): from wave 2 each wave boss brings one of six named rules and a stated reward. Wave 1 is unchanged. New joker: Rulebreaker.
-- **Travel** (plan M5a, `docs/TRAVEL.md`): after waves 2 and 4 the portal leads on to another stage (new ground, sites and enemies; the build, quests and loot carry over). CONTINUE travels, STAY HERE keeps the field.
-- `tools/soak_run.mjs`: a whole run in real Chrome, end to end. Desktop and phone runs of 14 game minutes: no console errors.
+## For Steve to look at
+1. Play the live build: the escape cinematic in motion and with sound (never checked by ear), a run to wave 3+ for rules and travel.
+2. Boss rules are a small net gain for the player (runs 11–15 about a fifth longer). Left as is.
+3. Wrath (see above) is a hidden tax on evolving weapons and filling item slots. It is now named in the reference (YOUR BUILD: WRATH) and on the text HUD. Removing it is a balance project.
+4. The travel intermission has eight cards now that the stakes card is gone (it fits a phone).
 
-Numbers
-- Suite: 218 files; 217–218 green at `--par 4` (the reds are load flakes that pass alone).
-- Career sims, 16 seeds: boss rules leave runs 1–10 unchanged and lengthen runs 11–15 by about a fifth (225 → 271/274 s); travel changes nothing measurable.
-
-## For Steve to decide
-1. **Ship `claude/overhaul` to `main`?** Before pushing: set `WHATS_NEW.id` and `dateMs` in `src/main.js` to the ship day.
-2. **Boss rules are a small net gain** for the player (rewards outweigh the rules). Fine as is, or trim the rewards (`BOSS_RULES` in `src/boss_rules.js`).
-3. **Escape Writ** costs 15,000 and now adds 50% to the escape gold (best run gold / 15, once per run): slow to pay back. Cheaper, or a bigger bonus?
-4. **Heat and the challenge modifiers** are still in the game; the plan had boss rules replace them. Removing them touches saves and trophies.
-5. **Quest gold** still skips the shop gold multiplier, rampage and heat.
-6. The travel intermission has nine cards; on a phone the ninth scrolls. The three chest cards could become one.
-
-## Next steps
-1. Steve plays the test build: the escape cinematic in motion and with sound (not checked by ear), a run to wave 3+ for rules and travel.
-2. With his OK: ship to `main`.
-3. Then M4 engine (sim extraction, fixed timestep, seeded randomness, mode state machine), M5 content (enemy behaviours, stage hazards and signature bosses, character rules, relics), M6 release candidate.
+## Next
+- M4 engine (sim extraction, fixed timestep, seeded randomness, mode state machine), M5 content (enemy behaviours, stage hazards and signature bosses, character rules, relics), M6.
+- Watch for player feedback on galaxy.click after the update.
 
 ## Still open (not blockers)
 - A hero inside the opened yard with a horde at the gate still dies fairly often.
 - Background play was not checked in a real hidden browser tab.
 - Contrast margins on the three bright stages are inside the tested limits but thin.
-- Pyraxis keeps her distance: a weak build takes about 100 s to kill her on wave 4.
-- Load flakes (pass alone): test_camera_deadzone, test_audit_m3, test_e2_horde, test_terrain, test_m3_first_minutes, test_frost_card, test_pilot_nostall.
+- Pyraxis keeps her distance: an unupgraded build takes about 100 s to kill her on wave 4.
+- Load flakes (pass alone): test_camera_deadzone, test_audit_m3, test_e2_horde, test_terrain, test_m3_first_minutes, test_frost_card, test_pilot_nostall, test_perks.
 
 ## Standing rules (also in Claude's memory)
 - Opus 5.5; workflows only when Steve opts in; at most one subagent at a time. Keep two CPU cores free (tests `--par 4`, sims `--concurrency 8`, one headless Chrome at a time). Never open windows on Steve's screen.
