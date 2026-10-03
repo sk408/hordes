@@ -44,13 +44,18 @@ for (const id of TYPE_IDS) {
   ok(!!s, `SPRITES.${id} exists`);
   if (!s) continue;
   checkGrids(id, s.frames, s.palette);
-  ok(s.frames.length === 2, `${id}: exactly 2 walk frames`);
+  // Art pass (Oct 2026): walkers cycle A B A C (4 entries), the warlock
+  // sways and the tick scuttles on 2.
+  ok(s.frames.length >= 2 && s.frames.length <= 4, `${id}: 2-4 walk frames (${s.frames.length})`);
+  ok(s.frames.every(f => f.length === s.frames[0].length && f[0].length === s.frames[0][0].length),
+     `${id}: every frame shares the box`);
   ok(s.box.w === s.frames[0][0].length && s.box.h === s.frames[0].length,
      `${id}: box matches pixels (${s.box.w}x${s.box.h})`);
   ok(s.anchor.x === Math.floor(s.box.w / 2) && s.anchor.y === Math.floor(s.box.h / 2),
      `${id}: anchor is sprite center`);
-  ok(s.box.w >= 8 && s.box.w <= 16 && s.box.h >= 8 && s.box.h <= 16,
-     `${id}: roughly 10-16px (${s.box.w}x${s.box.h})`);
+  // Art pass: sized to the type's collision box (tick 5px .. colossus 26px).
+  ok(s.box.w >= 6 && s.box.w <= 24 && s.box.h >= 6 && s.box.h <= 24,
+     `${id}: 6-24px (${s.box.w}x${s.box.h})`);
 }
 
 console.log('ARCHETYPES:');
@@ -65,11 +70,14 @@ console.log('ARCHETYPES:');
      && SPRITE_ARCHETYPES.STICK_FIGURE === SPRITES.CHASER
      && SPRITE_ARCHETYPES.TICK === SPRITES.TICK,
      'all 8 named archetypes map onto the typeId sprites');
-  // TICK is a recolor: same grids as BAT, different palette.
-  ok(SPRITES.TICK.frames === SPRITES.SWARMER.frames
-     && SPRITES.TICK.palette !== SPRITES.SWARMER.palette
-     && SPRITES.TICK.palette[1] !== SPRITES.SWARMER.palette[1],
-     'TICK = BAT grids with a distinct recolor palette');
+  // Art pass: TICK has its own silhouette now (no longer a bat recolour).
+  ok(SPRITES.TICK.frames !== SPRITES.SWARMER.frames
+     && SPRITES.TICK.box.w < SPRITES.SWARMER.box.w,
+     'TICK has its own, smaller grids (not the bat)');
+  // Every type has a distinct silhouette, not just a palette.
+  const sil = (s) => s.frames[0].map(r => r.map(v => v ? 1 : 0).join('')).join('/');
+  ok(new Set(TYPE_IDS.map(id => sil(SPRITES[id]))).size === TYPE_IDS.length,
+     'every enemy type has its own silhouette');
 }
 
 console.log('WALK FRAMES DIFFER:');

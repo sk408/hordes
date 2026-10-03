@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HORDES art sheet</title>
+<style>body{margin:0;background:#15121c;color:#ccc;font:11px monospace}canvas{display:block;image-rendering:pixelated}</style>
+<canvas id="c"></canvas>
+<script type="module">
+// HORDES — contact sheet of every pixel-grid sprite (art-pass review tool).
+// tools/art_sheet.mjs screenshots it; ?set=actors|world|icons picks a page,
+// ?scale=N the enlarged block size. Each sprite is shown at 1x on a ground
+// swatch and enlarged, all frames side by side, labelled.
+const q = new URLSearchParams(location.search);
+const SET = q.get('set') || 'actors';
+const Z = +(q.get('scale') || 4);
+const W = +(q.get('w') || 1600);
+
+const norm = (g) => g.map(r => typeof r === 'string' ? [...r].map(ch => ch === '.' ? 0 : +ch || 0) : r);
+const isGrid = (g) => Array.isArray(g) && g.length > 0 && (Array.isArray(g[0]) || typeof g[0] === 'string') && g[0].length > 0 && (typeof g[0][0] === 'number' || typeof g[0] === 'string');
+function collect(label, o, out, depth = 0, seen = new Set()) {
+  if (!o || typeof o !== 'object' || seen.has(o) || depth > 3) return;
+  seen.add(o);
+  if (o.palette && (isGrid(o.grid) || (Array.isArray(o.frames) && isGrid(o.frames[0])))) {
+    out.push({ label, frames: (o.frames || [o.grid]).map(norm), palette: o.palette });
+    return;
+  }
+  if (o.palette && o.rects) { out.push({ label, building: o }); return; }
+  for (const k of Object.keys(o)) collect(label + '.' + k, o[k], out, depth + 1, seen);
+}
+
+async function items() {
+  const out = [];
+  const add = async (mod, names) => {
+    const m = await import(mod);
+    for (const n of names || Object.keys(m)) collect(n, m[n], out);
+  };
+  if (SET === 'actors') {
+    const cs = await import('/src/character_sprites.js');
+    collect('PILOT', cs.CHARACTER_SPRITES, out);
+    const es = await import('/src/enemy_sprites.js');
+    collect('ENEMY', es.ENEMY_SPRITES, out);
+  } else if (SET === 'bosses') {
+    const b = await import('/src/bosses.js');
+    collect('BOSS', b.BOSS_SPRITES, out);
+    collect('MIDBOSS', b.MIDBOSS, out);
+    const s = await import('/src/sprites.js');
+    collect('BOSS_SPRITE', s.BOSS_SPRITE, out);
+    const f = await import('/src/final_boss.js');
+    collect('MAW', f.FINAL_BOSS_SPRITE, out);
+  } else if (SET === 'menu') {
+    await add('/src/art/portraits.js', ['CHARACTER_PORTRAITS']);
+    await add('/src/art/portal.js');
+  } else if (SET === 'world') {
+    const sa = await import('/src/sites_art.js');
+    for (const k of Object.keys(sa.SITE_GRIDS)) out.push({ label: 'SITE.' + k, frames: [sa.SITE_GRIDS[k]], palette: null, sitePal: true, id: k });
+    await add('/src/stage_props.js', ['STAGE_PROPS']);
+    await add('/src/camp_art.js', ['CAMP_ART']);
+    await add('/src/art/chests.js', ['CHEST_ART']);
+    await add('/src/art/arches.js');
+  } else if (SET === 'buildings') {
+    await add('/src/stage_buildings.js', ['STAGE_BUILDINGS']);
+  } else if (SET === 'icons') {
+    await add('/src/art/item_icons.js');
+    await add('/src/sprites.js', ['WEAPON_ICONS', 'WEATHER_ICONS', 'FLAME']);
+  }
+  return out;
+}
+
+const ONLY = q.get('only');
+const list = (await items()).filter(it => !ONLY || ONLY.split(',').some(o => it.label.includes(o)));
+// Site grids keep their palette inside sites_art's paint path; borrow a neutral one.
+const SITE_PAL = { 1: '#2a2630', 2: '#8a8296', 3: '#ffd75e', 4: '#b88ae8', 5: '#ffffff', 6: '#4a4452', 7: '#ff5a3c', 8: '#5ad0ff', 9: '#e0e0e0' };
+const c = document.getElementById('c');
+const g = c.getContext('2d');
+// layout pass
+let x = 8, y = 8, rowH = 0; const pos = [];
+for (const it of list) {
+  let w, h;
+  if (it.building) { w = it.building.w * 2 + it.building.w + 24; h = it.building.h * 2 + 16; }
+  else {
+    const fw = it.frames[0][0].length, fh = it.frames.reduce((m, f) => Math.max(m, f.length), 0);
+    w = Math.max(fw + 8 + it.frames.length * (fw * Z + 4), it.label.length * 7) + 16;
+    h = Math.max(fh * Z, fh * 2 + 12) + 18;
+  }
+  if (x + w > W - 8) { x = 8; y += rowH + 6; rowH = 0; }
+  pos.push([x, y, w, h]); x += w; rowH = Math.max(rowH, h);
+}
+c.width = W; c.height = y + rowH + 16;
+g.fillStyle = '#15121c'; g.fillRect(0, 0, c.width, c.height);
+const paint = (grid, pal, ox, oy, s) => {
+  for (let ry = 0; ry < grid.length; ry++) for (let rx = 0; rx < grid[ry].length; rx++) {
+    const v = grid[ry][rx]; if (v) { g.fillStyle = pal[v] || '#f0f'; g.fillRect(ox + rx * s, oy + ry * s, s, s); }
+  }
+};
+list.forEach((it, i) => {
+  const [px, py, pw, ph] = pos[i];
+  g.fillStyle = '#e8e0f0'; g.font = '11px monospace'; g.fillText(it.label, px, py + 10);
+  if (it.building) {
+    const b = it.building;
+    for (const s of [1, 2]) {
+      const bx = s === 1 ? px : px + b.w + 16;
+      g.fillStyle = '#3c5a34'; g.fillRect(bx, py + 14, b.w * s, b.h * s);
+      g.save(); g.translate(bx, py + 14); g.scale(s, s);
+      for (const [dx, dy, w, h, k] of b.rects) { g.fillStyle = b.palette[k]; g.fillRect(dx, dy, w, h); }
+      g.restore();
+    }
+    return;
+  }
+  const pal = it.palette || SITE_PAL;
+  const fw = it.frames[0][0].length, fh = it.frames[0].length;
+  // 1x on two ground swatches (grass / dark)
+  g.fillStyle = '#3c5a34'; g.fillRect(px, py + 14, fw + 6, fh + 4);
+  paint(it.frames[0], pal, px + 3, py + 16, 1);
+  g.fillStyle = '#2a2433'; g.fillRect(px, py + 18 + fh + 2, fw + 6, fh + 4);
+  paint(it.frames[1] || it.frames[0], pal, px + 3, py + 18 + fh + 4, 1);
+  let fx = px + fw + 12;
+  for (const f of it.frames) {
+    g.fillStyle = '#2b3a2a'; g.fillRect(fx - 1, py + 13, fw * Z + 2, f.length * Z + 2);
+    paint(f, pal, fx, py + 14, Z); fx += fw * Z + 4;
+  }
+});
+window.__done = list.length;
+</script>
