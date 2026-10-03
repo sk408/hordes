@@ -17,6 +17,7 @@ import { BOSS_SPRITES } from './bosses.js';
 // G16: the detailed portal art is CONSUMED here, never re-authored (its
 // owner is the A1 art track; test/test_art_lint.mjs gates the file).
 import { PORTAL_ART, PORTAL_PALETTE, PORTAL_BOX, portalFrame } from './art/index.js';
+import { CHARACTER_SPRITES } from './character_sprites.js';
 
 // ---------- timeline ----------
 // WAVE-9B/1 (Sk408: "slow it to about 70 percent"): the cinematic plays at
@@ -88,35 +89,10 @@ const BLOW_T = 650;                  // killing blow lands (ms into KILL)
 
 // Hero grids: adapted copies of render.js PLAYER_SPRITE / PLAYER_SPRITE_WALK
 // (same pair intro.js carries; 12x12, 0 = transparent).
-const HERO_A = [
-  [0,0,0,3,3,3,3,3,3,0,0,0],
-  [0,0,3,3,2,2,2,2,3,3,0,0],
-  [0,0,3,2,2,1,1,2,2,3,0,0],
-  [0,0,3,2,1,1,1,1,2,3,0,0],
-  [0,0,0,3,2,1,1,2,3,0,0,0],
-  [0,0,0,3,3,2,2,3,3,0,0,0],
-  [0,0,0,3,3,4,4,3,3,0,0,0],
-  [0,0,3,3,4,4,4,4,3,3,0,0],
-  [0,3,3,4,4,4,4,4,4,3,3,0],
-  [0,3,4,4,4,4,4,4,4,4,3,0],
-  [0,0,3,4,4,0,0,4,4,3,0,0],
-  [0,0,0,3,3,0,0,3,3,0,0,0],
-];
-const HERO_B = [                     // walk frame: feet splay 1px
-  [0,0,0,3,3,3,3,3,3,0,0,0],
-  [0,0,3,3,2,2,2,2,3,3,0,0],
-  [0,0,3,2,2,1,1,2,2,3,0,0],
-  [0,0,3,2,1,1,1,1,2,3,0,0],
-  [0,0,0,3,2,1,1,2,3,0,0,0],
-  [0,0,0,3,3,2,2,3,3,0,0,0],
-  [0,0,0,3,3,4,4,3,3,0,0,0],
-  [0,0,3,3,4,4,4,4,3,3,0,0],
-  [0,3,3,4,4,4,4,4,4,3,3,0],
-  [0,3,4,4,4,4,4,4,4,4,3,0],
-  [0,0,3,4,4,0,0,0,4,4,3,0],
-  [0,0,3,3,0,0,0,3,3,0,0,0],
-];
-const HERO_PALETTE = { 1: '#ffe9a8', 2: '#e8b04a', 3: '#7a4a1e', 4: '#3a6fd8' };
+// The hero is the Knight pilot's field sprite (src/character_sprites.js).
+const HERO_A = CHARACTER_SPRITES.KNIGHT.frames[0];
+const HERO_B = CHARACTER_SPRITES.KNIGHT.frames[1];
+const HERO_PALETTE = CHARACTER_SPRITES.KNIGHT.palette;
 const RISE_COLORS = ['#7ec8ff', '#b8e0ff'];   // dissolve motes (not hero colors)
 
 // Portal: the DETAILED gate (src/art/portal.js) behind the boss pile, drawn
@@ -313,7 +289,7 @@ export function render(g, tRaw) {
     // hero's rectangle does not move — this is body language at the gate.
     if (pauseTellOn(t)) {
       g.fillStyle = HERO_PALETTE[1];
-      g.fillRect(hx + 12 * pxh, heroTop + 5 * pxh, pxh, pxh);
+      g.fillRect(hx + HERO_A[0].length * pxh, heroTop + 5 * pxh, pxh, pxh);
     }
   }
   // Rising dissolve motes streaming off where he stands (DISSOLVE only —

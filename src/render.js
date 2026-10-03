@@ -1922,17 +1922,19 @@ export class Renderer {
       ? pilotSpr.frames[walkFrame ? 1 : 0]
       : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
     const pilotPalette = pilotSpr ? pilotSpr.palette : PALETTE;
+    // Pilot grids are 16x16 (the generic fallback 12x12): centre on the hero.
+    const pilotHalfW = Math.floor(pilotGrid[0].length / 2), pilotHalfH = Math.floor(pilotGrid.length / 2);
     if (cached) {
       // The hero: a pale pool underfoot so the eye finds them in a crowd,
       // outline + rim + shadow baked, white silhouette for a beat when hurt.
       const hurt = state.feel && state.feel.hurtT > 0;
-      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 11, Math.round(pl.x - cam.x), Math.round(pl.y - cam.y) + 6, 0.75);
-      blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - 6), Math.round(pl.y - cam.y - 6),
+      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 11, Math.round(pl.x - cam.x), Math.round(pl.y - cam.y) + pilotHalfH, 0.75);
+      blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - pilotHalfW), Math.round(pl.y - cam.y - pilotHalfH),
         actorStyle(hurt, false, '#f4f8ff'));
     } else {
       this.drawGrid(g, pilotGrid, pilotPalette,
-        Math.round(pl.x - cam.x - 6),
-        Math.round(pl.y - cam.y - 6));
+        Math.round(pl.x - cam.x - pilotHalfW),
+        Math.round(pl.y - cam.y - pilotHalfH));
     }
     g.globalAlpha = 1;
     // FIRST-RUN PROLOGUE — the shield's rainbow pulse: six slowly-spinning

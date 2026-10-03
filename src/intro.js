@@ -15,6 +15,7 @@
 // INTRO_TEST is a read-only test seam (NOT part of the frozen API).
 
 import { SPRITE_ARCHETYPES } from './sprites.js';
+import { CHARACTER_SPRITES } from './character_sprites.js';
 
 // ---------- timeline ----------
 export const INTRO_DURATION = 7000;   // ms
@@ -63,35 +64,10 @@ const BG = '#0e0e16', GROUND = '#15151f', GROUND_EDGE = '#1e1e2c';
 
 // Hero grids: adapted copies of render.js PLAYER_SPRITE / PLAYER_SPRITE_WALK
 // (12x12, 0 = transparent, digits index into HERO_PALETTE).
-const HERO_A = [
-  [0,0,0,3,3,3,3,3,3,0,0,0],
-  [0,0,3,3,2,2,2,2,3,3,0,0],
-  [0,0,3,2,2,1,1,2,2,3,0,0],
-  [0,0,3,2,1,1,1,1,2,3,0,0],
-  [0,0,0,3,2,1,1,2,3,0,0,0],
-  [0,0,0,3,3,2,2,3,3,0,0,0],
-  [0,0,0,3,3,4,4,3,3,0,0,0],
-  [0,0,3,3,4,4,4,4,3,3,0,0],
-  [0,3,3,4,4,4,4,4,4,3,3,0],
-  [0,3,4,4,4,4,4,4,4,4,3,0],
-  [0,0,3,4,4,0,0,4,4,3,0,0],
-  [0,0,0,3,3,0,0,3,3,0,0,0],
-];
-const HERO_B = [                     // walk frame: feet splay 1px
-  [0,0,0,3,3,3,3,3,3,0,0,0],
-  [0,0,3,3,2,2,2,2,3,3,0,0],
-  [0,0,3,2,2,1,1,2,2,3,0,0],
-  [0,0,3,2,1,1,1,1,2,3,0,0],
-  [0,0,0,3,2,1,1,2,3,0,0,0],
-  [0,0,0,3,3,2,2,3,3,0,0,0],
-  [0,0,0,3,3,4,4,3,3,0,0,0],
-  [0,0,3,3,4,4,4,4,3,3,0,0],
-  [0,3,3,4,4,4,4,4,4,3,3,0],
-  [0,3,4,4,4,4,4,4,4,4,3,0],
-  [0,0,3,4,4,0,0,0,4,4,3,0],
-  [0,0,3,3,0,0,0,3,3,0,0,0],
-];
-const HERO_PALETTE = { 1: '#ffe9a8', 2: '#e8b04a', 3: '#7a4a1e', 4: '#3a6fd8' };
+// The hero is the Knight pilot's field sprite (src/character_sprites.js).
+const HERO_A = CHARACTER_SPRITES.KNIGHT.frames[0];
+const HERO_B = CHARACTER_SPRITES.KNIGHT.frames[1];
+const HERO_PALETTE = CHARACTER_SPRITES.KNIGHT.palette;
 
 // Horde silhouettes: sprites.js grids, monochrome-remapped so the mass reads
 // as one dark wave; only "eye" indices keep a hot color (red glints).

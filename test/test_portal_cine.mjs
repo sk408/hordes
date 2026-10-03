@@ -13,6 +13,7 @@ import {
   render, isDone, phaseAt, PHASES, CINE_DURATION, CINE_SPEED, CINE_TEST,
 } from '../src/portal_cine.js';
 import { PORTAL_CUES } from '../src/audio.js';
+import { CHARACTER_SPRITES } from '../src/character_sprites.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -154,7 +155,7 @@ console.log('PAUSE (G16 NEW — the hero HOLDS at the threshold):');
   // scene [2080,2340) — the SAME tell frame): not one pixel moves.
   const heroSig = (t) => {
     const calls = renderAt(t);
-    const heroPal = ['#ffe9a8', '#e8b04a', '#7a4a1e', '#3a6fd8'];
+    const heroPal = Object.values(CHARACTER_SPRITES.KNIGHT.palette);
     return calls.filter(c => heroPal.includes(c.style))
       .map(c => `${c.style}|${c.x},${c.y},${c.w},${c.h}`).join(';');
   };
@@ -174,9 +175,9 @@ console.log('PAUSE (G16 NEW — the hero HOLDS at the threshold):');
   // edge, present on one tell frame, gone on the next.
   const tellOn = renderAt(3100).filter(c => c.style === C.TELL);
   const tellOff = renderAt(3572);   // scene 2500: floor(2500/260)%2 === 1 -> off
-  const tellRect = tellOn.find(r => r.x === CINE_TEST.PAUSE_X + 96 && r.y === 136 + 40);
+  const tellRect = tellOn.find(r => r.x === CINE_TEST.PAUSE_X + 8 * CHARACTER_SPRITES.KNIGHT.w && r.y === 232 - 8 * CHARACTER_SPRITES.KNIGHT.h + 40);
   ok(!!tellRect, 'idle tell present on a tell frame (one forward-lean pixel)');
-  ok(!tellOff.some(r => r.x === CINE_TEST.PAUSE_X + 96 && r.y === 136 + 40),
+  ok(!tellOff.some(r => r.x === CINE_TEST.PAUSE_X + 8 * CHARACTER_SPRITES.KNIGHT.w && r.y === 232 - 8 * CHARACTER_SPRITES.KNIGHT.h + 40),
     'idle tell absent on the alternate frame (a real 2-frame flicker)');
   // The vortex KEEPS ANIMATING while he holds (portal changes, hero does not).
   const p1 = renderAt(3000).filter(c => PORTAL_COLORS.includes(c.style)).map(r => `${r.x},${r.y}`).join(';');

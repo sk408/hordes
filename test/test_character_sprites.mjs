@@ -55,11 +55,11 @@ console.log('FORMAT (integer grids, palette-keyed):');
     const boxes = p.frames.map(f => ({ w: f[0].length, h: f.length }));
     ok(boxes.every(b => b.w === boxes[0].w && b.h === boxes[0].h),
       label + ': every frame is the same box (' + boxes[0].w + 'x' + boxes[0].h + ')');
-    ok(boxes[0].w === 12 && boxes[0].h === 12,
-      label + ': keeps the PLAYER_SPRITE box (12x12, geometry untouched)');
-    ok(p.w === 12 && p.h === 12, label + ': declared w/h match the pixels');
-    ok(p.box.w === 12 && p.box.h === 12, label + ': declared box matches the pixels');
-    ok(p.anchor.x === 6 && p.anchor.y === 6,
+    ok(boxes[0].w === 16 && boxes[0].h === 16,
+      label + ': is a 16x16 pilot grid');
+    ok(p.w === 16 && p.h === 16, label + ': declared w/h match the pixels');
+    ok(p.box.w === 16 && p.box.h === 16, label + ': declared box matches the pixels');
+    ok(p.anchor.x === 8 && p.anchor.y === 8,
       label + ': anchor is the box center');
     let ragged = 0, badCell = 0, nonZero = 0;
     const used = new Set();
@@ -76,7 +76,7 @@ console.log('FORMAT (integer grids, palette-keyed):');
     ok(badCell === 0, label + ': every cell is an integer palette index 0-9');
     ok(nonZero > 0, label + ': the grid actually has pixels (' + nonZero + ')');
     const keys = Object.keys(p.palette);
-    ok(keys.length > 0 && keys.length <= 6, label + ': palette is small (' + keys.length + ' keys)');
+    ok(keys.length > 0 && keys.length <= 9, label + ': palette is small (' + keys.length + ' keys)');
     ok(keys.every(k => /^[1-9]$/.test(k)), label + ': palette keys are 1-9 (0 is transparent)');
     ok(keys.every(k => HEX.test(String(p.palette[k]))), label + ': every palette value is #rgb/#rrggbb');
     ok([...used].every(v => p.palette[v]), label + ': every referenced index is defined');
