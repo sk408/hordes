@@ -584,12 +584,12 @@ S.check('SCAN: paint stays pure; only the motion seam resolves positions', () =>
   // where the pilot can stand: entry needs dist < RADIUS outside walls.
   const po = msrc.indexOf('state.portal = { x: state.wave.portalX');
   assert(po > 0, 'the portal-open site is delimited in main.js');
-  assert(/pushOutOfRects\(/.test(msrc.slice(po, po + 900)),
-    'portal-open nudges the entry point out of footprints');
+  assert(/clearOfBuildings\([\s\S]*lootLimit\(\)/.test(msrc.slice(po, po + 1200)),
+    'portal-open nudges the entry point out of footprints and inside the floor');
   const pd = msrc.indexOf('One-way approach: the step never overshoots');
   assert(pd > 0, 'the portal-drift site is delimited in main.js');
-  assert(/pushOutOfRects\(/.test(msrc.slice(pd, pd + 900)),
-    'portal-drift holds the entry point out of footprints');
+  assert(/clearOfBuildings\([\s\S]*lootLimit\(\)/.test(msrc.slice(pd, pd + 900)),
+    'portal-drift holds the entry point out of footprints and inside the floor');
 });
 
 // ---------------------------------------------------------------------------

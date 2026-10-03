@@ -3261,8 +3261,8 @@ function update(dt) {
         // through a wall — parking inside one would strand entry (same
         // shape as the open-clamp above). Hold the drifted point outside
         // the footprints; rim/reach behaviour is untouched.
-        const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
-          po.x, po.y, 4);
+        const pr = clearOfBuildings(buildingRectsForRun(state.groundSeed || 0, state.stage),
+          po.x, po.y, 4, lootLimit());
         po.x = pr[0]; po.y = pr[1];
       }
     }
@@ -3967,8 +3967,11 @@ function update(dt) {
     // footprints (a few px; the drift moves it far more anyway). The fiction
     // ("opens where the boss fell") survives the nudge.
     {
-      const pr = pushOutOfRects(buildingRectsForRun(state.groundSeed || 0, state.stage),
-        state.portal.x, state.portal.y, 4);
+      // Also kept inside the reachable floor: a boss that dies at the rim, or a
+      // push out of a building near it, could otherwise park the portal past
+      // the wall where nobody can enter it.
+      const pr = clearOfBuildings(buildingRectsForRun(state.groundSeed || 0, state.stage),
+        state.portal.x, state.portal.y, 4, lootLimit());
       state.portal.x = pr[0]; state.portal.y = pr[1];
     }
     toast('THE PORTAL OPENS - WALK THROUGH');
