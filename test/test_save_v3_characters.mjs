@@ -71,9 +71,9 @@ const CAT = {
 // =====================================================================
 console.log('SCHEMA v3 + NAMESPACE SHAPE:');
 {
-  // Pinned deliberately — update WITH the schema bump (v11 = the shop refund).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 11,
-    `schema version is 11 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
+  // Pinned deliberately — update WITH the schema bump (v12 = the camp).
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 13,
+    `schema version is 13 (got ${SCHEMA_VERSION}/${PROFILE_VERSION})`);
   ok(VERSION_HISTORY.some(v => v.version === 3 && /per-character/i.test(v.note)),
     'VERSION_HISTORY documents the v3 per-character namespace');
   ok(STORAGE_KEY === 'hordes_profile_v1',
@@ -124,7 +124,7 @@ console.log('v2 -> v3 MIGRATION (preserve everything, populate nothing):');
   const res = loadProfileResult(s);
   ok(res.status === 'migrated' && res.from === 2 && res.profile.version === SCHEMA_VERSION,
     `a v2 save migrates to v3 (status=${res.status}, from=${res.from})`);
-  deepEq(res.migrations, [2, 3, 4, 5, 6, 7, 8, 9, 10], 'a v2 save applies exactly the v2->v3 through v10->v11 steps');
+  deepEq(res.migrations, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'a v2 save applies exactly the v2->v3 through v12->v13 steps');
   deepEq(res.profile.characters, {}, 'the migration populates NO character with upgrades');
   // The v10 -> v11 step refunds the old stat rows (dmg 2, hp 1) at their old
   // prices; a row it does not know is kept as it is.
@@ -177,7 +177,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v1 = loadProfileResult(seededJson({ version: 1, gold: 12.9, unlockedCharacters: ['KNIGHT'] }));
   ok(v1.status === 'migrated' && v1.from === 1 && v1.profile.version === SCHEMA_VERSION,
     `a v1 save migrates ALL the way to v${SCHEMA_VERSION} (from=${v1.from})`);
-  deepEq(v1.migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'the v1 save runs the 1->2 through 10->11 steps in order');
+  deepEq(v1.migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'the v1 save runs the 1->2 through 12->13 steps in order');
   ok(v1.profile.gold === 12, 'the chained migration still clamps currency (1 -> 2 step)');
   deepEq(v1.profile.characters, {}, 'the chained migration adds an empty v3 namespace');
 
@@ -192,7 +192,7 @@ console.log('CHAINED MIGRATION (v1 -> v3, v0 -> v3):');
   const v0 = loadProfileResult(seededJson(legacy));
   ok(v0.status === 'migrated' && v0.from === 0 && v0.profile.version === SCHEMA_VERSION,
     `a v0 (unversioned) save migrates to v${SCHEMA_VERSION} (from=${v0.from})`);
-  deepEq(v0.migrations, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'the whole chain 0 -> 1 -> ... -> 10 -> 11 runs');
+  deepEq(v0.migrations, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'the whole chain 0 -> 1 -> ... -> 12 -> 13 runs');
   ok(v0.profile.bestTime === 187.5 && v0.profile.equippedCharacter === 'WITCH' &&
      v0.profile.gold === legacy.gold + OLD.dmg[0] + OLD.hp[0] + OLD.hp[1] &&
      v0.profile.purchased.dmg === undefined,

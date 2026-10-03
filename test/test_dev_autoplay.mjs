@@ -8,7 +8,7 @@
 //      within 5 estimated runs (gap <= 5*est saves, gap = 5*est+1 does not)
 //      and stops filler spend while saving.
 //   3. IMPULSIVE buys immediately (cheapest affordable now, no saving).
-//   4. Dev-night applies nightmare rules (run-scoped nightRun set) WITHOUT
+//   4. Dev-night applies nightmare rules (run-scoped unattended set) WITHOUT
 //      the 50% banking cut, while regular night mode keeps it (same purse,
 //      same prep, both arms through the REAL settleRunGold).
 //   5. Income-estimator formula + snapshot policy tag (additive optional).
@@ -168,8 +168,8 @@ import {
   // ARM 1 — dev-night: nightmare rules on, cut off.
   h.T.dev.setDevNight(true);
   h.T.startRun();
-  assert.equal(h.T.night.devRun, true, 'dev-night run carries the dev stamp');
-  assert.equal(h.T.night.run, true, 'dev-night run plays under nightmare rules');
+  assert.equal(h.T.auto.devRun, true, 'dev-night run carries the dev stamp');
+  assert.equal(h.T.auto.run, true, 'dev-night run plays under nightmare rules');
   assert.equal(h.T.dev.session.speed, 1, 'speed untouched by the variant');
   prepPurse();
   const settledDev = h.T.purse.settle();
@@ -179,22 +179,23 @@ import {
   assert.ok(!mfDev.modifiers.some((m) => m.startsWith('banking-penalty-')),
     'dev-night carries NO banking-penalty modifier');
 
-  // ARM 2 — regular night, same prep: the cut stays exactly as-is.
+  // ARM 2 — a run started by auto-continue, same prep: the cut applies.
   h.T.dev.setDevNight(false);
-  h.T.night.press(); h.T.night.press();   // the two-press SETUP confirm
-  assert.equal(h.T.night.on, true, 'regular night session on');
-  h.T.startRun();
-  assert.equal(h.T.night.devRun, false, 'regular night carries no dev stamp');
-  assert.equal(h.T.night.run, true, 'regular night is a night run');
+  h.T.auto.press();
+  assert.equal(h.T.auto.on, true, 'auto-continue on');
+  h.T.auto.restart();   // the end card's countdown starts the run
+  assert.equal(h.T.auto.devRun, false, 'no dev stamp');
+  assert.equal(h.T.auto.run, true, 'an unattended run');
+  assert.equal(h.T.auto.started, true, 'started by auto-continue');
   prepPurse();
   const settledNight = h.T.purse.settle();
-  assert.equal(settledNight.purseBanked, 500, 'regular night banks HALF the purse (cut kept)');
+  assert.equal(settledNight.purseBanked, 500, 'an auto-started run banks HALF the purse');
   const mfNight = h.T.dev.modeFields();
-  assert.equal(mfNight.mode, 'night', "regular night still stamps mode 'night'");
-  assert.ok(mfNight.modifiers.includes('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT),
-    'regular night keeps the live banking-penalty modifier');
+  assert.equal(mfNight.mode, 'unattended', "stamps mode 'unattended'");
+  assert.ok(mfNight.modifiers.includes('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT),
+    'and carries the live banking-penalty modifier');
   assert.equal(settledDev.purseBanked, 2 * settledNight.purseBanked,
-    'same purse, same prep: dev-night banks exactly 2x the night run');
+    'same purse, same prep: dev-night banks exactly 2x the auto-started run');
 }
 
 // ---- snapshot policy tag (additive optional, speed-stamped) ------------------

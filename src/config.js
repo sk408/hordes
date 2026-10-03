@@ -442,33 +442,30 @@ export const CONFIG = {
     // and resumes where it left off: the player is owed the full window of
     // unobstructed draft.
     DRAFT_TIMEOUT: 6.0,
-    // NIGHT MODE (owner 2026-09-17, the authorized exception to the feature
-    // freeze): the two NAMED auto-advance delays. The intermission CONTINUE
-    // auto-fires NIGHT_CONTINUE_S after the intermission screen opens; a
-    // finished night run auto-restarts (same build, same arena)
-    // NIGHT_RESTART_S after the end card settles. Wall-clock seconds ticked
-    // on the frame loop beside the draft timer — frame-rate independent by
-    // construction, and they stop on their own when the tab hides.
-    NIGHT_CONTINUE_S: 3.0,
-    NIGHT_RESTART_S: 3.0,
-    // NIGHT EVOLVE (gap found 2026-09-18): the EVOLUTION overlay is a
-    // human-click-only screen (EVOLVE cards / NOT NOW) — an unattended run
-    // that earns a token over a maxed weapon parked there FOREVER, the exact
-    // wedge class the watchdog exists to close. Same shape as the siblings:
-    // NIGHT_EVOLVE_S after the overlay opens, the night takes the FIRST
-    // candidate (deterministic — the draft policy's own first-slot rule).
-    NIGHT_EVOLVE_S: 3.0,
-    // NIGHT STALL WATCHDOG (defect follow-up 2026-09-17: "still sitting on the
-    // end of run summary"). The named timers above are the FRONT line; this is
-    // the backstop that makes "a night run never parks" a guarantee instead of
-    // a wiring hope. If a night run holds any single waiting mode of the run
-    // ladder (dead / intermission / escape / draft / evolve / portal-cine /
-    // death-cine) for longer than NIGHT_STALL_S, the watchdog advances it
-    // through that mode's OWN sanctioned action — the same call the named
-    // timer makes. It can never race the named timers (30s >> 3s/3s/6s) and
-    // never touches the live modes (playing/finale) or the human surfaces
-    // (title/intro, settings/stats while a person is reading them).
-    NIGHT_STALL_S: 30.0,
+    // AUTO-CONTINUE (Settings; main.js "Auto-continue and the away summary").
+    // Wall-clock delays before an unattended run's waiting screen resolves
+    // itself: the intermission CONTINUE, the end card's next run, the evolve
+    // offer (first offer taken).
+    AUTO_CONTINUE_S: 3.0,
+    AUTO_RESTART_S: 5.0,
+    AUTO_EVOLVE_S: 3.0,
+    // The backstop: any waiting mode of an unattended run held this long is
+    // advanced through that mode's own action.
+    AUTO_STALL_S: 30.0,
+    // Auto-started runs in a row with no input before the game stops on the title.
+    AUTO_RUN_LIMIT: 20,
+    // No input for this long counts as away; the next input shows the summary.
+    AWAY_S: 60,
+  },
+
+  // BACKGROUND PLAY (main.js bgTick): a hidden tab keeps an AUTO run going
+  // from a timer. Each tick steps real elapsed time in 1/60 s frames, at most
+  // MAX_CATCHUP_S of it; time beyond that (a frozen tab) is dropped.
+  BACKGROUND: {
+    TICK_MS: 100,
+    MAX_CATCHUP_S: 2,
+    BUDGET_MS: 50,       // wall-clock time one tick may spend stepping frames
+    SAVE_S: 60,          // a hidden run is autosaved this often
   },
 
   // WAVE-26 EARNED TIME DILATION (main.js advanceDilation/triggerDilation):
@@ -734,6 +731,15 @@ export const CONFIG = {
   //     AZIMUTH biases toward the uphill side (EXPOSURE_BIAS — the risk), so
   //     the pressure arrives over the ridge with you. Spawn COUNT, cadence
   //     and ring distance are untouched (the pacing invariants hold).
+  // M5b LANDSCAPE (src/terrain.js): authored plateaus, ramps, bridges, drops.
+  // High ground = standing on a plateau top (terrain tier >= 2).
+  TERRAIN: {
+    HIGH_DMG_MULT: 1.15,   // hero damage vs ground enemies two tiers below
+    HIGH_RANGE_MULT: 1.15, // hero engagement range on high ground
+    FLYER_MULT: 3,         // SHRIKE spawn weight while the hero stands high
+    ROUTE_HOLD: 1.0,       // s an enemy keeps following the flow field after a cliff blocked it
+    FLOW_REFRESH: 0.25,    // s between hero flow-field rebuilds (on a cell change)
+  },
   RELIEF: {
     HIGH_LEVEL: 2,      // standing at >= this level is "high ground"
     GRADE_LOOK: 60,     // px lookahead the grade reads along the move direction
@@ -767,6 +773,10 @@ export const CONFIG = {
                          // (~283), so the grid records what was SEEN
     DISCOVER_RADIUS: 120,// a landmark flips to discovered inside this range
                          // (about a quarter view — you plainly reached it)
+    // The open map's tap targets, view px. At the common phone letterbox (390
+    // wide portrait, scale 0.81) 56 view px is 45 CSS px: over the 44 px floor.
+    TAP_R: 28,           // a tap picks the nearest site icon within this
+    CLEAR_HIT_H: 56,     // CLEAR WAYPOINT's tap target height (its plate is 14)
   },
 
   // ---- CAMERA (main.js updateCamera) ----------------------------------------
@@ -1388,7 +1398,7 @@ export function xpGainMult(kills) {
   return 1 / Math.sqrt(1 + Math.max(0, kills || 0) / CONFIG.XP_KILL_SOFT);
 }
 
-/** Seconds between spawn ticks at play time t (before heat/stage multipliers). */
+/** Seconds between spawn ticks at play time t (before wrath/stage multipliers). */
 export function spawnInterval(t) {
   const E = CONFIG.ENEMY;
   return Math.max(E.SPAWN_INTERVAL_MIN, E.SPAWN_INTERVAL - t * E.SPAWN_INTERVAL_DECAY);
@@ -1397,7 +1407,7 @@ export function spawnInterval(t) {
 /**
  * Mid-boss (HERALD-class) hp at 120s-wave `waveNum` and escalation tick
  * `wTick` — the ONE definition of the MIDBOSS hp formula (E2 R2).
- * main.js spawnMidBoss multiplies desc.hpMult * heat on top at its call site
+ * main.js spawnMidBoss multiplies desc.hpMult * wrath on top at its call site
  * (byte-identical to the old inline formula), and the wave-2 HEAVY tier reads
  * this same function at waveNum-1 so a heavy body is mid-boss-equivalent by
  * READING, never by a restated copy.

@@ -268,11 +268,15 @@ console.log('RIM CLIP (no weathered ground rect past the arena rim):');
 }
 
 console.log('PALETTE-KEYS-ONLY (ZERO new colors — the section-1 tile budget holds):');
+// World art makeover: the stage owns the floor material, so the palette is
+// the stage's ground palette under the wave theme (world_ground.js), not the
+// bare wave theme row.
 {
+  const { stageGroundPalette } = await import('../src/world_ground.js');
   const { R, rec, ctx } = makeRenderer();
   for (const wave of [1, 4]) {
-    const themeVals = new Set(Object.values(groundTheme(wave)));
     for (const id of STAGE_IDS) {
+      const themeVals = new Set(Object.values(stageGroundPalette(id, groundTheme(wave))));
       for (const wx of WX6) {
         rec.rects.length = 0;
         R.drawGround(ctx, 4242, CAM, groundTheme(wave), id, wx);

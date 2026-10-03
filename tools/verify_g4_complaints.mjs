@@ -416,12 +416,11 @@ async function item5() {
           archBuffs: T.state.archBuffs.length,
           tickArches: typeof arch.tickArches,
           stagesSeam: typeof T.stages === 'object' && typeof T.stages.cycle === 'function' && typeof T.stages.unlocked === 'function',
-          challengeSeam: typeof T.challenge === 'object' && typeof T.challenge.cycle === 'function',
           stageLive: T.state.stage,
         };
       })()`, true);
       const png = await shot(p, 'g4-item5-hooks-live');
-      const wired = live.wave >= 1 && live.arches >= 0 && live.tickArches === 'function' && live.stagesSeam && live.challengeSeam;
+      const wired = live.wave >= 1 && live.arches >= 0 && live.tickArches === 'function' && live.stagesSeam;
       return {
         verdict: 'NOT VERIFIABLE',
         numbers: `${G5_XREF}. Functional wiring measured only: wave=${live.wave} live, arch gates spawned=${live.arches}, arches.tickArches=${live.tickArches}, stage+challenge seams reachable=${live.stagesSeam}/${live.challengeSeam}, live stage=${JSON.stringify(live.stageLive)}; state.time=${pre.time}s. NO balance verdict was attempted`,

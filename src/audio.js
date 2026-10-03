@@ -12,6 +12,7 @@
 // the music toggle; fire once per phase transition — hb1 polls phaseAt()):
 //   playIntroCue(phase):  OVERTAKE|HORDE, TITLE_SLAM|TITLE, FADE
 //   playPortalCue(phase): BOSS_YELL|KILL, DISSOLVE, FADE, WALK, PAUSE, LINGER
+//   playEscapeCue(id, arg): STEP, BOSS, ROAR, ESCAPE, GOLD (the escape cinematic)
 // Call init() from a user gesture (autoplay policy): it lazily creates the
 // AudioContext, resumes it if suspended, and is idempotent.
 //
@@ -67,6 +68,7 @@ let nextNoteTime = 0;
 
 // Per-sfx rate limiting (seconds between allowed plays; kills buzz).
 const SFX_LIMITS = {
+  radarPing: 3,
   shoot: 0.08, hit: 0.05, button: 0.05, levelup: 0.1, chest: 0.1, death: 0.5,
   fire_bolt: 0.09, fire_arc: 0.14, fire_blast: 0.16, fire_zap: 0.12, fire_seek: 0.14,
   kill: 0.06, eliteDeath: 0.25, bossDeath: 1, hurt: 0.18, gem: 0.045, potion: 0.15,
@@ -435,6 +437,10 @@ const SFX = {
   evolve:     { voice: 'arp', type: 'sawtooth', notes: [261.63, 329.63, 392, 523.25, 659.25, 783.99, 1046.5, 1318.5], noteDur: 0.07, gain: 0.09 },
   warning:    { voice: 'arp', type: 'square', notes: [880, 660, 880, 660], noteDur: 0.11, gain: 0.09 },
   victory:    { voice: 'arp', type: 'triangle', notes: [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5, 1318.5], noteDur: 0.12, gain: 0.13 },
+  // M5b: the radar picks up a site you have not reached yet (quiet, throttled).
+  radarPing:  { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 1568, dur: 0.07, gain: 0.04 },
+    { v: 'tone', type: 'sine', freq: 2093, dur: 0.09, gain: 0.03, at: 0.08 }] },
   // Menus.
   uiMove:     { voice: 'tone', type: 'square',   freq: 520, to: 520, dur: 0.025, gain: 0.05 },
   uiConfirm:  { voice: 'seq', layers: [
@@ -450,7 +456,7 @@ export { SFX };
 // pitch a whole tone, so a stream of pickups climbs.
 export function playSfx(name, arg) {
   const def = SFX[name];
-  if (!def || !sfxEnabled || !ctx) return false;
+  if (!def || !sfxEnabled || !ctx || hiddenMute) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   const now = ctx.currentTime;
   const limit = SFX_LIMITS[name] ?? 0.02;
@@ -566,15 +572,57 @@ function cueAllowed(key) {
 
 export function playIntroCue(phase) {
   const fn = INTRO_CUES[phase];
-  if (!fn || !cueAllowed('intro:' + phase)) return false;
+  if (!fn || hiddenMute || !cueAllowed('intro:' + phase)) return false;
   fn(ctx.currentTime);
   return true;
 }
 
 export function playPortalCue(phase) {
   const fn = PORTAL_CUES[phase];
-  if (!fn || !cueAllowed('portal:' + phase)) return false;
+  if (!fn || hiddenMute || !cueAllowed('portal:' + phase)) return false;
   fn(ctx.currentTime);
+  return true;
+}
+
+// ---------- Escape cinematic cues (src/escape_cine.js) ----------
+// STEP is one beat of the chase bed; `n` is which beat (the note climbs and
+// the hat gets louder as the chase builds). BOSS is a footfall, ROAR the
+// boss's lunge, ESCAPE the dive through the portal, GOLD the payout. All are
+// short, so a skip never leaves a sound hanging. SFX-class: the sfx toggle
+// gates them; a hidden tab is silent.
+export const ESCAPE_CUES = {
+  STEP: (when, n) => {
+    const k = Math.min(1, n / 28);
+    const root = 55 * Math.pow(2, Math.floor(k * 7) / 12);
+    const f = n % 4 === 3 ? root * 1.5 : n % 2 ? root * 2 : root;
+    tone(ctx, sfxBus, { type: 'square', freq: f, to: f * 0.97, dur: 0.11, gain: 0.16 + 0.1 * k, when });
+    if (n % 2) noise(ctx, sfxBus, { dur: 0.03, gain: 0.05 + 0.08 * k, when });
+  },
+  BOSS: (when) => {
+    tone(ctx, sfxBus, { type: 'sine', freq: 110, to: 30, dur: 0.3, gain: 0.42, when });
+    noise(ctx, sfxBus, { dur: 0.1, gain: 0.14, when });
+  },
+  ROAR: (when) => {
+    sus(ctx, sfxBus, { type: 'sawtooth', freq: 170, to: 52, dur: 0.55, gain: 0.44, when, hold: 0.8 });
+    sus(ctx, sfxBus, { type: 'sawtooth', freq: 178, to: 56, dur: 0.55, gain: 0.44, when, hold: 0.8 });
+    tone(ctx, sfxBus, { type: 'square', freq: 85, to: 28, dur: 0.55, gain: 0.22, when });
+    noise(ctx, sfxBus, { dur: 0.2, gain: 0.18, when });
+  },
+  ESCAPE: (when) => {
+    [659.25, 783.99, 1046.5, 1318.5, 1568].forEach((f, i) =>
+      tone(ctx, sfxBus, { type: 'triangle', freq: f, dur: 0.14, gain: 0.14, when: when + i * 0.05 }));
+    tone(ctx, sfxBus, { type: 'sine', freq: 2093, dur: 0.4, gain: 0.07, when: when + 0.25 });
+  },
+  GOLD: (when) => {
+    [1318.5, 1760, 2217.5].forEach((f, i) =>
+      tone(ctx, sfxBus, { type: 'triangle', freq: f, dur: 0.08, gain: 0.11, when: when + i * 0.07 }));
+  },
+};
+export function playEscapeCue(id, arg) {
+  const fn = ESCAPE_CUES[id];
+  if (!fn || hiddenMute || !ctx || !sfxEnabled) return false;
+  resumeIfSuspended();
+  fn(ctx.currentTime, Math.max(0, Number(arg) || 0));
   return true;
 }
 
@@ -632,8 +680,13 @@ export function setMusicMode(mode) {
 }
 export function getMusicMode() { return musicMode; }
 
+// A hidden tab plays on in silence: no SFX, no cues, and the music stays stopped.
+let hiddenMute = false;
+export function setHiddenMute(on) { hiddenMute = !!on; }
+export function getHiddenMute() { return hiddenMute; }
+
 export function startMusic() {
-  if (!musicEnabled || !ctx || musicRunning) return false;
+  if (!musicEnabled || !ctx || musicRunning || hiddenMute) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   musicRunning = true;
   step = 0;

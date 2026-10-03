@@ -43,6 +43,8 @@ POLICY (each independent)
   --once       ${ONCE.join(' | ')}  ONE OF EACH card: asis = no special handling  (default asis)
   --stance     a key of CONFIG.AUTOPILOT.STANCES (SAFE | BALANCED | GREEDY)  (default BALANCED)
   --character  a key of CHARACTERS; granted free at career start         (default: the free one)
+  --pilot      AUTO | EXPLORE  the run's pilot mode                      (default AUTO)
+  --stage      a stage id, or MIX = stage (run seed mod 8) for each run   (default: the game's default stage)
 
 SIZE / SPEED
   --runs N             runs per career                      (default 20)
@@ -182,6 +184,8 @@ async function main() {
   const base = {
     shop: o.shop || 'stats-first', loadout: o.loadout || 'default', draft: o.draft || 'random', once: o.once || 'asis',
     stance: o.stance || 'BALANCED', character: o.character || cat.defaultCharacter,
+    pilot: String(o.pilot || 'AUTO').toUpperCase(),
+    ...(o.stage ? { stage: String(o.stage).toUpperCase() } : {}),
     damageRow: o['damage-row'] || 'dmg', weaponLine: o['weapon-line'] ? list(o['weapon-line']) : ['split', 'slots'],
     onceRule: o['once-rule'] || 'once',
     ...(o['stat-priority'] ? { statPriority: list(o['stat-priority']) } : {}),
@@ -213,10 +217,11 @@ async function main() {
   const runs = int(o, 'runs', 20), nSeeds = int(o, 'seeds', 3), seedBase = int(o, 'seed-base', 1000, 0);
   const speed = int(o, 'speed', 8), maxRunSeconds = int(o, 'max-run-seconds', 1800);
   const overheadSeconds = int(o, 'overhead-seconds', 20, 0), k = int(o, 'k', 6);
-  const concurrency = int(o, 'concurrency', Math.max(1, os.availableParallelism() - 1));
+  const concurrency = int(o, 'concurrency', Math.max(1, os.availableParallelism() - 2));
   const quiet = !!o.quiet;
   const common = { tree, speed, maxRunSeconds, overheadSeconds, verbose: !!o.verbose, traceEvery: int(o, 'trace-every', 0, 0) };
-  const key = (p) => [p.shop, p.loadout, p.draft, p.once, p.stance, p.character].join('/');
+  const key = (p) => [p.shop, p.loadout, p.draft, p.once, p.stance, p.character].join('/') +
+    (p.pilot && p.pilot !== 'AUTO' ? '/' + p.pilot : '');
 
   const jobs = [];
   const fixed = o['fixed-build'];

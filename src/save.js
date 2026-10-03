@@ -37,6 +37,8 @@
 // inside the IO helpers, behind typeof guards.
 
 import { LEGACY_SHOP_V10, refundLegacyShop } from './legacy_shop_v10.js';
+import { sanitizeCamp } from './camp.js';
+import { sanitizeWorld, emptyWorld } from './world_save.js';
 
 // ---------- Schema identity ----------
 
@@ -49,7 +51,11 @@ import { LEGACY_SHOP_V10, refundLegacyShop } from './legacy_shop_v10.js';
 // run-count milestone (meta.js RUN_CHESTS) whose chest the player has
 // COLLECTED. One monotonic integer (0 = none), never a set, so once-only is
 // arithmetic. See the v10 history + migration entries.
-export const PROFILE_VERSION = 11;
+// v12 (2026-10-02): profile gains camp (src/camp.js); the Starting Artifact
+// shop row is removed and refunded (the camp's Forge replaces it).
+// v13 (2026-10-02): profile gains world = { glyphs, secrets, chains, questsDone }
+// (src/secrets.js, src/quests.js): found glyphs and secrets, quest-chain steps.
+export const PROFILE_VERSION = 13;
 export const SCHEMA_VERSION = PROFILE_VERSION;   // alias, for callers that prefer the explicit name
 
 // The localStorage key is deliberately UNCHANGED: existing players' saves must
@@ -70,6 +76,12 @@ export const RECOVERY_PREV_KEY = RECOVERY_KEY + '.prev';
 // download it or carry on in the classic build.
 export const PRE_UPDATE_KEY = 'hordes_profile_pre_update';
 export const PRE_UPDATE_BELOW = 11;
+// Every later update that changes the save's shape keeps the save from just
+// before it as well: the first time a save older than this build's schema is
+// loaded, its raw text goes here (one slot per schema version, never
+// overwritten). Nothing in the game reads it. It is there so a release can be
+// rolled back without anyone losing progress.
+export const BEFORE_UPDATE_KEY = 'hordes_profile_before_v' + PROFILE_VERSION;
 
 // Export envelope marker. Lets an import tell a HORDES export from any other
 // JSON file the player might pick.
@@ -173,6 +185,20 @@ export const VERSION_HISTORY = [
       'unlocks, character upgrades and the apex tier are untouched. A save that ' +
       'was refunded carries profile.shopRefund = { version, gold, rows } so the ' +
       'game can tell the player once.',
+  },
+  {
+    version: 12,
+    note: 'The camp: profile gains camp = { levels, since, charges } (src/camp.js), ' +
+      'empty for an older save. The Starting Artifact shop row is removed (the ' +
+      'Forge replaces it): what was paid for its levels is refunded (the spend ' +
+      'ledger where it has an entry, else the v11 list price) and the save ' +
+      'carries campRefund = { version: 12, gold } so the game can tell the player once.',
+  },
+  {
+    version: 13,
+    note: 'The world: profile gains world = { glyphs, secrets, chains, questsDone } ' +
+      '(found glyphs by stage, found secrets, quest-chain steps, quests done), ' +
+      'empty for an older save. Nothing else changes.',
   },
 ];
 
@@ -355,7 +381,45 @@ const MIGRATIONS = {
     }
     return next;
   },
+  // v11 -> v12: the camp. An empty camp, and the Starting Artifact row refunded
+  // and removed. A v10 save reaches here with the row already refunded by v10 -> v11.
+  11: (p) => {
+    const next = { ...p };
+    if (next.camp === undefined) next.camp = sanitizeCamp(undefined).camp;
+    if (plainObject(next.campRefund) && next.campRefund.version === 12) return next;
+    const purchased = plainObject(next.purchased) ? { ...next.purchased } : null;
+    const lv = purchased ? Number(purchased.artifact) : 0;
+    const levels = Number.isFinite(lv) ? Math.max(0, Math.min(ARTIFACT_V11_PRICES.length, Math.floor(lv))) : 0;
+    const ledger = plainObject(next.spendLedger) && Array.isArray(next.spendLedger.artifact)
+      ? next.spendLedger.artifact : [];
+    let gold = 0;
+    for (let i = 0; i < levels; i++) {
+      const paid = Number(ledger[i]);
+      gold += Number.isFinite(paid) && paid >= 0 ? Math.floor(paid) : ARTIFACT_V11_PRICES[i];
+    }
+    if (purchased && 'artifact' in purchased) { delete purchased.artifact; next.purchased = purchased; }
+    if (plainObject(next.spendLedger) && 'artifact' in next.spendLedger) {
+      const { artifact, ...rest } = next.spendLedger;
+      next.spendLedger = rest;
+    }
+    if (gold > 0) {
+      const g = Number(next.gold);
+      next.gold = Math.min(Number.MAX_SAFE_INTEGER, (Number.isFinite(g) ? Math.max(0, Math.floor(g)) : 0) + gold);
+      next.campRefund = { version: 12, gold };
+    }
+    return next;
+  },
 };
+
+// v12 -> v13: the world block (glyphs, secrets, quest chains). Empty for an older save.
+MIGRATIONS[12] = (p) => {
+  const next = { ...p };
+  if (next.world === undefined) next.world = emptyWorld();
+  return next;
+};
+
+// The Starting Artifact row's v11 list prices (1200 x 2.2^level), frozen for the v12 refund.
+export const ARTIFACT_V11_PRICES = Object.freeze([1200, 2640, 5808, 12778]);
 
 /**
  * Migrate a parsed payload up to PROFILE_VERSION.
@@ -842,6 +906,16 @@ export function validateProfile(profile, cat) {
   if (milestoneChest !== p.milestoneChest) repairs.push('milestoneChest');
   out.milestoneChest = milestoneChest;
 
+  // ---- camp (v12: buildings, production clocks, held charges) ----
+  const camp = sanitizeCamp(p.camp);
+  if (camp.dirty) repairs.push('camp');
+  out.camp = camp.camp;
+
+  // ---- world (v13: glyphs, secrets, quest chains) ----
+  const world = sanitizeWorld(p.world);
+  if (world.dirty) repairs.push('world');
+  out.world = world.world;
+
   // ---- version stamp ----
   if (out.version !== PROFILE_VERSION) repairs.push('version');
   out.version = PROFILE_VERSION;
@@ -1030,6 +1104,39 @@ export function readRecovery(storage, key = RECOVERY_KEY) {
   }
 }
 
+// An older build that meets a newer save keeps it in the recovery slot as
+// 'future-version'; before the newer-save guard it then saved a fresh profile
+// over it. A kept save this build can read, at a HIGHER version than the main
+// save, means an older build wrote over it: returns its text, else null.
+// Only an older build writes a lower version, so a save at the same version
+// (a RESET PROFILE, an import) is never replaced. A player who kept playing in
+// the older build may have gone further there than the kept save ever did:
+// the save with more runs played stays (the kept one stays downloadable).
+function overwrittenSave(s, mainRaw, recoveryKey) {
+  let main = null;
+  try { main = JSON.parse(mainRaw); } catch { return null; }
+  if (!plainObject(main)) return null;
+  const mainVersion = readVersion(main);
+  for (const key of [recoveryKey, recoveryKey + '.prev']) {
+    const rec = readRecovery(s, key);
+    if (!rec || rec.reason !== 'future-version' || typeof rec.raw !== 'string') continue;
+    let kept = null;
+    try { kept = JSON.parse(rec.raw); } catch { continue; }
+    if (!plainObject(kept)) continue;
+    const v = readVersion(kept);
+    if (v > mainVersion && v <= PROFILE_VERSION && runsPlayed(kept) >= runsPlayed(main)) return rec.raw;
+  }
+  return null;
+}
+// Runs played, as a raw save records it (0 when it does not).
+function runsPlayed(raw) {
+  const t = plainObject(raw.achievements) && plainObject(raw.achievements.totals) ? raw.achievements.totals : null;
+  const n = t ? Number(t.runs) : 0;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+const RESTORED_NOTICE = 'YOUR SAVE WAS RESTORED. An older version of the game had saved over it.';
+
 function corruptNotice(preserved) {
   return 'SAVE UNREADABLE — HORDES started a fresh profile. ' + (preserved
     ? 'The damaged data was copied to a recovery slot so nothing is lost: open SETTINGS to download it.'
@@ -1045,13 +1152,15 @@ function futureNotice(from, preserved) {
  * Load the profile from storage.
  *
  * Returns a RESULT, never a bare profile:
- *   { profile, status, from, repairs, migrations, recoveryKey, notice }
+ *   { profile, status, from, repairs, migrations, recoveryKey, notice, restored }
  * status: 'fresh' | 'current' | 'migrated' | 'repaired' | 'corrupt' | 'future-version'
  *
  * Guarantees:
  *   - never throws (storage read/write failures degrade to a fresh profile);
  *   - a corrupt or future-version payload is PRESERVED under RECOVERY_KEY and
  *     the original key is left untouched, so recovery is always possible;
+ *   - a kept save an older build wrote over is put back (restored: true) and
+ *     the save it replaces goes to the recovery slot as 'replaced';
  *   - the returned profile is always a valid current-version object.
  */
 export function loadProfileFrom(storage, cat, opts = {}) {
@@ -1063,8 +1172,16 @@ export function loadProfileFrom(storage, cat, opts = {}) {
   let raw = null;
   try { raw = s.getItem(key); } catch { raw = null; }
   if (raw === null || raw === undefined || raw === '') {
-    return { profile: fresh(), status: 'fresh', from: null, repairs: [], migrations: [], recoveryKey: null, notice: null };
+    return { profile: fresh(), status: 'fresh', from: null, repairs: [], migrations: [], recoveryKey: null, notice: null, restored: false };
   }
+
+  const keptRaw = typeof raw === 'string' ? overwrittenSave(s, raw, recoveryKey) : null;
+  if (keptRaw !== null) {
+    preservePayload(s, raw, 'replaced', recoveryKey);
+    try { s.setItem(key, keptRaw); } catch { /* storage full: plays from memory, the next save writes it */ }
+    raw = keptRaw;
+  }
+  const restored = keptRaw !== null;
 
   let parsed = null;
   let parseError = null;
@@ -1078,7 +1195,7 @@ export function loadProfileFrom(storage, cat, opts = {}) {
     return {
       profile: fresh(), status: 'corrupt', from: null, repairs: [], migrations: [],
       recoveryKey: preserved ? recoveryKey : null, error: parseError || 'payload is not an object',
-      notice: corruptNotice(preserved),
+      notice: corruptNotice(preserved), restored: false,
     };
   }
 
@@ -1088,18 +1205,23 @@ export function loadProfileFrom(storage, cat, opts = {}) {
     return {
       profile: fresh(), status: 'future-version', from: mig.from, repairs: [], migrations: [],
       recoveryKey: preserved ? recoveryKey : null,
-      notice: futureNotice(mig.from, preserved),
+      notice: futureNotice(mig.from, preserved), restored: false,
     };
   }
 
   if (Number(mig.from) < PRE_UPDATE_BELOW) {
     try { if (s.getItem(PRE_UPDATE_KEY) == null) s.setItem(PRE_UPDATE_KEY, raw); } catch { /* storage full: carry on */ }
   }
+  if (Number(mig.from) < PROFILE_VERSION) {
+    try { if (s.getItem(BEFORE_UPDATE_KEY) == null) s.setItem(BEFORE_UPDATE_KEY, raw); } catch { /* storage full: carry on */ }
+  }
   const { profile, repairs } = validateProfile(mig.profile, cat);
   let status = mig.status;
   if (repairs.length) status = 'repaired';
   let notice = null;
-  if (repairs.length) {
+  if (restored) {
+    notice = RESTORED_NOTICE;
+  } else if (repairs.length) {
     notice = `SAVE REPAIRED — ${repairs.length} value${repairs.length === 1 ? '' : 's'} were out of range ` +
       'and were corrected so the game stays consistent.';
   } else if (mig.status === 'migrated') {
@@ -1107,7 +1229,7 @@ export function loadProfileFrom(storage, cat, opts = {}) {
   }
   return {
     profile, status, from: mig.from, repairs, migrations: mig.migrations,
-    recoveryKey: null, notice,
+    recoveryKey: null, notice, restored,
   };
 }
 

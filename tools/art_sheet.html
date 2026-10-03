@@ -67,6 +67,10 @@ async function items() {
 }
 
 const ONLY = q.get('only');
+// ?baked=1: buildings and props drawn through the sprite cache with the
+// structure style, as the game shows them.
+const BAKED = q.get('baked') === '1';
+const SC = await import('/src/sprite_cache.js');
 const list = (await items()).filter(it => !ONLY || ONLY.split(',').some(o => it.label.includes(o)));
 // Site grids keep their palette inside sites_art's paint path; borrow a neutral one.
 const SITE_PAL = { 1: '#2a2630', 2: '#8a8296', 3: '#ffd75e', 4: '#b88ae8', 5: '#ffffff', 6: '#4a4452', 7: '#ff5a3c', 8: '#5ad0ff', 9: '#e0e0e0' };
@@ -99,9 +103,16 @@ list.forEach((it, i) => {
     const b = it.building;
     for (const s of [1, 2]) {
       const bx = s === 1 ? px : px + b.w + 16;
-      g.fillStyle = '#3c5a34'; g.fillRect(bx, py + 14, b.w * s, b.h * s);
+      g.fillStyle = BAKED ? '#2c3a2a' : '#3c5a34'; g.fillRect(bx, py + 14, b.w * s, b.h * s);
       g.save(); g.translate(bx, py + 14); g.scale(s, s);
-      for (const [dx, dy, w, h, k] of b.rects) { g.fillStyle = b.palette[k]; g.fillRect(dx, dy, w, h); }
+      if (BAKED) {   // the in-game bake (world art makeover: STYLE_STRUCT)
+        g.imageSmoothingEnabled = false;
+        SC.blitPainted(g, 'sheet:' + it.label, { x: 0, y: 0, w: b.w, h: b.h },
+          (c2, ox, oy) => { for (const [dx, dy, w, h, k] of b.rects) { c2.fillStyle = b.palette[k]; c2.fillRect(ox + dx, oy + dy, w, h); } },
+          0, 0, SC.STYLE_STRUCT);
+      } else {
+        for (const [dx, dy, w, h, k] of b.rects) { g.fillStyle = b.palette[k]; g.fillRect(dx, dy, w, h); }
+      }
       g.restore();
     }
     return;
@@ -110,9 +121,15 @@ list.forEach((it, i) => {
   const fw = it.frames[0][0].length, fh = it.frames[0].length;
   // 1x on two ground swatches (grass / dark)
   g.fillStyle = '#3c5a34'; g.fillRect(px, py + 14, fw + 6, fh + 4);
-  paint(it.frames[0], pal, px + 3, py + 16, 1);
-  g.fillStyle = '#2a2433'; g.fillRect(px, py + 18 + fh + 2, fw + 6, fh + 4);
-  paint(it.frames[1] || it.frames[0], pal, px + 3, py + 18 + fh + 4, 1);
+  if (BAKED && it.palette) {
+    SC.blitGrid(g, it.frames[0], pal, px + 3, py + 16, SC.STYLE_STRUCT);
+    g.fillStyle = '#2a2433'; g.fillRect(px, py + 18 + fh + 2, fw + 6, fh + 4);
+    SC.blitGrid(g, it.frames[1] || it.frames[0], pal, px + 3, py + 18 + fh + 4, SC.STYLE_STRUCT);
+  } else {
+    paint(it.frames[0], pal, px + 3, py + 16, 1);
+    g.fillStyle = '#2a2433'; g.fillRect(px, py + 18 + fh + 2, fw + 6, fh + 4);
+    paint(it.frames[1] || it.frames[0], pal, px + 3, py + 18 + fh + 4, 1);
+  }
   let fx = px + fw + 12;
   for (const f of it.frames) {
     g.fillStyle = '#2b3a2a'; g.fillRect(fx - 1, py + 13, fw * Z + 2, f.length * Z + 2);

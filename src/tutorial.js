@@ -107,21 +107,47 @@ export const MENU_STEPS = {
 export const HINTS = {
   run2: { text: "Aim for a weapon's evolution: level it to 8 and hold its partner card.", guided: true },
   chest: { basic: true, text: 'Walk into a chest to open it.' },
-  shrine: { basic: true, text: 'A shrine sells a blessing for gold. Stand in it to buy.' },
+  // M5b sites (the same sentences as sites.js SITE_HINTS).
+  shrine: { text: 'Stand in the ring to charge a blessing; steering charges it 40% faster.' },
+  altar: { text: 'Step on the altar to call the wave boss now and win an extra chest (waves 1-4).' },
+  brazier: { text: 'Break braziers for gold and the odd potion; steering finds 50% more.' },
+  fountain: { text: 'Stand in a fountain while hurt to heal once.' },
+  statue: { text: 'Touch the statue to take its curse for this wave and win its reward.' },
+  explore: { text: 'EXPLORE fights like AUTO and walks to sites when the field is calm.' },
+  waypoint: { text: 'Tap a site on the map to set a waypoint; tap it again to clear it.' },
+  // M5b slice 3: the vault, the yard, secrets and quests (first time each).
+  vault: { text: 'A marked elite carries the vault key: kill it, grab the key, touch the vault.' },
+  lever: { text: 'Pull the lever to open the walled yard and its chest for the rest of the run.' },
+  crack: { text: 'Cracked walls break under fire: keep shooting one to find the niche behind it.' },
+  mimic: { text: 'Some chests bite: a mimic wakes when opened, and pays a rare chest when it dies.' },
+  glyph: { text: 'Each stage hides one glyph off the beaten track; find all eight for a reward.' },
+  questboard: { text: 'The quest board picks three goals for each run; tap one to swap it, or just play.' },
+  questtracker: { text: 'Your three quests sit under the timer; done ones pay at the end of the run.' },
+  // Travel (the same sentence as travel.js TRAVEL_HINT).
+  travel: { text: 'The portal leads on to a new stage: new ground and fresh sites. Your build comes with you.' },
+  // Boss rules (the same sentence as boss_rules.js BOSS_RULE_HINT).
+  bossrule: { text: 'This boss brings a rule. Beat the boss to win the reward on its banner.' },
+  // M5b landscape: the first time a ramp is on screen.
+  highground: { text: 'High ground: you see and hit farther. Enemies climb the ramps.' },
   arch: { basic: true, text: 'Run through an arch for a short buff.' },
   elite: { basic: true, text: 'Glowing enemies are elites: tougher, with better loot.' },
   midboss: { basic: true, text: 'A mid-boss. Kill it for a chest.' },
   boss: { basic: true, text: 'The wave boss. Kill it to open the portal.' },
   portal: { basic: true, text: 'The portal is open. Walk in to end the wave.' },
-  escape: { basic: true, text: 'The escape: run right and jump the gaps for bonus gold.' },
+  escape: { basic: true, text: 'After the boss, your hero runs for the portal and banks escape gold.' },
   evoready: { text: 'This weapon is level 8 and you hold its partner: it evolves.' },
   fusion: { text: 'Two evolved weapons can fuse into one stronger weapon.' },
   draftacts: { text: 'Reroll, skip or banish: each spends one charge.' },
   stance: { text: 'Stance: SAFE keeps away, GREEDY chases loot.' },
   focus: { text: 'Focus picks which enemy your weapons aim at first.' },
-  prerun: { basic: true, text: 'Pick a stage and a modifier, or just press START.' },
+  prerun: { basic: true, text: 'Pick a stage, or just press START.' },
   loadout: { text: 'You own a new weapon. LOADOUT chooses which ones you bring.' },
   prestige: { text: 'Prestige resets the shop for a permanent gold multiplier.' },
+  hand: { text: 'Your cards made a hand: a bonus for the rest of the run.' },
+  joker: { text: 'A joker changes one rule for this run.' },
+  jokerfull: { text: 'Joker row full: a new joker replaces one you hold.' },
+  camp: { text: 'Camp buildings work while you are away. COLLECT takes what they made.' },
+  bgplay: { text: 'AUTO kept playing while the tab was hidden. Settings: KEEP PLAYING.' },
 };
 
 export function wordCount(text) { return String(text).trim().split(/\s+/).length; }

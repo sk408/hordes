@@ -61,12 +61,14 @@ const styles = new Map();
 export function spriteStyle(spec) {
   const s = spec || {};
   const key = (s.outline || '') + '|' + (s.outline2 || '') + '|' + (s.rim ? 1 : 0) +
-    (s.shadow ? 1 : 0) + (s.flash ? 1 : 0) + (s.mute ? 'm' : '') + '|' + (s.tint ? s.tint.join(',') : '');
+    (s.shadow ? 1 : 0) + (s.flash ? 1 : 0) + (s.mute ? 'm' : '') + (s.struct ? 's' : '') + '|' +
+    (s.tint ? s.tint.join(',') : '');
   let st = styles.get(key);
   if (!st) {
     st = { key, outline: s.outline || null, outline2: s.outline2 || null, rim: !!s.rim,
-      shadow: !!s.shadow, flash: !!s.flash, tint: s.tint || null, mute: !!s.mute };
-    st.pad = st.outline2 ? 2 : (st.outline ? 1 : 0);
+      shadow: !!s.shadow, flash: !!s.flash, tint: s.tint || null, mute: !!s.mute, struct: !!s.struct };
+    st.pad = st.struct ? 1 : st.outline2 ? 2 : (st.outline ? 1 : 0);
+    st.extra = st.struct ? 3 : 0;   // room for the cast shadow (right and below)
     st.below = st.shadow ? 2 : 0;
     styles.set(key, st);
   }
@@ -74,6 +76,11 @@ export function spriteStyle(spec) {
 }
 export const STYLE_PLAIN = spriteStyle({});
 export const STYLE_ITEM = spriteStyle({ outline: OUTLINE_DARK });
+// World art makeover: structures and props baked to the actors' standard —
+// a dark 1px outline, every surface lit from the top left (silhouette and
+// inner edges), a sparse grain on flat faces and a soft cast shadow falling
+// to the bottom right.
+export const STYLE_STRUCT = spriteStyle({ struct: true });
 const CHILL = [106, 168, 216, 0.45];
 // The style of a live actor: flags pick the baked variant.
 //   ring: outer tell colour (elite gold, rarity colour, telegraph white)
@@ -105,7 +112,68 @@ function hexRgb(hex) {
 
 // Post-process a freshly painted raster: rim light, flash, tint, outlines.
 // `g` holds the art at (pad, pad) on a transparent w x h canvas.
+const lumOf = (v) => ((v >> 16) & 255) * 0.3 + ((v >> 8) & 255) * 0.59 + (v & 255) * 0.11;
+function grainAt(x, y) {
+  let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1);
+  h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+function dressStruct(g, w, h) {
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  if (!d || d.length < w * h * 4) return;
+  const n = w * h;
+  const solid = new Uint8Array(n), orig = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    solid[i] = d[i * 4 + 3] >= 200 ? 1 : 0;   // soft (translucent) pixels stay as painted
+    orig[i] = solid[i] ? (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2] : -1;
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!solid[i]) continue;
+      const c = orig[i], lc = lumOf(c);
+      const up = y > 0 ? orig[i - w] : -1, lf = x > 0 ? orig[i - 1] : -1;
+      const dn = y < h - 1 ? orig[i + w] : -1, rt = x < w - 1 ? orig[i + 1] : -1;
+      let f = 0;
+      if (up === -1) f += 0.30; else if (up !== c) f += lumOf(up) < lc ? 0.12 : -0.12;
+      if (lf === -1) f += 0.14; else if (lf !== c) f += lumOf(lf) < lc ? 0.07 : -0.07;
+      if (dn === -1) f -= 0.26;
+      if (rt === -1) f -= 0.16;
+      if (f === 0 && up === c && lf === c && dn === c && rt === c && grainAt(x, y) < 0.06) f = -0.09;
+      if (f) {
+        const j = i * 4;
+        if (f > 0) { d[j] += (255 - d[j]) * f; d[j + 1] += (255 - d[j + 1]) * f; d[j + 2] += (255 - d[j + 2]) * f; }
+        else { d[j] *= 1 + f; d[j + 1] *= 1 + f; d[j + 2] *= 1 + f * 0.9; }
+      }
+    }
+  }
+  // 1px dark outline round the silhouette.
+  const ring = new Uint8Array(n);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (solid[i]) continue;
+      if ((x > 0 && solid[i - 1]) || (x < w - 1 && solid[i + 1]) || (y > 0 && solid[i - w]) || (y < h - 1 && solid[i + w])) {
+        ring[i] = 1;
+        d[i * 4] = 11; d[i * 4 + 1] = 9; d[i * 4 + 2] = 18; d[i * 4 + 3] = 255;
+      }
+    }
+  }
+  // Cast shadow: light from the top left, so the shadow falls 3 right, 2 down.
+  for (let y = 2; y < h; y++) {
+    for (let x = 3; x < w; x++) {
+      const i = y * w + x;
+      if (solid[i] || ring[i]) continue;
+      const k = (y - 2) * w + (x - 3);
+      if (solid[k] || ring[k]) { d[i * 4] = 0; d[i * 4 + 1] = 0; d[i * 4 + 2] = 0; d[i * 4 + 3] = 72; }
+    }
+  }
+  g.putImageData(img, 0, 0);
+}
+
 function dress(g, w, h, st) {
+  if (st.struct) { dressStruct(g, w, h); return; }
   if (!st.rim && !st.flash && !st.tint && !st.outline && !st.mute) return;
   const img = g.getImageData(0, 0, w, h);
   const d = img.data;
@@ -160,7 +228,7 @@ function dress(g, w, h, st) {
 // artW x artH pixels whose top-left sits (bx, by) from the origin.
 function bake(artW, artH, bx, by, st, paint) {
   const pad = st.pad;
-  const w = artW + pad * 2, h = artH + pad * 2;
+  const w = artW + pad * 2 + st.extra, h = artH + pad * 2 + st.extra;
   const body = factory(w, h);
   const bg = body.getContext('2d');
   paint(bg, pad - bx, pad - by);
@@ -194,7 +262,8 @@ function paintGridRects(g, grid, palette, x, y, s, white) {
 }
 
 // Draw a pixel grid with its top-left art pixel at (x, y). `scale` is the
-// integer block size (the cached raster is stretched; outlines scale too).
+// block size (the cached raster is stretched; outlines scale too). A
+// fractional scale (elites, 1.5) lands on whole pixels: offsets and size round.
 export function blitGrid(g, grid, palette, x, y, style = STYLE_PLAIN, scale = 1) {
   if (!cacheEnabled()) {
     stats.fallbacks++;
@@ -212,7 +281,7 @@ export function blitGrid(g, grid, palette, x, y, style = STYLE_PLAIN, scale = 1)
   }
   stats.blits++;
   if (scale === 1) g.drawImage(e.img, x + e.dx, y + e.dy);
-  else g.drawImage(e.img, x + e.dx * scale, y + e.dy * scale, e.w * scale, e.h * scale);
+  else g.drawImage(e.img, x + Math.round(e.dx * scale), y + Math.round(e.dy * scale), Math.round(e.w * scale), Math.round(e.h * scale));
   return true;
 }
 
@@ -258,6 +327,12 @@ export function blitGlow(g, colour, r, x, y, alpha = 1) {
 }
 
 export function cacheStats() { return { ...stats, styles: styles.size, painted: painted.size }; }
+
+// A blank w x h canvas from the cache's own source (the world ground chunks
+// borrow it), or null where no real canvas exists.
+export function scratchCanvas(w, h) {
+  return cacheEnabled() ? factory(w, h) : null;
+}
 
 // ---- test seam -------------------------------------------------------------
 export const SPRITE_CACHE_TEST = {

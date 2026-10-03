@@ -106,7 +106,7 @@ const BAT_DOWN = T([
   '2.........2',
 ]);
 const BAT_FRAMES = [BAT_UP, BAT_MID, BAT_DOWN, BAT_MID];
-const BAT_PALETTE = { 1: '#ff5ea8', 2: '#a8285e', 3: '#ff9ccb', 4: '#fff3b0', 5: '#6a1a40' };
+const BAT_PALETTE = { 1: '#ff5ea8', 2: '#ff86c0', 3: '#ffd0e6', 4: '#fff3b0', 5: '#6a1a40' };
 
 // ---- TICK — 9x7: a swollen blood tick, six bent legs splayed clear of the
 // round abdomen (the smallest thing on the field: 5px collision). The legs
@@ -242,7 +242,7 @@ const WARLOCK_FRAMES = [
   // frame B: the hands lift a pixel wider and the hem sways right
   T([...WARLOCK_TOP, '6..3111112.6', ...WARLOCK_MID.slice(0, 6), '.31111111122', '..5.55.55.5.']),
 ];
-const WARLOCK_PALETTE = { 1: '#a8306a', 2: '#5a1838', 3: '#e0609a', 4: '#ffd0f0', 5: '#1a0812', 6: '#ff9ed8' };
+const WARLOCK_PALETTE = { 1: '#f24ad6', 2: '#8a1e7c', 3: '#ff9cf0', 4: '#ffd0f0', 5: '#1a0812', 6: '#ffe0fa' };
 
 // ---- DEMON (COLOSSUS) — 20x22: the mini-boss. Long horns (its shoulder
 // braziers burn above them), burning eyes, fanged maw, a barrel body, arms
@@ -277,7 +277,7 @@ const DEMON_FRAMES = walker([
   '......11....5555....',
   '....5555............',
 ]);
-const DEMON_PALETTE = { 1: '#d8443a', 2: '#7a1e1a', 3: '#ff8a6a', 4: '#ffe04a', 5: '#2a0806', 6: '#f4e4b0' };
+const DEMON_PALETTE = { 1: '#f0664e', 2: '#98281e', 3: '#ffa888', 4: '#ffe04a', 5: '#2a0806', 6: '#f4e4b0' };
 
 // ===========================================================================
 // FLAMES — classic teardrop: dark orange rim (1), orange body (2), yellow

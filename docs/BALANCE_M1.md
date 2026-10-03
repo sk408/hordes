@@ -256,3 +256,20 @@ one at 38% after 6.8 h; integrating cost ÷ income × run length over the fixed-
 - Reroll, Skip and Banish in use: the pilot never spends a charge, so they are covered by tests only.
 - A returning player's refund. A fully bought old profile lands with 43.7M gold, enough for the new shop
   and the apex tier many times over.
+
+## Idle income (2026-10-02)
+
+Gold an hour for three ways of playing. Runs: `node tools/progression_sim.mjs --fixed-build 0,10000,100000 --k 4`
+(medians, AUTO pilot, so a floor). Active = gold a run over (survival + 6 s a draft + 20 s of menus).
+Auto-continue = half the gold over (survival + 6 s a draft + the 5 s restart), and it stops after 20 runs.
+Camp-only = the Gold Mine's rate (it holds 8 hours, so a longer absence pays no more).
+
+| Profile | Gold a run, survival | Active | Auto-continue | Camp-only |
+|---|---|---|---|---|
+| Early (0 spent) | 98, 27 s | about 6,700/h | about 4,600/h | 150/h (mine Lv 1) |
+| Mid (10k spent) | 1,547, 262 s | about 15,500/h | about 8,100/h | 500/h (mine Lv 3) |
+| Late (100k spent) | 5,288, 796 s | about 18,800/h | about 9,500/h | 1,000/h (mine Lv 5) |
+
+Camp-only is the smallest by a wide margin and auto-continue sits at 50 to 69% of active, so the draft
+prices stay. The 20-run limit caps an unattended session at roughly 13 minutes (early), 2 hours (mid) and 5.5 hours (late).
+Source: the sim for runs; arithmetic for the hourly figures and the camp.

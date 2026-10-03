@@ -40,9 +40,10 @@ s.check('the four timed achievements exist with the specified goals', () => {
   if (runGoals.length !== 4) throw new Error('expected 4 run goals, got ' + runGoals.length);
 });
 
-s.check('at least two timed goals carry an EXISTING unlock kind and target', () => {
+s.check('timed goals with an unlock carry an EXISTING unlock kind and target', () => {
   const withUnlock = ACHIEVEMENTS.filter(a => a.goal.kind === 'run' && a.unlock);
-  if (withUnlock.length < 2) throw new Error('only ' + withUnlock.length + ' timed goals carry an unlock');
+  // KILLS_500_UNDER_5MIN lost its row when the Starting Artifact became the camp Forge.
+  if (withUnlock.length < 1) throw new Error('only ' + withUnlock.length + ' timed goals carry an unlock');
   for (const a of withUnlock) {
     if (!['shopRow', 'character'].includes(a.unlock.kind)) {
       throw new Error(a.id + ' invented a new unlock kind: ' + a.unlock.kind);

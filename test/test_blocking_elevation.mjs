@@ -282,10 +282,10 @@ S.check('LIVE: a walker beelines across the old band — no terrain reroute anyw
   } finally { Math.random = realRandom; }
 });
 S.check('NIGHT: a flat run still clears the wave and auto-continues, unattended', () => {
-  while (!T.night.on) T.night.press();
+  while (!T.auto.on) T.auto.press();
   T.startRun();
   h.pump(2);
-  assert(st.nightRun === true, 'the night stamp is live');
+  assert(st.unattended === true, 'the night stamp is live');
   const prof = T.getProfile();
   prof.gold = 100_000_000;
   for (const def of SHOP_UPGRADES) {
@@ -305,7 +305,7 @@ S.check('NIGHT: a flat run still clears the wave and auto-continues, unattended'
     if (st.mode === 'dead' || st.mode === 'death-cine') break;
   }
   assert(sawIntermission, 'the night run reached the intermission unattended (mode ' + st.mode + ')');
-  while (T.night.on) T.night.press();
+  while (T.auto.on) T.auto.press();
   st.mode = 'menu';
 });
 S.check('the camera still holds the pilot on screen at the old floor, ramp and top spots', () => {

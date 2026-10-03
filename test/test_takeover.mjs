@@ -28,7 +28,7 @@ const kup = (k) => h.key('keyup', { key: k });
 const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
 const FPS = 60;
 
-S.check('the old pilot key is ignored: a profile trapped on MANUAL starts on AUTO', () => {
+S.check('the old pilot key is ignored: a profile trapped on MANUAL starts on its pilot (AUTO here)', () => {
   assert.notEqual(T.pilotPrefs.KEY_PILOT, 'hordes_pilot', 'the stored key was renamed');
   T.startRun();
   assert.equal(st.pilotMode, 'AUTO_ALL', 'the stale MANUAL under the old key is not read (got ' + st.pilotMode + ')');
@@ -64,7 +64,7 @@ S.check('a HELD move key steers on AUTO: the hero goes where it points, the mode
   assert.equal(T.wheel.t, T.wheel.handbackS, 'the hand-back timer is held full while the key is down');
   assert.equal(T.wheel.cue(), 'YOU STEER', 'the cue says who is steering');
   assert.equal(st.wheelCue, 'YOU STEER', 'and the renderer is handed the same text');
-  assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), null, 'nothing was stored');
+  assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), 'AUTO_ALL', 'the held key stored nothing (the harness seed is untouched)');
 });
 
 S.check('after the release the hero holds still, the cue counts down, then AUTO drives again', () => {
@@ -133,8 +133,11 @@ S.check('one stray move key does NOT make the next run MANUAL (the trap is gone)
   quiet();
 });
 
-S.check('MANUAL is an explicit choice: O toggles AUTO <-> MANUAL and it persists', () => {
+S.check('MANUAL is an explicit choice: O cycles AUTO -> EXPLORE -> MANUAL and it persists', () => {
   st.toasts.length = 0;
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'EXPLORE', 'O first chooses EXPLORE (M5b)');
+  assert.ok(/EXPLORE/.test(st.toasts[st.toasts.length - 1].msg), 'and says so');
   kdown('o'); kup('o');
   assert.equal(st.pilotMode, 'MANUAL', 'O chooses MANUAL');
   assert.ok(/MANUAL/.test(st.toasts[st.toasts.length - 1].msg), 'and says so');
@@ -143,13 +146,15 @@ S.check('MANUAL is an explicit choice: O toggles AUTO <-> MANUAL and it persists
   T.startRun(); quiet();
   assert.equal(st.pilotMode, 'MANUAL', 'the next run starts on MANUAL');
   kdown('o'); kup('o');
-  assert.equal(st.pilotMode, 'AUTO_ALL', 'O again returns to AUTO: two visible options');
+  assert.equal(st.pilotMode, 'AUTO_ALL', 'O again returns to AUTO');
   assert.equal(T.pilotPrefs.storage.getItem(T.pilotPrefs.KEY_PILOT), 'AUTO_ALL');
 });
 
 S.check('AUTO MOVE is the Advanced auto flavour: O returns to it, never cycles through it', () => {
   T.wheel.setAutoFlavor('AUTO_MOVE');
   assert.equal(st.pilotMode, 'AUTO_MOVE');
+  kdown('o'); kup('o');
+  assert.equal(st.pilotMode, 'EXPLORE');
   kdown('o'); kup('o');
   assert.equal(st.pilotMode, 'MANUAL');
   kdown('o'); kup('o');

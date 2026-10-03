@@ -1,5 +1,6 @@
 // HORDES — stage building structures (PORT SLICE E: original art from VS design reference).
 import { CONFIG as C } from './config.js';
+import { terrainFor, rectOnFeature } from './terrain.js';
 //
 // WHAT THIS FILE IS
 // Sixty-four ORIGINAL hand-authored landmark-scale structures in eight
@@ -467,13 +468,17 @@ const RUST_WALL_RECTS = [
   [12, 20, 2, 10, 4], [42, 22, 2, 8, 4],
   [6, 32, 56, 2, 1],
 ];
+// World art makeover: the old idol (round head, shoulders, arms) read as a
+// red figure standing in the field, i.e. as one more enemy. Now a horned
+// stele on a stepped plinth with a glowing rune: an object, not a body.
 const SMALL_IDOL_RECTS = [
   [2, 52, 36, 2, 1],
-  [10, 40, 20, 12, 6], [10, 40, 20, 2, 3],
-  [13, 18, 14, 22, 2], [13, 18, 14, 2, 3],
-  [15, 10, 10, 8, 2],
-  [17, 12, 2, 2, 4], [21, 12, 2, 2, 4],
-  [9, 22, 4, 12, 2], [27, 22, 4, 12, 2],
+  [6, 46, 28, 6, 6], [6, 46, 28, 1, 3],
+  [9, 42, 22, 4, 6], [9, 42, 22, 1, 3],
+  [12, 18, 16, 24, 2], [13, 14, 14, 4, 2], [12, 18, 2, 24, 3], [13, 14, 14, 1, 3],
+  [18, 23, 4, 2, 4], [17, 25, 6, 2, 4], [18, 27, 4, 2, 4], [19, 31, 2, 6, 4],
+  [9, 6, 3, 9, 2], [7, 3, 3, 4, 2], [28, 6, 3, 9, 2], [30, 3, 3, 4, 2],
+  [7, 3, 3, 1, 3], [30, 3, 3, 1, 3],
   [8, 48, 24, 2, 1],
 ];
 const SPIKE_RACK_RECTS = [
@@ -835,7 +840,7 @@ export const STAGE_BUILDINGS = {
   RUST_WALL: makeBuilding('RUST_WALL', 'rust wall',
     'a merloned wall run veined with rust', 68, 40, RUST_WALL_RECTS, PAL_RUST, 'satellite'),
   SMALL_IDOL: makeBuilding('SMALL_IDOL', 'small idol',
-    'a rust-lit idol on its pedestal', 40, 56, SMALL_IDOL_RECTS, PAL_RUST, 'satellite'),
+    'a horned rust stele with a glowing rune', 40, 56, SMALL_IDOL_RECTS, PAL_RUST, 'satellite'),
   SPIKE_RACK: makeBuilding('SPIKE_RACK', 'spike rack',
     'a rack of iron spikes facing outward', 56, 36, SPIKE_RACK_RECTS, PAL_RUST, 'satellite'),
   RUIN_STAIR: makeBuilding('RUIN_STAIR', 'ruin stair',
@@ -1331,7 +1336,11 @@ export function buildingPlacements(seed, stageId) {
       }
     }
   }
-  return kept.map(({ id, x, y, w, h, spawn }) => ({ id, x, y, w, h, spawn: !!spawn }));
+  // M5b LANDSCAPE: buildings keep to the low ground — a box touching a
+  // plateau, ramp, bridge or drop edge (20 px margin) is dropped.
+  const TER = terrainFor(seed, stageId);
+  return kept.filter(b => !rectOnFeature(TER, b, 20))
+    .map(({ id, x, y, w, h, spawn }) => ({ id, x, y, w, h, spawn: !!spawn }));
 }
 
 // Every building footprint on the arena, in world coords ({ x, y, w, h }):
@@ -1348,10 +1357,22 @@ export function buildingFootprints(seed, stageId) {
 // (seed, stage) and both are fixed for a run, so per-frame callers (motion,
 // pilot, render, drop placement) share one array. Treat it as read-only.
 let rectsKey = null, rectsVal = [];
+// M5b slice 3: run-scoped extra walls (the walled yard and its gate,
+// src/vault.js) join the footprints for the run they were set for, so every
+// reader (motion, the pilot's planner, drop clamps) sees them.
+let extraKey = null, extraVal = [], joinedVal = null;
+export function setExtraRects(seed, stageId, rects) {
+  extraKey = rects && rects.length ? seed + '|' + String(stageId) : null;
+  extraVal = rects && rects.length ? rects.slice() : [];
+  joinedVal = null;
+}
+export function extraRects() { return extraVal; }
 export function buildingRects(seed, stageId) {
   const key = seed + '|' + String(stageId);
-  if (rectsKey !== key) { rectsVal = buildingFootprints(seed, stageId); rectsKey = key; }
-  return rectsVal;
+  if (rectsKey !== key) { rectsVal = buildingFootprints(seed, stageId); rectsKey = key; joinedVal = null; }
+  if (extraKey !== key) return rectsVal;
+  if (!joinedVal) joinedVal = rectsVal.concat(extraVal);
+  return joinedVal;
 }
 
 // buildingPlacements behind the same kind of cache, for the per-frame paint.

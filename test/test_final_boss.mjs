@@ -121,10 +121,10 @@ check('any hero dies in EXACTLY 3 hits; 2 hits never kills', () => {
   }
 });
 
-check('three-hit rule ignores defenses, heat, items, buffs', () => {
+check('three-hit rule ignores defenses, wrath, items, buffs', () => {
   const naked = finalBossDamage({ maxHp: 100 });
   const stacked = finalBossDamage({
-    maxHp: 100, armor: 999, hp: 100, heat: 20,
+    maxHp: 100, armor: 999, hp: 100, wrath: 20,
     stats: { damageMult: 10, goldMult: 5 }, buffs: { overcharge: 4 },
   });
   assert.equal(naked, stacked, 'no defense in the maw');
@@ -221,6 +221,33 @@ check('sprite: 34x38 rectangular, palette-complete, two distinct frames', () => 
   assert.ok(lum(s.palette[2]) < lum(s.palette[1]), 'shade is darker than the hide');
   // and the teeth/core read: bone + glow both present in the maw rows
   assert.ok(used.has(3) && used.has(4) && used.has(5), 'teeth(3), eyes(4), core(5) used');
+});
+
+// --- the base: one body that closes to a chin, tendrils trailing under it -------
+check('sprite base: the body closes to a single chin (no cleft), with tendrils hanging below', () => {
+  const s = FINAL_BOSS_SPRITE;
+  const w = s.box.w, mid = w / 2;
+  const runs = (row) => { let n = 0, on = false; for (const v of row) { if (v && !on) n++; on = !!v; } return n; };
+  for (let f = 0; f < 2; f++) {
+    const g = s.frames[f];
+    const mouth = g.findIndex(r => r.includes(5));                       // first burning-core row
+    const chin = g.findIndex((r, y) => y > mouth && runs(r) > 1) - 1;    // last row that is one run
+    assert.ok(chin > mouth + 6, 'frame ' + f + ': a solid body under the mouth (chin at row ' + chin + ')');
+    for (let y = mouth; y <= chin; y++) {
+      assert.equal(runs(g[y]), 1, 'frame ' + f + ' row ' + y + ': one run, no split into lobes');
+      assert.ok(g[y][mid - 1] && g[y][mid], 'frame ' + f + ' row ' + y + ': filled across the centre line');
+    }
+    // The body narrows to the chin from both sides.
+    const width = (r) => r.filter(v => v).length;
+    assert.ok(width(g[chin]) <= width(g[mouth]) - 10, 'frame ' + f + ': the chin is narrower than the jaw');
+    // Tendrils: several thin strands under the chin, of different lengths, none on the centre line.
+    const below = g.slice(chin + 1);
+    assert.ok(below.length >= 5, 'frame ' + f + ': room for the tendrils');
+    assert.ok(runs(below[0]) >= 4, 'frame ' + f + ': at least four strands (' + runs(below[0]) + ')');
+    assert.ok(runs(below[below.length - 1]) < runs(below[0]), 'frame ' + f + ': strands end at different lengths');
+    for (const r of below) assert.ok(!r[mid - 1] && !r[mid], 'frame ' + f + ': nothing hangs on the centre line');
+    for (const r of below) { let n = 0; for (const v of r) { n = v ? n + 1 : 0; assert.ok(n <= 2, 'a strand is at most 2 px wide'); } }
+  }
 });
 
 console.log(`\n${passed} assertion groups passed — test_final_boss OK`);

@@ -3,7 +3,7 @@
 // The contract under test, driving the REAL seams (no copies):
 //   R1/R2 the heavy tier (BRUTE/DASHER/TICK + the flying SHRIKE) carries
 //         C.E2.HEAVY_HP_MULT x a chaser's hp at the same ladder tick from
-//         state.wave.num >= C.E2.WAVE on, heat-stamped like the herald; the
+//         state.wave.num >= C.E2.WAVE on, wrath-stamped like the herald; the
 //         herald reads config.js's ONE midBossHp definition;
 //   R3    heavies spawn RARER than chaff (one weight dial) + a guaranteed
 //         one-of-each debut ring on the horde wave's first spawn tick;
@@ -28,7 +28,7 @@ import { suite, boot } from './_harness.mjs';
 import { CONFIG as C, midBossHp, ladderHp, ladderXp } from '../src/config.js';
 import { ENEMY_TYPES, decideEnemyAction, flyingZ, makeTypedEnemy } from '../src/enemy_types.js';
 import { GOLD_TIER, RUN_GOLD, purseTier, purseValue } from '../src/meta.js';
-import { heatMultipliers, heatOf } from '../src/heat.js';
+import { wrathMultipliers, wrathOf } from '../src/wrath.js';
 import { mulberry32 } from '../src/weather.js';
 
 const s = suite('test_e2_horde');
@@ -129,17 +129,17 @@ function spawnWindow(num, seconds) {
 // ---------------------------------------------------------------------------
 // 4. R2: the wave-1 herald reads midBossHp EXACTLY (byte-identical retarget).
 // ---------------------------------------------------------------------------
-s.check('R2: the herald spawns at midBossHp(waveNum, tick) x heat exactly', () => {
+s.check('R2: the herald spawns at midBossHp(waveNum, tick) x wrath exactly', () => {
   st.enemies.length = 0;
   st.time = 60; st.wave.num = 1; st.wave.midAt = 60; st.wave.midBossDone = false;
-  const heat = heatMultipliers(heatOf(st)).hp;
-  if (heat !== 1) throw new Error('a fresh run must sit at heat x1 (got ' + heat + ')');
+  const wrath = wrathMultipliers(wrathOf(st)).hp;
+  if (wrath !== 1) throw new Error('a fresh run must sit at wrath x1 (got ' + wrath + ')');
   h.pump(3);
   const herald = st.enemies.find(e => e.midBoss);
   if (!herald) throw new Error('the herald never spawned');
   // HERALD desc.hpMult is 1.0 (bosses.js) — the live tick is unambiguous
   // (t in [60,90) -> w = 2).
-  const want = midBossHp(1, 2) * heat;
+  const want = midBossHp(1, 2) * wrath;
   if (Math.abs(herald.maxHp - want) > 1e-9 * want) {
     throw new Error('herald maxHp ' + herald.maxHp + ' != midBossHp(1,2) = ' + want);
   }
@@ -158,15 +158,15 @@ s.check('R2/R3: the horde wave debuts ONE of each heavy at HEAVY_HP_MULT x a cha
   st.wave.midBossDone = true; st.enemies.length = 0; st.spawnTimer = 0;
   h.pump(2);
   if (!st.wave.e2HeavyDebut) throw new Error('the guaranteed debut never fired');
-  const heat = heatMultipliers(heatOf(st)).hp;
+  const wrath = wrathMultipliers(wrathOf(st)).hp;
   // t in [120,150) -> w = 4. A plain chaser at that tick is BASE_HP x ladderHp.
-  const chaserHp = C.ENEMY.BASE_HP * ladderHp(4) * ENEMY_TYPES.CHASER.hpMult * heat;
+  const chaserHp = C.ENEMY.BASE_HP * ladderHp(4) * ENEMY_TYPES.CHASER.hpMult * wrath;
   const want = chaserHp * C.E2.HEAVY_HP_MULT;
   for (const id of ['BRUTE', 'DASHER', 'TICK', 'SHRIKE']) {
     const e = st.enemies.find(x => x.typeId === id);
     if (!e) throw new Error(id + ' missing from the debut ring');
     if (Math.abs(e.maxHp - want) > 1e-9 * want) {
-      throw new Error(id + ' maxHp ' + e.maxHp + ' != BASE_HP x ladderHp(4) x HEAVY_HP_MULT x heat = ' + want);
+      throw new Error(id + ' maxHp ' + e.maxHp + ' != BASE_HP x ladderHp(4) x HEAVY_HP_MULT x wrath = ' + want);
     }
     if (e.purseTier !== 'HEAVY') throw new Error(id + ' purseTier = ' + e.purseTier + ' (R7)');
     // R4: a heavy is NOT a boss — it routes through its TYPE behaviour.
@@ -178,7 +178,7 @@ s.check('R2/R3: the horde wave debuts ONE of each heavy at HEAVY_HP_MULT x a cha
   // The tier ordering: every heavy has the same body, heavier than a chaser
   // and lighter than the herald it shares the wave with.
   if (!(want > chaserHp)) throw new Error('a heavy is not heavier than a chaser');
-  if (!(want < midBossHp(C.E2.WAVE, 4) * heat)) throw new Error('a heavy out-bodies the herald');
+  if (!(want < midBossHp(C.E2.WAVE, 4) * wrath)) throw new Error('a heavy out-bodies the herald');
   const shrike = st.enemies.find(x => x.typeId === 'SHRIKE');
   if (!shrike.flying) throw new Error('the debut SHRIKE is not flagged flying');
 });

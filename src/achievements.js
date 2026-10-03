@@ -98,7 +98,7 @@ export const ACHIEVEMENTS = [
   { id: 'WAVE8_UNDER_5MIN', goal: { kind: 'run', stat: 'wave', n: 8, within: 300 },
     unlock: { kind: 'shopRow', id: 'slots' } },
   { id: 'KILLS_500_UNDER_5MIN', goal: { kind: 'run', stat: 'kills', n: 500, within: 300 },
-    unlock: { kind: 'shopRow', id: 'artifact' } },
+    unlock: null },
   { id: 'GOLD_600_UNDER_6MIN', goal: { kind: 'run', stat: 'gold', n: 600, within: 360 },
     unlock: null },
 ];
@@ -122,7 +122,7 @@ export const TOTALS_ZERO = {
   bestWave: 0, bestTime: 0, bestWeaponLevel: 0, untouchedWave: 0, runs: 0, survived: 0,
   // V1 escape payout basis: the BEST single-run gold, an integer MAX (never a
   // rate — no division at read time). The escape's payout multiplies this by
-  // K and floors once (src/escape/payout.js); it is not an achievement goal,
+  // K and floors once (src/escape_payout.js); it is not an achievement goal,
   // just a totals counter the escape reads.
   bestGold: 0,
 };

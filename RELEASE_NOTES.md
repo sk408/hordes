@@ -1,6 +1,37 @@
-# HORDES — October 2026 update
+# HORDES — the world update (October 2026)
 
-**Play it:** https://sk408.github.io/hordes/ · the previous version stays playable at https://sk408.github.io/hordes/classic/
+**Play it:** https://sk408.github.io/hordes/ · the version from before the overhaul stays playable at https://sk408.github.io/hordes/classic/
+
+## Your save
+- Nothing is reset. The Starting Artifact shop row is gone (the camp replaces it); what you paid for it is refunded in gold.
+- A tab left open on an older version can no longer save over a newer save. If that happened to you, the newer save is put back the next time the game loads, unless you have since played more runs on the older one.
+
+## New
+- **Things to find on the map:** shrines to charge for a blessing, altars that call the wave boss early for an extra chest, braziers and urns to break, fountains, cursed statues, a locked vault whose key a marked elite carries, a walled yard behind a lever, cracked walls, a mimic, and one glyph hidden on each stage.
+- **A useful map:** it fills in as you explore. Tap a site to set a waypoint.
+- **EXPLORE, the new default pilot:** it fights like AUTO and walks to sites when the field is calm. AUTO and steering by hand are still there; steering charges shrines faster and finds more in braziers.
+- **Quests:** three short goals each run, picked for you (tap one before the run to swap it). They pay gold at the end of the run, and two quest chains unlock characters.
+- **High ground:** plateaus, ramps and bridges. From high ground you see and hit farther.
+- **Travel:** after waves 2 and 4 the portal leads on to another stage: new ground, fresh sites and that stage's enemies, with your build, quests and loot carried over. STAY HERE on the same screen keeps the field. A run can look one stage past the ones you have unlocked.
+- **Boss rules:** from wave 2 each wave boss brings one named rule for its fight (potions do nothing, enemies move faster, the boss has more health...) and a reward for beating it. The rule is named when the wave starts. A new joker, Rulebreaker, ignores the rules and keeps the rewards.
+- **The camp:** buildings bought with gold that make gold and charges while you are away.
+- **Idle play:** a run keeps going while the tab is hidden. AUTO-CONTINUE (Settings) starts the next run for you, for less gold. A summary shows what happened while you were away.
+- **The escape is a short film now:** after the first boss your hero runs for the portal with the horde and the boss behind him. Nothing to play and nothing to fail: it always banks the escape gold, watched or skipped. The Escape Writ now triples it.
+
+## Removed
+- **RAISE THE STAKES** and the **run modifiers** (ONE WEAPON, NO POTIONS). Boss rules take their place. Neither was part of a save, so nothing is lost.
+- **MIMIC FEAST**, the modifier for finding all eight glyphs, is now a joker that joins the offers once you have them.
+
+## Changed
+- New floors, buildings and props on every stage.
+- The hero is easier to find in a crowd: an arrow shows over the head when it is hurt or surrounded.
+- The first shrine of every run stands close to the start.
+- Quests that can no longer be finished show as closed. Quest gold now grows with Greed.
+- Many fixes from a full review of the first October release.
+
+# HORDES — October 2 update
+
+The version from before this update stays playable at https://sk408.github.io/hordes/classic/
 
 ## Your save
 - Shop upgrades from before this update are refunded in gold at the price you paid; the shop is rebuilt and repriced. Weapons, characters and elite unlocks stay owned.

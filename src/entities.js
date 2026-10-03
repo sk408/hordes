@@ -1,6 +1,6 @@
 // HORDES — entities: player, enemies, projectiles, gems
 import { CONFIG as C, ladderHp, ladderXp, ladderDmg, xpForLevel } from './config.js';
-import { heatOf, heatMultipliers } from './heat.js';
+import { wrathOf, wrathMultipliers } from './wrath.js';
 
 export function makePlayer() {
   return {
@@ -82,14 +82,14 @@ export function contactHitDamage(base, dmgMult, typeMult, chargeMult, maxHp) {
 // ---------- applyEscalation (single source of truth) -----------------------
 // Re-scale a freshly-made typed enemy onto the ladder: back out
 // enemy_types.js's linear preview multipliers (1+0.35w hp / 1+0.25w xp) and
-// apply the ladder curves instead. HEAT multiplies hp on top (never xp).
+// apply the ladder curves instead. WRATH multiplies hp on top (never xp).
 // Shared by main.js and chests.js. `t` defaults to state.time.
 export function applyEscalation(state, e, t) {
   const time = (t === undefined ? (state && state.time) : t) || 0;
   const w = Math.floor(time / 30);
   const hpMult = e.hp / (C.ENEMY.BASE_HP * (1 + w * 0.35));
   const xpMult = e.xp / (C.ENEMY.BASE_XP * (1 + w * 0.25));
-  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * heatMultipliers(heatOf(state)).hp;
+  const hp = C.ENEMY.BASE_HP * hpScale(w) * hpMult * wrathMultipliers(wrathOf(state)).hp;
   e.hp = hp;
   e.maxHp = hp;
   e.xp = C.ENEMY.BASE_XP * xpScale(w) * xpMult;

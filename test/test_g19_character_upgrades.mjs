@@ -259,7 +259,7 @@ console.log('PERSISTENCE THROUGH THE REAL LOADER (acceptance D):');
     `${CHARACTER_UPGRADE_BY_ID.knight_vigor.maxLevel}) on load`);
   ok(lvlC === CHARACTER_UPGRADE_BY_ID.knight_vigor.maxLevel,
     'a level above maxLevel is clamped on load');
-  ok(PROFILE_VERSION === 11, 'PROFILE_VERSION is 11 (the v11 shop-refund bump — pin to the literal is intentional)');
+  ok(PROFILE_VERSION === 13, 'PROFILE_VERSION is 13 (the v13 world bump — pin to the literal is intentional)');
 }
 
 console.log(failed ? `\nG19 CHARACTER UPGRADES: ${failed} FAILURES` : '\nG19 CHARACTER UPGRADES: ALL CHECKS PASSED');

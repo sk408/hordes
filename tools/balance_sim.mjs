@@ -26,7 +26,7 @@
 // Per wave b (1..WAVES) the model asks two independent gates, the two axes the
 // game actually has:
 //   KILL gate   — can the build's dps (shop multipliers x in-run draft growth)
-//                 outrun the wave's toughness (ladderHp / heat)?  -> power
+//                 outrun the wave's toughness (ladderHp / wrath)?  -> power
 //   SURVIVE gate— can the build's effective pool (start pool + in-run HP
 //                 drafts + mitigation) absorb one wave of contact threat
 //                 (ladderDmg x the wave's contact mix, at the ladder's
@@ -49,7 +49,6 @@
 //   --validate [N] additionally run the REAL loop, N runs per stage (default 6)
 import { pathToFileURL } from 'node:url';
 import { CONFIG as C, UPGRADES, ladderHp, ladderDmg, ladderXp, ladderGroups, runClock } from '../src/config.js';
-import { goldMult as heatGoldMult } from '../src/heat.js';
 import {
   makeProfile, buyUpgrade, computeRunGold, catalogCost,
   SHOP_UPGRADES, SHOP_BY_ID, STARTER_WEAPONS, WEAPON_PRICES,
@@ -383,7 +382,7 @@ export function simulateRun(profile, rng, pre = null) {
   const greedMult = 1 + SHOP_BY_ID.greed.perLevel * (profile.purchased.greed || 0);
   const payout = computeRunGold({ kills, level, time, goldMult: greedMult });
   const bosses = dead ? b - 1 : WAVES;
-  const chestGold = chestGoldFor(bosses, rng) * heatGoldMult(Math.floor(bosses / 2));
+  const chestGold = chestGoldFor(bosses, rng);
   return {
     good: !dead || b > C.ESCALATION.END_WAVE,   // cleared past the maw milestone
     died: dead, wave: dead ? b : WAVES, time, kills, level,

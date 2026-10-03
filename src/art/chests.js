@@ -33,7 +33,7 @@
 //
 // Format: grids of integer palette indices (0 = transparent), palettes keyed
 // 1-9 with #rgb/#rrggbb inks, rows = the derived digit-string view. The
-// module is NOT enumerated in ART_ASSETS (escape-sprite precedent), so the
+// module is NOT enumerated in ART_ASSETS, so the
 // art-lint counts do not move; the slice-K test verifies this same format.
 export const CHEST_BANDS = ['common', 'rare', 'epic', 'legendary'];
 export const GAMBLE_KEY = 'gamble';

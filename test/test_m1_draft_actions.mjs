@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
 import { applyMetaBonuses, SHOP_BY_ID } from '../src/meta.js';
 import { DRAFT_ACTIONS } from '../src/config.js';
+import { JOKER_IDS, jokerCard } from '../src/jokers.js';
 
 const S = suite('test_m1_draft_actions');
 const h = await boot();
@@ -125,6 +126,74 @@ S.check('the AUTO auto-pick takes a card and never spends a charge', () => {
   assert.equal(T.draftAuto.count, n0 + 1);
   assert.equal(st.mode, 'playing');
   assert.deepEqual({ ...T.draftActions.charges }, { reroll: 2, skip: 2, banish: 2 });
+});
+
+S.check('the shrine blessing offer has no REROLL or BANISH, and R and B spend nothing', () => {
+  start({ reroll: 2, skip: 1, banish: 1 });
+  const site = st.sites.find(s => s.kind === 'shrine');
+  T.sites.event({ kind: 'shrineDone', site, handsOn: false }, st.player);
+  assert.equal(st.draftKind, 'shrine');
+  assert.deepEqual(buttons().map(b => b._draftAction), ['skip'], 'SKIP only');
+  const before = offers().map(o => o.id).join();
+  h.key('keydown', { key: 'r' });
+  h.key('keydown', { key: 'b' });
+  assert.equal(T.draftActions.armed, false);
+  assert.equal(T.draftActions.reroll(), false);
+  assert.equal(T.draftActions.banish(offers()[0]), false);
+  assert.deepEqual({ ...T.draftActions.charges }, { reroll: 2, skip: 1, banish: 1 });
+  assert.equal(T.draftActions.banned.size, 0);
+  assert.equal(offers().map(o => o.id).join(), before);
+  h.key('keydown', { key: '1' });                 // the digit takes the blessing
+  assert.equal(st.mode, 'playing');
+  assert.equal(st.shrineOffer, null);
+});
+
+const sub = () => h.elements['ov-sub'].textContent;
+const finish = () => { for (let i = 0; i < 6 && st.mode === 'draft'; i++) cards()[0].click(); };
+
+S.check('a rerolled or banished joker offer keeps its reason; the next offer shows its own', () => {
+  start({ reroll: 1, banish: 1 });
+  T.jokers.queueOffer('the vault is open');
+  T.jokers.queueOffer('quest done');
+  T.jokers.openOffer();
+  assert.equal(st.draftKind, 'joker');
+  assert.match(sub(), /^the vault is open: /);
+  h.key('keydown', { key: 'r' });
+  assert.equal(T.draftActions.charges.reroll, 0);
+  assert.match(sub(), /^the vault is open: /, 'after a reroll');
+  h.key('keydown', { key: 'b' }); h.key('keydown', { key: '1' });
+  assert.equal(T.draftActions.charges.banish, 0);
+  assert.match(sub(), /^the vault is open: /, 'after a banish');
+  cards()[0].click();
+  assert.equal(st.draftKind, 'joker');
+  assert.match(sub(), /^quest done: /);
+  finish();
+  assert.equal(st.mode, 'playing');
+  assert.equal(st.pendingDrafts, 0);
+});
+
+S.check('a joker offer with nothing to offer takes its reason with it', () => {
+  start({});
+  T.jokers.queueOffer('the vault is open');
+  for (const id of JOKER_IDS) st.draftBanned.add(jokerCard(id).id);   // nothing left to offer
+  T.jokers.openOffer();
+  finish();
+  st.draftBanned.clear();
+  T.jokers.queueOffer('quest done');
+  T.jokers.openOffer();
+  assert.equal(st.draftKind, 'joker');
+  assert.match(sub(), /^quest done: /);
+  finish();
+});
+
+S.check('a joker reason left from the last run does not label the next one', () => {
+  start({});
+  T.jokers.queueOffer('a hidden niche');
+  start({});
+  T.jokers.queueOffer();                           // a boss offer
+  T.jokers.openOffer();
+  assert.match(sub(), /^the boss is down: /);
+  finish();
 });
 
 for (const id of ['reroll', 'skip', 'banish']) delete prof.purchased[id];

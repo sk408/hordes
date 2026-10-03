@@ -399,4 +399,51 @@ check('boss sprites: rectangular, >=20x24, palettes resolve, frames differ', () 
   }
 });
 
+// --- GRAVELMAW: a creature, not a hump, with its own charge wind-up pose --------
+check('gravelmaw reads as a horned beast seen head-on: horns, two eyes, a toothed maw, legs', () => {
+  const s = BOSS_SPRITES.GRAVELMAW, g = s.frames[0], w = s.box.w, h = s.box.h;
+  const keyOf = (hex) => +Object.keys(s.palette).find(k => s.palette[k] === hex);
+  const [hide, bone, eye, fire, dark] = ['#8a8f96', '#e8d8b0', '#ff5566', '#ff9a3c', '#2e3136'].map(keyOf);
+  const cells = (key, y0, y1) => { const out = []; for (let y = y0; y <= y1; y++) for (let x = 0; x < w; x++) if (g[y][x] === key) out.push([x, y]); return out; };
+  // The hide is still the body colour (the portal cine and the contrast test read palette 1).
+  assert.equal(hide, 1, 'stone hide stays palette key 1');
+  // Horns: bone on both flanks of the upper half.
+  const horn = cells(bone, 0, 8);
+  assert.ok(horn.filter(([x]) => x < 6).length >= 8 && horn.filter(([x]) => x >= w - 6).length >= 8, 'a horn each side of the head');
+  // Two eyes, each a block, mirrored about the centre line.
+  const eyes = cells(eye, 0, h - 1);
+  assert.equal(eyes.length, 8, 'two 2x2 eyes (' + eyes.length + ' px)');
+  for (const [x, y] of eyes) assert.ok(eyes.some(([mx, my]) => mx === w - 1 - x && my === y), 'eyes are mirrored');
+  // The maw: fire between two rows of teeth, below the eyes.
+  const eyeY = Math.max(...eyes.map(([, y]) => y));
+  const fireCells = cells(fire, eyeY + 1, h - 1);
+  assert.ok(fireCells.length >= 8, 'fire in the maw');
+  const fy = fireCells[0][1];
+  assert.ok(cells(bone, fy - 1, fy - 1).length >= 4 && cells(bone, fy + 1, fy + 1).length >= 4, 'teeth above and below the fire');
+  // Legs: the bottom row is four separate feet.
+  let runs = 0, on = false;
+  for (let x = 0; x < w; x++) { const v = g[h - 1][x] !== 0; if (v && !on) runs++; on = v; }
+  assert.equal(runs, 4, 'four feet on the ground (' + runs + ' runs)');
+  assert.ok(g[h - 1].every(v => v === 0 || v === dark), 'hooves are the dark key');
+  // The body is symmetric in shape (lit from the left, so colours differ).
+  for (const row of g) for (let x = 0; x < w; x++) assert.equal(row[x] !== 0, row[w - 1 - x] !== 0, 'mirrored silhouette');
+});
+
+check('gravelmaw carries a wind-up pose: same box, crouched, eyes and maw white-hot', () => {
+  const s = BOSS_SPRITES.GRAVELMAW;
+  assert.ok(s.tell, 'the sprite has a tell grid');
+  assert.equal(s.frames.length, 2, 'the walk stays two frames');
+  assert.equal(s.tell.length, s.box.h); assert.ok(s.tell.every(r => r.length === s.box.w), 'same box as the walk');
+  const flat = (g) => JSON.stringify(g);
+  assert.ok(flat(s.tell) !== flat(s.frames[0]) && flat(s.tell) !== flat(s.frames[1]), 'a pose of its own');
+  const hot = +Object.keys(s.palette).find(k => s.palette[k] === '#fff0a0');
+  const count = (g, k) => g.flat().filter(v => v === k).length;
+  assert.ok(count(s.tell, hot) >= 16, 'white-hot eyes, cracks and maw (' + count(s.tell, hot) + ' px)');
+  assert.equal(count(s.frames[0], hot) + count(s.frames[1], hot), 0, 'never white-hot while walking');
+  const top = (g) => g.findIndex(r => r.some(v => v));
+  assert.ok(top(s.tell) > top(s.frames[0]), 'it crouches (top row ' + top(s.tell) + ' vs ' + top(s.frames[0]) + ')');
+  // The other bosses keep their two frames and no tell.
+  for (const id of ['CHOIR_MOTHER', 'PYRAXIS', 'HERALD']) assert.equal(BOSS_SPRITES[id].tell, undefined, id);
+});
+
 console.log(`\n${passed} assertion groups passed — test_bosses OK`);

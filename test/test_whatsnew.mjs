@@ -145,7 +145,7 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     const s1 = stored();
     ok('the first save stamps lastPlayed (a real epoch-ms integer)',
       typeof s1.lastPlayed === 'number' && s1.lastPlayed > 0 && Number.isInteger(s1.lastPlayed), s1.lastPlayed);
-    ok('the save stamps the v11 schema version', s1.version === 11, s1.version);
+    ok('the save stamps the current schema version', s1.version === 13, s1.version);
     fake += 60000;                       // a minute passes
     mainMod.autosave('exit');
     const s2 = stored();
@@ -201,10 +201,35 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     rel.worthTelling === true && typeof rel.id === 'string' && rel.id.length > 0 &&
     typeof rel.dateMs === 'number' && rel.dateMs > 0, { id: rel.id, dateMs: rel.dateMs });
   ok('the copy is plain ASCII with no emojis (house UI rule)',
-    [rel.title, ...rel.lines].every(s => !/[^\x00-\x7F]/.test(s)));
+    [rel.title, ...rel.lines, ...rel.missed.lines, ...rel.guidedLines].every(s => !/[^\x00-\x7F]/.test(s)));
   ok('the copy is a short list phrased as what the player GETS',
     rel.lines.length >= 3 && rel.lines.length <= 6 && rel.lines.every(l => l.length > 0 && l.length <= 90),
     rel.lines.map(l => l.length));
+  ok('the lines of the release before it are short too (at most 3, 90 characters)',
+    rel.missed.lines.length <= 3 && rel.missed.lines.every(l => l.length > 0 && l.length <= 90),
+    rel.missed.lines.map(l => l.length));
+  // Who missed the release before this one: never dismissed its note, and
+  // last played before it shipped (or has no stamp at all).
+  const M = rel.missed;
+  ok('MISSED: an older save with no stamp, or one last played before that release',
+    W.missed({ lastPlayed: null, lastSeenUpdate: null }, rel) === true &&
+    W.missed({ lastPlayed: M.dateMs - 1000, lastSeenUpdate: '2026-09-18' }, rel) === true);
+  ok('NOT MISSED: dismissed that note, or played after it shipped',
+    W.missed({ lastPlayed: M.dateMs - 1000, lastSeenUpdate: M.id }, rel) === false &&
+    W.missed({ lastPlayed: M.dateMs + 1000, lastSeenUpdate: null }, rel) === false);
+  ok('the release before this one is older than this one', M.dateMs < rel.dateMs && M.id !== rel.id && M.schema < rel.schema);
+  // The save's schema decides too: an older build's save has not met the release,
+  // even when that build was played after the ship date in a tab left open.
+  const late = { lastPlayed: rel.dateMs + 60000, lastSeenUpdate: M.id };
+  ok('DUE: a save an older build wrote, played after the ship date (a tab left open)',
+    W.due(late, rel, false, rel.schema - 1) === true && W.due(late, rel, false, M.schema) === true);
+  ok('NOT DUE: a save this build wrote, played after the ship date (a new player)',
+    W.due(late, rel, false, rel.schema) === false && W.due(late, rel, false) === false);
+  ok('NOT DUE: dismissed, whatever the schema', W.due({ ...late, lastSeenUpdate: rel.id }, rel, false, rel.schema - 1) === false);
+  ok('MISSED: a save older than the release before, even when played after it shipped',
+    W.missed({ lastPlayed: M.dateMs + 60000, lastSeenUpdate: null }, rel, M.schema - 1) === true &&
+    W.missed({ lastPlayed: M.dateMs + 60000, lastSeenUpdate: null }, rel, M.schema) === false);
+  ok('the ship date is 2026-10-03 and the id says so', rel.id === '2026-10-03' && new Date(rel.dateMs).toISOString().startsWith('2026-10-03'));
   const P = (over) => ({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: null, ...over });
   ok('DUE: an existing save that predates the release (the returning player)',
     W.due(P(), rel, false) === true);
@@ -260,10 +285,15 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('the note carries the release copy, an OBVIOUS dismiss button, and the close hint',
     /WHAT'S NEW/.test(noteUp.innerHTML) && /CLOSE/.test(noteUp.innerHTML) &&
     /tap anywhere on the note to close/i.test(noteUp.innerHTML));
-  ok('the release copy tells returning players about the refund, the new systems and the kept save',
-    W.release.lines.some(l => /refunded/i.test(l)) &&
-    W.release.lines.some(l => /EVOLVE/.test(l) && /FUSE/.test(l)) &&
-    W.release.lines.some(l => /old save is kept/i.test(l) && /classic/i.test(l)));
+  ok('a player who missed the release before reads about the refund, the new systems and the kept save',
+    W.release.missed.lines.some(l => /refunded/i.test(l)) &&
+    W.release.missed.lines.some(l => /EVOLVE/.test(l) && /FUSE/.test(l)) &&
+    W.release.missed.lines.some(l => /old save is kept/i.test(l) && /classic/i.test(l)) &&
+    W.release.missed.lines.every(l => noteUp.innerHTML.includes(l)));
+  ok("this release's own lines are on the note: the map, EXPLORE, quests, the camp, the landscape",
+    W.release.lines.every(l => noteUp.innerHTML.includes(l)) &&
+    [/vault/i, /EXPLORE/, /quests/i, /CAMP/, /ramps/i, /portal leads to a new stage/i, /boss brings a rule/i, /escape is a chase scene/i, /RAISE THE STAKES/]
+      .every(re => W.release.lines.some(l => re.test(l))));
   // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing
   // the popup should write a save" — the same prove-it-moved discipline the
@@ -321,6 +351,23 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
     W.due(freshProfile, rel, true) === false);
   ok('returning boot + migrated save: the note (the arm this file tested in 4)',
     W.due({ lastPlayed: null, lastSeenUpdate: null }, rel, false) === true);
+}
+
+// ---- 6b. A PLAYER WHO PLAYED THE RELEASE BEFORE: this release only, no offer --
+{
+  const rel = W.release, M = rel.missed;
+  const prof = T.getProfile();
+  prof.lastPlayed = M.dateMs + 1000; prof.lastSeenUpdate = M.id;
+  W.tried = false;
+  T.showTitle();
+  const note = noteEl();
+  ok('the note is due for a player of the release before', !!note);
+  ok("it carries this release's lines and none of the older ones",
+    !!note && rel.lines.every(l => note.innerHTML.includes(l)) && !M.lines.some(l => note.innerHTML.includes(l)));
+  ok('it does not offer the guided run again (they were asked then)',
+    !!note && !/SHOW ME/.test(note.innerHTML) && !/guided/i.test(note.innerHTML));
+  if (note) note.click();
+  ok('the dismiss marks this release seen', prof.lastSeenUpdate === rel.id);
 }
 
 // ---- 7. ADDENDUM: the OPT-IN guided run (the offer, decline, accept, B6) ----

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CONFIG as C } from '../src/config.js';
 import { hpScale, xpScale, applyEscalation } from '../src/entities.js';
-import { heatOf, heatMultipliers } from '../src/heat.js';
+import { wrathOf, wrathMultipliers } from '../src/wrath.js';
 import { PIERCE_ALL, weaponLevelParams } from '../src/weapons.js';
 import { makeWeapon } from '../src/weapons.js';
 import { boot, suite } from './_harness.mjs';
@@ -142,17 +142,17 @@ S.check('applyEscalation lives in entities.js and both callers delegate', () => 
     'and that call site is the ladder wrapper (params state, enemy, t)');
 });
 S.check('the shared helper reproduces the documented curves exactly', () => {
-  const st = { time: 90, heat: { total: 3, manual: 0, events: new Set() } };
+  const st = { time: 90, wrath: { total: 3, events: new Set() } };
   const w = 3;                                    // floor(90/30)
-  const heatHp = heatMultipliers(heatOf(st)).hp;
+  const heatHp = wrathMultipliers(wrathOf(st)).hp;
   // A factory enemy at the linear preview: BASE * (1 + 0.35w) for hp.
   const e = { hp: C.ENEMY.BASE_HP * (1 + 0.35 * w), xp: C.ENEMY.BASE_XP * (1 + 0.25 * w) };
   applyEscalation(st, e, st.time);
   assert.ok(Math.abs(e.hp - C.ENEMY.BASE_HP * hpScale(w) * heatHp) < 1e-6,
-    'hp lands on BASE_HP * hpScale(w) * heat (' + e.hp + ')');
+    'hp lands on BASE_HP * hpScale(w) * wrath (' + e.hp + ')');
   assert.equal(e.maxHp, e.hp, 'maxHp mirrors the escalated hp');
   assert.ok(Math.abs(e.xp - C.ENEMY.BASE_XP * xpScale(w)) < 1e-6,
-    'xp lands on BASE_XP * xpScale(w), never heat-inflated (' + e.xp + ')');
+    'xp lands on BASE_XP * xpScale(w), never wrath-inflated (' + e.xp + ')');
   // `t` is optional and defaults to state.time.
   const e2 = { hp: C.ENEMY.BASE_HP * (1 + 0.35 * w), xp: C.ENEMY.BASE_XP * (1 + 0.25 * w) };
   applyEscalation(st, e2);

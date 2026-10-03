@@ -8,6 +8,8 @@ import { formatDamage } from '../src/fx/feel_render.js';
 import { blitGrid, blitPainted, cacheEnabled, actorStyle, STYLE_PLAIN, SPRITE_CACHE_TEST } from '../src/sprite_cache.js';
 import { Renderer } from '../src/render.js';
 import { ENEMY_SPRITES } from '../src/enemy_sprites.js';
+import { makeTypedEnemy, ELITE_TEMPLATE } from '../src/enemy_types.js';
+import { BOSS_SPRITES } from '../src/bosses.js';
 import { CONFIG as C } from '../src/config.js';
 
 let passed = 0;
@@ -245,6 +247,77 @@ check('with a canvas the same grid is one drawImage, baked once per style', () =
   const g2 = recorder();
   blitGrid(g2, spr.frames[1], spr.palette, 0, 0, STYLE_PLAIN, 4);
   assert.deepEqual(g2.ops[0], ['img', 0, 0, spr.box.w * 4, spr.box.h * 4], 'scaled blit stretches the raster');
+  SPRITE_CACHE_TEST.reprobe();
+});
+
+// ---- the live actor blit: elites at body size, the boss wind-up pose -------------
+// A recorder that keeps the raster handed to drawImage, so a test can tell
+// which baked grid was drawn.
+const imgRecorder = () => {
+  const ops = [];
+  return { ops, fillStyle: '', globalAlpha: 1,
+    fillRect(x, y, w, h) { ops.push({ rect: true, x, y, w, h, col: this.fillStyle }); },
+    drawImage(img, x, y, w, h) { ops.push({ img, x, y, w: w === undefined ? img.width : w, h: h === undefined ? img.height : h }); } };
+};
+const rasterOf = (grid, palette, style) => {
+  const g = imgRecorder();
+  blitGrid(g, grid, palette, 0, 0, style);
+  return g.ops[0].img;
+};
+check('an elite is drawn at its body size: the same raster, 1.5x, about the body centre', () => {
+  SPRITE_CACHE_TEST.forceFakeCanvas();
+  const draw = Renderer.prototype.drawActor;
+  for (const id of Object.keys(ENEMY_SPRITES)) {
+    const sp = ENEMY_SPRITES[id];
+    const plain = makeTypedEnemy(id, 0, 0, 0, {}), elite = makeTypedEnemy(id, 0, 0, 0, { elite: true });
+    assert.equal(elite.w, plain.w * ELITE_TEMPLATE.sizeMult, id + ': the elite body is the template size');
+    const body = (e) => {
+      const g = imgRecorder();
+      draw.call(null, g, { ...e, hp: 1, maxHp: 1, age: 0 }, sp, 100, 80, { time: 0 });
+      const ring = e.elite ? '#ffd75e' : null;
+      const want = rasterOf(sp.frames[0], sp.palette, actorStyle(false, false, ring, !e.flying, !e.elite));
+      const op = g.ops.find(o => o.img === want);
+      assert.ok(op, id + (e.elite ? ' elite' : '') + ': the body raster is blitted');
+      return { op, g };
+    };
+    const a = body(plain).op, b = body(elite);
+    assert.ok(a.w === a.img.width && a.h === a.img.height, id + ': a plain enemy is drawn at 1x');
+    assert.equal(b.op.w, Math.round(b.op.img.width * 1.5), id + ': the elite raster is stretched 1.5x wide');
+    assert.equal(b.op.h, Math.round(b.op.img.height * 1.5), id + ': and 1.5x tall');
+    assert.ok([b.op.x, b.op.y, b.op.w, b.op.h].every(Number.isInteger), id + ': on whole pixels');
+    // The art inside the two 1px rings (3px once stretched) covers the elite body's width.
+    const artW = b.op.w - 6;
+    assert.ok(Math.abs(artW - sp.box.w * 1.5) <= 1, id + ': art ' + artW + 'px wide for a ' + sp.box.w + 'px sprite');
+    assert.ok(Math.abs(b.op.x + b.op.w / 2 - 100) <= 1.5, id + ': centred on the body');
+    // Same centre line as the plain draw: the feet stay under the body.
+    assert.ok(Math.abs((b.op.y + 3 + sp.box.h * 0.75) - 80) <= 1.5, id + ': grown about the body centre');
+    // The elite tells stay: the gold crown pips sit above the larger head.
+    const pips = b.g.ops.filter(o => o.rect && o.col === '#ffd75e');
+    assert.ok(pips.length >= 4, id + ': crown pips drawn');
+    assert.ok(pips.every(o => o.y < b.op.y + 2), id + ': the crown clears the head');
+  }
+  SPRITE_CACHE_TEST.reprobe();
+});
+check('a boss holds its wind-up pose while it telegraphs, and walks otherwise', () => {
+  SPRITE_CACHE_TEST.forceFakeCanvas();
+  const draw = Renderer.prototype.drawActor;
+  const sp = BOSS_SPRITES.GRAVELMAW;
+  const boss = { boss: true, hp: 1, maxHp: 1, x: 0, y: 0, w: 24, h: 24, age: 0 };
+  const drawn = (e, time) => { const g = imgRecorder(); draw.call(null, g, e, sp, 100, 80, { time }); return g.ops.filter(o => o.img).map(o => o.img); };
+  const walk = rasterOf(sp.frames[0], sp.palette, actorStyle(false, false, '#ff9ed8', true, false));
+  assert.ok(drawn(boss, 0).includes(walk), 'walking: frame A');
+  // Telegraphing: the ring blinks white / red; either way the grid is the tell pose.
+  for (const [time, ring] of [[0, '#ffffff'], [1 / 12, '#ff2f5e']]) {
+    const tell = rasterOf(sp.tell, sp.palette, actorStyle(false, false, ring, true, false));
+    const seen = drawn({ ...boss, telegraph: true, age: 0.2 }, time);
+    assert.ok(seen.includes(tell), 'telegraphing at t=' + time.toFixed(2) + ': the wind-up pose');
+    assert.ok(!seen.includes(rasterOf(sp.frames[1], sp.palette, actorStyle(false, false, ring, true, false))), 'not the walk frame');
+  }
+  // A sprite without a tell keeps cycling its frames through a telegraph.
+  const ch = BOSS_SPRITES.PYRAXIS;
+  const g = imgRecorder();
+  draw.call(null, g, { ...boss, telegraph: true, age: 0 }, ch, 100, 80, { time: 0 });
+  assert.ok(g.ops.some(o => o.img === rasterOf(ch.frames[0], ch.palette, actorStyle(false, false, '#ffffff', true, false))));
   SPRITE_CACHE_TEST.reprobe();
 });
 

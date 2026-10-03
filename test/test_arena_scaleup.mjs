@@ -38,6 +38,9 @@ import { radarDots, RADAR_RADIUS, SPAWN_RING_MAX } from '../src/radar.js';
 import { buyUpgrade, SHOP_UPGRADES } from '../src/meta.js';
 
 const S = suite('test_arena_scaleup');
+// Every check runs on a fixed stream: the measured arms are seeded, but the
+// unseeded checks before them changed the profile they start from.
+Math.random = mulberry32(0xa5ca1e);
 function assert(cond, msg) { if (!cond) throw new Error('AssertionError: ' + msg); }
 
 // ---------------------------------------------------------------------------
@@ -468,10 +471,10 @@ S.check('ELEVATION ROLLBACK: the live field is FLAT and the old high ground is o
 // -> auto-CONTINUE), and the pacing invariants' constants are untouched.
 // ---------------------------------------------------------------------------
 S.check('a NIGHT run clears the wave and auto-continues on the 9-unit field, unattended', () => {
-  while (!T.night.on) T.night.press();
+  while (!T.auto.on) T.auto.press();
   T.startRun();
   h.pump(2);
-  assert(st.nightRun === true, 'the night stamp is live');
+  assert(st.unattended === true, 'the night stamp is live');
   const prof = T.getProfile();
   prof.gold = 100_000_000;
   for (const def of SHOP_UPGRADES) {
@@ -504,7 +507,7 @@ S.check('a NIGHT run clears the wave and auto-continues on the 9-unit field, una
     'the auto-CONTINUE advanced the ladder unattended (mode ' + st.mode + ')');
   // The spawn ring is pilot-relative and did not grow with the field.
   assert(C.ENEMY.SPAWN_DIST === 280, 'the spawn ring radius is untouched by the scale-up');
-  while (T.night.on) T.night.press();
+  while (T.auto.on) T.auto.press();
   st.mode = 'menu';
 });
 

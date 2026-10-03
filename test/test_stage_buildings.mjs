@@ -316,8 +316,10 @@ console.log('COMPOSITION (no gate, abundance, separation — 48 seeds x 8 stages
       }
     }
   }
-  ok(minBoxes >= 40, 'every arena carries >= 40 structures (min ' + minBoxes + ' — an order of magnitude past one-in-a-field)');
-  ok(minAnchors >= 12, 'every arena carries >= 12 anchors (min ' + minAnchors + ')');
+  // M5b landscape: buildings keep off plateaus, ramps and bridges, so the
+  // floors are 32 structures / 8 anchors (were 40 / 12 on flat arenas).
+  ok(minBoxes >= 32, 'every arena carries >= 32 structures (min ' + minBoxes + ' — an order of magnitude past one-in-a-field)');
+  ok(minAnchors >= 8, 'every arena carries >= 8 anchors (min ' + minAnchors + ')');
   ok(sepBad === 0, 'the 16px separation floor holds for every kept pair (' + sepBad + ' violations)');
 }
 

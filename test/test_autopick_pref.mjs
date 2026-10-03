@@ -112,7 +112,7 @@ const TIMEOUT = CONFIG.AUTOPILOT.DRAFT_TIMEOUT;
 keyHandler({ key: 'x', preventDefault() {} });
 tick(1);
 T.startRun();
-ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.pilotMode === 'AUTO_ALL', [st.mode, st.pilotMode]);
+ok('the run is live on the default pilot (EXPLORE, an auto mode)', st.mode === 'playing' && st.pilotMode === 'EXPLORE', [st.mode, st.pilotMode]);
 st.player.stats.xpMult = 0;   // no XP may be earned mid-test
 T.draftAuto.rng = () => 0;
 

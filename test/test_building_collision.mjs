@@ -575,11 +575,15 @@ S.check('SCAN: paint stays pure; only the motion seam resolves positions', () =>
   assert(/slideMove\(p\.x, p\.y/.test(seam), 'the motion seam slides along footprints');
   // The enemy move seam (typed-behavior application .. the latch) is
   // building-blind by design: the horde walks through (no pacing change).
+  // The one exception is the walled yard: walkers slide on its walls, read
+  // from the run's extra rects, never from the footprint field.
   const es = msrc.indexOf('Enemies: typed behavior');
-  const ee = msrc.indexOf('TICK latch', es);
+  const ee = msrc.indexOf('TICK latch: once attached', es);
   assert(es > 0 && ee > es, 'the enemy move seam is delimited in main.js');
   const eseam = msrc.slice(es, ee);
   assert(!/building/i.test(eseam), 'the enemy move seam reads no building query');
+  assert(/slideMove\(ox, oy, e\.x, e\.y, yardW\b/.test(eseam) && /yardForWalkers\([^;]*extraRects\(\)/.test(eseam),
+    'walkers slide on the yard walls only (extraRects)');
   // The portal's two building clamps (open + drift) keep the entry point
   // where the pilot can stand: entry needs dist < RADIUS outside walls.
   const po = msrc.indexOf('state.portal = { x: state.wave.portalX');

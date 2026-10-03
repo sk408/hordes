@@ -121,7 +121,7 @@ keyHandler({ key: 'x', preventDefault() {} });
 tick(1);
 T.jokers.draftWeight = 0;   // plain level-up drafts: a joker with a full row opens a second choice
 T.startRun();
-ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.pilotMode === 'AUTO_ALL', [st.mode, st.pilotMode]);
+ok('the run is live on the default pilot (EXPLORE, an auto mode)', st.mode === 'playing' && st.pilotMode === 'EXPLORE', [st.mode, st.pilotMode]);
 st.player.stats.xpMult = 0;   // no XP may be earned mid-test
 T.draftAuto.rng = () => 0;
 // Nothing else may take the overlay while a ceremony is measured. The lead

@@ -50,6 +50,7 @@ const quietField = () => {
   st.enemies.length = 0; st.gems.length = 0; st.drops.length = 0;
   st.spawnTimer = 999; st.wave.endsAt = st.time + 9999;
   st.wave.bosses = []; st.wave.boss = null; st.portal = null;
+  st.sites = []; st.shrines = [];   // M5b: no sites under a probe
 };
 const probe = (act) => elements['touch']._ev['pointerdown']({
   preventDefault() {}, pointerId: 41, clientX: 10, clientY: 10,
@@ -167,8 +168,8 @@ S.check('the object explainers come from THE FIELD reference rows (parity)', () 
   }
   T.startRun(); pump(3); quietField();
   key('keydown', { key: '?', preventDefault() {} });
-  st.shrines.length = 0;
-  st.shrines.push({ x: st.player.x, y: st.player.y, used: false });
+  st.sites = [{ id: 1, kind: 'shrine', x: st.player.x, y: st.player.y, state: 'unused', charge: 0 }];
+  st.shrines = st.sites.slice();
   const r = T.helpmode.region(st.player.x, st.player.y, 8).getBoundingClientRect();
   probeGround(r.left + r.width / 2, r.top + r.height / 2);
   assert.ok(/SHRINE/i.test(tip()), 'the shrine explained (' + tip() + ')');

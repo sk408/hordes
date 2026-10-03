@@ -59,6 +59,15 @@ const park = (x, y) => {
 // A known, quiet run with the human owning movement.
 T.startRun();
 pump(3);
+// A pinned world: the walks below cross the field from (0,0), and a random
+// field can put a wall or a slope on that line, or a shrine whose blessing
+// draft holds the sim. Seed 2's field is clear and level along y = 0; no
+// sites or secrets, so site placement cannot reach the walks.
+state.stage = 'VERDANT_HOLLOW';
+state.groundSeed = 2;
+T.sites.seed();
+state.sites = [];
+state.secrets = [];
 state.spawnTimer = 99999;
 state.wave.endsAt = state.time + 99999;
 // (h) ASK for the manual pilot. This used to be a single M press, which is now

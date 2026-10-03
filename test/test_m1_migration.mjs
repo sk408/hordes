@@ -58,7 +58,7 @@ S.check('the legacy table is frozen and covers the 47 v10 stat rows', () => {
   assert.deepEqual(LEGACY_SHOP_V10.dmg, [125, 250, 325, 650, 1200]);
   assert.equal(LEGACY_SHOP_V10.laststand[0], 4320000);
   assert.equal(MAXED_REFUND, 43690241, 'the v10 stat catalogue summed to 43,690,241 gold');
-  assert.equal(PROFILE_VERSION, 11);
+  assert.equal(PROFILE_VERSION, 13);
 });
 
 S.check('refundLegacyShop is pure, clamps levels, and keeps ids it does not know', () => {
@@ -73,7 +73,7 @@ S.check('refundLegacyShop is pure, clamps levels, and keeps ids it does not know
 S.check('FRESH v10 profile: nothing to refund, nothing announced', () => {
   const r = loadProfileResult(mem(FRESH_V10));
   assert.equal(r.status, 'migrated');
-  assert.equal(r.profile.version, 11);
+  assert.equal(r.profile.version, PROFILE_VERSION);
   assert.equal(r.profile.gold, 320);
   assert.deepEqual(r.profile.purchased, {});
   assert.equal(r.profile.shopRefund, undefined);
@@ -145,7 +145,7 @@ S.check('importing a v10 export refunds through the same chain', () => {
 
 S.check('older saves (no version) run the whole chain and are refunded too', () => {
   const r = loadProfileResult(mem({ gold: 10, purchased: { dmg: 2 }, unlockedCharacters: ['KNIGHT'], equippedCharacter: 'KNIGHT' }));
-  assert.equal(r.profile.version, 11);
+  assert.equal(r.profile.version, PROFILE_VERSION);
   assert.equal(r.profile.gold, 10 + 125 + 250);
   assert.deepEqual(r.profile.purchased, {});
 });

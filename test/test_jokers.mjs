@@ -49,7 +49,7 @@ s.check('the registry: 18-24 jokers, each one sentence, each with a face and a f
   assert.deepEqual(from('mythic'), ['second_wind', 'storm_shards', 'full_hand', 'magnet_collector']);
   assert.deepEqual(from('rule'), ['hordebait', 'once']);
   assert.deepEqual(from('perk'), ['regrowth', 'frost']);
-  assert.deepEqual(from('new'), ['shortcut', 'wildcard', 'doubledown', 'encore', 'travellight']);
+  assert.deepEqual(from('new'), ['shortcut', 'wildcard', 'doubledown', 'encore', 'travellight', 'rulebreaker', 'mimicfeast']);
   // Cut: the flat-stat cards and the cross-tag combos are not jokers.
   for (const id of ['tempest', 'killshot', 'focus', 'thick', 'wideorbit', 'glacier', 'wildfire',
     'thermalshock', 'stormreaper', 'glacialorbit', 'shatter', 'cinder', 'frostwire']) {
@@ -131,6 +131,8 @@ s.check('every joker switches its own rule on, and off again when it leaves the 
     doubledown: (st) => handOpts(st).scale === DOUBLE_DOWN_SCALE,
     encore: (st) => !!(st.player.jokerFlags && st.player.jokerFlags.encore),
     travellight: (st) => Math.abs(emptySlotCooldownMult(st) - 0.7) < 1e-9,   // three empty weapon slots
+    rulebreaker: (st) => !!(st.player.jokerFlags && st.player.jokerFlags.rulebreaker),   // main.js reads the row when a boss arrives
+    mimicfeast: (st) => !!(st.player.jokerFlags && st.player.jokerFlags.mimicfeast),     // main.js reads the row when a chest opens
   };
   assert.deepEqual(Object.keys(marker).sort(), [...JOKER_IDS].sort(), 'a marker for every joker');
   for (const id of JOKER_IDS) {
@@ -257,7 +259,7 @@ s.check('a full row: a level-up joker opens the replace choice; REPLACE swaps in
 
 s.check('a boss kill queues a joker offer: three jokers, ahead of a level-up draft; a full row may keep', () => {
   const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.ok(/toast\('BOSS DOWN'\);\s*if \(credit\) queueJokerOffer\(\);/.test(src), 'the wave boss death queues the offer');
+  assert.ok(/toast\('BOSS DOWN'[^\n]*\);\s*if \(credit\) queueJokerOffer\(\);/.test(src), 'the wave boss death queues the offer');
   const p = freshRun();
   T.jokers.queueOffer();
   assert.deepEqual([st.jokerOffers, st.pendingDrafts, st.mode], [1, 1, 'playing']);
@@ -367,7 +369,7 @@ s.check('an old profile loads: no joker fields, an older version, and it plays w
   const g = gOld;
   const prof = g.T.getProfile();
   assert.equal(prof.version, SAVE.PROFILE_VERSION, 'migrated to the current version (the schema did not change)');
-  assert.equal(SAVE.PROFILE_VERSION, 11);
+  assert.equal(SAVE.PROFILE_VERSION, 13);
   assert.equal(prof.banners.TOKEN, 1, 'its banner ledger is kept');
   assert.equal(g.T.jokers.discovered(), 0);
   g.T.banners.suppressAll();

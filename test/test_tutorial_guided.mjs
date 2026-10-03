@@ -107,6 +107,8 @@ const stepId = (h) => (h.T.tut.model ? h.T.tut.model.id : null);
     assert.ok(until(h, () => stepId(h) === 'hero', 10));
     assert.ok(until(h, () => st.enemies.length > 0, 120), 'trainers on the field');
     assert.equal(st.time, 0);
+    assert.ok(st.quests && st.quests.length > 0, 'the run has its quests');
+    assert.equal(T.renderer.hudChrome.quests, null, 'the quest tracker is not drawn during the guided part');
   });
 
   S.check('HERO: ends when the hero makes a kill on their own', () => {
@@ -178,6 +180,7 @@ const stepId = (h) => (h.T.tut.model ? h.T.tut.model.id : null);
     assert.equal(T.tut.live, false, 'BEGIN (Enter) hands over');
     assert.equal(st.player.hp, st.player.stats.maxHp, 'full bars for the real run');
     h.pump(1);
+    if (st.mode === 'playing') assert.ok(T.renderer.hudChrome.quests, 'the quest tracker is back after the handover');
   });
 
   S.check('the hero was never hurt by the field during the guided part (only the scripted hit)', () => {

@@ -176,16 +176,17 @@ S.check('the run-end body: apex OFF is byte-identical, ON adds exactly the APEX 
   state.apexRun = false;
   assert.equal(on, '<span class="cause">APEX RUN</span><br>' + off,
     'the ON body is the OFF body with EXACTLY the APEX clause prepended');
-  // The clause rides the SAME mark pattern the challenge/stage clauses use:
-  // it stacks with them rather than replacing them.
-  state.challenge = 'ONE_WEAPON';        // a real non-standard id the table knows
+  // The clause rides the SAME mark pattern the stage clause uses: it stacks
+  // with it rather than replacing it.
+  const stage0 = state.stage;
+  state.stage = 'ASHEN_WASTE';           // a real non-default stage: it is tagged
   state.apexRun = true;
   try {
     const both = T.endScreenBody({ ...args });
     assert.ok(both.includes('APEX RUN</span><br><span class="cause">'),
-      'the apex clause stacks directly onto a challenge clause');
+      'the apex clause stacks directly onto the stage clause');
   } finally {
-    state.challenge = 'STANDARD';
+    state.stage = stage0;
     state.apexRun = false;
   }
 });

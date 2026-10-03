@@ -394,7 +394,7 @@ run 20–30 is still missed by about four runs (open item).
   every hand type; duplicates, near misses, the order of the best hand, Shortcut and Wild Card; the bonus
   table; the bonus applied once, replaced and removed exactly; hints; and through the real `pick()`: the
   hand, its payment, the count-up, the HUD plate and the pause screen.
-- `test/test_jokers.mjs` (new): the registry (21 jokers, one sentence each, a face each, what was cut);
+- `test/test_jokers.mjs` (new): the registry (22 jokers, one sentence each, a face each, what was cut);
   the pip-less joker face; slots 2 to 5 through the shop row; take / drop / replace; a marker for every
   joker's effect, on and off; offers and dead cards; the level-up joker, the replace choice (REPLACE and
   KEEP), the boss offer; Shortcut, Double Down, Encore and Full Hand in the live game; the HUD row, the

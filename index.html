@@ -272,6 +272,9 @@
     transform: translate(-50%, -50%);
     z-index: 30; margin: 0; cursor: pointer;
     max-height: calc(100% - 24px); overflow-y: auto;
+    /* Its own width and padding: the title's card rules for a phone held
+       sideways (17.5vw) would squeeze the note into a tall thin column. */
+    width: min(92vw, 480px); padding: 12px 16px;
   }
   /* THE DISMISS BUTTON: obvious, its own plate — a big target that reads as
      a button (the whole card still taps closed; this makes the affordance
@@ -401,6 +404,18 @@
     image-rendering: pixelated; image-rendering: crisp-edges;
   }
   #overlay .sub .gold { color: #ffd75e; font-weight: bold; letter-spacing: 1px; }
+  /* The away summary: time away, the gold counting up, one line per thing that happened. */
+  #overlay .away-time { font-size: 12px; color: #a89a80; letter-spacing: 2px; text-transform: uppercase; }
+  #overlay .away-gold { margin: 6px 0 8px; font-size: 26px; font-weight: bold; color: #ffd75e;
+    text-shadow: 2px 2px 0 #7a1f33, 4px 4px 0 #000; letter-spacing: 1px; }
+  #overlay .away-rows { display: inline-block; text-align: left; max-width: min(92vw, 420px);
+    padding: 8px 14px; background: rgba(5,5,10,0.72); border: 2px solid #3a2a18; border-radius: 4px;
+    font-size: 13px; line-height: 1.7; color: #f0dfc0; }
+  #overlay .away-rows div::before { content: '\25B8  '; color: #ffd75e; }
+  /* The camp strip: on the title's CAMP card at 1x, on the camp screen at 3x. */
+  canvas.camp-strip { display: block; margin: 0 auto 6px; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .card canvas.camp-strip { position: relative; z-index: 1; width: 96px; height: 24px; }
+  #overlay .sub canvas.camp-strip { margin-top: 8px; max-width: 92vw; height: auto !important; }
   /* Title screen: the cards start under the painted wordmark (main.js
      placeTitleMenu) and the gold + hero line sits below them, on a dark plate
      so it reads over the art. */
@@ -413,6 +428,23 @@
     #overlay.title .card { width: min(17.5vw, 172px); padding: 8px 6px; }
     #overlay.title .card .name { margin-bottom: 4px; }
     #overlay.title .card .desc { font-size: 11px; }
+  }
+  /* The run setup on a short landscape screen: two rows of three wide cards,
+     no press hints, quest pays or sub line, so all six fit under the wordmark
+     (the quest board shows the pays). The :has() rules tighten the grid where
+     the browser has them; the plain rules fit without. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #overlay.title { padding-bottom: 4px; }
+    #overlay.title .card.setup { box-sizing: border-box; width: calc((100vw - 52px) / 3);
+      max-width: 230px; padding: 6px 5px; }
+    #overlay.title .cards:has(.card.setup) { width: 100%; gap: 6px; }
+    #overlay.title .cards:has(.card.setup) .card.setup { width: calc((100% - 14px) / 3); }
+    #overlay.title .card.setup .name { font-size: 13px; letter-spacing: 0.5px; margin-bottom: 2px; }
+    #overlay.title .card.setup .name::before { left: 3px; }
+    #overlay.title .card.setup .desc { font-size: 11px; line-height: 1.25; }
+    #overlay.title .card.setup .desc .hint { display: none; }
+    #overlay.title #ov-sub .setup-hint { display: none; }
+    #overlay.title #ov-sub:has(.setup-hint) { display: none; }
   }
   #overlay .sub .pass { color: #7ad0ff; font-size: 11px; letter-spacing: 1px; }
   #overlay .sub canvas.bust {

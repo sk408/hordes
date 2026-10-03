@@ -58,8 +58,17 @@ import {
 // WAVE-11 pure modules (hb6/hb8/hb5): rolls + math only — this file owns all
 // mutation, stamping, drift and rendering on top of their contracts.
 import { rollEliteModifier, applyEliteModifier, splitChildren } from './elite_mods.js';
-import { seedShrines, shrineBlessing, canAfford } from './shrines.js';
+import { placeSites, tickSites, activeCurse, sitesUsed, siteOpen, mulberry32 as siteMulberry, SITES, SITE_HINTS } from './sites.js';
+import { BOSS_RULE_BY_ID, BOSS_RULE_REWARDS, BOSS_RULE_FIRST_WAVE, rollRuleOrder, ruleForWave, ruleLine, rewardLine, ruleFx } from './boss_rules.js';
+import { travelDue, rollTravelOrder, travelDestination } from './travel.js';
+import { exploreGoal, waypointDone, EXPLORE } from './explore.js';
+import { RADAR_RADIUS } from './radar.js';
 import { createAtlas, atlasUpdate, atlasRegisterLandmark } from './atlas.js';
+import { placeVaultYard, yardRects, tickVaultYard, wantsCarrier, VAULT, gateOutside, yardForWalkers, yardWallsFor, yardWay } from './vault.js';
+import { placeSecrets, tickSecrets, rollNiche, rollMimic, recordGlyph, markSecret, ensureWorld, glyphsAll, SECRETS, SECRET_SHELF } from './secrets.js';
+import { rollBoard, swapQuest, startQuests, questEvent, closeQuests, BOSS1_FAST_S, questGold, advanceChains, questLine, questPay as questPayAt, QUEST_BY_ID, CHAINS, chainStep, chainJokerStep, chainReward } from './quests.js';
+import { setExtraRects, extraRects } from './stage_buildings.js';
+import { grantCharacter } from './meta.js';
 import {
   FUSION_DEFS, fusionCandidates, fuseWeapons, describeFusion, fusionRoadText,
   kitWeapons, findKitWeapon,
@@ -68,13 +77,18 @@ import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 s
 // TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
 import { itemIconFor } from './art/item_icons.js';
 import { ENEMY_TYPES, makeTypedEnemy, decideEnemyAction, rollVariant, deathShockwave, flyingZ } from './enemy_types.js';
-import { maybeSpawnChest, tickChests } from './chests.js';
+import { maybeSpawnChest, tickChests, CHESTS } from './chests.js';
 // The joker row (jokers.js) and the modules that hold each joker's effect:
 // run rules, perks, the Frost Nova card and the rewrites.
 import {
   JOKERS, JOKER_IDS, JOKER_SLOTS, JOKER_CARD_WEIGHT, ENCORE_EVERY, jokerCards, rollJokerOffer, jokersHeld, hasJoker,
   jokerSlots, jokerRowFull, takeJoker, replaceJoker, handOpts,
 } from './jokers.js';
+import {
+  CAMP_BUILDINGS, CAMP_STORE_HOURS, campBuilding, campLevel, campNextCost, campPending, campHasStock,
+  campStockLines, campCollect, campBuy, campSpendCharges, campRateText,
+} from './camp.js';
+import { paintCampStrip, CAMP_STRIP_W, CAMP_STRIP_H } from './camp_art.js';
 import { statCardOffered, markStatTaken, hasRule } from './rules.js';
 import { applyRegrowth, damageTaken, skillManaCost } from './perks.js';
 import { frostCardTick, hasFrost } from './frostcard.js';
@@ -125,22 +139,12 @@ import * as CINE from './portal_cine.js';
 // WAVE-26 payoff overlay — it never replaces it. Structure mirrors the portal
 // cine; the whole movie lives in its own file (one writer per file).
 import * as DCINE from './death_cine.js';
-// V1 THE ESCAPE SEQUENCE: the side-scrolling change of pace owns its whole
-// world in src/escape/ (sim, generator, auto controller, render, payout). The
-// integration is this import plus ONE frame branch, ONE keydown/keyup branch,
-// ONE pointer route and ONE hook in endPortalCine — a narrow seam by house
-// rule; the escape never touches the overhead movement, p.stats or the draft.
-import * as ESCAPE from './escape/index.js';
-// P2B99: the escape's touch pads are CANVAS-DRAWN — the help-placement ladder
-// below cannot see them in the DOM, so their rects come in explicitly (the
-// same "every help-mode surface must clear the controls" rule, extended to
-// the escape's own controls).
-import { LEFT_RECT, RIGHT_RECT, JUMP_RECT, DASH_RECT, KICK_RECT, MODE_RECT, SKIP_RECT }
-  from './escape/render.js';
-import {
-  HEAT_CAP, HEAT_CURVES, heatMultipliers, goldMult, describeHeat, describeHeatPayout,
-  heatXpMult, heatOf, manualPushes, addHeat, initHeat,
-} from './heat.js';
+// THE ESCAPE: a short cinematic after the wave-1 boss (src/escape_cine.js).
+// main.js starts it, steps it from the frame loop, hands it key and pointer
+// presses (a press skips it) and takes the hand-back, which always pays.
+import * as ESCAPE from './escape_cine.js';
+// WRATH: enemies toughen as the run fills item slots and evolves weapons.
+import { wrathMultipliers, describeWrath, wrathOf, addWrath, initWrath } from './wrath.js';
 // PRESTIGE (owner-designed, player-facing): tier mults (1.5^P enemy, 2^P gold),
 // the gated speed ladder [1,3,5,7], and the 30:00 survival offer. Pure helpers
 // in src/prestige.js; every application seam is marked PRESTIGE below.
@@ -204,13 +208,8 @@ import {
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } from './art/index.js';
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
-import {
-  DEFAULT_CHALLENGE_ID, CHALLENGE_IDS, challengeOf, isStandard,
-  challengeRules, nextChallengeId, describeChallenge, challengeGoldBonusPct,
-} from './challenges.js';
-// G20a STAGES — the third axis (the PLACE): pool/mods/hazard rows stamped onto
-// the run exactly like challenges are. Same purity contract, same session-
-// scoped pending selection, nothing persisted.
+// G20a STAGES — the PLACE of a run: pool/mods/hazard rows stamped onto the
+// run at startRun. Pure, a session-scoped pending selection, nothing persisted.
 import {
   DEFAULT_STAGE_ID, STAGES, stageOf, stageMods, isDefaultStage,
   nextStageId, describeStage, lockedStageLines, stageRelief, stageFactsLine,
@@ -224,6 +223,11 @@ import {
   reliefLevel, reliefGrade, reliefUphillAzimuth, reliefBiasAngle,
   reliefLevelAt, reliefStep, reliefRampRoute,
 } from './relief.js';
+// M5b LANDSCAPE: authored plateaus/ramps/bridges/drops (src/terrain.js).
+import {
+  terrainFor, terrainStep, floorAt, compAt, flowField, flowDir, nodeOf, cellIx,
+  nearestRamp, HIGH_TIER,
+} from './terrain.js';
 // PORT SLICE F (building collision, owner-ruled 2026-09-22): the building
 // footprints + the axis-separated slide. stage_buildings imports config.js
 // only — no cycle. The query is pure in (seed, stage); this file owns the
@@ -251,7 +255,7 @@ import {
 } from './dev_autoplay.js';
 
 // M2 game feel: the per-step observer (damage numbers, puffs, shake).
-import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled } from './fx/feel.js';
+import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled, addSparks, addShake } from './fx/feel.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -823,7 +827,7 @@ const state = {
                      // display data for the open-chest remnant painter only.
   chests: [],        // chests.js-owned ({ id, x, y, age })
   items: [],         // equipped rare items (loot.js; cap MAX_EQUIPPED=4)
-  heat: null,        // WAVE-9 heat ledger (heat.js; run-scoped, never persisted)
+  wrath: null,       // the wrath ledger (wrath.js; run-scoped, never saved)
   weapons: [],       // granted weapons (base volley is slot 1, not listed)
   arches: [],        // field arch gates (arches.js; 1-2 spawned per wave)
   archBuffs: [],     // active arch buffs (arches.js tickArches-owned)
@@ -889,16 +893,11 @@ const state = {
   character: null,   // equipped CHARACTERS entry for the current run
   weaponSlots: 6,    // per-run slot cap (startWeaponSlots(profile) in startRun)
   baseWeaponSlots: 6, // pre-choice slot base (Merchant's Pact adds on top)
-  // G11 CHALLENGE MODES — run-scoped, reset in startRun. `challenge` is the
-  // selected mode's id (never persisted); weaponCap/potionCap are the ceilings
-  // the mode's rules impose, defaulting to the constants a STANDARD run uses,
-  // so every consumer below can read them unguarded.
-  challenge: 'STANDARD',
   // G20a STAGES — run-scoped, reset in startRun. `stage` is the selected
   // stage's id (never persisted); the spawn seam reads it every spawn.
   stage: 'VERDANT_HOLLOW',
-  weaponCap: 6,      // rule ceiling on weaponSlots (ONE_WEAPON: 1)
-  potionCap: 3,      // rule ceiling on carried potions (NO_POTIONS: 0)
+  weaponCap: 6,      // the run's ceiling on weaponSlots
+  potionCap: 3,      // the run's ceiling on carried potions
   weather: null,     // per-run weather instance (weather.js, rolled in startRun)
   groundSeed: 1,     // per-run ground-decor field seed (render.js, rolled in startRun)
   // M1 THE PER-RUN ATLAS (atlas.js): the ONE visited grid + landmark set
@@ -946,6 +945,41 @@ const state = {
   shrine: null,      // VIEW on state.shrines: the first unused altar (the
                      // render + tour handoff; the set itself is static — S1)
   shrines: [],       // S1: world-seeded set of 4, chosen ONCE at run start
+  // M5b sites (sites.js): the stage's points of interest and their glue.
+  sites: [],
+  siteRng: null,       // the sites' drop stream (off the world seed)
+  siteCurse: null,     // the cursed statue's deal, for the rest of the wave
+  sitePops: [],        // small rising word pops (+5G, HANDS-ON)
+  heroFlow: null,      // M5b landscape: the horde's flow field to the hero (built lazily)
+  lastSitePing: -99,   // M5b: sim time of the last new-site radar ping
+  handsOnPays: 0,
+  sitesTally: null,    // sites used before the maw closed them
+  // M5b slice 3 (vault.js, secrets.js, quests.js): set by seedWorldPoi.
+  poi: null,           // { vault, lever, yard, hasKey, keyDrop, carrier, ... }
+  secrets: [],         // cracked walls and the glyph
+  secretRng: null,     // the secrets' own stream
+  mimicCheck: null,    // chests.js asks it whether an opened chest is a mimic
+  quests: [],          // the run's three quests
+  questsHidden: false, // the tracker is not drawn (the guided tutorial is live)
+  // Boss rules (boss_rules.js): the run's order and this wave's rule.
+  bossRuleOrder: null, // rule ids, shuffled at the run's start
+  bossRule: null,      // { id, name, text, reward, live, broken } for this wave's boss
+  ruleCards: 0,        // free cards a beaten rule still owes
+  glyphSet: false,     // all eight glyphs are found: the Mimic Feast joker may be offered
+  // Travel (travel.js): the run's stages. state.stage is the one it is on now.
+  travelOrder: null,   // stage ids the portal may lead to, shuffled at the run's start
+  stagesSeen: [],      // the stages this run has been on, in order (the first is where it began)
+  sitesBefore: null,   // sites used on the fields the run has left
+  chainsFinished: [],  // quest chains this run's settlement finished
+  jokerWhys: [],       // what paid each queued joker offer (null = a boss)
+  draftWhy: null,      // the reason on the joker offer on screen
+  shrineOffer: null,   // a charged shrine's blessing cards, until picked
+  waypoint: null,      // { x, y, site } set from the map
+  pilotGoal: null,     // explore.js's goal for this frame
+  pilotGoalStalled: null,
+  exploreSkip: null,   // site ids the pilot gave up on
+  exploreGoalT: null,  // seconds each site has been EXPLORE's goal (given up past GOAL_GIVEUP_S)
+  lastSteerT: -99,     // sim time of the last steering input (hands-on)
   shrineRearm: false, // S1 double-sell latch: set by a successful debit, clears
                      // once the player is >26px from EVERY unsold altar
   shrineRng: null,   // mulberry32(choiceSeed ^ 0x5eed) — separate stream so
@@ -957,7 +991,7 @@ const state = {
   //   AUTO_ALL  - the pilot moves, casts skills and drinks potions (shipped AUTO)
   //   AUTO_MOVE - the pilot moves; skills and potions are the player's
   //   MANUAL    - the player moves; skills and potions are the player's too
-  pilotMode: 'AUTO_ALL',
+  pilotMode: 'EXPLORE',
   wheel: 0,          // seconds of player steering left on AUTO (see heldMoveVec)
   wheelCue: '',      // the on-screen cue's text
   clockInset: 0,     // view px the run clock steps down to clear DOM buttons
@@ -993,24 +1027,24 @@ const state = {
   lastMinute: 0,     // last whole minute the clock toast fired for
   finalCall: false,  // 29:00 "one minute left" callout fired
   mawCleared: false, // the maw milestone was SLAIN this run (unlocks a tier)
-  // NIGHT MODE (owner-authorized 2026-09-17): `night` is the SESSION toggle
-  // (title SETUP only, OFF by default, never persisted — a reload ends the
-  // night); `nightRun` is the run-scoped stamp (the apexRun pattern) frozen
-  // at startRun, so a toggle between runs can never rewrite a live run's
-  // payout class; `nightSummary` is the return-to-game line the title shows.
-  night: false,
-  nightRun: false,
-  nightSummary: null,
+  // AUTO-CONTINUE: `autoContinue` is the saved setting. The two run stamps
+  // are set at startRun: `unattended` (the setting was on with the AUTO
+  // pilot, so every waiting screen resolves itself; turning the setting off
+  // clears it) and `autoStarted` (the run was started by auto-continue, so
+  // it banks less gold).
+  autoContinue: false,
+  unattended: false,
+  autoStarted: false,
   // STEP 3 DEV-NIGHT (dev-only autoplay variant, ?dev=1 gate): the run-scoped
-  // stamp frozen at startRun off the dev session's devNight flag (the nightRun
-  // pattern). A dev-night run plays under nightmare rules (state.nightRun is
+  // stamp frozen at startRun off the dev session's devNight flag (the unattended
+  // pattern). A dev-night run plays under nightmare rules (state.unattended is
   // set alongside) but settleRunGold EXEMPTS it from the 50% banking cut and
   // snapshots stamp mode 'dev-night' with no banking-penalty modifier.
   // Regular night mode never sets this and keeps the cut exactly as-is.
   devNightRun: false,
   // OPT-IN GUIDED RUN (owner 2026-09-17: "The one off run for old players to
   // see the new tutorial would have to be opt-in"): `assistedRun` is the
-  // run-scoped stamp (the nightRun pattern) frozen at startRun from the
+  // run-scoped stamp (the unattended pattern) frozen at startRun from the
   // in-memory OPT-IN (veteranTutorialPending — set ONLY by the what's-new
   // offer's accept button or REPLAY TOUR). An assisted run is the veteran's
   // guided tutorial: FULL gold (no night penalty), but per the B6 decision
@@ -1081,10 +1115,11 @@ state.player.y = C.VIEW_H / 2;
 // W1: the loader now returns a RESULT — the profile plus a status/notice. A
 // corrupt or NEWER-version save is never silently replaced: the payload is
 // preserved under meta.js RECOVERY_KEY and the notice is surfaced to the
-// player (title screen), because a silent wipe is worse than an error.
+// player (title screen), because a silent wipe is worse than an error. A save
+// an older build wrote over is put back by the loader and the player is told.
 const bootResult = loadProfileResult();
 let profile = bootResult.profile;
-let saveNotice = (bootResult.status === 'corrupt' || bootResult.status === 'future-version')
+let saveNotice = (bootResult.restored || bootResult.status === 'corrupt' || bootResult.status === 'future-version')
   ? bootResult.notice : null;
 // One-time notice (banner ledger): the v11 shop rebuild refunded this
 // profile's upgrades. Shown on the title until the session ends.
@@ -1093,7 +1128,13 @@ function shopRefundNotice(p) {
   return 'THE SHOP WAS REBUILT — every upgrade you owned was refunded: +' +
     p.shopRefund.gold + ' GOLD. Weapons and characters are still yours.';
 }
+// One-time notice: v12 refunded the Starting Artifact, which the Forge replaces.
+function campRefundNotice(p) {
+  if (!(p.campRefund && p.campRefund.gold > 0 && markBannerSeen(p, 'camp_refund_v12'))) return null;
+  return 'STARTING ARTIFACT is now the camp FORGE. Refunded: +' + p.campRefund.gold + ' GOLD.';
+}
 if (!saveNotice) saveNotice = shopRefundNotice(profile);
+if (!saveNotice) saveNotice = campRefundNotice(profile);
 
 // ---------- v9 WHAT'S NEW (owner 2026-09-17) -------------------------------
 // "Have we timestamped last played for our auto saves yet? ... so we can
@@ -1127,29 +1168,60 @@ if (!saveNotice) saveNotice = shopRefundNotice(profile);
 //   no lastPlayed + no save at all  -> fresh profile -> prologue, no note;
 //   lastPlayed present              -> normal rules (lastSeenUpdate decides).
 const WHATS_NEW = {
-  id: '2026-10-02',                    // RELEASE_ID — one per marked release
-  dateMs: Date.UTC(2026, 9, 2),        // the ship date (2026-10-02)
+  id: '2026-10-03',                    // RELEASE_ID — one per marked release
+  dateMs: Date.UTC(2026, 9, 3, 15),    // the ship moment (2026-10-03 15:00 UTC)
+  schema: 13,                          // the save schema this release ships
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
   lines: [
-    'A big update. Your old shop upgrades were refunded in gold: spend it in the new shop.',
-    'Weapons now EVOLVE at level 8 with a partner card, and two evolved weapons can FUSE.',
-    'The cards you draft form a HAND, and JOKERS change the rules of a run.',
-    'Reroll, skip and banish in the draft. Clearer enemies, damage numbers, new sounds.',
-    'Your old save is kept: download it in Settings, or keep playing the old game at /classic/.',
+    'The map has things to find: shrines, altars, a locked vault, a walled yard, secrets.',
+    'EXPLORE is the new default pilot: it fights like AUTO and walks to the sites.',
+    'Three quests every run, picked for you. The CAMP makes gold while you are away.',
+    'High ground, ramps and bridges. After waves 2 and 4 the portal leads to a new stage.',
+    'From wave 2 each boss brings a rule and a reward. The escape is a chase scene now.',
+    'Gone: RAISE THE STAKES and the run modifiers. Mimic Feast is a joker now.',
   ],
+  // The release before this one. A player who never played it reads its
+  // lines first, and is offered the guided run (nobody is asked twice).
+  missed: {
+    id: '2026-10-02',
+    dateMs: Date.UTC(2026, 9, 2),
+    schema: 11,
+    lines: [
+      'Your old shop upgrades were refunded in gold: spend it in the new shop.',
+      'Weapons EVOLVE at level 8 and FUSE. Your cards form a HAND; JOKERS change the rules.',
+      'Your old save is kept: download it in Settings, or play the old game at /classic/.',
+    ],
+  },
   // Shown only with the offer of the guided run.
   guidedLines: [
     'New: a short guided first run that teaches by doing.',
     'You can replay it any time from Settings.',
   ],
 };
+// The schema of the save this page load read (null: no save, or unreadable).
+const bootFromVersion = Number.isFinite(Number(bootResult.from)) && bootResult.from !== null
+  ? Number(bootResult.from) : null;
+// Did this profile miss the release before the current one? It never
+// dismissed that note, and either its save is older than that release's
+// schema or it last played before that release shipped.
+function missedEarlierRelease(prof, rel, fromVersion = null) {
+  const m = rel && rel.missed;
+  if (!m || (prof && prof.lastSeenUpdate === m.id)) return false;
+  if (fromVersion !== null && fromVersion < m.schema) return true;
+  const last = prof && typeof prof.lastPlayed === 'number' ? prof.lastPlayed : null;
+  return last === null || last < m.dateMs;
+}
 // Pure: is the note due for THIS profile/release/boot state? Exported via
 // __TEST so the gate is matrix-testable without a DOM.
-function whatsNewDueFor(prof, rel, freshBoot) {
+// `fromVersion`: the schema of the save this boot loaded. A save an older
+// build wrote has not met this release, even when that build was played a
+// minute ago in a tab left open (its lastPlayed is then after the ship date).
+function whatsNewDueFor(prof, rel, freshBoot, fromVersion = null) {
   if (!rel || !rel.worthTelling) return false;   // unmarked release: nothing, ever
   if (freshBoot) return false;                   // brand-new profile: prologue owns the intro
   if (prof && prof.lastSeenUpdate === rel.id) return false;   // already dismissed
+  if (fromVersion !== null && rel.schema && fromVersion < rel.schema) return true;
   const last = prof && typeof prof.lastPlayed === 'number' ? prof.lastPlayed : null;
   return last === null || last < rel.dateMs;     // missing stamp = has not seen it
 }
@@ -1177,51 +1249,147 @@ let whatsNewTried = false;   // the note is a LAUNCH artifact: first title entry
 // v9 WHAT'S NEW (owner 2026-09-17): every persisted save stamps lastPlayed —
 // the launch gate reads it to find returning players who were away before a
 // marked release shipped. ONE choke point, so no save path can forget it.
+//
+// Two tabs share one save. A hidden tab stops writing once another tab has
+// changed the save (this tab's profile is then the old one: it reloads when
+// it is shown) or has come to the front. onStorage sets both flags; a hidden
+// tab also looks at the stored save itself before it writes, because a tab the
+// browser froze hears its storage events late.
+let bgHidden = false;        // the tab is hidden right now (bgSetHidden)
+let saveTakenOver = false;   // another tab changed the save while this one was hidden
+let otherTabUp = false;      // another tab was opened or shown after this one
+const readSaveRaw = () => { try { return prefStorage.getItem(STORAGE_KEY); } catch { return null; } };
+let savedRaw = readSaveRaw();   // the stored save as this tab last read or wrote it
 function persistProfile() {
+  if (bgHidden && !saveTakenOver && saveMovedOn()) { saveTakenOver = true; bgSyncTimer(); }
+  if (saveTakenOver || (otherTabUp && bgHidden)) return false;
   profile.lastPlayed = Date.now();
   latchApexUnlock(profile);
-  return saveProfile(profile);
+  const ok = saveProfile(profile);
+  if (ok) savedRaw = readSaveRaw();
+  return ok;
 }
 export function autosave(reason = 'exit') {
   return persistProfile();
 }
 // MUSIC ON A HIDDEN TAB (owner 2026-09-19: "can we also stop the music when the
-// tab is hidden?"). Browsers suspend rAF for a hidden document but NOT audio, so a
-// backgrounded tab kept playing the music bed for as long as it stayed hidden —
-// the game looked paused and was still audible. The loop already autosaves here;
-// it now also stops the music and REMEMBERS whether it was playing, so coming back
-// restores what the player had instead of leaving the run mute.
+// tab is hidden?"). Browsers suspend rAF for a hidden document but NOT audio, so
+// hiding the tab stops the music. Showing it again starts the music if a run is
+// in play then (the run may have ended, or a new one begun, while hidden).
 //
-// Declared BEFORE the listener registration below (order matters in this file —
-// see the fjoyApi note: a `let` read before its declaration throws and kills the
-// module at load).
-let musicWasRunning = false;
+// Settings: "Keep playing in background" (default on). The ticker itself is the
+// Background play block by frame(). These are declared BEFORE the listener
+// registration below (order matters in this file — see the fjoyApi note: a
+// `let` read before its declaration throws and kills the module at load).
+const KEY_BG_PLAY = 'hordes_bg_play';
+let bgPlay = (() => { try { return prefStorage.getItem(KEY_BG_PLAY) !== '0'; } catch { return true; } })();
+let bgFramesAtHide = 0;   // background frames stepped before this hide
+// A run is in play: not the title, a menu or the end card. ('settings' is a
+// run's pause screen; 'burst' and 'chest' are its milestone chest.)
+const RUN_MODES = new Set(['playing', 'draft', 'evolve', 'intermission', 'stats', 'settings',
+  'burst', 'chest', 'finale', 'portal-cine', 'escape']);
+function runLive() { return !state.runSettled && RUN_MODES.has(state.mode); }
+// Background play needs the setting, a hidden tab that still owns the save, a
+// pilot (a MANUAL run waits for its player) and no guided tutorial (that is
+// taught to a player who is here).
+function bgRuns() {
+  return bgPlay && bgHidden && !otherTabUp && !saveTakenOver && !pilotMovesYou() && !tutGuidedLive();
+}
+function setBgPlay(on) {
+  bgPlay = !!on;
+  try { prefStorage.setItem(KEY_BG_PLAY, bgPlay ? '1' : '0'); } catch { /* shim */ }
+  bgSyncTimer();
+}
+// The tab in front owns the save. Opening or showing a tab writes 'open' to
+// this key; the other tabs hear it (onStorage) and stand down while they are
+// hidden. Closing that tab writes 'closed', and they play on.
+const KEY_TAB = 'hordes_tab';
+const KEY_TAB_RELOADED = 'hordes_tab_reloaded';   // sessionStorage: this tab reloaded itself for a newer save
+function tellTabs(word) {
+  try { prefStorage.setItem(KEY_TAB, word + ':' + Date.now() + ':' + performance.now()); } catch { /* shim */ }
+}
+function claimTab() {
+  otherTabUp = false;
+  tellTabs('open');
+}
+// Did another tab's write change the save? Not when only the time stamp moved
+// (a tab that was opened and closed again), and not when what is stored now is
+// no save at all (cleared or unreadable: this tab's copy is the good one).
+function saveChanged(oldRaw, newRaw) {
+  const canon = (v) => Array.isArray(v) ? v.map(canon)
+    : v && typeof v === 'object' ? Object.keys(v).sort().map(k => [k, canon(v[k])]) : v;
+  const body = (raw) => {
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('not a save');
+    delete p.lastPlayed;
+    return JSON.stringify(canon(p));
+  };
+  let now;
+  try { now = body(newRaw); } catch { return false; }
+  try { return body(oldRaw) !== now; } catch { return true; }
+}
+// Is the stored save no longer the one this tab last read or wrote?
+function saveMovedOn() {
+  const raw = readSaveRaw();
+  return raw !== savedRaw && saveChanged(savedRaw, raw);
+}
+// Another tab wrote to storage (a tab never hears its own writes). A visible
+// tab keeps its save: the player is using it.
+function onStorage(ev) {
+  if (!ev) return;
+  if (ev.key === KEY_TAB) otherTabUp = typeof ev.newValue === 'string' && !ev.newValue.startsWith('closed');
+  else if (bgHidden && ev.key === STORAGE_KEY && saveChanged(ev.oldValue, ev.newValue)) saveTakenOver = true;
+  else return;
+  bgSyncTimer();
+}
 function onVisibilityChange() {
   const hidden = !!(typeof document !== 'undefined' && document
     && document.visibilityState === 'hidden');
   if (hidden) {
     autosave('hidden');
-    // Guard: repeated 'hidden' events must not overwrite the remembered intent
-    // with the state we just silenced.
-    if (!musicWasRunning) musicWasRunning = audio.isMusicRunning();
-    if (musicWasRunning) audio.stopMusic();
-  } else if (musicWasRunning) {
-    musicWasRunning = false;
-    audio.startMusic();       // honours musicEnabled internally: a muted player stays muted
+    audio.stopMusic();
+    bgSetHidden(true);
+    bgFramesAtHide = bgStats.frames;
+    away.hidden = true;   // camp production now counts toward the away card
+  } else {
+    const stepped = bgStats.frames;
+    bgSetHidden(false);
+    if (saveTakenOver || saveMovedOn()) {
+      saveTakenOver = true;
+      // This tab's profile is the old one: reload, which loads the newer save.
+      // The notice is for a page that cannot reload.
+      saveNotice = 'SAVED IN ANOTHER TAB — reload this page. Nothing here is saved until you do.';
+      try { sessionStorage.setItem(KEY_TAB_RELOADED, '1'); } catch { /* no session storage */ }
+      try { location.reload(); return; } catch { /* headless */ }
+    } else claimTab();
+    if (stepped > bgFramesAtHide && state.mode === 'playing') tut.due.push('bgplay');
+    // startMusic keeps a muted player muted.
+    if (runLive()) audio.startMusic(); else audio.stopMusic();
   }
 }
 try {
   const evWin = (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function')
     ? window : globalThis;
   const flush = () => { autosave('exit'); };
-  evWin.addEventListener('pagehide', flush);
+  // The page is going away. If it owned the save, a tab that stood down for it may play on.
+  evWin.addEventListener('pagehide', () => { flush(); if (!otherTabUp && !saveTakenOver) tellTabs('closed'); });
   evWin.addEventListener('beforeunload', flush);
+  evWin.addEventListener('storage', onStorage);
   // visibilitychange covers the mobile case (iOS/Android often never fire
   // pagehide before suspending a backgrounded tab).
   if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
+  // A game opened in front takes the save from any tab left in the background.
+  if (!(typeof document !== 'undefined' && document && document.visibilityState === 'hidden')) claimTab();
 } catch { /* no window (headless) — the autosave seam still works */ }
+// This tab reloaded itself because another tab had saved: the title says so once.
+try {
+  if (sessionStorage.getItem(KEY_TAB_RELOADED)) {
+    sessionStorage.removeItem(KEY_TAB_RELOADED);
+    if (!saveNotice) saveNotice = 'NEWER SAVE LOADED — the game was saved in another tab.';
+  }
+} catch { /* no session storage */ }
 
 // ---------- Character controller seam (see controllers.js) ----------
 // WAVE-13 MANUAL PILOT: BOTH implementations live for the whole run — the
@@ -1253,9 +1421,13 @@ const KEY_PILOT = 'hordes_pilot2';
 function savePilotPref(mode) {
   try { prefStorage.setItem(KEY_PILOT, mode); } catch { /* shim */ }
 }
+// With nothing chosen yet the pilot is EXPLORE: it fights like AUTO and visits
+// the map's sites when the field is calm.
 function loadPilotPref() {
-  try { return normalizePilotMode(prefStorage.getItem(KEY_PILOT)); }
-  catch { return 'AUTO_ALL'; }
+  try {
+    const raw = prefStorage.getItem(KEY_PILOT);
+    return raw == null || raw === '' ? 'EXPLORE' : normalizePilotMode(raw);
+  } catch { return 'EXPLORE'; }
 }
 // Which AUTO the pilot button returns to: AUTO_ALL (the pilot also casts skills
 // and drinks potions) or AUTO_MOVE (it only moves). Set on the Advanced page.
@@ -1309,13 +1481,18 @@ function clearPilotInput() {
 // The pilot modes. AUTO_ALL: the pilot moves, casts and drinks. AUTO_MOVE: it
 // only moves. MANUAL: the player moves. `pilotMovesYou` and `pilotAssistsYou`
 // are the only two places a mode is compared.
-export const PILOT_MODES = ['AUTO_ALL', 'AUTO_MOVE', 'MANUAL'];
+// M5b EXPLORE: fights like AUTO_ALL; when the field is calm it walks to the
+// nearest site worth using (explore.js).
+export const PILOT_MODES = ['AUTO_ALL', 'AUTO_MOVE', 'EXPLORE', 'MANUAL'];
 export function normalizePilotMode(m) {
   if (m === 'AUTO') return 'AUTO_ALL';        // an old stored name
   return PILOT_MODES.includes(m) ? m : 'AUTO_ALL';
 }
 function pilotMovesYou() { return normalizePilotMode(state.pilotMode) === 'MANUAL'; }
-function pilotAssistsYou() { return normalizePilotMode(state.pilotMode) === 'AUTO_ALL'; }
+function pilotAssistsYou() {
+  const m = normalizePilotMode(state.pilotMode);
+  return m === 'AUTO_ALL' || (m === 'EXPLORE' && autoFlavor() === 'AUTO_ALL');
+}
 
 // Bind the controller for `mode`, carry focus and stance across, store the
 // choice. Leaving MANUAL drops held input so a stale key cannot steer.
@@ -1333,16 +1510,19 @@ function swapPilotMode(mode) {
     clearPilotInput();
   }
   savePilotPref(mode);
+  bgSyncTimer();
   toast(mode === 'MANUAL' ? 'MANUAL: you steer. WASD, arrows or drag'
+    : mode === 'EXPLORE' ? 'EXPLORE: the pilot fights, and visits sites when it is calm'
     : mode === 'AUTO_MOVE' ? 'AUTO: the pilot steers. Skills and potions are yours'
     : 'AUTO: the pilot fights for you');
 }
 function pilotPrefLabel() {
-  return { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO (moves only)', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO';
+  return { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO (moves only)', EXPLORE: 'EXPLORE', MANUAL: 'MANUAL' }[normalizePilotMode(state.pilotMode)] || 'AUTO';
 }
-// The pilot button and the O key: AUTO <-> MANUAL.
+// The pilot button and the O key: AUTO -> EXPLORE -> MANUAL -> AUTO.
 function togglePilotMode() {
-  swapPilotMode(pilotMovesYou() ? autoFlavor() : 'MANUAL');
+  const m = normalizePilotMode(state.pilotMode);
+  swapPilotMode(m === 'MANUAL' ? autoFlavor() : m === 'EXPLORE' ? 'MANUAL' : 'EXPLORE');
 }
 
 // ---------- Taking the wheel --------------------------------------------------
@@ -1379,6 +1559,15 @@ function wheelCueText() {
 // curse's heal tax) read the same rule. p.fortify ticks in updateResources
 // (skills.js) and is deliberately NOT p.invuln — FORTIFY halves damage, it
 // grants no i-frames.
+// M5b LANDSCAPE: the hero's direct hits pay HIGH_DMG_MULT against ground
+// enemies standing two tiers or more below a hero on high ground.
+function heroHitMult(state, e) {
+  const p = state.player;
+  const m = directHitMult(state, e);
+  if (!p || !p.highGround || e.flying) return m;
+  return (e.tz || 0) <= (p.tz || 0) - 2 ? m * C.TERRAIN.HIGH_DMG_MULT : m;
+}
+
 function damageTakenFortified(state, amount) {
   const mult = state.player.fortify > 0 ? C.SKILLS.EARTHSHATTER.FORTIFY_MULT : 1;
   return damageTaken(state, amount * mult);
@@ -1391,6 +1580,7 @@ function buildingRectsForRun(seed, stage) {
 
 function runController(p, dt, am) {
   const decision = controller.decide(p, state, C.PLAYER);
+  if (heldMoveVec()) state.lastSteerT = state.time;   // M5b hands-on clock
   // Taking the wheel: on AUTO a held move input steers, and the pilot takes
   // back WHEEL_HANDBACK_S after the release. Targeting stays the pilot's.
   if (!pilotMovesYou()) {
@@ -1427,8 +1617,11 @@ function runController(p, dt, am) {
     // HERE for the pilot and at the enemy move seam through the SAME pure
     // function off the SAME field: the anti-sanctuary symmetry. High ground
     // slows whoever climbs it, pilot or horde, by the same rule.
-    const grade = reliefGrade(p.x, p.y, decision.moveX, decision.moveY,
-      state.groundSeed || 0, stageRelief(state.stage));
+    // M5b LANDSCAPE: with an authored layout the terrain is the one source of
+    // elevation (no invisible natural grade).
+    const grade = terrainFor(state.groundSeed || 0, state.stage) ? 1
+      : reliefGrade(p.x, p.y, decision.moveX, decision.moveY,
+        state.groundSeed || 0, stageRelief(state.stage));
     // BLOCKING ELEVATION (msg_01M2RK5B): the cliff rule + tangent slide, the
     // SAME reliefStep the enemy move seam reads — one geometry function, both
     // sides, no wall-hacks for either (pinned in test_blocking_elevation.mjs).
@@ -1443,11 +1636,17 @@ function runController(p, dt, am) {
       p.y + decision.moveY * stride,
       state.groundSeed || 0, stageRelief(state.stage));
     let bnx = stepped[0], bny = stepped[1];
+    // M5b LANDSCAPE: cliff faces block, ramps and drop edges pass (terrain.js).
+    const TERp = terrainFor(state.groundSeed || 0, state.stage);
+    if (TERp) {
+      const ts = terrainStep(TERp, p.x, p.y, p.tz || 0, bnx, bny);
+      bnx = ts[0]; bny = ts[1]; p.tz = ts[2];
+    }
     // PORT SLICE F (building collision, owner-ruled 2026-09-22): the pilot —
     // EITHER controller, both funnel through this seam — slides along
     // building footprints (redirect at full stride, so contact keeps moving
-    // and the no-stall invariant holds). The horde never reads this:
-    // it walks through buildings by design (no pacing change — see report).
+    // and the no-stall invariant holds). The horde walks through buildings by
+    // design; only the walled yard's walls stop walkers (the enemy move).
     if (bRects.length > 0 && (bnx !== p.x || bny !== p.y)) {
       const sl = slideMove(p.x, p.y, bnx, bny, bRects, BUILDING_MOVER_R);
       bnx = sl[0]; bny = sl[1];
@@ -1460,6 +1659,14 @@ function runController(p, dt, am) {
   const RIM = C.GROUND.RIM;
   p.x = Math.max(-RIM, Math.min(RIM, p.x));
   p.y = Math.max(-RIM, Math.min(RIM, p.y));
+  // M5b LANDSCAPE: the hero's floor and the high-ground flag (range, damage,
+  // radar reach, flyer pressure all read it).
+  {
+    const TERh = terrainFor(state.groundSeed || 0, state.stage);
+    p.tz = TERh ? floorAt(TERh, p.x, p.y, p.tz || 0) : 0;
+    p.highGround = p.tz >= HIGH_TIER;
+    if (p.highGround) state.runCounts.highGroundT = (state.runCounts.highGroundT || 0) + dt;
+  }
   // Attacking.
   p.attackTimer -= dt;
   const target = decision.target;
@@ -1541,7 +1748,9 @@ function pickSpawnType(wave) {
     for (const e of entries) {
       if (ENEMY_TYPES[e[0]] && ENEMY_TYPES[e[0]].heavy) e[1] *= C.E2.HEAVY_WEIGHT_MULT;
     }
-    entries.push(['SHRIKE', C.E2.SHRIKE_WEIGHT]);
+    // M5b LANDSCAPE: a hero on high ground draws more flyers.
+    entries.push(['SHRIKE', C.E2.SHRIKE_WEIGHT *
+      (state.player && state.player.highGround ? C.TERRAIN.FLYER_MULT : 1)]);
   }
   let r = Math.random() * entries.reduce((s, e) => s + e[1], 0);
   for (const [id, w] of entries) { if ((r -= w) < 0) return id; }
@@ -1582,13 +1791,15 @@ function stampStageStats(stateArg, e) {
   // after their own overwrite — see each site.
   const pHp = prestigeEnemyMult(getPrestige(profile));
   if (pHp !== 1) { e.hp *= pHp; e.maxHp = e.hp; }
+  if (stateArg.siteCurse) curseEnemy(e);   // M5b: the cursed statue's wave
+  if (stateArg.bossRule) ruleStamp(e);     // the stampede: arrivals during the fight
   return e;
 }
 
 // E2 (R1/R2): the HEAVY stamp. From the horde wave on, a heavy-tier body
 // (ENEMY_TYPES[id].heavy) carries MID-BOSS-equivalent hp — config.js's ONE
 // midBossHp definition read at waveNum-1 (R2: never a copied formula), with
-// the same heat factor the herald takes. R8: the corpse pays HEAVY_XP_KILLS
+// the same wrath factor the herald takes. R8: the corpse pays HEAVY_XP_KILLS
 // base kills of xp so the horde wave's drafts don't collapse when chaff xp
 // drops. R7: the purse follows the BODY — the stamp upgrades the tier to
 // HEAVY (a wave-1 TICK still pays CHAFF; only a real heavy body pays heavy).
@@ -1599,7 +1810,7 @@ function stampHeavy(e) {
   // still reads the heavy body (preStageMaxHp, recorded prestige-invariant by
   // the stamp that follows at the call sites) — drops come from strong bodies.
   e.hp = e.maxHp = C.ENEMY.BASE_HP * ladderHp(wTick) * C.E2.HEAVY_HP_MULT *
-    heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));
+    wrathMultipliers(wrathOf(state)).hp * prestigeEnemyMult(getPrestige(profile));
   e.xp = C.ENEMY.BASE_XP * ladderXp(wTick) * C.E2.HEAVY_XP_KILLS;
   e.purseTier = 'HEAVY';
 }
@@ -1631,18 +1842,21 @@ function spawnWave(dt) {
   if (tutGuidedLive()) return;   // the guided part runs its own trainers
   state.spawnTimer -= dt;
   if (state.spawnTimer > 0) return;
-  // WAVE-9: heat speeds the spawn clock (interval / spawnRate).
+  // WAVE-9: wrath speeds the spawn clock (interval / spawnRate).
   // G20a: a stage spawnMult < 1 slows the same clock (guarded — the default
   // stage divides by exactly 1.0, byte-identical to today).
   const sm = stageMods(state.stage);
   const interval = Math.max(0.25, spawnInterval(state.time) /
-    (heatMultipliers(heatOf(state)).spawnRate * (sm.spawnMult || 1)));
+    (wrathMultipliers(wrathOf(state)).spawnRate * (sm.spawnMult || 1)));
   state.spawnTimer = interval;
   // Groups, not individual enemies: a group is one spawn slot that pops a
   // pack (swarmers spawn packSize at once, others pop 1).
   // RUN-STRUCTURE: ladderGroups is the shipped formula through 4:00 and a
   // bounded ramp after (the shipped formula reached 37 groups/tick at 30:00).
-  const gf = ladderGroups(state.time);
+  // The chorus (a boss rule): each tick brings that many more groups while
+  // the boss lives. Groups, not the interval: the interval has a floor.
+  const rfx = ruleFx(state);
+  const gf = ladderGroups(state.time) * ((rfx && rfx.spawnRate) || 1);
   const groups = Math.floor(gf) + (Math.random() < gf % 1 ? 1 : 0);
   // ELITE SURGE beat (ladderBeats): on a surge wave the spawn-time elite
   // chance gets the ladder's ceiling for that wave, so a long run keeps
@@ -1664,10 +1878,20 @@ function spawnWave(dt) {
   // cadence and ring distance are untouched, and the rng stream cannot shift.
   const relCfgS = stageRelief(state.stage);
   const relSeedS = state.groundSeed || 0;
-  const pilotLevel = reliefLevel(state.player.x, state.player.y, relSeedS, relCfgS);
-  const uphillAz = pilotLevel >= C.RELIEF.HIGH_LEVEL
-    ? reliefUphillAzimuth(state.player.x, state.player.y, relSeedS, relCfgS)
-    : 0;
+  // M5b LANDSCAPE: on a stage with a layout, high ground is a plateau top and
+  // the bias points at the nearest ramp (the horde comes up the way out).
+  const TERs = terrainFor(relSeedS, state.stage);
+  let pilotLevel, uphillAz = 0;
+  if (TERs) {
+    pilotLevel = state.player.highGround ? C.RELIEF.HIGH_LEVEL : 0;
+    const rp = pilotLevel ? nearestRamp(TERs, state.player.x, state.player.y) : null;
+    if (rp) uphillAz = Math.atan2(rp.y - state.player.y, rp.x - state.player.x);
+  } else {
+    pilotLevel = reliefLevel(state.player.x, state.player.y, relSeedS, relCfgS);
+    uphillAz = pilotLevel >= C.RELIEF.HIGH_LEVEL
+      ? reliefUphillAzimuth(state.player.x, state.player.y, relSeedS, relCfgS)
+      : 0;
+  }
   for (let i = 0; i < groups; i++) {
     let a = Math.random() * Math.PI * 2;
     if (pilotLevel >= C.RELIEF.HIGH_LEVEL) a = reliefBiasAngle(a, pilotLevel, uphillAz);
@@ -1734,6 +1958,7 @@ function spawnWave(dt) {
       const effTier = effectiveTierId(tierId, elite);
       recordEncounter(profile, 'enemy:' + typeId,
         { wave, at: state.time, tier: effTier });
+      (state.wave.met || (state.wave.met = {}))[typeId] = 1;   // the escape's cast (a new run has a new wave object)
       if (effTier !== 'COMMON') {
         recordEncounter(profile, 'tier:' + effTier, { wave, at: state.time, tier: effTier });
       }
@@ -1741,6 +1966,7 @@ function spawnWave(dt) {
       // and rarity-stamped foe — the ONE shared stampStageStats (see its
       // comment) now also records preStageMaxHp for chest eligibility.
       stampStageStats(state, e);
+      if (elite) markKeyCarrier(e);   // M5b: the vault key rides one elite
       state.enemies.push(e);
     }
   }
@@ -1763,6 +1989,7 @@ function spawnWave(dt) {
       escalate(e, state.time);
       stampHeavy(e);
       recordEncounter(profile, 'enemy:' + id, { wave, at: state.time, tier: 'COMMON' });
+      (state.wave.met || (state.wave.met = {}))[id] = 1;
       stampStageStats(state, e);
       state.enemies.push(e);
     }
@@ -1797,11 +2024,11 @@ function removeItemAffixes(p, item) {
 }
 
 // WAVE-11 BEST-CASE EQUIP (loot.js decideEquip): EQUIP fills a free slot
-// (+1 heat NEW_ITEM_SLOT); REPLACE swaps out the weakest equipped item when
-// the drop is STRICTLY better (no heat — exchanges are free and rare by
+// (+1 wrath NEW_ITEM_SLOT); REPLACE swaps out the weakest equipped item when
+// the drop is STRICTLY better (no wrath — exchanges are free and rare by
 // construction, Sk408's no-churn rule); IGNORE leaves the drop on the ground
 // to despawn naturally. Returns a feed line { msg, tint } or null on IGNORE
-// (the caller then does NOT consume the drop). WAVE-9 heat charges live here.
+// (the caller then does NOT consume the drop). WAVE-9 wrath charges live here.
 // WAVE-14: the feed line is "FOUND: <name>" tinted by the item's rarity.
 function applyEquipDecision(it) {
   const res = decideEquip(state.items, it);
@@ -1809,7 +2036,7 @@ function applyEquipDecision(it) {
   const tint = RARITY_TINTS[it.rarity] || null;
   if (res.action === 'EQUIP') {
     state.items.push(it);
-    addHeat(state, 'NEW_ITEM_SLOT');
+    addWrath(state, 'NEW_ITEM_SLOT');
     applyItemAffixes(p, it);
     reopenForgeOffers();
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
@@ -1819,7 +2046,7 @@ function applyEquipDecision(it) {
     const out = state.items[res.slot];
     removeItemAffixes(p, out);
     state.items[res.slot] = it;   // in-place swap (not append)
-    addHeat(state, 'ITEM_EXCHANGE');   // heat.js rule: exchanges always +0
+    addWrath(state, 'ITEM_EXCHANGE');   // wrath.js rule: exchanges always +0
     applyItemAffixes(p, it);
     reopenForgeOffers();
     maybeTopTierBanner(it);   // (g) first-ever top-tier pickup = an event
@@ -1931,7 +2158,7 @@ function devNewSession() {
     // STEP 3: the autoplay-runner TOGGLE (default OFF) + the dev-night
     // variant flag, re-read per run like every other dev pref above, so a
     // mid-session overlay flip takes effect on the NEXT run (the same
-    // run-scoped-freeze contract as the nightRun stamp in startRun).
+    // run-scoped-freeze contract as the unattended stamp in startRun).
     autoplay: devPref(DEV_LS_AUTO),
     devNight: devPref(DEV_LS_DEVNIGHT),
     // K5 DEV DRAFT BAN LIST: the arm bit (default OFF) + the banned offer ids
@@ -1954,7 +2181,6 @@ function devNewSession() {
     // taken:id|null}; per-wave blessings {wave, offered:[ids], taken:id|null,
     // swaps}; shrine buys {id, cost, wave}; paid-chest gambles {tier, cost,
     // result}; evolutions {offered:[weapon ids], taken:weapon id|'deferred'|null};
-    // stakes counts the manual RAISE THE STAKES pushes taken this run.
     // Shop purchases, character select + upgrades and the loadout are the
     // snapshot `upgrades` field (out-of-run build, taken); skill/rule/rewrite
     // picks are draft cards, so they ride the drafts ledger, not a second one.
@@ -1963,7 +2189,6 @@ function devNewSession() {
     shrineBuys: [],
     chests: [],
     evolutions: [],
-    stakes: 0,
     series: [],            // 1 Hz samples {t, earned, spent, dmg}; capped at 600
     lastSampleMs: -1e12,
     rev: null,             // resolved game_rev (null = not yet fetched)
@@ -2304,32 +2529,25 @@ async function devDownloadLog(env) {
 // SLICE 9: the run's mode + modifiers, read LIVE off the run flags and the
 // live tuning constants at snapshot time — no hardcoded mode strings, no
 // hardcoded penalty numbers. `mode` is the night-vs-standard stamp (the
-// run-scoped nightRun flag frozen at startRun); `modifiers` names every live
+// run-scoped unattended flag frozen at startRun); `modifiers` names every live
 // payout/build modifier so a penalty run can never silently poison balance
 // analysis: the night banking penalty (percent read off RUN_GOLD, the ONE
-// home for the number), the challenge stamp + its live gold bonus, the stage
-// stamp, the manual heat pushes taken, assisted/apex flags.
+// home for the number), the stage stamp, assisted/apex flags.
 // STEP 3: a dev-night run stamps mode 'dev-night' and carries NO
 // banking-penalty modifier (the cut is exempt for the dev variant only —
 // regular night mode keeps stamping it exactly as before).
 function devModeFields() {
   const devNight = !!(state && state.devNightRun);
-  const night = !!(state && state.nightRun);
-  const mode = devNight ? 'dev-night' : (night ? 'night' : 'standard');
+  const night = !!(state && state.unattended);
+  const autoPaid = !!(state && state.autoStarted);
+  const mode = devNight ? 'dev-night' : (night ? 'unattended' : 'standard');
   const modifiers = [];
-  if (night && !devNight) modifiers.push('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT);
+  if (autoPaid && !devNight) modifiers.push('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT);
   try {
-    if (!isStandard(state.challenge)) {
-      modifiers.push('challenge:' + state.challenge);
-      modifiers.push('challenge-bonus-' + challengeGoldBonusPct(state.challenge));
-    }
-  } catch { /* stamps are always present; defensive */ }
-  try {
-    if (!isDefaultStage(state.stage)) modifiers.push('stage:' + state.stage);
-  } catch { /* defensive */ }
-  try {
-    const pushes = manualPushes(state) | 0;
-    if (pushes > 0) modifiers.push('heat-manual-' + pushes);
+    // The run's stage is where it began; travel is stamped beside it.
+    const began = (state.stagesSeen && state.stagesSeen[0]) || state.stage;
+    if (!isDefaultStage(began)) modifiers.push('stage:' + began);
+    if (state.stagesSeen && state.stagesSeen.length > 1) modifiers.push('travel-' + (state.stagesSeen.length - 1));
   } catch { /* defensive */ }
   if (state && state.assistedRun) modifiers.push('assisted');
   if (state && state.apexRun) modifiers.push('apex');
@@ -2345,14 +2563,13 @@ function devModeFields() {
 // refunded, same schema family (additive entry inside the optional choices
 // object — no version bump).
 function devChoices() {
-  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], stakes: 0, removals: [] };
+  if (!dev) return { drafts: [], blessings: [], shrines: [], chests: [], evolutions: [], removals: [] };
   return {
     drafts: dev.drafts.map(d => ({ ...d, offered: [...d.offered] })),
     blessings: dev.blessings.map(b => ({ ...b, offered: [...b.offered] })),
     shrines: dev.shrineBuys.map(s => ({ ...s })),
     chests: dev.chests.map(c => ({ ...c })),
     evolutions: dev.evolutions.map(e => ({ ...e, offered: [...e.offered] })),
-    stakes: dev.stakes | 0,
     removals: devShopRemovals.map(r => ({ ...r })),
   };
 }
@@ -2559,8 +2776,25 @@ function openIntermission(opts = {}) {
     `WAVE ${state.wave.num} CLEARED · survived ${Math.floor(state.time)}s` +
     ` · RUN ${runClock(state.time)} / ${runClock(C.RUN.LIMIT)}<br>` +
     `wave kills: ${waveKills} · level ${p.level} · ITEMS ${state.items.length}/${MAX_EQUIPPED}` +
-    `<br>GOLD ${purseClamp(profile.runPurse)} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}`;
-  menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
+    `<br>GOLD ${purseClamp(profile.runPurse)} (this run) · BANK ${profile.gold}${interMsg ? '<br>' + interMsg : ''}` +
+    nextBossRuleLine();
+  // On a travel wave CONTINUE takes the portal on to the next stage, and
+  // STAY HERE keeps this field.
+  const dest = travelTarget();
+  if (dest) {
+    const d = stageOf(dest);
+    // The first stage's blurb is written for the stage picker; a stage seen
+    // before is a new field of it.
+    const blurb = isDefaultStage(dest) ? 'a mixed horde, no twist' : d.blurb;
+    const where = (state.stagesSeen.includes(dest) ? 'a new field of ' : '') + d.name;
+    menuCard('CONTINUE', 'the portal leads on to ' + where + ': ' + blurb + ' · wave ' + (state.wave.num + 1) + ' [C]',
+      () => continueRun());
+    menuCard('STAY HERE', 'keep this field (' + stageOf(state.stage).name + ') · wave ' + (state.wave.num + 1),
+      () => continueRun({ stay: true }));
+    tutHint('travel', []);
+  } else {
+    menuCard('CONTINUE', 'into wave ' + (state.wave.num + 1) + ' [C]', () => continueRun());
+  }
   for (const [tier, def] of Object.entries(PAID_CHESTS)) {
     const cost = chestCost(def);
     // SLICE 7: free-build rows never dim (the buy path grants for 0).
@@ -2588,32 +2822,12 @@ function openIntermission(opts = {}) {
       (active ? ' · tap another offer to change' : ''),
       () => takeChoice(offer));
   }
-  // WAVE-9 manual heat dial: RAISE THE STAKES pushes +1 heat (harder, faster
-  // foes) and pays for it with goldMult — which tracks MANUAL pushes only.
-  // G24 slice 1: the dial now pays on BOTH channels (gold + the new per-kill
-  // XP multiplier), and every readout states the payout, not only the cost.
-  // Card is hidden once the ledger sits at HEAT_CAP.
-  if (heatOf(state) < HEAT_CAP) {
-    const nextGold = goldMult(manualPushes(state) + 1);
-    const nextXp = heatXpMult(manualPushes(state) + 1);
-    menuCard('RAISE THE STAKES',
-      `+1 heat: foes +${Math.round(HEAT_CURVES.HP * 100)}% hp & swarm faster · run gold x${nextGold.toFixed(2).replace(/\.?0+$/, '')} · run xp x${nextXp.toFixed(2).replace(/\.?0+$/, '')}`,
-      () => {
-        addHeat(state, 'MANUAL_PUSH');
-        // SLICE 9: the stakes push is a player choice (harder foes for paid
-        // gold+xp) — count it for the audit + the heat-manual modifier.
-        if (dev) dev.stakes++;
-        interMsg = `STAKES RAISED — ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}`;
-        audio.playSfx('draftPick');
-        openIntermission();   // re-render: gold line + card clamps at HEAT_CAP
-      });
-  }
   // ONBOARDING REWORK 2026-09-16: the 4 intermission cards are RETIRED —
-  // that screen labels itself (CONTINUE, chest, blessing, stakes).
-  // NIGHT MODE: arm the auto-CONTINUE once per intermission (the null guard
+  // that screen labels itself (CONTINUE, chest, blessing).
+  // Auto-continue: arm the CONTINUE once per intermission (the null guard
   // keeps a chest-buy re-render from resetting the countdown).
-  if (state.nightRun && nightContinueLeft === null) {
-    nightContinueLeft = C.AUTOPILOT.NIGHT_CONTINUE_S;
+  if (state.unattended && autoContinueLeft === null) {
+    autoContinueLeft = C.AUTOPILOT.AUTO_CONTINUE_S;
   }
 }
 
@@ -2670,7 +2884,7 @@ function takeChoice(offer) {
   // the absolute CONFIG cap) — recomputed from the restored scope, so a swap
   // away from the Pact narrows it again.
   const bonus = (p.choices && p.choices.weaponSlotBonus) || 0;
-  // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
+  // The ceiling is the run's weaponCap.
   state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
   interMsg = `BLESSING: ${offer.title} — ${offer.desc} · tap another offer to change it`;
   audio.playSfx('draftPick');
@@ -2730,9 +2944,13 @@ function buyPaidChest(tier) {
   openIntermission();   // re-render: gold balance + dim states refresh
 }
 
-function continueRun() {
-  nightContinueLeft = null;   // NIGHT MODE: a human CONTINUE cancels the auto one
+// `opts.stay`: keep this field on a wave whose portal would lead on.
+function continueRun(opts = {}) {
+  autoContinueLeft = null;   // a human CONTINUE cancels the auto one
   const p = state.player;
+  // Travel: after every second wave the portal leads on to another stage.
+  const dest = opts.stay ? null : travelTarget();
+  if (dest) travelTo(dest);
   // G9 FOLLOW-UP: the wave that just ENDED is "untouched" when nothing landed
   // on the hero during it. Reaching CONTINUE means the wave was finished (the
   // portal only opens on a clear), so this is the completion seam. The
@@ -2754,15 +2972,133 @@ function continueRun() {
   state.pendingChoiceOffers = null;   // next wave rolls a fresh set
   state.waveChoice = null;            // ...and a fresh pick (Sk408 playtest)
   state.waveChoiceSnap = null;
-  // S1: shrines are world-seeded ONCE at run start (startRun) and static for
-  // the whole run — no per-wave roll, no respawn.
+  state.wave.altar = false;   // M5b: a fresh wave owes no altar chest
   interMsg = '';
   spawnWaveArches();
   state.mode = 'playing';
   overlay.style.display = 'none';
-  // WAVE-9B/2: announce the AREA change with the wave — the theme ladder in
-  // CONFIG.GROUND.THEMES cycles by wave number (render.js groundTheme).
-  toast('WAVE ' + state.wave.num + ' - ' + C.GROUND.THEMES[(state.wave.num - 1) % C.GROUND.THEMES.length].name);
+  // The announce names the stage on screen: the floor is the stage's own
+  // material and the wave theme only shifts its light.
+  worldQuest('wave', state.wave.num);   // M5b quests
+  toast('WAVE ' + state.wave.num + ' - ' + stageOf(state.stage).name);
+  // This wave's boss rule, named ahead of the fight.
+  if (setWaveBossRule(state.wave.num)) toast('BOSS RULE - ' + state.bossRule.text.toUpperCase(), '#ffd75e');
+}
+
+// ---------- TRAVEL (travel.js) ----------------------------------------------------
+// The stage the portal of the wave just cleared leads to, or null.
+function travelTarget() {
+  if (!travelDue(state.wave.num, C.ESCALATION.END_WAVE)) return null;
+  return travelDestination(state.travelOrder, state.stage, state.stagesSeen);
+}
+// Move the run to a new field on `stageId`: new ground, sites and enemies.
+// The hero arrives at the centre; loot left on the old field comes along.
+function travelTo(stageId) {
+  const p = state.player;
+  state.sitesBefore = sitesUsed(state.sites, state.sitesBefore);
+  state.stage = stageOf(stageId).id;
+  state.stagesSeen.push(state.stage);
+  // The new field's seed comes off the run's own stream, one per field.
+  state.groundSeed = (siteMulberry(((state.choiceSeed | 0) ^ Math.imul(state.stagesSeen.length, 0x9e3779b1)) | 0)() * 1e9) | 0;
+  p.x = C.VIEW_W / 2;
+  p.y = C.VIEW_H / 2;
+  state.enemies = [];
+  state.enemyShots = [];
+  state.projectiles = [];
+  state.effects = [];
+  state.arches = [];
+  state.archBuffs = [];
+  state.atlas = createAtlas(C.GROUND.RIM, C.ATLAS.MAP_CELL);
+  state.mapOpen = false;
+  state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
+  seedWorldSites(true);
+  // Chests, gems, potions and items still on the ground arrive round the hero.
+  let k = 0;
+  for (const list of [state.chests, state.itemDrops, state.drops, state.gems]) {
+    for (const o of list || []) {
+      const a = k * 2.399963, r = 26 + (k % 5) * 9;   // a loose spiral
+      k++;
+      o.x = p.x + Math.cos(a) * r; o.y = p.y + Math.sin(a) * r * 0.7;
+      placeReachable(o, 6);
+    }
+  }
+  state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
+  state.camLead = { x: 0, y: 0 };
+  state.camBase = { x: state.cam.x, y: state.cam.y };
+  state.camPrev = { x: p.x, y: p.y };
+  toast('THE PORTAL LEADS ON: ' + stageOf(state.stage).name, '#8fd8ff');
+}
+
+// ---------- BOSS RULES (boss_rules.js) -----------------------------------------
+// From wave 2 on the wave's boss brings a named rule. It is set when the wave
+// begins, goes live when the boss arrives and ends when the boss falls (the
+// first of the two on a double wave: that death wins the wave), which pays
+// the rule's reward.
+function setWaveBossRule(wave) {
+  const def = ruleForWave(state.bossRuleOrder, wave, { potions: state.potionCap > 0 });
+  state.bossRule = def
+    ? { id: def.id, name: def.name, text: ruleLine(def), reward: rewardLine(def), live: false, broken: false }
+    : null;
+  return def;
+}
+// The stampede on one enemy (bosses keep their own pace).
+function ruleStamp(e) {
+  const fx = ruleFx(state);
+  if (fx && fx.enemySpeed && e && !e.boss && !e.ruleSped) { e.speed *= fx.enemySpeed; e.ruleSped = fx.enemySpeed; }
+  return e;
+}
+// The boss is here: the rule goes live, or breaks on the RULEBREAKER joker.
+function armBossRule(cast) {
+  const r = state.bossRule;
+  if (!r || r.live || !cast.length) return;
+  r.live = true;
+  r.broken = hasJoker(state, 'rulebreaker');
+  if (r.broken) { toast('RULEBREAKER: ' + r.name + ' DOES NOT BIND YOU', '#c87aff'); return; }
+  const fx = BOSS_RULE_BY_ID[r.id].fx;
+  if (fx.bossHp) for (const b of cast) { b.hp *= fx.bossHp; b.maxHp *= fx.bossHp; }
+  if (fx.enemySpeed) for (const e of state.enemies) ruleStamp(e);
+  if (fx.guards) {
+    // Elite brutes on either side of the boss.
+    for (let i = 0; i < fx.guards; i++) {
+      const a = (i / fx.guards) * Math.PI * 2 + Math.PI / 2;
+      const g = makeTypedEnemy('BRUTE', cast[0].x + Math.cos(a) * 34, cast[0].y + Math.sin(a) * 34, state.time, { elite: true });
+      escalate(g, state.time);
+      g.elite = true;
+      stampStageStats(state, g);
+      state.enemies.push(g);
+    }
+  }
+  tut.due.push('bossrule');
+}
+// The rule ends. `paid`: the wave's boss fell, so the reward is paid at
+// (x, y); otherwise it is dropped (the maw, a new wave). Returns the line
+// that says what was won ('' when nothing was).
+function endBossRule(paid, x = 0, y = 0) {
+  const r = state.bossRule;
+  if (!r) return '';
+  state.bossRule = null;
+  for (const e of state.enemies) if (e.ruleSped) { e.speed /= e.ruleSped; e.ruleSped = 0; }
+  if (!paid || !r.live) return '';
+  const def = BOSS_RULE_BY_ID[r.id];
+  const p = state.player;
+  if (def.reward === 'chest') siteChest(x, y + 20);
+  else if (def.reward === 'card') { state.pendingDrafts++; state.ruleCards++; }
+  else if (def.reward === 'heal') {
+    p.hp = p.stats.maxHp;
+    if (p.potions.hp < state.potionCap) p.potions.hp++;
+  }
+  sitePop(p.x, p.y - 30, 'RULE BEATEN', '#ffd75e');
+  return r.name + ' IS BEATEN: ' + BOSS_RULE_REWARDS[def.reward].toUpperCase();
+}
+// A beaten rule's free card opens once the field is back in play (a joker
+// offer goes first and chains into it).
+function maybeOpenRuleCard() {
+  if (state.ruleCards > 0 && state.pendingDrafts > 0 && state.mode === 'playing' && !state.draftKind) openDraft();
+}
+// The intermission's line about the boss rule of the wave ahead.
+function nextBossRuleLine() {
+  const def = ruleForWave(state.bossRuleOrder, state.wave.num + 1, { potions: state.potionCap > 0 });
+  return def ? '<br>NEXT BOSS RULE: ' + ruleLine(def) + ' (' + rewardLine(def) + ')' : '';
 }
 
 // ---------- BOSS: spawns on wave expiry; timer pauses while any lives --------
@@ -2785,7 +3121,7 @@ function spawnBoss() {
     escalate(boss, state.time);
     const hp = C.ENEMY.BASE_HP * ladderHp(w) *
       (B.HP_MULT_BASE + B.HP_MULT_PER_WAVE * state.wave.num) * desc.hpMult *
-      heatMultipliers(heatOf(state)).hp *   // WAVE-9: bosses take the heat too
+      wrathMultipliers(wrathOf(state)).hp *   // WAVE-9: bosses take the wrath too
       prestigeEnemyMult(getPrestige(profile));   // PRESTIGE HP: the boss overwrite bypasses stampStageStats
     boss.hp = hp;
     boss.maxHp = hp;
@@ -2826,6 +3162,10 @@ function spawnBoss() {
   };
   audio.playPortalCue('BOSS_YELL');
   easeToBossStance();       // BOSS_STANCE: the camera leans in; see CONFIG
+  // The wave's rule goes live; the banner's small print names it and its reward.
+  armBossRule(state.wave.bosses);
+  const rule = state.bossRule;
+  if (rule && rule.live && !rule.broken) state.bossBanner.sub = (rule.text + ' - ' + rule.reward).toUpperCase();
 }
 
 // ---------- HORDE WARNING timing + direction (C.HUD.WARNING) ------------------
@@ -2866,10 +3206,10 @@ function spawnMidBoss() {
   escalate(boss, state.time);
   // E2 (R2): the formula is config.js's midBossHp — the ONE definition the
   // wave-2 heavy tier also reads. Same factors in the same order as the old
-  // inline expression (desc.hpMult * heat on top), so the herald's number is
+  // inline expression (desc.hpMult * wrath on top), so the herald's number is
   // byte-identical.
   const hp = midBossHp(state.wave.num, w) * desc.hpMult *
-    heatMultipliers(heatOf(state)).hp * prestigeEnemyMult(getPrestige(profile));   // PRESTIGE HP: the herald overwrite bypasses stampStageStats
+    wrathMultipliers(wrathOf(state)).hp * prestigeEnemyMult(getPrestige(profile));   // PRESTIGE HP: the herald overwrite bypasses stampStageStats
   boss.hp = hp;
   boss.maxHp = hp;
   boss.w = Math.round(boss.w * M.SIZE_MULT * desc.sizeMult);
@@ -2964,7 +3304,7 @@ function detonateMineAt(mine, fusionId) {
     if (Math.hypot(e.x - mine.x, e.y - mine.y) <= blast) {
       let d = dmg;
       if ((p.stats.crit || 0) > 0 && Math.random() < p.stats.crit) { d *= (p.stats.critMult || 1.5); markCrit(state, e); }
-      e.hp -= devHit(d * directHitMult(state, e)); e.flash = 0.08;
+      e.hp -= devHit(d * heroHitMult(state, e)); e.flash = 0.08;
       onWeaponHit(state, e);   // a mine's payload is a direct weapon hit
       state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.12 });
     }
@@ -2987,7 +3327,7 @@ function fusionZapChain(x, y, hops, frac, exclude, fusionId) {
     const tgt = nearestFoe(from.x, from.y, hit);
     if (!tgt || Math.hypot(tgt.x - from.x, tgt.y - from.y) > WEAPONS.ZAP.CHAIN_RANGE) break;
     hit.add(tgt);
-    tgt.hp -= devHit(base * Math.pow(WEAPONS.ZAP.FALLOFF, k) * directHitMult(state, tgt));
+    tgt.hp -= devHit(base * Math.pow(WEAPONS.ZAP.FALLOFF, k) * heroHitMult(state, tgt));
     tgt.flash = 0.08;
     onWeaponHit(state, tgt);   // a link bolt is a direct hit
     points.push({ x: tgt.x, y: tgt.y });
@@ -3115,7 +3455,7 @@ function fusionScytheEmber() {
     for (const c of fx.reaped) {
       for (const e of state.enemies) {
         if (e.hp <= 0 || Math.hypot(e.x - c.x, e.y - c.y) > blast) continue;
-        e.hp -= devHit(dmg * directHitMult(state, e));
+        e.hp -= devHit(dmg * heroHitMult(state, e));
         e.flash = 0.08;
         onWeaponHit(state, e);
         state.effects.push({ kind: 'mine_hit', x: e.x, y: e.y, age: 0, ttl: 0.1 });
@@ -3370,7 +3710,7 @@ function update(dt) {
           markCrit(state, e);
           state.effects.push({ kind: 'hit_spark', x: pr.x, y: pr.y - 3, age: 0, ttl: 0.15 });
         }
-        e.hp -= devHit(dmg * directHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
+        e.hp -= devHit(dmg * heroHitMult(state, e)); e.flash = 0.08; pr.hit.add(e); audio.playSfx('hit');
         onWeaponHit(state, e);   // G21 rider: the volley projectile is a direct hit
         if ((p.stats.lifesteal || 0) > 0) {
           // G34/G36: heal = min(dmg * lifesteal, budget) — the RATE is capped
@@ -3409,7 +3749,7 @@ function update(dt) {
   // path below already multiplies (projectiles, novas, contact) — one seam,
   // guarded so the default stage (1.0) is byte-identical.
   // OWNER enemy buff: damage SQUARED. The square is on C.ENEMY.BASE_CONTACT (see
-  // config.js POWER), so this multiplier stays linear and heat's own damage
+  // config.js POWER), so this multiplier stays linear and wrath's own damage
   // contract is unchanged.
   // PRESTIGE DAMAGE (owner spec: enemy strength x1.5^P). The tier factor rides
   // the ONE shared threat curve every enemy-damage path below already
@@ -3418,7 +3758,7 @@ function update(dt) {
   // the threat still climbs every tier, it cannot one-shot the pool). The
   // maw's mercy-rule hits are excluded (exact thirds of player HP).
   const dmgMult = ladderDmg(Math.floor(state.time / 30)) *
-    heatMultipliers(heatOf(state)).damage * (stageMods(state.stage).dmgMult || 1) *
+    wrathMultipliers(wrathOf(state)).damage * (stageMods(state.stage).dmgMult || 1) *
     prestigeEnemyMult(getPrestige(profile));
   // ARENA RELIEF: the stage's terrain character, read ONCE for the whole
   // enemy pass. The grade term at the move seam below is the SAME pure
@@ -3426,6 +3766,24 @@ function update(dt) {
   // exactly the grade the pilot would (the anti-sanctuary symmetry).
   const relCfg = stageRelief(state.stage);
   const relSeed = state.groundSeed || 0;
+  // M5b LANDSCAPE: the run's terrain and the hero's region. A walker in
+  // another region (or just blocked by a cliff) follows the hero flow field
+  // through the ramps; it is built lazily, at most every FLOW_REFRESH s.
+  const TER = terrainFor(relSeed, state.stage);
+  const heroZ = TER ? floorAt(TER, p.x, p.y, p.tz || 0) : 0;
+  const heroComp = TER ? compAt(TER, p.x, p.y, heroZ) : 0;
+  const heroFlow = () => {
+    const node = nodeOf(TER, cellIx(p.x, p.y), heroZ);
+    const hf = state.heroFlow;
+    if (hf && hf.T === TER && (hf.node === node || state.time - hf.t < C.TERRAIN.FLOW_REFRESH)) return hf.F;
+    const F = flowField(TER, [node]);
+    state.heroFlow = { T: TER, node, t: state.time, F };
+    return F;
+  };
+  // M5b slice 3: the walled yard's walls stop walkers (big bosses and flyers
+  // cross them). A walker by the yard heads round the walls, or in and out
+  // through the open gate, and slides on contact; only walkers by the yard pay.
+  const yardV = yardForWalkers(state.poi && state.poi.yard, extraRects(), p.x, p.y);
   // WAVE-20 death-cause tracking (tools/boss_sim.mjs reads state.deathBy):
   // every damage path stamps the source right before die() can fire.
   const shotSrc = (e) => ({ typeId: e.typeId, bossId: e.bossId || null, name: e.name || null, midBoss: !!e.midBoss });
@@ -3486,8 +3844,33 @@ function update(dt) {
         mvx * (p.x - e.x) + mvy * (p.y - e.y) > 0) {
       const route = reliefRampRoute(e.x, e.y, p.x, p.y, relSeed, relCfg);
       if (route) { mvx = route[0]; mvy = route[1]; }
+      // M5b LANDSCAPE: walk the ramps to a hero in another region.
+      if (TER) {
+        const ez = floorAt(TER, e.x, e.y, e.tz || 0);
+        if (compAt(TER, e.x, e.y, ez) !== heroComp ||
+            state.time - (e.tblk ?? -99) < C.TERRAIN.ROUTE_HOLD) {
+          const fd = flowDir(TER, heroFlow(), e.x, e.y, ez);
+          if (fd) {
+            const ml = Math.hypot(mvx, mvy) || 1;
+            mvx = fd[0] * ml; mvy = fd[1] * ml;
+          }
+        }
+      }
     }
-    const grade = reliefGrade(e.x, e.y, mvx, mvy, relSeed, relCfg);
+    // The walled yard: the walls that hold this walker, and its way round
+    // them or through the gate (outside the yard, one on a ramp route or
+    // backing off keeps its own way and only slides).
+    const yardW = yardV && !e.flying && !e.boss ? yardWallsFor(yardV, e.x, e.y) : null;
+    if (yardW && (mvx || mvy)) {
+      const wt = yardWay(yardV, e.x, e.y, p.x, p.y,
+        mvx === act.mx && mvy === act.my && mvx * (p.x - e.x) + mvy * (p.y - e.y) > 0);
+      const wl = wt ? Math.hypot(wt[0] - e.x, wt[1] - e.y) : 0;
+      if (wl > 0.5) {
+        const ml = Math.hypot(mvx, mvy);
+        mvx = ((wt[0] - e.x) / wl) * ml; mvy = ((wt[1] - e.y) / wl) * ml;
+      }
+    }
+    const grade = TER ? 1 : reliefGrade(e.x, e.y, mvx, mvy, relSeed, relCfg);
     // BLOCKING ELEVATION (ELEVATION v2): the same cliff rule + rampward slide
     // the pilot's move seam reads (reliefStep), so pilot and horde obey ONE
     // geometry — a walker pressed against a cliff face slides along it and
@@ -3498,10 +3881,22 @@ function update(dt) {
       e.x += act.mx * spd * grade * dt;
       e.y += act.my * spd * grade * dt;
     } else {
+      const ox = e.x, oy = e.y;
       const stepped = reliefStep(e.x, e.y,
         e.x + mvx * spd * grade * dt,
         e.y + mvy * spd * grade * dt, relSeed, relCfg);
-      e.x = stepped[0]; e.y = stepped[1];
+      if (TER) {
+        // Cliffs block walkers; big bosses climb any face, slowly.
+        const ts = terrainStep(TER, e.x, e.y, e.tz || 0, stepped[0], stepped[1], !!e.boss);
+        e.x = ts[0]; e.y = ts[1]; e.tz = ts[2];
+        if (ts[3]) e.tblk = state.time;
+      } else {
+        e.x = stepped[0]; e.y = stepped[1];
+      }
+      if (yardW) {
+        const sl = slideMove(ox, oy, e.x, e.y, yardW, VAULT.WALK_R);
+        e.x = sl[0]; e.y = sl[1];
+      }
     }
     // TICK latch: once attached it rides the player and drains hp/s INSTEAD
     // of contact damage (its contactDamageMult is 0) until killed.
@@ -3710,6 +4105,7 @@ function update(dt) {
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     if (e.hp <= 0) {
+      if (e.elite || e.boss || e.mimic) worldOnDeath(e);   // M5b: quests, the mimic's pay
       // E2 (R6): plain chaff (the CHASER/SWARMER swarm — an elite is an
       // EVENT, never chaff) pays near-zero on every drop roll from the horde
       // wave on: potion, chest, evolution token and (at spawn) xp. The wave's
@@ -3837,10 +4233,16 @@ function update(dt) {
         // WAVE-8/A: the FINAL death of the wave's cast (nobody left alive)
         // queues the portal-entry cinematic. The first of a double pair just
         // opens the portal — existing wave-6 behavior is kept.
-        if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) state.wave.cinePending = true;
+        // The wave is won with this death (on a double wave the first to
+        // fall wins it), so the boss rule is beaten here and pays its reward.
+        const ruleWon = endBossRule(true, e.x, e.y);
+        if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) {
+          state.wave.cinePending = true;
+          siteBossPayout(e.x, e.y);   // M5b: altar chest, statue reward
+        }
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
         if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
-        toast('BOSS DOWN');
+        toast('BOSS DOWN' + (ruleWon ? ' - ' + ruleWon : ''), ruleWon ? '#ffd75e' : null);
         if (credit) queueJokerOffer();
         // WAVE-26 FEATURE 4: a boss kill is the OTHER earned moment. The
         // per-wave HERALD (the midBoss branch above) is deliberately NOT
@@ -3935,8 +4337,14 @@ function update(dt) {
   // triggers the intermission; CONTINUE starts the next wave.
   if (state.wave.pendingClear) {
     state.wave.pendingClear = false;
+    // The wave is won: the altar's chest and the statue's reward pay here too,
+    // so a double wave cleared by its first boss leaves nothing owed.
+    siteBossPayout(state.wave.portalX || p.x, state.wave.portalY || p.y);
     for (const o of state.enemies) {
-      if (o.hp > 0) pushGem(makeGem(o.x, o.y, o.xp));
+      if (!(o.hp > 0)) continue;
+      pushGem(makeGem(o.x, o.y, o.xp));
+      // A mimic the clear takes still pays its rare chest and the secret.
+      if (o.mimic && !o.worldDone) { o.worldDone = true; payMimic(o); }
     }
     state.enemies.length = 0;
     state.enemyShots.length = 0;   // no post-clear potshots
@@ -3973,6 +4381,15 @@ function update(dt) {
       const pr = clearOfBuildings(buildingRectsForRun(state.groundSeed || 0, state.stage),
         state.portal.x, state.portal.y, 4, lootLimit());
       state.portal.x = pr[0]; state.portal.y = pr[1];
+      // M5b slice 3: a boss that fell inside the SHUT walled yard (big bosses
+      // cross walls) would open the portal where no one can walk: it opens
+      // outside the gate instead (sim: a run held 30 min at a yard wall).
+      const yd = state.poi && state.poi.yard;
+      if (yd && !yd.open && Math.abs(state.portal.x - yd.x) < VAULT.YARD_W / 2 + 4 &&
+          Math.abs(state.portal.y - yd.y) < VAULT.YARD_H / 2 + 4) {
+        const go = gateOutside(yd);
+        state.portal.x = go[0]; state.portal.y = go[1];
+      }
     }
     toast('THE PORTAL OPENS - WALK THROUGH');
   }
@@ -4021,74 +4438,9 @@ function update(dt) {
   if (state.atlas) {
     atlasUpdate(state.atlas, p.x, p.y, C.ATLAS.VISIT_RADIUS, C.ATLAS.DISCOVER_RADIUS);
   }
-  // WAVE-11 RUN SHRINES (shrines.js): the pilot is shrine-BLIND (controllers
-  // never learn shrines exist). S1 (owner directive 2026-09-14): the set is
-  // world-seeded ONCE at run start and STATIC — the ~6px/s lean toward the
-  // player is gone ("static means static"; the DRIFT.ARCH coupling is removed
-  // from this path only — arches keep theirs above). On proximity, gold buys
-  // ONE random intermission-style blessing (choices.js semantics, repeat-free
-  // across the whole run). Per-run only: shrines never touch persistence
-  // beyond the purse debit (paid-chest precedent).
-  // E1: the shrine debits the RUN PURSE (profile.runPurse), never the bank —
-  // in-run gold buys in-run powers.
-  // RE-ARM LATCH (brief docs/briefs/S1_SHRINE_DOUBLE_SELL.md, 2026-09-18):
-  // seedShrines has no min-separation, so ~0.227% of seeds place two altars
-  // inside the SAME 26px radius — pre-latch this loop sold BOTH in one frame
-  // (one walk-up, two debits, a blessing the player never chose). Now a
-  // successful debit sets state.shrineRearm and no further sale may happen
-  // until the player has been more than 26px from EVERY unsold altar at least
-  // once. Set ONLY on a successful debit: the broke-toast and the
-  // pool-exhausted darkening never latch.
-  let nearUnsold = false;
-  for (const sh of state.shrines) {
-    if (sh.used) continue;
-    const dx = p.x - sh.x, dy = p.y - sh.y;
-    const len = Math.hypot(dx, dy) || 1;
-    if (len < 26) {
-      nearUnsold = true;
-      if (state.shrineRearm) continue;   // one sale per approach — walk off to re-arm
-      if (!sh.blessing) {
-        // Roll + cache once per shrine (rng stream: shrineRng, seeded off the
-        // run seed — never desyncs the intermission choice rolls).
-        sh.blessing = shrineBlessing(state.wave.num - 1, state.shrineRng || Math.random,
-          state.takenChoices);
-      }
-      if (!sh.blessing) {
-        sh.used = true;   // blessing pool exhausted — the altar goes dark
-      } else if ((devRunFree() || canAfford(purseClamp(profile.runPurse), sh.blessing.cost)) && purseSpend(sh.blessing.cost, 'shrine')) {
-        applyChoice(state.player, sh.blessing.offer);
-        state.takenChoices.push(sh.blessing.offer.id);
-        if (dev) {
-          dev.shrineBlessings.push(sh.blessing.offer.id);
-          // SLICE 9: shrine buys carry cost + wave (the `shrines` snapshot
-          // field keeps its slice-7 shape; the audit rides `choices.shrines`).
-          dev.shrineBuys.push({
-            id: sh.blessing.offer.id,
-            cost: sh.blessing.cost | 0,
-            wave: (state.wave && state.wave.num) | 0,
-          });
-        }
-        const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
-        // G11: the ceiling is the run's weaponCap (a challenge mode may lower it).
-        state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
-        sh.used = true;
-        state.shrineRearm = true;        // the latch: ONLY a successful debit sets it
-        toast(sh.blessing.offer.title + ' — ' + sh.blessing.offer.desc);
-        audio.playSfx('powerup');
-      } else if (!sh.brokeToast) {
-        sh.brokeToast = true;   // once per shrine: don't nag a broke pilot
-        toast('THE SHRINE REQUIRES ' + sh.blessing.cost + ' GOLD');
-      }
-      if (sh.used) {
-        // S1: advance the render/tour VIEW to the next unsold altar. This is
-        // the only place the view moves — event-driven, never per-frame.
-        state.shrine = state.shrines.find(s => !s.used) || null;
-      }
-    }
-  }
-  // The latch clears the first frame the player is outside EVERY unsold
-  // altar's radius — walking away and coming back re-arms the next sale.
-  if (state.shrineRearm && !nearUnsold) state.shrineRearm = false;
+  // M5b SITES (sites.js): shrines charge, the altar calls the boss,
+  // breakables break, fountains heal, the statue deals its curse.
+  tickWorldSites(p, dt);
   for (const ev of chestEvents) {
     if (ev.kind === 'chestOpened') {
       toast('CHEST OPENED: ' + ev.rarity.toUpperCase(),
@@ -4101,6 +4453,8 @@ function update(dt) {
       const heal = p.stats.healOnChest != null ? p.stats.healOnChest
         : (state.character ? (state.character.healOnChest || 0) : 0);
       if (heal > 0) p.hp = Math.min(p.stats.maxHp, p.hp + heal);
+    } else if (ev.kind === 'mimicWake') {
+      wakeMimic(ev.x, ev.y);   // M5b secrets
     } else if (ev.kind === 'gambleHorde') {
       toast('EMPTY CHEST: it was a trap. A small horde attacks');
     } else if (ev.kind === 'hordeBait') {
@@ -4197,7 +4551,7 @@ function update(dt) {
 
   // Rare item drops (loot.js, WAVE-11 best-case equip): EQUIP fills a free
   // slot, REPLACE swaps the weakest when the drop is STRICTLY better, IGNORE
-  // leaves it on the ground (heat charges inside applyEquipDecision: +1 new
+  // leaves it on the ground (wrath charges inside applyEquipDecision: +1 new
   // slot / +0 exchange).
   for (let i = state.itemDrops.length - 1; i >= 0; i--) {
     const d = state.itemDrops[i];
@@ -4230,12 +4584,7 @@ function update(dt) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
-      // G24 slice 1: the SECOND heat payout channel. heatXpMult tracks MANUAL
-      // pushes only (the symmetry rule — built-in heat stays cost-only), read
-      // here at the ONE kill-XP site alongside the Scholar/SUNNY/rampage
-      // multipliers. At manual 0 it is exactly 1, so a non-heat run's income
-      // is byte-identical to before.
-      p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult() * heatXpMult(manualPushes(state));
+      p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();
       state.gems.splice(i, 1);
       feedWeaponXp(1);                         // gems trickle weapon XP
       // The guided part of run 1 grants its one level-up itself (the draft step).
@@ -4283,6 +4632,7 @@ function update(dt) {
   // can all complete a requirements triple since the last frame.
   maybeOpenEvolve();
   maybeOpenJokerOffer();
+  maybeOpenRuleCard();
 
   // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
   // auto-start here on the first playing tick after the final boss died —
@@ -4405,19 +4755,28 @@ function openDraft() {
   state.mode = 'draft';
   ovTitle.className = '';
   // A boss kill queues a joker offer; it opens ahead of any level-up draft.
-  if (!state.draftKind) state.draftKind = state.jokerOffers > 0 ? 'joker' : 'level';
+  if (!state.draftKind) state.draftKind = state.shrineOffer ? 'shrine' : state.jokerOffers > 0 ? 'joker' : 'level';
+  if (state.draftKind === 'shrine') {
+    presentDraft(state.shrineOffer, 'SHRINE', 'the shrine is charged: take 1 blessing');
+    return;
+  }
   if (state.draftKind === 'joker') {
     // Banished cards and the dev ban list stay out of a boss offer too.
     const devBan = (dev && dev.autoplay === true && dev.draftBan) ? dev.draftBanIds : [];
     const offer = rollJokerOffer(state).filter(c =>
       !(state.draftBanned && state.draftBanned.has(draftBanKey(c))) && !devBan.includes(c.id));
+    // Each offer takes its reason off the queue once; a reroll or a banish
+    // redraws the cards under the same reason.
+    if (state.draftWhy == null) state.draftWhy = (state.jokerWhys && state.jokerWhys.shift()) || 'the boss is down';
     if (offer.length) {
+      const why = state.draftWhy;
       presentDraft(offer, 'JOKER', jokerRowFull(state)
-        ? 'the boss is down: take 1 joker, and choose which one it replaces'
-        : 'the boss is down: take 1 joker');
+        ? why + ': take 1 joker, and choose which one it replaces'
+        : why + ': take 1 joker');
       return;
     }
-    // Every joker is held: nothing to offer.
+    // Every joker is held: nothing to offer, and its reason goes with it.
+    state.draftWhy = null;
     state.jokerOffers--;
     state.draftKind = null;
     if (--state.pendingDrafts <= 0) { state.pendingDrafts = 0; state.mode = 'playing'; return; }
@@ -4586,7 +4945,10 @@ function openDraft() {
     const hint = handHint(state.player, c.id, runHandOpts());
     c.handText = hint ? hint.text : '';
   }
-  presentDraft(choices, 'LEVEL ' + state.player.level, 'pick 1 of ' + choices.length);
+  // A beaten boss rule's free card is a draft without the level.
+  const freeCard = state.ruleCards > 0;
+  presentDraft(choices, freeCard ? 'FREE CARD' : 'LEVEL ' + state.player.level,
+    (freeCard ? 'the rule is beaten: ' : '') + 'pick 1 of ' + choices.length);
 }
 
 // Put a set of offer cards on the draft overlay: level-up cards, a boss's
@@ -4666,8 +5028,9 @@ function presentDraft(choices, title, sub, opts = {}) {
   overlay.style.display = 'flex';
   // The one coach card left: a first level-up with no tutorial behind it (a
   // returning profile, or after REPLAY TOUR cleared the flags) gets one line.
-  // The first-run tutorial teaches the draft itself and marks this seen.
-  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !tourFlag(TOUR_KEYS.draft)) {
+  // The first-run tutorial teaches the draft itself and marks this seen. A
+  // hidden tab waits for a draft the player can see.
+  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !bgHidden && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
       text: 'THE DRAFT: every level, pick 1 card. Click one or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
@@ -4705,14 +5068,19 @@ function clearDraftActions() {
   }
 }
 
+// The shrine's blessings are a fixed set: SKIP is the only action there.
+function draftFixedOffer() { return state.draftKind === 'shrine'; }
+
 function renderDraftActions() {
   const armed = draftBanishArmed;
   clearDraftActions();
-  draftBanishArmed = armed;
+  const fixed = draftFixedOffer();
+  draftBanishArmed = armed && !fixed;
   const ch = state.draftCharges || { reroll: 0, skip: 0, banish: 0 };
   const st = state.player.stats;
-  const owned = (st.draftRerolls || 0) + (st.draftSkips || 0) + (st.draftBanishes || 0);
-  if (state.mode !== 'draft' || (owned + ch.reroll + ch.skip + ch.banish) <= 0) { draftBanishArmed = false; return; }
+  const owned = (st.draftSkips || 0) + ch.skip +
+    (fixed ? 0 : (st.draftRerolls || 0) + (st.draftBanishes || 0) + ch.reroll + ch.banish);
+  if (state.mode !== 'draft' || owned <= 0) { draftBanishArmed = false; return; }
   draftActionsEl = document.createElement('div');
   draftActionsEl.id = 'draft-actions';
   const btn = (kind, label, key, n, on, fn, tip) => {
@@ -4727,17 +5095,19 @@ function renderDraftActions() {
     };
     draftActionsEl.appendChild(b);
   };
-  btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — swap these cards for new ones.');
+  if (!fixed) btn('reroll', 'REROLL', 'R', ch.reroll, false, draftReroll, '<b>REROLL</b> — swap these cards for new ones.');
   btn('skip', 'SKIP', 'S', ch.skip, false, draftSkip,
     '<b>SKIP</b> — take no card and heal ' + Math.round(DRAFT_ACTIONS.SKIP_HEAL_FRAC * 100) + '% of max HP.');
-  btn('banish', draftBanishArmed ? 'BANISH: PICK A CARD' : 'BANISH', 'B', ch.banish, draftBanishArmed, draftBanishToggle,
-    '<b>BANISH</b> — then choose a card: it never appears again this run.');
+  if (!fixed) {
+    btn('banish', draftBanishArmed ? 'BANISH: PICK A CARD' : 'BANISH', 'B', ch.banish, draftBanishArmed, draftBanishToggle,
+      '<b>BANISH</b> — then choose a card: it never appears again this run.');
+  }
   overlay.appendChild(draftActionsEl);
 }
 
 function draftReroll() {
   const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !ch || ch.reroll <= 0) return false;
+  if (state.mode !== 'draft' || draftFixedOffer() || !ch || ch.reroll <= 0) return false;
   ch.reroll--;
   draftBanishArmed = false;
   if (dev && dev.drafts.length) dev.drafts[dev.drafts.length - 1].taken = 'reroll';
@@ -4761,7 +5131,7 @@ function draftSkip() {
 
 function draftBanishToggle() {
   const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !ch || ch.banish <= 0) return false;
+  if (state.mode !== 'draft' || draftFixedOffer() || !ch || ch.banish <= 0) return false;
   draftBanishArmed = !draftBanishArmed;
   renderDraftActions();
   return true;
@@ -4769,7 +5139,7 @@ function draftBanishToggle() {
 
 function draftBanish(u) {
   const ch = state.draftCharges;
-  if (state.mode !== 'draft' || !u || !ch || ch.banish <= 0) return false;
+  if (state.mode !== 'draft' || draftFixedOffer() || !u || !ch || ch.banish <= 0) return false;
   ch.banish--;
   draftBanishArmed = false;
   state.draftBanned.add(draftBanKey(u));
@@ -4785,7 +5155,10 @@ function draftBanish(u) {
 function closeDraft(u) {
   state.pendingDrafts--;
   if (state.draftKind === 'joker') state.jokerOffers = Math.max(0, (state.jokerOffers || 0) - 1);
+  if (state.draftKind === 'shrine') state.shrineOffer = null;
+  if (state.draftKind === 'level' && state.ruleCards > 0) state.ruleCards--;
   state.draftKind = null;
+  state.draftWhy = null;
   clearDraftActions();
   if (state.pendingDrafts > 0) { openDraft(); return; }
   draftFocus = -1;
@@ -4905,6 +5278,7 @@ function announceJoker(id, verb) {
   toast(verb + ' - ' + j.name.toUpperCase() + ': ' + j.desc, JOKER_TINT);
   audio.playSfx('powerup');
   updateRunHand(true);
+  tut.due.push('joker');
 }
 function gainJoker(id) {
   if (takeJoker(state, id)) announceJoker(id, 'JOKER');
@@ -4927,6 +5301,7 @@ function openJokerReplace(u) {
     });
   }
   presentDraft(choices, 'JOKER ROW FULL', 'your joker row is full. ' + inc.name.toUpperCase() + ': ' + inc.desc, { swap: true });
+  tutHint('jokerfull', []);
 }
 function resolveJokerSwap(u) {
   if (u.keep) {
@@ -4942,9 +5317,12 @@ function resolveJokerSwap(u) {
 }
 
 // A wave boss pays a joker offer: it opens as soon as the run is back in play.
-function queueJokerOffer() {
+function queueJokerOffer(why = null) {
   state.jokerOffers = (state.jokerOffers || 0) + 1;
   state.pendingDrafts++;
+  // M5b: what paid it (the vault, a quest, a niche); the boss when null.
+  if (!state.jokerWhys) state.jokerWhys = [];
+  state.jokerWhys.push(why);
 }
 function maybeOpenJokerOffer() {
   if (state.mode === 'playing' && state.jokerOffers > 0 && !state.draftKind) openDraft();
@@ -4997,6 +5375,7 @@ function updateRunHand(announce) {
     state.handFx = { t: 0, dur: HAND_COUNT_S, from, to: handBonus(res.hand, res.hand.scale).dmg };
     toast('HAND: ' + res.hand.name.toUpperCase() + ' - ' + describeHandBonus(res.hand, res.hand.scale), '#8fe0a0');
     audio.playSfx('powerup');
+    tut.due.push('hand');
   }
   return res;
 }
@@ -5026,6 +5405,8 @@ function pick(u) {
   // The first copy of a stat card levels every weapon it is the partner of.
   // The replace choice of a full joker row resolves a joker pick made earlier.
   if (u.jokerSwap) { resolveJokerSwap(u); return; }
+  // M5b: a shrine blessing card.
+  if (u.blessing) { takeShrineBlessing(u); closeDraft(u); return; }
   // A joker picked with a full row: choose which one it replaces first.
   if (u.joker && jokerRowFull(state)) { openJokerReplace(u); return; }
   const attune = (!u.joker && !u.tier && !(p.takenStats || {})[u.id])
@@ -5143,10 +5524,11 @@ function draftObstructed() {
   // MANUAL never auto-picks: the countdown is suspended (not reset), so a
   // flip to AUTO mid-draft owes the player the full unspent window.
   if (normalizePilotMode(state.pilotMode) === 'MANUAL') return true;
-  // NIGHT MODE: a coach must not park an unattended run — the countdown runs
-  // through it (the coach's own DOM is untouched).
-  if (coachActive() && !state.nightRun) return true;
+  // A coach must not park an unattended or background run — the countdown
+  // runs through it (the coach's own DOM is untouched).
+  if (coachActive() && !state.unattended && !bgRuns()) return true;
   if (tutGuidedLive()) return true;   // the tutorial's idle rule picks instead
+  if (bgRuns()) return false;          // background play picks on the same countdown
   try { return !!(typeof document !== 'undefined' && document && document.hidden); }
   catch { return false; }
 }
@@ -5214,8 +5596,8 @@ function tickDraftAutoPick(dt) {
       // presentation), through the ONE activation seam (activateDraftCard) —
       // byte-identical to a tap.
       const pool = draftOffers;
-      const u = state.nightRun
-        ? draftOffers[nightDraftPickIndex(draftOffers)]   // NIGHT: highest tier, first slot on tie
+      const u = state.unattended
+        ? draftOffers[autoDraftPickIndex(draftOffers)]   // auto-continue: the draft policy
         : pool[Math.min(pool.length - 1, Math.floor(draftAutoRng() * pool.length))];
       draftAutoCount++;
       draftAutoLastId = u.id;
@@ -5226,38 +5608,215 @@ function tickDraftAutoPick(dt) {
   updateDraftCountdownLine();
 }
 
-// ---------- NIGHT MODE (opt-in full auto, owner 2026-09-17) --------------------
-// Owner, verbatim: "Yes, full auto run is one of the toughest balances without
-// skipping the content. We can try it though. Let's start it at half gold.
-// Still too much but could let more people 'finish' the game which also feels
-// rewarding." The authorized exception to the feature freeze.
-//
-// WHAT IT IS: with the toggle ON (title SETUP, two confirming presses, OFF by
-// default), every run plays itself end to end — the pilot already drives
-// movement/casts/potions; the DRAFT auto-pick, the intermission CONTINUE, the
-// run-end RETRY and the two cinematics are the beats that still parked an auto
-// run on a human, and each now fires on a NAMED wall-clock delay
-// (CONFIG.AUTOPILOT.NIGHT_CONTINUE_S / NIGHT_RESTART_S). Runs auto-restart
-// with the SAME build and arena (startRun re-reads the persisted loadout,
-// character, pending challenge and pending stage — RETRY's exact contract).
-//
-// NO SKIPPING THE CONTENT: a night run still fights every wave, drafts every
-// card, meets elites and bosses. The ONE auto-skip is the escape minigame (an
-// unattended run cannot play a side-scroller) — the known content gap, and
-// part of why the 50% rate is defensible.
-//
-// THE DRAFT POLICY (one documented rule, no heuristic knob): take the
-// HIGHEST-TIER offer — MYTHIC beats RARE beats everything else — and the
-// FIRST SLOT on a tie. Deterministic: the same offers always pick the same
-// card.
-let nightArmed = false;          // the SETUP card's two-press confirm
-let nightSession = null;         // { t0, gold0 } while the night runs on
-let nightContinueLeft = null;    // s left on the intermission auto-CONTINUE
-let nightRestartLeft = null;     // s left on the end-card auto-RETRY
-let nightEvolveLeft = null;      // s left on the EVOLUTION overlay auto-pick
-let nightStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
+// ---------- Auto-continue and the away summary ----------
+// One saved setting (Settings: AUTO-CONTINUE, off by default). With the AUTO
+// pilot, a finished run starts the next one by itself, and every waiting
+// screen of the run resolves itself: drafts and evolve offers are picked, the
+// intermission continues, the movies and the escape are skipped. A run the
+// player ends with END RUN stays on its end card.
+// Idle play stays a floor under active play:
+//   - a run started by auto-continue banks AUTO_CONTINUE_PENALTY_PCT less
+//     gold (a run the player starts pays in full);
+//   - nothing is ever bought for the player;
+//   - after AUTO_RUN_LIMIT auto-started runs in a row with no input the game
+//     stops on the title.
+// What happened while nobody touched the game for AWAY_S or more is shown
+// once, on the next input, as the AWAY SUMMARY card.
+// The draft policy: a joker while the row has room, then the highest tier,
+// first slot on a tie.
+const KEY_AUTO_CONTINUE = 'hordes_auto_continue';
+try { state.autoContinue = prefStorage.getItem(KEY_AUTO_CONTINUE) === '1'; } catch { /* shim */ }
+let autoStartNext = false;       // the next startRun is auto-continue's, not the player's
+let autoRunsInRow = 0;           // auto-started runs since the last input
+let autoContinueLeft = null;     // s left on the intermission auto-CONTINUE
+let autoRestartLeft = null;      // s left on the end card before the next run
+let autoEvolveLeft = null;       // s left on the evolve offer
+let autoStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
 
-export function nightDraftPickIndex(offers) {
+// Turning it off takes effect at once: the rest of the run waits for the
+// player (what the run pays stays as it started).
+function setAutoContinue(on) {
+  state.autoContinue = !!on;
+  try { prefStorage.setItem(KEY_AUTO_CONTINUE, state.autoContinue ? '1' : '0'); } catch { /* shim */ }
+  if (state.autoContinue) return;
+  if (!state.devNightRun) state.unattended = false;
+  autoRestartLeft = null;
+  autoContinueLeft = null;
+  autoStall = { mode: null, t: 0 };
+}
+function toggleAutoContinue() {
+  setAutoContinue(!state.autoContinue);
+  audio.playSfx(state.autoContinue ? 'uiConfirm' : 'uiMove');
+}
+// The end card of an unattended run: count down to the next run.
+function armAutoRestart() {
+  if (state.unattended && !pilotMovesYou()) autoRestartLeft = C.AUTOPILOT.AUTO_RESTART_S;
+}
+// The countdown ran out: the next run, or the title once the run limit is reached.
+function autoRestart() {
+  if (!state.devNightRun && autoRunsInRow >= C.AUTOPILOT.AUTO_RUN_LIMIT) {
+    away.stopped = true;
+    showTitle();
+    return;
+  }
+  autoRunsInRow++;
+  autoStartNext = true;
+  startRun();   // same build, same arena: RETRY's contract
+}
+
+// ---- away tracking ----
+// `away` collects what unattended runs earned since the last input. The card
+// opens on an input that comes AWAY_S or more after the one before, if
+// something happened: an unattended run ended, or the camp made something
+// while the game was closed or hidden. A player watching a run is not away.
+let wallNow = () => Date.now();
+// The first input of a session measures from the last save (the game was closed).
+let lastInputMs = Math.min(wallNow(), Number(profile.lastPlayed) || wallNow());
+const awayBase = () => ({
+  evolutions: (profile.achievements && profile.achievements.totals && profile.achievements.totals.evolutions) || 0,
+  jokers: jokersDiscovered(), fusions: fusionsDiscovered(),
+});
+const away = { runs: 0, bestS: 0, gold: 0, stopped: false, base: null, hidden: true };
+let awayPending = null;          // the summary waiting for a screen that can show it
+let awayCard = null;             // { el, total, t } while the card counts up
+function awayClear() {
+  away.runs = 0; away.bestS = 0; away.gold = 0; away.stopped = false; away.hidden = false; away.base = awayBase();
+}
+// settleRunGold reports every finished run here; only unattended or hidden ones count.
+function awayNoteRun(gold, timeS) {
+  if (!state.unattended && !bgHidden) return;
+  if (!away.base) away.base = awayBase();
+  away.runs++;
+  away.gold += gold;
+  away.bestS = Math.max(away.bestS, timeS);
+}
+// Any key, tap or card press.
+function noteInput() {
+  const now = wallNow();
+  const gapS = (now - lastInputMs) / 1000;
+  lastInputMs = now;
+  autoRunsInRow = 0;
+  // A player on the end card of an unattended run gets AUTO_STALL_S to read it.
+  if (state.mode === 'dead' && autoRestartLeft !== null) {
+    autoRestartLeft = C.AUTOPILOT.AUTO_STALL_S;
+    autoStall = { mode: null, t: 0 };
+  }
+  if (awayCard || awayPending) return;
+  if (gapS < C.AUTOPILOT.AWAY_S) { awayClear(); return; }
+  const camp = away.hidden ? campPending(profile, now) : null;
+  if (away.runs === 0 && !campHasStock(camp)) { awayClear(); return; }
+  const base = away.base || awayBase(), cur = awayBase();
+  awayPending = {
+    awayS: gapS, runs: away.runs, bestS: away.bestS, gold: away.gold, stopped: away.stopped,
+    camp: camp || campPending(profile, now),
+    found: { evolutions: Math.max(0, cur.evolutions - base.evolutions),
+      jokers: Math.max(0, cur.jokers - base.jokers), fusions: Math.max(0, cur.fusions - base.fusions) },
+    hiddenAt: 0,   // wall time the tab hid while this summary waited
+  };
+  // The player is here now: the end card's RETRY is theirs to press.
+  autoRestartLeft = null;
+  awayClear();
+}
+const fmtRunTime = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+const fmtAway = (sec) => (sec >= 3600 ? (sec / 3600).toFixed(1) + ' h' : Math.max(1, Math.round(sec / 60)) + ' min');
+function awayRows(a) {
+  const rows = [];
+  if (a.runs > 0) {
+    rows.push(a.runs + (a.runs === 1 ? ' run' : ' runs') + ' played, best ' + fmtRunTime(a.bestS));
+    rows.push('+' + a.gold.toLocaleString('en-US') + ' gold from runs (already banked)');
+  }
+  for (const line of campStockLines(a.camp)) rows.push(line);
+  const bits = [];
+  const n = (k, one, many) => { if (a.found[k] > 0) bits.push(a.found[k] + ' ' + (a.found[k] === 1 ? one : many)); };
+  n('evolutions', 'evolution', 'evolutions'); n('fusions', 'new fusion', 'new fusions'); n('jokers', 'new joker', 'new jokers');
+  if (bits.length) rows.push('Found: ' + bits.join(', '));
+  if (a.stopped) rows.push('Auto-continue stopped after ' + C.AUTOPILOT.AUTO_RUN_LIMIT + ' runs in a row.');
+  return rows;
+}
+// The card: one COLLECT button, the gold counting up. In a run it pauses the
+// run like Settings does; anywhere else it returns to the title.
+function showAwaySummary() {
+  const a = awayPending;
+  if (!a) return;
+  awayPending = null;
+  // The camp as it is now: the player may have collected it while the card waited.
+  a.camp = campPending(profile, wallNow());
+  if (a.runs === 0 && !campHasStock(a.camp)) return;
+  const inRun = state.mode === 'playing';
+  if (inRun) state.settingsReturn = 'playing';
+  openMenu(inRun ? 'settings' : 'menu');
+  ovTitle.textContent = 'WHILE YOU WERE AWAY';
+  ovTitle.className = '';
+  if (ovTitle.style) ovTitle.style.display = '';
+  ovSub.innerHTML = '<div class="away-time">away ' + fmtAway(a.awayS) + '</div>';
+  const goldEl = document.createElement('div');
+  goldEl.className = 'away-gold';
+  goldEl.textContent = '+0 gold';
+  ovSub.appendChild(goldEl);
+  const list = document.createElement('div');
+  list.className = 'away-rows';
+  list.innerHTML = awayRows(a).map(r => '<div>' + r + '</div>').join('');
+  ovSub.appendChild(list);
+  const total = a.gold + (a.camp.gold | 0);
+  awayCard = { el: goldEl, total, t: 0, inRun, summary: a };
+  menuCard('COLLECT', campHasStock(a.camp) ? 'take what the camp made' : 'back to the game', () => collectAway());
+}
+function collectAway() {
+  const card = awayCard;
+  if (!card) return;
+  awayCard = null;
+  const got = campCollect(profile, wallNow());
+  if (got.any) { persistProfile(); audio.playSfx('chest'); }
+  if (card.inRun) closeSettings(); else showTitle();
+}
+// The gold line counts up over about a second and a half.
+const AWAY_COUNT_S = 1.5;
+function tickAwayCard(realDt) {
+  if (!awayCard || awayCard.t >= AWAY_COUNT_S) return;
+  awayCard.t = Math.min(AWAY_COUNT_S, awayCard.t + realDt);
+  const k = awayCard.t / AWAY_COUNT_S;
+  const shown = Math.round(awayCard.total * (1 - (1 - k) * (1 - k)));
+  awayCard.el.textContent = '+' + shown.toLocaleString('en-US') + ' gold';
+}
+// A summary that waited behind a hidden tab takes in what that time added:
+// the time itself, and the runs that ended in it.
+function awayTakeHidden(a) {
+  if (!a.hiddenAt) return;
+  a.awayS += Math.max(0, (wallNow() - a.hiddenAt) / 1000);
+  a.hiddenAt = 0;
+  const base = away.base || awayBase(), cur = awayBase();
+  a.runs += away.runs;
+  a.gold += away.gold;
+  a.bestS = Math.max(a.bestS, away.bestS);
+  a.stopped = a.stopped || away.stopped;
+  for (const k of Object.keys(a.found)) a.found[k] += Math.max(0, cur[k] - base[k]);
+  awayClear();
+}
+// A pending summary opens on the first screen that can hold it: the title or
+// a live run. Never over the end screen, whose cards (PRESTIGE) it would lose.
+function awayFrame(realDt) {
+  tickAwayCard(realDt);
+  // A hidden tab never shows the card. One already open goes back to waiting,
+  // so a run under it plays on behind the hidden tab.
+  if (bgHidden) {
+    if (awayCard) {
+      const inRun = awayCard.inRun;
+      awayPending = awayCard.summary;
+      awayCard = null;
+      if (inRun) closeSettings(); else showTitle();
+    }
+    if (awayPending && !awayPending.hiddenAt) awayPending.hiddenAt = wallNow();
+    return;
+  }
+  if (!awayPending || awayCard) return;
+  awayTakeHidden(awayPending);
+  const m = state.mode;
+  const title = m === 'title';
+  const play = m === 'playing' && !tutGuidedLive() && !tut.hints.active && !state.helpMode && !coachActive();
+  if (title || play) showAwaySummary();
+}
+
+export function autoDraftPickIndex(offers) {
   // A joker is the top pick while the row has room; with a full row it is the last.
   const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.tier === 'RARE') ? 1 : 0;
   let best = -1;
@@ -5267,25 +5826,25 @@ export function nightDraftPickIndex(offers) {
   return Math.max(0, best);   // strict > keeps the FIRST eligible slot on a tie
 }
 
-function tickNight(realDt) {
-  if (state.nightRun && nightContinueLeft !== null && state.mode === 'intermission') {
-    nightContinueLeft -= realDt;
-    if (nightContinueLeft <= 0) {
-      nightContinueLeft = null;
+function tickAutoContinue(realDt) {
+  if (state.unattended && autoContinueLeft !== null && state.mode === 'intermission') {
+    autoContinueLeft -= realDt;
+    if (autoContinueLeft <= 0) {
+      autoContinueLeft = null;
       if (state.mode === 'intermission') continueRun();
     }
   }
-  if (state.nightRun && nightRestartLeft !== null && state.mode === 'dead') {
-    nightRestartLeft -= realDt;
-    if (nightRestartLeft <= 0) {
-      nightRestartLeft = null;
-      startRun();   // same build, same arena: RETRY's contract
+  if (state.unattended && autoRestartLeft !== null && state.mode === 'dead') {
+    autoRestartLeft -= realDt;
+    if (autoRestartLeft <= 0) {
+      autoRestartLeft = null;
+      autoRestart();
     }
   }
-  if (nightEvolveLeft !== null && state.mode === 'evolve') {
-    nightEvolveLeft -= realDt;
-    if (nightEvolveLeft <= 0) {
-      nightEvolveLeft = null;
+  if (autoEvolveLeft !== null && state.mode === 'evolve') {
+    autoEvolveLeft -= realDt;
+    if (autoEvolveLeft <= 0) {
+      autoEvolveLeft = null;
       if (state.mode === 'evolve') {
         const offers = forgeOffers();
         if (offers.length) takeForgeOffer(offers[0]);   // the first offer
@@ -5293,34 +5852,28 @@ function tickNight(realDt) {
       }
     }
   }
-  // NIGHT STALL WATCHDOG (defect follow-up 2026-09-17: the owner reported a
-  // night run parked on the end-of-run summary). The named timers above cover
-  // the transitions they were wired to; this covers EVERYTHING ELSE that could
-  // leave an unattended run standing still: if any single waiting mode of the
-  // run ladder is held longer than NIGHT_STALL_S, advance it through that
-  // mode's own sanctioned action (the same call the named timer makes, so the
-  // watchdog can only ever do early what the timer would have done — never
-  // anything a human path does differently). Deliberately NOT fired on the
-  // live modes (playing/finale — the run IS moving), the human surfaces
-  // (title/intro), or the pause screens a present human is reading
-  // (settings/stats): those are not stalls.
-  if (state.nightRun) {
+  // The stall watchdog: the timers above cover the screens they were wired
+  // to; this covers anything else that could leave an unattended run standing
+  // still. A waiting mode held longer than AUTO_STALL_S is advanced through
+  // that mode's own action. Never fired on the live modes, the title, or the
+  // pause screens a person is reading.
+  if (state.unattended && !pilotMovesYou()) {
     const m = state.mode;
     if (m === 'dead' || m === 'intermission' || m === 'escape' || m === 'draft' ||
-        m === 'evolve' || m === 'portal-cine' || m === 'death-cine') {
-      if (nightStall.mode !== m) nightStall = { mode: m, t: 0 };
+        m === 'evolve' || m === 'portal-cine' || m === 'death-cine' || m === 'chest') {
+      if (autoStall.mode !== m) autoStall = { mode: m, t: 0 };
       else {
-        nightStall.t += realDt;
-        if (nightStall.t >= C.AUTOPILOT.NIGHT_STALL_S) {
-          nightStall = { mode: null, t: 0 };
-          nightUnstick(m);
+        autoStall.t += realDt;
+        if (autoStall.t >= C.AUTOPILOT.AUTO_STALL_S) {
+          autoStall = { mode: null, t: 0 };
+          autoUnstick(m);
         }
       }
     } else {
-      nightStall = { mode: null, t: 0 };
+      autoStall = { mode: null, t: 0 };
     }
   } else {
-    nightStall = { mode: null, t: 0 };
+    autoStall = { mode: null, t: 0 };
   }
 }
 
@@ -5328,16 +5881,18 @@ function tickNight(realDt) {
 // timer / auto path would have made. A thrown error here must not wedge the
 // loop either, so each action is isolated and the watchdog re-arms (the stall
 // clock restarts; a persistent failure surfaces as a 30s cadence, not a freeze).
-function nightUnstick(m) {
+function autoUnstick(m) {
   try {
-    if (m === 'dead') startRun();
+    // Only an end card auto-continue still holds (armed, countdown running):
+    // END RUN and a card handed back to the player stay until they leave it.
+    if (m === 'dead') { if (autoRestartLeft !== null && !away.stopped) autoRestart(); }
     else if (m === 'intermission') continueRun();
-    else if (m === 'escape') ESCAPE.skip();
+    else if (m === 'escape') ESCAPE.finishNow();   // pays and hands back
     else if (m === 'draft') {
       if (draftOffers && draftOffers.length && draftTimer && !draftTimer.done) {
         draftTimer.done = true;
         draftAutoCount++;
-        const u = draftOffers[nightDraftPickIndex(draftOffers)];
+        const u = draftOffers[autoDraftPickIndex(draftOffers)];
         draftAutoLastId = u.id;
         activateDraftCard(u);
       }
@@ -5348,34 +5903,10 @@ function nightUnstick(m) {
       else closeEvolve();
     } else if (m === 'portal-cine') endPortalCine();
     else if (m === 'death-cine') endDeathCine();
+    else if (m === 'chest') closeChestCard();   // the gold is already banked
   } catch (e) { /* the loop lives; the stall clock restarts on the next tick */ }
 }
 
-// The SETUP card's ONE handler. First press ARMS (the toggle must not be
-// reachable by accident); the second turns the night on. Turning OFF is a
-// single press and writes the return-to-game summary the title renders.
-function toggleNight() {
-  if (state.night) {
-    state.night = false;
-    nightArmed = false;
-    if (nightSession) {
-      state.nightSummary = {
-        awayS: Math.max(0, (Date.now() - nightSession.t0) / 1000),
-        gold: profile.gold - nightSession.gold0,
-        mult: (100 - RUN_GOLD.NIGHT_PENALTY_PCT) / 100,
-      };
-      nightSession = null;
-    }
-    audio.playSfx('uiMove');
-    return;
-  }
-  if (!nightArmed) { nightArmed = true; audio.playSfx('uiMove'); return; }
-  nightArmed = false;
-  state.night = true;
-  state.nightSummary = null;   // a new night replaces the old line
-  nightSession = { t0: Date.now(), gold0: profile.gold };
-  audio.playSfx('uiConfirm');
-}
 
 // ---------- DRAFT PICK CEREMONY (owner 2026-09-16) -----------------------------
 // The chosen card scales/brightens and settles; the others disintegrate with a
@@ -5590,9 +6121,9 @@ function maybeOpenEvolve() {
     frameCard(notNow);
   }
   // An unattended run must not park here: a night run takes the FIRST offer
-  // after NIGHT_EVOLVE_S, and an AUTO run after the draft timeout.
-  if (state.nightRun) nightEvolveLeft = C.AUTOPILOT.NIGHT_EVOLVE_S;
-  else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') nightEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
+  // after AUTO_EVOLVE_S, and an AUTO run after the draft timeout.
+  if (state.unattended) autoEvolveLeft = C.AUTOPILOT.AUTO_EVOLVE_S;
+  else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') autoEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
   // The offer set (the taken entry — or 'deferred' — fills in when it resolves).
   if (dev) dev.evolutions.push({ offered: offers.map(o => (o.kind === 'fuse' ? 'fuse:' + o.def.id : o.w.type)), taken: null });
 }
@@ -5619,8 +6150,8 @@ function doEvolve(w) {
   const res = evolveWeapon(w, ownedCards());
   if (res.ok) {
     recordForgeTaken(w.type);
-    // An evolution charges +2 heat (event-id deduped).
-    addHeat(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
+    // An evolution charges +2 wrath (event-id deduped).
+    addWrath(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
     forgeHeal(DRAFT_PLAN.EVOLUTION_KIT_DMG);
     if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
       // The first evolution ever: the cinematic banner and its pause.
@@ -5647,6 +6178,7 @@ function doFuse(def) {
   const res = fuseWeapons(state.weapons, def);
   if (res.ok) {
     state.fusionsMade = (state.fusionsMade || 0) + 1;
+    worldQuest('fuse');   // M5b quests
     recordForgeTaken('fuse:' + res.weapon.fusionId);
     forgeHeal(DRAFT_PLAN.FUSION_KIT_DMG);
     const first = markBannerSeen(profile, FUSION_SHELF_KEY + res.weapon.fusionId);
@@ -5833,11 +6365,12 @@ function maybeStanceTip() {
 function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   const goal = bestNextPurchase(profile);
   const tags = [];
-  if (state.nightRun) tags.push('NIGHT RUN');
+  if (state.autoStarted) tags.push('AUTO-CONTINUE');
   if (state.assistedRun) tags.push('ASSISTED');
   if (state.apexRun) tags.push('APEX RUN');
-  if (!isDefaultStage(state.stage)) tags.push(stageOf(state.stage).name);
-  if (!isStandard(state.challenge)) tags.push(challengeOf(state.challenge).name + ' RUN');
+  // The stages the run went through, in order (one stage: its name, as before).
+  const journey = state.stagesSeen && state.stagesSeen.length > 1 ? state.stagesSeen : [state.stage];
+  if (journey.length > 1 || !isDefaultStage(journey[0])) tags.push(journey.map(id => stageOf(id).name).join(' &gt; '));
   let html = lead;
   for (const t of tags.slice().reverse()) html = `<span class="cause">${t}</span><br>` + html;
   if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
@@ -5846,15 +6379,13 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   const bd = parts && parts.breakdown;
   if (bd) {
     html += `<br><span class="pool">run award ${bd.award} · survival ${bd.survival} · kills ${bd.kills}` +
-      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + '</span>';
+      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + (bd.quests ? ` · quests ${bd.quests}` : '') + '</span>';
+    const ql = endQuestLine();
+    if (ql) html += `<br><span class="pool">${ql}</span>`;
   }
   const gp = parts && parts.goldPool;
-  if (gp && (gp.night > 0 || gp.challenge > 0 || gp.heat > 0)) {
-    const bits = [];
-    if (gp.night > 0) bits.push(`night mode -${Math.round(gp.night * 100)}%`);
-    if (gp.challenge > 0) bits.push(`modifier +${Math.round(gp.challenge * 100)}%`);
-    if (gp.heat > 0) bits.push(`raised stakes +${Math.round(gp.heat * 100)}%`);
-    html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (${bits.join(', ')})</span>`;
+  if (gp && gp.auto > 0) {
+    html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (auto-continue -${Math.round(gp.auto * 100)}%)</span>`;
   }
   if (goal) {
     const gap = goal.cost - profile.gold;
@@ -5880,8 +6411,7 @@ function endLead(prefix) {
 // old "per-session only" caveat is gone.
 // E1: the payout is FIXED award x goldMult + the banked purse remainder
 // (owner directive 2026-09-14) — the Greed shop line + Midas items multiply
-// the AWARD. WAVE-9: RAISE THE STAKES multiplies on top —
-// goldMult tracks MANUAL pushes ONLY (built-in heat never inflates gold).
+// the AWARD.
 // G9 — ACHIEVEMENTS ARE EARNED HERE, ONCE PER RUN.
 //
 // settleRunGold is the single funnel EVERY run end passes through (die,
@@ -5961,36 +6491,18 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const firstClear = state.time > (profile.bestTime || 0);
   // E1 (owner directive 2026-09-14): the end-of-run meta award is a FIXED
   // amount — computeRunGold is RETIRED as the payout authority (it stays a
-  // pure helper with its own test). The goldMult chain (GREED x manual stakes
-  // x rampage best) multiplies the AWARD only; FIRST_CLEAR and the maw /
+  // pure helper with its own test). The goldMult chain (GREED x rampage
+  // best) multiplies the AWARD only; FIRST_CLEAR and the maw /
   // completion winBonus stay SEPARATE additions on top. Performance pays
   // through the banked purse remainder: the run's tier-weighted in-run
   // earnings land here, unspent.
-  // THE ADDITIVE GOLD POOL (owner 2026-09-17: challenge gold is "200%
-  // additive"). The AWARD's percentage bonuses SUM — never multiply:
-  //   pool = 100% base + CHALLENGE bonus (+RUN_GOLD.CHALLENGE_BONUS_PCT
-  //          percentage points, any non-standard mode)
-  //        + HEAT bonus (+HEAT_CURVES.GOLD per manual stakes push)
-  // (a NIGHT-MODE penalty joins this same pool when that mode lands). The
-  // performance axis — shop goldMult x rampage best — multiplies the POOL
-  // result; those are stats, not stated-percentage bonuses, and were not part
-  // of the named formula. The pool applies to the AWARD only, never the purse
-  // (kills already paid).
-  const challengePct = challengeGoldBonusPct(state.challenge);
-  const heatPct = goldMult(manualPushes(state)) - 1;
-  // NIGHT MODE (owner 2026-09-17): the -50% rides the SAME additive pool —
-  // total = 100% - NIGHT + CHALLENGE + HEAT, summed, never multiplied — and
-  // the night term ALSO scales the per-run purse and the completion bonus,
-  // because "start it at half gold" means the whole payout, not the flat
-  // award the pool multiplies (the purse is the dominant income; halving
-  // only the 70g award would be a ~0.01% cut). FIRST_CLEAR stays a separate
-  // one-time record bonus, unhalved, like the challenge settle before it.
-  // STEP 3 DEV-NIGHT: the dev-only variant is EXEMPT from the cut (nightPct
-  // 0) while playing under nightmare rules. Regular night mode (devNightRun
-  // false) pays exactly as before — this line is its only reader.
-  const nightPct = (state.nightRun && !state.devNightRun) ? RUN_GOLD.NIGHT_PENALTY_PCT : 0;
-  const pool = 1 - nightPct / 100 + challengePct / 100 + heatPct;
-  const nightFactor = 1 - nightPct / 100;
+  // AUTO-CONTINUE: a run it started pays AUTO_CONTINUE_PENALTY_PCT less. The
+  // cut scales the award, the purse and the completion bonus, so it is the
+  // whole payout.
+  // The record bonus is not cut. A dev-night run is exempt.
+  const autoPct = (state.autoStarted && !state.devNightRun) ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0;
+  const pool = 1 - autoPct / 100;
+  const autoFactor = 1 - autoPct / 100;
   // PRESTIGE GOLD (owner spec: x2^P, all sources). The AWARD (fixed end-of-run
   // pay, FIRST_CLEAR included) and the winBonus (completion / maw milestone)
   // scale with the tier; the purse remainder does NOT (purseCredit already
@@ -6001,16 +6513,19 @@ function settleRunGold({ winBonus = 0 } = {}) {
   const baseAward = Math.round(RUN_GOLD.AWARD * mult * pGold);
   const recordGold = Math.round(recordBonus * pGold);
   const award = baseAward + recordGold;
-  const purseBanked = Math.round(purseClamp(profile.runPurse) * nightFactor);
-  winBonus = Math.round((winBonus + (state.milestoneBonus || 0)) * nightFactor * pGold);
-  const gold = award + purseBanked + winBonus;
+  const purseBanked = Math.round(purseClamp(profile.runPurse) * autoFactor);
+  winBonus = Math.round((winBonus + (state.milestoneBonus || 0)) * autoFactor * pGold);
+  // M5b quests: the done quests' gold, scaled by the prestige tier and the
+  // shop's Greed (questGoldMult) and cut like the rest by auto-continue.
+  const questsGold = Math.round(questGold(state.quests, questGoldMult()) * autoFactor);
+  const gold = award + purseBanked + winBonus + questsGold;
   // The end screen's four parts, which always sum to `gold`. The purse is
   // survival pay plus kill pay less anything spent in the run; spending comes
   // out of the kills part.
   const survival = Math.min(purseBanked,
-    Math.round(((state.runCounts.gold && state.runCounts.gold.survival) || 0) * nightFactor));
+    Math.round(((state.runCounts.gold && state.runCounts.gold.survival) || 0) * autoFactor));
   const breakdown = { award: baseAward, survival, kills: purseBanked - survival,
-    bonuses: recordGold + winBonus };
+    bonuses: recordGold + winBonus, quests: questsGold };
   // F10 (audit round 3, 2026-09-16): CLAIM FIRST. The run-once flag used to be
   // written LAST, after every side effect — if anything threw in between
   // (bestTime write, banking, the achievements fold, the save), runSettled
@@ -6021,8 +6536,8 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // save is re-attempted once so the run does not strand silently. The return
   // value is the claim itself: byte-identical numbers on the normal path.
   state.runSettled = { gold, award, purseBanked, winBonus, firstClear, breakdown,
-    goldPool: { base: 1, night: nightPct / 100, challenge: challengePct / 100,
-      heat: heatPct, total: pool } };
+    goldPool: { base: 1, auto: autoPct / 100, total: pool } };
+  awayNoteRun(gold, state.time);
   try {
     if (firstClear) profile.bestTime = Math.floor(state.time);
     profile.gold += gold;
@@ -6034,6 +6549,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
     // save, so the trophies and the gold they were settled alongside persist
     // together.
     recordRunAchievements(gold);
+    settleWorld();   // M5b: quest chains and counts
     persistProfile();
   } catch (err) {
     console.error('settleRunGold: settlement claimed but an effect failed', err);
@@ -6104,7 +6620,7 @@ function runSurvived() {
       `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
       () => prestigeAscend());
   }
-  if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
+  armAutoRestart();
 }
 
 // Every end screen (death, the 30:00 win, END RUN) is composed here. RETRY is
@@ -6233,9 +6749,8 @@ function die(finale) {
       parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
     }),
   });
-  // NIGHT MODE: the auto-RETRY (a deliberate END RUN never arms it — a human
-  // pressed that button).
-  if (state.nightRun) nightRestartLeft = C.AUTOPILOT.NIGHT_RESTART_S;
+  // Auto-continue (a deliberate END RUN never arms it: a human pressed that button).
+  armAutoRestart();
   // G15 THE DEATH MOVIE: the payoff above is COMPOSED but stays HIDDEN while
   // the movie plays; endDeathCine() reveals it untouched. Gold was settled
   // exactly once above (settleRunGold) — the cine never pays, never re-stamps
@@ -6266,19 +6781,8 @@ function setShakePref(b) {
   try { prefStorage.setItem(KEY_SHAKE, b ? '1' : '0'); } catch { /* shim */ }
 }
 
-// ---------- G11: the pending challenge mode (SESSION-scoped, never persisted) ----
-// The title screen's CHALLENGE card cycles this. startRun() stamps it onto the
-// run-scoped state.challenge and derives the rule ceilings from it — nothing is
-// written to the profile or storage, so a reload returns to STANDARD and a
-// challenge run mutates nothing persistent (the brief's bar, tested).
-let pendingChallenge = DEFAULT_CHALLENGE_ID;
-function cyclePendingChallenge() {
-  pendingChallenge = nextChallengeId(pendingChallenge);
-  return pendingChallenge;
-}
-
 // ---------- G20a: the pending stage (SESSION-scoped, never persisted) --------
-// Mirror of the challenge pattern: the title screen's STAGE card cycles this,
+// The pre-run screen's STAGE card cycles this,
 // startRun() stamps it onto run-scoped state.stage, and nothing is written to
 // the profile or storage — a reload returns to VERDANT HOLLOW. The gate is an
 // EXISTING achievement id read through achievements.isEarned on the live
@@ -6428,17 +6932,7 @@ function manualRowsControls() {
     refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
-    refRow('pause: settings, END RUN', 'SETTINGS (cog)') +
-    // P2B99: THE ESCAPE's manual pads, named (the how-to card must carry the
-    // controls a manual player presses — the pads mirror the auto-pilot's
-    // whole action set: hold LEFT/RIGHT to run, LIFT to brake, plus the verbs).
-    refSub('THE ESCAPE (manual)') +
-    refRow('hold to run &middot; LIFT to brake (that is how you time the boss arms)', '\u25C0 / \u25B6') +
-    refRow('leap the gaps (same jump as the auto pilot)', 'JUMP') +
-    refRow('the short speed burst', 'DASH') +
-    refRow('stomp the pursuit pack off your tail (cooldown)', 'KICK') +
-    refRow('switch pilot &harr; manual mid-escape (same O setting)', 'MODE') +
-    refRow('keys work too: A/D move &middot; SPACE jump &middot; X dash &middot; S kick &middot; O mode', 'KEYS');
+    refRow('pause: settings, END RUN', 'SETTINGS (cog)');
   return isTouchPath()
     ? refSub('TOUCH CONTROLS') + tchRows + refSub('KEYBOARD CONTROLS') + kbRows
     : refSub('KEYBOARD CONTROLS') + kbRows + refSub('TOUCH CONTROLS') + tchRows;
@@ -6475,13 +6969,11 @@ function manualGoto(page) {
     const waveS = C.ESCALATION.WAVE_LENGTH;
     const c = menuCard('HOW A RUN WORKS', basics +
       'WAVES: after ' + waveS + ' seconds a BOSS arrives (a smaller one comes at half time).<br>' +
-      'Kill the boss and a PORTAL opens: walk in for a break between waves.<br><br>' +
-      'BETWEEN WAVES: buy a chest, take a blessing, or RAISE THE STAKES<br>' +
-      '(harder enemies, more gold). A token turns a weapon at Lv ' + WEAPON_MAX_LEVEL + ' into a stronger one.<br><br>' +
-      'ON THE FIELD: SHRINES sell blessings for run gold, ARCHES give a short<br>' +
-      'buff, CHESTS hold an item, upgrades, or an ambush.<br><br>' +
-      'MODIFIERS (chosen before a run): ONE WEAPON or NO POTIONS, for a<br>' +
-      'run award ' + (1 + RUN_GOLD.CHALLENGE_BONUS_PCT / 100) + ' times as big.<br><br>' +
+      'Kill the boss and a PORTAL opens: walk in for a break between waves.<br>' +
+      'THE ESCAPE: ' + HINTS.escape.text + '<br><br>' +
+      'BETWEEN WAVES: buy a chest or take a blessing.<br><br>' +
+      'ON THE FIELD: SHRINES charge a blessing while you stand in them, ARCHES<br>' +
+      'give a short buff, CHESTS hold an item. The MAP (M) shows the rest.<br><br>' +
       'GOLD: you keep everything a run earns, even when you die.<br>' +
       'Spend it in the SHOP on upgrades that last.<br><br>' +
       'THE END: you die, or you last the full ' + runClock(C.RUN.LIMIT) + ' and win.<br>' +
@@ -6496,7 +6988,20 @@ function manualGoto(page) {
       refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS (TAB)') +
       refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE (G)') +
       refRow('yours right now', pilotPrefLabel() + ' &middot; ' + controller.focus + ' &middot; ' + controller.stance, true) +
-      '<div class="rl">In help mode (?), tap any button to see what it does.</div>');
+      '<div class="rl">In help mode (?), tap any button to see what it does.</div>' +
+      refSub('YOUR BUILD') +
+      refRow('Every card has a rank and a suit. Pairs, flushes and straights make a HAND: a bonus for the rest of the run', 'HAND') +
+      refRow('A joker changes one rule for the run. Your joker row holds ' + JOKER_SLOTS.BASE + ' (the shop adds up to ' + JOKER_SLOTS.MAX + ')', 'JOKERS') +
+      refRow('From wave ' + BOSS_RULE_FIRST_WAVE + ' each wave boss brings a rule for its fight. Beat the boss to win the reward on its banner', 'BOSS RULES') +
+      refRow('The horde answers your build: each item slot you fill and each weapon you evolve makes enemies tougher', 'WRATH') +
+      refRow('After waves 2 and 4 the portal leads on to another stage: new ground and fresh sites, same build. STAY HERE keeps the field', 'TRAVEL') +
+      refRow('A weapon at Lv ' + WEAPON_MAX_LEVEL + ' holding its partner card evolves into a stronger one', 'EVOLVE') +
+      refRow('Two evolved weapons with a matching pair fuse into one, freeing a slot', 'FUSE') +
+      refSub('WHILE YOU ARE AWAY') +
+      refRow('Buildings bought with gold. They make gold and charges even when the game is closed', 'CAMP') +
+      refRow('With AUTO, the next run starts by itself. Those runs pay ' +
+        (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold and stop after ' + C.AUTOPILOT.AUTO_RUN_LIMIT + ' runs', 'AUTO-CONTINUE') +
+      refRow('An AUTO run keeps going while the tab is hidden', 'KEEP PLAYING'));
     addCls(c, 'ref');
   } else if (p === 3) {
     // ONE CARD, NOT TWO: the merged controls page (see manualRowsControls).
@@ -6524,6 +7029,12 @@ function manualGoto(page) {
       '<br>AUTO pilot drinks for you: HP at ' + Math.round(C.AUTOPILOT.AUTO_DRINK.HP_FRACTION * 100) + '% of max or less' +
       ', MP under ' + Math.round(C.AUTOPILOT.AUTO_DRINK.MP_FRACTION * 100) + '% of max.' +
       '<br>boss curse: while the wave boss lives, health potions heal HALF.' +
+      // M5b slice 3: the world in four lines.
+      '<br><br>THE WORLD — quests, the vault, secrets:' +
+      '<br>QUESTS: three goals a run from the quest board (run setup); done ones pay at the end.' +
+      '<br>KEY AND VAULT: after 2:30 one elite carries a gold key; kill it, take the key, touch the vault.' +
+      '<br>LEVER AND YARD: the lever opens the walled yard for the run; the map links the two.' +
+      '<br>SECRETS: cracked walls break under fire, some chests bite, and each stage hides a glyph.' +
       // STARTING ARENA IMPROVE (2026-09-17): the arena itself explained —
       // the review's "what things are" gap for the starting field. The
       // claims are the code's own: BASIN flat heart (relief.js), GROVE/GATE/
@@ -6693,6 +7204,7 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
   el.onclick = () => {
     // HELP MODE: an overlay-card tap explains the card, never presses it.
     if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || ''), el); return; }
+    noteInput();
     audio.playSfx(dim ? 'uiDeny' : state.mode === 'draft' ? 'draftPick' : 'uiConfirm'); onclick();
   };
   ovCards.appendChild(el);
@@ -6747,7 +7259,7 @@ function isSelCard(el) {
 const CARD_MENU_MODES = new Set([
   'title',        // openMenu('title') via showTitle — a SEPARATE mode from 'menu'
   'menu',         // openMenu() default: the shop, the manual, the apex shop
-  'setup',        // openMenu('setup') — CHALLENGE / STAGE / NIGHT MODE / SETTINGS
+  'setup',        // openMenu('setup') — the pre-run screen (STAGE / LOADOUT / QUESTS)
   'progress',     // openMenu('progress') — the TROPHIES / BESTIARY doors
   'farewell',
   'characters',
@@ -6879,6 +7391,7 @@ function openMenu(mode = 'menu') {
   // DRAFT PICK CEREMONY: any meta screen supersedes a live ceremony — it
   // stands down without touching what this screen is about to draw.
   if (draftCeremony) endDraftCeremony(false);
+  awayCard = null;   // a screen opened over the away card replaces it
   state.mode = mode;
   // MANUAL v2: pagination is manual-scoped — every other screen (and every
   // re-open of a non-manual menu) starts with the page marker cleared, so
@@ -7250,7 +7763,37 @@ function showProgress() {
     () => showJokers());
   menuCard('FUSIONS', `${fusionsDiscovered()} / ${FUSION_DEFS.length} discovered · weapon pairs`,
     () => showFusions());
+  menuCard('SECRETS', `${secretsFound()} / ${SECRET_SHELF.length} found · ${ensureWorld(profile).glyphs.length} / 8 glyphs · quest chains`,
+    () => showSecrets());
   menuCard('BACK', 'to title [ESC]', () => showTitle());
+}
+// M5b: the SECRETS shelf. Found secrets show their name; the rest are a
+// silhouette with a one-line hint. The quest chains close the list.
+function secretsFound() {
+  const w = ensureWorld(profile);
+  return SECRET_SHELF.filter(s => w.secrets[s.id]).length;
+}
+function showSecrets() {
+  openMenu('progress');
+  ovTitle.textContent = 'SECRETS';
+  ovTitle.className = 'logo';
+  const w = ensureWorld(profile);
+  ovSub.innerHTML = secretsFound() + ' / ' + SECRET_SHELF.length + ' found &middot; ' + w.questsDone + ' quests done';
+  for (const s of SECRET_SHELF) {
+    const known = !!w.secrets[s.id];
+    const extra = s.id === 'glyphs' ? ' (' + w.glyphs.length + ' / 8)' : '';
+    const el = menuCard(known ? s.name : '? ? ?' + extra,
+      known ? '<span style="color:#a8a8c0">found' + (s.id === 'glyphs' ? ': the MIMIC FEAST joker is in the pool' : '') + '</span>' : s.hint, () => {}, !known);
+    el._secretShelf = { id: s.id, known };
+  }
+  for (const c of CHAINS) {
+    const at = Math.min(c.steps.length, (w.chains[c.id] | 0));
+    const next = chainStep(w, c.id);
+    menuCard(c.name + ' ' + at + ' / ' + c.steps.length,
+      (next ? 'next: ' + QUEST_BY_ID[next].text.toLowerCase() : 'complete') + ' &middot; ' + chainReward(c, !!next && ownsCharacter(c.unlock.id)),
+      () => {}, !next ? false : true);
+  }
+  menuCard('BACK', 'to progress [ESC]', () => showProgress());
 }
 
 // ---------- The pre-run screen ---------------------------------------------------
@@ -7270,13 +7813,6 @@ function stagePlainLine(id) {
     : st.blurb.charAt(0).toUpperCase() + st.blurb.slice(1) + (bits.length ? ' (' + bits.join(', ') + ')' : '');
   return what + '. Pays normal gold.';
 }
-function challengePlainLine(id) {
-  const c = challengeOf(id);
-  if (isStandard(id)) return 'No extra rules. Pays normal gold.';
-  const pct = challengeGoldBonusPct(id);
-  return c.blurb.charAt(0).toUpperCase() + c.blurb.slice(1) + '. Pays +' + pct + '% run award (' +
-    RUN_GOLD.AWARD + ' to ' + Math.round(RUN_GOLD.AWARD * (1 + pct / 100)) + ' gold).';
-}
 function loadoutSummary() {
   const kit = ['VOLLEY', ...effectiveLoadout(profile, loadoutSlotCap())];
   return kit.map(w => WEAPON_NAMES[w] || w).join(' + ') + '. Weapons start at Lv ' + (1 + masteryStartLevels(profile)) + '.';
@@ -7291,20 +7827,51 @@ function showPreRun() {
   if (ovTitle.style) ovTitle.style.display = 'none';
   overlay.style.background = 'transparent';
   if (overlay.classList) overlay.classList.add('title');
-  ovSub.innerHTML = 'NEXT RUN: press START, or change the run first';
-  menuCard('START', 'begin the run [ENTER]', () => startRun());
+  // A short landscape screen (index.html) packs these cards into two rows of
+  // three and hides the .hint lines and this sub line, so all five fit under
+  // the wordmark. The caret on each card still says it can be pressed.
+  ovSub.innerHTML = '<span class="setup-hint">NEXT RUN: press START, or change the run first</span>';
+  const hint = (t) => '<span class="hint"><br>' + t + '</span>';
+  const card = (...a) => { const el = menuCard(...a); if (el.classList) el.classList.add('setup'); return el; };
+  card('START', 'begin the run<span class="hint"> [ENTER]</span>', () => startRun());
   const locked = lockedStageLines(stageUnlocked);
   const stageCount = STAGE_IDS.filter(stageUnlocked).length;
-  menuCard('STAGE: ' + stageOf(pendingStage).name,
+  card('STAGE: ' + stageOf(pendingStage).name,
     stagePlainLine(pendingStage) +
-    (stageCount > 1 ? '<br>press to change' : locked.length ? '<br>next stage: ' + locked[0] : ''),
+    (stageCount > 1 ? hint('press to change') : locked.length ? '<br>next stage: ' + locked[0] : ''),
     () => { cyclePendingStage(); showPreRun(); }, stageCount <= 1);
-  menuCard('MODIFIER: ' + challengeOf(pendingChallenge).name,
-    challengePlainLine(pendingChallenge) + '<br>press to change',
-    () => { cyclePendingChallenge(); showPreRun(); });
-  menuCard('LOADOUT', loadoutSummary() + (ownsExtraWeapon() ? '<br>press to change' : '<br>buy more weapons in the SHOP'),
+  card('LOADOUT', loadoutSummary() + hint(ownsExtraWeapon() ? 'press to change' : 'buy more weapons in the SHOP'),
     () => showLoadout('prerun'), !ownsExtraWeapon());
-  menuCard('BACK', 'to title [ESC]', () => showTitle());
+  // M5b quests: the board's three quests for this run (picked for you).
+  card('QUESTS', peekQuestBoard().ids.map(id => QUEST_BY_ID[id].text.toLowerCase() +
+    '<span class="hint"> (' + questPay(id) + ')</span>').join('<br>') +
+    hint('press to swap one'), () => showQuestBoard());
+  card('BACK', 'to title<span class="hint"> [ESC]</span>', () => showTitle());
+  placeTitleMenu();
+}
+// M5b: the quest board. START is first, so Enter keeps the three and plays;
+// each quest can be swapped once. Esc presses BACK (the run setup).
+function showQuestBoard() {
+  openMenu('setup');
+  // Same frame as the run setup: the title art's wordmark is the heading, so
+  // the DOM h1 hides (a second "HORDES" under the logo on phone otherwise).
+  ovTitle.textContent = 'QUEST BOARD';
+  ovTitle.className = 'logo';
+  if (ovTitle.style) ovTitle.style.display = 'none';
+  overlay.style.background = 'transparent';
+  if (overlay.classList) overlay.classList.add('title');
+  ovSub.innerHTML = 'QUEST BOARD: three goals for the next run. Done ones pay at the end.';
+  menuCard('START', 'begin the run [ENTER]', () => startRun());
+  const b = peekQuestBoard();
+  b.ids.forEach((id, i) => {
+    const chain = CHAINS.find(c => chainStep(ensureWorld(profile), c.id) === id);
+    const joker = chainJokerStep(ensureWorld(profile), id, ownsCharacter);
+    menuCard(QUEST_BY_ID[id].text.toUpperCase(), 'pays ' + questPay(id).toLowerCase() + (joker ? ' and a joker' : '') +
+      (chain ? '<br>' + chain.name.toLowerCase() + ' step' : '') +
+      (b.swapped.includes(i) ? '<br>swapped' : '<br>press to swap'),
+      () => { swapBoardQuest(i); showQuestBoard(); }, b.swapped.includes(i));
+  });
+  menuCard('BACK', 'to the run setup [ESC]', () => showPreRun())._esc = true;
   placeTitleMenu();
 }
 
@@ -7346,14 +7913,7 @@ function paintTitleHeader() {
       (hasArcadePass(profile) ? '<span class="pass">ARCADE PASS</span>' : '') +
     '</div>' +
     '<canvas class="bust" width="32" height="32"></canvas>' +
-    saveNoticeHtml() +
-    // NIGHT MODE: the return-to-game line — time away, gold earned, the
-    // multiplier applied. One line, computed when the night was toggled OFF.
-    (state.nightSummary
-      ? `<div class="pass">NIGHT: away ${(state.nightSummary.awayS / 3600).toFixed(1)}h` +
-        ` · gold +${state.nightSummary.gold}` +
-        ` · x${state.nightSummary.mult.toFixed(2)}</div>`
-      : '');
+    saveNoticeHtml();
   // Markup-built like every menuCard; the live canvases are resolved exactly the
   // way the character selector resolves its portraits (stub-DOM safe).
   const canvasIn = (cls) => {
@@ -7396,9 +7956,7 @@ function paintTitleHeader() {
 // the pool carries level-ups for exactly the weapons the player brought.
 //
 // Slots: the base volley occupies slot 1 of startWeaponSlots(profile), so the
-// player picks at most slots-1 weapons here. A challenge mode that narrows the
-// run's slot count is applied at startRun (the run truncates, the menu never
-// needs to know the mode).
+// player picks at most slots-1 weapons here.
 function loadoutChoices() {
   // The unlock set, ordered by the WEAPON_TYPES registry so the menu is stable
   // no matter the purchase order. VOLLEY is not in WEAPON_TYPES (it is the base
@@ -7500,12 +8058,16 @@ function chosenLoadout() {
 function addWhatsNewCard() {
   const el = document.createElement('div');
   el.className = 'card paper-note wn-over';
-  const lines = C.PROLOGUE.ENABLED
-    ? [...WHATS_NEW.guidedLines, ...WHATS_NEW.lines] : WHATS_NEW.lines;
+  // A player who missed the release before this one reads its lines first
+  // and gets the offer of the guided run; the others were asked then.
+  const missed = missedEarlierRelease(profile, WHATS_NEW, bootFromVersion);
+  const offerGuided = C.PROLOGUE.ENABLED && missed;
+  const lines = [...(missed ? WHATS_NEW.missed.lines : []), ...WHATS_NEW.lines,
+    ...(offerGuided ? WHATS_NEW.guidedLines : [])];
   el.innerHTML =
     `<div class="name">${WHATS_NEW.title}</div>` +
     `<div class="desc">${lines.map(l => '- ' + l).join('<br>')}</div>` +
-    (C.PROLOGUE.ENABLED ? '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' : '') +
+    (offerGuided ? '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' : '') +
     '<div class="wn-close">CLOSE</div>' +
     '<div class="key">tap anywhere on the note to close</div>';
   el.onclick = () => {
@@ -7571,7 +8133,7 @@ function showTitle() {
   // not-yet-dismissed, lastPlayed predates the ship date).
   if (!whatsNewTried) {
     whatsNewTried = true;
-    if (whatsNewDueFor(profile, WHATS_NEW, bootResult.status === 'fresh')) addWhatsNewCard();
+    if (whatsNewDueFor(profile, WHATS_NEW, bootResult.status === 'fresh', bootFromVersion)) addWhatsNewCard();
   }
   // Five cards. LOADOUT joins once there is a weapon beyond the starting kit
   // to choose; before that the pre-run screen shows the kit.
@@ -7582,6 +8144,7 @@ function showTitle() {
     menuCard('LOADOUT', 'choose your weapons', () => showLoadout('title'));
   }
   menuCard('PROGRESS', `${earnedCount(profile)} of ${totalAchievements()} trophies`, () => showProgress());
+  if (campOpen()) addCampCard();
   menuCard('SETTINGS', 'sound, display, help', () => showSettings());
   if (DEV_GATE) {
     menuCard('DEV LOG', 'download every run snapshot (runs.jsonl)', () => { devDownloadLog(); });
@@ -7597,6 +8160,83 @@ function showTitle() {
   }
   applyRevealStyles();
   armTitleRevealTimer();
+}
+
+// ---------- The camp (title screen) ----------
+// Four buildings bought with gold that work while the player is away
+// (src/camp.js). The title shows a CAMP card with the strip once the player
+// has finished two runs; the camp screen has one card per building and COLLECT.
+const CAMP_OPEN_RUNS = 2;
+function campOpen() { return runsFinished() >= CAMP_OPEN_RUNS; }
+function campReady(pending) {
+  return { mine: pending.gold > 0, forge: !!pending.forge, library: !!pending.library, shrine: !!pending.shrine };
+}
+// A strip canvas at an integer scale (pixelated by CSS).
+function campStripCanvas(scale) {
+  const cv = document.createElement('canvas');
+  cv.className = 'camp-strip';
+  cv.width = CAMP_STRIP_W; cv.height = CAMP_STRIP_H;
+  if (cv.style) { cv.style.width = CAMP_STRIP_W * scale + 'px'; cv.style.height = CAMP_STRIP_H * scale + 'px'; }
+  const pending = campPending(profile, wallNow());
+  const g = cv.getContext && cv.getContext('2d');
+  if (g) paintCampStrip(g, (profile.camp && profile.camp.levels) || {}, campReady(pending));
+  return cv;
+}
+function campCardLine() {
+  const pending = campPending(profile, wallNow());
+  if (campHasStock(pending)) return pending.gold > 0 ? '+' + pending.gold.toLocaleString('en-US') + ' gold ready' : 'something is ready';
+  const built = CAMP_BUILDINGS.some(b => campLevel(profile, b.id) > 0);
+  return built ? 'works while away' : 'build a gold mine';
+}
+function addCampCard() {
+  const el = menuCard('CAMP', campCardLine(), () => showCamp());
+  // The strip rides on the card where there is height for it (not a landscape phone).
+  if (typeof innerHeight === 'number' && innerHeight < 500) return el;
+  const cv = campStripCanvas(1);
+  if (el.insertBefore) el.insertBefore(cv, el.firstChild); else el.appendChild(cv);
+  return el;
+}
+function showCamp() {
+  openMenu('menu');
+  ovTitle.textContent = 'CAMP';
+  const now = wallNow();
+  const pending = campPending(profile, now);
+  ovSub.innerHTML = '<div>Your camp works while you are away. Gold <span class="gold">' +
+    (profile.gold || 0).toLocaleString('en-US') + '</span></div>';
+  // 3x, or 2x on a short (landscape phone) screen
+  const short = typeof innerHeight === 'number' && innerHeight < 500;
+  ovSub.appendChild(campStripCanvas(short ? 2 : 3));
+  for (const b of CAMP_BUILDINGS) {
+    const lv = campLevel(profile, b.id);
+    const cost = campNextCost(profile, b.id);
+    const nextDef = cost === null ? null : b.levels[lv];
+    const next = !nextDef ? '' : b.kind === 'gold'
+      ? nextDef.rate + ' gold an hour'
+      : 'charges in ' + nextDef.hours + ' hours';
+    // Unbuilt: what it does. Built: what it makes now and what the next level makes.
+    const held = b.kind === 'charge' && profile.camp && profile.camp.charges[b.id] > 0 ? '<br>Charge held for the next run.' : '';
+    const desc = (lv > 0 && b.kind === 'gold' ? '' : b.blurb) +
+      (lv > 0 ? (b.kind === 'gold' ? '' : '<br>') + 'Now: ' + campRateText(profile, b.id) + '.' : '') + held +
+      (cost === null ? '<br>MAX LEVEL' : '<br>' + (lv > 0 ? 'Next: ' : 'Build: ') + next +
+        '<br><span class="buy">' + cost.toLocaleString('en-US') + ' gold</span>');
+    const can = cost !== null && (profile.gold || 0) >= cost;
+    menuCard(b.name + (lv > 0 ? ' · Lv ' + lv : ''), desc, () => {
+      if (!can) return;
+      const r = campBuy(profile, b.id, wallNow());
+      if (r.ok) persistProfile();
+      showCamp();
+    }, !can);
+  }
+  const stock = campHasStock(pending);
+  menuCard('COLLECT', stock ? campStockLines(pending).join('<br>') : 'nothing ready yet', () => {
+    if (!stock) return;
+    campCollect(profile, wallNow());
+    persistProfile();
+    audio.playSfx('chest');
+    showCamp();
+  }, !stock);
+  menuCard('BACK', 'to the title', () => showTitle());
+  tutHint('camp', [ovCards.children && ovCards.children[0]].filter(Boolean));
 }
 
 // G14: the live registry of shop-row icon canvases, rebuilt by showShop() so
@@ -8403,7 +9043,8 @@ let charSelected = null;        // the pilot whose kit the panel is showing
 // The unowned mask: the SAME grid painted through a one-tone palette, so the
 // bust reads as a designed silhouette (the authored outline, just unlit) —
 // never a broken or empty box.
-const SILHOUETTE_PALETTE = { 1: '#16161f', 2: '#16161f', 3: '#1d1d29', 4: '#101018', 5: '#16161f' };
+const SILHOUETTE_PALETTE = { 1: '#16161f', 2: '#16161f', 3: '#1d1d29', 4: '#101018', 5: '#16161f',
+  6: '#16161f', 7: '#16161f', 8: '#16161f', 9: '#101018' };   // the busts use keys 1-9
 
 function charIdleIndex() {
   return Math.floor(charIdle.t / CHAR_IDLE_PERIOD);
@@ -8605,7 +9246,7 @@ function importSaveText(text) {
     return res;
   }
   profile = res.profile;
-  const refundNote = shopRefundNotice(profile);   // an old save file is refunded on import too
+  const refundNote = shopRefundNotice(profile) || campRefundNotice(profile);   // an old save file is refunded on import too
   persistProfile();
   saveNotice = refundNote ? 'SAVE IMPORTED — ' + refundNote
     : res.status === 'imported-migrated'
@@ -8653,6 +9294,23 @@ function showSettings(disarm = true, inRun = false) {
     toggleFullscreen();
     showSettings(false, inRun);
   }, !fsOk);
+  const manual = normalizePilotMode(loadPilotPref()) === 'MANUAL';
+  menuCard('AUTO-CONTINUE', manual ? 'Needs the AUTO pilot (ADVANCED, PILOT)'
+    : state.autoContinue ? 'ON: the next run starts by itself and pays ' +
+      (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold. Press to turn off'
+    : 'OFF. Press to start the next run automatically (those runs pay ' +
+      (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold)', () => {
+    if (manual) return;
+    toggleAutoContinue();
+    showSettings(false, inRun);
+  }, manual);
+  // (The name avoids the word BACK: that is the last card's name.)
+  menuCard('KEEP PLAYING', bgPlay
+    ? 'ON: an AUTO run keeps going in the background, while the tab is hidden. Press to turn off'
+    : 'OFF: the game stops while the tab is hidden. Press to keep playing in the background', () => {
+    setBgPlay(!bgPlay);
+    showSettings(false, inRun);
+  });
   if (!inRun) {
     menuCard('EXPORT SAVE', 'download a backup file of your progress', () => {
       const done = (r) => {
@@ -8685,7 +9343,7 @@ function showSettings(disarm = true, inRun = false) {
       });
     // Play-test entry for the escape, only with localStorage hordes_debug = 1.
     if ((() => { try { return localStorage.getItem('hordes_debug') === '1'; } catch { return false; } })()) {
-      menuCard('TEST: ESCAPE SEQUENCE', 'play-test the side-scroll (no payout)', () => {
+      menuCard('TEST: ESCAPE SEQUENCE', 'watch the escape cinematic (no payout)', () => {
         closeSettings();
         startEscape({ test: true });
       });
@@ -8738,8 +9396,8 @@ const DISPLAY_PRESETS = [
   { name: 'BIGGEST', res: 'AUTO',          zoom: 4, blurb: 'the world drawn 4x larger' },
 ];
 
-// ADVANCED: the fine controls. Title and in-run share it; night mode, the
-// recovery file and the profile reset are title-only.
+// ADVANCED: the fine controls. Title and in-run share it; the recovery file
+// and the profile reset are title-only.
 function showAdvancedSettings(inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
   ovTitle.textContent = 'ADVANCED';
@@ -8762,9 +9420,11 @@ function showAdvancedSettings(inRun = false) {
   const mode = normalizePilotMode(state.pilotMode);
   menuCard('PILOT', (mode === 'AUTO_ALL' ? 'AUTO: moves, casts skills, drinks potions'
     : mode === 'AUTO_MOVE' ? 'AUTO, MOVES ONLY: skills and potions are yours'
+    : mode === 'EXPLORE' ? 'EXPLORE: fights like AUTO, visits sites when calm'
     : 'MANUAL: you steer') + '. Press to change', () => {
+    // AUTO ALL -> AUTO MOVE -> EXPLORE -> MANUAL (the only door to AUTO MOVE).
     const next = PILOT_MODES[(PILOT_MODES.indexOf(mode) + 1) % PILOT_MODES.length];
-    if (next !== 'MANUAL') setAutoFlavor(next);
+    if (next === 'AUTO_ALL' || next === 'AUTO_MOVE') setAutoFlavor(next);
     swapPilotMode(next);
     again();
   });
@@ -8777,13 +9437,6 @@ function showAdvancedSettings(inRun = false) {
     again();
   });
   if (!inRun) {
-    // Night mode: runs play and restart by themselves at half gold. Never
-    // saved, off by default, and two presses to turn on.
-    menuCard('NIGHT MODE · ' + (state.night ? 'ON' : nightArmed ? 'ARMED' : 'OFF'),
-      state.night ? 'Runs play and restart by themselves for half gold. Press to turn off'
-        : nightArmed ? 'Press again: runs play by themselves and pay half gold'
-          : 'Leave the game running: it plays and restarts by itself. Pays half gold',
-      () => { toggleNight(); again(); });
     if (readRecovery()) {
       menuCard('RECOVERY FILE', 'download the damaged save the game set aside', () => {
         const r = downloadRecovery();
@@ -8835,16 +9488,8 @@ function startRun() {
   state.baseMaxHp = p.stats.maxHp;
   p.base = { damage: p.stats.damage, maxHp: p.stats.maxHp };
   p.hp = p.stats.maxHp;                          // mods changed maxHp
-  // G11 CHALLENGE MODES — THE ONE APPLICATION SEAM. The session's pending mode
-  // is stamped onto the run, its rules become the two run-scoped ceilings, and
-  // the existing start-of-run numbers are CLAMPED to them (a rule can only
-  // constrain: STANDARD keeps today's constants byte-for-byte). This is the
-  // only place state.challenge is written; the four consumers of the ceilings
-  // (slot growth x2, potion pickup, chest potions) read the caps, never the
-  // constants, for the mode.
-  state.challenge = pendingChallenge;
-  // G20a: the run knows its stage — stamped beside the challenge, reset the
-  // same way (the declaration above + this stamp = the full run-scoped reset).
+  // G20a: the run knows its stage (the declaration above + this stamp = the
+  // full run-scoped reset).
   state.stage = pendingStage;
   // G25 slice 1: run-scoped apex stamps, read ONCE here through the meta.js
   // accessors (never the raw fields) — the weapons re-arm seam
@@ -8855,11 +9500,12 @@ function startRun() {
   state.apexRun = apexEnabled(profile);
   state.apexFire = state.apexRun && apexOwned(profile, 'apex_endless_fire');
   state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
-  // NIGHT MODE: the run-scoped stamp, frozen here (the apexRun pattern).
-  state.nightRun = state.night === true;
-  const rules = challengeRules(state.challenge);
-  state.weaponCap = rules.weaponSlots !== undefined ? rules.weaponSlots : C.WEAPON_SLOTS;
-  state.potionCap = rules.potions !== undefined ? rules.potions : C.POTIONS.MAX_CARRIED;
+  // Auto-continue: the two run stamps, frozen here.
+  state.autoStarted = autoStartNext;
+  autoStartNext = false;
+  state.unattended = state.autoContinue === true && normalizePilotMode(loadPilotPref()) !== 'MANUAL';
+  state.weaponCap = C.WEAPON_SLOTS;
+  state.potionCap = C.POTIONS.MAX_CARRIED;
   const pots = Math.min(state.potionCap, startPotionCount(profile)); // character base + Travel Pack
   p.potions = { hp: pots, mp: pots };
   state.baseWeaponSlots = Math.min(state.weaponCap, startWeaponSlots(profile)); // 3 base; 4/5/6 shop-bought
@@ -8941,11 +9587,11 @@ function startRun() {
   setDevFreeBuild(devRunFree());
   // STEP 3 DEV-NIGHT: frozen here off the FRESH session (the pref
   // devNewSession just read — session and stamp can never disagree). A
-  // dev-night run joins nightRun so every nightmare rule (auto-continue,
+  // dev-night run joins unattended so every nightmare rule (auto-continue,
   // auto-restart, tier-first draft picks, cine/escape skips, AUTO pilot
   // below) applies; only the banking cut is exempt (settleRunGold).
   state.devNightRun = DEV_GATE && !!(dev && dev.devNight);
-  if (state.devNightRun) state.nightRun = true;
+  if (state.devNightRun) state.unattended = true;
   if (dev) devEnsurePanel();
   // E1: the purse is NOT reseeded from the bank — a fresh run after settlement
   // opens at 0 (settlement zeroed it), and a run after a mid-run RELOAD resumes
@@ -8961,14 +9607,12 @@ function startRun() {
   // no-op when the last run already ended in that mode. Absent/unrecognised
   // stored value -> AUTO_ALL, the fresh-player default.
   swapPilotMode(loadPilotPref());
-  // NIGHT MODE: an unattended run must pilot itself — AUTO_ALL regardless of
-  // the stored preference (the pref itself is untouched; the next normal run
-  // re-reads it two lines up).
-  if (state.nightRun) swapPilotMode('AUTO_ALL');
-  // NIGHT MODE: no auto-advance timer survives a run boundary.
-  nightContinueLeft = null;
-  nightRestartLeft = null;
-  nightEvolveLeft = null;
+  // A dev-night run pilots itself whatever the stored preference says.
+  if (state.devNightRun) swapPilotMode('AUTO_ALL');
+  // No auto-advance timer survives a run boundary.
+  autoContinueLeft = null;
+  autoRestartLeft = null;
+  autoEvolveLeft = null;
   clearPilotInput();
   state.wheel = 0;
   // G31: the stance pref rides along (the boot apply already covers a
@@ -8995,17 +9639,9 @@ function startRun() {
       if (nm && kbQ && kbQ.textContent !== nm) kbQ.textContent = nm;
     }
   }
-  state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);
-  // S1 (owner directive 2026-09-14): world-seed the fixed set of 4 altars ONCE
-  // here — uniform scatter over the whole arena, static for the whole run.
-  state.shrines = seedShrines(state.shrineRng);
-  state.shrine = state.shrines[0] || null;   // render/tour VIEW: first unused
-  state.shrineRearm = false;   // per-run double-sell latch (never serialised)
-  // M1 (C4/C5): the per-run atlas — created fresh here next to groundSeed,
-  // never serialised. The ONE landmark source wired this slice is S1's
-  // world-seeded shrines: their positions are READ from the set above and
-  // registered ONCE (no re-roll, no mirrored placement constants, no
-  // per-frame registration).
+  state.shrineRng = mulberry32(state.choiceSeed ^ 0x5eed);   // shrine blessing rolls
+  // M5b: the sites are placed once the buildings exist (below).
+  state.sites = []; state.shrines = []; state.shrine = null;
   state.atlas = createAtlas(C.GROUND.RIM, C.ATLAS.MAP_CELL);
   state.mapOpen = false;                     // C6: every run boots map-CLOSED
   state.takenChoices = [];
@@ -9014,12 +9650,9 @@ function startRun() {
   state.waveChoiceSnap = null;
   state.weather = initWeather(rollWeather(), (Math.random() * 1e9) | 0);
   state.groundSeed = (Math.random() * 1e9) | 0;   // world-space decor field
-  // The buildings exist now: stand each altar clear of them, then put the
-  // final positions on the map.
-  for (const sh of state.shrines) {
-    placeReachable(sh, SHRINE_BUILDING_MARGIN);
-    atlasRegisterLandmark(state.atlas, { kind: 'shrine', x: sh.x, y: sh.y });
-  }
+  // M5b: the buildings exist now: place the stage's sites (a pure function
+  // of the world seed and the stage) and put them on the map.
+  seedWorldSites();
   state.weapons = [];
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
@@ -9028,12 +9661,9 @@ function startRun() {
   for (const t of chosenLoadout() || []) state.weapons.push(makeWeapon(t));
   // Mastery: every weapon starts above level 1 by the profile's mastery.
   for (const w of state.weapons) w.level = Math.min(WEAPON_MAX_LEVEL, 1 + masteryStartLevels(profile));
-  // Starting Artifact shop line: free random weapon levels at run start.
-  for (let i = 0; i < (p.stats.artifactLevels || 0); i++) {
-    const cands = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
-    if (cands.length === 0) break;
-    levelUpWeapon(cands[Math.floor(Math.random() * cands.length)]);
-  }
+  // The camp's held charges are spent on this run.
+  state.campRun = campSpendCharges(profile);
+  if (state.campRun.forge && state.weapons[0] && (state.weapons[0].level || 1) < WEAPON_MAX_LEVEL) levelUpWeapon(state.weapons[0]);
   state.enemies = [];
   state.projectiles = [];
   state.enemyShots = [];
@@ -9070,11 +9700,14 @@ function startRun() {
   // seeds per run — so the gate is run-seeded by construction. Run-scoped:
   // rerolled every startRun, and the revive spend resets with the run.
   // Draft actions: this run's charges and the cards banished from its drafts.
-  state.draftCharges = { reroll: p.stats.draftRerolls || 0, skip: p.stats.draftSkips || 0, banish: p.stats.draftBanishes || 0 };
+  state.draftCharges = { reroll: (p.stats.draftRerolls || 0) + (state.campRun.library ? 1 : 0),
+    skip: p.stats.draftSkips || 0, banish: p.stats.draftBanishes || 0 };
   state.draftBanned = new Set();
   // The joker row: the slots this profile has bought, and no offer queued.
   state.jokerSlots = Math.min(JOKER_SLOTS.MAX, p.stats.jokerSlots || JOKER_SLOTS.BASE);
   state.jokerOffers = 0;
+  state.jokerWhys = [];
+  state.draftWhy = null;
   state.draftKind = null;
   state.handFx = null;
   state.secondWindUsed = false;
@@ -9119,12 +9752,14 @@ function startRun() {
     }
   }
   state.pendingDrafts = 0;
+  // A camp Shrine charge: a joker offer on the first playing frame.
+  if (state.campRun.shrine) queueJokerOffer('your camp shrine');
   state.wave = makeWave();
-  // WAVE-9: fresh heat ledger every run (run-scoped; NEVER persisted to
-  // meta/profile — a null-then-init forces the reset, initHeat is idempotent
+  // WAVE-9: fresh wrath ledger every run (run-scoped; NEVER persisted to
+  // meta/profile — a null-then-init forces the reset, initWrath is idempotent
   // but does not clear a stale ledger).
-  state.heat = null;
-  initHeat(state);
+  state.wrath = null;
+  initWrath(state);
   spawnWaveArches();
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
   // WAVE-27: a fresh run starts with no lead and with the follow's base +
@@ -9148,7 +9783,7 @@ function startRun() {
 //     in-run and settles through settleRunGold's death/bank split; a milestone
 //     reward is already-earned meta gold and must be un-losable even if the
 //     player dies one second later (the escape payout's direct-write
-//     precedent, src/escape/payout.js).
+//     precedent, src/escape_payout.js).
 //   * the CLAIM (profile.milestoneChest = milestone) is written in the SAME
 //     save, BEFORE the celebration card opens — even a tab close mid-firework
 //     cannot double-pay or lose the chest.
@@ -9181,14 +9816,17 @@ function collectRunChest() {
 
 // The wall-clock half of the burst: ages the shower (frame-rate
 // independent — progress is accumulated realDt, never per-frame assumed)
-// and hands off to the card exactly once.
+// and hands off to the card exactly once. An unattended run or a hidden tab
+// has nobody to press GOT IT: the toast told the gold, so play goes on.
 function tickChestBurst(realDt) {
   const b = state.chestBurst;
   if (!b) return;
   b.t += realDt;
   if (b.t >= C.RUN_CHEST.BURST_TTL) {
     state.chestBurst = null;
-    if (state.mode === 'burst') openChestCard(b.milestone, b.reward);
+    if (state.mode !== 'burst') return;
+    if (state.unattended || bgHidden) state.mode = 'playing';
+    else openChestCard(b.milestone, b.reward);
   }
 }
 
@@ -9228,6 +9866,7 @@ const tut = {
   inited: false,
   hintMode: null,      // the mode a hint went up in; it closes when the mode changes
   run2Due: false,      // the second-run line is owed at the start of this run
+  due: [],             // hints owed once the run is back in play (hand, joker, bgplay)
   hintsMuted: false,   // the run that carries the guided part shows no hints (skip included)
   menuId: null, menuShownMs: NaN, menuSkipArmT: 0, shopGold: 0,
   gems: 0, casts: 0, drinks: 0, xpMark: 0,
@@ -9477,9 +10116,12 @@ function tutKeydown(ev) {
 
 // Show first-time hint `id` (once per profile). The hook for things the frame
 // scan cannot see, e.g. the fusion overlay: tutHint('fusion', [element]).
+const PRESENT_HINTS = new Set(['camp', 'bgplay']);
 function tutHint(id, targets) {
   if (id === 'run2' && !(tutSeen(LEDGER.cohort) && !tutSeen(LEDGER.skipped))) return false;
-  if (state.nightRun || (dev && dev.autoplay)) return false;
+  // Menu hints (camp, bgplay) are read by a player who is here now.
+  if ((state.unattended && !PRESENT_HINTS.has(id)) || (dev && dev.autoplay)) return false;
+  if (bgHidden) return false;   // nobody is looking: it waits for a frame the player can see
   if (tut.hintsMuted && state.mode !== 'setup') return false;
   if (!tut.hints.offer(id, targets || [], performance.now())) return false;
   tut.hintMode = state.mode;
@@ -9493,6 +10135,7 @@ function tutHintScan() {
   const m = state.mode;
   if (m === 'playing') {
     if (tut.run2Due) { tut.run2Due = false; if (tutHint('run2', [])) return; }
+    while (tut.due.length) { if (tutHint(tut.due.shift(), [])) return; }
     const onScreen = (o) => {
       if (!o) return false;
       const Z = zoomScale(state.zoom);
@@ -9502,7 +10145,28 @@ function tutHintScan() {
     };
     const world = (id, o, r = 20) => !!o && H.wants(id) && onScreen(o) && tutHint(id, [worldRegion(o.x, o.y, r)]);
     if (world('chest', (state.chests || []).find(onScreen))) return;
-    if (world('shrine', (state.shrines || []).find(s => !s.used && onScreen(s)), 26)) return;
+    for (const k of ['shrine', 'altar', 'brazier', 'fountain', 'statue']) {
+      if (H.wants(k) && world(k, (state.sites || []).find(s => s.kind === k && s.state !== 'spent' && onScreen(s)), 26)) return;
+    }
+    // M5b slice 3: the vault (or its key carrier), the lever, secrets once met.
+    const wp = state.poi;
+    if (wp) {
+      const vis = (o) => (o && onScreen(o) ? o : null);
+      // The maw closes the vault and the lever: no hint points at them after it.
+      if (!wp.closed && world('vault', vis(wp.carrier && wp.carrier.hp > 0 ? wp.carrier : null) || vis(wp.vault && wp.vault.state !== 'spent' ? wp.vault : null), 26)) return;
+      if (!wp.closed && world('lever', vis(wp.lever && wp.lever.state === 'unused' ? wp.lever : null), 26)) return;
+      if (wp.mimicSeen && world('mimic', state.enemies.find(e => e.mimic && e.hp > 0 && onScreen(e)), 26)) return;
+    }
+    for (const k of ['crack', 'glyph']) {
+      if (H.wants(k) && world(k, (state.secrets || []).find(x => x.kind === k && x.seen && x.state !== 'spent' && onScreen(x)), 22)) return;
+    }
+    if (H.wants('questtracker') && state.quests && state.quests.length && state.time > 15 && tutHint('questtracker', [])) return;
+    if (H.wants('highground')) {
+      // M5b: the first ramp in view (its foot-to-top centre).
+      const TERh = terrainFor(state.groundSeed || 0, state.stage);
+      const rp = TERh && nearestRamp(TERh, state.player.x, state.player.y);
+      if (rp && world('highground', rp, 30)) return;
+    }
     if (world('arch', (state.arches || []).find(onScreen), 26)) return;
     if (world('portal', state.portal, 26)) return;
     if (world('boss', state.wave.boss && !state.wave.boss.midBoss ? state.wave.boss : null, 30)) return;
@@ -9512,6 +10176,9 @@ function tutHintScan() {
     if (tut.focus !== null && controller.focus !== tut.focus) tutHint('focus', []);
     else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', []);
     tut.focus = controller.focus; tut.stance = controller.stance;
+    // M5b: the EXPLORE pilot and the map waypoint, the first time each is met.
+    if (H.wants('explore') && normalizePilotMode(state.pilotMode) === 'EXPLORE' && tutHint('explore', [])) return;
+    if (H.wants('waypoint') && state.mapOpen && tutHint('waypoint', [])) return;
   } else if (m === 'evolve') {
     // The same overlay carries evolutions and fusions; name the one on offer.
     tutHint(fusionOffers().length ? 'fusion' : 'evoready', ['cards']);
@@ -9519,7 +10186,7 @@ function tutHintScan() {
     const ch = state.draftCharges;
     if (ch && (ch.reroll > 0 || ch.skip > 0 || ch.banish > 0)) tutHint('draftacts', []);
   } else if (m === 'setup') {
-    if (!tutHint('prerun', ['startcard']) && ownsExtraWeapon()) tutHint('loadout', ['loadoutcard']);
+    if (!tutHint('prerun', ['startcard']) && !(ownsExtraWeapon() && tutHint('loadout', ['loadoutcard']))) tutHint('questboard', []);
   } else if (m === 'escape') {
     tutHint('escape', []);
   } else if (m === 'dead' && prestigeOfferForRun(state.runWon)) {
@@ -10060,7 +10727,7 @@ function runAction(act) {
   }
   // WAVE-17: the touch cog — opens/closes the in-run settings pause.
   if (act === 'settings') {
-    if (state.mode === 'settings') closeSettings();
+    if (state.mode === 'settings') { if (awayCard) collectAway(); else closeSettings(); }
     else openSettings();
     return;
   }
@@ -10333,6 +11000,7 @@ const REPEAT_GUARDED = new Set([
 ]);
 
 window.addEventListener('keydown', (ev) => {
+  noteInput();
   audioUnlockGesture();   // S2: a keydown IS a user gesture — unlock audio
   // FULLSCREEN: a key is an interaction — but an OS auto-REPEAT is not a new
   // interaction (guard 2026-09-18): at HIDE_S 1.3 a held movement key's
@@ -10423,11 +11091,10 @@ window.addEventListener('keydown', (ev) => {
     if (k === 'pageup') { shopPageGoto(shopPager.page - 1); return; }
     if (k === 'pagedown') { shopPageGoto(shopPager.page + 1); return; }
   }
-  if (state.mode === 'escape') {                        // V1: the mode's own keys
-    // The escape owns its input surface (arrows/AD run, space/W/up jump,
-    // shift/X dash, ESC skips) — never the overhead skill/potion paths.
+  if (state.mode === 'escape') {                        // any key skips the escape
+    // A key held since before the movie began is not a new press.
     if (ev.preventDefault) ev.preventDefault();
-    ESCAPE.onKey(ev.key, true);
+    if (!ev.repeat) escapePress();
     return;
   }
   if (state.mode === 'draft') {
@@ -10524,10 +11191,14 @@ window.addEventListener('keydown', (ev) => {
     // them: where a pager is live (the shop, the manual) those branches sit
     // EARLIER in this chain and return, so paging keeps its arrows.
     if (k === 'escape') {
+      if (awayCard) { collectAway(); return; }   // ESC on the away card is COLLECT
       // IN-RUN REFERENCE ACCESS: the reference opened from an END screen backs
       // out to that screen, not to the title (return-to-origin discipline).
       if (state.helpFrom === 'end') { state.helpFrom = null; reshowEndScreen(); return; }
-      showTitle();                     // every sub-menu (and the farewell) backs out to title
+      // A screen whose BACK is not the title marks that card: Esc presses it.
+      const back = [...(ovCards.children || [])].find(c => c && c._esc);
+      if (back) { back.click(); return; }
+      showTitle();                     // every other sub-menu (and the farewell) backs out to title
     } else menuNavKey(k, ev);          // arrows/Tab move, Enter/Space activate
   } else if (state.mode === 'chest') {
     // MILESTONE CHEST card: ESC / Enter / Space is GOT IT (the card's twin).
@@ -10537,7 +11208,7 @@ window.addEventListener('keydown', (ev) => {
     // MENU KEYBOARD NAV: the pause screen is card-based like any other menu, so
     // it gets the same cursor — a keyboard-only player can now reach END RUN /
     // zoom / BACK without the mouse.
-    if (k === 'escape') closeSettings();
+    if (k === 'escape') { if (awayCard) collectAway(); else closeSettings(); }
     else menuNavKey(k, ev);
   } else if (state.mode === 'stats') {
     // WAVE-12 FIELD REPORT: S/ESC/I (or any card) closes and resumes.
@@ -10612,10 +11283,7 @@ window.addEventListener('keydown', (ev) => {
 // WAVE-13: keyup ALWAYS clears its direction (regardless of mode/overlay) so a
 // key held across a draft, a toggle or a death screen can never ghost-move the
 // next run. blur clears everything (alt-tab with a key down).
-// V1: the escape owns its held-key state (its own movement layer) — route the
-// keyup there too so a manual runner never ghost-runs past the hand-back.
 window.addEventListener('keyup', (ev) => {
-  if (state.mode === 'escape') ESCAPE.onKey(ev.key, false);
   const dir = KEY_DIRS[ev.key.toLowerCase()];
   if (dir) pilotInput[dir] = false;
 });
@@ -10666,7 +11334,7 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 // to exactly the screen the mode was armed on. One glyph, one door.
 const helpHudEl = document.getElementById('help-hud');
 const helpTipEl = document.getElementById('help-tip');
-const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft', 'escape']);
+const HELP_ENTRY_MODES = new Set(['playing', 'finale', 'dead', 'title', 'draft']);
 // The two controls with no controls_ref row (movement + the cog): one table,
 // read by the explainer; the reference's TOUCH card carries the same names
 // (joystick / SETTINGS (cog)) so the wording cannot fork.
@@ -10686,8 +11354,22 @@ const OBJECT_HELP = [
     field: 'portal — walk through to bank the wave' },
   { id: 'arch', name: 'ARCH', purpose: 'cross the gate for a timed buff',
     field: 'arches — cross the gate for a timed buff' },
-  { id: 'shrine', name: 'SHRINE', purpose: 'walk close, gold buys a blessing',
-    field: 'shrines — walk close, gold buys a blessing' },
+  { id: 'shrine', name: 'SHRINE', purpose: 'stand in the ring to charge it, then pick a blessing',
+    field: 'shrines — stand in the ring to charge it, then pick a blessing' },
+  { id: 'altar', name: 'BOSS ALTAR', purpose: 'step on it to call the wave boss now (waves 1-4); it pays an extra chest',
+    field: 'boss altar — step on it to call the wave boss now (waves 1-4); it pays an extra chest' },
+  { id: 'brazier', name: 'BRAZIER', purpose: 'break it for gold, sometimes a potion',
+    field: 'braziers and urns — break it for gold, sometimes a potion' },
+  { id: 'fountain', name: 'FOUNTAIN', purpose: 'stand in it while hurt to heal once',
+    field: 'fountains — stand in it while hurt to heal once' },
+  { id: 'statue', name: 'CURSED STATUE', purpose: 'touch it to take its curse for the wave and win its reward',
+    field: 'cursed statue — touch it to take its curse for the wave and win its reward' },
+  { id: 'vault', name: 'VAULT', purpose: 'touch it with the key a marked elite drops; it pays what its card says',
+    field: 'vault — touch it with the key a marked elite drops; it pays what its card says' },
+  { id: 'lever', name: 'LEVER', purpose: 'pull it to open the walled yard and its chest for the run',
+    field: 'lever — pull it to open the walled yard and its chest for the run' },
+  { id: 'yard', name: 'WALLED YARD', purpose: 'its gate opens when you pull the lever; a chest waits inside',
+    field: 'walled yard — its gate opens when you pull the lever; a chest waits inside' },
   // Ground potions have no THE FIELD row of their own (the TOUCH card's
   // potions row carries the restore wording); the explainer still names
   // what a dropped vial does when the player points at one.
@@ -10724,6 +11406,12 @@ const HINT_LINES = {
     'I stats &middot; ESC close / pause',
     '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
+  EXPLORE: [
+    'O pilot (EXPLORE) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
+    'Q / E skills &middot; H / N potions',
+    'I stats &middot; ESC close / pause',
+    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
+  ],
   MANUAL: [
     'O pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
@@ -10742,10 +11430,6 @@ HINT_LINES.AUTO = HINT_LINES.AUTO_ALL;
 // device-derived touch path, never a second table.
 function compactKeyLines() {
   const lines = [...(HINT_LINES[normalizePilotMode(state.pilotMode)] || HINT_LINES.AUTO_ALL || [])];
-  // G11: name the live challenge mode while a non-standard run is up.
-  if (!isStandard(state.challenge)) {
-    lines.splice(1, 0, 'CHALLENGE: ' + challengeOf(state.challenge).name);
-  }
   return lines;
 }
 
@@ -10845,27 +11529,6 @@ function helpControlRects(excludeEl) {
   };
   if (typeof document.querySelectorAll === 'function') {
     document.querySelectorAll('#touch button, #joy').forEach(see);
-  }
-  // P2B99: the escape's pads are canvas-drawn, not DOM — feed their LIVE
-  // rects (mapped through the canvas's own letterboxed rect) into the ladder
-  // so a help surface can never sit on them. SKIP/MODE are always up in the
-  // escape; the action pads only exist in MANUAL.
-  if (state.mode === 'escape' && typeof document.getElementById === 'function') {
-    const c = document.getElementById('game');
-    if (c && typeof c.getBoundingClientRect === 'function') {
-      const g = c.getBoundingClientRect();
-      if (g.width > 0 && g.height > 0) {
-        const rects = [SKIP_RECT, MODE_RECT];
-        if (!ESCAPE.isAuto()) rects.push(LEFT_RECT, RIGHT_RECT, JUMP_RECT, DASH_RECT, KICK_RECT);
-        for (const q of rects) {
-          out.push({
-            left: g.left + q.x / 480 * g.width, right: g.left + (q.x + q.w) / 480 * g.width,
-            top: g.top + q.y / 300 * g.height, bottom: g.top + (q.y + q.h) / 300 * g.height,
-            width: q.w / 480 * g.width, height: q.h / 300 * g.height,
-          });
-        }
-      }
-    }
   }
   // the OTHER help surface and the leave strip are visible chrome too
   see(helpTipEl);
@@ -11052,7 +11715,7 @@ function pickHelpObject(cx, cy) {
   };
   if (state.portal) consider(state.portal.x, state.portal.y, 'portal');
   for (const c of state.chests || []) consider(c.x, c.y, 'chest');
-  for (const s of state.shrines || []) if (!s.used) consider(s.x, s.y, 'shrine');
+  for (const s of state.sites || []) if (s.state !== 'spent' && helpObject(s.kind)) consider(s.x, s.y, s.kind);
   for (const a of state.arches || []) consider(a.x, a.y, 'arch');
   for (const d of state.drops || []) consider(d.x, d.y, 'potion');
   return best;
@@ -11252,6 +11915,564 @@ function toggleMap() {
   return state.mapOpen;
 }
 
+// ---------- M5b SITES, MAP WAYPOINT, EXPLORE ----------------------------------
+// sites.js owns placement and the site rules; this block applies what they
+// pay (offers, chests, the boss call, pickups) and feeds the pilot its goal.
+// `travel`: the run arrives on a new field. The boss rules, the quests and
+// the run's tallies carry over; only the field is placed.
+function seedWorldSites(travel = false) {
+  const seed = state.groundSeed || 0;
+  const rects = buildingRects(seed, state.stage);
+  state.sites = placeSites(seed, state.stage, rects, C.GROUND.RIM);
+  state.siteRng = siteMulberry((seed ^ 0x51e5) | 0);   // drops: own stream
+  state.shrines = state.sites.filter(s => s.kind === 'shrine');
+  state.shrine = state.shrines[0] || null;
+  state.shrineOffer = null;
+  state.waypoint = null;
+  state.pilotGoal = null;
+  state.pilotGoalStalled = null;
+  state.exploreSkip = new Set();
+  state.exploreGoalT = new Map();
+  state.siteCurse = null;
+  if (!travel) {
+    // Boss rules: the run's order, off the world seed. Wave 1's boss has none.
+    state.bossRuleOrder = rollRuleOrder(siteMulberry((seed ^ 0xb055) | 0));
+    state.bossRule = null;
+    state.ruleCards = 0;
+    // Travel: where the portal may lead, and where the run began.
+    state.travelOrder = rollTravelOrder(siteMulberry((seed ^ 0x7a1e) | 0), stageUnlocked);
+    state.stagesSeen = [state.stage];
+    state.sitesBefore = null;
+    state.handsOnPays = 0;
+    state.sitesTally = null;
+    state.lastSteerT = -99;
+  }
+  state.sitePops = [];
+  state.heroFlow = null;
+  state.lastSitePing = -99;
+  if (state.wave) state.wave.altar = false;
+  for (const s of state.sites) {
+    const lm = atlasRegisterLandmark(state.atlas, { kind: s.kind, x: s.x, y: s.y });
+    lm.site = s;
+  }
+  seedWorldPoi(travel);   // M5b slice 3: vault, yard, secrets, quests
+}
+// Steering in the last SITES.HANDS_ON_S seconds.
+function siteHandsOn() {
+  return state.time - (state.lastSteerT ?? -99) <= SITES.HANDS_ON_S;
+}
+// The altar may call the boss: playing, no boss up, no portal, not the maw's wave.
+function altarCanSummon() {
+  const w = state.wave;
+  return state.mode === 'playing' && !w.pendingClear && !state.portal &&
+    !(w.bosses || []).some(b => b.hp > 0) && w.num < C.ESCALATION.END_WAVE &&
+    (w.endsAt - state.time) > 3;
+}
+function sitePop(x, y, text, color) {
+  if (!state.sitePops) state.sitePops = [];
+  if (state.sitePops.length > 12) state.sitePops.shift();
+  state.sitePops.push({ x, y, text, color, age: 0, ttl: 1.2 });
+}
+function payHandsOn(x, y) {
+  state.handsOnPays = (state.handsOnPays || 0) + 1;
+  sitePop(x, y - 26, 'HANDS-ON', '#ffd75e');
+}
+// A chest at (x, y) even when the field holds the usual maximum.
+function siteChest(x, y, band = null) {
+  const cap = CHESTS.MAX_ACTIVE;
+  CHESTS.MAX_ACTIVE = cap + 4;
+  let ch = null;
+  try { ch = maybeSpawnChest(state, { x, y, elite: true }, () => 0); } finally { CHESTS.MAX_ACTIVE = cap; }
+  if (ch && band) { ch.band = band; ch.mimic = false; }   // M5b: a stated band, never a mimic
+  return ch;
+}
+// The shrine's blessing offer opens as a draft of up to 3 cards.
+function queueShrineOffer(site) {
+  const offers = rollChoices(state.wave.num, state.shrineRng || Math.random, state.takenChoices).slice(0, 3);
+  if (!offers.length) { toast('THE SHRINE IS SILENT: NO BLESSINGS LEFT'); return; }
+  state.shrineOffer = offers.map(o => ({ id: 'shr_' + o.id, tier: 'BLESSING', name: o.title,
+    desc: o.desc, blessing: o, weight: 1, apply: () => {} }));
+  state.pendingDrafts++;
+  if (state.mode === 'playing' && !state.draftKind) openDraft();
+}
+function takeShrineBlessing(u) {
+  const o = u.blessing;
+  applyChoice(state.player, o);
+  state.takenChoices.push(o.id);
+  if (dev) {
+    dev.shrineBlessings.push(o.id);
+    dev.shrineBuys.push({ id: o.id, cost: 0, wave: (state.wave && state.wave.num) | 0 });
+  }
+  const bonus = (state.player.choices && state.player.choices.weaponSlotBonus) || 0;
+  state.weaponSlots = Math.min(state.weaponCap, state.baseWeaponSlots + bonus);
+  toast('BLESSING: ' + o.title + ' - ' + o.desc, '#7ad0ff');
+  audio.playSfx('powerup');
+}
+// The cursed statue's curse on one enemy (new spawns and the live field).
+function curseEnemy(e) {
+  const c = state.siteCurse;
+  if (!c || !e || e.boss || e.cursed) return e;
+  e.cursed = true;
+  if (c.speedMult !== 1) e.speed *= c.speedMult;
+  if (c.hpMult !== 1) { e.hp *= c.hpMult; e.maxHp *= c.hpMult; }
+  return e;
+}
+function handleSiteEvent(ev, p) {
+  const s = ev.site;
+  const f = state.feel || null;
+  switch (ev.kind) {
+    case 'shrineDone':
+      if (ev.handsOn) payHandsOn(s.x, s.y);
+      if (f) { addSparks(f, s.x, s.y - 10, '#7ad0ff', 14, 40); addShake(f, 2); }
+      audio.playSfx('levelup');
+      state.shrine = state.shrines.find(x => x.state !== 'spent') || null;
+      worldQuest('shrine');
+      queueShrineOffer(s);
+      break;
+    case 'altar':
+      state.wave.altar = true;
+      state.wave.endsAt = state.time;   // the boss spawns at this frame's wave check
+      if (f) { addSparks(f, s.x, s.y - 6, '#ff3a4a', 18, 50); addShake(f, 4); }
+      audio.playSfx('warning');
+      toast('THE ALTAR CALLS THE BOSS. BEAT IT FOR AN EXTRA CHEST', '#ff6a6a');
+      break;
+    case 'altarQuiet': {
+      // Say why (the reasons altarCanSummon refuses), the lasting one first.
+      const w = state.wave, end = C.ESCALATION.END_WAVE;
+      let why = 'THE ALTAR IS QUIET';
+      if (w.num >= end) {
+        why = 'THE ALTAR ONLY WAKES ON WAVES 1-' + (end - 1);
+        // It cannot finish a waypoint any more: take it off.
+        if (state.waypoint && state.waypoint.site === s) state.waypoint = null;
+      } else if ((w.bosses || []).some(b => b.hp > 0)) why = 'THE ALTAR IS QUIET: FINISH THIS BOSS FIRST';
+      else if (w.pendingClear || state.portal) {
+        why = w.num + 1 < end ? 'THE ALTAR WAKES NEXT WAVE' : "THE ALTAR IS QUIET: THIS WAVE'S BOSS IS DOWN";
+      } else if (w.endsAt - state.time <= 3) why = 'THE ALTAR IS QUIET: THE BOSS IS ALMOST HERE';
+      toast(why, '#9aa4b0');
+      break;
+    }
+    case 'break': {
+      let gold = 0;
+      for (const d of ev.drops) {
+        if (d.kind === 'gold') gold += purseAdd(d.amount * purseIncomeMult(false));
+        else if (d.kind === 'potion') pushDrop({ ...clampLootToArena(s.x + 6, s.y + 4), kind: (state.siteRng || Math.random)() < 0.5 ? 'hp' : 'mp' });
+        else if (d.kind === 'magnet') {
+          p.magnetSweep = C.MAGNET.SWEEP_S;
+          state.magnetSnap = { gems: state.gems.length,
+            potions: (state.drops || []).reduce((n, x) => n + (x.count || 1), 0), items: (state.itemDrops || []).length };
+          state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0, ttl: 0.6 });
+          sitePop(s.x, s.y - 34, 'MAGNET', '#fff8d0');
+        }
+      }
+      if (gold > 0) sitePop(s.x, s.y - 14, '+' + gold + 'G', '#ffd75e');
+      if (ev.handsOn) payHandsOn(s.x, s.y);
+      if (f) addSparks(f, s.x, s.y - 6, s.urn ? '#e8c070' : '#ffb030', 8, 30);
+      audio.playSfx('hit');
+      worldQuest('brazier');
+      break;
+    }
+    case 'fountain':
+      p.hp = Math.min(p.stats.maxHp, p.hp + ev.heal);
+      sitePop(s.x, s.y - 16, '+' + Math.round(ev.heal) + ' HP', '#8fe0a0');
+      if (f) addSparks(f, s.x, s.y - 6, '#bfe8ff', 14, 30);
+      audio.playSfx('potion');
+      worldQuest('fountain');
+      break;
+    case 'curse':
+      state.siteCurse = s.deal;
+      for (const e of state.enemies) if (e.hp > 0) curseEnemy(e);
+      if (f) { addSparks(f, s.x, s.y - 14, '#7cff6a', 16, 40); addShake(f, 3); }
+      audio.playSfx('warning');
+      toast('CURSE: ' + s.deal.curse.toUpperCase() + '. BEAT THE BOSS FOR: ' + s.deal.reward.toUpperCase(), '#7cff6a');
+      break;
+  }
+}
+// The wave's boss fell: the altar's chest and the statue's reward pay here.
+function siteBossPayout(x, y) {
+  if (state.wave.altar) {
+    state.wave.altar = false;
+    siteChest(x, y + 18);
+    toast('ALTAR BOSS DOWN: AN EXTRA CHEST', '#ffd75e');
+  }
+  const st = activeCurse(state.sites);
+  if (st) {
+    st.state = 'spent';
+    if (st.deal.pay === 'joker') queueJokerOffer();
+    else { siteChest(x - 16, y + 20); siteChest(x + 16, y + 20); }
+    toast('CURSE LIFTED. REWARD: ' + st.deal.reward.toUpperCase(), '#7cff6a');
+    state.siteCurse = null;
+  }
+}
+// One frame: radar sight, the site rules, the waypoint and the pilot's goal.
+function tickWorldSites(p, dt) {
+  if (state.sitePops && state.sitePops.length) {
+    for (const q of state.sitePops) q.age += dt;
+    state.sitePops = state.sitePops.filter(q => q.age < q.ttl);
+  }
+  // No sites (the maw closed them): no site goal either. A goal left over
+  // from before kept EXPLORE walking to an old vault through the whole maw
+  // fight (sim: 400 s of a 20,000-gold run).
+  if (!state.sites || !state.sites.length) { state.pilotGoal = null; return; }
+  if (state.atlas) {
+    const r2 = RADAR_RADIUS * RADAR_RADIUS;
+    for (const lm of state.atlas.landmarks) {
+      if (!lm.seen && (lm.x - p.x) ** 2 + (lm.y - p.y) ** 2 <= r2) {
+        lm.seen = true;
+        // M5b: a quiet ping when the radar first shows a site not yet reached
+        // (one per 3 s at most; audio.js throttles the voice too).
+        if (lm.site && !lm.discovered && state.time - (state.lastSitePing ?? -99) >= 3) {
+          state.lastSitePing = state.time;
+          audio.playSfx('radarPing');
+        }
+      }
+    }
+  }
+  const evs = tickSites(state.sites, {
+    player: { x: p.x, y: p.y, hp: p.hp, maxHp: p.stats.maxHp }, dt,
+    handsOn: siteHandsOn(), projectiles: state.projectiles, canSummon: altarCanSummon,
+    // The statue's curse is for the wave: no deal once its boss is down.
+    canCurse: () => !state.wave.pendingClear && !state.portal,
+    goalSite: (state.pilotGoal && state.pilotGoal.site) || null, manual: pilotMovesYou(),
+    rng: state.siteRng || Math.random,
+    blocked: tutGuidedLive() || !!(state.prologue && !state.prologue.drunk),
+  });
+  for (const ev of evs) handleSiteEvent(ev, p);
+  if (state.waypoint && waypointDone(state, p)) {
+    state.waypoint = null;
+    toast('WAYPOINT DONE', '#ffd75e');
+  }
+  const stalled = state.pilotGoalStalled;
+  if (stalled) {
+    state.pilotGoalStalled = null;
+    if (stalled.waypoint) { state.waypoint = null; toast('NO PATH TO THE WAYPOINT', '#9aa4b0'); }
+    else if (stalled.site) state.exploreSkip.add(stalled.site.id);
+  }
+  const mode = normalizePilotMode(state.pilotMode);
+  tickWorldPoi(p, dt);   // M5b slice 3 (before the goal: the key and the vault feed it)
+  // The guided tutorial keeps EXPLORE beside the trainers: no site detours yet.
+  const goalMode = mode === 'MANUAL' ? 'MANUAL'
+    : (mode === 'EXPLORE' && !tutGuidedLive()) ? 'EXPLORE' : 'AUTO';
+  state.pilotGoal = exploreGoal(state, p, goalMode, state.exploreSkip);
+  // EXPLORE career fix: a site held as the goal for GOAL_GIVEUP_S in all
+  // (walking, standing, coming back after a fight) without being used is
+  // given up for the run, so a site it cannot finish never drags it around.
+  const pg = state.pilotGoal;
+  if (pg && pg.site && !pg.waypoint && pg.site.id != null) {
+    const gt = state.exploreGoalT || (state.exploreGoalT = new Map());
+    const t = (gt.get(pg.site.id) || 0) + dt;
+    gt.set(pg.site.id, t);
+    if (t > EXPLORE.GOAL_GIVEUP_S) state.exploreSkip.add(pg.site.id);
+  }
+}
+// ---------- M5b SLICE 3: VAULT, YARD, SECRETS, QUESTS ------------------------
+// vault.js, secrets.js and quests.js own the rules; this block places them
+// for the run, applies what they pay and counts quest events.
+function seedWorldPoi(travel = false) {
+  const seed = state.groundSeed || 0;
+  setExtraRects(seed, state.stage, null);
+  const rects = buildingRects(seed, state.stage);
+  const vy = placeVaultYard(seed, state.stage, rects, state.sites, C.GROUND.RIM);
+  state.poi = { vault: vy.vault, lever: vy.lever, yard: vy.yard, hasKey: false, keyDrop: null,
+    carrier: null, carrierSeen: false, mimicDone: false, mimicSeen: false, gateFx: 0 };
+  for (const s of [vy.vault, vy.lever, vy.yard]) {
+    if (!s) continue;
+    state.sites.push(s);
+    const lm = atlasRegisterLandmark(state.atlas, { kind: s.kind, x: s.x, y: s.y });
+    lm.site = s;
+  }
+  if (vy.yard) setExtraRects(seed, state.stage, yardRects(vy.yard, false));
+  const w = ensureWorld(profile);
+  state.secrets = placeSecrets(seed, state.stage, rects, state.sites, C.GROUND.RIM,
+    w.glyphs.includes(state.stage));
+  state.glyphSet = glyphsAll(profile);
+  state.secretRng = siteMulberry((seed ^ 0x5ec2) | 0);
+  state.mimicCheck = () => {
+    const m = rollMimic(state.secretRng, state.time, state.poi.mimicDone, hasJoker(state, 'mimicfeast'));
+    if (m) state.poi.mimicDone = true;
+    return m;
+  };
+  if (!travel) state.quests = startQuests(takeQuestBoard());
+}
+// The board for the next run: the one shown on the pre-run screen, else a
+// fresh roll at the run's start (idle-friendly: nothing to pick).
+let pendingQuestBoard = null;
+function peekQuestBoard() {
+  if (!pendingQuestBoard) pendingQuestBoard = { ids: rollBoard(Math.random, ensureWorld(profile)), swapped: [] };
+  return pendingQuestBoard;
+}
+function takeQuestBoard() {
+  const b = pendingQuestBoard;
+  pendingQuestBoard = null;
+  return b ? b.ids : rollBoard(siteMulberry(((state.groundSeed || 0) ^ 0x9e57) | 0), ensureWorld(profile));
+}
+// Swap one quest on the board (once per slot).
+function swapBoardQuest(i) {
+  const b = peekQuestBoard();
+  if (b.swapped.includes(i)) return false;
+  b.ids = swapQuest(Math.random, b.ids, i);
+  b.swapped.push(i);
+  return true;
+}
+// What a quest pays at this profile's prestige tier, as the board shows it.
+function questPay(id) { return questPayAt(id, questGoldMult()); }
+// What multiplies a quest's gold: the prestige tier and the shop's Greed
+// ("gold from runs"). Both are fixed for the run, so the board, the toast and
+// the settlement show the same number. Kill-streak and item bonuses are for
+// kill gold and stay out.
+function questGoldMult() {
+  const greed = (profile.purchased && profile.purchased.greed) | 0;
+  return prestigeGoldMult(getPrestige(profile)) * (1 + SHOP_BY_ID.greed.perLevel * greed);
+}
+function ownsCharacter(id) { return (profile.unlockedCharacters || []).includes(id); }
+// Count a quest event; done quests toast, and joker quests pay now. The last
+// step of a chain whose character is already owned pays a joker offer as well.
+function worldQuest(ev, amount = 1) {
+  if (!state.quests || !state.quests.length || state.mode === 'dead') return;
+  for (const q of questEvent(state.quests, ev, amount)) {
+    const d = QUEST_BY_ID[q.id];
+    audio.playSfx('levelup');
+    if (d.joker) { q.paid = true; queueJokerOffer('quest done'); toast('QUEST DONE: ' + d.text.toUpperCase() + '. A JOKER', '#ffd75e'); }
+    else toast('QUEST DONE: ' + d.text.toUpperCase() + '. +' + questPay(q.id) + ' AT THE END', '#ffd75e');
+    const chain = chainJokerStep(ensureWorld(profile), q.id, ownsCharacter);
+    if (chain) {
+      q.chainJoker = chain.id;
+      queueJokerOffer(chain.name.toLowerCase() + ' is done');
+      toast(chain.name + ' DONE: A JOKER', '#ffd75e');
+    }
+    if (state.player) sitePop(state.player.x, state.player.y - 30, 'QUEST DONE', '#ffd75e');
+  }
+}
+// Settlement: count the run's quests and advance the saved chains. A chain
+// that paid its joker in the run grants nothing more here.
+function settleWorld() {
+  const w = ensureWorld(profile);
+  w.questsDone += (state.quests || []).filter(q => q.done).length;
+  state.chainsFinished = [];
+  for (const c of advanceChains(w, state.quests)) {
+    const joker = (state.quests || []).some(q => q.chainJoker === c.id);
+    const ok = joker || grantCharacter(profile, c.unlock.id);
+    state.chainsFinished.push({ chain: c.name, unlock: c.unlock.id, ok, joker });
+  }
+}
+function endQuestLine() {
+  const qs = state.quests || [];
+  if (!qs.length) return '';
+  let s = 'quests done ' + qs.filter(q => q.done).length + ' of ' + qs.length;
+  for (const c of state.chainsFinished || []) {
+    s += ' · ' + c.chain + ' complete: ' + (c.joker ? 'a joker (' + c.unlock + ' was already yours)' : c.unlock + ' unlocked');
+  }
+  return s;
+}
+// The first elite after 2:30 carries the vault key (a gold key over its head).
+function markKeyCarrier(e) {
+  const w = state.poi;
+  if (!w || w.closed || e.boss || !wantsCarrier(w, state.time)) return;
+  e.keyCarrier = true;
+  w.carrier = e;
+}
+// A mimic's pay: a rare chest where it stood, and the secret.
+function payMimic(e) {
+  siteChest(e.x, e.y, 'rare');
+  sitePop(e.x, e.y - 20, 'A RARE CHEST', '#ffd75e');
+  if (markSecret(profile, 'mimic')) toast('SECRET FOUND: THE MIMIC', '#c87aff');
+}
+// Elite, boss and mimic deaths: quest counts, the carrier, the mimic's pay.
+function worldOnDeath(e) {
+  if (e.worldDone) return;
+  e.worldDone = true;
+  const p = state.player;
+  if (e.mimic) payMimic(e);
+  if (e.keyCarrier) worldQuest('carrier');
+  if (e.boss && !e.midBoss) {
+    if ((state.wave.num | 0) === 1 && state.time <= BOSS1_FAST_S) worldQuest('boss1Fast');
+  } else if (e.elite) {
+    worldQuest('elite');
+    if (p && p.highGround) worldQuest('eliteHigh');
+  }
+}
+// A mimic wakes: a tough elite where the chest stood.
+function wakeMimic(x, y) {
+  // It wakes a step away from the hero, so the first bite is not free.
+  const p = state.player;
+  if (p) {
+    const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy) || 1;
+    const ux = d > 0.5 ? dx / d : 1, uy = d > 0.5 ? dy / d : 0;
+    x = p.x + ux * SECRETS.MIMIC_WAKE_GAP; y = p.y + uy * SECRETS.MIMIC_WAKE_GAP;
+  }
+  const e = makeTypedEnemy('BRUTE', x, y, state.time, { elite: true });
+  escalate(e, state.time);
+  e.elite = true; e.mimic = true;
+  stampStageStats(state, e);
+  e.hp *= SECRETS.MIMIC_HP_MULT; e.maxHp *= SECRETS.MIMIC_HP_MULT;
+  state.enemies.push(e);
+  const f = state.feel || null;
+  if (f) { addSparks(f, x, y - 6, '#c87aff', 18, 50); addShake(f, 4); }
+  audio.playSfx('warning');
+  toast('MIMIC! KILL IT FOR A RARE CHEST', '#c87aff');
+  if (state.poi) state.poi.mimicSeen = true;
+}
+// One frame: the key carrier, the key, the vault, the lever and gate, secrets.
+function tickWorldPoi(p, dt) {
+  const w = state.poi;
+  if (!w) return;
+  // The carrier left the field without dying (culled): the next elite takes the key.
+  if (w.carrier && w.carrier.hp > 0 && !state.enemies.includes(w.carrier)) w.carrier = null;
+  if (w.carrier && !w.carrierSeen &&
+    (w.carrier.x - p.x) ** 2 + (w.carrier.y - p.y) ** 2 <= RADAR_RADIUS * RADAR_RADIUS) {
+    w.carrierSeen = true;
+    toast('A MARKED ELITE CARRIES THE VAULT KEY', '#ffd75e');
+  }
+  // The dropped key drifts to a hero close by (no pilot needed).
+  if (w.keyDrop) {
+    const dx = p.x - w.keyDrop.x, dy = p.y - w.keyDrop.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 150) { const k = Math.min(d, 160 * dt); w.keyDrop.x += dx / d * k; w.keyDrop.y += dy / d * k; }
+  }
+  if (w.gateFx > 0) w.gateFx = Math.max(0, w.gateFx - dt);
+  if (tutGuidedLive() || (state.prologue && !state.prologue.drunk)) return;
+  // Quests that can no longer be finished grey out on the tracker.
+  closeQuests(state.quests, { worldClosed: !!w.closed, time: state.time, wave: state.wave.num | 0 });
+  for (const ev of tickVaultYard(w, { player: p })) handlePoiEvent(ev, p);
+  const sev = tickSecrets(state.secrets, { player: p, dt, handsOn: siteHandsOn(), projectiles: state.projectiles });
+  for (const ev of sev) handleSecretEvent(ev, p);
+}
+function handlePoiEvent(ev, p) {
+  const f = state.feel || null;
+  const w = state.poi;
+  switch (ev.kind) {
+    case 'keyDropped':
+      sitePop(ev.x, ev.y - 18, 'THE KEY!', '#ffd75e');
+      audio.playSfx('chest');
+      break;
+    case 'keyPicked':
+      toast('YOU HAVE THE VAULT KEY: TOUCH THE VAULT', '#ffd75e');
+      audio.playSfx('uiConfirm');
+      sitePop(p.x, p.y - 26, 'KEY', '#ffd75e');
+      break;
+    case 'vaultLocked':
+      toast('THE VAULT IS LOCKED: A MARKED ELITE CARRIES THE KEY', '#9aa4b0');
+      break;
+    case 'vaultOpen': {
+      const s = ev.site;
+      if (f) { addSparks(f, s.x, s.y - 10, '#ffd75e', 20, 50); addShake(f, 3); }
+      audio.playSfx('evolve');
+      if (s.reward === 'joker') { queueJokerOffer('the vault is open'); toast('THE VAULT OPENS: A JOKER', '#ffd75e'); }
+      else { siteChest(s.x, s.y + 16, 'rare'); toast('THE VAULT OPENS: A RARE CHEST', '#ffd75e'); }
+      markSecret(profile, 'vault');
+      worldQuest('vault');
+      break;
+    }
+    case 'leverPulled': {
+      const Y = ev.yard;
+      if (Y) setExtraRects(state.groundSeed || 0, state.stage, yardRects(Y, true));
+      w.gateFx = 2.5;
+      if (f) { addShake(f, 5); if (Y) addSparks(f, Y.x, Y.y, '#d8c8a0', 24, 60); }
+      audio.playSfx('warning');
+      toast('THE GATE OPENS: THE YARD STAYS OPEN THIS RUN', '#ffd75e');
+      if (Y) sitePop(Y.x, Y.y - 50, 'THE GATE OPENS', '#ffd75e');
+      break;
+    }
+    case 'yardLoot': {
+      const s = ev.site;
+      siteChest(s.x, s.y, 'rare');
+      markSecret(profile, 'yard');
+      worldQuest('yard');
+      audio.playSfx('chest');
+      break;
+    }
+  }
+}
+function handleSecretEvent(ev, p) {
+  const s = ev.site;
+  const f = state.feel || null;
+  switch (ev.kind) {
+    case 'seen':
+      if (s.kind === 'glyph') sitePop(s.x, s.y - 16, '?', '#c87aff');
+      break;
+    case 'crackHit':
+      if (f && (state.secretRng || Math.random)() < 0.3) addSparks(f, s.x, s.wallY - 6, '#b0a090', 3, 20);
+      break;
+    case 'crackBroken': {
+      const r = rollNiche(state.secretRng || Math.random);
+      const gold = purseAdd(r.gold * purseIncomeMult(false));
+      sitePop(s.x, s.y - 18, '+' + gold + 'G', '#ffd75e');
+      pushDrop({ ...clampLootToArena(s.x, s.y + 6), kind: (state.secretRng || Math.random)() < 0.5 ? 'hp' : 'mp' });
+      if (r.joker) queueJokerOffer('a hidden niche');
+      if (s.handsOn) payHandsOn(s.x, s.y);
+      if (f) { addSparks(f, s.x, s.wallY - 6, '#c8b8a0', 16, 40); addShake(f, 2); }
+      audio.playSfx('hit');
+      toast(r.joker ? 'A HIDDEN NICHE: GOLD, A POTION AND A JOKER' : 'A HIDDEN NICHE: GOLD AND A POTION', '#c87aff');
+      markSecret(profile, 'crack');
+      worldQuest('crack');
+      break;
+    }
+    case 'glyph': {
+      const res = recordGlyph(profile, state.stage);
+      if (res.all) state.glyphSet = true;
+      if (f) addSparks(f, s.x, s.y - 6, '#c87aff', 18, 40);
+      audio.playSfx('evolve');
+      const n = ensureWorld(profile).glyphs.length;
+      toast(res.all ? 'ALL 8 GLYPHS: THE MIMIC FEAST JOKER JOINS THE POOL' : 'GLYPH FOUND: ' + n + ' OF 8', '#c87aff');
+      persistProfile();
+      break;
+    }
+  }
+}
+// Set, move or clear the waypoint. A site already marked clears it.
+function setWaypoint(site) {
+  if (!site || (state.waypoint && state.waypoint.site === site)) {
+    const had = !!state.waypoint;
+    state.waypoint = null;
+    if (had) toast('WAYPOINT CLEARED', '#ffd75e');
+    return null;
+  }
+  state.waypoint = { x: site.x, y: site.y, site };
+  toast('WAYPOINT SET' + (pilotMovesYou() ? ': FOLLOW THE ARROW' : ': THE PILOT HEADS THERE'), '#ffd75e');
+  audio.playSfx('uiConfirm');
+  return state.waypoint;
+}
+// What view px (vx, vy) hits on the open map: { clear } for the CLEAR
+// button's tap target (larger than its plate), { mark } for the nearest site
+// icon within ATLAS.TAP_R that passes `ok` (null on bare map), or null when
+// the point is off the map.
+function mapMarkAt(vx, vy, ok = null) {
+  const m = renderer.atlasMap;
+  if (!state.mapOpen || !m) return null;
+  const b = m.clearBtn;
+  if (b && vx >= b.x && vx <= b.x + b.w && vy >= b.y && vy <= b.y + b.h) return { clear: true };
+  let best = null, bd = C.ATLAS.TAP_R * C.ATLAS.TAP_R;
+  for (const mk of m.landmarks || []) {
+    if (!mk.site || (ok && !ok(mk))) continue;
+    const d = (mk.x - vx) ** 2 + (mk.y - vy) ** 2;
+    if (d <= bd) { bd = d; best = mk; }
+  }
+  if (best) return { mark: best };
+  return vx >= m.x && vx <= m.x + m.size && vy >= m.y && vy <= m.y + m.size ? { mark: null } : null;
+}
+// A tap on the open map: a site icon sets (or clears) the waypoint; the
+// CLEAR button clears it. `vx, vy` are view px. True when the tap was used.
+// Spent sites, and every site once the maw has closed them, take no waypoint.
+function mapTapAt(vx, vy) {
+  const hit = mapMarkAt(vx, vy, (mk) => mk.state !== 'spent' && (state.sites || []).includes(mk.site));
+  if (!hit) return false;
+  if (hit.clear) setWaypoint(null);
+  else if (hit.mark) setWaypoint(hit.mark.site);
+  return true;
+}
+// Help mode on the open map: the tap explains the icon and sets nothing.
+// `anchor` is the tap's client rect (the tip is placed around it).
+function mapHelpAt(vx, vy, anchor) {
+  const hit = mapMarkAt(vx, vy);
+  if (!hit) return false;
+  const mk = hit.mark;
+  let text = null;
+  if (hit.clear) text = 'CLEAR WAYPOINT — takes the waypoint off the map';
+  else if (mk && mk.state === 'unknown') text = '? — a site the radar has seen; walk there to learn what it is';
+  else if (mk && mk.state === 'closed') text = 'CLOSED SITE — the sites close when the maw comes';
+  else if (mk) { const o = helpObject(mk.kind); text = o ? o.name + ' — ' + o.purpose : null; }
+  showHelpTip(text, anchor);
+  return true;
+}
+
 // pointerdown fires with no tap delay; touch-action: manipulation kills the
 // legacy 300ms wait and double-tap zoom.
 //
@@ -11382,6 +12603,7 @@ if (touchLayer && touchLayer.addEventListener) {
   }
 
   touchLayer.addEventListener('pointerdown', (ev) => {
+    noteInput();
     audioUnlockGesture();   // S2: a touch IS a user gesture — unlock audio
     fsBump();               // FULLSCREEN: a pad/joystick press is an interaction
     // HELP MODE: the funnel intercepts FIRST — a tap explains what it
@@ -11467,10 +12689,8 @@ function chromeOn() {
   // G13 registration check: 'characters' is deliberately NOT in this list —
   // the selector is a meta screen, so the pad layer / cog / "?" / hints stay
   // down while it is live (verified by name in tools/verify_g13_selector.mjs).
-  // V1 REGISTRATION: 'escape' is likewise chrome-OFF BY NAME — the side
-  // scroller's d-pad/cog/? are meaningless (and inert: its input never routes
-  // through the touch layer), so the whole layer stands down for the whole
-  // mode (verified in test_v1_escape + the phone verifier).
+  // 'escape' is likewise chrome-OFF BY NAME: a cinematic, like the movies
+  // (verified in test_escape_cine).
   // G15 REGISTRATION: 'death-cine' is chrome-OFF BY NAME too — a cinematic,
   // not a run screen (verified in test_death_cine + the phone verifier).
   return state.mode === 'playing' || state.mode === 'finale';
@@ -11582,8 +12802,8 @@ function syncChrome() {
 // The PILOT badge: the mode in plain words (compact pads abbreviate), then
 // what the pilot is doing. While the player holds the wheel it reads YOU.
 function pilotBadgeText(mode, act, compact) {
-  const FULL = { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO MOVE', MANUAL: 'MANUAL' };
-  const ABBR = { AUTO_ALL: 'A1', AUTO_MOVE: 'A2', MANUAL: 'M' };
+  const FULL = { AUTO_ALL: 'AUTO', AUTO_MOVE: 'AUTO MOVE', EXPLORE: 'EXPLORE', MANUAL: 'MANUAL' };
+  const ABBR = { AUTO_ALL: 'A1', AUTO_MOVE: 'A2', EXPLORE: 'EX', MANUAL: 'M' };
   const m = (compact ? ABBR[mode] : FULL[mode]) || mode;
   return act && act !== mode && act !== m ? m + ' \u00b7 ' + act : m;
 }
@@ -11621,7 +12841,8 @@ function updateTouchHud() {
   set('tc-stance', state.stance);
   const wheelOn = !pilotMovesYou() && state.wheel > 0;
   set('tc-pilot', pilotBadgeText(state.pilotMode, wheelOn ? 'YOU' : act, padsCompact));
-  kb('kb-pilot', wheelOn ? 'YOU' : pilotMovesYou() ? 'MANUAL' : 'AUTO');
+  kb('kb-pilot', wheelOn ? 'YOU' : pilotMovesYou() ? 'MANUAL'
+    : normalizePilotMode(state.pilotMode) === 'EXPLORE' ? 'EXPLORE' : 'AUTO');
   const skill = (id, defId) => {
     // N1 slice 3 + 2026-09-17 mana price: an ult badge reads charge AND the
     // pool — cooling (`12.0s`) while the floor runs, LOW when charged but
@@ -11685,14 +12906,18 @@ function drawHud() {
   if (state.pilotMode === 'MANUAL' && renderer.ctx &&
       (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
     const ctx = renderer.ctx;
+    // M5b fix: sits right of the GOLD purse badge (it used to cover the right
+    // end of the HP/MP bars, which grew since).
+    const pu = renderer.hudChrome && renderer.hudChrome.purse;
+    const bx = pu ? pu.x + pu.w + 4 : 6, by = pu ? pu.y + Math.round((pu.h - 17) / 2) : 70;
     ctx.fillStyle = '#14141f';
-    ctx.fillRect(119, 14, 14, 17);   // plate (bars run x6..116)
+    ctx.fillRect(bx, by, 14, 17);            // plate
     ctx.fillStyle = '#ffd75e';
-    ctx.fillRect(121, 17, 2, 11);    // left stem
-    ctx.fillRect(129, 17, 2, 11);    // right stem
-    ctx.fillRect(123, 19, 2, 2);     // vee
-    ctx.fillRect(127, 19, 2, 2);
-    ctx.fillRect(125, 21, 2, 2);
+    ctx.fillRect(bx + 2, by + 3, 2, 11);     // left stem
+    ctx.fillRect(bx + 10, by + 3, 2, 11);    // right stem
+    ctx.fillRect(bx + 4, by + 5, 2, 2);      // vee
+    ctx.fillRect(bx + 8, by + 5, 2, 2);
+    ctx.fillRect(bx + 6, by + 7, 2, 2);
   }
 }
 
@@ -11775,16 +13000,13 @@ function hudTextBlock(p) {
     '\n' +
     `FOES ${foeLine()}\n` +
     `WEATHER: ${state.weather ? state.weather.def.name.toUpperCase() : 'CLEAR'}` +
-    `   ${describeHeat(heatOf(state))} · ${describeHeatPayout(manualPushes(state))}` +
+    `   ${describeWrath(wrathOf(state))}` +
     (archBits.length ? `   ARCH ${archBits.join(' ')}` : '') + '\n' +
     `RUN ${runClock(state.time)}/${runClock(C.RUN.LIMIT)}   WAVE ${state.wave.num} - ${waveTxt}   LVL ${p.level}   XP ${Math.floor(p.xp)}/${p.xpNext}\n` +
-    // G11: the mode badge line — only while a NON-standard mode is live, so a
-    // STANDARD run's text HUD is byte-identical to before.
     // G25 slice 1: THE MARK OF THE GRIND — pure proof, no power. The flourish
     // line rides the text HUD ONLY while the run's apex mark stamp is live
     // (owned + toggled ON); a normal run renders byte-identically to before.
     (state.apexMark ? 'APEX MARK OF THE GRIND\n' : '') +
-    (isStandard(state.challenge) ? '' : `MODE ${challengeOf(state.challenge).name}\n`) +
     `TIME ${Math.floor(state.time)}s   KILLS ${p.kills}   RP ${state.rampage.streak} (x${rampageMult().toFixed(2)})   POS ${p.x.toFixed(1)},${p.y.toFixed(1)}` +
     // PRESTIGE speed readout (always present — 1x on a fresh profile, so the
     // control reads discoverable; regex-safe append, no line moves).
@@ -11864,9 +13086,9 @@ if (overlay && overlay.addEventListener) {
 
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
 // WAVE-8/A: the same gesture skips the portal cinematic.
-// V1: during the escape a tap is PLAY — mapped into the mode's own virtual
-// 480x300 (the skip rect first, then a tap anywhere jumps for MANUAL play).
+// The same gesture skips the escape cinematic (after its guard time).
 if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
+  noteInput();
   audioUnlockGesture();     // S2: a tap IS a user gesture — unlock audio
   // FULLSCREEN (owner 2026-09-17): the button's OWN tap toggles — hit-test
   // FIRST, before the skip/interaction logic below, so nothing can swallow
@@ -11880,6 +13102,22 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
+  // M5b: a tap on the open map sets or clears the waypoint. In help mode it
+  // explains the icon instead (a tap there never activates anything).
+  if (state.mapOpen && state.mode === 'playing') {
+    const mr = canvas.getBoundingClientRect();
+    if (mr.width && mr.height) {
+      const vx = (ev.clientX - mr.left) / mr.width * C.VIEW_W;
+      const vy = (ev.clientY - mr.top) / mr.height * C.VIEW_H;
+      const used = state.helpMode
+        ? mapHelpAt(vx, vy, { left: ev.clientX - 1, top: ev.clientY - 1, right: ev.clientX + 1, bottom: ev.clientY + 1, width: 2, height: 2 })
+        : mapTapAt(vx, vy);
+      if (used) {
+        if (ev.preventDefault) ev.preventDefault();
+        return;
+      }
+    }
+  }
   // FLOATING JOYSTICK (owner 2026-09-18): a canvas press in MANUAL play arms
   // the stick AT the touch point. AFTER fsHit above (the fullscreen button's
   // own tap toggles, never steers); the hook itself declines help-mode,
@@ -11889,29 +13127,7 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     if (ev.preventDefault) ev.preventDefault();
     return;
   }
-  if (state.mode === 'escape') {
-    // HELP MODE (VK9P4: the escape joined the entry set): a tap EXPLAINS,
-    // never activates — the touchLayer funnel's mirror on the canvas path, so
-    // the JUMP/KICK pads cannot fire (and cannot be swallowed silently) with
-    // the reference open.
-    if (state.helpMode) {
-      if (ev.preventDefault) ev.preventDefault();
-      const hr = canvas.getBoundingClientRect();
-      if (hr.width && hr.height) {
-        const vx = (ev.clientX - hr.left) / hr.width * C.VIEW_W;
-        const vy = (ev.clientY - hr.top) / hr.height * C.VIEW_H;
-        showHelpTip(ESCAPE.explain(vx, vy),
-          { left: ev.clientX - 1, top: ev.clientY - 1, right: ev.clientX + 1, bottom: ev.clientY + 1, width: 2, height: 2 });
-      }
-      return;
-    }
-    const r = canvas.getBoundingClientRect();
-    if (r.width && r.height) {
-      ESCAPE.pointer((ev.clientX - r.left) / r.width * C.VIEW_W,
-        (ev.clientY - r.top) / r.height * C.VIEW_H, ev.pointerId);
-    }
-    return;
-  }
+  if (state.mode === 'escape') { escapePress(); return; }
   // Armed ONLY when this gesture actually ended a cinematic — never during play.
   const skipping = state.mode === 'intro' ||
     (state.mode === 'portal-cine' && C.CINE.SKIPPABLE) ||
@@ -11920,21 +13136,6 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
   endIntro();
   if (C.CINE.SKIPPABLE) { endPortalCine(); endDeathCine(); }
 });
-// P2B99: the lift of a touch. The escape's LEFT/RIGHT pads HOLD — a finger
-// down keeps running, and the LIFT is the brake the appendage gauntlet is
-// timed around. pointerup/pointercancel (either one ends a press) route to
-// the escape WITH the pointerId: the lift releases only ITS OWN pad, so the
-// right thumb tapping JUMP mid-run cannot drop the left thumb's RUN finger
-// (the two-thumb phone pattern); a finger that slid off its pad still cannot
-// leave a phantom run pinned.
-if (canvas.addEventListener) {
-  for (const type of ['pointerup', 'pointercancel']) {
-    canvas.addEventListener(type, (ev) => {
-      if (state.mode === 'escape') ESCAPE.pointerUp(ev.pointerId);
-    });
-  }
-}
-
 // ---------- Portal-entry cinematic (WAVE-8/A) ----------
 // Plays once when the wave's FINAL boss dies: gameplay freezes, CINE.render
 // runs per frame until isDone, then the run proceeds into the EXISTING
@@ -11958,9 +13159,9 @@ function startPortalCine() {
   // touching this screen.
   overlay.style.display = 'none';
   state.mode = 'portal-cine';
-  // NIGHT MODE: no one is watching the movie — hand straight to the end
+  // Unattended: no one is watching the movie — hand straight to the end
   // handler (the same call isDone would make).
-  if (state.nightRun) endPortalCine();
+  if (state.unattended) endPortalCine();
 }
 function endPortalCine() {
   if (state.mode !== 'portal-cine') return;
@@ -11969,11 +13170,8 @@ function endPortalCine() {
   // run's ending — it is a bounded encounter, and every wave AFTER it resumes
   // the ordinary ladder (intermission -> CONTINUE) up to the 30:00 limit.
   if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
-  // V1 THE ESCAPE SEQUENCE (owner trigger decision 2026-09-15): the escape
-  // hangs off PORTAL ENTRY — beating the wave-1 boss and walking into the
-  // portal starts the side-scroller INSTEAD of the wave-2 intermission. It
-  // ends SOFT (complete/caught/fell/skip) back into openIntermission, so the
-  // ordinary ladder resumes unchanged.
+  // THE ESCAPE hangs off portal entry: after the wave-1 boss the escape
+  // cinematic plays before the wave-2 intermission, and pays its gold.
   if (state.wave.num === 1) { startEscape(); return; }
   openIntermission();
 }
@@ -11991,9 +13189,9 @@ let deathCineT0 = 0;
 function startDeathCine() {
   deathCineT0 = performance.now();
   state.mode = 'death-cine';
-  // NIGHT MODE: skip the movie — straight to the composed payoff card (the
-  // auto-RETRY is armed beside the compose in die()).
-  if (state.nightRun) endDeathCine();
+  // Unattended: skip the movie — straight to the composed payoff card (the
+  // next run is armed beside the compose in die()).
+  if (state.unattended) endDeathCine();
 }
 function endDeathCine() {
   if (state.mode !== 'death-cine') return;
@@ -12010,70 +13208,81 @@ function endDeathCine() {
   overlay.style.display = 'flex';
 }
 
-// ---------- V1: THE ESCAPE SEQUENCE (src/escape/) ----------------------------
-// The mode's whole engine lives in its own directory; main.js only starts it,
-// routes input to it while it is live, and takes the (always-soft) hand-back.
+// ---------- THE ESCAPE (src/escape_cine.js) ----------------------------------
+// A short cinematic after the wave-1 boss: the hero runs for the portal with
+// the horde and the boss behind him. It always pays the escape's gold, once,
+// when it ends or is skipped. main.js starts it, steps it and takes the
+// hand-back into the intermission.
+function escapeStill() {
+  try {
+    return !!(typeof window !== 'undefined' && window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch { return false; }
+}
 function startEscape(opts = {}) {
   state.portal = null;
-  // Same sequencing guarantee as startPortalCine: the escape owns the full
-  // screen — no overlay from an earlier mode may ride into it (backstop;
-  // the portal-cine entry already drops it).
+  // The cinematic owns the full screen: no overlay from an earlier mode may
+  // ride into it (the portal-cine entry already drops it).
   overlay.style.display = 'none';
   state.mode = 'escape';
   ESCAPE.begin({
-    // The corridor seed is the run's identity, not a sim input; anything
-    // deterministic per run will do (never Math.random inside the sim).
-    seed: (Date.now() & 0x7fffffff) || 1,
     profile,
-    // AUTO pilots ride the template controller (bands, clamps, boss steering);
-    // a MANUAL pilot plays the escape by hand — same seam as the overhead
-    // movement-authority predicate. VK9P4: `getAuto` is read LIVE every frame
-    // (the pilot pref is the ONE source of truth — a flip mid-run changes who
-    // drives on the next frame, no restart, no lost progress), and
-    // `onToggleMode` hands the escape's MODE button/key back into main's own
-    // swapPilotMode (persisted pref + toast — no second pilot anywhere).
-    auto: !pilotMovesYou(),
-    getAuto: () => !pilotMovesYou(),
-    onToggleMode: () => togglePilotMode(),
+    // The cast: this run's stage, pilot, the enemy types it met and the boss
+    // of the wave just cleared. The seed is the run's world seed, so a run
+    // always plays the same chase.
+    scene: {
+      seed: (state.groundSeed | 0) || 1,
+      stage: state.stage,
+      character: state.character && state.character.id,
+      met: Object.keys(state.wave.met || {}),
+      bossId: pickBossForWave(state.wave.num)[0].id,
+    },
+    reduced: escapeStill(),
+    // A run started by auto-continue banks its escape at the same cut as its gold.
+    cutPct: (state.autoStarted && !state.devNightRun) ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0,
+    onCue: (id, arg) => audio.playEscapeCue(id, arg),
     onEnd: opts.test ? endEscapeTest : endEscape,
-    // The in-run settings TEST button: a play-test entry that PAYS NOTHING
-    // (the payout is repeatable currency — a paying test button would be a
-    // faucet) and returns to the paused settings screen, not the wave-2
-    // intermission the real portal entry hands off to.
+    // The in-run settings TEST card: a preview that pays nothing and returns
+    // to the paused settings screen.
     test: !!opts.test,
   });
-  // NIGHT MODE: the ONE sanctioned content skip (an unattended run cannot
-  // play a side-scroller). Skipping without the paid writ forgoes the payout
-  // — the escape's own rule, unchanged.
-  if (state.nightRun && !opts.test) ESCAPE.skip();
+  // Nobody is watching an unattended run: straight to the hand-back, paid.
+  if (state.unattended && !opts.test) ESCAPE.finishNow();
+}
+// A key or a tap during the cinematic: skips it once its guard time has
+// passed. The guard on the next screen keeps the same press off its cards.
+function escapePress() {
+  if (tut.hints.active) return false;   // the first-time hint holds the movie
+  if (!ESCAPE.press()) return false;
+  uiGuard.arm();
+  return true;
 }
 // The test entry's hand-back: the run is still live underneath — reopen the
-// paused settings screen the button came from (BACK resumes the run through
-// the normal closeSettings path, so chrome re-registers by name).
+// paused settings screen the card came from.
 function endEscapeTest() {
   state.mode = state.settingsReturn || 'playing';
   overlay.style.display = 'none';
   openSettings();
 }
 function endEscape(r) {
-  // The ladder resumes exactly where the portal would have taken it: wave 1
-  // cleared, CONTINUE into wave 2. The lead line carries the escape's story
-  // (and its payout, when it paid one) onto the intermission screen.
-  const lead = r.result === 'complete'
-    ? `ESCAPED: +${r.payout} gold banked`
-    : r.result === 'skip'
-      ? (r.paidSkipUsed ? `ESCAPE SKIPPED: +${r.payout} gold banked (Escape Writ)`
-        : `ESCAPE SKIPPED: ${r.forgone} gold passed up`)
-      : r.result === 'caught'
-        ? 'ESCAPE FAILED: the horde caught you. No gold, the run goes on'
-        : 'ESCAPE FAILED: you fell. No gold, the run goes on';
+  // An unattended or hidden run's escape gold joins the away summary.
+  if (r.payout > 0 && (state.unattended || bgHidden)) {
+    if (!away.base) away.base = awayBase();
+    away.gold += r.payout;
+  }
+  if (r.payout > 0) persistProfile();
+  // The ladder resumes where the portal would have taken it: wave 1 cleared,
+  // CONTINUE into wave 2. The lead line carries the escape's gold.
+  const lead = r.payout > 0
+    ? `ESCAPED: +${r.payout} gold banked` + (r.writ ? ' (Escape Writ)' : '')
+    : 'ESCAPED';
   openIntermission({ lead });
 }
 
 // ---------- FINALE / MAW MILESTONE (final_boss.js) ---------------------------
 // The milestone beat: the field is swept clean (no spawns, no portal, no
 // intermission/choices) and the MAW comes in ALONE. Every hit it lands is an
-// exact third of maxHp — defenses, heat, items and buffs are all blind to it —
+// exact third of maxHp — defenses, wrath, items and buffs are all blind to it —
 // so the encounter is a pure dodge-and-burn skill check.
 //
 // RUN-STRUCTURE changes (all in main.js; final_boss.js is untouched):
@@ -12088,12 +13297,30 @@ function endEscape(r) {
 //   * Damage is written to boss.hp directly (weapons.js already writes there
 //     for its chip bodies), so the bar the HUD shows IS the real pool.
 function startFinale() {
+  // A mimic still alive pays after the clears below (its chest would go with them).
+  const mimics = state.enemies.filter(e => e.mimic && e.hp > 0 && !e.worldDone);
   state.enemies.length = 0;
   state.enemyShots.length = 0;
   state.chests.length = 0;
   state.arches.length = 0;
-  state.shrines = [];    // S1: the world-seeded set closes at the end
-  state.shrine = null;   // WAVE-11: no shrines past the end
+  for (const e of mimics) { e.worldDone = true; payMimic(e); }
+  // An altar chest or a statue reward still owed pays now; no curse outlives its statue.
+  siteBossPayout(state.player.x, state.player.y);
+  state.siteCurse = null;
+  endBossRule(false);    // the maw brings no rule
+  state.sitesTally = sitesUsed(state.sites, state.sitesBefore);   // M5b: what the run used, kept for the sim
+  state.sites = [];      // M5b: the sites close at the maw (none after it)
+  // The rest of the world closes with them: the vault, the lever, the key and
+  // its carrier, the yard's chest and the unfound secrets. What no longer
+  // works is not drawn, prompted or carried (world_art.js reads poi.closed);
+  // the yard's walls and the opened niches stay.
+  if (state.poi) Object.assign(state.poi, { closed: true, carrier: null, keyDrop: null, hasKey: false, gateFx: 0 });
+  closeQuests(state.quests, { worldClosed: true, time: state.time, wave: state.wave.num | 0 });
+  state.secrets = (state.secrets || []).filter(s => s.state === 'spent');
+  state.pilotGoal = null; // ...and so does any site goal (it was held stale through the maw)
+  state.shrines = [];
+  state.shrine = null;
+  state.waypoint = null;
   state.archBuffs.length = 0;
   state.shieldAbsorbs = 0;
   state.portal = null;
@@ -12222,7 +13449,7 @@ function updateFinale(dt) {
   }
 
   // Barrage projectiles: the FIRST touch of a volleyId costs an exact third
-  // of maxHp DIRECTLY (no defenses, no heat, no damageTaken mults); the rest
+  // of maxHp DIRECTLY (no defenses, no wrath, no damageTaken mults); the rest
   // of the same volley pass through harmlessly. NOTE (G8 step 4): the maw's
   // mercy-rule hits are the ONE player-HP path deliberately NOT routed through
   // perks.damageTaken — "no damageTaken mults" is the documented balance
@@ -12392,7 +13619,7 @@ function mawWithdrew() {
 // items the run's own rules refuse (an over-cap potion, an IGNOREd equip)
 // honestly stay on the floor at the player's feet.
 //
-// WALL-CLOCK slot (the bannerHold/tickNight rule), NOT inside update(): the
+// WALL-CLOCK slot (the bannerHold/tickAutoContinue rule), NOT inside update(): the
 // sweep collects XP, and XP levels fire openDraft() — which parks the run in
 // 'draft' mode and FREEZES update() mid-sweep (a sweep frozen at 0.25s of 0.45
 // never printed its total; the freeze was the bug). Ticking here on realDt
@@ -12450,13 +13677,19 @@ function tickMagnetSweep(sweepDt) {
 state.mode = 'intro';
 let last = performance.now();
 let lastIntroPhase = null;
+// One rendered frame. The clock `last` is shared with the background ticker
+// (bgTick), so whichever of the two runs consumes the elapsed time once.
 function frame(now) {
-  // WAVE-26: the REAL frame delta is measured once, at the top, for EVERY
-  // mode — the earned-moment dilation decays on wall-clock time and must not
-  // freeze while an overlay/cinematic mode early-returns. `dt` for the
-  // simulation is this real delta times the earned-moment time scale.
   const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
+  runFrame(now, realDt, true);
+  requestAnimationFrame(frame);
+}
+// One logical frame of `realDt` wall seconds: the wall-clock timers, the
+// movies, the sim substeps and (when `draw`) the picture. `dt` for the
+// simulation is realDt times the earned-moment time scale. With draw false
+// (a hidden tab) nothing is painted and the movies end at once.
+function runFrame(now, realDt, draw) {
   // SLICE 8: sim-clock pacing for sim-gating UI holds at dev speed >1. The
   // draft auto-pick timeout, the token-banner hold and the dilation window
   // are UX pacing in wall-seconds at 1x; at Nx they decay N× faster in wall
@@ -12532,9 +13765,10 @@ function frame(now) {
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
-  // NIGHT MODE: the intermission auto-CONTINUE + the end-card auto-RETRY,
+  // Auto-continue: the intermission CONTINUE and the end card's next run,
   // same wall-clock slot (mode-gated no-ops in every other mode).
-  tickNight(realDt);
+  tickAutoContinue(realDt);
+  awayFrame(realDt);
   // SLICE 7: the 1 Hz dev sampler rides the same wall-clock slot (a single
   // gate branch when off; devFrameTick no-ops outside playing/finale).
   if (DEV_GATE) devFrameTick(now);
@@ -12555,25 +13789,25 @@ function frame(now) {
   tutFrame(realDt, now);
   if (state.mode === 'intro') {
     const t = now - introT0;
+    if (!draw) return;   // the title movie waits for someone to watch it
     INTRO.render(renderer.ctx, t);
     // WAVE-8/B: fire the intro stinger on each phase transition (rising
     // drone at OVERTAKE, slam at the TITLE stamp, sweep on FADE).
     const iph = INTRO.phaseAt(t);
     if (iph !== lastIntroPhase) { lastIntroPhase = iph; audio.playIntroCue(iph); }
     if (INTRO.isDone(t)) endIntro();
-    requestAnimationFrame(frame);
     return;
   }
   if (state.mode === 'portal-cine') {
     // WAVE-8/A: gameplay is frozen (update() only runs in 'playing'); the
     // movie owns the canvas until isDone, then the intermission takes over.
     renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
+    if (!draw) { endPortalCine(); return; }
     const t = now - cineT0;
     CINE.render(renderer.ctx, t);
     const cph = CINE.phaseAt(t);
     if (cph !== lastCinePhase) { lastCinePhase = cph; audio.playPortalCue(cph); }
     if (CINE.isDone(t)) endPortalCine();
-    requestAnimationFrame(frame);
     return;
   }
   if (state.mode === 'death-cine') {
@@ -12587,23 +13821,19 @@ function frame(now) {
     // the seam reads as if the button were still up (a test flake whenever
     // the pilot dies inside a hide-window). Clear it: nothing is live here.
     renderer.fsButton = null;
+    if (!draw) { endDeathCine(); return; }
     const t = now - deathCineT0;
     DCINE.render(renderer.ctx, t, state.deathBy ? state.deathBy.cause : 'unknown');
     if (DCINE.isDone(t)) endDeathCine();
-    requestAnimationFrame(frame);
     return;
   }
-  // V1: the escape owns the canvas like the movies do — the overhead world
-  // render, the HUD and the touch pads all stand down for the change of pace
-  // (chromeOn already excludes every mode but playing/finale). realDt, NOT
-  // the earned-moment dt: the escape keeps a steady clock by design.
+  // The escape cinematic owns the canvas like the other movies, on real
+  // time. A hidden tab ends it at once (it pays in full); a first-time hint
+  // holds its clock until it is answered.
   if (state.mode === 'escape') {
     renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
-    // HELP MODE (VK9P4): the pause is the player's own invitation — same
-    // freeze the playing branch grants, so reading the reference mid-escape
-    // never costs wall-clock distance (the horde is the timer).
-    ESCAPE.frame(renderer.ctx, (state.helpMode || tut.hints.active) ? 0 : realDt);
-    requestAnimationFrame(frame);
+    if (!draw) { ESCAPE.finishNow(); return; }
+    ESCAPE.frame(renderer.ctx, tut.hints.active ? 0 : realDt);
     return;
   }
   // `dt` (real * earned-moment time scale) was computed at the top of frame().
@@ -12621,6 +13851,8 @@ function frame(now) {
     // it) — same freeze, and leaving resumes the clock without a trace.
     if (!coachActive() && state.bannerHold <= 0 && !state.helpMode && !tutPausesSim()) devSimSteps(dt);
   } else if (state.mode === 'finale') devSimSteps(dt);
+  if (!draw) return;
+  state.questsHidden = tutGuidedLive();   // the tracker waits for the handover
   renderer.render(state, state.cam);
   drawHud();
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
@@ -12633,9 +13865,97 @@ function frame(now) {
   // immediately while state.bestiaryView is null.
   renderer.drawBestiary(renderer.ctx, state);
   updateTouchHud();
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---------- Background play ----------
+// requestAnimationFrame stops in a hidden tab, so while the tab is hidden a
+// timer drives the same logical frames without drawing. A Worker posts the
+// ticks (main-thread timers are throttled to about one a second when hidden);
+// setInterval is the fallback. The timer only exists while the tab is hidden
+// and bgRuns() says something can run (a MANUAL run stays paused: nobody is
+// there to steer).
+const BG_FRAME_S = 1 / 60;
+let bgTimer = null;      // { stop() } while the ticker runs
+let bgCarry = 0;         // fraction of a frame not yet stepped
+let bgSaveT = 0;         // seconds of run since the last background autosave
+const bgStats = { ticks: 0, frames: 0, droppedS: 0 };
+function bgTick(now) {
+  if (!bgHidden) return 0;
+  bgStats.ticks++;
+  let elapsed = Math.max(0, (now - last) / 1000);
+  last = now;
+  if (!bgRuns()) { bgStopTimer(); return 0; }   // paused: the time is not owed later
+  if (elapsed > C.BACKGROUND.MAX_CATCHUP_S) {
+    bgStats.droppedS += elapsed - C.BACKGROUND.MAX_CATCHUP_S;
+    elapsed = C.BACKGROUND.MAX_CATCHUP_S;
+  }
+  bgCarry += elapsed / BG_FRAME_S;
+  const n = Math.floor(bgCarry);
+  bgCarry -= n;
+  // One tick may spend BUDGET_MS stepping frames. Past that the rest are
+  // dropped, not owed: a machine that cannot keep up plays slower than real
+  // time instead of working without a pause.
+  const t0 = performance.now();
+  let ran = 0;
+  while (ran < n) {
+    runFrame(now - (n - 1 - ran) * BG_FRAME_S * 1000, BG_FRAME_S, false);
+    ran++;
+    if (ran < n && performance.now() - t0 >= C.BACKGROUND.BUDGET_MS) {
+      bgStats.droppedS += (n - ran) * BG_FRAME_S;
+      bgCarry = 0;
+      break;
+    }
+  }
+  bgStats.frames += ran;
+  // Only a run in play is saved from here: the title and the end card have
+  // nothing new to write.
+  if (runLive()) {
+    bgSaveT += elapsed;
+    if (bgSaveT >= C.BACKGROUND.SAVE_S) { bgSaveT = 0; autosave('background'); }
+  }
+  return ran;
+}
+function bgStartTimer() {
+  if (bgTimer) return;
+  const tick = () => bgTick(performance.now());
+  try {
+    if (typeof Worker === 'function' && typeof Blob === 'function' && typeof URL !== 'undefined' && URL.createObjectURL) {
+      const url = URL.createObjectURL(new Blob(
+        ['setInterval(function(){postMessage(0)},' + C.BACKGROUND.TICK_MS + ')'], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      w.onmessage = tick;
+      bgTimer = { kind: 'worker', stop() { w.terminate(); URL.revokeObjectURL(url); } };
+      return;
+    }
+  } catch { /* no Worker here (file:// or a strict CSP): the interval below */ }
+  const id = setInterval(tick, C.BACKGROUND.TICK_MS);
+  if (id && typeof id.unref === 'function') id.unref();   // never holds a headless process open
+  bgTimer = { kind: 'interval', stop() { clearInterval(id); } };
+}
+function bgStopTimer() {
+  if (bgTimer) { bgTimer.stop(); bgTimer = null; }
+}
+// Start or stop the ticker to match bgRuns(). Called when the tab hides and
+// whenever something bgRuns() reads is changed while it is hidden.
+function bgSyncTimer() {
+  if (!bgHidden) return;   // a visible tab has no ticker
+  if (!bgRuns()) { bgStopTimer(); return; }
+  if (bgTimer) return;
+  last = performance.now();   // the time spent paused is not owed
+  bgCarry = 0;
+  bgStartTimer();
+}
+// The tab was hidden or shown (onVisibilityChange calls this).
+function bgSetHidden(hidden) {
+  if (hidden === bgHidden) return;
+  bgHidden = hidden;
+  last = performance.now();   // neither side inherits the other's gap
+  bgCarry = 0;
+  bgSaveT = 0;
+  audio.setHiddenMute(hidden);
+  if (hidden) bgSyncTimer(); else bgStopTimer();
+}
 
 // Headless test seam (smoke.mjs): live state access so integration probes
 // can force conditions (Lv8 + item + token) through the REAL loop. Never
@@ -12643,6 +13963,8 @@ requestAnimationFrame(frame);
 // the FIELD REPORT open/close entry points; WAVE-13 adds the pilot-mode
 // toggle + the shared held-direction input object (the d-pad seam).
 export const __TEST = {
+  // M5b landscape: the high-ground damage rule.
+  heroHitMult,
   state, get controller() { return controller; }, startRun,
   getProfile: () => profile,
   // Fusion seams: the live offers, the one fuse action, the link pass and the shelf.
@@ -12728,6 +14050,7 @@ export const __TEST = {
   // scraping for the card.
   whatsNew: {
     due: whatsNewDueFor,
+    missed: missedEarlierRelease,
     release: WHATS_NEW,
     accept: acceptWhatsNew,
     arm: armVeteranTutorial,
@@ -12825,23 +14148,15 @@ export const __TEST = {
       return rep;
     },
   },
-  // ---- G11 challenge-mode seam: the pending (session-scoped) selection, the
-  // cycle the title card drives, and the live run's stamp + rule ceilings, so
-  // a headless test can prove the seams through the REAL startRun without a
-  // DOM click. `select` is test-only: the title card is the player's one
-  // control surface.
-  challenge: {
-    get pending() { return pendingChallenge; },
-    cycle: cyclePendingChallenge,
-    select: (id) => { pendingChallenge = id; },
-    get live() { return state.challenge; },
+  // The run's ceilings (weapon slots, carried potions).
+  caps: {
     get weaponCap() { return state.weaponCap; },
     get potionCap() { return state.potionCap; },
   },
   // ---- G20a stage seam: the pending (session-scoped) selection, the cycle
   // the title card drives (through the REAL lock predicate on the LIVE
-  // profile), the lock predicate itself, and the live run's stamp — same
-  // shape as the challenge seam. `select` is test-only.
+  // profile), the lock predicate itself, and the live run's stamp.
+  // `select` is test-only.
   stages: {
     get pending() { return pendingStage; },
     cycle: cyclePendingStage,
@@ -12893,15 +14208,40 @@ export const __TEST = {
     screen: tutScreen,
     TUT, LEDGER, GUIDED_STEPS, HINTS,
   },
-  setPilotMode: swapPilotMode, pilotInput,
+  setPilotMode: swapPilotMode, pilotInput, togglePilotMode,
+  // M5b sites / map / explore seams: the same functions the frame and the
+  // canvas tap route through.
+  sites: {
+    seed: seedWorldSites, tick: tickWorldSites, event: handleSiteEvent,
+    bossPayout: siteBossPayout, canSummon: altarCanSummon, handsOn: siteHandsOn,
+    setWaypoint, mapTap: mapTapAt, pickCard: (u) => activateDraftCard(u),
+    curseEnemy,
+  },
+  // M5b slice 3 seams: vault, yard, secrets and quests (the frame's own functions).
+  world: {
+    seed: seedWorldPoi, tick: tickWorldPoi, quest: worldQuest, onDeath: worldOnDeath,
+    markCarrier: markKeyCarrier, wakeMimic, settle: settleWorld, endLine: endQuestLine,
+    peekBoard: peekQuestBoard, swapBoard: swapBoardQuest,
+    get board() { return pendingQuestBoard; }, set board(v) { pendingQuestBoard = v; },
+  },
+  // Travel: where the portal leads, and the move itself.
+  travel: {
+    target: travelTarget, to: travelTo, intermission: openIntermission,
+    get order() { return state.travelOrder; }, set order(v) { state.travelOrder = v; },
+  },
+  // Boss rules: this wave's rule, and the calls the game makes around a boss.
+  bossRules: {
+    setWave: setWaveBossRule, arm: armBossRule, end: endBossRule, spawnBoss,
+    nextLine: nextBossRuleLine,
+    get order() { return state.bossRuleOrder; }, set order(v) { state.bossRuleOrder = v; },
+  },
   // M3 seams: the menus, the wheel hand-back and the title reveal's timer.
   menus: {
     showTitle, showPreRun, showSettings, showAdvanced: showAdvancedSettings, showShop,
-    showLoadout, showHowToPlay,
-    stageLine: stagePlainLine, challengeLine: challengePlainLine, loadoutSummary,
+    showLoadout, showHowToPlay, showSecrets, showQuestBoard, showProgress,
+    stageLine: stagePlainLine, loadoutSummary,
     bestNextPurchase: () => bestNextPurchase(profile),
     get pendingStage() { return pendingStage; },
-    get pendingChallenge() { return pendingChallenge; },
   },
   wheel: {
     handbackS: WHEEL_HANDBACK_S,
@@ -12928,32 +14268,39 @@ export const __TEST = {
     applyStance: applyStancePref,
     KEY_PILOT, KEY_STANCE,
   },
-  // ---- NIGHT MODE seam: the session toggle + two-press arm, the run stamp,
-  // the pure draft policy, the live auto-advance timers, and the return
-  // summary — so every night behaviour is drivable headlessly through the
-  // real paths (never copies).
-  night: {
-    get on() { return state.night; },
-    get run() { return state.nightRun; },
-    // STEP 3: the dev-night run stamp (nightmare rules, no banking cut).
+  // ---- Auto-continue and away seam: the setting, the run stamps, the draft
+  // policy, the live timers, the watchdog and the away summary.
+  auto: {
+    get on() { return state.autoContinue; },
+    set on(v) { setAutoContinue(v); },
+    get run() { return state.unattended; },
+    get started() { return state.autoStarted; },
     get devRun() { return state.devNightRun; },
-    get armed() { return nightArmed; },
-    press: toggleNight,
-    get summary() { return state.nightSummary; },
-    pickIndex: nightDraftPickIndex,
-    get continueLeft() { return nightContinueLeft; },
-    get restartLeft() { return nightRestartLeft; },
-    get evolveLeft() { return nightEvolveLeft; },
+    press: toggleAutoContinue,
+    restart: autoRestart,
+    get runsInRow() { return autoRunsInRow; },
+    set runsInRow(v) { autoRunsInRow = v; },
+    input: noteInput,
+    set clock(fn) { wallNow = fn; lastInputMs = fn(); },
+    away,
+    get pending() { return awayPending; },
+    get card() { return awayCard; },
+    collect: collectAway,
+    pickIndex: autoDraftPickIndex,
+    get continueLeft() { return autoContinueLeft; },
+    get restartLeft() { return autoRestartLeft; },
+    get evolveLeft() { return autoEvolveLeft; },
     // Watchdog seam: the live stall clock (null mode = not stalled) and a
     // direct probe for the unstick action, so tests drive the REAL backstop.
-    get stall() { return { mode: nightStall.mode, t: nightStall.t }; },
-    unstick: nightUnstick,
+    get stall() { return { mode: autoStall.mode, t: autoStall.t }; },
+    unstick: autoUnstick,
     get constants() {
-      return { CONTINUE_S: C.AUTOPILOT.NIGHT_CONTINUE_S,
-        RESTART_S: C.AUTOPILOT.NIGHT_RESTART_S,
-        EVOLVE_S: C.AUTOPILOT.NIGHT_EVOLVE_S,
-        STALL_S: C.AUTOPILOT.NIGHT_STALL_S,
-        PENALTY_PCT: RUN_GOLD.NIGHT_PENALTY_PCT };
+      return { RUN_LIMIT: C.AUTOPILOT.AUTO_RUN_LIMIT, AWAY_S: C.AUTOPILOT.AWAY_S,
+        CONTINUE_S: C.AUTOPILOT.AUTO_CONTINUE_S,
+        RESTART_S: C.AUTOPILOT.AUTO_RESTART_S,
+        EVOLVE_S: C.AUTOPILOT.AUTO_EVOLVE_S,
+        STALL_S: C.AUTOPILOT.AUTO_STALL_S,
+        PENALTY_PCT: RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT };
     },
   },
   // ---- E1 RUN PURSE seam: the live wallet plus the REAL credit / spend /
@@ -13142,6 +14489,16 @@ export const __TEST = {
   // harness's document stub registers listeners as no-ops, so a test drives the
   // handler directly after setting document.visibilityState.
   onVisibilityChange,
+  // Background play: the ticker (driven with a fake clock), its counters and the setting.
+  bg: {
+    tick: (now) => bgTick(now),
+    get hidden() { return bgHidden; },
+    get runs() { return bgRuns(); },
+    get on() { return bgPlay; },
+    set on(v) { setBgPlay(v); },
+    get timer() { return bgTimer ? bgTimer.kind : null; },
+    stats: bgStats,
+  },
   // ---- G30 AUTO DRAFT AUTO-PICK seam: the countdown's observable state, an
   // rng injection point (a pinned-index test drives the SAME draw the live
   // loop makes), and the suspend state. Never read by the browser page.
@@ -13255,22 +14612,18 @@ export const __TEST = {
     recovery: () => readRecovery(),
     downloadRecovery: (env, opts) => downloadRecovery(undefined, env || globalThis, opts),
   },
-  // ---- V1 escape seam: start the mode through the REAL hand-over (the same
-  // startEscape the portal-cine hook calls), read its live sim (clock, mode,
-  // pressure), drive the skip, and step it headlessly — so tests and the
-  // browser verifier prove the integrated path, never a copy of it.
+  // ---- escape cinematic seam: start it through the real hand-over (the
+  // startEscape the portal-cine hook calls), read its clock and scene, skip
+  // it, and pin its clock for a capture.
   escape: {
     start: startEscape,
-    begin: ESCAPE.begin,      // seeded hand-over (the no-stats trace test drives this)
     get mode() { return state.mode; },
-    get sim() { return ESCAPE.current(); },
+    get cine() { return ESCAPE.current(); },
+    press: escapePress,
     skip: ESCAPE.skip,
-    frame: ESCAPE.frame,
-    onKey: ESCAPE.onKey,
-    pointer: ESCAPE.pointer,
-    pointerUp: ESCAPE.pointerUp,
-    explain: ESCAPE.explain,
-    isAuto: ESCAPE.isAuto,
+    finishNow: ESCAPE.finishNow,
+    hold: ESCAPE.hold,
+    duration: ESCAPE.DURATION,
     get payload() { return ESCAPE.payload(); },
   },
   // ---- G15 death-movie seam: the same start/end the real die()/skip path

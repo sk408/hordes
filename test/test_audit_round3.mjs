@@ -138,15 +138,15 @@ S.check('F10: the normal path is byte-identical ({gold,award,purseBanked,winBonu
   const before = prof.gold;
   const r = T.purse.settle({ winBonus: 1200 });
   const wantAward = Math.round(RUN_GOLD.AWARD * 2) + RUN_GOLD.FIRST_CLEAR;
-  // goldPool (2026-09-17 challenge +200% additive, night -50%): the ADDITIVE
+  // goldPool (2026-09-17 challenge +200% additive, auto-continue -50%): the ADDITIVE
   // breakdown now rides the settled shape — an identity pool on this standard
   // stakes-free fixture; every pre-F10 number is unchanged.
   // breakdown (M3): the end screen's four parts, summing to gold.
   assert.deepEqual(r, { gold: wantAward + 42 + 1200, award: wantAward,
     purseBanked: 42, winBonus: 1200, firstClear: true,
     breakdown: { award: Math.round(RUN_GOLD.AWARD * 2), survival: 0, kills: 42,
-      bonuses: RUN_GOLD.FIRST_CLEAR + 1200 },
-    goldPool: { base: 1, night: 0, challenge: 0, heat: 0, total: 1 } },
+      bonuses: RUN_GOLD.FIRST_CLEAR + 1200, quests: 0 },
+    goldPool: { base: 1, auto: 0, total: 1 } },
     'the settled shape is exactly the pre-F10 numbers');
   assert.equal(prof.gold, before + r.gold, 'bank delta matches (effects ran on the normal path)');
   assert.equal(prof.runPurse, 0, 'the purse zeroed on the normal path');

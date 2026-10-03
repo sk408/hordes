@@ -5,9 +5,10 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { CONFIG as CFG } from '../src/config.js';
-import { heatOf, manualPushes, heatMultipliers, addHeat } from '../src/heat.js';
+import { wrathOf, wrathMultipliers, addWrath } from '../src/wrath.js';
 import { groundTheme, Renderer } from '../src/render.js';
 import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
+import { stageOf } from '../src/stages.js';
 import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
 import { makeGem } from '../src/entities.js';   // WAVE-13 draft-pause probe
@@ -106,6 +107,7 @@ globalThis.location = { reload: noop };
 // of the way (a stage-2 coachmark would pause the sim mid-smoke).
 const lsBack = new Map([
   ['hordes_zoom', '6'],
+  ['hordes_pilot2', 'AUTO_ALL'],   // smoke measures the plain AUTO pilot
   ...Object.values(TOUR_KEYS).map(k => [k, '1']),
 ]);
 globalThis.localStorage = {
@@ -846,13 +848,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   }
   assert(evolved, 'the EVOLVE overlay must open (Lv8 + partner card)');
   assert(volley.evolutionId === 'NOVA_SHOT', 'volley must be NOVA_SHOT after evolving');
-  // WAVE-9: a weapon EVOLUTION charges +2 heat, and the HUD carries the line.
-  assert(heatOf(st) === 2, 'an evolution must charge +2 heat (got ' + heatOf(st) + ')');
-  assert(manualPushes(st) === 0, 'built-in heat must NOT touch the manual gold dial');
+  // WAVE-9: a weapon EVOLUTION charges +2 wrath, and the HUD carries the line.
+  assert(wrathOf(st) === 2, 'an evolution must charge +2 wrath (got ' + wrathOf(st) + ')');
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(/Nova Shot/.test(hudText()), 'HUD must show the evolved weapon name');
-  assert(/HEAT 2 /.test(hudText()), 'HUD must carry the HEAT line near WEATHER');
-  console.log('evolution probe: VOLLEY -> Nova Shot (+2 heat, HUD updated)');
+  assert(/WRATH 2 /.test(hudText()), 'HUD must carry the WRATH line near WEATHER');
+  console.log('evolution probe: VOLLEY -> Nova Shot (+2 wrath, HUD updated)');
 }
 
 // (3) RUN-SCOPE RESET: a fresh run must drop every WAVE-7 run-scoped field.
@@ -864,12 +865,12 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.pendingChoiceOffers === null, 'run reset must clear pendingChoiceOffers');
   const volley = st.weapons.find(w => w.type === 'VOLLEY');
   assert(volley && !volley.evolutionId, 'fresh run VOLLEY must be un-evolved');
-  assert(heatOf(st) === 0 && manualPushes(st) === 0, 'run reset must clear the heat ledger');
+  assert(wrathOf(st) === 0, 'run reset must clear the wrath ledger');
   // WAVE-11 run-scoped companions reset too.
   assert(st.lastFlashAt === null, 'run reset must clear lastFlashAt');
   assert(st.rampage.streak === 0 && st.rampage.best === 0, 'run reset must clear the rampage meter');
   assert(st.shrineRng && st.shrine !== undefined, 'run must seed the shrine rng stream');
-  console.log('run-scope reset: choices/evolutions/heat/rampage/flash/shrine all cleared');
+  console.log('run-scope reset: choices/evolutions/wrath/rampage/flash/shrine all cleared');
 }
 
 // ---- WAVE-8/A portal-entry cinematic ----
@@ -910,12 +911,9 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   }
 
   // (a) SKIP PATH: movie renders frames, a keypress jumps to the end of the
-  // cine. RETARGETED 2026-09-15 (V1 escape): this probe is on WAVE 1, and the
-  // wave-1 cine end now hands the run to THE ESCAPE (owner directive
-  // 2026-09-15: the escape hangs off PORTAL ENTRY after the wave-1 boss).
-  // Same strength, new invariant: the key-skip lands in the escape, and the
-  // escape's OWN skip key (ESC, the mode's first-class affordance) hands the
-  // run back to the intermission SOFT.
+  // cine. This probe is on WAVE 1, where the cine's end hands the run to THE
+  // ESCAPE cinematic: the key-skip lands in the escape, and a key after the
+  // escape's guard time skips that too, into the intermission.
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   forceBossDeath();
@@ -931,8 +929,10 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(cineFrames >= 31, `the movie must render before the skip (${cineFrames} frames)`);
   assert(escapeSeen && st.mode === 'escape',
     'wave-1 skip must hand the run to the escape (mode=' + st.mode + ')');
-  keyHandler({ key: 'Escape' });   // the escape's own skip (first-class, first frame)
-  pumpUntil(() => st.mode === 'intermission', 60 * 20, () => {});
+  keyHandler({ key: 'Escape' });   // inside the escape's guard time: ignored
+  assert(st.mode === 'escape', 'a press on the escape\'s first frame must not skip it (mode=' + st.mode + ')');
+  pumpUntil(() => false, 30, () => {});
+  keyHandler({ key: 'Escape' });   // any key skips the escape after its guard
   assert(st.mode === 'intermission', 'escape skip must hand back to the intermission (mode=' + st.mode + ')');
   assert(st.player.hp > 0, 'the escape skip must never kill (hp=' + st.player.hp + ')');
   assert(elements['ov-title'].textContent.includes('CLEARED'),
@@ -942,20 +942,20 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
   keyHandler({ key: 'c' });   // CONTINUE into the next wave
   assert(st.mode === 'playing', 'CONTINUE should resume play (mode=' + st.mode + ')');
-  // WAVE-9B/2: the wave announce toast names the new AREA. WAVE-25 (agent F):
+  // The wave announce toast names the stage the run is on. WAVE-25 (agent F):
   // this used to assert the ANNOUNCE was the HUD's newest feed line AND that
   // the wave was 2 — any other toast queued in the same frame (a blessing
   // pickup, a level-up) pushes the announce out of the 3-line HUD feed, and the
   // wave number drifts if the run got further before this probe. Both flaked
   // ~1/40 runs. Read the wave number from state and assert on the announcement
-  // in the toast stream instead (the theme still comes from CONFIG).
+  // in the toast stream instead.
   const waveNum = st.wave.num;
   now += dtMs; const cbT = rafQueue.shift(); cbT && cbT(now);
-  const theme = CFG.GROUND.THEMES[(waveNum - 1) % CFG.GROUND.THEMES.length].name;
+  const place = stageOf(st.stage).name;
   const announce = (st.toasts || []).find(t => (t.msg || '').startsWith('WAVE ' + waveNum + ' - '));
-  assert(announce && announce.msg === 'WAVE ' + waveNum + ' - ' + theme,
-    'the wave toast must announce the theme: ' + (announce ? announce.msg : 'none') +
-    ' (wave ' + waveNum + ', expected theme ' + theme + ')');
+  assert(announce && announce.msg === 'WAVE ' + waveNum + ' - ' + place,
+    'the wave toast must name the stage: ' + (announce ? announce.msg : 'none') +
+    ' (wave ' + waveNum + ', expected ' + place + ')');
   forceBossDeath();
   cineFrames = 0;
   const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
@@ -965,36 +965,14 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     `the 3.8s movie should run to isDone (${cineFrames} frames)`);
   console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
 
-  // (c) WAVE-9 RAISE THE STAKES: manual push +1 heat, +30% gold per push,
-  // card re-renders with the NEXT gold mult and hides at HEAT_CAP.
-  {
-    const findStakes = () => elements['ov-cards'].children
-      .find(c => (c.innerHTML || '').includes('RAISE THE STAKES'));
-    const stakes = findStakes();
-    assert(stakes, 'the intermission must offer the RAISE THE STAKES card');
-    assert((stakes.innerHTML || '').includes('gold x1.3'),
-      'the card must sell the NEXT gold mult (x1.3): ' + stakes.innerHTML);
-    const heatBefore = heatOf(st);
-    stakes.click();
-    assert(heatOf(st) === heatBefore + 1 && manualPushes(st) === 1,
-      'a manual push must add +1 heat and manual=1');
-    const again = findStakes();
-    assert(again && (again.innerHTML || '').includes('gold x1.6'),
-      'the re-rendered card must pitch the NEXT push (x1.6)');
-    // Clamp: keep clicking the card (each click re-renders) — it must
-    // disappear once the ledger sits at HEAT_CAP.
-    let clicks = 0;
-    for (let i = 0; i < 25 && findStakes(); i++) { findStakes().click(); clicks++; }
-    assert(!findStakes(), 'RAISE THE STAKES must be hidden at HEAT_CAP');
-    assert(heatOf(st) === 20, `heat must clamp at HEAT_CAP (got ${heatOf(st)})`);
-    assert(manualPushes(st) === 1 + clicks,
-      `every card click is one manual push (manual ${manualPushes(st)}, clicks ${1 + clicks})`);
-    console.log('heat dial: +1 heat per push, gold x1.3 -> x1.6 pitched, card clamped at cap');
-  }
+  // (c) The wrath dial is gone: no RAISE THE STAKES card on the intermission.
+  assert(!elements['ov-cards'].children.some(c => (c.innerHTML || '').includes('RAISE THE STAKES')),
+    'the intermission must not offer a stakes card');
+  console.log('intermission: no stakes card');
 }
 
-// ---- WAVE-9 heat + WAVE-11 best-case equip: EXCHANGE is free (in-place ----
-// REPLACE of the weakest), IGNORE leaves the drop, EMPTY-slot equip +1 heat.
+// ---- WAVE-9 wrath + WAVE-11 best-case equip: EXCHANGE is free (in-place ----
+// REPLACE of the weakest), IGNORE leaves the drop, EMPTY-slot equip +1 wrath.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
@@ -1010,34 +988,34 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.items.length === 4, 'the exchange keeps the belt at 4/4');
   assert(st.items[0] === newcomer && !st.items.some(it => it.id === 'old0'),
     'a strictly better drop REPLACES the weakest slot IN PLACE (slot 0)');
-  assert(heatOf(st) === 0, 'an item EXCHANGE at 4/4 must add NO heat (got ' + heatOf(st) + ')');
-  // IGNORE: an equal-score drop is left on the ground (no churn, no heat).
+  assert(wrathOf(st) === 0, 'an item EXCHANGE at 4/4 must add NO wrath (got ' + wrathOf(st) + ')');
+  // IGNORE: an equal-score drop is left on the ground (no churn, no wrath).
   const junk = { id: 'junk', name: 'Junk', rarity: 'COMMON', affixes: [] };
   st.itemDrops.push({ x: st.player.x, y: st.player.y, item: junk, age: 0 });
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.itemDrops.some(d => d.item === junk),
     'an equal-score drop must stay on the ground (IGNORE)');
   assert(!st.items.some(it => it.id === 'junk'), 'the ignored drop must NOT equip');
-  assert(heatOf(st) === 0, 'an ignored drop adds no heat');
+  assert(wrathOf(st) === 0, 'an ignored drop adds no wrath');
   // Free the last slot and drop another: an empty-slot equip charges +1.
   st.items.pop();
   const second = { id: 'second', name: 'Second', rarity: 'RARE', affixes: [] };
   st.itemDrops.push({ x: st.player.x, y: st.player.y, item: second, age: 0 });
   for (let i = 0; i < 10; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(st.items[st.items.length - 1] === second, 'the free-slot drop must equip');
-  assert(heatOf(st) === 1, 'an equip into an EMPTY slot must charge +1 heat (got ' + heatOf(st) + ')');
-  console.log('heat charges: in-place REPLACE +0, IGNORE stays on the ground, empty-slot equip +1 — verified');
+  assert(wrathOf(st) === 1, 'an equip into an EMPTY slot must charge +1 wrath (got ' + wrathOf(st) + ')');
+  console.log('wrath charges: in-place REPLACE +0, IGNORE stays on the ground, empty-slot equip +1 — verified');
 }
 
-// ---- WAVE-9 heat: enemy HP visibly scales at spawn -------------------------
+// ---- WAVE-9 wrath: enemy HP visibly scales at spawn -------------------------
 // E2/G10 TIER FIX (pilot tick 48): "variants are palette-only" was WRONG. Every
 // spawn rolls a rarity (main.js:772-773, `rollRarity()`), RARE 2% = hpMult 1.6 and
 // MYTHIC 0.3% = hpMult 2.5, FROM t=0. That made this probe measure the tier roll
-// instead of heat: a RARE hot draw reads x3.52 (2.2 x 1.6) and fails the x2.2 bar,
+// instead of wrath: a RARE hot draw reads x3.52 (2.2 x 1.6) and fails the x2.2 bar,
 // which is the ~2%-per-suite-run flake tick 47 saw here and mis-attributed to load.
 // The bar is NOT weakened - want stays x2.2 and the same typeId is still compared -
 // both windows now require a COMMON body (a tiered draw stamps `enemy.rarity`;
-// COMMON is an unstamped no-op), so the only delta between the windows is heat,
+// COMMON is an unstamped no-op), so the only delta between the windows is wrath,
 // which is what the check says it measures.
 {
   mainMod.__TEST.startRun();
@@ -1048,7 +1026,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
     return st.enemies.find(e => e.typeId === typeId) || null;
   };
-  // Baseline: a COMMON body of whatever type spawns first at heat 0.
+  // Baseline: a COMMON body of whatever type spawns first at wrath 0.
   let first = null;
   for (let i = 0; i < 40 && !first; i++) {
     st.enemies.length = 0; st.itemDrops.length = 0; st.spawnTimer = 0;
@@ -1058,58 +1036,49 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(first, 'a COMMON body must spawn within the probe window');
   const T = first.typeId;
   const base = first.maxHp;
-  // Force heat to 10 (+120% foe hp), re-spawn until the same COMMON type shows up.
-  for (let i = 0; i < 10; i++) addHeat(st, 'MANUAL_PUSH');
-  assert(heatOf(st) === 10, 'forced heat 10 for the spawn probe');
+  // Force wrath to 10 (+120% foe hp), re-spawn until the same COMMON type shows up.
+  addWrath(st, 'NEW_ITEM_SLOT', 10);
+  assert(wrathOf(st) === 10, 'forced wrath 10 for the spawn probe');
   let hot = null;
   for (let i = 0; i < 40 && !hot; i++) {
     const e = spawnOnce(T);
     if (e && !e.rarity) hot = e;
   }
   assert(hot, 'a COMMON ' + T + ' must respawn within the probe window');
-  const want = heatMultipliers(10, 10).hp / heatMultipliers(0, 0).hp;   // 2.2
+  const want = wrathMultipliers(10).hp / wrathMultipliers(0).hp;   // 2.2
   assert(Math.abs(hot.maxHp / base - want) < 0.01,
-    `heat 10 must scale foe hp x${want} (base ${base}, hot ${hot.maxHp})`);
-  console.log(`heat scaling: ${T} hp ${base} -> ${hot.maxHp} (x${(hot.maxHp / base).toFixed(2)} at heat 10)`);
+    `wrath 10 must scale foe hp x${want} (base ${base}, hot ${hot.maxHp})`);
+  console.log(`wrath scaling: ${T} hp ${base} -> ${hot.maxHp} (x${(hot.maxHp / base).toFixed(2)} at wrath 10)`);
 }
 
 // ---- WAVE-11 probes (through the real loop) ----
-// (a) SHRINE PURCHASE: proximity + gold buys one blessing; the RUN PURSE is
-// debited via the real update() shrine block. E1 (owner directive 2026-09-14):
-// the debit moved from the bank to the purse — this probe now pins BOTH halves
-// (purse debited exactly the cost, the bank untouched).
+// (a) CHARGE SHRINE (M5b): standing in the ring charges it; on completion a
+// SHRINE draft of up to 3 blessings opens; the pick applies one blessing.
+// It costs nothing: neither the purse nor the bank moves.
 {
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  mainMod.__TEST.getProfile().gold = 1000;    // the BANK: must not move
-  mainMod.__TEST.getProfile().runPurse = 100; // the run's own wallet
+  mainMod.__TEST.getProfile().gold = 1000;
+  mainMod.__TEST.getProfile().runPurse = 100;
   const choicesBefore = st.takenChoices.length;
-  // S1 retarget: the proximity loop iterates the world-seeded SET
-  // (state.shrines); the probe replaces it with one altar under the player
-  // (was: st.shrine = {...} on the single-slot handoff).
-  const probeShrine = { x: st.player.x, y: st.player.y, used: false };
+  const probeShrine = { id: 900, kind: 'shrine', x: st.player.x, y: st.player.y, state: 'unused', charge: 0, handsOn: false };
+  st.sites = [probeShrine];
   st.shrines = [probeShrine];
-  for (let i = 0; i < 30 && !probeShrine.used; i++) {
+  for (let i = 0; i < 60 * 8 && probeShrine.state !== 'spent'; i++) {
+    st.player.x = probeShrine.x; st.player.y = probeShrine.y;
+    st.enemies.length = 0;
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
   }
-  assert(probeShrine.used === true, 'the shrine must complete the purchase (used flag)');
-  // WAVE-25 (agent F): pin the purse against the cost the shrine ACTUALLY
-  // advertised instead of a hardcoded 60 — shrineBlessing's cost is a function
-  // of the wave and of how many blessings this run already took
-  // (shrines.js shrineCost), so the literal expectation flaked (~1/60) when the
-  // probe ran with a taken blessing. The cost CURVE itself is pinned by
-  // test_shrines.mjs; this probe only owes the purse-debit wiring.
-  const shrineCost = probeShrine.blessing && probeShrine.blessing.cost;
-  assert(typeof shrineCost === 'number' && shrineCost > 0,
-    'the shrine must advertise a cost for the blessing it sells');
-  assert(mainMod.__TEST.getProfile().runPurse === 100 - shrineCost,
-    `the shrine must debit its advertised cost from the purse (got ${mainMod.__TEST.getProfile().runPurse}, want ${100 - shrineCost})`);
-  assert(mainMod.__TEST.getProfile().gold === 1000,
-    'and the BANK must be untouched by an in-run purchase (E1)');
-  assert(st.takenChoices.length === choicesBefore + 1,
-    'the shrine blessing must be recorded repeat-free in takenChoices');
+  assert(probeShrine.state === 'spent', 'the shrine must finish charging (spent)');
+  assert(st.mode === 'draft' && st.draftKind === 'shrine' && st.shrineOffer && st.shrineOffer.length >= 1,
+    'a charged shrine opens the SHRINE draft');
+  mainMod.__TEST.sites.pickCard(st.shrineOffer[0]);
+  assert(st.mode === 'playing', 'the pick closes the draft');
+  assert(mainMod.__TEST.getProfile().runPurse >= 100, 'the charge shrine costs no gold');
+  assert(mainMod.__TEST.getProfile().gold === 1000, 'and the BANK is untouched');
+  assert(st.takenChoices.length === choicesBefore + 1, 'the blessing is recorded in takenChoices');
   assert(st.player.choices, 'the shrine blessing must applyChoice onto the run player');
-  console.log('shrine: proximity purchase — 60 gold, blessing applied, altar marked used');
+  console.log('shrine: charged in the ring, SHRINE draft, blessing applied');
 }
 
 // (b) ELITE MODS: strict unlock gating (pure roll) + the death split + the
@@ -1362,8 +1331,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   T.startRun();
   quietField();
   pump(1);   // render the fresh run — the HUD string is built per frame
-  assert(st.pilotMode === 'AUTO_ALL', 'no stored pref: runs must start AUTO_ALL (got ' + st.pilotMode + ')');
-  assert(/Pilot:AUTO_ALL/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
+  assert(st.pilotMode === 'EXPLORE', 'no stored pref: runs start on the default EXPLORE pilot (got ' + st.pilotMode + ')');
+  assert(/Pilot:EXPLORE/.test(hudText()), 'HUD carries the pilot readout: ' + hudText());
   T.pilotPrefs.storage.setItem(T.pilotPrefs.KEY_PILOT, 'MANUAL');
   T.startRun();
   quietField();
@@ -1385,17 +1354,21 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(/Pilot:AUTO_MOVE/.test(hudText()), 'HUD readout names AUTO MOVE');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
     'focus/stance decorations survive the AUTO ALL -> AUTO MOVE swap');
-  keyHandler({ key: 'o' });                               // AUTO MOVE -> MANUAL
+  keyHandler({ key: 'o' });                               // AUTO MOVE -> EXPLORE
+  pump(2);
+  assert(st.pilotMode === 'EXPLORE', 'O cycles AUTO -> EXPLORE (got ' + st.pilotMode + ')');
+  keyHandler({ key: 'o' });                               // EXPLORE -> MANUAL
   pump(2);
   assert(st.pilotMode === 'MANUAL', 'O must toggle into MANUAL');
   assert(/Pilot:MANUAL/.test(hudText()), 'HUD readout flips to MANUAL');
   assert(T.controller.focus === 'TOUGHEST' && T.controller.stance === 'GREEDY',
-    'focus/stance decorations survive the AUTO MOVE -> MANUAL swap');
+    'focus/stance decorations survive the EXPLORE -> MANUAL swap');
   keyHandler({ key: 'o' });                               // MANUAL -> the auto flavour
   assert(st.pilotMode === 'AUTO_MOVE', 'O from MANUAL returns to the chosen auto flavour');
   T.wheel.setAutoFlavor('AUTO_ALL');
   keyHandler({ key: 'o' });
-  assert(st.pilotMode === 'MANUAL', 'O toggles AUTO -> MANUAL in one press');
+  keyHandler({ key: 'o' });
+  assert(st.pilotMode === 'MANUAL', 'O cycles AUTO -> EXPLORE -> MANUAL in two presses');
 
   // Held ArrowRight crosses a real distance; keyup STOPS the pilot dead.
   // Pinned building field + the spawn footing: seed 1 leaves the lanes right
@@ -1416,7 +1389,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   st.gems.push(makeGem(st.player.x + 2, st.player.y, 1));
   pump(5);
   assert(st.gems.length === 0 && st.player.xp >= 1,
-    'gems must vacuum onto a MANUAL pilot (rampage/heat/XP untouched)');
+    'gems must vacuum onto a MANUAL pilot (rampage/wrath/XP untouched)');
 
   // Diagonal: w+d keys normalize to equal displacement on both axes.
   T.startRun();

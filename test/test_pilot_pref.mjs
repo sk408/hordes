@@ -127,7 +127,7 @@ const cardsOf = () => [...elements['ov-cards'].children];
 const cardNamed = (n) => cardsOf().find(c => (c._html || '').includes('>' + n + '<'));
 
 // Boot with NOTHING stored: the default, applied silently.
-ok('boot with nothing stored: AUTO_ALL, no boot toast', st.pilotMode === 'AUTO_ALL' && !isManualBound() && st.toasts.length === 0, [st.pilotMode, st.toasts.length]);
+ok('boot with nothing stored: EXPLORE (the default), no boot toast', st.pilotMode === 'EXPLORE' && !isManualBound() && st.toasts.length === 0, [st.pilotMode, st.toasts.length]);
 
 // Skip intro -> title -> run (the test_auto_draft boot path).
 keyHandler({ key: 'x' });
@@ -139,8 +139,8 @@ ok('a first run is live', st.mode === 'playing', st.mode);
 // ---- 1. nothing stored -> AUTO_ALL ------------------------------------------
 ls.delete(prefs.KEY_PILOT);
 T.startRun();
-ok('nothing stored: the run starts AUTO_ALL on the auto controller',
-  st.pilotMode === 'AUTO_ALL' && !isManualBound(), st.pilotMode);
+ok('nothing stored: the run starts on EXPLORE on the auto controller',
+  st.pilotMode === 'EXPLORE' && !isManualBound(), st.pilotMode);
 
 // ---- 2. stored MANUAL -> MANUAL + the manual controller ----------------------
 ls.set(prefs.KEY_PILOT, 'MANUAL');

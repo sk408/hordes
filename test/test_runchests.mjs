@@ -347,6 +347,9 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
   prof.achievements.totals.runs = 99;      // the 100 crossing
   prof.milestoneChest = 50;                // 50 already claimed
   const goldBefore = prof.gold;
+  // M5b: a site near the spawn would raise its first-time hint, which holds
+  // the sim; this leg measures the walk-in, so hints are off for it.
+  if (T.tut && T.tut.setHintsEnabled) T.tut.setHintsEnabled(false);
   T.startRun();
   if (!st.runChest) throw new Error('fixture: the 100 chest is up');
   // Let the REAL run play: the autopilot beelines for the chest and the

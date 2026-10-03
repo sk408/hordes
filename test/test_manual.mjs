@@ -169,7 +169,7 @@ check('page 1 is HOW A RUN WORKS: waves, intermission, the choices, both endings
   T.manual.goto(1);
   const html = cards().map(c => c.innerHTML || '').join('\n');
   for (const tok of ['120 seconds', 'BOSS', 'PORTAL', 'BETWEEN WAVES', 'LEVEL UP', 'SHRINES',
-    'ARCHES', 'CHESTS', 'MODIFIERS', 'ONE WEAPON', 'GOLD', 'RAISE THE STAKES', 'Lv 8', '30:00', 'THE MAW']) {
+    'ARCHES', 'CHESTS', 'GOLD', '30:00', 'THE MAW']) {
     assert.ok(html.includes(tok), 'HOW A RUN WORKS lost ' + tok);
   }
 });
@@ -179,7 +179,8 @@ check('page 2 is OPTIONS AND MODES: one line each + LIVE callouts read at open t
   T.manual.goto(2);
   const html = cards().map(c => c.innerHTML || '').join('\n');
   for (const tok of ['PILOT', 'AUTO', 'MANUAL', 'FOCUS', 'NEAREST', 'TOUGHEST', 'SWARM',
-    'RANGED', 'STANCE', 'SAFE', 'BALANCED', 'GREEDY']) {
+    'RANGED', 'STANCE', 'SAFE', 'BALANCED', 'GREEDY',
+    'HAND', 'JOKERS', 'EVOLVE', 'Lv 8', 'FUSE', 'CAMP', 'AUTO-CONTINUE', 'KEEP PLAYING']) {
     assert.ok(html.includes(tok), 'OPTIONS AND MODES lost ' + tok);
   }
   // LIVE callouts: the player's CURRENT levers are named from state at open

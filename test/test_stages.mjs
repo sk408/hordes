@@ -1,6 +1,6 @@
 // HORDES — G20a: player-selected stages (slice 1: system + 3 stages).
 //
-// The contract under test: stages are a PURE declarative catalog (challenges.js
+// The contract under test: stages are a PURE declarative catalog (the same
 // contract), the spawn seam reads the LIVE stage with the SHIPPED wave gates,
 // stage 0 is an EXACT parity with the shipped chooser, locked stages cannot be
 // selected until their EXISTING achievement is earned, mods apply at the real
@@ -468,7 +468,7 @@ s.check('(e) mods at the REAL seam: SNOWFIELD foes are exactly 1.5x hp / 0.9x sp
 });
 
 s.check('(e) dmgMult rides the threat curve: the same ladder number, scaled by the stage', () => {
-  // The seam multiplies ladderDmg * heat * stage dmgMult, and contact damage
+  // The seam multiplies ladderDmg * wrath * stage dmgMult, and contact damage
   // applies that product SUB-LINEARLY (C.SURVIVAL.CONTACT_POW, the measured
   // anti-one-shot curve) — so the honest assertion is the ratio through the
   // curve, computed with the same pure function the game uses.
@@ -490,7 +490,7 @@ s.check('(e) dmgMult rides the threat curve: the same ladder number, scaled by t
   };
   const d0 = plant(DEFAULT_STAGE_ID);
   const dAsh = plant('ASHEN_WASTE');
-  // Expected: wave 0 + heat 0 -> ladder factor 1 on stage 0, 1 * 1.2 on ASHEN.
+  // Expected: wave 0 + wrath 0 -> ladder factor 1 on stage 0, 1 * 1.2 on ASHEN.
   const expect0 = contactHitDamage(C.SURVIVAL.BASE_CONTACT, 1, 1, 1, st.player.stats.maxHp);
   const expectAsh = contactHitDamage(C.SURVIVAL.BASE_CONTACT, 1.2, 1, 1, st.player.stats.maxHp);
   if (Math.abs(d0 - expect0) > 1e-9) throw new Error('stage-0 hit ' + d0 + ' != curve ' + expect0);
@@ -627,6 +627,21 @@ s.check('startRun stamps the stage; a new run never inherits the last run\'s sta
   T.startRun();
   h.pump(2);
   if (st.stage !== DEFAULT_STAGE_ID) throw new Error('default stamp is ' + st.stage);
+});
+
+s.check('the wave toast names the stage the hero stands in, never the wave theme ladder', () => {
+  st.mode = 'menu';
+  h.elements['ov-cards'].innerHTML = '';
+  for (const id of ['BONE_DESERT', 'VERDANT_HOLLOW']) {
+    T.stages.select(id);
+    T.startRun();
+    h.pump(2);
+    st.toasts.length = 0;
+    T.run.nextWave();
+    const want = 'WAVE ' + st.wave.num + ' - ' + stageOf(id).name;
+    const got = st.toasts.map(t => t.msg).find(m => m.startsWith('WAVE '));
+    if (got !== want) throw new Error(id + ': wave toast is ' + got + ', want ' + want);
+  }
 });
 
 s.check('the run-end summary names a non-default stage; the default renders byte-identically', () => {

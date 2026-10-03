@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { boot } from '../test/_harness.mjs';
 import { declareSimBudget, markArm } from '../test/_sim_budget.mjs';
 import { mulberry32 } from '../src/weather.js';
-import { seedShrines } from '../src/shrines.js';
+// M5b: the pay shrine is gone; the run's sites seed in startRun.
 import { buyUpgrade, devFreeBuild } from '../src/meta.js';
 import {
   requireAutoplay, estimateRunIncome, smartNextBuy, impulsiveNextBuy,
@@ -67,7 +67,7 @@ function seedStreams(T, seed) {
   st.choiceSeed = seed | 0;
   st.choiceRng = mulberry32(seed);
   st.shrineRng = mulberry32(seed ^ 0x5eed);
-  st.shrines = seedShrines(st.shrineRng);
+  // (sites are placed by startRun from the world seed)
   st.groundSeed = seed | 0;
   // Non-night auto-picks draw here (dev-night uses the deterministic
   // tier-first rule instead); seeded so the arm is replayable.

@@ -1,5 +1,5 @@
 // HORDES — art contact sheets in real Chrome (art-pass review tool).
-//   HORDES_CHROME=<chrome.exe> node tools/art_sheet.mjs <tag> [outDir] [sets]
+//   HORDES_CHROME=<chrome.exe> [HORDES_SHEET_BAKED=1] node tools/art_sheet.mjs <tag> [outDir] [sets]
 // Writes <outDir>/<tag>-sheet-<set>.png for each set (actors, bosses, menu,
 // world, buildings, icons): every sprite at 1x on a ground swatch plus all
 // frames enlarged. One headless Chrome, one page per set.
@@ -13,6 +13,8 @@ const outDir = path.resolve(process.argv[3] || path.join(ROOT, 'docs/art/art-pas
 const sets = (process.argv[4] || 'actors,bosses,menu,world,buildings,icons').split(',');
 const ONLY = process.argv[5] || '';
 const ZOOM = +(process.argv[6] || 0);
+// HORDES_SHEET_BAKED=1: buildings and props drawn as the game bakes them.
+const BAKED = process.env.HORDES_SHEET_BAKED === '1';
 fs.mkdirSync(outDir, { recursive: true });
 process.env.HORDES_SHOT_DIR = outDir;
 const { withPage } = await import('./browser.mjs');
@@ -22,7 +24,7 @@ for (const set of sets) {
   await nap(500);
   const scale = ZOOM || (set === 'bosses' ? 3 : set === 'icons' || set === 'world' ? 3 : 4);
   const W = set === 'buildings' ? 1400 : 1000;
-  const url = `tools/art_sheet.html?set=${set}&scale=${scale}&w=${W}` + (ONLY ? '&only=' + ONLY : '');
+  const url = `tools/art_sheet.html?set=${set}&scale=${scale}&w=${W}` + (ONLY ? '&only=' + ONLY : '') + (BAKED ? '&baked=1' : '');
   let H = 600;
   await withPage({ w: W, h: 400, dpr: 1, mobile: false, url }, async (page) => {
     await page.waitFor('window.__done !== undefined', 15000);

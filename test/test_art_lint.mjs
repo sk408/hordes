@@ -16,8 +16,6 @@ import {
   PORTAL_ART, PORTAL_BOX, portalFrame,
   APEX_ART, APEX_IDS, APEX_FALLBACK_ID, apexArt,
 } from '../src/art/index.js';
-// V1b: the escape sprites live with their mode (src/escape/), not in src/art/.
-import { PURSUER_ART, PURSUER_LUNGE_ART, FLIER_ART } from '../src/escape/sprites.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -39,12 +37,6 @@ const LIMITS = {
   SHOP_ICON: { w: [12, 16], h: [12, 16] },
   PORTAL: { w: [48, 48], h: [48, 48] },
   TITLE_LAYER: { w: [1, 480], h: [1, 300] },
-  // V1b (2026-09-15): the escape mode's enemy sprites, in src/escape/sprites.js
-  // (the house rule keeps the slice in src/escape/, so they are NOT enumerated
-  // in ART_ASSETS — the format checks below still apply in full). Both sides of
-  // this table were widened TOGETHER (format.js ART_LIMITS), so the keys-match
-  // assertion above is a tightening, not a relaxation.
-  ESCAPE: { w: [8, 32], h: [8, 32] },
 };
 const SECTION_LIMIT = {
   trophies: 'TROPHY', portraits: 'PORTRAIT', shop: 'SHOP_ICON',
@@ -72,7 +64,7 @@ const EXPECTED_SHOP = [
   'dmg', 'hp', 'focus', 'lodestone', 'potions', 'fleetfoot', 'xp',
   'hairtrigger', 'crit', 'critdmg', 'greed', 'alchemy', 'regen', 'well', 'thrifty', 'briarmail',
   'reroll', 'skip', 'banish',
-  'split', 'hollowpoint', 'bloodpact', 'artifact', 'luck', 'slots', 'jokerslots', 'zapchain',
+  'split', 'hollowpoint', 'bloodpact', 'luck', 'slots', 'jokerslots', 'zapchain',
   'fanfire', 'deepread', 'laststand', 'escapeskip', 'arcade',
   'weapon_volley', 'weapon_orbit', 'weapon_boomerang', 'weapon_zap',
   'weapon_nova_pulse', 'weapon_scythe', 'weapon_seeker', 'weapon_mine',
@@ -234,7 +226,8 @@ console.log('CHARACTER PORTRAITS (' + CHARACTER_IDS.length + '):');
   for (const id of CHARACTER_IDS) {
     const a = CHARACTER_PORTRAITS[id];
     ok(!!a, 'CHARACTER_PORTRAITS.' + id + ' exists');
-    verifyAsset(a, 'portrait', 'PORTRAIT', { maxKeys: 6, minFrames: 2, minCoverage: 0.20, requireInk: true });
+    // A bust carries the field pilot's colours and gear, so it gets the same key budget (1-9).
+    verifyAsset(a, 'portrait', 'PORTRAIT', { maxKeys: 9, minFrames: 2, minCoverage: 0.20, requireInk: true });
     ok(a.frames.length >= 2, 'portrait/' + id + ': ships an idle pair');
     const a0 = a.frames[0].flat().join(',');
     const a1 = a.frames[1].flat().join(',');
@@ -333,22 +326,6 @@ console.log('TITLE CARD:');
   drawnLayers.push(...rects);
 }
 
-console.log('ESCAPE SPRITES (V1b, src/escape/sprites.js):');
-{
-  // Same format contract as every src/art/ family — the grids, palettes and
-  // frame rules are verified with the SAME helpers, only the enumeration
-  // differs (ART_ASSETS does not list them; the escape render imports them
-  // directly, per the brief's self-containment house rule).
-  for (const a of [PURSUER_ART, PURSUER_LUNGE_ART, FLIER_ART]) {
-    verifyAsset(a, 'escape', 'ESCAPE', { minFrames: 2, minCoverage: 0.15, requireInk: true });
-    const f0 = a.frames[0].flat().join(',');
-    const f1 = a.frames[1].flat().join(',');
-    ok(f0 !== f1, 'escape/' + a.id + ': the two frames actually differ (not a still)');
-  }
-  eq(PURSUER_ART.id, 'ESCAPE_PURSUER', 'the pursuer sprite id is stable');
-  eq(PURSUER_LUNGE_ART.id, 'ESCAPE_PURSUER_LUNGE', 'the V1d lunge-posture sprite id is stable');
-  eq(FLIER_ART.id, 'ESCAPE_FLIER', 'the flier sprite id is stable');
-}
 
 console.log('COVERAGE CROSS-CHECK (soft, meta.js):');
 {

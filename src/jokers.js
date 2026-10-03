@@ -86,6 +86,15 @@ const DEFS = [
     ...flag('jokerFlags', 'encore') },
   { id: 'travellight', name: 'Travel Light', desc: 'each empty weapon slot cools your skills 10% faster', from: 'new', art: 'skill_focus',
     ...flag('jokerFlags', 'travellight') },
+  // Boss rules (boss_rules.js): main.js reads the row when a boss arrives.
+  { id: 'rulebreaker', name: 'Rulebreaker', desc: 'boss rules do not bind you; you still win their rewards', from: 'new', art: 'rw_shatter',
+    ...flag('jokerFlags', 'rulebreaker') },
+  // The reward for finding all eight glyphs (secrets.js): it joins the offers
+  // once the set is complete (main.js sets state.glyphSet). Chests bite at
+  // SECRETS.MIMIC_FEAST_CHANCE while it is held.
+  { id: 'mimicfeast', name: 'Mimic Feast', desc: 'chests often bite; each mimic you kill pays a rare chest', from: 'new', art: 'gilded_palm',
+    offered: (state) => !!(state && state.glyphSet),
+    ...flag('jokerFlags', 'mimicfeast') },
 ];
 export const JOKERS = DEFS.reduce((m, d) => { m[d.id] = d; return m; }, {});
 export const JOKER_IDS = DEFS.map(d => d.id);

@@ -177,6 +177,7 @@ function arena(types, idle = []) {
   T.setPilotMode('MANUAL');
   st.enemies.length = 0; st.gems.length = 0; st.projectiles.length = 0; st.effects.length = 0;
   st.spawnTimer = 1e9; st.wave.endsAt = st.time + 1e9; st.wave.midAt = st.time + 1e9;
+  st.quests = [];   // M5b: a rolled 'fuse a weapon' quest would open a joker offer mid-check
   const p = st.player;
   p.stats.crit = 0; p.stats.damage = 10; p.stats.pierce = 0; p.stats.projectiles = 1;
   p.mana = p.stats.maxMana = 1e6;

@@ -212,6 +212,10 @@ export async function boot(opts = {}) {
   // gameplay test measures. The preseed above turned them off (TOUR_KEYS.hintsOff);
   // a test that is about them boots with { hints: true }.
   if (opts.hints) store.delete('hordes_hints_off');
+  // A fresh profile's pilot is EXPLORE; gameplay tests measure the plain AUTO
+  // pilot unless they ask otherwise ({ pilot: 'EXPLORE' }, or { pilot: null }
+  // for "nothing stored").
+  if (opts.pilot !== null && !store.has('hordes_pilot2')) store.set('hordes_pilot2', opts.pilot || 'AUTO_ALL');
 
   // opts.variant busts the ESM cache so ONE test file can boot the game twice
   // (e.g. a desktop arm and a touch-device arm) — each boot re-evaluates

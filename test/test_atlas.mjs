@@ -148,6 +148,10 @@ const freshRun = (safe = false) => {
   h.elements['ov-cards'].innerHTML = '';
   T.startRun();
   if (safe) {
+    // M5b: keep only the shrine sites (and their landmarks) so the fixtures
+    // below reason about three far-apart points, as before.
+    st.atlas.landmarks = st.atlas.landmarks.filter(lm => lm.kind === 'shrine');
+    st.sites = st.shrines.slice();
     // Shrine placement is rolled per run (choiceSeed), so "no landmark within
     // DISCOVER_RADIUS of the player" is LUCK unless the player is parked where
     // that is guaranteed — the lattice point farthest from every shrine. Must
@@ -172,18 +176,20 @@ const freshRun = (safe = false) => {
   return st.player;
 };
 
-s.check('R5: startRun registers EXACTLY S1s seeded shrines — one path, no re-roll', () => {
-  freshRun(true);
+s.check('R5 (M5b): startRun registers EXACTLY the placed sites — one path, no re-roll', () => {
+  freshRun(false);
   assert.ok(st.atlas, 'the atlas exists at run start');
   assert.equal(st.atlas.side, atlasGridSide(C.GROUND.RIM, CELL), 'units-derived grid over the real arena');
   assert.equal(st.mapOpen, false, 'C6: every run boots map-CLOSED');
-  assert.equal(st.atlas.landmarks.length, st.shrines.length, 'one landmark per S1 shrine');
-  for (let i = 0; i < st.shrines.length; i++) {
-    assert.equal(st.atlas.landmarks[i].kind, 'shrine');
-    assert.equal(st.atlas.landmarks[i].x, st.shrines[i].x, 'READS the seeded x (no re-roll)');
-    assert.equal(st.atlas.landmarks[i].y, st.shrines[i].y, 'READS the seeded y');
-    assert.equal(st.atlas.landmarks[i].discovered, false, 'starts undiscovered');
+  assert.equal(st.atlas.landmarks.length, st.sites.length, 'one landmark per site');
+  for (let i = 0; i < st.sites.length; i++) {
+    const lm = st.atlas.landmarks[i];
+    assert.equal(lm.kind, st.sites[i].kind);
+    assert.equal(lm.site, st.sites[i], 'the landmark carries its site');
+    assert.equal(lm.x, st.sites[i].x, 'READS the placed x (no re-roll)');
+    assert.equal(lm.y, st.sites[i].y, 'READS the placed y');
   }
+  assert.ok(st.shrines.length >= 1 && st.shrines.every(x => x.kind === 'shrine'), 'state.shrines is the shrine view');
 });
 
 s.check('R4 live: an undiscovered landmark is drawn NOWHERE; discovery paints it', () => {

@@ -417,12 +417,15 @@ S.check('the pre-run screen takes keyboard navigation', () => {
 });
 
 S.check('cycling a pre-run row keeps the cursor (the screen re-composes itself)', () => {
-  // The MODIFIER card re-renders the screen on every press, so this is the
-  // two-press retention case in its natural habitat.
+  // The STAGE card re-renders the screen on every press (with a second stage
+  // unlocked), so this is the two-press retention case in its natural habitat.
+  const earned = T.getProfile().achievements.earned;
+  const had = earned.FIRST_BOSS;
+  earned.FIRST_BOSS = earned.FIRST_BOSS || 1;   // unlocks ASHEN WASTE: the card can cycle
   title();
   cardWith('>PLAY<').click();
-  const idx = indexOfCard('>MODIFIER: ');
-  assert.ok(idx >= 0, 'there is a MODIFIER card');
+  const idx = indexOfCard('>STAGE: ');
+  assert.ok(idx >= 0, 'there is a STAGE card');
   while (T.menuFocus() !== idx) key('arrowdown');
   const before = cards()[idx].innerHTML;
   key('enter');
@@ -430,8 +433,9 @@ S.check('cycling a pre-run row keeps the cursor (the screen re-composes itself)'
   assert.notEqual(cards()[idx].innerHTML, before, 'the row re-composed (its label changed)');
   assert.equal(T.menuFocus(), idx, 'and the cursor STAYED on that row');
   assert.equal(selCount(), 1, 'visibly still selected');
-  while (T.menus.pendingChallenge !== 'STANDARD') key('enter');   // leave no state behind
+  while (T.menus.pendingStage !== 'VERDANT_HOLLOW') key('enter');   // leave no state behind
   assert.equal(T.menuFocus(), idx, 'still there after the later presses');
+  if (had === undefined) delete earned.FIRST_BOSS;
 });
 
 S.check('the PROGRESS screen takes keyboard navigation (same missing mode)', () => {

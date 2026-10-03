@@ -2,13 +2,13 @@
 //
 // Defect: applyContents()'s gamble punishment horde spawned through
 // entities.makeEnemy(), so those 6 enemies had no typeId / variant / w / h /
-// age, skipped the heat multiplier, and could never be flash-drop eligible
+// age, skipped the wrath multiplier, and could never be flash-drop eligible
 // (loot.isFlashEligibleKill requires a CHASER/SWARMER typeId). Every other
 // spawn path (main.js spawnWave) goes through enemy_types.makeTypedEnemy +
-// the CONFIG.ESCALATION re-scale + heat.
+// the CONFIG.ESCALATION re-scale + wrath.
 //
 // Fix: chests.js spawns the horde through the same typed construction (CHASER
-// chassis, CONFIG.ESCALATION hp/xp curves, heat hp multiplier) with NO extra
+// chassis, CONFIG.ESCALATION hp/xp curves, wrath hp multiplier) with NO extra
 // rng draws — the chest's documented 2-draw rng order is preserved.
 //
 // Run: node test/test_chests_horde_typed.mjs   (exit 0 = pass)
@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { CHESTS, tickChests } from '../src/chests.js';
 import { makePlayer, hpScale, xpScale } from '../src/entities.js';
 import { CONFIG as C } from '../src/config.js';
-import { heatOf, heatMultipliers } from '../src/heat.js';
+import { wrathOf, wrathMultipliers } from '../src/wrath.js';
 import { isFlashEligibleKill } from '../src/loot.js';
 
 let failed = 0;
@@ -44,7 +44,7 @@ function makeState(time = 120, heatTotal = 3) {
     chests: [],
     effects: [],
     time,
-    heat: { total: heatTotal, manual: 0, events: new Set() },
+    wrath: { total: heatTotal, events: new Set() },
   };
 }
 
@@ -62,7 +62,7 @@ console.log('GAMBLE LOSS -> typed horde:');
   ok(rng.draws() === 2, `the chest still draws exactly 2 rng values (got ${rng.draws()})`);
 
   const wave = Math.floor(T / 30);
-  const heatMult = heatMultipliers(heatOf(st)).hp;
+  const heatMult = wrathMultipliers(wrathOf(st)).hp;
   const expHp = C.ENEMY.BASE_HP * hpScale(wave) * heatMult;   // CHASER hpMult is 1
   const expXp = C.ENEMY.BASE_XP * xpScale(wave);
 
@@ -81,14 +81,14 @@ console.log('GAMBLE LOSS -> typed horde:');
   }
   ok(typed, 'every horde enemy is typed (typeId/variant/age)');
   ok(boxed, `every horde enemy carries a w/h box (${C.ENEMY.W}x${C.ENEMY.H})`);
-  ok(heatApplied, `heat multiplies the horde hp (x${heatMult} -> ${expHp})`);
+  ok(heatApplied, `wrath multiplies the horde hp (x${heatMult} -> ${expHp})`);
   ok(curveApplied, `CONFIG.ESCALATION xp curve applies (${expXp} xp)`);
   ok(flashEligible, 'horde kills are flash-drop eligible (CHASER trash tier)');
   ok(plain, 'the horde is plain trash — not elite, not boss');
   ok(onRing, 'the horde still rings the player at GAMBLE_HORDE_RADIUS');
 }
 
-console.log('BAREWORDS STATE (no heat ledger) does not crash:');
+console.log('BAREWORDS STATE (no wrath ledger) does not crash:');
 {
   const st = {
     player: makePlayer(), enemies: [], chests: [], effects: [], time: 30,
@@ -96,11 +96,11 @@ console.log('BAREWORDS STATE (no heat ledger) does not crash:');
   st.chests.push({ id: 4, x: st.player.x, y: st.player.y, age: 0 });
   const rng = countingRng([0.05, 0.7]);
   const events = tickChests(st, 0.016, rng);
-  const expHp = C.ENEMY.BASE_HP * hpScale(1);   // heat 0 -> neutral
+  const expHp = C.ENEMY.BASE_HP * hpScale(1);   // wrath 0 -> neutral
   ok(events.some(e => e.kind === 'gambleHorde') &&
      st.enemies.length === CHESTS.GAMBLE_HORDE_COUNT &&
      st.enemies.every(e => Math.abs(e.maxHp - expHp) < 1e-9),
-    'a state without a heat ledger spawns the typed horde at neutral heat');
+    'a state without a wrath ledger spawns the typed horde at neutral wrath');
   ok(st.enemies.every(e => e.typeId === 'CHASER'), 'typed chassis survives the bare state');
 }
 

@@ -297,146 +297,18 @@ const ensureSimLive = (tag) => {
 
 console.log('test_review_round1: item 1 ' + passed + ' checks');
 
-// ---- ITEM 2: SPECIAL RUNS SAY WHAT YOU GET --------------------------------------
-// Owner: "special (no potion, etc) runs don't clearly explain what you GET
-// from doing them." Every restricted option must state restriction + reward +
-// multiplier on the SELECTION surface itself, and the reward must be REAL
-// (the settle pays it) — copy the code cannot disagree with.
+// ---- ITEM 2: SPECIAL RUNS (removed) ----------------------------------------------
+// Owner (2026-09-17): "special (no potion, etc) runs don't clearly explain what
+// you GET from doing them." Those modifier runs were removed with the heat dial
+// in the world update (2026-10-03): boss rules took their place, and each rule
+// states its reward on the boss's banner. What is left to hold here: nothing of
+// the old systems is offered or paid.
 {
-  const { describeChallenge, challengeGoldBonusPct, CHALLENGES } = await import('../src/challenges.js');
-
-  // The phrasing surface: restriction AND reward in one line, for every
-  // non-standard mode; STANDARD (no restriction) promises nothing.
-  for (const c of CHALLENGES) {
-    const line = describeChallenge(c.id);
-    if (c.id === 'STANDARD') {
-      ok('2: STANDARD names itself without promising a reward', line.includes('STANDARD RUN') && !line.includes('REWARD'), line);
-    } else {
-      ok('2: ' + c.id + ' states the restriction', line.includes(c.name) && line.includes(c.blurb), line);
-      ok('2: ' + c.id + ' states its REWARD with the multiplier',
-        /REWARD: \+\d+% END-OF-RUN GOLD/.test(line), line);
-      ok('2: ' + c.id + "'s copy matches its actual bonus points",
-        line.includes('+' + challengeGoldBonusPct(c.id) + '%'), line);
-    }
-  }
-  ok('2: garbage ids pay and promise nothing (total-over-garbage holds)',
-    challengeGoldBonusPct('GARBAGE') === 0 && !describeChallenge('GARBAGE').includes('REWARD'));
-
-  // The settle math: the reward is paid, on the AWARD component.
-  const ovCards = globalThis.document.getElementById('ov-cards');
-  const killAndSettle = () => {
-    st.player.stats.goldMult = 1;                 // zero the persistent chain drift
-    st.player.stats.maxHp = 1; st.player.hp = 1;
-    // Disarm the pilot: a kill landing on the death frame would bump the
-    // rampage gold mult after the per-frame reset below and skew the award.
-    st.weapons.length = 0; st.projectiles.length = 0;
-    // BOUNDARY GUARD (the 21:43 red: 7200 frames, no death — a re-armed coach
-    // had frozen the sim). Clear anything modal at entry, then sweep EVERY
-    // frame of the wait: a level-up draft or a coach mounting mid-wait pauses
-    // the sim and the death never comes. All dismissals are the real paths.
-    sweepOverlays();
-    let ended = false;
-    for (let i = 0; i < 60 * 120 && !ended; i++) {
-      frame();
-      sweepOverlays();
-      st.rampage.best = 0; st.rampage.streak = 0; // rampage re-accrues on kills
-      ended = st.mode === 'death-cine' || st.mode === 'dead';
-    }
-    if (st.mode === 'death-cine') { keyHandler({ key: 'x', preventDefault() {} }); }
-    // ITEM 1 retarget side effect (ONBOARDING RETIREMENT 2026-09-18): the real
-    // REPLAY TOUR card clearTourFlags()s, so the KEPT death coach is re-armed
-    // and mounts on this death screen — an undismissed coach freezes the NEXT
-    // run's sim. Skip it through the same real Escape path as ITEM 1.
-    if (tourRoot()) docKey('Escape');
-    return st.runSettled;
-  };
-  T.getProfile().bestTime = 1e9;   // kill FIRST_CLEAR: isolate the award
-  // Baseline first: whatever the run's own gold chain pays at STANDARD (the
-  // session's earlier runs may have nudged persistent multipliers — the check
-  // is the RATIO, the only thing the challenge should change).
-  T.challenge.select('STANDARD');
-  T.startRun();
-  tick(1);
-  ensureSimLive('2: STANDARD run start');
-  let settled = killAndSettle();
-  const stdAward = settled && settled.award;
-  T.challenge.select('ONE_WEAPON');
-  T.startRun();
-  tick(1);
-  ensureSimLive('2: ONE_WEAPON run start');
-  settled = killAndSettle();
-  const oneAward = settled && settled.award;
-  ok('2: a ONE_WEAPON run settles the AWARD at exactly +200% over STANDARD (300% total)',
-    stdAward === 70 && oneAward === Math.round(70 * 3),
-    { std: stdAward, one: oneAward });
-  ok('2: the settled goldPool reads the additive parts (challenge +2.00, summed)',
-    settled && settled.goldPool && settled.goldPool.base === 1 &&
-    settled.goldPool.challenge === 2 && settled.goldPool.heat === 0 &&
-    settled.goldPool.total === 3, settled && settled.goldPool);
-
-  // ADDITIVE STACKING with a known HEAT level (owner formula: 100% base +
-  // challenge + heat, SUMMED — never multiplied). Heat at manual=2 pays
-  // +60% (0.30/manual push), so pool = 1 + 2 + 0.6 = 3.6 — a multiplicative
-  // misread would pay 1 x 3 x 1.6 = 4.8 instead.
-  T.startRun();
-  tick(1);
-  ensureSimLive('2: heat run start');
-  st.heat.manual = 2;
-  settled = killAndSettle();
-  ok('2: heat stacks ADDITIVELY — ONE_WEAPON + heat(manual 2) settles at x3.6',
-    settled && settled.award === 252 &&
-    Math.abs(settled.goldPool.heat - 0.6) < 1e-9 &&
-    Math.abs(settled.goldPool.total - 3.6) < 1e-9,
-    settled && settled.goldPool);
-  // The result screen states the multiplier: the end card's sub-panel carries
-  // the GOLD POOL clause while the settled run is still displayed.
-  tick(0.5);   // let the dead-screen overlay repaint
-  const endSub = globalThis.document.getElementById('ov-sub');
-  const endHtml = (endSub && endSub._html) || '';
-  ok('2: the result screen shows the GOLD POOL multiplier clause',
-    /run award x3\.60/.test(endHtml) && endHtml.includes('modifier +200%') &&
-    endHtml.includes('raised stakes +60%'), endHtml.slice(0, 400));
-
-  // The SELECTION surface shows the reward (the title CHALLENGE card renders
-  // describeChallenge verbatim — sub text is the card's desc line).
-  T.challenge.select('NO_POTIONS');
-  keyHandler({ key: 't', preventDefault() {} });   // TITLE from the dead screen
-  // BOUNDARY GUARD: the death coach mounts a frame LATE under load — an
-  // immediate one-shot check misses it and it swallows every TITLE key (the
-  // old loop then spun forever). Let it mount, sweep via the real Escape path,
-  // and keep pressing T through a BOUNDED loop: a genuinely stuck transition
-  // must fail the assert below, never hang the suite.
-  tick(0.3);
-  for (let i = 0; i < 60 && st.mode !== 'title' && st.mode !== 'menu'; i++) {
-    sweepOverlays();
-    keyHandler({ key: 't', preventDefault() {} });
-    tick(0.5);
-  }
-  ok('2: the dead screen reaches the title (nothing swallowed the transition)',
-    st.mode === 'title' || st.mode === 'menu', st.mode);
-  tick(1);
-  // The selection surface: PLAY opens the pre-run screen, whose MODIFIER card
-  // says what the selection changes and what it pays.
-  const playCard = [...ovCards.children].find(c => (c._html || '').includes('>PLAY<'));
-  ok('2: the title PLAY card is up', !!playCard);
-  playCard && playCard.click();
-  tick(0.5);
-  const chCard = [...ovCards.children].find(c => (c._html || '').includes('>MODIFIER: '));
-  ok('2: the MODIFIER selection card is up', !!chCard);
-  ok('2: the selection card itself carries the reward line (NO_POTIONS, +200%)',
-    chCard && /Pays \+200% run award \(\d+ to \d+ gold\)/.test(chCard._html), chCard && chCard._html);
-
-  // SINGLE-CONSTANT proof: the bonus lives in ONE place (RUN_GOLD.CHALLENGE_BONUS_PCT
-  // in meta.js) and is never re-literalled in the challenge/selection code.
   const metaSrc = readFileSync(new URL('../src/meta.js', import.meta.url), 'utf8');
-  const chSrc = readFileSync(new URL('../src/challenges.js', import.meta.url), 'utf8');
   const mainSrc = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  ok('2: CHALLENGE_BONUS_PCT is defined exactly once (meta.js)',
-    (metaSrc.match(/CHALLENGE_BONUS_PCT\s*:/g) || []).length === 1);
-  ok('2: the challenge/selection code reads the constant, not a duplicate literal',
-    chSrc.includes('RUN_GOLD.CHALLENGE_BONUS_PCT') && !/:\s*200\b/.test(chSrc), chSrc.slice(0, 200));
-  ok('2: the settle path reads the constant, not a duplicate literal',
-    mainSrc.includes('challengeGoldBonusPct(state.challenge)'), '');
+  ok('2: no challenge module, no bonus constant, no MODIFIER card, no stakes card',
+    !existsSync(new URL('../src/challenges.js', import.meta.url)) && !/CHALLENGE_BONUS_PCT/.test(metaSrc) &&
+    !mainSrc.includes('MODIFIER: ') && !mainSrc.includes("menuCard('RAISE THE STAKES'"));
 }
 
 console.log('test_review_round1: items 1-2 ' + passed + ' checks');
@@ -505,64 +377,27 @@ console.log('test_review_round1: items 1-3 ' + passed + ' checks');
 
 // ---- ITEM 4: MINIGAME LENGTH VS PAYOUT -------------------------------------------
 // Owner: "The minigame is a nice idea but, for me, just breaks the experience.
-// Too long, not enough payout means I always click skip." Shorten the
-// interaction (one act fewer, corridor ~halved) and raise the payout (K 1/30
-// -> 1/15). Declining stays free and instant-then-carded (skip pays 0 without
-// the paid writ, ends after the 1.4s outcome card).
+// Too long, not enough payout means I always click skip." The minigame is gone:
+// the escape is a 9 s cinematic that pays in full whether it is watched or
+// skipped (src/escape_cine.js). The payout rule kept its raise (K 1/30 -> 1/15).
 {
-  const { PACING, PAYOUT_K } = await import('../src/escape/config.js');
-  const { generateCorridor } = await import('../src/escape/generator.js');
-  const { nominalSeconds } = await import('../src/escape/sim.js');
-  const { payoutFor } = await import('../src/escape/payout.js');
-
-  // BEFORE (read at RED time): 5 acts, nominal 54-66s, K = 1/30.
-  ok('4: the escape is FOUR acts (was five)', PACING.ACTS.length === 4,
-    PACING.ACTS.map(a => a.name));
-  let worst = 0, bestS = Infinity;
-  for (let seed = 1; seed <= 20; seed++) {
-    const s = nominalSeconds(generateCorridor(seed));
-    worst = Math.max(worst, s); bestS = Math.min(bestS, s);
-  }
-  // RETARGET (map scale-up 2026-09-17, disclosed): this pin read "<= 40s" off
-  // the review's corridor-halving; later the SAME DAY the owner directed the
-  // bigger map (msg_01M2R8SM: 4 -> 9 units, "report the duration change, never
-  // retune it away") and the extent is units-based now, so the honest pin is
-  // the units bound (3 x 3000px at 200px/s, +20% authored variance) — the
-  // review's tier/payout pins below are untouched, and the duration
-  // consequence is reported in docs/art/escape-scaleup-2026-09-17/REPORT.md.
-  const { MAP } = await import('../src/escape/config.js');
-  const durHi = MAP.UNITS_X * MAP.UNIT_W / PACING.NOMINAL_SPEED *
-    (1 + (PACING.MAX_SECONDS - PACING.MIN_SECONDS) / PACING.MIN_SECONDS) + 4;
-  ok('4: nominal escape duration is units-based — every seed inside the 3-unit bound (was <= 40s at 2 units)',
-    worst <= durHi, { bestS, worst, durHi });
-  ok('4: the tier ramp is intact (tiers never decrease, sprint last)',
-    PACING.ACTS.every((a, i) => i === 0 || a.tier >= PACING.ACTS[i - 1].tier) &&
-    PACING.ACTS[PACING.ACTS.length - 1].tier === 3);
+  const ESCAPE = await import('../src/escape_cine.js');
+  const { payoutFor, PAYOUT_K } = await import('../src/escape_payout.js');
+  ok('4: the escape is a movie of 8-10 s (was a 25-60 s minigame)',
+    ESCAPE.DURATION >= 8 && ESCAPE.DURATION <= 10, ESCAPE.DURATION);
   ok('4: payout raised — K = 1/15 (was 1/30)',
     Math.abs(PAYOUT_K - 1 / 15) < 1e-12, PAYOUT_K);
   ok('4: payoutFor pays floor(bestGold/15) — 12000 banks 800 (was 400)',
     payoutFor(12000) === 800, payoutFor(12000));
-  // Gold per second of escape time: before bestGold/(30x~60s) = /1800; after
-  // bestGold/(15x~33s) = /495 — >3.6x per minute spent, for a completion.
-  // RETARGET (map scale-up 2026-09-17, disclosed): the same-day owner
-  // directive grew the map 4 -> 9 units, so the worst case is ~54-58s not
-  // ~33s and the honest multiple vs the old baseline is >2x (K's raise to
-  // 1/15 is untouched; the duration consequence is reported, not retuned —
-  // docs/art/escape-scaleup-2026-09-17/REPORT.md).
-  ok('4: payout-per-second at least DOUBLES vs the old length x old K',
-    (1 / 15) / (worst || 1) > 2 * (1 / 30) / 60, { worst });
-
-  // Declining stays FREE (and ends after the short outcome card, no corridor):
-  // drive the real escape module headlessly, skip on frame one.
-  const ESCAPE = await import('../src/escape/index.js');
+  // Skipping costs nothing: the same gold, at once.
+  const prof = { gold: 0, purchased: {}, achievements: { totals: { bestGold: 12000 } } };
   let end = null;
-  ESCAPE.begin({ seed: 7, ctx: null, auto: false, onEnd: (e) => { end = e; }, test: false });
-  ESCAPE.skip();
-  for (let i = 0; i < 120 && !end; i++) ESCAPE.frame(null, 1 / 60);
-  ok('4: skip ends the sequence without playing it out', end && end.result === 'skip', end);
-  ok('4: declining pays NOTHING (no writ held)', end && end.payout === 0, end);
-  ok('4: declining is quick — under 3s wall of outcome card, no corridor time',
-    end && end.seconds < 3, end && end.seconds);
+  ESCAPE.begin({ profile: prof, onEnd: (e) => { end = e; } });
+  for (let i = 0; i < 30; i++) ESCAPE.frame(null, 1 / 60);
+  ESCAPE.press();
+  ok('4: a skip ends the escape at once', end && end.result === 'skip' && end.seconds < 1, end);
+  ok('4: a skip pays in full (it used to pay nothing without the writ)',
+    end && end.payout === 800 && prof.gold === 800, end);
 }
 
 console.log('test_review_round1: ' + passed + ' checks passed (items 1-4)');

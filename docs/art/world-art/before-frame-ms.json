@@ -1,0 +1,34 @@
+{
+ "VERDANT_HOLLOW": {
+  "med": 0.6,
+  "p95": 3.9
+ },
+ "ASHEN_WASTE": {
+  "med": 0.4,
+  "p95": 1.2
+ },
+ "SNOWFIELD": {
+  "med": 0.5,
+  "p95": 0.9
+ },
+ "BLOOD_RUST": {
+  "med": 0.5,
+  "p95": 1.2
+ },
+ "BONE_DESERT": {
+  "med": 0.4,
+  "p95": 0.9
+ },
+ "VOID_REACH": {
+  "med": 0.4,
+  "p95": 0.6
+ },
+ "CINDER_MAW": {
+  "med": 0.4,
+  "p95": 0.7
+ },
+ "WHITEOUT": {
+  "med": 0.5,
+  "p95": 0.7
+ }
+}

@@ -2,13 +2,12 @@
 // slice 2 the full 8-stage ladder; same contract throughout).
 //
 // WHY THIS FILE EXISTS
-// The ladder (heat.js) owns opt-in difficulty that PAYS; challenges.js owns
-// rule-changing MODES. A STAGE is the third, orthogonal axis: the PLACE the
+// A STAGE is the PLACE the
 // run happens — which foes the spawner draws from, how hard they hit, how the
 // swarm arrives. Stages never pay a gold bonus or penalty (that is G17's
-// economy call) and never change a rule the challenge system owns.
+// economy call).
 //
-// THE CONTRACT (modelled EXACTLY on src/challenges.js)
+// THE CONTRACT
 //   * Pure and declarative: no DOM, no game state, so a headless test owns it.
 //   * Nothing about a stage is persisted: no profile field, no schema bump, no
 //     storage key. main.js holds the pending choice in a module-level let
@@ -227,7 +226,7 @@ export const STAGE_BY_ID = STAGES.reduce((m, s) => { m[s.id] = s; return m; }, {
 
 // TOTAL over garbage: a missing/unknown id IS the default stage. A caller that
 // somehow names a stage this build deleted degrades to the default, never
-// throws — same contract as challengeOf.
+// throws.
 export function stageOf(id) {
   return STAGE_BY_ID[id] || STAGE_BY_ID[DEFAULT_STAGE_ID];
 }

@@ -17,6 +17,8 @@ import { nearestEnemy } from './weapons.js';
 import { applyBlast } from './rewrites.js';
 // SLICE 7: dev damage metric (devHit is a no-op branch when disarmed).
 import { devHit } from './dev_telemetry.js';
+// Boss rules: THE SILENCE seals skills and THE DROUGHT stops potions.
+import { ruleBlocks } from './boss_rules.js';
 
 // Try to fire a skill ('FROST_NOVA' | 'OVERCHARGE' | 'CHAIN_REACTION' | one
 // of the N1 slice 3 ults). Returns true if fired.
@@ -27,6 +29,7 @@ export function useSkill(state, id) {
   const p = state.player;
   const def = C.SKILLS[id];
   if (!def) return false;   // unknown id: fail, never throw
+  if (ruleBlocks(state, 'skills')) return false;   // sealed: nothing is spent
   // N1 slice 3, SUPERSEDED 2026-09-17 (owner: "player ults must cost a
   // significant amount of mana"): a kill-charged ult (a def with KILLS) is
   // charged in KILLS and PRICED in MANA. The gate is charge AND the cooldown
@@ -287,6 +290,7 @@ export function usePotion(state, kind) {
   const p = state.player;
   if (kind !== 'hp' && kind !== 'mp') return false;
   if (p.potions[kind] <= 0) return false;
+  if (ruleBlocks(state, 'potions')) return false;   // the drought: the charge is kept
   if (kind === 'hp') {
     if (p.hp >= p.stats.maxHp) return false; // never waste a health potion at full HP
     p.potions.hp--;

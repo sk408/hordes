@@ -75,7 +75,7 @@ Each axis is independent. A policy is written `shop/loadout/draft/once/stance/ch
 | `--concurrency` | cores - 1 | Worker processes. One worker per (policy, seed). |
 | `--overhead-seconds` | 20 | Menu time per run in the play-hours estimate. |
 | `--json FILE` | | Every per-run record as JSONL, in a fixed order. |
-| `--trace-every N` | off | Adds a `trace` array to every JSONL record, one sample per N sim seconds: `t, level, drafts, kills, hp, maxHp, dmg, enemies, purse, wave, tiers` (kills per gold tier), `survival` (survival-bonus gold so far) and `near` (what is touching the player). |
+| `--trace-every N` | off | Adds a `trace` array to every JSONL record, one sample per N sim seconds: `t, level, drafts, kills, hp, maxHp, dmg, enemies, purse, wave, tiers` (kills per gold tier), `survival` (survival-bonus gold so far), `near` (what is touching the player), and for the pilot: `pos` (x, y, tier), `act`, `goal`, `gk` (goal kind), `gd` (distance to it), `e150`/`e160`/`e300` (live enemies within that many px), `g80`/`g140`/`g240`/`gall` (XP gems near / on the field), `boss` (a boss alive) and `why` (EXPLORE's gate this sample: `ok`, `calm`, `gems` or `boss`). |
 | `--detail` | | Matrix: also print each policy's per-window table. |
 | `--verbose` / `--quiet` | | One stderr line per finished run (with wall time) / no stderr progress at all. |
 | `--tree DIR` | this repo | Simulate another checkout (for example a sibling worktree). |

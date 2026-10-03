@@ -425,6 +425,10 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   T.banners.suppressAll();
   st.player.stats.maxHp = 1e9;
   st.player.hp = 1e9;
+  // No world sites or secrets: a shrine's blessing draft or a niche's joker
+  // offer would hold the sim too, and they are not coachmarks either.
+  st.sites = [];
+  st.secrets = [];
   let sawTour = false;
   for (let i = 0; i < 60 * 36 && st.time < 35; i++) {
     frame();

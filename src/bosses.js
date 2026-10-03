@@ -53,75 +53,80 @@ function grid(...rows) {
   return rows.map(r => [...r].map(ch => (ch === '.' || ch === ' ') ? 0 : Number(ch)));
 }
 
-function makeBossSprite(frames, palette) {
+// `tell` is an optional extra grid in the same box: the wind-up pose the
+// renderer shows while the boss telegraphs (frames stay the two-step walk).
+function makeBossSprite(frames, palette, tell = null) {
   const box = spriteBox(frames[0]);
-  return { frames, palette, anchor: { x: Math.floor(box.w / 2), y: Math.floor(box.h / 2) }, box };
+  const spr = { frames, palette, anchor: { x: Math.floor(box.w / 2), y: Math.floor(box.h / 2) }, box };
+  if (tell) spr.tell = tell;
+  return spr;
 }
 
-// ---- GRAVELMAW — 24x24 stone ram-bull, head lowered, horns swept forward ---
+// ---- GRAVELMAW — 26x24 stone bull seen head-on: a plated hump with ember
+// cracks, bone horns curving up from the sides of a low head, two red eyes
+// under a brow ridge, a wide jaw of stone teeth with fire behind them, thick
+// forelegs and the hind legs between them. Frame B is the other step (the
+// body dips a pixel, the left hoof lifts). TELL is the charge wind-up: it
+// crouches two pixels, and the eyes, cracks and maw burn white-hot.
+const GRAVELMAW_BODY = [
+  '..33......777777......33..',
+  '.338....7771111122....833.',
+  '.338...771111111112...833.',
+  '.338...711151111112...833.',
+  '.3388..711511111112..8833.',
+  '..3388.711111155112.8833..',
+  '..3387777777777777772833..',
+  '...38711111111111111283...',
+  '.....7112211111122112.....',
+  '.771171144111111441121122.',
+  '77112711441111114411221122',
+  '71112711111111111111221122',
+  '71112711177777777111221122',
+  '71112711176611662111221122',
+  '71112711171111112111221122',
+  '71112263636363636362221122',
+  '71112265555555555556221122',
+  '11112236363636363662221222',
+  '11122.22222222222222.21222',
+];
+const GRAVELMAW_BLANK = '.'.repeat(26);
+const GRAVELMAW_HOT = (rows) => rows.map(r => r.replace(/[45]/g, '9'));
 const GRAVELMAW_FRAMES = [
   grid(
-    // frame A — stride open, horns forward
-    '.............3..3.........',
-    '............33..33........',
-    '...........33....33.......',
-    '..........33.1111.33......',
-    '.........33.111111.3......',
-    '........33.11111111.3.....',
-    '.......33.111111111.33....',
-    '......3311111111111.33....',
-    '.....331111111111111.3....',
-    '....3311111111111111.3....',
-    '...321111111111111113.....',
-    '...321111111111141111.....',
-    '...32111111111111111......',
-    '...32111111111111111......',
-    '...21111155111111111......',
-    '...2111155551111111.......',
-    '...2111155511111111.......',
-    '...1111111111111111.......',
-    '...111111111111111........',
-    '....11..11...11.11........',
-    '....11..11...11.11........',
-    '....11..11...11.11........',
-    '...166..166..166.166......',
-    '...166..166..166.166......',
+    ...GRAVELMAW_BODY,
+    '11122...222....222...21222',
+    '11122...222....222...21222',
+    '11122...222....222...21222',
+    '66666...222....222...66666',
+    '66666...666....666...66666',
   ),
   grid(
-    // frame B — legs pass (1px shuffle), head dips
-    '..........................',
-    '............33..33........',
-    '...........33....33.......',
-    '..........33.1111.33......',
-    '.........33.111111.3......',
-    '........33.11111111.3.....',
-    '.......33.111111111.33....',
-    '......3311111111111.33....',
-    '.....331111111111111.3....',
-    '....3311111111111111.3....',
-    '...321111111111111113.....',
-    '...321111111111141111.....',
-    '...32111111111111111......',
-    '...32111111111111111......',
-    '...21111155111111111......',
-    '...2111155551111111.......',
-    '...2111155511111111.......',
-    '...1111111111111111.......',
-    '...111111111111111........',
-    '...11...11...11..11.......',
-    '...11...11...11..11.......',
-    '...11...11...11..11.......',
-    '..166..166...166..16......',
-    '..166..166...166..16......',
+    GRAVELMAW_BLANK,
+    ...GRAVELMAW_BODY,
+    '11122...222....222...21222',
+    '11122...222....222...21222',
+    '66666...222....222...21222',
+    '........666....666...66666',
   ),
 ];
+const GRAVELMAW_TELL = grid(
+  GRAVELMAW_BLANK,
+  GRAVELMAW_BLANK,
+  ...GRAVELMAW_HOT(GRAVELMAW_BODY),
+  '11122...222....222...21222',
+  '66666...222....222...66666',
+  '66666...666....666...66666',
+);
 const GRAVELMAW_PALETTE = {
   1: '#8a8f96',  // stone hide
   2: '#4a4f56',  // shadowed hide
-  3: '#e8d8b0',  // horn bone
-  4: '#ff5566',  // charge eye
-  5: '#ff9a3c',  // ember cracks
-  6: '#2e3136',  // hooves
+  3: '#e8d8b0',  // horn bone, teeth
+  4: '#ff5566',  // eyes
+  5: '#ff9a3c',  // ember cracks, fire in the maw
+  6: '#2e3136',  // hooves, nostrils, the dark of the maw
+  7: '#b9bec6',  // lit plates (top left)
+  8: '#b0a078',  // horn in shadow
+  9: '#fff0a0',  // white-hot (the charge tell)
 };
 
 // ---- CHOIR MOTHER — 20x26 hooded matron, halo ring, children at shoulders --
@@ -342,17 +347,17 @@ const HERALD_FRAMES = [
 ];
 const HERALD_PALETTE = {
   1: '#8a92b4',  // armour
-  2: '#4a2a78',  // cloak shade / outline
+  2: '#5e3a96',  // cloak shade / outline
   3: '#e0d8b8',  // bone: mask, pauldrons, blade
   4: '#ff5a3c',  // ember eyes
   5: '#a8875a',  // lance shaft
   6: '#140a20',  // hood shadow
-  7: '#7a4ab0',  // cloak
+  7: '#a274e4',  // cloak
   8: '#fff0a0',  // white-hot flare (the tell)
 };
 
 export const BOSS_SPRITES = {
-  GRAVELMAW:    makeBossSprite(GRAVELMAW_FRAMES, GRAVELMAW_PALETTE),
+  GRAVELMAW:    makeBossSprite(GRAVELMAW_FRAMES, GRAVELMAW_PALETTE, GRAVELMAW_TELL),
   CHOIR_MOTHER: makeBossSprite(CHOIR_MOTHER_FRAMES, CHOIR_MOTHER_PALETTE),
   PYRAXIS:      makeBossSprite(PYRAXIS_FRAMES, PYRAXIS_PALETTE),
   HERALD:       makeBossSprite(HERALD_FRAMES, HERALD_PALETTE),

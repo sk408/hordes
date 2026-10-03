@@ -155,7 +155,7 @@ export function importProfileText(text) {
 
 // ---------- Run rewards ----------
 // What a run banks (main.js settleRunGold), all of it exactly once at run end:
-//   AWARD (flat, x Greed x rampage x the challenge/heat/night pool)
+//   AWARD (flat, x Greed x rampage, less the auto-continue cut)
 //   + FIRST_CLEAR for the very first run, NEW_BEST for a later record
 //   + the run purse: per-kill gold (GOLD_TIER), the survival bonus below and
 //     anything else earned in the run, minus what the run spent
@@ -172,10 +172,7 @@ export const RUN_GOLD = {
   SURVIVAL_BASE: 30,
   SURVIVAL_STEP: 0.5,
   KILL_SOFTCAP: 200,  // kills at which an ordinary kill pays half
-  // Challenge runs add this many percentage points to the AWARD pool; the
-  // pool is additive: 100% + challenge + heat - night.
-  CHALLENGE_BONUS_PCT: 200,
-  NIGHT_PENALTY_PCT: 50,   // night mode pays this many points less
+  AUTO_CONTINUE_PENALTY_PCT: 50,   // a run started by auto-continue pays this many points less
 };
 
 // The old analytic payout model. Not a payout any more: only
@@ -468,9 +465,6 @@ export const SHOP_UPGRADES = [
   { id: 'bloodpact', name: 'Blood Pact',
     get desc() { return 'Heal ' + fmtPct(this.perLevel) + '% of the damage you deal, per level'; },
     baseCost: 1000, costGrowth: 2, maxLevel: 5, perLevel: 0.01 },
-  { id: 'artifact', name: 'Starting Artifact',
-    get desc() { return 'Each run, ' + fmtNum(this.perLevel) + ' random weapon starts a level higher, per level'; },
-    baseCost: 1200, costGrowth: 2.2, maxLevel: 4, perLevel: 1 },
   { id: 'luck',    name: 'Fortune',        desc: 'Rarer items drop and rarer level-up cards appear more often, per level',
     baseCost: 1500, costGrowth: 2, maxLevel: 5, perLevel: 1 },
   { id: 'slots',   name: 'Weapon Slot',
@@ -495,8 +489,8 @@ export const SHOP_UPGRADES = [
   { id: 'laststand', name: 'Last Stand',
     get desc() { return 'Once per run, come back from death at ' + fmtPct(DRAFT_LADDER.SECOND_WIND_HP_FRAC) + '% health'; },
     baseCost: 30000, costGrowth: 1, maxLevel: 1, perLevel: 1 },
-  // Escape Writ: skipping the escape normally forgoes its payout; this keeps it.
-  { id: 'escapeskip', name: 'Escape Writ', desc: 'Skipping the escape still pays its gold. Buy once, works every run',
+  // Escape Writ: the escape after the first boss pays three times as much (escape_payout.js WRIT).
+  { id: 'escapeskip', name: 'Escape Writ', desc: 'The escape after the first boss pays three times the gold. Buy once, works every run',
     baseCost: 15000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
   { id: 'arcade',  name: 'Arcade Pass',    desc: 'Turns your HUD gold: a trophy for the long haul. Does not change play',
     baseCost: 40000, costGrowth: 1, maxLevel: 1, perLevel: 0 },
@@ -1067,7 +1061,6 @@ export const BASE_CRIT_MULT = 1.5;
 //   pierce        Hollowpoint   + perLevel x level
 //   projectiles   Fan Fire      + perLevel x level
 //   splitCap      Split Shot    volley projectile cap + level (config.js volleyProjectileCap)
-//   artifactLevels Starting Artifact  random weapon levels at run start
 //   luck          Fortune       level (loot rarity and draft weights)
 //   draftOffers   Deep Read     + level
 //   draftRerolls / draftSkips / draftBanishes   per-run draft charges
@@ -1101,7 +1094,6 @@ export function applyMetaBonuses(stats, purchased) {
     pierce: (stats.pierce || 0) + per('hollowpoint'),
     projectiles: (stats.projectiles || 1) + per('fanfire'),
     splitCap: per('split'),
-    artifactLevels: per('artifact'),
     luck: per('luck'),
     draftOffers: (stats.draftOffers || 0) + per('deepread'),
     draftRerolls: per('reroll'),

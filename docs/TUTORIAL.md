@@ -63,15 +63,31 @@ or more runs when this version first loaded starts with the "basic" hints marked
 
 | id | Text | Trigger | Basic |
 |----|------|---------|-------|
-| `prerun` | Pick a stage and a modifier, or just press START. | the pre-run screen opens | yes |
+| `prerun` | Pick a stage, or just press START. | the pre-run screen opens | yes |
 | `chest` | Walk into a chest to open it. | a chest is on screen | yes |
-| `shrine` | A shrine sells a blessing for gold. Stand in it to buy. | an unused shrine is on screen | yes |
+| `shrine` | Stand in the ring to charge a blessing; steering charges it 40% faster. | an unused shrine is on screen | no (M5b: the shrine changed) |
+| `altar` | Step on the altar to call the wave boss now and win an extra chest (waves 1-4). | an unused boss altar is on screen | no |
+| `brazier` | Break braziers for gold and the odd potion; steering finds 50% more. | a brazier or urn is on screen | no |
+| `fountain` | Stand in a fountain while hurt to heal once. | an unused fountain is on screen | no |
+| `statue` | Touch the statue to take its curse for this wave and win its reward. | a cursed statue is on screen | no |
+| `explore` | EXPLORE fights like AUTO and walks to sites when the field is calm. | the pilot is on EXPLORE during play | no |
+| `waypoint` | Tap a site on the map to set a waypoint; tap it again to clear it. | the map is open | no |
+| `highground` | High ground: you see and hit farther. Enemies climb the ramps. | a ramp is on screen (M5b landscape) | no |
+| `vault` | A marked elite carries the vault key: kill it, grab the key, touch the vault. | the key carrier or the shut vault is on screen | no |
+| `lever` | Pull the lever to open the walled yard and its chest for the rest of the run. | an unpulled lever is on screen | no |
+| `crack` | Cracked walls break under fire: keep shooting one to find the niche behind it. | a noticed cracked wall is on screen | no |
+| `mimic` | Some chests bite: a mimic wakes when opened, and pays a rare chest when it dies. | a woken mimic is on screen (never before the first one wakes) | no |
+| `glyph` | Each stage hides one glyph off the beaten track; find all eight for a reward. | a noticed glyph is on screen | no |
+| `questboard` | The quest board picks three goals for each run; tap one to swap it, or just play. | the pre-run screen, after `prerun` (and `loadout` when due) | no |
+| `questtracker` | Your three quests sit under the timer; done ones pay at the end of the run. | 15 s into a run with quests | no |
+| `bossrule` | This boss brings a rule. Beat the boss to win the reward on its banner. | the first boss with a rule arrives (wave 2 or later) | no |
+| `travel` | The portal leads on to a new stage: new ground and fresh sites. Your build comes with you. | the first intermission whose CONTINUE travels (after wave 2) | no |
 | `arch` | Run through an arch for a short buff. | an arch is on screen | yes |
 | `elite` | Glowing enemies are elites: tougher, with better loot. | an elite is on screen | yes |
 | `midboss` | A mid-boss. Kill it for a chest. | a mid-boss is on screen | yes |
 | `boss` | The wave boss. Kill it to open the portal. | the wave boss is on screen | yes |
 | `portal` | The portal is open. Walk in to end the wave. | the portal is on screen | yes |
-| `escape` | The escape: run right and jump the gaps for bonus gold. | the escape sequence starts | yes |
+| `escape` | After the boss, your hero runs for the portal and banks escape gold. | the escape cinematic starts (it holds on its first frame until the hint is answered) | yes |
 | `evoready` | This weapon is level 8 and you hold its partner: it evolves. | the evolve screen opens | no |
 | `fusion` | Two evolved weapons can fuse into one stronger weapon. | **hook only**: call `tutHint('fusion', [element])` from the fusion overlay | no |
 | `draftacts` | Reroll, skip or banish: each spends one charge. | a draft opens while a charge is owned | no |
@@ -79,6 +95,17 @@ or more runs when this version first loaded starts with the "basic" hints marked
 | `stance` | Stance: SAFE keeps away, GREEDY chases loot. | the player changes Stance | no |
 | `loadout` | You own a new weapon. LOADOUT chooses which ones you bring. | the pre-run screen, once a third weapon is owned | no |
 | `prestige` | Prestige resets the shop for a permanent gold multiplier. | the end screen offers prestige | no |
+| `hand` | Your cards made a hand: a bonus for the rest of the run. | the first hand forms (shown back in play) | no |
+| `joker` | A joker changes one rule for this run. | the first joker is taken (shown back in play) | no |
+| `jokerfull` | Joker row full: a new joker replaces one you hold. | the joker-replace screen opens | no |
+| `camp` | Camp buildings work while you are away. COLLECT takes what they made. | the camp screen opens | no |
+| `bgplay` | AUTO kept playing while the tab was hidden. Settings: KEEP PLAYING. | the tab is shown again after background play stepped a run | no |
+
+`camp` and `bgplay` also show on a session where auto-continue is on (the player is reading a menu). The away
+summary has no hint: its one button says what it does, and on a phone a hint covered the heading.
+The quest tracker stays hidden while the guided part of the tutorial is live.
+The guided draft step (4 and 5) still reads right: the guided draft offers weapon and stat cards; hands and
+jokers are taught later by their own hints.
 
 Two older one-line tips stay as they were: the Focus line on the end screen after a death to an enemy shot,
 and the Stance toast at the first boss after run 1.
@@ -104,6 +131,9 @@ and the Stance toast at the first boss after run 1.
    tutorial step.
 7. **Returning players.** A profile with a finished run never gets the guided run automatically. The
    what's-new note offers it once; REPLAY TUTORIAL is always there.
+8. **Hidden tab.** Nothing is taught to a tab nobody is looking at. The guided run waits while the tab is
+   hidden (background play does not run it), and no hint opens in a hidden tab: a hint the run met while
+   hidden opens the next time its subject is on screen.
 
 ## D. Idle rule
 
@@ -126,3 +156,12 @@ The HINTS switch is the storage flag `hordes_hints_off` (`TOUR_KEYS.hintsOff`).
 | A player who does each step about 2 s after it appears (n=9) | 20 s | 24 s [17 to 48] | 388 [351 to 453] |
 | A player who touches nothing (n=7) | 110 s | 39 s [17 to 63] | 471 [427 to 500] |
 | No tutorial, same build, for comparison (n=9, settled profile) | 0 | 32 s [20 to 49] | 379 [336 to 419] |
+
+## Open items
+
+- Dead prologue code: `state.prologue` and `state.prologueShieldT` are never set any more (only reset to
+  null / 0 in `startRun`). The branches that read them can go: `src/controllers.js` (the potion walk, about
+  lines 383-425 and 672), `src/render.js` (the potion, the shield ring, the banner and skip drawing, about
+  lines 1074, 1941-1950, 2584-2660, 2774) and the `!state.prologue` guard in `presentDraft` in `src/main.js`.
+  `C.PROLOGUE.ENABLED` stays (it gates the guided run and the what's-new offer). Not done in the idle pass:
+  the render seams are pinned by tests that need checking one by one.

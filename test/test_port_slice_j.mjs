@@ -52,8 +52,10 @@ S.check('GRAMMAR clusters: cells compose anchor + satellites, never singletons',
       const pl = buildingPlacements(seed, s.id);
       const anchors = pl.filter(p => STAGE_BUILDINGS[p.id].role !== 'satellite');
       const sats = pl.filter(p => STAGE_BUILDINGS[p.id].role === 'satellite');
-      assert(anchors.length >= 12, 'stage ' + s.id + ' seed ' + seed +
-        ': >= 12 anchors/arena (got ' + anchors.length + ')');
+      // M5b landscape: buildings keep to the low ground, so plateaus take
+      // some cells (was >= 12 on a flat arena).
+      assert(anchors.length >= 6, 'stage ' + s.id + ' seed ' + seed +
+        ': >= 6 anchors/arena (got ' + anchors.length + ')');
       assert(sats.length >= anchors.length,
         'stage ' + s.id + ' seed ' + seed + ': satellites outnumber anchors (' +
         sats.length + ' vs ' + anchors.length + ' — clusters, not sprinkles)');

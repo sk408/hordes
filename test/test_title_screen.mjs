@@ -8,6 +8,7 @@
 //
 // Run: node test/test_title_screen.mjs   (exit 0 = pass)
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { boot } from './_harness.mjs';
 import { CONFIG } from '../src/config.js';
 const { VIEW_W, VIEW_H } = CONFIG;
@@ -166,8 +167,8 @@ check('LOADOUT joins the title once a weapon beyond the starting kit is owned', 
 
 check('PROGRESS carries TROPHIES + BESTIARY + JOKERS + FUSIONS; PLAY opens the ONE pre-run screen; both return', () => {
   cardWith('PROGRESS').click();
-  assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'JOKERS', 'FUSIONS', 'BACK'],
-    'PROGRESS holds the gallery, the guide, the joker shelf and the fusion shelf, plus BACK');
+  assert.deepEqual(names(), ['TROPHIES', 'BESTIARY', 'JOKERS', 'FUSIONS', 'SECRETS', 'BACK'],
+    'PROGRESS holds the gallery, the guide, the joker, fusion and secrets shelves, plus BACK');
   cardWith('BACK').click();
   assert.ok(names().includes('PLAY'), 'BACK returns to the title');
 
@@ -175,34 +176,61 @@ check('PROGRESS carries TROPHIES + BESTIARY + JOKERS + FUSIONS; PLAY opens the O
   const s = names();
   assert.equal(s.length, 5, 'the pre-run screen is five cards');
   assert.equal(s[0], 'START', 'START is first (Enter goes straight through)');
-  assert.ok(/^STAGE: /.test(s[1]) && /^MODIFIER: /.test(s[2]) && s[3] === 'LOADOUT' && s[4] === 'BACK',
-    'then STAGE, MODIFIER, LOADOUT, BACK: ' + s.join(' | '));
+  assert.ok(/^STAGE: /.test(s[1]) && s[2] === 'LOADOUT' && s[3] === 'QUESTS' && s[4] === 'BACK',
+    'then STAGE, LOADOUT, QUESTS, BACK: ' + s.join(' | '));
   // Each choice card says what it changes and what it pays.
   const html = (i) => cards()[i].innerHTML || '';
   assert.ok(/Pays normal gold/.test(html(1)), 'the stage card says what it pays: ' + html(1));
-  assert.ok(/No extra rules\. Pays normal gold/.test(html(2)), 'the modifier card says what it pays: ' + html(2));
-  assert.ok(/Volley \+ Boomerang/.test(html(3)) && /start at Lv 1/.test(html(3)), 'the loadout card names the kit: ' + html(3));
-  // The defaults: the first stage, no modifier.
-  assert.ok(/VERDANT HOLLOW/.test(s[1]) && /STANDARD RUN/.test(s[2]), 'default selection: ' + s.join(' | '));
-  // A cycling selector re-renders its OWN screen, not the title.
-  cards()[2].click();
-  assert.ok(/^MODIFIER: ONE WEAPON/.test(names()[2]), 'cycling the modifier stays on the pre-run screen');
-  assert.ok(/Pays \+\d+% run award \(\d+ to \d+ gold\)/.test(cards()[2].innerHTML), 'a modifier states its pay');
-  while (T.menus.pendingChallenge !== 'STANDARD') cards()[2].click();
+  assert.ok(/Volley \+ Boomerang/.test(html(2)) && /start at Lv 1/.test(html(2)), 'the loadout card names the kit: ' + html(2));
+  // The default: the first stage. No modifier is offered.
+  assert.ok(/VERDANT HOLLOW/.test(s[1]) && !s.some(n => /MODIFIER/.test(n)), 'default selection: ' + s.join(' | '));
   cardWith('BACK').click();
   assert.ok(names().includes('PLAY'), 'BACK returns to the title from the pre-run screen');
+});
+
+// A short landscape phone has about 190px under the wordmark. The setup cards
+// carry .setup and wrap their press hints and quest pays in .hint, and
+// index.html packs them three to a row and hides the hints there. The real
+// layout is measured by tools/verify_prerun_fit.mjs.
+check('the pre-run screen has a compact form for a short landscape screen', () => {
+  T.menus.showPreRun();
+  const cs = cards();
+  assert.equal(cs.length, 5);
+  for (const c of cs) assert.ok(c.classList.contains('setup'), 'every setup card is marked .setup: ' + c.innerHTML);
+  const desc = (i) => (cs[i].innerHTML.match(/class="desc">(.*)<\/div>$/) || [])[1] || '';
+  const shown = (i) => desc(i).replace(/<span class="hint">.*?<\/span>/g, '');
+  // What stays on a phone: the facts. What goes: key names, press hints, quest pays.
+  assert.equal(shown(0), 'begin the run');
+  assert.ok(/Pays normal gold\.$|next stage: /.test(shown(1)), 'stage facts stay: ' + shown(1));
+  assert.ok(/^Volley \+ Boomerang\. Weapons start at Lv 1\.$/.test(shown(2)), 'loadout: ' + shown(2));
+  const quests = shown(3).split('<br>');
+  assert.equal(quests.length, 3, 'three quests, one per line: ' + shown(3));
+  for (const q of quests) assert.ok(q.length <= 30 && !/[()]/.test(q), 'a quest line fits one row: ' + q);
+  assert.ok(/\(\d+G\)|\(A JOKER\)/i.test(desc(3)) && /press to swap one/.test(desc(3)), 'the wide layout still shows pays and the hint: ' + desc(3));
+  assert.equal(shown(4), 'to title');
+  assert.ok(/class="setup-hint"/.test(h.elements['ov-sub'].innerHTML), 'the sub line is marked so the compact form can hide it');
+  // The stylesheet rule that uses those marks.
+  const css = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const m = css.match(/@media \(orientation: landscape\) and \(max-height: (\d+)px\) \{([\s\S]*?)\n  \}/);
+  assert.ok(m, 'index.html has the short-landscape block');
+  assert.ok(+m[1] >= 430, 'it covers 390 and 375 tall phones with headroom (max-height ' + m[1] + ')');
+  assert.ok(/\.card\.setup \.desc \.hint \{ display: none; \}/.test(m[2]), 'hints hide');
+  assert.ok(/#ov-sub:has\(\.setup-hint\) \{ display: none; \}/.test(m[2]), 'the sub line hides');
+  assert.ok(/\.card\.setup \{[^}]*width: calc\(\(100% - \d+px\) \/ 3\)/.test(m[2]), 'three cards to a row');
+  T.showTitle();
 });
 
 check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   cardWith('SETTINGS').click();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
+    'AUTO-CONTINUE', 'KEEP PLAYING',
     'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'BACK'],
-    'title settings is exactly these twelve cards, in order');
+    'title settings is exactly these fourteen cards, in order');
   cardWith('ADVANCED').click();
   const adv = names();
   assert.deepEqual(adv.slice(0, 6), ['ZOOM', 'RESOLUTION', 'TEXT HUD', 'PILOT', 'FOCUS', 'STANCE'],
     'ADVANCED carries zoom, resolution, text hud, pilot, focus and stance');
-  assert.ok(adv.some(x => /^NIGHT MODE/.test(x)), 'and night mode');
+  assert.ok(!adv.some(x => /NIGHT/.test(x)), 'night mode is gone');
   assert.equal(adv[adv.length - 2], 'RESET PROFILE', 'RESET PROFILE sits just before BACK');
   cardWith('RESET PROFILE').click();
   assert.ok(names().includes('CONFIRM RESET?'), 'the reset arms on the first press');
@@ -221,10 +249,10 @@ check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
   T.openSettings();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
-    'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
+    'AUTO-CONTINUE', 'KEEP PLAYING', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
     'in-run settings: no save cards, END RUN added (no TEST: ESCAPE)');
   cardWith('ADVANCED').click();
-  assert.ok(!names().some(x => /^NIGHT MODE|RESET PROFILE|RECOVERY FILE/.test(x)), 'in-run ADVANCED has no night mode / reset / recovery');
+  assert.ok(!names().some(x => /^RESET PROFILE|RECOVERY FILE/.test(x)), 'in-run ADVANCED has no reset / recovery');
   cardWith('BACK').click();
   cardWith('BACK').click();
   assert.equal(st.mode, 'playing', 'BACK resumes the run');
@@ -277,7 +305,8 @@ check('a FRESH browser has NO title load offer; IMPORT SAVE lives on SETTINGS', 
   h.storage.delete('hordes_profile_v1');
   T.showTitle();
   assert.equal(cardWith('LOAD FROM DISK'), undefined, 'no fresh-browser load offer on the title');
-  assert.equal(names().length, 5, 'fresh title is the same five cards');
+  // (the profile in memory has finished runs, so CAMP has joined; the fresh-title pin is above)
+  assert.equal(names().filter(n => n !== 'CAMP').length, 5, 'fresh title is the same five cards');
   cardWith('SETTINGS').click();
   assert.ok([...cards()].some(c => (c.innerHTML || '').includes('>IMPORT SAVE<')), 'SETTINGS offers IMPORT SAVE');
   key('escape');

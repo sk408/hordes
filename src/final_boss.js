@@ -68,9 +68,11 @@ export const FINAL_BOSS = {
 export const MAW_SPEED_BASE = 400;
 
 // ===========================================================================
-// SPRITE — 34x38 void-black maw: jagged crown, eye cluster, ringed teeth
-// around a burning throat. Same grid format as sprites.js/bosses.js (rows of
-// palette indices; 0 transparent, 1..9 palette keys). Authored as string art
+// SPRITE — 34x38 void-violet maw: jagged crown, eye cluster, ringed teeth
+// around a burning throat, a body that tapers to one chin with tendrils
+// trailing under it (they sway between the two frames). Same grid format
+// as sprites.js/bosses.js (rows of palette indices; 0 transparent, 1..9
+// palette keys). Authored as string art
 // ('.' = 0) in LEFT HALVES and mirrored, so the boss is perfectly symmetric.
 // Deliberately bigger AND darker than the named cast (body #141018).
 // ===========================================================================
@@ -109,17 +111,17 @@ const MAW_FRAMES = [
     '22111111111111111',
     '22111111111111111',
     '21111111111111111',
-    '2211111111111111.',
-    '.221111111111112.',
-    '.22111111111112..',
-    '..2211111111122..',
-    '...22111111122...',
-    '....2211112212...',
-    '....22..22..22...',
-    '....2...2...2....',
-    '...22..22..22....',
-    '...2...2....2....',
-    '..22..22....22...',
+    '22111111111111111',
+    '.2211111111111111',
+    '..221111111111111',
+    '....2211111111111',
+    '......22111111111',
+    '.......21.21.21..',
+    '.......21.21.21..',
+    '.......2..21.21..',
+    '..........21.2...',
+    '..........21.....',
+    '..........2......',
   ]),
   mirror([ // frame B — teeth rotated a notch, core flares (swallow breath)
     '.....2......2....',
@@ -149,17 +151,17 @@ const MAW_FRAMES = [
     '22111111111111111',
     '22111111111111111',
     '21111111111111111',
-    '2211111111111111.',
-    '.221111111111112.',
-    '.22111111111112..',
-    '..2211111111122..',
-    '...22111111122...',
-    '....2211112212...',
-    '....22..22..22...',
-    '....2...2...2....',
-    '....22..22..22...',
-    '.....2..2....2...',
-    '..22..22....22...',
+    '22111111111111111',
+    '.2211111111111111',
+    '..221111111111111',
+    '....2211111111111',
+    '......22111111111',
+    '.......21.21.21..',
+    '......21..21.21..',
+    '......2...21..21.',
+    '..........21..2..',
+    '...........21....',
+    '...........2.....',
   ]),
 ];
 const MAW_PALETTE = {
@@ -228,7 +230,7 @@ export function mawDecide(enemy, player, _state, dt = 1 / 60) {
 
 // ===========================================================================
 // THREE-HIT RULE — exact third of maxHp, ceil'd, ignoring EVERYTHING else
-// (defenses, heat, items, buffs). Any hero dies in exactly 3 hits.
+// (defenses, wrath, items, buffs). Any hero dies in exactly 3 hits.
 // ===========================================================================
 export function finalBossDamage(player) {
   return Math.ceil(player.maxHp / 3);

@@ -73,8 +73,8 @@ console.log('SCHEMA VERSION:');
   // Pinned deliberately: bumping the schema is a conscious act, and this line
   // must be updated with it (v10 = the milestoneChest claim; v11 = the M1 shop
   // refund; the pin to the literal is intentional — never relax to >=).
-  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 11,
-    `schema version constant is 11 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
+  ok(SCHEMA_VERSION === PROFILE_VERSION && PROFILE_VERSION === 13,
+    `schema version constant is 13 (got ${SCHEMA_VERSION} / ${PROFILE_VERSION})`);
   const fresh = makeProfile();
   ok(fresh.version === SCHEMA_VERSION, `makeProfile stamps the current version (got ${fresh.version})`);
 

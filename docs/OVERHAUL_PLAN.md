@@ -59,13 +59,31 @@ Change four things:
 - Sprite cache (pre-rendered offscreen atlas) so the extra effects cost fewer draw calls than today.
 - Audio pass: distinct sounds per weapon family, pickup, hurt, boss and level-up; a boss track; volume sliders.
 
+### M2b — World art makeover (added 2026-10-02)
+- Ground tiles, structures, props, terrain faces and landmarks redrawn to the standard set by the new pilots and enemies: outlined, lit from the top left, one material family per stage.
+- The ground stays a quiet backdrop: actors keep at least 3:1 contrast against it.
+- Ground decor is pre-rendered into cached chunks (it was the largest uncached draw cost, about 440–600 rects a frame).
+- Collision footprints and terrain geometry are unchanged; this is a drawing pass only.
+- Ground, building and prop work is kept separable from the terrain work, so it can ship to `main` before the map milestone does.
+
 ### M3 — First minutes and menus
 - No manual before run 1. Run 1 opens with a guided part taught by doing (nine one-sentence steps), then menu steps after the first death and first-time hints later: see docs/TUTORIAL.md.
 - Desktop: touch pads hidden until a touch is seen; radar moved clear of the potion buttons.
 - Settings reduced to one screen plus an Advanced page; stage and challenge chosen in one step after START.
 - A move key takes the wheel only while held, then hands back to Auto; MANUAL is an explicit choice.
-- Escape sequence shortened to about 30s with its payout shown up front.
+- Escape sequence shortened to about 30s with its payout shown up front (replaced in M3b by a cinematic).
 - Card and shop text rewritten in plain words.
+
+### M3b — Escape cinematic (added 2026-10-03, built)
+Steve's brief: replace the escape minigame with a well-made cinematic of the pilot running from all the different enemies and barely escaping a huge boss; it could look a bit 3D.
+- **What:** a 9 s, skippable, non-interactive chase after the wave-1 portal, in place of the side-scrolling minigame that players skipped. Code: `src/escape_cine.js` (cast, clock, skip, payout), `src/escape_cine_art.js` (timeline and picture), `src/escape_payout.js` (the gold).
+- **Look:** a pseudo-3D chase seen from in front of the hero. The camera backs away down the path, so the banded ground, the stage's props and buildings and the speed lines recede to the crest behind him; sprites scale with depth; the stage's sky and ridge shift in parallax. The run's own pilot runs in front at 5x; the enemy types met this run come over the crest in a wave of 30 that gains on him, three of them lunging and missing; the wave boss rises behind them, gains, winds up and lunges as he dives through the portal; white flash; "ESCAPED +N gold".
+- **Beats:** establish 1.5 s, horde closes 3 s, boss rises and gains 2.5 s, dive and flash 1 s, payout card 1 s.
+- **Payout:** always paid, once, when the movie ends or is skipped: floor(best run gold / 15). Nothing to fail. The Escape Writ (row id `escapeskip`, no save migration) triples it.
+- **Skip:** any key, tap or click after 0.4 s. A skip pays in full and goes straight to the intermission.
+- **Idle-safe:** ends at once in a hidden tab and on an unattended run, paid; under reduced motion it is a still card for 1.5 s.
+- **Removed:** the minigame (`src/escape/`: generator, simulation, auto-player, renderer, sprites) with its tests and capture tools.
+- **Captures:** `node tools/capture_escape.mjs` writes `docs/art/escape/`.
 
 ### M4 — Engine
 - Simulation extracted from `main.js` behind a single `step(state, dt, rng)`; audio, toasts and saves become events.
@@ -97,7 +115,39 @@ Each piece replaces an existing system, so the game gets deeper without getting 
 | Megabonk | Shrines and choices out on the map; stages chained into tiers | Shrines, chests and arches become things the pilot paths to on purpose; clearing a stage's boss offers the next stage tier in the same run | The blind-pilot shrine rules |
 | Idle | It keeps going without you | Background ticking in a hidden tab, offline camp production, Auto that plays the plan you set (which evolution to chase, which hand to build) | Night mode's special cases |
 
-Order: evolutions (done) → fusion (done) → hands and jokers (done; all three in `docs/WEAPONS_AND_EVOLUTIONS.md`) → boss rules → camp and idle → map shrines and stage tiers.
+Order: evolutions (done) → fusion (done) → hands and jokers (done; all three in `docs/WEAPONS_AND_EVOLUTIONS.md`) → boss rules (done; `docs/BOSS_RULES.md`) → camp and idle (done) → map shrines (done; M5b) and stage tiers (done as TRAVEL; `docs/TRAVEL.md`).
+
+Heat and the challenge modifiers are still in the game: boss rules were added beside them, not in their place. Removing them touches saves and trophies and waits for Steve's call.
+
+### M5b — A world worth exploring (added 2026-10-02)
+
+Steve's brief: interactable things on the map, secrets, and quests, in the spirit of Vampire Survivors and Megabonk; a semi-automatic pilot mode for them; a reward for manual players; the map made useful; richer structures and landscape, including elevated paths.
+
+**Points of interest.** Each stage places a seeded set of sites, shown on the map as "?" until found.
+
+| Site | What you do | What you get |
+|---|---|---|
+| Shrine | Stand in its circle while it charges; enemies keep coming | A blessing (replaces today's buy-with-gold shrine) |
+| Boss altar | Step on it to call the wave boss early | Extra chest, faster run |
+| Locked vault | Find the key carried by a marked elite | A joker or relic |
+| Braziers and urns | Break them | Small pickups: gold, potion, a magnet pull |
+| Cursed statue | Take its curse for the wave | A named reward, stated up front |
+| Fountain | Stand in it | A heal, once |
+| Lever and gate | Pull a lever on one side of the map | Opens a walled yard with a chest |
+
+**Secrets.** Cracked walls that break to a hidden room; a mimic chest; a hidden glyph on each stage (find them all for a character); character and stage unlocks tied to deeds, with the hint shown as a silhouette on the Progress shelf.
+
+**Quests.** Three per run, picked on the pre-run screen from a board at the camp ("charge two shrines", "kill an elite on high ground", "open the vault"). Each pays gold or a joker. A tracker sits in the HUD. Longer chains across runs unlock characters and stages.
+
+**Pilot modes.** AUTO fights and collects what is near. A new EXPLORE mode also walks to the nearest unvisited site when the field is calm. Tapping a site on the map sets a waypoint in either mode. MANUAL is unchanged.
+
+**Hands-on reward.** Things done while you are steering pay a little more: shrines charge faster, breakables drop more, and a few secrets need a deliberate input. Kept small, so that hands-off play stays viable and hands-on play is simply the best version.
+
+**The map.** Fog lifts as you explore; site icons, quest markers and the waypoint show on it; the radar pings an undiscovered site when you pass near.
+
+**Landscape.** Plateaus, ramps, bridges and cliffs authored per stage on the existing height field. High ground gives reach and sight; ground enemies must take the ramps while flyers and ranged enemies keep it from being a safe spot; a cliff edge is a one-way drop for the hero. Each stage gets its own layout and two or three landmark structures that hold the sites above.
+
+Order: sites and the map → EXPLORE mode and waypoints → elevated layouts per stage → quests → secrets.
 
 ### M6 — Release candidate
 - Real-browser performance check on phone-class hardware.

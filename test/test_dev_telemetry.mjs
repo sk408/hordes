@@ -229,15 +229,21 @@ function validFields() {
   // proximity path.
   T.getProfile().runPurse = 50000;
   {
-    const sh = h.state.shrines.find(s => !s.used);
-    assert.ok(sh, 'a shrine altar exists');
-    h.state.player.x = sh.x; h.state.player.y = sh.y;
+    // M5b: the charge shrine — stand in the ring until it charges, then take
+    // the first blessing card through the real pick.
+    const sh = h.state.shrines.find(s => s.state !== 'spent');
+    assert.ok(sh, 'a shrine exists');
     let bought = false;
-    for (let i = 0; i < 30 && !bought; i++) {
+    for (let i = 0; i < 60 * 8 && !bought; i++) {
+      h.state.player.x = sh.x; h.state.player.y = sh.y;
+      h.state.enemies.length = 0;
       h.pump(1);
-      bought = T.dev.session.shrineBuys.length > 0;
+      if (h.state.mode === 'draft' && h.state.draftKind === 'shrine') {
+        T.sites.pickCard(h.state.shrineOffer[0]);
+        bought = T.dev.session.shrineBuys.length > 0;
+      }
     }
-    assert.ok(bought, 'the walk-up shrine sale fired');
+    assert.ok(bought, 'the shrine blessing was taken');
   }
   // SHOP (paid chest): buy BRONZE through the real path (funded purse above).
   T.dev.buyChest('BRONZE');
@@ -269,18 +275,21 @@ function validFields() {
   assert.ok(snap.choices.blessings[0].taken, 'the blessing taken id set');
   assert.equal(snap.mode, 'standard', 'mode stamped on the snapshot');
   assert.deepEqual(snap.modifiers, [], 'modifiers stamped on the snapshot');
-  // NIGHT MODE: the stamp + the live penalty modifier (percent off the live
-  // RUN_GOLD constant, never a hardcoded string).
+  // AUTO-CONTINUE: the stamp, and the live penalty modifier on a run it started
+  // (percent off the live RUN_GOLD constant, never a hardcoded string).
   {
     const { RUN_GOLD } = await import('../src/meta.js');
-    T.night.press(); T.night.press();   // two-press confirm: ARMED then ON
-    assert.equal(T.night.on, true, 'night session on');
+    T.auto.press();
+    assert.equal(T.auto.on, true, 'auto-continue on');
     T.startRun();
-    assert.equal(T.night.run, true, 'the run carries the night stamp');
-    const mf = T.dev.modeFields();
-    assert.equal(mf.mode, 'night', 'night run reports night mode');
-    assert.ok(mf.modifiers.includes('banking-penalty-' + RUN_GOLD.NIGHT_PENALTY_PCT),
-      'the live banking-penalty modifier is stamped');
+    assert.equal(T.auto.run, true, 'the run carries the unattended stamp');
+    let mf = T.dev.modeFields();
+    assert.equal(mf.mode, 'unattended', 'reports unattended mode');
+    assert.ok(!mf.modifiers.some((m) => m.startsWith('banking-penalty-')), 'a run the player started pays in full');
+    T.auto.restart();
+    mf = T.dev.modeFields();
+    assert.ok(mf.modifiers.includes('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT),
+      'the live banking-penalty modifier is stamped on an auto-started run');
   }
 }
 

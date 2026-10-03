@@ -142,7 +142,7 @@ const S = suite('test_floating_joystick');
     assert.equal(fj.armed(), false, 'no stick on a draft screen');
     st.mode = 'escape';
     down(120, 120);
-    assert.equal(fj.armed(), false, 'no stick in the escape (its pads are the controls)');
+    assert.equal(fj.armed(), false, 'no stick in the escape (a cinematic)');
     st.mode = 'playing';
   });
 

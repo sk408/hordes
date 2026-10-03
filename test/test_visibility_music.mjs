@@ -1,28 +1,28 @@
-// HORDES — HIDDEN-TAB BEHAVIOUR: MUSIC STOPS, THE RUN DOES NOT.
+// HORDES — HIDDEN-TAB BEHAVIOUR: THE MUSIC STOPS WHILE THE TAB IS HIDDEN.
 // Run: node test/test_visibility_music.mjs
 //
 // Owner (2026-09-19): "can we also stop the music when the tab is hidden?"
-//
-// The bug was real and asymmetric: browsers SUSPEND rAF for a hidden document but
-// NOT audio. So a backgrounded tab stopped simulating and kept playing the music
-// bed indefinitely — the game looked paused and was still audible.
-//
-// The handler also had to be careful in two ways, both pinned below:
-//   * come back to what the player HAD — a run that was playing music resumes it,
-//     a muted player stays muted (startMusic honours musicEnabled internally);
-//   * repeated 'hidden' events must not overwrite the remembered intent with the
-//     state we just silenced, or the resume is lost.
-//
-// The autosave-on-hidden that already lived here is pinned too: it is the reason
-// the handler exists and must not be lost in the rewrite.
+// Browsers suspend rAF for a hidden document but not audio, so hiding the tab
+// stops the music. Showing it again decides from what is on screen then:
+//   * a run in play has its music back (a muted player stays muted);
+//   * the end card and the menus stay silent, even if a run was playing when
+//     the tab was hidden (background play can end a run, or start one);
+//   * repeated 'hidden' events change nothing.
+// The save on hide is pinned too.
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
-import { AUDIO_TEST, isMusicRunning, startMusic, stopMusic, init as audioInit } from '../src/audio.js';
+import { AUDIO_TEST, isMusicRunning, setMusicEnabled, init as audioInit } from '../src/audio.js';
+import { CONFIG as C } from '../src/config.js';
+import { mulberry32 } from '../src/weather.js';
+
+// A fixed run: startRun rolls the field from Math.random.
+Math.random = mulberry32(20261004);
 
 const S = suite('test_visibility_music');
 
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
-const T = h.T;
+const T = h.T, st = h.state;
+T.banners.suppressAll();
 
 // ---- the fake AudioContext (the test_audio.mjs shape, minimal) --------------
 class FakeParam {
@@ -50,72 +50,107 @@ class FakeAudioContext {
 }
 const fakeStorage = { getItem: () => null, setItem() {}, removeItem() {} };
 
-// Arm the audio with the fake and a real context, then start the bed.
+// Arm the audio with the fake and a real context, then start a run: it has music.
 AUDIO_TEST.reset();
 AUDIO_TEST.setDeps({ AudioContext: FakeAudioContext, storage: fakeStorage });
 audioInit();
-startMusic();
-assert.equal(isMusicRunning(), true, 'the music bed is running before we hide the tab');
+T.startRun();
+h.pump(2);
+assert.equal(isMusicRunning(), true, 'the music is running before we hide the tab');
 
 const setVis = (v) => { globalThis.document.visibilityState = v; };
+const hide = () => { setVis('hidden'); T.onVisibilityChange(); };
+const show = () => { setVis('visible'); T.onVisibilityChange(); };
+// The background ticker, driven by hand on the harness clock.
+const bgFor = (seconds) => {
+  for (let t = 0; t < seconds * 1000; t += C.BACKGROUND.TICK_MS) {
+    h.advanceClock(C.BACKGROUND.TICK_MS);
+    T.bg.tick(performance.now());
+  }
+};
 
 S.check('hiding the tab STOPS the music', () => {
-  setVis('hidden');
-  T.onVisibilityChange();
-  assert.equal(isMusicRunning(), false, 'the music bed was stopped');
+  hide();
+  assert.equal(isMusicRunning(), false, 'the music was stopped');
 });
 
-S.check('returning to the tab RESUMES it (what the player had, not mute)', () => {
-  setVis('visible');
-  T.onVisibilityChange();
-  assert.equal(isMusicRunning(), true, 'the music bed came back');
+S.check('returning to a run in play RESUMES it', () => {
+  show();
+  assert.equal(isMusicRunning(), true, 'the music came back');
 });
 
 S.check('repeated hidden events do not lose the resume', () => {
-  // A browser can fire visibilitychange more than once. The handler must not
-  // overwrite the remembered intent with the state it just silenced.
-  setVis('hidden');
-  T.onVisibilityChange();
+  // A browser can fire visibilitychange more than once.
+  hide();
   T.onVisibilityChange();                 // a second 'hidden'
   assert.equal(isMusicRunning(), false, 'still stopped');
-  setVis('visible');
-  T.onVisibilityChange();
+  show();
   assert.equal(isMusicRunning(), true, 'and the resume still happened');
 });
 
 S.check('a muted player stays muted through a hide/show', () => {
-  // The stop/resume must never turn sound ON for someone who had it off: the
-  // resume only runs when the bed WAS playing, and startMusic re-checks the flag.
-  stopMusic();
-  setVis('hidden');
-  T.onVisibilityChange();
-  assert.equal(isMusicRunning(), false, 'nothing was running to stop');
-  setVis('visible');
-  T.onVisibilityChange();
-  assert.equal(isMusicRunning(), false, 'and nothing started on return');
+  setMusicEnabled(false);
+  assert.equal(isMusicRunning(), false, 'muting stops the music');
+  hide();
+  show();
+  assert.equal(isMusicRunning(), false, 'nothing started on return');
+  setMusicEnabled(true);
+  hide();
+  show();
+  assert.equal(isMusicRunning(), true, 'unmuted: the run has its music after the next return');
 });
 
-S.check('the autosave-on-hidden still happens (the handler existed for it)', () => {
-  const before = h.storage.size;
-  setVis('hidden');
-  T.onVisibilityChange();
-  assert.ok(h.storage.size > before || before > 0,
-    'the profile was flushed to storage on hide (keys=' + h.storage.size + ')');
+S.check('hiding the tab saves the profile', () => {
+  const prof = T.getProfile();
+  prof.gold += 5;   // progress the stored save does not hold yet
+  hide();
+  assert.equal(JSON.parse(h.storage.get('hordes_profile_v1')).gold, prof.gold, 'the profile was not written on hide');
+  show();
 });
 
-S.check('a hidden tab does NOT advance the run (the sim is rAF-driven)', () => {
-  // The other half of the owner's question: AUTO does not mean "keeps playing".
-  // rAF is suspended for a hidden document, so the sim clock stops advancing.
-  setVis('visible');
-  T.onVisibilityChange();
+S.check('hiding and showing by themselves do not move the run clock', () => {
+  const t0 = st.time;
+  hide();
+  show();
+  assert.equal(st.time, t0, 'the run clock moved with no frame and no tick');
+});
+
+S.check('a run that ends while hidden: the end card is silent after the return', () => {
   T.startRun();
   h.pump(2);
-  const t0 = h.state.time;
-  setVis('hidden');
-  T.onVisibilityChange();
-  setVis('visible');
-  T.onVisibilityChange();
-  assert.equal(h.state.time, t0, 'the run clock did not move while hidden');
+  assert.equal(st.mode, 'playing');
+  assert.equal(isMusicRunning(), true);
+  hide();
+  st.player.invuln = 0;
+  T.die();
+  bgFor(1);
+  assert.equal(st.mode, 'dead', st.mode);
+  show();
+  assert.equal(isMusicRunning(), false, 'run music over the end card');
+  T.showTitle();
+  hide();
+  show();
+  assert.equal(isMusicRunning(), false, 'run music on the title');
+});
+
+S.check('auto-continue starts the next run while hidden: it has its music after the return', () => {
+  T.auto.on = true;
+  T.startRun();
+  h.pump(2);
+  assert.equal(T.auto.run, true, 'the run is not unattended');
+  assert.equal(isMusicRunning(), true);
+  st.player.invuln = 0;
+  T.die();
+  for (let i = 0; i < 600 && st.mode !== 'dead'; i++) h.pump(1);   // the death movie, if one plays
+  assert.equal(st.mode, 'dead', st.mode);
+  assert.equal(isMusicRunning(), false, 'the end card is silent');
+  hide();                                   // hidden on the end card: nothing is playing
+  for (let i = 0; i < 20 && st.mode === 'dead'; i++) bgFor(1);
+  assert.equal(st.mode, 'playing', 'auto-continue did not start a run in the hidden tab (' + st.mode + ')');
+  assert.equal(isMusicRunning(), false, 'a hidden tab is silent');
+  show();
+  assert.equal(isMusicRunning(), true, 'the run started while hidden is silent');
+  T.auto.on = false;
 });
 
 AUDIO_TEST.reset();   // drop the fake so later files are audio-inert (no timers)

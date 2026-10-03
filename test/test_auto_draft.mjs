@@ -117,7 +117,7 @@ T.getProfile().achievements.totals.runs = 1;
 keyHandler({ key: 'x', preventDefault() {} });
 tick(1);
 T.startRun();
-ok('the run is live in AUTO (default pilot mode)', st.mode === 'playing' && st.pilotMode === 'AUTO_ALL', [st.mode, st.pilotMode]);
+ok('the run is live on the default pilot (EXPLORE, an auto mode)', st.mode === 'playing' && st.pilotMode === 'EXPLORE', [st.mode, st.pilotMode]);
 // The run stays LIVE (the frame loop must really run), but no XP may be earned:
 // a level-up would open the GAME's own draft mid-test and re-arm the countdown
 // being measured. Only the drafts THIS test opens explicitly may exist.

@@ -1,13 +1,13 @@
 // M3 "first minutes and menus": the pieces that have no other home.
 //   1. THE PRE-RUN SCREEN: the defaults let Enter go straight through; the
-//      stage, modifier and loadout cards each say what they change and pay.
+//      stage and loadout cards each say what they change and pay.
 //   2. THE END SCREEN: time, wave, level, kills; gold with a breakdown whose
 //      four parts sum to the gold actually banked; the best next purchase;
 //      RETRY as the default action.
 //   3. LATER TIPS: Focus (first death to an enemy shot) and Stance (first boss)
 //      get one line each, once, and never in run 1.
-//   4. THE ESCAPE: 25-30 s, the payout stated up front, the skip states what
-//      it passes up, the Escape Writ keeps the payout.
+//   4. THE ESCAPE: a short movie, the payout stated up front, paid in full
+//      on a skip, the Escape Writ triples it.
 //   5. THE DESKTOP HUD: pads stay hidden until a touch is seen.
 // Run: node test/test_m3_first_minutes.mjs
 import assert from 'node:assert/strict';
@@ -15,12 +15,14 @@ import { readFileSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 import { RUN_GOLD, SHOP_BY_ID, upgradeCost } from '../src/meta.js';
 import { makeTypedEnemy } from '../src/enemy_types.js';
-import * as ESC from '../src/escape/index.js';
-import { createSim, step } from '../src/escape/sim.js';
-import { inputFor } from '../src/escape/auto.js';
-import { PACING } from '../src/escape/config.js';
-import { payoutFor } from '../src/escape/payout.js';
+import * as ESC from '../src/escape_cine.js';
+import { payoutFor } from '../src/escape_payout.js';
 
+import { mulberry32 } from '../src/weather.js';
+
+// A fixed random stream: drops, arches and shrines on an unseeded field could
+// add a gold multiplier or a purchase to the measured run.
+Math.random = mulberry32(0x3f1a);
 const S = suite('test_m3_first_minutes');
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const T = h.T, st = h.state, el = h.elements;
@@ -29,7 +31,8 @@ const names = () => cards().map(c => ((c.innerHTML || '').match(/class="name">([
 const card = (t) => cards().find(c => (c.innerHTML || '').includes('>' + t));
 const kdown = (k) => h.key('keydown', { key: k, preventDefault() {} });
 const sub = () => el['ov-sub'].innerHTML || '';
-const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
+// No shrines either: the pilot walking into one spends run gold and moves the parts.
+const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.shrines = []; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
 const toDead = () => {
   for (let i = 0; i < 20 && st.mode !== 'dead'; i++) { if (st.mode === 'death-cine') kdown('x'); h.pump(1); }
   assert.equal(st.mode, 'dead', 'on the end screen');
@@ -40,20 +43,18 @@ if (st.mode === 'intro') { kdown('x'); h.pump(2); }
 T.showTitle();
 
 // ---- 1. the pre-run screen ----------------------------------------------------
-S.check('pre-run defaults: first stage, no modifier, the starting kit; START is the default card', () => {
+S.check('pre-run defaults: first stage, the starting kit; START is the default card; no modifier card', () => {
   T.menus.showPreRun();
   assert.equal(st.mode, 'setup');
   assert.equal(el['ov-title'].textContent, 'NEXT RUN');
   const n = names();
   assert.equal(n[0], 'START', 'START is the first card');
   assert.equal(T.menus.pendingStage, 'VERDANT_HOLLOW', 'the default stage');
-  assert.equal(T.menus.pendingChallenge, 'STANDARD', 'the default modifier');
-  assert.ok(n[1] === 'STAGE: VERDANT HOLLOW' && n[2] === 'MODIFIER: STANDARD RUN' && n[3] === 'LOADOUT' && n[4] === 'BACK', n.join(' | '));
+  assert.ok(n[1] === 'STAGE: VERDANT HOLLOW' && n[2] === 'LOADOUT' && n[3] === 'QUESTS' && n[4] === 'BACK' && n.length === 5, n.join(' | '));
   assert.equal(T.menuFocus(), -1, 'no cursor: Enter takes the first card');
   kdown('Enter');
   assert.equal(st.mode, 'playing', 'Enter starts the run with the defaults');
   assert.equal(st.stage, 'VERDANT_HOLLOW');
-  assert.equal(st.challenge, 'STANDARD');
   assert.deepEqual(st.weapons.map(w => w.type), ['VOLLEY', 'BOOMERANG'], 'the starting kit');
 });
 
@@ -62,15 +63,7 @@ S.check('each pre-run card is one plain line: what it changes and what it pays',
   T.menus.showPreRun();
   const desc = (i) => ((cards()[i].innerHTML || '').match(/class="desc">([\s\S]*?)<\/div>/) || [])[1] || '';
   assert.match(desc(1), /^The first arena: a mixed horde\. Pays normal gold\./, desc(1));
-  assert.match(desc(2), /^No extra rules\. Pays normal gold\./, desc(2));
-  assert.match(desc(3), /^Volley \+ Boomerang\. Weapons start at Lv 1\./, desc(3));
-  // Every modifier states its pay as a number.
-  const award = RUN_GOLD.AWARD, big = Math.round(award * (1 + RUN_GOLD.CHALLENGE_BONUS_PCT / 100));
-  for (const id of ['ONE_WEAPON', 'NO_POTIONS']) {
-    const line = T.menus.challengeLine(id);
-    assert.ok(line.includes('Pays +' + RUN_GOLD.CHALLENGE_BONUS_PCT + '% run award (' + award + ' to ' + big + ' gold).'), line);
-    assert.ok(line.split('. ').length === 2, 'one sentence of change, one of pay: ' + line);
-  }
+  assert.match(desc(2), /^Volley \+ Boomerang\. Weapons start at Lv 1\./, desc(2));
   // No internal words on the screen.
   const all = cards().map(c => c.innerHTML || '').join(' ');
   assert.ok(!/G\d\d|U1|REWARD:|foe hp|relief|x1\b/.test(all), 'no ticket tags or table jargon: ' + all.slice(0, 200));
@@ -155,8 +148,7 @@ S.check('bestNextPurchase prefers what the player can afford, and never an owned
   prof.purchased.hp = saved.hp; prof.purchased.dmg = saved.dmg;
 });
 
-S.check('a win with a modifier: bonuses carry the completion bonus and the parts still sum', () => {
-  T.challenge.select('ONE_WEAPON');
+S.check('a win that sets a record: bonuses carry the completion bonus and the parts still sum', () => {
   T.startRun(); h.pump(2); quiet();
   const prof = T.getProfile();
   prof.bestTime = 0;                           // this run sets a record
@@ -169,11 +161,9 @@ S.check('a win with a modifier: bonuses carry the completion bonus and the parts
   const b = breakdownOf(html);
   assert.equal(b.award + b.survival + b.kills + b.bonuses, banked, JSON.stringify(b) + ' vs ' + banked);
   assert.equal(earnedOf(html), banked);
-  assert.equal(b.award, Math.round(RUN_GOLD.AWARD * (1 + RUN_GOLD.CHALLENGE_BONUS_PCT / 100)), 'the modifier multiplies the run award');
+  assert.equal(b.award, RUN_GOLD.AWARD, 'the run award is the flat award');
   assert.ok(b.bonuses >= RUN_GOLD.NEW_BEST, 'record + completion bonus in bonuses (' + b.bonuses + ')');
-  assert.match(html, /run award x3\.00 \(modifier \+200%\)/, 'the bigger award is explained in plain words');
-  assert.match(html, /ONE WEAPON RUN/, 'the run kind is tagged');
-  T.challenge.select('STANDARD');
+  assert.ok(!/run award x/.test(html), 'a full-pay run has no award multiplier line');
 });
 
 S.check('gold spent in the run comes out of the kills part; the parts still sum', () => {
@@ -259,70 +249,47 @@ function recCtx() {
 const profileWith = (bestGold, writ) => ({ gold: 0, purchased: writ ? { escapeskip: 1 } : {},
   achievements: { totals: { bestGold } } });
 
-S.check('the escape is 25-30 s: the corridor bound and the auto pilot\'s real time', () => {
-  assert.equal(PACING.MIN_SECONDS, 25); assert.equal(PACING.MAX_SECONDS, 30);
-  const secs = [];
-  for (let seed = 1; seed <= 40; seed++) {
-    const sim = createSim(seed);
-    const nominal = sim.corridor.length / PACING.NOMINAL_SPEED;
-    assert.ok(nominal >= 25 && nominal <= 30 + 4, 'seed ' + seed + ': nominal ' + nominal.toFixed(1) + 's');
-    let n = 0;
-    while (!sim.outcome && n < 60 * 90) { step(sim, 1 / 60, inputFor(sim)); n++; }
-    assert.equal(sim.outcome, 'complete', 'seed ' + seed + ': the auto pilot finishes');
-    secs.push(sim.t);
-  }
-  secs.sort((a, b) => a - b);
-  const med = secs[secs.length >> 1];
-  assert.ok(med >= 23 && med <= 30, 'median real time ' + med.toFixed(1) + 's');
-  assert.ok(secs[secs.length - 1] <= 34, 'longest ' + secs[secs.length - 1].toFixed(1) + 's');
-  console.log('  MEASURED escape (auto, 40 seeds): ' + secs[0].toFixed(1) + '-' + secs[secs.length - 1].toFixed(1) + ' s, median ' + med.toFixed(1) + ' s');
+S.check('the escape is a movie of 8-10 s with nothing to play', () => {
+  assert.ok(ESC.DURATION >= 8 && ESC.DURATION <= 10, 'runs ' + ESC.DURATION + ' s');
+  let ended = null, n = 0;
+  ESC.begin({ profile: profileWith(900, false), onEnd: (r) => { ended = r; } });
+  while (!ended && n < 60 * 30) { ESC.frame(null, 1 / 60); n++; }
+  assert.equal(ended.result, 'complete', 'it ends by itself');
+  assert.ok(Math.abs(n / 60 - ESC.DURATION) < 0.05, 'after ' + (n / 60).toFixed(2) + ' s');
 });
 
-S.check('the payout is stated up front, and the skip states what it passes up', () => {
+S.check('the payout is stated up front, and a skip banks all of it', () => {
   const prof = profileWith(1500, false);
   const worth = payoutFor(1500);
   assert.ok(worth > 0);
   let ended = null;
-  ESC.begin({ seed: 7, profile: prof, auto: true, onEnd: (r) => { ended = r; } });
+  ESC.begin({ profile: prof, onEnd: (r) => { ended = r; } });
   const r = recCtx();
   ESC.frame(r.ctx, 1 / 60);
-  assert.ok(r.texts.includes('ESCAPE: +' + worth + ' gold'), 'the first frame names the payout: ' + r.texts.join(' | '));
-  assert.ok(r.texts.includes('SKIP: lose ' + worth + 'g'), 'the skip names the gold it passes up: ' + r.texts.join(' | '));
-  assert.match(ESC.explain(480 - 60, 20), /You lose its gold unless you own the Escape Writ/, 'help mode says the same');
-  ESC.skip();
-  const r2 = recCtx();
-  for (let i = 0; i < 120 && !ended; i++) ESC.frame(r2.ctx, 1 / 60);
+  assert.ok(r.texts.includes('ESCAPE') && r.texts.includes('+' + worth + ' gold'), 'the first frame names the payout: ' + r.texts.join(' | '));
+  assert.ok(r.texts.includes('SKIP'), 'the skip is on screen: ' + r.texts.join(' | '));
+  for (let i = 0; i < 30; i++) ESC.frame(null, 1 / 60);
+  assert.equal(ESC.press(), true);
   assert.ok(ended && ended.result === 'skip', 'the skip ends the escape');
-  assert.equal(ended.payout, 0, 'no payout without the writ');
-  assert.equal(ended.forgone, worth, 'the hand-back carries the passed-up amount');
-  assert.equal(prof.gold, 0, 'nothing banked');
-  assert.ok(r2.texts.includes(worth + ' gold passed up'), 'the outcome card says so: ' + r2.texts.join(' | '));
+  assert.equal(ended.payout, worth, 'paid in full');
+  assert.equal(prof.gold, worth, 'banked');
 });
 
-S.check('the Escape Writ: a skip keeps the payout, and the button says so', () => {
-  const prof = profileWith(1500, true);
-  const worth = payoutFor(1500);
-  let ended = null;
-  ESC.begin({ seed: 7, profile: prof, auto: true, onEnd: (r) => { ended = r; } });
-  const r = recCtx();
-  ESC.frame(r.ctx, 1 / 60);
-  assert.ok(r.texts.includes('SKIP: keep ' + worth + 'g'), r.texts.join(' | '));
-  ESC.skip();
-  for (let i = 0; i < 120 && !ended; i++) ESC.frame(r.ctx, 1 / 60);
-  assert.equal(ended.payout, worth); assert.equal(ended.forgone, 0); assert.equal(ended.paidSkipUsed, true);
-  assert.equal(prof.gold, worth, 'the payout was banked');
-  assert.match(SHOP_BY_ID.escapeskip.desc, /Skipping the escape still pays its gold/, 'the shop row says what it does');
-});
-
-S.check('finishing the escape banks the stated amount', () => {
-  const prof = profileWith(900, false);
-  const worth = payoutFor(900);
-  let ended = null;
-  ESC.begin({ seed: 4, profile: prof, auto: true, onEnd: (r) => { ended = r; } });
-  for (let i = 0; i < 60 * 60 && !ended; i++) ESC.frame(null, 1 / 60);
-  assert.ok(ended && ended.result === 'complete', 'the auto pilot completes (got ' + (ended && ended.result) + ')');
-  assert.equal(ended.payout, worth); assert.equal(prof.gold, worth);
-  assert.ok(ended.seconds >= 20 && ended.seconds <= 34, 'in ' + ended.seconds.toFixed(1) + 's');
+S.check('the Escape Writ: the escape pays three times as much, watched or skipped, and the shop row says so', () => {
+  const worth = payoutFor(1500, true);
+  assert.equal(worth, payoutFor(1500) * 3);
+  for (const skip of [false, true]) {
+    const prof = profileWith(1500, true);
+    let ended = null;
+    ESC.begin({ profile: prof, onEnd: (r) => { ended = r; } });
+    const r = recCtx();
+    ESC.frame(r.ctx, 1 / 60);
+    assert.ok(r.texts.includes('+' + worth + ' gold'), r.texts.join(' | '));
+    if (skip) ESC.skip(); else for (let i = 0; i < 60 * 12 && !ended; i++) ESC.frame(null, 1 / 60);
+    assert.equal(ended.payout, worth); assert.equal(ended.writ, true);
+    assert.equal(prof.gold, worth, 'the payout was banked');
+  }
+  assert.match(SHOP_BY_ID.escapeskip.desc, /The escape after the first boss pays three times the gold/, 'the shop row says what it does');
 });
 
 // ---- 5. the desktop HUD ------------------------------------------------------------

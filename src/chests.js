@@ -5,7 +5,7 @@
 // (CHESTS.RARITY_WEIGHTS); the GAMBLE is NOT a rarity but its own independent
 // 1-in-10 roll — the tension moment: 50/50 between a big payoff and nothing
 // PLUS a mini horde spawned
-// right on top of the player (typed CHASERs through the same chassis + heat
+// right on top of the player (typed CHASERs through the same chassis + wrath
 // scaling every other spawn uses — see applyEscalation below).
 //
 // Pure-ish by design: every randomness goes through an injectable `rng`
@@ -62,12 +62,12 @@ export const CHESTS = {
 // ---------- Typed horde spawn (main.js spawnWave parity) -------------------
 // Wave-25 (agent F): the gamble punishment horde used to spawn through
 // entities.makeEnemy(), so its enemies had no typeId / variant / w / h / age,
-// skipped the HEAT hp multiplier, and could never be flash-drop eligible
+// skipped the WRATH hp multiplier, and could never be flash-drop eligible
 // (loot.isFlashEligibleKill needs a CHASER/SWARMER typeId). It now spawns
 // through the SAME typed construction the regular spawner uses:
 //   enemy_types.makeTypedEnemy -> a real CHASER chassis (typeId/w/h/age/pack)
 //   the CONFIG.ESCALATION re-scale -> the same hp/xp curves as every spawn
-//   heatMultipliers(heatOf(state)).hp -> the run's heat ledger
+//   wrathMultipliers(wrathOf(state)).hp -> the run's wrath ledger
 // Deliberately NO rng: the factory's default variant is used, so the chest
 // keeps its documented 2-draw rng order and no caller's stream shifts.
 // WAVE-26: the re-scale algebra used to be duplicated here and in main.js;
@@ -76,7 +76,7 @@ export const CHESTS = {
 // BALANCE NOTE (wave-25, measured — no numbers were retuned): putting the
 // gamble horde on the typed path also puts it on CONFIG.ESCALATION, which
 // COMPOUNDS from wave 4. Its hp vs the old makeEnemy chassis: x1.41 at wave 1,
-// x1.65 at wave 2, x1.92 at wave 4, x7.2 at wave 8 (x1.36 more at heat 3);
+// x1.65 at wave 2, x1.92 at wave 4, x7.2 at wave 8 (x1.36 more at wrath 3);
 // xp follows the same curve (x1.47 at wave 2, x1.70 at wave 4, x4.72 at wave
 // 8). That is exactly the curve every
 // ambient spawn uses, so the punishment horde now matches the field it lands
@@ -245,6 +245,11 @@ function applyContents(state, contents, chest) {
 
 // Per-frame: age chests, despawn expired ones, open any the player touches.
 // Returns the aggregated events array for this tick.
+// M5b: a chest of a stated band: that band's item and one of each flask.
+export function bandContents(band, rng = Math.random) {
+  return { rarity: band, item: rollItemOfRarity(String(band).toUpperCase(), rng), potions: { hp: 1, mp: 1 } };
+}
+
 export function tickChests(state, dt, rng = Math.random) {
   if (!Array.isArray(state.chests)) { state.chests = []; return []; }
   const p = state.player;
@@ -259,7 +264,18 @@ export function tickChests(state, dt, rng = Math.random) {
       continue;
     }
     if (Math.hypot(chest.x - p.x, chest.y - p.y) <= CHESTS.PICKUP_RADIUS) {
-      const contents = rollContents(state, rng);
+      // M5b secrets: a chest may be a mimic, decided when it is opened on
+      // the caller's own stream (state.mimicCheck), so this rng is untouched.
+      if (chest.mimic === undefined && !chest.band && typeof state.mimicCheck === 'function') {
+        chest.mimic = !!state.mimicCheck(chest);
+      }
+      if (chest.mimic) {
+        state.chests.splice(i, 1);
+        events.push({ kind: 'mimicWake', x: chest.x, y: chest.y });
+        continue;
+      }
+      // A band chest (vault, yard, mimic reward) pays its stated band.
+      const contents = chest.band ? bandContents(chest.band, rng) : rollContents(state, rng);
       events.push(...applyContents(state, contents, chest));
       state.chests.splice(i, 1);
     }

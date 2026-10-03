@@ -41,12 +41,12 @@
 // NOT sinks (no gold leaves the purse or bank; verified by the same greps):
 //   - Unspent purse: banked into profile.gold at settleRunGold (a transfer,
 //     EXCLUDED by the "unspent" clause — never counted as spent).
-//   - settleRunGold banking, milestone/challenge/heat/night payout terms:
+//   - settleRunGold banking, milestone/night payout terms:
 //     income and payout modifiers, not spending.
 //   - Achievement grants (grantWeapon/grantElite/grantShopRow/grantCharacter):
 //     gold-free by design (the achievement IS the price).
 //   - Level-up draft picks, free chest opens, intermission blessings,
-//     RAISE THE STAKES, potions, loadout/equip, character equip: cost no gold.
+//     potions, loadout/equip, character equip: cost no gold.
 //   - No draft-reroll, respec, repair or upkeep spend exists anywhere in src/.
 
 // ---------- dev gate ---------------------------------------------------------
@@ -107,8 +107,7 @@ export function formatGameRev(sha, dirty) {
 //               per draft), intermission blessings (offered vs taken per wave),
 //               shrine buys (taken id + cost + wave), paid-chest gambles
 //               (tier + cost + keep/leave/empty outcome), evolutions
-//               (offered candidates vs taken/deferred), manual heat pushes
-//               (stakes count). Shop purchases, character select + upgrades and
+//               (offered candidates vs taken/deferred). Shop purchases, character select + upgrades and
 //               the loadout are the `upgrades` field (out-of-run build, taken);
 //               skill/rule/rewrite picks are draft cards, so they ride the
 //               drafts ledger, not a second ledger.
@@ -125,7 +124,7 @@ export function formatGameRev(sha, dirty) {
 //               time (night vs standard), never a hardcoded string.
 //   modifiers — live-derived payout/build modifiers for the run
 //               (e.g. the night banking-penalty percent read off the live
-//               RUN_GOLD constant, challenge/stage/heat/assisted/apex stamps).
+//               RUN_GOLD constant, stage/assisted/apex stamps).
 //   policy    — STEP 3 (still schema_v 2 — ADDITIVE OPTIONAL FIELD ONLY, no
 //               version bump): the autoplay policy that drove the between-run
 //               buys for this snapshot's build ('smart' | 'impulsive').

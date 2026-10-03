@@ -97,8 +97,8 @@ const out = await withPage({ w: 390, h: 844, dpr: 3,
     const heavyHp = await p.evaluate(`(async () => {
       const st = (await import('./src/main.js')).__TEST.state;
       const cfg = await import('./src/config.js');
-      const heat = (await import('./src/heat.js')).heatMultipliers(
-        (await import('./src/heat.js')).heatOf(st)).hp;
+      const heat = (await import('./src/wrath.js')).wrathMultipliers(
+        (await import('./src/wrath.js')).wrathOf(st)).hp;
       const tick = Math.floor(st.time / 30);
       const want = cfg.midBossHp(st.wave.num - 1, tick) * heat;
       const heavies = st.enemies.filter(e => e.hp > 0 &&

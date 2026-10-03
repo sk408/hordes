@@ -2,7 +2,7 @@
 // image assets). Each grid is rasterised once by sprite_cache.js and drawn
 // with drawImage; without a real canvas the same grids paint with fillRect.
 import { CONFIG as C, runClock } from './config.js';
-import { resolveLook, ELITE_LOOK } from './enemy_types.js';
+import { resolveLook, ELITE_LOOK, ELITE_TEMPLATE } from './enemy_types.js';
 import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
 import { SPRITES, BOSS_SPRITE, FLAME } from './sprites.js';
@@ -14,7 +14,6 @@ import {
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 import { fusionByBodyKind, fusionDef } from './fusions.js';   // fused weapons' tints and emblems
-import { CHALLENGE_BY_ID } from './challenges.js';   // G11: the in-run mode badge
 import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
 // PORT SLICE I — HUD chrome trim (original art, additive-only: every helper
 // paints 1px furniture strictly inside the footprint its caller already
@@ -25,7 +24,9 @@ import { trimBar, trimBadge, trimPlate, studCorners, radarTicks, fsKeyline, bann
 import { chestArtFor, paintChest, SEALED_KEY } from './art/chests.js';
 // PORT SLICE K2 — original shrine altar art (per-index designs, honest
 // display: never per-blessing). Painters only; economy/rolls/latch untouched.
-import { shrineArtFor, paintShrine } from './art/shrines.js';
+import { drawSites, drawWaypoint, drawMapIcon, MAP_ICON } from './sites_art.js';
+import { drawWorldPoi, drawCarrierTell, drawQuestTracker, drawPoiMap } from './world_art.js';
+import { clearWorldCards, flushWorldCards } from './world_cards.js';
 import { archArtFor, paintArch } from './art/arches.js';
 // TIER-2 NAMED FINDS (2026-09-23): per-affix item portraits. Painters only —
 // the belt record (chrome.itemIcons, rarity per item in order) is untouched.
@@ -40,12 +41,15 @@ import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingField, paintBuilding, STAGE_BUILDINGS } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
-import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN } from './sprite_cache.js';
+import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN, STYLE_STRUCT } from './sprite_cache.js';
 import { shakeOffset } from './fx/feel.js';
 import { describeHandBonus } from './hands.js';   // the HUD hand plate
 import { JOKERS, jokerSlots, jokersHeld } from './jokers.js';   // the HUD joker row
 import { cardArt } from './art/cards.js';
 import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
+import { terrainFor, TN, TCELL, TEXT, F_RAMP, F_BRIDGE } from './terrain.js';
+import { drawTerrain, drawTerrainMarks } from './terrain_art.js';
+import { stageGroundPalette, drawGroundChunks, paintGroundDecor, groundChunksOn } from './world_ground.js';
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
 // Owner 2026-09-17 (msg_01M2RVD9HHZZDSR7FKNTRRSSY5 + addendum): while ANY
@@ -98,6 +102,19 @@ function heroRingPainter(bright) {
   };
 }
 const paintHeroRing = heroRingPainter('#9ff0ff');   // stays cyan when hurt
+// The hero's marker: a small cyan arrow over the head, dark-edged, shown when
+// the hero is hurt or stands in a crowd (it goes up at HERO_CROWD_ON enemies
+// inside the box around the hero and comes down under HERO_CROWD_OFF).
+const HERO_MARK_BOX = { x: -5, y: -1, w: 11, h: 7 };
+const HERO_CROWD_ON = 5, HERO_CROWD_OFF = 3, HERO_CROWD_X = 40, HERO_CROWD_Y = 30;
+function paintHeroMark(c, ox, oy) {
+  const arrow = (colour, dx, dy) => {
+    c.fillStyle = colour;
+    for (let r = 0; r < 5; r++) c.fillRect(ox - 4 + r + dx, oy + r + dy, 9 - 2 * r, 1);
+  };
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) arrow('rgba(8,6,14,0.9)', dx, dy);
+  arrow('#9ff0ff', 0, 0);
+}
 
 export const PLAYER_SPRITE = [
   [0,0,0,3,3,3,3,3,3,0,0,0],
@@ -605,6 +622,11 @@ function blitChest(g, art, x, y, lit) {
 function blitPlain(g, grid, palette, x, y, scale = 1) {
   blitGrid(g, grid, palette, x, y, STYLE_PLAIN, scale);
 }
+// Stage props on the field: the structure standard (outline, top-left light,
+// cast shadow) — world art makeover.
+function blitProp(g, grid, palette, x, y, scale = 1) {
+  blitGrid(g, grid, palette, x, y, STYLE_STRUCT, scale);
+}
 
 // A building is a fixed rect list: one cached raster per design. Returns the
 // design's rect count either way (the landmarks seam reports it).
@@ -623,7 +645,7 @@ function blitBuilding(g, id, x, y) {
     box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
     buildingBoxes.set(id, box);
   }
-  blitPainted(g, 'bld:' + id, box, (c, ox, oy) => paintBuilding(c, id, ox, oy), x, y);
+  blitPainted(g, 'bld:' + id, box, (c, ox, oy) => paintBuilding(c, id, ox, oy), x, y, STYLE_STRUCT);
   return b.rects.length;
 }
 
@@ -803,21 +825,25 @@ export class Renderer {
   // One live enemy through the sprite cache: tells under the body, then a
   // single blit whose baked variant carries outline, rim light, contact
   // shadow, hit flash, chill tint and the elite / rarity / telegraph ring.
+  // An elite's body is ELITE_TEMPLATE.sizeMult larger, so its sprite is drawn
+  // that much larger too (the same raster, stretched about the body centre).
   drawActor(g, e, spr, x, y, state) {
-    const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
-    const bw = spr.box.w, bh = spr.box.h;
+    const grow = e.elite && !e.boss ? ELITE_TEMPLATE.sizeMult : 1;
+    const bw = Math.round(spr.box.w * grow), bh = Math.round(spr.box.h * grow);
+    const sx = x - Math.round(spr.anchor.x * grow), sy = y - Math.round(spr.anchor.y * grow);
     const t = state.time || 0;
-    const frame = spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
-    const feet = y + bh - spr.anchor.y - 1;
     const tier = e.rarity ? RARITY[e.rarity] : null;
     const tell = tier && tier.tell ? tier.tell : null;
     const tele = !!e.telegraph;
+    // A sprite with a wind-up pose (bosses.js `tell`) holds it while it telegraphs.
+    const frame = tele && spr.tell ? spr.tell : spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
+    const feet = sy + bh - 1;
     const blink = Math.floor(t * 12) % 2 === 0;
     // Pools of light on the ground: red and growing under a wind-up, violet
     // under a boss, gold under an elite, the tier colour under a rare.
     if (tele) {
-      const grow = 0.5 + 0.5 * Math.abs(Math.sin(t * 9));
-      blitGlow(g, '#ff2f5e', Math.round(bw * (e.boss ? 1.1 : 1.3)) + 4, x, feet, 0.5 + 0.5 * grow);
+      const pulse = 0.5 + 0.5 * Math.abs(Math.sin(t * 9));
+      blitGlow(g, '#ff2f5e', Math.round(bw * (e.boss ? 1.1 : 1.3)) + 4, x, feet, 0.5 + 0.5 * pulse);
     } else if (e.boss) {
       blitGlow(g, '#c46ad8', bw + 2, x, feet, 0.75);
     } else if (e.elite) {
@@ -831,12 +857,12 @@ export class Renderer {
     else if (e.elite) ring = '#ffd75e';
     else if (tell) ring = (tell.pulseHz && Math.floor(t * tell.pulseHz * 2) % 2 === 0) ? '#efd9ff' : tell.outline;
     else if (e.boss) ring = '#ff9ed8';
-    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying, !e.boss && !e.elite));
+    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying, !e.boss && !e.elite), grow);
     if (e.typeId === 'COLOSSUS') {
+      // The shoulder braziers burn just above the horns.
       const fi = Math.floor(t * 10) % FLAME.small.length;
-      const hh = Math.round((e.h || C.ENEMY.H) / 2);
-      blitGrid(g, FLAME.small[fi], FLAME.palette, x - 7, y - hh - 3);
-      blitGrid(g, FLAME.small[fi], FLAME.palette, x + 3, y - hh - 3);
+      blitGrid(g, FLAME.small[fi], FLAME.palette, x - Math.round(7 * grow), sy - 6);
+      blitGrid(g, FLAME.small[fi], FLAME.palette, x + Math.round(3 * grow), sy - 6);
     }
     // Elite crown pips / wind-up warning mark over the head.
     if (tele) {
@@ -992,10 +1018,14 @@ export class Renderer {
     // Ground base + grid dots are world objects too: they zoom with the layer
     // (fillRect 0..VIEW_W inside the transform covers exactly the zoomed
     // window — at 1x that is the whole screen, i.e. identical to before).
-    g.fillStyle = theme.base;
+    // WORLD ART MAKEOVER: the stage owns the floor material (world_ground.js);
+    // the wave theme leans it. The cached ground chunks carry their own
+    // texture, so the dot lattice only draws on the direct (headless) path.
+    const gpal = stageGroundPalette(state.stage, theme);
+    g.fillStyle = gpal.base;
     if (shake.x || shake.y) g.fillRect(-8, -8, C.VIEW_W + 16, C.VIEW_H + 16);   // no bare edge mid-shake
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
-    g.fillStyle = theme.grid;
+    g.fillStyle = gpal.grid;
     // WAVE-24 (#3): the dot lattice is aligned to the decor CELL and drawn at
     // CELL spacing (was an unrelated 24px grid). At 24px the lattice read as
     // scanline/compression noise; on the same 32px joints as the paving field
@@ -1003,7 +1033,7 @@ export class Renderer {
     const gs = C.GROUND.CELL;
     const ox = ((-cam.x % gs) + gs) % gs;
     const oy = ((-cam.y % gs) + gs) % gs;
-    for (let y = oy - gs; y < C.VIEW_H; y += gs) {
+    if (!groundChunksOn()) for (let y = oy - gs; y < C.VIEW_H; y += gs) {
       for (let x = ox - gs; x < C.VIEW_W; x += gs) g.fillRect(x, y, 1, 1);
     }
 
@@ -1021,7 +1051,16 @@ export class Renderer {
     // WAVE-24 (#3): deliberate structures over the fine field (see
     // drawLandmarks) — the coarse layer that gives the floor a sense of place.
     this.drawLandmarks(g, state.groundSeed || 1, cam, theme, state.stage);
-    this.drawArenaWall(g, cam, theme);   // WAVE-18 (#7): the rim made visible
+    // M5b LANDSCAPE: plateaus, ramps, bridges, drop edges and the stage's
+    // landmark structures, over the floor decor and under every actor.
+    {
+      const TER = terrainFor(state.groundSeed || 0, state.stage);
+      if (TER) {
+        this.terrainChunks = drawTerrain(g, TER, cam, C.VIEW_W, C.VIEW_H);
+        drawTerrainMarks(g, TER, cam, cull);
+      }
+    }
+    this.drawArenaWall(g, cam, gpal);   // WAVE-18 (#7): the rim made visible
 
     // Gems.
     // Faceted lozenge, outlined; the tier colour follows the xp it carries
@@ -1193,33 +1232,13 @@ export class Renderer {
       }
     }
 
-    // WAVE-11 RUN SHRINES (shrines.js): PORT SLICE K2 original altar art —
-    // one designed altar per shrine INDEX (orb/coil/hood, art/shrines.js),
-    // never per-blessing (honest display: the blessing is rolled but hidden
-    // until purchase, so the world sprite must not leak it — see the module
-    // header). A soft aura pulse while unsold, a coin glyph on the face.
-    // Used shrines go dark (spent greys, no aura) so the field reads spent.
-    if (state.shrine) {
-      const sh = state.shrine;
-      const x = Math.round(sh.x - cam.x), y = Math.round(sh.y - cam.y);
-      if (!cull(x, y, 30)) {
-        const lit = !sh.used;
-        const glow = 0.5 + 0.5 * Math.sin((state.time || 0) * 2.5);
-        if (lit) {
-          g.fillStyle = 'rgba(255,215,94,' + (0.08 + 0.14 * glow).toFixed(2) + ')';
-          g.fillRect(x - 10, y - 20, 20, 30);     // aura field
-        }
-        // The altar body: 14x12 grid art, anchored like the chest painter
-        // (centred, footing 4px above the ground point). Variant = the
-        // shrine's index in the world-seeded set (stable all run, S1).
-        const sart = shrineArtFor((state.shrines || []).indexOf(sh));
-        paintShrine(g, sart, x - Math.floor(sart.w / 2), y - sart.h + 4, lit);
-        if (lit) {                                // coin glyph, blinking
-          g.fillStyle = Math.floor((state.time || 0) * 3) % 2 === 0 ? '#ffe9a8' : '#c8a03a';
-          g.fillRect(x - 2, y - 4, 4, 4);
-        }
-      }
-    }
+    // M5b SITES (sites.js / sites_art.js): shrines, altar, braziers,
+    // fountains and the cursed statue, plus the waypoint flag or edge arrow.
+    clearWorldCards();   // world cards queue here and draw in the HUD pass
+    drawSites(g, state, cam, cull);
+    // M5b slice 3 (world_art.js): yard, vault, lever, key, cracks, the glyph.
+    drawWorldPoi(g, state, cam, cull, (state.time || 0) - (state.lastSteerT ?? -99) <= 2);
+    this.waypointMark = drawWaypoint(g, state, cam, this.worldView);
 
     // Portal (wave progression): a rotating ring of flames around a pulsing
     // core — the walk-in that ends the wave. P1 R4 PRESENCE: the ring GROWS
@@ -1410,6 +1429,7 @@ export class Renderer {
         }
       }
     }
+    drawCarrierTell(g, state, cam, cull);   // M5b: the key over its carrier
 
     // WAVE-10 FINALE: the maw of the horde — huge (4x zoom) void-black grid
     // from final_boss.js, 2-frame idle, white hit-flash, and the hot pink
@@ -1928,9 +1948,9 @@ export class Renderer {
     // unset character ids keep the generic PLAYER_SPRITE pair (the fallback,
     // never a pilot's look).
     const pl = state.player;
-    if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
-      g.globalAlpha = 0.4;
-    }
+    // While invulnerable the body blinks; the pool, the ring and the arrow
+    // stay solid so the hero is never lost in the blink.
+    const blink = pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0;
     const stepD = this._lpx !== undefined ? Math.hypot(pl.x - this._lpx, pl.y - this._lpy) : 0;
     const moved = stepD > 0.25;
     this._lpx = pl.x; this._lpy = pl.y;
@@ -1957,9 +1977,23 @@ export class Renderer {
       blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 16, hx, hfy, 1);
       // The ring stays cyan when hurt: red reads as one more enemy.
       blitPainted(g, 'heroRing', HERO_RING_BOX, paintHeroRing, hx, hfy);
+      if (blink && !hurt) g.globalAlpha = 0.6;   // the white hit flash stays solid
       blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - pilotHalfW), Math.round(pl.y - cam.y - pilotHalfH),
         actorStyle(hurt, false, '#f4f8ff'));
+      g.globalAlpha = 1;
+      // In a crowd, or when hurt, the arrow over the head points the hero out.
+      let crowd = 0;
+      for (const e of state.enemies) {
+        if (Math.abs(e.x - pl.x) < HERO_CROWD_X && Math.abs(e.y - pl.y) < HERO_CROWD_Y && ++crowd >= HERO_CROWD_ON) break;
+      }
+      if (hurt || crowd >= HERO_CROWD_ON) this.heroMark = true;
+      else if (crowd < HERO_CROWD_OFF) this.heroMark = false;
+      if (this.heroMark) {
+        const bob = prefersReducedMotion() ? 0 : Math.floor((state.time || 0) * 4) % 2;
+        blitPainted(g, 'heroMark', HERO_MARK_BOX, paintHeroMark, hx, Math.round(pl.y - cam.y) - pilotHalfH - 8 - bob);
+      }
     } else {
+      if (blink) g.globalAlpha = 0.4;
       this.drawGrid(g, pilotGrid, pilotPalette,
         Math.round(pl.x - cam.x - pilotHalfW),
         Math.round(pl.y - cam.y - pilotHalfH));
@@ -2071,14 +2105,21 @@ export class Renderer {
   // stat bars and the GOLD counter over the gold line (owner screenshot
   // 2026-09-17); the gallery states (G9/G10) fold into the same list.
   drawPlayHud(g, state) {
+    // World cards (vault, cursed statue): drawn over the world, on screen and
+    // clear of the HUD (world_cards.js). With the HUD hidden there is nothing to avoid.
+    const cardView = { Z: this._zoom || 1, shake: this.shake || { x: 0, y: 0 }, vw: C.VIEW_W, vh: C.VIEW_H };
     if (hudSuppressed(state)) {
       this.hudChrome = null; this.bossBanner = null; this.radar = null;
       this.fsButton = null;   // the fullscreen toggle rides the same gate
       this.hudDrawn = false;
+      this.worldCards = flushWorldCards(g, cardView);
       return;
     }
     this.drawMoment(g, state);
     this.drawHudChrome(g, state);
+    const ch = this.hudChrome;
+    this.worldCards = flushWorldCards(g, { ...cardView,
+      avoid: ch ? [ch.quests, ch.bars, ch.purse, ch.clock, ch.auto] : [] });
     this.drawRadar(g, state);
     this.drawBossBanner(g, state);
     this.drawPrologueBanner(g, state);
@@ -2225,8 +2266,9 @@ export class Renderer {
     // WORLD reach widens while the drawn disc stays the same fixed-geometry
     // box, so the same plate maps more world (the dots compress). The radius
     // always still covers the spawn ring — on high ground with room to spare.
-    const vision = reliefVisionRadius(RADAR_RADIUS,
-      reliefLevel(p.x, p.y, state.groundSeed || 0, stageRelief(state.stage)));
+    const vision = reliefVisionRadius(RADAR_RADIUS, p.highGround !== undefined
+      ? (p.highGround ? C.RELIEF.HIGH_LEVEL : 0)
+      : reliefLevel(p.x, p.y, state.groundSeed || 0, stageRelief(state.stage)));
     const scale = R / vision;
     const focusR = Math.round((C.AUTOPILOT.FOCUS_RANGE || 0) * scale);
 
@@ -2293,15 +2335,24 @@ export class Renderer {
     // landmarks paint NOWHERE, here or on the map (R4).
     const landmarks = [];
     if (state.atlas) {
+      // M5b: every site in reach shows; one not yet reached pings white.
+      const ping = Math.floor((state.time || 0) * 3) % 2 === 0;
+      const closed = !!(state.poi && state.poi.closed);   // the maw closed the sites
       for (const lm of state.atlas.landmarks) {
-        if (!lm.discovered) continue;
         const dx = lm.x - p.x, dy = lm.y - p.y;
         const dist = Math.hypot(dx, dy);
         if (!(dist <= vision)) continue;   // radar.js's inclusive rule, at the vision radius
+        if (lm.site && (closed || lm.site.state === 'spent')) continue;
         const mx = cx + Math.round(dx * scale), my = cy + Math.round(dy * scale);
-        g.fillStyle = '#ffd75e';
-        g.fillRect(mx - 1, my - 1, 3, 3);
-        landmarks.push({ x: mx, y: my, kind: lm.kind });
+        if (!lm.discovered) {
+          g.fillStyle = ping ? '#ffffff' : '#8a94a4';
+          g.fillRect(mx - 1, my - 1, 3, 3);
+        } else {
+          g.fillStyle = MAP_ICON[lm.kind] || '#ffd75e';
+          if (lm.kind === 'brazier') g.fillRect(mx, my, 2, 2);
+          else g.fillRect(mx - 1, my - 1, 3, 3);
+        }
+        landmarks.push({ x: mx, y: my, kind: lm.kind, discovered: !!lm.discovered });
       }
     }
     this.radar = { cx, cy, r: R, focusR, counts, dots: painted, landmarks };
@@ -2340,6 +2391,10 @@ export class Renderer {
     const oy = Math.round((C.VIEW_H - size) / 2);
     // The plate: one OPAQUE dark rect (the field is hidden BY DESIGN — C1),
     // the unvisited haze as the field's own base fill.
+    // M5b: a dark veil over the whole view first, so the key, the header
+    // and the CLEAR button never sit on top of the HUD or the field.
+    g.fillStyle = 'rgba(4,6,10,0.9)';
+    g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
     g.fillStyle = '#04060a';
     g.fillRect(ox - 2, oy - 2, size + 4, size + 4);
     g.fillStyle = '#0a0e14';                           // haze = UNVISITED
@@ -2354,29 +2409,120 @@ export class Renderer {
         visited++;
       }
     }
+    // M5b: plateaus and ramps on the map, inside the lifted fog only: tops a
+    // lighter green (upper tiers lighter still), ramps and bridges tan.
+    const TERm = terrainFor(state.groundSeed || 0, state.stage);
+    if (TERm) {
+      const k = size / (2 * TEXT);
+      for (let c = 0; c < TN * TN; c++) {
+        const tier = TERm.tier[c], fl = TERm.flags[c];
+        if (!tier && !(fl & (F_RAMP | F_BRIDGE))) continue;
+        const wx = -TEXT + (c % TN) * TCELL, wy = -TEXT + Math.floor(c / TN) * TCELL;
+        const ax = Math.floor((wx + atlas.rim) / (2 * atlas.rim) * side), ay = Math.floor((wy + atlas.rim) / (2 * atlas.rim) * side);
+        if (ax < 0 || ay < 0 || ax >= side || ay >= side || !atlas.visited[ay * side + ax]) continue;
+        g.fillStyle = (fl & (F_RAMP | F_BRIDGE)) ? '#6a5a3a' : tier >= 4 ? '#5a7a4a' : '#3e5a34';
+        const x0 = ox + Math.round((wx + TEXT) * k), y0 = oy + Math.round((wy + TEXT) * k);
+        g.fillRect(x0, y0, Math.max(1, ox + Math.round((wx + TCELL + TEXT) * k) - x0), Math.max(1, oy + Math.round((wy + TCELL + TEXT) * k) - y0));
+      }
+    }
     // The arena rim frame: the map reads as THE ARENA, not a texture.
     g.fillStyle = '#3a4a58';
     g.fillRect(ox - 1, oy - 1, size + 2, 1);
     g.fillRect(ox - 1, oy + size, size + 2, 1);
     g.fillRect(ox - 1, oy, 1, size);
     g.fillRect(ox + size, oy, 1, size);
-    // Landmarks: DISCOVERED only (R4 — an undiscovered one is drawn NOWHERE).
+    // M5b: site icons. Reached (discovered) sites show their kind and state;
+    // sites seen on the radar but not reached show a "?"; the rest stay hidden.
     const marks = [];
+    const at = (wx, wy) => [ox + Math.round((wx + atlas.rim) / (2 * atlas.rim) * size),
+      oy + Math.round((wy + atlas.rim) / (2 * atlas.rim) * size)];
+    // Once the maw has closed the sites, the reached ones turn grey ('closed':
+    // no waypoint) and the "?" ones leave the map.
+    const closed = !!(state.poi && state.poi.closed);
     for (const lm of atlas.landmarks) {
-      if (!lm.discovered) continue;
-      const c = atlasCell(atlas, lm.x, lm.y);
-      const mx = ox + c.cx * CELL + (CELL >> 1), my = oy + c.cy * CELL + (CELL >> 1);
-      g.fillStyle = '#ffd75e';                         // the shrine idol's gold
-      g.fillRect(mx - 2, my - 2, 5, 5);
-      marks.push({ kind: lm.kind, x: mx, y: my });
+      if (!lm.discovered && !lm.seen) continue;
+      const site = lm.site || null;
+      if (closed && site && !lm.discovered) continue;
+      const [mx, my] = at(lm.x, lm.y);
+      const st = !lm.discovered ? 'unknown' : !site ? 'unused' : closed && site.state !== 'spent' ? 'closed' : site.state;
+      drawMapIcon(g, lm.kind, mx, my, st === 'closed' ? 'spent' : st, lm.kind === 'brazier' && lm.discovered);
+      marks.push({ kind: lm.kind, x: mx, y: my, site, state: st });
     }
-    // The player pip, same cell rule as everything else.
-    const pc = atlasCell(atlas, state.player.x, state.player.y);
-    const px = ox + pc.cx * CELL + (CELL >> 1), py = oy + pc.cy * CELL + (CELL >> 1);
-    g.fillStyle = '#e8e8f0';
-    g.fillRect(px - 1, py - 1, 3, 3);
+    // M5b slice 3: the lever-yard link, the key carrier, the key, found secrets.
+    const poiMarks = drawPoiMap(g, state, at);
+    // The portal and live bosses.
+    if (state.portal) {
+      const [mx, my] = at(state.portal.x, state.portal.y);
+      g.fillStyle = '#000000'; g.fillRect(mx - 3, my - 3, 7, 7);
+      g.fillStyle = '#c87aff'; g.fillRect(mx - 2, my - 2, 5, 5);
+      g.fillStyle = '#ffffff'; g.fillRect(mx, my, 1, 1);
+    }
+    const bosses = [];
+    for (const b of (state.wave && state.wave.bosses) || []) {
+      if (!(b.hp > 0)) continue;
+      const [mx, my] = at(b.x, b.y);
+      g.fillStyle = '#000000'; g.fillRect(mx - 3, my - 3, 6, 6);
+      g.fillStyle = '#ff2f5e'; g.fillRect(mx - 2, my - 2, 4, 4);
+      bosses.push({ x: mx, y: my });
+    }
+    // The waypoint: a gold frame round its icon.
+    let wpMark = null;
+    if (state.waypoint) {
+      const [mx, my] = at(state.waypoint.x, state.waypoint.y);
+      const blink = Math.floor((state.time || 0) * 3) % 2 === 0;
+      g.fillStyle = blink ? '#ffd75e' : '#a08030';
+      g.fillRect(mx - 6, my - 6, 13, 1); g.fillRect(mx - 6, my + 6, 13, 1);
+      g.fillRect(mx - 6, my - 6, 1, 13); g.fillRect(mx + 6, my - 6, 1, 13);
+      wpMark = { x: mx, y: my };
+    }
+    // The player pip (a white cross so it reads over the icons).
+    const [px, py] = at(state.player.x, state.player.y);
+    g.fillStyle = '#000000'; g.fillRect(px - 3, py - 1, 7, 3); g.fillRect(px - 1, py - 3, 3, 7);
+    g.fillStyle = '#ffffff'; g.fillRect(px - 2, py, 5, 1); g.fillRect(px, py - 2, 1, 5);
+    // Header and footer lines, outside the map box.
+    g.font = 'bold 8px monospace';
+    g.textBaseline = 'top';
+    g.textAlign = 'left';
+    g.textAlign = 'right';
+    g.fillStyle = '#c0c8d0';
+    g.fillText(closed ? 'MAP: THE SITES ARE CLOSED' : 'MAP: TAP A SITE TO SET A WAYPOINT', ox + size, Math.max(1, oy - 11));
+    g.textAlign = 'left';
+    let clearBtn = null;
+    if (state.waypoint) {
+      const bw = 92, bh = 14;
+      const bx = ox + size + 8, by = oy + size - bh;
+      if (bx + bw <= C.VIEW_W - 2) {
+        g.fillStyle = '#000000'; g.fillRect(bx, by, bw, bh);
+        g.fillStyle = '#ffd75e'; g.fillRect(bx, by, bw, 1); g.fillRect(bx, by + bh - 1, bw, 1);
+        g.fillRect(bx, by, 1, bh); g.fillRect(bx + bw - 1, by, 1, bh);
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText('CLEAR WAYPOINT', bx + bw / 2, by + bh / 2 + 1);
+        g.textAlign = 'left'; g.textBaseline = 'top';
+        // The tap target is taller than the painted plate and centred on it.
+        const hh = Math.max(bh, C.ATLAS.CLEAR_HIT_H);
+        const hy = Math.max(0, Math.min(C.VIEW_H - hh, by + Math.round((bh - hh) / 2)));
+        clearBtn = { x: bx, y: hy, w: bw, h: hh, plate: { x: bx, y: by, w: bw, h: bh } };
+      }
+    }
+    // The key, down the left of the box.
+    const keyRows = [['shrine', 'SHRINE'], ['altar', 'ALTAR'], ['fountain', 'FOUNTAIN'],
+      ['statue', 'STATUE'], ['brazier', 'BRAZIER'], ['vault', 'VAULT'], ['lever', 'LEVER'], ['yard', 'YARD']];
+    const kx = ox - 74;
+    if (kx >= 2) {
+      g.font = '7px monospace';
+      keyRows.forEach(([k, label], i) => {
+        const ky = oy + 4 + i * 12;
+        drawMapIcon(g, k, kx + 3, ky + 3, 'unused');
+        g.fillStyle = '#c0c8d0'; g.fillText(label, kx + 10, ky);
+      });
+      const ky = oy + 4 + keyRows.length * 12;
+      drawMapIcon(g, 'shrine', kx + 3, ky + 3, 'unknown');
+      g.fillStyle = '#c0c8d0'; g.fillText('SEEN', kx + 10, ky);
+      drawMapIcon(g, 'shrine', kx + 3, ky + 15, 'spent');
+      g.fillText('USED', kx + 10, ky + 12);
+    }
     this.atlasMap = { x: ox, y: oy, size, cell: CELL, visited,
-      landmarks: marks, player: { x: px, y: py } };
+      landmarks: marks, player: { x: px, y: py }, bosses, waypoint: wpMark, clearBtn, poi: poiMarks };
   }
 
   // ---- HORDE WARNING (2026-09-17 review addendum; SCOPE-LIMITED same day) -----
@@ -2792,7 +2938,7 @@ export class Renderer {
     const p = state.player;
     if (!p || !p.stats) { this.hudChrome = null; return; }
     const t = state.time || 0;
-    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, challenge: null, night: null };
+    const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, auto: null, rule: null };
     // PROLOGUE HUD CLEARANCE (2026-09-18): while the first-run prologue phase
     // is live (up to the drink) the banner card owns the top band — every
     // readout that CANNOT change during the phase AND overlaps the card band
@@ -2908,7 +3054,11 @@ export class Renderer {
     g.textBaseline = 'top';
     const valBox = Math.ceil(Math.max(valTextW(hpTxt), valTextW(mpTxt))) + 4;
     const valRight = C.VIEW_W - 24 - 44;          // the clock plate starts at ~417
+    // The bars block's right edge (labels, bars, LV badge, value plates): the
+    // box world cards keep off (chrome.bars, set under the XP row).
+    let barsRight = 0;
     if (!prologueLive && valX + valBox <= valRight) {
+      barsRight = valX - 2 + valBox;
       g.fillStyle = H.PLATE;                      // one plate behind both rows
       g.fillRect(valX - 2, 11, valBox, 22);
       g.fillStyle = H.HP;
@@ -2986,10 +3136,13 @@ export class Renderer {
       const xpTxt = Math.max(0, Math.floor(p.xp)) + '/' + Math.floor(p.xpNext);
       const xpValX = lvX + lvW + 4;
       if (xpValX + xpTxt.length * Math.round(H.LABEL_PX * 0.62) + 4 <= valRight) {
-        label(xpTxt, xpValX, lvY + 2, H.XP, H.LABEL_PX);
+        barsRight = Math.max(barsRight, xpValX - 2 + label(xpTxt, xpValX, lvY + 2, H.XP, H.LABEL_PX));
         chrome.xpText = xpTxt;
       }
     }
+    // HP, MP and XP rows with their labels, the LV badge and the value plates.
+    chrome.bars = prologueLive ? null
+      : { x: 4, y: 11, w: Math.max(barsRight, lvX + lvW) - 4, h: Math.max(yb + hb + 2, lvY + lvH, yb + H.LABEL_PX + 2) - 11 };
 
     // --- E1 RUN PURSE readout (owner directive 2026-09-14: "have a visible ----
     // on screen display"). The live IN-RUN wallet (state.runPurse — syncChrome
@@ -3059,54 +3212,19 @@ export class Renderer {
     trimBar(g, cbX, cbY, cbW, cbH);   // PORT SLICE I: chamfered housing corners + studs
     chrome.clock = { text: clockTxt, frac: limitFrac, finalCall, x: cx - 2, y: clockY, w: cw + 2, h: clockPx + 10 };
 
-    // --- G11 CHALLENGE MODE BADGE ------------------------------------------
-    // Only when a NON-standard mode is live (a STANDARD run renders
-    // byte-identically to before — the badge is simply not drawn). Same badge
-    // language as the LV plate: gold border, dark inset, warm bold text, set
-    // directly under the clock's limit bar so the right column reads
-    // clock -> mode.
-    if (state.challenge && state.challenge !== 'STANDARD') {
-      const name = (CHALLENGE_BY_ID[state.challenge] || CHALLENGE_BY_ID.STANDARD).name;
-      const bPx = 9;
-      const bW = name.length * Math.round(bPx * 0.62) + 6;
-      const bH = bPx + 4;
-      const bX = C.VIEW_W - 24 + 2 - bW;
-      const bY = cbY + cbH + 8;
-      g.fillStyle = '#ffd75e';                       // gold badge border
-      g.fillRect(bX, bY, bW, bH);
-      g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
-      g.fillRect(bX + 1, bY + 1, bW - 2, bH - 2);
-      g.font = 'bold ' + bPx + 'px monospace';
-      g.textBaseline = 'top';
-      g.fillStyle = '#ffe9a8';
-      g.fillText(name, bX + 3, bY + 2);
-      trimBadge(g, bX, bY, bW, bH);   // PORT SLICE I: badge studs
-      chrome.challenge = { id: state.challenge, name };
-    }
-
-    // --- NIGHT MODE BADGE (owner 2026-09-19) --------------------------------
-    // "there should be an overlay on the screen with nightmode is on so the
-    // player knows." A night run changes what the run is WORTH (the gold pool
-    // pays NIGHT_PENALTY_PCT) and NOTHING on screen said so: this file had no
-    // reference to night at all — the only sign was the NIGHT RUN tag on the end
-    // card, i.e. after the run was already over.
-    //
-    // Same badge language as the challenge badge directly above, and the SAME
-    // invariant: a day run renders byte-identically to before — nothing painted,
-    // nothing shifted — so the badge exists only while a night run is live.
-    // Cool blue to the challenge badge's gold, because the two can be live at
-    // once and the right column must not read as one two-line badge.
-    if (state.nightRun) {
+    // --- AUTO-CONTINUE BADGE ------------------------------------------------
+    // A run started by auto-continue banks less gold, so the HUD says so for
+    // the whole run. Same badge language as the LV plate (a border, a dark
+    // inset, bold text), in blue, under the clock's limit bar. Other runs
+    // paint nothing.
+    if (state.autoStarted) {
       const nPx = 9;
-      const nName = 'NIGHT';
+      const nName = 'AUTO 50%';
       const nW = nName.length * Math.round(nPx * 0.62) + 6;
       const nH = nPx + 4;
       const nX = C.VIEW_W - 24 + 2 - nW;
-      // Stack UNDER the challenge badge when one is drawn (clock -> mode ->
-      // night); otherwise take that badge's own slot.
-      const challengeLive = !!(state.challenge && state.challenge !== 'STANDARD');
-      const nY = cbY + cbH + 8 + (challengeLive ? nH + 4 : 0);
-      g.fillStyle = '#8fb8ff';                       // cool border: night reads blue
+      const nY = cbY + cbH + 8;
+      g.fillStyle = '#8fb8ff';                       // cool blue border
       g.fillRect(nX, nY, nW, nH);
       g.fillStyle = 'rgba(10,9,6,0.90)';             // the same dark inset plate
       g.fillRect(nX + 1, nY + 1, nW - 2, nH - 2);
@@ -3115,7 +3233,37 @@ export class Renderer {
       g.fillStyle = '#dbe9ff';
       g.fillText(nName, nX + 3, nY + 2);
       trimBadge(g, nX, nY, nW, nH);   // PORT SLICE I: badge studs
-      chrome.night = { name: nName };
+      chrome.auto = { name: nName, x: nX, y: nY, w: nW, h: nH };
+    }
+    // --- BOSS RULE PLATE ------------------------------------------------------
+    // While a boss rule is live its line sits under the boss bar, in the free
+    // band between the bars (left) and the clock (right).
+    {
+      const rule = state.bossRule;
+      if (rule && rule.live && !rule.broken) {
+        const rPx = 8;
+        const txt = String(rule.text).toUpperCase();
+        const rW = txt.length * Math.round(rPx * 0.62) + 8;
+        const rH = rPx + 4;
+        const rX = Math.round(Math.max(180, Math.min(388 - rW, 284 - rW / 2)));
+        const rY = 13;
+        g.fillStyle = '#c0304a';                       // blood-red border
+        g.fillRect(rX, rY, rW, rH);
+        g.fillStyle = 'rgba(10,9,6,0.90)';             // the same dark inset plate
+        g.fillRect(rX + 1, rY + 1, rW - 2, rH - 2);
+        g.font = 'bold ' + rPx + 'px monospace';
+        g.textBaseline = 'top';
+        g.textAlign = 'left';
+        g.fillStyle = '#ffe9a8';
+        g.fillText(txt, rX + 4, rY + 2);
+        chrome.rule = { id: rule.id, text: txt, x: rX, y: rY, w: rW, h: rH };
+      }
+    }
+    // M5b slice 3: the quest tracker under the clock column (and its badges).
+    // The guided tutorial keeps it down until the handover.
+    {
+      const badges = state.autoStarted ? 17 : 0;
+      chrome.quests = state.questsHidden ? null : drawQuestTracker(g, state, C.VIEW_W - 22, cbY + cbH + 8 + badges);
     }
 
     // --- WAVE-27: no doctrine text on the canvas ----------------------------
@@ -3543,6 +3691,8 @@ export class Renderer {
     const RIM = C.GROUND.RIM;
     const rel = stageRelief(state.stage);
     if (!rel || rel.LEVELS <= 1) return;
+    // M5b LANDSCAPE: an authored layout replaces the natural tints.
+    if (terrainFor(state.groundSeed || 0, state.stage)) return;
     const c0 = Math.floor(cam.x / RC), c1 = Math.floor((cam.x + C.VIEW_W) / RC);
     const r0 = Math.floor(cam.y / RC), r1 = Math.floor((cam.y + C.VIEW_H) / RC);
     const lvAt = (wx, wy) => reliefLevelAt(wx, wy, seed, rel);
@@ -3663,422 +3813,20 @@ export class Renderer {
   // so the floor reads as deliberate level art. Still subtle: decor sits
   // under entities and never competes with the play pieces.
   drawGround(g, seed, cam, theme, stage, weather) {
-    const CELL = C.GROUND.CELL, DENS = C.GROUND.DENSITY;
-    // WAVE-24 (#3): decor clips at the arena RIM (600), not the old 660 bound
-    // — pieces used to spill into the off-map gloom past the wall.
-    const RIM = C.GROUND.RIM;
-    // WAVE-9B/2: palette family rides the WAVE theme (groundSeed keeps
-    // shaping WHICH cells carry a piece — the field itself stays per-run).
-    // PORT SLICE G: the STAGE sets the terrain character (the overlay pass
-    // at the end of this function), the WAVE keeps setting every COLOR —
-    // every motif below paints ONLY through pal.* so the recolor cadence
-    // survives: same stage at a later wave reads recolored, same wave at a
-    // different stage reads re-patterned.
-    const pal = theme || groundTheme(1);
-    const c0 = Math.floor(cam.x / CELL), c1 = Math.floor((cam.x + C.VIEW_W) / CELL);
-    const r0 = Math.floor(cam.y / CELL), r1 = Math.floor((cam.y + C.VIEW_H) / CELL);
-    for (let cy = r0; cy <= r1; cy++) {
-      for (let cx = c0; cx <= c1; cx++) {
-        if (cellRand(cx, cy, seed, 1) >= DENS) continue;
-        const wx = cx * CELL + Math.floor(cellRand(cx, cy, seed, 2) * (CELL - 16));
-        const wy = cy * CELL + Math.floor(cellRand(cx, cy, seed, 3) * (CELL - 16));
-        // Keep the whole piece inside the arena: pieces are up to 14px wide,
-        // so the anchor culls 14 short of the rim.
-        if (wx < -RIM + 2 || wx > RIM - 14 || wy < -RIM + 2 || wy > RIM - 14) continue;
-        const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
-        const kind = cellRand(cx, cy, seed, 4);
-        if (kind < 0.28) {            // tuft cluster: 5 blades + dirt specks
-          g.fillStyle = pal.tuft;
-          g.fillRect(x, y, 1, 4); g.fillRect(x + 2, y - 1, 1, 5); g.fillRect(x + 5, y + 1, 1, 3);
-          g.fillRect(x + 7, y, 1, 4);
-          g.fillStyle = pal.tuft2;
-          g.fillRect(x + 1, y + 1, 1, 3); g.fillRect(x + 3, y, 1, 4); g.fillRect(x + 6, y + 1, 1, 3);
-          g.fillStyle = pal.crack;
-          g.fillRect(x - 2, y + 4, 2, 1); g.fillRect(x + 6, y + 5, 2, 1);
-        } else if (kind < 0.52) {     // stone pair: big rock + pebble sidekick
-          g.fillStyle = pal.stone;
-          g.fillRect(x, y + 1, 6, 4); g.fillRect(x + 1, y, 4, 1);
-          g.fillStyle = pal.stoneTop;
-          g.fillRect(x + 1, y + 1, 3, 1);
-          g.fillStyle = pal.stone;
-          g.fillRect(x + 7, y + 3, 3, 2);
-          g.fillStyle = pal.stoneTop;
-          g.fillRect(x + 7, y + 3, 1, 1);
-        } else if (kind < 0.68) {     // crack run: long stepping fissure
-          g.fillStyle = pal.crack;
-          g.fillRect(x, y, 3, 1); g.fillRect(x + 3, y + 1, 3, 1); g.fillRect(x + 5, y + 2, 3, 1);
-          g.fillRect(x + 8, y + 3, 2, 1); g.fillRect(x + 4, y + 3, 2, 1);
-          g.fillStyle = pal.stoneTop;  // lit lip along the fissure
-          g.fillRect(x, y - 1, 3, 1); g.fillRect(x + 3, y, 3, 1);
-        } else if (kind < 0.93) {     // slab plate: 13x13 floor tile, notched
-          g.fillStyle = pal.slab;     // corners + a seam — reads as paving
-          g.fillRect(x + 1, y, 11, 13); g.fillRect(x, y + 1, 13, 11);
-          g.fillStyle = pal.base;     // knock the corners off the square
-          g.fillRect(x, y, 1, 1); g.fillRect(x + 12, y, 1, 1);
-          g.fillRect(x, y + 12, 1, 1); g.fillRect(x + 12, y + 12, 1, 1);
-          g.fillStyle = pal.stoneTop; // lit top pitch (paving relief)
-          g.fillRect(x + 1, y, 11, 1);
-          g.fillStyle = pal.crack;    // a seam splitting the plate
-          const seam = cellRand(cx, cy, seed, 5) < 0.5;
-          if (seam) g.fillRect(x + 2, y + 6, 9, 1);
-          else g.fillRect(x + 6, y + 2, 1, 9);
-        } else {                      // boulder: rare landmark anchor
-          g.fillStyle = pal.stone;
-          g.fillRect(x + 1, y + 1, 8, 5); g.fillRect(x, y + 2, 10, 3); g.fillRect(x + 3, y, 4, 1);
-          g.fillStyle = pal.stoneTop;
-          g.fillRect(x + 3, y + 1, 4, 1); g.fillRect(x + 2, y + 2, 2, 1);
-          g.fillStyle = pal.crack;    // grounded shadow at the base
-          g.fillRect(x - 1, y + 6, 12, 1);
-          g.fillStyle = pal.stone;
-          g.fillRect(x + 11, y + 4, 2, 2);
-        }
-      }
+    // WORLD ART MAKEOVER (src/world_ground.js): the STAGE owns the floor
+    // material (its palette, the underlay, the decor and motifs) and the WAVE
+    // theme leans every colour (the ladder beat survives). Geometry is the
+    // same pure function of (cell, seed, stage, weather id) as before. With a
+    // real canvas the floor is cached in 256 px chunks (a frame blits a few);
+    // without one (the headless harness) it paints directly, as before.
+    const pal = stageGroundPalette(stage, theme || groundTheme(1));
+    if (drawGroundChunks(g, seed, cam, C.VIEW_W, C.VIEW_H, pal, stage, weather)) {
+      this.groundCached = true;
+      return;
     }
-    // PORT SLICE G — STAGE GROUND OVERLAY (owner autopilot 2026-09-23:
-    // "deeper stage identity in the ground itself" — an APPROVED
-    // visual-density change, painting only) + PORT SLICE K3 (owner feedback
-    // 2026-09-23: "floor tiles could use a bit more variety" — an APPROVED
-    // visual-density change, painting only). A SECOND hash field on a
-    // coarser tile (STAGE_GROUND_TILE = 64, 2x the fine CELL) paints one
-    // stage-keyed terrain motif per picked tile, and K3 gives every stage
-    // THREE motifs (src/stage_ground.js — 24 motifs, 4..7 fillRects each,
-    // wave-theme colors only so the recolor beat survives), mixed per cell
-    // via groundMotifFor (pure fn of cell + seed + stage, salt 34 — never
-    // the wave, never the clock). Same contract as the fine field:
-    // deterministic per (cell, seed, stage) — never the clock — footprint
-    // rim-clipped, drawn UNDER entities (this whole function runs before
-    // every entity pass), quiet dark tones that never compete with the play
-    // pieces. Perf: tiles per view are bounded (~(480/64+2) x (300/64+2)
-    // ~= 70 cells, each gated at dens <= 0.30 and painting <= 10 rects incl.
-    // the rim tick) — O(view), no cache, no stored arrays, camera moves cost
-    // nothing beyond the new cull window. K3 bound: one view paints < 1600
-    // rects (measured ~470..540 — same ~3x headroom shape as slice-G's 1500
-    // bound, rebased for 24 motifs). The fine field above is byte-identical
-    // (same salts, same gates), so the wave ladder, the landmark/building
-    // subdivision and every existing pin hold; only ADDED rects carry stage
-    // identity.
-    // Rim treatment: a tile whose anchor sits within 64px of the arena rim
-    // grows one extra tick pointing at the rim (the edge reads finished
-    // per biome instead of stopping mid-pattern).
-    {
-      const spec = stageGroundSpec(stage);
-      const salt = stageSalt(spec.id);
-      // K4: the run's weather id (string or weather.js instance; garbage ->
-      // CLEAR = no reaction). Geometry of the pass never reads the wave or
-      // the clock — only (cell, seed, stage, weather id).
-      const wxId = normGroundWeather(weather);
-      const T = STAGE_GROUND_TILE;
-      const t0 = Math.floor(cam.x / T), t1 = Math.floor((cam.x + C.VIEW_W) / T);
-      const s0 = Math.floor(cam.y / T), s1 = Math.floor((cam.y + C.VIEW_H) / T);
-      const painted = [];   // K3 smoke seam: motifs painted this view (one per picked tile)
-      for (let cy = s0; cy <= s1; cy++) {
-        for (let cx = t0; cx <= t1; cx++) {
-          if (!groundCellPicked(cx, cy, seed, spec.id)) continue;
-          const wx = cx * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 31) * (T - 28));
-          const wy = cy * T + 8 + Math.floor(cellRand(cx, cy, seed ^ salt, 32) * (T - 28));
-          if (wx < -RIM + 2 || wx > RIM - 22 || wy < -RIM + 2 || wy > RIM - 22) continue;
-          const x = Math.round(wx - cam.x), y = Math.round(wy - cam.y);
-          const v = cellRand(cx, cy, seed ^ salt, 33);
-          const flip = v < 0.5;
-          const motif = groundMotifFor(cx, cy, seed, spec.id);
-          painted.push(motif);
-          switch (motif) {
-            case 'EMBER_CRACK': {     // ash fissure + lit lip + ember speck
-              g.fillStyle = pal.crack;
-              g.fillRect(x, y + 3, 9, 1); g.fillRect(x + 6, y + 4, 7, 1);
-              g.fillRect(x + 10, y + 5, 5, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y + 2, 9, 1); g.fillRect(x + 6, y + 3, 4, 1);
-              g.fillRect(x + (flip ? 2 : 11), y, 2, 2);
-              break;
-            }
-            case 'ASH_PILE': {        // soft ash mound + crest + contact shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x, y + 8, 14, 1);
-              g.fillStyle = pal.slab;
-              g.fillRect(x + 1, y + 4, 12, 4); g.fillRect(x + 3, y + 3, 8, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 3, y + 3, 8, 1); g.fillRect(x + (flip ? 2 : 9), y + 5, 3, 1);
-              break;
-            }
-            case 'CINDER_SPECK': {    // scattered cinder dots + dark speckle
-              g.fillStyle = pal.crack;
-              g.fillRect(x, y + 7, 4, 1); g.fillRect(x + 10, y + 3, 4, 1);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 3 : 9), y + 1, 2, 2);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + (flip ? 9 : 3), y + 5, 2, 2); g.fillRect(x + 6, y + 8, 2, 1);
-              break;
-            }
-            case 'DRIFT_STREAK': {    // three combed wind streaks
-              g.fillStyle = pal.stone;
-              g.fillRect(x, y + 5, 18, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + (flip ? 3 : 0), y + 2, 14, 1);
-              g.fillRect(x + (flip ? 0 : 4), y + 8, 12, 1);
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 2, y + 10, 14, 1);
-              break;
-            }
-            case 'ICE_CHIP': {        // shard cluster + glints + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 13, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 2, y + 4, 5, 5); g.fillRect(x + 9, y + 5, 4, 4);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 2, y + 4, 5, 1); g.fillRect(x + 9, y + 5, 4, 1);
-              g.fillRect(x + (flip ? 0 : 14), y + 2, 2, 2);
-              break;
-            }
-            case 'FROST_PELLET': {    // dotted pellet arc + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 2, y + 9, 12, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x, y + 5, 3, 2); g.fillRect(x + 6, y + 4, 3, 2); g.fillRect(x + 12, y + 5, 3, 2);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y + 4, 3, 1); g.fillRect(x + 6, y + 3, 3, 1); g.fillRect(x + 12, y + 4, 3, 1);
-              break;
-            }
-            case 'RUST_VEIN': {       // branching vein + lit edge
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 6, y, 1, 10); g.fillRect(x + 2, y + 4, 9, 1);
-              g.fillRect(x + 9, y + 6, 5, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 7, y + 1, 1, 8);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 1 : 11), y + 3, 2, 2);
-              break;
-            }
-            case 'RUST_POOL': {       // dark rust pool + lit rim + inner pit
-              g.fillStyle = pal.slab;
-              g.fillRect(x + 1, y + 3, 12, 5); g.fillRect(x + 3, y + 2, 8, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 3, y + 2, 8, 1); g.fillRect(x + 1, y + 3, 2, 1);
-              g.fillStyle = pal.crack;
-              g.fillRect(x + (flip ? 4 : 7), y + 5, 4, 2);
-              break;
-            }
-            case 'SPLINTER': {        // pale splinter shards + speck
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 12, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 2, y + 4, 7, 1); g.fillRect(x + 5, y + 5, 7, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 2, y + 3, 7, 1);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 12 : 0), y + 6, 2, 2);
-              break;
-            }
-            case 'DUNE_RIPPLE': {     // three parallel dune ripples
-              g.fillStyle = pal.stone;
-              g.fillRect(x, y + 1, 16, 1); g.fillRect(x + 2, y + 5, 16, 1);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y, 16, 1); g.fillRect(x + 2, y + 4, 16, 1);
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 15, 1);
-              break;
-            }
-            case 'BONE_FRAG': {       // pale bone L-frags + shadow + speck
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 12, 1); g.fillRect(x + 12, y + 2, 3, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 2, y + 5, 5, 3);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 2, y + 4, 6, 2); g.fillRect(x + (flip ? 9 : 11), y + 4, 4, 2);
-              break;
-            }
-            case 'SAND_PIT': {        // shallow pit ring + lit lip + inner shade
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 3, y + 3, 9, 1); g.fillRect(x + 3, y + 8, 9, 1);
-              g.fillRect(x + 2, y + 4, 1, 4); g.fillRect(x + 12, y + 4, 1, 4);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 3, y + 2, 9, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + (flip ? 5 : 8), y + 5, 3, 2);
-              break;
-            }
-            case 'VOID_RUNE': {       // small cross marks in theme stone
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + 5, y, 2, 12); g.fillRect(x, y + 5, 12, 2);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 5, y, 1, 4);
-              g.fillStyle = pal.tuft;
-              g.fillRect(x + (flip ? 13 : -3), y + 4, 2, 2);
-              break;
-            }
-            case 'VOID_CRACK': {      // thin star fissure + lip + mote
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 5, 13, 1); g.fillRect(x + 7, y + 1, 1, 9);
-              g.fillRect(x + 4, y + 3, 1, 5);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 1, y + 4, 13, 1);
-              g.fillStyle = pal.tuft;
-              g.fillRect(x + (flip ? 0 : 13), y + 7, 2, 2);
-              break;
-            }
-            case 'VOID_PEBBLE': {     // violet pebble pair + lit tops
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 13, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 1, y + 5, 6, 4); g.fillRect(x + 9, y + 4, 5, 5);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 1, y + 4, 6, 1); g.fillRect(x + 9, y + 3, 5, 1);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 8 : 0), y + 1, 2, 2);
-              break;
-            }
-            case 'SCORCH_PLATE': {    // dark plate split by a crack seam
-              g.fillStyle = pal.slab;
-              g.fillRect(x + 1, y, 12, 9); g.fillRect(x, y + 1, 14, 7);
-              g.fillStyle = pal.base;
-              g.fillRect(x, y, 1, 1); g.fillRect(x + 13, y, 1, 1);
-              g.fillRect(x, y + 8, 1, 1); g.fillRect(x + 13, y + 8, 1, 1);
-              g.fillStyle = pal.crack;
-              if (flip) g.fillRect(x + 2, y + 4, 10, 1);
-              else g.fillRect(x + 6, y + 1, 1, 7);
-              break;
-            }
-            case 'CINDER_VENT': {     // vent hole + heat rim + hot speck
-              g.fillStyle = pal.slab;
-              g.fillRect(x, y + 3, 14, 5);
-              g.fillStyle = pal.crack;
-              g.fillRect(x + (flip ? 4 : 7), y + 4, 4, 3);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y + 2, 14, 1);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 11 : 1), y + 6, 2, 2);
-              break;
-            }
-            case 'SLAG_LINE': {       // slag bar + seam + lit edge
-              g.fillStyle = pal.slab;
-              g.fillRect(x, y + 3, 16, 4);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y + 2, 16, 1);
-              g.fillStyle = pal.crack;
-              if (flip) g.fillRect(x + 2, y + 4, 12, 1);
-              else g.fillRect(x + 7, y + 3, 1, 4);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 13 : 1), y, 2, 2);
-              break;
-            }
-            case 'SNOW_PACK': {       // packed clumps + windlit crest + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x - 1, y + 9, 18, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x, y + 5, 8, 4); g.fillRect(x + 9, y + 4, 7, 5);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x, y + 4, 8, 1); g.fillRect(x + 9, y + 3, 7, 1);
-              break;
-            }
-            case 'FROST_FEATHER': {   // feathered frost + midrib + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 14, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 7, y + 1, 1, 8);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + (flip ? 2 : 4), y + 3, 5, 1);
-              g.fillRect(x + (flip ? 9 : 7), y + 5, 5, 1);
-              g.fillRect(x + (flip ? 2 : 4), y + 7, 5, 1);
-              break;
-            }
-            case 'ICE_PEBBLE': {      // ice pebble cluster + crests + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 13, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 1, y + 5, 5, 4); g.fillRect(x + 8, y + 6, 6, 3);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 1, y + 4, 5, 1); g.fillRect(x + 8, y + 5, 6, 1);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + (flip ? 12 : 0), y + 2, 2, 2);
-              break;
-            }
-            case 'FERN_CURL': {       // curled fern stem + fronds + shadow
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 11, 1);
-              g.fillStyle = pal.tuft;
-              g.fillRect(x + 6, y + 1, 1, 8);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + 2, y + 3, 4, 1); g.fillRect(x + 7, y + 5, 4, 1);
-              g.fillRect(x + (flip ? 3 : 9), y + 1, 2, 2);
-              break;
-            }
-            case 'PEBBLE_NEST': {     // pebble trio + lit tops + specks
-              g.fillStyle = pal.crack;
-              g.fillRect(x + 1, y + 9, 13, 1); g.fillRect(x + 12, y + 2, 3, 1);
-              g.fillStyle = pal.stone;
-              g.fillRect(x + 1, y + 5, 5, 4); g.fillRect(x + 8, y + 6, 5, 3);
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + 1, y + 4, 5, 1); g.fillRect(x + 8, y + 5, 5, 1);
-              break;
-            }
-            default: {                // MOSS: low blotch + tuft blades
-              g.fillStyle = pal.slab;
-              g.fillRect(x, y + 4, 12, 3);
-              g.fillStyle = pal.tuft;
-              g.fillRect(x + 1, y, 1, 5); g.fillRect(x + 6, y + 1, 1, 4);
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + 3, y, 1, 5); g.fillRect(x + 9, y + 2, 1, 3);
-              g.fillStyle = pal.crack;
-              g.fillRect(x + (flip ? 0 : 8), y + 7, 3, 1);
-              break;
-            }
-          }
-          // PORT SLICE K4 — WEATHER-REACTIVE TILES (owner feedback
-          // 2026-09-23: "maybe have different tiles impacted by the weather
-          // also in a subtle way"). At most TWO 1-4px additive rects per
-          // picked motif tile (never a new tile, never a redrawn motif),
-          // every rect through pal.* so the wave recolor beat survives and
-          // the palette budget holds (ZERO new colors). Gated by
-          // groundWxFor (pure fn of cell + seed + stage + weather id, salt
-          // 35 — never the clock, never weather.time), positioned by two
-          // fresh cellRand lanes (36/37) off the same (seed ^ salt) field.
-          // Offsets stay inside [0,15]x[0,10] of an anchor the cull keeps
-          // >= 22px inside the rim, so the rim clip holds. CLEAR (or an
-          // absent/unknown weather) paints nothing — the floor byte-returns.
-          // Perf: <= 2 rects per picked tile (~17 per view) on top of the K3
-          // ~470..540 — the < 1600 bound holds with the same ~3x headroom.
-          const nwx = groundWxFor(cx, cy, seed, spec.id, wxId);
-          if (nwx > 0) {
-            const ox = Math.floor(cellRand(cx, cy, seed ^ salt, 36) * 12);
-            const oy = 1 + Math.floor(cellRand(cx, cy, seed ^ salt, 37) * 7);
-            const ox2 = (ox + 7) % 12;
-            if (wxId === 'RAIN') {            // wet speckle: dark damp dots
-              g.fillStyle = pal.crack;
-              g.fillRect(x + ox, y + oy + 3, 2, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + 1, 2, 1);
-            } else if (wxId === 'SNOW') {     // dusting: pale cap + crack settle
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + ox, y, 3, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + 8, 2, 1);
-            } else if (wxId === 'WIND') {     // blown grit: thin shifted streak
-              g.fillStyle = pal.stone;
-              g.fillRect(x + ox, y + oy, 4, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + oy + 2, 3, 1);
-            } else if (wxId === 'CLOUDY') {   // passing shadow: sparse dapple
-              g.fillStyle = pal.crack;
-              g.fillRect(x + ox, y + oy + 2, 3, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + oy, 2, 1);
-            } else if (wxId === 'SUNNY') {    // sun glint: small lit catch
-              g.fillStyle = pal.stoneTop;
-              g.fillRect(x + ox, y + oy, 2, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + oy + 3, 2, 1);
-            } else {                          // MOONLIGHT mote: faint pale speck
-              g.fillStyle = pal.tuft2;
-              g.fillRect(x + ox, y + oy, 2, 1);
-              if (nwx > 1) g.fillRect(x + ox2, y + oy + 4, 2, 1);
-            }
-          }
-          // Rim tick: the edge reads finished per biome.
-          const rimNear = RIM - Math.max(Math.abs(wx), Math.abs(wy));
-          if (rimNear < 64) {
-            g.fillStyle = pal.stoneTop;
-            if (Math.abs(wx) >= Math.abs(wy)) g.fillRect(x + (wx > 0 ? 15 : -3), y + 3, 3, 1);
-            else g.fillRect(x + 5, y + (wy > 0 ? 11 : -3), 1, 3);
-          }
-        }
-      }
-      this.groundMotifs = painted;
-    }
+    this.groundCached = false;
+    this.groundMotifs = paintGroundDecor(g, seed, cam.x, cam.y, cam.x, cam.y,
+      cam.x + C.VIEW_W, cam.y + C.VIEW_H, pal, stage, weather);
   }
 
   // ---- WAVE-24 (#3): LANDMARKS — deliberate level art -------------------------
@@ -4096,8 +3844,11 @@ export class Renderer {
   drawLandmarks(g, seed, cam, theme, stage) {
     const FC = C.GROUND.LANDMARK_CELL, DENS = C.GROUND.LANDMARK_DENSITY;
     const RIM = C.GROUND.RIM;
-    const pal = theme || groundTheme(1);
-    const tIdx = C.GROUND.THEMES.indexOf(pal);
+    // WORLD ART MAKEOVER: the small structures share the stage's ground
+    // material (world_ground.js); the theme-flavoured pile follows the stage.
+    const pal = stageGroundPalette(stage, theme || groundTheme(1));
+    const tIdx = stage === 'VOID_REACH' ? 5 : (stage === 'SNOWFIELD' || stage === 'WHITEOUT') ? 2
+      : stage ? -1 : C.GROUND.THEMES.indexOf(theme || groundTheme(1));
     // STARTING ARENA IMPROVE (2026-09-17): `stage` (optional) lets ONE arena
     // carry its own landmark identity without touching the other seven —
     // the VERDANT HOLLOW grows grove stands and two authored structures
@@ -4190,7 +3941,7 @@ export class Renderer {
           const fr = propFrame(prop, cx, cy);
           g.fillStyle = pal.crack;                                     // bed shadow
           g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
-          rects = 1 + paintStageProp(g, blitPlain, prop.id, fr, x, y);
+          rects = 1 + paintStageProp(g, blitProp, prop.id, fr, x, y);
         } else if (pick < 0.26) {            // RUINED WALL RUN: blocks + a breach
           kind = 'WALL';
           const n = 4 + Math.floor(cellRand(cx, cy, seed, 15) * 3);      // 4..6
@@ -4265,7 +4016,7 @@ export class Renderer {
           const fr = propFrame(prop, cx, cy);
           g.fillStyle = pal.crack;                                     // bed shadow
           g.fillRect(x - 2, y + prop.h, prop.w + 4, 1);
-          rects = 1 + paintStageProp(g, blitPlain, prop.id, fr, x, y);
+          rects = 1 + paintStageProp(g, blitProp, prop.id, fr, x, y);
         } else if (hollow) {          // THE HOLLOW: the tail grows groves too
           kind = 'GROVE';
           rects = grove(x, y);
@@ -4513,6 +4264,22 @@ export class Renderer {
           g.fillRect(Math.round(s.x - cam.x), Math.round(my - cam.y), s.w, 1);
         }
       }
+      // WORLD ART MAKEOVER: light from the top left. The north and west walls
+      // cast a soft shadow onto the arena floor; every block's outer half is
+      // shaded so the band reads as a wall top, not a stripe; a dark outer
+      // edge closes the silhouette.
+      const sx = Math.round(s.x - cam.x), sy = Math.round(s.y - cam.y);
+      g.fillStyle = 'rgba(0,0,0,0.22)';
+      if (s.side === 'N') g.fillRect(sx, sy + s.h, s.w, 5);
+      else if (s.side === 'W') g.fillRect(sx + s.w, sy, 5, s.h);
+      g.fillStyle = 'rgba(0,0,0,0.18)';
+      if (s.horiz) g.fillRect(sx, s.side === 'N' ? sy : sy + (s.h >> 1), s.w, s.h >> 1);
+      else g.fillRect(s.side === 'W' ? sx : sx + (s.w >> 1), sy, s.w >> 1, s.h);
+      g.fillStyle = '#0b0912';
+      if (s.side === 'N') g.fillRect(sx, sy, s.w, 1);
+      else if (s.side === 'S') g.fillRect(sx, sy + s.h - 1, s.w, 1);
+      else if (s.side === 'W') g.fillRect(sx, sy, 1, s.h);
+      else g.fillRect(sx + s.w - 1, sy, 1, s.h);
     }
     this.arenaWall = { rim: RIM, thickness: T, sides };
   }

@@ -13,6 +13,66 @@ import { buildingRects, clearOfBuildings, BUILDING_MOVER_R } from './stage_build
 import { makeNav, navDirection, navRemaining, straightClear, NAV_PAD } from './pilot_nav.js';
 import { stageRelief } from './stages.js';
 import { reliefRampRoute } from './relief.js';
+import {
+  terrainFor, floorAt, terrainLineClear, flowField, flowDir, nodeOf, cellIx,
+  exitField, TNN, TCELL, FLOW_INF, HIGH_TIER,
+} from './terrain.js';
+import { VAULT, gateOutside } from './vault.js';
+
+// M5b LANDSCAPE: the pilot's per-cell building mask (cells a route may not
+// enter), cached on the terrain object per building field. A building grows
+// by the mover's ring. A yard wall (vault.js) is thinner than a cell: it
+// grows half a cell across, so a row of cells always covers it, and not at
+// all along its length, so a cell always stands in the open gate.
+export function pilotBlock(T, rects) {
+  if (T.blockFor === rects) return T.block;
+  const b = new Uint8Array(TNN);
+  const N = Math.round(Math.sqrt(TNN)), H = (N * TCELL) / 2;
+  for (const r of rects) {
+    let mx = BUILDING_MOVER_R, my = BUILDING_MOVER_R;
+    if (r.yard) { mx = r.w < r.h ? TCELL / 2 : 0; my = r.w < r.h ? 0 : TCELL / 2; }
+    for (let gy = 0; gy < N; gy++) {
+      const cy = -H + gy * TCELL + TCELL / 2;
+      if (cy < r.y - my || cy > r.y + r.h + my) continue;
+      for (let gx = 0; gx < N; gx++) {
+        const cx = -H + gx * TCELL + TCELL / 2;
+        if (cx >= r.x - mx && cx <= r.x + r.w + mx) b[gy * N + gx] = 1;
+      }
+    }
+  }
+  T.blockFor = rects; T.block = b;
+  return b;
+}
+
+// The walled yard's outer box (vault.js), or null. Open, it is a dead end to
+// the flee; shut, nothing inside it can be reached.
+function yardBox(state) {
+  const y = state.poi && state.poi.yard;
+  if (!y) return null;
+  const hw = VAULT.YARD_W / 2, hh = VAULT.YARD_H / 2;
+  return { x0: y.x - hw, y0: y.y - hh, x1: y.x + hw, y1: y.y + hh, yard: y };
+}
+const inBox = (b, x, y) => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1;
+// Inside the yard, or on the step just outside its gate (so the walk out
+// carries clear of the walls before the plain flee takes over).
+const YARD_PORCH = 12;
+function inYardDeadEnd(b, x, y) {
+  if (inBox(b, x, y)) return true;
+  const g = b.yard.gateSide, ns = g === 'n' || g === 's';
+  const side = ns ? Math.abs(x - b.yard.x) : Math.abs(y - b.yard.y);
+  const out = g === 'n' ? b.y0 - y : g === 's' ? y - b.y1 : g === 'w' ? b.x0 - x : x - b.x1;
+  return side < VAULT.GATE_W / 2 && out >= 0 && out < YARD_PORCH;
+}
+// Does the walk from (x, y) along (dx, dy) for `look` px come within the
+// mover's ring of the box?
+function entersBox(b, x, y, dx, dy, look) {
+  const m = BUILDING_MOVER_R;
+  for (let t = look / 4; t <= look; t += look / 4) {
+    const qx = x + dx * t, qy = y + dy * t;
+    if (qx > b.x0 - m && qx < b.x1 + m && qy > b.y0 - m && qy < b.y1 + m) return true;
+  }
+  return false;
+}
 
 export const FOCUS_MODES = ['NEAREST', 'TOUGHEST', 'SWARM', 'RANGED'];
 export const STANCES = ['SAFE', 'BALANCED', 'GREEDY'];
@@ -72,7 +132,8 @@ function nearestEnemy(p, state) {
 function engagementR2(p) {
   const v = p && p.stats ? p.stats.focusRange : undefined;
   const back = C.AUTOPILOT.FOCUS_RANGE;
-  const r = (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : back;
+  let r = (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : back;
+  if (p && p.highGround) r *= C.TERRAIN.HIGH_RANGE_MULT;   // M5b: high ground reaches farther
   return r * r;
 }
 
@@ -274,11 +335,14 @@ export class AutoPilotController {
     // is queried ONCE per frame (pure in seed/stage, a couple dozen boxes) and the
     // interior test rides the same commit/drop shape as the rim test above.
     const bRects = buildingRects(state.groundSeed || 0, state.stage);
+    // The walled yard: shut, a gem inside it has no way in either.
+    const yardB = yardBox(state);
+    const yb = yardB && yardB.yard.open ? yardB : null;
     const inBricks = (x, y) => {
       for (const r of bRects) {
         if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) return true;
       }
-      return false;
+      return !!yardB && !yb && inBox(yardB, x, y);
     };
     if (!state.gems.includes(this.gem)) this.gem = null;
     if (this.gem && !isReachableLoot(this.gem.x, this.gem.y)) this.gem = null;
@@ -355,7 +419,36 @@ export class AutoPilotController {
       if (lineClear) { m.routed = true; m.stepCap = Infinity; }
       return m;
     };
+    // M5b LANDSCAPE: a goal across a cliff is walked through the ramps — a
+    // flow field from the goal (a few kept per pilot), buildings masked.
+    const TER = terrainFor(state.groundSeed || 0, state.stage);
+    const pz = TER ? floorAt(TER, p.x, p.y, p.tz || 0) : 0;
+    const terrainRoute = (tx, ty, mag) => {
+      if (!TER || terrainLineClear(TER, p.x, p.y, pz, tx, ty)) return null;
+      const gn = nodeOf(TER, cellIx(tx, ty), floorAt(TER, tx, ty, 0));
+      // The kept fields belong to one mask: a new one (the gate opened) drops them.
+      const blk = pilotBlock(TER, bRects);
+      if (!this.tflows || this.tflows.T !== TER || this.tflows.blk !== blk) this.tflows = { T: TER, blk, list: [] };
+      let F = null;
+      for (const f of this.tflows.list) if (f.node === gn) F = f.F;
+      if (!F) {
+        F = flowField(TER, [gn], blk);
+        this.tflows.list.unshift({ node: gn, F });
+        if (this.tflows.list.length > 4) this.tflows.list.pop();
+      }
+      const un = nodeOf(TER, cellIx(p.x, p.y), pz);
+      if (F.dist[un] >= FLOW_INF) return null;
+      const d = flowDir(TER, F, p.x, p.y, pz);
+      if (!d) return null;
+      left = F.dist[un] * (TCELL / 2);
+      const m = put(d[0] * mag, d[1] * mag, C.GROUND.RIM);
+      m.routed = true;
+      m.stepCap = Infinity;
+      return m;
+    };
     const routeTo = (tx, ty, mag) => {
+      const tr = terrainRoute(tx, ty, mag);
+      if (tr) { lineClear = false; return tr; }
       left = Math.hypot(tx - p.x, ty - p.y);
       lineClear = straightClear(bRects, p.x, p.y, tx, ty);
       if (lineClear) { this.nav.path = null; return null; }
@@ -454,6 +547,12 @@ export class AutoPilotController {
     if (nearest && !state.portal && (this.fleeing ? nd < exitR2 : nd < enterR2)) {
       this.fleeing = true;
       this.act = 'FLEE';
+      // The open walled yard is a dead end: inside it, flee out through the gate.
+      if (yb && inYardDeadEnd(yb, p.x, p.y)) {
+        const [ox, oy] = gateOutside(yb.yard);
+        const ol = Math.hypot(ox - p.x, oy - p.y) || 1;
+        return routeTo(ox, oy, 1) || direct(put((ox - p.x) / ol, (oy - p.y) / ol));
+      }
       const len = Math.sqrt(nd) || 1;
       let fx = (p.x - nearest.x) / len;
       let fy = (p.y - nearest.y) / len;
@@ -475,8 +574,39 @@ export class AutoPilotController {
         fx = -Math.sign(p.x) * 0.7071;
         fy = -Math.sign(p.y) * 0.7071;
       }
-      const fl = Math.hypot(fx, fy) || 1;
+      let fl = Math.hypot(fx, fy) || 1;
       fx /= fl; fy /= fl;
+      // M5b LANDSCAPE: never kite into a cliff face or a dead-end plateau.
+      // On high ground far from a way down, lean toward the nearest ramp or
+      // drop edge; a flee line a cliff blocks turns to the nearest open one.
+      if (TER && pz >= HIGH_TIER) {
+        const ex = exitField(TER);
+        const ed = ex.dist[nodeOf(TER, cellIx(p.x, p.y), pz)] * (TCELL / 2);
+        const xd = flowDir(TER, ex, p.x, p.y, pz);
+        if (xd && ed > 72 && fx * xd[0] + fy * xd[1] < 0.3) {
+          fx = fx * 0.4 + xd[0]; fy = fy * 0.4 + xd[1];
+          fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
+        }
+      }
+      // A flee line is open when no cliff blocks it and it does not run into
+      // the open yard (the way back into the dead end).
+      const LOOK = 40;
+      const fleeOpen = (rx, ry) =>
+        (!TER || terrainLineClear(TER, p.x, p.y, pz, p.x + rx * LOOK, p.y + ry * LOOK)) &&
+        !(yb && entersBox(yb, p.x, p.y, rx, ry, LOOK));
+      if (!fleeOpen(fx, fy)) {
+        let best = null;
+        for (const a of [0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0]) {
+          const c = Math.cos(a), sn = Math.sin(a);
+          const rx = fx * c - fy * sn, ry = fx * sn + fy * c;
+          if (fleeOpen(rx, ry)) { best = [rx, ry]; break; }
+        }
+        if (!best && TER) {
+          const xd = flowDir(TER, exitField(TER), p.x, p.y, pz);
+          if (xd) best = [xd[0], xd[1]];
+        }
+        if (best) { fx = best[0]; fy = best[1]; }
+      }
       if (this.stance === 'GREEDY' && g) {
         const w = st.LOOT_WEIGHT;
         const bx = fx * (1 - w) + gx * w;
@@ -575,6 +705,31 @@ export class AutoPilotController {
       return routed || direct(put(pdx / plen, pdy / plen, rim));
     }
 
+    // M5b SITE GOAL (explore.js): EXPLORE's calm-field site pick, or a map
+    // waypoint (AUTO and EXPLORE). Below the flee and portal branches, so a
+    // threat or an open portal always wins. Stand-in sites (shrine, fountain)
+    // hold inside the ring; the rest walk onto the spot. A goal the pilot
+    // makes no progress toward is reported back (state.pilotGoalStalled).
+    const goal = state.pilotGoal;
+    if (goal) {
+      const gdx = goal.x - p.x, gdy = goal.y - p.y;
+      const glen = Math.hypot(gdx, gdy);
+      if (goal.hold > 0 && glen <= goal.hold) {
+        this.act = 'SITE';
+        return put(0, 0);
+      }
+      if (glen > 2) {
+        const routed = routeTo(goal.x, goal.y, 1);
+        if (this.stalled(goal.site || goal.key || goal, p, left)) {
+          this.nav.path = null;
+          state.pilotGoalStalled = goal;
+        } else {
+          this.act = 'SITE';
+          return routed || direct(put(gdx / glen, gdy / glen, C.GROUND.RIM));
+        }
+      }
+    }
+
     // Calm: drift toward the nearest XP gem (SAFE drifts slower).
     if (g) {
       lineClear = false;
@@ -622,7 +777,9 @@ export class AutoPilotController {
       // instead of pressing its face.
       const ml = Math.hypot(mx, my);
       lineClear = ml > 0 && straightClear(bRects, p.x, p.y,
-        p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK);
+        p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK) &&
+        (!TER || terrainLineClear(TER, p.x, p.y, pz,
+          p.x + (mx / ml) * PATROL_LOOK, p.y + (my / ml) * PATROL_LOOK));
       if (ml > 0 && !lineClear) {
         const r = Math.min(400, Math.max(80, len));
         const a = Math.atan2(dy, dx) + 0.6;

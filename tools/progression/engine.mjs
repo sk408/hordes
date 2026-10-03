@@ -21,6 +21,11 @@ const H = await import(treeUrl('test/_harness.mjs'));
 const CFG = (await import(treeUrl('src/config.js'))).CONFIG;
 const EVOLUTION_DEFS = (await import(treeUrl('src/evolutions.js'))).EVOLUTION_DEFS || {};
 // Fusion pairs (absent in a tree older than the fusion rework: no fusion awareness there).
+// M5b sites (absent in a tree older than the sites slice: no site counts there).
+const SITES_MOD = await import(treeUrl('src/sites.js')).catch(() => null);
+const EXPLORE_MOD = await import(treeUrl('src/explore.js')).catch(() => null);
+export const PILOT_MODES = ['AUTO', 'EXPLORE'];
+const STAGE_IDS = await import(treeUrl('src/stages.js')).then((m) => (m.STAGES || []).map((x) => x.id), () => []);
 const FUSION_DEFS = await import(treeUrl('src/fusions.js')).then((m) => m.FUSION_DEFS || [], () => []);
 
 // Hands and jokers (absent in a tree older than that rework: no awareness there).
@@ -61,6 +66,7 @@ function stanceNames() {
 export async function validatePolicy(pol, cat) {
   if (!DRAFT_POLICIES.includes(pol.draft)) throw new SimConfigError(`unknown draft policy '${pol.draft}'. Choose one of: ${DRAFT_POLICIES.join(', ')}`);
   if (!ONCE_MODES.includes(pol.once)) throw new SimConfigError(`unknown --once '${pol.once}'. Choose one of: ${ONCE_MODES.join(', ')}`);
+  if (pol.pilot && !PILOT_MODES.includes(pol.pilot)) throw new SimConfigError(`unknown --pilot '${pol.pilot}'. Choose one of: ${PILOT_MODES.join(', ')}`);
   if (!LOADOUT_POLICIES.includes(pol.loadout)) throw new SimConfigError(`unknown loadout policy '${pol.loadout}'. Choose one of: ${LOADOUT_POLICIES.join(', ')}`);
   const st = stanceNames();
   if (!st.includes(pol.stance)) throw new SimConfigError(`stance '${pol.stance}' is not in CONFIG.AUTOPILOT.STANCES (have: ${st.join(', ') || 'none'})`);
@@ -117,14 +123,21 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     T.pilotPrefs.storage.setItem(T.pilotPrefs.KEY_STANCE, pol.stance);
     T.pilotPrefs.applyStance();
     const goldBefore = prof.gold;
+    // --stage: one stage, or MIX = the run seed picks among all stages.
+    if (pol.stage && T.stages && T.stages.select && STAGE_IDS.length) {
+      T.stages.select(pol.stage === 'MIX' ? STAGE_IDS[Math.abs(seed) % STAGE_IDS.length] : pol.stage);
+    }
     T.startRun();
-    if (T.setPilotMode) T.setPilotMode('AUTO_ALL');
+    if (T.setPilotMode) T.setPilotMode(pol.pilot === 'EXPLORE' ? 'EXPLORE' : 'AUTO_ALL');
     const weapons = st.weapons.map((w) => w.type).join('+');
     let drafts = 0, end = null, maxWave = 1, escFrames = 0, stuck = 0, lastT = -1, tookOnce = null;
     let firstEvo = null, evolved = 0;   // sim seconds of the first evolution; evolutions in the run
     let firstFuse = null, fused = 0;    // the same for fusions
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
     const trace = []; let nextTrace = traceEvery;
+    // STALLS: a 10 s window in which a goal is up (portal, pilot site goal,
+    // run chest) and the pilot got no 8 px closer to it, during play.
+    let stalls = 0, stallT = 0, stallBest = Infinity, stallKey = null;
     const isRule = (o) => !!o.rule || String(o.id).startsWith('rule_') || TRADE_JOKERS.includes(o.joker);
     const rowFull = () => JOKERS ? JOKERS.jokerRowFull(st) : true;
     const isWeapon = (o) => /^(lvl|wpn)_/.test(String(o.id));
@@ -185,7 +198,31 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         trace.push({ t: Math.round(st.time), level: pl.level, drafts, kills: pl.kills, hp: Math.round(pl.hp), maxHp: Math.round(pl.stats.maxHp),
           dmg: Math.round(pl.stats.damage), enemies: st.enemies.length, purse: T.purse.get(), wave: st.wave.num,
           tiers: { ...st.runCounts.gold.kills }, survival: st.runCounts.gold.survival || 0,
+          pos: [Math.round(pl.x), Math.round(pl.y), pl.tz || 0], act: st.stanceAct || null, gs: st.groundSeed,
+          portal: st.portal ? [Math.round(st.portal.x), Math.round(st.portal.y)] : null,
+          goal: st.pilotGoal ? [Math.round(st.pilotGoal.x), Math.round(st.pilotGoal.y)] : null,
+          gk: st.pilotGoal ? (st.pilotGoal.carrier ? 'carrier' : st.pilotGoal.key ? 'key' : st.pilotGoal.waypoint ? 'wp' : (st.pilotGoal.site && st.pilotGoal.site.kind) || '?') : null,
+          gd: st.pilotGoal ? Math.round(Math.hypot(st.pilotGoal.x - pl.x, st.pilotGoal.y - pl.y)) : null,
+          e150: st.enemies.filter((e) => e.hp > 0 && Math.hypot(e.x - pl.x, e.y - pl.y) < 150).length,
+          e300: st.enemies.filter((e) => e.hp > 0 && Math.hypot(e.x - pl.x, e.y - pl.y) < 300).length,
+          why: EXPLORE_MOD && EXPLORE_MOD.bossFight ? (EXPLORE_MOD.bossFight(st) ? 'boss' : EXPLORE_MOD.gemsNear(st, pl) ? 'gems' : !EXPLORE_MOD.exploreCalm(st, pl) ? 'calm' : 'ok') : null,
+          g80: st.gems.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 80).length,
+          g140: st.gems.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 140).length,
+          g240: st.gems.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 240).length,
+          gall: st.gems.length,
+          e160: st.enemies.filter((e) => e.hp > 0 && Math.hypot(e.x - pl.x, e.y - pl.y) < 160).length,
+          boss: !!(st.wave.boss || (st.wave.bosses || []).some((b) => b.hp > 0)),
           near: st.enemies.filter((e) => Math.hypot(e.x - pl.x, e.y - pl.y) < 40).map((e) => (e.boss ? (e.midBoss ? 'HERALD' : 'BOSS') : e.typeId)).sort().join(',') });
+      }
+      if (st.mode === 'playing') {
+        const gl = st.portal || st.pilotGoal || st.runChest || null;
+        if (!gl) { stallKey = null; }
+        else {
+          const d = Math.hypot(gl.x - st.player.x, gl.y - st.player.y);
+          if (stallKey !== gl) { stallKey = gl; stallBest = d; stallT = st.time; }
+          else if (d < stallBest - 8) { stallBest = d; stallT = st.time; }
+          else if (st.time - stallT >= 10) { stalls++; stallT = st.time; stallBest = d; }
+        }
       }
       if (st.mode === 'dead') { end = 'died'; break; }
       if (st.runWon) { end = 'won'; break; }
@@ -215,6 +252,15 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
       weapons, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused,
+      stage: st.stage || null, stalls,
+      highT: Math.round((st.runCounts.highGroundT || 0) * 10) / 10,
+      sites: SITES_MOD && st.sites ? (st.sitesTally || SITES_MOD.sitesUsed(st.sites, st.sitesBefore)) : null,
+      // M5b slice 3: quests done, quest gold, vault / yard / secrets used.
+      world: st.poi ? { quests: (st.quests || []).filter((q) => q.done).length, questGold: (s.breakdown && s.breakdown.quests) || 0,
+        vault: !!(st.poi.vault && st.poi.vault.state === 'spent'), yard: !!(st.poi.yard && st.poi.yard.state === 'spent'),
+        lever: !!(st.poi.lever && st.poi.lever.state === 'spent'), carrier: !!st.poi.carrierSeen,
+        cracks: (st.secrets || []).filter((x) => x.kind === 'crack' && x.state === 'spent').length,
+        glyph: (st.secrets || []).some((x) => x.kind === 'glyph' && x.state === 'spent'), mimic: !!st.poi.mimicDone } : null,
       hand: (st.player.hand && st.player.hand.id) || null, jokers: (st.player.jokers || []).length, ...(traceEvery ? { trace } : {}),
     };
   } finally {
@@ -274,7 +320,8 @@ function handFirstPick(st, offs, cand, statPriority) {
   return evolutionFirstPick(st, offs, cand, statPriority);
 }
 
-const tag = (pol) => [pol.shop, pol.loadout, pol.draft, pol.once, pol.stance, pol.character].join('/');
+const tag = (pol) => [pol.shop, pol.loadout, pol.draft, pol.once, pol.stance, pol.character].join('/') +
+  (pol.pilot && pol.pilot !== 'AUTO' ? '/' + pol.pilot : '');
 export const policyKey = tag;
 
 async function setup(job) {

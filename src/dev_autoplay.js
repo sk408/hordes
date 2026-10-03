@@ -10,8 +10,8 @@
 //     (localStorage bits `hordes_dev_*`, default OFF when absent — the same
 //     fail-closed read main.js devPref() applies to TEST/FREE/SNAP).
 //   - Dev-night mode = nightmare rules with the 50% banking cut REMOVED.
-//     The cut itself (src/main.js settleRunGold, `state.nightRun ?
-//     RUN_GOLD.NIGHT_PENALTY_PCT : 0`) is untouched for regular night mode;
+//     The cut itself (src/main.js settleRunGold, `state.unattended ?
+//     RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0`) is untouched for regular night mode;
 //     main.js exempts only runs stamped `state.devNightRun`.
 //   - Two auto-buy SHOP policies. The runner buys BETWEEN runs (out-of-run,
 //     through the REAL meta.js buyUpgrade — ledger, gold gate and investment

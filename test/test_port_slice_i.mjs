@@ -181,12 +181,10 @@ console.log('SLICE I / A — BADGES + PLATES (LV / purse / label plates / feed /
   ok(!!slot && slot.style === '#2a2a36', 'the slot frame keeps its shipped style');
 }
 
-console.log('SLICE I / A — CHALLENGE + NIGHT badges (badges only exist off-STANDARD)');
+console.log('SLICE I / A — the AUTO badge (it only exists on a run auto-continue started)');
 {
-  const { R, rec } = fullFrame({ challenge: 'ONE_WEAPON', nightRun: true });
-  ok(!!R.hudChrome.challenge && !!R.hudChrome.night, 'both badges are live in the seam');
-  const borders = rec.rects.filter(q => q.style === '#ffd75e' && q.h >= 12 && q.x > 300);
-  ok(borders.length >= 1, 'the challenge gold border paints in the right column');
+  const { R, rec } = fullFrame({ autoStarted: true });
+  ok(!!R.hudChrome.auto && R.hudChrome.challenge === undefined, 'the auto badge is live in the seam; there is no mode badge');
   const nborder = rec.rects.find(q => q.style === '#8fb8ff' && q.h >= 12 && q.x > 300);
   ok(!!nborder, 'the night blue border paints in the right column');
   if (nborder) {
@@ -199,7 +197,7 @@ console.log('SLICE I / A — CHALLENGE + NIGHT badges (badges only exist off-STA
   // badge rows (below the clock plate — the clock's own trim lives above).
   const { rec: rec2 } = fullFrame();
   ok(!rec2.rects.some(q => q.style === '#ffd75e' && q.x > 300 && q.y >= 30 && q.h >= 12),
-    'a STANDARD run paints no challenge badge in the column');
+    'no gold badge border paints in the column');
   ok(!rec2.rects.some(q => q.style === '#8fb8ff' && q.x > 300 && q.y >= 30 && q.h >= 12),
     'a day run paints no night badge in the column');
 }

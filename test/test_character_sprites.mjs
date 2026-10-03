@@ -22,9 +22,10 @@
 //      fields anywhere on a sprite) and the character tables are untouched
 //      (prices / stat mods / starting kits / skills read their documented
 //      values — this slice changes NO number).
-//   7. PRESENTATION CHAIN — the menu busts keep CHARACTER_PORTRAITS
-//      (portraits.js), intro.js / portal_cine.js keep their adapted generic
-//      copies: slice (c) documents them, it does not redraw them.
+//   7. MENU BUSTS — the 32x32 busts (portraits.js CHARACTER_PORTRAITS) show the
+//      field pilot: its colours and its gear (plume and tabard cross, hat and
+//      staff, hood and scarf, winged helm). intro.js / portal_cine.js keep
+//      their adapted generic copies.
 import {
   CHARACTER_SPRITES, CHARACTER_SPRITE_IDS,
   characterSpriteFor, characterSpriteFrame,
@@ -225,11 +226,57 @@ console.log('RENDER SEAM (every pilot sprite paints COMPOSED + deterministic):')
     'render.js keeps the generic PLAYER_SPRITE pair as the fallback');
 }
 
-console.log('PRESENTATION CHAIN (busts + generic copies, documented not redrawn):');
+console.log('MENU BUSTS (the bust is the field pilot: same colours, same gear):');
+{
+  // Pixels of palette colour `hex` inside a box of frame 0 (x0..x1, y0..y1 inclusive).
+  const count = (id, hex, x0, y0, x1, y1) => {
+    const a = CHARACTER_PORTRAITS[id];
+    const key = Object.keys(a.palette).find(k => a.palette[k].toLowerCase() === hex);
+    if (!key) return 0;
+    let n = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (a.frames[0][y][x] === +key) n++;
+    return n;
+  };
+  const field = (id, key) => CHARACTER_SPRITES[id].palette[key].toLowerCase();
+  // KNIGHT: steel helm, red plume on top, an open face, the red tabard with the gold cross.
+  ok(count('KNIGHT', field('KNIGHT', 3), 0, 4, 31, 12) >= 30, 'KNIGHT bust: a steel helm in the field steel');
+  ok(count('KNIGHT', field('KNIGHT', 5), 8, 0, 23, 4) >= 12, 'KNIGHT bust: the red plume stands on the helm');
+  ok(count('KNIGHT', field('KNIGHT', 1), 8, 12, 23, 19) >= 60, 'KNIGHT bust: an open face (skin under the brow)');
+  ok(count('KNIGHT', field('KNIGHT', 5), 8, 22, 23, 31) >= 60, 'KNIGHT bust: the red tabard');
+  ok(count('KNIGHT', field('KNIGHT', 6), 10, 22, 21, 31) >= 20, 'KNIGHT bust: the gold cross on the tabard');
+  // WITCH: the violet pointed hat (narrow at the top, a wide brim), the staff with its cyan crystal.
+  const hatRow = (y) => count('WITCH', field('WITCH', 2), 0, y, 25, y) + count('WITCH', field('WITCH', 3), 0, y, 25, y);
+  ok(hatRow(2) >= 3 && hatRow(2) <= 8 && hatRow(11) >= 16, 'WITCH bust: a pointed hat over a wide brim (' + hatRow(2) + ' px at the tip, ' + hatRow(11) + ' at the brim)');
+  ok(count('WITCH', field('WITCH', 7), 24, 0, 31, 5) >= 6, 'WITCH bust: the cyan crystal on the staff');
+  ok(count('WITCH', field('WITCH', 6), 26, 6, 31, 31) >= 30, 'WITCH bust: the staff runs down beside her');
+  ok(count('WITCH', field('WITCH', 5), 12, 22, 19, 26) >= 2, 'WITCH bust: the amber clasp');
+  // ROGUE: the green hood round the face, the sand scarf over the mouth and round the neck.
+  ok(count('ROGUE', field('ROGUE', 2), 0, 0, 31, 11) + count('ROGUE', field('ROGUE', 3), 0, 0, 31, 11) >= 80, 'ROGUE bust: the green hood');
+  ok(count('ROGUE', field('ROGUE', 5), 9, 12, 22, 15) >= 20, 'ROGUE bust: the sand scarf covers the mouth');
+  ok(count('ROGUE', field('ROGUE', 5), 4, 16, 27, 21) >= 30, 'ROGUE bust: the scarf wraps the neck');
+  ok(count('ROGUE', field('ROGUE', 1), 9, 7, 22, 11) >= 30, 'ROGUE bust: eyes and brow show above the scarf');
+  // PALADIN: the gold helm with a wing each side, white plate with the gold cross.
+  ok(count('PALADIN', field('PALADIN', 3), 0, 0, 8, 8) >= 12 && count('PALADIN', field('PALADIN', 2), 23, 0, 31, 8) >= 12,
+    'PALADIN bust: a wing each side of the helm');
+  ok(count('PALADIN', field('PALADIN', 2), 8, 1, 23, 9) + count('PALADIN', field('PALADIN', 3), 8, 1, 23, 9) >= 70, 'PALADIN bust: the gold helm');
+  ok(count('PALADIN', field('PALADIN', 4), 8, 22, 23, 31) >= 50, 'PALADIN bust: white plate');
+  ok(count('PALADIN', field('PALADIN', 2), 10, 22, 21, 31) >= 20, 'PALADIN bust: the gold cross on the plate');
+  // A locked pilot is the same grid through main.js's one-tone mask: it must name every key a bust uses.
+  const fs = await import('node:fs');
+  const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const mask = (mainSrc.match(/const SILHOUETTE_PALETTE = \{([^}]*)\}/) || [])[1] || '';
+  const maskKeys = new Set([...mask.matchAll(/(\d):/g)].map(m => +m[1]));
+  for (const id of ROSTER) {
+    const used = new Set(CHARACTER_PORTRAITS[id].frames.flat(2).filter(v => v));
+    ok([...used].every(k => maskKeys.has(k)), 'the locked-pilot mask covers every key of the ' + id + ' bust (' + [...used].sort().join('') + ')');
+  }
+}
+
+console.log('PRESENTATION CHAIN (busts + generic copies):');
 {
   for (const id of ROSTER) {
     ok(!!CHARACTER_PORTRAITS[id] && CHARACTER_PORTRAITS[id].frames.length === 2,
-      'pilot ' + id + ' keeps its authored 32x32 menu bust (2 idle frames)');
+      'pilot ' + id + ' has its authored 32x32 menu bust (2 idle frames)');
   }
   const fs = await import('node:fs');
   const intro = fs.readFileSync(new URL('../src/intro.js', import.meta.url), 'utf8');

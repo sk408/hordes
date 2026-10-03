@@ -3,8 +3,9 @@
 // Drives the REAL seams the game loop calls (never copies):
 //   - per-kill credit: crafted corpses reaped by the REAL death funnel
 //     (the smoke.mjs elite-mod pattern), tier-weighted by meta.js GOLD_TIER;
-//   - 60Hz vs 120Hz: the SAME seeded run must credit the IDENTICAL purse at
-//     both frame steps (a kill is an EVENT, never a per-frame amount);
+//   - 60Hz vs 120Hz: the SAME seeded run at both frame steps banks exactly
+//     what its own kill log pays, and the two purses differ only by the kills
+//     that differ (a kill is an EVENT, never a per-frame amount);
 //   - the bank is unreachable mid-run: profile.gold = 0 buys NOTHING at the
 //     shrine; purse == cost buys it (the smoke shrine probe's invariant,
 //     moved to the purse);
@@ -20,12 +21,16 @@ import { boot, suite } from './_harness.mjs';
 import { loadProfileResult, RUN_GOLD, GOLD_TIER, GOLD_MODEL, computeRunGold,
   buyUpgrade, SHOP_UPGRADES } from '../src/meta.js';
 import { PROFILE_VERSION } from '../src/save.js';
+import { prestigeGoldMult, getPrestige } from '../src/prestige.js';
 
 const S = suite('test_run_purse');
 const h = await boot();
 const T = h.T;
 const st = h.state;
 const elements = h.elements;
+// A fixed random stream for the whole file: an unseeded field (arches, drops)
+// could add a stray credit inside the one-pass funnel probe below.
+Math.random = mulberry32(0x9e11);
 
 // Deterministic RNG for the parity arms (same seed -> same sequence).
 function mulberry32(a) {
@@ -123,31 +128,34 @@ S.check('per-kill credit is tier-weighted at the same funnel the loop uses', () 
     for (let i = 0; i < def.maxLevel; i++) if (!buyUpgrade(prof, def.id)) break;
   }
 }
+// One seeded 20 s run at a frame step. Sites and secrets are removed so kills
+// are the purse's only income (no brazier or niche gold; the first survival
+// tick is at 30 s). Every frame that kills is logged: the tiers the ledger
+// gained, the body count's gain, and the income multiplier in force.
+const PARITY_SEED = 0xf5;
+// What multiplies a kill's gold right now (main.js purseIncomeMult).
+const incomeMult = () => (st.player.stats.goldMult || 1) * (st.player.stats.purseKillMult || 1) *
+  prestigeGoldMult(getPrestige(T.getProfile()));
 function seededPurseRun(frameMs, frames) {
   const realRandom = Math.random;
-  Math.random = mulberry32(0xf5);   // FIXTURE RETARGET (was 0xef): the pilot now
-  // routes around buildings (pilot_nav.js), which re-paths both arms and
-  // split a boundary kill again (15 vs 14). 0xf5 parity verified on repeat
-  // runs (0xf7-0xfa hold too). Earlier retarget, 2026-09-23 (was 0xee): PORT
-  // SLICE J's composed field (~60 building footprints vs ~3) re-paths the
-  // pilot around walls — the arms' micro-diverging positions split a
-  // boundary kill again (15 vs 16) at 0xee. The same failure class the
-  // 0xe1->0xe3->0xe5->0xeb->0xed->0xee retargets document; assertion
-  // unchanged — equal kills / equal purse at both rates. (0xef parity
-  // 15/15, verified stable across repeat runs: non-vacuous, both arms kill.)
-  // v2's reliefRampRoute intent bias (src/relief.js) re-paths walkers toward
-  // the terrace ramps — the arms' micro-diverging positions shifted a boundary
-  // kill again (15 vs 14) at 0xed. The same failure class the
-  // 0xe1->0xe3->0xe5->0xeb->0xed retargets document; assertion unchanged —
-  // equal kills / equal purse at both rates. (0xed was: the ARENA SCALE-UP's
-  // grade term split 15/16 at 0xeb; 0xee parity 16/16.)
+  Math.random = mulberry32(PARITY_SEED);
+  const log = [];
   try {
     T.banners.suppressAll();               // one-time banners hold the sim 2.5s
     T.getProfile().runPurse = 0;               // isolate the arm's earnings
     T.startRun();
+    st.sites = []; st.secrets = [];
     h.setFrameMs(frameMs);
     for (let i = 0; i < frames; i++) {
+      const before = { ...st.runCounts.gold.kills }, bodies = st.player.kills;
+      const mult0 = incomeMult();
       h.pump(1);
+      const after = st.runCounts.gold.kills, tiers = [];
+      for (const t of Object.keys(after)) for (let n = before[t] || 0; n < after[t]; n++) tiers.push(t);
+      if (tiers.length || st.player.kills !== bodies) {
+        const mult1 = incomeMult();
+        log.push({ tiers, bodies: st.player.kills - bodies, lo: Math.min(mult0, mult1), hi: Math.max(mult0, mult1) });
+      }
       if (st.mode === 'draft' || st.mode === 'evolve') {
         const c0 = elements['ov-cards'].children[0]; c0 && c0.click();
       } else if (st.mode === 'intermission') {
@@ -159,17 +167,64 @@ function seededPurseRun(frameMs, frames) {
     Math.random = realRandom;
     h.setFrameMs(undefined);
   }
-  return { purse: T.purse.get(), time: st.time, kills: st.player.kills };
+  return { purse: T.purse.get(), time: st.time, kills: st.player.kills, log,
+    survival: st.runCounts.gold.survival || 0 };
 }
+// What a kill log must have paid: [lowest, highest] whole gold. The softcap
+// makes later kills pay less, so the order of kills inside one frame (which
+// the log does not record) gives the two ends, as does a multiplier that
+// changed inside the frame; with one kill a frame and a steady build they meet.
+function logPays(log) {
+  let lo = 0, hi = 0, k = 0;
+  for (const f of log) {
+    const up = f.tiers.slice().sort((a, b) => GOLD_TIER[a] - GOLD_TIER[b]);
+    up.forEach((t, i) => {
+      const soft = (tier, at) => (tier === 'BOSS' || tier === 'MID_BOSS') ? 1 : 1 / (1 + at / RUN_GOLD.KILL_SOFTCAP);
+      const down = up[up.length - 1 - i];
+      lo += GOLD_TIER[t] * f.lo * soft(t, k + i + 1);
+      hi += GOLD_TIER[down] * f.hi * soft(down, k + i + 1);
+    });
+    k += f.tiers.length;
+  }
+  return [Math.floor(lo - 1e-9), Math.floor(hi + 1e-9)];
+}
+const tierCounts = (log) => {
+  const n = {};
+  for (const f of log) for (const t of f.tiers) n[t] = (n[t] || 0) + 1;
+  return n;
+};
 const arm60 = seededPurseRun(1000 / 60, 20 * 60);      // 20 sim-seconds at 60Hz
 const arm120 = seededPurseRun(1000 / 120, 20 * 120);   // 20 sim-seconds at 120Hz
-S.check('60Hz vs 120Hz: the same seeded run credits the identical purse', () => {
+S.check('60Hz vs 120Hz: each arm banks exactly what its own kills pay', () => {
   assert(arm60.time > 19 && arm120.time > 19,
     `both arms really simulated ~20s (got ${arm60.time.toFixed(2)} / ${arm120.time.toFixed(2)})`);
-  assert(arm60.kills > 0, `the seeded run killed something (${arm60.kills} kills)`);
-  assert(arm60.purse === arm120.purse,
-    `purse parity: 60Hz ${arm60.purse} vs 120Hz ${arm120.purse} ` +
-    `(kills ${arm60.kills} / ${arm120.kills}) — the credit is a per-kill EVENT, dt-free`);
+  for (const [hz, arm] of [[60, arm60], [120, arm120]]) {
+    assert(arm.kills >= 5, `${hz}Hz: the seeded run killed enough to mean something (${arm.kills} kills)`);
+    assert(arm.survival === 0, `${hz}Hz: kills are the only income in 20 s`);
+    assert(arm.log.every(f => f.bodies === f.tiers.length),
+      `${hz}Hz: one purse credit per body: ` + JSON.stringify(arm.log.filter(f => f.bodies !== f.tiers.length)));
+    const [lo, hi] = logPays(arm.log);
+    assert(arm.purse >= lo && arm.purse <= hi,
+      `${hz}Hz: purse ${arm.purse} for ${arm.kills} kills, the kill log pays ${lo}${hi > lo ? '-' + hi : ''}` +
+      ' (the credit is a per-kill EVENT, dt-free)');
+  }
+});
+S.check('60Hz vs 120Hz: the two purses differ by no more than the kills that differ', () => {
+  // The two frame rates take slightly different paths, so a kill on the 20 s
+  // line can land in one arm and not the other. The purses may differ by what
+  // those kills pay in full, plus one gold of rounding; the same kills in the
+  // same order pay the same purse.
+  const killGap = Math.abs(arm60.kills - arm120.kills);
+  assert(killGap <= 2, `the arms stayed comparable (kills ${arm60.kills} / ${arm120.kills})`);
+  const n60 = tierCounts(arm60.log), n120 = tierCounts(arm120.log);
+  const mult = Math.max(...arm60.log.concat(arm120.log).map(f => f.hi));
+  let extra = 0;
+  for (const t of Object.keys(GOLD_TIER)) extra += Math.abs((n60[t] || 0) - (n120[t] || 0)) * GOLD_TIER[t] * mult;
+  const same = JSON.stringify(arm60.log) === JSON.stringify(arm120.log);
+  const tol = same ? 0 : Math.ceil(extra) + 1;
+  assert(Math.abs(arm60.purse - arm120.purse) <= tol,
+    `purse parity: 60Hz ${arm60.purse} vs 120Hz ${arm120.purse} (kills ${arm60.kills} / ${arm120.kills}), ` +
+    `allowed gap ${tol}`);
 });
 
 // ------------------------------------- the bank is unreachable mid-run
@@ -179,25 +234,19 @@ h.pump(5);
   const prof = T.getProfile();
   prof.gold = 0;
   prof.runPurse = 0;
-  // S1 retarget: the proximity loop iterates state.shrines (the world-seeded
-  // set); pin one probe altar under the player (was: st.shrine = {...}).
-  var probeShrine = { x: st.player.x, y: st.player.y, used: false };
-  st.shrines = [probeShrine];
-  for (let i = 0; i < 30 && !probeShrine.used && !probeShrine.brokeToast; i++) h.pump(1);
-  var shrineCost = probeShrine.blessing && probeShrine.blessing.cost;
+  // M5b: the charge shrine costs nothing — stand in it until it charges.
+  var probeShrine = { id: 900, kind: 'shrine', x: st.player.x, y: st.player.y, state: 'unused', charge: 0, handsOn: false };
+  st.sites = [probeShrine]; st.shrines = [probeShrine];
+  for (let i = 0; i < 60 * 8 && probeShrine.state !== 'spent'; i++) {
+    st.player.x = probeShrine.x; st.player.y = probeShrine.y; st.enemies.length = 0;
+    h.pump(1);
+  }
 }
-S.check('banked gold buys NOTHING at the shrine (purse 0, bank 0 -> no sale)', () => {
-  assert(typeof shrineCost === 'number' && shrineCost > 0,
-    'the shrine advertised a cost before the affordability check');
-  assert(probeShrine.used === false, 'no purchase with an empty purse');
-  assert(probeShrine.brokeToast === true, 'the broke toast fired (the altar asked and was refused)');
+S.check('the charge shrine spends NOTHING (purse 0, bank 0 -> it still charges)', () => {
+  assert(probeShrine.state === 'spent', 'the shrine charged with an empty purse');
+  assert(st.mode === 'draft' && st.draftKind === 'shrine', 'and opened its blessing draft');
+  assert(T.purse.get() === 0, 'the purse did not move');
   assert(T.getProfile().gold === 0, 'the BANK was not touched');
-  // Now the purse exactly covers it: same shrine, real proximity purchase.
-  T.getProfile().runPurse = shrineCost;
-  for (let i = 0; i < 30 && !probeShrine.used; i++) h.pump(1);
-  assert(probeShrine.used === true, 'purse == cost completes the purchase');
-  assert(T.purse.get() === 0, `the purse was debited exactly ${shrineCost}`);
-  assert(T.getProfile().gold === 0, 'and the bank STILL was not touched');
 });
 
 // ------------------------------------------------------- settlement shape

@@ -110,6 +110,8 @@ const frame = () => {
 // the estimator with it (that was a real suite red, not a hypothetical).
 st.enemies.length = 0; st.drops.length = 0; st.gems.length = 0;
 st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; st.wave.midAt = st.time + 9999;
+// No map sites either: a shrine the pilot wanders into opens its blessing offer.
+if (Array.isArray(st.sites)) st.sites.length = 0;
 for (let i = 0; i < 30; i++) frame();   // a quiet second and a half: rate stays 0
 ok('the live estimator sits at 0 with no kills', st.killRateEwma === 0);
 st.player.kills += 120;                 // one swarm frame's worth of kills

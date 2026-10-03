@@ -281,12 +281,12 @@ export function itemScore(item) {
 }
 
 // PURE equip policy — hb1 wires it on every drop pickup:
-//   EQUIP   — a slot is free (empty-slot pickup = the +1-heat NEW_ITEM_SLOT
-//             event; heat rule unchanged). slot = index to insert at
+//   EQUIP   — a slot is free (empty-slot pickup = the +1-wrath NEW_ITEM_SLOT
+//             event). slot = index to insert at
 //             (=== items.length).
 //   REPLACE — belt is full AND itemScore(drop) > itemScore(weakest equipped)
 //             STRICTLY. slot = index of the weakest (first weakest wins
-//             ties). No heat event (exchanges are free, and now rare by
+//             ties). No wrath event (exchanges are free, and now rare by
 //             construction). The caller swaps items[slot] itself.
 //   IGNORE  — drop is not strictly better than the weakest equipped item:
 //             it stays on the ground and despawns normally. No equal-swaps,

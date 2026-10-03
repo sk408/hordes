@@ -148,15 +148,15 @@ console.log('FIRST PURCHASES:');
 // ---------- Expansion shop lines ----------
 console.log('EXPANSION LINES:');
 {
-  const NEW_IDS = ['crit', 'critdmg', 'greed', 'alchemy', 'artifact'];
+  const NEW_IDS = ['crit', 'critdmg', 'greed', 'alchemy'];
   for (const id of NEW_IDS) {
     const u = SHOP_BY_ID[id];
     ok(u && u.baseCost > 0 && u.maxLevel >= 3 && Number.isFinite(u.perLevel),
        `${id} line exists with baseCost/maxLevel/perLevel`);
   }
   // One row per stat line, nothing silently added or dropped (docs/BALANCE_M1.md).
-  ok(SHOP_UPGRADES.filter(u => !u.kind).length === 32,
-     `32 stat rows (got ${SHOP_UPGRADES.filter(u => !u.kind).length})`);
+  ok(SHOP_UPGRADES.filter(u => !u.kind).length === 31,
+     `31 stat rows (the Starting Artifact became the camp Forge) (got ${SHOP_UPGRADES.filter(u => !u.kind).length})`);
   ok(new Set(SHOP_UPGRADES.map(u => u.id)).size === SHOP_UPGRADES.length, 'row ids are unique');
   ok(SHOP_UPGRADES.filter(u => u.kind === 'weapon').length
      === Object.keys(WEAPON_PRICES).length,
@@ -188,19 +188,18 @@ console.log('STATS CONTRACT:');
                  pierce: 0, maxHp: 100, maxMana: 100 };
   const def = applyMetaBonuses(base, {});
   ok(def.crit === 0 && def.critMult === 1.5 && def.goldMult === 1
-     && def.potionPower === 1 && def.dropBonus === 0 && def.artifactLevels === 0
+     && def.potionPower === 1 && def.dropBonus === 0 && def.artifactLevels === undefined
      && def.xpMult === 1 && def.luck === 0,
      'unpurchased: all contract fields present with safe defaults (0/1; crit damage x1.5)');
 
   const max = applyMetaBonuses(base,
-    { crit: 5, critdmg: 5, greed: 5, alchemy: 4, artifact: 3, xp: 5, luck: 5 });
+    { crit: 5, critdmg: 5, greed: 5, alchemy: 4, xp: 5, luck: 5 });
   // Every percent row but Forged Edge is additive.
   ok(max.crit === per('crit') * 5, 'crit: +perLevel chance per level');
   ok(max.critMult === 1.5 + per('critdmg') * 5, 'critMult: the x1.5 base plus perLevel per level');
   ok(max.goldMult === 1 + per('greed') * 5, 'goldMult: 1 + perLevel per level');
   ok(max.potionPower === 1 + per('alchemy') * 4, 'potionPower: 1 + perLevel per level');
   ok(max.dropBonus === 0, 'dropBonus: no shop row feeds it any more');
-  ok(max.artifactLevels === per('artifact') * 3, 'artifactLevels: perLevel random weapon levels per level');
   ok(max.luck === 5, 'luck: Fortune level count flows through the stats contract (0..5)');
   ok(max.damage === 8 && max.maxHp === 100, 'base stats untouched by new lines');
 }
@@ -580,8 +579,8 @@ console.log('LUCK:');
 console.log('APEX TIER (G25):');
 {
   // -- partition: apex is invisible to the shop economy --
-  ok(SHOP_UPGRADES.length === 46,
-     `SHOP_UPGRADES holds exactly its 46 rows (32 stat + 11 weapon + 3 elite; got ${SHOP_UPGRADES.length})`);
+  ok(SHOP_UPGRADES.length === 45,
+     `SHOP_UPGRADES holds exactly its 45 rows (31 stat + 11 weapon + 3 elite; got ${SHOP_UPGRADES.length})`);
   ok(APEX_UPGRADES.length === 2, `exactly two apex items this slice (got ${APEX_UPGRADES.length})`);
   ok(APEX_UPGRADES.every(u => u.apex === true && u.kind === 'apex'),
      'every APEX_UPGRADES row carries apex:true + kind:"apex"');

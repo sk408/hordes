@@ -170,24 +170,26 @@ const DUNE_CART_PALETTE = { 1: '#6b4a2a', 2: '#a87f4a', 3: '#3a3f4a', 4: '#8a2a2
 
 // ---- RUST_IDOL (12x16, static) ----------------------------------------------
 // Reference: section 6 rows EX_TOHILSTATUE / KUJATASTATUE (the heavy maxHp
-// statue). HORDES-native: a rust-red stone idol marking the elite arena
-// (BLOOD_RUST). Blocky head with glowing eye slits on a stepped plinth.
+// statue). HORDES-native: a rust-red standing stone marking the elite arena
+// (BLOOD_RUST). World art makeover: the old idol (blocky head, two glowing
+// eyes, a body) read as a small creature, i.e. as an enemy; it is now a
+// pointed obelisk with a glowing zigzag rune on a stepped plinth.
 const RUST_IDOL_GRID = [
-  [0,0,2,2,2,2,2,2,0,0,0,0],
-  [0,2,2,2,2,2,2,2,2,0,0,0],
-  [0,2,3,3,3,3,3,3,2,0,0,0],
-  [0,2,4,2,2,2,4,2,2,0,0,0],
-  [0,2,2,2,5,5,2,2,2,0,0,0],
-  [0,0,2,2,2,2,2,2,0,0,0,0],
-  [0,0,0,2,2,2,2,0,0,0,0,0],
-  [0,2,2,2,2,2,2,2,2,2,0,0],
-  [0,2,3,2,2,5,2,2,3,2,0,0],
-  [0,2,2,2,2,5,2,2,2,2,0,0],
-  [0,0,2,2,2,2,2,2,2,0,0,0],
+  [0,0,0,0,0,3,2,0,0,0,0,0],
+  [0,0,0,0,3,2,2,2,0,0,0,0],
+  [0,0,0,0,3,2,2,2,0,0,0,0],
+  [0,0,0,3,2,2,2,2,2,0,0,0],
+  [0,0,0,3,2,4,2,2,2,0,0,0],
+  [0,0,0,3,2,2,4,2,2,0,0,0],
+  [0,0,0,3,2,4,2,2,2,0,0,0],
+  [0,0,0,3,2,2,4,2,2,0,0,0],
+  [0,0,3,2,2,4,2,2,2,2,0,0],
+  [0,0,3,2,2,2,2,2,2,2,0,0],
+  [0,0,3,2,2,2,2,2,5,2,0,0],
+  [0,0,3,2,2,2,2,2,2,2,0,0],
+  [0,3,3,3,3,3,3,3,3,3,3,0],
   [0,2,2,2,2,2,2,2,2,2,2,0],
-  [2,2,3,2,2,2,2,2,2,3,2,2],
-  [2,2,2,2,5,2,2,5,2,2,2,2],
-  [2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,5,2,2,2,2,2,5,2,2,2],
   [5,5,5,5,5,5,5,5,5,5,5,5],
 ];
 const RUST_IDOL_PALETTE = { 1: '#2e1a14', 2: '#6a3226', 3: '#a8583c', 4: '#ffd54a', 5: '#1c0e0a' };
@@ -240,7 +242,7 @@ export const STAGE_PROPS = {
   DUNE_CART: makeProp('DUNE_CART', 'dune cart',
     'a broken supply cart in the sand', [DUNE_CART_GRID], DUNE_CART_PALETTE),
   RUST_IDOL: makeProp('RUST_IDOL', 'rust idol',
-    'a heavy stone idol watching the red arena', [RUST_IDOL_GRID], RUST_IDOL_PALETTE),
+    'a rust standing stone with a glowing rune', [RUST_IDOL_GRID], RUST_IDOL_PALETTE),
   STORM_VANE: makeProp('STORM_VANE', 'storm vane',
     'a storm arrow waymark for the white hills', [STORM_VANE_GRID], STORM_VANE_PALETTE),
 };
