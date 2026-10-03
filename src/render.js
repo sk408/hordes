@@ -1918,8 +1918,10 @@ export class Renderer {
     this._lpx = pl.x; this._lpy = pl.y;
     const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
     const pilotSpr = characterSpriteFor(state.character && state.character.id);
+    // Pilots walk on their step frames (1..n-1) at 8 steps a second.
+    const pilotStep = pilotSpr && moved ? 1 + Math.floor(state.time * 8) % (pilotSpr.frames.length - 1) : 0;
     const pilotGrid = pilotSpr
-      ? pilotSpr.frames[walkFrame ? 1 : 0]
+      ? pilotSpr.frames[pilotStep]
       : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
     const pilotPalette = pilotSpr ? pilotSpr.palette : PALETTE;
     // Pilot grids are 16x16 (the generic fallback 12x12): centre on the hero.

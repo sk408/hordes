@@ -51,7 +51,7 @@ console.log('FORMAT (integer grids, palette-keyed):');
     const p = CHARACTER_SPRITES[id];
     const label = 'sprite/' + id;
     ok(p.id === id, label + ': id is stable');
-    ok(p.frames.length === 2, label + ': exactly 2 frames (idle + walk-step)');
+    ok(p.frames.length === 3, label + ': 3 frames (stand + two walk steps)');
     const boxes = p.frames.map(f => ({ w: f[0].length, h: f.length }));
     ok(boxes.every(b => b.w === boxes[0].w && b.h === boxes[0].h),
       label + ': every frame is the same box (' + boxes[0].w + 'x' + boxes[0].h + ')');
@@ -81,10 +81,13 @@ console.log('FORMAT (integer grids, palette-keyed):');
     ok(keys.every(k => HEX.test(String(p.palette[k]))), label + ': every palette value is #rgb/#rrggbb');
     ok([...used].every(v => p.palette[v]), label + ': every referenced index is defined');
     const sigs = new Set(p.frames.map(f => f.flat().join(',')));
-    ok(sigs.size === 2, label + ': the 2 frames differ (real walk-step cycle)');
-    // Only the leg rows move between frames (the PLAYER_SPRITE_WALK convention).
-    const sameHead = p.frames[0].slice(0, 10).flat().join(',') === p.frames[1].slice(0, 10).flat().join(',');
-    ok(sameHead, label + ': rows 0-9 are identical across frames (only the legs step)');
+    ok(sigs.size === 3, label + ': the 3 frames all differ (a real walk cycle)');
+    // The two steps bob the body the same way and lift opposite feet.
+    const body = (f) => f.slice(0, 13).flat().join(',');
+    ok(body(p.frames[1]) === body(p.frames[2]) && body(p.frames[1]) !== body(p.frames[0]),
+      label + ': both steps bob the body; standing does not');
+    ok(p.frames[1].slice(13).flat().join(',') !== p.frames[2].slice(13).flat().join(','),
+      label + ': the two steps lift different feet');
   }
   // The four looks are actually distinct pilots, not one grid re-tinted.
   const sigs = new Set(ROSTER.map(id => CHARACTER_SPRITES[id].frames[0].flat().join(',')));
@@ -155,7 +158,7 @@ console.log('FRAME DETERMINISM (sim-phase, never the clock):');
   ok(characterSpriteFrame(witch, 0.5) === characterSpriteFrame(witch, 0.5), 'characterSpriteFrame is stable per age');
   ok(characterSpriteFrame(witch, 0) === 0, 'age 0 reads frame 0 (the idle)');
   ok(characterSpriteFrame(witch, 1 / 6) === 1, 'age 1/6 advances one frame at the 6/s pace');
-  ok(characterSpriteFrame(witch, 2 / 6) === 0, 'the 2-frame cycle wraps (age 2/6 reads frame 0)');
+  ok(characterSpriteFrame(witch, 3 / 6) === 0, 'the cycle wraps after its last frame (age 3/6 reads frame 0)');
   // Matches the render.js player rule exactly across a sweep of ages.
   let drift = 0;
   for (let k = 0; k < 40; k++) {
