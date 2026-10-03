@@ -54,16 +54,18 @@ export function cacheEnabled() {
 // shadow: bake a contact shadow under the feet
 // flash: paint the whole silhouette white (hit flash)
 // tint: [r, g, b, a] blended over the body (chill)
+// mute: pull the colours a little toward grey and darker (art pass: the
+//   horde sits a step behind the hero, who stays at full saturation)
 const OUTLINE_DARK = '#0b0912';
 const styles = new Map();
 export function spriteStyle(spec) {
   const s = spec || {};
   const key = (s.outline || '') + '|' + (s.outline2 || '') + '|' + (s.rim ? 1 : 0) +
-    (s.shadow ? 1 : 0) + (s.flash ? 1 : 0) + '|' + (s.tint ? s.tint.join(',') : '');
+    (s.shadow ? 1 : 0) + (s.flash ? 1 : 0) + (s.mute ? 'm' : '') + '|' + (s.tint ? s.tint.join(',') : '');
   let st = styles.get(key);
   if (!st) {
     st = { key, outline: s.outline || null, outline2: s.outline2 || null, rim: !!s.rim,
-      shadow: !!s.shadow, flash: !!s.flash, tint: s.tint || null };
+      shadow: !!s.shadow, flash: !!s.flash, tint: s.tint || null, mute: !!s.mute };
     st.pad = st.outline2 ? 2 : (st.outline ? 1 : 0);
     st.below = st.shadow ? 2 : 0;
     styles.set(key, st);
@@ -75,10 +77,12 @@ export const STYLE_ITEM = spriteStyle({ outline: OUTLINE_DARK });
 const CHILL = [106, 168, 216, 0.45];
 // The style of a live actor: flags pick the baked variant.
 //   ring: outer tell colour (elite gold, rarity colour, telegraph white)
-export function actorStyle(flash, slow, ring, grounded = true) {
+//   mute: the horde look (see `mute` above); the hero and bosses pass false
+export function actorStyle(flash, slow, ring, grounded = true, mute = false) {
   return spriteStyle({
     outline: flash ? '#ffffff' : OUTLINE_DARK, outline2: ring || null,
     rim: !flash, shadow: grounded, flash: !!flash, tint: (!flash && slow) ? CHILL : null,
+    mute: !flash && mute,
   });
 }
 
@@ -102,7 +106,7 @@ function hexRgb(hex) {
 // Post-process a freshly painted raster: rim light, flash, tint, outlines.
 // `g` holds the art at (pad, pad) on a transparent w x h canvas.
 function dress(g, w, h, st) {
-  if (!st.rim && !st.flash && !st.tint && !st.outline) return;
+  if (!st.rim && !st.flash && !st.tint && !st.outline && !st.mute) return;
   const img = g.getImageData(0, 0, w, h);
   const d = img.data;
   const solid = new Uint8Array(w * h);
@@ -113,6 +117,12 @@ function dress(g, w, h, st) {
       if (!solid[y * w + x]) continue;
       const i = (y * w + x) * 4;
       if (st.flash) { d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = 255; continue; }
+      if (st.mute) {
+        const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
+        d[i] = (d[i] * 0.78 + l * 0.22) * 0.9;
+        d[i + 1] = (d[i + 1] * 0.78 + l * 0.22) * 0.9;
+        d[i + 2] = (d[i + 2] * 0.78 + l * 0.22) * 0.9;
+      }
       if (st.rim) {
         if (!at(x, y - 1)) {            // top edge catches the light
           d[i] += (255 - d[i]) * 0.32; d[i + 1] += (255 - d[i + 1]) * 0.32; d[i + 2] += (255 - d[i + 2]) * 0.32;

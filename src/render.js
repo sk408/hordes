@@ -81,6 +81,25 @@ const RADAR_DOT_STYLE = {
 };
 
 // 12x12 player sprite: 0 = transparent, digits index into PALETTE.
+// Art pass (Oct 2026): the hero's ground ring — an ellipse 29x11 around the
+// feet, a bright line over a dark one so it reads on any ground and over any
+// enemy. Baked once through the sprite cache (blitPainted).
+const HERO_RING_BOX = { x: -15, y: -6, w: 31, h: 13 };
+function heroRingPainter(bright) {
+  return (c, ox, oy) => {
+    for (let a = 0; a < 64; a++) {
+      const t = (a / 64) * Math.PI * 2;
+      const x = Math.round(Math.cos(t) * 14), y = Math.round(Math.sin(t) * 5);
+      c.fillStyle = 'rgba(8,6,14,0.8)';
+      c.fillRect(ox + x, oy + y + 1, 1, 1);
+      c.fillStyle = bright;
+      c.fillRect(ox + x, oy + y, 1, 1);
+    }
+  };
+}
+const paintHeroRing = heroRingPainter('#9ff0ff');
+const paintHeroRingHurt = heroRingPainter('#ff6a7a');
+
 export const PLAYER_SPRITE = [
   [0,0,0,3,3,3,3,3,3,0,0,0],
   [0,0,3,3,2,2,2,2,3,3,0,0],
@@ -813,7 +832,7 @@ export class Renderer {
     else if (e.elite) ring = '#ffd75e';
     else if (tell) ring = (tell.pulseHz && Math.floor(t * tell.pulseHz * 2) % 2 === 0) ? '#efd9ff' : tell.outline;
     else if (e.boss) ring = '#ff9ed8';
-    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying));
+    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying, !e.boss && !e.elite));
     if (e.typeId === 'COLOSSUS') {
       const fi = Math.floor(t * 10) % FLAME.small.length;
       const hh = Math.round((e.h || C.ENEMY.H) / 2);
@@ -1933,7 +1952,11 @@ export class Renderer {
       // The hero: a pale pool underfoot so the eye finds them in a crowd,
       // outline + rim + shadow baked, white silhouette for a beat when hurt.
       const hurt = state.feel && state.feel.hurtT > 0;
-      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 11, Math.round(pl.x - cam.x), Math.round(pl.y - cam.y) + pilotHalfH, 0.75);
+      // Art pass: a wider pool plus a crisp ground ring (dark under bright)
+      // that sits ON TOP of the horde, so the hero is findable in a crowd.
+      const hx = Math.round(pl.x - cam.x), hfy = Math.round(pl.y - cam.y) + pilotHalfH - 1;
+      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 16, hx, hfy, 1);
+      blitPainted(g, hurt ? 'heroRing:hurt' : 'heroRing', HERO_RING_BOX, hurt ? paintHeroRingHurt : paintHeroRing, hx, hfy);
       blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - pilotHalfW), Math.round(pl.y - cam.y - pilotHalfH),
         actorStyle(hurt, false, '#f4f8ff'));
     } else {
