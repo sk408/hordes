@@ -67,6 +67,7 @@ const BG = '#0e0e16', GROUND = '#15151f', GROUND_EDGE = '#1e1e2c';
 // The hero is the Knight pilot's field sprite (src/character_sprites.js).
 const HERO_A = CHARACTER_SPRITES.KNIGHT.frames[0];
 const HERO_B = CHARACTER_SPRITES.KNIGHT.frames[1];
+const HERO_C = CHARACTER_SPRITES.KNIGHT.frames[2];
 const HERO_PALETTE = CHARACTER_SPRITES.KNIGHT.palette;
 
 // Horde silhouettes: sprites.js grids, monochrome-remapped so the mass reads
@@ -206,7 +207,8 @@ export function render(g, t) {
     g.fillRect(hx - 40, GROUND_Y - 8 + d * 3, 3, 2);
   }
   if (heroVisible(t)) {
-    const frame = Math.floor(t / 160) % 2 === 0 ? HERO_A : HERO_B;
+    // Running: alternate the two step frames.
+    const frame = Math.floor(t / 110) % 2 === 0 ? HERO_B : HERO_C;
     drawGridScaled(g, frame, HERO_PALETTE, hx, heroTop, PX);
   } else if (t >= SWALLOW_T) {
     // Swallowed: growing red burst where the hero was.

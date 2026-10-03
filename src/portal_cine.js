@@ -92,6 +92,7 @@ const BLOW_T = 650;                  // killing blow lands (ms into KILL)
 // The hero is the Knight pilot's field sprite (src/character_sprites.js).
 const HERO_A = CHARACTER_SPRITES.KNIGHT.frames[0];
 const HERO_B = CHARACTER_SPRITES.KNIGHT.frames[1];
+const HERO_C = CHARACTER_SPRITES.KNIGHT.frames[2];
 const HERO_PALETTE = CHARACTER_SPRITES.KNIGHT.palette;
 const RISE_COLORS = ['#7ec8ff', '#b8e0ff'];   // dissolve motes (not hero colors)
 
@@ -282,7 +283,10 @@ export function render(g, tRaw) {
   const hx = Math.floor(heroX(t));
   const heroTop = GROUND_Y - HERO_A.length * pxh;
   const mirror = t >= SCENE.WALK[0];
-  const frameH = mirror ? HERO_B : (Math.floor(t / 160) % 2 === 0 ? HERO_A : HERO_B);
+  // He strides while he moves (the walk to the gate, the walk in) and stands
+  // still otherwise.
+  const moving = (t >= SCENE.WALK[0] && t < SCENE.PAUSE[0]) || t >= SCENE.DISSOLVE[0];
+  const frameH = moving ? (Math.floor(t / 130) % 2 === 0 ? HERO_B : HERO_C) : HERO_A;
   if (uD < 1) {
     drawGridScaled(g, frameH, HERO_PALETTE, hx, heroTop, pxh, mirror, uD, 91);
     // G16 PAUSE tell: ONE forward-lean pixel on a slow 2-frame flicker. The
