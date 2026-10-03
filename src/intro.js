@@ -73,11 +73,10 @@ const HERO_PALETTE = CHARACTER_SPRITES.KNIGHT.palette;
 // Horde silhouettes: sprites.js grids, monochrome-remapped so the mass reads
 // as one dark wave; only "eye" indices keep a hot color (red glints).
 const SIL = '#3a3548', SIL_DARK = '#2c2838', EYE = '#ff3b4e';
-const SIL_PALETTES = {
-  SKELETON: { 1: SIL, 2: EYE, 3: SIL_DARK },
-  DEMON:    { 1: SIL, 2: SIL_DARK, 3: SIL_DARK, 4: EYE },
-  BAT:      { 1: SIL, 2: SIL_DARK, 3: EYE, 4: SIL_DARK },
-};
+// Art pass (Oct 2026): every enemy grid now keys 1 base, 2 shade, 3 light,
+// 4 eyes, 5 dark, 6 accent — one silhouette palette serves all three kinds.
+const SIL_ALL = { 1: SIL, 2: SIL_DARK, 3: SIL, 4: EYE, 5: SIL_DARK, 6: SIL_DARK };
+const SIL_PALETTES = { SKELETON: SIL_ALL, DEMON: SIL_ALL, BAT: SIL_ALL };
 const HORDE_KINDS = ['SKELETON', 'BAT', 'DEMON', 'SKELETON', 'BAT', 'SKELETON', 'DEMON'];
 
 // Title: 5x7 pixel font, gold with a dark-red drop shadow (index.html logo

@@ -97,8 +97,7 @@ function heroRingPainter(bright) {
     }
   };
 }
-const paintHeroRing = heroRingPainter('#9ff0ff');
-const paintHeroRingHurt = heroRingPainter('#ff6a7a');
+const paintHeroRing = heroRingPainter('#9ff0ff');   // stays cyan when hurt
 
 export const PLAYER_SPRITE = [
   [0,0,0,3,3,3,3,3,3,0,0,0],
@@ -1956,7 +1955,8 @@ export class Renderer {
       // that sits ON TOP of the horde, so the hero is findable in a crowd.
       const hx = Math.round(pl.x - cam.x), hfy = Math.round(pl.y - cam.y) + pilotHalfH - 1;
       blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 16, hx, hfy, 1);
-      blitPainted(g, hurt ? 'heroRing:hurt' : 'heroRing', HERO_RING_BOX, hurt ? paintHeroRingHurt : paintHeroRing, hx, hfy);
+      // The ring stays cyan when hurt: red reads as one more enemy.
+      blitPainted(g, 'heroRing', HERO_RING_BOX, paintHeroRing, hx, hfy);
       blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - pilotHalfW), Math.round(pl.y - cam.y - pilotHalfH),
         actorStyle(hurt, false, '#f4f8ff'));
     } else {
