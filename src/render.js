@@ -1913,13 +1913,16 @@ export class Renderer {
     if (pl.invuln > 0 && Math.floor(state.time * 20) % 2 === 0) {
       g.globalAlpha = 0.4;
     }
-    const moved = this._lpx !== undefined &&
-      Math.abs(pl.x - this._lpx) + Math.abs(pl.y - this._lpy) > 0.25;
+    const stepD = this._lpx !== undefined ? Math.hypot(pl.x - this._lpx, pl.y - this._lpy) : 0;
+    const moved = stepD > 0.25;
     this._lpx = pl.x; this._lpy = pl.y;
+    // Gait follows distance walked (a step every 7 px), not the run clock,
+    // which the tutorial holds at 0:00. A teleport is not a step.
+    if (moved && stepD < 40) this._walkDist = (this._walkDist || 0) + stepD;
     const walkFrame = moved && Math.floor(state.time * 6) % 2 === 1;
     const pilotSpr = characterSpriteFor(state.character && state.character.id);
-    // Pilots walk on their step frames (1..n-1) at 8 steps a second.
-    const pilotStep = pilotSpr && moved ? 1 + Math.floor(state.time * 8) % (pilotSpr.frames.length - 1) : 0;
+    // Pilots walk on their step frames (1..n-1).
+    const pilotStep = pilotSpr && moved ? 1 + Math.floor((this._walkDist || 0) / 7) % (pilotSpr.frames.length - 1) : 0;
     const pilotGrid = pilotSpr
       ? pilotSpr.frames[pilotStep]
       : (walkFrame ? PLAYER_SPRITE_WALK : PLAYER_SPRITE);
