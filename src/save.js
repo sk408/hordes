@@ -1037,9 +1037,8 @@ function corruptNotice(preserved) {
 }
 
 function futureNotice(from, preserved) {
-  return `SAVE IS FROM A NEWER VERSION OF HORDES (v${from} vs v${PROFILE_VERSION}) — it was not ` +
-    'loaded, because loading it could destroy data this build does not understand. ' +
-    (preserved ? 'A copy was preserved: open SETTINGS to download it.' : 'A copy could not be preserved.');
+  return `YOUR SAVE IS FROM A NEWER VERSION OF HORDES (v${from}). Refresh the page to load the ` +
+    'latest game. Your save is safe: nothing in this tab will be saved over it.';
 }
 
 /**
@@ -1122,8 +1121,20 @@ export function saveProfileTo(profile, storage, opts = {}) {
   const p = plainObject(profile) ? profile : {};
   const key = (opts && opts.key) || STORAGE_KEY;
   try {
-    resolveStorage(storage).setItem(key, JSON.stringify({ ...p, version: PROFILE_VERSION }));
+    const s = resolveStorage(storage);
+    // Never write over a save made by a NEWER build (an old cached tab open
+    // after an update): this build plays on in memory and saves nothing.
+    if (storedVersionIsNewer(s.getItem(key))) return false;
+    s.setItem(key, JSON.stringify({ ...p, version: PROFILE_VERSION }));
     return true;
+  } catch { return false; }
+}
+
+function storedVersionIsNewer(raw) {
+  if (typeof raw !== 'string' || !raw) return false;
+  try {
+    const v = Number(JSON.parse(raw).version);
+    return Number.isFinite(v) && v > PROFILE_VERSION;
   } catch { return false; }
 }
 
