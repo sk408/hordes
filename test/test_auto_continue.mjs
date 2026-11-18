@@ -77,10 +77,11 @@ S.check('autoDraftPickIndex: JOKER > RARE > plain, first slot on a tie; a joker 
   st.player.jokers = [];
 });
 
-// ---- 3. pay: full when the player starts the run, 50% when auto-continue does ----
-function settleArm(byAuto) {
+// ---- 3. pay: full when the player starts the run and for the first 3 auto-continue
+// starts in a row; 75% from the 4th (decision 8) ----
+function settleArm(byAuto, inRow = 3) {
   T.auto.on = true;
-  if (byAuto) { T.auto.runsInRow = 0; T.auto.restart(); } else T.startRun();
+  if (byAuto) { T.auto.runsInRow = inRow; T.auto.restart(); } else T.startRun();
   h.pump(2);
   const prof = T.getProfile();
   prof.bestTime = 99999;              // no record bonus
@@ -96,20 +97,32 @@ S.check('a run the player starts pays in full, even with the setting on', () => 
   assert.deepEqual({ a: r.award, p: r.purseBanked, w: r.winBonus }, { a: 70, p: 42, w: 1000 });
   assert.equal(r.goldPool.auto, 0);
 });
-S.check('a run auto-continue starts pays 50%: award, purse and completion bonus', () => {
-  const r = settleArm(true);
-  assert.equal(st.autoStarted, true);
-  assert.deepEqual({ a: r.award, p: r.purseBanked, w: r.winBonus }, { a: 35, p: 21, w: 500 });
-  assert.equal(r.goldPool.total, 0.5);
+S.check('the first 3 runs auto-continue starts in a row pay in full', () => {
+  for (const inRow of [0, 1, 2]) {
+    const r = settleArm(true, inRow);
+    assert.equal(st.autoStarted, true);
+    assert.equal(T.auto.runsInRow, inRow + 1, 'run ' + (inRow + 1) + ' in the row');
+    assert.equal(T.auto.cutPct, 0);
+    assert.deepEqual({ a: r.award, p: r.purseBanked, w: r.winBonus }, { a: 70, p: 42, w: 1000 }, 'run ' + (inRow + 1));
+  }
+});
+S.check('from the 4th in a row, a run auto-continue starts pays 75%: award, purse and completion bonus', () => {
+  for (const inRow of [3, 10]) {
+    const r = settleArm(true, inRow);
+    assert.equal(st.autoStarted, true);
+    assert.equal(T.auto.cutPct, 25);
+    assert.deepEqual({ a: r.award, p: r.purseBanked, w: r.winBonus }, { a: Math.round(70 * 0.75), p: Math.round(42 * 0.75), w: 750 });
+    assert.equal(r.goldPool.total, 0.75);
+  }
 });
 S.check('the cut is the only term of the run award pool', () => {
   const r = settleArm(true);
   assert.deepEqual(Object.keys(r.goldPool).sort(), ['auto', 'base', 'total']);
-  assert.deepEqual([r.goldPool.base, r.goldPool.auto, r.goldPool.total], [1, 0.5, 0.5]);
+  assert.deepEqual([r.goldPool.base, r.goldPool.auto, r.goldPool.total], [1, 0.25, 0.75]);
 });
-S.check('the constants: penalty 50, continue 3 s, restart 5 s, evolve 3 s, stall 30 s, 20 runs, away 60 s', () => {
+S.check('the constants: penalty 25 after 3 free runs, continue 3 s, restart 5 s, evolve 3 s, stall 30 s, 20 runs, away 60 s', () => {
   assert.deepEqual(T.auto.constants, { RUN_LIMIT: 20, AWAY_S: 60, CONTINUE_S: 3, RESTART_S: 5,
-    EVOLVE_S: 3, STALL_S: 30, PENALTY_PCT: 50 });
+    EVOLVE_S: 3, STALL_S: 30, PENALTY_PCT: 25, FREE_RUNS: 3 });
 });
 
 // ---- 4. the run moves itself: escape passed, intermission continued ----
@@ -149,7 +162,7 @@ S.check('the intermission continues by itself after AUTO_CONTINUE_S', () => {
 });
 
 // ---- 5. the restart: same build, after AUTO_RESTART_S ----
-S.check('a finished unattended run restarts after 5 s with the same build and stage, at 50%', () => {
+S.check('a finished unattended run restarts after 5 s with the same build and stage', () => {
   const stage0 = st.stage;
   const lead0 = st.weapons[0].type;   // the loadout's lead (the old run drafted more)
   T.auto.runsInRow = 0;

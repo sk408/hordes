@@ -283,6 +283,7 @@ function validFields() {
     let mf = T.dev.modeFields();
     assert.equal(mf.mode, 'unattended', 'reports unattended mode');
     assert.ok(!mf.modifiers.some((m) => m.startsWith('banking-penalty-')), 'a run the player started pays in full');
+    T.auto.runsInRow = 3;   // the 4th auto-started run in a row: the cut applies (decision 8)
     T.auto.restart();
     mf = T.dev.modeFields();
     assert.ok(mf.modifiers.includes('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT),

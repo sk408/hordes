@@ -128,6 +128,35 @@ S.check('the lead points in the direction of travel', () => {
     'a parked player has no lead (' + state.camLead.x.toFixed(2) + ')');
 });
 
+// R1 (2026-11-18, "it shakes the screen around"): the lead follows travel that lasts.
+S.check('a hero that steps back and forth every frame barely moves the view', () => {
+  park(0, 0);
+  state.camDir.x = 0; state.camDir.y = 0;
+  pump(1); clearField();
+  let worst = 0, prev = state.cam.x;
+  for (let i = 0; i < 120; i++) {
+    state.player.x += i % 2 ? -1 : 1;
+    pump(1); clearField();
+    worst = Math.max(worst, Math.abs(state.cam.x - prev));
+    prev = state.cam.x;
+  }
+  // One smoothing alone moved the view LEAD x SMOOTH / 60 = 1.17 px on every such frame.
+  assert.ok(worst < 0.3, 'the view moves under 0.3 px a frame (' + worst.toFixed(3) + ')');
+  assert.ok(Math.abs(state.camLead.x) < 1.5, 'and no lead builds (' + state.camLead.x.toFixed(2) + ')');
+});
+S.check('a turn held for two frames swings the lead far less than a real turn', () => {
+  park(0, 0);
+  state.camDir.x = 0; state.camDir.y = 0;
+  for (let i = 0; i < 120; i++) { state.player.x += 0.5; pump(1); clearField(); }
+  const lead0 = state.camLead.x;
+  assert.ok(lead0 > CAM.LEAD * 0.9, 'steady travel east: the full lead (' + lead0.toFixed(2) + ')');
+  let low = lead0;
+  for (let i = 0; i < 2; i++) { state.player.x -= 0.5; pump(1); clearField(); low = Math.min(low, state.camLead.x); }
+  for (let i = 0; i < 20; i++) { state.player.x += 0.5; pump(1); clearField(); low = Math.min(low, state.camLead.x); }
+  // One smoothing alone dropped the lead 4.4 px (two frames at 28 px x 5 / 60).
+  assert.ok(lead0 - low < 2.5, 'a two-frame turn costs under 2.5 px of lead (' + (lead0 - low).toFixed(2) + ')');
+});
+
 // ---- the safe screen region, every wall + corner, every zoom ---------------
 S.check('pressed against every wall and corner, the player never leaves the safe region', () => {
   const dirs = [

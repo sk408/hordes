@@ -430,7 +430,7 @@ s.check('live: the vault card never overlaps the quest tracker (vault anywhere n
   quiet(); h.pump(1);
   let moved = 0, n = 0;
   for (const auto of [false, true]) {
-    st.autoStarted = auto;   // the AUTO 50% badge pushes the tracker down
+    st.autoStarted = auto;   // the AUTO badge pushes the tracker down
     // Put the vault (by the camera) at spots around the tracker, render, check.
     for (const [sx, sy] of [[300, 30], [340, 40], [380, 50], [420, 60], [460, 45], [360, 80], [250, 50], [200, 150]]) {
       const cam = { ...st.cam, x: w.vault.x - sx, y: w.vault.y - sy };

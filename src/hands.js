@@ -33,10 +33,13 @@ export const HANDS = [
   { id: 'flush',     name: 'Flush',           need: FLUSH_SIZE + ' cards of one suit',  dmg: 0.25 },
   { id: 'fullhouse', name: 'Full House',      need: 'three of a kind and a pair',       dmg: 0.50, hp: 0.25 },
   { id: 'four',      name: 'Four of a Kind',  need: 'four cards of one rank',           dmg: 0.60, hp: 0.30 },
+  // R1 (decision 2, 2026-11-17): above Four of a Kind; Four's bonus, the
+  // Straight's faster fire, and the suit's flush boon (handBonus).
+  { id: 'straightflush', name: 'Straight Flush', need: STRAIGHT_SIZE + ' ranks in a row, one suit', dmg: 0.60, hp: 0.30, cooldown: 0.90 },
 ];
 export const HAND_BY_ID = HANDS.reduce((m, h, i) => { m[h.id] = { ...h, order: i + 1 }; return m; }, {});
 
-// A flush also boosts its suit's family, on top of the flush's own damage.
+// A flush (and a straight flush) also boosts its suit's family, on top of the hand's own bonus.
 export const FLUSH_BOONS = {
   spades:   { dmg: 0.25,               text: '+25% more weapon damage' },
   hearts:   { hp: 0.40,                text: '+40% max HP' },
@@ -104,7 +107,25 @@ export function evaluateHand(cards, opts = {}) {
   const groups = [...byValue.entries()].sort((a, b) => b[1].length - a[1].length || b[0] - a[0]);
   const keys = (cs) => cs.map(c => c.key);
   const made = (id, cs, suit = null) => ({ id, name: handName(id, suit), order: HAND_BY_ID[id].order, suit, cards: keys(cs) });
+  const size = STRAIGHT_SIZE - less;
+  // The highest run of `size` consecutive ranks among `cs` (one card per rank), or null.
+  const runOf = (cs) => {
+    const by = new Map();
+    for (const c of cs) if (!by.has(c.value)) by.set(c.value, c);
+    const vs = [...by.keys()].sort((a, b) => b - a);
+    for (let i = 0; i + size <= vs.length; i++) {
+      if (vs[i] - vs[i + size - 1] === size - 1) return vs.slice(i, i + size).map(v => by.get(v));
+    }
+    return null;
+  };
 
+  // Straight flush: a straight inside one suit. The highest top card wins; ties go to SUIT_ORDER.
+  let sf = null;
+  for (const s of SUIT_ORDER) {
+    const run = runOf(list.filter(c => c.suit === s));
+    if (run && (!sf || run[0].value > sf[0].value)) sf = run;
+  }
+  if (sf) return made('straightflush', sf, sf[0].suit);
   if (groups.length && groups[0][1].length >= 4) return made('four', groups[0][1].slice(0, 4));
   if (groups.length > 1 && groups[0][1].length >= 3 && groups[1][1].length >= 2) {
     return made('fullhouse', [...groups[0][1].slice(0, 3), ...groups[1][1].slice(0, 2)]);
@@ -117,13 +138,8 @@ export function evaluateHand(cards, opts = {}) {
   }
   if (flush) return made('flush', flush, flush[0].suit);
   // Straight: the highest run of consecutive ranks.
-  const values = [...byValue.keys()].sort((a, b) => b - a);
-  const size = STRAIGHT_SIZE - less;
-  for (let i = 0; i + size <= values.length; i++) {
-    if (values[i] - values[i + size - 1] === size - 1) {
-      return made('straight', values.slice(i, i + size).map(v => byValue.get(v)[0]));
-    }
-  }
+  const straight = runOf(list);
+  if (straight) return made('straight', straight);
   if (groups.length && groups[0][1].length >= 3) return made('three', groups[0][1].slice(0, 3));
   if (groups.length > 1 && groups[1][1].length >= 2) {
     return made('twopair', [...groups[0][1].slice(0, 2), ...groups[1][1].slice(0, 2)]);
@@ -132,11 +148,11 @@ export function evaluateHand(cards, opts = {}) {
   return null;
 }
 
-/** 'Flush' reads with its suit: 'Spade Flush'. */
+/** 'Flush' reads with its suit: 'Spade Flush', 'Heart Straight Flush'. */
 export function handName(id, suit = null) {
   const h = HAND_BY_ID[id];
   if (!h) return '';
-  return id === 'flush' && suit ? SUIT_NAMES[suit] + ' Flush' : h.name;
+  return (id === 'flush' || id === 'straightflush') && suit ? SUIT_NAMES[suit] + ' ' + h.name : h.name;
 }
 
 /** The bonus a hand pays: { dmg, hp, cooldown, gold, xp } (shares / multipliers). */
@@ -144,7 +160,7 @@ export function handBonus(hand, scale = 1) {
   const out = { dmg: 0, hp: 0, cooldown: 1, gold: 0, xp: 0 };
   if (!hand || !HAND_BY_ID[hand.id]) return out;
   const parts = [HAND_BY_ID[hand.id]];
-  if (hand.id === 'flush' && FLUSH_BOONS[hand.suit]) parts.push(FLUSH_BOONS[hand.suit]);
+  if ((hand.id === 'flush' || hand.id === 'straightflush') && FLUSH_BOONS[hand.suit]) parts.push(FLUSH_BOONS[hand.suit]);
   for (const b of parts) {
     out.dmg += (b.dmg || 0) * scale;
     out.hp += (b.hp || 0) * scale;

@@ -1,16 +1,25 @@
-# HORDES overhaul — checkpoint (2026-11-18: the music and service worker release)
+# HORDES overhaul — checkpoint (2026-11-18: the pilot steering release)
 
 ## Where everything is
 | What | Where | State |
 |---|---|---|
-| Live game (players, galaxy.click) | GitHub `sk408/hordes` `main` | The release made from this tree: recorded music from Google Lyria (Steve's picks) and the service worker (an offline copy and a NEW VERSION READY notice), on top of `423b318` (the draft auto-pick switches, 2026-11-17). Shipped 2026-11-18 with Steve's OK ("ok ship it with the service worker when it's done"). |
-| Rollback points | tags `auto-pick-2026-11-17` (= `423b318`), `play-test-fixes-2026-10-03` (= `ce40d72`), `phone-shop-2026-10-03` (= `10a9768`), `world-update-2026-10-03` (= `349e83b`), `pre-world-update-2026-10` (= `df10edc`, the October 2 release), `pre-overhaul-2026-10` | All on GitHub. Every one predates the service worker: a rollback to any of them must put `tools/sw_killswitch.js` at `sw.js` (see the hard rules below). The pre-overhaul game is still at `/classic/`. |
+| Live game (players, galaxy.click) | GitHub `sk408/hordes` `main` | The release made from this tree: the pilot steering and the calmer camera, Straight Flush, red-orange enemy shots and the new auto-continue pay, on top of `47800d6` (the recorded music and the service worker, shipped earlier on 2026-11-18). Shipped 2026-11-18 with Steve's OK ("Please push the fix to GitHub for the live players too"). It is the first update players receive through the service worker: an open game shows NEW VERSION READY. |
+| Rollback points | tags `music-sw-2026-11-18` (= `47800d6`), `auto-pick-2026-11-17` (= `423b318`), `play-test-fixes-2026-10-03` (= `ce40d72`), `phone-shop-2026-10-03` (= `10a9768`), `world-update-2026-10-03` (= `349e83b`), `pre-world-update-2026-10` (= `df10edc`, the October 2 release), `pre-overhaul-2026-10` | All on GitHub. `music-sw-2026-11-18` has the service worker: a rollback to it is an ordinary release of that tree. Every older tag predates the worker: a rollback to one of those must put `tools/sw_killswitch.js` at `sw.js` (see the hard rules below). The pre-overhaul game is still at `/classic/`. |
 | Release branch | `D:\hordes-release`, branch `release/overhaul-1` | One squashed commit per release, each with the working branch's exact tree. |
 | Working branch | `D:\hordes-claude`, branch `claude/overhaul` | Anything ahead of `main` is listed under "On `claude/overhaul`, not live yet". Its history is not on GitHub (old checkpoint commits hold server details): release by squashing, never by pushing this branch. |
-| Test build | https://claude.stevesinfo.com:8443/hordes-claude/ | Follows `claude/overhaul`; updated with this release (same tree). It runs the service worker too, so its next update shows the NEW VERSION READY notice. The update steps are in the local checkpoint. |
-| Plan | `docs/OVERHAUL_PLAN.md`; the November review `docs/REVIEW_2026-11.md` | Done: M0–M3, M2b, M3b, M5a, M5b; from the review, the music (decision 3) and the R4 service worker. Next: R1, the first of the review's seven small releases. |
+| Test build | https://claude.stevesinfo.com:8443/hordes-claude/ | Follows `claude/overhaul`; the tree of this release until the next R1 work is merged. It runs the service worker too, so its next update shows the NEW VERSION READY notice. The update steps are in the local checkpoint. |
+| Plan | `docs/OVERHAUL_PLAN.md`; the November review `docs/REVIEW_2026-11.md` | Done: M0–M3, M2b, M3b, M5a, M5b; from the review, the music (decision 3), the R4 service worker, and from R1 the pilot steering, Straight Flush, the enemy shot orbs and the auto-continue pay. Next: the rest of R1. |
 
-## What shipped on 2026-11-18
+## What shipped on 2026-11-18: the pilot steering release
+1. **Pilot steering** (Steve on galaxy.click, 2026-11-18: "the pathing is causing the hero to jitter a bit too much ... and it shakes the screen around", then "maybe you should look at improving pilot pathing overall"). The flee ran from the nearest enemy only: between two threats it reversed on every frame, in a building corner it bounced, and a flee that worked ran to the rim. Now the flee scores 48 headings every frame (`src/controllers.js`: `STEER`, `fleeThreats`, `fleeScores`): away from every enemy in the kite band, never at one, toward the centre near the rim, along a wall before reaching it, toward a gem that is on its way (BALANCED only), with a limited turn rate. Calm moves bend round near threats and share the turn limit; the gem pick skips a gem an enemy stands on. The camera lead follows travel that lasts (`CAMERA.DIR_SMOOTH`). When the pilot flees and what it shoots are unchanged.
+   - Measured over 144 real runs (72 each, the same seeds; `scratchpad/jitter/`), old to new: hero reversals 7-10 a second to 0.03-0.09; camera reversals 17-23 a second to 0.07-0.10; time within 120 px of the rim 4-5% to 0%; a fresh profile's run 1 lasts 53 s instead of 30 s and still always ends in death (24 of 24); mid-strength runs last 127 s against 123 s at level 7.4 against 7.7. Real Chrome, 40 s at 1280x720 and 390x844: reversals 0-0.07 a second, camera 0, 60 fps, 0 errors.
+   - Run 1 on a fresh profile is longer (about 50 s, was 30 s): the jitter was costing the pilot hits. Steve was told; he can ask for run 1 to be brought back down.
+   - Tests: `test/test_pilot_steer.mjs` (14 checks, 15 mutations all caught), two new camera checks in `test/test_camera_deadzone.mjs`.
+2. **Three R1 items:** Straight Flush (decision 2: above Four of a Kind; Four's bonus, the Straight's faster fire, the suit's boon); enemy shots are round red-orange orbs (`test/test_enemy_shot_orbs.mjs`); auto-continue pays in full for the first 3 runs in a row, then 75% (decision 8; the HUD badge reads AUTO 100% or AUTO 75%). LOADING and the load-failure screen shipped with the service worker.
+
+Checks before the push: suite 224/224 at `--par 4`, also under a fixed seed; real Chrome as above; `tools/verify_sw.mjs --live` on the test build with this tree.
+
+## The release before: the music and the service worker (2026-11-18, `47800d6`)
 1. **Recorded music from Google Lyria.** Eleven slots: title and menus; four run tracks by stage group (wilds: VERDANT HOLLOW, SNOWFIELD, WHITEOUT; ash: ASHEN WASTE, BLOOD RUST, CINDER MAW; THE BONE DESERT; void: THE VOID REACH and every wave after the Maw); boss (herald too); the Maw; the escape chase; portal, victory and game-over cues. 6.2 MB in `assets/music/`, fetched one at a time after the first frame, only when needed; the synth is the fallback (no file, not loaded yet, a failed fetch) and the ADVANCED option MUSIC: RECORDED / CLASSIC SYNTH gives the old synth. Run -> boss switches on the next beat, back after a 1-bar debounce; title -> run is a 1 s crossfade; drafts keep the bed, pause screens duck it; the portal movie ducks under its cue; the escape has its own loop (the synth STEP bed is muted under it); death plays the game-over cue, then the title on the end card. Loudness measured in real Chrome: recorded beds sit 3 dB above the synth (MUSIC_TRIM_DB -4.2).
    - **The takes are Steve's picks** (by ear on the listening page https://claude.ai/artifact/TTcb6f85cu3Ew9ziHYTeEV, saved in its db collection `picks`): the recommended take in eight slots, maw t5, escape t2 and portal t3 in the other three. Picks file: `D:\hordes\music_lyria_2026-11\picks_steve.json`; `node tools/music_import.mjs <picks.json>` swaps takes (it derives each loop's exact tempo from its whole bar count, and regenerates `sw.js`).
    - Made with Lyria 3 Pro ($3.88 for 53 songs; Steve's key and billing); every raw take, prompt, report and tool is archived outside git in `D:\hordes\music_lyria_2026-11\` (the model is experimental: takes cannot be remade). Credits: `assets/music/CREDITS.md`.
@@ -24,7 +33,7 @@ Checks before the push: suite 222/222 at `--par 4`, also under fixed seeds; `tes
 - **The play-test fixes** (2026-10-03, `ce40d72`): FOCUS and STANCE chips on the desktop key bar; the escape cinematic's skip rules; the elite modifiers moved to the kill trophies, with refunds; the end card after a quick death; the fusion banner wraps; a hero inside a building's collision ring steps out. `test/_seed_random.mjs` replays a run under a fixed seed: `HORDES_RNG=3 node --import ./test/_seed_random.mjs test/<file>`; the whole suite: `NODE_OPTIONS="--import=./test/_seed_random.mjs" HORDES_RNG=3 node tools/run_suite.mjs --par 4`.
 
 ## On `claude/overhaul`, not live yet
-Nothing.
+Nothing. In progress, by Opus agents in their own worktrees (`D:/hordes-wt/<name>`, branches `r1/<name>`; the coordinator merges): the rest of R1: weapons from drafts (decision 7); the returning-player note and coach, and a "Pick 1" header; no duplicate portal movie at wave 1, and auto-continue offered on the end card; the sound mix pass, a let-down sound for an empty chest and the listening page. Then the store text and the replies to the October commenters.
 
 ## How a release is made
 **On `claude/overhaul` (from R4, the service worker `sw.js`):**
@@ -56,18 +65,18 @@ Nothing.
 **First R4 rollout:** if Steve agrees, ship to the test build first through its usual update path and run `verify_sw.mjs --live` against it, with one practice update A to B and one practice kill there. No player has a worker yet, so the first release only adds `register()`, 3 s after the first frame; `tools/sw_killswitch.js` ships in the same release.
 
 ## For Steve
-1. The first update after this release is the first one players receive through the service worker: their open game shows NEW VERSION READY. If anyone reports being stuck on an old version, the recovery steps are under the hard rules above.
+1. This release is the first update players receive through the service worker: their open game shows NEW VERSION READY. If anyone reports being stuck on an old version, the recovery steps are under the hard rules above. Run 1 on a fresh profile now lasts about 50 s (was 30 s); say so if it should come back down.
 2. Elite variety is still "variety, not gold": a swift or splitting elite pays what a plain one does. Paying a little more for a modified elite would turn the new threat into a risk worth taking; that needs a balance pass. Steve, 2026-10-03: "not right now".
 3. Still his to look at: the escape cinematic by ear; wrath (the hidden tax on evolving weapons and filling slots) is named in the reference but removing it is a balance project.
 
 ## Next
-- R1 from the review ("Listening"): the returning-player bug (the What's New note and the draft coach open together over the first draft) and a "Pick 1" header; weapons from drafts (decision 7); the auto-continue penalty (decision 8); Straight Flush (decision 2); no duplicate portal movie at wave 1; red-orange enemy orbs; a sound mix pass; a let-down sound for an empty chest; LOADING and load-failure polish; a sound listening page; the store text and replies to the October commenters.
+- The rest of R1 ("Listening"): see "On `claude/overhaul`, not live yet". Then R2 (the movies) and R3 (a readable fight).
 - M4 engine (sim extraction, fixed timestep, seeded randomness, mode state machine), M5 content (enemy behaviours, stage hazards and signature bosses, character rules, relics), M6.
 - Watch for player feedback on galaxy.click.
 
 ## Still open (not blockers)
 - `tools/verify_g12_title.mjs` and `tools/verify_host_fit.mjs` still look for the title's old START GAME card (it is PLAY now) and fail; `tools/verify_sw.mjs` C11 reruns them.
-- The service worker's update path (A to B on a real host) and its kill switch were checked in real Chrome on a local server, not yet on a real host: the first test-build update after this release is the practice A to B.
+- The service worker's update path (A to B) and its kill switch were checked in real Chrome on a local server; on the real hosts only a fresh profile's install of each release was checked (`verify_sw.mjs --live`).
 - A hero inside the opened yard with a horde at the gate still dies fairly often.
 - Background play was not checked in a real hidden browser tab.
 - Contrast margins on the three bright stages are inside the tested limits but thin.

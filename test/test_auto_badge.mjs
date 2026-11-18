@@ -15,17 +15,25 @@ const pump = h.pump;
 // The harness's recording context starts DISABLED (rec.on gates every push), so
 // switch it on. Recording ACCUMULATES across frames, hence the slice-from-a-mark.
 h.rec.on = true;
-const nightTexts = () => h.rec.texts.filter(t => t.txt === 'AUTO 50%');
+const nightTexts = () => h.rec.texts.filter(t => t.txt === 'AUTO 75%');
+const freeTexts = () => h.rec.texts.filter(t => t.txt === 'AUTO 100%');
 const since = (n) => nightTexts().slice(n);
 
 T.startRun();
 pump(2);                       // a live run with a real HUD
 
-S.check('an auto-started run paints the badge', () => {
-  st.autoStarted = true;
+S.check('an auto-started run paints the badge: AUTO 75% once the cut applies', () => {
+  st.autoStarted = true; st.autoCutPct = 25;
   const n0 = nightTexts().length;
   pump(1);
   assert.equal(since(n0).length, 1, 'exactly one badge label is painted per frame');
+  st.autoStarted = false; st.autoCutPct = 0;
+});
+S.check('the first auto-started runs in a row say AUTO 100% (decision 8: they pay in full)', () => {
+  st.autoStarted = true; st.autoCutPct = 0;
+  const n0 = freeTexts().length;
+  pump(1);
+  assert.equal(freeTexts().length - n0, 1);
   st.autoStarted = false;
 });
 
@@ -39,7 +47,7 @@ S.check('a run the player started paints no badge', () => {
 });
 
 S.check('the badge marks the RUN, not a moment — it holds frame after frame', () => {
-  st.autoStarted = true;
+  st.autoStarted = true; st.autoCutPct = 25;
   const n0 = nightTexts().length;
   pump(3);
   assert.equal(since(n0).length, 3, 'still painted on every frame of the run');
@@ -47,7 +55,7 @@ S.check('the badge marks the RUN, not a moment — it holds frame after frame', 
 });
 
 S.check('the badge goes with the stamp', () => {
-  st.autoStarted = true;
+  st.autoStarted = true; st.autoCutPct = 25;
   pump(1);
   const n0 = nightTexts().length;
   st.autoStarted = false;
@@ -60,7 +68,7 @@ S.check('the badge is anchored in the HUD right column, under the clock', () => 
   // stacks BELOW it when both are live. Assert the right-edge anchoring rather
   // than an exact y — the y depends on the clock chrome above it, so pinning it
   // would fail on any unrelated HUD layout change.
-  st.autoStarted = true;
+  st.autoStarted = true; st.autoCutPct = 25;
   const n0 = nightTexts().length;
   pump(1);
   const [badge] = since(n0);
@@ -73,7 +81,7 @@ S.check('the badge is anchored in the HUD right column, under the clock', () => 
 S.check('an auto-started run is still a run — the badge does not disturb the sim', () => {
   // Cheap guard against the badge being wired to anything beyond presentation:
   // five frames of the run must leave the clock and the player intact.
-  st.autoStarted = true;
+  st.autoStarted = true; st.autoCutPct = 25;
   const t0 = st.time;
   const hp0 = st.player && st.player.hp;
   pump(5);

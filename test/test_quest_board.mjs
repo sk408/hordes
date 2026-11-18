@@ -76,7 +76,7 @@ function settledQuestGold(tier, byAuto = false) {
   setPrestige(T.getProfile(), tier);
   T.world.board = { ids: ['yard', 'fountain', 'vault'], swapped: [] };
   T.auto.on = byAuto;
-  if (byAuto) { T.auto.runsInRow = 0; T.auto.restart(); } else T.startRun();
+  if (byAuto) { T.auto.runsInRow = 3; T.auto.restart(); } else T.startRun();   // the 4th in a row: the cut applies
   h.pump(2);
   T.world.quest('yard');
   T.world.quest('fountain');

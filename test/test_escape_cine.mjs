@@ -662,12 +662,22 @@ S.check('the Escape Writ pays three times as much through the real hand-over', (
 
 S.check('a run started by auto-continue banks its escape at the same cut as its gold', () => {
   startRun();
-  st.autoStarted = true;
+  st.autoStarted = true; st.autoCutPct = 25;   // the 4th auto-started run in a row on (decision 8)
   const gold0 = prof.gold;
   T.escape.start();
-  assert.equal(T.escape.cine.scene.payout, Math.floor(PAY / 2));
+  assert.equal(T.escape.cine.scene.payout, Math.floor(PAY * 0.75));
   T.escape.skip();
-  assert.equal(prof.gold - gold0, Math.floor(PAY / 2));
+  assert.equal(prof.gold - gold0, Math.floor(PAY * 0.75));
+  st.autoStarted = false; st.autoCutPct = 0;
+});
+S.check('the first auto-started runs in a row bank their escape in full', () => {
+  startRun();
+  st.autoStarted = true; st.autoCutPct = 0;
+  const gold0 = prof.gold;
+  T.escape.start();
+  assert.equal(T.escape.cine.scene.payout, PAY);
+  T.escape.skip();
+  assert.equal(prof.gold - gold0, PAY);
   st.autoStarted = false;
 });
 

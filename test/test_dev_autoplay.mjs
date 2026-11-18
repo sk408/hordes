@@ -183,19 +183,20 @@ import {
   h.T.dev.setDevNight(false);
   h.T.auto.press();
   assert.equal(h.T.auto.on, true, 'auto-continue on');
+  h.T.auto.runsInRow = 3;   // the 4th auto-started run in a row: the cut applies (decision 8)
   h.T.auto.restart();   // the end card's countdown starts the run
   assert.equal(h.T.auto.devRun, false, 'no dev stamp');
   assert.equal(h.T.auto.run, true, 'an unattended run');
   assert.equal(h.T.auto.started, true, 'started by auto-continue');
   prepPurse();
   const settledNight = h.T.purse.settle();
-  assert.equal(settledNight.purseBanked, 500, 'an auto-started run banks HALF the purse');
+  assert.equal(settledNight.purseBanked, 1000 * (1 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT / 100), 'an auto-started run banks the purse less the cut');
   const mfNight = h.T.dev.modeFields();
   assert.equal(mfNight.mode, 'unattended', "stamps mode 'unattended'");
   assert.ok(mfNight.modifiers.includes('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT),
     'and carries the live banking-penalty modifier');
-  assert.equal(settledDev.purseBanked, 2 * settledNight.purseBanked,
-    'same purse, same prep: dev-night banks exactly 2x the auto-started run');
+  assert.equal(settledDev.purseBanked - settledNight.purseBanked, 1000 * RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT / 100,
+    'same purse, same prep: dev-night banks the cut more than the auto-started run');
 }
 
 // ---- snapshot policy tag (additive optional, speed-stamped) ------------------

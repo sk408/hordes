@@ -108,6 +108,107 @@ function alive(e) {
   return !(e.hp <= 0);
 }
 
+// R1 PILOT STEERING (2026-11-18). Steve, playing on galaxy.click: "the pathing is causing
+// the hero to jitter a bit too much ... and it shakes the screen around", then "maybe you
+// should look at improving pilot pathing overall".
+//
+// The flee used to be one vector: straight away from the NEAREST enemy. Measured over 48
+// real runs it reversed 10 times a second (between two threats a step away from one made
+// the other the nearest, and the next frame stepped back; pressed into a building corner it
+// bounced in and out; its escape sweep took alternate sides on alternate frames), and a flee
+// that did work ran straight to the rim and ground along the wall.
+//
+// Now the flee scores HEADS candidate headings every frame and walks the best open one:
+//   + away from the threats: every live enemy inside the kite band, nearer ones heavier;
+//   - a heading that points AT a nearby enemy (so between threats the gaps win);
+//   + toward the arena centre, more the nearer the rim (the flee bends round the horde);
+//   - outward inside WALL_W of a wall (it turns along the wall before it reaches it);
+//   + toward a gem that is on its way (BALANCED only);
+//   + the heading it already has (no dithering between two equal ways out).
+// Nothing here changes WHEN the pilot flees (the kite line) or what it shoots.
+export const STEER = {
+  DANGER: 1.0,     // weight of "this heading points at a nearby enemy"
+  CENTER: 0.9,     // pull toward the arena centre, x (distance from centre / rim)^2
+  WALL: 2.0,       // cost of heading outward at the working rim, fading over WALL_W
+  WALL_W: 180,     // px from the working rim where that cost starts
+  GEM_R: 110,      // a gem this close, in a safe direction, draws the flee to it
+  GEM_W: 0.45,     // how hard (BALANCED; SAFE never, GREEDY has its own LOOT_WEIGHT blend)
+  STICK: 0.15,     // preference for the heading already taken
+  LEAN: 1.0,       // on high ground far from a way down: toward the nearest ramp or drop edge
+  TURN: 10,        // the flee heading turns at most this fast, rad/s (a half turn takes 0.3 s)
+  TRY: 48,         // how many of the best headings are checked for a clear line (all of them:
+                   // cornered between buildings and the horde, the 17th best may be the way out)
+  CALM_R: 1.5,     // calm moves (gem drift, patrol) mind threats within this x the kite band
+  CALM_K: 3,       // how hard a calm move bends away from a heading that points at one
+  HEAD_S: 0.1,     // a heading older than this (s) no longer limits the next turn
+};
+
+// Turn the unit heading `prev` toward (x, y) by at most maxA radians.
+function turnToward(prev, x, y, maxA) {
+  const ang = Math.atan2(prev[0] * y - prev[1] * x, prev[0] * x + prev[1] * y);
+  if (Math.abs(ang) <= maxA) return [x, y];
+  const a = Math.sign(ang) * maxA, c = Math.cos(a), sn = Math.sin(a);
+  return [prev[0] * c - prev[1] * sn, prev[0] * sn + prev[1] * c];
+}
+export const HEADS = 48;
+const HX = new Float64Array(HEADS), HY = new Float64Array(HEADS);
+for (let i = 0; i < HEADS; i++) { const a = i * 2 * Math.PI / HEADS; HX[i] = Math.cos(a); HY[i] = Math.sin(a); }
+HX[0] = 1; HY[0] = 0; HX[HEADS / 4] = 0; HY[HEADS / 4] = 1;                  // the axes, exactly
+HX[HEADS / 2] = -1; HY[HEADS / 2] = 0; HX[3 * HEADS / 4] = 0; HY[3 * HEADS / 4] = -1;
+
+// The threats around p: unit directions TO every live enemy within R and their weights
+// (1 - d/R)^2, continuous in position. With none inside R, the nearest alone.
+export function fleeThreats(p, state, nearest, R) {
+  const th = { x: [], y: [], w: [], sum: 0 };
+  const add = (e, w) => {
+    const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy);
+    th.x.push(d > 1e-6 ? dx / d : 1); th.y.push(d > 1e-6 ? dy / d : 0); th.w.push(w); th.sum += w;
+  };
+  for (const e of state.enemies) {
+    if (!alive(e)) continue;
+    const d = Math.hypot(e.x - p.x, e.y - p.y);
+    if (d < R) { const k = 1 - d / R; add(e, k * k); }
+  }
+  if (!(th.sum > 0) && nearest) add(nearest, 1);
+  return th;
+}
+// What the threats say of heading (hx, hy): [away, danger]. away is 1 straight away from all
+// of them and -1 straight at them (near 0 when they cancel); danger is the weighted share of
+// them the heading points at.
+export function threatAt(th, hx, hy) {
+  if (!(th.sum > 0)) return [0, 0];
+  let away = 0, danger = 0;
+  for (let i = 0; i < th.w.length; i++) {
+    const c = hx * th.x[i] + hy * th.y[i];
+    away -= th.w[i] * c;
+    if (c > 0) danger += th.w[i] * c * c;
+  }
+  return [away / th.sum, danger / th.sum];
+}
+// The score of every heading. `L` is the working rim (lootLimit); o: { gem, prev, lean },
+// unit vectors or null.
+export function fleeScores(p, th, L, o = {}) {
+  const s = new Float64Array(HEADS);
+  const cl = Math.hypot(p.x, p.y);
+  const kC = cl > 1 ? STEER.CENTER * Math.min(1, Math.max(Math.abs(p.x), Math.abs(p.y)) / L) ** 2 : 0;
+  const cx = cl > 1 ? -p.x / cl : 0, cy = cl > 1 ? -p.y / cl : 0;
+  const wx = p.x >= 0 ? 1 : -1, wy = p.y >= 0 ? 1 : -1;           // the nearer walls' outward normals
+  const nX = Math.max(0, 1 - Math.max(0, L - Math.abs(p.x)) / STEER.WALL_W);
+  const nY = Math.max(0, 1 - Math.max(0, L - Math.abs(p.y)) / STEER.WALL_W);
+  for (let i = 0; i < HEADS; i++) {
+    const hx = HX[i], hy = HY[i];
+    const [away, danger] = threatAt(th, hx, hy);
+    let v = away - STEER.DANGER * danger + kC * (hx * cx + hy * cy);
+    if (nX > 0) v -= STEER.WALL * Math.max(0, hx * wx) * nX * nX;
+    if (nY > 0) v -= STEER.WALL * Math.max(0, hy * wy) * nY * nY;
+    if (o.gem) v += STEER.GEM_W * Math.max(0, hx * o.gem[0] + hy * o.gem[1]);
+    if (o.prev) v += STEER.STICK * (hx * o.prev[0] + hy * o.prev[1]);
+    if (o.lean) v += STEER.LEAN * (hx * o.lean[0] + hy * o.lean[1]);
+    s[i] = v;
+  }
+  return s;
+}
+
 function nearestEnemy(p, state) {
   let nearest = null, nd = Infinity;
   for (const e of state.enemies) {
@@ -146,6 +247,10 @@ export class AutoPilotController {
     // state.gems => re-pick; no threat near => fleeing clears), so a new
     // controller per page load is reset enough — no reset hooks.
     this.fleeing = false;
+    this.head = null;      // the heading of the last steered move (the turn limit, the stick)
+    this.headT = null;     // state.time of that move
+    this.fleeGem = null;   // the gem the flee is bending to
+    this.dropGem = false;  // a flee just ended: re-pick the calm gem
     this.gem = null;
     // Building navigation: the current route, the goal-progress tracker, and
     // the goals given up on as unreachable.
@@ -307,6 +412,12 @@ export class AutoPilotController {
   // being walked at; the motion seam must not step past it).
   decide(p, state, cfg) {
     this.tick++;
+    // The clock of the steering: with one, a heading older than HEAD_S is forgotten; a
+    // probe with no clock (unit tests, tools) counts every call as the next frame.
+    const now = typeof state.time === 'number' ? state.time : null;
+    const headAge = now !== null && this.headT !== null ? now - this.headT : 1 / 60;
+    const lastHead = this.head && headAge >= 0 && headAge <= STEER.HEAD_S ? this.head : null;
+    const maxTurn = STEER.TURN * (headAge > 0 && headAge <= 0.05 ? headAge : 1 / 60);
     const nearest = nearestEnemy(p, state);
     const nd = nearest
       ? (nearest.x - p.x) ** 2 + (nearest.y - p.y) ** 2
@@ -344,18 +455,29 @@ export class AutoPilotController {
       }
       return !!yardB && !yb && inBox(yardB, x, y);
     };
+    if (this.dropGem) { this.gem = null; this.dropGem = false; }
     if (!state.gems.includes(this.gem)) this.gem = null;
     if (this.gem && !isReachableLoot(this.gem.x, this.gem.y)) this.gem = null;
     if (this.gem && inBricks(this.gem.x, this.gem.y)) this.gem = null;
     if (!this.gem && state.gems.length > 0) {
-      let gd = Infinity;
+      // R1 PILOT STEERING: the nearest gem that no live enemy stands within the kite line
+      // of; only when there is none, the nearest of all (as before). Walking at a gem in
+      // the middle of the pack turned the pilot round again a moment later.
+      const safeR2 = (kite * 2) ** 2;
+      const crowded = (gm) => {
+        for (const e of state.enemies) if (alive(e) && (e.x - gm.x) ** 2 + (e.y - gm.y) ** 2 < safeR2) return true;
+        return false;
+      };
+      let gd = Infinity, anyD = Infinity, any = null;
       for (const gm of state.gems) {
         if (!isReachableLoot(gm.x, gm.y)) continue;
         if (inBricks(gm.x, gm.y)) continue;
         if (this.skipGems.has(gm)) continue;
         const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
-        if (d < gd) { gd = d; this.gem = gm; }
+        if (d < anyD) { anyD = d; any = gm; }
+        if (d < gd && !crowded(gm)) { gd = d; this.gem = gm; }
       }
+      if (!this.gem) this.gem = any;
     }
     const g = this.gem;
     let gx = 0, gy = 0;
@@ -553,60 +675,84 @@ export class AutoPilotController {
         const ol = Math.hypot(ox - p.x, oy - p.y) || 1;
         return routeTo(ox, oy, 1) || direct(put((ox - p.x) / ol, (oy - p.y) / ol));
       }
-      const len = Math.sqrt(nd) || 1;
-      let fx = (p.x - nearest.x) / len;
-      let fy = (p.y - nearest.y) / len;
-      // Wall steer (Sk408 bug: pinned at the ±600 clamp with the horde on one
-      // side, the raw flee vector points INTO the wall and the player dies in
-      // the corner). Cancel the component pushing further outside the rim and
-      // keep the tangential part — the player skims along the wall instead.
-      // WAVE-27: the rim is the CONFIG-derived working boundary (the old
-      // hardcoded 560 duplicated CONFIG.GROUND.RIM by hand and could not know
-      // about the wall band or the pickup radius); put() below holds the same
-      // edge for every branch.
-      const rim = lootLimit();
-      if (Math.abs(p.x) > rim && fx * Math.sign(p.x) > 0) fx = 0;
-      if (Math.abs(p.y) > rim && fy * Math.sign(p.y) > 0) fy = 0;
-      if (fx === 0 && fy === 0) {
-        // Corner pin: BOTH components canceled (enemy diagonally inward at
-        // the rim corner) — steer straight for the arena center instead of
-        // freezing at the clamp while the horde closes.
-        fx = -Math.sign(p.x) * 0.7071;
-        fy = -Math.sign(p.y) * 0.7071;
-      }
-      let fl = Math.hypot(fx, fy) || 1;
-      fx /= fl; fy /= fl;
-      // M5b LANDSCAPE: never kite into a cliff face or a dead-end plateau.
-      // On high ground far from a way down, lean toward the nearest ramp or
-      // drop edge; a flee line a cliff blocks turns to the nearest open one.
+      // R1 PILOT STEERING (see STEER above): score every heading, walk the best open one.
+      const prevFlee = lastHead;
+      const rimL = lootLimit();
+      const th = fleeThreats(p, state, nearest, Math.sqrt(exitR2));
+      // A gem on the way (BALANCED): near, reachable, and in a direction the threats leave
+      // free. One gem is kept until it is taken or stops being safe (no weaving between two).
+      let gemDir = null;
+      if (this.stance === 'BALANCED' && STEER.GEM_W > 0 && state.gems.length > 0) {
+        const ok = (gm, slack) => {
+          const dx = gm.x - p.x, dy = gm.y - p.y, d = Math.hypot(dx, dy) || 1;
+          if (d > STEER.GEM_R * slack) return 0;
+          const [aw, dg] = threatAt(th, dx / d, dy / d);
+          return aw > (slack > 1 ? -0.25 : -0.1) && dg < (slack > 1 ? 0.25 : 0.15) ? d : 0;
+        };
+        let fg = this.fleeGem;
+        if (fg && !(state.gems.includes(fg) && ok(fg, 1.3))) fg = null;
+        if (!fg) {
+          let bd = Infinity;
+          for (const gm of state.gems) {
+            const d = ok(gm, 1);
+            if (d && d < bd && isReachableLoot(gm.x, gm.y) && !inBricks(gm.x, gm.y) && !this.skipGems.has(gm)) { bd = d; fg = gm; }
+          }
+        }
+        this.fleeGem = fg;
+        if (fg) {
+          const d = Math.hypot(fg.x - p.x, fg.y - p.y) || 1;
+          gemDir = [(fg.x - p.x) / d, (fg.y - p.y) / d];
+        }
+      } else this.fleeGem = null;
+      // M5b LANDSCAPE: on high ground far from a way down, lean toward the nearest ramp
+      // or drop edge (never kite into a dead-end plateau).
+      let lean = null;
       if (TER && pz >= HIGH_TIER) {
         const ex = exitField(TER);
         const ed = ex.dist[nodeOf(TER, cellIx(p.x, p.y), pz)] * (TCELL / 2);
         const xd = flowDir(TER, ex, p.x, p.y, pz);
-        if (xd && ed > 72 && fx * xd[0] + fy * xd[1] < 0.3) {
-          fx = fx * 0.4 + xd[0]; fy = fy * 0.4 + xd[1];
-          fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
-        }
+        if (xd && ed > 72) lean = xd;
       }
-      // A flee line is open when no cliff blocks it and it does not run into
-      // the open yard (the way back into the dead end).
+      const scores = fleeScores(p, th, rimL, { gem: gemDir, prev: prevFlee, lean });
+      // A heading is open when no cliff blocks it, it does not run into the open yard (the
+      // way back into the dead end), and no building stands in it (a flee pressed into a
+      // corner of footprints bounced in and out of it on every frame).
       const LOOK = 40;
       const fleeOpen = (rx, ry) =>
         (!TER || terrainLineClear(TER, p.x, p.y, pz, p.x + rx * LOOK, p.y + ry * LOOK)) &&
-        !(yb && entersBox(yb, p.x, p.y, rx, ry, LOOK));
-      if (!fleeOpen(fx, fy)) {
-        let best = null;
-        for (const a of [0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0]) {
-          const c = Math.cos(a), sn = Math.sin(a);
-          const rx = fx * c - fy * sn, ry = fx * sn + fy * c;
-          if (fleeOpen(rx, ry)) { best = [rx, ry]; break; }
+        !(yb && entersBox(yb, p.x, p.y, rx, ry, LOOK)) &&
+        straightClear(bRects, p.x, p.y, p.x + rx * LOOK, p.y + ry * LOOK);
+      let fx = 0, fy = 0, pick = -1;
+      {
+        const used = new Uint8Array(HEADS);
+        for (let k = 0; k < STEER.TRY && pick < 0; k++) {
+          let bi = -1;
+          for (let i = 0; i < HEADS; i++) if (!used[i] && (bi < 0 || scores[i] > scores[bi])) bi = i;
+          used[bi] = 1;
+          if (k === 0) { fx = HX[bi]; fy = HY[bi]; }             // nothing open: the best anyway
+          if (fleeOpen(HX[bi], HY[bi])) pick = bi;
         }
-        if (!best && TER) {
-          const xd = flowDir(TER, exitField(TER), p.x, p.y, pz);
-          if (xd) best = [xd[0], xd[1]];
-        }
-        if (best) { fx = best[0]; fy = best[1]; }
       }
+      if (pick >= 0) {
+        // Between this heading and its neighbours: the top of the parabola through the three
+        // scores, so the walk is not quantised to 7.5 degree steps.
+        const s0 = scores[pick], sm = scores[(pick + HEADS - 1) % HEADS], sp = scores[(pick + 1) % HEADS];
+        const den = sm - 2 * s0 + sp;
+        const off = den < -1e-9 ? Math.max(-0.5, Math.min(0.5, 0.5 * (sm - sp) / den)) : 0;
+        fx = HX[pick]; fy = HY[pick];
+        if (Math.abs(off) > 1e-6) {
+          const a = (pick + off) * 2 * Math.PI / HEADS;
+          const rx = Math.cos(a), ry = Math.sin(a);
+          if (fleeOpen(rx, ry)) { fx = rx; fy = ry; }
+        }
+      } else if (TER) {
+        const xd = flowDir(TER, exitField(TER), p.x, p.y, pz);
+        if (xd) { fx = xd[0]; fy = xd[1]; }
+      }
+      // The heading turns at a limited rate: direction changes are arcs, not snaps, and
+      // no rule above can make the hero step back and forth on alternate frames.
+      if (prevFlee && STEER.TURN > 0) [fx, fy] = turnToward(prevFlee, fx, fy, maxTurn);
+      this.head = [fx, fy]; this.headT = now;
       if (this.stance === 'GREEDY' && g) {
         const w = st.LOOT_WEIGHT;
         const bx = fx * (1 - w) + gx * w;
@@ -620,7 +766,46 @@ export class AutoPilotController {
       }
       return put(fx, fy);
     }
+    if (this.fleeing) this.dropGem = true;   // the calm gem is picked afresh once the threat has passed
     this.fleeing = false;
+    this.fleeGem = null;
+    if (now === null) this.head = null;   // no clock: a flee always starts fresh
+    // R1 PILOT STEERING: a calm move (gem drift, patrol, a site walk). A straight one bends
+    // away from threats that are near but outside the kite line (walking straight at them
+    // only turned the pilot round again a moment later). Every one turns at the flee's
+    // rate, so leaving a flee is an arc and not a reversal; a move along a building route
+    // (bend false) is only turned, and is handed on untouched once the heading has come round.
+    const calm = (m, bend = true) => {
+      const ml = Math.hypot(m.moveX, m.moveY);
+      if (now === null || !(ml > 0)) return m;
+      let hx = m.moveX / ml, hy = m.moveY / ml, bent = false;
+      const Rc = Math.sqrt(exitR2) * STEER.CALM_R;
+      if (bend && nearest && nd < Rc * Rc) {
+        const th = fleeThreats(p, state, null, Rc);
+        // Here a threat weighs sqrt of its flee weight, 1 - d/Rc: the bend starts well
+        // before the kite line, not at it.
+        const cost = (x, y) => {
+          let dg = 0;
+          for (let i = 0; i < th.w.length; i++) { const c = x * th.x[i] + y * th.y[i]; if (c > 0) dg += Math.sqrt(th.w[i]) * c * c; }
+          return dg;
+        };
+        if (cost(hx, hy) > 0.02) {
+          let bi = -1, bs = -Infinity;
+          for (let i = 0; i < HEADS; i++) {
+            const v = HX[i] * hx + HY[i] * hy - STEER.CALM_K * cost(HX[i], HY[i]) +
+              (lastHead ? STEER.STICK * (HX[i] * lastHead[0] + HY[i] * lastHead[1]) : 0);
+            if (v > bs) { bs = v; bi = i; }
+          }
+          hx = HX[bi]; hy = HY[bi]; bent = true;
+        }
+      }
+      if (lastHead && STEER.TURN > 0) {
+        const t = turnToward(lastHead, hx, hy, maxTurn);
+        if (t[0] !== hx || t[1] !== hy) { hx = t[0]; hy = t[1]; bent = true; }
+      }
+      this.head = [hx, hy]; this.headT = now;
+      return bent ? put(hx * ml, hy * ml) : m;
+    };
 
     // RUN-COUNT MILESTONE CHEST (owner 2026-09-17: "a big chest on the screen
     // that pilot collects"): the pilot beelines for the milestone chest. It
@@ -725,7 +910,7 @@ export class AutoPilotController {
           state.pilotGoalStalled = goal;
         } else {
           this.act = 'SITE';
-          return routed || direct(put(gdx / glen, gdy / glen, C.GROUND.RIM));
+          return calm(routed || direct(put(gdx / glen, gdy / glen, C.GROUND.RIM)), false);
         }
       }
     }
@@ -741,7 +926,7 @@ export class AutoPilotController {
         this.nav.path = null;
       } else if (routed) {
         this.act = 'LOOT';
-        return routed;
+        return calm(routed, false);
       }
     }
     if (this.gem) {
@@ -758,7 +943,7 @@ export class AutoPilotController {
       // (smoke caught 3.0s at x=560.1). Below a real vector, patrol instead.
       if (Math.hypot(gx, gy) >= 0.25) {
         this.act = 'LOOT';
-        return direct(put(gx * st.XP_SPEED, gy * st.XP_SPEED));
+        return calm(direct(put(gx * st.XP_SPEED, gy * st.XP_SPEED)));
       }
       // Gem dead-ahead (or a crawl) outside the rim — fall through to patrol.
     }
@@ -788,10 +973,10 @@ export class AutoPilotController {
         if (routed) return routed;
         if (lineClear) {   // the orbit point is in plain sight: walk at it
           const tl = Math.hypot(tx - p.x, ty - p.y) || 1;
-          return direct(put(((tx - p.x) / tl) * ml, ((ty - p.y) / tl) * ml));
+          return calm(direct(put(((tx - p.x) / tl) * ml, ((ty - p.y) / tl) * ml)));
         }
       }
-      return direct(put(mx, my));
+      return calm(direct(put(mx, my)));
     }
   }
 }

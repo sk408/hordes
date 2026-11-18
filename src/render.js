@@ -43,7 +43,7 @@ import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCe
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
 import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN, STYLE_STRUCT } from './sprite_cache.js';
 import { shakeOffset } from './fx/feel.js';
-import { describeHandBonus } from './hands.js';   // the HUD hand plate
+import { describeHandBonus, HAND_BY_ID, SUIT_GLYPHS } from './hands.js';   // the HUD hand plate
 import { JOKERS, jokerSlots, jokersHeld } from './jokers.js';   // the HUD joker row
 import { cardArt } from './art/cards.js';
 import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
@@ -651,27 +651,32 @@ function blitBuilding(g, id, x, y) {
 
 // Enemy shots: a bright ring instead of the dark one, so a shot reads as
 // danger against any ground.
+// R1 (the November review): every enemy shot is a ROUND RED-ORANGE ORB. The old
+// green spit and violet bolt wore the gems' colours, so danger looked like reward;
+// red-orange is the colour reserved for danger. The kinds differ by size and core:
+// spit a small orb, bolt (WARLOCK) a big one with a hot core, nova (boss burst) a
+// lighter orange, the Maw's barrage a redder one with a white-hot core.
 const STYLE_SHOT = spriteStyle({ outline: '#fff0f4' });
 const SHOT_BOX = { x: -4, y: -5, w: 9, h: 10 };
+// A pixel disc of radius 2 (5x5) or 3 (7x7) centred on x, y.
+function shotOrb(g, x, y, r, body, core, coreW, shade) {
+  g.fillStyle = body;
+  if (r >= 3) {
+    g.fillRect(x - 1, y - 3, 3, 1); g.fillRect(x - 2, y - 2, 5, 1); g.fillRect(x - 3, y - 1, 7, 3);
+    g.fillRect(x - 2, y + 2, 5, 1); g.fillRect(x - 1, y + 3, 3, 1);
+  } else {
+    g.fillRect(x - 1, y - 2, 3, 1); g.fillRect(x - 2, y - 1, 5, 3); g.fillRect(x - 1, y + 2, 3, 1);
+  }
+  g.fillStyle = shade; g.fillRect(x, y + r, 2, 1);                       // the lower rim, in shadow
+  g.fillStyle = core; g.fillRect(x - 1, y - 1, coreW, coreW);            // the hot core, up and left
+}
 const SHOT_PAINT = {
-  bolt(g, x, y) {
-    g.fillStyle = '#c46ad8'; g.fillRect(x - 3, y - 3, 7, 7);
-    g.fillStyle = '#52203d'; g.fillRect(x - 1, y - 1, 3, 3);
-    g.fillStyle = '#ff9ed8'; g.fillRect(x - 1, y - 4, 1, 1);
-  },
-  nova(g, x, y) {
-    g.fillStyle = '#ff7a9a'; g.fillRect(x - 2, y - 2, 5, 5);
-    g.fillStyle = '#a83a5a'; g.fillRect(x - 1, y - 1, 2, 2);
-  },
-  maw(g, x, y) {
-    g.fillStyle = '#ff2f5e'; g.fillRect(x - 2, y - 2, 5, 5);
-    g.fillStyle = '#ffd0da'; g.fillRect(x - 1, y - 1, 2, 2);
-  },
-  spit(g, x, y) {
-    g.fillStyle = '#68e080'; g.fillRect(x - 2, y - 2, 5, 5);
-    g.fillStyle = '#1f6a2a'; g.fillRect(x - 1, y - 1, 2, 2);
-  },
+  bolt(g, x, y) { shotOrb(g, x, y, 3, '#ff4a14', '#ffe2b0', 3, '#8a1c06'); },
+  nova(g, x, y) { shotOrb(g, x, y, 2, '#ff7a26', '#ffe2b0', 1, '#9a3008'); },
+  maw(g, x, y) { shotOrb(g, x, y, 2, '#ff3218', '#fff4e0', 2, '#7a1204'); },
+  spit(g, x, y) { shotOrb(g, x, y, 2, '#ff5a1f', '#ffc890', 1, '#8a2208'); },
 };
+export { SHOT_PAINT, GEM_TIERS };   // test/test_enemy_shot_orbs.mjs
 
 // Player projectiles through the cache: the body painter's discrete inputs
 // (kind, 8-way heading, spin / blink phase, glint bit) form the key, and a
@@ -1473,8 +1478,8 @@ export class Renderer {
       }
     }
 
-    // Enemy projectiles: spit (green blob), bolt (heavy purple, WARLOCK),
-    // nova (pink, boss radial burst).
+    // Enemy projectiles (SHOT_PAINT): round red-orange orbs. spit (small), bolt
+    // (big, WARLOCK), nova (orange, boss radial burst), maw (red, the barrage).
     for (const s of state.enemyShots || []) {
       const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
       if (cull(x, y, 5)) continue;
@@ -1483,30 +1488,7 @@ export class Renderer {
         blitPainted(g, 'shot:' + sk, SHOT_BOX, SHOT_PAINT[sk], x, y, STYLE_SHOT);
         continue;
       }
-      if (s.kind === 'bolt') {
-        g.fillStyle = '#c46ad8';
-        g.fillRect(x - 3, y - 3, 7, 7);
-        g.fillStyle = '#52203d';
-        g.fillRect(x - 1, y - 1, 3, 3);
-        g.fillStyle = '#ff9ed8';
-        g.fillRect(x - 1, y - 4, 1, 1);
-      } else if (s.kind === 'nova') {
-        g.fillStyle = '#ff7a9a';
-        g.fillRect(x - 2, y - 2, 5, 5);
-        g.fillStyle = '#a83a5a';
-        g.fillRect(x - 1, y - 1, 2, 2);
-      } else if (s.kind === 'maw') {
-        // Barrage round (WAVE-10): hot-pink mote with a white-hot core.
-        g.fillStyle = '#ff2f5e';
-        g.fillRect(x - 2, y - 2, 5, 5);
-        g.fillStyle = '#ffd0da';
-        g.fillRect(x - 1, y - 1, 2, 2);
-      } else {
-        g.fillStyle = '#68e080';
-        g.fillRect(x - 2, y - 2, 5, 5);
-        g.fillStyle = '#1f6a2a';
-        g.fillRect(x - 1, y - 1, 2, 2);
-      }
+      SHOT_PAINT[SHOT_PAINT[s.kind] ? s.kind : 'spit'](g, x, y);   // the same orbs as the cache
     }
 
     // Projectiles: volley shots + kind-tagged weapon bodies (boomerang spin,
@@ -3232,13 +3214,14 @@ export class Renderer {
     chrome.clock = { text: clockTxt, frac: limitFrac, finalCall, x: cx - 2, y: clockY, w: cw + 2, h: clockPx + 10 };
 
     // --- AUTO-CONTINUE BADGE ------------------------------------------------
-    // A run started by auto-continue banks less gold, so the HUD says so for
-    // the whole run. Same badge language as the LV plate (a border, a dark
+    // A run started by auto-continue says what it banks for the whole run:
+    // AUTO 100% for the first runs in a row, then AUTO 75% (main.js autoCutPct,
+    // decision 8). Same badge language as the LV plate (a border, a dark
     // inset, bold text), in blue, under the clock's limit bar. Other runs
     // paint nothing.
     if (state.autoStarted) {
       const nPx = 9;
-      const nName = 'AUTO 50%';
+      const nName = 'AUTO ' + (100 - (state.devNightRun ? 0 : (state.autoCutPct || 0))) + '%';
       const nW = nName.length * Math.round(nPx * 0.62) + 6;
       const nH = nPx + 4;
       const nX = C.VIEW_W - 24 + 2 - nW;
@@ -3466,11 +3449,16 @@ export class Renderer {
       const fx = hand ? state.handFx : null;
       const k = fx ? Math.min(1, fx.t / fx.dur) : 1;
       const counting = !!fx && k < 1;
-      const line = hand
-        ? hand.name.toUpperCase() + '  ' + describeHandBonus(hand, hand.scale, fx ? fx.from + (fx.to - fx.from) * k : null)
-        : 'NO HAND YET';
+      const bonus = hand ? describeHandBonus(hand, hand.scale, fx ? fx.from + (fx.to - fx.from) * k : null) : '';
+      let line = hand ? hand.name.toUpperCase() + '  ' + bonus : 'NO HAND YET';
       g.font = (fx ? 10 : 9) + 'px monospace';
       g.textBaseline = 'top';
+      // A suited hand too wide for the screen (a Diamond Straight Flush pays five things)
+      // names its suit by its glyph: '♦ STRAIGHT FLUSH'.
+      if (hand && hand.suit && SUIT_GLYPHS[hand.suit] && HAND_BY_ID[hand.id] && feedTextW(line) > C.VIEW_W - 14) {
+        line = SUIT_GLYPHS[hand.suit] + ' ' + HAND_BY_ID[hand.id].name.toUpperCase() + '  ' + bonus;
+        if (fx && feedTextW(line) > C.VIEW_W - 14) g.font = '9px monospace';   // the count-up's larger type would not fit
+      }
       const tw = Math.ceil(feedTextW(line));
       g.fillStyle = H.PLATE;
       g.fillRect(5, hy - 2, tw + 4, 12);

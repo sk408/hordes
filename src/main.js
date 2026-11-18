@@ -897,6 +897,7 @@ const state = {
   // measures displacement from. Run-scoped (reset in startRun) — declared here
   // so the follow needs no guards.
   camLead: { x: 0, y: 0 },
+  camDir: { x: 0, y: 0 },   // the low-passed travel direction that drives the lead
   camBase: { x: 0, y: 0 },
   camPrev: { x: 0, y: 0 },
   character: null,   // equipped CHARACTERS entry for the current run
@@ -1039,14 +1040,16 @@ const state = {
   // AUTO-CONTINUE: `autoContinue` is the saved setting. The two run stamps
   // are set at startRun: `unattended` (the setting was on with the AUTO
   // pilot, so every waiting screen resolves itself; turning the setting off
-  // clears it) and `autoStarted` (the run was started by auto-continue, so
-  // it banks less gold).
+  // clears it) and `autoStarted` (the run was started by auto-continue).
+  // `autoCutPct`: what an auto-started run banks less, frozen at startRun: 0 for
+  // the first AUTO_CONTINUE_FREE_RUNS in a row, then AUTO_CONTINUE_PENALTY_PCT.
   autoContinue: false,
   unattended: false,
   // The trophies the finished run earned and what they gave for nothing
   // ({ earned: [name], granted: [row or pilot name] }), for the end card.
   runTrophies: null,
   autoStarted: false,
+  autoCutPct: 0,
   // STEP 3 DEV-NIGHT (dev-only autoplay variant, ?dev=1 gate): the run-scoped
   // stamp frozen at startRun off the dev session's devNight flag (the unattended
   // pattern). A dev-night run plays under nightmare rules (state.unattended is
@@ -2627,10 +2630,10 @@ async function devDownloadLog(env) {
 function devModeFields() {
   const devNight = !!(state && state.devNightRun);
   const night = !!(state && state.unattended);
-  const autoPaid = !!(state && state.autoStarted);
+  const cut = state ? autoCutPct() : 0;
   const mode = devNight ? 'dev-night' : (night ? 'unattended' : 'standard');
   const modifiers = [];
-  if (autoPaid && !devNight) modifiers.push('banking-penalty-' + RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT);
+  if (cut) modifiers.push('banking-penalty-' + cut);
   try {
     // The run's stage is where it began; travel is stamped beside it.
     const began = (state.stagesSeen && state.stagesSeen[0]) || state.stage;
@@ -3112,6 +3115,7 @@ function travelTo(stageId) {
   }
   state.cam = { x: p.x - C.VIEW_W / 2, y: p.y - C.VIEW_H / 2 };
   state.camLead = { x: 0, y: 0 };
+  state.camDir = { x: 0, y: 0 };
   state.camBase = { x: state.cam.x, y: state.cam.y };
   state.camPrev = { x: p.x, y: p.y };
   toast('THE PORTAL LEADS ON: ' + stageOf(state.stage).name, '#8fd8ff');
@@ -5820,8 +5824,9 @@ function tickDraftAutoPick(dt) {
 // intermission continues, the movies and the escape are skipped. A run the
 // player ends with END RUN stays on its end card.
 // Idle play stays a floor under active play:
-//   - a run started by auto-continue banks AUTO_CONTINUE_PENALTY_PCT less
-//     gold (a run the player starts pays in full);
+//   - the first AUTO_CONTINUE_FREE_RUNS runs auto-continue starts in a row pay
+//     in full; later ones bank AUTO_CONTINUE_PENALTY_PCT less gold (a run the
+//     player starts pays in full);
 //   - nothing is ever bought for the player;
 //   - after AUTO_RUN_LIMIT auto-started runs in a row with no input the game
 //     stops on the title.
@@ -5837,6 +5842,11 @@ let autoContinueLeft = null;     // s left on the intermission auto-CONTINUE
 let autoRestartLeft = null;      // s left on the end card before the next run
 let autoEvolveLeft = null;       // s left on the evolve offer
 let autoStall = { mode: null, t: 0 };   // watchdog: one waiting mode, held how long
+// What this run banks less (decision 8): the cut frozen at startRun; a dev-night run is exempt.
+function autoCutPct() { return state.devNightRun ? 0 : (state.autoCutPct || 0); }
+// The rule in words, for Settings and the manual.
+const AUTO_PAY_TEXT = 'the first ' + RUN_GOLD.AUTO_CONTINUE_FREE_RUNS + ' in a row pay in full, then ' +
+  (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold';
 
 // Turning it off takes effect at once: the rest of the run waits for the
 // player (what the run pays stays as it started).
@@ -6726,11 +6736,11 @@ function settleRunGold({ winBonus = 0 } = {}) {
   // completion winBonus stay SEPARATE additions on top. Performance pays
   // through the banked purse remainder: the run's tier-weighted in-run
   // earnings land here, unspent.
-  // AUTO-CONTINUE: a run it started pays AUTO_CONTINUE_PENALTY_PCT less. The
-  // cut scales the award, the purse and the completion bonus, so it is the
-  // whole payout.
+  // AUTO-CONTINUE: a run it started pays its frozen cut less (autoCutPct: none for
+  // the first AUTO_CONTINUE_FREE_RUNS in a row). The cut scales the award, the
+  // purse and the completion bonus, so it is the whole payout.
   // The record bonus is not cut. A dev-night run is exempt.
-  const autoPct = (state.autoStarted && !state.devNightRun) ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0;
+  const autoPct = autoCutPct();
   const pool = 1 - autoPct / 100;
   const autoFactor = 1 - autoPct / 100;
   // PRESTIGE GOLD (owner spec: x2^P, all sources). The AWARD (fixed end-of-run
@@ -7238,8 +7248,7 @@ function manualGoto(page) {
       refRow('Two evolved weapons with a matching pair fuse into one, freeing a slot', 'FUSE') +
       refSub('WHILE YOU ARE AWAY') +
       refRow('Buildings bought with gold. They make gold and charges even when the game is closed', 'CAMP') +
-      refRow('With AUTO, the next run starts by itself. Those runs pay ' +
-        (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold and stop after ' + C.AUTOPILOT.AUTO_RUN_LIMIT + ' runs', 'AUTO-CONTINUE') +
+      refRow('With AUTO, the next run starts by itself: ' + AUTO_PAY_TEXT + ', and it stops after ' + C.AUTOPILOT.AUTO_RUN_LIMIT + ' runs', 'AUTO-CONTINUE') +
       refRow('An AUTO run keeps going while the tab is hidden', 'KEEP PLAYING'));
     addCls(c, 'ref');
   } else if (p === 3) {
@@ -7775,6 +7784,7 @@ function updateCamera(p, dt) {
   const CAM = C.CAMERA;
   const halfW = C.VIEW_W / 2, halfH = C.VIEW_H / 2;
   if (!state.camLead) state.camLead = { x: 0, y: 0 };
+  if (!state.camDir) state.camDir = { x: 0, y: 0 };
   if (!state.camBase) state.camBase = { x: state.cam.x, y: state.cam.y };
   if (!state.camPrev) state.camPrev = { x: p.x, y: p.y };
 
@@ -7788,9 +7798,17 @@ function updateCamera(p, dt) {
   // Lead is defined in SCREEN px and converted to world px at this zoom; it is
   // the ONLY smoothed term (weight when starting/stopping), so its time
   // constant is wall-clock and its amplitude is zoom-invariant.
+  // R1 (Steve on galaxy.click, 2026-11-18: the pilot "shakes the screen around in a way
+  // that isn't pleasing"): the direction is low-passed first (DIR_SMOOTH), so only travel
+  // that lasts moves the lead. A hero that turns for a frame or two, or steps back and
+  // forth, used to swing the lead target a full 2 x LEAD each time and the whole view
+  // wagged with it; now the two smoothings in a row let those average out.
+  const kDir = Math.min(1, dt * CAM.DIR_SMOOTH);
+  state.camDir.x += (tx - state.camDir.x) * kDir;
+  state.camDir.y += (ty - state.camDir.y) * kDir;
   const kLead = Math.min(1, dt * CAM.SMOOTH);
-  state.camLead.x += (tx * CAM.LEAD / Z - state.camLead.x) * kLead;
-  state.camLead.y += (ty * CAM.LEAD / Z - state.camLead.y) * kLead;
+  state.camLead.x += (state.camDir.x * CAM.LEAD / Z - state.camLead.x) * kLead;
+  state.camLead.y += (state.camDir.y * CAM.LEAD / Z - state.camLead.y) * kLead;
 
   // Deadzone, anchored to the follow BASE (the view WITHOUT the lead). The
   // lead must never be folded back into the base: doing that adds the lead
@@ -9568,10 +9586,8 @@ function showSettings(disarm = true, inRun = false) {
   }, !fsOk);
   const manual = normalizePilotMode(loadPilotPref()) === 'MANUAL';
   menuCard('AUTO-CONTINUE', manual ? 'Needs the AUTO pilot (ADVANCED, PILOT)'
-    : state.autoContinue ? 'ON: the next run starts by itself and pays ' +
-      (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold. Press to turn off'
-    : 'OFF. Press to start the next run automatically (those runs pay ' +
-      (100 - RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT) + '% gold)', () => {
+    : state.autoContinue ? 'ON: the next run starts by itself (' + AUTO_PAY_TEXT + '). Press to turn off'
+    : 'OFF. Press to start the next run automatically (' + AUTO_PAY_TEXT + ')', () => {
     if (manual) return;
     toggleAutoContinue();
     showSettings(false, inRun);
@@ -9782,6 +9798,7 @@ function startRun() {
   state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
   // Auto-continue: the two run stamps, frozen here.
   state.autoStarted = autoStartNext;
+  state.autoCutPct = autoStartNext && autoRunsInRow > RUN_GOLD.AUTO_CONTINUE_FREE_RUNS ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0;
   autoStartNext = false;
   state.unattended = state.autoContinue === true && normalizePilotMode(loadPilotPref()) !== 'MANUAL';
   state.weaponCap = C.WEAPON_SLOTS;
@@ -10047,6 +10064,7 @@ function startRun() {
   // displacement baseline on the player, so the first frame cannot read a
   // stale delta from the previous run as travel or start from an old base.
   state.camLead = { x: 0, y: 0 };
+  state.camDir = { x: 0, y: 0 };
   state.camBase = { x: state.cam.x, y: state.cam.y };
   state.camPrev = { x: p.x, y: p.y };
   state.mode = 'playing';
@@ -13553,7 +13571,7 @@ function startEscape(opts = {}) {
     },
     reduced: escapeStill(),
     // A run started by auto-continue banks its escape at the same cut as its gold.
-    cutPct: (state.autoStarted && !state.devNightRun) ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0,
+    cutPct: autoCutPct(),
     onCue: (id, arg) => audio.playEscapeCue(id, arg),
     onEnd: opts.test ? endEscapeTest : endEscape,
     // The in-run settings TEST card: a preview that pays nothing and returns
@@ -14626,6 +14644,7 @@ export const __TEST = {
     set on(v) { setAutoContinue(v); },
     get run() { return state.unattended; },
     get started() { return state.autoStarted; },
+    get cutPct() { return autoCutPct(); },
     get devRun() { return state.devNightRun; },
     press: toggleAutoContinue,
     restart: autoRestart,
@@ -14651,7 +14670,7 @@ export const __TEST = {
         RESTART_S: C.AUTOPILOT.AUTO_RESTART_S,
         EVOLVE_S: C.AUTOPILOT.AUTO_EVOLVE_S,
         STALL_S: C.AUTOPILOT.AUTO_STALL_S,
-        PENALTY_PCT: RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT };
+        PENALTY_PCT: RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT, FREE_RUNS: RUN_GOLD.AUTO_CONTINUE_FREE_RUNS };
     },
   },
   // ---- E1 RUN PURSE seam: the live wallet plus the REAL credit / spend /

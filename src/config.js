@@ -798,7 +798,10 @@ export const CONFIG = {
                       // (screen px) — the camera clamp reserves SAFE + LEAD
     SMOOTH: 5,        // rate (1/s) at which the LEAD eases in/out of travel.
                       // The follow itself is positional (the box is the feel),
-                      // so this is the only smoothed term.
+                      // so the lead is the only smoothed term.
+    DIR_SMOOTH: 6,    // rate (1/s) of the low-pass on the travel direction that
+                      // feeds the lead: a turn held for a frame or two no longer
+                      // swings the view (main.js updateCamera).
   },
 
   // ---- HUD presentation (WAVE-24 #1/#2/#4 legibility pass) ------------------

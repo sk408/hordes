@@ -56,6 +56,15 @@ s.check('every draftable hand card has a rank and a suit; no two share both; jok
     const n = new Set(ids.map(handCardOf).filter(c => c.suit === suit).map(c => c.key)).size;
     assert.ok(n >= FLUSH_SIZE, suit + ' has ' + n + ' cards (a flush needs ' + FLUSH_SIZE + ')');
   }
+  // The straight flush is reachable: the real deck holds a straight inside one suit
+  // (the October report: "I have 23456 of spades and it still only has spade flush").
+  const deck = [...new Map(ids.map(handCardOf).map(c => [c.key, c])).values()];
+  const sfSuits = Object.values(SUIT).filter(suit => {
+    const h = evaluateHand(deck.filter(c => c.suit === suit));
+    return h && h.id === 'straightflush';
+  });
+  assert.ok(sfSuits.length >= 1, 'no suit can make a straight flush');
+  assert.ok(sfSuits.includes('spades'), 'spades 2-6 is a straight flush');
   const queens = ['dmg', 'gold_pct', 'edge', 'thorns'].map(handCardOf);
   assert.deepEqual(queens.map(c => c.rank), ['Q', 'Q', 'Q', 'Q']);
   assert.equal(new Set(queens.map(c => c.suit)).size, 4, 'four queens, four suits');
@@ -72,8 +81,10 @@ s.check('every hand type is detected', () => {
   assert.equal(hand('2S', '7S', '8S', 'QS').id, 'flush');
   assert.equal(hand('3H', '3S', '3C', '2H', '2S').id, 'fullhouse');
   assert.equal(hand('QS', 'QD', 'QH', 'QC').id, 'four');
+  assert.equal(hand('5S', '6S', '7S', '8S').id, 'straightflush');
+  assert.equal(hand('2S', '3S', '4S', '5S', '6S').id, 'straightflush', 'the October report: 2-6 of spades');
   assert.deepEqual([STRAIGHT_SIZE, FLUSH_SIZE], [4, 4]);
-  assert.deepEqual(HANDS.map(h => h.id), ['pair', 'twopair', 'three', 'straight', 'flush', 'fullhouse', 'four']);
+  assert.deepEqual(HANDS.map(h => h.id), ['pair', 'twopair', 'three', 'straight', 'flush', 'fullhouse', 'four', 'straightflush']);
 });
 
 s.check('edge cases: duplicates, near misses, and the order of the best hand', () => {
@@ -86,8 +97,18 @@ s.check('edge cases: duplicates, near misses, and the order of the best hand', (
   assert.equal(hand('2S', '7S', '8S', '3H'), null);
   // A pair inside a straight still counts the straight (one card per rank).
   assert.equal(hand('5C', '5S', '6D', '7S', '8S').id, 'straight');
-  // The best hand wins: flush over straight over three; full house over flush; four over all.
-  assert.equal(hand('5S', '6S', '7S', '8S').id, 'flush');
+  // The best hand wins: flush over straight over three; full house over flush; four over full
+  // house; a straight flush over all.
+  assert.equal(hand('5S', '6S', '7S', '9S').id, 'flush');
+  assert.equal(hand('5S', '6S', '7S', '9S', '8H').id, 'flush', 'a straight and a flush apart are a flush');
+  assert.equal(hand('QS', 'QD', 'QH', 'QC', '9S', 'JS', 'KS').id, 'straightflush', '9-J-Q-K of spades beats four queens');
+  assert.equal(hand('QS', 'QD', 'QH', 'QC', '9S', 'JS', 'KH').id, 'four');
+  // Two straight flushes: the higher top card; a tie goes to spades, hearts, diamonds, clubs.
+  assert.equal(hand('2S', '3S', '4S', '5S', '6H', '7H', '8H', '9H').suit, 'hearts');
+  assert.deepEqual(hand('2S', '3S', '4S', '5S', '6H', '7H', '8H', '9H').cards, ['9H', '8H', '7H', '6H']);
+  assert.equal(hand('2C', '3C', '4C', '5C', '2D', '3D', '4D', '5D').suit, 'diamonds');
+  assert.equal(handName('straightflush', 'hearts'), 'Heart Straight Flush');
+  assert.equal(hand('5S', '6S', '7S', '8S').name, 'Spade Straight Flush');
   assert.equal(hand('3H', '3S', '3C', '5C', '6D', '7S', '8H').id, 'straight');
   assert.equal(hand('3H', '3S', '3C', '2H', '2S', '7H', '8H').id, 'fullhouse', 'full house beats the heart flush');
   assert.equal(hand('QS', 'QD', 'QH', 'QC', '2H', '2S').id, 'four');
@@ -102,10 +123,13 @@ s.check('edge cases: duplicates, near misses, and the order of the best hand', (
   assert.equal(evaluateHand(['5C', '6D', '7S'].map(card), { short: true }).id, 'straight');
   assert.equal(evaluateHand(['2S', '7S', '8S'].map(card), { short: true }).id, 'flush');
   assert.equal(evaluateHand(['2S', '7H'].map(card), { short: true }), null);
+  assert.equal(evaluateHand(['5C', '6C', '7C'].map(card), { short: true }).id, 'straightflush');
+  assert.equal(evaluateHand(['5C', '6C', '7C'].map(card)), null, 'three in a row of one suit, no Shortcut: nothing');
   // Wild Card: one extra card of whatever helps most.
   assert.equal(evaluateHand([card('2H')], { wild: true }).id, 'pair');
   assert.equal(evaluateHand(['QS', 'QD', 'QH'].map(card), { wild: true }).id, 'four');
   assert.ok(evaluateHand([card('2H')], { wild: true }).cards.includes(WILD_KEY));
+  assert.equal(evaluateHand(['5S', '6S', '8S'].map(card), { wild: true }).id, 'straightflush', 'the wild card fills the gap');
 });
 
 s.check('the bonus table: +10% to +60% damage, and a flush boosts its suit\'s family', () => {
@@ -117,6 +141,18 @@ s.check('the bonus table: +10% to +60% damage, and a flush boosts its suit\'s fa
   assert.equal(handBonus(hand('2H', '3H', '6H', 'KH')).hp, FLUSH_BOONS.hearts.hp);
   assert.equal(handBonus(hand('6D', 'JD', 'QD', '1D')).gold, 0.50);
   assert.equal(handBonus(hand('3C', '5C', 'QC', '7C')).cooldown, 0.80);
+  // Straight flush (decision 2): Four's bonus, the Straight's faster fire, and the suit's boon.
+  assert.deepEqual(handBonus(hand('5H', '6H', '7H', '8H')), { dmg: 0.60, hp: 0.30 + FLUSH_BOONS.hearts.hp, cooldown: 0.90, gold: 0, xp: 0 });
+  const sfs = handBonus(hand('5S', '6S', '7S', '8S'));
+  assert.ok(Math.abs(sfs.dmg - (0.60 + FLUSH_BOONS.spades.dmg)) < 1e-9 && sfs.hp === 0.30 && sfs.cooldown === 0.90);
+  assert.ok(Math.abs(handBonus(hand('5C', '6C', '7C', '8C')).cooldown - 0.90 * 0.80) < 1e-9, 'clubs: both faster-fire parts multiply');
+  assert.equal(describeHandBonus(hand('5D', '6D', '7D', '8D')), '+60% damage, +30% max HP, fire 10% faster, +50% gold, +25% XP');
+  // It outranks every other hand, so a pick that makes it is an upgrade.
+  assert.equal(HAND_BY_ID.straightflush.order, HANDS.length);
+  for (const h of HANDS) {
+    const b = handBonus({ id: h.id, suit: 'spades' }), sf = handBonus({ id: 'straightflush', suit: 'spades' });
+    assert.ok(sf.dmg >= b.dmg && sf.hp >= b.hp && sf.cooldown <= b.cooldown, 'straight flush pays at least ' + h.id);
+  }
   assert.equal(describeHandBonus(hand('3H', '3S', '3C', '2H', '2S')), '+50% damage, +25% max HP');
   assert.equal(describeHandBonus(hand('5C', '6D', '7S', '8S')), '+30% damage, fire 10% faster');
   assert.equal(describeHandBonus(hand('2H', '2S'), DOUBLE_DOWN_SCALE), '+15% damage');
@@ -271,6 +307,15 @@ s.check('the HUD shows the hand and its bonus; the pause screen lists the hand a
   assert.ok(rep.innerHTML.includes('Pair') && rep.innerHTML.includes('+10% damage') && rep.innerHTML.includes('Iron Heart'), rep.innerHTML);
   T.closeStats();
   assert.equal(p.hand.id, 'pair');
+  // A Diamond Straight Flush pays five things: the plate names the suit by its glyph so the
+  // line fits the screen.
+  p.handCards = Object.fromEntries(['5D', '6D', '7D', '8D'].map(c => [c, card(c)]));
+  refreshHand(p);
+  h.pump(1);
+  const sf = T.renderer.hudChrome.hand;
+  assert.equal(sf.id, 'straightflush');
+  assert.ok(sf.text.startsWith('♦ STRAIGHT FLUSH  +60% damage'), sf.text);
+  assert.ok(sf.text.length * 6 <= 480, sf.text.length + ' chars');
 });
 
 s.done();

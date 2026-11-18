@@ -172,7 +172,10 @@ export const RUN_GOLD = {
   SURVIVAL_BASE: 30,
   SURVIVAL_STEP: 0.5,
   KILL_SOFTCAP: 200,  // kills at which an ordinary kill pays half
-  AUTO_CONTINUE_PENALTY_PCT: 50,   // a run started by auto-continue pays this many points less
+  // Decision 8 (2026-11-17): the first AUTO_CONTINUE_FREE_RUNS runs auto-continue starts in a
+  // row (a coffee break) pay in full; from the next one on, AUTO_CONTINUE_PENALTY_PCT less.
+  AUTO_CONTINUE_PENALTY_PCT: 25,   // was 50
+  AUTO_CONTINUE_FREE_RUNS: 3,
 };
 
 // The old analytic payout model. Not a payout any more: only
