@@ -105,6 +105,24 @@
   }
   #draft-actions .dact.dim { opacity: 0.4; cursor: default; }
   #draft-actions .dact.armed { border-color: #ff5a3c; color: #ffb0a0; }
+  /* the AUTO-PICK row over the cards: the countdown, ON/OFF [O], WAIT [T] */
+  #draft-autopick {
+    display: flex; gap: 8px; align-items: center; justify-content: center;
+    width: max-content; max-width: 100%; margin: 2px auto 6px;
+    font-size: 11px; letter-spacing: 1px; color: #6a6a8a;
+  }
+  #draft-autopick .dap {
+    padding: 4px 10px; border: 1px solid #3a3a52; background: #12121c; color: #9a9ab8;
+    cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  #draft-autopick .dap:hover { border-color: #6a6a8a; color: #d0d0ea; }
+  #draft-autopick .dap.off { border-color: #7a5a3a; color: #ffb070; }
+  #draft-autopick .k { opacity: 0.6; }
+  /* Fixed widths, so a press never moves a switch out from under the finger:
+     the text box fits its longest form (AUTO-CONTINUE IN 30s, 20 characters
+     plus their 1px letter-spacing) and ON/OFF share one width. */
+  #draft-autopick .dap-left { display: inline-block; min-width: calc(20ch + 20px); text-align: right; }
+  #draft-autopick .dap-on { min-width: calc(7ch + 7px); text-align: center; }
   /* level-up draft, evolve and fusion offers: a darker scrim than the menus,
      so card text reads over the live field */
   #overlay.draft { background: rgba(5,5,10,0.88); }
@@ -134,6 +152,8 @@
   #overlay.draft.compact #draft-actions { margin-top: 2px; gap: 8px; }
   #overlay.draft.compact #draft-actions .dact { padding: 5px 10px; font-size: 11px; }
   #overlay.draft.compact #draft-autopick { margin: 0 auto !important; }
+  #overlay.draft.compact #draft-autopick .k { display: none; }
+  #overlay.draft.compact #draft-autopick .dap-on { min-width: calc(3ch + 3px); }
   .card:active { transform: translateY(1px); }
   .card.dim { opacity: 0.45; }
   .card.dim:hover { cursor: default; }

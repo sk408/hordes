@@ -1495,9 +1495,9 @@ function applyStancePref() {
   manualController.stance = s;
   return s;
 }
-// The level-up draft's auto-pick delay is fixed (C.AUTOPILOT.DRAFT_TIMEOUT) and
-// has no setting: nothing may read or write 'hordes_autopick'
-// (test/test_autopick_pref.mjs).
+// The level-up draft's auto-pick has two switches on the draft screen itself,
+// not in Settings (DRAFT AUTO-PICK SWITCHES, by armDraftAutoPick). Nothing may
+// read or write the retired 'hordes_autopick' key (test/test_autopick_pref.mjs).
 
 // The floating joystick's api. Declared before clearPilotInput because the
 // boot path (swapPilotMode -> clearPilotInput) reads it during module init.
@@ -5567,11 +5567,84 @@ let draftAutoRng = Math.random;   // injectable rng (chests.js :291 pattern)
 let draftAutoCount = 0;           // test seam: auto-picks made
 let draftAutoLastId = null;       // test seam: the last auto-picked offer id
 
+// ---- DRAFT AUTO-PICK SWITCHES (owner 2026-11-17, verbatim: "I was thinking one
+// for on off and one that cycles 1 to 6") --------------------------------------
+// Two small buttons over the cards on the draft and evolve screens in AUTO,
+// both remembered:
+//   AUTO-PICK ON / OFF [U]  OFF holds the offer until the player picks;
+//   WAIT 6s .. 1s [T]       each press takes a second off; 1s goes back to 6s.
+// U and T are bound nowhere in play. Not O: O is the in-run pilot toggle, and
+// a press racing the countdown's end (the pick flips the mode to 'playing'
+// under the still-visible ceremony cards) would flip the pilot to MANUAL and
+// store it; a pilot press as a draft opens would store AUTO-PICK OFF.
+// The wait steps DOWN so a press never lands on a shorter wait than the ones
+// the player has already passed through (stepping 6 -> 1 would pick before a
+// second press could land). The top step IS C.AUTOPILOT.DRAFT_TIMEOUT (the
+// progression sims raise it so the game's timer never fires), so a player who
+// never touches either switch sees exactly the September behaviour. There is
+// no instant pick: the owner's 2026-09-16 reason for retiring INSTANT (an idle
+// player must still watch the build grow) holds at every default.
+// Auto-continue: an unattended run with AUTO-PICK OFF waits for the player,
+// and the stall watchdog (AUTO_STALL_S) takes the card if nobody comes.
+const KEY_DRAFT_AUTO = 'hordes_draft_auto';
+const KEY_DRAFT_WAIT = 'hordes_draft_wait';
+const DRAFT_WAIT_STEPS = 6;       // WAIT 6s (the default) down to 1s
+// A stored WAIT: a whole number of seconds 1..6, anything else is the default.
+export function draftWaitFromPref(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= DRAFT_WAIT_STEPS ? n : DRAFT_WAIT_STEPS;
+}
+let draftAutoOn = true;           // AUTO-PICK ON
+let draftWaitStep = DRAFT_WAIT_STEPS;
+try {
+  draftAutoOn = prefStorage.getItem(KEY_DRAFT_AUTO) !== '0';
+  draftWaitStep = draftWaitFromPref(prefStorage.getItem(KEY_DRAFT_WAIT));
+} catch { /* shim */ }
+// The countdown a fresh offer gets.
+function draftWaitS() {
+  return draftWaitStep >= DRAFT_WAIT_STEPS ? C.AUTOPILOT.DRAFT_TIMEOUT : draftWaitStep;
+}
+// Either switch restarts the open offer's countdown on the (new) wait: back ON,
+// the player is owed the full window from now. The press also restarts the
+// auto-continue stall watchdog, so it can never take the card before the
+// countdown the row shows (and OFF reads AUTO-CONTINUE IN 30s at once).
+function restartOpenAutoPick() {
+  if (state.mode === 'draft' && draftTimer && !draftTimer.done) draftTimer.left = draftWaitS();
+  const waiting = state.mode === 'draft' || state.mode === 'evolve';
+  autoStall = state.unattended && waiting ? { mode: state.mode, t: 0 } : { mode: null, t: 0 };
+  armEvolveAutoPick();
+  updateDraftCountdownLine();
+}
+function toggleDraftAuto() {
+  draftAutoOn = !draftAutoOn;
+  try { prefStorage.setItem(KEY_DRAFT_AUTO, draftAutoOn ? '1' : '0'); } catch { /* shim */ }
+  audio.playSfx(draftAutoOn ? 'uiConfirm' : 'uiMove');
+  restartOpenAutoPick();
+}
+function cycleDraftWait() {
+  draftWaitStep = draftWaitStep <= 1 ? DRAFT_WAIT_STEPS : draftWaitStep - 1;
+  try { prefStorage.setItem(KEY_DRAFT_WAIT, String(draftWaitStep)); } catch { /* shim */ }
+  audio.playSfx('uiMove');
+  restartOpenAutoPick();
+}
+// The evolve offer follows the same switches. OFF holds it (an unattended
+// run's stall watchdog still takes the first offer); an unattended run keeps
+// its own short AUTO_EVOLVE_S; an attended AUTO run waits the player's WAIT.
+function armEvolveAutoPick() {
+  if (state.mode !== 'evolve') return;
+  if (!draftAutoOn) autoEvolveLeft = null;
+  else if (state.unattended) autoEvolveLeft = C.AUTOPILOT.AUTO_EVOLVE_S;
+  else if (!pilotMovesYou()) autoEvolveLeft = draftWaitS();
+  else autoEvolveLeft = null;
+}
+
 function draftObstructed() {
   if (state.mode !== 'draft') return true;
   // MANUAL never auto-picks: the countdown is suspended (not reset), so a
   // flip to AUTO mid-draft owes the player the full unspent window.
   if (normalizePilotMode(state.pilotMode) === 'MANUAL') return true;
+  // AUTO-PICK OFF holds the offer for the player (suspended, like MANUAL).
+  if (!draftAutoOn) return true;
   // A coach must not park an unattended or background run — the countdown
   // runs through it (the coach's own DOM is untouched).
   if (coachActive() && !state.unattended && !bgRuns()) return true;
@@ -5585,11 +5658,14 @@ function armDraftAutoPick(offers) {
   // Armed on every presentation (MANUAL included): the TICK and the LINE are
   // what gate on AUTO, so a player who flips AUTO mid-draft gets the full
   // window from that moment, and a MANUAL player gets nothing at all.
-  // The window is the FIXED DRAFT_TIMEOUT (the retired INSTANT preference
-  // armed at 0 — the delay is the pacing feature, see the retirement note
-  // above; no reachable state may shorten it).
+  // The window is the player's WAIT (draftWaitS: DRAFT_TIMEOUT unless they
+  // stepped the switch down; the retired INSTANT preference armed at 0 and
+  // nothing may again — the delay is the pacing feature).
   draftOffers = Array.isArray(offers) ? offers : [];
-  draftTimer = { left: C.AUTOPILOT.DRAFT_TIMEOUT, done: false };
+  draftTimer = { left: draftWaitS(), done: false };
+  // Each presented draft is progress: a queued draft (the mode stays 'draft')
+  // gets the stall watchdog's full AUTO_STALL_S too.
+  if (state.unattended && autoStall.mode === 'draft') autoStall = { mode: 'draft', t: 0 };
   updateDraftCountdownLine();
 }
 
@@ -5603,36 +5679,77 @@ function clearDraftAutoPick() {
   }
 }
 
+// The row shows in AUTO on a live draft and on the evolve offer. The guided
+// tutorial picks its own draft, so it shows none.
+function autoPickRowShown() {
+  if (pilotMovesYou() || tutGuidedLive()) return false;
+  if (state.mode === 'draft') return !!(draftTimer && !draftTimer.done);
+  return state.mode === 'evolve';
+}
+
+function removeAutoPickRow() {
+  if (!draftCountdownEl) return;
+  if (draftCountdownEl.remove) draftCountdownEl.remove();
+  else if (draftCountdownEl.parentNode) draftCountdownEl.parentNode.removeChild(draftCountdownEl);
+  draftCountdownEl = null;
+}
+
+const AUTO_PICK_TIP = '<b>AUTO-PICK</b> — ON: a card is picked for you when the wait runs out. OFF: the cards wait for you. Key U.';
+const AUTO_WAIT_TIP = '<b>WAIT</b> — how long auto-pick waits. Each press takes a second off; 1s goes back to 6s. Key T.';
+
+// [AUTO-PICK IN 4.2s] [ON] [WAIT 6s]: the countdown text, then the two
+// switches. Small and unemphatic by design (index.html #draft-autopick): it
+// must never read as the primary action.
+function buildAutoPickRow() {
+  const row = document.createElement('div');
+  row.id = 'draft-autopick';
+  const text = document.createElement('span');
+  text.className = 'dap-left';
+  row.appendChild(text);
+  const chip = (cls, fn, tip) => {
+    const b = document.createElement('div');
+    b.className = 'dap ' + cls;
+    b.title = tip.replace(/<[^>]+>/g, '');   // hover says what it does
+    b.onclick = (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      if (state.helpMode) { showHelpTip(tip, b); return; }
+      fn();
+    };
+    row.appendChild(b);
+  };
+  chip('dap-on', toggleDraftAuto, AUTO_PICK_TIP);
+  chip('dap-wait', cycleDraftWait, AUTO_WAIT_TIP);
+  if (typeof overlay.insertBefore === 'function' && ovCards && ovCards.parentNode === overlay) {
+    overlay.insertBefore(row, ovCards);
+  } else {
+    overlay.appendChild(row);
+  }
+  draftCountdownEl = row;
+}
+
+// Written only when the value changes: the switches must not be rebuilt under
+// a press (a click needs its target to survive from pointerdown to pointerup).
+function setOnChange(el, prop, v) {
+  if (!el || el['_dap_' + prop] === v) return;
+  el['_dap_' + prop] = v;
+  el[prop] = v;
+}
+
 function updateDraftCountdownLine() {
-  const show = state.mode === 'draft' && draftTimer && !draftTimer.done
-    && normalizePilotMode(state.pilotMode) !== 'MANUAL';
-  if (!show) {
-    if (draftCountdownEl) {
-      if (draftCountdownEl.remove) draftCountdownEl.remove();
-      else if (draftCountdownEl.parentNode) draftCountdownEl.parentNode.removeChild(draftCountdownEl);
-      draftCountdownEl = null;
-    }
-    return;
+  if (!autoPickRowShown()) { removeAutoPickRow(); return; }
+  if (!draftCountdownEl || !draftCountdownEl.parentNode) buildAutoPickRow();
+  const [text, onEl, waitEl] = draftCountdownEl.children;
+  // The time left on whichever countdown holds this screen.
+  const left = state.mode === 'draft' ? (draftAutoOn ? draftTimer.left : null) : autoEvolveLeft;
+  let line = 'AUTO-PICK';
+  if (left !== null && left !== undefined) line = 'AUTO-PICK IN ' + Math.max(0, left).toFixed(1) + 's';
+  else if (!draftAutoOn && state.unattended && autoStall.mode === state.mode) {
+    line = 'AUTO-CONTINUE IN ' + Math.max(0, Math.ceil(C.AUTOPILOT.AUTO_STALL_S - autoStall.t)) + 's';
   }
-  if (!draftCountdownEl || !draftCountdownEl.parentNode) {
-    draftCountdownEl = document.createElement('div');
-    draftCountdownEl.id = 'draft-autopick';
-    // Small and unemphatic by design: it must never read as the primary
-    // action. Inline style — the draft overlay's own inline-style precedent
-    // (the tier badge above).
-    if (draftCountdownEl.style && draftCountdownEl.style.cssText !== undefined) {
-      draftCountdownEl.style.cssText =
-        'margin:2px auto 6px;width:max-content;font-size:11px;letter-spacing:1px;color:#6a6a8a;';
-    }
-    if (typeof overlay.insertBefore === 'function' && ovCards && ovCards.parentNode === overlay) {
-      overlay.insertBefore(draftCountdownEl, ovCards);
-    } else {
-      overlay.appendChild(draftCountdownEl);
-    }
-  }
-  // The guided tutorial holds the auto-pick, so its draft shows no countdown.
-  draftCountdownEl.textContent = tutGuidedLive() ? ''
-    : 'AUTO-PICK IN ' + Math.max(0, draftTimer.left).toFixed(1) + 's';
+  setOnChange(text, 'textContent', line);
+  setOnChange(onEl, 'className', 'dap dap-on' + (draftAutoOn ? '' : ' off'));
+  setOnChange(onEl, 'innerHTML', (draftAutoOn ? 'ON' : 'OFF') + '<span class="k"> [U]</span>');
+  setOnChange(waitEl, 'innerHTML', 'WAIT ' + draftWaitStep + 's<span class="k"> [T]</span>');
 }
 
 function tickDraftAutoPick(dt) {
@@ -6169,9 +6286,10 @@ function maybeOpenEvolve() {
     frameCard(notNow);
   }
   // An unattended run must not park here: a night run takes the FIRST offer
-  // after AUTO_EVOLVE_S, and an AUTO run after the draft timeout.
-  if (state.unattended) autoEvolveLeft = C.AUTOPILOT.AUTO_EVOLVE_S;
-  else if (normalizePilotMode(state.pilotMode) !== 'MANUAL') autoEvolveLeft = C.AUTOPILOT.DRAFT_TIMEOUT;
+  // after AUTO_EVOLVE_S, and an AUTO run after the player's WAIT (the draft's
+  // AUTO-PICK switches; OFF holds it).
+  armEvolveAutoPick();
+  updateDraftCountdownLine();
   // The offer set (the taken entry — or 'deferred' — fills in when it resolves).
   if (dev) dev.evolutions.push({ offered: offers.map(o => (o.kind === 'fuse' ? 'fuse:' + o.def.id : o.w.type)), taken: null });
 }
@@ -6252,6 +6370,7 @@ function closeEvolve() {
   overlay.style.display = 'none';
   setDraftOverlay(false);
   state.mode = 'playing';
+  updateDraftCountdownLine();   // the AUTO-PICK row leaves with the offer
 }
 
 // ---------- The fusion shelf (PROGRESS) --------------------------------------
@@ -11235,6 +11354,8 @@ window.addEventListener('keydown', (ev) => {
       draftSkip();
     } else if (k === 'b') {
       draftBanishToggle();
+    } else if ((k === 'u' || k === 't') && autoPickRowShown()) {
+      if (!ev.repeat) (k === 'u' ? toggleDraftAuto : cycleDraftWait)();
     } else if (k === 'escape' && draftBanishArmed) {
       draftBanishToggle();
     } else if (k === 'arrowleft' || k === 'arrowup' || (k === 'tab' && ev.shiftKey)) {
@@ -11261,6 +11382,8 @@ window.addEventListener('keydown', (ev) => {
     if (['1', '2', '3', '4'].includes(ev.key)) {
       const card = ovCards.children[Number(ev.key) - 1];  // EVOLVE cards + NOT NOW
       if (card) card.click();
+    } else if ((k === 'u' || k === 't') && autoPickRowShown()) {
+      if (!ev.repeat) (k === 'u' ? toggleDraftAuto : cycleDraftWait)();
     } else menuNavKey(k, ev);
   } else if (state.mode === 'dead') {
     // THE RUN-ENDED SCREEN (owner 2026-09-19: "the run ended screen doesnt let me
@@ -14673,6 +14796,14 @@ export const __TEST = {
     get lastId() { return draftAutoLastId; },
     get left() { return draftTimer ? draftTimer.left : null; },
     get armed() { return !!draftTimer; },
+    // the AUTO-PICK switches (owner 2026-11-17)
+    get on() { return draftAutoOn; },
+    get waitStep() { return draftWaitStep; },
+    get wait() { return draftWaitS(); },
+    get row() { return draftCountdownEl; },
+    toggle: () => toggleDraftAuto(),
+    cycle: () => cycleDraftWait(),
+    armEvolve: () => armEvolveAutoPick(),
   },
   // ---- DRAFT PICK CEREMONY seam: the one timing constant + the one
   // class-name pair the CSS (index.html) and the tests agree on, plus the

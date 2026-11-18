@@ -68,8 +68,8 @@ await withPage({ w: 390, h: 844, dpr: 3, mobile: true, skipTour: true,
   const t0 = await p.evaluate(`performance.now()`);
   // Mid-window: the countdown line must be live. Poll until it reads a value
   // below ~5s (so the shot shows a real ticking countdown, not the first '6.0').
-  await p.waitFor(`(() => { const el = document.getElementById('draft-autopick'); return el && /[0-4]\\.[0-9]s$/.test(el.textContent); })()`, 4000);
-  const lineTxt = await p.evaluate(`(() => document.getElementById('draft-autopick').textContent)()`);
+  await p.waitFor(`(() => { const el = document.querySelector('#draft-autopick .dap-left'); return el && /[0-4]\\.[0-9]s$/.test(el.textContent); })()`, 4000);
+  const lineTxt = await p.evaluate(`(() => document.querySelector('#draft-autopick .dap-left').textContent)()`);
   await shot(p, 'auto-countdown-live');
   // Expiry: nothing is tapped; a card must be taken through the real seam.
   await p.waitFor(`(async () => ${T}.state.mode !== 'draft')()`, 12000);

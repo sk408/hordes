@@ -103,6 +103,8 @@ const countdownLine = () => {
   const ov = elements['overlay'];
   return ov ? ov.children.find(c => c.id === 'draft-autopick') : null;
 };
+// The row's countdown text (its first child; the two switches follow it).
+const lineText = (l) => ((l && l.children && l.children[0] && l.children[0].textContent) || '');
 const tourRoot = () => globalThis.document.body.children.find(c => c.id === 'tour-root');
 
 // Skip the intro -> title -> straight into a run (AUTO_ALL is the default
@@ -148,12 +150,12 @@ st.player.xpNext = 1e18;
   const c0 = T.draftAuto.count;
   tick(0.2);
   const line = countdownLine();
-  ok('countdown line present in AUTO and live', !!line && /^AUTO-PICK IN \d+\.\ds$/.test(line.textContent || ''), line && line.textContent);
+  ok('countdown line present in AUTO and live', !!line && /^AUTO-PICK IN \d+\.\ds$/.test(lineText(line)), lineText(line));
   tick(5.7);                              // 5.9s total
   ok('5.9s of ticking: NO pick, still on the draft',
     T.draftAuto.count === c0 && st.mode === 'draft', [T.draftAuto.count - c0, st.mode]);
   const line59 = countdownLine();
-  ok('the line still counts down near expiry', !!line59 && /AUTO-PICK IN 0\.[0-3]s/.test(line59.textContent || ''), line59 && line59.textContent);
+  ok('the line still counts down near expiry', !!line59 && /AUTO-PICK IN 0\.[0-3]s/.test(lineText(line59)), lineText(line59));
   tick(0.2);                              // 6.1s total: past the 6.0s timeout
   ok('6.0s: EXACTLY ONE auto-pick, through the activation seam, expected offer',
     T.draftAuto.count === c0 + 1 && T.draftAuto.lastId === expectedId && st.mode === 'playing',
