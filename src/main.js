@@ -272,6 +272,10 @@ let audio = {
   playIntroCue() {}, playPortalCue() {},   // WAVE-8/B cinematic stingers
   setMusicVolume() {}, getMusicVolume() { return 0; },
   setSfxVolume() {}, getSfxVolume() { return 0; }, setMusicMode() {},
+  setHiddenMute() {}, playEscapeCue() {}, isMusicRunning() { return false; }, getMusicMode() { return 'run'; },
+  // Recorded music (src/music_files.js).
+  setMusicContext() {}, getMusicContext() { return null; }, setMusicSource() {}, getMusicSource() { return 'recorded'; },
+  playMusicCue() { return false; },
 };
 try {
   const mod = await import('./audio.js');
@@ -1321,6 +1325,42 @@ let bgFramesAtHide = 0;   // background frames stepped before this hide
 const RUN_MODES = new Set(['playing', 'draft', 'evolve', 'intermission', 'stats', 'settings',
   'burst', 'chest', 'finale', 'portal-cine', 'escape']);
 function runLive() { return !state.runSettled && RUN_MODES.has(state.mode); }
+// RECORDED MUSIC (2026-11-17): where the game is, for audio.js's music
+// contexts. Called every frame (runFrame) and right before startRun's
+// startMusic, so a new run's bed starts from its own context. The synth path
+// ignores it; the recorded path picks the slot (title, run_<stage group>, boss,
+// maw, escape) and the ducks (pause -8 dB, portal movie -12 dB) from it.
+let musicRunNo = 0;   // bumped by startRun: a new run's tracks start from the top
+function musicScene() {
+  const m = state.mode;
+  if (m === 'intro') return 'none';
+  if (m === 'death-cine') return 'death';
+  if (m === 'dead') return 'endcard';
+  if (runLive()) {
+    if (m === 'portal-cine') return 'portal';
+    if (m === 'escape') return 'escape';
+    if (m === 'finale') return 'finale';
+    if (m === 'settings' || m === 'stats') return 'pause';
+    if (m === 'intermission') return 'intermission';
+    return 'run';
+  }
+  return 'title';
+}
+function syncMusic() {
+  try {
+    const live = runLive();
+    const waveNum = (state.wave && state.wave.num) || 0;
+    audio.setMusicContext({
+      scene: musicScene(),
+      // Out of a run: the stage picked for the next run (its track preloads).
+      stage: live ? state.stage : (pendingStage || state.stage),
+      wave: live ? waveNum : 0,
+      afterMaw: live && waveNum > C.ESCALATION.END_WAVE,
+      maw: live && !!(state.finalBoss && state.finalBoss.hp > 0),
+      runNo: musicRunNo,
+    });
+  } catch { /* music never blocks a frame */ }
+}
 // Background play needs the setting, a hidden tab that still owns the save, a
 // pilot (a MANUAL run waits for its player) and no guided tutorial (that is
 // taught to a player who is here).
@@ -6783,7 +6823,8 @@ function runSurvived() {
   state.runWon = true;
   state.deathBy = null;       // nobody killed you; do not print a cause line
   audio.stopMusic();
-  audio.playSfx('victory');
+  // The recorded victory cue when there is one, else the synth arpeggio.
+  if (!audio.playMusicCue('victory')) audio.playSfx('victory');
   // The biggest earned moment in the game, same flourish the finale kill used.
   triggerEarnedMoment('finale', p.x, p.y);
   const bonus = survivedBonus();
@@ -6933,6 +6974,7 @@ function die(finale) {
     time: state.time,
   };
   audio.stopMusic();
+  audio.playMusicCue('gameover');   // as the death movie starts (recorded music only)
   audio.playSfx('death');
   const { gold, firstClear, award, purseBanked, goldPool, breakdown } = settleRunGold();
 
@@ -9666,6 +9708,14 @@ function showAdvancedSettings(inRun = false) {
     cycleStanceWithFeedback();
     again();
   });
+  // RECORDED MUSIC (2026-11-17): the mp3 soundtrack, or the original chiptune
+  // synth exactly as it always played. A live switch crossfades on the next bar.
+  const recorded = audio.getMusicSource() !== 'synth';
+  menuCard(recorded ? 'MUSIC: RECORDED' : 'MUSIC: CLASSIC SYNTH',
+    (recorded ? 'the soundtrack' : 'the original chiptune') + '. Press to change', () => {
+      audio.setMusicSource(recorded ? 'synth' : 'recorded');
+      again();
+    });
   if (!inRun) {
     if (readRecovery()) {
       menuCard('RECOVERY FILE', 'download the damaged save the game set aside', () => {
@@ -10001,6 +10051,8 @@ function startRun() {
   state.camPrev = { x: p.x, y: p.y };
   state.mode = 'playing';
   overlay.style.display = 'none';
+  musicRunNo++;
+  syncMusic();          // the new run's context, before its bed starts
   audio.startMusic();
 }
 
@@ -13421,7 +13473,9 @@ function startPortalCine() {
   state.mode = 'portal-cine';
   // Unattended: no one is watching the movie — hand straight to the end
   // handler (the same call isDone would make).
-  if (state.unattended) endPortalCine();
+  if (state.unattended) { endPortalCine(); return; }
+  // The recorded portal cue over the run/boss bed (ducked -12 dB for the movie).
+  audio.playMusicCue('portal');
 }
 function endPortalCine() {
   if (state.mode !== 'portal-cine') return;
@@ -13847,7 +13901,8 @@ function mawDefeated() {
   // back, exactly as mawWithdrew does. Without this the saved pre-boss stance
   // stayed pending and leaked into the NEXT run (startRun did not clear it).
   restoreBossStance();
-  audio.playSfx('victory');
+  // The run goes on: the recorded victory cue plays over the bed ducked -12 dB.
+  if (!audio.playMusicCue('victory', { duckDb: -12 })) audio.playSfx('victory');
   // The biggest earned moment in the game — same flourish the finale used.
   triggerEarnedMoment('finale', state.player.x, state.player.y);
   // The unlock: a persistent milestone flag on the profile (src/save.js keeps
@@ -13956,11 +14011,26 @@ let last = performance.now();
 let lastIntroPhase = null;
 // One rendered frame. The clock `last` is shared with the background ticker
 // (bgTick), so whichever of the two runs consumes the elapsed time once.
+let bootReported = false;   // R4: index.html's BOOT AND UPDATES script hears about the first frame once
 function frame(now) {
   const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
   runFrame(now, realDt, true);
   requestAnimationFrame(frame);
+  if (!bootReported) {
+    bootReported = true;
+    // After this frame: drop LOADING…, then the service worker and the update notice (index.html).
+    // A timeout, not a second rAF: test/_harness.mjs runs one rAF callback per frame. Absent in Node.
+    setTimeout(() => {
+      try {
+        if (typeof globalThis.hordesBooted === 'function') globalThis.hordesBooted({
+          runLive,
+          fresh: () => !runLive() && (state.mode === 'intro' || state.mode === 'menu' || state.mode === 'title'),
+          save: () => autosave('update'),
+        });
+      } catch { /* never blocks the game */ }
+    }, 0);
+  }
 }
 // One logical frame of `realDt` wall seconds: the wall-clock timers, the
 // movies, the sim substeps and (when `draw`) the picture. `dt` for the
@@ -13998,6 +14068,7 @@ function runFrame(now, realDt, draw) {
   // the timer never disagree by a frame.
   if (fsOverlay.t > 0) fsOverlay.t = Math.max(0, fsOverlay.t - realDt);
   syncChrome();
+  syncMusic();
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
   advanceTitleReveal();
@@ -14710,6 +14781,8 @@ export const __TEST = {
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).
   die, ladderOn: DRAFT_LADDER_ON,
+  // Recorded music: the scene this frame reports, and the run counter.
+  music: { scene: musicScene, sync: syncMusic, get runNo() { return musicRunNo; } },
   // Stamp the last damage source (what die() records as the killer).
   hurtBy: (src) => { lastDamageSource = src; },
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().

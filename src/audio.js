@@ -18,6 +18,19 @@
 //
 // Extra exports (AUDIO_TEST, MUSIC, SFX) are read-only/test seams — hb1
 // should not need them.
+//
+// RECORDED MUSIC (2026-11-17, src/music_files.js): mp3 loops and cues from
+// src/music_manifest.js play for the game's music contexts; the synth above
+// stays as the fallback and as a player option. Additions:
+//   setMusicContext({ scene, stage, wave, afterMaw, runNo }) — the game reports
+//     where it is every frame (scene: title | endcard | run | intermission |
+//     pause | portal | escape | finale | death | none)
+//   setMusicSource('recorded' | 'synth') / getMusicSource() — the ADVANCED row
+//   playMusicCue('victory' | 'gameover' | 'portal', { duckDb })
+// The recorded path runs only with a context that can decodeAudioData, a
+// fetch, a page not on file://, the 'recorded' pref and the slot in the
+// manifest (and decoded); otherwise everything below behaves as before.
+import { createMusicEngine, envAt } from './music_files.js';
 
 // ---------- Injectables (node-safe, meta.js pattern) ----------
 function detectAudioContext() {
@@ -37,6 +50,8 @@ const KEY_MUSIC = 'hordes_audio_music';
 const KEY_SFX = 'hordes_audio_sfx';
 const KEY_MUSIC_VOL = 'hordes_audio_music_vol';
 const KEY_SFX_VOL = 'hordes_audio_sfx_vol';
+// 'recorded' (default when missing) | 'synth'. Read never writes it.
+const KEY_MUSIC_SRC = 'hordes_audio_music_src';
 // Slider defaults; at the default the bus gain equals the level the game
 // shipped with (music 0.5, sfx 0.7), so an untouched profile sounds the same.
 const DEFAULT_MUSIC_VOL = 70;
@@ -59,6 +74,16 @@ let musicVol = DEFAULT_MUSIC_VOL;   // 0..100, hydrated from storage
 let sfxVol = DEFAULT_SFX_VOL;
 let musicMode = 'run';     // 'run' | 'boss' — which arrangement the sequencer plays
 let bossStep = 0;
+let modeCalls = 0;         // every setMusicMode call, changed or not (the recorded engine's freshness check)
+let musicSrc = 'recorded'; // hydrated from storage: 'recorded' | 'synth'
+let musicDuck = null;      // ducks the recorded beds only (src/music_files.js)
+let engine = null;         // the recorded-music engine, built once the gate holds
+let fetchDep;              // injectable fetch (AUDIO_TEST.setDeps); undefined = global
+let tracksDep = null;      // injectable manifest (tests)
+let trimDep = null;
+// Synth level envelope: null = 1 (today). The recorded engine sets it to fade
+// the synth out on a bar line when a track takes over, and back in.
+let synthEnv = null;
 
 // Music sequencer state.
 let musicRunning = false;
@@ -295,6 +320,9 @@ export function init() {
   master.connect(ctx.destination);
   sfxBus = ctx.createGain();  sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);  sfxBus.connect(master);
   musicBus = ctx.createGain(); musicBus.gain.value = busGain(MUSIC_BUS_GAIN, musicVol, DEFAULT_MUSIC_VOL); musicBus.connect(master);
+  // Recorded tracks -> musicDuck -> musicBus: the slider still scales them,
+  // and ducking never touches the bus gain the slider writes.
+  musicDuck = ctx.createGain(); musicDuck.gain.value = 1; musicDuck.connect(musicBus);
   noiseBuf = null;
   if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
     try { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); } catch { /* ignore */ }
@@ -319,6 +347,7 @@ function hydrateFlags() {
     const s = storage.getItem(KEY_SFX);   if (s !== null) sfxEnabled = s === '1';
     const mv = storage.getItem(KEY_MUSIC_VOL); if (mv !== null) musicVol = clampVol(mv, DEFAULT_MUSIC_VOL);
     const sv = storage.getItem(KEY_SFX_VOL);   if (sv !== null) sfxVol = clampVol(sv, DEFAULT_SFX_VOL);
+    const ms = storage.getItem(KEY_MUSIC_SRC); if (ms !== null) musicSrc = ms === 'synth' ? 'synth' : 'recorded';
   } catch { /* keep defaults */ }
 }
 hydrateFlags();
@@ -348,6 +377,7 @@ export function setMusicEnabled(v) {
   if (musicEnabled && musicVol <= 0) setMusicVolumeQuiet(DEFAULT_MUSIC_VOL);
   try { storage.setItem(KEY_MUSIC, musicEnabled ? '1' : '0'); } catch { /* ignore */ }
   if (!musicEnabled) stopMusic();          // cutting the switch silences now
+  musicSync();                             // the title bed follows the switch
 }
 export function getMusicEnabled() { return musicEnabled; }
 
@@ -621,6 +651,9 @@ export const ESCAPE_CUES = {
 export function playEscapeCue(id, arg) {
   const fn = ESCAPE_CUES[id];
   if (!fn || hiddenMute || !ctx || !sfxEnabled) return false;
+  // The chase bed is not tempo-synced to the recorded escape loop: drop it
+  // while that loop plays (BOSS, ROAR, ESCAPE and GOLD still sound).
+  if (id === 'STEP' && engine && engine.escapePlaying()) return false;
   resumeIfSuspended();
   fn(ctx.currentTime, Math.max(0, Number(arg) || 0));
   return true;
@@ -634,11 +667,13 @@ function scheduleStep(s, when) {
   const g = ((s % TOTAL_STEPS) + TOTAL_STEPS) % TOTAL_STEPS;
   const bar = BAR_TABLE[(g / STEPS) | 0];
   const i = g % STEPS;
+  const lv = synthEnv ? envAt(synthEnv, when) : 1;   // 1 unless a recorded track is taking over
+  if (lv < 0.001) return;
   const bass = bar.bass[i];
-  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.35, when });
+  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.35 * lv, when });
   const lead = bar.lead[i];
-  if (lead) tone(ctx, musicBus, { type: 'triangle', freq: lead, dur: STEP_DUR * 0.8, gain: 0.3, when });
-  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.08, when });
+  if (lead) tone(ctx, musicBus, { type: 'triangle', freq: lead, dur: STEP_DUR * 0.8, gain: 0.3 * lv, when });
+  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.08 * lv, when });
 }
 
 // One step of the boss section: square bass, sawtooth riff, hats, kick.
@@ -646,16 +681,19 @@ function scheduleBossStep(s, when) {
   const g = ((s % BOSS_STEPS) + BOSS_STEPS) % BOSS_STEPS;
   const bar = BOSS_TABLE[(g / STEPS) | 0];
   const i = g % STEPS;
+  const lv = synthEnv ? envAt(synthEnv, when) : 1;
+  if (lv < 0.001) return;
   const bass = bar.bass[i];
-  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.36, when });
+  if (bass) tone(ctx, musicBus, { type: 'square', freq: bass, dur: STEP_DUR * bar.bassDur, gain: 0.36 * lv, when });
   const lead = bar.lead[i];
-  if (lead) tone(ctx, musicBus, { type: 'sawtooth', freq: lead, dur: STEP_DUR * 0.9, gain: 0.2, when });
-  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.09, when });
-  if (bar.kicks.includes(i)) tone(ctx, musicBus, { type: 'sine', freq: 150, to: 45, dur: 0.12, gain: 0.4, when });
+  if (lead) tone(ctx, musicBus, { type: 'sawtooth', freq: lead, dur: STEP_DUR * 0.9, gain: 0.2 * lv, when });
+  if (bar.hats.includes(i)) noise(ctx, musicBus, { dur: 0.03, gain: 0.09 * lv, when });
+  if (bar.kicks.includes(i)) tone(ctx, musicBus, { type: 'sine', freq: 150, to: 45, dur: 0.12, gain: 0.4 * lv, when });
 }
 
 function scheduleAhead() {
   if (!musicRunning || !ctx) return;
+  if (engine) engine.sync();   // bar-line swaps, the boss debounce, loads landing
   while (nextNoteTime < ctx.currentTime + LOOKAHEAD) {
     if (musicMode === 'boss') {
       scheduleBossStep(bossStep, nextNoteTime);
@@ -673,16 +711,23 @@ function scheduleAhead() {
 // the step it stopped on. Safe to call every frame.
 export function setMusicMode(mode) {
   const m = mode === 'boss' ? 'boss' : 'run';
+  modeCalls++;
   if (m === musicMode) return false;
   musicMode = m;
   if (m === 'boss') bossStep = 0;
+  if (engine) engine.sync();
   return true;
 }
 export function getMusicMode() { return musicMode; }
 
 // A hidden tab plays on in silence: no SFX, no cues, and the music stays stopped.
 let hiddenMute = false;
-export function setHiddenMute(on) { hiddenMute = !!on; }
+export function setHiddenMute(on) {
+  hiddenMute = !!on;
+  // Hidden: every recorded source stops now and remembers its place; shown:
+  // the context's bed comes back at that place (startMusic brings the run's).
+  if (engine) { if (hiddenMute) engine.hide(); else engine.sync(); }
+}
 export function getHiddenMute() { return hiddenMute; }
 
 export function startMusic() {
@@ -692,6 +737,7 @@ export function startMusic() {
   step = 0;
   bossStep = 0;
   nextNoteTime = ctx.currentTime + 0.05;
+  ensureEngine();          // decides, before the first synth step, who plays
   scheduleAhead();
   musicTimer = setInterval(scheduleAhead, TICK_MS);
   return true;
@@ -701,6 +747,7 @@ export function stopMusic() {
   if (!musicRunning) return false;
   musicRunning = false;
   if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
+  if (engine) engine.sync();   // a recorded run bed fades out (0.2 s), keeping its place
   return true; // already-scheduled notes (< LOOKAHEAD ahead) ring out naturally
 }
 
@@ -711,14 +758,96 @@ export function stopMusic() {
 // tab mid-run comes back to a silent run. Pure read, no state change.
 export function isMusicRunning() { return musicRunning; }
 
+// ---------- Recorded music (src/music_files.js) ----------
+function fetchFn() {
+  if (fetchDep !== undefined) return fetchDep;
+  try { return typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null; } catch { return null; }
+}
+// The gate: every one must hold, or the game plays exactly what it did before.
+function recordedGate() {
+  if (!ctx || !musicDuck || typeof ctx.decodeAudioData !== 'function') return false;
+  if (typeof fetchFn() !== 'function') return false;
+  try { if (globalThis.location && globalThis.location.protocol === 'file:') return false; } catch { /* no location */ }
+  return true;
+}
+// Track urls are relative to the page (served from /hordes/ on Pages and from
+// a sub-path on the test server).
+function resolveUrl(url) {
+  try {
+    const base = globalThis.document && globalThis.document.baseURI;
+    if (base) return new URL(url, base).href;
+  } catch { /* fall through */ }
+  return url;
+}
+function ensureEngine() {
+  if (engine && engine.ctx === ctx) return engine;
+  if (engine) { engine.drop(); engine = null; }
+  if (!recordedGate()) return null;
+  const e = createMusicEngine({
+    ctx, dest: musicDuck, cueDest: musicBus, duck: musicDuck.gain,
+    fetch: fetchFn(), tracks: tracksDep || undefined, trimDb: trimDep == null ? undefined : trimDep,
+    resolveUrl,
+    runOn: () => musicRunning,
+    musicOn: () => musicEnabled,
+    hidden: () => hiddenMute,
+    recorded: () => musicSrc === 'recorded',
+    synthMode: () => musicMode,
+    modeCalls: () => modeCalls,
+    synthGrid: () => (musicRunning
+      ? { next: nextNoteTime, stepIndex: musicMode === 'boss' ? bossStep : step, stepDur: STEP_DUR } : null),
+    setSynthEnv: (env) => { synthEnv = env; },
+  });
+  e.ctx = ctx;
+  engine = e;
+  return e;
+}
+function musicSync() {
+  try { const e = ensureEngine(); if (e) e.sync(); } catch { /* music never breaks the game */ }
+}
+
+// The game says where it is, every frame (main.js syncMusic). Cheap when the
+// recorded path is off; the first call is also what lets loading start (after
+// the first frame, never at module load).
+let lastMusicContext = null;
+export function setMusicContext(c) {
+  lastMusicContext = c || null;
+  try { const e = ensureEngine(); if (e) e.setContext(c || {}); } catch { /* never block a frame */ }
+}
+export function getMusicContext() { return lastMusicContext; }
+
+export function setMusicSource(src) {
+  musicSrc = src === 'synth' ? 'synth' : 'recorded';
+  try { storage.setItem(KEY_MUSIC_SRC, musicSrc); } catch { /* ignore */ }
+  musicSync();   // a live switch crossfades on the next bar line
+  return musicSrc;
+}
+export function getMusicSource() { return musicSrc; }
+
+// A one-shot recorded cue (victory / gameover / portal) through the music
+// channel. False when it cannot play (no file, not decoded yet, synth chosen,
+// music off or at zero volume). main.js plays the synth victory arpeggio only
+// when this returns false (the two are in different keys); the death and
+// portal SFX are sound effects and always play.
+export function playMusicCue(slot, opts) {
+  if (!musicEnabled || musicVol <= 0 || hiddenMute || !ctx) return false;
+  try { const e = ensureEngine(); return e ? e.playCue(slot, opts || {}) : false; } catch { return false; }
+}
+
 // ---------- Test-only seam (fakes inject here; NOT part of the frozen API) ----------
 export const AUDIO_TEST = {
-  setDeps({ AudioContext: ac, storage: st } = {}) {
+  setDeps({ AudioContext: ac, storage: st, fetch: fe, tracks, trimDb } = {}) {
     if (ac !== undefined) AudioCtxCtor = ac;
     if (st !== undefined) storage = st;
+    if (fe !== undefined) fetchDep = fe;
+    // A new manifest or trim rebuilds the engine on its next use (same ctx).
+    if (tracks !== undefined || trimDb !== undefined || fe !== undefined) { if (engine) engine.drop(); engine = null; }
+    if (tracks !== undefined) tracksDep = tracks;
+    if (trimDb !== undefined) trimDep = trimDb;
   },
   reset() {
     stopMusic();
+    if (engine) engine.drop();   // buffers, pending loads (ignored when they land), sources
+    engine = null; musicDuck = null; synthEnv = null; musicSrc = 'recorded'; lastMusicContext = null;
     ctx = null; master = null; sfxBus = null; musicBus = null; noiseBuf = null;
     musicEnabled = true; sfxEnabled = true;
     musicVol = DEFAULT_MUSIC_VOL; sfxVol = DEFAULT_SFX_VOL;
@@ -730,5 +859,8 @@ export const AUDIO_TEST = {
   scheduleAhead,                    // manual scheduler pass (fake clock)
   scheduleStep,                     // real per-step synthesis (offline render drives this)
   scheduleBossStep,
-  state: () => ({ ctx, musicRunning, master, musicBus, sfxBus }),
+  state: () => ({ ctx, musicRunning, master, musicBus, sfxBus, musicDuck, musicSrc, synthEnv }),
+  music: () => (engine ? engine.debug() : null),   // the recorded engine's state (tests, probes)
+  synthLevel: (t) => (synthEnv ? envAt(synthEnv, t) : 1),
+  sfxPlayedAt: (name) => lastPlayed[name],   // ctx time an SFX last played (undefined: never)
 };

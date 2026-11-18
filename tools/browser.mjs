@@ -13,6 +13,17 @@
 //   shot(name)              Page.captureScreenshot -> <SHOT_DIR>/<name>.png
 //   readShot(path, samples) decode that PNG in-page, sample it, return { label: [r,g,b] }
 //   click(x, y)             real composited left click at CSS-pixel x,y
+// Service-worker test hooks (R4, tools/verify_sw.mjs; all opt-in, the defaults are unchanged):
+//   opts.root               serve another directory (default the repo); opts.url may be absolute
+//   opts.userGesture        false: evaluate() is not a user gesture (navigator.userActivation stays clean)
+//   server                  { log, setOffline, hook } of the local server (serveRoot below)
+//   reload()                Page.reload, resolves at the load event
+//   navigations()           main-frame navigations of this tab so far
+//   newTab(url, {wait})     a second tab in the same profile: { evaluate, waitFor, tap, click, rectOf, reload, navigations, bringToFront, close }
+//                           (wait: false returns before its load event)
+//   bringToFront()          front this page's tab
+//   reopen(url)             a new tab becomes the page, then the old one closes
+//   setViewport(w, h)       change the emulated viewport
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -27,34 +38,72 @@ const CHROME = process.env.HORDES_CHROME || path.join(os.homedir(),
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
-  '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
+  '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
 
+// The returned server also carries the service-worker test hooks (opt-in; unused by default):
+//   log                       every request: { t, path, query, status } (status 0 = dropped offline)
+//   setOffline(false | true | (path) => bool)   matching requests get their socket destroyed
+//   hook = (path, query, n) => Buffer | { delayMs, body? } | null   consulted before the disk;
+//                             n counts earlier requests for the same path. A stale CDN edge or a slow file.
+// A directory request serves its index.html (/hordes/ -> <root>/hordes/index.html).
 export async function serveRoot(root = ROOT, extra = {}) {
-  const srv = http.createServer((req, res) => {
-    const rel = decodeURIComponent(String(req.url).split('?')[0]);
+  const api = { port: 0, log: [], hook: null, offline: false, close: null, setOffline: null };
+  const counts = new Map();
+  const isOffline = (p) => (typeof api.offline === 'function' ? !!api.offline(p) : !!api.offline);
+  const srv = http.createServer(async (req, res) => {
+    const [rawPath, ...qs] = String(req.url).split('?');
+    let rel = rawPath;
+    try { rel = decodeURIComponent(rawPath); } catch { /* served as is: a 404 */ }
+    const query = qs.join('?');
+    const entry = { t: Date.now(), path: rel, query, status: 0 };
+    api.log.push(entry);
+    if (isOffline(rel)) { req.socket.destroy(); return; }
+    const n = counts.get(rel) || 0; counts.set(rel, n + 1);
     // HOST-PAGE SIMULATION (verify_host_fit.mjs): extra maps a served path to
     // inline HTML — a page that embeds the game in an iframe under a header,
     // the galaxy.click scenario, without writing a file into the repo.
     if (Object.prototype.hasOwnProperty.call(extra, rel)) {
+      entry.status = 200;
       res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
       return res.end(extra[rel]);
     }
-    const f = path.join(root, rel === '/' ? 'index.html' : rel);
+    let f = path.join(root, rel === '/' ? 'index.html' : rel);
     let st = null;
     try { st = fs.statSync(f); } catch { /* 404 below */ }
-    if (!f.startsWith(root) || !st || st.isDirectory()) { res.writeHead(404); return res.end('404'); }
-    res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-store' });
+    if (st && st.isDirectory()) { f = path.join(f, 'index.html'); try { st = fs.statSync(f); } catch { st = null; } }
+    let hooked = null;
+    if (typeof api.hook === 'function') { try { hooked = api.hook(rel, query, n); } catch { hooked = null; } }
+    if (hooked && !Buffer.isBuffer(hooked) && hooked.delayMs) {
+      await sleep(hooked.delayMs);
+      if (isOffline(rel)) { req.socket.destroy(); return; }
+      hooked = hooked.body || null;
+    }
+    const type = MIME[path.extname(f)] || 'application/octet-stream';
+    if (Buffer.isBuffer(hooked)) {
+      entry.status = 200;
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
+      return res.end(hooked);
+    }
+    if (!f.startsWith(root) || !st || st.isDirectory()) { entry.status = 404; res.writeHead(404); return res.end('404'); }
+    entry.status = 200;
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
     fs.createReadStream(f).pipe(res);
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  return { port: srv.address().port, close: () => srv.close() };
+  api.port = srv.address().port;
+  api.setOffline = (v) => { api.offline = v; };
+  api.close = () => { srv.close(); try { srv.closeAllConnections(); } catch { /* older node */ } };
+  return api;
 }
 
 class CDP {
   constructor(ws) {
     this.ws = ws; this.id = 0; this.session = null; this.pending = new Map(); this.errors = [];
+    this.listeners = [];
     ws.addEventListener('message', (ev) => {
       const m = JSON.parse(ev.data);
+      if (m.method) for (const f of this.listeners.slice()) { try { f(m); } catch (e) { /* a listener never breaks the pump */ } }
       if (m.id && this.pending.has(m.id)) {
         const { res, rej } = this.pending.get(m.id); this.pending.delete(m.id);
         if (m.error) rej(new Error('CDP ' + JSON.stringify(m.error))); else res(m.result);
@@ -93,10 +142,10 @@ export async function withPage(opts, fn) {
     // profile the verifier seeded itself, and verify_prologue.mjs opts out
     // with skipPrologue: false — the phase is ITS subject.
     skipPrologue = true,
-    startupScript = '', timeoutMs = 30000 } = opts || {};
+    startupScript = '', timeoutMs = 30000, userGesture = true } = opts || {};
   if (!fs.existsSync(CHROME)) throw new Error('no chrome binary at ' + CHROME);
   fs.mkdirSync(SHOT_DIR, { recursive: true });
-  const srv = await serveRoot(ROOT, opts.extra || {});
+  const srv = await serveRoot(opts.root || ROOT, opts.extra || {});
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hordes-chrome-'));
   const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',
@@ -139,11 +188,14 @@ export async function withPage(opts, fn) {
     if (startupScript) pre.push(startupScript);
     if (pre.length) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: pre.join('\n') });
 
-    await cdp.send('Page.navigate', { url: 'http://127.0.0.1:' + srv.port + '/' + url });
+    const navCount = new Map();   // sessionId -> main-frame navigations
+    cdp.listeners.push((m) => { if (m.method === 'Page.frameNavigated' && m.params && m.params.frame && !m.params.frame.parentId) navCount.set(m.sessionId, (navCount.get(m.sessionId) || 0) + 1); });
+    const fullUrl = (u) => (/^https?:/.test(u) ? u : 'http://127.0.0.1:' + srv.port + '/' + u);
+    await cdp.send('Page.navigate', { url: fullUrl(url) });
 
     const evaluate = async (expression, awaitPromise) => {
       const r = await cdp.send('Runtime.evaluate', { expression, awaitPromise: awaitPromise !== false,
-        returnByValue: true, userGesture: true });
+        returnByValue: true, userGesture });
       if (r.exceptionDetails) {
         const e = r.exceptionDetails;
         const d = (e.exception && e.exception.description) || e.text || 'evaluate failed';
@@ -220,6 +272,72 @@ export async function withPage(opts, fn) {
       "); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]; })()");
     const api = { evaluate, waitFor, shot, readShot, click, tap, swipe, rectOf, sleep, port: srv.port, viewport: { w, h, dpr } };
     Object.defineProperty(api, 'errors', { get: () => cdp.errors });
+    // ---- service-worker test hooks (opt-in) ----
+    api.server = srv;
+    let mainTarget = tgt.targetId;
+    const loadOf = (sid) => new Promise((res) => {
+      const f = (m) => { if (m.method === 'Page.loadEventFired' && m.sessionId === sid) { cdp.listeners.splice(cdp.listeners.indexOf(f), 1); res(true); } };
+      cdp.listeners.push(f);
+    });
+    const reloadOf = async (sid) => { const p = loadOf(sid); await cdp.send('Page.reload', {}, sid); return Promise.race([p, sleep(timeoutMs).then(() => false)]); };
+    api.reload = () => reloadOf(cdp.session);
+    api.navigations = () => navCount.get(cdp.session) || 0;
+    api.bringToFront = () => cdp.send('Page.bringToFront', {}, cdp.session);
+    api.setViewport = async (vw, vh) => cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: dpr, mobile });
+    const openTab = async (u, wait = true) => {
+      const tg = await cdp.send('Target.createTarget', { url: 'about:blank' }, null);
+      const at = await cdp.send('Target.attachToTarget', { targetId: tg.targetId, flatten: true }, null);
+      const sid = at.sessionId;
+      await cdp.send('Runtime.enable', {}, sid);
+      await cdp.send('Page.enable', {}, sid);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: dpr, mobile }, sid);
+      if (mobile) await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sid);
+      if (pre.length) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: pre.join('\n') }, sid);
+      const p = loadOf(sid);
+      await cdp.send('Page.navigate', { url: fullUrl(u) }, sid);
+      if (wait) await Promise.race([p, sleep(timeoutMs)]);
+      return { targetId: tg.targetId, sid };
+    };
+    api.newTab = async (u, o = {}) => {
+      const { targetId, sid } = await openTab(u, o.wait !== false);
+      const ev = async (expression, awaitPromise) => {
+        const r = await cdp.send('Runtime.evaluate', { expression, awaitPromise: awaitPromise !== false, returnByValue: true, userGesture }, sid);
+        if (r.exceptionDetails) throw new Error('page threw: ' + String((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text).split('\n')[0]);
+        return r.result.value;
+      };
+      const wf = async (expr, ms, step) => {
+        const t0 = Date.now();
+        for (;;) {
+          try { if (await ev(expr)) return true; } catch (e) { /* keep polling */ }
+          if (Date.now() - t0 > (ms || 8000)) return false;
+          await sleep(step || 100);
+        }
+      };
+      return {
+        sid, evaluate: ev, waitFor: wf,
+        click: async (x, y) => {
+          await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1 }, sid);
+          await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0 }, sid);
+        },
+        tap: async (x, y, radius = 8) => {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, radiusX: radius, radiusY: radius, force: 1 }] }, sid);
+          await sleep(40);
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }, sid);
+        },
+        rectOf: (sel) => ev("(() => { const e = document.querySelector(" + JSON.stringify(sel) +
+          "); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]; })()"),
+        reload: () => reloadOf(sid),
+        navigations: () => navCount.get(sid) || 0,
+        bringToFront: () => cdp.send('Page.bringToFront', {}, sid),
+        close: () => cdp.send('Target.closeTarget', { targetId }, null),
+      };
+    };
+    api.reopen = async (u) => {
+      const { targetId, sid } = await openTab(u);
+      const prev = mainTarget; cdp.session = sid; mainTarget = targetId;
+      await cdp.send('Target.closeTarget', { targetId: prev }, null).catch(() => {});
+      return true;
+    };
     return await fn(api);
   } finally {
     try { if (cdp) cdp.ws.close(); } catch (e) {}

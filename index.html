@@ -1042,6 +1042,19 @@
   #overlay.shop-compact.shop-low .card.shop-footer .name { margin: 0; font-size: 13px; }
   #overlay.shop-compact.shop-low .card.shop-footer .name::before { content: none; }
   #overlay.shop-compact.shop-low .shop-ind { left: auto; right: 60px; transform: none; bottom: 16px; }
+/* R1/R4: LOADING… / failure screen, and the update notice (index.html BOOT AND UPDATES) */
+#boot-msg { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center;
+  justify-content: center; padding: 16px; text-align: center; color: #9aa3b8;
+  font: 14px/1.5 monospace; letter-spacing: 2px; pointer-events: none; }
+#boot-msg.tap { pointer-events: auto; cursor: pointer; background: #0b0b12; color: #ffd75e; }
+#boot-msg[hidden], #sw-update[hidden] { display: none; }
+#sw-update { position: fixed; z-index: 70; top: calc(6px + env(safe-area-inset-top)); left: 50%;
+  transform: translateX(-50%); width: max-content; max-width: var(--fit-w); font: 12px monospace; letter-spacing: 1px;
+  text-align: center; color: #0b0b12; background: #ffd75e; border: 0; padding: 6px 12px;
+  box-shadow: 2px 2px 0 #000; cursor: pointer; touch-action: manipulation; }
+/* width: max-content: at left 50% the box would otherwise shrink to half the screen and wrap
+   to two lines on a phone. While the notice shows, the overlay's first row (a heading, the shop's BANK line) starts below it. */
+body.sw-notice #overlay { padding-top: calc(40px + env(safe-area-inset-top)); }
 </style>
 </head>
 <body>
@@ -1107,6 +1120,220 @@
     <div class="sub" id="ov-legend" hidden>cards 1 / 2 / 3 in the draft (1-4 in evolve / intermission) &middot; 1-6 stat tabs &middot; or click a card &middot; TAB focus &middot; G stance &middot; Q frost / E overcharge &middot; X magnet (card) &middot; H / N potions &middot; O pilot (WASD+arrows manual) &middot; M map &middot; + / - zoom &middot; R radar &middot; I stats &middot; ESC close / pause &middot; ? help mode &middot; or the on-screen buttons</div>
   </div>
 </div>
+<div id="boot-msg" role="status">LOADING…</div>
+<script>
+// BOOT AND UPDATES (R1/R4). A plain inline script, so it runs even when the game's modules cannot load.
+//  - "LOADING…" until main.js reports its first frame (window.hordesBooted). A game script that fails
+//    to load or throws before that frame, or 90 s of visible waiting, turns it into a tap-to-reload screen.
+//  - A page whose service worker changes before its first frame reloads itself (its remaining files
+//    would come from another release).
+//  - After the first frame: the service worker (sw.js), best effort, and the "NEW VERSION READY" notice,
+//    shown only while no run is live. Reloads: a tap, a page still loading, or a fresh untouched reload.
+(function () {
+  'use strict';
+  var SLOW_MS = 20000, FAIL_MS = 90000, REGISTER_AFTER_MS = 3000, CHECK_EVERY_MS = 3600000,
+    CHECK_GAP_MS = 600000, APPLY_WAIT_MS = 3000, AUTO_GUARD_MS = 120000, AUTO_KEY = 'hordes_sw_auto',
+    NOTICE = 'NEW VERSION READY · TAP TO RELOAD';
+  var box = document.getElementById('boot-msg');
+  var booted = false, failed = false, hooks = null, reg = null, applying = false, reloading = false, btn = null;
+  function noop() {}
+  function swc() { try { return navigator.serviceWorker || null; } catch (e) { return null; } }
+  function say(text, onTap) {
+    if (!box) return;
+    box.hidden = false; box.textContent = text; box.className = onTap ? 'tap' : '';
+    box.onclick = onTap || null;
+  }
+  function reload(save) {
+    if (reloading) return; reloading = true;
+    if (save) { try { if (hooks && hooks.save) hooks.save(); } catch (e) { /* pagehide still flushes */ } }
+    location.reload();
+  }
+
+  // ---- LOADING… and the failure screen ----
+  var visibleMs = 0;
+  var watch = setInterval(function () {
+    if (booted || failed) { clearInterval(watch); return; }
+    if (!document.hidden) visibleMs += 1000;
+    if (visibleMs >= FAIL_MS) fail('slow'); else if (visibleMs >= SLOW_MS) say('STILL LOADING\u2026');
+  }, 1000);
+  function offline() { return navigator.onLine === false; }
+  function fail(why) {
+    if (booted || failed) return;
+    failed = true; window.__hordesBootFail = why;
+    say(offline() ? 'NO CONNECTION. TAP TO TRY AGAIN'
+                  : 'HORDES DIDN\u2019T LOAD. IT MAY HAVE JUST UPDATED. TAP TO RELOAD', recover);
+  }
+  // Only this page's own game files count: an extension's or another site's script failing is not
+  // HORDES failing to load.
+  var BASE = (function () { try { return location.origin + location.pathname.replace(/[^\/]*$/, ''); } catch (e) { return ''; } })();
+  function ours(u, sub) { return !!BASE && typeof u === 'string' && u.indexOf(BASE + sub) === 0; }
+  window.addEventListener('error', function (e) {
+    if (booted) return;
+    var t = e && e.target;
+    if (t && t.tagName === 'SCRIPT') { if (ours(t.src, '')) fail('load'); }
+    else if (e && ours(e.filename, 'src/')) fail('script');
+  }, true);
+  // The tap on the failure screen. The page never booted, so nothing can be lost. Offline, it only
+  // reloads: dropping the offline copy then would leave the browser's own offline page.
+  function recover() {
+    say('RELOADING\u2026');
+    var go = function () { location.reload(); };
+    var c = swc();
+    if (!c || offline()) { go(); return; }
+    try {
+      c.getRegistration().then(function (r) {
+        if (r && r.waiting && c.controller) {          // a fixed release is waiting: take it
+          applying = true; r.waiting.postMessage('skipWaiting'); setTimeout(go, APPLY_WAIT_MS); return;
+        }
+        if (r && c.controller) {                       // the offline copy may be the problem: drop it
+          var pre = 'hordes:' + new URL(r.scope).pathname + ':';
+          var drop = window.caches ? caches.keys().then(function (ks) {
+            return Promise.all(ks.filter(function (k) { return k.indexOf(pre) === 0; })
+              .map(function (k) { return caches.delete(k); }));
+          }) : null;
+          Promise.all([r.unregister(), drop]).then(go, go); return;
+        }
+        go();
+      }, go);
+    } catch (e) { go(); }
+  }
+
+  // ---- G1: a controller change before the first frame means a reload ----
+  var c0 = swc();
+  if (c0) {
+    try {
+      c0.addEventListener('controllerchange', function () {
+        if (!booted) { if (!applying) say('UPDATING\u2026'); reload(false); }
+        else if (applying) settle();                   // the update this page asked for
+        else showNotice();                             // another tab took the update; this page keeps running
+      });
+    } catch (e) { /* no worker here */ }
+  }
+
+  // ---- the update notice ----
+  function showNotice() {
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'sw-update'; btn.type = 'button'; btn.hidden = true;
+      btn.textContent = NOTICE;
+      btn.addEventListener('click', function (e) { e.stopPropagation(); applyUpdate(); });
+      document.body.appendChild(btn);
+      setInterval(sync, 500);
+    }
+    sync();
+  }
+  function live() {
+    try { return !!(hooks && hooks.runLive && hooks.runLive()); } catch (e) { return true; }
+  }
+  function sync() {
+    if (!btn) return;
+    if (!btn.disabled) btn.hidden = live();
+    var b = document.body;                             // index.html CSS: the overlay starts below the notice
+    if (b && b.classList) b.classList.toggle('sw-notice', !btn.hidden);
+  }
+  // The update this page asked for (a tap, or the F5 auto-apply) is in place, or the wait is over:
+  // reload, unless a run went live in between. A run is never reloaded; the notice comes back
+  // when it ends.
+  function settle() {
+    if (reloading || !applying) return;
+    if (!live()) { reload(true); return; }
+    applying = false;
+    if (box) box.hidden = true;
+    if (btn) { btn.disabled = false; btn.textContent = NOTICE; }
+    showNotice();
+  }
+  function applyUpdate() {                             // the player's tap
+    btn.disabled = true; btn.textContent = 'RELOADING\u2026';
+    try { if (hooks && hooks.save) hooks.save(); } catch (e) { /* the reload saves again; pagehide flushes */ }
+    var w = reg && reg.waiting;
+    if (!w) { reload(true); return; }                  // already active (another tab): a plain reload
+    applying = true;
+    try { w.postMessage('skipWaiting'); } catch (e) { reload(true); return; }
+    setTimeout(settle, APPLY_WAIT_MS);
+  }
+
+  // ---- after the first frame ----
+  window.hordesBooted = function (h) {
+    if (booted) return;
+    booted = true; hooks = h || {};
+    clearInterval(watch);
+    if (box) box.hidden = true;                        // also clears a failure box if the game came up after all
+    try { start(); } catch (e) { /* no service worker: the game is exactly as before */ }
+  };
+  function devHost() { return /^(localhost|127\.0\.0\.1|\[::1\])$|\.localhost$/.test(location.hostname); }
+  function start() {
+    var c = swc();
+    if (!c || typeof c.register !== 'function' || !/^https?:$/.test(location.protocol)) return;
+    // A local host or a live-edited '-dev/' tree (/hordes-dev/): no offline copy unless ?sw=on
+    // (sw.js also serves such a page from the network without it).
+    var devTree = devHost() || /-dev\/$/.test(location.pathname.replace(/[^\/]*$/, ''));
+    if (devTree && !/[?&]sw=on(?:&|$)/.test(location.search)) {
+      c.getRegistration().then(function (r) { if (r) r.unregister(); }, noop);   // local editing never meets an offline copy
+      return;
+    }
+    if (/[?&]dev=1(?:&|$)/.test(location.search)) return;   // a dev run registers nothing (sw.js sends it to the network)
+    c.getRegistration().then(function (r) {
+      if (r && r.waiting && c.controller && untouched()) { autoApply(r); return; }
+      setTimeout(register, REGISTER_AFTER_MS);
+    }, function () { setTimeout(register, REGISTER_AFTER_MS); });
+  }
+  function untouched() {
+    try {
+      var ua = navigator.userActivation;
+      if (!ua || ua.hasBeenActive !== false) return false;
+      if (!(hooks.fresh && hooks.fresh())) return false;
+      if (Date.now() - Number(sessionStorage.getItem(AUTO_KEY) || 0) < AUTO_GUARD_MS) return false;
+      sessionStorage.setItem(AUTO_KEY, String(Date.now()));
+      return sessionStorage.getItem(AUTO_KEY) !== null;
+    } catch (e) { return false; }
+  }
+  // F5 with an update waiting: this load is still the old release, because the browser keeps the old
+  // worker while the old page overlaps the reload. Nothing has been touched and no run can be in a fresh
+  // page (runs do not resume after a reload), so take the update now: one more reload.
+  function autoApply(r) {
+    reg = r; applying = true; say('UPDATING\u2026');
+    try { r.waiting.postMessage('skipWaiting'); } catch (e) { /* the timeout below */ }
+    setTimeout(function () {
+      if (reloading) return;
+      applying = false; if (box) box.hidden = true;
+      setTimeout(register, REGISTER_AFTER_MS);
+      showNotice();
+    }, APPLY_WAIT_MS);
+  }
+  function register() {
+    if (reloading) return;
+    var c = swc(); if (!c) return;
+    // Controlled, yet no registration: it is being removed (the kill switch unregistered it, or a
+    // recovery tap in another tab). register() would revive it for good; the next load starts clean.
+    try {
+      Promise.resolve(c.getRegistration()).then(function (r) { if (r || !c.controller) registerNow(c); }, function () { registerNow(c); });
+    } catch (e) { /* no worker */ }
+  }
+  function registerNow(c) {
+    if (reloading) return;
+    var p; try { p = c.register('sw.js', { updateViaCache: 'none' }); } catch (e) { return; }
+    Promise.resolve(p).then(function (r) {
+      reg = r;
+      if (r.waiting && c.controller) showNotice();
+      var follow = function (w) {
+        if (w) w.addEventListener('statechange', function () { if (w.state === 'installed' && c.controller) showNotice(); });
+      };
+      follow(r.installing);
+      r.addEventListener('updatefound', function () { follow(r.installing); });
+      var lastCheck = Date.now();
+      var check = function () {
+        if (document.hidden) return;
+        lastCheck = Date.now();
+        try { Promise.resolve(r.update()).catch(noop); } catch (e) { /* next time */ }
+      };
+      setInterval(check, CHECK_EVERY_MS);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && Date.now() - lastCheck > CHECK_GAP_MS) check();
+      });
+    }, noop);
+  }
+})();
+</script>
 <script type="module" src="src/main.js"></script>
 </body>
 </html>
