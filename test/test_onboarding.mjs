@@ -231,8 +231,12 @@ s.check('no element with id hint-strip mounted on ANY frame of the whole cycle',
     T.setPilotMode('MANUAL');   // suspends the auto-pick: the coach owns the screen
     st.player.stats.xpMult = 0;
     st.player.stats.maxHp = 1e9; st.player.hp = 1e9;
+    // R1: the coach card is only the fallback for a profile with no finished
+    // run (a returning player never gets it), so this draft opens as one.
+    T.getProfile().achievements.totals.runs = 0;
     st.pendingDrafts = 1;
     T.openDraft();
+    T.getProfile().achievements.totals.runs = 1;   // back to the returning profile
     // Pump WITHOUT the auto-pick step(): the coach is the thing under test —
     // it suspends the AUTO countdown, so nothing resolves the draft but us.
     const coachStep = (n) => { for (let i = 0; i < n; i++) { pump(1); stripFrames += stripEls().length; } };
@@ -255,7 +259,9 @@ s.check('no element with id hint-strip mounted on ANY frame of the whole cycle',
       assert.ok((st.toasts || []).some(t => /TOUR SKIPPED/.test(t.msg)),
         'toasts: ' + JSON.stringify((st.toasts || []).map(t => t.msg)));
     });
-    const c0 = (elements['ov-cards'].children || [])[0];
+    // Not the run's free NEW weapon: it deals the draft again (KIT_OFFER.FREE).
+    const cs = elements['ov-cards'].children || [];
+    const c0 = cs.find(c => c && c._draftOffer && !c._draftOffer.kitNew) || cs[0];
     if (c0 && c0.click) c0.click();
     s.check('the draft resolves under the dismissed coach (run continues)', () => {
       assert.equal(st.mode, 'playing', st.mode);

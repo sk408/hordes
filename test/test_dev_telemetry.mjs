@@ -334,6 +334,10 @@ function validFields() {
   // retaliation radii; weapons/projectiles cleared and burn DoTs neutralized
   // so only the pickup path can move damage or hp this frame.
   const stage = () => {
+    // The hero's own volley must not fire this frame either: with an enemy 10 px away a
+    // shot can land in the frame it is fired (it did on some seeds once the pilot's first
+    // flee step became an arc), and that hit is counted, rightly.
+    p.attackTimer = 99;
     h.state.projectiles.length = 0;
     h.state.weapons.length = 0;
     h.state.gems.length = 0;

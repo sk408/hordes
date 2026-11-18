@@ -174,9 +174,13 @@ const ensureSimLive = (tag) => {
 
   // The tour: the first draft (a level-up) coaches through the REAL path —
   // xp crosses the bar through the REAL gem-pickup loop, not a state write.
+  // R1: the coach card is only the fallback for a profile with no finished
+  // run (a returning player never gets it), so this draft opens as one.
+  T.getProfile().achievements.totals.runs = 0;
   st.player.xp = st.player.xpNext - 1;
   T.m3.pushGem({ x: st.player.x, y: st.player.y, xp: 10 });
   tick(0.5);
+  T.getProfile().achievements.totals.runs = 1;   // back to the returning profile
   ok('1: the draft opened', st.mode === 'draft', st.mode);
   ok('1: the draft coachmark tour is mounted', !!tourRoot());
 

@@ -443,8 +443,12 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   // countdown so the coach is the only thing on the screen.
   st.pilotMode = 'MANUAL';
   st.player.stats.xpMult = 1;
+  // R1: the coach card is only the fallback for a profile with no finished
+  // run (a returning player never gets it), so this draft opens as one.
+  T.getProfile().achievements.totals.runs = 0;
   st.pendingDrafts = 1;
   T.openDraft();
+  T.getProfile().achievements.totals.runs = 1;   // back to the returning profile
   let roots = tourRoots();
   assert.equal(roots.length, 1, 'the draft coach fired on the first draft');
   const tip = roots[0].children.find(c => c.id === 'tour-tip');
@@ -453,9 +457,12 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   assert.equal(ls.get(TOUR_KEYS.draft), '1', 'the draft flag persisted');
   cards()[0].click();
   assert.equal(st.mode, 'playing', 'the hand pick resolves the draft under the dismissed coach');
-  // Once flagged, a second draft mounts nothing.
+  // Once flagged, a second draft mounts nothing (still a no-run profile, so
+  // only the flag holds it down).
+  T.getProfile().achievements.totals.runs = 0;
   st.pendingDrafts = 1;
   T.openDraft();
+  T.getProfile().achievements.totals.runs = 1;
   assert.equal(tourRoots().length, 0, 'the flagged draft coach never repeats');
   cards()[0].click();
 });

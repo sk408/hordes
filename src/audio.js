@@ -27,6 +27,9 @@
 //     pause | portal | escape | finale | death | none)
 //   setMusicSource('recorded' | 'synth') / getMusicSource() — the ADVANCED row
 //   playMusicCue('victory' | 'gameover' | 'portal', { duckDb })
+// THE MIX PASS (R1, 2026-11-18): setMixMode('new' | 'old') / getMixMode() (see
+// MIX below; persisted, 'new' by default), playSfx('chestEmpty'), and
+// startMusic({ resume: true }) for the tab coming back (the song keeps its place).
 // The recorded path runs only with a context that can decodeAudioData, a
 // fetch, a page not on file://, the 'recorded' pref and the slot in the
 // manifest (and decoded); otherwise everything below behaves as before.
@@ -52,6 +55,8 @@ const KEY_MUSIC_VOL = 'hordes_audio_music_vol';
 const KEY_SFX_VOL = 'hordes_audio_sfx_vol';
 // 'recorded' (default when missing) | 'synth'. Read never writes it.
 const KEY_MUSIC_SRC = 'hordes_audio_music_src';
+// The mix pass (R1): 'new' (default when missing) | 'old'. See MIX below.
+const KEY_MIX = 'hordes_audio_mix';
 // Slider defaults; at the default the bus gain equals the level the game
 // shipped with (music 0.5, sfx 0.7), so an untouched profile sounds the same.
 const DEFAULT_MUSIC_VOL = 70;
@@ -84,6 +89,10 @@ let trimDep = null;
 // Synth level envelope: null = 1 (today). The recorded engine sets it to fade
 // the synth out on a bar line when a track takes over, and back in.
 let synthEnv = null;
+let mixMode = 'new';     // hydrated from storage: 'new' | 'old' (the mix pass)
+let rngDep = null;       // injectable random source (tests); null = Math.random
+let limiterIn = null;    // the 1/range gain in front of the limiter's shaper
+let limiterNode = null;  // the limiter's WaveShaper (null where the context has none)
 
 // Music sequencer state.
 let musicRunning = false;
@@ -283,13 +292,20 @@ function tone(c, dest, { type, freq, to, dur, gain, when }) {
 }
 
 // White-noise burst (hits, hats).
-function noise(c, dest, { dur, gain, when }) {
+// lp: an optional low-pass cutoff in Hz (the new mix's softer noises); a
+// context without filters plays the plain burst.
+function noise(c, dest, { dur, gain, when, lp }) {
   const src = c.createBufferSource();
   const g = c.createGain();
   src.buffer = ensureNoiseBuffer(c);
   g.gain.setValueAtTime(gain, when);
   g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-  src.connect(g); g.connect(dest);
+  if (lp && typeof c.createBiquadFilter === 'function') {
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = lp; f.Q.value = 0.7;
+    src.connect(f); f.connect(g);
+  } else src.connect(g);
+  g.connect(dest);
   src.start(when);
   src.stop(when + dur + 0.02);
 }
@@ -316,8 +332,8 @@ export function init() {
   if (!AudioCtxCtor) return null;
   try { ctx = new AudioCtxCtor(); } catch { ctx = null; return null; }
   master = ctx.createGain();
-  master.gain.value = 0.15;                 // pleasant-low master volume
-  master.connect(ctx.destination);
+  limiterIn = null; limiterNode = null;
+  wireMix();                                // master level + the limiter (the mix)
   sfxBus = ctx.createGain();  sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);  sfxBus.connect(master);
   musicBus = ctx.createGain(); musicBus.gain.value = busGain(MUSIC_BUS_GAIN, musicVol, DEFAULT_MUSIC_VOL); musicBus.connect(master);
   // Recorded tracks -> musicDuck -> musicBus: the slider still scales them,
@@ -348,6 +364,7 @@ function hydrateFlags() {
     const mv = storage.getItem(KEY_MUSIC_VOL); if (mv !== null) musicVol = clampVol(mv, DEFAULT_MUSIC_VOL);
     const sv = storage.getItem(KEY_SFX_VOL);   if (sv !== null) sfxVol = clampVol(sv, DEFAULT_SFX_VOL);
     const ms = storage.getItem(KEY_MUSIC_SRC); if (ms !== null) musicSrc = ms === 'synth' ? 'synth' : 'recorded';
+    const mx = storage.getItem(KEY_MIX); if (mx !== null) mixMode = mx === 'old' ? 'old' : 'new';
   } catch { /* keep defaults */ }
 }
 hydrateFlags();
@@ -398,6 +415,113 @@ export function setSfxEnabled(v) {
 }
 export function getSfxEnabled() { return sfxEnabled; }
 
+// ---------- THE MIX (R1, 2026-11-18) ----------
+// Two mixes of the same sounds. 'old' is the game as it shipped up to R1,
+// sample for sample. 'new' is the mix pass: the whole game louder, a soft
+// limiter on the master so stacked sounds cannot clip, each sound trimmed to
+// sit with the music, quieter movie roars, a softer hit, and a small random
+// pitch and volume change per play on the sounds that repeat many times a
+// second. The numbers were measured in real Chrome with
+// tools/measure_sfx_mix.mjs; listen/index.html plays both. Steve can turn
+// the new mix off there (it writes KEY_MIX, which the game reads too).
+export const MIX = {
+  // Master gain. The music buses feed it too, so the music rises with it;
+  // MUSIC_TRIM_DB (the music against the synth) is unchanged.
+  master: { old: 0.15, new: 0.15 * Math.pow(10, 10 / 20) },
+  // The soft limiter: straight below KNEE, bends smoothly toward CEIL above
+  // it, never goes over CEIL. Linear amplitudes (KNEE -6 dBFS, CEIL -1 dBFS).
+  // RANGE: the input the curve covers (+12 dBFS); louder input is held at
+  // the curve's end, at most CEIL.
+  limiter: { knee: 0.5, ceil: 0.89, range: 4, points: 8193 },
+  // Per-sound trim in dB on top of the old gains (0 when missing). Measured
+  // as the loudest 400 ms of each sound (tools/measure_sfx_mix.mjs): the
+  // weapon thump was 10 dB over the other weapons, the quiet weapons and the
+  // gem sat under the fight, and the empty chest must not beat the reward.
+  trimDb: {
+    fire_blast: -5, fire_zap: 3, fire_seek: 3, gem: 2,
+    chest: 2, chestEmpty: -5,
+  },
+  // Per-cue trim in dB (keys 'intro:<PHASE>', 'portal:<PHASE>', 'escape:<ID>').
+  // The review's rule: a movie sting sits at most 6 dB over a busy fight
+  // (both as the loudest 400 ms). The two boss roars were 10 dB over it.
+  // At -5 they were still 7-8 dB over a real starter-kit fight at minute 10
+  // (integration review): -7 brings them under 6.
+  cueDb: {
+    'portal:BOSS_YELL': -7, 'portal:KILL': -7, 'escape:ROAR': -7,
+    'intro:OVERTAKE': -1.5, 'intro:HORDE': -1.5,
+  },
+  // Variation per play: pitch up or down by at most `semis` semitones, and
+  // volume down by at most `db` dB (never up, so no play is louder than the
+  // measured sound). Only the sounds that repeat many times a second. The
+  // gem keeps its pitch: its climb is the combo.
+  vary: {
+    hit: { semis: 1, db: 3 }, kill: { semis: 1, db: 3 }, gem: { semis: 0, db: 2 },
+    shoot: { semis: 0.7, db: 2 },
+    fire_bolt: { semis: 0.7, db: 2 }, fire_arc: { semis: 0.7, db: 2 }, fire_blast: { semis: 0.7, db: 2 },
+    fire_zap: { semis: 0.7, db: 2 }, fire_seek: { semis: 0.7, db: 2 },
+  },
+};
+
+// The soft limiter's transfer curve for one input sample (pure; the tests and
+// the WaveShaper both use it). Odd, rising, equal to x up to the knee, and
+// never over the ceiling (it only meets it far above the knee).
+export function softClip(x, knee = MIX.limiter.knee, ceil = MIX.limiter.ceil) {
+  const a = Math.abs(x);
+  if (a <= knee) return x;
+  const room = ceil - knee;
+  const y = knee + room * Math.tanh((a - knee) / room);
+  return x < 0 ? -y : y;
+}
+// The WaveShaper curve. The shaper reads input in -1..1, so a gain of 1/range
+// sits in front of it and point i stands for the input range * (2i/(n-1) - 1).
+// An odd point count puts an exact 0 in the middle.
+export function limiterCurve(n = MIX.limiter.points, range = MIX.limiter.range) {
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) c[i] = softClip(range * ((2 * i) / (n - 1) - 1));
+  return c;
+}
+// One play's variation (pure): r1 and r2 are uniform draws in [0, 1).
+// rate multiplies every frequency; gain multiplies every layer's level.
+export function variation(name, r1, r2) {
+  const v = MIX.vary[name];
+  if (!v) return { rate: 1, gain: 1 };
+  const semis = (v.semis || 0) * (2 * r1 - 1);
+  const db = -(v.db || 0) * r2;
+  return { rate: Math.pow(2, semis / 12), gain: Math.pow(10, db / 20) };
+}
+const dbToGain = (db) => Math.pow(10, (db || 0) / 20);
+
+function rand() { return rngDep ? rngDep() : Math.random(); }
+
+// Wire master -> destination for the current mix: through the limiter on
+// 'new', straight on 'old'. Safe on contexts without WaveShaper (the limiter
+// is skipped) and on fakes without disconnect().
+function wireMix() {
+  if (!ctx || !master) return;
+  const isNew = mixMode === 'new';
+  master.gain.value = isNew ? MIX.master.new : MIX.master.old;
+  if (isNew && !limiterNode && typeof ctx.createWaveShaper === 'function') {
+    try {
+      limiterIn = ctx.createGain();
+      limiterIn.gain.value = 1 / MIX.limiter.range;
+      limiterNode = ctx.createWaveShaper();
+      limiterNode.curve = limiterCurve();
+      limiterNode.oversample = '4x';
+      limiterIn.connect(limiterNode);
+      limiterNode.connect(ctx.destination);
+    } catch { limiterIn = null; limiterNode = null; }
+  }
+  try { if (typeof master.disconnect === 'function') master.disconnect(); } catch { /* ignore */ }
+  master.connect(isNew && limiterIn ? limiterIn : ctx.destination);
+}
+export function setMixMode(m) {
+  mixMode = m === 'old' ? 'old' : 'new';
+  try { storage.setItem(KEY_MIX, mixMode); } catch { /* ignore */ }
+  wireMix();
+  return mixMode;
+}
+export function getMixMode() { return mixMode; }
+
 // SFX voices. All rate-limited (shoot max ~1 per 80ms) to avoid buzz.
 const SFX = {
   shoot:   { voice: 'tone', type: 'square',   freq: 880,   to: 220, dur: 0.09, gain: 0.12 },
@@ -407,6 +531,14 @@ const SFX = {
   // Arpeggios are sequences of tones scheduled back-to-back.
   levelup: { voice: 'arp', type: 'triangle', notes: [523.25, 659.25, 783.99, 1046.5], noteDur: 0.09, gain: 0.12 },
   chest:   { voice: 'arp', type: 'triangle', notes: [1318.5, 1760, 2217.5],          noteDur: 0.07, gain: 0.1 },
+  // An empty chest (a paid chest that gave nothing, a lost field gamble): a
+  // let-down, not the reward. A hollow lid thud, then two notes that sag
+  // downward, low and soft (the reward climbs high and bright).
+  chestEmpty: { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 150, to: 70, dur: 0.14, gain: 0.2 },
+    { v: 'noise', dur: 0.04, gain: 0.05, lp: 900 },
+    { v: 'tone', type: 'triangle', freq: 392, to: 370, dur: 0.2, gain: 0.11, at: 0.12 },
+    { v: 'tone', type: 'triangle', freq: 330, to: 262, dur: 0.42, gain: 0.11, at: 0.33 }] },
 
   // ---- M2 families. 'seq' = layered voices, each { v: 'tone' | 'noise',
   // at: seconds after the trigger, ...voice params }. ----
@@ -484,11 +616,31 @@ export { SFX };
 
 // arg: for the pitched families (gem), the combo step — each step raises the
 // pitch a whole tone, so a stream of pickups climbs.
+// The new mix's hit (MIX 'new'): the old hit was raw white noise, a harsh
+// hiss with most of its energy near 10 kHz. This one is the same short burst
+// through a low-pass, with a small body thump under it.
+const HIT_SOFT = { voice: 'seq', layers: [
+  { v: 'noise', dur: 0.05, gain: 0.22, lp: 2600 },
+  { v: 'tone', type: 'triangle', freq: 210, to: 120, dur: 0.05, gain: 0.08 }] };
+// The voice a sound plays in the current mix.
+function sfxDef(name) {
+  if (mixMode === 'new' && name === 'hit') return HIT_SOFT;
+  return SFX[name];
+}
+
+// arg: for the pitched families (gem), the combo step — each step raises the
+// pitch a whole tone, so a stream of pickups climbs.
 export function playSfx(name, arg) {
-  const def = SFX[name];
+  if (!ctx) return false;
+  return playSfxAt(name, arg, ctx.currentTime);
+}
+// The same, at a given context time (the listening page and the measuring
+// tool schedule a busy fight ahead). The rate limits count in that time.
+function playSfxAt(name, arg, when) {
+  const def = sfxDef(name);
   if (!def || !sfxEnabled || !ctx || hiddenMute) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
-  const now = ctx.currentTime;
+  const now = when;
   const limit = SFX_LIMITS[name] ?? 0.02;
   if (lastPlayed[name] !== undefined && now - lastPlayed[name] < limit) return false;
   if (def.fire) {
@@ -496,27 +648,36 @@ export function playSfx(name, arg) {
     lastPlayed['fire:*'] = now;
   }
   lastPlayed[name] = now;
+  voiceSfx(def, name, arg, now);
+  return true;
+}
 
+function voiceSfx(def, name, arg, now) {
+  // The mix: the old one plays every level as written; the new one trims each
+  // sound and varies the busy ones (two draws per play, only when it varies).
+  let lv = 1, rate = 1;
+  if (mixMode === 'new') {
+    lv = dbToGain(MIX.trimDb[name]);
+    if (MIX.vary[name]) { const v = variation(name, rand(), rand()); lv *= v.gain; rate = v.rate; }
+  }
   if (def.voice === 'seq') {
-    const mul = def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1;
+    const mul = (def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1) * rate;
     for (const l of def.layers) {
       const when = now + (l.at || 0);
-      if (l.v === 'noise') noise(ctx, sfxBus, { dur: l.dur, gain: l.gain, when });
-      else tone(ctx, sfxBus, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain, when });
+      if (l.v === 'noise') noise(ctx, sfxBus, { dur: l.dur, gain: l.gain * lv, when, lp: l.lp ? l.lp * rate : 0 });
+      else tone(ctx, sfxBus, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain * lv, when });
     }
-    return true;
+    return;
   }
-
   if (def.voice === 'tone') {
-    tone(ctx, sfxBus, { ...def, when: now });
+    tone(ctx, sfxBus, { ...def, freq: def.freq * rate, to: def.to ? def.to * rate : def.to, gain: def.gain * lv, when: now });
   } else if (def.voice === 'noise') {
-    noise(ctx, sfxBus, { ...def, when: now });
+    noise(ctx, sfxBus, { ...def, gain: def.gain * lv, when: now });
   } else { // arp
     def.notes.forEach((f, i) => {
-      tone(ctx, sfxBus, { type: def.type, freq: f, dur: def.noteDur, gain: def.gain, when: now + i * def.noteDur });
+      tone(ctx, sfxBus, { type: def.type, freq: f * rate, dur: def.noteDur, gain: def.gain * lv, when: now + i * def.noteDur });
     });
   }
-  return true;
 }
 
 // ---------- Cinematic stingers (WAVE-8/B) ----------
@@ -524,6 +685,22 @@ export function playSfx(name, arg) {
 // FADE 6000–7000ms) + portal (src/portal_cine.js: KILL/WALK/DISSOLVE/FADE,
 // ~4s). Fired once per phase transition; a short re-fire guard stops a
 // double-fire from stacking cues. SFX-class: sfx toggle gates, music does NOT.
+
+// Where a cue's voices go: sfxBus, or (new mix) a gain node that carries the
+// cue's trim (MIX.cueDb). runCue sets it for the length of one cue call.
+let cueOut = null;
+function runCue(key, fn, when, arg) {
+  cueOut = sfxBus;
+  if (mixMode === 'new' && MIX.cueDb[key]) {
+    try {
+      const g = ctx.createGain();
+      g.gain.value = dbToGain(MIX.cueDb[key]);
+      g.connect(sfxBus);
+      cueOut = g;
+    } catch { cueOut = sfxBus; }
+  }
+  try { fn(when, arg); } finally { cueOut = null; }
+}
 
 // Sustained voice: fast attack, hold, release — tone()'s one-shot exp decay
 // would fade a multi-second drone to silence long before its dur is up.
@@ -544,34 +721,34 @@ function sus(c, dest, { type, freq, to, dur, gain, when, hold = 0.7 }) {
 
 // intro OVERTAKE/HORDE — rising low drone: detuned saws sweeping up (~2.5s).
 function introOvertake(when) {
-  sus(ctx, sfxBus, { type: 'sawtooth', freq: 50,   to: 210, dur: 2.5, gain: 0.22, when });
-  sus(ctx, sfxBus, { type: 'sawtooth', freq: 51.5, to: 216, dur: 2.5, gain: 0.22, when });
+  sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 50,   to: 210, dur: 2.5, gain: 0.22, when });
+  sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 51.5, to: 216, dur: 2.5, gain: 0.22, when });
 }
 // intro TITLE_SLAM — impact stinger: noise burst + low thump at the stamp.
 function introTitleSlam(when) {
-  noise(ctx, sfxBus, { dur: 0.22, gain: 0.32, when });
-  tone(ctx, sfxBus, { type: 'sine', freq: 130, to: 38, dur: 0.4, gain: 0.4, when });
+  noise(ctx, cueOut || sfxBus, { dur: 0.22, gain: 0.32, when });
+  tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 130, to: 38, dur: 0.4, gain: 0.4, when });
 }
 // intro FADE — short downward sweep into black.
 function introFade(when) {
-  tone(ctx, sfxBus, { type: 'sawtooth', freq: 320, to: 60, dur: 0.5, gain: 0.14, when });
+  tone(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 320, to: 60, dur: 0.5, gain: 0.14, when });
 }
 // portal BOSS_YELL — pitched descending growl (~0.6s; detuned saws + sub
 // square give the fm-ish beat; louder than average sfx, avg gain ~0.12–0.18).
 function portalBossYell(when) {
-  sus(ctx, sfxBus, { type: 'sawtooth', freq: 190, to: 62, dur: 0.6, gain: 0.42, when, hold: 0.8 });
-  sus(ctx, sfxBus, { type: 'sawtooth', freq: 197, to: 66, dur: 0.6, gain: 0.42, when, hold: 0.8 });
-  tone(ctx, sfxBus, { type: 'square',  freq: 95,  to: 31, dur: 0.6, gain: 0.2,  when });
+  sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 190, to: 62, dur: 0.6, gain: 0.42, when, hold: 0.8 });
+  sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 197, to: 66, dur: 0.6, gain: 0.42, when, hold: 0.8 });
+  tone(ctx, cueOut || sfxBus, { type: 'square',  freq: 95,  to: 31, dur: 0.6, gain: 0.2,  when });
 }
 // portal DISSOLVE — spacey shimmer: high sine arpeggio, gapped spacing for a
 // delay/echo feel (~1.5s total).
 function portalDissolve(when) {
   const NOTES = [1046.5, 1318.5, 1568, 2093, 2637, 3136];
-  NOTES.forEach((f, i) => tone(ctx, sfxBus, { type: 'sine', freq: f, dur: 0.16, gain: 0.09, when: when + i * 0.22 }));
+  NOTES.forEach((f, i) => tone(ctx, cueOut || sfxBus, { type: 'sine', freq: f, dur: 0.16, gain: 0.09, when: when + i * 0.22 }));
 }
 // transitional blip (portal WALK / FADE).
 function cueBlip(when) {
-  tone(ctx, sfxBus, { type: 'triangle', freq: 500, to: 260, dur: 0.09, gain: 0.1, when });
+  tone(ctx, cueOut || sfxBus, { type: 'triangle', freq: 500, to: 260, dur: 0.09, gain: 0.1, when });
 }
 
 const INTRO_CUES = {
@@ -603,14 +780,14 @@ function cueAllowed(key) {
 export function playIntroCue(phase) {
   const fn = INTRO_CUES[phase];
   if (!fn || hiddenMute || !cueAllowed('intro:' + phase)) return false;
-  fn(ctx.currentTime);
+  runCue('intro:' + phase, fn, ctx.currentTime);
   return true;
 }
 
 export function playPortalCue(phase) {
   const fn = PORTAL_CUES[phase];
   if (!fn || hiddenMute || !cueAllowed('portal:' + phase)) return false;
-  fn(ctx.currentTime);
+  runCue('portal:' + phase, fn, ctx.currentTime);
   return true;
 }
 
@@ -625,27 +802,27 @@ export const ESCAPE_CUES = {
     const k = Math.min(1, n / 28);
     const root = 55 * Math.pow(2, Math.floor(k * 7) / 12);
     const f = n % 4 === 3 ? root * 1.5 : n % 2 ? root * 2 : root;
-    tone(ctx, sfxBus, { type: 'square', freq: f, to: f * 0.97, dur: 0.11, gain: 0.16 + 0.1 * k, when });
-    if (n % 2) noise(ctx, sfxBus, { dur: 0.03, gain: 0.05 + 0.08 * k, when });
+    tone(ctx, cueOut || sfxBus, { type: 'square', freq: f, to: f * 0.97, dur: 0.11, gain: 0.16 + 0.1 * k, when });
+    if (n % 2) noise(ctx, cueOut || sfxBus, { dur: 0.03, gain: 0.05 + 0.08 * k, when });
   },
   BOSS: (when) => {
-    tone(ctx, sfxBus, { type: 'sine', freq: 110, to: 30, dur: 0.3, gain: 0.42, when });
-    noise(ctx, sfxBus, { dur: 0.1, gain: 0.14, when });
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 110, to: 30, dur: 0.3, gain: 0.42, when });
+    noise(ctx, cueOut || sfxBus, { dur: 0.1, gain: 0.14, when });
   },
   ROAR: (when) => {
-    sus(ctx, sfxBus, { type: 'sawtooth', freq: 170, to: 52, dur: 0.55, gain: 0.44, when, hold: 0.8 });
-    sus(ctx, sfxBus, { type: 'sawtooth', freq: 178, to: 56, dur: 0.55, gain: 0.44, when, hold: 0.8 });
-    tone(ctx, sfxBus, { type: 'square', freq: 85, to: 28, dur: 0.55, gain: 0.22, when });
-    noise(ctx, sfxBus, { dur: 0.2, gain: 0.18, when });
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 170, to: 52, dur: 0.55, gain: 0.44, when, hold: 0.8 });
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 178, to: 56, dur: 0.55, gain: 0.44, when, hold: 0.8 });
+    tone(ctx, cueOut || sfxBus, { type: 'square', freq: 85, to: 28, dur: 0.55, gain: 0.22, when });
+    noise(ctx, cueOut || sfxBus, { dur: 0.2, gain: 0.18, when });
   },
   ESCAPE: (when) => {
     [659.25, 783.99, 1046.5, 1318.5, 1568].forEach((f, i) =>
-      tone(ctx, sfxBus, { type: 'triangle', freq: f, dur: 0.14, gain: 0.14, when: when + i * 0.05 }));
-    tone(ctx, sfxBus, { type: 'sine', freq: 2093, dur: 0.4, gain: 0.07, when: when + 0.25 });
+      tone(ctx, cueOut || sfxBus, { type: 'triangle', freq: f, dur: 0.14, gain: 0.14, when: when + i * 0.05 }));
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 2093, dur: 0.4, gain: 0.07, when: when + 0.25 });
   },
   GOLD: (when) => {
     [1318.5, 1760, 2217.5].forEach((f, i) =>
-      tone(ctx, sfxBus, { type: 'triangle', freq: f, dur: 0.08, gain: 0.11, when: when + i * 0.07 }));
+      tone(ctx, cueOut || sfxBus, { type: 'triangle', freq: f, dur: 0.08, gain: 0.11, when: when + i * 0.07 }));
   },
 };
 export function playEscapeCue(id, arg) {
@@ -655,7 +832,7 @@ export function playEscapeCue(id, arg) {
   // while that loop plays (BOSS, ROAR, ESCAPE and GOLD still sound).
   if (id === 'STEP' && engine && engine.escapePlaying()) return false;
   resumeIfSuspended();
-  fn(ctx.currentTime, Math.max(0, Number(arg) || 0));
+  runCue('escape:' + id, fn, ctx.currentTime, Math.max(0, Number(arg) || 0));
   return true;
 }
 
@@ -730,12 +907,21 @@ export function setHiddenMute(on) {
 }
 export function getHiddenMute() { return hiddenMute; }
 
-export function startMusic() {
+// opts.resume (R1 mix pass): the synth carries on from the step where it
+// stopped instead of bar 1. main.js passes it when the player comes back to
+// the tab; a new run, the finale and the volume slider start from the top.
+// (The recorded beds keep their place on their own: music_files.js.)
+export function startMusic(opts) {
+  // A plain start (a new run, the finale) moves the song to the top even when
+  // it is held back: a run that starts while the tab is hidden must not come
+  // back at the old run's bar when the player returns and the resume call runs.
+  if (!musicRunning && !(opts && opts.resume)) {
+    step = 0;
+    bossStep = 0;
+  }
   if (!musicEnabled || !ctx || musicRunning || hiddenMute) return false;
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   musicRunning = true;
-  step = 0;
-  bossStep = 0;
   nextNoteTime = ctx.currentTime + 0.05;
   ensureEngine();          // decides, before the first synth step, who plays
   scheduleAhead();
@@ -835,8 +1021,9 @@ export function playMusicCue(slot, opts) {
 
 // ---------- Test-only seam (fakes inject here; NOT part of the frozen API) ----------
 export const AUDIO_TEST = {
-  setDeps({ AudioContext: ac, storage: st, fetch: fe, tracks, trimDb } = {}) {
+  setDeps({ AudioContext: ac, storage: st, fetch: fe, tracks, trimDb, rng } = {}) {
     if (ac !== undefined) AudioCtxCtor = ac;
+    if (rng !== undefined) rngDep = rng;   // the variation's random draws (null = Math.random)
     if (st !== undefined) storage = st;
     if (fe !== undefined) fetchDep = fe;
     // A new manifest or trim rebuilds the engine on its next use (same ctx).
@@ -853,12 +1040,23 @@ export const AUDIO_TEST = {
     musicVol = DEFAULT_MUSIC_VOL; sfxVol = DEFAULT_SFX_VOL;
     musicMode = 'run'; bossStep = 0;
     step = 0; nextNoteTime = 0;
+    mixMode = 'new'; limiterIn = null; limiterNode = null;
     for (const k of Object.keys(lastPlayed)) delete lastPlayed[k];
     hydrateFlags();
   },
   scheduleAhead,                    // manual scheduler pass (fake clock)
   scheduleStep,                     // real per-step synthesis (offline render drives this)
   scheduleBossStep,
+  playSfxAt,                        // a sound at a given ctx time (busy-fight renders)
+  runCue: (kind, key, when, arg) => {   // a cue at a given ctx time, its trim included
+    const fn = kind === 'intro' ? INTRO_CUES[key] : kind === 'portal' ? PORTAL_CUES[key] : ESCAPE_CUES[key];
+    if (!fn || !ctx) return false;
+    runCue(kind + ':' + key, fn, when, arg || 0);
+    return true;
+  },
+  step: () => step,                 // the synth song's next step
+  bossStep: () => bossStep,         // the boss section's next step
+  limiter: () => ({ in: limiterIn, node: limiterNode }),
   state: () => ({ ctx, musicRunning, master, musicBus, sfxBus, musicDuck, musicSrc, synthEnv }),
   music: () => (engine ? engine.debug() : null),   // the recorded engine's state (tests, probes)
   synthLevel: (t) => (synthEnv ? envAt(synthEnv, t) : 1),

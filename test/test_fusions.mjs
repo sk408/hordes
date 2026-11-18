@@ -185,6 +185,9 @@ function arena(types, idle = []) {
   p.takenStats = {};     // no stat card: the evolved forms below are set directly
   st.weapons.length = 0;
   st.weaponSlots = 4;
+  // The arena's weapons are the run's whole kit: no loadout weapon is left to
+  // offer as a NEW card (decision 7), so a freed slot goes to the refill.
+  st.runKit = types.filter(t => t !== 'VOLLEY');
   for (const t of types.includes('VOLLEY') ? types : ['VOLLEY', ...types]) {
     const w = evolved(t);
     w.cd = idle.includes(t) ? 1e9 : 0;

@@ -110,7 +110,7 @@ ok('(e/a) buying ORBIT equips it with NO further action (kit ' + JSON.stringify(
   prof.loadout === null && JSON.stringify(effectiveLoadout(prof)) === '["BOOMERANG","ORBIT"]',
   { loadout: prof.loadout, kit: effectiveLoadout(prof) });
 ok('the buy says so on screen (a visible line names the equipped weapon)',
-  toasts().includes('EQUIPPED') && toasts().toUpperCase().includes(WEAPON_NAMES.ORBIT.toUpperCase()),
+  toasts().includes('ADDED') && toasts().includes('LOADOUT') && toasts().toUpperCase().includes(WEAPON_NAMES.ORBIT.toUpperCase()),
   toasts());
 
 // ---- 2. FULL LOADOUT: still equipped, the displaced weapon is NAMED ---------
@@ -132,7 +132,7 @@ T.loadout.open();
 const orbitRow = cards().find(c => (c._html || '').includes('>' + WEAPON_NAMES.ORBIT + '<'));
 const novaRow = cards().find(c => (c._html || '').includes('>' + WEAPON_NAMES.NOVA_PULSE + '<'));
 ok('(b) the LOADOUT screen reflects the swap (NOVA in, ORBIT out)',
-  (novaRow._html || '').includes('EQUIPPED') && !(orbitRow._html || '').includes('EQUIPPED'),
+  (novaRow._html || '').includes('tap to BENCH') && !(orbitRow._html || '').includes('tap to BENCH'),
   { nova: novaRow._html, orbit: orbitRow._html });
 
 // ---- 4. ONE-TAP BENCH, persisting -------------------------------------------
@@ -142,8 +142,8 @@ novaRow.click();           // THE BENCH: one tap on the equipped row
 pump(1);
 ok('(c) ONE TAP benches an equipped weapon', JSON.stringify(prof.loadout) === '["ZAP"]', prof.loadout);
 const novaRow2 = cards().find(c => (c._html || '').includes('>' + WEAPON_NAMES.NOVA_PULSE + '<'));
-ok('(c) the benched row names the action ("tap to equip" — the affordance is on the screen)',
-  (novaRow2._html || '').includes('tap to equip'), novaRow2._html);
+ok('(c) the benched row names the action ("tap to add" — the affordance is on the screen)',
+  (novaRow2._html || '').includes('tap to add'), novaRow2._html);
 const round = validateProfile({ ...prof, loadout: prof.loadout });
 ok('(c) the benched shape survives the save validator', JSON.stringify(round.profile.loadout) === '["ZAP"]',
   round.profile.loadout);
@@ -163,8 +163,11 @@ ok('(3) a null loadout stays null: WITCH buys METEOR -> the kit is [ZAP, METEOR]
   prof.loadout === null && JSON.stringify(effectiveLoadout(prof)) === '["ZAP","METEOR"]',
   { loadout: prof.loadout, kit: effectiveLoadout(prof) });
 T.startRun();
-ok('(3) and the run arms the starter beside the new weapon',
-  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP","METEOR"]', st.weapons.map(w => w.type));
+// Decision 7: the run starts with the starter; the new weapon is in its kit
+// and comes as a NEW card in a draft.
+ok('(3) and the run starts with the starter, the new weapon in its kit for the drafts',
+  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP"]' && JSON.stringify(st.runKit) === '["ZAP","METEOR"]',
+  { kit: st.weapons.map(w => w.type), runKit: st.runKit });
 
 // ---- 5. items: non-weapon rows are ACTIVE ON OWNERSHIP ----------------------
 // The shop's other unlock rows (elites, writ, pass) have NO equip layer: the

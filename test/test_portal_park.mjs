@@ -289,7 +289,8 @@ s.check('R4 dwell: 0.35-0.5s on contact, identical wall-clock at 60Hz and 120Hz'
   for (let i = 0; i < 60 * 60; i++) {
     pinWorld();
     h.pump(1);
-    if (st.mode === 'portal-cine') { cineStarted = true; break; }
+    // R1: at wave 1 the entry goes straight to the escape chase (no portal movie).
+    if (st.mode === 'portal-cine' || st.mode === 'escape') { cineStarted = true; break; }
     if (st.mode !== 'playing') throw new Error('unexpected mode ' + st.mode + ' before the movie');
     if (st.portal && st.portal.entering) enteringSeen = true;
     if (st.wave.cinePending) framesPlayingWithCinePending++;
@@ -301,12 +302,10 @@ s.check('R4 dwell: 0.35-0.5s on contact, identical wall-clock at 60Hz and 120Hz'
       throw new Error('the movie fired almost immediately (' + framesPlayingWithCinePending +
         ' playing frames) — the kill-time auto-start is back');
     }
-    // Skip through the real key seam (any key skips). On wave 1 the cine's
-    // end hands the run to THE ESCAPE cinematic; a key after its guard time
-    // skips that too and hands the run to the intermission (alive, paid).
-    h.key('keydown', { key: 'x', preventDefault() {} });
-    h.pump(2);
-    if (st.mode !== 'escape') throw new Error('the skip did not hand the run to the escape: ' + st.mode);
+    // On wave 1 the entry hands the run straight to THE ESCAPE cinematic (R1:
+    // no portal movie there); a key after its guard time skips it and hands
+    // the run to the intermission (alive, paid).
+    if (st.mode !== 'escape') throw new Error('the wave-1 entry did not hand the run to the escape: ' + st.mode);
     h.pump(30);   // past the escape's skip guard
     h.key('keydown', { key: 'Escape', preventDefault() {} });   // asks
     h.key('keydown', { key: 'Escape', preventDefault() {} });   // skips

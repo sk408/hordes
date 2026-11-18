@@ -99,7 +99,7 @@ S.check('a Shrine charge opens one joker offer at the start; later drafts still 
   assert.equal(prof.camp.charges.shrine, 0, 'spent');
   assert.equal(st.mode, 'draft');
   assert.equal(h.elements['ov-title'].textContent, 'JOKER');
-  assert.match(h.elements['ov-sub'].textContent, /^your camp shrine: take 1 joker/);
+  assert.match(h.elements['ov-sub'].textContent, /^your camp shrine · Pick 1: /);
   cards()[0].click();
   assert.equal(st.mode, 'playing');
   assert.equal(st.pendingDrafts, 0);

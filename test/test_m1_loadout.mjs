@@ -120,12 +120,13 @@ S.check('run 1 on a fresh profile starts with VOLLEY + BOOMERANG', () => {
   T.startRun(); h.pump(1);
   assert.deepEqual(st.weapons.map(w => w.type), ['VOLLEY', 'BOOMERANG']);
 });
-S.check('the run arms the kit the loadout screen shows', () => {
+S.check('the run starts with the first weapon the loadout screen shows; the rest come in drafts', () => {
   const prof = T.getProfile();
   own(prof, 'ORBIT', 'SEEKER');
   T.startRun(); h.pump(1);
-  assert.deepEqual(st.weapons.map(w => w.type), ['VOLLEY', ...T.loadout.kit()]);
+  assert.deepEqual(st.weapons.map(w => w.type), ['VOLLEY', T.loadout.kit()[0]]);
   assert.deepEqual(T.loadout.kit(), ['SEEKER', 'BOOMERANG']);
+  assert.deepEqual(T.loadout.pending(), ['BOOMERANG']);
   prof.loadout = ['ORBIT'];
   T.startRun(); h.pump(1);
   assert.deepEqual(st.weapons.map(w => w.type), ['VOLLEY', 'ORBIT']);

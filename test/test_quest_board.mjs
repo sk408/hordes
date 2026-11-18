@@ -162,7 +162,8 @@ S.check('owned: the joker offer opens in the run and names the chain', () => {
   while (st.mode !== 'draft' && guard++ < 120) h.pump(1, () => { st.player.hp = st.player.stats.maxHp; });
   assert.equal(st.mode, 'draft');
   assert.equal(st.draftKind, 'joker');
-  assert.equal(h.elements['ov-sub'].textContent, "warden's path is done: take 1 joker");
+  assert.equal(h.elements['ov-sub'].textContent, "warden's path is done · Pick 1: click or press " +
+    Array.from({ length: cards().length }, (_, i) => i + 1).join('/'));
   T.purse.settle();
   st.mode = 'title';
 });

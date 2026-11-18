@@ -34,7 +34,7 @@ const JOKERS = await import(treeUrl('src/jokers.js')).catch(() => null);
 // The two jokers that are a trade, not a plain gain: only --once take picks them.
 const TRADE_JOKERS = ['once', 'hordebait'];
 
-export const DRAFT_POLICIES = ['random', 'weapons-first', 'evolution-first', 'stats-first', 'hand-first'];
+export const DRAFT_POLICIES = ['random', 'auto', 'weapons-first', 'evolution-first', 'stats-first', 'hand-first'];
 export const ONCE_MODES = ['asis', 'take', 'never'];
 export const LOADOUT_POLICIES = ['default', 'all-owned'];
 // stats-first draft priority (base stat-card ids). Cards not listed are taken
@@ -130,6 +130,10 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     T.startRun();
     if (T.setPilotMode) T.setPilotMode(pol.pilot === 'EXPLORE' ? 'EXPLORE' : 'AUTO_ALL');
     const weapons = st.weapons.map((w) => w.type).join('+');
+    // The kit the run can reach (the loadout) and when it is complete; the
+    // player's level at fixed times.
+    const kitTarget = (T.loadout && T.loadout.kit ? (T.loadout.kit() || []).length : 0);
+    let kitMax = 0, kitFullT = null, kitFullDrafts = null, kitFullLv = null; const lvAt = {}; const LV_AT = [60, 120, 180, 300, 600];
     let drafts = 0, end = null, maxWave = 1, escFrames = 0, stuck = 0, lastT = -1, tookOnce = null;
     let firstEvo = null, evolved = 0;   // sim seconds of the first evolution; evolutions in the run
     let firstFuse = null, fused = 0;    // the same for fusions
@@ -149,7 +153,9 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         let pick = null;
         const onceIdx = offs.findIndex((o) => o.id === onceId);
         const keepIdx = offs.findIndex((o) => o.jokerSwap && o.keep);
-        if (pol.once === 'take' && onceIdx >= 0) pick = onceIdx;
+        // auto: the game's own unattended pick (T.auto.pickIndex), as it plays.
+        if (pol.draft === 'auto') pick = T.auto.pickIndex(offs);
+        else if (pol.once === 'take' && onceIdx >= 0) pick = onceIdx;
         // A full joker row: the deliberate policies keep it (random picks at random).
         else if (keepIdx >= 0 && pol.draft !== 'random') pick = keepIdx;
         else if (keepIdx >= 0) pick = Math.floor(prng() * offs.length);
@@ -185,6 +191,10 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       }
       h.pump(1); frames++;
       maxWave = Math.max(maxWave, st.wave.num);
+      { const n = st.weapons.filter((w) => w.type !== 'VOLLEY').length + st.weapons.filter((w) => w.fused).length;
+        if (n > kitMax) kitMax = n;
+        if (kitFullT === null && kitMax >= kitTarget) { kitFullT = Math.round(st.time); kitFullDrafts = drafts; kitFullLv = st.player.level; } }
+      for (const s of LV_AT) if (lvAt[s] === undefined && st.time >= s) lvAt[s] = st.player.level;
       if (st.weapons.length && st.weapons.some((w) => w.evolutionId)) {
         // A fused weapon carries its other (evolved) half off the list.
         const n = st.weapons.filter((w) => w.evolutionId).length + st.weapons.filter((w) => w.fused).length;
@@ -251,7 +261,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
       gold: prof.gold - goldBefore, award: s.award ?? null, purse: s.purseBanked ?? null, winBonus: s.winBonus ?? null,
       firstClear: !!s.firstClear, cause: end === 'died' ? causeOf(st.deathBy) : end,
-      weapons, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused,
+      weapons, kitTarget, kitMax, kitFullT, kitFullDrafts, kitFullLv, lvAt, picks, tookOnce, frames, firstEvo, evolved, firstFuse, fused,
       stage: st.stage || null, stalls,
       highT: Math.round((st.runCounts.highGroundT || 0) * 10) / 10,
       sites: SITES_MOD && st.sites ? (st.sitesTally || SITES_MOD.sitesUsed(st.sites, st.sitesBefore)) : null,

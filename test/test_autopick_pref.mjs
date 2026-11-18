@@ -250,8 +250,15 @@ st.pilotMode = 'AUTO_ALL';
 
 // A joker taken on a full joker row opens a replace draft of its own, so the
 // checks below take a plain card (auto and by hand): one pick is one draft.
+// The run's free NEW weapon deals its draft again (KIT_OFFER.FREE), so it is
+// marked used here: a NEW card the stall watchdog takes is one pick too.
 const plainIdx = () => Math.max(0, cards().findIndex(c => c._draftOffer && c._draftOffer.tier !== 'JOKER'));
+// The stall watchdog does not use the test's rng, and with no weapon held a
+// NEW card would join at the start level and could open an evolve offer
+// (HORDES_RNG=8): so these drafts hold no NEW card at all.
 const openPlain = () => {
+  st.kitFreeUsed = Infinity;
+  st.runKit = [];
   st.pendingDrafts = 1;
   T.openDraft();
   const n = cards().length, i = plainIdx();

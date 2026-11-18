@@ -169,8 +169,10 @@ check('arm 2: tapping ORBIT + ZAP stores exactly that choice',
   JSON.stringify(out.stored) === JSON.stringify(['ORBIT', 'ZAP']), out.stored);
 check('arm 2: state.time > 1.0 asserted BEFORE measuring (t=' + (out.arm2.time && out.arm2.time.toFixed(2)) + 's)',
   out.live === true && out.arm2.time > 1.0, out.arm2.time);
-check('CHOICE PROOF: the run carries VOLLEY+ORBIT+ZAP read off LIVE state (not menu bookkeeping)',
-  JSON.stringify(out.arm2.kit) === JSON.stringify(['VOLLEY', 'ORBIT', 'ZAP']), out.arm2.kit);
+// Decision 7 (2026-11-17): the run starts with the loadout's first weapon;
+// ZAP comes later as a NEW card in a draft.
+check('CHOICE PROOF: the run starts with VOLLEY+ORBIT (the first loadout weapon) read off LIVE state (not menu bookkeeping)',
+  JSON.stringify(out.arm2.kit) === JSON.stringify(['VOLLEY', 'ORBIT']), out.arm2.kit);
 check('PNG backing store is exactly 1170x2532 (390x844 @dpr3)', out.px.w === 1170 && out.px.h === 2532,
   [out.px.w, out.px.h]);
 check('PNG pixel readback: gameplay pixels on the field (13x9 grid scan across the canvas: '

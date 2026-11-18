@@ -12,9 +12,11 @@
 // It also pins the slice's other contracts through the REAL seams:
 //   - persistence: profile.loadout round-trips the save validator;
 //   - the screen: rows for the unlock set, slot cap, AUTO clears;
-//   - the choice proof: startRun arms the chosen kit, read off LIVE run state;
-//   - the pool proof: ZERO wpn_* grants across a draft sweep, lvl_* offers
-//     for exactly the brought kit.
+//   - the choice proof: startRun arms the chosen kit's FIRST weapon (decision
+//     7, 2026-11-17: the loadout lists what a run can offer), read off LIVE
+//     run state, and holds the rest for the drafts;
+//   - the pool proof: wpn_* NEW cards only for the loadout's weapons not yet
+//     held, lvl_* offers for exactly the weapons held.
 // Run: node test/test_g26_loadout.mjs
 import assert from 'node:assert/strict';
 import { makeProfile, validateProfile } from '../src/meta.js';
@@ -188,16 +190,16 @@ ok('the screen enumerates the unlock set in registry order',
     === expectOrder.join(','),
   expectOrder.join(','));
 // No stored choice: the screen shows the auto kit (the strongest owned weapons
-// that fit) as EQUIPPED.
-ok('with no stored choice the auto kit reads EQUIPPED (BOOMERANG + ZAP, ORBIT benched)',
-  prof.loadout === null && weaponCard('BOOMERANG')._html.includes('EQUIPPED') &&
-  weaponCard('ZAP')._html.includes('EQUIPPED') && !weaponCard('ORBIT')._html.includes('EQUIPPED'),
+// that fit) as chosen: the first is the START WEAPON, the other comes IN DRAFTS.
+ok('with no stored choice the auto kit is chosen (ZAP starts, BOOMERANG in drafts, ORBIT benched)',
+  prof.loadout === null && weaponCard('ZAP')._html.includes('START WEAPON') &&
+  weaponCard('BOOMERANG')._html.includes('IN DRAFTS') && !weaponCard('ORBIT')._html.includes('tap to BENCH'),
   prof.loadout);
 weaponCard('ORBIT').click();
 ok('the slot cap refuses a third pick (the menu never exceeds the run cap)',
   prof.loadout === null, prof.loadout);
 weaponCard('BOOMERANG').click();
-ok('a tap on an EQUIPPED weapon benches it and stores the choice',
+ok('a tap on a chosen weapon benches it and stores the choice',
   JSON.stringify(prof.loadout) === '["ZAP"]', prof.loadout);
 weaponCard('ORBIT').click();
 ok('a tap fills the free slot (3 slots: volley + 2 picks)',
@@ -213,8 +215,9 @@ ok('AUTO clears the choice to null',
 prof.loadout = ['ORBIT', 'ZAP'];
 T.startRun();
 const goodKit = st.weapons.map(w => w.type);
-ok('chosen kit: startRun arms VOLLEY + the loadout, read off LIVE run state',
-  JSON.stringify(goodKit) === '["VOLLEY","ORBIT","ZAP"]', goodKit);
+ok('chosen kit: startRun arms VOLLEY + the first loadout weapon, the rest wait for the drafts',
+  JSON.stringify(goodKit) === '["VOLLEY","ORBIT"]' && JSON.stringify(T.loadout.pending()) === '["ZAP"]',
+  { goodKit, pending: T.loadout.pending() });
 prof.loadout = ['BOOMERANG'];       // the deliberately poor kit
 T.startRun();
 const poorKit = st.weapons.map(w => w.type);
@@ -224,9 +227,9 @@ ok('poor kit: a different choice arms a different kit', JSON.stringify(goodKit) 
 // Knight has no starting weapon of his own to lead the list).
 prof.loadout = null;
 T.startRun();
-ok('no stored choice -> VOLLEY + the two strongest owned weapons (ZAP, BOOMERANG; ORBIT sits out)',
-  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP","BOOMERANG"]',
-  st.weapons.map(w => w.type));
+ok('no stored choice -> the two strongest owned weapons (ZAP starts, BOOMERANG in drafts; ORBIT sits out)',
+  JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ZAP"]' && JSON.stringify(st.runKit) === '["ZAP","BOOMERANG"]',
+  { kit: st.weapons.map(w => w.type), runKit: st.runKit });
 // A loadout naming a weapon the save does NOT own never arms it (import rule).
 prof.unlockedWeapons = prof.unlockedWeapons.filter(w => w !== 'ZAP');
 prof.loadout = ['ORBIT', 'ZAP'];
@@ -235,15 +238,19 @@ ok('an unowned loadout entry is dropped at startRun (validated against the LIVE 
   JSON.stringify(st.weapons.map(w => w.type)) === '["VOLLEY","ORBIT"]', st.weapons.map(w => w.type));
 prof.unlockedWeapons.push('ZAP');
 
-// ---- 6. the pool proof: the draft never grants a weapon ----------------------
+// ---- 6. the pool proof: the draft grants only the loadout's weapons ---------
 // Full unlocked set, chosen kit ORBIT+ZAP: sweep drafts and read the REAL
 // offer objects (el._draftOffer is the exact card openDraft built).
 prof.loadout = ['ORBIT', 'ZAP'];
+// This profile never played, so startRun would carry the guided tutorial run,
+// whose drafts hold no NEW card. The pool proof is about a normal run.
+T.tut.mark(T.tut.LEDGER.guided);
 T.startRun();
+assert.ok(!T.tut.live, 'a normal run, not the guided one');
 const realRandom = Math.random;
 Math.random = (function () { let s = 20260915; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; })();
 const families = { wpn: 0, lvl: 0, stat: 0, other: 0 };
-const lvlTypes = new Set();
+const lvlTypes = new Set(), wpnTypes = new Set();
 const DRAWS = 200;
 try {
   for (let i = 0; i < DRAWS; i++) {
@@ -251,7 +258,7 @@ try {
     for (const c of cards()) {
       const u = c._draftOffer;
       if (!u) continue;
-      if (u.id.startsWith('wpn_')) families.wpn++;
+      if (u.id.startsWith('wpn_')) { families.wpn++; wpnTypes.add(u.id.slice(4)); }
       else if (u.id.startsWith('lvl_')) { families.lvl++; lvlTypes.add(u.id.split('_')[1]); }
       else if (/^(rule_|skill_|rewrite_|frost)/.test(u.id)) families.stat++;
       else families.other++;
@@ -259,10 +266,10 @@ try {
     st.mode = 'playing';   // reopen without picking
   }
 } finally { Math.random = realRandom; }
-ok('pool proof: ZERO wpn_* grants across ' + DRAWS + ' drafts with the FULL unlock set',
-  families.wpn === 0, families);
-ok('pool proof: lvl_* offers still flow, for EXACTLY the brought kit',
-  families.lvl > 0 && [...lvlTypes].sort().join(',') === ['ORBIT', 'VOLLEY', 'ZAP'].sort().join(','),
+ok('pool proof: across ' + DRAWS + ' drafts with the FULL unlock set, NEW cards only for the loadout weapon still to come (ZAP)',
+  families.wpn > 0 && [...wpnTypes].join(',') === 'ZAP', { families, wpnTypes: [...wpnTypes] });
+ok('pool proof: lvl_* offers still flow, for EXACTLY the weapons held',
+  families.lvl > 0 && [...lvlTypes].sort().join(',') === ['ORBIT', 'VOLLEY'].sort().join(','),
   { families, lvlTypes: [...lvlTypes] });
 console.log('  MEASURED families over ' + DRAWS + ' drafts: ' + JSON.stringify(families) +
   ' · lvl types: ' + [...lvlTypes].sort().join('/'));

@@ -168,8 +168,12 @@ st.player.xpNext = 1e18;
 // ---- 2. SUSPEND under the draft coachmark; resume where it left off --------
 {
   ls.delete(TOUR_KEYS.draft);             // the draft coach fires on open
+  // R1: the coach card is only the fallback for a profile with no finished
+  // run (a returning player never gets it), so this draft opens as one.
+  T.getProfile().achievements.totals.runs = 0;
   st.pendingDrafts = 1;
   T.openDraft();
+  T.getProfile().achievements.totals.runs = 1;   // back to the returning profile
   const c0 = T.draftAuto.count;
   ok('the draft coachmark rides on top of the cards', !!tourRoot());
   tick(30);                               // half a minute obstructed
@@ -229,9 +233,22 @@ st.player.xpNext = 1e18;
   T.openDraft();
   const c0 = T.draftAuto.count;
   tick(3);                                // halfway through the window
-  cards()[1].click();                     // the human takes the SECOND card
+  // The human takes the SECOND card. Not a joker, though: with the joker row full a joker
+  // opens the replace screen instead of resolving the draft, and about 1 seed in 60 put
+  // one in the second place (seed 35), which failed this check at random.
+  const isJoker = (c) => !!(c && c._draftOffer && c._draftOffer.tier === 'JOKER');
+  const tapAt = !isJoker(cards()[1]) ? 1 : (cards().length > 2 && !isJoker(cards()[2]) ? 2 : 0);
+  cards()[tapAt].click();
   ok('the tap resolves the draft (not the timer)', st.mode === 'playing' && T.draftAuto.count === c0);
+  // Nothing else may open a draft during the wait: a level-up, or a shrine the pilot walks
+  // into (seed 62), brings a NEW draft with its own countdown row and its own auto-pick,
+  // which failed the two checks below at random.
+  const xp0 = st.player.stats.xpMult, sites0 = st.sites;
+  st.player.stats.xpMult = 0;
+  st.sites = [];
   tick(6);                                // long past where the timer would fire
+  st.player.stats.xpMult = xp0;
+  st.sites = sites0;
   ok('the cancelled timer never fires: no second pick', T.draftAuto.count === c0, T.draftAuto.count - c0);
   ok('the countdown line left with the draft', !countdownLine());
 }

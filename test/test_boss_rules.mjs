@@ -264,7 +264,7 @@ s.check('a card rule pays a free card: a draft without the level, after the joke
   if (st.draftKind === 'joker') { h.elements['ov-cards'].children[0].click(); for (let i = 0; i < 3 && st.draftKind !== 'level'; i++) step(); }
   assert.equal(st.draftKind, 'level');
   assert.equal(h.elements['ov-title'].textContent, 'FREE CARD');
-  assert.ok(/^the rule is beaten: pick 1 of \d$/.test(h.elements['ov-sub'].textContent), h.elements['ov-sub'].textContent);
+  assert.ok(/^the rule is beaten · Pick 1: click or press 1\/2\/3$/.test(h.elements['ov-sub'].textContent), h.elements['ov-sub'].textContent);
   h.elements['ov-cards'].children[0].click();
   assert.equal(st.ruleCards, 0);
   assert.equal(st.player.level, level, 'no level was added');

@@ -55,7 +55,7 @@ await withPage({ w: 390, h: 844, dpr: 3, mobile: true }, async (p) => {
       toasts: T2.state.toasts.map(t => t.msg).join(' | ') }; })()`);
   ok(Array.isArray(bought.chosen) && bought.chosen.includes('ORBIT'),
     'the ORBIT purchase EQUIPPED it with no further action (loadout ' + JSON.stringify(bought.chosen) + ')');
-  ok(bought.toasts.toUpperCase().includes('EQUIPPED') && bought.toasts.toUpperCase().includes('ORBIT'),
+  ok(bought.toasts.toUpperCase().includes('ADDED') && bought.toasts.toUpperCase().includes('ORBIT'),
     'a visible line names the equipped weapon ("' + bought.toasts + '")');
 
   // ---- 2. ONE TAP benches it -------------------------------------------------

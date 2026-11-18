@@ -471,7 +471,7 @@ export const SHOP_UPGRADES = [
   { id: 'luck',    name: 'Fortune',        desc: 'Rarer items drop and rarer level-up cards appear more often, per level',
     baseCost: 1500, costGrowth: 2, maxLevel: 5, perLevel: 1 },
   { id: 'slots',   name: 'Weapon Slot',
-    get desc() { return 'Bring 1 more weapon into every run (max ' + MAX_WEAPON_SLOTS + '). Mastery +1: +' + MASTERY.HP_PER_RANK + ' max HP'; },
+    get desc() { return 'One more weapon your runs can offer in drafts (max ' + MAX_WEAPON_SLOTS + '). Mastery +1: +' + MASTERY.HP_PER_RANK + ' max HP'; },
     baseCost: 400, costGrowth: 5, maxLevel: 3, perLevel: 0 },
   // Joker Slot: a run holds 2 jokers; each level adds a slot, up to 5 (jokers.js).
   { id: 'jokerslots', name: 'Joker Slot',
@@ -501,7 +501,7 @@ export const SHOP_UPGRADES = [
   ...Object.entries(WEAPON_PRICES).map(([wid, price]) => ({
     id: `weapon_${wid.toLowerCase()}`, kind: 'weapon', weaponId: wid,
     name: WEAPON_NAMES[wid] || wid,
-    desc: `New weapon, equipped when you buy it. Mastery +1: +${MASTERY.HP_PER_RANK} max HP`,
+    desc: `New weapon for your LOADOUT: runs offer it in drafts. Mastery +1: +${MASTERY.HP_PER_RANK} max HP`,
     baseCost: price, costGrowth: 1, maxLevel: 1, perLevel: 0,
   })),
 ];

@@ -213,7 +213,9 @@ function spawnPunishmentHorde(state) {
 
 function applyContents(state, contents, chest) {
   const p = state.player;
-  const events = [{ kind: 'chestOpened', rarity: contents.rarity, x: chest.x, y: chest.y }];
+  // empty: a lost gamble gives nothing (main.js plays the let-down sound).
+  const events = [{ kind: 'chestOpened', rarity: contents.rarity, x: chest.x, y: chest.y,
+    empty: contents.rarity === 'gamble' && contents.gambleWin === false }];
 
   for (const k of ['hp', 'mp']) {
     // G11: the run's rule ceiling (NO_POTIONS stays at 0 — no chest refills a

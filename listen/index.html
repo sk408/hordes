@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Everything below is relative to the game's root (../): the same page works
+     from a local server and from the test build. It lives in listen/ (not tools/: the
+     test build's server does not serve tools/). Not in the service worker's precache. -->
+<base href="../">
+<title>HORDES sound check</title>
+<style>
+  :root { --bg: #14161c; --panel: #1e2129; --line: #2e3340; --text: #e8e6e1; --dim: #9aa0ad;
+    --new: #7fd88f; --old: #f0b45a; --hot: #ff7a5c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 4px 0 8px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  .listen { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  .listen ol { margin: 6px 0 0; padding-left: 20px; }
+  .listen li { margin: 3px 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0 4px; }
+  button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 12px; cursor: pointer; min-height: 40px; }
+  button:hover { border-color: var(--dim); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .mix { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .mix button { border: 0; border-radius: 0; min-width: 96px; }
+  .mix button[aria-pressed="true"].new { background: var(--new); color: #10140f; font-weight: 700; }
+  .mix button[aria-pressed="true"].old { background: var(--old); color: #1a1408; font-weight: 700; }
+  .big { font-weight: 700; }
+  .meter { flex: 1 1 160px; min-width: 140px; height: 12px; background: #0c0d11; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--new); transition: width 60ms linear; }
+  .meterlbl { color: var(--dim); font-variant-numeric: tabular-nums; min-width: 92px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 8px; }
+  .snd { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; width: 100%; }
+  .snd b { font-weight: 600; overflow-wrap: anywhere; }
+  .lv { font-size: 12px; color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lv .n { color: var(--new); } .lv .o { color: var(--old); }
+  .note { color: var(--dim); font-size: 13px; }
+  #status { color: var(--dim); font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>HORDES sound check</h1>
+  <div class="listen">
+    <b>What to listen for (about 2 minutes, with headphones or speakers at your usual level):</b>
+    <ol>
+      <li>Press <b>PLAY A BUSY FIGHT</b> on <b>NEW</b>, then on <b>OLD</b>. The new one should be louder, the hits less hissy, and no crackle.</li>
+      <li>Press <b>BUSY FIGHT + MUSIC</b>. The fight should sit with the music, not drown it.</li>
+      <li>Press <b>Boss roar</b> and <b>Escape roar</b> under Movie cues. Loud, but no longer a jump scare next to the fight.</li>
+      <li>Press <b>chest</b>, then <b>chestEmpty</b>. The empty one should feel like a let-down.</li>
+    </ol>
+    <p class="note">The NEW / OLD switch is saved in this browser, and the game on the same site uses it too: pick OLD to turn the new mix off in the game. Numbers beside each sound: its loudest moment in LUFS, <span style="color:var(--new)">new</span> and <span style="color:var(--old)">old</span> (higher is louder; 10 more is about twice as loud to the ear).</p>
+  </div>
+
+  <div class="bar">
+    <span class="mix" role="group" aria-label="Mix">
+      <button class="new" id="mixNew" aria-pressed="true">NEW MIX</button>
+      <button class="old" id="mixOld" aria-pressed="false">OLD MIX</button>
+    </span>
+    <button class="big" id="fight" disabled>PLAY A BUSY FIGHT</button>
+    <button id="fightMusic" disabled>BUSY FIGHT + MUSIC</button>
+    <button id="worst" disabled>WORST CASE</button>
+    <button id="stop">STOP</button>
+  </div>
+  <div class="bar">
+    <span class="meter" aria-hidden="true"><i id="meterBar"></i></span>
+    <span class="meterlbl" id="meterLbl">-- dB</span>
+  </div>
+  <div id="status">Measuring every sound…</div>
+  <div class="bar note" id="fightLv"></div>
+  <div id="groups"></div>
+</main>
+<script type="module">
+const A = await import('./src/audio.js');
+const S = await import('./listen/sfx_scenes.js');   // .js, not .mjs: the test build's server sends .mjs as a download
+
+const NAMES = {
+  'portal:BOSS_YELL': 'Boss roar (portal)', 'escape:ROAR': 'Escape roar', 'escape:BOSS': 'Boss footfall',
+  'escape:STEP#4': 'Chase beat (start)', 'escape:STEP#28': 'Chase beat (peak)', 'escape:ESCAPE': 'Dive through',
+  'escape:GOLD': 'Escape gold', 'intro:OVERTAKE': 'Intro horde rise', 'intro:TITLE_SLAM': 'Title slam',
+  'intro:FADE': 'Intro fade', 'portal:DISSOLVE': 'Portal shimmer', 'portal:WALK': 'Portal step',
+};
+const $ = (id) => document.getElementById(id);
+const levels = {};
+const state = { busy: false, an: null, anCtx: null, anNode: null, peakHold: -100 };
+window.__aud = { A, levels, ready: false, played: [], level: () => liveDb() };
+
+function setStatus(t) { $('status').textContent = t; }
+function fmt(x) { return (x > -100 ? x.toFixed(0) : '–'); }
+
+// ---- the analyser on the output (after the limiter in the new mix) ----
+function tap() {
+  const s = A.AUDIO_TEST.state();
+  if (!s.ctx) return null;
+  const node = (A.getMixMode() === 'new' && A.AUDIO_TEST.limiter().node) || s.master;
+  if (state.anCtx !== s.ctx || state.anNode !== node) {
+    state.an = s.ctx.createAnalyser(); state.an.fftSize = 2048;
+    node.connect(state.an); state.anCtx = s.ctx; state.anNode = node;
+  }
+  return state.an;
+}
+function liveDb() {
+  const an = tap(); if (!an) return -200;
+  const d = new Float32Array(an.fftSize); an.getFloatTimeDomainData(d);
+  let q = 0; for (const v of d) q += v * v;
+  return q > 0 ? 10 * Math.log10(q / d.length) : -200;
+}
+function meterLoop() {
+  const db = liveDb();
+  const w = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+  $('meterBar').style.width = w + '%';
+  $('meterBar').style.background = db > -6 ? 'var(--hot)' : A.getMixMode() === 'new' ? 'var(--new)' : 'var(--old)';
+  $('meterLbl').textContent = db > -100 ? db.toFixed(1) + ' dB' : '-- dB';
+  requestAnimationFrame(meterLoop);
+}
+
+// ---- playing ----
+function live() {
+  const c = A.init();   // a click is a user gesture: the context may start
+  return c;
+}
+function stopAll() {
+  const s = A.AUDIO_TEST.state();
+  A.stopMusic();
+  try { A.setMusicContext({ scene: 'none' }); } catch { /* ignore */ }
+  if (s.ctx && typeof s.ctx.close === 'function') { try { s.ctx.close(); } catch { /* ignore */ } }
+  S.restore(A);
+  state.anCtx = null;
+}
+function playOne(it) {
+  if (!window.__aud.ready) return;   // the offline measuring owns audio.js until then
+  const c = live(); if (!c) return;
+  const ok = S.playItem(A, it, c.currentTime + 0.03);
+  window.__aud.played.push(S.itemKey(it) + (ok ? '' : ' (held by its rate limit)'));
+}
+async function playFight(kind, withMusic) {
+  if (!window.__aud.ready) return;
+  stopAll();
+  const c = live(); if (!c) return;
+  if (withMusic) {
+    A.setMusicContext({ scene: 'run', stage: 'VERDANT_HOLLOW', wave: 3, runNo: 1 });
+    A.startMusic();
+    // Give the recorded track a moment to load; the synth plays meanwhile.
+    for (let i = 0; i < 40 && !(A.AUDIO_TEST.music() && A.AUDIO_TEST.music().cur && A.AUDIO_TEST.music().cur !== 'synth'); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      A.setMusicContext({ scene: 'run', stage: 'VERDANT_HOLLOW', wave: 3, runNo: 1 });
+    }
+  }
+  const t0 = c.currentTime + 0.1;
+  if (kind === 'worst') S.worstCase(A, t0); else S.busyFight(A, t0);
+  window.__aud.played.push(kind + (withMusic ? '+music' : ''));
+  if (withMusic) setTimeout(() => { if (A.AUDIO_TEST.state().ctx === c) A.stopMusic(); }, (S.FIGHT_SECONDS + 1) * 1000);
+}
+
+// ---- the mix switch ----
+function showMix() {
+  const m = A.getMixMode();
+  $('mixNew').setAttribute('aria-pressed', String(m === 'new'));
+  $('mixOld').setAttribute('aria-pressed', String(m === 'old'));
+}
+$('mixNew').onclick = () => { if (window.__aud.ready) { A.setMixMode('new'); showMix(); } };
+$('mixOld').onclick = () => { if (window.__aud.ready) { A.setMixMode('old'); showMix(); } };
+$('fight').onclick = () => playFight('fight', false);
+$('fightMusic').onclick = () => playFight('fight', true);
+$('worst').onclick = () => playFight('worst', false);
+$('stop').onclick = () => { if (window.__aud.ready) stopAll(); };
+
+// ---- the sound buttons ----
+function lvHtml(k) {
+  const l = levels[k];
+  if (!l) return '…';
+  return '<span class="n">' + fmt(l.new.momentaryLufs) + '</span> / <span class="o">' + fmt(l.old.momentaryLufs) + '</span>';
+}
+function build() {
+  const root = $('groups');
+  root.innerHTML = '';
+  for (const g of S.GROUPS) {
+    const h = document.createElement('h2'); h.textContent = g.label; root.appendChild(h);
+    const grid = document.createElement('div'); grid.className = 'grid'; root.appendChild(grid);
+    for (const it of g.items) {
+      const k = S.itemKey(it);
+      const b = document.createElement('button');
+      b.className = 'snd'; b.dataset.key = k;
+      b.innerHTML = '<b></b><span class="lv"></span>';
+      b.querySelector('b').textContent = NAMES[k] || k;
+      b.querySelector('.lv').innerHTML = lvHtml(k);
+      b.onclick = () => playOne(it);
+      grid.appendChild(b);
+    }
+  }
+}
+
+// ---- measure everything once, offline, in both mixes ----
+async function measureAll() {
+  build();
+  const t0 = performance.now();
+  for (const g of S.GROUPS) for (const it of g.items) {
+    const k = S.itemKey(it);
+    levels[k] = { old: S.measure(await S.render(A, { item: it }, 'old')), new: S.measure(await S.render(A, { item: it }, 'new')) };
+    const b = document.querySelector('[data-key="' + CSS.escape(k) + '"] .lv');
+    if (b) b.innerHTML = lvHtml(k);
+  }
+  const f = { old: S.measure(await S.render(A, { fight: true }, 'old')), new: S.measure(await S.render(A, { fight: true }, 'new')) };
+  const w = { old: S.measure(await S.render(A, { worst: true }, 'old')), new: S.measure(await S.render(A, { worst: true }, 'new')) };
+  levels.fight = f; levels.worst = w;
+  S.restore(A);
+  showMix();
+  $('fightLv').innerHTML = '<div>Busy fight: <span style="color:var(--new)">' + f.new.lufs + ' LUFS, peak ' + f.new.peakDb + ' dB</span> / '
+    + '<span style="color:var(--old)">' + f.old.lufs + ' LUFS, peak ' + f.old.peakDb + ' dB</span></div><div>Worst case peak: '
+    + '<span style="color:var(--new)">' + w.new.peakDb + '</span> / <span style="color:var(--old)">' + w.old.peakDb + '</span> dB (0 is clipping)</div>';
+  for (const id of ['fight', 'fightMusic', 'worst']) $(id).disabled = false;
+  setStatus('Ready. Measured in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s. Tap anything to listen.');
+  window.__aud.ready = true;
+}
+showMix();
+requestAnimationFrame(meterLoop);
+measureAll().catch((e) => { setStatus('Measuring failed: ' + e.message); console.error(e); });
+</script>
+</body>
+</html>

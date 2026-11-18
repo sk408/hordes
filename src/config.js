@@ -1202,6 +1202,35 @@ export const EVOLUTION_HP_FRAC = 0.15;
 //   STACK_FROM / _MULT   from its STACK_FROM-th copy on, a common stat card
 //                        counts STACK_MULT times: a stat plan pays, a scatter
 //                        of single copies does not
+// The run's kit (Steve, 2026-11-17, decision 7: the loadout lists the
+// weapons a run can offer, it does not hand them all out). A run starts with
+// the base volley and the loadout's first weapon (its START weapon). The
+// others come as NEW cards in level-up drafts while a weapon slot is free.
+//   WEIGHT     the NEW cards share this draft weight between them (a level-up
+//              card weighs 1, a common stat card 0.3)
+//   GAP        a draft that follows GAP - 1 drafts with no NEW card always
+//              holds one, so no run is starved of its kit
+//   AUTO_RANK  how the unattended auto-pick ranks a NEW card: above a RARE
+//              card (1) and a plain card (0), below a joker with room (2)
+//   FIRST      the run's first level-up draft always holds a NEW card (the
+//              guarantee counts as if GAP - 1 drafts had gone by)
+//   CATCH_UP   a NEW weapon joins at the level of the weakest weapon held
+//              (not below the start level, at most one short of the top)
+export const KIT_OFFER = {
+  WEIGHT: 3,
+  GAP: 3,
+  AUTO_RANK: 1.5,
+  FIRST: true,
+  CATCH_UP: true,
+  // A late weapon joins this many levels above the weakest weapon held
+  // (still at most one short of the top). Measured 2026-11-18: with 0 a
+  // progressed profile lost 10-16% survival against the old whole-kit start.
+  JOIN_ABOVE: 1,
+  // The run's first FREE NEW-card picks do not cost the level-up: the draft is
+  // dealt again without NEW cards, and the player takes a card from it too.
+  FREE: 1,
+};
+
 export const DRAFT_PLAN = {
   LEAD_LEVELS: 2,
   PARTNER_LEVELS: 1,

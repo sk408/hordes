@@ -34,6 +34,9 @@ st.sites = []; st.secrets = [];
 T.jokers.draftWeight = 0;
 for (const w of st.weapons) w.level = 1;   // no evolve offer after a pick
 h.storage.delete(TOUR_KEYS.draft);
+// R1: the coach card is only the fallback for a profile with no finished
+// run (a returning player never gets it), so this draft opens as one.
+T.getProfile().achievements.totals.runs = 0;
 
 S.check('setup: AUTO, auto-continue off, the draft coach not seen yet', () => {
   assert.equal(st.mode, 'playing');

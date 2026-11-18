@@ -132,9 +132,12 @@ const setup = () => {
   assert.strictEqual(playSfx('hit'), true);
   assert.strictEqual(theCtx.notes.filter(n => n.kind === 'noise').length, 1, 'hit = noise burst');
   theCtx.advance(1);
+  // R1 mix pass: the new hit adds a small body thump (one osc) under the noise.
+  const beforeShoot = theCtx.notes.filter(n => n.kind === 'osc').length;
+  assert.strictEqual(beforeShoot, 5, '4 arp + the hit thump');
   assert.strictEqual(playSfx('shoot'), true);
   const lastOsc = theCtx.notes.filter(n => n.kind === 'osc').length;
-  assert.strictEqual(lastOsc, 5, 'shoot = one more osc (4 arp + 1 blip)');
+  assert.strictEqual(lastOsc, beforeShoot + 1, 'shoot = one more osc (the blip)');
   console.log('ok: sfx voices schedule distinct waveforms');
 }
 

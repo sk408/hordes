@@ -140,6 +140,13 @@
     text-align: left; min-height: 0;
   }
   #overlay.draft.compact .card canvas.card-art { float: left; margin: 0 8px 2px 0 !important; }
+  /* LOADOUT on a phone: short rows, small art beside the name (main.js loadoutTight). */
+  #overlay.loadout-tight .card { padding: 6px 8px; text-align: left; }
+  #overlay.loadout-tight .card canvas.card-art { float: left; margin: 0 8px 0 0 !important; }
+  #overlay.loadout-tight .card .name { font-size: 13px; margin-bottom: 2px; letter-spacing: 0; }
+  #overlay.loadout-tight .card .name::before { content: none; }
+  #overlay.loadout-tight .card .desc { font-size: 11px; line-height: 1.2; }
+  @media (orientation: portrait) { #overlay.loadout-tight .card { width: 44vw; box-sizing: border-box; } }
   #overlay.draft.compact .card > div { overflow: hidden; }   /* text keeps its own column beside the art */
   #overlay.draft.compact .card .name { font-size: 12px; margin-bottom: 3px; letter-spacing: 0; }
   #overlay.draft.compact .card .name::before { content: none; }
@@ -202,6 +209,9 @@
     content: '\2023'; position: absolute; left: 8px; color: #c9a05a;
   }
   .card:hover .name::before { color: #ffd75e; }
+  /* the end card's "AUTO-CONTINUE: OFF" filled the row and ran into the caret
+     at 1280x720: no letter spacing gives it a clear gap like the other cards */
+  .card.endauto .name { letter-spacing: 0; }
   /* MENU KEYBOARD NAV (2026-09-19): the keyboard cursor must LOOK like the hover
      it stands in for, so the caret rule above is reused VERBATIM. The one
      addition is the outline, because a keyboard player has no pointer sitting on
@@ -498,6 +508,16 @@
   #overlay.end > .sub { font-size: 14px; color: #b8b8cc; line-height: 1.55; }
   #overlay.end > .sub br { line-height: 2.1; }
   #overlay.end > .cards { margin-top: 6px; }
+  /* A short landscape screen (a phone on its side) keeps the end card's row in
+     one line: RETRY, SHOP, AUTO-CONTINUE, TITLE and the win's PRESTIGE. Five
+     phone-width cards wrapped PRESTIGE below the bottom edge at 844x390. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #overlay.end { gap: 10px; }
+    #overlay.end .cards { gap: 8px; }   /* 5 x 17.5vw + 4 gaps fits any landscape width */
+    #overlay.end .card { box-sizing: border-box; width: min(17.5vw, 160px); padding: 8px 6px; }
+    #overlay.end .card .name { margin-bottom: 4px; }
+    #overlay.end .card .desc { font-size: 11px; line-height: 1.3; }
+  }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
      staged spotlight walkthrough. #tour-root is appended to <body> (above

@@ -157,16 +157,16 @@ S.check('a rerolled or banished joker offer keeps its reason; the next offer sho
   T.jokers.queueOffer('quest done');
   T.jokers.openOffer();
   assert.equal(st.draftKind, 'joker');
-  assert.match(sub(), /^the vault is open: /);
+  assert.match(sub(), /^the vault is open · Pick 1: /);
   h.key('keydown', { key: 'r' });
   assert.equal(T.draftActions.charges.reroll, 0);
-  assert.match(sub(), /^the vault is open: /, 'after a reroll');
+  assert.match(sub(), /^the vault is open · Pick 1: /, 'after a reroll');
   h.key('keydown', { key: 'b' }); h.key('keydown', { key: '1' });
   assert.equal(T.draftActions.charges.banish, 0);
-  assert.match(sub(), /^the vault is open: /, 'after a banish');
+  assert.match(sub(), /^the vault is open · Pick 1: /, 'after a banish');
   cards()[0].click();
   assert.equal(st.draftKind, 'joker');
-  assert.match(sub(), /^quest done: /);
+  assert.match(sub(), /^quest done · Pick 1: /);
   finish();
   assert.equal(st.mode, 'playing');
   assert.equal(st.pendingDrafts, 0);
@@ -182,7 +182,7 @@ S.check('a joker offer with nothing to offer takes its reason with it', () => {
   T.jokers.queueOffer('quest done');
   T.jokers.openOffer();
   assert.equal(st.draftKind, 'joker');
-  assert.match(sub(), /^quest done: /);
+  assert.match(sub(), /^quest done · Pick 1: /);
   finish();
 });
 
@@ -192,7 +192,7 @@ S.check('a joker reason left from the last run does not label the next one', () 
   start({});
   T.jokers.queueOffer();                           // a boss offer
   T.jokers.openOffer();
-  assert.match(sub(), /^the boss is down: /);
+  assert.match(sub(), /^the boss is down · Pick 1: /);
   finish();
 });
 

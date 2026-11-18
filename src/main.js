@@ -1,6 +1,6 @@
 // HORDES — auto-playing survivors-like. Entry point & game loop.
 import {
-  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC, DRAFT_PLAN,
+  CONFIG as C, UPGRADES, runBase, DRAFT_ACTIONS, EVOLUTION_HP_FRAC, DRAFT_PLAN, KIT_OFFER,
   DRAFT_LADDER, DRAFT_RARE_UPGRADES,
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
@@ -1027,6 +1027,10 @@ const state = {
   mapOpen: false,
   fuseDeclined: new Set(),  // fusion ids deferred with NOT NOW (cleared by the next draft pick)
   fusionsMade: 0,    // fusions taken this run
+  runKit: [],        // the loadout this run can offer (the first one started it)
+  kitDry: 0,         // level-up drafts in a row with no NEW kit card on offer
+  kitFreeUsed: 0,    // free NEW-card picks used this run (KIT_OFFER.FREE)
+  kitRedeal: false,  // this draft is the deal again after a free NEW card
   fusionRefills: 0,  // freed slots already refilled with a new weapon
   // ---- WAVE-26 (earned slow-mo + glow / stance feedback) ----
   timeScale: 1,      // sim time scale (1 = normal); render/HUD read this
@@ -1438,8 +1442,9 @@ function onVisibilityChange() {
       try { location.reload(); return; } catch { /* headless */ }
     } else claimTab();
     if (stepped > bgFramesAtHide && state.mode === 'playing') tut.due.push('bgplay');
-    // startMusic keeps a muted player muted.
-    if (runLive()) audio.startMusic(); else audio.stopMusic();
+    // startMusic keeps a muted player muted. resume: the synth song carries on
+    // where it stopped, not from bar 1 (the recorded beds keep their place too).
+    if (runLive()) audio.startMusic({ resume: true }); else audio.stopMusic();
   }
 }
 try {
@@ -3031,7 +3036,8 @@ function buyPaidChest(tier) {
     if (dev) dev.chests.push({ tier, cost, result: 'empty' });
     interMsg = 'THE CHEST WAS EMPTY... ' + res.debited + ' gold gone';
   }
-  audio.playSfx('chest');
+  // An empty chest sounds like a let-down, not the reward (R1).
+  audio.playSfx(res.gambled === 'item' && res.item ? 'chest' : 'chestEmpty');
   openIntermission();   // re-render: gold balance + dim states refresh
 }
 
@@ -4537,7 +4543,8 @@ function update(dt) {
     if (ev.kind === 'chestOpened') {
       toast('CHEST OPENED: ' + ev.rarity.toUpperCase(),
         RARITY_TINTS[ev.rarity.toUpperCase()] || null);   // WAVE-14 feed tint
-      audio.playSfx('chest');
+      // A lost gamble is empty: the let-down, not the reward (R1).
+      audio.playSfx(ev.empty ? 'chestEmpty' : 'chest');
       // PALADIN bless: heal on chest open. G19: the per-level Blessed Chests
       // row rides stats.healOnChest (stamped by applyCharacterUpgrades at the
       // run seam); every character without the row has no key, so the def
@@ -4849,7 +4856,7 @@ function openDraft() {
   // A boss kill queues a joker offer; it opens ahead of any level-up draft.
   if (!state.draftKind) state.draftKind = state.shrineOffer ? 'shrine' : state.jokerOffers > 0 ? 'joker' : 'level';
   if (state.draftKind === 'shrine') {
-    presentDraft(state.shrineOffer, 'SHRINE', 'the shrine is charged: take 1 blessing');
+    presentDraft(state.shrineOffer, 'SHRINE', 'the shrine is charged');
     return;
   }
   if (state.draftKind === 'joker') {
@@ -4863,8 +4870,8 @@ function openDraft() {
     if (offer.length) {
       const why = state.draftWhy;
       presentDraft(offer, 'JOKER', jokerRowFull(state)
-        ? why + ': take 1 joker, and choose which one it replaces'
-        : why + ': take 1 joker');
+        ? why + ': row full, then choose which one it replaces'
+        : why);
       return;
     }
     // Every joker is held: nothing to offer, and its reason goes with it.
@@ -4874,14 +4881,12 @@ function openDraft() {
     if (--state.pendingDrafts <= 0) { state.pendingDrafts = 0; state.mode = 'playing'; return; }
     state.draftKind = 'level';
   }
-  // Weapon-scoped pool (megabonk rework), G26 RE-SCOPED (owner 2026-09-15:
-  // "Player chosen weapons in a menu, not during run... Replaces in run
-  // cards"): there are NO wpn_* grant offers any more — the run never hands
-  // you a weapon you did not bring. What starts in state.weapons (startRun:
-  // the pre-run LOADOUT choice, or the default kit) is what the whole run
-  // carries, so the weapon side of the pool is LEVEL-UP cards for exactly the
-  // brought kit (+ the base volley). Global stat cards keep their weights, so
-  // the draft still reads weapon-tilted while a draft lasts.
+  // Weapon-scoped pool (megabonk rework). Decision 7 (Steve, 2026-11-17):
+  // the LOADOUT lists the weapons a run can offer. The run starts with the
+  // first one; the others come as NEW cards (kitNew) while a slot is free.
+  // The rest of the weapon side is LEVEL-UP cards for the weapons held (+ the
+  // base volley). The run never offers a weapon outside its loadout, except
+  // the refill of a slot a fusion freed.
   const weaponCards = [];
   // Level-up cards for every owned weapon below the cap (VOLLEY included —
   // its instance rides in state.weapons but never takes a slot).
@@ -4927,13 +4932,49 @@ function openDraft() {
       apply: () => { for (let i = 0; i < gain; i++) levelUpWeapon(w); },
     });
   }
+  // The loadout's other weapons: one NEW card each while a slot is free.
+  // A weapon joins at the level the run's weapons started at (mastery).
+  const refillsLeft = (state.fusionsMade || 0) - (state.fusionRefills || 0);
+  const openSlots = kitOpenSlots();
+  // The deal again after a free NEW card holds no NEW card (and no refill).
+  // The guided run's drafts hold none either: its lessons are the first
+  // run's. The first draft after the handover gets the NEW card instead
+  // (kitDry is left as it was).
+  const pending = (openSlots > 0 && !state.kitRedeal && !tutGuidedLive()) ? kitPending() : [];
+  const kitFree = (state.kitFreeUsed || 0) < KIT_OFFER.FREE;
+  for (const t of pending) {
+    const joinLv = kitJoinLevel();
+    const preview = { type: t, level: joinLv };
+    weaponCards.push({
+      id: 'wpn_' + t,
+      name: 'NEW: ' + WEAPON_NAMES[t],
+      desc: (WEAPON_BLURBS[t] || '') + ' · from your loadout, joins at Lv ' + joinLv + (kitFree ? ' · FREE: then pick again' : ''),
+      leadText: '',
+      evoText: evoLine(preview, joinLv),
+      evoReady: false,
+      fuseText: fusionRoadText(preview, [...state.weapons, preview]),
+      kitNew: true,
+      apply: () => {
+        // A card that counts twice (ENCORE) runs this again. By then the
+        // weapon is held: the second run gives it a level, never a copy,
+        // and stops one short of the top like catch-up does.
+        const held = state.weapons.find(x => x.type === t);
+        if (held) {
+          if ((held.level || 1) < WEAPON_MAX_LEVEL - 1) levelUpWeapon(held);
+          return;
+        }
+        const w = makeWeapon(t);
+        w.level = joinLv;
+        state.weapons.push(w);
+        toast('NEW WEAPON: ' + WEAPON_NAMES[t].toUpperCase());
+      },
+    });
+  }
   // A slot freed by a fusion is refilled from the draft: one NEW card per
   // weapon the profile owns that the kit does not hold (any weapon when it
-  // owns no spare). The new weapon joins part-levelled.
-  const refillsLeft = (state.fusionsMade || 0) - (state.fusionRefills || 0);
-  const openSlots = (state.weaponSlots || C.WEAPON_SLOTS) - 1 -
-    state.weapons.filter(w => w.type !== 'VOLLEY').length;
-  if (refillsLeft > 0 && openSlots > 0) {
+  // owns no spare). The new weapon joins part-levelled. While the loadout
+  // still has weapons to offer, the free slot is theirs (the cards above).
+  if (refillsLeft > 0 && openSlots > 0 && !pending.length && !state.kitRedeal) {
     const have = new Set(kitWeapons(state.weapons).map(w => w.type));
     const spare = Object.keys(WEAPON_TYPES).filter(t => !have.has(t));
     const ownedSpare = spare.filter(t => weaponUnlocked(profile, t));
@@ -4951,6 +4992,9 @@ function openDraft() {
         fuseText: fusionRoadText(preview, [...state.weapons, preview]),
         refill: true,
         apply: () => {
+          // Run twice (ENCORE): the second run is a level, not a copy.
+          const held = state.weapons.find(x => x.type === t);
+          if (held) { levelUpWeapon(held); return; }
           const w = makeWeapon(t);
           w.level = joinLv;
           state.weapons.push(w);
@@ -4979,8 +5023,10 @@ function openDraft() {
     return { ...u, evoText, evoReady: ready, partnerBoost: PARTNER_WEIGHT_MULT, stackText };
   };
   const pool = [
-    // Level-up cards weigh 1 each; the NEW cards share REFILL_WEIGHT between them.
-    ...weaponCards.map(c => ({ ...c, weight: c.refill ? REFILL_WEIGHT / weaponCards.filter(x => x.refill).length : 1 })),
+    // Level-up cards weigh 1 each; the refill NEW cards share REFILL_WEIGHT
+    // between them, the loadout's NEW cards KIT_OFFER.WEIGHT.
+    ...weaponCards.map(c => ({ ...c, weight: c.refill ? REFILL_WEIGHT / weaponCards.filter(x => x.refill).length
+      : c.kitNew ? KIT_OFFER.WEIGHT / pending.length : 1 })),
     // G8 step 1: the stat family carries its rarity weight (meta.js
     // draftCardWeight) so Fortune shifts the DRAFT, not just world drops.
     // At luck 0 every one of these is exactly 0.3 — the shipped pool.
@@ -5032,6 +5078,16 @@ function openDraft() {
     for (let i = 0; i < drawPool.length; i++) { if ((r -= drawPool[i].weight) < 0) { idx = i; break; } }
     choices.push(drawPool.splice(idx, 1)[0]);
   }
+  // The kit guarantee: after GAP - 1 drafts with no NEW card, this one holds
+  // one (in the last place), so a run always reaches its loadout.
+  const kitLeft = drawPool.filter(c => c.kitNew);
+  if (choices.some(c => c.kitNew)) state.kitDry = 0;
+  else if (kitLeft.length) {
+    if ((state.kitDry || 0) + 1 >= KIT_OFFER.GAP && choices.length) {
+      choices[choices.length - 1] = kitLeft[Math.floor(Math.random() * kitLeft.length)];
+      state.kitDry = 0;
+    } else state.kitDry = (state.kitDry || 0) + 1;
+  }
   // A card that would make a new or better hand says so (hands.js).
   for (const c of choices) {
     const hint = handHint(state.player, c.id, runHandOpts());
@@ -5040,7 +5096,77 @@ function openDraft() {
   // A beaten boss rule's free card is a draft without the level.
   const freeCard = state.ruleCards > 0;
   presentDraft(choices, freeCard ? 'FREE CARD' : 'LEVEL ' + state.player.level,
-    (freeCard ? 'the rule is beaten: ' : '') + 'pick 1 of ' + choices.length);
+    state.kitRedeal ? 'the NEW weapon was free' : freeCard ? 'the rule is beaten' : '');
+}
+
+// The header line under a pick screen's title says how to pick, for everyone:
+// "Pick 1: click or press 1/2/3", or "Pick 1: tap a card" on a touch screen.
+// `n` is the number of cards a digit key reaches on that screen, so the keys
+// it names always work. `lead` (the reason for the offer) goes in front.
+function pickHowText(n) {
+  if (isTouchPath()) return 'Pick 1: tap a card';
+  const k = Math.max(1, n | 0);
+  const keys = k <= 4 ? Array.from({ length: k }, (_, i) => i + 1).join('/') : '1-' + k;
+  return 'Pick 1: click or press ' + keys;
+}
+function pickHeader(lead, n) {
+  return (lead ? lead + ' · ' : '') + pickHowText(n);
+}
+// The header line can sit level with the HUD's top corners, which the canvas
+// paints under the overlay: the gold box on the left, the quest tracker and
+// clock on the right (at 844x390 a joker swap header ran over both). When it
+// does, move the whole pick screen down until the line clears them, as far
+// as the room under the cards allows. Called once the cards are on the overlay.
+function fitDraftHeader() {
+  if (typeof ovSub.getBoundingClientRect !== 'function' || typeof canvas.getBoundingClientRect !== 'function') return;
+  if (typeof overlay.getBoundingClientRect !== 'function') return;
+  const ch = renderer.hudChrome;
+  if (!ch) return;
+  const cr = canvas.getBoundingClientRect();
+  if (!cr.width || !cr.height) return;
+  const sx = cr.width / C.VIEW_W, sy = cr.height / C.VIEW_H;
+  const boxes = [ch.bars, ch.purse, ch.clock, ch.quests, ch.rule, ch.auto].filter(b => b && b.w > 0 && b.h > 0)
+    .map(b => ({ l: cr.left + b.x * sx, r: cr.left + (b.x + b.w) * sx, t: cr.top + b.y * sy, b: cr.top + (b.y + b.h) * sy }));
+  if (!boxes.length) return;
+  // How far the line must drop to clear every box it runs into.
+  const need = () => {
+    const r = ovSub.getBoundingClientRect();
+    if (!r.width || !r.height) return 0;
+    let d = 0;
+    for (const b of boxes) {
+      if (b.l < r.right && r.left < b.r && b.t < r.bottom && r.top < b.b) d = Math.max(d, b.b + 4 - r.top);
+    }
+    return d;
+  };
+  let d = need();
+  if (d <= 0) return;
+  // The room under the lowest part of the screen (the cards or the action row).
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 0;
+  let low = 0;
+  for (const e of [ovCards, draftActionsEl]) {
+    if (e && e.isConnected !== false && typeof e.getBoundingClientRect === 'function') low = Math.max(low, e.getBoundingClientRect().bottom);
+  }
+  const room = vh - 4 - low;
+  if (room < 1) return;
+  // On a short screen (compact layout) the HUD is one thin band, so part of
+  // the way still helps. On a tall one its rows stack (HP, MP, XP): stopping
+  // part way only puts the line over the next row, so move all the way or not.
+  if (d > room && !(overlay.classList && overlay.classList.contains('compact'))) return;
+  d = Math.min(d, room);
+  // Pin the screen's top where it is now, then lower it by d. Padding is in
+  // layout px; the rects are painted at the interface scale.
+  const top = Math.min(...[ovTitle, ovSub].map(e => e.getBoundingClientRect())
+    .filter(r => r.height > 0).map(r => r.top));
+  const or = overlay.getBoundingClientRect();
+  const pad = (top - or.top + d) / (uiScaleNow || 1);
+  overlay.style.justifyContent = 'flex-start';
+  overlay.style.paddingTop = Math.max(0, Math.round(pad)) + 'px';
+  // Margins and borders above the first line shift the result a little:
+  // measure once more and correct by what is left.
+  const left = Math.min(need(), vh - 4 - Math.max(...[ovCards, draftActionsEl]
+    .filter(e => e && e.isConnected !== false && typeof e.getBoundingClientRect === 'function')
+    .map(e => e.getBoundingClientRect().bottom)));
+  if (left >= 1) overlay.style.paddingTop = Math.round(pad + left / (uiScaleNow || 1)) + 'px';
 }
 
 // Put a set of offer cards on the draft overlay: level-up cards, a boss's
@@ -5058,7 +5184,11 @@ function presentDraft(choices, title, sub, opts = {}) {
     });
   }
   ovTitle.textContent = title;
-  ovSub.textContent = sub;
+  // The digit keys reach cards 1-6 on a draft (see the keydown routing).
+  // The guided run's first draft belongs to its DRAFT step, whose panel asks
+  // for NEXT: a header naming the keys there would skip the EVOLVE lesson.
+  ovSub.textContent = tutOwnsDraftHeader() ? 'pick 1 of ' + choices.length
+    : pickHeader(sub, Math.min(choices.length, 6));
   draftFocus = -1;
   ovCards.innerHTML = '';
   const lay = setDraftOverlay(true, choices.length);
@@ -5118,11 +5248,16 @@ function presentDraft(choices, title, sub, opts = {}) {
     frameCard(el);
   });
   overlay.style.display = 'flex';
-  // The one coach card left: a first level-up with no tutorial behind it (a
-  // returning profile, or after REPLAY TOUR cleared the flags) gets one line.
-  // The first-run tutorial teaches the draft itself and marks this seen. A
-  // hidden tab waits for a draft the player can see.
-  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !bgHidden && !tourFlag(TOUR_KEYS.draft)) {
+  // The one coach card left: the first level-up of a profile that has never
+  // finished a run and has no tutorial behind it (the guided run is switched
+  // off) gets one line. The first-run tutorial teaches the draft itself and
+  // marks this seen. A player with past runs never gets it: the header line
+  // above already says how to pick, and the card's dark shade hid the cards
+  // of every profile from before the tutorial (its flag lives outside the
+  // save, so only a finished-run count can tell a returning player). A hidden
+  // tab waits for a draft the player can see.
+  if (!opts.swap && state.draftKind === 'level' && !state.prologue && !bgHidden &&
+      runsFinished() === 0 && !tourFlag(TOUR_KEYS.draft)) {
     startCoach({ id: 'draft',
       text: 'THE DRAFT: every level, pick 1 card. Click one or press 1 / 2 / 3.',
       target: () => ovCards.children[0] || ovCards }, TOUR_KEYS.draft);
@@ -5131,6 +5266,7 @@ function presentDraft(choices, title, sub, opts = {}) {
   // G30: every presented draft re-arms the AUTO countdown (the coach above
   // suspends it until dismissed — tickDraftAutoPick).
   armDraftAutoPick(choices);
+  fitDraftHeader();
 }
 
 // ---------- DRAFT ACTIONS: REROLL / SKIP / BANISH -----------------------------
@@ -5245,6 +5381,7 @@ function draftBanish(u) {
 // The draft is resolved (a card was taken, or it was skipped with u = null):
 // open the next queued draft, or hand the screen back to the run.
 function closeDraft(u) {
+  state.kitRedeal = false;
   state.pendingDrafts--;
   if (state.draftKind === 'joker') state.jokerOffers = Math.max(0, (state.jokerOffers || 0) - 1);
   if (state.draftKind === 'shrine') state.shrineOffer = null;
@@ -5343,6 +5480,30 @@ function volleyAtProjCap() {
   const w = state.weapons.find(x => x.type === 'VOLLEY');
   const proj = weaponLevelParams('VOLLEY', w ? w.level : 1).proj || 0;
   return (state.player.stats.projectiles || 0) + proj >= volleyProjectileCap(state.player.stats);
+}
+
+// The run's kit (decision 7): the loadout weapons this run has not got yet,
+// in loadout order. A weapon riding a fusion counts as held.
+function kitPending() {
+  const have = new Set(kitWeapons(state.weapons || []).map(w => w.type));
+  // A banished NEW card is gone for the run: it is not to come any more,
+  // so it does not hold back the fusion refill.
+  const banned = state.draftBanned;
+  return (state.runKit || []).filter(t => WEAPON_TYPES[t] && !have.has(t) && !(banned && banned.has('wpn_' + t)));
+}
+// Weapon slots still free this run (the base volley takes slot 1).
+function kitOpenSlots() {
+  return (state.weaponSlots || C.WEAPON_SLOTS) - 1 - (state.weapons || []).filter(w => w.type !== 'VOLLEY').length;
+}
+// A NEW weapon joins KIT_OFFER.JOIN_ABOVE levels above the weakest weapon
+// held (the volley aside), so a late arrival is not dead weight; never below
+// the level the run's weapons started at, and one short of the top so it still
+// has a level to earn before it evolves (KIT_OFFER.CATCH_UP; off: the start level).
+function kitJoinLevel() {
+  const start = Math.min(WEAPON_MAX_LEVEL, 1 + masteryStartLevels(profile));
+  if (!KIT_OFFER.CATCH_UP) return start;
+  const held = (state.weapons || []).filter(w => w.type !== 'VOLLEY').map(w => w.level || 1);
+  return held.length ? Math.max(start, Math.min(WEAPON_MAX_LEVEL - 1, Math.min(...held) + KIT_OFFER.JOIN_ABOVE)) : start;
 }
 
 // The kit's LEAD weapon: the highest-level weapon still on the road to its
@@ -5557,7 +5718,8 @@ function pick(u) {
         else u.apply(p);   // the card's apply is exactly one levelUpWeapon call
       } else if (u.id.startsWith('wpn_')) {
         const granted = state.weapons[state.weapons.length - 1];
-        if (granted) levelUpWeapon(granted);
+        // A loadout weapon keeps one level to earn before it evolves.
+        if (granted && !(u.kitNew && (granted.level || 1) >= WEAPON_MAX_LEVEL - 1)) levelUpWeapon(granted);
       }
     }
   }
@@ -5577,6 +5739,17 @@ function pick(u) {
   // A level-up or a partner card may have completed an evolution: a declined
   // offer is re-opened by the next pick.
   reopenForgeOffers();
+  // KIT_OFFER.FREE: the run's first NEW weapon does not cost the level-up.
+  // The draft is dealt again without NEW cards and the player takes one more.
+  if (u.kitNew && state.mode === 'draft' && (state.kitFreeUsed || 0) < KIT_OFFER.FREE) {
+    state.kitFreeUsed = (state.kitFreeUsed || 0) + 1;
+    state.kitRedeal = true;
+    // The NEW-card hint pointed at the card just taken: the deal again holds
+    // no NEW card, so the hint goes with it.
+    if (tut.hints.active && tut.hints.active.id === 'newweapon') tut.hints.active = null;
+    openDraft();
+    return;
+  }
   closeDraft(u);
 }
 
@@ -5694,6 +5867,9 @@ function draftObstructed() {
   if (coachActive() && !state.unattended && !bgRuns()) return true;
   if (tutGuidedLive()) return true;   // the tutorial's idle rule picks instead
   if (bgRuns()) return false;          // background play picks on the same countdown
+  // A first-time hint is being read: the countdown waits for GOT IT (or the
+  // hint's own idle close). Unattended runs never raise one.
+  if (tut.hints.active && !state.unattended) return true;
   try { return !!(typeof document !== 'undefined' && document && document.hidden); }
   catch { return false; }
 }
@@ -5864,8 +6040,80 @@ function toggleAutoContinue() {
   audio.playSfx(state.autoContinue ? 'uiConfirm' : 'uiMove');
 }
 // The end card of an unattended run: count down to the next run.
+// It waits while the tutorial still owes its menu steps (see tutOwesMenuSteps).
 function armAutoRestart() {
+  if (!state.devNightRun && tutOwesMenuSteps()) return;
   if (state.unattended && !pilotMovesYou()) autoRestartLeft = C.AUTOPILOT.AUTO_RESTART_S;
+}
+// A run ended (death or 30:00). AUTO-CONTINUE turned on in Settings during a
+// run the player started left that run theirs: it paid as it started and its
+// movie played. Its end card still says ON, so it counts down to the next run
+// the way the setting says, as if the card had been pressed.
+function armRunEndAuto() {
+  if (state.autoContinue && !state.unattended && !state.devNightRun && !tutOwesMenuSteps() &&
+      normalizePilotMode(loadPilotPref()) !== 'MANUAL') {
+    state.unattended = true;
+    autoStall = { mode: null, t: 0 };
+  }
+  armAutoRestart();
+}
+// R1: the end card offers AUTO-CONTINUE where players look for it ("Runs don't
+// auto-restart; I have to babysit it"). One card, after RETRY and SHOP, with the
+// same rules as the Settings card. Turned on here, this card counts down to
+// the next run like an unattended run's card; an input still holds it 30 s.
+let endAutoCardEl = null;
+function endAutoState() {
+  if (state.devNightRun) {
+    return { name: 'AUTO-CONTINUE: DEV NIGHT', desc: 'dev night runs go on by themselves', dim: true };
+  }
+  if (normalizePilotMode(loadPilotPref()) === 'MANUAL') {
+    return { name: 'AUTO-CONTINUE', desc: 'needs the AUTO pilot (Settings, ADVANCED, PILOT)', dim: true };
+  }
+  // A new player's first end cards lead to the SHOP: the card waits for that.
+  if (tutOwesMenuSteps()) {
+    return { name: 'AUTO-CONTINUE', desc: 'comes on after your first SHOP visit', dim: true };
+  }
+  if (!state.autoContinue) {
+    return { name: 'AUTO-CONTINUE: OFF', desc: 'start the next run by itself (' + AUTO_PAY_TEXT + ')', dim: false };
+  }
+  // On but not counting (a deliberate END RUN): one press starts the countdown.
+  if (autoRestartLeft === null || !state.unattended) {
+    return { name: 'AUTO-CONTINUE: ON', desc: 'Press to start the next run by itself', dim: false };
+  }
+  return { name: 'AUTO-CONTINUE: ON',
+    desc: 'next run in ' + Math.max(0, Math.ceil(autoRestartLeft)) + 's. Press to turn off', dim: false };
+}
+// The card's press (click, tap, or Enter on the cursor). It has no letter key:
+// A is a steering key (WASD), and one stray tap of it on the end card must
+// not save the setting and start a run nobody asked for.
+function endAutoPress() {
+  if (state.mode !== 'dead' || endAutoState().dim) return;
+  if (state.autoContinue && autoRestartLeft !== null && state.unattended) {
+    setAutoContinue(false);   // stops the countdown at once
+  } else {
+    setAutoContinue(true);
+    // The card counts down the way an unattended run's card does.
+    state.unattended = true;
+    autoStall = { mode: null, t: 0 };
+    armAutoRestart();
+  }
+  paintEndAutoCard();
+}
+// Rewritten only when the words change (once a second while counting), and
+// only the text inside the card, so a press in progress keeps its target.
+function paintEndAutoCard() {
+  const el = endAutoCardEl;
+  if (!el || state.mode !== 'dead') return;
+  const s = endAutoState();
+  const key = s.name + '|' + s.desc;
+  if (el._autoKey === key) return;
+  el._autoKey = key;
+  const n = el.querySelector && el.querySelector('.name');
+  const d = el.querySelector && el.querySelector('.desc');
+  if (n && d) { n.textContent = s.name; d.textContent = s.desc; }
+  else el.innerHTML = `<div class="name">${s.name}</div><div class="desc">${s.desc}</div>`;
+  // SKIP TUTORIAL on the end card's panel frees the card at once.
+  el.className = String(el.className || '').replace(/\s*\bdim\b/g, '') + (s.dim ? ' dim' : '');
 }
 // The countdown ran out: the next run, or the title once the run limit is reached.
 function autoRestart() {
@@ -6033,7 +6281,10 @@ function awayFrame(realDt) {
 
 export function autoDraftPickIndex(offers) {
   // A joker is the top pick while the row has room; with a full row it is the last.
-  const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.tier === 'RARE') ? 1 : 0;
+  // A NEW weapon from the loadout ranks above a RARE card: an unattended run
+  // fills the kit its player chose (KIT_OFFER.AUTO_RANK).
+  const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.kitNew) ? KIT_OFFER.AUTO_RANK
+    : (u && u.tier === 'RARE') ? 1 : 0;
   let best = -1;
   for (let i = 0; i < offers.length; i++) {
     if (best < 0 || rank(offers[i]) > rank(offers[best])) best = i;
@@ -6056,6 +6307,7 @@ function tickAutoContinue(realDt) {
       autoRestart();
     }
   }
+  if (state.mode === 'dead') paintEndAutoCard();
   if (autoEvolveLeft !== null && state.mode === 'evolve') {
     autoEvolveLeft -= realDt;
     if (autoEvolveLeft <= 0) {
@@ -6283,8 +6535,9 @@ function maybeOpenEvolve() {
   const fusing = offers.every(o => o.kind === 'fuse');
   ovTitle.textContent = fusing ? 'FUSION' : 'EVOLUTION';
   ovTitle.className = 'logo';
-  ovSub.textContent = fusing ? 'two evolved weapons become one, and a weapon slot comes free'
-    : 'a maxed weapon and its partner card';
+  // The digit keys reach the offers and NOT NOW, up to 4 (see the keydown routing).
+  ovSub.textContent = pickHeader(fusing ? 'two evolved weapons become one, and a weapon slot comes free'
+    : 'a maxed weapon and its partner card', Math.min(offers.length + 1, 4));
   ovCards.innerHTML = '';
   // Each card is labelled with its own position: the number keys route 1-4 to
   // ovCards.children[n-1].
@@ -6340,6 +6593,7 @@ function maybeOpenEvolve() {
   // AUTO-PICK switches; OFF holds it).
   armEvolveAutoPick();
   updateDraftCountdownLine();
+  fitDraftHeader();
   // The offer set (the taken entry — or 'deferred' — fills in when it resolves).
   if (dev) dev.evolutions.push({ offered: offers.map(o => (o.kind === 'fuse' ? 'fuse:' + o.def.id : o.w.type)), taken: null });
 }
@@ -6861,7 +7115,8 @@ function runSurvived() {
       `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
       () => prestigeAscend());
   }
-  armAutoRestart();
+  armRunEndAuto();
+  paintEndAutoCard();
 }
 
 // Every end screen (death, the 30:00 win, END RUN) is composed here. RETRY is
@@ -6881,6 +7136,12 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
   ovCards.innerHTML = '';
   menuCard('RETRY', 'play again [R]', () => startRun());
   menuCard('SHOP', 'spend your gold', () => showShop());
+  // R1: AUTO-CONTINUE after SHOP, so the first death still leads to the shop.
+  const ea = endAutoState();
+  endAutoCardEl = menuCard(ea.name, ea.desc, endAutoPress, ea.dim);
+  endAutoCardEl._autoKey = ea.name + '|' + ea.desc;
+  // Its long name gets room clear of the corner caret (index.html .endauto).
+  if (endAutoCardEl.classList) endAutoCardEl.classList.add('endauto');
   menuCard('TITLE', 'back to the menu [T]', () => showTitle());
   // The summary owns the overlay: nothing of the screen the run started from
   // may ride in. A run that ended before any other menu opened (a quick first
@@ -7006,6 +7267,9 @@ function die(finale) {
   // deathBy, and never recomposes the card.
   overlay.style.display = 'none';
   startDeathCine();
+  // After the movie's start: a run the player started keeps its death movie.
+  armRunEndAuto();
+  paintEndAutoCard();
 }
 
 // ---------- WAVE-12: text-HUD toggle (persisted, audio.js storage shim) ------
@@ -7244,6 +7508,7 @@ function manualGoto(page) {
       refRow('From wave ' + BOSS_RULE_FIRST_WAVE + ' each wave boss brings a rule for its fight. Beat the boss to win the reward on its banner', 'BOSS RULES') +
       refRow('The horde answers your build: each item slot you fill and each weapon you evolve makes enemies tougher', 'WRATH') +
       refRow('After waves 2 and 4 the portal leads on to another stage: new ground and fresh sites, same build. STAY HERE keeps the field', 'TRAVEL') +
+      refRow('A run starts with the first weapon of your LOADOUT. The others come as NEW cards in drafts; the first is a free pick', 'LOADOUT') +
       refRow('A weapon at Lv ' + WEAPON_MAX_LEVEL + ' holding its partner card evolves into a stronger one', 'EVOLVE') +
       refRow('Two evolved weapons with a matching pair fuse into one, freeing a slot', 'FUSE') +
       refSub('WHILE YOU ARE AWAY') +
@@ -7453,7 +7718,9 @@ function menuCard(name, sub, onclick, dim, deferFrame = false) {
     // HELP MODE: an overlay-card tap explains the card, never presses it.
     if (state.helpMode) { showHelpTip('<b>' + name + '</b> — ' + (sub || ''), el); return; }
     noteInput();
-    audio.playSfx(dim ? 'uiDeny' : state.mode === 'draft' ? 'draftPick' : 'uiConfirm'); onclick();
+    // Read live: the end card's AUTO-CONTINUE can stop being dim while it is up.
+    const dimNow = /\bdim\b/.test(String(el.className || ''));
+    audio.playSfx(dimNow ? 'uiDeny' : state.mode === 'draft' ? 'draftPick' : 'uiConfirm'); onclick();
   };
   ovCards.appendChild(el);
   // SHOP-LATENCY: big screens pass deferFrame and frame the whole list AFTER
@@ -7650,8 +7917,8 @@ function openMenu(mode = 'menu') {
   // (class-list-less DOM stubs keep a plain className string — same state.)
   // 'end' (the end-of-run summary's panel styling) gets the same reset — no
   // menu may inherit the summary's spacing/scrim.
-  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact'].includes(c)).join(' ');
+  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact', 'loadout-tight');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact', 'loadout-tight'].includes(c)).join(' ');
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which
@@ -7667,10 +7934,7 @@ function openMenu(mode = 'menu') {
   // from the title is NOT a dismiss — the element goes, nothing is persisted
   // (the note returns next launch until actually dismissed; whatsNewTried
   // already keeps this page load quiet).
-  for (const e of [...(overlay.children || [])]) {
-    if (e && e.classList && e.classList.contains('wn-over')) e.remove();
-    else if (e && typeof e.className === 'string' && /\bwn-over\b/.test(e.className) && e.remove) e.remove();
-  }
+  clearWhatsNewNote();
   // G9: the TROPHY GALLERY is the one screen that wants the canvas art visible
   // behind the cards, so it sets these two inline overrides AFTER calling this
   // function (showTrophies). The reset lives HERE so the overrides cannot leak:
@@ -8071,8 +8335,13 @@ function stagePlainLine(id) {
   return what + '. Pays normal gold.';
 }
 function loadoutSummary() {
-  const kit = ['VOLLEY', ...effectiveLoadout(profile, loadoutSlotCap())];
-  return kit.map(w => WEAPON_NAMES[w] || w).join(' + ') + '. Weapons start at Lv ' + (1 + masteryStartLevels(profile)) + '.';
+  const kit = effectiveLoadout(profile, loadoutSlotCap());
+  const lv = '. Weapons start at Lv ' + (1 + masteryStartLevels(profile)) + '.';
+  if (!kit.length) return WEAPON_NAMES.VOLLEY + lv;
+  // One weapon: nothing comes in drafts, so the line stays the plain kit.
+  if (kit.length === 1) return WEAPON_NAMES.VOLLEY + ' + ' + (WEAPON_NAMES[kit[0]] || kit[0]) + lv;
+  return 'Start: ' + WEAPON_NAMES.VOLLEY + ' + ' + (WEAPON_NAMES[kit[0]] || kit[0]) +
+    (kit.length > 1 ? '. In drafts: ' + kit.slice(1).map(w => WEAPON_NAMES[w] || w).join(', ') : '') + lv;
 }
 function showPreRun() {
   openMenu('setup');
@@ -8206,11 +8475,13 @@ function paintTitleHeader() {
 // "Player chosen weapons in a menu, not during run. Before the run." The screen
 // is a DESTINATION the player finds from the title (never a forced stop before
 // START GAME, never a nag); the penalty for never visiting it is ZERO — with no
-// stored choice startRun arms the same starting kit a fresh account has today
-// (VOLLEY + the character's starting weapon when unlocked), and a stored choice
-// persists run to run. The choice REPLACES in-run weapon acquisition: openDraft
-// no longer offers wpn_* grants at all, and lvl_* cards ride state.weapons, so
-// the pool carries level-ups for exactly the weapons the player brought.
+// stored choice the game fills it (the character's starting weapon first),
+// and a stored choice persists run to run.
+// Decision 7 (Steve, 2026-11-17: "i think i intended to have potential weapon
+// loadout in the menu, i didn't mean for it to actually give those weapons to
+// the player"): the loadout LISTS the weapons a run can offer. The run starts
+// with the first one (the START weapon, changed with the START card); the
+// others come as NEW cards in the level-up drafts (openDraft, KIT_OFFER).
 //
 // Slots: the base volley occupies slot 1 of startWeaponSlots(profile), so the
 // player picks at most slots-1 weapons here.
@@ -8241,29 +8512,51 @@ function toggleLoadoutWeapon(id) {
   showLoadout();
 }
 
+// The START card: the next chosen weapon becomes the one the run starts
+// with (the list turns round, so every chosen weapon gets its turn).
+function cycleLoadoutStart() {
+  const cur = effectiveLoadout(profile, loadoutSlotCap());
+  if (cur.length < 2) return;
+  profile.loadout = [...cur.slice(1), cur[0]];
+  persistProfile();
+  showLoadout();
+}
+
 // `from` is where BACK returns: 'prerun' (the pre-run screen) or the title.
 let loadoutFrom = null;
+// The LOADOUT's short-row layout: a screen under 500 px either way.
+const LOADOUT_TIGHT_ART = 2;
+function loadoutTight() {
+  const w = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+  const h = (typeof window !== 'undefined' && window.innerHeight) || 720;
+  return Math.min(w, h) < 500;
+}
 function showLoadout(from) {
   if (from !== undefined) loadoutFrom = from;
   openMenu('loadout');
   ovTitle.textContent = 'LOADOUT';
   ovTitle.className = '';
+  // A phone (either way up) gets short rows with small art, so START, AUTO
+  // and BACK stay on the screen with every owned weapon listed.
+  const tight = loadoutTight();
+  if (tight && overlay.classList) overlay.classList.add('loadout-tight');
   const cap = loadoutSlotCap();
-  const sel = new Set(effectiveLoadout(profile, cap));
-  ovSub.textContent = (profile.loadout ? sel.size + ' of ' + cap + ' slots chosen' : 'auto: your best weapons fill the slots')
-    + ' · ' + masteryLine(profile);
+  const kit = effectiveLoadout(profile, cap);
+  const sel = new Set(kit);
+  // The screen says what it does: the run can offer these, and starts with one.
+  ovSub.textContent = 'Weapons your run can offer: you start with one, the rest come as NEW cards in drafts (the first one is a free pick). ' +
+    (profile.loadout ? sel.size + ' of ' + cap + ' chosen' : 'Auto') + ' · ' + masteryLine(profile);
   for (const id of loadoutChoices()) {
     const on = sel.has(id);
     const full = !on && sel.size >= cap;
     // Unselected rows ride the existing 'dim' card style (the shop's owned/
     // unaffordable look). SGKV4 (opt-out language): the row NAMES the one-tap
-    // action both ways — EQUIPPED rows say "tap to BENCH", benched rows say
-    // "tap to equip" — so the opt-out affordance is on the screen itself,
-    // not in a manual.
+    // action both ways ("tap to BENCH", "tap to add"), so the opt-out
+    // affordance is on the screen itself, not in a manual.
     const el = menuCard(
       WEAPON_NAMES[id],
-      (on ? 'EQUIPPED — tap to BENCH' : full ? 'slots full' : 'BENCHED — tap to equip')
-        + ' · ' + (describeWeaponLevel(id, 2) || ''),
+      // Short rows (status and action only), so a phone holds the screen.
+      on ? (id === kit[0] ? 'START WEAPON' : 'IN DRAFTS') + ' — tap to BENCH' : full ? 'slots full' : 'BENCHED — tap to add',
       () => toggleLoadoutWeapon(id),
       !on,
     );
@@ -8273,12 +8566,19 @@ function showLoadout(from) {
     const artCv = document.createElement('canvas');
     artCv.className = 'card-art';
     if (artCv.setAttribute) artCv.setAttribute('data-card', 'wpn_' + id);
-    if (paintOfferArt(artCv, 'wpn_' + id)) {
+    if (paintOfferArt(artCv, 'wpn_' + id, tight ? LOADOUT_TIGHT_ART : OFFER_ART_SCALE)) {
       if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
       else el.appendChild(artCv);
     }
   }
-  menuCard('AUTO', 'let the game pick: your best weapons fill the slots', () => {
+  // START: the weapon the run starts with. A press moves it to the next
+  // chosen one. A short card after the weapon rows, so a phone fits it.
+  if (kit.length) {
+    menuCard('START: ' + WEAPON_NAMES[kit[0]],
+      'the run starts with it' + (kit.length > 1 ? ' · tap: ' + WEAPON_NAMES[kit[1]] : ''),
+      () => cycleLoadoutStart(), kit.length < 2);
+  }
+  menuCard('AUTO', 'the game picks your best, your hero\u2019s own first', () => {
     profile.loadout = null;
     persistProfile();
     showLoadout();
@@ -8344,6 +8644,16 @@ function addWhatsNewCard() {
   overlay.appendChild(el);
   return el;
 }
+// Take the note off the screen without marking it read. Leaving the title
+// (openMenu) and starting a run (startRun) both call this: the note is a
+// launch note on the title and must never ride the overlay into a run, where
+// a draft would show it over the cards.
+function clearWhatsNewNote() {
+  for (const e of [...(overlay.children || [])]) {
+    if (e && e.classList && e.classList.contains('wn-over')) e.remove();
+    else if (e && typeof e.className === 'string' && /\bwn-over\b/.test(e.className) && e.remove) e.remove();
+  }
+}
 function dismissWhatsNew(el) {
   profile.lastSeenUpdate = WHATS_NEW.id;
   persistProfile();
@@ -8398,7 +8708,7 @@ function showTitle() {
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'pick your hero', () => showCharacters());
   if (ownsExtraWeapon()) {
-    menuCard('LOADOUT', 'choose your weapons', () => showLoadout('title'));
+    menuCard('LOADOUT', 'the weapons your run can offer', () => showLoadout('title'));
   }
   menuCard('PROGRESS', `${earnedCount(profile)} of ${totalAchievements()} trophies`, () => showProgress());
   if (campOpen()) addCampCard();
@@ -8966,9 +9276,10 @@ function showShop() {
             const added = now.find(w => !kitBefore.includes(w));
             const benched = kitBefore.find(w => !now.includes(w));
             if (added != null) {
+              const how = now[0] === added ? 'it starts your runs' : 'it comes in drafts';
               toast(benched != null
-                ? 'EQUIPPED ' + WEAPON_NAMES[added] + ' / BENCHED ' + WEAPON_NAMES[benched] + ' — see LOADOUT'
-                : 'EQUIPPED ' + WEAPON_NAMES[added] + ' — in your LOADOUT');
+                ? 'ADDED ' + WEAPON_NAMES[added] + ' to your LOADOUT, BENCHED ' + WEAPON_NAMES[benched] + ': ' + how
+                : 'ADDED ' + WEAPON_NAMES[added] + ' to your LOADOUT: ' + how);
             }
           }
         }
@@ -9384,7 +9695,13 @@ function pilotKit(id) {
     // including the G19 satchel term (characterPotionBonus, the same helper
     // startPotionCount reads, so preview and run share one definition).
     potions: ch.startPotions + (profile.purchased.potions || 0) + characterPotionBonus(profile, ch.id),
-    weapon: ch.startingWeapon ? WEAPON_NAMES[ch.startingWeapon] : WEAPON_NAMES.VOLLEY + ' (BASE)',
+    // The run starts with the loadout's first weapon (decision 7). With no
+    // stored choice that depends on the hero, so read it as this hero's.
+    weapon: (() => {
+      const first = effectiveLoadout({ ...profile, equippedCharacter: ch.id }, Math.max(0, startWeaponSlots(profile) - 1))
+        .find(t => WEAPON_TYPES[t]);
+      return first ? WEAPON_NAMES[first] : WEAPON_NAMES.VOLLEY + ' (BASE)';
+    })(),
     skill: C.SKILLS[ch.skill].NAME,
     healOnChest: st.healOnChest != null ? st.healOnChest : ch.healOnChest,
   };
@@ -9765,6 +10082,7 @@ function startRun() {
   // A fresh run drops any live draft ceremony and the shop's paging chrome.
   if (draftCeremony) endDraftCeremony(false);
   clearShopPager();
+  clearWhatsNewNote();   // a launch note on the title, never over a run
   const ch = CHARACTERS[profile.equippedCharacter] || CHARACTERS.KNIGHT;
   state.character = ch;
   state.player = makePlayer();
@@ -9955,8 +10273,15 @@ function startRun() {
   // VOLLEY instance rides in state.weapons so gems/bosses can feed it XP and
   // the draft can level it — but it never occupies one of WEAPON_SLOTS.
   state.weapons.push(makeWeapon('VOLLEY'));
-  // The kit: the stored loadout choice, or every owned weapon that fits.
-  for (const t of chosenLoadout() || []) state.weapons.push(makeWeapon(t));
+  // The kit: the loadout (the stored choice, or every owned weapon that
+  // fits) is what the run can offer. The run starts with its first weapon;
+  // the others come as NEW cards in the drafts (decision 7).
+  state.runKit = (chosenLoadout() || []).slice();
+  // KIT_OFFER.FIRST: the run's first level-up draft holds a NEW card.
+  state.kitDry = KIT_OFFER.FIRST ? KIT_OFFER.GAP - 1 : 0;
+  state.kitFreeUsed = 0;
+  state.kitRedeal = false;
+  if (state.runKit.length) state.weapons.push(makeWeapon(state.runKit[0]));
   // Mastery: every weapon starts above level 1 by the profile's mastery.
   for (const w of state.weapons) w.level = Math.min(WEAPON_MAX_LEVEL, 1 + masteryStartLevels(profile));
   // The camp's held charges are spent on this run.
@@ -10175,8 +10500,18 @@ const tut = {
   focus: null, stance: null,
 };
 const TUT_GOLD_STEP = GUIDED_STEPS.findIndex(s => s.id === 'gold');
+const TUT_DRAFT_STEP = GUIDED_STEPS.findIndex(s => s.id === 'draft');
 
 function tutGuidedLive() { return !!(tut.guided && !tut.guided.over); }
+// The guided run has not passed its DRAFT step (that step reads the cards
+// first and moves on with NEXT, not with a pick).
+function tutOwnsDraftHeader() { return tutGuidedLive() && tut.guided.i <= TUT_DRAFT_STEP; }
+// The guided run is over but its menu steps (end card, SHOP, BACK, PLAY) are
+// still owed. AUTO-CONTINUE waits until they are done, or a run started by
+// itself would carry the player past them for good.
+function tutOwesMenuSteps() {
+  return tutSeen(LEDGER.cohort) && !tutSeen(LEDGER.skipped) && !tutSeen(LEDGER.play);
+}
 // A hint holds the sim so nothing happens to the hero while it is read.
 function tutPausesSim() { return !!tut.hints.active; }
 
@@ -10406,6 +10741,13 @@ function tutKeydown(ev) {
   const primary = ev.key === 'Enter' || ev.key === ' ';
   const fresh = !ev.repeat;   // a key held since before the panel never counts
   if (tut.hints.active) {
+    // A draft's header names its digit keys: they pick under a hint, as a
+    // click does, and the pick answers the hint.
+    const card = state.mode === 'draft' && /^[1-6]$/.test(ev.key || '') && ovCards.children[Number(ev.key) - 1];
+    if (card && card._draftOffer) {
+      tut.hints.active = null;
+      return false;
+    }
     // The sim is held: no game key may land under the hint.
     if (fresh && (primary || ev.key === 'Escape')) tut.hints.press(performance.now());
     if (ev.preventDefault) ev.preventDefault();
@@ -10486,6 +10828,9 @@ function tutHintScan() {
     // The same overlay carries evolutions and fusions; name the one on offer.
     tutHint(fusionOffers().length ? 'fusion' : 'evoready', ['cards']);
   } else if (m === 'draft') {
+    // The first NEW weapon card from the loadout: point at it.
+    const ni = draftOffers.findIndex(u => u && u.kitNew);
+    if (ni >= 0 && state.draftKind === 'level' && tutHint('newweapon', [ovCards.children && ovCards.children[ni]].filter(Boolean))) return;
     const ch = state.draftCharges;
     if (ch && (ch.reroll > 0 || ch.skip > 0 || ch.banish > 0)) tutHint('draftacts', []);
   } else if (m === 'setup') {
@@ -10619,6 +10964,12 @@ function openStats() {
     wHtml += icon + '<b>' + weaponDisplayName(w) + '</b>' + tag + ' · Lv ' + (w.level || 1) + '/' + WEAPON_MAX_LEVEL +
       '<br><span style="color:#a8a8c0">' + (w.fusion ? w.fusion.desc : (WEAPON_BLURBS[w.type] || '')) + '</span>' +
       evoLine + fuseLine + '<br>';
+  }
+  // The loadout weapons still to come (decision 7).
+  const toCome = kitPending();
+  if (toCome.length) {
+    wHtml += '<span style="color:#a8a8c0">' + (kitOpenSlots() > 0 ? 'still to come as NEW cards: ' : 'in your loadout, no free slot: ') +
+      toCome.map(t => WEAPON_NAMES[t]).join(', ') + '</span><br>';
   }
   menuCard('WEAPONS', wHtml || 'none yet', info);
 
@@ -13410,7 +13761,12 @@ if (overlay && overlay.addEventListener) {
   for (const type of ['pointerup', 'click', 'keyup']) {
     overlay.addEventListener(type, (ev) => uiGuard.swallow(ev), true);
   }
-  overlay.addEventListener('pointerdown', () => uiGuard.standDown(), true);
+  overlay.addEventListener('pointerdown', () => {
+    uiGuard.standDown();
+    // A tap anywhere on the end card (its title, its summary) is the player
+    // reading it: it holds the auto restart like a key or a card press does.
+    if (state.mode === 'dead') noteInput();
+  }, true);
 }
 
 // Click/tap skip (guarded: headless stubs may not implement addEventListener).
@@ -13477,6 +13833,13 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
 let cineT0 = 0, lastCinePhase = null;
 function startPortalCine() {
   state.wave.cinePending = false;
+  // R1: at wave 1 the escape chase already shows the hero diving through a
+  // portal, so this movie would tell the same story twice. There the portal
+  // entry goes straight to the chase; later waves keep the movie. Nothing
+  // else is lost: the chase drops the overlay itself, brings its own music
+  // (the portal cue and its duck belong to this movie's picture), skips
+  // itself when nobody watches, and hands back to the intermission.
+  if (state.wave.num === 1) { startEscape(); return; }
   cineT0 = performance.now();
   lastCinePhase = null;
   // 8X SEQUENCING (owner 2026-09-21: draft menu stuck over the escape
@@ -13504,6 +13867,8 @@ function endPortalCine() {
   if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
   // THE ESCAPE hangs off portal entry: after the wave-1 boss the escape
   // cinematic plays before the wave-2 intermission, and pays its gold.
+  // (startPortalCine goes there directly at wave 1; this line covers a movie
+  // put up some other way.)
   if (state.wave.num === 1) { startEscape(); return; }
   openIntermission();
 }
@@ -14445,6 +14810,10 @@ export const __TEST = {
     open: showLoadout,
     get chosen() { return profile.loadout; },
     kit: chosenLoadout,
+    cycleStart: cycleLoadoutStart,
+    pending: kitPending,
+    openSlots: kitOpenSlots,
+    joinLevel: kitJoinLevel,
     choices: loadoutChoices,
     slotCap: loadoutSlotCap,
   },
@@ -14802,6 +15171,8 @@ export const __TEST = {
   die, ladderOn: DRAFT_LADDER_ON,
   // Recorded music: the scene this frame reports, and the run counter.
   music: { scene: musicScene, sync: syncMusic, get runNo() { return musicRunNo; } },
+  // The audio object main.js calls (tests wrap it to see which cues play).
+  audio: { get: () => audio, set: (a) => { audio = a; } },
   // Stamp the last damage source (what die() records as the killer).
   hurtBy: (src) => { lastDamageSource = src; },
   // WAVE-15 joystick seam: applyJoyVector(dx, dy, rad) / joyRecenter().

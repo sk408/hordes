@@ -910,25 +910,20 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     for (const b of st.wave.bosses) if (b.hp > 0) b.hp = 0;   // slay them all
   }
 
-  // (a) SKIP PATH: movie renders frames, a keypress jumps to the end of the
-  // cine. This probe is on WAVE 1, where the cine's end hands the run to THE
-  // ESCAPE cinematic: the key-skip lands in the escape, and a key after the
-  // escape's guard time skips that too, into the intermission.
+  // (a) WAVE 1: the portal entry goes straight to THE ESCAPE cinematic (R1:
+  // the portal movie would tell the same story twice), and a key after the
+  // escape's guard time skips it, into the intermission.
   mainMod.__TEST.startRun();
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   forceBossDeath();
-  let cineFrames = 0, skipped = false, escapeSeen = false;
+  let cineFrames = 0, escapeSeen = false;
   pumpUntil(() => st.mode === 'escape' || st.mode === 'intermission', 60 * 20, () => {
-    if (st.mode === 'portal-cine' && ++cineFrames === 31) {
-      keyHandler({ key: 'x' });   // any key skips straight to the end
-      skipped = true;
-    }
+    if (st.mode === 'portal-cine') cineFrames++;
     if (st.mode === 'escape') escapeSeen = true;
   });
-  assert(skipped, 'cine skip path must be exercised');
-  assert(cineFrames >= 31, `the movie must render before the skip (${cineFrames} frames)`);
+  assert(cineFrames === 0, `R1: no portal movie at wave 1 (${cineFrames} frames)`);
   assert(escapeSeen && st.mode === 'escape',
-    'wave-1 skip must hand the run to the escape (mode=' + st.mode + ')');
+    'the wave-1 portal must hand the run to the escape (mode=' + st.mode + ')');
   keyHandler({ key: 'Escape' });   // inside the escape's guard time: ignored
   assert(st.mode === 'escape', 'a press on the escape\'s first frame must not skip it (mode=' + st.mode + ')');
   pumpUntil(() => false, 30, () => {});
@@ -939,7 +934,7 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(st.player.hp > 0, 'the escape skip must never kill (hp=' + st.player.hp + ')');
   assert(elements['ov-title'].textContent.includes('CLEARED'),
     'intermission title after the cine (got ' + elements['ov-title'].textContent + ')');
-  console.log(`portal cine: ${cineFrames} frames then key-skip -> escape -> ESC twice -> intermission`);
+  console.log('wave 1: portal -> escape (no portal movie) -> ESC twice -> intermission');
 
   // (b) NATURAL END: let the 3.8s movie run out on its own -> intermission.
   keyHandler({ key: 'c' });   // CONTINUE into the next wave

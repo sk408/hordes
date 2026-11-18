@@ -123,7 +123,8 @@ S.check('the best next purchase is named with its price, and RETRY is the defaul
   assert.equal(m[3] === 'you can afford it', prof.gold >= goal.cost, 'the afford clause is true');
   // It is one of the three core steps while any is left: Vitality, Forged Edge or the cheapest weapon.
   assert.ok(goal.id === 'hp' || goal.id === 'dmg' || /^weapon_/.test(goal.id), 'a core step: ' + goal.id);
-  assert.deepEqual(names(), ['RETRY', 'SHOP', 'TITLE'], 'three cards, RETRY first');
+  // R1: the end card also offers AUTO-CONTINUE, after SHOP (test_endcard_auto_continue.mjs).
+  assert.deepEqual(names(), ['RETRY', 'SHOP', 'AUTO-CONTINUE: OFF', 'TITLE'], 'four cards, RETRY first');
   assert.equal(T.menuFocus(), -1, 'no cursor');
   kdown('Enter');
   assert.equal(st.mode, 'playing', 'Enter retries');

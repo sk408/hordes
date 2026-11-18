@@ -93,7 +93,8 @@ or more runs when this version first loaded starts with the "basic" hints marked
 | `draftacts` | Reroll, skip or banish: each spends one charge. | a draft opens while a charge is owned | no |
 | `focus` | Focus picks which enemy your weapons aim at first. | the player changes Focus | no |
 | `stance` | Stance: SAFE keeps away, GREEDY chases loot. | the player changes Stance | no |
-| `loadout` | You own a new weapon. LOADOUT chooses which ones you bring. | the pre-run screen, once a third weapon is owned | no |
+| `loadout` | You own a new weapon. LOADOUT picks the weapons a run can offer. | the pre-run screen, once a third weapon is owned | no |
+| `newweapon` | A NEW card adds a weapon from your loadout. The first one is free. | the first level-up draft that holds a NEW card from the loadout (points at that card) | no |
 | `prestige` | Prestige resets the shop for a permanent gold multiplier. | the end screen offers prestige | no |
 | `hand` | Your cards made a hand: a bonus for the rest of the run. | the first hand forms (shown back in play) | no |
 | `joker` | A joker changes one rule for this run. | the first joker is taken (shown back in play) | no |

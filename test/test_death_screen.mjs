@@ -142,11 +142,13 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   assert.ok(/WAVE \d+/.test(html) && /TIME \d\d:\d\d/.test(html) && /LEVEL \d+/.test(html) && /\d+ KILLS/.test(html), 'progress on screen');
   assert.ok(/run award \d+ · survival \d+ · kills \d+/.test(html), 'the gold breakdown on screen');
   assert.ok(/\u00b7/.test(html) || /·/.test(html), 'single-line scannable layout');
-  // RETRY is the first card (the default action); SHOP and TITLE follow.
+  // RETRY is the first card (the default action); SHOP, AUTO-CONTINUE (R1:
+  // offered on the end card, test_endcard_auto_continue.mjs) and TITLE follow.
   const cards = elements['ov-cards'].children;
   assert.ok((cards[0].innerHTML || '').includes('RETRY'), 'RETRY is the FIRST card');
   assert.ok((cards[1].innerHTML || '').includes('SHOP'), 'SHOP second');
-  assert.ok(cards.length === 3 && (cards[2].innerHTML || '').includes('TITLE'), 'TITLE third, and nothing else (' + cards.length + ' cards)');
+  assert.ok((cards[2].innerHTML || '').includes('AUTO-CONTINUE'), 'AUTO-CONTINUE third');
+  assert.ok(cards.length === 4 && (cards[3].innerHTML || '').includes('TITLE'), 'TITLE fourth, and nothing else (' + cards.length + ' cards)');
   assert.ok(![...cards].some(c => (c.innerHTML || '').includes('CONFIRM')), 'no armed confirm slows RETRY');
 });
 

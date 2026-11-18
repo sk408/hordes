@@ -426,10 +426,11 @@ S.check('the wave-1 portal hands the run to the cinematic; it ends in the interm
   assert.equal(st.wave.num, 1);
   const gold0 = prof.gold;
   st.wave.cinePending = true; st.portal = null;
-  h.pump(2);
-  assert.equal(st.mode, 'portal-cine');
-  kdown('x'); h.pump(1);
-  assert.equal(st.mode, 'escape', 'the portal movie hands over');
+  // R1: at wave 1 the portal entry goes straight to the chase (no portal movie).
+  const modes = new Set();
+  h.pump(2, () => modes.add(st.mode));
+  assert.ok(!modes.has('portal-cine'), 'no portal movie at wave 1');
+  assert.equal(st.mode, 'escape', 'the portal entry hands over to the chase');
   const cine = T.escape.cine;
   assert.equal(cine.scene.bossId, 'GRAVELMAW', 'the wave-1 boss');
   assert.equal(cine.scene.stage, st.stage); assert.equal(cine.scene.character, st.character.id);
