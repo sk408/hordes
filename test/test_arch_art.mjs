@@ -34,7 +34,7 @@ const S = suite('arch art pass: field-arch presentation');
 
 // The type identity inks (render.js ARCH_COLORS — the buff-read family).
 const ARCH_INKS = {
-  twin_fury: '#ff8848',   // DOUBLE_FIRE (orange)
+  twin_fury: '#e8902a',   // DOUBLE_FIRE (amber: the player's own buff, not danger)
   magnet: '#4a8cff',      // MAGNET (blue)
   aegis: '#a8e0ff',       // SHIELD (ice)
   berserker: '#ff5566',   // BERSERK (red)

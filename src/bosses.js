@@ -41,7 +41,7 @@
 // detected by intervalWrapped below).
 
 import { CONFIG as C } from './config.js';
-import { spriteBox } from './sprites.js';
+import { spriteBox, eyeSockets, shadeLower } from './sprites.js';
 
 // ===========================================================================
 // SPRITES — hand-authored in the sprites.js grid format (arrays of rows of
@@ -55,10 +55,16 @@ function grid(...rows) {
 
 // `tell` is an optional extra grid in the same box: the wind-up pose the
 // renderer shows while the boss telegraphs (frames stay the two-step walk).
-function makeBossSprite(frames, palette, tell = null) {
+function makeBossSprite(frames, palette, tell = null, rim = null, pool = null) {
   const box = spriteBox(frames[0]);
   const spr = { frames, palette, anchor: { x: Math.floor(box.w / 2), y: Math.floor(box.h / 2) }, box };
   if (tell) spr.tell = tell;
+  // bossdark: a dark heavy body carried by a bright ring of its own hue
+  // (render.js drawActor; the dark keyline outside it on a light floor).
+  spr.rim = rim;
+  // Its pool of light on a dark floor: a dark step of the same hue, so the
+  // rim stays bright against it (render.js bossPool).
+  spr.pool = pool;
   return spr;
 }
 
@@ -118,15 +124,15 @@ const GRAVELMAW_TELL = grid(
   '66666...666....666...66666',
 );
 const GRAVELMAW_PALETTE = {
-  1: '#8a8f96',  // stone hide
-  2: '#4a4f56',  // shadowed hide
-  3: '#e8d8b0',  // horn bone, teeth
-  4: '#ff5566',  // eyes
-  5: '#ff9a3c',  // ember cracks, fire in the maw
-  6: '#2e3136',  // hooves, nostrils, the dark of the maw
-  7: '#b9bec6',  // lit plates (top left)
-  8: '#b0a078',  // horn in shadow
-  9: '#fff0a0',  // white-hot (the charge tell)
+  1: '#6a583c',  // stone hide (dark earth, apart from the steel and bone bosses)
+  2: '#1e1810',  // shadowed hide
+  3: '#e4e2ea',  // horn bone, teeth
+  4: '#ff4a14',  // eyes (GRAVELMAW)
+  5: '#e8902a',  // ember cracks, fire in the maw
+  6: '#0b0912',  // hooves, nostrils, the dark of the maw, eye sockets
+  7: '#a69070',  // lit plates (top left)
+  8: '#c2ae8c',  // horn in shadow
+  9: '#f8e098',  // white-hot (the charge tell)
 };
 
 // ---- CHOIR MOTHER — 20x26 hooded matron, halo ring, children at shoulders --
@@ -145,7 +151,7 @@ const CHOIR_MOTHER_FRAMES = [
     '......3.88888.3......',
     '.......8844488.......',
     '.......8454548.......',
-    '.......8445448.......',
+    '.......8449448.......',
     '.......8844488.......',
     '......788888882......',
     '.....77111111122.....',
@@ -174,7 +180,7 @@ const CHOIR_MOTHER_FRAMES = [
     '......3.88888.3......',
     '.......8844488.......',
     '.......8454548.......',
-    '.......8455548.......',
+    '.......8499948.......',
     '.......8844488.......',
     '......788888882......',
     '.....77111111122.....',
@@ -197,14 +203,15 @@ const CHOIR_MOTHER_FRAMES = [
   ),
 ];
 const CHOIR_MOTHER_PALETTE = {
-  1: '#5aa0b4',  // teal robe
-  2: '#2f5a68',  // robe shadow
-  3: '#ffe8b0',  // halo, hymnal
-  4: '#f4e0d0',  // face, hands
-  5: '#5a1838',  // eyes, singing mouth
-  6: '#9effe0',  // cherub glow
-  7: '#8ad0e0',  // robe light
-  8: '#e8f0f8',  // veil
+  1: '#46663a',  // deep moss robe
+  2: '#1e1810',  // robe shadow, the hem in the dark
+  3: '#f8e098',  // halo, hymnal
+  4: '#1e1810',  // the dark under the veil, hands
+  5: '#ff4a14',  // eyes (CHOIR_MOTHER): a threat mark
+  9: '#3e142c',  // the singing mouth: dark plum (not danger)
+  6: '#f0c860',  // cherub glow
+  7: '#62804a',  // robe light
+  8: '#bebac4',  // veil
 };
 
 // ---- PYRAXIS — 24x24 fire elemental. Art pass (Oct 2026): the old disc
@@ -225,7 +232,7 @@ const PYRAXIS_FRAMES = [
     '..12333333333333333321..',
     '..12222222222222222221..',
     '..12255522222222555221..',
-    '..12544522222222544521..',
+    '..12577522222222577521..',
     '..12255522222222555221..',
     '...122222222222222221...',
     '...122255555555552221...',
@@ -270,12 +277,13 @@ const PYRAXIS_FRAMES = [
   ),
 ];
 const PYRAXIS_PALETTE = {
-  1: '#e8481e',  // rim
-  2: '#ff9a3c',  // body
-  3: '#ffe08a',  // highlight (flame crown, chest)
-  4: '#fff8d8',  // white-hot (eyes, maw, core)
-  5: '#5c2a1e',  // brow, sockets, maw
-  6: '#ffd54a',  // gold flare (the tell)
+  1: '#5c1820',  // ember-dark edge
+  2: '#3e1016',  // body: a banked coal, ember-dark
+  3: '#e8902a',  // flame (crown, chest)
+  4: '#f8e098',  // white-hot (maw, core)
+  5: '#1e1810',  // brow, sockets, maw
+  6: '#ffffff',  // gold flare (the tell)
+  7: '#ff4a14',  // eyes (PYRAXIS): the only danger it wears
 };
 
 // ---- VYRN, THE HERALD — WAVE-20 mid-wave boss: 22x26 hooded reaper.
@@ -295,7 +303,7 @@ const HERALD_FRAMES = [
     '.......2777772.....5..',
     '.......2766662.....5..',
     '.......2633362.....5..',
-    '.......2643462.....5..',
+    '.......2646462.....5..',
     '........26362......5..',
     '...3333..262..3333.5..',
     '..311113.....3111135..',
@@ -346,21 +354,27 @@ const HERALD_FRAMES = [
   ),
 ];
 const HERALD_PALETTE = {
-  1: '#8a92b4',  // armour
-  2: '#5e3a96',  // cloak shade / outline
-  3: '#e0d8b8',  // bone: mask, pauldrons, blade
-  4: '#ff5a3c',  // ember eyes
-  5: '#a8875a',  // lance shaft
-  6: '#140a20',  // hood shadow
-  7: '#a274e4',  // cloak
-  8: '#fff0a0',  // white-hot flare (the tell)
+  1: '#5e5968',  // armour
+  2: '#1e2c44',  // cloak shade / outline
+  3: '#e4e2ea',  // bone: mask, pauldrons, blade
+  4: '#ff4a14',  // ember eyes
+  5: '#6a583c',  // lance shaft
+  6: '#0b0912',  // hood shadow, the brow between the eyes
+  7: '#304464',  // cloak
+  8: '#f8e098',  // white-hot flare (the tell)
 };
 
+// bossdark: each boss a dark, heavy body (its lower half in shadow, lit from
+// the top left), its eyes in dark sockets, carried by a bright rim of its own
+// hue (the last argument; render.js draws it, and a dark keyline outside it on
+// a light floor). tools/boss_contrast.mjs measures the rims and the eyes.
+const GRAVELMAW_LOOK = (f) => shadeLower(eyeSockets(f, 4, 6), { 1: 2, 7: 1 }, 0.6);
+const CHOIR_LOOK = (f) => shadeLower(f, { 1: 2, 7: 1 }, 0.8);
 export const BOSS_SPRITES = {
-  GRAVELMAW:    makeBossSprite(GRAVELMAW_FRAMES, GRAVELMAW_PALETTE, GRAVELMAW_TELL),
-  CHOIR_MOTHER: makeBossSprite(CHOIR_MOTHER_FRAMES, CHOIR_MOTHER_PALETTE),
-  PYRAXIS:      makeBossSprite(PYRAXIS_FRAMES, PYRAXIS_PALETTE),
-  HERALD:       makeBossSprite(HERALD_FRAMES, HERALD_PALETTE),
+  GRAVELMAW:    makeBossSprite(GRAVELMAW_FRAMES.map(GRAVELMAW_LOOK), GRAVELMAW_PALETTE, shadeLower(GRAVELMAW_TELL, { 1: 2, 7: 1 }, 0.6), '#c2ae8c', '#887352'),
+  CHOIR_MOTHER: makeBossSprite(CHOIR_MOTHER_FRAMES.map(CHOIR_LOOK), CHOIR_MOTHER_PALETTE, null, '#acc084', '#62804a'),
+  PYRAXIS:      makeBossSprite(PYRAXIS_FRAMES, PYRAXIS_PALETTE, null, '#c88a22', '#7a4c0e'),
+  HERALD:       makeBossSprite(HERALD_FRAMES.map(f => eyeSockets(f, 4, 6)), HERALD_PALETTE, null, '#8aa0c0', '#486084'),
 };
 
 // ===========================================================================

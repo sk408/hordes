@@ -167,7 +167,7 @@ const cardWith = (t) => cards().find(c => (c.innerHTML || '').includes(t));
 const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 
 S.check('the title menu offers a TROPHIES card carrying the earned count', () => {
-  if (st.mode === 'intro') key('x');                 // any key skips the intro movie
+  if (st.mode === 'intro') h.skipMovie();                 // any key skips the intro movie
   assert.equal(st.mode, 'title', 'the title is up');
   T.showTitle();
   cardWith('PROGRESS').click();            // U1: the gallery's card lives behind PROGRESS

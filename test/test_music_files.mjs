@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { init, startMusic, stopMusic, setMusicMode, setHiddenMute, setMusicEnabled,
   setMusicContext, setMusicSource, getMusicSource, playMusicCue, playEscapeCue,
-  isMusicRunning, AUDIO_TEST } from '../src/audio.js';
+  isMusicRunning, fadeMusicCues, AUDIO_TEST } from '../src/audio.js';
 import { MUSIC_TRACKS, MUSIC_TRIM_DB } from '../src/music_manifest.js';
 import { LOOP_SLOTS, CUE_SLOTS, runSlotFor, MAX_LOOP_BUFFERS, dbToGain } from '../src/music_files.js';
 
@@ -554,6 +554,28 @@ let shared;
   assert.ok(pc.stops.length && pc.stops[0] <= 45.25 + 1e-9, 'CLASSIC SYNTH: a recorded cue does not play on');
   stopMusic();
   ok('victory cue then the title; a new run and CLASSIC SYNTH cut a playing cue');
+}
+
+// ---------- R2: the portal cue cut short by the Maw: it fades, its duck lifts ----------
+{
+  const { c, fe, m } = setup();
+  setMusicContext(ctxRun());
+  await fe.serveAll();
+  startMusic();
+  const duck = AUDIO_TEST.state().musicDuck.gain;
+  c.currentTime = 10;
+  assert.ok(playMusicCue('portal', { duckDb: -12 }), 'the portal cue plays at the kill');
+  assert.ok(near(duck.last(), dbToGain(-12)), 'and ducks the bed');
+  const pc = trackOf(c, 'portal');
+  c.currentTime = 12.5;                            // the walk-in at the last wave: the finale
+  fadeMusicCues();
+  assert.ok(pc.dest.gain.events.some((e) => e[0] === 'lin' && e[1] === 0 && near(e[2], 12.8)), 'the cue fades over 0.3 s');
+  assert.ok(pc.stops.length && pc.stops[0] <= 12.85 + 1e-9, 'and stops');
+  assert.ok(near(duck.last(), 1), 'the duck lifts at once, not at the cue\'s end');
+  fadeMusicCues();                                 // nothing playing: a no-op
+  assert.strictEqual(m().cur, 'run_wilds');
+  stopMusic();
+  ok('fadeMusicCues: a playing cue fades over 0.3 s and its duck lifts');
 }
 
 // ---------- CLASSIC SYNTH on a paused screen keeps the duck until the bed has faded ----------

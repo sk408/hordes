@@ -150,7 +150,11 @@ st.pilotMode = 'MANUAL'; st.player.x = 0; st.player.y = 0;   // pin: drop line s
 const dropValue = () => st.drops.reduce((s, d) => s + (d.count || 1), 0);
 const corpses = (n) => { for (let i = 0; i < n; i++) st.enemies.push(
   { x: st.player.x + 200, y: st.player.y + i, hp: 0, typeId: 'CHASER', xp: 0, speed: 0 }); };
+// R3 floor: the floor now holds at most C.FLOOR.POTION_CAP potions. These checks
+// pin the drop ROLL rate, so the floor cap is lifted while they count.
+const savedFloorCap = C.FLOOR.POTION_CAP;
 try {
+  C.FLOOR.POTION_CAP = 1e9;
   C.POTIONS.DROP_CHANCE = 1;
   st.killRateEwma = 0; st.killsAtRateTick = st.player.kills;
   corpses(30); frame();
@@ -183,6 +187,7 @@ try {
     v >= 80 && v <= 160, v);
 } finally {
   C.POTIONS.DROP_CHANCE = savedChance;
+  C.FLOOR.POTION_CAP = savedFloorCap;
 }
 
 // MAX_CARRIED still bounds storage: a full inventory leaves the potion on the ground

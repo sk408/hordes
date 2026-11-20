@@ -209,7 +209,7 @@ ok('useSkill charges the Focus price and rolls the Focus cooldown', () => {
 // ---- 3 + 4. THE LIVE LOOP: dt-correct regen and the three damage paths -------
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
-if (st.mode === 'intro') h.key('keydown', { key: 'x', preventDefault() {} });
+if (st.mode === 'intro') h.skipMovie();
 st.player.skills = {};
 h.T.banners.suppressAll();   // a one-time banner holds the sim 2.5 s: a probe frame inside it reads 0 damage
 h.T.startRun();

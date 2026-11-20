@@ -236,7 +236,7 @@ await acheck('bosses and the COLOSSUS are NEVER tier-rolled (forced roll proves 
       const c = h.elements['ov-cards'].children[0];
       if (c) { c.click(); return; }
     }
-    if (st.mode === 'portal-cine') { h.key('keydown', { key: 'x', preventDefault() {} }); return; }
+    if (st.mode === 'portal-cine') { h.skipMovie(); return; }
     if (st.mode === 'intermission') { h.key('keydown', { key: 'c', preventDefault() {} }); return; }
     if (st.mode === 'dead') { h.key('keydown', { key: 'r', preventDefault() {} }); return; }
     h.pump(1);

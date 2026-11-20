@@ -174,7 +174,8 @@ S.check('the run-end body: apex OFF is byte-identical, ON adds exactly the APEX 
   state.apexRun = true;
   const on = T.endScreenBody({ ...args });
   state.apexRun = false;
-  assert.equal(on, '<span class="cause">APEX RUN</span><br>' + off,
+  // R5: the tags sit in one line at the top of the end card's panel.
+  assert.equal(on, off.replace('<div class="ec">', '<div class="ec"><div class="ec-tags"><span class="cause">APEX RUN</span></div>'),
     'the ON body is the OFF body with EXACTLY the APEX clause prepended');
   // The clause rides the SAME mark pattern the stage clause uses: it stacks
   // with it rather than replacing it.
@@ -183,7 +184,7 @@ S.check('the run-end body: apex OFF is byte-identical, ON adds exactly the APEX 
   state.apexRun = true;
   try {
     const both = T.endScreenBody({ ...args });
-    assert.ok(both.includes('APEX RUN</span><br><span class="cause">'),
+    assert.ok(both.includes('APEX RUN</span> · <span class="cause">'),
       'the apex clause stacks directly onto the stage clause');
   } finally {
     state.stage = stage0;

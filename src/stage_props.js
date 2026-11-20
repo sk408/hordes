@@ -1,15 +1,12 @@
-// HORDES — stage prop objects (PORT SLICE A: original art from VS design reference).
+// HORDES — stage prop objects (PORT SLICE A: original art).
 //
 // WHAT THIS FILE IS
 // Six ORIGINAL hand-authored pixel props for the arena floor, one per stage
-// identity. They are CONCEPT ports only: the reference
-// (docs/vs_port_ref/DESIGN_REFERENCE_VS.md, sections 5-6 + 13, see GAPS) names
-// the ROLES — breakable fire bowls, lamp posts, candelabra, carts, statues,
-// marker nodes — and documents that the prop sprite bundle was NEVER
-// extracted (section 14 GAPS: "Props sprites empty", zero thumbs). There was
-// nothing to trace; every grid below was drawn fresh for HORDES.
+// identity. The props have ROLES (breakable fire bowls, lamp posts,
+// candelabra, carts, statues, marker nodes). Every grid below was drawn
+// fresh for HORDES; nothing from any other game was traced.
 //
-// ART-DIRECTION NUMBERS (reference section 1, style guidance only):
+// ART-DIRECTION NUMBERS (style guidance only):
 //   * 32px grid: every prop fits inside one 32px decor cell (largest is
 //     16x10), painted 1:1 through drawGrid — integer scaling, no smoothing.
 //   * Palette budget: heroes stay tight (~32-48 colors); each prop uses 4-5

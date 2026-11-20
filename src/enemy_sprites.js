@@ -2,12 +2,11 @@
 //
 // WHAT THIS FILE IS
 // Two ORIGINAL hand-authored pixel sprites closing the roster gap, plus the
-// ONE roster-wide lookup the renderer and the tests share. They are CONCEPT
-// ports only: the reference (docs/vs_port_ref/DESIGN_REFERENCE_VS.md,
-// section 3 + appendix A) names the ROLES — chaser swarm, fast chaser, tank
-// frontliner, boss/elite gatekeeper, stationary elite, winged diver — and
-// every grid below was drawn fresh for HORDES. No VS pixels, palettes, or
-// traced silhouettes appear here (RED LINE).
+// ONE roster-wide lookup the renderer and the tests share. The roster has
+// ROLES (chaser swarm, fast chaser, tank frontliner, boss/elite gatekeeper,
+// stationary elite, winged diver) and every grid below was drawn fresh for
+// HORDES: no pixels, palettes or traced silhouettes from any other game
+// appear here (RED LINE).
 //
 // WHY ONLY TWO NEW GRIDS
 // src/sprites.js already ships eight typed sprites (CHASER, SWARMER, BRUTE,
@@ -19,7 +18,7 @@
 // every ENEMY_TYPES id resolves to hand art and the fallback stays a
 // fallback (unknown ids), never a roster member's look.
 //
-// ART-DIRECTION NUMBERS (reference section 1, style guidance only):
+// ART-DIRECTION NUMBERS (style guidance only):
 //   * 32px grid: PILLAR is 12x16 (tall turret, the PILLAR LOOK tall shape),
 //     SHRIKE is 14x10 (wide diver, the SHRIKE LOOK wide shape) — both painted
 //     1:1 through drawGrid: integer scaling, no smoothing.
@@ -34,13 +33,12 @@
 //     contract). PILLAR's pair throbs its rune eye (it never walks — it is
 //     stationary by speedMult 0); SHRIKE's pair beats its wings (up/down).
 //
-// REFERENCE DERIVATION (doc section 3 roles -> hordes type):
-//   * PILLAR  <- EX_BATDRAKELET_STATIONARY (spd10 stationary elite,
-//     boss/elite gatekeeper role) + the sturdy-prop solidity concept
-//     (section 6 CART maxHp=4). A planted runic obelisk: cap stone, ember
+// THE TWO LOOKS (role -> what the grid shows):
+//   * PILLAR  a stationary elite, a gatekeeper, solid as a prop. A planted
+//     runic obelisk: cap stone, ember
 //     eye band, tapered column, stepped base. Static by design.
-//   * SHRIKE  <- BOSS_HARPY (winged boss/elite gatekeeper) + BAT1-6 wing
-//     vocabulary (chaser-swarm bat rows) + ANGEL1-3 winged-frontliner mass.
+//   * SHRIKE  a winged gatekeeper with a swarm bat's wings and a
+//     frontliner's mass.
 //     A swept-wing diver: horned head, pale eye slits, broad wings that beat
 //     between the two frames, forked tail.
 // Elites keep the EXISTING gold-outline presentation (render.js elite branch
@@ -91,11 +89,11 @@ const PILLAR_B = [
   [0,5,5,5,5,5,5,5,5,5,5,0],
 ];
 const PILLAR_PALETTE = {
-  1: '#a89a80',  // weathered stone (PILLAR LOOK body)
-  2: '#6a5e4a',  // stone shadow (PILLAR LOOK trim)
-  3: '#ff5a3c',  // ember rune (PILLAR LOOK accent)
-  4: '#ffd75e',  // hot eye (elite-gold heat, turret only)
-  5: '#241c18',  // socket shadow
+  1: '#c2ae8c',  // weathered stone (PILLAR LOOK body)
+  2: '#a69070',  // stone shadow (PILLAR LOOK trim)
+  3: '#e8902a',  // ember rune (PILLAR LOOK accent)
+  4: '#f0c860',  // hot eye (elite-gold heat, turret only)
+  5: '#1e1810',  // socket shadow
 };
 
 // ---- SHRIKE (14x10, 2 frames: wings raised / lowered) -----------------------
@@ -124,10 +122,10 @@ const SHRIKE_B = [
   [0,0,0,0,0,4,0,0,4,0,0,0,0,0],
 ];
 const SHRIKE_PALETTE = {
-  1: '#7888ff',  // storm body (SHRIKE LOOK body)
-  2: '#34409a',  // deep trim (SHRIKE LOOK trim)
-  3: '#d8ecff',  // pale eye slits (SHRIKE LOOK accent)
-  4: '#a8b4ff',  // wing glints
+  1: '#9a7cc8',  // storm body (SHRIKE LOOK body)
+  2: '#1e2c44',  // deep trim (SHRIKE LOOK trim)
+  3: '#e4e2ea',  // pale eye slits (SHRIKE LOOK accent)
+  4: '#bebac4',  // wing glints
 };
 
 function makeEnemySprite(id, name, blurb, frames, palette) {

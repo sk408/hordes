@@ -27,6 +27,39 @@
     overscroll-behavior: none;
     font-family: monospace;
   }
+  /* THE MENU FONT (src/menu_font.js): Pixelify Sans for every menu and
+     overlay once it has loaded after the first frame; until then, and if it
+     fails, today's monospace. Buttons and inputs take it too (without this
+     they used the browser's own button font). The face is weight 400 only and
+     synthetic bold is off: the font is crisp only at weight 400 on its 11 px
+     grid, so emphasis comes from size and colour. The in-run DOM controls
+     (touch pads, the DOM HUD line) stay monospace beside the canvas HUD. */
+  html.px-font { font-synthesis: none; }
+  html.px-font body, html.px-font button, html.px-font input, html.px-font select,
+  html.px-font textarea { font-family: 'Pixelify Sans', monospace;
+    font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'clig' 0; }
+  /* Ligatures are off: the font joins "fi" and "fl", and at 11 px "first"
+     read as "Arst". */
+  html.px-font body { font-size: 11px; }
+  /* The name caret (the absolute ::before at left 8px) stays clear of the
+     name: the name keeps the caret's width free on both sides (both, so it
+     stays centred). The draft's playing cards and the compact shop drop the
+     caret (the number and the icon lead there), and cards with no caret keep
+     their full width. */
+  html.px-font .card .name { padding-left: calc(8px + 0.75em); padding-right: calc(8px + 0.75em); }
+  html.px-font .card.dcard .name::before,
+  html.px-font #overlay.shop-compact .cards.shopgrid > .card .name::before { content: none; }
+  html.px-font .card.dcard .name, html.px-font .card.paper-note .name,
+  html.px-font #overlay.settings .card .name, html.px-font #overlay.loadout-tight .card .name,
+  html.px-font #overlay.draft.compact .card .name,
+  html.px-font #overlay.shop-compact .cards.shopgrid > .card .name { padding-left: 0; padding-right: 0; }
+  /* The galleries (trophies, bestiary, apex) put their caption over the
+     picture: a dark backing keeps it readable over the art. */
+  #overlay.showcase > h1, #overlay.showcase > .sub {
+    background: rgba(8, 8, 14, 0.86); width: fit-content; max-width: 92vw;
+    margin-left: auto; margin-right: auto; padding: 1px 8px; box-sizing: border-box;
+  }
+  html.px-font #touch, html.px-font #touch button, html.px-font #hud { font-family: monospace; }
   /* Canvas is letterboxed by JS (fitCanvas in main.js): internal resolution
      stays 480x300, CSS size preserves aspect so pixels never stretch. */
   #wrap {
@@ -65,7 +98,37 @@
     text-shadow: 3px 3px 0 #7a1f33, 6px 6px 0 #000;
   }
   #overlay .cards { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  /* R3 SETTINGS FITS: the SETTINGS and ADVANCED pages are a compact grid of
+     equal cells that fits the screen at 1280x720, 844x390 and 390x844 with no
+     scrolling (the flex row of 170px cards grew past the screen). */
+  #overlay.settings { gap: 6px; padding: 8px; }
+  #overlay.settings h1 { font-size: 20px; margin: 0; letter-spacing: 3px; }
+  #overlay.settings .sub { font-size: 11px; }
+  #overlay.settings .cards {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 6px; width: min(100%, 900px);
+  }
+  #overlay.settings .card { width: auto; min-width: 0; padding: 7px 9px; box-sizing: border-box; }
+  #overlay.settings .card .name { font-size: 12px; margin-bottom: 2px; letter-spacing: 1px; }
+  #overlay.settings .card .name::before { content: none; }
+  #overlay.settings .card .desc { font-size: 10px; line-height: 1.25; }
+  #overlay.settings .card input.vol { margin-top: 3px !important; }
+  /* .tight: only when the page would not fit at the sizes above (main.js
+     fitSettingsGrid measures it), so a page that fits keeps its readable type. */
+  #overlay.settings.tight { padding: 4px 8px; gap: 3px; }
+  #overlay.settings.tight h1 { font-size: 15px; }
+  #overlay.settings.tight .sub { display: none; }
+  #overlay.settings.tight .cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+  #overlay.settings.tight .card { padding: 4px 7px; }
+  #overlay.settings.tight .card .name { font-size: 11px; margin-bottom: 1px; }
+  #overlay.settings.tight .card .desc { font-size: 9px; line-height: 1.15; }
+  @media (max-width: 520px) {
+    #overlay.settings .cards { grid-template-columns: 1fr 1fr; }
+  }
   #overlay .sub br { line-height: 1.8; }
+  /* FIELD REPORT: when its cards run past a short screen and the overlay
+     scrolls, CLOSE stays in view at the bottom edge. */
+  #overlay .card.pin-close { position: sticky; bottom: 6px; z-index: 3; }
   /* ---- THEMED BUTTONS (owner 2026-09-14). Reference: a pixel-art SIGN that
      reads as part of the scene. U1b: the plaque is now an AUTHORED 9-slice
      pixel frame (src/art/menu_frame.js) painted through the renderer's
@@ -103,13 +166,13 @@
     font-size: 12px; letter-spacing: 1px; cursor: pointer;
     touch-action: manipulation; user-select: none; -webkit-user-select: none;
   }
-  #draft-actions .dact.dim { opacity: 0.4; cursor: default; }
+  #draft-actions .dact.dim { color: #9a8f7a; border-color: #4a4030; cursor: default; }
   #draft-actions .dact.armed { border-color: #ff5a3c; color: #ffb0a0; }
   /* the AUTO-PICK row over the cards: the countdown, ON/OFF [O], WAIT [T] */
   #draft-autopick {
     display: flex; gap: 8px; align-items: center; justify-content: center;
     width: max-content; max-width: 100%; margin: 2px auto 6px;
-    font-size: 11px; letter-spacing: 1px; color: #6a6a8a;
+    font-size: 11px; letter-spacing: 1px; color: #9a9ab8;
   }
   #draft-autopick .dap {
     padding: 4px 10px; border: 1px solid #3a3a52; background: #12121c; color: #9a9ab8;
@@ -117,7 +180,7 @@
   }
   #draft-autopick .dap:hover { border-color: #6a6a8a; color: #d0d0ea; }
   #draft-autopick .dap.off { border-color: #7a5a3a; color: #ffb070; }
-  #draft-autopick .k { opacity: 0.6; }
+  #draft-autopick .k { color: #b0b0cc; }   /* key chips reach 4.5 to 1 on their plate */
   /* Fixed widths, so a press never moves a switch out from under the finger:
      the text box fits its longest form (AUTO-CONTINUE IN 30s, 20 characters
      plus their 1px letter-spacing) and ON/OFF share one width. */
@@ -126,6 +189,32 @@
   /* level-up draft, evolve and fusion offers: a darker scrim than the menus,
      so card text reads over the live field */
   #overlay.draft { background: rgba(5,5,10,0.88); }
+  /* R5: the evolve and fusion offer sits over the frozen field: dimmed, not
+     black. Each card shows weapon + partner = what they become (main.js
+     forgeRowEl), the pictures at whole-number scales. */
+  #overlay.draft.forge { background: rgba(5,5,10,0.62); }
+  #overlay.draft.forge h1, #overlay.draft.forge .sub, #overlay.draft.forge #draft-autopick { text-shadow: 0 0 6px #05050a, 1px 1px 0 #05050a; }
+  /* The offer's grey lines sit on a dark plate (as the title's #ov-sub does):
+     over a light floor the lighter scrim leaves mid grey, and on an upright
+     phone the lines cross the frozen HUD. The plate keeps them readable on
+     every stage and hides the HUD words under them. */
+  #overlay.draft.forge .sub, #overlay.draft.forge #draft-autopick {
+    background: rgba(5,5,10,0.9); padding: 3px 10px; border-radius: 2px; }
+  /* A light floor (Bone Desert, the snow) shows through a menu's scrim as mid
+     grey: the in-run menus (pause, intermission) get a darker scrim there
+     (main.js syncFloorLightFlag). The title, the drafts and the end card
+     keep their own. */
+  #overlay.floor-light:not(.title):not(.draft):not(.end) { background: rgba(5,5,10,0.86); }
+  .forge-row { display: flex; align-items: center; justify-content: center; gap: 4px;
+    margin: 0 auto 8px; position: relative; z-index: 1; }
+  .forge-row canvas { display: block; image-rendering: pixelated; flex: none; }
+  .forge-row canvas:last-child { box-shadow: 0 0 10px 2px rgba(63,230,210,0.55); }   /* what they become: the reward glow */
+  .forge-sign { color: #fff1d6; font-weight: bold; font-size: 16px; line-height: 1; }
+  #overlay.draft.compact .forge-row { margin-bottom: 4px; gap: 2px; }
+  /* a narrow phone card: tight gaps and small signs, and the row may reach
+     4 px into the card's padding (main.js forgeRowFit) */
+  #overlay.draft .forge-row.tight { gap: 1px; margin-left: -4px; margin-right: -4px; }
+  .forge-row.tight .forge-sign { font-size: 12px; }
   #overlay.draft #draft-actions, #overlay.draft #draft-autopick { align-self: center; }
   /* the COMPACT draft card (draft_card_art.js draftLayout: viewports up to
      500px tall). Half-size art beside tighter text, one row, no scrolling;
@@ -162,7 +251,13 @@
   #overlay.draft.compact #draft-autopick .k { display: none; }
   #overlay.draft.compact #draft-autopick .dap-on { min-width: calc(3ch + 3px); }
   .card:active { transform: translateY(1px); }
-  .card.dim { opacity: 0.45; }
+  /* A dim card: the pictures fade, the frame darkens but stays solid, so the
+     screen's art never shows through behind the text. */
+  .card.dim canvas:not(.frame) { opacity: 0.5; }
+  .card.dim canvas.frame { filter: brightness(0.6) saturate(0.7); }
+  /* 0.85, not less: on a sideways phone the pre-run's text runs onto the
+     frame's darkened shade step, and it still reads at 4.5:1 there. */
+  .card.dim .name, .card.dim .desc, .card.dim .syn, .card.dim .key { opacity: 0.85; }
   .card.dim:hover { cursor: default; }
   /* DRAFT PICK CEREMONY (owner 2026-09-16): the pick resolves instantly (the
      sim already runs underneath — zero added latency); the overlay stays up
@@ -206,7 +301,7 @@
   /* caret sits OUTSIDE the centred text run (absolute), so it cannot skew the
      title's centring — a visual read caught the title pushed right */
   .card .name::before {
-    content: '\2023'; position: absolute; left: 8px; color: #c9a05a;
+    content: '\203A'; position: absolute; left: 8px; color: #c9a05a;
   }
   .card:hover .name::before { color: #ffd75e; }
   /* the end card's "AUTO-CONTINUE: OFF" filled the row and ran into the caret
@@ -231,7 +326,134 @@
     margin-top: 8px; font-size: 11px; color: #7ad0ff;
     letter-spacing: 1px;
   }
-  .card .key { margin-top: 10px; font-size: 11px; color: #6a6a8a; }
+  .card .key { margin-top: 10px; font-size: 11px; color: #b0b0cc; }   /* the key chip reaches 4.5 to 1 */
+  /* ---- R5 DRAFT CARDS (main.js presentDraft, src/draft_card_face.js): each
+     offer is a playing card. A ribbon, the card face large inside a border in
+     its rarity colour (--rar), the hand tag, the name and at most two effect
+     lines; the full text is in .detail (hover, the keyboard cursor .sel, or
+     press-and-hold .peek). Only .dcard is touched: menus and the evolve
+     offer keep their look. */
+  .card.dcard { display: flex; flex-direction: column; align-items: center; padding: 10px 10px 12px; }
+  .dcard .ribbon, .dcard .tag, .dcard .fx, .dcard .face, .dcard .detail { position: relative; z-index: 1; }
+  .dcard .ribbon {
+    font-size: 10px; letter-spacing: 1px; line-height: 14px; padding: 0 6px; margin-bottom: 7px;
+    color: #0a0603; background: #c9a05a; font-weight: bold; white-space: nowrap;
+  }
+  .dcard .ribbon.none { visibility: hidden; }
+  .dcard .ribbon.new, .dcard .ribbon.evo { background: #ffd75e; }
+  .dcard .ribbon.rare { background: #6fd8ff; }
+  .dcard .ribbon.mythic { background: #c89aff; }
+  .dcard .ribbon.joker { background: #b08aff; }
+  .dcard .face {
+    line-height: 0; margin: 3px auto 10px; overflow: hidden;
+    box-shadow: 0 0 0 2px var(--rar, #8a7350), 0 0 0 3px #0a0603;
+  }
+  .dcard .face canvas.card-art { margin: 0 !important; }
+  .dcard .face canvas.back { display: none; position: absolute; left: 0; top: 0; z-index: 3; }
+  /* the slow shimmer on the rare ones: a light band crosses the face in
+     stepped moves, then rests */
+  .dcard.r-rare .face::after, .dcard.r-mythic .face::after {
+    content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,.26) 47%, rgba(255,255,255,.26) 53%, transparent 60%) no-repeat;
+    background-size: 250% 100%; background-position: 100% 0;
+    animation: cardShimmer 3.6s steps(18, jump-none) infinite;
+  }
+  .dcard.r-mythic .face::after {
+    background-image: linear-gradient(115deg, transparent 40%, rgba(232,206,255,.34) 47%, rgba(232,206,255,.34) 53%, transparent 60%);
+  }
+  @keyframes cardShimmer { 0% { background-position: 100% 0; } 40%, 100% { background-position: 0% 0; } }
+  /* the hand tag stays inside its card: one line when it fits, else it wraps
+     between words (never inside one), each line centred; the longest the
+     game can make is "makes DIAMOND STRAIGHT FLUSH" */
+  .dcard .tag {
+    font-size: 10px; letter-spacing: 1px; line-height: 14px; padding: 0 5px; margin: -4px auto 6px;
+    color: #0a0603; background: #8fe0a0; font-weight: bold; white-space: normal; z-index: 4;
+    box-sizing: border-box; width: fit-content; max-width: 100%; text-align: center;
+  }
+  .card.dcard .name { margin-bottom: 4px; }
+  /* the two face lines wrap in full: no clamp, no ellipsis (a cut line hid
+     the number the card gives) */
+  .dcard .fx {
+    font-size: 12px; line-height: 1.3; color: #d6c09a; text-shadow: 1px 1px 0 #0a0603; max-width: 100%;
+    overflow-wrap: break-word;
+  }
+  .dcard .fx.evo, .dcard .fx.lead, .dcard .fx.stack { color: #ffd75e; font-size: 11px; margin-top: 2px; }
+  .dcard .fx.road { color: #c0b48a; font-size: 11px; margin-top: 2px; }
+  .dcard .fx.dim { color: #9a8a6a; font-size: 11px; margin-top: 2px; }
+  .card.dcard .key { margin-top: auto; padding-top: 6px; }
+  .dcard .detail {
+    display: none; position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20;
+    padding: 8px; text-align: left; line-height: 1.35; pointer-events: none;
+    background: #140d08; border: 2px solid var(--rar, #8a7350); box-shadow: 3px 3px 0 #0a0603;
+  }
+  .dcard .detail .dname { color: #ffd75e; font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+  .dcard .detail .syn { margin-top: 0; margin-bottom: 4px; }
+  .dcard .detail .desc { font-size: 11px; }
+  .dcard .detail .evo { margin-top: 4px; }
+  @media (hover: hover) { .dcard:hover .detail { display: block; } }
+  .dcard.sel .detail, .dcard.peek .detail { display: block; }
+  /* the deal-in: face down, then one flip each (delays from dealDelays).
+     The card's CONTENTS flip (its frame, face and lines), never the card box
+     itself: the box keeps its full size, so a press anywhere on the card
+     during the flip still lands on it and picks. */
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > :not(.detail) {
+    animation: cardDealFlip 150ms linear backwards; animation-delay: var(--deal-delay, 0ms);
+  }
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > .ribbon,
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > .tag,
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > .name,
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > .fx,
+  .card.dcard.deal:not(.card-picked):not(.card-burn) > .key {
+    animation: cardDealFlip 150ms linear backwards, cardDealFront 150ms linear backwards;
+    animation-delay: var(--deal-delay, 0ms), var(--deal-delay, 0ms);
+  }
+  .dcard.deal .face canvas.card-art {
+    animation: cardDealFront 150ms linear backwards; animation-delay: var(--deal-delay, 0ms);
+  }
+  .dcard.deal .face canvas.back {
+    display: block; animation: cardDealBack 150ms linear both; animation-delay: var(--deal-delay, 0ms);
+  }
+  @keyframes cardDealFlip { 0% { transform: scaleX(1); } 50% { transform: scaleX(0.06); } 100% { transform: scaleX(1); } }
+  @keyframes cardDealFront { 0%, 49% { visibility: hidden; } 50%, 100% { visibility: visible; } }
+  @keyframes cardDealBack { 0%, 49% { visibility: visible; } 50%, 100% { visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) {
+    .card.dcard.deal, .dcard.deal *, .dcard .face::after { animation: none !important; }
+    .dcard.deal .face canvas.back { display: none; }
+  }
+  /* the compact card (phone held sideways): the face beside the text */
+  #overlay.draft.compact .card.dcard { display: flow-root; padding: 8px; }
+  #overlay.draft.compact .dcard .face { float: left; margin: 3px 10px 3px 3px; }
+  #overlay.draft.compact .dcard .ribbon { display: inline-block; margin-bottom: 3px; font-size: 10px; line-height: 13px; letter-spacing: 0.5px; }
+  #overlay.draft.compact .dcard .ribbon.none { display: none; }
+  #overlay.draft.compact .dcard .tag { display: table; margin: 0 0 3px; font-size: 10px; line-height: 13px; letter-spacing: 0.5px; }
+  #overlay.draft.compact .dcard .fx { font-size: 11px; }
+  #overlay.draft.compact .dcard .fx.evo, #overlay.draft.compact .dcard .fx.lead,
+  #overlay.draft.compact .dcard .fx.stack, #overlay.draft.compact .dcard .fx.dim { font-size: 10px; }
+  /* the detail covers its card and grows past it when the text is longer
+     (never cut): at least the card's height, as tall as its text */
+  #overlay.draft.compact .dcard .detail { top: 0; bottom: auto; min-height: 100%; box-sizing: border-box; padding: 6px; }
+  /* cards2: the ROWS card (an upright phone; draftLayout rows): one offer
+     per row, as wide as the screen. The face on the left at a whole scale,
+     the ribbon, hand tag, numbered name and effect lines on the right. The
+     whole row is the tap target. main.js sets the row width. */
+  #overlay.draft.rows { gap: 8px; padding-top: 8px; padding-bottom: 8px; }   /* DRAFT_ROWS.CHROME counts these */
+  #overlay.draft.rows h1 { font-size: 22px; margin: 0; letter-spacing: 3px; }
+  #overlay.draft.rows .cards { flex-direction: column; flex-wrap: nowrap; align-items: center; gap: 8px; width: auto; align-self: center; }
+  #overlay.draft.rows .card.dcard { display: flow-root; box-sizing: border-box; padding: 8px; margin: 0; text-align: left; min-height: 0; }
+  #overlay.draft.rows .dcard .face { float: left; margin: 3px 10px 3px 3px; }
+  #overlay.draft.rows .dcard .ribbon { display: inline-block; margin-bottom: 4px; }
+  #overlay.draft.rows .dcard .ribbon.none { display: none; }
+  #overlay.draft.rows .dcard .tag { display: table; margin: 0 0 4px; }   /* a table sits beside the float */
+  #overlay.draft.rows .card.dcard .name { font-size: 14px; margin-bottom: 4px; letter-spacing: 0; }
+  #overlay.draft.rows .card.dcard .name::before { content: none; }
+  #overlay.draft.rows .card.dcard .key { display: none; }
+  /* the detail covers its row and grows past it when the text is longer
+     (a 2x row is 90 px tall): down over the next rows, or up over the
+     row above for the last row, so it stays on the screen */
+  #overlay.draft.rows .dcard .detail { top: 0; bottom: auto; min-height: 100%; box-sizing: border-box; padding: 8px; }
+  #overlay.draft.rows .dcard:last-child:not(:first-child) .detail { top: auto; bottom: 0; }
+  #overlay.draft.rows #draft-actions { margin-top: 0; }
+  #overlay.draft.rows #draft-autopick { margin: 0 auto !important; }
   /* ---- G13 CHARACTER SELECTOR: the authored 32x32 idle busts as LIVE
      canvases inside the pilot cards. The backing store stays 32x32 (the
      pixel grid itself, painted by the renderer's own drawGrid); CSS scales
@@ -269,7 +491,7 @@
     color: #3c2c14;
   }
   .card.paper-note .name {
-    color: #6b4f1d;
+    color: #5a3f12;
     text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.35);
   }
   /* no caret on the parchment (the ::before glyph belongs to the plaques) */
@@ -278,7 +500,7 @@
     font-size: 13px; line-height: 1.65;
     color: #3f3016; text-shadow: none;
   }
-  .card.paper-note .key { color: #7a5f35; }
+  .card.paper-note .key { color: #5e4626; }
   /* OPT-IN OFFER (owner 2026-09-17: "Ask them if they want to see it"): the
      one obvious button on the note — the ACCEPT. Bold ink on a wax-seal red
      plate so it cannot be missed, while the DECLINE stays the easiest action
@@ -420,7 +642,7 @@
     width: 32px; height: 32px;           /* 16x16 backing, integer 2x */
     image-rendering: pixelated; image-rendering: crisp-edges;
   }
-  #overlay .sub { font-size: 13px; color: #8888a8; text-align: center; }
+  #overlay .sub { font-size: 13px; color: #9a9ab8; text-align: center; }
   /* U1 HEADER (owner 2026-09-14): gold reads as a coin glyph + number, and the
      equipped pilot as their own bust. Both canvases are integer-scaled with
      pixelated rendering (no smoothing, no blur) — the coin is an 8x8 grid at
@@ -441,7 +663,7 @@
   #overlay .away-rows { display: inline-block; text-align: left; max-width: min(92vw, 420px);
     padding: 8px 14px; background: rgba(5,5,10,0.72); border: 2px solid #3a2a18; border-radius: 4px;
     font-size: 13px; line-height: 1.7; color: #f0dfc0; }
-  #overlay .away-rows div::before { content: '\25B8  '; color: #ffd75e; }
+  #overlay .away-rows div::before { content: '\203A  '; color: #ffd75e; }
   /* The camp strip: on the title's CAMP card at 1x, on the camp screen at 3x. */
   canvas.camp-strip { display: block; margin: 0 auto 6px; image-rendering: pixelated; image-rendering: crisp-edges; }
   .card canvas.camp-strip { position: relative; z-index: 1; width: 96px; height: 24px; }
@@ -453,11 +675,21 @@
   #overlay.title #ov-sub { order: 3; padding: 4px 12px; background: rgba(5,5,10,0.72);
     border-radius: 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
   #overlay.title #ov-sub canvas.bust { margin: 0; width: 32px; height: 32px; }
+  /* THE MAIN BUTTON: PLAY alone on the first row, wider, with a 22 px name
+     and its own bright frame (MENU_FRAME_PALETTES.main); every other tile
+     keeps the plain plaque and reads as secondary. */
+  #overlay.title .cards:has(.card.main) { width: 100%; }
+  #overlay.title .card.main { box-sizing: border-box; width: min(264px, 100%);
+    margin: 0 calc((100% - min(264px, 100%)) / 2); padding: 10px 14px 9px; }
+  #overlay.title .card.main .name { font-size: 22px; letter-spacing: 4px; margin-bottom: 4px; }
+  #overlay.title .card.main .desc { color: #f0dfc0; }
   /* A landscape phone fits the title's five or six cards in one or two short rows. */
   @media (pointer: coarse) and (orientation: landscape) {
     #overlay.title .card { width: min(17.5vw, 172px); padding: 8px 6px; }
     #overlay.title .card .name { margin-bottom: 4px; }
     #overlay.title .card .desc { font-size: 11px; }
+    /* no height for a row of its own: PLAY leads the first row, wider */
+    #overlay.title .card.main { width: min(24vw, 210px); margin: 0; padding: 6px 8px; }
   }
   /* The run setup on a short landscape screen: two rows of three wide cards,
      no press hints, quest pays or sub line, so all six fit under the wordmark
@@ -498,6 +730,47 @@
      one point more type size for the 3-second read. The .end class is set by
      composeEndScreen and reset by openMenu for every other screen. */
   #overlay.end { background: rgba(5,5,10,0.86); gap: 18px; }
+  /* R5 THE END CARD: over the last frame of the fight, frozen and dimmed
+     (main.js paints the death movie's frozen frame under it). The scrim is
+     lighter at the middle so the fight shows; the words sit on their own
+     panel so they read over any fight. */
+  #overlay.end { background: radial-gradient(ellipse at 50% 45%, rgba(5,5,10,0.5) 0%, rgba(5,5,10,0.62) 55%, rgba(5,5,10,0.85) 100%); }
+  #overlay.end > h1 { text-shadow: 2px 2px 0 #000, 0 0 12px rgba(0,0,0,0.9); }
+  #overlay.end .ec {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: rgba(6,6,12,0.82); border: 1px solid rgba(255,215,94,0.22);
+    border-radius: 6px; padding: 10px 16px; max-width: min(640px, calc(100vw - 32px));
+    box-sizing: border-box; line-height: 1.35;
+  }
+  #overlay.end .ec-tags { font-size: 12px; }
+  #overlay.end .ec-how { color: #e8e2d4; }
+  #overlay.end .ec-gold { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  #overlay.end .ec-earned { font-size: 20px; font-weight: bold; letter-spacing: 1px; text-shadow: 2px 2px 0 #0a0603; font-variant-numeric: tabular-nums; }
+  #overlay.end .ec-bankline { color: #d6c09a; font-variant-numeric: tabular-nums; }
+  #overlay.end .ec-bank { color: #ffd75e; font-weight: bold; }
+  #overlay.end .ec-best { color: #7ad0ff; }
+  #overlay.end .ec-got { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  #overlay.end .ec-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    min-width: 76px; max-width: 150px; padding: 5px 7px; box-sizing: border-box;
+    border: 1px solid; border-radius: 4px; background: rgba(0,0,0,0.35); font-size: 12px; line-height: 1.25;
+  }
+  #overlay.end .ec-item .ec-cap { font-size: 12px; letter-spacing: 1px; opacity: 0.85; }
+  #overlay.end .ec-item .ec-nm { color: #e8e2d4; }
+  #overlay.end .ec-trophy { border-color: #c9a05a; }
+  #overlay.end .ec-trophy .ec-cap { color: #ffd75e; }
+  #overlay.end .ec-unlock { border-color: #3fc8c0; }   /* cyan-teal: reward */
+  #overlay.end .ec-unlock .ec-cap { color: #5fe0d6; }
+  #overlay.end .ec-threat { border-color: #ff7a4a; }   /* red-orange: danger */
+  #overlay.end .ec-threat .ec-cap { color: #ff7a6a; }
+  #overlay.end canvas.ec-icon { width: 64px; height: 64px; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #overlay.end canvas.ec-icon.ec-sm { width: 32px; height: 32px; }
+  #overlay.end .ec-more { font-size: 12px; color: #9a9ab0; line-height: 1.4; }
+  #overlay.end .ec-more .pool { opacity: 0.75; }
+  /* BUY NEXT: its own line under the row, a shop shortcut in reward colours. */
+  #overlay.end .cards:has(.endbuy)::before { content: ''; flex-basis: 100%; height: 0; order: 1; }
+  #overlay.end .card.endbuy { order: 2; width: 360px; max-width: calc(100vw - 40px); box-sizing: border-box; margin-top: -8px; }
+  #overlay.end .card.endbuy.afford .desc { color: #5fe0d6; }
   /* The summary is a SHORT panel: the coarse-pointer media query below
      top-aligns #overlay (a scrolling-menu rule) and left it stranded in the
      upper third with an empty band below. Center it in the viewport —
@@ -517,6 +790,34 @@
     #overlay.end .card { box-sizing: border-box; width: min(17.5vw, 160px); padding: 8px 6px; }
     #overlay.end .card .name { margin-bottom: 4px; }
     #overlay.end .card .desc { font-size: 11px; line-height: 1.3; }
+    /* R5: the summary on a phone on its side: smaller emblems, a tighter panel. */
+    #overlay.end .ec { gap: 4px; padding: 6px 12px; }
+    #overlay.end .ec-earned { font-size: 16px; }
+    #overlay.end canvas.ec-icon { width: 32px; height: 32px; }
+    #overlay.end canvas.ec-icon.ec-sm { width: 16px; height: 16px; }
+    #overlay.end .ec-item { flex-direction: row; gap: 5px; padding: 3px 6px; max-width: 220px; }
+    #overlay.end .ec-more { font-size: 12px; line-height: 1.3; }
+    /* BUY NEXT: one short line under the row (name and words side by side). */
+    #overlay.end .card.endbuy { display: flex; gap: 10px; align-items: baseline; justify-content: center;
+      width: auto; min-width: 300px; padding: 4px 14px; }
+    #overlay.end .card.endbuy .name { margin-bottom: 0; }
+    /* Two columns: the gold on the left, the details on the right; the
+       ending above them and what was earned below. */
+    #overlay.end .ec { display: grid; grid-template-columns: auto auto; column-gap: 18px; align-items: center; justify-items: center; }
+    #overlay.end .ec-tags { grid-column: 1 / -1; grid-row: 1; }
+    #overlay.end .ec-how { grid-column: 1 / -1; grid-row: 2; }
+    #overlay.end .ec-gold { grid-column: 1; grid-row: 3; }
+    #overlay.end .ec-more { grid-column: 2; grid-row: 3; text-align: left; }
+    #overlay.end .ec-got { grid-column: 1 / -1; grid-row: 4; }
+  }
+  /* R5: a phone held upright: BUY NEXT joins the row (the row has room), and
+     the summary is tighter, so the card needs no scroll. */
+  @media (orientation: portrait) and (max-width: 600px) {
+    #overlay.end { gap: 10px; }
+    #overlay.end .ec { gap: 6px; padding: 8px 10px; }
+    #overlay.end .ec-more { font-size: 12px; line-height: 1.3; }
+    #overlay.end .cards:has(.endbuy)::before { display: none; }
+    #overlay.end .card.endbuy { order: 0; width: min(30vw, 172px); margin-top: 0; }
   }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
@@ -539,8 +840,8 @@
     background: #14141f; border: 2px solid #ffd75e;
     color: #e8e8f0; font-size: 13px; line-height: 1.45;
   }
-  #tour-tip .tour-count { display: block; font-size: 10px; color: #6a6a8a; letter-spacing: 1px; margin-bottom: 2px; }
-  #tour-tip .tour-replay { display: block; margin-top: 6px; font-size: 10px; color: #6a6a8a; }
+  #tour-tip .tour-count { display: block; font-size: 10px; color: #9a9ab8; letter-spacing: 1px; margin-bottom: 2px; }
+  #tour-tip .tour-replay { display: block; margin-top: 6px; font-size: 10px; color: #9a9ab8; }
   #tour-tip .tour-controls { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 8px; }
   /* Real hit targets, >=44px on both axes (phone-thumb sized), inside the
      card and above the shade — the mobile rule: overlap is the acceptable
@@ -631,6 +932,16 @@
   @media (max-width: 930px) { #touch .keybar .opt { display: none; } }
   @media (max-width: 825px) { #touch .keybar .opt3 { display: none; } }
   @media (min-width: 1600px) { #touch.cog-only .keybar, #touch .keybar button { font-size: 13px; } }
+  /* R3 KEY STRIP: after the first minutes of the first runs the strip folds
+     into one small KEYS chip in the bottom-right corner (it reserves no band,
+     so the canvas takes the room). ? or the chip brings the strip back. */
+  #touch .keybar .kb-more { display: none; }
+  #touch.cog-only.kb-min .keybar {
+    left: auto; right: 6px; bottom: 6px; height: 24px; padding: 0 2px;
+    border: 1px solid #23233a; border-radius: 4px; background: rgba(11,11,18,0.85);
+  }
+  #touch.cog-only.kb-min .keybar > * { display: none; }
+  #touch.cog-only.kb-min .keybar .kb-more { display: inline-block; }
   /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
      2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
      canvas button enters immersive mode instead. The wrap grows to the
@@ -1121,6 +1432,8 @@ body.sw-notice #overlay { padding-top: calc(40px + env(safe-area-inset-top)); }
       <button data-act="stats"><b>I</b>STATS</button>
       <button data-act="settings"><b>ESC</b>PAUSE</button>
       <button data-act="help" class="opt"><b>?</b>HELP</button>
+      <!-- R3: the one chip left when the strip folds away (main.js keyStripWanted) -->
+      <button data-act="help" class="kb-more" id="kb-more"><b>?</b>KEYS</button>
     </div>
   </div>
   <!-- HELP MODE: the retired #hints key-list panel's slot. "?" arms the

@@ -89,6 +89,10 @@ const savedEq = prof.equippedCharacter;
 const pinWorld = () => {
   st.spawnTimer = 999;
   st.portal = null;
+  // No shrines, altars or other sites: the pilot walks into one in a long window (about 1 seed
+  // in 10: seeds 25, 34, 43, 44, 45) and its offer takes the run out of play, which failed the
+  // cooldown-floor and AFTERIMAGE checks at random.
+  if (st.sites && st.sites.length) st.sites.length = 0;
   st.wave.midAt = st.time + 1e9;
   st.wave.endsAt = st.time + 1e9;
   st.wave.midBossDone = true;

@@ -244,7 +244,7 @@ const frame = () => { now += 1000 / 60; const cb = rafQueue.shift(); if (!cb) th
       fillRect(x, y, w, h) { paints.push([x, y, w, h]); } };
     const painted = drawChestBurst(rg, st, st.cam);
     const goldRects = paints.filter(Array.isArray);
-    const goldInks = paints.filter(p => typeof p === 'string' && /255,\s*215,\s*94|ffd75e|ffffff/.test(p));
+    const goldInks = paints.filter(p => typeof p === 'string' && /255,\s*215,\s*94|ffd75e|f0c860|ffffff/.test(p));
     ok('the burst PAINTS the shower (12 sparks + ring + flash, all integer pixels)',
       painted === true && goldRects.length >= CONFIG.RUN_CHEST.BURST_SPARKS + 4 &&
       goldInks.length >= CONFIG.RUN_CHEST.BURST_SPARKS &&

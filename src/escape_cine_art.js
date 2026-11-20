@@ -12,6 +12,7 @@ import { propForStage } from './stage_props.js';
 import { designsForStage } from './stage_buildings.js';
 import { WRIT } from './escape_payout.js';
 import { PORTAL_PALETTE, portalFrame } from './art/portal.js';
+import { SKIP_RECT, SKIP_HIT, drawSkip } from './movie_skip.js';
 
 // ---- the timeline (seconds) --------------------------------------------------
 export const BEATS = {
@@ -321,10 +322,10 @@ function frontAt(t) {
 }
 
 // The hero's sideways position (sprite pixels): a weave, and a dodge away
-// from each lunge.
-function heroX(t) {
+// from each lunge (none when the scene has no lungers: the intro's road).
+function heroX(t, lunges = LUNGES) {
   let x = 2.2 * Math.sin(t * 2.3);
-  for (const L of LUNGES) {
+  for (const L of lunges) {
     const u = (t - L.t0) / LUNGE_S;
     if (u > 0.25 && u < 0.95) x -= L.side * 10 * Math.sin(Math.PI * span(u, 0.25, 0.95));
   }
@@ -336,7 +337,8 @@ function heroX(t) {
 // down | swoop.
 export function hordePose(scene, i, t) {
   const m = scene.horde[i];
-  const base = 1 + frontAt(t) + m.off + 0.1 * Math.sin(t * 1.7 + m.phase * 6.283);
+  // scene.frontAt: a shot with its own pace for the wave (the intro's road).
+  const base = 1 + (scene.frontAt ? scene.frontAt(t) : frontAt(t)) + m.off + 0.1 * Math.sin(t * 1.7 + m.phase * 6.283);
   let d = base, x = m.x, lift = m.fly ? FLY_H + 2 * Math.sin(t * 6 + m.phase * 6.283) : 0, state = 'run';
   const li = scene.lungers.indexOf(i);
   if (li >= 0) {
@@ -371,7 +373,7 @@ export function hordePose(scene, i, t) {
 // The boss: null before it shows. d: depth; s: sprite scale; rise: 0 while it
 // is still behind the crest, 1 once it stands on the plain.
 export function bossPose(scene, t) {
-  if (t < BOSS_T.RISE) return null;
+  if (scene.noBoss || t < BOSS_T.RISE) return null;
   const spr = artOf(scene).boss;
   const rise = smooth(span(t, BOSS_T.RISE, BOSS_T.UP));
   let d = 10;
@@ -389,7 +391,8 @@ export function heroPose(scene, t) {
   const d = lerp(1, 0.52, dive * dive);
   const hop = Math.abs(Math.sin(t * 9 * Math.PI)) * 0.7;
   const lift = dive > 0 ? Math.sin(Math.PI * Math.min(1, dive * 1.15)) * 7 : hop;
-  return { d, x: heroX(t) * (1 - dive), lift, dive, step: Math.floor(t * 9) % 2,
+  const lunges = scene.lungers && scene.lungers.length ? LUNGES : [];
+  return { d, x: heroX(t, lunges) * (1 - dive), lift, dive, step: Math.floor(t * 9) % 2,
     glance: t >= GLANCE[0] && t < GLANCE[1] };
 }
 
@@ -541,7 +544,7 @@ function drawItem(g, scene, A, it, t, sway) {
       const rising = b.rise < 1;
       if (rising) { g.save(); g.beginPath(); g.rect(-8, -8, W + 16, y + 8); g.clip(); }
       else drawShadow(g, x, y, w * 0.9, b.s);
-      blitGrid(g, gr, spr.palette, Math.round(x - w * b.s / 2), Math.round(by), b.tell ? ST_TELL : ST_ACTOR, b.s);
+      blitGrid(g, gr, spr.palette, Math.round(x - w * b.s / 2), Math.round(by), b.tell ? ST_TELL : (spr.rim ? actorStyle(false, false, spr.rim, false, false) : ST_ACTOR), b.s);   // bossdark: its rim
       if (rising) g.restore();
       break;
     }
@@ -666,10 +669,8 @@ function textW(g, s, per) {
 }
 
 // The SKIP button, top right, and the wider box a tap on it may land in.
-// Skipping takes two presses (escape_cine.js press): the first raises the
-// prompt, a skip key or a tap in SKIP_HIT while it is up ends the movie.
-export const SKIP_RECT = { x: W - 50, y: 2, w: 44, h: BAR - 4 };
-export const SKIP_HIT = { x: W - 112, y: 0, w: 112, h: 46 };
+// Every movie shares them and the two-press rule (src/movie_skip.js).
+export { SKIP_RECT, SKIP_HIT };
 
 const BAR_COL = '#06060b';
 function drawBars(g) {
@@ -689,26 +690,9 @@ function drawHud(g, scene, t, ask = null) {
     g.fillStyle = scene.test ? '#9aa4b0' : GOLD;
     g.fillText(lead, 8 + textW(g, 'ESCAPE', 5.4) + 8, BAR / 2 + 0.5);
   }
-  const r = SKIP_RECT;
-  const asking = !!(ask && ask.on);
-  if (asking) {
-    g.fillStyle = GOLD;
-    g.fillRect(r.x, r.y, r.w, r.h);
-  } else {
-    g.fillStyle = '#3a3a4c';
-    g.fillRect(r.x, r.y, r.w, 1); g.fillRect(r.x, r.y + r.h - 1, r.w, 1);
-    g.fillRect(r.x, r.y, 1, r.h); g.fillRect(r.x + r.w - 1, r.y, 1, r.h);
-  }
-  g.textAlign = 'center';
-  g.fillStyle = asking ? BAR_COL : '#b8b8cc';
-  g.fillText('SKIP', r.x + r.w / 2, BAR / 2 + 0.5);
-  // The prompt: only after a press, and it says what the second one must be.
-  if (asking) {
-    g.fillStyle = '#e8e8f0';
-    g.font = 'bold 8px monospace';
-    g.fillText(ask.tap ? 'tap SKIP to skip' : 'ESC or ENTER to skip', CX, H - BAR / 2 + 0.5);
-  }
-  g.textAlign = 'left';
+  // The button is always outlined on the film bar; the prompt comes only
+  // after a press and says what the second one must be.
+  drawSkip(g, { ask: ask && ask.on ? 1 : 0, askTap: ask && ask.tap ? ask.tap : false }, { idle: true });
 }
 
 // The whole frame at time t. ask: the skip prompt (see drawHud).
@@ -746,6 +730,20 @@ export function drawScene(g, scene, t, ask = null) {
   if (white > 0) { g.globalAlpha = white; g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
 }
 
+// The road alone, for the intro's opening shot (src/intro.js): the sky, the
+// ground and its scenery, the horde and the hero, the dust and the speed
+// lines. No film bars, no boss, no portal and no shake. Build the scene with
+// noBoss: true and no lungers, so nothing lunges and the hero only weaves.
+export function drawRoad(g, scene, t) {
+  const A = artOf(scene);
+  const sway = swayAt(t);
+  drawSky(g, A, t, sway);
+  drawGround(g, A, t, sway);
+  for (const it of collect(scene, A, t)) drawItem(g, scene, A, it, t, sway);
+  drawDust(g, scene, A, t, sway);
+  drawStreaks(g, A, t, sway);
+}
+
 // The payout card. tc: seconds since it came up (the gold counts up over the
 // first 0.4 s); white: how much of the flash is still over it.
 export function drawCard(g, scene, tc, white = 0) {
@@ -780,4 +778,46 @@ export function drawCard(g, scene, tc, white = 0) {
     }
   }
   if (white > 0) { g.globalAlpha = white; g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
+}
+
+// The road camera's parts, for the other movies built on it (the death
+// movie, src/death_cine.js). Read only: the escape itself does not use this.
+export const ROAD = {
+  W, H, CX, BAR, CREST_Y, D_CREST, D_MIN, CYC, RUN, SP,
+  sOf, yOf, xOf, swayAt, artOf, drawSky, drawGround, drawItem, drawShadow, drawBars, mix, hash, fog,
+};
+
+// ---- the road (R2: the shot before a stage change) -------------------------------
+// The same road and camera as the chase, on the NEXT stage's ground and sky,
+// with the hero running and nobody behind him. t: seconds into the shot.
+// title: the stage's name, laid over the sky; k: how far the name is in (0..1).
+// (Named drawStageRoad: the intro's road shot above is drawRoad.)
+export function drawStageRoad(g, scene, t, title = '', k = 1) {
+  const A = artOf(scene);
+  const sway = swayAt(t);
+  drawSky(g, A, t, sway);
+  drawGround(g, A, t, sway);
+  const items = collect(scene, A, t);
+  for (const it of items) drawItem(g, scene, A, it, t, sway);
+  drawStreaks(g, A, t, sway);
+  drawBars(g);
+  g.font = 'bold 9px monospace';
+  g.textBaseline = 'middle';
+  g.textAlign = 'left';
+  g.fillStyle = '#c8c8d8';
+  g.fillText('THE ROAD ON', 8, BAR / 2 + 0.5);
+  if (title && k > 0) {
+    g.globalAlpha = clamp01(k);
+    g.textAlign = 'center';
+    g.font = 'bold 22px monospace';
+    g.fillStyle = '#06060b';
+    g.fillText(title, CX + 1, 62 + 1);
+    g.fillStyle = '#f2f2fa';
+    g.fillText(title, CX, 62);
+    g.font = 'bold 9px monospace';
+    g.fillStyle = A.sky.glow;
+    g.fillText('NEXT STAGE', CX, 44);
+    g.globalAlpha = 1;
+    g.textAlign = 'left';
+  }
 }

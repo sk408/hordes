@@ -87,14 +87,16 @@ S.check('endScreenBody carries progress + cause + earnings + the next unlock', (
   assert.ok(/survived 151s/.test(html), 'time survived');
   assert.ok(/KILLED BY SPITTER at range/.test(html), 'the legible cause');
   assert.ok(/GOLD EARNED: \+184/.test(html), 'gold earned');
-  assert.ok(/BUY NEXT: /.test(html), 'the next purchase');
-  // Still a short read, not a wall: lead, cause, gold, next.
-  assert.ok(html.split('<br>').length <= 4, 'at most four lines without a breakdown');
+  // R5: the next purchase is the BUY NEXT card now, not a line of the summary.
+  assert.ok(!/BUY NEXT/.test(html), 'no BUY NEXT line in the summary');
+  // The reading order: how it ended and the killer, the gold, then the rest.
+  assert.ok(html.indexOf('KILLED BY') < html.indexOf('GOLD EARNED') &&
+    html.indexOf('GOLD EARNED') < html.indexOf('ec-more'), 'ending, gold, then the details');
 });
 S.check('a deliberate exit omits the killer line but keeps the payoff', () => {
   const html = T.endScreenBody({ lead: 'you called it at wave 2', cause: null, gold: 12, firstClear: false });
   assert.ok(!/KILLED BY/.test(html), 'no cause on a deliberate exit');
-  assert.ok(/GOLD EARNED: \+12/.test(html) && /BUY NEXT: /.test(html), 'payoff intact');
+  assert.ok(/GOLD EARNED: \+12/.test(html), 'payoff intact');
 });
 
 // ---- integration: a REAL death through the real loop -------------------------
@@ -128,7 +130,7 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   // assertion below runs unchanged against the identical composed DOM.
   assert.equal(state.mode, 'death-cine', 'the hero died (the movie is playing)');
   assert.equal(elements.overlay.style.display, 'none', 'the payoff overlay is hidden during the movie');
-  h.key('keydown', { key: 'x', preventDefault() {} });   // the skip contract
+  h.skipMovie();   // the skip contract (R2: SKIP shows on the first press, the second skips)
   assert.equal(state.mode, 'dead', 'the skip hands back to the payoff screen');
   assert.equal(elements.overlay.style.display, 'flex', 'the payoff overlay is revealed by the hand-off');
   assert.equal(state.deathBy.cause, 'contact', 'the damage source was recorded');
@@ -138,7 +140,7 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   const html = ovSub();
   assert.ok(/KILLED BY SPITTER in melee/.test(html), 'cause on screen (' + html + ')');
   assert.ok(/GOLD EARNED: \+\d+/.test(html), 'earnings on screen');
-  assert.ok(/BUY NEXT: /.test(html), 'the next purchase on screen');
+  assert.ok([...elements['ov-cards'].children].some(c => /class="name">BUY NEXT</.test(c.innerHTML || '')), 'the next purchase on screen (the BUY NEXT card)');
   assert.ok(/WAVE \d+/.test(html) && /TIME \d\d:\d\d/.test(html) && /LEVEL \d+/.test(html) && /\d+ KILLS/.test(html), 'progress on screen');
   assert.ok(/run award \d+ · survival \d+ · kills \d+/.test(html), 'the gold breakdown on screen');
   assert.ok(/\u00b7/.test(html) || /·/.test(html), 'single-line scannable layout');
@@ -148,7 +150,9 @@ S.check('a real death shows the cause, the earnings and the next unlock', () => 
   assert.ok((cards[0].innerHTML || '').includes('RETRY'), 'RETRY is the FIRST card');
   assert.ok((cards[1].innerHTML || '').includes('SHOP'), 'SHOP second');
   assert.ok((cards[2].innerHTML || '').includes('AUTO-CONTINUE'), 'AUTO-CONTINUE third');
-  assert.ok(cards.length === 4 && (cards[3].innerHTML || '').includes('TITLE'), 'TITLE fourth, and nothing else (' + cards.length + ' cards)');
+  assert.ok((cards[3].innerHTML || '').includes('TITLE'), 'TITLE fourth');
+  // R5: BUY NEXT last, and nothing else.
+  assert.ok(cards.length === 5 && (cards[4].innerHTML || '').includes('BUY NEXT'), 'BUY NEXT fifth, and nothing else (' + cards.length + ' cards)');
   assert.ok(![...cards].some(c => (c.innerHTML || '').includes('CONFIRM')), 'no armed confirm slows RETRY');
 });
 
@@ -175,7 +179,7 @@ S.check('a run that ends before any other menu opened: the end card does not kee
   pump(3);
   assert.ok(ov.classList.contains('title'), 'nothing reset it during the run');
   T.die();
-  for (let i = 0; i < 8 && state.mode !== 'dead'; i++) { h.key('keydown', { key: 'x', preventDefault() {} }); pump(2); }
+  h.skipMovie();   // R2: the one skip rule (two presses, after the start-up guard)
   assert.equal(state.mode, 'dead');
   assert.ok(ov.classList.contains('end'), 'the summary layout');
   for (const c of ['title', 'howto', 'draft', 'compact']) assert.ok(!ov.classList.contains(c), 'no ' + c + ' layout rides in');

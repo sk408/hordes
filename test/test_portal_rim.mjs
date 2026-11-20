@@ -30,7 +30,7 @@ ok('the portal opens and drifts inside the reachable floor, even from beyond the
     st.player.x = st.portal ? st.portal.x : st.player.x; st.player.y = st.portal ? st.portal.y : st.player.y;
     st.player.hp = st.player.stats.maxHp;
     if (st.mode === 'draft' || st.mode === 'evolve' || st.mode === 'chest') h.key('keydown', { key: 'Enter' });
-    if (st.mode === 'portal-cine') h.key('keydown', { key: 'Escape' });
+    if (st.mode === 'portal-cine') h.skipMovie();
     if (st.mode === 'escape') { try { T.escape.skip(); } catch { /* optional */ } }
     h.pump(1);
   }

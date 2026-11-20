@@ -651,7 +651,8 @@ s.check('the run-end summary names a non-default stage; the default renders byte
   st.stage = DEFAULT_STAGE_ID;
   const dflt = T.endScreenBody({ lead: 'RUN OVER', gold: 25 });
   if (/STAGE|HOLLOW|WASTE|SNOWFIELD/.test(dflt)) throw new Error('default end screen mentions a stage: ' + dflt);
-  if (!dflt.startsWith('RUN OVER')) throw new Error('default lead not first: ' + dflt);
+  // R5: the lead is the summary's first line (inside the end card's panel).
+  if (!dflt.startsWith('<div class="ec"><div class="ec-how"><span class="ec-lead">RUN OVER<')) throw new Error('default lead not first: ' + dflt);
 });
 
 s.check('a stage run persists NOTHING (no storage key, no profile field, deep scan)', () => {

@@ -1,3 +1,8 @@
+// STALE (balance review 2026-11): the MEASURED baseline below (2026-09-15: 11.6 s fresh
+// runs, 754 689 gold for a maxed run) and GOLD_MODEL.INCOME_TIERS no longer describe the
+// game, and it knows nothing of auto-continue. Its catalogue totals and price checks still
+// read the live tables; its hours do not. For gold and hours, measure with
+// tools/balance/batch.mjs (fixed builds) and tools/balance/careermodel.mjs instead.
 // HORDES — tools/economy_ledger.mjs — THE ECONOMY LEDGER (G17 slice 1).
 //
 // The one plain-text CLI view of the shop economy. It answers, as raw numbers:

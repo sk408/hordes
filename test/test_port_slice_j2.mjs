@@ -92,15 +92,15 @@ const NOVA_FX = [{ kind: 'nova_pulse', x: 240, y: 150, radius: 30, age: 0.06, tt
 const SCYTHE_FX = [{ kind: 'scythe_arc', x: 240, y: 150, dir: 0, radius: 55, arc: 1.0, age: 0.05, ttl: 0.25 }];
 const BEAM_FX = [{ kind: 'beam', x: 240, y: 150, dir: 0, from: -0.25, to: 0.25, len: 240, width: 10, phase: 1.7, age: 0.05, ttl: 0.35 }];
 const DRESSED = [
-  ['VOLLEY arrow', VOLLEY, [], 6, ['#ffffff', '#ffe9a8', '#ff9a3c']],
-  ['ORBIT blade', [], ORBIT_FX, 5, ['#c8e8ff', '#ffffff', '#5a9ad8']],
-  ['BOOMERANG crescent', BOOM, [], 6, ['#b8e0ff', '#ffffff', '#5a9ad8']],
-  ['SEEKER missile', SEEK, [], 6, ['#ffffff', '#ffdd7a', '#ff8848']],
-  ['MINE armed', MINE, [], 7, ['#6a6a76', '#ff3040']],
-  ['ZAP bolt', [], ZAP_FX, 30, ['#ffffff', '#ffd75e']],
-  ['NOVA ring', [], NOVA_FX, 84, ['#efe0ff']],
-  ['SCYTHE blade', [], SCYTHE_FX, 25, ['#ffffff', '#a8e0ff']],
-  ['BEAM pulse', [], BEAM_FX, 85, ['#ffffff', '#ff5566', '#ff9e9e']],
+  ['VOLLEY arrow', VOLLEY, [], 6, ['#ffffff', '#f8e098', '#e8902a']],
+  ['ORBIT blade', [], ORBIT_FX, 5, ['#a8d0f4', '#ffffff', '#8aa0c0']],
+  ['BOOMERANG crescent', BOOM, [], 6, ['#a8d0f4', '#ffffff', '#8aa0c0']],
+  ['SEEKER missile', SEEK, [], 6, ['#ffffff', '#f8e098', '#e8902a']],
+  ['MINE armed', MINE, [], 7, ['#7c7886', '#e06a74']],
+  ['ZAP bolt', [], ZAP_FX, 30, ['#ffffff', '#f0c860']],
+  ['NOVA ring', [], NOVA_FX, 84, ['#e4e2ea']],
+  ['SCYTHE blade', [], SCYTHE_FX, 25, ['#ffffff', '#a8d0f4']],
+  ['BEAM pulse', [], BEAM_FX, 85, ['#ffffff', '#e06a74', '#e06a74']],
 ];
 {
   const base = paintFrame(frameState({ projectiles: [], effects: [] }));
@@ -128,7 +128,7 @@ const DRESSED = [
   });
   s.check('ZAP bolt head: four gold ticks around the heart', () => {
     for (const [tx, ty] of [[297, 150], [303, 150], [300, 147], [300, 153]]) {
-      assert.ok(hasRect(zap, tx, ty, 1, 1, '#ffd75e'), 'missing bolt-head tick at ' + tx + ',' + ty);
+      assert.ok(hasRect(zap, tx, ty, 1, 1, '#f0c860'), 'missing bolt-head tick at ' + tx + ',' + ty);
     }
   });
   const scy = paint([], SCYTHE_FX);
@@ -143,7 +143,7 @@ const DRESSED = [
   });
   const nova = paint([], NOVA_FX);
   s.check('NOVA ring: four pale motes ride inside the pulse', () => {
-    const motes = nova.rects.filter(q => q.w === 1 && q.h === 1 && q.style === '#efe0ff');
+    const motes = nova.rects.filter(q => q.w === 1 && q.h === 1 && q.style === '#e4e2ea');
     // 24 echo dots + 4 motes share the echo ink; motes push it past the ring count.
     assert.ok(motes.length >= 28, 'only ' + motes.length + ' pale 1px dots (want 24 echo + 4 motes)');
   });

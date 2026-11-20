@@ -2,17 +2,13 @@
 //
 // REFERENCE VOCABULARY ONLY (no foreign pixels — every grid below is
 // hand-composed in hordes' integer-grid style):
-//   sealed/common closed silhouette (arched lid, gold bands, lock plate)
-//     <- docs/mb_ref/art/chests/psd_Chest.png (closed chest)
-//   open frames (raised lid slab + dark mouth + contents glow)
-//     <- docs/mb_ref/art/chests/psd_ChestOpen.png (open chest)
-//   common plain-timber body  <- docs/mb_ref/art/chests/t_chest_normal.png
-//   rare cool-steel trim      <- docs/mb_ref/art/chests/t_chestFree.png
-//   epic ornate/crypt trim    <- docs/mb_ref/art/chests/t_chestFreeCrypt.png
-//   gamble hazard/dark look   <- docs/mb_ref/tables/chest_types.json
-//     EChest Corrupt/Ghost rows + docs/mb_ref/art/chests/CRATE_3C.png slats
-//   legendary gold+fittings   <- psd_Chest.png bands/lock + the top rung of
-//     docs/mb_ref/tables/rarity.json (Legendary)
+//   sealed/common: the closed silhouette (arched lid, gold bands, lock plate)
+//   open frames: a raised lid slab, a dark mouth, the contents' glow
+//   common: a plain-timber body
+//   rare: cool-steel trim
+//   epic: ornate crypt trim
+//   gamble: a hazard-striped dark look with crate slats
+//   legendary: gold bands and fittings, the top rarity rung
 //   trim inks == the house rarity inks (RARITY_TINTS main.js / RARITY_COLORS
 //     render.js): COMMON #a8a8c0 RARE #4a8cff EPIC #c46ad8 LEGENDARY #ffd75e.
 //

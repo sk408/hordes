@@ -1,8 +1,7 @@
 // HORDES — HUD chrome trim (PORT SLICE I, owner autopilot).
 //
-// The reference's presentation feel (docs/vs_port_ref section 10 UI: 111
-// thumbs — HUD framing, panels, buttons, meters, cards — plus section 1's
-// integer scale + palette discipline) is, conceptually: every meter lives in
+// The presentation feel (HUD framing, panels, buttons, meters, cards, with
+// integer scale and palette discipline) is, conceptually: every meter lives in
 // a HOUSED frame, every badge/plate carries a keyline, round instruments
 // carry rim ticks. Hordes painted those housings as plain rectangles (a steel
 // frame rect, a gold border rect, a dark plate rect). This module dresses

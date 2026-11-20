@@ -63,6 +63,17 @@ const setup = (opts = {}) => {
   return { ctx, st };
 };
 
+// A hidden tab is silent: the death movie's cues too.
+S.check('a hidden tab mutes the death movie cues', () => {
+  setup();
+  for (const ph of Object.keys(audio.DEATH_CUES)) {
+    audio.setHiddenMute(true);
+    assert.equal(audio.playDeathCue(ph), false, ph + ' is silent while the tab is hidden');
+    audio.setHiddenMute(false);
+    assert.equal(audio.playDeathCue(ph), true, ph + ' plays when the tab is shown');
+  }
+});
+
 // ---- the limiter ---------------------------------------------------------
 S.check('the soft limiter is straight below the knee and never goes over the ceiling', () => {
   const { knee, ceil } = MIX.limiter;
@@ -233,6 +244,7 @@ S.check('only the listed cues get a trim; every other cue plays at its old level
   const cues = [
     ...Object.keys(audio.PORTAL_CUES).map(k => ['portal', k]),
     ...Object.keys(audio.ESCAPE_CUES).map(k => ['escape', k]),
+    ...Object.keys(audio.DEATH_CUES).map(k => ['death', k]),
     ...['OVERTAKE', 'HORDE', 'TITLE_SLAM', 'TITLE', 'FADE'].map(k => ['intro', k]),
   ];
   const listed = { ...MIX.cueDb };   // read before any cue plays

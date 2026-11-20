@@ -24,8 +24,8 @@
 //      values — this slice changes NO number).
 //   7. MENU BUSTS — the 32x32 busts (portraits.js CHARACTER_PORTRAITS) show the
 //      field pilot: its colours and its gear (plume and tabard cross, hat and
-//      staff, hood and scarf, winged helm). intro.js / portal_cine.js keep
-//      their adapted generic copies.
+//      staff, hood and scarf, winged helm). intro.js keeps its adapted generic
+//      copy.
 import {
   CHARACTER_SPRITES, CHARACTER_SPRITE_IDS,
   characterSpriteFor, characterSpriteFrame,
@@ -280,9 +280,9 @@ console.log('PRESENTATION CHAIN (busts + generic copies):');
   }
   const fs = await import('node:fs');
   const intro = fs.readFileSync(new URL('../src/intro.js', import.meta.url), 'utf8');
-  const cine = fs.readFileSync(new URL('../src/portal_cine.js', import.meta.url), 'utf8');
-  ok(intro.includes('PLAYER_SPRITE'), 'intro.js keeps its adapted generic copy (unchanged)');
-  ok(cine.includes('PLAYER_SPRITE'), 'portal_cine.js keeps its adapted generic copy (unchanged)');
+  // R2: the movies no longer carry their own hero copy; they draw the pilot
+  // they are handed through src/movie_cast.js (test_movies pins each pilot).
+  ok(intro.includes("from './movie_cast.js'"), 'intro.js takes its pilot from movie_cast.js');
 }
 
 console.log('');

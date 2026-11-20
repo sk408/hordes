@@ -125,7 +125,8 @@ console.log('0.98 D1 — FUSION ANNOUNCE WRAPS INSIDE THE VIEW');
 
     // (e) the plate is built from the measured lines: one rect, contains them,
     // never spans the view.
-    const plate = rec.rects.find(q => q.x === 5 && q.y === 84);
+    // R3: the lane moved up under the vitals block; its row is in the seam.
+    const plate = rec.rects.find(q => q.x === 5 && q.y === R.hudChrome.lane.y);
     ok(!!plate && plate.w <= C.VIEW_W - 5,
       'the plate is sized from the lines and stays inside the view (w=' + (plate && plate.w) + ')');
     const plateRight = plate ? plate.x + plate.w : 0;
@@ -139,7 +140,7 @@ console.log('0.98 D1 — FUSION ANNOUNCE WRAPS INSIDE THE VIEW');
   R.drawHudChrome(ctx, hudState({ toasts: [{ msg: 'BOSS DOWN', ttl: 3, tint: null }] }));
   const one = (R.hudChrome.feed || [])[0];
   ok(one && one.lines && one.lines.length === 1, 'a short message stays ONE line (not a stubby box)');
-  const shortPlate = rec.rects.find(q => q.x === 5 && q.y === 84);
+  const shortPlate = rec.rects.find(q => q.x === 5 && q.y === R.hudChrome.lane.y);
   ok(!!shortPlate && shortPlate.h === 11 && shortPlate.w === 'BOSS DOWN'.length * EST + 4,
     'the single-line plate keeps the feed geometry (11px tall, hugging the text): ' +
     (shortPlate ? shortPlate.w + 'x' + shortPlate.h : 'none'));
@@ -151,10 +152,11 @@ console.log('0.98 D1 — FUSION ANNOUNCE WRAPS INSIDE THE VIEW');
     { msg: fusionMsgs[0], ttl: 3, tint: null },
     { msg: fusionMsgs[1], ttl: 3, tint: null }] }));
   const f = R.hudChrome.feed;
-  const firstBottom = 86 - 2 + (f[0].lines || []).length * 10 + 1;
-  const secondTop = rec.rects.filter(q => q.x === 5)[1];
-  ok(f.length === 2 && secondTop && secondTop.y >= firstBottom - 2,
-    'a second toast stacks below the wrapped first (plate2 top ' + (secondTop && secondTop.y) + ' >= ' + (firstBottom - 2) + ')');
+  const firstBottom = R.hudChrome.lane.y + (f[0].lines || []).length * 10 + 1;   // R3: the lane's row
+  // R3 MESSAGE LANE: the lane is 2 lines tall, so two 2-line messages do not
+  // both fit. The newer one shows whole; the older waits (it is never cut).
+  ok(f.length === 1 && f[0].msg === fusionMsgs[1] && R.hudChrome.lane.lines === 2 && firstBottom > R.hudChrome.lane.y,
+    'two wrapped toasts: the lane shows the newer one whole, 2 lines (' + f.map(x => x.lines.length).join(',') + ')');
   const totalBottom = Math.max(...rec.rects.filter(q => q.x === 5).map(q => q.y + q.h));
   ok(totalBottom < C.VIEW_H - 60, 'the wrapped feed stays clear of the weapon row (' + totalBottom + ' of ' + C.VIEW_H + ')');
   console.log('  measured: ' + rows.map(r => r.name + ' ' + r.old + 'px -> ' + r.lines + ' lines, right ' + r.right + ', plate ' + r.plate).join(' | '));
@@ -174,7 +176,8 @@ console.log('0.98 D3 — HP / MP / XP NUMBERS ON THE ALWAYS-ON HUD');
     const t = textOf(rec, want);
     ok(!!t, 'the value "' + want + '" is painted on the canvas');
     ok(t && plateFor(rec, t), '"' + want + '" rides a dark readability plate');
-    ok(t && t.x >= 134 && t.x + Math.max(1, t.txt.length) * EST <= C.VIEW_W,
+    // R3: the bars end at x 127 in the one vitals block (43 + 84).
+    ok(t && t.x >= 129 && t.x + Math.max(1, t.txt.length) * EST <= C.VIEW_W,
       '"' + want + '" is clear of the bar end (x=' + (t && t.x) + ') and inside the view');
   }
   ok(R.hudChrome.hpText === '74/120' && R.hudChrome.mpText === '33/60' && R.hudChrome.xpText === '42/100',
@@ -191,7 +194,7 @@ console.log('0.98 D3 — HP / MP / XP NUMBERS ON THE ALWAYS-ON HUD');
   R.drawHudChrome(ctx, st);
   ok(!!textOf(rec, '7/120') && !!textOf(rec, '1/60'), 'the numbers follow the live hp/mana');
   // The XP row keeps its LV badge (nothing was displaced by the new value).
-  ok(!!textOf(rec, 'LV 4'), 'the LV badge still paints beside the XP value');
+  ok(R.hudChrome.lvBadge.text === 'LV 4' && !!textOf(rec, '4'), 'the LV badge still paints beside the XP value');
   // Level cap: xpNext = 0 paints no "0/0" noise.
   rec.texts.length = 0;
   st.player.xpNext = 0;

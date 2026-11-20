@@ -93,7 +93,7 @@ async function returning(variant, prof = {}) {
   const h = await boot({ tutorial: true, variant: 'new', storage: [['hordes_onboarded', '1']] });
   h.storage.delete(TOUR_KEYS.draft);   // a brand-new browser has no flags
   h.pump(3);
-  if (h.state.mode === 'intro') { h.key('keydown', { key: 'x', preventDefault() {} }); h.pump(2); }
+  if (h.state.mode === 'intro') { h.skipMovie(); h.pump(2); }
   const T = h.T, st = h.state;
   S.check('brand new: run 1 opens the guided part', () => {
     assert.equal(T.getProfile().achievements.totals.runs || 0, 0);
@@ -311,10 +311,10 @@ async function returning(variant, prof = {}) {
     h.elements['ov-cards'].children[0].click();
     for (let i = 0; i < 120 && st.mode !== 'playing'; i++) h.pump(1);
   });
-  S.check('on a touch screen the header says tap', () => {
+  S.check('on a touch screen the header says tap, and that a hold reads the card', () => {
     h.elements['touch'].classList.add('on');
     openLevelDraft(h);
-    assert.equal(sub(h), 'Pick 1: tap a card');
+    assert.equal(sub(h), 'Pick 1: tap a card · hold to read');
     h.elements['touch'].classList.remove('on');
   });
 }

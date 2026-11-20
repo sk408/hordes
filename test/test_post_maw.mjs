@@ -207,7 +207,9 @@ s.check('the maw closes the world: a live mimic is paid after the clears; carrie
   assert.ok(st.secrets.every(x => x.state === 'spent'), 'unfound secrets are closed');
   assert.equal(w.closed, true, 'the vault, lever and yard are closed with the sites');
   assert.deepEqual(st.quests.map(q => !!q.closed), [true, true, false], 'the quests that need a closed site are closed');
+  st.questsOpen = true;   // R3: the full tracker opens from the quest chip
   const tracker = shot(st.player.x, st.player.y).texts.filter(t => /shrines|yard|elites/.test(t));
+  st.questsOpen = false;
   assert.deepEqual(tracker, ['Charge 2 shrines - CLOSED', 'Loot the walled yard - CLOSED', 'Kill 5 elites 0/5'], 'the tracker says so');
   // The maw withdraws; the run goes on.
   st.mawDeadline = st.time;
@@ -344,13 +346,13 @@ s.check('live: the statue card never covers the HUD, at any zoom', () => {
         n++;
         const at = `Z ${Z} at ${sx},${sy}: card ${JSON.stringify(c)}`;
         assert.ok(onScreen(c), at + ' is on screen');
-        // The HP, MP and XP rows as drawn (labels from x 4, the XP bar to x 156).
-        assert.ok(!overlap(c, { x: 4, y: 13, w: 152, h: 32 }), at + ' covers the bars');
+        // R3: the HP, MP and XP rows as drawn (the one vitals block, x 4..127+).
+        assert.ok(!overlap(c, { x: 4, y: 10, w: 123, h: 33 }), at + ' covers the bars');
         for (const k of ['purse', 'clock', 'quests']) {
           assert.ok(!overlap(c, ch[k]), at + ` covers the HUD's ${k} ${JSON.stringify(ch[k])}`);
         }
         // The chrome's own record of that block reaches past the LV badge.
-        assert.ok(ch.bars && ch.bars.x <= 4 && ch.bars.y <= 13 && ch.bars.x + ch.bars.w >= 186 && ch.bars.y + ch.bars.h >= 45,
+        assert.ok(ch.bars && ch.bars.x <= 4 && ch.bars.y <= 13 && ch.bars.x + ch.bars.w >= 127 && ch.bars.y + ch.bars.h >= 41,
           'the bars block is on the chrome record: ' + JSON.stringify(ch.bars));
         assert.ok(!overlap(c, ch.bars), at + ` covers the bars block ${JSON.stringify(ch.bars)}`);
       }

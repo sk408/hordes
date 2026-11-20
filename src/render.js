@@ -2,6 +2,7 @@
 // image assets). Each grid is rasterised once by sprite_cache.js and drawn
 // with drawImage; without a real canvas the same grids paint with fillRect.
 import { CONFIG as C, runClock } from './config.js';
+import { richStep } from './entities.js';   // R3 floor: rich gems
 import { resolveLook, ELITE_LOOK, ELITE_TEMPLATE } from './enemy_types.js';
 import { RARITY } from './rarity.js';   // G10 tier tells (outline ring colour)
 import { BOSSES, MIDBOSS, BOSS_SPRITES } from './bosses.js';   // G10 bestiary: boss sprites
@@ -12,6 +13,7 @@ import {
   WEAPON_ICONS, WEAPON_ICON_PALETTE, ITEM_ICON_GRID, weatherIcon,
 } from './sprites.js';
 import { FINAL_BOSS_SPRITE } from './final_boss.js';
+import { arenaOn } from './finale_arena.js';   // the Maw is drawn wherever its arena is
 import { weaponXpNeeded, WEAPON_MAX_LEVEL } from './weapons.js';   // WAVE-18 read-only
 import { fusionByBodyKind, fusionDef } from './fusions.js';   // fused weapons' tints and emblems
 import { drawTitle, TITLE_WIDTH, TITLE_HEIGHT } from './art/title.js';   // G12 title card
@@ -41,15 +43,62 @@ import { propForStage, propFrame, paintStageProp } from './stage_props.js';
 import { buildingField, paintBuilding, STAGE_BUILDINGS } from './stage_buildings.js';
 import { stageGroundSpec, stageSalt, STAGE_GROUND_TILE, groundMotifFor, groundCellPicked, normGroundWeather, groundWxFor } from './stage_ground.js';
 import { reliefLevel, reliefLevelAt, reliefVisionRadius } from './relief.js';
-import { setCacheHost, cacheEnabled, blitGrid, blitPainted, blitGlow, actorStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN, STYLE_STRUCT } from './sprite_cache.js';
-import { shakeOffset } from './fx/feel.js';
+import { setCacheHost, cacheEnabled, blitGrid, blitGridPose, blitPainted, blitGlow, actorStyle, corpseStyle, spriteStyle, STYLE_ITEM, STYLE_PLAIN, STYLE_STRUCT } from './sprite_cache.js';
+import { shakeOffset, trackOf } from './fx/feel.js';
+import { enemyPose, collapsePose, heroLift, actorAnimOn } from './actor_anim.js';
 import { describeHandBonus, HAND_BY_ID, SUIT_GLYPHS } from './hands.js';   // the HUD hand plate
+// CLOUDY's bands: the alpha of each 2 px strip of a 14 px band (soft edges,
+// the old 0.16 only at the middle), and the share kept on a light floor.
+export const CLOUD_BAND_RAMP = [0.03, 0.07, 0.12, 0.16, 0.12, 0.07, 0.03];
+export const CLOUD_BAND_LIGHT = 0.6;
+// 'NO HAND YET' (the hand fan with no hand): a hint that reaches 4.5 to 1 on its plate.
+export const FAN_EMPTY_TEXT = '#9a9ab8';
+import { fanCards, fanLayout, fanKey, fanBlock, paintFan, pulsePhase, pulseLook } from './hand_fan.js';   // R5 the hand fan
+const FAN_TEAL = '#3fe6d2';   // decision 5: cyan-teal is reward (the portal beat's TEAL)
 import { JOKERS, jokerSlots, jokersHeld } from './jokers.js';   // the HUD joker row
 import { cardArt } from './art/cards.js';
+import { laneLines } from './message_lane.js';
 import { drawFeelEffects, drawFeelNumbers } from './fx/feel_render.js';
 import { terrainFor, TN, TCELL, TEXT, F_RAMP, F_BRIDGE } from './terrain.js';
 import { drawTerrain, drawTerrainMarks } from './terrain_art.js';
-import { stageGroundPalette, drawGroundChunks, paintGroundDecor, groundChunksOn } from './world_ground.js';
+import { stageGroundPalette, drawGroundChunks, paintGroundDecor, groundChunksOn, groundIsLight, groundEmits } from './world_ground.js';
+import { LightLayer } from './light.js';   // R6 the light layer and the glows
+
+// Depth order for the horde: the feet decide, higher on the ground first (a
+// stable sort, so bodies on one row keep their list order and never flicker).
+// A body's feet are where drawActor puts the bottom of its sprite, so a small
+// body a little lower than a big body's centre, but with its feet above the
+// big body's feet, stands behind it. A flyer goes by its shadow.
+// bossdark: the pool of light under a boss or the Maw. On a dark floor it is
+// a dark step of the boss's own hue (spr.pool), so the bright rim still
+// stands 3:1 off the pool; on a light floor it is the rim's hue and the dark
+// keyline carries the edge. tools/boss_contrast.mjs measures the rim over it.
+export const BOSS_POOL_ALPHA = 0.75, MAW_POOL_ALPHA = 0.6;
+export function bossPool(spr, groundLight) { return groundLight ? spr.rim : (spr.pool || spr.rim); }
+
+// The ring an actor wears in the fight: white and danger while it winds up,
+// gold on an elite, its tier's colour on a rare, a boss's own rim (bossdark:
+// a boss is built on an elite chassis but wears its rim, not the elite gold).
+export function actorRing(e, spr, tele, blink, tell, t) {
+  if (tele && blink) return '#ffffff';
+  if (tele) return '#ff4a14';   // the wind-up tell
+  if (e.boss && spr && spr.rim) return spr.rim;
+  if (e.elite) return '#f0c860';
+  if (tell) return (tell.pulseHz && Math.floor(t * tell.pulseHz * 2) % 2 === 0) ? '#efd9ff' : tell.outline;
+  if (e.boss) return '#ff9ed8';
+  return null;
+}
+export function depthKey(e) {
+  const hh = (e.h || C.ENEMY.H) / 2;
+  if (e.flying || e.finalBoss) return e.y + hh;
+  const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
+  if (!spr) return e.y + hh;
+  const grow = e.elite && !e.boss ? ELITE_TEMPLATE.sizeMult : 1;
+  return e.y + Math.round(spr.box.h * grow) - Math.round(spr.anchor.y * grow) - 1;
+}
+// The sort works on { e, k } pairs (k worked out once per body per frame),
+// from a pool that is reused, so a frame makes no garbage.
+function byDepth(a, b) { return a.k - b.k; }
 
 // ---- MODAL SURFACE SUPPRESSION (the one shared mechanism) --------------------
 // Owner 2026-09-17 (msg_01M2RVD9HHZZDSR7FKNTRRSSY5 + addendum): while ANY
@@ -62,7 +111,48 @@ import { stageGroundPalette, drawGroundChunks, paintGroundDecor, groundChunksOn 
 //   'dead'      the end-of-run summary (the shipped defect this fixes)
 //   'trophies'  G9 gallery showcase
 //   'bestiary'  G10 bestiary guide
-export const HUD_SUPPRESSED_MODES = new Set(['dead', 'trophies', 'bestiary', 'menu', 'progress', 'loadout', 'characters', 'farewell']);
+// 'death-cine': the death movie owns the canvas; the one world render it
+// takes for its frozen frame (main.js deathFreeze) must carry no HUD.
+export const HUD_SUPPRESSED_MODES = new Set(['death-cine', 'dead', 'trophies', 'bestiary', 'menu', 'progress', 'loadout', 'characters', 'farewell']);
+// The boss-arrival banner's letterbox: how far it is in (0..1), the same
+// fade the banner paints with. 0 when no banner is up, or for the peripheral
+// horde warning, which has no bands.
+export const LETTERBOX_BAND = 34;
+export function letterboxAlpha(state) {
+  const b = state && state.bossBanner;
+  // R7: an arrival banner the sting's name card stands in for is not drawn.
+  if (!b || !(b.ttl > 0) || b.peripheral || b.underSting) return 0;
+  const DUR = 2.5;
+  return Math.max(0, Math.min(1, (DUR - b.ttl) / 0.35, b.ttl / 0.6));
+}
+// View px the top-left vitals block and the clock column step down while the
+// letterbox is in, so HP, MP, the clock and the boss rule plate sit under the
+// band (its red edge line included) and not behind it. It follows the band's
+// fade, so the HUD slides down and back up with it.
+export const LETTERBOX_HUD_DROP = 27;
+// The portal beat's film bars push the block down the same way
+// (state.beatHudDrop, set by main.js while the beat is up).
+export function letterboxHudDrop(state) {
+  const beat = (state && state.beatHudDrop) | 0;
+  return Math.max(Math.round(LETTERBOX_HUD_DROP * letterboxAlpha(state)), beat);
+}
+
+// A pixel grid painted with one fillRect per run of equal pixels in a row.
+// The same pixels as Renderer.drawGrid at scale 1, about ten times fewer calls.
+export function paintGridRuns(g, grid, palette, x, y) {
+  for (let ry = 0; ry < grid.length; ry++) {
+    const row = grid[ry];
+    let rx = 0;
+    while (rx < row.length) {
+      const v = row[rx];
+      let end = rx + 1;
+      while (end < row.length && row[end] === v) end++;
+      if (v) { g.fillStyle = palette[v]; g.fillRect(x + rx, y + ry, end - rx, 1); }
+      rx = end;
+    }
+  }
+}
+
 export function hudSuppressed(state) {
   return HUD_SUPPRESSED_MODES.has(state.mode);
 }
@@ -74,6 +164,13 @@ export function hudSuppressed(state) {
 // top-right, weapon/item rows bottom-left).
 const RADAR_DISPLAY_R = 34;
 const RADAR_CORNER_INSET = 10;
+// R7: does the radar's disc touch a rect (view px)? (drawRadar's own placement.)
+function radarTouches(state, r) {
+  const R = RADAR_DISPLAY_R;
+  const inset = Math.max(0, Math.min(C.VIEW_W / 2, Math.round((state && state.radarInset) || 0)));
+  const cx = C.VIEW_W - RADAR_CORNER_INSET - R - inset, cy = C.VIEW_H - RADAR_CORNER_INSET - R;
+  return cx + R > r.x && cx - R < r.x + r.w && cy + R > r.y && cy - R < r.y + r.h;
+}
 // Tier tells: chaff is a small grey pip, elite is gold, boss is the big red
 // one — readable at a glance, in the house palette (gold #ffd75e / red
 // #ff2f5e, the same pair the LV badge and the run-limit tick use). Sizes are
@@ -89,20 +186,30 @@ const RADAR_DOT_STYLE = {
 // feet, a bright line over a dark one so it reads on any ground and over any
 // enemy. Baked once through the sprite cache (blitPainted).
 const HERO_RING_BOX = { x: -15, y: -6, w: 31, h: 13 };
-function heroRingPainter(bright) {
+// R3: warm white is the hero's colour (decision 5: red-orange danger,
+// cyan-teal reward, warm white hero). The ring, the arrow, the pool and the
+// second outline round the pilot use it, and nothing else in the fight does.
+export const HERO_WARM = '#ffd8c4';
+// Half the side of the hero's box (world px) that damage numbers fade near.
+export const HERO_BOX_HALF = 10;
+// keyed: dark on both sides of the bright line (R6: on a light floor the line
+// alone melts into snow or sand).
+function heroRingPainter(bright, keyed = false) {
   return (c, ox, oy) => {
     for (let a = 0; a < 64; a++) {
       const t = (a / 64) * Math.PI * 2;
       const x = Math.round(Math.cos(t) * 14), y = Math.round(Math.sin(t) * 5);
       c.fillStyle = 'rgba(8,6,14,0.8)';
       c.fillRect(ox + x, oy + y + 1, 1, 1);
+      if (keyed) c.fillRect(ox + x, oy + y - 1, 1, 1);
       c.fillStyle = bright;
       c.fillRect(ox + x, oy + y, 1, 1);
     }
   };
 }
-const paintHeroRing = heroRingPainter('#9ff0ff');   // stays cyan when hurt
-// The hero's marker: a small cyan arrow over the head, dark-edged, shown when
+const paintHeroRing = heroRingPainter(HERO_WARM);   // stays warm white when hurt
+const paintHeroRingKeyed = heroRingPainter(HERO_WARM, true);
+// The hero's marker: a small warm-white arrow over the head, dark-edged, shown when
 // the hero is hurt or stands in a crowd (it goes up at HERO_CROWD_ON enemies
 // inside the box around the hero and comes down under HERO_CROWD_OFF).
 const HERO_MARK_BOX = { x: -5, y: -1, w: 11, h: 7 };
@@ -113,7 +220,7 @@ function paintHeroMark(c, ox, oy) {
     for (let r = 0; r < 5; r++) c.fillRect(ox - 4 + r + dx, oy + r + dy, 9 - 2 * r, 1);
   };
   for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) arrow('rgba(8,6,14,0.9)', dx, dy);
-  arrow('#9ff0ff', 0, 0);
+  arrow(HERO_WARM, 0, 0);
 }
 
 export const PLAYER_SPRITE = [
@@ -203,7 +310,7 @@ export function fmtGold(n) {
 // Wave-6: item-drop glow colors by rarity (loot.js) + arch gate colors.
 const RARITY_COLORS = { COMMON: '#a8a8c0', RARE: '#4a8cff', EPIC: '#c46ad8', LEGENDARY: '#ffd75e' };
 const ARCH_COLORS = {
-  DOUBLE_FIRE: '#ff8848', MAGNET: '#4a8cff', SHIELD: '#a8e0ff',
+  DOUBLE_FIRE: '#e8902a', MAGNET: '#4a8cff', SHIELD: '#a8e0ff',
   BERSERK: '#ff5566', SWIFT: '#68e080',
 };
 
@@ -293,6 +400,9 @@ export function prologueCardRect() {
   return { x: Math.round((C.VIEW_W - W) / 2), y: PROLOGUE_CARD_Y, w: W, h: PROLOGUE_CARD_H };
 }
 export function prologueFeedY() { return PROLOGUE_FEED_Y; }
+// R3: the vitals block's numbers stop short of this x (view px); the boss
+// rule plate starts right of it.
+export const VITALS_MAX_RIGHT = 200;
 
 // Reduced motion is read LIVE (the draftCeremonyEnabled precedent — one
 // handler per feature, nothing global). False in the headless stub, which
@@ -302,6 +412,18 @@ export function prefersReducedMotion() {
     const mm = (typeof window !== 'undefined') && window.matchMedia;
     return !!(mm && mm('(prefers-reduced-motion: reduce)').matches);
   } catch { return false; }
+}
+
+// R3 floor under reduced motion: a rich gem's glow holds still instead of
+// pulsing, and a potion or item in its last BLINK_S shows dim instead of
+// blinking (it still reads as leaving). Pure, so testable.
+export function richGlowStrength(time, x, reduced) {
+  return reduced ? 0.85 : 0.75 + 0.25 * Math.sin(time * 4 + x * 0.1);
+}
+export function leavingAlpha(leftS, time, reduced) {
+  if (leftS >= C.FLOOR.BLINK_S) return 1;
+  if (reduced) return 0.5;
+  return Math.floor(time * 6) % 2 === 0 ? 0 : 1;
 }
 
 // The rainbow pulse's colour — a GENTLE cycle (40 deg/s), never a strobe;
@@ -363,7 +485,7 @@ export function drawChestBurst(g, state, cam) {
     const a = ((i * 2 + ph) / 16) * Math.PI * 2;
     const cx = x + Math.round(Math.cos(a) * cdist);
     const cy = y + Math.round(Math.sin(a) * cdist) - Math.round(p * 6);
-    g.fillStyle = '#fff2c0';
+    g.fillStyle = '#f8e098';
     g.fillRect(cx - 1, cy - 1, 2, 2);
   }
   // The coin/spark shower: fixed angles, ease-out radius, a slight lift —
@@ -374,7 +496,7 @@ export function drawChestBurst(g, state, cam) {
     const a = (i / n) * Math.PI * 2;
     const sx = x + Math.round(Math.cos(a) * dist);
     const sy = y + Math.round(Math.sin(a) * dist) - Math.round(p * 6);
-    g.fillStyle = i % 3 === 0 ? '#ffffff' : '#ffd75e';
+    g.fillStyle = i % 3 === 0 ? '#ffffff' : '#f0c860';
     g.fillRect(sx - 1, sy - 1, 2, 2);
   }
   return true;
@@ -391,7 +513,7 @@ export function paintProjectileBody(g, p, x, y, ph) {
     // blue fuller core, one hash glint at a tip. Spin timing is the
     // shipped alternation (age * 20, two phases) — <= 8 rects.
     const spin = Math.floor(p.age * 20) % 2 === 0;
-    g.fillStyle = '#b8e0ff';
+    g.fillStyle = '#a8d0f4';
     if (spin) {
       g.fillRect(x - 4, y - 1, 9, 2);
       g.fillRect(x - 3, y - 2, 2, 1); g.fillRect(x + 2, y + 2, 2, 1);
@@ -402,9 +524,9 @@ export function paintProjectileBody(g, p, x, y, ph) {
     g.fillStyle = '#ffffff';
     if (spin) { g.fillRect(x - 4, y - 1, 2, 1); }
     else { g.fillRect(x - 1, y - 4, 1, 2); }
-    g.fillStyle = '#5a9ad8';
+    g.fillStyle = '#8aa0c0';
     g.fillRect(x - 1, y - 1, 2, 2);
-    g.fillStyle = '#e8f4ff';
+    g.fillStyle = '#ffffff';
     const gx = spin ? ((ph & 1) === 0 ? 4 : -4) : 0;
     const gy = spin ? 0 : ((ph & 1) === 0 ? 4 : -4);
     g.fillRect(x + gx, y + gy, 1, 1);
@@ -418,15 +540,15 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const hx = Math.round(x + ca * 2), hy = Math.round(y + sa * 2);
     const tx = Math.round(x - ca * 2), ty = Math.round(y - sa * 2);
     const px = Math.round(-sa * 2), py = Math.round(ca * 2);
-    g.fillStyle = '#ffdd7a';
+    g.fillStyle = '#f8e098';
     g.fillRect(x - 1, y - 1, 3, 3);
     g.fillStyle = '#ffffff';
     g.fillRect(hx - 1, hy - 1, 2, 2);
     g.fillRect(Math.round(x + ca * 3), Math.round(y + sa * 3), 1, 1);
-    g.fillStyle = '#ff8848';
+    g.fillStyle = '#e8902a';
     g.fillRect(tx + px - 1, ty + py - 1, 2, 2);
     g.fillRect(tx - px - 1, ty - py - 1, 2, 2);
-    g.fillStyle = (ph & 2) === 0 ? '#ffd75e' : '#ffdd7a';
+    g.fillStyle = (ph & 2) === 0 ? '#f0c860' : '#f8e098';
     g.fillRect(tx, ty, 1, 1);
     return;
   }
@@ -434,18 +556,18 @@ export function paintProjectileBody(g, p, x, y, ph) {
     // Armed mine: dark hull (shipped disc), steel rim ticks, brass studs,
     // the shipped 1Hz arming lamp, one hash-phased glint. Blink timing is
     // the shipped (age * 2) alternation — <= 10 rects.
-    g.fillStyle = '#3a3a46';
+    g.fillStyle = '#433e4e';
     g.fillRect(x - 3, y - 2, 7, 5);
     g.fillRect(x - 2, y - 3, 5, 7);
-    g.fillStyle = '#6a6a76';
+    g.fillStyle = '#7c7886';
     g.fillRect(x - 3, y - 3, 2, 1); g.fillRect(x + 2, y - 3, 2, 1);
     g.fillRect(x - 3, y + 3, 2, 1); g.fillRect(x + 2, y + 3, 2, 1);
-    g.fillStyle = '#c8a03a';
+    g.fillStyle = '#e2aa38';
     g.fillRect(x - 2, y - 1, 1, 1); g.fillRect(x + 2, y + 1, 1, 1);
-    g.fillStyle = Math.floor((p.age || 0) * 2) % 2 === 0 ? '#ff3040' : '#7a1018';
+    g.fillStyle = Math.floor((p.age || 0) * 2) % 2 === 0 ? '#e06a74' : '#7a222a';
     g.fillRect(x - 1, y - 1, 2, 2);
     if ((ph & 3) === 0) {
-      g.fillStyle = '#e8e8f0';
+      g.fillStyle = '#e4e2ea';
       g.fillRect(x + 1, y - 3, 1, 1);
     }
     return;
@@ -459,28 +581,28 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const jdx = JX[joct], jdy = JY[joct];
     if (p.evo) {
       // SOLAR LANCE: a longer gold shaft, white-hot head, four corona ticks.
-      g.fillStyle = '#ffb14a';
+      g.fillStyle = '#e2aa38';
       g.fillRect(x - jdx * 2 - 1, y - jdy * 2 - 1, 3, 3);
       g.fillRect(x - 1, y - 1, 3, 3);
       g.fillStyle = '#ffffff';
       g.fillRect(x + jdx * 3 - 1, y + jdy * 3 - 1, 3, 3);
       g.fillRect(x + jdx * 5, y + jdy * 5, 1, 1);
-      g.fillStyle = '#ffe07a';
+      g.fillStyle = '#f8e098';
       g.fillRect(x - jdy * 3, y + jdx * 3, 1, 1); g.fillRect(x + jdy * 3, y - jdx * 3, 1, 1);
       g.fillRect(x - jdx * 4, y - jdy * 4, 1, 1);
       return;
     }
-    g.fillStyle = '#9aa4b8';
+    g.fillStyle = '#8aa0c0';
     g.fillRect(x - jdx - 1, y - jdy - 1, 2, 2);
     g.fillRect(x - 1, y - 1, 2, 2);
-    g.fillStyle = '#ffe07a';
+    g.fillStyle = '#f8e098';
     g.fillRect(x + jdx * 2 - 1, y + jdy * 2 - 1, 2, 2);
     g.fillStyle = '#ffffff';
     g.fillRect(x + jdx * 3, y + jdy * 3, 1, 1);
-    g.fillStyle = '#8a5f2c';
+    g.fillStyle = '#7a4c0e';
     g.fillRect(x - jdx * 2, y - jdy * 2, 1, 1);
     if ((ph & 2) === 0) {
-      g.fillStyle = '#e8ecf4';
+      g.fillStyle = '#e4e2ea';
       g.fillRect(x - jdx, y - jdy, 1, 1);
     }
     return;
@@ -488,19 +610,19 @@ export function paintProjectileBody(g, p, x, y, ph) {
   if (p.kind === 'ember') {
     // Ember Shot: hot core, orange body, gold cap, two hash sparks. <= 7 rects.
     // INFERNO: a wider flame with a white-blue heart.
-    g.fillStyle = p.evo ? '#e05a1a' : '#b03a1a';
+    g.fillStyle = p.evo ? '#e8902a' : '#a46a16';
     g.fillRect(x - 2, y - 2, 5, 5);
     if (p.evo) { g.fillRect(x - 3, y - 1, 7, 3); g.fillRect(x - 1, y - 3, 3, 7); }
-    g.fillStyle = p.evo ? '#ffd080' : '#e07828';
+    g.fillStyle = p.evo ? '#f0c860' : '#e8902a';
     g.fillRect(x - 1, y - 1, 3, 3);
-    g.fillStyle = p.evo ? '#d8f4ff' : '#ffe07a';
+    g.fillStyle = p.evo ? '#ffffff' : '#f8e098';
     g.fillRect(x, y, 1, 1);
     if ((ph & 1) === 0) {
-      g.fillStyle = '#ffd75e';
+      g.fillStyle = '#f0c860';
       g.fillRect(x + 2, y - 3, 1, 1);
     }
     if ((ph & 2) === 0) {
-      g.fillStyle = '#ff8848';
+      g.fillStyle = '#e8902a';
       g.fillRect(x - 3, y + 2, 1, 1);
     }
     return;
@@ -514,13 +636,13 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const rdx = RX[roct], rdy = RY[roct];
     // PRISM SHOT: the ball cycles through prism colours by position hash and
     // trails a second chevron.
-    const PRISM = ['#ff6a8a', '#ffd75e', '#6af0a0', '#8ab8ff'];
-    g.fillStyle = p.evo ? PRISM[ph & 3] : '#9ad0f4';
+    const PRISM = ['#e06a74', '#f0c860', '#acc084', '#a8d0f4'];
+    g.fillStyle = p.evo ? PRISM[ph & 3] : '#a8d0f4';
     g.fillRect(x - 1, y - 1, 3, 3);
     if (p.evo) { g.fillStyle = PRISM[(ph + 2) & 3]; g.fillRect(x - rdx * 4, y - rdy * 4, 2, 2); }
-    g.fillStyle = '#e8ecf4';
+    g.fillStyle = '#e4e2ea';
     g.fillRect(x, y, 1, 1);
-    g.fillStyle = p.evo ? '#ffffff' : '#5a9ad8';
+    g.fillStyle = p.evo ? '#ffffff' : '#8aa0c0';
     g.fillRect(x - rdx * 2, y - rdy * 2, 1, 1);
     g.fillRect(x - rdx * 2 - rdy, y - rdy * 2 + rdx, 1, 1);
     g.fillRect(x - rdx * 2 + rdy, y - rdy * 2 - rdx, 1, 1);
@@ -536,8 +658,8 @@ export function paintProjectileBody(g, p, x, y, ph) {
     const life = Math.max(0, 1 - (p.age || 0) / 2);
     const flick = Math.floor((p.age || 0) * 12) % 2;
     const r = p.radius || 20;
-    const hot = p.tint === 'meteor' ? '#d0a8ff' : '#ffd75e';
-    const cool = p.tint === 'meteor' ? '#8a5ad8' : '#ff8848';
+    const hot = p.tint === 'meteor' ? '#b49ad4' : '#f0c860';
+    const cool = p.tint === 'meteor' ? '#8c6cb4' : '#e8902a';
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2 + (ph % 7) * 0.13;
       const rr = r * (0.55 + 0.45 * (((ph >> i) & 1) ^ flick));
@@ -559,9 +681,9 @@ export function paintProjectileBody(g, p, x, y, ph) {
   const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
   const dx = DX[oct], dy = DY[oct];
   const qx = -dy, qy = dx;   // perpendicular (fletch axis)
-  g.fillStyle = '#ffe9a8';
+  g.fillStyle = '#f8e098';
   g.fillRect(x + dx - 1, y + dy - 1, 2, 2);
-  g.fillStyle = '#ff9a3c';
+  g.fillStyle = '#e8902a';
   g.fillRect(x - dx * 2, y - dy * 2, 1, 1);
   g.fillRect(x - dx * 2 + qx, y - dy * 2 + qy, 1, 1);
   g.fillRect(x - dx * 2 - qx, y - dy * 2 - qy, 1, 1);
@@ -575,11 +697,50 @@ export function paintProjectileBody(g, p, x, y, ph) {
 // (outline baked) and falls back to calling it directly when headless.
 const GEM_BOX = { x: -3, y: -4, w: 7, h: 9 };
 const GEM_TIERS = [
-  ['#3ef0c0', '#b8fff0', '#17a888'],   // small: teal
+  ['#4dffd2', '#b6fff0', '#139e8a'],   // small: teal
   ['#5ab0ff', '#d8f0ff', '#2a6ad8'],   // mid: blue
   ['#d07aff', '#f4dcff', '#8a3ad8'],   // large: violet
 ];
 const GEM_PAINT = [];
+// Gems recede in a crowd (see the gem pass in render()). The crowd state goes
+// on past CROWD gems on screen and off under CROWD_OFF, so it does not flicker.
+// FAR is the floor's KEEP_NEAR (config.js C.FLOOR): the gems the picture fades
+// are the gems the floor may merge for real. Nothing merges in the picture alone.
+export const GEM_RECEDE = { CROWD: 40, CROWD_OFF: 30, FAR: C.FLOOR.KEEP_NEAR, FAR_ALPHA: 0.35 };
+// R3 floor: a RICH gem (merged on the floor, entities.js richStep) is a bigger
+// crystal above the three tiers, one size per step of C.FLOOR.RICH_XP, in the
+// reward family (bright aqua-mint; never the danger red-orange or the hero's
+// warm white), with a glow that grows with it.
+export const GEM_RICH = { body: '#5fffd8', hi: '#e6fffa', lo: '#139e8a', core: '#b6fff0', glow: '#4dffd2' };
+const GEM_RICH_BOX = [];
+const GEM_RICH_PAINT = [];
+for (let k = 1; k <= 4; k++) {
+  const h = 4 + k, w = 2 + k;   // half height, half width
+  GEM_RICH_BOX.push({ x: -w - 1, y: -h - 1, w: 2 * w + 3, h: 2 * h + 3 });
+  GEM_RICH_PAINT.push((g, x, y) => {
+    // A tall cut crystal: rows narrow toward the tips.
+    for (let dy = -h; dy <= h; dy++) {
+      const half = Math.max(0, Math.round(w * (1 - Math.abs(dy) / (h + 1)) + 0.4));
+      g.fillStyle = dy < 0 ? GEM_RICH.body : GEM_RICH.lo;
+      g.fillRect(x - half, y + dy, 2 * half + 1, 1);
+      g.fillStyle = GEM_RICH.core;
+      if (half > 1) g.fillRect(x, y + dy, 1, 1);   // the bright centre facet line
+    }
+    g.fillStyle = GEM_RICH.hi;
+    g.fillRect(x - Math.max(1, w - 2), y - h + 2, 2, Math.max(2, h - 2));
+    if (k >= 3) {   // the big ones sparkle at the corners
+      g.fillRect(x - w - 1, y - 1, 1, 1); g.fillRect(x + w + 1, y - 1, 1, 1);
+      g.fillRect(x, y - h - 1, 1, 1);
+    }
+  });
+}
+export { GEM_RICH_BOX };
+// R3 floor: how solid an opened chest's art is, `lay` s after it opened: solid,
+// then fading over the last REMNANT_FADE_S of REMNANT_S, then gone (0).
+export function remnantAlpha(lay, F = C.FLOOR) {
+  if (!(lay < F.REMNANT_S)) return 0;
+  return Math.max(0, Math.min(1, (F.REMNANT_S - lay) / F.REMNANT_FADE_S));
+}
 for (const [body, hi, lo] of GEM_TIERS) {
   for (const lit of [0, 1]) {
     GEM_PAINT.push((g, x, y) => {
@@ -601,12 +762,12 @@ function potionPainter(body, hi) {
     g.fillRect(x - 1, y - 4, 3, 2);
     g.fillStyle = hi;
     g.fillRect(x - 1, y - 1, 1, 3);
-    g.fillStyle = '#e8e8f0';
+    g.fillStyle = '#e4e2ea';
     g.fillRect(x - 1, y - 5, 3, 1);
   };
 }
 const paintPotionHp = potionPainter('#ff4a5e', '#ffb0b8');
-const paintPotionMp = potionPainter('#4a8cff', '#b8d8ff');
+const paintPotionMp = potionPainter('#4a8cff', '#a8d0f4');
 
 function blitChest(g, art, x, y, lit) {
   if (!cacheEnabled()) { paintChest(g, art, x, y, lit); return; }
@@ -656,7 +817,13 @@ function blitBuilding(g, id, x, y) {
 // red-orange is the colour reserved for danger. The kinds differ by size and core:
 // spit a small orb, bolt (WARLOCK) a big one with a hot core, nova (boss burst) a
 // lighter orange, the Maw's barrage a redder one with a white-hot core.
-const STYLE_SHOT = spriteStyle({ outline: '#fff0f4' });
+const STYLE_SHOT = spriteStyle({ outline: '#ffffff' });
+// R6: on a light floor (snow, sand, ash) a pale rim melts into the ground, so
+// the orb wears a dark rim there, like every other thing on the floor. Inside
+// it the pale ring stays, so in a crowd the orb does not share the enemies'
+// plain dark outline (as the hero keeps its warm ring inside its keyline).
+const STYLE_SHOT_LIGHT = spriteStyle({ outline: '#ffffff', outline2: '#0b0912' });
+export { STYLE_SHOT, STYLE_SHOT_LIGHT };
 const SHOT_BOX = { x: -4, y: -5, w: 9, h: 10 };
 // A pixel disc of radius 2 (5x5) or 3 (7x7) centred on x, y.
 function shotOrb(g, x, y, r, body, core, coreW, shade) {
@@ -671,10 +838,10 @@ function shotOrb(g, x, y, r, body, core, coreW, shade) {
   g.fillStyle = core; g.fillRect(x - 1, y - 1, coreW, coreW);            // the hot core, up and left
 }
 const SHOT_PAINT = {
-  bolt(g, x, y) { shotOrb(g, x, y, 3, '#ff4a14', '#ffe2b0', 3, '#8a1c06'); },
-  nova(g, x, y) { shotOrb(g, x, y, 2, '#ff7a26', '#ffe2b0', 1, '#9a3008'); },
-  maw(g, x, y) { shotOrb(g, x, y, 2, '#ff3218', '#fff4e0', 2, '#7a1204'); },
-  spit(g, x, y) { shotOrb(g, x, y, 2, '#ff5a1f', '#ffc890', 1, '#8a2208'); },
+  bolt(g, x, y) { shotOrb(g, x, y, 3, '#ff4a14', '#f8e098', 3, '#b02608'); },
+  nova(g, x, y) { shotOrb(g, x, y, 2, '#ff6a24', '#f8e098', 1, '#b02608'); },
+  maw(g, x, y) { shotOrb(g, x, y, 2, '#ff4a14', '#ffffff', 2, '#7a222a'); },
+  spit(g, x, y) { shotOrb(g, x, y, 2, '#ff4a14', '#f0c860', 1, '#b02608'); },
 };
 export { SHOT_PAINT, GEM_TIERS };   // test/test_enemy_shot_orbs.mjs
 
@@ -768,6 +935,13 @@ export class Renderer {
     // World scale: how much larger than the HUD the world layer draws (see
     // resize). 1 until a real layout says there are pixels to spare.
     this.worldScale = 1;
+    // R6 LIGHT: the light layer and the level it draws at (2 ON, 1 LOW, 0
+    // OFF; main.js sets it from the setting and the governor each frame).
+    this.light = new LightLayer();
+    this.lightLevel = 2;
+    this.lightMix = null;   // the level on its way (main.js fades a step); null = no fade
+    this.lightMs = 0;       // what the last compose cost (ms)
+    this.lightOut = null;
     setCacheHost(canvas);
     this.resize();
   }
@@ -832,37 +1006,41 @@ export class Renderer {
   // shadow, hit flash, chill tint and the elite / rarity / telegraph ring.
   // An elite's body is ELITE_TEMPLATE.sizeMult larger, so its sprite is drawn
   // that much larger too (the same raster, stretched about the body centre).
-  drawActor(g, e, spr, x, y, state) {
+  drawActor(g, e, spr, x, y, state, reduced = false) {
     const grow = e.elite && !e.boss ? ELITE_TEMPLATE.sizeMult : 1;
     const bw = Math.round(spr.box.w * grow), bh = Math.round(spr.box.h * grow);
-    const sx = x - Math.round(spr.anchor.x * grow), sy = y - Math.round(spr.anchor.y * grow);
+    const sx = x - Math.round(spr.anchor.x * grow), sy0 = y - Math.round(spr.anchor.y * grow);
+    // The pose (src/actor_anim.js): facing, bob, spawn pop and hit squash.
+    // The pools of light stay on the ground; the body, crown and bar lift.
+    const pose = enemyPose(e, trackOf(state, e), reduced, spr.frames.length);
+    const sy = sy0 - pose.lift;
     const t = state.time || 0;
     const tier = e.rarity ? RARITY[e.rarity] : null;
     const tell = tier && tier.tell ? tier.tell : null;
     const tele = !!e.telegraph;
     // A sprite with a wind-up pose (bosses.js `tell`) holds it while it telegraphs.
     const frame = tele && spr.tell ? spr.tell : spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
-    const feet = sy + bh - 1;
+    const feet = sy0 + bh - 1;
     const blink = Math.floor(t * 12) % 2 === 0;
     // Pools of light on the ground: red and growing under a wind-up, violet
     // under a boss, gold under an elite, the tier colour under a rare.
     if (tele) {
       const pulse = 0.5 + 0.5 * Math.abs(Math.sin(t * 9));
-      blitGlow(g, '#ff2f5e', Math.round(bw * (e.boss ? 1.1 : 1.3)) + 4, x, feet, 0.5 + 0.5 * pulse);
+      blitGlow(g, '#ff4a14', Math.round(bw * (e.boss ? 1.1 : 1.3)) + 4, x, feet, 0.5 + 0.5 * pulse); // wind-up tell: danger
     } else if (e.boss) {
-      blitGlow(g, '#c46ad8', bw + 2, x, feet, 0.75);
+      blitGlow(g, bossPool(spr, !!(this && this.groundLight)) || '#c46ad8', bw + 2, x, feet, BOSS_POOL_ALPHA);   // bossdark: its own hue
     } else if (e.elite) {
-      blitGlow(g, '#ffd75e', bw + 3, x, feet, 0.6 + 0.4 * Math.abs(Math.sin(t * 4 + e.x)));
+      blitGlow(g, '#f0c860', bw + 3, x, feet, 0.6 + 0.4 * Math.abs(Math.sin(t * 4 + e.x)));
     } else if (tell) {
       blitGlow(g, tell.outline, bw + 1, x, feet, 0.75);
     }
-    let ring = null;
-    if (tele && blink) ring = '#ffffff';
-    else if (tele) ring = '#ff2f5e';
-    else if (e.elite) ring = '#ffd75e';
-    else if (tell) ring = (tell.pulseHz && Math.floor(t * tell.pulseHz * 2) % 2 === 0) ? '#efd9ff' : tell.outline;
-    else if (e.boss) ring = '#ff9ed8';
-    blitGrid(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying, !e.boss && !e.elite), grow);
+    const ring = actorRing(e, spr, tele, blink, tell, t);
+    // bossdark: a boss's dark body is carried by its bright rim on a dark
+    // floor and by a dark keyline outside it on a light one (not while it
+    // flashes: the hit flash stays white, as before).
+    const keyline = !!(e.boss && spr.rim && !(e.flash > 0) && this && this.groundLight);
+    blitGridPose(g, frame, spr.palette, sx, sy, actorStyle(e.flash > 0, e.slow > 0, ring, !e.flying, !e.boss && !e.elite, keyline), grow,
+      pose.flip, pose.kx, pose.ky, sx + bw / 2, sy + bh);
     if (e.typeId === 'COLOSSUS') {
       // The shoulder braziers burn just above the horns.
       const fi = Math.floor(t * 10) % FLAME.small.length;
@@ -871,11 +1049,11 @@ export class Renderer {
     }
     // Elite crown pips / wind-up warning mark over the head.
     if (tele) {
-      g.fillStyle = blink ? '#ffffff' : '#ff2f5e';
+      g.fillStyle = blink ? '#ffffff' : '#ff4a14'; // wind-up tell: danger
       g.fillRect(x - 1, sy - 11, 2, 5);
       g.fillRect(x - 1, sy - 5, 2, 2);
     } else if (e.elite && !e.boss) {
-      g.fillStyle = '#ffd75e';
+      g.fillStyle = '#f0c860';
       g.fillRect(x - 3, sy - 5, 1, 2); g.fillRect(x, sy - 6, 1, 3); g.fillRect(x + 3, sy - 5, 1, 2);
       g.fillRect(x - 3, sy - 3, 7, 1);
     }
@@ -884,8 +1062,31 @@ export class Renderer {
       const by = sy - (tele || (e.elite && !e.boss) ? 14 : 4) - th;
       g.fillStyle = '#0b0912';
       g.fillRect(sx - 1, by - 1, bw + 2, th + 2);
-      g.fillStyle = e.elite ? '#ffd75e' : '#ff4a5e';
+      g.fillStyle = e.elite ? '#f0c860' : '#e06a74';
       g.fillRect(sx, by, Math.max(1, Math.ceil(bw * e.hp / e.maxHp)), th);
+    }
+  }
+
+  // The collapse: each killed body (feel corpses) squashes flat in its last
+  // pose, white for the first beat (a plain dark body on a light floor: the
+  // white outline there is the hurt hero's), then its puff takes over. Reduced motion
+  // holds the body still for the same beat instead.
+  drawCorpses(g, state, cam, cull, reduced) {
+    for (const c of state.feel.corpses) {
+      const e = c.e;
+      const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
+      if (!spr || c.age < 0) continue;
+      const x = Math.round(e.x - cam.x), y = Math.round(e.y - cam.y) - (e.flying ? Math.round(e.z || 0) : 0);
+      if (cull(x, y, 30)) continue;
+      const grow = e.elite && !e.boss ? ELITE_TEMPLATE.sizeMult : 1;
+      const bw = Math.round(spr.box.w * grow), bh = Math.round(spr.box.h * grow);
+      const sx = x - Math.round(spr.anchor.x * grow), sy = y - Math.round(spr.anchor.y * grow);
+      const t = c.age / c.ttl;
+      const pose = collapsePose(t, reduced);
+      const frame = spr.frames[Math.floor((e.age || 0) * 6) % spr.frames.length];
+      blitGridPose(g, frame, spr.palette, sx, sy, corpseStyle(t < 0.35, !!this.groundLight, !e.flying, !e.boss && !e.elite,
+        e.boss ? spr.rim : null, !!(e.boss && spr.rim && this.groundLight)), grow,
+        c.face < 0, pose.kx, pose.ky, sx + bw / 2, sy + bh);
     }
   }
 
@@ -941,7 +1142,9 @@ export class Renderer {
       // the canvas is the title's, and nothing else may read through it.
       g.fillStyle = '#05050a';
       g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
-      drawTitle(this.drawGrid.bind(this), g, x, y);
+      // One fillRect per run of equal pixels: the per-pixel painter took
+      // about 70 ms here (2 x 10^5 rects), one long frame as the title came up.
+      drawTitle(paintGridRuns, g, x, y);
       this._titlePainted = true;
     }
     this.titleScreen = { x, y, w, h, scale };
@@ -1027,6 +1230,8 @@ export class Renderer {
     // the wave theme leans it. The cached ground chunks carry their own
     // texture, so the dot lattice only draws on the direct (headless) path.
     const gpal = stageGroundPalette(state.stage, theme);
+    // R6: on a light floor the hero wears a dark keyline outside its ring.
+    this.groundLight = groundIsLight(state.stage) && !this.light.arenaDark(state);   // R7: the finale's void is dark
     g.fillStyle = gpal.base;
     if (shake.x || shake.y) g.fillRect(-8, -8, C.VIEW_W + 16, C.VIEW_H + 16);   // no bare edge mid-shake
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
@@ -1066,17 +1271,58 @@ export class Renderer {
       }
     }
     this.drawArenaWall(g, cam, gpal);   // WAVE-18 (#7): the rim made visible
+    // R6 LIGHT (src/light.js): the darkness with its holes of light and the
+    // glows, over the floor, the buildings and the props and UNDER every
+    // pickup, actor, shot and effect drawn below (none of them is darkened).
+    // Its own cost is timed (wall clock, read only by the governor in main.js).
+    const lt0 = performance.now(); this.light.timer = this.light.timer || (() => performance.now());   // R7: times the arena's share
+    this.lightOut = this.light.compose(g, state, cam, this.worldView, this.landmarks,
+      groundEmits(), this.lightLevel, prefersReducedMotion(), this.lightMix);
+    this.lightMs = Math.max(0, performance.now() - lt0 - (this.light.arenaMs || 0));   // R7: not the arena's floor and cracks (drawn at every level)
 
     // Gems.
     // Faceted lozenge, outlined; the tier colour follows the xp it carries
     // and each gem twinkles on its own position-hashed beat.
+    // R3, gems recede in a crowd: past GEM_RECEDE.CROWD gems on screen (until it
+    // drops under GEM_RECEDE.CROWD_OFF), gems far from the hero fade. Every gem
+    // in state.gems draws (a gem on screen is a gem in the game): the floor
+    // merges gems for real (main.js tickFloor), and a merged gem past the first
+    // rich step draws as a rich gem.
     const twinkle = Math.floor((state.time || 0) * 3);
+    const sink = this.readStats || null;
+    if (sink) { sink.gems = []; sink.nums = []; sink.hero = null; sink.order = []; }
+    let onScreen = 0;
+    for (const gem of state.gems) {
+      if (!cull(Math.round(gem.x - cam.x), Math.round(gem.y - cam.y), 5)) onScreen++;
+    }
+    if (onScreen > GEM_RECEDE.CROWD) this._gemCrowd = true;
+    else if (onScreen < GEM_RECEDE.CROWD_OFF) this._gemCrowd = false;
+    const crowded = !!this._gemCrowd;
+    if (sink) sink.gemCrowd = crowded;
+    const hpl = state.player;
+    const stillFloor = prefersReducedMotion();   // read once a frame (matchMedia)
     for (const gem of state.gems) {
       const x = Math.round(gem.x - cam.x), y = Math.round(gem.y - cam.y);
+      if (cull(x, y, 12)) continue;
+      const rich = richStep(gem, C.FLOOR.RICH_XP);
+      if (rich > 0) {
+        // A rich gem never fades: it is the thing worth walking to.
+        const box = GEM_RICH_BOX[rich - 1];
+        const pulse = richGlowStrength(state.time || 0, gem.x, stillFloor);
+        blitGlow(g, GEM_RICH.glow, 7 + rich * 3, x, y, pulse);
+        if (sink) sink.gems.push({ x: x + box.x, y: y + box.y, w: box.w, h: box.h, a: 1, rich, glow: pulse });
+        blitPainted(g, 'gemrich:' + rich, box, GEM_RICH_PAINT[rich - 1], x, y, STYLE_ITEM);
+        continue;
+      }
       if (cull(x, y, 5)) continue;
       const tier = gem.xp >= 25 ? 2 : gem.xp >= 6 ? 1 : 0;
+      let a = 1;
+      if (crowded && hpl && Math.hypot(gem.x - hpl.x, gem.y - hpl.y) > GEM_RECEDE.FAR) a = GEM_RECEDE.FAR_ALPHA;
       const lit = ((Math.round(gem.x) * 7 + Math.round(gem.y) * 13 + twinkle) % 5) === 0 ? 1 : 0;
+      if (sink) sink.gems.push({ x: x + GEM_BOX.x, y: y + GEM_BOX.y, w: GEM_BOX.w, h: GEM_BOX.h, a });
+      g.globalAlpha = a;
       blitPainted(g, 'gem:' + tier + lit, GEM_BOX, GEM_PAINT[tier * 2 + lit], x, y, STYLE_ITEM);
+      g.globalAlpha = 1;
     }
 
     // Potion drops: tiny bottles (red = health, blue = mana).
@@ -1084,8 +1330,14 @@ export class Renderer {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (cull(x, y, 5)) continue;
       const hp = d.kind === 'hp';
+      // R3 floor: the last BLINK_S of its life the potion blinks (it is leaving).
+      const left = C.FLOOR.POTION_LIFE - ((state.time || 0) - (d.t ?? (state.time || 0)));
+      const la = leavingAlpha(left, state.time || 0, stillFloor);
+      if (la <= 0) continue;
+      g.globalAlpha = la;
       blitGlow(g, hp ? '#ff5566' : '#4a8cff', 7, x, y + 3, 0.75);
       blitPainted(g, hp ? 'potion:hp' : 'potion:mp', POTION_BOX, hp ? paintPotionHp : paintPotionMp, x, y, STYLE_ITEM);
+      g.globalAlpha = 1;
     }
 
     // Chests: the SEALED chest (PORT SLICE K — original closed-chest art:
@@ -1111,10 +1363,22 @@ export class Renderer {
     for (const d of state.itemDrops || []) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (cull(x, y, d.chest ? 14 : 5)) continue;
-      if (d.chest) {
+      // R3 floor (Steve: "dead chests can clean up more frequently"): the open
+      // chest stays REMNANT_S after it opens, fading out over the last
+      // REMNANT_FADE_S; the item stays as a plain drop.
+      const lay = (state.time || 0) - (d.t ?? (state.time || 0));
+      const F = C.FLOOR;
+      const ra = d.chest ? remnantAlpha(lay) : 0;
+      if (ra > 0) {
         const oart = chestArtFor(d.chest, 'open');
+        g.globalAlpha = ra;
         blitChest(g, oart, x - Math.floor(oart.w / 2), y - Math.floor(oart.h / 2) + 3, true);
+        g.globalAlpha = 1;
       }
+      const leftS = d.refusedAt != null ? F.REFUSED_S - ((state.time || 0) - d.refusedAt) : F.ITEM_LIFE - lay;
+      const la = leavingAlpha(leftS, state.time || 0, stillFloor);
+      if (la <= 0) continue;
+      g.globalAlpha = la;
       const col = RARITY_COLORS[d.item.rarity] || RARITY_COLORS.COMMON;
       blitGlow(g, col, 8, x, y + 2, 0.75);
       g.fillStyle = col;
@@ -1126,6 +1390,7 @@ export class Renderer {
         g.fillRect(x - 4, y, 1, 1); g.fillRect(x + 4, y, 1, 1);
         g.fillRect(x, y - 4, 1, 1); g.fillRect(x, y + 4, 1, 1);
       }
+      g.globalAlpha = 1;
     }
 
     // FIRST-RUN PROLOGUE potion (main.js owns the phase): a TALLER bottle
@@ -1240,7 +1505,7 @@ export class Renderer {
     // M5b SITES (sites.js / sites_art.js): shrines, altar, braziers,
     // fountains and the cursed statue, plus the waypoint flag or edge arrow.
     clearWorldCards();   // world cards queue here and draw in the HUD pass
-    drawSites(g, state, cam, cull);
+    drawSites(g, state, cam, cull, prefersReducedMotion());
     // M5b slice 3 (world_art.js): yard, vault, lever, key, cracks, the glyph.
     drawWorldPoi(g, state, cam, cull, (state.time || 0) - (state.lastSteerT ?? -99) <= 2);
     this.waypointMark = drawWaypoint(g, state, cam, this.worldView);
@@ -1279,7 +1544,29 @@ export class Renderer {
     // own LARGE grids (bosses.js BOSS_SPRITES, 20-26px, crown/robe/star built
     // in) on e.bossSprite; the legacy BOSS_SPRITE stays as the fallback.
     const cached = cacheEnabled();
-    for (const e of state.enemies) {
+    const reducedAnim = prefersReducedMotion();   // read once a frame (matchMedia)
+    // Killed bodies fold down where they fell, under the living, then puff.
+    if (cached && state.feel && state.feel.corpses.length) this.drawCorpses(g, state, cam, cull, reducedAnim);
+    // Depth: the horde is drawn top of the screen first, so a body lower down
+    // stands in front (a crowd reads as a crowd). Ground y decides, so a flyer
+    // sorts by its shadow. The hero is drawn later, on top of all of them.
+    const order = this.depthOrder || (this.depthOrder = []);
+    order.length = 0;
+    if (actorAnimOn()) {
+      const pool = this.depthPool || (this.depthPool = []), keyed = this.depthKeyed || (this.depthKeyed = []);
+      keyed.length = 0;
+      for (let i = 0; i < state.enemies.length; i++) {
+        const e = state.enemies[i];
+        const p = pool[i] || (pool[i] = { e: null, k: 0 });
+        p.e = e; p.k = depthKey(e);
+        keyed.push(p);
+      }
+      keyed.sort(byDepth);
+      for (const p of keyed) { order.push(p.e); p.e = null; }
+    } else {
+      for (const e of state.enemies) order.push(e);
+    }
+    for (const e of order) {
       if (e.finalBoss) continue;   // WAVE-10: the maw has its own draw below
       const w = Math.round(e.w || C.ENEMY.W), h = Math.round(e.h || C.ENEMY.H);
       const hw = Math.round(w / 2), hh = Math.round(h / 2);
@@ -1307,7 +1594,7 @@ export class Renderer {
       }
       const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
       if (spr && cached) {
-        this.drawActor(g, e, spr, x, y, state);
+        this.drawActor(g, e, spr, x, y, state, reducedAnim);
       } else if (spr) {
         const sx = x - spr.anchor.x, sy = y - spr.anchor.y;
         const bw = spr.box.w, bh = spr.box.h;
@@ -1335,7 +1622,7 @@ export class Renderer {
           g.fillRect(sx + bw + 1, sy - 1, 1, bh + 2);
         }
         if (e.elite) {
-          g.fillStyle = '#ffd75e';
+          g.fillStyle = '#f0c860';
           g.fillRect(sx - 1, sy - 1, bw + 2, 1);
           g.fillRect(sx - 1, sy + bh + 1, bw + 2, 1);
           g.fillRect(sx - 1, sy - 1, 1, bh + 2);
@@ -1343,16 +1630,16 @@ export class Renderer {
         }
         if (e.rarity) rarityRing(g, e, state, sx, sy, bw, bh);
         if (e.hp < e.maxHp) {
-          g.fillStyle = '#000000';
+          g.fillStyle = '#0b0912';
           g.fillRect(sx, sy - 3, bw, 1);
-          g.fillStyle = '#ff5566';
+          g.fillStyle = '#e06a74';
           g.fillRect(sx, sy - 3, Math.ceil(bw * e.hp / e.maxHp), 1);
         }
       } else {
         // Fallback: typed shapes + palette variants via resolveLook.
         const look = resolveLook(e.typeId, e.variant || 0);
-        let body = e.flash > 0 ? '#ffffff' : (e.slow > 0 ? '#6aa8d8' : look.body);
-        let trim = e.flash > 0 ? '#dddddd' : (e.slow > 0 ? '#3a6a9a' : look.trim);
+        let body = e.flash > 0 ? '#ffffff' : (e.slow > 0 ? '#8aa0c0' : look.body);
+        let trim = e.flash > 0 ? '#e4e2ea' : (e.slow > 0 ? '#486084' : look.trim);
         let accent = look.accent || '#ffffff';
         if (e.elite) { trim = ELITE_LOOK.trim; accent = ELITE_LOOK.accent; } // gold tell
         g.fillStyle = body;
@@ -1380,7 +1667,7 @@ export class Renderer {
           g.fillRect(x + hw + 1, y - hh - 1, 1, h + 2);
         }
         if (e.elite) {
-          g.fillStyle = '#ffd75e';
+          g.fillStyle = '#f0c860';
           g.fillRect(x - hw - 1, y - hh - 1, w + 2, 1);
           g.fillRect(x - hw - 1, y + hh + 1, w + 2, 1);
           g.fillRect(x - hw - 1, y - hh - 1, 1, h + 2);
@@ -1388,9 +1675,9 @@ export class Renderer {
         }
         if (e.rarity) rarityRing(g, e, state, x - hw, y - hh, w, h);
         if (e.hp < e.maxHp) {
-          g.fillStyle = '#000000';
+          g.fillStyle = '#0b0912';
           g.fillRect(x - hw, y - hh - 3, w, 1);
-          g.fillStyle = '#ff5566';
+          g.fillStyle = '#e06a74';
           g.fillRect(x - hw, y - hh - 3, Math.ceil(w * e.hp / e.maxHp), 1);
         }
       }
@@ -1419,7 +1706,7 @@ export class Renderer {
           // Leech: pulsing red heart-core (2Hz heartbeat swell).
           const beat = 0.5 + 0.5 * Math.sin((state.time || 0) * 12);
           const cs = beat > 0.5 ? 3 : 2;
-          g.fillStyle = '#ff3040';
+          g.fillStyle = '#e06a74';
           g.fillRect(x - Math.round(cs / 2), y - Math.round(cs / 2), cs, cs);
         }
       }
@@ -1427,7 +1714,7 @@ export class Renderer {
       if (e.attached) {
         const px = Math.round(state.player.x - cam.x), py = Math.round(state.player.y - cam.y);
         const steps = 4;
-        g.fillStyle = '#ff5566';
+        g.fillStyle = '#e06a74';
         for (let i = 1; i < steps; i++) {
           const u = i / steps;
           g.fillRect(Math.round(x + (px - x) * u), Math.round(y + (py - y) * u), 1, 1);
@@ -1440,7 +1727,9 @@ export class Renderer {
     // from final_boss.js, 2-frame idle, white hit-flash, and the hot pink
     // telegraph wash during the 0.8s pre-barrage window (decide() sets the
     // flag; render only reads it). fillRect-only, like everything else.
-    if (state.finalBoss && state.mode === 'finale') {
+    // integ4: drawn in its arena's every mode (finale_arena.js arenaOn), so the
+    // death movie's frozen frame, a pause and a draft over the fight still hold the Maw.
+    if (state.finalBoss && arenaOn(state)) {
       const fb = state.finalBoss;
       const spr = FINAL_BOSS_SPRITE;
       const Z = 4;
@@ -1451,9 +1740,11 @@ export class Renderer {
       if (cached) {
         // One blit: the 4x block raster with its outline, flash and
         // telegraph ring baked; a pool of light underneath lifts it off the ground.
-        blitGlow(g, fb.telegraph ? '#ff2f5e' : '#c46ad8', 62, x, y + spr.box.h * 2 - 6, fb.telegraph ? 1 : 0.6);
+        blitGlow(g, fb.telegraph ? '#ff4a14' : bossPool(spr, !!this.groundLight), 62, x, y + spr.box.h * 2 - 6, fb.telegraph ? 1 : MAW_POOL_ALPHA);
+        // bossdark: its rim when it is not winding up (the telegraph ring stays danger)
         blitGrid(g, frame, spr.palette, sx, sy,
-          actorStyle(fb.flash > 0, fb.slow > 0, mawTele ? '#ff2f5e' : null), Z);
+          actorStyle(fb.flash > 0, fb.slow > 0, mawTele ? '#ff4a14' : (fb.telegraph ? null : spr.rim), true, false,
+            !!(this.groundLight && !(fb.flash > 0) && !fb.telegraph)), Z);
       } else {
         for (let ry = 0; ry < frame.length; ry++) {
           const row = frame[ry];
@@ -1485,7 +1776,7 @@ export class Renderer {
       if (cull(x, y, 5)) continue;
       if (cached) {
         const sk = SHOT_PAINT[s.kind] ? s.kind : 'spit';
-        blitPainted(g, 'shot:' + sk, SHOT_BOX, SHOT_PAINT[sk], x, y, STYLE_SHOT);
+        blitPainted(g, 'shot:' + sk, SHOT_BOX, SHOT_PAINT[sk], x, y, this.groundLight ? STYLE_SHOT_LIGHT : STYLE_SHOT);
         continue;
       }
       SHOT_PAINT[SHOT_PAINT[s.kind] ? s.kind : 'spit'](g, x, y);   // the same orbs as the cache
@@ -1495,10 +1786,8 @@ export class Renderer {
     // seeker missiles, dropped mines).
     //
     // PORT SLICE J2: every traveling body paints ORIGINAL multi-part sprite
-    // art in the integer-grid fillRect style, derived from the reference
-    // vocabulary (DESIGN_REFERENCE_VS.md section 12 / A.7: knives-orbs-beams-
-    // axes — volley arrows, orbit blades, boomerang crescent, seeker missile,
-    // armed mine). Triggers, ttls, flight paths, speeds, hit boxes and pool
+    // art in the integer-grid fillRect style (volley arrows, orbit blades,
+    // boomerang crescent, seeker missile, armed mine). Triggers, ttls, flight paths, speeds, hit boxes and pool
     // bounds are untouched — painters only. Phase sources are sim state
     // (position hash, age, velocity, flight angle), never wall clock and
     // never Math.random, so 60Hz and 120Hz paint identically at the same age.
@@ -1536,35 +1825,35 @@ export class Renderer {
         const ringFus = (fx.fus && fusionDef(fx.fus)) ||
           (fusOf && fx.kind === 'nova_pulse' && !fx.evo ? fusOf.nova_pulse : null);
         const ringCol = ringFus ? (t < 0.5 ? ringFus.tint[0] : ringFus.tint[1])
-          : fx.evo === 'sun' ? (t < 0.5 ? '#ffffff' : '#ffb14a')
-          : fx.evo === 'fire' ? (t < 0.5 ? '#fff2c0' : '#ff6a2a')
-          : fx.evo === 'meteor' ? (t < 0.5 ? '#efe0ff' : '#8a5ad8')
+          : fx.evo === 'sun' ? (t < 0.5 ? '#ffffff' : '#e2aa38')
+          : fx.evo === 'fire' ? (t < 0.5 ? '#f8e098' : '#e8902a')
+          : fx.evo === 'meteor' ? (t < 0.5 ? '#e4e2ea' : '#8c6cb4')
           : fx.kind === 'nova'
-          ? (t < 0.5 ? '#a8e0ff' : '#5a9ad8')
+          ? (t < 0.5 ? '#a8d0f4' : '#8aa0c0')
           : fx.kind === 'boss_nova'
-            ? (t < 0.5 ? '#ff7a9a' : '#a83a5a')
+            ? (t < 0.5 ? '#e06a74' : '#b83a4e')
             : fx.kind === 'mine_blast'
-              ? (t < 0.4 ? '#ffd75e' : t < 0.75 ? '#ff8848' : '#a83a1e')
+              ? (t < 0.4 ? '#f0c860' : t < 0.75 ? '#e8902a' : '#962e34')
               : fx.kind === 'colossus_shock'
-                ? (t < 0.5 ? '#e8e8f0' : '#8a8a96')
+                ? (t < 0.5 ? '#e4e2ea' : '#9c98a4')
                 // G8 step 2: Chain Reaction (warm ember) / Blood Harvest (red).
                 // RSS8 magnet: gold loot tell — matches nothing else on the field.
                 : fx.kind === 'rewrite_boom'
-                  ? (t < 0.5 ? '#ffb066' : '#b05a2a')
+                  ? (t < 0.5 ? '#e8902a' : '#a46a16')
                   : fx.kind === 'rewrite_harvest'
-                    ? (t < 0.5 ? '#ff6a7a' : '#a02a3a')
+                    ? (t < 0.5 ? '#e06a74' : '#962e34')
                     : fx.kind === 'magnet'
-                      ? (t < 0.5 ? '#ffe98a' : '#c8a03a')
-                      : (t < 0.5 ? '#d0a8ff' : '#8a5ad8');
+                      ? (t < 0.5 ? '#f8e098' : '#e2aa38')
+                      : (t < 0.5 ? '#b49ad4' : '#8c6cb4');
         const echoCol = fx.evo ? '#ffffff'
-          : fx.kind === 'boss_nova' ? '#ffd7e0'
-          : fx.kind === 'mine_blast' ? '#fff2c0'
+          : fx.kind === 'boss_nova' ? '#e4e2ea'
+          : fx.kind === 'mine_blast' ? '#f8e098'
           : fx.kind === 'colossus_shock' ? '#ffffff'
-          : fx.kind === 'rewrite_boom' ? '#ffe0b8'
-          : fx.kind === 'rewrite_harvest' ? '#ffc0c8'
-          : fx.kind === 'magnet' ? '#fff8d0'
-          : fx.kind === 'nova' ? '#e8f4ff'
-          : '#efe0ff';
+          : fx.kind === 'rewrite_boom' ? '#f8e098'
+          : fx.kind === 'rewrite_harvest' ? '#d48aae'
+          : fx.kind === 'magnet' ? '#f8e098'
+          : fx.kind === 'nova' ? '#ffffff'
+          : '#e4e2ea';
         const hh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
         const rot = ((hh % 360) / 360) * Math.PI * 2;
         g.fillStyle = ringCol;
@@ -1603,7 +1892,7 @@ export class Renderer {
         // orbs). NOVA_PULSE only — every other ring kind paints
         // byte-identically to slice-h. +4 rects.
         if (fx.kind === 'nova_pulse') {
-          g.fillStyle = '#efe0ff';
+          g.fillStyle = '#e4e2ea';
           for (let k = 0; k < 4; k++) {
             const a = rot + k * (Math.PI / 2) + ((hh >> (k * 2)) & 3) * 0.2;
             g.fillRect(Math.round(fx.x + Math.cos(a) * r * 0.8 - cam.x),
@@ -1617,7 +1906,7 @@ export class Renderer {
         const blink = Math.floor((fx.age || 0) * 24) % 2 === 0;
         if (bright || blink) {
           const sf = fusOf && fusOf.scythe_arc;   // a fused Scythe sweeps in its fusion's colours
-          g.fillStyle = bright ? (t < 0.4 ? (sf ? sf.tint[0] : '#ffffff') : (sf ? sf.tint[1] : '#a8e0ff')) : '#c8d8e8';
+          g.fillStyle = bright ? (t < 0.4 ? (sf ? sf.tint[0] : '#ffffff') : (sf ? sf.tint[1] : '#a8d0f4')) : '#b4c4dc';
           const steps = 16;
           for (let i = 0; i <= steps; i++) {
             const a = fx.dir - fx.arc / 2 + (i / steps) * fx.arc;
@@ -1648,7 +1937,7 @@ export class Renderer {
             g.fillStyle = '#ffffff';
             g.fillRect(Math.round(fx.x + bcx * brr - cam.x) - 1,
                        Math.round(fx.y + bcy * brr - cam.y) - 1, 3, 3);
-            g.fillStyle = '#a8e0ff';
+            g.fillStyle = '#a8d0f4';
             g.fillRect(Math.round(fx.x + bcx * (brr - 4) - cam.x),
                        Math.round(fx.y + bcy * (brr - 4) - cam.y), 2, 2);
             g.fillRect(Math.round(fx.x + bcx * (brr - 7) - cam.x),
@@ -1662,7 +1951,7 @@ export class Renderer {
           const pt = fx.points[i];
           const fade = (i / n) * (1 - t);   // older points dimmer
           const sz = fade > 0.5 ? 2 : 1;
-          g.fillStyle = fade > 0.66 ? '#ffdd7a' : fade > 0.33 ? '#ff8848' : '#7a3a1e';
+          g.fillStyle = fade > 0.66 ? '#f8e098' : fade > 0.33 ? '#e8902a' : '#7a4c0e';
           g.fillRect(Math.round(pt.x - cam.x), Math.round(pt.y - cam.y), sz, sz);
         }
       } else if (fx.kind === 'mine_shrap') {
@@ -1670,9 +1959,9 @@ export class Renderer {
         const d = fx.dist * t;
         const shx = Math.round(fx.x + Math.cos(fx.ang) * d - cam.x),
               shy = Math.round(fx.y + Math.sin(fx.ang) * d - cam.y);
-        g.fillStyle = t < 0.5 ? '#ffd75e' : '#ff8848';
+        g.fillStyle = t < 0.5 ? '#f0c860' : '#e8902a';
         g.fillRect(shx - 1, shy - 1, 2, 2);
-        g.fillStyle = '#7a3a1e';
+        g.fillStyle = '#7a4c0e';
         g.fillRect(Math.round(shx - Math.cos(fx.ang) * 3), Math.round(shy - Math.sin(fx.ang) * 3), 1, 1);
       } else if (fx.kind === 'beam') {
         // Piercing laser: the visible beam sweeps from->to over its life,
@@ -1685,13 +1974,13 @@ export class Renderer {
         for (let i = 0; i <= steps; i++) {
           const d = (i / steps) * fx.len;
           const x = Math.round(fx.x + cx * d - cam.x), y = Math.round(fx.y + cy * d - cam.y);
-          g.fillStyle = (fusOf && fusOf.beam) ? fusOf.beam.tint[1] : '#ff5566';   // outer glow (a fused Beam: its fusion's colour)
+          g.fillStyle = (fusOf && fusOf.beam) ? fusOf.beam.tint[1] : '#e8902a';   // outer glow: amber, the player's fire (a fused Beam: its fusion's colour)
           g.fillRect(x - Math.round(th / 2), y - Math.round(th / 2), th, th);
           g.fillStyle = '#ffffff';                       // hot core
           g.fillRect(x - 1, y - 1, 2, 2);
           // PORT SLICE H: edge crackle ticks every 4th sample (same sweep).
           if (i % 4 === 0 && t < 0.8) {
-            g.fillStyle = '#ff9e9e';
+            g.fillStyle = '#f0c860';
             g.fillRect(x - Math.round(th / 2) - 1, y - Math.round(th / 2) - 1, 1, 1);
           }
         }
@@ -1700,7 +1989,7 @@ export class Renderer {
           const tx = Math.round(fx.x + cx * fx.len - cam.x), ty = Math.round(fx.y + cy * fx.len - cam.y);
           g.fillStyle = '#ffffff';
           g.fillRect(tx - 1, ty - 1, 3, 3);
-          g.fillStyle = '#ff9e9e';
+          g.fillStyle = '#e06a74';
           g.fillRect(tx - 2, ty, 5, 1); g.fillRect(tx, ty - 2, 1, 5);
         }
         // PORT SLICE J2 — BEAM pulse body: one bright packet riding down the
@@ -1711,7 +2000,7 @@ export class Renderer {
           const qx = Math.round(fx.x + cx * pd - cam.x), qy = Math.round(fx.y + cy * pd - cam.y);
           g.fillStyle = '#ffffff';
           g.fillRect(qx - 1, qy - 1, 3, 3);
-          g.fillStyle = '#ff9e9e';
+          g.fillStyle = '#e06a74';
           g.fillRect(qx - 3, qy, 7, 1); g.fillRect(qx, qy - 3, 1, 7);
         }
       } else if (fx.kind === 'zap') {
@@ -1719,7 +2008,7 @@ export class Renderer {
         // PORT SLICE H fork ticks every 3rd dot (perpendicular, hash-sided).
         // A fusion's link bolt (fx.fus) or a fused Chain Zap strikes in the fusion's colours.
         const zf = (fx.fus && fusionDef(fx.fus)) || (fusOf && fusOf.zap);
-        g.fillStyle = zf ? (t < 0.5 ? zf.tint[0] : zf.tint[1]) : (t < 0.5 ? '#ffffff' : '#a8e0ff');
+        g.fillStyle = zf ? (t < 0.5 ? zf.tint[0] : zf.tint[1]) : (t < 0.5 ? '#ffffff' : '#a8d0f4');
         const zh = ((Math.round(fx.points[0].x) * 73856093) ^ (Math.round(fx.points[0].y) * 19349663)) >>> 0;
         let zdi = 0;
         for (let s = 0; s < fx.points.length - 1; s++) {
@@ -1749,7 +2038,7 @@ export class Renderer {
           const zx = Math.round(hp0.x - cam.x), zy = Math.round(hp0.y - cam.y);
           g.fillStyle = '#ffffff';
           g.fillRect(zx - 1, zy - 1, 3, 3);
-          g.fillStyle = '#ffd75e';
+          g.fillStyle = '#f0c860';
           g.fillRect(zx - 3, zy, 1, 1); g.fillRect(zx + 3, zy, 1, 1);
           g.fillRect(zx, zy - 3, 1, 1); g.fillRect(zx, zy + 3, 1, 1);
         }
@@ -1763,7 +2052,7 @@ export class Renderer {
         const ox = Math.round(fx.x - cam.x), oy = Math.round(fx.y - cam.y);
         const oh = ((Math.round(fx.x) * 73856093) ^ (Math.round(fx.y) * 19349663)) >>> 0;
         const horiz = ((oh >> 4) & 1) === 0;
-        g.fillStyle = '#c8e8ff';
+        g.fillStyle = '#a8d0f4';
         if (horiz) {
           g.fillRect(ox - 4, oy - 1, 9, 2);
           g.fillRect(ox - 2, oy - 2, 5, 1);
@@ -1774,10 +2063,10 @@ export class Renderer {
         g.fillStyle = '#ffffff';
         if (horiz) { g.fillRect(ox - 4, oy - 1, 9, 1); }
         else { g.fillRect(ox - 1, oy - 4, 1, 9); }
-        g.fillStyle = '#5a9ad8';
+        g.fillStyle = '#8aa0c0';
         if (horiz) { g.fillRect(ox - 1, oy, 3, 1); }
         else { g.fillRect(ox, oy - 1, 1, 3); }
-        g.fillStyle = '#e8f4ff';
+        g.fillStyle = '#ffffff';
         if (horiz) { g.fillRect(ox + ((oh & 1) === 0 ? 4 : -4), oy - 2, 1, 1); }
         else { g.fillRect(ox - 2, oy + ((oh & 1) === 0 ? 4 : -4), 1, 1); }
         if (fusOf && fusOf.orbit) blitFusionCorona(g, fusOf.orbit, ox, oy, oh, cached);
@@ -1792,13 +2081,13 @@ export class Renderer {
         g.fillStyle = '#ffffff';
         const ocz = t < 0.4 ? 4 : 3;
         g.fillRect(ox - Math.round(ocz / 2), oy - Math.round(ocz / 2), ocz, ocz);
-        g.fillStyle = '#c8e8ff';
+        g.fillStyle = '#a8d0f4';
         for (let i = 0; i < 8; i++) {
           const a = orot + (i / 8) * Math.PI * 2;
           g.fillRect(Math.round(ox + Math.cos(a) * orr), Math.round(oy + Math.sin(a) * orr), 1, 1);
         }
         if (t < 0.7) {
-          g.fillStyle = '#5a9ad8';
+          g.fillStyle = '#8aa0c0';
           const od = Math.round(3 + 4 * t);
           const s0 = (oh >> 3) & 1;
           g.fillRect(ox - od + s0, oy - od, 1, 1); g.fillRect(ox + od, oy - od + s0, 1, 1);
@@ -1823,8 +2112,8 @@ export class Renderer {
         };
         if (fx.kind === 'hit_spark') {
           // Volley impact star: white core, gold-to-ember cross, 4 crackle flecks.
-          const core = t < 0.5 ? '#ffffff' : '#ffd75e';
-          const arm = t < 0.5 ? '#ffd75e' : '#ff9a3c';
+          const core = t < 0.5 ? '#ffffff' : '#f0c860';
+          const arm = t < 0.5 ? '#f0c860' : '#e8902a';
           const alen = t < 0.4 ? 5 : t < 0.75 ? 4 : 3;
           g.fillStyle = core;
           const cs = t < 0.4 ? 3 : 2;
@@ -1833,53 +2122,53 @@ export class Renderer {
           g.fillRect(sx - alen, sy, alen * 2, 1); g.fillRect(sx, sy - alen, 1, alen * 2);
           if (t < 0.7) {
             const dd = Math.round(3 + 4 * t) + srot % 2;
-            sdiag(-dd, -dd, '#fff2c0'); sdiag(dd, -dd, '#fff2c0');
-            sdiag(-dd, dd, '#fff2c0'); sdiag(dd, dd, '#fff2c0');
+            sdiag(-dd, -dd, '#f8e098'); sdiag(dd, -dd, '#f8e098');
+            sdiag(-dd, dd, '#f8e098'); sdiag(dd, dd, '#f8e098');
           }
         } else if (fx.kind === 'muzzle') {
           // Muzzle chevron: hot core + two side ticks along the hash direction.
-          g.fillStyle = t < 0.5 ? '#ffe9a8' : '#ff9a3c';
+          g.fillStyle = t < 0.5 ? '#f8e098' : '#e8902a';
           g.fillRect(sx - 1, sy - 1, 3, 3);
-          g.fillStyle = '#ff9a3c';
+          g.fillStyle = '#e8902a';
           const mo = srot % 2 === 0 ? 1 : -1;
           g.fillRect(sx - 3, sy + mo * 2, 2, 1); g.fillRect(sx + 2, sy - mo * 2, 2, 1);
         } else if (fx.kind === 'scythe_hit') {
           // Reap tick: white core + two trailing ticks along a hash direction.
           const sa = (srot / 4) * Math.PI * 2 + Math.PI / 4;
           const cdx = Math.cos(sa), cdy = Math.sin(sa);
-          g.fillStyle = t < 0.5 ? '#ffffff' : '#a8e0ff';
+          g.fillStyle = t < 0.5 ? '#ffffff' : '#a8d0f4';
           g.fillRect(sx - 1, sy - 1, 3, 3);
-          g.fillStyle = '#a8e0ff';
+          g.fillStyle = '#a8d0f4';
           g.fillRect(Math.round(sx - cdx * 3), Math.round(sy - cdy * 3), 2, 2);
-          g.fillStyle = '#5a9ad8';
+          g.fillStyle = '#8aa0c0';
           g.fillRect(Math.round(sx - cdx * 5), Math.round(sy - cdy * 5), 1, 1);
         } else if (fx.kind === 'seeker_pop') {
           // Ember pop: gold core, ember halo, 4 outward sparks.
-          g.fillStyle = t < 0.5 ? '#ffdd7a' : '#ff8848';
+          g.fillStyle = t < 0.5 ? '#f8e098' : '#e8902a';
           g.fillRect(sx - 1, sy - 1, 3, 3);
           if (t < 0.7) {
-            g.fillStyle = '#ff8848';
+            g.fillStyle = '#e8902a';
             const pd = Math.round(3 + 3 * t);
             g.fillRect(sx - pd, sy, 1, 1); g.fillRect(sx + pd, sy, 1, 1);
             g.fillRect(sx, sy - pd, 1, 1); g.fillRect(sx, sy + pd, 1, 1);
             const qd = pd - 1 + srot % 2;
-            sdiag(-qd, -qd, '#ffdd7a'); sdiag(qd, qd, '#ffdd7a');
+            sdiag(-qd, -qd, '#f8e098'); sdiag(qd, qd, '#f8e098');
           }
         } else if (fx.kind === 'mine_hit') {
           // Amber contact star: gold core, ember cross, diagonal crackle.
-          g.fillStyle = t < 0.5 ? '#ffd75e' : '#ff8848';
+          g.fillStyle = t < 0.5 ? '#f0c860' : '#e8902a';
           g.fillRect(sx - 1, sy - 1, 3, 3);
-          g.fillStyle = '#ff8848';
+          g.fillStyle = '#e8902a';
           const md = t < 0.5 ? 4 : 3;
           g.fillRect(sx - md, sy, md * 2, 1); g.fillRect(sx, sy - md, 1, md * 2);
           if (t < 0.6) {
             const dd = md + 1 + srot % 2;
-            sdiag(-dd, -dd, '#ffd75e'); sdiag(dd, -dd, '#ffd75e');
-            sdiag(-dd, dd, '#ffd75e'); sdiag(dd, dd, '#ffd75e');
+            sdiag(-dd, -dd, '#f0c860'); sdiag(dd, -dd, '#f0c860');
+            sdiag(-dd, dd, '#f0c860'); sdiag(dd, dd, '#f0c860');
           }
         } else if (fx.kind === 'mine_fizzle') {
           // Damp fizzle: three grey motes drifting apart and upward with t.
-          g.fillStyle = t < 0.5 ? '#8a8a96' : '#5a5a66';
+          g.fillStyle = t < 0.5 ? '#9c98a4' : '#5e5968';
           const fo = Math.round(1 + 3 * t);
           const fy = Math.round(2 * t);
           g.fillRect(sx - fo, sy - fy, 1, 1);
@@ -1889,13 +2178,13 @@ export class Renderer {
           // Magenta impact cross: white core, long cross, pale diagonals.
           g.fillStyle = '#ffffff';
           g.fillRect(sx - 1, sy - 1, 2, 2);
-          g.fillStyle = '#ff5566';
+          g.fillStyle = '#e06a74';
           const bd = t < 0.5 ? 5 : 4;
           g.fillRect(sx - bd, sy, bd * 2, 1); g.fillRect(sx, sy - bd, 1, bd * 2);
           if (t < 0.7) {
             const qd = bd - 1 + srot % 2;
-            sdiag(-qd, -qd, '#ff9e9e'); sdiag(qd, -qd, '#ff9e9e');
-            sdiag(-qd, qd, '#ff9e9e'); sdiag(qd, qd, '#ff9e9e');
+            sdiag(-qd, -qd, '#e06a74'); sdiag(qd, -qd, '#e06a74');
+            sdiag(-qd, qd, '#e06a74'); sdiag(qd, qd, '#e06a74');
           }
         }
       } else if (fx.kind === 'flash') {
@@ -1909,7 +2198,7 @@ export class Renderer {
         // Flickering yellow brackets around the player while overcharged.
         if (Math.floor(fx.age * 20) % 2 === 0) {
           const x = Math.round(fx.x - cam.x), y = Math.round(fx.y - cam.y);
-          g.fillStyle = '#ffd75e';
+          g.fillStyle = '#f0c860';
           g.fillRect(x - 10, y - 10, 5, 2); g.fillRect(x - 10, y - 10, 2, 5);
           g.fillRect(x + 5, y - 10, 5, 2);  g.fillRect(x + 8, y - 10, 2, 5);
           g.fillRect(x - 10, y + 8, 5, 2);  g.fillRect(x - 10, y + 5, 2, 5);
@@ -1919,7 +2208,25 @@ export class Renderer {
     }
 
     // Death puffs, sparks, level-up and pickup bursts (src/fx/feel.js pools).
-    drawFeelEffects(g, state, cam);
+    drawFeelEffects(g, state, cam, prefersReducedMotion(), !!this.groundLight);   // dark on a light floor
+    if (sink) sink.order.push('effects');
+
+    // Weather PARTICLES (weather.js): camera-anchored rain/snow/wind/bugs —
+    // they ride the world zoom like everything else in this layer. The
+    // distant sky layers (cloud bands, sun, scene tint) stay NATIVE 1x and
+    // paint after the restore below.
+    g.globalAlpha = 1 - 0.8 * this.light.arenaEase(state); this.drawWeatherParticles(g, state.weather, cam); g.globalAlpha = 1;   // R7: the weather fades in the void
+    if (sink) sink.order.push('weather');
+    // Damage numbers next: they describe everything under them. R3: the hero
+    // is drawn after them (always on top), and they fade as they near the
+    // hero's box (fx/feel_render.js heroFade).
+    {
+      const p0 = state.player;
+      const hb = { x0: p0.x - cam.x - HERO_BOX_HALF, y0: p0.y - cam.y - HERO_BOX_HALF,
+        x1: p0.x - cam.x + HERO_BOX_HALF, y1: p0.y - cam.y + HERO_BOX_HALF };
+      drawFeelNumbers(g, state, cam, hb, sink);
+      if (sink) { sink.order.push('numbers'); sink.hero = hb; }
+    }
 
     // Player. Walk cycle (2 frames @ ~6fps, same clock as the enemies) —
     // frame B only while actually moving: motion is derived from the player's
@@ -1956,12 +2263,19 @@ export class Renderer {
       // Art pass: a wider pool plus a crisp ground ring (dark under bright)
       // that sits ON TOP of the horde, so the hero is findable in a crowd.
       const hx = Math.round(pl.x - cam.x), hfy = Math.round(pl.y - cam.y) + pilotHalfH - 1;
-      blitGlow(g, hurt ? '#ff5566' : '#bfe3ff', 16, hx, hfy, 1);
-      // The ring stays cyan when hurt: red reads as one more enemy.
-      blitPainted(g, 'heroRing', HERO_RING_BOX, paintHeroRing, hx, hfy);
+      blitGlow(g, hurt ? '#ff5566' : HERO_WARM, 16, hx, hfy, 1);
+      // The ring stays warm white when hurt: red reads as one more enemy.
+      if (this.groundLight) blitPainted(g, 'heroRingK', HERO_RING_BOX, paintHeroRingKeyed, hx, hfy);
+      else blitPainted(g, 'heroRing', HERO_RING_BOX, paintHeroRing, hx, hfy);
       if (blink && !hurt) g.globalAlpha = 0.6;   // the white hit flash stays solid
-      blitGrid(g, pilotGrid, pilotPalette, Math.round(pl.x - cam.x - pilotHalfW), Math.round(pl.y - cam.y - pilotHalfH),
-        actorStyle(hurt, false, '#f4f8ff'));
+      // Facing (the feel observer's record, on sim time) and a 1 px bob on
+      // every other step. The ring and the pool stay on the ground.
+      const heroRec = state.feel && state.feel.hero;
+      const heroFlip = actorAnimOn() && !!heroRec && heroRec.face < 0;
+      const lift = heroLift(Math.floor((this._walkDist || 0) / 7), moved, prefersReducedMotion());
+      const hsx = Math.round(pl.x - cam.x - pilotHalfW), hsy = Math.round(pl.y - cam.y - pilotHalfH) - lift;
+      blitGridPose(g, pilotGrid, pilotPalette, hsx, hsy, actorStyle(hurt, false, HERO_WARM, true, false, !!this.groundLight), 1,
+        heroFlip, 1, 1, hsx + pilotGrid[0].length / 2, hsy + pilotGrid.length);
       g.globalAlpha = 1;
       // In a crowd, or when hurt, the arrow over the head points the hero out.
       let crowd = 0;
@@ -1998,16 +2312,13 @@ export class Renderer {
       }
     }
 
-    // Weather PARTICLES (weather.js): camera-anchored rain/snow/wind/bugs —
-    // they ride the world zoom like everything else in this layer. The
-    // distant sky layers (cloud bands, sun, scene tint) stay NATIVE 1x and
-    // paint after the restore below.
-    this.drawWeatherParticles(g, state.weather, cam);
-    // Damage numbers last: they describe everything under them.
-    drawFeelNumbers(g, state, cam);
+    if (sink) sink.order.push('hero');
 
     // ---- end of the zoomed world layer --------------------------------------
     g.restore();
+    // R7: the arrival sting's push copies the world just drawn back over
+    // itself, scaled toward the boss (drawing only; main.js sets it).
+    if (typeof this.afterWorld === 'function') this.afterWorld(g);
 
     // Deferred WAVE-11 flash: full-screen white-out at native 1x so the wash
     // covers the whole screen regardless of zoom.
@@ -2053,12 +2364,15 @@ export class Renderer {
 
     // Weather sky + tint (weather.js): bands/rays/tint are screen-dressing,
     // not world objects — they stay native 1x and cover the full screen.
-    this.drawWeatherSky(g, state.weather, cam);
+    g.globalAlpha = 1 - this.light.arenaEase(state); this.drawWeatherSky(g, state.weather, cam); g.globalAlpha = 1;   // R7: no sky over the void
 
     // WAVE-12 canvas HUD chrome: graphic HP/mana bars, weapon/equipment icon
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
     // WAVE-26: the earned-moment flourish paints just BELOW the chrome so the
     // HUD readouts stay legible through the flare.
+    // R2: a film laid over the world but under the HUD (the portal beat's
+    // bars, column and dust), so the readouts stay on top of it.
+    if (typeof this.underHud === 'function') this.underHud(g);
     this.drawPlayHud(g, state);
     // M1 THE MAP SCREEN: drawn LAST on the canvas layer — OPAQUE over the
     // field (C1; the DOM touch pads stay tappable above the canvas, so the
@@ -2090,7 +2404,9 @@ export class Renderer {
     // World cards (vault, cursed statue): drawn over the world, on screen and
     // clear of the HUD (world_cards.js). With the HUD hidden there is nothing to avoid.
     const cardView = { Z: this._zoom || 1, shake: this.shake || { x: 0, y: 0 }, vw: C.VIEW_W, vh: C.VIEW_H };
-    if (hudSuppressed(state)) {
+    // hudOff (main.js forgeOfferHidesHud): the evolve offer on an upright
+    // phone stands over the HUD rows; the frozen field is drawn without them.
+    if (hudSuppressed(state) || this.hudOff) {
       this.hudChrome = null; this.bossBanner = null; this.radar = null;
       this.fsButton = null;   // the fullscreen toggle rides the same gate
       this.hudDrawn = false;
@@ -2098,11 +2414,29 @@ export class Renderer {
       return;
     }
     this.drawMoment(g, state);
+    // R7: the arrival sting's name card (state.hudHole, view px) is drawn
+    // under the HUD; the HUD rows that would stand on it are not drawn there,
+    // and the radar steps out while it touches the card.
+    const hole = state.hudHole;
+    const holed = !!(hole && hole.w > 0 && hole.h > 0 && typeof g.clip === 'function');
+    if (holed) {
+      g.save();
+      // One clip per rect (clips add up), so two rects that overlap stay holes.
+      for (const r of [hole, hole.also]) {
+        if (!r) continue;
+        g.beginPath();
+        g.rect(0, 0, C.VIEW_W, C.VIEW_H);
+        g.rect(r.x, r.y, r.w, r.h);
+        g.clip('evenodd');
+      }
+    }
     this.drawHudChrome(g, state);
+    if (holed) g.restore();
     const ch = this.hudChrome;
     this.worldCards = flushWorldCards(g, { ...cardView,
-      avoid: ch ? [ch.quests, ch.bars, ch.purse, ch.clock, ch.auto] : [] });
-    this.drawRadar(g, state);
+      avoid: ch ? [ch.quests, ch.bars, ch.purse, ch.clock, ch.auto, ch.hand] : [] });
+    if (hole && radarTouches(state, hole)) this.radar = null;
+    else this.drawRadar(g, state);
     this.drawBossBanner(g, state);
     this.drawPrologueBanner(g, state);
     this.drawPrologueSkip(g, state);
@@ -2343,7 +2677,7 @@ export class Renderer {
   // ---- M1 THE PER-RUN MAP SCREEN (owner directive 2026-09-14,
   // docs/briefs/M1_MAP_SCREEN.md) -------------------------------------------
   // The whole 1200x1200 arena at small scale: VISITED AREAS ONLY off the
-  // atlas's visited grid (the Metroid convention — the rest is haze), plus
+  // atlas's visited grid (an explored-map convention: the rest is haze), plus
   // DISCOVERED landmarks and the player pip. The datum is state.atlas, the
   // SAME atlas.js tracker the radar reads (C2: one system, two scales).
   //
@@ -2598,14 +2932,11 @@ export class Renderer {
   // null when no banner is live).
   drawBossBanner(g, state) {
     const b = state.bossBanner;
-    if (!b || !(b.ttl > 0)) { this.bossBanner = null; return; }
+    if (!b || !(b.ttl > 0) || b.underSting) { this.bossBanner = null; return; }
     if (b.peripheral) return this.drawHordeWarning(g, state, b);
-    const DUR = 2.5;
-    const aIn = Math.min(1, (DUR - b.ttl) / 0.35);
-    const aOut = Math.min(1, b.ttl / 0.6);
-    const alpha = Math.max(0, Math.min(aIn, aOut));
+    const alpha = letterboxAlpha(state);
     const W = C.VIEW_W, H = C.VIEW_H;
-    const bandH = 34;
+    const bandH = LETTERBOX_BAND;
     g.globalAlpha = alpha;
     // Letterbox bands + a thin blood-red rule at each edge.
     g.fillStyle = '#08080f';
@@ -2939,6 +3270,9 @@ export class Renderer {
     const p = state.player;
     if (!p || !p.stats) { this.hudChrome = null; return; }
     const t = state.time || 0;
+    // integ3: on a light floor (Bone Desert, the snow, the meadow) the see-through
+    // plate left grey and blue text under 4.5 to 1: the HUD's plates go darker there.
+    const PLATE = this.groundLight ? C.HUD.PLATE_ON_LIGHT : C.HUD.PLATE;
     const chrome = { hpFrac: 0, hpFlashFrac: 0, manaFrac: 0, weaponIcons: [], itemIcons: [], weather: null, auto: null, rule: null };
     // PROLOGUE HUD CLEARANCE (2026-09-18): while the first-run prologue phase
     // is live (up to the drink) the banner card owns the top band — every
@@ -2970,223 +3304,142 @@ export class Renderer {
     chrome.hpFlashFrac = flashFrac;
     chrome.manaFrac = manaFrac;
 
-    // WAVE-24 (#2): every canvas label goes through label() — a dark plate
-    // behind the text so its contrast NEVER depends on the terrain that
-    // happens to be under the HUD, at the sizes in CONFIG.HUD (the vision
-    // pass: bar labels "tiny", the LV badge "washed out"). Returns the
-    // painted plate width so callers can stack a second element beside it.
+    // WAVE-24 (#2): every canvas label sits on a dark plate so its contrast
+    // never depends on the terrain under the HUD. Returns the plate width.
     const H = C.HUD;
     const label = (txt, x, y, col, size) => {
       g.font = 'bold ' + size + 'px monospace';
       g.textBaseline = 'top';
       const w = txt.length * Math.round(size * 0.62) + 4;
-      g.fillStyle = H.PLATE;
+      g.fillStyle = PLATE;
       g.fillRect(x - 2, y - 2, w, size + 5);
       g.fillStyle = col;
       g.fillText(txt, x, y);
       trimPlate(g, x - 2, y - 2, w, size + 5);   // PORT SLICE I: plate corner studs
       return w;
     };
+    // A bar: steel frame, dark trough (empty reads as empty on every theme),
+    // ticks over the whole track, the fill, and a white damage-flash segment.
     const drawBar = (x, y, w, h, frac, flash, fillCol) => {
-      // WAVE-24 (#1/#2): steel FRAME + dark TROUGH. The old pure-black border
-      // vanished on the dark themes and a mid-grey track read as a FILLED bar
-      // at 0%; the frame makes the container visible and the dark trough makes
-      // "empty" unmistakable, on every theme.
       g.fillStyle = H.FRAME;
       g.fillRect(x - 2, y - 2, w + 4, h + 4);
-      g.fillStyle = '#000000';                       // 1px pixel border (seam)
+      g.fillStyle = '#000000';
       g.fillRect(x - 1, y - 1, w + 2, h + 2);
-      g.fillStyle = H.TROUGH;                        // empty track
+      g.fillStyle = H.TROUGH;
       g.fillRect(x, y, w, h);
-      // Ticks run the FULL track (WAVE-23 empty-state fix, now legible on the
-      // dark trough): over the fill they read as chunky VS-style segments,
-      // over the empty trough as progress marks.
       g.fillStyle = H.TICK;
       for (let sx = x + 6; sx < x + w; sx += 8) g.fillRect(sx, y, 1, h);
       const fw = Math.round(w * frac);
-      g.fillStyle = fillCol;                         // the fill
+      g.fillStyle = fillCol;
       g.fillRect(x, y, fw, h);
-      g.fillStyle = 'rgba(255,255,255,0.30)';        // top glint row
+      g.fillStyle = 'rgba(255,255,255,0.30)';
       g.fillRect(x, y, fw, 1);
-      g.fillStyle = 'rgba(0,0,0,0.35)';              // segment marks on the fill
+      g.fillStyle = 'rgba(0,0,0,0.35)';
       for (let sx = x + 5; sx < x + fw; sx += 6) g.fillRect(sx, y + 1, 1, h - 1);
-      if (flash > frac) {                            // damage-flash segment
-        const fx = x + fw;
-        const fwid = Math.round(w * flash) - fw;
+      if (flash > frac) {
         g.fillStyle = '#ffffff';
-        g.fillRect(fx, y, fwid, h);
+        g.fillRect(x + fw, y, Math.round(w * flash) - fw, h);
       }
       trimBar(g, x, y, w, h);   // PORT SLICE I: chamfered housing corners + studs
     };
-    // WAVE-23 (#4/#6) gave every bar a text label to its left (the vision pass
-    // called the unlabeled bars "placeholders"); WAVE-24 (#2) puts each label
-    // on a plate and lifts 8px -> 9px bold with a brighter tint.
-    if (!prologueLive) {                    // inert during the prologue — hidden, not overlapped
-      label('HP', 6, 15, H.HP, H.LABEL_PX);
-      label('MP', 6, 25, H.MP, H.LABEL_PX);
-      drawBar(22, 16, 110, 5, hpFrac, flashFrac, '#ff5566');
-      drawBar(22, 26, 110, 5, manaFrac, 0, '#4a8cff');
-    }
-
-    // 0.98 feedback (defect 3): a 5px bar carries no readable text, and the
-    // current/max numbers existed ONLY in the opt-in text HUD (default OFF) —
-    // so the always-on HUD showed a fill with nothing to read it against. The
-    // values ride to the RIGHT of the bars (x=136, clear of the 132px bar end)
-    // in the same dark-plate + bold-monospace language as every other label.
-    // The rows are 10px apart — too tight for two 9px plates — so ONE plate
-    // backs both rows. `valRight` is the run clock's column: if a value would
-    // reach it the numbers are simply NOT painted (an unlabelled bar beats an
-    // overlap, at any view width).
-    const valPx = H.LABEL_PX;
-    // Measured when the context can (the browser), the 9px-monospace estimate
-    // otherwise — same fallback rule as the event feed above, so the headless
-    // geometry stays assertable.
-    const valTextW = (s) => {
+    // Measured text width when the context can (the browser), the monospace
+    // estimate otherwise (the headless stubs have no measureText, so the
+    // painted geometry stays assertable in tests).
+    const textW = (s, px) => {
       if (typeof g.measureText === 'function') {
         const m = g.measureText(s);
         if (m && isFinite(m.width) && m.width > 0) return m.width;
       }
-      return s.length * Math.round(valPx * 0.62);
+      return s.length * Math.round(px * 0.62);
     };
-    const valX = 136;
-    const hpTxt = Math.max(0, Math.floor(hp)) + '/' + Math.ceil(maxHp);
-    const mpTxt = Math.max(0, Math.floor(p.mana)) + '/' + Math.ceil(p.stats.maxMana);
-    g.font = 'bold ' + valPx + 'px monospace';
-    g.textBaseline = 'top';
-    const valBox = Math.ceil(Math.max(valTextW(hpTxt), valTextW(mpTxt))) + 4;
-    const valRight = C.VIEW_W - 24 - 44;          // the clock plate starts at ~417
-    // The bars block's right edge (labels, bars, LV badge, value plates): the
-    // box world cards keep off (chrome.bars, set under the XP row).
-    let barsRight = 0;
-    if (!prologueLive && valX + valBox <= valRight) {
-      barsRight = valX - 2 + valBox;
-      g.fillStyle = H.PLATE;                      // one plate behind both rows
-      g.fillRect(valX - 2, 11, valBox, 22);
-      g.fillStyle = H.HP;
-      g.fillText(hpTxt, valX, 13);
-      g.fillStyle = H.MP;
-      g.fillText(mpTxt, valX, 23);
-      chrome.hpText = hpTxt;
-      chrome.mpText = mpTxt;
-    }
 
-    // --- WAVE-18 (#2) PLAYER XP BAR (galaxy.click: "there's no xp bar
-    // (?!?!?!?)"). The genre's core readout, previously drawn nowhere: gold,
-    // LONGER and BOLDER (6px fill), with the level number riding its right
-    // end. WAVE-23 (#1): the EMPTY state must read as a bar at 0% too —
-    // visible frame + track, tick marks across the FULL width (not just the
-    // fill), an XP label, and a gold goal-tick at the far end. WAVE-24 (#1):
-    // VERIFIED against the wave-23 primitives and tightened — the frame is
-    // now steel (not black-on-black), the trough dark (an empty XP bar used
-    // to read as a full grey one), the ticks light-on-dark instead of
-    // black-on-grey, and the label rides a plate. Fill behaviour unchanged.
-    // chrome.xpFrac is the EXACT unclamped fraction.
+    // --- R3 ONE VITALS BLOCK ---------------------------------------------------
+    // HP, MP and XP as three short bars on ONE dark plate, the level as a gold
+    // badge at the plate's left, and each bar's numbers in one column at its
+    // right. It replaces the labelled rows, the two value plates and the LV
+    // badge that used to spread over the corner (REVIEW_2026-11, R3 row 4).
+    // On desktop, once the key strip has gone (state.readyRow), a fourth line
+    // carries what the strip showed live: skill ready and potions left.
     const xpFrac = p.xpNext > 0 ? Math.max(0, Math.min(1, p.xp / p.xpNext)) : 0;
     chrome.xpFrac = p.xpNext > 0 ? p.xp / p.xpNext : 0;
     chrome.level = p.level || 1;
-    const xb = 22, yb = 37, wb = 134, hb = 6;
-    // LV badge geometry is pure math (no paint) — hoisted above the
-    // prologue-suppressed paint block so the xpText row can read it.
-    const lvTxt = 'LV ' + (p.level || 1);
-    const lvPx = H.LV_PX;
-    const lvW = lvTxt.length * Math.round(lvPx * 0.62) + 6;
-    const lvH = lvPx + 4;
-    const lvX = xb + wb + 4, lvY = yb + Math.round(hb / 2) - Math.round(lvH / 2);
-    if (!prologueLive) {                    // inert during the prologue — hidden, not overlapped
-      label('XP', 6, yb - 1, H.XP, H.LABEL_PX);
-      g.fillStyle = H.FRAME;                         // steel container frame
-      g.fillRect(xb - 2, yb - 2, wb + 4, hb + 4);
-      g.fillStyle = '#000000';                       // 1px pixel border
-      g.fillRect(xb - 1, yb - 1, wb + 2, hb + 2);
-      g.fillStyle = H.TROUGH;                        // dark empty track
-      g.fillRect(xb, yb, wb, hb);
-      g.fillStyle = H.TICK;                          // ticks run the FULL track
-      for (let sx = xb + 6; sx < xb + wb; sx += 8) g.fillRect(sx, yb + 1, 1, hb - 1);
-      g.fillStyle = H.TICK_MAJOR;                    // 25 / 50 / 75% majors
-      for (let q = 1; q <= 3; q++) g.fillRect(xb + Math.round(wb * q / 4), yb, 1, hb);
-      const xfw = Math.round(wb * xpFrac);
-      g.fillStyle = '#ffd75e';                       // the gold fill
-      g.fillRect(xb, yb, xfw, hb);
-      g.fillStyle = 'rgba(255,255,255,0.35)';        // top glint row
-      g.fillRect(xb, yb, xfw, 1);
-      g.fillStyle = 'rgba(0,0,0,0.35)';              // chunky segments on the fill
-      for (let sx = xb + 5; sx < xb + xfw; sx += 6) g.fillRect(sx, yb + 1, 1, hb - 1);
-      g.fillStyle = '#ffd75e';                       // gold goal tick at the end
-      g.fillRect(xb + wb - 1, yb, 1, hb);
-      trimBar(g, xb, yb, wb, hb);   // PORT SLICE I: chamfered housing corners + studs
-      // WAVE-23 (#4) added the LV badge; WAVE-24 (#2) makes it a BADGE: 9 -> 11px
-      // bold on a gold-bordered dark plate (the vision pass: "washed out, reads
-      // like an unpolished placeholder"), vertically centered on the bar.
-      g.fillStyle = '#ffd75e';                       // gold badge border
-      g.fillRect(lvX, lvY, lvW, lvH);
-      g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
-      g.fillRect(lvX + 1, lvY + 1, lvW - 2, lvH - 2);
-      g.font = 'bold ' + lvPx + 'px monospace';
-      g.textBaseline = 'top';
-      g.fillStyle = '#fff3c4';
-      g.fillText(lvTxt, lvX + 3, lvY + 2);
-      trimBadge(g, lvX, lvY, lvW, lvH);   // PORT SLICE I: badge studs
-    }
-    // 0.98 feedback (defect 3): the XP row keeps its LV badge, and the
-    // progress numbers join it to the badge's right (the badge owns the bar's
-    // right end, so the value cannot ride the bar itself). Same plate + bold
-    // language as the HP/MP values, same guard: dropped rather than allowed to
-    // reach the clock column, and never painted at the level cap (xpNext = 0 —
-    // "0/0" would be noise).
-    if (!prologueLive && p.xpNext > 0) {
-      const xpTxt = Math.max(0, Math.floor(p.xp)) + '/' + Math.floor(p.xpNext);
-      const xpValX = lvX + lvW + 4;
-      if (xpValX + xpTxt.length * Math.round(H.LABEL_PX * 0.62) + 4 <= valRight) {
-        barsRight = Math.max(barsRight, xpValX - 2 + label(xpTxt, xpValX, lvY + 2, H.XP, H.LABEL_PX));
-        chrome.xpText = xpTxt;
-      }
-    }
-    // HP, MP and XP rows with their labels, the LV badge and the value plates.
-    chrome.bars = prologueLive ? null
-      : { x: 4, y: 11, w: Math.max(barsRight, lvX + lvW) - 4, h: Math.max(yb + hb + 2, lvY + lvH, yb + H.LABEL_PX + 2) - 11 };
-
-    // --- E1 RUN PURSE readout (owner directive 2026-09-14: "have a visible ----
-    // on screen display"). The live IN-RUN wallet (state.runPurse — syncChrome
-    // publishes profile.runPurse every frame; the renderer never touches the
-    // profile). Same badge language as the LV plate: gold border, dark inset,
-    // 11px bold. H1 NO-REFLOW CONTRACT: the digit column is RESERVED — the
-    // value is right-aligned in a fixed 5-char field (fmtGold: compact k/M
-    // past 99999, still exactly 5 chars), so a 1-digit purse and a 750k purse
-    // paint BYTE-IDENTICAL geometry. A counter whose width grows as it counts
-    // is the control-pad reflow bug H1 just fixed; the canvas HUD obeys the
-    // same rule.
-    const purseVal = state.runPurse | 0;
-    const goldTxt = 'GOLD ' + fmtGold(purseVal);
-    const goldPx = H.CLOCK_PX;
-    const goldW = goldTxt.length * Math.round(goldPx * 0.62) + 6;
-    const goldH = goldPx + 4;
-    const goldX = 6, goldY = 52;           // left column, under the XP row, clear of the feed (y 84+)
-    // PROLOGUE CLEARANCE: the purse column (x 6..~66) never reaches the card
-    // band (x 90+) — it KEEPS painting during the phase (only what overlapped
-    // is suppressed).
-    g.fillStyle = '#ffd75e';                       // gold badge border
-    g.fillRect(goldX, goldY, goldW, goldH);
-    g.fillStyle = 'rgba(10,9,6,0.90)';             // dark inset plate
-    g.fillRect(goldX + 1, goldY + 1, goldW - 2, goldH - 2);
-    g.font = 'bold ' + goldPx + 'px monospace';
+    // While the boss-arrival letterbox is in, the block steps down under it.
+    const lbDrop = letterboxHudDrop(state);
+    if (lbDrop) chrome.letterboxDrop = lbDrop;
+    const VX = 4, VY = 10 + lbDrop;
+    const valPx = H.LABEL_PX;
+    const lvNum = String(p.level || 1);
+    const lvW = Math.max(20, lvNum.length * Math.round(H.LV_PX * 0.62) + 6);
+    const lbX = VX + lvW + 5;              // the HP / MP / XP letters
+    const barX = lbX + 14, barW = 84;
+    const valX = barX + barW + 5;
+    const rowY = [VY + 4, VY + 14, VY + 24];   // bar tops: HP, MP, XP
+    const hpTxt = Math.max(0, Math.floor(hp)) + '/' + Math.ceil(maxHp);
+    const mpTxt = Math.max(0, Math.floor(p.mana)) + '/' + Math.ceil(p.stats.maxMana);
+    const xpTxt = p.xpNext > 0 ? Math.max(0, Math.floor(p.xp)) + '/' + Math.floor(p.xpNext) : 'MAX';
+    g.font = 'bold ' + valPx + 'px monospace';
     g.textBaseline = 'top';
-    g.fillStyle = '#fff3c4';
-    g.fillText(goldTxt, goldX + 3, goldY + 2);
-    trimBadge(g, goldX, goldY, goldW, goldH);   // PORT SLICE I: badge studs
-    chrome.purse = { x: goldX, y: goldY, w: goldW, h: goldH, px: goldPx,
-      value: purseVal, text: goldTxt, digitW: 5 * Math.round(goldPx * 0.62) };
+    let valW = Math.ceil(Math.max(textW(hpTxt, valPx), textW(mpTxt, valPx), textW(xpTxt, valPx)));
+    // The numbers never reach the rule plate's band: past VITALS_MAX_RIGHT
+    // they are left out (a bar without numbers beats an overlap).
+    const showVals = valX + valW + 3 <= VITALS_MAX_RIGHT;
+    if (!showVals) valW = 0;
+    const ready = typeof state.readyRow === 'string' && state.readyRow ? state.readyRow : '';
+    const vH = ready ? 44 : 33;
+    const vW = (showVals ? valX + valW + 3 : barX + barW + 4) - VX;
+    if (!prologueLive) {                    // inert during the prologue: hidden, not overlapped
+      g.fillStyle = PLATE;                // the one plate
+      g.fillRect(VX, VY, vW, vH);
+      trimPlate(g, VX, VY, vW, vH);
+      // The level badge: gold border, dark inset, LV over the number.
+      const lvX = VX + 2, lvY = VY + 2, lvH = 29;
+      g.fillStyle = '#ffd75e';
+      g.fillRect(lvX, lvY, lvW, lvH);
+      g.fillStyle = 'rgba(10,9,6,0.90)';
+      g.fillRect(lvX + 1, lvY + 1, lvW - 2, lvH - 2);
+      g.textAlign = 'center';
+      g.font = 'bold 7px monospace';
+      g.fillStyle = '#c8a040';
+      g.fillText('LV', lvX + lvW / 2, lvY + 3);
+      g.font = 'bold ' + H.LV_PX + 'px monospace';
+      g.fillStyle = '#fff3c4';
+      g.fillText(lvNum, lvX + lvW / 2, lvY + 13);
+      g.textAlign = 'left';
+      trimBadge(g, lvX, lvY, lvW, lvH);
+      g.font = 'bold ' + valPx + 'px monospace';
+      const rows = [['HP', H.HP, hpTxt], ['MP', H.MP, mpTxt], ['XP', H.XP, xpTxt]];
+      for (let i = 0; i < 3; i++) {
+        g.fillStyle = rows[i][1];
+        g.fillText(rows[i][0], lbX, rowY[i] - 2);
+        if (showVals) g.fillText(rows[i][2], valX, rowY[i] - 2);
+      }
+      drawBar(barX, rowY[0], barW, 5, hpFrac, flashFrac, '#ff5566');
+      drawBar(barX, rowY[1], barW, 5, manaFrac, 0, '#4a8cff');
+      // XP: one px taller, with 25/50/75% majors and a gold goal tick at the
+      // end, so an empty bar still reads as a scaled bar (WAVE-23/24).
+      drawBar(barX, rowY[2], barW, 6, xpFrac, 0, '#ffd75e');
+      g.fillStyle = H.TICK_MAJOR;
+      for (let q = 1; q <= 3; q++) g.fillRect(barX + Math.round(barW * q / 4), rowY[2], 1, 6);
+      g.fillStyle = '#ffd75e';
+      g.fillRect(barX + barW - 1, rowY[2], 1, 6);
+      if (ready) {
+        g.font = 'bold 8px monospace';
+        g.fillStyle = '#b8b8cc';
+        g.fillText(ready, lbX, VY + 33);
+      }
+      if (showVals) { chrome.hpText = hpTxt; chrome.mpText = mpTxt; if (p.xpNext > 0) chrome.xpText = xpTxt; }
+      chrome.lvBadge = { x: lvX, y: lvY, w: lvW, h: lvH, text: 'LV ' + lvNum };
+      if (ready) chrome.readyRow = ready;
+    }
+    // The vitals block's box (world cards keep off it; tests read it).
+    chrome.bars = prologueLive ? null : { x: VX, y: VY, w: vW, h: vH };
+    chrome.vitals = chrome.bars;
 
-    // --- RUN CLOCK (SURVIVAL-GAP wave) -------------------------------------
-    // The 30:00 limit is the run's core structure, but the always-on CANVAS HUD
-    // never showed it: only the opt-in text HUD, the per-minute toast and the
-    // end cards did. This is the readout a player must always have — how far
-    // into the run they are. Pixel-art, in the existing HUD language: the clock
-    // as a bold label on the same dark plate every other label uses, plus a
-    // thin limit bar with the same steel-frame / dark-trough chrome as the XP
-    // bar and a red limit tick at the far end. It turns warm once the
-    // FINAL_CALL_AT callout lands. Frame-rate independence is by construction:
-    // it reads state.time (sim seconds, dt-driven) through the same runClock()
-    // the win condition uses — no frame counters, nothing to stack.
+    // --- RUN CLOCK (top right) --------------------------------------------------
+    // The 30:00 limit is the run's core structure: the clock on a dark plate,
+    // a thin limit bar under it with a red tick at the end, warm once the
+    // FINAL_CALL_AT callout lands. Reads state.time through runClock(), the
+    // same clock the win condition uses.
     const clockTxt = runClock(t);
     const clockPx = H.CLOCK_PX;
     const cw = clockTxt.length * Math.round(clockPx * 0.62) + 4;
@@ -3194,31 +3447,65 @@ export class Renderer {
     const finalCall = t >= C.RUN.FINAL_CALL_AT;
     // state.clockInset: view px the clock steps down so it clears the DOM
     // button row where that row overlays the canvas (0 when it does not).
-    const clockY = 13 + Math.max(0, Math.min(C.VIEW_H / 3, Math.round(state.clockInset || 0)));
+    // The boss-arrival letterbox steps it down the same way (lbDrop).
+    const clockY = 13 + Math.max(lbDrop, Math.min(C.VIEW_H / 3, Math.round(state.clockInset || 0)));
     label(clockTxt, cx, clockY, finalCall ? '#ff9c6a' : '#cfe8ff', clockPx);
     const cbX = cx - 2, cbY = clockY + clockPx + 4, cbW = cw, cbH = 4;
     const limitFrac = Math.max(0, Math.min(1, t / C.RUN.LIMIT));
-    g.fillStyle = H.FRAME;                         // steel container frame
+    g.fillStyle = H.FRAME;
     g.fillRect(cbX - 2, cbY - 2, cbW + 4, cbH + 4);
-    g.fillStyle = '#000000';                       // 1px pixel border
+    g.fillStyle = '#000000';
     g.fillRect(cbX - 1, cbY - 1, cbW + 2, cbH + 2);
-    g.fillStyle = H.TROUGH;                        // dark empty track
+    g.fillStyle = H.TROUGH;
     g.fillRect(cbX, cbY, cbW, cbH);
-    g.fillStyle = '#4a8cff';                       // the run-progress fill
+    g.fillStyle = '#4a8cff';
     g.fillRect(cbX, cbY, Math.round(cbW * limitFrac), cbH);
-    g.fillStyle = 'rgba(255,255,255,0.30)';        // top glint row
+    g.fillStyle = 'rgba(255,255,255,0.30)';
     g.fillRect(cbX, cbY, Math.round(cbW * limitFrac), 1);
     g.fillStyle = '#ff2f5e';                       // the limit tick (30:00)
     g.fillRect(cbX + cbW - 1, cbY, 1, cbH);
-    trimBar(g, cbX, cbY, cbW, cbH);   // PORT SLICE I: chamfered housing corners + studs
+    trimBar(g, cbX, cbY, cbW, cbH);
     chrome.clock = { text: clockTxt, frac: limitFrac, finalCall, x: cx - 2, y: clockY, w: cw + 2, h: clockPx + 10 };
 
+    // --- R3 GOLD BY THE CLOCK -------------------------------------------------
+    // The live in-run purse (state.runPurse, published by syncChrome) as a gold
+    // coin and a fixed 5-character field (fmtGold), on the clock's row just
+    // left of it. H1 NO-REFLOW: a 1-gold and a 750k purse paint the same box.
+    // Inert during the prologue (nothing can be earned while the world is
+    // frozen) and hidden then, like the vitals: the banner card crosses it.
+    const purseVal = state.runPurse | 0;
+    const goldDigits = fmtGold(purseVal);
+    const goldPx = H.CLOCK_PX;
+    const coinW = 9;
+    const digitW = 5 * Math.round(goldPx * 0.62);
+    const goldW = coinW + digitW + 8;
+    const goldH = goldPx + 4;
+    const goldX = cx - 2 - 5 - goldW, goldY = clockY - 2;
+    if (!prologueLive) {
+      g.fillStyle = '#ffd75e';                     // gold badge border
+      g.fillRect(goldX, goldY, goldW, goldH);
+      g.fillStyle = 'rgba(10,9,6,0.90)';           // dark inset plate
+      g.fillRect(goldX + 1, goldY + 1, goldW - 2, goldH - 2);
+      // The coin: a 7px gold disc with a dark rim and a bright glint.
+      const ccx = goldX + 3, ccy = goldY + Math.round((goldH - 7) / 2);
+      g.fillStyle = '#7a5a10';
+      g.fillRect(ccx + 1, ccy, 5, 7); g.fillRect(ccx, ccy + 1, 7, 5);
+      g.fillStyle = '#ffd75e';
+      g.fillRect(ccx + 1, ccy + 1, 5, 5);
+      g.fillStyle = '#fff3c4';
+      g.fillRect(ccx + 2, ccy + 2, 1, 2);
+      g.font = 'bold ' + goldPx + 'px monospace';
+      g.textBaseline = 'top';
+      g.fillStyle = '#fff3c4';
+      g.fillText(goldDigits, goldX + coinW + 4, goldY + 2);
+      trimBadge(g, goldX, goldY, goldW, goldH);
+    }
+    chrome.purse = prologueLive ? null : { x: goldX, y: goldY, w: goldW, h: goldH, px: goldPx,
+      value: purseVal, text: 'GOLD ' + goldDigits, digitW };
+
     // --- AUTO-CONTINUE BADGE ------------------------------------------------
-    // A run started by auto-continue says what it banks for the whole run:
-    // AUTO 100% for the first runs in a row, then AUTO 75% (main.js autoCutPct,
-    // decision 8). Same badge language as the LV plate (a border, a dark
-    // inset, bold text), in blue, under the clock's limit bar. Other runs
-    // paint nothing.
+    // A run started by auto-continue says what it banks for the whole run
+    // (main.js autoCutPct, decision 8), under the clock's limit bar.
     if (state.autoStarted) {
       const nPx = 9;
       const nName = 'AUTO ' + (100 - (state.devNightRun ? 0 : (state.autoCutPct || 0))) + '%';
@@ -3226,20 +3513,23 @@ export class Renderer {
       const nH = nPx + 4;
       const nX = C.VIEW_W - 24 + 2 - nW;
       const nY = cbY + cbH + 8;
-      g.fillStyle = '#8fb8ff';                       // cool blue border
+      g.fillStyle = '#8fb8ff';
       g.fillRect(nX, nY, nW, nH);
-      g.fillStyle = 'rgba(10,9,6,0.90)';             // the same dark inset plate
+      g.fillStyle = 'rgba(10,9,6,0.90)';
       g.fillRect(nX + 1, nY + 1, nW - 2, nH - 2);
       g.font = 'bold ' + nPx + 'px monospace';
       g.textBaseline = 'top';
       g.fillStyle = '#dbe9ff';
       g.fillText(nName, nX + 3, nY + 2);
-      trimBadge(g, nX, nY, nW, nH);   // PORT SLICE I: badge studs
+      trimBadge(g, nX, nY, nW, nH);
       chrome.auto = { name: nName, x: nX, y: nY, w: nW, h: nH };
     }
     // --- BOSS RULE PLATE ------------------------------------------------------
-    // While a boss rule is live its line sits under the boss bar, in the free
-    // band between the bars (left) and the clock (right).
+    // While a boss rule is live its line sits under the boss bar, on the row
+    // below the gold (the longest rule line is about 200 px, wider than the
+    // gap between the vitals block and the gold), centred in the band between
+    // the vitals block (left) and the clock column (right). It is never behind
+    // a tap: a live rule always shows.
     {
       const rule = state.bossRule;
       if (rule && rule.live && !rule.broken) {
@@ -3247,11 +3537,14 @@ export class Renderer {
         const txt = String(rule.text).toUpperCase();
         const rW = txt.length * Math.round(rPx * 0.62) + 8;
         const rH = rPx + 4;
-        const rX = Math.round(Math.max(180, Math.min(388 - rW, 284 - rW / 2)));
-        const rY = 13;
+        // Right of the vitals block (and of the MANUAL badge main.js paints
+        // beside it), left of the gold.
+        const lo = VX + vW + (state.pilotMode === 'MANUAL' ? 17 : 0) + 3, hi = cx - 2 - 5;
+        const rX = Math.round(Math.max(lo, Math.min(hi - rW, (lo + hi) / 2 - rW / 2)));
+        const rY = goldY + goldH + 2;   // ends where the quest chip starts
         g.fillStyle = '#c0304a';                       // blood-red border
         g.fillRect(rX, rY, rW, rH);
-        g.fillStyle = 'rgba(10,9,6,0.90)';             // the same dark inset plate
+        g.fillStyle = 'rgba(10,9,6,0.90)';
         g.fillRect(rX + 1, rY + 1, rW - 2, rH - 2);
         g.font = 'bold ' + rPx + 'px monospace';
         g.textBaseline = 'top';
@@ -3261,51 +3554,60 @@ export class Renderer {
         chrome.rule = { id: rule.id, text: txt, x: rX, y: rY, w: rW, h: rH };
       }
     }
-    // M5b slice 3: the quest tracker under the clock column (and its badges).
-    // The guided tutorial keeps it down until the handover.
+    // --- R3 QUEST CHIP ----------------------------------------------------------
+    // The quests as one small chip under the clock column ("QUESTS 1/3"). A
+    // tap or click on it, or the J key, opens the full tracker under it
+    // (state.questsOpen). A quest done lights the chip green for a moment
+    // (the message lane names it). The guided tutorial keeps it down until
+    // the handover.
     {
       const badges = state.autoStarted ? 17 : 0;
-      chrome.quests = state.questsHidden ? null : drawQuestTracker(g, state, C.VIEW_W - 22, cbY + cbH + 8 + badges);
+      const top = cbY + cbH + 8 + badges;
+      chrome.questChip = null;
+      chrome.quests = null;
+      const qs = state.quests;
+      if (!state.questsHidden && qs && qs.length) {
+        const done = qs.filter(q => q.done).length;
+        const txt = 'QUESTS ' + done + '/' + qs.length + (state.questsOpen ? ' ▴' : ' ▾');
+        g.font = 'bold 7px monospace';
+        g.textBaseline = 'top';
+        const qw = Math.ceil(textW(txt, 7)) + 8, qh = 11;
+        const qx = C.VIEW_W - 22 - qw;
+        const fresh = state.questFlashUntil > t;
+        g.fillStyle = fresh ? '#8fe0a0' : '#5a5a72';   // border
+        g.fillRect(qx, top, qw, qh);
+        g.fillStyle = 'rgba(8,10,14,0.88)';
+        g.fillRect(qx + 1, top + 1, qw - 2, qh - 2);
+        g.fillStyle = fresh ? '#8fe0a0' : done === qs.length ? '#8fe0a0' : '#e8e8f0';
+        g.textAlign = 'left';
+        g.fillText(txt, qx + 4, top + 2);
+        chrome.questChip = { x: qx, y: top, w: qw, h: qh, done, total: qs.length, open: !!state.questsOpen, text: txt };
+        let box = { x: qx, y: top, w: qw, h: qh };
+        if (state.questsOpen) {
+          const tr = drawQuestTracker(g, state, C.VIEW_W - 22, top + qh + 2);
+          if (tr) {
+            chrome.questTracker = tr;
+            const x0 = Math.min(box.x, tr.x), x1 = Math.max(box.x + box.w, tr.x + tr.w);
+            box = { x: x0, y: top, w: x1 - x0, h: tr.y + tr.h - top };
+          }
+        }
+        chrome.quests = box;
+      }
     }
 
-    // --- WAVE-27: no doctrine text on the canvas ----------------------------
-    // The FOCUS / STANCE readout that used to sit here is gone (owner ruling:
-    // the overlay buttons' badges already carry that state, and the stance
-    // cycle toast names its meaning). The event feed below keeps its own
-    // placement; nothing is shifted to compensate.
-
-    // --- WAVE-14 event feed: last 3 toasts UNDER the bars (now under the XP
-    // bar too), newest lowest. The toast() stream in main.js is the ONE feed
-    // — equipment finds (tinted by rarity), arch effects, potions, weapon
-    // level-ups, synergies, flash drops, wave/theme lines all land here.
-    // Lines fade out over their final second (alpha = ttl clamped to 1).
-    // WAVE-24 (#2): text stays 9px; the plate is darker so the lines hold up
-    // over bright themes. (WAVE-27: the doctrine block that used to sit below
-    // these lines is gone; the feed keeps its own placement.)
-    // 0.98 feedback (defect 1): a toast used to paint as ONE unwrapped line —
-    // every synergy announce measured 513..627px against a 480px view, so all
-    // seven ran off the right edge. Lines now WRAP to the view (at word
-    // boundaries; a word wider than the box is hard-split, so nothing can ever
-    // paint past the edge), the plate is sized from the widest MEASURED line,
-    // and a short message still paints exactly one line (the feed's pitch and
-    // geometry are unchanged for it).
+    // --- R3 MESSAGE LANE: at most 2 lines under the vitals block ---------------
+    // The toast() stream in main.js is the one feed (finds tinted by rarity,
+    // potions, level-ups, wave and stage lines, quests, the portal). The lane
+    // paints at most LANE_LINES lines; message_lane.js picks them so a portal,
+    // boss or quest line is never pushed out by a lesser one. Lines wrap to the
+    // lane's width (a word wider than the box is hard-split), and fade over
+    // their final second (alpha = ttl clamped to 1).
     g.font = H.FEED_PX + 'px monospace';
     g.textBaseline = 'top';
     chrome.feed = [];
-    const feed = (state.toasts || []).slice(-3);
-    const FEED_LINE_H = 10;                 // the feed's line pitch (unchanged)
+    const FEED_LINE_H = 10;
     const FEED_MAX_W = C.VIEW_W - 14;       // plate starts at x=5; 7px of air right
-    // Real font metrics when the context has them (the browser, and the
-    // measureText probes); the ~6px/char 9px-monospace advance the feed has
-    // always assumed otherwise (the headless stubs carry no measureText, so
-    // the painted geometry stays assertable in tests).
-    const feedTextW = (s) => {
-      if (typeof g.measureText === 'function') {
-        const m = g.measureText(s);
-        if (m && isFinite(m.width) && m.width > 0) return m.width;
-      }
-      return s.length * 6;
-    };
+    const feedTextW = (s) => textW(s, 9.7);
     const wrapFeed = (msg) => {
       const out = [];
       let line = '';
@@ -3325,19 +3627,17 @@ export class Renderer {
       if (line) out.push(line);
       return out.length ? out : [''];
     };
-    // PROLOGUE HUD CLEARANCE: while the phase is live the feed starts below
-    // the banner card (PROLOGUE_FEED_Y = card bottom + 10, so the plate's
-    // fy-2 top edge clears the card by exactly 8) instead of under the XP row.
-    let fy = prologueLive ? PROLOGUE_FEED_Y : 86;
-    for (const ft of feed) {
+    // PROLOGUE HUD CLEARANCE: while the phase is live the lane starts below
+    // the banner card instead of under the vitals block.
+    let fy = prologueLive ? PROLOGUE_FEED_Y : VY + vH + 6;
+    chrome.lane = { x: 5, y: fy - 2, lines: 0 };
+    for (const { entry: ft, lines } of laneLines(state.toasts || [], wrapFeed)) {
       const alpha = Math.max(0, Math.min(1, ft.ttl || 0));
-      if (alpha <= 0) continue;
-      const lines = wrapFeed(ft.msg);
       let widest = 0;
       for (const ln of lines) widest = Math.max(widest, feedTextW(ln));
       const fw = Math.ceil(widest) + 4;
       g.globalAlpha = alpha;
-      g.fillStyle = H.PLATE;              // readability plate, sized to the lines
+      g.fillStyle = PLATE;              // readability plate, sized to the lines
       g.fillRect(5, fy - 2, fw, lines.length * FEED_LINE_H + 1);
       g.fillStyle = ft.tint || '#e4e4ee';
       for (let li = 0; li < lines.length; li++) g.fillText(lines[li], 7, fy + li * FEED_LINE_H);
@@ -3345,9 +3645,12 @@ export class Renderer {
       // The studs sit 1px INSIDE the plate: test_feedback_098 identifies feed
       // plates by their x===5 column, so no trim pixel may land on it.
       studCorners(g, 6, fy - 1, fw - 2, lines.length * FEED_LINE_H - 1);   // PORT SLICE I
-      chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha, lines: lines.slice() });
+      chrome.feed.push({ msg: ft.msg, tint: ft.tint || null, alpha, lines: lines.slice(), rank: ft.rank || 0 });
+      chrome.lane.lines += lines.length;
+      chrome.lane.w = Math.max(chrome.lane.w || 0, fw);
       fy += lines.length * FEED_LINE_H;
     }
+    chrome.lane.h = chrome.lane.lines * FEED_LINE_H + 1;
 
     // --- equipment icon row (above the weapon row, same bottom-left corner).
     // 4x4 rarity-tinted gem per equipped rare item — OR the item's authored
@@ -3417,7 +3720,7 @@ export class Renderer {
       }
       // WAVE-24 (#2): the level number rides its own dark plate — it used to
       // sit on bare terrain.
-      g.fillStyle = H.PLATE;
+      g.fillStyle = PLATE;
       g.fillRect(wx - 1, wy + 5 * Z + 1, 10, 12);
       g.fillStyle = '#e8e8f0';                       // lv badge
       g.fillText(String(w.level || 1), wx + 1, wy + 5 * Z + 2);
@@ -3441,30 +3744,104 @@ export class Renderer {
     // --- the hand plate, above the item row: the best hand among the cards
     // drafted this run and what it pays. While a new hand counts up
     // (state.handFx) the damage share climbs and the line is gold.
+    // R5 THE HAND FAN: the cards that make the hand are drawn as small card
+    // faces (hand_fan.js), with the hand's name and its bonus beside them.
+    // The fan is a cached raster at whole device pixels per card pixel,
+    // rebuilt only when its cards or the screen's pixel size change.
     const pl = state.player;
     const hand = pl && pl.hand;
-    const hy = C.VIEW_H - 58;
+    let hy = C.VIEW_H - 58;                 // the joker row sits above this
     chrome.hand = null;
-    if (hand || (pl && pl.handCards && Object.keys(pl.handCards).length)) {
+    const fan = fanCards(pl);
+    if (fan.cards.length) {
       const fx = hand ? state.handFx : null;
-      const k = fx ? Math.min(1, fx.t / fx.dur) : 1;
-      const counting = !!fx && k < 1;
-      const bonus = hand ? describeHandBonus(hand, hand.scale, fx ? fx.from + (fx.to - fx.from) * k : null) : '';
-      let line = hand ? hand.name.toUpperCase() + '  ' + bonus : 'NO HAND YET';
-      g.font = (fx ? 10 : 9) + 'px monospace';
-      g.textBaseline = 'top';
-      // A suited hand too wide for the screen (a Diamond Straight Flush pays five things)
-      // names its suit by its glyph: '♦ STRAIGHT FLUSH'.
-      if (hand && hand.suit && SUIT_GLYPHS[hand.suit] && HAND_BY_ID[hand.id] && feedTextW(line) > C.VIEW_W - 14) {
-        line = SUIT_GLYPHS[hand.suit] + ' ' + HAND_BY_ID[hand.id].name.toUpperCase() + '  ' + bonus;
-        if (fx && feedTextW(line) > C.VIEW_W - 14) g.font = '9px monospace';   // the count-up's larger type would not fit
+      const kc = fx ? Math.min(1, fx.t / fx.dur) : 1;
+      const counting = !!fx && kc < 1;
+      const bonus = hand ? describeHandBonus(hand, hand.scale, fx ? fx.from + (fx.to - fx.from) * kc : null) : '';
+      // Fan geometry. One card pixel is the whole number of device pixels
+      // nearest one HUD pixel (1 in the headless harness).
+      const vsx = (this.viewScale && this.viewScale.sx) || 1;
+      const vsy = (this.viewScale && this.viewScale.sy) || vsx;
+      // integ3: on a phone held upright the view shows below 1:1, and a card
+      // pixel of round(vsx) device pixels left the ranks about 4 CSS px tall.
+      // There a card pixel is 1.5 CSS px (a card about 36x51 CSS px).
+      // The canvas's CSS width is kept by fitCanvas (main.js) when it sizes the
+      // canvas; reading clientWidth here every frame could force a layout.
+      const k = fanBlock(vsx, this.cssW);
+      const L = fanLayout(fan.cards.length);
+      const key = fanKey(fan.cards, k);
+      if (this._handFanKey !== key) {
+        const off = (typeof OffscreenCanvas === 'function')
+          ? new OffscreenCanvas(L.w * k, L.h * k)
+          : (this.canvas && this.canvas.ownerDocument
+              ? this.canvas.ownerDocument.createElement('canvas') : null);
+        if (off) {
+          off.width = L.w * k; off.height = L.h * k;
+          const og = off.getContext && off.getContext('2d');
+          if (og) paintFan(og, fan.cards, k);
+        }
+        this._handFan = off;
+        this._handFanKey = key;
+        this.handFanBuilds = (this.handFanBuilds || 0) + 1;
       }
-      const tw = Math.ceil(feedTextW(line));
-      g.fillStyle = H.PLATE;
-      g.fillRect(5, hy - 2, tw + 4, 12);
-      g.fillStyle = !hand ? '#6a6a8a' : fx ? '#ffd75e' : '#8fe0a0';
-      g.fillText(line, 7, hy);
-      chrome.hand = { id: hand ? hand.id : null, text: line, counting };
+      // The pulse (state.handPulse, a better hand): the fan rises and a
+      // cyan-teal rim fades. It runs only in play (main.js tickHandPulse), so
+      // outside play (a draft, the pause screen) nothing is drawn: a held
+      // pulse would be a still rim. Reduced motion: none.
+      const ph = (prefersReducedMotion() || state.mode !== 'playing') ? null : pulsePhase(state.handPulse);
+      const look = pulseLook(ph);
+      const lift = look.lift * k;
+      const bottom = C.VIEW_H - 52;          // the pulse rim ends above the item row (VIEW_H - 49)
+      const fx0 = Math.round(6 * vsx) / vsx;
+      const fy0 = (Math.round(bottom * vsy) - L.h * k - lift) / vsy;
+      const fw = L.w * k / vsx, fh = L.h * k / vsy;
+      if (ph !== null) {
+        g.globalAlpha = look.alpha;
+        g.fillStyle = FAN_TEAL;
+        g.fillRect(fx0 - 2, fy0 - 2, fw + 4, fh + 4);
+        g.globalAlpha = 1;
+      }
+      if (this._handFan) g.drawImage(this._handFan, fx0, fy0, fw, fh);
+      // The name, then the bonus, to the right of the fan, bottom-aligned
+      // with it and clear of the radar. A bonus too wide wraps at its commas.
+      const tx = Math.ceil(fx0 + fw) + 5;
+      const radarL = state.radarOn
+        ? C.VIEW_W - RADAR_CORNER_INSET - 2 * RADAR_DISPLAY_R - Math.max(0, Math.round(state.radarInset || 0)) - 6
+        : C.VIEW_W - 7;
+      const maxW = radarL - tx - 4;
+      let name = hand ? hand.name.toUpperCase() : 'NO HAND YET';
+      if (hand && hand.suit && SUIT_GLYPHS[hand.suit] && HAND_BY_ID[hand.id] && feedTextW(name) > maxW) {
+        name = SUIT_GLYPHS[hand.suit] + ' ' + HAND_BY_ID[hand.id].name.toUpperCase();
+      }
+      const bl = [];
+      for (const part of bonus ? bonus.split(', ') : []) {
+        const cand = bl.length ? bl[bl.length - 1] + ', ' + part : part;
+        if (bl.length && feedTextW(cand) <= maxW) bl[bl.length - 1] = cand;
+        else bl.push(part);
+      }
+      const lines = [name, ...bl];
+      const LH = 10;
+      const ty = bottom - lines.length * LH;
+      let tw = 0;
+      for (const ln of lines) tw = Math.max(tw, Math.ceil(feedTextW(ln)));
+      g.textBaseline = 'top';
+      g.fillStyle = PLATE;
+      g.fillRect(tx - 2, ty - 2, tw + 4, lines.length * LH + 1);
+      for (let i = 0; i < lines.length; i++) {
+        g.font = (i === 0 && fx ? 10 : 9) + 'px monospace';
+        g.fillStyle = !hand ? FAN_EMPTY_TEXT : i ? '#c8eee8' : fx ? '#ffd75e' : FAN_TEAL;
+        g.fillText(lines[i], tx, ty + i * LH);
+      }
+      const top = Math.min(fy0 - (ph !== null ? 2 : 0), ty - 2);
+      hy = Math.floor(top) + 2;
+      chrome.hand = {
+        id: hand ? hand.id : null,
+        text: hand ? name + '  ' + bonus : name,
+        lines, counting,
+        x: Math.floor(fx0) - 2, y: Math.floor(top), w: Math.ceil(tx + tw + 2) - (Math.floor(fx0) - 2), h: bottom + 2 - Math.floor(top),
+        fan: { cards: fan.cards.map(c => c.key), dim: fan.cards.filter(c => c.dim).map(c => c.key), made: fan.made, k, x: fx0, y: fy0, w: fw, h: fh, lift, pulse: ph },
+        textBox: { x: tx - 2, y: ty - 2, w: tw + 4, h: lines.length * LH + 1 },
+      };
     }
 
     // --- the joker row, above the hand plate: one framed cell per slot, the
@@ -3616,7 +3993,7 @@ export class Renderer {
     g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
 
     const MASK = '#262636';   // the one flat dark silhouette colour
-    let grid = null, palette = null, gw = 0, gh = 0;
+    let grid = null, palette = null, gw = 0, gh = 0, bossRim = null;
     let shape = 'block', color = MASK, sw = C.ENEMY.W, sh = C.ENEMY.H;
     if (bv.kind === 'boss') {
       const desc = BOSSES[bv.ref] || MIDBOSS[bv.ref];
@@ -3628,6 +4005,7 @@ export class Renderer {
       const spr = desc && (desc.sprite || BOSS_SPRITES[bv.ref]);
       if (spr) {
         grid = spr.frames ? spr.frames[0] : spr.grid;
+        bossRim = spr.rim || null;
         // Masked: every palette entry -> MASK, so the silhouette IS the sprite.
         palette = bv.discovered ? spr.palette
           : Object.fromEntries(Object.keys(spr.palette).map(k => [k, MASK]));
@@ -3637,7 +4015,7 @@ export class Renderer {
       shape = 'diamond';                      // the emblem plate shape
       sw = 24; sh = 24;
       color = bv.discovered
-        ? (bv.ref === 'ELITE' ? '#ffd75e' : (RARITY[bv.ref] && RARITY[bv.ref].tell.outline))
+        ? (bv.ref === 'ELITE' ? '#f0c860' : (RARITY[bv.ref] && RARITY[bv.ref].tell.outline))
         : MASK;
     } else {
       const look = resolveLook(bv.ref, 0);    // the REAL silhouette contract
@@ -3676,6 +4054,18 @@ export class Renderer {
     g.fillRect(x - PAD, y - PAD, w + PAD * 2, h + PAD * 2);
 
     if (grid) {
+      // bossdark: a found boss wears its rim here too (its body is dark, the
+      // case is dark): the silhouette in the rim colour, a step out each way,
+      // then a dark line, then the boss. Inside the case's padding.
+      const rim = bv.discovered && bossRim;
+      if (rim) {
+        const k = Math.min(PAD - 1, Math.max(2, Math.round(scale / 2)));
+        const ink = Object.fromEntries(Object.keys(palette).map(c => [c, rim]));
+        for (const [dx, dy] of [[-k, 0], [k, 0], [0, -k], [0, k]]) this.drawGrid(g, grid, ink, x + dx, y + dy, scale);
+        const dark = Object.fromEntries(Object.keys(palette).map(c => [c, '#0b0912']));
+        const j = Math.max(1, k >> 1);
+        for (const [dx, dy] of [[-j, 0], [j, 0], [0, -j], [0, j]]) this.drawGrid(g, grid, dark, x + dx, y + dy, scale);
+      }
       this.drawGrid(g, grid, palette, x, y, scale);
     } else {
       g.fillStyle = color;
@@ -4340,10 +4730,15 @@ export class Renderer {
     const t = weather.time || 0;
     if (def.bands) {
       // CLOUDY: dark translucent bands scrolling down; slow parallax on y.
-      g.fillStyle = 'rgba(20,22,35,0.16)';
+      // integ3: each band fades in and out over its 14 px (the hard edges read
+      // as grey stripes on the snow), and on a light floor it is lighter still.
+      const k = this.groundLight ? CLOUD_BAND_LIGHT : 1;
       for (let i = 0; i < 4; i++) {
         const y = Math.round((t * 8 + cam.y * 0.2 + i * (C.VIEW_H / 4)) % (C.VIEW_H + 20)) - 10;
-        g.fillRect(0, y, C.VIEW_W, 14);
+        for (let s = 0; s < CLOUD_BAND_RAMP.length; s++) {
+          g.fillStyle = 'rgba(20,22,35,' + (CLOUD_BAND_RAMP[s] * k).toFixed(3) + ')';
+          g.fillRect(0, y + s * 2, C.VIEW_W, 2);
+        }
       }
     }
     if (def.rays) {

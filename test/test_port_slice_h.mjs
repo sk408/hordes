@@ -83,17 +83,17 @@ const stylesOf = (rec) => new Set(rec.rects.map(q => q.style));
 // mine_fizzle: grey tri-mote puff (was: 1 square).
 // muzzle: hot core + side ticks (was: 1 square).
 const DRESSED = [
-  ['hit_spark', { kind: 'hit_spark', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 7, ['#ffffff', '#fff2c0']],
-  ['orbit_hit', { kind: 'orbit_hit', x: 240, y: 150, age: 0.03, ttl: 0.1 }, 10, ['#ffffff', '#c8e8ff']],
-  ['boss_nova', { kind: 'boss_nova', x: 240, y: 150, age: 0.1, ttl: 0.5, radius: 30 }, 60, ['#ffd7e0']],
-  ['mine_blast', { kind: 'mine_blast', x: 240, y: 150, age: 0.07, ttl: 0.35, radius: 40 }, 60, ['#fff2c0']],
-  ['nova_pulse', { kind: 'nova_pulse', x: 240, y: 150, age: 0.06, ttl: 0.3, radius: 24 }, 60, ['#efe0ff']],
-  ['beam_hit', { kind: 'beam_hit', x: 240, y: 150, age: 0.02, ttl: 0.15 }, 7, ['#ffffff', '#ff9e9e']],
-  ['seeker_pop', { kind: 'seeker_pop', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 5, ['#ffdd7a']],
-  ['scythe_hit', { kind: 'scythe_hit', x: 240, y: 150, age: 0.02, ttl: 0.15 }, 3, ['#ffffff', '#a8e0ff']],
-  ['mine_hit', { kind: 'mine_hit', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 7, ['#ffd75e']],
+  ['hit_spark', { kind: 'hit_spark', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 7, ['#ffffff', '#f8e098']],
+  ['orbit_hit', { kind: 'orbit_hit', x: 240, y: 150, age: 0.03, ttl: 0.1 }, 10, ['#ffffff', '#a8d0f4']],
+  ['boss_nova', { kind: 'boss_nova', x: 240, y: 150, age: 0.1, ttl: 0.5, radius: 30 }, 60, ['#e4e2ea']],
+  ['mine_blast', { kind: 'mine_blast', x: 240, y: 150, age: 0.07, ttl: 0.35, radius: 40 }, 60, ['#f8e098']],
+  ['nova_pulse', { kind: 'nova_pulse', x: 240, y: 150, age: 0.06, ttl: 0.3, radius: 24 }, 60, ['#e4e2ea']],
+  ['beam_hit', { kind: 'beam_hit', x: 240, y: 150, age: 0.02, ttl: 0.15 }, 7, ['#ffffff', '#e06a74']],
+  ['seeker_pop', { kind: 'seeker_pop', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 5, ['#f8e098']],
+  ['scythe_hit', { kind: 'scythe_hit', x: 240, y: 150, age: 0.02, ttl: 0.15 }, 3, ['#ffffff', '#a8d0f4']],
+  ['mine_hit', { kind: 'mine_hit', x: 240, y: 150, age: 0.02, ttl: 0.12 }, 7, ['#f0c860']],
   ['mine_fizzle', { kind: 'mine_fizzle', x: 240, y: 150, age: 0.02, ttl: 0.15 }, 3, []],
-  ['muzzle', { kind: 'muzzle', x: 248, y: 150, age: 0.02, ttl: 0.08 }, 3, ['#ffe9a8']],
+  ['muzzle', { kind: 'muzzle', x: 248, y: 150, age: 0.02, ttl: 0.08 }, 3, ['#f8e098']],
 ];
 {
   const base = paint([]);

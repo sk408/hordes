@@ -1,5 +1,5 @@
 // HORDES — LOOT RARITY: rare items (affix system) + PAID CHESTS.
-// Megabonk-inspired layer on top of chests.js. Self-contained: hb1 wires the
+// A rarity layer on top of chests.js. Self-contained: hb1 wires the
 // UI/inventory into main.js; this module owns rolls + math only. All
 // randomness goes through an injectable rng (defaults to Math.random) so the
 // tests are deterministic.
@@ -79,10 +79,8 @@ export const AFFIX_POOL = [
   // 0.25, thorns 3, lifesteal 0.02), so itemScore's base-normalized affix
   // contribution is flavor-invariant and the strict-better REPLACE rule in
   // decideEquip needs no retune. Names/nouns are ORIGINAL (ASCII, no emojis);
-  // the flavor debt is documented per entry: VS = docs/vs_ref/spec/
-  // SPEC-shop-items.md power-up vocabulary (Might/Greed/Growth/Magnet/Move
-  // Speed/Cooldown rows), MB = docs/mb_ref/tables/items.json + passives.json
-  // name vocabulary. Magnitudes follow the lane's tune-after stance: chosen
+  // each entry raises one plain stat (damage, gold, growth, pickup range,
+  // move speed, cooldown). Magnitudes follow the lane's tune-after stance: chosen
   // by analogy to the existing same-field entry, owner tunes after the fact.
   { id: 'ironbrand',  name: 'Ironbrand',       field: 'damageMult', base: 0.1,  noun: 'Brand',
     get desc() { return '+' + fmtPct(this.base) + '% damage (the brand holds its heat)'; } },

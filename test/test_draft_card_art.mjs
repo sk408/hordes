@@ -40,6 +40,7 @@ import { UPGRADES, DRAFT_RARE_UPGRADES, DRAFT_MYTHIC_UPGRADES } from '../src/con
 import { describeWeaponLevel } from '../src/weapons.js';
 import {
   OFFER_TO_DECK, deckIdForOffer, paintOfferArt, OFFER_ART_SCALE, draftLayout, DRAFT_COMPACT_MAX_H,
+  DRAFT_ROWS, draftRowH,
 } from '../src/draft_card_art.js';
 import { cardBox } from '../src/render_cards.js';
 
@@ -105,7 +106,9 @@ function openDraftUntil(pred, cap = 400) {
   return null;
 }
 const offerOf = (el) => el._draftOffer;
-const artChild = (el) => (el.children || []).find(c => c.className === 'card-art');
+// R5: the art sits inside the card's face box (.face).
+const artChild = (el) => (el.children || []).find(c => c.className === 'card-art') ||
+  (el.children || []).filter(c => c.className === 'face').flatMap(f => f.children || []).find(c => c.className === 'card-art');
 
 // ---- 3. openDraft wires the art in -------------------------------------------
 s.check('openDraft wires .card-art into art-backed offers only', () => {
@@ -136,14 +139,18 @@ s.check('layout rule: short viewports get the compact card, sized to fit one row
     for (const n of [3, 4]) {
       const lay = draftLayout(vw, vh, n);
       assert.equal(lay.compact, true, vw + 'x' + vh);
-      assert.equal(lay.artScale, 2);
+      // R5: the 3x face where the text column beside it keeps 90px, else 2x.
+      assert.ok(lay.artScale === 2 || lay.artScale === 3, vw + 'x' + vh + ': ' + lay.artScale);
       assert.ok(lay.cardW * n + 8 * (n - 1) + 16 <= vw, vw + 'x' + vh + ' x' + n + ': the row fits (' + lay.cardW + ')');
       assert.ok(lay.cardW <= 250, 'cards do not stretch past 250px');
-      // room beside the half-size art for the text column
-      assert.ok(lay.cardW - 16 - cardBox(2).w - 8 >= 30, 'a text column beside the art (' + lay.cardW + ')');
+      // room beside the art for the text column
+      const col = lay.cardW - 16 - cardBox(lay.artScale).w - 8;
+      assert.ok(col >= (lay.artScale === 3 ? 90 : 30), 'a text column beside the art (' + lay.cardW + ')');
     }
   }
   assert.equal(draftLayout(844, 390, 3).cardW, 250);
+  assert.equal(draftLayout(844, 390, 3).artScale, 3, 'a phone held sideways gets the 3x face');
+  assert.equal(draftLayout(480, 300, 3).artScale, 2, 'a very short screen keeps the 2x face');
   assert.equal(draftLayout(667, 375, 3).cardW, 211);
   // The boundary: 500px tall is compact, 501 is not.
   assert.equal(DRAFT_COMPACT_MAX_H, 500);
@@ -159,7 +166,90 @@ s.check('layout rule: a narrow tall viewport keeps the stacked card on ONE row w
   const small = draftLayout(320, 700, 3);
   assert.ok(cardBox(small.artScale).w <= small.cardW - 20, 'and the art shrinks when the full size would not fit');
   // Desktop: the stylesheet's own card, full-size art.
-  assert.deepEqual(draftLayout(1280, 720, 3), { compact: false, artScale: OFFER_ART_SCALE, cardW: null });
+  // R5: a desktop 640px tall or more gets the 5x face; a shorter one keeps 4x.
+  assert.deepEqual(draftLayout(1280, 720, 3), { compact: false, artScale: 5, cardW: null });
+  assert.deepEqual(draftLayout(1280, 600, 3), { compact: false, artScale: OFFER_ART_SCALE, cardW: null });
+});
+// cards2: the playing-card offers (opts.dcard) stack as ROWS on an upright
+// phone, the face at the largest whole scale that fits; the evolve offer
+// (no opts) keeps the old card on one row.
+s.check('layout rule (cards2): an upright phone stacks the playing cards as rows at a whole scale', () => {
+  for (const [vw, vh] of [[390, 844], [360, 740], [375, 667], [412, 915], [320, 568]]) {
+    for (let n = 1; n <= 6; n++) {
+      const lay = draftLayout(vw, vh, n, { dcard: true });
+      assert.equal(lay.rows, true, vw + 'x' + vh);
+      assert.equal(lay.compact, false);
+      assert.ok(Number.isInteger(lay.artScale) && lay.artScale >= DRAFT_ROWS.MIN_SCALE && lay.artScale <= DRAFT_ROWS.MAX_SCALE);
+      assert.ok(lay.cardW <= vw - DRAFT_ROWS.PAD, 'a row fits the width');
+      const fits = n * draftRowH(lay.artScale) + (n - 1) * DRAFT_ROWS.GAP + DRAFT_ROWS.CHROME <= vh;
+      // the largest scale that fits: one step up would not
+      if (lay.artScale < DRAFT_ROWS.MAX_SCALE) {
+        const up = lay.artScale + 1;
+        assert.ok(n * draftRowH(up) + (n - 1) * DRAFT_ROWS.GAP + DRAFT_ROWS.CHROME > vh ||
+          lay.cardW - 2 * DRAFT_ROWS.CARD_PAD - cardBox(up).w - 13 < DRAFT_ROWS.TEXT_MIN, vw + 'x' + vh + ' n' + n + ': a larger face would fit');
+      }
+      if (n <= 4 && vh >= 667) assert.ok(fits, vw + 'x' + vh + ': ' + n + ' rows fit without scrolling');
+    }
+  }
+  assert.equal(draftLayout(390, 844, 3, { dcard: true }).artScale, 5, '390x844, 3 offers: the 5x face');
+  assert.equal(draftLayout(390, 844, 4, { dcard: true }).artScale, 4, '390x844, 4 offers: the 4x face');
+  assert.equal(draftLayout(390, 844, 5, { dcard: true }).artScale, 3, '390x844, 5 offers: steps down to 3x');
+  assert.equal(draftLayout(390, 844, 6, { dcard: true }).artScale, 2, '390x844, 6 offers: 2x');
+  assert.equal(draftLayout(390, 844, 3, { dcard: true }).cardW, 366);
+  // the guided first draft keeps room for the tutorial panel
+  const tut = draftLayout(390, 844, 3, { dcard: true, reserve: 120 });
+  assert.ok(3 * draftRowH(tut.artScale) + 16 + DRAFT_ROWS.CHROME + 120 <= 844, 'the reserve is kept');
+  // not much taller than wide, a wide screen, a short one: no rows
+  assert.ok(!draftLayout(600, 700, 3, { dcard: true }).rows);
+  assert.ok(!draftLayout(1280, 720, 3, { dcard: true }).rows);
+  assert.ok(!draftLayout(844, 390, 3, { dcard: true }).rows);
+  // the evolve offer (no opts) keeps the old one-row card at 390x844
+  assert.deepEqual(draftLayout(390, 844, 3), { compact: false, artScale: 4, cardW: 118 });
+});
+// cards2 review fixes: the rows' height budget is the stylesheet's, not a
+// guess that only checks itself. A row is the face, its margins and the
+// card padding as index.html draws them; CHROME holds the overlay padding and
+// gaps from index.html plus the parts measured in Chrome (a two-line header 30,
+// the AUTO-PICK row 23, the action row 78); tools/verify_draft_cards.mjs runs
+// the real page at 375x667 and 390x844.
+s.check('layout rule (cards2): the rows height budget matches the stylesheet', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const rule = (sel) => { const i = html.indexOf(sel + ' {'); assert.ok(i >= 0, 'no rule ' + sel); return html.slice(i, html.indexOf('}', i)); };
+  const px = (body, prop) => { const m = new RegExp('(?:^|[\\s;{])' + prop + ':\\s*([^;]+);').exec(body); assert.ok(m, prop + ' in ' + body); return m[1].trim().split(/\s+/).map(parseFloat); };
+  const face = px(rule('#overlay.draft.rows .dcard .face'), 'margin');
+  const pad = px(rule('#overlay.draft.rows .card.dcard'), 'padding');
+  for (const s of [2, 3, 4, 5]) assert.equal(draftRowH(s), cardBox(s).h + face[0] + face[2] + 2 * pad[0], 'row height at ' + s + 'x');
+  const ov = rule('#overlay.draft.rows');
+  const chrome = px(ov, 'padding-top')[0] + px(ov, 'padding-bottom')[0] + 3 * px(ov, 'gap')[0] + 30 + 23 + 78;
+  assert.ok(DRAFT_ROWS.CHROME >= chrome, 'CHROME ' + DRAFT_ROWS.CHROME + ' holds the header, AUTO-PICK and action rows (' + chrome + ')');
+  // what that gives on a short upright phone: three offers 4x, four 2x (3x
+  // would push the action row off the screen), and at 360x640 three are 3x
+  assert.equal(draftLayout(375, 667, 3, { dcard: true }).artScale, 4);
+  assert.equal(draftLayout(375, 667, 4, { dcard: true }).artScale, 2);
+  assert.equal(draftLayout(360, 640, 3, { dcard: true }).artScale, 3);
+});
+// The detail (press-and-hold) is never cut: on rows and on the compact card
+// it covers its card and grows past it when the text is longer (a 2x row is
+// 90 px tall); the last row grows upward, so it stays on the screen.
+s.check('detail (cards2): on rows and compact cards it grows past its card, never cut', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  for (const sel of ['#overlay.draft.rows .dcard .detail', '#overlay.draft.compact .dcard .detail']) {
+    const i = html.indexOf(sel + ' {'); assert.ok(i >= 0, sel);
+    const body = html.slice(i, html.indexOf('}', i));
+    assert.ok(!/overflow:\s*hidden/.test(body), sel + ': the text is not cut');
+    assert.ok(/min-height:\s*100%/.test(body) && !/bottom:\s*0/.test(body), sel + ': at least its card, taller with longer text');
+  }
+  assert.ok(/#overlay\.draft\.rows \.dcard:last-child:not\(:first-child\) \.detail \{ top: auto; bottom: 0; \}/.test(html), 'the last row grows upward');
+});
+s.check('layout rule (cards2): a phone held sideways takes the 4x face for three cards, 3x for four', () => {
+  assert.equal(draftLayout(844, 390, 3, { dcard: true }).artScale, 4);
+  assert.equal(draftLayout(844, 390, 4, { dcard: true }).artScale, 3);
+  assert.equal(draftLayout(844, 390, 3).artScale, 3, 'the evolve offer keeps its 3x');
+  assert.equal(draftLayout(667, 375, 3, { dcard: true }).artScale, 3, 'too short for 4x');
+  for (const n of [3, 4]) {
+    const lay = draftLayout(844, 390, n, { dcard: true });
+    assert.ok(lay.cardW - 16 - cardBox(lay.artScale).w - 8 >= 90, 'the text column keeps 90px');
+  }
 });
 s.check('layout rule: the stylesheet carries the compact card and the darker draft scrim', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -172,6 +262,25 @@ s.check('layout rule: the stylesheet carries the compact card and the darker dra
     '#overlay.draft.compact .card .desc { font-size: 11px;']) {
     assert.ok(html.includes(rule), 'index.html carries: ' + rule);
   }
+});
+s.check('openDraft (cards2): an upright phone gets the rows flag, the row width and the rows face; it leaves with the draft', () => {
+  const W = globalThis.window, keep = [W.innerWidth, W.innerHeight];
+  W.innerWidth = 390; W.innerHeight = 844;
+  try {
+    const kids = openDraftUntil(ks => ks.length === 3 && ks.every(artChild));
+    assert.ok(kids, 'a three-card draft with art');
+    const has = (c) => elements.overlay.classList.contains(c);
+    assert.ok(has('draft') && has('rows') && !has('compact'), 'the overlay is flagged draft and rows');
+    const lay = draftLayout(390, 844, 3, { dcard: true });
+    assert.equal(lay.artScale, 5);
+    for (const el of kids) {
+      assert.equal(el.style.width, lay.cardW + 'px', 'each row is as wide as the layout says');
+      assert.equal(artChild(el).width, cardBox(5).w, 'the face at the rows scale');
+    }
+    kids[0].click();
+    pump(40);
+    assert.ok(!has('draft') && !has('rows'), 'the flags leave with the draft');
+  } finally { W.innerWidth = keep[0]; W.innerHeight = keep[1]; }
 });
 s.check('openDraft applies the rule: the overlay is flagged draft + compact and the cards take the rule width', () => {
   const kids = openDraftUntil(ks => ks.length > 0);

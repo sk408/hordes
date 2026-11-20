@@ -19,7 +19,7 @@ const T = h.T, st = h.state, el = h.elements;
 T.banners.suppressAll();
 const kdown = (k) => h.key('keydown', { key: k, preventDefault() {} });
 h.pump(3);
-if (st.mode === 'intro') { kdown('x'); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 const L = T.tut.LEDGER;
 
 const cards = () => [...el['ov-cards'].children];

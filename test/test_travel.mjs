@@ -115,6 +115,10 @@ s.check('CONTINUE travels: a new stage and field, the hero at the centre, the ru
   const br = st.sites.find(x => x.kind === 'brazier'); br.state = 'spent';
   st.toasts.length = 0;
   card(/>CONTINUE</).click();
+  // R2: 1.5 s of the road to the new stage first (the run is already there).
+  assert.equal(st.mode, 'portal-cine');
+  assert.equal(st.stage, dest);
+  h.skipMovie();
   assert.equal(st.mode, 'playing');
   assert.equal(st.stage, dest);
   assert.deepEqual(st.stagesSeen, [DEFAULT_STAGE_ID, dest]);

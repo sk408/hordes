@@ -13,7 +13,7 @@ const S = suite('r1 guided draft header');
 const h = await boot({ tutorial: true, hints: true, variant: 'active', storage: [['hordes_onboarded', '1']] });
 const T = h.T, st = h.state, el = h.elements;
 h.pump(3);
-if (st.mode === 'intro') { h.key('keydown', { key: 'x', preventDefault() {} }); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 T.startRun();
 const until = (cond, max = 60 * 60) => { for (let i = 0; i < max && !cond(); i++) h.pump(1); return cond(); };
 const stepId = () => (T.tut.model ? T.tut.model.id : null);
@@ -33,6 +33,19 @@ S.check('NEXT moves on to EVOLVE on the same draft; a later draft names its keys
   T.tut.press(T.tut.model.shownMs + 2000);
   h.pump(2);
   assert.equal(stepId(), 'evolve');
+  // The EVOLVE step says weapon cards name their evolution partner: the face
+  // of every weapon card (not only the hidden detail) must show that road.
+  const words = T.tut.model.text || '';
+  assert.ok(/evolution partner/.test(JSON.stringify(T.tut.model)) || /evolution partner/.test(words), 'the step teaches the partner');
+  const weapons = [...el['ov-cards'].children].filter(c => /^(lvl_|wpn_)/.test(String(c._draftOffer && c._draftOffer.id)));
+  assert.ok(weapons.length >= 1, 'the guided draft holds a weapon card');
+  for (const c of weapons) {
+    const u = c._draftOffer;
+    if (!u.evoText) continue;
+    const faceHtml = c.innerHTML.split('<div class="detail">')[0];
+    assert.ok(/class="fx[^"]*">evolves /.test(faceHtml), u.id + ' shows its evolution road on the face: ' + faceHtml);
+  }
+  assert.ok(weapons.some(c => c._draftOffer.evoText), 'at least one weapon card has a road to name');
   el['ov-cards'].children[0].click();
   h.pump(2);
   assert.notEqual(st.mode, 'draft');

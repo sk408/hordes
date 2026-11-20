@@ -159,7 +159,15 @@ export async function withPage(opts, fn) {
       if (Date.now() - t0 > timeoutMs) throw new Error('chrome never wrote DevToolsActivePort');
       await sleep(100);
     }
-    const port = fs.readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    // Chrome may still hold the file open as it appears (EBUSY on Windows):
+    // try the read again for a short while.
+    let port = '';
+    for (let i = 0; ; i++) {
+      try { port = fs.readFileSync(portFile, 'utf8').split('\n')[0].trim(); if (port) break; }
+      catch (e) { if (!(e && (e.code === 'EBUSY' || e.code === 'EPERM')) || i >= 50) throw e; }
+      if (i >= 50) throw new Error('DevToolsActivePort stayed empty');
+      await sleep(100);
+    }
     const ver = await (await fetch('http://127.0.0.1:' + port + '/json/version')).json();
     const ws = new WebSocket(ver.webSocketDebuggerUrl);
     await new Promise((res, rej) => {
@@ -270,7 +278,17 @@ export async function withPage(opts, fn) {
     };
     const rectOf = (sel) => evaluate("(() => { const e = document.querySelector(" + JSON.stringify(sel) +
       "); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]; })()");
-    const api = { evaluate, waitFor, shot, readShot, click, tap, swipe, rectOf, sleep, port: srv.port, viewport: { w, h, dpr } };
+    // A REAL key press (R2 movies): keyDown then keyUp through CDP, so the
+    // page's own keydown handlers see a trusted event. key: 'Escape', 'Enter',
+    // ' ' or a single printable character.
+    const KEYS = { Escape: ['Escape', 27], Enter: ['Enter', 13], ' ': ['Space', 32] };
+    const key = async (k) => {
+      const [code, vk] = KEYS[k] || ['Key' + k.toUpperCase(), k.toUpperCase().charCodeAt(0)];
+      const text = k.length === 1 ? k : (k === 'Enter' ? '\r' : undefined);
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...(text ? { text } : {}) });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk });
+    };
+    const api = { evaluate, waitFor, shot, readShot, click, tap, key, swipe, rectOf, sleep, port: srv.port, viewport: { w, h, dpr } };
     Object.defineProperty(api, 'errors', { get: () => cdp.errors });
     // ---- service-worker test hooks (opt-in) ----
     api.server = srv;

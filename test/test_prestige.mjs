@@ -246,6 +246,12 @@ function prestigeCards(h) {
   const cards = prestigeCards(h);
   assert.equal(cards.length, 1, 'exactly one PRESTIGE card is composed');
   assert.ok(cards[0].innerHTML.includes('PRESTIGE 1'), 'the card names tier 1');
+  // integ3: a trip to help and back recomposes the end card (reshowEndScreen):
+  // the offer comes back with it, once.
+  T.endCard.reshow();
+  assert.equal(h.state.mode, 'dead');
+  assert.equal(prestigeCards(h).length, 1, 'the PRESTIGE card is back after a return to the end card');
+  cards[0] = prestigeCards(h)[0];
   cards[0].click();
   assert.equal(T.prestige.get(), 1, 'taking the offer ascends to P1');
   assert.equal(h.state.mode, 'playing', 'the ascent resets the run');

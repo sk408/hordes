@@ -217,19 +217,21 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('NOT MISSED: dismissed that note, or played after it shipped',
     W.missed({ lastPlayed: M.dateMs - 1000, lastSeenUpdate: M.id }, rel) === false &&
     W.missed({ lastPlayed: M.dateMs + 1000, lastSeenUpdate: null }, rel) === false);
-  ok('the release before this one is older than this one', M.dateMs < rel.dateMs && M.id !== rel.id && M.schema < rel.schema);
+  ok('the release before this one is older than this one', M.dateMs < rel.dateMs && M.id !== rel.id && M.schema <= rel.schema);
   // The save's schema decides too: an older build's save has not met the release,
   // even when that build was played after the ship date in a tab left open.
   const late = { lastPlayed: rel.dateMs + 60000, lastSeenUpdate: M.id };
+  // (This release kept the October schema; the rule is held on a release that bumps it too.)
+  const bumped = { ...rel, schema: M.schema + 1 };
   ok('DUE: a save an older build wrote, played after the ship date (a tab left open)',
-    W.due(late, rel, false, rel.schema - 1) === true && W.due(late, rel, false, M.schema) === true);
+    W.due(late, rel, false, rel.schema - 1) === true && W.due(late, bumped, false, M.schema) === true);
   ok('NOT DUE: a save this build wrote, played after the ship date (a new player)',
     W.due(late, rel, false, rel.schema) === false && W.due(late, rel, false) === false);
   ok('NOT DUE: dismissed, whatever the schema', W.due({ ...late, lastSeenUpdate: rel.id }, rel, false, rel.schema - 1) === false);
   ok('MISSED: a save older than the release before, even when played after it shipped',
     W.missed({ lastPlayed: M.dateMs + 60000, lastSeenUpdate: null }, rel, M.schema - 1) === true &&
     W.missed({ lastPlayed: M.dateMs + 60000, lastSeenUpdate: null }, rel, M.schema) === false);
-  ok('the ship date is 2026-10-03 and the id says so', rel.id === '2026-10-03' && new Date(rel.dateMs).toISOString().startsWith('2026-10-03'));
+  ok('the ship date and the id agree', new Date(rel.dateMs).toISOString().startsWith(rel.id));
   const P = (over) => ({ lastPlayed: rel.dateMs - 1000, lastSeenUpdate: null, ...over });
   ok('DUE: an existing save that predates the release (the returning player)',
     W.due(P(), rel, false) === true);
@@ -285,14 +287,13 @@ ok('the boot migrated the v8 save (a returning player, not fresh)',
   ok('the note carries the release copy, an OBVIOUS dismiss button, and the close hint',
     /WHAT'S NEW/.test(noteUp.innerHTML) && /CLOSE/.test(noteUp.innerHTML) &&
     /tap anywhere on the note to close/i.test(noteUp.innerHTML));
-  ok('a player who missed the release before reads about the refund, the new systems and the kept save',
-    W.release.missed.lines.some(l => /refunded/i.test(l)) &&
-    W.release.missed.lines.some(l => /EVOLVE/.test(l) && /FUSE/.test(l)) &&
-    W.release.missed.lines.some(l => /old save is kept/i.test(l) && /classic/i.test(l)) &&
+  ok('a player who missed the release before reads about the map, EXPLORE, quests, the camp, the landscape',
+    [/vault/i, /EXPLORE/, /quests/i, /CAMP/, /ramps/i, /portal leads to a new stage/i, /boss brings a rule/i]
+      .every(re => W.release.missed.lines.some(l => re.test(l))) &&
     W.release.missed.lines.every(l => noteUp.innerHTML.includes(l)));
-  ok("this release's own lines are on the note: the map, EXPLORE, quests, the camp, the landscape",
+  ok("this release's own lines are on the note: weapons in drafts, cards, the light, colours, bosses, scenes",
     W.release.lines.every(l => noteUp.innerHTML.includes(l)) &&
-    [/vault/i, /EXPLORE/, /quests/i, /CAMP/, /ramps/i, /portal leads to a new stage/i, /boss brings a rule/i, /escape is a chase scene/i, /RAISE THE STAKES/]
+    [/NEW cards/, /playing cards/, /night/i, /LIGHTING/, /shots are red-orange/, /Maw/, /what killed you/i]
       .every(re => W.release.lines.some(l => re.test(l))));
   // DISMISS: persists lastSeenUpdate; the title stays whole. The persisted
   // BYTES must actually change on the dismiss (addendum 2026-09-17: "dismissing

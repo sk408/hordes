@@ -18,7 +18,7 @@ import { CONTROLS } from '../src/controls_ref.js';
 const s = suite('test_upfront');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
-const { T, state: st, elements, pump, key } = await boot({ prologue: true });   // an EMPTY profile, kept empty
+const { T, state: st, elements, pump, key, skipMovie } = await boot({ prologue: true });   // an EMPTY profile, kept empty
 const cards = () => [...elements['ov-cards'].children];
 const byTitle = (t) => cards().find(c => (c.innerHTML || '').includes('>' + t + '<'));
 const titleText = () => elements['ov-title'].textContent;
@@ -26,7 +26,7 @@ const kdown = (k) => key('keydown', { key: k, preventDefault() {} });
 const toTitle = () => {
   T.die();
   for (let i = 0; i < 10 && st.mode !== 'dead' && st.mode !== 'death-cine'; i++) pump(1);
-  if (st.mode === 'death-cine') kdown('x');
+  if (st.mode === 'death-cine') skipMovie();   // R2: two presses
   for (let i = 0; i < 5; i++) pump(1);
   kdown('t');
   for (let i = 0; i < 5; i++) pump(1);

@@ -85,7 +85,8 @@ const cardTitled = (t) => cards().find(c => (c._html || '').includes('>' + t + '
 const settleReveal = () => { for (let i = 0; i < 400 && !(st.titleReveal && st.titleReveal.phase === 'settled'); i++) frame(); };
 const toasts = () => st.toasts.map(t => t.msg).join(' | ');
 
-keyHandler({ key: 'x', preventDefault() {} });
+// R2: the one movie skip rule: ESC shows SKIP, ESC again skips (after the start-up guard).
+for (let i = 0; i < 90 && st.mode === 'intro'; i++) { keyHandler({ key: 'Escape', preventDefault() {} }); if (st.mode === 'intro') frame(); }
 pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 settleReveal();

@@ -41,6 +41,10 @@ export const CONTROLS = [
     purpose: 'show or hide the radar of nearby enemies' },
   { id: 'map', keys: ['M'], touch: 'MAP',
     purpose: 'open the world map (the fight keeps running)' },
+  // R3: the quests sit in a chip under the clock; J (or a tap on the chip)
+  // opens the list under it.
+  { id: 'quests', keys: ['J'], touch: 'QUESTS chip',
+    purpose: 'open or close your quest list (the chip under the clock)' },
   { id: 'stats', keys: ['I'], touch: 'STATS',
     purpose: 'open your stats for this run (pauses)' },
   // '?' SUPPLEMENT (2026-09-16) -> HELP MODE (same day, retirement brief):

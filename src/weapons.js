@@ -179,10 +179,8 @@ export const WEAPONS = {
     SWEEP: 0.25,        // rad the visual sweep wiggles either side of dir
   },
   // ---- tier-2(e) NEW WEAPONS (owner autopilot 2026-09-23) -------------------
-  // ORIGINAL instances of shipped behavior classes (docs/vs_ref SPEC-weapons
-  // "passes through enemies" / "boomerang effect" / "bounces around" /
-  // bombardment + docs/mb_ref projectile vocabulary used as CLASS sources
-  // only — no foreign names, no foreign pixels). Numbers TUNE-AFTER. Every
+  // ORIGINAL weapons of common behaviour classes (passes through enemies,
+  // comes back like a boomerang, bounces around, bombardment). Numbers TUNE-AFTER. Every
   // effect rides an EXISTING stat surface (p.stats.damage / cooldown /
   // projectiles / pierce / damageMult / rateMult / crit / critMult via
   // rateScale :227, dmgScale :250, critRoll :259) and an EXISTING effect
@@ -1248,7 +1246,7 @@ export function updateWeapons(state, weapons, dt) {
 }
 
 // ==========================================================================
-// PER-WEAPON LEVELING (megabonk-style, Sk408 playtest)
+// PER-WEAPON LEVELING (Sk408 playtest)
 // Each weapon instance carries a level (1..WEAPON_MAX_LEVEL). Levels come
 // from draft cards for now (levelUpWeapon) and/or weapon XP fed by a later
 // integration (collectWeaponXp). WEAPON_LEVELS is the AUTHORITATIVE table:

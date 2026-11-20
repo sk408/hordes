@@ -27,8 +27,8 @@ const SEED = [
 
 const VIEWS = [
   { name: 'desk_1280x720', w: 1280, h: 720, dpr: 1, mobile: false, header: 'Pick 1: click or press 1/2/3' },
-  { name: 'phone_844x390', w: 844, h: 390, dpr: 2, mobile: true, header: 'Pick 1: tap a card' },
-  { name: 'phone_390x844', w: 390, h: 844, dpr: 2, mobile: true, header: 'Pick 1: tap a card' },
+  { name: 'phone_844x390', w: 844, h: 390, dpr: 2, mobile: true, header: 'Pick 1: tap a card · hold to read' },
+  { name: 'phone_390x844', w: 390, h: 844, dpr: 2, mobile: true, header: 'Pick 1: tap a card · hold to read' },
 ];
 
 let failed = 0;
@@ -47,12 +47,13 @@ for (const v of VIEWS) {
       const cardAt = (txt) => p.evaluate(`(() => { const c = [...document.querySelectorAll('#ov-cards .card')].find(e => { const n = e.querySelector('.name'); return n && n.textContent.trim() === ${JSON.stringify(txt)}; }); if (!c) return null; const r = c.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       await p.waitFor(`!!document.getElementById('ov-cards')`, 15000);
       await p.sleep(800);
-      // Skip the intro movie if it runs.
-      for (let i = 0; i < 6; i++) {
+      // Skip the intro movie if it runs. The movies' skip rule (src/movie_skip.js):
+      // the first press only shows SKIP, a second ESC while it is up skips.
+      for (let i = 0; i < 8; i++) {
         const mode = await p.evaluate(`(async () => ${T}.state.mode)()`);
         if (mode === 'title') break;
-        await p.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }))");
-        await p.sleep(700);
+        await p.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+        await p.sleep(500);
       }
       ok('the title is up', await p.evaluate(`(async () => ${T}.state.mode)()`) === 'title');
       await p.waitFor(`!!document.querySelector('.wn-over')`, 4000).catch(() => {});

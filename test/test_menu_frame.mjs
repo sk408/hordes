@@ -99,7 +99,7 @@ const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
 const T = h.T;
 h.pump(3);
-if (st.mode === 'intro') { h.key('keydown', { key: 'x', preventDefault() {} }); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 T.showTitle();
 
 S.check('ov-cards children are STILL the clickable cards, each with a frame canvas', () => {

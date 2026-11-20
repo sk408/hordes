@@ -1,21 +1,16 @@
-// HORDES — stage ground/biome identity (PORT SLICE G: original art from VS design reference;
+// HORDES — stage ground/biome identity (PORT SLICE G: original art;
 // PORT SLICE K3: floor tile variety — multiple motifs per biome, mixed per cell).
 //
 // WHAT THIS FILE IS
 // Eight ORIGINAL hand-authored ground-motif SETS, three per stage identity
 // (24 motifs total: each slice-G motif kept as motifs[0], plus two new
-// siblings per biome). They are CONCEPT ports only: the reference
-// (docs/vs_port_ref/DESIGN_REFERENCE_VS.md, section 5 stage rows + section 13
-// TILES + section 1 art-direction numbers, see per-motif rows below) names
-// the ROLES — forest floor, chapel stone, shared filler reused across stages
-// via palette swap, 32px autotile sets, 8-16 variants per motif, bulk
-// transitions/edges — and documents that no ground pixels were ever extracted
-// to trace (section 14 GAPS covers the missing bundles; Appendix A.3's stage
-// thumbs are packed 32px tileset atlases, not ground sprites; Appendix A.4's
-// 757 tile thumbs are the 32px vocabulary this variety pass mirrors). Every
-// rect render.js paints for these motifs was composed fresh for HORDES.
+// siblings per biome). The motifs have ROLES (forest floor, chapel stone,
+// shared filler reused across stages by a palette swap, 32px tile sets with
+// several variants per motif). Every rect render.js paints for these motifs
+// was composed fresh for HORDES; no ground pixels from any other game were
+// traced.
 //
-// ART-DIRECTION NUMBERS (reference section 1, style guidance only):
+// ART-DIRECTION NUMBERS (style guidance only):
 //   * 32px grid: motifs anchor on a 64px tile (2x the decor CELL) and every
 //     motif fits inside ~20px, painted 1:1 through fillRect — integer
 //     scaling, no smoothing.
@@ -140,7 +135,7 @@ export const STAGE_GROUND_TILE = 64;
 
 // PORT SLICE K4 — WEATHER-REACTIVE TILES (owner feedback 2026-09-23: "maybe
 // have different tiles impacted by the weather also in a subtle way").
-// The ground answers the run's weather the way the reference's tile sets
+// The ground answers the run's weather the way seasonal tile sets
 // answer their stage (section 13 TILES: shared filler reused across stages
 // via palette swap — here the filler is reused across WEATHERS via the same
 // wave-theme palette keys, never a fixed color). Per-weather reactions:

@@ -48,7 +48,7 @@ const key = (k, extra = {}) => h.key('keydown', { key: k, preventDefault() {}, .
 // Every check starts from a clean title screen with no cursor.
 function title() {
   T.showTitle();
-  if (st.mode === 'intro') key('x');                 // any key skips the intro movie
+  if (st.mode === 'intro') h.skipMovie();                 // any key skips the intro movie
   assert.equal(st.mode, 'title', 'the title is up');
 }
 
@@ -175,7 +175,7 @@ S.check('Enter with NO cursor takes the first card: PLAY, then START (straight t
   key('enter');
   assert.equal(st.mode, 'playing', 'Enter again starts the run');
   T.die(); pump(1);
-  if (st.mode === 'death-cine') key('x');
+  if (st.mode === 'death-cine') h.skipMovie();
 });
 
 S.check('DIM cards are unreachable — the cursor skips them', () => {
@@ -239,7 +239,7 @@ function toEndScreen() {
   killer.speed = 0;                          // parked exactly on the hero
   st.enemies.push(killer);
   pump(30, () => { st.enemies.forEach(e => { e.speed = 0; e.x = p.x; e.y = p.y; }); });
-  if (st.mode === 'death-cine') key('x');    // any key skips the movie
+  if (st.mode === 'death-cine') h.skipMovie();    // any key skips the movie
   assert.equal(st.mode, 'dead', 'the run-ended screen is up');
 }
 

@@ -20,7 +20,7 @@ const PAGE = '<!doctype html><meta charset="utf-8"><title>sfx mix</title><body>s
 const SCRIPT = `(async () => {
   const A = await import('/src/audio.js');
   const S = await import('/listen/sfx_scenes.js');
-  const out = { items: {}, fight: {}, worst: {}, music: {} };
+  const out = { items: {}, fight: {}, worst: {}, music: {}, meaning: {}, worstMeaning: {} };
   for (const g of S.GROUPS) for (const it of g.items) {
     const k = S.itemKey(it);
     out.items[k] = { group: g.id };
@@ -29,6 +29,8 @@ const SCRIPT = `(async () => {
   for (const mix of ['old', 'new']) {
     out.fight[mix] = S.measure(await S.render(A, { fight: true }, mix));
     out.worst[mix] = S.measure(await S.render(A, { worst: true }, mix));
+    out.meaning[mix] = S.measure(await S.render(A, { fight: true, meaning: true }, mix));
+    out.worstMeaning[mix] = S.measure(await S.render(A, { worst: true, meaning: true }, mix));
   }
   // The music for reference: 16 s of the synth song from bar 41, and of run_wilds.
   const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
@@ -75,6 +77,15 @@ await withPage({ w: 390, h: 844, url: 'measure.html', extra: { '/measure.html': 
   console.log(row('BUSY FIGHT (8 s)', r.fight.old, r.fight.new));
   console.log(row('WORST CASE', r.worst.old, r.worst.new));
   console.log('busy fight integrated: old ' + r.fight.old.lufs + ' LUFS, new ' + r.fight.new.lufs + ' LUFS');
+  // R4: the busy fight with the sounds that mean something on, against off.
+  console.log(row('FIGHT + R4 CUES', r.meaning.old, r.meaning.new));
+  console.log(row('WORST + R4 CUES', r.worstMeaning.old, r.worstMeaning.new));
+  for (const mix of ['old', 'new']) {
+    const off = r.fight[mix], on = r.meaning[mix];
+    console.log('R4 ' + mix + ' mix: busiest second ' + off.busiestSecondLufs + ' -> ' + on.busiestSecondLufs + ' LUFS ('
+      + (on.busiestSecondLufs - off.busiestSecondLufs).toFixed(2) + ' dB), integrated ' + off.lufs + ' -> ' + on.lufs
+      + ', peak ' + off.peakDb + ' -> ' + on.peakDb + ' dBFS; worst case peak ' + r.worst[mix].peakDb + ' -> ' + r.worstMeaning[mix].peakDb);
+  }
   for (const [k, v] of Object.entries(r.music)) console.log('music ' + k + ': ' + v.lufs + ' LUFS, peak ' + v.peakDb + ' dBFS');
   if (page.errors && page.errors.length) console.log('page errors: ' + page.errors.join(' | '));
 });

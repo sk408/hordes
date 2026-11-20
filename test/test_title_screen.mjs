@@ -28,7 +28,7 @@ const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 // Let the boot settle into the intro, then skip it (onboarded flag preset:
 // the skip lands straight on the title).
 h.pump(3);
-if (st.mode === 'intro') { key('x'); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 
 let passed = 0;
 function check(name, fn) {
@@ -222,10 +222,10 @@ check('the pre-run screen has a compact form for a short landscape screen', () =
 
 check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   cardWith('SETTINGS').click();
-  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
+  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DAMAGE NUMBERS', 'DISPLAY SIZE', 'FULLSCREEN',
     'AUTO-CONTINUE', 'KEEP PLAYING',
     'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'BACK'],
-    'title settings is exactly these fourteen cards, in order');
+    'title settings is exactly these fifteen cards, in order (R3 added DAMAGE NUMBERS)');
   cardWith('ADVANCED').click();
   const adv = names();
   assert.deepEqual(adv.slice(0, 6), ['ZOOM', 'RESOLUTION', 'TEXT HUD', 'PILOT', 'FOCUS', 'STANCE'],
@@ -248,7 +248,7 @@ check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   h.pump(2);
   assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
   T.openSettings();
-  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DISPLAY SIZE', 'FULLSCREEN',
+  assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DAMAGE NUMBERS', 'DISPLAY SIZE', 'FULLSCREEN',
     'AUTO-CONTINUE', 'KEEP PLAYING', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
     'in-run settings: no save cards, END RUN added (no TEST: ESCAPE)');
   cardWith('ADVANCED').click();

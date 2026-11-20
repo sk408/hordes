@@ -89,7 +89,7 @@ await check('every game mode maps to its music scene', () => {
   const want = {
     playing: 'run', draft: 'run', evolve: 'run', burst: 'run', chest: 'run',
     settings: 'pause', stats: 'pause', intermission: 'intermission', finale: 'finale',
-    'portal-cine': 'portal', escape: 'escape', 'death-cine': 'death', dead: 'endcard',
+    'portal-cine': 'run', escape: 'escape',   // R2: portal-cine is the road shot; the beat ducks 'death-cine': 'death', dead: 'endcard',
     intro: 'none', title: 'title', menu: 'title',
   };
   const got = {};

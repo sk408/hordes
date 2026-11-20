@@ -105,13 +105,59 @@ export const OFFER_ART_SCALE = 4;
 // A narrow tall viewport keeps the stacked card and shrinks only the art to
 // the card's inner width. Pure: main.js openDraft applies the result.
 export const DRAFT_COMPACT_MAX_H = 500;
-export const DRAFT_COMPACT = { ART_SCALE: 2, GAP: 8, PAD: 16, CARD_MAX: 250, CARD_PAD: 8 };
-export function draftLayout(vw, vh, offers = 3) {
+// R5 (cards worth holding): the card face is the large part of the card. A
+// compact card takes the 3x face when the text column beside it keeps
+// BIG_TEXT_MIN px and the screen is BIG_MIN_H tall; a desktop card takes the
+// 5x face when the screen is DESK_BIG_MIN_H tall (OFFER_ART_SCALE stays the
+// loadout screen's scale).
+export const DRAFT_COMPACT = { ART_SCALE: 2, BIG_SCALE: 3, BIG_TEXT_MIN: 90, BIG_MIN_H: 360,
+  GAP: 8, PAD: 16, CARD_MAX: 250, CARD_PAD: 8 };
+export const DRAFT_DESK = { ART_SCALE: 5, BIG_MIN_H: 640 };
+// cards2: a phone held sideways takes the 4x face when the screen is
+// HUGE_MIN_H tall and the text column beside it still keeps BIG_TEXT_MIN px
+// (three offers at 844x390: yes; four: the cards are too narrow, so 3x).
+DRAFT_COMPACT.HUGE_SCALE = 4;
+DRAFT_COMPACT.HUGE_MIN_H = 380;
+// cards2: an upright phone (and any screen much taller than wide) stacks
+// the offers as ROWS, one per offer, each as wide as the screen allows: the
+// face on the left, the words on the right. The face takes the largest whole
+// scale (MAX_SCALE down to MIN_SCALE) at which every row, the header, the
+// AUTO-PICK row and the action row (CHROME px) fit the height, and the text
+// column keeps TEXT_MIN px. Only the playing-card offers ask (opts.dcard:
+// presentDraft); the evolve offer keeps its own card and layout.
+// CHROME is everything on the rows screen that is not a row, as index.html
+// lays it out (#overlay.draft.rows), measured in Chrome at 375x667:
+//   8 + 8   the overlay's padding, top and bottom
+//   30      the "Pick 1" header on TWO lines (a reason such as "the NEW
+//           weapon was free" wraps it on a phone)
+//   23      the AUTO-PICK row
+//   78      the action row (REROLL / BANISH / SKIP wrap to two lines)
+//   3 x 8   the gaps between header, AUTO-PICK row, rows and action row
+// = 171. tools/verify_draft_cards.mjs checks it at 375x667 and 390x844.
+export const DRAFT_ROWS = { MAX_W: 700, MIN_RATIO: 1.3, PAD: 24, CARD_MAX: 520, CARD_PAD: 8,
+  GAP: 8, CHROME: 171, MAX_SCALE: 5, MIN_SCALE: 2, TEXT_MIN: 150, FACE_MY: 3 };
+// The height one row takes at face scale s: the face, its 3 px margin above
+// and below (the 3 px ring sits in it) and the card's padding.
+export const draftRowH = (s) => cardBox(s).h + 2 * DRAFT_ROWS.FACE_MY + 2 * DRAFT_ROWS.CARD_PAD;
+export function draftLayout(vw, vh, offers = 3, opts = {}) {
   const n = Math.max(1, offers | 0);
+  if (opts.dcard && vw <= DRAFT_ROWS.MAX_W && vh > DRAFT_COMPACT_MAX_H && vh >= vw * DRAFT_ROWS.MIN_RATIO) {
+    const R = DRAFT_ROWS;
+    const cardW = Math.floor(Math.min(R.CARD_MAX, vw - R.PAD));
+    const room = vh - R.CHROME - Math.max(0, opts.reserve || 0);
+    let s = R.MAX_SCALE;
+    const fits = (k) => n * draftRowH(k) + (n - 1) * R.GAP <= room &&
+      cardW - 2 * R.CARD_PAD - cardBox(k).w - 13 >= R.TEXT_MIN;
+    while (s > R.MIN_SCALE && !fits(s)) s--;
+    return { compact: false, rows: true, artScale: s, cardW };
+  }
   if (vh <= DRAFT_COMPACT_MAX_H) {
     const K = DRAFT_COMPACT;
     const cardW = Math.floor(Math.min(K.CARD_MAX, (vw - K.PAD - K.GAP * (n - 1)) / n));
-    return { compact: true, artScale: K.ART_SCALE, cardW };
+    const col = (s) => cardW - 2 * K.CARD_PAD - cardBox(s).w - 8;
+    const huge = opts.dcard && vh >= K.HUGE_MIN_H && col(K.HUGE_SCALE) >= K.BIG_TEXT_MIN;
+    const big = vh >= K.BIG_MIN_H && col(K.BIG_SCALE) >= K.BIG_TEXT_MIN;
+    return { compact: true, artScale: huge ? K.HUGE_SCALE : big ? K.BIG_SCALE : K.ART_SCALE, cardW };
   }
   // Stacked card on a narrow tall viewport: one row of border-box cards, and
   // the art takes the largest whole scale that fits the card's inner width.
@@ -121,7 +167,7 @@ export function draftLayout(vw, vh, offers = 3) {
     while (artScale > 2 && cardBox(artScale).w > cardW - 20) artScale--;
     return { compact: false, artScale, cardW };
   }
-  return { compact: false, artScale: OFFER_ART_SCALE, cardW: null };
+  return { compact: false, artScale: vh >= DRAFT_DESK.BIG_MIN_H ? DRAFT_DESK.ART_SCALE : OFFER_ART_SCALE, cardW: null };
 }
 
 // The joker face of a deck card: the pips blanked to parchment and the

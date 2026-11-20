@@ -106,7 +106,13 @@ export function evaluateHand(cards, opts = {}) {
   // Rank groups, biggest first; ties go to the higher rank.
   const groups = [...byValue.entries()].sort((a, b) => b[1].length - a[1].length || b[0] - a[0]);
   const keys = (cs) => cs.map(c => c.key);
-  const made = (id, cs, suit = null) => ({ id, name: handName(id, suit), order: HAND_BY_ID[id].order, suit, cards: keys(cs) });
+  const made = (id, cs, suit = null) => {
+    const h = { id, name: handName(id, suit), order: HAND_BY_ID[id].order, suit, cards: keys(cs) };
+    // The Wild Card's rank and suit in this hand, so the HUD fan can show it in its place.
+    const w = cs.find(c => c.key === WILD_KEY);
+    if (w) h.wild = { rank: w.rank, value: w.value, suit: w.suit };
+    return h;
+  };
   const size = STRAIGHT_SIZE - less;
   // The highest run of `size` consecutive ranks among `cs` (one card per rank), or null.
   const runOf = (cs) => {
@@ -208,6 +214,7 @@ function applyHandBonus(p, hand, scale) {
   if (a.gold) p.stats.purseKillMult = (p.stats.purseKillMult || 1) + a.gold;
   if (a.xp) p.stats.xpMult = (p.stats.xpMult || 1) + a.xp;
   p.hand = { id: hand.id, suit: hand.suit, name: hand.name, order: hand.order, cards: hand.cards, scale, applied: a };
+  if (hand.wild) p.hand.wild = hand.wild;
 }
 
 /**
@@ -223,7 +230,10 @@ export function refreshHand(p, opts = {}) {
   const same = (!hand && !prev) ||
     (hand && prev && hand.id === prev.id && hand.suit === prev.suit && prev.scale === scale);
   if (same) {
-    if (hand && prev) prev.cards = hand.cards;
+    if (hand && prev) {
+      prev.cards = hand.cards;
+      if (hand.wild) prev.wild = hand.wild; else delete prev.wild;
+    }
     return { changed: false, upgraded: false, hand: prev, prev };
   }
   removeHandBonus(p);

@@ -241,7 +241,7 @@ check('every type ships a valid LOOK and 2-3 palette variants', () => {
       assert.ok(typeof v[k] === 'string' && v[k].startsWith('#'), `${id} variant ${k}`);
     }
   }
-  assert.ok(ELITE_LOOK.trim === '#ffd54a', 'gold elite tell available');
+  assert.ok(ELITE_LOOK.trim === '#f0c860', 'gold elite tell available');
 });
 
 check('rollVariant maps stubbed rng onto the palette range (base + variants)', () => {

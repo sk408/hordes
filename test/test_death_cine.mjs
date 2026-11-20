@@ -31,7 +31,8 @@ const overlay = elements['overlay'];
 
 // ---- 1. the pure timeline -----------------------------------------------------
 S.check('the phase timeline is monotone and ends exactly at the wall duration', () => {
-  const ORDER = { BLOW: 0, COLLAPSE: 1, TAKEN: 2, HANDOFF: 3, DONE: 4 };
+  // R2: the six shots of "the escape that fails" (test_death_movie.mjs pins them).
+  const ORDER = { FREEZE: 0, ROAD: 1, LUNGE: 2, HIT: 3, SLUMP: 4, CLOSE: 5, DONE: 6 };
   let last = -1;
   for (let t = 0; t <= DCINE.CINE_DURATION + 1; t += 7) {   // off the frame grid
     const p = DCINE.phaseAt(t);
@@ -40,11 +41,11 @@ S.check('the phase timeline is monotone and ends exactly at the wall duration', 
     last = idx;
   }
   assert.equal(DCINE.phaseAt(DCINE.CINE_DURATION), 'DONE', 'done at the wall duration');
-  assert.equal(DCINE.PHASES.HANDOFF[1], DCINE.CINE_DURATION, 'the last phase ends at the wall duration');
+  assert.equal(DCINE.PHASES.CLOSE[1], DCINE.CINE_DURATION, 'the last phase ends at the wall duration');
   console.log('  MEASURED timeline: ' + Object.entries(DCINE.PHASES)
     .map(([k, v]) => k + ' ' + v[0] + '-' + v[1] + 'ms').join(', ')
     + ' | wall duration ' + DCINE.CINE_DURATION + 'ms ('
-    + DCINE.CINE_DURATION / 1000 + 's, <= 6.0s)');
+    + DCINE.CINE_DURATION / 1000 + 's, <= 4.2s)');
 });
 S.check('isDone flips exactly once over the whole timeline', () => {
   let flips = 0, prev = DCINE.isDone(-1);
@@ -135,22 +136,33 @@ S.check('the hand-off reveals the IDENTICAL payoff; gold settled ONCE; deathBy n
   assert.deepEqual(st.deathBy, mid.deathBy, 'deathBy was not re-stamped');
 });
 
-// ---- 4. both skips, one input each ----------------------------------------------
-S.check('the KEY skip exits the mode in one input and arms the guard', () => {
+// ---- 4. both skips, by the one skip rule (R2) --------------------------------------
+// Before R2 one press skipped. Now the death movie skips like every movie
+// (src/movie_skip.js): past the start-up guard a press shows SKIP, and a
+// skip key or a tap on SKIP while it is up skips.
+S.check('the KEY skip: a press shows SKIP, ESC skips, and the guard is armed', () => {
   realDeath('TICK');
   T.uiGuard.standDown();
-  h.key('keydown', { key: 'x', preventDefault() {} });      // ONE input
-  assert.equal(st.mode, 'dead', 'one keydown ended the movie');
+  h.advanceClock(500);
+  h.key('keydown', { key: 'x', preventDefault() {} });
+  assert.equal(st.mode, 'death-cine', 'the first press only shows SKIP');
+  h.key('keydown', { key: 'Escape', preventDefault() {} });
+  assert.equal(st.mode, 'dead', 'the second press ended the movie');
   assert.equal(overlay.style.display, 'flex', 'and revealed the payoff');
   assert.equal(T.uiGuard.armed(), true, 'the same gesture cannot also press RETRY');
 });
-S.check('the TAP skip exits the mode in one input and arms the guard', () => {
+S.check('the TAP skip: a tap shows SKIP, a tap on SKIP skips, and the guard is armed', () => {
   realDeath('CHASER');
   T.uiGuard.standDown();
   const tap = elements['game']._ev && elements['game']._ev.pointerdown;
   assert.ok(tap, 'the canvas pointerdown seam is registered');
-  tap({ clientX: 240, clientY: 150, stopPropagation() {}, preventDefault() {} });   // ONE input
-  assert.equal(st.mode, 'dead', 'one tap ended the movie');
+  h.advanceClock(500);
+  tap({ clientX: 240, clientY: 150, stopPropagation() {}, preventDefault() {} });
+  assert.equal(st.mode, 'death-cine', 'a tap in the middle only shows SKIP');
+  tap({ clientX: 240, clientY: 150, stopPropagation() {}, preventDefault() {} });
+  assert.equal(st.mode, 'death-cine', 'a second tap away from SKIP does not skip');
+  tap({ clientX: 455, clientY: 8, stopPropagation() {}, preventDefault() {} });
+  assert.equal(st.mode, 'dead', 'a tap on SKIP ended the movie');
   assert.equal(overlay.style.display, 'flex', 'and revealed the payoff');
   assert.equal(T.uiGuard.armed(), true, 'the guard is armed on the tap path too');
 });
@@ -180,8 +192,8 @@ S.check('60Hz and 120Hz agree: same elapsed time -> same phase, same natural exi
   const at = (frameMs) => {
     h.setFrameMs(frameMs);
     realDeath('BRUTE');
-    // Advance to a fixed ELAPSED wall time: mid-TAKEN on the design timeline.
-    const target = DCINE.PHASES.TAKEN[0] + 200;
+    // Advance to a fixed ELAPSED wall time: in the slump on the design timeline.
+    const target = DCINE.PHASES.SLUMP[0] + 200;
     while (T.deathCine.t < target) h.pump(1);
     const phase = DCINE.phaseAt(T.deathCine.t);
     const tAtPhase = T.deathCine.t;
@@ -197,7 +209,7 @@ S.check('60Hz and 120Hz agree: same elapsed time -> same phase, same natural exi
     `the sampling frame is within one 60Hz frame (${hz60.tAtPhase} vs ${hz120.tAtPhase})`);
   assert.ok(Math.abs(hz60.exitT - hz120.exitT) <= 1000 / 60 + 1,
     `the natural exit lands at the same wall time within one 60Hz frame (${hz60.exitT} vs ${hz120.exitT})`);
-  assert.ok(hz60.exitT <= 6100 && hz120.exitT <= 6100, 'both exits inside the <= 6.0s bar');
+  assert.ok(hz60.exitT <= 4300 && hz120.exitT <= 4300, 'both exits inside the <= 4.2s bar (R2: was 6.0s)');
   console.log('  MEASURED 60Hz: phase ' + hz60.phase + ' at ' + hz60.tAtPhase + 'ms, exit ' + hz60.exitT
     + 'ms | 120Hz: phase ' + hz120.phase + ' at ' + hz120.tAtPhase + 'ms, exit ' + hz120.exitT + 'ms');
 });

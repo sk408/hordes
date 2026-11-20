@@ -129,7 +129,8 @@ const tourRoots = () => globalThis.document.body.children.filter(c => c.id === '
 const settleReveal = () => { for (let i = 0; i < 400 && !(st.titleReveal && st.titleReveal.phase === 'settled'); i++) frame(); };
 
 // Skip the intro movie -> title (fresh boot, starter weapons only).
-keyHandler({ key: 'x', preventDefault() {} });
+// R2: the one movie skip rule: ESC shows SKIP, ESC again skips (after the start-up guard).
+for (let i = 0; i < 90 && st.mode === 'intro'; i++) { keyHandler({ key: 'Escape', preventDefault() {} }); if (st.mode === 'intro') frame(); }
 pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 settleReveal();

@@ -234,7 +234,10 @@ function stripComments(s) {   // strings and templates kept whole; comments remo
 const srcFiles = [];
 (function walk(d) { for (const n of fs.readdirSync(path.join(ROOT, d))) { const p = d + '/' + n; if (fs.statSync(path.join(ROOT, p)).isDirectory()) walk(p); else if (/\.m?js$/.test(p)) srcFiles.push(p); } })('src');
 const IMPORT_ALLOW = { 'src/main.js': ["'./audio.js'"] };   // top-level await during boot, before the first frame
-const FETCH_ALLOW = [];                                        // files besides src/music_files.js
+// src/sfx_files.js (R4 recorded sound effects) fetches only assets/sfx/ files whose names carry
+// their own content hash (test_sfx_files.mjs checks every name against its bytes): a listed name
+// has the same bytes in every release, and a name a newer release dropped fails and stays synth.
+const FETCH_ALLOW = ['src/sfx_files.js'];                      // files besides src/music_files.js
 check('9 every dynamic import() in src/ is on the allowlist (G2)', () => {
   const bad = [];
   for (const p of srcFiles) {
@@ -262,6 +265,9 @@ check('9 every fetch( in src/ is in src/music_files.js or on the allowlist (G2)'
 const LOADER_ALLOW = {
   'src/main.js': ['new Worker(url)'],   // the blob timer worker: a blob: URL, no file
   'src/save.js': ['.href = url'],       // the save download link: a blob: or data: URL
+  // the menu font: asked for once during boot, before the first frame (main.js,
+  // just before the frame loop starts; test_menu_font pins it)
+  'src/menu_font.js': ["'url(' + (env.url || MENU_FONT.url) +"],
 };
 const LOADERS = [
   /\bnew\s+(?:Shared)?Worker\s*\([^)]*\)/g,

@@ -51,6 +51,24 @@ export function placePanel(bounds, view, size, targets = [], avoid = [], menu = 
   if (!menu && below.top + size.h + GAP <= view.bottom) order.unshift(below);
   const box = (c) => ({ left: c.left, top: c.top, right: c.left + size.w, bottom: c.top + size.h });
   const clear = (c, rects) => rects.every(r => !hit(box(c), grow(r, GAP)));
+  // An upper slot that sits on an avoid rect (the HUD's vitals block or its
+  // message lane) may slide down to just under it, if it still keeps off the
+  // middle of the play area. The slid slot is tried right after the original.
+  if (!menu) {
+    const midTop = bounds.top + bounds.height / 2 - GAP;
+    const slide = (c) => {
+      let top = c.top;
+      for (let i = 0; i < 4; i++) {
+        const under = avoid.filter(r => hit(box({ left: c.left, top }), grow(r, GAP)));
+        if (!under.length) break;
+        top = Math.max(...under.map(r => r.bottom)) + GAP + 1;
+      }
+      return top !== c.top && top + size.h <= midTop ? at(top, c.slot) : null;
+    };
+    const i = order.indexOf(upper);
+    const s = i >= 0 ? slide(upper) : null;
+    if (s) order.splice(i + 1, 0, s);
+  }
   const inView = (c) => c.top >= view.top && c.top + size.h <= view.bottom;
   return order.find(c => inView(c) && clear(c, targets) && clear(c, avoid)) ||
     order.find(c => inView(c) && clear(c, targets)) || order[0];

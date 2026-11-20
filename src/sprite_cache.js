@@ -50,24 +50,27 @@ export function cacheEnabled() {
 // ---- styles ----------------------------------------------------------------
 // outline: colour of the 1px ring round the silhouette (null = none)
 // outline2: colour of a second ring outside the first (elite / rarity tells)
+// outline3: colour of a third ring outside the second (R6: the hero's dark
+//   keyline on a light floor, so its warm-white ring does not melt into snow)
 // rim: lighten the top edge, darken the bottom edge
 // shadow: bake a contact shadow under the feet
-// flash: paint the whole silhouette white (hit flash)
+// flash: paint the whole silhouette white (hit flash); a colour string
+//   paints it that colour (integ3: dark on a light floor, where white vanished)
 // tint: [r, g, b, a] blended over the body (chill)
 // mute: pull the colours a little toward grey and darker (art pass: the
 //   horde sits a step behind the hero, who stays at full saturation)
-const OUTLINE_DARK = '#0b0912';
+export const OUTLINE_DARK = '#0b0912';
 const styles = new Map();
 export function spriteStyle(spec) {
   const s = spec || {};
-  const key = (s.outline || '') + '|' + (s.outline2 || '') + '|' + (s.rim ? 1 : 0) +
-    (s.shadow ? 1 : 0) + (s.flash ? 1 : 0) + (s.mute ? 'm' : '') + (s.struct ? 's' : '') + '|' +
+  const key = (s.outline || '') + '|' + (s.outline2 || '') + '|' + (s.outline3 ? s.outline3 + '|' : '') + (s.rim ? 1 : 0) +
+    (s.shadow ? 1 : 0) + (s.flash ? (typeof s.flash === 'string' ? s.flash : 1) : 0) + (s.mute ? 'm' : '') + (s.struct ? 's' : '') + '|' +
     (s.tint ? s.tint.join(',') : '');
   let st = styles.get(key);
   if (!st) {
-    st = { key, outline: s.outline || null, outline2: s.outline2 || null, rim: !!s.rim,
-      shadow: !!s.shadow, flash: !!s.flash, tint: s.tint || null, mute: !!s.mute, struct: !!s.struct };
-    st.pad = st.struct ? 1 : st.outline2 ? 2 : (st.outline ? 1 : 0);
+    st = { key, outline: s.outline || null, outline2: s.outline2 || null, outline3: s.outline3 || null, rim: !!s.rim,
+      shadow: !!s.shadow, flash: s.flash ? (typeof s.flash === 'string' ? s.flash : '#ffffff') : null, tint: s.tint || null, mute: !!s.mute, struct: !!s.struct };
+    st.pad = st.struct ? 1 : st.outline3 ? 3 : st.outline2 ? 2 : (st.outline ? 1 : 0);
     st.extra = st.struct ? 3 : 0;   // room for the cast shadow (right and below)
     st.below = st.shadow ? 2 : 0;
     styles.set(key, st);
@@ -85,12 +88,30 @@ const CHILL = [106, 168, 216, 0.45];
 // The style of a live actor: flags pick the baked variant.
 //   ring: outer tell colour (elite gold, rarity colour, telegraph white)
 //   mute: the horde look (see `mute` above); the hero and bosses pass false
-export function actorStyle(flash, slow, ring, grounded = true, mute = false) {
+// keyline: a dark ring outside `ring` (R6: the hero on a light floor)
+// A light floor (keyline, or `flash` given as FLASH_ON_LIGHT): the hit flash
+// is dark, ringed in white, so a hurt hero or a falling body stays the
+// strongest shape on snow.
+export const FLASH_ON_LIGHT = '#1a1420';
+export function actorStyle(flash, slow, ring, grounded = true, mute = false, keyline = false) {
+  if (flash && keyline) flash = FLASH_ON_LIGHT;
   return spriteStyle({
     outline: flash ? '#ffffff' : OUTLINE_DARK, outline2: ring || null,
-    rim: !flash, shadow: grounded, flash: !!flash, tint: (!flash && slow) ? CHILL : null,
+    outline3: keyline && ring ? OUTLINE_DARK : null,
+    rim: !flash, shadow: grounded, flash: flash || false, tint: (!flash && slow) ? CHILL : null,
     mute: !flash && mute,
   });
+}
+// A killed body's first beat (the fold). On a dark floor it flashes white,
+// outlined in white, as any hit. On a light floor it is a plain dark
+// silhouette with a dark outline: the white outline on a dark body belongs to
+// the hurt hero there (warm white is the hero), so a dying enemy never
+// looks like the hero. After the first beat the body is drawn as it was.
+// ring / keyline: a boss's dark body keeps its rim (and its keyline on a
+// light floor) while it folds, as in the fight (bossdark).
+export function corpseStyle(fold, light, grounded = true, mute = false, ring = null, keyline = false) {
+  if (fold && light) return spriteStyle({ outline: OUTLINE_DARK, shadow: grounded, flash: FLASH_ON_LIGHT });
+  return actorStyle(fold, false, fold ? null : ring, grounded, mute, !fold && keyline);
 }
 
 // ---- bake ------------------------------------------------------------------
@@ -180,11 +201,12 @@ function dress(g, w, h, st) {
   const solid = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) solid[i] = d[i * 4 + 3] > 0 ? 1 : 0;
   const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : solid[y * w + x];
+  const flashRgb = st.flash ? hexRgb(st.flash) : null;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       if (!solid[y * w + x]) continue;
       const i = (y * w + x) * 4;
-      if (st.flash) { d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = 255; continue; }
+      if (st.flash) { d[i] = flashRgb[0]; d[i + 1] = flashRgb[1]; d[i + 2] = flashRgb[2]; d[i + 3] = 255; continue; }
       if (st.mute) {
         const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
         d[i] = (d[i] * 0.78 + l * 0.22) * 0.9;
@@ -221,6 +243,7 @@ function dress(g, w, h, st) {
   };
   if (st.outline) ring(st.outline, solid);
   if (st.outline2) ring(st.outline2, solid);
+  if (st.outline3) ring(st.outline3, solid);
   g.putImageData(img, 0, 0);
 }
 
@@ -256,7 +279,7 @@ function paintGridRects(g, grid, palette, x, y, s, white) {
     const row = grid[ry];
     for (let rx = 0; rx < row.length; rx++) {
       const v = row[rx];
-      if (v) { g.fillStyle = white ? '#ffffff' : palette[v]; g.fillRect(x + rx * s, y + ry * s, s, s); }
+      if (v) { g.fillStyle = white ? (typeof white === 'string' ? white : '#ffffff') : palette[v]; g.fillRect(x + rx * s, y + ry * s, s, s); }
     }
   }
 }
@@ -285,6 +308,63 @@ export function blitGrid(g, grid, palette, x, y, style = STYLE_PLAIN, scale = 1)
   return true;
 }
 
+// A cached entry mirrored left to right (a body walking left). Baked once
+// from the entry beside it, so each (grid, palette, style) has at most two.
+function mirrored(per, key, e) {
+  const mk = key + ':f';
+  let m = per.get(mk);
+  if (!m) {
+    const img = factory(e.w, e.h);
+    const c = img.getContext('2d');
+    if (c.setTransform) { c.setTransform(-1, 0, 0, 1, e.w, 0); c.drawImage(e.img, 0, 0); c.setTransform(1, 0, 0, 1, 0, 0); }
+    else c.drawImage(e.img, 0, 0);
+    m = { img, dx: e.dx, dy: e.dy, w: e.w, h: e.h, mirror: true };
+    per.set(mk, m);
+    stats.baked++;
+  }
+  return m;
+}
+
+// blitGrid with a pose (src/actor_anim.js): `flip` mirrors the sprite in its
+// own box; kx, ky stretch it about (px, py), the feet. With no flip and
+// kx = ky = 1 this draws exactly what blitGrid draws.
+export function blitGridPose(g, grid, palette, x, y, style, scale, flip, kx, ky, px, py) {
+  if (!cacheEnabled() || (!flip && kx === 1 && ky === 1)) return blitGrid(g, grid, palette, x, y, style, scale);
+  let per = gridEntries.get(grid);
+  if (!per) { per = new Map(); gridEntries.set(grid, per); }
+  const key = paletteId(palette) + ':' + style.key;
+  let e = per.get(key);
+  if (!e) {
+    e = bake(grid[0].length, grid.length, 0, 0, style,
+      (c, ox, oy) => paintGridRects(c, grid, palette, ox, oy, 1, false));
+    per.set(key, e);
+  }
+  // The box blitGrid would draw (art origin x, y, padding included), then
+  // mirrored about its own middle (art width w0 sits centred in the pad).
+  const w0 = grid[0].length;
+  const pad = -e.dx;
+  let x0 = x + Math.round(e.dx * scale), y0 = y + Math.round(e.dy * scale);
+  const w1 = Math.round(e.w * scale), h1 = Math.round(e.h * scale);
+  if (flip) {
+    e = mirrored(per, key, e);
+    // The baked box is pad + art + pad + extra: mirroring puts the extra on the
+    // left, so shift by it to keep the art where it was.
+    x0 -= Math.round((e.w - w0 - pad * 2) * scale);
+  }
+  stats.blits++;
+  if (kx === 1 && ky === 1) {
+    // Mirrored only: the plain blit of the mirrored raster.
+    if (scale === 1) g.drawImage(e.img, x0, y0);
+    else g.drawImage(e.img, x0, y0, w1, h1);
+    return true;
+  }
+  const x1 = x0 + w1, y1 = y0 + h1;
+  const ax = Math.round(px + (x0 - px) * kx), bx = Math.round(px + (x1 - px) * kx);
+  const ay = Math.round(py + (y0 - py) * ky), by = Math.round(py + (y1 - py) * ky);
+  g.drawImage(e.img, ax, ay, Math.max(1, bx - ax), Math.max(1, by - ay));
+  return true;
+}
+
 // Draw a procedural painter through the cache. `box` = { x, y, w, h } is the
 // painter's extent relative to its origin; `paint(ctx, ox, oy)` must draw the
 // same pixels for the same key. Falls back to calling paint on `g` directly.
@@ -307,6 +387,8 @@ export function blitPainted(g, key, box, paint, x, y, style = STYLE_PLAIN) {
 
 // Soft round glow (auras, telegraph pools): `r` px radius, built from
 // concentric pixel discs so it stays in the pixel-art idiom.
+// A glow is three stacked discs of one alpha each: 4 baked strengths.
+export const glowLayerAlpha = (alpha) => 0.07 * Math.max(1, Math.min(4, Math.round(alpha * 4)));
 export function blitGlow(g, colour, r, x, y, alpha = 1) {
   const a = Math.max(1, Math.min(4, Math.round(alpha * 4)));   // 4 baked strengths
   const paint = (c, ox, oy) => {
@@ -328,6 +410,12 @@ export function blitGlow(g, colour, r, x, y, alpha = 1) {
 
 export function cacheStats() { return { ...stats, styles: styles.size, painted: painted.size }; }
 
+// How many baked variants one grid has (the test seam for the cache bound).
+export function gridVariants(grid) {
+  const per = gridEntries.get(grid);
+  return per ? per.size : 0;
+}
+
 // A blank w x h canvas from the cache's own source (the world ground chunks
 // borrow it), or null where no real canvas exists.
 export function scratchCanvas(w, h) {
@@ -339,9 +427,18 @@ export const SPRITE_CACHE_TEST = {
   // Count-only canvases: the cache takes its drawImage path with no raster
   // behind it (the headless draw-call probe).
   forceFakeCanvas() {
-    const ctx = () => ({
+    // Any other call (the light layer's clearRect, save, gradients) is a no-op,
+    // so a test can render a whole frame with the light ON.
+    const ctx = () => new Proxy({
       fillStyle: '', fillRect() {}, drawImage() {}, putImageData() {},
       getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+      createLinearGradient: () => ({ addColorStop() {} }),
+      createRadialGradient: () => ({ addColorStop() {} }),
+      measureText: () => ({ width: 0 }),
+      createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+    }, {
+      get(t, p) { if (p in t) return t[p]; return typeof p === 'string' ? () => {} : undefined; },
+      set(t, p, v) { t[p] = v; return true; },
     });
     factory = (w, h) => { const c = ctx(); return { width: w, height: h, getContext: () => c }; };
     painted.clear();

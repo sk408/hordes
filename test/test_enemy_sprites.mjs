@@ -209,7 +209,7 @@ console.log('RENDER SEAM (every roster sprite paints COMPOSED + deterministic):'
 
 console.log('PRESENTATION CHAIN (elites + bosses, documented not redrawn):');
 {
-  ok(ELITE_LOOK.trim === '#ffd54a', 'elite gold-trim tell is stable (' + ELITE_LOOK.trim + ')');
+  ok(ELITE_LOOK.trim === '#f0c860', 'elite gold-trim tell is stable (' + ELITE_LOOK.trim + ')');
   const bossIds = Object.keys(BOSS_SPRITES);
   ok(bossIds.includes('GRAVELMAW') && bossIds.includes('CHOIR_MOTHER') &&
      bossIds.includes('PYRAXIS') && bossIds.includes('HERALD'),

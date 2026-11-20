@@ -204,7 +204,8 @@ const seedFloor = (gems = 12, potions = 2, items = 1) => {
   for (let i = 0; i < items; i++) T.m3.pushItemDrop({ x: q.x - i, y: q.y, item: rollItemOfRarity('COMMON'), age: 0 });
 };
 
-keyHandler({ key: 'x', preventDefault() {} });
+// R2: the one movie skip rule: ESC shows SKIP, ESC again skips (after the start-up guard).
+for (let i = 0; i < 90 && st.mode === 'intro'; i++) { keyHandler({ key: 'Escape', preventDefault() {} }); if (st.mode === 'intro') frame(); }
 pump(5);
 assert.equal(st.mode, 'title', 'title screen up');
 

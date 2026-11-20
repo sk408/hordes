@@ -9,17 +9,18 @@
 // key ended it 0.4 s in (Steve, 2026-10-03: "it just skipped really fast").
 import { escapeWorth, bestGoldOf, hasWrit, bankEscape } from './escape_payout.js';
 import {
-  BEATS, DURATION, LUNGES, BOSS_T, STOMPS, FLASH_T, SKIP_HIT, drawScene, drawCard,
+  BEATS, DURATION, LUNGES, BOSS_T, STOMPS, FLASH_T, drawScene, drawCard,
 } from './escape_cine_art.js';
 import { stageOf } from './stages.js';
 import { enemySpriteFor } from './enemy_sprites.js';
 import { BOSSES, BOSS_SPRITES, BOSS_ORDER } from './bosses.js';
 import { characterSpriteFor } from './character_sprites.js';
 import { mulberry32 } from './weather.js';
+// The skip rule is shared by every movie (src/movie_skip.js); this movie was
+// its model.
+import { SKIP_GUARD_S, SKIP_ASK_S, tickSkip, pressSkip, skipHit as skipHitShared } from './movie_skip.js';
 
-export { BEATS, DURATION };
-export const SKIP_GUARD_S = 0.4;   // a press this soon after the start is ignored
-export const SKIP_ASK_S = 2.5;     // how long the skip prompt stays up after a press
+export { BEATS, DURATION, SKIP_GUARD_S, SKIP_ASK_S };
 export const STILL_S = 1.5;        // how long the still card holds (reduced motion)
 export const HORDE_SIZE = 30;      // enemies in the wave, at most
 
@@ -140,7 +141,7 @@ export function frame(g, dt) {
   const t0 = c.t;
   const step = Math.min(0.1, Math.max(0, Number(dt) || 0));
   if (!c.held) c.t += step;
-  if (c.ask > 0) c.ask = Math.max(0, c.ask - step);
+  tickSkip(c, step);
   if (c.onCue && !c.reduced) {
     while (c.cue < CUES.length && CUES[c.cue][0] <= c.t) {
       const q = CUES[c.cue++];
@@ -162,17 +163,14 @@ export function frame(g, dt) {
 // the cinematic.
 export function press(confirm = false, tap = false) {
   const c = cine;
-  if (!c || c.ended || c.t < SKIP_GUARD_S) return false;
-  if (!(confirm && c.ask > 0)) { c.ask = SKIP_ASK_S; c.askTap = !!tap; return false; }
+  if (!c || c.ended) return false;
+  if (!pressSkip(c, c.t, confirm, tap)) return false;
   if (c.onCue && c.scene.payout > 0) c.onCue('GOLD', 0);
   finish('skip');
   return true;
 }
 // Is (vx, vy), in view pixels, on the SKIP button?
-export function skipHit(vx, vy) {
-  const r = SKIP_HIT;
-  return vx >= r.x && vx < r.x + r.w && vy >= r.y && vy < r.y + r.h;
-}
+export function skipHit(vx, vy) { return skipHitShared(vx, vy); }
 
 // End now, paid in full: `skip` for a skip from code, `finishNow` for a tab
 // nobody is watching or a run nobody is at.

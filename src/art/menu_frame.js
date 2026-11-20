@@ -51,6 +51,13 @@ export const MENU_FRAME_PALETTES = {
     1: '#0a0603', 2: '#fff2b0', 3: '#e8c05a', 4: '#ffd75e', 5: '#8a5a2a',
     6: '#2b1c12', 7: '#3d2818', 8: '#1d1209', 9: 'rgba(6,4,2,0.55)',
   },
+  // The title's ONE main button (PLAY): a pale gold lip, a gold frame and a
+  // warmer, brighter plank, so it reads as the thing to press (warm white is
+  // the hero's colour, so not here). Hover and keyboard focus still use 'hot'.
+  main: {
+    1: '#0a0603', 2: '#ffe9a0', 3: '#ffd75e', 4: '#ffd75e', 5: '#a8702a',
+    6: '#4a2e12', 7: '#64401c', 8: '#2e1c0a', 9: 'rgba(6,4,2,0.55)',
+  },
 };
 
 // The cast shadow's offset in pixels (the old CSS drop-shadow was 5px 6px).

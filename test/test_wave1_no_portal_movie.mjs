@@ -124,18 +124,21 @@ S.check('wave 1: boss kill, portal entry, straight into the escape chase; no por
   assert.equal(st.stage, stage0, 'wave 2 stays on the stage (travel is after every second wave)');
 });
 
-S.check('wave 2: the portal movie still plays, with its music scene, then the intermission (no escape)', () => {
+// R2: from wave 2 the portal movie is the 2.5 s beat on the battlefield, from
+// the kill (test_portal_beat.mjs pins its timeline).
+S.check('wave 2: the portal beat plays, with its cue and music scene, then the intermission (no escape)', () => {
   freeze();
   st.player.invuln = 1e6;
+  cues.length = 0;
   bossDown();
   const gold0 = prof.gold;
-  cues.length = 0;
+  assert.equal(st.mode, 'playing', 'no cut away at wave 2');
+  assert.ok(T.portalBeat.live, 'the beat plays at wave 2');
+  assert.ok(cues.includes('portal'), 'the beat asks for its portal cue at wave 2: ' + cues.join(','));
+  assert.equal(T.music.scene(), 'portal', 'the beat keeps its music scene (the duck)');
   const seen = enterPortal();
-  assert.equal(st.mode, 'portal-cine', 'the movie plays at wave 2');
-  assert.ok(cues.includes('portal'), 'the movie asks for its portal cue at wave 2: ' + cues.join(','));
-  assert.equal(T.music.scene(), 'portal', 'the movie keeps its music scene (the duck)');
-  runOut('portal-cine', 60 * 10, seen);
   assert.equal(st.mode, 'intermission');
+  assert.ok(!seen.modes.has('portal-cine'), 'no separate scene');
   assert.ok(!seen.modes.has('escape'), 'no escape after wave 2');
   assert.ok(!/ESCAPED/.test(sub()));
   assert.equal(prof.gold, gold0);

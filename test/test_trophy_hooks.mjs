@@ -43,7 +43,7 @@ function parkOnHero() {
 }
 
 S.check('a wave finished without a hit banks UNTOUCHED_WAVE; a hit clears it', () => {
-  if (st.mode === 'intro') h.key('keydown', { key: 'x', preventDefault() {} });
+  if (st.mode === 'intro') h.skipMovie();
   T.startRun();
   h.pump(2);
   assert.equal(st.mode, 'playing', 'run live');
@@ -60,6 +60,7 @@ S.check('a wave finished without a hit banks UNTOUCHED_WAVE; a hit clears it', (
   h.pump(3);
   assert.equal(st.runCounts.waveTookDamage, true, 'the contact path flagged the wave');
   T.run.nextWave();
+  h.skipMovie();   // R2: a CONTINUE that travels shows the road first
   assert.equal(st.runCounts.untouchedWave, true, 'the earlier untouched wave is not revoked');
 });
 
@@ -109,7 +110,7 @@ S.check('a REAL death earns the four counter trophies and grants PALADIN', () =>
   // contract), then the run has ended through die() and every assertion
   // below runs unchanged.
   for (let i = 0; i < 30 && st.mode !== 'death-cine' && st.mode !== 'dead'; i++) h.pump(1);
-  h.key('keydown', { key: 'x', preventDefault() {} });   // any key skips the movie
+  h.skipMovie();   // R2: the one movie skip rule (two presses)
   for (let i = 0; i < 4 && st.mode !== 'dead'; i++) h.pump(1);
   assert.equal(st.mode, 'dead', 'the run ended through die()');
 

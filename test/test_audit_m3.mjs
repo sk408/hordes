@@ -113,18 +113,29 @@ const CAPS = CONFIG.GROUND_ITEMS;
   //        field is a plain push and pays its own value (K = the run's live
   //        xp multipliers, measured with a control gem so weather/rampage
   //        stance cannot make the economy assert flaky). --------------------
-  st.gems.length = 0;
-  let xpBefore = st.player.xp;
-  T.m3.pushGem(makeGem(st.player.x + 1, st.player.y, 4));   // control gem
-  assert.equal(st.gems.length, 1, 'single gem below cap: plain push');
-  h.pump(2);
-  const K = (st.player.xp - xpBefore) / 4;
-  assert.ok(K > 0, `control gem collected (multiplier ${K})`);
-  xpBefore = st.player.xp;
-  T.m3.pushGem(makeGem(st.player.x + 1, st.player.y, 5));
-  h.pump(2);
-  assert.ok(Math.abs((st.player.xp - xpBefore) - 5 * K) < 1e-9,
-    `the reached gem paid exactly its own value (${st.player.xp - xpBefore} == 5 x ${K})`);
+  // The multiplier can change in the middle of a measurement (about 1 seed in 50: seeds 39 and
+  // 53 paid the test gem at 1.1 times the control gem's rate). So the test gem is bracketed by
+  // two control gems, and a measurement counts only when both controls agree.
+  const payOf = (xp) => {
+    st.gems.length = 0;
+    const before = st.player.xp;
+    T.m3.pushGem(makeGem(st.player.x + 1, st.player.y, xp));
+    assert.equal(st.gems.length, 1, 'single gem below cap: plain push');
+    h.pump(2);
+    return st.player.xp - before;
+  };
+  let K = 0, paid = 0, steady = false;
+  for (let tries = 0; tries < 8 && !steady; tries++) {
+    const k1 = payOf(4) / 4;   // control gem
+    assert.ok(k1 > 0, `control gem collected (multiplier ${k1})`);
+    paid = payOf(5);
+    const k2 = payOf(4) / 4;   // control gem again
+    steady = Math.abs(k1 - k2) < 1e-12;
+    K = k1;
+  }
+  assert.ok(steady, 'the multiplier held still for one measurement in eight');
+  assert.ok(Math.abs(paid - 5 * K) < 1e-9,
+    `the reached gem paid exactly its own value (${paid} == 5 x ${K})`);
   assert.equal(st.gems.length, 0, 'and left the ground');
 
   // --- 6. Merged potion payout: a count-carrying drop pays up to the potion
@@ -165,12 +176,34 @@ const CAPS = CONFIG.GROUND_ITEMS;
     }
     return best;
   };
+  // The two arms must time the same work. A level-up draft from the gem pile, a shrine or a
+  // death stops the run in one arm and not the other (seed 106: the 10000-gem arm stopped and
+  // looked cheaper), so XP, sites and damage are held, and the times count only if the run
+  // stayed in play through both arms.
+  // (The next level is put out of reach: an XP multiplier of 0 does not hold XP, the game reads it as 1.)
+  const next0 = st.player.xpNext, sites0 = st.sites;
+  st.player.xpNext = 1e15;
+  st.sites = [];
+  // And the same world in both arms: no enemies and no new ones, or the later arm times a
+  // busier fight than the earlier one (seeds 104 and 158).
+  st.enemies.length = 0;
+  if (st.enemyShots) st.enemyShots.length = 0;
+  st.spawnTimer = 1e9;
+  if (st.wave) { st.wave.midAt = st.time + 1e9; st.wave.endsAt = st.time + 1e9; }
+  let inPlay = st.mode === 'playing';
+  const arm = () => { h.pump(200, () => { st.player.invuln = 1e6; }); if (st.mode !== 'playing') inPlay = false; };
   st.gems = synth(10000);                   // the OLD world: unbounded array
-  const uncapped = timeBest(() => h.pump(200));
+  const uncapped = timeBest(arm);
   st.gems = synth(CAPS.GEM_CAP);            // the NEW world: capped array
-  const capped = timeBest(() => h.pump(200));
+  const capped = timeBest(arm);
+  st.player.xpNext = next0;
+  st.sites = sites0;
   console.log(`scan cost, 200 frames best-of-3: capped(${CAPS.GEM_CAP}) ${capped.toFixed(1)}ms vs uncapped(10000) ${uncapped.toFixed(1)}ms = ${(uncapped / Math.max(0.01, capped)).toFixed(1)}x`);
-  assert.ok(capped < uncapped, `capped scan (${capped.toFixed(1)}ms) must beat uncapped (${uncapped.toFixed(1)}ms)`);
+  if (!inPlay) console.log('note: the run left play during the timing (mode ' + st.mode + '); the scan-cost comparison is not judged in this run');
+  // With the floor budget (C.FLOOR) a big pile is merged down within a frame, so the two arms
+  // now do nearly the same work and their times differ by noise. The rule that is left: the
+  // capped world is never notably dearer than the unbounded one.
+  else assert.ok(capped < uncapped * 1.5, `capped scan (${capped.toFixed(1)}ms) must not cost more than 1.5x uncapped (${uncapped.toFixed(1)}ms)`);
 }
 
 console.log('test_audit_m3: all checks passed');

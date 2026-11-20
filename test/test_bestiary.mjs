@@ -137,12 +137,18 @@ S.check('a boss paints its real sprite at the LARGEST INTEGER scale in the budge
     'and it is the LARGEST such scale');
   assert.ok(Math.abs(sc.x - Math.round((C.VIEW_W - sc.w) / 2)) <= 1 &&
     Math.abs(sc.y - Math.round((C.VIEW_H - sc.h) / 2)) <= 1, 'centered');
-  const blocks = rec.rects.filter(q => q.w === sc.scale && q.h === sc.scale);
-  assert.equal(blocks.length, paintedCells(grid),
-    'one NxN block per painted sprite pixel (' + blocks.length + ')');
+  const all = rec.rects.filter(q => q.w === sc.scale && q.h === sc.scale);
+  const n = paintedCells(grid);
+  // bossdark: a found boss wears its rim: four passes of its silhouette in the
+  // rim colour, four of a dark line, then the sprite itself (the last n blocks).
+  assert.equal(all.length, 9 * n, 'rim, dark line, then one NxN block per painted sprite pixel (' + all.length + ')');
+  assert.ok(all.slice(0, 4 * n).every(q => q.style === spr.rim), 'the rim in the boss rim colour');
+  const PAD = 6;
+  assert.ok(all.every(q => q.x >= sc.x - PAD && q.x + q.w <= sc.x + sc.w + PAD && q.y >= sc.y - PAD && q.y + q.h <= sc.y + sc.h + PAD), 'the rim stays inside the case');
+  const blocks = all.slice(8 * n);
   const pal = Object.values(spr.palette).map(String);
-  assert.ok(blocks.some(q => pal.includes(q.style)),
-    'a discovered boss paints its REAL palette (' + blocks[0].style + '...)');
+  assert.ok(blocks.every(q => pal.includes(q.style)),
+    'a discovered boss paints its REAL palette on top (' + blocks[0].style + '...)');
 });
 
 S.check('an UNDISCOVERED boss paints ONLY the mask colour (silhouette is the sprite)', () => {
@@ -186,7 +192,7 @@ S.check('a minion paints its real look; masked it paints the mask', () => {
 
 S.check('a tier paints its tell colour; ELITE gold, RARE cyan, MYTHIC violet', () => {
   const { R, rec, ctx } = makeRenderer();
-  const expect = { ELITE: '#ffd75e', RARE: RARITY.RARE.tell.outline, MYTHIC: RARITY.MYTHIC.tell.outline };
+  const expect = { ELITE: '#f0c860', RARE: RARITY.RARE.tell.outline, MYTHIC: RARITY.MYTHIC.tell.outline };
   for (const [ref, colour] of Object.entries(expect)) {
     rec.rects.length = 0;
     R.drawBestiary(ctx, { bestiaryView: view({ id: 'tier:' + ref, kind: 'tier', ref }) });
@@ -214,7 +220,7 @@ const cardWith = (t) => cards().find(c => (c.innerHTML || '').includes(t));
 const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
 
 S.check('the title menu offers a BESTIARY card carrying the honest count', () => {
-  if (st.mode === 'intro') key('x');                 // any key skips the intro movie
+  if (st.mode === 'intro') h.skipMovie();                 // any key skips the intro movie
   assert.equal(st.mode, 'title', 'the title is up');
   T.showTitle();
   cardWith('PROGRESS').click();            // U1: the guide's card lives behind PROGRESS

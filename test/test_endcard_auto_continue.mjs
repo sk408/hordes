@@ -16,7 +16,7 @@ const T = h.T, st = h.state, el = h.elements;
 T.banners.suppressAll();
 const kdown = (k, extra = {}) => h.key('keydown', { key: k, preventDefault() {}, ...extra });
 h.pump(3);
-if (st.mode === 'intro') { kdown('x'); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 
 const cards = () => [...el['ov-cards'].children];
 const nameOf = (c) => ((c.innerHTML || '').match(/class="name">([^<]*)</) || [])[1] || '';
@@ -42,7 +42,8 @@ S.check('OFF on the AUTO pilot: the third card (after RETRY and SHOP), says what
   T.setPilotMode('AUTO_ALL');
   startRun();
   dieToCard();
-  assert.deepEqual(cards().map(nameOf), ['RETRY', 'SHOP', 'AUTO-CONTINUE: OFF', 'TITLE']);
+  // R5: BUY NEXT follows TITLE, on its own line (test_end_card.mjs).
+  assert.deepEqual(cards().map(nameOf), ['RETRY', 'SHOP', 'AUTO-CONTINUE: OFF', 'TITLE', 'BUY NEXT']);
   const c = autoCard();
   assert.ok(!(c.className || '').includes('dim'));
   assert.ok(descOf(c).includes('start the next run by itself'), descOf(c));

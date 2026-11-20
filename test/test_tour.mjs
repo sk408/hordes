@@ -372,7 +372,8 @@ await check('integration: title self-labelling; HOW TO PLAY reachable; no in-run
   };
 
   // Skip the intro movie -> title; the reveal settles (N2) and NOTHING mounts.
-  keyHandler({ key: 'x', preventDefault() {} });
+  // R2: the one movie skip rule: ESC shows SKIP, ESC again skips (after the start-up guard).
+  for (let i = 0; i < 90 && st.mode === 'intro'; i++) { keyHandler({ key: 'Escape', preventDefault() {} }); if (st.mode === 'intro') frame(); }
   for (let i = 0; i < 5; i++) frame();
   assert.equal(st.mode, 'title', 'title screen up');
   settleReveal();

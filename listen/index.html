@@ -39,6 +39,17 @@
   .lv .n { color: var(--new); } .lv .o { color: var(--old); }
   .note { color: var(--dim); font-size: 13px; }
   #status { color: var(--dim); font-size: 13px; min-height: 18px; }
+  /* R4: recorded sounds, pick */
+  .pk { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; }
+  .pk h3 { font-size: 15px; margin: 0 0 6px; }
+  .pk .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  .pk .rl { color: var(--dim); font-size: 13px; min-width: 104px; }
+  @media (max-width: 560px) { .pk .rl { flex: 0 0 100%; min-width: 0; margin-bottom: -2px; } }
+  .pk button { min-height: 40px; padding: 6px 10px; }
+  .pk button.syn { border-style: dashed; }
+  .pk button.pick[aria-pressed="true"] { background: var(--new); color: #10140f; font-weight: 700; border-color: var(--new); }
+  .picks { background: #0c0d11; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0 24px; }
+  .picks code { display: block; font: 13px/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; user-select: all; margin: 6px 0; }
 </style>
 </head>
 <body>
@@ -51,6 +62,9 @@
       <li>Press <b>BUSY FIGHT + MUSIC</b>. The fight should sit with the music, not drown it.</li>
       <li>Press <b>Boss roar</b> and <b>Escape roar</b> under Movie cues. Loud, but no longer a jump scare next to the fight.</li>
       <li>Press <b>chest</b>, then <b>chestEmpty</b>. The empty one should feel like a let-down.</li>
+      <li>Press <b>gem</b>, then <b>gemRich</b>. The rich gem (many gems merged into one) should feel like a payoff.</li>
+      <li>At the bottom, under <b>Recorded sounds: pick</b>, choose a recorded sound for each slot (or keep the synth) and send the line it gives you.</li>
+      <li>Under <b>Sounds that mean something</b>, play the eight hands from Pair to Straight Flush. Each should be bigger than the one before, not just louder. Then the heartbeat at 25%, 15% and 5%: soft, and faster as health falls.</li>
     </ol>
     <p class="note">The NEW / OLD switch is saved in this browser, and the game on the same site uses it too: pick OLD to turn the new mix off in the game. Numbers beside each sound: its loudest moment in LUFS, <span style="color:var(--new)">new</span> and <span style="color:var(--old)">old</span> (higher is louder; 10 more is about twice as loud to the ear).</p>
   </div>
@@ -72,6 +86,28 @@
   <div id="status">Measuring every sound…</div>
   <div class="bar note" id="fightLv"></div>
   <div id="groups"></div>
+  <h2>Recorded sounds: pick</h2>
+  <div class="listen">
+    <b>Recorded sound effects (free CC0 recordings) could replace the synth ones. For each sound below:</b>
+    <ol>
+      <li>Under <b>Alone</b>, press <b>Synth today</b>, then each letter. Hits, kills and gems play their 3 or 4 variations in a row.</li>
+      <li>Under <b>In a fight</b> (or <b>In the menus</b>), press each one: the same busy fight with only that sound changed. This is what counts.</li>
+      <li>Under <b>My pick</b>, choose the one you like best, or <b>Keep synth</b> if none fits.</li>
+      <li>At the bottom, press <b>COPY</b> and send that line to Claude.</li>
+    </ol>
+    <p class="note">Your picks are saved in this browser. In the game, Settings, ADVANCED, SOUND EFFECTS: RECORDED (PREVIEW) plays the A of each sound until your picks are in.</p>
+  </div>
+  <div id="recStatus" class="note">Loading the recorded sounds…</div>
+  <div id="recorded"></div>
+  <div class="picks">
+    <b>Your picks</b>
+    <code id="pickText"></code>
+    <div class="bar" style="margin:6px 0 0">
+      <button id="copyPicks">COPY</button>
+      <button id="fightPicks" disabled>BUSY FIGHT WITH MY PICKS</button>
+      <span id="copied" class="note"></span>
+    </div>
+  </div>
 </main>
 <script type="module">
 const A = await import('./src/audio.js');
@@ -82,6 +118,18 @@ const NAMES = {
   'escape:STEP#4': 'Chase beat (start)', 'escape:STEP#28': 'Chase beat (peak)', 'escape:ESCAPE': 'Dive through',
   'escape:GOLD': 'Escape gold', 'intro:OVERTAKE': 'Intro horde rise', 'intro:TITLE_SLAM': 'Title slam',
   'intro:FADE': 'Intro fade', 'portal:DISSOLVE': 'Portal shimmer', 'portal:WALK': 'Portal step',
+  'death:FREEZE': 'Death: the freeze', 'death:ROAD': 'Death: cut to the road', 'death:LUNGE': 'Death: the lunge',
+  'death:HIT': 'Death: the hit', 'death:SLUMP': 'Death: the fall', 'death:CLOSE': 'Death: the horde closes',
+  // R4: sounds that mean something.
+  'hand:1': 'Hand: Pair', 'hand:2': 'Hand: Two Pair', 'hand:3': 'Hand: Three of a Kind', 'hand:4': 'Hand: Straight',
+  'hand:5': 'Hand: Flush', 'hand:6': 'Hand: Full House', 'hand:7': 'Hand: Four of a Kind', 'hand:8': 'Hand: Straight Flush',
+  crit: 'Critical hit ping', eliteArrive: 'An elite arrives', coin: 'Coin (one)', 'coins:8': 'Coin streak (8 in a row)',
+  goldBank: 'Gold into the bank (end card, later)',
+  // R5: the sting when a weapon evolves or two fuse on screen.
+  forge: 'Evolution: the forge sting',
+  // R7: the boss arrival stings.
+  bossSting: 'A boss arrives: the name card sting', mawSting: 'The Maw arrives: its sting',
+  'heartbeat:0.25': 'Heartbeat at 25% health', 'heartbeat:0.15': 'Heartbeat at 15% health', 'heartbeat:0.05': 'Heartbeat at 5% health',
 };
 const $ = (id) => document.getElementById(id);
 const levels = {};
@@ -215,9 +263,107 @@ async function measureAll() {
   setStatus('Ready. Measured in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s. Tap anything to listen.');
   window.__aud.ready = true;
 }
+// ---- R4: recorded sounds, pick ----
+// Each button renders its job offline through the real audio.js graph (the
+// game's choice in this browser is never touched) and plays the result.
+const F = await import('./src/sfx_files.js');
+const KEY_PICKS = 'hordes_listen_sfx_picks';
+const rec = { buffers: null, ctx: null, src: null };
+window.__aud.rec = rec;
+const LETTERS = 'ABCDE';
+function loadPicks() {
+  try { const p = JSON.parse(localStorage.getItem(KEY_PICKS) || '{}'); return p && typeof p === 'object' ? p : {}; } catch { return {}; }
+}
+function savePicks(p) { try { localStorage.setItem(KEY_PICKS, JSON.stringify(p)); } catch { /* private window */ } }
+function picksText(p) {
+  return 'SFX picks: ' + S.PICK_SLOTS.map((s) => s.slot + '=' + (p[s.slot] || '?')).join(', ');
+}
+function showPicks() {
+  const p = loadPicks();
+  $('pickText').textContent = picksText(p);
+  for (const b of document.querySelectorAll('button.pick')) b.setAttribute('aria-pressed', String(p[b.dataset.slot] === b.dataset.id));
+}
+// The audio context for playing renders: made and resumed inside the click
+// (iOS Safari only starts audio from inside a gesture).
+function recCtx() {
+  if (!rec.ctx) rec.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (rec.ctx.state === 'suspended') rec.ctx.resume().catch(() => {});
+  return rec.ctx;
+}
+async function playJob(job, label) {
+  if (!window.__aud.ready || !rec.buffers) return;
+  const c = recCtx();
+  if (rec.src) { try { rec.src.stop(); } catch { /* ended */ } }
+  const buf = await S.render(A, job, A.getMixMode());
+  S.restore(A);
+  const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination); src.start();
+  rec.src = src;
+  window.__aud.played.push(label);
+}
+const filesOf = (slot, id) => (F.candidate(slot, id) || { files: [] }).files;
+function sfxJob(slot, id) { return { sets: { [slot]: filesOf(slot, id) }, buffers: rec.buffers }; }
+function sceneJob(scene, sfx) { return scene === 'menu' ? { menu: true, sfx } : { fight: true, sfx }; }
+function button(text, cls, onclick) {
+  const b = document.createElement('button');
+  b.textContent = text; if (cls) b.className = cls; b.onclick = onclick;
+  return b;
+}
+function buildRecorded() {
+  const root = $('recorded');
+  root.innerHTML = '';
+  for (const s of S.PICK_SLOTS) {
+    const cands = F.SFX_CANDIDATES[s.slot] || [];
+    const box = document.createElement('div'); box.className = 'pk'; box.dataset.slot = s.slot;
+    const h = document.createElement('h3'); h.textContent = s.label; box.appendChild(h);
+    const row = (label) => {
+      const r = document.createElement('div'); r.className = 'row';
+      const l = document.createElement('span'); l.className = 'rl'; l.textContent = label; r.appendChild(l);
+      box.appendChild(r); return r;
+    };
+    const n = Math.max(...cands.map((c) => c.files.length), 1);
+    const alone = row('Alone');
+    alone.appendChild(button('Synth today', 'syn', () => playJob({ variations: { slot: s.slot, n } }, s.slot + ':synth')));
+    cands.forEach((c, i) => alone.appendChild(button(LETTERS[i] + ': ' + c.label, '',
+      () => playJob({ variations: { slot: s.slot, n: c.files.length }, sfx: sfxJob(s.slot, c.id) }, s.slot + ':' + c.id))));
+    const inScene = row(s.scene === 'menu' ? 'In the menus' : 'In a fight');
+    inScene.appendChild(button('Synth today', 'syn', () => playJob(sceneJob(s.scene, null), s.slot + ':synth:' + s.scene)));
+    cands.forEach((c, i) => inScene.appendChild(button(LETTERS[i], '',
+      () => playJob(sceneJob(s.scene, sfxJob(s.slot, c.id)), s.slot + ':' + c.id + ':' + s.scene))));
+    const mine = row('My pick');
+    const choose = (id) => () => { const p = loadPicks(); p[s.slot] = id; savePicks(p); showPicks(); };
+    cands.forEach((c, i) => { const b = button(LETTERS[i], 'pick', choose(c.id)); b.dataset.slot = s.slot; b.dataset.id = c.id; mine.appendChild(b); });
+    const keep = button('Keep synth', 'pick syn', choose('synth')); keep.dataset.slot = s.slot; keep.dataset.id = 'synth'; mine.appendChild(keep);
+    root.appendChild(box);
+  }
+  showPicks();
+}
+$('copyPicks').onclick = async () => {
+  const t = picksText(loadPicks());
+  try { await navigator.clipboard.writeText(t); $('copied').textContent = 'Copied.'; } catch {
+    const r = document.createRange(); r.selectNodeContents($('pickText'));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $('copied').textContent = 'Selected: copy it with your keyboard or the menu.';
+  }
+};
+// The busy fight with every slot on its pick (synth where none or Keep synth).
+$('fightPicks').onclick = () => {
+  const p = loadPicks(); const sets = {};
+  for (const s of S.PICK_SLOTS) { const c = F.candidate(s.slot, p[s.slot]); if (c) sets[s.slot] = c.files; }
+  playJob({ fight: true, sfx: { sets, buffers: rec.buffers } }, 'fight:picks');
+};
+async function loadRecorded() {
+  buildRecorded();
+  const urls = F.allSfxUrls();
+  const r = await S.decodeSfx(urls, (k, n) => { $('recStatus').textContent = 'Loading the recorded sounds… ' + k + ' / ' + n; });
+  rec.buffers = r.buffers;
+  window.__aud.recLoad = { files: urls.length, failed: r.failed, ms: r.ms, bytes: r.bytes, decodedBytes: r.decodedBytes, decodeMs: r.decodeMs };
+  $('recStatus').textContent = r.failed.length ? 'Some recorded sounds did not load: ' + r.failed.length : 'Recorded sounds ready (' + urls.length + ' files, ' + Math.round(r.bytes / 1024) + ' KB).';
+  $('fightPicks').disabled = false;
+}
+
 showMix();
 requestAnimationFrame(meterLoop);
-measureAll().catch((e) => { setStatus('Measuring failed: ' + e.message); console.error(e); });
+measureAll().then(loadRecorded).catch((e) => { setStatus('Measuring failed: ' + e.message); console.error(e); });
 </script>
 </body>
 </html>

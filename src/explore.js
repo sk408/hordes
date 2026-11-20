@@ -76,7 +76,8 @@ export function bossFight(state) {
 export function gemsNear(state, p) {
   const r2 = EXPLORE.GEM_R * EXPLORE.GEM_R;
   let n = 0;
-  for (const g of state.gems || []) if ((g.x - p.x) ** 2 + (g.y - p.y) ** 2 <= r2 && ++n > EXPLORE.GEM_MAX) return true;
+  // A merged gem (R3 floor) counts as the gems it holds (n).
+  for (const g of state.gems || []) if ((g.x - p.x) ** 2 + (g.y - p.y) ** 2 <= r2 && (n += g.n || 1) > EXPLORE.GEM_MAX) return true;
   return false;
 }
 

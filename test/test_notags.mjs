@@ -27,7 +27,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { boot, suite } from './_harness.mjs';
 
 const s = suite('test_notags');
-const { T, state: st, elements, pump, key } = await boot({ storage: [['hordes_onboarded', '1']] });
+const { T, state: st, elements, pump, key, skipMovie } = await boot({ storage: [['hordes_onboarded', '1']] });
 const body = globalThis.document.body;
 const tagEls = () => (body.children || []).filter(c =>
   typeof c.id === 'string' && c.id.startsWith('tag-'));
@@ -80,7 +80,7 @@ st.portal = { x: st.player.x + 80, y: st.player.y, age: 0 };       // in view
     assert.ok(st.mode === 'death-cine' || st.mode === 'dead', st.mode);
     assert.equal(tagEls().length, 0, tagEls().map(e => e.id));
   });
-  if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });   // skip the movie
+  if (st.mode === 'death-cine') skipMovie();   // skip the movie (R2: two presses)
   step(5);
   step(60 * 8);   // park on the death screen a while — nothing fades in late
   s.check('the death screen stays label-free over time', () => {

@@ -10,6 +10,9 @@
 //     and the worst case all sound, and the worst case never passes 0 dBFS
 //     in the new mix;
 //   - no sideways scroll, no console errors.
+// All four arms take longer than three minutes. --arm <n> (1..4) runs one:
+//   node tools/verify_audition.mjs --arm 1    (1 desktop root, 2 phone root,
+//                                              3 desktop sub-path, 4 phone sub-path)
 // Run: HORDES_CHROME="C:/Program Files/Google/Chrome/Application/chrome.exe" node tools/verify_audition.mjs
 import path from 'node:path';
 import { withPage, ROOT } from './browser.mjs';
@@ -95,9 +98,13 @@ async function run(label, opts, phone) {
 }
 
 const sub = path.basename(ROOT);   // the repo folder: /<name>/listen/index.html, as on the test build
-await run('desktop 1280x720, root', { w: 1280, h: 720, dpr: 1, mobile: false, url: 'listen/index.html', shot: 'audition_desktop' }, false);
-await run('phone 390x844, root', { w: 390, h: 844, dpr: 2, mobile: true, url: 'listen/index.html', shot: 'audition_phone' }, true);
-await run('desktop 1280x720, /' + sub + '/', { w: 1280, h: 720, dpr: 1, mobile: false, root: path.dirname(ROOT), url: sub + '/listen/index.html' }, false);
-await run('phone 390x844, /' + sub + '/', { w: 390, h: 844, dpr: 2, mobile: true, root: path.dirname(ROOT), url: sub + '/listen/index.html' }, true);
+const ARM_I = process.argv.indexOf('--arm');
+const ONLY_ARM = ARM_I >= 0 ? Number(process.argv[ARM_I + 1]) : 0;
+if (ARM_I >= 0 && !(ONLY_ARM >= 1 && ONLY_ARM <= 4)) throw new Error('--arm takes 1, 2, 3 or 4');
+const want = (n) => !ONLY_ARM || ONLY_ARM === n;
+if (want(1)) await run('desktop 1280x720, root', { w: 1280, h: 720, dpr: 1, mobile: false, url: 'listen/index.html', shot: 'audition_desktop' }, false);
+if (want(2)) await run('phone 390x844, root', { w: 390, h: 844, dpr: 2, mobile: true, url: 'listen/index.html', shot: 'audition_phone' }, true);
+if (want(3)) await run('desktop 1280x720, /' + sub + '/', { w: 1280, h: 720, dpr: 1, mobile: false, root: path.dirname(ROOT), url: sub + '/listen/index.html' }, false);
+if (want(4)) await run('phone 390x844, /' + sub + '/', { w: 390, h: 844, dpr: 2, mobile: true, root: path.dirname(ROOT), url: sub + '/listen/index.html' }, true);
 console.log(oks + '/' + (oks + fails) + ' checks passed');
 process.exit(fails ? 1 : 0);

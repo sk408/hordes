@@ -98,7 +98,38 @@ const frame = () => {
   cb(now);
 };
 const tick = (s) => { for (let i = 0, n = Math.round(s * 60); i < n; i++) frame(); };
+// Wait with the world held still. While a test waits in play, the run goes on: a level-up, a
+// shrine the pilot walks into (seeds 62, 197) or an evolution the last pick made ready (seeds
+// 179, 189) opens a NEW offer with its own countdown row and its own auto-pick, and the checks
+// after the wait then fail at random. So: no XP, no sites, and every evolution marked as
+// turned down for the length of the wait. The mark is set again before every frame, and an
+// evolution offer that still opens (a weapon that levels up clears the mark and opens the
+// offer in the same frame: seed 238) is answered NOT NOW at once, as a player could.
+const tickHeld = (s) => {
+  // The next level is put out of reach (an XP multiplier of 0 would not do it: the game reads 0 as 1).
+  const next0 = st.player.xpNext, sites0 = st.sites;
+  const declined0 = st.weapons.map(w => w.evoDeclined);
+  st.player.xpNext = 1e15;
+  st.sites = [];
+  for (let i = 0, n = Math.round(s * 60); i < n; i++) {
+    for (const w of st.weapons) w.evoDeclined = true;
+    frame();
+    if (st.mode === 'evolve') { const c = cards(); c[c.length - 1].click(); }   // NOT NOW is the last card
+  }
+  st.player.xpNext = next0;
+  st.sites = sites0;
+  st.weapons.forEach((w, i) => { if (i < declined0.length) w.evoDeclined = declined0[i]; });
+};
 const cards = () => elements['ov-cards'] ? elements['ov-cards'].children : [];
+// The first card, from `from` on, whose press resolves the draft at once. Not a joker: with
+// the joker row full it opens the replace screen (seed 35). Not a NEW weapon: the run's first
+// one is free and the draft deals again (seed 305).
+const plainCard = (from = 0) => {
+  const list = cards();
+  const plain = (c) => !(c && c._draftOffer && (c._draftOffer.tier === 'JOKER' || c._draftOffer.kitNew));
+  for (let k = 0; k < list.length; k++) { const i = (from + k) % list.length; if (plain(list[i])) return i; }
+  return 0;
+};
 const countdownLine = () => {
   const ov = elements['overlay'];
   return ov ? ov.children.find(c => c.id === 'draft-autopick') : null;
@@ -202,7 +233,7 @@ st.player.xpNext = 1e18;
   const c0 = T.draftAuto.count;
   tick(2);
   st.mode = 'playing';                    // another screen owns the player now
-  tick(10);
+  tickHeld(10);                           // held: nothing else may open an offer meanwhile
   ok('ticking while mode !== draft: no pick', T.draftAuto.count === c0, T.draftAuto.count - c0);
   ok('the countdown line is hidden off-draft', !countdownLine());
   st.mode = 'draft';                      // back on the draft: RESUME
@@ -222,7 +253,7 @@ st.player.xpNext = 1e18;
   tick(60);                               // a FULL MINUTE
   ok('MANUAL: no auto-pick at any elapsed time', T.draftAuto.count === c0, T.draftAuto.count - c0);
   ok('MANUAL: no countdown line anywhere', !countdownLine());
-  cards()[0].click();                     // the human takes the card
+  cards()[plainCard()].click();           // the human takes a card
   ok('a human pick still resolves a MANUAL draft', st.mode === 'playing' && T.draftAuto.count === c0, st.mode);
   st.pilotMode = 'AUTO_ALL';              // restore for the arm below
 }
@@ -233,22 +264,11 @@ st.player.xpNext = 1e18;
   T.openDraft();
   const c0 = T.draftAuto.count;
   tick(3);                                // halfway through the window
-  // The human takes the SECOND card. Not a joker, though: with the joker row full a joker
-  // opens the replace screen instead of resolving the draft, and about 1 seed in 60 put
-  // one in the second place (seed 35), which failed this check at random.
-  const isJoker = (c) => !!(c && c._draftOffer && c._draftOffer.tier === 'JOKER');
-  const tapAt = !isJoker(cards()[1]) ? 1 : (cards().length > 2 && !isJoker(cards()[2]) ? 2 : 0);
-  cards()[tapAt].click();
+  // The human takes the SECOND card, or the next one that resolves the draft (see plainCard).
+  cards()[plainCard(1)].click();
   ok('the tap resolves the draft (not the timer)', st.mode === 'playing' && T.draftAuto.count === c0);
-  // Nothing else may open a draft during the wait: a level-up, or a shrine the pilot walks
-  // into (seed 62), brings a NEW draft with its own countdown row and its own auto-pick,
-  // which failed the two checks below at random.
-  const xp0 = st.player.stats.xpMult, sites0 = st.sites;
-  st.player.stats.xpMult = 0;
-  st.sites = [];
-  tick(6);                                // long past where the timer would fire
-  st.player.stats.xpMult = xp0;
-  st.sites = sites0;
+  // Nothing else may open an offer during the wait (see tickHeld).
+  tickHeld(6);                            // long past where the timer would fire
   ok('the cancelled timer never fires: no second pick', T.draftAuto.count === c0, T.draftAuto.count - c0);
   ok('the countdown line left with the draft', !countdownLine());
 }

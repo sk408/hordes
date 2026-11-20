@@ -115,6 +115,11 @@ async function check(opts, label) {
     okc('boss killed: back to the run track after the debounce', back, { afterMs: Date.now() - tk, cur: (await mus()).cur, mode: await page.evaluate('T.state.mode') });
     // A death in a boss fight, then RETRY: the new run opens with its run track.
     const god = () => page.evaluate('(() => { const p = T.state.player; if (p) { p.hp = 1e9; p.maxHp = 1e9; } return true; })()');
+    // In a fresh run: the boss killed above opened a portal, and the pilot may walk into it
+    // while this step runs (the escape chase, then the intermission), where a forced death does
+    // nothing. About 2 runs in 3 at the phone size this step then never saw the end card.
+    await page.evaluate('(T.startRun(), true)');
+    await page.waitFor("(() => { const m = A.AUDIO_TEST.music(); return T.state.mode === 'playing' && m && m.cur === 'run_wilds'; })()", 8000, 50);
     await god();
     await page.evaluate('T.bossRules.spawnBoss()');
     await page.waitFor("(() => { const m = A.AUDIO_TEST.music(); return m && m.cur === 'boss'; })()", 5000, 20);

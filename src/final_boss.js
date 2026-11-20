@@ -16,7 +16,7 @@
 // cast). decide() mutates NOTHING — volleyIds derive deterministically from
 // age (floor(age / CYCLE)), so replays/interrupts stay consistent.
 
-import { spriteBox } from './sprites.js';
+import { spriteBox, eyeSockets } from './sprites.js';
 
 // ===========================================================================
 // TUNING
@@ -30,7 +30,7 @@ export const FINAL_BOSS_WAVE = 5;
 // false. Sk408 flips BEATABLE later; the floor (and death gating) follows it.
 export const BEATABLE = false;
 export const HP_FLOOR = BEATABLE ? 0 : 1;
-export const DISPLAY_HP = 250_000;
+export const DISPLAY_HP = 7_500_000;   // == CONFIG.RUN.MAW_HP
 
 // Attack choreography (seconds). GRACE = entrance pause before cycle 1.
 export const FINAL_BOSS_PHASES = {
@@ -165,18 +165,20 @@ const MAW_FRAMES = [
   ]),
 ];
 const MAW_PALETTE = {
-  1: '#a868f0',  // void-violet hide
-  2: '#5a2e9a',  // deep violet shading
-  3: '#c8b890',  // bone teeth
-  4: '#ff2f5e',  // eye glow
-  5: '#ff6a3c',  // burning core
-  6: '#3d0a1c',  // throat
+  1: '#3a2654',  // void-violet hide, deep
+  2: '#0b0912',  // void-black shading, eye sockets
+  3: '#c2ae8c',  // bone teeth
+  4: '#ff4a14',  // eye glow
+  5: '#ff6a24',  // burning core
+  6: '#3e1016',  // throat
 };
 
 export const FINAL_BOSS_SPRITE = (() => {
-  const frames = MAW_FRAMES;
+  const frames = MAW_FRAMES.map(f => eyeSockets(f, 4, 2));
   const box = spriteBox(frames[0]);
-  return { frames, palette: MAW_PALETTE, anchor: { x: Math.floor(box.w / 2), y: Math.floor(box.h / 2) }, box };
+  // rim: the bright ring that carries the dark hide on a dark floor (render.js);
+  // pool: its pool of light on a dark floor, a dark violet under the rim
+  return { frames, palette: MAW_PALETTE, anchor: { x: Math.floor(box.w / 2), y: Math.floor(box.h / 2) }, box, rim: '#8c6cb4', pool: '#3a2654' };
 })();
 
 // ===========================================================================

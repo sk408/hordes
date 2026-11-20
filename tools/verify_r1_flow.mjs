@@ -77,7 +77,7 @@ for (const arm of ARMS) {
           w: Math.round(r.width), h: Math.round(r.height) }; });
     })()`);
     const ac = lay.find(c => c.name.startsWith('AUTO-CONTINUE'));
-    check(arm.tag + ' cards in order with AUTO-CONTINUE: OFF third', lay.map(c => c.name).join(',') === 'RETRY,SHOP,AUTO-CONTINUE: OFF,TITLE', lay.map(c => c.name));
+    check(arm.tag + ' cards in order with AUTO-CONTINUE: OFF third', lay.map(c => c.name).join(',') === 'RETRY,SHOP,AUTO-CONTINUE: OFF,TITLE,BUY NEXT', lay.map(c => c.name));   // R5: BUY NEXT last
     check(arm.tag + ' every card fully on screen', lay.every(c => c.inView), lay.map(c => [c.name, c.inView, c.w + 'x' + c.h]));
     check(arm.tag + ' the card says what it does and pays', ac && /next run by itself/.test(ac.desc) && /pay in full, then 75% gold/.test(ac.desc), ac && ac.desc);
     const hScroll = await evaluate("document.documentElement.scrollWidth > innerWidth");
@@ -112,7 +112,7 @@ for (const arm of ARMS) {
           inView: r.left >= 0 && r.right <= vw && r.top >= 0 && r.bottom <= vh, hit: !!(e && e.closest && e.closest('.card') === c) }; });
       return { cards, scroll: ov.scrollHeight, client: ov.clientHeight };
     })()`);
-    check(arm.tag + ' win card: RETRY, SHOP, AUTO-CONTINUE, TITLE, PRESTIGE', won && wl.cards.map(c => c.name.replace(/:.*/, '')).join(',') === 'RETRY,SHOP,AUTO-CONTINUE,TITLE,PRESTIGE 1', wl.cards.map(c => c.name));
+    check(arm.tag + ' win card: RETRY, SHOP, AUTO-CONTINUE, TITLE, PRESTIGE', won && wl.cards.map(c => c.name.replace(/:.*/, '')).join(',') === 'RETRY,SHOP,AUTO-CONTINUE,TITLE,PRESTIGE 1,BUY NEXT', wl.cards.map(c => c.name));
     check(arm.tag + ' win card: every card fully on screen and hit at its centre, no scroll', wl.cards.every(c => c.inView && c.hit) && wl.scroll <= wl.client + 1,
       { scroll: wl.scroll, client: wl.client, cards: wl.cards.map(c => [c.name, c.top, c.bottom, c.inView, c.hit]) });
     await shot('r1flow_' + arm.tag + '_win');

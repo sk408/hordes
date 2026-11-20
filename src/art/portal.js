@@ -21,13 +21,13 @@
 import { makeFrames } from './format.js';
 
 export const PORTAL_PALETTE = {
-  1: '#0a0a0e',
-  2: '#5a5a6a',
-  3: '#8f8f9e',
-  4: '#1b1130',
-  5: '#5c3f8f',
-  6: '#9effe0',
-  7: '#ffd54a',
+  1: '#0b0912',
+  2: '#5e5968',
+  3: '#9c98a4',
+  4: '#160e24',
+  5: '#6c4c94',
+  6: '#5fffd8',   // the swirl: reward teal
+  7: '#f0c860',
 };
 
 export const PORTAL_ART = makeFrames({

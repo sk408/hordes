@@ -23,6 +23,12 @@ For Steve to paste and post. Everything here is true of the LIVE game as of rele
 > - Auto-continue is on the end card, where you look for it.
 > - Coming back after a break no longer hides your first draft.
 > - Weapons arrive during the run: your loadout lists the weapons a run can offer, you start with one, and the rest come as NEW cards in your drafts. The first one is a free pick.
+> - Drafts are dealt as playing cards, and your hand shows as a fan of cards.
+> - Each stage has its own ground, and the light turns each wave: day, dusk, night, dawn. At night windows, fires and the portal light the dark. LIGHTING ON, LOW or OFF is under Settings > ADVANCED.
+> - Colours you can trust in a fight: enemy shots are red-orange, rewards are cyan-teal, and your hero wears a warm white mark.
+> - Each boss arrives with its name card. The Maw fights you in a void of its own.
+> - Short scenes: what killed you, the road to the next stage, a weapon being forged. Skip any of them with a second press.
+> - Recorded sound effects to try: SOUND EFFECTS under Settings > ADVANCED.
 
 ## Replies to the three October comments
 

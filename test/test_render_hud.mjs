@@ -104,7 +104,9 @@ console.log('WAVE-24 / #1 — XP BAR EMPTY STATE (0%)');
   const st = hudState();
   st.player.xp = 0; st.player.xpNext = 100; st.player.level = 1;
   R.drawHudChrome(ctx, st);
-  const xb = 22, yb = 37, wb = 134, hb = 6;
+  // R3 (one vitals block): the XP bar is the block's third row; the geometry
+  // moved with it, the rules this test pins did not.
+  const xb = 43, yb = 34, wb = 84, hb = 6;
 
   ok(R.hudChrome.xpFrac === 0, 'seam: xpFrac is exactly 0 at run start');
   const trough = rec.rects.find(q => q.x === xb && q.y === yb && q.w === wb && q.h === hb);
@@ -122,7 +124,7 @@ console.log('WAVE-24 / #1 — XP BAR EMPTY STATE (0%)');
   ok(rec.rects.some(q => q.style === '#ffd75e' && q.x === xb + wb - 1),
     'gold goal tick at the far end of an empty bar');
   ok(!!textOf(rec, 'XP'), 'the "XP" label is painted (empty bar is labelled)');
-  ok(!!textOf(rec, 'LV 1'), 'the level badge reads LV 1');
+  ok(R.hudChrome.lvBadge && R.hudChrome.lvBadge.text === 'LV 1' && !!textOf(rec, '1'), 'the level badge reads LV 1');
   // And the fill still tracks the value (fill behaviour must not change).
   const st2 = hudState(); st2.player.xp = 50; st2.player.xpNext = 100;
   R.drawHudChrome(ctx, st2);
@@ -147,11 +149,13 @@ console.log('WAVE-24 / #2 — CANVAS TEXT CONTRAST + SIZE');
     'every HUD label sits on a dark readability plate' +
     (unplated.length ? ' (missing: ' + unplated.map(t => t.txt).join(', ') + ')' : ''));
 
-  const lv = textOf(rec, 'LV 4');
-  ok(!!lv, 'the level badge is painted');
+  // R3: the badge paints LV small over the number large (one vitals block).
+  const lv = textOf(rec, '4');
+  ok(!!lv && !!textOf(rec, 'LV'), 'the level badge is painted');
   const lvPx = lv ? parseInt(/bold (\d+)px/.exec(lv.font)[1], 10) : 0;
   ok(lvPx >= 10, 'the LV badge is >= 10px bold (was 9 — read as a placeholder), got ' + lvPx);
-  const badgeBorder = rec.rects.find(q => q.style === '#ffd75e' && q.x > 150 && q.y < 60 && q.h >= 13);
+  const lvb = R.hudChrome.lvBadge;
+  const badgeBorder = lvb && rec.rects.find(q => q.style === '#ffd75e' && q.x === lvb.x && q.y === lvb.y && q.h >= 13);
   ok(!!badgeBorder, 'the LV badge has a gold border plate (contrast on every theme)');
 
   for (const lbl of ['HP', 'MP', 'XP']) {
@@ -338,7 +342,8 @@ console.log('WAVE-27 — NO CANVAS DOCTRINE TEXT (the overlay badges carry it)')
      !('stanceAct' in R.hudChrome),
     'the chrome seam carries no doctrine fields any more');
   // Everything ELSE the HUD paints is untouched (removal, not a rewrite).
-  ok(!!textOf(rec, 'XP') && !!textOf(rec, 'LV 1'), 'the rest of the HUD chrome still paints');
+  // R3: the LV badge paints LV over the number (one vitals block).
+  ok(!!textOf(rec, 'XP') && !!textOf(rec, 'LV') && R.hudChrome.lvBadge.text === 'LV 1', 'the rest of the HUD chrome still paints');
 
   // The renderer must be DOM-free now (the old badge bridge is gone for good):
   // a document that THROWS on any access must never be touched, through the

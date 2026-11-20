@@ -160,7 +160,13 @@ s.check('THE SILENCE: skills cost nothing and do nothing while the boss lives; t
   assert.ok(!(p.skillCd[qid] > 0), 'no cooldown started');
   killCast();
   assert.equal(st.bossRule, null);
-  if (st.mode === 'playing') assert.equal(useSkill(st, qid), true, 'the skill fires once the rule is over');
+  // (R2: the portal beat holds the rule's card back, so play goes on here and
+  // this line now runs; before, the card was up and it never did. A class
+  // whose skill is a kill-charged ult has no charge yet: the plain skill
+  // stands in for it, with a full pool.)
+  const after = C.SKILLS[qid] && C.SKILLS[qid].KILLS != null ? 'FROST_NOVA' : qid;
+  p.mana = p.stats.maxMana; p.skillCd[after] = 0;
+  if (st.mode === 'playing') assert.equal(useSkill(st, after), true, 'the skill fires once the rule is over');
 });
 
 s.check('THE DROUGHT: a potion stays in the bag; beating the boss heals to full and adds a potion', () => {
@@ -258,16 +264,21 @@ s.check('a card rule pays a free card: a draft without the level, after the joke
   callBoss(); killCast();
   assert.equal(st.ruleCards, 1);
   // The boss's joker offer opens first; taking it chains into the free card.
+  // (R2: the cards wait for the 2.5 s portal beat to end.)
   let guard = 0;
-  while (st.mode !== 'draft' && guard++ < 30) step();
+  while (st.mode !== 'draft' && guard++ < 200) step();
   assert.equal(st.mode, 'draft');
   if (st.draftKind === 'joker') { h.elements['ov-cards'].children[0].click(); for (let i = 0; i < 3 && st.draftKind !== 'level'; i++) step(); }
   assert.equal(st.draftKind, 'level');
   assert.equal(h.elements['ov-title'].textContent, 'FREE CARD');
   assert.ok(/^the rule is beaten · Pick 1: click or press 1\/2\/3$/.test(h.elements['ov-sub'].textContent), h.elements['ov-sub'].textContent);
+  // (R2: the sweep may bank gems during the portal beat; the card itself
+  // must add no level.)
+  const before = st.player.level;
+  assert.ok(before >= level);
   h.elements['ov-cards'].children[0].click();
   assert.equal(st.ruleCards, 0);
-  assert.equal(st.player.level, level, 'no level was added');
+  assert.equal(st.player.level, before, 'no level was added');
 });
 
 s.check('RULEBREAKER: the rule does not bind, the plate stays down, the reward is still paid', () => {

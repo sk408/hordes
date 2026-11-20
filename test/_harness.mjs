@@ -179,7 +179,9 @@ export async function boot(opts = {}) {
     removeEventListener: noop,
     innerWidth: 480, innerHeight: 300,
     ...(touchDevice ? { ontouchstart: {} } : {}),
-    matchMedia: (q) => ({ matches: coarse && /coarse|hover:\s*none/.test(String(q)),
+    // opts.reducedMotion: the player asked the system for less motion.
+    matchMedia: (q) => ({ matches: (coarse && /coarse|hover:\s*none/.test(String(q)))
+      || (!!opts.reducedMotion && /prefers-reduced-motion:\s*reduce/.test(String(q))),
       addEventListener: noop, addListener: noop }),
   };
 
@@ -224,6 +226,11 @@ export async function boot(opts = {}) {
   // (e.g. a desktop arm and a touch-device arm) — each boot re-evaluates
   // main.js against its own globals; the pure data modules stay shared.
   const mainMod = await import('../src/main.js' + (opts.variant ? '?v=' + opts.variant : ''));
+  // R7: a boss arrival sting holds the sim for 1.5 s (the Maw's 3.5 s), which
+  // would change what every gameplay test measures around a boss. Off for
+  // these boots, like the tour and the hints above; a test that is about it
+  // boots with { stings: true } (test/test_boss_sting.mjs).
+  if (!opts.stings && mainMod.__TEST.bossSting) mainMod.__TEST.bossSting.enabled = false;
 
   // FIRST-RUN PROLOGUE (2026-09-18): every boot here is a FRESH profile, so
   // run #1 would open INERT (no spawns, frozen clock) and silently change
@@ -279,6 +286,32 @@ export async function boot(opts = {}) {
     pump,
     handlers,
     key: (name, arg) => { if (handlers[name]) handlers[name](arg); },
+    // R2: get past whatever movie is up (intro, portal, death, escape) the
+    // way a player does under the one skip rule (src/movie_skip.js): ESC
+    // once to show SKIP, again to skip, waiting out the start-up guard.
+    // Returns the number of frames it took. A test that is ABOUT the skip
+    // drives the keys itself.
+    skipMovie: (maxFrames = 120) => {
+      const st = mainMod.__TEST.state;
+      const MOVIES = ['intro', 'portal-cine', 'death-cine', 'escape'];
+      let n = 0;
+      // The intro, portal and death movies run on the wall clock: step it
+      // past the guard (the player waited that long), then press twice.
+      // The escape runs on frame time: it pumps. The clock only moves
+      // forward, like a real one.
+      if (MOVIES.includes(st.mode) && st.mode !== 'escape') {
+        now += 450;
+        for (let i = 0; i < 2 && MOVIES.includes(st.mode); i++) {
+          if (handlers.keydown) handlers.keydown({ key: 'Escape', preventDefault() {} });
+        }
+      }
+      while (MOVIES.includes(st.mode) && n < maxFrames) {
+        if (handlers.keydown) handlers.keydown({ key: 'Escape', preventDefault() {} });
+        if (!MOVIES.includes(st.mode)) break;
+        pump(1); n++;
+      }
+      return n;
+    },
     storage: store,
     // FULLSCREEN: the enter/exit counters for the opts.fullscreen stub
     // (null in the no-API arm — iPhone iOS Safari).

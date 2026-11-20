@@ -603,6 +603,62 @@ export const CONFIG = {
   },
 
 
+  // ---- THE FLOOR BUDGET (R3 floor item, Steve 2026-11-18) --------------------
+  // Steve: "limit objects on the floor. Dead chests can clean up more
+  // frequently." Every kind of thing that lies on the floor has one rule here.
+  // The numbers come from the floor census (tools/floor_census.mjs, 8 seeds,
+  // fresh and strong saves, AUTO and EXPLORE pilots, to minute 15; the figures
+  // are in the floor report). Whole floor, worst case: GEM_CAP gems + POTION_CAP
+  // potions + ITEM_CAP items + 3 chests (chests.js MAX_ACTIVE) + 1 milestone chest.
+  FLOOR: {
+    // GEMS never cost XP: they merge, for real, into one gem holding the exact sum.
+    // Condense: every CONDENSE_EVERY s, a gem that has lain CONDENSE_AGE s merges
+    // into another such gem within CONDENSE_R px (the one nearer the hero keeps
+    // its place); a gem takes in one gem at a time and then rests CONDENSE_REST
+    // s, so a field nobody collects gathers into a few rich gems over a minute.
+    CONDENSE_EVERY: 0.5,
+    CONDENSE_AGE: 8,
+    CONDENSE_R: 40,
+    CONDENSE_REST: 5,   // a gem that just merged waits this long to merge again
+    // Cap: past GEM_CAP gems, the oldest and farthest merge into gems nearer the
+    // hero until GEM_TARGET are left. Gems within KEEP_NEAR px of the hero never
+    // merge away (KEEP_NEAR is also the distance past which the picture fades a
+    // gem in a crowd: render.js GEM_RECEDE.FAR reads it).
+    GEM_CAP: 90,
+    GEM_TARGET: 70,
+    KEEP_NEAR: 100,
+    // A merged gem holding at least RICH_XP[0] XP is a rich gem, drawn larger
+    // and brighter at each step of RICH_XP, with its own pickup sound.
+    RICH_XP: [30, 100, 300, 1000],
+    // Steve: gems left alone condense into richer gems, never worth less than
+    // the sum, barely any bonus at the low steps and a real one only when much
+    // has condensed. The floor always holds the exact sum; this share of the
+    // gem's XP is paid ON TOP when a rich gem of that step is picked up
+    // (index = step, 0 = an ordinary gem). A balance-review number.
+    RICH_BONUS: [0, 0.01, 0.03, 0.06, 0.10],
+    // The pilot treats a rich gem as this much nearer than it is.
+    RICH_PULL: 0.5,
+    // POTIONS: the floor must not be a potion bank (Steve: "potion drops build
+    // up too much"). At most POTION_CAP potions lie on the floor (a new one
+    // pushes out the oldest), each for POTION_LIFE s, and never merged.
+    POTION_CAP: 4,
+    POTION_LIFE: 25,
+    // ITEMS: an opened chest's art leaves REMNANT_S s after it opens (the last
+    // REMNANT_FADE_S fading); its item stays as a plain drop. An item drop lies
+    // ITEM_LIFE s; one the hero has touched and turned down (not better than his
+    // belt) leaves REFUSED_S s after that.
+    REMNANT_S: 2.5,
+    REMNANT_FADE_S: 0.8,
+    ITEM_LIFE: 40,
+    REFUSED_S: 3,
+    // Nothing expires while it lies within NEAR px of the hero: he was about to
+    // take it. The last BLINK_S s of a life blink.
+    NEAR: 60,
+    BLINK_S: 3,
+    // CHESTS: an unopened chest keeps its full 30 s (chests.js LIFETIME). Steve
+    // asked for DEAD chests to clean up, so only the opened ones go sooner.
+  },
+
   // ---- M3 GROUND-ITEM OVERFLOW CAPS (audit 2026-09-16) ---------------------
   // state.gems / state.drops / state.itemDrops were unbounded arrays with
   // three O(n) pickup scans per frame. The caps bound the scans; the
@@ -723,9 +779,9 @@ export const CONFIG = {
   //   * the GRADE term (uphill slower / downhill faster) applies to the PLAYER
   //     and to every ENEMY at the same movement seams, read from the same
   //     pure function — high ground slows an attacker's climb exactly as much
-  //     as it would slow the pilot's, and nothing blocks enemy motion, so the
-  //     Megabonk stuck-on-ledges / camp-the-deck safe-spot bug is structurally
-  //     absent;
+  //     as it would slow the pilot's, and nothing blocks enemy motion, so
+  //     enemies stuck on ledges and a safe spot to camp on a high deck are
+  //     structurally absent;
   //   * standing on HIGH ground is a TRADE, not a haven: the radar's world
   //     reach widens (VISION_MULT — the reward) while the horde's spawn
   //     AZIMUTH biases toward the uphill side (EXPOSURE_BIAS — the risk), so
@@ -814,6 +870,9 @@ export const CONFIG = {
   // than a filled grey bar or a dead placeholder.
   HUD: {
     LABEL_PX: 9,          // HP / MP / XP bar labels (was 8)
+    // R3: the desktop key strip shows in the first SECONDS of a profile's
+    // first RUNS runs (and in help mode); main.js keyStripWanted.
+    KEYSTRIP: { RUNS: 3, SECONDS: 180 },
     FEED_PX: 9,           // event-feed lines
     LV_PX: 11,            // level badge (was 9 — read as unpolished)
     CLOCK_PX: 11,         // RUN CLOCK (RUN-STRUCTURE/SURVIVAL-GAP wave): the
@@ -875,6 +934,7 @@ export const CONFIG = {
     FRAME: '#6a6a7c',     // outer steel frame around every bar/plate
     TROUGH: '#2e2e38',    // dark empty track (a 0% bar must read EMPTY)
     PLATE: 'rgba(4,4,10,0.72)',   // dark plate behind label text
+    PLATE_ON_LIGHT: 'rgba(4,4,10,0.9)',   // the same plate on a light floor (renderer.groundLight)
     PLATE_SOLID: 'rgba(6,6,12,0.80)',
     TICK: 'rgba(255,255,255,0.12)',        // minor ticks (full track)
     TICK_MAJOR: 'rgba(255,255,255,0.22)',  // 25/50/75% ticks
@@ -1109,23 +1169,26 @@ export const CONFIG = {
   // Shipped run: 5 waves, then an UNBEATABLE finale. Every run therefore ended
   // in death, and the only shape the game could express was "die in ~3.5 min".
   // The genre leaders do not work that way — they complete a run at a TIME
-  // LIMIT and pay a discrete win for reaching it (Vampire Survivors: 30:00
-  // "stage complete" + gold; Megabonk: 10:00 per stage, tiers chained). G18
+  // LIMIT and pay a discrete win for reaching it (a stage complete, and
+  // gold). G18
   // makes run length a PROGRESSION AXIS: the limit is 30:00, a fresh build
   // still dies in minutes, and surviving is what the build earns.
   //
   // WHAT IS BOUNDED, AND WHY: reaching RUN.LIMIT ends the run in victory. There
   // is no post-limit continuation — an unbounded run has no ladder to climb and
   // no win to pay, and "keep playing forever" is the failure state this wave
-  // exists to remove. (VS resolves the same question the other way: a Reaper
-  // spawns at the limit and ends you. We chose the discrete win because the
-  // browser session should have a completion.)
+  // exists to remove. (The other answer is an unbeatable enemy that spawns
+  // at the limit and ends you. We chose the discrete win because the browser
+  // session should have a completion.)
   RUN: {
     LIMIT: 1800,           // 30:00 of PLAY time (state.time, sim seconds)
     FINAL_CALL_AT: 1740,   // 29:00 — the "one minute left" callout
-    SURVIVED_BONUS: 1500,  // flat payout for reaching the limit (VS shape)
+    SURVIVED_BONUS: 1500,  // flat payout for reaching the limit
     DEPTH_BONUS: 150,      // + per wave reached BEYOND the maw milestone
-    MAW_HP: 250_000,       // == final_boss DISPLAY_HP
+    // == final_boss DISPLAY_HP. Balance review 2026-11: at 250k every hero who reached
+    // the Maw killed it in about a second. 7.5M makes it a fight of about 20 s for a
+    // mid build; a weak build may see it withdraw at MAW_WINDOW.
+    MAW_HP: 7_500_000,
     MAW_WINDOW: 90,        // seconds the maw encounter lasts before it withdraws
     MAW_CLEAR_BONUS: 1200, // payout for slaying the maw (on top of the run's gold)
     MAW_UNLOCK: 'HYPER',   // difficulty tier the milestone unlocks (profile.milestones)
@@ -1336,8 +1399,8 @@ export const DRAFT_RARE_UPGRADES = [
   // 1, dust by the late ladder — the same timing gate as Scholar/Gilded (good
   // early, dead late). +6 sits at 2x the world-drop base (loot.js base 3,
   // legendary 9) and below the shop rung (meta.js Briarmail +10/level).
-  // Source rows: vs_ref ARMOR (flat mitigation, max -3) as the flat-contact
-  // family shape — hordes' answer on this axis is thorns, not armor, so the
+  // The shape: flat mitigation against contact, small and capped. Hordes'
+  // answer on this axis is thorns, not armor, so the
   // card grants the seam the game actually reads.
   { id: 'thorns',   name: 'Thornmail',       desc: '+6 thorns damage on contact', apply: (p) => { p.stats.thorns = (p.stats.thorns || 0) + 6; } },
 ];
@@ -1379,8 +1442,7 @@ export const DRAFT_MYTHIC_UPGRADES = [
   // MAX_HOPS) — the state-dependent shape a mythic must have. Magnitude IS one
   // shop level (meta.js Storm Conduit: +RANGE_PER_LEVEL hop range per level +
   // the uncapped-count arm), so the card never invents a second zap economy.
-  // Source rows: vs_ref LIGHTNING amount/power per-level deltas as the
-  // chain-gun ladder shape; mb_ref Zap passive as the family word.
+  // The shape: a chain weapon's count and power climbing per level.
   { id: 'tempest', name: 'Tempest',
     desc: 'Chain Zap +1 chain level and hop range (needs Chain Zap)',
     apply: (p) => { p.stats.zapChain = (p.stats.zapChain || 0) + 1; } },
@@ -1390,8 +1452,7 @@ export const DRAFT_MYTHIC_UPGRADES = [
   // the choices.js trade) — the pool's crit sources enable the MYTHIC, which
   // is the chase working as designed. +0.5 sits between the loot scale's base (+0.2) and
   // legendary (+0.6) Executioner (loot.js), far below the shop Deadeye's
-  // (1.75)^level compounding. Source rows: vs_ref SPEC-drafts critMul column;
-  // mb_ref stat 19 (CritDamage).
+  // (1.75)^level compounding. It raises the crit damage multiplier.
   { id: 'killshot', name: 'Killshot',
     desc: '+50% crit damage',
     apply: (p) => { p.stats.critMult = (p.stats.critMult || 1.5) + 0.5; } },

@@ -116,7 +116,9 @@ export function useSkill(state, id) {
     state.magnetSnap = {
       // (|| [] : useSkill is also cast on bare fixtures — test_perks runs the
       // WHOLE catalog through it — and an empty floor is a legal snapshot.)
-      gems: (state.gems || []).length,
+      // A merged gem (R3 floor) counts as the gems it holds (n); main.js
+      // gemUnits diffs the same way, so the toast counts gems, not objects.
+      gems: (state.gems || []).reduce((s, g) => s + (g.n || 1), 0),
       potions: (state.drops || []).reduce((s, d) => s + (d.count || 1), 0),
       items: (state.itemDrops || []).length,
     };

@@ -34,12 +34,12 @@ const sub = () => el['ov-sub'].innerHTML || '';
 // No shrines either: the pilot walking into one spends run gold and moves the parts.
 const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.shrines = []; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
 const toDead = () => {
-  for (let i = 0; i < 20 && st.mode !== 'dead'; i++) { if (st.mode === 'death-cine') kdown('x'); h.pump(1); }
+  for (let i = 0; i < 20 && st.mode !== 'dead'; i++) { if (st.mode === 'death-cine') h.skipMovie(); h.pump(1); }
   assert.equal(st.mode, 'dead', 'on the end screen');
 };
 
 h.pump(3);
-if (st.mode === 'intro') { kdown('x'); h.pump(2); }
+if (st.mode === 'intro') { h.skipMovie(); h.pump(2); }
 T.showTitle();
 
 // ---- 1. the pre-run screen ----------------------------------------------------
@@ -116,15 +116,17 @@ S.check('a death: the four parts on the card sum to the gold actually banked', (
 S.check('the best next purchase is named with its price, and RETRY is the default action', () => {
   const prof = T.getProfile();
   const html = sub();
-  const m = html.match(/BUY NEXT: ([^,]+), (\d+) gold · (you can afford it|\d+ more to go)/);
-  assert.ok(m, 'the next purchase line: ' + html);
+  // R5: the next purchase is the BUY NEXT card (test_end_card.mjs).
+  const buy = cards().find(c => /class="name">BUY NEXT</.test(c.innerHTML || ''));
+  const m = buy && buy.innerHTML.match(/BUY NEXT<\/div><div class="desc">([^,]+), (\d+) gold · (you can afford it|\d+ more to go)/);
+  assert.ok(m, 'the BUY NEXT card: ' + html);
   const goal = T.menus.bestNextPurchase();
   assert.equal(m[1], goal.name); assert.equal(+m[2], goal.cost);
   assert.equal(m[3] === 'you can afford it', prof.gold >= goal.cost, 'the afford clause is true');
   // It is one of the three core steps while any is left: Vitality, Forged Edge or the cheapest weapon.
   assert.ok(goal.id === 'hp' || goal.id === 'dmg' || /^weapon_/.test(goal.id), 'a core step: ' + goal.id);
   // R1: the end card also offers AUTO-CONTINUE, after SHOP (test_endcard_auto_continue.mjs).
-  assert.deepEqual(names(), ['RETRY', 'SHOP', 'AUTO-CONTINUE: OFF', 'TITLE'], 'four cards, RETRY first');
+  assert.deepEqual(names(), ['RETRY', 'SHOP', 'AUTO-CONTINUE: OFF', 'TITLE', 'BUY NEXT'], 'five cards, RETRY first, BUY NEXT last');
   assert.equal(T.menuFocus(), -1, 'no cursor');
   kdown('Enter');
   assert.equal(st.mode, 'playing', 'Enter retries');
@@ -144,7 +146,17 @@ S.check('bestNextPurchase prefers what the player can afford, and never an owned
   prof.gold = 150;
   assert.equal(T.menus.bestNextPurchase().id, 'weapon_orbit', 'then the cheapest locked weapon');
   prof.unlockedWeapons.push('ORBIT');
+  prof.gold = 0;
+  // Balance review 2026-11: three weapons fill the three slots, so a weapon is no
+  // longer a core step; one more slot makes room again.
+  assert.ok(!/^weapon_/.test(T.menus.bestNextPurchase().id), 'weapons fill the slots: not a weapon');
+  const savedSlots = prof.purchased.slots;
+  prof.purchased.slots = 1;
   assert.equal(T.menus.bestNextPurchase().id, 'weapon_scythe', 'an owned weapon is skipped');
+  if (savedSlots === undefined) delete prof.purchased.slots; else prof.purchased.slots = savedSlots;
+  // R5: the core out of reach, another row in reach: that row, not a missing-gold line.
+  prof.gold = 150;
+  assert.equal(T.menus.bestNextPurchase().id, 'focus', 'the cheapest row that can be bought now');
   Object.assign(prof, { gold: saved.gold, unlockedWeapons: saved.w });
   prof.purchased.hp = saved.hp; prof.purchased.dmg = saved.dmg;
 });

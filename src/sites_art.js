@@ -10,6 +10,7 @@ import { queueWorldCard } from './world_cards.js';
 import { blitGrid, blitGlow, STYLE_ITEM } from './sprite_cache.js';
 import { SITES } from './sites.js';
 import { CONFIG as C } from './config.js';
+import { groundIsLight } from './world_ground.js';
 
 // Grids are written as strings: '.' = empty, digits = palette index.
 const G = (rows) => rows.map(r => [...r].map(ch => (ch === '.' ? 0 : +ch)));
@@ -137,10 +138,19 @@ function groundRing(g, x, y, r, colour, frac = 1, step = 10) {
   void step;
 }
 
+// How far a word pop has risen at `age` s. Under reduced motion it stays put
+// (it still shows, and leaves on the same ttl).
+export function popRise(age, reduced) {
+  return reduced ? 0 : age * 14;
+}
+
 // Draw every site in view. `cull(x, y, pad)` is the renderer's screen test.
-export function drawSites(g, state, cam, cull) {
-  const sites = state.sites;
-  if (!sites || !sites.length) return;
+// `reduced`: the OS asks for reduced motion (render.js reads it).
+// The plate under a word pop on a light floor.
+export const POP_PLATE = 'rgba(4,4,10,0.85)';
+export function drawSites(g, state, cam, cull, reduced = false) {
+  // A stage with no sites still draws the word pops below (RULE BEATEN, +5G).
+  const sites = state.sites || [];
   const t = state.time || 0;
   const p = state.player;
   for (const s of sites) {
@@ -194,9 +204,17 @@ export function drawSites(g, state, cam, cull) {
   if (state.sitePops && state.sitePops.length) {
     g.font = 'bold 7px monospace';
     g.textAlign = 'center'; g.textBaseline = 'middle';
+    // integ3: on a light floor (the snow) the pale words read only by their
+    // thin shadow ('RULE BEATEN' at 1.8 to 1 on Whiteout): they get a plate.
+    const plate = groundIsLight(state.stage);
     for (const q of state.sitePops) {
-      const x = Math.round(q.x - cam.x), y = Math.round(q.y - cam.y - q.age * 14);
+      const x = Math.round(q.x - cam.x), y = Math.round(q.y - cam.y - popRise(q.age, reduced));
       if (cull(x, y, 30)) continue;
+      if (plate) {
+        const m = g.measureText ? g.measureText(q.text) : null;
+        const w = Math.ceil(m && m.width > 0 ? m.width : q.text.length * 5) + 4;
+        g.fillStyle = POP_PLATE; g.fillRect(x - (w >> 1), y - 5, w, 10);
+      }
       g.fillStyle = '#000000'; g.fillText(q.text, x + 1, y + 1);
       g.fillStyle = q.color; g.fillText(q.text, x, y);
     }

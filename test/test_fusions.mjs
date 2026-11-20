@@ -216,6 +216,9 @@ function fuseThroughOverlay(def) {
   assert.ok(host && host.type === def.pair[0] && host.fused.type === def.pair[1], def.name + ': fused');
   assert.equal(st.weapons.filter(w => w.type !== 'VOLLEY').length, slotsBefore - 1, def.name + ': one slot freed');
   assert.ok(st.toasts.some(t => t.msg === 'FUSION: ' + def.name.toUpperCase() + ' — ' + def.desc), 'the fusion is announced with what it does');
+  // R5: the forge moment holds the fight for a moment, then it goes on.
+  for (let i = 0; i < 200 && T.forge.live; i++) step();
+  assert.ok(!T.forge.live, 'the forge moment ends by itself');
   return host;
 }
 
@@ -382,7 +385,7 @@ for (const def of FUSION_DEFS) {
 s.check('real loop: both halves of a fused weapon hit harder than the same two evolved weapons', () => {
   const dmgOf = (fuse) => {
     const p = arena(['NOVA_PULSE', 'ORBIT'], ['ORBIT']);
-    if (fuse) { T.fusion.take(fusionDef('GRAVITY_WELL')); assert.equal(st.weapons.length, 2); }
+    if (fuse) { T.fusion.take(fusionDef('GRAVITY_WELL')); T.forge.end(); assert.equal(st.weapons.length, 2); }
     else st.fuseDeclined.add('GRAVITY_WELL');
     st.fuseDeclined.add('ORBITAL_VOLLEY');
     const e = foe(p.x + 20, p.y, 1e9);

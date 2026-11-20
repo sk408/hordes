@@ -5,7 +5,7 @@ import {
   ladderHp, ladderDmg, ladderXp, ladderGroups, ladderEliteChance, ladderBeats, runClock,
   volleyProjectileCap, midBossHp, xpForLevel, xpGainMult, spawnInterval,
 } from './config.js';
-import { makePlayer, makeProjectile, makeGem, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped } from './entities.js';
+import { makePlayer, makeProjectile, makeGem, applyEscalation, clampLootToArena, lootLimit, contactHitDamage, pushGroundCapped, condenseGems, capGems, richStep } from './entities.js';
 
 // ---------- M3 (audit 2026-09-16): ground-item overflow caps ----------
 // The three ground arrays were unbounded (10k corpses -> 10k gems, three
@@ -26,19 +26,77 @@ function placeReachable(o, margin) {
   return o;
 }
 const SHRINE_BUILDING_MARGIN = 10, ARCH_BUILDING_MARGIN = 14;
-function pushGem(gm) {
-  return pushGroundCapped(state.gems, gm, C.GROUND_ITEMS.GEM_CAP,
-    () => 'gem', (s, n) => { s.xp += n.xp; });
+// R3 floor: every floor object is stamped with the run time it landed (t), so
+// the floor rules (C.FLOOR, tickFloor below) know its age.
+// How many gems lie on the floor, a merged gem counting as the gems it holds
+// (n). The sweep toasts count by this, so a merge is never read as a pickup.
+function gemUnits() {
+  let n = 0;
+  for (const g of state.gems) n += g.n || 1;
+  return n;
 }
+function pushGem(gm) {
+  gm.t = state.time || 0;
+  return pushGroundCapped(state.gems, gm, C.GROUND_ITEMS.GEM_CAP,
+    () => 'gem', (s, n) => { s.xp += n.xp; s.n = (s.n || 1) + (n.n || 1); });
+}
+// R3 floor (Steve: "potion drops build up too much"): at most POTION_CAP
+// potions on the floor and never merged into a count. A new one pushes out the
+// oldest that is not near the hero; when every one is near him, the new one is
+// not placed (he is standing on full ones already).
 function pushDrop(d) {
   placeReachable(d, 2);
-  return pushGroundCapped(state.drops, d, C.GROUND_ITEMS.DROP_CAP,
-    x => x.kind, (s, n) => { s.count = (s.count || 1) + (n.count || 1); });
+  d.t = state.time || 0;
+  if (state.drops.length >= C.FLOOR.POTION_CAP) {
+    const p = state.player;
+    let old = -1;
+    for (let i = 0; i < state.drops.length; i++) {
+      const o = state.drops[i];
+      if (p && Math.hypot(o.x - p.x, o.y - p.y) < C.FLOOR.NEAR) continue;
+      if (old < 0 || (o.t || 0) < (state.drops[old].t || 0)) old = i;
+    }
+    if (old < 0) return null;
+    state.drops.splice(old, 1);
+  }
+  state.drops.push(d);
+  return d;
 }
 function pushItemDrop(d) {
   placeReachable(d, 2);
+  d.t = state.time || 0;
   if (state.itemDrops.length >= C.GROUND_ITEMS.ITEM_CAP) state.itemDrops.shift();
   state.itemDrops.push(d);
+}
+// R3 floor: the per-frame floor rules (C.FLOOR). Gems condense and are capped
+// by real merges (XP exactly kept); potions and items expire unless they lie
+// near the hero. An opened chest's art goes after REMNANT_S: render.js reads
+// the item drop's landing time (d.t) for that, so nothing is needed here.
+function floorKeep() {
+  const k = new Set();
+  if (autoController.gem) k.add(autoController.gem);
+  if (autoController.fleeGem) k.add(autoController.fleeGem);
+  return k;
+}
+function tickFloor(dt) {
+  const F = C.FLOOR, p = state.player, now = state.time || 0;
+  state.floorClock = (state.floorClock || 0) + dt;
+  if (state.floorClock >= F.CONDENSE_EVERY) {
+    state.floorClock = 0;
+    condenseGems(state.gems, p.x, p.y, now, { age: F.CONDENSE_AGE, r: F.CONDENSE_R, rest: F.CONDENSE_REST, keep: floorKeep() });
+  }
+  if (state.gems.length > F.GEM_CAP) {
+    capGems(state.gems, p.x, p.y, now, { cap: F.GEM_CAP, target: F.GEM_TARGET, near: F.KEEP_NEAR, keep: floorKeep() });
+  }
+  const near = (o) => Math.hypot(o.x - p.x, o.y - p.y) < F.NEAR;
+  for (let i = state.drops.length - 1; i >= 0; i--) {
+    const d = state.drops[i];
+    if (now - (d.t ?? now) >= F.POTION_LIFE && !near(d)) state.drops.splice(i, 1);
+  }
+  for (let i = state.itemDrops.length - 1; i >= 0; i--) {
+    const d = state.itemDrops[i];
+    const refused = d.refusedAt != null && now - d.refusedAt >= F.REFUSED_S;
+    if (refused || (now - (d.t ?? now) >= F.ITEM_LIFE && !near(d))) state.itemDrops.splice(i, 1);
+  }
 }
 import { Renderer } from './render.js';
 import { AutoPilotController, PlayerController } from './controllers.js';
@@ -71,7 +129,7 @@ import { setExtraRects, extraRects } from './stage_buildings.js';
 import { grantCharacter } from './meta.js';
 import {
   FUSION_DEFS, fusionCandidates, fuseWeapons, describeFusion, fusionRoadText,
-  kitWeapons, findKitWeapon,
+  kitWeapons, findKitWeapon, fusionDef,
 } from './fusions.js';
 import { WEAPON_ICONS, WEAPON_ICON_PALETTE } from './sprites.js';   // WAVE-12 stats icons
 // TIER-2 NAMED FINDS (2026-09-23): per-affix portraits on the stats card.
@@ -127,13 +185,24 @@ import { rollChoices, applyChoice } from './choices.js';
 // CARD ART INTEGRATION (R1): the draft's offers render their playing-card art
 // through the REAL drawCard — the join table lives in the wiring module (the
 // deck and the renderer are frozen tracks).
-import { paintOfferArt, OFFER_ART_SCALE, draftLayout, jokerFaceArt } from './draft_card_art.js';
+import { paintOfferArt, OFFER_ART_SCALE, draftLayout, jokerFaceArt, OFFER_TO_DECK, WEAPON_OFFER_TO_DECK } from './draft_card_art.js';
+import { offerRarity, offerRibbon, faceLines, offerHandTag, dealDelays, paintCardBack, RARITY_BORDER, RIBBON_COLOUR } from './draft_card_face.js';
+import * as FORGE from './forge_show.js';
+import * as STING from './boss_sting.js';
+import { cardArt } from './art/cards.js';
+import { drawCardArt } from './render_cards.js';
 import {
   handHint, addHandCard, refreshHand, handCards, describeHandBonus, handBonus, HANDS, FLUSH_BOONS,
   SUIT_GLYPHS, handName,
 } from './hands.js';
+import { FAN_PULSE_S } from './hand_fan.js';
 import * as INTRO from './intro.js';
-import * as CINE from './portal_cine.js';
+// R2: the portal movie is a beat on the battlefield (portal_beat.js) and a
+// road shot before a stage change (road_shot.js). The old separate scene
+// (portal_cine.js) is gone.
+import * as BEAT from './portal_beat.js';
+import * as ENDCARD from './end_card.js';   // R5 the end card
+import * as ROAD from './road_shot.js';
 // G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
 // the win or the deliberate exit), composed BEFORE and handing back to the
 // WAVE-26 payoff overlay — it never replaces it. Structure mirrors the portal
@@ -143,6 +212,11 @@ import * as DCINE from './death_cine.js';
 // main.js starts it, steps it from the frame loop, hands it key and pointer
 // presses (a press skips it) and takes the hand-back, which always pays.
 import * as ESCAPE from './escape_cine.js';
+// R2: every movie skips the same way (movie_skip.js) and shows the same cast
+// (movie_cast.js: the equipped pilot, the boss really killed, the real killer,
+// and the seen count that lets a repeat viewing play through).
+import { createSkip, tickSkip, pressSkip, isSkipKey, skipHit as movieSkipAt, drawSkip } from './movie_skip.js';
+import { pilotLook, bossLook, killerLook, isRepeat as movieIsRepeat, noteSeen as movieNoteSeen, seenCount as movieSeenCount } from './movie_cast.js';
 // WRATH: enemies toughen as the run fills item slots and evolves weapons.
 import { wrathMultipliers, describeWrath, wrathOf, addWrath, initWrath } from './wrath.js';
 // PRESTIGE (owner-designed, player-facing): tier mults (1.5^P enemy, 2^P gold),
@@ -199,6 +273,8 @@ import {
   // The elite modifiers (brought by the kill trophies) and the refund for
   // their retired shop rows.
   ELITE_MODIFIERS, refundRetiredRows,
+  // BUY NEXT (the end card, the shop's goal line, the tutorial's shop lesson).
+  bestNextPurchase,
 } from './meta.js';
 // G9 ACHIEVEMENTS — the earned half. achievements.js owns the catalog, the
 // goals and the grant (its recordRun is the one fold-a-finished-run entry
@@ -211,6 +287,7 @@ import {
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } from './art/index.js';
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
+import { loadMenuFont, maybeApplyMenuFont, menuFontOn, shopBuyPx } from './menu_font.js';
 // G20a STAGES — the PLACE of a run: pool/mods/hazard rows stamped onto the
 // run at startRun. Pure, a session-scoped pending selection, nothing persisted.
 import {
@@ -259,7 +336,11 @@ import {
 } from './dev_autoplay.js';
 
 // M2 game feel: the per-step observer (damage numbers, puffs, shake).
-import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled, addSparks, addShake } from './fx/feel.js';
+import { pushToast, LANE_LINES } from './message_lane.js';
+import { warmGroundPainters, groundPaintersWarm } from './world_ground.js';
+import { LightGovernor, lightingPref, nextLightingPref, KEY_LIGHTING, LIGHT_LEVELS, KEY_LIGHT_AUTO, lightAutoPref } from './light.js';   // R6 the light layer
+import { feelStep, setFeelAudio, markCrit, setShakeEnabled, getShakeEnabled, addSparks, addShake,
+  setNumbersMode, getNumbersMode, NUMBER_MODES } from './fx/feel.js';
 
 // ---------- Audio (glm-hb3's src/audio.js — EXACT API per spec) ----------
 // Dynamic import with a no-op shim so the game boots identically before the
@@ -275,7 +356,10 @@ let audio = {
   setHiddenMute() {}, playEscapeCue() {}, isMusicRunning() { return false; }, getMusicMode() { return 'run'; },
   // Recorded music (src/music_files.js).
   setMusicContext() {}, getMusicContext() { return null; }, setMusicSource() {}, getMusicSource() { return 'recorded'; },
-  playMusicCue() { return false; },
+  playMusicCue() { return false; }, fadeMusicCues() {},
+  setHeartbeat() { return false; },   // R4: the low-health pulse
+  setSfxSource() {}, getSfxSource() { return 'synth'; },   // R4: recorded sound effects
+  stopSfx() { return false; },   // R5: a press lands the end card's count
 };
 try {
   const mod = await import('./audio.js');
@@ -367,7 +451,8 @@ const KEYBAR_H = 26;
 function keybarLive() {
   if (typeof getComputedStyle !== 'function') return false;
   const touch = document.getElementById('touch');
-  return !!(touch && touch.isConnected && touch.classList && touch.classList.contains('cog-only'));
+  return !!(touch && touch.isConnected && touch.classList && touch.classList.contains('cog-only') &&
+    !touch.classList.contains('kb-min'));   // R3: the folded strip reserves no band
 }
 function touchLayerLive() {
   // Only the REAL touch layer ('.on' — coarse pointers / touch devices, where
@@ -753,6 +838,9 @@ function fitCanvas() {
   }
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
+  // The canvas's CSS width, kept for the HUD (the hand fan's size): reading
+  // canvas.clientWidth every frame can force a layout.
+  renderer.cssW = w;
   if (!placed && kb) {
     canvas.style.position = 'absolute';
     canvas.style.top = Math.round((vh - kb - h) / 2) + 'px';
@@ -800,6 +888,7 @@ function onViewportResize() {
   fitCanvas();
   if (state.mode === 'title' || state.mode === 'setup') placeTitleMenu();
   if (shopPager) { applyShopGrid(); finalizeShopPager(); }
+  fitSettingsGrid();
 }
 window.addEventListener('resize', onViewportResize);
 window.addEventListener('orientationchange', onViewportResize);
@@ -847,6 +936,13 @@ const state = {
   portal: null,      // open portal after a boss clear ({ x, y, age }) — wave-6
   effects: [],       // transient skill/weapon visuals ({ kind, x, y, age, ttl })
   toasts: [],        // transient HUD messages ({ msg, ttl, tint }) — WAVE-14: also the event feed
+  // R3 HUD: the quest chip's tracker is open (a session choice), the chip's
+  // green flash after a quest is done, the runs finished before this one (the
+  // key strip rule) and the folded strip's live line for the vitals block.
+  questsOpen: false,
+  questFlashUntil: 0,
+  runsBefore: 0,
+  readyRow: '',
   bossBanner: null,  // WAVE-14: boss-arrival overlay
                      // ({ names, verb, title, sub, ttl } | null) — names/verb
                      // drive the two-line fit, title stays the flat legacy form
@@ -1027,6 +1123,7 @@ const state = {
   mapOpen: false,
   fuseDeclined: new Set(),  // fusion ids deferred with NOT NOW (cleared by the next draft pick)
   fusionsMade: 0,    // fusions taken this run
+  forgeShows: 0,     // evolve and fusion moments shown this run (a repeat is shorter)
   runKit: [],        // the loadout this run can offer (the first one started it)
   kitDry: 0,         // level-up drafts in a row with no NEW kit card on offer
   kitFreeUsed: 0,    // free NEW-card picks used this run (KIT_OFFER.FREE)
@@ -1049,6 +1146,7 @@ const state = {
   // the first AUTO_CONTINUE_FREE_RUNS in a row, then AUTO_CONTINUE_PENALTY_PCT.
   autoContinue: false,
   unattended: false,
+  beatHudDrop: 0,   // R2: view px the vitals step down under the portal beat's top bar (set each frame)
   // The trophies the finished run earned and what they gave for nothing
   // ({ earned: [name], granted: [row or pilot name] }), for the end card.
   runTrophies: null,
@@ -1211,29 +1309,31 @@ if (!saveNotice) saveNotice = campRefundNotice(profile);
 //   no lastPlayed + no save at all  -> fresh profile -> prologue, no note;
 //   lastPlayed present              -> normal rules (lastSeenUpdate decides).
 const WHATS_NEW = {
-  id: '2026-10-03',                    // RELEASE_ID — one per marked release
-  dateMs: Date.UTC(2026, 9, 3, 15),    // the ship moment (2026-10-03 15:00 UTC)
+  // The November release (R1 to R3). SET id AND dateMs TO THE SHIP MOMENT when the
+  // release is cut: a player who last played before dateMs gets the note.
+  id: '2026-11-20',                    // RELEASE_ID — one per marked release
+  dateMs: Date.UTC(2026, 10, 20, 15),  // the ship moment (2026-11-20 15:00 UTC)
   schema: 13,                          // the save schema this release ships
   worthTelling: true,                  // the gate: only MARKED releases pop
   title: "WHAT'S NEW",
   lines: [
-    'The map has things to find: shrines, altars, a locked vault, a walled yard, secrets.',
-    'EXPLORE is the new default pilot: it fights like AUTO and walks to the sites.',
-    'Three quests every run, picked for you. The CAMP makes gold while you are away.',
-    'High ground, ramps and bridges. After waves 2 and 4 the portal leads to a new stage.',
-    'From wave 2 each boss brings a rule and a reward. The escape is a chase scene now.',
-    'Gone: RAISE THE STAKES and the run modifiers. Mimic Feast is a joker now.',
+    'Weapons arrive during the run as NEW cards in your drafts, dealt as playing cards.',
+    'Each stage has its own ground, and the light turns each wave: day, dusk, night, dawn.',
+    'At night windows, fires and the portal light the dark. LIGHTING is in ADVANCED.',
+    'Enemy shots are red-orange, rewards are cyan-teal, and your hero wears a warm white mark.',
+    'Each boss arrives with its name card. The Maw fights you in a void of its own.',
+    'Short scenes: what killed you, the road to the next stage, a weapon being forged.',
   ],
-  // The release before this one. A player who never played it reads its
-  // lines first, and is offered the guided run (nobody is asked twice).
+  // The release before this one (October). A player who never played it reads
+  // its lines first, and is offered the guided run (nobody is asked twice).
   missed: {
-    id: '2026-10-02',
-    dateMs: Date.UTC(2026, 9, 2),
-    schema: 11,
+    id: '2026-10-03',
+    dateMs: Date.UTC(2026, 9, 3, 15),
+    schema: 13,
     lines: [
-      'Your old shop upgrades were refunded in gold: spend it in the new shop.',
-      'Weapons EVOLVE at level 8 and FUSE. Your cards form a HAND; JOKERS change the rules.',
-      'Your old save is kept: download it in Settings, or play the old game at /classic/.',
+      'The map has sites, a vault and secrets. EXPLORE walks you to them. Three quests a run.',
+      'High ground and ramps. After waves 2 and 4 the portal leads to a new stage.',
+      'From wave 2 each boss brings a rule and a reward. The CAMP makes gold while you are away.',
     ],
   },
   // Shown only with the offer of the guided run.
@@ -1344,7 +1444,9 @@ function musicScene() {
   if (m === 'death-cine') return 'death';
   if (m === 'dead') return 'endcard';
   if (runLive()) {
-    if (m === 'portal-cine') return 'portal';
+    // R2: the portal's duck belongs to the beat on the battlefield; the road
+    // shot ('portal-cine') already plays the new stage's bed.
+    if (m === 'playing' && beatLive()) return 'portal';
     if (m === 'escape') return 'escape';
     if (m === 'finale') return 'finale';
     if (m === 'settings' || m === 'stats') return 'pause';
@@ -1359,6 +1461,10 @@ function syncMusic() {
     const waveNum = (state.wave && state.wave.num) || 0;
     audio.setMusicContext({
       scene: musicScene(),
+      // The game mode: the sound effect loader holds in every movie by it.
+      mode: state.mode,
+      // integ3: the boss sting and the forge moment hold the loader too.
+      hold: !!(forge || stingLive()),
       // Out of a run: the stage picked for the next run (its track preloads).
       stage: live ? state.stage : (pendingStage || state.stage),
       wave: live ? waveNum : 0,
@@ -1367,6 +1473,27 @@ function syncMusic() {
       runNo: musicRunNo,
     });
   } catch { /* music never blocks a frame */ }
+}
+// R4: the low-health heartbeat. The health fraction while the hero is in a
+// live fight a player is watching; null otherwise, which stops the pulse at
+// once: a movie (the portal beat, the road, the death movie), a menu, a
+// draft, a pause, a banner or coach card holding the sim, a hidden tab, an
+// unattended run, the hero dead.
+function heartbeatFrac(draw) {
+  const p = state.player;
+  if (!draw || !p || state.unattended || state.runSettled) return null;
+  if (state.mode !== 'playing' && state.mode !== 'finale') return null;
+  if (beatLive() || simHeld() || sting) return null;
+  try {
+    const d = globalThis.document;
+    if (d && (d.hidden === true || d.visibilityState === 'hidden')) return null;
+  } catch { /* no document */ }
+  const max = (p.stats && p.stats.maxHp) || 0;
+  if (!(p.hp > 0) || !(max > 0)) return null;
+  return p.hp / max;
+}
+function syncHeartbeat(draw) {
+  try { audio.setHeartbeat(heartbeatFrac(draw)); } catch { /* sound never blocks a frame */ }
 }
 // Background play needs the setting, a hidden tab that still owns the save, a
 // pilot (a MANUAL run waits for its player) and no guided tutorial (that is
@@ -1426,6 +1553,7 @@ function onVisibilityChange() {
     && document.visibilityState === 'hidden');
   if (hidden) {
     autosave('hidden');
+    hideForge();   // R5: a forge moment nobody saw keeps its first-ever banner
     audio.stopMusic();
     bgSetHidden(true);
     bgFramesAtHide = bgStats.frames;
@@ -2092,7 +2220,7 @@ function spawnWave(dt) {
   }
 }
 
-// ---------- Weapon XP feed (megabonk ladder; XP from gems + bosses) --------
+// ---------- Weapon XP feed (per-weapon levels; XP from gems + bosses) ------
 // Routes XP through weapons.js collectWeaponXp; auto-level-ups toast.
 function feedWeaponXp(amount) {
   const candidates = state.weapons.filter(w => (w.level || 1) < WEAPON_MAX_LEVEL);
@@ -2498,6 +2626,11 @@ function devPaintPanel() {
 // remaining substeps exactly as the next frame would have — a fast run can
 // never simulate a dead/frozen mode the 1x run would not.
 function devSimStep(dt) {
+  // R7: the arrival sting holds the fight. The wall time it holds is counted
+  // (from the first held step to the next step that runs) and taken off the
+  // flash-drop clock, so the fight after it is the fight there would have been.
+  if (sting) { if (stingHeldFrom == null) stingHeldFrom = performance.now(); return false; }
+  if (stingHeldFrom != null) { stingHeldMs += performance.now() - stingHeldFrom; stingHeldFrom = null; }
   if (state.mode === 'playing') {
     if (coachActive() || state.bannerHold > 0 || state.helpMode) return false;
     update(dt);
@@ -2528,8 +2661,12 @@ function devSimSteps(dt) {
 // switch, so changing speed never grants or steals cooldown.
 function devCooldownNow() {
   if (DEV_GATE && dev && dev.speed > 1) return state.time * 1000;
-  return performance.now();
+  return wallCooldownNow();
 }
+// R7: the wall clock less the time arrival stings held the fight this run
+// (0 in a run with no sting: unattended runs are exactly as before).
+let stingHeldMs = 0, stingHeldFrom = null;
+function wallCooldownNow() { return performance.now() - stingHeldMs; }
 function devSetSpeed(n) {
   // STEP 3: with the gate ON the pref persists even with no live session yet
   // (the headless runner arms 8x before the first startRun; the overlay path
@@ -2540,8 +2677,8 @@ function devSetSpeed(n) {
   devSetSpeedPref(next);
   if (!dev) return next;
   if (dev.speed !== next && state.lastFlashAt != null) {
-    const oldNow = dev.speed > 1 ? state.time * 1000 : performance.now();
-    const newNow = next > 1 ? state.time * 1000 : performance.now();
+    const oldNow = dev.speed > 1 ? state.time * 1000 : wallCooldownNow();
+    const newNow = next > 1 ? state.time * 1000 : wallCooldownNow();
     state.lastFlashAt = newNow - (oldNow - state.lastFlashAt);
   }
   dev.speed = next;
@@ -3080,6 +3217,8 @@ function continueRun(opts = {}) {
   toast('WAVE ' + state.wave.num + ' - ' + stageOf(state.stage).name);
   // This wave's boss rule, named ahead of the fight.
   if (setWaveBossRule(state.wave.num)) toast('BOSS RULE - ' + state.bossRule.text.toUpperCase(), '#ffd75e');
+  // R2: a stage change shows the road to it first (1.5 s, the sim waits).
+  if (dest) startRoadShot();
 }
 
 // ---------- TRAVEL (travel.js) ----------------------------------------------------
@@ -3209,6 +3348,7 @@ function spawnBoss() {
   const w = Math.floor(state.time / 30);
   const cast = pickBossForWave(state.wave.num);
   state.wave.bosses = [];
+  state.wave.killedBossId = null;   // R2: the movies show the boss the player kills
   cast.forEach((desc, i) => {
     const a = Math.random() * Math.PI * 2 + (i / cast.length) * Math.PI * 2;
     const d = C.ENEMY.SPAWN_DIST * 0.7;
@@ -3264,6 +3404,8 @@ function spawnBoss() {
   armBossRule(state.wave.bosses);
   const rule = state.bossRule;
   if (rule && rule.live && !rule.broken) state.bossBanner.sub = (rule.text + ' - ' + rule.reward).toUpperCase();
+  // R7: the arrival sting (it holds the sim; its card stands in for the banner).
+  startBossSting('boss', state.wave.bosses);
 }
 
 // ---------- HORDE WARNING timing + direction (C.HUD.WARNING) ------------------
@@ -3683,7 +3825,9 @@ function update(dt) {
       // 1/120 sums to 0.39999... in doubles, which would otherwise hold one
       // extra 120Hz frame); it is 6 orders below any visible timescale.
       po.enterT += dt;
-      if (po.enterT >= C.PORTAL.DWELL - 1e-9) { openIntermission(); return; }
+      // R2: while the portal beat plays, the pilot waits inside the portal
+      // for the beat to finish (or be skipped); then the crossing completes.
+      if (po.enterT >= C.PORTAL.DWELL - 1e-9 && !beatHoldsEntry()) { openIntermission(); return; }
     } else {
       const dx = p.x - po.x, dy = p.y - po.y;
       const len = Math.hypot(dx, dy);
@@ -4012,7 +4156,7 @@ function update(dt) {
         p.hp -= damageTakenFortified(state, act.drain * prestigeEnemyMult(getPrestige(profile)) * dt);   // DoT: no invuln, just bleed (THICK SKIN funnel; N1 slice 3 FORTIFY-aware)
         state.runCounts.waveTookDamage = true;   // G9: a hit landed this wave
         resetRampage();              // WAVE-11: ANY hp loss ends the streak
-        if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; die(); return; }
+        if (p.hp <= 0) { lastDamageSource = { ...shotSrc(e), cause: 'drain' }; lastKillerRef = e; die(); return; }
       }
     }
     if (act.fire) {
@@ -4022,6 +4166,7 @@ function update(dt) {
         damage: act.fire.damage * dmgMult, age: 0,
         kind: e.typeId === 'WARLOCK' ? 'bolt' : 'spit',   // render variant
         src: shotSrc(e),   // WAVE-20 death-cause tracking
+        from: e,           // R2: the shooter, for the death movie's freeze
       });
     }
     // CHOIR MOTHER hymn / HERALD rifle burst: a fan of fire-intents around
@@ -4034,6 +4179,7 @@ function update(dt) {
           damage: f.damage * dmgMult, age: 0,
           kind: 'bolt',
           src: shotSrc(e),
+          from: e,
         });
       }
     }
@@ -4048,6 +4194,7 @@ function update(dt) {
           damage: act.nova.damage * dmgMult, age: 0,
           kind: 'nova',
           src: shotSrc(e),
+          from: e,
         });
       }
       state.effects.push({ kind: 'boss_nova', x: e.x, y: e.y, radius: 30, age: 0, ttl: 0.5 });
@@ -4163,7 +4310,7 @@ function update(dt) {
         touchKiller.vampBudget -= heal;
         touchKiller.hp = Math.min(touchKiller.maxHp, touchKiller.hp + heal);
       }
-      if (p.hp <= 0) { lastDamageSource = { ...shotSrc(touchKiller || {}), cause: 'contact' }; die(); return; }
+      if (p.hp <= 0) { lastDamageSource = { ...shotSrc(touchKiller || {}), cause: 'contact' }; lastKillerRef = touchKiller; die(); return; }
     }
     // Spiked Hide: reflect flat thorns damage into every touching enemy.
     const th = p.stats.thorns || 0;
@@ -4192,7 +4339,17 @@ function update(dt) {
         resetRampage();   // WAVE-11: projectile hits end the streak too
       }
       s.age = 99;
-      if (p.hp <= 0) { lastDamageSource = { ...(s.src || {}), cause: 'shot' }; die(); return; }
+      // The shooter is boxed on the freeze only while it still stands on the
+      // field: one killed while its shot was in flight left empty ground (or
+      // its own XP gem) behind. The caption still names it (deathBy) and says
+      // it is dead, so no other enemy on the frame is taken for it.
+      if (p.hp <= 0) {
+        lastDamageSource = { ...(s.src || {}), cause: 'shot' };
+        const fr = s.from;
+        lastKillerRef = fr && fr.hp > 0 && state.enemies.includes(fr) ? fr
+          : (fr && Number.isFinite(fr.x) && Number.isFinite(fr.y) ? { x: fr.x, y: fr.y, gone: true } : null);
+        die(); return;
+      }
     }
   }
   state.enemyShots = state.enemyShots.filter(s => s.age < 4);
@@ -4328,15 +4485,24 @@ function update(dt) {
         state.wave.pendingClear = true;
         state.wave.portalX = e.x;
         state.wave.portalY = e.y;
+        // R2: the boss whose death won the wave is the one the portal movie
+        // and the escape show (on a double wave, the first to fall).
+        if (!state.wave.killedBossId) state.wave.killedBossId = e.bossId || null;
         // WAVE-8/A: the FINAL death of the wave's cast (nobody left alive)
         // queues the portal-entry cinematic. The first of a double pair just
         // opens the portal — existing wave-6 behavior is kept.
         // The wave is won with this death (on a double wave the first to
         // fall wins it), so the boss rule is beaten here and pays its reward.
         const ruleWon = endBossRule(true, e.x, e.y);
-        if (!state.wave.bosses.some(b => b !== e && b.hp > 0)) {
+        // R2 fix: this death wins the wave even when the other boss of a
+        // double wave still lives (the clear below sweeps the survivor), so
+        // the portal's movie is queued here every time. It used to wait for
+        // nobody to be left alive, which never happened: on a double wave
+        // the movie never played.
+        if (!state.wave.cinePending) {
           state.wave.cinePending = true;
           siteBossPayout(e.x, e.y);   // M5b: altar chest, statue reward
+          startPortalBeat(e);
         }
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
         if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
@@ -4438,6 +4604,10 @@ function update(dt) {
     // The wave is won: the altar's chest and the statue's reward pay here too,
     // so a double wave cleared by its first boss leaves nothing owed.
     siteBossPayout(state.wave.portalX || p.x, state.wave.portalY || p.y);
+    // The other boss of a double wave is swept here with the horde. It dies
+    // its own death on the field (the fold and the small puff): the beat
+    // draws only the boss that fell, and a boss that just vanished read as
+    // a glitch.
     for (const o of state.enemies) {
       if (!(o.hp > 0)) continue;
       pushGem(makeGem(o.x, o.y, o.xp));
@@ -4459,7 +4629,7 @@ function update(dt) {
     // the scatter above so the fresh corpse-gems ride the same sweep.
     p.bossSweep = C.BOSS_SWEEP.SWEEP_S;
     state.bossSweepSnap = {
-      gems: state.gems.length,
+      gems: gemUnits(),
       potions: (state.drops || []).reduce((s, d) => s + (d.count || 1), 0),
       items: (state.itemDrops || []).length,
     };
@@ -4500,6 +4670,7 @@ function update(dt) {
   // a wall of off-curve unkillables. When that horde actually fires, re-base
   // the newly added enemies onto the ladder. Guarded on the event so the
   // frame cost of the set snapshot is not paid on ordinary ticks.
+  tickFloor(dt);   // R3 floor rules (C.FLOOR)
   const chestPre = state.chests.length > 0 ? new Set(state.enemies) : null;
   const chestEvents = tickChests(state, dt);
   // G9 FOLLOW-UP: count OPENED chests for CHESTS_25. An expired chest is a
@@ -4659,6 +4830,8 @@ function update(dt) {
       if (res) {
         state.itemDrops.splice(i, 1);
         toast(res.msg, res.tint);
+      } else if (d.refusedAt == null) {
+        d.refusedAt = state.time || 0;   // R3 floor: turned down, it leaves soon (C.FLOOR.REFUSED_S)
       }
     }
   }
@@ -4683,9 +4856,23 @@ function update(dt) {
     const gm = state.gems[i];
     const d = Math.hypot(gm.x - p.x, gm.y - p.y);
     if (d < pickR) {
-      p.xp += gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();
+      const gain = gm.xp * xpGainMult(p.kills) * (p.stats.xpMult || 1) * (wm.xpMult || 1) * rampageMult();
+      p.xp += gain;
       state.gems.splice(i, 1);
-      feedWeaponXp(1);                         // gems trickle weapon XP
+      // R3 floor: a merged gem is n gems; each still trickles weapon XP once.
+      const many = gm.n || 1;
+      for (let k = 0; k < many; k++) feedWeaponXp(1);   // gems trickle weapon XP
+      const rich = richStep(gm, C.FLOOR.RICH_XP);
+      if (rich > 0) {
+        // A rich gem is a payoff: a small bonus on top of the exact sum it holds
+        // (C.FLOOR.RICH_BONUS), its own sound, and its XP shown where it lay.
+        const bonus = gain * (C.FLOOR.RICH_BONUS[rich] || 0);
+        p.xp += bonus;
+        state.runCounts.richXp = (state.runCounts.richXp || 0) + gain;
+        state.runCounts.richBonusXp = (state.runCounts.richBonusXp || 0) + bonus;
+        audio.playSfx('gemRich');
+        sitePop(gm.x, gm.y - 10, '+' + Math.round(gain + bonus) + ' XP', '#9effe6');
+      }
       // The guided part of run 1 grants its one level-up itself (the draft step).
       while (p.xp >= p.xpNext && !tutGuidedLive()) { levelUp(); }
       // W7b MYTHIC Storm Shards: picking up XP chips every enemy in a radius
@@ -4701,7 +4888,7 @@ function update(dt) {
       // damage metric (same owner report). Gameplay unchanged.
       if (p.stats.stormShards) {
         const S = DRAFT_LADDER.STORM_SHARDS;
-        const chip = Math.max(S.CHIP_MIN, p.stats.damage * S.CHIP_FRAC);
+        const chip = Math.max(S.CHIP_MIN, p.stats.damage * S.CHIP_FRAC) * many;   // one proc per gem
         for (const o of state.enemies) {
           if (o.hp <= 0) continue;
           if (Math.hypot(o.x - p.x, o.y - p.y) <= S.RADIUS) {
@@ -4729,9 +4916,12 @@ function update(dt) {
 
   // EVOLVE overlay check: level-ups and partner cards
   // can all complete a requirements triple since the last frame.
-  maybeOpenEvolve();
-  maybeOpenJokerOffer();
-  maybeOpenRuleCard();
+  // R2: no card screen cuts into the portal beat; they open when it ends.
+  if (!beatLive()) {
+    maybeOpenEvolve();
+    maybeOpenJokerOffer();
+    maybeOpenRuleCard();
+  }
 
   // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
   // auto-start here on the first playing tick after the final boss died —
@@ -4762,16 +4952,19 @@ function levelUp() {
   p.hp = Math.min(p.stats.maxHp, p.hp + gain);
   audio.playSfx('levelup');
   state.pendingDrafts++;
-  if (state.mode === 'playing') openDraft();
+  // R2: a level-up during the portal beat waits for its end (endPortalBeat).
+  if (state.mode === 'playing' && !beatLive()) openDraft();
 }
 
 // WAVE-14: toast() is the ONE event stream — the text HUD's `!` line and the
 // on-canvas event feed (render.js, under the HP/mana bars) both read it.
 // `tint` (optional) colorizes the feed line — the rarity color of a found
 // item. ttl 4s; the feed shows the last 3 and fades each line's final second.
+// R3 MESSAGE LANE: the stream keeps STREAM_CAP lines, and when it is full the
+// lowest-ranked line goes (message_lane.js), so a portal, boss or quest line is
+// never pushed out by a lesser one. The HUD paints at most 2 lines of it.
 function toast(msg, tint = null) {
-  state.toasts.push({ msg, ttl: 4, tint });
-  if (state.toasts.length > 3) state.toasts.shift();
+  pushToast(state.toasts, { msg, ttl: 4, tint });
 }
 
 // WAVE-14: the boss-arrival banner lives ~2.5s. STUCK-OVERLAY GUARANTEE
@@ -4853,6 +5046,8 @@ function openDraft() {
   if (draftCeremony) endDraftCeremony(false);
   state.mode = 'draft';
   ovTitle.className = '';
+  // integ3: the pre-run screen hides the heading; a draft shows its own.
+  if (ovTitle.style) ovTitle.style.display = '';
   // A boss kill queues a joker offer; it opens ahead of any level-up draft.
   if (!state.draftKind) state.draftKind = state.shrineOffer ? 'shrine' : state.jokerOffers > 0 ? 'joker' : 'level';
   if (state.draftKind === 'shrine') {
@@ -4881,7 +5076,7 @@ function openDraft() {
     if (--state.pendingDrafts <= 0) { state.pendingDrafts = 0; state.mode = 'playing'; return; }
     state.draftKind = 'level';
   }
-  // Weapon-scoped pool (megabonk rework). Decision 7 (Steve, 2026-11-17):
+  // Weapon-scoped pool: the draft offers only the run's own weapons. Decision 7 (Steve, 2026-11-17):
   // the LOADOUT lists the weapons a run can offer. The run starts with the
   // first one; the others come as NEW cards (kitNew) while a slot is free.
   // The rest of the weapon side is LEVEL-UP cards for the weapons held (+ the
@@ -5088,11 +5283,8 @@ function openDraft() {
       state.kitDry = 0;
     } else state.kitDry = (state.kitDry || 0) + 1;
   }
-  // A card that would make a new or better hand says so (hands.js).
-  for (const c of choices) {
-    const hint = handHint(state.player, c.id, runHandOpts());
-    c.handText = hint ? hint.text : '';
-  }
+  // A card that would make a new or better hand says so: presentDraft tags
+  // every offer (draft_card_face.js offerHandTag).
   // A beaten boss rule's free card is a draft without the level.
   const freeCard = state.ruleCards > 0;
   presentDraft(choices, freeCard ? 'FREE CARD' : 'LEVEL ' + state.player.level,
@@ -5109,6 +5301,8 @@ function pickHowText(n) {
   const keys = k <= 4 ? Array.from({ length: k }, (_, i) => i + 1).join('/') : '1-' + k;
   return 'Pick 1: click or press ' + keys;
 }
+// The draft header's touch tail: press-and-hold opens a card's full text.
+const DRAFT_HOLD_HINT = ' · hold to read';
 function pickHeader(lead, n) {
   return (lead ? lead + ' · ' : '') + pickHowText(n);
 }
@@ -5172,6 +5366,7 @@ function fitDraftHeader() {
 // Put a set of offer cards on the draft overlay: level-up cards, a boss's
 // joker offer, or the replace choice of a full joker row.
 let lastDraft = null;   // the offer a replace choice can go back to
+const DRAFT_TUT_RESERVE = 120;
 function presentDraft(choices, title, sub, opts = {}) {
   if (!opts.swap) lastDraft = { choices, title, sub };
   // SLICE 9: record the offer set (the taken id fills in at pick()).
@@ -5187,29 +5382,52 @@ function presentDraft(choices, title, sub, opts = {}) {
   // The digit keys reach cards 1-6 on a draft (see the keydown routing).
   // The guided run's first draft belongs to its DRAFT step, whose panel asks
   // for NEXT: a header naming the keys there would skip the EVOLVE lesson.
-  ovSub.textContent = tutOwnsDraftHeader() ? 'pick 1 of ' + choices.length
-    : pickHeader(sub, Math.min(choices.length, 6));
+  // On touch the full text of a card opens by press-and-hold (wireDraftHold):
+  // the header says so, or a phone player would never find it.
+  ovSub.textContent = (tutOwnsDraftHeader() ? 'pick 1 of ' + choices.length
+    : pickHeader(sub, Math.min(choices.length, 6))) + (isTouchPath() ? DRAFT_HOLD_HINT : '');
   draftFocus = -1;
   ovCards.innerHTML = '';
-  const lay = setDraftOverlay(true, choices.length);
+  // cards2: on the guided first draft the tutorial's panel needs a strip of
+  // the screen, so an upright phone keeps DRAFT_TUT_RESERVE px free for it.
+  const lay = setDraftOverlay(true, choices.length,
+    { dcard: true, reserve: tutOwnsDraftHeader() ? DRAFT_TUT_RESERVE : 0 });
+  // R5: each offer is a playing card (src/draft_card_face.js): a ribbon, the
+  // card face large inside its rarity border, the hand tag, the name and at
+  // most two effect lines. The rest of the text sits in a detail that opens
+  // on hover, on the keyboard cursor, or on press-and-hold (touch).
+  const kitFree = (state.kitFreeUsed || 0) < KIT_OFFER.FREE;
+  const dealOn = draftDealEnabled();
+  const dealAt = dealDelays(choices.length);
   choices.forEach((u, i) => {
     const el = document.createElement('div');
-    el.className = 'card';
-    if (lay.cardW && el.style) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
+    const rar = offerRarity(u);
+    el.className = 'card dcard r-' + rar + ((u.kitNew || u.refill) ? ' is-new' : '') + (dealOn ? ' deal' : '');
+    if (el.style) {
+      if (lay.cardW) { el.style.width = lay.cardW + 'px'; el.style.boxSizing = 'border-box'; }
+      const setVar = (k, v) => { if (typeof el.style.setProperty === 'function') el.style.setProperty(k, v); else el.style[k] = v; };
+      setVar('--rar', RARITY_BORDER[rar]);
+      if (dealOn) setVar('--deal-delay', dealAt[i] + 'ms');
+    }
     el._draftOffer = u;        // the keydown routing + the inspect flow read this
     el.tabIndex = 0;           // the arrows+Enter cursor focuses (frameCard hot tone)
-    // W7b: the ladder tier is ON the card — the chase has to read as a chase.
-    // Tints are the rarity.js encounter tells (RARE cyan / MYTHIC violet), so
-    // the draft and the field speak one rarity language. Inline style: the
-    // draft overlay is DOM, and index.html's stylesheet is another track's
-    // file.
+    // The hand tag tells the truth: the hand the pick would leave, from
+    // evaluateHand, shown only when it is better than the hand held now.
+    const tag = offerHandTag(state, u);
+    u.handText = tag ? tag.text : '';
+    // The ladder tier rides in the detail too, in the rarity.js tells
+    // (RARE cyan / MYTHIC violet), so the draft and the field speak one
+    // rarity language.
     const badge = u.tier
       ? `<div class="syn" style="color:${u.tier === 'JOKER' ? JOKER_TINT : RARITY.RARE.tell.outline}">${u.tier}</div>`
-      : u.evoReady ? `<div class="syn evo-ready" style="color:#ffd75e">EVOLUTION READY</div>` : '';
-    if (u.evoReady) el.className += ' evo-ready';
-    const handLine = u.handText
-      ? `<div class="evo hand" style="color:#8fe0a0;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.handText}</div>`
       : '';
+    if (u.evoReady) el.className += ' evo-ready';
+    const rib = offerRibbon(u, { kitFree });
+    const ribbon = rib
+      ? `<div class="ribbon ${rib.cls}" style="background:${RIBBON_COLOUR[rib.cls] || '#c9a05a'}">${rib.text}</div>`
+      : '<div class="ribbon none">&nbsp;</div>';
+    const handTag = u.handText ? `<div class="tag hand">${u.handText}</div>` : '';
+    const face = faceLines(u).map(l => `<div class="${l.cls}">${l.text}</div>`).join('');
     // The road to the evolution rides its own line under the effect text.
     const evoLine = u.evoText
       ? `<div class="evo" style="color:${u.evoReady ? '#ffd75e' : '#c0b48a'};font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.evoText}</div>`
@@ -5224,26 +5442,44 @@ function presentDraft(choices, title, sub, opts = {}) {
     const stackLine = u.stackText
       ? `<div class="evo stack" style="color:#ffd75e;font-size:11px;letter-spacing:1px;position:relative;z-index:1">${u.stackText}</div>`
       : '';
-    el.innerHTML = badge + `<div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>` + handLine + leadLine + stackLine + evoLine + fuseLine +
-      `<div class="key">[${i + 1}]</div>`;
+    // The detail: the full text and every road, as the card carried it before.
+    const detail = `<div class="detail"><div class="dname">${u.name}</div>` + badge +
+      `<div class="desc">${u.desc}</div>` + leadLine + stackLine + evoLine + fuseLine + '</div>';
+    el.innerHTML = ribbon + handTag + `<div class="name">${i + 1}. ${u.name}</div>` + face +
+      `<div class="key">[${i + 1}]</div>` + detail;
     // ONE activation takes the card (owner directive 2026-09-15: the text is on
     // the card, so there is no confirm step) — see activateDraftCard below.
     // HELP MODE: a tap on a draft card explains it and picks NOTHING.
+    // A press-and-hold on a touch screen opens the detail; letting go after a
+    // hold picks nothing. A plain tap still picks in one tap.
     el.onclick = () => {
+      if (el._held) { el._held = false; return; }
       if (state.helpMode) { showHelpTip('<b>' + u.name + '</b> — ' + (u.desc || ''), el); return; }
       if (draftBanishArmed) { draftBanish(u); return; }
       activateDraftCard(u);
     };
+    wireDraftHold(el);
     ovCards.appendChild(el);
     // R1: the offer's playing-card art, painted by the REAL drawCard
-    // (src/draft_card_art.js). On top of the text in a live DOM (insertBefore);
-    // appended in a stub DOM — the canvas child is the contract there.
+    // (src/draft_card_art.js), inside the face box under the ribbon. The card
+    // back sits over it while the card is dealt face down.
+    const faceEl = document.createElement('div');
+    faceEl.className = 'face';
     const artCv = document.createElement('canvas');
     artCv.className = 'card-art';
     if (artCv.setAttribute) artCv.setAttribute('data-card', u.id);
     if (paintOfferArt(artCv, u.artId || u.id, lay.artScale)) {
-      if (typeof el.insertBefore === 'function') el.insertBefore(artCv, el.firstChild);
-      else el.appendChild(artCv);
+      faceEl.appendChild(artCv);
+      if (dealOn) {
+        const back = document.createElement('canvas');
+        back.className = 'back';
+        if (back.setAttribute) back.setAttribute('aria-hidden', 'true');
+        paintCardBack(back, lay.artScale);
+        faceEl.appendChild(back);
+      }
+      const after = typeof el.querySelector === 'function' ? el.querySelector('.ribbon') : null;
+      if (after && after.nextSibling !== undefined && typeof el.insertBefore === 'function') el.insertBefore(faceEl, after.nextSibling);
+      else el.appendChild(faceEl);
     }
     frameCard(el);
   });
@@ -5626,22 +5862,34 @@ function updateRunHand(announce) {
   const res = refreshHand(p, runHandOpts());
   if (res.changed && res.hand && announce && res.upgraded) {
     state.handFx = { t: 0, dur: HAND_COUNT_S, from, to: handBonus(res.hand, res.hand.scale).dmg };
+    // R5: the HUD's hand fan pulses once (render.js, hand_fan.js).
+    state.handPulse = { t: 0 };
     toast('HAND: ' + res.hand.name.toUpperCase() + ' - ' + describeHandBonus(res.hand, res.hand.scale), '#8fe0a0');
-    audio.playSfx('powerup');
+    // R4: the hand's own count-up and stinger, bigger for a higher hand.
+    audio.playSfx('hand', res.hand.order);
     tut.due.push('hand');
   }
   return res;
 }
 
-// Advance the count-up; a soft tick marks each step of the number.
+// Advance the count-up. (R4: its ticks are part of the hand's own cue, played
+// at the pick, so the number climbing on screen makes no second sound.)
+// Like the fan's pulse, it runs only in play: when a second draft opens right
+// after the pick, both wait and then play together when the fight is back.
 function tickHandFx(dt) {
   const fx = state.handFx;
-  if (!fx) return;
-  const step = (t) => Math.floor(Math.min(1, t / fx.dur) * 5);
-  const before = step(fx.t);
+  if (!fx || state.mode !== 'playing') return;
   fx.t += dt;
-  if (step(fx.t) > before && fx.t < fx.dur) audio.playSfx('uiMove');
   if (fx.t >= fx.dur + 0.6) state.handFx = null;
+}
+
+// The hand fan's pulse runs only while the fight is on screen, so it is not
+// spent behind the draft that made the hand. Drawing only: no rng, no sim.
+function tickHandPulse(dt) {
+  const hp = state.handPulse;
+  if (!hp || state.mode !== 'playing') return;
+  hp.t += dt;
+  if (hp.t >= FAN_PULSE_S) state.handPulse = null;
 }
 
 // Common stat cards (config.js UPGRADES) stack: how many times this pick of
@@ -6159,6 +6407,8 @@ function noteInput() {
   const gapS = (now - lastInputMs) / 1000;
   lastInputMs = now;
   autoRunsInRow = 0;
+  // R5: a press on the end card lands the gold count at once.
+  if (state.mode === 'dead') endCountFinish();
   // A player on the end card of an unattended run gets AUTO_STALL_S to read it.
   if (state.mode === 'dead' && autoRestartLeft !== null) {
     autoRestartLeft = C.AUTOPILOT.AUTO_STALL_S;
@@ -6281,10 +6531,24 @@ function awayFrame(realDt) {
 
 export function autoDraftPickIndex(offers) {
   // A joker is the top pick while the row has room; with a full row it is the last.
-  // A NEW weapon from the loadout ranks above a RARE card: an unattended run
-  // fills the kit its player chose (KIT_OFFER.AUTO_RANK).
-  const rank = (u) => (u && u.tier === 'JOKER') ? (jokerRowFull(state) ? -1 : 2) : (u && u.kitNew) ? KIT_OFFER.AUTO_RANK
-    : (u && u.tier === 'RARE') ? 1 : 0;
+  // Then it drafts toward evolutions, as a player who plans would (balance review
+  // 2026-11: the old pick took a NEW weapon, then a RARE card, else the first card,
+  // and an idle run died at the first boss where a planned one lived twice as long):
+  // a card that evolves a weapon now, the lead weapon's card, any weapon level, a
+  // NEW weapon from the loadout (KIT_OFFER.AUTO_RANK), a stat card that is a kit
+  // weapon's evolution partner, a RARE card, else the first card.
+  const rank = (u) => {
+    if (!u) return 0;
+    if (u.tier === 'JOKER') return jokerRowFull(state) ? -1 : 2;
+    // (Taking the run's free NEW card first was measured and is worse: 26 of 64
+    // seeds past the first boss against 34 of 64 with the lead weapon's card first.)
+    if (u.evoReady) return 1.9;
+    if (u.leadText) return 1.7;
+    if (String(u.id).startsWith('lvl_')) return 1.6;
+    if (u.kitNew) return KIT_OFFER.AUTO_RANK;
+    if (u.evoText && !u.refill) return 1.3;
+    return u.tier === 'RARE' ? 1 : 0;
+  };
   let best = -1;
   for (let i = 0; i < offers.length; i++) {
     if (best < 0 || rank(offers[i]) > rank(offers[best])) best = i;
@@ -6406,8 +6670,63 @@ function draftCeremonyEnabled() {
   } catch { return true; }
 }
 
+// R5 deal-in: the offer cards arrive face down and flip (index.html
+// .dcard.deal). Presentation only: a press during the flip picks the card,
+// and no timer waits for it. Reduced motion and a hidden tab get no flip.
+function draftDealEnabled() {
+  return !bgHidden && draftCeremonyEnabled();
+}
+
+// R5 detail on touch: press and hold a draft card for DRAFT_HOLD_MS to open
+// its detail (class 'peek'). Letting go after a hold picks nothing (onclick
+// reads _held); a shorter press is a plain tap and picks. A mouse never
+// holds: it has hover. Whether it was a hold is decided by the clock at
+// release, so a browser that sends no click after a long press is fine too:
+// the next press clears the mark.
+const DRAFT_HOLD_MS = 380;
+function setCardClass(el, cls, on) {
+  const has = new RegExp('\\b' + cls + '\\b').test(String(el.className || ''));
+  if (on && !has) el.className = (String(el.className || '') + ' ' + cls).trim();
+  else if (!on && has) el.className = String(el.className).split(' ').filter(c => c && c !== cls).join(' ');
+}
+function wireDraftHold(el) {
+  if (!el || typeof el.addEventListener !== 'function') return;
+  let downAt = -1, timer = null;
+  const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('pointerdown', (ev) => {
+    el._held = false;
+    stop();
+    if (!ev || ev.pointerType === 'mouse') { downAt = -1; return; }
+    downAt = performance.now();
+    timer = setTimeout(() => { timer = null; setCardClass(el, 'peek', true); }, DRAFT_HOLD_MS);
+  });
+  const release = (pick) => () => {
+    stop();
+    if (pick && downAt >= 0 && performance.now() - downAt >= DRAFT_HOLD_MS) el._held = true;
+    downAt = -1;
+    setCardClass(el, 'peek', false);
+  };
+  el.addEventListener('pointerup', release(true));
+  el.addEventListener('pointercancel', release(false));
+  // A long press must not open the browser's own menu over the card.
+  el.addEventListener('contextmenu', (ev) => { if (ev && ev.preventDefault) ev.preventDefault(); });
+}
+
 // Adds or removes one class on the overlay (classList in a browser, the plain
 // className string in a stub DOM).
+let floorLightFlag = false;
+// The darker scrim is for a run on a light floor behind the overlay (pause,
+// intermission, in-run settings and help). The title, the shop, the end card
+// and every menu outside a run keep the plain scrim, though the renderer
+// still remembers the last run's floor. The modes of a run:
+const FLOOR_LIGHT_RUN = new Set(['playing', 'finale', 'intro', 'draft', 'evolve', 'stats', 'settings', 'chest', 'burst',
+  'intermission', 'escape', 'portal-cine', 'death-cine']);
+function syncFloorLightFlag() {
+  const on = !!renderer.groundLight && FLOOR_LIGHT_RUN.has(state.mode);
+  if (on === floorLightFlag) return;
+  floorLightFlag = on;
+  setOverlayFlag('floor-light', on);
+}
 function setOverlayFlag(cls, on) {
   if (overlay.classList && typeof overlay.classList.add === 'function') {
     if (on) overlay.classList.add(cls);
@@ -6423,13 +6742,19 @@ function setDraftCeremonyFlag(on) { setOverlayFlag(CEREMONY_FLAG_CLS, on); }
 // The draft / evolve / fusion offers share one overlay look: a dark scrim
 // (index.html #overlay.draft) and, on a short viewport, the compact card
 // (draft_card_art.js draftLayout). Returns the layout the cards are built to.
-function setDraftOverlay(on, offers = 3) {
+// `opts` goes to draftLayout: { dcard: true } for the playing-card offers
+// (the rows on an upright phone, the 4x face held sideways), `reserve` the
+// height kept free for the guided tutorial's panel.
+function setDraftOverlay(on, offers = 3, opts = {}) {
   setOverlayFlag('draft', on);
-  if (!on) { setOverlayFlag('compact', false); return null; }
+  if (!on) { setOverlayFlag('compact', false); setOverlayFlag('rows', false); setOverlayFlag(FORGE_FLAG_CLS, false); return null; }
   let vw = 1280, vh = 720;
   try { if (typeof window !== 'undefined' && window.innerWidth) ({ vw, vh } = viewSize()); } catch { /* stub DOM */ }
-  const lay = draftLayout(vw, vh, offers);
+  const lay = draftLayout(vw, vh, offers, opts);
   setOverlayFlag('compact', lay.compact);
+  setOverlayFlag('rows', !!lay.rows);
+  setOverlayFlag(FORGE_FLAG_CLS, false);   // maybeOpenEvolve sets it again for its own offer
+  lay.vw = vw;
   // The title / pre-run screen's top-aligned, transparent overlay must not leak in.
   for (const c of ['title', 'end', 'howto']) setOverlayFlag(c, false);
   overlay.style.background = '';
@@ -6532,9 +6857,13 @@ function maybeOpenEvolve() {
   state.mode = 'evolve';
   overlay.style.display = 'flex';
   const lay = setDraftOverlay(true, offers.length + 1);
+  // R5: the offer sits over the frozen field (a lighter scrim than a draft's)
+  // and shows what fuses as pictures.
+  setOverlayFlag(FORGE_FLAG_CLS, true);
   const fusing = offers.every(o => o.kind === 'fuse');
   ovTitle.textContent = fusing ? 'FUSION' : 'EVOLUTION';
   ovTitle.className = 'logo';
+  if (ovTitle.style) ovTitle.style.display = '';   // the pre-run screen hid it
   // The digit keys reach the offers and NOT NOW, up to 4 (see the keydown routing).
   ovSub.textContent = pickHeader(fusing ? 'two evolved weapons become one, and a weapon slot comes free'
     : 'a maxed weapon and its partner card', Math.min(offers.length + 1, 4));
@@ -6562,6 +6891,11 @@ function maybeOpenEvolve() {
         ` &middot; whole kit +${Math.round(DRAFT_PLAN.EVOLUTION_KIT_DMG * 100)}% damage</div>` +
         `<div class="key">[${i + 1}]</div>`;
     }
+    const row = forgeRowEl(forgeArts(o), lay);
+    // A wide screen shows the pictures at 3x: the card widens to hold the row.
+    if (row && !lay.cardW && !lay.compact && el.style) el.style.width = FORGE_CARD_W + 'px';
+    if (row && el.insertBefore && el.firstChild) el.insertBefore(row, el.firstChild);
+    else if (row && el.appendChild) el.appendChild(row);
     el.onclick = () => takeForgeOffer(o);
     ovCards.appendChild(el);
     frameCard(el);
@@ -6623,20 +6957,30 @@ function doEvolve(w) {
     // An evolution charges +2 wrath (event-id deduped).
     addWrath(state, 'WEAPON_EVOLUTION', null, 'evo:' + w.type + ':' + res.name);
     forgeHeal(DRAFT_PLAN.EVOLUTION_KIT_DMG);
-    if (oneTimeBanners && markBannerSeen(profile, 'EVOLVE')) {
-      // The first evolution ever: the cinematic banner and its pause.
-      state.bossBanner = {
-        names: [res.name.toUpperCase()], verb: 'EVOLVED',
-        title: res.name.toUpperCase(),
-        sub: (WEAPON_NAMES[w.type] || w.type).toUpperCase() + ' EVOLVED - ' + w.evolution.desc.toUpperCase(),
-        ttl: TOKEN_BANNER_SEC,
-      };
-      state.bannerHold = TOKEN_BANNER_SEC;
-    }
+    const firstEver = oneTimeBanners && markBannerSeen(profile, 'EVOLVE');
     toast(res.name.toUpperCase() + ' UNLEASHED');
-    audio.playSfx('evolve');
-    // An evolution is one of the EARNED slow-mo moments.
-    triggerEarnedMoment('evolution', state.player.x, state.player.y);
+    closeEvolve();
+    // R5: the weapon and its partner card fuse on screen first. What runs on
+    // the wall clock (the slow time) starts when it ends. Where the moment
+    // played (`staged`) it has announced the evolution: the first-ever banner
+    // and its hold are left out (they froze the fight 2.5 s more). An
+    // unattended or hidden run, which stages no moment, keeps the banner, and
+    // so does a moment cut short by the tab going hidden (hideForge).
+    beginForge(forgeArts({ kind: 'evolve', w }), (staged) => {
+      if (firstEver && !staged) {
+        // The first evolution ever: the cinematic banner and its pause.
+        state.bossBanner = {
+          names: [res.name.toUpperCase()], verb: 'EVOLVED',
+          title: res.name.toUpperCase(),
+          sub: (WEAPON_NAMES[w.type] || w.type).toUpperCase() + ' EVOLVED - ' + w.evolution.desc.toUpperCase(),
+          ttl: TOKEN_BANNER_SEC,
+        };
+        state.bannerHold = TOKEN_BANNER_SEC;
+      }
+      // An evolution is one of the EARNED slow-mo moments.
+      triggerEarnedMoment('evolution', state.player.x, state.player.y);
+    });
+    return;
   }
   closeEvolve();
 }
@@ -6652,22 +6996,326 @@ function doFuse(def) {
     recordForgeTaken('fuse:' + res.weapon.fusionId);
     forgeHeal(DRAFT_PLAN.FUSION_KIT_DMG);
     const first = markBannerSeen(profile, FUSION_SHELF_KEY + res.weapon.fusionId);
-    if (oneTimeBanners && first) {
-      // A fusion discovered for the first time: the cinematic banner and its pause.
-      state.bossBanner = {
-        names: [res.name.toUpperCase()], verb: 'FUSED',
-        title: res.name.toUpperCase(),
-        sub: 'NEW FUSION - ' + res.weapon.fusion.desc.toUpperCase(),
-        ttl: TOKEN_BANNER_SEC,
-      };
-      state.bannerHold = TOKEN_BANNER_SEC;
-    }
     // The feed says what the new weapon does: an AUTO run took it unread.
     toast('FUSION: ' + res.name.toUpperCase() + ' — ' + res.weapon.fusion.desc);
-    audio.playSfx('evolve');
-    triggerEarnedMoment('evolution', state.player.x, state.player.y);
+    closeEvolve();
+    // R5: the two evolved weapons fuse on screen first (see doEvolve).
+    beginForge(forgeArts({ kind: 'fuse', def: fusionDef(res.weapon.fusionId) || def }), (staged) => {
+      if (oneTimeBanners && first && !staged) {
+        // A fusion discovered for the first time: the cinematic banner and its pause.
+        state.bossBanner = {
+          names: [res.name.toUpperCase()], verb: 'FUSED',
+          title: res.name.toUpperCase(),
+          sub: 'NEW FUSION - ' + res.weapon.fusion.desc.toUpperCase(),
+          ttl: TOKEN_BANNER_SEC,
+        };
+        state.bannerHold = TOKEN_BANNER_SEC;
+      }
+      triggerEarnedMoment('evolution', state.player.x, state.player.y);
+    });
+    return;
   }
   closeEvolve();
+}
+
+// ---------- R5: the forge, staged ------------------------------------------
+// Taking an evolution or a fusion plays a short moment over the frozen field
+// (src/forge_show.js): the two cards move together and fuse into the new
+// weapon's card, with a cyan-teal glow and a sting. The rules are already
+// applied when it starts (the mode is 'playing' again at once); the moment
+// holds the sim the way a banner does, and what would run on the wall clock
+// under it (the first-ever banner's hold, the earned slow time) starts when
+// it ends, so the fight after it is the fight there would have been.
+// An unattended run, background play and a hidden tab never stage it (a tab
+// hidden mid-moment ends it at once). The shared skip rule applies.
+const FORGE_FLAG_CLS = 'forge';     // the offer's lighter scrim (index.html #overlay.draft.forge)
+// On a screen held upright the evolve or fusion offer's header lines stand
+// over the canvas HUD rows and would half cover their words: there the
+// frozen field is drawn without the HUD while the offer is up. A wide screen
+// keeps the HUD (the offer does not reach it).
+function forgeOfferHidesHud() {
+  if (state.mode !== 'evolve' || !overlay.classList || !overlay.classList.contains(FORGE_FLAG_CLS)) return false;
+  const { vw, vh } = viewSize();
+  return vh > vw;
+}
+const FORGE_CARD_W = 290;           // a wide screen's offer card: three 72 px pictures, two signs, the padding
+var forge = null;   // eslint-disable-line no-var -- { t, o, skip, stung, after } while on screen
+const deckOfWeapon = (type) => WEAPON_OFFER_TO_DECK[type] || null;
+// The three pictures of an offer: what goes in, and what comes out.
+function forgeArts(o) {
+  if (!o) return null;
+  if (o.kind === 'fuse') {
+    const d = o.def;
+    if (!d || !d.pair) return null;
+    const [a, b] = d.pair;
+    const evoName = (t) => (EVOLUTION_DEFS[t] ? EVOLUTION_DEFS[t].name : (WEAPON_NAMES[t] || t));
+    return { kind: 'fuse', left: FORGE.evolvedFaceArt(deckOfWeapon(a)), right: FORGE.evolvedFaceArt(deckOfWeapon(b)),
+      result: FORGE.fusionFaceArt(d), name: d.name, sub: evoName(a) + ' + ' + evoName(b) };
+  }
+  const card = o.w && describeEvolution(o.w);
+  if (!card) return null;
+  const deck = deckOfWeapon(o.w.type);
+  return { kind: 'evolve', left: deck ? cardArt(deck) : null, right: cardArt(OFFER_TO_DECK[card.partner]) || null,
+    result: deck ? FORGE.evolvedFaceArt(deck) : null, name: card.name, sub: card.weaponName + ' + ' + card.partnerName };
+}
+// The offer card's picture row: weapon + partner = evolved (or the two
+// evolved weapons = the fusion). Whole-number scales only (pixel art).
+// R5 review: on a narrow phone card the 2x row (with 16 px signs and 4 px
+// gaps) was wider than the card and covered its gold border. The row now
+// takes the largest whole scale that fits the card's inner width, with tight
+// gaps and small signs when that is what makes it fit. The widths are upper
+// bounds measured in Chrome (a 16 px sign is 9 px wide, a 12 px one 7 px).
+const FORGE_ROW = { ART_W: 24, SIGN_W: 10, SIGN_W_TIGHT: 8, GAP: 4, GAP_COMPACT: 2, GAP_TIGHT: 1,
+  OVERHANG: 4, PAD_PORTRAIT: 10, PAD_COMPACT: 8 };
+function forgeRowFit(lay) {
+  if (!lay || !lay.cardW) return { s: lay && lay.compact ? 2 : 3, tight: false };
+  const R = FORGE_ROW;
+  const inner = lay.cardW - 2 * (lay.compact ? R.PAD_COMPACT : R.PAD_PORTRAIT);
+  const width = (s, signW, gap) => 3 * R.ART_W * s + 2 * signW + 4 * gap;
+  const gap = lay.compact ? R.GAP_COMPACT : R.GAP;
+  for (const s of [2, 1]) {
+    if (width(s, R.SIGN_W, gap) <= inner) return { s, tight: false, inner };
+    // Tight: 1 px gaps, small signs, and the row may reach 4 px into the
+    // card's padding on each side (still inside the painted border).
+    if (width(s, R.SIGN_W_TIGHT, R.GAP_TIGHT) <= inner + 2 * R.OVERHANG) return { s, tight: true, inner };
+  }
+  // Three or four offers on a small phone: no room for the sum, so the card
+  // shows only what the weapon becomes.
+  return { s: R.ART_W * 2 <= inner ? 2 : 1, tight: true, inner, only: true };
+}
+function forgeRowEl(arts, lay) {
+  if (!arts || typeof document === 'undefined' || !document || !document.createElement) return null;
+  const fit = forgeRowFit(lay);
+  const s = fit.s;
+  const row = document.createElement('div');
+  row.className = fit.tight ? 'forge-row tight' : 'forge-row';
+  row._forgeArts = arts;
+  row._forgeFit = fit;
+  for (const p of fit.only ? [arts.result] : [arts.left, '+', arts.right, '=', arts.result]) {
+    if (typeof p === 'string') {
+      const sp = document.createElement('span');
+      sp.className = 'forge-sign';
+      sp.textContent = p;
+      row.appendChild(sp);
+      continue;
+    }
+    const cv = document.createElement('canvas');
+    cv.className = 'forge-art';
+    cv.width = 24 * s; cv.height = 34 * s;
+    if (cv.style) { cv.style.width = cv.width + 'px'; cv.style.height = cv.height + 'px'; }
+    try {
+      const g = typeof cv.getContext === 'function' ? cv.getContext('2d') : null;
+      const src = g && p ? forgeArtCanvas(p, s) : null;
+      if (src) g.drawImage(src, 0, 0);
+    } catch { /* stub DOM */ }
+    row.appendChild(cv);
+  }
+  return row;
+}
+// Each card picture is painted once per scale (about 800 cells each) and
+// copied after that, so opening the offer again costs a few image copies.
+const forgeArtCache = new Map();
+function forgeArtCanvas(art, s) {
+  let byScale = forgeArtCache.get(art);
+  if (!byScale) { byScale = new Map(); forgeArtCache.set(art, byScale); }
+  if (byScale.has(s)) return byScale.get(s);
+  const c = document.createElement('canvas');
+  c.width = 24 * s; c.height = 34 * s;
+  const g = c.getContext && c.getContext('2d');
+  if (!g) return null;
+  drawCardArt(g, art, 0, 0, s);
+  byScale.set(s, c);
+  return c;
+}
+function forgeStages() {
+  if (state.unattended || bgRuns()) return false;
+  try { return !(typeof document !== 'undefined' && document && document.hidden); } catch { return true; }
+}
+// Start the moment, or (when it is not staged) do at once what follows it.
+function beginForge(arts, after) {
+  if (forge) endForge();   // never two at once
+  if (!arts || !arts.result || !forgeStages()) {
+    audio.playSfx('evolve');
+    after(false);   // not staged
+    return;
+  }
+  let capScale = 1;
+  try { const r = canvas.getBoundingClientRect(); if (r && r.width > 0) capScale = r.width / C.VIEW_W; } catch { /* keep 1 */ }
+  forge = { t: 0, skip: createSkip(), stung: false, after,
+    o: { ...arts, reduced: escapeStill(), repeat: (state.forgeShows || 0) > 0, capScale } };
+  state.forgeShows = (state.forgeShows || 0) + 1;
+}
+// End the moment (it ran out, was skipped, or its screen went away). The
+// sting is never lost: a skip before the fuse plays it now.
+function endForge() {
+  const f = forge;
+  if (!f) return;
+  forge = null;
+  if (!f.stung) audio.playSfx('forge');
+  try { f.after(true); } catch { /* the run goes on */ }   // staged: the moment was shown
+}
+// Drop the moment without what follows it (a death, the run left behind):
+// no clang, no banner, no slow time. Its rules were applied when it was taken.
+function dropForge() { forge = null; }
+// The tab went hidden while the moment was up: the player did not see it, so it
+// ends as not staged and a first-ever EVOLVED or FUSED banner is shown as before.
+function hideForge() {
+  const f = forge;
+  if (!f) return;
+  forge = null;
+  // Only while the run goes on: after a death or on the way out the moment is
+  // dropped, as forgeFrame drops it (no banner or slow time on a run that is over).
+  if (state.mode !== 'playing' && !FORGE_ENDS_IN.has(state.mode)) return;
+  try { f.after(false); } catch { /* the run goes on */ }
+}
+// The modes a moment ends normally under (a menu over the run); any other
+// mode means the run is over or leaving, and the moment is dropped.
+const FORGE_ENDS_IN = new Set(['draft', 'evolve', 'stats', 'settings', 'burst', 'chest']);
+// A key or a tap during the moment: the shared skip rule. True when it skipped.
+function forgePress(confirm, tap) {
+  if (!forge || !C.CINE.SKIPPABLE) return false;
+  if (!pressSkip(forge.skip, forge.t, confirm, tap)) return false;
+  uiGuard.arm();
+  endForge();
+  return true;
+}
+// One frame of the moment, drawn over the world and the HUD.
+function forgeFrame(realDt) {
+  if (!forge) return;
+  if (state.mode !== 'playing') {
+    if (FORGE_ENDS_IN.has(state.mode)) endForge(); else dropForge();
+    return;
+  }
+  forge.t += realDt;
+  tickSkip(forge.skip, realDt);
+  if (!forge.stung && forge.t >= FORGE.fuseTime(forge.o)) { forge.stung = true; audio.playSfx('forge'); }
+  if (FORGE.isDone(forge.t, forge.o)) { endForge(); return; }
+  FORGE.render(renderer.ctx, forge.t, forge.o);
+  drawSkip(renderer.ctx, forge.skip, { scale: forge.o.capScale });
+}
+
+// ---------- R7: the boss arrival sting ----------------------------------------
+// When a wave's boss arrives (spawnBoss) or the Maw (startFinale), a short film
+// plays on the live battlefield (src/boss_sting.js): the film bars, a push in
+// toward the boss, a name card with its own sprite, its name and its rule.
+// It HOLDS THE SIM the way the forge moment does: the boss arrives at the same
+// sim time as before, and nothing in the fight moves (nothing can hurt the
+// hero) until the card is gone. While it holds, the wall-clock timers that
+// feed the sim (the earned slow time, the magnet sweep) wait too, so the fight
+// after it is the fight there would have been. Its card stands in for the
+// APPROACHES banner (the banner is not drawn under it and goes with it).
+// Never staged in an unattended run, background play or a hidden tab (a tab
+// hidden mid-sting ends it); a mid-wave herald or an elite gets none. The
+// shared skip rule applies; a boss already shown this run gets the short film.
+var sting = null;   // eslint-disable-line no-var -- { t, o, skip, stung, kind, banner } while up or waiting
+let stingsOn = true;   // test seam: the determinism check runs the same seed with stings off
+// Modes a sting waits through (a draft or a pause); any other mode ends it.
+const STING_WAITS = new Set(['draft', 'evolve', 'stats', 'settings', 'burst', 'chest']);
+function mawLook() {
+  const m = FINAL_BOSS_SPRITE;
+  return { id: 'MAW', name: FINAL_BOSS.name, frames: m.frames, palette: m.palette, box: m.box, rim: m.rim || null };
+}
+// The sting is on screen and takes the keys and taps.
+function stingLive() {
+  return !!sting && (state.mode === 'playing' || state.mode === 'finale') && !simHeld() && !forge;
+}
+function startBossSting(kind, bosses) {
+  if (!stingsOn || !forgeStages()) return false;
+  if (sting) endSting();
+  const maw = kind === 'maw';
+  const looks = maw ? [mawLook()] : bosses.map((b) => bossLook(b.bossId));
+  if (!looks.length) return false;
+  const seen = state.stingSeen || (state.stingSeen = []);
+  const ids = looks.map((l) => l.id);
+  const repeat = !maw && ids.every((id) => seen.includes(id));
+  for (const id of ids) if (!seen.includes(id)) seen.push(id);
+  const r = state.bossRule;
+  const rule = !maw && r && r.live && !r.broken ? { text: r.text, reward: r.reward } : null;
+  const flavor = maw ? FINAL_BOSS.flavor : bosses.length === 1 ? (bosses[0].flavor || '') : '';
+  sting = { t: 0, skip: createSkip(), stung: false, kind, bosses: bosses.slice(), banner: state.bossBanner || null,
+    o: { kind, cast: looks, rule, flavor, wave: state.wave.num, reduced: escapeStill(), repeat, capScale: 1, focus: null } };
+  if (sting.banner) sting.banner.underSting = true;
+  return true;
+}
+// End the sting (it ran out, was skipped, or its screen went away). The
+// banner it stood in for goes with it. `skipped`: the player skipped it, so
+// its cue still plays if it had not (an arrival is never silent).
+function endSting(skipped = false) {
+  const s = sting;
+  if (!s) return;
+  sting = null;
+  state.hudHole = null;   // the HUD rows come back
+  if (skipped && !s.stung) audio.playSfx(s.kind === 'maw' ? 'mawSting' : 'bossSting');
+  if (s.banner && state.bossBanner === s.banner) state.bossBanner = null;
+}
+// A key or a tap during the sting: the shared skip rule. True when it skipped.
+function stingPress(confirm, tap) {
+  if (!sting || !C.CINE.SKIPPABLE) return false;
+  if (!pressSkip(sting.skip, sting.t, confirm, tap)) return false;
+  uiGuard.arm();
+  endSting(true);
+  return true;
+}
+// One frame of the sting: advance its clock and fire its cue. Returns the
+// sting to draw this frame, or null. It waits (not drawn, clock stopped)
+// through a draft or a pause, and while a first-ever banner, a coach card,
+// help mode or a hint holds the sim.
+function stingFrame(realDt) {
+  if (!sting) return null;
+  const m = state.mode;
+  // While it waits, its hold is not counted: the wait's own time is the
+  // same with or without a sting (the count starts again at the next held step).
+  if (m !== 'playing' && m !== 'finale') {
+    stingHeldFrom = null;
+    if (!STING_WAITS.has(m)) endSting();
+    return null;
+  }
+  // A forge moment (an evolution taken in the offer that opened with the
+  // arrival) plays first: one thing at a time.
+  if (simHeld() || forge) { stingHeldFrom = null; return null; }
+  sting.t += realDt;
+  tickSkip(sting.skip, realDt);
+  const o = sting.o;
+  if (!sting.stung && sting.t >= STING.slamTime(o)) {
+    sting.stung = true;
+    audio.playSfx(sting.kind === 'maw' ? 'mawSting' : 'bossSting');
+  }
+  if (STING.isDone(sting.t, o)) { endSting(); return null; }
+  try { const r = canvas.getBoundingClientRect(); o.capScale = r && r.width > 0 ? r.width / C.VIEW_W : 1; } catch { o.capScale = 1; }
+  // The push leans toward the boss (the middle of a pair) as the world draws it.
+  const live = sting.kind === 'maw' ? [state.finalBoss].filter(Boolean) : sting.bosses;
+  if (live.length) {
+    const zs = state.zoomScale;
+    const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1) ? Math.round(zs) : 1;
+    const cam = state.cam || { x: 0, y: 0 };
+    const mx = live.reduce((a, b) => a + b.x, 0) / live.length, my = live.reduce((a, b) => a + b.y, 0) / live.length;
+    o.focus = { x: C.VIEW_W / 2 + (mx - cam.x - C.VIEW_W / 2) * Z, y: C.VIEW_H / 2 + (my - cam.y - C.VIEW_H / 2) * Z };
+  }
+  // Where the card goes, once (the sim is held, so the hero stays put): on the
+  // bottom bar, or under the HUD's top rows when the hero stands low in the view.
+  if (!o.slot) {
+    const hud = renderer.hudChrome;
+    let top = STING.barHeight(o) + 2;
+    if (hud) {
+      // (Not the message lane: its lines say what the card says, and step off it.)
+      for (const r of [hud.bars, hud.clock, hud.purse, hud.auto, hud.rule, hud.quests]) {
+        if (r && Number.isFinite(r.y) && Number.isFinite(r.h)) top = Math.max(top, r.y + r.h);
+      }
+    }
+    // Those rows step down with the bars (by what they have not stepped yet).
+    o.topY = top + Math.max(0, STING.barHeight(o) - STING_HUD_GAP - (state.beatHudDrop | 0)) + 4;
+    o.slot = STING.cardSlot(o, stingHeroOnScreen(), renderer.ctx);
+  }
+  return sting;
+}
+// The hero on screen (view px, before the push), with half its size.
+function stingHeroOnScreen() {
+  const p = state.player;
+  if (!p) return null;
+  const zs = state.zoomScale;
+  const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1) ? Math.round(zs) : 1;
+  const cam = state.cam || { x: 0, y: 0 };
+  return { x: C.VIEW_W / 2 + (p.x - cam.x - C.VIEW_W / 2) * Z, y: C.VIEW_H / 2 + (p.y - cam.y - C.VIEW_H / 2) * Z, r: 12 * Z };
 }
 
 function closeEvolve() {
@@ -6791,21 +7439,12 @@ function deathCauseLabel(d) {
 
 // The purchase to point the player at next. Survival is what a new player
 // lacks, so the core is the next Vitality level, the next Forged Edge level and
-// the cheapest locked weapon: the cheapest of those they can afford, else the
-// cheapest of them. With the core finished, the cheapest row left.
-function bestNextPurchase(prof) {
-  const offer = (def) => {
-    if (!def || shopRowOwned(prof, def)) return null;
-    const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
-    if (!def.kind && level >= def.maxLevel) return null;
-    return { id: def.id, name: def.name, cost: def.kind ? def.baseCost : upgradeCost(def, level) };
-  };
-  const byCost = (a, b) => a.cost - b.cost;
-  const weapon = SHOP_UPGRADES.filter(d => d.kind === 'weapon').map(offer).filter(Boolean).sort(byCost)[0];
-  const core = [offer(SHOP_BY_ID.hp), offer(SHOP_BY_ID.dmg), weapon].filter(Boolean).sort(byCost);
-  const pool = core.length ? core : SHOP_UPGRADES.map(offer).filter(Boolean).sort(byCost);
-  return pool.find(o => prof.gold >= o.cost) || pool[0] || null;
-}
+// the cheapest locked weapon: the cheapest of those they can afford. When none
+// of the core is affordable but another row is, the cheapest row they can
+// afford (R5: BUY NEXT names what can be bought now). With nothing affordable,
+// the cheapest of the core. With the core finished, the cheapest row left.
+// BUY NEXT: meta.js bestNextPurchase (a pure function of the profile; the
+// progression sim's buy-next shop policy calls the same one).
 function nextUnlockWithinReach(prof) { return bestNextPurchase(prof); }
 
 // A tip for the end screen, once ever and never on a first run: a death to an
@@ -6833,8 +7472,10 @@ function maybeStanceTip() {
 // The end-of-run summary under the title. Top to bottom: what kind of run it
 // was (only when not a plain one), time / wave / level / kills, the killer,
 // the gold earned with its breakdown, the next purchase, and at most one tip.
+// R5: the markup and its reading order live in src/end_card.js; this gathers
+// the run's facts. `lead` is how the run ended in words ('' for a plain death).
+// The next purchase is no longer a line here: it is the BUY NEXT card.
 function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
-  const goal = bestNextPurchase(profile);
   const tags = [];
   if (state.autoStarted) tags.push('AUTO-CONTINUE');
   if (state.assistedRun) tags.push('ASSISTED');
@@ -6842,46 +7483,44 @@ function endScreenBody({ lead, cause = null, gold, firstClear, parts = null }) {
   // The stages the run went through, in order (one stage: its name, as before).
   const journey = state.stagesSeen && state.stagesSeen.length > 1 ? state.stagesSeen : [state.stage];
   if (journey.length > 1 || !isDefaultStage(journey[0])) tags.push(journey.map(id => stageOf(id).name).join(' &gt; '));
-  let html = lead;
-  for (const t of tags.slice().reverse()) html = `<span class="cause">${t}</span><br>` + html;
-  if (cause) html += `<br><span class="cause">KILLED BY ${cause}</span>`;
-  html += `<br><span class="earn">GOLD EARNED: +${gold}` +
-    `${firstClear ? ' (NEW BEST TIME!)' : ''} · BANK ${profile.gold}</span>`;
+  const out = [];
   const bd = parts && parts.breakdown;
   if (bd) {
-    html += `<br><span class="pool">run award ${bd.award} · survival ${bd.survival} · kills ${bd.kills}` +
-      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + (bd.quests ? ` · quests ${bd.quests}` : '') + '</span>';
+    out.push(`run award ${bd.award} · survival ${bd.survival} · kills ${bd.kills}` +
+      (bd.bonuses ? ` · bonuses ${bd.bonuses}` : '') + (bd.quests ? ` · quests ${bd.quests}` : ''));
     const ql = endQuestLine();
-    if (ql) html += `<br><span class="pool">${ql}</span>`;
+    if (ql) out.push(ql);
   }
   const gp = parts && parts.goldPool;
-  if (gp && gp.auto > 0) {
-    html += `<br><span class="pool">run award x${(+gp.total).toFixed(2)} (auto-continue -${Math.round(gp.auto * 100)}%)</span>`;
-  }
+  if (gp && gp.auto > 0) out.push(`run award x${(+gp.total).toFixed(2)} (auto-continue -${Math.round(gp.auto * 100)}%)`);
   // The trophies this run earned and what they gave for nothing. The toasts
   // that say so are wiped as this screen comes up, so a free shop row used to
   // look as if it had bought itself (Steve, 2026-10-03, of the elite rows).
   const tr = state.runTrophies;
-  if (tr && tr.earned.length) {
-    html += `<br><span class="earn">TROPHY: ${tr.earned.join(' · ')}</span>`;
-    if (tr.granted.length) html += `<br><span class="next">TROPHY REWARD, FREE: ${tr.granted.join(' · ')}</span>`;
+  const ids = tr && tr.earnedIds;
+  return ENDCARD.endCardHtml({
+    tags, lead: lead || '', cause, gold, bank: profile.gold, firstClear,
+    trophies: tr ? tr.earned.map((name, i) => ({ id: (ids && ids[i]) || '', name })) : [],
+    unlocks: tr ? (tr.grantedUnlocks || tr.granted.map(label => ({ kind: '', id: '', label }))) : [],
     // A kill trophy brings an elite modifier: said as what it is.
-    for (const line of tr.threats) html += `<br><span class="cause">NEW THREAT: ${line}</span>`;
-  }
-  if (goal) {
-    const gap = goal.cost - profile.gold;
-    html += `<br><span class="next">BUY NEXT: ${goal.name}, ${goal.cost} gold · ` +
-      (gap > 0 ? `${gap} more to go` : 'you can afford it') + '</span>';
-  }
-  const tip = focusTipLine();
-  if (tip) html += `<br><span class="next">${tip}</span>`;
-  return html;
+    threats: tr ? tr.threats : [],
+    stats: endStatsLine(),
+    parts: out,
+    // While the tutorial owes its menu steps there is no BUY NEXT card (the
+    // lesson's SHOP card is the one path), so its words stay as a line.
+    buyLine: tutOwesMenuSteps() ? endBuyLine() : '',
+    tip: focusTipLine(),
+  });
 }
-// The lead line every end screen shares.
-function endLead(prefix) {
+function endBuyLine() {
+  const bw = ENDCARD.buyNextWords(bestNextPurchase(profile), profile.gold);
+  return bw ? bw.name + ': ' + bw.desc : '';
+}
+// The run in numbers, and the hand it ended with.
+function endStatsLine() {
   const p = state.player;
-  return (prefix ? prefix + '<br>' : '') +
-    `TIME ${runClock(state.time)} · WAVE ${state.wave.num} · LEVEL ${p.level} · ${p.kills} KILLS`;
+  const hand = p.hand && p.hand.name ? ' · HAND: ' + String(p.hand.name).toUpperCase() : '';
+  return `TIME ${runClock(state.time)} · WAVE ${state.wave.num} · LEVEL ${p.level} · ${p.kills} KILLS` + hand;
 }
 
 // WAVE-18: shared run settlement — death AND the END RUN card pay out
@@ -6970,6 +7609,9 @@ function recordRunAchievements(gold) {
   // The end card says the same (endScreenBody): the toasts do not outlive it.
   state.runTrophies = {
     earned: res.earned.map(trophyName),
+    // R5: the end card shows each trophy as its emblem and each unlock as a card.
+    earnedIds: res.earned.slice(),
+    grantedUnlocks: rewards.map(u => ({ kind: u.kind, id: u.id, label: unlockLabel(u) })),
     granted: rewards.map(unlockLabel),
     threats: threats.map(u => (ELITE_MODIFIERS[u.id] || {}).desc || unlockLabel(u)),
   };
@@ -7058,7 +7700,7 @@ function settleRunGold({ winBonus = 0 } = {}) {
 // from the genre's completion payout: a flat bonus for the completion plus a
 // depth term for every wave cleared past the maw milestone.
 //
-// It is a true end, not a VS-style overtime Reaper: the run terminates at the
+// It is a true end, not an overtime enemy that ends you: the run terminates at the
 // limit. See the long comment on CONFIG.RUN for why (a bounded run is what
 // makes the ladder climbable and the win payable).
 function survivedBonus() {
@@ -7097,24 +7739,13 @@ function runSurvived() {
     titleText: 'RUN SURVIVED',
     titleCls: 'logo',
     subHtml: endScreenBody({
-      lead: endLead('You lasted the full ' + runClock(C.RUN.LIMIT) +
-        (state.mawCleared ? ' and killed the Maw' : '') + '. Bonus +' + bonus + ' gold'),
+      lead: 'You lasted the full ' + runClock(C.RUN.LIMIT) +
+        (state.mawCleared ? ' and killed the Maw' : '') + '. Bonus +' + bonus + ' gold',
       cause: null,
       gold, firstClear,
       parts: { award, purseBanked, winBonus: bonus, goldPool, breakdown },
     }),
   });
-  // PRESTIGE OFFER (owner spec): surviving to 30:00 offers the reset at P+1.
-  // Offered ONLY here — die()/endRun() never compose this card, so the offer
-  // fires on survival and never on death (test_prestige.mjs drives both real
-  // paths). The ascent resets the run at the new tier via prestigeAscend().
-  if (prestigeOfferForRun(state.runWon)) {
-    const nextP = getPrestige(profile) + 1;
-    const unlock = nextP >= 3 ? 'unlocks 7x speed' : nextP === 2 ? 'unlocks 5x speed' : 'unlocks 3x speed';
-    menuCard('PRESTIGE ' + nextP,
-      `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
-      () => prestigeAscend());
-  }
   armRunEndAuto();
   paintEndAutoCard();
 }
@@ -7123,7 +7754,7 @@ function runSurvived() {
 // the first card, so Enter with no cursor retries. The composed payload is
 // kept on state so a return from another screen redraws the same summary
 // without settling gold again.
-function composeEndScreen({ titleText, titleCls, subHtml }) {
+function composeEndScreen({ titleText, titleCls, subHtml }, reshow = false) {
   state.mode = 'dead';
   state.helpFrom = null;
   state.endScreen = { titleText, titleCls, subHtml };
@@ -7143,11 +7774,35 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
   // Its long name gets room clear of the corner caret (index.html .endauto).
   if (endAutoCardEl.classList) endAutoCardEl.classList.add('endauto');
   menuCard('TITLE', 'back to the menu [T]', () => showTitle());
+  // PRESTIGE OFFER (owner spec): surviving to 30:00 offers the reset at P+1.
+  // Only a won run (state.runWon, set by runSurvived) shows it, so it fires on
+  // survival and never on death (test_prestige.mjs drives both real paths).
+  // It is composed here, with the other cards, so a trip to help and back
+  // (reshowEndScreen) finds it again. The ascent: prestigeAscend().
+  if (prestigeOfferForRun(state.runWon)) {
+    const nextP = getPrestige(profile) + 1;
+    const unlock = nextP >= 3 ? 'unlocks 7x speed' : nextP === 2 ? 'unlocks 5x speed' : 'unlocks 3x speed';
+    menuCard('PRESTIGE ' + nextP,
+      `Start over one tier harder: enemies x${prestigeEnemyMult(nextP)}, gold x${prestigeGoldMult(nextP)}, ${unlock.toLowerCase()} [P]`,
+      () => prestigeAscend());
+  }
+  // R5: BUY NEXT, last in the row (its own line under the others). A new
+  // player's first end cards lead to the SHOP card alone: the lesson's path.
+  endBuyCardEl = null;
+  const goal = tutOwesMenuSteps() ? null : bestNextPurchase(profile);
+  const bw = ENDCARD.buyNextWords(goal, profile.gold);
+  if (bw) {
+    endBuyCardEl = menuCard(bw.name, bw.desc + ' [B]', () => showShopAt(goal.id));
+    endBuyCardEl._buyId = goal.id;
+    if (endBuyCardEl.classList) endBuyCardEl.classList.add('endbuy', bw.afford ? 'afford' : 'short');
+  }
+  paintEndIcons();
+  endCountStart(reshow);
   // The summary owns the overlay: nothing of the screen the run started from
   // may ride in. A run that ended before any other menu opened (a quick first
   // death) kept the title's layout: no scrim, the menu's top padding, and the
   // summary pushed under the cards and off the bottom of a phone.
-  if (overlay.classList) { overlay.classList.remove('howto', 'title', 'draft', 'compact'); overlay.classList.add('end'); }
+  if (overlay.classList) { overlay.classList.remove('howto', 'title', 'draft', 'compact', 'rows', 'settings', 'tight'); overlay.classList.add('end'); }
   overlay.style.background = '';
   overlay.style.justifyContent = '';
   overlay.style.paddingTop = '';
@@ -7156,7 +7811,75 @@ function composeEndScreen({ titleText, titleCls, subHtml }) {
 }
 function reshowEndScreen() {
   if (!state.endScreen) { showTitle(); return; }   // nothing to return to
-  composeEndScreen(state.endScreen);
+  composeEndScreen(state.endScreen, true);   // the numbers stand: no second count
+}
+
+// ---- R5: the end card's pictures, its count and BUY NEXT ----
+let endBuyCardEl = null;     // the BUY NEXT card while the end card is up
+// The trophy emblems and the unlock icons in the summary (data-trophy,
+// data-shop, data-pilot canvases), painted with the renderer's own painter.
+function paintEndIcons() {
+  if (typeof ovSub.querySelectorAll !== 'function') return;   // stub DOM: the markup is the contract
+  for (const cv of ovSub.querySelectorAll('canvas.ec-icon')) {
+    const g = cv.getContext && cv.getContext('2d');
+    if (!g) continue;
+    const d = cv.dataset || {};
+    const asset = d.trophy ? (TROPHY_ART[d.trophy] || TROPHY_ART.LOCKED) : d.shop ? shopIcon(d.shop) : d.pilot ? CHARACTER_PORTRAITS[d.pilot] : null;
+    if (asset && asset.grid) renderer.drawGrid(g, asset.grid, asset.palette, 0, 0);
+  }
+}
+// The gold counts into the bank once, when the card first shows. Final
+// numbers at once on any press (noteInput), under reduced motion, in a hidden
+// tab, on a return to the card, and in a run nobody is watching.
+let endCount = null;         // { t, gold, bank, cue, done }
+function endCountStart(reshow) {
+  const s = state.runSettled;
+  endCount = null;
+  if (reshow || !s) return;
+  endCount = { t: 0, gold: s.gold | 0, bank: profile.gold | 0, cue: false, done: false };
+  if (escapeStill() || escapeUnwatched() || bgHidden) endCountFinish();
+  else endCountPaint();
+}
+function endCountPaint() {
+  const c = endCount;
+  if (!c || typeof ovSub.querySelector !== 'function') return;
+  const v = ENDCARD.countFrame(c.gold, c.bank, c.done ? ENDCARD.COUNT_END_S : c.t);
+  const e = ovSub.querySelector('.ec-earned');
+  const b = ovSub.querySelector('.ec-bank');
+  if (e) e.textContent = 'GOLD EARNED: +' + v.gold;
+  if (b) b.textContent = 'BANK ' + v.bank;
+}
+function endCountFinish() {
+  if (!endCount || endCount.done) return;
+  // The cue started before the number landed: its bell must not ring later
+  // (or in the next run, when the press was RETRY).
+  if (endCount.cue && typeof audio.stopSfx === 'function') audio.stopSfx(BANK_CUE);
+  endCount.done = true;
+  endCountPaint();
+}
+const BANK_CUE = 'goldBank';
+// Wall clock, only while the card is the screen (a death waits for its movie).
+function endCountFrame(realDt, draw) {
+  const c = endCount;
+  if (!c || c.done) return;
+  if (state.mode !== 'dead') { if (state.mode !== 'death-cine') endCount = null; return; }
+  if (!draw) { endCountFinish(); return; }
+  c.t += realDt;
+  // The cue starts so its bell rings as the number lands.
+  if (!c.cue && c.t >= ENDCARD.COUNT_CUE_AT_S) { c.cue = true; if (c.gold > 0) audio.playSfx(BANK_CUE); }
+  if (c.t >= ENDCARD.COUNT_END_S) c.done = true;
+  endCountPaint();
+}
+// BUY NEXT: the shop, on the page that holds the row, the cursor on it.
+let shopFocusRow = null;
+function showShopAt(id) {
+  shopFocusRow = id;
+  showShop();
+}
+function buyNextPress() {
+  if (state.mode !== 'dead' || !endBuyCardEl) return false;
+  endBuyCardEl.click();
+  return true;
 }
 
 // Per simulated frame, AFTER state.time advances and BEFORE any damage is
@@ -7206,7 +7929,7 @@ function endRun() {
     titleText: 'RUN ENDED',
     titleCls: '',
     subHtml: endScreenBody({
-      lead: endLead(''),
+      lead: 'You ended the run',
       cause: null,          // a deliberate exit has no killer
       gold, firstClear,
       parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
@@ -7218,6 +7941,10 @@ function endRun() {
 // before die() can fire; die() freezes it (plus wave/time) onto state.deathBy
 // for the run-history HUD-adjacent consumers and tools/boss_sim.mjs.
 let lastDamageSource = null;
+// R2 death movie: the entity whose hit killed the hero (a shooter for a
+// shot), stamped beside lastDamageSource, so the movie's freeze can box it
+// where it stood. Never saved and never printed.
+let lastKillerRef = null;
 
 function die(finale) {
   const p = state.player;
@@ -7236,6 +7963,10 @@ function die(finale) {
     audio.playSfx('powerup');
     return;
   }
+  // R4: the heartbeat stops here, before the death movie's first cue (the
+  // per-frame sync would only see the death on the next frame).
+  try { audio.setHeartbeat(null); } catch { /* sound never blocks a death */ }
+  dropForge();   // a forge moment on screen goes with the hero: no clang, no slow time
   state.mode = 'death-cine';   // G15: the death movie owns the beat between
   // here and the payoff screen — die() still composes the overlay BELOW, the
   // cine merely delays its reveal (and never touches what it says).
@@ -7253,7 +7984,7 @@ function die(finale) {
     titleText: finale ? 'THE HORDE CLAIMS ALL' : 'THE HORDE WINS',
     titleCls: finale ? 'logo' : '',
     subHtml: endScreenBody({
-      lead: endLead(finale ? 'The Maw swallowed you' : ''),
+      lead: finale ? 'The Maw swallowed you' : '',
       cause: deathCauseLabel(state.deathBy),
       gold, firstClear,
       parts: { award, purseBanked, winBonus: 0, goldPool, breakdown },
@@ -7293,6 +8024,19 @@ function setShakePref(b) {
   setShakeEnabled(b);
   try { prefStorage.setItem(KEY_SHAKE, b ? '1' : '0'); } catch { /* shim */ }
 }
+
+// ---------- R3: the DAMAGE NUMBERS setting (all / big / off), remembered -----
+const KEY_NUMBERS = 'hordes_numbers';
+try { setNumbersMode(prefStorage.getItem(KEY_NUMBERS) || 'all'); } catch { /* shim */ }
+function setNumbersPref(m) {
+  setNumbersMode(m);
+  try { prefStorage.setItem(KEY_NUMBERS, getNumbersMode()); } catch { /* shim */ }
+}
+const NUMBERS_DESC = {
+  all: 'ALL: every hit, calmer late in a run. Press for BIG',
+  big: 'BIG: only crits, kills and big hits. Press for OFF',
+  off: 'OFF: no damage numbers. Press for ALL',
+};
 
 // ---------- G20a: the pending stage (SESSION-scoped, never persisted) --------
 // The pre-run screen's STAGE card cycles this,
@@ -7428,7 +8172,7 @@ function manualRowsControls() {
     refRow('move (on AUTO: steer while you drag)', 'joystick') +
     refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
     refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE') +
-    refRow('auto &harr; manual', 'PILOT') +
+    refRow('auto / manual', 'PILOT') +
     refRow('your stats and items', 'STATS') +
     refRow('skills', 'FROST / OVER') +
     // RSS8: the card-granted sweep, named so the touch layer's MAG button can
@@ -7445,6 +8189,7 @@ function manualRowsControls() {
     refRow('help mode: tap any control or object to learn it', 'HELP') +
     refRow('edge blips mark enemies off-screen', 'RADAR') +
     refRow('the world map (fight keeps running)', 'MAP') +
+    refRow('your quests: tap the chip under the clock to open or close the list', 'QUESTS') +
     refRow('pause: settings, END RUN', 'SETTINGS (cog)');
   return isTouchPath()
     ? refSub('TOUCH CONTROLS') + tchRows + refSub('KEYBOARD CONTROLS') + kbRows
@@ -7639,6 +8384,52 @@ let frameHotEl = null;
 //   measures (menuCard's deferFrame option), so one layout serves all rows
 //   instead of a forced relayout per append; paint itself stays synchronous.
 const frameAtlas = new Map();
+// R5 review: a new frame size used to cost one fillRect per cell (a 320 x 260
+// evolve card is about 80,000 of them, 50 ms on the frame that opens it). The
+// atlas is now written as ONE pixel block. Each palette colour is first painted
+// once on a 1 x 1 canvas and read back, so every pixel is the exact value the
+// fillRect path gave (test_forge_show.mjs pins the call count; the Chrome check
+// compares the pixels with drawGrid's). No readback: drawGrid, as before.
+const framePaletteRGBA = new Map();
+function frameRGBA(tone) {
+  if (framePaletteRGBA.has(tone)) return framePaletteRGBA.get(tone);
+  let out = null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = 1; c.height = 1;
+    const g = c.getContext && c.getContext('2d', { willReadFrequently: true });
+    if (g && typeof g.getImageData === 'function') {
+      out = {};
+      for (const [k, col] of Object.entries(MENU_FRAME_PALETTES[tone])) {
+        g.clearRect(0, 0, 1, 1);
+        g.fillStyle = col;
+        g.fillRect(0, 0, 1, 1);
+        const d = g.getImageData(0, 0, 1, 1);
+        if (!d || !d.data || d.data.length < 4) { out = null; break; }
+        out[k] = [d.data[0], d.data[1], d.data[2], d.data[3]];
+      }
+    }
+  } catch { out = null; }
+  if (out) framePaletteRGBA.set(tone, out);   // a failed readback is tried again next time
+  return out;
+}
+function paintFrameAtlas(sg, wpx, hpx, tone) {
+  const { grid } = composeMenuFrame(wpx, hpx);
+  const rgba = typeof sg.createImageData === 'function' && typeof sg.putImageData === 'function' ? frameRGBA(tone) : null;
+  const img = rgba && grid.length ? sg.createImageData(grid[0].length, grid.length) : null;
+  if (!img || !img.data) { renderer.drawGrid(sg, grid, MENU_FRAME_PALETTES[tone], 0, 0); return; }
+  const d = img.data, W = img.width;
+  for (let y = 0; y < grid.length; y++) {
+    const row = grid[y];
+    for (let x = 0; x < row.length; x++) {
+      const p = row[x] && rgba[row[x]];
+      if (!p) continue;
+      const i = (y * W + x) * 4;
+      d[i] = p[0]; d[i + 1] = p[1]; d[i + 2] = p[2]; d[i + 3] = p[3];
+    }
+  }
+  sg.putImageData(img, 0, 0);
+}
 function frameBlit(cv, wpx, hpx, tone) {
   const W = wpx + MENU_FRAME_SHADOW.dx, H = hpx + MENU_FRAME_SHADOW.dy;
   const key = W + 'x' + H + ':' + tone;
@@ -7648,7 +8439,7 @@ function frameBlit(cv, wpx, hpx, tone) {
     src.width = W; src.height = H;
     const sg = src.getContext && src.getContext('2d');
     if (!sg) return false;   // stub DOM without 2d: markup only, as before
-    renderer.drawGrid(sg, composeMenuFrame(wpx, hpx).grid, MENU_FRAME_PALETTES[tone], 0, 0);
+    paintFrameAtlas(sg, wpx, hpx, tone);
     frameAtlas.set(key, src);
   }
   cv.width = W; cv.height = H;
@@ -7674,7 +8465,8 @@ function frameCard(el, lazy = false) {
     if (!w || !h) return false;   // real browser, overlay not laid out yet: retry below
     const cls = el.className || '';
     const tone = cls.includes('selected') ? 'sel'
-      : (frameHotEl === el && !cls.includes('dim')) ? 'hot' : 'base';
+      : (frameHotEl === el && !cls.includes('dim')) ? 'hot'
+      : /\bmain\b/.test(cls) ? 'main' : 'base';
     return frameBlit(cv, Math.round(w), Math.round(h), tone);
   };
   // Late relayout (a menu re-wrap, a viewport change, a state line settling)
@@ -7906,6 +8698,9 @@ function openMenu(mode = 'menu') {
   // DRAFT PICK CEREMONY: any meta screen supersedes a live ceremony — it
   // stands down without touching what this screen is about to draw.
   if (draftCeremony) endDraftCeremony(false);
+  // THE MENU FONT: a new screen is being built, so a font that arrived while
+  // the last one was showing switches now (src/menu_font.js).
+  maybeApplyMenuFont(typeof document !== 'undefined' ? document : null, overlay, true);
   awayCard = null;   // a screen opened over the away card replaces it
   state.mode = mode;
   // MANUAL v2: pagination is manual-scoped — every other screen (and every
@@ -7917,8 +8712,9 @@ function openMenu(mode = 'menu') {
   // (class-list-less DOM stubs keep a plain className string — same state.)
   // 'end' (the end-of-run summary's panel styling) gets the same reset — no
   // menu may inherit the summary's spacing/scrim.
-  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact', 'loadout-tight');
-  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact', 'loadout-tight'].includes(c)).join(' ');
+  if (overlay.classList) overlay.classList.remove('howto', 'end', 'title', 'draft', 'compact', 'rows', 'loadout-tight', 'settings', 'tight', 'showcase');
+  else if (overlay.className) overlay.className = overlay.className.split(/\s+/).filter(c => !['howto', 'end', 'title', 'draft', 'compact', 'rows', 'loadout-tight', 'settings', 'showcase'].includes(c)).join(' ');
+  syncFloorLightFlag();   // a menu outside a run drops the light-floor scrim at once
   overlay.style.display = 'flex';
   ovCards.innerHTML = '';
   // MENU KEYBOARD NAV: nothing to reset here — the cursor is DERIVED from which
@@ -8681,6 +9477,7 @@ function placeTitleMenu() {
 }
 
 function showTitle() {
+  endBackdrop = null;   // R5: the end card's frozen frame goes with it
   openMenu('title');
   // The authored title card (renderer mode 'title') carries its OWN wordmark,
   // so the DOM <h1> hides here (textContent stays 'HORDES' — the stub-DOM
@@ -8704,7 +9501,11 @@ function showTitle() {
   }
   // Five cards. LOADOUT joins once there is a weapon beyond the starting kit
   // to choose; before that the pre-run screen shows the kit.
-  menuCard('PLAY', 'start a run', () => showPreRun());
+  // PLAY is the ONE main button (bigger, its own frame tone, its own row);
+  // the class goes on before the frame paints, so the first paint is right.
+  const play = menuCard('PLAY', 'start a run', () => showPreRun(), false, true);
+  play.className += ' main';
+  frameCard(play);
   menuCard('SHOP', 'permanent upgrades', () => showShop());
   menuCard('CHARACTERS', 'pick your hero', () => showCharacters());
   if (ownsExtraWeapon()) {
@@ -8718,10 +9519,12 @@ function showTitle() {
   }
   placeTitleMenu();
   // The first title entry per page load shows the art alone for a beat, then
-  // fades the menu in over it; every return fades quickly.
+  // fades the menu in over it; every return fades quickly. When the launch
+  // movie ran to its end it already showed the art (it ends on it): the menu
+  // fades in at once.
   if (!titleRevealPlayed) {
     titleRevealPlayed = true;
-    state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
+    state.titleReveal = { phase: introLanded ? 'fade' : 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
   } else {
     state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
   }
@@ -8870,6 +9673,7 @@ function shopPageChunk(rowHs, availH, gap = SHOP_GAP) {
 
 let shopPager = null;         // { pages: [rowIdx[]], rows: [{cards, h}], page, cols }
 let shopPageWanted = 1;       // survives the buy re-render: you stay on your page
+let shopFocusCard = null;     // R5: the row BUY NEXT named, until the pager has placed it
 function shopPagerActive() { return !!shopPager && state.mode === 'menu'; }
 
 function clearShopPager() {
@@ -8967,6 +9771,13 @@ function finalizeShopPager() {
     - (low ? SHOP_ARR_LOW_H + 8 : SHOP_IND_H) - 10 - footH);
   const pages = shopPageChunk(rows.map(r => r.h), availH, gap);
   shopPager = { pages, rows, footer, page: Math.min(Math.max(1, shopPageWanted), pages.length), cols: plan.cols, low, compact };
+  // R5 BUY NEXT: open on the page that holds the row it named.
+  if (shopFocusCard) {
+    const ri = rows.findIndex(r => r.cards.includes(shopFocusCard));
+    const pi = ri < 0 ? -1 : pages.findIndex(pg => pg.includes(ri));
+    if (pi >= 0) shopPager.page = pi + 1;
+    shopFocusCard = null;
+  }
   shopPageGoto(shopPager.page);
 }
 
@@ -9203,6 +10014,8 @@ function devAddSellControls(cardEl, desc) {
 }
 
 function showShop() {
+  const focusId = shopFocusRow;   // R5: set by BUY NEXT for this one showing
+  shopFocusRow = null;
   openMenu();
   ovTitle.textContent = 'SHOP';
   ovTitle.className = '';
@@ -9252,7 +10065,8 @@ function showShop() {
   });
   if (abbrev && ovCards.style && typeof ovCards.style.setProperty === 'function') {
     const maxCh = Math.max(...rows0.map(r => r.sub.length));
-    const fs = Math.max(9, Math.min(12, Math.floor((gridPlan.cardW - 16) / (0.6 * maxCh))));
+    // The menu font is crisp only at 11 px (its grid): shopBuyPx keeps it there.
+    const fs = shopBuyPx(gridPlan.cardW, maxCh, menuFontOn());
     ovCards.style.setProperty('--shop-buy-fs', fs + 'px');
   }
   // SHOP-LATENCY: defer every row's frame so the WHOLE list appends (and lays
@@ -9356,6 +10170,14 @@ function showShop() {
     if (shopBack.classList && typeof shopBack.classList.add === 'function') shopBack.classList.add('shop-footer');
   }
   for (const el of framed) frameCard(el, true);   // lazy: the observer paints after the browser's own layout pass
+  // R5 BUY NEXT: the end card's shortcut lands with the cursor on its row
+  // (Enter buys it); the pager below opens the page that holds it.
+  shopFocusCard = null;
+  if (focusId) {
+    const cv = shopIconCanvases[focusId];
+    const row = cv && cv.parentNode;
+    if (row) { setSelCard(row); shopFocusCard = row; }
+  }
   // SHOP PAGING: pages are chunked after the browser's layout pass (the rAF
   // runs before the first paint — the un-paged list never flashes) and the
   // wanted page SURVIVES this re-render: buying keeps you where you bought.
@@ -9490,7 +10312,7 @@ function showApexShop() {
   devSellControls = [];   // SLICE 10: rebuilt per render (the headless seam reads it)
   if (open) {
     // The TOGGLE (one activation flips it, persisted immediately): apex must
-    // always be switchable off — the Megabonk lesson. Apex ON marks every
+    // always be switchable off, so a player can always go back. Apex ON marks every
     // run (and powers the rule-breakers you own); OFF restores an honest run.
     const on = apexEnabled(profile);
     menuCard(`APEX ${on ? 'ON' : 'OFF'}`,
@@ -9603,6 +10425,7 @@ function showApexGallery() {
   // of the view, the cards sit at the bottom edge, no sheet background.
   overlay.style.background = 'transparent';
   overlay.style.justifyContent = 'flex-end';
+  if (overlay.classList) overlay.classList.add('showcase');
   refreshApexView();
   menuCard('PREV', 'previous apex item', () => apexStep(-1));
   menuCard('NEXT', 'next apex item', () => apexStep(1));
@@ -9873,6 +10696,9 @@ function showSettings(disarm = true, inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
   // Re-rendering after the first END RUN press must not clear its own arm.
   if (disarm) { resetArmed = false; endArmed = false; }
+  // R3: the settings pages lay their cards out as a compact grid that fits the
+  // screen (index.html #overlay.settings). Set before the cards are framed.
+  if (overlay.classList) overlay.classList.add('settings');
   ovTitle.textContent = 'SETTINGS';
   ovTitle.className = '';
   ovSub.textContent = saveNotice || (inRun ? 'the run is paused' : 'sound, display and your save file');
@@ -9884,6 +10710,11 @@ function showSettings(disarm = true, inRun = false) {
   volumeCard('SFX', audio.getSfxVolume, (v) => { audio.setSfxVolume(v); audio.playSfx('uiConfirm'); });
   menuCard('SCREEN SHAKE', getShakeEnabled() ? 'ON. Press to turn off' : 'OFF. Press to turn on', () => {
     setShakePref(!getShakeEnabled());
+    showSettings(false, inRun);
+  });
+  menuCard('DAMAGE NUMBERS', NUMBERS_DESC[getNumbersMode()], () => {
+    const modes = NUMBER_MODES;
+    setNumbersPref(modes[(modes.indexOf(getNumbersMode()) + 1) % modes.length]);
     showSettings(false, inRun);
   });
   const cur = DISPLAY_PRESETS.find(pr => pr.res === resMode() && pr.zoom === state.zoom);
@@ -9957,6 +10788,7 @@ function showSettings(disarm = true, inRun = false) {
   } else {
     menuCard('BACK', 'to title [ESC]', () => showTitle());
   }
+  fitSettingsGrid();
 }
 
 // A 0-100 volume slider as a menu card. Dragging the slider sets the level;
@@ -10005,6 +10837,7 @@ const DISPLAY_PRESETS = [
 // and the profile reset are title-only.
 function showAdvancedSettings(inRun = false) {
   openMenu(inRun ? 'settings' : 'menu');
+  if (overlay.classList) overlay.classList.add('settings');   // R3: the compact grid
   ovTitle.textContent = 'ADVANCED';
   ovTitle.className = '';
   ovSub.textContent = saveNotice || 'fine controls: most players never need these';
@@ -10041,12 +10874,30 @@ function showAdvancedSettings(inRun = false) {
     cycleStanceWithFeedback();
     again();
   });
+  // R6: the light layer. LOW keeps the night and its lights, OFF draws none.
+  // When the fallback has stepped the light down, the card says what is drawn.
+  const drawnAt = LIGHT_LEVELS[Math.min(lightGov.level, LIGHT_LEVELS.indexOf(lightingSetting))] || lightingSetting;
+  menuCard('LIGHTING: ' + lightingSetting, (lightingSetting === 'ON' ? 'night, lights and glows'
+    : lightingSetting === 'LOW' ? 'night and lights, no glows' : 'no night, no glows') +
+    (drawnAt !== lightingSetting ? ' (now ' + drawnAt + ' to keep it smooth)' : '') +
+    '. Press to change', () => {
+    setLighting(nextLightingPref(lightingSetting));
+    again();
+  });
   // RECORDED MUSIC (2026-11-17): the mp3 soundtrack, or the original chiptune
   // synth exactly as it always played. A live switch crossfades on the next bar.
   const recorded = audio.getMusicSource() !== 'synth';
   menuCard(recorded ? 'MUSIC: RECORDED' : 'MUSIC: CLASSIC SYNTH',
     (recorded ? 'the soundtrack' : 'the original chiptune') + '. Press to change', () => {
       audio.setMusicSource(recorded ? 'synth' : 'recorded');
+      again();
+    });
+  // R4: recorded sound effects, a preview until Steve has picked them on the
+  // listening page. SYNTH by default; the choice is remembered (audio.js).
+  const fxRec = audio.getSfxSource() === 'recorded';
+  menuCard(fxRec ? 'SOUND EFFECTS: RECORDED (PREVIEW)' : 'SOUND EFFECTS: SYNTH',
+    (fxRec ? 'recorded sounds, not final yet' : 'the original synth sounds') + '. Press to change', () => {
+      audio.setSfxSource(fxRec ? 'synth' : 'recorded');
       again();
     });
   if (!inRun) {
@@ -10075,6 +10926,15 @@ function showAdvancedSettings(inRun = false) {
       });
   }
   menuCard('BACK', 'to settings', () => showSettings(true, inRun));
+  fitSettingsGrid();
+}
+// R3: the SETTINGS and ADVANCED grid takes its smaller type (.tight, index.html)
+// only when the page would not fit the screen at its normal size.
+function fitSettingsGrid() {
+  if (!overlay.classList || !overlay.classList.contains('settings')) return;
+  overlay.classList.remove('tight');
+  const over = (overlay.scrollHeight || 0) > (overlay.clientHeight || 0) + 1;
+  if (over) overlay.classList.add('tight');
 }
 
 // ---------- Run flow: compose a run from the profile (meta.js header spec) --
@@ -10166,6 +11026,7 @@ function startRun() {
   state.preBossStance = null;
   // M2: the previous run's last killer must not print on this run's death card.
   lastDamageSource = null;
+  lastKillerRef = null;
   // AUDIT ROUND 2 (2026-09-16): run-boundary presentation state that used to
   // survive startRun. The meta-screen RETURN markers are mode snapshots a run
   // that ends inside a screen leaves behind — a stale settingsReturn could
@@ -10181,6 +11042,7 @@ function startRun() {
   state.helpFrom = null;
   state.manualPage = null;
   state.endScreen = null;
+  endBackdrop = null;   // R5: the last end card's frozen frame
   // HELP MODE: the inspect mode is player-armed and run-scoped — a new run
   // never starts with the UI inert, and no origin marker leaks between runs.
   state.helpMode = false;
@@ -10296,6 +11158,7 @@ function startRun() {
   state.magnetSnap = null;   // RSS8: a fresh run owes no sweep total
   state.bossSweepSnap = null; // ARENA SCALE-UP: ditto the boss-clear sweep's total
   state.chests = [];
+  state.floorClock = 0;   // R3 floor
   state.items = [];
   state.arches = [];
   state.archBuffs = [];
@@ -10312,6 +11175,12 @@ function startRun() {
   state.toasts = [];
   state.fuseDeclined = new Set();
   state.fusionsMade = 0;
+  state.forgeShows = 0;
+  forge = null;   // R5: a forge moment never rides into a new run
+  sting = null;   // R7: nor an arrival sting
+  stingHeldMs = 0; stingHeldFrom = null;   // R7: the flash-drop clock starts clean with the run
+  state.hudHole = null;
+  state.stingSeen = [];   // R7: the bosses whose sting this run has shown (a repeat is shorter)
   state.fusionRefills = 0;
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   // No stale banner hold can freeze the new run's opening frames.
@@ -10333,6 +11202,7 @@ function startRun() {
   state.draftWhy = null;
   state.draftKind = null;
   state.handFx = null;
+  state.handPulse = null;
   state.secondWindUsed = false;
   state.time = 0;
   state.spawnTimer = 0;
@@ -10344,6 +11214,10 @@ function startRun() {
   // record). C.PROLOGUE.ENABLED switches the automatic arm off; asking for
   // the tutorial always works.
   const runsPlayed = runsFinished();
+  // R3 KEY STRIP: how many runs this profile finished before this one (the
+  // desktop key strip shows in the first minutes of the first few runs).
+  state.runsBefore = runsPlayed;
+  state.questFlashUntil = 0;
   state.assistedRun = veteranTutorialPending;
   veteranTutorialPending = false;
   state.prologue = null;
@@ -10664,12 +11538,19 @@ function tutTarget(name) {
   };
   switch (name) {
     case 'hero': return worldRegion(p.x, p.y, 18);
-    case 'hp': return canvasRegion(4, 13, 172, 11);
-    case 'mana': return canvasRegion(4, 23, 172, 11);
-    case 'xp': return canvasRegion(4, 33, 182, 13);
+    // R3: the three rows of the one vitals block (render.js drawHudChrome).
+    case 'hp': case 'mana': case 'xp': {
+      const v = renderer.hudChrome && renderer.hudChrome.vitals;
+      const row = name === 'hp' ? 0 : name === 'mana' ? 1 : 2;
+      return v ? canvasRegion(v.x, v.y + 1 + row * 10, v.w, 11) : canvasRegion(4, 11 + row * 10, 190, 11);
+    }
     case 'gold': {
       const g = renderer.hudChrome && renderer.hudChrome.purse;
       return g ? canvasRegion(g.x, g.y, g.w, g.h) : canvasRegion(6, 52, 66, 14);
+    }
+    case 'questchip': {
+      const q = renderer.hudChrome && renderer.hudChrome.questChip;
+      return q ? canvasRegion(q.x, q.y, q.w, q.h) : null;
     }
     case 'skillbtn': return padOrKey('tc-q', 'kb-q');
     case 'potionbtn': return padOrKey('tc-h', 'kb-h');
@@ -10701,16 +11582,26 @@ function tutRects(targets) {
   return out;
 }
 // The on-screen controls the panel must not sit on: the pads and key bar,
-// and the shop's pager.
+// and the shop's pager. In a run also the HUD's vitals block and the message
+// lane under it: the lane is kept clear at its full size (LANE_LINES lines,
+// full width), because the panel is placed once per step and a line that
+// arrives after it (a level-up, the FOCUS line) must still be readable.
 function tutAvoid() {
-  if (!touchLayer || typeof touchLayer.querySelectorAll !== 'function') return [];
   const out = [];
   const add = (el) => {
     const r = el && el.getBoundingClientRect();
     if (r && r.width > 0 && r.height > 0) out.push(r);
   };
-  for (const b of touchLayer.querySelectorAll('button')) add(b);
+  if (touchLayer && typeof touchLayer.querySelectorAll === 'function') {
+    for (const b of touchLayer.querySelectorAll('button')) add(b);
+  }
   if (state.mode === 'menu') for (const id of ['shop-prev', 'shop-next', 'shop-ind']) add(document.getElementById(id));
+  const ch = state.mode === 'playing' && renderer.hudChrome;
+  if (ch && typeof canvas.getBoundingClientRect === 'function') {
+    const v = ch.vitals;
+    if (v) add(canvasRegion(v.x, v.y, v.w, v.h));
+    if (ch.lane) add(canvasRegion(ch.lane.x, ch.lane.y, C.VIEW_W - 14, LANE_LINES * 10 + 1));
+  }
   return out;
 }
 
@@ -10777,6 +11668,8 @@ function tutHint(id, targets) {
 function tutHintScan() {
   const H = tut.hints;
   if (H.active) return;
+  if (forge) return;   // R5: no hint opens over the forge moment
+  if (sting) return;   // R7: nor over an arrival sting (the boss rule's hint waits for its end)
   const m = state.mode;
   if (m === 'playing') {
     if (tut.run2Due) { tut.run2Due = false; if (tutHint('run2', [])) return; }
@@ -10805,7 +11698,7 @@ function tutHintScan() {
     for (const k of ['crack', 'glyph']) {
       if (H.wants(k) && world(k, (state.secrets || []).find(x => x.kind === k && x.seen && x.state !== 'spent' && onScreen(x)), 22)) return;
     }
-    if (H.wants('questtracker') && state.quests && state.quests.length && state.time > 15 && tutHint('questtracker', [])) return;
+    if (H.wants('questtracker') && state.quests && state.quests.length && state.time > 15 && tutHint('questtracker', ['questchip'])) return;
     if (H.wants('highground')) {
       // M5b: the first ramp in view (its foot-to-top centre).
       const TERh = terrainFor(state.groundSeed || 0, state.stage);
@@ -10816,7 +11709,9 @@ function tutHintScan() {
     if (world('portal', state.portal, 26)) return;
     if (world('boss', state.wave.boss && !state.wave.boss.midBoss ? state.wave.boss : null, 30)) return;
     if (world('midboss', (state.wave.midBosses || []).find(b => b.hp > 0 && onScreen(b)), 30)) return;
-    if (H.wants('elite') && world('elite', state.enemies.find(e => e.elite && e.hp > 0 && onScreen(e)))) return;
+    // A boss is built on an elite chassis but wears its own rim, not the elite
+    // gold: the elite hint points at a real elite only (bosses have their own).
+    if (H.wants('elite') && world('elite', state.enemies.find(e => e.elite && !e.boss && e.hp > 0 && onScreen(e)))) return;
     // Focus and stance: the first time the player changes one.
     if (tut.focus !== null && controller.focus !== tut.focus) tutHint('focus', ['focusbtn']);
     else if (tut.stance !== null && controller.stance !== tut.stance) tutHint('stance', ['stancebtn']);
@@ -10975,10 +11870,11 @@ function openStats() {
 
   // HAND: the best hand and what it pays, then every card held.
   const hand = p.hand;
-  const suitTint = (c) => (c.suit === 'hearts' || c.suit === 'diamonds') ? '#e06a6a' : '#b8c4e0';
+  const red = (c) => c.suit === 'hearts' || c.suit === 'diamonds';
+  const suitTint = (c, held) => red(c) ? (held ? '#ff8a8a' : '#c88080') : (held ? '#e8eeff' : '#9aa3b8');
   const inHand = new Set((hand && hand.cards) || []);
   const cardsHtml = handCards(p).map(c =>
-    '<span style="color:' + suitTint(c) + (inHand.has(c.key) ? ';font-weight:bold' : ';opacity:0.7') + '">' +
+    '<span style="color:' + suitTint(c, inHand.has(c.key)) + (inHand.has(c.key) ? ';font-weight:bold' : '') + '">' +
     c.rank + SUIT_GLYPHS[c.suit] + ' ' + c.name + '</span>').join(' &middot; ');
   const handCard = menuCard('HAND',
     (hand
@@ -10994,7 +11890,7 @@ function openStats() {
     const j = JOKERS[held[i]];
     jHtml += j
       ? '<b style="color:' + JOKER_TINT + '">' + j.name + '</b> <span style="color:#a8a8c0">' + j.desc + '</span><br>'
-      : '<span style="color:#6a6a8a">empty slot</span><br>';
+      : '<span style="color:#9a9ab8">empty slot</span><br>';
   }
   menuCard('JOKERS ' + held.length + '/' + jokerSlots(state), jHtml, info)._jokerReport = { held: held.slice() };
 
@@ -11006,7 +11902,7 @@ function openStats() {
     const col = RARITY_TINTS[it.rarity] || RARITY_TINTS.COMMON;
     const portrait = itemIconFor(it);
     const pIcon = portrait ? iconHtml(portrait.grid, portrait.palette, 2) : '';
-    iHtml += pIcon + '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#6a6a8a">' + it.rarity + '</span><br>';
+    iHtml += pIcon + '<b style="color:' + col + '">' + it.name + '</b> <span style="color:#9a9ab8">' + it.rarity + '</span><br>';
     for (const a of it.affixes || []) {
       const mag = a.magnitude < 1 ? '+' + Math.round(a.magnitude * 100) + '%' : '+' + a.magnitude;
       iHtml += '<span style="color:#a8a8c0">' + (a.name || a.id) + ' ' + mag + '</span><br>';
@@ -11025,7 +11921,10 @@ function openStats() {
     'KILLS ' + p.kills + ' · LVL ' + p.level,
     info);
 
-  menuCard('CLOSE', 'back to the fight [S]', () => closeStats());
+  // On a short screen (a phone on its side) the cards run past the bottom
+  // and the overlay scrolls: CLOSE stays pinned in view (index.html).
+  const close = menuCard('CLOSE', 'back to the fight [S]', () => closeStats());
+  if (close && close.classList) close.classList.add('pin-close');
 }
 
 function closeStats() {
@@ -11049,6 +11948,8 @@ function closeSettings() {
   if (state.mode !== 'settings') return;
   state.mode = state.settingsReturn || 'playing';
   overlay.style.display = 'none';
+  setOverlayFlag('settings', false);   // R3: the grid belongs to the settings pages only
+  setOverlayFlag('tight', false);
 }
 
 // ---------- G9 TROPHY GALLERY (mode 'trophies') -----------------------------
@@ -11149,6 +12050,7 @@ function showTrophies() {
   // openMenu is what resets them for every other screen (see its comment).
   overlay.style.background = 'transparent';
   overlay.style.justifyContent = 'flex-end';
+  if (overlay.classList) overlay.classList.add('showcase');
   refreshTrophyView();
   menuCard('PREV', 'previous trophy', () => trophiesStep(-1));
   menuCard('NEXT', 'next trophy', () => trophiesStep(1));
@@ -11251,6 +12153,7 @@ function showBestiary() {
   // sheet background, chrome pushed to the bottom edge, canvas owns the view.
   overlay.style.background = 'transparent';
   overlay.style.justifyContent = 'flex-end';
+  if (overlay.classList) overlay.classList.add('showcase');
   refreshBestiaryView();
   // G23/G11 FILTER card: cycles ALL -> MISSING -> ALL. The sub names the
   // CURRENT selection, so the press is never a guess; re-render through
@@ -11353,6 +12256,19 @@ const STANCE_PLAIN = {
   BALANCED: 'the middle setting',
   GREEDY: 'goes after gems and loot, takes more hits',
 };
+// TAB names the new focus, as G names the stance: once the key strip folds
+// nothing else on screen shows it.
+const FOCUS_PLAIN = {
+  NEAREST: 'shoots the closest enemy first',
+  TOUGHEST: 'shoots the biggest enemy first',
+  SWARM: 'shoots into the thickest crowd',
+  RANGED: 'shoots the enemies that shoot back first',
+};
+function cycleFocusWithFeedback() {
+  const f = controller.cycleFocus();
+  toast('FOCUS ' + f + ': ' + (FOCUS_PLAIN[f] || ''));
+  return f;
+}
 function cycleStanceWithFeedback() {
   const s = controller.cycleStance();
   saveStancePref(s);   // G31: the stance choice persists between runs
@@ -11426,7 +12342,7 @@ function runAction(act) {
   }
   // Skills/potions/doctrine stay live through the finale (WAVE-10).
   if (state.mode !== 'playing' && state.mode !== 'finale') return;
-  if (act === 'focus') { controller.cycleFocus(); }
+  if (act === 'focus') { cycleFocusWithFeedback(); }
   else if (act === 'stance') { cycleStanceWithFeedback(); }
   else if (act === 'q') {
     // E2 (R9): ground-AoE casts can't touch flyers (see flyingGuard); the
@@ -11628,7 +12544,9 @@ function autoCastSkills(state) {
   // banking. MANA 0, so the pool check is vacuous but kept for symmetry.
   if (magnetHeld(state) && (p.skillCd.MAGNET_PULL || 0) <= 0 &&
       p.mana >= skillManaCost('MAGNET_PULL', state)) {
-    const floor = state.gems.length + state.drops.length + state.itemDrops.length;
+    // A merged gem counts as the gems it holds (R3 floor), so merging does not
+    // starve the policy.
+    const floor = gemUnits() + state.drops.length + state.itemDrops.length;
     if (floor >= C.MAGNET.AUTO_MIN) useSkill(state, 'MAGNET_PULL');
   }
 }
@@ -11683,31 +12601,45 @@ window.addEventListener('keydown', (ev) => {
   // immersive mode with no way out is a trap. Native fullscreen exits with
   // Escape by the browser's own default; this is the fallback's mirror.
   if (k === 'escape' && immersiveOn) { applyImmersive(false); return; }
-  if (state.mode === 'intro') {                              // any key skips the movie
-    // CINEMATIC GESTURE GUARD: the same press must not also activate the button
-    // that appears with the menu (preventDefault kills the synthesized click on
-    // a focused element; arming swallows any that still lands on the overlay).
+  // R5: the forge moment holds the fight, so every key is the movie's: any
+  // key shows SKIP, ESC, ENTER or SPACE while it is up skips.
+  if (forge && state.mode === 'playing') {
     if (ev.preventDefault) ev.preventDefault();
-    uiGuard.arm();
-    endIntro();
+    if (!ev.repeat) forgePress(isSkipKey(ev.key), false);
     return;
   }
-  if (state.mode === 'portal-cine') {                   // WAVE-8/A: any key skips
-    if (C.CINE.SKIPPABLE) {
-      if (ev.preventDefault) ev.preventDefault();
-      uiGuard.arm();
-      endPortalCine();
-    }
+  // R7: the arrival sting holds the fight the same way: every key is its own.
+  if (stingLive()) {
+    if (ev.preventDefault) ev.preventDefault();
+    if (!ev.repeat) stingPress(isSkipKey(ev.key), false);
     return;
   }
-  if (state.mode === 'death-cine') {                    // G15: any key skips
-    // Same contract as the other movies: the guard eats the tap tail so the
-    // skipping gesture cannot also press the RETRY card waiting underneath.
-    if (C.CINE.SKIPPABLE) {
-      if (ev.preventDefault) ev.preventDefault();
-      uiGuard.arm();
-      endDeathCine();
-    }
+  if (state.mode === 'intro' || state.mode === 'portal-cine' || state.mode === 'death-cine') {
+    // R2: the one skip rule (src/movie_skip.js): any key shows SKIP, ESC,
+    // ENTER or SPACE while it is up skips. CINEMATIC GESTURE GUARD: the
+    // skipping press must not also activate the button that appears next
+    // (preventDefault kills the synthesized click on a focused element;
+    // arming swallows any that still lands on the overlay).
+    if (ev.preventDefault) ev.preventDefault();
+    if (!ev.repeat) moviePress(isSkipKey(ev.key), false);
+    return;
+  }
+  // The escape: the same rule, on its own clock (src/escape_cine.js keeps the
+  // skip state). It sits here, before the help gate, like the other movies:
+  // '?' or F1 is a press like any other key and shows SKIP, it does not open
+  // the help mode under the movie. A key held since before the movie began
+  // (an auto-repeat) is not a new press.
+  if (state.mode === 'escape') {
+    if (ev.preventDefault) ev.preventDefault();
+    if (!ev.repeat) escapePress(isSkipKey(ev.key));
+    return;
+  }
+  // R2: the portal beat plays over live play, so only the skip keys go to it
+  // (the first shows SKIP, the second skips; ESC does not pause under it).
+  // Every other key still steers and casts.
+  if (beatPlaying() && isSkipKey(ev.key)) {
+    if (ev.preventDefault) ev.preventDefault();
+    if (!ev.repeat) moviePress(true, false);
     return;
   }
   // HELP MODE (owner 2026-09-16): '?' arms / leaves the tap-to-learn mode on
@@ -11753,14 +12685,6 @@ window.addEventListener('keydown', (ev) => {
   if (shopPagerActive()) {
     if (k === 'pageup') { shopPageGoto(shopPager.page - 1); return; }
     if (k === 'pagedown') { shopPageGoto(shopPager.page + 1); return; }
-  }
-  if (state.mode === 'escape') {                        // the escape: a skip key, twice
-    // A key held since before the movie began is not a new press. Any key
-    // raises the SKIP prompt; ESC, ENTER or SPACE while it is up skips. The
-    // keys a player steers and fights with can never end the movie.
-    if (ev.preventDefault) ev.preventDefault();
-    if (!ev.repeat) escapePress(k === 'escape' || k === 'enter' || k === ' ');
-    return;
   }
   if (state.mode === 'draft') {
     if (['1', '2', '3', '4', '5', '6'].includes(ev.key)) {
@@ -11814,6 +12738,7 @@ window.addEventListener('keydown', (ev) => {
     // reached with arrows and the HOW TO PLAY card had no key at all.
     if (k === 'r') startRun();       // RETRY (parity with the death buttons)
     else if (k === 't') showTitle(); // TITLE
+    else if (k === 'b' && !ev.repeat) buyNextPress();   // R5: BUY NEXT
     else if (k === 'p' && state.runWon) prestigeAscend();   // PRESTIGE (the survival offer card's key twin — dead-by-death runs have no card, so the guard refuses)
     else menuNavKey(k, ev);          // arrows/Tab move, Enter/Space activate
   } else if (state.mode === 'intermission') {
@@ -11913,6 +12838,8 @@ window.addEventListener('keydown', (ev) => {
     // the radar — never a pause, the sim keeps running under it).
     if (k === 'm') { toggleMap(); return; }
     if (k === 'i') { openStats(); return; }
+    // R3: J opens or closes the full quest tracker under the quest chip.
+    if (k === 'j') { toggleQuests(); return; }
     // A2: R toggles the radar in BOTH pilot modes (it is a HUD readout, not
     // a movement key — no conflict with WASD).
     if (k === 'r') { toggleRadar(); return; }
@@ -12067,25 +12994,25 @@ const HINT_LINES = {
     'O pilot (AUTO ALL) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
     'Q / E skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
+    '+ / - zoom &middot; R radar &middot; M map &middot; J quests &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   AUTO_MOVE: [
     'O pilot (AUTO MOVE) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
     'Q / E skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
+    '+ / - zoom &middot; R radar &middot; M map &middot; J quests &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   EXPLORE: [
     'O pilot (EXPLORE) &middot; WASD / arrows steer while held &middot; TAB focus &middot; G stance',
     'Q / E skills &middot; H / N potions',
     'I stats &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
+    '+ / - zoom &middot; R radar &middot; M map &middot; J quests &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
   MANUAL: [
     'O pilot (MANUAL) &middot; WASD / arrows move',
     'TAB focus &middot; G stance &middot; Q frost &middot; E overcharge',
     'I stats (S = move down) &middot; ESC close / pause',
-    '+ / - zoom &middot; R radar &middot; M map &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
+    '+ / - zoom &middot; R radar &middot; M map &middot; J quests &middot; 1-3 draft, 1-6 tabs &middot; ? help mode',
   ],
 };
 // The pre-(h) persisted mode name 'AUTO' is an alias, not a lookalike table:
@@ -12533,6 +13460,37 @@ function fsHit(ev) {
   const vy = ((ev.clientY ?? 0) - r.top) / r.height * C.VIEW_H;
   return vx >= b.x && vx <= b.x + b.w && vy >= b.y && vy <= b.y + b.h;
 }
+// ---- R3 QUEST CHIP ----------------------------------------------------------
+// The HUD shows the quests as a small chip (render.js); J, or a tap or click
+// on it, opens the full tracker under it. The choice holds for the session.
+function toggleQuests() {
+  if (state.mode !== 'playing' && state.mode !== 'finale') return false;
+  state.questsOpen = !state.questsOpen;
+  audio.playSfx('uiConfirm');
+  return true;
+}
+// The chip's hit box in view px: the painted chip grown to a thumb-sized
+// target (QUEST_CHIP_HIT view px), kept inside the view.
+const QUEST_CHIP_HIT = { W: 64, H: 30 };
+function questChipHitRect() {
+  const c = renderer.hudChrome && renderer.hudChrome.questChip;
+  if (!c) return null;
+  const w = Math.max(QUEST_CHIP_HIT.W, c.w), h = Math.max(QUEST_CHIP_HIT.H, c.h);
+  const x = Math.max(0, Math.min(c.x + c.w / 2 - w / 2, C.VIEW_W - w));
+  const y = Math.max(0, Math.min(c.y + c.h / 2 - h / 2, C.VIEW_H - h));
+  return { x, y, w, h };
+}
+function questChipHit(ev) {
+  if (state.mode !== 'playing' && state.mode !== 'finale') return false;
+  if (state.mapOpen) return false;
+  const b = questChipHitRect();
+  if (!b) return false;
+  const r = canvas.getBoundingClientRect();
+  if (!r || !r.width || !r.height) return false;
+  const vx = ((ev.clientX ?? 0) - r.left) / r.width * C.VIEW_W;
+  const vy = ((ev.clientY ?? 0) - r.top) / r.height * C.VIEW_H;
+  return vx >= b.x && vx <= b.x + b.w && vy >= b.y && vy <= b.y + b.h;
+}
 function toggleFullscreen() {
   const mode = fsMode();
   if (mode === 'none') return false;
@@ -12727,7 +13685,7 @@ function handleSiteEvent(ev, p) {
         else if (d.kind === 'potion') pushDrop({ ...clampLootToArena(s.x + 6, s.y + 4), kind: (state.siteRng || Math.random)() < 0.5 ? 'hp' : 'mp' });
         else if (d.kind === 'magnet') {
           p.magnetSweep = C.MAGNET.SWEEP_S;
-          state.magnetSnap = { gems: state.gems.length,
+          state.magnetSnap = { gems: gemUnits(),
             potions: (state.drops || []).reduce((n, x) => n + (x.count || 1), 0), items: (state.itemDrops || []).length };
           state.effects.push({ kind: 'magnet', x: p.x, y: p.y, age: 0, ttl: 0.6 });
           sitePop(s.x, s.y - 34, 'MAGNET', '#fff8d0');
@@ -12902,6 +13860,7 @@ function worldQuest(ev, amount = 1) {
     audio.playSfx('levelup');
     if (d.joker) { q.paid = true; queueJokerOffer('quest done'); toast('QUEST DONE: ' + d.text.toUpperCase() + '. A JOKER', '#ffd75e'); }
     else toast('QUEST DONE: ' + d.text.toUpperCase() + '. +' + questPay(q.id) + ' AT THE END', '#ffd75e');
+    state.questFlashUntil = state.time + 2.5;   // R3: the quest chip lights green
     const chain = chainJokerStep(ensureWorld(profile), q.id, ownsCharacter);
     if (chain) {
       q.chainJoker = chain.id;
@@ -13282,6 +14241,18 @@ if (touchLayer && touchLayer.addEventListener) {
       helpProbe(ev);
       return;
     }
+    // R5 review: during the forge moment a press is the movie's, like a key
+    // (the pads are veiled, this catches a tap in the frame before that).
+    if (forge && state.mode === 'playing') {
+      if (ev.preventDefault) ev.preventDefault();
+      forgePress(false, true);
+      return;
+    }
+    if (stingLive()) {   // R7: the arrival sting, the same way
+      if (ev.preventDefault) ev.preventDefault();
+      stingPress(false, true);
+      return;
+    }
     const joy = ev.target && ev.target.closest
       ? ev.target.closest('[data-joy]') : null;
     if (joy) {
@@ -13362,6 +14333,12 @@ function chromeOn() {
   // (verified in test_escape_cine).
   // G15 REGISTRATION: 'death-cine' is chrome-OFF BY NAME too — a cinematic,
   // not a run screen (verified in test_death_cine + the phone verifier).
+  // R2: the portal beat is a movie over play: the pads, cog and "?" step
+  // down for its 2.5 s, so its SKIP corner and taps are its own on a phone.
+  // R5 review: the forge moment too (its keys are already its own; a pad tap
+  // changed the focus, the stance or the pilot under it).
+  // R7: the arrival sting too (it holds the fight; its taps are its own).
+  if (beatLive() || forge || stingLive()) return false;
   return state.mode === 'playing' || state.mode === 'finale';
 }
 // View px of canvas hidden under the right-hand pad column (0 when the pads
@@ -13397,6 +14374,32 @@ function clockTopInset() {
     }
     return bottom > cr.top ? Math.ceil((bottom - cr.top) * C.VIEW_H / cr.height) + 2 : 0;
   } catch { return 0; }
+}
+// ---- R3 KEY STRIP: early on, and on request ---------------------------------
+// The desktop strip of key chips teaches the keys. It shows in the first
+// C.HUD.KEYSTRIP.SECONDS of each of a profile's first C.HUD.KEYSTRIP.RUNS runs,
+// and whenever help mode is on (the ? key, or the KEYS chip the strip folds
+// into). A phone never shows it (index.html: the touch layer's .on class).
+// The tutorial rings the Q, H, TAB and G chips. While the guided run is live,
+// or a hint points at one of those chips, the strip stays up so the ring has
+// something to land on (a folded chip measures 0x0).
+const KEY_STRIP_TARGETS = new Set(['skillbtn', 'potionbtn', 'focusbtn', 'stancebtn']);
+function keyStripWanted() {
+  if (state.helpMode) return true;
+  if (tutGuidedLive()) return true;
+  const hint = tut.hints && tut.hints.active;
+  if (hint && (hint.targets || []).some(t => KEY_STRIP_TARGETS.has(t))) return true;
+  const K = C.HUD.KEYSTRIP;
+  return (state.runsBefore | 0) < K.RUNS && (state.time || 0) < K.SECONDS;
+}
+// While the strip is folded, its live values (skill ready, potions left) ride
+// the vitals block as one short line (render.js reads state.readyRow).
+function readyRowText() {
+  const tc = touchLayer && touchLayer.classList;
+  if (!tc || !tc.contains('cog-only') || !tc.contains('kb-min')) return '';
+  const v = (id) => (keybarEls[id] && keybarEls[id].textContent) || '';
+  const qKey = String(C.SKILLS[classSkillId(state)].KEY || 'q').toUpperCase();
+  return qKey + ' ' + v('kb-q') + '  E ' + v('kb-w') + '  H ' + v('kb-h') + '  N ' + v('kb-n');
 }
 function syncChrome() {
   // WAVE-25 (audit 2.6): publish the active controller's doctrine + the zoom
@@ -13442,9 +14445,15 @@ function syncChrome() {
   // 0 + pointer-events none (index.html): visually gone AND completely inert.
   setBodyClass('chrome-reveal', topTransient && on && fsOverlay.t > 1e-9);
   let chromeLayoutChanged = false;
+  // R2: the portal beat hides the pads but keeps their room (visibility, not
+  // display): taking them out of the layout re-centred the canvas, and the
+  // battlefield jumped 120 px on a phone at the moment the boss fell.
+  const veil = !on && (beatLive() || !!forge || stingLive());
   if (touchLayer && touchLayer.style) {
-    const want = on ? '' : 'none';
+    const want = (on || veil) ? '' : 'none';
     if (touchLayer.style.display !== want) { touchLayer.style.display = want; chromeLayoutChanged = true; }
+    const vis = veil ? 'hidden' : '';
+    if (touchLayer.style.visibility !== vis) touchLayer.style.visibility = vis;
   }
   // WAVE-15: the joystick shows ONLY while the manual pilot is bound mid-run.
   // FLOATING JOYSTICK (2026-09-18): on touch paths the floating stick IS the
@@ -13466,6 +14475,17 @@ function syncChrome() {
   // change mid-inspect), it stands down here — the strip can never strand.
   if (state.helpMode && !HELP_ENTRY_MODES.has(state.mode)) leaveHelpMode();
   syncHelpHud();
+  // R3 KEY STRIP: on desktop the strip of key chips shows only early on (the
+  // first minutes of the first runs) and on request (help mode, the ? key or
+  // the KEYS chip it folds into). Judged only while the run's chrome is up, so
+  // a menu never refits the canvas. Folding it frees its band for the canvas.
+  if (on && touchLayer && touchLayer.classList) {
+    const fold = !keyStripWanted();
+    if (touchLayer.classList.contains('kb-min') !== fold) {
+      touchLayer.classList.toggle('kb-min', fold);
+      if (touchLayer.classList.contains('cog-only')) chromeLayoutChanged = true;
+    }
+  }
   if (chromeLayoutChanged) fitCanvas();
 }
 // The PILOT badge: the mode in plain words (compact pads abbreviate), then
@@ -13556,6 +14576,7 @@ function updateTouchHud() {
   if (radarBtn && radarBtn.classList) radarBtn.classList.toggle('on', !!state.radarOn);
   const mapBtn = touchEls['tc-map'];
   if (mapBtn && mapBtn.classList) mapBtn.classList.toggle('on', !!state.mapOpen);
+  state.readyRow = readyRowText();
 }
 
 // ---------- HUD ----------
@@ -13586,10 +14607,10 @@ function drawHud() {
   if (state.pilotMode === 'MANUAL' && renderer.ctx &&
       (state.mode === 'playing' || state.mode === 'finale' || state.mode === 'stats')) {
     const ctx = renderer.ctx;
-    // M5b fix: sits right of the GOLD purse badge (it used to cover the right
-    // end of the HP/MP bars, which grew since).
-    const pu = renderer.hudChrome && renderer.hudChrome.purse;
-    const bx = pu ? pu.x + pu.w + 4 : 6, by = pu ? pu.y + Math.round((pu.h - 17) / 2) : 70;
+    // R3: sits right of the vitals block (the gold moved up by the clock;
+    // render.js keeps the boss rule plate clear of this badge).
+    const vb = renderer.hudChrome && renderer.hudChrome.vitals;
+    const bx = vb ? vb.x + vb.w + 3 : 196, by = vb ? vb.y : 10;
     ctx.fillStyle = '#14141f';
     ctx.fillRect(bx, by, 14, 17);            // plate
     ctx.fillStyle = '#ffd75e';
@@ -13711,13 +14732,26 @@ function foeLine() {
 }
 
 // ---------- Main loop ----------
-// WAVE-7/D: the intro movie plays BEFORE the title menu on page load — the
-// canvas IS the movie (intro.js render is fillRect-only and deterministic);
-// any key/click/tap skips straight to the menu. It plays once per load:
-// death-screen TITLE returns jump straight to the menu.
+// The launch movie plays BEFORE the title menu on page load; the canvas IS
+// the movie (src/intro.js). A new player sees the 5 s road shot, a returning
+// player (a finished run) the 1 s title stamp, reduced motion a still of the
+// title. Every cut ends on the title painting, so when it plays to its end
+// the title skips its own art-alone beat and only fades the menu in. It
+// plays once per load: death-screen TITLE returns jump straight to the menu.
 let introT0 = performance.now();
-function endIntro() {
+let introLastNow = 0;          // the intro's last frame (wall clock)
+const INTRO_GAP_MS = 250;      // a longer gap between frames is time nobody saw
+let introLanded = false;   // the movie played to its end, on the title painting
+function introOpts() {
+  return {
+    hero: pilotLook(profile && profile.equippedCharacter),
+    returning: runsFinished() > 0,
+    reduced: escapeStill(),
+  };
+}
+function endIntro(played = false) {
   if (state.mode !== 'intro') return;
+  introLanded = !!played;
   state.mode = 'menu';
   // UP-FRONT CONTROLS (owner 2026-09-16): the WAVE-19 first-boot auto-pop
   // moved to the FIRST-RUN GATE — a fresh boot lands on the title, and the
@@ -13788,6 +14822,14 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
   fsBump();                 // any other canvas tap is still an interaction
+  // R3: a tap or click on the quest chip opens or closes the full tracker.
+  if (questChipHit(ev)) {
+    if (ev.preventDefault) ev.preventDefault();
+    if (state.helpMode) {
+      showHelpTip('<b>QUESTS</b> - this run\'s quests. Tap or press J to open the list', { left: ev.clientX - 1, top: ev.clientY - 1, right: ev.clientX + 1, bottom: ev.clientY + 1, width: 2, height: 2 });
+    } else toggleQuests();
+    return;
+  }
   // M5b: a tap on the open map sets or clears the waypoint. In help mode it
   // explains the icon instead (a tap there never activates anything).
   if (state.mapOpen && state.mode === 'playing') {
@@ -13804,6 +14846,26 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
       }
     }
   }
+  // R2: during the portal beat a canvas tap is the beat's (the one skip rule),
+  // before the stick: on a phone a touch would otherwise take the wheel. For
+  // its 2.5 s the pilot walks on by itself and the crossing waits.
+  if (beatPlaying()) {
+    if (ev.preventDefault) ev.preventDefault();
+    moviePress(escapeSkipHit(ev), ev && ev.pointerType === 'mouse' ? 'mouse' : true);
+    return;
+  }
+  // R5: a press during the forge moment is the movie's (the shared skip rule).
+  if (forge && state.mode === 'playing') {
+    if (ev.preventDefault) ev.preventDefault();
+    forgePress(escapeSkipHit(ev), ev && ev.pointerType === 'mouse' ? 'mouse' : true);
+    return;
+  }
+  // R7: a press during the arrival sting is the sting's (the shared skip rule).
+  if (stingLive()) {
+    if (ev.preventDefault) ev.preventDefault();
+    stingPress(escapeSkipHit(ev), ev && ev.pointerType === 'mouse' ? 'mouse' : true);
+    return;
+  }
   // FLOATING JOYSTICK (owner 2026-09-18): a canvas press in MANUAL play arms
   // the stick AT the touch point. AFTER fsHit above (the fullscreen button's
   // own tap toggles, never steers); the hook itself declines help-mode,
@@ -13813,65 +14875,237 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
     if (ev.preventDefault) ev.preventDefault();
     return;
   }
-  if (state.mode === 'escape') { escapePress(escapeSkipHit(ev), true); return; }
-  // Armed ONLY when this gesture actually ended a cinematic — never during play.
-  const skipping = state.mode === 'intro' ||
-    (state.mode === 'portal-cine' && C.CINE.SKIPPABLE) ||
-    (state.mode === 'death-cine' && C.CINE.SKIPPABLE);
-  if (skipping) uiGuard.arm();
-  endIntro();
-  if (C.CINE.SKIPPABLE) { endPortalCine(); endDeathCine(); }
+  // A mouse click gets the desktop wording on the prompt; a finger, 'tap'.
+  const how = ev && ev.pointerType === 'mouse' ? 'mouse' : true;
+  if (state.mode === 'escape') { escapePress(escapeSkipHit(ev), how); return; }
+  // R2: the other movies skip by the same rule: a tap shows SKIP, a tap on
+  // SKIP while it is up skips (the guard is armed only when it did).
+  if (state.mode === 'intro' || state.mode === 'portal-cine' || state.mode === 'death-cine') {
+    if (ev.preventDefault) ev.preventDefault();
+    moviePress(escapeSkipHit(ev), how);
+  }
 });
-// ---------- Portal-entry cinematic (WAVE-8/A) ----------
-// Plays once when the wave's FINAL boss dies: gameplay freezes, CINE.render
-// runs per frame until isDone, then the run proceeds into the EXISTING
-// intermission (openIntermission — chest shop + blessing cards + CONTINUE).
-// Any key/click/tap skips straight to the end (gated by CONFIG.CINE.SKIPPABLE).
-// WAVE-8/B: phaseAt is polled once per frame; each phase transition fires the
-// matching audio stinger (BOSS_YELL at KILL, shimmer during DISSOLVE — sfx
-// toggle gates them, the re-fire guard makes double-fires safe).
-let cineT0 = 0, lastCinePhase = null;
+// ---------- R2: the movie in progress (intro, portal, death) ---------------
+// One record for whichever of the three movies is up: its skip state (the
+// shared rule in src/movie_skip.js), its cast and timeline options, and
+// whether it was already counted as seen. The escape keeps the same skip
+// state inside escape_cine.js.
+//   kind  'intro' | 'portal' | 'death'
+//   opts  what the movie module's render/phaseAt/isDone take
+// (var, not let: chromeOn asks beatLive() during module load, above this line.)
+var movie = null;   // eslint-disable-line no-var
+function beginMovie(kind, opts) {
+  movie = { kind, t0: performance.now(), skip: createSkip(), counted: false,
+    opts: { ...opts, repeat: movieIsRepeat(prefStorage, kind) } };
+  return movie;
+}
+// The boss a movie shows: the one whose death won this wave; before any kill
+// (a movie put up some other way), the wave's own first boss.
+function movieBossId() {
+  return state.wave.killedBossId || pickBossForWave(state.wave.num)[0].id;
+}
+function moviePilot() {
+  return pilotLook((state.character && state.character.id) || (profile && profile.equippedCharacter));
+}
+// A movie was shown to someone: count it once (the next showing is a repeat).
+function movieShown(kind) {
+  if (!movie || movie.kind !== kind || movie.counted) return;
+  movie.counted = true;
+  movieNoteSeen(prefStorage, kind);
+}
+// One frame of a movie's skip prompt: count it down and draw it on top,
+// sized for the screen (a phone held upright shows the view below 1:1).
+function movieSkipFrame(dt) {
+  if (!movie) return;
+  tickSkip(movie.skip, dt);
+  let scale = 1;
+  try {
+    const r = canvas.getBoundingClientRect();
+    if (r && r.width > 0) scale = r.width / C.VIEW_W;
+  } catch { /* keep 1 */ }
+  drawSkip(renderer.ctx, movie.skip, { scale });
+}
+// R2: the 'portal-cine' mode now plays the road shot before a stage change
+// (kind 'road'); the portal movie itself is the beat in 'playing' mode.
+const MOVIE_OF_MODE = { intro: 'intro', 'portal-cine': 'road', 'death-cine': 'death' };
+// A key or a tap during the intro, the road shot, the death movie or the
+// portal beat. Returns true when it skipped.
+function moviePress(confirm, tap) {
+  const kind = beatLive() ? 'portal' : MOVIE_OF_MODE[state.mode];
+  if (!kind || !movie || movie.kind !== kind) return false;
+  if (kind !== 'intro' && !C.CINE.SKIPPABLE) return false;
+  const t = kind === 'portal' ? movie.beatT : (performance.now() - movie.t0) / 1000;
+  if (!pressSkip(movie.skip, t, confirm, tap)) return false;
+  uiGuard.arm();
+  if (kind === 'intro') endIntro();
+  else if (kind === 'portal') endPortalBeat(true, true);
+  else if (kind === 'road') endRoadShot();
+  else endDeathCine();
+  return true;
+}
+// ---------- The portal: the beat on the battlefield (R2) ----------
+// The portal movie used to be a scene of its own, played after the pilot
+// walked in. Now it is 2.5 s on the real battlefield, from the moment the
+// wave's boss dies (src/portal_beat.js): the boss dies in slow time where it
+// stands, the portal opens on that spot, the pilot walks in. The game keeps
+// running under it in 'playing' mode, so the sweep, the loot, the pilot's own
+// walk and the portal's invulnerability all work as before. The beat only
+// draws on top, holds the crossing until it ends (beatHoldsEntry), and takes
+// the skip keys and taps. Its clock runs on play time (realDt in 'playing'),
+// so a draft opened by the swept gems pauses it.
+// Wave 1 plays no beat: the escape chase tells that story.
+function startPortalBeat(e) {
+  if (state.wave.num === 1 || state.unattended) return;
+  // The beat draws this boss's death itself (it flashes and sinks): the
+  // field's own fold and puff for it would be a second body on the spot.
+  // Under reduced motion the beat is a still card with no boss in it, so
+  // the boss keeps its field death: it must not just vanish.
+  if (!escapeStill()) e.quietDeath = true;
+  beginMovie('portal', { hero: moviePilot(), boss: bossLook(movieBossId()) });
+  movie.beatT = 0;
+  movie.lastPhase = null;
+  movie.spot = { x: e.x, y: e.y };
+  movie.reduced = escapeStill();
+  movie.done = false;
+  movie.held = false;
+  // A quick kill: the boss's APPROACHES banner would still be up, over the
+  // spot where it dies and against the FALLS caption. It goes now.
+  const bb = state.bossBanner;
+  if (bb && !bb.peripheral && (bb.verb === 'APPROACH' || bb.verb === 'APPROACHES')) state.bossBanner = null;
+  // The boss dies in slow time: the earned moment's dilation, held through
+  // the beat's KILL phase.
+  if (!movie.reduced) triggerDilation(C.DILATION.BOSS.SCALE, BEAT.SLOW_S);
+  // The recorded portal cue, now at the kill. It is 6 s long and the beat is
+  // 2.5 s: its tail plays on into the walk and the intermission, and the run
+  // bed stays ducked under it (-12 dB) until the cue ends, so the tail is
+  // heard and not fought.
+  audio.playMusicCue('portal', { duckDb: PORTAL_CUE_DUCK_DB });
+}
+const PORTAL_CUE_DUCK_DB = -12;   // = music_files.js DUCK_DB.portal
+function beatLive() {
+  return !!(movie && movie.kind === 'portal' && !movie.done && state.mode === 'playing');
+}
+// Something holds the sim in 'playing' (the same gates as the frame loop).
+function simHeld() {
+  return coachActive() || state.bannerHold > 0 || !!state.helpMode || tutPausesSim();
+}
+// The beat is on screen and takes its skip keys and taps: not while a banner,
+// a coach card, help mode or a hint holds the sim (ESC then leaves help mode).
+function beatPlaying() {
+  return beatLive() && !simHeld();
+}
+// The crossing waits for the beat (the pilot stands in the portal).
+function beatHoldsEntry() {
+  return beatLive() && movie.beatT < BEAT.DURATION;
+}
+// resume: open the level-up draft the beat held back (the joker, evolve and
+// rule cards open from update() on their own once the beat is over).
+// skipped: the player skipped it, so the beat's slow time ends with it (the
+// field would otherwise run on at 0.35x with nothing drawn to say why).
+function endPortalBeat(resume = true, skipped = false) {
+  if (!movie || movie.kind !== 'portal' || movie.done) return;
+  movie.done = true;
+  if (skipped && !movie.reduced && movie.beatT < BEAT.SLOW_S && dilation.remaining > 0) {
+    dilation.remaining = 0;
+    dilation.scale = 1;
+    state.timeScale = 1;
+  }
+  if (resume && state.mode === 'playing' && state.pendingDrafts > 0 && !state.draftKind) openDraft();
+}
+// One frame of the beat: advance its clock on play time and fire its
+// stingers. Returns what to draw this frame ({ t, o }) or null. The frame
+// loop hands the drawing to the renderer, which paints it over the world and
+// under the HUD (the readouts stay on top). Hidden tab: the beat ends at once.
+const BEAT_HUD_DROP = 8;   // view px the vitals block steps down under the top bar
+const STING_HUD_GAP = BEAT.BAR - BEAT_HUD_DROP;   // R7: the vitals sit as far below the sting's bar as below the beat's
+function portalBeatFrame(realDt, draw) {
+  if (!movie || movie.kind !== 'portal' || movie.done) return null;
+  if (state.mode !== 'playing') { movie.held = true; return null; }   // a draft or a pause holds the beat
+  if (!draw) { endPortalBeat(); return null; }
+  // A first-ever banner, a coach card, help mode or a tutorial hint holds the
+  // sim. The beat waits with it and leaves the screen to it: its clock stops
+  // and nothing of it is drawn, so it never plays out over a frozen field.
+  if (simHeld()) { movie.held = true; return null; }
+  if (movie.held) {
+    movie.held = false;
+    // Slow time ran out on the wall clock while the beat waited: the KILL
+    // phase gets the rest of it.
+    if (!movie.reduced && movie.beatT < BEAT.SLOW_S) triggerDilation(C.DILATION.BOSS.SCALE, BEAT.SLOW_S - movie.beatT);
+  }
+  movie.beatT += realDt;
+  const t = movie.beatT;
+  if (BEAT.isDone(t)) { endPortalBeat(); return null; }
+  const ph = BEAT.phaseAt(t);
+  if (ph !== movie.lastPhase) {
+    movie.lastPhase = ph;
+    // KILL: the boss yell; OPEN: the portal shimmer; WALK: the blip.
+    audio.playPortalCue(ph === 'OPEN' ? 'DISSOLVE' : ph);
+  }
+  const zs = state.zoomScale;
+  const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1) ? Math.round(zs) : 1;
+  const cam = state.cam || { x: 0, y: 0 };
+  const sx = (x) => C.VIEW_W / 2 + (x - cam.x - C.VIEW_W / 2) * Z;
+  const sy = (y) => C.VIEW_H / 2 + (y - cam.y - C.VIEW_H / 2) * Z;
+  const po = state.portal, p = state.player;
+  return { t, o: {
+    boss: movie.opts.boss, zoom: Z, reduced: movie.reduced, repeat: movie.opts.repeat,
+    bx: sx(movie.spot.x), by: sy(movie.spot.y),
+    px: po ? sx(po.x) : null, py: po ? sy(po.y) : null,
+    hx: sx(p.x), hy: sy(p.y), entering: !!(po && po.entering),
+  } };
+}
+
+// Walking into the portal lands here (openIntermission, cinePending): wave 1
+// goes on to the escape chase, the END_WAVE cast to the Maw, and every other
+// wave to its intermission. The name stays for the callers and tests.
 function startPortalCine() {
   state.wave.cinePending = false;
   // R1: at wave 1 the escape chase already shows the hero diving through a
-  // portal, so this movie would tell the same story twice. There the portal
-  // entry goes straight to the chase; later waves keep the movie. Nothing
-  // else is lost: the chase drops the overlay itself, brings its own music
-  // (the portal cue and its duck belong to this movie's picture), skips
+  // portal. The chase drops the overlay itself, brings its own music, skips
   // itself when nobody watches, and hands back to the intermission.
   if (state.wave.num === 1) { startEscape(); return; }
-  cineT0 = performance.now();
-  lastCinePhase = null;
-  // 8X SEQUENCING (owner 2026-09-21: draft menu stuck over the escape
-  // sequence): portal entry can land inside a draft pick ceremony — mode is
-  // already 'playing' again while the resolved cards are still up over the
-  // live game. openIntermission routes here BEFORE openMenu, so no screen
-  // takes the overlay over; the movie must drop it, or the stale draft
-  // cards ride through the cine into the escape. The ceremony's own state
-  // still stands down on its own (tickDraftCeremony, mode-gated) without
-  // touching this screen.
+  endPortalBeat(false);
+  // 8X SEQUENCING: the walk-in can land inside a draft pick ceremony; no
+  // stale draft card may ride into what comes next.
   overlay.style.display = 'none';
-  state.mode = 'portal-cine';
-  // Unattended: no one is watching the movie — hand straight to the end
-  // handler (the same call isDone would make).
-  if (state.unattended) { endPortalCine(); return; }
-  // The recorded portal cue over the run/boss bed (ducked -12 dB for the movie).
-  audio.playMusicCue('portal');
-}
-function endPortalCine() {
-  if (state.mode !== 'portal-cine') return;
   // WAVE-10: the END_WAVE cast fell and the maw MILESTONE begins (final_boss.js).
-  // RUN-STRUCTURE: the maw is the run's milestone beat at END_WAVE, not the
-  // run's ending — it is a bounded encounter, and every wave AFTER it resumes
-  // the ordinary ladder (intermission -> CONTINUE) up to the 30:00 limit.
-  if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
-  // THE ESCAPE hangs off portal entry: after the wave-1 boss the escape
-  // cinematic plays before the wave-2 intermission, and pays its gold.
-  // (startPortalCine goes there directly at wave 1; this line covers a movie
-  // put up some other way.)
-  if (state.wave.num === 1) { startEscape(); return; }
+  if (state.wave.num === C.ESCALATION.END_WAVE) {
+    // The portal cue is 6 s and ducks the bed under it; the Maw arrives about
+    // 2.5 s after the kill. Its tail fades now and the duck lifts.
+    if (audio.fadeMusicCues) audio.fadeMusicCues();
+    startFinale();
+    return;
+  }
   openIntermission();
 }
+
+// ---------- The road shot before a stage change (R2) ----------
+// CONTINUE on a wave whose portal leads on (after waves 2 and 4) moves the
+// run to the next stage at once (continueRun); then, for 1.5 s, the road the
+// hero takes, on the new stage's ground with its name (src/road_shot.js).
+// It plays in the 'portal-cine' mode, which every movie rule already knows:
+// the frozen sim, the skip rule, the stall clock, a hidden tab ending it.
+let roadT0 = 0;
+function startRoadShot() {
+  if (state.unattended) return;
+  const st = stageOf(state.stage);
+  beginMovie('road', {
+    hero: moviePilot(),
+    name: String(st.name || '').toUpperCase(),
+    scene: ROAD.sceneFor({ seed: (state.groundSeed | 0) || 1, stage: state.stage,
+      character: state.character && state.character.id }),
+    reduced: escapeStill(),
+  });
+  roadT0 = movie.t0;
+  overlay.style.display = 'none';
+  state.mode = 'portal-cine';
+}
+function endRoadShot() {
+  if (state.mode !== 'portal-cine') return;
+  state.mode = 'playing';
+}
+// The old name, kept for the stall clock and the tests' seams.
+function endPortalCine() { endRoadShot(); }
 
 // ---------- G15: the death movie (src/death_cine.js) ------------------------
 // The movie plays on DEATH ONLY: die() composes the payoff overlay, HIDES it,
@@ -13882,9 +15116,77 @@ function endPortalCine() {
 // once in die()) and lands in the terminal 'dead' mode. Same skip contract as
 // the intro / portal cine: any key or tap, gated by C.CINE.SKIPPABLE, with
 // uiGuard.arm() so the skipping gesture cannot also press RETRY.
-let deathCineT0 = 0;
+let deathCineT0 = 0, lastDeathPhase = null;
+// R5: the death movie's frozen frame, kept under the end card (null otherwise).
+let endBackdrop = null;
+function paintEndBackdrop(g) {
+  const cv = renderer.canvas;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(endBackdrop, 0, 0, cv.width, cv.height);
+  g.restore();
+}
+// R2 "the escape that fails": the frozen frame the movie opens on. A copy of
+// the canvas as it stood (the last frame of the fight) and where the hero
+// and the killer stood on it, in view pixels. The copy is null where the
+// canvas cannot be copied (tests): the movie then draws the actors itself.
+function deathFreeze() {
+  const Z = zoomScale(state.zoom);
+  const cam = state.cam || { x: 0, y: 0 };
+  const view = (e) => (e && Number.isFinite(e.x) && Number.isFinite(e.y) ? {
+    x: C.VIEW_W / 2 + (e.x - cam.x - C.VIEW_W / 2) * Z,
+    y: C.VIEW_H / 2 + (e.y - cam.y - C.VIEW_H / 2) * Z,
+  } : null);
+  // The copy itself is taken on the movie's first frame (captureFreeze).
+  const gone = !!(lastKillerRef && lastKillerRef.gone);
+  return { snap: null, pending: true, scale: Z, hero: view(state.player),
+    killer: gone ? null : view(lastKillerRef), killerGone: gone };
+}
+// The frozen frame: the world re-drawn as it stood, with no HUD (the mode is
+// 'death-cine', which suppresses it), then copied. The last frame on the
+// canvas carried the HUD and the boss banner, which the push-in blew up over
+// the killer's box.
+function captureFreeze(mo) {
+  const f = mo && mo.freeze;
+  if (!f || !f.pending) return;
+  f.pending = false;
+  try {
+    const src = renderer.canvas;
+    if (src && src.width > 0 && src.height > 0 && typeof document !== 'undefined') {
+      const cv = document.createElement('canvas');
+      cv.width = src.width; cv.height = src.height;
+      const c2 = cv.getContext && cv.getContext('2d');
+      if (c2 && typeof c2.drawImage === 'function') {
+        renderer.render(state, state.cam);
+        f.hudInShot = !!renderer.hudDrawn;
+        renderer.fsButton = null;
+        c2.drawImage(src, 0, 0);
+        f.snap = cv;
+      }
+    }
+  } catch { f.snap = null; }
+}
 function startDeathCine() {
+  endSting();   // R7: a death in the arrival's own update leaves no sting (nor its banner mark) behind
   deathCineT0 = performance.now();
+  lastDeathPhase = null;
+  beginMovie('death', {
+    hero: moviePilot(),
+    killer: killerLook(state.deathBy),
+    // The road: this run's stage and the enemy types it met (the escape's cast).
+    road: {
+      seed: (state.groundSeed | 0) || 1,
+      stage: state.stage,
+      met: Object.keys((state.wave && state.wave.met) || {}),
+      bossId: movieBossId(),
+    },
+    freeze: deathFreeze(),
+    reduced: escapeStill(),
+  });
+  // Build the road scene and bake its sprites now, not on the movie's first
+  // road frame (that frame cost about five normal ones).
+  DCINE.prepare(movie.opts);
+  deathCineT0 = movie.t0;
   state.mode = 'death-cine';
   // Unattended: skip the movie — straight to the composed payoff card (the
   // next run is armed beside the compose in die()).
@@ -13893,6 +15195,13 @@ function startDeathCine() {
 function endDeathCine() {
   if (state.mode !== 'death-cine') return;
   state.mode = 'dead';
+  // R5: the frozen frame passes to the end card, which sits over it (the
+  // same picture, never a second copy). The end card lets it go.
+  endBackdrop = null;
+  if (movie && movie.kind === 'death' && movie.opts.freeze) {
+    endBackdrop = movie.opts.freeze.snap || null;
+    movie.opts.freeze.snap = null; movie.opts.freeze.pending = false;
+  }
   // MODAL SUPPRESSION (the reveal half, owner 2026-09-17 msg_01M2RVD9): the
   // queue is purged HERE and only here — this is the moment the summary
   // becomes the visible surface, and a toast can land at any point up to it
@@ -13922,6 +15231,7 @@ function startEscape(opts = {}) {
   // ride into it (the portal-cine entry already drops it).
   overlay.style.display = 'none';
   state.mode = 'escape';
+  escapeCounted = !!opts.test;   // R2: a settings preview is not a showing
   ESCAPE.begin({
     profile,
     // The cast: this run's stage, pilot, the enemy types it met and the boss
@@ -13932,7 +15242,7 @@ function startEscape(opts = {}) {
       stage: state.stage,
       character: state.character && state.character.id,
       met: Object.keys(state.wave.met || {}),
-      bossId: pickBossForWave(state.wave.num)[0].id,
+      bossId: movieBossId(),
     },
     reduced: escapeStill(),
     // A run started by auto-continue banks its escape at the same cut as its gold.
@@ -13950,6 +15260,7 @@ function startEscape(opts = {}) {
 // run, or pressed anything since it began (noteInput zeroes the count), sees
 // the chase. A run auto-continue started with no input since is nobody's to
 // watch, and neither is a dev night run. (A hidden tab ends it in the frame.)
+let escapeCounted = false;   // R2: this escape was counted as seen
 function escapeUnwatched() {
   return state.unattended && (!!state.devNightRun || autoRunsInRow > 0);
 }
@@ -14087,6 +15398,7 @@ function startFinale() {
   audio.playPortalCue('BOSS_YELL');
   audio.playSfx('bossArrive');
   audio.startMusic();
+  startBossSting('maw', []);   // R7: the Maw's arrival, the big one
 }
 
 // The finale tick (mode === 'finale'; frame() routes here instead of update).
@@ -14180,7 +15492,7 @@ function updateFinale(dt) {
         resetRampage();   // WAVE-11: the maw's hits end the streak too
         state.effects.push({ kind: 'hit_spark', x: p.x, y: p.y, age: 0, ttl: 0.15 });
         audio.playSfx('hit');
-        if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; die(true); return; }
+        if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; lastKillerRef = b; die(true); return; }
       }
     }
   }
@@ -14198,7 +15510,7 @@ function updateFinale(dt) {
       p.invuln = 0.6;
       resetRampage();   // WAVE-11: the maw's bite ends the streak too
       audio.playSfx('hit');
-      if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; die(true); return; }
+      if (p.hp <= 0) { lastDamageSource = { cause: 'contact', name: 'THE MAW' }; lastKillerRef = b; die(true); return; }
     }
   }
 
@@ -14357,7 +15669,7 @@ function tickMagnetSweep(sweepDt) {
     }
     if (p.bossSweep <= 0 && state.bossSweepSnap) {
       const a = state.bossSweepSnap;
-      const gems = a.gems - state.gems.length;
+      const gems = a.gems - gemUnits();
       const potions = a.potions - state.drops.reduce((s, d) => s + (d.count || 1), 0);
       const items = a.items - state.itemDrops.length;
       const parts = [];
@@ -14377,7 +15689,7 @@ function tickMagnetSweep(sweepDt) {
   }
   if (p.magnetSweep <= 0 && state.magnetSnap) {
     const a = state.magnetSnap;
-    const gems = a.gems - state.gems.length;
+    const gems = a.gems - gemUnits();
     const potions = a.potions - state.drops.reduce((s, d) => s + (d.count || 1), 0);
     const items = a.items - state.itemDrops.length;
     const parts = [];
@@ -14390,15 +15702,44 @@ function tickMagnetSweep(sweepDt) {
 }
 
 state.mode = 'intro';
+beginMovie('intro', introOpts());
+movie.t0 = introT0;
 let last = performance.now();
 let lastIntroPhase = null;
 // One rendered frame. The clock `last` is shared with the background ticker
 // (bgTick), so whichever of the two runs consumes the elapsed time once.
 let bootReported = false;   // R4: index.html's BOOT AND UPDATES script hears about the first frame once
+// R6 LIGHT: the LIGHTING setting (ADVANCED page) and the governor that steps
+// the lighting down when the game's own frames get slow (src/light.js). The
+// governor reads the wall clock and only ever chooses how the light is drawn.
+let lightingSetting = lightingPref(prefStorage);
+// The governor starts where it last settled (a slow device starts low).
+const lightGov = new LightGovernor(lightAutoPref(prefStorage));
+function setLighting(v) {
+  lightingSetting = LIGHT_LEVELS.includes(v) ? v : 'ON';
+  try { prefStorage.setItem(KEY_LIGHTING, lightingSetting); } catch { /* not remembered */ }
+  // A choice by the player starts the automatic fallback afresh.
+  lightGov.reset();
+  try { prefStorage.removeItem(KEY_LIGHT_AUTO); } catch { /* not remembered */ }
+}
+// A step of the light fades over LIGHT_FADE_S instead of popping.
+const LIGHT_FADE_S = 0.6;
 function frame(now) {
   const realDt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
+  const work0 = performance.now();
   runFrame(now, realDt, true);
+  const govWas = lightGov.level;
+  const lv = lightGov.sample(performance.now() - work0, realDt, LIGHT_LEVELS.indexOf(lightingSetting), renderer.lightMs || 0);
+  if (lightGov.level !== govWas) {
+    try { prefStorage.setItem(KEY_LIGHT_AUTO, String(lightGov.level)); } catch { /* not remembered */ }
+  }
+  // The level drawn is the step the fade is in: a step down keeps drawing the
+  // old level while it fades out, a step up fades the new one in.
+  const mix0 = renderer.lightMix == null ? lv : renderer.lightMix;
+  const mix = lv > mix0 ? Math.min(lv, mix0 + realDt / LIGHT_FADE_S) : Math.max(lv, mix0 - realDt / LIGHT_FADE_S);
+  renderer.lightMix = mix;
+  renderer.lightLevel = Math.max(0, Math.ceil(mix - 1e-6));
   requestAnimationFrame(frame);
   if (!bootReported) {
     bootReported = true;
@@ -14413,6 +15754,9 @@ function frame(now) {
         });
       } catch { /* never blocks the game */ }
     }, 0);
+    // integ3: paint each stage's floor once, off screen, while the intro and
+    // the menus are up, so the first frame of a run is not slowed by it.
+    setTimeout(() => { try { warmGroundPainters(); } catch { /* drawing only */ } }, 1200);
   }
 }
 // One logical frame of `realDt` wall seconds: the wall-clock timers, the
@@ -14420,6 +15764,7 @@ function frame(now) {
 // simulation is realDt times the earned-moment time scale. With draw false
 // (a hidden tab) nothing is painted and the movies end at once.
 function runFrame(now, realDt, draw) {
+  maybeApplyMenuFont(typeof document !== 'undefined' ? document : null, overlay, false);
   // SLICE 8: sim-clock pacing for sim-gating UI holds at dev speed >1. The
   // draft auto-pick timeout, the token-banner hold and the dilation window
   // are UX pacing in wall-seconds at 1x; at Nx they decay N× faster in wall
@@ -14430,7 +15775,8 @@ function runFrame(now, realDt, draw) {
   // deliberately — pacing the player sees must never depend on a dev pref.
   const devPace = (DEV_GATE && dev && dev.speed > 1) ? devNormSpeed(dev.speed) : 1;
   const paceDt = realDt * devPace;
-  const timeScale = advanceDilation(paceDt);
+  // R7: the arrival sting holds the sim, and the earned slow time waits with it.
+  const timeScale = advanceDilation(sting ? 0 : paceDt);
   const dt = realDt * timeScale;
   // The earned-moment flourish decays on WALL-CLOCK time too, so slow-mo
   // stretches the simulation but never the flare itself.
@@ -14452,6 +15798,7 @@ function runFrame(now, realDt, draw) {
   if (fsOverlay.t > 0) fsOverlay.t = Math.max(0, fsOverlay.t - realDt);
   syncChrome();
   syncMusic();
+  syncHeartbeat(draw);
   // N2: the title reveal/hold advances on WALL-CLOCK dt (same rule as the
   // earned-moment decay above) so it can never assume a frame rate.
   advanceTitleReveal();
@@ -14478,8 +15825,8 @@ function runFrame(now, realDt, draw) {
   // hold, a live coach card — plus the death-cine/escape early returns
   // below, which this block precedes). In playing/finale the sim tick owns
   // them (unchanged); the two never tick the same frame.
-  const simTicksTransients = state.mode === 'finale' ||
-    (state.mode === 'playing' && !coachActive() && state.bannerHold <= 0 && !state.helpMode);
+  const simTicksTransients = !sting && (state.mode === 'finale' ||
+    (state.mode === 'playing' && !coachActive() && state.bannerHold <= 0 && !state.helpMode && !forge));
   if (!simTicksTransients) {
     tickBossBanner(realDt);
     for (let i = state.toasts.length - 1; i >= 0; i--) {
@@ -14493,6 +15840,7 @@ function runFrame(now, realDt, draw) {
   // countdown rides paceDt (sim-clock — same sim coverage as 1x).
   tickDraftAutoPick(paceDt);
   tickHandFx(paceDt);
+  tickHandPulse(realDt);
   // DRAFT PICK CEREMONY: same wall-clock slot — the overlay teardown after a
   // resolved draft. A no-op in every other mode.
   tickDraftCeremony(realDt);
@@ -14500,6 +15848,7 @@ function runFrame(now, realDt, draw) {
   // same wall-clock slot (mode-gated no-ops in every other mode).
   tickAutoContinue(realDt);
   awayFrame(realDt);
+  endCountFrame(realDt, draw);   // R5: the end card's gold count
   // SLICE 7: the 1 Hz dev sampler rides the same wall-clock slot (a single
   // gate branch when off; devFrameTick no-ops outside playing/finale).
   if (DEV_GATE) devFrameTick(now);
@@ -14513,32 +15862,49 @@ function runFrame(now, realDt, draw) {
   // over the sweep's sim-time. devPace sub-ticks of realDt cover the
   // identical sim-time with the 1x motion; gate off / 1x is one tick of
   // realDt (=== paceDt there), the historical behaviour bit-for-bit.
-  for (let i = 0; i < devPace; i++) tickMagnetSweep(realDt);
+  // R7: not under the arrival sting (it holds the sim; the sweep picks up gems).
+  if (!sting) for (let i = 0; i < devPace; i++) tickMagnetSweep(realDt);
   // v10 milestone chest: the collection burst ages on this same wall-clock
   // slot (mode 'burst' freezes the sim — the shower would never age on dt).
   tickChestBurst(realDt);
   tutFrame(realDt, now);
   if (state.mode === 'intro') {
+    // The title movie waits for someone to watch it: time the tab spent
+    // hidden (no frames, or frames that do not draw) is taken off its clock,
+    // so a tab opened in the background still plays the whole road shot.
+    if (introLastNow > 0) {
+      const gap = now - introLastNow;
+      const lost = !draw ? gap : (gap > INTRO_GAP_MS ? gap - 1000 / 60 : 0);
+      if (lost > 0) { introT0 += lost; if (movie && movie.kind === 'intro') movie.t0 = introT0; }
+    }
+    introLastNow = now;
     const t = now - introT0;
-    if (!draw) return;   // the title movie waits for someone to watch it
-    INTRO.render(renderer.ctx, t);
+    if (!draw) return;
+    INTRO.render(renderer.ctx, t, movie && movie.opts);
+    movieShown('intro');
+    movieSkipFrame(realDt);
     // WAVE-8/B: fire the intro stinger on each phase transition (rising
-    // drone at OVERTAKE, slam at the TITLE stamp, sweep on FADE).
-    const iph = INTRO.phaseAt(t);
+    // drone at OVERTAKE, the sweep under the dissolve (FADE), the slam when
+    // the logo lands (TITLE)).
+    const mo = movie && movie.opts;
+    const iph = INTRO.phaseAt(t, mo);
     if (iph !== lastIntroPhase) { lastIntroPhase = iph; audio.playIntroCue(iph); }
-    if (INTRO.isDone(t)) endIntro();
+    if (INTRO.isDone(t, mo)) endIntro(true);
     return;
   }
   if (state.mode === 'portal-cine') {
     // WAVE-8/A: gameplay is frozen (update() only runs in 'playing'); the
     // movie owns the canvas until isDone, then the intermission takes over.
+    // R2: this mode is now the road shot before a stage change (the run is
+    // already on the new stage; the sim waits).
     renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
-    if (!draw) { endPortalCine(); return; }
-    const t = now - cineT0;
-    CINE.render(renderer.ctx, t);
-    const cph = CINE.phaseAt(t);
-    if (cph !== lastCinePhase) { lastCinePhase = cph; audio.playPortalCue(cph); }
-    if (CINE.isDone(t)) endPortalCine();
+    if (!draw) { endRoadShot(); return; }
+    const t = (now - roadT0) / 1000;
+    const mo = movie && movie.kind === 'road' ? movie.opts : undefined;
+    if (mo) ROAD.render(renderer.ctx, t, mo);
+    movieShown('road');
+    movieSkipFrame(realDt);
+    if (!mo || ROAD.isDone(t)) endRoadShot();
     return;
   }
   if (state.mode === 'death-cine') {
@@ -14554,8 +15920,19 @@ function runFrame(now, realDt, draw) {
     renderer.fsButton = null;
     if (!draw) { endDeathCine(); return; }
     const t = now - deathCineT0;
-    DCINE.render(renderer.ctx, t, state.deathBy ? state.deathBy.cause : 'unknown');
-    if (DCINE.isDone(t)) endDeathCine();
+    const mo = movie && movie.kind === 'death' ? movie.opts : undefined;
+    captureFreeze(mo);
+    // The caption keeps a readable size on a phone held upright.
+    if (mo) {
+      try { const r = canvas.getBoundingClientRect(); mo.capScale = r && r.width > 0 ? r.width / C.VIEW_W : 1; } catch { mo.capScale = 1; }
+    }
+    DCINE.render(renderer.ctx, t, state.deathBy ? state.deathBy.cause : 'unknown', mo);
+    movieShown('death');
+    movieSkipFrame(realDt);
+    // Its own sound: one cue as each shot begins (src/audio.js DEATH_CUES).
+    const dph = DCINE.phaseAt(t, mo);
+    if (dph !== lastDeathPhase) { lastDeathPhase = dph; if (dph !== 'DONE') audio.playDeathCue(dph); }
+    if (DCINE.isDone(t, mo)) endDeathCine();
     return;
   }
   // The escape cinematic owns the canvas like the other movies, on real
@@ -14565,6 +15942,9 @@ function runFrame(now, realDt, draw) {
     renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
     if (!draw) { ESCAPE.finishNow(); return; }
     ESCAPE.frame(renderer.ctx, tut.hints.active ? 0 : realDt);
+    // Seen only when someone watches (an unattended run does not count it,
+    // the same as the death movie).
+    if (!escapeCounted && !state.unattended) { escapeCounted = true; movieNoteSeen(prefStorage, 'escape'); }
     return;
   }
   // `dt` (real * earned-moment time scale) was computed at the top of frame().
@@ -14580,12 +15960,58 @@ function runFrame(now, realDt, draw) {
     // update() here any more, and no transient DOM overlay exists in play.
     // HELP MODE: the pause is the player's own invitation (their "?" armed
     // it) — same freeze, and leaving resumes the clock without a trace.
-    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode && !tutPausesSim()) devSimSteps(dt);
+    // R5: the forge moment holds it too (src/forge_show.js).
+    if (!coachActive() && state.bannerHold <= 0 && !state.helpMode && !tutPausesSim() && !forge) devSimSteps(dt);
   } else if (state.mode === 'finale') devSimSteps(dt);
-  if (!draw) return;
+  if (!draw) { endForge(); endSting(); portalBeatFrame(realDt, false); return; }   // R7: and the arrival sting   // R2: a hidden tab ends the beat (R5: and the forge)
   state.questsHidden = tutGuidedLive();   // the tracker waits for the handover
-  renderer.render(state, state.cam);
+  // R2: the portal beat films over the live battlefield, under the HUD; the
+  // vitals block steps down under its top bar.
+  const beat = portalBeatFrame(realDt, true);
+  state.beatHudDrop = beat ? Math.round(BEAT_HUD_DROP * BEAT.barsAt(beat.t, beat.o.reduced)) : 0;
+  renderer.underHud = beat ? (g) => BEAT.render(g, beat.t, beat.o) : null;
+  // R7: the arrival sting: the push right after the world layer (drawing
+  // only), the bars and the name card under the HUD, the vitals block below
+  // its top bar.
+  const st = stingFrame(realDt);
+  // R7 the finale arena: the floor turns to the void as the Maw rises in its
+  // sting (its clock, while the sim is held), then on sim time (src/finale_arena.js).
+  renderer.light.stingT = st && st.kind === 'maw' && !st.o.reduced ? st.t : null;
+  if (st) {
+    const t = st.t, o = st.o;
+    state.beatHudDrop = Math.max(state.beatHudDrop, Math.round((STING.barHeight(o) - STING_HUD_GAP) * STING.barsAt(t, o)));
+    renderer.afterWorld = (g) => STING.renderPush(g, t, o);
+    renderer.underHud = (g) => STING.render(g, t, o);   // the dark, the bars and the name card
+  }
+  // The HUD rows that would stand on the card (the weapon row, the hand, the
+  // radar) are kept off it for its length.
+  state.hudHole = st ? STING.cardRect(st.t, st.o, renderer.ctx) : null;
+  // On the bottom bar the hole runs down to the view's edge: the weapon row's
+  // small level marks under the plate would otherwise sit on the film bar.
+  if (state.hudHole && st.o.slot !== 'top') state.hudHole.h = C.VIEW_H - state.hudHole.y;
+  if (state.hudHole && st.o.slot === 'top') {
+    // Up top the message lane's lines would stand on the card: they step off with the rows.
+    const ln = renderer.hudChrome && renderer.hudChrome.lane;
+    if (ln && ln.lines > 0) state.hudHole.also = { x: 0, y: ln.y - 2, w: C.VIEW_W, h: (ln.h | 0) + 16 };
+  }
+  // R5: the end card after a death sits over the movie's frozen frame. The
+  // picture is kept while the card exists (a trip to help and back finds it
+  // again) and goes with a new run or the title. (A win, END RUN or an
+  // unwatched death keeps the world as it stood: the sim does not run under
+  // the card.)
+  if (endBackdrop && !state.endScreen) endBackdrop = null;
+  renderer.hudOff = forgeOfferHidesHud();
+  if (endBackdrop && state.mode === 'dead') { renderer.fsButton = null; paintEndBackdrop(renderer.ctx); }
+  else renderer.render(state, state.cam);
+  // A light floor (Bone Desert, the snow) shows through a menu's scrim as mid
+  // grey: the overlay is told, and darkens its scrim (index.html .floor-light).
+  syncFloorLightFlag();
+  renderer.underHud = null;
+  renderer.afterWorld = null;
   drawHud();
+  if (beat) { movieShown('portal'); movieSkipFrame(realDt); }
+  if (st && sting === st) drawSkip(renderer.ctx, st.skip, { scale: st.o.capScale });
+  forgeFrame(realDt);   // R5: the forge moment, over the world and the HUD
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
   // gallery's emblem and its display case sit on top of the (frozen) world and
   // its readouts. A no-op everywhere else — drawTrophyShowcase returns
@@ -14597,6 +16023,10 @@ function runFrame(now, realDt, draw) {
   renderer.drawBestiary(renderer.ctx, state);
   updateTouchHud();
 }
+// THE MENU FONT is asked for here, during boot, and nothing waits for it: the
+// first frame is drawn while it loads. A request made during boot is served
+// by the same release as the page (sw.js, test_sw_manifest G2).
+try { loadMenuFont({ overlay }); } catch { /* today's font stays */ }
 requestAnimationFrame(frame);
 
 // ---------- Background play ----------
@@ -14694,6 +16124,11 @@ function bgSetHidden(hidden) {
 // the FIELD REPORT open/close entry points; WAVE-13 adds the pilot-mode
 // toggle + the shared held-direction input object (the d-pad seam).
 export const __TEST = {
+  // R6 LIGHT seams: the setting and the governor.
+  light: { get setting() { return lightingSetting; }, setLighting, gov: lightGov },
+  // R3 HUD seams: the key strip rule, the quest chip, the ready line.
+  hud: { keyStripWanted, toggleQuests, questChipHitRect, questChipHit, readyRowText, touchLayer: () => touchLayer, fitCanvas },
+  toast,
   // M5b landscape: the high-ground damage rule.
   heroHitMult,
   state, get controller() { return controller; }, startRun,
@@ -14703,12 +16138,25 @@ export const __TEST = {
     offers: () => fusionOffers(), take: (def) => doFuse(def), wire: wireFusions, snapshot: snapshotFire,
     forgeOffers, shelf: showFusions, discovered: fusionsDiscovered,
   },
+  // R5 forge moment seam (test/test_forge_show.mjs): the moment on screen,
+  // its end and its skip press, and an offer's pictures.
+  // R7 arrival sting seam (test/test_boss_sting.mjs): the sting up or waiting,
+  // on/off for this process (the harness turns it off unless a test asks),
+  // its end and its skip press.
+  bossSting: { get live() { return sting; }, get playing() { return stingLive(); },
+    get enabled() { return stingsOn; }, set enabled(v) { stingsOn = !!v; },
+    end: (skipped) => endSting(!!skipped), press: (c, tap) => stingPress(c, tap),
+    cooldownNow: () => devCooldownNow(), heroOnScreen: () => stingHeroOnScreen() },
+  groundWarm: () => groundPaintersWarm(),
+  forge: { get live() { return forge; }, end: () => endForge(), press: (c, tap) => forgePress(c, tap), arts: (o) => forgeArts(o),
+    rowFit: (lay) => forgeRowFit(lay), FORGE_ROW, frameBlit: (cv, w, h, tone) => frameBlit(cv, w, h, tone) },
   // MANUAL v2 seam: page turns through the real renderer (goto re-draws the
   // whole stack — indicator, nav, contents, footer).
   manual: { next: manualNext, prev: manualPrev, goto: manualGoto },
   // M3: the ground-item overflow wrappers (test seam — the same functions the
   // kill funnel and drop events call).
   m3: { pushGem, pushDrop, pushItemDrop },
+  floor: { tick: tickFloor, autoController, gemUnits },   // R3 floor seam (test/test_floor.mjs)
   // ONBOARDING seam: the in-run hint layer is RETIRED (2026-09-18) — no
   // strip, no store, no scheduler. What remains for tests is the touch-path
   // read the prologue's staged tooltips still use. The object-tag engine
@@ -14935,6 +16383,7 @@ export const __TEST = {
     get hints() { return tut.hints; },
     get model() { return tut.model; },
     get ui() { return tut.ui; },
+    avoid: () => tutAvoid(),
     get lastGuidedS() { return tut.lastGuidedS; },
     get pausesSim() { return tutPausesSim(); },
     press: (downMs) => tutPrimary(downMs),
@@ -15164,7 +16613,7 @@ export const __TEST = {
     get draftWeight() { return jokerDraftWeight; },
     set draftWeight(w) { jokerDraftWeight = w; },
   },
-  hand: { update: updateRunHand, tick: tickHandFx, COUNT_S: HAND_COUNT_S },
+  hand: { update: updateRunHand, tick: tickHandFx, COUNT_S: HAND_COUNT_S, tickPulse: tickHandPulse },
   // W7b ladder seams: the ONE death function (Second Wind revive probes drive
   // it directly, the same call every damage path makes) and the ladder-on
   // flag this process booted with (the A/B BEFORE/AFTER arms).
@@ -15216,6 +16665,17 @@ export const __TEST = {
   deathCauseLabel,
   nextUnlockWithinReach,
   endScreenBody,
+  // R5 the end card: its count, its backdrop and its BUY NEXT card.
+  endCard: {
+    count: () => endCount,
+    backdrop: () => endBackdrop,
+    buyCard: () => endBuyCardEl,
+    countFrame: (dt, draw = true) => endCountFrame(dt, draw),
+    // Pictures of the count (the strip for Steve): show it at time t, no cue.
+    countAt: (t) => { if (!endCount) return; endCount.t = t; endCount.cue = true; endCount.done = t >= ENDCARD.COUNT_END_S; endCountPaint(); },
+    shopSel: () => { const i = menuFocusIndex(); return i >= 0 ? ovCards.children[i] : null; },
+    reshow: () => reshowEndScreen(),
+  },
   // G25 slice 1: the text-HUD block (same string the DOM node renders), so
   // the APEX MARK flourish is assertable by STRING equality — a run with the
   // mark off must be byte-identical to the pre-apex output.
@@ -15385,13 +16845,40 @@ export const __TEST = {
     start: startDeathCine,
     end: endDeathCine,
     get t() { return performance.now() - deathCineT0; },
-    duration: DCINE.CINE_DURATION,
+    // R2: a repeat viewing is shorter; this is the one playing (or the first).
+    get duration() { return DCINE.durationOf(movie && movie.kind === 'death' ? movie.opts : null); },
+    // The finale (the Maw), for the death to the Maw.
+    startFinale,
+    zoomScale: () => zoomScale(state.zoom),
+  },
+  // R2 movie seam: the movie in progress (kind, skip state, cast, repeat) and
+  // the seen counts the repeat rule reads.
+  movies: {
+    get current() { return movie; },
+    seen: (kind) => movieSeenCount(prefStorage, kind),
+    // Restart the movie record for a mode a test forced (st.mode = ...).
+    begin: (kind) => beginMovie(kind, { hero: moviePilot() }),
+    bossId: () => movieBossId(),
   },
   // ---- G16 portal-cine seam: the same read-only clock the G15 death movie
   // exposes — start/end stay internal (the real boss-kill path drives them);
   // the browser verifier samples the PAUSE/LINGER beats off this t.
+  // R2: the portal beat on the battlefield (its play-time clock, in seconds)
+  // and the road shot before a stage change (wall clock, ms, like the others).
+  portalBeat: {
+    get live() { return beatLive(); },
+    get t() { return movie && movie.kind === 'portal' ? movie.beatT : 0; },
+    get done() { return !!(movie && movie.kind === 'portal' && movie.done); },
+    duration: BEAT.DURATION,
+    holds: () => beatHoldsEntry(),
+  },
+  roadShot: {
+    get t() { return performance.now() - roadT0; },
+    duration: ROAD.DURATION * 1000,
+    get name() { return movie && movie.kind === 'road' ? movie.opts.name : null; },
+  },
   portalCine: {
-    get t() { return performance.now() - cineT0; },
-    duration: CINE.CINE_DURATION,
+    get t() { return performance.now() - roadT0; },
+    get duration() { return ROAD.DURATION * 1000; },
   },
 };

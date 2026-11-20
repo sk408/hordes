@@ -403,7 +403,7 @@ check('boss sprites: rectangular, >=20x24, palettes resolve, frames differ', () 
 check('gravelmaw reads as a horned beast seen head-on: horns, two eyes, a toothed maw, legs', () => {
   const s = BOSS_SPRITES.GRAVELMAW, g = s.frames[0], w = s.box.w, h = s.box.h;
   const keyOf = (hex) => +Object.keys(s.palette).find(k => s.palette[k] === hex);
-  const [hide, bone, eye, fire, dark] = ['#8a8f96', '#e8d8b0', '#ff5566', '#ff9a3c', '#2e3136'].map(keyOf);
+  const [hide, bone, eye, fire, dark] = ['#6a583c', '#e4e2ea', '#ff4a14', '#e8902a', '#0b0912'].map(keyOf);
   const cells = (key, y0, y1) => { const out = []; for (let y = y0; y <= y1; y++) for (let x = 0; x < w; x++) if (g[y][x] === key) out.push([x, y]); return out; };
   // The hide is still the body colour (the portal cine and the contrast test read palette 1).
   assert.equal(hide, 1, 'stone hide stays palette key 1');
@@ -436,7 +436,7 @@ check('gravelmaw carries a wind-up pose: same box, crouched, eyes and maw white-
   assert.equal(s.tell.length, s.box.h); assert.ok(s.tell.every(r => r.length === s.box.w), 'same box as the walk');
   const flat = (g) => JSON.stringify(g);
   assert.ok(flat(s.tell) !== flat(s.frames[0]) && flat(s.tell) !== flat(s.frames[1]), 'a pose of its own');
-  const hot = +Object.keys(s.palette).find(k => s.palette[k] === '#fff0a0');
+  const hot = +Object.keys(s.palette).find(k => s.palette[k] === '#f8e098');
   const count = (g, k) => g.flat().filter(v => v === k).length;
   assert.ok(count(s.tell, hot) >= 16, 'white-hot eyes, cracks and maw (' + count(s.tell, hot) + ' px)');
   assert.equal(count(s.frames[0], hot) + count(s.frames[1], hot), 0, 'never white-hot while walking');

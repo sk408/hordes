@@ -1,7 +1,7 @@
 // HORDES — src/relief.js
 //
 // ARENA ELEVATED PATHS (scale-up 2026-09-17, owner directive msg_01M2R90M:
-// "we need some dynamic aspect to it. Elevated paths, like a megabonk map").
+// "we need some dynamic aspect to it. Elevated paths").
 //
 // THE RELIEF is a deterministic per-run HEIGHT FIELD, the ground-decor hash
 // pattern (render.js cellRand) turned into terrain: every world point hashes
@@ -12,8 +12,8 @@
 // (stages.js `relief`) — per-arena elevation identity, declarative like the
 // rest of a stage.
 //
-// ANTI-SANCTUARY, by construction (the Megabonk lesson — their community's
-// two standing complaints are enemies stuck on ledges and camp-the-high-
+// ANTI-SANCTUARY, by construction (the two standing complaints about
+// raised ground in this genre are enemies stuck on ledges and camp-the-high-
 // ground safe spots):
 //   * The same geometry for both sides. Cliffs block the PLAYER and every
 //     walking ENEMY through one function (reliefStep below) at the same
@@ -241,7 +241,7 @@ export function reliefBlocked(x0, y0, x1, y1, seed, rel) {
 }
 
 // THE ROUTE BIAS — the INTENT half of the funnel, and the fix for the
-// tangential-shadow orbit (the Megabonk stuck-on-a-ledge defect this model
+// tangential-shadow orbit (an enemy stuck on a ledge, the defect this model
 // exists to avoid). A blocked frame can only reroute the mover when the
 // geometry refuses the step; but a greedy walker whose target stands on the
 // terrace has a whole band of positions BELOW the face where its direct

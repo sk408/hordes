@@ -8,7 +8,7 @@
 // appetite for kiting vs. looting). Both are plain controller state, cycled
 // from main.js key handling — the controller itself never touches input.
 import { CONFIG as C } from './config.js';
-import { isReachableLoot, lootLimit } from './entities.js';
+import { isReachableLoot, lootLimit, richStep } from './entities.js';
 import { buildingRects, clearOfBuildings, BUILDING_MOVER_R } from './stage_buildings.js';
 import { makeNav, navDirection, navRemaining, straightClear, NAV_PAD } from './pilot_nav.js';
 import { stageRelief } from './stages.js';
@@ -473,7 +473,10 @@ export class AutoPilotController {
         if (!isReachableLoot(gm.x, gm.y)) continue;
         if (inBricks(gm.x, gm.y)) continue;
         if (this.skipGems.has(gm)) continue;
-        const d = (gm.x - p.x) ** 2 + (gm.y - p.y) ** 2;
+        // R3 floor: a rich (merged) gem counts as nearer than it is, so the
+        // pilot does not walk past one for a string of single gems.
+        const pull = richStep(gm, C.FLOOR.RICH_XP) > 0 ? C.FLOOR.RICH_PULL * C.FLOOR.RICH_PULL : 1;
+        const d = ((gm.x - p.x) ** 2 + (gm.y - p.y) ** 2) * pull;
         if (d < anyD) { anyD = d; any = gm; }
         if (d < gd && !crowded(gm)) { gd = d; this.gem = gm; }
       }

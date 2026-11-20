@@ -55,7 +55,7 @@ export const FUSION_DEFS = [
     id: 'HARVEST_FIRE', pair: ['SCYTHE', 'EMBER'], name: 'Harvest Fire',
     desc: 'Every enemy the sweep kills bursts like an ember kill and leaves burning ground.',
     flags: { scytheEmberBurst: true },
-    tint: ['#ffd080', '#e0401a'], mark: ['..a..', '.aba.', 'abbba', '.bbb.', '..b..'],
+    tint: ['#ffd080', '#c88a22'], mark: ['..a..', '.aba.', 'abbba', '.bbb.', '..b..'],
   },
   {
     id: 'STORM_BOUNCE', pair: ['RICOCHET', 'ZAP'], name: 'Storm Bounce',
@@ -67,7 +67,7 @@ export const FUSION_DEFS = [
     id: 'CRATER_FIELD', pair: ['METEOR', 'MINE'], name: 'Crater Field',
     desc: 'A landing meteor sets off every mine in its crater, and each crater seeds a fresh mine.',
     flags: { meteorDetonatesMines: true, craterMine: true },
-    tint: ['#efe0ff', '#ff7a2a'], mark: ['b.b.b', '.aaa.', 'baaab', '.aaa.', 'b.b.b'],
+    tint: ['#efe0ff', '#e8902a'], mark: ['b.b.b', '.aaa.', 'baaab', '.aaa.', 'b.b.b'],
   },
   {
     id: 'GRAVITY_WELL', pair: ['NOVA_PULSE', 'ORBIT'], name: 'Gravity Well',

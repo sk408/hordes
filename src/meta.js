@@ -761,6 +761,32 @@ export function shopRowOwned(profile, def) {
   return (profile.purchased[def.id] || 0) >= def.maxLevel;
 }
 
+// BUY NEXT: the one row the end card and the shop point at. The core steps
+// (Vitality, Forged Edge, the cheapest weapon not owned) come first, the
+// cheapest affordable one; with none affordable, the cheapest row that is;
+// else the cheapest core step, as a goal to save for.
+// A weapon is a core step only while the player owns fewer weapons than weapon
+// slots (balance review 2026-11): past that a new weapon only widens what drafts
+// can offer, and following BUY NEXT into every weapon cost 24% of survival at
+// 30000 gold spent, against damage first.
+export function bestNextPurchase(prof) {
+  const offer = (def) => {
+    if (!def || shopRowOwned(prof, def)) return null;
+    const level = def.kind ? 0 : (prof.purchased[def.id] || 0);
+    if (!def.kind && level >= def.maxLevel) return null;
+    return { id: def.id, name: def.name, cost: def.kind ? def.baseCost : upgradeCost(def, level) };
+  };
+  const byCost = (a, b) => a.cost - b.cost;
+  const roomForWeapon = (prof.unlockedWeapons || []).length < startWeaponSlots(prof);
+  const weapon = roomForWeapon
+    ? SHOP_UPGRADES.filter(d => d.kind === 'weapon').map(offer).filter(Boolean).sort(byCost)[0] : null;
+  const core = [offer(SHOP_BY_ID.hp), offer(SHOP_BY_ID.dmg), weapon].filter(Boolean).sort(byCost);
+  const rest = SHOP_UPGRADES.map(offer).filter(Boolean).sort(byCost);
+  const pool = core.length ? core : rest;
+  const can = (o) => prof.gold >= o.cost;
+  return pool.find(can) || rest.find(can) || pool[0] || null;
+}
+
 // Full-buy cost of a list of shop row ids (every level of every row; single-
 // purchase rows cost their baseCost). The balance seam the WAVE-11 economy
 // targets are asserted through (test_meta.mjs + the post-integration sim).
@@ -904,7 +930,7 @@ export function buyApex(profile, id) {
   return true;
 }
 
-// The TOGGLE (Megabonk lesson: apex must always be switchable off). This pair
+// The TOGGLE (apex must always be switchable off). This pair
 // is the ONLY sanctioned reader/writer of the raw enabled field.
 export function apexEnabled(profile) {
   return !!profile && !!(profile.apex && profile.apex.enabled === true);

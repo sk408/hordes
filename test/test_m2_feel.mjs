@@ -237,7 +237,7 @@ check('with a canvas the same grid is one drawImage, baked once per style', () =
   SPRITE_CACHE_TEST.forceFakeCanvas();
   assert.equal(cacheEnabled(), true);
   const g = recorder();
-  const st = actorStyle(false, false, '#ffd75e');
+  const st = actorStyle(false, false, '#f0c860');
   blitGrid(g, spr.frames[1], spr.palette, 10, 20, st);
   blitGrid(g, spr.frames[1], spr.palette, 30, 20, st);
   assert.equal(g.ops.length, 2);
@@ -273,8 +273,9 @@ check('an elite is drawn at its body size: the same raster, 1.5x, about the body
     assert.equal(elite.w, plain.w * ELITE_TEMPLATE.sizeMult, id + ': the elite body is the template size');
     const body = (e) => {
       const g = imgRecorder();
-      draw.call(null, g, { ...e, hp: 1, maxHp: 1, age: 0 }, sp, 100, 80, { time: 0 });
-      const ring = e.elite ? '#ffd75e' : null;
+      // age 0.67: past the spawn pop (actor_anim.js), on walk frame 0.
+      draw.call(null, g, { ...e, hp: 1, maxHp: 1, age: 0.67 }, sp, 100, 80, { time: 0 });
+      const ring = e.elite ? '#f0c860' : null;
       const want = rasterOf(sp.frames[0], sp.palette, actorStyle(false, false, ring, !e.flying, !e.elite));
       const op = g.ops.find(o => o.img === want);
       assert.ok(op, id + (e.elite ? ' elite' : '') + ': the body raster is blitted');
@@ -292,7 +293,7 @@ check('an elite is drawn at its body size: the same raster, 1.5x, about the body
     // Same centre line as the plain draw: the feet stay under the body.
     assert.ok(Math.abs((b.op.y + 3 + sp.box.h * 0.75) - 80) <= 1.5, id + ': grown about the body centre');
     // The elite tells stay: the gold crown pips sit above the larger head.
-    const pips = b.g.ops.filter(o => o.rect && o.col === '#ffd75e');
+    const pips = b.g.ops.filter(o => o.rect && o.col === '#f0c860');
     assert.ok(pips.length >= 4, id + ': crown pips drawn');
     assert.ok(pips.every(o => o.y < b.op.y + 2), id + ': the crown clears the head');
   }
@@ -304,10 +305,10 @@ check('a boss holds its wind-up pose while it telegraphs, and walks otherwise', 
   const sp = BOSS_SPRITES.GRAVELMAW;
   const boss = { boss: true, hp: 1, maxHp: 1, x: 0, y: 0, w: 24, h: 24, age: 0 };
   const drawn = (e, time) => { const g = imgRecorder(); draw.call(null, g, e, sp, 100, 80, { time }); return g.ops.filter(o => o.img).map(o => o.img); };
-  const walk = rasterOf(sp.frames[0], sp.palette, actorStyle(false, false, '#ff9ed8', true, false));
+  const walk = rasterOf(sp.frames[0], sp.palette, actorStyle(false, false, sp.rim, true, false));   // bossdark: its rim
   assert.ok(drawn(boss, 0).includes(walk), 'walking: frame A');
   // Telegraphing: the ring blinks white / red; either way the grid is the tell pose.
-  for (const [time, ring] of [[0, '#ffffff'], [1 / 12, '#ff2f5e']]) {
+  for (const [time, ring] of [[0, '#ffffff'], [1 / 12, '#ff4a14']]) {
     const tell = rasterOf(sp.tell, sp.palette, actorStyle(false, false, ring, true, false));
     const seen = drawn({ ...boss, telegraph: true, age: 0.2 }, time);
     assert.ok(seen.includes(tell), 'telegraphing at t=' + time.toFixed(2) + ': the wind-up pose');

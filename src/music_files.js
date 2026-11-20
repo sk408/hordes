@@ -580,6 +580,14 @@ export function createMusicEngine(host) {
     sync,
     hide,
     playCue,
+    // A cue cut short by the next scene (the Maw after wave 5's portal): it
+    // fades and its duck lifts at once.
+    fadeAllCues() {
+      if (!cues.length && !cueDuck) return;
+      const n = now();
+      if (cues.length) fadeCues(n, CUE_FADE); else cueDuck = null;
+      updateDuck(n);
+    },
     // The synth STEP chase bed is not tempo-synced: it is suppressed while the
     // recorded escape loop plays (ROAR, BOSS, ESCAPE and GOLD still sound).
     escapePlaying: () => !!(cur && cur.kind === 'rec' && cur.slot === 'escape'),

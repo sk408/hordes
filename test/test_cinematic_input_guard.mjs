@@ -45,6 +45,17 @@ const press = () => {
   if (cap) cap({ stopPropagation() {}, preventDefault() {} });
 };
 const key = (k) => h.key('keydown', { key: k, preventDefault() {} });
+// R2: every movie skips by the one rule (src/movie_skip.js). Past the
+// start-up guard, the first press only shows SKIP; ESC while it is up skips.
+// (Before R2 any single key skipped these three movies.)
+const skipByKeys = (kind, mode) => {
+  T.movies.begin(kind);
+  h.advanceClock(500);
+  key('x');
+  assert.equal(st.mode, mode, 'the first press only shows SKIP');
+  assert.equal(T.uiGuard.armed(), false, 'and arms nothing');
+  key('Escape');
+};
 
 S.check('the guard is inert by default (a normal menu click works)', () => {
   assert.equal(T.uiGuard.armed(), false, 'not armed at boot');
@@ -58,7 +69,7 @@ S.check('the guard is inert by default (a normal menu click works)', () => {
 
 S.check('skipping the intro arms the guard, and the same gesture cannot press', () => {
   st.mode = 'intro';
-  key('x');
+  skipByKeys('intro', 'intro');
   assert.notEqual(st.mode, 'intro', `the key skipped the movie (mode=${st.mode})`);
   assert.equal(T.uiGuard.armed(), true, 'ending a cinematic by input arms the guard');
 
@@ -97,13 +108,14 @@ S.check('the guard expires on its own after UI_GUARD_MS', () => {
   assert.equal(fired, 1, 'clicks flow again once the window has closed');
 });
 
-S.check('the portal cinematic arms the guard too', () => {
+// R2: the 'portal-cine' mode is now the road shot before a stage change.
+S.check('the road shot (portal-cine mode) arms the guard too', () => {
   h.pump(2);                             // settle whatever mode we are in
   st.mode = 'portal-cine';
   T.uiGuard.standDown();
-  key('x');
-  assert.notEqual(st.mode, 'portal-cine', 'the key skipped the portal cinematic');
-  assert.equal(T.uiGuard.armed(), true, 'the hand-off into the intermission is guarded');
+  skipByKeys('road', 'portal-cine');
+  assert.notEqual(st.mode, 'portal-cine', 'the key skipped the road shot');
+  assert.equal(T.uiGuard.armed(), true, 'the hand-off into play is guarded');
   let fired = 0;
   clickThrough({ click() { fired++; } });
   assert.equal(fired, 0, 'a chest card cannot be pressed by the skipping gesture');
@@ -114,7 +126,7 @@ S.check('the death cinematic arms the guard too (G15)', () => {
   h.pump(2);
   st.mode = 'death-cine';
   T.uiGuard.standDown();
-  key('x');
+  skipByKeys('death', 'death-cine');
   assert.equal(st.mode, 'dead', 'the key skipped the death movie (the payoff screen is up)');
   assert.equal(T.uiGuard.armed(), true, 'the hand-off into the payoff screen is guarded');
   let fired = 0;

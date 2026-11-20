@@ -41,6 +41,10 @@ Each axis is independent. A policy is written `shop/loadout/draft/once/stance/ch
     holds gold when one of those is within 5 runs of income; otherwise behaves
     as `stats-first`.
   - `balanced`: alternates `stats-first` and `weapons-first`, purchase by purchase.
+  - `buy-next`: whatever the game's BUY NEXT card names (`src/meta.js`
+    `bestNextPurchase`), while it is affordable. It follows the game's own rule.
+  - `buy-next-v1`: BUY NEXT as it was before the balance review of 2026-11 (a
+    weapon was a core step whatever the slots), for paired before/after.
 - `--loadout`: `default` (whatever the game equips; a bought weapon is
   auto-equipped) or `all-owned` (before every run, fill every slot with owned
   weapons, priciest first).
@@ -50,7 +54,9 @@ Each axis is independent. A policy is written `shop/loadout/draft/once/stance/ch
   already evolved, then on one with a fusion partner in the kit, then on the
   highest-level one), `stats-first` (stat cards in `--stat-priority` order),
   `hand-first` (the card that makes the best new hand when one is offered,
-  otherwise the evolution-first pick).
+  otherwise the evolution-first pick), `auto` (the game's own unattended
+  pick, `autoDraftPickIndex`, as it plays), `auto-v1` (the auto-pick as it was
+  before the balance review of 2026-11: joker, NEW weapon, RARE, else the first).
   Every policy but `random` takes a joker while the row has room, keeps a
   full row, and never takes ONE OF EACH or Horde Bait unless `--once take`.
   The fixed-build table reports the first evolution and the first fusion (sim
@@ -130,6 +136,51 @@ playHours`.
   income shown is steady-state.
 - A run that ends at the cap is settled through the purse seam, not through a
   death or win screen.
+- Until 2026-11 a 30:00 win was recorded as a death (a won run also sets mode
+  'dead'), and its gold was settled twice. Win counts from batches before that
+  fix are wrong.
+
+## Balance batches (tools/balance/)
+
+The balance review of 2026-11 (docs/BALANCE_REVIEW_2026-11.md) ran its
+measurements as named batches. They run from a clean checkout:
+
+    node tools/balance/batch.mjs <batch> <out.jsonl> [part]
+    node tools/balance/ana.mjs <out.jsonl...> [cellA=cellB ...]
+    node tools/balance/ana.mjs <run1.jsonl> --run1
+    node tools/balance/lastweapon.mjs <out.jsonl...>
+    node tools/balance/careermodel.mjs <draft> <fixed-build .jsonl...>
+
+- `batch.mjs` runs 6 workers (`BAL_CONC` lowers it) and appends one JSON line per
+  run, with the cell and the env it ran with. `BAL_TREE=<dir>` plays another
+  checkout, so a batch can run on a snapshot while you edit. The batches:
+  `run1` (200 fresh run-1 careers per pilot), `early`/`mid`/`late` (3k/30k/400k
+  fixed builds, four drafts), `career`, and the before/after batches of the
+  review's changes: `a1late`, `a1p1` (the Maw), `a2early`, `a2mid`, `a2late`
+  (the auto-pick), `a3` (characters), `a4` (BUY NEXT). `BAL_ONLY=<regex>` keeps
+  only the cells that match. `BAL_SEEDS=<first>x<n>` moves or widens the seeds
+  (default 2001x16; write `x`, not `:`, from Git Bash). The cell label does not
+  carry the env: give each setting its own output file.
+- Switches a job can set (read by `tools/progression/engine.mjs`):
+  `BAL_MAW_HP` (the Maw's pool), `BAL_PRESTIGE` (a fixed build's prestige
+  tier), `BAL_CHAR_NOWEAPON=1` (a granted character does not bring its weapon,
+  the rule before 2026-11), `BAL_NOHAND=1` (hands give nothing),
+  `BAL_AUTO_RANK=<x>` (the auto-pick's rank for a NEW weapon card).
+- The draft policy `auto-v1` and the shop policy `buy-next-v1` are the game's
+  rules from before the review, for before/after on one tree.
+- `ana.mjs` prints per cell: survival median [p10-p90], wins, gold, level, the
+  first evolution, the Maw (reached / slain / withdrew, fight length, deaths
+  with it up), and gold per hour attended and unattended at 1x (attended =
+  gold / (survival + 2 s a draft + 20 s of menus); unattended = 0.8 x gold /
+  (survival + 6 s a draft + 5 s)). A pair `A=B` prints B against A on the same
+  seeds: the survival ratio and how many seeds were longer, tied or shorter.
+- `careermodel.mjs` turns fixed-build medians into a career (runs, hours,
+  trophies, purchases). It is an interpolation: trust its hours to about 20%.
+- Size a batch to under about 8 minutes: a 400k run takes about 25 s of wall
+  time per worker, a 30k run about 6 s, a 3k run about 3 s. On a shared
+  machine run each batch through the CPU lock, and never two back to back.
+- The pilot is not a person. Vary the player: at least three draft policies
+  and two shop policies, and 16 seeds per cell, before a claim.
 
 ## The sim budget
 
@@ -149,3 +200,4 @@ purpose, not in a loop.
 - `tools/progression/policies.mjs`: the shop policies.
 - `tools/progression/engine.mjs`: boots the game, plays runs, careers, fixed builds.
 - `tools/progression/report.mjs`: statistics and tables.
+- `tools/balance/`: the balance batches, their analysis and the career model.

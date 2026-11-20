@@ -255,7 +255,7 @@ function offer(id) {
   return null;
 }
 
-s.check('the real pick() builds the hand, pays it once, and the draft card says "makes:"', () => {
+s.check('the real pick() builds the hand, pays it once, and the draft card says "makes PAIR"', () => {
   const p = freshRun();
   assert.equal(p.hand || null, null);
   const base = runBase(p).damage;
@@ -263,9 +263,9 @@ s.check('the real pick() builds the hand, pays it once, and the draft card says 
   assert.equal(p.hand || null, null, 'one card');
   assert.equal(st.handFx || null, null);
   const volley = offer('lvl_VOLLEY_1');
-  assert.equal(volley._draftOffer.handText, 'makes: PAIR');
-  assert.ok(volley.innerHTML.includes('makes: PAIR'), 'the card shows the hint');
-  for (const c of cardsNow()) if (c !== volley) assert.notEqual(c._draftOffer.handText, 'makes: PAIR');
+  assert.equal(volley._draftOffer.handText, 'makes PAIR');
+  assert.ok(volley.innerHTML.includes('makes PAIR'), 'the card shows the tag');
+  for (const c of cardsNow()) if (c !== volley) assert.notEqual(c._draftOffer.handText, 'makes PAIR');
   const d0 = p.stats.damage;
   volley.click();
   assert.equal(p.hand.id, 'pair');
@@ -300,22 +300,24 @@ s.check('the HUD shows the hand and its bonus; the pause screen lists the hand a
   assert.ok(T.renderer.hudChrome.hand.counting, 'the plate counts up right after the hand is made');
   T.hand.tick(T.hand.COUNT_S + 1);
   h.pump(1);
-  assert.deepEqual(T.renderer.hudChrome.hand, { id: 'pair', text: 'PAIR  +10% damage', counting: false });
+  const pr = T.renderer.hudChrome.hand;
+  assert.deepEqual([pr.id, pr.text, pr.counting, pr.lines], ['pair', 'PAIR  +10% damage', false, ['PAIR', '+10% damage']]);
   T.openStats();
   const rep = cardsNow().find(c => c._handReport);
   assert.equal(rep._handReport.id, 'pair');
   assert.ok(rep.innerHTML.includes('Pair') && rep.innerHTML.includes('+10% damage') && rep.innerHTML.includes('Iron Heart'), rep.innerHTML);
   T.closeStats();
   assert.equal(p.hand.id, 'pair');
-  // A Diamond Straight Flush pays five things: the plate names the suit by its glyph so the
-  // line fits the screen.
+  // A Diamond Straight Flush pays five things: beside the fan (R5) the bonus wraps at its
+  // commas, and every line stays clear of the radar.
   p.handCards = Object.fromEntries(['5D', '6D', '7D', '8D'].map(c => [c, card(c)]));
   refreshHand(p);
   h.pump(1);
   const sf = T.renderer.hudChrome.hand;
   assert.equal(sf.id, 'straightflush');
-  assert.ok(sf.text.startsWith('♦ STRAIGHT FLUSH  +60% damage'), sf.text);
-  assert.ok(sf.text.length * 6 <= 480, sf.text.length + ' chars');
+  assert.ok(sf.lines[0].endsWith('STRAIGHT FLUSH') && sf.lines[1].startsWith('+60% damage'), sf.lines.join(' / '));
+  assert.ok(sf.lines.length >= 3, 'the five-part bonus wraps: ' + sf.lines.join(' / '));
+  assert.ok(sf.textBox.x + sf.textBox.w <= 480 - 10 - 68 - 4, 'clear of the radar: ' + JSON.stringify(sf.textBox));
 });
 
 s.done();

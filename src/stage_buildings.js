@@ -1,4 +1,4 @@
-// HORDES — stage building structures (PORT SLICE E: original art from VS design reference).
+// HORDES — stage building structures (PORT SLICE E: original art).
 import { CONFIG as C } from './config.js';
 import { terrainFor, rectOnFeature } from './terrain.js';
 //
@@ -7,15 +7,10 @@ import { terrainFor, rectOnFeature } from './terrain.js';
 // per-stage kits (slice E shipped one anchor per stage identity; slice J
 // grows each biome to 3 anchors + 5 satellite outbuildings — no cap on
 // counts, the bound is measured perf + the pilot-fit separation floor).
-// They are CONCEPT ports only: the reference
-// (docs/vs_port_ref/DESIGN_REFERENCE_VS.md, section 5 + 13, see per-building
-// rows below) names the ROLES — castle-courtyard walls, clock-tower stubs,
-// chapel fronts, library halls, gallo-tower stacks, machine houses,
-// forest lodges, bone-zone ossuaries — and documents that the matching
-// pixels were NEVER extracted (section 14 GAPS: "Props sprites empty"; the
-// stage thumbs in Appendix A.3 are packed 32px tileset atlases, not
-// building sprites to trace). Every rect below was composed fresh for
-// HORDES.
+// The buildings have ROLES (courtyard walls, clock-tower stubs, chapel
+// fronts, library halls, tower stacks, machine houses, forest lodges,
+// bone-zone ossuaries). Every rect below was composed fresh for HORDES; no
+// pixels from any other game were traced.
 //
 // SCALE (the whole point of this slice — slice A was single-cell props):
 // each building is a fillRect-composed rect list 64..108px wide, 64..100px

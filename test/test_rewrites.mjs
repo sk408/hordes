@@ -295,7 +295,7 @@ ok('harvestBlast: exactly FLAT + FRAC x weapon damage with the rewrite, null wit
 // ---- 3. THE LIVE LOOP ---------------------------------------------------------
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
 const st = h.state;
-if (st.mode === 'intro') h.key('keydown', { key: 'x', preventDefault() {} });
+if (st.mode === 'intro') h.skipMovie();
 st.player.rewrites = {};
 h.T.startRun();
 h.pump(2);
@@ -769,10 +769,18 @@ ok('R4 wiring: the volley projectile and the ORBIT blade both fire the rider (li
     st.weapons = [orb];
     const near = hostile('BRUTE', p, { x: 45, y: 0 });
     st.enemies.push(near);
-    h.pump(90, () => { st.projectiles.length = 0; st.enemyShots.length = 0; });
+    // The chill is read on the frame the blade touches, not after the pump:
+    // a touch early in the 90 frames can wear off (or knock the body out of
+    // reach) before the end, which made this check depend on where the run
+    // happened to stand.
+    let chilled = false;
+    h.pump(90, () => {
+      st.projectiles.length = 0; st.enemyShots.length = 0;
+      if (near.slow > 0 && near.slowMult === RIME_SLOW_FACTOR) chilled = true;
+    });
     st.weapons = [];
-    assert.ok(near.slow > 0 && near.slowMult === RIME_SLOW_FACTOR,
-      'an orbit contact chilled through hurt() (weapons.js seam)');
+    assert.ok(near.hp < near.maxHp, 'the orbit blade touched the body');
+    assert.ok(chilled, 'an orbit contact chilled through hurt() (weapons.js seam)');
     // (b) main.js: the volley projectile (the A1 fixture shape: re-anchor the
     // target inside the pilot's engagement radius every frame so it fires).
     const far = hostile('BRUTE', p, { x: 60, y: 0 });

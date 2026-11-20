@@ -26,6 +26,40 @@
 export function spriteBox(grid) {
   return { w: grid[0].length, h: grid.length };
 }
+// Bosses: a dark socket round each eye. Every body pixel next to an eye
+// pixel (key `eye`) takes key `socket`, so the danger-red eyes burn out of
+// the dark (4.5:1, test/test_actor_contrast.mjs). Grids of digit rows or
+// strings in, the same form out; the outline of the sprite never moves.
+export function eyeSockets(grid, eye, socket) {
+  const str = typeof grid[0] === 'string';
+  const g = grid.map(r => (str ? r.split('').map(c => (c === '.' ? 0 : +c)) : r.slice()));
+  const out = g.map(r => r.slice());
+  for (let y = 0; y < g.length; y++) for (let x = 0; x < g[y].length; x++) {
+    if (g[y][x] !== eye) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const v = g[y + dy] && g[y + dy][x + dx];
+      if (v && v !== eye) out[y + dy][x + dx] = socket;
+    }
+  }
+  return str ? out.map(r => r.map(v => (v ? String(v) : '.')).join('')) : out;
+}
+// Bosses: the lower body in shadow, lit from the top left (the house light).
+// A pixel below the line y/h + tilt * x/w = k takes map[key] (a darker key of
+// the same hue) when the map has one; the outline and every other key stay.
+// Along the line a band of `soft` is dithered (every other pixel), so the
+// shadow comes on in a step of pixel art, not a hard cut.
+export function shadeLower(grid, map, k, tilt = 0.4, soft = 0.1) {
+  const str = typeof grid[0] === 'string';
+  const h = grid.length, w = grid[0].length;
+  return grid.map((row, y) => {
+    const r = str ? row.split('').map(c => (c === '.' ? 0 : +c)) : row.slice();
+    for (let x = 0; x < w; x++) {
+      const d = y / h + tilt * x / w - k;
+      if (r[x] && map[r[x]] && (d > soft || (d > 0 && (x + y) % 2 === 0))) r[x] = map[r[x]];
+    }
+    return str ? r.map(v => (v ? String(v) : '.')).join('') : r;
+  });
+}
 
 // ===========================================================================
 // ARCHETYPES — one entry per creature, frames first, palette after.
@@ -72,7 +106,7 @@ const GHOUL_FRAMES = walker([
   '...1..55..',
   '..55......',
 ]);
-const GHOUL_PALETTE = { 1: '#e0783a', 2: '#9a3e1e', 3: '#ffb070', 4: '#fff8d0', 5: '#3a1a14' };
+const GHOUL_PALETTE = { 1: '#a69070', 2: '#6a583c', 3: '#c2ae8c', 4: '#f0c860', 5: '#1e1810' };
 
 // ---- BAT (SWARMER) — 11x8: ears, eyes, membrane wings; up / level / down.
 const BAT_UP = T([
@@ -106,7 +140,7 @@ const BAT_DOWN = T([
   '2.........2',
 ]);
 const BAT_FRAMES = [BAT_UP, BAT_MID, BAT_DOWN, BAT_MID];
-const BAT_PALETTE = { 1: '#ff5ea8', 2: '#ff86c0', 3: '#ffd0e6', 4: '#fff3b0', 5: '#6a1a40' };
+const BAT_PALETTE = { 1: '#c87ab8', 2: '#d48aae', 3: '#e4e2ea', 4: '#f8e098', 5: '#5c1e42' };
 
 // ---- TICK — 9x7: a swollen blood tick, six bent legs splayed clear of the
 // round abdomen (the smallest thing on the field: 5px collision). The legs
@@ -131,7 +165,7 @@ const TICK_FRAMES = [
     '...222...',
   ]),
 ];
-const TICK_PALETTE = { 1: '#a8e03c', 2: '#5c8a1e', 3: '#e3ff9e', 4: '#ff3344', 5: '#b0703a', 6: '#ff6a7a' };
+const TICK_PALETTE = { 1: '#c87ab8', 2: '#6a583c', 3: '#c2ae8c', 4: '#e06a74', 5: '#3e1016', 6: '#962e34' };
 
 // ---- OGRE KNIGHT (BRUTE) — 16x16: spiked pauldrons, tiny visored head,
 // huge fists hanging clear of the body, short legs.
@@ -160,7 +194,7 @@ const BRUTE_FRAMES = walker([
   '.....11..555....',
   '....555.........',
 ]);
-const BRUTE_PALETTE = { 1: '#7f9ed4', 2: '#3d4f7a', 3: '#c4d6f4', 4: '#ff4a3a', 5: '#1c2236', 6: '#f0e6c8' };
+const BRUTE_PALETTE = { 1: '#8aa0c0', 2: '#304464', 3: '#c2ae8c', 4: '#e06a74', 5: '#0b0912', 6: '#c2ae8c' };
 
 // ---- TOAD (SPITTER) — 12x12: eye domes, wide mouth, pale throat sac that
 // the spit comes from; it waddles (crouch / spread).
@@ -186,7 +220,7 @@ const TOAD_FRAMES = walker(TOAD_BODY, [
   '3..11..12..2',
   '55.5....5.55',
 ]);
-const TOAD_PALETTE = { 1: '#3fc864', 2: '#1d7a40', 3: '#a6ff9e', 4: '#ffe04a', 5: '#0c3418', 6: '#e0ffa8' };
+const TOAD_PALETTE = { 1: '#acc084', 2: '#46663a', 3: '#f8e098', 4: '#f0c860', 5: '#1e1810', 6: '#f8e098' };
 
 // ---- SKELETON (DASHER) — 10x15: skull with glowing sockets, jaw, ribs,
 // arm bones hanging clear, pelvis, legs.
@@ -214,7 +248,7 @@ const SKELETON_FRAMES = walker([
   '...1..22..',
   '..11......',
 ]);
-const SKELETON_PALETTE = { 1: '#eeeef2', 2: '#9c9cb4', 3: '#ffffff', 4: '#5ae0ff', 5: '#16161e' };
+const SKELETON_PALETTE = { 1: '#bebac4', 2: '#7c7886', 3: '#e4e2ea', 4: '#8c6cb4', 5: '#0b0912' };
 
 // ---- WARLOCK — 12x16: tall pointed hood over a shadowed face with two pink
 // eyes, glowing hands raised clear of the flared sleeves, a robe that floats
@@ -242,7 +276,7 @@ const WARLOCK_FRAMES = [
   // frame B: the hands lift a pixel wider and the hem sways right
   T([...WARLOCK_TOP, '6..3111112.6', ...WARLOCK_MID.slice(0, 6), '.31111111122', '..5.55.55.5.']),
 ];
-const WARLOCK_PALETTE = { 1: '#f24ad6', 2: '#8a1e7c', 3: '#ff9cf0', 4: '#ffd0f0', 5: '#1a0812', 6: '#ffe0fa' };
+const WARLOCK_PALETTE = { 1: '#e06a74', 2: '#7a222a', 3: '#d48aae', 4: '#e4e2ea', 5: '#3e1016', 6: '#e4e2ea' };
 
 // ---- DEMON (COLOSSUS) — 20x22: the mini-boss. Long horns (its shoulder
 // braziers burn above them), burning eyes, fanged maw, a barrel body, arms
@@ -277,7 +311,7 @@ const DEMON_FRAMES = walker([
   '......11....5555....',
   '....5555............',
 ]);
-const DEMON_PALETTE = { 1: '#f0664e', 2: '#98281e', 3: '#ffa888', 4: '#ffe04a', 5: '#2a0806', 6: '#f4e4b0' };
+const DEMON_PALETTE = { 1: '#c88a22', 2: '#5c1820', 3: '#e8902a', 4: '#f8e098', 5: '#1e1810', 6: '#c2ae8c' };
 
 // ===========================================================================
 // FLAMES — classic teardrop: dark orange rim (1), orange body (2), yellow
@@ -341,7 +375,7 @@ export const FLAME_FRAMES = [
     [0,1,1,1,1,1,0,0],
   ],
 ];
-const FLAME_PALETTE = { 1: '#e8481e', 2: '#ff9a3c', 3: '#ffe08a', 4: '#fff8d8' };
+const FLAME_PALETTE = { 1: '#a46a16', 2: '#e8902a', 3: '#f0c860', 4: '#f8e098' };
 
 // SMALL_FLAME — 4x6 ember (braziers, torch pixels, small portals).
 export const SMALL_FLAME_FRAMES = [
@@ -399,8 +433,8 @@ export const BOSS_SPRITE = {
       [0,0,0,5,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,5,0,0,0,0],
       [0,0,5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5,5,0,0,0,0],
       [0,5,5,1,1,1,2,2,1,1,1,1,1,1,2,2,1,1,1,5,5,0,0,0],
-      [5,5,1,1,1,2,4,2,1,1,1,1,1,1,2,4,2,1,1,1,5,5,0,0],
-      [5,5,1,1,1,2,4,2,1,1,1,1,1,1,2,4,2,1,1,1,5,5,0,0],
+      [5,5,1,1,1,2,3,2,1,1,1,1,1,1,2,3,2,1,1,1,5,5,0,0],
+      [5,5,1,1,1,2,3,2,1,1,1,1,1,1,2,3,2,1,1,1,5,5,0,0],
       [5,5,1,1,1,2,2,2,1,1,1,1,1,1,2,2,2,1,1,1,5,5,0,0],
       [5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5,5,0,0,0],
       [5,5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5,5,5,0,0,0],
@@ -420,7 +454,7 @@ export const BOSS_SPRITE = {
       [0,0,0,0,0,0,1,2,2,2,2,2,2,2,2,2,2,1,0,0,0,0,0,0],
       [0,0,0,0,0,0,1,2,3,3,2,2,2,2,3,3,2,1,0,0,0,0,0,0],
       [0,0,0,0,0,0,1,2,2,2,2,2,2,2,2,2,2,1,0,0,0,0,0,0],
-      [0,0,0,0,0,0,1,2,4,2,2,4,4,2,2,4,2,1,0,0,0,0,0,0],
+      [0,0,0,0,0,0,1,2,3,2,2,4,4,2,2,3,2,1,0,0,0,0,0,0],
       [0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0],
       [0,0,0,5,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,5,0,0,0,0],
       [0,5,5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5,5,5,0,0,0],
@@ -439,10 +473,16 @@ export const BOSS_SPRITE = {
       [0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0],
     ],
   ],
-  palette: { 1: '#a878e0', 2: '#5c3a8a', 3: '#ffd54a', 4: '#ff3b6b', 5: '#c22f42' },
+  // bossdark: the most ordinary menace, a tyrant in dark blood mail: a black
+  // face, a dull gold crown and studs, a black cape, danger-red eyes, an iron rim.
+  palette: { 1: '#5c1820', 2: '#0b0912', 3: '#c88a22', 4: '#ff4a14', 5: '#1e1810' }, // 4: the eyes
+  rim: '#9c98a4',   // the bright ring that carries it on a dark floor
+  pool: '#5e5968',  // its pool of light on a dark floor: a darker iron, under the rim
   anchor: { x: 12, y: 12 },
   box: { w: 24, h: 24 },
 };
+// Its eyes and its maw burn out of dark sockets (key 2, the black face).
+BOSS_SPRITE.frames = BOSS_SPRITE.frames.map(f => eyeSockets(f, 4, 2));
 
 // ===========================================================================
 // SPRITES — keyed by enemy typeId (mapping table at the top of this file).

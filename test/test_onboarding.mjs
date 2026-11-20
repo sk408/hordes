@@ -123,7 +123,7 @@ function step(n = 1) {
 function stepUntil(pred, capSeconds) {
   for (let i = 0, n = Math.round(capSeconds * 60); i < n; i++) {
     step(1);
-    if (st.mode === 'portal-cine') { key('keydown', { key: 'x', preventDefault() {} }); }
+    if (st.mode === 'portal-cine') { h.skipMovie(); }
     if (pred()) return true;
   }
   return false;
@@ -198,7 +198,7 @@ s.check('plain play with every old hint trigger live mounts NO hint strip (8s)',
   st.secondWindUsed = true;
   T.die();
   step(5);
-  if (st.mode === 'death-cine') key('keydown', { key: 'x', preventDefault() {} });
+  if (st.mode === 'death-cine') h.skipMovie();
   step(10);
   s.check('the run ended on the death screen', () => {
     assert.equal(st.mode, 'dead', st.mode);

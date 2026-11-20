@@ -1,17 +1,12 @@
-// HORDES — INTRO TITLE STINGER TIMING (agent F, wave-25).
-//
-// Defect: PHASES.TITLE starts at 4000ms, but the title only LANDS 300ms later
-// (titlePose's drop-in; TITLE_IMPACT = TITLE[0] + 300 = 4300ms). hb1 fires the
-// TITLE_SLAM stinger off phaseAt(), so the impact sound played ~300ms before
-// the stamp it scores — audio.js's own comment already says the stamp lands at
-// ~4300ms.
-//
-// Fix: phaseAt() reports 'TITLE' from the STAMP (TITLE_IMPACT = 4300ms), while
-// the visual drop-in still starts at PHASES.TITLE[0] (4000ms). The PHASES
-// window is unchanged, so every existing timeline assertion holds.
-//
+// HORDES - the intro's slam lands WITH the logo (agent F, wave-25; kept
+// through the R2 rebuild). main.js fires audio.playIntroCue on each change of
+// phaseAt(); the slam is the TITLE phase, so TITLE must begin on the frame
+// the logo comes to rest, never while it is still falling. Both cuts that
+// drop the logo are checked: the road (a new player) and the stamp (a
+// returning player).
 // Run: node test/test_intro_impact.mjs   (exit 0 = pass)
-import { render, phaseAt, PHASES, INTRO_DURATION } from '../src/intro.js';
+import { render, phaseAt, PHASES, STAMP_PHASES, TITLE_IMPACT, STAMP_IMPACT, INTRO_TEST } from '../src/intro.js';
+import { TITLE_LAYERS } from '../src/art/title.js';
 
 let failed = 0;
 function ok(cond, msg) {
@@ -19,53 +14,45 @@ function ok(cond, msg) {
   else { failed++; console.error('  FAIL ' + msg); }
 }
 
-// Minimal ctx stub recording fillRects with their style (test_intro.mjs shape).
-function draw(t) {
-  const calls = [];
-  const ctx = new Proxy({}, {
-    get(target, prop) {
-      if (prop === 'fillRect') {
-        return (x, y, w, h) => calls.push({ style: target.fillStyle, x, y, w, h });
-      }
-      return target[prop];
+// The wordmark's own colours (no other layer of the painting uses them).
+const WORD = TITLE_LAYERS.find(L => L.id === 'WORDMARK');
+const others = new Set(TITLE_LAYERS.filter(L => L.id !== 'WORDMARK').flatMap(L => L.grid.flat().filter(Boolean).map(v => L.palette[v])));
+const wordCols = new Set(WORD.grid.flat().filter(Boolean).map(v => WORD.palette[v]).filter(c => !others.has(c)));
+// The top of the wordmark on screen at t (Infinity when it is not drawn).
+function wordTop(t, opts) {
+  let top = Infinity, st = '';
+  const g = new Proxy({}, {
+    get(_, p) {
+      if (p === 'fillRect') return (x, y, w, h) => { if (wordCols.has(st) && y + h > 0) top = Math.min(top, y); };
+      if (p === 'fillStyle') return st;
+      if (p === 'measureText') return () => ({ width: 0 });
+      return () => {};
     },
-    set(target, prop, v) { target[prop] = v; return true; },
+    set(_, p, v) { if (p === 'fillStyle') st = v; return true; },
   });
-  render(ctx, t);
-  return calls;
-}
-const goldRects = (t) => draw(t).filter(c => c.style === '#ffd75e');
-const topGoldY = (t) => Math.min(...goldRects(t).map(c => c.y));
-
-const DROP = 300;                        // the title's drop-in duration
-const STAMP = PHASES.TITLE[0] + DROP;    // 4300ms: the impact / stinger moment
-
-console.log('TIMELINE is unchanged:');
-{
-  ok(PHASES.TITLE[0] === 4000 && PHASES.TITLE[1] === 6000, 'TITLE window still 4000-6000');
-  ok(PHASES.FADE[0] === 6000 && INTRO_DURATION === 7000, 'FADE + duration unchanged');
+  render(g, t, opts);
+  return top;
 }
 
-console.log('STINGER keys on the VISUAL IMPACT:');
-{
-  ok(phaseAt(STAMP) === 'TITLE', `phaseAt(${STAMP}) is TITLE (the stamp frame)`);
-  ok(phaseAt(STAMP - 1) === 'OVERTAKE',
-    `phaseAt(${STAMP - 1}) is still OVERTAKE — the slam cannot fire before the stamp`);
-  ok(phaseAt(4500) === 'TITLE' && phaseAt(6500) === 'FADE' && phaseAt(7000) === 'DONE',
-    'the rest of the phase ladder still walks (4500 TITLE / 6500 FADE / 7000 DONE)');
-  ok(phaseAt(1000) === 'CHASE' && phaseAt(3000) === 'OVERTAKE', 'early beats unchanged');
+for (const [name, opts, drop, impact] of [
+  ['the road', {}, PHASES.TITLE[0], TITLE_IMPACT],
+  ['the stamp', { returning: true }, STAMP_PHASES.DROP[0], STAMP_IMPACT],
+]) {
+  console.log(name.toUpperCase() + ':');
+  ok(wordCols.size > 0, 'the wordmark has colours of its own');
+  ok(phaseAt(impact, opts) === 'TITLE' && phaseAt(impact - 1, opts) !== 'TITLE',
+    `TITLE (the slam) begins at ${impact} ms, not a frame before`);
+  ok(wordTop(drop - 1, opts) === Infinity || wordTop(drop - 1, opts) < 0, 'the wordmark is not on screen before the drop');
+  const rest = wordTop(impact + 400, opts);
+  ok(rest > 0 && rest < 300, `it comes to rest on the painting (top at y=${rest})`);
+  ok(wordTop(impact - 1, opts) < rest, 'one frame before the slam it is still above its place');
+  ok(wordTop(impact, opts) === rest, 'at the slam it is in its place (the landing frame)');
+  ok(wordTop(drop + (impact - drop) / 2, opts) < wordTop(impact - 20, opts), 'it falls (higher halfway through the drop)');
 }
-
-console.log('the title actually LANDS at that instant:');
+console.log('THE DROP is fixed by the logo\'s box:');
 {
-  const before = goldRects(STAMP - 1), at = goldRects(STAMP);
-  ok(before.length > 0 && at.length > 0, 'the title is on screen either side of the stamp');
-  ok(topGoldY(STAMP) > topGoldY(STAMP - 1),
-    `the title is still descending one frame earlier (${topGoldY(STAMP - 1)} -> ${topGoldY(STAMP)})`);
-  ok(Math.abs(topGoldY(STAMP + 1) - topGoldY(STAMP)) < 1e-9,
-    'and it is at rest one frame after the stamp (the impact frame is the landing)');
-  ok(goldRects(3999).length === 0, 'no title pixels before the drop-in starts');
-  ok(goldRects(STAMP + 10).length >= 60, 'all six letters are landed at the stamp');
+  const b = INTRO_TEST.logoBox();
+  ok(b.w > 0 && b.h > 0 && b.y >= 0 && b.y + b.h <= 300, `the logo box sits inside the picture (${JSON.stringify(b)})`);
 }
 
 if (failed) { console.error(`\n${failed} FAILURES`); process.exit(1); }

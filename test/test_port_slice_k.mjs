@@ -298,7 +298,7 @@ const DROP_RARITY = { common: 'COMMON', rare: 'RARE', epic: 'EPIC', legendary: '
     assert.ok(countStyle(early, '#ffffff') > countStyle(mid, '#ffffff'), 'no core cross');
     assert.ok(early.rects.length - base.rects.length >= 30, 'early burst is thin');
   });
-  for (const ink of ['#fff2c0']) {
+  for (const ink of ['#f8e098']) {
     S.check('burst carries its marker ink ' + ink, () => {
       assert.ok(countStyle(mid, ink) > countStyle(base, ink), 'no ' + ink + ' from the burst');
     });

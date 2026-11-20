@@ -81,12 +81,12 @@ async function arm(w, h, dpr) {
       await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode !== 'intro')()", 15000);
       await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'title')()", 8000);
       await p.waitFor("(async () => { const rv = (await import('./src/main.js')).__TEST.state.titleReveal; return !rv || rv.phase === 'settled'; })()", 8000);
-      // START GAME (retry: a card mid-handoff has a zero rect).
+      // PLAY on the title, then START on the run setup (retry: a card mid-handoff has a zero rect).
       let playing = false;
       for (let tries = 0; tries < 12 && !playing; tries++) {
         const c = await p.evaluate(`(() => {
           const el = [...document.getElementById('ov-cards').children]
-            .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
+            .find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase()));
           if (!el) return null;
           el.scrollIntoView({ block: 'center' });
           const r = el.getBoundingClientRect();

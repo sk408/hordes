@@ -130,6 +130,7 @@ s.check('an evolution raises the whole kit\'s damage and restores the hero; the 
   const card = cardsNow()[0];
   assert.ok(card.innerHTML.includes('whole kit +20% damage'), card.innerHTML);
   card.click();
+  T.forge.end();   // R5: the forge moment would hold the next check's fight
   assert.ok(Math.abs(p.stats.damage - (dmg0 + DRAFT_PLAN.EVOLUTION_KIT_DMG * base)) < 1e-9, 'kit damage +20% of the run\'s starting damage');
   assert.ok(Math.abs(p.stats.maxHp - (hp0 + EVOLUTION_HP_FRAC * runBase(p).maxHp)) < 1e-9);
   assert.equal(p.hp, p.stats.maxHp, 'full health');

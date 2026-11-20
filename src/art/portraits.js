@@ -226,15 +226,15 @@ export const CHARACTER_PORTRAITS = {
     id: 'KNIGHT',
     name: 'Knight',
     palette: {
-      1: '#0a0a0e',  // ink
-      2: '#8e9bad',  // steel
-      3: '#dfe6ef',  // bright steel
-      4: '#566176',  // dark steel (brow band, shaded side)
-      5: '#f2c9a0',  // skin
-      6: '#d8403a',  // plume and tabard red
-      7: '#ffd24a',  // gold cross
-      8: '#c9966e',  // skin in shadow
-      9: '#8e2424',  // red in shadow
+      1: '#0b0912',  // ink
+      2: '#b4c4dc',  // steel
+      3: '#a8d0f4',  // bright steel
+      4: '#433e4e',  // dark steel (brow band, shaded side)
+      5: '#cc9a78',  // skin
+      6: '#b83a4e',  // plume and tabard red
+      7: '#e2aa38',  // gold cross
+      8: '#a69070',  // skin in shadow
+      9: '#962e34',  // red in shadow
     },
     frames: KNIGHT,
   }),
@@ -242,15 +242,15 @@ export const CHARACTER_PORTRAITS = {
     id: 'WITCH',
     name: 'Witch',
     palette: {
-      1: '#0a0a0e',  // ink
-      2: '#a276f4',  // violet hat and robe
-      3: '#d2b6ff',  // violet light
-      4: '#7a4bd0',  // violet shade
-      5: '#f0d2b8',  // skin
-      6: '#ffb347',  // amber clasp and buckle
-      7: '#c9a06a',  // staff wood, skin in shadow
-      8: '#aef6ff',  // staff crystal
-      9: '#2e1f52',  // hair
+      1: '#0b0912',  // ink
+      2: '#b49ad4',  // violet hat and robe
+      3: '#ece0c0',  // violet light
+      4: '#6c4c94',  // violet shade
+      5: '#cc9a78',  // skin
+      6: '#e2aa38',  // amber clasp and buckle
+      7: '#887352',  // staff wood, skin in shadow
+      8: '#a8d0f4',  // staff crystal
+      9: '#160e24',  // hair
     },
     frames: WITCH,
   }),
@@ -258,15 +258,15 @@ export const CHARACTER_PORTRAITS = {
     id: 'ROGUE',
     name: 'Rogue',
     palette: {
-      1: '#0a0a0e',  // ink
-      2: '#3f9a4c',  // hood green
-      3: '#7fd068',  // hood light
-      4: '#2a6e38',  // hood shade
-      5: '#e8c09a',  // skin
-      6: '#d9c08a',  // sand scarf
-      7: '#a8905e',  // scarf shade
-      8: '#4a3426',  // leather
-      9: '#173d1f',  // inside the hood, lacing
+      1: '#0b0912',  // ink
+      2: '#86a062',  // hood green
+      3: '#acc084',  // hood light
+      4: '#46663a',  // hood shade
+      5: '#cc9a78',  // skin
+      6: '#887352',  // sand scarf
+      7: '#6a583c',  // scarf shade
+      8: '#4e3f2a',  // leather
+      9: '#2e4a2c',  // inside the hood, lacing
     },
     frames: ROGUE,
   }),
@@ -274,14 +274,14 @@ export const CHARACTER_PORTRAITS = {
     id: 'PALADIN',
     name: 'Paladin',
     palette: {
-      1: '#0a0a0e',  // ink
-      2: '#e0aa2e',  // gold
-      3: '#ffe28a',  // gold light (helm top, wings)
-      4: '#f6f2e6',  // white plate
-      5: '#f2cfa6',  // skin
-      6: '#8a5a2a',  // gold in shadow
-      7: '#c9c2ae',  // plate in shadow
-      8: '#c99a6e',  // skin in shadow
+      1: '#0b0912',  // ink
+      2: '#e2aa38',  // gold
+      3: '#ece0c0',  // ivory light (helm top, wings)
+      4: '#b4c4dc',  // silver plate
+      5: '#cc9a78',  // skin
+      6: '#7a4c0e',  // gold in shadow
+      7: '#8aa0c0',  // plate in shadow
+      8: '#a69070',  // skin in shadow
     },
     frames: PALADIN,
   }),

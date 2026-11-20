@@ -46,7 +46,7 @@ const inBox = (r) =>
 // --- boot a real run ---------------------------------------------------------
 T.startRun();
 for (let i = 0; i < 6 && state.mode !== 'playing'; i++) {
-  if (state.mode === 'intro') key('keydown', { key: ' ' });
+  if (state.mode === 'intro') h.skipMovie();
   pump(1);
 }
 assert.equal(state.mode, 'playing', 'the run must reach playing');

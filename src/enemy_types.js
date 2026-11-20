@@ -40,7 +40,7 @@ export const ENEMY_TYPES = {
     hpMult: 1.0, speedMult: 1.0, xpMult: 1.0, sizeMult: 1.0,
     contactDamageMult: 1.0,
     decide: chaseDecide,
-    LOOK: { body: '#c23b3b', trim: '#7a1f1f', accent: '#ff8f8f', shape: 'block', sizeMult: 1.0 },
+    LOOK: { body: '#b83a4e', trim: '#7a222a', accent: '#e06a74', shape: 'block', sizeMult: 1.0 },
   },
 
   // Fast, weak, spawns in packs.
@@ -51,7 +51,7 @@ export const ENEMY_TYPES = {
     contactDamageMult: 0.7,
     packSize: 4,          // spawner hint: spawn this many per pop
     decide: chaseDecide,
-    LOOK: { body: '#d9a03c', trim: '#8a5f1c', accent: '#ffe08a', shape: 'diamond', sizeMult: 0.75 },
+    LOOK: { body: '#e2aa38', trim: '#7a4c0e', accent: '#f8e098', shape: 'diamond', sizeMult: 0.75 },
   },
 
   // Slow, tanky, big contact damage.
@@ -61,7 +61,7 @@ export const ENEMY_TYPES = {
     hpMult: 3.5, speedMult: 0.6, xpMult: 3.0, sizeMult: 1.8,
     contactDamageMult: 1.8,
     decide: chaseDecide,
-    LOOK: { body: '#6d4f8f', trim: '#3d2a52', accent: '#c9a6ff', shape: 'wide', sizeMult: 1.8 },
+    LOOK: { body: '#6c4c94', trim: '#3a2654', accent: '#b49ad4', shape: 'wide', sizeMult: 1.8 },
   },
 
   // Ranged threat: holds ~120px, retreats if crowded, spits steady shots.
@@ -80,7 +80,7 @@ export const ENEMY_TYPES = {
     projSpeed: 105,       // meaningfully faster than the pilot's strafe
     projDamage: 10,
     decide: spitterDecide,
-    LOOK: { body: '#3f9e4f', trim: '#1f5c2b', accent: '#a6ff9e', shape: 'tall', sizeMult: 1.1 },
+    LOOK: { body: '#86a062', trim: '#46663a', accent: '#acc084', shape: 'tall', sizeMult: 1.1 },
   },
 
   // DASHER — stalks slowly, then lunges in bursts. Deterministic
@@ -93,7 +93,7 @@ export const ENEMY_TYPES = {
     stalkTime: 1.6, stalkSpeedMult: 0.5,
     lungeTime: 0.8, lungeSpeedMult: 2.6,
     decide: dasherDecide,
-    LOOK: { body: '#3f7f9e', trim: '#1f465c', accent: '#9ee6ff', shape: 'block', sizeMult: 1.0 },
+    LOOK: { body: '#647ea2', trim: '#304464', accent: '#a8d0f4', shape: 'block', sizeMult: 1.0 },
   },
 
   // WARLOCK — dedicated ranged HUNTER: keeps 150px, telegraphs with a 1s
@@ -116,7 +116,7 @@ export const ENEMY_TYPES = {
     projSpeed: 75,        // heavy bolt — faster than a calm strafe now
     projDamage: 17,
     decide: warlockDecide,
-    LOOK: { body: '#8f3f6d', trim: '#52203d', accent: '#ff9ed8', shape: 'tall', sizeMult: 1.2 },
+    LOOK: { body: '#9c4074', trim: '#5c1e42', accent: '#d48aae', shape: 'tall', sizeMult: 1.2 },
   },
 
   // TICK — tiny latcher: fast, attaches on contact and DRAINS hp over time
@@ -132,7 +132,7 @@ export const ENEMY_TYPES = {
     attachDist: 14,                 // latches inside this radius
     drainDps: 4,                    // hp/s while attached
     decide: tickDecide,
-    LOOK: { body: '#7f9e3f', trim: '#46521f', accent: '#e3ff9e', shape: 'diamond', sizeMult: 0.5 },
+    LOOK: { body: '#86a062', trim: '#46663a', accent: '#f8e098', shape: 'diamond', sizeMult: 0.5 },
   },
 
   // COLOSSUS — rare wave-5+ mini-boss tier: massive HP, slow, huge body.
@@ -147,7 +147,7 @@ export const ENEMY_TYPES = {
     shockBaseDamage: 25,
     shockMaxHpFrac: 0.25,           // + 25% of colossus maxHp
     decide: chaseDecide,
-    LOOK: { body: '#5a5f66', trim: '#2e3136', accent: '#ffd54a', shape: 'wide', sizeMult: 2.6 },
+    LOOK: { body: '#5e5968', trim: '#1a1622', accent: '#f0c860', shape: 'wide', sizeMult: 2.6 },
   },
 
   // PILLAR — WAVE-20 herald turret: NEVER in the normal spawner mix; the
@@ -167,7 +167,7 @@ export const ENEMY_TYPES = {
     projSpeed: 105,             // fast chip — the ring must be respected
     projDamage: 5,              // pre-dmgScale chip damage
     decide: pillarDecide,
-    LOOK: { body: '#7f7461', trim: '#4a4236', accent: '#ff5a3c', shape: 'tall', sizeMult: 1.3 },
+    LOOK: { body: '#887352', trim: '#4e3f2a', accent: '#e06a74', shape: 'tall', sizeMult: 1.3 },
   },
 
   // SHRIKE — E2 (R9) THE FLYING heavy, debuting with the wave-2 horde. It
@@ -193,7 +193,7 @@ export const ENEMY_TYPES = {
     hoverZ: 14,             // cruise altitude (px, drawn)
     diveZ: 3,               // altitude at the bottom of the dive (px, drawn)
     decide: shrikeDecide,
-    LOOK: { body: '#3f4a9e', trim: '#1f2552', accent: '#9ec9ff', shape: 'wide', sizeMult: 1.2 },
+    LOOK: { body: '#486084', trim: '#3a2654', accent: '#a8d0f4', shape: 'wide', sizeMult: 1.2 },
   },
 };
 
@@ -244,51 +244,51 @@ export const ELITE_TEMPLATE = {
 
 // Suggested elite palette override for render (gold trim keeps the existing
 // elite tell regardless of type/variant).
-export const ELITE_LOOK = { trim: '#ffd54a', accent: '#fff3b0' };
+export const ELITE_LOOK = { trim: '#f0c860', accent: '#f8e098' };
 
 // ---- palette VARIANTS (visual mix; rollVariant picks the index at spawn) ---
 // Each entry swaps {body, trim, accent}; shape/sizeMult come from type.LOOK.
 export const VARIANTS = {
   CHASER: [
-    { body: '#b0562f', trim: '#6b3018', accent: '#ffb98a' },   // rust
-    { body: '#8f3b52', trim: '#521f2f', accent: '#ff9ec2' },   // rose
+    { body: '#a46a16', trim: '#523208', accent: '#cc9a78' },   // rust
+    { body: '#5c1e42', trim: '#3e142c', accent: '#d48aae' },   // rose
   ],
   SWARMER: [
-    { body: '#c9c93f', trim: '#75751c', accent: '#ffffa6' },   // acid
-    { body: '#9ec93f', trim: '#5c751c', accent: '#e3ff9e' },   // lime
-    { body: '#c96b3f', trim: '#753a1c', accent: '#ffc4a6' },   // ember
+    { body: '#f0c860', trim: '#62804a', accent: '#f8e098' },   // acid
+    { body: '#acc084', trim: '#62804a', accent: '#f8e098' },   // lime
+    { body: '#cc9a78', trim: '#523208', accent: '#cc9a78' },   // ember
   ],
   BRUTE: [
-    { body: '#8f6d4f', trim: '#523a28', accent: '#ffc49e' },   // ochre
-    { body: '#4f6d8f', trim: '#283a52', accent: '#9ec9ff' },   // steel
+    { body: '#887352', trim: '#4e3f2a', accent: '#cc9a78' },   // ochre
+    { body: '#486084', trim: '#304464', accent: '#a8d0f4' },   // steel
   ],
   SPITTER: [
-    { body: '#3f9e8a', trim: '#1f5c50', accent: '#9effe0' },   // teal
-    { body: '#9e9e3f', trim: '#5c5c1c', accent: '#ffffa6' },   // bile
+    { body: '#86a062', trim: '#2e4a2c', accent: '#acc084' },   // teal
+    { body: '#86a062', trim: '#46663a', accent: '#f8e098' },   // bile
   ],
   DASHER: [
-    { body: '#5c3f9e', trim: '#321f5c', accent: '#c49eff' },   // violet
-    { body: '#3f9e6d', trim: '#1f5c40', accent: '#9effc4' },   // jade
+    { body: '#6c4c94', trim: '#3a2654', accent: '#b49ad4' },   // violet
+    { body: '#86a062', trim: '#2e4a2c', accent: '#acc084' },   // jade
   ],
   WARLOCK: [
-    { body: '#5c3f8f', trim: '#332052', accent: '#c49eff' },   // arcanist
-    { body: '#8f3f3f', trim: '#521f1f', accent: '#ff9e9e' },   // blood
+    { body: '#6c4c94', trim: '#3a2654', accent: '#b49ad4' },   // arcanist
+    { body: '#962e34', trim: '#5c1820', accent: '#e06a74' },   // blood
   ],
   TICK: [
-    { body: '#9e5c3f', trim: '#5c3218', accent: '#ffc49e' },   // tick-brown
-    { body: '#3f6d9e', trim: '#1f3d5c', accent: '#9ec9ff' },   // blue-bug
+    { body: '#7a4c0e', trim: '#523208', accent: '#cc9a78' },   // tick-brown
+    { body: '#486084', trim: '#304464', accent: '#a8d0f4' },   // blue-bug
   ],
   COLOSSUS: [
-    { body: '#6d5a3f', trim: '#3d3220', accent: '#ffd54a' },   // bronze
-    { body: '#3f5a6d', trim: '#20323d', accent: '#9effff' },   // glacier
+    { body: '#6a583c', trim: '#1e1810', accent: '#f0c860' },   // bronze
+    { body: '#486084', trim: '#1e2c44', accent: '#a8d0f4' },   // glacier
   ],
   PILLAR: [
-    { body: '#6d5f7f', trim: '#3a324a', accent: '#c49eff' },   // runic violet
-    { body: '#7f6d5f', trim: '#4a3a32', accent: '#ffc49e' },   // sandstone
+    { body: '#5e5968', trim: '#433e4e', accent: '#b49ad4' },   // runic violet
+    { body: '#887352', trim: '#4e3f2a', accent: '#cc9a78' },   // sandstone
   ],
   SHRIKE: [
-    { body: '#3f9e8a', trim: '#1f5c50', accent: '#9effe0' },   // storm teal
-    { body: '#9e3f5c', trim: '#5c1f2f', accent: '#ff9ec2' },   // dusk crimson
+    { body: '#86a062', trim: '#2e4a2c', accent: '#acc084' },   // storm teal
+    { body: '#9c4074', trim: '#5c1820', accent: '#d48aae' },   // dusk crimson
   ],
 };
 

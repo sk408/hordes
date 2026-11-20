@@ -150,6 +150,114 @@ export function makeGem(x, y, xp) {
   return { x: at.x, y: at.y, xp };
 }
 
+// ---- R3 floor: gems merge for real (C.FLOOR) --------------------------------
+// A merged gem holds the exact sum of the XP that went into it (xp) and how
+// many gems it is (n: each one still feeds weapon XP and Storm Shards once).
+// The gem nearer the hero is the one that stays, so XP only ever moves toward
+// him. A gem in `keep` (the pilot's chosen gem) is never merged away; it can
+// grow. Both functions edit `arr` in place and keep its order. PURE otherwise.
+function absorbGem(into, g) {
+  into.xp += g.xp;
+  into.n = (into.n || 1) + (g.n || 1);
+}
+function dropGone(arr, gone) {
+  if (!gone.size) return;
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) if (!gone.has(arr[i])) arr[w++] = arr[i];
+  arr.length = w;
+}
+
+// Condense: each gem older than `age` that has another old gem within `r`
+// merges into it (the one nearer the hero stays). A gem that has just merged
+// (mt, the time it last took one in) rests `rest` s before it merges again, and
+// takes in at most one gem a pass, so a field gathers step by step (90 gems ->
+// 45 -> 23 ...), not all at once. Returns the merges done.
+export function condenseGems(arr, hx, hy, now, { age, r, rest = 0, keep = null }) {
+  const old = [];
+  for (const g of arr) if (now - (g.t ?? now) >= age && !(now - (g.mt ?? -Infinity) < rest)) old.push(g);
+  if (old.length < 2) return 0;
+  const r2 = r * r, gone = new Set(), took = new Set();
+  const d2h = (g) => (g.x - hx) * (g.x - hx) + (g.y - hy) * (g.y - hy);
+  // Farthest first, so piles fold inward.
+  old.sort((a, b) => d2h(b) - d2h(a));
+  for (let i = 0; i < old.length; i++) {
+    const g = old[i];
+    if (gone.has(g) || (keep && keep.has(g))) continue;
+    const dg = d2h(g);
+    let best = null, bd = r2;
+    for (let j = 0; j < old.length; j++) {
+      const h = old[j];
+      if (h === g || gone.has(h) || d2h(h) > dg) continue;
+      const q = (h.x - g.x) * (h.x - g.x) + (h.y - g.y) * (h.y - g.y);
+      if (q <= bd) { bd = q; best = h; }
+    }
+    if (!best) continue;
+    absorbGem(best, g);
+    best.mt = now;
+    gone.add(g);
+    gone.add(best); took.add(best);   // it rests now: no more this pass
+  }
+  for (const g of took) gone.delete(g);
+  dropGone(arr, gone);
+  return gone.size;
+}
+
+// Cap: past `cap` gems, the oldest and farthest (outside `near` px of the hero)
+// merge into their nearest gem that lies nearer the hero, until `target` are
+// left. Returns the merges done.
+// A kill burst can lift the floor to hundreds of gems in one frame, so each
+// gem's place and its squared distance to the hero are read ONCE into flat
+// arrays; the inner loop only does arithmetic on them (a merge never moves
+// the gem that stays).
+export function capGems(arr, hx, hy, now, { cap, target, near, keep = null }) {
+  const n = arr.length;
+  if (n <= cap) return 0;
+  const xs = new Float64Array(n), ys = new Float64Array(n), d2 = new Float64Array(n);
+  const cand = [];
+  for (let i = 0; i < n; i++) {
+    const g = arr[i];
+    const x = g.x, y = g.y;
+    xs[i] = x; ys[i] = y;
+    d2[i] = (x - hx) * (x - hx) + (y - hy) * (y - hy);
+    if (keep && keep.has(g)) continue;
+    if (d2[i] > near * near) {
+      const d = Math.sqrt(d2[i]);
+      cand.push({ i, s: d + 10 * (now - (g.t ?? now)) });   // 1 s of age weighs as 10 px
+    }
+  }
+  cand.sort((a, b) => b.s - a.s);
+  const gone = new Uint8Array(n);
+  let goneN = 0;
+  for (const c of cand) {
+    if (n - goneN <= target) break;
+    const ci = c.i, cx = xs[ci], cy = ys[ci], cd = d2[ci];
+    let best = -1, bd = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (j === ci || gone[j] || d2[j] > cd) continue;
+      const q = (xs[j] - cx) * (xs[j] - cx) + (ys[j] - cy) * (ys[j] - cy);
+      if (q < bd) { bd = q; best = j; }
+    }
+    if (best < 0) continue;
+    absorbGem(arr[best], arr[ci]);
+    gone[ci] = 1; goneN++;
+  }
+  if (goneN) {
+    let w = 0;
+    for (let i = 0; i < n; i++) if (!gone[i]) arr[w++] = arr[i];
+    arr.length = w;
+  }
+  return goneN;
+}
+
+// The rich step of a gem: 0 for an ordinary gem, 1..steps.length for a merged
+// gem holding at least steps[k-1] XP.
+export function richStep(g, steps) {
+  if (!g || (g.n || 1) < 2) return 0;
+  let k = 0;
+  while (k < steps.length && g.xp >= steps[k]) k++;
+  return k;
+}
+
 // M3 (audit 2026-09-16): the ground-item arrays (gems / potion drops / item
 // drops) were UNBOUNDED — a 10,000-corpse wave left 10,000 gems on the floor
 // and every pickup scan is O(n) per frame. VALUE-PRESERVING overflow: when

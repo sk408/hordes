@@ -13,6 +13,7 @@
 //   playIntroCue(phase):  OVERTAKE|HORDE, TITLE_SLAM|TITLE, FADE
 //   playPortalCue(phase): BOSS_YELL|KILL, DISSOLVE, FADE, WALK, PAUSE, LINGER
 //   playEscapeCue(id, arg): STEP, BOSS, ROAR, ESCAPE, GOLD (the escape cinematic)
+//   playDeathCue(phase): FREEZE, ROAD, LUNGE, HIT, SLUMP, CLOSE (the death movie)
 // Call init() from a user gesture (autoplay policy): it lazily creates the
 // AudioContext, resumes it if suspended, and is idempotent.
 //
@@ -30,10 +31,18 @@
 // THE MIX PASS (R1, 2026-11-18): setMixMode('new' | 'old') / getMixMode() (see
 // MIX below; persisted, 'new' by default), playSfx('chestEmpty'), and
 // startMusic({ resume: true }) for the tab coming back (the song keeps its place).
+// SOUNDS THAT MEAN SOMETHING (R4): playSfx('hand', order) (handCue), 'crit',
+// 'eliteArrive', 'coin' (arg: the streak), 'goldBank' (for the end card), and
+// setHeartbeat(healthFraction | null), called every frame by main.js.
 // The recorded path runs only with a context that can decodeAudioData, a
 // fetch, a page not on file://, the 'recorded' pref and the slot in the
 // manifest (and decoded); otherwise everything below behaves as before.
+// RECORDED SOUND EFFECTS (R4, src/sfx_files.js): setSfxSource('synth' |
+// 'recorded') / getSfxSource() (the ADVANCED row, 'synth' by default). With
+// 'recorded', a slot that has a decoded file set plays the file through the
+// same rate limits, trims, variation and limiter as its synth voice.
 import { createMusicEngine, envAt } from './music_files.js';
+import { createSfxBank, pickedSets } from './sfx_files.js';
 
 // ---------- Injectables (node-safe, meta.js pattern) ----------
 function detectAudioContext() {
@@ -57,6 +66,8 @@ const KEY_SFX_VOL = 'hordes_audio_sfx_vol';
 const KEY_MUSIC_SRC = 'hordes_audio_music_src';
 // The mix pass (R1): 'new' (default when missing) | 'old'. See MIX below.
 const KEY_MIX = 'hordes_audio_mix';
+// Recorded sound effects (R4): 'synth' (default when missing) | 'recorded'.
+const KEY_SFX_SRC = 'hordes_audio_sfx_src';
 // Slider defaults; at the default the bus gain equals the level the game
 // shipped with (music 0.5, sfx 0.7), so an untouched profile sounds the same.
 const DEFAULT_MUSIC_VOL = 70;
@@ -93,6 +104,11 @@ let mixMode = 'new';     // hydrated from storage: 'new' | 'old' (the mix pass)
 let rngDep = null;       // injectable random source (tests); null = Math.random
 let limiterIn = null;    // the 1/range gain in front of the limiter's shaper
 let limiterNode = null;  // the limiter's WaveShaper (null where the context has none)
+const DEFAULT_SFX_SRC = 'synth';   // R4: until Steve has picked the recorded sounds
+let sfxSrc = DEFAULT_SFX_SRC;    // hydrated from storage: 'synth' | 'recorded'
+let sfxBank = null;      // the recorded sound effects' loader (src/sfx_files.js)
+let sfxSetsDep = null;   // injectable slot -> files table (tests, the listening page); null = SFX_PICKS
+let sfxBuffersDep = null; // injectable shared url -> AudioBuffer map (the listening page)
 
 // Music sequencer state.
 let musicRunning = false;
@@ -108,6 +124,13 @@ const SFX_LIMITS = {
   kill: 0.06, eliteDeath: 0.25, bossDeath: 1, hurt: 0.18, gem: 0.045, potion: 0.15,
   item: 0.12, powerup: 0.2, draftPick: 0.1, evolve: 0.5, bossArrive: 1.5, slam: 0.2,
   warning: 0.5, victory: 1, uiMove: 0.03, uiConfirm: 0.05, uiDeny: 0.08,
+  // R4, sounds that mean something. A crit pings at most about 7 times a
+  // second however many crits land; an elite growls at most once in 4 s.
+  crit: 0.15, eliteArrive: 4, coin: 0.12, goldBank: 1, hand: 0.3,
+  // R5: the forge sting (one per evolution or fusion taken).
+  forge: 0.5,
+  // R7: the boss arrival stings (one per arrival).
+  bossSting: 1, mawSting: 3,
 };
 // Weapon-fire families share one extra gate, so five weapons firing on the
 // same frame make one sound, not a chord of five.
@@ -365,6 +388,7 @@ function hydrateFlags() {
     const sv = storage.getItem(KEY_SFX_VOL);   if (sv !== null) sfxVol = clampVol(sv, DEFAULT_SFX_VOL);
     const ms = storage.getItem(KEY_MUSIC_SRC); if (ms !== null) musicSrc = ms === 'synth' ? 'synth' : 'recorded';
     const mx = storage.getItem(KEY_MIX); if (mx !== null) mixMode = mx === 'old' ? 'old' : 'new';
+    const fx = storage.getItem(KEY_SFX_SRC); if (fx !== null) sfxSrc = fx === 'recorded' ? 'recorded' : 'synth';
   } catch { /* keep defaults */ }
 }
 hydrateFlags();
@@ -412,6 +436,7 @@ export function setSfxEnabled(v) {
     if (sfxBus) sfxBus.gain.value = busGain(SFX_BUS_GAIN, sfxVol, DEFAULT_SFX_VOL);
   }
   try { storage.setItem(KEY_SFX, sfxEnabled ? '1' : '0'); } catch { /* ignore */ }
+  if (!sfxEnabled) stopHeartbeat();
 }
 export function getSfxEnabled() { return sfxEnabled; }
 
@@ -439,7 +464,16 @@ export const MIX = {
   // gem sat under the fight, and the empty chest must not beat the reward.
   trimDb: {
     fire_blast: -5, fire_zap: 3, fire_seek: 3, gem: 2,
-    chest: 2, chestEmpty: -5,
+    chest: 2, chestEmpty: -5, gemRich: 0,
+    // R4 (measured with tools/measure_sfx_mix.mjs, see the R4 report).
+    crit: 0, eliteArrive: 0, coin: 0, goldBank: 0, hand: 0,
+    // The pulse is low and sustained under a whole fight: -3 keeps it soft and
+    // the busiest second of a late fight within 1 dB of the fight without it.
+    heartbeat: -3,
+    // R5: the forge sting (measured with tools/measure_sfx_mix.mjs, see the R5 evolve report).
+    forge: 0,
+    // R7: the boss arrival stings (measured with tools/measure_sfx_mix.mjs, see the R7 bossarrival report).
+    bossSting: 0, mawSting: 0,
   },
   // Per-cue trim in dB (keys 'intro:<PHASE>', 'portal:<PHASE>', 'escape:<ID>').
   // The review's rule: a movie sting sits at most 6 dB over a busy fight
@@ -449,6 +483,8 @@ export const MIX = {
   cueDb: {
     'portal:BOSS_YELL': -7, 'portal:KILL': -7, 'escape:ROAR': -7,
     'intro:OVERTAKE': -1.5, 'intro:HORDE': -1.5,
+    // R2 death movie: the lunge's snarl and the hit sit with the roars.
+    'death:LUNGE': -6, 'death:HIT': -3,
   },
   // Variation per play: pitch up or down by at most `semis` semitones, and
   // volume down by at most `db` dB (never up, so no play is louder than the
@@ -587,6 +623,14 @@ const SFX = {
   gem:        { voice: 'seq', pitched: true, layers: [
     { v: 'tone', type: 'triangle', freq: 880, dur: 0.06, gain: 0.08 },
     { v: 'tone', type: 'sine', freq: 1320, dur: 0.07, gain: 0.05, at: 0.03 }] },
+  // R3 floor: a rich (merged) gem picked up. The gem's own ping, then a bright
+  // rising run and a long shimmer on top: a payoff, brighter than one gem.
+  gemRich:    { voice: 'seq', layers: [
+    { v: 'tone', type: 'triangle', freq: 880, dur: 0.06, gain: 0.08 },
+    { v: 'tone', type: 'triangle', freq: 1174.7, dur: 0.07, gain: 0.08, at: 0.06 },
+    { v: 'tone', type: 'triangle', freq: 1568, dur: 0.08, gain: 0.08, at: 0.12 },
+    { v: 'tone', type: 'sine', freq: 2349.3, to: 2637, dur: 0.32, gain: 0.05, at: 0.18 },
+    { v: 'noise', dur: 0.05, gain: 0.02, at: 0.18 }] },
   potion:     { voice: 'seq', layers: [
     { v: 'tone', type: 'sine', freq: 300, to: 620, dur: 0.1, gain: 0.14 },
     { v: 'tone', type: 'sine', freq: 420, to: 900, dur: 0.12, gain: 0.12, at: 0.09 }] },
@@ -611,15 +655,116 @@ const SFX = {
   uiDeny:     { voice: 'seq', layers: [
     { v: 'tone', type: 'square', freq: 196, dur: 0.07, gain: 0.09 },
     { v: 'tone', type: 'square', freq: 147, dur: 0.1, gain: 0.09, at: 0.07 }] },
+
+  // ---- R4: sounds that mean something. None of these varies per play (no
+  // random draws), so the same event always sounds the same. None uses the
+  // noise voice either: the noise buffer is filled from Math.random the first
+  // time any noise plays, and a new sound must not move when that happens
+  // (a seeded run stays the same run). ----
+  // A critical hit: a short bright ping, quieter than the hit under it.
+  crit:       { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 3136, to: 2960, dur: 0.05, gain: 0.045 },
+    { v: 'tone', type: 'triangle', freq: 4186, dur: 0.03, gain: 0.015, at: 0.005 }] },
+  // An elite arrives: a low growl, well under the boss's arrival.
+  eliteArrive: { voice: 'seq', layers: [
+    { v: 'sus', type: 'sawtooth', freq: 92, to: 64, dur: 0.5, gain: 0.08, hold: 0.55 },
+    { v: 'sus', type: 'sawtooth', freq: 95.5, to: 66, dur: 0.5, gain: 0.08, hold: 0.55 },
+    { v: 'tone', type: 'sine', freq: 70, to: 40, dur: 0.3, gain: 0.14 },
+    { v: 'tone', type: 'square', freq: 46, to: 38, dur: 0.22, gain: 0.03 }] },
+  // Gold into the run's purse: a small two-note clink. arg is the streak:
+  // each coin of a streak sits a semitone higher, and the climb starts again
+  // after 8 (climb.wrap), so a long streak is a rising scale, not a whine.
+  coin:       { voice: 'seq', climb: { semis: 1, wrap: 8 }, layers: [
+    { v: 'tone', type: 'square', freq: 1975.5, dur: 0.03, gain: 0.03 },
+    { v: 'tone', type: 'triangle', freq: 2637, dur: 0.07, gain: 0.05, at: 0.03 }] },
+  // Gold counting into the bank (for the end card of R5; not wired yet): a
+  // run of clinks that climbs, then a bright bell.
+  goldBank:   { voice: 'seq', layers: [
+    ...[1568, 1760, 1975.5, 2093, 2349.3, 2637].map((f, i) =>
+      ({ v: 'tone', type: 'triangle', freq: f, dur: 0.05, gain: 0.06, at: i * 0.055 })),
+    { v: 'tone', type: 'sine', freq: 2093, dur: 0.45, gain: 0.07, at: 0.36 },
+    { v: 'tone', type: 'sine', freq: 3136, dur: 0.3, gain: 0.035, at: 0.36 },
+    { v: 'tone', type: 'square', freq: 1046.5, dur: 0.06, gain: 0.03, at: 0.36 }] },
+  // A better poker hand: arg is the hand's order (1 Pair .. 8 Straight Flush).
+  // The voices come from handCue(order) below.
+  hand:       { voice: 'hand' },
+  // R5: the forge sting. Plays the instant a weapon and its partner card (or
+  // two evolved weapons) fuse on screen: a low thump, a bright major chord
+  // that rings, and a high shimmer on top. Fixed voices, no noise, no
+  // variation (the same rule as the R4 cues).
+  forge:      { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 130.81, to: 65.41, dur: 0.22, gain: 0.12 },
+    { v: 'tone', type: 'square', freq: 523.25, to: 1046.5, dur: 0.06, gain: 0.03 },
+    ...[523.25, 659.25, 783.99, 1046.5].map((f, i) =>
+      ({ v: 'tone', type: 'triangle', freq: f, dur: 0.55 - i * 0.05, gain: 0.055, at: 0.03 + i * 0.025 })),
+    { v: 'tone', type: 'sine', freq: 2093, dur: 0.4, gain: 0.03, at: 0.1 },
+    { v: 'tone', type: 'sine', freq: 3136, dur: 0.3, gain: 0.018, at: 0.18 }] },
+  // R7: a boss lands on its name card. A low hit, then a held clash a semitone
+  // apart (E and F, low saws) with a hard bite on top: a threat, not a reward.
+  // Fixed voices, no noise, no variation (the same rule as the R4 cues).
+  bossSting:  { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 110, to: 38, dur: 0.35, gain: 0.3 },
+    { v: 'sus', type: 'sawtooth', freq: 82.41, to: 80, dur: 0.75, gain: 0.1, hold: 0.5 },
+    { v: 'sus', type: 'sawtooth', freq: 87.31, to: 84.5, dur: 0.75, gain: 0.09, hold: 0.5 },
+    { v: 'tone', type: 'square', freq: 164.8, to: 155.6, dur: 0.45, gain: 0.04 },
+    { v: 'tone', type: 'triangle', freq: 659.3, to: 622.3, dur: 0.22, gain: 0.04, at: 0.02 }] },
+  // R7: the Maw shows itself. Heavier and longer: two hits, a deep clash a
+  // semitone apart that holds, a falling brass-like cry above it.
+  mawSting:   { voice: 'seq', layers: [
+    { v: 'tone', type: 'sine', freq: 92, to: 28, dur: 0.8, gain: 0.32 },
+    { v: 'sus', type: 'sawtooth', freq: 55, to: 52, dur: 1.4, gain: 0.11, hold: 0.6 },
+    { v: 'sus', type: 'sawtooth', freq: 58.27, to: 55, dur: 1.4, gain: 0.1, hold: 0.6 },
+    { v: 'sus', type: 'square', freq: 110, to: 98, dur: 1.2, gain: 0.035, hold: 0.5 },
+    { v: 'tone', type: 'sawtooth', freq: 233.1, to: 196, dur: 0.9, gain: 0.05, at: 0.06 },
+    { v: 'tone', type: 'triangle', freq: 466.2, to: 392, dur: 0.9, gain: 0.035, at: 0.08 },
+    { v: 'tone', type: 'sine', freq: 72, to: 30, dur: 0.5, gain: 0.24, at: 0.5 }] },
 };
 export { SFX };
+
+// The hand stinger (R4). A quick count-up of ticks, then a run up a C-major
+// ladder that ends on a held note. A higher hand has more ticks, more notes,
+// a wider span (it starts lower and ends higher), a longer last note and more
+// layers under it; every note plays at the same level, so a big hand is
+// bigger, not just louder. Pure: the same order always gives the same voices.
+const HAND_LADDER = [261.63, 329.63, 392, 523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98, 2093, 2637];
+export const HAND_CUE = { at: 0.08, tick: 0.045, note: 0.06 };
+export function handCue(order) {
+  const k = Math.max(1, Math.min(8, Math.round(Number(order)) || 1));
+  const { at, tick, note } = HAND_CUE;
+  const layers = [];
+  const ticks = 2 + (k >> 1);                    // 2 for a Pair .. 6 for a Straight Flush
+  for (let i = 0; i < ticks; i++) {
+    layers.push({ v: 'tone', type: 'square', freq: 1046.5 * Math.pow(2, (2 * i) / 12), dur: 0.025, gain: 0.03, at: at + i * tick, part: 'count' });
+  }
+  const s0 = at + ticks * tick + 0.03;
+  const first = 5 - ((k - 1) >> 1);              // Pair starts on G5, Straight Flush on G4
+  const n = k + 1;                               // Pair: two notes (G5 to C6), Straight Flush: nine
+  for (let i = 0; i < n - 1; i++) {
+    layers.push({ v: 'tone', type: 'triangle', freq: HAND_LADDER[first + i], dur: note * 1.6, gain: 0.09, at: s0 + i * note, part: 'note' });
+  }
+  const top = HAND_LADDER[first + n - 1];
+  const tAt = s0 + (n - 1) * note;
+  const tDur = 0.2 + 0.06 * k;
+  layers.push({ v: 'tone', type: 'triangle', freq: top, dur: tDur, gain: 0.1, at: tAt, part: 'note' });
+  if (k >= 3) layers.push({ v: 'tone', type: 'sine', freq: top / 2, dur: tDur, gain: 0.04, at: tAt, part: 'under' });
+  if (k >= 5) {
+    layers.push({ v: 'tone', type: 'triangle', freq: 523.25, dur: tDur, gain: 0.03, at: tAt, part: 'under' });
+    layers.push({ v: 'tone', type: 'triangle', freq: 783.99, dur: tDur, gain: 0.03, at: tAt, part: 'under' });
+  }
+  if (k >= 7) {
+    layers.push({ v: 'tone', type: 'sine', freq: top * 1.5, dur: 0.1, gain: 0.025, at: tAt + 0.08, part: 'sparkle' });
+    layers.push({ v: 'tone', type: 'sine', freq: top * 2, dur: 0.1, gain: 0.02, at: tAt + 0.16, part: 'sparkle' });
+  }
+  if (k >= 8) layers.push({ v: 'tone', type: 'sine', freq: 130.8, to: 65.4, dur: 0.4, gain: 0.07, at: tAt, part: 'under' });
+  return layers;
+}
 
 // arg: for the pitched families (gem), the combo step — each step raises the
 // pitch a whole tone, so a stream of pickups climbs.
 // The new mix's hit (MIX 'new'): the old hit was raw white noise, a harsh
 // hiss with most of its energy near 10 kHz. This one is the same short burst
 // through a low-pass, with a small body thump under it.
-const HIT_SOFT = { voice: 'seq', layers: [
+export const HIT_SOFT = { voice: 'seq', layers: [
   { v: 'noise', dur: 0.05, gain: 0.22, lp: 2600 },
   { v: 'tone', type: 'triangle', freq: 210, to: 120, dur: 0.05, gain: 0.08 }] };
 // The voice a sound plays in the current mix.
@@ -642,17 +787,102 @@ function playSfxAt(name, arg, when) {
   resumeIfSuspended();   // S2 (audit 2026-09-16): self-heal a gesture-gated ctx
   const now = when;
   const limit = SFX_LIMITS[name] ?? 0.02;
-  if (lastPlayed[name] !== undefined && now - lastPlayed[name] < limit) return false;
+  // A better hand right after another (a chained draft) is always heard: the
+  // limit holds only the same or a lower hand.
+  const higherHand = def.voice === 'hand' && (arg | 0) > (lastPlayed['hand#'] | 0);
+  if (!higherHand && lastPlayed[name] !== undefined && now - lastPlayed[name] < limit) return false;
   if (def.fire) {
     if (lastPlayed['fire:*'] !== undefined && now - lastPlayed['fire:*'] < FIRE_GATE) return false;
     lastPlayed['fire:*'] = now;
   }
   lastPlayed[name] = now;
-  voiceSfx(def, name, arg, now);
+  if (def.voice === 'hand') lastPlayed['hand#'] = arg | 0;
+  // A cue a screen may cut short plays through a gain node of its own, so
+  // stopSfx can silence it (R5: a press that lands the end card's count).
+  let dest = sfxBus;
+  if (STOPPABLE.has(name)) {
+    try { const g = ctx.createGain(); g.connect(sfxBus); cueGroups[name] = g; dest = g; } catch { dest = sfxBus; }
+  }
+  const file = sfxFile(name);
+  if (file) voiceFile(def, name, arg, now, file, dest);
+  else voiceSfx(def, name, arg, now, dest);
+  return true;
+}
+// The cues stopSfx can cut, and the gain node of each one's last play.
+const STOPPABLE = new Set(['goldBank']);
+const cueGroups = {};
+// Fade the last play of a stoppable cue to silence in 30 ms. True when there
+// was one to stop. Draws no random number.
+export function stopSfx(name) {
+  const g = cueGroups[name];
+  if (!g || !ctx) return false;
+  delete cueGroups[name];
+  try {
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.linearRampToValueAtTime(0, t + 0.03);
+  } catch { /* a context without ramps: leave it */ }
   return true;
 }
 
-function voiceSfx(def, name, arg, now) {
+// ---------- Recorded sound effects (R4, src/sfx_files.js) ----------
+// The gate, as for the music: a context that decodes, a fetch, not file://.
+function sfxGate() {
+  if (!ctx || !sfxBus || typeof ctx.decodeAudioData !== 'function') return false;
+  if (typeof fetchFn() !== 'function') return false;
+  try { if (globalThis.location && globalThis.location.protocol === 'file:') return false; } catch { /* no location */ }
+  return true;
+}
+// The loader for the current context, made when RECORDED is on and the gate
+// holds. Making it loads nothing: frame() does, from the first frame on.
+function ensureSfxBank() {
+  if (sfxSrc !== 'recorded') return null;
+  if (sfxBank && sfxBank.ctx === ctx) return sfxBank;
+  if (sfxBank) { sfxBank.drop(); sfxBank = null; }
+  if (!sfxGate()) return null;
+  sfxBank = createSfxBank({ ctx, fetch: fetchFn(), resolveUrl, sets: sfxSetsDep || pickedSets(), buffers: sfxBuffersDep || undefined });
+  return sfxBank;
+}
+// The file to play for this sound now, or null (synth): RECORDED on and every
+// file of the slot decoded. Never throws.
+function sfxFile(name) {
+  if (sfxSrc !== 'recorded') return null;
+  try {
+    const b = ensureSfxBank();
+    return b && b.ready(name) ? b.next(name) : null;
+  } catch { return null; }
+}
+const usesNoise = (def) => def.voice === 'noise' || !!(def.layers && def.layers.some((l) => l.v === 'noise'));
+// One file play, by the synth voice's rules: the mix's trim and per-play
+// variation (the same two draws), the gem's combo climb and the coin's climb
+// as playback rate, the sfx bus and so the limiter. Where the synth voice
+// would have filled the noise buffer (Math.random), the file play fills it
+// too, so a seeded run makes the same draws with either source.
+function voiceFile(def, name, arg, now, file, dest = sfxBus) {
+  let lv = 1, rate = 1;
+  if (mixMode === 'new') {
+    lv = dbToGain(MIX.trimDb[name]);
+    if (MIX.vary[name]) { const v = variation(name, rand(), rand()); lv *= v.gain; rate = v.rate; }
+  }
+  let mul = (def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1) * rate;
+  if (def.climb) mul *= Math.pow(2, (Math.max(0, arg | 0) % def.climb.wrap) * def.climb.semis / 12);
+  if (usesNoise(def)) ensureNoiseBuffer(ctx);
+  const src = ctx.createBufferSource();
+  const g = ctx.createGain();
+  src.buffer = file.buffer;
+  if (src.playbackRate) src.playbackRate.value = mul;
+  g.gain.value = lv * file.gain;
+  src.connect(g); g.connect(dest);
+  src.start(now);
+}
+export function setSfxSource(src) {
+  sfxSrc = src === 'recorded' ? 'recorded' : 'synth';
+  try { storage.setItem(KEY_SFX_SRC, sfxSrc); } catch { /* ignore */ }
+  return sfxSrc;
+}
+export function getSfxSource() { return sfxSrc; }
+
+function voiceSfx(def, name, arg, now, dest = sfxBus) {
   // The mix: the old one plays every level as written; the new one trims each
   // sound and varies the busy ones (two draws per play, only when it varies).
   let lv = 1, rate = 1;
@@ -660,30 +890,124 @@ function voiceSfx(def, name, arg, now) {
     lv = dbToGain(MIX.trimDb[name]);
     if (MIX.vary[name]) { const v = variation(name, rand(), rand()); lv *= v.gain; rate = v.rate; }
   }
-  if (def.voice === 'seq') {
-    const mul = (def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1) * rate;
-    for (const l of def.layers) {
-      const when = now + (l.at || 0);
-      if (l.v === 'noise') noise(ctx, sfxBus, { dur: l.dur, gain: l.gain * lv, when, lp: l.lp ? l.lp * rate : 0 });
-      else tone(ctx, sfxBus, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain * lv, when });
-    }
+  if (def.voice === 'seq' || def.voice === 'hand') {
+    let mul = (def.pitched ? Math.pow(2, Math.max(0, Math.min(12, arg | 0)) / 6) : 1) * rate;
+    if (def.climb) mul *= Math.pow(2, (Math.max(0, arg | 0) % def.climb.wrap) * def.climb.semis / 12);
+    playLayers(def.voice === 'hand' ? handCue(arg) : def.layers, dest, now, lv, mul, rate);
     return;
   }
   if (def.voice === 'tone') {
-    tone(ctx, sfxBus, { ...def, freq: def.freq * rate, to: def.to ? def.to * rate : def.to, gain: def.gain * lv, when: now });
+    tone(ctx, dest, { ...def, freq: def.freq * rate, to: def.to ? def.to * rate : def.to, gain: def.gain * lv, when: now });
   } else if (def.voice === 'noise') {
-    noise(ctx, sfxBus, { ...def, gain: def.gain * lv, when: now });
+    noise(ctx, dest, { ...def, gain: def.gain * lv, when: now });
   } else { // arp
     def.notes.forEach((f, i) => {
-      tone(ctx, sfxBus, { type: def.type, freq: f * rate, dur: def.noteDur, gain: def.gain * lv, when: now + i * def.noteDur });
+      tone(ctx, dest, { type: def.type, freq: f * rate, dur: def.noteDur, gain: def.gain * lv, when: now + i * def.noteDur });
     });
   }
 }
 
+// Plays a list of layers ({ v: 'tone' | 'sus' | 'noise', at, ...voice }) into
+// `dest`: lv scales every level, mul every pitch, rate the noise filters.
+function playLayers(layers, dest, now, lv, mul, rate) {
+  for (const l of layers) {
+    const when = now + (l.at || 0);
+    if (l.v === 'noise') noise(ctx, dest, { dur: l.dur, gain: l.gain * lv, when, lp: l.lp ? l.lp * rate : 0 });
+    else if (l.v === 'sus') sus(ctx, dest, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain * lv, when, hold: l.hold });
+    else tone(ctx, dest, { type: l.type, freq: l.freq * mul, to: l.to ? l.to * mul : undefined, dur: l.dur, gain: l.gain * lv, when });
+  }
+}
+
+// ---------- The low-health heartbeat (R4) ----------
+// A soft two-beat pulse while the hero is under HEARTBEAT.on of max health in
+// a fight; it quickens as health falls. The game calls setHeartbeat every
+// frame (main.js syncHeartbeat) with the health fraction, or null when the
+// pulse must not sound (no fight, a movie, a menu, a draft, a pause, a hidden
+// or unattended run, the hero dead). There is no timer here: a frame schedules
+// the next pulse only when it is due, so when the frames stop the pulse stops.
+// Every pulse goes through one gain node; stopping drops that node to silence
+// at once, so a heal or a cut never leaves a beat ringing. One pulse per call
+// at most, and never sooner than one period after the last: it cannot stack.
+export const HEARTBEAT = { on: 0.25, slowS: 1.05, fastS: 0.45, lead: 0.1, dub: 0.19 };
+// Seconds between pulses at a health fraction: 1.05 s at 25%, 0.45 s at 0.
+export function heartbeatPeriod(frac) {
+  const k = Math.max(0, Math.min(1, (Number(frac) || 0) / HEARTBEAT.on));
+  return HEARTBEAT.fastS + (HEARTBEAT.slowS - HEARTBEAT.fastS) * k;
+}
+// One pulse: "lub" then a softer "dub", low and short.
+// Tones only (no noise voice: see the R4 note above SFX.crit).
+const HB_PULSE = [
+  { v: 'tone', type: 'sine', freq: 64, to: 44, dur: 0.16, gain: 0.3 },
+  { v: 'tone', type: 'triangle', freq: 96, to: 60, dur: 0.05, gain: 0.03 },
+  { v: 'tone', type: 'sine', freq: 58, to: 40, dur: 0.18, gain: 0.22, at: HEARTBEAT.dub },
+  { v: 'tone', type: 'triangle', freq: 88, to: 56, dur: 0.05, gain: 0.02, at: HEARTBEAT.dub }];
+const HB_LUB = HB_PULSE.filter(l => !l.at), HB_DUB = HB_PULSE.filter(l => l.at);
+// parts: the newest pulse's two halves ({ node, at }), each on its own node,
+// so a stop can cut a half that is scheduled but has not started yet.
+// prevLast: the pulse before it, which counts again if its lub is cut.
+const hb = { out: null, next: 0, last: -Infinity, prevLast: -Infinity, pulses: 0, frac: null, parts: [] };
+function hbLevel() { return mixMode === 'new' ? dbToGain(MIX.trimDb.heartbeat) : 1; }
+function hbNode() {
+  const g = ctx.createGain();
+  g.gain.value = hbLevel();
+  g.connect(sfxBus);
+  return g;
+}
+function hbPart(layers, at) {
+  const n = ctx.createGain();
+  n.connect(hb.out);
+  playLayers(layers, n, at, 1, 1, 1);
+  return { node: n, at: at + Math.min(...layers.map(l => l.at || 0)) };   // when it starts sounding
+}
+// Stops the pulse at once: a half that has not started yet is cut off the
+// speakers (it never sounds), and what is already sounding fades in 30 ms.
+function stopHeartbeat() {
+  const g = hb.out, parts = hb.parts;
+  hb.out = null; hb.next = 0; hb.frac = null; hb.parts = [];
+  if (!g || !ctx) return;
+  try {
+    const now = ctx.currentTime;
+    for (const pt of parts) {
+      if (pt.at <= now) continue;
+      pt.node.disconnect();
+      if (pt.at === hb.last) { hb.last = hb.prevLast; hb.pulses = Math.max(0, hb.pulses - 1); }
+    }
+    g.gain.setValueAtTime(g.gain.value, now);
+    g.gain.linearRampToValueAtTime(0, now + 0.03);
+  } catch { /* ignore */ }
+}
+export function setHeartbeat(frac) {
+  const f = frac == null ? NaN : Number(frac);
+  if (!(f >= 0 && f < HEARTBEAT.on) || !ctx || !sfxBus || !sfxEnabled || hiddenMute) {
+    stopHeartbeat();
+    return false;
+  }
+  const now = ctx.currentTime;
+  const period = heartbeatPeriod(f);
+  if (!hb.out) {
+    hb.out = hbNode();
+    hb.next = Math.max(now + 0.02, hb.last + period);
+  } else if (hb.next < now) {
+    // The frames stopped for a while: start again from now, never a catch-up burst.
+    hb.next = Math.max(now + 0.02, hb.last + period);
+  }
+  hb.frac = f;
+  if (hb.next <= now + HEARTBEAT.lead) {
+    resumeIfSuspended();
+    hb.parts = [hbPart(HB_LUB, hb.next), hbPart(HB_DUB, hb.next)];
+    hb.prevLast = hb.last;
+    hb.last = hb.next;
+    hb.pulses++;
+    hb.next += period;
+  }
+  return true;
+}
+export function getHeartbeat() { return { on: !!hb.out, frac: hb.frac, next: hb.next, last: hb.last, pulses: hb.pulses }; }
+
 // ---------- Cinematic stingers (WAVE-8/B) ----------
 // Intro (src/intro.js PHASES: OVERTAKE 2500–5000ms, TITLE stamps ~4300ms,
-// FADE 6000–7000ms) + portal (src/portal_cine.js: KILL/WALK/DISSOLVE/FADE,
-// ~4s). Fired once per phase transition; a short re-fire guard stops a
+// FADE 6000–7000ms) + portal (the beat, src/portal_beat.js: KILL, OPEN played
+// as DISSOLVE, WALK). Fired once per phase transition; a short re-fire guard stops a
 // double-fire from stacking cues. SFX-class: sfx toggle gates, music does NOT.
 
 // Where a cue's voices go: sfxBus, or (new mix) a gain node that carries the
@@ -756,8 +1080,8 @@ const INTRO_CUES = {
   TITLE_SLAM: introTitleSlam, TITLE: introTitleSlam,
   FADE: introFade,
 };
-// G16: exported read-only so test/test_portal_cine.mjs can assert every PHASES
-// name has a cue (a silent transition is a defect — binding rule 5).
+// G16: exported read-only so test/test_movies.mjs can assert every beat phase
+// has a cue (a silent transition is a defect — binding rule 5).
 export const PORTAL_CUES = {
   BOSS_YELL: portalBossYell, KILL: portalBossYell,
   DISSOLVE: portalDissolve,
@@ -825,6 +1149,53 @@ export const ESCAPE_CUES = {
       tone(ctx, cueOut || sfxBus, { type: 'triangle', freq: f, dur: 0.08, gain: 0.11, when: when + i * 0.07 }));
   },
 };
+// ---------- Death movie cues (src/death_cine.js, R2) ----------
+// One cue as each shot of "the escape that fails" begins. FREEZE: the fight
+// stops dead (a tape stop and a low thump). ROAD: the cut to the road (a rush
+// of air and one chase beat). LUNGE: the killer's snarl, rising. HIT: the
+// blow that lands (a crunch and a low drop). SLUMP: the body hits the ground.
+// CLOSE: the horde closes in (a low swell that sinks). SFX-class: the sfx
+// toggle gates them; a hidden tab is silent. All under a second and a half,
+// so a skip never leaves a sound hanging for long.
+export const DEATH_CUES = {
+  FREEZE: (when) => {
+    tone(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 240, to: 40, dur: 0.38, gain: 0.12, when });
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 96, to: 32, dur: 0.34, gain: 0.34, when });
+  },
+  ROAD: (when) => {
+    noise(ctx, cueOut || sfxBus, { dur: 0.22, gain: 0.1, when });
+    tone(ctx, cueOut || sfxBus, { type: 'square', freq: 55, to: 53, dur: 0.11, gain: 0.16, when: when + 0.04 });
+    tone(ctx, cueOut || sfxBus, { type: 'square', freq: 82.4, to: 80, dur: 0.11, gain: 0.14, when: when + 0.34 });
+  },
+  LUNGE: (when) => {
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 120, to: 260, dur: 0.42, gain: 0.3, when, hold: 0.75 });
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 124, to: 268, dur: 0.42, gain: 0.3, when, hold: 0.75 });
+    noise(ctx, cueOut || sfxBus, { dur: 0.16, gain: 0.08, when: when + 0.22 });
+  },
+  HIT: (when) => {
+    noise(ctx, cueOut || sfxBus, { dur: 0.12, gain: 0.3, when });
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 170, to: 38, dur: 0.36, gain: 0.42, when });
+    tone(ctx, cueOut || sfxBus, { type: 'square', freq: 72, to: 30, dur: 0.22, gain: 0.16, when });
+  },
+  SLUMP: (when) => {
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 84, to: 36, dur: 0.3, gain: 0.32, when: when + 0.2 });
+    noise(ctx, cueOut || sfxBus, { dur: 0.06, gain: 0.08, when: when + 0.2 });
+    tone(ctx, cueOut || sfxBus, { type: 'sine', freq: 70, to: 30, dur: 0.34, gain: 0.36, when: when + 0.42 });
+    noise(ctx, cueOut || sfxBus, { dur: 0.08, gain: 0.1, when: when + 0.42 });
+  },
+  CLOSE: (when) => {
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 46, to: 36, dur: 1.0, gain: 0.14, when, hold: 0.6 });
+    sus(ctx, cueOut || sfxBus, { type: 'sawtooth', freq: 47.4, to: 37, dur: 1.0, gain: 0.14, when, hold: 0.6 });
+  },
+};
+export function playDeathCue(phase) {
+  const fn = DEATH_CUES[phase];
+  if (!fn || hiddenMute || !cueAllowed('death:' + phase)) return false;
+  resumeIfSuspended();
+  runCue('death:' + phase, fn, ctx.currentTime);
+  return true;
+}
+
 export function playEscapeCue(id, arg) {
   const fn = ESCAPE_CUES[id];
   if (!fn || hiddenMute || !ctx || !sfxEnabled) return false;
@@ -901,6 +1272,7 @@ export function getMusicMode() { return musicMode; }
 let hiddenMute = false;
 export function setHiddenMute(on) {
   hiddenMute = !!on;
+  if (hiddenMute) stopHeartbeat();
   // Hidden: every recorded source stops now and remembers its place; shown:
   // the context's bed comes back at that place (startMusic brings the run's).
   if (engine) { if (hiddenMute) engine.hide(); else engine.sync(); }
@@ -998,6 +1370,8 @@ let lastMusicContext = null;
 export function setMusicContext(c) {
   lastMusicContext = c || null;
   try { const e = ensureEngine(); if (e) e.setContext(c || {}); } catch { /* never block a frame */ }
+  // The recorded sound effects load from the first frame on (R4).
+  try { const b = ensureSfxBank(); if (b) b.frame(c || {}); } catch { /* never block a frame */ }
 }
 export function getMusicContext() { return lastMusicContext; }
 
@@ -1019,6 +1393,11 @@ export function playMusicCue(slot, opts) {
   try { const e = ensureEngine(); return e ? e.playCue(slot, opts || {}) : false; } catch { return false; }
 }
 
+// Fade every recorded cue still playing (0.3 s) and lift its duck now.
+export function fadeMusicCues() {
+  try { if (engine) engine.fadeAllCues(); } catch { /* ignore */ }
+}
+
 // ---------- Test-only seam (fakes inject here; NOT part of the frozen API) ----------
 export const AUDIO_TEST = {
   setDeps({ AudioContext: ac, storage: st, fetch: fe, tracks, trimDb, rng } = {}) {
@@ -1031,16 +1410,29 @@ export const AUDIO_TEST = {
     if (tracks !== undefined) tracksDep = tracks;
     if (trimDb !== undefined) trimDep = trimDb;
   },
+  // R4: the recorded sound effects' slot -> files table (null = SFX_PICKS) and
+  // an optional shared url -> AudioBuffer map; either one rebuilds the loader.
+  setSfxDeps({ sets, buffers } = {}) {
+    if (sets !== undefined) sfxSetsDep = sets;
+    if (buffers !== undefined) sfxBuffersDep = buffers;
+    if (sfxBank) sfxBank.drop();
+    sfxBank = null;
+  },
+  sfxBank: () => (sfxBank ? sfxBank.debug() : null),
   reset() {
     stopMusic();
     if (engine) engine.drop();   // buffers, pending loads (ignored when they land), sources
     engine = null; musicDuck = null; synthEnv = null; musicSrc = 'recorded'; lastMusicContext = null;
     ctx = null; master = null; sfxBus = null; musicBus = null; noiseBuf = null;
+    for (const k of Object.keys(cueGroups)) delete cueGroups[k];
     musicEnabled = true; sfxEnabled = true;
     musicVol = DEFAULT_MUSIC_VOL; sfxVol = DEFAULT_SFX_VOL;
     musicMode = 'run'; bossStep = 0;
     step = 0; nextNoteTime = 0;
     mixMode = 'new'; limiterIn = null; limiterNode = null;
+    if (sfxBank) sfxBank.drop();
+    sfxBank = null; sfxSrc = DEFAULT_SFX_SRC;
+    hb.out = null; hb.next = 0; hb.last = -Infinity; hb.prevLast = -Infinity; hb.pulses = 0; hb.frac = null; hb.parts = [];
     for (const k of Object.keys(lastPlayed)) delete lastPlayed[k];
     hydrateFlags();
   },
@@ -1049,9 +1441,18 @@ export const AUDIO_TEST = {
   scheduleBossStep,
   playSfxAt,                        // a sound at a given ctx time (busy-fight renders)
   runCue: (kind, key, when, arg) => {   // a cue at a given ctx time, its trim included
-    const fn = kind === 'intro' ? INTRO_CUES[key] : kind === 'portal' ? PORTAL_CUES[key] : ESCAPE_CUES[key];
+    const fn = kind === 'intro' ? INTRO_CUES[key] : kind === 'portal' ? PORTAL_CUES[key]
+      : kind === 'death' ? DEATH_CUES[key] : ESCAPE_CUES[key];
     if (!fn || !ctx) return false;
     runCue(kind + ':' + key, fn, when, arg || 0);
+    return true;
+  },
+  // The heartbeat at a health fraction for `secs` seconds from ctx time t0
+  // (the listening page and the measuring tool), through its own trim.
+  heartbeatAt: (frac, t0, secs) => {
+    if (!ctx || !sfxBus) return false;
+    const g = hbNode();
+    for (let t = t0; t < t0 + secs; t += heartbeatPeriod(frac)) playLayers(HB_PULSE, g, t, 1, 1, 1);
     return true;
   },
   step: () => step,                 // the synth song's next step

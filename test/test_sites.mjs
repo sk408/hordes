@@ -357,7 +357,7 @@ s.check('live: altar -> boss now -> beat it -> extra chest -> portal -> next wav
       const c = h.elements['ov-cards'].children.find(x => (x.innerHTML || '').includes('CONTINUE'));
       if (c) c.click();
     }
-    if (st.mode === 'portal-cine') h.key('keydown', { key: 'Escape' });
+    if (st.mode === 'portal-cine') h.skipMovie();
     // Boss gems can level the hero: take the first card so the walk goes on.
     if (st.mode === 'draft' || st.mode === 'evolve') {
       const c0 = h.elements['ov-cards'].children[0];

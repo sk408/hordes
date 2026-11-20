@@ -105,7 +105,10 @@ function fullFrame(over) {
     fsOverlay: { supported: true, visible: true, active: false },
     bossBanner: { title: 'GRAVELMAW', names: ['GRAVELMAW'], sub: 'THE WAVE BREAKS HERE', ttl: 2.0 },
   }, over || {}));
-  R.drawHudChrome(ctx, st);
+  // The HUD trim is pinned at its home place. While the arrival letterbox is
+  // in, the vitals block and the clock step down under it (test_r2_integ_fixes
+  // pins that), so the chrome is painted from the moment just before it.
+  R.drawHudChrome(ctx, Object.assign({}, st, { bossBanner: null }));
   R.drawRadar(ctx, st);
   R.drawFsButton(ctx, st);
   R.drawBossBanner(ctx, st);
@@ -118,21 +121,15 @@ const RIVET = CHROME_INKS.RIVET, KEY = CHROME_INKS.KEYLINE;
 console.log('SLICE I / A — METER HOUSINGS (HP / MP / XP / clock limit bar)');
 {
   const { R, rec } = fullFrame();
-  // HP trough box (22,16,110,5): steel-frame chamfers + trough studs.
-  for (const [x, y] of [[20, 14], [133, 14], [20, 22], [133, 22]])
-    ok(hasRect(rec, x, y, 1, 1, KEY), 'HP housing chamfer at ' + x + ',' + y);
-  for (const [x, y] of [[22, 16], [131, 16], [22, 20], [131, 20]])
-    ok(hasRect(rec, x, y, 1, 1, RIVET), 'HP housing stud at ' + x + ',' + y);
-  // MP trough box (22,26,110,5).
-  for (const [x, y] of [[20, 24], [133, 24], [20, 32], [133, 32]])
-    ok(hasRect(rec, x, y, 1, 1, KEY), 'MP housing chamfer at ' + x + ',' + y);
-  for (const [x, y] of [[22, 26], [131, 26], [22, 30], [131, 30]])
-    ok(hasRect(rec, x, y, 1, 1, RIVET), 'MP housing stud at ' + x + ',' + y);
-  // XP trough box (22,37,134,6).
-  for (const [x, y] of [[20, 35], [157, 35], [20, 44], [157, 44]])
-    ok(hasRect(rec, x, y, 1, 1, KEY), 'XP housing chamfer at ' + x + ',' + y);
-  for (const [x, y] of [[22, 37], [155, 37], [22, 42], [155, 42]])
-    ok(hasRect(rec, x, y, 1, 1, RIVET), 'XP housing stud at ' + x + ',' + y);
+  // R3 (one vitals block): the three troughs moved into the block (x 43,
+  // width 84; HP y 14, MP y 24, XP y 34 and 6 tall). The trim rule this test
+  // pins is unchanged: steel-frame chamfers 2px out, studs in the trough corners.
+  for (const [name, bx, by, bw, bh] of [['HP', 43, 14, 84, 5], ['MP', 43, 24, 84, 5], ['XP', 43, 34, 84, 6]]) {
+    for (const [x, y] of [[bx - 2, by - 2], [bx + bw + 1, by - 2], [bx - 2, by + bh + 1], [bx + bw + 1, by + bh + 1]])
+      ok(hasRect(rec, x, y, 1, 1, KEY), name + ' housing chamfer at ' + x + ',' + y);
+    for (const [x, y] of [[bx, by], [bx + bw - 1, by], [bx, by + bh - 1], [bx + bw - 1, by + bh - 1]])
+      ok(hasRect(rec, x, y, 1, 1, RIVET), name + ' housing stud at ' + x + ',' + y);
+  }
   // Clock limit bar: derive its box from the red limit tick, then the trim.
   const tick = rec.rects.find(q => q.style === '#ff2f5e' && q.w === 1 && q.h === 4);
   ok(!!tick, 'the red limit tick paints (clock bar anchor)');
@@ -154,24 +151,30 @@ console.log('SLICE I / A — BADGES + PLATES (LV / purse / label plates / feed /
                         [lv.x + 1, lv.y + lv.h - 2], [lv.x + lv.w - 2, lv.y + lv.h - 2]])
     ok(hasRect(rec, x, y, 1, 1, RIVET), 'LV badge stud at ' + x + ',' + y);
   // Purse badge (gold border at y~52) -> inset studs; value reads the same field.
-  const purse = rec.rects.find(q => q.style === '#ffd75e' && q.y >= 50 && q.y <= 56 && q.h >= 13);
+  // R3: the purse moved up beside the clock; its box comes from the seam.
+  const pb = R.hudChrome.purse;
+  const purse = pb && rec.rects.find(q => q.style === '#ffd75e' && q.x === pb.x && q.y === pb.y && q.h >= 13);
   ok(!!purse, 'the purse gold border paints (badge anchor)');
   for (const [x, y] of [[purse.x + 1, purse.y + 1], [purse.x + purse.w - 2, purse.y + 1],
                         [purse.x + 1, purse.y + purse.h - 2], [purse.x + purse.w - 2, purse.y + purse.h - 2]])
     ok(hasRect(rec, x, y, 1, 1, RIVET), 'purse badge stud at ' + x + ',' + y);
   ok(!!R.hudChrome.purse && /^GOLD /.test(R.hudChrome.purse.text) && R.hudChrome.purse.value === 0,
     'the purse seam still carries the run wallet (' + R.hudChrome.purse.text + ')');
-  // Label plates: the HP plate (4,13,16,14) carries corner studs.
-  for (const [x, y] of [[4, 13], [19, 13], [4, 26], [19, 26]])
-    ok(hasRect(rec, x, y, 1, 1, RIVET), 'HP label plate stud at ' + x + ',' + y);
+  // R3: the HP/MP/XP labels share the one vitals plate, and it carries the
+  // corner studs the per-label plates used to.
+  const vb = R.hudChrome.vitals;
+  for (const [x, y] of [[vb.x, vb.y], [vb.x + vb.w - 1, vb.y], [vb.x, vb.y + vb.h - 1], [vb.x + vb.w - 1, vb.y + vb.h - 1]])
+    ok(hasRect(rec, x, y, 1, 1, RIVET), 'vitals plate stud at ' + x + ',' + y);
   // Feed plate: dark plate under the toast line; its studs sit 1px INSIDE
   // (the x===5 column is the frozen plate query — see the render.js note).
-  const feedPlate = rec.rects.find(q => q.x === 5 && q.y === 84 &&
+  // R3: the message lane sits under the vitals block (chrome.lane.y).
+  const LY = R.hudChrome.lane.y;
+  const feedPlate = rec.rects.find(q => q.x === 5 && q.y === LY &&
     (q.style === C.HUD.PLATE || q.style === C.HUD.PLATE_SOLID));
-  ok(!!feedPlate, 'the feed plate paints at the frozen row (5,84)');
+  ok(!!feedPlate, 'the feed plate paints at the lane row (5,' + LY + ')');
   if (feedPlate) {
-    for (const [x, y] of [[6, 85], [6 + feedPlate.w - 3, 85],
-                          [6, 85 + feedPlate.h - 3], [6 + feedPlate.w - 3, 85 + feedPlate.h - 3]])
+    for (const [x, y] of [[6, LY + 1], [6 + feedPlate.w - 3, LY + 1],
+                          [6, LY + 1 + feedPlate.h - 3], [6 + feedPlate.w - 3, LY + 1 + feedPlate.h - 3]])
       ok(hasRect(rec, x, y, 1, 1, RIVET), 'feed plate stud at ' + x + ',' + y);
   }
   // Weapon slot frame (5,269,12,12 for wy=270, Z=2) carries corner studs.
@@ -236,19 +239,20 @@ console.log('SLICE I / A — RADAR rim ticks + FULLSCREEN keyline + HELD banner 
 console.log('SLICE I / B — FROZEN LAYOUT (spot-checks from the existing contract)');
 {
   const { R, rec, st } = fullFrame();
-  const xb = 22, yb = 37, wb = 134, hb = 6;
+  // R3 (one vitals block): the boxes moved into the block; the inks did not.
+  const xb = 43, yb = 34, wb = 84, hb = 6;
   const trough = rec.rects.find(q => q.x === xb && q.y === yb && q.w === wb && q.h === hb);
   ok(!!trough && trough.style === C.HUD.TROUGH, 'XP trough: same box, same TROUGH ink');
   const frame = rec.rects.find(q => q.x === xb - 2 && q.y === yb - 2 && q.w === wb + 4 && q.h === hb + 4);
   ok(!!frame && frame.style === C.HUD.FRAME, 'XP frame: same box, same FRAME ink');
-  const hpTrough = rec.rects.find(q => q.x === 22 && q.y === 16 && q.w === 110 && q.h === 5);
+  const hpTrough = rec.rects.find(q => q.x === 43 && q.y === 14 && q.w === 84 && q.h === 5);
   ok(!!hpTrough && hpTrough.style === C.HUD.TROUGH, 'HP trough: same box, same ink');
   const majors = rec.rects.filter(q => q.style === C.HUD.TICK_MAJOR && q.h === hb);
   ok(majors.length === 3, 'quarter ticks still mark 25/50/75% (exactly 3)');
   ok(rec.rects.some(q => q.style === '#ffd75e' && q.x === xb + wb - 1),
     'gold goal tick still at the far end');
   ok(rec.rects.some(q => q.style === '#ff2f5e'), 'the red limit tick still paints');
-  ok(!!rec.texts.find(t => t.txt === 'LV 4'), 'the level badge still reads LV 4');
+  ok(R.hudChrome.lvBadge.text === 'LV 4' && !!rec.texts.find(t => t.txt === '4'), 'the level badge still reads LV 4');
   // Seam values: the readouts keep reading the same fields.
   const p = st.player;
   const wantHp = Math.max(0, Math.min(1, p.hp / p.stats.maxHp));
@@ -338,8 +342,10 @@ console.log('SLICE I / D — ZERO NEW TEXT (no copy, no emojis, plain ASCII)');
 {
   const { R, rec } = fullFrame();
   const texts = rec.texts.map(t => t.txt);
-  const expected = ['HP', 'MP', R.hudChrome.hpText, R.hudChrome.mpText, 'XP', 'LV 4',
-    R.hudChrome.xpText, R.hudChrome.purse.text, '15:00', 'FOUND Whetstone', '3',
+  // R3: the level badge paints LV over the number, and the purse paints a
+  // coin and its digits (no GOLD word): the same labels, split or drawn.
+  const expected = ['HP', 'MP', R.hudChrome.hpText, R.hudChrome.mpText, 'XP', 'LV', '4',
+    R.hudChrome.xpText, R.hudChrome.purse.text.slice(5), '15:00', 'FOUND Whetstone', '3',
     'GRAVELMAW', 'THE WAVE BREAKS HERE'];
   const missing = expected.filter(e => e && !texts.includes(e));
   const extra = texts.filter(t => !expected.includes(t));

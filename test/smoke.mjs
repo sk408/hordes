@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import { CONFIG as CFG } from '../src/config.js';
 import { wrathOf, wrathMultipliers, addWrath } from '../src/wrath.js';
 import { groundTheme, Renderer } from '../src/render.js';
-import { CINE_DURATION } from '../src/portal_cine.js';   // hb8: wall-clock (CINE_SPEED)
 import { stageOf } from '../src/stages.js';
 import { makeWeapon, weaponXpNeeded, WEAPON_MAX_LEVEL } from '../src/weapons.js';
 import { rollEliteModifier, applyEliteModifier } from '../src/elite_mods.js';
@@ -120,6 +119,8 @@ globalThis.localStorage = {
 // headless state seam (see main.js) — integration probes below use it.
 const mainMod = await import('../src/main.js');
 const st = mainMod.__TEST.state;
+// R7: the boss arrival sting holds the sim; this probe measures the fight (test/_harness.mjs does the same).
+mainMod.__TEST.bossSting.enabled = false;
 
 // FIRST-RUN PROLOGUE (2026-09-18): this boot is a FRESH profile, so run #1
 // would open INERT (no spawns, frozen clock) and change what every section
@@ -134,7 +135,7 @@ const stampNotFresh = () => {
 stampNotFresh();
 
 // ---- WAVE-7/D intro movie: plays BEFORE the title menu on page load ----
-// Pump rAF frames until the 7s movie finishes and the menu lands. Skipping
+// Pump rAF frames until the 5s movie finishes and the menu lands. Skipping
 // is exercised separately at the end of the file (fresh module re-import).
 const dtMs = 1000 / 60;
 {
@@ -153,7 +154,8 @@ const dtMs = 1000 / 60;
     .find(c => (c.innerHTML || '').includes(t));
   assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
     'first boot (storage empty) must land on the title (the howto pop moved to START GAME)');
-  assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
+  // R2: a fresh profile gets the 5 s road shot (it was 7 s before).
+  assert(introFrames > 60 * 4.5, `intro movie should run most of its 5s (frames=${introFrames})`);
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
   // HOW TO PLAY lives under SETTINGS; ESC backs out to the title.
@@ -193,7 +195,13 @@ const dtMs = 1000 / 60;
        mainMod.__TEST.state.mode !== 'death-cine'; i++) {
     now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
   }
-  if (mainMod.__TEST.state.mode === 'death-cine') keyHandler({ key: 'x' });
+  // R2: the one movie skip rule: wait out the start-up guard, ESC shows
+  // SKIP, ESC again skips.
+  for (let i = 0; i < 90 && mainMod.__TEST.state.mode === 'death-cine'; i++) {
+    keyHandler({ key: 'Escape' });
+    if (mainMod.__TEST.state.mode !== 'death-cine') break;
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+  }
   keyHandler({ key: 't' });
   for (let i = 0; i < 5; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(elements['ov-title'].textContent === 'HORDES',
@@ -953,14 +961,16 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(announce && announce.msg === 'WAVE ' + waveNum + ' - ' + place,
     'the wave toast must name the stage: ' + (announce ? announce.msg : 'none') +
     ' (wave ' + waveNum + ', expected ' + place + ')');
+  // R2: the portal movie is now the 2.5 s beat on the battlefield, from the
+  // kill; the crossing waits for it, then the intermission.
   forceBossDeath();
   cineFrames = 0;
   const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
-    () => { if (st.mode === 'portal-cine') cineFrames++; });
-  assert(took >= 0, 'the movie must hand off to the intermission on its own');
-  assert(cineFrames >= Math.ceil(CINE_DURATION / dtMs) - 2,
-    `the 3.8s movie should run to isDone (${cineFrames} frames)`);
-  console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
+    () => { if (mainMod.__TEST.portalBeat.live) cineFrames++; });
+  assert(took >= 0, 'the beat must hand off to the intermission on its own');
+  assert(cineFrames >= Math.ceil(2500 / dtMs) - 4,
+    `the 2.5s beat should run to its end (${cineFrames} frames)`);
+  console.log(`portal beat: natural end after ${cineFrames} frames -> intermission`);
 
   // (c) The wrath dial is gone: no RAISE THE STAKES card on the intermission.
   assert(!elements['ov-cards'].children.some(c => (c.innerHTML || '').includes('RAISE THE STAKES')),
@@ -1142,6 +1152,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'the fusion leaves ONE weapon carrying the other half');
   assert(st.toasts.some(t => /FUSION: ORBITAL VOLLEY/.test(t.msg)),
     'a fusion must toast its announce');
+  // R5: the forge moment holds the fight first; it ends by itself.
+  for (let i = 0; i < 200 && mainMod.__TEST.forge.live; i++) {
+    now += dtMs; const cb = rafQueue.shift(); cb && cb(now);
+  }
+  assert(!mainMod.__TEST.forge.live, 'the forge moment ends by itself');
   // A target in range makes the controller fire volley shots — they must now
   // carry the orbit flight state for their first ~0.55s.
   st.enemies.push({ typeId: 'CHASER', x: st.player.x + 40, y: st.player.y,
@@ -1582,7 +1597,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
       affixes: [{ id: 'thorns', name: 'Spiked Hide', field: 'thorns', magnitude: 3 }] } });
   pump(5);
   feed = r.hudChrome.feed;
-  assert(feed.length === 3, 'feed caps at 3 lines (got ' + feed.length + ')');
+  // R3 MESSAGE LANE: the HUD lane is 2 lines tall (it held 3 before).
+  assert(feed.length === 2 && r.hudChrome.lane.lines <= 2, 'the lane caps at 2 lines (got ' + feed.length + ')');
   // WAVE-25 (agent F): this indexed feed[2] directly, which is only the MYTHIC
   // line if nothing else toasted inside the 5-frame window — the same
   // unrelated-toast hazard probe (c) below already guards against, and it
@@ -1711,7 +1727,8 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   ctxRec.rec = true; ctxRec.rects.length = 0;
   pump(1);
   ctxRec.rec = false;
-  assert(ctxRec.rects.some(q => q.d === 0 && q.x === 21 && q.y === 15 && q.w === 112 && q.h === 7),
+  // R3: the HP bar is now drawBar(43,14,84) in the one vitals block -> border (42,13,86,7).
+  assert(ctxRec.rects.some(q => q.d === 0 && q.x === 42 && q.y === 13 && q.w === 86 && q.h === 7),
     'the HP bar chrome must paint at NATIVE 1x coords while the world zooms');
   assert(ctxRec.rects.some(q => q.d === 1 && q.x === 0 && q.y === 0 && q.w === CFG.VIEW_W && q.h === CFG.VIEW_H),
     'the world ground base must paint INSIDE the zoom transform');
@@ -2164,7 +2181,11 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     // contract, via the same keyHandler seam the whole file drives), then the
     // kill is terminal. The end-card assertions below are unchanged.
     assert(st.mode === 'death-cine', 'three volley hits must kill the hero (mode=' + st.mode + ')');
-    keyHandler({ key: 'x' });
+    // R2: the one movie skip rule: ESC shows SKIP, ESC again skips (after the start-up guard).
+    for (let i = 0; i < 90 && st.mode === 'death-cine'; i++) {
+      keyHandler({ key: 'Escape' });
+      if (st.mode === 'death-cine') { now += dtMs; cb = rafQueue.shift(); cb(now); }
+    }
     assert(st.mode === 'dead', 'the skip hands back to the end card');
     assert(elements['ov-title'].textContent === 'THE HORDE CLAIMS ALL',
       'finale death must show the distinct end card (got ' +
@@ -2193,9 +2214,14 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
     'a fresh module must hydrate the persisted zoom (got ' + m2.__TEST.state.zoom + ')');
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
   assert(m2.__TEST.state.mode !== 'menu', 'fresh module should boot into the intro');
-  keyHandler({ key: 'x' });
+  // R2: the one movie skip rule: a press shows SKIP, ESC while it is up
+  // skips; presses in the first 0.4 s are ignored.
+  for (let i = 0; i < 90 && m2.__TEST.state.mode === 'intro'; i++) {
+    keyHandler({ key: 'Escape' });
+    if (m2.__TEST.state.mode === 'intro') { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
+  }
   for (let i = 0; i < 3; i++) { now += dtMs; const cb = rafQueue.shift(); cb && cb(now); }
-  assert(m2.__TEST.state.mode === 'title', 'any key must skip the intro to the title');
+  assert(m2.__TEST.state.mode === 'title', 'the skip rule must take the intro to the title');
   assert(elements['ov-title'].textContent === 'HORDES',
     'onboarding flag preset: no HOW TO PLAY auto-pop, straight to the title');
   console.log('intro skip: keypress jumps straight to the HORDES menu (no onboarding re-pop)');

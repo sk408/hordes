@@ -4,11 +4,10 @@
 // WHAT THIS FILE IS
 // Four ORIGINAL hand-authored 12x12 pixel sprites — one per meta.js
 // CHARACTERS id (KNIGHT, WITCH, ROGUE, PALADIN) — plus the ONE roster-wide
-// lookup the renderer and the tests share. They are CONCEPT ports only: the
-// reference (docs/vs_port_ref/DESIGN_REFERENCE_VS.md, section 4) names the
-// ROLES — starter brawler, chain-lightning witch, knife thief, cross-bearing
-// support — and every grid below was drawn fresh for HORDES. No VS pixels,
-// palettes, or traced silhouettes appear here (RED LINE).
+// lookup the renderer and the tests share. Each pilot has a ROLE (starter
+// brawler, chain-lightning witch, knife thief, cross-bearing support) and
+// every grid below was drawn fresh for HORDES: no pixels, palettes or traced
+// silhouettes from any other game appear here (RED LINE).
 //
 // WHY THESE FOUR GRIDS
 // Character identity currently shows ONLY in the menus: the CHARACTERS screen
@@ -22,7 +21,7 @@
 // characterSpriteFor — the generic pair stays as the fallback (unknown /
 // unset character id), never a pilot's look.
 //
-// ART-DIRECTION NUMBERS (reference section 1, style guidance only):
+// ART-DIRECTION NUMBERS (style guidance only):
 //   * 32px grid: every sprite is 12x12, the PLAYER_SPRITE box — painted 1:1
 //     through drawGrid: integer scaling, no smoothing. Geometry, hitbox and
 //     cull margins are byte-identical to before (the render seam keeps the
@@ -38,20 +37,18 @@
 //     rows differ between frames, exactly like PLAYER_SPRITE vs
 //     PLAYER_SPRITE_WALK.
 //
-// REFERENCE DERIVATION (doc section 4 roles -> hordes pilot):
-//   * KNIGHT   <- ANTONIO (starter hero, melee brawler stance, free). Steel
-//     helm with a red crest ridge, bright pauldrons, crest-cross tabard.
-//   * WITCH    <- PORTA (LIGHTNING start, the chain-lightning witch) +
-//     IMELDA (MAGIC_MISSILE start, the frail caster). Violet robe, amber
-//     clasp, shadowed eyes under the hood brim.
-//   * ROGUE    <- GENNARO (KNIFE start, the projectile thief) + PUGNALA
-//     (GUNS skirmisher). Green hood, sand scarf wrap, dark leathers.
-//   * PALADIN  <- GERMANA (HOLYWATER + max-HP support role, Clerici) +
-//     CROCI (CROSS start, the cross bearer). Gold helm, white-gold plate,
-//     gold cross down the chest.
+// THE FOUR LOOKS (role -> what the grid shows):
+//   * KNIGHT   the starter, a melee brawler. Steel helm with a red crest
+//     ridge, bright pauldrons, crest-cross tabard.
+//   * WITCH    the chain-lightning caster, frail. Violet robe, amber clasp,
+//     shadowed eyes under the hood brim.
+//   * ROGUE    the knife thrower, a skirmisher. Green hood, sand scarf wrap,
+//     dark leathers.
+//   * PALADIN  the cross bearer, a support with more health. Gold helm,
+//     white-gold plate, gold cross down the chest.
 // The menu busts (src/art/portraits.js CHARACTER_PORTRAITS) are drawn from
-// the 16x16 pilots below: same colours, same gear. intro.js / portal_cine.js
-// keep their adapted PLAYER_SPRITE copies (slice-b boss-chain precedent). No balance/combat/economy
+// the 16x16 pilots below: same colours, same gear. intro.js
+// keeps its adapted PLAYER_SPRITE copy (slice-b boss-chain precedent). No balance/combat/economy
 // number lives here (visual-only slice).
 
 // ---- KNIGHT (12x12, 2 frames: idle / walk-step) -----------------------------
@@ -85,11 +82,11 @@ const KNIGHT_B = [
   [0,0,4,4,0,0,0,0,4,4,0,0],
 ];
 const KNIGHT_PALETTE = {
-  1: '#e8b890',  // skin (the bust's face tone)
-  2: '#8a93ad',  // steel plate
-  3: '#d5dbe8',  // bright steel (pauldrons, helm light)
-  4: '#3a3f52',  // dark steel (eyeslit, greaves)
-  5: '#c03038',  // crest red (ridge + tabard cross)
+  1: '#cc9a78',  // skin (the bust's face tone)
+  2: '#b4c4dc',  // steel plate
+  3: '#e4e2ea',  // bright steel (pauldrons, helm light)
+  4: '#304464',  // dark steel (eyeslit, greaves)
+  5: '#b83a4e',  // crest red (ridge + tabard cross)
 };
 
 // ---- WITCH (12x12, 2 frames: idle / walk-step) -------------------------------
@@ -122,11 +119,11 @@ const WITCH_B = [
   [0,0,4,4,0,0,0,0,4,4,0,0],
 ];
 const WITCH_PALETTE = {
-  1: '#e8c8e0',  // pale caster skin
-  2: '#a070f0',  // violet robe
-  3: '#d0b0ff',  // robe light (sleeves, hem)
-  4: '#3a2452',  // shadow (hair, eyes, hem)
-  5: '#ffb63c',  // amber clasp
+  1: '#cc9a78',  // pale caster skin
+  2: '#b49ad4',  // violet robe
+  3: '#e4e2ea',  // robe light (sleeves, hem)
+  4: '#160e24',  // shadow (hair, eyes, hem)
+  5: '#e2aa38',  // amber clasp
 };
 
 // ---- ROGUE (12x12, 2 frames: idle / walk-step) -------------------------------
@@ -159,11 +156,11 @@ const ROGUE_B = [
   [0,0,4,4,0,0,0,0,4,4,0,0],
 ];
 const ROGUE_PALETTE = {
-  1: '#e8c890',  // skin (the bust's face tone)
-  2: '#2fa85a',  // hood green
-  3: '#8ff0a0',  // hood light
-  4: '#6a9a4a',  // olive leathers (shadow, boots)
-  5: '#d8b060',  // sand scarf + buckle
+  1: '#cc9a78',  // skin (the bust's face tone)
+  2: '#86a062',  // hood green
+  3: '#acc084',  // hood light
+  4: '#46663a',  // olive leathers (shadow, boots)
+  5: '#e2aa38',  // sand scarf + buckle
 };
 
 // ---- PALADIN (12x12, 2 frames: idle / walk-step) -----------------------------
@@ -196,11 +193,11 @@ const PALADIN_B = [
   [0,0,4,4,0,0,0,0,4,4,0,0],
 ];
 const PALADIN_PALETTE = {
-  1: '#f0d0a8',  // skin (the bust's face tone)
-  2: '#c89a2a',  // blessed gold
-  3: '#ffe07a',  // gold light (helm, pauldrons)
-  4: '#5a3f14',  // dark gold (eyeslit, boots)
-  5: '#f4f0e4',  // white plate
+  1: '#cc9a78',  // skin (the bust's face tone)
+  2: '#e2aa38',  // blessed gold
+  3: '#f0c860',  // gold light (helm, pauldrons)
+  4: '#523208',  // dark gold (eyeslit, boots)
+  5: '#f8e098',  // white plate
 };
 
 
@@ -261,7 +258,7 @@ const KNIGHT_C16 = [
   [0,0,0,3,3,0,0,0,7,7,7,0,0,0,0,0],
   [0,0,7,7,7,0,0,0,0,0,0,0,0,0,0,0],
 ];
-const KNIGHT_PALETTE16 = { 1: '#f2c9a0', 2: '#dfe6ef', 3: '#8e9bad', 4: '#454e5e', 5: '#d8403a', 6: '#ffd24a', 7: '#5b3a24', 8: '#f4fbff' };
+const KNIGHT_PALETTE16 = { 1: '#cc9a78', 2: '#a8d0f4', 3: '#b4c4dc', 4: '#433e4e', 5: '#b83a4e', 6: '#e2aa38', 7: '#4e3f2a', 8: '#ffffff' };
 const WITCH_A16 = [
   [0,0,0,0,0,0,0,4,2,0,0,0,0,0,7,0],
   [0,0,0,0,0,0,4,2,2,4,0,0,0,7,7,7],
@@ -316,7 +313,7 @@ const WITCH_C16 = [
   [0,0,0,0,4,4,0,0,0,8,8,0,0,0,0,0],
   [0,0,0,0,8,8,0,0,0,0,0,0,0,0,0,0],
 ];
-const WITCH_PALETTE16 = { 1: '#f0d2b8', 2: '#a276f4', 3: '#d2b6ff', 4: '#2e1f52', 5: '#ffb347', 6: '#c9a06a', 7: '#aef6ff', 8: '#1a1030' };
+const WITCH_PALETTE16 = { 1: '#cc9a78', 2: '#b49ad4', 3: '#ece0c0', 4: '#160e24', 5: '#e2aa38', 6: '#887352', 7: '#a8d0f4', 8: '#3a2654' };
 const ROGUE_A16 = [
   [0,0,0,0,0,4,2,2,4,0,0,0,0,0,0,0],
   [0,0,0,0,4,2,3,3,2,4,0,0,0,0,0,0],
@@ -371,7 +368,7 @@ const ROGUE_C16 = [
   [0,0,0,4,6,0,0,0,0,8,8,8,0,0,0,0],
   [0,0,8,8,8,0,0,0,0,0,0,0,0,0,0,0],
 ];
-const ROGUE_PALETTE16 = { 1: '#e8c09a', 2: '#3f9a4c', 3: '#7fd068', 4: '#173d1f', 5: '#d9c08a', 6: '#4a3426', 7: '#eef4ff', 8: '#101810' };
+const ROGUE_PALETTE16 = { 1: '#cc9a78', 2: '#86a062', 3: '#acc084', 4: '#2e4a2c', 5: '#887352', 6: '#4e3f2a', 7: '#e4e2ea', 8: '#1e3220' };
 const PALADIN_A16 = [
   [0,0,3,0,0,0,2,2,0,0,0,3,0,0,0,0],
   [0,0,3,3,0,2,2,2,6,0,3,3,0,0,0,0],
@@ -426,7 +423,7 @@ const PALADIN_C16 = [
   [0,0,0,2,5,5,0,0,0,8,8,8,8,0,0,0],
   [0,0,8,8,8,8,0,0,0,0,0,0,0,0,0,0],
 ];
-const PALADIN_PALETTE16 = { 1: '#f2cfa6', 2: '#e0aa2e', 3: '#ffe28a', 4: '#f6f2e6', 5: '#c9c2ae', 6: '#5a3f14', 7: '#2a1d08', 8: '#8a5a2a', 9: '#b8c2cc' };
+const PALADIN_PALETTE16 = { 1: '#cc9a78', 2: '#e2aa38', 3: '#ece0c0', 4: '#b4c4dc', 5: '#a46a16', 6: '#523208', 7: '#1e1810', 8: '#7a4c0e', 9: '#b4c4dc' };
 
 function makeCharacterSprite(id, name, blurb, frames, palette) {
   return {

@@ -26,6 +26,10 @@ const prof = T.getProfile();
 const sub = () => el['ov-sub'].innerHTML || '';
 const cards = () => el['ov-cards'].children;
 const cardNamed = (name) => [...cards()].find(c => (c.innerHTML || '').includes('>' + name + '<')) || null;
+// R5: a trophy shows as its emblem with its name; the toasts' three lists stay.
+const trophyShown = (html, id, name) => html.includes('<canvas class="ec-icon" width="32" height="32" data-trophy="' + id +
+  '"></canvas><span class="ec-cap">TROPHY</span><span class="ec-nm">' + name + '</span>');
+const trophiesOf = (t) => ({ earned: t.earned, granted: t.granted, threats: t.threats });
 const quiet = () => { st.spawnTimer = 1e9; st.wave.endsAt = st.time + 1e9; st.enemies.length = 0; };
 // A run that ends with these numbers, through the real death funnel.
 function runEnding({ kills = 0, bossKills = 0 }) {
@@ -36,7 +40,8 @@ function runEnding({ kills = 0, bossKills = 0 }) {
   st.player.kills = kills;
   st.runCounts.bossKills = bossKills;
   T.die();
-  for (let i = 0; i < 6 && st.mode !== 'dead'; i++) { h.key('keydown', { key: 'x', preventDefault() {} }); pump(2); }
+  h.skipMovie();   // R2: the one movie skip rule (two presses)
+  pump(2);
   assert.equal(st.mode, 'dead', 'the end card is up');
   return sub();
 }
@@ -53,9 +58,9 @@ S.check('the shop sells no elite modifier', () => {
 S.check('a trophy that gives nothing is named on the end card, with no reward or threat line', () => {
   const html = runEnding({ kills: 40 });        // the first kill ever: FIRST_BLOOD
   const name = TROPHY_ART.FIRST_BLOOD.name;
-  assert.ok(html.includes('<span class="earn">TROPHY: ' + name + '</span>'), html);
-  assert.ok(!/TROPHY REWARD|NEW THREAT/.test(html), html);
-  assert.deepEqual(st.runTrophies, { earned: [name], granted: [], threats: [] });
+  assert.ok(trophyShown(html, 'FIRST_BLOOD', name), html);
+  assert.ok(!/UNLOCKED, FREE|NEW THREAT/.test(html), html);
+  assert.deepEqual(trophiesOf(st.runTrophies), { earned: [name], granted: [], threats: [] });
   assert.deepEqual(prof.unlockedElites, []);
 });
 
@@ -64,13 +69,13 @@ S.check('the 100-kill trophy: the end card names it and the threat it brings, in
   const html = runEnding({ kills: 60 });        // 40 + 60 = 100 across the two runs
   assert.ok(prof.unlockedElites.includes('SWIFT'), 'the trophy brought SWIFT');
   const name = TROPHY_ART.KILLS_100.name;
-  assert.ok(html.includes('<span class="earn">TROPHY: ' + name + '</span>'), html);
-  assert.ok(html.includes('<span class="cause">NEW THREAT: ' + ELITE_MODIFIERS.SWIFT.desc + '</span>'), html);
-  assert.ok(!/TROPHY REWARD/.test(html), 'a threat is not called a reward: ' + html);
+  assert.ok(trophyShown(html, 'KILLS_100', name), html);
+  assert.ok(html.includes('<span class="ec-item ec-threat"><span class="ec-cap">NEW THREAT</span><span class="ec-nm">' + ELITE_MODIFIERS.SWIFT.desc + '</span></span>'), html);
+  assert.ok(!/UNLOCKED, FREE/.test(html), 'a threat is not called a reward: ' + html);
   assert.ok(!/gold|shop/i.test(ELITE_MODIFIERS.SWIFT.desc), 'and the line carries no shop talk');
   assert.deepEqual(st.runTrophies.threats, [ELITE_MODIFIERS.SWIFT.desc]);
-  // The lines sit before the BUY NEXT goal, after the gold.
-  assert.ok(html.indexOf('GOLD EARNED') < html.indexOf('TROPHY: ') && (html.indexOf('BUY NEXT') < 0 || html.indexOf('TROPHY: ') < html.indexOf('BUY NEXT')));
+  // R5: the earned items come after the gold and before the details.
+  assert.ok(html.indexOf('GOLD EARNED') < html.indexOf('ec-trophy') && html.indexOf('ec-trophy') < html.indexOf('ec-more'));
   // The trophy moved no gold beyond what the run paid.
   assert.equal(prof.gold - gold0, st.runSettled.gold);
   // The card is rebuilt from state after a visit to the shop: the lines survive.
@@ -81,7 +86,7 @@ S.check('the 100-kill trophy: the end card names it and the threat it brings, in
 S.check('a run with no trophy has no trophy line, and one already earned is not announced twice', () => {
   const html = runEnding({ kills: 5 });
   assert.ok(!/TROPHY|NEW THREAT/.test(html), html);
-  assert.deepEqual(st.runTrophies, { earned: [], granted: [], threats: [] });
+  assert.deepEqual(trophiesOf(st.runTrophies), { earned: [], granted: [], threats: [] });
   assert.equal(prof.unlockedElites.filter(e => e === 'SWIFT').length, 1);
 });
 
@@ -93,8 +98,8 @@ S.check('a trophy that gives a weapon: named FREE on the end card, and the shop 
   const gold0 = prof.gold;
   const html = runEnding({ kills: 3, bossKills: 1 });
   assert.ok(prof.unlockedWeapons.includes('ORBIT'), 'granted');
-  assert.ok(html.includes('TROPHY: ' + TROPHY_ART.FIRST_BOSS.name), html);
-  assert.ok(html.includes('<span class="next">TROPHY REWARD, FREE: ' + row.name + '</span>'), html);
+  assert.ok(trophyShown(html, 'FIRST_BOSS', TROPHY_ART.FIRST_BOSS.name), html);
+  assert.ok(html.includes('data-shop="' + row.id + '"></canvas><span class="ec-cap">UNLOCKED, FREE</span><span class="ec-nm">' + row.name + '</span>'), html);
   assert.ok(!/NEW THREAT/.test(html));
   assert.equal(prof.gold - gold0, st.runSettled.gold, 'free: no gold left the bank for it');
   // In the shop: OWNED, and why.

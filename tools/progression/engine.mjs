@@ -19,6 +19,7 @@ globalThis.__HORDES_SIM_REGISTRY = { totalS: 0, arms, get budgetS() { return nul
 
 const H = await import(treeUrl('test/_harness.mjs'));
 const CFG = (await import(treeUrl('src/config.js'))).CONFIG;
+const KIT_OFFER = (await import(treeUrl('src/config.js'))).KIT_OFFER || {};
 const EVOLUTION_DEFS = (await import(treeUrl('src/evolutions.js'))).EVOLUTION_DEFS || {};
 // Fusion pairs (absent in a tree older than the fusion rework: no fusion awareness there).
 // M5b sites (absent in a tree older than the sites slice: no site counts there).
@@ -33,8 +34,24 @@ const HANDS = await import(treeUrl('src/hands.js')).catch(() => null);
 const JOKERS = await import(treeUrl('src/jokers.js')).catch(() => null);
 // The two jokers that are a trade, not a plain gain: only --once take picks them.
 const TRADE_JOKERS = ['once', 'hordebait'];
+if (process.env.BAL_NOHAND === '1' && HANDS) {
+  for (const k of Object.keys(HANDS.HAND_BY_ID)) Object.assign(HANDS.HAND_BY_ID[k], { dmg: 0, hp: 0, cooldown: undefined });
+  for (const k of Object.keys(HANDS.FLUSH_BOONS)) HANDS.FLUSH_BOONS[k] = {};
+}
 
-export const DRAFT_POLICIES = ['random', 'auto', 'weapons-first', 'evolution-first', 'stats-first', 'hand-first'];
+// BALANCE SWITCHES (balance review 2026-11): paired before/after on one tree.
+//   BAL_MAW_HP=<n>   the Maw's pool (CONFIG.RUN.MAW_HP) for this worker
+//   BAL_PRESTIGE=<n> a fixed build plays at this prestige tier
+//   BAL_CHAR_NOWEAPON=1  a granted character does NOT bring its starting weapon
+//                    (the rule before the review: it starts with it only if owned)
+if (process.env.BAL_MAW_HP) CFG.RUN.MAW_HP = Number(process.env.BAL_MAW_HP);
+// BAL_AUTO_RANK=<x>  the auto-pick's rank for a NEW weapon card (KIT_OFFER.AUTO_RANK)
+if (process.env.BAL_AUTO_RANK) KIT_OFFER.AUTO_RANK = Number(process.env.BAL_AUTO_RANK);
+
+// 'auto-v1' is the game's auto-pick as it was before the balance review (joker,
+// then a NEW weapon at KIT_OFFER.AUTO_RANK, then a RARE card, else the first card),
+// kept so a change to the auto-pick can be measured against it on the same tree.
+export const DRAFT_POLICIES = ['random', 'auto', 'auto-v1', 'weapons-first', 'evolution-first', 'stats-first', 'hand-first'];
 export const ONCE_MODES = ['asis', 'take', 'never'];
 export const LOADOUT_POLICIES = ['default', 'all-owned'];
 // stats-first draft priority (base stat-card ids). Cards not listed are taken
@@ -89,9 +106,11 @@ function applyCharacter(prof, cat, id) {
   if (prof.equippedCharacter === id) return;
   // Granted, not bought: the character is an independent variable, so its
   // unlock price is kept out of the career's economy.
+  const weaponsBefore = [...(prof.unlockedWeapons || [])];
   if (!cat.META.grantCharacter(prof, id) || !cat.META.equipCharacter(prof, id)) {
     throw new SimConfigError(`could not grant/equip character '${id}'`);
   }
+  if (process.env.BAL_CHAR_NOWEAPON === '1') prof.unlockedWeapons = weaponsBefore;
 }
 
 function applyLoadout(h, prof, cat, policy) {
@@ -139,6 +158,34 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
     let firstFuse = null, fused = 0;    // the same for fusions
     const picks = { weapon: 0, stat: 0, once: 0, other: 0 };
     const trace = []; let nextTrace = traceEvery;
+    // BAL: potions drunk, time at a full belt, boss/herald/maw arrivals and deaths,
+    // stage changes, wave starts, every draft pick. (The review's gem-hold experiment
+    // needed hooks in src/ and is not kept: it measured abandoning gems, not holding them.)
+    const BAL = { drankHp: 0, drankMp: 0, fullBeltS: 0, playS: 0, bosses: [], stages: [], waves: [[1, 0]], draftLog: [], finaleAt: null };
+    let balPrevHp = null, balPrevMp = null, balLastT = st.time, balStage = st.stage, balWave = st.wave.num;
+    const balSeen = new Map();
+    const balTrack = () => {
+      const p = st.player; const dt = st.time - balLastT; balLastT = st.time;
+      if (p && p.potions) {
+        if (balPrevHp !== null && p.potions.hp < balPrevHp) BAL.drankHp += balPrevHp - p.potions.hp;
+        if (balPrevMp !== null && p.potions.mp < balPrevMp) BAL.drankMp += balPrevMp - p.potions.mp;
+        balPrevHp = p.potions.hp; balPrevMp = p.potions.mp;
+        if (dt > 0 && (st.mode === 'playing' || st.mode === 'finale')) {
+          BAL.playS += dt;
+          if (st.potionCap > 0 && p.potions.hp >= st.potionCap) BAL.fullBeltS += dt;
+        }
+      }
+      if (st.mode === 'finale' && BAL.finaleAt === null) BAL.finaleAt = Math.round(st.time);
+      for (const e of st.enemies) {
+        if ((e.boss || e.finalBoss) && !balSeen.has(e)) {
+          const r = { w: st.wave.num, id: e.finalBoss ? 'MAW' : e.midBoss ? 'HERALD' : (e.bossId || '?'), at: Math.round(st.time), dead: null, st: st.stage };
+          balSeen.set(e, r); BAL.bosses.push(r);
+        }
+      }
+      for (const [e, r] of balSeen) if (r.dead === null && e.hp <= 0) r.dead = Math.round(st.time);
+      if (st.stage !== balStage) { BAL.stages.push([Math.round(st.time), st.stage]); balStage = st.stage; }
+      if (st.wave.num !== balWave) { BAL.waves.push([st.wave.num, Math.round(st.time)]); balWave = st.wave.num; }
+    };
     // STALLS: a 10 s window in which a goal is up (portal, pilot site goal,
     // run chest) and the pilot got no 8 px closer to it, during play.
     let stalls = 0, stallT = 0, stallBest = Infinity, stallKey = null;
@@ -155,6 +202,11 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         const keepIdx = offs.findIndex((o) => o.jokerSwap && o.keep);
         // auto: the game's own unattended pick (T.auto.pickIndex), as it plays.
         if (pol.draft === 'auto') pick = T.auto.pickIndex(offs);
+        else if (pol.draft === 'auto-v1') {
+          const ar = Number(KIT_OFFER.AUTO_RANK) || 1.5;
+          const rank = (u) => (u && u.tier === 'JOKER') ? (rowFull() ? -1 : 2) : (u && u.kitNew) ? ar : (u && u.tier === 'RARE') ? 1 : 0;
+          pick = 0; for (let i = 1; i < offs.length; i++) if (rank(offs[i]) > rank(offs[pick])) pick = i;
+        }
         else if (pol.once === 'take' && onceIdx >= 0) pick = onceIdx;
         // A full joker row: the deliberate policies keep it (random picks at random).
         else if (keepIdx >= 0 && pol.draft !== 'random') pick = keepIdx;
@@ -184,12 +236,14 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
           if (pick === null) pick = cand[Math.floor(prng() * cand.length)];
         }
         const o = offs[pick]; drafts++;
+        BAL.draftLog.push([Math.round(st.time), String(o.id)]);
         const cls = o.id === onceId ? 'once' : isWeapon(o) ? 'weapon' : statPriority.includes(o.id) ? 'stat' : 'other';
         picks[cls]++;
         if (o.id === onceId) tookOnce = Math.round(st.time);
         cards0[pick].click();
       }
       h.pump(1); frames++;
+      balTrack();
       maxWave = Math.max(maxWave, st.wave.num);
       { const n = st.weapons.filter((w) => w.type !== 'VOLLEY').length + st.weapons.filter((w) => w.fused).length;
         if (n > kitMax) kitMax = n;
@@ -234,8 +288,8 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
           else if (st.time - stallT >= 10) { stalls++; stallT = st.time; stallBest = d; }
         }
       }
-      if (st.mode === 'dead') { end = 'died'; break; }
       if (st.runWon) { end = 'won'; break; }
+      if (st.mode === 'dead') { end = 'died'; break; }
       if (st.time >= capS) { end = 'capped'; break; }
       if (st.mode === 'escape') {
         escFrames++;
@@ -255,7 +309,7 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         }
       }
     }
-    if (end !== 'died') { try { T.purse.settle(); } catch { /* already settled */ } }
+    if (end === 'capped' || String(end).startsWith('stuck')) { try { T.purse.settle(); } catch { /* already settled */ } }
     const s = st.runSettled || {};
     return {
       end, t: Math.round(st.time * 10) / 10, wave: maxWave, level: st.player.level, drafts, kills: st.player.kills,
@@ -272,6 +326,14 @@ export function playRun(h, pol, { seed, capS, speed, onceId, statPriority, trace
         cracks: (st.secrets || []).filter((x) => x.kind === 'crack' && x.state === 'spent').length,
         glyph: (st.secrets || []).some((x) => x.kind === 'glyph' && x.state === 'spent'), mimic: !!st.poi.mimicDone } : null,
       hand: (st.player.hand && st.player.hand.id) || null, jokers: (st.player.jokers || []).length, ...(traceEvery ? { trace } : {}),
+      handSuit: (st.player.hand && st.player.hand.suit) || null,
+      jokerIds: (st.player.jokers || []).map((j) => j.id || j),
+      weaponsEnd: (st.weapons || []).map((w) => w.type + ':' + (w.level || 1) + (w.evolutionId ? '*' : '') + (w.fusionId ? '+' : '')),
+      dmgBase: st.player.base ? Math.round(st.player.base.damage * 100) / 100 : null, dmgEnd: Math.round(st.player.stats.damage * 100) / 100,
+      hpEnd: Math.round(st.player.stats.maxHp), mawCleared: !!st.mawCleared,
+      richXp: Math.round(st.runCounts.richXp || 0), richBonusXp: Math.round(st.runCounts.richBonusXp || 0),
+      deathCtx: end === 'died' ? { boss: !!(st.wave.boss || (st.wave.bosses || []).some((b) => b.hp > 0)), finale: BAL.finaleAt !== null, wave: st.wave.num, stage: st.stage } : null,
+      bal: { ...BAL, fullBeltS: Math.round(BAL.fullBeltS), playS: Math.round(BAL.playS) },
     };
   } finally {
     Math.random = realRandom;
@@ -384,6 +446,7 @@ export async function runFixed(job, emit) {
   prof.gold = 0;
   const catPct = cat.totalCost ? +(100 * (1 - cat.remaining(prof).cost / cat.totalCost)).toFixed(3) : 100;
   prof.bestTime = 1e9;                         // steady-state income: no FIRST_CLEAR bonus
+  if (process.env.BAL_PRESTIGE) prof.prestige = Number(process.env.BAL_PRESTIGE);
   applyLoadout(h, prof, cat, job.policy.loadout);
   const r = playRun(h, job.policy, runOpts(runSeed(job.seed, 1)));
   emit({

@@ -24,7 +24,7 @@ check('descriptor: ominous name + flavor, wave target, huge display hp', () => {
   assert.equal(FINAL_BOSS.name, 'THE MAW OF THE HORDE');
   assert.ok(FINAL_BOSS.flavor.length > 3, 'flavor line for the announce');
   assert.equal(FINAL_BOSS_WAVE, 5, 'wave-5 target (tunable)');
-  assert.equal(DISPLAY_HP, 250_000, 'huge display hp');
+  assert.equal(DISPLAY_HP, 7_500_000, 'huge display hp');
   assert.ok(typeof FINAL_BOSS.decide === 'function');
 });
 
@@ -212,12 +212,14 @@ check('sprite: 34x38 rectangular, palette-complete, two distinct frames', () => 
   assert.equal(s.box.w, w); assert.equal(s.box.h, h);
   assert.equal(s.anchor.x, Math.floor(w / 2));
   assert.equal(s.anchor.y, Math.floor(h / 2));
-  // M2 contrast pass: the hide must read against the floor (>= 3:1 on the
-  // darkest-contrast theme), with a darker shade (2) for its modelling.
+  // bossdark: the hide is dark and heavy; a bright rim carries it on a dark
+  // floor (test/test_actor_contrast.mjs holds the rim to 3:1 on every floor),
+  // with a darker shade (2) for its modelling.
   const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
   const lum = (h) => 0.2126 * lin(parseInt(h.slice(1, 3), 16)) + 0.7152 * lin(parseInt(h.slice(3, 5), 16)) +
     0.0722 * lin(parseInt(h.slice(5, 7), 16));
-  assert.ok(lum(s.palette[1]) >= 0.22, `readable hide (${s.palette[1]})`);
+  assert.ok(lum(s.palette[1]) < 0.05, `a dark, heavy hide (${s.palette[1]})`);
+  assert.ok(s.rim && lum(s.rim) > 4 * lum(s.palette[1]), `a bright rim round it (${s.rim})`);
   assert.ok(lum(s.palette[2]) < lum(s.palette[1]), 'shade is darker than the hide');
   // and the teeth/core read: bone + glow both present in the maw rows
   assert.ok(used.has(3) && used.has(4) && used.has(5), 'teeth(3), eyes(4), core(5) used');

@@ -10,8 +10,7 @@
 // THE MODEL (follows docs/HORDES_GOALS_2026-09-12.md G9)
 //   * An achievement is a GOAL over a run summary plus cumulative counters.
 //   * Earning one UNLOCKS REAL CONTENT (a weapon, an elite, a pilot). The
-//     genre leaders do exactly this (VS: "Achievements, displayed as Unlocks
-//     in-game, unlock new items, characters, stages, Relics"). It is the
+//     earned unlock turns a goal into new things to play with. It is the
 //     answer to "not enough options": achieve -> unlock -> more options.
 //   * Unlocks are "ACHIEVE **OR** BUY". The gold price on the shop row is
 //     untouched — the achievement is a second, earned route to the same row.

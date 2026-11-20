@@ -4,15 +4,18 @@
 //      the list written by the build before the pass (fixture
 //      test/fixtures/building_footprints_pre_world_art.json, from 3a01e88).
 //   2. ART INSIDE THE BOX — every redrawn design paints inside [0,w)x[0,h).
-//   3. GROUND PALETTES — each stage owns a material palette; its underlay
-//      tones are never lighter than its base (actors keep their contrast) and
-//      every base stays in the mid-dark band; the wave still leans the colour.
+//   3. GROUND PALETTES — each stage owns a material palette. R6 (stage value
+//      keys): a DARK floor keeps the mid-dark band and underlay tones never
+//      lighter than its base (the actors' bodies carry the contrast there); a
+//      LIGHT floor (Ashen Waste, Bone Desert, the snow) is held by
+//      test/test_stage_keys.mjs instead (the actors' dark edges carry it).
+//      The wave still leans the colour.
 //   4. DIRECT PATH — without a real canvas the ground paints with fillRect
 //      (the headless harness), and the chunk cache stays off.
 import fs from 'node:fs';
 import { STAGE_BUILDINGS, buildingRects } from '../src/stage_buildings.js';
 import { STAGE_IDS } from '../src/stages.js';
-import { STAGE_GROUND_PALETTES, stageGroundPalette, groundChunksOn } from '../src/world_ground.js';
+import { STAGE_GROUND_PALETTES, stageGroundPalette, groundChunksOn, groundIsLight } from '../src/world_ground.js';
 import { CONFIG as C } from '../src/config.js';
 
 let failed = 0;
@@ -59,9 +62,11 @@ console.log('GROUND PALETTES (stage owns the material, wave leans it):');
   ok(Object.keys(STAGE_GROUND_PALETTES).sort().join() === [...STAGE_IDS].sort().join(), 'one ground palette per stage');
   for (const id of STAGE_IDS) {
     const P = STAGE_GROUND_PALETTES[id];
-    ok(lum(P.base) >= 0.012 && lum(P.base) <= 0.046, id + ': base in the mid-dark band (L ' + lum(P.base).toFixed(3) + ')');
-    ok(lum(P.patch) <= lum(P.base) + 1e-9 && lum(P.patch2) <= lum(P.base) + 0.002,
-      id + ': underlay tones never lighter than the base (shadow, not highlight)');
+    if (!groundIsLight(id)) {
+      ok(lum(P.base) >= 0.008 && lum(P.base) <= 0.046, id + ': dark floor, base in the mid-dark band (L ' + lum(P.base).toFixed(3) + ')');
+      ok(lum(P.patch) <= lum(P.base) + 1e-9 && lum(P.patch2) <= lum(P.base) + 0.002,
+        id + ': dark floor, underlay tones never lighter than the base (shadow, not highlight)');
+    } else ok(lum(P.base) >= 0.15, id + ': light floor (L ' + lum(P.base).toFixed(3) + '), held by test_stage_keys');
     const p1 = stageGroundPalette(id, C.GROUND.THEMES[0]), p4 = stageGroundPalette(id, C.GROUND.THEMES[3]);
     ok(p1.base !== p4.base, id + ': the wave theme still leans the floor colour');
   }

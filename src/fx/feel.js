@@ -8,6 +8,7 @@
 // roll order must not move); jitter comes from a private hash.
 import { enemySpriteFor } from '../enemy_sprites.js';
 import { SPRITES, BOSS_SPRITE } from '../sprites.js';
+import { ANIM, actorAnimOn, stepFacing, facingWeight } from '../actor_anim.js';
 
 export const FEEL = {
   NUM_CAP: 48,          // live damage numbers
@@ -20,6 +21,7 @@ export const FEEL = {
   PUFF_CAP: 56,
   SPARK_CAP: 72,
   BURST_CAP: 8,
+  CORPSE_CAP: 40,       // bodies folding down before their puff
   // Knockback: small bodies only, never elites, bosses or planted turrets.
   KB_MAX_W: 15,         // widest body that is pushed
   KB_SPEED: 46,         // px/s at the instant of the hit
@@ -30,19 +32,25 @@ export const FEEL = {
   SHAKE_DECAY: 9,       // 1/s
   HURT_FLASH: 0.22,     // s the player sprite flashes after a hit
   COMBO_WINDOW: 0.9,    // s between gem pickups that keep the pitch rising
+  COIN_WINDOW: 1.2,     // s between gold gains that keep a coin streak going
+  ELITE_QUIET: 8,       // s with no new elite before the growl marks an arrival again
 };
 
 function freshFeel() {
   return {
     time: 0, pass: 0, player: null,
-    nums: [], puffs: [], sparks: [], bursts: [],
+    nums: [], puffs: [], sparks: [], bursts: [], corpses: [],
+    hero: { face: 1, vxs: 0, spd: 0, lx: null, ly: null },
     shake: 0, shakeT: 0, hurtT: 0,
     hp: null, xp: null, level: null, potHp: null, potMp: null,
     combo: 0, comboT: 0,
+    gold: null, coinStreak: 0, coinT: 0,
+    eliteQuiet: Infinity,   // s since an elite last arrived (the first one always growls)
     track: new WeakMap(), prev: [], cur: [],
     seenFx: new WeakSet(), groundPrev: [], groundCur: [],
     crits: new WeakSet(),
     seed: 1,
+    hitAvg: 0,     // running average of one hit on an enemy (what counts as a big hit)
   };
 }
 
@@ -67,6 +75,16 @@ let shakeOn = true;      // the settings toggle (reduced motion is read at draw 
 export function setShakeEnabled(b) { shakeOn = !!b; }
 export function getShakeEnabled() { return shakeOn; }
 
+// The NUMBERS setting: which damage numbers are drawn. Drawing only: the pool
+// above keeps every number (and every point of damage) whatever the mode.
+//   all: every hit (the default), calmer late in a run (fx/feel_render.js)
+//   big: only crits, kills, big hits and the hero's own hurt numbers
+//   off: no damage numbers at all
+export const NUMBER_MODES = ['all', 'big', 'off'];
+let numbersMode = 'all';
+export function setNumbersMode(m) { numbersMode = NUMBER_MODES.includes(m) ? m : 'all'; }
+export function getNumbersMode() { return numbersMode; }
+
 function rnd(f) {        // private LCG, 0..1
   f.seed = (Math.imul(f.seed, 1664525) + 1013904223) >>> 0;
   return f.seed / 4294967296;
@@ -76,13 +94,15 @@ function rnd(f) {        // private LCG, 0..1
 const bodyCache = new WeakMap();
 export function bodyColourOf(e) {
   const spr = e.boss ? (e.bossSprite || BOSS_SPRITE) : (enemySpriteFor(e.typeId) || SPRITES[e.typeId]);
-  if (!spr) return '#c8c8d8';
+  if (!spr) return '#bebac4';
+  // bossdark: a boss's body is dark on purpose; its puff is its bright rim.
+  if (e.boss && spr.rim) return spr.rim;
   let c = bodyCache.get(spr);
   if (!c) {
     const cnt = {};
     for (const row of spr.frames[0]) for (const v of row) if (v) cnt[v] = (cnt[v] || 0) + 1;
     const k = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
-    c = spr.palette[k] || '#c8c8d8';
+    c = spr.palette[k] || '#bebac4';
     bodyCache.set(spr, c);
   }
   return c;
@@ -127,13 +147,26 @@ function pushCapped(arr, item, cap) {
   arr.push(item);
 }
 
-export function addPuff(f, e, big) {
+// `delay` s: the puff waits (age below 0, not drawn) while the body collapses.
+export function addPuff(f, e, big, delay = 0) {
   const w = e.w || 10;
   const cls = e.boss ? 3 : (e.elite || big) ? 2 : w > 13 ? 1 : 0;
   pushCapped(f.puffs, {
     x: e.x, y: e.y - (e.flying ? (e.z || 0) : 0), cls, colour: bodyColourOf(e),
-    age: 0, ttl: [0.26, 0.32, 0.42, 0.7][cls], rot: rnd(f) * 6.283, r: w * 0.6,
+    age: -delay, ttl: [0.26, 0.32, 0.42, 0.7][cls], rot: rnd(f) * 6.283, r: w * 0.6,
   }, FEEL.PUFF_CAP);
+}
+
+// A killed body folds down where it stood before its puff (drawn by
+// render.js from the body itself: its sprite, frame and facing at death).
+function addCorpse(f, e, face) {
+  pushCapped(f.corpses, { e, face, age: 0, ttl: ANIM.COLLAPSE_S }, FEEL.CORPSE_CAP);
+}
+
+// The feel record of a live body (its facing and walk speed), or null.
+export function trackOf(state, e) {
+  const f = state.feel;
+  return f ? (f.track.get(e) || null) : null;
 }
 
 export function addSparks(f, x, y, colour, n, speed = 30) {
@@ -196,6 +229,7 @@ export function feelStep(state, dt) {
   agePool(f.nums, dt);
   agePool(f.puffs, dt);
   agePool(f.bursts, dt);
+  agePool(f.corpses, dt);
   for (const s of f.sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 60 * dt; }
   agePool(f.sparks, dt);
   f.shake = Math.max(0, f.shake - f.shake * FEEL.SHAKE_DECAY * dt - 0.6 * dt);
@@ -203,26 +237,44 @@ export function feelStep(state, dt) {
   f.hurtT = Math.max(0, f.hurtT - dt);
   f.comboT = Math.max(0, f.comboT - dt);
   if (f.comboT <= 0) f.combo = 0;
+  f.eliteQuiet += dt;
+  f.coinT = Math.max(0, f.coinT - dt);
+  if (f.coinT <= 0) f.coinStreak = 0;
 
   // -- enemies: hits (numbers + knockback) and removals (puffs) --
   const cur = f.cur; cur.length = 0;
-  let hitThisStep = false, bossAlive = false;
+  const faceK = facingWeight(dt);
+  let hitThisStep = false, critThisStep = false, bossAlive = false;
   const scan = (e) => {
     let r = f.track.get(e);
     if (!r) {
-      r = { hp: e.hp, pass: 0, kvx: 0, kvy: 0, kcd: 0 };
+      // face: a new body looks toward the hero until it walks somewhere.
+      r = { hp: e.hp, pass: 0, kvx: 0, kvy: 0, kcd: 0, lx: e.x, ly: e.y, face: e.x > p.x ? -1 : 1, vxs: 0, spd: 0 };
       f.track.set(e, r);
       if (e.boss || e.finalBoss) { sfx('bossArrive'); addShake(f, 3); }
+      else if (e.elite && e.hp > 0) {
+        // Red-orange danger has a sound. It marks an ARRIVAL: the first elite
+        // after a quiet spell growls. Late in a run elites come more than once
+        // a second, and a growl for each (even one in 4 s) was a steady beat
+        // that told the player nothing.
+        if (f.eliteQuiet >= FEEL.ELITE_QUIET) sfx('eliteArrive');
+        f.eliteQuiet = 0;
+      }
     }
     if ((e.boss || e.finalBoss) && e.hp > 0) bossAlive = true;
     r.pass = f.pass;
     cur.push(e);
+    // Facing and walk speed from the body's own move this step (the shove
+    // below is left out: it was added after lx was taken last step).
+    stepFacing(r, e.x - r.lx, e.y - r.ly, dt, faceK);
     const dmg = r.hp - e.hp;
     if (dmg > 0.01) {
       hitThisStep = true;
       const crit = f.crits.has(e);
-      if (crit) f.crits.delete(e);
-      addNumber(f, e.x, e.y - (e.h || 10) / 2 - (e.flying ? (e.z || 0) : 0) - 2, dmg, crit ? 'crit' : 'hit', e);
+      if (crit) { f.crits.delete(e); critThisStep = true; }
+      f.hitAvg = f.hitAvg > 0 ? f.hitAvg * 0.98 + dmg * 0.02 : dmg;
+      const num = addNumber(f, e.x, e.y - (e.h || 10) / 2 - (e.flying ? (e.z || 0) : 0) - 2, dmg, crit ? 'crit' : 'hit', e);
+      if (num && e.hp <= 0) num.kill = true;   // the killing blow reads large
       if (!e.boss && !e.elite && !e.finalBoss && !e.attached && (e.w || 0) <= FEEL.KB_MAX_W &&
           (e.speed || 0) > 0 && r.kcd <= 0 && e.hp > 0 && dmg >= (e.maxHp || 1) * FEEL.KB_MIN_FRAC) {
         const dx = e.x - p.x, dy = e.y - p.y, len = Math.hypot(dx, dy) || 1;
@@ -238,6 +290,7 @@ export function feelStep(state, dt) {
       r.kvx *= k; r.kvy *= k;
       if (Math.abs(r.kvx) + Math.abs(r.kvy) < 2) { r.kvx = 0; r.kvy = 0; }
     }
+    r.lx = e.x; r.ly = e.y;
   };
   for (const e of state.enemies) scan(e);
   if (state.finalBoss && state.mode === 'finale') scan(state.finalBoss);
@@ -246,16 +299,32 @@ export function feelStep(state, dt) {
     const r = f.track.get(e);
     if (!r || r.pass === f.pass) continue;
     if (Math.abs(e.x - p.x) > 320 || Math.abs(e.y - p.y) > 220) continue;   // far off screen
-    addPuff(f, e, false);
+    if (e.quietDeath) {
+      // The portal beat draws this boss's death itself (main.js): no second
+      // body folding on the spot, no puff behind its sinking sprite.
+    } else if (actorAnimOn() && !e.finalBoss) {
+      addCorpse(f, e, r.face);
+      addPuff(f, e, false, ANIM.COLLAPSE_S);
+    } else addPuff(f, e, false);
     deaths++;
+    // Its last number shows the kill (a body can leave the list before its hp shows 0).
+    for (const n of f.nums) if (n.owner === e) n.kill = true;
     if (e.boss) bigDeath = Math.max(bigDeath, 2);
     else if (e.elite) bigDeath = Math.max(bigDeath, 1);
   }
   { const old = f.prev; f.prev = cur; f.cur = old; }
   if (sounds && sounds.setMusicMode) sounds.setMusicMode(bossAlive ? 'boss' : 'run');
   if (hitThisStep) sfx('hit');
+  if (critThisStep) sfx('crit');   // one ping per step at most; audio.js rate-limits it further
   if (deaths > 0) sfx(bigDeath === 2 ? 'bossDeath' : bigDeath === 1 ? 'eliteDeath' : 'kill');
   if (bigDeath === 2) addShake(f, 5); else if (bigDeath === 1) addShake(f, 2.5);
+
+  // -- player: facing (a jump of 40 px or more is a teleport, not a walk) --
+  {
+    const h = f.hero;
+    if (h.lx !== null && Math.hypot(p.x - h.lx, p.y - h.ly) < 40) stepFacing(h, p.x - h.lx, p.y - h.ly, dt);
+    h.lx = p.x; h.ly = p.y;
+  }
 
   // -- player: hurt, xp (gem pickup), level, potions --
   if (f.hp !== null && p.hp < f.hp - 0.01 && p.hp > -1e6) {
@@ -270,17 +339,27 @@ export function feelStep(state, dt) {
   if (f.xp !== null && f.level === p.level && p.xp > f.xp + 1e-6) {
     f.combo = f.comboT > 0 ? Math.min(12, f.combo + 1) : 0;
     f.comboT = FEEL.COMBO_WINDOW;
-    addSparks(f, p.x, p.y + 2, '#7dffd0', 2, 22);
+    addSparks(f, p.x, p.y + 2, '#4dffd2', 2, 22);
     sfx('gem', f.combo);
   }
   if (f.level !== null && p.level > f.level) {
     pushCapped(f.bursts, { kind: 'levelup', x: p.x, y: p.y, age: 0, ttl: 0.7 }, FEEL.BURST_CAP);
-    addSparks(f, p.x, p.y, '#ffd75e', 14, 60);
+    addSparks(f, p.x, p.y, '#f0c860', 14, 60);
   }
   f.xp = p.xp; f.level = p.level;
+  // -- gold into the run's purse (kills, urns, the survival pay): a coin --
+  const earned = state.runCounts && state.runCounts.gold ? state.runCounts.gold.earned : null;
+  if (typeof earned === 'number') {
+    if (f.gold !== null && earned > f.gold) {
+      sfx('coin', f.coinStreak);
+      f.coinStreak++;
+      f.coinT = FEEL.COIN_WINDOW;
+    }
+    f.gold = earned;
+  }
   if (p.potions) {
     if (f.potHp !== null && (p.potions.hp > f.potHp || p.potions.mp > f.potMp)) {
-      addSparks(f, p.x, p.y, p.potions.hp > f.potHp ? '#ff7a8a' : '#7ab0ff', 8, 40);
+      addSparks(f, p.x, p.y, p.potions.hp > f.potHp ? '#e06a74' : '#a4c4fc', 8, 40);
       sfx('potion');
     }
     f.potHp = p.potions.hp; f.potMp = p.potions.mp;
@@ -299,7 +378,7 @@ export function feelStep(state, dt) {
     if (live.has(o)) continue;
     if (Math.hypot(o.x - p.x, o.y - p.y) > PICK_R) continue;
     const kind = kinds.get(o);
-    addSparks(f, o.x, o.y, kind === 'chest' ? '#ffd75e' : '#ffffff', kind === 'chest' ? 16 : 8, 55);
+    addSparks(f, o.x, o.y, kind === 'chest' ? '#f0c860' : '#ffffff', kind === 'chest' ? 16 : 8, 55);
     pushCapped(f.bursts, { kind: 'pickup', x: o.x, y: o.y, age: 0, ttl: 0.35 }, FEEL.BURST_CAP);
   }
   { const old = f.groundPrev; f.groundPrev = gcur; f.groundCur = old; }
@@ -323,4 +402,33 @@ export function feelStep(state, dt) {
     f.seenFx.add(pr);
     sfx(fire);
   }
+  mawShake(f, state, p, dt);
+}
+
+// R7 THE FINALE: the Maw's attacks shake the screen, each with its own weight.
+// Its wind-up is a low rumble that grows over the wind-up, its barrage a hard
+// kick (lighter when it fires from far off), its bite (its body reaching the
+// hero) the heaviest. All stay under SHAKE_MAX: the world layer moves at most
+// 5 px and the HUD never moves, so a shot can still be read and dodged. The
+// SHAKE setting and reduced motion turn it off (shakeOffset).
+export const MAW_SHAKE = { WINDUP_MIN: 0.8, WINDUP_MAX: 1.8, WINDUP_S: 0.8, BARRAGE: 4, BARRAGE_FAR: 2.5, FAR_D: 320, BITE: 5 };
+function mawShake(f, state, p, dt) {
+  const b = state.mode === 'finale' ? state.finalBoss : null;
+  if (!b) { f.mawTele = 0; f.mawVolley = null; f.mawMask = null; return; }
+  if (b.telegraph) {
+    f.mawTele = (f.mawTele || 0) + dt;
+    const k = Math.min(1, f.mawTele / MAW_SHAKE.WINDUP_S);
+    addShake(f, MAW_SHAKE.WINDUP_MIN + (MAW_SHAKE.WINDUP_MAX - MAW_SHAKE.WINDUP_MIN) * k);
+  } else f.mawTele = 0;
+  // A barrage: the first step a new volley of its shots is on the field.
+  for (const s of state.enemyShots || []) {
+    if (s.kind !== 'maw' || typeof s.volleyId !== 'number' || s.volleyId === f.mawVolley || s.age > 0.25) continue;
+    f.mawVolley = s.volleyId;
+    addShake(f, Math.hypot(b.x - p.x, b.y - p.y) <= MAW_SHAKE.FAR_D ? MAW_SHAKE.BARRAGE : MAW_SHAKE.BARRAGE_FAR);
+    break;
+  }
+  // A bite: the mercy rule's mark turns to a new 'body' id (main.js updateFinale).
+  const m = state.volleyMask;
+  if (typeof m === 'string' && m.startsWith('body') && m !== f.mawMask) addShake(f, MAW_SHAKE.BITE);
+  f.mawMask = m == null ? null : m;
 }

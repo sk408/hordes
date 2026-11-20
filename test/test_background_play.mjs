@@ -432,7 +432,7 @@ s.check('shown again: this tab reloads to load the newer save, and writes nothin
   const h3 = await boot({ tutorial: true, hints: true, variant: 'bg-guided', storage: [['hordes_onboarded', '1']] });
   const T3 = h3.T, k3 = kit(h3);
   h3.pump(3);
-  if (h3.state.mode === 'intro') { h3.key('keydown', { key: 'x', preventDefault() {} }); h3.pump(2); }
+  if (h3.state.mode === 'intro') { h3.skipMovie(); h3.pump(2); }
   T3.startRun();
   h3.pump(10);
   s.check('hidden: the guided tutorial waits for its player (no ticker, no step taken, nothing saved as done)', () => {

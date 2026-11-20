@@ -13,6 +13,7 @@ import { KIT_OFFER, CONFIG } from '../src/config.js';
 import { HINTS } from '../src/tutorial.js';
 import { handCardOf } from '../src/hands.js';
 import { WEAPON_MAX_LEVEL, WEAPON_NAMES } from '../src/weapons.js';
+import { EVOLUTION_DEFS } from '../src/evolutions.js';
 
 const S = suite('test_kit_offer');
 const h = await boot({ storage: [['hordes_onboarded', '1'], ['hordes_tour_draft', '1'], ['hordes_hints_off', '1']] });
@@ -138,10 +139,12 @@ S.check('the cap: with no free slot no NEW card is offered, though the kit still
 S.check('the auto-pick takes a NEW kit card over a RARE and a plain card, not over a joker with room', () => {
   const pick = T.auto.pickIndex;
   st.player.jokers = []; st.jokerSlots = 2;
-  assert.equal(pick([{ id: 'dmg' }, { id: 'lvl_VOLLEY_1' }, { id: 'wpn_ORBIT', kitNew: true }]), 2);
+  // Balance review 2026-11: a weapon level comes before a NEW card (free or not).
+  assert.equal(pick([{ id: 'dmg' }, { id: 'lvl_VOLLEY_1' }, { id: 'wpn_ORBIT', kitNew: true }]), 1);
   assert.equal(pick([{ id: 'r', tier: 'RARE' }, { id: 'wpn_ORBIT', kitNew: true }]), 1);
+  assert.equal(pick([{ id: 'dmg' }, { id: 'wpn_ORBIT', kitNew: true }]), 1);
   assert.equal(pick([{ id: 'j', tier: 'JOKER' }, { id: 'wpn_ORBIT', kitNew: true }]), 0);
-  assert.ok(KIT_OFFER.AUTO_RANK > 1 && KIT_OFFER.AUTO_RANK < 2);
+  assert.ok(KIT_OFFER.AUTO_RANK > 1.3 && KIT_OFFER.AUTO_RANK < 1.6, 'between a partner stat card and a weapon level');
 });
 
 S.check('RETRY (and auto-continue\'s restart) starts the same way: the first weapon only, the whole kit to come', () => {
@@ -599,6 +602,22 @@ S.check('an unattended run raises no newweapon hint (nobody is there to read it)
 S.check('unattended with AUTO-PICK OFF: the free NEW card goes at the stall limit, and the deal again gets its own full wait', () => {
   const STALL = CONFIG.AUTOPILOT.AUTO_STALL_S;
   kitRun(['BEAM', 'ORBIT', 'ZAP']);
+  // A full joker row: a joker with room outranks the NEW card for the auto-pick (by design),
+  // and about 1 seed in 6 dealt one into this draft, so the watchdog took the joker and the
+  // check failed at random (seeds 6, 12, 22). With the row full a joker ranks last.
+  // The auto-pick also takes a weapon level before a NEW card (balance review 2026-11),
+  // so the weapons held are maxed here. A maxed weapon makes its partner card EVOLVES NOW,
+  // which the auto-pick ranks first (that failed this check on 11 seeds in 24), so they are
+  // evolved too: then nothing in the draft outranks the NEW card.
+  const fullJokerRow = () => {
+    st.jokerSlots = 2; st.player.jokers = ['rime', 'ignite'];
+    for (const w of st.weapons) {
+      w.level = WEAPON_MAX_LEVEL;
+      const def = EVOLUTION_DEFS[w.type];
+      if (def && !w.evolutionId) w.evolutionId = def.id;
+    }
+  };
+  fullJokerRow();
   st.unattended = true;
   T.draftAuto.toggle();                    // OFF
   assert.equal(T.draftAuto.on, false);
@@ -607,7 +626,7 @@ S.check('unattended with AUTO-PICK OFF: the free NEW card goes at the stall limi
   h.pump(STALL * 60 - 60);
   assert.equal(st.mode, 'draft'); assert.equal(st.kitRedeal, false, 'held until the stall limit');
   h.pump(90);
-  assert.equal(st.kitRedeal, true, 'the watchdog took the NEW card (it ranks first)');
+  assert.equal(st.kitRedeal, true, 'the watchdog took the NEW card (nothing ranks above it)');
   assert.equal(st.mode, 'draft');
   h.pump(STALL * 60 - 60);
   assert.equal(st.mode, 'draft', 'the deal again waits its own full window');
@@ -616,6 +635,7 @@ S.check('unattended with AUTO-PICK OFF: the free NEW card goes at the stall limi
   // Someone watching takes the NEW card late (5 s before the limit): the deal
   // again is a new draft, with the full window, not the 5 s left over.
   kitRun(['BEAM', 'ORBIT', 'ZAP']);
+  fullJokerRow();
   st.unattended = true;
   assert.ok(draft().some(x => x.kitNew));
   h.pump((STALL - 5) * 60);

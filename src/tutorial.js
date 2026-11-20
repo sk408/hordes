@@ -122,7 +122,7 @@ export const HINTS = {
   mimic: { text: 'Some chests bite: a mimic wakes when opened, and pays a rare chest when it dies.' },
   glyph: { text: 'Each stage hides one glyph off the beaten track; find all eight for a reward.' },
   questboard: { text: 'The quest board picks three goals for each run; tap one to swap it, or just play.' },
-  questtracker: { text: 'Your three quests sit under the timer; done ones pay at the end of the run.' },
+  questtracker: { text: 'Your quests sit in the chip under the timer: tap it or press J to see them.' },
   // Travel (the same sentence as travel.js TRAVEL_HINT).
   travel: { text: 'The portal leads on to a new stage: new ground and fresh sites. Your build comes with you.' },
   // Boss rules (the same sentence as boss_rules.js BOSS_RULE_HINT).

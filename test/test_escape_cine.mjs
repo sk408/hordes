@@ -459,7 +459,7 @@ S.check('no state leaks: CONTINUE starts wave 2, and the wave-2 portal goes stra
   freeze();
   const gold0 = prof.gold;
   st.wave.cinePending = true; st.portal = null;
-  h.pump(2); kdown('x'); h.pump(2);
+  h.pump(2); h.skipMovie(); h.pump(2);   // R2: the portal movie skips by the escape's rule
   assert.equal(st.mode, 'intermission', 'no escape after wave 2');
   assert.equal(prof.gold, gold0);
   assert.ok(!/ESCAPED/.test(sub()));

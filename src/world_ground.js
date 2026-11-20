@@ -37,26 +37,73 @@ import { cacheEnabled, scratchCanvas } from './sprite_cache.js';
 // (fissures, contact shadows), slab (soft patches), patch/patch2 (the
 // underlay's two material tones), accent (a rare warm/cold glint: ember,
 // crystal, ice).
+// R6 STAGE VALUE KEYS (2026-11, Steve's decision 5: muted dark fantasy, light
+// snow stages, a warm Bone Desert). Each stage owns a value key (how light or
+// dark the floor is overall) and a hue, so no two stages look alike even as a
+// thumbnail. From dark to light: Void Reach, Cinder Maw, Blood Rust, Verdant
+// Hollow (mid green), Ashen Waste (grey ash), Bone Desert (warm sand),
+// Snowfield (pale blue snow), Whiteout (white). On the five light floors
+// (Verdant Hollow up) the actors read by their dark outline; on the three dark
+// floors by their body colour (test/test_stage_keys.mjs holds both rules).
 export const STAGE_GROUND_PALETTES = {
-  VERDANT_HOLLOW: { base: '#26382b', grid: '#2f4534', tuft: '#3c603f', tuft2: '#4c7649', stone: '#3c4844',
-    stoneTop: '#5a6a60', crack: '#16211a', slab: '#2b3a24', patch: '#223326', patch2: '#2c3123', accent: '#7aa85a' },
-  ASHEN_WASTE: { base: '#2c2c31', grid: '#36363d', tuft: '#46434c', tuft2: '#57535e', stone: '#3a3a44',
-    stoneTop: '#5c5c6a', crack: '#141418', slab: '#25252b', patch: '#26262c', patch2: '#2b2a2c', accent: '#b0461e' },
-  SNOWFIELD: { base: '#2d3a4d', grid: '#374559', tuft: '#6f86a0', tuft2: '#93aac4', stone: '#4a5a6e',
-    stoneTop: '#b4c8de', crack: '#1c2534', slab: '#283447', patch: '#273246', patch2: '#2a3448', accent: '#9cc8ec' },
-  BLOOD_RUST: { base: '#42251d', grid: '#4c2c23', tuft: '#5e3324', tuft2: '#74412a', stone: '#4c2e26',
-    stoneTop: '#7a4c3a', crack: '#220f0b', slab: '#3a2119', patch: '#3a2119', patch2: '#3d2a1d', accent: '#c4622e' },
-  BONE_DESERT: { base: '#40361f', grid: '#4a3f26', tuft: '#5c5030', tuft2: '#706240', stone: '#544830',
-    stoneTop: '#8c7c58', crack: '#221b0e', slab: '#3a311c', patch: '#3a311b', patch2: '#3c351c', accent: '#e2d6b8' },
-  VOID_REACH: { base: '#25213e', grid: '#2d2850', tuft: '#3a3268', tuft2: '#4a3f84', stone: '#322c58',
-    stoneTop: '#4e4686', crack: '#120f24', slab: '#211d38', patch: '#1f1b36', patch2: '#2a2146', accent: '#8e7cf0' },
-  CINDER_MAW: { base: '#2a201d', grid: '#33261f', tuft: '#3e2e28', tuft2: '#4c3830', stone: '#3a2c28',
-    stoneTop: '#5a4640', crack: '#110b0a', slab: '#231a18', patch: '#221a18', patch2: '#2e221c', accent: '#d8581e' },
-  WHITEOUT: { base: '#343b46', grid: '#3e4550', tuft: '#8a96a6', tuft2: '#aab4c4', stone: '#5a6474',
-    stoneTop: '#c9d3e0', crack: '#22272f', slab: '#313742', patch: '#2f3540', patch2: '#333a46', accent: '#e4ecf6' },
+  VERDANT_HOLLOW: { base: '#5b7e4e', grid: '#608353', tuft: '#3d6331', tuft2: '#749c5a', stone: '#5d6659',
+    stoneTop: '#9aa395', crack: '#2f4328', slab: '#557345', patch: '#55774c', patch2: '#6a8251', accent: '#9ac360' },
+  ASHEN_WASTE: { base: '#7a7a7c', grid: '#828284', tuft: '#5e5c60', tuft2: '#69676c', stone: '#5c5c62',
+    stoneTop: '#a4a4aa', crack: '#3a3a3e', slab: '#6c6c70', patch: '#727274', patch2: '#807e7a', accent: '#8e4a2a' },
+  SNOWFIELD: { base: '#98bada', grid: '#9ebfde', tuft: '#7494b8', tuft2: '#8eaacb', stone: '#86a4c4',
+    stoneTop: '#eaf3fb', crack: '#52729a', slab: '#90b2d4', patch: '#92b4d4', patch2: '#a2c2df', accent: '#ffffff' },
+  BLOOD_RUST: { base: '#4e2115', grid: '#55261a', tuft: '#5e3324', tuft2: '#7a432c', stone: '#503028',
+    stoneTop: '#80503c', crack: '#200d09', slab: '#3c1f17', patch: '#3c1e15', patch2: '#4a2216', accent: '#b0582c' },
+  BONE_DESERT: { base: '#b49a70', grid: '#baa076', tuft: '#857248', tuft2: '#9c885c', stone: '#94805e',
+    stoneTop: '#e2d4b0', crack: '#6a5434', slab: '#a68e66', patch: '#a98f66', patch2: '#bea67c', accent: '#f2ead2' },
+  VOID_REACH: { base: '#1a1532', grid: '#201a3c', tuft: '#2c2454', tuft2: '#3a2f6c', stone: '#262046',
+    stoneTop: '#40387a', crack: '#08060f', slab: '#141029', patch: '#140f28', patch2: '#1a1438', accent: '#a466ec' },
+  CINDER_MAW: { base: '#1c1a1a', grid: '#22201f', tuft: '#2e2826', tuft2: '#3c3430', stone: '#2c2725',
+    stoneTop: '#4e403a', crack: '#0a0706', slab: '#181413', patch: '#171312', patch2: '#201b16', accent: '#b04818' },
+  WHITEOUT: { base: '#dde3ea', grid: '#e2e7ed', tuft: '#a0adbe', tuft2: '#b8c2d0', stone: '#b0bccb',
+    stoneTop: '#fbfcfe', crack: '#8392a6', slab: '#cdd5df', patch: '#d0d8e1', patch2: '#ebeff3', accent: '#ffffff' },
 };
+// R6 GROUND FEATURES: the larger shapes drawn into the cached underlay, one
+// kind per stage, flat (no effect on movement, terrain relief stays off):
+//   patches  noise-shaped light and dark areas (meadow, ash banks)
+//   pools    dark pools with a lighter rim (rust pools)
+//   drifts   long mounds lying along `angle` (stretched noise), lit, each
+//            with a shadow falling to the bottom right (snow drifts, dunes)
+//   cracks   thin lines with a dark lip and a dim glowing core (embers, rifts)
+// light/dark are the two feature tones; glow and hot the line core and its
+// rare brightest spots. scale is the feature size in world px, cover how much
+// of the floor carries features (0..1); drifts: stretch (the across/along
+// ratio of a mound), cut (the noise level a mound starts at) and shadow (how
+// far, in world px, its shadow falls).
+export const STAGE_GROUND_FEATURES = {
+  VERDANT_HOLLOW: { kind: 'patches', light: '#719659', dark: '#4d6e47', scale: 150, cover: 0.75 },
+  ASHEN_WASTE: { kind: 'patches', light: '#a0a0a2', dark: '#646467', scale: 120, cover: 0.8 },
+  SNOWFIELD: { kind: 'drifts', light: '#c5daed', dark: '#749dc3', scale: 120, stretch: 0.3, cut: 0.6, shadow: 5, angle: -0.3 },
+  BLOOD_RUST: { kind: 'pools', light: '#542c1e', dark: '#30130d', scale: 110, cover: 0.6 },
+  BONE_DESERT: { kind: 'drifts', light: '#c4ab80', dark: '#9e8560', scale: 90, stretch: 0.22, cut: 0.58, shadow: 4, angle: 0.45 },
+  VOID_REACH: { kind: 'cracks', light: '#62309f', dark: '#05030b', glow: '#62309f', hot: '#9a58e0', scale: 72, cover: 0.62 },
+  CINDER_MAW: { kind: 'cracks', light: '#8a3212', dark: '#060403', glow: '#8a3212', hot: '#a8461a', scale: 64, cover: 0.66 },
+  WHITEOUT: { kind: 'drifts', light: '#f3f6f9', dark: '#bfcad8', scale: 160, stretch: 0.35, cut: 0.62, shadow: 6, angle: 0.15 },
+};
+// A LIGHT floor (relative luminance of the base at or above LIGHT_FLOOR): the
+// actors read by their dark outline there, and the hero wears a dark keyline
+// outside its warm-white ring (render.js). Verdant Hollow, Ashen Waste, Bone
+// Desert, Snowfield and Whiteout.
+export const LIGHT_FLOOR = 0.15;
+export function relLum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f((n >> 16) & 255) + 0.7152 * f((n >> 8) & 255) + 0.0722 * f(n & 255);
+}
+export function groundIsLight(stage) {
+  const P = STAGE_GROUND_PALETTES[stage] || STAGE_GROUND_PALETTES.VERDANT_HOLLOW;
+  return relLum(P.base) >= LIGHT_FLOOR;
+}
 const PAL_KEYS = ['base', 'grid', 'tuft', 'tuft2', 'stone', 'stoneTop', 'crack', 'slab'];
-// How far each stage colour leans toward the wave theme's colour.
+// How far each stage colour leans with the wave theme. R6: the lean is the
+// wave theme's OFFSET from the mean of all wave themes (12% of it), not a pull
+// toward the theme itself: the themes are all dark, so a pull would grey the
+// snow. A new wave still reads as a change of light; a light stage stays light.
 export const WAVE_MIX = 0.12;
 
 function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
@@ -68,6 +115,25 @@ function mix(a, b, t) {
   if (!b || b[0] !== '#') return a;
   const x = hexRgb(a), y = hexRgb(b);
   return rgbHex(x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t);
+}
+let themeMean = null;   // per palette key: the mean [r, g, b] of the wave themes
+function meanOf(k) {
+  if (!themeMean) {
+    themeMean = {};
+    const T = C.GROUND.THEMES;
+    for (const key of PAL_KEYS) {
+      const m = [0, 0, 0];
+      for (const t of T) { const c = hexRgb(t[key]); m[0] += c[0] / T.length; m[1] += c[1] / T.length; m[2] += c[2] / T.length; }
+      themeMean[key] = m;
+    }
+  }
+  return themeMean[k];
+}
+// Lean stage colour `a` by the wave theme's offset from the mean theme.
+function lean(a, b, k, t) {
+  if (!b || b[0] !== '#') return a;
+  const x = hexRgb(a), y = hexRgb(b), m = meanOf(k);
+  return rgbHex(x[0] + (y[0] - m[0]) * t, x[1] + (y[1] - m[1]) * t, x[2] + (y[2] - m[2]) * t);
 }
 
 const palCache = new Map();   // stage|theme name -> palette
@@ -81,11 +147,15 @@ export function stageGroundPalette(stage, theme) {
   if (!p) {
     const S = STAGE_GROUND_PALETTES[id];
     p = { name: t.name, tint: t.tint || null, stage: id, key };
-    for (const k of PAL_KEYS) p[k] = mix(S[k], t[k], WAVE_MIX);
+    for (const k of PAL_KEYS) p[k] = lean(S[k], t[k], k, WAVE_MIX);
     // Underlay tones lean with the base so the patches keep their relation.
-    p.patch = mix(S.patch, t.base, WAVE_MIX);
-    p.patch2 = mix(S.patch2, t.base, WAVE_MIX);
+    p.patch = lean(S.patch, t.base, 'base', WAVE_MIX);
+    p.patch2 = lean(S.patch2, t.base, 'base', WAVE_MIX);
     p.accent = S.accent;
+    // The feature tones lean with the base too; a glowing core does not.
+    const F = STAGE_GROUND_FEATURES[id];
+    p.feat = { ...F, light: lean(F.light, t.base, 'base', WAVE_MIX), dark: lean(F.dark, t.base, 'base', WAVE_MIX) };
+    if (F.kind === 'cracks') p.feat.light = F.light;
     palCache.set(key, p);
   }
   return p;
@@ -361,18 +431,85 @@ const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v
 
 // Paint the underlay into a w x h image (world origin x0, y0): two material
 // tones in noise-shaped patches with dithered edges, a sparse grain.
-function paintUnderlay(g, w, h, x0, y0, pal, seed) {
+// R6 LIGHT: `emit` (optional, cracks only) collects the glowing core of the
+// cracks at a quarter of the size, { w, h, n: Uint8Array } (counts per 4x4
+// block); the ground picture itself is the same with or without it.
+function paintUnderlay(g, w, h, x0, y0, pal, seed, emit = null) {
   let img;
   try { img = g.getImageData(0, 0, w, h); } catch { return; }
   if (!img || !img.data) return;
   const d = img.data;
   const B = hexRgb(pal.base), P1 = hexRgb(pal.patch), P2 = hexRgb(pal.patch2), CR = hexRgb(pal.crack);
   const s1 = (seed * 7 + 13) | 0, s2 = (seed * 11 + 5) | 0;
+  const feat = pal.feat || null;
+  const FL = feat ? hexRgb(feat.light) : null, FD = feat ? hexRgb(feat.dark) : null;
+  const FH = feat && feat.hot ? hexRgb(feat.hot) : null;
+  const s3 = (seed * 13 + 29) | 0, s4 = (seed * 17 + 3) | 0;
+  // R6 features are sampled on a coarse grid (every FG world px, read back
+  // bilinear), so a chunk costs about what it did before the features: the
+  // shapes are tens of px wide, and the crack test below reads its slope from
+  // the same smooth field.
+  const fk = feat ? feat.kind : null;
+  // Grid step: 6 px for the cracks (their distance field is smooth), 8 px for
+  // the broad shapes; the margin (in steps) covers a drift's shadow, read up
+  // to 6 px back.
+  const FG = fk === 'cracks' ? 6 : 8, FM = 2;
+  const gx0 = x0 - FM * FG, gy0 = y0 - FM * FG;
+  const gw = Math.ceil(w / FG) + FM * 2 + 2, gh = Math.ceil(h / FG) + FM * 2 + 2;
+  let shape = null, gather = null;
+  if (fk) {
+    shape = new Float32Array(gw * gh);
+    if (fk !== 'drifts') gather = new Float32Array(gw * gh);
+    for (let j = 0; j < gh; j++) {
+      for (let i = 0; i < gw; i++) {
+        const x = gx0 + i * FG, y = gy0 + j * FG;
+        shape[j * gw + i] = fk === 'drifts' ? driftNoise(feat, x, y, s3)
+          : vnoise(x / feat.scale, y / feat.scale, s3) * 0.8 + vnoise(x / (feat.scale * 0.3), y / (feat.scale * 0.3), s3 + 7) * 0.2;
+        if (gather) gather[j * gw + i] = vnoise(x / 220, y / 220, s4);
+      }
+    }
+    if (fk === 'cracks') {
+      // A crack is where the field crosses its middle. Each node keeps its
+      // signed distance in px from that line (the offset over the slope), so
+      // every crack is the same width and a flat spot never swells into a
+      // round blob. Read back bilinear, the distance stays smooth.
+      const sd = new Float32Array(gw * gh);
+      for (let j = 0; j < gh; j++) {
+        for (let i = 0; i < gw; i++) {
+          const k = j * gw + i;
+          const il = Math.max(0, i - 1), ir = Math.min(gw - 1, i + 1), ju = Math.max(0, j - 1), jd = Math.min(gh - 1, j + 1);
+          const gxv = (shape[j * gw + ir] - shape[j * gw + il]) / ((ir - il) * FG);
+          const gyv = (shape[jd * gw + i] - shape[ju * gw + i]) / ((jd - ju) * FG);
+          sd[k] = (shape[k] - 0.5) / Math.max(Math.hypot(gxv, gyv), 1e-5);
+        }
+      }
+      shape = sd;
+    }
+  }
+  const sample = (F, x, y) => {
+    const fx = (x - gx0) / FG, fy = (y - gy0) / FG;
+    const i = Math.max(0, Math.min(gw - 2, Math.floor(fx))), j = Math.max(0, Math.min(gh - 2, Math.floor(fy)));
+    const u = fx - i, v = fy - j, k = j * gw + i;
+    const a = F[k] + (F[k + 1] - F[k]) * u, b = F[k + gw] + (F[k + gw + 1] - F[k + gw]) * u;
+    return a + (b - a) * v;
+  };
   for (let by = 0; by < h; by += 2) {
     for (let bx = 0; bx < w; bx += 2) {
       const wx = x0 + bx, wy = y0 + by;
       const n = vnoise(wx / 88, wy / 88, s1) * 0.68 + vnoise(wx / 22, wy / 22, s1 + 1) * 0.32;
       const m = vnoise(wx / 120, wy / 120, s2) * 0.75 + vnoise(wx / 30, wy / 30, s2 + 3) * 0.25;
+      // R6 features: one field for the shape, one for where they gather.
+      let fq = 0, fq2 = 0, fm = 0;
+      if (fk === 'drifts') {
+        fq = sample(shape, wx, wy);
+        fq2 = sample(shape, wx - feat.shadow * 0.6, wy - feat.shadow);
+      } else if (fk === 'cracks') {
+        fq = Math.abs(sample(shape, wx, wy));   // px from the crack's middle line
+        fm = sample(gather, wx, wy);
+      } else if (fk) {
+        fq = sample(shape, wx, wy);
+        fm = sample(gather, wx, wy);
+      }
       for (let py = 0; py < 2; py++) {
         for (let pxx = 0; pxx < 2; pxx++) {
           const xx = bx + pxx, yy = by + py;
@@ -380,6 +517,11 @@ function paintUnderlay(g, w, h, x0, y0, pal, seed) {
           let col = B;
           if (n + t > 0.6) col = P1;
           else if (m + t < 0.34) col = P2;
+          if (fk) {
+            const f = featureAt(feat, fk, fq, fk === 'drifts' ? fq2 : fm, t);
+            if (f === 1) col = FL; else if (f === 2) col = FD; else if (f === 3) col = FH;
+            if (emit && (f === 1 || f === 3)) emit.n[(yy >> 2) * emit.w + (xx >> 2)] += f === 3 ? 2 : 1;
+          }
           const i = (yy * w + xx) * 4;
           // grain: a rare darker fleck (never lighter than the base)
           const gr = lattice(wx + pxx, wy + py, seed ^ 0x2c1b);
@@ -393,6 +535,47 @@ function paintUnderlay(g, w, h, x0, y0, pal, seed) {
   g.putImageData(img, 0, 0);
 }
 
+// The drift field: two octaves of value noise in coordinates turned to the
+// drift's angle and squeezed across it, so the mounds lie long and low.
+function driftNoise(F, x, y, seed) {
+  const ca = Math.cos(F.angle || 0), sa = Math.sin(F.angle || 0);
+  const u = (x * ca + y * sa) / F.scale, v = (y * ca - x * sa) / (F.scale * F.stretch);
+  return vnoise(u, v, seed) * 0.8 + vnoise(u * 3.3, v * 3.3, seed + 7) * 0.2;
+}
+
+// Which feature tone a pixel takes: 0 none, 1 light, 2 dark, 3 hot.
+// q is the shape noise (for cracks: the distance from the crack line), m the
+// gathering noise (for drifts: the shape noise
+// one shadow length up and to the left), t the dither.
+export function featureAt(F, kind, q, m, t) {
+  if (kind === 'drifts') {
+    if (q + t * 0.4 > F.cut) return 1;      // the mound, lit
+    if (m + t * 0.4 > F.cut) return 2;      // its shadow, down and to the right
+    return 0;
+  }
+  const on = m + t * 0.5 > 1 - F.cover;
+  if (kind === 'patches') {
+    if (!on) return 0;
+    if (q + t > 0.6) return 1;
+    if (q + t < 0.4) return 2;
+    return 0;
+  }
+  if (kind === 'pools') {
+    if (!on) return 0;
+    if (q + t > 0.6) return 2;
+    if (q + t > 0.555) return 1;
+    return 0;
+  }
+  if (kind === 'cracks') {
+    if (!on) return 0;
+    // q is the distance in world px from the crack's middle line.
+    if (q < 1.1) return m > 0.62 ? 3 : 1;     // the core, hottest where the cracks gather
+    if (q < 2.6) return 2;                    // the dark lip
+    return 0;
+  }
+  return 0;
+}
+
 // ---- the chunk cache ----------------------------------------------------------
 export const GROUND_CHUNK = 256;
 export const GROUND_CHUNK_CAP = 24;      // LRU cap: 24 x 258^2 x 4 B = 6.4 MB
@@ -402,12 +585,66 @@ const gstats = { built: 0, evicted: 0, blits: 0 };
 let off = false;                          // test seam: force the direct path
 
 export function groundChunksOn() { return !off && cacheEnabled(); }
+// R6 LIGHT: the glowing cracks of the chunks blitted by the last
+// drawGroundChunks call, in the same screen coordinates: [{ img, x, y, w, h }].
+const emits = [];
+export function groundEmits() { return groundChunksOn() ? emits : []; }
+// The crack mask as a small canvas: the glow colour, as opaque as the block
+// is full of glowing core (a hot spot counts twice).
+// The light a crack throws, when it is not the crack's own hot colour: the
+// Cinder Maw's embers glow amber, well away from the red-orange that means
+// danger (their hot paint is only 7 degrees of hue from an enemy shot).
+export const EMIT_LIGHT = { CINDER_MAW: '#c87a2a' };
+function emitCanvas(em, feat, col) {
+  const cv = scratchCanvas(em.w, em.h);
+  if (!cv) return null;
+  const c = cv.getContext('2d');
+  let img;
+  try { img = c.createImageData(em.w, em.h); } catch { return null; }
+  const G = hexRgb(col || feat.hot || feat.glow || feat.light);
+  const d = img.data;
+  let any = 0;
+  for (let i = 0; i < em.n.length; i++) {
+    const v = em.n[i];
+    if (!v) continue;
+    any++;
+    d[i * 4] = G[0]; d[i * 4 + 1] = G[1]; d[i * 4 + 2] = G[2];
+    d[i * 4 + 3] = Math.min(255, v * 22);
+  }
+  if (!any) return null;
+  c.putImageData(img, 0, 0);
+  return cv;
+}
 export function groundChunkStats() { return { ...gstats, live: chunks.size }; }
 export const WORLD_GROUND_TEST = {
   disable() { off = true; chunks.clear(); },
   enable() { off = false; chunks.clear(); },
   clear() { chunks.clear(); },
+  paintUnderlay,   // test seam: paint one underlay into a fake 2D context
 };
+
+// integ3: the first floor of a stage whose feature kind (cracks, drifts,
+// pools, patches) had not been painted yet in this session cost 2x a warm
+// one (the painters' first run is slow). This paints a small square of every
+// stage once, off screen, while the menus are up, so a run's first frame
+// costs what a later one does. Pure drawing into a throwaway canvas: no game
+// state, no random numbers, no cached chunk.
+let warmed = false;
+export function warmGroundPainters(size = 160) {
+  if (warmed || !groundChunksOn()) return false;
+  const img = scratchCanvas(size, size);
+  if (!img) return false;
+  warmed = true;
+  const cg = img.getContext('2d');
+  for (const st of Object.keys(STAGE_GROUND_PALETTES)) {
+    const pal = stageGroundPalette(st, null);
+    cg.fillStyle = pal.base; cg.fillRect(0, 0, size, size);
+    paintUnderlay(cg, size, size, 0, 0, pal, 1);
+    paintGroundDecor(cg, 1, 0, 0, -40, -40, size + 8, size + 8, pal, st, normGroundWeather(null));
+  }
+  return true;
+}
+export function groundPaintersWarm() { return warmed; }
 
 // Blit the visible ground chunks (camera top-left at cam.x, cam.y; the view
 // is viewW x viewH world px). Returns false when no canvas exists (the caller
@@ -418,6 +655,7 @@ export function drawGroundChunks(g, seed, cam, viewW, viewH, pal, stage, weather
   const wxId = normGroundWeather(weather);
   const st = STAGE_GROUND_PALETTES[stage] ? stage : 'VERDANT_HOLLOW';
   const base = st + '|' + seed + '|' + pal.key + '|' + wxId + '|';
+  emits.length = 0;
   const c0 = Math.floor(cam.x / CH), c1 = Math.floor((cam.x + viewW) / CH);
   const r0 = Math.floor(cam.y / CH), r1 = Math.floor((cam.y + viewH) / CH);
   for (let cy = r0; cy <= r1; cy++) {
@@ -435,7 +673,10 @@ export function drawGroundChunks(g, seed, cam, viewW, viewH, pal, stage, weather
         const cg = img.getContext('2d');
         const x0 = cx * CH - OV, y0 = cy * CH - OV;
         cg.fillStyle = pal.base; cg.fillRect(0, 0, W, W);
-        paintUnderlay(cg, W, W, x0, y0, pal, seed | 0);
+        const em = pal.feat && pal.feat.kind === 'cracks' ? { w: Math.ceil(W / 4), h: Math.ceil(W / 4), n: null } : null;
+        if (em) em.n = new Uint8Array(em.w * em.h);
+        paintUnderlay(cg, W, W, x0, y0, pal, seed | 0, em);
+        if (em) img.emit = emitCanvas(em, pal.feat, EMIT_LIGHT[st]);
         // Pieces reach up to ~22 px past their anchor: iterate a margin so a
         // piece that straddles a chunk edge paints its part in both chunks.
         paintGroundDecor(cg, seed, x0, y0, x0 - 40, y0 - 40, x0 + W + 8, y0 + W + 8, pal, st, wxId);
@@ -447,6 +688,7 @@ export function drawGroundChunks(g, seed, cam, viewW, viewH, pal, stage, weather
         }
       }
       g.drawImage(img, Math.round(cx * CH - cam.x) - OV, Math.round(cy * CH - cam.y) - OV);
+      if (img.emit) emits.push({ img: img.emit, x: Math.round(cx * CH - cam.x) - OV, y: Math.round(cy * CH - cam.y) - OV, w: img.emit.width * 4, h: img.emit.height * 4 });
       gstats.blits++;
     }
   }

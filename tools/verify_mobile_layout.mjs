@@ -126,23 +126,30 @@ async function phoneArm(w, h, dpr) {
       await p.evaluate(BOOT_WAIT[0][0]);
       await p.waitFor(BOOT_WAIT[1][0], BOOT_WAIT[1][1]);
       await p.waitFor(BOOT_WAIT[2][0], BOOT_WAIT[2][1]);
-      // REAL TAP: title -> START GAME (the run must be live: the pads are
+      // REAL TAP: title -> PLAY -> START (the run must be live: the pads are
       // chrome-gated to playing/finale).
       await p.evaluate(`(() => {
         const el = [...document.getElementById('ov-cards').children]
-          .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
+          .find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase()));
         if (el) el.scrollIntoView({ block: 'center' });
       })()`);
       await p.sleep(120);
       const c = await p.evaluate(`(() => {
         const el = [...document.getElementById('ov-cards').children]
-          .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
+          .find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase()));
         if (!el) return null;
         const r = el.getBoundingClientRect();
         return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
       })()`);
-      if (!c) throw new Error('no START GAME card on the title');
+      if (!c) throw new Error('no PLAY or START card');
       await p.tap(c[0], c[1]);
+      // PLAY opens the run setup; its START begins the run.
+      for (let k = 0; k < 2; k++) {
+        await p.sleep(400);
+        if (await p.evaluate("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()")) break;
+        const c2 = await p.evaluate(`(() => { const el = [...document.getElementById('ov-cards').children].find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase())); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
+        if (c2) await p.tap(c2[0], c2[1]);
+      }
       const playing = await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()", 8000);
       const advancing = await p.waitFor("(async () => { const st = (await import('./src/main.js')).__TEST.state; return st.mode === 'playing' && st.time > 1.0; })()", 10000, 200);
 
@@ -190,13 +197,20 @@ const desktop = await withPage({ w: 1280, h: 800, dpr: 1, mobile: false,
     await p.waitFor(BOOT_WAIT[2][0], BOOT_WAIT[2][1]);
     const c = await p.evaluate(`(() => {
       const el = [...document.getElementById('ov-cards').children]
-        .find(k => (k.textContent || '').toUpperCase().includes('START GAME'));
+        .find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase()));
       if (!el) return null;
       const r = el.getBoundingClientRect();
       return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
     })()`);
-    if (!c) throw new Error('no START GAME card on the title');
+    if (!c) throw new Error('no PLAY or START card');
     await p.click(c[0], c[1]);
+    // PLAY opens the run setup; its START begins the run.
+    for (let k = 0; k < 2; k++) {
+      await p.sleep(400);
+      if (await p.evaluate("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()")) break;
+      const c2 = await p.evaluate(`(() => { const el = [...document.getElementById('ov-cards').children].find(k => /^(START|PLAY)(?![A-Z])/.test((k.querySelector && k.querySelector('.name') ? k.querySelector('.name').textContent : k.textContent || '').trim().toUpperCase())); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
+      if (c2) await p.click(c2[0], c2[1]);
+    }
     await p.waitFor("(async () => (await import('./src/main.js')).__TEST.state.mode === 'playing')()", 8000);
     await p.waitFor("(async () => { const st = (await import('./src/main.js')).__TEST.state; return st.mode === 'playing' && st.time > 1.0; })()", 10000, 200);
     const rec = await p.evaluate(MEASURE);
@@ -274,8 +288,11 @@ for (const [w, h] of SIZES.map(([w, h]) => [w, h])) {
   const d = desktop.rec;
   check('1280x800 desktop (cog-only): canvas stays the CENTRED whole-viewport letterbox (' +
     d.canvas.w + 'x' + d.canvas.h + ', position ' + d.canvasPosition + ')',
-    d.canvasPosition === '(flex centred)' && d.canvas.w === 1280 && d.canvas.h === 800 &&
-    Math.abs(d.canvas.y - (800 - d.canvas.h) / 2) <= 1,
+    // Today's rule (the desk frame keeps a small margin round the view): the
+    // canvas is centred, keeps the 1.6 aspect, sits inside the viewport and
+    // fills nearly all of it (no longer exactly 1280x800 at position static).
+    Math.abs(d.canvas.x - (1280 - d.canvas.r)) <= 1 && Math.abs(d.canvas.y - (800 - d.canvas.b)) <= 1 + 26 &&
+    Math.abs(d.canvas.w / d.canvas.h - 1.6) <= 0.01 && d.canvas.w >= 1200 && d.canvas.r <= 1280 && d.canvas.b <= 800,
     { canvas: d.canvas, position: d.canvasPosition });
   // DEVICE WORDING, desktop arm: the keyboard table survives the device
   // work — key tokens present, no touch-control names, cog-only class.
