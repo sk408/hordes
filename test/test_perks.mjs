@@ -216,6 +216,15 @@ h.T.startRun();
 h.pump(2);
 assert.equal(st.mode, 'playing', 'run live');
 const p = st.player;
+// ARCH HERMETICITY: the wave's 1 or 2 arches sit at random spots, and the
+// pilot sometimes stands under an AEGIS one during the 20 s regen window. Its
+// shield then eats the control hit of the CONTACT and SHOT probes (invuln 0.5,
+// 0.00 hp lost: seed 30). No probe here measures arches, so the run has none.
+st.arches = []; st.archBuffs = []; st.shieldAbsorbs = 0;
+// Nor sites: a shrine charges from state.sites and opens a blessing draft that
+// would freeze the regen window (not seen on a seed here; the same gap as
+// test_rewrites, commit 8ea5616).
+st.sites = []; st.shrines = [];
 const quiet = () => { st.enemies.length = 0; st.enemyShots.length = 0; };
 
 ok('REGEN IS DT-CORRECT through the live frame seam (60Hz == 120Hz == rate*t)', () => {
@@ -255,7 +264,10 @@ const hostile = (typeId, at) => ({
 // Whetstone is x1.25, src/config.js:500) and guards that nothing extra was
 // collected off the ground mid-window, so a leak fails LOUDLY instead of
 // quietly skewing the ratio.
-const windowPins = () => ({ dmg: p.stats.damage, potions: { ...p.potions } });
+const windowPins = () => {
+  assert.equal(st.shieldAbsorbs || 0, 0, 'no arch shield is up to eat the probe hit');
+  return { dmg: p.stats.damage, potions: { ...p.potions } };
+};
 const assertWindowClean = (pin, label) => {
   assert.equal(p.stats.damage, pin.dmg, label + ': no stat leaked into the window');
   assert.deepEqual(p.potions, pin.potions, label + ': nothing extra was collected in the window');

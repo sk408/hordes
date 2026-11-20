@@ -265,9 +265,6 @@ check('9 every fetch( in src/ is in src/music_files.js or on the allowlist (G2)'
 const LOADER_ALLOW = {
   'src/main.js': ['new Worker(url)'],   // the blob timer worker: a blob: URL, no file
   'src/save.js': ['.href = url'],       // the save download link: a blob: or data: URL
-  // the menu font: asked for once during boot, before the first frame (main.js,
-  // just before the frame loop starts; test_menu_font pins it)
-  'src/menu_font.js': ["'url(' + (env.url || MENU_FONT.url) +"],
 };
 const LOADERS = [
   /\bnew\s+(?:Shared)?Worker\s*\([^)]*\)/g,

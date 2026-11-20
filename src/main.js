@@ -197,10 +197,9 @@ import {
 } from './hands.js';
 import { FAN_PULSE_S } from './hand_fan.js';
 import * as INTRO from './intro.js';
-// R2: the portal movie is a beat on the battlefield (portal_beat.js) and a
-// road shot before a stage change (road_shot.js). The old separate scene
-// (portal_cine.js) is gone.
-import * as BEAT from './portal_beat.js';
+// The portal movie (portal_cine.js) plays when the pilot walks into a wave's
+// portal; the road shot (road_shot.js) before a stage change.
+import * as CINE from './portal_cine.js';
 import * as ENDCARD from './end_card.js';   // R5 the end card
 import * as ROAD from './road_shot.js';
 // G15 THE DEATH MOVIE: a short, skippable cinematic on DEATH ONLY (never on
@@ -287,7 +286,6 @@ import {
 } from './achievements.js';
 import { TROPHY_ART, CHARACTER_PORTRAITS, shopIcon, apexArt, APEX_FALLBACK_ID } from './art/index.js';
 import { composeMenuFrame, MENU_FRAME_PALETTES, MENU_FRAME_SHADOW } from './art/menu_frame.js';
-import { loadMenuFont, maybeApplyMenuFont, menuFontOn, shopBuyPx } from './menu_font.js';
 // G20a STAGES — the PLACE of a run: pool/mods/hazard rows stamped onto the
 // run at startRun. Pure, a session-scoped pending selection, nothing persisted.
 import {
@@ -952,6 +950,7 @@ const state = {
   prologue: null,
   prologueShieldT: 0,
   bannerHold: 0,   // seconds the sim is held while a one-time banner owns the screen
+  bannerLater: null,   // a one-time banner that came while the tab was hidden: shown when it is back
   time: 0,
   spawnTimer: 0,
   // PRESTIGE speed: sim substeps per rendered frame (1 = normal). Gated by
@@ -1146,7 +1145,7 @@ const state = {
   // the first AUTO_CONTINUE_FREE_RUNS in a row, then AUTO_CONTINUE_PENALTY_PCT.
   autoContinue: false,
   unattended: false,
-  beatHudDrop: 0,   // R2: view px the vitals step down under the portal beat's top bar (set each frame)
+  barHudDrop: 0,   // R7: view px the vitals step down under the arrival sting's top bar (set each frame)
   // The trophies the finished run earned and what they gave for nothing
   // ({ earned: [name], granted: [row or pilot name] }), for the end card.
   runTrophies: null,
@@ -1444,9 +1443,9 @@ function musicScene() {
   if (m === 'death-cine') return 'death';
   if (m === 'dead') return 'endcard';
   if (runLive()) {
-    // R2: the portal's duck belongs to the beat on the battlefield; the road
-    // shot ('portal-cine') already plays the new stage's bed.
-    if (m === 'playing' && beatLive()) return 'portal';
+    // The 'portal-cine' mode plays two movies: the portal movie ducks the bed
+    // under its cue; the road shot plays the new stage's bed as it is.
+    if (m === 'portal-cine' && movie && movie.kind === 'portal') return 'portal';
     if (m === 'escape') return 'escape';
     if (m === 'finale') return 'finale';
     if (m === 'settings' || m === 'stats') return 'pause';
@@ -1476,14 +1475,14 @@ function syncMusic() {
 }
 // R4: the low-health heartbeat. The health fraction while the hero is in a
 // live fight a player is watching; null otherwise, which stops the pulse at
-// once: a movie (the portal beat, the road, the death movie), a menu, a
+// once: a movie (the portal movie, the road, the death movie), a menu, a
 // draft, a pause, a banner or coach card holding the sim, a hidden tab, an
 // unattended run, the hero dead.
 function heartbeatFrac(draw) {
   const p = state.player;
   if (!draw || !p || state.unattended || state.runSettled) return null;
   if (state.mode !== 'playing' && state.mode !== 'finale') return null;
-  if (beatLive() || simHeld() || sting) return null;
+  if (simHeld() || sting) return null;
   try {
     const d = globalThis.document;
     if (d && (d.hidden === true || d.visibilityState === 'hidden')) return null;
@@ -1543,6 +1542,8 @@ function saveMovedOn() {
 // tab keeps its save: the player is using it.
 function onStorage(ev) {
   if (!ev) return;
+  // R9: another tab showed or hid the key strip; the next frame follows it.
+  if (ev.key === KEY_KEYSTRIP) { readKeyStripChoice(); return; }
   if (ev.key === KEY_TAB) otherTabUp = typeof ev.newValue === 'string' && !ev.newValue.startsWith('closed');
   else if (bgHidden && ev.key === STORAGE_KEY && saveChanged(ev.oldValue, ev.newValue)) saveTakenOver = true;
   else return;
@@ -3825,9 +3826,7 @@ function update(dt) {
       // 1/120 sums to 0.39999... in doubles, which would otherwise hold one
       // extra 120Hz frame); it is 6 orders below any visible timescale.
       po.enterT += dt;
-      // R2: while the portal beat plays, the pilot waits inside the portal
-      // for the beat to finish (or be skipped); then the crossing completes.
-      if (po.enterT >= C.PORTAL.DWELL - 1e-9 && !beatHoldsEntry()) { openIntermission(); return; }
+      if (po.enterT >= C.PORTAL.DWELL - 1e-9) { openIntermission(); return; }
     } else {
       const dx = p.x - po.x, dy = p.y - po.y;
       const len = Math.hypot(dx, dy);
@@ -4498,11 +4497,10 @@ function update(dt) {
         // double wave still lives (the clear below sweeps the survivor), so
         // the portal's movie is queued here every time. It used to wait for
         // nobody to be left alive, which never happened: on a double wave
-        // the movie never played.
+        // the movie never played. The guard keeps the wave from clearing twice.
         if (!state.wave.cinePending) {
           state.wave.cinePending = true;
           siteBossPayout(e.x, e.y);   // M5b: altar chest, statue reward
-          startPortalBeat(e);
         }
         restoreBossStanceIfClear();   // BOSS_STANCE: cast down — hand the doctrine back
         if (credit) feedWeaponXp(30);   // boss kill = big weapon-XP payout (player credit only)
@@ -4605,9 +4603,8 @@ function update(dt) {
     // so a double wave cleared by its first boss leaves nothing owed.
     siteBossPayout(state.wave.portalX || p.x, state.wave.portalY || p.y);
     // The other boss of a double wave is swept here with the horde. It dies
-    // its own death on the field (the fold and the small puff): the beat
-    // draws only the boss that fell, and a boss that just vanished read as
-    // a glitch.
+    // its own death on the field (the fold and the small puff): a boss that
+    // just vanished read as a glitch.
     for (const o of state.enemies) {
       if (!(o.hp > 0)) continue;
       pushGem(makeGem(o.x, o.y, o.xp));
@@ -4916,12 +4913,9 @@ function update(dt) {
 
   // EVOLVE overlay check: level-ups and partner cards
   // can all complete a requirements triple since the last frame.
-  // R2: no card screen cuts into the portal beat; they open when it ends.
-  if (!beatLive()) {
-    maybeOpenEvolve();
-    maybeOpenJokerOffer();
-    maybeOpenRuleCard();
-  }
+  maybeOpenEvolve();
+  maybeOpenJokerOffer();
+  maybeOpenRuleCard();
 
   // WAVE-8/A + P1: the portal-entry cinematic is ENTRY-DRIVEN. It used to
   // auto-start here on the first playing tick after the final boss died —
@@ -4952,8 +4946,7 @@ function levelUp() {
   p.hp = Math.min(p.stats.maxHp, p.hp + gain);
   audio.playSfx('levelup');
   state.pendingDrafts++;
-  // R2: a level-up during the portal beat waits for its end (endPortalBeat).
-  if (state.mode === 'playing' && !beatLive()) openDraft();
+  if (state.mode === 'playing') openDraft();
 }
 
 // WAVE-14: toast() is the ONE event stream — the text HUD's `!` line and the
@@ -5015,7 +5008,7 @@ function maybeTopTierBanner(it) {
     verb: it.rarity,
     title: it.name.toUpperCase(),
     sub: (it.rarity === 'LEGENDARY' ? 'LEGENDARY ITEM ACQUIRED' : 'TOP-TIER ITEM ACQUIRED'),
-    ttl: TOKEN_BANNER_SEC,
+    ttl: TOKEN_BANNER_SEC, oneTime: true,
   };
   state.bannerHold = TOKEN_BANNER_SEC;
   audio.playPortalCue('BOSS_YELL');
@@ -6973,7 +6966,7 @@ function doEvolve(w) {
           names: [res.name.toUpperCase()], verb: 'EVOLVED',
           title: res.name.toUpperCase(),
           sub: (WEAPON_NAMES[w.type] || w.type).toUpperCase() + ' EVOLVED - ' + w.evolution.desc.toUpperCase(),
-          ttl: TOKEN_BANNER_SEC,
+          ttl: TOKEN_BANNER_SEC, oneTime: true,
         };
         state.bannerHold = TOKEN_BANNER_SEC;
       }
@@ -7007,7 +7000,7 @@ function doFuse(def) {
           names: [res.name.toUpperCase()], verb: 'FUSED',
           title: res.name.toUpperCase(),
           sub: 'NEW FUSION - ' + res.weapon.fusion.desc.toUpperCase(),
-          ttl: TOKEN_BANNER_SEC,
+          ttl: TOKEN_BANNER_SEC, oneTime: true,
         };
         state.bannerHold = TOKEN_BANNER_SEC;
       }
@@ -7303,7 +7296,7 @@ function stingFrame(realDt) {
       }
     }
     // Those rows step down with the bars (by what they have not stepped yet).
-    o.topY = top + Math.max(0, STING.barHeight(o) - STING_HUD_GAP - (state.beatHudDrop | 0)) + 4;
+    o.topY = top + Math.max(0, STING.barHeight(o) - STING_HUD_GAP - (state.barHudDrop | 0)) + 4;
     o.slot = STING.cardSlot(o, stingHeroOnScreen(), renderer.ctx);
   }
   return sting;
@@ -8017,6 +8010,32 @@ function setHudTextEnabled(b) {
   try { prefStorage.setItem(KEY_HUD_TEXT, textHudOn ? '1' : '0'); } catch { /* shim */ }
 }
 
+// ---------- R9: the desktop key strip, shown or hidden (a device setting) ------
+// 'shown' or 'hidden' once the player picks (the corner chip, the strip's hide
+// chip, or the SETTINGS row). null: no choice yet, so the early-runs rule in
+// keyStripWanted decides. Not part of the save.
+const KEY_KEYSTRIP = 'hordes_keystrip';
+// Set once the corner chip has pulsed (the first fold by itself), so it
+// pulses once on this device, not once per early run or per reload.
+const KEY_KEYSTRIP_PULSED = 'hordes_keystrip_pulsed';
+let keyStripChoice = null;
+// Reads the stored choice. At load, and when another tab changes it
+// (onStorage), so a second tab does not keep a stale choice.
+function readKeyStripChoice() {
+  try {
+    const v = prefStorage.getItem(KEY_KEYSTRIP);
+    keyStripChoice = (v === 'shown' || v === 'hidden') ? v : null;
+  } catch { /* shim */ }
+}
+readKeyStripChoice();
+function setKeyStripChoice(v) {
+  keyStripChoice = (v === 'shown' || v === 'hidden') ? v : null;
+  try {
+    if (keyStripChoice) prefStorage.setItem(KEY_KEYSTRIP, keyStripChoice);
+    else if (prefStorage.removeItem) prefStorage.removeItem(KEY_KEYSTRIP);
+  } catch { /* not remembered */ }
+}
+
 // ---------- M2: screen-shake toggle (persisted with the other prefs) ---------
 const KEY_SHAKE = 'hordes_shake';
 try { if (prefStorage.getItem(KEY_SHAKE) === '0') setShakeEnabled(false); } catch { /* shim */ }
@@ -8164,6 +8183,8 @@ function manualRowsControls() {
     // '?' SUPPLEMENT: built FROM the controls_ref row — the card can never
     // drift from the hint that names the glyph.
     refRow('? — ' + controlById('help').purpose) +
+    // R9: the strip's own chips (desktop only; SETTINGS has the same choice).
+    refRow('KEYS / HIDE chips — show or hide the key strip along the bottom') +
     // RETIRED '?' PANEL (2026-09-16): the compact four-line key list lives
     // HERE now — the SAME HINT_LINES table the panel read, so nobody loses
     // the list; it stops being the whole of "?".
@@ -8172,7 +8193,7 @@ function manualRowsControls() {
     refRow('move (on AUTO: steer while you drag)', 'joystick') +
     refRow('which enemies get shot first: NEAREST / TOUGHEST / SWARM / RANGED', 'FOCUS') +
     refRow('how bold the pilot is: SAFE / BALANCED / GREEDY', 'STANCE') +
-    refRow('auto / manual', 'PILOT') +
+    refRow('auto &harr; manual', 'PILOT') +
     refRow('your stats and items', 'STATS') +
     refRow('skills', 'FROST / OVER') +
     // RSS8: the card-granted sweep, named so the touch layer's MAG button can
@@ -8698,9 +8719,6 @@ function openMenu(mode = 'menu') {
   // DRAFT PICK CEREMONY: any meta screen supersedes a live ceremony — it
   // stands down without touching what this screen is about to draw.
   if (draftCeremony) endDraftCeremony(false);
-  // THE MENU FONT: a new screen is being built, so a font that arrived while
-  // the last one was showing switches now (src/menu_font.js).
-  maybeApplyMenuFont(typeof document !== 'undefined' ? document : null, overlay, true);
   awayCard = null;   // a screen opened over the away card replaces it
   state.mode = mode;
   // MANUAL v2: pagination is manual-scoped — every other screen (and every
@@ -9420,8 +9438,11 @@ function addWhatsNewCard() {
   el.innerHTML =
     `<div class="name">${WHATS_NEW.title}</div>` +
     `<div class="desc">${lines.map(l => '- ' + l).join('<br>')}</div>` +
+    // The offer and CLOSE share a holder that stays at the note's bottom edge
+    // when the note scrolls (index.html .wn-acts).
+    '<div class="wn-acts">' +
     (offerGuided ? '<div class="offer">SHOW ME - START THE GUIDED RUN</div>' : '') +
-    '<div class="wn-close">CLOSE</div>' +
+    '<div class="wn-close">CLOSE</div></div>' +
     '<div class="key">tap anywhere on the note to close</div>';
   el.onclick = () => {
     // HELP MODE parity with menuCard: a tap explains, never presses.
@@ -9519,12 +9540,10 @@ function showTitle() {
   }
   placeTitleMenu();
   // The first title entry per page load shows the art alone for a beat, then
-  // fades the menu in over it; every return fades quickly. When the launch
-  // movie ran to its end it already showed the art (it ends on it): the menu
-  // fades in at once.
+  // fades the menu in over it; every return fades quickly.
   if (!titleRevealPlayed) {
     titleRevealPlayed = true;
-    state.titleReveal = { phase: introLanded ? 'fade' : 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
+    state.titleReveal = { phase: 'art', t: 0, dur: TITLE_FADE_S, opacity: 0 };
   } else {
     state.titleReveal = { phase: 'return', t: 0, dur: TITLE_RETURN_FADE_S, opacity: 0 };
   }
@@ -10065,8 +10084,7 @@ function showShop() {
   });
   if (abbrev && ovCards.style && typeof ovCards.style.setProperty === 'function') {
     const maxCh = Math.max(...rows0.map(r => r.sub.length));
-    // The menu font is crisp only at 11 px (its grid): shopBuyPx keeps it there.
-    const fs = shopBuyPx(gridPlan.cardW, maxCh, menuFontOn());
+    const fs = Math.max(9, Math.min(12, Math.floor((gridPlan.cardW - 16) / (0.6 * maxCh))));
     ovCards.style.setProperty('--shop-buy-fs', fs + 'px');
   }
   // SHOP-LATENCY: defer every row's frame so the WHOLE list appends (and lays
@@ -10732,6 +10750,17 @@ function showSettings(disarm = true, inRun = false) {
     toggleFullscreen();
     showSettings(false, inRun);
   }, !fsOk);
+  // R9: the desktop key strip, shown or hidden. A phone or tablet never shows
+  // the strip (the pads are its controls), so the row is not offered there.
+  if (touchLayer && touchLayer.classList && touchLayer.classList.contains('cog-only')) {
+    menuCard('KEY STRIP: ' + (keyStripChoice ? keyStripChoice.toUpperCase() : 'AUTO'),
+      (keyStripChoice === 'shown' ? 'the key chips along the bottom. Press to hide'
+        : keyStripChoice === 'hidden' ? 'one KEYS chip in the corner. Press to show'
+        : 'shown in your first runs, then folded. Press to keep it shown'), () => {
+        setKeyStripChoice(keyStripChoice === 'shown' ? 'hidden' : 'shown');
+        showSettings(false, inRun);
+      });
+  }
   const manual = normalizePilotMode(loadPilotPref()) === 'MANUAL';
   menuCard('AUTO-CONTINUE', manual ? 'Needs the AUTO pilot (ADVANCED, PILOT)'
     : state.autoContinue ? 'ON: the next run starts by itself (' + AUTO_PAY_TEXT + '). Press to turn off'
@@ -10974,6 +11003,7 @@ function startRun() {
   state.apexRun = apexEnabled(profile);
   state.apexFire = state.apexRun && apexOwned(profile, 'apex_endless_fire');
   state.apexMark = state.apexRun && apexOwned(profile, 'apex_mark');
+  state.runMoviesSeen = {};   // movies shown in this run (the portal movie's repeat rule)
   // Auto-continue: the two run stamps, frozen here.
   state.autoStarted = autoStartNext;
   state.autoCutPct = autoStartNext && autoRunsInRow > RUN_GOLD.AUTO_CONTINUE_FREE_RUNS ? RUN_GOLD.AUTO_CONTINUE_PENALTY_PCT : 0;
@@ -11185,6 +11215,7 @@ function startRun() {
   state.bossBanner = null;   // WAVE-14: no arrival banner at run start
   // No stale banner hold can freeze the new run's opening frames.
   state.bannerHold = 0;
+  state.bannerLater = null;   // nor a banner kept from the last run's hidden tab
   state.deathBy = null;      // WAVE-20: no death recorded yet
   // W7b MYTHIC chase gate: each run rolls whether each mythic build-definer is
   // in its draft pool AT ALL (owner spec: ~1/10 of runs each, ~1% both). The
@@ -12316,6 +12347,12 @@ function runAction(act) {
     if (state.helpMode) leaveHelpMode(); else enterHelpMode();
     return;
   }
+  // R9: the desktop key strip's own chips: show it (the corner chip) or hide
+  // it (the chip at its end). The choice is remembered; the game keeps running.
+  if (act === 'kbshow' || act === 'kbhide') {
+    setKeyStripShown(act === 'kbshow', kbPressPoint);
+    return;
+  }
   // WAVE-13: the pilot toggle is live mid-run only (a paused/drafting game
   // must not flip controllers under the smoke probes' feet).
   if (act === 'pilot') {
@@ -12634,14 +12671,6 @@ window.addEventListener('keydown', (ev) => {
     if (!ev.repeat) escapePress(isSkipKey(ev.key));
     return;
   }
-  // R2: the portal beat plays over live play, so only the skip keys go to it
-  // (the first shows SKIP, the second skips; ESC does not pause under it).
-  // Every other key still steers and casts.
-  if (beatPlaying() && isSkipKey(ev.key)) {
-    if (ev.preventDefault) ev.preventDefault();
-    if (!ev.repeat) moviePress(true, false);
-    return;
-  }
   // HELP MODE (owner 2026-09-16): '?' arms / leaves the tap-to-learn mode on
   // every screen it can serve — desktop included, which is where the old
   // key-list panel made "?" look broken. While the mode is up, every other
@@ -12939,6 +12968,10 @@ const HELP_EXTRAS = {
     purpose: 'move your hero. Weapons fire on their own' },
   settings: { keys: 'ESC or P', touch: 'SETTINGS (cog)',
     purpose: 'pause: settings, END RUN' },
+  kbhide: { keys: 'HIDE chip', touch: 'HIDE chip',
+    purpose: 'fold this strip into one KEYS chip in the corner (SETTINGS, KEY STRIP too)' },
+  kbshow: { keys: 'KEYS chip', touch: 'KEYS chip',
+    purpose: 'bring the key strip back (SETTINGS, KEY STRIP too)' },
 };
 // THE FIELD object meanings: ONE table for two consumers — the reference's
 // THE FIELD card renders the `field` lines verbatim, the help-mode object
@@ -13262,6 +13295,7 @@ function helpActText(act) {
   };
   if (ACT_ROW[act]) return introLine(ACT_ROW[act], isTouchPath());
   if (act === 'settings') return helpLine(HELP_EXTRAS.settings);
+  if (act === 'kbhide' || act === 'kbshow') return helpLine(HELP_EXTRAS[act]);
   if (act === 'help') return introLine('help', isTouchPath());
   return null;
 }
@@ -14264,7 +14298,10 @@ if (touchLayer && touchLayer.addEventListener) {
     const btn = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
     if (!btn) return;
     if (ev.preventDefault) ev.preventDefault();
+    // R9: where the strip toggle was clicked (setKeyStripShown's same-spot guard).
+    kbPressPoint = typeof ev.clientX === 'number' ? { x: ev.clientX, y: ev.clientY } : null;
     runAction(btn.dataset.act);
+    kbPressPoint = null;
   });
   touchLayer.addEventListener('pointermove', (ev) => {
     if (isJoyPointer(ev)) {
@@ -14333,12 +14370,11 @@ function chromeOn() {
   // (verified in test_escape_cine).
   // G15 REGISTRATION: 'death-cine' is chrome-OFF BY NAME too — a cinematic,
   // not a run screen (verified in test_death_cine + the phone verifier).
-  // R2: the portal beat is a movie over play: the pads, cog and "?" step
-  // down for its 2.5 s, so its SKIP corner and taps are its own on a phone.
-  // R5 review: the forge moment too (its keys are already its own; a pad tap
-  // changed the focus, the stance or the pilot under it).
+  // R5 review: the forge moment is a movie over play: the pads, cog and "?"
+  // step down for it (its keys are already its own; a pad tap changed the
+  // focus, the stance or the pilot under it).
   // R7: the arrival sting too (it holds the fight; its taps are its own).
-  if (beatLive() || forge || stingLive()) return false;
+  if (forge || stingLive()) return false;
   return state.mode === 'playing' || state.mode === 'finale';
 }
 // View px of canvas hidden under the right-hand pad column (0 when the pads
@@ -14378,8 +14414,10 @@ function clockTopInset() {
 // ---- R3 KEY STRIP: early on, and on request ---------------------------------
 // The desktop strip of key chips teaches the keys. It shows in the first
 // C.HUD.KEYSTRIP.SECONDS of each of a profile's first C.HUD.KEYSTRIP.RUNS runs,
-// and whenever help mode is on (the ? key, or the KEYS chip the strip folds
-// into). A phone never shows it (index.html: the touch layer's .on class).
+// and whenever help mode is on (the ? key, F1, the HELP chip). R9: once the
+// player picks (the KEYS chip the strip folds into shows it, the HIDE chip at
+// its end hides it, or the SETTINGS row), that choice rules instead of the
+// early-runs rule. A phone never shows it (index.html: the touch layer's .on class).
 // The tutorial rings the Q, H, TAB and G chips. While the guided run is live,
 // or a hint points at one of those chips, the strip stays up so the ring has
 // something to land on (a folded chip measures 0x0).
@@ -14389,8 +14427,67 @@ function keyStripWanted() {
   if (tutGuidedLive()) return true;
   const hint = tut.hints && tut.hints.active;
   if (hint && (hint.targets || []).some(t => KEY_STRIP_TARGETS.has(t))) return true;
+  // R9: the player's choice, once made, beats the early-runs rule.
+  if (keyStripChoice === 'shown') return true;
+  if (keyStripChoice === 'hidden') return false;
   const K = C.HUD.KEYSTRIP;
   return (state.runsBefore | 0) < K.RUNS && (state.time || 0) < K.SECONDS;
+}
+// Folds or raises the strip to match keyStripWanted. True when it changed (the
+// caller refits the canvas). Judged only while the run's chrome is up.
+function keyStripPulsed() {
+  try { return prefStorage.getItem(KEY_KEYSTRIP_PULSED) === '1'; } catch { return false; }
+}
+function syncKeyStripFold() {
+  if (!touchLayer || !touchLayer.classList) return false;
+  const fold = !keyStripWanted();
+  if (touchLayer.classList.contains('kb-min') === fold) return false;
+  touchLayer.classList.toggle('kb-min', fold);
+  // R9: the strip folding by itself at the end of an early run's first minutes
+  // (no choice made): one short pulse on the corner chip so the player sees
+  // where the keys went. No text, no sound, nothing under reduced motion.
+  const K = C.HUD.KEYSTRIP;
+  if (fold && keyStripChoice === null && touchLayer.classList.contains('cog-only') &&
+      (state.runsBefore | 0) < K.RUNS && (state.time || 0) >= K.SECONDS &&
+      !keyStripPulsed()) {
+    try { prefStorage.setItem(KEY_KEYSTRIP_PULSED, '1'); } catch { /* shim */ }
+    pulseKeysChip();
+  }
+  return touchLayer.classList.contains('cog-only');
+}
+function pulseKeysChip() {
+  const el = typeof document !== 'undefined' && document.getElementById ? document.getElementById('kb-more') : null;
+  if (!el || !el.classList || escapeStill()) return false;
+  el.classList.remove('kb-pulse');
+  void el.offsetWidth;   // restart the animation if it was already set
+  el.classList.add('kb-pulse');
+  return true;
+}
+// The corner chip and the hide chip. The fold lands at once (not next frame),
+// so the click that asked for it sees it.
+// On a narrow window the HIDE chip can land where the KEYS chip was, so a
+// double click on KEYS would hide the strip again. Two guards: any second
+// toggle within KB_TOGGLE_GUARD_MS (longer than the Windows double-click
+// time, 500 ms) is ignored, and a HIDE click on the very spot the KEYS click
+// was, within KB_SAME_SPOT_MS, is taken as a repeat of that click.
+const KB_TOGGLE_GUARD_MS = 600;
+const KB_SAME_SPOT_MS = 1500;
+const KB_SAME_SPOT_PX = 24;
+let kbToggleAt = -Infinity;
+let kbShowAt = null;   // { t, x, y } of the last KEYS click
+let kbPressPoint = null;   // the click being handled (the touch layer's pointerdown)
+function setKeyStripShown(shown, pt) {
+  const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+  if (now - kbToggleAt < KB_TOGGLE_GUARD_MS) return false;
+  if (!shown && kbShowAt && pt && now - kbShowAt.t < KB_SAME_SPOT_MS &&
+      Math.abs(pt.x - kbShowAt.x) <= KB_SAME_SPOT_PX && Math.abs(pt.y - kbShowAt.y) <= KB_SAME_SPOT_PX) return false;
+  kbToggleAt = now;
+  kbShowAt = shown && pt ? { t: now, x: pt.x, y: pt.y } : null;
+  setKeyStripChoice(shown ? 'shown' : 'hidden');
+  if (chromeOn() && syncKeyStripFold()) fitCanvas();
+  // The ready line changes with the fold, in the same frame (not one late).
+  state.readyRow = readyRowText();
+  return true;
 }
 // While the strip is folded, its live values (skill ready, potions left) ride
 // the vitals block as one short line (render.js reads state.readyRow).
@@ -14445,10 +14542,10 @@ function syncChrome() {
   // 0 + pointer-events none (index.html): visually gone AND completely inert.
   setBodyClass('chrome-reveal', topTransient && on && fsOverlay.t > 1e-9);
   let chromeLayoutChanged = false;
-  // R2: the portal beat hides the pads but keeps their room (visibility, not
-  // display): taking them out of the layout re-centred the canvas, and the
-  // battlefield jumped 120 px on a phone at the moment the boss fell.
-  const veil = !on && (beatLive() || !!forge || stingLive());
+  // The forge moment and the arrival sting hide the pads but keep their room
+  // (visibility, not display): taking them out of the layout re-centred the
+  // canvas, and the battlefield jumped 120 px on a phone.
+  const veil = !on && (!!forge || stingLive());
   if (touchLayer && touchLayer.style) {
     const want = (on || veil) ? '' : 'none';
     if (touchLayer.style.display !== want) { touchLayer.style.display = want; chromeLayoutChanged = true; }
@@ -14476,16 +14573,10 @@ function syncChrome() {
   if (state.helpMode && !HELP_ENTRY_MODES.has(state.mode)) leaveHelpMode();
   syncHelpHud();
   // R3 KEY STRIP: on desktop the strip of key chips shows only early on (the
-  // first minutes of the first runs) and on request (help mode, the ? key or
-  // the KEYS chip it folds into). Judged only while the run's chrome is up, so
+  // first minutes of the first runs), in help mode, and as the player chose
+  // (R9: the KEYS and HIDE chips, the SETTINGS row). Judged only while the run's chrome is up, so
   // a menu never refits the canvas. Folding it frees its band for the canvas.
-  if (on && touchLayer && touchLayer.classList) {
-    const fold = !keyStripWanted();
-    if (touchLayer.classList.contains('kb-min') !== fold) {
-      touchLayer.classList.toggle('kb-min', fold);
-      if (touchLayer.classList.contains('cog-only')) chromeLayoutChanged = true;
-    }
-  }
+  if (on && syncKeyStripFold()) chromeLayoutChanged = true;
   if (chromeLayoutChanged) fitCanvas();
 }
 // The PILOT badge: the mode in plain words (compact pads abbreviate), then
@@ -14733,25 +14824,24 @@ function foeLine() {
 
 // ---------- Main loop ----------
 // The launch movie plays BEFORE the title menu on page load; the canvas IS
-// the movie (src/intro.js). A new player sees the 5 s road shot, a returning
-// player (a finished run) the 1 s title stamp, reduced motion a still of the
-// title. Every cut ends on the title painting, so when it plays to its end
-// the title skips its own art-alone beat and only fades the menu in. It
-// plays once per load: death-screen TITLE returns jump straight to the menu.
+// the movie (src/intro.js). Every player, new or returning, sees the same
+// 7 s movie (the hero, the horde, the HORDES stamp, the fade); reduced motion
+// gets one still frame of it. It plays once per load: death-screen TITLE
+// returns jump straight to the menu.
 let introT0 = performance.now();
-let introLastNow = 0;          // the intro's last frame (wall clock)
+// The intro's last frame (wall clock). It starts at the launch, so a tab
+// that is hidden from the start (no frame until it is shown) has that
+// time taken off the movie's clock like any other time away.
+let introLastNow = introT0;
 const INTRO_GAP_MS = 250;      // a longer gap between frames is time nobody saw
-let introLanded = false;   // the movie played to its end, on the title painting
 function introOpts() {
   return {
     hero: pilotLook(profile && profile.equippedCharacter),
-    returning: runsFinished() > 0,
     reduced: escapeStill(),
   };
 }
-function endIntro(played = false) {
+function endIntro() {
   if (state.mode !== 'intro') return;
-  introLanded = !!played;
   state.mode = 'menu';
   // UP-FRONT CONTROLS (owner 2026-09-16): the WAVE-19 first-boot auto-pop
   // moved to the FIRST-RUN GATE — a fresh boot lands on the title, and the
@@ -14846,14 +14936,6 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
       }
     }
   }
-  // R2: during the portal beat a canvas tap is the beat's (the one skip rule),
-  // before the stick: on a phone a touch would otherwise take the wheel. For
-  // its 2.5 s the pilot walks on by itself and the crossing waits.
-  if (beatPlaying()) {
-    if (ev.preventDefault) ev.preventDefault();
-    moviePress(escapeSkipHit(ev), ev && ev.pointerType === 'mouse' ? 'mouse' : true);
-    return;
-  }
   // R5: a press during the forge moment is the movie's (the shared skip rule).
   if (forge && state.mode === 'playing') {
     if (ev.preventDefault) ev.preventDefault();
@@ -14890,13 +14972,13 @@ if (canvas.addEventListener) canvas.addEventListener('pointerdown', (ev) => {
 // shared rule in src/movie_skip.js), its cast and timeline options, and
 // whether it was already counted as seen. The escape keeps the same skip
 // state inside escape_cine.js.
-//   kind  'intro' | 'portal' | 'death'
+//   kind  'intro' | 'portal' | 'road' | 'death'
 //   opts  what the movie module's render/phaseAt/isDone take
-// (var, not let: chromeOn asks beatLive() during module load, above this line.)
+// (var, not let: musicScene asks for it during module load, above this line.)
 var movie = null;   // eslint-disable-line no-var
 function beginMovie(kind, opts) {
   movie = { kind, t0: performance.now(), skip: createSkip(), counted: false,
-    opts: { ...opts, repeat: movieIsRepeat(prefStorage, kind) } };
+    opts: { ...opts, repeat: movieIsRepeat(prefStorage, kind, (state.runMoviesSeen && state.runMoviesSeen[kind]) || 0) } };
   return movie;
 }
 // The boss a movie shows: the one whose death won this wave; before any kill
@@ -14912,6 +14994,10 @@ function movieShown(kind) {
   if (!movie || movie.kind !== kind || movie.counted) return;
   movie.counted = true;
   movieNoteSeen(prefStorage, kind);
+  // Also per run: the portal movie shortens once it was seen in THIS run.
+  // Each kind keeps its own count, so a road shot never counts as a portal movie.
+  if (!state.runMoviesSeen) state.runMoviesSeen = {};
+  state.runMoviesSeen[kind] = (state.runMoviesSeen[kind] || 0) + 1;
 }
 // One frame of a movie's skip prompt: count it down and draw it on top,
 // sized for the screen (a phone held upright shows the view below 1:1).
@@ -14925,157 +15011,78 @@ function movieSkipFrame(dt) {
   } catch { /* keep 1 */ }
   drawSkip(renderer.ctx, movie.skip, { scale });
 }
-// R2: the 'portal-cine' mode now plays the road shot before a stage change
-// (kind 'road'); the portal movie itself is the beat in 'playing' mode.
-const MOVIE_OF_MODE = { intro: 'intro', 'portal-cine': 'road', 'death-cine': 'death' };
-// A key or a tap during the intro, the road shot, the death movie or the
-// portal beat. Returns true when it skipped.
+// The 'portal-cine' mode plays two movies, told apart by the movie record's
+// kind: the portal movie ('portal', when the pilot walks into a wave's portal)
+// and the road shot ('road', after CONTINUE on a wave that changes stage).
+// Each has its own clock, its own end, its own seen count and its own skip.
+const MOVIE_OF_MODE = { intro: 'intro', 'death-cine': 'death' };
+function cineKind() {
+  return movie && (movie.kind === 'portal' || movie.kind === 'road') ? movie.kind : null;
+}
+// A key or a tap during the intro, the portal movie, the road shot or the
+// death movie. Returns true when it skipped.
 function moviePress(confirm, tap) {
-  const kind = beatLive() ? 'portal' : MOVIE_OF_MODE[state.mode];
+  const kind = state.mode === 'portal-cine' ? cineKind() : MOVIE_OF_MODE[state.mode];
   if (!kind || !movie || movie.kind !== kind) return false;
   if (kind !== 'intro' && !C.CINE.SKIPPABLE) return false;
-  const t = kind === 'portal' ? movie.beatT : (performance.now() - movie.t0) / 1000;
+  const t = (performance.now() - movie.t0) / 1000;
   if (!pressSkip(movie.skip, t, confirm, tap)) return false;
   uiGuard.arm();
   if (kind === 'intro') endIntro();
-  else if (kind === 'portal') endPortalBeat(true, true);
+  else if (kind === 'portal') endPortalCine();
   else if (kind === 'road') endRoadShot();
   else endDeathCine();
   return true;
-}
-// ---------- The portal: the beat on the battlefield (R2) ----------
-// The portal movie used to be a scene of its own, played after the pilot
-// walked in. Now it is 2.5 s on the real battlefield, from the moment the
-// wave's boss dies (src/portal_beat.js): the boss dies in slow time where it
-// stands, the portal opens on that spot, the pilot walks in. The game keeps
-// running under it in 'playing' mode, so the sweep, the loot, the pilot's own
-// walk and the portal's invulnerability all work as before. The beat only
-// draws on top, holds the crossing until it ends (beatHoldsEntry), and takes
-// the skip keys and taps. Its clock runs on play time (realDt in 'playing'),
-// so a draft opened by the swept gems pauses it.
-// Wave 1 plays no beat: the escape chase tells that story.
-function startPortalBeat(e) {
-  if (state.wave.num === 1 || state.unattended) return;
-  // The beat draws this boss's death itself (it flashes and sinks): the
-  // field's own fold and puff for it would be a second body on the spot.
-  // Under reduced motion the beat is a still card with no boss in it, so
-  // the boss keeps its field death: it must not just vanish.
-  if (!escapeStill()) e.quietDeath = true;
-  beginMovie('portal', { hero: moviePilot(), boss: bossLook(movieBossId()) });
-  movie.beatT = 0;
-  movie.lastPhase = null;
-  movie.spot = { x: e.x, y: e.y };
-  movie.reduced = escapeStill();
-  movie.done = false;
-  movie.held = false;
-  // A quick kill: the boss's APPROACHES banner would still be up, over the
-  // spot where it dies and against the FALLS caption. It goes now.
-  const bb = state.bossBanner;
-  if (bb && !bb.peripheral && (bb.verb === 'APPROACH' || bb.verb === 'APPROACHES')) state.bossBanner = null;
-  // The boss dies in slow time: the earned moment's dilation, held through
-  // the beat's KILL phase.
-  if (!movie.reduced) triggerDilation(C.DILATION.BOSS.SCALE, BEAT.SLOW_S);
-  // The recorded portal cue, now at the kill. It is 6 s long and the beat is
-  // 2.5 s: its tail plays on into the walk and the intermission, and the run
-  // bed stays ducked under it (-12 dB) until the cue ends, so the tail is
-  // heard and not fought.
-  audio.playMusicCue('portal', { duckDb: PORTAL_CUE_DUCK_DB });
-}
-const PORTAL_CUE_DUCK_DB = -12;   // = music_files.js DUCK_DB.portal
-function beatLive() {
-  return !!(movie && movie.kind === 'portal' && !movie.done && state.mode === 'playing');
 }
 // Something holds the sim in 'playing' (the same gates as the frame loop).
 function simHeld() {
   return coachActive() || state.bannerHold > 0 || !!state.helpMode || tutPausesSim();
 }
-// The beat is on screen and takes its skip keys and taps: not while a banner,
-// a coach card, help mode or a hint holds the sim (ESC then leaves help mode).
-function beatPlaying() {
-  return beatLive() && !simHeld();
-}
-// The crossing waits for the beat (the pilot stands in the portal).
-function beatHoldsEntry() {
-  return beatLive() && movie.beatT < BEAT.DURATION;
-}
-// resume: open the level-up draft the beat held back (the joker, evolve and
-// rule cards open from update() on their own once the beat is over).
-// skipped: the player skipped it, so the beat's slow time ends with it (the
-// field would otherwise run on at 0.35x with nothing drawn to say why).
-function endPortalBeat(resume = true, skipped = false) {
-  if (!movie || movie.kind !== 'portal' || movie.done) return;
-  movie.done = true;
-  if (skipped && !movie.reduced && movie.beatT < BEAT.SLOW_S && dilation.remaining > 0) {
-    dilation.remaining = 0;
-    dilation.scale = 1;
-    state.timeScale = 1;
-  }
-  if (resume && state.mode === 'playing' && state.pendingDrafts > 0 && !state.draftKind) openDraft();
-}
-// One frame of the beat: advance its clock on play time and fire its
-// stingers. Returns what to draw this frame ({ t, o }) or null. The frame
-// loop hands the drawing to the renderer, which paints it over the world and
-// under the HUD (the readouts stay on top). Hidden tab: the beat ends at once.
-const BEAT_HUD_DROP = 8;   // view px the vitals block steps down under the top bar
-const STING_HUD_GAP = BEAT.BAR - BEAT_HUD_DROP;   // R7: the vitals sit as far below the sting's bar as below the beat's
-function portalBeatFrame(realDt, draw) {
-  if (!movie || movie.kind !== 'portal' || movie.done) return null;
-  if (state.mode !== 'playing') { movie.held = true; return null; }   // a draft or a pause holds the beat
-  if (!draw) { endPortalBeat(); return null; }
-  // A first-ever banner, a coach card, help mode or a tutorial hint holds the
-  // sim. The beat waits with it and leaves the screen to it: its clock stops
-  // and nothing of it is drawn, so it never plays out over a frozen field.
-  if (simHeld()) { movie.held = true; return null; }
-  if (movie.held) {
-    movie.held = false;
-    // Slow time ran out on the wall clock while the beat waited: the KILL
-    // phase gets the rest of it.
-    if (!movie.reduced && movie.beatT < BEAT.SLOW_S) triggerDilation(C.DILATION.BOSS.SCALE, BEAT.SLOW_S - movie.beatT);
-  }
-  movie.beatT += realDt;
-  const t = movie.beatT;
-  if (BEAT.isDone(t)) { endPortalBeat(); return null; }
-  const ph = BEAT.phaseAt(t);
-  if (ph !== movie.lastPhase) {
-    movie.lastPhase = ph;
-    // KILL: the boss yell; OPEN: the portal shimmer; WALK: the blip.
-    audio.playPortalCue(ph === 'OPEN' ? 'DISSOLVE' : ph);
-  }
-  const zs = state.zoomScale;
-  const Z = (typeof zs === 'number' && Number.isFinite(zs) && zs >= 1) ? Math.round(zs) : 1;
-  const cam = state.cam || { x: 0, y: 0 };
-  const sx = (x) => C.VIEW_W / 2 + (x - cam.x - C.VIEW_W / 2) * Z;
-  const sy = (y) => C.VIEW_H / 2 + (y - cam.y - C.VIEW_H / 2) * Z;
-  const po = state.portal, p = state.player;
-  return { t, o: {
-    boss: movie.opts.boss, zoom: Z, reduced: movie.reduced, repeat: movie.opts.repeat,
-    bx: sx(movie.spot.x), by: sy(movie.spot.y),
-    px: po ? sx(po.x) : null, py: po ? sy(po.y) : null,
-    hx: sx(p.x), hy: sy(p.y), entering: !!(po && po.entering),
-  } };
-}
-
-// Walking into the portal lands here (openIntermission, cinePending): wave 1
-// goes on to the escape chase, the END_WAVE cast to the Maw, and every other
-// wave to its intermission. The name stays for the callers and tests.
+const STING_HUD_GAP = 8;   // R7: view px the vitals sit below the arrival sting's top bar
+// ---------- The portal movie (WAVE-8/A; back in round 8) ----------
+// Plays when the pilot walks into the portal a wave's boss left, from wave 2
+// on: the game is frozen ('portal-cine' mode), src/portal_cine.js draws the
+// hero killing the boss and walking into the portal, then the run goes on to
+// the intermission (or, at END_WAVE, to the Maw). Steve, round 8: the full
+// movie (6.9 s) at the first portal of each run, the short form (3.5 s) on the
+// later ones in the same run (movie_cast.js REPEAT_RULE, state.runMoviesSeen).
+// Any key or tap skips by the shared rule. Wave 1 has the escape chase instead.
+// The cards a boss kill earns (level-up, joker, rule, evolve) open at the
+// kill, during play, never after the movie.
+let cineT0 = 0, lastCinePhase = null;
 function startPortalCine() {
   state.wave.cinePending = false;
   // R1: at wave 1 the escape chase already shows the hero diving through a
-  // portal. The chase drops the overlay itself, brings its own music, skips
-  // itself when nobody watches, and hands back to the intermission.
+  // portal, so this movie would tell the same story twice. The chase drops
+  // the overlay itself, brings its own music, skips itself when nobody
+  // watches, and hands back to the intermission.
   if (state.wave.num === 1) { startEscape(); return; }
-  endPortalBeat(false);
+  lastCinePhase = null;
+  beginMovie('portal', { hero: moviePilot(), boss: bossLook(movieBossId()), reduced: escapeStill() });
+  cineT0 = movie.t0;
   // 8X SEQUENCING: the walk-in can land inside a draft pick ceremony; no
-  // stale draft card may ride into what comes next.
+  // stale draft card may ride through the movie.
   overlay.style.display = 'none';
+  state.mode = 'portal-cine';
+  // Unattended: no one is watching the movie. Hand straight to the end
+  // handler (the same call isDone would make); nothing is counted.
+  if (state.unattended) { endPortalCine(); return; }
+  // The recorded portal cue over the run bed (the 'portal' scene ducks the
+  // bed -12 dB while the movie is up). The cue is about 6 s: it ends inside
+  // the full movie (6.9 s); the short form (3.5 s) fades it as it ends.
+  audio.playMusicCue('portal');
+}
+function endPortalCine() {
+  if (state.mode !== 'portal-cine') return;
+  // The road shot plays in this mode too: its own end.
+  if (movie && movie.kind === 'road') { endRoadShot(); return; }
+  // The cue does not play on past the movie (the short form, or a skip): it
+  // fades in 0.3 s and the duck lifts. After the full movie it is already over.
+  if (audio.fadeMusicCues) audio.fadeMusicCues();
   // WAVE-10: the END_WAVE cast fell and the maw MILESTONE begins (final_boss.js).
-  if (state.wave.num === C.ESCALATION.END_WAVE) {
-    // The portal cue is 6 s and ducks the bed under it; the Maw arrives about
-    // 2.5 s after the kill. Its tail fades now and the duck lifts.
-    if (audio.fadeMusicCues) audio.fadeMusicCues();
-    startFinale();
-    return;
-  }
+  if (state.wave.num === C.ESCALATION.END_WAVE) { startFinale(); return; }
+  // A movie put up some other way at wave 1 still goes on to the chase.
+  if (state.wave.num === 1) { startEscape(); return; }
   openIntermission();
 }
 
@@ -15104,8 +15111,6 @@ function endRoadShot() {
   if (state.mode !== 'portal-cine') return;
   state.mode = 'playing';
 }
-// The old name, kept for the stall clock and the tests' seams.
-function endPortalCine() { endRoadShot(); }
 
 // ---------- G15: the death movie (src/death_cine.js) ------------------------
 // The movie plays on DEATH ONLY: die() composes the payoff overlay, HIDES it,
@@ -15764,7 +15769,6 @@ function frame(now) {
 // simulation is realDt times the earned-moment time scale. With draw false
 // (a hidden tab) nothing is painted and the movies end at once.
 function runFrame(now, realDt, draw) {
-  maybeApplyMenuFont(typeof document !== 'undefined' ? document : null, overlay, false);
   // SLICE 8: sim-clock pacing for sim-gating UI holds at dev speed >1. The
   // draft auto-pick timeout, the token-banner hold and the dilation window
   // are UX pacing in wall-seconds at 1x; at Nx they decay N× faster in wall
@@ -15811,6 +15815,19 @@ function runFrame(now, realDt, draw) {
   // earned-moment flourish and the title reveal above). Frame-rate
   // independent: 2.5s of real time at 60Hz and at 120Hz. SLICE 8: at dev
   // speed >1 it decays on paceDt (sim-clock — same sim coverage as 1x).
+  // A one-time banner that comes up in a hidden tab (a background run) would
+  // run out before anyone saw it, as the intro once did. It is put aside, and
+  // the run plays on; it shows, with its full hold, on the first frame the
+  // player is back in the fight.
+  if (!draw && state.bannerHold > 0 && state.bossBanner && state.bossBanner.oneTime) {
+    if (!state.bannerLater) state.bannerLater = state.bossBanner;
+    state.bossBanner = null;
+    state.bannerHold = 0;
+  } else if (draw && state.bannerLater && state.mode === 'playing' && !sting && !forge && !coachActive()) {
+    state.bossBanner = { ...state.bannerLater, ttl: TOKEN_BANNER_SEC };
+    state.bannerHold = TOKEN_BANNER_SEC;
+    state.bannerLater = null;
+  }
   if (state.bannerHold > 0) {
     state.bannerHold = Math.max(0, state.bannerHold - paceDt);
   }
@@ -15871,8 +15888,8 @@ function runFrame(now, realDt, draw) {
   if (state.mode === 'intro') {
     // The title movie waits for someone to watch it: time the tab spent
     // hidden (no frames, or frames that do not draw) is taken off its clock,
-    // so a tab opened in the background still plays the whole road shot.
-    if (introLastNow > 0) {
+    // so a tab opened in the background still plays the whole movie.
+    {
       const gap = now - introLastNow;
       const lost = !draw ? gap : (gap > INTRO_GAP_MS ? gap - 1000 / 60 : 0);
       if (lost > 0) { introT0 += lost; if (movie && movie.kind === 'intro') movie.t0 = introT0; }
@@ -15884,20 +15901,32 @@ function runFrame(now, realDt, draw) {
     movieShown('intro');
     movieSkipFrame(realDt);
     // WAVE-8/B: fire the intro stinger on each phase transition (rising
-    // drone at OVERTAKE, the sweep under the dissolve (FADE), the slam when
-    // the logo lands (TITLE)).
+    // drone at OVERTAKE, slam at the TITLE stamp, sweep on FADE).
     const mo = movie && movie.opts;
     const iph = INTRO.phaseAt(t, mo);
     if (iph !== lastIntroPhase) { lastIntroPhase = iph; audio.playIntroCue(iph); }
-    if (INTRO.isDone(t, mo)) endIntro(true);
+    if (INTRO.isDone(t, mo)) endIntro();
     return;
   }
   if (state.mode === 'portal-cine') {
     // WAVE-8/A: gameplay is frozen (update() only runs in 'playing'); the
     // movie owns the canvas until isDone, then the intermission takes over.
-    // R2: this mode is now the road shot before a stage change (the run is
-    // already on the new stage; the sim waits).
+    // It plays the portal movie, or the road shot before a stage change (the
+    // run is already on the new stage; the sim waits): movie.kind says which.
+    // Either one owns the whole canvas: no world, light or HUD pass is drawn.
     renderer.fsButton = null;   // SEAM HYGIENE: see the death-cine branch
+    if (movie && movie.kind === 'portal') {
+      if (!draw) { endPortalCine(); return; }   // a hidden tab: nobody watches
+      const t = now - cineT0;
+      const mo = movie.opts;
+      CINE.render(renderer.ctx, t, mo);
+      movieShown('portal');
+      movieSkipFrame(realDt);
+      const cph = CINE.phaseAt(t, mo);
+      if (cph !== lastCinePhase) { lastCinePhase = cph; audio.playPortalCue(cph); }
+      if (CINE.isDone(t, mo)) endPortalCine();
+      return;
+    }
     if (!draw) { endRoadShot(); return; }
     const t = (now - roadT0) / 1000;
     const mo = movie && movie.kind === 'road' ? movie.opts : undefined;
@@ -15963,13 +15992,10 @@ function runFrame(now, realDt, draw) {
     // R5: the forge moment holds it too (src/forge_show.js).
     if (!coachActive() && state.bannerHold <= 0 && !state.helpMode && !tutPausesSim() && !forge) devSimSteps(dt);
   } else if (state.mode === 'finale') devSimSteps(dt);
-  if (!draw) { endForge(); endSting(); portalBeatFrame(realDt, false); return; }   // R7: and the arrival sting   // R2: a hidden tab ends the beat (R5: and the forge)
+  if (!draw) { endForge(); endSting(); return; }   // R5: a hidden tab ends the forge (R7: and the arrival sting)
   state.questsHidden = tutGuidedLive();   // the tracker waits for the handover
-  // R2: the portal beat films over the live battlefield, under the HUD; the
-  // vitals block steps down under its top bar.
-  const beat = portalBeatFrame(realDt, true);
-  state.beatHudDrop = beat ? Math.round(BEAT_HUD_DROP * BEAT.barsAt(beat.t, beat.o.reduced)) : 0;
-  renderer.underHud = beat ? (g) => BEAT.render(g, beat.t, beat.o) : null;
+  state.barHudDrop = 0;
+  renderer.underHud = null;
   // R7: the arrival sting: the push right after the world layer (drawing
   // only), the bars and the name card under the HUD, the vitals block below
   // its top bar.
@@ -15979,7 +16005,7 @@ function runFrame(now, realDt, draw) {
   renderer.light.stingT = st && st.kind === 'maw' && !st.o.reduced ? st.t : null;
   if (st) {
     const t = st.t, o = st.o;
-    state.beatHudDrop = Math.max(state.beatHudDrop, Math.round((STING.barHeight(o) - STING_HUD_GAP) * STING.barsAt(t, o)));
+    state.barHudDrop = Math.max(state.barHudDrop, Math.round((STING.barHeight(o) - STING_HUD_GAP) * STING.barsAt(t, o)));
     renderer.afterWorld = (g) => STING.renderPush(g, t, o);
     renderer.underHud = (g) => STING.render(g, t, o);   // the dark, the bars and the name card
   }
@@ -16009,7 +16035,6 @@ function runFrame(now, realDt, draw) {
   renderer.underHud = null;
   renderer.afterWorld = null;
   drawHud();
-  if (beat) { movieShown('portal'); movieSkipFrame(realDt); }
   if (st && sting === st) drawSkip(renderer.ctx, st.skip, { scale: st.o.capScale });
   forgeFrame(realDt);   // R5: the forge moment, over the world and the HUD
   // G9 TROPHY GALLERY: the full-screen showcase paints AFTER the HUD so the
@@ -16023,10 +16048,6 @@ function runFrame(now, realDt, draw) {
   renderer.drawBestiary(renderer.ctx, state);
   updateTouchHud();
 }
-// THE MENU FONT is asked for here, during boot, and nothing waits for it: the
-// first frame is drawn while it loads. A request made during boot is served
-// by the same release as the page (sw.js, test_sw_manifest G2).
-try { loadMenuFont({ overlay }); } catch { /* today's font stays */ }
 requestAnimationFrame(frame);
 
 // ---------- Background play ----------
@@ -16127,7 +16148,7 @@ export const __TEST = {
   // R6 LIGHT seams: the setting and the governor.
   light: { get setting() { return lightingSetting; }, setLighting, gov: lightGov },
   // R3 HUD seams: the key strip rule, the quest chip, the ready line.
-  hud: { keyStripWanted, toggleQuests, questChipHitRect, questChipHit, readyRowText, touchLayer: () => touchLayer, fitCanvas },
+  hud: { keyStripWanted, keyStripChoice: () => keyStripChoice, setKeyStripChoice, syncKeyStripFold, toggleQuests, questChipHitRect, questChipHit, readyRowText, touchLayer: () => touchLayer, fitCanvas },
   toast,
   // M5b landscape: the high-ground damage rule.
   heroHitMult,
@@ -16859,26 +16880,25 @@ export const __TEST = {
     // Restart the movie record for a mode a test forced (st.mode = ...).
     begin: (kind) => beginMovie(kind, { hero: moviePilot() }),
     bossId: () => movieBossId(),
+    // How many times each kind was shown in this run (the portal movie's repeat rule).
+    runSeen: (kind) => (state.runMoviesSeen && state.runMoviesSeen[kind]) || 0,
   },
   // ---- G16 portal-cine seam: the same read-only clock the G15 death movie
   // exposes — start/end stay internal (the real boss-kill path drives them);
   // the browser verifier samples the PAUSE/LINGER beats off this t.
-  // R2: the portal beat on the battlefield (its play-time clock, in seconds)
-  // and the road shot before a stage change (wall clock, ms, like the others).
-  portalBeat: {
-    get live() { return beatLive(); },
-    get t() { return movie && movie.kind === 'portal' ? movie.beatT : 0; },
-    get done() { return !!(movie && movie.kind === 'portal' && movie.done); },
-    duration: BEAT.DURATION,
-    holds: () => beatHoldsEntry(),
+  // The road shot before a stage change shares the 'portal-cine' mode; it
+  // has its own clock (wall clock, ms, like the others).
+  // live: which of the two is up ('portal', 'road' or null). t: the clock of
+  // the one playing (during a road shot, the road shot's).
+  portalCine: {
+    get live() { return state.mode === 'portal-cine' ? cineKind() : null; },
+    get t() { return performance.now() - (cineKind() === 'road' ? roadT0 : cineT0); },
+    get duration() { return CINE.durationOf(movie && movie.kind === 'portal' ? movie.opts : null); },
+    get repeat() { return !!(movie && movie.kind === 'portal' && movie.opts.repeat); },
   },
   roadShot: {
     get t() { return performance.now() - roadT0; },
     duration: ROAD.DURATION * 1000,
     get name() { return movie && movie.kind === 'road' ? movie.opts.name : null; },
-  },
-  portalCine: {
-    get t() { return performance.now() - roadT0; },
-    get duration() { return ROAD.DURATION * 1000; },
   },
 };

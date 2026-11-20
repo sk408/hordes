@@ -160,10 +160,8 @@ s.check('THE SILENCE: skills cost nothing and do nothing while the boss lives; t
   assert.ok(!(p.skillCd[qid] > 0), 'no cooldown started');
   killCast();
   assert.equal(st.bossRule, null);
-  // (R2: the portal beat holds the rule's card back, so play goes on here and
-  // this line now runs; before, the card was up and it never did. A class
-  // whose skill is a kill-charged ult has no charge yet: the plain skill
-  // stands in for it, with a full pool.)
+  // (Play goes on here after the kill. A class whose skill is a kill-charged
+  // ult has no charge yet: the plain skill stands in for it, with a full pool.)
   const after = C.SKILLS[qid] && C.SKILLS[qid].KILLS != null ? 'FROST_NOVA' : qid;
   p.mana = p.stats.maxMana; p.skillCd[after] = 0;
   if (st.mode === 'playing') assert.equal(useSkill(st, after), true, 'the skill fires once the rule is over');
@@ -264,16 +262,21 @@ s.check('a card rule pays a free card: a draft without the level, after the joke
   callBoss(); killCast();
   assert.equal(st.ruleCards, 1);
   // The boss's joker offer opens first; taking it chains into the free card.
-  // (R2: the cards wait for the 2.5 s portal beat to end.)
+  // (The offer opens a few frames after the kill: step until it is up.)
   let guard = 0;
   while (st.mode !== 'draft' && guard++ < 200) step();
   assert.equal(st.mode, 'draft');
-  if (st.draftKind === 'joker') { h.elements['ov-cards'].children[0].click(); for (let i = 0; i < 3 && st.draftKind !== 'level'; i++) step(); }
+  // The joker on offer is random. Full Hand adds a card to every draft, so
+  // taking it made this free card a draft of 4 (seed 6). The joker is not what
+  // is measured: take one that leaves the draft size alone.
+  const plainJoker = () => [...h.elements['ov-cards'].children]
+    .find((c) => !String(c.innerHTML || '').includes(JOKERS.full_hand.name + '</div>'));
+  if (st.draftKind === 'joker') { plainJoker().click(); for (let i = 0; i < 3 && st.draftKind !== 'level'; i++) step(); }
   assert.equal(st.draftKind, 'level');
   assert.equal(h.elements['ov-title'].textContent, 'FREE CARD');
   assert.ok(/^the rule is beaten · Pick 1: click or press 1\/2\/3$/.test(h.elements['ov-sub'].textContent), h.elements['ov-sub'].textContent);
-  // (R2: the sweep may bank gems during the portal beat; the card itself
-  // must add no level.)
+  // (The wave-clear sweep may bank gems before the card is taken; the card
+  // itself must add no level.)
   const before = st.player.level;
   assert.ok(before >= level);
   h.elements['ov-cards'].children[0].click();

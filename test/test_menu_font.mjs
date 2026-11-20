@@ -1,25 +1,18 @@
-// THE MENU FONT (R5 "one pixel font for all menus, a clear main PLAY button,
-// readable hint contrast"): src/menu_font.js, index.html, the title's PLAY.
-//   1. every character the menus use is in the font file (its cmap is read
-//      from the woff2 itself), or is a listed symbol-fallback character;
-//   2. the size table puts every declared size on the font's 11 px grid,
-//      and inline sizes in the code are on the grid already;
-//   3. the CSSOM switch moves sizes and restores them, leaves monospace and
-//      in-run rules alone;
-//   4. the loader: asked for during boot and never waited for, a failure
-//      keeps today's font, a font that arrives while a menu is in view waits
-//      for a screen change;
-//   5. one main button on the title (PLAY) with its own frame tone;
-//   6. hint and dim text reaches 4.5:1 against its background;
-//   7. LOADING does not depend on the font; sw.js precaches it; credits.
+// THE MENUS' TYPE AND READABILITY (R5 "a clear main PLAY button, readable
+// hint contrast"; round 8 "font2": the pixel font is gone, Steve found it
+// harder to read). index.html, src/art/menu_frame.js, the title's PLAY.
+//   1. no web font: none on disk, none precached, none asked for by the code
+//      or the page; every menu is in the page's monospace at its own sizes;
+//   2. one main button on the title (PLAY): its own frame tone, a bigger name;
+//   3. hint and dim text reaches 4.5:1 against its background;
+//   4. the draft's rows on an upright phone (cards2) are still the layout.
 // Run: node test/test_menu_font.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import * as MF from '../src/menu_font.js';
 import { MENU_FRAME_PALETTES } from '../src/art/menu_frame.js';
+import { draftLayout } from '../src/draft_card_art.js';
 import { boot } from './_harness.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,250 +21,60 @@ let n = 0;
 const ok = (name, fn) => { fn(); n++; console.log('  ok - ' + name); };
 const html = read('index.html');
 const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
-
-// ---- the font's cmap, from the woff2 ------------------------------------------
-function readBase128(b, o) {
-  let v = 0;
-  for (let i = 0; i < 5; i++) { const x = b[o.p++]; v = (v << 7) | (x & 0x7f); if (!(x & 0x80)) return v >>> 0; }
-  throw new Error('bad UIntBase128');
-}
-function woff2Cmap(buf) {
-  assert.equal(buf.toString('latin1', 0, 4), 'wOF2');
-  const numTables = buf.readUInt16BE(12);
-  const compLen = buf.readUInt32BE(20);
-  const o = { p: 48 };
-  const tags = ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf', 'loca', 'prep'];
-  const dir = [];
-  for (let i = 0; i < numTables; i++) {
-    const flags = buf[o.p++];
-    let tag = tags[flags & 0x3f] || ('#' + (flags & 0x3f));
-    if ((flags & 0x3f) === 63) { tag = buf.toString('latin1', o.p, o.p + 4); o.p += 4; }
-    const ver = flags >> 6;
-    const orig = readBase128(buf, o);
-    const transformed = (tag === 'glyf' || tag === 'loca') ? ver !== 3 : ver !== 0;
-    const len = transformed ? readBase128(buf, o) : orig;
-    dir.push({ tag, len });
-  }
-  const data = zlib.brotliDecompressSync(buf.subarray(o.p, o.p + compLen));
-  let off = 0; let cmap = null;
-  for (const t of dir) { if (t.tag === 'cmap') cmap = data.subarray(off, off + t.len); off += t.len; }
-  assert.ok(cmap, 'the woff2 has a cmap');
-  const nSub = cmap.readUInt16BE(2);
-  const cps = new Set();
-  for (let i = 0; i < nSub; i++) {
-    const pid = cmap.readUInt16BE(4 + i * 8), eid = cmap.readUInt16BE(6 + i * 8), so = cmap.readUInt32BE(8 + i * 8);
-    const fmt = cmap.readUInt16BE(so);
-    if (fmt === 12 && pid === 3 && eid === 10) {
-      const ng = cmap.readUInt32BE(so + 12);
-      for (let g = 0; g < ng; g++) { const s = cmap.readUInt32BE(so + 16 + g * 12), e = cmap.readUInt32BE(so + 20 + g * 12); for (let c = s; c <= e; c++) cps.add(c); }
-    } else if (fmt === 4 && pid === 3 && (eid === 1 || eid === 0)) {
-      const seg = cmap.readUInt16BE(so + 6) / 2;
-      const ends = so + 14, starts = ends + seg * 2 + 2, deltas = starts + seg * 2, ros = deltas + seg * 2;
-      for (let s = 0; s < seg; s++) {
-        const end = cmap.readUInt16BE(ends + s * 2), start = cmap.readUInt16BE(starts + s * 2);
-        const delta = cmap.readInt16BE(deltas + s * 2), ro = cmap.readUInt16BE(ros + s * 2);
-        for (let c = start; c <= end && c !== 0xffff; c++) {
-          let gid;
-          if (ro === 0) gid = (c + delta) & 0xffff;
-          else { const g = cmap.readUInt16BE(ros + s * 2 + ro + (c - start) * 2); gid = g ? (g + delta) & 0xffff : 0; }
-          if (gid) cps.add(c);
-        }
-      }
-    }
-  }
-  return cps;
-}
-const fontBuf = fs.readFileSync(path.join(ROOT, MF.MENU_FONT.url));
-const CMAP = woff2Cmap(fontBuf);
-
-ok('the font file is the 12 KB Latin Pixelify Sans and its cmap reads (217 code points, A-z, digits, the dot and the dash)', () => {
-  assert.equal(CMAP.size, 217);
-  for (const ch of 'AZaz09 .·×—…›•') assert.ok(CMAP.has(ch.codePointAt(0)), 'has ' + ch);
-  assert.ok(!CMAP.has(0x2660), 'no spade (the suits are a symbol fallback on purpose)');
-});
-
-// ---- 1. every character the menus use ------------------------------------------
-const ENTITIES = { nbsp: 0xa0, middot: 0xb7, times: 0xd7, mdash: 0x2014, ndash: 0x2013, hellip: 0x2026, bull: 0x2022,
-  rarr: 0x2192, larr: 0x2190, uarr: 0x2191, darr: 0x2193, harr: 0x2194, check: 0x2713, copy: 0xa9, deg: 0xb0,
-  amp: 0x26, lt: 0x3c, gt: 0x3e, quot: 0x22, apos: 0x27 };
-function codeChars(text) {
-  const out = [];
-  text = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
-  for (let ln of text.split('\n')) {
-    ln = ln.replace(/(^|[^:\\'"])\/\/.*$/, '$1');
-    for (const m of ln.matchAll(/content:\s*'([^']*)'/g)) for (const e of m[1].matchAll(/\\([0-9a-fA-F]{4,5})/g)) out.push([parseInt(e[1], 16), ln]);
-    for (const m of ln.matchAll(/\\u\{?([0-9a-fA-F]{4,5})\}?/g)) out.push([parseInt(m[1], 16), ln]);
-    for (const m of ln.matchAll(/&([a-zA-Z]{2,8});/g)) {
-      assert.ok(m[1] in ENTITIES, 'unknown entity &' + m[1] + '; - add it to the table: ' + ln.trim());
-      out.push([ENTITIES[m[1]], ln]);
-    }
-    for (const m of ln.matchAll(/&#x([0-9a-fA-F]+);|&#(\d+);/g)) out.push([m[1] ? parseInt(m[1], 16) : +m[2], ln]);
-    for (const ch of ln) { const c = ch.codePointAt(0); if (c > 126) out.push([c, ln]); }
-  }
-  return out;
-}
 const srcFiles = [];
 const walk = (d) => { for (const e of fs.readdirSync(path.join(ROOT, d), { withFileTypes: true })) {
   const p = d + '/' + e.name; if (e.isDirectory()) walk(p); else if (p.endsWith('.js')) srcFiles.push(p); } };
 walk('src');
-ok('every character in src/ and index.html is in the font, or is a listed symbol-fallback character', () => {
-  const missing = new Map();
-  for (const f of [...srcFiles.filter((f) => f !== 'src/menu_font.js'), 'index.html']) {
-    for (const [c, ln] of codeChars(read(f))) {
-      if (CMAP.has(c) || String.fromCodePoint(c) in MF.SYMBOL_FALLBACK) continue;
-      if (!missing.has(c)) missing.set(c, f + ': ' + ln.trim().slice(0, 90));
-    }
-  }
-  assert.deepEqual([...missing].map(([c, w]) => 'U+' + c.toString(16).toUpperCase() + ' ' + w), []);
-});
-ok('the replaced characters are gone from the code and their replacements are in the font', () => {
-  for (const [from, to] of Object.entries(MF.REPLACED)) {
-    assert.ok(CMAP.has(to.codePointAt(0)), 'replacement in the font: ' + to);
-    for (const f of [...srcFiles.filter((f) => f !== 'src/menu_font.js'), 'index.html']) {
-      assert.ok(!codeChars(read(f)).some(([c]) => c === from.codePointAt(0)), f + ' still uses U+' + from.codePointAt(0).toString(16));
-    }
-  }
-  for (const ch of Object.keys(MF.SYMBOL_FALLBACK)) assert.ok(!CMAP.has(ch.codePointAt(0)), 'listed fallback is really missing: ' + ch);
-});
 
-// ---- 2. the size table ---------------------------------------------------------------
-function fakeRule(sel, decl) {
-  const props = new Map(Object.entries(decl).map(([k, v]) => [k, [v, '']]));
-  return { selectorText: sel, style: {
-    getPropertyValue: (k) => (props.get(k) || [''])[0],
-    getPropertyPriority: (k) => (props.get(k) || ['', ''])[1],
-    setProperty: (k, v, p = '') => props.set(k, [v, p]) } };
-}
-ok('every px font size the stylesheet declares maps onto the 11 px grid (11, 22, 44)', () => {
-  const sizes = [...css.matchAll(/font-size:\s*([\d.]+)px/g)].map((m) => +m[1]);
-  assert.ok(sizes.length > 60);
-  for (const s of sizes) assert.ok(MF.GRID_PX.includes(MF.gridSize(s)), s + 'px -> ' + MF.gridSize(s));
-  assert.deepEqual([9, 11, 13, 16, 18, 22, 28, 46].map(MF.gridSize), [11, 11, 11, 11, 22, 22, 22, 44]);
-  assert.match(css, /html\.px-font body \{ font-size: 11px; \}/, 'inherited text (16 px by default) is 11 px with the font');
+// ---- 1. no web font --------------------------------------------------------------------
+const FONT_FILE = /\.(woff2?|ttf|otf|eot)\b/i;
+ok('no font file ships: assets/fonts is gone and nothing in assets is a font', () => {
+  assert.ok(!fs.existsSync(path.join(ROOT, 'assets/fonts')), 'assets/fonts is removed');
+  const bad = [];
+  const scan = (d) => { for (const e of fs.readdirSync(path.join(ROOT, d), { withFileTypes: true })) {
+    const p = d + '/' + e.name; if (e.isDirectory()) scan(p); else if (FONT_FILE.test(p)) bad.push(p); } };
+  scan('assets');
+  assert.deepEqual(bad, []);
+  assert.ok(!fs.existsSync(path.join(ROOT, 'src/menu_font.js')), 'the font loader is removed');
 });
-ok('inline font sizes written by the code are on the grid already (the switch does not see them)', () => {
+ok('sw.js precaches no font', () => {
+  const sw = read('sw.js');
+  assert.ok(!FONT_FILE.test(sw), 'no font file in the precache list');
+  assert.ok(!/menu_font/.test(sw));
+});
+ok('the page and the code ask for no web font', () => {
+  assert.ok(!/@font-face/.test(html), 'no @font-face');
+  assert.ok(!/<link[^>]+font/i.test(html), 'no font link or preload');
+  assert.ok(!/px-font|Pixelify/i.test(html), 'no rules for the pixel font');
   for (const f of srcFiles) {
-    for (const m of read(f).matchAll(/font-size:\s*([\d.]+)px/g)) assert.ok(MF.GRID_PX.includes(+m[1]), f + ': ' + m[0]);
+    const t = read(f);
+    assert.ok(!/\bFontFace\b|document\.fonts|Pixelify|menu_font/.test(t), f + ' asks for a font');
+    assert.ok(!FONT_FILE.test(t.replace(/\/\/.*$/gm, '')), f + ' names a font file');
   }
 });
-ok('the main button and the shop buy line ask for grid sizes', () => {
-  assert.match(css, /#overlay\.title \.card\.main \.name \{ font-size: 22px;/);
-  const main = read('src/main.js');
-  assert.match(main, /const fs = shopBuyPx\(gridPlan\.cardW, maxCh, menuFontOn\(\)\);/);
-  // With the font on the buy line is 11 px at every card width (it was 9 or
-  // 10 px where 11 did not fit, off the grid); today's font still shrinks.
-  for (let w = 40; w <= 320; w += 7) for (let ch = 5; ch <= 16; ch++) {
-    assert.equal(MF.shopBuyPx(w, ch, true), 11, w + 'px card, ' + ch + ' characters');
-  }
-  assert.equal(MF.shopBuyPx(93, 13, false), 9);
-  assert.equal(MF.shopBuyPx(300, 10, false), 12);
+ok('no code rewrites the stylesheet\'s font sizes at run time', () => {
+  for (const f of srcFiles) assert.ok(!/styleSheets/.test(read(f)), f + ' walks the stylesheets');
 });
-ok('a size given as a variable\'s fallback is on the grid with the font (the camp\'s buy line)', () => {
-  const fb = [...css.matchAll(/font-size:\s*var\(--[\w-]+,\s*([\d.]+)px\)/g)].map((m) => +m[1]);
-  assert.ok(fb.length >= 1, 'the shop buy line\'s var() fallback is in the stylesheet');
-  const r = fakeRule('.card .desc .buy', { 'font-size': 'var(--shop-buy-fs, 12px)' });
-  const doc = { styleSheets: [{ cssRules: [r] }] };
-  const saved = MF.snapSheetSizes(doc);
-  assert.equal(r.style.getPropertyValue('font-size'), 'var(--shop-buy-fs, 11px)');
-  MF.restoreSheetSizes(saved);
-  assert.equal(r.style.getPropertyValue('font-size'), 'var(--shop-buy-fs, 12px)');
+ok('menus use the page\'s monospace: body says monospace and no rule sets another family', () => {
+  assert.match(css, /html, body \{[^}]*font-family: monospace;/);
+  const fams = [...css.matchAll(/font-family:\s*([^;}]+)/g)].map((m) => m[1].trim());
+  assert.ok(fams.length >= 1);
+  for (const f of fams) assert.match(f, /^monospace$|^inherit$/, 'font-family ' + f);
+  for (const m of css.matchAll(/(?:^|[;{\s])font:\s*([^;}]+)/g)) assert.match(m[1], /monospace|inherit/, 'font: ' + m[1]);
 });
-
-// ---- 3. the CSSOM switch -------------------------------------------------------------------
-ok('the switch moves sizes onto the grid, keeps monospace and in-run rules, and can be undone', () => {
-  const a = fakeRule('.card .desc', { 'font-size': '12px' });
-  const b = fakeRule('#boot-msg', { 'font-size': '14px', 'font-family': 'monospace' });
-  const c = fakeRule('#touch .keybar', { 'font-size': '13px' });
-  const d = fakeRule('#overlay h1', { 'font-size': '28px' });
-  const e = fakeRule('.x', { 'font-size': '11px' });
-  const media = { cssRules: [d] };
-  const doc = { styleSheets: [{ cssRules: [a, b, c, media, e] }], documentElement: { classList: new Set() } };
-  const saved = MF.snapSheetSizes(doc);
-  assert.equal(a.style.getPropertyValue('font-size'), '11px');
-  assert.equal(d.style.getPropertyValue('font-size'), '22px', 'inside @media too');
-  assert.equal(b.style.getPropertyValue('font-size'), '14px', 'LOADING keeps its size and font');
-  assert.equal(c.style.getPropertyValue('font-size'), '13px', 'the touch pads keep theirs');
-  assert.equal(saved.length, 2);
-  MF.restoreSheetSizes(saved);
-  assert.equal(a.style.getPropertyValue('font-size'), '12px');
-  assert.equal(d.style.getPropertyValue('font-size'), '28px');
+ok('the glyphs the pixel font lacked are back: the name caret, the away-rows bullet, the help arrow', () => {
+  assert.match(css, /\.card \.name::before \{\s*content: '\\2023';/);
+  assert.match(css, /#overlay \.away-rows div::before \{ content: '\\25B8  ';/);
+  // the draft's playing cards keep no caret: it sat on their number ("1. Whetstone")
+  assert.match(css, /(?:^|\n)[ \t]*\.card\.dcard \.name::before \{ content: none; \}/);
+  assert.match(read('src/main.js'), /refRow\('auto &harr; manual', 'PILOT'\)/);
+});
+ok('the shop\'s buy line shrinks to fit again (9 to 12 px), as before the font', () => {
+  assert.match(read('src/main.js'), /const fs = Math\.max\(9, Math\.min\(12, Math\.floor\(\(gridPlan\.cardW - 16\) \/ \(0\.6 \* maxCh\)\)\)\);/);
+  assert.match(css, /\.card \.desc \.buy \{[^}]*font-size: var\(--shop-buy-fs, 12px\);/);
 });
 
-// ---- 4. the loader ----------------------------------------------------------------------------
-function fakeEnv({ fail = false, visible = false } = {}) {
-  const added = [];
-  let resolveLoad;
-  class FF { constructor(fam, src, desc) { this.fam = fam; this.src = src; this.desc = desc; }
-    load() { return new Promise((res, rej) => { resolveLoad = () => (fail ? rej(new Error('404')) : res(this)); }); } }
-  const cls = new Set();
-  const doc = { styleSheets: [{ cssRules: [fakeRule('.a', { 'font-size': '13px' })] }],
-    documentElement: { classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) } } };
-  const overlay = { style: { display: visible ? 'flex' : 'none', opacity: '' } };
-  return { env: { doc, FontFace: FF, fonts: { add: (f) => added.push(f) }, overlay }, added, cls, overlay, go: () => resolveLoad() };
-}
-const tick = () => new Promise((r) => setTimeout(r, 0));
-MF.__resetMenuFont();
-{
-  const f = fakeEnv();
-  const p = MF.loadMenuFont(f.env);
-  await tick();
-  ok('while loading, the menus keep today\'s font', () => { assert.equal(MF.menuFontState().status, 'loading'); assert.ok(!f.cls.has('px-font')); });
-  f.go(); await p;
-  ok('loaded with no menu in view: the switch is at once, the face is weight 400, the file is the woff2', () => {
-    assert.equal(MF.menuFontState().status, 'on'); assert.ok(f.cls.has('px-font'));
-    assert.equal(f.added.length, 1); assert.equal(f.added[0].desc.weight, '400');
-    assert.match(f.added[0].src, /assets\/fonts\/PixelifySans-latin\.woff2/);
-    assert.equal(MF.loadMenuFont(f.env), null, 'loads once');
-  });
-  MF.removeMenuFont(f.env.doc);
-  ok('the switch can be undone (class off, sizes back)', () => assert.ok(!f.cls.has('px-font')));
-}
-MF.__resetMenuFont();
-{
-  const f = fakeEnv({ visible: true });
-  const p = MF.loadMenuFont(f.env); await tick(); f.go(); await p;
-  ok('loaded while a menu is in view: it waits (no jump under the player\'s eyes)', () => {
-    assert.equal(MF.menuFontState().status, 'ready'); assert.ok(!f.cls.has('px-font'));
-    assert.equal(MF.maybeApplyMenuFont(f.env.doc, f.overlay, false), false);
-  });
-  f.overlay.style.opacity = '0';
-  ok('a menu faded to nothing (the title\'s art beat) is not in view: it switches', () => {
-    assert.equal(MF.maybeApplyMenuFont(f.env.doc, f.overlay, false), true); assert.ok(f.cls.has('px-font'));
-  });
-  MF.removeMenuFont(f.env.doc); f.overlay.style.opacity = '';
-  ok('a screen change switches it even with the overlay up', () => {
-    assert.equal(MF.maybeApplyMenuFont(f.env.doc, f.overlay, true), true); assert.ok(f.cls.has('px-font'));
-  });
-}
-MF.__resetMenuFont();
-{
-  const f = fakeEnv({ fail: true });
-  const p = MF.loadMenuFont(f.env); await tick(); f.go(); const r = await p;
-  ok('a failed load keeps today\'s font for the session, silently', () => {
-    assert.equal(r, false); assert.equal(MF.menuFontState().status, 'failed'); assert.ok(!f.cls.has('px-font'));
-    assert.equal(MF.maybeApplyMenuFont(f.env.doc, f.overlay, true), false);
-  });
-}
-MF.__resetMenuFont();
-ok('no FontFace (an old browser): today\'s font, no throw', () => {
-  assert.equal(MF.loadMenuFont({ doc: {}, FontFace: null, fonts: null }), null);
-  assert.equal(MF.menuFontState().status, 'failed');
-});
-MF.__resetMenuFont();
-
-// The real game asks for it during boot, once, just before the frame loop
-// starts (so no precached file is fetched after the first frame: G2), and
-// the boot does not wait for it.
-ok('main.js asks for the font right before the frame loop starts, and nowhere else', () => {
-  const main = read('src/main.js');
-  assert.equal(main.match(/loadMenuFont\(/g).length, 1);
-  assert.match(main, /try \{ loadMenuFont\(\{ overlay \}\); \} catch \{ [^}]*\}\r?\nrequestAnimationFrame\(frame\);/);
-});
 const h = await boot({ storage: [['hordes_onboarded', '1']] });
-ok('the real game boots and asked for it (no FontFace in node: today\'s font stays)', () => {
-  assert.equal(MF.menuFontState().status, 'failed');
-  assert.equal(MF.menuFontState().error, 'no FontFace');
-});
 h.pump(2);
 
 // ---- 5. one main button ---------------------------------------------------------------------
@@ -288,6 +91,19 @@ ok('the title has ONE main button and it is PLAY; its frame tone is its own', ()
   assert.notDeepEqual(MENU_FRAME_PALETTES.main, MENU_FRAME_PALETTES.base);
   assert.notDeepEqual(MENU_FRAME_PALETTES.main, MENU_FRAME_PALETTES.sel);
   assert.match(read('src/main.js'), /\/\\bmain\\b\/\.test\(cls\) \? 'main' : 'base'/);
+});
+ok('PLAY reads bigger and brighter than the other tiles: a larger name and a lighter plank', () => {
+  const m = /#overlay\.title \.card\.main \.name \{ font-size: (\d+)px;/.exec(css);
+  assert.ok(m, 'PLAY has its own name size');
+  // the other tiles' names inherit the page size (16 px): nothing sets one
+  assert.ok(!/(?:^|\n)[ \t]*\.card \.name \{[^}]*font-size/.test(css), '.card .name keeps the page size');
+  assert.ok(+m[1] >= 20, 'PLAY\'s name ' + m[1] + ' px is clearly larger than 16 px');
+  const hx = (s) => { s = s.replace('#', ''); return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16)); };
+  const L = (c) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+  assert.ok(L(hx(MENU_FRAME_PALETTES.main[6])) > L(hx(MENU_FRAME_PALETTES.base[6])), 'a lighter plank');
+  assert.ok(L(hx(MENU_FRAME_PALETTES.main[3])) > L(hx(MENU_FRAME_PALETTES.base[3])), 'a brighter frame');
+  assert.match(css, /@media \(pointer: coarse\) and \(orientation: landscape\) \{[\s\S]*?#overlay\.title \.card\.main \{ width: min\(24vw, 210px\); margin: 0;/,
+    'a sideways phone: PLAY leads the first row');
 });
 h.T.menus.showSettings();
 ok('no other screen has a main button', () => {
@@ -349,6 +165,7 @@ ok('a dim card fades its pictures, never its frame: the plank stays solid behind
   assert.equal(opOf('.card.dim canvas.frame'), 1, 'the frame keeps full opacity');
   assert.match(rule('.card.dim canvas:not(.frame)'), /opacity: 0\.5;/);
   assert.ok(!/(?:^|\n)[ \t]*\.card\.dim canvas \{/.test(css), 'no rule fades every canvas of a dim card');
+  assert.ok(!/(?:^|\n)[ \t]*\.card\.dim \{[^}]*opacity/.test(css), 'no rule fades the whole dim card (frame and text with it)');
   assert.match(rule('.card.dim canvas.frame'), /filter: brightness\(0?\.\d+\)/);
 });
 {
@@ -413,36 +230,189 @@ ok('no #6a6a8a hint text is left in the menus', () => {
   for (const sel of ['#draft-autopick', '.card .key', '#tour-tip .tour-count', '#tour-tip .tour-replay']) assert.notDeepEqual(colorOf(sel), hex('#6a6a8a'), sel);
 });
 
-// ---- 7. loading, the service worker, credits -----------------------------------------------------
-ok('the menu font names monospace as its fallback and has ligatures off (no "fi" in "first")', () => {
-  const m = /html\.px-font body, html\.px-font button, html\.px-font input, html\.px-font select,\s*html\.px-font textarea \{([^}]*)\}/.exec(css);
-  assert.ok(m, 'the html.px-font family rule');
-  const r = m[1];
-  assert.match(r, /font-family: 'Pixelify Sans', monospace;/);
-  assert.match(r, /font-variant-ligatures: none;/);
-  assert.match(r, /font-feature-settings: 'liga' 0, 'clig' 0;/);
+
+// ---- 4. the draft's rows on an upright phone ---------------------------------------------
+ok('an upright phone still gets the draft as rows (cards2), a desktop does not', () => {
+  for (const [w, hh] of [[390, 844], [375, 667]]) assert.equal(draftLayout(w, hh, 3, { dcard: true }).rows, true, w + 'x' + hh);
+  assert.ok(!draftLayout(1280, 720, 3, { dcard: true }).rows);
+  assert.match(css, /#overlay\.draft\.rows \.card\.dcard \.name \{ font-size: 14px;/);
 });
-ok('a card name keeps the caret\'s room free on both sides, where the caret shows', () => {
-  const left = +/left: (\d+)px/.exec(rule('.card .name::before'))[1];
-  const pad = rule('html.px-font .card .name');
-  const l = /padding-left: calc\((\d+)px \+ ([\d.]+)em\)/.exec(pad), rr = /padding-right: calc\((\d+)px \+ ([\d.]+)em\)/.exec(pad);
-  assert.ok(l && rr, 'padding on both sides');
-  assert.deepEqual([l[1], l[2]], [rr[1], rr[2]], 'the same both sides: the name stays centred');
-  assert.ok(+l[1] >= left && +l[2] >= 0.6, 'the caret (at ' + left + 'px, about 0.5 em wide) and a gap fit');
-  assert.match(css, /html\.px-font \.card\.dcard \.name::before,\s*html\.px-font #overlay\.shop-compact \.cards\.shopgrid > \.card \.name::before \{ content: none; \}/);
+// Every @media block of the page's style, by its head (one entry per block).
+const mediaBlocks = (head) => {
+  const out = [];
+  for (let i = css.indexOf(head); i >= 0; i = css.indexOf(head, i + 1)) {
+    let depth = 0, j = css.indexOf('{', i);
+    for (let k = j; k < css.length; k++) { if (css[k] === '{') depth++; else if (css[k] === '}' && --depth === 0) { out.push(css.slice(j + 1, k)); break; } }
+  }
+  return out;
+};
+ok('the end card on a short upright phone is tightened by spacing and card widths, never by text size', () => {
+  const m = mediaBlocks('@media (orientation: portrait) and (max-height: 700px)').find((b) => b.includes('#overlay.end'));
+  assert.ok(m, 'the short upright phone rule for the end card');
+  assert.match(m, /#overlay\.end \{ gap: 8px;/);
+  assert.match(m, /#overlay\.end \.card, #overlay\.end \.cards > \.card\.endbuy \{ box-sizing: border-box; width: calc\(50% - 4px\);/);
+  assert.ok(!/font-size|font:/.test(m), 'no text gets smaller');
+  // after the upright-phone rule, so its spacing wins
+  assert.ok(css.indexOf(m) > css.indexOf('@media (orientation: portrait) and (max-width: 600px)'), 'comes after the max-width 600px rule');
+  const tiny = mediaBlocks('@media (orientation: portrait) and (max-height: 600px)').find((b) => b.includes('#overlay.end'));
+  assert.ok(tiny && !/font-size|font:/.test(tiny), 'the 320x568 rule only changes spacing');
 });
-ok('LOADING and the tap-to-reload screen are set in monospace and never wait for the font', () => {
-  assert.match(rule('#boot-msg'), /font: 14px\/1\.5 monospace/);
-  assert.match(css, /html\.px-font #touch, html\.px-font #touch button, html\.px-font #hud \{ font-family: monospace; \}/);
-  assert.match(css, /html\.px-font \{ font-synthesis: none; \}/);
-  assert.ok(!/@font-face/.test(html), 'no @font-face: the font is asked for by the code after the first frame');
-  assert.ok(!/<link[^>]+font/i.test(html), 'no font preload');
+ok('on an upright phone the end card packs what was earned two to a line, emblem beside the words', () => {
+  const m = mediaBlocks('@media (orientation: portrait) and (max-width: 500px)').find((b) => b.includes('#overlay.end'));
+  assert.ok(m, 'the upright phone rule for the end card');
+  assert.match(m, /#overlay\.end \.card \.name::before \{ content: none; \}/);
+  assert.match(m, /#overlay\.end \.ec-got \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 120px\), 1fr\)\);/);
+  assert.match(m, /#overlay\.end \.ec-item \{ display: grid; grid-template-columns: auto minmax\(0, 1fr\);/);
+  assert.match(m, /#overlay\.end \.ec-item > canvas\.ec-icon \{ grid-column: 1; grid-row: 1 \/ span 2; width: 32px; height: 32px; \}/);
+  assert.ok(!/font-size|font:/.test(m), 'no text gets smaller');
 });
-ok('sw.js precaches the font; credits and the licence ship beside it', () => {
-  const sw = read('sw.js');
-  assert.match(sw, /'assets\/fonts\/PixelifySans-latin\.woff2': '[0-9a-f]{64}'/);
-  assert.match(read('assets/fonts/CREDITS.md'), /PixelifySans-latin\.woff2 \| Pixelify Sans .*SIL Open Font License 1\.1/);
-  assert.match(read('assets/fonts/OFL.txt'), /SIL OPEN FONT LICENSE Version 1\.1/);
+ok('on a phone on its side the end card panel takes the width and the emblems sit beside their words', () => {
+  const m = mediaBlocks('@media (orientation: landscape) and (max-height: 500px)').find((b) => b.includes('#overlay.end .ec-item'));
+  assert.ok(m, 'the short landscape rule for the end card');
+  assert.match(m, /#overlay\.end \.ec \{ max-width: calc\(100vw - 32px\); row-gap: 2px; \}/);
+  assert.match(m, /#overlay\.end \.ec-item > canvas\.ec-icon \{ grid-column: 1; grid-row: 1 \/ span 2; width: 24px; height: 24px; \}/);
+});
+ok("What's New on a short screen: packed tighter (never smaller text), the offer and CLOSE ride the note's bottom", () => {
+  assert.match(css, /#overlay \.card\.paper-note\.wn-over \.wn-acts \{ position: sticky; bottom: 0; z-index: 3;/);
+  const main = read('src/main.js');
+  assert.match(main, /'<div class="wn-acts">' \+\s*\(offerGuided \? '<div class="offer">[^']*<\/div>' : ''\) \+\s*'<div class="wn-close">CLOSE<\/div><\/div>'/);
+  const land = mediaBlocks('@media (orientation: landscape) and (max-height: 500px)').find((b) => b.includes('wn-over'));
+  const port = mediaBlocks('@media (orientation: portrait) and (max-height: 700px)').find((b) => b.includes('wn-over'));
+  assert.ok(land && port, 'both short-screen rules');
+  assert.match(land, /#overlay \.card\.paper-note\.wn-over \{ width: min\(92vw, 760px\);/);
+  assert.match(land + port, /\.wn-over \.desc \{ line-height: 1\.45; \}/);
+  assert.ok(!/font-size|font:/.test(land) && !/font-size|font:/.test(port), 'no text gets smaller');
+});
+
+// ---- 5. every declared menu text size is the one it had before the pixel font -------------
+// The table is every "font-size: Npx" in index.html's style at 8c2e243^1 (the tree before the
+// pixel font), keyed by its @media and selector. Each must still be there at the same size.
+const OLD_SIZES = [
+  [" | #hud", 14],
+  [" | #overlay h1", 28],
+  [" | #overlay h1.logo", 46],
+  [" | #overlay.settings h1", 20],
+  [" | #overlay.settings .sub", 11],
+  [" | #overlay.settings .card .name", 12],
+  [" | #overlay.settings .card .desc", 10],
+  [" | #overlay.settings.tight h1", 15],
+  [" | #overlay.settings.tight .card .name", 11],
+  [" | #overlay.settings.tight .card .desc", 9],
+  [" | #draft-actions .dact", 12],
+  [" | #draft-autopick", 11],
+  [" | .forge-sign", 16],
+  [" | .forge-row.tight .forge-sign", 12],
+  [" | #overlay.draft.compact h1", 16],
+  [" | #overlay.draft.compact h1.logo", 20],
+  [" | #overlay.draft.compact .sub", 11],
+  [" | #overlay.loadout-tight .card .name", 13],
+  [" | #overlay.loadout-tight .card .desc", 11],
+  [" | #overlay.draft.compact .card .name", 12],
+  [" | #overlay.draft.compact .card .desc", 11],
+  [" | #overlay.draft.compact .card .syn", 10],
+  [" | #overlay.draft.compact .card .evo", 10],
+  [" | #overlay.draft.compact .card .par", 10],
+  [" | #overlay.draft.compact #draft-actions .dact", 11],
+  [" | .card .desc", 12],
+  [" | .card .syn", 11],
+  [" | .card .key", 11],
+  [" | .dcard .ribbon", 10],
+  [" | .dcard .tag", 10],
+  [" | .dcard .fx", 12],
+  [" | .dcard .fx.evo", 11],
+  [" | .dcard .fx.lead", 11],
+  [" | .dcard .fx.stack", 11],
+  [" | .dcard .fx.road", 11],
+  [" | .dcard .fx.dim", 11],
+  [" | .dcard .detail .dname", 12],
+  [" | .dcard .detail .desc", 11],
+  [" | #overlay.draft.compact .dcard .ribbon", 10],
+  [" | #overlay.draft.compact .dcard .tag", 10],
+  [" | #overlay.draft.compact .dcard .fx", 11],
+  [" | #overlay.draft.compact .dcard .fx.evo", 10],
+  [" | #overlay.draft.compact .dcard .fx.lead", 10],
+  [" | #overlay.draft.compact .dcard .fx.stack", 10],
+  [" | #overlay.draft.compact .dcard .fx.dim", 10],
+  [" | .card.kit-card .desc", 13],
+  [" | .card.paper-note .desc", 13],
+  [" | .card.paper-note .offer", 13],
+  [" | .card.paper-note .wn-close", 14],
+  [" | #overlay.howto .card.ref .desc", 15],
+  [" | #overlay.howto .subhead", 12],
+  [" | #overlay.howto .card.nav .name", 12],
+  [" | #overlay.howto .card.nav .desc", 10],
+  ["@media (min-width: 860px) | #overlay.howto .howto-page", 12],
+  [" | #overlay .sub", 13],
+  [" | #overlay .away-time", 12],
+  [" | #overlay .away-gold", 26],
+  [" | #overlay .away-rows", 13],
+  ["@media (pointer: coarse) and (orientation: landscape) | #overlay.title .card .desc", 11],
+  ["@media (orientation: landscape) and (max-height: 500px) | #overlay.title .card.setup .name", 13],
+  ["@media (orientation: landscape) and (max-height: 500px) | #overlay.title .card.setup .desc", 11],
+  [" | #overlay .sub .pass", 11],
+  [" | #overlay.end .ec-tags", 12],
+  [" | #overlay.end .ec-earned", 20],
+  [" | #overlay.end .ec-item", 12],
+  [" | #overlay.end .ec-item .ec-cap", 12],
+  [" | #overlay.end .ec-more", 12],
+  [" | #overlay.end > .sub", 14],
+  ["@media (orientation: landscape) and (max-height: 500px) | #overlay.end .card .desc", 11],
+  ["@media (orientation: landscape) and (max-height: 500px) | #overlay.end .ec-earned", 16],
+  ["@media (orientation: landscape) and (max-height: 500px) | #overlay.end .ec-more", 12],
+  ["@media (orientation: portrait) and (max-width: 600px) | #overlay.end .ec-more", 12],
+  [" | #tour-tip", 13],
+  [" | #tour-tip .tour-count", 10],
+  [" | #tour-tip .tour-replay", 10],
+  [" | #tour-tip .tour-btn", 12],
+  [" | #tut-panel", 15],
+  [" | #tut-panel .tut-btn", 13],
+  [" | #tut-panel .tut-skip", 11],
+  ["@media (max-width: 700px), (max-height: 420px) | #tut-panel", 13],
+  [" | #touch.cog-only .keybar", 11],
+  [" | #touch .keybar button", 11],
+  ["@media (min-width: 1600px) | #touch.cog-only .keybar", 13],
+  ["@media (min-width: 1600px) | #touch .keybar button", 13],
+  [" | body.pads-compact #touch .pad button", 11],
+  [" | body.pads-compact #touch button .badge", 9],
+  [" | body.pads-compact #touch button .key", 9],
+  [" | #touch button", 13],
+  [" | #touch button .badge", 11],
+  [" | #touch button .key", 10],
+  [" | #touch button.cog", 10],
+  [" | #touch button.cog.help", 10],
+  [" | #touch button.cog.radar", 10],
+  [" | #touch button.cog.map", 10],
+  [" | #help-hud", 12],
+  [" | #help-tip", 13],
+  ["@media (pointer: coarse), (max-width: 700px) | .card .desc", 13],
+  [" | #overlay .shop-arr", 26],
+  [" | #overlay .shop-ind", 12],
+  [" | #overlay.shop-compact > h1", 18],
+  [" | #overlay.shop-compact .sub", 12],
+  [" | #overlay.shop-compact .cards.shopgrid > .card .name", 12],
+  [" | #overlay.shop-compact .cards.shopgrid > .card .desc", 11],
+  [" | #overlay.shop-compact.shop-low .card.shop-footer .name", 13],
+];
+const declaredSizes = () => {
+  const out = new Map(); const stack = []; let buf = '';
+  for (const ch of css) {
+    if (ch === '{') { stack.push(buf.trim().replace(/\s+/g, ' ')); buf = ''; }
+    else if (ch === '}') {
+      const head = stack.pop();
+      if (head && !head.startsWith('@')) {
+        const m = /(?:^|;)\s*font-size\s*:\s*([\d.]+)px/.exec(buf);
+        if (m) { const media = stack.filter((h) => h.startsWith('@')).join(' '); for (const sel of head.split(',').map((x) => x.trim())) out.set(media + ' | ' + sel, +m[1]); }
+      }
+      buf = '';
+    } else buf += ch;
+  }
+  return out;
+};
+ok('every menu text size declared before the pixel font is unchanged (' + OLD_SIZES.length + ' rules)', () => {
+  const now = declaredSizes();
+  const bad = OLD_SIZES.filter(([k, v]) => now.get(k) !== v).map(([k, v]) => k + ' was ' + v + 'px, now ' + now.get(k));
+  assert.deepEqual(bad, []);
+  assert.ok(OLD_SIZES.length > 100);
 });
 
 console.log(`test_menu_font: ${n} checks passed`);

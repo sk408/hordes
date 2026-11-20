@@ -60,10 +60,11 @@ export function allSfxUrls() {
 }
 
 // The scenes (main.js musicScene) in which no new file starts to load: the
-// intro ('none'), the portal beat, the escape and the death movie.
+// intro ('none'), the portal movie, the escape and the death movie.
 export const HOLD_SCENES = new Set(['none', 'portal', 'escape', 'death']);
-// The movies by game mode (main.js state.mode). The road shot ('portal-cine')
-// plays under the 'run' music scene, so the scene alone does not show it.
+// The movies by game mode (main.js state.mode). The 'portal-cine' mode holds
+// the portal movie (scene 'portal') and the road shot (scene 'run'), so the
+// scene alone does not show the road shot.
 export const HOLD_MODES = new Set(['intro', 'portal-cine', 'escape', 'death-cine']);
 // True when no new file may start: the context main.js reports every frame.
 // `hold`: a short film over a live run (the boss sting, the forge moment),

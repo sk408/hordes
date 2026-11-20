@@ -1006,8 +1006,8 @@ export function getHeartbeat() { return { on: !!hb.out, frac: hb.frac, next: hb.
 
 // ---------- Cinematic stingers (WAVE-8/B) ----------
 // Intro (src/intro.js PHASES: OVERTAKE 2500–5000ms, TITLE stamps ~4300ms,
-// FADE 6000–7000ms) + portal (the beat, src/portal_beat.js: KILL, OPEN played
-// as DISSOLVE, WALK). Fired once per phase transition; a short re-fire guard stops a
+// FADE 6000–7000ms) + portal (src/portal_cine.js: KILL/WALK/PAUSE/DISSOLVE/
+// LINGER/FADE). Fired once per phase transition; a short re-fire guard stops a
 // double-fire from stacking cues. SFX-class: sfx toggle gates, music does NOT.
 
 // Where a cue's voices go: sfxBus, or (new mix) a gain node that carries the

@@ -1,13 +1,12 @@
 // HORDES - the four R2 changes played together (the death movie, the portal
-// beat, the intro, the actor animation). Each check pins a defect the merged
+// beat (removed in round 8), the intro, the actor animation). Each check pins a defect the merged
 // review found where two of them met:
 //   1. the title painting paints in runs (one long frame as the title came up)
 //   2. the death pop is a small capped star, and none under reduced motion
 //   3. the death caption keeps a readable size on a phone held upright
 //   4. the intro's clock waits while the tab is hidden
-//   5. the portal beat: its boss dies once (no corpse, no puff under it), it
-//      is drawn under the HUD with the vitals stepped below its bar, the pads
-//      hide without moving the canvas, and a skip ends its slow time
+//   5. round 8 removed the portal beat: a boss dies its own death on the
+//      field (a double wave's two as well), and no beat holds the field
 //   6. the death freeze is the world without the HUD, the killer is drawn
 //      over the hero in a contact death, a dead shooter is said to be dead,
 //      and the copy is let go when the movie ends
@@ -16,8 +15,8 @@
 import assert from 'node:assert/strict';
 import { boot, suite } from './_harness.mjs';
 import { mulberry32 } from '../src/weather.js';
-import * as BEAT from '../src/portal_beat.js';
 import * as DCINE from '../src/death_cine.js';
+import * as INTRO from '../src/intro.js';
 import { pilotLook, killerLook } from '../src/movie_cast.js';
 import { drawFeelEffects } from '../src/fx/feel_render.js';
 import { makeTypedEnemy } from '../src/enemy_types.js';
@@ -82,7 +81,8 @@ const prof = T.getProfile();
 S.check('the intro waits while the tab is hidden: the time away is not taken off the movie', () => {
   assert.equal(st.mode, 'intro');
   const mo = T.movies.current;
-  const dur = mo.opts.returning ? 1000 : 5000;
+  const dur = INTRO.durationOf(mo.opts);   // the original 7 s movie, for every player
+  assert.equal(dur, 7000);
   h.pump(6);
   h.advanceClock(dur + 3000);   // a hidden tab: no frames for longer than the movie
   h.pump(1);
@@ -129,8 +129,22 @@ function kill(bosses) {
   assert.ok(st.portal, 'the portal opened');
 }
 
-// ---- 5. the portal beat ----------------------------------------------------------------------
-S.check('a double wave: the boss that fell is the beat\'s, the swept one dies its own death', () => {
+// ---- 5. the boss death with no beat (round 8: the portal beat is gone) ----------------------
+// Every boss dies its own death on the field (the fold and the puff), as
+// every enemy does; nothing marks a boss quiet, no slow beat holds the field,
+// the pads stay, and the portal movie waits for the walk-in.
+function walkInAndPass() {
+  let g = 0;
+  while ((st.mode === 'playing' || st.mode === 'draft' || st.mode === 'evolve') && g++ < 1200) {
+    if (st.mode !== 'playing') kdown('1');
+    else if (st.portal) { st.player.x = st.portal.x; st.player.y = st.portal.y; }
+    h.pump(1, () => { st.player.invuln = 1e6; });
+  }
+  assert.equal(st.mode, 'portal-cine', 'the walk-in starts the portal movie');
+  h.skipMovie(); T.uiGuard.standDown();
+  if (st.mode === 'intermission') { kdown('c'); h.skipMovie(); T.uiGuard.standDown(); }
+}
+S.check('a double wave: the boss that fell and the swept one each die their own death', () => {
   startRunAs('PALADIN', 3);
   const cast = bossCast();
   assert.ok(cast.length >= 2, 'wave 3 brings two bosses: ' + cast.length);
@@ -140,88 +154,33 @@ S.check('a double wave: the boss that fell is the beat\'s, the swept one dies it
   swept.x = st.player.x - 40; swept.y = st.player.y;
   h.pump(2, () => { st.player.invuln = 1e6; fell.x = st.player.x + 40; fell.y = st.player.y; swept.x = st.player.x - 40; swept.y = st.player.y; });
   kill([fell]);
-  assert.ok(T.portalBeat.live, 'the beat is up');
   h.pump(3, () => { st.player.invuln = 1e6; });
-  assert.equal(fell.quietDeath, true, 'the boss that fell dies in the beat only');
-  assert.ok(!swept.quietDeath, 'the swept boss is not quiet');
+  assert.ok(!('quietDeath' in fell) && !('quietDeath' in swept), 'no boss is marked quiet');
   assert.ok(!st.enemies.includes(swept), 'the clear swept the other boss');
   const f = st.feel;
-  assert.ok(!f.corpses.some(c => c.e === fell), 'no corpse of the boss the beat draws');
-  assert.ok(f.corpses.some(c => c.e === swept) || f.puffs.some(p => p.cls === 3),
-    'the swept boss leaves its own death on the field: corpses ' + f.corpses.length + ', puffs ' + f.puffs.length);
-  let g = 0;
-  while (T.portalBeat.live && g++ < 400) h.pump(1, () => { st.player.invuln = 1e6; });
+  const marks = (e) => f.corpses.some(c => c.e === e);
+  assert.ok(marks(fell) || f.puffs.some(p => p.cls === 3), 'the boss that fell folds on the field: corpses ' + f.corpses.length);
+  assert.ok(marks(swept) || f.puffs.some(p => p.cls === 3), 'the swept boss leaves its own death on the field');
+  if (marks(fell) || marks(swept)) assert.ok(marks(fell) && marks(swept), 'both fold, not one');
+  walkInAndPass();
 });
-S.check('reduced motion: the beat is a still card, so its boss keeps a death on the field', () => {
-  const mm0 = globalThis.window.matchMedia;
-  globalThis.window.matchMedia = (q) => ({ matches: /prefers-reduced-motion/.test(String(q)), addEventListener() {}, removeEventListener() {} });
-  try {
-    startRunAs('PALADIN', 2);
-    const [boss] = bossCast();
-    boss.x = st.player.x + 40; boss.y = st.player.y;
-    h.pump(2, () => { st.player.invuln = 1e6; boss.x = st.player.x + 40; boss.y = st.player.y; });
-    kill([boss]);
-    assert.ok(T.portalBeat.live, 'the beat is up');
-    assert.ok(!boss.quietDeath, 'not quiet: nothing else would show the boss dying');
-    let g = 0;
-    while (T.portalBeat.live && g++ < 400) h.pump(1, () => { st.player.invuln = 1e6; });
-  } finally { globalThis.window.matchMedia = mm0; }
-});
-S.check('the beat\'s boss dies once: no fold and no puff of its own under the beat', () => {
-  startRunAs('PALADIN', 2);
-  const [boss] = bossCast();
-  kill([boss]);
-  assert.ok(T.portalBeat.live, 'the beat is up');
-  h.pump(30, () => { st.player.invuln = 1e6; });
-  const f = st.feel;
-  assert.ok(!f.corpses.some(c => c.e === boss), 'no corpse of the boss');
-  assert.ok(!f.puffs.some(p => p.cls === 3), 'no boss puff');
-  // The run goes on: walk to the end of the beat.
-  let g = 0;
-  while (T.portalBeat.live && g++ < 400) h.pump(1, () => { st.player.invuln = 1e6; });
-});
-
-S.check('the beat is drawn under the HUD, the vitals step below its bar, the pads keep their room', () => {
+S.check('a boss kill holds no beat: no slow time past its own moment, the pads stay, the vitals stay put', () => {
   startRunAs('ROGUE', 2);
-  const [boss] = bossCast();
-  kill([boss]);
-  let g = 0;
-  while (T.portalBeat.live && T.portalBeat.t < 1.0 && g++ < 200) h.pump(1, () => { st.player.invuln = 1e6; });
-  assert.ok(T.portalBeat.live && BEAT.barsAt(T.portalBeat.t) === 1, 'the bars are in');
-  const R = T.renderer;
-  const orig = R.drawPlayHud;
-  let hudAt = -1;
-  R.drawPlayHud = function (gg, s) { hudAt = h.rec.rects.length; return orig.call(this, gg, s); };
-  h.rec.on = true; h.rec.rects.length = 0; h.pump(1, () => { st.player.invuln = 1e6; }); h.rec.on = false;
-  R.drawPlayHud = orig;
-  const bar = h.rec.rects.findIndex(q => q.x === 0 && q.y === 0 && q.w === 480 && q.h === BEAT.BAR);
-  assert.ok(bar >= 0 && hudAt >= 0, 'the top bar and the HUD were drawn: ' + bar + ' ' + hudAt);
-  assert.ok(bar < hudAt, 'the top bar is drawn before the HUD: bar ' + bar + ', HUD from ' + hudAt);
-  const vb = R.hudChrome && R.hudChrome.vitals;
-  assert.ok(vb && vb.y >= BEAT.BAR, 'the vitals block sits below the bar: y ' + (vb && vb.y));
-  const touch = el['touch'];
-  assert.equal(touch.style.display, '', 'the pads keep their room in the layout');
-  assert.equal(touch.style.visibility, 'hidden', 'and are hidden for the beat');
-  while (T.portalBeat.live && g++ < 400) h.pump(1, () => { st.player.invuln = 1e6; });
-  h.pump(2);
-  if (st.mode === 'playing') assert.equal(touch.style.visibility, '', 'the pads come back');
-});
-
-S.check('a skipped beat takes its slow time with it', () => {
-  startRunAs('WITCH', 2);
   st.pendingDrafts = 0;
   const [boss] = bossCast();
   kill([boss]);
   st.pendingDrafts = 0; st.jokerOffers = 0;
+  h.pump(45, () => { st.player.invuln = 1e6; st.pendingDrafts = 0; });
   let g = 0;
-  while (T.portalBeat.t < 0.45 && g++ < 200) h.pump(1, () => { st.player.invuln = 1e6; st.pendingDrafts = 0; });
-  assert.ok(st.timeScale < 1, 'slow time is on: ' + st.timeScale);
-  kdown('Escape'); kdown('Escape');
-  assert.ok(T.portalBeat.done, 'the beat was skipped');
-  h.pump(2, () => { st.player.invuln = 1e6; });
-  assert.equal(st.timeScale, 1, 'the field runs at full speed again');
-  g = 0;
   while ((st.mode === 'draft' || st.mode === 'evolve') && g++ < 20) { kdown('1'); h.pump(1); }
+  assert.equal(st.mode, 'playing');
+  assert.equal(st.timeScale, 1, 'the field runs at full speed after the kill\'s own moment');
+  assert.equal(T.chromeOn(), true, 'the pads, cog and ? stay up');
+  const touch = el['touch'];
+  assert.equal(touch.style.display, '', 'the pads keep their room');
+  assert.equal(touch.style.visibility, '', 'and are shown');
+  assert.equal(st.barHudDrop | 0, 0, 'no bars push the vitals down');
+  walkInAndPass();
 });
 
 // ---- 6. the death freeze ---------------------------------------------------------------------

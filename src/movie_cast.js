@@ -79,14 +79,21 @@ export function seenCount(store, kind) {
   const n = Number(readSeen(store)[kind]);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
-// Which movies play a shorter timeline once they have been seen. Only the death movie.
-// The portal movie is a 2.5 s beat on the battlefield now (src/portal_beat.js) and has no
-// shorter form. (For the old 6.9 s portal movie Steve asked, 2026-11-18, that it shorten
-// only once it had been seen in the same run; the beat replaced that movie.)
-export const REPEAT_SHORTENS = { death: true };
-// Has the player seen this kind of movie before, and does it shorten? Then it plays its
-// repeat timeline.
-export function isRepeat(store, kind) { return !!REPEAT_SHORTENS[kind] && seenCount(store, kind) > 0; }
+// When a movie plays its shorter repeat timeline. Steve, 2026-11-18, of the portal movie:
+// "the shorter movie is fine if it's been seen during a run already" (and round 8: the full
+// movie at the first portal of each run, the short one on later portals in the same run). So:
+//   'run'    the portal movie: in full the first time in each run (6.9 s), short after
+//            that in the same run (3.5 s);
+//   'ever'   the death movie: short once it has been seen at all.
+// A kind that is not listed (the intro, the escape, the road shot) never shortens.
+export const REPEAT_RULE = { portal: 'run', death: 'ever' };
+// Does this showing play the repeat timeline? `seenThisRun`: how many times this kind was
+// shown in the current run (main.js counts it, per kind).
+export function isRepeat(store, kind, seenThisRun = 0) {
+  const rule = REPEAT_RULE[kind];
+  if (rule === 'run') return seenThisRun > 0;
+  return rule === 'ever' && seenCount(store, kind) > 0;
+}
 // Count one showing.
 export function noteSeen(store, kind) {
   const o = readSeen(store);

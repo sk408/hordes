@@ -302,7 +302,7 @@ S.check('wave 2: the boss arrives, the sim holds, the card shows the boss and it
   assert.ok(!tx.includes('APPROACHES'), 'the banner does not shout over it');
   assert.equal(T.renderer.bossBanner, null, 'the banner is not drawn');
   assert.ok(st.bossBanner && st.bossBanner.underSting, 'the banner the card stands in for');
-  assert.ok(st.beatHudDrop >= STING.BAR - 8, 'the vitals step below the bar: ' + st.beatHudDrop);
+  assert.ok(st.barHudDrop >= STING.BAR - 8, 'the vitals step below the bar: ' + st.barHudDrop);
   assert.equal(T.chromeOn(), false, 'the pads, cog and ? step down');
   // It ends by itself after about 1.5 s; the fight goes on with the plate and the bar.
   const frames = 33 + playOut();
@@ -316,7 +316,7 @@ S.check('wave 2: the boss arrives, the sim holds, the card shows the boss and it
   h.rec.on = true; h.rec.texts.length = 0; h.pump(1); h.rec.on = false;
   assert.ok(T.renderer.hudChrome && st.bossRule.live, 'the HUD and the rule are back');
   assert.ok(h.rec.texts.some(t => t.txt.includes(st.bossRule.name)), 'the rule plate is drawn: ' + h.rec.texts.map(t => t.txt).join('|').slice(0, 300));
-  assert.equal(st.beatHudDrop, 0);
+  assert.equal(st.barHudDrop, 0);
 });
 
 S.check('a repeat of the same boss in the run is shorter; a double wave gets one sting with both; the herald gets none', () => {

@@ -54,7 +54,7 @@ export const CLOUD_BAND_LIGHT = 0.6;
 // 'NO HAND YET' (the hand fan with no hand): a hint that reaches 4.5 to 1 on its plate.
 export const FAN_EMPTY_TEXT = '#9a9ab8';
 import { fanCards, fanLayout, fanKey, fanBlock, paintFan, pulsePhase, pulseLook } from './hand_fan.js';   // R5 the hand fan
-const FAN_TEAL = '#3fe6d2';   // decision 5: cyan-teal is reward (the portal beat's TEAL)
+const FAN_TEAL = '#3fe6d2';   // decision 5: cyan-teal is reward (the forge moment's TEAL)
 import { JOKERS, jokerSlots, jokersHeld } from './jokers.js';   // the HUD joker row
 import { cardArt } from './art/cards.js';
 import { laneLines } from './message_lane.js';
@@ -130,11 +130,11 @@ export function letterboxAlpha(state) {
 // band (its red edge line included) and not behind it. It follows the band's
 // fade, so the HUD slides down and back up with it.
 export const LETTERBOX_HUD_DROP = 27;
-// The portal beat's film bars push the block down the same way
-// (state.beatHudDrop, set by main.js while the beat is up).
+// The arrival sting's film bars push the block down the same way
+// (state.barHudDrop, set by main.js while the sting is up).
 export function letterboxHudDrop(state) {
-  const beat = (state && state.beatHudDrop) | 0;
-  return Math.max(Math.round(LETTERBOX_HUD_DROP * letterboxAlpha(state)), beat);
+  const bars = (state && state.barHudDrop) | 0;
+  return Math.max(Math.round(LETTERBOX_HUD_DROP * letterboxAlpha(state)), bars);
 }
 
 // A pixel grid painted with one fillRect per run of equal pixels in a row.
@@ -2370,8 +2370,8 @@ export class Renderer {
     // rows, weather glyph. Drawn LAST so it always sits above the scene.
     // WAVE-26: the earned-moment flourish paints just BELOW the chrome so the
     // HUD readouts stay legible through the flare.
-    // R2: a film laid over the world but under the HUD (the portal beat's
-    // bars, column and dust), so the readouts stay on top of it.
+    // R7: a film laid over the world but under the HUD (the arrival sting's
+    // dark, bars and name card), so the readouts stay on top of it.
     if (typeof this.underHud === 'function') this.underHud(g);
     this.drawPlayHud(g, state);
     // M1 THE MAP SCREEN: drawn LAST on the canvas layer — OPAQUE over the

@@ -206,7 +206,7 @@ check('the threat marks are danger: the Maw\'s eye and burning core, the named b
 // Every file that draws in a fight, scanned whole (not only the PLAN ranges).
 const FIGHT_FILES = ['src/render.js', 'src/sprites.js', 'src/enemy_sprites.js', 'src/enemy_types.js', 'src/bosses.js', 'src/final_boss.js',
   'src/character_sprites.js', 'src/fx/feel.js', 'src/fx/feel_render.js', 'src/art/portal.js', 'src/art/arches.js', 'src/fusions.js',
-  'src/boss_sting.js', 'src/portal_beat.js', 'src/death_cine.js', 'src/forge_show.js',
+  'src/boss_sting.js', 'src/portal_cine.js', 'src/death_cine.js', 'src/forge_show.js',
   // integ4: the light layer and the Maw's arena, and the art they light (floor, buildings,
   // props, sites, world marks, terrain, chests) are on screen in every fight too.
   'src/light.js', 'src/finale_arena.js', 'src/world_ground.js', 'src/stage_buildings.js', 'src/stage_props.js',
@@ -233,9 +233,6 @@ const KNOWN = {
   'src/fusions.js #ffd0d0': 'a fused weapon\'s pale tint: reported for a ruling',
   'src/boss_sting.js #ff6a3a': 'the sting\'s danger: same meaning, dE 4 off the step (the Maw wears both steps)',
   'src/boss_sting.js #3fe6d2': 'the sting\'s reward teal: same meaning',
-  'src/portal_beat.js #ff6a3a': 'the beat\'s danger: same meaning',
-  'src/portal_beat.js #3fe6d2': 'the beat\'s reward teal: same meaning',
-  'src/portal_beat.js #1f8f86': 'the beat\'s dim teal: same meaning',
   'src/death_cine.js #ff5a1f': 'the death movie\'s danger: same meaning (the Maw wears both steps)',
   'src/death_cine.js #8a2208': 'the death movie\'s dark danger: same meaning',
   'src/forge_show.js #3fe6d2': 'the forge moment\'s reward teal: same meaning',

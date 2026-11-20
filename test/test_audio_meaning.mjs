@@ -491,9 +491,9 @@ S.check('in a run: a Pair, then Three of a Kind 0.1 s later, plays both stingers
   p.handCards = {}; T.hand.update(false);
 });
 
-// The portal beat (wave 2 on): the boss dies and the battlefield plays on for
-// 2.5 s as a movie. A hero at 12% health hears no heartbeat through it.
-S.check('in a run: the heartbeat is off through the portal beat, even at 12% health', () => {
+// The portal movie (wave 2 on): the boss dies, the pilot walks into the
+// portal and the movie plays. A hero at 12% health hears no heartbeat through it.
+S.check('in a run: the heartbeat is off through the portal movie, even at 12% health', () => {
   st.unattended = false; st.bannerHold = 0;
   globalThis.document.visibilityState = 'visible';
   T.startRun(); h.pump(2);
@@ -510,16 +510,20 @@ S.check('in a run: the heartbeat is off through the portal beat, even at 12% hea
   assert.equal(hbOn(), true, 'the heartbeat runs in the boss fight');
   for (const b of st.wave.bosses) b.hp = 0;
   g = 0;
-  while (!T.portalBeat.live && g++ < 600) h.pump(1, low);
-  assert.ok(T.portalBeat.live, 'the beat started');
-  let frames = 0;
-  while (T.portalBeat.live && frames < 600) {
+  while (st.mode !== 'portal-cine' && g++ < 1200) {
+    if (st.mode === 'draft' || st.mode === 'evolve') h.key('keydown', { key: '1', preventDefault() {} });
+    else if (st.portal) { st.player.x = st.portal.x; st.player.y = st.portal.y; }
     h.pump(1, low);
-    if (!T.portalBeat.live) break;
-    frames++;
-    assert.equal(hbOn(), false, 'off in the beat, frame ' + frames);
   }
-  assert.ok(frames > 60, 'the beat lasted: ' + frames + ' frames');
+  assert.equal(st.mode, 'portal-cine', 'the movie started');
+  let frames = 0;
+  while (st.mode === 'portal-cine' && frames < 900) {
+    h.pump(1, low);
+    if (st.mode !== 'portal-cine') break;
+    frames++;
+    assert.equal(hbOn(), false, 'off in the movie, frame ' + frames);
+  }
+  assert.ok(frames > 180, 'the movie lasted: ' + frames + ' frames');
 });
 
 // die() stops the heartbeat itself, before the death movie's first cue: no

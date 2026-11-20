@@ -322,7 +322,7 @@ function frontAt(t) {
 }
 
 // The hero's sideways position (sprite pixels): a weave, and a dodge away
-// from each lunge (none when the scene has no lungers: the intro's road).
+// from each lunge (none when the scene has no lungers: the stage road shot).
 function heroX(t, lunges = LUNGES) {
   let x = 2.2 * Math.sin(t * 2.3);
   for (const L of lunges) {
@@ -337,8 +337,7 @@ function heroX(t, lunges = LUNGES) {
 // down | swoop.
 export function hordePose(scene, i, t) {
   const m = scene.horde[i];
-  // scene.frontAt: a shot with its own pace for the wave (the intro's road).
-  const base = 1 + (scene.frontAt ? scene.frontAt(t) : frontAt(t)) + m.off + 0.1 * Math.sin(t * 1.7 + m.phase * 6.283);
+  const base = 1 + frontAt(t) + m.off + 0.1 * Math.sin(t * 1.7 + m.phase * 6.283);
   let d = base, x = m.x, lift = m.fly ? FLY_H + 2 * Math.sin(t * 6 + m.phase * 6.283) : 0, state = 'run';
   const li = scene.lungers.indexOf(i);
   if (li >= 0) {
@@ -373,7 +372,7 @@ export function hordePose(scene, i, t) {
 // The boss: null before it shows. d: depth; s: sprite scale; rise: 0 while it
 // is still behind the crest, 1 once it stands on the plain.
 export function bossPose(scene, t) {
-  if (scene.noBoss || t < BOSS_T.RISE) return null;
+  if (t < BOSS_T.RISE) return null;
   const spr = artOf(scene).boss;
   const rise = smooth(span(t, BOSS_T.RISE, BOSS_T.UP));
   let d = 10;
@@ -730,20 +729,6 @@ export function drawScene(g, scene, t, ask = null) {
   if (white > 0) { g.globalAlpha = white; g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
 }
 
-// The road alone, for the intro's opening shot (src/intro.js): the sky, the
-// ground and its scenery, the horde and the hero, the dust and the speed
-// lines. No film bars, no boss, no portal and no shake. Build the scene with
-// noBoss: true and no lungers, so nothing lunges and the hero only weaves.
-export function drawRoad(g, scene, t) {
-  const A = artOf(scene);
-  const sway = swayAt(t);
-  drawSky(g, A, t, sway);
-  drawGround(g, A, t, sway);
-  for (const it of collect(scene, A, t)) drawItem(g, scene, A, it, t, sway);
-  drawDust(g, scene, A, t, sway);
-  drawStreaks(g, A, t, sway);
-}
-
 // The payout card. tc: seconds since it came up (the gold counts up over the
 // first 0.4 s); white: how much of the flash is still over it.
 export function drawCard(g, scene, tc, white = 0) {
@@ -791,7 +776,6 @@ export const ROAD = {
 // The same road and camera as the chase, on the NEXT stage's ground and sky,
 // with the hero running and nobody behind him. t: seconds into the shot.
 // title: the stage's name, laid over the sky; k: how far the name is in (0..1).
-// (Named drawStageRoad: the intro's road shot above is drawRoad.)
 export function drawStageRoad(g, scene, t, title = '', k = 1) {
   const A = artOf(scene);
   const sway = swayAt(t);

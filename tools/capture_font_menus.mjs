@@ -1,7 +1,8 @@
-// R5 "one pixel font": real-Chrome screenshots of every menu and overlay, plus
-// a fit report per screen (text cut off, boxes off screen, an overlay that
-// scrolls) and the menu font's state.
-//   HORDES_CHROME=<chrome.exe> node tools/capture_font_menus.mjs <tag> <outDir> [--vp desktop,land,portrait] [--root <dir>] [--only a,b]
+// Real-Chrome screenshots of every menu and overlay, plus a fit report per
+// screen (text cut off, boxes off screen, an overlay that scrolls) and the
+// page's font family. Made for the pixel font (R5) and kept for the sheets
+// that compare trees (round 8 "font2" took the pixel font out again).
+//   HORDES_CHROME=<chrome.exe> node tools/capture_font_menus.mjs <tag> <outDir> [--vp desktop,land,portrait,small] [--root <dir>] [--only a,b]
 // Writes <outDir>/<tag>-<scene>-<vp>.png and <outDir>/<tag>-<vp>.json.
 // --root serves another tree (the "before" pictures come from the base branch).
 import path from 'node:path';
@@ -23,6 +24,7 @@ const VIEWPORTS = [
   { name: 'desktop', w: 1280, h: 720, dpr: 1, mobile: false },
   { name: 'land', w: 844, h: 390, dpr: 2, mobile: true },
   { name: 'portrait', w: 390, h: 844, dpr: 2, mobile: true },
+  { name: 'small', w: 375, h: 667, dpr: 2, mobile: true },
 ].filter((v) => !vpOnly.length || vpOnly.includes(v.name));
 
 // A played profile: gold, a few weapons, the camp open (6 runs), on the
@@ -57,7 +59,7 @@ const FIT = `(() => {
     if (b.left < -0.5 || b.right > vw + 0.5 || b.top < -0.5 || b.bottom > vh + 0.5) off.push(name);
   }
   const ov = document.getElementById('overlay');
-  return { pxFont: document.documentElement.classList.contains('px-font'),
+  return { fam: getComputedStyle(document.body).fontFamily,
     scrolls: ov.style.display !== 'none' && ov.scrollHeight > ov.clientHeight + 1,
     cut: cut.slice(0, 8), off: off.slice(0, 8) };
 })()`;
@@ -83,8 +85,6 @@ for (const vp of VIEWPORTS) {
   // ---- the title and every screen it reaches --------------------------------
   await withPage(base, async (page) => {
     await toTitle(page);
-    report.font = await page.evaluate(`(() => { const e = performance.getEntriesByType('resource').find((r) => /PixelifySans/.test(r.name));
-      return { firstRaf: window.__firstRaf, fontStart: e ? e.startTime : null, fontEnd: e ? e.responseEnd : null }; })()`);
     if (want('whatsnew')) await take(page, 'whatsnew');
     await page.evaluate(`document.querySelectorAll('.wn-over').forEach((e) => e.remove())`);
     if (want('title')) { await page.evaluate(`T.menus.showTitle()`); await take(page, 'title'); }
@@ -174,7 +174,7 @@ for (const vp of VIEWPORTS) {
     });
   }
   fs.writeFileSync(path.join(outDir, `${tag}-${vp.name}.json`), JSON.stringify(report, null, 1));
-  console.log(vp.name, JSON.stringify(report.font), Object.entries(report.scenes).map(([k, v]) =>
-    k + (v.pxFont ? '' : '(mono)') + (v.scrolls ? ' SCROLLS' : '') + (v.cut.length ? ' CUT ' + v.cut.join('|') : '') + (v.off.length ? ' OFF ' + v.off.join('|') : '')).join('; '));
+  console.log(vp.name, Object.entries(report.scenes).map(([k, v]) =>
+    k + (v.scrolls ? ' SCROLLS' : '') + (v.cut.length ? ' CUT ' + v.cut.join('|') : '') + (v.off.length ? ' OFF ' + v.off.join('|') : '')).join('; '));
   for (const k of ['errorsMenus', 'errorsRun', 'errorsTutorial']) if (report[k]) console.log(vp.name, k, report[k]);
 }

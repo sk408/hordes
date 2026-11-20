@@ -32,7 +32,9 @@ const card = (t) => cards().find(c => (c.innerHTML || '').includes('>' + t));
 const kdown = (k) => h.key('keydown', { key: k, preventDefault() {} });
 const sub = () => el['ov-sub'].innerHTML || '';
 // No shrines either: the pilot walking into one spends run gold and moves the parts.
-const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.shrines = []; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
+// state.shrines is only a view of state.sites, and the shrines are ticked from
+// state.sites, so the list itself is emptied too (see test_rewrites, 8ea5616).
+const quiet = () => { st.enemies.length = 0; st.gems.length = 0; st.shrines = []; st.sites = []; st.spawnTimer = 999; st.wave.endsAt = st.time + 9999; };
 const toDead = () => {
   for (let i = 0; i < 20 && st.mode !== 'dead'; i++) { if (st.mode === 'death-cine') h.skipMovie(); h.pump(1); }
   assert.equal(st.mode, 'dead', 'on the end screen');

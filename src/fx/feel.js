@@ -299,10 +299,7 @@ export function feelStep(state, dt) {
     const r = f.track.get(e);
     if (!r || r.pass === f.pass) continue;
     if (Math.abs(e.x - p.x) > 320 || Math.abs(e.y - p.y) > 220) continue;   // far off screen
-    if (e.quietDeath) {
-      // The portal beat draws this boss's death itself (main.js): no second
-      // body folding on the spot, no puff behind its sinking sprite.
-    } else if (actorAnimOn() && !e.finalBoss) {
+    if (actorAnimOn() && !e.finalBoss) {
       addCorpse(f, e, r.face);
       addPuff(f, e, false, ANIM.COLLAPSE_S);
     } else addPuff(f, e, false);

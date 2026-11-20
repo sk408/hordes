@@ -55,6 +55,10 @@ assert.equal(fmtGold(null), '    0');
   // emptying state.shrines pins the purse to what this test writes. The
   // assertion itself is untouched.
   st.shrines = [];
+  // state.shrines is only a view of state.sites, and the shrines are ticked
+  // from state.sites: empty the list itself, or a shrine stays live (the
+  // same gap as test_rewrites, commit 8ea5616).
+  st.sites = [];
   // The badge publishes profile.runPurse through state.runPurse each frame —
   // write the PROFILE wallet, not just the state mirror.
   T.getProfile().runPurse = 99999; st.runPurse = 99999;

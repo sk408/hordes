@@ -148,7 +148,7 @@ await check('no new file starts to load during the boss sting or the forge momen
   assert.match(src, /hold: !!\(forge \|\| stingLive\(\)\),/, 'main.js reports the sting and the forge');
 });
 
-await check('no new file starts to load during a movie (intro, portal beat, escape, death)', async () => {
+await check('no new file starts to load during a movie (intro, portal movie, escape, death)', async () => {
   for (const scene of ['none', 'portal', 'escape', 'death']) {
     assert.ok(HOLD_SCENES.has(scene), scene + ' holds');
     const { fetch } = setup();
@@ -347,7 +347,7 @@ await check('ADVANCED: SOUND EFFECTS: SYNTH by default; a press turns RECORDED (
 // The real game says where it is (main.js syncMusic); that context goes to the
 // loader. Every movie main.js plays holds it, including the road shot, whose
 // music scene is 'run'; a fight and the finale (a fight, not a movie) load.
-await check('the game\'s own context holds the loader in every movie (intro, portal beat, road shot, escape, death); a fight loads', () => {
+await check('the game\'s own context holds the loader in every movie (intro, portal movie, road shot, escape, death); a fight loads', () => {
   const T = h.T, st = h.state;
   const real = T.audio.get();
   let seen = null;
@@ -362,7 +362,7 @@ await check('the game\'s own context holds the loader in every movie (intro, por
   };
   const loads = (c) => { const { fetch } = setup(); A.setMusicContext(c); return fetch.calls.length; };
   try {
-    for (const [mode, kind] of [['intro'], ['playing', 'portal'], ['portal-cine', 'road'], ['escape'], ['death-cine']]) {
+    for (const [mode, kind] of [['intro'], ['portal-cine', 'portal'], ['portal-cine', 'road'], ['escape'], ['death-cine']]) {
       const c = contextIn(mode, kind);
       assert.equal(loads(c), 0, 'no file starts in ' + mode + (kind ? '/' + kind : '') + ' (scene ' + c.scene + ')');
     }

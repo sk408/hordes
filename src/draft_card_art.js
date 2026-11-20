@@ -126,16 +126,18 @@ DRAFT_COMPACT.HUGE_MIN_H = 380;
 // column keeps TEXT_MIN px. Only the playing-card offers ask (opts.dcard:
 // presentDraft); the evolve offer keeps its own card and layout.
 // CHROME is everything on the rows screen that is not a row, as index.html
-// lays it out (#overlay.draft.rows), measured in Chrome at 375x667:
+// lays it out (#overlay.draft.rows), measured in Chrome at 375x667 in the
+// menus' monospace (round 8 "font2"; it was 171 with the pixel font):
 //   8 + 8   the overlay's padding, top and bottom
-//   30      the "Pick 1" header on TWO lines (a reason such as "the NEW
+//   26      the title ("LEVEL UP", 22 px)
+//   30      the "Pick 1" line on TWO lines (a reason such as "the NEW
 //           weapon was free" wraps it on a phone)
 //   23      the AUTO-PICK row
 //   78      the action row (REROLL / BANISH / SKIP wrap to two lines)
-//   3 x 8   the gaps between header, AUTO-PICK row, rows and action row
-// = 171. tools/verify_draft_cards.mjs checks it at 375x667 and 390x844.
+//   4 x 8   the gaps between title, Pick line, AUTO-PICK row, rows and action row
+// = 205. tools/verify_draft_cards.mjs checks it at 375x667 and 390x844.
 export const DRAFT_ROWS = { MAX_W: 700, MIN_RATIO: 1.3, PAD: 24, CARD_MAX: 520, CARD_PAD: 8,
-  GAP: 8, CHROME: 171, MAX_SCALE: 5, MIN_SCALE: 2, TEXT_MIN: 150, FACE_MY: 3 };
+  GAP: 8, CHROME: 205, MAX_SCALE: 5, MIN_SCALE: 2, TEXT_MIN: 150, FACE_MY: 3 };
 // The height one row takes at face scale s: the face, its 3 px margin above
 // and below (the 3 px ring sits in it) and the card's padding.
 export const draftRowH = (s) => cardBox(s).h + 2 * DRAFT_ROWS.FACE_MY + 2 * DRAFT_ROWS.CARD_PAD;

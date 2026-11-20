@@ -77,6 +77,10 @@ const quietRun = () => {
   T.auto.on = false;
   T.startRun(); h.pump(3);
   st.enemies.length = 0; st.wave.endsAt = st.time + 1e9;
+  // The run's quest board is random. A rolled 'fuse a weapon' quest pays a
+  // joker when the fusion lands, and its draft opened after the moment on
+  // seeds 1, 3 and 11 (the next check then found stale cards). Not measured here.
+  st.quests = [];
 };
 const takeEvolve = () => {
   const w = readyVolley();
@@ -132,7 +136,11 @@ S.check('a first-ever fusion with no moment staged (the tab hidden) keeps the FU
       st.weapons.push(w);
     }
     const v = makeWeapon('VOLLEY'); v.cd = 1e9; st.weapons.unshift(v);
-    T.fusion.forgeOffers();
+    // Open the offer for real (a frame), not the cards an earlier
+    // check left in the overlay.
+    h.elements['ov-cards'].innerHTML = '';
+    for (let i = 0; i < 6 && st.mode === 'playing'; i++) h.pump(1);
+    assert.equal(st.mode, 'evolve', 'the offer opened');
     const card = [...h.elements['ov-cards'].children].find((c) => c._fusionOffer === FUSE);
     assert.ok(card, 'the fusion is offered');
     card.click();
@@ -167,6 +175,41 @@ S.check('the same for a fusion: hidden mid-moment, the FUSED banner shows', () =
     assert.ok(st.bossBanner && st.bossBanner.verb === 'FUSED', 'the FUSED banner');
   } finally { hide(false); }
   playOut();
+});
+
+// integ5: a background run (the tab hidden, the pilot playing on) whose first
+// evolution ever comes while nobody looks. The banner used to run out on the
+// hidden frames. Now the run plays on, and the banner waits for the player.
+S.check('a first-ever EVOLVED banner in a background run waits for the player to come back', () => {
+  freshEvolve();
+  T.setPilotMode('AUTO_ALL'); T.auto.on = false;
+  T.startRun(); h.pump(3);
+  st.enemies.length = 0; st.wave.endsAt = st.time + 1e9;
+  const w = readyVolley();
+  let played = 0;
+  const away = (s) => { for (let i = 0; i < s * 4; i++) { st.player.invuln = 1e9; h.advanceClock(250); T.bg.tick(performance.now()); } };
+  hide(true);
+  try {
+    assert.equal(T.bg.hidden, true);
+    for (let i = 0; i < 60 && !w.evolution; i++) away(0.5);
+    assert.ok(w.evolution, 'the pilot took the evolution while hidden');
+    assert.equal(T.forge.live, null, 'no moment in a hidden tab');
+    const t0 = st.time;
+    away(6);
+    played = st.time - t0;
+  } finally { hide(false); }
+  h.pump(1);
+  assert.ok(st.bossBanner && st.bossBanner.verb === 'EVOLVED', 'the EVOLVED banner is up when the player is back');
+  assert.ok(st.bannerHold > 2.3, 'with its whole hold: ' + st.bannerHold);
+  // Not held while hidden: nobody was there to see the hold.
+  assert.ok(played > 5.5, 'the run played on while hidden: ' + played.toFixed(2) + ' s of 6');
+  const simT = st.time;
+  h.pump(60);
+  assert.equal(st.time, simT, 'the fight waits under it');
+  assert.ok(st.bossBanner && st.bossBanner.verb === 'EVOLVED', 'still up a second later');
+  for (let i = 0; i < 120; i++) h.pump(1);
+  assert.equal(st.bannerHold, 0, 'then it lets go');
+  assert.equal(st.bannerLater, null);
 });
 
 S.done();

@@ -206,7 +206,31 @@ s.check('index.html: the strip shows only on the desktop layer, folds to one KEY
   assert.ok(/#touch\.cog-only \.keybar \{/.test(html), 'shown only on the desktop layer');
   assert.ok(/#touch\.cog-only\.kb-min \.keybar > \* \{ display: none; \}/.test(html), 'folded: every chip hides');
   assert.ok(/#touch\.cog-only\.kb-min \.keybar \.kb-more \{ display: inline-block; \}/.test(html), 'but the KEYS chip');
-  assert.ok(/<button data-act="help" class="kb-more" id="kb-more"><b>\?<\/b>KEYS<\/button>/.test(html), 'the KEYS chip is the help action');
+  // R9: the corner chip shows the strip (it no longer opens help mode), and a
+  // HIDE chip ends the strip. Neither is ever shed on a narrow window.
+  assert.ok(/<button data-act="kbshow" class="kb-more" id="kb-more"[^>]*><span class="kb-arrow up" aria-hidden="true"><\/span>KEYS<\/button>/.test(html), 'the KEYS chip shows the strip, with an up arrow');
+  assert.ok(!/data-act="help" class="kb-more"/.test(html), 'the KEYS chip is not the help action any more');
+  const bar = /<div class="keybar" id="keybar">([\s\S]*?)<\/div>/.exec(html)[1];
+  const acts = [...bar.matchAll(/<button data-act="([a-z]+)"/g)].map(m => m[1]);
+  assert.deepEqual(acts.slice(-3), ['help', 'kbhide', 'kbshow'], 'HIDE comes after HELP, last before the corner chip: ' + acts);
+  assert.ok(/<button data-act="kbhide" class="kb-hide" id="kb-hide"[^>]*><span class="kb-arrow dn" aria-hidden="true"><\/span><span class="kb-w">HIDE<\/span><\/button>/.test(bar), 'the HIDE chip, with a down arrow');
+  // No narrow-window rule ever hides the HIDE chip itself (below 800 px it
+  // keeps its arrow and drops only the word).
+  const mediaBlocks = [];
+  for (const m of html.matchAll(/@media \(max-width: (\d+)px\) \{/g)) {
+    let i = m.index + m[0].length, depth = 1;
+    while (depth && i < html.length) { if (html[i] === '{') depth++; else if (html[i] === '}') depth--; i++; }
+    mediaBlocks.push({ w: +m[1], body: html.slice(m.index + m[0].length, i - 1) });
+  }
+  assert.ok(mediaBlocks.length >= 4, 'found the width rules');
+  for (const b of mediaBlocks) {
+    assert.ok(!/\.kb-hide\s*(,[^{]*)?\{[^}]*display:\s*none/.test(b.body), 'max-width ' + b.w + ' must not hide the HIDE chip');
+  }
+  assert.ok(!/data-act="kbhide" class="[^"]*\bopt/.test(bar), 'the HIDE chip has no shedding class');
+  const narrow = mediaBlocks.find(b => b.w === 799);
+  assert.ok(narrow && /#touch \.keybar \.kb-hide \.kb-w \{ display: none; \}/.test(narrow.body), 'below 800 px HIDE drops only its word');
+  assert.ok(/#touch \.keybar \.kb-hide \{\s*position: relative; margin-left: 16px;/.test(html), 'set apart from PAUSE and HELP');
+  assert.ok(/@media \(prefers-reduced-motion: reduce\) \{ #touch \.keybar \.kb-more\.kb-pulse \{ animation: none; \} \}/.test(html), 'no pulse under reduced motion');
 });
 
 s.check('a boss fight: HP, the boss bar, the clock and every live rule show with no tap, clear of each other', () => {
@@ -407,6 +431,337 @@ s.check('the settings grid shrinks its type only when the page would not fit', (
   if (st.mode === 'settings') h.key('keydown', { key: 'Escape' });
   assert.ok(!ov.classList.contains('tight'), 'leaving drops it');
   delete ov.scrollHeight; delete ov.clientHeight;
+});
+
+// ---- R9: the desktop key strip, shown or hidden (TASKS9 "keys") --------------
+// A click on a strip chip, the way the touch layer's pointerdown sees it.
+const chipEl = (act) => ({
+  dataset: { act },
+  getBoundingClientRect: () => ({ left: 400, top: 280, right: 440, bottom: 296, width: 40, height: 16 }),
+});
+const press = (H, act, x = 420, y = 288) => {
+  const b = chipEl(act);
+  H.T.hud.touchLayer()._ev.pointerdown({
+    target: { closest: (sel) => (sel === '[data-act]' ? b : null) }, clientX: x, clientY: y, preventDefault() {},
+  });
+};
+const desk = (H) => {
+  const tl = H.T.hud.touchLayer();
+  tl.classList.add('cog-only'); tl.classList.remove('on');
+  return tl;
+};
+// A between-runs lesson line (from earlier checks) takes the next key; clear
+// it so the key reaches the help gate.
+const helpKey = (k) => { T.tut.hints.active = null; h.key('keydown', { key: k, preventDefault() {} }); };
+const deskDone = (H) => {
+  const tl = H.T.hud.touchLayer();
+  tl.classList.remove('cog-only'); tl.classList.remove('kb-min');
+  H.T.hud.setKeyStripChoice(null);
+};
+
+s.check('R9: the corner chip shows the strip with the game running; the HIDE chip folds it; both are kept', () => {
+  fresh();
+  const tl = desk(h);
+  try {
+    assert.equal(T.hud.keyStripChoice(), null, 'no choice on a new device');
+    st.runsBefore = 5; st.time = 400;
+    step();
+    assert.ok(tl.classList.contains('kb-min'), 'a veteran, late: folded into the corner chip');
+    press(h, 'kbshow');
+    assert.ok(!tl.classList.contains('kb-min'), 'one click and the strip is up, at once');
+    assert.equal(st.helpMode, false, 'not help mode');
+    assert.equal(st.mode, 'playing', 'not paused');
+    assert.equal(h.storage.get('hordes_keystrip'), 'shown', 'remembered on this device');
+    assert.equal(st.readyRow, '', 'the ready line goes in the same click, not a frame later');
+    // A double click: the second press lands on HIDE (narrow window) and is ignored.
+    press(h, 'kbhide');
+    assert.ok(!tl.classList.contains('kb-min') && h.storage.get('hordes_keystrip') === 'shown', 'a double click does not hide it again');
+    // A slow double click (Windows allows 500 ms between the two clicks), even
+    // with the mouse moved off the KEYS spot.
+    h.advanceClock(520);
+    press(h, 'kbhide', 520, 288);
+    assert.ok(!tl.classList.contains('kb-min'), 'a slow double click (520 ms) does not hide it either');
+    // A third click on the same spot a little later: still taken as a repeat of KEYS.
+    h.advanceClock(400);
+    press(h, 'kbhide');
+    assert.ok(!tl.classList.contains('kb-min') && h.storage.get('hordes_keystrip') === 'shown', 'HIDE on the KEYS spot within 1.5 s is ignored');
+    // (A between-runs lesson line from an earlier check holds the sim; clear it.)
+    T.tut.hints.active = null;
+    const t0 = st.time;
+    step(30);   // half a second: past the double-click guard
+    assert.ok(st.time > t0, 'the clock runs (' + t0 + ' -> ' + st.time + ')');
+    assert.ok(!tl.classList.contains('kb-min') && st.readyRow === '', 'still up; no ready line while it is up');
+    // Every chip works: PILOT changes the pilot, no help tip.
+    const p0 = st.pilotMode;
+    press(h, 'pilot');
+    assert.notEqual(st.pilotMode, p0, 'the PILOT chip works');
+    T.setPilotMode('AUTO_ALL');
+    h.advanceClock(1000);   // past the same-spot window
+    press(h, 'kbhide');
+    assert.ok(tl.classList.contains('kb-min'), 'HIDE folds it at once');
+    assert.equal(h.storage.get('hordes_keystrip'), 'hidden', 'and remembers that');
+    assert.ok(/^Q \S+  E \S+  H \d+  N \d+$/.test(st.readyRow), 'the ready line is back in the same click: ' + st.readyRow);
+    step();
+    assert.ok(/^Q \S+  E \S+  H \d+  N \d+$/.test(st.readyRow), 'the ready line is back: ' + st.readyRow);
+  } finally { deskDone(h); }
+});
+
+s.check('R9: KEYS and HIDE refit the canvas at once (the band comes and goes)', () => {
+  fresh();
+  const tl = T.hud.touchLayer();
+  const gcs = globalThis.getComputedStyle;
+  const conn = Object.getOwnPropertyDescriptor(tl, 'isConnected');
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => '', display: 'block' });
+  Object.defineProperty(tl, 'isConnected', { value: true, configurable: true, writable: true });
+  try {
+    tl.classList.add('cog-only'); tl.classList.remove('on');
+    T.hud.setKeyStripChoice('hidden');
+    st.runsBefore = 5; st.time = 400;
+    frame(); frame();
+    const canvasEl = h.elements.game;
+    const hDown = parseFloat(canvasEl.style.height);
+    assert.ok(tl.classList.contains('kb-min') && hDown > 0, 'folded, canvas ' + canvasEl.style.height);
+    h.advanceClock(2000);
+    press(h, 'kbshow');
+    const hUp = parseFloat(canvasEl.style.height);
+    assert.ok(!tl.classList.contains('kb-min'), 'KEYS: up');
+    assert.ok(hUp < hDown, 'KEYS: the canvas makes room for the strip at once (' + hDown + ' -> ' + hUp + ')');
+    h.advanceClock(2000);
+    press(h, 'kbhide');
+    assert.ok(tl.classList.contains('kb-min'), 'HIDE: folded');
+    assert.equal(parseFloat(canvasEl.style.height), hDown, 'HIDE: the canvas takes the band back at once');
+  } finally {
+    globalThis.getComputedStyle = gcs;
+    if (conn) Object.defineProperty(tl, 'isConnected', conn); else delete tl.isConnected;
+    tl.classList.remove('cog-only'); tl.classList.remove('kb-min');
+    T.hud.setKeyStripChoice(null);
+    T.hud.fitCanvas();
+  }
+});
+
+s.check('R9: a choice made in another tab reaches this one (the storage event)', () => {
+  fresh();
+  const tl = desk(h);
+  try {
+    T.hud.setKeyStripChoice('shown');
+    st.runsBefore = 5; st.time = 400;
+    step();
+    assert.ok(!tl.classList.contains('kb-min'), 'shown here');
+    h.storage.set('hordes_keystrip', 'hidden');   // the other tab hid it
+    h.handlers.storage({ key: 'hordes_keystrip', oldValue: 'shown', newValue: 'hidden' });
+    assert.equal(T.hud.keyStripChoice(), 'hidden', 'this tab reads the new choice');
+    step();
+    assert.ok(tl.classList.contains('kb-min'), 'and folds its strip');
+  } finally { deskDone(h); }
+});
+
+s.check('R9: a stored SHOWN keeps the strip up in a later run and past the first minutes', () => {
+  fresh();
+  const K = C.HUD.KEYSTRIP;
+  T.hud.setKeyStripChoice('shown');
+  try {
+    st.runsBefore = K.RUNS + 4; st.time = 900;
+    assert.equal(T.hud.keyStripWanted(), true, 'a later run, late: shown');
+    st.runsBefore = 0; st.time = K.SECONDS + 1;
+    assert.equal(T.hud.keyStripWanted(), true, 'run 1 past the first minutes: shown');
+  } finally { T.hud.setKeyStripChoice(null); }
+});
+
+s.check('R9: a stored HIDDEN folds run 1 from the start, but the guided run and a chip hint still raise it', () => {
+  fresh();
+  T.hud.setKeyStripChoice('hidden');
+  try {
+    st.runsBefore = 0; st.time = 5;
+    assert.equal(T.hud.keyStripWanted(), false, 'run 1, early: folded');
+    T.tut.hints.active = { id: 'focus', text: 'x', targets: ['focusbtn'], shownMs: 0, idleT: 0 };
+    assert.equal(T.hud.keyStripWanted(), true, 'a hint on the TAB chip raises it');
+    T.tut.hints.active = null;
+    assert.equal(T.hud.keyStripWanted(), false, 'and it goes back to the choice');
+    const prof = T.getProfile();
+    prof.achievements = prof.achievements || {};
+    prof.achievements.totals = Object.assign({}, prof.achievements.totals, { runs: 5 });
+    st.mode = 'menu';
+    T.whatsNew.arm();
+    T.startRun();
+    assert.ok(T.tut.live, 'the guided run is live');
+    assert.equal(T.hud.keyStripWanted(), true, 'the guided run raises it');
+    T.tut.guided.over = true;   // the guided run has ended
+    assert.ok(!T.tut.live, 'the guided run is over');
+    assert.equal(T.hud.keyStripWanted(), false, 'then the choice again');
+  } finally { T.tut.hints.active = null; T.hud.setKeyStripChoice(null); }
+});
+
+s.check('R9: help mode raises the strip and leaving it returns to the choice', () => {
+  fresh();
+  const tl = desk(h);
+  try {
+    T.hud.setKeyStripChoice('hidden');
+    st.runsBefore = 5; st.time = 400;
+    step();
+    assert.ok(tl.classList.contains('kb-min'), 'hidden');
+    helpKey('?');
+    assert.ok(st.helpMode, '? arms help mode ');
+    step();
+    assert.ok(!tl.classList.contains('kb-min'), 'help mode shows the strip so the chips can be explained');
+    // In help mode a click on HIDE explains it and never uses it.
+    press(h, 'kbhide');
+    assert.ok(st.helpMode && !tl.classList.contains('kb-min') && T.hud.keyStripChoice() === 'hidden', 'HIDE explained, not used');
+    assert.ok(/HIDE CHIP: fold this strip/.test(globalThis.document.getElementById('help-tip').innerHTML), 'the tip says what HIDE does: ' + globalThis.document.getElementById('help-tip').innerHTML);
+    helpKey('?');
+    assert.ok(!st.helpMode, '? leaves');
+    step();
+    assert.ok(tl.classList.contains('kb-min'), 'back to HIDDEN');
+    T.hud.setKeyStripChoice('shown');
+    step();
+    assert.ok(!tl.classList.contains('kb-min'), 'SHOWN');
+    helpKey('F1');
+    step();
+    helpKey('F1');
+    step();
+    assert.ok(!st.helpMode && !tl.classList.contains('kb-min'), 'help on and off with F1: still SHOWN');
+  } finally { deskDone(h); }
+});
+
+s.check('R9: the first fold by itself (an early run, no choice) pulses the corner chip once', () => {
+  fresh();
+  const tl = desk(h);
+  const K = C.HUD.KEYSTRIP;
+  const chip = globalThis.document.getElementById('kb-more');
+  try {
+    chip.classList.remove('kb-pulse');
+    h.storage.delete('hordes_keystrip_pulsed');
+    st.runsBefore = 1; st.time = K.SECONDS - 2;
+    step();
+    assert.ok(!tl.classList.contains('kb-min') && !chip.classList.contains('kb-pulse'), 'early: up, no pulse');
+    st.time = K.SECONDS + 0.5;
+    step();
+    assert.ok(tl.classList.contains('kb-min'), 'the 180 s mark folds it');
+    assert.ok(chip.classList.contains('kb-pulse'), 'and the corner chip pulses');
+    chip.classList.remove('kb-pulse');
+    helpKey('?'); step();
+    helpKey('?'); step();
+    assert.ok(tl.classList.contains('kb-min') && !chip.classList.contains('kb-pulse'), 'folding again in the same run: no second pulse');
+    assert.equal(h.storage.get('hordes_keystrip_pulsed'), '1', 'kept on this device');
+    // The next early run folds at 180 s too: no pulse, it was shown once.
+    tl.classList.remove('kb-min');
+    st.runsBefore = 2; st.time = K.SECONDS - 2;
+    step();
+    assert.ok(!tl.classList.contains('kb-min'), 'run 3, early: up');
+    st.time = K.SECONDS + 0.5;
+    step();
+    assert.ok(tl.classList.contains('kb-min') && !chip.classList.contains('kb-pulse'), 'run 3 at 180 s: folded, no second pulse');
+    // A veteran's run folds from the start: no pulse; nor a fold the player asked for.
+    // The "pulsed once" flag is taken away first, or it alone would hide a
+    // pulse here and these two checks would pass whatever the rule did.
+    h.storage.delete('hordes_keystrip_pulsed');
+    tl.classList.remove('kb-min');
+    st.runsBefore = K.RUNS + 1; st.time = 5;
+    step();
+    assert.ok(tl.classList.contains('kb-min') && !chip.classList.contains('kb-pulse'), 'a veteran: no pulse');
+    assert.ok(!h.storage.get('hordes_keystrip_pulsed'), 'a veteran: the one pulse is not spent');
+    T.hud.setKeyStripChoice('shown'); step();
+    st.runsBefore = 2; st.time = K.SECONDS + 1;
+    h.advanceClock(1000);   // past the double-click guard
+    h.storage.delete('hordes_keystrip_pulsed');
+    press(h, 'kbhide');
+    assert.ok(tl.classList.contains('kb-min') && !chip.classList.contains('kb-pulse'), 'the HIDE chip: no pulse');
+    assert.ok(!h.storage.get('hordes_keystrip_pulsed'), 'the HIDE chip: the one pulse is not spent');
+  } finally { chip.classList.remove('kb-pulse'); deskDone(h); }
+});
+
+s.check('R9: SETTINGS has a KEY STRIP row on the first page that cycles the choice', () => {
+  fresh();
+  desk(h);
+  const cards = () => h.elements['ov-cards'].children;
+  const row = () => cards().find(c => /KEY STRIP/.test(c.innerHTML));
+  try {
+    h.key('keydown', { key: 'Escape' });
+    assert.equal(st.mode, 'settings');
+    assert.ok(row(), 'the row is on the first settings page');
+    assert.ok(/KEY STRIP: AUTO/.test(row().innerHTML) && /first runs/.test(row().innerHTML), 'no choice: AUTO, in plain words');
+    row().click();
+    assert.ok(/KEY STRIP: SHOWN/.test(row().innerHTML) && /along the bottom/.test(row().innerHTML), row().innerHTML);
+    assert.equal(h.storage.get('hordes_keystrip'), 'shown');
+    row().click();
+    assert.ok(/KEY STRIP: HIDDEN/.test(row().innerHTML) && /in the corner/.test(row().innerHTML), row().innerHTML);
+    assert.equal(h.storage.get('hordes_keystrip'), 'hidden');
+    row().click();
+    assert.ok(/KEY STRIP: SHOWN/.test(row().innerHTML), 'and back');
+    h.key('keydown', { key: 'Escape' });
+    if (st.mode === 'settings') h.key('keydown', { key: 'Escape' });
+    assert.equal(st.mode, 'playing');
+    // A phone or tablet (the pads): no row.
+    const tl = T.hud.touchLayer();
+    tl.classList.remove('cog-only'); tl.classList.add('on');
+    h.key('keydown', { key: 'Escape' });
+    assert.equal(st.mode, 'settings');
+    assert.ok(!row(), 'no KEY STRIP row on the touch layer');
+    h.key('keydown', { key: 'Escape' });
+    if (st.mode === 'settings') h.key('keydown', { key: 'Escape' });
+    tl.classList.remove('on');
+  } finally { deskDone(h); }
+});
+
+// A reload is a second boot with the same storage (top-level awaits: the
+// checks themselves are synchronous).
+const H2 = await boot({ variant: 'ks-reload', storage: [['hordes_onboarded', '1'], ['hordes_keystrip', 'hidden']] });
+s.check('R9: a stored HIDDEN is read back after a reload and folds run 1 from the start', () => {
+  const S2 = H2.T.state;
+  assert.equal(H2.T.hud.keyStripChoice(), 'hidden', 'read back from storage');
+  H2.T.banners.suppressAll();
+  const tl = desk(H2);
+  S2.mode = 'menu'; H2.T.startRun(); H2.skipMovie();
+  S2.runsBefore = 0; S2.time = 1;
+  H2.pump(1);
+  assert.equal(S2.mode, 'playing');
+  assert.ok(tl.classList.contains('kb-min'), 'run 1, second 1: folded');
+  press(H2, 'kbshow');
+  assert.ok(!tl.classList.contains('kb-min'), 'the corner chip raises it');
+  assert.equal(H2.storage.get('hordes_keystrip'), 'shown');
+});
+const H3 = await boot({ variant: 'ks-reload2', storage: [...H2.storage] });
+s.check('R9: a SHOWN made by the corner chip survives the next reload', () => {
+  assert.equal(H3.T.hud.keyStripChoice(), 'shown', 'SHOWN read back');
+});
+
+const H6 = await boot({ variant: 'ks-pulsed', storage: [['hordes_onboarded', '1'], ['hordes_keystrip_pulsed', '1']] });
+s.check('R9: after a reload the corner chip does not pulse again', () => {
+  const S6 = H6.T.state;
+  H6.T.banners.suppressAll();
+  const tl = desk(H6);
+  S6.mode = 'menu'; H6.T.startRun(); H6.skipMovie();
+  S6.runsBefore = 1; S6.time = 5;
+  H6.pump(1);
+  assert.ok(!tl.classList.contains('kb-min'), 'early: up');
+  S6.time = C.HUD.KEYSTRIP.SECONDS + 1;
+  H6.pump(1);
+  assert.ok(tl.classList.contains('kb-min'), 'folded');
+  assert.ok(!globalThis.document.getElementById('kb-more').classList.contains('kb-pulse'), 'no pulse: it already pulsed on this device');
+});
+
+const H4 = await boot({ variant: 'ks-rm', reducedMotion: true, storage: [['hordes_onboarded', '1']] });
+s.check('R9: under reduced motion the first fold does not pulse', () => {
+  const S4 = H4.T.state;
+  H4.T.banners.suppressAll();
+  const tl = desk(H4);
+  S4.mode = 'menu'; H4.T.startRun(); H4.skipMovie();
+  S4.runsBefore = 0; S4.time = 5;
+  H4.pump(1);
+  assert.ok(!tl.classList.contains('kb-min'), 'early: up');
+  S4.time = C.HUD.KEYSTRIP.SECONDS + 1;
+  H4.pump(1);
+  assert.ok(tl.classList.contains('kb-min'), 'folded');
+  assert.ok(!globalThis.document.getElementById('kb-more').classList.contains('kb-pulse'), 'no pulse');
+});
+
+const H5 = await boot({ variant: 'ks-touch', device: 'touch', storage: [['hordes_onboarded', '1']] });
+s.check('R9: a touch device keeps its pads and has no KEY STRIP row', () => {
+  H5.T.banners.suppressAll();
+  assert.ok(H5.T.hud.touchLayer().classList.contains('on'), 'the pads');
+  H5.state.mode = 'menu'; H5.T.startRun(); H5.skipMovie();
+  H5.key('keydown', { key: 'Escape' });
+  assert.equal(H5.state.mode, 'settings');
+  assert.ok(!H5.elements['ov-cards'].children.some(c => /KEY STRIP/.test(c.innerHTML)), 'no row on a phone');
 });
 
 s.done();

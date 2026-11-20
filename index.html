@@ -27,39 +27,12 @@
     overscroll-behavior: none;
     font-family: monospace;
   }
-  /* THE MENU FONT (src/menu_font.js): Pixelify Sans for every menu and
-     overlay once it has loaded after the first frame; until then, and if it
-     fails, today's monospace. Buttons and inputs take it too (without this
-     they used the browser's own button font). The face is weight 400 only and
-     synthetic bold is off: the font is crisp only at weight 400 on its 11 px
-     grid, so emphasis comes from size and colour. The in-run DOM controls
-     (touch pads, the DOM HUD line) stay monospace beside the canvas HUD. */
-  html.px-font { font-synthesis: none; }
-  html.px-font body, html.px-font button, html.px-font input, html.px-font select,
-  html.px-font textarea { font-family: 'Pixelify Sans', monospace;
-    font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'clig' 0; }
-  /* Ligatures are off: the font joins "fi" and "fl", and at 11 px "first"
-     read as "Arst". */
-  html.px-font body { font-size: 11px; }
-  /* The name caret (the absolute ::before at left 8px) stays clear of the
-     name: the name keeps the caret's width free on both sides (both, so it
-     stays centred). The draft's playing cards and the compact shop drop the
-     caret (the number and the icon lead there), and cards with no caret keep
-     their full width. */
-  html.px-font .card .name { padding-left: calc(8px + 0.75em); padding-right: calc(8px + 0.75em); }
-  html.px-font .card.dcard .name::before,
-  html.px-font #overlay.shop-compact .cards.shopgrid > .card .name::before { content: none; }
-  html.px-font .card.dcard .name, html.px-font .card.paper-note .name,
-  html.px-font #overlay.settings .card .name, html.px-font #overlay.loadout-tight .card .name,
-  html.px-font #overlay.draft.compact .card .name,
-  html.px-font #overlay.shop-compact .cards.shopgrid > .card .name { padding-left: 0; padding-right: 0; }
   /* The galleries (trophies, bestiary, apex) put their caption over the
      picture: a dark backing keeps it readable over the art. */
   #overlay.showcase > h1, #overlay.showcase > .sub {
     background: rgba(8, 8, 14, 0.86); width: fit-content; max-width: 92vw;
     margin-left: auto; margin-right: auto; padding: 1px 8px; box-sizing: border-box;
   }
-  html.px-font #touch, html.px-font #touch button, html.px-font #hud { font-family: monospace; }
   /* Canvas is letterboxed by JS (fitCanvas in main.js): internal resolution
      stays 480x300, CSS size preserves aspect so pixels never stretch. */
   #wrap {
@@ -301,9 +274,12 @@
   /* caret sits OUTSIDE the centred text run (absolute), so it cannot skew the
      title's centring — a visual read caught the title pushed right */
   .card .name::before {
-    content: '\203A'; position: absolute; left: 8px; color: #c9a05a;
+    content: '\2023'; position: absolute; left: 8px; color: #c9a05a;
   }
   .card:hover .name::before { color: #ffd75e; }
+  /* The draft's playing cards have no caret: their number leads the name,
+     and the caret sat on top of it ("1. Whetstone"). */
+  .card.dcard .name::before { content: none; }
   /* the end card's "AUTO-CONTINUE: OFF" filled the row and ran into the caret
      at 1280x720: no letter spacing gives it a clear gap like the other cards */
   .card.endauto .name { letter-spacing: 0; }
@@ -540,6 +516,11 @@
     text-shadow: none; width: 100%; box-sizing: border-box;
   }
   .card.paper-note .wn-close:active { background: #c3a973; }
+  /* The offer and CLOSE ride the bottom of the note when its words are taller
+     than the screen: the words scroll under them, cut at the buttons, so the
+     note shows there is more and the buttons never leave the screen. */
+  #overlay .card.paper-note.wn-over .wn-acts { position: sticky; bottom: 0; z-index: 3; margin: 0 -16px; padding: 0 16px 2px;
+    background: #dcc694; box-shadow: 0 12px 0 #dcc694; }  /* the shadow covers the note's bottom padding */
   /* ---- HOW TO PLAY readability (owner 2026-09-16: "We need to fix the
      formatting of the how to play screen, at least on mobile. It's hard to
      read the text because of the narrow width and it wraps"). The reference
@@ -663,7 +644,7 @@
   #overlay .away-rows { display: inline-block; text-align: left; max-width: min(92vw, 420px);
     padding: 8px 14px; background: rgba(5,5,10,0.72); border: 2px solid #3a2a18; border-radius: 4px;
     font-size: 13px; line-height: 1.7; color: #f0dfc0; }
-  #overlay .away-rows div::before { content: '\203A  '; color: #ffd75e; }
+  #overlay .away-rows div::before { content: '\25B8  '; color: #ffd75e; }
   /* The camp strip: on the title's CAMP card at 1x, on the camp screen at 3x. */
   canvas.camp-strip { display: block; margin: 0 auto 6px; image-rendering: pixelated; image-rendering: crisp-edges; }
   .card canvas.camp-strip { position: relative; z-index: 1; width: 96px; height: 24px; }
@@ -781,6 +762,20 @@
   #overlay.end > .sub { font-size: 14px; color: #b8b8cc; line-height: 1.55; }
   #overlay.end > .sub br { line-height: 2.1; }
   #overlay.end > .cards { margin-top: 6px; }
+  /* An upright phone: the end card's narrow cards have no caret (it sat on
+     "AUTO-CONTINUE: OFF" and "BUY NEXT"). What the run earned packs two to a
+     line, each emblem beside its words: stacked, five trophies took three
+     tall rows and pushed the buttons off a short phone. */
+  @media (orientation: portrait) and (max-width: 500px) {
+    #overlay.end .card .name::before { content: none; }
+    #overlay.end .ec-got { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); gap: 6px; width: 100%; }
+    #overlay.end .ec-item { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 6px; row-gap: 0;
+      align-items: center; justify-items: start; text-align: left; min-width: 0; max-width: none; padding: 4px 6px; }
+    #overlay.end .ec-item > canvas.ec-icon { grid-column: 1; grid-row: 1 / span 2; width: 32px; height: 32px; }
+    #overlay.end .ec-item > canvas.ec-icon.ec-sm { width: 24px; height: 24px; }
+    #overlay.end .ec-item > .ec-cap { grid-column: 2; grid-row: 1; }
+    #overlay.end .ec-item > .ec-nm { grid-column: 2; grid-row: 2; }
+  }
   /* A short landscape screen (a phone on its side) keeps the end card's row in
      one line: RETRY, SHOP, AUTO-CONTINUE, TITLE and the win's PRESTIGE. Five
      phone-width cards wrapped PRESTIGE below the bottom edge at 844x390. */
@@ -809,6 +804,18 @@
     #overlay.end .ec-gold { grid-column: 1; grid-row: 3; }
     #overlay.end .ec-more { grid-column: 2; grid-row: 3; text-align: left; }
     #overlay.end .ec-got { grid-column: 1 / -1; grid-row: 4; }
+    /* In the menus' monospace the trophies wrapped to a second row and BUY
+       NEXT fell off the bottom edge: the panel takes the full width (the
+       details take three lines, not four), the emblems sit beside their two
+       lines of words, and the gaps are tighter. The text keeps its size. */
+    #overlay.end { gap: 6px; }
+    #overlay.end .ec { max-width: calc(100vw - 32px); row-gap: 2px; }
+    #overlay.end .ec-got { gap: 4px 6px; }
+    #overlay.end .ec-item { display: grid; grid-template-columns: auto auto; column-gap: 5px; row-gap: 0; align-items: center; justify-items: start; padding: 2px 6px; }
+    #overlay.end .ec-item > canvas.ec-icon { grid-column: 1; grid-row: 1 / span 2; width: 24px; height: 24px; }
+    #overlay.end .ec-item > canvas.ec-icon.ec-sm { width: 16px; height: 16px; }
+    #overlay.end .ec-item > .ec-cap { grid-column: 2; grid-row: 1; }
+    #overlay.end .ec-item > .ec-nm { grid-column: 2; grid-row: 2; }
   }
   /* R5: a phone held upright: BUY NEXT joins the row (the row has room), and
      the summary is tighter, so the card needs no scroll. */
@@ -818,6 +825,29 @@
     #overlay.end .ec-more { font-size: 12px; line-height: 1.3; }
     #overlay.end .cards:has(.endbuy)::before { display: none; }
     #overlay.end .card.endbuy { order: 0; width: min(30vw, 172px); margin-top: 0; }
+  }
+  /* A short upright phone (375x667 and smaller): in the menus' monospace the
+     card text wraps to more lines, so the end card is tightened (spacing, the
+     card widths, never the text) to keep every button on the screen. It comes
+     after the upright-phone rule above so its spacing wins. */
+  @media (orientation: portrait) and (max-height: 700px) {
+    #overlay.end { gap: 8px; padding-top: 6px; padding-bottom: 8px; }
+    #overlay.end .ec { gap: 4px; padding: 6px 12px; }
+    #overlay.end .cards { gap: 8px; }
+    #overlay.end > .cards { margin-top: 0; }
+    /* The cards share the full width two to a line, so their words wrap to
+       fewer lines (BUY NEXT too: it is the last tile of the grid). */
+    #overlay.end .card, #overlay.end .cards > .card.endbuy { box-sizing: border-box; width: calc(50% - 4px); max-width: 220px;
+      padding: 6px 8px; margin-bottom: 0; }
+    #overlay.end .card .name { margin-bottom: 2px; }
+  }
+  /* The smallest upright phones (320x568): a little less space between the
+     parts, so the win's six buttons stay on the screen too. */
+  @media (orientation: portrait) and (max-height: 600px) {
+    #overlay.end { gap: 5px; }
+    #overlay.end .ec { gap: 2px; padding: 4px 10px; }
+    #overlay.end .cards { gap: 6px; }
+    #overlay.end .card, #overlay.end .cards > .card.endbuy { width: calc(50% - 3px); }
   }
 
   /* ---- WAVE-21 first-run tour (docs/FIRST_RUN_TOUR_2026-09-11.md): a
@@ -939,9 +969,49 @@
   #touch.cog-only.kb-min .keybar {
     left: auto; right: 6px; bottom: 6px; height: 24px; padding: 0 2px;
     border: 1px solid #23233a; border-radius: 4px; background: rgba(11,11,18,0.85);
+    overflow: visible;
   }
   #touch.cog-only.kb-min .keybar > * { display: none; }
   #touch.cog-only.kb-min .keybar .kb-more { display: inline-block; }
+  /* R9 SHOW / HIDE: the player picks the strip (main.js keyStripChoice). The
+     corner chip is a tab with an up arrow: it opens the strip. The hide chip
+     sits last, set off from PAUSE and HELP by a gap and a rule, and is never
+     shed on a narrow window. */
+  #touch .keybar .kb-arrow {
+    display: inline-block; width: 0; height: 0; margin: 0 5px 1px 0; vertical-align: middle;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+  }
+  #touch .keybar .kb-arrow.up { border-bottom: 5px solid #ffd75e; }
+  #touch .keybar .kb-arrow.dn { border-top: 5px solid #8a8aa8; }
+  #touch .keybar .kb-hide {
+    position: relative; margin-left: 16px; color: #8a8aa8;
+  }
+  #touch .keybar .kb-hide::before {
+    content: ''; position: absolute; left: -11px; top: 3px; bottom: 3px;
+    border-left: 1px solid #33334a;
+  }
+  #touch.cog-only.kb-min .keybar .kb-more {
+    height: 20px; padding: 0 8px; border-color: #4a4a66; border-radius: 4px 4px 2px 2px;
+  }
+  #touch .keybar .kb-more.kb-pulse { animation: kb-pulse 0.9s ease-out 1; }
+  @keyframes kb-pulse {
+    0% { border-color: #ffd75e; box-shadow: 0 0 0 0 rgba(255, 215, 94, 0.7); }
+    100% { border-color: #4a4a66; box-shadow: 0 0 0 10px rgba(255, 215, 94, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) { #touch .keybar .kb-more.kb-pulse { animation: none; } }
+  /* Below 800 px (a half-screen window) the hide chip keeps only its arrow and
+     the chips pad less, so the strip still fits as it did before HIDE. */
+  @media (max-width: 799px) {
+    #touch .keybar button { padding: 0 5px; }
+    #touch .keybar .kb-hide { margin-left: 8px; }
+    #touch .keybar .kb-hide::before { left: -7px; }
+    #touch .keybar .kb-hide .kb-w { display: none; }
+    #touch .keybar .kb-arrow.dn { margin-right: 0; }
+  }
+  @media (max-width: 699px) {
+    #touch.cog-only .keybar { gap: 3px; }
+    #touch .keybar button { padding: 0 4px; }
+  }
   /* ---- FULLSCREEN IMMERSIVE MODE (iPhone Safari fallback, owner
      2026-09-17): the Fullscreen API is iPad-only on iOS, so there the same
      canvas button enters immersive mode instead. The wrap grows to the
@@ -1386,6 +1456,23 @@
 /* width: max-content: at left 50% the box would otherwise shrink to half the screen and wrap
    to two lines on a phone. While the notice shows, the overlay's first row (a heading, the shop's BANK line) starts below it. */
 body.sw-notice #overlay { padding-top: calc(40px + env(safe-area-inset-top)); }
+  /* WHAT'S NEW on a short screen (kept at the end of the style, so the
+     blocks above stay the first of their kind). The note keeps its text size
+     but packs it tighter (line spacing, padding; the full width on a phone on
+     its side), so the SHOW ME offer and CLOSE stay in view without scrolling
+     the note. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #overlay .card.paper-note.wn-over { width: min(92vw, 760px); padding: 8px 14px; }
+    #overlay .card.paper-note.wn-over .wn-acts { margin: 0 -14px; padding: 0 14px 2px; }
+    #overlay .card.paper-note.wn-over .desc { line-height: 1.45; }
+    #overlay .card.paper-note.wn-over .offer, #overlay .card.paper-note.wn-over .wn-close { margin-top: 6px; padding: 7px 10px; }
+  }
+  @media (orientation: portrait) and (max-height: 700px) {
+    #overlay .card.paper-note.wn-over { width: calc(100vw - 16px); padding: 10px 12px; }
+    #overlay .card.paper-note.wn-over .wn-acts { margin: 0 -12px; padding: 0 12px 2px; }
+    #overlay .card.paper-note.wn-over .desc { line-height: 1.45; }
+    #overlay .card.paper-note.wn-over .offer, #overlay .card.paper-note.wn-over .wn-close { margin-top: 6px; padding: 8px 10px; }
+  }
 </style>
 </head>
 <body>
@@ -1432,8 +1519,10 @@ body.sw-notice #overlay { padding-top: calc(40px + env(safe-area-inset-top)); }
       <button data-act="stats"><b>I</b>STATS</button>
       <button data-act="settings"><b>ESC</b>PAUSE</button>
       <button data-act="help" class="opt"><b>?</b>HELP</button>
-      <!-- R3: the one chip left when the strip folds away (main.js keyStripWanted) -->
-      <button data-act="help" class="kb-more" id="kb-more"><b>?</b>KEYS</button>
+      <!-- R9: the hide chip, last and set apart; the player's choice is kept (main.js keyStripWanted) -->
+      <button data-act="kbhide" class="kb-hide" id="kb-hide" title="Hide the key strip" aria-label="Hide the key strip"><span class="kb-arrow dn" aria-hidden="true"></span><span class="kb-w">HIDE</span></button>
+      <!-- R3: the one chip left when the strip folds away. R9: it shows the strip -->
+      <button data-act="kbshow" class="kb-more" id="kb-more" title="Show the key strip" aria-label="Show the key strip"><span class="kb-arrow up" aria-hidden="true"></span>KEYS</button>
     </div>
   </div>
   <!-- HELP MODE: the retired #hints key-list panel's slot. "?" arms the

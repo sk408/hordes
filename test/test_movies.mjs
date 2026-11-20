@@ -22,8 +22,7 @@ import { BOSS_SPRITES } from '../src/bosses.js';
 import { ENEMY_SPRITES } from '../src/enemy_sprites.js';
 import { pilotLook, bossLook, killerLook, seenCount, noteSeen, isRepeat, SEEN_KEY } from '../src/movie_cast.js';
 import * as SKIP from '../src/movie_skip.js';
-import * as BEAT from '../src/portal_beat.js';
-import { PORTAL_CUES } from '../src/audio.js';
+import * as CINE from '../src/portal_cine.js';
 import * as DCINE from '../src/death_cine.js';
 import * as INTRO from '../src/intro.js';
 import { makeTypedEnemy } from '../src/enemy_types.js';
@@ -82,20 +81,15 @@ S.check('pilotLook, bossLook and killerLook answer for every pilot, boss and kil
 });
 
 // ---- 2. the movies draw what they are handed -----------------------------------------
-// The portal is a beat on the live field (the pilot is the live one): the
-// beat draws each boss it is handed as it sinks, and each of its phases has a cue.
-S.check('the portal beat draws each boss it is handed, and each phase has a cue', () => {
-  for (const bid of BOSSES) {
-    const boss = bossLook(bid);
+S.check('the portal movie draws each pilot and each boss it is handed', () => {
+  for (const pid of PILOTS) for (const bid of BOSSES) {
+    const hero = pilotLook(pid), boss = bossLook(bid);
     const r = recorder();
-    for (const k of ['translate', 'scale']) if (typeof r.g[k] !== 'function') r.g[k] = () => {};   // colours only
-    BEAT.render(r.g, 0.3, { boss, bx: 240, by: 150, zoom: 2 });   // KILL, after the flash
+    CINE.render(r.g, 300, { hero, boss });        // KILL, before the blow
     const have = drawn(r.rects);
-    assert.deepEqual(missing(usedColours(boss.frames[0], boss.palette), have), [], bid + ' boss colours');
-  }
-  for (const ph of ['KILL', 'OPEN', 'WALK']) {
-    const cue = ph === 'OPEN' ? 'DISSOLVE' : ph;   // main.js portalBeatFrame plays OPEN as DISSOLVE
-    assert.equal(typeof PORTAL_CUES[cue], 'function', ph + ' has a cue');
+    assert.deepEqual(missing(usedColours(hero.frames[0], hero.palette), have), [], pid + '/' + bid + ' hero colours');
+    const both = [...usedColours(boss.frames[0], boss.palette)].filter(c => usedColours(boss.frames[1] || boss.frames[0], boss.palette).has(c));
+    assert.deepEqual(missing(new Set(both), have), [], pid + '/' + bid + ' boss colours');
   }
 });
 S.check('the death movie draws each pilot (running, kneeling, fallen) and the killer', () => {
@@ -179,14 +173,21 @@ S.check('a repeat viewing is the same pictures at full speed, the held beats ste
     const keep = (r) => !only || (only.has(r.style) && r.w >= 5);   // actor pixels are 5-8 px, the portal's 3
     assert.deepEqual(ra.rects.filter(keep), rb.rects.filter(keep), label);
   };
+  const sp = CINE.CINE_SPEED;
+  // Portal: scene ms = wall ms before PAUSE; +700 (PAUSE) in DISSOLVE; +1300 in FADE.
+  for (const [tr, ts] of [[500, 500], [1700, 1700], [2400, 3100], [3200, 4500]]) {
+    same(g => CINE.render(g, tr, { hero, boss, repeat: true }), g => CINE.render(g, ts / sp, { hero, boss }), 'portal ' + tr, actors);
+  }
   // Death (R2): the first viewing holds the freeze HOLD_MS; after it, the same pictures.
   for (const tr of [300, 900, 1600, 2000, 2600, 3300]) {
     const tf = tr < DCINE.REPEAT_PHASES.FREEZE[1] ? tr : tr + DCINE.HOLD_MS;
     same(g => DCINE.render(g, tr, 'contact', { hero, killer, repeat: true }),
       g => DCINE.render(g, tf, 'contact', { hero, killer }), 'death ' + tr);
   }
-  // The portal beat has no held moments: a repeat is the same 2.5 s.
-  assert.equal(BEAT.durationOf({ repeat: true }), BEAT.durationOf({}));
+  assert.equal(CINE.phaseAt(2500, { repeat: true }), 'DISSOLVE');
+  assert.equal(CINE.phaseAt(3100, { repeat: true }), 'FADE');
+  assert.equal(CINE.isDone(CINE.REPEAT_DURATION, { repeat: true }), true);
+  assert.equal(CINE.isDone(CINE.REPEAT_DURATION, {}), false, 'the first viewing is as long as before');
 });
 
 // ---- 4a. the skip rule itself --------------------------------------------------------
@@ -286,9 +287,9 @@ function bossDown(kill = 0) {
   while (!(st.wave.bosses || []).some(b => b.hp > 0) && g++ < 1800) h.pump(1);
   st.wave.endsAt = st.time + 1e9;
   const cast = st.wave.bosses.map(b => b.bossId);
-  // The whole cast dies in one frame. `kill` is reaped first, so it is the
-  // one whose death wins the wave. (A first boss falling alone is pinned in
-  // test_portal_beat.mjs.)
+  // The whole cast dies in one frame (a double wave whose first boss falls
+  // alone is pinned in test_portal_movie.mjs). `kill` is reaped
+  // first, so it is the one whose death wins the wave.
   const first = st.wave.bosses[kill];
   st.enemies.splice(st.enemies.indexOf(first), 1);
   st.enemies.push(first);   // the reap walks the list from the end
@@ -318,42 +319,44 @@ S.check('the escape: the equipped pilot, the boss killed, and the one skip rule 
   assert.equal(T.movies.seen('escape'), 1);
 });
 
-// R2 row 4: the portal movie is now the beat on the battlefield, from the
-// kill (test_portal_beat.mjs has its timeline, skip and hold).
-S.check('the portal beat: the equipped pilot and the boss really killed (a double wave, the second of the pair)', () => {
-  kdown('c'); h.pump(2);   // CONTINUE out of the intermission
+S.check('the portal movie: the equipped pilot and the boss really killed (a double wave, the second of the pair)', () => {
+  kdown('c'); h.skipMovie(); h.pump(2);   // CONTINUE out of the intermission
   T.uiGuard.standDown();
   startRunAs('WITCH', 3);
   const cast = bossDown(1);
   assert.equal(cast.length, 2, 'wave 3 is a double wave: ' + cast.join(','));
   assert.equal(st.wave.killedBossId, cast[1], 'the one that fell is recorded');
-  assert.equal(st.mode, 'playing');
-  assert.ok(T.portalBeat.live, 'the beat is up');
-  assert.equal(T.movies.current.kind, 'portal');
+  enterPortal();
+  assert.equal(st.mode, 'portal-cine');
   const o = T.movies.current.opts;
   assert.equal(o.hero.id, 'WITCH'); assert.equal(o.hero.palette, CHARACTER_SPRITES.WITCH.palette);
   assert.equal(o.boss.id, cast[1], 'the movie shows ' + cast[1] + ', not the wave\'s first boss ' + cast[0]);
   assert.notEqual(o.boss.id, cast[0]);
   assert.equal(o.repeat, false, 'the first portal movie');
-  h.pump(1);
+  // The frame really carries the Witch and the boss.
+  h.rec.on = true; h.rec.rects.length = 0; h.pump(1); h.rec.on = false;
+  checkSkipRule('portal-cine', true);
   assert.equal(T.movies.seen('portal'), 1);
-  enterPortal();
-  assert.equal(st.mode, 'intermission');
 });
 
-S.check('a repeat portal beat plays the same 2.5 s, and the count stays in the settings', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+S.check('the first portal movie of a run plays in full even when seen in an earlier run, and the count stays in the settings', () => {
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs('PALADIN', 2);
   const cast = bossDown(0);
-  assert.ok(T.portalBeat.live);
-  const o = T.movies.current.opts;
-  assert.equal(o.repeat, false, 'the portal beat has no shorter form');
-  assert.equal(o.boss.id, cast[0]); assert.equal(o.hero.id, 'PALADIN');
-  assert.equal(T.portalBeat.duration, 2.5);
-  let frames = 0;
-  while (T.portalBeat.live && frames++ < 600) h.pump(1, () => { st.player.invuln = 1e6; });
-  assert.ok(frames / 60 <= 2.55, 'it played through in ' + (frames / 60).toFixed(2) + ' s');
   enterPortal();
+  assert.equal(st.mode, 'portal-cine');
+  const o = T.movies.current.opts;
+  assert.equal(T.movies.seen('portal'), 1, 'seen once before');
+  assert.equal(o.repeat, false, 'seen in an earlier run, but it is the first in THIS run: full length');
+  assert.equal(o.boss.id, cast[0]); assert.equal(o.hero.id, 'PALADIN');
+  assert.equal(T.portalCine.duration, CINE.CINE_DURATION);
+  assert.ok(CINE.CINE_DURATION > 6000);
+  const phases = new Set();
+  let frames = 0;
+  while (st.mode === 'portal-cine' && frames++ < 600) h.pump(1, () => { if (st.mode === 'portal-cine') phases.add(CINE.phaseAt(T.portalCine.t, o)); });
+  assert.ok(phases.has('PAUSE') && phases.has('LINGER'), 'the held beats are kept: ' + [...phases].join(','));
+  assert.ok(phases.has('KILL') && phases.has('DISSOLVE') && phases.has('FADE'));
+  assert.ok(frames / 60 > 6.5 && frames / 60 < 7.3, 'it played its full length: ' + (frames / 60).toFixed(2) + ' s');
   assert.equal(st.mode, 'intermission');
   assert.equal(T.movies.seen('portal'), 2);
   const raw = h.storage.get(SEEN_KEY);
@@ -361,20 +364,38 @@ S.check('a repeat portal beat plays the same 2.5 s, and the count stays in the s
   for (const [k, v] of h.storage) if (k !== SEEN_KEY) assert.ok(!String(v).includes('"portal":2'), 'not in ' + k);
 });
 
-// The 'portal-cine' mode is the road shot now: wave 2's boss, the walk-in,
-// then a CONTINUE that travels to the next stage.
-function roadShot() {
-  h.skipMovie(); T.uiGuard.standDown();
-  if (st.mode === 'intermission') { kdown('c'); h.skipMovie(); T.uiGuard.standDown(); }
-  startRunAs('ROGUE', 2);
+// Steve, 2026-11-18: "the shorter movie is fine if it's been seen during a run already".
+S.check('a second portal movie in the SAME run is the short one; a new run starts in full again', () => {
+  assert.equal(st.mode, 'intermission', 'still in the run of the check above');
+  assert.equal(st.runMoviesSeen.portal, 1, 'one portal movie shown in this run');
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();   // CONTINUE into the next wave
+  assert.equal(st.mode, 'playing');
+  freeze(); st.wave.endsAt = st.time + 1e9; st.player.invuln = 1e6;
   bossDown(0);
   enterPortal();
-  assert.equal(st.mode, 'intermission');
-  kdown('c');
-  assert.equal(st.mode, 'portal-cine', 'a travelling CONTINUE plays the road shot');
-}
+  assert.equal(st.mode, 'portal-cine');
+  const o = T.movies.current.opts;
+  assert.equal(o.repeat, true, 'seen earlier in this run: the short one');
+  assert.equal(T.portalCine.duration, CINE.REPEAT_DURATION);
+  const phases = new Set();
+  let frames = 0;
+  while (st.mode === 'portal-cine' && frames++ < 600) h.pump(1, () => { if (st.mode === 'portal-cine') phases.add(CINE.phaseAt(T.portalCine.t, o)); });
+  assert.ok(!phases.has('PAUSE') && !phases.has('LINGER'), 'no held beats: ' + [...phases].join(','));
+  assert.ok(frames / 60 < 3.7, 'it played through in ' + (frames / 60).toFixed(2) + ' s');
+  assert.equal(st.runMoviesSeen.portal, 2);
+  // A new run: the count starts again, so its first portal movie is in full.
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
+  startRunAs('WITCH', 2);
+  assert.deepEqual(st.runMoviesSeen, {}, 'a new run has shown no movie');
+  bossDown(0);
+  enterPortal();
+  assert.equal(T.movies.current.opts.repeat, false, 'first in the new run: full length');
+  assert.equal(T.portalCine.duration, CINE.CINE_DURATION);
+  h.skipMovie();
+});
+
 function realDeath(pilot, typeId, extra = {}) {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs(pilot, 1);
   const p = st.player;
   p.hp = 1; p.invuln = 0; p.potions.hp = 0;
@@ -411,18 +432,15 @@ S.check('the death movie: the equipped pilot, the real killer, and the one skip 
 
 // A key held down: its auto-repeat is not a second press. And '?' or F1 is a
 // press like any other in every movie (it does not open help under a movie).
-// short: the road shot (1.5 s) ends before the prompt would run out.
-function checkHeldAndHelp(mode, short = false) {
+function checkHeldAndHelp(mode) {
   const ask = () => (mode === 'escape' ? T.escape.cine.ask : T.movies.current.skip.ask);
   h.pump(30);                                     // past the guard
   h.key('keydown', { key: ' ', preventDefault() {} });
   assert.ok(ask() > 0, mode + ': the first press shows SKIP');
   for (let i = 0; i < 5; i++) h.key('keydown', { key: ' ', repeat: true, preventDefault() {} });
   assert.equal(st.mode, mode, mode + ': holding the key does not skip');
-  if (!short) {
-    h.pump(160);                                  // the prompt runs out
-    assert.equal(ask(), 0);
-  }
+  h.pump(160);                                    // the prompt runs out
+  assert.equal(ask(), 0);
   kdown('?');
   assert.equal(st.mode, mode, mode + ': ? does not leave the movie');
   assert.ok(!st.helpMode, mode + ': and does not open help under it');
@@ -432,14 +450,18 @@ function checkHeldAndHelp(mode, short = false) {
   T.uiGuard.standDown();
 }
 S.check('in every movie a held key is one press, and ? shows SKIP', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs('KNIGHT', 1);
   bossDown(0);
   enterPortal();
   assert.equal(st.mode, 'escape');
   checkHeldAndHelp('escape');
-  roadShot();
-  checkHeldAndHelp('portal-cine', true);
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
+  startRunAs('ROGUE', 2);
+  bossDown(0);
+  enterPortal();
+  assert.equal(st.mode, 'portal-cine');
+  checkHeldAndHelp('portal-cine');
   realDeath('PALADIN', 'CHASER');
   checkHeldAndHelp('death-cine');
 });
@@ -459,20 +481,24 @@ function checkJ(mode) {
   T.uiGuard.standDown();
 }
 S.check('in every movie J is a press: SKIP shows and the quests stay shut', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs('KNIGHT', 1);
   bossDown(0);
   enterPortal();
   assert.equal(st.mode, 'escape');
   checkJ('escape');
-  roadShot();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
+  startRunAs('ROGUE', 2);
+  bossDown(0);
+  enterPortal();
+  assert.equal(st.mode, 'portal-cine');
   checkJ('portal-cine');
   realDeath('PALADIN', 'CHASER');
   checkJ('death-cine');
 });
 
 S.check('the escape preview in the settings is not counted as seen', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs('WITCH', 2);
   const e0 = T.movies.seen('escape');
   T.escape.start({ test: true });
@@ -492,13 +518,14 @@ S.check('the escape preview in the settings is not counted as seen', () => {
 });
 
 S.check('the movies take the pilot of the run, not the one picked since', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   startRunAs('PALADIN', 2);
   prof.equippedCharacter = 'WITCH';   // changed on the profile after the run began
   bossDown(0);
-  assert.ok(T.portalBeat.live);
-  assert.equal(T.movies.current.opts.hero.id, 'PALADIN', 'the run\'s own pilot');
   enterPortal();
+  assert.equal(st.mode, 'portal-cine');
+  assert.equal(T.movies.current.opts.hero.id, 'PALADIN', 'the run\'s own pilot');
+  h.skipMovie();
 });
 
 S.check('the seen count: per kind, read before the showing, counted once', () => {
@@ -514,7 +541,7 @@ S.check('the seen count: per kind, read before the showing, counted once', () =>
 });
 
 S.check('reduced motion keeps the escape\'s still card, seen before or not', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   const mm = window.matchMedia;
   window.matchMedia = (q) => ({ matches: /prefers-reduced-motion/.test(String(q)) });
   try {
@@ -529,7 +556,7 @@ S.check('reduced motion keeps the escape\'s still card, seen before or not', () 
 });
 
 S.check('unattended runs pass the portal and death movies by themselves, uncounted', () => {
-  kdown('c'); h.pump(2); T.uiGuard.standDown();
+  kdown('c'); h.skipMovie(); h.pump(2); T.uiGuard.standDown();
   const p0 = T.movies.seen('portal'), d0 = T.movies.seen('death');
   T.auto.on = true;
   T.setPilotMode('AUTO_ALL');

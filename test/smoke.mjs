@@ -135,7 +135,7 @@ const stampNotFresh = () => {
 stampNotFresh();
 
 // ---- WAVE-7/D intro movie: plays BEFORE the title menu on page load ----
-// Pump rAF frames until the 5s movie finishes and the menu lands. Skipping
+// Pump rAF frames until the 7s movie finishes and the menu lands. Skipping
 // is exercised separately at the end of the file (fresh module re-import).
 const dtMs = 1000 / 60;
 {
@@ -154,8 +154,7 @@ const dtMs = 1000 / 60;
     .find(c => (c.innerHTML || '').includes(t));
   assert(elements['ov-title'] && elements['ov-title'].textContent === 'HORDES',
     'first boot (storage empty) must land on the title (the howto pop moved to START GAME)');
-  // R2: a fresh profile gets the 5 s road shot (it was 7 s before).
-  assert(introFrames > 60 * 4.5, `intro movie should run most of its 5s (frames=${introFrames})`);
+  assert(introFrames > 60 * 6, `intro movie should run most of its 7s (frames=${introFrames})`);
   assert(elements['ov-cards'].children.length >= 4,
     'title screen should show PLAY/SHOP/CHARACTERS/SETTINGS cards after intro');
   // HOW TO PLAY lives under SETTINGS; ESC backs out to the title.
@@ -961,16 +960,17 @@ assert(time >= 45, 'auto-mover should survive a meaningful run (time=' + time + 
   assert(announce && announce.msg === 'WAVE ' + waveNum + ' - ' + place,
     'the wave toast must name the stage: ' + (announce ? announce.msg : 'none') +
     ' (wave ' + waveNum + ', expected ' + place + ')');
-  // R2: the portal movie is now the 2.5 s beat on the battlefield, from the
-  // kill; the crossing waits for it, then the intermission.
+  // Round 8: the portal movie is back. The pilot walks in, the movie plays
+  // (in full the first time in a run, short after that), then the intermission.
   forceBossDeath();
   cineFrames = 0;
+  let cineMs = 0;
   const took = pumpUntil(() => st.mode === 'intermission', 60 * 20,
-    () => { if (mainMod.__TEST.portalBeat.live) cineFrames++; });
-  assert(took >= 0, 'the beat must hand off to the intermission on its own');
-  assert(cineFrames >= Math.ceil(2500 / dtMs) - 4,
-    `the 2.5s beat should run to its end (${cineFrames} frames)`);
-  console.log(`portal beat: natural end after ${cineFrames} frames -> intermission`);
+    () => { if (mainMod.__TEST.portalCine.live === 'portal') { cineFrames++; cineMs = mainMod.__TEST.portalCine.duration; } });
+  assert(took >= 0, 'the movie must hand off to the intermission on its own');
+  assert(cineMs > 0 && cineFrames >= Math.ceil(cineMs / dtMs) - 2,
+    `the ${cineMs} ms movie should run to isDone (${cineFrames} frames)`);
+  console.log(`portal cine: natural end after ${cineFrames} frames -> intermission`);
 
   // (c) The wrath dial is gone: no RAISE THE STAKES card on the intermission.
   assert(!elements['ov-cards'].children.some(c => (c.innerHTML || '').includes('RAISE THE STAKES')),

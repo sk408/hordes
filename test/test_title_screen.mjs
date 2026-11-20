@@ -223,9 +223,9 @@ check('the pre-run screen has a compact form for a short landscape screen', () =
 check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   cardWith('SETTINGS').click();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DAMAGE NUMBERS', 'DISPLAY SIZE', 'FULLSCREEN',
-    'AUTO-CONTINUE', 'KEEP PLAYING',
+    'KEY STRIP: AUTO', 'AUTO-CONTINUE', 'KEEP PLAYING',
     'EXPORT SAVE', 'IMPORT SAVE', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'BACK'],
-    'title settings is exactly these fifteen cards, in order (R3 added DAMAGE NUMBERS)');
+    'title settings is exactly these sixteen cards, in order (R3 added DAMAGE NUMBERS, R9 KEY STRIP on desktop)');
   cardWith('ADVANCED').click();
   const adv = names();
   assert.deepEqual(adv.slice(0, 6), ['ZOOM', 'RESOLUTION', 'TEXT HUD', 'PILOT', 'FOCUS', 'STANCE'],
@@ -249,7 +249,7 @@ check('SETTINGS is ONE screen plus ADVANCED, in both contexts', () => {
   assert.equal(st.mode, 'playing', 'a run is live for the in-run settings probe');
   T.openSettings();
   assert.deepEqual(names(), ['MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'DAMAGE NUMBERS', 'DISPLAY SIZE', 'FULLSCREEN',
-    'AUTO-CONTINUE', 'KEEP PLAYING', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
+    'KEY STRIP: AUTO', 'AUTO-CONTINUE', 'KEEP PLAYING', 'HOW TO PLAY', 'HINTS', 'REPLAY TUTORIAL', 'ADVANCED', 'END RUN', 'BACK'],
     'in-run settings: no save cards, END RUN added (no TEST: ESCAPE)');
   cardWith('ADVANCED').click();
   assert.ok(!names().some(x => /^RESET PROFILE|RECOVERY FILE/.test(x)), 'in-run ADVANCED has no reset / recovery');

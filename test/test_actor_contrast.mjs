@@ -98,7 +98,7 @@ check('the muted horde colour of every common enemy still holds 2.75:1 on every 
   assert.deepEqual(low, [], 'under 2.75:1 as drawn: ' + low.join('; '));
 });
 
-check('every look that draws a boss away from the fight carries its rim: the name card, the portal beat, the death movie', () => {
+check('every look that draws a boss away from the fight carries its rim: the name card, the portal movie, the death movie', () => {
   for (const id of Object.keys(BOSS_SPRITES)) {
     assert.equal(bossLook(id).rim, BOSS_SPRITES[id].rim, 'bossLook ' + id);
     assert.equal(killerLook({ bossId: id }).rim, BOSS_SPRITES[id].rim, 'killerLook ' + id);

@@ -192,8 +192,9 @@ s.check('layout rule (cards2): an upright phone stacks the playing cards as rows
     }
   }
   assert.equal(draftLayout(390, 844, 3, { dcard: true }).artScale, 5, '390x844, 3 offers: the 5x face');
-  assert.equal(draftLayout(390, 844, 4, { dcard: true }).artScale, 4, '390x844, 4 offers: the 4x face');
-  assert.equal(draftLayout(390, 844, 5, { dcard: true }).artScale, 3, '390x844, 5 offers: steps down to 3x');
+  // (in the menus' monospace the chrome is 205 px: four offers take 3x, five 2x)
+  assert.equal(draftLayout(390, 844, 4, { dcard: true }).artScale, 3, '390x844, 4 offers: the 3x face');
+  assert.equal(draftLayout(390, 844, 5, { dcard: true }).artScale, 2, '390x844, 5 offers: steps down to 2x');
   assert.equal(draftLayout(390, 844, 6, { dcard: true }).artScale, 2, '390x844, 6 offers: 2x');
   assert.equal(draftLayout(390, 844, 3, { dcard: true }).cardW, 366);
   // the guided first draft keeps room for the tutorial panel
@@ -209,8 +210,9 @@ s.check('layout rule (cards2): an upright phone stacks the playing cards as rows
 // cards2 review fixes: the rows' height budget is the stylesheet's, not a
 // guess that only checks itself. A row is the face, its margins and the
 // card padding as index.html draws them; CHROME holds the overlay padding and
-// gaps from index.html plus the parts measured in Chrome (a two-line header 30,
-// the AUTO-PICK row 23, the action row 78); tools/verify_draft_cards.mjs runs
+// gaps from index.html plus the parts measured in Chrome in the menus'
+// monospace (the title 26, a two-line Pick line 30, the AUTO-PICK row 23,
+// the action row 78); tools/verify_draft_cards.mjs runs
 // the real page at 375x667 and 390x844.
 s.check('layout rule (cards2): the rows height budget matches the stylesheet', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -220,11 +222,11 @@ s.check('layout rule (cards2): the rows height budget matches the stylesheet', (
   const pad = px(rule('#overlay.draft.rows .card.dcard'), 'padding');
   for (const s of [2, 3, 4, 5]) assert.equal(draftRowH(s), cardBox(s).h + face[0] + face[2] + 2 * pad[0], 'row height at ' + s + 'x');
   const ov = rule('#overlay.draft.rows');
-  const chrome = px(ov, 'padding-top')[0] + px(ov, 'padding-bottom')[0] + 3 * px(ov, 'gap')[0] + 30 + 23 + 78;
+  const chrome = px(ov, 'padding-top')[0] + px(ov, 'padding-bottom')[0] + 4 * px(ov, 'gap')[0] + 26 + 30 + 23 + 78;
   assert.ok(DRAFT_ROWS.CHROME >= chrome, 'CHROME ' + DRAFT_ROWS.CHROME + ' holds the header, AUTO-PICK and action rows (' + chrome + ')');
-  // what that gives on a short upright phone: three offers 4x, four 2x (3x
-  // would push the action row off the screen), and at 360x640 three are 3x
-  assert.equal(draftLayout(375, 667, 3, { dcard: true }).artScale, 4);
+  // what that gives on a short upright phone: three offers 3x (4x pushed the
+  // action row off the screen in the old font), four 2x, and at 360x640 three are 3x
+  assert.equal(draftLayout(375, 667, 3, { dcard: true }).artScale, 3);
   assert.equal(draftLayout(375, 667, 4, { dcard: true }).artScale, 2);
   assert.equal(draftLayout(360, 640, 3, { dcard: true }).artScale, 3);
 });

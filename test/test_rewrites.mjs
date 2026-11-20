@@ -429,6 +429,7 @@ const closeWindow = () => {
   const save = { spawnTimer: st.spawnTimer, endsAt: st.wave.endsAt, midAt: st.wave.midAt,
     dropBonus: p.stats.dropBonus, weapons: st.weapons, shrine: st.shrine,
     shrines: st.shrines,               // S1: the world-seeded set rides too
+    sites: st.sites,                   // M5b: the list the shrines are ticked from
     arches: st.arches, archBuffs: st.archBuffs,
                                   // SUITE_HARDENING Part 2 — THE ARCH LEAK, the
                                   // last unpinned random source inside the
@@ -480,6 +481,13 @@ const closeWindow = () => {
                                   // doctrine and to AUTO_DRINK, and disturbing
                                   // it moved the pilot off the pickup.)
   st.shrine = null;                // no altar purchase: the world-seeded
+  st.sites = [];                   // M5b: state.shrines is only a view of
+  //                                state.sites, and tickSites charges the
+  //                                shrines from state.sites. Emptying the view
+  //                                alone left them live: on 1 seed in 60 the
+  //                                pilot stood by one, it opened its blessing
+  //                                draft at 29 s, and every later window found
+  //                                the run in 'draft' (seed 22, 2026-11-19).
   st.shrines = [];                 // shrines are STATIC now (S1 killed the
   //                                drift) but STILL buy an intermission-style
   //                                blessing on proximity (applyChoice — a
@@ -495,7 +503,7 @@ const closeWindow = () => {
   //                                is +2 the probe never priced
   return () => { st.spawnTimer = save.spawnTimer; st.wave.endsAt = save.endsAt;
     st.wave.midAt = save.midAt; p.stats.dropBonus = save.dropBonus; st.weapons = save.weapons;
-    st.shrine = save.shrine; st.shrines = save.shrines; st.arches = save.arches;
+    st.shrine = save.shrine; st.shrines = save.shrines; st.sites = save.sites; st.arches = save.arches;
     st.archBuffs = save.archBuffs; p.attackTimer = save.attackTimer;
     Object.assign(p.skillCd, save.skillCd); };
 };

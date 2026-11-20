@@ -170,6 +170,7 @@ s.check('the canonical control list: every authored control is NAMED in the refe
     q: 'FROST', w: 'OVER', h: 'HP', n: 'MP',
     settings: 'SETTINGS', help: 'HELP', radar: 'RADAR', map: 'MAP',
     magnet: 'MAG',   // RSS8: the card-granted sweep button (hidden without the card)
+    kbshow: 'KEYS', kbhide: 'HIDE',   // R9: the desktop key strip's show / hide chips
   };
   const touchSeg = html.slice(html.indexOf('<div id="touch">'), html.indexOf('<div id="overlay">'));
   const acts = [...touchSeg.matchAll(/data-act="([a-z]+)"/g)].map(m => m[1]);

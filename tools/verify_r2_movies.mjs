@@ -1,6 +1,6 @@
 // HORDES - R2 movies in a real headless Chrome: the one skip rule by real key,
-// click and tap in every movie (the intro, the escape, the portal beat on the
-// battlefield, the road shot before a stage change, the death movie), the cast
+// click and tap in every movie (the intro, the escape, the portal movie, the
+// road shot before a stage change, the death movie), the cast
 // each movie is handed, and 0 console errors. With --sheets it also writes the before/after frame strips
 // (run once against this tree, once with --root D:/hordes-claude --tag before).
 //   node tools/verify_r2_movies.mjs
@@ -73,18 +73,18 @@ const HELPERS = `(async () => {
 
 const mode = `window.__T.state.mode`;
 const ask = `(window.__T.state.mode === 'escape' ? window.__T.escape.cine.ask : (window.__T.movies.current ? window.__T.movies.current.skip.ask : -1))`;
-// How old the movie is by its own clock, in seconds (the beat counts play time); -1 when the
-// tool cannot read it (the escape chase keeps its own clock).
+// How old the movie is by its own clock, in seconds; -1 when the tool cannot
+// read it (the escape chase keeps its own clock).
 const movieAge = `(() => { const T = window.__T; if (T.state.mode === 'escape') return -1; const m = T.movies.current;
-  if (!m) return -1; return (m.kind === 'portal' && typeof m.beatT === 'number') ? m.beatT : (performance.now() - m.t0) / 1000; })()`;
+  if (!m) return -1; return (performance.now() - m.t0) / 1000; })()`;
 // A view point (480x300) to CSS pixels through the live canvas rect.
 const toCss = (vx, vy) => `(() => { const r = document.getElementById('game').getBoundingClientRect();
   return [r.left + ${vx} / 480 * r.width, r.top + ${vy} / 300 * r.height]; })()`;
 
 // liveExpr: an in-page test that the movie is still up (default: the mode is
-// movieMode). The portal beat plays in 'playing' mode, so it passes its own.
-// The portal beat plays over live play, so only the skip keys (ESC, ENTER,
-// SPACE) go to it: its first key press is one of those (firstKey).
+// movieMode). The portal movie and the road shot share 'portal-cine', so each
+// passes its own (the mode and the movie's kind). firstKey: the key of the
+// first press (any key shows SKIP).
 async function skipRule(pg, label, movieMode, how, liveExpr = null, firstKey = 'x') {
   const { evaluate, sleep } = pg;
   const live = async () => !!(await evaluate(liveExpr || `${mode} === ${JSON.stringify(movieMode)}`));
@@ -138,6 +138,10 @@ async function arm(w, h, mobile, hows, withSheets) {
     // The intro: the page boots into it.
     await waitFor(`window.__T.state.mode === 'intro'`, 5000);
     check(tag + ' intro carries the equipped pilot', (await evaluate(`window.__T.movies.current.opts.hero.id`)) === 'KNIGHT');
+    // The original movie for every player: this profile has a finished run,
+    // and it still gets the full 7 s (no short cut for a returning player).
+    const introLen = await evaluate(`import('./src/intro.js').then(I => [I.INTRO_DURATION, I.durationOf(window.__T.movies.current.opts), 'returning' in window.__T.movies.current.opts])`);
+    check(tag + ' intro is the original 7 s movie for a returning player', introLen[0] === 7000 && introLen[1] === 7000 && introLen[2] === false, introLen);
     await evaluate(`window.__T.movies.current.t0 = performance.now()`);
     await skipRule(pg, tag + ' intro', 'intro', hows.intro);
     // The escape (wave 1), as the Rogue.
@@ -146,23 +150,22 @@ async function arm(w, h, mobile, hows, withSheets) {
     check(tag + ' escape: Rogue and Gravelmaw', (await evaluate(`window.__T.escape.cine.scene.character + '/' + window.__T.escape.cine.scene.bossId`)) === 'ROGUE/GRAVELMAW');
     await skipRule(pg, tag + ' escape', 'escape', hows.escape);
     await evaluate(`window.__T.state.mode === 'intermission' && window.__park && (window.__park = null)`);
-    // The portal beat (wave 2), as the Witch: Choir Mother is wave 2's boss.
-    // From wave 2 the portal is a 2.5 s beat on the live battlefield: the
-    // mode stays 'playing' and the beat takes the skip presses.
+    // The portal movie (wave 2), as the Witch: Choir Mother is wave 2's boss.
+    // The kill plays on the field (a card it earns opens there); the walk-in
+    // starts the movie in 'portal-cine', the first of the run in full.
     await evaluate(`window.__run('WITCH', 2)`);
-    await waitFor(`window.__T.portalBeat.live`, 20000);
-    check(tag + ' portal: the beat plays on the live field', (await evaluate(mode)) === 'playing' && (await evaluate(`window.__T.movies.current.kind`)) === 'portal');
+    const portalUp = `window.__T.state.mode === 'portal-cine' && window.__T.movies.current.kind === 'portal'`;
+    for (let i = 0; i < 60 && !(await evaluate(portalUp)); i++) {
+      if (['draft', 'evolve'].includes(await evaluate(mode))) await pg.key('1');
+      await sleep(250);
+    }
+    check(tag + ' portal: the walk-in plays the movie, in full', (await evaluate(portalUp)) && !(await evaluate(`window.__T.movies.current.opts.repeat`)));
     const cast = await evaluate(`window.__T.movies.current.opts.hero.id + '/' + window.__T.movies.current.opts.boss.id`);
     check(tag + ' portal: the Witch and the boss killed', cast === 'WITCH/CHOIR_MOTHER', cast);
-    await skipRule(pg, tag + ' portal', 'playing', hows.portal, `window.__T.portalBeat.live`, 'Enter');
-    check(tag + ' portal: the skip ended the beat', await evaluate(`window.__T.portalBeat.done`));
-    // The cards it held open after it; the pilot walks in.
-    await waitFor(`window.__T.state.mode === 'draft' || window.__T.state.mode === 'intermission'`, 20000);
-    for (let i = 0; i < 12 && (await evaluate(mode)) !== 'intermission'; i++) {
-      if ((await evaluate(mode)) === 'draft' || (await evaluate(mode)) === 'evolve') await pg.key('1');
-      await sleep(400);
-    }
-    check(tag + ' portal: the intermission after the beat', (await evaluate(mode)) === 'intermission', await evaluate(mode));
+    await evaluate(`window.__T.movies.current.t0 = performance.now()`);   // the guard, timed from here
+    await skipRule(pg, tag + ' portal', 'portal-cine', hows.portal, portalUp);
+    await sleep(200);
+    check(tag + ' portal: the intermission after the movie', (await evaluate(mode)) === 'intermission', await evaluate(mode));
     // The road shot (CONTINUE after wave 2 moves to the next stage): 1.5 s,
     // under the same skip rule.
     await sleep(700);   // past the next screen's input guard
@@ -175,7 +178,7 @@ async function arm(w, h, mobile, hows, withSheets) {
     await waitFor(`window.__T.state.mode === 'portal-cine'`, 3000);
     check(tag + ' road: CONTINUE plays the road shot', (await evaluate(`window.__T.movies.current.kind`)) === 'road', await evaluate(`window.__T.movies.current.kind`));
     check(tag + ' road: the run\'s pilot', (await evaluate(`window.__T.movies.current.opts.hero.id`)) === 'WITCH');
-    await skipRule(pg, tag + ' road', 'portal-cine', hows.road);
+    await skipRule(pg, tag + ' road', 'portal-cine', hows.road, `window.__T.state.mode === 'portal-cine' && window.__T.movies.current.kind === 'road'`);
     await evaluate(`window.__park = null`);
     // The death movie, as the Paladin, killed by Pyraxis.
     await evaluate(`window.__die('PALADIN', 'BRUTE', { bossId: 'PYRAXIS' })`);
@@ -197,22 +200,24 @@ async function arm(w, h, mobile, hows, withSheets) {
 // the movie module (the same render the game calls) with the time on each.
 async function sheets(pg, tag) {
   const { evaluate, sleep } = pg;
-  for (const [movie, label] of [['beat', 'Pyraxis falls, over a plain field'], ['road', 'Witch, to the next stage'], ['death', 'Rogue, killed by Pyraxis'], ['death-repeat', 'Rogue, Pyraxis, seen before']]) {
+  for (const [movie, label] of [['portal', 'Witch kills Pyraxis, first portal of the run'], ['portal-repeat', 'Witch, Pyraxis, a later portal in the run'], ['road', 'Witch, to the next stage'], ['death', 'Rogue, killed by Pyraxis'], ['death-repeat', 'Rogue, Pyraxis, seen before']]) {
     if (TAG === 'before' && /repeat/.test(movie)) continue;
     const ok = await evaluate(`(async () => {
       let B = null, RS = null;
-      try { B = await import('./src/portal_beat.js'); RS = await import('./src/road_shot.js'); } catch (e) { B = null; }
+      try { B = await import('./src/portal_cine.js'); } catch (e) { B = null; }
+      try { RS = await import('./src/road_shot.js'); } catch (e) { RS = null; }
       const D = await import('./src/death_cine.js');
       let cast = null;
       try { cast = await import('./src/movie_cast.js'); } catch (e) { cast = null; }
       const repeat = ${JSON.stringify(movie)}.endsWith('-repeat');
       const kind = ${JSON.stringify(movie)}.replace('-repeat', '');
-      if (kind !== 'death' && !B) return false;   // a tree without the beat
+      if (kind === 'portal' && !B) return false;   // a tree without the movie
+      if (kind === 'road' && !RS) return false;
       const opts = cast ? { hero: cast.pilotLook(kind === 'death' ? 'ROGUE' : 'WITCH'), boss: cast.bossLook('PYRAXIS'),
         killer: cast.killerLook({ typeId: 'BRUTE', bossId: 'PYRAXIS' }), repeat,
         bx: 240, by: 170, px: 240, py: 175, hx: 200, hy: 180, zoom: 2, entering: true,
         scene: RS ? RS.sceneFor({ seed: 7, stage: 'ASHEN_WASTE', character: 'WITCH' }) : null, name: 'ASHEN WASTE' } : {};
-      const dur = kind === 'beat' ? B.DURATION * 1000 : kind === 'road' ? RS.DURATION * 1000
+      const dur = kind === 'portal' ? B.durationOf(opts) : kind === 'road' ? RS.DURATION * 1000
         : (D.durationOf ? D.durationOf(opts) : D.CINE_DURATION);
       const vw = innerWidth, vh = innerHeight, cols = vw > vh ? 4 : 2, n = 12, rows = Math.ceil(n / cols);
       const head = 28, pad = 4;
@@ -233,7 +238,7 @@ async function sheets(pg, tag) {
       for (let i = 0; i < n; i++) {
         const t = Math.round(i * dur / (n - 1) * 0.985);
         og.setTransform(1, 0, 0, 1, 0, 0); og.clearRect(0, 0, 480, 300);
-        if (kind === 'beat') { og.fillStyle = '#3a3428'; og.fillRect(0, 0, 480, 300); B.render(og, t / 1000, opts); }
+        if (kind === 'portal') B.render(og, t, opts);
         else if (kind === 'road') RS.render(og, t / 1000, opts);
         else D.render(og, t, 'contact', opts);
         const x = pad + (i % cols) * (Math.floor(480 * s) + pad), y = head + pad + Math.floor(i / cols) * (Math.floor(300 * s) + pad);

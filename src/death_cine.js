@@ -437,6 +437,10 @@ function drawRoad(g, ts, cause, o, killer) {
   const dark = smooth(closeU) * 0.88;
   if (dark > 0) { g.globalAlpha = dark; g.fillStyle = INK; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
   const bh = Math.round(lerp(BAR, H / 2, smooth(span(ts, SCENE.CLOSE[0] + 150, SCENE.CLOSE[1]))));
+  // On a phone held upright the top bar's line grows like the freeze's
+  // caption (captionScale). Its capitals still fit the bar, which keeps its
+  // height: a boss's head stays in the picture below it.
+  const cs = captionScale(o), TB = BAR;
   g.fillStyle = INK;
   g.fillRect(0, 0, W, bh);
   g.fillRect(0, H - Math.max(BAR, bh), W, Math.max(BAR, bh));
@@ -444,9 +448,9 @@ function drawRoad(g, ts, cause, o, killer) {
   if (bh <= BAR + 2) {
     const c = captionOf(by, o.killer);
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    g.font = 'bold 9px monospace';
-    g.fillStyle = GREY; g.fillText('KILLED BY', 8, BAR / 2 + 0.5);
-    g.fillStyle = DANGER; g.fillText(c.name, 8 + textW(g, 'KILLED BY', 5.4) + 6, BAR / 2 + 0.5);
+    g.font = 'bold ' + Math.round(9 * cs) + 'px monospace';
+    g.fillStyle = GREY; g.fillText('KILLED BY', 8, TB / 2 + 0.5);
+    g.fillStyle = DANGER; g.fillText(c.name, 8 + textW(g, 'KILLED BY', 5.4 * cs) + Math.round(6 * cs), TB / 2 + 0.5);
   }
 }
 function drawHero(g, ts, run, it, ps, sway) {

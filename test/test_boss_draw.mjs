@@ -5,7 +5,7 @@
 //     dark floor, its rim's hue on a light one, at BOSS_POOL_ALPHA) and wears
 //     its rim, with the dark keyline outside it on a light floor only;
 //   - the Maw in the finale: the same rule, through a whole rendered frame;
-//   - the escape chase and the portal beat draw the boss with its rim.
+//   - the escape chase and the portal movie draw the boss with its rim.
 // Run: node test/test_boss_draw.mjs
 import assert from 'node:assert/strict';
 import { Renderer, bossPool, BOSS_POOL_ALPHA, MAW_POOL_ALPHA } from '../src/render.js';
@@ -17,7 +17,7 @@ import { makePlayer } from '../src/entities.js';
 import { bossLook } from '../src/movie_cast.js';
 import * as E from '../src/escape_cine.js';
 import * as A from '../src/escape_cine_art.js';
-import * as BEAT from '../src/portal_beat.js';
+import * as CINE from '../src/portal_cine.js';
 import { bodyColourOf } from '../src/fx/feel.js';
 import { reservedFamily } from '../src/palette.js';
 
@@ -112,14 +112,23 @@ check('the escape chase draws its boss with its rim', () => withCache(() => {
   }
 }));
 
-check('the portal beat sinks the boss with its rim', () => withCache(() => {
+check('the portal movie draws the boss dark in its rim', () => {
+  // The movie paints the close-up pixel by pixel (fillRect): the rim is a ring
+  // of the rim colour round the body, which keeps its own palette.
   for (const id of Object.keys(BOSS_SPRITES)) {
     const s = BOSS_SPRITES[id];
-    const r = recCtx();
-    BEAT.render(r.ctx, 0.3, { boss: bossLook(id), bx: 200, by: 150, px: 200, py: 150, hx: 260, hy: 160, zoom: 1 });
-    assert.ok(r.imgs.includes(rasterOf(s.frames[0], s.palette, actorStyle(false, false, s.rim, false, false))), id + ': the sinking boss wears its rim');
+    const rects = [];
+    const g = new Proxy({}, { get(t, p) { if (p === 'fillRect') return (x, y, w, h) => rects.push({ c: t.fillStyle, x, y, w, h }); return t[p]; }, set(t, p, v) { t[p] = v; return true; } });
+    CINE.render(g, 300, { boss: bossLook(id) });
+    const body = rects.filter(q => q.w === 8 && q.c === s.palette[1]);
+    assert.ok(s.rim && body.length > 0, id + ': the body keeps its own dark palette');
+    // The first rim-coloured cell is drawn before any body pixel: the ring under the body.
+    const firstRim = rects.findIndex(q => q.c === s.rim && q.w === 8);
+    const firstBody = rects.findIndex(q => q.c === s.palette[1] && q.w === 8);
+    assert.ok(firstRim >= 0 && firstRim < firstBody, id + ': the rim ring is drawn round the body');
+    assert.ok(rects.filter(q => q.c === s.rim && q.w === 8).length > 10, id + ': the rim is drawn');
   }
-}));
+});
 
 check('a killed boss folds down in its rim (and its keyline on a light floor), after the white beat', () => withCache(() => {
   const R = Renderer.prototype;

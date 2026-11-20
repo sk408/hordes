@@ -1,9 +1,10 @@
 // HORDES - tools/verify_r5_endcard.mjs (R5 the end card). Real headless
-// Chrome at 1280x720, 844x390 and 390x844:
+// Chrome at 1280x720, 844x390, 390x844, 375x667 and 320x568 (or the sizes named on the command line):
 //   1. A death, the movie skipped with two key presses: the end card comes up
 //      over the frozen frame, and the skipping press did not press RETRY.
 //   2. The gold counts (part way at 0.5 s), a press lands it at once.
 //   3. Every card fully on screen and the top element at its centre; no scroll.
+//      The same with five trophies earned (the five longest names).
 //   4. Keys: the arrows reach BUY NEXT last, Tab wraps to RETRY, Enter on
 //      BUY NEXT opens the shop with the cursor on that row, the row on screen.
 //   5. A real click (desktop) or tap (phones) on BUY NEXT does the same; one
@@ -23,8 +24,18 @@ const ARMS = [
   { tag: '1280x720', w: 1280, h: 720, dpr: 1, mobile: false },
   { tag: '844x390', w: 844, h: 390, dpr: 2, mobile: true },
   { tag: '390x844', w: 390, h: 844, dpr: 3, mobile: true },
-];
+  // a short upright phone (font2: the old font wraps the card text to more lines)
+  { tag: '375x667', w: 375, h: 667, dpr: 2, mobile: true },
+  // the smallest upright phone (font2 review: the cards fell off it in monospace)
+  { tag: '320x568', w: 320, h: 568, dpr: 2, mobile: true },
+].filter((a) => process.argv.length <= 2 || process.argv.slice(2).includes(a.tag));
 const key = (k) => `(window.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}' })), window.dispatchEvent(new KeyboardEvent('keyup', { key: '${k}' })), true)`;
+// The five longest trophy names, put into the stored end card, which is shown again.
+const FIVE = `(async () => { const A = await import('./src/achievements.js'); const E = await import('./src/end_card.js'); const art = (await import('./src/art/index.js')).TROPHY_ART;
+  const ts = A.ACHIEVEMENTS.map(a => ({ id: a.id, name: (art[a.id] && art[a.id].name) || a.id })).sort((x, y) => y.name.length - x.name.length).slice(0, 5);
+  const d = document.createElement('div'); d.innerHTML = E.endCardHtml({ gold: 1, bank: 1, trophies: ts });
+  const got = d.querySelector('.ec-got').outerHTML; const s = window.__T.state.endScreen;
+  s.subHtml = s.subHtml.replace(/<div class="ec-more">/, got + '<div class="ec-more">'); window.__T.endCard.reshow(); return true; })()`;
 const LAYOUT = `(() => {
   const vw = innerWidth, vh = innerHeight, ov = document.getElementById('overlay');
   const cards = [...document.querySelectorAll('#ov-cards .card')].filter(c => c.style.display !== 'none').map(c => { const r = c.getBoundingClientRect();
@@ -76,6 +87,22 @@ for (const arm of ARMS) {
     check(arm.tag + ' death card: RETRY first, BUY NEXT last', lay.cards.map(c => c.name).join(',') === 'RETRY,SHOP,AUTO-CONTINUE: OFF,TITLE,BUY NEXT', lay.cards.map(c => c.name));
     check(arm.tag + ' death card: every card on screen and hit at its centre, no scroll', lay.cards.every(c => c.inView && c.hit) && lay.scroll <= 1 && !lay.hscroll,
       { scroll: lay.scroll, cards: lay.cards.map(c => [c.name, c.inView, c.hit]) });
+    // 3b. Five trophies (the five longest names) put into this end card, shown again.
+    // The 320x568 phone is the one size where five trophies may scroll (they did with
+    // the pixel font too, 306 px); there every card must still be hit after scrolling.
+    await evaluate(FIVE);
+    await sleep(400);
+    const five = await evaluate(LAYOUT);
+    const got = await evaluate("document.querySelectorAll('#ov-sub .ec-trophy').length");
+    if (arm.tag !== '320x568') {
+      check(arm.tag + ' five trophies: every card on screen and hit at its centre, no scroll', got === 5 && five.cards.every(c => c.inView && c.hit) && five.scroll <= 1 && !five.hscroll,
+        { got, scroll: five.scroll, cards: five.cards.map(c => [c.name, c.inView, c.hit]) });
+    } else {
+      const reach = await evaluate(`(() => { const ov = document.getElementById('overlay'); ov.scrollTop = ov.scrollHeight; const out = [...document.querySelectorAll('#ov-cards .card')].map(c => { const r = c.getBoundingClientRect();
+        const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!(e && e.closest && e.closest('.card') === c); }); ov.scrollTop = 0; return out; })()`);
+      check(arm.tag + ' five trophies: every card reachable by scrolling, scroll under 120 px', got === 5 && reach.every(Boolean) && five.scroll < 120 && !five.hscroll,
+        { got, scroll: five.scroll, reach });
+    }
     // 4. Keys.
     for (let i = 0; i < 5; i++) await evaluate(key('ArrowRight'));
     lay = await evaluate(LAYOUT);

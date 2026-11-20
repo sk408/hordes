@@ -555,4 +555,35 @@ S.check('a boss or the Maw on the road: its head stays under the top film bar fr
   });
 });
 
+// integ5: the road's KILLED BY line read at about 7 px on a phone held upright.
+// It grows there like the freeze's caption (about 11 CSS px), and its capitals
+// still fit the top film bar. A sideways phone and the desktop keep 9 px.
+S.check('the road\'s KILLED BY line is readable on a phone held upright and fits the top bar', () => {
+  const { BAR } = D.DEATH_CINE_TEST;
+  const lineAt = (capScale) => {
+    const said = [];
+    let font = '';
+    const g = {
+      fillStyle: null, globalAlpha: 1, textAlign: '', textBaseline: '',
+      set font(v) { font = v; }, get font() { return font; },
+      fillRect() {}, measureText: (q) => ({ width: String(q).length * 0.6 * (parseFloat(/(\d+)px/.exec(font)[1])) }),
+      fillText(t, x, y) { said.push({ t: String(t), x, y, px: parseFloat(/(\d+)px/.exec(font)[1]) }); },
+      drawImage() {}, save() {}, restore() {}, translate() {}, beginPath() {}, arc() {}, moveTo() {}, rect() {}, clip() {}, fill() {},
+    };
+    D.render(g, SC.ROAD[0] + 400, 'contact', { hero: ROGUE, killer: killerLook({ typeId: 'BRUTE' }), repeat: true, capScale });
+    const k = said.find(q => q.t === 'KILLED BY'), n = said.find(q => q.t === 'BRUTE');
+    assert.ok(k && n, 'the line is drawn at capScale ' + capScale);
+    return { k, n };
+  };
+  for (const w of [390, 375]) {
+    const cs = w / 480, { k, n } = lineAt(cs);
+    assert.ok(k.px * cs >= 10.5, w + ' wide: KILLED BY reads at ' + (k.px * cs).toFixed(1) + ' CSS px');
+    assert.equal(n.px, k.px, 'the name is the same size');
+    // Bold capitals are about 0.7 of the size high, centred on the bar's middle.
+    assert.ok(k.y - k.px * 0.35 >= 1 && k.y + k.px * 0.35 <= BAR - 1, 'the capitals fit the ' + BAR + ' px bar: ' + k.px + ' px at ' + k.y);
+    assert.ok(n.x >= k.x + 9 * 0.6 * k.px, 'the name starts after KILLED BY');
+  }
+  for (const cs of [1.3, 2.3]) assert.equal(lineAt(cs).k.px, 9, 'unchanged at capScale ' + cs);
+});
+
 S.done();
